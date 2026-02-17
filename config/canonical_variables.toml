@@ -1,0 +1,151 @@
+# ===========================================================================
+# Canonical Variable Definitions for AtmosTransportModel
+#
+# This file defines the "contract" between met data sources and physics code.
+# All physics operators (advection, diffusion, convection) reference these
+# canonical names — never native met-file variable names.
+#
+# Every met source TOML (geosfp.toml, merra2.toml, era5.toml, …) must map
+# its native variables into this canonical set.
+#
+# To add a new canonical variable:
+#   1. Add a [variables.<name>] section here
+#   2. Add the mapping in each relevant met source TOML
+#   3. Physics code can then request it via get_field(met, :name)
+# ===========================================================================
+
+[meta]
+version = "1.0"
+description = "Canonical meteorological variables for atmospheric transport modeling"
+
+# ---------------------------------------------------------------------------
+# 3D fields on model levels
+# ---------------------------------------------------------------------------
+
+[variables.u_wind]
+units       = "m/s"
+dimensions  = 3
+description = "Zonal (eastward) wind component"
+required    = true
+
+[variables.v_wind]
+units       = "m/s"
+dimensions  = 3
+description = "Meridional (northward) wind component"
+required    = true
+
+[variables.w_wind]
+units       = "Pa/s"
+dimensions  = 3
+description = "Vertical pressure velocity (omega; positive = downward)"
+required    = true
+
+[variables.temperature]
+units       = "K"
+dimensions  = 3
+description = "Air temperature"
+required    = true
+
+[variables.specific_humidity]
+units       = "kg/kg"
+dimensions  = 3
+description = "Specific humidity (mass mixing ratio of water vapour)"
+required    = true
+
+[variables.pressure_thickness]
+units       = "Pa"
+dimensions  = 3
+description = "Pressure thickness of each model layer (delp)"
+required    = true
+
+[variables.mid_level_pressure]
+units       = "Pa"
+dimensions  = 3
+description = "Pressure at the midpoint of each model layer"
+required    = false
+
+[variables.mid_layer_height]
+units       = "m"
+dimensions  = 3
+description = "Geometric height at the midpoint of each model layer"
+required    = false
+
+# ---------------------------------------------------------------------------
+# 3D fields on model level edges (Nz+1)
+# ---------------------------------------------------------------------------
+
+[variables.edge_pressure]
+units       = "Pa"
+dimensions  = 3
+description = "Pressure at layer edges (Nz+1 levels; level 1 = model top)"
+required    = false
+
+[variables.diffusivity]
+units       = "m^2/s"
+dimensions  = 3
+description = "Vertical scalar diffusivity Kz (total, for boundary-layer mixing)"
+required    = false
+
+[variables.conv_mass_flux_up]
+units       = "kg/m^2/s"
+dimensions  = 3
+description = "Convective updraft mass flux at level edges"
+required    = false
+
+[variables.conv_mass_flux_down]
+units       = "kg/m^2/s"
+dimensions  = 3
+description = "Convective downdraft mass flux at level edges"
+required    = false
+
+[variables.conv_detrainment]
+units       = "kg/m^2/s"
+dimensions  = 3
+description = "Convective detrainment rate"
+required    = false
+
+# ---------------------------------------------------------------------------
+# 2D (single-level / surface) fields
+# ---------------------------------------------------------------------------
+
+[variables.surface_pressure]
+units       = "Pa"
+dimensions  = 2
+description = "Surface pressure"
+required    = true
+
+[variables.surface_geopotential]
+units       = "m^2/s^2"
+dimensions  = 2
+description = "Surface geopotential (phis = g * z_surface)"
+required    = false
+
+[variables.boundary_layer_height]
+units       = "m"
+dimensions  = 2
+description = "Planetary boundary layer height"
+required    = false
+
+[variables.surface_roughness]
+units       = "m"
+dimensions  = 2
+description = "Surface roughness length"
+required    = false
+
+[variables.friction_velocity]
+units       = "m/s"
+dimensions  = 2
+description = "Surface friction velocity (u*)"
+required    = false
+
+[variables.sensible_heat_flux]
+units       = "W/m^2"
+dimensions  = 2
+description = "Surface sensible heat flux (positive upward)"
+required    = false
+
+[variables.latent_heat_flux]
+units       = "W/m^2"
+dimensions  = 2
+description = "Surface latent heat flux (positive upward)"
+required    = false

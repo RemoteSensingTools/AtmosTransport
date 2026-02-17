@@ -1,0 +1,140 @@
+# ===========================================================================
+# GEOS-FP (Forward Processing) — Met Data Source Configuration
+#
+# NASA GMAO GEOS Forward Processing system.
+# Near real-time assimilated meteorological fields.
+# Same model and vertical coordinate as MERRA-2 but at higher horizontal
+# resolution and with near-zero latency.
+#
+# OPeNDAP access: NO AUTHENTICATION REQUIRED
+# ===========================================================================
+
+[source]
+name        = "GEOS-FP"
+description = "NASA GEOS Forward Processing (near real-time assimilated meteorology)"
+institution = "NASA Global Modeling and Assimilation Office (GMAO)"
+reference   = "https://gmao.gsfc.nasa.gov/GMAO_products/NRT_products.php"
+
+# ---------------------------------------------------------------------------
+# Native grid specification
+# ---------------------------------------------------------------------------
+[grid]
+type      = "LatitudeLongitude"
+Nx        = 1152          # number of longitude points
+Ny        = 721           # number of latitude points
+Nz        = 72            # number of native model levels
+dlon      = 0.3125        # longitude spacing (degrees)
+dlat      = 0.25          # latitude spacing (degrees)
+lon_start = -180.0        # first longitude (degrees east)
+lat_start = -90.0         # first latitude (degrees north)
+# Vertical: 72 hybrid sigma-pressure levels, top-to-bottom indexing
+# Level 1 = model top (0.01 hPa), Level 72 = surface
+
+# ---------------------------------------------------------------------------
+# Data access configuration
+# ---------------------------------------------------------------------------
+[access]
+protocol      = "opendap"
+base_url      = "https://opendap.nccs.nasa.gov/dods/GEOS-5/fp/0.25_deg/assim"
+auth_required = false
+time_interval = 10800.0   # 3-hourly for 3D fields (seconds)
+
+# ---------------------------------------------------------------------------
+# Collections — groups of variables in the same OPeNDAP dataset / file
+# ---------------------------------------------------------------------------
+[collections.asm_Nv_inst]
+dataset     = "inst3_3d_asm_Nv"
+frequency   = "inst3"
+vertical    = "Nv"
+levels      = 72
+description = "3-hourly instantaneous 3D assimilated state on native levels"
+
+[collections.asm_Nv_tavg]
+dataset     = "tavg3_3d_asm_Nv"
+frequency   = "tavg3"
+vertical    = "Nv"
+levels      = 72
+description = "3-hourly time-averaged 3D assimilated state on native levels"
+
+[collections.trb_Ne]
+dataset     = "tavg3_3d_trb_Ne"
+frequency   = "tavg3"
+vertical    = "Ne"
+levels      = 73
+description = "3-hourly time-averaged turbulence diagnostics at layer edges"
+
+[collections.mst_Ne]
+dataset     = "tavg3_3d_mst_Ne"
+frequency   = "tavg3"
+vertical    = "Ne"
+levels      = 73
+description = "3-hourly time-averaged moist process diagnostics at layer edges"
+
+[collections.flx_Nx]
+dataset     = "tavg1_2d_flx_Nx"
+frequency   = "tavg1"
+vertical    = "Nx"
+levels      = 1
+description = "Hourly time-averaged surface flux diagnostics"
+
+[collections.slv_Nx]
+dataset     = "tavg1_2d_slv_Nx"
+frequency   = "tavg1"
+vertical    = "Nx"
+levels      = 1
+description = "Hourly time-averaged single-level diagnostics"
+
+# ---------------------------------------------------------------------------
+# Variable mapping: canonical_name → native name + collection
+#
+# unit_conversion: multiplicative factor to convert native → canonical units.
+#                  Default is 1.0 (native units already match canonical).
+# ---------------------------------------------------------------------------
+
+[variables.u_wind]
+native_name     = "u"
+collection      = "asm_Nv_inst"
+
+[variables.v_wind]
+native_name     = "v"
+collection      = "asm_Nv_inst"
+
+[variables.w_wind]
+native_name     = "omega"
+collection      = "asm_Nv_inst"
+
+[variables.temperature]
+native_name     = "t"
+collection      = "asm_Nv_inst"
+
+[variables.specific_humidity]
+native_name     = "qv"
+collection      = "asm_Nv_inst"
+
+[variables.surface_pressure]
+native_name     = "ps"
+collection      = "asm_Nv_inst"
+
+[variables.pressure_thickness]
+native_name     = "delp"
+collection      = "asm_Nv_inst"
+
+[variables.mid_level_pressure]
+native_name     = "pl"
+collection      = "asm_Nv_inst"
+
+[variables.mid_layer_height]
+native_name     = "h"
+collection      = "asm_Nv_inst"
+
+[variables.surface_geopotential]
+native_name     = "phis"
+collection      = "asm_Nv_inst"
+
+[variables.diffusivity]
+native_name     = "kh"
+collection      = "trb_Ne"
+
+[variables.edge_pressure]
+native_name     = "ple"
+collection      = "trb_Ne"

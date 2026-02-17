@@ -1,0 +1,5 @@
+[deps]
+CDSAPI = "8a7b9de3-9c00-473e-88b4-7eccd7ef2fea"
+HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
+NCDatasets = "85f8d34a-cbdd-5861-8df4-14fed0d494ab"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"

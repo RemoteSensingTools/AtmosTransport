@@ -1,0 +1,160 @@
+# ===========================================================================
+# ERA5 — Met Data Source Configuration
+#
+# ECMWF ERA5 reanalysis — the fifth generation of ECMWF atmospheric
+# reanalyses of the global climate. Produced by the Copernicus Climate
+# Change Service (C3S).
+#
+# Key differences from GEOS-FP / MERRA-2:
+#   - 137 hybrid model levels (vs. 72)
+#   - Hourly temporal resolution for 2D (vs. 3-hourly)
+#   - Longitude starts at 0° (not -180°)
+#   - Latitude runs N→S (90° to -90°) — needs flip on read
+#   - Accessed via Copernicus CDS API (requires ~/.cdsapirc)
+#
+# ERA5 data can also be accessed via the Copernicus Data Store (CDS)
+# Python or Julia API, or downloaded as GRIB/NetCDF files.
+# ===========================================================================
+
+[source]
+name        = "ERA5"
+description = "ECMWF ERA5 global reanalysis"
+institution = "European Centre for Medium-Range Weather Forecasts (ECMWF)"
+reference   = "https://doi.org/10.1002/qj.3803"
+
+# ---------------------------------------------------------------------------
+# Native grid specification
+#
+# ERA5 is produced on a reduced Gaussian grid (TL639) but is typically
+# distributed on regular lat-lon grids. The default download grid is 0.25°.
+# Users can request coarser grids (e.g., 1° or 2°) through the CDS API.
+# ---------------------------------------------------------------------------
+[grid]
+type      = "LatitudeLongitude"
+Nx        = 1440          # at 0.25° (can vary with download request)
+Ny        = 721           # at 0.25°
+Nz        = 137           # model levels
+dlon      = 0.25
+dlat      = 0.25
+lon_start = 0.0           # ERA5 longitudes: 0° to 359.75°
+lat_start = 90.0          # ERA5 latitudes: 90°N to 90°S (north-to-south!)
+
+# Vertical: 137 hybrid sigma-pressure levels
+# Different from GEOS 72-level system — requires level mapping or regridding
+
+# ---------------------------------------------------------------------------
+# Data access configuration
+# ---------------------------------------------------------------------------
+[access]
+protocol      = "cds"     # Copernicus Climate Data Store API
+base_url      = "https://cds.climate.copernicus.eu/api"
+auth_required = true
+auth_file     = "~/.cdsapirc"
+time_interval = 3600.0    # hourly for pressure levels (seconds)
+
+# CDS API dataset identifiers
+[access.cds]
+dataset_pressure    = "reanalysis-era5-pressure-levels"
+dataset_single      = "reanalysis-era5-single-levels"
+dataset_model_level = "reanalysis-era5-complete"
+
+# ---------------------------------------------------------------------------
+# Collections — for ERA5, collections map to CDS dataset + product type
+# ---------------------------------------------------------------------------
+[collections.pressure_levels]
+dataset     = "reanalysis-era5-pressure-levels"
+frequency   = "hourly"
+vertical    = "pressure"
+levels      = 37           # standard pressure level count (can request more)
+description = "Hourly data on pressure levels"
+
+[collections.single_levels]
+dataset     = "reanalysis-era5-single-levels"
+frequency   = "hourly"
+vertical    = "surface"
+levels      = 1
+description = "Hourly single-level (surface) data"
+
+[collections.model_levels]
+dataset     = "reanalysis-era5-complete"
+frequency   = "hourly"
+vertical    = "model"
+levels      = 137
+description = "Hourly data on native 137 model levels (MARS access)"
+
+# ---------------------------------------------------------------------------
+# Variable mapping: canonical_name → native name + collection
+#
+# ERA5 uses lowercase short names. Some variables need unit conversion.
+#
+# Note: ERA5 model-level data provides the most complete set but requires
+# special MARS access. Pressure-level data is more accessible but
+# loses information near the surface and in the upper stratosphere.
+# ---------------------------------------------------------------------------
+
+[variables.u_wind]
+native_name     = "u"
+collection      = "pressure_levels"
+cds_name        = "u_component_of_wind"
+
+[variables.v_wind]
+native_name     = "v"
+collection      = "pressure_levels"
+cds_name        = "v_component_of_wind"
+
+[variables.w_wind]
+native_name     = "w"
+collection      = "pressure_levels"
+cds_name        = "vertical_velocity"
+
+[variables.temperature]
+native_name     = "t"
+collection      = "pressure_levels"
+cds_name        = "temperature"
+
+[variables.specific_humidity]
+native_name     = "q"
+collection      = "pressure_levels"
+cds_name        = "specific_humidity"
+
+[variables.surface_pressure]
+native_name     = "sp"
+collection      = "single_levels"
+cds_name        = "surface_pressure"
+
+[variables.surface_geopotential]
+native_name     = "z"
+collection      = "single_levels"
+cds_name        = "geopotential"
+
+[variables.boundary_layer_height]
+native_name     = "blh"
+collection      = "single_levels"
+cds_name        = "boundary_layer_height"
+
+[variables.friction_velocity]
+native_name     = "zust"
+collection      = "single_levels"
+cds_name        = "friction_velocity"
+
+[variables.sensible_heat_flux]
+native_name     = "sshf"
+collection      = "single_levels"
+cds_name        = "surface_sensible_heat_flux"
+# ERA5 fluxes are accumulated J/m², need division by accumulation period
+# unit_conversion handled in the reader based on time step
+
+[variables.latent_heat_flux]
+native_name     = "slhf"
+collection      = "single_levels"
+cds_name        = "surface_latent_heat_flux"
+
+# ---------------------------------------------------------------------------
+# Notes on coordinate transforms needed when reading ERA5:
+#
+# 1. Longitude: ERA5 uses [0, 360) — shift to [-180, 180) with circshift
+# 2. Latitude:  ERA5 runs N→S — reverse to match our S→N convention
+# 3. Levels:    ERA5 pressure levels are separate from model levels;
+#               for transport on model levels, use the 'model_levels'
+#               collection (requires ECMWF MARS access or CDS beta)
+# ---------------------------------------------------------------------------

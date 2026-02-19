@@ -39,8 +39,21 @@ dlat      = 0.25
 lon_start = 0.0           # ERA5 longitudes: 0° to 359.75°
 lat_start = 90.0          # ERA5 latitudes: 90°N to 90°S (north-to-south!)
 
-# Vertical: 137 hybrid sigma-pressure levels
-# Different from GEOS 72-level system — requires level mapping or regridding
+# ---------------------------------------------------------------------------
+# Vertical coordinate: 137 hybrid sigma-pressure levels
+#
+# All met sources use HybridSigmaPressure(A, B) with source-specific
+# coefficients. The transport model sees only the abstract interface
+# p(k) = A[k] + B[k] * p_surface — regardless of whether the met source
+# uses spectral harmonics (ECMWF) or gridded output (GEOS, MERRA).
+# ---------------------------------------------------------------------------
+[vertical]
+coordinate_type   = "HybridSigmaPressure"
+coefficients_file = "config/era5_L137_coefficients.toml"
+n_levels          = 137
+n_interfaces      = 138
+surface_pressure_var = "surface_pressure"
+log_surface_pressure_var = "lnsp"  # ERA5 model-level data provides ln(ps)
 
 # ---------------------------------------------------------------------------
 # Data access configuration

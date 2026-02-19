@@ -10,6 +10,7 @@
 # ---------------------------------------------------------------------------
 
 using TOML
+using ..Grids: HybridSigmaPressure
 
 """
     VarMapping
@@ -57,6 +58,30 @@ struct CollectionInfo
 end
 
 """
+    VerticalConfig
+
+Vertical coordinate configuration parsed from the `[vertical]` section of a
+met source TOML. All met sources use hybrid sigma-pressure coordinates;
+this struct records the source-specific details (level count, coefficient file).
+
+# Fields
+- `coordinate_type :: String` — always "HybridSigmaPressure" for now
+- `coefficients_file :: String` — path to the TOML file with A/B coefficients
+- `n_levels :: Int` — number of model levels
+- `n_interfaces :: Int` — number of level interfaces (n_levels + 1)
+- `surface_pressure_var :: String` — canonical variable for surface pressure
+- `log_surface_pressure_var :: String` — optional: ln(ps) variable (ERA5 model levels)
+"""
+struct VerticalConfig
+    coordinate_type         :: String
+    coefficients_file       :: String
+    n_levels                :: Int
+    n_interfaces            :: Int
+    surface_pressure_var    :: String
+    log_surface_pressure_var :: String
+end
+
+"""
     MetSourceConfig
 
 Complete configuration for a meteorological data source, parsed from TOML.
@@ -66,6 +91,7 @@ Complete configuration for a meteorological data source, parsed from TOML.
 - `description :: String`
 - `institution :: String`
 - `grid_info :: Dict{String, Any}` — grid type, resolution, dimensions
+- `vertical :: VerticalConfig` — hybrid sigma-pressure vertical coordinate
 - `access :: Dict{String, Any}` — protocol, base URL, auth settings
 - `collections :: Dict{String, CollectionInfo}` — collection key → info
 - `variables :: Dict{Symbol, VarMapping}` — canonical name → mapping
@@ -76,6 +102,7 @@ struct MetSourceConfig
     description  :: String
     institution  :: String
     grid_info    :: Dict{String, Any}
+    vertical     :: VerticalConfig
     access       :: Dict{String, Any}
     collections  :: Dict{String, CollectionInfo}
     variables    :: Dict{Symbol, VarMapping}
@@ -106,6 +133,17 @@ function load_met_config(toml_path::String)
 
     grid_info = get(raw, "grid", Dict{String, Any}())
     access    = get(raw, "access", Dict{String, Any}())
+
+    # Parse vertical coordinate config
+    raw_vert = get(raw, "vertical", Dict())
+    vertical = VerticalConfig(
+        get(raw_vert, "coordinate_type", "HybridSigmaPressure"),
+        get(raw_vert, "coefficients_file", ""),
+        get(raw_vert, "n_levels", get(grid_info, "Nz", 0)),
+        get(raw_vert, "n_interfaces", get(grid_info, "Nz", 0) + 1),
+        get(raw_vert, "surface_pressure_var", "surface_pressure"),
+        get(raw_vert, "log_surface_pressure_var", ""),
+    )
 
     # Parse collections
     raw_collections = get(raw, "collections", Dict())
@@ -138,7 +176,7 @@ function load_met_config(toml_path::String)
 
     return MetSourceConfig(
         name, description, institution,
-        grid_info, access, collections, variables,
+        grid_info, vertical, access, collections, variables,
         toml_path
     )
 end
@@ -269,7 +307,78 @@ function build_merra2_file_url(config::MetSourceConfig, collection_key::String,
     return "$base/$(coll.dataset)/$(year)/$(lpad(month, 2, '0'))/$filename"
 end
 
-export VarMapping, CollectionInfo, MetSourceConfig
+"""
+    load_vertical_coefficients(config::MetSourceConfig; FT=Float64) -> (A::Vector{FT}, B::Vector{FT})
+
+Load hybrid sigma-pressure A/B coefficients from the file referenced in the
+met source configuration. Works for any met source (ERA5, GEOS-FP, MERRA-2)
+because every source's TOML has a `[vertical]` section pointing to its
+coefficient file.
+
+The returned vectors have length `n_interfaces` (= n_levels + 1).
+
+# Example
+```julia
+config = default_met_config("era5")
+A, B = load_vertical_coefficients(config)   # 138-element vectors
+```
+"""
+function load_vertical_coefficients(config::MetSourceConfig; FT::Type{<:AbstractFloat}=Float64)
+    coeff_path = config.vertical.coefficients_file
+    isempty(coeff_path) && error("No coefficients_file specified in $(config.name) vertical config")
+
+    if !isabspath(coeff_path)
+        coeff_path = normpath(joinpath(default_config_dir(), "..", coeff_path))
+    end
+    isfile(coeff_path) || error("Vertical coefficients file not found: $coeff_path")
+
+    raw = TOML.parsefile(coeff_path)
+    coeffs = raw["coefficients"]
+    A = FT.(coeffs["a"])
+    B = FT.(coeffs["b"])
+
+    expected = config.vertical.n_interfaces
+    if length(A) != expected
+        @warn "A coefficient count $(length(A)) ≠ expected $expected interfaces for $(config.name)"
+    end
+    if length(B) != expected
+        @warn "B coefficient count $(length(B)) ≠ expected $expected interfaces for $(config.name)"
+    end
+
+    return A, B
+end
+
+"""
+    build_vertical_coordinate(config::MetSourceConfig; FT=Float64, level_range=nothing)
+
+Construct a `HybridSigmaPressure` from a met source configuration.
+Optionally pass `level_range` (e.g., `50:137`) to select a subset of levels.
+
+This is the universal entry point for building the vertical coordinate
+regardless of met source — the same code works for ERA5 (137 levels),
+GEOS-FP (72 levels), or MERRA-2 (72 levels).
+
+# Example
+```julia
+config = default_met_config("geosfp")
+vc = build_vertical_coordinate(config)   # 72-level HybridSigmaPressure
+```
+"""
+function build_vertical_coordinate(config::MetSourceConfig;
+                                    FT::Type{<:AbstractFloat}=Float64,
+                                    level_range=nothing)
+    A, B = load_vertical_coefficients(config; FT)
+    if level_range !== nothing
+        first_idx = first(level_range)
+        last_idx  = last(level_range) + 1   # +1 because we need interfaces
+        A = A[first_idx:last_idx]
+        B = B[first_idx:last_idx]
+    end
+    return HybridSigmaPressure(A, B)
+end
+
+export VerticalConfig, VarMapping, CollectionInfo, MetSourceConfig
 export load_met_config, load_canonical_config, default_met_config
 export validate_met_config, merra2_stream
+export load_vertical_coefficients, build_vertical_coordinate
 export build_opendap_url, build_merra2_file_url

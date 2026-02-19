@@ -5,5 +5,5 @@ using AtmosTransportModel.Architectures
     @test CPU() isa AbstractArchitecture
     @test GPU() isa AbstractArchitecture
     @test array_type(CPU()) === Array
-    @test_throws ErrorException array_type(GPU())  # no CUDA loaded
+    @test_throws MethodError array_type(GPU())  # no CUDA loaded
 end

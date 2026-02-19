@@ -39,6 +39,13 @@ model = TransportModel(;
 - **Adjoint-paired:** Every forward operator has a hand-coded adjoint counterpart
 - **Extension-friendly:** Abstract types + interface contracts; adding a new scheme never requires editing core
 
+## Validation
+
+- **Tests:** 199 unit and integration tests; gradient tests for the adjoint. See `docs/VALIDATION.md`.
+- **Reproducible run:** `julia --project=. scripts/run_reference_ecmwf.jl` (ECMWF/ERA5 reference case; see `docs/REFERENCE_RUN.md`).
+- **TM5 comparison:** Run TM5 locally (see `docs/TM5_LOCAL_SETUP.md`), then `scripts/compare_tm5_output.jl our_output.nc tm5_output.nc`.
+- **GPU:** X-advection runs on CUDA via KernelAbstractions when `grid = LatitudeLongitudeGrid(GPU(); ...)` and `using CUDA`; y/z and convection/diffusion remain on CPU until ported.
+
 ## References
 
 - Krol et al. (2005): TM5 two-way nested zoom algorithm

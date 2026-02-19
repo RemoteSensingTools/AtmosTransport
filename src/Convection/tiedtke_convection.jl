@@ -21,8 +21,6 @@
 using ..Fields: interior, AbstractField
 using ..Grids: grid_size, Δz, floattype, LatitudeLongitudeGrid
 
-"""Gravitational acceleration [m/s²]."""
-const CONV_GRAVITY = 9.81
 
 """
     conv_tracer_data(t)
@@ -80,9 +78,8 @@ function convect!(tracers::NamedTuple, met, grid::LatitudeLongitudeGrid,
     gs = grid_size(grid)
     Nx, Ny, Nz = gs.Nx, gs.Ny, gs.Nz
     FT = floattype(grid)
-    grav = FT(CONV_GRAVITY)
+    grav = grid.gravity
 
-    # Preallocate workspace (allocation-free per column)
     col  = Vector{FT}(undef, Nz)
     flux = Vector{FT}(undef, Nz + 1)
 

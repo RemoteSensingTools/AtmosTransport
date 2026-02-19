@@ -62,6 +62,8 @@ using AtmosTransportModel.Grids
             @test sum(tracers.c) ≈ mass0 rtol = 1e-10
 
             # Reset and test y (zero v at boundaries for mass conservation)
+            # Spherical y-advection conserves physical mass (weighted by Δsinφ),
+            # not simple sum(c).
             c = rand(Nx, Ny, Nz) .+ 0.1
             tracers = (; c)
             v = fill(0.5, Nx, Ny + 1, Nz)
@@ -70,9 +72,12 @@ using AtmosTransportModel.Grids
             u = zeros(Nx + 1, Ny, Nz)
             w = zeros(Nx, Ny, Nz + 1)
             velocities = (; u, v, w)
-            mass0 = sum(c)
+            φᶠ = Array(grid.φᶠ)
+            phys_mass(cc) = sum(abs(sind(φᶠ[j+1]) - sind(φᶠ[j])) * cc[i,j,k]
+                                for i in 1:Nx, j in 1:Ny, k in 1:Nz)
+            mass0 = phys_mass(c)
             advect_y!(tracers, velocities, grid, scheme, 30.0)
-            @test sum(tracers.c) ≈ mass0 rtol = 1e-10
+            @test phys_mass(tracers.c) ≈ mass0 rtol = 1e-10
 
             # Reset and test z (zero w at top/bottom for mass conservation)
             # Conserved quantity is Δz-weighted mass (pressure thickness × concentration)
@@ -114,10 +119,10 @@ using AtmosTransportModel.Grids
             adjoint_advect_x!(adj_tracers, velocities, grid, scheme, Δt)
             Atλ = adj_tracers.c
 
-            # Adjoint identity: dot(A'λ, δc) ≈ dot(λ, Aδc)
+            # Adjoint identity: dot(A'λ, δc) ≈ dot(λ, Aδc) — exact for linear upwind
             lhs = dot(Atλ, δc)
             rhs = dot(λ, Aδc)
-            @test lhs ≈ rhs rtol = 1e-4
+            @test lhs ≈ rhs rtol = 1e-10
 
             # Also test y and z (zero velocity at boundaries)
             v = fill(1.0, Nx, Ny + 1, Nz)
@@ -134,7 +139,7 @@ using AtmosTransportModel.Grids
             tracers_pert = (; c = copy(δc))
             advect_y!(tracers_pert, velocities, grid, scheme, Δt)
             adjoint_advect_y!(adj_tracers, velocities, grid, scheme, Δt)
-            @test dot(adj_tracers.c, δc) ≈ dot(λ, tracers_pert.c) rtol = 1e-4
+            @test dot(adj_tracers.c, δc) ≈ dot(λ, tracers_pert.c) rtol = 1e-10
 
             w = fill(-5.0, Nx, Ny, Nz + 1)
             w[:, :, 1] .= 0
@@ -150,7 +155,7 @@ using AtmosTransportModel.Grids
             tracers_pert = (; c = copy(δc))
             advect_z!(tracers_pert, velocities, grid, scheme, Δt)
             adjoint_advect_z!(adj_tracers, velocities, grid, scheme, Δt)
-            @test dot(adj_tracers.c, δc) ≈ dot(λ, tracers_pert.c) rtol = 1e-4
+            @test dot(adj_tracers.c, δc) ≈ dot(λ, tracers_pert.c) rtol = 1e-10
         end
     end
 

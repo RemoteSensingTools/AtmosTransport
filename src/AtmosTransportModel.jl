@@ -16,6 +16,9 @@ module AtmosTransportModel
 include("Architectures.jl")
 using .Architectures
 
+include("Parameters.jl")
+using .Parameters
+
 include("Communications.jl")
 using .Communications
 
@@ -59,6 +62,10 @@ using .IO
 # ---- Regridding ----
 include("Regridding/Regridding.jl")
 using .Regridding
+
+# ---- Sources / Emissions ----
+include("Sources/Sources.jl")
+using .Sources
 
 # ---- Models (depends on everything above) ----
 include("Models/Models.jl")

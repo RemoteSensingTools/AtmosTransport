@@ -29,8 +29,18 @@ dlon      = 0.625         # longitude spacing (degrees)
 dlat      = 0.5           # latitude spacing (degrees)
 lon_start = -180.0        # first longitude (degrees east)
 lat_start = -90.0         # first latitude (degrees north)
-# Vertical: same 72 hybrid sigma-pressure levels as GEOS-FP
-# Level 1 = model top (0.01 hPa), Level 72 = surface
+# ---------------------------------------------------------------------------
+# Vertical coordinate: 72 hybrid sigma-pressure levels
+#
+# Same vertical coordinate as GEOS-FP. All met sources use
+# HybridSigmaPressure(A, B) with source-specific coefficients.
+# ---------------------------------------------------------------------------
+[vertical]
+coordinate_type   = "HybridSigmaPressure"
+coefficients_file = "config/geos_L72_coefficients.toml"
+n_levels          = 72
+n_interfaces      = 73
+surface_pressure_var = "surface_pressure"
 
 # ---------------------------------------------------------------------------
 # Data access configuration

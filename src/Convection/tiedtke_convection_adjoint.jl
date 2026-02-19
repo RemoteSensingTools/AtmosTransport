@@ -6,6 +6,9 @@
 #
 # The adjoint is the exact transpose:  λ_old = L^T * λ_new
 #
+# Parity: ⟨L^T λ, δq⟩ = ⟨λ, L δq⟩ to machine precision (see test_convection.jl
+# "Adjoint identity (exact discrete transpose)").
+#
 # Following TM5/NICAM-TM (Niwa et al., 2017), the discrete adjoint approach
 # is used for the convection process because the operator is already linear
 # in tracer concentration.
@@ -43,7 +46,7 @@ function adjoint_convect!(adj_tracers::NamedTuple, met, grid::LatitudeLongitudeG
     gs = grid_size(grid)
     Nx, Ny, Nz = gs.Nx, gs.Ny, gs.Nz
     FT = floattype(grid)
-    grav = FT(CONV_GRAVITY)
+    grav = grid.gravity
 
     λ_new = Vector{FT}(undef, Nz)
     λ_old = Vector{FT}(undef, Nz)

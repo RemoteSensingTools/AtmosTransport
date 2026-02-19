@@ -1,0 +1,38 @@
+# ===========================================================================
+# AtmosTransportModel — Default Parameters
+#
+# All physical constants, numerical settings, and simulation defaults.
+# Nothing is hardcoded in the source; everything comes from here.
+#
+# Override any value by passing a second TOML file:
+#   params = load_parameters(FT; override="my_experiment.toml")
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Planet
+# ---------------------------------------------------------------------------
+[planet]
+radius                     = 6.371e6     # Earth equatorial radius [m] (WGS84)
+gravity                    = 9.81        # gravitational acceleration [m/s²]
+reference_surface_pressure = 101325.0    # standard surface pressure [Pa]
+
+# ---------------------------------------------------------------------------
+# Numerics
+# ---------------------------------------------------------------------------
+[numerics]
+polar_epsilon = 1e-30    # regularisation for 1/(sinφ_N - sinφ_S) near poles
+cfl_limit     = 0.4      # maximum allowed CFL number before warning
+
+# ---------------------------------------------------------------------------
+# Simulation defaults
+# ---------------------------------------------------------------------------
+[simulation]
+dt      = 600.0    # time step [s]
+n_hours = 48       # simulation length [hours]
+
+# ---------------------------------------------------------------------------
+# Architecture
+# ---------------------------------------------------------------------------
+[architecture]
+use_gpu    = false       # run on GPU (requires CUDA.jl)
+float_type = "Float64"   # "Float32" or "Float64"

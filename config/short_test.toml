@@ -1,0 +1,3 @@
+# Override for a quick 6-hour test run
+[simulation]
+n_hours = 6

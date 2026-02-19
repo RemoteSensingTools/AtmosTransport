@@ -19,7 +19,7 @@ that dispatch on `AbstractGrid`, ensuring grid-agnostic kernels.
 """
 module Grids
 
-using ..Architectures: AbstractArchitecture, CPU
+using ..Architectures: AbstractArchitecture, CPU, array_type
 import ..Architectures: architecture
 
 export AbstractGrid, AbstractStructuredGrid
@@ -30,11 +30,13 @@ export AbstractLocationType, Center, Face
 export xnode, ynode, znode, cell_area, cell_volume
 export Δx, Δy, Δz
 export topology, halo_size, grid_size, floattype
+export ReducedGridSpec, compute_reduced_grid
 
 include("topology.jl")
 include("location_types.jl")
 include("abstract_grid.jl")
 include("vertical_coordinates.jl")
+include("reduced_grid.jl")
 include("latitude_longitude_grid.jl")
 include("cubed_sphere_grid.jl")
 include("panel_connectivity.jl")

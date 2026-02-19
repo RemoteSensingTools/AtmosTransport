@@ -61,12 +61,9 @@ struct GPU <: AbstractArchitecture end
     array_type(arch::AbstractArchitecture)
 
 Return the array constructor for the given architecture.
+CPU returns `Array`; GPU is defined by the CUDA extension.
 """
 array_type(::CPU) = Array
-
-function array_type(::GPU)
-    error("GPU support requires CUDA.jl. Load it with `using CUDA` before constructing a GPU architecture.")
-end
 
 # ---------------------------------------------------------------------------
 # Interface: device
@@ -76,12 +73,9 @@ end
     device(arch::AbstractArchitecture)
 
 Return the KernelAbstractions device for kernel launches.
+CPU returns `KA.CPU()`; GPU is defined by the CUDA extension.
 """
 device(::CPU) = KA.CPU()
-
-function device(::GPU)
-    error("GPU support requires CUDA.jl. Load it with `using CUDA` before constructing a GPU architecture.")
-end
 
 # ---------------------------------------------------------------------------
 # Utility: extract architecture from objects

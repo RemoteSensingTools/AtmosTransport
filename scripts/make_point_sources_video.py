@@ -57,20 +57,36 @@ def main():
     lon = ds.variables["lon"][:]
     lat = ds.variables["lat"][:]
     time_hours = ds.variables["time_hours"][:]
-    co2 = ds.variables["co2_ppm"][:]  # (lon, lat, lev, time)
+    co2 = ds.variables["co2_ppm"][:]
+    dims = ds.variables["co2_ppm"].dimensions
     ds.close()
 
-    nx, ny, nz, ntime = co2.shape
-    # Column average over lev -> (lon, lat, time)
-    co2_col = np.nanmean(co2, axis=2)
-    # Anomaly from initial; then (time, lon, lat) for looping
-    ref = co2_col[:, :, 0]
-    anomaly = np.transpose(co2_col - ref[:, :, np.newaxis], (2, 0, 1))  # (time, lon, lat)
+    nlon, nlat = len(lon), len(lat)
+    axis_lev = dims.index("lev")
+    axis_time = dims.index("time")
+    # Column average over lev
+    co2_col = np.nanmean(co2, axis=axis_lev)  # e.g. (time, lat, lon) or (lon, lat, time)
+    # Move time to first axis
+    co2_col = np.moveaxis(co2_col, axis_time, 0)
+    ntime = co2_col.shape[0]
+    # Anomaly from first time
+    ref = co2_col[0]
+    anomaly = co2_col - ref
+    # Ensure (ntime, nlon, nlat) for pcolormesh(lon2d, lat2d, anomaly[t]); lon2d is (nlon, nlat)
+    if anomaly.shape[1] == nlat and anomaly.shape[2] == nlon:
+        anomaly = np.transpose(anomaly, (0, 2, 1))  # (time, lat, lon) -> (time, lon, lat)
+    elif anomaly.shape[1] != nlon or anomaly.shape[2] != nlat:
+        raise ValueError("co2_ppm dims after avg: expected (time, lon, lat) or (time, lat, lon)")
 
-    vmin = float(np.nanpercentile(anomaly, 2))
-    vmax = float(np.nanpercentile(anomaly, 98))
-    if vmax - vmin < 0.1:
-        vmin, vmax = -1.0, 1.0
+    # Use first 30 frames (or all if fewer) for color scale so blow-up doesn't dominate
+    n_sensible = min(30, ntime)
+    sensible = anomaly[:n_sensible]
+    vmin = float(np.nanpercentile(sensible, 2))
+    vmax = float(np.nanpercentile(sensible, 98))
+    if vmax - vmin < 0.01:
+        vmin, vmax = 0.0, 1.0
+    # Clip displayed data to this range so later frames don't wash out the colorbar
+    plot_data = np.clip(anomaly, vmin, vmax)
 
     lon2d, lat2d = np.meshgrid(lon, lat, indexing="ij")
 
@@ -82,25 +98,23 @@ def main():
             ax.add_feature(cfeature.BORDERS, linestyle=":")
             ax.set_global()
             cf = ax.pcolormesh(
-                lon2d, lat2d, anomaly[t].T,
+                lon2d, lat2d, plot_data[t],
                 transform=ccrs.PlateCarree(),
                 cmap="YlOrRd", vmin=vmin, vmax=vmax,
             )
         else:
             ax = plt.gca()
-            cf = ax.pcolormesh(lon2d, lat2d, anomaly[t].T, cmap="YlOrRd", vmin=vmin, vmax=vmax)
+            cf = ax.pcolormesh(lon2d, lat2d, plot_data[t], cmap="YlOrRd", vmin=vmin, vmax=vmax)
             ax.set_xlabel("Longitude")
             ax.set_ylabel("Latitude")
             ax.set_aspect("equal")
 
-        plt.colorbar(cf, ax=ax, label="CO2 anomaly (ppm)")
+        plt.colorbar(cf, ax=ax, label="CO2 (ppm, column-mean)")
         day = time_hours[t] / 24.0
-        ax.set_title(f"Column-mean CO2 anomaly — Day {day:.2f}")
+        ax.set_title("Column-mean CO2 — Day {:.2f}".format(day))
         plt.tight_layout()
         plt.savefig(os.path.join(frames_dir, f"frame_{t:04d}.png"), dpi=100, bbox_inches="tight")
         plt.close()
-
-    ds.close()
 
     # Encode video with ffmpeg if available
     import subprocess
@@ -110,11 +124,13 @@ def main():
             [
                 ffmpeg, "-y", "-framerate", "4", "-i",
                 os.path.join(frames_dir, "frame_%04d.png"),
+                "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
                 "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "23",
                 outpath,
             ],
             check=True,
-            capture_output=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
         print(f"Video written: {outpath}")
         # Optionally remove frames to save space

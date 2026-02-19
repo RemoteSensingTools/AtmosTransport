@@ -6,12 +6,11 @@ Provides GPU array types and KernelAbstractions device for the GPU architecture.
 """
 module AtmosTransportModelCUDAExt
 
-using AtmosTransportModel.Architectures: GPU, array_type, device
+import AtmosTransportModel
+using AtmosTransportModel.Architectures: GPU
 using CUDA: CuArray, CUDABackend
-using KernelAbstractions: KernelAbstractions as KA
 
-# Override the error-throwing stubs in Architectures.jl
 AtmosTransportModel.Architectures.array_type(::GPU) = CuArray
-AtmosTransportModel.Architectures.device(::GPU) = CUDABackend()
+AtmosTransportModel.Architectures.device(::GPU)     = CUDABackend()
 
 end # module AtmosTransportModelCUDAExt

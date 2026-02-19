@@ -14,22 +14,32 @@ using AtmosTransportModel
 using AtmosTransportModel.Architectures
 using AtmosTransportModel.Grids
 using AtmosTransportModel.Advection
+using AtmosTransportModel.Parameters
 using NCDatasets
 using Dates
 
 # ---------------------------------------------------------------------------
-# Configuration
+# Load configuration from TOML (with optional override)
 # ---------------------------------------------------------------------------
-const FT        = Float64
-const Δt        = 600.0                # 10-minute time step [s]
-const N_HOURS   = 48                   # simulation length [hours]
+const OVERRIDE_TOML = get(ENV, "CONFIG", nothing)
+const FT_STR = get(ENV, "USE_FLOAT32", "false") == "true" ? Float32 : Float64
+const PARAMS = load_parameters(FT_STR; override=OVERRIDE_TOML)
+const FT     = FT_STR
+const Δt     = PARAMS.simulation.dt
+const N_HOURS = PARAMS.simulation.n_hours
+
+const USE_GPU = get(ENV, "USE_GPU", "false") == "true"
+if USE_GPU
+    using CUDA
+end
 
 const PROJECT_ROOT = abspath(joinpath(@__DIR__, ".."))
 const DATA_DIR     = joinpath(PROJECT_ROOT, "data", "era5")
 const PL_FILE      = joinpath(DATA_DIR, "era5_pressure_levels_20250201_20250207.nc")
 const SL_FILE      = joinpath(DATA_DIR, "era5_single_levels_20250201_20250207.nc")
 const OUTDIR       = joinpath(DATA_DIR, "output")
-const OUTFILE      = joinpath(OUTDIR, "forward_era5_output.nc")
+const REFERENCE_RUN = get(ENV, "REFERENCE_RUN", "false") == "true"
+const OUTFILE      = joinpath(OUTDIR, REFERENCE_RUN ? "reference_era5_output.nc" : "forward_era5_output.nc")
 
 # Standard 37 ERA5 pressure levels [hPa]
 const ERA5_PRESSURE_LEVELS = FT.([
@@ -47,6 +57,11 @@ function load_era5_data(pl_file::String, sl_file::String, ::Type{FT};
                         time_idx::Int=1) where {FT}
     @info "Loading ERA5 pressure-level data from $pl_file"
     @info "Loading ERA5 single-level data from $sl_file"
+
+    # Pre-declare variables used across try/catch boundary
+    local lons_raw, lats_raw, levels
+    local Nx, Ny, Nz
+    local u_raw, v_raw, w_raw, t_raw, q_raw
 
     # Read pressure-level data
     ds_pl = NCDataset(pl_file)
@@ -175,9 +190,17 @@ function load_era5_data(pl_file::String, sl_file::String, ::Type{FT};
         lats = lats_raw
     end
 
-    # ERA5 pressure levels: 1..1000 hPa (top → surface)
-    # Our convention: k=1 is top of atmosphere, k=Nz is near surface
-    # ERA5 already stores data this way, so no reorder needed
+    # ERA5 pressure levels: ensure k=1 is top of atmosphere (lowest pressure)
+    # ERA5 CDS often stores surface-first (1000→10 hPa); reverse if needed.
+    if levels[1] > levels[end]
+        levels = reverse(levels)
+        u_raw = u_raw[:, :, end:-1:1]
+        v_raw = v_raw[:, :, end:-1:1]
+        w_raw = w_raw[:, :, end:-1:1]
+        t_raw = t_raw[:, :, end:-1:1]
+        q_raw = q_raw[:, :, end:-1:1]
+        @info "  Reversed pressure levels to top→surface: [$(levels[1]), $(levels[end])] hPa"
+    end
 
     @info "  Transformed grid: lon=[$(lons[1]),$(lons[end])], lat=[$(lats[1]),$(lats[end])]"
     @info "  Wind ranges: u=[$(round(minimum(u_raw),digits=1)),$(round(maximum(u_raw),digits=1))] m/s"
@@ -204,9 +227,14 @@ function build_era5_grid(data, ::Type{FT}) where {FT}
     for k in 1:Nz-1
         p_edges[k+1] = (p_levels_Pa[k] + p_levels_Pa[k+1]) / 2
     end
-    p_edges[Nz+1] = FT(101325)  # approximate surface pressure
+    p_edges[Nz+1] = PARAMS.planet.reference_surface_pressure
 
     @info "  Vertical: $(Nz) levels, p_top=$(p_edges[1]) Pa, p_surface=$(p_edges[end]) Pa"
+    @info "  Level centers (hPa): $(round.(p_levels_Pa ./ 100, digits=1)[1:min(5,Nz)])... $(round.(p_levels_Pa ./ 100, digits=1)[max(1,Nz-2):Nz])"
+    @info "  p_edges monotonic? $(all(diff(p_edges) .> 0))"
+    dp_min = minimum(diff(p_edges))
+    dp_max = maximum(diff(p_edges))
+    @info "  Layer thickness range: $(round(dp_min, digits=1)) — $(round(dp_max, digits=1)) Pa"
 
     # Pure sigma: a=0, b=p/p_surface
     Ps = p_edges[end]
@@ -216,11 +244,17 @@ function build_era5_grid(data, ::Type{FT}) where {FT}
     vc = HybridSigmaPressure(a_values, b_values)
 
     Δlon = lons[2] - lons[1]
-    grid = LatitudeLongitudeGrid(CPU();
+    arch = USE_GPU ? GPU() : CPU()
+    pp = PARAMS.planet
+    grid = LatitudeLongitudeGrid(arch;
+        FT,
         size = (Nx, Ny, Nz),
         longitude = (FT(lons[1]) - Δlon/2, FT(lons[end]) + Δlon/2),
-        latitude  = (FT(lats[1]) - Δlon/2, FT(lats[end]) + Δlon/2),
-        vertical  = vc)
+        latitude  = (FT(-90), FT(90)),
+        vertical  = vc,
+        radius             = pp.radius,
+        gravity             = pp.gravity,
+        reference_pressure  = pp.reference_surface_pressure)
 
     @info "Grid constructed: Nx=$Nx, Ny=$Ny, Nz=$Nz"
     @info "  Longitude: [$(lons[1]), $(lons[end])]"
@@ -235,51 +269,83 @@ function stagger_winds(data, grid, p_levels_Pa, p_edges, ::Type{FT}) where {FT}
     v_cc = data.v
     omega = data.w  # vertical velocity in Pa/s
 
-    # CFL limiter parameters
-    cfl_limit = FT(0.4)
-    Δlon_m = FT(2.5 * 111000)  # rough estimate of grid spacing at equator
-    Δlat_m = FT(2.5 * 111000)
-    u_max = cfl_limit * Δlon_m / FT(Δt)
-    v_max = cfl_limit * Δlat_m / FT(Δt)
+    # CPU copies of grid coords for host-side staggering
+    φᶠ_cpu = Array(grid.φᶠ)
+    φᶜ_cpu = Array(grid.φᶜ)
 
-    @info "  CFL limits: u_max=$(round(u_max, digits=1)) m/s, v_max=$(round(v_max, digits=1)) m/s"
+    cfl_limit = FT(0.4)
 
     # Stagger u to x-faces: (Nx+1, Ny, Nz), periodic
     u = zeros(FT, Nx + 1, Ny, Nz)
     @inbounds for k in 1:Nz, j in 1:Ny, i in 1:Nx
         ip = i == Nx ? 1 : i + 1
-        u_val = (u_cc[i, j, k] + u_cc[ip, j, k]) / 2
-        u[i, j, k] = clamp(u_val, -u_max, u_max)
+        u[i, j, k] = (u_cc[i, j, k] + u_cc[ip, j, k]) / 2
     end
     u[Nx + 1, :, :] .= u[1, :, :]
 
     # Stagger v to y-faces: (Nx, Ny+1, Nz), zero at poles
     v = zeros(FT, Nx, Ny + 1, Nz)
     @inbounds for k in 1:Nz, j in 2:Ny, i in 1:Nx
-        v_val = (v_cc[i, j-1, k] + v_cc[i, j, k]) / 2
-        v[i, j, k] = clamp(v_val, -v_max, v_max)
+        v[i, j, k] = (v_cc[i, j-1, k] + v_cc[i, j, k]) / 2
     end
 
-    # w at z-interfaces: (Nx, Ny, Nz+1)
-    # omega (Pa/s), positive downward → negate for our convention (w>0 upward)
-    w = zeros(FT, Nx, Ny, Nz + 1)
-    @inbounds for k in 2:Nz, j in 1:Ny, i in 1:Nx
-        w_raw = -(omega[i, j, k-1] + omega[i, j, k]) / 2
-        # CFL limit based on pressure thickness
-        dp = p_edges[k+1] - p_edges[k]
-        dp_prev = p_edges[k] - p_edges[k-1]
-        dp_min = min(abs(dp), abs(dp_prev))
-        w_lim = cfl_limit * dp_min / FT(Δt)
-        w[i, j, k] = clamp(w_raw, -w_lim, w_lim)
+    # Diagnose vertical omega from horizontal divergence (TM5 approach):
+    # 1. Compute horizontal divergence at each level
+    # 2. Remove barotropic component so ω=0 at BOTH top and surface
+    # 3. Integrate from top to get omega profile
+    # Combined with unsplit advection, this guarantees exact
+    # physical mass conservation (all boundary fluxes = 0).
+    R_earth = grid.radius
+    div_h = zeros(FT, Nx, Ny, Nz)
+    @inbounds for k in 1:Nz, j in 1:Ny, i in 1:Nx
+        ip = i == Nx ? 1 : i + 1
+        dx = Δx(i, j, grid)
+        div_u = (u[ip, j, k] - u[i, j, k]) / dx
+
+        cos_N = cosd(φᶠ_cpu[j + 1])
+        cos_S = cosd(φᶠ_cpu[j])
+        sin_N = sind(φᶠ_cpu[j + 1])
+        sin_S = sind(φᶠ_cpu[j])
+        dsinphi = max(abs(sin_N - sin_S), FT(1e-30))
+        div_v = (v[i, j+1, k] * cos_N - v[i, j, k] * cos_S) / (R_earth * dsinphi)
+
+        div_h[i, j, k] = div_u + div_v
     end
-    # w[:,:,1] = 0 (top), w[:,:,Nz+1] = 0 (surface)
+
+    P_total = p_edges[Nz+1] - p_edges[1]
+    @inbounds for j in 1:Ny, i in 1:Nx
+        pit = FT(0)
+        for k in 1:Nz
+            pit += div_h[i, j, k] * (p_edges[k+1] - p_edges[k])
+        end
+        for k in 1:Nz
+            div_h[i, j, k] -= pit / P_total
+        end
+    end
+
+    w = zeros(FT, Nx, Ny, Nz + 1)
+    @inbounds for j in 1:Ny, i in 1:Nx
+        for k in 1:Nz
+            w[i, j, k+1] = w[i, j, k] - div_h[i, j, k] * (p_edges[k+1] - p_edges[k])
+        end
+    end
+
+    max_cfl_z = FT(0)
+    @inbounds for k in 2:Nz, j in 1:Ny, i in 1:Nx
+        dp = min(p_edges[k+1] - p_edges[k], p_edges[k] - p_edges[k-1])
+        cfl_z = abs(w[i, j, k]) * FT(Δt) / dp
+        max_cfl_z = max(max_cfl_z, cfl_z)
+    end
+    @info "  Max vertical CFL: $(round(max_cfl_z, digits=2))"
+    @info "  w(surface) max|w|: $(round(maximum(abs.(w[:,:,Nz+1])), sigdigits=3))"
 
     @info "Staggered wind ranges:"
     @info "  u: [$(round(minimum(u),digits=1)), $(round(maximum(u),digits=1))] m/s"
     @info "  v: [$(round(minimum(v),digits=1)), $(round(maximum(v),digits=1))] m/s"
     @info "  w: [$(round(minimum(w),digits=2)), $(round(maximum(w),digits=2))] Pa/s"
 
-    return (; u, v, w)
+    ArrayType = array_type(grid.architecture)
+    return (; u=ArrayType(u), v=ArrayType(v), w=ArrayType(w))
 end
 
 # ---------------------------------------------------------------------------
@@ -323,6 +389,11 @@ function initialize_tracer(data, ::Type{FT}) where {FT}
     end
 
     return (; c = c)
+end
+
+function to_device(tracers, arch)
+    ArrayType = array_type(arch)
+    return (; c = ArrayType(tracers.c))
 end
 
 # ---------------------------------------------------------------------------
@@ -383,10 +454,12 @@ function main()
 
     # Step 3: Initialize tracers
     @info "\n--- Step 3: Initializing tracers ---"
-    tracers = initialize_tracer(data, FT)
-    @info "  Initial tracer: min=$(round(minimum(tracers.c), digits=2)), " *
-          "max=$(round(maximum(tracers.c), digits=2)), " *
-          "mean=$(round(sum(tracers.c)/length(tracers.c), digits=2))"
+    tracers_cpu = initialize_tracer(data, FT)
+    @info "  Initial tracer: min=$(round(minimum(tracers_cpu.c), digits=2)), " *
+          "max=$(round(maximum(tracers_cpu.c), digits=2)), " *
+          "mean=$(round(sum(tracers_cpu.c)/length(tracers_cpu.c), digits=2))"
+    tracers = to_device(tracers_cpu, grid.architecture)
+    @info "  Backend: $(USE_GPU ? "GPU (CUDA)" : "CPU (KernelAbstractions)")"
 
     # Step 4: Run simulation
     @info "\n--- Step 4: Running forward simulation ---"
@@ -398,15 +471,34 @@ function main()
     mkpath(OUTDIR)
     isfile(OUTFILE) && rm(OUTFILE)
 
-    # Save initial state
-    save_output(OUTFILE, tracers, data.lons, data.lats, data.Nz, 0, 0.0)
+    # Save initial state (always save CPU data)
+    save_output(OUTFILE, (; c=Array(tracers.c)), data.lons, data.lats, data.Nz, 0, 0.0)
 
-    total_mass_initial = sum(tracers.c)
+    Nx, Ny, Nz = data.Nx, data.Ny, data.Nz
+
+    # Volume weights for physical mass: V[i,j,k] ∝ Δ(sinφ) × Δp
+    φᶠ_cpu = Array(grid.φᶠ)
+    vol_cpu = zeros(FT, Nx, Ny, Nz)
+    for k in 1:Nz, j in 1:Ny, i in 1:Nx
+        dsinphi = abs(sind(φᶠ_cpu[j+1]) - sind(φᶠ_cpu[j]))
+        dp_k = p_edges[k+1] - p_edges[k]
+        vol_cpu[i, j, k] = dsinphi * dp_k
+    end
+    vol = array_type(grid.architecture)(vol_cpu)
+
+    physical_mass(c) = sum(Array(c) .* vol_cpu)
+    total_mass_initial = physical_mass(tracers.c)
+    simple_mass_initial = sum(Array(tracers.c))
     t0 = time()
     last_report = t0
 
+    # Pre-extract staggered velocities
+    u_vel = vel.u
+    v_vel = vel.v
+    w_vel = vel.w
+
     for step in 1:N_steps
-        half = Δt / 2
+        half = FT(Δt / 2)
 
         # Strang splitting: XYZ / ZYX
         advect_x!(tracers, vel, grid, scheme, half)
@@ -421,32 +513,40 @@ function main()
 
         # Report every 6 simulated hours
         if step % round(Int, 6 * 3600 / Δt) == 0
-            total_mass = sum(tracers.c)
-            mass_change = abs(total_mass - total_mass_initial) / abs(total_mass_initial)
+            c_cpu = Array(tracers.c)
+            phys_mass = physical_mass(tracers.c)
+            simp_mass = sum(c_cpu)
+            phys_change = (phys_mass - total_mass_initial) / abs(total_mass_initial)
+            simp_change = (simp_mass - simple_mass_initial) / abs(simple_mass_initial)
             wall = round(time() - t0, digits=1)
             @info "  t = $(round(time_hours, digits=1))h: " *
-                  "min=$(round(minimum(tracers.c), digits=2)), " *
-                  "max=$(round(maximum(tracers.c), digits=2)), " *
-                  "mass_change=$(round(mass_change * 100, sigdigits=3))%, " *
+                  "min=$(round(minimum(c_cpu), digits=2)), " *
+                  "max=$(round(maximum(c_cpu), digits=2)), " *
+                  "Σc_change=$(round(simp_change * 100, sigdigits=3))%, " *
+                  "phys_mass_change=$(round(phys_change * 100, sigdigits=3))%, " *
                   "wall=$(wall)s"
 
-            save_output(OUTFILE, tracers, data.lons, data.lats, data.Nz, step, time_hours)
+            save_output(OUTFILE, (; c=c_cpu), data.lons, data.lats, data.Nz, step, time_hours)
         end
     end
 
     # Save final state
-    save_output(OUTFILE, tracers, data.lons, data.lats, data.Nz, N_steps, FT(N_HOURS))
+    c_final = Array(tracers.c)
+    save_output(OUTFILE, (; c=c_final), data.lons, data.lats, data.Nz, N_steps, FT(N_HOURS))
 
-    total_mass_final = sum(tracers.c)
-    mass_conservation = abs(total_mass_final - total_mass_initial) / abs(total_mass_initial)
+    phys_mass_final = physical_mass(tracers.c)
+    simp_mass_final = sum(c_final)
+    phys_conservation = abs(phys_mass_final - total_mass_initial) / abs(total_mass_initial)
+    simp_conservation = abs(simp_mass_final - simple_mass_initial) / abs(simple_mass_initial)
     wall_total = round(time() - t0, digits=1)
 
     @info "\n--- Results ---"
     @info "  Total steps: $N_steps"
     @info "  Wall time: $(wall_total)s"
-    @info "  Final tracer: min=$(round(minimum(tracers.c), digits=2)), " *
-          "max=$(round(maximum(tracers.c), digits=2))"
-    @info "  Mass conservation: $(round(mass_conservation * 100, sigdigits=3))% change"
+    @info "  Final tracer: min=$(round(minimum(c_final), digits=2)), " *
+          "max=$(round(maximum(c_final), digits=2))"
+    @info "  Σc conservation: $(round(simp_conservation * 100, sigdigits=3))% change"
+    @info "  Physical mass conservation: $(round(phys_conservation * 100, sigdigits=3))% change"
     @info "  Output saved to: $OUTFILE"
     @info "=" ^ 60
 end

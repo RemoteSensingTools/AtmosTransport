@@ -10,22 +10,33 @@ Convective transport parameterizations with paired discrete adjoints.
 """
 module Convection
 
+using DocStringExtensions
+
 using ..Grids: AbstractGrid
 using ..Fields: AbstractField
 
 export AbstractConvection, TiedtkeConvection, NoConvection
 export convect!, adjoint_convect!
 
+"""
+$(TYPEDEF)
+
+Supertype for convective transport parameterizations.
+"""
 abstract type AbstractConvection end
 
-"""No convection (pass-through). Adjoint is also a no-op."""
+"""
+$(TYPEDEF)
+
+No convection (pass-through). Adjoint is also a no-op.
+"""
 struct NoConvection <: AbstractConvection end
 
 convect!(tracers, met, grid, ::NoConvection, Δt) = nothing
 adjoint_convect!(adj_tracers, met, grid, ::NoConvection, Δt) = nothing
 
 """
-    TiedtkeConvection <: AbstractConvection
+$(TYPEDEF)
 
 Tiedtke (1989) mass-flux convection scheme, as used in TM5.
 Mass fluxes come from met data (fixed), so the operator is linear in tracers

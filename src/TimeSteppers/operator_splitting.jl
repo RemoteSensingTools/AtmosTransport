@@ -19,29 +19,29 @@ using ..Diffusion: AbstractDiffusion, diffuse!
 using ..Chemistry: AbstractChemistry, apply_chemistry!
 
 """
-    AbstractTimeStepper
+$(TYPEDEF)
 
 Supertype for time-stepping strategies.
 """
 abstract type AbstractTimeStepper end
 
 """
-    OperatorSplittingTimeStepper{FT, A, C, D, Ch} <: AbstractTimeStepper
+$(TYPEDEF)
 
 TM5-style symmetric Strang splitting.
 
-# Fields
-- `advection  :: A`  — advection scheme
-- `convection :: C`  — convection parameterization
-- `diffusion  :: D`  — vertical diffusion parameterization
-- `chemistry  :: Ch` — chemistry scheme (NoChemistry for inert tracers)
-- `Δt_outer   :: FT` — outer time step [seconds] (e.g. 10800 for 3 hours)
+$(FIELDS)
 """
 struct OperatorSplittingTimeStepper{FT, A, C, D, Ch} <: AbstractTimeStepper
+    "advection scheme"
     advection  :: A
+    "convection parameterization"
     convection :: C
+    "vertical diffusion parameterization"
     diffusion  :: D
+    "chemistry scheme (NoChemistry for inert tracers)"
     chemistry  :: Ch
+    "outer time step [seconds] (e.g. 10800 for 3 hours)"
     Δt_outer   :: FT
 end
 
@@ -58,7 +58,7 @@ function OperatorSplittingTimeStepper(;
 end
 
 """
-    _extract_velocities(met)
+$(SIGNATURES)
 
 Extract the velocity NamedTuple `(; u, v, w)` from a met data object.
 Works with any object that has `.u`, `.v`, `.w` properties (NamedTuple,
@@ -67,7 +67,7 @@ struct, or the result of `prepare_met_for_physics`).
 @inline _extract_velocities(met) = (; u = met.u, v = met.v, w = met.w)
 
 """
-    time_step!(model, Δt)
+$(SIGNATURES)
 
 Perform one forward time step using symmetric Strang operator splitting.
 `model` must have fields: `tracers`, `met_data`, `grid`, `timestepper`, `clock`.

@@ -12,14 +12,14 @@
 using ..TimeSteppers: time_step!, adjoint_time_step!
 
 """
-    AbstractCheckpointer
+$(TYPEDEF)
 
 Supertype for checkpointing strategies used during adjoint runs.
 """
 abstract type AbstractCheckpointer end
 
 """
-    StoreAllCheckpointer <: AbstractCheckpointer
+$(TYPEDEF)
 
 Simple checkpointer that stores the full tracer state at every time step.
 Use when memory is not a concern. O(n_steps) memory, no recomputation.
@@ -27,16 +27,16 @@ Use when memory is not a concern. O(n_steps) memory, no recomputation.
 struct StoreAllCheckpointer <: AbstractCheckpointer end
 
 """
-    RevolveCheckpointer{S} <: AbstractCheckpointer
+$(TYPEDEF)
 
 Optimal checkpointing using the Revolve algorithm (Griewank & Walther, 2000).
 
-# Fields
-- `n_snapshots :: Int` — number of checkpoint storage slots
-- `storage     :: S` — storage backend (:memory or :disk)
+$(FIELDS)
 """
 struct RevolveCheckpointer{S} <: AbstractCheckpointer
+    "number of checkpoint storage slots"
     n_snapshots :: Int
+    "storage backend (:memory or :disk)"
     storage     :: S
 end
 
@@ -47,12 +47,20 @@ RevolveCheckpointer(; n_snapshots::Int = 10, storage = :memory) =
 # Helpers for saving/restoring tracer state
 # ---------------------------------------------------------------------------
 
-"""Save a copy of tracer state. Returns a NamedTuple of copied arrays."""
+"""
+$(SIGNATURES)
+
+Save a copy of tracer state. Returns a NamedTuple of copied arrays.
+"""
 function _save_checkpoint(tracers)
     return (; (k => copy(v) for (k, v) in pairs(tracers))...)
 end
 
-"""Restore tracer state from a checkpoint (mutates model.tracers in place)."""
+"""
+$(SIGNATURES)
+
+Restore tracer state from a checkpoint (mutates model.tracers in place).
+"""
 function _restore_checkpoint!(tracers, checkpoint)
     for (k, v) in pairs(checkpoint)
         copyto!(tracers[k], v)
@@ -65,20 +73,12 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    run_adjoint!(model, met_data, checkpointer::StoreAllCheckpointer, n_steps, Δt; cost_gradient_fn)
+$(TYPEDSIGNATURES)
 
 Execute a full forward-then-backward adjoint run with store-all checkpointing.
 
 Returns the gradient of the cost function w.r.t. the initial tracer state
 (i.e. `model.adj_tracers` after the backward pass).
-
-# Arguments
-- `model` — NamedTuple or TransportModel with fields: tracers, adj_tracers, met_data, grid, timestepper, clock
-- `met_data` — NamedTuple with velocity fields (; u, v, w, ...) and optionally conv_mass_flux, diffusivity
-- `checkpointer` — StoreAllCheckpointer
-- `n_steps` — number of time steps
-- `Δt` — time step size
-- `cost_gradient_fn` — function (tracers) -> adj_tracers_init computing ∂J/∂c_final from final tracer state
 
 # Algorithm (store-all)
 1. Store initial tracer state
@@ -122,7 +122,7 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    run_adjoint!(model, met_data, checkpointer::RevolveCheckpointer, n_steps, Δt; cost_gradient_fn)
+$(TYPEDSIGNATURES)
 
 Execute a full forward-then-backward adjoint run with simplified multi-level checkpointing.
 

@@ -7,23 +7,23 @@
 # ---------------------------------------------------------------------------
 
 """
-    TemporalInterpolator{M}
+$(TYPEDEF)
 
 Manages two adjacent met data snapshots and interpolates between them.
 
-# Fields
-- `met :: M` — the met data reader
-- `t_prev :: Float64` — time of the earlier snapshot
-- `t_next :: Float64` — time of the later snapshot
+$(FIELDS)
 """
 mutable struct TemporalInterpolator{M <: AbstractMetData}
+    "the met data reader"
     met    :: M
+    "time of the earlier snapshot"
     t_prev :: Float64
+    "time of the later snapshot"
     t_next :: Float64
 end
 
 """
-    interpolation_weight(interp, t)
+$(SIGNATURES)
 
 Return weight `α ∈ [0, 1]` for linear interpolation:
 `field(t) = (1 - α) * field(t_prev) + α * field(t_next)`

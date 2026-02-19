@@ -6,7 +6,7 @@
 # ---------------------------------------------------------------------------
 
 """
-    AbstractGrid{FT, Arch}
+$(TYPEDEF)
 
 Supertype for all grids. Parametric on:
 - `FT`: floating-point type (Float32, Float64)
@@ -15,7 +15,7 @@ Supertype for all grids. Parametric on:
 abstract type AbstractGrid{FT, Arch} end
 
 """
-    AbstractStructuredGrid{FT, Arch} <: AbstractGrid{FT, Arch}
+$(TYPEDEF)
 
 Grids with a logically rectangular structure per region/panel.
 Both `LatitudeLongitudeGrid` and `CubedSphereGrid` are structured.
@@ -27,7 +27,7 @@ abstract type AbstractStructuredGrid{FT, Arch} <: AbstractGrid{FT, Arch} end
 # ---------------------------------------------------------------------------
 
 """
-    xnode(i, j, grid, loc)
+$(SIGNATURES)
 
 Horizontal x-coordinate at index `(i, j)` and location `loc` (Center or Face).
 On lat-lon grids this is longitude; on cubed-sphere it is the local panel x-coordinate.
@@ -35,7 +35,7 @@ On lat-lon grids this is longitude; on cubed-sphere it is the local panel x-coor
 function xnode end
 
 """
-    ynode(i, j, grid, loc)
+$(SIGNATURES)
 
 Horizontal y-coordinate at index `(i, j)` and location `loc`.
 On lat-lon grids this is latitude; on cubed-sphere it is the local panel y-coordinate.
@@ -43,7 +43,7 @@ On lat-lon grids this is latitude; on cubed-sphere it is the local panel y-coord
 function ynode end
 
 """
-    znode(k, grid, loc)
+$(SIGNATURES)
 
 Vertical coordinate at level `k` and location `loc`.
 Returns pressure, sigma, or height depending on the vertical coordinate type.
@@ -51,35 +51,35 @@ Returns pressure, sigma, or height depending on the vertical coordinate type.
 function znode end
 
 """
-    cell_area(i, j, grid)
+$(SIGNATURES)
 
 Horizontal area of cell `(i, j)` in m².
 """
 function cell_area end
 
 """
-    cell_volume(i, j, k, grid)
+$(SIGNATURES)
 
 Volume of cell `(i, j, k)` in m³.
 """
 function cell_volume end
 
 """
-    Δx(i, j, grid)
+$(SIGNATURES)
 
 Horizontal grid spacing in the x-direction at `(i, j)` in meters.
 """
 function Δx end
 
 """
-    Δy(i, j, grid)
+$(SIGNATURES)
 
 Horizontal grid spacing in the y-direction at `(i, j)` in meters.
 """
 function Δy end
 
 """
-    Δz(k, grid)
+$(SIGNATURES)
 
 Vertical grid spacing at level `k`.
 Units depend on vertical coordinate (Pa for pressure-based, m for height-based).
@@ -91,7 +91,7 @@ function Δz end
 # ---------------------------------------------------------------------------
 
 """
-    topology(grid)
+$(SIGNATURES)
 
 Return a tuple of `AbstractTopology` types describing each dimension.
 E.g. `(Periodic(), Bounded())` for a lat-lon grid.
@@ -99,14 +99,14 @@ E.g. `(Periodic(), Bounded())` for a lat-lon grid.
 function topology end
 
 """
-    halo_size(grid)
+$(SIGNATURES)
 
 Return a `NamedTuple` `(Hx=..., Hy=..., Hz=...)` with halo widths.
 """
 function halo_size end
 
 """
-    grid_size(grid)
+$(SIGNATURES)
 
 Return a `NamedTuple` `(Nx=..., Ny=..., Nz=...)` with interior grid dimensions.
 """

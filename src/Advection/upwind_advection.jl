@@ -14,7 +14,7 @@
 using KernelAbstractions: @kernel, @index
 
 """
-    UpwindAdvection <: AbstractAdvectionScheme
+$(TYPEDEF)
 
 First-order upwind advection. Simple reference scheme for testing.
 """

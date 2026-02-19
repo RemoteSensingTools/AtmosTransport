@@ -14,7 +14,7 @@
 # ---------------------------------------------------------------------------
 
 """
-    AbstractMetData{FT}
+$(TYPEDEF)
 
 Supertype for meteorological data readers. Parametric on float type.
 

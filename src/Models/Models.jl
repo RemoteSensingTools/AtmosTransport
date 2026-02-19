@@ -18,46 +18,47 @@ using Dates
 using ..IO: AbstractMetData, AbstractOutputWriter, MetDataSource
 using ..IO: read_met!, prepare_met_for_physics
 using ..Callbacks: AbstractCallback
+using DocStringExtensions
 
 export AbstractModel, TransportModel, run!, update_met_data!
 
 """
-    AbstractModel{Arch}
+$(TYPEDEF)
 
 Supertype for all model types.
 """
 abstract type AbstractModel{Arch} end
 
 """
-    TransportModel{Arch, G, Tr, ATr, M, TS, OW, CB} <: AbstractModel{Arch}
+$(TYPEDEF)
 
 The main atmospheric transport model.
 
-# Fields
-- `architecture` — CPU or GPU
-- `grid` — the computational grid
-- `tracers` — NamedTuple of tracer Fields
-- `adj_tracers` — NamedTuple of adjoint tracer Fields (nothing if not doing adjoint)
-- `met_data` — meteorological data reader
-- `clock` — simulation clock
-- `timestepper` — time-stepping strategy
-- `output_writers` — vector of output writers
-- `callbacks` — vector of callbacks
+$(FIELDS)
 """
 struct TransportModel{Arch, G, Tr, ATr, M, TS, OW, CB} <: AbstractModel{Arch}
+    "CPU or GPU"
     architecture   :: Arch
+    "the computational grid"
     grid           :: G
+    "NamedTuple of tracer Fields"
     tracers        :: Tr
+    "NamedTuple of adjoint tracer Fields (nothing if not doing adjoint)"
     adj_tracers    :: ATr
+    "meteorological data reader"
     met_data       :: M
+    "simulation clock"
     clock          :: Clock
+    "time-stepping strategy"
     timestepper    :: TS
+    "vector of output writers"
     output_writers :: OW
+    "vector of callbacks"
     callbacks      :: CB
 end
 
 """
-    TransportModel(; grid, tracers, met_data, advection, convection, diffusion, kwargs...)
+$(TYPEDSIGNATURES)
 
 Construct a `TransportModel` from components.
 """
@@ -98,7 +99,7 @@ function TransportModel(;
 end
 
 """
-    update_met_data!(model::TransportModel, met_source::MetDataSource, time)
+$(SIGNATURES)
 
 Read meteorological data for `time` from `met_source` and prepare the
 staggered velocity fields for the physics operators. Updates `model.met_data`.
@@ -113,26 +114,12 @@ function update_met_data!(model::TransportModel, met_source::MetDataSource, time
 end
 
 """
-    run!(model::TransportModel, met_source::MetDataSource,
-         t_start, t_end;
-         Δt = model.timestepper.Δt_outer,
-         met_update_interval = Δt,
-         callback = nothing,
-         verbose = true)
+$(TYPEDSIGNATURES)
 
 Run the forward model from `t_start` to `t_end`.
 
 At each `met_update_interval`, reads and prepares new met data from
 `met_source`. Between met updates, steps the model forward with `Δt`.
-
-# Arguments
-- `model` — the TransportModel
-- `met_source` — MetDataSource (reads via OPeNDAP or local files)
-- `t_start`, `t_end` — simulation time range (DateTime or seconds)
-- `Δt` — physics time step (default: timestepper's Δt_outer)
-- `met_update_interval` — how often to re-read met data
-- `callback` — optional function `callback(model, step)` called each step
-- `verbose` — print progress
 """
 function run!(model::TransportModel, met_source::MetDataSource,
               t_start, t_end;

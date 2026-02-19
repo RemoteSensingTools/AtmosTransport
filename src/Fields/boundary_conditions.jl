@@ -7,20 +7,35 @@
 # ---------------------------------------------------------------------------
 
 """
-    AbstractBoundaryCondition
+$(TYPEDEF)
 
 Supertype for field boundary conditions.
 """
 abstract type AbstractBoundaryCondition end
 
-"""No boundary condition (halo fill handles everything via grid topology)."""
+"""
+$(TYPEDEF)
+
+No boundary condition (halo fill handles everything via grid topology).
+"""
 struct DefaultBC <: AbstractBoundaryCondition end
 
-"""Zero-flux (Neumann) boundary condition."""
+"""
+$(TYPEDEF)
+
+Zero-flux (Neumann) boundary condition.
+"""
 struct ZeroFluxBC <: AbstractBoundaryCondition end
 
-"""Prescribed value (Dirichlet) boundary condition."""
+"""
+$(TYPEDEF)
+
+Prescribed value (Dirichlet) boundary condition.
+
+$(FIELDS)
+"""
 struct ValueBC{T} <: AbstractBoundaryCondition
+    "the prescribed boundary value"
     value :: T
 end
 

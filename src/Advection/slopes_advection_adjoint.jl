@@ -39,8 +39,7 @@ using ..Grids: LatitudeLongitudeGrid, Δx, Δy, Δz
 # ═══════════════════════════════════════════════════════════════════════════════
 
 """
-    adjoint_advect_x!(adj_tracers, velocities, grid::LatitudeLongitudeGrid,
-                       scheme::SlopesAdvection, Δt)
+$(SIGNATURES)
 
 Adjoint of `advect_x!` for the Russell-Lerner slopes scheme.
 
@@ -61,8 +60,7 @@ function adjoint_advect_x!(adj_tracers::NamedTuple, velocities,
 end
 
 """
-    adjoint_advect_y!(adj_tracers, velocities, grid::LatitudeLongitudeGrid,
-                       scheme::SlopesAdvection, Δt)
+$(SIGNATURES)
 
 Adjoint of `advect_y!`. See `adjoint_advect_x!` for the two-mode description.
 """
@@ -79,8 +77,7 @@ function adjoint_advect_y!(adj_tracers::NamedTuple, velocities,
 end
 
 """
-    adjoint_advect_z!(adj_tracers, velocities, grid::LatitudeLongitudeGrid,
-                       scheme::SlopesAdvection, Δt)
+$(SIGNATURES)
 
 Adjoint of `advect_z!`. See `adjoint_advect_x!` for the two-mode description.
 """

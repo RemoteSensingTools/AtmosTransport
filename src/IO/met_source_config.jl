@@ -13,104 +13,104 @@ using TOML
 using ..Grids: HybridSigmaPressure
 
 """
-    VarMapping
+$(TYPEDEF)
 
 Mapping from a canonical variable name to its native representation
 in a specific met data source.
 
-# Fields
-- `canonical_name :: Symbol` — canonical name (e.g., :u_wind)
-- `native_name :: String` — name in the met file (e.g., "u" or "U")
-- `collection :: String` — key into the collections dict (e.g., "asm_Nv_inst")
-- `unit_conversion :: Float64` — multiplicative factor: canonical = native × factor
-- `cds_name :: String` — CDS API variable name (ERA5 only; empty otherwise)
+$(FIELDS)
 """
 struct VarMapping
+    "canonical name (e.g. `:u_wind`)"
     canonical_name  :: Symbol
+    "name in the met file (e.g. U, u)"
     native_name     :: String
+    "key into the collections dict (e.g. asm_Nv_inst)"
     collection      :: String
+    "multiplicative factor: canonical = native × factor"
     unit_conversion :: Float64
+    "CDS API variable name (ERA5 only; empty otherwise)"
     cds_name        :: String
 end
 
 """
-    CollectionInfo
+$(TYPEDEF)
 
 Metadata for a dataset collection within a met data source.
 
-# Fields
-- `key :: String` — lookup key (e.g., "asm_Nv_inst")
-- `dataset :: String` — OPeNDAP dataset name or ESDT name
-- `collection_name :: String` — file-level collection name (for MERRA-2 file naming)
-- `frequency :: String` — temporal frequency (e.g., "inst3", "tavg3", "tavg1")
-- `vertical :: String` — vertical grid type ("Nv", "Ne", "Nx", "pressure")
-- `levels :: Int` — number of vertical levels
-- `description :: String`
+$(FIELDS)
 """
 struct CollectionInfo
+    "lookup key (e.g. asm_Nv_inst)"
     key             :: String
+    "OPeNDAP dataset name or ESDT name"
     dataset         :: String
+    "file-level collection name (for MERRA-2 file naming)"
     collection_name :: String
+    "temporal frequency (e.g. inst3, tavg3, tavg1)"
     frequency       :: String
+    "vertical grid type (Nv, Ne, Nx, pressure)"
     vertical        :: String
+    "number of vertical levels"
     levels          :: Int
+    "human-readable description"
     description     :: String
 end
 
 """
-    VerticalConfig
+$(TYPEDEF)
 
 Vertical coordinate configuration parsed from the `[vertical]` section of a
 met source TOML. All met sources use hybrid sigma-pressure coordinates;
 this struct records the source-specific details (level count, coefficient file).
 
-# Fields
-- `coordinate_type :: String` — always "HybridSigmaPressure" for now
-- `coefficients_file :: String` — path to the TOML file with A/B coefficients
-- `n_levels :: Int` — number of model levels
-- `n_interfaces :: Int` — number of level interfaces (n_levels + 1)
-- `surface_pressure_var :: String` — canonical variable for surface pressure
-- `log_surface_pressure_var :: String` — optional: ln(ps) variable (ERA5 model levels)
+$(FIELDS)
 """
 struct VerticalConfig
+    "always HybridSigmaPressure for now"
     coordinate_type         :: String
+    "path to the TOML file with A/B coefficients"
     coefficients_file       :: String
+    "number of model levels"
     n_levels                :: Int
+    "number of level interfaces (n_levels + 1)"
     n_interfaces            :: Int
+    "canonical variable for surface pressure"
     surface_pressure_var    :: String
+    "optional: ln(ps) variable (ERA5 model levels)"
     log_surface_pressure_var :: String
 end
 
 """
-    MetSourceConfig
+$(TYPEDEF)
 
 Complete configuration for a meteorological data source, parsed from TOML.
 
-# Fields
-- `name :: String` — human-readable name (e.g., "GEOS-FP")
-- `description :: String`
-- `institution :: String`
-- `grid_info :: Dict{String, Any}` — grid type, resolution, dimensions
-- `vertical :: VerticalConfig` — hybrid sigma-pressure vertical coordinate
-- `access :: Dict{String, Any}` — protocol, base URL, auth settings
-- `collections :: Dict{String, CollectionInfo}` — collection key → info
-- `variables :: Dict{Symbol, VarMapping}` — canonical name → mapping
-- `toml_path :: String` — path to the source TOML file (for error messages)
+$(FIELDS)
 """
 struct MetSourceConfig
+    "human-readable name (e.g. GEOS-FP)"
     name         :: String
+    "source description"
     description  :: String
+    "providing institution"
     institution  :: String
+    "grid type, resolution, dimensions"
     grid_info    :: Dict{String, Any}
+    "hybrid sigma-pressure vertical coordinate"
     vertical     :: VerticalConfig
+    "protocol, base URL, auth settings"
     access       :: Dict{String, Any}
+    "collection key → info"
     collections  :: Dict{String, CollectionInfo}
+    "canonical name → mapping"
     variables    :: Dict{Symbol, VarMapping}
+    "path to the source TOML file (for error messages)"
     toml_path    :: String
 end
 
 """
-    load_met_config(toml_path::String) -> MetSourceConfig
+$(SIGNATURES)
 
 Parse a met source TOML file into a `MetSourceConfig`.
 
@@ -182,7 +182,7 @@ function load_met_config(toml_path::String)
 end
 
 """
-    load_canonical_config(toml_path::String) -> Dict{Symbol, Dict{String, Any}}
+$(SIGNATURES)
 
 Parse the canonical variables TOML file. Returns a dict mapping
 canonical variable names to their properties (units, dimensions, required, etc.).
@@ -199,7 +199,7 @@ function load_canonical_config(toml_path::String)
 end
 
 """
-    default_config_dir()
+$(SIGNATURES)
 
 Return the path to the default config directory (relative to package root).
 """
@@ -208,7 +208,7 @@ function default_config_dir()
 end
 
 """
-    default_met_config(source::String) -> MetSourceConfig
+$(SIGNATURES)
 
 Load a built-in met source config by short name.
 
@@ -225,7 +225,7 @@ function default_met_config(source::String)
 end
 
 """
-    validate_met_config(config::MetSourceConfig; canonical_path=nothing)
+$(TYPEDSIGNATURES)
 
 Validate a met source config against the canonical variables definition.
 Warns about missing required variables and unknown canonical names.
@@ -268,7 +268,7 @@ function validate_met_config(config::MetSourceConfig; canonical_path=nothing)
 end
 
 """
-    merra2_stream(year::Int) -> Int
+$(SIGNATURES)
 
 Determine the MERRA-2 production stream code for a given year.
 Returns 100, 200, 300, or 400.
@@ -282,7 +282,7 @@ function merra2_stream(year::Int)
 end
 
 """
-    build_opendap_url(config::MetSourceConfig, collection_key::String) -> String
+$(SIGNATURES)
 
 Construct the OPeNDAP URL for a specific collection.
 """
@@ -293,7 +293,7 @@ function build_opendap_url(config::MetSourceConfig, collection_key::String)
 end
 
 """
-    build_merra2_file_url(config::MetSourceConfig, collection_key::String, year::Int, month::Int, day::Int) -> String
+$(SIGNATURES)
 
 Construct the OPeNDAP URL for a specific MERRA-2 file.
 """
@@ -308,7 +308,7 @@ function build_merra2_file_url(config::MetSourceConfig, collection_key::String,
 end
 
 """
-    load_vertical_coefficients(config::MetSourceConfig; FT=Float64) -> (A::Vector{FT}, B::Vector{FT})
+$(TYPEDSIGNATURES)
 
 Load hybrid sigma-pressure A/B coefficients from the file referenced in the
 met source configuration. Works for any met source (ERA5, GEOS-FP, MERRA-2)
@@ -349,7 +349,7 @@ function load_vertical_coefficients(config::MetSourceConfig; FT::Type{<:Abstract
 end
 
 """
-    build_vertical_coordinate(config::MetSourceConfig; FT=Float64, level_range=nothing)
+$(TYPEDSIGNATURES)
 
 Construct a `HybridSigmaPressure` from a met source configuration.
 Optionally pass `level_range` (e.g., `50:137`) to select a subset of levels.

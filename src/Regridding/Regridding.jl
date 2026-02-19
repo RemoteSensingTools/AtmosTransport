@@ -18,17 +18,22 @@ to model CubedSphereGrid C90), a regridder maps fields between them.
 """
 module Regridding
 
+using DocStringExtensions
 using SparseArrays: SparseMatrixCSC
 
 export AbstractRegridder
 export ConservativeRegridder, BilinearRegridder, IdentityRegridder
 export regrid!, compute_weights
 
-"""Supertype for all regridding methods."""
+"""
+$(TYPEDEF)
+
+Supertype for all regridding methods.
+"""
 abstract type AbstractRegridder end
 
 """
-    IdentityRegridder <: AbstractRegridder
+$(TYPEDEF)
 
 No-op regridder for when met data and model grids match.
 """
@@ -37,29 +42,32 @@ struct IdentityRegridder <: AbstractRegridder end
 regrid!(target, source, ::IdentityRegridder) = copyto!(target, source)
 
 """
-    ConservativeRegridder{FT} <: AbstractRegridder
+$(TYPEDEF)
 
 Conservative (mass-preserving) regridding using precomputed sparse weights.
 
-# Fields
-- `weights :: SparseMatrixCSC{FT, Int}` — precomputed remapping weights
+$(FIELDS)
 """
 struct ConservativeRegridder{FT} <: AbstractRegridder
+    "precomputed remapping weights"
     weights :: SparseMatrixCSC{FT, Int}
 end
 
 """
-    BilinearRegridder{FT} <: AbstractRegridder
+$(TYPEDEF)
 
 Bilinear interpolation using precomputed sparse weights.
 Fast but not mass-conserving; suitable for smooth fields (wind, temperature).
+
+$(FIELDS)
 """
 struct BilinearRegridder{FT} <: AbstractRegridder
+    "precomputed interpolation weights"
     weights :: SparseMatrixCSC{FT, Int}
 end
 
 """
-    regrid!(target, source, regridder::AbstractRegridder)
+$(SIGNATURES)
 
 Interpolate `source` data onto `target` field using `regridder`.
 """
@@ -70,7 +78,7 @@ function regrid!(target, source, r::Union{ConservativeRegridder{FT}, BilinearReg
 end
 
 """
-    compute_weights(source_grid, target_grid, ::Type{R}) where R <: AbstractRegridder
+$(SIGNATURES)
 
 Precompute interpolation weights for mapping from `source_grid` to `target_grid`.
 Implementation stub.

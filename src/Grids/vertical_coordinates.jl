@@ -9,7 +9,7 @@
 # ---------------------------------------------------------------------------
 
 """
-    AbstractVerticalCoordinate{FT}
+$(TYPEDEF)
 
 Supertype for vertical coordinate systems. Parametric on float type `FT`.
 
@@ -23,19 +23,19 @@ Any subtype must implement:
 abstract type AbstractVerticalCoordinate{FT} end
 
 """
-    HybridSigmaPressure{FT} <: AbstractVerticalCoordinate{FT}
+$(TYPEDEF)
 
 Hybrid sigma-pressure coordinate: `p(k) = A(k) + B(k) * p_surface`.
 
 Vectors `A` and `B` have length `Nz + 1` (level interfaces / half-levels).
 Level centers are at the midpoint of adjacent interfaces.
 
-# Fields
-- `A :: Vector{FT}` — pressure coefficient at each interface [Pa]
-- `B :: Vector{FT}` — sigma coefficient at each interface [dimensionless]
+$(FIELDS)
 """
 struct HybridSigmaPressure{FT} <: AbstractVerticalCoordinate{FT}
+    "pressure coefficient at each interface [Pa]"
     A :: Vector{FT}
+    "sigma coefficient at each interface [dimensionless]"
     B :: Vector{FT}
 
     function HybridSigmaPressure(A::Vector{FT}, B::Vector{FT}) where {FT}

@@ -20,6 +20,7 @@ params.numerics.cfl_limit  # ::Float32
 module Parameters
 
 using TOML
+using DocStringExtensions
 
 export PlanetParameters, NumericsParameters, SimulationParameters
 export ModelParameters, load_parameters
@@ -29,47 +30,65 @@ export ModelParameters, load_parameters
 # ---------------------------------------------------------------------------
 
 """
-    PlanetParameters{FT}
+$(TYPEDEF)
 
 Physical constants of the planet (Earth by default).
+
+$(FIELDS)
 """
 struct PlanetParameters{FT}
+    "planetary radius [m]"
     radius                     :: FT
+    "gravitational acceleration [m/s²]"
     gravity                    :: FT
+    "reference surface pressure [Pa]"
     reference_surface_pressure :: FT
 end
 
 """
-    NumericsParameters{FT}
+$(TYPEDEF)
 
 Numerical tuning knobs.
+
+$(FIELDS)
 """
 struct NumericsParameters{FT}
+    "small offset to avoid singularity at the poles"
     polar_epsilon :: FT
+    "CFL stability limit"
     cfl_limit     :: FT
 end
 
 """
-    SimulationParameters{FT}
+$(TYPEDEF)
 
 Run-time simulation settings.
+
+$(FIELDS)
 """
 struct SimulationParameters{FT}
+    "time-step size [s]"
     dt      :: FT
+    "total simulation length [hours]"
     n_hours :: Int
 end
 
 """
-    ModelParameters{FT}
+$(TYPEDEF)
 
 Top-level container holding all parameter groups.
 Passed to grid constructors, advection kernels, etc.
+
+$(FIELDS)
 """
 struct ModelParameters{FT, P <: PlanetParameters{FT},
                            N <: NumericsParameters{FT},
                            S <: SimulationParameters{FT}}
+    "physical constants of the planet"
     planet     :: P
+    "numerical tuning knobs"
     numerics   :: N
+    "run-time simulation settings"
     simulation :: S
 end
 
@@ -82,7 +101,7 @@ float_type(::ModelParameters{FT}) where {FT} = FT
 const DEFAULT_TOML = joinpath(@__DIR__, "..", "config", "defaults.toml")
 
 """
-    load_parameters(::Type{FT}; override=nothing, defaults=DEFAULT_TOML)
+$(TYPEDSIGNATURES)
 
 Read `defaults` TOML, merge with optional `override` TOML, and return a
 fully type-stable `ModelParameters{FT}`.
@@ -119,7 +138,7 @@ function load_parameters(::Type{FT};
 end
 
 """
-    _deep_merge!(base, override)
+$(SIGNATURES)
 
 Recursively merge `override` into `base`, overwriting leaf values.
 """

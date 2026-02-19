@@ -5,7 +5,7 @@
 using OffsetArrays: OffsetArray
 
 """
-    Field{LX, LY, LZ, G, D, B} <: AbstractField{LX, LY, LZ, G}
+$(TYPEDEF)
 
 A 3D field on a grid at a specified staggered location.
 
@@ -13,16 +13,14 @@ Data is stored as an `OffsetArray` to include halo regions with negative/zero
 indices, so that stencil operations can index `field[i-1, j, k]` without
 bounds checking in the interior.
 
-# Constructor
-
-    Field(LX, LY, LZ, grid; boundary_conditions=nothing)
-
-Creates a zero-initialized field on the given grid at the specified location.
-The array type matches the grid's architecture (Array for CPU, CuArray for GPU).
+$(FIELDS)
 """
 struct Field{LX, LY, LZ, G, D, B} <: AbstractField{LX, LY, LZ, G}
+    "the grid this field lives on"
     grid :: G
-    _data :: D      # OffsetArray including halos
+    "underlying data array (`OffsetArray` including halos)"
+    _data :: D
+    "boundary conditions attached to this field"
     boundary_conditions :: B
 end
 
@@ -72,7 +70,7 @@ function interior(f::Field)
 end
 
 """
-    set!(field::Field, value)
+$(SIGNATURES)
 
 Set field interior to `value`. `value` can be:
 - A scalar (fills uniformly)

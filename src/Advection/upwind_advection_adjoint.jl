@@ -6,7 +6,7 @@
 # ---------------------------------------------------------------------------
 
 """
-    adjoint_advect_x!(adj_tracers, velocities, grid::LatitudeLongitudeGrid, scheme::UpwindAdvection, Δt)
+$(SIGNATURES)
 
 Discrete adjoint of advect_x!. Overwrites adj_tracers with A' * adj_tracers.
 """
@@ -47,7 +47,7 @@ function adjoint_advect_x!(adj_tracers::NamedTuple, velocities, grid::LatitudeLo
 end
 
 """
-    adjoint_advect_y!(adj_tracers, velocities, grid::LatitudeLongitudeGrid, scheme::UpwindAdvection, Δt)
+$(SIGNATURES)
 
 Discrete adjoint of advect_y!. Overwrites adj_tracers with A' * adj_tracers.
 Uses the spherical form matching the forward kernel (sin/cos weighting).
@@ -108,7 +108,7 @@ function adjoint_advect_y!(adj_tracers::NamedTuple, velocities, grid::LatitudeLo
 end
 
 """
-    adjoint_advect_z!(adj_tracers, velocities, grid::LatitudeLongitudeGrid, scheme::UpwindAdvection, Δt)
+$(SIGNATURES)
 
 Discrete adjoint of advect_z!. Overwrites adj_tracers with A' * adj_tracers.
 """

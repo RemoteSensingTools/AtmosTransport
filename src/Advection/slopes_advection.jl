@@ -11,23 +11,21 @@
 # ---------------------------------------------------------------------------
 
 """
-    SlopesAdvection{L} <: AbstractAdvectionScheme
+$(TYPEDEF)
 
 Russell-Lerner slopes advection scheme.
 
-# Fields
-- `use_limiter :: Bool` — enable/disable flux limiter.
-  When off: forward is linear, adjoint is exact (machine precision).
-  When on: monotone but adjoint is approximate (continuous adjoint).
+$(FIELDS)
 """
 struct SlopesAdvection{L} <: AbstractAdvectionScheme
+    "enable/disable flux limiter. When off: forward is linear, adjoint is exact (machine precision). When on: monotone but adjoint is approximate (continuous adjoint)."
     use_limiter :: L
 end
 
 SlopesAdvection(; use_limiter::Bool = true) = SlopesAdvection(use_limiter)
 
 """
-    minmod(a, b, c)
+$(SIGNATURES)
 
 Minmod limiter: returns the value with smallest magnitude if all have the same sign,
 otherwise zero.
@@ -43,7 +41,7 @@ function minmod(a, b, c)
 end
 
 """
-    advect_x!(tracers, velocities, grid::LatitudeLongitudeGrid, scheme::SlopesAdvection, Δt)
+$(SIGNATURES)
 
 Russell-Lerner slopes advection in x (longitude). Periodic boundaries.
 When the grid has a reduced grid specification, high-latitude rows are
@@ -199,7 +197,7 @@ function _advect_x_reduced_row!(c, c_new, u, grid, j, k, cluster, Δt, use_limit
 end
 
 """
-    advect_y!(tracers, velocities, grid::LatitudeLongitudeGrid, scheme::SlopesAdvection, Δt)
+$(SIGNATURES)
 
 Russell-Lerner slopes advection in y (latitude). Bounded boundaries with zero flux.
 """
@@ -310,7 +308,7 @@ function advect_y!(tracers::NamedTuple, velocities, grid::LatitudeLongitudeGrid,
 end
 
 """
-    advect_z!(tracers, velocities, grid::LatitudeLongitudeGrid, scheme::SlopesAdvection, Δt)
+$(SIGNATURES)
 
 Russell-Lerner slopes advection in z (vertical). Bounded boundaries with zero flux.
 """

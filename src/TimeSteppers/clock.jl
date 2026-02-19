@@ -3,32 +3,40 @@
 # ---------------------------------------------------------------------------
 
 """
-    Clock{FT}
+$(TYPEDEF)
 
 Tracks simulation time and iteration count.
 
-# Fields
-- `time :: FT` — current simulation time [seconds]
-- `iteration :: Int` — current iteration number
-- `Δt :: FT` — current time step [seconds]
+$(FIELDS)
 """
 mutable struct Clock{FT}
+    "current simulation time [seconds]"
     time      :: FT
+    "current iteration number"
     iteration :: Int
+    "current time step [seconds]"
     Δt        :: FT
 end
 
 Clock(FT::Type = Float64; time = zero(FT), Δt = zero(FT)) =
     Clock{FT}(time, 0, Δt)
 
-"""Advance the clock by `Δt` seconds."""
+"""
+$(SIGNATURES)
+
+Advance the clock by `Δt` seconds.
+"""
 function tick!(clock::Clock, Δt)
     clock.time += Δt
     clock.iteration += 1
     return nothing
 end
 
-"""Reverse the clock by `Δt` seconds (for adjoint runs)."""
+"""
+$(SIGNATURES)
+
+Reverse the clock by `Δt` seconds (for adjoint runs).
+"""
 function tick_backward!(clock::Clock, Δt)
     clock.time -= Δt
     clock.iteration -= 1

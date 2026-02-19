@@ -11,14 +11,22 @@
 # ---------------------------------------------------------------------------
 
 """
-    AbstractLocationType
+$(TYPEDEF)
 
 Supertype for staggered-grid location tags.
 """
 abstract type AbstractLocationType end
 
-"""Cell center location."""
+"""
+$(TYPEDEF)
+
+Cell center location.
+"""
 struct Center <: AbstractLocationType end
 
-"""Cell face location."""
+"""
+$(TYPEDEF)
+
+Cell face location.
+"""
 struct Face <: AbstractLocationType end

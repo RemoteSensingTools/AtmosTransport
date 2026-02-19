@@ -8,7 +8,7 @@
 # ---------------------------------------------------------------------------
 
 """
-    TracerFields(names::NTuple{N, Symbol}, grid) where N
+$(SIGNATURES)
 
 Create a `NamedTuple` of `Field`s at `(Center, Center, Center)` for each tracer name.
 

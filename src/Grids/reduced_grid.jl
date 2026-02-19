@@ -17,23 +17,23 @@ export ReducedGridSpec, compute_reduced_grid
 export reduce_row!, expand_row!, reduce_velocity_row!
 
 """
-    ReducedGridSpec
+$(TYPEDEF)
 
 Per-latitude specification of zonal cell clustering for CFL stability.
 
-# Fields
-- `Nx`             — number of uniform-grid zonal cells
-- `cluster_sizes`  — length-Ny vector; how many fine cells form one reduced cell
-- `reduced_counts` — length-Ny vector; effective number of zonal cells (Nx / cluster_size)
+$(FIELDS)
 """
 struct ReducedGridSpec
+    "number of uniform-grid zonal cells"
     Nx             :: Int
+    "length-Ny vector; how many fine cells form one reduced cell"
     cluster_sizes  :: Vector{Int}
+    "length-Ny vector; effective number of zonal cells (Nx / cluster_size)"
     reduced_counts :: Vector{Int}
 end
 
 """
-    compute_reduced_grid(Nx, φᶜ; max_cluster=nothing)
+$(TYPEDSIGNATURES)
 
 Auto-compute per-latitude cluster sizes so that the effective zonal spacing
 Δx_eff ≈ R·Δλ (equatorial value) at every latitude.
@@ -100,7 +100,7 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    reduce_row!(c_red, c, j, k, r, Nx)
+$(SIGNATURES)
 
 Average `r` adjacent fine cells into one reduced cell for latitude `j`, level `k`.
 `c_red` must have length `Nx ÷ r`.
@@ -120,7 +120,7 @@ function reduce_row!(c_red::AbstractVector, c::AbstractArray, j::Int, k::Int,
 end
 
 """
-    expand_row!(c, c_red_new, c_red_old, j, k, r, Nx)
+$(SIGNATURES)
 
 Distribute the change (c_red_new - c_red_old) uniformly back to the fine cells.
 Preserves sub-grid structure while conserving the volume-averaged concentration.
@@ -140,7 +140,7 @@ function expand_row!(c::AbstractArray, c_red_new::AbstractVector,
 end
 
 """
-    reduce_velocity_row!(u_red, u, j, k, r, Nx)
+$(SIGNATURES)
 
 Pick face velocities at reduced-grid cell boundaries.
 `u` has shape (Nx+1, Ny, Nz); `u_red` has length `Nx_red + 1`.

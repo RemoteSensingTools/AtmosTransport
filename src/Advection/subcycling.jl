@@ -7,7 +7,7 @@
 # ---------------------------------------------------------------------------
 
 """
-    max_cfl_x(velocities, grid::LatitudeLongitudeGrid, dt)
+$(SIGNATURES)
 
 Maximum CFL number for x-advection, accounting for the reduced grid.
 """
@@ -27,7 +27,7 @@ function max_cfl_x(velocities, grid::LatitudeLongitudeGrid, dt)
 end
 
 """
-    max_cfl_y(velocities, grid::LatitudeLongitudeGrid, dt)
+$(SIGNATURES)
 
 Maximum CFL number for y-advection.
 """
@@ -43,7 +43,7 @@ function max_cfl_y(velocities, grid::LatitudeLongitudeGrid, dt)
 end
 
 """
-    max_cfl_z(velocities, grid::LatitudeLongitudeGrid, dt)
+$(SIGNATURES)
 
 Maximum CFL number for z-advection.
 """
@@ -60,7 +60,7 @@ function max_cfl_z(velocities, grid::LatitudeLongitudeGrid, dt)
 end
 
 """
-    subcycling_counts(velocities, grid, dt; cfl_limit=0.95)
+$(TYPEDSIGNATURES)
 
 Compute the number of sub-steps needed for each advection direction.
 Returns `(nx, ny, nz)` where each is ≥ 1.
@@ -79,7 +79,7 @@ function subcycling_counts(velocities, grid::LatitudeLongitudeGrid, dt;
 end
 
 """
-    advect_x_subcycled!(tracers, vel, grid, scheme, dt; n_sub=nothing, cfl_limit=0.95)
+$(TYPEDSIGNATURES)
 
 Subcycled x-advection. If `n_sub` is provided, uses that many sub-steps;
 otherwise automatically determines from CFL.
@@ -98,7 +98,7 @@ function advect_x_subcycled!(tracers, vel, grid, scheme, dt;
 end
 
 """
-    advect_y_subcycled!(tracers, vel, grid, scheme, dt; n_sub=nothing, cfl_limit=0.95)
+$(TYPEDSIGNATURES)
 
 Subcycled y-advection.
 """
@@ -116,7 +116,7 @@ function advect_y_subcycled!(tracers, vel, grid, scheme, dt;
 end
 
 """
-    advect_z_subcycled!(tracers, vel, grid, scheme, dt; n_sub=nothing, cfl_limit=0.95)
+$(TYPEDSIGNATURES)
 
 Subcycled z-advection.
 """

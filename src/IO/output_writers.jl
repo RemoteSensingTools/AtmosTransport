@@ -8,44 +8,58 @@ using ..Grids: grid_size, floattype, LatitudeLongitudeGrid, znode, Center
 using ..Fields: interior, AbstractField
 
 """
-    AbstractOutputWriter
+$(TYPEDEF)
 
 Supertype for output writers. Subtype and implement `write_output!`.
 """
 abstract type AbstractOutputWriter end
 
 """
-    AbstractOutputSchedule
+$(TYPEDEF)
 
 Supertype for output scheduling.
 """
 abstract type AbstractOutputSchedule end
 
-"""Output every `interval` seconds of simulation time."""
+"""
+$(TYPEDEF)
+
+Output every `interval` seconds of simulation time.
+
+$(FIELDS)
+"""
 struct TimeIntervalSchedule <: AbstractOutputSchedule
+    "output interval in seconds of simulation time"
     interval :: Float64
 end
 
-"""Output every `interval` iterations."""
+"""
+$(TYPEDEF)
+
+Output every `interval` iterations.
+
+$(FIELDS)
+"""
 struct IterationIntervalSchedule <: AbstractOutputSchedule
+    "output interval in number of iterations"
     interval :: Int
 end
 
 """
-    NetCDFOutputWriter{S} <: AbstractOutputWriter
+$(TYPEDEF)
 
 Write selected fields to NetCDF files on a schedule.
 
-# Fields
-- `filename :: String`
-- `fields :: Dict{Symbol, Any}` — name → field or function
-- `schedule :: S`
-- `_write_count :: Ref{Int}` — number of writes so far
+$(FIELDS)
 """
 struct NetCDFOutputWriter{S <: AbstractOutputSchedule} <: AbstractOutputWriter
+    "output file path"
     filename     :: String
+    "name → field or function"
     fields       :: Dict{Symbol, Any}
+    "output schedule"
     schedule     :: S
+    "number of writes so far"
     _write_count :: Ref{Int}
 
     function NetCDFOutputWriter(filename::String, fields::Dict, schedule::S) where S <: AbstractOutputSchedule
@@ -54,7 +68,7 @@ struct NetCDFOutputWriter{S <: AbstractOutputSchedule} <: AbstractOutputWriter
 end
 
 """
-    should_write(writer::NetCDFOutputWriter, model_time, iteration) -> Bool
+$(SIGNATURES)
 
 Return true if the schedule says we should write at this time/iteration.
 """
@@ -72,7 +86,7 @@ function should_write(writer::NetCDFOutputWriter, model_time, iteration)
 end
 
 """
-    _extract_field_data(field_or_func, model)
+$(SIGNATURES)
 
 Extract 3D array from a field entry (AbstractField, function, or raw array).
 Ensures CPU array for NetCDF writing.
@@ -92,7 +106,7 @@ function _extract_field_data(field_or_func, model)
 end
 
 """
-    _create_netcdf_file(writer::NetCDFOutputWriter, model, grid::LatitudeLongitudeGrid)
+$(SIGNATURES)
 
 Create a new NetCDF file with dimensions (lon, lat, lev, time) and coordinate variables.
 Defines all output variables. Does not write any time slices.
@@ -129,7 +143,7 @@ function _create_netcdf_file(writer::NetCDFOutputWriter, model, grid::LatitudeLo
 end
 
 """
-    initialize_output!(writer::NetCDFOutputWriter, model)
+$(SIGNATURES)
 
 Create the NetCDF file with proper dimensions from `model.grid`, define all variables
 from `writer.fields`, and write coordinate variables (lon, lat, lev).
@@ -144,7 +158,7 @@ function initialize_output!(writer::NetCDFOutputWriter, model)
 end
 
 """
-    write_output!(writer::NetCDFOutputWriter, model, time)
+$(SIGNATURES)
 
 Write output if the schedule condition is met. Opens or creates the NetCDF file,
 appends a new time slice for each field, and increments `_write_count`.
@@ -183,7 +197,7 @@ function write_output!(writer::NetCDFOutputWriter, model, time)
 end
 
 """
-    write_output!(writer::AbstractOutputWriter, model, time)
+$(SIGNATURES)
 
 Write output if the schedule condition is met. Implementation stub for other writers.
 """

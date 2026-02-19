@@ -13,7 +13,7 @@
 using ..Grids: AbstractGrid, grid_size
 
 """
-    prepare_met_for_physics(met::MetDataSource{FT}, grid::AbstractGrid) where {FT}
+$(SIGNATURES)
 
 Convert the cell-center met data fields into the staggered arrays
 required by the physics operators. Returns a NamedTuple with:

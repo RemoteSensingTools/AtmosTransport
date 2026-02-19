@@ -22,8 +22,7 @@ using ..Fields: interior, AbstractField
 using ..Grids: grid_size, Δz, floattype, LatitudeLongitudeGrid
 
 """
-    adjoint_convect!(adj_tracers::NamedTuple, met, grid::LatitudeLongitudeGrid,
-                     conv::TiedtkeConvection, Δt)
+$(SIGNATURES)
 
 Discrete adjoint of `convect!` for the Tiedtke mass-flux scheme.
 

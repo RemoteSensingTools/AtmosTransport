@@ -10,16 +10,12 @@
 # ---------------------------------------------------------------------------
 
 """
-    MetDataSource{FT} <: AbstractMetData{FT}
+$(TYPEDEF)
 
 Config-driven meteorological data reader. Reads its variable mappings,
 collection definitions, and access URLs from a TOML configuration file.
 
-# Fields
-- `config :: MetSourceConfig` — parsed TOML configuration
-- `buffers :: Dict{Symbol, Array}` — cached field data (canonical name → array)
-- `current_time :: Base.RefValue{Float64}` — time of the currently loaded data
-- `local_path :: String` — local data directory (overrides OPeNDAP if non-empty)
+$(FIELDS)
 
 # Construction
 ```julia
@@ -36,9 +32,13 @@ met = ERA5MetData(Float64)
 ```
 """
 struct MetDataSource{FT} <: AbstractMetData{FT}
+    "parsed TOML configuration"
     config       :: MetSourceConfig
+    "cached field data (canonical name → array)"
     buffers      :: Dict{Symbol, Array}
+    "time of the currently loaded data"
     current_time :: Base.RefValue{Float64}
+    "local data directory (overrides OPeNDAP if non-empty)"
     local_path   :: String
 end
 
@@ -67,7 +67,7 @@ MetDataSource(source::String; kw...) = MetDataSource(Float64, source; kw...)
 # ---------------------------------------------------------------------------
 
 """
-    GEOSFPMetData(; FT=Float64, local_path="", config_path=nothing)
+$(TYPEDSIGNATURES)
 
 Create a GEOS-FP met data reader from the built-in TOML config.
 Optionally override with a custom config path.
@@ -84,7 +84,7 @@ function GEOSFPMetData(; FT::Type = Float64,
 end
 
 """
-    MERRAMetData(; FT=Float64, local_path="", config_path=nothing)
+$(TYPEDSIGNATURES)
 
 Create a MERRA-2 met data reader from the built-in TOML config.
 """
@@ -100,7 +100,7 @@ function MERRAMetData(; FT::Type = Float64,
 end
 
 """
-    ERA5MetData(; FT=Float64, local_path="", config_path=nothing)
+$(TYPEDSIGNATURES)
 
 Create an ERA5 met data reader from the built-in TOML config.
 """
@@ -120,7 +120,7 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    get_field(met::MetDataSource, name::Symbol) -> Array
+$(SIGNATURES)
 
 Return the buffered field for the given canonical variable name.
 """
@@ -133,14 +133,14 @@ function get_field(met::MetDataSource, name::Symbol)
 end
 
 """
-    has_variable(met::MetDataSource, name::Symbol) -> Bool
+$(SIGNATURES)
 
 Check whether the met data source provides a given canonical variable.
 """
 has_variable(met::MetDataSource, name::Symbol) = haskey(met.config.variables, name)
 
 """
-    native_name(met::MetDataSource, canonical::Symbol) -> String
+$(SIGNATURES)
 
 Return the native variable name for a canonical variable.
 """
@@ -152,7 +152,7 @@ function native_name(met::MetDataSource, canonical::Symbol)
 end
 
 """
-    collection_for(met::MetDataSource, canonical::Symbol) -> CollectionInfo
+$(SIGNATURES)
 
 Return the collection that contains a given canonical variable.
 """
@@ -162,7 +162,7 @@ function collection_for(met::MetDataSource, canonical::Symbol)
 end
 
 """
-    met_grid(met::MetDataSource)
+$(SIGNATURES)
 
 Return the native grid specification from the config.
 """
@@ -171,21 +171,21 @@ function met_grid(met::MetDataSource)
 end
 
 """
-    protocol(met::MetDataSource) -> String
+$(SIGNATURES)
 
-Return the data access protocol ("opendap", "cds", "local").
+Return the data access protocol (opendap, cds, local).
 """
 protocol(met::MetDataSource) = get(met.config.access, "protocol", "local")
 
 """
-    time_interval(met::MetDataSource) -> Float64
+$(SIGNATURES)
 
 Return the time interval between snapshots (seconds).
 """
 time_interval(met::MetDataSource) = get(met.config.access, "time_interval", 10800.0)
 
 """
-    source_name(met::MetDataSource) -> String
+$(SIGNATURES)
 
 Return the human-readable name of the met data source.
 """

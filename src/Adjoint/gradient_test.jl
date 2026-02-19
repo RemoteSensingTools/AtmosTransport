@@ -17,7 +17,7 @@ using ..TimeSteppers: time_step!, adjoint_time_step!, Clock
 using LinearAlgebra: dot
 
 """
-    gradient_test(; grid, timestepper, met_data, n_steps, Δt, epsilons, verbose)
+$(TYPEDSIGNATURES)
 
 Run a gradient test for the full operator-splitting time stepper.
 
@@ -28,16 +28,6 @@ against finite differences for a series of perturbation sizes `ε`.
 
 Returns a vector of `(ε, ratio)` pairs. For a correct discrete adjoint,
 `ratio → 1.0` as `ε → 0`.
-
-# Arguments
-- `grid` — the computational grid
-- `timestepper` — OperatorSplittingTimeStepper with physics operators
-- `met_data` — NamedTuple with velocity fields `(; u, v, w, ...)` and
-  optionally `conv_mass_flux` for convection
-- `n_steps` — number of time steps (default: 1)
-- `Δt` — time step size (default: `timestepper.Δt_outer`)
-- `epsilons` — sequence of perturbation sizes
-- `verbose` — print progress (default: false)
 
 # Example
 
@@ -136,8 +126,7 @@ function gradient_test(;
 end
 
 """
-    gradient_test(model, cost_function, control, perturbation;
-                  epsilons = [1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7])
+$(TYPEDSIGNATURES)
 
 Generic gradient test interface. Currently delegates to the keyword-based
 version using a simple quadratic cost function.

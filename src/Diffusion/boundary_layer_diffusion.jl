@@ -10,14 +10,14 @@ using ..Fields: interior, AbstractField
 using ..Grids: grid_size, Δz, floattype, LatitudeLongitudeGrid
 
 """
-    tracer_data(t)
+$(SIGNATURES)
 
 Return the modifiable 3D array for a tracer (Field or raw array).
 """
 tracer_data(t) = t isa AbstractField ? interior(t) : t
 
 """
-    default_Kz_interface(k, Nz, Kz_max, FT)
+$(SIGNATURES)
 
 Default exponential Kz profile at interface between level k and k+1.
 Decreases with height (smaller at top, larger near surface).
@@ -30,7 +30,7 @@ function default_Kz_interface(k, Nz, Kz_max, ::Type{FT}) where {FT}
 end
 
 """
-    thomas_solve!(a, b, c, d, x, w, g, N)
+$(SIGNATURES)
 
 Solve tridiagonal system A*x = d in-place using Thomas algorithm.
 a = sub-diagonal, b = main diagonal, c = super-diagonal.

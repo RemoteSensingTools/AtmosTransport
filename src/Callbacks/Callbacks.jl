@@ -13,40 +13,46 @@ Forcing functions provide additional source terms.
 """
 module Callbacks
 
+using DocStringExtensions
+
 export AbstractCallback, DiscreteCallback, Forcing
 export execute_callbacks!
 
-"""Supertype for all callbacks."""
+"""
+$(TYPEDEF)
+
+Supertype for all callbacks.
+"""
 abstract type AbstractCallback end
 
 """
-    DiscreteCallback{C, A} <: AbstractCallback
+$(TYPEDEF)
 
 Callback that fires when `condition(model, t)` returns `true`.
 
-# Fields
-- `condition` — `(model, t) → Bool`
-- `affect!`   — `(model) → nothing` (mutates model state)
+$(FIELDS)
 """
 struct DiscreteCallback{C, A} <: AbstractCallback
+    "`(model, t) → Bool`"
     condition :: C
+    "`(model) → nothing` (mutates model state)"
     affect!   :: A
 end
 
 """
-    Forcing{F}
+$(TYPEDEF)
 
 User-defined source/forcing term applied every time step.
 
-# Fields
-- `func` — `(x, y, z, t, params...) → value` to be added to tracer tendency
+$(FIELDS)
 """
 struct Forcing{F}
+    "`(x, y, z, t, params...) → value` to be added to tracer tendency"
     func :: F
 end
 
 """
-    execute_callbacks!(callbacks, model, t)
+$(SIGNATURES)
 
 Check and execute all callbacks whose conditions are met.
 """

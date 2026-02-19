@@ -7,20 +7,36 @@
 # ---------------------------------------------------------------------------
 
 """
-    AbstractTopology
+$(TYPEDEF)
 
 Supertype for grid dimension topologies.
 """
 abstract type AbstractTopology end
 
-"""Periodic dimension (e.g. longitude on a lat-lon grid)."""
+"""
+$(TYPEDEF)
+
+Periodic dimension (e.g. longitude on a lat-lon grid).
+"""
 struct Periodic   <: AbstractTopology end
 
-"""Bounded dimension with walls (e.g. latitude on a lat-lon grid)."""
+"""
+$(TYPEDEF)
+
+Bounded dimension with walls (e.g. latitude on a lat-lon grid).
+"""
 struct Bounded    <: AbstractTopology end
 
-"""Cubed-sphere panel connectivity (edges connect to neighboring panels)."""
+"""
+$(TYPEDEF)
+
+Cubed-sphere panel connectivity (edges connect to neighboring panels).
+"""
 struct CubedPanel <: AbstractTopology end
 
-"""Flat (degenerate) dimension — single grid point, used to reduce dimensionality."""
+"""
+$(TYPEDEF)
+
+Flat (degenerate) dimension — single grid point, used to reduce dimensionality.
+"""
 struct Flat       <: AbstractTopology end

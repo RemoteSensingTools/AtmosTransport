@@ -36,6 +36,8 @@ met = MetDataSource(Float64, "path/to/my_source.toml")
 """
 module IO
 
+using DocStringExtensions
+
 export AbstractMetData
 export MetDataSource, GEOSFPMetData, MERRAMetData, ERA5MetData
 export MetSourceConfig, VarMapping, CollectionInfo, VerticalConfig

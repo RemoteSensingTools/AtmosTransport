@@ -18,12 +18,14 @@ module Communications
 export AbstractComms, SingletonComms
 export fill_halo!, reduce_sum, barrier
 
+using DocStringExtensions
+
 # ---------------------------------------------------------------------------
 # Abstract type
 # ---------------------------------------------------------------------------
 
 """
-    AbstractComms
+$(TYPEDEF)
 
 Supertype for communication backends. `SingletonComms` is the default
 (single-process, no-op). `MPIComms` will be added via the MPI extension.
@@ -35,7 +37,7 @@ abstract type AbstractComms end
 # ---------------------------------------------------------------------------
 
 """
-    SingletonComms()
+$(TYPEDEF)
 
 No-op communication backend for single-process runs.
 Halo fills are local copies; reductions are plain `sum`.
@@ -47,7 +49,7 @@ struct SingletonComms <: AbstractComms end
 # ---------------------------------------------------------------------------
 
 """
-    fill_halo!(field, grid, comms::AbstractComms)
+$(SIGNATURES)
 
 Exchange halo regions. Dispatches on both grid type (for boundary topology)
 and comms type (for single-process vs MPI).
@@ -55,14 +57,14 @@ and comms type (for single-process vs MPI).
 function fill_halo! end
 
 """
-    reduce_sum(x, comms::AbstractComms)
+$(SIGNATURES)
 
 Global sum across all processes. On `SingletonComms`, just returns `sum(x)`.
 """
 reduce_sum(x, ::SingletonComms) = sum(x)
 
 """
-    barrier(comms::AbstractComms)
+$(SIGNATURES)
 
 Synchronization barrier. No-op on `SingletonComms`.
 """

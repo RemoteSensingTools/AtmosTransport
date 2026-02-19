@@ -16,6 +16,8 @@ calls the adjoint of each operator.
 """
 module TimeSteppers
 
+using DocStringExtensions
+
 export AbstractTimeStepper, OperatorSplittingTimeStepper
 export Clock
 export time_step!, adjoint_time_step!, tick!, tick_backward!

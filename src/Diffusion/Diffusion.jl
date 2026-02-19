@@ -14,22 +14,33 @@ solved with a transposed Thomas algorithm.
 """
 module Diffusion
 
+using DocStringExtensions
+
 using ..Grids: AbstractGrid
 using ..Fields: AbstractField
 
 export AbstractDiffusion, BoundaryLayerDiffusion, NoDiffusion
 export diffuse!, adjoint_diffuse!
 
+"""
+$(TYPEDEF)
+
+Supertype for vertical diffusion parameterizations.
+"""
 abstract type AbstractDiffusion end
 
-"""No diffusion (pass-through). Adjoint is also a no-op."""
+"""
+$(TYPEDEF)
+
+No diffusion (pass-through). Adjoint is also a no-op.
+"""
 struct NoDiffusion <: AbstractDiffusion end
 
 diffuse!(tracers, met, grid, ::NoDiffusion, Δt) = nothing
 adjoint_diffuse!(adj_tracers, met, grid, ::NoDiffusion, Δt) = nothing
 
 """
-    BoundaryLayerDiffusion{FT} <: AbstractDiffusion
+$(TYPEDEF)
 
 Boundary-layer vertical diffusion parameterization.
 Uses diffusivity coefficients from met data (Kz).
@@ -37,10 +48,10 @@ Uses diffusivity coefficients from met data (Kz).
 Forward: implicit tridiagonal solve.
 Adjoint: transposed tridiagonal solve (transposed Thomas algorithm).
 
-# Fields
-- `Kz_max :: FT` — maximum allowed diffusivity [m²/s]
+$(FIELDS)
 """
 struct BoundaryLayerDiffusion{FT} <: AbstractDiffusion
+    "maximum allowed diffusivity [m²/s]"
     Kz_max :: FT
 end
 

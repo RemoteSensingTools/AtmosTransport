@@ -23,7 +23,7 @@ using ..Diffusion: adjoint_diffuse!
 using ..Chemistry: adjoint_chemistry!
 
 """
-    adjoint_time_step!(model, Δt)
+$(SIGNATURES)
 
 Perform one adjoint time step (backward in time).
 `model` must have fields: `adj_tracers`, `met_data`, `grid`, `timestepper`, `clock`.

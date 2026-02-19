@@ -8,6 +8,7 @@ Infrastructure for the hand-coded discrete adjoint:
 """
 module Adjoint
 
+using DocStringExtensions
 using ..Grids
 using ..TimeSteppers
 

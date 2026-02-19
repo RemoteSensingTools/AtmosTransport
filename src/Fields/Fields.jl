@@ -20,6 +20,8 @@ depending on the grid's architecture.
 """
 module Fields
 
+using DocStringExtensions
+
 using ..Architectures: AbstractArchitecture, array_type
 import ..Architectures: architecture
 using ..Grids: AbstractGrid, AbstractLocationType, Center, Face

@@ -11,7 +11,7 @@
 using TOML
 
 """
-    canonical_variables()
+$(SIGNATURES)
 
 Return the list of canonical meteorological variable names used by the model,
 loaded from `config/canonical_variables.toml`.
@@ -22,7 +22,7 @@ function canonical_variables()
 end
 
 """
-    canonical_units()
+$(SIGNATURES)
 
 Return the expected SI units for each canonical variable,
 loaded from `config/canonical_variables.toml`.
@@ -33,7 +33,7 @@ function canonical_units()
 end
 
 """
-    canonical_required()
+$(SIGNATURES)
 
 Return the set of required canonical variable names.
 """
@@ -43,7 +43,7 @@ function canonical_required()
 end
 
 """
-    canonical_dimensions()
+$(SIGNATURES)
 
 Return a dict mapping canonical variable names to their dimensionality (2 or 3).
 """

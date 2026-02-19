@@ -20,6 +20,7 @@ module Architectures
 export AbstractArchitecture, CPU, GPU
 export array_type, device, architecture
 
+using DocStringExtensions
 using KernelAbstractions: KernelAbstractions as KA
 
 # ---------------------------------------------------------------------------
@@ -27,7 +28,7 @@ using KernelAbstractions: KernelAbstractions as KA
 # ---------------------------------------------------------------------------
 
 """
-    AbstractArchitecture
+$(TYPEDEF)
 
 Supertype for all compute backends. Subtypes determine where arrays live
 and how kernels are launched.
@@ -39,14 +40,14 @@ abstract type AbstractArchitecture end
 # ---------------------------------------------------------------------------
 
 """
-    CPU()
+$(TYPEDEF)
 
 Run on the host CPU. Arrays are standard `Array`s.
 """
 struct CPU <: AbstractArchitecture end
 
 """
-    GPU()
+$(TYPEDEF)
 
 Run on a GPU device. The concrete array type (e.g. `CuArray`) and device are
 provided by the CUDA extension (`ext/AtmosTransportModelCUDAExt.jl`).
@@ -58,7 +59,7 @@ struct GPU <: AbstractArchitecture end
 # ---------------------------------------------------------------------------
 
 """
-    array_type(arch::AbstractArchitecture)
+$(SIGNATURES)
 
 Return the array constructor for the given architecture.
 CPU returns `Array`; GPU is defined by the CUDA extension.
@@ -70,7 +71,7 @@ array_type(::CPU) = Array
 # ---------------------------------------------------------------------------
 
 """
-    device(arch::AbstractArchitecture)
+$(SIGNATURES)
 
 Return the KernelAbstractions device for kernel launches.
 CPU returns `KA.CPU()`; GPU is defined by the CUDA extension.
@@ -82,7 +83,7 @@ device(::CPU) = KA.CPU()
 # ---------------------------------------------------------------------------
 
 """
-    architecture(x)
+$(SIGNATURES)
 
 Return the `AbstractArchitecture` associated with `x`.
 Concrete types (grids, fields, models) should specialize this.

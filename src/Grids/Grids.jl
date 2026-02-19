@@ -19,6 +19,7 @@ that dispatch on `AbstractGrid`, ensuring grid-agnostic kernels.
 """
 module Grids
 
+using DocStringExtensions
 using ..Architectures: AbstractArchitecture, CPU, array_type
 import ..Architectures: architecture
 

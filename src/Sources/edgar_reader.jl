@@ -3,7 +3,7 @@
 # ---------------------------------------------------------------------------
 
 """
-    load_edgar_co2(filepath, target_grid; FT=Float64)
+$(TYPEDSIGNATURES)
 
 Read EDGAR v8.0 CO2 total emissions from `filepath` and conservatively
 regrid to `target_grid`.
@@ -58,6 +58,8 @@ function load_edgar_co2(filepath::String, target_grid::LatitudeLongitudeGrid{FT}
 end
 
 """
+$(SIGNATURES)
+
 Conservative area-weighted regridding: accumulates mass (flux × source area) into
 model cells, then divides by model cell area to get flux density [kg/m²/s].
 """

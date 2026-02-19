@@ -5,7 +5,7 @@
 using TOML
 
 """
-    load_configuration(path::String)
+$(SIGNATURES)
 
 Load a TOML configuration file and return a Dict.
 

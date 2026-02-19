@@ -3,7 +3,7 @@
 # ---------------------------------------------------------------------------
 
 """
-    total_size(grid)
+$(SIGNATURES)
 
 Return the total array size including halo regions for memory allocation.
 
@@ -20,7 +20,7 @@ function total_size(g::CubedSphereGrid)
 end
 
 """
-    interior_indices(grid)
+$(SIGNATURES)
 
 Return the range of interior (non-halo) indices for each dimension.
 """

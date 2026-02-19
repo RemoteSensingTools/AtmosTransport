@@ -14,7 +14,7 @@
 # ---------------------------------------------------------------------------
 
 """
-    LatitudeLongitudeGrid{FT, Arch, VZ, V} <: AbstractStructuredGrid{FT, Arch}
+$(TYPEDEF)
 
 Regular latitude-longitude grid with hybrid sigma-pressure vertical coordinate.
 
@@ -23,51 +23,58 @@ so that all accessor functions are self-contained and type-stable.  Values come
 from `config/defaults.toml` via `ModelParameters`, or can be overridden in the
 constructor.
 
-# Constructor
-
-    LatitudeLongitudeGrid(arch::AbstractArchitecture;
-        FT = Float64,
-        size,                     # (Nx, Ny, Nz)
-        longitude = (-180, 180),  # (λ_west, λ_east)
-        latitude  = (-90, 90),    # (φ_south, φ_north)
-        vertical,                 # AbstractVerticalCoordinate
-        halo = (3, 3, 1),        # (Hx, Hy, Hz)
-        radius                = FT(6.371e6),
-        gravity               = FT(9.81),
-        reference_pressure    = FT(101325.0))
-
 # Accessor functions
 - `xnode`, `ynode` — horizontal coordinates (longitude, latitude)
 - `znode` — vertical coordinate (pressure at level/interface center)
 - `cell_area`, `cell_volume` — horizontal area and 3D cell volume
 - `Δx`, `Δy`, `Δz` — grid spacing in x, y, and vertical (pressure thickness)
+
+$(FIELDS)
 """
 struct LatitudeLongitudeGrid{FT, Arch, VZ, V, RG} <: AbstractStructuredGrid{FT, Arch}
+    "compute architecture (CPU or GPU)"
     architecture :: Arch
 
+    "number of grid cells in x (longitude)"
     Nx :: Int
+    "number of grid cells in y (latitude)"
     Ny :: Int
+    "number of vertical levels"
     Nz :: Int
 
+    "halo width in x"
     Hx :: Int
+    "halo width in y"
     Hy :: Int
+    "halo width in z"
     Hz :: Int
 
-    λᶜ :: V    # cell center longitudes  (length Nx)
-    λᶠ :: V    # cell face longitudes    (length Nx+1)
-    φᶜ :: V    # cell center latitudes   (length Ny)
-    φᶠ :: V    # cell face latitudes     (length Ny+1)
+    "cell-center longitudes (length Nx)"
+    λᶜ :: V
+    "cell-face longitudes (length Nx+1)"
+    λᶠ :: V
+    "cell-center latitudes (length Ny)"
+    φᶜ :: V
+    "cell-face latitudes (length Ny+1)"
+    φᶠ :: V
 
-    Δλ :: FT             # uniform lon spacing (degrees)
-    Δφ :: FT             # uniform lat spacing (degrees)
+    "uniform longitude spacing [degrees]"
+    Δλ :: FT
+    "uniform latitude spacing [degrees]"
+    Δφ :: FT
 
+    "vertical coordinate (e.g. HybridSigmaPressure)"
     vertical :: VZ
 
-    radius             :: FT   # planet radius [m]
-    gravity            :: FT   # gravitational acceleration [m/s²]
-    reference_pressure :: FT   # reference surface pressure [Pa]
+    "planet radius [m]"
+    radius             :: FT
+    "gravitational acceleration [m/s²]"
+    gravity            :: FT
+    "reference surface pressure [Pa]"
+    reference_pressure :: FT
 
-    reduced_grid :: RG   # nothing or ReducedGridSpec for polar CFL handling
+    "reduced grid specification for polar CFL handling, or `nothing`"
+    reduced_grid :: RG
 end
 
 # Placeholder constructor — implementation will be filled by a parallel agent
@@ -174,7 +181,7 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    znode(k, g::LatitudeLongitudeGrid, loc; p_surface=g.reference_pressure)
+$(TYPEDSIGNATURES)
 
 Pressure (Pa) at vertical level or interface `k` for reference surface pressure.
 """
@@ -189,7 +196,7 @@ function znode(k, g::LatitudeLongitudeGrid{FT}, ::Face;
 end
 
 """
-    Δz(k, g::LatitudeLongitudeGrid; p_surface=g.reference_pressure)
+$(TYPEDSIGNATURES)
 
 Pressure thickness (Pa) of vertical level k.
 """
@@ -199,7 +206,7 @@ function Δz(k, g::LatitudeLongitudeGrid{FT};
 end
 
 """
-    cell_volume(i, j, k, g::LatitudeLongitudeGrid; p_surface=g.reference_pressure)
+$(TYPEDSIGNATURES)
 
 Volume of cell (i, j, k) as pressure thickness × area / g.
 Under hydrostatic balance this gives mass per cell (kg).

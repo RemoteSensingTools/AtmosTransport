@@ -10,15 +10,9 @@ using NCDatasets
 using Dates
 
 """
-    read_met!(met::MetDataSource{FT}, time_seconds::Real;
-              variables::Union{Nothing, Vector{Symbol}}=nothing) where {FT}
+$(TYPEDSIGNATURES)
 
 Read meteorological data for the given time into internal buffers.
-
-# Arguments
-- `met` — the met data source (with TOML config)
-- `time_seconds` — time in seconds since model epoch, or a DateTime
-- `variables` — optional subset of canonical variables to read (default: all mapped)
 
 Dispatches on the access protocol:
 - `"opendap"` → reads directly from OPeNDAP URL
@@ -37,7 +31,7 @@ function read_met!(met::MetDataSource{FT}, time_seconds::Real;
 end
 
 """
-    read_met!(met::MetDataSource, dt::Dates.DateTime; kw...)
+$(TYPEDSIGNATURES)
 
 Read met data for a DateTime.
 """

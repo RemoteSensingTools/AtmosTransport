@@ -11,7 +11,7 @@
 # ---------------------------------------------------------------------------
 
 """
-    AbstractField{LX, LY, LZ, G}
+$(TYPEDEF)
 
 Supertype for all field types. Parametric on:
 - `LX, LY, LZ`: location types (Center or Face) per dimension

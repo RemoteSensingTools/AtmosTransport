@@ -6,23 +6,23 @@ const M_AIR  = 28.97e-3   # kg/mol
 const M_CO2  = 44.01e-3   # kg/mol
 
 """
-    GriddedEmission{FT, A} <: AbstractSource
+$(TYPEDEF)
 
 Regridded surface emission on the model grid.
 
-# Fields
-- `flux`    — emission flux [kg/m²/s] on model grid (Nx × Ny)
-- `species` — tracer name (e.g., :co2)
-- `label`   — human-readable label
+$(FIELDS)
 """
 struct GriddedEmission{FT, A <: AbstractMatrix{FT}} <: AbstractSource
+    "emission flux [kg/m²/s] on model grid (Nx × Ny)"
     flux    :: A
+    "tracer name (e.g., :co2)"
     species :: Symbol
+    "human-readable label"
     label   :: String
 end
 
 """
-    apply_surface_flux!(tracers, source::GriddedEmission, grid, dt)
+$(SIGNATURES)
 
 Inject emission into the lowest atmospheric layer. Converts emission flux
 [kg/m²/s] to mixing ratio change [ppm] using cell air mass.

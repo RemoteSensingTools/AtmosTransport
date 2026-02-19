@@ -23,14 +23,14 @@ using ..Grids: grid_size, Δz, floattype, LatitudeLongitudeGrid
 
 
 """
-    conv_tracer_data(t)
+$(SIGNATURES)
 
 Return the modifiable 3D array for a tracer (Field or raw array).
 """
 conv_tracer_data(t) = t isa AbstractField ? interior(t) : t
 
 """
-    has_conv_mass_flux(met)
+$(SIGNATURES)
 
 Check whether `met` provides convective mass flux data.
 Returns `false` for `nothing` or any object without a `conv_mass_flux` field.
@@ -38,8 +38,7 @@ Returns `false` for `nothing` or any object without a `conv_mass_flux` field.
 has_conv_mass_flux(met) = met !== nothing && hasproperty(met, :conv_mass_flux)
 
 """
-    convect!(tracers::NamedTuple, met, grid::LatitudeLongitudeGrid,
-             conv::TiedtkeConvection, Δt)
+$(SIGNATURES)
 
 Apply Tiedtke mass-flux convection to all tracers in-place.
 

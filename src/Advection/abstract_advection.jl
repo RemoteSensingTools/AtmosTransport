@@ -3,7 +3,7 @@
 # ---------------------------------------------------------------------------
 
 """
-    AbstractAdvectionScheme
+$(TYPEDEF)
 
 Supertype for all advection schemes. Each subtype must implement both
 forward and adjoint methods.
@@ -59,7 +59,7 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    advection_cfl(grid, velocities, scheme)
+$(SIGNATURES)
 
 Compute the advective CFL number. Default is a generic estimate;
 schemes may override for tighter bounds.

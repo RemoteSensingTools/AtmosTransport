@@ -15,7 +15,7 @@
 # ---------------------------------------------------------------------------
 
 """
-    default_panel_connectivity()
+$(SIGNATURES)
 
 Return the standard GEOS-convention panel connectivity for a gnomonic
 cubed-sphere with 6 panels.

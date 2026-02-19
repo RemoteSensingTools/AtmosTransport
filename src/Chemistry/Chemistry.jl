@@ -14,18 +14,24 @@ MOGUNTIA) subtype `AbstractChemistry` and implement the interface.
 """
 module Chemistry
 
+using DocStringExtensions
+
 export AbstractChemistry, NoChemistry
 export apply_chemistry!, adjoint_chemistry!
 
 """
-    AbstractChemistry
+$(TYPEDEF)
 
 Supertype for chemistry schemes. Future extensions (CBM4, mCB05, MOGUNTIA,
 aerosol modules) subtype this and implement forward + adjoint methods.
 """
 abstract type AbstractChemistry end
 
-"""No chemistry (inert tracers). Both forward and adjoint are no-ops."""
+"""
+$(TYPEDEF)
+
+No chemistry (inert tracers). Both forward and adjoint are no-ops.
+"""
 struct NoChemistry <: AbstractChemistry end
 
 apply_chemistry!(tracers, grid, ::NoChemistry, Δt) = nothing

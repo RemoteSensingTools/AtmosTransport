@@ -18,6 +18,8 @@ Optional (has defaults):
 """
 module Advection
 
+using DocStringExtensions
+
 using ..Grids: AbstractGrid, AbstractStructuredGrid, LatitudeLongitudeGrid, Δx, Δy, Δz, floattype
 using ..Grids: ReducedGridSpec, reduce_row!, expand_row!, reduce_velocity_row!
 using ..Fields: AbstractField

@@ -15,7 +15,7 @@ using ..Grids: LatitudeLongitudeGrid, CubedSphereGrid
 import ..Communications: fill_halo!
 
 """
-    fill_halo!(field::Field, comms::AbstractComms)
+$(SIGNATURES)
 
 Fill halo regions of `field` using the appropriate method for the grid and comms.
 """

@@ -4,7 +4,9 @@ version = "0.1.0"
 authors = ["Christian Frankenberg and contributors"]
 
 [deps]
+CubedSphere = "7445602f-e544-4518-8976-18f8e8ae6cdb"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+DocStringExtensions = "ffbed154-4ef7-542d-bbb7-c09d3a79fcae"
 KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 NCDatasets = "85f8d34a-cbdd-5861-8df4-14fed0d494ab"
@@ -21,6 +23,8 @@ AtmosTransportModelCUDAExt = "CUDA"
 
 [compat]
 CUDA = "5"
+CubedSphere = "0.3.4"
+DocStringExtensions = "0.9.5"
 KernelAbstractions = "0.9"
 NCDatasets = "0.14"
 OffsetArrays = "1"

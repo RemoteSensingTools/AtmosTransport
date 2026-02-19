@@ -85,7 +85,8 @@ function adjoint_advect_z!(adj_tracers::NamedTuple, velocities,
                             grid::LatitudeLongitudeGrid,
                             scheme::SlopesAdvection, Δt)
     if scheme.use_limiter
-        neg_vel = (; w = .-velocities.w)
+        ps = _get_p_surface(velocities)
+        neg_vel = ps !== nothing ? (; w = .-velocities.w, p_surface = ps) : (; w = .-velocities.w)
         advect_z!(adj_tracers, neg_vel, grid, scheme, Δt)
     else
         _discrete_adjoint_advect_z!(adj_tracers, velocities, grid, Δt)
@@ -275,6 +276,8 @@ function _discrete_adjoint_advect_z!(adj_tracers::NamedTuple, velocities,
                                       grid::LatitudeLongitudeGrid, Δt)
     w = velocities.w
     Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
+    ps = _get_p_surface(velocities)
+    Δz_3d = _build_Δz_3d(grid, ps)
 
     for (name, λ) in pairs(adj_tracers)
         T = eltype(λ)
@@ -282,15 +285,14 @@ function _discrete_adjoint_advect_z!(adj_tracers::NamedTuple, velocities,
 
         for k in 1:Nz, j in 1:Ny, i in 1:Nx
             @inbounds begin
-                Δz_k = Δz(k, grid)
+                Δz_k = Δz_3d[i, j, k]
                 fac = Δt / Δz_k
                 λv = λ[i, j, k]
-                wt = w[i, j, k]       # top face (interface k)
-                wb = w[i, j, k + 1]   # bottom face (interface k+1)
+                wt = w[i, j, k]
+                wb = w[i, j, k + 1]
 
                 λ_old[i, j, k] += λv
 
-                # ── Bottom flux (face k+1): scatter with −fac ──
                 if k < Nz
                     if wb > 0
                         α = 1 - wb * Δt / Δz_k
@@ -303,7 +305,7 @@ function _discrete_adjoint_advect_z!(adj_tracers::NamedTuple, velocities,
                             λ_old[i, j, k+1] -= fac * wb * α / 4 * λv
                         end
                     else
-                        Δz_kp = Δz(k + 1, grid)
+                        Δz_kp = Δz_3d[i, j, k + 1]
                         β = 1 + wb * Δt / Δz_kp
                         has_slope_next = (k + 1 > 1 && k + 1 < Nz)
                         if has_slope_next
@@ -314,16 +316,15 @@ function _discrete_adjoint_advect_z!(adj_tracers::NamedTuple, velocities,
                             λ_old[i, j, k+2] += fac * wb * β / 4 * λv
                         end
                     end
-                else  # k == Nz: boundary
+                else
                     if wb > 0
                         λ_old[i, j, k] -= fac * wb * λv
                     end
                 end
 
-                # ── Top flux (face k): scatter with +fac ──
                 if k > 1
                     if wt > 0
-                        Δz_km = Δz(k - 1, grid)
+                        Δz_km = Δz_3d[i, j, k - 1]
                         γ = 1 - wt * Δt / Δz_km
                         has_slope_prev = (k - 1 > 1 && k - 1 < Nz)
                         if has_slope_prev && k - 2 >= 1

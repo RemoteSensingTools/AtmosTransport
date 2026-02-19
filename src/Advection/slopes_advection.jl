@@ -310,21 +310,28 @@ end
 """
 $(SIGNATURES)
 
-Russell-Lerner slopes advection in z (vertical). Bounded boundaries with zero flux.
+Russell-Lerner slopes advection in z (vertical). Bounded boundaries with zero flux
+at model top (k=1) and surface (k=Nz+1).
+
+Sign convention: `w > 0` means **downward** — flow from level k-1 toward level k
+(increasing k index, toward the surface). This matches the ERA5/ECMWF omega
+convention where `omega > 0` is downward (increasing pressure).
 """
 function advect_z!(tracers::NamedTuple, velocities, grid::LatitudeLongitudeGrid, scheme::SlopesAdvection, Δt)
     w = velocities.w
     Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
     use_limiter = scheme.use_limiter
     arch = architecture(grid)
+    ps = _get_p_surface(velocities)
+    Δz_3d = _build_Δz_3d(grid, ps)
 
     if arch isa GPU
         FT = floattype(grid)
-        Δz_arr = array_type(arch)(FT[Δz(k, grid) for k in 1:Nz])
+        Δz_dev = array_type(arch)(Δz_3d)
         for (name, c) in pairs(tracers)
             c_new = similar(c)
             kernel = advect_z_kernel(device(arch), 256)
-            event = kernel(c_new, c, w, Δz_arr, Nx, Ny, Nz, FT(Δt), use_limiter; ndrange=(Nx, Ny, Nz))
+            event = kernel(c_new, c, w, Δz_dev, Nx, Ny, Nz, FT(Δt), use_limiter; ndrange=(Nx, Ny, Nz))
             wait(device(arch), event)
             copyto!(c, c_new)
         end
@@ -335,11 +342,10 @@ function advect_z!(tracers::NamedTuple, velocities, grid::LatitudeLongitudeGrid,
         c_new = similar(c)
         for k in 1:Nz, j in 1:Ny, i in 1:Nx
             @inbounds begin
-                Δz_k = Δz(k, grid)
+                Δz_k = Δz_3d[i, j, k]
                 k_prev = k - 1
                 k_next = k + 1
 
-                # Slopes: zero at boundaries
                 s_k = if k > 1 && k < Nz
                     s_raw = (c[i, j, k_next] - c[i, j, k_prev]) / 2
                     if use_limiter
@@ -385,10 +391,9 @@ function advect_z!(tracers::NamedTuple, velocities, grid::LatitudeLongitudeGrid,
 
                 w_top = w[i, j, k]
                 w_bot = w[i, j, k + 1]
-                Δz_next = k_next <= Nz ? Δz(k_next, grid) : Δz_k
-                Δz_prev = k_prev >= 1 ? Δz(k_prev, grid) : Δz_k
+                Δz_next = k_next <= Nz ? Δz_3d[i, j, k_next] : Δz_k
+                Δz_prev = k_prev >= 1 ? Δz_3d[i, j, k_prev] : Δz_k
 
-                # Flux at top face (k)
                 flux_top = if k > 1
                     if w_top > 0
                         w_top * (c[i, j, k_prev] + (1 - w_top * Δt / Δz_prev) * s_k_prev / 2)
@@ -399,7 +404,6 @@ function advect_z!(tracers::NamedTuple, velocities, grid::LatitudeLongitudeGrid,
                     w_top <= 0 ? w_top * c[i, j, k] : zero(eltype(c))
                 end
 
-                # Flux at bottom face (k+1)
                 flux_bot = if k < Nz
                     if w_bot > 0
                         w_bot * (c[i, j, k] + (1 - w_bot * Δt / Δz_k) * s_k / 2)

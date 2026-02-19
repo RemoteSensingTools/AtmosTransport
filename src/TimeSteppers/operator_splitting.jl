@@ -14,6 +14,8 @@
 # ---------------------------------------------------------------------------
 
 using ..Advection: AbstractAdvectionScheme, advect_x!, advect_y!, advect_z!
+using ..Advection: advect_x_mass_corrected!, advect_y_mass_corrected!, advect_z_mass_corrected!
+using ..Advection: strang_split_massflux!
 using ..Convection: AbstractConvection, convect!
 using ..Diffusion: AbstractDiffusion, diffuse!
 using ..Chemistry: AbstractChemistry, apply_chemistry!
@@ -102,6 +104,64 @@ function time_step!(model, Δt)
     advect_z!(tr, vel, g, ts.advection, half)
     advect_y!(tr, vel, g, ts.advection, half)
     advect_x!(tr, vel, g, ts.advection, half)
+
+    tick!(model.clock, Δt)
+    return nothing
+end
+
+"""
+$(SIGNATURES)
+
+Perform one forward time step with TM5-style mass correction (pressure fixer).
+
+`Δp` is a 3D pressure-thickness array `(Nx, Ny, Nz)` that is updated in place
+during each directional advection step.  After each 1D advection, the tracer
+concentration is rescaled by `Δp_old / Δp_new` to account for the air mass change
+due to the 1D divergence created by operator splitting.
+
+Initialize `Δp` from surface pressure at the start of each met-data interval.
+"""
+function time_step!(model, Δt, Δp::AbstractArray{<:Real,3})
+    ts  = model.timestepper
+    tr  = model.tracers
+    met = model.met_data
+    g   = model.grid
+    half = Δt / 2
+
+    vel = _extract_velocities(met)
+
+    advect_x_mass_corrected!(tr, vel, g, ts.advection, half, Δp)
+    advect_y_mass_corrected!(tr, vel, g, ts.advection, half, Δp)
+    advect_z_mass_corrected!(tr, vel, g, ts.advection, half, Δp)
+
+    convect!(tr, met, g, ts.convection, Δt)
+    diffuse!(tr, met, g, ts.diffusion, Δt)
+    apply_chemistry!(tr, g, ts.chemistry, Δt)
+
+    advect_z_mass_corrected!(tr, vel, g, ts.advection, half, Δp)
+    advect_y_mass_corrected!(tr, vel, g, ts.advection, half, Δp)
+    advect_x_mass_corrected!(tr, vel, g, ts.advection, half, Δp)
+
+    tick!(model.clock, Δt)
+    return nothing
+end
+
+"""
+$(SIGNATURES)
+
+TM5-faithful mass-flux time step.  Uses pre-computed mass fluxes `am`, `bm`,
+`cm` and an air mass array `m` that tracks continuously through the Strang
+split (X-Y-Z-Z-Y-X) — no reset between directional steps.
+
+`use_limiter` enables the minmod + positivity slope limiter.
+"""
+function time_step_massflux!(model, Δt, m, am, bm, cm; use_limiter=true, cfl_limit=0.95)
+    ts  = model.timestepper
+    tr  = model.tracers
+    g   = model.grid
+    FT  = eltype(m)
+
+    strang_split_massflux!(tr, m, am, bm, cm, g, use_limiter; cfl_limit=FT(cfl_limit))
 
     tick!(model.clock, Δt)
     return nothing

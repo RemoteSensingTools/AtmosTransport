@@ -91,7 +91,7 @@ using AtmosTransportModel.Architectures: CPU
         @test size(result.diffusivity) == (8, 4, 6)
     end
 
-    @testset "Physical correctness: omega sign flip for w" begin
+    @testset "Raw omega → w (no sign flip, fallback path)" begin
         met = MetDataSource(Float64, config_path; local_path = test_data_dir)
         read_met!(met, 0.0)
 
@@ -106,17 +106,35 @@ using AtmosTransportModel.Architectures: CPU
             vertical = vc,
         )
 
-        result = prepare_met_for_physics(met, grid)
+        result = prepare_met_for_physics(met, grid; use_continuity_omega = false)
 
-        # omega > 0 is downward (GEOS convention); our w > 0 is upward
-        # Bridge negates: w = -(omega[k-1] + omega[k])/2
-        # Our synthetic omega is negative (-0.01 * ...), so w should be positive
+        # Raw omega path: w preserves the sign of omega (no flip).
         omega = get_field(met, :w_wind)
         @test all(omega .<= 0)
-        # w at interior interfaces (k=2:Nz) should be positive when omega is negative
-        @test all(result.w[:, :, 2:5] .>= 0)
-        # Top and bottom boundaries are zero
+        @test all(result.w[:, :, 2:5] .<= 0)
         @test all(result.w[:, :, 1] .== 0)
         @test all(result.w[:, :, 6] .== 0)
+    end
+
+    @testset "Continuity omega: boundary values are zero" begin
+        met = MetDataSource(Float64, config_path; local_path = test_data_dir)
+        read_met!(met, 0.0)
+
+        vc = HybridSigmaPressure(
+            [0.0, 5000.0, 10000.0, 20000.0, 50000.0, 101325.0],
+            [0.0, 0.0, 0.1, 0.3, 0.7, 1.0],
+        )
+        grid = LatitudeLongitudeGrid(CPU();
+            size = (8, 4, 5),
+            longitude = (-180, 180),
+            latitude = (-90, 90),
+            vertical = vc,
+        )
+
+        result = prepare_met_for_physics(met, grid; use_continuity_omega = true)
+
+        # Continuity omega guarantees zero at top and bottom
+        @test all(result.w[:, :, 1] .== 0)
+        @test all(abs.(result.w[:, :, 6]) .< 1e-10)
     end
 end

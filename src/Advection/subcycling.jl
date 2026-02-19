@@ -45,15 +45,18 @@ end
 """
 $(SIGNATURES)
 
-Maximum CFL number for z-advection.
+Maximum CFL number for z-advection.  Uses per-column surface pressure from
+`velocities.p_surface` when available, falling back to reference pressure.
 """
 function max_cfl_z(velocities, grid::LatitudeLongitudeGrid, dt)
     w = Array(velocities.w)
     Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
+    ps = _get_p_surface(velocities)
+    Δz_3d = _build_Δz_3d(grid, ps)
     cfl_max = zero(Float64)
     @inbounds for k in 1:(Nz + 1), j in 1:Ny, i in 1:Nx
         kk = clamp(k, 1, Nz)
-        dz = Float64(Δz(kk, grid))
+        dz = Float64(Δz_3d[i, j, kk])
         cfl_max = max(cfl_max, abs(Float64(w[i, j, k])) * abs(dt) / dz)
     end
     return cfl_max

@@ -200,7 +200,9 @@ function _combine_ml_lnsp(ml_file::String, lnsp_file::String, outfile::String)
             for aname in keys(v.attrib)
                 outv.attrib[aname] = v.attrib[aname]
             end
-            outv[:] = collect(vraw[:])
+            data = Array(vraw)
+            idxs = ntuple(i -> 1:size(data, i), ndims(data))
+            outv[idxs...] = data
         end
 
         # Add LNSP from the surface file (it has no level dimension, or level=1)
@@ -221,11 +223,12 @@ function _combine_ml_lnsp(ml_file::String, lnsp_file::String, outfile::String)
             lnsp_dims = NCDatasets.dimnames(lnsp_var)
             lnsp_data = collect(lnsp_raw[:])
 
-            # If has a level dimension, squeeze it out
-            if "level" in lnsp_dims
-                level_idx = findfirst(==("level"), collect(lnsp_dims))
-                lnsp_data = dropdims(lnsp_data; dims=level_idx)
-                lnsp_dims_out = filter(!=("level"), collect(lnsp_dims))
+            # Squeeze out any level dimension (may be named "level" or "model_level")
+            level_dim = findfirst(d -> d in ("level", "model_level"), collect(lnsp_dims))
+            if level_dim !== nothing
+                level_name = collect(lnsp_dims)[level_dim]
+                lnsp_data = dropdims(lnsp_data; dims=level_dim)
+                lnsp_dims_out = filter(!=(level_name), collect(lnsp_dims))
             else
                 lnsp_dims_out = collect(lnsp_dims)
             end
@@ -241,7 +244,8 @@ function _combine_ml_lnsp(ml_file::String, lnsp_file::String, outfile::String)
             for aname in keys(lnsp_var.attrib)
                 outv.attrib[aname] = lnsp_var.attrib[aname]
             end
-            outv[:] = lnsp_data
+            idxs = ntuple(i -> 1:size(lnsp_data, i), ndims(lnsp_data))
+            outv[idxs...] = lnsp_data
         else
             @warn "LNSP variable not found in $lnsp_file"
         end

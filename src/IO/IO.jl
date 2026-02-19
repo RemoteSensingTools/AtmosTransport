@@ -44,7 +44,7 @@ export MetSourceConfig, VarMapping, CollectionInfo, VerticalConfig
 export load_met_config, load_canonical_config, default_met_config, validate_met_config
 export load_vertical_coefficients, build_vertical_coordinate
 export get_field, has_variable, native_name, collection_for
-export read_met!, write_output!, initialize_output!, prepare_met_for_physics
+export read_met!, write_output!, initialize_output!, prepare_met_for_physics, compute_continuity_omega
 export protocol, time_interval, source_name
 export merra2_stream, build_opendap_url, build_merra2_file_url
 export canonical_variables, canonical_units, canonical_required, canonical_dimensions

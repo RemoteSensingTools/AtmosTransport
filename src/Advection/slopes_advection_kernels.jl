@@ -145,7 +145,7 @@ end
     I = @index(Global, Cartesian)
     i, j, k = I[1], I[2], I[3]
     @inbounds begin
-        Δz_k = Δz_arr[k]
+        Δz_k = Δz_arr[i, j, k]
 
         s_k = if k > 1 && k < Nz
             s_raw = (c[i, j, k+1] - c[i, j, k-1]) / 2
@@ -185,8 +185,8 @@ end
             zero(eltype(c))
         end
 
-        Δz_next = k < Nz ? Δz_arr[k+1] : Δz_k
-        Δz_prev = k > 1 ? Δz_arr[k-1] : Δz_k
+        Δz_next = k < Nz ? Δz_arr[i, j, k+1] : Δz_k
+        Δz_prev = k > 1 ? Δz_arr[i, j, k-1] : Δz_k
 
         w_top = w[i, j, k]
         w_bot = w[i, j, k+1]

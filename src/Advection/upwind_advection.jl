@@ -79,7 +79,7 @@ end
     i, j, k = @index(Global, NTuple)
     @inbounds begin
         FT  = eltype(c)
-        dpk = Δz_arr[k]
+        dpk = Δz_arr[i, j, k]
 
         w_t = w[i, j, k]
         w_b = w[i, j, k + 1]
@@ -136,12 +136,23 @@ function advect_y!(tracers::NamedTuple, velocities, grid::LatitudeLongitudeGrid,
     return nothing
 end
 
+"""
+$(SIGNATURES)
+
+First-order upwind advection in z (vertical). Zero-flux boundaries at model
+top (k=1) and surface (k=Nz+1).
+
+Sign convention: `w > 0` means **downward** — flow from level k-1 toward level k
+(increasing k index, toward the surface). This matches the ERA5/ECMWF omega
+convention where `omega > 0` is downward (increasing pressure).
+"""
 function advect_z!(tracers::NamedTuple, velocities, grid::LatitudeLongitudeGrid, ::UpwindAdvection, Δt)
     w  = velocities.w
     backend = _get_backend(grid)
     FT = floattype(grid)
-    Δz_arr = FT[Δz(k, grid) for k in 1:grid.Nz]
-    Δz_dev = array_type(grid.architecture)(Δz_arr)
+    ps = _get_p_surface(velocities)
+    Δz_3d = _build_Δz_3d(grid, ps)
+    Δz_dev = array_type(grid.architecture)(Δz_3d)
     for (_, c) in pairs(tracers)
         c_new = similar(c)
         kernel! = _upwind_advect_z!(backend, 256)

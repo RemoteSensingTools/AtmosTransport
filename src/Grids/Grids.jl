@@ -29,9 +29,10 @@ export AbstractVerticalCoordinate, HybridSigmaPressure
 export AbstractTopology, Periodic, Bounded, CubedPanel, Flat
 export AbstractLocationType, Center, Face
 export xnode, ynode, znode, cell_area, cell_volume
-export Δx, Δy, Δz
+export Δx, Δy, Δz, level_thickness
 export topology, halo_size, grid_size, floattype
 export ReducedGridSpec, compute_reduced_grid
+export allocate_cubed_sphere_field, fill_panel_halos!
 
 include("topology.jl")
 include("location_types.jl")
@@ -42,5 +43,6 @@ include("latitude_longitude_grid.jl")
 include("cubed_sphere_grid.jl")
 include("panel_connectivity.jl")
 include("grid_utils.jl")
+include("halo_exchange.jl")
 
 end # module Grids

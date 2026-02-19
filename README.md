@@ -41,10 +41,23 @@ model = TransportModel(;
 
 ## Validation
 
-- **Tests:** 199 unit and integration tests; gradient tests for the adjoint. See `docs/VALIDATION.md`.
+- **Tests:** 209 unit and integration tests (including 18 mass-flux advection tests); gradient tests for the adjoint. See `docs/VALIDATION.md`.
+- **Mass-flux advection:** TM5-faithful co-advection of tracer mass and air mass with machine-precision conservation. See `docs/MASS_FLUX_EVOLUTION.md`.
 - **Reproducible run:** `julia --project=. scripts/run_reference_ecmwf.jl` (ECMWF/ERA5 reference case; see `docs/REFERENCE_RUN.md`).
 - **TM5 comparison:** Run TM5 locally (see `docs/TM5_LOCAL_SETUP.md`), then `scripts/compare_tm5_output.jl our_output.nc tm5_output.nc`.
 - **GPU:** X-advection runs on CUDA via KernelAbstractions when `grid = LatitudeLongitudeGrid(GPU(); ...)` and `using CUDA`; y/z and convection/diffusion remain on CPU until ported.
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [`docs/literate/advection_theory.jl`](docs/literate/advection_theory.jl) | Mathematical framework: mass-flux advection, TM5 comparison, continuity equation |
+| [`docs/literate/design_principles.jl`](docs/literate/design_principles.jl) | Architecture: why Julia, multiple dispatch, GPU, adjoint design |
+| [`docs/literate/met_driver_comparison.jl`](docs/literate/met_driver_comparison.jl) | Tutorial: ERA5 vs GEOS-FP vs MERRA-2 |
+| [`docs/VALIDATION.md`](docs/VALIDATION.md) | Test results, mass conservation, gradient tests |
+| [`docs/TM5_CODE_ALIGNMENT.md`](docs/TM5_CODE_ALIGNMENT.md) | Point-by-point checklist against TM5 Fortran source |
+| [`docs/MASS_FLUX_EVOLUTION.md`](docs/MASS_FLUX_EVOLUTION.md) | Design history and lessons learned (developer reference) |
+| [`docs/METEO_PREPROCESSING.md`](docs/METEO_PREPROCESSING.md) | Meteorological data requirements and preprocessing |
 
 ## References
 

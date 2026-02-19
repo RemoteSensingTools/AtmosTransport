@@ -383,4 +383,58 @@ using AtmosTransportModel.Grids
             @test abs(lhs - rhs) / max(abs(lhs), abs(rhs)) < 0.3
         end
     end
+
+    @testset "Transport direction: w > 0 moves mass downward (increasing k)" begin
+        vc = HybridSigmaPressure(
+            [0.0, 20000.0, 40000.0, 60000.0, 80000.0, 101325.0],
+            [0.0, 0.0, 0.1, 0.3, 0.7, 1.0])
+        grid = LatitudeLongitudeGrid(CPU();
+            size = (4, 4, 5),
+            longitude = (-180, 180),
+            latitude = (-90, 90),
+            vertical = vc)
+        Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
+
+        for scheme in [UpwindAdvection(), SlopesAdvection(use_limiter = false)]
+            label = scheme isa UpwindAdvection ? "Upwind" : "Slopes"
+
+            @testset "$label: w > 0 → downward transport" begin
+                c = zeros(Nx, Ny, Nz)
+                c[:, :, 1] .= 100.0
+                sum_k1_before = sum(c[:, :, 1])
+                tracers = (; c)
+
+                u = zeros(Nx + 1, Ny, Nz)
+                v = zeros(Nx, Ny + 1, Nz)
+                w = fill(5000.0, Nx, Ny, Nz + 1)  # w > 0 = downward
+                w[:, :, 1] .= 0
+                w[:, :, end] .= 0
+                velocities = (; u, v, w)
+
+                advect_z!(tracers, velocities, grid, scheme, 1.0)
+
+                @test sum(tracers.c[:, :, 1]) < sum_k1_before
+                @test sum(tracers.c[:, :, 2]) > 0
+            end
+
+            @testset "$label: w < 0 → upward transport" begin
+                c = zeros(Nx, Ny, Nz)
+                c[:, :, Nz] .= 100.0
+                sum_kN_before = sum(c[:, :, Nz])
+                tracers = (; c)
+
+                u = zeros(Nx + 1, Ny, Nz)
+                v = zeros(Nx, Ny + 1, Nz)
+                w = fill(-5000.0, Nx, Ny, Nz + 1)  # w < 0 = upward
+                w[:, :, 1] .= 0
+                w[:, :, end] .= 0
+                velocities = (; u, v, w)
+
+                advect_z!(tracers, velocities, grid, scheme, 1.0)
+
+                @test sum(tracers.c[:, :, Nz]) < sum_kN_before
+                @test sum(tracers.c[:, :, Nz - 1]) > 0
+            end
+        end
+    end
 end

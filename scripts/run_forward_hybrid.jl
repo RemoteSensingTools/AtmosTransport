@@ -120,10 +120,11 @@ function stagger_velocities(u_cc, v_cc, omega, Nx, Ny, Nz, ::Type{FT}) where {FT
     end
 
     # omega → w at z-interfaces (Nx, Ny, Nz+1)
-    # omega > 0 = downward, w > 0 = upward → negate and average to interfaces
+    # omega > 0 = downward (toward surface, increasing k).
+    # advect_z! uses w > 0 = downward (increasing k), so no sign flip.
     w = zeros(FT, Nx, Ny, Nz + 1)
     @inbounds for k in 2:Nz, j in 1:Ny, i in 1:Nx
-        w[i, j, k] = -(omega[i, j, k - 1] + omega[i, j, k]) / 2
+        w[i, j, k] = (omega[i, j, k - 1] + omega[i, j, k]) / 2
     end
 
     return (; u, v, w)
@@ -207,15 +208,10 @@ function run_forward()
           "max=$(round(maximum(c_cpu), digits=2)), " *
           "mass=$(round(initial_mass, sigdigits=8))"
 
-    # Advection scheme
-    scheme = SlopesAdvection(use_limiter = true)
-
-    # Time stepping: 56 steps (7 days at 3-hourly)
-    # Each step: load met, Strang split with subcycled advection
-    # Strang: X(dt/2), Y(dt/2), Z(dt/2), Z(dt/2), Y(dt/2), X(dt/2)
     half_dt = DT / 2
 
     @info "\n--- Running forward simulation ($Nt steps, DT=$(DT)s) ---"
+    @info "  Using TM5-faithful mass-flux advection"
     wall_start = time()
 
     for step in 1:Nt
@@ -232,16 +228,17 @@ function run_forward()
             w = ArrayType(met.w),
         )
 
-        # CFL diagnostics (optional, for logging)
-        counts = subcycling_counts(vel, grid, half_dt; cfl_limit = 0.95)
+        # Compute pressure thickness, air mass, and mass fluxes (TM5 dynam0)
+        Δp = Advection._build_Δz_3d(grid, ps)
+        m = compute_air_mass(Δp, grid)
+        mf = compute_mass_fluxes(vel.u, vel.v, grid, Δp, half_dt)
 
-        # Strang split with subcycled advection
-        advect_x_subcycled!(tracers, vel, grid, scheme, half_dt; cfl_limit = 0.95)
-        advect_y_subcycled!(tracers, vel, grid, scheme, half_dt; cfl_limit = 0.95)
-        advect_z_subcycled!(tracers, vel, grid, scheme, half_dt; cfl_limit = 0.95)
-        advect_z_subcycled!(tracers, vel, grid, scheme, half_dt; cfl_limit = 0.95)
-        advect_y_subcycled!(tracers, vel, grid, scheme, half_dt; cfl_limit = 0.95)
-        advect_x_subcycled!(tracers, vel, grid, scheme, half_dt; cfl_limit = 0.95)
+        # CFL diagnostics (mass-based)
+        cfl_x = max_cfl_massflux_x(mf.am, m)
+
+        # TM5-faithful mass-flux Strang split (X→Y→Z→Z→Y→X)
+        strang_split_massflux!(tracers, m, mf.am, mf.bm, mf.cm,
+                               grid, true; cfl_limit = FT(0.95))
 
         # Diagnostics
         c_now = Array(tracers.c)
@@ -261,7 +258,7 @@ function run_forward()
               "max=$(round(c_max, digits=2)), " *
               "mean=$(round(c_mean, digits=2)), " *
               "mass_change=$(round(mass_change_pct, sigdigits=3))%, " *
-              "CFL_x=$(round(counts.cfl_x, digits=2)), " *
+              "CFL_x=$(round(cfl_x, digits=2)), " *
               "wall=$(elapsed_step)s (total $(elapsed_total)s)"
     end
 

@@ -115,10 +115,12 @@ Discrete adjoint of advect_z!. Overwrites adj_tracers with A' * adj_tracers.
 function adjoint_advect_z!(adj_tracers::NamedTuple, velocities, grid::LatitudeLongitudeGrid, scheme::UpwindAdvection, Δt)
     w = velocities.w
     Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
+    ps = _get_p_surface(velocities)
+    Δz_3d = _build_Δz_3d(grid, ps)
     for (name, λ) in pairs(adj_tracers)
         λ_new = similar(λ)
         for k in 1:Nz, j in 1:Ny, i in 1:Nx
-            Δz_k = Δz(k, grid)
+            Δz_k = Δz_3d[i, j, k]
             k_prev = k - 1
             k_next = k + 1
             w_top = w[i, j, k]
@@ -126,12 +128,11 @@ function adjoint_advect_z!(adj_tracers::NamedTuple, velocities, grid::LatitudeLo
             fac = Δt / Δz_k
             diag = 1 - fac * (w_bot * (w_bot > 0) - w_top * (w_top <= 0))
             contrib = diag * λ[i, j, k]
-            # A[k+1,k] uses Δz(k+1); A[k-1,k] uses Δz(k-1) and has minus sign
             if k < Nz
-                contrib += (Δt / Δz(k_next, grid)) * w_bot * (w_bot > 0) * λ[i, j, k_next]
+                contrib += (Δt / Δz_3d[i, j, k_next]) * w_bot * (w_bot > 0) * λ[i, j, k_next]
             end
             if k > 1
-                contrib -= (Δt / Δz(k_prev, grid)) * w_top * (w_top <= 0) * λ[i, j, k_prev]
+                contrib -= (Δt / Δz_3d[i, j, k_prev]) * w_top * (w_top <= 0) * λ[i, j, k_prev]
             end
             λ_new[i, j, k] = contrib
         end

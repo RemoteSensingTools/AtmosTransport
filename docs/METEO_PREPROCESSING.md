@@ -242,6 +242,37 @@ against:
 - Observations (surface stations, satellite retrievals)
 - The Julia model already has a working GEOS-FP reader
 
+### Mass fluxes vs. winds — lessons from GCHP v13
+
+Martin et al. (2022, GMD 15, 8731-8748) demonstrate that **directly using air
+mass fluxes** instead of inferring them from archived winds significantly reduces
+transport errors in offline models. Key findings relevant to our model:
+
+1. **Surface pressure tendency error**: Using winds gives 15× larger error than
+   using mass fluxes directly (MAE 15 Pa vs 1 Pa for a 5-min timestep).
+
+2. **Restaggering error**: Even on the native cubed-sphere grid, converting
+   between A-grid (cell-center winds) and C-grid (face mass fluxes) weakens
+   vertical advection by ~8% (regression slope = 0.92). Our `stagger_velocities`
+   function performs exactly this operation.
+
+3. **Regridding + restaggering**: The traditional GEOS-FP pipeline
+   (C720 cubed-sphere → 0.25° lat-lon winds → regrid to model grid → restagger)
+   introduces compounding errors that dominate vertical transport, especially in
+   the stratosphere where vertical motion is weak.
+
+4. **Native cubed-sphere mass fluxes**: Since March 2021, GEOS-FP operationally
+   archives hourly C720 cubed-sphere mass fluxes. GEOS-IT provides C180 archives
+   for 1998-present. These avoid all regridding/restaggering errors.
+
+**Implications for our model:**
+- Our current wind-based approach (cell-center → face staggering) introduces a
+  known ~1% mass conservation error, consistent with our observed 0.9% drift
+- Supporting direct mass flux ingestion from native cubed-sphere GEOS-FP/GEOS-IT
+  archives would eliminate this error source entirely
+- The `CubedSphereGrid` implementation uses the same gnomonic projection as FV3,
+  enabling direct use of native GEOS-FP mass flux archives in the future
+
 ## Data on disk
 
 Current meteorological data available at `~/data/metDrivers/`:
@@ -259,4 +290,7 @@ Current meteorological data available at `~/data/metDrivers/`:
 - Krol et al. (2005): TM5 algorithm. ACP 5, 417-432.
 - Williams et al. (2017): TM5-MP description. GMD 10, 721.
 - Huijnen et al. (2010): TM5 tropospheric chemistry. GMD 3, 445.
+- Martin et al. (2022): GCHP v13 — improved advection, native CS archives. GMD 15, 8731-8748.
+  https://doi.org/10.5194/gmd-15-8731-2022
+- Putman & Lin (2007): FV3 cubed-sphere advection. JCP 227, 55-78.
 - TM5 Wiki: https://sourceforge.net/p/tm5/wiki/Meteo/

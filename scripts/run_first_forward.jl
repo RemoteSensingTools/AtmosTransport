@@ -163,12 +163,11 @@ function load_met_from_netcdf(filepath::String, ::Type{FT}) where {FT}
         end
 
         # w at z-interfaces: (Nx, Ny, Nz+1), convert from omega
-        # omega is in Pa/s, our vertical coordinate is also in Pa (pressure)
-        # w > 0 means upward (toward lower pressure / lower k index)
+        # omega > 0 = downward; advect_z! w > 0 = downward. No sign flip.
         # Apply CFL limiter: |w * Δt / Δz| < 0.5
         w = zeros(FT, Nx, Ny, Nz + 1)
         for k in 2:Nz, j in 1:Ny, i in 1:Nx
-            w_raw = -(omega[i, j, k - 1] + omega[i, j, k]) / 2
+            w_raw = (omega[i, j, k - 1] + omega[i, j, k]) / 2
             # Use the thinner of the two adjacent layers for CFL check
             dp_min = min(mean_delp[k - 1], mean_delp[k])
             w_max = cfl_limit * dp_min / FT(Δt)

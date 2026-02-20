@@ -52,6 +52,9 @@ export AbstractOutputWriter, AbstractOutputSchedule
 export NetCDFOutputWriter, TimeIntervalSchedule, IterationIntervalSchedule
 export TemporalInterpolator, interpolation_weight
 export load_configuration
+export GeosFPCubedSphereTimestep
+export read_geosfp_cs_timestep, to_haloed_panels
+export geosfp_cs_url, geosfp_cs_asm_url
 
 # Core abstract interface (must come first)
 include("abstract_met_data.jl")
@@ -84,5 +87,8 @@ include("output_writers.jl")
 
 # Run configuration
 include("configuration.jl")
+
+# GEOS-FP native cubed-sphere reader
+include("geosfp_cubed_sphere_reader.jl")
 
 end # module IO

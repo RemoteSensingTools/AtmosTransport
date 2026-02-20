@@ -43,7 +43,14 @@ function load_edgar_co2(filepath::String, target_grid::LatitudeLongitudeGrid{FT}
         flux_native[i, j] = tonnes_per_year * FT(1000) / (seconds_per_year * cell_area_e)
     end
 
-    flux_model = _conservative_regrid(flux_native, lon_edgar, lat_edgar,
+    # If EDGAR uses -180:180 but the model grid uses 0:360, remap longitudes.
+    lon_edgar_use, flux_native_use = if minimum(lon_edgar) < 0
+        _remap_lon_0_360(lon_edgar, flux_native, FT)
+    else
+        FT.(lon_edgar), flux_native
+    end
+
+    flux_model = _conservative_regrid(flux_native_use, lon_edgar_use, lat_edgar,
                                       target_grid, FT)
 
     total_native = sum(emi_raw) * 1000 / seconds_per_year  # kg/s
@@ -55,6 +62,25 @@ function load_edgar_co2(filepath::String, target_grid::LatitudeLongitudeGrid{FT}
           "ratio=$(round(ratio, digits=4))"
 
     return GriddedEmission{FT, typeof(flux_model)}(flux_model, :co2, "EDGAR v8.0 CO2 $year")
+end
+
+"""
+Reorder a lon×lat flux array from -180:180 longitude convention to 0:360,
+so that the regridder can match against a model grid that uses 0:360.
+"""
+function _remap_lon_0_360(lon_src::AbstractVector, flux::Matrix{FT}, ::Type{FT}) where FT
+    n = length(lon_src)
+    # Find the first index where lon >= 0
+    split = findfirst(>=(0), lon_src)
+    if split === nothing
+        # All negative — just shift by 360
+        return FT.(lon_src .+ 360), flux
+    end
+    # Reorder: [split:end, 1:split-1]
+    idx = vcat(split:n, 1:split-1)
+    lon_new = FT.(mod.(lon_src[idx], 360))
+    flux_new = flux[idx, :]
+    return lon_new, flux_new
 end
 
 """

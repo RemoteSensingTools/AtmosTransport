@@ -1,5 +1,8 @@
 [deps]
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 CDSAPI = "8a7b9de3-9c00-473e-88b4-7eccd7ef2fea"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+GeoMakie = "db073c08-6b98-4ee5-b6a4-5efafb3259c6"
+GeometryBasics = "5c1252a2-5f33-56bf-86c9-59e7332b4326"
 HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
 NCDatasets = "85f8d34a-cbdd-5861-8df4-14fed0d494ab"
-Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"

@@ -145,6 +145,38 @@ function apply_emissions_window!(c, flux_dev, area_j_dev, ps_dev,
 end
 
 # ---------------------------------------------------------------------------
+# GPU diagnostic kernels (column-mean, surface slice)
+# ---------------------------------------------------------------------------
+@kernel function _column_mean_kernel!(c_col, @Const(c), @Const(m), Nz)
+    i, j = @index(Global, NTuple)
+    FT = eltype(c)
+    @inbounds begin
+        sum_cm = zero(FT)
+        sum_m  = zero(FT)
+        for k in 1:Nz
+            sum_cm += c[i, j, k] * m[i, j, k]
+            sum_m  += m[i, j, k]
+        end
+        c_col[i, j] = sum_m > zero(FT) ? sum_cm / sum_m : zero(FT)
+    end
+end
+
+@kernel function _copy_surface_kernel!(c_sfc, @Const(c), Nz)
+    i, j = @index(Global, NTuple)
+    @inbounds c_sfc[i, j] = c[i, j, Nz]
+end
+
+function compute_diagnostics_gpu!(c_col_dev, c_sfc_dev, c, m, Nz)
+    backend = get_backend(c)
+    Nx, Ny = size(c, 1), size(c, 2)
+    k1! = _column_mean_kernel!(backend, 256)
+    k1!(c_col_dev, c, m, Nz; ndrange=(Nx, Ny))
+    k2! = _copy_surface_kernel!(backend, 256)
+    k2!(c_sfc_dev, c, Nz; ndrange=(Nx, Ny))
+    synchronize(backend)
+end
+
+# ---------------------------------------------------------------------------
 # Mass diagnostic (CPU)
 # ---------------------------------------------------------------------------
 function total_mass(c, grid, ps_2d, A_coeff, B_coeff)
@@ -262,6 +294,13 @@ function run_era5_edgar()
     c        = AT(zeros(FT, Nx, Ny, Nz))
     tracers  = (; c)
 
+    # Diffusion workspace (GPU Thomas solver — eliminates D2H/H2D per sub-step)
+    diff_ws = DiffusionWorkspace(grid, FT(50), DT, c)
+
+    # GPU diagnostic buffers
+    c_col_dev = AT(zeros(FT, Nx, Ny))
+    c_sfc_dev = AT(zeros(FT, Nx, Ny))
+
     @info "  All arrays pre-allocated ($(USE_GPU ? "GPU" : "CPU"), zero-alloc inner loop)"
 
     # --- Output ---
@@ -332,27 +371,26 @@ function run_era5_edgar()
 
                 # ===== PHASE 2: Advection + diffusion sub-steps =====
                 t_phase2 = time()
-                diff_scheme = BoundaryLayerDiffusion(FT(50))
                 for sub in 1:steps_per_met
                     step += 1
                     strang_split_massflux!(tracers, m, am, bm, cm,
                                            grid, true, ws; cfl_limit = FT(0.95))
-                    diffuse!(tracers, nothing, grid, diff_scheme, DT)
+                    diffuse_gpu!(tracers, diff_ws)
                 end
                 t_phase2_done = time() - t_phase2
 
                 # --- Diagnostics (every snapshot_interval steps) ---
                 if step % snapshot_interval < steps_per_met || step <= steps_per_met
-                    c_host = Array(tracers.c)
-                    c_sfc = c_host[:, :, Nz]
-                    c_col = dropdims(sum(c_host, dims=3), dims=3) ./ Nz
+                    compute_diagnostics_gpu!(c_col_dev, c_sfc_dev, tracers.c, Δp, Nz)
+                    c_sfc = Array(c_sfc_dev)
+                    c_col = Array(c_col_dev)
                     sim_hours = step * Float64(DT) / 3600.0
 
                     snapshot_idx += 1
                     ds["time"][snapshot_idx] = sim_hours
                     ds["co2_surface"][:, :, snapshot_idx] = Float32.(c_sfc)
                     ds["co2_column_mean"][:, :, snapshot_idx] = Float32.(c_col)
-                    ds["mass_total"][snapshot_idx] = Float64(sum(c_host))
+                    ds["mass_total"][snapshot_idx] = Float64(sum(tracers.c))
                     ds["emitted_total_kg"][snapshot_idx] = cumulative_emitted_kg
 
                     elapsed = round(time() - wall_start, digits=1)
@@ -362,7 +400,7 @@ function run_era5_edgar()
                         "  Window %d/%d (day %.1f): precomp=%.2fs advect=%.2fs | sfc_max=%.3f mean=%.5f ppm | wall=%.0fs (%.2fs/win)",
                         met_window, total_met_windows, sim_hours/24,
                         t_phase1_done, t_phase2_done,
-                        maximum(c_sfc), sum(c_host)/length(c_host),
+                        maximum(c_sfc), sum(tracers.c)/length(tracers.c),
                         elapsed, rate)
                 end
             end

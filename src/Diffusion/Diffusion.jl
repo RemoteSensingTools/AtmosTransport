@@ -21,6 +21,7 @@ using ..Fields: AbstractField
 
 export AbstractDiffusion, BoundaryLayerDiffusion, NoDiffusion
 export diffuse!, adjoint_diffuse!
+export DiffusionWorkspace, diffuse_gpu!, build_diffusion_coefficients
 
 """
 $(TYPEDEF)

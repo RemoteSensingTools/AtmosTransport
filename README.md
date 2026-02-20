@@ -5,6 +5,29 @@
 A Julia-based atmospheric transport model for GPU and CPU, inspired by TM5 and designed with
 [Oceananigans.jl](https://github.com/CliMA/Oceananigans.jl)-style multiple dispatch patterns.
 
+### Column-Mean CO₂ Transport (ERA5 + EDGAR, GPU)
+
+![Column-mean CO₂ animation](docs/src/assets/column_mean_animation_small.gif)
+
+*One-month forward simulation (June 2024) of anthropogenic CO₂ transport on a
+1° × 1° × 137-level grid, driven by ERA5 model-level spectral winds and
+[EDGAR v8.0](https://edgar.jrc.ec.europa.eu/) surface emissions. The animation
+shows the column-averaged mixing ratio enhancement (ppm, delta-pressure weighted)
+in Robinson projection.*
+
+**Simulation details.** Mass fluxes are pre-computed from ERA5 hybrid-level u/v/omega
+fields following TM5's continuity-consistent approach: horizontal mass fluxes are
+derived from the winds, and vertical fluxes are diagnosed from horizontal convergence
+to guarantee column mass conservation. Transport uses TM5-faithful mass-flux advection
+(Russell--Lerner slopes scheme with Strang splitting) and boundary-layer diffusion
+(implicit Thomas solver). The entire simulation loop --- advection, diffusion, source
+injection, air-mass bookkeeping, and column-mean diagnostics --- runs on a single
+NVIDIA L40S GPU via [KernelAbstractions.jl](https://github.com/JuliaGPU/KernelAbstractions.jl)
+in Float32 arithmetic. Key GPU optimizations include a parallelized tridiagonal
+(Thomas) solver for vertical diffusion, device-to-device air-mass resets eliminating
+per-substep host transfers, GPU-side column-mean and surface diagnostics, and
+memory-mapped flat-binary I/O for mass-flux ingestion (~15× faster than NetCDF).
+
 ## Features
 
 - **Multi-grid:** Latitude-longitude and cubed-sphere grids with hybrid sigma-pressure vertical coordinates

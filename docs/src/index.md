@@ -11,6 +11,25 @@ checkpointing, and extensible physics operators -- all from a single codebase th
 runs identically on CPU and GPU via
 [KernelAbstractions.jl](https://github.com/JuliaGPU/KernelAbstractions.jl).
 
+## Example: Column-Mean CO₂ Transport
+
+![Column-mean CO₂ animation](assets/column_mean_animation_small.gif)
+
+*One-month forward simulation (June 2024) of anthropogenic CO₂ transport on a
+1° × 1° × 137-level grid, driven by ERA5 model-level spectral winds and
+EDGAR v8.0 surface emissions. Column-averaged mixing ratio enhancement (ppm,
+delta-pressure weighted) in Robinson projection.*
+
+Mass fluxes are pre-computed from ERA5 hybrid-level u/v/omega fields following
+TM5's continuity-consistent approach: horizontal mass fluxes are derived from the
+winds, and vertical fluxes are diagnosed from horizontal convergence to guarantee
+column mass conservation. Transport uses TM5-faithful mass-flux advection
+(Russell--Lerner slopes scheme with Strang splitting) and boundary-layer diffusion
+(implicit Thomas solver). The simulation loop runs entirely on a single NVIDIA L40S
+GPU in Float32 arithmetic, with a parallelized tridiagonal solver for diffusion,
+device-to-device air-mass resets, GPU-side diagnostics, and memory-mapped
+flat-binary I/O for mass-flux ingestion (~15× faster than NetCDF).
+
 ## Quick install
 
 AtmosTransportModel requires Julia 1.10 or later.
@@ -51,9 +70,9 @@ model = TransportModel(;
 
 | Section | Contents |
 |:--------|:---------|
-| [Theory](@ref) | Mathematical framework: mass-flux advection, continuity equation, TM5 comparison |
-| [Tutorials](@ref) | Step-by-step guides for running forward simulations |
-| [Developer Guide](@ref) | Validation details, TM5 alignment checklists, design history |
+| Theory | Mathematical framework: mass-flux advection, continuity equation, TM5 comparison |
+| Tutorials | Step-by-step guides for running forward simulations |
+| Developer Guide | Validation details, TM5 alignment checklists, design history |
 | [API Reference](@ref) | Auto-generated docstrings for all exported types and functions |
 
 ## References

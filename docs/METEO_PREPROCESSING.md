@@ -300,6 +300,76 @@ transport errors in offline models. Key findings relevant to our model:
 - The `CubedSphereGrid` implementation uses the same gnomonic projection as FV3,
   enabling direct use of native GEOS-FP mass flux archives in the future
 
+## CO2 Surface Flux Components
+
+The model supports multiple CO2 flux components, following the ECMWF IFS/CHE
+nature run framework. Each component can be loaded and applied independently
+or combined via `CompositeEmission`.
+
+### Comparison with ECMWF IFS and CarbonTracker
+
+| Component | ECMWF IFS (CY49R1) | CarbonTracker CT-NRT | Our Model |
+|-----------|---------------------|----------------------|-----------|
+| **Anthropogenic** | CAMS-GLOB-ANT v6.2 | Miller fossil fuel | EDGAR v8.0 |
+| **Biosphere** | ECLand (online) | CASA + optimization | CT-NRT bio_flux_opt |
+| **Ocean** | Jena CarboScope v2020 | OIF ocean prior + opt | Jena CarboScope oc_v2024 |
+| **Fire** | GFAS v1.4 | GFED4.1s | CT-NRT fire_flux_imp or GFAS |
+
+### Available flux datasets
+
+| Source | Reader | Resolution | Temporal | Units (native) | Download Script |
+|--------|--------|------------|----------|----------------|-----------------|
+| EDGAR v8.0 | `load_edgar_co2` | 0.1° | Annual | Tonnes/yr | (manual) |
+| CT-NRT v2025-1 | `load_carbontracker_fluxes` | 1×1° | 3-hourly | mol/m²/s | `download_carbontracker_fluxes.jl` |
+| Jena CarboScope | `load_jena_ocean_flux` | 1×1° | Daily | PgC/yr/cell | `download_ocean_flux.jl` |
+| CAMS GFAS v1.4 | `load_gfas_fire_flux` | 0.1° | Daily | kg/m²/s | `download_gfas_fire.jl` |
+
+### Tagged tracers (future)
+
+The IFS CHE nature run uses tagged CO2 tracers (GRIB table 210) to track
+atmospheric enhancement by source:
+
+| Parameter | Description |
+|-----------|-------------|
+| 210061 | Total CO2 mass mixing ratio |
+| 68.210 | Natural biosphere CO2 flux |
+| 69.210 | Anthropogenic CO2 emissions |
+| 64.210 | CO2 column-mean molar fraction |
+
+Our model can replicate this by adding separate tracers (`co2_anthro`,
+`co2_bio`, `co2_ocean`, `co2_fire`) transported independently, with
+total CO2 = sum of all components. This is implemented as a stretch goal.
+
+## Monthly-Sharded Mass Flux Preprocessing
+
+For year-long simulations, mass flux files are sharded by month:
+
+```
+~/data/metDrivers/era5/era5_ml_1deg_20240101_20241231/
+    massflux_era5_202401_float32.nc   (~5-12 GB)
+    massflux_era5_202401_float32.bin  (mmap-ready binary)
+    massflux_era5_202402_float32.nc
+    ...
+    massflux_era5_202412_float32.nc
+```
+
+The forward model (`run_forward_preprocessed.jl`) accepts `MASSFLUX_DIR`
+pointing to this directory and chains through monthly shards automatically.
+
+### Data size estimates (1-degree, L88, full year)
+
+| Component | Per Month | Full Year |
+|-----------|-----------|-----------|
+| ERA5 model-level downloads | ~3-5 GB | ~40-60 GB |
+| Mass flux NetCDF (deflate=1) | ~5-12 GB | ~60-100 GB |
+| Mass flux binary (mmap) | ~11 GB | ~135 GB |
+| CT-NRT fluxes (1x1, 3-hourly) | ~60 MB | ~730 MB |
+| GFAS fire (0.1, daily) | ~150 MB | ~2 GB |
+| Jena CarboScope ocean | — | ~100 MB (single file) |
+| EDGAR v8.0 | — | ~26 MB |
+
+Total storage for a full-year 1-degree simulation: **~200-300 GB**.
+
 ## Data on disk
 
 Current meteorological data available at `~/data/metDrivers/`:
@@ -324,4 +394,8 @@ Current meteorological data available at `~/data/metDrivers/`:
 - Martin et al. (2022): GCHP v13 — improved advection, native CS archives. GMD 15, 8731-8748.
   https://doi.org/10.5194/gmd-15-8731-2022
 - Putman & Lin (2007): FV3 cubed-sphere advection. JCP 227, 55-78.
+- Agusti-Panareda et al. (2023): CAMS GHG production system. GMD.
+- Rödenbeck et al. (2013): Jena CarboScope ocean CO2 fluxes. Ocean Sci.
+- Agustí-Panareda et al. (2019): CHE global nature run. Sci. Data 9, 1-16.
+  https://doi.org/10.1038/s41597-022-01228-2
 - TM5 Wiki: https://sourceforge.net/p/tm5/wiki/Meteo/

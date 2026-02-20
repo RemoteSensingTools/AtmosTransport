@@ -1,30 +1,29 @@
 #!/usr/bin/env julia
 # ===========================================================================
-# Forward transport reading PRE-COMPUTED mass fluxes from NetCDF
+# Forward transport reading PRE-COMPUTED mass fluxes from NetCDF/binary
 #
 # The mass fluxes (am, bm, cm, m) were computed by preprocess_mass_fluxes.jl
 # and saved to disk. This script:
-#   1. Reads am/bm/cm/m per met window from the preprocessed file
+#   1. Reads am/bm/cm/m per met window from the preprocessed file(s)
 #   2. Copies to GPU (single H2D transfer per window)
 #   3. Injects EDGAR emissions once per window (constant field)
 #   4. Runs Strang-split advection sub-steps (pure GPU, zero allocation)
 #
-# This separation means:
-#   - No wind staggering at runtime
-#   - No compute_mass_fluxes! at runtime
-#   - Adjoint runs reuse the same preprocessed file
-#   - The GPU only does advection kernels
+# Supports monthly-sharded mass flux files: set MASSFLUX_DIR to a directory
+# containing massflux_era5_YYYYMM_*.nc (or .bin) files. The script chains
+# through them in chronological order.
 #
 # Usage:
 #   USE_GPU=true USE_FLOAT32=true julia --project=. scripts/run_forward_preprocessed.jl
 #
 # Environment variables:
-#   USE_GPU      — "true" for GPU execution (default: false)
-#   USE_FLOAT32  — "true" for Float32 precision (default: false)
-#   DT           — advection sub-step [s] (read from preprocessed file if not set)
-#   MASSFLUX_FILE — path to preprocessed mass-flux NetCDF
-#   EDGAR_FILE   — path to EDGAR emission NetCDF
-#   OUTDIR       — output directory
+#   USE_GPU       — "true" for GPU execution (default: false)
+#   USE_FLOAT32   — "true" for Float32 precision (default: false)
+#   DT            — advection sub-step [s] (read from preprocessed file if not set)
+#   MASSFLUX_FILE — path to single preprocessed mass-flux file (legacy mode)
+#   MASSFLUX_DIR  — directory with monthly-sharded mass flux files (preferred)
+#   EDGAR_FILE    — path to EDGAR emission NetCDF
+#   OUTDIR        — output directory
 # ===========================================================================
 
 using AtmosTransportModel
@@ -57,10 +56,33 @@ const FT = USE_FLOAT32 ? Float32 : Float64
 
 const MASSFLUX_FILE = expanduser(get(ENV, "MASSFLUX_FILE",
     "~/data/metDrivers/era5/massflux_era5_202406_$(USE_FLOAT32 ? "float32" : "float64").nc"))
+const MASSFLUX_DIR  = expanduser(get(ENV, "MASSFLUX_DIR", ""))
 const EDGAR_FILE = expanduser(get(ENV, "EDGAR_FILE",
     "~/data/emissions/edgar_v8/v8.0_FT2022_GHG_CO2_2022_TOTALS_emi.nc"))
 const OUTDIR = expanduser(get(ENV, "OUTDIR",
     "~/data/output/era5_edgar_preprocessed_$(USE_FLOAT32 ? "f32" : "f64")"))
+
+"""
+Discover monthly mass-flux shard files in a directory.
+Prefers .bin over .nc for each month. Returns sorted list of file paths.
+"""
+function find_massflux_shards(dir::String, ft_tag::String)
+    all_files = readdir(dir; join=true)
+    # Group by YYYYMM key
+    months = Dict{String, String}()
+    for f in all_files
+        bn = basename(f)
+        m = match(r"massflux_era5_(\d{6})_" * ft_tag, bn)
+        m === nothing && continue
+        month_key = m[1]
+        if endswith(bn, ".bin")
+            months[month_key] = f  # .bin always wins
+        elseif endswith(bn, ".nc") && !haskey(months, month_key)
+            months[month_key] = f
+        end
+    end
+    return [months[k] for k in sort(collect(keys(months)))]
+end
 
 # ---------------------------------------------------------------------------
 # GPU emission injection kernel
@@ -223,6 +245,48 @@ function ensure_local_cache(src_path::String)
 end
 
 # ===========================================================================
+# Open a single mass-flux file (binary or NetCDF) and return metadata.
+# Returns (source, lons, lats, Nx, Ny, Nz, Nt, dt, steps_per_met, level_top, level_bot)
+# where source is either MassFluxBinaryReader or NCDataset.
+# ===========================================================================
+function open_massflux_source(filepath::String)
+    if endswith(filepath, ".bin")
+        use_cache = parse(Bool, get(ENV, "USE_LOCAL_CACHE", "false"))
+        bin_path = use_cache ? ensure_local_cache(filepath) : filepath
+        reader = MassFluxBinaryReader(bin_path, FT)
+        return (reader, reader.lons, reader.lats, reader.Nx, reader.Ny, reader.Nz,
+                reader.Nt, reader.dt_seconds, reader.steps_per_met,
+                reader.level_top, reader.level_bot)
+    else
+        ds = NCDataset(filepath)
+        lons = FT.(ds["lon"][:])
+        lats = FT.(ds["lat"][:])
+        return (ds, lons, lats, length(lons), length(lats),
+                ds.dim["lev"], ds.dim["time"],
+                FT(ds.attrib["dt_seconds"]),
+                Int(ds.attrib["steps_per_met_window"]),
+                Int(ds.attrib["level_top"]), Int(ds.attrib["level_bot"]))
+    end
+end
+
+function load_window_from_source!(m_cpu, am_cpu, bm_cpu, cm_cpu, ps_cpu,
+                                  source, win::Int)
+    if source isa MassFluxBinaryReader
+        load_window!(m_cpu, am_cpu, bm_cpu, cm_cpu, ps_cpu, source, win)
+    else
+        m_cpu  .= FT.(source["m"][:, :, :, win])
+        am_cpu .= FT.(source["am"][:, :, :, win])
+        bm_cpu .= FT.(source["bm"][:, :, :, win])
+        cm_cpu .= FT.(source["cm"][:, :, :, win])
+        ps_cpu .= FT.(source["ps"][:, :, win])
+    end
+end
+
+function close_source(source)
+    close(source)
+end
+
+# ===========================================================================
 # Main simulation
 # ===========================================================================
 function run_forward()
@@ -230,52 +294,43 @@ function run_forward()
     @info "AtmosTransportModel — Forward Run from Preprocessed Mass Fluxes"
     @info "=" ^ 70
 
-    isfile(MASSFLUX_FILE) || error("Preprocessed file not found: $MASSFLUX_FILE")
     isfile(EDGAR_FILE) || error("EDGAR file not found: $EDGAR_FILE")
 
-    # --- Detect binary file (prefer .bin over .nc for speed) ---
-    bin_candidate = replace(MASSFLUX_FILE, r"\.nc$" => ".bin")
-    use_binary = isfile(bin_candidate)
-    bin_reader = nothing   # set below if binary
-    ds_mf = nothing        # set below if NetCDF
-
-    if use_binary
-        # Optionally cache to local NVMe for faster reads
-        use_cache = parse(Bool, get(ENV, "USE_LOCAL_CACHE", "false"))
-        bin_path = use_cache ? ensure_local_cache(bin_candidate) : bin_candidate
-        bin_reader = MassFluxBinaryReader(bin_path, FT)
-        lons = bin_reader.lons
-        lats = bin_reader.lats
-        Nx   = bin_reader.Nx
-        Ny   = bin_reader.Ny
-        Nz   = bin_reader.Nz
-        Nt   = bin_reader.Nt
-        dt_file = bin_reader.dt_seconds
-        steps_per_met = bin_reader.steps_per_met
-        level_top = bin_reader.level_top
-        level_bot = bin_reader.level_bot
-        @info "  I/O backend: BINARY (mmap) — $bin_path"
+    # --- Discover mass flux file(s) ---
+    ft_tag = USE_FLOAT32 ? "float32" : "float64"
+    massflux_files = if !isempty(MASSFLUX_DIR) && isdir(MASSFLUX_DIR)
+        shards = find_massflux_shards(MASSFLUX_DIR, ft_tag)
+        isempty(shards) && error("No massflux shard files found in $MASSFLUX_DIR")
+        @info "  Multi-month mode: $(length(shards)) shard files in $MASSFLUX_DIR"
+        shards
     else
-        ds_mf = NCDataset(MASSFLUX_FILE)
-        lons = FT.(ds_mf["lon"][:])
-        lats = FT.(ds_mf["lat"][:])
-        Nx   = length(lons)
-        Ny   = length(lats)
-        Nz   = ds_mf.dim["lev"]
-        Nt   = ds_mf.dim["time"]
-        dt_file = FT(ds_mf.attrib["dt_seconds"])
-        steps_per_met = ds_mf.attrib["steps_per_met_window"]
-        level_top = ds_mf.attrib["level_top"]
-        level_bot = ds_mf.attrib["level_bot"]
-        @info "  I/O backend: NetCDF — $MASSFLUX_FILE"
+        # Legacy single-file mode: also check for .bin companion
+        bin_candidate = replace(MASSFLUX_FILE, r"\.nc$" => ".bin")
+        primary = isfile(bin_candidate) ? bin_candidate : MASSFLUX_FILE
+        isfile(primary) || error("Preprocessed file not found: $primary")
+        [primary]
     end
 
-    DT = haskey(ENV, "DT") ? parse(FT, ENV["DT"]) : dt_file
-    met_interval = FT(DT * steps_per_met)
-    total_steps = Nt * steps_per_met
+    for (i, f) in enumerate(massflux_files)
+        @info "  [$i] $(basename(f))"
+    end
 
-    @info "  Preprocessed: $MASSFLUX_FILE"
-    @info "  Grid: Nx=$Nx, Ny=$Ny, Nz=$Nz, windows=$Nt"
+    # Read metadata from the first file
+    first_source, lons, lats, Nx, Ny, Nz, _, dt_file, steps_per_met,
+        level_top, level_bot = open_massflux_source(massflux_files[1])
+    close_source(first_source)
+
+    DT = haskey(ENV, "DT") ? parse(FT, ENV["DT"]) : dt_file
+    total_windows = 0
+    for f in massflux_files
+        src, _, _, _, _, _, nt, _, _, _, _ = open_massflux_source(f)
+        total_windows += nt
+        close_source(src)
+    end
+    total_steps = total_windows * steps_per_met
+
+    @info "  Grid: Nx=$Nx, Ny=$Ny, Nz=$Nz"
+    @info "  Total windows: $total_windows across $(length(massflux_files)) file(s)"
     @info "  DT=$(DT)s, steps/window=$steps_per_met, total_steps=$total_steps"
     @info "  Levels: $level_top-$level_bot"
     @info "  FT=$FT, arch=$(USE_GPU ? "GPU" : "CPU")"
@@ -316,7 +371,7 @@ function run_forward()
     area_j_dev = AT(area_j_cpu)
 
     m_dev  = AT(zeros(FT, Nx, Ny, Nz))
-    m_ref  = AT(zeros(FT, Nx, Ny, Nz))   # device-resident reference for D2D reset
+    m_ref  = AT(zeros(FT, Nx, Ny, Nz))
     am_dev = AT(zeros(FT, Nx + 1, Ny, Nz))
     bm_dev = AT(zeros(FT, Nx, Ny + 1, Nz))
     cm_dev = AT(zeros(FT, Nx, Ny, Nz + 1))
@@ -325,7 +380,6 @@ function run_forward()
     tracers = (; c)
     ws = allocate_massflux_workspace(m_dev, am_dev, bm_dev, cm_dev)
 
-    # GPU diagnostic buffers (2D only — avoid full 3D D2H for snapshots)
     c_col_dev = AT(zeros(FT, Nx, Ny))
     c_sfc_dev = AT(zeros(FT, Nx, Ny))
 
@@ -337,7 +391,7 @@ function run_forward()
         nothing
     end
 
-    # CPU staging buffers for binary reader (reused every window, zero-alloc)
+    # CPU staging buffers (reused every window)
     m_cpu  = Array{FT}(undef, Nx, Ny, Nz)
     am_cpu = Array{FT}(undef, Nx + 1, Ny, Nz)
     bm_cpu = Array{FT}(undef, Nx, Ny + 1, Nz)
@@ -360,7 +414,7 @@ function run_forward()
         defVar(ds_out, "lon", Float32, ("lon",))[:] = Float32.(lons)
         defVar(ds_out, "lat", Float32, ("lat",))[:] = Float32.(lats)
         defVar(ds_out, "time", Float64, ("time",);
-               attrib = Dict("units" => "hours since 2024-06-01 00:00:00"))
+               attrib = Dict("units" => "hours since simulation start"))
         defVar(ds_out, "co2_surface", Float32, ("lon", "lat", "time");
                attrib = Dict("units" => "ppm"))
         defVar(ds_out, "co2_column_mean", Float32, ("lon", "lat", "time");
@@ -374,107 +428,97 @@ function run_forward()
 
         snapshot_idx = 1
         step = 0
+        global_win = 0
         wall_start = time()
 
         @info "\n--- Starting simulation ---"
 
-        for win in 1:Nt
-            t_win = time()
+        for (file_idx, mf_path) in enumerate(massflux_files)
+            source, _, _, _, _, _, Nt_file, _, _, _, _ = open_massflux_source(mf_path)
+            @info @sprintf("  Opening shard %d/%d: %s (%d windows)",
+                           file_idx, length(massflux_files), basename(mf_path), Nt_file)
 
-            # Load preprocessed mass fluxes
-            if bin_reader !== nothing
-                load_window!(m_cpu, am_cpu, bm_cpu, cm_cpu, ps_cpu, bin_reader, win)
-            else
-                m_cpu  .= FT.(ds_mf["m"][:, :, :, win])
-                am_cpu .= FT.(ds_mf["am"][:, :, :, win])
-                bm_cpu .= FT.(ds_mf["bm"][:, :, :, win])
-                cm_cpu .= FT.(ds_mf["cm"][:, :, :, win])
-                ps_cpu .= FT.(ds_mf["ps"][:, :, win])
-            end
+            for win in 1:Nt_file
+                global_win += 1
+                t_win = time()
 
-            # H2D once per window for mass fluxes; store m_ref on device for D2D reset
-            copyto!(m_ref, m_cpu)
-            copyto!(m_dev, m_ref)
-            copyto!(am_dev, am_cpu)
-            copyto!(bm_dev, bm_cpu)
-            copyto!(cm_dev, cm_cpu)
-            copyto!(ps_dev, ps_cpu)
+                load_window_from_source!(m_cpu, am_cpu, bm_cpu, cm_cpu, ps_cpu,
+                                         source, win)
 
-            t_load = time() - t_win
+                copyto!(m_ref, m_cpu)
+                copyto!(m_dev, m_ref)
+                copyto!(am_dev, am_cpu)
+                copyto!(bm_dev, bm_cpu)
+                copyto!(cm_dev, cm_cpu)
+                copyto!(ps_dev, ps_cpu)
 
-            # Inject emissions once for this window
-            dt_window = FT(DT * steps_per_met)
-            apply_emissions_window!(tracers.c, flux_dev, area_j_dev,
-                                     ps_dev, A_coeff, B_coeff, Nz,
-                                     grid.gravity, dt_window)
+                t_load = time() - t_win
 
-            # Advection sub-steps + diffusion (all on GPU, zero PCIe transfers)
-            # m_dev is reset each sub-step via D2D copy from m_ref.
-            t_adv = time()
-            for sub in 1:steps_per_met
-                step += 1
-                copyto!(m_dev, m_ref)   # D2D: ~20x faster than H2D
-                strang_split_massflux!(tracers, m_dev, am_dev, bm_dev, cm_dev,
-                                       grid, true, ws; cfl_limit = FT(0.95))
-                if USE_DIFFUSION && diff_ws !== nothing
-                    diffuse_gpu!(tracers, diff_ws)
-                elseif USE_DIFFUSION
-                    diffuse!(tracers, nothing, grid, diff_scheme, DT)
+                dt_window = FT(DT * steps_per_met)
+                apply_emissions_window!(tracers.c, flux_dev, area_j_dev,
+                                         ps_dev, A_coeff, B_coeff, Nz,
+                                         grid.gravity, dt_window)
+
+                t_adv = time()
+                for sub in 1:steps_per_met
+                    step += 1
+                    copyto!(m_dev, m_ref)
+                    strang_split_massflux!(tracers, m_dev, am_dev, bm_dev, cm_dev,
+                                           grid, true, ws; cfl_limit = FT(0.95))
+                    if USE_DIFFUSION && diff_ws !== nothing
+                        diffuse_gpu!(tracers, diff_ws)
+                    elseif USE_DIFFUSION
+                        diffuse!(tracers, nothing, grid, diff_scheme, DT)
+                    end
+                end
+                t_adv_done = time() - t_adv
+
+                if step % snapshot_every < steps_per_met || step <= steps_per_met
+                    compute_diagnostics_gpu!(c_col_dev, c_sfc_dev, tracers.c, m_ref, Nz)
+                    c_sfc = Array(c_sfc_dev)
+                    c_col = Array(c_col_dev)
+                    sim_hours = step * Float64(DT) / 3600.0
+
+                    snapshot_idx += 1
+                    ds_out["time"][snapshot_idx] = sim_hours
+                    ds_out["co2_surface"][:, :, snapshot_idx] = Float32.(c_sfc)
+                    ds_out["co2_column_mean"][:, :, snapshot_idx] = Float32.(c_col)
+                    ds_out["mass_total"][snapshot_idx] = Float64(sum(tracers.c))
+
+                    elapsed = round(time() - wall_start, digits=1)
+                    rate = global_win > 1 ? round((time() - wall_start) / (global_win - 1), digits=2) : 0.0
+
+                    @info @sprintf(
+                        "  Win %d/%d (day %.1f): load=%.2fs adv=%.2fs | sfc_max=%.3f mean=%.5f ppm | wall=%.0fs (%.2fs/win)",
+                        global_win, total_windows, sim_hours/24,
+                        t_load, t_adv_done,
+                        maximum(c_sfc), sum(tracers.c)/length(tracers.c),
+                        elapsed, rate)
                 end
             end
-            t_adv_done = time() - t_adv
 
-            # Periodic snapshots — compute diagnostics on GPU, transfer 2D only
-            if step % snapshot_every < steps_per_met || step <= steps_per_met
-                compute_diagnostics_gpu!(c_col_dev, c_sfc_dev, tracers.c, m_ref, Nz)
-                c_sfc = Array(c_sfc_dev)
-                c_col = Array(c_col_dev)
-                sim_hours = step * Float64(DT) / 3600.0
-
-                snapshot_idx += 1
-                ds_out["time"][snapshot_idx] = sim_hours
-                ds_out["co2_surface"][:, :, snapshot_idx] = Float32.(c_sfc)
-                ds_out["co2_column_mean"][:, :, snapshot_idx] = Float32.(c_col)
-                # mass_total: reduce on GPU, transfer scalar
-                ds_out["mass_total"][snapshot_idx] = Float64(sum(tracers.c))
-
-                elapsed = round(time() - wall_start, digits=1)
-                rate = win > 1 ? round((time() - wall_start) / (win - 1), digits=2) : 0.0
-
-                @info @sprintf(
-                    "  Win %d/%d (day %.1f): load=%.2fs adv=%.2fs | sfc_max=%.3f mean=%.5f ppm | wall=%.0fs (%.2fs/win)",
-                    win, Nt, sim_hours/24,
-                    t_load, t_adv_done,
-                    maximum(c_sfc), sum(tracers.c)/length(tracers.c),
-                    elapsed, rate)
-            end
+            close_source(source)
         end
 
         wall_total = round(time() - wall_start, digits=1)
-        # Final stats — these GPU reductions avoid a full 3D D2H
         c_min = Float64(minimum(tracers.c))
         c_max = Float64(maximum(tracers.c))
         c_mean = Float64(sum(tracers.c)) / length(tracers.c)
-        c_final = Array(tracers.c)  # only for negative-cell count
+        c_final = Array(tracers.c)
         n_neg = count(x -> x < 0, c_final)
 
         @info "\n" * "=" ^ 70
         @info "Simulation complete!"
         @info "=" ^ 70
-        @info "  Steps: $step, windows: $Nt, days: $(step * Float64(DT) / 3600 / 24)"
-        @info "  Wall time: $(wall_total)s ($(round(wall_total/Nt, digits=2))s/window)"
+        @info "  Steps: $step, windows: $global_win, days: $(step * Float64(DT) / 3600 / 24)"
+        @info "  Wall time: $(wall_total)s ($(round(wall_total/global_win, digits=2))s/window)"
+        @info "  Files: $(length(massflux_files))"
         @info "  FT=$FT, arch=$(USE_GPU ? "GPU" : "CPU")"
         @info @sprintf("  Tracer: min=%.6f, max=%.4f, mean=%.6f ppm",
                        c_min, c_max, c_mean)
         @info "  Negative cells: $n_neg / $(length(c_final))"
         @info "  Output: $outfile ($snapshot_idx snapshots)"
         @info "=" ^ 70
-    end
-
-    if bin_reader !== nothing
-        close(bin_reader)
-    elseif ds_mf !== nothing
-        close(ds_mf)
     end
 end
 

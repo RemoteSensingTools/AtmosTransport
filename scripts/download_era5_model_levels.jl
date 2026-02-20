@@ -6,29 +6,33 @@
 # Levels: 50-137 (troposphere + lower stratosphere, ~55 hPa to surface)
 #
 # Configurable via environment variables:
-#   RESOLUTION  — grid spacing in degrees (default: 0.25)
-#   START_DATE  — first date (default: 2024-06-01)
-#   END_DATE    — last date (default: 2024-08-31)
-#   DATA_DIR    — output directory
-#   LEVEL_TOP   — topmost model level to download (default: 50)
-#   LEVEL_BOT   — bottommost model level (default: 137)
-#   PYTHON      — path to python3 with cdsapi installed
+#   RESOLUTION    — grid spacing in degrees (default: 1.0)
+#   START_DATE    — first date (default: 2024-01-01)
+#   END_DATE      — last date (default: 2024-12-31)
+#   DATA_DIR      — output directory
+#   LEVEL_TOP     — topmost model level to download (default: 50)
+#   LEVEL_BOT     — bottommost model level (default: 137)
+#   PYTHON        — path to python3 with cdsapi installed
+#   MAX_PARALLEL  — concurrent CDS requests per month (default: 4)
+#   MAX_RETRIES   — retries per failed download (default: 3)
 # ---------------------------------------------------------------------------
 
 using NCDatasets
 using Dates
 
-const RESOLUTION = parse(Float64, get(ENV, "RESOLUTION", "0.25"))
-const START_DATE = Date(get(ENV, "START_DATE", "2024-06-01"))
-const END_DATE   = Date(get(ENV, "END_DATE",   "2024-08-31"))
-const LEVEL_TOP  = parse(Int, get(ENV, "LEVEL_TOP", "50"))
-const LEVEL_BOT  = parse(Int, get(ENV, "LEVEL_BOT", "137"))
-const DATA_DIR   = expanduser(get(ENV, "DATA_DIR",
+const RESOLUTION    = parse(Float64, get(ENV, "RESOLUTION", "1.0"))
+const START_DATE    = Date(get(ENV, "START_DATE", "2024-01-01"))
+const END_DATE      = Date(get(ENV, "END_DATE",   "2024-12-31"))
+const LEVEL_TOP     = parse(Int, get(ENV, "LEVEL_TOP", "50"))
+const LEVEL_BOT     = parse(Int, get(ENV, "LEVEL_BOT", "137"))
+const MAX_PARALLEL  = parse(Int, get(ENV, "MAX_PARALLEL", "4"))
+const MAX_RETRIES   = parse(Int, get(ENV, "MAX_RETRIES", "3"))
+const DATA_DIR      = expanduser(get(ENV, "DATA_DIR",
     joinpath("~/data/metDrivers/era5",
              "era5_ml_$(replace(string(RESOLUTION), "." => ""))deg_" *
              Dates.format(START_DATE, "yyyymmdd") * "_" *
              Dates.format(END_DATE,   "yyyymmdd"))))
-const PYTHON     = get(ENV, "PYTHON", "/opt/miniconda/bin/python3")
+const PYTHON        = get(ENV, "PYTHON", "/usr/bin/python3")
 
 function main()
     mkpath(DATA_DIR)
@@ -39,6 +43,8 @@ function main()
     println("  Resolution: $(RESOLUTION)°")
     println("  Period: $START_DATE to $END_DATE")
     println("  Levels: $LEVEL_TOP-$LEVEL_BOT ($n_levels levels)")
+    println("  Parallel requests: $MAX_PARALLEL")
+    println("  Max retries: $MAX_RETRIES")
     println("  Output: $DATA_DIR")
 
     cdsrc = expanduser("~/.cdsapirc")
@@ -48,7 +54,10 @@ function main()
 
     days = collect(START_DATE:Day(1):END_DATE)
     months = unique(Dates.format.(days, "yyyy-mm"))
-    println("  Total days: $(length(days)), months: $months")
+    n_days = length(days)
+    est_gb = n_days * 0.15  # ~150 MB/day at 1-deg L88
+    println("  Total days: $n_days, months: $(length(months))")
+    println("  Estimated download: ~$(round(est_gb, digits=1)) GB")
 
     for month_str in months
         y, m = split(month_str, "-")
@@ -57,43 +66,90 @@ function main()
         ml_merged = joinpath(DATA_DIR, "era5_ml_$(y)$(m).nc")
 
         if isfile(ml_merged)
-            println("  Already exists: $ml_merged")
+            println("  [$month_str] Already exists: $ml_merged")
             continue
         end
 
+        # Identify which days still need downloading
         daily_files = String[]
+        days_to_download = Tuple{Date, String}[]
         for day in month_days
             daystr = Dates.format(day, "yyyymmdd")
             dayfile = joinpath(DATA_DIR, "era5_ml_$(daystr).nc")
             push!(daily_files, dayfile)
-
             if isfile(dayfile)
                 println("  $daystr: already downloaded")
-                continue
+            else
+                push!(days_to_download, (day, dayfile))
             end
+        end
 
-            println("  $daystr: requesting model-level data from CDS...")
-            _download_ml_day(day, dayfile, levelist)
+        # Download missing days in parallel batches
+        if !isempty(days_to_download)
+            println("  [$month_str] Downloading $(length(days_to_download)) days " *
+                    "($(MAX_PARALLEL) parallel)...")
+            t_month = time()
+            _download_parallel(days_to_download, levelist, MAX_PARALLEL, MAX_RETRIES)
+            elapsed = round((time() - t_month) / 60, digits=1)
+            println("  [$month_str] Downloads finished in $(elapsed) min")
         end
 
         existing = filter(isfile, daily_files)
         if isempty(existing)
-            println("  WARNING: No daily files, skipping merge")
+            println("  WARNING: [$month_str] No daily files, skipping merge")
             continue
         end
 
-        println("  Merging $(length(existing)) daily files → $ml_merged")
+        if length(existing) < length(month_days)
+            n_missing = length(month_days) - length(existing)
+            @warn "[$month_str] $n_missing daily files missing — merging available $(length(existing))"
+        end
+
+        println("  [$month_str] Merging $(length(existing)) daily files → $ml_merged")
         _merge_nc_files(existing, ml_merged)
         for f in existing; rm(f); end
         sz = round(filesize(ml_merged) / 1e6, digits=1)
-        println("  Merged: $ml_merged ($(sz) MB)")
+        println("  [$month_str] Merged: $ml_merged ($(sz) MB)")
     end
 
     println("\nAll downloads complete.")
     println("Files in $DATA_DIR:")
+    total_gb = 0.0
     for f in sort(readdir(DATA_DIR))
-        sz = round(filesize(joinpath(DATA_DIR, f)) / 1e6, digits=1)
-        println("  $f  ($(sz) MB)")
+        sz_bytes = filesize(joinpath(DATA_DIR, f))
+        sz_mb = round(sz_bytes / 1e6, digits=1)
+        total_gb += sz_bytes / 1e9
+        println("  $f  ($(sz_mb) MB)")
+    end
+    println("  Total: $(round(total_gb, digits=2)) GB")
+end
+
+"""
+Download days in parallel using asyncmap with bounded concurrency.
+Failed downloads are retried up to `max_retries` times with exponential backoff.
+"""
+function _download_parallel(days_and_files::Vector{Tuple{Date, String}},
+                            levelist::String, max_parallel::Int, max_retries::Int)
+    asyncmap(days_and_files; ntasks=max_parallel) do (day, dayfile)
+        daystr = Dates.format(day, "yyyymmdd")
+        for attempt in 1:max_retries
+            try
+                if attempt > 1
+                    wait_sec = 30 * 2^(attempt - 2)
+                    println("    $daystr: retry $attempt/$max_retries (waiting $(wait_sec)s)...")
+                    sleep(wait_sec)
+                end
+                _download_ml_day(day, dayfile, levelist)
+                if isfile(dayfile)
+                    sz = round(filesize(dayfile) / 1e6, digits=1)
+                    println("    $daystr: OK ($(sz) MB)")
+                    return
+                end
+            catch e
+                @warn "    $daystr: attempt $attempt failed" exception=e
+            end
+        end
+        @error "$daystr: all $max_retries attempts failed — skipping"
     end
 end
 
@@ -261,13 +317,15 @@ function _run_python(script::String)
     t0 = time()
     try
         run(`$PYTHON $tmp`)
+        elapsed = round((time() - t0) / 60, digits=1)
+        println("    done in $(elapsed) min")
+        return true
     catch e
         @warn "Download failed: $e"
+        return false
     finally
         rm(tmp; force=true)
     end
-    elapsed = round((time() - t0) / 60, digits=1)
-    println("    done in $(elapsed) min")
 end
 
 function _base_type(T)

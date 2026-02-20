@@ -28,11 +28,26 @@ const DEV_DST = joinpath(@__DIR__, "src", "developer")
 mkpath(DEV_DST)
 
 for f in ["VALIDATION.md", "TM5_CODE_ALIGNMENT.md", "MASS_FLUX_EVOLUTION.md",
-          "METEO_PREPROCESSING.md"]
+          "METEO_PREPROCESSING.md", "TM5_LOCAL_SETUP.md", "TRANSPORT_COMPARISON.md",
+          "TM5_GRID_REFERENCES.md", "REFERENCE_RUN.md", "GITHUB_SETUP.md"]
     src = joinpath(DEV_SRC, "docs", f)
     dst = joinpath(DEV_DST, f)
     if isfile(src)
         cp(src, dst; force=true)
+    end
+end
+
+# Copy animation GIF into docs/src/assets/ for embedding
+const ASSETS_DIR = joinpath(@__DIR__, "src", "assets")
+mkpath(ASSETS_DIR)
+let gif_name = "column_mean_animation_small.gif"
+    gif_dst = joinpath(ASSETS_DIR, gif_name)
+    if !isfile(gif_dst)
+        alt_src = joinpath(homedir(), "data", "output", "era5_edgar_preprocessed_f32", gif_name)
+        if isfile(alt_src)
+            cp(alt_src, gif_dst; force=true)
+            @info "Copied $gif_name to docs/src/assets/"
+        end
     end
 end
 
@@ -64,10 +79,13 @@ makedocs(;
     format = Documenter.HTML(;
         prettyurls = get(ENV, "CI", nothing) == "true",
         canonical = "https://RemoteSensingTools.github.io/AtmosTransportModel",
+        assets = String[],
+        size_threshold = 400 * 1024,
+        size_threshold_warn = 200 * 1024,
     ),
     modules = [AtmosTransportModel],
     pages = pages,
-    warnonly = [:cross_references, :missing_docs],
+    warnonly = [:cross_references, :missing_docs, :example_block],
     doctest = false,
 )
 

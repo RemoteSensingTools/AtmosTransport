@@ -2,18 +2,13 @@
 # ===========================================================================
 # Convert preprocessed mass-flux NetCDF to flat binary for fast mmap I/O
 #
-# The NetCDF uses deflate compression and HDF5 chunking, which add CPU
-# overhead on every read. This script writes a single flat binary file
-# with contiguous per-window data that can be memory-mapped at zero cost.
-#
-# Usage:
-#   julia --project=. scripts/convert_massflux_to_binary.jl [input.nc] [output.bin]
-#
-# Default input:  ~/data/metDrivers/era5/massflux_era5_202406_float32.nc
-# Default output: <input_dir>/massflux_era5_202406_float32.bin
+# Supports two modes:
+#   1. Single file:  julia convert_massflux_to_binary.jl input.nc [output.bin]
+#   2. Batch (dir):  MASSFLUX_DIR=~/data/metDrivers/era5/ julia convert_massflux_to_binary.jl
+#      Converts all massflux_era5_*_float32.nc files in the directory.
 #
 # Binary layout:
-#   [Header]  — 512 bytes (JSON metadata, zero-padded)
+#   [Header]  — 4096 bytes (JSON metadata, zero-padded)
 #   [Window 1]: m(Nx*Ny*Nz) | am((Nx+1)*Ny*Nz) | bm(Nx*(Ny+1)*Nz) |
 #               cm(Nx*Ny*(Nz+1)) | ps(Nx*Ny)     — all FT (Float32/64)
 #   [Window 2]: same layout
@@ -127,15 +122,46 @@ function convert_massflux(nc_path::String, bin_path::String)
         @warn @sprintf("Size mismatch: expected %d, got %d", expected, actual_size)
 end
 
-# --- Entry point ---
-nc_default = expanduser(get(ENV, "MASSFLUX_FILE",
-    "~/data/metDrivers/era5/massflux_era5_202406_float32.nc"))
-nc_path = length(ARGS) >= 1 ? ARGS[1] : nc_default
-bin_path = if length(ARGS) >= 2
-    ARGS[2]
-else
-    replace(nc_path, r"\.nc$" => ".bin")
+# --- Batch conversion: find all massflux shard .nc files in a directory ---
+function batch_convert(dir::String)
+    files = filter(readdir(dir; join=true)) do f
+        endswith(f, ".nc") && contains(basename(f), "massflux_era5_")
+    end
+    sort!(files; by=basename)
+    if isempty(files)
+        @warn "No massflux_era5_*.nc files found in $dir"
+        return
+    end
+    @info "Batch converting $(length(files)) mass-flux files in $dir"
+    t_total = time()
+    for nc_path in files
+        bin_path = replace(nc_path, r"\.nc$" => ".bin")
+        if isfile(bin_path) && filesize(bin_path) > 0
+            @info "  Skipping (already exists): $(basename(bin_path))"
+            continue
+        end
+        convert_massflux(nc_path, bin_path)
+    end
+    elapsed = round(time() - t_total, digits=1)
+    @info "Batch conversion done in $(elapsed)s"
 end
 
-isfile(nc_path) || error("Input NetCDF not found: $nc_path")
-convert_massflux(nc_path, bin_path)
+# --- Entry point ---
+massflux_dir = get(ENV, "MASSFLUX_DIR", "")
+
+if !isempty(massflux_dir)
+    batch_convert(expanduser(massflux_dir))
+elseif length(ARGS) >= 1
+    nc_path = ARGS[1]
+    bin_path = length(ARGS) >= 2 ? ARGS[2] : replace(nc_path, r"\.nc$" => ".bin")
+    isfile(nc_path) || error("Input NetCDF not found: $nc_path")
+    convert_massflux(nc_path, bin_path)
+else
+    nc_default = expanduser(get(ENV, "MASSFLUX_FILE",
+        "~/data/metDrivers/era5/massflux_era5_202406_float32.nc"))
+    if isfile(nc_default)
+        convert_massflux(nc_default, replace(nc_default, r"\.nc$" => ".bin"))
+    else
+        error("No input specified. Use MASSFLUX_FILE, MASSFLUX_DIR, or pass file as argument.")
+    end
+end

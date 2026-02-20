@@ -163,7 +163,7 @@ function run_geosfp_cs_edgar()
     @info "  Architecture: $(USE_GPU ? "GPU (CUDA)" : "CPU")"
 
     grid = CubedSphereGrid(arch;
-        FT, Nc, Nz,
+        FT, Nc,
         vertical = vc,
         radius = pp.radius, gravity = pp.gravity,
         reference_pressure = pp.reference_surface_pressure)

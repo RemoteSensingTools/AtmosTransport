@@ -53,6 +53,7 @@ end
 
 pages = [
     "Home" => "index.md",
+    "Grids" => "grids.md",
     "Theory" => [
         "Advection Theory" => "literated/advection_theory.md",
         "Design Principles" => "literated/design_principles.md",

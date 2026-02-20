@@ -1,417 +1,722 @@
 # ---------------------------------------------------------------------------
-# TM5-faithful mass-flux advection (Russell & Lerner, 1981)
+# TM5-faithful mass-flux advection — unified KernelAbstractions implementation
 #
-# This module implements TM5's native formulation where tracer mass (rm) and
-# air mass (m) are co-advected.  The key equation is:
-#
-#   alpha   = am / m_donor           (mass-based Courant number)
-#   f       = alpha * (rm + (1 - alpha) * rxm)   (tracer mass flux, positive flow)
-#   rm_new  = rm + f_left - f_right              (tracer mass update)
-#   m_new   = m  + am_left - am_right            (air mass update)
-#   c       = rm_new / m_new                     (recover concentration)
-#
-# Advantages over concentration-based advection:
-# - Division by m_new naturally handles mass divergence from operator splitting
-# - Exact mass conservation (sum of rm is invariant)
-# - No need for post-hoc mass correction
+# Every function uses @kernel so the SAME code runs on CPU and GPU.
+# Backend is inferred from the arrays via get_backend(). No if/else branching
+# on architecture. No hardcoded Array{}/Vector{} allocations.
 #
 # Reference: TM5 advectx.F90, advecty.F90, advectz.F90 (dynamw_1d)
 # ---------------------------------------------------------------------------
 
+using KernelAbstractions: @kernel, @index, synchronize, get_backend
+
+@inline function _to_device(cpu_vec::Vector{FT}, ref::AbstractArray{FT}) where FT
+    dev = similar(ref, FT, length(cpu_vec))
+    copyto!(dev, cpu_vec)
+    return dev
+end
+
 # =====================================================================
-# Helpers: air mass and mass flux computation
+# Preprocessing kernels
+# =====================================================================
+
+@kernel function _air_mass_kernel!(m_out, @Const(Δp), @Const(area_j), g)
+    i, j, k = @index(Global, NTuple)
+    @inbounds m_out[i, j, k] = Δp[i, j, k] * area_j[j] / g
+end
+
+@kernel function _am_kernel!(am, @Const(u), @Const(Δp), @Const(dy_j), Nx, half_dt, g)
+    i, j, k = @index(Global, NTuple)
+    @inbounds begin
+        il = i == 1 ? Nx : i - 1
+        ir = i > Nx ? 1 : i
+        dp_f = (Δp[il, j, k] + Δp[ir, j, k]) / 2
+        am[i, j, k] = half_dt * u[i, j, k] * dp_f * dy_j[j] / g
+    end
+end
+
+@kernel function _bm_kernel!(bm, @Const(v), @Const(Δp), @Const(dx_face), Ny, half_dt, g)
+    i, j, k = @index(Global, NTuple)
+    @inbounds begin
+        jb = max(j - 1, 1)
+        ja = min(j, Ny)
+        dp_f = (Δp[i, jb, k] + Δp[i, ja, k]) / 2
+        bm[i, j, k] = half_dt * v[i, j, k] * dp_f * abs(dx_face[j]) / g
+    end
+end
+
+@kernel function _cm_column_kernel!(cm, @Const(am), @Const(bm), @Const(bt), Nz)
+    i, j = @index(Global, NTuple)
+    FT = eltype(cm)
+    @inbounds begin
+        pit = zero(FT)
+        for k in 1:Nz
+            pit += am[i, j, k] - am[i + 1, j, k] + bm[i, j, k] - bm[i, j + 1, k]
+        end
+        acc = zero(FT)
+        cm[i, j, 1] = acc
+        for k in 1:Nz
+            conv_k = am[i, j, k] - am[i + 1, j, k] + bm[i, j, k] - bm[i, j + 1, k]
+            acc += conv_k - bt[k] * pit
+            cm[i, j, k + 1] = acc
+        end
+    end
+end
+
+# =====================================================================
+# Advection kernels — one thread per (i,j,k), double-buffer
+# =====================================================================
+
+@kernel function _massflux_x_kernel!(
+    rm_new, @Const(rm), m_new, @Const(m), @Const(am), Nx, use_limiter
+)
+    i, j, k = @index(Global, NTuple)
+    @inbounds begin
+        ip  = i == Nx ? 1 : i + 1
+        im  = i == 1  ? Nx : i - 1
+        ipp = ip == Nx ? 1 : ip + 1
+        imm = im == 1  ? Nx : im - 1
+        FT = eltype(rm)
+
+        c_imm = rm[imm, j, k] / m[imm, j, k]
+        c_im  = rm[im,  j, k] / m[im,  j, k]
+        c_i   = rm[i,   j, k] / m[i,   j, k]
+        c_ip  = rm[ip,  j, k] / m[ip,  j, k]
+        c_ipp = rm[ipp, j, k] / m[ipp, j, k]
+
+        sc_im = (c_i - c_imm) / 2
+        if use_limiter
+            sc_im = minmod_device(sc_im, 2 * (c_i - c_im), 2 * (c_im - c_imm))
+        end
+        sx_im = m[im, j, k] * sc_im
+        if use_limiter
+            sx_im = max(min(sx_im, rm[im, j, k]), -rm[im, j, k])
+        end
+
+        sc_i = (c_ip - c_im) / 2
+        if use_limiter
+            sc_i = minmod_device(sc_i, 2 * (c_ip - c_i), 2 * (c_i - c_im))
+        end
+        sx_i = m[i, j, k] * sc_i
+        if use_limiter
+            sx_i = max(min(sx_i, rm[i, j, k]), -rm[i, j, k])
+        end
+
+        sc_ip = (c_ipp - c_i) / 2
+        if use_limiter
+            sc_ip = minmod_device(sc_ip, 2 * (c_ipp - c_ip), 2 * (c_ip - c_i))
+        end
+        sx_ip = m[ip, j, k] * sc_ip
+        if use_limiter
+            sx_ip = max(min(sx_ip, rm[ip, j, k]), -rm[ip, j, k])
+        end
+
+        am_l = am[i, j, k]
+        flux_left = if am_l >= zero(FT)
+            alpha = am_l / m[im, j, k]
+            alpha * (rm[im, j, k] + (one(FT) - alpha) * sx_im)
+        else
+            alpha = am_l / m[i, j, k]
+            alpha * (rm[i, j, k] - (one(FT) + alpha) * sx_i)
+        end
+
+        am_r = am[i + 1, j, k]
+        flux_right = if am_r >= zero(FT)
+            alpha = am_r / m[i, j, k]
+            alpha * (rm[i, j, k] + (one(FT) - alpha) * sx_i)
+        else
+            alpha = am_r / m[ip, j, k]
+            alpha * (rm[ip, j, k] - (one(FT) + alpha) * sx_ip)
+        end
+
+        rm_new[i, j, k] = rm[i, j, k] + flux_left - flux_right
+        m_new[i, j, k]  = m[i, j, k]  + am[i, j, k] - am[i + 1, j, k]
+    end
+end
+
+@kernel function _massflux_y_kernel!(
+    rm_new, @Const(rm), m_new, @Const(m), @Const(bm), Ny, use_limiter
+)
+    i, j, k = @index(Global, NTuple)
+    FT = eltype(rm)
+    @inbounds begin
+        # --- Slope at j ---
+        sy_j = if j > 1 && j < Ny
+            cjm = rm[i, j - 1, k] / m[i, j - 1, k]
+            cj  = rm[i, j,     k] / m[i, j,     k]
+            cjp = rm[i, j + 1, k] / m[i, j + 1, k]
+            sc = (cjp - cjm) / 2
+            if use_limiter; sc = minmod_device(sc, 2 * (cjp - cj), 2 * (cj - cjm)); end
+            s = m[i, j, k] * sc
+            if use_limiter; s = max(min(s, rm[i, j, k]), -rm[i, j, k]); end
+            s
+        else
+            zero(FT)
+        end
+
+        # --- Slope at j-1 (for south flux) ---
+        sy_jm = if j > 2 && j - 1 < Ny
+            cjmm = rm[i, j - 2, k] / m[i, j - 2, k]
+            cjm  = rm[i, j - 1, k] / m[i, j - 1, k]
+            cj   = rm[i, j,     k] / m[i, j,     k]
+            sc = (cj - cjmm) / 2
+            if use_limiter; sc = minmod_device(sc, 2 * (cj - cjm), 2 * (cjm - cjmm)); end
+            s = m[i, j - 1, k] * sc
+            if use_limiter; s = max(min(s, rm[i, j - 1, k]), -rm[i, j - 1, k]); end
+            s
+        else
+            zero(FT)
+        end
+
+        # --- Slope at j+1 (for north flux) ---
+        sy_jp = if j < Ny - 1 && j + 1 > 1
+            cj   = rm[i, j,     k] / m[i, j,     k]
+            cjp  = rm[i, j + 1, k] / m[i, j + 1, k]
+            cjpp = rm[i, j + 2, k] / m[i, j + 2, k]
+            sc = (cjpp - cj) / 2
+            if use_limiter; sc = minmod_device(sc, 2 * (cjpp - cjp), 2 * (cjp - cj)); end
+            s = m[i, j + 1, k] * sc
+            if use_limiter; s = max(min(s, rm[i, j + 1, k]), -rm[i, j + 1, k]); end
+            s
+        else
+            zero(FT)
+        end
+
+        # --- Flux at south face (face j) ---
+        flux_s = if j > 1
+            bm_s = bm[i, j, k]
+            if bm_s >= zero(FT)
+                beta = bm_s / m[i, j - 1, k]
+                j - 1 == 1 ? beta * rm[i, j - 1, k] :
+                    beta * (rm[i, j - 1, k] + (one(FT) - beta) * sy_jm)
+            else
+                beta = bm_s / m[i, j, k]
+                j == Ny ? beta * rm[i, j, k] :
+                    beta * (rm[i, j, k] - (one(FT) + beta) * sy_j)
+            end
+        else
+            zero(FT)
+        end
+
+        # --- Flux at north face (face j+1) ---
+        flux_n = if j < Ny
+            bm_n = bm[i, j + 1, k]
+            if bm_n >= zero(FT)
+                beta = bm_n / m[i, j, k]
+                j == 1 ? beta * rm[i, j, k] :
+                    beta * (rm[i, j, k] + (one(FT) - beta) * sy_j)
+            else
+                beta = bm_n / m[i, j + 1, k]
+                j + 1 == Ny ? beta * rm[i, j + 1, k] :
+                    beta * (rm[i, j + 1, k] - (one(FT) + beta) * sy_jp)
+            end
+        else
+            zero(FT)
+        end
+
+        rm_new[i, j, k] = rm[i, j, k] + flux_s - flux_n
+        m_new[i, j, k]  = m[i, j, k]  + bm[i, j, k] - bm[i, j + 1, k]
+    end
+end
+
+@kernel function _massflux_z_kernel!(
+    rm_new, @Const(rm), m_new, @Const(m), @Const(cm), Nz, use_limiter
+)
+    i, j, k = @index(Global, NTuple)
+    FT = eltype(rm)
+    @inbounds begin
+        # --- Slope at k ---
+        sz_k = if k > 1 && k < Nz
+            ckm = rm[i, j, k - 1] / m[i, j, k - 1]
+            ck  = rm[i, j, k]     / m[i, j, k]
+            ckp = rm[i, j, k + 1] / m[i, j, k + 1]
+            sc = (ckp - ckm) / 2
+            if use_limiter; sc = minmod_device(sc, 2 * (ckp - ck), 2 * (ck - ckm)); end
+            s = m[i, j, k] * sc
+            if use_limiter; s = max(min(s, rm[i, j, k]), -rm[i, j, k]); end
+            s
+        else
+            zero(FT)
+        end
+
+        # --- Slope at k-1 (for top flux) ---
+        sz_km = if k > 2 && k - 1 < Nz
+            ckmm = rm[i, j, k - 2] / m[i, j, k - 2]
+            ckm  = rm[i, j, k - 1] / m[i, j, k - 1]
+            ck   = rm[i, j, k]     / m[i, j, k]
+            sc = (ck - ckmm) / 2
+            if use_limiter; sc = minmod_device(sc, 2 * (ck - ckm), 2 * (ckm - ckmm)); end
+            s = m[i, j, k - 1] * sc
+            if use_limiter; s = max(min(s, rm[i, j, k - 1]), -rm[i, j, k - 1]); end
+            s
+        else
+            zero(FT)
+        end
+
+        # --- Slope at k+1 (for bottom flux) ---
+        sz_kp = if k < Nz - 1 && k + 1 > 1
+            ck   = rm[i, j, k]     / m[i, j, k]
+            ckp  = rm[i, j, k + 1] / m[i, j, k + 1]
+            ckpp = rm[i, j, k + 2] / m[i, j, k + 2]
+            sc = (ckpp - ck) / 2
+            if use_limiter; sc = minmod_device(sc, 2 * (ckpp - ckp), 2 * (ckp - ck)); end
+            s = m[i, j, k + 1] * sc
+            if use_limiter; s = max(min(s, rm[i, j, k + 1]), -rm[i, j, k + 1]); end
+            s
+        else
+            zero(FT)
+        end
+
+        # --- Flux at top face (face k) ---
+        flux_top = if k > 1
+            cm_t = cm[i, j, k]
+            if cm_t > zero(FT)
+                gamma = cm_t / m[i, j, k - 1]
+                gamma * (rm[i, j, k - 1] + (one(FT) - gamma) * sz_km)
+            elseif cm_t < zero(FT)
+                gamma = cm_t / m[i, j, k]
+                gamma * (rm[i, j, k] - (one(FT) + gamma) * sz_k)
+            else
+                zero(FT)
+            end
+        else
+            zero(FT)
+        end
+
+        # --- Flux at bottom face (face k+1) ---
+        flux_bot = if k < Nz
+            cm_b = cm[i, j, k + 1]
+            if cm_b > zero(FT)
+                gamma = cm_b / m[i, j, k]
+                gamma * (rm[i, j, k] + (one(FT) - gamma) * sz_k)
+            elseif cm_b < zero(FT)
+                gamma = cm_b / m[i, j, k + 1]
+                gamma * (rm[i, j, k + 1] - (one(FT) + gamma) * sz_kp)
+            else
+                zero(FT)
+            end
+        else
+            zero(FT)
+        end
+
+        rm_new[i, j, k] = rm[i, j, k] + flux_top - flux_bot
+        m_new[i, j, k]  = m[i, j, k]  + cm[i, j, k] - cm[i, j, k + 1]
+    end
+end
+
+# =====================================================================
+# CFL kernels
+# =====================================================================
+
+@kernel function _cfl_x_kernel!(cfl, @Const(am), @Const(m), Nx)
+    i, j, k = @index(Global, NTuple)
+    FT = eltype(m)
+    @inbounds begin
+        il = i == 1 ? Nx : i - 1
+        ir = i > Nx ? 1 : i
+        md = am[i, j, k] >= zero(FT) ? m[il, j, k] : m[ir, j, k]
+        cfl[i, j, k] = md > zero(FT) ? abs(am[i, j, k]) / md : zero(FT)
+    end
+end
+
+@kernel function _cfl_y_kernel!(cfl, @Const(bm), @Const(m), Ny)
+    i, j, k = @index(Global, NTuple)
+    FT = eltype(m)
+    @inbounds begin
+        if j >= 2 && j <= Ny
+            js = j - 1; jn = j
+            md = bm[i, j, k] >= zero(FT) ? m[i, js, k] : m[i, jn, k]
+            cfl[i, j, k] = md > zero(FT) ? abs(bm[i, j, k]) / md : zero(FT)
+        else
+            cfl[i, j, k] = zero(FT)
+        end
+    end
+end
+
+@kernel function _cfl_z_kernel!(cfl, @Const(cm), @Const(m), Nz)
+    i, j, k = @index(Global, NTuple)
+    FT = eltype(m)
+    @inbounds begin
+        if k >= 2 && k <= Nz
+            md = cm[i, j, k] > zero(FT) ? m[i, j, k - 1] : m[i, j, k]
+            cfl[i, j, k] = md > zero(FT) ? abs(cm[i, j, k]) / md : zero(FT)
+        else
+            cfl[i, j, k] = zero(FT)
+        end
+    end
+end
+
+# =====================================================================
+# Grid geometry cache — computed once, reused every met window (TM5 dynam0)
+# =====================================================================
+
+"""
+    GridGeometryCache{FT, A1}
+
+Device-side cache of grid geometry vectors that are constant for a given grid.
+Eliminates repeated host→device transfers of `area_j`, `dy_j`, `dx_face`, and
+`bt` that previously occurred on every call to `compute_air_mass!` /
+`compute_mass_fluxes!`.
+
+Construct once with [`build_geometry_cache`](@ref), then pass to the in-place
+`compute_air_mass!` and `compute_mass_fluxes!` overloads.
+"""
+struct GridGeometryCache{FT, A1 <: AbstractVector{FT}}
+    area_j  :: A1   # cell area by latitude [m²], length Ny
+    dy_j    :: A1   # Δy by latitude [m], length Ny
+    dx_face :: A1   # dx at v-face latitudes [m], length Ny+1
+    bt      :: A1   # B-ratio for vertical mass-flux closure, length Nz
+    gravity :: FT
+    Nx :: Int
+    Ny :: Int
+    Nz :: Int
+end
+
+"""
+$(SIGNATURES)
+
+Build a [`GridGeometryCache`](@ref) from a `LatitudeLongitudeGrid`.  `ref_array`
+is any device-side 3-D array whose backend determines whether the cache lives on
+CPU or GPU.
+
+Call once before the time loop; the cache is valid for the lifetime of the grid.
+"""
+function build_geometry_cache(grid::LatitudeLongitudeGrid{FT},
+                              ref_array::AbstractArray{FT}) where FT
+    Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
+    g = FT(grid.gravity)
+
+    area_j_cpu = FT[cell_area(1, j, grid) for j in 1:Ny]
+    dy_j_cpu   = FT[Δy(1, j, grid) for j in 1:Ny]
+
+    dx_face_cpu = Vector{FT}(undef, Ny + 1)
+    @inbounds for j in 1:Ny+1
+        φ_f = if j == 1
+            FT(-90)
+        elseif j == Ny + 1
+            FT(90)
+        else
+            FT(grid.φᶠ_cpu[j])
+        end
+        dx_face_cpu[j] = FT(grid.radius) * cosd(φ_f) * deg2rad(FT(grid.Δλ))
+    end
+
+    vc = grid.vertical
+    ΔB_cpu = Vector{FT}(undef, Nz)
+    @inbounds for k in 1:Nz
+        ΔB_cpu[k] = FT(vc.B[k + 1] - vc.B[k])
+    end
+    ΔB_total = FT(vc.B[Nz + 1] - vc.B[1])
+    bt_cpu = abs(ΔB_total) > eps(FT) ? ΔB_cpu ./ ΔB_total : zeros(FT, Nz)
+
+    area_j  = _to_device(area_j_cpu, ref_array)
+    dy_j    = _to_device(dy_j_cpu, ref_array)
+    dx_face = _to_device(dx_face_cpu, ref_array)
+    bt      = _to_device(bt_cpu, ref_array)
+
+    return GridGeometryCache{FT, typeof(area_j)}(
+        area_j, dy_j, dx_face, bt, g, Nx, Ny, Nz)
+end
+
+# =====================================================================
+# Pre-allocated workspace to avoid GPU array allocations in the inner loop
+# =====================================================================
+
+"""
+    MassFluxWorkspace{FT, A3}
+
+Pre-allocated buffers for mass-flux advection, eliminating all GPU array
+allocations from the inner time-stepping loop.
+"""
+struct MassFluxWorkspace{FT, A3 <: AbstractArray{FT,3}}
+    rm::A3       # tracer mass (Nx, Ny, Nz)
+    rm_buf::A3   # advection output buffer for rm (Nx, Ny, Nz)
+    m_buf::A3    # advection output buffer for m  (Nx, Ny, Nz)
+    cfl_x::A3   # CFL scratch for x (Nx+1, Ny, Nz) — reused as flux_x_eff
+    cfl_y::A3   # CFL scratch for y (Nx, Ny+1, Nz) — reused as flux_y_eff
+    cfl_z::A3   # CFL scratch for z (Nx, Ny, Nz+1) — reused as flux_z_eff
+end
+
+"""
+$(SIGNATURES)
+
+Allocate a workspace that matches the sizes of `m`, `am`, `bm`, `cm`.
+Call once before the time loop; pass to `strang_split_massflux!`.
+"""
+function allocate_massflux_workspace(m::AbstractArray{FT,3},
+                                     am::AbstractArray{FT,3},
+                                     bm::AbstractArray{FT,3},
+                                     cm::AbstractArray{FT,3}) where FT
+    MassFluxWorkspace{FT, typeof(m)}(
+        similar(m),       # rm
+        similar(m),       # rm_buf
+        similar(m),       # m_buf
+        similar(am),      # cfl_x / flux_x_eff
+        similar(bm),      # cfl_y / flux_y_eff
+        similar(cm),      # cfl_z / flux_z_eff
+    )
+end
+
+# =====================================================================
+# Public wrapper functions
 # =====================================================================
 
 """
 $(SIGNATURES)
 
-Compute 3D air mass array from pressure thickness and grid geometry.
-
-Returns `m[i,j,k] = Δp[i,j,k] * cell_area(i,j,grid) / g` in kg.
+Compute 3D air mass from pressure thickness and grid geometry.
+Uses a KernelAbstractions kernel (runs on CPU or GPU).
 """
 function compute_air_mass(Δp::AbstractArray{FT,3}, grid) where FT
-    Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
-    g = FT(grid.gravity)
-    m = Array{FT}(undef, Nx, Ny, Nz)
-    @inbounds for k in 1:Nz, j in 1:Ny
-        area_j = FT(cell_area(1, j, grid))
-        for i in 1:Nx
-            m[i, j, k] = Δp[i, j, k] * area_j / g
-        end
-    end
+    m = similar(Δp)
+    compute_air_mass!(m, Δp, grid)
     return m
 end
 
 """
 $(SIGNATURES)
 
+In-place version: fills pre-allocated `m` with air mass values.
+
+When a [`GridGeometryCache`](@ref) is provided, geometry vectors are reused
+from the cache (zero allocation). Otherwise they are recomputed from the grid.
+"""
+function compute_air_mass!(m::AbstractArray{FT,3}, Δp::AbstractArray{FT,3}, grid) where FT
+    Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
+    g = FT(grid.gravity)
+    backend = get_backend(Δp)
+
+    area_j_cpu = FT[cell_area(1, j, grid) for j in 1:Ny]
+    area_j = _to_device(area_j_cpu, Δp)
+
+    k! = _air_mass_kernel!(backend, 256)
+    k!(m, Δp, area_j, g; ndrange=(Nx, Ny, Nz))
+    synchronize(backend)
+    return nothing
+end
+
+function compute_air_mass!(m::AbstractArray{FT,3}, Δp::AbstractArray{FT,3},
+                           gc::GridGeometryCache{FT}) where FT
+    backend = get_backend(Δp)
+    k! = _air_mass_kernel!(backend, 256)
+    k!(m, Δp, gc.area_j, gc.gravity; ndrange=(gc.Nx, gc.Ny, gc.Nz))
+    synchronize(backend)
+    return nothing
+end
+
+"""
+$(SIGNATURES)
+
 Compute mass fluxes `am`, `bm`, `cm` from staggered velocities, pressure
-thickness, and half-timestep.  Follows TM5's `dynam0` approach.
+thickness, and half-timestep. Uses KernelAbstractions kernels.
 
-`u` is size `(Nx+1, Ny, Nz)`, `v` is `(Nx, Ny+1, Nz)`.
-
-Returns a `NamedTuple` `(; am, bm, cm)`:
-- `am[i,j,k]`: eastward mass flux at x-face `i` (kg per half-timestep).
-  Size `(Nx+1, Ny, Nz)`.
-- `bm[i,j,k]`: northward mass flux at y-face `j` (kg per half-timestep).
-  Size `(Nx, Ny+1, Nz)`.
-- `cm[i,j,k]`: downward mass flux at z-interface `k` (kg per half-timestep).
-  Size `(Nx, Ny, Nz+1)`.  Derived from horizontal convergence via the
-  continuity equation to ensure column mass conservation.
+Returns `(; am, bm, cm)`.
 """
 function compute_mass_fluxes(u, v, grid, Δp::AbstractArray{FT,3}, half_dt) where FT
     Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
-    g = FT(grid.gravity)
-    vc = grid.vertical
-
-    # --- Horizontal mass fluxes ---
-    am = Array{FT}(undef, Nx + 1, Ny, Nz)
-    @inbounds for k in 1:Nz, j in 1:Ny
-        dy_j = FT(Δy(1, j, grid))
-        for i in 1:Nx+1
-            i_left  = i == 1 ? Nx : i - 1
-            i_right = i > Nx ? 1  : i
-            Δp_face = (Δp[i_left, j, k] + Δp[i_right, j, k]) / 2
-            am[i, j, k] = FT(half_dt) * u[i, j, k] * Δp_face * dy_j / g
-        end
-    end
-
-    bm = Array{FT}(undef, Nx, Ny + 1, Nz)
-    @inbounds for k in 1:Nz, j in 1:Ny+1, i in 1:Nx
-        j_below = max(j - 1, 1)
-        j_above = min(j, Ny)
-        Δp_face = (Δp[i, j_below, k] + Δp[i, j_above, k]) / 2
-        φ_face = if j == 1
-            FT(-90.0)
-        elseif j == Ny + 1
-            FT(90.0)
-        else
-            (grid.φᶠ isa Array ? grid.φᶠ[j] : Array(grid.φᶠ)[j])
-        end
-        dx_face = FT(grid.radius) * cosd(φ_face) * deg2rad(FT(grid.Δλ))
-        bm[i, j, k] = FT(half_dt) * v[i, j, k] * Δp_face * abs(dx_face) / g
-    end
-
-    # --- Vertical mass flux from continuity (TM5 dynam0) ---
-    # Horizontal convergence into each cell
-    conv = Array{FT}(undef, Nx, Ny, Nz)
-    @inbounds for k in 1:Nz, j in 1:Ny, i in 1:Nx
-        conv[i, j, k] = am[i, j, k] - am[i + 1, j, k] +
-                         bm[i, j, k] - bm[i, j + 1, k]
-    end
-
-    # Column-integrated convergence
-    pit = zeros(FT, Nx, Ny)
-    @inbounds for k in 1:Nz, j in 1:Ny, i in 1:Nx
-        pit[i, j] += conv[i, j, k]
-    end
-
-    # Normalized B coefficient differences (fraction of sp-tendency per layer)
-    ΔB = Vector{FT}(undef, Nz)
-    @inbounds for k in 1:Nz
-        ΔB[k] = vc.B[k + 1] - vc.B[k]
-    end
-    ΔB_total = vc.B[Nz + 1] - vc.B[1]
-    bt = abs(ΔB_total) > eps(FT) ? ΔB ./ ΔB_total : zeros(FT, Nz)
-
-    cm = zeros(FT, Nx, Ny, Nz + 1)
-    # cm[:,,:,1] = 0 (top of atmosphere, no flux)
-    # cm[:,:,Nz+1] = 0 (surface, no flux)
-    # Accumulate from top downward:
-    #   cm[k+1] = cm[k] + conv[k] - bt[k] * pit
-    @inbounds for k in 1:Nz, j in 1:Ny, i in 1:Nx
-        cm[i, j, k + 1] = cm[i, j, k] + conv[i, j, k] - bt[k] * pit[i, j]
-    end
-
+    am = similar(u, FT, Nx + 1, Ny, Nz)
+    bm = similar(v, FT, Nx, Ny + 1, Nz)
+    cm = similar(Δp, FT, Nx, Ny, Nz + 1)
+    compute_mass_fluxes!(am, bm, cm, u, v, grid, Δp, half_dt)
     return (; am, bm, cm)
 end
 
+"""
+$(SIGNATURES)
+
+In-place version: fills pre-allocated `am`, `bm`, `cm` with mass fluxes.
+
+When a [`GridGeometryCache`](@ref) is provided, geometry vectors are reused
+from the cache (zero allocation). Otherwise they are recomputed from the grid.
+"""
+function compute_mass_fluxes!(am, bm, cm, u, v, grid,
+                               Δp::AbstractArray{FT,3}, half_dt) where FT
+    Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
+    g = FT(grid.gravity)
+    vc = grid.vertical
+    backend = get_backend(Δp)
+    dy_j_cpu = FT[Δy(1, j, grid) for j in 1:Ny]
+    dy_j = _to_device(dy_j_cpu, Δp)
+
+    dx_face_cpu = Vector{FT}(undef, Ny + 1)
+    for j in 1:Ny+1
+        φ_f = if j == 1
+            FT(-90)
+        elseif j == Ny + 1
+            FT(90)
+        else
+            FT(grid.φᶠ_cpu[j])
+        end
+        dx_face_cpu[j] = FT(grid.radius) * cosd(φ_f) * deg2rad(FT(grid.Δλ))
+    end
+    dx_face = _to_device(dx_face_cpu, Δp)
+
+    k_am! = _am_kernel!(backend, 256)
+    k_am!(am, u, Δp, dy_j, Nx, FT(half_dt), g; ndrange=(Nx + 1, Ny, Nz))
+    synchronize(backend)
+
+    k_bm! = _bm_kernel!(backend, 256)
+    k_bm!(bm, v, Δp, dx_face, Ny, FT(half_dt), g; ndrange=(Nx, Ny + 1, Nz))
+    synchronize(backend)
+
+    ΔB_cpu = Vector{FT}(undef, Nz)
+    @inbounds for k in 1:Nz
+        ΔB_cpu[k] = FT(vc.B[k + 1] - vc.B[k])
+    end
+    ΔB_total = FT(vc.B[Nz + 1] - vc.B[1])
+    bt_cpu = abs(ΔB_total) > eps(FT) ? ΔB_cpu ./ ΔB_total : zeros(FT, Nz)
+    bt = _to_device(bt_cpu, Δp)
+
+    fill!(cm, zero(FT))
+    k_cm! = _cm_column_kernel!(backend, 256)
+    k_cm!(cm, am, bm, bt, Nz; ndrange=(Nx, Ny))
+    synchronize(backend)
+
+    return nothing
+end
+
+"""
+$(SIGNATURES)
+
+Cache-accelerated version: uses pre-computed geometry from [`GridGeometryCache`](@ref).
+No host→device transfers, no temporary allocations.
+"""
+function compute_mass_fluxes!(am, bm, cm, u, v,
+                               gc::GridGeometryCache{FT},
+                               Δp::AbstractArray{FT,3}, half_dt) where FT
+    backend = get_backend(Δp)
+
+    k_am! = _am_kernel!(backend, 256)
+    k_am!(am, u, Δp, gc.dy_j, gc.Nx, FT(half_dt), gc.gravity;
+          ndrange=(gc.Nx + 1, gc.Ny, gc.Nz))
+    synchronize(backend)
+
+    k_bm! = _bm_kernel!(backend, 256)
+    k_bm!(bm, v, Δp, gc.dx_face, gc.Ny, FT(half_dt), gc.gravity;
+          ndrange=(gc.Nx, gc.Ny + 1, gc.Nz))
+    synchronize(backend)
+
+    fill!(cm, zero(FT))
+    k_cm! = _cm_column_kernel!(backend, 256)
+    k_cm!(cm, am, bm, gc.bt, gc.Nz; ndrange=(gc.Nx, gc.Ny))
+    synchronize(backend)
+
+    return nothing
+end
+
 # =====================================================================
-# X-direction mass-flux advection
+# Advection wrappers — zero-allocation versions using workspace buffers
 # =====================================================================
 
 """
 $(SIGNATURES)
 
-TM5-faithful slopes advection in the x-direction (longitude) using mass fluxes.
-
-Modifies `rm_tracers` (NamedTuple of tracer mass arrays) and `m` (air mass) in
-place.  Periodic boundary conditions in longitude.
-
-`am` is the eastward mass flux at x-faces, size `(Nx+1, Ny, Nz)`.
-
-The scheme:
-1. Computes slopes of `rm` (centered difference, with optional limiter).
-2. Computes tracer mass flux `f` using `alpha = am / m_donor`.
-3. Updates `rm = rm + f_in - f_out`.
-4. Updates `m = m + am_in - am_out`.
+TM5-faithful x-advection using mass fluxes. Runs on CPU or GPU via KA kernels.
+Uses pre-allocated `rm_buf` and `m_buf` to avoid GPU allocations.
 """
 function advect_x_massflux!(rm_tracers::NamedTuple,
                              m::AbstractArray{FT,3},
                              am::AbstractArray{FT,3},
-                             grid::LatitudeLongitudeGrid,
-                             use_limiter::Bool) where FT
-    Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
-
-    f  = Vector{FT}(undef, Nx + 1)
-    sx = Vector{FT}(undef, Nx)
-
-    @inbounds for k in 1:Nz, j in 1:Ny
-
-        for (_, rm) in pairs(rm_tracers)
-
-            # Slopes of concentration (c = rm/m), then scale by m.
-            # Computing slopes from c rather than rm ensures that a spatially
-            # uniform concentration field is exactly preserved.
-            for i in 1:Nx
-                i_prev = i == 1 ? Nx : i - 1
-                i_next = i == Nx ? 1 : i + 1
-                c_prev = rm[i_prev, j, k] / m[i_prev, j, k]
-                c_this = rm[i, j, k] / m[i, j, k]
-                c_next = rm[i_next, j, k] / m[i_next, j, k]
-                sc = (c_next - c_prev) / 2
-                if use_limiter
-                    sc = minmod(sc, 2 * (c_next - c_this), 2 * (c_this - c_prev))
-                end
-                sx[i] = m[i, j, k] * sc
-                if use_limiter
-                    sx[i] = max(min(sx[i], rm[i, j, k]), -rm[i, j, k])
-                end
-            end
-
-            # Fluxes at each x-face
-            for i in 1:Nx+1
-                i_left  = i == 1 ? Nx : i - 1
-                i_right = i > Nx ? 1  : i
-
-                if am[i, j, k] >= zero(FT)
-                    alpha = am[i, j, k] / m[i_left, j, k]
-                    f[i] = alpha * (rm[i_left, j, k] + (one(FT) - alpha) * sx[i_left])
-                else
-                    alpha = am[i, j, k] / m[i_right, j, k]
-                    f[i] = alpha * (rm[i_right, j, k] - (one(FT) + alpha) * sx[i_right])
-                end
-            end
-            # Periodic: face Nx+1 == face 1
-            f[Nx + 1] = f[1]
-
-            # Update rm
-            for i in 1:Nx
-                rm[i, j, k] += f[i] - f[i + 1]
-            end
-        end
-
-        # --- Update air mass m ---
-        for i in 1:Nx
-            m[i, j, k] += am[i, j, k] - am[i + 1, j, k]
-        end
+                             grid,
+                             use_limiter::Bool,
+                             rm_buf::AbstractArray{FT,3},
+                             m_buf::AbstractArray{FT,3}) where FT
+    backend = get_backend(m)
+    Nx = grid.Nx
+    k! = _massflux_x_kernel!(backend, 256)
+    for (_, rm) in pairs(rm_tracers)
+        k!(rm_buf, rm, m_buf, m, am, Nx, use_limiter; ndrange=size(m))
+        synchronize(backend)
+        copyto!(rm, rm_buf)
     end
+    copyto!(m, m_buf)
     return nothing
 end
-
-# =====================================================================
-# Y-direction mass-flux advection
-# =====================================================================
 
 """
 $(SIGNATURES)
 
-TM5-faithful slopes advection in the y-direction (latitude) using mass fluxes.
-
-Modifies `rm_tracers` and `m` in place.  Zero-flux walls at poles.
-
-`bm` is the northward mass flux at y-faces, size `(Nx, Ny+1, Nz)`.
-
-Poles (j=1 and j=Ny) receive first-order treatment (no meridional slope)
-following TM5's convention.
+TM5-faithful y-advection using mass fluxes. Runs on CPU or GPU via KA kernels.
+Uses pre-allocated `rm_buf` and `m_buf` to avoid GPU allocations.
 """
 function advect_y_massflux!(rm_tracers::NamedTuple,
                              m::AbstractArray{FT,3},
                              bm::AbstractArray{FT,3},
-                             grid::LatitudeLongitudeGrid,
-                             use_limiter::Bool) where FT
-    Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
-
-    f  = Vector{FT}(undef, Ny + 1)
-    sy = Vector{FT}(undef, Ny)
-
-    @inbounds for k in 1:Nz, i in 1:Nx
-
-        for (_, rm) in pairs(rm_tracers)
-
-            # Slopes of concentration, scaled by m (preserves uniform fields)
-            for j in 1:Ny
-                if j > 1 && j < Ny
-                    c_prev = rm[i, j - 1, k] / m[i, j - 1, k]
-                    c_this = rm[i, j, k] / m[i, j, k]
-                    c_next = rm[i, j + 1, k] / m[i, j + 1, k]
-                    sc = (c_next - c_prev) / 2
-                    if use_limiter
-                        sc = minmod(sc, 2 * (c_next - c_this), 2 * (c_this - c_prev))
-                    end
-                    sy[j] = m[i, j, k] * sc
-                    if use_limiter
-                        sy[j] = max(min(sy[j], rm[i, j, k]), -rm[i, j, k])
-                    end
-                else
-                    sy[j] = zero(FT)
-                end
-            end
-
-            # Fluxes at each y-face
-            # Face 1 = south boundary (zero flux)
-            # Face Ny+1 = north boundary (zero flux)
-            f[1] = zero(FT)
-            f[Ny + 1] = zero(FT)
-
-            for j in 2:Ny
-                j_south = j - 1
-                j_north = j
-
-                if bm[i, j, k] >= zero(FT)
-                    beta = bm[i, j, k] / m[i, j_south, k]
-                    if j_south == 1
-                        # South pole: first-order (no slope)
-                        f[j] = beta * rm[i, j_south, k]
-                    else
-                        f[j] = beta * (rm[i, j_south, k] + (one(FT) - beta) * sy[j_south])
-                    end
-                else
-                    beta = bm[i, j, k] / m[i, j_north, k]
-                    if j_north == Ny
-                        # North pole: first-order (no slope)
-                        f[j] = beta * rm[i, j_north, k]
-                    else
-                        f[j] = beta * (rm[i, j_north, k] - (one(FT) + beta) * sy[j_north])
-                    end
-                end
-            end
-
-            # Update rm:  bm > 0 = northward, so mass enters j from south (face j)
-            # and leaves j to north (face j+1).
-            for j in 1:Ny
-                rm[i, j, k] += f[j] - f[j + 1]
-            end
-        end
-
-        # Update air mass m
-        for j in 1:Ny
-            m[i, j, k] += bm[i, j, k] - bm[i, j + 1, k]
-        end
+                             grid,
+                             use_limiter::Bool,
+                             rm_buf::AbstractArray{FT,3},
+                             m_buf::AbstractArray{FT,3}) where FT
+    backend = get_backend(m)
+    Ny = grid.Ny
+    k! = _massflux_y_kernel!(backend, 256)
+    for (_, rm) in pairs(rm_tracers)
+        k!(rm_buf, rm, m_buf, m, bm, Ny, use_limiter; ndrange=size(m))
+        synchronize(backend)
+        copyto!(rm, rm_buf)
     end
+    copyto!(m, m_buf)
     return nothing
 end
-
-# =====================================================================
-# Z-direction mass-flux advection (TM5 dynamw_1d)
-# =====================================================================
 
 """
 $(SIGNATURES)
 
-TM5-faithful slopes advection in the z-direction (vertical) using mass fluxes.
-
-Modifies `rm_tracers` and `m` in place.
-
-`cm` is the downward mass flux at z-interfaces, size `(Nx, Ny, Nz+1)`.
-`cm > 0` means downward (from layer k toward layer k+1).
-`cm[:,:,1] = 0` (top) and `cm[:,:,Nz+1] = 0` (surface).
+TM5-faithful z-advection using mass fluxes. Runs on CPU or GPU via KA kernels.
+Uses pre-allocated `rm_buf` and `m_buf` to avoid GPU allocations.
 """
 function advect_z_massflux!(rm_tracers::NamedTuple,
                              m::AbstractArray{FT,3},
                              cm::AbstractArray{FT,3},
-                             use_limiter::Bool) where FT
-    Nx, Ny, Nz = Base.size(m)
-
-    f  = Vector{FT}(undef, Nz + 1)
-    sz = Vector{FT}(undef, Nz)
-    mnew = Vector{FT}(undef, Nz)
-
-    @inbounds for j in 1:Ny, i in 1:Nx
-
-        # New air mass distribution for this column
-        for k in 1:Nz
-            mnew[k] = m[i, j, k] + cm[i, j, k] - cm[i, j, k + 1]
-        end
-
-        for (_, rm) in pairs(rm_tracers)
-
-            # Slopes of concentration, scaled by m (preserves uniform fields)
-            for k in 1:Nz
-                if k > 1 && k < Nz
-                    c_prev = rm[i, j, k - 1] / m[i, j, k - 1]
-                    c_this = rm[i, j, k] / m[i, j, k]
-                    c_next = rm[i, j, k + 1] / m[i, j, k + 1]
-                    sc = (c_next - c_prev) / 2
-                    if use_limiter
-                        sc = minmod(sc, 2 * (c_next - c_this), 2 * (c_this - c_prev))
-                    end
-                    sz[k] = m[i, j, k] * sc
-                    if use_limiter
-                        sz[k] = max(min(sz[k], rm[i, j, k]), -rm[i, j, k])
-                    end
-                else
-                    sz[k] = zero(FT)
-                end
-            end
-
-            # Fluxes at each z-interface
-            # Interface 1 = top of atmosphere (zero flux)
-            # Interface Nz+1 = surface (zero flux)
-            f[1] = zero(FT)
-            f[Nz + 1] = zero(FT)
-
-            for k in 2:Nz
-                k_above = k - 1
-                k_below = k
-
-                if cm[i, j, k] > zero(FT)
-                    # Downward flow: donor = layer above (k_above)
-                    gamma = cm[i, j, k] / m[i, j, k_above]
-                    f[k] = gamma * (rm[i, j, k_above] + (one(FT) - gamma) * sz[k_above])
-                elseif cm[i, j, k] < zero(FT)
-                    # Upward flow: donor = layer below (k_below)
-                    gamma = cm[i, j, k] / m[i, j, k_below]
-                    f[k] = gamma * (rm[i, j, k_below] - (one(FT) + gamma) * sz[k_below])
-                else
-                    f[k] = zero(FT)
-                end
-            end
-
-            # Update rm: cm > 0 = downward, so mass enters k from above (face k)
-            # and leaves k downward (face k+1).
-            for k in 1:Nz
-                rm[i, j, k] += f[k] - f[k + 1]
-            end
-        end
-
-        # Update m
-        for k in 1:Nz
-            m[i, j, k] = mnew[k]
-        end
+                             use_limiter::Bool,
+                             rm_buf::AbstractArray{FT,3},
+                             m_buf::AbstractArray{FT,3}) where FT
+    backend = get_backend(m)
+    Nz = size(m, 3)
+    k! = _massflux_z_kernel!(backend, 256)
+    for (_, rm) in pairs(rm_tracers)
+        k!(rm_buf, rm, m_buf, m, cm, Nz, use_limiter; ndrange=size(m))
+        synchronize(backend)
+        copyto!(rm, rm_buf)
     end
+    copyto!(m, m_buf)
     return nothing
 end
 
+# Backward-compatible versions that allocate internally (for tests)
+function advect_x_massflux!(rm_tracers::NamedTuple, m::AbstractArray{FT,3},
+                             am::AbstractArray{FT,3}, grid, use_limiter::Bool) where FT
+    advect_x_massflux!(rm_tracers, m, am, grid, use_limiter,
+                        similar(first(values(rm_tracers))), similar(m))
+end
+function advect_y_massflux!(rm_tracers::NamedTuple, m::AbstractArray{FT,3},
+                             bm::AbstractArray{FT,3}, grid, use_limiter::Bool) where FT
+    advect_y_massflux!(rm_tracers, m, bm, grid, use_limiter,
+                        similar(first(values(rm_tracers))), similar(m))
+end
+function advect_z_massflux!(rm_tracers::NamedTuple, m::AbstractArray{FT,3},
+                             cm::AbstractArray{FT,3}, use_limiter::Bool) where FT
+    advect_z_massflux!(rm_tracers, m, cm, use_limiter,
+                        similar(first(values(rm_tracers))), similar(m))
+end
+
 # =====================================================================
-# CFL-based mass-flux Courant number check
+# CFL functions — zero-allocation versions
 # =====================================================================
 
 """
 $(SIGNATURES)
 
 Maximum mass-based Courant number for x-direction mass fluxes.
+Pre-allocated `cfl_arr` avoids GPU allocation.
 """
-function max_cfl_massflux_x(am::AbstractArray{FT,3}, m::AbstractArray{FT,3}) where FT
-    Nx, Ny, Nz = Base.size(m)
-    cfl_max = zero(FT)
-    @inbounds for k in 1:Nz, j in 1:Ny, i in 1:Nx+1
-        i_left  = i == 1 ? Nx : i - 1
-        i_right = i > Nx ? 1  : i
-        m_donor = am[i, j, k] >= zero(FT) ? m[i_left, j, k] : m[i_right, j, k]
-        cfl_max = max(cfl_max, abs(am[i, j, k]) / m_donor)
-    end
-    return cfl_max
+function max_cfl_massflux_x(am::AbstractArray{FT,3}, m::AbstractArray{FT,3},
+                             cfl_arr::AbstractArray{FT,3}) where FT
+    backend = get_backend(m)
+    Nx = size(m, 1)
+    k! = _cfl_x_kernel!(backend, 256)
+    k!(cfl_arr, am, m, Nx; ndrange=size(am))
+    synchronize(backend)
+    return FT(maximum(cfl_arr))
 end
 
 """
@@ -419,16 +724,14 @@ $(SIGNATURES)
 
 Maximum mass-based Courant number for y-direction mass fluxes.
 """
-function max_cfl_massflux_y(bm::AbstractArray{FT,3}, m::AbstractArray{FT,3}) where FT
-    Nx, Ny, Nz = Base.size(m)
-    cfl_max = zero(FT)
-    @inbounds for k in 1:Nz, j in 2:Ny, i in 1:Nx
-        j_south = j - 1
-        j_north = j
-        m_donor = bm[i, j, k] >= zero(FT) ? m[i, j_south, k] : m[i, j_north, k]
-        cfl_max = max(cfl_max, abs(bm[i, j, k]) / m_donor)
-    end
-    return cfl_max
+function max_cfl_massflux_y(bm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
+                             cfl_arr::AbstractArray{FT,3}) where FT
+    backend = get_backend(m)
+    Ny = size(m, 2)
+    k! = _cfl_y_kernel!(backend, 256)
+    k!(cfl_arr, bm, m, Ny; ndrange=size(bm))
+    synchronize(backend)
+    return FT(maximum(cfl_arr))
 end
 
 """
@@ -436,43 +739,52 @@ $(SIGNATURES)
 
 Maximum mass-based Courant number for z-direction mass fluxes.
 """
+function max_cfl_massflux_z(cm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
+                             cfl_arr::AbstractArray{FT,3}) where FT
+    backend = get_backend(m)
+    Nz = size(m, 3)
+    k! = _cfl_z_kernel!(backend, 256)
+    k!(cfl_arr, cm, m, Nz; ndrange=size(cm))
+    synchronize(backend)
+    return FT(maximum(cfl_arr))
+end
+
+# Backward-compatible versions (allocating)
+function max_cfl_massflux_x(am::AbstractArray{FT,3}, m::AbstractArray{FT,3}) where FT
+    max_cfl_massflux_x(am, m, similar(am))
+end
+function max_cfl_massflux_y(bm::AbstractArray{FT,3}, m::AbstractArray{FT,3}) where FT
+    max_cfl_massflux_y(bm, m, similar(bm))
+end
 function max_cfl_massflux_z(cm::AbstractArray{FT,3}, m::AbstractArray{FT,3}) where FT
-    Nx, Ny, Nz = Base.size(m)
-    cfl_max = zero(FT)
-    @inbounds for k in 2:Nz, j in 1:Ny, i in 1:Nx
-        k_above = k - 1
-        k_below = k
-        m_donor = cm[i, j, k] > zero(FT) ? m[i, j, k_above] : m[i, j, k_below]
-        if m_donor > zero(FT)
-            cfl_max = max(cfl_max, abs(cm[i, j, k]) / m_donor)
-        end
-    end
-    return cfl_max
+    max_cfl_massflux_z(cm, m, similar(cm))
 end
 
 # =====================================================================
-# Subcycled mass-flux advection
+# Subcycled advection — zero-allocation versions using workspace
 # =====================================================================
 
 """
 $(SIGNATURES)
 
-CFL-adaptive subcycled x-advection in mass-flux form.  When the maximum
-Courant number exceeds `cfl_limit`, the mass fluxes are divided into `n_sub`
-equal sub-steps (following TM5's `advectx_get_nloop`).
+CFL-adaptive subcycled x-advection in mass-flux form.
+Uses workspace buffers to avoid GPU allocations.
 """
 function advect_x_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, am,
-                                       grid, use_limiter;
+                                       grid, use_limiter,
+                                       ws::MassFluxWorkspace{FT};
                                        cfl_limit = FT(0.95)) where FT
-    cfl = max_cfl_massflux_x(am, m)
+    cfl = max_cfl_massflux_x(am, m, ws.cfl_x)
     n_sub = max(1, ceil(Int, cfl / cfl_limit))
     if n_sub > 1
-        am_sub = am ./ FT(n_sub)
-        for _ in 1:n_sub
-            advect_x_massflux!(rm_tracers, m, am_sub, grid, use_limiter)
-        end
+        ws.cfl_x .= am ./ FT(n_sub)   # reuse cfl_x as flux_eff
+        am_eff = ws.cfl_x
     else
-        advect_x_massflux!(rm_tracers, m, am, grid, use_limiter)
+        am_eff = am
+    end
+    for _ in 1:n_sub
+        advect_x_massflux!(rm_tracers, m, am_eff, grid, use_limiter,
+                            ws.rm_buf, ws.m_buf)
     end
     return n_sub
 end
@@ -483,17 +795,20 @@ $(SIGNATURES)
 CFL-adaptive subcycled y-advection in mass-flux form.
 """
 function advect_y_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, bm,
-                                       grid, use_limiter;
+                                       grid, use_limiter,
+                                       ws::MassFluxWorkspace{FT};
                                        cfl_limit = FT(0.95)) where FT
-    cfl = max_cfl_massflux_y(bm, m)
+    cfl = max_cfl_massflux_y(bm, m, ws.cfl_y)
     n_sub = max(1, ceil(Int, cfl / cfl_limit))
     if n_sub > 1
-        bm_sub = bm ./ FT(n_sub)
-        for _ in 1:n_sub
-            advect_y_massflux!(rm_tracers, m, bm_sub, grid, use_limiter)
-        end
+        ws.cfl_y .= bm ./ FT(n_sub)
+        bm_eff = ws.cfl_y
     else
-        advect_y_massflux!(rm_tracers, m, bm, grid, use_limiter)
+        bm_eff = bm
+    end
+    for _ in 1:n_sub
+        advect_y_massflux!(rm_tracers, m, bm_eff, grid, use_limiter,
+                            ws.rm_buf, ws.m_buf)
     end
     return n_sub
 end
@@ -504,55 +819,108 @@ $(SIGNATURES)
 CFL-adaptive subcycled z-advection in mass-flux form.
 """
 function advect_z_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, cm,
+                                       use_limiter,
+                                       ws::MassFluxWorkspace{FT};
+                                       cfl_limit = FT(0.95)) where FT
+    cfl = max_cfl_massflux_z(cm, m, ws.cfl_z)
+    n_sub = max(1, ceil(Int, cfl / cfl_limit))
+    if n_sub > 1
+        ws.cfl_z .= cm ./ FT(n_sub)
+        cm_eff = ws.cfl_z
+    else
+        cm_eff = cm
+    end
+    for _ in 1:n_sub
+        advect_z_massflux!(rm_tracers, m, cm_eff, use_limiter,
+                            ws.rm_buf, ws.m_buf)
+    end
+    return n_sub
+end
+
+# Backward-compatible versions (allocating, for tests)
+function advect_x_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, am,
+                                       grid, use_limiter;
+                                       cfl_limit = FT(0.95)) where FT
+    cfl = max_cfl_massflux_x(am, m)
+    n_sub = max(1, ceil(Int, cfl / cfl_limit))
+    am_eff = n_sub > 1 ? am ./ FT(n_sub) : am
+    for _ in 1:n_sub
+        advect_x_massflux!(rm_tracers, m, am_eff, grid, use_limiter)
+    end
+    return n_sub
+end
+function advect_y_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, bm,
+                                       grid, use_limiter;
+                                       cfl_limit = FT(0.95)) where FT
+    cfl = max_cfl_massflux_y(bm, m)
+    n_sub = max(1, ceil(Int, cfl / cfl_limit))
+    bm_eff = n_sub > 1 ? bm ./ FT(n_sub) : bm
+    for _ in 1:n_sub
+        advect_y_massflux!(rm_tracers, m, bm_eff, grid, use_limiter)
+    end
+    return n_sub
+end
+function advect_z_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, cm,
                                        use_limiter;
                                        cfl_limit = FT(0.95)) where FT
     cfl = max_cfl_massflux_z(cm, m)
     n_sub = max(1, ceil(Int, cfl / cfl_limit))
-    if n_sub > 1
-        cm_sub = cm ./ FT(n_sub)
-        for _ in 1:n_sub
-            advect_z_massflux!(rm_tracers, m, cm_sub, use_limiter)
-        end
-    else
-        advect_z_massflux!(rm_tracers, m, cm, use_limiter)
+    cm_eff = n_sub > 1 ? cm ./ FT(n_sub) : cm
+    for _ in 1:n_sub
+        advect_z_massflux!(rm_tracers, m, cm_eff, use_limiter)
     end
     return n_sub
 end
 
 # =====================================================================
-# Convenience: full Strang-split mass-flux advection step
+# Full Strang-split mass-flux advection step
 # =====================================================================
 
 """
 $(SIGNATURES)
 
 Perform a full Strang-split advection step (X-Y-Z-Z-Y-X) using TM5-style
-mass-flux advection.
+mass-flux advection.  Runs on CPU or GPU — same code path via KA kernels.
 
-Converts concentration `tracers` to tracer mass using `m`, performs the split,
-then converts back.  `m` is updated in-place to track air mass through the
-split (NOT reset between directional steps — this is critical for consistency).
+Converts concentration `tracers` to tracer mass, performs the split,
+then converts back.  `m` is updated in-place to track air mass.
 
-Arguments:
-- `tracers`: NamedTuple of 3D concentration arrays (modified in-place)
-- `m`: 3D air mass array (modified in-place; tracks continuously)
-- `am, bm, cm`: pre-computed mass fluxes for one half-timestep
-- `grid`: LatitudeLongitudeGrid
-- `use_limiter`: enable slope limiter
-- `cfl_limit`: CFL threshold for subcycling
+When `ws::MassFluxWorkspace` is provided, all temporary GPU arrays are
+pre-allocated, reducing per-step allocations from ~90 to zero.
 """
+function strang_split_massflux!(tracers::NamedTuple,
+                                 m::AbstractArray{FT,3},
+                                 am, bm, cm,
+                                 grid::LatitudeLongitudeGrid,
+                                 use_limiter::Bool,
+                                 ws::MassFluxWorkspace{FT};
+                                 cfl_limit::FT = FT(0.95)) where FT
+    # Convert concentration → tracer mass using pre-allocated ws.rm
+    ws.rm .= m .* first(values(tracers))
+    rm_tracers = NamedTuple{keys(tracers)}((ws.rm,))
+
+    advect_x_massflux_subcycled!(rm_tracers, m, am, grid, use_limiter, ws; cfl_limit)
+    advect_y_massflux_subcycled!(rm_tracers, m, bm, grid, use_limiter, ws; cfl_limit)
+    advect_z_massflux_subcycled!(rm_tracers, m, cm, use_limiter, ws; cfl_limit)
+    advect_z_massflux_subcycled!(rm_tracers, m, cm, use_limiter, ws; cfl_limit)
+    advect_y_massflux_subcycled!(rm_tracers, m, bm, grid, use_limiter, ws; cfl_limit)
+    advect_x_massflux_subcycled!(rm_tracers, m, am, grid, use_limiter, ws; cfl_limit)
+
+    first(values(tracers)) .= ws.rm ./ m
+    return nothing
+end
+
+# Backward-compatible version without workspace (allocates internally)
 function strang_split_massflux!(tracers::NamedTuple,
                                  m::AbstractArray{FT,3},
                                  am, bm, cm,
                                  grid::LatitudeLongitudeGrid,
                                  use_limiter::Bool;
                                  cfl_limit::FT = FT(0.95)) where FT
-    # Convert concentration → tracer mass
     rm_tracers = NamedTuple{keys(tracers)}(
         Tuple(m .* c for c in values(tracers))
     )
 
-    # Strang split: X → Y → Z → Z → Y → X
     advect_x_massflux_subcycled!(rm_tracers, m, am, grid, use_limiter; cfl_limit)
     advect_y_massflux_subcycled!(rm_tracers, m, bm, grid, use_limiter; cfl_limit)
     advect_z_massflux_subcycled!(rm_tracers, m, cm, use_limiter; cfl_limit)
@@ -560,12 +928,9 @@ function strang_split_massflux!(tracers::NamedTuple,
     advect_y_massflux_subcycled!(rm_tracers, m, bm, grid, use_limiter; cfl_limit)
     advect_x_massflux_subcycled!(rm_tracers, m, am, grid, use_limiter; cfl_limit)
 
-    # Convert tracer mass → concentration
     for (name, c) in pairs(tracers)
         rm = rm_tracers[name]
-        @inbounds @simd for idx in eachindex(c)
-            c[idx] = rm[idx] / m[idx]
-        end
+        c .= rm ./ m
     end
 
     return nothing

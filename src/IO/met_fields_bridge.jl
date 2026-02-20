@@ -147,8 +147,8 @@ function compute_continuity_omega(
         for j in 1:Ny
             A_j  = cell_area(1, j, grid)
             Ly   = R * Δφ                                          # y-edge length (uniform)
-            Lx_n = R * FT(cosd(Array(grid.φᶠ)[j + 1])) * Δλ      # north x-edge
-            Lx_s = R * FT(cosd(Array(grid.φᶠ)[j]))     * Δλ      # south x-edge
+            Lx_n = R * FT(cosd(grid.φᶠ_cpu[j + 1])) * Δλ      # north x-edge
+            Lx_s = R * FT(cosd(grid.φᶠ_cpu[j]))     * Δλ      # south x-edge
 
             for i in 1:Nx
                 ps_ij = p_surface !== nothing ? p_surface[i, j] : grid.reference_pressure

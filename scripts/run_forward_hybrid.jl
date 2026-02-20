@@ -208,7 +208,25 @@ function run_forward()
           "max=$(round(maximum(c_cpu), digits=2)), " *
           "mass=$(round(initial_mass, sigdigits=8))"
 
-    half_dt = DT / 2
+    half_dt = FT(DT / 2)
+
+    # ---------------------------------------------------------------
+    # TM5-style precomputation: build geometry cache + allocate buffers
+    # ---------------------------------------------------------------
+    @info "\n--- Precomputing grid geometry cache (TM5 dynam0 style) ---"
+    Δp_cpu  = Array{FT}(undef, Nx, Ny, Nz)
+    Δp_dev  = ArrayType(zeros(FT, Nx, Ny, Nz))
+    u_dev   = ArrayType(zeros(FT, Nx + 1, Ny, Nz))
+    v_dev   = ArrayType(zeros(FT, Nx, Ny + 1, Nz))
+    m_dev   = ArrayType(zeros(FT, Nx, Ny, Nz))
+    am_dev  = ArrayType(zeros(FT, Nx + 1, Ny, Nz))
+    bm_dev  = ArrayType(zeros(FT, Nx, Ny + 1, Nz))
+    cm_dev  = ArrayType(zeros(FT, Nx, Ny, Nz + 1))
+
+    gc = build_geometry_cache(grid, Δp_dev)
+    ws = allocate_massflux_workspace(m_dev, am_dev, bm_dev, cm_dev)
+
+    @info "  Geometry cache + workspace allocated (zero per-step allocation)"
 
     @info "\n--- Running forward simulation ($Nt steps, DT=$(DT)s) ---"
     @info "  Using TM5-faithful mass-flux advection"
@@ -221,24 +239,23 @@ function run_forward()
         u_cc, v_cc, omega, delp, ps = load_timestep(DATAFILE, step, Nx, Ny, Nz, FT)
         met = stagger_velocities(u_cc, v_cc, omega, Nx, Ny, Nz, FT)
 
-        # Convert to architecture arrays
-        vel = (;
-            u = ArrayType(met.u),
-            v = ArrayType(met.v),
-            w = ArrayType(met.w),
-        )
+        # Fill pre-allocated CPU → device arrays
+        Advection._build_Δz_3d!(Δp_cpu, grid, ps)
+        copyto!(Δp_dev, Δp_cpu)
+        copyto!(u_dev, met.u)
+        copyto!(v_dev, met.v)
 
-        # Compute pressure thickness, air mass, and mass fluxes (TM5 dynam0)
-        Δp = Advection._build_Δz_3d(grid, ps)
-        m = compute_air_mass(Δp, grid)
-        mf = compute_mass_fluxes(vel.u, vel.v, grid, Δp, half_dt)
+        # Precompute air mass and mass fluxes using cached geometry
+        compute_air_mass!(m_dev, Δp_dev, gc)
+        compute_mass_fluxes!(am_dev, bm_dev, cm_dev, u_dev, v_dev,
+                              gc, Δp_dev, half_dt)
 
         # CFL diagnostics (mass-based)
-        cfl_x = max_cfl_massflux_x(mf.am, m)
+        cfl_x = max_cfl_massflux_x(am_dev, m_dev, ws.cfl_x)
 
         # TM5-faithful mass-flux Strang split (X→Y→Z→Z→Y→X)
-        strang_split_massflux!(tracers, m, mf.am, mf.bm, mf.cm,
-                               grid, true; cfl_limit = FT(0.95))
+        strang_split_massflux!(tracers, m_dev, am_dev, bm_dev, cm_dev,
+                               grid, true, ws; cfl_limit = FT(0.95))
 
         # Diagnostics
         c_now = Array(tracers.c)

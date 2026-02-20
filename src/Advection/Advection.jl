@@ -40,11 +40,18 @@ function _build_Δz_3d(grid, p_surface)
     FT = floattype(grid)
     Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
     Δz_3d = Array{FT}(undef, Nx, Ny, Nz)
+    _build_Δz_3d!(Δz_3d, grid, p_surface)
+    return Δz_3d
+end
+
+function _build_Δz_3d!(Δz_3d, grid, p_surface)
+    FT = floattype(grid)
+    Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
     @inbounds for k in 1:Nz, j in 1:Ny, i in 1:Nx
         ps = p_surface !== nothing ? FT(p_surface[i, j]) : grid.reference_pressure
         Δz_3d[i, j, k] = level_thickness(grid.vertical, k, ps)
     end
-    return Δz_3d
+    return nothing
 end
 
 export AbstractAdvectionScheme
@@ -59,7 +66,9 @@ export update_pressure_x!, update_pressure_y!, update_pressure_z!
 export apply_mass_correction!
 export advect_x_mass_corrected!, advect_y_mass_corrected!, advect_z_mass_corrected!
 export advect_x_mass_corrected_subcycled!, advect_y_mass_corrected_subcycled!, advect_z_mass_corrected_subcycled!
-export compute_air_mass, compute_mass_fluxes
+export compute_air_mass, compute_air_mass!, compute_mass_fluxes, compute_mass_fluxes!
+export GridGeometryCache, build_geometry_cache
+export MassFluxWorkspace, allocate_massflux_workspace
 export advect_x_massflux!, advect_y_massflux!, advect_z_massflux!
 export advect_x_massflux_subcycled!, advect_y_massflux_subcycled!, advect_z_massflux_subcycled!
 export max_cfl_massflux_x, max_cfl_massflux_y, max_cfl_massflux_z

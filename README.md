@@ -1,5 +1,7 @@
 # AtmosTransportModel.jl
 
+[![Documentation](https://img.shields.io/badge/docs-dev-blue.svg)](https://RemoteSensingTools.github.io/AtmosTransportModel/dev/)
+
 A Julia-based atmospheric transport model for GPU and CPU, inspired by TM5 and designed with
 [Oceananigans.jl](https://github.com/CliMA/Oceananigans.jl)-style multiple dispatch patterns.
 
@@ -49,15 +51,16 @@ model = TransportModel(;
 
 ## Documentation
 
-| Document | Description |
-|----------|-------------|
-| [`docs/literate/advection_theory.jl`](docs/literate/advection_theory.jl) | Mathematical framework: mass-flux advection, TM5 comparison, continuity equation |
-| [`docs/literate/design_principles.jl`](docs/literate/design_principles.jl) | Architecture: why Julia, multiple dispatch, GPU, adjoint design |
-| [`docs/literate/met_driver_comparison.jl`](docs/literate/met_driver_comparison.jl) | Tutorial: ERA5 vs GEOS-FP vs MERRA-2 |
-| [`docs/VALIDATION.md`](docs/VALIDATION.md) | Test results, mass conservation, gradient tests |
-| [`docs/TM5_CODE_ALIGNMENT.md`](docs/TM5_CODE_ALIGNMENT.md) | Point-by-point checklist against TM5 Fortran source |
-| [`docs/MASS_FLUX_EVOLUTION.md`](docs/MASS_FLUX_EVOLUTION.md) | Design history and lessons learned (developer reference) |
-| [`docs/METEO_PREPROCESSING.md`](docs/METEO_PREPROCESSING.md) | Meteorological data requirements and preprocessing |
+[![Documentation](https://img.shields.io/badge/docs-dev-blue.svg)](https://RemoteSensingTools.github.io/AtmosTransportModel/dev/)
+
+Full documentation is available at [RemoteSensingTools.github.io/AtmosTransportModel](https://RemoteSensingTools.github.io/AtmosTransportModel/dev/), including:
+
+- **Theory:** Mathematical framework for mass-flux advection and TM5 comparison
+- **Tutorials:** Step-by-step guides for running forward simulations with ERA5 and GEOS-FP
+- **Developer Guide:** Validation results, TM5 code alignment, design history
+- **API Reference:** Auto-generated docstrings for all exported types and functions
+
+Source files for the documentation are in `docs/literate/` (Literate.jl scripts) and `docs/` (markdown reference docs).
 
 ## References
 

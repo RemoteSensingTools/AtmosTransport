@@ -1,0 +1,9 @@
+[deps]
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+DocStringExtensions = "ffbed154-4ef7-542d-bbb7-c09d3a79fcae"
+Literate = "98b081ad-f1c9-55d3-8b20-4c87d4299306"
+
+[compat]
+Documenter = "1"
+DocStringExtensions = "0.9"
+Literate = "2"

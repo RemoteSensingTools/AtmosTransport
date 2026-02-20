@@ -49,13 +49,13 @@ struct LatitudeLongitudeGrid{FT, Arch, VZ, V, RG} <: AbstractStructuredGrid{FT, 
     "halo width in z"
     Hz :: Int
 
-    "cell-center longitudes (length Nx)"
+    "cell-center longitudes — device array (length Nx)"
     λᶜ :: V
-    "cell-face longitudes (length Nx+1)"
+    "cell-face longitudes — device array (length Nx+1)"
     λᶠ :: V
-    "cell-center latitudes (length Ny)"
+    "cell-center latitudes — device array (length Ny)"
     φᶜ :: V
-    "cell-face latitudes (length Ny+1)"
+    "cell-face latitudes — device array (length Ny+1)"
     φᶠ :: V
 
     "uniform longitude spacing [degrees]"
@@ -75,6 +75,15 @@ struct LatitudeLongitudeGrid{FT, Arch, VZ, V, RG} <: AbstractStructuredGrid{FT, 
 
     "reduced grid specification for polar CFL handling, or `nothing`"
     reduced_grid :: RG
+
+    "CPU-cached cell-center longitudes for host-side scalar access"
+    λᶜ_cpu :: Vector{FT}
+    "CPU-cached cell-face longitudes for host-side scalar access"
+    λᶠ_cpu :: Vector{FT}
+    "CPU-cached cell-center latitudes for host-side scalar access"
+    φᶜ_cpu :: Vector{FT}
+    "CPU-cached cell-face latitudes for host-side scalar access"
+    φᶠ_cpu :: Vector{FT}
 end
 
 # Placeholder constructor — implementation will be filled by a parallel agent
@@ -127,7 +136,8 @@ function LatitudeLongitudeGrid(arch::AbstractArchitecture;
     return LatitudeLongitudeGrid{FT, typeof(arch), typeof(vertical), typeof(λᶜ), typeof(rg)}(
         arch, Nx, Ny, Nz, Hx, Hy, Hz,
         λᶜ, λᶠ, φᶜ, φᶠ, Δλ, Δφ, vertical,
-        FT(radius), FT(gravity), FT(reference_pressure), rg)
+        FT(radius), FT(gravity), FT(reference_pressure), rg,
+        λᶜ_cpu, λᶠ_cpu, φᶜ_cpu, φᶠ_cpu)
 end
 
 # ---------------------------------------------------------------------------
@@ -144,23 +154,19 @@ grid_size(g::LatitudeLongitudeGrid) = (Nx=g.Nx, Ny=g.Ny, Nz=g.Nz)
 halo_size(g::LatitudeLongitudeGrid) = (Hx=g.Hx, Hy=g.Hy, Hz=g.Hz)
 
 """Longitude at (i, j). Center → cell center; Face → cell face."""
-xnode(i, j, g::LatitudeLongitudeGrid, ::Center) = _cpu_getindex(g.λᶜ, i)
-xnode(i, j, g::LatitudeLongitudeGrid, ::Face)   = _cpu_getindex(g.λᶠ, i)
+xnode(i, j, g::LatitudeLongitudeGrid, ::Center) = @inbounds g.λᶜ_cpu[i]
+xnode(i, j, g::LatitudeLongitudeGrid, ::Face)   = @inbounds g.λᶠ_cpu[i]
 
 """Latitude at (i, j). Center → cell center; Face → cell face."""
-ynode(i, j, g::LatitudeLongitudeGrid, ::Center) = _cpu_getindex(g.φᶜ, j)
-ynode(i, j, g::LatitudeLongitudeGrid, ::Face)   = _cpu_getindex(g.φᶠ, j)
-
-"""Scalar indexing helper — works for both CPU Arrays and GPU CuArrays."""
-@inline _cpu_getindex(v::Array, i) = @inbounds v[i]
-@inline _cpu_getindex(v, i) = @inbounds Array(v)[i]
+ynode(i, j, g::LatitudeLongitudeGrid, ::Center) = @inbounds g.φᶜ_cpu[j]
+ynode(i, j, g::LatitudeLongitudeGrid, ::Face)   = @inbounds g.φᶠ_cpu[j]
 
 """Horizontal x-spacing (m) at cell center (i, j). Uses cell-center latitude φᶜ (TM5 convention).
 At the poles the grid cell collapses in x; clamped to Δy to prevent CFL violation
 and division-by-zero. Physical fluxes near poles are small due to v·cos(φ) → 0."""
 function Δx(i, j, g::LatitudeLongitudeGrid{FT}) where FT
     R = g.radius
-    dx = R * cosd(_cpu_getindex(g.φᶜ, j)) * deg2rad(g.Δλ)
+    dx = R * cosd(g.φᶜ_cpu[j]) * deg2rad(g.Δλ)
     dx_min = R * deg2rad(g.Δφ)
     return max(dx, dx_min)
 end
@@ -173,7 +179,7 @@ end
 """Horizontal cell area (m²) at (i, j). Varies with latitude; larger near equator."""
 function cell_area(i, j, g::LatitudeLongitudeGrid{FT}) where FT
     R = g.radius
-    return R^2 * deg2rad(g.Δλ) * abs(sind(_cpu_getindex(g.φᶠ, j+1)) - sind(_cpu_getindex(g.φᶠ, j)))
+    return R^2 * deg2rad(g.Δλ) * abs(sind(g.φᶠ_cpu[j+1]) - sind(g.φᶠ_cpu[j]))
 end
 
 # ---------------------------------------------------------------------------

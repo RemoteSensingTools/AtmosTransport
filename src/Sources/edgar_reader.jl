@@ -74,8 +74,8 @@ function _conservative_regrid(flux_native::Matrix{FT},
 
     mass_model = zeros(FT, Nx_m, Ny_m)
 
-    λᶠ_cpu = Array(grid.λᶠ)
-    φᶠ_cpu = Array(grid.φᶠ)
+    λᶠ_cpu = grid.λᶠ_cpu
+    φᶠ_cpu = grid.φᶠ_cpu
 
     for js in eachindex(lat_src), is in eachindex(lon_src)
         f = flux_native[is, js]

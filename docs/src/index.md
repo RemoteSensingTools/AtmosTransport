@@ -43,18 +43,25 @@ Pkg.add(url="https://github.com/RemoteSensingTools/AtmosTransportModel.git")
 
 ```julia
 using AtmosTransportModel
+using AtmosTransportModel.Grids
+using AtmosTransportModel.IO: default_met_config, build_vertical_coordinate
+
+# Build vertical coordinate from TOML config (ERA5 137 levels, GEOS-FP 72, etc.)
+config = default_met_config("era5")
+vert = build_vertical_coordinate(config; FT=Float64)
 
 grid = LatitudeLongitudeGrid(CPU();
-    size = (360, 180, 60),
+    FT   = Float64,
+    size = (360, 180, n_levels(vert)),
     longitude = (-180, 180),
-    latitude = (-90, 90),
-    vertical = HybridSigmaPressure(levels=60))
+    latitude  = (-90, 90),
+    vertical  = vert)
 
 model = TransportModel(;
-    grid = grid,
-    tracers = (:CO2, :CH4),
-    advection = SlopesAdvection(),
-    diffusion = BoundaryLayerDiffusion(),
+    grid       = grid,
+    tracers    = (:CO2, :CH4),
+    advection  = SlopesAdvection(),
+    diffusion  = BoundaryLayerDiffusion(),
     convection = TiedtkeConvection())
 ```
 

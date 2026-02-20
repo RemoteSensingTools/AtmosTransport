@@ -72,6 +72,9 @@ pages = [
         "Reference Run" => "developer/REFERENCE_RUN.md",
         "GitHub Setup" => "developer/GITHUB_SETUP.md",
     ],
+    "Performance" => [
+        "GPU Double Buffering" => "gpu_double_buffering.md",
+    ],
     "API Reference" => "api.md",
 ]
 

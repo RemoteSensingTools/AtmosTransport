@@ -31,17 +31,27 @@
 #
 # ```julia
 # using AtmosTransportModel
+# using AtmosTransportModel.Grids
+# using AtmosTransportModel.IO: default_met_config, build_vertical_coordinate
+# using Dates
+#
+# # Build vertical coordinate from the GEOS-FP config (72 levels);
+# # ERA5 would give 137 levels — choose whichever matches your comparison.
+# config = default_met_config("geosfp")
+# vert = build_vertical_coordinate(config; FT=Float64)
 #
 # # Common grid — all met drivers will be regridded to this
-# grid = LatitudeLongitudeGrid(Float64;
-#     Nx = 360, Ny = 180, Nz = 72,
-#     lon_start = -180.0, lat_start = -90.0,
-#     vertical_coordinate = HybridSigmaPressure(Nz=72)
-# )
+# grid = LatitudeLongitudeGrid(CPU();
+#     FT   = Float64,
+#     size = (360, 180, n_levels(vert)),
+#     longitude = (-180, 180),
+#     latitude  = (-90, 90),
+#     vertical  = vert)
 #
-# # Common tracer setup — uniform initial condition
-# tracers = TracerFields(grid, (:CO2,))
-# fill!(interior(tracers[:CO2]), 400.0e-6)  # 400 ppm
+# # Common tracer setup — uniform initial condition (NamedTuple of 3D arrays)
+# Nx, Ny, Nz = 360, 180, n_levels(vert)
+# c = fill(Float64(400.0e-6), Nx, Ny, Nz)
+# tracers = (; CO2 = c)
 #
 # # Common time window
 # t_start = DateTime(2024, 3, 1, 0, 0, 0)
@@ -50,29 +60,40 @@
 
 # ### Step 2: Run with each met driver
 #
+# The workflow for each met source follows the same pattern used in
+# `scripts/run_era5_edgar_forward.jl`:
+# 1. Load met data for each window (3-hourly or 6-hourly)
+# 2. Precompute mass fluxes via `compute_air_mass!` and `compute_mass_fluxes!`
+# 3. Run `strang_split_massflux!` for TM5-faithful advection
+#
 # ```julia
+# using AtmosTransportModel.Advection: build_geometry_cache, allocate_massflux_workspace,
+#     compute_air_mass!, compute_mass_fluxes!, strang_split_massflux!
+#
 # results = Dict{String, Any}()
 #
-# for met_source in ["geosfp", "merra2", "era5"]
-#     config_path = joinpath(@__DIR__, "../../config/met_sources/$(met_source).toml")
+# for met_name in ["geosfp", "merra2", "era5"]
+#     cfg = default_met_config(met_name)
+#     vc  = build_vertical_coordinate(cfg; FT=Float64)
 #
-#     met = MetDataSource(Float64, config_path)
+#     g = LatitudeLongitudeGrid(CPU();
+#         FT=Float64, size=(360, 180, n_levels(vc)),
+#         longitude=(-180, 180), latitude=(-90, 90), vertical=vc)
 #
-#     model = TransportModel(;
-#         grid       = grid,
-#         met_data   = met,
-#         advection  = SlopesAdvection(),
-#         diffusion  = BoundaryLayerDiffusion(),
-#         Δt         = 1800.0,   # 30-minute time step
-#     )
+#     # Allocate arrays (zero-allocation inner loop)
+#     Δp  = zeros(Float64, 360, 180, n_levels(vc))
+#     m   = similar(Δp)
+#     am  = zeros(Float64, 361, 180, n_levels(vc))
+#     bm  = zeros(Float64, 360, 181, n_levels(vc))
+#     cm  = zeros(Float64, 360, 180, n_levels(vc)+1)
+#     gc  = build_geometry_cache(g, Δp)
+#     ws  = allocate_massflux_workspace(m, am, bm, cm)
 #
-#     # Deep-copy tracers so each run starts from the same initial condition
-#     run_tracers = deepcopy(tracers)
+#     run_tracers = (; CO2 = copy(c))  # deep copy per met source
 #
-#     # Run forward model
-#     run!(model, run_tracers, t_start, t_end)
+#     # ... per-timestep loop: load met → compute fluxes → strang_split_massflux! ...
 #
-#     results[met_source] = interior(run_tracers[:CO2]) |> copy
+#     results[met_name] = copy(run_tracers.CO2)
 # end
 # ```
 
@@ -81,10 +102,11 @@
 # Key diagnostics to examine:
 #
 # ```julia
-# # Global mean column CO2 (proxy for XCO2)
+# using Statistics: mean
+#
+# # Global mean mixing ratio
 # for (name, field) in results
-#     col_mean = mean(field, dims=(1,2,3))
-#     println("$name: global mean = $(col_mean) ppm")
+#     println("$name: global mean = $(mean(field)) ppm")
 # end
 #
 # # Zonal mean cross-sections
@@ -149,10 +171,11 @@
 # gradient of a cost function (e.g., in a CO₂ flux inversion):
 #
 # ```julia
-# # Run adjoint with different met drivers
-# for met_source in ["geosfp", "merra2", "era5"]
-#     gradient = compute_gradient(model, cost_function, met_source)
-#     # Compare gradient maps across met drivers...
+# # Each forward operator (advect_x_massflux!, etc.) has a paired adjoint;
+# # running the adjoint with different met drivers quantifies sensitivity.
+# for met_name in ["geosfp", "merra2", "era5"]
+#     # ... run adjoint_strang_split_massflux! with same met data ...
+#     # Compare adjoint gradient maps across met drivers...
 # end
 # ```
 #

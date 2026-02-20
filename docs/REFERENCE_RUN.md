@@ -18,21 +18,22 @@ Output: `data/era5/output/reference_era5_output.nc`
 
 | Parameter | Value |
 |-----------|--------|
-| Met source | ERA5 (pressure-level + single-level NetCDF) |
-| Horizontal | 2.5° (from ERA5 file; typically 144×73) |
-| Vertical | 37 pressure levels (1–1000 hPa) |
-| Time step Δt | 600 s (10 min) |
-| Simulation length | 48 h (2 days) |
-| Physics | Slopes advection (limiter on), no convection (no conv_mass_flux), no diffusion in current ERA5 script |
-| Initial condition | 420 ppm + Gaussian blobs (Europe, East Asia, Eastern US) |
+| Met source | ERA5 model levels (spectral/hybrid sigma-pressure, preprocessed to mass fluxes) |
+| Horizontal | 1° × 1° (360 × 180) |
+| Vertical | 137 hybrid sigma-pressure levels (ERA5 L137, A/B coefficients from `config/era5_L137_coefficients.toml`) |
+| Time step Δt | 1800 s (30 min) |
+| Simulation length | 1 month (June 2024) |
+| Physics | TM5-faithful mass-flux advection (Russell-Lerner slopes, Strang splitting), boundary-layer diffusion (Thomas solver), EDGAR v8.0 surface emissions |
+| GPU | Full simulation loop on GPU (Float32, KernelAbstractions.jl) |
+| Initial condition | Uniform 0 ppm (anthropogenic CO₂ enhancement only) |
 
 ## Data and paths
 
-- **Pressure-level file:** `data/era5/era5_pressure_levels_20250201_20250207.nc`
-- **Single-level file:** `data/era5/era5_single_levels_20250201_20250207.nc`
-- **Output:** `data/era5/output/reference_era5_output.nc`
+- **Preprocessed mass fluxes:** `~/data/output/era5_edgar_preprocessed_f32/massflux_era5_202406_float32.nc` (or flat binary equivalent)
+- **EDGAR emissions:** `~/data/edgar/v8.0/IEA_EDGAR_CO2_2022_1.nc`
+- **Output:** `~/data/output/era5_edgar_preprocessed_f32/output_era5_edgar.nc`
 
-Paths are relative to project root. Download script: `scripts/download_era5_week.jl` (requires CDS API key for ERA5).
+Download scripts: `scripts/download_era5_model_levels.jl` (CDS API), `scripts/preprocess_mass_fluxes.jl` (wind → mass flux conversion).
 
 ## Use for validation
 

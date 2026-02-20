@@ -41,18 +41,25 @@ memory-mapped flat-binary I/O for mass-flux ingestion (~15× faster than NetCDF)
 
 ```julia
 using AtmosTransportModel
+using AtmosTransportModel.Grids
+using AtmosTransportModel.IO: default_met_config, build_vertical_coordinate
+
+# Build vertical coordinate from TOML config (ERA5 137 levels, GEOS-FP 72, etc.)
+config = default_met_config("era5")
+vert = build_vertical_coordinate(config; FT=Float64)
 
 grid = LatitudeLongitudeGrid(CPU();
-    size = (360, 180, 60),
+    FT   = Float64,
+    size = (360, 180, n_levels(vert)),
     longitude = (-180, 180),
-    latitude = (-90, 90),
-    vertical = HybridSigmaPressure(levels=60))
+    latitude  = (-90, 90),
+    vertical  = vert)
 
 model = TransportModel(;
-    grid = grid,
-    tracers = (:CO2, :CH4),
-    advection = SlopesAdvection(),
-    diffusion = BoundaryLayerDiffusion(),
+    grid       = grid,
+    tracers    = (:CO2, :CH4),
+    advection  = SlopesAdvection(),
+    diffusion  = BoundaryLayerDiffusion(),
     convection = TiedtkeConvection())
 ```
 
@@ -70,7 +77,7 @@ model = TransportModel(;
 - **Mass-flux advection:** TM5-faithful co-advection of tracer mass and air mass with machine-precision conservation. See `docs/MASS_FLUX_EVOLUTION.md`.
 - **Reproducible run:** `julia --project=. scripts/run_reference_ecmwf.jl` (ECMWF/ERA5 reference case; see `docs/REFERENCE_RUN.md`).
 - **TM5 comparison:** Run TM5 locally (see `docs/TM5_LOCAL_SETUP.md`), then `scripts/compare_tm5_output.jl our_output.nc tm5_output.nc`.
-- **GPU:** X-advection runs on CUDA via KernelAbstractions when `grid = LatitudeLongitudeGrid(GPU(); ...)` and `using CUDA`; y/z and convection/diffusion remain on CPU until ported.
+- **GPU:** The full simulation loop (all advection directions, vertical diffusion, source injection, diagnostics) runs on GPU via KernelAbstractions when `grid = LatitudeLongitudeGrid(GPU(); ...)` and `using CUDA`.
 
 ## Documentation
 

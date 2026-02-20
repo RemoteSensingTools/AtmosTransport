@@ -73,8 +73,10 @@
 # The architecture is selected at model construction time:
 #
 # ```julia
-# model = TransportModel(grid, architecture=GPU())   # NVIDIA GPU
-# model = TransportModel(grid, architecture=CPU())   # standard CPU
+# grid = LatitudeLongitudeGrid(GPU(); size=(360,180,72), vertical=vert)  # NVIDIA GPU
+# grid = LatitudeLongitudeGrid(CPU(); size=(360,180,72), vertical=vert)  # standard CPU
+# model = TransportModel(; grid=grid, tracers=(:CO2,), advection=SlopesAdvection(),
+#                          diffusion=BoundaryLayerDiffusion(), convection=TiedtkeConvection())
 # ```
 #
 # No code duplication, no separate GPU branch.
@@ -86,7 +88,7 @@
 # GPUs like the L40S where Float64 is 32× slower than Float32, simply:
 #
 # ```julia
-# grid = LatitudeLongitudeGrid(Float32; Nx=360, Ny=180, Nz=72, ...)
+# grid = LatitudeLongitudeGrid(CPU(); FT=Float32, size=(360, 180, 72), vertical=vert)
 # ```
 #
 # All physics operators, fields, and constants automatically use `Float32`.

@@ -12,7 +12,58 @@
     compute_air_mass!(m_dev, Δp_dev, gc)
     compute_mass_fluxes!(am_dev, bm_dev, cm_dev, ...)
     strang_split_massflux!(tracers, m_dev, am_dev, bm_dev, cm_dev, ...)
-end</code></pre><p>The GPU sits idle during ~6 sequential CPU operations (disk read, velocity staggering, pressure thickness computation, and three <code>copyto!</code> transfers) before it gets any work:</p><p><img src="../assets/gpu_sync_pipeline.png" alt="Synchronous pipeline"/></p><p>The idle fraction grows as the computation becomes faster (e.g., with Float32, fewer vertical levels, or a smaller grid), making data movement the bottleneck.</p><h2 id="Solution:-Double-Buffered-Ping-Pong"><a class="docs-heading-anchor" href="#Solution:-Double-Buffered-Ping-Pong">Solution: Double-Buffered Ping-Pong</a><a id="Solution:-Double-Buffered-Ping-Pong-1"></a><a class="docs-heading-anchor-permalink" href="#Solution:-Double-Buffered-Ping-Pong" title="Permalink"></a></h2><p>The idea is simple: <strong>pre-allocate two sets of GPU buffers</strong> (A and B) and use <strong>two CUDA streams</strong> (one for compute, one for async data transfer) so that loading the next timestep overlaps with processing the current one.</p><p>The pipeline becomes:</p><ol><li>Upload timestep N to buffer A (blocking, first iteration only)</li><li>Launch compute on buffer A (compute stream)</li><li>While GPU computes on A, CPU loads and preprocesses timestep N+1, then async-copies it to buffer B (transfer stream)</li><li>Wait for both streams; swap A ↔ B; repeat</li></ol><p><img src="../assets/gpu_double_buffer_era5.png" alt="Double-buffered ERA5 pipeline"/></p><h3 id="Implementation-Sketch"><a class="docs-heading-anchor" href="#Implementation-Sketch">Implementation Sketch</a><a id="Implementation-Sketch-1"></a><a class="docs-heading-anchor-permalink" href="#Implementation-Sketch" title="Permalink"></a></h3><pre><code class="language-julia hljs">using CUDA
+end</code></pre><p>The GPU sits idle during ~6 sequential CPU operations (disk read, velocity staggering, pressure thickness computation, and three <code>copyto!</code> transfers) before it gets any work:</p><p><img src="../assets/gpu_sync_pipeline.png" alt="Synchronous pipeline"/></p><pre><code class="language-mermaid hljs">sequenceDiagram
+    participant Disk
+    participant CPU
+    participant GPU
+
+    rect rgb(240, 240, 255)
+    Note over Disk,GPU: Step N
+    Disk-&gt;&gt;CPU: Load timestep N
+    CPU-&gt;&gt;CPU: Stagger velocities
+    CPU-&gt;&gt;CPU: Build pressure thickness
+    CPU-&gt;&gt;GPU: H2D transfer (blocking)
+    Note over CPU: idle
+    GPU-&gt;&gt;GPU: Compute air mass
+    GPU-&gt;&gt;GPU: Compute mass fluxes
+    GPU-&gt;&gt;GPU: Strang split advection
+    end
+
+    rect rgb(240, 240, 255)
+    Note over Disk,GPU: Step N+1 (same pattern)
+    Disk-&gt;&gt;CPU: Load timestep N+1
+    CPU-&gt;&gt;GPU: H2D transfer (blocking)
+    Note over CPU: idle
+    GPU-&gt;&gt;GPU: Compute step N+1
+    end</code></pre><p>The idle fraction grows as the computation becomes faster (e.g., with Float32, fewer vertical levels, or a smaller grid), making data movement the bottleneck.</p><h2 id="Solution:-Double-Buffered-Ping-Pong"><a class="docs-heading-anchor" href="#Solution:-Double-Buffered-Ping-Pong">Solution: Double-Buffered Ping-Pong</a><a id="Solution:-Double-Buffered-Ping-Pong-1"></a><a class="docs-heading-anchor-permalink" href="#Solution:-Double-Buffered-Ping-Pong" title="Permalink"></a></h2><p>The idea is simple: <strong>pre-allocate two sets of GPU buffers</strong> (A and B) and use <strong>two CUDA streams</strong> (one for compute, one for async data transfer) so that loading the next timestep overlaps with processing the current one.</p><p>The pipeline becomes:</p><ol><li>Upload timestep N to buffer A (blocking, first iteration only)</li><li>Launch compute on buffer A (compute stream)</li><li>While GPU computes on A, CPU loads and preprocesses timestep N+1, then async-copies it to buffer B (transfer stream)</li><li>Wait for both streams; swap A ↔ B; repeat</li></ol><p><img src="../assets/gpu_double_buffer_era5.png" alt="Double-buffered ERA5 pipeline"/></p><pre><code class="language-mermaid hljs">sequenceDiagram
+    participant Disk
+    participant CPU
+    participant TransferStream as GPU Transfer Stream
+    participant ComputeStream as GPU Compute Stream
+
+    Disk-&gt;&gt;CPU: Load timestep 1
+    CPU-&gt;&gt;CPU: Preprocess
+    CPU-&gt;&gt;TransferStream: Upload to Buffer A
+
+    rect rgb(230, 255, 230)
+    Note over Disk,ComputeStream: Overlapped execution
+    ComputeStream-&gt;&gt;ComputeStream: Compute on Buffer A
+    par While GPU computes
+        Disk-&gt;&gt;CPU: Load timestep 2
+        CPU-&gt;&gt;CPU: Preprocess
+        CPU-&gt;&gt;TransferStream: Upload to Buffer B
+    end
+    end
+
+    Note over TransferStream,ComputeStream: Synchronize both streams, swap A and B
+
+    rect rgb(230, 255, 230)
+    ComputeStream-&gt;&gt;ComputeStream: Compute on Buffer B
+    par While GPU computes
+        Disk-&gt;&gt;CPU: Load timestep 3
+        CPU-&gt;&gt;TransferStream: Upload to Buffer A
+    end
+    end</code></pre><h3 id="Implementation-Sketch"><a class="docs-heading-anchor" href="#Implementation-Sketch">Implementation Sketch</a><a id="Implementation-Sketch-1"></a><a class="docs-heading-anchor-permalink" href="#Implementation-Sketch" title="Permalink"></a></h3><pre><code class="language-julia hljs">using CUDA
 
 # Pre-allocate two buffer slots
 buf = ntuple(_ -&gt; (
@@ -42,9 +93,35 @@ for step in 1:Nt
     CUDA.synchronize(compute_stream)
     CUDA.synchronize(transfer_stream)
     curr, next = next, curr   # swap buffers
-end</code></pre><p>The key CUDA.jl primitives are:</p><ul><li><strong><code>CuStream()</code></strong> — create an independent execution stream</li><li><strong><code>copyto!(dst, src; stream=s)</code></strong> — async copy on stream <code>s</code></li><li><strong><code>@cuda stream=s kernel!(...)</code></strong> — launch kernel on stream <code>s</code></li><li><strong><code>CUDA.synchronize(s)</code></strong> — block until stream <code>s</code> completes</li></ul><p>With KernelAbstractions.jl, use <code>synchronize(backend)</code> after each kernel group, scoped to the appropriate stream.</p><h2 id="Application-1:-ERA5-Timestep-Pipeline"><a class="docs-heading-anchor" href="#Application-1:-ERA5-Timestep-Pipeline">Application 1: ERA5 Timestep Pipeline</a><a id="Application-1:-ERA5-Timestep-Pipeline-1"></a><a class="docs-heading-anchor-permalink" href="#Application-1:-ERA5-Timestep-Pipeline" title="Permalink"></a></h2><p>For the ERA5 mass-flux advection run, each timestep loads three 3D arrays (<code>Δp</code>, <code>u</code>, <code>v</code>) from disk. At 1° × 1° × 137 levels in Float32, this is roughly:</p><table><tr><th style="text-align: left">Array</th><th style="text-align: left">Shape</th><th style="text-align: left">Size</th></tr><tr><td style="text-align: left">Δp</td><td style="text-align: left">360 × 180 × 137</td><td style="text-align: left">~34 MB</td></tr><tr><td style="text-align: left">u</td><td style="text-align: left">361 × 180 × 137</td><td style="text-align: left">~34 MB</td></tr><tr><td style="text-align: left">v</td><td style="text-align: left">360 × 181 × 137</td><td style="text-align: left">~34 MB</td></tr><tr><td style="text-align: left"><strong>Total per step</strong></td><td style="text-align: left"></td><td style="text-align: left"><strong>~100 MB</strong></td></tr></table><p>On PCIe Gen4 x16 (~25 GB/s), transfer takes ~4 ms. On PCIe Gen3, ~8 ms. If GPU compute per step is 20-50 ms, the overlap saves 4-8 ms per step (10-40% of total step time). Over thousands of steps, this adds up.</p><p>The double-buffer option would be exposed as:</p><pre><code class="language-julia hljs">ws = allocate_massflux_workspace(m, am, bm, cm; double_buffer=true)</code></pre><h2 id="Application-2:-Cubed-Sphere-Panel-Pipeline"><a class="docs-heading-anchor" href="#Application-2:-Cubed-Sphere-Panel-Pipeline">Application 2: Cubed-Sphere Panel Pipeline</a><a id="Application-2:-Cubed-Sphere-Panel-Pipeline-1"></a><a class="docs-heading-anchor-permalink" href="#Application-2:-Cubed-Sphere-Panel-Pipeline" title="Permalink"></a></h2><p>For the cubed-sphere grid, the model processes 6 panels sequentially. Each panel&#39;s data (MFXC, MFYC, DELP, tracer) must be on the GPU before advection kernels can run. With double buffering, while the GPU advects panel P on buffer A, we upload panel P+1&#39;s data to buffer B:</p><p><img src="../assets/gpu_double_buffer_cs.png" alt="Double-buffered cubed-sphere panel pipeline"/></p><p>This is particularly effective because:</p><ul><li>Each C720 panel is 720 × 720 × 72 — substantial transfer volume (~280 MB in Float32)</li><li>The 6-panel sequential loop provides a natural pipeline with clear chunk boundaries</li><li>Panel computations are independent (modulo halos, which are small)</li></ul><p>The same <code>curr/next</code> buffer-swapping pattern applies, with the loop iterating over panels 1–6 instead of timesteps.</p><h2 id="Expected-Speedup"><a class="docs-heading-anchor" href="#Expected-Speedup">Expected Speedup</a><a id="Expected-Speedup-1"></a><a class="docs-heading-anchor-permalink" href="#Expected-Speedup" title="Permalink"></a></h2><p>The theoretical speedup from double buffering is:</p><pre><code class="nohighlight hljs">Speedup = T_sequential / T_overlapped
+end</code></pre><p>The key CUDA.jl primitives are:</p><ul><li><strong><code>CuStream()</code></strong> — create an independent execution stream</li><li><strong><code>copyto!(dst, src; stream=s)</code></strong> — async copy on stream <code>s</code></li><li><strong><code>@cuda stream=s kernel!(...)</code></strong> — launch kernel on stream <code>s</code></li><li><strong><code>CUDA.synchronize(s)</code></strong> — block until stream <code>s</code> completes</li></ul><p>With KernelAbstractions.jl, use <code>synchronize(backend)</code> after each kernel group, scoped to the appropriate stream.</p><h2 id="Application-1:-ERA5-Timestep-Pipeline"><a class="docs-heading-anchor" href="#Application-1:-ERA5-Timestep-Pipeline">Application 1: ERA5 Timestep Pipeline</a><a id="Application-1:-ERA5-Timestep-Pipeline-1"></a><a class="docs-heading-anchor-permalink" href="#Application-1:-ERA5-Timestep-Pipeline" title="Permalink"></a></h2><p>For the ERA5 mass-flux advection run, each timestep loads three 3D arrays (<code>Δp</code>, <code>u</code>, <code>v</code>) from disk. At 1° × 1° × 137 levels in Float32, this is roughly:</p><table><tr><th style="text-align: left">Array</th><th style="text-align: left">Shape</th><th style="text-align: left">Size</th></tr><tr><td style="text-align: left">Δp</td><td style="text-align: left">360 × 180 × 137</td><td style="text-align: left">~34 MB</td></tr><tr><td style="text-align: left">u</td><td style="text-align: left">361 × 180 × 137</td><td style="text-align: left">~34 MB</td></tr><tr><td style="text-align: left">v</td><td style="text-align: left">360 × 181 × 137</td><td style="text-align: left">~34 MB</td></tr><tr><td style="text-align: left"><strong>Total per step</strong></td><td style="text-align: left"></td><td style="text-align: left"><strong>~100 MB</strong></td></tr></table><p>On PCIe Gen4 x16 (~25 GB/s), transfer takes ~4 ms. On PCIe Gen3, ~8 ms. If GPU compute per step is 20-50 ms, the overlap saves 4-8 ms per step (10-40% of total step time). Over thousands of steps, this adds up.</p><p>The double-buffer option would be exposed as:</p><pre><code class="language-julia hljs">ws = allocate_massflux_workspace(m, am, bm, cm; double_buffer=true)</code></pre><h2 id="Application-2:-Cubed-Sphere-Panel-Pipeline"><a class="docs-heading-anchor" href="#Application-2:-Cubed-Sphere-Panel-Pipeline">Application 2: Cubed-Sphere Panel Pipeline</a><a id="Application-2:-Cubed-Sphere-Panel-Pipeline-1"></a><a class="docs-heading-anchor-permalink" href="#Application-2:-Cubed-Sphere-Panel-Pipeline" title="Permalink"></a></h2><p>For the cubed-sphere grid, the model processes 6 panels sequentially. Each panel&#39;s data (MFXC, MFYC, DELP, tracer) must be on the GPU before advection kernels can run. With double buffering, while the GPU advects panel P on buffer A, we upload panel P+1&#39;s data to buffer B:</p><p><img src="../assets/gpu_double_buffer_cs.png" alt="Double-buffered cubed-sphere panel pipeline"/></p><pre><code class="language-mermaid hljs">sequenceDiagram
+    participant Host
+    participant BufA as GPU Buffer A
+    participant BufB as GPU Buffer B
+
+    Host-&gt;&gt;BufA: Upload Panel 1
+    BufA-&gt;&gt;BufA: Advect Panel 1
+    par Overlapped
+        Host-&gt;&gt;BufB: Upload Panel 2
+    end
+    BufB-&gt;&gt;BufB: Advect Panel 2
+    par Overlapped
+        Host-&gt;&gt;BufA: Upload Panel 3
+    end
+    BufA-&gt;&gt;BufA: Advect Panel 3
+    par Overlapped
+        Host-&gt;&gt;BufB: Upload Panel 4
+    end
+    BufB-&gt;&gt;BufB: Advect Panel 4
+    par Overlapped
+        Host-&gt;&gt;BufA: Upload Panel 5
+    end
+    BufA-&gt;&gt;BufA: Advect Panel 5
+    par Overlapped
+        Host-&gt;&gt;BufB: Upload Panel 6
+    end
+    BufB-&gt;&gt;BufB: Advect Panel 6</code></pre><p>This is particularly effective because:</p><ul><li>Each C720 panel is 720 × 720 × 72 — substantial transfer volume (~280 MB in Float32)</li><li>The 6-panel sequential loop provides a natural pipeline with clear chunk boundaries</li><li>Panel computations are independent (modulo halos, which are small)</li></ul><p>The same <code>curr/next</code> buffer-swapping pattern applies, with the loop iterating over panels 1–6 instead of timesteps.</p><h2 id="Expected-Speedup"><a class="docs-heading-anchor" href="#Expected-Speedup">Expected Speedup</a><a id="Expected-Speedup-1"></a><a class="docs-heading-anchor-permalink" href="#Expected-Speedup" title="Permalink"></a></h2><p>The theoretical speedup from double buffering is:</p><pre><code class="nohighlight hljs">Speedup = T_sequential / T_overlapped
         = (T_cpu + T_transfer + T_compute) / max(T_compute, T_cpu + T_transfer)</code></pre><table><tr><th style="text-align: left">Regime</th><th style="text-align: left">T_compute vs T_transfer</th><th style="text-align: left">Speedup</th></tr><tr><td style="text-align: left">Compute-bound</td><td style="text-align: left">T_compute &gt;&gt; T_transfer</td><td style="text-align: left">~1× (no benefit)</td></tr><tr><td style="text-align: left">Balanced</td><td style="text-align: left">T_compute ≈ T_transfer</td><td style="text-align: left">~2×</td></tr><tr><td style="text-align: left">Transfer-bound</td><td style="text-align: left">T_compute &lt;&lt; T_transfer</td><td style="text-align: left">~1× (limited by transfer)</td></tr></table><p>The sweet spot is when compute and transfer times are comparable, which is often the case for moderate-resolution grids on consumer GPUs. For very large grids (C720), the compute time dominates and the benefit is smaller per step but the absolute time saved is still significant over many steps.</p><h2 id="Configuration"><a class="docs-heading-anchor" href="#Configuration">Configuration</a><a id="Configuration-1"></a><a class="docs-heading-anchor-permalink" href="#Configuration" title="Permalink"></a></h2><p>The double-buffer strategy is an <strong>optional optimization</strong> controlled by a flag. When disabled, the model uses the simpler synchronous pipeline (easier to debug, deterministic timing). When enabled, the model pre-allocates 2× the met-data GPU memory in exchange for overlapped execution.</p><pre><code class="language-julia hljs"># Synchronous (default, simpler)
 ws = allocate_massflux_workspace(m, am, bm, cm)
 
 # Double-buffered (faster when I/O is significant)
-ws = allocate_massflux_workspace(m, am, bm, cm; double_buffer=true)</code></pre></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../developer/GITHUB_SETUP/">« GitHub Setup</a><a class="docs-footer-nextpage" href="../api/">API Reference »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Friday 20 February 2026 22:21">Friday 20 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+ws = allocate_massflux_workspace(m, am, bm, cm; double_buffer=true)</code></pre></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../developer/GITHUB_SETUP/">« GitHub Setup</a><a class="docs-footer-nextpage" href="../api/">API Reference »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Friday 20 February 2026 22:28">Friday 20 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

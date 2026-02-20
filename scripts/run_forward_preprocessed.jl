@@ -227,9 +227,17 @@ function run_forward()
                                      grid.gravity, dt_window)
 
             # Advection sub-steps (pure GPU)
+            # IMPORTANT: Reset m_dev to the pre-computed air mass before each
+            # sub-step. The mass fluxes (am, bm, cm) were computed for THIS m;
+            # if m is allowed to drift via co-advection over 24 sub-steps with
+            # constant fluxes, cells near flow convergence/divergence zones
+            # gain/lose mass → CFL = |am|/m explodes → subcycle count grows
+            # exponentially (measured: 0.005s/step → 8.9s/step by step 24).
+            # Resetting m keeps CFL stable at the pre-computed value (~6.25 max).
             t_adv = time()
             for sub in 1:steps_per_met
                 step += 1
+                copyto!(m_dev, m_cpu)
                 strang_split_massflux!(tracers, m_dev, am_dev, bm_dev, cm_dev,
                                        grid, true, ws; cfl_limit = FT(0.95))
             end

@@ -65,6 +65,16 @@
 # **Adding a new met data source requires zero Julia code changes** — just
 # write a new TOML file. This is critical for enabling community contributions
 # and systematic met driver intercomparison studies.
+#
+# ```mermaid
+# flowchart TD
+#     UserSelect([Select met source]) --> LoadTOML[Load TOML config]
+#     LoadTOML --> ParseConfig["Parse: URLs, collections,\nvariable mappings, grid info"]
+#     ParseConfig --> BuildVert["Build HybridSigmaPressure\nfrom A/B coefficients"]
+#     BuildVert --> CreateGrid[Create grid with\nvertical coordinate]
+#     CreateGrid --> LoadMet["Load met data using\nconfig-driven mappings"]
+#     LoadMet --> RunModel([Run simulation])
+# ```
 
 # ### 3. GPU/CPU Agnostic via KernelAbstractions.jl
 #
@@ -140,6 +150,20 @@
 # - **New grid type**: Subtype `AbstractGrid` and implement accessor functions
 # - **New physics operator**: Subtype `AbstractPhysicsOperator`
 # - **New output format**: Subtype `AbstractOutputWriter`
+#
+# ```mermaid
+# flowchart TD
+#     AddNew([Add New Component]) --> CompType{Component type?}
+#     CompType -->|Advection| NewAdv["Define struct\n<: AbstractAdvectionScheme"]
+#     NewAdv --> ImplAdv["Implement advect!\nand adjoint_advect!"]
+#     ImplAdv --> DoneAdv([Done — no core changes])
+#     CompType -->|Met Source| NewMet["Write TOML config file"]
+#     NewMet --> DoneMet([Done — zero code changes])
+#     CompType -->|Grid Type| NewGrid["Subtype AbstractGrid\nimplement accessors"]
+#     NewGrid --> DoneGrid([Done — no core changes])
+#     CompType -->|Physics| NewPhys["Subtype AbstractPhysicsOperator\nimplement forward + adjoint"]
+#     NewPhys --> DonePhys([Done — no core changes])
+# ```
 #
 # Package extensions (Julia 1.9+) keep optional dependencies like CUDA.jl
 # out of the core package.

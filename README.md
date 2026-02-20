@@ -37,6 +37,43 @@ memory-mapped flat-binary I/O for mass-flux ingestion (~15× faster than NetCDF)
 - **Extensible:** Every physics operator is behind an abstract type; new schemes, grids, and data sources plug in via multiple dispatch without modifying core code
 - **Operator splitting:** Symmetric Strang splitting (advection, convection, diffusion, sources) with paired forward/adjoint operators
 
+## Architecture Overview
+
+```mermaid
+flowchart TD
+    subgraph inputLayer["Input Layer"]
+        ERA5["ERA5"]
+        MERRA2["MERRA-2"]
+        GEOSFP["GEOS-FP"]
+        TOMLConfigs["TOML Configs"]
+        ERA5 --> TOMLConfigs
+        MERRA2 --> TOMLConfigs
+        GEOSFP --> TOMLConfigs
+    end
+    
+    subgraph coreModel["Core Model"]
+        gridTypes["Grid Types<br/>Lat-Lon, Cubed-Sphere"]
+        physicsOps["Physics Operators<br/>Advection, Diffusion, Convection"]
+        discreteAdjoint["Discrete Adjoint"]
+        TOMLConfigs --> gridTypes
+        gridTypes --> physicsOps
+        physicsOps --> discreteAdjoint
+    end
+    
+    subgraph backend["Backend"]
+        kernelAbstractions["KernelAbstractions.jl"]
+        CPU["CPU"]
+        GPU["GPU"]
+        kernelAbstractions --> CPU
+        kernelAbstractions --> GPU
+    end
+    
+    output["Simulation Results"]
+    
+    discreteAdjoint --> kernelAbstractions
+    kernelAbstractions --> output
+```
+
 ## Quick start
 
 ```julia

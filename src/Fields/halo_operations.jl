@@ -10,7 +10,7 @@
 # ---------------------------------------------------------------------------
 
 using ..Communications: AbstractComms, SingletonComms
-using ..Grids: LatitudeLongitudeGrid, CubedSphereGrid
+using ..Grids: LatitudeLongitudeGrid, CubedSphereGrid, fill_panel_halos!
 
 import ..Communications: fill_halo!
 
@@ -23,14 +23,39 @@ function fill_halo!(field::Field, comms::AbstractComms)
     return fill_halo!(field, grid(field), comms)
 end
 
-# Lat-lon + singleton: periodic in lon, extrapolate in lat
-function fill_halo!(field::Field, ::LatitudeLongitudeGrid, ::SingletonComms)
-    # TODO: implement periodic lon wrap + lat boundary handling
+function fill_halo!(field::Field, grid::LatitudeLongitudeGrid, ::SingletonComms)
+    arr = data(field)
+    gs = grid_size(grid)
+    hs = halo_size(grid)
+    Nx, Ny, Nz = gs.Nx, gs.Ny, gs.Nz
+    Hx, Hy, Hz = hs.Hx, hs.Hy, hs.Hz
+
+    @inbounds for k in 1:Nz
+        for j in 1:Ny
+            for i in 1:Hx
+                arr[1-i, j, k] = arr[Nx+1-i, j, k]
+                arr[Nx+i, j, k] = arr[i, j, k]
+            end
+        end
+    end
+
+    @inbounds for k in 1:Nz
+        for j in 1:Hy
+            for i in (1-Hx):(Nx+Hx)
+                arr[i, 1-j, k] = arr[i, 1, k]
+                arr[i, Ny+j, k] = arr[i, Ny, k]
+            end
+        end
+    end
+
     return nothing
 end
 
-# Cubed-sphere + singleton: panel-edge exchange
-function fill_halo!(field::Field, ::CubedSphereGrid, ::SingletonComms)
-    # TODO: implement panel connectivity halo exchange
+function fill_halo!(field::Field, grid::CubedSphereGrid, ::SingletonComms)
+    arr = data(field)
+    panels = ntuple(6) do p
+        view(arr, p, :, :, :)
+    end
+    fill_panel_halos!(panels, grid)
     return nothing
 end

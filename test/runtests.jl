@@ -15,4 +15,6 @@ using AtmosTransportModel
     include("test_met_integration.jl")
     include("test_regridding.jl")
     include("test_callbacks.jl")
+    include("test_mass_flux_advection.jl")
+    include("test_cubed_sphere_mass_flux.jl")
 end

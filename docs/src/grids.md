@@ -4,6 +4,44 @@ AtmosTransportModel supports multiple horizontal grid types, all sharing a
 common vertical coordinate. This page describes each grid type, when to use
 it, and how it is represented internally.
 
+## Grid Type Hierarchy
+
+```mermaid
+classDiagram
+    class AbstractGrid {
+        <<abstract>>
+        +FT
+        +vertical
+        +grid_size()
+        +cell_area()
+    }
+    
+    class LatitudeLongitudeGrid {
+        +Nx
+        +Ny
+        +Nz
+        +xnode()
+        +ynode()
+        +Dx()
+        +Dy()
+    }
+    
+    class CubedSphereGrid {
+        +Nc
+        +Hp
+        +fill_panel_halos!()
+    }
+    
+    class HybridSigmaPressure {
+        +level_thickness()
+        +n_levels()
+    }
+    
+    AbstractGrid <|-- LatitudeLongitudeGrid
+    AbstractGrid <|-- CubedSphereGrid
+    AbstractGrid *-- HybridSigmaPressure
+```
+
 ## LatitudeLongitudeGrid
 
 The workhorse grid for ERA5-driven simulations. Cells are defined by
@@ -200,6 +238,30 @@ up to 57 subcycles per step. With the reduced grid, the maximum subcycle count
 drops to ~4, giving a ~10–15× speedup in the X-advection phase.
 
 ---
+
+## Grid Selection Logic
+
+```mermaid
+flowchart TD
+    metDataSource{"Met Data Source?"}
+    era5MERRA2["ERA5 / MERRA-2"]
+    geosFP["GEOS-FP"]
+    latLon["LatitudeLongitudeGrid"]
+    cubedSphere["CubedSphereGrid"]
+    resolutionCheck{"Resolution<br/>≤ 1°?"}
+    reducedGrid["Enable Reduced Grid"]
+    standardGrid["Standard Grid"]
+    
+    metDataSource -->|"Lat-Lon data"| era5MERRA2
+    metDataSource -->|"Cubed-sphere data"| geosFP
+    
+    era5MERRA2 --> latLon
+    geosFP --> cubedSphere
+    
+    latLon --> resolutionCheck
+    resolutionCheck -->|"Yes"| reducedGrid
+    resolutionCheck -->|"No"| standardGrid
+```
 
 ## Grid Comparison
 

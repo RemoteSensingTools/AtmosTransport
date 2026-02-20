@@ -33,6 +33,33 @@ before it gets any work:
 
 ![Synchronous pipeline](assets/gpu_sync_pipeline.png)
 
+```mermaid
+sequenceDiagram
+    participant Disk
+    participant CPU
+    participant GPU
+
+    rect rgb(240, 240, 255)
+    Note over Disk,GPU: Step N
+    Disk->>CPU: Load timestep N
+    CPU->>CPU: Stagger velocities
+    CPU->>CPU: Build pressure thickness
+    CPU->>GPU: H2D transfer (blocking)
+    Note over CPU: idle
+    GPU->>GPU: Compute air mass
+    GPU->>GPU: Compute mass fluxes
+    GPU->>GPU: Strang split advection
+    end
+
+    rect rgb(240, 240, 255)
+    Note over Disk,GPU: Step N+1 (same pattern)
+    Disk->>CPU: Load timestep N+1
+    CPU->>GPU: H2D transfer (blocking)
+    Note over CPU: idle
+    GPU->>GPU: Compute step N+1
+    end
+```
+
 The idle fraction grows as the computation becomes faster (e.g., with Float32,
 fewer vertical levels, or a smaller grid), making data movement the bottleneck.
 
@@ -51,6 +78,38 @@ The pipeline becomes:
 4. Wait for both streams; swap A ↔ B; repeat
 
 ![Double-buffered ERA5 pipeline](assets/gpu_double_buffer_era5.png)
+
+```mermaid
+sequenceDiagram
+    participant Disk
+    participant CPU
+    participant TransferStream as GPU Transfer Stream
+    participant ComputeStream as GPU Compute Stream
+
+    Disk->>CPU: Load timestep 1
+    CPU->>CPU: Preprocess
+    CPU->>TransferStream: Upload to Buffer A
+
+    rect rgb(230, 255, 230)
+    Note over Disk,ComputeStream: Overlapped execution
+    ComputeStream->>ComputeStream: Compute on Buffer A
+    par While GPU computes
+        Disk->>CPU: Load timestep 2
+        CPU->>CPU: Preprocess
+        CPU->>TransferStream: Upload to Buffer B
+    end
+    end
+
+    Note over TransferStream,ComputeStream: Synchronize both streams, swap A and B
+
+    rect rgb(230, 255, 230)
+    ComputeStream->>ComputeStream: Compute on Buffer B
+    par While GPU computes
+        Disk->>CPU: Load timestep 3
+        CPU->>TransferStream: Upload to Buffer A
+    end
+    end
+```
 
 ### Implementation Sketch
 
@@ -128,6 +187,36 @@ advection kernels can run. With double buffering, while the GPU advects
 panel P on buffer A, we upload panel P+1's data to buffer B:
 
 ![Double-buffered cubed-sphere panel pipeline](assets/gpu_double_buffer_cs.png)
+
+```mermaid
+sequenceDiagram
+    participant Host
+    participant BufA as GPU Buffer A
+    participant BufB as GPU Buffer B
+
+    Host->>BufA: Upload Panel 1
+    BufA->>BufA: Advect Panel 1
+    par Overlapped
+        Host->>BufB: Upload Panel 2
+    end
+    BufB->>BufB: Advect Panel 2
+    par Overlapped
+        Host->>BufA: Upload Panel 3
+    end
+    BufA->>BufA: Advect Panel 3
+    par Overlapped
+        Host->>BufB: Upload Panel 4
+    end
+    BufB->>BufB: Advect Panel 4
+    par Overlapped
+        Host->>BufA: Upload Panel 5
+    end
+    BufA->>BufA: Advect Panel 5
+    par Overlapped
+        Host->>BufB: Upload Panel 6
+    end
+    BufB->>BufB: Advect Panel 6
+```
 
 This is particularly effective because:
 

@@ -65,6 +65,39 @@ model = TransportModel(;
     convection = TiedtkeConvection())
 ```
 
+## Simulation Pipeline
+
+```mermaid
+flowchart TD
+    loadMetData["Load Met Data"]
+    precomputeMassFluxes["Pre-compute Mass Fluxes"]
+    initializeTracers["Initialize Tracers"]
+    
+    subgraph timestepLoop["Timestep Loop"]
+        loadTimestep["Load Timestep"]
+        staggerWinds["Stagger Winds"]
+        transferToGPU["Transfer to GPU"]
+        computeMass["Compute Mass"]
+        advect["Advect<br/>(Strang split)"]
+        diffuse["Diffuse"]
+        injectSources["Inject Sources"]
+        diagnostics["Diagnostics"]
+        
+        loadTimestep --> staggerWinds
+        staggerWinds --> transferToGPU
+        transferToGPU --> computeMass
+        computeMass --> advect
+        advect --> diffuse
+        diffuse --> injectSources
+        injectSources --> diagnostics
+        diagnostics --> loadTimestep
+    end
+    
+    loadMetData --> precomputeMassFluxes
+    precomputeMassFluxes --> initializeTracers
+    initializeTracers --> loadTimestep
+```
+
 ## Design principles
 
 - **Julian:** Multiple dispatch, parametric types, no OOP inheritance chains

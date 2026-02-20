@@ -43,8 +43,12 @@ for the history of how the advection was aligned with TM5.
   continuity equation structure for `cm`.
 
 - **Reduced grid:** TM5 uses a reduced grid near the poles to maintain CFL
-  stability. We use global CFL subcycling instead. The numerical behavior is
-  equivalent but the subcycling cost differs.
+  stability. We now implement TM5-style reduced-grid x-advection for CPU via
+  `advect_x_massflux_reduced!`, which reduces rm, m, and am to coarser rows
+  at high latitudes, advects on the reduced row, then expands back.
+  On GPU, we fall back to global CFL subcycling (simple, efficient for GPU
+  thread scheduling). The numerical behavior is equivalent but the
+  implementation differs.
 
 ## Stencil-level advection (concentration-based) — `slopes_advection.jl`
 
@@ -54,7 +58,9 @@ for the history of how the advection was aligned with TM5.
       (identical to TM5).
 - [x] **Periodic x:** Same handling at i=1 and i=Nx.
 - [x] **Boundary y/z:** Zero flux at poles / top and bottom.
-- [ ] **Reduced grid:** TM5 uses reduced grid; we don't. Document difference.
+- [x] **Reduced grid:** TM5-style reduced grid implemented for mass-flux
+      advection (`advect_x_massflux_reduced!`) and concentration-based
+      advection on CPU. GPU uses CFL subcycling.
 
 ## Convection (Tiedtke mass flux)
 
@@ -67,8 +73,8 @@ for the history of how the advection was aligned with TM5.
 
 - [x] **Cell centers:** Tracer at (λᶜ, φᶜ). TM5 cell-centered — same.
 - [x] **Δx, Δy:** Δx = R*cos(φᶜ)*Δλ; Δy uniform. Same as TM5.
-- [ ] **Reduced grid:** TM5 uses reduced grid at high latitudes.
-      We use regular grid + CFL subcycling. Document difference.
+- [x] **Reduced grid:** TM5-style reduced grid for mass-flux x-advection on
+      CPU. GPU uses regular grid + CFL subcycling.
 
 ## Files to compare
 

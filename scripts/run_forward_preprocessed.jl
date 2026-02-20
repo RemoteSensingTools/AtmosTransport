@@ -31,6 +31,8 @@ using AtmosTransportModel
 using AtmosTransportModel.Architectures
 using AtmosTransportModel.Grids
 using AtmosTransportModel.Advection
+using AtmosTransportModel.Convection
+using AtmosTransportModel.Diffusion
 using AtmosTransportModel.Parameters
 using AtmosTransportModel.Sources: load_edgar_co2, GriddedEmission, M_AIR, M_CO2
 using AtmosTransportModel.IO: default_met_config, build_vertical_coordinate,
@@ -40,8 +42,10 @@ using NCDatasets
 using Dates
 using Printf
 
-const USE_GPU     = parse(Bool, get(ENV, "USE_GPU", "false"))
-const USE_FLOAT32 = parse(Bool, get(ENV, "USE_FLOAT32", "false"))
+const USE_GPU      = parse(Bool, get(ENV, "USE_GPU", "false"))
+const USE_FLOAT32  = parse(Bool, get(ENV, "USE_FLOAT32", "false"))
+const USE_DIFFUSION = parse(Bool, get(ENV, "USE_DIFFUSION", "true"))
+const KZ_MAX       = parse(Float64, get(ENV, "KZ_MAX", "50.0"))
 if USE_GPU
     using CUDA
     CUDA.allowscalar(false)
@@ -169,7 +173,23 @@ function run_forward()
     tracers = (; c)
     ws = allocate_massflux_workspace(m_dev, am_dev, bm_dev, cm_dev)
 
+    # --- Diffusion setup ---
+    diff_scheme = USE_DIFFUSION ? BoundaryLayerDiffusion(FT(KZ_MAX)) : NoDiffusion()
+    diff_grid = if USE_DIFFUSION && USE_GPU
+        LatitudeLongitudeGrid(CPU();
+            FT, size = (Nx, Ny, Nz),
+            longitude = (FT(lons[1]), FT(lons[end]) + FT(Δlon)),
+            latitude = (FT(-90), FT(90)),
+            vertical = vc,
+            radius = pp.radius, gravity = pp.gravity,
+            reference_pressure = pp.reference_surface_pressure,
+            use_reduced_grid = false)
+    else
+        grid
+    end
+
     @info "  All arrays pre-allocated ($(USE_GPU ? "GPU" : "CPU"))"
+    @info "  Diffusion: $(USE_DIFFUSION ? "ON (Kz_max=$KZ_MAX)" : "OFF")"
 
     # --- Output ---
     mkpath(OUTDIR)
@@ -226,7 +246,7 @@ function run_forward()
                                      ps_dev, A_coeff, B_coeff, Nz,
                                      grid.gravity, dt_window)
 
-            # Advection sub-steps (pure GPU)
+            # Advection sub-steps + optional diffusion
             # IMPORTANT: Reset m_dev to the pre-computed air mass before each
             # sub-step. The mass fluxes (am, bm, cm) were computed for THIS m;
             # if m is allowed to drift via co-advection over 24 sub-steps with
@@ -240,6 +260,16 @@ function run_forward()
                 copyto!(m_dev, m_cpu)
                 strang_split_massflux!(tracers, m_dev, am_dev, bm_dev, cm_dev,
                                        grid, true, ws; cfl_limit = FT(0.95))
+                if USE_DIFFUSION
+                    if USE_GPU
+                        c_cpu = Array(tracers.c)
+                        tracers_cpu = (; c = c_cpu)
+                        diffuse!(tracers_cpu, nothing, diff_grid, diff_scheme, DT)
+                        copyto!(tracers.c, c_cpu)
+                    else
+                        diffuse!(tracers, nothing, diff_grid, diff_scheme, DT)
+                    end
+                end
             end
             t_adv_done = time() - t_adv
 

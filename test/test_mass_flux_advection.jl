@@ -259,4 +259,110 @@ end
     end
 end
 
+@testset "Reduced-grid mass-flux X-advection" begin
+
+    function make_reduced_grid(; Nx=360, Ny=180, Nz=5)
+        A = FT.(range(0.0, 0.0, length=Nz+1))
+        B = FT.(range(0.0, 1.0, length=Nz+1))
+        vc = HybridSigmaPressure(A, B)
+        grid = LatitudeLongitudeGrid(CPU();
+            FT, size=(Nx, Ny, Nz),
+            longitude=(-180.0, 180.0),
+            latitude=(-90.0, 90.0),
+            vertical=vc,
+            use_reduced_grid=true)
+        return grid
+    end
+
+    @testset "Reduced grid is activated at 1-degree" begin
+        grid = make_reduced_grid()
+        @test grid.reduced_grid !== nothing
+        rg = grid.reduced_grid
+        @test any(rg.cluster_sizes .> 1)
+        n_reduced = count(>(1), rg.cluster_sizes)
+        max_r = maximum(rg.cluster_sizes)
+        @info "  Reduced grid: $n_reduced/$(grid.Ny) rows reduced, max cluster=$max_r"
+    end
+
+    @testset "Mass conservation (reduced-grid x-advection)" begin
+        grid = make_reduced_grid(Nx=72, Ny=36, Nz=5)
+        Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
+        Δp = uniform_dp(grid)
+        m = compute_air_mass(Δp, grid)
+
+        rm_init = m .* FT(420.0)
+        rm = (; c = copy(rm_init))
+
+        u = zeros(FT, Nx+1, Ny, Nz) .+ 10.0
+        half_dt = FT(450.0)
+        mf = compute_mass_fluxes(u, zeros(FT, Nx, Ny+1, Nz), grid, Δp, half_dt)
+
+        mass_before = sum(rm.c)
+        advect_x_massflux_reduced!(rm, m, mf.am, grid, true)
+        mass_after = sum(rm.c)
+
+        rel_error = abs(mass_after - mass_before) / abs(mass_before)
+        @info "  Reduced-grid x-advection mass conservation: $(rel_error)"
+        @test rel_error < 1e-10
+    end
+
+    @testset "Uniform field preservation (reduced-grid x-advection)" begin
+        grid = make_reduced_grid(Nx=72, Ny=36, Nz=5)
+        Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
+        Δp = uniform_dp(grid)
+        m = compute_air_mass(Δp, grid)
+
+        rm = (; c = m .* FT(420.0))
+
+        u = randn(FT, Nx+1, Ny, Nz) .* 5.0
+        u[Nx+1, :, :] .= u[1, :, :]
+        half_dt = FT(200.0)
+        mf = compute_mass_fluxes(u, zeros(FT, Nx, Ny+1, Nz), grid, Δp, half_dt)
+
+        advect_x_massflux_reduced!(rm, m, mf.am, grid, true)
+
+        c_after = rm.c ./ m
+        max_deviation = maximum(abs.(c_after .- 420.0))
+        @info "  Reduced-grid uniform preservation: max_dev=$(max_deviation)"
+        @test max_deviation < 1e-8
+    end
+
+    @testset "CFL reduction on reduced grid" begin
+        grid = make_reduced_grid(Nx=360, Ny=180, Nz=3)
+        Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
+        Δp = uniform_dp(grid)
+        m = compute_air_mass(Δp, grid)
+
+        u = zeros(FT, Nx+1, Ny, Nz) .+ 10.0
+        half_dt = FT(1800.0)
+        mf = compute_mass_fluxes(u, zeros(FT, Nx, Ny+1, Nz), grid, Δp, half_dt)
+
+        cfl_full = max_cfl_massflux_x(mf.am, m)
+        @info "  CFL on full grid (no reduction): $(round(cfl_full, digits=2))"
+        @test cfl_full > 1.0
+
+        rg = grid.reduced_grid
+        if rg !== nothing
+            max_cfl_reduced = zero(FT)
+            for j in 1:Ny
+                r = rg.cluster_sizes[j]
+                if r > 1
+                    Nx_red = rg.reduced_counts[j]
+                    m_red = zeros(FT, Nx_red)
+                    am_red = zeros(FT, Nx_red + 1)
+                    reduce_row_mass!(m_red, m, j, 1, r, Nx)
+                    reduce_am_row!(am_red, mf.am, j, 1, r, Nx)
+                    for i_r in 1:Nx_red
+                        cfl_r = abs(am_red[i_r]) / m_red[i_r]
+                        max_cfl_reduced = max(max_cfl_reduced, cfl_r)
+                    end
+                end
+            end
+            @info "  Max CFL on reduced rows: $(round(max_cfl_reduced, digits=3))"
+            @test max_cfl_reduced < cfl_full
+            @test max_cfl_reduced < 1.0
+        end
+    end
+end
+
 @info "\nAll mass-flux advection tests passed!"

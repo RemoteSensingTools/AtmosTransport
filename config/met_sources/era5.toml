@@ -163,6 +163,25 @@ collection      = "single_levels"
 cds_name        = "surface_latent_heat_flux"
 
 # ---------------------------------------------------------------------------
+# Convective mass flux variables (from ERA5 forecasts, GRIB table 162)
+#
+# Required for Tiedtke convection scheme. These are forecast-step fields
+# (not analysis) and must be downloaded separately from the main model-level
+# analysis data. Available from CDS as part of the ERA5 complete archive.
+# ---------------------------------------------------------------------------
+[variables.conv_mass_flux_up]
+native_name     = "p71.162"
+collection      = "model_levels"
+cds_name        = "updraft_mass_flux"
+description     = "Updraft convective mass flux (kg m-2 s-1)"
+
+[variables.conv_mass_flux_down]
+native_name     = "p72.162"
+collection      = "model_levels"
+cds_name        = "downdraft_mass_flux"
+description     = "Downdraft convective mass flux (kg m-2 s-1)"
+
+# ---------------------------------------------------------------------------
 # Notes on coordinate transforms needed when reading ERA5:
 #
 # 1. Longitude: ERA5 uses [0, 360) — shift to [-180, 180) with circshift

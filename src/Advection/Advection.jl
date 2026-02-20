@@ -23,6 +23,7 @@ using DocStringExtensions
 using ..Grids: AbstractGrid, AbstractStructuredGrid, LatitudeLongitudeGrid, CubedSphereGrid
 using ..Grids: Δx, Δy, Δz, floattype, level_thickness, cell_area
 using ..Grids: ReducedGridSpec, reduce_row!, expand_row!, reduce_velocity_row!
+using ..Grids: reduce_row_mass!, reduce_am_row!, expand_row_mass!
 using ..Grids: fill_panel_halos!, allocate_cubed_sphere_field
 using ..Fields: AbstractField
 using ..Architectures: architecture, device, array_type, CPU, GPU
@@ -73,6 +74,7 @@ export advect_x_massflux!, advect_y_massflux!, advect_z_massflux!
 export advect_x_massflux_subcycled!, advect_y_massflux_subcycled!, advect_z_massflux_subcycled!
 export max_cfl_massflux_x, max_cfl_massflux_y, max_cfl_massflux_z
 export strang_split_massflux!
+export advect_x_massflux_reduced!
 
 include("abstract_advection.jl")
 include("slopes_advection_kernels.jl")

@@ -682,6 +682,211 @@ function advect_z_massflux!(rm_tracers::NamedTuple,
     return nothing
 end
 
+# =====================================================================
+# CPU reduced-grid x-advection (TM5-style)
+# =====================================================================
+
+"""
+1D mass-flux slopes advection on a single periodic row of length `N`.
+Updates `rm_vec` and `m_vec` in place.
+"""
+function _advect_x_row_massflux!(rm_vec::AbstractVector{FT},
+                                  m_vec::AbstractVector{FT},
+                                  am_vec::AbstractVector{FT},
+                                  N::Int,
+                                  use_limiter::Bool) where FT
+    rm_buf = Vector{FT}(undef, N)
+    m_buf  = Vector{FT}(undef, N)
+    @inbounds for i in 1:N
+        ip  = i == N ? 1 : i + 1
+        im  = i == 1 ? N : i - 1
+        ipp = ip == N ? 1 : ip + 1
+        imm = im == 1 ? N : im - 1
+
+        c_imm = rm_vec[imm] / m_vec[imm]
+        c_im  = rm_vec[im]  / m_vec[im]
+        c_i   = rm_vec[i]   / m_vec[i]
+        c_ip  = rm_vec[ip]  / m_vec[ip]
+        c_ipp = rm_vec[ipp] / m_vec[ipp]
+
+        sc_im = (c_i - c_imm) / 2
+        if use_limiter
+            sc_im = _minmod_cpu(sc_im, 2*(c_i - c_im), 2*(c_im - c_imm))
+        end
+        sx_im = m_vec[im] * sc_im
+        if use_limiter
+            sx_im = max(min(sx_im, rm_vec[im]), -rm_vec[im])
+        end
+
+        sc_i = (c_ip - c_im) / 2
+        if use_limiter
+            sc_i = _minmod_cpu(sc_i, 2*(c_ip - c_i), 2*(c_i - c_im))
+        end
+        sx_i = m_vec[i] * sc_i
+        if use_limiter
+            sx_i = max(min(sx_i, rm_vec[i]), -rm_vec[i])
+        end
+
+        sc_ip = (c_ipp - c_i) / 2
+        if use_limiter
+            sc_ip = _minmod_cpu(sc_ip, 2*(c_ipp - c_ip), 2*(c_ip - c_i))
+        end
+        sx_ip = m_vec[ip] * sc_ip
+        if use_limiter
+            sx_ip = max(min(sx_ip, rm_vec[ip]), -rm_vec[ip])
+        end
+
+        am_l = am_vec[i]
+        flux_left = if am_l >= zero(FT)
+            alpha = am_l / m_vec[im]
+            alpha * (rm_vec[im] + (one(FT) - alpha) * sx_im)
+        else
+            alpha = am_l / m_vec[i]
+            alpha * (rm_vec[i] - (one(FT) + alpha) * sx_i)
+        end
+
+        am_r = am_vec[i + 1]
+        flux_right = if am_r >= zero(FT)
+            alpha = am_r / m_vec[i]
+            alpha * (rm_vec[i] + (one(FT) - alpha) * sx_i)
+        else
+            alpha = am_r / m_vec[ip]
+            alpha * (rm_vec[ip] - (one(FT) + alpha) * sx_ip)
+        end
+
+        rm_buf[i] = rm_vec[i] + flux_left - flux_right
+        m_buf[i]  = m_vec[i]  + am_vec[i] - am_vec[i + 1]
+    end
+    copyto!(rm_vec, rm_buf)
+    copyto!(m_vec, m_buf)
+    return nothing
+end
+
+@inline function _minmod_cpu(a::T, b::T, c::T) where T
+    if a > zero(T) && b > zero(T) && c > zero(T)
+        return min(a, b, c)
+    elseif a < zero(T) && b < zero(T) && c < zero(T)
+        return max(a, b, c)
+    else
+        return zero(T)
+    end
+end
+
+"""
+$(SIGNATURES)
+
+TM5-style reduced-grid x-advection for mass-flux form on CPU. For each
+latitude row with cluster size `r > 1`, reduces rm, m, and am to the coarser
+row, advects with the 1D slopes scheme, then expands back.
+
+Rows with cluster size 1 use the standard kernel.  All tracers see the
+original `m` for slope computation (m is updated once at the end, matching
+the non-reduced path).
+"""
+function advect_x_massflux_reduced!(rm_tracers::NamedTuple,
+                                     m::Array{FT,3},
+                                     am::Array{FT,3},
+                                     grid,
+                                     use_limiter::Bool) where FT
+    rg = grid.reduced_grid
+    rg === nothing && return advect_x_massflux!(rm_tracers, m, am, grid, use_limiter)
+
+    Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
+    max_N = max(Nx, maximum(rg.reduced_counts))
+
+    rm_red_work = Vector{FT}(undef, max_N)
+    rm_red_old  = Vector{FT}(undef, max_N)
+    m_red_work  = Vector{FT}(undef, max_N)
+    m_red_old   = Vector{FT}(undef, max_N)
+    m_red_new   = Vector{FT}(undef, max_N)
+    am_red      = Vector{FT}(undef, max_N + 1)
+
+    rm_row = Vector{FT}(undef, Nx)
+    m_row  = Vector{FT}(undef, Nx)
+    am_row = Vector{FT}(undef, Nx + 1)
+
+    for k in 1:Nz
+        for j in 1:Ny
+            r = rg.cluster_sizes[j]
+            if r == 1
+                @inbounds for i in 1:Nx
+                    am_row[i] = am[i, j, k]
+                end
+                am_row[Nx + 1] = am_row[1]
+                for (_, rm) in pairs(rm_tracers)
+                    @inbounds for i in 1:Nx
+                        rm_row[i] = rm[i, j, k]
+                        m_row[i]  = m[i, j, k]
+                    end
+                    _advect_x_row_massflux!(rm_row, m_row, am_row, Nx, use_limiter)
+                    @inbounds for i in 1:Nx
+                        rm[i, j, k] = rm_row[i]
+                    end
+                end
+                @inbounds for i in 1:Nx
+                    m[i, j, k] = m[i, j, k] + am[i, j, k] - am[i == Nx ? 1 : i + 1, j, k]
+                end
+            else
+                Nx_red = rg.reduced_counts[j]
+                m_rv = @view m_red_work[1:Nx_red]
+                m_ov = @view m_red_old[1:Nx_red]
+                m_nv = @view m_red_new[1:Nx_red]
+                am_v = @view am_red[1:Nx_red+1]
+
+                reduce_row_mass!(m_ov, m, j, k, r, Nx)
+                reduce_am_row!(am_v, am, j, k, r, Nx)
+
+                # Compute m_red_new (tracer-independent)
+                @inbounds for i_r in 1:Nx_red
+                    m_nv[i_r] = m_ov[i_r] + am_v[i_r] - am_v[i_r + 1]
+                end
+
+                for (_, rm) in pairs(rm_tracers)
+                    rm_wv = @view rm_red_work[1:Nx_red]
+                    rm_ov = @view rm_red_old[1:Nx_red]
+
+                    reduce_row_mass!(rm_ov, rm, j, k, r, Nx)
+                    copyto!(rm_wv, rm_ov)
+                    copyto!(m_rv, m_ov)
+
+                    _advect_x_row_massflux!(rm_wv, m_rv, am_v, Nx_red, use_limiter)
+
+                    # Expand tracer mass change proportionally
+                    @inbounds for i_r in 1:Nx_red
+                        delta_rm = rm_wv[i_r] - rm_ov[i_r]
+                        rm_sum = rm_ov[i_r]
+                        i_start = (i_r - 1) * r + 1
+                        for off in 0:r-1
+                            i = i_start + off
+                            if abs(rm_sum) > eps(FT)
+                                rm[i, j, k] += delta_rm * (rm[i, j, k] / rm_sum)
+                            else
+                                rm[i, j, k] += delta_rm / FT(r)
+                            end
+                        end
+                    end
+                end
+
+                # Expand air mass change proportionally (once)
+                @inbounds for i_r in 1:Nx_red
+                    delta_m = m_nv[i_r] - m_ov[i_r]
+                    m_sum = m_ov[i_r]
+                    i_start = (i_r - 1) * r + 1
+                    for off in 0:r-1
+                        i = i_start + off
+                        if abs(m_sum) > eps(FT)
+                            m[i, j, k] += delta_m * (m[i, j, k] / m_sum)
+                        else
+                            m[i, j, k] += delta_m / FT(r)
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return nothing
+end
+
 # Backward-compatible versions that allocate internally (for tests)
 function advect_x_massflux!(rm_tracers::NamedTuple, m::AbstractArray{FT,3},
                              am::AbstractArray{FT,3}, grid, use_limiter::Bool) where FT
@@ -908,6 +1113,24 @@ function strang_split_massflux!(tracers::NamedTuple,
 
     first(values(tracers)) .= ws.rm ./ m
     return nothing
+end
+
+"""
+$(SIGNATURES)
+
+CFL-adaptive subcycled x-advection using TM5-style reduced grid on CPU.
+The reduced grid keeps CFL < 1 at all latitudes, so typically n_sub = 1.
+"""
+function advect_x_massflux_reduced_subcycled!(rm_tracers, m::Array{FT,3}, am,
+                                               grid, use_limiter;
+                                               cfl_limit = FT(0.95)) where FT
+    cfl = max_cfl_massflux_x(am, m)
+    n_sub = max(1, ceil(Int, cfl / cfl_limit))
+    am_eff = n_sub > 1 ? am ./ FT(n_sub) : am
+    for _ in 1:n_sub
+        advect_x_massflux_reduced!(rm_tracers, m, am_eff, grid, use_limiter)
+    end
+    return n_sub
 end
 
 # Backward-compatible version without workspace (allocates internally)

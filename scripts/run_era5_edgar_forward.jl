@@ -36,6 +36,8 @@ using AtmosTransportModel
 using AtmosTransportModel.Architectures
 using AtmosTransportModel.Grids
 using AtmosTransportModel.Advection
+using AtmosTransportModel.Convection
+using AtmosTransportModel.Diffusion
 using AtmosTransportModel.Parameters
 using AtmosTransportModel.Sources: load_edgar_co2, GriddedEmission, M_AIR, M_CO2
 using AtmosTransportModel.IO: default_met_config, build_vertical_coordinate,
@@ -328,12 +330,14 @@ function run_era5_edgar()
                                          grid.gravity, dt_window)
                 cumulative_emitted_kg += total_flux * Float64(dt_window)
 
-                # ===== PHASE 2: Advection sub-steps (pure GPU) =====
+                # ===== PHASE 2: Advection + diffusion sub-steps =====
                 t_phase2 = time()
+                diff_scheme = BoundaryLayerDiffusion(FT(50))
                 for sub in 1:steps_per_met
                     step += 1
                     strang_split_massflux!(tracers, m, am, bm, cm,
                                            grid, true, ws; cfl_limit = FT(0.95))
+                    diffuse!(tracers, nothing, grid, diff_scheme, DT)
                 end
                 t_phase2_done = time() - t_phase2
 

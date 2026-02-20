@@ -15,6 +15,7 @@
 
 export ReducedGridSpec, compute_reduced_grid
 export reduce_row!, expand_row!, reduce_velocity_row!
+export reduce_row_mass!, reduce_am_row!, expand_row_mass!
 
 """
 $(TYPEDEF)
@@ -153,5 +154,90 @@ function reduce_velocity_row!(u_red::AbstractVector, u::AbstractArray,
         u_red[i_red] = u[(i_red - 1) * r + 1, j, k]
     end
     u_red[Nx_red + 1] = u_red[1]  # periodic
+    return nothing
+end
+
+# ---------------------------------------------------------------------------
+# Mass-quantity reduce / expand for mass-flux advection
+#
+# Unlike concentration (intensive → average), mass is extensive → SUM.
+# Mass flux am is also extensive → pick at reduced-cell boundaries.
+# ---------------------------------------------------------------------------
+
+"""
+$(SIGNATURES)
+
+Sum `r` adjacent fine cells of an extensive field (rm or m) into one
+reduced cell for latitude `j`, level `k`.  `q_red` must have length `Nx ÷ r`.
+"""
+function reduce_row_mass!(q_red::AbstractVector, q::AbstractArray,
+                          j::Int, k::Int, r::Int, Nx::Int)
+    Nx_red = Nx ÷ r
+    @inbounds for i_red in 1:Nx_red
+        s = zero(eltype(q))
+        i_start = (i_red - 1) * r + 1
+        for off in 0:r-1
+            s += q[i_start + off, j, k]
+        end
+        q_red[i_red] = s
+    end
+    return nothing
+end
+
+"""
+$(SIGNATURES)
+
+Pick mass flux `am` at reduced-grid cell boundaries.
+`am` has shape (Nx+1, Ny, Nz); `am_red` has length `Nx_red + 1`.
+The face between reduced cells `i_red-1` and `i_red` corresponds to fine
+face `(i_red - 1) * r + 1`.
+"""
+function reduce_am_row!(am_red::AbstractVector, am::AbstractArray,
+                        j::Int, k::Int, r::Int, Nx::Int)
+    Nx_red = Nx ÷ r
+    @inbounds for i_red in 1:Nx_red
+        am_red[i_red] = am[(i_red - 1) * r + 1, j, k]
+    end
+    am_red[Nx_red + 1] = am_red[1]  # periodic
+    return nothing
+end
+
+"""
+$(SIGNATURES)
+
+Distribute mass changes from a reduced-grid advection step back to fine cells.
+Changes in `rm` and `m` are distributed proportionally to each fine cell's
+original mass fraction within the reduced cell, guaranteeing exact conservation
+of both tracer mass and air mass.
+
+  rm_fine[i] += (rm_red_new[i_r] - rm_red_old[i_r]) × (rm_old[i] / rm_red_old[i_r])
+  m_fine[i]  += (m_red_new[i_r]  - m_red_old[i_r])  × (m_old[i]  / m_red_old[i_r])
+"""
+function expand_row_mass!(rm::AbstractArray, m::AbstractArray,
+                          rm_red_new::AbstractVector, rm_red_old::AbstractVector,
+                          m_red_new::AbstractVector, m_red_old::AbstractVector,
+                          j::Int, k::Int, r::Int, Nx::Int)
+    FT = eltype(rm)
+    Nx_red = Nx ÷ r
+    @inbounds for i_red in 1:Nx_red
+        i_start = (i_red - 1) * r + 1
+        delta_rm = rm_red_new[i_red] - rm_red_old[i_red]
+        delta_m  = m_red_new[i_red]  - m_red_old[i_red]
+        rm_sum = rm_red_old[i_red]
+        m_sum  = m_red_old[i_red]
+        for off in 0:r-1
+            i = i_start + off
+            if abs(rm_sum) > eps(FT)
+                rm[i, j, k] += delta_rm * (rm[i, j, k] / rm_sum)
+            else
+                rm[i, j, k] += delta_rm / FT(r)
+            end
+            if abs(m_sum) > eps(FT)
+                m[i, j, k] += delta_m * (m[i, j, k] / m_sum)
+            else
+                m[i, j, k] += delta_m / FT(r)
+            end
+        end
+    end
     return nothing
 end

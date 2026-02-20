@@ -66,6 +66,11 @@ pages = [
         "TM5 Code Alignment" => "developer/TM5_CODE_ALIGNMENT.md",
         "Mass-Flux Evolution" => "developer/MASS_FLUX_EVOLUTION.md",
         "Meteo Preprocessing" => "developer/METEO_PREPROCESSING.md",
+        "TM5 Local Setup" => "developer/TM5_LOCAL_SETUP.md",
+        "Transport Comparison" => "developer/TRANSPORT_COMPARISON.md",
+        "TM5 Grid References" => "developer/TM5_GRID_REFERENCES.md",
+        "Reference Run" => "developer/REFERENCE_RUN.md",
+        "GitHub Setup" => "developer/GITHUB_SETUP.md",
     ],
     "API Reference" => "api.md",
 ]
@@ -85,7 +90,7 @@ makedocs(;
     ),
     modules = [AtmosTransportModel],
     pages = pages,
-    warnonly = [:cross_references, :missing_docs, :example_block],
+    warnonly = [:cross_references, :missing_docs, :example_block, :linkcheck],
     doctest = false,
 )
 

@@ -200,10 +200,10 @@
 # | [Advection Theory](advection_theory.jl) | Mathematical derivation of the mass-flux advection scheme and its relationship to TM5 |
 # | [Met Driver Comparison](met_driver_comparison.jl) | Tutorial: running the same simulation with ERA5, GEOS-FP, or MERRA-2 |
 # | [First Forward Run](first_forward_run.jl) | Tutorial: setting up and running your first simulation |
-# | [Validation](../VALIDATION.md) | Test results, mass conservation metrics, gradient tests |
-# | [TM5 Code Alignment](../TM5_CODE_ALIGNMENT.md) | Point-by-point comparison with TM5 Fortran source |
-# | [Mass-Flux Evolution](../MASS_FLUX_EVOLUTION.md) | Design history and lessons learned (developer reference) |
+# | [Validation](../developer/VALIDATION.md) | Test results, mass conservation metrics, gradient tests |
+# | [TM5 Code Alignment](../developer/TM5_CODE_ALIGNMENT.md) | Point-by-point comparison with TM5 Fortran source |
+# | [Mass-Flux Evolution](../developer/MASS_FLUX_EVOLUTION.md) | Design history and lessons learned (developer reference) |
 #
 # ## Getting Started
 #
-# See the [Quick Start guide](../../README.md) for installation and basic usage.
+# See the [Quick Start guide](../index.md) for installation and basic usage.

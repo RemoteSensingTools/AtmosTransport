@@ -4,13 +4,40 @@ This document explains how meteorological data flows into both TM5 and our Julia
 model, what preprocessing each requires, and why TM5's approach differs
 fundamentally from a simple gridpoint wind-based method.
 
+## CRITICAL: Model Levels Only — Never Pressure Levels
+
+**ERA5 pressure-level data (e.g. `era5_pl_*.nc` on fixed hPa levels) CANNOT be
+used for mass-flux transport.**
+
+The transport model requires **model-level** data (`levtype: ml`) on the native
+hybrid sigma-pressure grid, with `lnsp` (log surface pressure, param 152) for
+per-column pressure reconstruction:
+
+```
+Δp[i,j,k] = (A[k+1] - A[k]) + (B[k+1] - B[k]) × exp(lnsp[i,j])
+```
+
+Pressure-level data interpolates to fixed isobaric surfaces, which destroys:
+
+1. **Terrain-following coordinate** — mountains are cut off or extrapolated below
+   the surface, creating fictitious mass in sub-surface cells
+2. **Column mass consistency** — `sum(Δp)` no longer equals `ps - p_top`, so the
+   continuity equation cannot be satisfied
+3. **Vertical mass flux closure** — `cm` is derived from horizontal divergence
+   and the B-ratio; this requires `Δp` from hybrid A/B coefficients, not fixed
+   pressure differences
+
+Use `scripts/download_era5_model_levels.jl` which requests `levtype: ml` with
+params 131 (U), 132 (V), 135 (omega), 152 (LNSP). The resulting files contain
+variables `u`, `v`, `w`, `lnsp` on `model_level` dimensions.
+
 ## Overview
 
 | Aspect | TM5 | Julia AtmosTransportModel |
 |--------|-----|--------------------------|
 | Advection input | Mass fluxes (kg/s) through cell faces | Wind velocities (m/s) at cell centers |
 | Mass conservation | Guaranteed by spectral integration (Bregman et al. 2003) | Depends on advection scheme discretization |
-| Vertical coordinate | Hybrid sigma-pressure (A/B coefficients) | Hybrid sigma-pressure or pressure levels |
+| Vertical coordinate | Hybrid sigma-pressure (A/B coefficients) | Hybrid sigma-pressure (A/B coefficients) |
 | Convective fluxes | Read from ECMWF archive (eu, ed, du, dd) | Read from met data if available |
 | Met format | Preprocessed NetCDF/HDF with specific naming | Standard NetCDF (ERA5, GEOS-FP, MERRA-2) |
 
@@ -279,10 +306,14 @@ Current meteorological data available at `~/data/metDrivers/`:
 
 | Dataset | Location | Size | Details |
 |---------|----------|------|---------|
-| ERA5 test (1 day) | `era5/test/` | 5.9 MB | 2024-03-01, 2 deg, 8 pressure levels |
-| ERA5 week | `era5/` | 178 MB | 2025-02-01 to 07, 2 deg, 20 pressure levels |
+| ERA5 model levels (June 1-7) | `era5/era5_ml_10deg_20240601_20240607/` | ~1.1 GB | 1-deg, L88 (levels 50-137), 4x daily, u/v/w/lnsp |
+| ERA5 model levels (June 8-30) | `era5/era5_ml_10deg_20240608_20240630/` | ~3.6 GB | 1-deg, L88 (levels 50-137), 4x daily, u/v/w/lnsp |
 | GEOS-FP week | `geosfp/` | 654 MB | 2025-02-01 to 07, ~4x5 deg |
+| EDGAR v8.0 CO2 | `~/data/emissions/edgar_v8/` | ~26 MB | 2022 annual totals, 0.1 deg |
 | TM5 meteo archive | (not yet created) | -- | Requires preprocessing step above |
+
+**Deleted (unusable):**
+- `era5/era5_025deg_20240601_20240831/` — 0.25-deg ERA5 on **fixed pressure levels** (not model levels). Cannot be used for mass-flux transport. See "Critical: Model Levels Only" above.
 
 ## References
 

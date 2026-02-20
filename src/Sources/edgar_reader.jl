@@ -68,9 +68,9 @@ function _conservative_regrid(flux_native::Matrix{FT},
                               grid::LatitudeLongitudeGrid{FT},
                               ::Type{FT}) where FT
     Nx_m, Ny_m = grid.Nx, grid.Ny
-    Δlon_s = Float64(lon_src[2] - lon_src[1])
-    Δlat_s = Float64(lat_src[2] - lat_src[1])
-    R = Float64(grid.radius)
+    Δlon_s = FT(lon_src[2] - lon_src[1])
+    Δlat_s = FT(lat_src[2] - lat_src[1])
+    R = FT(grid.radius)
 
     mass_model = zeros(FT, Nx_m, Ny_m)
 
@@ -79,35 +79,35 @@ function _conservative_regrid(flux_native::Matrix{FT},
 
     for js in eachindex(lat_src), is in eachindex(lon_src)
         f = flux_native[is, js]
-        f == 0 && continue
+        f == zero(FT) && continue
 
-        φ_s_south = Float64(lat_src[js]) - Δlat_s / 2
-        φ_s_north = Float64(lat_src[js]) + Δlat_s / 2
+        φ_s_south = FT(lat_src[js]) - Δlat_s / 2
+        φ_s_north = FT(lat_src[js]) + Δlat_s / 2
         area_src = R^2 * deg2rad(Δlon_s) * abs(sind(φ_s_north) - sind(φ_s_south))
-        emission_rate = Float64(f) * area_src  # kg/s from this source cell
+        emission_rate = f * area_src
 
-        lon_s_west = Float64(lon_src[is]) - Δlon_s / 2
-        lon_s_east = Float64(lon_src[is]) + Δlon_s / 2
+        lon_s_west = FT(lon_src[is]) - Δlon_s / 2
+        lon_s_east = FT(lon_src[is]) + Δlon_s / 2
 
         im_start = _find_model_index_lon(lon_s_west, λᶠ_cpu)
-        im_end   = _find_model_index_lon(lon_s_east - 1e-10, λᶠ_cpu)
+        im_end   = _find_model_index_lon(lon_s_east - FT(1e-10), λᶠ_cpu)
         jm_start = _find_model_index_lat(φ_s_south, φᶠ_cpu)
-        jm_end   = _find_model_index_lat(φ_s_north - 1e-10, φᶠ_cpu)
+        jm_end   = _find_model_index_lat(φ_s_north - FT(1e-10), φᶠ_cpu)
 
         (im_start === nothing || jm_start === nothing) && continue
         (im_end === nothing || jm_end === nothing) && continue
 
         for jm in jm_start:jm_end, im in im_start:im_end
             (im < 1 || im > Nx_m || jm < 1 || jm > Ny_m) && continue
-            overlap_lon = max(0.0, min(lon_s_east, Float64(λᶠ_cpu[im + 1])) -
-                                   max(lon_s_west, Float64(λᶠ_cpu[im])))
-            overlap_lat_s = max(φ_s_south, Float64(φᶠ_cpu[jm]))
-            overlap_lat_n = min(φ_s_north, Float64(φᶠ_cpu[jm + 1]))
+            overlap_lon = max(zero(FT), min(lon_s_east, λᶠ_cpu[im + 1]) -
+                                        max(lon_s_west, λᶠ_cpu[im]))
+            overlap_lat_s = max(φ_s_south, φᶠ_cpu[jm])
+            overlap_lat_n = min(φ_s_north, φᶠ_cpu[jm + 1])
             overlap_lat_n <= overlap_lat_s && continue
             frac_lon = overlap_lon / Δlon_s
             frac_lat = abs(sind(overlap_lat_n) - sind(overlap_lat_s)) /
                        abs(sind(φ_s_north) - sind(φ_s_south))
-            mass_model[im, jm] += FT(emission_rate * frac_lon * frac_lat)
+            mass_model[im, jm] += emission_rate * frac_lon * frac_lat
         end
     end
 

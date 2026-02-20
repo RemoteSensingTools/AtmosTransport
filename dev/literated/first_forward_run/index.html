@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>First Forward Run · AtmosTransportModel.jl</title><meta name="title" content="First Forward Run · AtmosTransportModel.jl"/><meta property="og:title" content="First Forward Run · AtmosTransportModel.jl"/><meta property="twitter:title" content="First Forward Run · AtmosTransportModel.jl"/><meta name="description" content="Documentation for AtmosTransportModel.jl."/><meta property="og:description" content="Documentation for AtmosTransportModel.jl."/><meta property="twitter:description" content="Documentation for AtmosTransportModel.jl."/><meta property="og:url" content="https://RemoteSensingTools.github.io/AtmosTransportModel/literated/first_forward_run/"/><meta property="twitter:url" content="https://RemoteSensingTools.github.io/AtmosTransportModel/literated/first_forward_run/"/><link rel="canonical" href="https://RemoteSensingTools.github.io/AtmosTransportModel/literated/first_forward_run/"/><script data-outdated-warner src="../../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../search_index.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../../">AtmosTransportModel.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../../">Home</a></li><li><span class="tocitem">Theory</span><ul><li><a class="tocitem" href="../advection_theory/">Advection Theory</a></li><li><a class="tocitem" href="../design_principles/">Design Principles</a></li></ul></li><li><span class="tocitem">Tutorials</span><ul><li class="is-active"><a class="tocitem" href>First Forward Run</a><ul class="internal"><li><a class="tocitem" href="#Prerequisites"><span>Prerequisites</span></a></li><li><a class="tocitem" href="#Step-1:-Download-GEOS-FP-test-data"><span>Step 1: Download GEOS-FP test data</span></a></li><li><a class="tocitem" href="#Step-2:-Load-met-data-and-build-staggered-velocities"><span>Step 2: Load met data and build staggered velocities</span></a></li><li><a class="tocitem" href="#Step-3:-Build-model-grid"><span>Step 3: Build model grid</span></a></li><li><a class="tocitem" href="#Step-4:-Initialize-tracers"><span>Step 4: Initialize tracers</span></a></li><li><a class="tocitem" href="#Step-5:-Run-24-hours-of-advective-transport"><span>Step 5: Run 24 hours of advective transport</span></a></li><li><a class="tocitem" href="#Results"><span>Results</span></a></li><li><a class="tocitem" href="#Next-Steps"><span>Next Steps</span></a></li></ul></li><li><a class="tocitem" href="../met_driver_comparison/">Met Driver Comparison</a></li></ul></li><li><span class="tocitem">Developer Guide</span><ul><li><a class="tocitem" href="../../developer/VALIDATION/">Validation</a></li><li><a class="tocitem" href="../../developer/TM5_CODE_ALIGNMENT/">TM5 Code Alignment</a></li><li><a class="tocitem" href="../../developer/MASS_FLUX_EVOLUTION/">Mass-Flux Evolution</a></li><li><a class="tocitem" href="../../developer/METEO_PREPROCESSING/">Meteo Preprocessing</a></li></ul></li><li><a class="tocitem" href="../../api/">API Reference</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Tutorials</a></li><li class="is-active"><a href>First Forward Run</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>First Forward Run</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/RemoteSensingTools/AtmosTransportModel" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/RemoteSensingTools/AtmosTransportModel/blob/main/docs/literate/first_forward_run.jl" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="First-Forward-Run:-Tracer-Transport-with-Real-Meteorology"><a class="docs-heading-anchor" href="#First-Forward-Run:-Tracer-Transport-with-Real-Meteorology">First Forward Run: Tracer Transport with Real Meteorology</a><a id="First-Forward-Run:-Tracer-Transport-with-Real-Meteorology-1"></a><a class="docs-heading-anchor-permalink" href="#First-Forward-Run:-Tracer-Transport-with-Real-Meteorology" title="Permalink"></a></h1><p>This tutorial demonstrates an end-to-end forward simulation using AtmosTransportModel.jl with real GEOS-FP meteorological data downloaded directly via OPeNDAP — <strong>no authentication required</strong>.</p><p>By the end, you will have:</p><ol><li>Downloaded a coarsened GEOS-FP snapshot from NASA&#39;s OPeNDAP server</li><li>Built a model grid with 72 vertical levels</li><li>Initialized a CO₂-like tracer with a localized perturbation</li><li>Run 24 hours of advective transport using Slopes advection</li><li>Written the output to a NetCDF file</li></ol><h2 id="Prerequisites"><a class="docs-heading-anchor" href="#Prerequisites">Prerequisites</a><a id="Prerequisites-1"></a><a class="docs-heading-anchor-permalink" href="#Prerequisites" title="Permalink"></a></h2><p>Only the main <code>AtmosTransportModel</code> package and <code>NCDatasets</code> (a standard dependency) are needed. No API keys, no credentials, no extra packages.</p><pre><code class="language- hljs">using AtmosTransportModel
+using AtmosTransportModel.Architectures
+using AtmosTransportModel.Grids
+using AtmosTransportModel.Advection
+using NCDatasets
+using Dates</code></pre><h2 id="Step-1:-Download-GEOS-FP-test-data"><a class="docs-heading-anchor" href="#Step-1:-Download-GEOS-FP-test-data">Step 1: Download GEOS-FP test data</a><a id="Step-1:-Download-GEOS-FP-test-data-1"></a><a class="docs-heading-anchor-permalink" href="#Step-1:-Download-GEOS-FP-test-data" title="Permalink"></a></h2><p>NASA&#39;s GEOS Forward Processing system provides near-real-time assimilated meteorological fields at 0.25° × 0.3125° resolution, freely accessible via OPeNDAP. We subsample by a stride of 10 to get a manageable ~3° grid.</p><pre><code class="language- hljs">const STRIDE = 10
+const TEST_DATE = Date(2024, 12, 1)
+const OUTDIR = joinpath(homedir(), &quot;data&quot;, &quot;metDrivers&quot;, &quot;geosfp&quot;, &quot;test&quot;)
+const FT = Float64</code></pre><p>The download function opens the OPeNDAP endpoint, reads a single 12Z snapshot with spatial subsampling, and writes it as a local NetCDF file. Once downloaded, subsequent runs use the cached file automatically.</p><pre><code class="language- hljs">function download_geosfp(date, outdir; stride=STRIDE)
+    mkpath(outdir)
+    outfile = joinpath(outdir, &quot;geosfp_asm_$(Dates.format(date, &quot;yyyymmdd&quot;)).nc&quot;)
+    isfile(outfile) &amp;&amp; filesize(outfile) &gt; 1000 &amp;&amp; return outfile
+
+    url = &quot;https://opendap.nccs.nasa.gov/dods/GEOS-5/fp/0.25_deg/assim/inst3_3d_asm_Nv&quot;
+    ds = NCDataset(url)
+    try
+        lons, lats, levs = ds[&quot;lon&quot;][:], ds[&quot;lat&quot;][:], ds[&quot;lev&quot;][:]
+        times = ds[&quot;time&quot;][:]
+        target = DateTime(date) + Hour(12)
+        tidx = if eltype(times) &lt;: DateTime
+            argmin([abs(Dates.value(t - target)) for t in times])
+        else
+            argmin(abs.(times .- (Dates.value(date - Date(1,1,1)) + 0.5)))
+        end
+        li, la = 1:stride:length(lons), 1:stride:length(lats)
+
+        NCDataset(outfile, &quot;c&quot;) do out
+            defDim(out, &quot;lon&quot;, length(li))
+            defDim(out, &quot;lat&quot;, length(la))
+            defDim(out, &quot;lev&quot;, length(levs))
+            defVar(out, &quot;lon&quot;, Float64, (&quot;lon&quot;,))[:] = lons[li]
+            defVar(out, &quot;lat&quot;, Float64, (&quot;lat&quot;,))[:] = lats[la]
+            defVar(out, &quot;lev&quot;, Float64, (&quot;lev&quot;,))[:] = levs
+            for v in [&quot;u&quot;,&quot;v&quot;,&quot;omega&quot;,&quot;delp&quot;]
+                defVar(out, v, Float32, (&quot;lon&quot;,&quot;lat&quot;,&quot;lev&quot;))[:] = Float32.(ds[v][li,la,:,tidx])
+            end
+        end
+    finally
+        close(ds)
+    end
+    return outfile
+end
+
+metfile = download_geosfp(TEST_DATE, OUTDIR)</code></pre><h2 id="Step-2:-Load-met-data-and-build-staggered-velocities"><a class="docs-heading-anchor" href="#Step-2:-Load-met-data-and-build-staggered-velocities">Step 2: Load met data and build staggered velocities</a><a id="Step-2:-Load-met-data-and-build-staggered-velocities-1"></a><a class="docs-heading-anchor-permalink" href="#Step-2:-Load-met-data-and-build-staggered-velocities" title="Permalink"></a></h2><p>The advection scheme requires velocities at cell <em>faces</em>:</p><ul><li><code>u</code> at longitude faces: <code>(Nx+1, Ny, Nz)</code>, periodic</li><li><code>v</code> at latitude faces: <code>(Nx, Ny+1, Nz)</code>, zero at poles</li><li><code>w</code> at level interfaces: <code>(Nx, Ny, Nz+1)</code>, zero at top/surface</li></ul><p>We compute these by averaging adjacent cell-center values and apply a CFL limiter to ensure numerical stability.</p><pre><code class="language- hljs">ds = NCDataset(metfile)
+lons, lats = ds[&quot;lon&quot;][:], ds[&quot;lat&quot;][:]
+Nx, Ny, Nz = length(lons), length(lats), length(ds[&quot;lev&quot;][:])
+u_cc   = FT.(ds[&quot;u&quot;][:,:,:])
+v_cc   = FT.(ds[&quot;v&quot;][:,:,:])
+omega  = FT.(ds[&quot;omega&quot;][:,:,:])
+delp   = FT.(ds[&quot;delp&quot;][:,:,:])
+close(ds)</code></pre><pre><code class="language- hljs"># Column-mean pressure thickness → vertical coordinate
+mean_dp = [sum(delp[:,:,k])/(Nx*Ny) for k in 1:Nz]
+p_edges = cumsum(vcat(0.0, mean_dp))
+Ps = p_edges[end]
+
+# Stagger winds to faces with CFL limiting
+Δt = 300.0  # 5-minute time step
+cfl = 0.4
+Δx_min = STRIDE * 0.3125 * 111000.0
+Δy_min = STRIDE * 0.25   * 111000.0
+u_max, v_max = cfl * Δx_min / Δt, cfl * Δy_min / Δt
+
+u = zeros(Nx+1, Ny, Nz)
+for k in 1:Nz, j in 1:Ny, i in 1:Nx
+    u[i,j,k] = clamp((u_cc[i,j,k]+u_cc[i==Nx ? 1 : i+1,j,k])/2, -u_max, u_max)
+end
+u[Nx+1,:,:] .= u[1,:,:]
+
+v = zeros(Nx, Ny+1, Nz)
+for k in 1:Nz, j in 2:Ny, i in 1:Nx
+    v[i,j,k] = clamp((v_cc[i,j-1,k]+v_cc[i,j,k])/2, -v_max, v_max)
+end
+
+w = zeros(Nx, Ny, Nz+1)
+for k in 2:Nz, j in 1:Ny, i in 1:Nx
+    w_raw = -(omega[i,j,k-1]+omega[i,j,k])/2
+    dp_min = min(mean_dp[k-1], mean_dp[k])
+    w[i,j,k] = clamp(w_raw, -cfl*dp_min/Δt, cfl*dp_min/Δt)
+end
+
+velocities = (; u, v, w)</code></pre><h2 id="Step-3:-Build-model-grid"><a class="docs-heading-anchor" href="#Step-3:-Build-model-grid">Step 3: Build model grid</a><a id="Step-3:-Build-model-grid-1"></a><a class="docs-heading-anchor-permalink" href="#Step-3:-Build-model-grid" title="Permalink"></a></h2><p>We use a <code>LatitudeLongitudeGrid</code> with 72 hybrid sigma-pressure levels derived from the actual GEOS-FP pressure thickness. This ensures that <code>Δz(k, grid)</code> returns physically realistic pressure thicknesses at each level — crucial for CFL stability.</p><pre><code class="language- hljs">vc = HybridSigmaPressure(zeros(Nz+1), p_edges ./ Ps)
+grid = LatitudeLongitudeGrid(CPU();
+    size = (Nx, Ny, Nz),
+    longitude = (lons[1], lons[end] + (lons[2]-lons[1])),
+    latitude  = (lats[1], lats[end]),
+    vertical  = vc)</code></pre><h2 id="Step-4:-Initialize-tracers"><a class="docs-heading-anchor" href="#Step-4:-Initialize-tracers">Step 4: Initialize tracers</a><a id="Step-4:-Initialize-tracers-1"></a><a class="docs-heading-anchor-permalink" href="#Step-4:-Initialize-tracers" title="Permalink"></a></h2><p>Start with a uniform CO₂-like background (400 ppm) plus a Gaussian perturbation centered over Europe. This makes it easy to visualize how the tracer disperses under the influence of GEOS-FP winds.</p><pre><code class="language- hljs">c = fill(400.0, Nx, Ny, Nz)
+for k in 1:Nz, j in 1:Ny, i in 1:Nx
+    Δlon = lons[i] - 10.0
+    Δlat = lats[j] - 50.0
+    blob = 50.0 * exp(-(Δlon^2/450 + Δlat^2/200 + (k-Nz+5)^2/8))
+    c[i,j,k] += blob
+end
+tracers = (; c)
+
+println(&quot;Initial tracer: min=$(minimum(c)), max=$(round(maximum(c), digits=1)), &quot; *
+        &quot;mean=$(round(sum(c)/length(c), digits=2))&quot;)</code></pre><h2 id="Step-5:-Run-24-hours-of-advective-transport"><a class="docs-heading-anchor" href="#Step-5:-Run-24-hours-of-advective-transport">Step 5: Run 24 hours of advective transport</a><a id="Step-5:-Run-24-hours-of-advective-transport-1"></a><a class="docs-heading-anchor-permalink" href="#Step-5:-Run-24-hours-of-advective-transport" title="Permalink"></a></h2><p>We use the Russell-Lerner <strong>SlopesAdvection</strong> scheme (second-order, with minmod flux limiter) and symmetric Strang operator splitting:</p><pre><code class="nohighlight hljs">advect_x (Δt/2)  →  advect_y (Δt/2)  →  advect_z (Δt/2)
+      →  advect_z (Δt/2)  →  advect_y (Δt/2)  →  advect_x (Δt/2)</code></pre><p>No convection or diffusion in this demo — pure advection.</p><pre><code class="language- hljs">scheme = SlopesAdvection(use_limiter=true)
+N_hours = 24
+N_steps = round(Int, N_hours * 3600 / Δt)
+half = Δt / 2
+
+mass_initial = sum(tracers.c)
+
+for step in 1:N_steps
+    advect_x!(tracers, velocities, grid, scheme, half)
+    advect_y!(tracers, velocities, grid, scheme, half)
+    advect_z!(tracers, velocities, grid, scheme, half)
+    advect_z!(tracers, velocities, grid, scheme, half)
+    advect_y!(tracers, velocities, grid, scheme, half)
+    advect_x!(tracers, velocities, grid, scheme, half)
+
+    if step % (N_steps ÷ 8) == 0
+        t_hr = step * Δt / 3600
+        mass_now = sum(tracers.c)
+        Δm = abs(mass_now - mass_initial) / abs(mass_initial) * 100
+        println(&quot;  t=$(round(t_hr, digits=1))h: &quot; *
+                &quot;min=$(round(minimum(tracers.c), digits=1)), &quot; *
+                &quot;max=$(round(maximum(tracers.c), digits=1)), &quot; *
+                &quot;mass_change=$(round(Δm, sigdigits=3))%&quot;)
+    end
+end</code></pre><h2 id="Results"><a class="docs-heading-anchor" href="#Results">Results</a><a id="Results-1"></a><a class="docs-heading-anchor-permalink" href="#Results" title="Permalink"></a></h2><p>The tracer blob has been transported by the GEOS-FP wind field. Key observations:</p><ul><li><p><strong>Mass conservation</strong>: The limiter introduces small mass changes (~1%), which is expected for a single-snapshot wind field that isn&#39;t divergence-free after CFL clipping. A proper simulation would use temporally interpolated, divergence-corrected winds.</p></li><li><p><strong>Dispersion</strong>: The initial Gaussian blob spreads both horizontally (by the jet stream and surface winds) and vertically (by omega).</p></li><li><p><strong>Stability</strong>: The SlopesAdvection scheme with CFL-limited winds runs stably for the full 24-hour period.</p></li></ul><pre><code class="language- hljs">println(&quot;\n--- Final State ---&quot;)
+println(&quot;  Steps: $N_steps&quot;)
+println(&quot;  min=$(round(minimum(tracers.c), digits=2))&quot;)
+println(&quot;  max=$(round(maximum(tracers.c), digits=2))&quot;)
+println(&quot;  mass change: $(round(abs(sum(tracers.c)-mass_initial)/abs(mass_initial)*100, sigdigits=3))%&quot;)</code></pre><h2 id="Next-Steps"><a class="docs-heading-anchor" href="#Next-Steps">Next Steps</a><a id="Next-Steps-1"></a><a class="docs-heading-anchor-permalink" href="#Next-Steps" title="Permalink"></a></h2><p>From here, you can:</p><ol><li><strong>Add physics</strong>: Include <code>BoundaryLayerDiffusion</code> and <code>TiedtkeConvection</code> for a more complete transport model</li><li><strong>Swap met drivers</strong>: Replace <code>geosfp.toml</code> with <code>merra2.toml</code> or <code>era5.toml</code> to compare reanalysis products</li><li><strong>Run the adjoint</strong>: Use <code>adjoint_advect_x/y/z!</code> to compute sensitivities of an observation to upwind sources</li><li><strong>GPU acceleration</strong>: Replace <code>CPU()</code> with <code>GPU()</code> for NVIDIA hardware (requires the CUDA extension)</li><li><strong>Higher resolution</strong>: Reduce <code>STRIDE</code> for finer grids (needs proportionally smaller <code>Δt</code>)</li></ol><hr/><p><em>This page was generated using <a href="https://github.com/fredrikekre/Literate.jl">Literate.jl</a>.</em></p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../design_principles/">« Design Principles</a><a class="docs-footer-nextpage" href="../met_driver_comparison/">Met Driver Comparison »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Friday 20 February 2026 20:59">Friday 20 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

@@ -1,0 +1,571 @@
+# ---------------------------------------------------------------------------
+# Cubed-Sphere Mass-Flux Advection
+#
+# Panel-local Russell-Lerner slopes advection for CubedSphereGrid, following
+# the same TM5-faithful scheme as the lat-lon version but with:
+#   - 2D per-panel cell area (not 1D by latitude)
+#   - Halo-based boundary conditions (no periodic wrap or pole logic)
+#   - fill_panel_halos! between directional sweeps
+#
+# Data layout: each panel has interior (Nc × Nc × Nz) and halos of width Hp.
+# Tracer mass and air mass arrays are (Nc+2Hp) × (Nc+2Hp) × Nz with halos.
+# Mass flux arrays (am, bm) are interior-only: (Nc+1 × Nc × Nz) and (Nc × Nc+1 × Nz).
+# ---------------------------------------------------------------------------
+
+using KernelAbstractions: @kernel, @index, @Const, synchronize, get_backend
+
+# ---- helpers ---------------------------------------------------------------
+
+"""Move a CPU vector/matrix to the same device as `ref`."""
+function _to_device_2d(cpu_data, ref::AbstractArray)
+    ArrayType = typeof(similar(ref, eltype(cpu_data), size(cpu_data)))
+    return ArrayType(cpu_data)
+end
+
+# ---- Geometry Cache --------------------------------------------------------
+
+"""
+$(TYPEDEF)
+
+Device-side geometry cache for cubed-sphere mass-flux advection.
+
+Unlike the lat-lon `GridGeometryCache` (which stores 1-D area/dy vectors),
+this stores per-panel 2-D cell area and metric arrays.
+
+$(FIELDS)
+"""
+struct CubedSphereGeometryCache{FT, A2 <: AbstractMatrix{FT}, A1 <: AbstractVector{FT}}
+    "per-panel cell areas [m²], NTuple of Nc×Nc matrices"
+    area  :: NTuple{6, A2}
+    "per-panel Δx at cell centers [m], NTuple of Nc×Nc matrices"
+    dx    :: NTuple{6, A2}
+    "per-panel Δy at cell centers [m], NTuple of Nc×Nc matrices"
+    dy    :: NTuple{6, A2}
+    "vertical B-ratio for mass-flux closure, length Nz"
+    bt    :: A1
+    gravity :: FT
+    Nc :: Int
+    Nz :: Int
+    Hp :: Int
+end
+
+"""
+$(SIGNATURES)
+
+Build a [`CubedSphereGeometryCache`](@ref) from a `CubedSphereGrid`.
+`ref_array` determines device placement (CPU or GPU).
+"""
+function build_geometry_cache(grid::CubedSphereGrid{FT},
+                              ref_array::AbstractArray{FT}) where FT
+    Nc = grid.Nc
+    Nz = grid.Nz
+    Hp = grid.Hp
+    g  = FT(grid.gravity)
+
+    area_panels = ntuple(6) do p
+        a_cpu = Matrix{FT}(undef, Nc, Nc)
+        @inbounds for j in 1:Nc, i in 1:Nc
+            a_cpu[i, j] = FT(grid.Aᶜ[p][i, j])
+        end
+        _to_device_2d(a_cpu, ref_array)
+    end
+
+    dx_panels = ntuple(6) do p
+        d_cpu = Matrix{FT}(undef, Nc, Nc)
+        @inbounds for j in 1:Nc, i in 1:Nc
+            d_cpu[i, j] = FT(grid.Δxᶜ[p][i, j])
+        end
+        _to_device_2d(d_cpu, ref_array)
+    end
+
+    dy_panels = ntuple(6) do p
+        d_cpu = Matrix{FT}(undef, Nc, Nc)
+        @inbounds for j in 1:Nc, i in 1:Nc
+            d_cpu[i, j] = FT(grid.Δyᶜ[p][i, j])
+        end
+        _to_device_2d(d_cpu, ref_array)
+    end
+
+    vc = grid.vertical
+    ΔB_cpu = Vector{FT}(undef, Nz)
+    @inbounds for k in 1:Nz
+        ΔB_cpu[k] = FT(vc.B[k + 1] - vc.B[k])
+    end
+    ΔB_total = FT(vc.B[Nz + 1] - vc.B[1])
+    bt_cpu = abs(ΔB_total) > eps(FT) ? ΔB_cpu ./ ΔB_total : zeros(FT, Nz)
+
+    bt = typeof(ref_array) <: Array ? bt_cpu : _to_device_2d(bt_cpu, ref_array)
+
+    return CubedSphereGeometryCache{FT, typeof(area_panels[1]), typeof(bt)}(
+        area_panels, dx_panels, dy_panels, bt, g, Nc, Nz, Hp)
+end
+
+# ---- Air Mass Kernel -------------------------------------------------------
+
+@kernel function _air_mass_cs_kernel!(m_out, @Const(delp), @Const(area), g, Hp)
+    i, j, k = @index(Global, NTuple)
+    @inbounds m_out[Hp + i, Hp + j, k] = delp[Hp + i, Hp + j, k] * area[i, j] / g
+end
+
+"""
+$(SIGNATURES)
+
+Compute air mass for a single cubed-sphere panel from pressure thickness.
+`m` and `delp` are haloed arrays (Nc+2Hp × Nc+2Hp × Nz).
+`area` is an interior-only array (Nc × Nc).
+"""
+function compute_air_mass_panel!(m::AbstractArray{FT,3},
+                                 delp::AbstractArray{FT,3},
+                                 area::AbstractMatrix{FT},
+                                 g::FT, Nc::Int, Nz::Int, Hp::Int) where FT
+    backend = get_backend(m)
+    k! = _air_mass_cs_kernel!(backend, 256)
+    k!(m, delp, area, g, Hp; ndrange=(Nc, Nc, Nz))
+    synchronize(backend)
+    return nothing
+end
+
+# ---- Vertical Mass-Flux Closure --------------------------------------------
+
+@kernel function _cm_column_cs_kernel!(cm, @Const(am), @Const(bm), @Const(bt), Nc, Nz)
+    i, j = @index(Global, NTuple)
+    FT = eltype(cm)
+    @inbounds begin
+        pit = zero(FT)
+        for k in 1:Nz
+            pit += am[i, j, k] - am[i + 1, j, k] + bm[i, j, k] - bm[i, j + 1, k]
+        end
+        acc = zero(FT)
+        cm[i, j, 1] = acc
+        for k in 1:Nz
+            conv_k = am[i, j, k] - am[i + 1, j, k] + bm[i, j, k] - bm[i, j + 1, k]
+            acc += conv_k - bt[k] * pit
+            cm[i, j, k + 1] = acc
+        end
+    end
+end
+
+"""
+$(SIGNATURES)
+
+Compute vertical mass flux `cm` from horizontal convergence of `am` (X mass flux)
+and `bm` (Y mass flux) for a single panel, ensuring column mass conservation.
+
+- `cm`: (Nc, Nc, Nz+1) — vertical flux at level interfaces
+- `am`: (Nc+1, Nc, Nz) — X-face mass flux
+- `bm`: (Nc, Nc+1, Nz) — Y-face mass flux
+- `bt`: (Nz,) — B-ratio for sigma correction
+"""
+function compute_cm_panel!(cm::AbstractArray{FT,3},
+                           am::AbstractArray{FT,3},
+                           bm::AbstractArray{FT,3},
+                           bt::AbstractVector{FT},
+                           Nc::Int, Nz::Int) where FT
+    backend = get_backend(cm)
+    fill!(cm, zero(FT))
+    k! = _cm_column_cs_kernel!(backend, 256)
+    k!(cm, am, bm, bt, Nc, Nz; ndrange=(Nc, Nc))
+    synchronize(backend)
+    return nothing
+end
+
+# ---- Panel-Local X-Advection Kernel ----------------------------------------
+
+@kernel function _massflux_x_cs_kernel!(
+    rm_new, @Const(rm), m_new, @Const(m), @Const(am), Hp, Nc, use_limiter
+)
+    i, j, k = @index(Global, NTuple)
+    @inbounds begin
+        ii  = Hp + i
+        jj  = Hp + j
+        FT  = eltype(rm)
+
+        c_imm = rm[ii - 2, jj, k] / m[ii - 2, jj, k]
+        c_im  = rm[ii - 1, jj, k] / m[ii - 1, jj, k]
+        c_i   = rm[ii,     jj, k] / m[ii,     jj, k]
+        c_ip  = rm[ii + 1, jj, k] / m[ii + 1, jj, k]
+        c_ipp = rm[ii + 2, jj, k] / m[ii + 2, jj, k]
+
+        # Slope at i-1
+        sc_im = (c_i - c_imm) / 2
+        if use_limiter
+            sc_im = minmod_device(sc_im, 2 * (c_i - c_im), 2 * (c_im - c_imm))
+        end
+        sx_im = m[ii - 1, jj, k] * sc_im
+        if use_limiter
+            sx_im = max(min(sx_im, rm[ii - 1, jj, k]), -rm[ii - 1, jj, k])
+        end
+
+        # Slope at i
+        sc_i = (c_ip - c_im) / 2
+        if use_limiter
+            sc_i = minmod_device(sc_i, 2 * (c_ip - c_i), 2 * (c_i - c_im))
+        end
+        sx_i = m[ii, jj, k] * sc_i
+        if use_limiter
+            sx_i = max(min(sx_i, rm[ii, jj, k]), -rm[ii, jj, k])
+        end
+
+        # Slope at i+1
+        sc_ip = (c_ipp - c_i) / 2
+        if use_limiter
+            sc_ip = minmod_device(sc_ip, 2 * (c_ipp - c_ip), 2 * (c_ip - c_i))
+        end
+        sx_ip = m[ii + 1, jj, k] * sc_ip
+        if use_limiter
+            sx_ip = max(min(sx_ip, rm[ii + 1, jj, k]), -rm[ii + 1, jj, k])
+        end
+
+        # Flux at left face (face i in am, which is interior-indexed)
+        am_l = am[i, j, k]
+        flux_left = if am_l >= zero(FT)
+            alpha = am_l / m[ii - 1, jj, k]
+            alpha * (rm[ii - 1, jj, k] + (one(FT) - alpha) * sx_im)
+        else
+            alpha = am_l / m[ii, jj, k]
+            alpha * (rm[ii, jj, k] - (one(FT) + alpha) * sx_i)
+        end
+
+        # Flux at right face (face i+1 in am)
+        am_r = am[i + 1, j, k]
+        flux_right = if am_r >= zero(FT)
+            alpha = am_r / m[ii, jj, k]
+            alpha * (rm[ii, jj, k] + (one(FT) - alpha) * sx_i)
+        else
+            alpha = am_r / m[ii + 1, jj, k]
+            alpha * (rm[ii + 1, jj, k] - (one(FT) + alpha) * sx_ip)
+        end
+
+        rm_new[ii, jj, k] = rm[ii, jj, k] + flux_left - flux_right
+        m_new[ii, jj, k]  = m[ii, jj, k]  + am[i, j, k] - am[i + 1, j, k]
+    end
+end
+
+# ---- Panel-Local Y-Advection Kernel ----------------------------------------
+
+@kernel function _massflux_y_cs_kernel!(
+    rm_new, @Const(rm), m_new, @Const(m), @Const(bm), Hp, Nc, use_limiter
+)
+    i, j, k = @index(Global, NTuple)
+    @inbounds begin
+        ii = Hp + i
+        jj = Hp + j
+        FT = eltype(rm)
+
+        c_jmm = rm[ii, jj - 2, k] / m[ii, jj - 2, k]
+        c_jm  = rm[ii, jj - 1, k] / m[ii, jj - 1, k]
+        c_j   = rm[ii, jj,     k] / m[ii, jj,     k]
+        c_jp  = rm[ii, jj + 1, k] / m[ii, jj + 1, k]
+        c_jpp = rm[ii, jj + 2, k] / m[ii, jj + 2, k]
+
+        # Slope at j-1
+        sc_jm = (c_j - c_jmm) / 2
+        if use_limiter
+            sc_jm = minmod_device(sc_jm, 2 * (c_j - c_jm), 2 * (c_jm - c_jmm))
+        end
+        sy_jm = m[ii, jj - 1, k] * sc_jm
+        if use_limiter
+            sy_jm = max(min(sy_jm, rm[ii, jj - 1, k]), -rm[ii, jj - 1, k])
+        end
+
+        # Slope at j
+        sc_j = (c_jp - c_jm) / 2
+        if use_limiter
+            sc_j = minmod_device(sc_j, 2 * (c_jp - c_j), 2 * (c_j - c_jm))
+        end
+        sy_j = m[ii, jj, k] * sc_j
+        if use_limiter
+            sy_j = max(min(sy_j, rm[ii, jj, k]), -rm[ii, jj, k])
+        end
+
+        # Slope at j+1
+        sc_jp = (c_jpp - c_j) / 2
+        if use_limiter
+            sc_jp = minmod_device(sc_jp, 2 * (c_jpp - c_jp), 2 * (c_jp - c_j))
+        end
+        sy_jp = m[ii, jj + 1, k] * sc_jp
+        if use_limiter
+            sy_jp = max(min(sy_jp, rm[ii, jj + 1, k]), -rm[ii, jj + 1, k])
+        end
+
+        # Flux at south face (face j in bm)
+        bm_s = bm[i, j, k]
+        flux_south = if bm_s >= zero(FT)
+            beta = bm_s / m[ii, jj - 1, k]
+            beta * (rm[ii, jj - 1, k] + (one(FT) - beta) * sy_jm)
+        else
+            beta = bm_s / m[ii, jj, k]
+            beta * (rm[ii, jj, k] - (one(FT) + beta) * sy_j)
+        end
+
+        # Flux at north face (face j+1 in bm)
+        bm_n = bm[i, j + 1, k]
+        flux_north = if bm_n >= zero(FT)
+            beta = bm_n / m[ii, jj, k]
+            beta * (rm[ii, jj, k] + (one(FT) - beta) * sy_j)
+        else
+            beta = bm_n / m[ii, jj + 1, k]
+            beta * (rm[ii, jj + 1, k] - (one(FT) + beta) * sy_jp)
+        end
+
+        rm_new[ii, jj, k] = rm[ii, jj, k] + flux_south - flux_north
+        m_new[ii, jj, k]  = m[ii, jj, k]  + bm[i, j, k] - bm[i, j + 1, k]
+    end
+end
+
+# ---- Panel-Local Z-Advection (reuses lat-lon kernel) -----------------------
+
+@kernel function _massflux_z_cs_kernel!(
+    rm_new, @Const(rm), m_new, @Const(m), @Const(cm), Hp, Nz, use_limiter
+)
+    i, j, k = @index(Global, NTuple)
+    @inbounds begin
+        ii = Hp + i
+        jj = Hp + j
+        FT = eltype(rm)
+
+        sz_k = if k > 1 && k < Nz
+            ckm = rm[ii, jj, k - 1] / m[ii, jj, k - 1]
+            ck  = rm[ii, jj, k]     / m[ii, jj, k]
+            ckp = rm[ii, jj, k + 1] / m[ii, jj, k + 1]
+            sc = (ckp - ckm) / 2
+            if use_limiter; sc = minmod_device(sc, 2 * (ckp - ck), 2 * (ck - ckm)); end
+            s = m[ii, jj, k] * sc
+            if use_limiter; s = max(min(s, rm[ii, jj, k]), -rm[ii, jj, k]); end
+            s
+        else
+            zero(FT)
+        end
+
+        sz_km = if k > 2 && k - 1 < Nz
+            ckmm = rm[ii, jj, k - 2] / m[ii, jj, k - 2]
+            ckm  = rm[ii, jj, k - 1] / m[ii, jj, k - 1]
+            ck   = rm[ii, jj, k]     / m[ii, jj, k]
+            sc = (ck - ckmm) / 2
+            if use_limiter; sc = minmod_device(sc, 2 * (ck - ckm), 2 * (ckm - ckmm)); end
+            s = m[ii, jj, k - 1] * sc
+            if use_limiter; s = max(min(s, rm[ii, jj, k - 1]), -rm[ii, jj, k - 1]); end
+            s
+        else
+            zero(FT)
+        end
+
+        sz_kp = if k < Nz - 1 && k + 1 > 1
+            ck   = rm[ii, jj, k]     / m[ii, jj, k]
+            ckp  = rm[ii, jj, k + 1] / m[ii, jj, k + 1]
+            ckpp = rm[ii, jj, k + 2] / m[ii, jj, k + 2]
+            sc = (ckpp - ck) / 2
+            if use_limiter; sc = minmod_device(sc, 2 * (ckpp - ckp), 2 * (ckp - ck)); end
+            s = m[ii, jj, k + 1] * sc
+            if use_limiter; s = max(min(s, rm[ii, jj, k + 1]), -rm[ii, jj, k + 1]); end
+            s
+        else
+            zero(FT)
+        end
+
+        flux_top = if k > 1
+            cm_t = cm[i, j, k]
+            if cm_t > zero(FT)
+                gamma = cm_t / m[ii, jj, k - 1]
+                gamma * (rm[ii, jj, k - 1] + (one(FT) - gamma) * sz_km)
+            elseif cm_t < zero(FT)
+                gamma = cm_t / m[ii, jj, k]
+                gamma * (rm[ii, jj, k] - (one(FT) + gamma) * sz_k)
+            else
+                zero(FT)
+            end
+        else
+            zero(FT)
+        end
+
+        flux_bot = if k < Nz
+            cm_b = cm[i, j, k + 1]
+            if cm_b > zero(FT)
+                gamma = cm_b / m[ii, jj, k]
+                gamma * (rm[ii, jj, k] + (one(FT) - gamma) * sz_k)
+            elseif cm_b < zero(FT)
+                gamma = cm_b / m[ii, jj, k + 1]
+                gamma * (rm[ii, jj, k + 1] - (one(FT) + gamma) * sz_kp)
+            else
+                zero(FT)
+            end
+        else
+            zero(FT)
+        end
+
+        rm_new[ii, jj, k] = rm[ii, jj, k] + flux_top - flux_bot
+        m_new[ii, jj, k]  = m[ii, jj, k]  + cm[i, j, k] - cm[i, j, k + 1]
+    end
+end
+
+# ---- Panel-Level Advection Functions ---------------------------------------
+
+"""
+$(SIGNATURES)
+
+X-direction mass-flux advection for a single cubed-sphere panel.
+`rm`, `m`, `rm_buf`, `m_buf` are haloed (Nc+2Hp × Nc+2Hp × Nz).
+`am` is interior-only (Nc+1 × Nc × Nz).
+"""
+function advect_x_cs_panel!(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
+                            am::AbstractArray{FT,3},
+                            rm_buf::AbstractArray{FT,3}, m_buf::AbstractArray{FT,3},
+                            Hp::Int, Nc::Int, use_limiter::Bool) where FT
+    backend = get_backend(rm)
+    k! = _massflux_x_cs_kernel!(backend, 256)
+    k!(rm_buf, rm, m_buf, m, am, Hp, Nc, use_limiter; ndrange=(Nc, Nc, size(rm, 3)))
+    synchronize(backend)
+    _copy_interior!(rm, rm_buf, Hp, Nc, size(rm, 3))
+    _copy_interior!(m, m_buf, Hp, Nc, size(rm, 3))
+    return nothing
+end
+
+"""
+$(SIGNATURES)
+
+Y-direction mass-flux advection for a single cubed-sphere panel.
+"""
+function advect_y_cs_panel!(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
+                            bm::AbstractArray{FT,3},
+                            rm_buf::AbstractArray{FT,3}, m_buf::AbstractArray{FT,3},
+                            Hp::Int, Nc::Int, use_limiter::Bool) where FT
+    backend = get_backend(rm)
+    k! = _massflux_y_cs_kernel!(backend, 256)
+    k!(rm_buf, rm, m_buf, m, bm, Hp, Nc, use_limiter; ndrange=(Nc, Nc, size(rm, 3)))
+    synchronize(backend)
+    _copy_interior!(rm, rm_buf, Hp, Nc, size(rm, 3))
+    _copy_interior!(m, m_buf, Hp, Nc, size(rm, 3))
+    return nothing
+end
+
+"""
+$(SIGNATURES)
+
+Z-direction mass-flux advection for a single cubed-sphere panel.
+`cm` is interior-only (Nc × Nc × Nz+1).
+"""
+function advect_z_cs_panel!(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
+                            cm::AbstractArray{FT,3},
+                            rm_buf::AbstractArray{FT,3}, m_buf::AbstractArray{FT,3},
+                            Hp::Int, Nc::Int, Nz::Int, use_limiter::Bool) where FT
+    backend = get_backend(rm)
+    k! = _massflux_z_cs_kernel!(backend, 256)
+    k!(rm_buf, rm, m_buf, m, cm, Hp, Nz, use_limiter; ndrange=(Nc, Nc, Nz))
+    synchronize(backend)
+    _copy_interior!(rm, rm_buf, Hp, Nc, Nz)
+    _copy_interior!(m, m_buf, Hp, Nc, Nz)
+    return nothing
+end
+
+@kernel function _copy_interior_kernel!(dst, @Const(src), Hp)
+    i, j, k = @index(Global, NTuple)
+    @inbounds dst[Hp + i, Hp + j, k] = src[Hp + i, Hp + j, k]
+end
+
+function _copy_interior!(dst, src, Hp, Nc, Nz)
+    backend = get_backend(dst)
+    k! = _copy_interior_kernel!(backend, 256)
+    k!(dst, src, Hp; ndrange=(Nc, Nc, Nz))
+    synchronize(backend)
+end
+
+# ---- Workspace for Cubed-Sphere Mass-Flux Advection ------------------------
+
+"""
+$(TYPEDEF)
+
+Pre-allocated buffers for cubed-sphere mass-flux advection.
+One set of haloed buffers is reused across all panels (sequential processing).
+
+$(FIELDS)
+"""
+struct CubedSphereMassFluxWorkspace{FT, A3 <: AbstractArray{FT,3}}
+    "tracer mass buffer (haloed, Nc+2Hp × Nc+2Hp × Nz)"
+    rm_buf :: A3
+    "air mass buffer (haloed, Nc+2Hp × Nc+2Hp × Nz)"
+    m_buf  :: A3
+end
+
+"""
+$(SIGNATURES)
+
+Allocate workspace buffers for cubed-sphere mass-flux advection.
+`ref_panel` is a haloed panel array whose size and device type are matched.
+"""
+function allocate_cs_massflux_workspace(ref_panel::AbstractArray{FT,3}) where FT
+    CubedSphereMassFluxWorkspace{FT, typeof(ref_panel)}(
+        similar(ref_panel),
+        similar(ref_panel),
+    )
+end
+
+# ---- Strang Split for CubedSphereGrid -------------------------------------
+
+"""
+$(SIGNATURES)
+
+Perform a full Strang-split mass-flux advection step (X-Y-Z-Z-Y-X) on a
+`CubedSphereGrid`. Each directional sweep:
+1. Fills panel halos on rm and m
+2. Loops over 6 panels, applying the panel-local advection kernel
+
+Arguments:
+- `rm_panels`: NTuple{6, Array} of tracer mass (haloed)
+- `m_panels`: NTuple{6, Array} of air mass (haloed)
+- `am_panels`: NTuple{6, Array} of X mass flux (interior, Nc+1 × Nc × Nz)
+- `bm_panels`: NTuple{6, Array} of Y mass flux (interior, Nc × Nc+1 × Nz)
+- `cm_panels`: NTuple{6, Array} of Z mass flux (interior, Nc × Nc × Nz+1)
+- `grid`: CubedSphereGrid
+- `use_limiter`: enable minmod slope limiter
+- `ws`: CubedSphereMassFluxWorkspace
+"""
+function strang_split_massflux!(rm_panels::NTuple{6},
+                                m_panels::NTuple{6},
+                                am_panels::NTuple{6},
+                                bm_panels::NTuple{6},
+                                cm_panels::NTuple{6},
+                                grid::CubedSphereGrid,
+                                use_limiter::Bool,
+                                ws::CubedSphereMassFluxWorkspace)
+    Nc = grid.Nc
+    Nz = grid.Nz
+    Hp = grid.Hp
+
+    # X → Y → Z → Z → Y → X (Strang splitting)
+    _sweep_x!(rm_panels, m_panels, am_panels, grid, use_limiter, ws)
+    _sweep_y!(rm_panels, m_panels, bm_panels, grid, use_limiter, ws)
+    _sweep_z!(rm_panels, m_panels, cm_panels, grid, use_limiter, ws)
+    _sweep_z!(rm_panels, m_panels, cm_panels, grid, use_limiter, ws)
+    _sweep_y!(rm_panels, m_panels, bm_panels, grid, use_limiter, ws)
+    _sweep_x!(rm_panels, m_panels, am_panels, grid, use_limiter, ws)
+
+    return nothing
+end
+
+function _sweep_x!(rm_panels, m_panels, am_panels, grid, use_limiter, ws)
+    fill_panel_halos!(rm_panels, grid)
+    fill_panel_halos!(m_panels, grid)
+    for p in 1:6
+        advect_x_cs_panel!(rm_panels[p], m_panels[p], am_panels[p],
+                           ws.rm_buf, ws.m_buf,
+                           grid.Hp, grid.Nc, use_limiter)
+    end
+end
+
+function _sweep_y!(rm_panels, m_panels, bm_panels, grid, use_limiter, ws)
+    fill_panel_halos!(rm_panels, grid)
+    fill_panel_halos!(m_panels, grid)
+    for p in 1:6
+        advect_y_cs_panel!(rm_panels[p], m_panels[p], bm_panels[p],
+                           ws.rm_buf, ws.m_buf,
+                           grid.Hp, grid.Nc, use_limiter)
+    end
+end
+
+function _sweep_z!(rm_panels, m_panels, cm_panels, grid, use_limiter, ws)
+    for p in 1:6
+        advect_z_cs_panel!(rm_panels[p], m_panels[p], cm_panels[p],
+                           ws.rm_buf, ws.m_buf,
+                           grid.Hp, grid.Nc, grid.Nz, use_limiter)
+    end
+end

@@ -75,6 +75,10 @@ export advect_x_massflux_subcycled!, advect_y_massflux_subcycled!, advect_z_mass
 export max_cfl_massflux_x, max_cfl_massflux_y, max_cfl_massflux_z
 export strang_split_massflux!
 export advect_x_massflux_reduced!
+export CubedSphereGeometryCache, CubedSphereMassFluxWorkspace
+export allocate_cs_massflux_workspace
+export compute_air_mass_panel!, compute_cm_panel!
+export advect_x_cs_panel!, advect_y_cs_panel!, advect_z_cs_panel!
 
 include("abstract_advection.jl")
 include("slopes_advection_kernels.jl")
@@ -86,5 +90,6 @@ include("cubed_sphere_advection.jl")
 include("subcycling.jl")
 include("mass_correction.jl")
 include("mass_flux_advection.jl")
+include("cubed_sphere_mass_flux.jl")
 
 end # module Advection

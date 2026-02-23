@@ -8,14 +8,89 @@
 
 using NCDatasets
 
+function _write_test_geosfp_toml(path::String)
+    open(path, "w") do io
+        write(io, """
+        [source]
+        name        = "GEOS-FP-Test"
+        description = "Synthetic GEOS-FP format for integration tests"
+        institution = "Test"
+
+        [grid]
+        type      = "LatitudeLongitude"
+        Nx        = 8
+        Ny        = 4
+        Nz        = 5
+        dlon      = 45.0
+        dlat      = 45.0
+        lon_start = -180.0
+        lat_start = -90.0
+
+        [access]
+        protocol      = "local"
+        time_interval = 10800.0
+
+        [collections.asm_Nv_inst]
+        dataset     = "inst3_3d_asm_Nv"
+        frequency   = "inst3"
+        vertical    = "Nv"
+        levels      = 5
+        description = "3D assimilated state on native levels (test)"
+
+        [collections.trb_Ne]
+        dataset     = "tavg3_3d_trb_Ne"
+        frequency   = "tavg3"
+        vertical    = "Ne"
+        levels      = 6
+        description = "Turbulence diagnostics at layer edges (test)"
+
+        [variables.u_wind]
+        native_name = "u"
+        collection  = "asm_Nv_inst"
+
+        [variables.v_wind]
+        native_name = "v"
+        collection  = "asm_Nv_inst"
+
+        [variables.w_wind]
+        native_name = "omega"
+        collection  = "asm_Nv_inst"
+
+        [variables.temperature]
+        native_name = "t"
+        collection  = "asm_Nv_inst"
+
+        [variables.specific_humidity]
+        native_name = "qv"
+        collection  = "asm_Nv_inst"
+
+        [variables.surface_pressure]
+        native_name = "ps"
+        collection  = "asm_Nv_inst"
+
+        [variables.pressure_thickness]
+        native_name = "delp"
+        collection  = "asm_Nv_inst"
+
+        [variables.diffusivity]
+        native_name = "kh"
+        collection  = "trb_Ne"
+        """)
+    end
+end
+
 function generate_test_met_data(; force::Bool = false)
     Nx, Ny, Nz = 8, 4, 5
     FILL = -9999.0
     data_dir = joinpath(@__DIR__, "data", "geosfp_test")
     mkpath(data_dir)
 
-    asm_path = joinpath(data_dir, "inst3_3d_asm_Nv.nc")
-    trb_path = joinpath(data_dir, "tavg3_3d_trb_Ne.nc")
+    asm_path  = joinpath(data_dir, "inst3_3d_asm_Nv.nc")
+    trb_path  = joinpath(data_dir, "tavg3_3d_trb_Ne.nc")
+    toml_path = joinpath(data_dir, "test_geosfp.toml")
+
+    # Always write the TOML config so it exists even when .nc files are cached
+    _write_test_geosfp_toml(toml_path)
 
     if !force && isfile(asm_path) && isfile(trb_path)
         return asm_path, trb_path

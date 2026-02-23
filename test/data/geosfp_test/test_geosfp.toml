@@ -1,0 +1,64 @@
+[source]
+name        = "GEOS-FP-Test"
+description = "Synthetic GEOS-FP format for integration tests"
+institution = "Test"
+
+[grid]
+type      = "LatitudeLongitude"
+Nx        = 8
+Ny        = 4
+Nz        = 5
+dlon      = 45.0
+dlat      = 45.0
+lon_start = -180.0
+lat_start = -90.0
+
+[access]
+protocol      = "local"
+time_interval = 10800.0
+
+[collections.asm_Nv_inst]
+dataset     = "inst3_3d_asm_Nv"
+frequency   = "inst3"
+vertical    = "Nv"
+levels      = 5
+description = "3D assimilated state on native levels (test)"
+
+[collections.trb_Ne]
+dataset     = "tavg3_3d_trb_Ne"
+frequency   = "tavg3"
+vertical    = "Ne"
+levels      = 6
+description = "Turbulence diagnostics at layer edges (test)"
+
+[variables.u_wind]
+native_name = "u"
+collection  = "asm_Nv_inst"
+
+[variables.v_wind]
+native_name = "v"
+collection  = "asm_Nv_inst"
+
+[variables.w_wind]
+native_name = "omega"
+collection  = "asm_Nv_inst"
+
+[variables.temperature]
+native_name = "t"
+collection  = "asm_Nv_inst"
+
+[variables.specific_humidity]
+native_name = "qv"
+collection  = "asm_Nv_inst"
+
+[variables.surface_pressure]
+native_name = "ps"
+collection  = "asm_Nv_inst"
+
+[variables.pressure_thickness]
+native_name = "delp"
+collection  = "asm_Nv_inst"
+
+[variables.diffusivity]
+native_name = "kh"
+collection  = "trb_Ne"

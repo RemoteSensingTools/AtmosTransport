@@ -10,7 +10,7 @@
 #
 # Usage:
 #   using CUDA        # (for GPU)
-#   using AtmosTransportModel
+#   using AtmosTransport
 #   model = build_model_from_config("config/runs/catrine_era5.toml")
 #   run!(model)
 # ===========================================================================

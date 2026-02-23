@@ -4,10 +4,10 @@
 # behave as expected (conservation, simple analytic cases) before full 3D/TM5 comparison.
 
 using Test
-using AtmosTransportModel
-using AtmosTransportModel.Advection
-using AtmosTransportModel.Convection
-using AtmosTransportModel.Grids
+using AtmosTransport
+using AtmosTransport.Advection
+using AtmosTransport.Convection
+using AtmosTransport.Grids
 using LinearAlgebra: dot
 
 @testset "Numerics (TM5-aligned)" begin

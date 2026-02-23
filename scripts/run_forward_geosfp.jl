@@ -11,14 +11,14 @@
 #   julia --project=. scripts/run_forward_geosfp.jl
 # ===========================================================================
 
-using AtmosTransportModel
-using AtmosTransportModel.Architectures
-using AtmosTransportModel.Grids
-using AtmosTransportModel.Advection
-using AtmosTransportModel.Convection
-using AtmosTransportModel.Diffusion
-using AtmosTransportModel.Chemistry
-using AtmosTransportModel.TimeSteppers
+using AtmosTransport
+using AtmosTransport.Architectures
+using AtmosTransport.Grids
+using AtmosTransport.Advection
+using AtmosTransport.Convection
+using AtmosTransport.Diffusion
+using AtmosTransport.Chemistry
+using AtmosTransport.TimeSteppers
 using NCDatasets
 using Dates
 
@@ -180,7 +180,7 @@ end
 # ---------------------------------------------------------------------------
 function run_forward()
     @info "=" ^ 70
-    @info "AtmosTransportModel — Forward Integration Test (1 week GEOS-FP)"
+    @info "AtmosTransport — Forward Integration Test (1 week GEOS-FP)"
     @info "=" ^ 70
 
     if !isfile(DATAFILE)

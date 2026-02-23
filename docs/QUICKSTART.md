@@ -1,6 +1,6 @@
 # Quick Start Guide
 
-End-to-end instructions for running AtmosTransportModel: downloading
+End-to-end instructions for running AtmosTransport: downloading
 meteorological data, preprocessing, configuring, and running simulations.
 
 For a deep dive into met data formats, vertical coordinates, and TM5

@@ -1,6 +1,6 @@
 # Grid Types
 
-AtmosTransportModel supports multiple horizontal grid types, all sharing a
+AtmosTransport supports multiple horizontal grid types, all sharing a
 common vertical coordinate. This page describes each grid type, when to use
 it, and how it is represented internally.
 
@@ -61,8 +61,8 @@ grid that maps directly to standard NetCDF data layouts.
 ### Construction
 
 ```julia
-using AtmosTransportModel.Grids
-using AtmosTransportModel.IO: default_met_config, build_vertical_coordinate
+using AtmosTransport.Grids
+using AtmosTransport.IO: default_met_config, build_vertical_coordinate
 
 config = default_met_config("era5")
 vert = build_vertical_coordinate(config; FT=Float64)

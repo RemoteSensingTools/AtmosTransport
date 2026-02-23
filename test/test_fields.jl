@@ -1,6 +1,6 @@
 using Test
-using AtmosTransportModel.Grids
-using AtmosTransportModel.Fields
+using AtmosTransport.Grids
+using AtmosTransport.Fields
 
 @testset "Fields" begin
     @test Center() isa AbstractLocationType

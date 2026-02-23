@@ -1,7 +1,7 @@
 using Test
-using AtmosTransportModel
+using AtmosTransport
 
-@testset "AtmosTransportModel" begin
+@testset "AtmosTransport" begin
     include("test_architectures.jl")
     include("test_grids.jl")
     include("test_fields.jl")

@@ -1,8 +1,8 @@
 using Test
-using AtmosTransportModel
-using AtmosTransportModel.Architectures
-using AtmosTransportModel.Advection
-using AtmosTransportModel.Grids
+using AtmosTransport
+using AtmosTransport.Architectures
+using AtmosTransport.Advection
+using AtmosTransport.Grids
 
 @testset "Mass Correction (Pressure Fixer)" begin
 

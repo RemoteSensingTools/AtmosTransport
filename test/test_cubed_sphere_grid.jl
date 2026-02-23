@@ -1,8 +1,8 @@
 using Test
-using AtmosTransportModel
-using AtmosTransportModel.Architectures
-using AtmosTransportModel.Grids
-using AtmosTransportModel.IO: default_met_config, build_vertical_coordinate
+using AtmosTransport
+using AtmosTransport.Architectures
+using AtmosTransport.Grids
+using AtmosTransport.IO: default_met_config, build_vertical_coordinate
 
 # Build vertical coordinate from GEOS-FP config
 config = default_met_config("geosfp")

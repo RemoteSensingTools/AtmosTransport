@@ -1,8 +1,8 @@
 using Test
 using LinearAlgebra: dot
-using AtmosTransportModel
-using AtmosTransportModel.Advection
-using AtmosTransportModel.Grids
+using AtmosTransport
+using AtmosTransport.Advection
+using AtmosTransport.Grids
 
 @testset "Advection" begin
     @test SlopesAdvection() isa AbstractAdvectionScheme

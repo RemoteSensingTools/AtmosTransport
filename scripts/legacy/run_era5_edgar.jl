@@ -9,30 +9,30 @@
 #   USE_GPU=true julia --project=. scripts/run_era5_edgar.jl
 #   # or with TOML:
 #   julia --project=. -e '
-#       using AtmosTransportModel
+#       using AtmosTransport
 #       model = build_model_from_config("config/runs/era5_edgar.toml")
 #       run!(model)
 #   '
 # ===========================================================================
 
-using AtmosTransportModel
-using AtmosTransportModel.Architectures: GPU, CPU
+using AtmosTransport
+using AtmosTransport.Architectures: GPU, CPU
 
 const USE_GPU     = parse(Bool, get(ENV, "USE_GPU", "false"))
 if USE_GPU
     using CUDA
     CUDA.allowscalar(false)
 end
-using AtmosTransportModel.Grids: LatitudeLongitudeGrid
-using AtmosTransportModel.IO: default_met_config, build_vertical_coordinate,
+using AtmosTransport.Grids: LatitudeLongitudeGrid
+using AtmosTransport.IO: default_met_config, build_vertical_coordinate,
                               load_vertical_coefficients, ERA5MetDriver,
                               find_era5_files, NetCDFOutputWriter,
                               TimeIntervalSchedule
-using AtmosTransportModel.Sources: EdgarSource, load_inventory
-using AtmosTransportModel.Diagnostics: ColumnMeanDiagnostic
-using AtmosTransportModel.Models: TransportModel, DoubleBuffer
-import AtmosTransportModel.Models: run!
-using AtmosTransportModel.Parameters: load_parameters
+using AtmosTransport.Sources: EdgarSource, load_inventory
+using AtmosTransport.Diagnostics: ColumnMeanDiagnostic
+using AtmosTransport.Models: TransportModel, DoubleBuffer
+import AtmosTransport.Models: run!
+using AtmosTransport.Parameters: load_parameters
 
 # --- Configuration ---
 const USE_FLOAT32 = parse(Bool, get(ENV, "USE_FLOAT32", "false"))
@@ -55,7 +55,7 @@ datadirs = [expanduser(d) for d in split(get(ENV, "ERA5_DATADIRS",
 files = find_era5_files(datadirs)
 
 # Grid metadata from first file
-using AtmosTransportModel.IO: get_era5_grid_info
+using AtmosTransport.IO: get_era5_grid_info
 lons, lats, _, Nx, Ny, Nz, _ = get_era5_grid_info(files[1], FT)
 Δlon = lons[2] - lons[1]
 

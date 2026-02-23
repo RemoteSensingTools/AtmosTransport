@@ -16,12 +16,12 @@
 #   julia --project=. scripts/run_production_era5_jja2024.jl
 # ===========================================================================
 
-using AtmosTransportModel
-using AtmosTransportModel.Architectures
-using AtmosTransportModel.Grids
-using AtmosTransportModel.Advection
-using AtmosTransportModel.Sources
-using AtmosTransportModel.Parameters
+using AtmosTransport
+using AtmosTransport.Architectures
+using AtmosTransport.Grids
+using AtmosTransport.Advection
+using AtmosTransport.Sources
+using AtmosTransport.Parameters
 using NCDatasets
 using Dates
 
@@ -301,7 +301,7 @@ function init_output(outfile, grid, p_edges)
         defVar(ds, "total_mass_ppm", Float64, ("time",);
                attrib=Dict("long_name" => "global physical mass (sum c*volume_weight)"))
 
-        ds.attrib["description"] = "AtmosTransportModel Production Run: JJA 2024"
+        ds.attrib["description"] = "AtmosTransport Production Run: JJA 2024"
         ds.attrib["created"] = string(now())
         ds.attrib["time_step_seconds"] = Δt
         ds.attrib["advection_scheme"] = "SlopesAdvection(use_limiter=true)"
@@ -457,7 +457,7 @@ end
 # ---------------------------------------------------------------------------
 function main()
     @info "=" ^ 70
-    @info "AtmosTransportModel — Production ERA5 Forward Run (JJA 2024)"
+    @info "AtmosTransport — Production ERA5 Forward Run (JJA 2024)"
     @info "=" ^ 70
 
     # Discover ERA5 files

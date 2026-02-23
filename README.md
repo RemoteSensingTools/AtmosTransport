@@ -1,6 +1,6 @@
-# AtmosTransportModel.jl
+# AtmosTransport.jl
 
-[![Documentation](https://img.shields.io/badge/docs-dev-blue.svg)](https://RemoteSensingTools.github.io/AtmosTransportModel/dev/)
+[![Documentation](https://img.shields.io/badge/docs-dev-blue.svg)](https://RemoteSensingTools.github.io/AtmosTransport/dev/)
 
 A Julia-based atmospheric transport model for GPU and CPU, inspired by TM5 and designed with
 [Oceananigans.jl](https://github.com/CliMA/Oceananigans.jl)-style multiple dispatch patterns.
@@ -77,9 +77,9 @@ flowchart TD
 ## Quick start
 
 ```julia
-using AtmosTransportModel
-using AtmosTransportModel.Grids
-using AtmosTransportModel.IO: default_met_config, build_vertical_coordinate
+using AtmosTransport
+using AtmosTransport.Grids
+using AtmosTransport.IO: default_met_config, build_vertical_coordinate
 
 # Build vertical coordinate from TOML config (ERA5 137 levels, GEOS-FP 72, etc.)
 config = default_met_config("era5")
@@ -118,9 +118,9 @@ model = TransportModel(;
 
 ## Documentation
 
-[![Documentation](https://img.shields.io/badge/docs-dev-blue.svg)](https://RemoteSensingTools.github.io/AtmosTransportModel/dev/)
+[![Documentation](https://img.shields.io/badge/docs-dev-blue.svg)](https://RemoteSensingTools.github.io/AtmosTransport/dev/)
 
-Full documentation is available at [RemoteSensingTools.github.io/AtmosTransportModel](https://RemoteSensingTools.github.io/AtmosTransportModel/dev/), including:
+Full documentation is available at [RemoteSensingTools.github.io/AtmosTransport](https://RemoteSensingTools.github.io/AtmosTransport/dev/), including:
 
 - **Theory:** Mathematical framework for mass-flux advection and TM5 comparison
 - **Tutorials:** Step-by-step guides for running forward simulations with ERA5 and GEOS-FP

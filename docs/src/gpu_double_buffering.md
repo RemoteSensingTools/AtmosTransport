@@ -14,7 +14,7 @@ every timestep follows a strictly sequential pattern:
 for step in 1:Nt
     # --- CPU work (GPU idle) ---
     u, v, ω, Δp, ps = load_timestep(datafile, step, ...)   # NetCDF read
-    met = stagger_velocities(u, v, ω, ...)                   # CPU compute
+    met = stagger_winds!(u, v, ω, ...)                        # CPU compute
     _build_Δz_3d!(Δp_cpu, grid, ps)                          # CPU compute
     copyto!(Δp_dev, Δp_cpu)                                  # H→D transfer
     copyto!(u_dev, met.u)                                    # H→D transfer

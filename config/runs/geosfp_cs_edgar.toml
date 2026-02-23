@@ -2,7 +2,7 @@
 # GEOS-FP C720 Cubed-Sphere + EDGAR CO2 — Example Run Configuration
 #
 # Usage:
-#   using AtmosTransportModel
+#   using AtmosTransport
 #   model = build_model_from_config("config/runs/geosfp_cs_edgar.toml")
 #   run!(model)
 # ===========================================================================

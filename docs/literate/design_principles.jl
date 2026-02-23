@@ -1,6 +1,6 @@
 # # Design Principles: A Next-Generation Atmospheric Transport Model
 #
-# AtmosTransportModel.jl is designed from scratch to address limitations of
+# AtmosTransport.jl is designed from scratch to address limitations of
 # legacy atmospheric transport models (TM5, GEOS-Chem, LMDZ, TM3, etc.)
 # while preserving their proven scientific capabilities — particularly the
 # hand-coded discrete adjoint for 4D-Var data assimilation.
@@ -24,7 +24,7 @@
 # | Configuration | Fortran namelists | Input files | Hard to version-control and share |
 # | Extensibility | Requires Fortran expertise | Monolithic codebase | High barrier to contribution |
 #
-# AtmosTransportModel.jl addresses all of these while building on the
+# AtmosTransport.jl addresses all of these while building on the
 # scientific strengths of TM5's operator-splitting framework and proven
 # discrete adjoint.
 
@@ -176,7 +176,7 @@
 # ### The GPU Transition
 # HPC is moving decisively toward GPU-accelerated computing. Fortran-based
 # models require massive rewrites (or wrapper approaches) to use GPUs.
-# AtmosTransportModel.jl is GPU-native from day one.
+# AtmosTransport.jl is GPU-native from day one.
 #
 # ### The Met Driver Lock-In Problem
 # Most transport models are tightly coupled to a single meteorological
@@ -205,7 +205,7 @@
 
 # ## Comparison with Existing Models
 #
-# | Feature | AtmosTransportModel.jl | TM5 | GEOS-Chem |
+# | Feature | AtmosTransport.jl | TM5 | GEOS-Chem |
 # |:---|:---|:---|:---|
 # | Language | Julia | Fortran 90 | Fortran 90 |
 # | GPU acceleration | Native (KernelAbstractions.jl) | No | Partial |
@@ -223,9 +223,9 @@
 #
 # | Document | Contents |
 # |:---|:---|
-# | [Advection Theory](advection_theory.jl) | Mathematical derivation of the mass-flux advection scheme and its relationship to TM5 |
-# | [Met Driver Comparison](met_driver_comparison.jl) | Tutorial: running the same simulation with ERA5, GEOS-FP, or MERRA-2 |
-# | [First Forward Run](first_forward_run.jl) | Tutorial: setting up and running your first simulation |
+# | [Advection Theory](advection_theory.md) | Mathematical derivation of the mass-flux advection scheme and its relationship to TM5 |
+# | [Met Driver Comparison](met_driver_comparison.md) | Tutorial: running the same simulation with ERA5, GEOS-FP, or MERRA-2 |
+# | [First Forward Run](first_forward_run.md) | Tutorial: setting up and running your first simulation |
 # | [Validation](../developer/VALIDATION.md) | Test results, mass conservation metrics, gradient tests |
 # | [TM5 Code Alignment](../developer/TM5_CODE_ALIGNMENT.md) | Point-by-point comparison with TM5 Fortran source |
 # | [Mass-Flux Evolution](../developer/MASS_FLUX_EVOLUTION.md) | Design history and lessons learned (developer reference) |

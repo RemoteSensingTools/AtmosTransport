@@ -1,5 +1,5 @@
 # ===========================================================================
-# AtmosTransportModel — Default Parameters
+# AtmosTransport — Default Parameters
 #
 # All physical constants, numerical settings, and simulation defaults.
 # Nothing is hardcoded in the source; everything comes from here.

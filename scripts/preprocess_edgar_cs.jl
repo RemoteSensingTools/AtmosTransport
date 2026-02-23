@@ -19,11 +19,11 @@
 #   NC_GRID    — grid resolution (default: 720, for C720)
 # ===========================================================================
 
-using AtmosTransportModel
-using AtmosTransportModel.Architectures
-using AtmosTransportModel.Grids
-using AtmosTransportModel.Parameters
-using AtmosTransportModel.IO: default_met_config, build_vertical_coordinate
+using AtmosTransport
+using AtmosTransport.Architectures
+using AtmosTransport.Grids
+using AtmosTransport.Parameters
+using AtmosTransport.IO: default_met_config, build_vertical_coordinate
 using NCDatasets
 using Printf
 using JSON3

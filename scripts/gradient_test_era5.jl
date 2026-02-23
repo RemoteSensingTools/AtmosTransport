@@ -14,16 +14,16 @@
 #   julia --project=. scripts/gradient_test_era5.jl
 # ===========================================================================
 
-using AtmosTransportModel
-using AtmosTransportModel.Architectures
-using AtmosTransportModel.Grids
-using AtmosTransportModel.Advection
-using AtmosTransportModel.Convection
-using AtmosTransportModel.Diffusion
-using AtmosTransportModel.Chemistry
-using AtmosTransportModel.TimeSteppers
-using AtmosTransportModel.Adjoint
-using AtmosTransportModel.Parameters
+using AtmosTransport
+using AtmosTransport.Architectures
+using AtmosTransport.Grids
+using AtmosTransport.Advection
+using AtmosTransport.Convection
+using AtmosTransport.Diffusion
+using AtmosTransport.Chemistry
+using AtmosTransport.TimeSteppers
+using AtmosTransport.Adjoint
+using AtmosTransport.Parameters
 using NCDatasets
 using LinearAlgebra: dot
 using Random

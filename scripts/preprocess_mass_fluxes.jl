@@ -28,12 +28,12 @@
 #   OUTFILE      — (legacy) single output path; if set, disables monthly sharding
 # ===========================================================================
 
-using AtmosTransportModel
-using AtmosTransportModel.Architectures
-using AtmosTransportModel.Grids
-using AtmosTransportModel.Advection
-using AtmosTransportModel.Parameters
-using AtmosTransportModel.IO: default_met_config, build_vertical_coordinate,
+using AtmosTransport
+using AtmosTransport.Architectures
+using AtmosTransport.Grids
+using AtmosTransport.Advection
+using AtmosTransport.Parameters
+using AtmosTransport.IO: default_met_config, build_vertical_coordinate,
                               load_vertical_coefficients
 using NCDatasets
 using Dates
@@ -178,7 +178,7 @@ function write_monthly_shard(outpath::String, files::Vector{String},
     rm(outpath; force=true)
 
     NCDataset(outpath, "c") do ds
-        ds.attrib["title"] = "Pre-computed mass fluxes for AtmosTransportModel"
+        ds.attrib["title"] = "Pre-computed mass fluxes for AtmosTransport"
         ds.attrib["source"] = "ERA5 model levels (levtype=ml), NOT pressure levels"
         ds.attrib["float_type"] = string(FT)
         ds.attrib["dt_seconds"] = Float64(DT)
@@ -277,7 +277,7 @@ end
 # ===========================================================================
 function preprocess()
     @info "=" ^ 70
-    @info "AtmosTransportModel — Mass-Flux Preprocessing (TM5 dynam0 style)"
+    @info "AtmosTransport — Mass-Flux Preprocessing (TM5 dynam0 style)"
     @info "=" ^ 70
 
     files = find_era5_files(ERA5_DIRS)

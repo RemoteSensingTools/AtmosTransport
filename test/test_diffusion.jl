@@ -1,7 +1,7 @@
 using Test
 using LinearAlgebra: dot
-using AtmosTransportModel.Diffusion
-using AtmosTransportModel.Grids
+using AtmosTransport.Diffusion
+using AtmosTransport.Grids
 
 @testset "Diffusion" begin
     @test NoDiffusion() isa AbstractDiffusion

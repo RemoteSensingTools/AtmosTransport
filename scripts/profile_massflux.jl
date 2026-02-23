@@ -1,12 +1,12 @@
 #!/usr/bin/env julia
 # Profile mass-flux advection: measure CFL, subcycle counts, and kernel timing
 
-using AtmosTransportModel
-using AtmosTransportModel.Architectures
-using AtmosTransportModel.Grids
-using AtmosTransportModel.Advection
-using AtmosTransportModel.Parameters
-using AtmosTransportModel.IO: default_met_config, build_vertical_coordinate,
+using AtmosTransport
+using AtmosTransport.Architectures
+using AtmosTransport.Grids
+using AtmosTransport.Advection
+using AtmosTransport.Parameters
+using AtmosTransport.IO: default_met_config, build_vertical_coordinate,
                               load_vertical_coefficients
 using NCDatasets
 using Printf

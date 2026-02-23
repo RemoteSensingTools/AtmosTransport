@@ -23,10 +23,10 @@
 # This is exactly what slopes_advection.jl implements.
 # ===========================================================================
 
-using AtmosTransportModel
-using AtmosTransportModel.Architectures
-using AtmosTransportModel.Grids
-using AtmosTransportModel.Advection
+using AtmosTransport
+using AtmosTransport.Architectures
+using AtmosTransport.Grids
+using AtmosTransport.Advection
 using LinearAlgebra
 
 @info "=" ^ 60

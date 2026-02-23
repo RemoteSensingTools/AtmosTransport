@@ -18,13 +18,13 @@
 #   julia --project=. scripts/run_point_sources_geosfp.jl
 # ===========================================================================
 
-using AtmosTransportModel
-using AtmosTransportModel.Architectures
-using AtmosTransportModel.Grids
-using AtmosTransportModel.Advection
-using AtmosTransportModel.Convection
-using AtmosTransportModel.Diffusion
-using AtmosTransportModel.Chemistry
+using AtmosTransport
+using AtmosTransport.Architectures
+using AtmosTransport.Grids
+using AtmosTransport.Advection
+using AtmosTransport.Convection
+using AtmosTransport.Diffusion
+using AtmosTransport.Chemistry
 using NCDatasets
 using Dates
 

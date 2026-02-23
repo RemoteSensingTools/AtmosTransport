@@ -1,4 +1,4 @@
-# Transport Comparison: AtmosTransportModel.jl vs TM5 vs GEOS-Chem
+# Transport Comparison: AtmosTransport.jl vs TM5 vs GEOS-Chem
 
 This document compares the transport algorithms and design choices of our Julia
 model against TM5 (KNMI/SRON, Krol et al. 2005) and GEOS-Chem / GCHP (Harvard,
@@ -50,7 +50,7 @@ Key features:
 
 Source: Lin & Rood (1996), Lin (2004), Putman & Lin (2007).
 
-### AtmosTransportModel.jl (this model)
+### AtmosTransport.jl (this model)
 
 We implement the Russell & Lerner (1981) slopes scheme in **mass-flux form**,
 matching TM5's formulation. The prognostic variables are tracer mass `rm` and
@@ -328,7 +328,7 @@ The pipeline: `ECMWF GRIB (spectral) → TMM → mass fluxes (am, bm, cm) + ps`.
 
 TM5 can run in preprocessing mode (`tmm.output: T`) to generate preprocessed
 NetCDF files, then subsequent runs read from this archive — analogous to our
-`preprocess_mass_fluxes.jl` / `run_forward_preprocessed.jl` workflow.
+`preprocess_mass_fluxes.jl` / `run.jl` with a preprocessed config workflow.
 
 Required raw fields: spectral vorticity (VO, param 138), divergence (D, param
 155), log surface pressure (LNSP, param 152). For convection: MUMF, MDMF, EU,

@@ -15,15 +15,15 @@
 #   USE_GPU, USE_FLOAT32, DT, MASSFLUX_FILE, MASSFLUX_DIR, EDGAR_FILE, OUTDIR
 # ===========================================================================
 
-using AtmosTransportModel
-using AtmosTransportModel.Architectures
-using AtmosTransportModel.Grids
-using AtmosTransportModel.Advection
-using AtmosTransportModel.Convection
-using AtmosTransportModel.Diffusion
-using AtmosTransportModel.Parameters
-using AtmosTransportModel.Sources: load_edgar_co2, GriddedEmission, M_AIR, M_CO2
-using AtmosTransportModel.IO: default_met_config, build_vertical_coordinate,
+using AtmosTransport
+using AtmosTransport.Architectures
+using AtmosTransport.Grids
+using AtmosTransport.Advection
+using AtmosTransport.Convection
+using AtmosTransport.Diffusion
+using AtmosTransport.Parameters
+using AtmosTransport.Sources: load_edgar_co2, GriddedEmission, M_AIR, M_CO2
+using AtmosTransport.IO: default_met_config, build_vertical_coordinate,
                               load_vertical_coefficients
 using KernelAbstractions: @kernel, @index, @Const, synchronize, get_backend
 using NCDatasets
@@ -309,7 +309,7 @@ end
 # ===========================================================================
 function run_forward_dbuf()
     @info "=" ^ 70
-    @info "AtmosTransportModel — Preprocessed Forward Run (DOUBLE-BUFFERED)"
+    @info "AtmosTransport — Preprocessed Forward Run (DOUBLE-BUFFERED)"
     @info "=" ^ 70
 
     isfile(EDGAR_FILE) || error("EDGAR file not found: $EDGAR_FILE")

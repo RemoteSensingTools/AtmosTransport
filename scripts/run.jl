@@ -30,8 +30,8 @@ import TOML
 config = TOML.parsefile(ARGS[1])
 @info "Configuration: $(ARGS[1])"
 
-# CRITICAL: Load CUDA before AtmosTransportModel to trigger the weak-dependency
-# extension AtmosTransportModelCUDAExt. This cannot be deferred.
+# CRITICAL: Load CUDA before AtmosTransport to trigger the weak-dependency
+# extension AtmosTransportCUDAExt. This cannot be deferred.
 if get(get(config, "architecture", Dict()), "use_gpu", false)
     using CUDA
     CUDA.allowscalar(false)
@@ -40,9 +40,9 @@ else
     @info "CPU mode"
 end
 
-using AtmosTransportModel
-using AtmosTransportModel.IO: build_model_from_config
-import AtmosTransportModel.Models: run!
+using AtmosTransport
+using AtmosTransport.IO: build_model_from_config
+import AtmosTransport.Models: run!
 
 @info "Building model..."
 model = build_model_from_config(config)

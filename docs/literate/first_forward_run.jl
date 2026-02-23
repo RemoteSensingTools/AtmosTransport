@@ -1,7 +1,7 @@
 # # First Forward Run: Tracer Transport with Real Meteorology
 #
 # This tutorial demonstrates an end-to-end forward simulation using
-# AtmosTransportModel.jl with real GEOS-FP meteorological data downloaded
+# AtmosTransport.jl with real GEOS-FP meteorological data downloaded
 # directly via OPeNDAP — **no authentication required**.
 #
 # By the end, you will have:
@@ -13,13 +13,13 @@
 #
 # ## Prerequisites
 #
-# Only the main `AtmosTransportModel` package and `NCDatasets` (a standard
+# Only the main `AtmosTransport` package and `NCDatasets` (a standard
 # dependency) are needed. No API keys, no credentials, no extra packages.
 
-using AtmosTransportModel
-using AtmosTransportModel.Architectures
-using AtmosTransportModel.Grids
-using AtmosTransportModel.Advection
+using AtmosTransport
+using AtmosTransport.Architectures
+using AtmosTransport.Grids
+using AtmosTransport.Advection
 using NCDatasets
 using Dates
 

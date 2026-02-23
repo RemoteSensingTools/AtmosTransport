@@ -1,5 +1,5 @@
 using Test
-using AtmosTransportModel.IO
+using AtmosTransport.IO
 
 @testset "IO" begin
     @testset "TOML config loading" begin

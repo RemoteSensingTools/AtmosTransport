@@ -9,18 +9,18 @@
 #     USE_GPU=true julia --project=. scripts/run_preprocessed.jl
 # ===========================================================================
 
-using AtmosTransportModel
-using AtmosTransportModel.Architectures: GPU, CPU
-using AtmosTransportModel.Grids: LatitudeLongitudeGrid
-using AtmosTransportModel.IO: default_met_config, build_vertical_coordinate,
+using AtmosTransport
+using AtmosTransport.Architectures: GPU, CPU
+using AtmosTransport.Grids: LatitudeLongitudeGrid
+using AtmosTransport.IO: default_met_config, build_vertical_coordinate,
                               load_vertical_coefficients,
                               PreprocessedLatLonMetDriver,
                               find_massflux_shards, MassFluxBinaryReader,
                               NetCDFOutputWriter, TimeIntervalSchedule
-using AtmosTransportModel.Sources: EdgarSource, load_inventory
-using AtmosTransportModel.Diagnostics: ColumnMeanDiagnostic
-using AtmosTransportModel.Models: TransportModel, SingleBuffer, run!
-using AtmosTransportModel.Parameters: load_parameters
+using AtmosTransport.Sources: EdgarSource, load_inventory
+using AtmosTransport.Diagnostics: ColumnMeanDiagnostic
+using AtmosTransport.Models: TransportModel, SingleBuffer, run!
+using AtmosTransport.Parameters: load_parameters
 
 # --- Configuration ---
 const USE_GPU     = parse(Bool, get(ENV, "USE_GPU", "false"))

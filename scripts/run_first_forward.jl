@@ -1,6 +1,6 @@
 #!/usr/bin/env julia
 # ===========================================================================
-# First end-to-end forward run of AtmosTransportModel
+# First end-to-end forward run of AtmosTransport
 #
 # Downloads a small GEOS-FP test dataset via OPeNDAP (no authentication),
 # initializes a tracer blob, runs the model for 24 hours, and writes
@@ -10,14 +10,14 @@
 #   julia --project=. scripts/run_first_forward.jl
 # ===========================================================================
 
-using AtmosTransportModel
-using AtmosTransportModel.Architectures
-using AtmosTransportModel.Grids
-using AtmosTransportModel.Advection
-using AtmosTransportModel.Convection
-using AtmosTransportModel.Diffusion
-using AtmosTransportModel.IO: prepare_met_for_physics
-using AtmosTransportModel.TimeSteppers
+using AtmosTransport
+using AtmosTransport.Architectures
+using AtmosTransport.Grids
+using AtmosTransport.Advection
+using AtmosTransport.Convection
+using AtmosTransport.Diffusion
+using AtmosTransport.IO: prepare_met_for_physics
+using AtmosTransport.TimeSteppers
 using NCDatasets
 using Dates
 
@@ -254,7 +254,7 @@ function save_output(outfile, tracers, lons, lats, Nz, step, time_hours)
             defVar(ds, "lat", Float64, ("lat",))[:] = lats
             defVar(ds, "time_hours", Float64, ("time",))
 
-            ds.attrib["description"] = "AtmosTransportModel forward run output"
+            ds.attrib["description"] = "AtmosTransport forward run output"
             ds.attrib["created"] = string(now())
         end
 
@@ -271,7 +271,7 @@ end
 
 function main()
     @info "=" ^ 60
-    @info "AtmosTransportModel — First Forward Run"
+    @info "AtmosTransport — First Forward Run"
     @info "=" ^ 60
 
     # Step 1: Download test data

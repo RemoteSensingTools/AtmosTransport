@@ -1,6 +1,6 @@
 #!/usr/bin/env julia
 # ===========================================================================
-# Download meteorological test data for AtmosTransportModel
+# Download meteorological test data for AtmosTransport
 #
 # Three sources:
 #   1. GEOS-FP via OPeNDAP (NO authentication required) — primary test data
@@ -105,7 +105,7 @@ function download_geosfp_opendap(date::Date, outdir::String; stride::Int=8)
         out.attrib["date"] = Dates.format(date, "yyyy-mm-dd")
         out.attrib["time_index"] = tidx
         out.attrib["stride"] = stride
-        out.attrib["created_by"] = "AtmosTransportModel/scripts/download_test_data.jl"
+        out.attrib["created_by"] = "AtmosTransport/scripts/download_test_data.jl"
 
         # Read and write 3D variables
         for varname in vars_3d

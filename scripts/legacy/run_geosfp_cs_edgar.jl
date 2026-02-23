@@ -9,14 +9,14 @@
 #   julia --project=. scripts/run_geosfp_cs_edgar.jl
 #   # or with TOML:
 #   julia --project=. -e '
-#       using AtmosTransportModel
+#       using AtmosTransport
 #       model = build_model_from_config("config/runs/geosfp_cs_edgar.toml")
 #       run!(model)
 #   '
 # ===========================================================================
 
-using AtmosTransportModel
-using AtmosTransportModel.Architectures: GPU, CPU
+using AtmosTransport
+using AtmosTransport.Architectures: GPU, CPU
 
 const USE_GPU = parse(Bool, get(ENV, "USE_GPU", "true"))
 if USE_GPU
@@ -24,16 +24,16 @@ if USE_GPU
     CUDA.allowscalar(false)
 end
 
-using AtmosTransportModel.Grids: CubedSphereGrid
-using AtmosTransportModel.IO: build_model_from_config, default_met_config,
+using AtmosTransport.Grids: CubedSphereGrid
+using AtmosTransport.IO: build_model_from_config, default_met_config,
                               build_vertical_coordinate,
                               GEOSFPCubedSphereMetDriver, LatLonOutputGrid,
                               NetCDFOutputWriter, TimeIntervalSchedule
-using AtmosTransportModel.Sources: EdgarSource, load_inventory
-using AtmosTransportModel.Diagnostics: ColumnMeanDiagnostic
-using AtmosTransportModel.Models: TransportModel, SingleBuffer, DoubleBuffer
-import AtmosTransportModel.Models: run!
-using AtmosTransportModel.Parameters: load_parameters
+using AtmosTransport.Sources: EdgarSource, load_inventory
+using AtmosTransport.Diagnostics: ColumnMeanDiagnostic
+using AtmosTransport.Models: TransportModel, SingleBuffer, DoubleBuffer
+import AtmosTransport.Models: run!
+using AtmosTransport.Parameters: load_parameters
 using Dates
 
 # --- Configuration ---

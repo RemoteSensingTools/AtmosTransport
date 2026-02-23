@@ -1,5 +1,5 @@
 """
-    AtmosTransportModel
+    AtmosTransport
 
 A Julia-based atmospheric transport model for GPU and CPU.
 
@@ -10,7 +10,7 @@ adjoint with Revolve checkpointing, and extensible physics operators.
 
 See the README and `docs/` for full documentation.
 """
-module AtmosTransportModel
+module AtmosTransport
 
 # ---- Core infrastructure (order matters for dependencies) ----
 include("Architectures.jl")
@@ -75,4 +75,4 @@ using .IO
 include("Models/Models.jl")
 using .Models
 
-end # module AtmosTransportModel
+end # module AtmosTransport

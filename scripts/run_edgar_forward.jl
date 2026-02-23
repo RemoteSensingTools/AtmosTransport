@@ -15,13 +15,13 @@
 #   DT          — outer time step [s] (default: 10800 to match 3-hourly met)
 # ===========================================================================
 
-using AtmosTransportModel
-using AtmosTransportModel.Architectures
-using AtmosTransportModel.Grids
-using AtmosTransportModel.Advection
-using AtmosTransportModel.Parameters
-using AtmosTransportModel.Sources: load_edgar_co2, apply_surface_flux!, GriddedEmission
-using AtmosTransportModel.IO: default_met_config, build_vertical_coordinate
+using AtmosTransport
+using AtmosTransport.Architectures
+using AtmosTransport.Grids
+using AtmosTransport.Advection
+using AtmosTransport.Parameters
+using AtmosTransport.Sources: load_edgar_co2, apply_surface_flux!, GriddedEmission
+using AtmosTransport.IO: default_met_config, build_vertical_coordinate
 using NCDatasets
 using Dates
 
@@ -141,7 +141,7 @@ end
 # ---------------------------------------------------------------------------
 function run_edgar_forward()
     @info "=" ^ 70
-    @info "AtmosTransportModel — EDGAR CO2 Forward Transport"
+    @info "AtmosTransport — EDGAR CO2 Forward Transport"
     @info "=" ^ 70
     @info "  USE_GPU=$USE_GPU, USE_FLOAT32=$USE_FLOAT32, DT=$(DT)s"
 

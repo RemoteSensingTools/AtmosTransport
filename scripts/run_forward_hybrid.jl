@@ -19,12 +19,12 @@
 #   DT          — outer time step [s] (default: 10800 to match 3-hourly met)
 # ===========================================================================
 
-using AtmosTransportModel
-using AtmosTransportModel.Architectures
-using AtmosTransportModel.Grids
-using AtmosTransportModel.Advection
-using AtmosTransportModel.Parameters
-using AtmosTransportModel.IO: default_met_config, build_vertical_coordinate
+using AtmosTransport
+using AtmosTransport.Architectures
+using AtmosTransport.Grids
+using AtmosTransport.Advection
+using AtmosTransport.Parameters
+using AtmosTransport.IO: default_met_config, build_vertical_coordinate
 using NCDatasets
 using Dates
 
@@ -155,7 +155,7 @@ end
 # ---------------------------------------------------------------------------
 function run_forward()
     @info "=" ^ 70
-    @info "AtmosTransportModel — Forward Hybrid (universal met infrastructure)"
+    @info "AtmosTransport — Forward Hybrid (universal met infrastructure)"
     @info "=" ^ 70
     @info "  USE_GPU=$(USE_GPU), USE_FLOAT32=$(USE_FLOAT32), DT=$(DT)s"
 

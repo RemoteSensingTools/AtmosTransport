@@ -1,100 +1,106 @@
 # API Reference
 
-This page documents all exported types and functions from AtmosTransportModel.jl
+This page documents all exported types and functions from AtmosTransport.jl
 and its submodules.
 
 ## Architectures
 
 ```@autodocs
-Modules = [AtmosTransportModel.Architectures]
+Modules = [AtmosTransport.Architectures]
 ```
 
 ## Parameters
 
 ```@autodocs
-Modules = [AtmosTransportModel.Parameters]
+Modules = [AtmosTransport.Parameters]
 ```
 
 ## Communications
 
 ```@autodocs
-Modules = [AtmosTransportModel.Communications]
+Modules = [AtmosTransport.Communications]
 ```
 
 ## Grids
 
 ```@autodocs
-Modules = [AtmosTransportModel.Grids]
+Modules = [AtmosTransport.Grids]
 ```
 
 ## Fields
 
 ```@autodocs
-Modules = [AtmosTransportModel.Fields]
+Modules = [AtmosTransport.Fields]
 ```
 
 ## Advection
 
 ```@autodocs
-Modules = [AtmosTransportModel.Advection]
+Modules = [AtmosTransport.Advection]
 ```
 
 ## Convection
 
 ```@autodocs
-Modules = [AtmosTransportModel.Convection]
+Modules = [AtmosTransport.Convection]
 ```
 
 ## Diffusion
 
 ```@autodocs
-Modules = [AtmosTransportModel.Diffusion]
+Modules = [AtmosTransport.Diffusion]
 ```
 
 ## Chemistry
 
 ```@autodocs
-Modules = [AtmosTransportModel.Chemistry]
+Modules = [AtmosTransport.Chemistry]
 ```
 
 ## Time Steppers
 
 ```@autodocs
-Modules = [AtmosTransportModel.TimeSteppers]
+Modules = [AtmosTransport.TimeSteppers]
 ```
 
 ## Adjoint
 
 ```@autodocs
-Modules = [AtmosTransportModel.Adjoint]
+Modules = [AtmosTransport.Adjoint]
 ```
 
 ## Callbacks
 
 ```@autodocs
-Modules = [AtmosTransportModel.Callbacks]
+Modules = [AtmosTransport.Callbacks]
 ```
 
 ## I/O
 
 ```@autodocs
-Modules = [AtmosTransportModel.IO]
+Modules = [AtmosTransport.IO]
 ```
 
 ## Regridding
 
 ```@autodocs
-Modules = [AtmosTransportModel.Regridding]
+Modules = [AtmosTransport.Regridding]
+```
+
+## Diagnostics
+
+```@autodocs
+Modules = [AtmosTransport.Diagnostics]
 ```
 
 ## Sources
 
 ```@autodocs
-Modules = [AtmosTransportModel.Sources]
+Modules = [AtmosTransport.Sources]
 ```
 
 ## Models
 
 ```@autodocs
-Modules = [AtmosTransportModel.Models]
+Modules = [AtmosTransport.Models]
 ```

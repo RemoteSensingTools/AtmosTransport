@@ -54,7 +54,7 @@ the split. Slopes are computed from concentration `c = rm/m` (not from `rm` dire
 to preserve uniform fields, then scaled by `m`.
 
 See [MASS_FLUX_EVOLUTION.md](MASS_FLUX_EVOLUTION.md) for the design history and
-[advection_theory.jl](literate/advection_theory.jl) for the mathematical framework.
+[Advection Theory](../literated/advection_theory.md) for the mathematical framework.
 
 ## Mass-flux advection validation
 

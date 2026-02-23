@@ -1,7 +1,8 @@
 # Meteorological Data: Preprocessing and Data Sources
 
 > **New users**: For step-by-step instructions on downloading data,
-> preprocessing, and running the model, see [QUICKSTART.md](QUICKSTART.md).
+> preprocessing, and running the model, see the Quick Start Guide
+> (`docs/QUICKSTART.md` in the repository root).
 > This document is a deep-dive reference on met data formats, vertical
 > coordinates, and the TM5 comparison.
 
@@ -38,7 +39,7 @@ variables `u`, `v`, `w`, `lnsp` on `model_level` dimensions.
 
 ## Overview
 
-| Aspect | TM5 | Julia AtmosTransportModel |
+| Aspect | TM5 | Julia AtmosTransport |
 |--------|-----|--------------------------|
 | Advection input | Mass fluxes (kg/s) through cell faces | Wind velocities (m/s) at cell centers |
 | Mass conservation | Guaranteed by spectral integration (Bregman et al. 2003) | Depends on advection scheme discretization |
@@ -444,8 +445,9 @@ For year-long simulations, mass flux files are sharded by month:
     massflux_era5_202412_float32.nc
 ```
 
-The forward model (`run_forward_preprocessed.jl`) accepts `MASSFLUX_DIR`
-pointing to this directory and chains through monthly shards automatically.
+The forward model (`run.jl` with a preprocessed config) accepts the
+preprocessed directory via the TOML configuration and chains through monthly
+shards automatically.
 
 ### Data size estimates (1-degree, L88, full year)
 

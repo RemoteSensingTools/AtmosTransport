@@ -1,6 +1,6 @@
 using Documenter
 using Literate
-using AtmosTransportModel
+using AtmosTransport
 
 # Process Literate.jl scripts (no execution -- they reference large data files)
 const LITERATE_DIR = joinpath(@__DIR__, "literate")
@@ -79,27 +79,27 @@ pages = [
     "API Reference" => "api.md",
 ]
 
-DocMeta.setdocmeta!(AtmosTransportModel, :DocTestSetup,
-    :(using AtmosTransportModel); recursive=true)
+DocMeta.setdocmeta!(AtmosTransport, :DocTestSetup,
+    :(using AtmosTransport); recursive=true)
 
 makedocs(;
-    sitename = "AtmosTransportModel.jl",
+    sitename = "AtmosTransport.jl",
     authors = "Christian Frankenberg and contributors",
     format = Documenter.HTML(;
         prettyurls = get(ENV, "CI", nothing) == "true",
-        canonical = "https://RemoteSensingTools.github.io/AtmosTransportModel",
+        canonical = "https://RemoteSensingTools.github.io/AtmosTransport",
         assets = String[],
-        size_threshold = 400 * 1024,
-        size_threshold_warn = 200 * 1024,
+        size_threshold = 500 * 1024,
+        size_threshold_warn = 300 * 1024,
     ),
-    modules = [AtmosTransportModel],
+    modules = [AtmosTransport],
     pages = pages,
     warnonly = [:cross_references, :missing_docs, :example_block, :linkcheck],
     doctest = false,
 )
 
 deploydocs(;
-    repo = "github.com/RemoteSensingTools/AtmosTransportModel.git",
+    repo = "github.com/RemoteSensingTools/AtmosTransport.git",
     devbranch = "main",
     push_preview = true,
 )

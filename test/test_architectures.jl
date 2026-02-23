@@ -1,5 +1,5 @@
 using Test
-using AtmosTransportModel.Architectures
+using AtmosTransport.Architectures
 
 @testset "Architectures" begin
     @test CPU() isa AbstractArchitecture

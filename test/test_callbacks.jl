@@ -1,5 +1,5 @@
 using Test
-using AtmosTransportModel.Callbacks
+using AtmosTransport.Callbacks
 
 @testset "Callbacks" begin
     triggered = Ref(false)

@@ -5,7 +5,7 @@
 # Fastest path: no wind staggering or flux computation needed.
 #
 # Usage:
-#   using AtmosTransportModel
+#   using AtmosTransport
 #   model = build_model_from_config("config/runs/era5_preprocessed.toml")
 #   run!(model)
 # ===========================================================================

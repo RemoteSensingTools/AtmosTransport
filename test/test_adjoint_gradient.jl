@@ -1,12 +1,12 @@
 using Test
-using AtmosTransportModel.Adjoint
-using AtmosTransportModel.Architectures
-using AtmosTransportModel.Grids
-using AtmosTransportModel.Advection
-using AtmosTransportModel.Convection
-using AtmosTransportModel.Diffusion
-using AtmosTransportModel.Chemistry
-using AtmosTransportModel.TimeSteppers
+using AtmosTransport.Adjoint
+using AtmosTransport.Architectures
+using AtmosTransport.Grids
+using AtmosTransport.Advection
+using AtmosTransport.Convection
+using AtmosTransport.Diffusion
+using AtmosTransport.Chemistry
+using AtmosTransport.TimeSteppers
 
 @testset "Adjoint infrastructure" begin
     @test StoreAllCheckpointer() isa AbstractCheckpointer
@@ -15,8 +15,8 @@ using AtmosTransportModel.TimeSteppers
 end
 
 @testset "run_adjoint! with StoreAllCheckpointer" begin
-    using AtmosTransportModel.Grids: grid_size, floattype
-    using AtmosTransportModel.TimeSteppers: Clock
+    using AtmosTransport.Grids: grid_size, floattype
+    using AtmosTransport.TimeSteppers: Clock
     using LinearAlgebra: dot
 
     vc = HybridSigmaPressure(

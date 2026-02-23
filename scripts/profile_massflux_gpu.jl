@@ -1,12 +1,12 @@
 #!/usr/bin/env julia
 # Minimal GPU kernel timing: load 1 window, run N strang splits, measure wall time
 
-using AtmosTransportModel
-using AtmosTransportModel.Architectures
-using AtmosTransportModel.Grids
-using AtmosTransportModel.Advection
-using AtmosTransportModel.Parameters
-using AtmosTransportModel.IO: default_met_config, build_vertical_coordinate
+using AtmosTransport
+using AtmosTransport.Architectures
+using AtmosTransport.Grids
+using AtmosTransport.Advection
+using AtmosTransport.Parameters
+using AtmosTransport.IO: default_met_config, build_vertical_coordinate
 using NCDatasets
 using Printf
 using CUDA

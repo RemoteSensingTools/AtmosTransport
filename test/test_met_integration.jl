@@ -6,10 +6,10 @@
 # ---------------------------------------------------------------------------
 
 using Test
-using AtmosTransportModel
-using AtmosTransportModel.IO
-using AtmosTransportModel.Grids
-using AtmosTransportModel.Architectures: CPU
+using AtmosTransport
+using AtmosTransport.IO
+using AtmosTransport.Grids
+using AtmosTransport.Architectures: CPU
 
 @testset "Met IO integration" begin
     # Ensure test data exists (generates if not present)

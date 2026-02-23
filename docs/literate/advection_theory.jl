@@ -1,7 +1,7 @@
 # # Advection Theory: From Concentration to Mass-Flux Formulation
 #
 # This document explains the mathematical framework behind the advection schemes
-# in AtmosTransportModel.jl, their relationship to the TM5 reference model, and
+# in AtmosTransport.jl, their relationship to the TM5 reference model, and
 # the critical design decision to adopt TM5's mass-flux formulation for
 # mass-conserving operator-split transport.
 #
@@ -182,7 +182,7 @@
 # | TM5 | Mass-flux (``r_m``, ``m``) | From ECMWF spectral harmonics | Hand-coded discrete |
 # | GEOS-Chem | Concentration-based | From GEOS-FP native fluxes | AD-based |
 # | LMDZ | Mass-flux | From GCM dynamics | None (ensemble) |
-# | **AtmosTransportModel.jl** | **Mass-flux (TM5-faithful)** | **From winds or native** | **Hand-coded discrete** |
+# | **AtmosTransport.jl** | **Mass-flux (TM5-faithful)** | **From winds or native** | **Hand-coded discrete** |
 #
 # Our model combines TM5's proven mass-flux formulation with Julia's performance
 # and flexibility. It supports multiple meteorological drivers (ERA5, GEOS-FP,

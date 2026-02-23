@@ -1,5 +1,5 @@
 # ===========================================================================
-# Canonical Variable Definitions for AtmosTransportModel
+# Canonical Variable Definitions for AtmosTransport
 #
 # This file defines the "contract" between met data sources and physics code.
 # All physics operators (advection, diffusion, convection) reference these

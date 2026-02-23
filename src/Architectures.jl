@@ -13,7 +13,7 @@ Any new architecture subtype must implement:
 - `array_type(arch)` → the array constructor (e.g. `Array`, `CuArray`)
 - `device(arch)`     → the KernelAbstractions device
 
-GPU-specific methods are defined in `ext/AtmosTransportModelCUDAExt.jl` (weak dependency).
+GPU-specific methods are defined in `ext/AtmosTransportCUDAExt.jl` (weak dependency).
 """
 module Architectures
 
@@ -50,7 +50,7 @@ struct CPU <: AbstractArchitecture end
 $(TYPEDEF)
 
 Run on a GPU device. The concrete array type (e.g. `CuArray`) and device are
-provided by the CUDA extension (`ext/AtmosTransportModelCUDAExt.jl`).
+provided by the CUDA extension (`ext/AtmosTransportCUDAExt.jl`).
 """
 struct GPU <: AbstractArchitecture end
 

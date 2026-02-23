@@ -1,6 +1,6 @@
 # # Met Driver Intercomparison Tutorial
 #
-# One of the key design features of AtmosTransportModel.jl is that **the
+# One of the key design features of AtmosTransport.jl is that **the
 # same model code runs with different meteorological driving data** simply
 # by pointing to a different TOML configuration file. This enables systematic
 # studies of how transport uncertainties from meteorological reanalyses
@@ -19,7 +19,7 @@
 #
 # With legacy models (TM5 uses only ECMWF; GEOS-Chem uses only GEOS),
 # disentangling model errors from met driver errors requires running two
-# entirely different codebases. AtmosTransportModel.jl eliminates this
+# entirely different codebases. AtmosTransport.jl eliminates this
 # confounding factor.
 
 # ## Example: Three-Way Met Driver Comparison
@@ -30,9 +30,9 @@
 # ### Step 1: Define common model setup
 #
 # ```julia
-# using AtmosTransportModel
-# using AtmosTransportModel.Grids
-# using AtmosTransportModel.IO: default_met_config, build_vertical_coordinate
+# using AtmosTransport
+# using AtmosTransport.Grids
+# using AtmosTransport.IO: default_met_config, build_vertical_coordinate
 # using Dates
 #
 # # Build vertical coordinate from the GEOS-FP config (72 levels);
@@ -67,7 +67,7 @@
 # 3. Run `strang_split_massflux!` for TM5-faithful advection
 #
 # ```julia
-# using AtmosTransportModel.Advection: build_geometry_cache, allocate_massflux_workspace,
+# using AtmosTransport.Advection: build_geometry_cache, allocate_massflux_workspace,
 #     compute_air_mass!, compute_mass_fluxes!, strang_split_massflux!
 #
 # results = Dict{String, Any}()

@@ -1,5 +1,5 @@
 using Test
-using AtmosTransportModel.Regridding
+using AtmosTransport.Regridding
 
 @testset "Regridding" begin
     @test IdentityRegridder() isa AbstractRegridder

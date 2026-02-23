@@ -23,12 +23,12 @@
 #   USE_GPU     — "true" for GPU (default: false)
 # ===========================================================================
 
-using AtmosTransportModel
-using AtmosTransportModel.Architectures
-using AtmosTransportModel.Grids
-using AtmosTransportModel.Advection
-using AtmosTransportModel.Parameters
-using AtmosTransportModel.IO: default_met_config, build_vertical_coordinate,
+using AtmosTransport
+using AtmosTransport.Architectures
+using AtmosTransport.Grids
+using AtmosTransport.Advection
+using AtmosTransport.Parameters
+using AtmosTransport.IO: default_met_config, build_vertical_coordinate,
                               load_vertical_coefficients, compute_continuity_omega
 using NCDatasets
 using Dates
@@ -147,7 +147,7 @@ end
 # ---------------------------------------------------------------------------
 function run_forward()
     @info "=" ^ 70
-    @info "AtmosTransportModel — ERA5 Model-Level Forward Run"
+    @info "AtmosTransport — ERA5 Model-Level Forward Run"
     @info "=" ^ 70
 
     files = find_era5_files(DATADIR)

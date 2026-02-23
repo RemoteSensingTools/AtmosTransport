@@ -26,8 +26,8 @@
 #   FT_PRECISION    — "Float32" or "Float64" (default: Float32)
 # ===========================================================================
 
-using AtmosTransportModel
-using AtmosTransportModel.IO: read_geosfp_cs_timestep, to_haloed_panels,
+using AtmosTransport
+using AtmosTransport.IO: read_geosfp_cs_timestep, to_haloed_panels,
                               cgrid_to_staggered_panels
 using NCDatasets
 using Dates

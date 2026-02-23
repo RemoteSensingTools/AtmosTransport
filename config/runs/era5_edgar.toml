@@ -2,7 +2,7 @@
 # ERA5 Lat-Lon + EDGAR CO2 — Example Run Configuration
 #
 # Usage:
-#   using AtmosTransportModel
+#   using AtmosTransport
 #   model = build_model_from_config("config/runs/era5_edgar.toml")
 #   run!(model)
 # ===========================================================================

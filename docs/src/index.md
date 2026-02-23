@@ -1,8 +1,8 @@
-# AtmosTransportModel.jl
+# AtmosTransport.jl
 
 _Fast and flexible atmospheric transport on CPUs and GPUs._
 
-AtmosTransportModel.jl is a Julia-based atmospheric transport model inspired by
+AtmosTransport.jl is a Julia-based atmospheric transport model inspired by
 [TM5](https://doi.org/10.5194/acp-5-445-2005) and designed with
 [Oceananigans.jl](https://github.com/CliMA/Oceananigans.jl)-style multiple dispatch.
 It supports latitude-longitude and cubed-sphere grids, multiple meteorological data
@@ -32,19 +32,19 @@ flat-binary I/O for mass-flux ingestion (~15× faster than NetCDF).
 
 ## Quick install
 
-AtmosTransportModel requires Julia 1.10 or later.
+AtmosTransport requires Julia 1.10 or later.
 
 ```julia
 using Pkg
-Pkg.add(url="https://github.com/RemoteSensingTools/AtmosTransportModel.git")
+Pkg.add(url="https://github.com/RemoteSensingTools/AtmosTransport.git")
 ```
 
 ## Quick start
 
 ```julia
-using AtmosTransportModel
-using AtmosTransportModel.Grids
-using AtmosTransportModel.IO: default_met_config, build_vertical_coordinate
+using AtmosTransport
+using AtmosTransport.Grids
+using AtmosTransport.IO: default_met_config, build_vertical_coordinate
 
 # Build vertical coordinate from TOML config (ERA5 137 levels, GEOS-FP 72, etc.)
 config = default_met_config("era5")

@@ -26,14 +26,14 @@
 #   GEOSFP_START, GEOSFP_END — date range
 # ===========================================================================
 
-using AtmosTransportModel
-using AtmosTransportModel.Architectures
-using AtmosTransportModel.Grids
-using AtmosTransportModel.Grids: fill_panel_halos!, allocate_cubed_sphere_field
-using AtmosTransportModel.Advection
-using AtmosTransportModel.Parameters
-using AtmosTransportModel.Sources: M_AIR, M_CO2
-using AtmosTransportModel.IO: default_met_config, build_vertical_coordinate,
+using AtmosTransport
+using AtmosTransport.Architectures
+using AtmosTransport.Grids
+using AtmosTransport.Grids: fill_panel_halos!, allocate_cubed_sphere_field
+using AtmosTransport.Advection
+using AtmosTransport.Parameters
+using AtmosTransport.Sources: M_AIR, M_CO2
+using AtmosTransport.IO: default_met_config, build_vertical_coordinate,
                               read_geosfp_cs_timestep, to_haloed_panels,
                               cgrid_to_staggered_panels
 using KernelAbstractions: @kernel, @index, @Const, synchronize, get_backend
@@ -345,7 +345,7 @@ end
 # ===========================================================================
 function run_geosfp_cs_gpu()
     @info "=" ^ 70
-    @info "AtmosTransportModel -- GEOS-FP C720 Cubed-Sphere GPU Forward Run"
+    @info "AtmosTransport -- GEOS-FP C720 Cubed-Sphere GPU Forward Run"
     @info "=" ^ 70
 
     ft_tag = USE_FLOAT32 ? "float32" : "float64"

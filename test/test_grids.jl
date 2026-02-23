@@ -1,5 +1,5 @@
 using Test
-using AtmosTransportModel.Grids
+using AtmosTransport.Grids
 
 @testset "Grids" begin
     @testset "LatitudeLongitudeGrid" begin

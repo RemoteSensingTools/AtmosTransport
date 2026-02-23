@@ -1,5 +1,5 @@
 using Test
-using AtmosTransportModel.TimeSteppers
+using AtmosTransport.TimeSteppers
 
 @testset "TimeSteppers" begin
     @testset "Clock" begin

@@ -25,14 +25,14 @@
 #   GEOSFP_DATA_DIR — directory with downloaded GEOS-FP CS data
 # ===========================================================================
 
-using AtmosTransportModel
-using AtmosTransportModel.Architectures
-using AtmosTransportModel.Grids
-using AtmosTransportModel.Grids: fill_panel_halos!
-using AtmosTransportModel.Advection
-using AtmosTransportModel.Parameters
-using AtmosTransportModel.Sources: load_edgar_co2, M_AIR, M_CO2
-using AtmosTransportModel.IO: default_met_config, build_vertical_coordinate,
+using AtmosTransport
+using AtmosTransport.Architectures
+using AtmosTransport.Grids
+using AtmosTransport.Grids: fill_panel_halos!
+using AtmosTransport.Advection
+using AtmosTransport.Parameters
+using AtmosTransport.Sources: load_edgar_co2, M_AIR, M_CO2
+using AtmosTransport.IO: default_met_config, build_vertical_coordinate,
                               read_geosfp_cs_timestep, to_haloed_panels,
                               cgrid_to_staggered_panels,
                               GeosFPCubedSphereTimestep
@@ -135,7 +135,7 @@ end
 # ===========================================================================
 function run_geosfp_cs_edgar()
     @info "=" ^ 70
-    @info "AtmosTransportModel — GEOS-FP C720 Cubed-Sphere + EDGAR CO2"
+    @info "AtmosTransport — GEOS-FP C720 Cubed-Sphere + EDGAR CO2"
     @info "Data source: geoschemdata.wustl.edu (Washington University)"
     @info "=" ^ 70
 

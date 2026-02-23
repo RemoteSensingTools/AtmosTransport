@@ -1,7 +1,7 @@
 using Test
 using LinearAlgebra: dot
-using AtmosTransportModel.Convection
-using AtmosTransportModel.Grids
+using AtmosTransport.Convection
+using AtmosTransport.Grids
 
 @testset "Convection" begin
     @test NoConvection() isa AbstractConvection

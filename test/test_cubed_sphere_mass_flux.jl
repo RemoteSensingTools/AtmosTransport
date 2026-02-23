@@ -11,11 +11,11 @@
 # ===========================================================================
 
 using Test
-using AtmosTransportModel
-using AtmosTransportModel.Architectures
-using AtmosTransportModel.Grids
-using AtmosTransportModel.Grids: fill_panel_halos!
-using AtmosTransportModel.Advection
+using AtmosTransport
+using AtmosTransport.Architectures
+using AtmosTransport.Grids
+using AtmosTransport.Grids: fill_panel_halos!
+using AtmosTransport.Advection
 
 const FT = Float64
 

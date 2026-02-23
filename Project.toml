@@ -1,4 +1,4 @@
-name = "AtmosTransportModel"
+name = "AtmosTransport"
 uuid = "fcfdcc98-126e-435e-9a83-ddb11e65593a"
 authors = ["Christian Frankenberg and contributors"]
 version = "0.1.0"
@@ -23,7 +23,7 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 
 [extensions]
-AtmosTransportModelCUDAExt = "CUDA"
+AtmosTransportCUDAExt = "CUDA"
 
 [compat]
 CUDA = "5"

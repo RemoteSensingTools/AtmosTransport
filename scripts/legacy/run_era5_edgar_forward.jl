@@ -32,15 +32,15 @@
 #   LEVEL_BOT    — bottommost level     (default: 137)
 # ===========================================================================
 
-using AtmosTransportModel
-using AtmosTransportModel.Architectures
-using AtmosTransportModel.Grids
-using AtmosTransportModel.Advection
-using AtmosTransportModel.Convection
-using AtmosTransportModel.Diffusion
-using AtmosTransportModel.Parameters
-using AtmosTransportModel.Sources: load_edgar_co2, GriddedEmission, M_AIR, M_CO2
-using AtmosTransportModel.IO: default_met_config, build_vertical_coordinate,
+using AtmosTransport
+using AtmosTransport.Architectures
+using AtmosTransport.Grids
+using AtmosTransport.Advection
+using AtmosTransport.Convection
+using AtmosTransport.Diffusion
+using AtmosTransport.Parameters
+using AtmosTransport.Sources: load_edgar_co2, GriddedEmission, M_AIR, M_CO2
+using AtmosTransport.IO: default_met_config, build_vertical_coordinate,
                               load_vertical_coefficients
 using KernelAbstractions: @kernel, @index, @Const, synchronize, get_backend
 using NCDatasets
@@ -214,7 +214,7 @@ end
 # ===========================================================================
 function run_era5_edgar()
     @info "=" ^ 70
-    @info "AtmosTransportModel — ERA5 + EDGAR CO2 Forward Transport"
+    @info "AtmosTransport — ERA5 + EDGAR CO2 Forward Transport"
     @info "=" ^ 70
 
     files = find_era5_files(DATADIRS)

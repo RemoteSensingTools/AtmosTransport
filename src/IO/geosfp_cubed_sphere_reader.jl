@@ -2,204 +2,183 @@
 # GEOS-FP Native Cubed-Sphere Data Reader
 #
 # Reads MFXC (eastward mass flux), MFYC (northward mass flux), and DELP
-# (pressure thickness) from native GEOS-FP cubed-sphere NetCDF files.
+# (pressure thickness) from native GEOS-FP cubed-sphere NetCDF files
+# archived by the GEOS-Chem Support Team at Washington University.
 #
-# GEOS-FP cubed-sphere files use dimensions:
-#   nf=6 (face/panel), Xdim=Nc, Ydim=Nc, lev=72
-# Variables are stored as (Xdim, Ydim, lev, nf, time) or similar orderings.
+# Data source: http://geoschemdata.wustl.edu/ExtData/GEOS_C720/
+# Reference: Martin et al. (2022), GMD, doi:10.5194/gmd-15-8325-2022
 #
-# MFXC: eastward mass flux on X cell faces → (Nc+1, Nc, lev, nf)
-# MFYC: northward mass flux on Y cell faces → (Nc, Nc+1, lev, nf)
-# DELP: pressure thickness at cell centers → (Nc, Nc, lev, nf)
+# File: GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.YYYYMMDD_HHMM.V01.nc4
 #
-# The `tavg3_3d_mst_Cp` collection on NCCS contains MFXC/MFYC.
-# The `inst3_3d_asm_Cp` or `tavg3_3d_asm_Cp` collection contains DELP.
+# Dimension order: (Xdim=720, Ydim=720, nf=6, lev=72, time=1)
+#   - `nf` comes BEFORE `lev` (panel index before vertical)
+#
+# Variables:
+#   MFXC: (720,720,6,72,1) pressure-weighted accumulated eastward mass flux [Pa m²]
+#   MFYC: (720,720,6,72,1) pressure-weighted accumulated northward mass flux [Pa m²]
+#   DELP: (720,720,6,72,1) pressure thickness [Pa]
+#   PS:   (720,720,6,1)    surface pressure [Pa]
+#   CX:   (720,720,6,72,1) eastward accumulated Courant number
+#   CY:   (720,720,6,72,1) northward accumulated Courant number
+#
+# Mass flux convention (C-grid):
+#   MFXC(i,j) = flux through the EAST face of cell (i,j)
+#   MFYC(i,j) = flux through the NORTH face of cell (i,j)
+#   Both stored at cell-center indices (NOT staggered Nc+1).
+#
+# Unit conversion to kg/s:
+#   mass_flux_kgs = MFXC / (g × Δt_met)
+#   where g = 9.80665 m/s², Δt_met = accumulation interval in seconds
 # ---------------------------------------------------------------------------
 
 using NCDatasets
 using Dates
+
+const GRAV_GEOSFP = 9.80665  # standard gravity [m/s²]
 
 """
 $(TYPEDEF)
 
 Container for one timestep of GEOS-FP cubed-sphere mass-flux data.
 
+Mass fluxes are stored in C-grid convention: MFXC(i,j) is the flux through
+the east face of cell (i,j). Unlike a staggered grid, both arrays are
+(Nc, Nc, Nz) per panel.
+
+The raw values from the file are "pressure-weighted accumulated" (Pa m²).
+Use `convert_massflux_to_kgs!` to convert to kg/s.
+
 $(FIELDS)
 """
 struct GeosFPCubedSphereTimestep{FT}
-    "X-direction mass flux per panel, NTuple{6, Array{FT,3}}, each (Nc+1, Nc, Nz)"
+    "X-direction mass flux per panel, NTuple{6, Array{FT,3}}, each (Nc, Nc, Nz)"
     mfxc :: NTuple{6, Array{FT, 3}}
-    "Y-direction mass flux per panel, NTuple{6, Array{FT,3}}, each (Nc, Nc+1, Nz)"
+    "Y-direction mass flux per panel, NTuple{6, Array{FT,3}}, each (Nc, Nc, Nz)"
     mfyc :: NTuple{6, Array{FT, 3}}
     "Pressure thickness per panel, NTuple{6, Array{FT,3}}, each (Nc, Nc, Nz)"
     delp :: NTuple{6, Array{FT, 3}}
+    "Surface pressure per panel, NTuple{6, Array{FT,2}}, each (Nc, Nc)"
+    ps :: NTuple{6, Array{FT, 2}}
     "Timestamp"
     time :: DateTime
     "Cells per panel edge"
     Nc :: Int
     "Number of vertical levels"
     Nz :: Int
+    "Accumulation interval in seconds (for unit conversion)"
+    dt_met :: FT
 end
 
-"""
-    geosfp_cs_url(date::Date, hour::Int; stream="f5295_fp", collection="tavg3_3d_mst_Cp")
+const WASHU_BASE_URL = "http://geoschemdata.wustl.edu/ExtData/GEOS_C720"
 
-Build the NCCS download URL for a GEOS-FP cubed-sphere file.
 """
-function geosfp_cs_url(date::Date, hour::Int;
-                       stream::String = "f5295_fp",
-                       collection::String = "tavg3_3d_mst_Cp")
+    geosfp_cs_tavg_url(date::Date, hour::Int; collection="GEOS_FP_Native")
+
+Build URL for a GEOS-FP C720 cubed-sphere file from the Washington University
+archive (geoschemdata.wustl.edu).
+
+The `tavg_1hr_ctm` collection contains MFXC, MFYC, DELP, PS, CX, CY.
+Timestamps are at HH30 (center of hour-long averaging window).
+"""
+function geosfp_cs_tavg_url(date::Date, hour::Int;
+                            collection::String = "GEOS_FP_Native")
     datestr = Dates.format(date, "yyyymmdd")
-    timestr = lpad(hour, 2, '0') * "30"
-    y = Dates.format(date, "yyyy")
-    m = Dates.format(date, "mm")
-    d = Dates.format(date, "dd")
-    return "https://portal.nccs.nasa.gov/datashare/gmao/geos-fp/das/" *
-           "Y$(y)/M$(m)/D$(d)/$(stream).$(collection).$(datestr)_$(timestr)z.nc4"
+    timestamp = lpad(hour, 2, '0') * "30"
+    y = Dates.year(date)
+    m = lpad(Dates.month(date), 2, '0')
+    d = lpad(Dates.day(date), 2, '0')
+    return "$WASHU_BASE_URL/$collection/Y$y/M$m/D$d/" *
+           "GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.$(datestr)_$(timestamp).V01.nc4"
 end
 
-"""
-    geosfp_cs_asm_url(date::Date, hour::Int)
+geosfp_cs_url(date::Date, hour::Int; kwargs...) = geosfp_cs_tavg_url(date, hour; kwargs...)
+geosfp_cs_asm_url(date::Date, hour::Int; kwargs...) = geosfp_cs_tavg_url(date, hour; kwargs...)
 
-Build URL for instantaneous assembly data (contains DELP) on cubed-sphere.
 """
-function geosfp_cs_asm_url(date::Date, hour::Int;
-                           stream::String = "f5295_fp",
-                           collection::String = "inst3_3d_asm_Cp")
+    geosfp_cs_local_path(date::Date, hour::Int;
+                         base_dir=joinpath(homedir(), "data", "geosfp_cs"))
+
+Build the local file path for a downloaded GEOS-FP cubed-sphere file.
+"""
+function geosfp_cs_local_path(date::Date, hour::Int;
+                              base_dir::String = joinpath(homedir(), "data", "geosfp_cs"))
     datestr = Dates.format(date, "yyyymmdd")
-    timestr = lpad(hour, 2, '0') * "00"
-    y = Dates.format(date, "yyyy")
-    m = Dates.format(date, "mm")
-    d = Dates.format(date, "dd")
-    return "https://portal.nccs.nasa.gov/datashare/gmao/geos-fp/das/" *
-           "Y$(y)/M$(m)/D$(d)/$(stream).$(collection).$(datestr)_$(timestr)z.nc4"
+    timestamp = lpad(hour, 2, '0') * "30"
+    fname = "GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.$(datestr)_$(timestamp).V01.nc4"
+    return joinpath(base_dir, datestr, fname)
 end
 
 """
 $(SIGNATURES)
 
-Read one timestep of GEOS-FP cubed-sphere data from NetCDF file(s).
+Read one timestep of GEOS-FP cubed-sphere data from a local NetCDF file.
 
-The `mst_file` should contain MFXC and MFYC (mass flux collection).
-The `asm_file` should contain DELP (assembly collection), or `nothing` if
-DELP is available in the same file as MFXC/MFYC.
+The file should be from the `tavg_1hr_ctm_c0720_v72` collection.
+All variables (MFXC, MFYC, DELP, PS) are read from the same file.
 
-Returns a `GeosFPCubedSphereTimestep`.
+Raw mass fluxes are in Pa⋅m² (pressure-weighted accumulated).
+Set `convert_to_kgs=true` to automatically convert to kg/s.
+
+# Arguments
+- `filepath`: Path to the NetCDF4 file
+- `FT`: Float type (default Float32, matching file storage)
+- `time_index`: Time index within the file (default 1)
+- `dt_met`: Accumulation interval in seconds (default 3600.0 for 1-hour)
+- `convert_to_kgs`: If true, convert mass fluxes from Pa⋅m² to kg/s
 """
-function read_geosfp_cs_timestep(mst_file::String;
-                                  asm_file::Union{String, Nothing} = nothing,
-                                  FT::Type{<:AbstractFloat} = Float64,
-                                  time_index::Int = 1)
-    mfxc_panels, mfyc_panels, Nc, Nz = _read_mass_fluxes(mst_file, FT, time_index)
-
-    if asm_file !== nothing
-        delp_panels = _read_delp(asm_file, FT, time_index, Nc, Nz)
-    else
-        delp_panels = _read_delp(mst_file, FT, time_index, Nc, Nz)
-    end
-
-    ds = NCDataset(mst_file, "r")
-    t = ds["time"][time_index]
-    close(ds)
-
-    return GeosFPCubedSphereTimestep{FT}(mfxc_panels, mfyc_panels, delp_panels,
-                                          t, Nc, Nz)
-end
-
-"""
-Read MFXC and MFYC from a cubed-sphere NetCDF file.
-
-GEOS-FP cubed-sphere files store data with dimensions that vary by collection.
-This function handles common orderings:
-- (Xdim, Ydim, lev, nf)      — most common for cell-center variables
-- (XCdim, Ydim, lev, nf)     — MFXC (staggered in X)
-- (Xdim, YCdim, lev, nf)     — MFYC (staggered in Y)
-
-The `nf` dimension indexes the 6 cubed-sphere panels.
-"""
-function _read_mass_fluxes(filepath::String, FT::Type, tidx::Int)
+function read_geosfp_cs_timestep(filepath::String;
+                                  FT::Type{<:AbstractFloat} = Float32,
+                                  time_index::Int = 1,
+                                  dt_met::Real = 3600.0,
+                                  convert_to_kgs::Bool = false)
     ds = NCDataset(filepath, "r")
     try
-        mfxc_raw = _read_cs_var(ds, "MFXC", FT, tidx)
-        mfyc_raw = _read_cs_var(ds, "MFYC", FT, tidx)
+        # Dimension order in file: (Xdim, Ydim, nf, lev, time)
+        mfxc_raw = Array{FT}(ds["MFXC"][:, :, :, :, time_index])  # (720,720,6,72)
+        mfyc_raw = Array{FT}(ds["MFYC"][:, :, :, :, time_index])
+        delp_raw = Array{FT}(ds["DELP"][:, :, :, :, time_index])
+        ps_raw   = Array{FT}(ds["PS"][:, :, :, time_index])       # (720,720,6)
 
-        nf = 6
-        nx_mfxc = size(mfxc_raw, 1)
-        ny_mfxc = size(mfxc_raw, 2)
-        nz      = size(mfxc_raw, 3)
+        Nc = size(mfxc_raw, 1)
+        Nz = size(mfxc_raw, 4)
+        @assert size(mfxc_raw) == (Nc, Nc, 6, Nz)
+        @assert size(mfyc_raw) == (Nc, Nc, 6, Nz)
+        @assert size(delp_raw) == (Nc, Nc, 6, Nz)
+        @assert size(ps_raw) == (Nc, Nc, 6)
 
-        nx_mfyc = size(mfyc_raw, 1)
-        ny_mfyc = size(mfyc_raw, 2)
+        conv = convert_to_kgs ? FT(1 / (GRAV_GEOSFP * dt_met)) : FT(1)
 
-        Nc = ny_mfxc
-        @assert nx_mfxc == Nc + 1 "MFXC X-dim should be Nc+1=$(Nc+1), got $nx_mfxc"
-        @assert nx_mfyc == Nc "MFYC X-dim should be Nc=$Nc, got $nx_mfyc"
-        @assert ny_mfyc == Nc + 1 "MFYC Y-dim should be Nc+1=$(Nc+1), got $ny_mfyc"
-
-        mfxc_panels = ntuple(nf) do p
-            Array{FT}(mfxc_raw[:, :, :, p])
+        # Split into per-panel arrays: (Nc, Nc, Nz)
+        mfxc_panels = ntuple(6) do p
+            arr = mfxc_raw[:, :, p, :]
+            conv != 1 && (arr .*= conv)
+            arr
+        end
+        mfyc_panels = ntuple(6) do p
+            arr = mfyc_raw[:, :, p, :]
+            conv != 1 && (arr .*= conv)
+            arr
+        end
+        delp_panels = ntuple(6) do p
+            delp_raw[:, :, p, :]
+        end
+        ps_panels = ntuple(6) do p
+            ps_raw[:, :, p]
         end
 
-        mfyc_panels = ntuple(nf) do p
-            Array{FT}(mfyc_raw[:, :, :, p])
+        t = try
+            ds["time"][time_index]
+        catch
+            DateTime(2000, 1, 1)
         end
 
-        return mfxc_panels, mfyc_panels, Nc, nz
+        return GeosFPCubedSphereTimestep{FT}(
+            mfxc_panels, mfyc_panels, delp_panels, ps_panels,
+            t, Nc, Nz, FT(dt_met)
+        )
     finally
         close(ds)
     end
-end
-
-"""
-Read DELP (pressure thickness) from a cubed-sphere NetCDF file.
-"""
-function _read_delp(filepath::String, FT::Type, tidx::Int, Nc::Int, Nz::Int)
-    ds = NCDataset(filepath, "r")
-    try
-        delp_raw = _read_cs_var(ds, "DELP", FT, tidx)
-        @assert size(delp_raw, 1) == Nc "DELP X-dim should be $Nc, got $(size(delp_raw, 1))"
-        @assert size(delp_raw, 2) == Nc "DELP Y-dim should be $Nc, got $(size(delp_raw, 2))"
-        @assert size(delp_raw, 3) == Nz "DELP lev-dim should be $Nz, got $(size(delp_raw, 3))"
-
-        return ntuple(6) do p
-            Array{FT}(delp_raw[:, :, :, p])
-        end
-    finally
-        close(ds)
-    end
-end
-
-"""
-Read a 4D variable (X, Y, lev, nf) from a cubed-sphere NetCDF dataset,
-handling different possible dimension orderings.
-"""
-function _read_cs_var(ds::NCDataset, varname::String, FT::Type, tidx::Int)
-    var = ds[varname]
-    dims = dimnames(var)
-    ndim = length(dims)
-
-    if ndim == 5
-        raw = Array{FT}(var[:, :, :, :, tidx])
-    elseif ndim == 4
-        raw = Array{FT}(var[:, :, :, :])
-    else
-        error("Unexpected number of dimensions ($ndim) for variable $varname")
-    end
-
-    nf_idx = findfirst(d -> d in ("nf", "face", "nface", "tile"), dims)
-    if nf_idx !== nothing && nf_idx != ndim && nf_idx != ndim - 1
-        perm = _move_nf_to_last(nf_idx, ndim == 5 ? 4 : ndim)
-        raw = permutedims(raw, perm)
-    end
-
-    return raw
-end
-
-function _move_nf_to_last(nf_idx::Int, ndims_notime::Int)
-    perm = collect(1:ndims_notime)
-    splice!(perm, nf_idx)
-    push!(perm, nf_idx)
-    return Tuple(perm)
 end
 
 """
@@ -222,4 +201,115 @@ function to_haloed_panels(ts::GeosFPCubedSphereTimestep{FT}; Hp::Int = 3) where 
     end
 
     return delp_haloed, ts.mfxc, ts.mfyc
+end
+
+"""
+    cgrid_to_staggered_panels(mfxc_panels, mfyc_panels, Nc, Nz)
+
+Convert C-grid mass fluxes (where MFXC(i,j) = flux through east face of cell (i,j))
+to staggered arrays compatible with the advection kernels:
+  - `am`: (Nc+1, Nc, Nz) — flux through X-faces (am(i,j) = flux into cell i from left)
+  - `bm`: (Nc, Nc+1, Nz) — flux through Y-faces (bm(i,j) = flux into cell j from below)
+
+Panel boundary fluxes (am[1,:,:] and bm[:,1,:]) are extracted from the east/north
+face of the adjacent panel using the standard cubed-sphere gnomonic connectivity.
+
+The standard connectivity for GEOS cubed-sphere panels (1-indexed):
+  Panel 1: west=5, south=3, east=2, north=6
+  Panel 2: west=1, south=3, east=4, north=6
+  Panel 3: west=1, south=5, east=4, north=2
+  Panel 4: west=3, south=5, east=6, north=2
+  Panel 5: west=3, south=1, east=6, north=4
+  Panel 6: west=5, south=1, east=2, north=4
+"""
+function cgrid_to_staggered_panels(mfxc_panels::NTuple{6, Array{FT,3}},
+                                    mfyc_panels::NTuple{6, Array{FT,3}}) where FT
+    Nc = size(mfxc_panels[1], 1)
+    Nz = size(mfxc_panels[1], 3)
+
+    # Connectivity: west_neighbor[p] gives the panel whose east edge abuts p's west edge.
+    # For GEOS gnomonic CS (from file contacts = [west, south, east, north]):
+    west_neighbor = (5, 1, 1, 3, 3, 5)
+    south_neighbor = (3, 3, 5, 5, 1, 1)
+
+    am_panels = ntuple(6) do p
+        am = zeros(FT, Nc + 1, Nc, Nz)
+        mfxc = mfxc_panels[p]
+
+        @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
+            am[i + 1, j, k] = mfxc[i, j, k]
+        end
+
+        # West boundary: flux from the east edge of the western neighbor
+        wp = west_neighbor[p]
+        mfxc_w = mfxc_panels[wp]
+        @inbounds for k in 1:Nz, j in 1:Nc
+            am[1, j, k] = mfxc_w[Nc, j, k]
+        end
+
+        am
+    end
+
+    bm_panels = ntuple(6) do p
+        bm = zeros(FT, Nc, Nc + 1, Nz)
+        mfyc = mfyc_panels[p]
+
+        @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
+            bm[i, j + 1, k] = mfyc[i, j, k]
+        end
+
+        sp = south_neighbor[p]
+        mfyc_s = mfyc_panels[sp]
+        @inbounds for k in 1:Nz, i in 1:Nc
+            bm[i, 1, k] = mfyc_s[i, Nc, k]
+        end
+
+        bm
+    end
+
+    return am_panels, bm_panels
+end
+
+"""
+    inspect_geosfp_cs_file(filepath::String)
+
+Print diagnostic information about a GEOS-FP cubed-sphere NetCDF file.
+"""
+function inspect_geosfp_cs_file(filepath::String)
+    ds = NCDataset(filepath, "r")
+    try
+        println("File: $(basename(filepath))")
+        println("\nDimensions:")
+        for (name, dim) in ds.dim
+            println("  $name = $(length(dim))")
+        end
+        println("\nVariables:")
+        for (name, var) in ds
+            attrs = String[]
+            haskey(var.attrib, "long_name") && push!(attrs, var.attrib["long_name"])
+            haskey(var.attrib, "units") && push!(attrs, "[$(var.attrib["units"])]")
+            println("  $name: $(dimnames(var)) → $(size(var))  $(join(attrs, " "))")
+        end
+    finally
+        close(ds)
+    end
+end
+
+"""
+    read_geosfp_cs_grid_info(filepath::String)
+
+Read the cubed-sphere grid coordinates (center lons/lats and corner lons/lats)
+from a GEOS-FP file. Returns `(lons, lats, corner_lons, corner_lats)`.
+"""
+function read_geosfp_cs_grid_info(filepath::String)
+    ds = NCDataset(filepath, "r")
+    try
+        lons = Array{Float64}(ds["lons"][:, :, :])         # (720,720,6)
+        lats = Array{Float64}(ds["lats"][:, :, :])
+        clons = Array{Float64}(ds["corner_lons"][:, :, :]) # (721,721,6)
+        clats = Array{Float64}(ds["corner_lats"][:, :, :])
+        return lons, lats, clons, clats
+    finally
+        close(ds)
+    end
 end

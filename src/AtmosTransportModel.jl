@@ -55,17 +55,21 @@ using .Adjoint
 include("Callbacks/Callbacks.jl")
 using .Callbacks
 
-# ---- I/O ----
-include("IO/IO.jl")
-using .IO
-
 # ---- Regridding ----
 include("Regridding/Regridding.jl")
 using .Regridding
 
-# ---- Sources / Emissions ----
+# ---- Diagnostics (before IO — output writers need diagnostic types) ----
+include("Diagnostics/Diagnostics.jl")
+using .Diagnostics
+
+# ---- Sources / Emissions (before IO — configuration needs inventory types) ----
 include("Sources/Sources.jl")
 using .Sources
+
+# ---- I/O (depends on Diagnostics, Sources, Grids) ----
+include("IO/IO.jl")
+using .IO
 
 # ---- Models (depends on everything above) ----
 include("Models/Models.jl")

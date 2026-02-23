@@ -26,6 +26,8 @@
 #   Martin et al. (2022, GMD) — GCHP panel exchange
 # ---------------------------------------------------------------------------
 
+using KernelAbstractions: @kernel, @index, @Const, synchronize, get_backend
+
 """
 $(SIGNATURES)
 
@@ -67,6 +69,8 @@ function fill_panel_halos!(data::NTuple{6, A},
             _fill_edge!(data[p], data[q], e, q_e, orient, Nc, Hp)
         end
     end
+    # Single sync after all 24 edge kernels are queued
+    synchronize(get_backend(data[1]))
     return nothing
 end
 
@@ -83,24 +87,42 @@ end
 Copy `Hp` layers of interior data from source panel near edge `q_e`
 into the halo of destination panel outside edge `e`, applying the
 along-edge orientation mapping.
+
+Dispatches to a GPU kernel for device arrays, or a CPU loop for host arrays.
 """
 function _fill_edge!(dst::AbstractArray{T, 3}, src::AbstractArray{T, 3},
                      e::Int, q_e::Int, orient::Int,
                      Nc::Int, Hp::Int) where T
     Nk = size(dst, 3)
-    flip = orient >= 2  # orient 0,1 → same direction; orient 2,3 → reversed
+    flip = orient >= 2
 
-    @inbounds for k in 1:Nk
-        for d in 1:Hp
-            for s in 1:Nc
-                s_src = flip ? (Nc + 1 - s) : s
-                i_src, j_src = _edge_interior_ij(q_e, d, s_src, Nc, Hp)
-                i_dst, j_dst = _edge_halo_ij(e, d, s, Nc, Hp)
-                dst[i_dst, j_dst, k] = src[i_src, j_src, k]
+    backend = get_backend(dst)
+    if backend isa KernelAbstractions.CPU
+        @inbounds for k in 1:Nk
+            for d in 1:Hp
+                for s in 1:Nc
+                    s_src = flip ? (Nc + 1 - s) : s
+                    i_src, j_src = _edge_interior_ij(q_e, d, s_src, Nc, Hp)
+                    i_dst, j_dst = _edge_halo_ij(e, d, s, Nc, Hp)
+                    dst[i_dst, j_dst, k] = src[i_src, j_src, k]
+                end
             end
         end
+    else
+        k! = _fill_edge_kernel!(backend, 256)
+        k!(dst, src, e, q_e, flip, Nc, Hp; ndrange=(Nc, Hp, Nk))
     end
     return nothing
+end
+
+@kernel function _fill_edge_kernel!(dst, @Const(src), e, q_e, flip, Nc, Hp)
+    s, d, k = @index(Global, NTuple)
+    @inbounds begin
+        s_src = flip ? (Nc + 1 - s) : s
+        i_src, j_src = _edge_interior_ij(q_e, d, s_src, Nc, Hp)
+        i_dst, j_dst = _edge_halo_ij(e, d, s, Nc, Hp)
+        dst[i_dst, j_dst, k] = src[i_src, j_src, k]
+    end
 end
 
 """Interior array index (i, j) for the source panel at edge `q_e`, depth `d`,

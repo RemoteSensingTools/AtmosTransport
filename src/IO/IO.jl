@@ -48,13 +48,37 @@ export read_met!, write_output!, initialize_output!, prepare_met_for_physics, co
 export protocol, time_interval, source_name
 export merra2_stream, build_opendap_url, build_merra2_file_url
 export canonical_variables, canonical_units, canonical_required, canonical_dimensions
-export AbstractOutputWriter, AbstractOutputSchedule
+export AbstractOutputWriter, AbstractOutputSchedule, AbstractOutputGrid, LatLonOutputGrid
 export NetCDFOutputWriter, TimeIntervalSchedule, IterationIntervalSchedule
 export TemporalInterpolator, interpolation_weight
-export load_configuration
+export load_configuration, build_model_from_config
 export GeosFPCubedSphereTimestep
-export read_geosfp_cs_timestep, to_haloed_panels
-export geosfp_cs_url, geosfp_cs_asm_url
+export read_geosfp_cs_timestep, to_haloed_panels, cgrid_to_staggered_panels
+export geosfp_cs_url, geosfp_cs_asm_url, geosfp_cs_tavg_url, geosfp_cs_local_path
+export inspect_geosfp_cs_file, read_geosfp_cs_grid_info
+
+# Binary readers (mmap-based)
+export AbstractBinaryReader, MassFluxBinaryReader, CSBinaryReader
+export load_window!, load_cs_window!, load_edgar_cs_binary, window_count
+
+# File discovery
+export find_massflux_shards, find_preprocessed_cs_files
+export find_geosfp_cs_files, find_era5_files, ensure_local_cache
+
+# Met driver abstraction (Phase 4)
+export AbstractMetDriver, AbstractRawMetDriver, AbstractMassFluxMetDriver
+export total_windows, window_dt, steps_per_window, load_met_window!
+
+# Met buffer types
+export AbstractMetBuffer, AbstractCPUStagingBuffer
+export LatLonMetBuffer, LatLonCPUBuffer, CubedSphereMetBuffer, CubedSphereCPUBuffer
+export upload!
+
+# Wind processing utilities
+export stagger_winds!, load_era5_timestep, get_era5_grid_info
+
+# Concrete met drivers
+export ERA5MetDriver, PreprocessedLatLonMetDriver, GEOSFPCubedSphereMetDriver
 
 # Core abstract interface (must come first)
 include("abstract_met_data.jl")
@@ -90,5 +114,25 @@ include("configuration.jl")
 
 # GEOS-FP native cubed-sphere reader
 include("geosfp_cubed_sphere_reader.jl")
+
+# Binary readers (mmap-based, zero-copy)
+include("binary_readers.jl")
+
+# File discovery utilities
+include("file_discovery.jl")
+
+# Met driver abstraction — abstract types + interface (Phase 4)
+include("abstract_met_driver.jl")
+
+# Met buffer types (CPU staging + GPU resident)
+include("met_buffers.jl")
+
+# Wind processing utilities (stagger_winds!, load_era5_timestep, etc.)
+include("wind_processing.jl")
+
+# Concrete met drivers
+include("era5_met_driver.jl")
+include("preprocessed_latlon_driver.jl")
+include("geosfp_cs_met_driver.jl")
 
 end # module IO

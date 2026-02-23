@@ -8,11 +8,19 @@ const M_CO2  = 44.01e-3   # kg/mol
 """
 $(TYPEDEF)
 
-Regridded surface emission on the model grid.
+Supertype for all gridded (spatially-resolved) emission sources.
+Subtypes include `GriddedEmission` (lat-lon) and `CubedSphereEmission` (panel-based).
+"""
+abstract type AbstractGriddedEmission{FT} <: AbstractSource end
+
+"""
+$(TYPEDEF)
+
+Regridded surface emission on a lat-lon model grid.
 
 $(FIELDS)
 """
-struct GriddedEmission{FT, A <: AbstractMatrix{FT}} <: AbstractSource
+struct GriddedEmission{FT, A <: AbstractMatrix{FT}} <: AbstractGriddedEmission{FT}
     "emission flux [kg/m²/s] on model grid (Nx × Ny)"
     flux    :: A
     "tracer name (e.g., :co2)"

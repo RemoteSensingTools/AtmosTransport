@@ -3,10 +3,14 @@
 
 Top-level model type that assembles grid, fields, physics operators,
 met data, I/O, and time stepping into a single runnable object.
+
+Supports both the legacy `run!(model, met_source, t_start, t_end)` path
+and the new driver-based `run!(model)` path with dispatch on
+`(grid type, buffering strategy)`.
 """
 module Models
 
-using ..Architectures: AbstractArchitecture, architecture
+using ..Architectures: AbstractArchitecture, architecture, array_type
 using ..Grids: AbstractGrid
 using ..Fields: Field, Center, TracerFields
 using ..Advection: AbstractAdvectionScheme
@@ -16,11 +20,16 @@ using ..Chemistry: AbstractChemistry, NoChemistry
 using ..TimeSteppers: AbstractTimeStepper, OperatorSplittingTimeStepper, Clock
 using Dates
 using ..IO: AbstractMetData, AbstractOutputWriter, MetDataSource
-using ..IO: read_met!, prepare_met_for_physics
+using ..IO: AbstractMetDriver, read_met!, prepare_met_for_physics
+using ..Sources: AbstractSource
 using ..Callbacks: AbstractCallback
 using DocStringExtensions
 
 export AbstractModel, TransportModel, run!, update_met_data!
+export AbstractBufferingStrategy, SingleBuffer, DoubleBuffer
+
+# Buffering strategy types
+include("buffering.jl")
 
 """
 $(TYPEDEF)
@@ -36,66 +45,109 @@ The main atmospheric transport model.
 
 $(FIELDS)
 """
-struct TransportModel{Arch, G, Tr, ATr, M, TS, OW, CB} <: AbstractModel{Arch}
+struct TransportModel{Arch, G, Tr, ATr, M, TS, Src, OW, CB, Buf} <: AbstractModel{Arch}
     "CPU or GPU"
     architecture   :: Arch
     "the computational grid"
     grid           :: G
-    "NamedTuple of tracer Fields"
+    "NamedTuple of tracer Fields (or raw arrays for direct GPU runs)"
     tracers        :: Tr
     "NamedTuple of adjoint tracer Fields (nothing if not doing adjoint)"
     adj_tracers    :: ATr
-    "meteorological data reader"
+    "meteorological data (AbstractMetData or AbstractMetDriver)"
     met_data       :: M
     "simulation clock"
     clock          :: Clock
     "time-stepping strategy"
     timestepper    :: TS
+    "vector of emission sources"
+    sources        :: Src
     "vector of output writers"
     output_writers :: OW
     "vector of callbacks"
     callbacks      :: CB
+    "buffering strategy (SingleBuffer or DoubleBuffer)"
+    buffering      :: Buf
 end
 
 """
 $(TYPEDSIGNATURES)
 
-Construct a `TransportModel` from components.
+Construct a `TransportModel` with the new driver-based API.
+
+This constructor supports both the legacy physics-operator style and the new
+met-driver + sources + buffering style.
 """
 function TransportModel(;
         grid           :: AbstractGrid{FT},
-        tracers        :: NTuple{N, Symbol} where N,
-        met_data       :: AbstractMetData = nothing,
-        advection      :: AbstractAdvectionScheme,
-        convection     :: AbstractConvection,
-        diffusion      :: AbstractDiffusion,
+        tracers,
+        met_data       = nothing,
+        advection      :: Union{AbstractAdvectionScheme, Nothing} = nothing,
+        convection     :: Union{AbstractConvection, Nothing} = nothing,
+        diffusion      :: Union{AbstractDiffusion, Nothing} = nothing,
         chemistry      :: AbstractChemistry = NoChemistry(),
         Δt             :: Real = 10800.0,
+        sources        :: Vector = AbstractSource[],
         output_writers :: Vector = AbstractOutputWriter[],
         callbacks      :: Vector = AbstractCallback[],
-        adjoint        :: Bool = false) where {FT}
+        buffering      :: AbstractBufferingStrategy = SingleBuffer(),
+        adjoint        :: Bool = false,
+        adj_tracers    = nothing) where {FT}
 
     arch = architecture(grid)
-    tracer_fields = TracerFields(tracers, grid)
 
-    adj_tracer_fields = if adjoint
+    # Build tracer fields:
+    #   (:co2, :ch4)           → allocate via TracerFields (legacy path)
+    #   (;co2=nothing)         → allocate raw zero arrays on the architecture
+    #   (;co2=array)           → use as-is (pre-allocated GPU/CPU arrays)
+    tracer_fields = if tracers isa NTuple{N, Symbol} where N
         TracerFields(tracers, grid)
+    elseif tracers isa NamedTuple && any(v -> v === nothing, values(tracers))
+        if hasproperty(grid, :Nx)
+            # Lat-lon: allocate 3D arrays on device
+            AT = array_type(arch)
+            names = keys(tracers)
+            arrays = ntuple(length(names)) do idx
+                if tracers[idx] === nothing
+                    AT(zeros(FT, grid.Nx, grid.Ny, grid.Nz))
+                else
+                    tracers[idx]
+                end
+            end
+            NamedTuple{names}(arrays)
+        else
+            # Cubed-sphere: run loop allocates its own panel arrays
+            tracers
+        end
+    else
+        tracers  # already constructed (e.g. NamedTuple of GPU arrays)
+    end
+
+    adj_tracer_fields = if adjoint && adj_tracers === nothing
+        tracer_fields isa NamedTuple ? TracerFields(keys(tracer_fields), grid) : nothing
+    else
+        adj_tracers
+    end
+
+    Δt_ft = FT(Δt)
+
+    # Build timestepper only if physics operators are provided (legacy path)
+    ts = if advection !== nothing && convection !== nothing && diffusion !== nothing
+        OperatorSplittingTimeStepper(;
+            advection  = advection,
+            convection = convection,
+            diffusion  = diffusion,
+            chemistry  = chemistry,
+            Δt_outer   = Δt_ft)
     else
         nothing
     end
 
-    Δt_ft = FT(Δt)
-    ts = OperatorSplittingTimeStepper(;
-        advection  = advection,
-        convection = convection,
-        diffusion  = diffusion,
-        chemistry  = chemistry,
-        Δt_outer   = Δt_ft)
-
     clock = Clock(FT; Δt = Δt_ft)
 
     return TransportModel(arch, grid, tracer_fields, adj_tracer_fields,
-                          met_data, clock, ts, output_writers, callbacks)
+                          met_data, clock, ts, sources, output_writers,
+                          callbacks, buffering)
 end
 
 """
@@ -109,14 +161,14 @@ Returns the prepared met fields NamedTuple.
 function update_met_data!(model::TransportModel, met_source::MetDataSource, time)
     read_met!(met_source, time)
     physics_fields = prepare_met_for_physics(met_source, model.grid)
-    # Store in model (requires mutable field — use a Ref or rebuild)
     return physics_fields
 end
 
 """
 $(TYPEDSIGNATURES)
 
-Run the forward model from `t_start` to `t_end`.
+Run the forward model from `t_start` to `t_end` using the legacy
+MetDataSource-based API.
 
 At each `met_update_interval`, reads and prepares new met data from
 `met_source`. Between met updates, steps the model forward with `Δt`.
@@ -144,12 +196,11 @@ function run!(model::TransportModel, met_source::MetDataSource,
             read_met!(met_source, t_current)
             physics_fields = prepare_met_for_physics(met_source, model.grid)
 
-            # Rebuild the model with updated met_data
-            # (TransportModel is immutable, so we update via a local binding)
             model = TransportModel(
                 model.architecture, model.grid, model.tracers,
                 model.adj_tracers, physics_fields, model.clock,
-                model.timestepper, model.output_writers, model.callbacks)
+                model.timestepper, model.sources, model.output_writers,
+                model.callbacks, model.buffering)
 
             next_met_update = if using_datetime
                 t_current + Dates.Second(round(Int, met_update_interval))
@@ -190,5 +241,8 @@ function run!(model::TransportModel, met_source::MetDataSource,
 
     return model
 end
+
+# New driver-based run implementations (dispatch on grid + buffering)
+include("run_implementations.jl")
 
 end # module Models

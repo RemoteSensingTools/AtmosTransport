@@ -467,8 +467,6 @@ function run_forward()
                                            grid, true, ws; cfl_limit = FT(0.95))
                     if USE_DIFFUSION && diff_ws !== nothing
                         diffuse_gpu!(tracers, diff_ws)
-                    elseif USE_DIFFUSION
-                        diffuse!(tracers, nothing, grid, diff_scheme, DT)
                     end
                 end
                 t_adv_done = time() - t_adv

@@ -1,0 +1,52 @@
+# ===========================================================================
+# GEOS-FP C720 Cubed-Sphere + EDGAR CO2 — Scratch-disk timing test (1 day)
+#
+# Data on /scratch for fast local IO; use to benchmark vs NAS.
+# Run after the copy completes:
+#   cp ~/data/geosfp_cs/preprocessed/geosfp_cs_20240601_float32.bin \
+#      /scratch/cfranken/geosfp_cs_preprocessed/
+#   cp ~/data/geosfp_cs/preprocessed/geosfp_cs_20240602_float32.bin \
+#      /scratch/cfranken/geosfp_cs_preprocessed/   # optional 2nd day
+#
+# Usage:
+#   USE_GPU=true USE_FLOAT32=true \
+#     ~/.juliaup/bin/julia --project=. scripts/run_geosfp_cs_edgar.jl \
+#     --config config/runs/geosfp_cs_edgar_scratch.toml
+# ===========================================================================
+
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "cubed_sphere"
+Nc         = 720
+met_source = "geosfp"
+
+[met_data]
+driver           = "geosfp_cs"
+preprocessed_dir = "/scratch/cfranken/geosfp_cs_preprocessed"
+start_date       = "2024-06-01"
+end_date         = "2024-06-02"   # 1 day = 24 windows for quick timing test
+dt               = 900
+met_interval     = 3600
+Hp               = 3
+
+[tracers.co2]
+emission      = "edgar"
+edgar_version = "v8.0"
+year          = 2022
+edgar_file    = "/scratch/cfranken/edgar_cs_c720_float32.bin"
+
+[output]
+filename    = "/scratch/cfranken/geosfp_cs_edgar_scratch_test.nc"
+interval    = 3600          # every window for detailed timing
+output_grid = "latlon"
+Nlon        = 720
+Nlat        = 361
+
+[output.fields]
+co2 = "column_mean"
+
+[buffering]
+strategy = "single"

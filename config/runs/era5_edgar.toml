@@ -1,0 +1,42 @@
+# ===========================================================================
+# ERA5 Lat-Lon + EDGAR CO2 — Example Run Configuration
+#
+# Usage:
+#   using AtmosTransportModel
+#   model = build_model_from_config("config/runs/era5_edgar.toml")
+#   run!(model)
+# ===========================================================================
+
+[architecture]
+use_gpu    = false
+float_type = "Float64"
+
+[grid]
+type       = "latlon"
+met_source = "era5"            # selects ERA5 vertical coefficients
+
+[met_data]
+driver       = "era5"
+datadirs     = [
+    "~/data/metDrivers/era5/era5_ml_10deg_20240601_20240607",
+    "~/data/metDrivers/era5/era5_ml_10deg_20240608_20240630",
+]
+dt           = 900                        # advection sub-step [s]
+met_interval = 21600                      # 6-hour met updates
+level_top    = 50
+level_bot    = 137
+
+[tracers.co2]
+emission      = "edgar"
+edgar_version = "v8.0"
+year          = 2022
+
+[output]
+filename = "~/data/output/era5_edgar.nc"
+interval = 3600
+
+[output.fields]
+co2 = "column_mean"
+
+[buffering]
+strategy = "double"

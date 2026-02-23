@@ -1,0 +1,46 @@
+# ===========================================================================
+# GEOS-FP C720 Cubed-Sphere + EDGAR CO2 — Example Run Configuration
+#
+# Usage:
+#   using AtmosTransportModel
+#   model = build_model_from_config("config/runs/geosfp_cs_edgar.toml")
+#   run!(model)
+# ===========================================================================
+
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "cubed_sphere"
+Nc         = 720
+met_source = "geosfp"          # selects GEOS vertical coefficients
+
+[met_data]
+driver          = "geosfp_cs"
+preprocessed_dir = "~/data/geosfp_cs/preprocessed"
+# netcdf_dir    = "~/data/geosfp_cs"    # fallback if no preprocessed
+start_date      = "2024-06-01"
+end_date        = "2024-06-05"
+dt              = 900                     # advection sub-step [s]
+met_interval    = 3600                    # met update interval [s]
+Hp              = 3                       # halo width
+
+[tracers.co2]
+emission       = "edgar"
+edgar_version  = "v8.0"
+year           = 2022
+# edgar_file   = "~/data/emissions/edgar_v8/..."   # leave empty for default
+
+[output]
+filename    = "~/data/output/geosfp_cs_edgar.nc"
+interval    = 10800                        # output every 3 hours
+output_grid = "latlon"                    # regrid CS panels to lat-lon
+Nlon        = 720
+Nlat        = 361
+
+[output.fields]
+co2 = "column_mean"
+
+[buffering]
+strategy = "single"

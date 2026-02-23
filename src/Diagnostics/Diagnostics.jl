@@ -30,6 +30,7 @@ using KernelAbstractions: @kernel, @index, @Const, @atomic, synchronize, get_bac
 using ..Grids: AbstractGrid, LatitudeLongitudeGrid, CubedSphereGrid
 
 export AbstractDiagnostic, ColumnMeanDiagnostic, SurfaceSliceDiagnostic, RegridDiagnostic
+export Full3DDiagnostic, MetField2DDiagnostic
 export column_mean!, surface_slice!, compute_diagnostics!
 export regrid_cs_to_latlon, regrid_cs_to_latlon!, RegridMapping, build_regrid_mapping
 
@@ -85,6 +86,32 @@ end
 
 RegridDiagnostic(species::Symbol; Nlon=720, Nlat=361) =
     RegridDiagnostic(species, Nlon, Nlat)
+
+"""
+$(TYPEDEF)
+
+Full 3D tracer field diagnostic. Outputs the complete (lon, lat, lev) tracer
+array. Required by CATRINE protocol for all 4 tracers every 3 hours.
+
+$(FIELDS)
+"""
+struct Full3DDiagnostic <: AbstractDiagnostic
+    "tracer symbol (e.g. :co2)"
+    species :: Symbol
+end
+
+"""
+$(TYPEDEF)
+
+2D met field diagnostic (surface pressure, PBL height, tropopause height, etc.).
+The field is retrieved from model.met_data or computed on-the-fly.
+
+$(FIELDS)
+"""
+struct MetField2DDiagnostic <: AbstractDiagnostic
+    "met field identifier (e.g. :surface_pressure, :pbl_height, :tropopause_height)"
+    field_name :: Symbol
+end
 
 include("column_diagnostics.jl")
 include("regridding_diagnostics.jl")

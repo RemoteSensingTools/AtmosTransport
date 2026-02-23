@@ -116,10 +116,10 @@ function load_gfas_fire_flux(datadir::String,
     @info "GFAS: loaded $Nt_out daily time steps"
 
     if Nt_out == 0
-        return GriddedEmission{FT, Matrix{FT}}(
+        return GriddedEmission(
             zeros(FT, Nx_m, Ny_m), :co2, "GFAS fire (empty)")
     elseif Nt_out == 1
-        return GriddedEmission{FT, Matrix{FT}}(
+        return GriddedEmission(
             flux_mats[1], :co2, "GFAS fire CO2 $year")
     else
         stack = _stack_matrices(flux_mats, Nx_m, Ny_m, FT)

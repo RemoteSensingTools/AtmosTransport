@@ -39,6 +39,7 @@ module IO
 using DocStringExtensions
 
 export AbstractMetData
+export load_initial_conditions!
 export MetDataSource, GEOSFPMetData, MERRAMetData, ERA5MetData
 export MetSourceConfig, VarMapping, CollectionInfo, VerticalConfig
 export load_met_config, load_canonical_config, default_met_config, validate_met_config
@@ -134,5 +135,8 @@ include("wind_processing.jl")
 include("era5_met_driver.jl")
 include("preprocessed_latlon_driver.jl")
 include("geosfp_cs_met_driver.jl")
+
+# Initial conditions loader
+include("initial_conditions.jl")
 
 end # module IO

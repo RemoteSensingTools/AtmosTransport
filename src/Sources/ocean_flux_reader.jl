@@ -59,7 +59,7 @@ function load_jena_ocean_flux(filepath::String,
             @warn "No time steps matching year $year in Jena CarboScope file"
             close(ds)
             Nx_m, Ny_m = target_grid.Nx, target_grid.Ny
-            return GriddedEmission{FT, Matrix{FT}}(
+            return GriddedEmission(
                 zeros(FT, Nx_m, Ny_m), :co2, "Jena CarboScope ocean (empty)")
         end
     end
@@ -121,7 +121,7 @@ function load_jena_ocean_flux(filepath::String,
     @info "Jena CarboScope: loaded $Nt_out time steps from $filepath"
 
     if Nt_out == 1
-        return GriddedEmission{FT, Matrix{FT}}(
+        return GriddedEmission(
             flux_mats[1], :co2, "Jena CarboScope ocean $(year)")
     else
         stack = _stack_matrices(flux_mats, Nx_m, Ny_m, FT)

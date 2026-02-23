@@ -22,7 +22,8 @@ using ..Advection: MassFluxWorkspace, allocate_massflux_workspace,
 using ..Diffusion: DiffusionWorkspace, diffuse_gpu!
 using ..Sources: AbstractSource, apply_surface_flux!, AbstractGriddedEmission,
                  CubedSphereEmission, GriddedEmission, apply_emissions_window!,
-                 M_AIR, M_CO2
+                 M_AIR, M_CO2, M_SF6, M_RN222
+using ..Chemistry: apply_chemistry!
 using ..IO: AbstractMetDriver, AbstractRawMetDriver, AbstractMassFluxMetDriver,
             total_windows, window_dt, steps_per_window, load_met_window!,
             LatLonMetBuffer, LatLonCPUBuffer, CubedSphereMetBuffer, CubedSphereCPUBuffer,
@@ -72,14 +73,16 @@ function _apply_emissions_latlon!(tracers, emission_data, area_j_dev, ps_dev,
         name = src.species
         haskey(tracers, name) || continue
         c = tracers[name]
+        mm = src.molar_mass
         if A_coeff !== nothing && B_coeff !== nothing
             apply_emissions_window!(c, flux_dev, area_j_dev, ps_dev,
-                                     A_coeff, B_coeff, Nz, g, dt_window)
+                                     A_coeff, B_coeff, Nz, g, dt_window;
+                                     molar_mass=mm)
         else
             # Fallback: uniform Δp approximation
             FT = eltype(c)
             Δp_approx = FT(grid.reference_pressure / Nz)
-            mol = FT(1e6 * M_AIR / M_CO2)
+            mol = FT(1e6 * M_AIR / mm)
             @. c[:, :, Nz] += flux_dev * dt_window * mol * grid.gravity / Δp_approx
         end
     end
@@ -108,7 +111,8 @@ function _apply_emissions_cs!(rm_panels::NTuple{6}, emission_data,
                                 area_panels::NTuple{6}, dt_window, Nc::Int, Hp::Int)
     for (src, flux_dev) in emission_data
         apply_surface_flux!(rm_panels,
-            CubedSphereEmission(flux_dev, src.species, src.label),
+            CubedSphereEmission(flux_dev, src.species, src.label;
+                                molar_mass=src.molar_mass),
             area_panels, dt_window, Nc, Hp)
     end
 end
@@ -190,6 +194,9 @@ function _run_loop!(model, grid::LatitudeLongitudeGrid{FT},
                                     gpu_buf.am, gpu_buf.bm, gpu_buf.cm,
                                     grid, true, gpu_buf.ws; cfl_limit=FT(0.95))
         end
+
+        # Chemistry (e.g. radioactive decay for ²²²Rn)
+        apply_chemistry!(model.tracers, grid, model.chemistry, dt_window)
 
         # Output
         sim_time = Float64(step * dt_sub)
@@ -282,6 +289,9 @@ function _run_loop!(model, grid::LatitudeLongitudeGrid{FT},
                                     curr.am, curr.bm, curr.cm,
                                     grid, true, curr.ws; cfl_limit=FT(0.95))
         end
+
+        # Chemistry (e.g. radioactive decay for ²²²Rn)
+        apply_chemistry!(model.tracers, grid, model.chemistry, dt_window)
 
         # Upload next window (after GPU compute)
         if has_next
@@ -399,14 +409,19 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
                                     am_gpu, bm_gpu, cm_gpu,
                                     grid, true, ws)
         end
+
+        # Chemistry (e.g. radioactive decay for ²²²Rn)
+        # For CS, build a NamedTuple mapping tracer names to panel arrays
+        tracer_names = keys(model.tracers)
+        cs_tracers = NamedTuple{tracer_names}(ntuple(_ -> rm_panels, length(tracer_names)))
+        apply_chemistry!(cs_tracers, grid, model.chemistry, dt_window)
+
         t_compute += time() - t0
 
         # ── Output: diagnostics + regrid + NetCDF ─────────────────────
         t0 = time()
         sim_time = Float64(step * dt_sub)
         _current_air_mass = m_panels
-        tracer_names = keys(model.tracers)
-        cs_tracers = NamedTuple{tracer_names}(ntuple(_ -> rm_panels, length(tracer_names)))
         for writer in writers
             write_output!(writer, model, sim_time;
                           air_mass=_current_air_mass, tracers=cs_tracers)
@@ -525,13 +540,17 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
                                     curr_gpu.am, curr_gpu.bm, curr_gpu.cm,
                                     grid, true, ws)
         end
+
+        # Chemistry (e.g. radioactive decay for ²²²Rn)
+        tracer_names = keys(model.tracers)
+        cs_tracers = NamedTuple{tracer_names}(ntuple(_ -> rm_panels, length(tracer_names)))
+        apply_chemistry!(cs_tracers, grid, model.chemistry, dt_window)
+
         t_compute += time() - t0
 
         # ── Output ────────────────────────────────────────────────────
         t0 = time()
         sim_time = Float64(step * dt_sub)
-        tracer_names = keys(model.tracers)
-        cs_tracers = NamedTuple{tracer_names}(ntuple(_ -> rm_panels, length(tracer_names)))
         for writer in writers
             write_output!(writer, model, sim_time;
                           air_mass=m_panels, tracers=cs_tracers)

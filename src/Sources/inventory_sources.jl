@@ -160,7 +160,7 @@ function load_inventory(src::EdgarSource, grid::CubedSphereGrid{FT};
         @info "  EDGAR regridded to C$Nc"
     end
 
-    return CubedSphereEmission{FT, Matrix{FT}}(flux_panels, :co2,
+    return CubedSphereEmission(flux_panels, :co2,
         "EDGAR $(src.version) CO2 $year")
 end
 
@@ -185,11 +185,7 @@ function load_inventory(src::JenaCarboScopeSource, grid::LatitudeLongitudeGrid{F
     return load_jena_ocean_flux(filepath, grid)
 end
 
-# --- Stub for CATRINE ---
-function load_inventory(src::CATRINESource, grid::AbstractGrid; kwargs...)
-    error("CATRINESource loading not yet implemented. " *
-          "See https://www.catrine-project.eu/ for dataset details.")
-end
+# CATRINE load_inventory dispatch is in catrine_reader.jl
 
 # =====================================================================
 # EDGAR cubed-sphere binary reader (self-contained, no IO dependency)

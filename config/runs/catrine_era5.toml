@@ -1,0 +1,96 @@
+# ===========================================================================
+# CATRINE D7.1 — ERA5 Lat-Lon Configuration
+#
+# 4-tracer intercomparison: CO2, fossil CO2, SF6, 222Rn
+# Period: 1 Dec 2021 (spin-up) — 31 Dec 2023
+# Met data: ERA5, 6-hourly updates
+# Output: 3-hourly, full 3D fields (NetCDF4, Float32)
+#
+# Protocol: https://www.catrine-project.eu/
+#
+# Usage:
+#   using CUDA        # (for GPU)
+#   using AtmosTransportModel
+#   model = build_model_from_config("config/runs/catrine_era5.toml")
+#   run!(model)
+# ===========================================================================
+
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "latlon"
+met_source = "era5"
+size       = [360, 181, 88]             # >= 51000 horiz points per protocol
+longitude  = [0.0, 360.0]
+latitude   = [-90.0, 90.0]
+
+[met_data]
+driver       = "era5"
+datadirs     = [
+    "~/data/metDrivers/era5/2021",
+    "~/data/metDrivers/era5/2022",
+    "~/data/metDrivers/era5/2023",
+]
+dt           = 900                       # advection sub-step [s]
+met_interval = 21600                     # 6-hour met updates
+level_top    = 50
+level_bot    = 137
+
+# --- Initial conditions ---
+# CO2 and SF6 from LSCE inversions (1 Dec 2021 00:00 UTC)
+# fossil_co2 and rn222 start from zero
+[initial_conditions]
+file       = "~/data/catrine/initial_conditions_20211201.nc"
+co2        = "CO2"
+sf6        = "SF6"
+# fossil_co2 and rn222 omitted → start from zero
+
+# --- Tracers ---
+
+[tracers.co2]
+emission = "cams_co2"
+file     = "~/data/catrine/cams_co2_flux.nc"
+species  = "co2"
+year     = 2022
+
+[tracers.fossil_co2]
+emission = "gridfed"
+file     = "~/data/catrine/GridFEDv2024.1_monthly.nc"
+species  = "fossil_co2"
+year     = 2022
+
+[tracers.sf6]
+emission         = "edgar_sf6"
+file             = "~/data/catrine/v8.0_FT2022_GHG_SF6_2022_TOTALS_emi.nc"
+noaa_growth_file = "~/data/catrine/sf6_gr_gl.txt"
+year             = 2022
+scale_year       = 2022
+
+[tracers.rn222]
+emission   = "zhang_rn222"
+dir        = "~/data/catrine/ZHANG_Rn222/"
+chemistry  = "decay"
+half_life  = 330350.4                    # 3.8235 days in seconds
+
+# --- Chemistry (222Rn radioactive decay) ---
+[chemistry]
+type      = "composite"
+
+# --- Output (3-hourly, full 3D) ---
+[output]
+filename = "~/data/output/catrine_era5.nc"
+interval = 10800                         # 3 hours
+
+[output.fields]
+co2                = "full_3d"
+fossil_co2         = "full_3d"
+sf6                = "full_3d"
+rn222              = "full_3d"
+surface_pressure   = "surface_pressure"
+pbl_height         = "pbl_height"
+tropopause_height  = "tropopause_height"
+
+[buffering]
+strategy = "double"

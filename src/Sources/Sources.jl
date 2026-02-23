@@ -26,9 +26,11 @@ export CubedSphereEmission
 export CompositeEmission, TimeVaryingEmission, update_time_index!
 export load_edgar_co2, load_carbontracker_fluxes
 export load_jena_ocean_flux, load_gfas_fire_flux
+export load_cams_co2, load_gridfed_fossil_co2, load_edgar_sf6, load_zhang_rn222
 export regrid_emissions!, apply_surface_flux!
 export apply_emissions_window!
 export regrid_edgar_to_cs
+export M_AIR, M_CO2, M_SF6, M_RN222, molar_mass_for_species
 
 # Inventory source types and load_inventory dispatch
 export AbstractInventorySource
@@ -60,5 +62,6 @@ include("carbontracker_reader.jl")
 include("ocean_flux_reader.jl")
 include("gfas_reader.jl")
 include("inventory_sources.jl")
+include("catrine_reader.jl")
 
 end # module Sources

@@ -1,0 +1,90 @@
+# ===========================================================================
+# CATRINE D7.1 — GEOS-FP Cubed-Sphere Configuration
+#
+# 4-tracer intercomparison: CO2, fossil CO2, SF6, 222Rn
+# Period: 1 Dec 2021 (spin-up) — 31 Dec 2023
+# Met data: GEOS-FP C720, cubed-sphere mass fluxes
+# Output: 3-hourly, regridded to lat-lon (NetCDF4, Float32)
+#
+# Protocol: https://www.catrine-project.eu/
+#
+# Usage:
+#   using CUDA
+#   using AtmosTransportModel
+#   model = build_model_from_config("config/runs/catrine_geosfp_cs.toml")
+#   run!(model)
+# ===========================================================================
+
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "cubed_sphere"
+met_source = "geosfp"
+Nc         = 720
+
+[met_data]
+driver           = "geosfp_cs"
+preprocessed_dir = "~/data/geosfp_cs/preprocessed"
+start_date       = "2021-12-01"
+end_date         = "2023-12-31"
+dt               = 900                   # advection sub-step [s]
+met_interval     = 10800                 # 3-hour met updates
+Hp               = 3
+
+# --- Initial conditions ---
+[initial_conditions]
+file       = "~/data/catrine/initial_conditions_20211201.nc"
+co2        = "CO2"
+sf6        = "SF6"
+
+# --- Tracers ---
+
+[tracers.co2]
+emission = "edgar"
+edgar_version = "v8.0"
+year     = 2022
+# Note: For full CATRINE compliance, replace with cams_co2 on lat-lon.
+# CS path uses EDGAR as proxy; true CAMS fluxes need lat-lon→CS regrid.
+
+[tracers.fossil_co2]
+emission = "none"
+# GridFED not yet supported on CS; initialize from zero
+
+[tracers.sf6]
+emission         = "edgar_sf6"
+file             = "~/data/catrine/v8.0_FT2022_GHG_SF6_2022_TOTALS_emi.nc"
+noaa_growth_file = "~/data/catrine/sf6_gr_gl.txt"
+year             = 2022
+scale_year       = 2022
+
+[tracers.rn222]
+emission   = "zhang_rn222"
+dir        = "~/data/catrine/ZHANG_Rn222/"
+chemistry  = "decay"
+half_life  = 330350.4
+
+# --- Chemistry ---
+[chemistry]
+type      = "composite"
+
+# --- Output (3-hourly, regridded to lat-lon) ---
+[output]
+filename    = "~/data/output/catrine_geosfp_cs.nc"
+interval    = 10800                      # 3 hours
+output_grid = "latlon"
+Nlon        = 720
+Nlat        = 361
+
+[output.fields]
+co2                = "regrid"
+fossil_co2         = "regrid"
+sf6                = "regrid"
+rn222              = "regrid"
+surface_pressure   = "surface_pressure"
+pbl_height         = "pbl_height"
+tropopause_height  = "tropopause_height"
+
+[buffering]
+strategy = "double"

@@ -12,8 +12,11 @@ using ..Architectures: CPU, GPU, array_type
 using ..Grids: LatitudeLongitudeGrid, CubedSphereGrid
 using ..Parameters: load_parameters
 using ..Sources: AbstractSource, EdgarSource, CarbonTrackerSource, GFASSource,
-                 JenaCarboScopeSource, CATRINESource, load_inventory
-using ..Diagnostics: ColumnMeanDiagnostic, SurfaceSliceDiagnostic, RegridDiagnostic
+                 JenaCarboScopeSource, CATRINESource, load_inventory,
+                 load_cams_co2, load_gridfed_fossil_co2, load_edgar_sf6, load_zhang_rn222
+using ..Diagnostics: ColumnMeanDiagnostic, SurfaceSliceDiagnostic, RegridDiagnostic,
+                     Full3DDiagnostic, MetField2DDiagnostic
+using ..Chemistry: NoChemistry, RadioactiveDecay, CompositeChemistry
 
 """
 $(SIGNATURES)
@@ -147,12 +150,34 @@ function build_model_from_config(config::Dict)
     strategy = get(buf_cfg, "strategy", "single")
     buffering = strategy == "double" ? DoubleBuffer() : SingleBuffer()
 
+    # --- Chemistry ---
+    chemistry = _build_chemistry(config, tracer_names, FT)
+
+    # --- Initial conditions ---
+    ic_cfg = get(config, "initial_conditions", Dict())
+    if !isempty(ic_cfg) && haskey(ic_cfg, "file")
+        ic_file = expanduser(ic_cfg["file"])
+        var_map = Dict{Symbol, String}()
+        for (k, v) in ic_cfg
+            k == "file" && continue
+            k == "time_index" && continue
+            var_map[Symbol(k)] = String(v)
+        end
+        ti = get(ic_cfg, "time_index", 1)
+        if isfile(ic_file)
+            load_initial_conditions!(tracers, ic_file, grid;
+                                      variable_map=var_map, time_index=ti)
+        else
+            @warn "Initial conditions file not found: $ic_file"
+        end
+    end
+
     # --- Build model ---
     Δt = get(met_data_cfg, "dt", 900.0)
 
     return TransportModel(;
         grid, tracers, met_data=met, Δt,
-        sources, output_writers=writers, buffering)
+        sources, output_writers=writers, buffering, chemistry)
 end
 
 # =====================================================================
@@ -234,6 +259,30 @@ function _build_emission_source(tcfg::Dict, grid, ::Type{FT}) where FT
         filepath = expanduser(get(tcfg, "file", ""))
         src = JenaCarboScopeSource(; filepath)
         return load_inventory(src, grid; year, file=filepath)
+
+    # CATRINE-specific emission types
+    elseif emission == "cams_co2" || emission == "catrine_co2"
+        filepath = expanduser(get(tcfg, "file", ""))
+        species = Symbol(get(tcfg, "species", "co2"))
+        return load_cams_co2(filepath, grid; year, species)
+    elseif emission == "gridfed" || emission == "gridfed_fossil_co2"
+        filepath = expanduser(get(tcfg, "file", ""))
+        species = Symbol(get(tcfg, "species", "fossil_co2"))
+        return load_gridfed_fossil_co2(filepath, grid; year, species)
+    elseif emission == "edgar_sf6"
+        filepath = expanduser(get(tcfg, "file", ""))
+        noaa_file = expanduser(get(tcfg, "noaa_growth_file", ""))
+        scale_year = get(tcfg, "scale_year", year)
+        return load_edgar_sf6(filepath, grid; year, noaa_growth_file=noaa_file,
+                               scale_year)
+    elseif emission == "zhang_rn222"
+        dirpath = expanduser(get(tcfg, "dir", get(tcfg, "file", "")))
+        return load_zhang_rn222(dirpath, grid)
+    elseif emission == "catrine"
+        dataset = get(tcfg, "dataset", "")
+        filepath = expanduser(get(tcfg, "file", get(tcfg, "dir", "")))
+        src = CATRINESource(; dataset, filepath)
+        return load_inventory(src, grid; year)
     else
         @warn "Unknown emission type: $emission"
         return nothing
@@ -284,12 +333,66 @@ function _build_output_writers(cfg::Dict)
             Nlon_f = get(cfg, "Nlon", 720)
             Nlat_f = get(cfg, "Nlat", 361)
             fields[sym] = RegridDiagnostic(sym; Nlon=Nlon_f, Nlat=Nlat_f)
+        elseif ftype == "full_3d"
+            fields[sym] = Full3DDiagnostic(sym)
+        elseif ftype == "surface_pressure"
+            fields[sym] = MetField2DDiagnostic(:surface_pressure)
+        elseif ftype == "pbl_height"
+            fields[sym] = MetField2DDiagnostic(:pbl_height)
+        elseif ftype == "tropopause_height"
+            fields[sym] = MetField2DDiagnostic(:tropopause_height)
+        elseif startswith(string(ftype), "met_")
+            fields[sym] = MetField2DDiagnostic(Symbol(ftype[5:end]))
         end
     end
 
     writer = NetCDFOutputWriter(expanduser(filename), fields, schedule;
                                 output_grid=og)
     return AbstractOutputWriter[writer]
+end
+
+"""Build chemistry scheme from config. Supports per-tracer decay and composite."""
+function _build_chemistry(config::Dict, tracer_names::Vector{Symbol}, ::Type{FT}) where FT
+    chem_cfg = get(config, "chemistry", Dict())
+    isempty(chem_cfg) && return NoChemistry()
+
+    # Global chemistry type
+    global_type = get(chem_cfg, "type", "none")
+    global_type == "none" && return NoChemistry()
+
+    if global_type == "decay"
+        species = Symbol(get(chem_cfg, "species", "rn222"))
+        half_life = FT(get(chem_cfg, "half_life", 330350.4))
+        return RadioactiveDecay(species, half_life)
+    elseif global_type == "composite"
+        # Build from per-tracer chemistry sections
+        schemes = _build_per_tracer_chemistry(config, tracer_names, FT)
+        return isempty(schemes) ? NoChemistry() : CompositeChemistry(tuple(schemes...))
+    end
+
+    # Check per-tracer chemistry in [tracers.xxx] sections
+    schemes = _build_per_tracer_chemistry(config, tracer_names, FT)
+    if length(schemes) == 1
+        return schemes[1]
+    elseif length(schemes) > 1
+        return CompositeChemistry(tuple(schemes...))
+    end
+
+    return NoChemistry()
+end
+
+function _build_per_tracer_chemistry(config::Dict, tracer_names::Vector{Symbol}, ::Type{FT}) where FT
+    tracers_cfg = get(config, "tracers", Dict())
+    schemes = []
+    for name in tracer_names
+        tcfg = get(tracers_cfg, string(name), Dict())
+        chem = get(tcfg, "chemistry", "none")
+        if chem == "decay"
+            half_life = FT(get(tcfg, "half_life", 330350.4))
+            push!(schemes, RadioactiveDecay(name, half_life))
+        end
+    end
+    return schemes
 end
 
 export load_configuration, build_model_from_config

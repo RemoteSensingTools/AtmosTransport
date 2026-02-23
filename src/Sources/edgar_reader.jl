@@ -61,7 +61,7 @@ function load_edgar_co2(filepath::String, target_grid::LatitudeLongitudeGrid{FT}
           "regridded total=$(round(total_model, digits=1)) kg/s, " *
           "ratio=$(round(ratio, digits=4))"
 
-    return GriddedEmission{FT, typeof(flux_model)}(flux_model, :co2, "EDGAR v8.0 CO2 $year")
+    return GriddedEmission(flux_model, :co2, "EDGAR v8.0 CO2 $year")
 end
 
 """

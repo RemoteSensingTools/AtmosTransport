@@ -12,7 +12,8 @@ using ..Grids: grid_size, floattype, LatitudeLongitudeGrid, CubedSphereGrid, zno
 using ..Fields: interior, AbstractField
 using ..Architectures: array_type
 using ..Diagnostics: AbstractDiagnostic, ColumnMeanDiagnostic, SurfaceSliceDiagnostic,
-                     RegridDiagnostic, column_mean!, surface_slice!, regrid_cs_to_latlon,
+                     RegridDiagnostic, Full3DDiagnostic, MetField2DDiagnostic,
+                     column_mean!, surface_slice!, regrid_cs_to_latlon,
                      RegridMapping, build_regrid_mapping, regrid_cs_to_latlon!
 
 """
@@ -248,6 +249,46 @@ function _compute_diagnostic(diag::RegridDiagnostic, model;
     return out
 end
 
+function _compute_diagnostic(diag::Full3DDiagnostic, model;
+                             air_mass=nothing, tracers=nothing, regrid_cache=nothing)
+    grid = model.grid
+    if grid isa LatitudeLongitudeGrid
+        c = _get_tracer(model, diag.species; tracers)
+        return Array(c)
+    elseif grid isa CubedSphereGrid
+        # Return panels — will be regridded or written natively by _write_field_slice!
+        c_panels = _get_tracer_panels(model, diag.species; tracers)
+        return ntuple(p -> Array(c_panels[p]), 6)
+    end
+end
+
+function _compute_diagnostic(diag::MetField2DDiagnostic, model;
+                             air_mass=nothing, tracers=nothing, regrid_cache=nothing)
+    met = model.met_data
+    fn = diag.field_name
+
+    # Try to extract the field from met_data (NamedTuple or struct with fields)
+    if met isa NamedTuple && haskey(met, fn)
+        return Array(met[fn])
+    elseif hasproperty(met, fn)
+        return Array(getproperty(met, fn))
+    elseif met isa NamedTuple && fn === :surface_pressure && haskey(met, :ps)
+        return Array(met[:ps])
+    elseif met isa NamedTuple && fn === :pbl_height && haskey(met, :pblh)
+        return Array(met[:pblh])
+    elseif met isa NamedTuple && fn === :tropopause_height && haskey(met, :troph)
+        return Array(met[:troph])
+    else
+        @warn "MetField2DDiagnostic: field '$fn' not found in met_data — returning zeros"
+        grid = model.grid
+        if grid isa LatitudeLongitudeGrid
+            return zeros(Float32, grid.Nx, grid.Ny)
+        else
+            return zeros(Float32, grid.Nc, grid.Nc)
+        end
+    end
+end
+
 # Model accessor helpers — use `tracers` override if provided
 function _get_tracer(model, species::Symbol; tracers=nothing)
     tr = tracers !== nothing ? tracers : model.tracers
@@ -363,13 +404,21 @@ function _output_dims(field_entry, grid::LatitudeLongitudeGrid, output_grid)
         return ("lon", "lat", "time")
     elseif field_entry isa RegridDiagnostic
         return ("lon", "lat", "time")
+    elseif field_entry isa MetField2DDiagnostic
+        return ("lon", "lat", "time")
+    elseif field_entry isa Full3DDiagnostic
+        return ("lon", "lat", "lev", "time")
     else
         return ("lon", "lat", "lev", "time")
     end
 end
 
 function _output_dims(field_entry, grid::CubedSphereGrid, output_grid::LatLonOutputGrid)
-    return ("lon", "lat", "time")
+    if field_entry isa Full3DDiagnostic
+        return ("lon", "lat", "lev", "time")
+    else
+        return ("lon", "lat", "time")
+    end
 end
 
 function _output_dims(field_entry, grid::CubedSphereGrid, output_grid)

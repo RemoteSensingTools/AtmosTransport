@@ -22,6 +22,18 @@ struct CubedSphereEmission{FT, A <: AbstractMatrix{FT}} <: AbstractGriddedEmissi
     species     :: Symbol
     "human-readable label"
     label       :: String
+    "molar mass of emitted species [kg/mol]"
+    molar_mass  :: FT
+end
+
+"""
+    CubedSphereEmission(flux_panels, species, label; molar_mass=molar_mass_for_species(species))
+
+Construct a `CubedSphereEmission`. Molar mass defaults based on species name.
+"""
+function CubedSphereEmission(flux_panels::NTuple{6, A}, species::Symbol, label::String;
+                             molar_mass::Real=molar_mass_for_species(species)) where {FT, A <: AbstractMatrix{FT}}
+    CubedSphereEmission{FT, A}(flux_panels, species, label, FT(molar_mass))
 end
 
 # ---------------------------------------------------------------------------
@@ -50,7 +62,7 @@ Works on both CPU and GPU via KernelAbstractions dispatch.
 function apply_surface_flux!(rm_panels::NTuple{6}, source::CubedSphereEmission{FT},
                               area_panels::NTuple{6},
                               dt, Nc::Int, Hp::Int) where FT
-    mol_ratio = FT(1e6 * M_AIR / M_CO2)
+    mol_ratio = FT(1e6 * M_AIR / source.molar_mass)
     backend = get_backend(rm_panels[1])
     k! = _emit_cs_kernel!(backend, 256)
     for p in 1:6

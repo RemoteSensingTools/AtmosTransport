@@ -13,6 +13,7 @@
 # ---------------------------------------------------------------------------
 
 using KernelAbstractions: @kernel, @index, @Const, synchronize, get_backend
+using Printf: @sprintf
 
 # ---- helpers ---------------------------------------------------------------
 
@@ -398,6 +399,151 @@ end
     end
 end
 
+# ---- Column-Sequential Z-Advection Kernel ---------------------------------
+#
+# Processes levels sequentially within each (i,j) column, preventing
+# negative mass by clamping gamma (= cm/m) to [-1, 1].  This is necessary
+# when the per-face Z-CFL exceeds 0.5, because two-sided outflow from a
+# single cell can drain more mass than the cell contains.
+#
+# The mass update m_new = m + cm[k] - cm[k+1] is exact regardless of gamma
+# clamping.  Only the TRACER flux uses gamma, so clamping reduces the tracer
+# transport to first-order upwind at extreme-CFL cells while keeping the
+# mass budget perfectly balanced.
+
+@kernel function _massflux_z_cs_column_kernel!(rm, m, @Const(cm), Hp, Nz, use_limiter)
+    i, j = @index(Global, NTuple)
+    @inbounds begin
+        ii = Hp + i
+        jj = Hp + j
+        FT = eltype(rm)
+
+        # Process levels top to bottom.
+        # At each level k we compute the tracer flux through the TOP interface
+        # (cm[i,j,k]) and through the BOTTOM interface (cm[i,j,k+1]), then
+        # update rm and m in-place.  Because we process sequentially, level
+        # k-1's mass has already been updated when we compute the top flux.
+        for k in 1:Nz
+            # ── Slopes for the second-order correction ──────────────────
+            # Slope at k (needs k-1 and k+1)
+            # Safe mixing ratio: guard against m ≤ 0 from in-place updates
+            sz_k = if k > 1 && k < Nz
+                _m = m[ii, jj, k - 1]; ckm = _m > zero(FT) ? rm[ii, jj, k - 1] / _m : zero(FT)
+                _m = m[ii, jj, k];     ck  = _m > zero(FT) ? rm[ii, jj, k]     / _m : zero(FT)
+                _m = m[ii, jj, k + 1]; ckp = _m > zero(FT) ? rm[ii, jj, k + 1] / _m : zero(FT)
+                sc = (ckp - ckm) / FT(2)
+                if use_limiter
+                    sc = minmod_device(sc, FT(2) * (ckp - ck), FT(2) * (ck - ckm))
+                end
+                s = m[ii, jj, k] * sc
+                if use_limiter
+                    s = max(min(s, rm[ii, jj, k]), -rm[ii, jj, k])
+                end
+                s
+            else
+                zero(FT)
+            end
+
+            # Slope at k-1 (needs k-2 and k)
+            sz_km = if k > 2 && k - 1 < Nz
+                _m = m[ii, jj, k - 2]; ckmm = _m > zero(FT) ? rm[ii, jj, k - 2] / _m : zero(FT)
+                _m = m[ii, jj, k - 1]; ckm  = _m > zero(FT) ? rm[ii, jj, k - 1] / _m : zero(FT)
+                _m = m[ii, jj, k];     ck   = _m > zero(FT) ? rm[ii, jj, k]     / _m : zero(FT)
+                sc = (ck - ckmm) / FT(2)
+                if use_limiter
+                    sc = minmod_device(sc, FT(2) * (ck - ckm), FT(2) * (ckm - ckmm))
+                end
+                s = m[ii, jj, k - 1] * sc
+                if use_limiter
+                    s = max(min(s, rm[ii, jj, k - 1]), -rm[ii, jj, k - 1])
+                end
+                s
+            else
+                zero(FT)
+            end
+
+            # Slope at k+1 (needs k and k+2)
+            sz_kp = if k < Nz - 1 && k + 1 > 1
+                _m = m[ii, jj, k];     ck   = _m > zero(FT) ? rm[ii, jj, k]     / _m : zero(FT)
+                _m = m[ii, jj, k + 1]; ckp  = _m > zero(FT) ? rm[ii, jj, k + 1] / _m : zero(FT)
+                _m = m[ii, jj, k + 2]; ckpp = _m > zero(FT) ? rm[ii, jj, k + 2] / _m : zero(FT)
+                sc = (ckpp - ck) / FT(2)
+                if use_limiter
+                    sc = minmod_device(sc, FT(2) * (ckpp - ckp), FT(2) * (ckp - ck))
+                end
+                s = m[ii, jj, k + 1] * sc
+                if use_limiter
+                    s = max(min(s, rm[ii, jj, k + 1]), -rm[ii, jj, k + 1])
+                end
+                s
+            else
+                zero(FT)
+            end
+
+            # ── Tracer flux at top interface (k) ────────────────────────
+            flux_top = if k > 1
+                cm_t = cm[i, j, k]
+                if cm_t > zero(FT)
+                    md = m[ii, jj, k - 1]
+                    gamma = md > zero(FT) ? clamp(cm_t / md, zero(FT), one(FT)) : zero(FT)
+                    gamma * (rm[ii, jj, k - 1] + (one(FT) - gamma) * sz_km)
+                elseif cm_t < zero(FT)
+                    md = m[ii, jj, k]
+                    gamma = md > zero(FT) ? clamp(cm_t / md, -one(FT), zero(FT)) : zero(FT)
+                    gamma * (rm[ii, jj, k] - (one(FT) + gamma) * sz_k)
+                else
+                    zero(FT)
+                end
+            else
+                zero(FT)
+            end
+
+            # ── Tracer flux at bottom interface (k+1) ───────────────────
+            flux_bot = if k < Nz
+                cm_b = cm[i, j, k + 1]
+                if cm_b > zero(FT)
+                    md = m[ii, jj, k]
+                    gamma = md > zero(FT) ? clamp(cm_b / md, zero(FT), one(FT)) : zero(FT)
+                    gamma * (rm[ii, jj, k] + (one(FT) - gamma) * sz_k)
+                elseif cm_b < zero(FT)
+                    md = m[ii, jj, k + 1]
+                    gamma = md > zero(FT) ? clamp(cm_b / md, -one(FT), zero(FT)) : zero(FT)
+                    gamma * (rm[ii, jj, k + 1] - (one(FT) + gamma) * sz_kp)
+                else
+                    zero(FT)
+                end
+            else
+                zero(FT)
+            end
+
+            # ── Update rm and m IN-PLACE ────────────────────────────────
+            rm[ii, jj, k] = rm[ii, jj, k] + flux_top - flux_bot
+            m[ii, jj, k]  = m[ii, jj, k]  + cm[i, j, k] - cm[i, j, k + 1]
+        end
+    end
+end
+
+"""
+$(SIGNATURES)
+
+Column-sequential Z-direction mass-flux advection for a single cubed-sphere
+panel.  Unlike `advect_z_cs_panel!` (which parallelises over k), this kernel
+processes levels sequentially within each column and clamps gamma to [-1,1],
+preventing negative-mass instabilities at high vertical CFL.
+
+No scratch buffers or subcycling required — a single pass per panel suffices.
+"""
+function advect_z_cs_panel_column!(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
+                                   cm::AbstractArray{FT,3},
+                                   Hp::Int, Nc::Int, Nz::Int,
+                                   use_limiter::Bool) where FT
+    backend = get_backend(rm)
+    k! = _massflux_z_cs_column_kernel!(backend, 256)
+    k!(rm, m, cm, Hp, Nz, use_limiter; ndrange=(Nc, Nc))
+    synchronize(backend)
+    return nothing
+end
+
 # ---- Panel-Level Advection Functions ---------------------------------------
 
 """
@@ -469,6 +615,82 @@ function _copy_interior!(dst, src, Hp, Nc, Nz)
     synchronize(backend)
 end
 
+# ---- CFL Kernels for Cubed-Sphere -----------------------------------------
+#
+# Per-face Courant numbers for CFL-adaptive subcycling.
+# Unlike the lat-lon kernels, these account for the halo offset Hp between
+# the interior-only flux arrays (am/bm) and the haloed mass array (m).
+
+@kernel function _cfl_x_cs_kernel!(cfl, @Const(am), @Const(m), Hp)
+    i, j, k = @index(Global, NTuple)
+    FT = eltype(m)
+    @inbounds begin
+        ii = Hp + i
+        jj = Hp + j
+        md = am[i, j, k] >= zero(FT) ? m[ii - 1, jj, k] : m[ii, jj, k]
+        cfl[i, j, k] = md > zero(FT) ? abs(am[i, j, k]) / md : zero(FT)
+    end
+end
+
+@kernel function _cfl_y_cs_kernel!(cfl, @Const(bm), @Const(m), Hp)
+    i, j, k = @index(Global, NTuple)
+    FT = eltype(m)
+    @inbounds begin
+        ii = Hp + i
+        jj = Hp + j
+        md = bm[i, j, k] >= zero(FT) ? m[ii, jj - 1, k] : m[ii, jj, k]
+        cfl[i, j, k] = md > zero(FT) ? abs(bm[i, j, k]) / md : zero(FT)
+    end
+end
+
+@kernel function _cfl_z_cs_kernel!(cfl, @Const(cm), @Const(m), Hp, Nz)
+    i, j, k = @index(Global, NTuple)
+    FT = eltype(m)
+    @inbounds begin
+        ii = Hp + i
+        jj = Hp + j
+        if k >= 2 && k <= Nz
+            md = cm[i, j, k] > zero(FT) ? m[ii, jj, k - 1] : m[ii, jj, k]
+            cfl[i, j, k] = md > zero(FT) ? abs(cm[i, j, k]) / md : zero(FT)
+        else
+            cfl[i, j, k] = zero(FT)
+        end
+    end
+end
+
+"""Maximum per-face CFL in x-direction for one CS panel."""
+function max_cfl_x_cs(am::AbstractArray{FT,3}, m::AbstractArray{FT,3},
+                      cfl_arr::AbstractArray{FT,3}, Hp::Int) where FT
+    backend = get_backend(m)
+    fill!(cfl_arr, zero(FT))
+    k! = _cfl_x_cs_kernel!(backend, 256)
+    k!(cfl_arr, am, m, Hp; ndrange=size(am))
+    synchronize(backend)
+    return FT(maximum(cfl_arr))
+end
+
+"""Maximum per-face CFL in y-direction for one CS panel."""
+function max_cfl_y_cs(bm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
+                      cfl_arr::AbstractArray{FT,3}, Hp::Int) where FT
+    backend = get_backend(m)
+    fill!(cfl_arr, zero(FT))
+    k! = _cfl_y_cs_kernel!(backend, 256)
+    k!(cfl_arr, bm, m, Hp; ndrange=size(bm))
+    synchronize(backend)
+    return FT(maximum(cfl_arr))
+end
+
+"""Maximum per-face CFL in z-direction for one CS panel."""
+function max_cfl_z_cs(cm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
+                      cfl_arr::AbstractArray{FT,3}, Hp::Int, Nz::Int) where FT
+    backend = get_backend(m)
+    fill!(cfl_arr, zero(FT))
+    k! = _cfl_z_cs_kernel!(backend, 256)
+    k!(cfl_arr, cm, m, Hp, Nz; ndrange=size(cm))
+    synchronize(backend)
+    return FT(maximum(cfl_arr))
+end
+
 # ---- Workspace for Cubed-Sphere Mass-Flux Advection ------------------------
 
 """
@@ -476,6 +698,7 @@ $(TYPEDEF)
 
 Pre-allocated buffers for cubed-sphere mass-flux advection.
 One set of haloed buffers is reused across all panels (sequential processing).
+CFL buffers are sized to the largest flux array per direction.
 
 $(FIELDS)
 """
@@ -484,6 +707,12 @@ struct CubedSphereMassFluxWorkspace{FT, A3 <: AbstractArray{FT,3}}
     rm_buf :: A3
     "air mass buffer (haloed, Nc+2Hp × Nc+2Hp × Nz)"
     m_buf  :: A3
+    "CFL scratch for x-direction (Nc+1 × Nc × Nz)"
+    cfl_x  :: A3
+    "CFL scratch for y-direction (Nc × Nc+1 × Nz)"
+    cfl_y  :: A3
+    "CFL scratch for z-direction (Nc × Nc × Nz+1)"
+    cfl_z  :: A3
 end
 
 """
@@ -491,11 +720,21 @@ $(SIGNATURES)
 
 Allocate workspace buffers for cubed-sphere mass-flux advection.
 `ref_panel` is a haloed panel array whose size and device type are matched.
+`Nc` is the number of interior cells per panel edge (required so CFL scratch
+arrays are sized exactly to the flux dimensions — oversized arrays caused
+`maximum()` to read uninitialized GPU memory, producing garbage CFL values).
 """
-function allocate_cs_massflux_workspace(ref_panel::AbstractArray{FT,3}) where FT
+function allocate_cs_massflux_workspace(ref_panel::AbstractArray{FT,3}, Nc::Int) where FT
+    Nz = size(ref_panel, 3)
+    # CFL buffers match the exact flux array dimensions:
+    #   x-flux: (Nc+1, Nc, Nz),  y-flux: (Nc, Nc+1, Nz),  z-flux: (Nc, Nc, Nz+1)
+    cfl_x = similar(ref_panel, FT, Nc + 1, Nc, Nz)
+    cfl_y = similar(ref_panel, FT, Nc, Nc + 1, Nz)
+    cfl_z = similar(ref_panel, FT, Nc, Nc, Nz + 1)
     CubedSphereMassFluxWorkspace{FT, typeof(ref_panel)}(
         similar(ref_panel),
         similar(ref_panel),
+        cfl_x, cfl_y, cfl_z,
     )
 end
 
@@ -505,9 +744,11 @@ end
 $(SIGNATURES)
 
 Perform a full Strang-split mass-flux advection step (X-Y-Z-Z-Y-X) on a
-`CubedSphereGrid`. Each directional sweep:
-1. Fills panel halos on rm and m
-2. Loops over 6 panels, applying the panel-local advection kernel
+`CubedSphereGrid` with CFL-adaptive subcycling per direction.
+
+Each directional sweep computes the maximum per-face CFL across all 6 panels.
+When CFL exceeds `cfl_limit`, the sweep is subcycled: fluxes are divided by
+the subcycle count and the advection kernel is applied that many times.
 
 Arguments:
 - `rm_panels`: NTuple{6, Array} of tracer mass (haloed)
@@ -518,54 +759,111 @@ Arguments:
 - `grid`: CubedSphereGrid
 - `use_limiter`: enable minmod slope limiter
 - `ws`: CubedSphereMassFluxWorkspace
+- `cfl_limit`: maximum allowed CFL per sweep (default 0.95)
 """
 function strang_split_massflux!(rm_panels::NTuple{6},
                                 m_panels::NTuple{6},
                                 am_panels::NTuple{6},
                                 bm_panels::NTuple{6},
                                 cm_panels::NTuple{6},
-                                grid::CubedSphereGrid,
+                                grid::CubedSphereGrid{FT},
                                 use_limiter::Bool,
-                                ws::CubedSphereMassFluxWorkspace)
-    Nc = grid.Nc
-    Nz = grid.Nz
-    Hp = grid.Hp
-
-    # X → Y → Z → Z → Y → X (Strang splitting)
-    _sweep_x!(rm_panels, m_panels, am_panels, grid, use_limiter, ws)
-    _sweep_y!(rm_panels, m_panels, bm_panels, grid, use_limiter, ws)
-    _sweep_z!(rm_panels, m_panels, cm_panels, grid, use_limiter, ws)
-    _sweep_z!(rm_panels, m_panels, cm_panels, grid, use_limiter, ws)
-    _sweep_y!(rm_panels, m_panels, bm_panels, grid, use_limiter, ws)
-    _sweep_x!(rm_panels, m_panels, am_panels, grid, use_limiter, ws)
-
+                                ws::CubedSphereMassFluxWorkspace;
+                                cfl_limit::FT = FT(0.95)) where FT
+    # X → Y → Z_full → Y → X (modified Strang splitting)
+    # The Z-sweep is applied once with doubled cm instead of twice with half-step cm.
+    # This avoids intermediate negative mass that occurs when two Z-sweeps each
+    # have CFL >> 1 in thin upper-atmosphere layers (GEOS L72 has 25 levels above
+    # 10 hPa with ≤1 Pa thickness).  The combined mass update gives the physically
+    # correct target mass, which should always be positive.
+    _sweep_x!(rm_panels, m_panels, am_panels, grid, use_limiter, ws; cfl_limit)
+    _sweep_y!(rm_panels, m_panels, bm_panels, grid, use_limiter, ws; cfl_limit)
+    for p in 1:6; cm_panels[p] .*= FT(2); end
+    _sweep_z!(rm_panels, m_panels, cm_panels, grid, use_limiter)
+    for p in 1:6; cm_panels[p] .*= FT(1) / FT(2); end
+    _sweep_y!(rm_panels, m_panels, bm_panels, grid, use_limiter, ws; cfl_limit)
+    _sweep_x!(rm_panels, m_panels, am_panels, grid, use_limiter, ws; cfl_limit)
     return nothing
 end
 
-function _sweep_x!(rm_panels, m_panels, am_panels, grid, use_limiter, ws)
+function _sweep_x!(rm_panels, m_panels, am_panels, grid, use_limiter, ws;
+                   cfl_limit = eltype(ws.rm_buf)(0.95))
+    FT = eltype(ws.rm_buf)
+    Hp = grid.Hp
     fill_panel_halos!(rm_panels, grid)
     fill_panel_halos!(m_panels, grid)
+
+    # Per-face CFL across all panels
+    max_cfl = zero(FT)
     for p in 1:6
-        advect_x_cs_panel!(rm_panels[p], m_panels[p], am_panels[p],
-                           ws.rm_buf, ws.m_buf,
-                           grid.Hp, grid.Nc, use_limiter)
+        max_cfl = max(max_cfl, max_cfl_x_cs(am_panels[p], m_panels[p], ws.cfl_x, Hp))
     end
+    n_sub = max(1, ceil(Int, max_cfl / cfl_limit))
+    if n_sub > 100
+        @warn "Extreme CFL subcycling in x-sweep — likely uninitialized data or bad fluxes" max_cfl n_sub
+        n_sub = 100
+    end
+
+    if n_sub > 1
+        inv = FT(1) / FT(n_sub)
+        for p in 1:6; am_panels[p] .*= inv; end
+    end
+    for _ in 1:n_sub
+        for p in 1:6
+            advect_x_cs_panel!(rm_panels[p], m_panels[p], am_panels[p],
+                               ws.rm_buf, ws.m_buf, grid.Hp, grid.Nc, use_limiter)
+        end
+    end
+    if n_sub > 1
+        fwd = FT(n_sub)
+        for p in 1:6; am_panels[p] .*= fwd; end
+    end
+    return n_sub
 end
 
-function _sweep_y!(rm_panels, m_panels, bm_panels, grid, use_limiter, ws)
+function _sweep_y!(rm_panels, m_panels, bm_panels, grid, use_limiter, ws;
+                   cfl_limit = eltype(ws.rm_buf)(0.95))
+    FT = eltype(ws.rm_buf)
+    Hp = grid.Hp
     fill_panel_halos!(rm_panels, grid)
     fill_panel_halos!(m_panels, grid)
+
+    max_cfl = zero(FT)
     for p in 1:6
-        advect_y_cs_panel!(rm_panels[p], m_panels[p], bm_panels[p],
-                           ws.rm_buf, ws.m_buf,
-                           grid.Hp, grid.Nc, use_limiter)
+        max_cfl = max(max_cfl, max_cfl_y_cs(bm_panels[p], m_panels[p], ws.cfl_y, Hp))
     end
+    n_sub = max(1, ceil(Int, max_cfl / cfl_limit))
+    if n_sub > 100
+        @warn "Extreme CFL subcycling in y-sweep — likely uninitialized data or bad fluxes" max_cfl n_sub
+        n_sub = 100
+    end
+
+    if n_sub > 1
+        inv = FT(1) / FT(n_sub)
+        for p in 1:6; bm_panels[p] .*= inv; end
+    end
+    for _ in 1:n_sub
+        for p in 1:6
+            advect_y_cs_panel!(rm_panels[p], m_panels[p], bm_panels[p],
+                               ws.rm_buf, ws.m_buf, grid.Hp, grid.Nc, use_limiter)
+        end
+    end
+    if n_sub > 1
+        fwd = FT(n_sub)
+        for p in 1:6; bm_panels[p] .*= fwd; end
+    end
+    return n_sub
 end
 
-function _sweep_z!(rm_panels, m_panels, cm_panels, grid, use_limiter, ws)
+function _sweep_z!(rm_panels, m_panels, cm_panels, grid, use_limiter)
+    Hp = grid.Hp
+    Nc = grid.Nc
+    Nz = grid.Nz
+    # Column-sequential kernel: processes k=1..Nz sequentially per column,
+    # clamping gamma to [-1,1] to prevent negative mass.  No subcycling needed.
     for p in 1:6
-        advect_z_cs_panel!(rm_panels[p], m_panels[p], cm_panels[p],
-                           ws.rm_buf, ws.m_buf,
-                           grid.Hp, grid.Nc, grid.Nz, use_limiter)
+        advect_z_cs_panel_column!(rm_panels[p], m_panels[p], cm_panels[p],
+                                  Hp, Nc, Nz, use_limiter)
     end
+    return 1
 end

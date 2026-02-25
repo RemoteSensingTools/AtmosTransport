@@ -110,7 +110,8 @@ function find_era5_files(datadirs)
     for datadir in datadirs
         isdir(datadir) || continue
         for f in readdir(datadir)
-            if startswith(f, "era5_ml_") && endswith(f, ".nc") && !contains(f, "_tmp")
+            # Require 8-digit date (YYYYMMDD) to exclude monthly aggregates like era5_ml_202306.nc
+            if match(r"^era5_ml_\d{8}\.nc$", f) !== nothing && !contains(f, "_tmp")
                 push!(files, joinpath(datadir, f))
             end
         end

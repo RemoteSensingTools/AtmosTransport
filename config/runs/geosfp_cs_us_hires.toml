@@ -1,0 +1,60 @@
+# ===========================================================================
+# GEOS-FP C720 Cubed-Sphere + EDGAR CO2 — Global 0.25° Output
+#
+# Regrids the C720 cubed-sphere (~12.5 km) to a 0.25° global lat-lon grid.
+#
+# Usage:
+#   using AtmosTransport
+#   model = build_model_from_config("config/runs/geosfp_cs_us_hires.toml")
+#   run!(model)
+# ===========================================================================
+
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "cubed_sphere"
+Nc         = 720
+met_source = "geosfp"
+
+[met_data]
+driver           = "geosfp_cs"
+netcdf_dir       = "/home/cfranken/data/geosfp_cs"
+start_date       = "2024-06-01"
+end_date         = "2024-06-03"
+dt               = 900                     # advection sub-step [s]
+met_interval     = 3600                    # met update interval [s]
+Hp               = 3                       # halo width
+
+[tracers.co2]
+emission       = "edgar"
+edgar_version  = "v8.0"
+year           = 2022
+edgar_file     = "/scratch/cfranken/edgar_cs_c720_float32.bin"
+
+[diffusion]
+type       = "boundary_layer"
+Kz_max     = 100.0                        # Pa²/s maximum diffusivity
+H_scale    = 8.0                          # e-folding depth in levels from surface
+
+[output]
+filename     = "/scratch/cfranken/geosfp_cs_global_025_diff.bin"
+format       = "binary"                    # "netcdf" (default) or "binary"
+auto_convert = true                        # convert .bin → .nc after simulation
+interval     = 3600                        # output every hour
+output_grid  = "latlon"
+Nlon         = 1440                        # 0.25° global
+Nlat         = 720                         # 0.25° global
+lon_range    = [-180.0, 180.0]
+lat_range    = [-90.0, 90.0]
+
+[output.fields]
+co2 = "column_mean"
+
+[output.fields.co2_sfc]
+type    = "surface_slice"
+species = "co2"
+
+[buffering]
+strategy = "double"

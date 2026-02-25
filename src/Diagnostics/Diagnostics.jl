@@ -30,8 +30,8 @@ using KernelAbstractions: @kernel, @index, @Const, @atomic, synchronize, get_bac
 using ..Grids: AbstractGrid, LatitudeLongitudeGrid, CubedSphereGrid
 
 export AbstractDiagnostic, ColumnMeanDiagnostic, SurfaceSliceDiagnostic, RegridDiagnostic
-export Full3DDiagnostic, MetField2DDiagnostic
-export column_mean!, surface_slice!, compute_diagnostics!
+export Full3DDiagnostic, MetField2DDiagnostic, SigmaLevelDiagnostic
+export column_mean!, surface_slice!, sigma_level_slice!, compute_diagnostics!
 export regrid_cs_to_latlon, regrid_cs_to_latlon!, RegridMapping, build_regrid_mapping
 
 # --- Abstract diagnostic types ---
@@ -111,6 +111,21 @@ $(FIELDS)
 struct MetField2DDiagnostic <: AbstractDiagnostic
     "met field identifier (e.g. :surface_pressure, :pbl_height, :tropopause_height)"
     field_name :: Symbol
+end
+
+"""
+$(TYPEDEF)
+
+Tracer mixing ratio at a target sigma level (pressure fraction of surface pressure).
+For sigma=0.8, extracts at the level where p ≈ 0.8 × p_surface (~800 hPa).
+
+$(FIELDS)
+"""
+struct SigmaLevelDiagnostic <: AbstractDiagnostic
+    "tracer symbol (e.g. :co2)"
+    species :: Symbol
+    "target sigma level (0..1, where 1 = surface)"
+    sigma   :: Float64
 end
 
 include("column_diagnostics.jl")

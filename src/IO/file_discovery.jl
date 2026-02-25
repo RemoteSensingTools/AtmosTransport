@@ -47,19 +47,36 @@ function find_preprocessed_cs_files(dir::String, start_date::Date, end_date::Dat
 end
 
 """
-    find_geosfp_cs_files(datadir, start_date, end_date) → Vector{String}
+    find_geosfp_cs_files(datadir, start_date, end_date; product="geosfp_c720") → Vector{String}
 
-Find raw GEOS-FP cubed-sphere NetCDF files (hourly `tavg_1hr_ctm_c0720_v72` files)
-organized in `datadir/YYYYMMDD/` subdirectories.
+Find raw GEOS cubed-sphere NetCDF files in `datadir`.
+
+For `:hourly` products (GEOS-FP): expects `datadir/YYYYMMDD/*.nc4` (24 files/day).
+For `:daily` products (GEOS-IT): expects `datadir/YYYYMMDD/GEOSIT.*.nc` (1 file/day).
 """
-function find_geosfp_cs_files(datadir::String, start_date::Date, end_date::Date)
+function find_geosfp_cs_files(datadir::String, start_date::Date, end_date::Date;
+                              product::String = "geosfp_c720")
+    info = GEOS_CS_PRODUCTS[product]
     files = String[]
-    for date in start_date:Day(1):end_date
-        daydir = joinpath(datadir, Dates.format(date, "yyyymmdd"))
-        isdir(daydir) || continue
-        for f in sort(readdir(daydir))
-            if contains(f, "tavg_1hr_ctm_c0720_v72") && endswith(f, ".nc4")
-                push!(files, joinpath(daydir, f))
+    if info.layout === :hourly
+        for date in start_date:Day(1):end_date
+            daydir = joinpath(datadir, Dates.format(date, "yyyymmdd"))
+            isdir(daydir) || continue
+            for f in sort(readdir(daydir))
+                if contains(f, "tavg_1hr_ctm_c0720_v72") && endswith(f, ".nc4")
+                    push!(files, joinpath(daydir, f))
+                end
+            end
+        end
+    else  # :daily
+        tag = "CTM_A1.C$(info.Nc)"
+        for date in start_date:Day(1):end_date
+            daydir = joinpath(datadir, Dates.format(date, "yyyymmdd"))
+            isdir(daydir) || continue
+            for f in sort(readdir(daydir))
+                if contains(f, tag) && endswith(f, ".nc")
+                    push!(files, joinpath(daydir, f))
+                end
             end
         end
     end

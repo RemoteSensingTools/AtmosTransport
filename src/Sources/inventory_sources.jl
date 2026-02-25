@@ -131,7 +131,8 @@ end
 # --- EDGAR on cubed-sphere grid ---
 function load_inventory(src::EdgarSource, grid::CubedSphereGrid{FT};
                         year::Int=2022, file::String=src.filepath,
-                        binary_file::String="") where FT
+                        binary_file::String="",
+                        file_lons=nothing, file_lats=nothing) where FT
     Nc = grid.Nc
     ft_tag = FT == Float32 ? "float32" : "float64"
 
@@ -156,7 +157,8 @@ function load_inventory(src::EdgarSource, grid::CubedSphereGrid{FT};
         edgar_lats = FT.(ds["lat"][:])
         edgar_flux = FT.(replace(ds["emissions"][:, :], missing => zero(FT)))
         close(ds)
-        flux_panels = regrid_edgar_to_cs(edgar_flux, edgar_lons, edgar_lats, grid)
+        flux_panels = regrid_edgar_to_cs(edgar_flux, edgar_lons, edgar_lats, grid;
+                                          file_lons, file_lats)
         @info "  EDGAR regridded to C$Nc"
     end
 

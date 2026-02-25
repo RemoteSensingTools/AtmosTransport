@@ -34,6 +34,7 @@ export Δx, Δy, Δz, level_thickness
 export topology, halo_size, grid_size, floattype
 export ReducedGridSpec, compute_reduced_grid
 export allocate_cubed_sphere_field, fill_panel_halos!
+export merge_upper_levels
 
 include("topology.jl")
 include("location_types.jl")

@@ -1,0 +1,61 @@
+# ===========================================================================
+# GEOS-IT C180 Cubed-Sphere — June 2023 Comparison Run
+#
+# For intercomparison with ERA5 (~1° lat-lon).
+# Uses preprocessed binary files for fast mmap I/O. Falls back to raw
+# NetCDF if preprocessed_dir is empty or missing.
+#
+# Preprocessing:
+#   PRODUCT=geosit_c180 GEOSFP_DATA_DIR=~/data/geosit_c180 \
+#   OUTDIR=~/data/geosit_c180/preprocessed GEOSFP_START=2023-06-01 \
+#   GEOSFP_END=2023-06-30 julia --project=. scripts/preprocess_geosfp_cs.jl
+#
+# Usage:
+#   julia --project=. scripts/run.jl config/runs/geosit_c180_june2023.toml
+# ===========================================================================
+
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "cubed_sphere"
+Nc         = 180
+met_source = "geosfp"
+
+[met_data]
+driver           = "geosfp_cs"
+product          = "geosit_c180"
+# preprocessed_dir = "~/data/geosit_c180/preprocessed"  # stale: pre-dates panel connectivity fix
+netcdf_dir       = "~/data/geosit_c180"
+start_date       = "2023-06-01"
+end_date         = "2023-06-30"
+dt               = 300
+met_interval     = 3600
+mass_flux_dt     = 450       # GEOS-IT C180 stores per-dynamics-step fluxes (dt_dyn ≈ 450 s)
+Hp               = 3
+
+[tracers.co2]
+emission      = "edgar"
+edgar_version = "v8.0"
+year          = 2022
+
+[output]
+filename    = "~/data/output/geosit_c180_june2023_05deg.nc"
+interval    = 7200
+output_grid = "latlon"
+Nlon        = 720
+Nlat        = 361
+
+[output.fields]
+co2_column_mean = {type = "column_mean", species = "co2"}
+co2_surface = {type = "surface_slice", species = "co2"}
+co2_800hPa = {type = "sigma_level", species = "co2", sigma = 0.8}
+
+[diffusion]
+type       = "boundary_layer"
+Kz_max     = 100.0
+H_scale    = 8.0
+
+[buffering]
+strategy = "single"

@@ -18,8 +18,9 @@ using ..Advection: MassFluxWorkspace, allocate_massflux_workspace,
                    allocate_cs_massflux_workspace,
                    strang_split_massflux!, compute_air_mass!,
                    compute_mass_fluxes!, compute_air_mass_panel!, compute_cm_panel!,
-                   build_geometry_cache
-using ..Diffusion: DiffusionWorkspace, diffuse_gpu!
+                   build_geometry_cache, max_cfl_x_cs, max_cfl_y_cs
+using ..Diffusion: DiffusionWorkspace, diffuse_gpu!, diffuse_cs_panels!,
+                   BoundaryLayerDiffusion, build_diffusion_coefficients
 using ..Sources: AbstractSource, apply_surface_flux!, AbstractGriddedEmission,
                  CubedSphereEmission, GriddedEmission, apply_emissions_window!,
                  M_AIR, M_CO2, M_SF6, M_RN222
@@ -27,7 +28,7 @@ using ..Chemistry: apply_chemistry!
 using ..IO: AbstractMetDriver, AbstractRawMetDriver, AbstractMassFluxMetDriver,
             total_windows, window_dt, steps_per_window, load_met_window!,
             LatLonMetBuffer, LatLonCPUBuffer, CubedSphereMetBuffer, CubedSphereCPUBuffer,
-            upload!, AbstractOutputWriter, write_output!
+            upload!, AbstractOutputWriter, write_output!, finalize_output!
 using ..Diagnostics: column_mean!, surface_slice!
 using Printf
 
@@ -217,6 +218,10 @@ function _run_loop!(model, grid::LatitudeLongitudeGrid{FT},
     wall_total = time() - wall_start
     @info @sprintf("Simulation complete: %d steps, %.1fs (%.2fs/win)",
                    step, wall_total, wall_total / n_win)
+
+    for writer in writers
+        finalize_output!(writer)
+    end
     return model
 end
 
@@ -329,6 +334,10 @@ function _run_loop!(model, grid::LatitudeLongitudeGrid{FT},
     wall_total = time() - wall_start
     @info @sprintf("Simulation complete: %d steps, %.1fs (%.2fs/win)",
                    step, wall_total, wall_total / n_win)
+
+    for writer in writers
+        finalize_output!(writer)
+    end
     return model
 end
 
@@ -354,11 +363,12 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
     # Build geometry cache + workspace
     ref_panel = AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz))
     gc = build_geometry_cache(grid, ref_panel)
-    ws = allocate_cs_massflux_workspace(ref_panel)
+    ws = allocate_cs_massflux_workspace(ref_panel, Nc)
 
     # Allocate panel arrays
-    rm_panels = allocate_cubed_sphere_field(grid, Nz)
-    m_panels  = allocate_cubed_sphere_field(grid, Nz)
+    rm_panels     = allocate_cubed_sphere_field(grid, Nz)
+    m_panels      = allocate_cubed_sphere_field(grid, Nz)
+    m_ref_panels  = allocate_cubed_sphere_field(grid, Nz)   # reference air mass for sub-step reset
 
     # GPU met buffers
     delp_gpu = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz)), 6)
@@ -375,13 +385,29 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
     # Pre-upload emission flux panels to device
     emi_data = _prepare_cs_emissions(sources, grid, arch)
 
+    # Diffusion timestep = full window duration
+    dt_window = FT(dt_sub * n_sub)
+
+    # Build diffusion workspace (pre-computed tridiagonal factors on device)
+    dw = if model.diffusion isa BoundaryLayerDiffusion
+        diff = model.diffusion
+        DiffusionWorkspace(grid, FT(diff.Kz_max), FT(diff.H_scale),
+                           dt_window, ref_panel)
+    else
+        nothing
+    end
+
     step = 0
     wall_start = time()
     t_io      = 0.0   # met load + H2D upload
     t_compute = 0.0   # air mass, emissions, advection (GPU)
     t_output  = 0.0   # diagnostics + NetCDF write
 
-    @info "Starting simulation: $n_win windows × $n_sub sub-steps (SingleBuffer, C$Nc)"
+    # Strang splitting half-step: scale mass fluxes from kg/s → kg per half-sub-step
+    half_dt = FT(dt_sub / 2)
+
+    @info "Starting simulation: $n_win windows × $n_sub sub-steps (SingleBuffer, C$Nc)" *
+          (dw !== nothing ? " [diffusion: Kz_max=$(model.diffusion.Kz_max), H_scale=$(model.diffusion.H_scale)]" : "")
 
     for w in 1:n_win
         # ── I/O: load met from disk → CPU → GPU ───────────────────────
@@ -392,36 +418,68 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
 
         # ── GPU compute: air mass + emissions + advection ─────────────
         t0 = time()
+
+        # Scale mass fluxes from kg/s → kg per half-sub-step
+        for p in 1:6
+            am_gpu[p] .*= half_dt
+            bm_gpu[p] .*= half_dt
+        end
+
         for p in 1:6
             compute_air_mass_panel!(m_panels[p], delp_gpu[p],
                                     gc.area[p], gc.gravity, Nc, Nz, Hp)
         end
+        # Save reference air mass — reset before each sub-step to prevent
+        # mass drift in convergence/divergence zones (cf. commit 8a03955)
+        for p in 1:6
+            copyto!(m_ref_panels[p], m_panels[p])
+        end
+
         for p in 1:6
             compute_cm_panel!(cm_gpu[p], am_gpu[p], bm_gpu[p], gc.bt, Nc, Nz)
         end
 
-        dt_window = FT(dt_sub * n_sub)
+        # CFL diagnostic (first window + every 24th) — X/Y only; Z handled by column kernel
+        if w == 1 || w % 24 == 0
+            cfl_x = maximum(max_cfl_x_cs(am_gpu[p], m_ref_panels[p], ws.cfl_x, Hp) for p in 1:6)
+            cfl_y = maximum(max_cfl_y_cs(bm_gpu[p], m_ref_panels[p], ws.cfl_y, Hp) for p in 1:6)
+            @info @sprintf("  CFL diag (win %d): max_x=%.3f max_y=%.3f", w, cfl_x, cfl_y)
+            # Mass budget diagnostic: total tracer, total air mass, max surface mixing ratio
+            _total_rm = sum(sum(Array(rm_panels[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, :])) for p in 1:6)
+            _total_m  = sum(sum(Array(m_ref_panels[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, :])) for p in 1:6)
+            _max_ppm  = maximum(
+                maximum(Array(rm_panels[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, Nz]) ./
+                        max.(Array(m_ref_panels[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, Nz]), eps(FT)))
+                for p in 1:6)
+            @info @sprintf("  Budget (win %d): total_rm=%.4e total_m=%.4e max_sfc_ppm=%.4f",
+                           w, _total_rm, _total_m, _max_ppm)
+        end
+
         _apply_emissions_cs!(rm_panels, emi_data, gc.area, dt_window, Nc, Hp)
 
         for _ in 1:n_sub
             step += 1
+            for p in 1:6
+                copyto!(m_panels[p], m_ref_panels[p])
+            end
             strang_split_massflux!(rm_panels, m_panels,
                                     am_gpu, bm_gpu, cm_gpu,
                                     grid, true, ws)
         end
-
+        # Boundary-layer vertical diffusion (implicit solve, once per window)
+        if dw !== nothing
+            diffuse_cs_panels!(rm_panels, m_ref_panels, dw, Nc, Nz, Hp)
+        end
         # Chemistry (e.g. radioactive decay for ²²²Rn)
-        # For CS, build a NamedTuple mapping tracer names to panel arrays
         tracer_names = keys(model.tracers)
         cs_tracers = NamedTuple{tracer_names}(ntuple(_ -> rm_panels, length(tracer_names)))
         apply_chemistry!(cs_tracers, grid, model.chemistry, dt_window)
-
         t_compute += time() - t0
 
         # ── Output: diagnostics + regrid + NetCDF ─────────────────────
         t0 = time()
         sim_time = Float64(step * dt_sub)
-        _current_air_mass = m_panels
+        _current_air_mass = m_ref_panels
         for writer in writers
             write_output!(writer, model, sim_time;
                           air_mass=_current_air_mass, tracers=cs_tracers)
@@ -432,10 +490,13 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
         if w % max(1, n_win ÷ 20) == 0 || w == 1 || w == n_win
             elapsed = time() - wall_start
             day = div(w - 1, 24) + 1
+            max_rm = maximum(maximum(rm_panels[p]) for p in 1:6)
+            min_rm = minimum(minimum(rm_panels[p]) for p in 1:6)
             @info @sprintf(
-                "  Day %d, win %3d/%d: wall=%5.0fs | IO=%5.2f  GPU=%5.2f  Out=%5.2f  s/win",
+                "  Day %d, win %3d/%d: wall=%5.0fs | IO=%5.2f  GPU=%5.2f  Out=%5.2f  s/win | rm=[%.3e, %.3e]",
                 day, w, n_win, elapsed,
-                t_io / w, t_compute / w, t_output / w)
+                t_io / w, t_compute / w, t_output / w,
+                min_rm, max_rm)
         end
     end
 
@@ -443,6 +504,10 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
     @info @sprintf(
         "Simulation complete: %d steps, %.1fs | avg IO=%.2f GPU=%.2f Out=%.2f s/win",
         step, wall_total, t_io / n_win, t_compute / n_win, t_output / n_win)
+
+    for writer in writers
+        finalize_output!(writer)
+    end
     return model
 end
 
@@ -475,11 +540,12 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
     AT = array_type(arch)
     ref_panel = AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz))
     gc = build_geometry_cache(grid, ref_panel)
-    ws = allocate_cs_massflux_workspace(ref_panel)
+    ws = allocate_cs_massflux_workspace(ref_panel, Nc)
 
     # Tracers + air-mass (single set — not double-buffered)
-    rm_panels = allocate_cubed_sphere_field(grid, Nz)
-    m_panels  = allocate_cubed_sphere_field(grid, Nz)
+    rm_panels     = allocate_cubed_sphere_field(grid, Nz)
+    m_panels      = allocate_cubed_sphere_field(grid, Nz)
+    m_ref_panels  = allocate_cubed_sphere_field(grid, Nz)   # reference air mass for sub-step reset
 
     # TWO GPU met buffers (A = current, B = next)
     gpu_A = CubedSphereMetBuffer(arch, FT, Nc, Nz, Hp)
@@ -491,6 +557,18 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
 
     # Pre-upload emission flux panels to device
     emi_data = _prepare_cs_emissions(sources, grid, arch)
+
+    # Diffusion timestep = full window duration
+    dt_window = FT(dt_sub * n_sub)
+
+    # Build diffusion workspace (pre-computed tridiagonal factors on device)
+    dw = if model.diffusion isa BoundaryLayerDiffusion
+        diff = model.diffusion
+        DiffusionWorkspace(grid, FT(diff.Kz_max), FT(diff.H_scale),
+                           dt_window, ref_panel)
+    else
+        nothing
+    end
 
     # Pre-load window 1 synchronously before the loop
     load_met_window!(cpu_A, driver, grid, 1)
@@ -505,7 +583,11 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
     t_output  = 0.0   # diagnostics + NetCDF
     load_task = nothing
 
-    @info "Starting simulation: $n_win windows × $n_sub sub-steps (DoubleBuffer, C$Nc)"
+    # Strang splitting half-step: scale mass fluxes from kg/s → kg per half-sub-step
+    half_dt = FT(dt_sub / 2)
+
+    @info "Starting simulation: $n_win windows × $n_sub sub-steps (DoubleBuffer, C$Nc)" *
+          (dw !== nothing ? " [diffusion: Kz_max=$(model.diffusion.Kz_max), H_scale=$(model.diffusion.H_scale)]" : "")
 
     for w in 1:n_win
         has_next = w < n_win
@@ -523,22 +605,49 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
 
         # ── GPU compute ───────────────────────────────────────────────
         t0 = time()
+
+        # Scale mass fluxes from kg/s → kg per half-sub-step
+        for p in 1:6
+            curr_gpu.am[p] .*= half_dt
+            curr_gpu.bm[p] .*= half_dt
+        end
+
         for p in 1:6
             compute_air_mass_panel!(m_panels[p], curr_gpu.delp[p],
                                     gc.area[p], gc.gravity, Nc, Nz, Hp)
         end
+        # Save reference air mass — reset before each sub-step to prevent
+        # mass drift in convergence/divergence zones (cf. commit 8a03955)
+        for p in 1:6
+            copyto!(m_ref_panels[p], m_panels[p])
+        end
+
         for p in 1:6
             compute_cm_panel!(curr_gpu.cm[p], curr_gpu.am[p], curr_gpu.bm[p], gc.bt, Nc, Nz)
         end
 
-        dt_window = FT(dt_sub * n_sub)
+        # CFL diagnostic (first window + every 24th)
+        if w == 1 || w % 24 == 0
+            cfl_x = maximum(max_cfl_x_cs(curr_gpu.am[p], m_ref_panels[p], ws.cfl_x, Hp) for p in 1:6)
+            cfl_y = maximum(max_cfl_y_cs(curr_gpu.bm[p], m_ref_panels[p], ws.cfl_y, Hp) for p in 1:6)
+            @info @sprintf("  CFL diag (win %d): max_x=%.3f max_y=%.3f", w, cfl_x, cfl_y)
+        end
+
         _apply_emissions_cs!(rm_panels, emi_data, gc.area, dt_window, Nc, Hp)
 
         for _ in 1:n_sub
             step += 1
+            for p in 1:6
+                copyto!(m_panels[p], m_ref_panels[p])
+            end
             strang_split_massflux!(rm_panels, m_panels,
                                     curr_gpu.am, curr_gpu.bm, curr_gpu.cm,
                                     grid, true, ws)
+        end
+
+        # Boundary-layer vertical diffusion (implicit solve, once per window)
+        if dw !== nothing
+            diffuse_cs_panels!(rm_panels, m_ref_panels, dw, Nc, Nz, Hp)
         end
 
         # Chemistry (e.g. radioactive decay for ²²²Rn)
@@ -553,7 +662,7 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
         sim_time = Float64(step * dt_sub)
         for writer in writers
             write_output!(writer, model, sim_time;
-                          air_mass=m_panels, tracers=cs_tracers)
+                          air_mass=m_ref_panels, tracers=cs_tracers)
         end
         t_output += time() - t0
 
@@ -570,10 +679,13 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
         if w % max(1, n_win ÷ 20) == 0 || w == 1 || w == n_win
             elapsed = time() - wall_start
             day = div(w - 1, 24) + 1
+            max_rm = maximum(maximum(rm_panels[p]) for p in 1:6)
+            min_rm = minimum(minimum(rm_panels[p]) for p in 1:6)
             @info @sprintf(
-                "  Day %d, win %3d/%d: wall=%5.0fs | IO=%5.2f  GPU=%5.2f  Out=%5.2f  s/win",
+                "  Day %d, win %3d/%d: wall=%5.0fs | IO=%5.2f  GPU=%5.2f  Out=%5.2f  s/win | rm=[%.3e, %.3e]",
                 day, w, n_win, elapsed,
-                t_io / w, t_compute / w, t_output / w)
+                t_io / w, t_compute / w, t_output / w,
+                min_rm, max_rm)
         end
     end
 
@@ -581,5 +693,8 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
     @info @sprintf(
         "Simulation complete: %d steps, %.1fs | avg IO=%.2f GPU=%.2f Out=%.2f s/win",
         step, wall_total, t_io / n_win, t_compute / n_win, t_output / n_win)
+    for writer in writers
+        finalize_output!(writer)
+    end
     return model
 end

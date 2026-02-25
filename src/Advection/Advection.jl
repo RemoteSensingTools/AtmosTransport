@@ -77,8 +77,10 @@ export strang_split_massflux!
 export advect_x_massflux_reduced!
 export CubedSphereGeometryCache, CubedSphereMassFluxWorkspace
 export allocate_cs_massflux_workspace
+export max_cfl_x_cs, max_cfl_y_cs
 export compute_air_mass_panel!, compute_cm_panel!
 export advect_x_cs_panel!, advect_y_cs_panel!, advect_z_cs_panel!
+export advect_z_cs_panel_column!
 
 include("abstract_advection.jl")
 include("slopes_advection_kernels.jl")

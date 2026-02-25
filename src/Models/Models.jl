@@ -45,7 +45,7 @@ The main atmospheric transport model.
 
 $(FIELDS)
 """
-struct TransportModel{Arch, G, Tr, ATr, M, TS, Src, OW, CB, Buf, Chem} <: AbstractModel{Arch}
+struct TransportModel{Arch, G, Tr, ATr, M, TS, Src, OW, CB, Buf, Chem, Diff} <: AbstractModel{Arch}
     "CPU or GPU"
     architecture   :: Arch
     "the computational grid"
@@ -70,6 +70,8 @@ struct TransportModel{Arch, G, Tr, ATr, M, TS, Src, OW, CB, Buf, Chem} <: Abstra
     buffering      :: Buf
     "chemistry scheme (NoChemistry, RadioactiveDecay, CompositeChemistry, ...)"
     chemistry      :: Chem
+    "vertical diffusion scheme (nothing or BoundaryLayerDiffusion)"
+    diffusion      :: Diff
 end
 
 """
@@ -149,7 +151,7 @@ function TransportModel(;
 
     return TransportModel(arch, grid, tracer_fields, adj_tracer_fields,
                           met_data, clock, ts, sources, output_writers,
-                          callbacks, buffering, chemistry)
+                          callbacks, buffering, chemistry, diffusion)
 end
 
 """
@@ -202,7 +204,8 @@ function run!(model::TransportModel, met_source::MetDataSource,
                 model.architecture, model.grid, model.tracers,
                 model.adj_tracers, physics_fields, model.clock,
                 model.timestepper, model.sources, model.output_writers,
-                model.callbacks, model.buffering, model.chemistry)
+                model.callbacks, model.buffering, model.chemistry,
+                model.diffusion)
 
             next_met_update = if using_datetime
                 t_current + Dates.Second(round(Int, met_update_interval))

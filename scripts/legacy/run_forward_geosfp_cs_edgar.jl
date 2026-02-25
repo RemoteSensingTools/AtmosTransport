@@ -171,7 +171,7 @@ function run_geosfp_cs_edgar()
 
     ref_panel = zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz)
     gc = build_geometry_cache(grid, ref_panel)
-    ws = allocate_cs_massflux_workspace(ref_panel)
+    ws = allocate_cs_massflux_workspace(ref_panel, Nc)
 
     # Allocate tracer and air mass (haloed)
     c_panels = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz), 6)

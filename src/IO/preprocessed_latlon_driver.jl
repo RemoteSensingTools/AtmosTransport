@@ -60,16 +60,35 @@ function PreprocessedLatLonMetDriver(; FT::Type{<:AbstractFloat} = Float64,
                                        dt::Union{Nothing, Real} = nothing)
     isempty(files) && error("PreprocessedLatLonMetDriver: no files provided")
 
-    # Read metadata from first file
-    r = MassFluxBinaryReader(files[1], FT)
-    Nx, Ny, Nz = r.Nx, r.Ny, r.Nz
-    file_dt = r.dt_seconds
-    steps_per = r.steps_per_met
-    lons = copy(r.lons)
-    lats = copy(r.lats)
-    level_top = r.level_top
-    level_bot = r.level_bot
-    close(r)
+    # Read metadata from first file — dispatch on extension
+    if endswith(files[1], ".bin")
+        r = MassFluxBinaryReader(files[1], FT)
+        Nx, Ny, Nz = r.Nx, r.Ny, r.Nz
+        file_dt = r.dt_seconds
+        steps_per = r.steps_per_met
+        lons = copy(r.lons)
+        lats = copy(r.lats)
+        level_top = r.level_top
+        level_bot = r.level_bot
+        close(r)
+    else
+        # NetCDF mass-flux shard
+        ds = NCDataset(files[1], "r")
+        try
+            lons = FT.(ds["lon"][:])
+            lats = FT.(ds["lat"][:])
+            Nx = length(lons)
+            Ny = length(lats)
+            m_var = ds["m"]
+            Nz = size(m_var, 3)
+            level_top = get(ds.attrib, "level_top", 50)
+            level_bot = get(ds.attrib, "level_bot", 137)
+            file_dt = FT(get(ds.attrib, "dt_seconds", 900))
+            steps_per = get(ds.attrib, "steps_per_met_window", 4)
+        finally
+            close(ds)
+        end
+    end
 
     actual_dt = dt === nothing ? file_dt : FT(dt)
     steps_per_win = dt === nothing ? steps_per : max(1, round(Int, actual_dt * steps_per / file_dt))
@@ -78,10 +97,16 @@ function PreprocessedLatLonMetDriver(; FT::Type{<:AbstractFloat} = Float64,
     wins_per = Int[]
     total = 0
     for f in files
-        r2 = MassFluxBinaryReader(f, FT)
-        push!(wins_per, r2.Nt)
-        total += r2.Nt
-        close(r2)
+        if endswith(f, ".bin")
+            r2 = MassFluxBinaryReader(f, FT)
+            push!(wins_per, r2.Nt)
+            close(r2)
+        else
+            ds = NCDataset(f, "r")
+            push!(wins_per, size(ds["m"], 4))
+            close(ds)
+        end
+        total += wins_per[end]
     end
 
     PreprocessedLatLonMetDriver{FT}(

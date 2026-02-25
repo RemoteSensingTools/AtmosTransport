@@ -50,7 +50,8 @@ export protocol, time_interval, source_name
 export merra2_stream, build_opendap_url, build_merra2_file_url
 export canonical_variables, canonical_units, canonical_required, canonical_dimensions
 export AbstractOutputWriter, AbstractOutputSchedule, AbstractOutputGrid, LatLonOutputGrid
-export NetCDFOutputWriter, TimeIntervalSchedule, IterationIntervalSchedule
+export NetCDFOutputWriter, BinaryOutputWriter, TimeIntervalSchedule, IterationIntervalSchedule
+export finalize_output!, convert_binary_to_netcdf
 export TemporalInterpolator, interpolation_weight
 export load_configuration, build_model_from_config
 export GeosFPCubedSphereTimestep
@@ -109,6 +110,9 @@ include("temporal_interpolation.jl")
 
 # Output
 include("output_writers.jl")
+
+# Binary output writer (fast sequential writes)
+include("binary_output_writer.jl")
 
 # Run configuration
 include("configuration.jl")

@@ -13,7 +13,9 @@ using ..Fields: interior, AbstractField
 using ..Architectures: array_type
 using ..Diagnostics: AbstractDiagnostic, ColumnMeanDiagnostic, SurfaceSliceDiagnostic,
                      RegridDiagnostic, Full3DDiagnostic, MetField2DDiagnostic,
-                     column_mean!, surface_slice!, regrid_cs_to_latlon,
+                     SigmaLevelDiagnostic,
+                     column_mean!, surface_slice!, sigma_level_slice!,
+                     regrid_cs_to_latlon,
                      RegridMapping, build_regrid_mapping, regrid_cs_to_latlon!
 
 """
@@ -70,17 +72,33 @@ abstract type AbstractOutputGrid end
 $(TYPEDEF)
 
 Lat-lon output grid for regridding cubed-sphere data before writing.
+Supports regional subsetting via bounding box (default: global).
 
 $(FIELDS)
 """
-struct LatLonOutputGrid <: AbstractOutputGrid
+struct LatLonOutputGrid{FT} <: AbstractOutputGrid
     "number of longitude points"
     Nlon :: Int
     "number of latitude points"
     Nlat :: Int
+    "western boundary [degrees]"
+    lon0 :: FT
+    "eastern boundary [degrees]"
+    lon1 :: FT
+    "southern boundary [degrees]"
+    lat0 :: FT
+    "northern boundary [degrees]"
+    lat1 :: FT
 end
 
-LatLonOutputGrid(; Nlon=720, Nlat=361) = LatLonOutputGrid(Nlon, Nlat)
+function LatLonOutputGrid(; Nlon=720, Nlat=361,
+                            lon_range=(-180.0, 180.0),
+                            lat_range=(-90.0, 90.0))
+    FT = typeof(float(lon_range[1]))
+    LatLonOutputGrid{FT}(Nlon, Nlat,
+                          FT(lon_range[1]), FT(lon_range[2]),
+                          FT(lat_range[1]), FT(lat_range[2]))
+end
 
 # =====================================================================
 # NetCDFOutputWriter
@@ -134,7 +152,7 @@ $(SIGNATURES)
 
 Return true if the schedule says we should write at this time/iteration.
 """
-function should_write(writer::NetCDFOutputWriter, model_time, iteration)
+function should_write(writer::AbstractOutputWriter, model_time, iteration)
     s = writer.schedule
     if s isa TimeIntervalSchedule
         # Write when model_time >= (_write_count + 1) * interval
@@ -158,7 +176,8 @@ Extract array data from a field entry for NetCDF writing.
 Ensures result is a CPU array.
 """
 function _extract_field_data(field_or_func, model;
-                             air_mass=nothing, tracers=nothing, regrid_cache=nothing)
+                             air_mass=nothing, tracers=nothing, regrid_cache=nothing,
+                             output_grid=nothing)
     if field_or_func isa AbstractField
         arr = interior(field_or_func)
         return Array(arr)  # ensure CPU for NCDatasets
@@ -168,7 +187,8 @@ function _extract_field_data(field_or_func, model;
     elseif field_or_func isa AbstractArray
         return Array(field_or_func)
     elseif field_or_func isa AbstractDiagnostic
-        return _compute_diagnostic(field_or_func, model; air_mass, tracers, regrid_cache)
+        return _compute_diagnostic(field_or_func, model; air_mass, tracers, regrid_cache,
+                                    output_grid)
     else
         error("Field must be AbstractField, Function, Array, or AbstractDiagnostic, " *
               "got $(typeof(field_or_func))")
@@ -179,7 +199,8 @@ end
 Compute a diagnostic from model state. Returns a CPU array.
 """
 function _compute_diagnostic(diag::ColumnMeanDiagnostic, model;
-                             air_mass=nothing, tracers=nothing, regrid_cache=nothing)
+                             air_mass=nothing, tracers=nothing, regrid_cache=nothing,
+                             output_grid=nothing)
     grid = model.grid
     if grid isa LatitudeLongitudeGrid
         c = _get_tracer(model, diag.species; tracers)
@@ -195,13 +216,18 @@ function _compute_diagnostic(diag::ColumnMeanDiagnostic, model;
         m = air_mass !== nothing ? air_mass : ntuple(_ -> ones(eltype(rm[1]), size(rm[1])), 6)
         c_col_panels = ntuple(_ -> similar(rm[1], Nc, Nc), 6)
         column_mean!(c_col_panels, rm, m, Nc, Nz, Hp)
+        # Regrid to lat-lon using GEOS-FP file coordinates
+        if output_grid isa LatLonOutputGrid
+            return _regrid_panels_to_latlon(c_col_panels, model, grid, output_grid, regrid_cache)
+        end
         panels_cpu = ntuple(p -> Array(c_col_panels[p]), 6)
         return panels_cpu
     end
 end
 
 function _compute_diagnostic(diag::SurfaceSliceDiagnostic, model;
-                             air_mass=nothing, tracers=nothing, regrid_cache=nothing)
+                             air_mass=nothing, tracers=nothing, regrid_cache=nothing,
+                             output_grid=nothing)
     grid = model.grid
     if grid isa LatitudeLongitudeGrid
         c = _get_tracer(model, diag.species; tracers)
@@ -209,21 +235,63 @@ function _compute_diagnostic(diag::SurfaceSliceDiagnostic, model;
         surface_slice!(c_sfc, c)
         return Array(c_sfc)
     elseif grid isa CubedSphereGrid
-        c_panels = _get_tracer_panels(model, diag.species; tracers)
+        rm_panels = _get_tracer_panels(model, diag.species; tracers)
         Nc = grid.Nc
-        Nz = size(c_panels[1], 3)
-        Hp = div(size(c_panels[1], 1) - Nc, 2)
-        c_sfc_panels = ntuple(_ -> similar(c_panels[1], Nc, Nc), 6)
-        surface_slice!(c_sfc_panels, c_panels, Nc, Nz, Hp)
-        panels_cpu = ntuple(p -> Array(c_sfc_panels[p]), 6)
+        Nz = size(rm_panels[1], 3)
+        Hp = div(size(rm_panels[1], 1) - Nc, 2)
+        rm_sfc_panels = ntuple(_ -> similar(rm_panels[1], Nc, Nc), 6)
+        surface_slice!(rm_sfc_panels, rm_panels, Nc, Nz, Hp)
+        # CS tracers are rm = air_mass × mixing_ratio; divide by surface air mass
+        if air_mass !== nothing
+            m_sfc_panels = ntuple(_ -> similar(air_mass[1], Nc, Nc), 6)
+            surface_slice!(m_sfc_panels, air_mass, Nc, Nz, Hp)
+            sfc_panels = ntuple(6) do p
+                rm_sfc_panels[p] ./= m_sfc_panels[p]  # in-place on device
+                rm_sfc_panels[p]
+            end
+        else
+            sfc_panels = rm_sfc_panels
+        end
+        # Regrid to lat-lon using GEOS-FP file coordinates
+        if output_grid isa LatLonOutputGrid
+            return _regrid_panels_to_latlon(sfc_panels, model, grid, output_grid, regrid_cache)
+        end
+        panels_cpu = ntuple(p -> Array(sfc_panels[p]), 6)
         return panels_cpu
     end
 end
 
+function _compute_diagnostic(diag::SigmaLevelDiagnostic, model;
+                             air_mass=nothing, tracers=nothing, regrid_cache=nothing,
+                             output_grid=nothing)
+    grid = model.grid
+    if grid isa LatitudeLongitudeGrid
+        c = _get_tracer(model, diag.species; tracers)
+        m = air_mass !== nothing ? air_mass : _compute_uniform_mass(c)
+        c_sig = similar(c, size(c, 1), size(c, 2))
+        sigma_level_slice!(c_sig, c, m, diag.sigma)
+        return Array(c_sig)
+    elseif grid isa CubedSphereGrid
+        rm_panels = _get_tracer_panels(model, diag.species; tracers)
+        Nc = grid.Nc
+        Nz = size(rm_panels[1], 3)
+        Hp = div(size(rm_panels[1], 1) - Nc, 2)
+        m = air_mass !== nothing ? air_mass : ntuple(_ -> ones(eltype(rm_panels[1]), size(rm_panels[1])), 6)
+        sig_panels = ntuple(_ -> similar(rm_panels[1], Nc, Nc), 6)
+        sigma_level_slice!(sig_panels, rm_panels, m, Nc, Nz, Hp, diag.sigma)
+        if output_grid isa LatLonOutputGrid
+            return _regrid_panels_to_latlon(sig_panels, model, grid, output_grid, regrid_cache)
+        end
+        return ntuple(p -> Array(sig_panels[p]), 6)
+    end
+end
+
 function _compute_diagnostic(diag::RegridDiagnostic, model;
-                             air_mass=nothing, tracers=nothing, regrid_cache=nothing)
+                             air_mass=nothing, tracers=nothing, regrid_cache=nothing,
+                             output_grid=nothing)
     grid = model.grid
     grid isa CubedSphereGrid || error("RegridDiagnostic only applies to CubedSphereGrid")
+    FT = floattype(grid)
     rm = _get_tracer_panels(model, diag.species; tracers)
     Nc = grid.Nc
     Nz = size(rm[1], 3)
@@ -232,25 +300,80 @@ function _compute_diagnostic(diag::RegridDiagnostic, model;
     c_col_panels = ntuple(_ -> similar(rm[1], Nc, Nc), 6)
     column_mean!(c_col_panels, rm, m, Nc, Nz, Hp)
 
-    # GPU scatter path: build RegridMapping once then reuse every write
+    # Build a LatLonOutputGrid from the diagnostic's own Nlon/Nlat + bounding box
+    og = output_grid
+    _lon0 = og isa LatLonOutputGrid ? FT(og.lon0) : FT(-180)
+    _lon1 = og isa LatLonOutputGrid ? FT(og.lon1) : FT(180)
+    _lat0 = og isa LatLonOutputGrid ? FT(og.lat0) : FT(-90)
+    _lat1 = og isa LatLonOutputGrid ? FT(og.lat1) : FT(90)
+    diag_og = LatLonOutputGrid{FT}(diag.Nlon, diag.Nlat, _lon0, _lon1, _lat0, _lat1)
+
+    return _regrid_panels_to_latlon(c_col_panels, model, grid, diag_og, regrid_cache)
+end
+
+"""
+    _get_cs_file_coords(model)
+
+Load cubed-sphere cell-center coordinates from the GEOS-FP file if available.
+Returns `(lons, lats)` as `(Nc×Nc×6)` arrays, or `(nothing, nothing)` if
+no coordinate file is available.
+"""
+function _get_cs_file_coords(model)
+    met = model.met_data
+    # Use coord_file if available (works for both binary and netcdf modes)
+    if hasproperty(met, :coord_file) && !isempty(met.coord_file) &&
+       isfile(met.coord_file)
+        lons, lats, _, _ = read_geosfp_cs_grid_info(met.coord_file)
+        return lons, lats
+    end
+    # Fallback: try first data file in netcdf mode
+    if hasproperty(met, :mode) && met.mode == :netcdf &&
+       hasproperty(met, :files) && !isempty(met.files)
+        lons, lats, _, _ = read_geosfp_cs_grid_info(met.files[1])
+        return lons, lats
+    end
+    return nothing, nothing
+end
+
+"""
+    _regrid_panels_to_latlon(panels, model, grid, output_grid, regrid_cache)
+
+Regrid NTuple{6} of 2D panel data to a lat-lon array using GEOS-FP file
+coordinates (NOT gnomonic grid coordinates). Builds the RegridMapping lazily
+via `regrid_cache` (shared across all diagnostics).
+
+Returns a CPU `Array{FT,2}` of size `(Nlon, Nlat)`.
+"""
+function _regrid_panels_to_latlon(panels::NTuple{6}, model, grid::CubedSphereGrid{FT},
+                                   output_grid::LatLonOutputGrid,
+                                   regrid_cache) where FT
+    og = output_grid
     if regrid_cache !== nothing
         if regrid_cache[] === nothing
+            file_lons, file_lats = _get_cs_file_coords(model)
             AT = array_type(model.architecture)
-            regrid_cache[] = build_regrid_mapping(grid, AT, diag.Nlon, diag.Nlat)
+            regrid_cache[] = build_regrid_mapping(grid, AT, og.Nlon, og.Nlat;
+                                                   lon0=FT(og.lon0), lon1=FT(og.lon1),
+                                                   lat0=FT(og.lat0), lat1=FT(og.lat1),
+                                                   file_lons, file_lats)
         end
         mapping = regrid_cache[]::RegridMapping
-        out_ll = regrid_cs_to_latlon!(mapping, c_col_panels)
-        return Array(out_ll)
+        return Array(regrid_cs_to_latlon!(mapping, panels))
     end
-
-    # CPU fallback (no cache provided)
-    panels_cpu = ntuple(p -> Array(c_col_panels[p]), 6)
-    out, _, _ = regrid_cs_to_latlon(panels_cpu, grid; Nlon=diag.Nlon, Nlat=diag.Nlat)
+    # CPU fallback
+    file_lons, file_lats = _get_cs_file_coords(model)
+    panels_cpu = ntuple(p -> Array(panels[p]), 6)
+    out, _, _ = regrid_cs_to_latlon(panels_cpu, grid;
+                                     Nlon=og.Nlon, Nlat=og.Nlat,
+                                     lon0=FT(og.lon0), lon1=FT(og.lon1),
+                                     lat0=FT(og.lat0), lat1=FT(og.lat1),
+                                     file_lons, file_lats)
     return out
 end
 
 function _compute_diagnostic(diag::Full3DDiagnostic, model;
-                             air_mass=nothing, tracers=nothing, regrid_cache=nothing)
+                             air_mass=nothing, tracers=nothing, regrid_cache=nothing,
+                             output_grid=nothing)
     grid = model.grid
     if grid isa LatitudeLongitudeGrid
         c = _get_tracer(model, diag.species; tracers)
@@ -263,7 +386,8 @@ function _compute_diagnostic(diag::Full3DDiagnostic, model;
 end
 
 function _compute_diagnostic(diag::MetField2DDiagnostic, model;
-                             air_mass=nothing, tracers=nothing, regrid_cache=nothing)
+                             air_mass=nothing, tracers=nothing, regrid_cache=nothing,
+                             output_grid=nothing)
     met = model.met_data
     fn = diag.field_name
 
@@ -362,8 +486,10 @@ function _create_netcdf_file(writer::NetCDFOutputWriter, model, grid::CubedSpher
         if writer.output_grid isa LatLonOutputGrid
             og = writer.output_grid
             Nlon, Nlat = og.Nlon, og.Nlat
-            lons = collect(range(FT(-180), FT(180) - FT(360)/Nlon, length=Nlon))
-            lats = collect(range(FT(-90), FT(90), length=Nlat))
+            dlon = (FT(og.lon1) - FT(og.lon0)) / Nlon
+            dlat = (FT(og.lat1) - FT(og.lat0)) / Nlat
+            lons = collect(range(FT(og.lon0) + dlon/2, FT(og.lon1) - dlon/2, length=Nlon))
+            lats = collect(range(FT(og.lat0) + dlat/2, FT(og.lat1) - dlat/2, length=Nlat))
 
             defDim(ds, "lon", Nlon)
             defDim(ds, "lat", Nlat)
@@ -400,7 +526,8 @@ end
 
 """Determine NetCDF dimension tuple for a field entry."""
 function _output_dims(field_entry, grid::LatitudeLongitudeGrid, output_grid)
-    if field_entry isa ColumnMeanDiagnostic || field_entry isa SurfaceSliceDiagnostic
+    if field_entry isa ColumnMeanDiagnostic || field_entry isa SurfaceSliceDiagnostic ||
+       field_entry isa SigmaLevelDiagnostic
         return ("lon", "lat", "time")
     elseif field_entry isa RegridDiagnostic
         return ("lon", "lat", "time")
@@ -469,7 +596,8 @@ function write_output!(writer::NetCDFOutputWriter, model, time;
 
         for (name, field_entry) in writer.fields
             arr = _extract_field_data(field_entry, model; air_mass, tracers,
-                                      regrid_cache=writer._regrid_cache)
+                                      regrid_cache=writer._regrid_cache,
+                                      output_grid=writer.output_grid)
             _write_field_slice!(ds, string(name), arr, grid, writer.output_grid, n_time + 1)
         end
     end
@@ -492,10 +620,15 @@ function _write_field_slice!(ds, name::String, arr, grid::CubedSphereGrid,
                               output_grid::LatLonOutputGrid, tidx::Int)
     # arr is either a regridded lat-lon matrix or NTuple{6} of panels
     if arr isa NTuple
-        # Regrid panels to lat-lon
+        # Fallback: regrid panels without file coordinates (gnomonic coords only)
+        @warn "CS→lat-lon regridding without file coordinates for field '$name'. " *
+              "Output coordinates may be incorrect." maxlog=1
+        FT = floattype(grid)
         panels_cpu = ntuple(p -> arr[p] isa Array ? arr[p] : Array(arr[p]), 6)
         out_ll, _, _ = regrid_cs_to_latlon(panels_cpu, grid;
-                                            Nlon=output_grid.Nlon, Nlat=output_grid.Nlat)
+                                            Nlon=output_grid.Nlon, Nlat=output_grid.Nlat,
+                                            lon0=FT(output_grid.lon0), lon1=FT(output_grid.lon1),
+                                            lat0=FT(output_grid.lat0), lat1=FT(output_grid.lat1))
         ds[name][:, :, tidx] = Float32.(out_ll)
     else
         ds[name][:, :, tidx] = Float32.(arr)
@@ -524,7 +657,16 @@ function write_output!(writer::AbstractOutputWriter, model, time)
     error("write_output! not implemented for $(typeof(writer))")
 end
 
+"""
+    finalize_output!(writer)
+
+Finalize an output writer at the end of a simulation. No-op for most writers.
+For `BinaryOutputWriter`, updates the header with final `Nt` and optionally
+converts to NetCDF.
+"""
+finalize_output!(::AbstractOutputWriter) = nothing
+
 export AbstractOutputWriter, AbstractOutputSchedule
 export NetCDFOutputWriter, TimeIntervalSchedule, IterationIntervalSchedule
 export AbstractOutputGrid, LatLonOutputGrid
-export write_output!, initialize_output!
+export write_output!, initialize_output!, finalize_output!

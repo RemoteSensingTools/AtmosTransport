@@ -393,7 +393,7 @@ function run_geosfp_cs_gpu()
 
     ref_panel = AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz))
     gc = build_geometry_cache(grid, ref_panel)
-    ws = allocate_cs_massflux_workspace(ref_panel)
+    ws = allocate_cs_massflux_workspace(ref_panel, Nc)
 
     rm_panels = allocate_cubed_sphere_field(grid, Nz)
     m_panels  = allocate_cubed_sphere_field(grid, Nz)

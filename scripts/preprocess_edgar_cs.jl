@@ -3,8 +3,8 @@
 # One-time EDGAR → Cubed-Sphere Preprocessing
 #
 # Reads EDGAR v8.0 CO2 emissions (0.1° lat-lon, Tonnes/yr), converts to
-# kg/m²/s, regrids to cubed-sphere panels via nearest-neighbor, and saves
-# to a compact binary file for fast loading during simulation.
+# kg/m²/s, regrids to cubed-sphere panels via nearest-neighbor using
+# GEOS-FP file coordinates, and saves to a compact binary file.
 #
 # Binary layout:
 #   [Header]  4096 bytes — JSON metadata
@@ -14,16 +14,15 @@
 #   julia --project=. scripts/preprocess_edgar_cs.jl
 #
 # Environment variables:
-#   EDGAR_FILE — input EDGAR NetCDF
-#   OUTFILE    — output binary path
-#   NC_GRID    — grid resolution (default: 720, for C720)
+#   EDGAR_FILE     — input EDGAR NetCDF
+#   OUTFILE        — output binary path
+#   NC_GRID        — grid resolution (default: 720, for C720)
+#   GEOSFP_REF_FILE — any GEOS-FP NetCDF for coordinate reference
 # ===========================================================================
 
 using AtmosTransport
-using AtmosTransport.Architectures
-using AtmosTransport.Grids
 using AtmosTransport.Parameters
-using AtmosTransport.IO: default_met_config, build_vertical_coordinate
+using AtmosTransport.IO: read_geosfp_cs_grid_info
 using NCDatasets
 using Printf
 using JSON3
@@ -37,6 +36,11 @@ const EDGAR_FILE = expanduser(get(ENV, "EDGAR_FILE",
 const OUTFILE = expanduser(get(ENV, "OUTFILE",
     joinpath(homedir(), "data", "emissions", "edgar_v8",
              "edgar_cs_c$(NC_GRID)_float32.bin")))
+
+# Any GEOS-FP NetCDF file — only used for grid coordinates (lons, lats)
+const GEOSFP_REF_FILE = expanduser(get(ENV, "GEOSFP_REF_FILE",
+    joinpath(homedir(), "data", "geosfp_cs", "20240601",
+             "GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.20240601_0030.V01.nc4")))
 
 const HEADER_SIZE = 4096
 
@@ -60,8 +64,8 @@ function regrid_edgar_to_cs(edgar_raw, edgar_lons, edgar_lats,
     flux_panels = ntuple(6) do p
         pf = zeros(FT, Nc, Nc)
         for j in 1:Nc, i in 1:Nc
-            lon = mod(grid_lons[p][i, j] + 180, 360) - 180
-            lat = grid_lats[p][i, j]
+            lon = mod(FT(grid_lons[i, j, p]) + FT(180), FT(360)) - FT(180)
+            lat = FT(grid_lats[i, j, p])
             ii = clamp(round(Int, (lon - edgar_lons[1]) / Δlon) + 1, 1, Nlon_e)
             jj = clamp(round(Int, (lat - edgar_lats[1]) / Δlat) + 1, 1, Nlat_e)
             pf[i, j] = flux_kgm2s[ii, jj]
@@ -81,10 +85,11 @@ end
 
 function main()
     @info "=" ^ 70
-    @info "EDGAR → Cubed-Sphere C$(NC_GRID) Preprocessing"
+    @info "EDGAR → Cubed-Sphere C$(NC_GRID) Preprocessing (GEOS-FP coords)"
     @info "=" ^ 70
 
     isfile(EDGAR_FILE) || error("EDGAR file not found: $EDGAR_FILE")
+    isfile(GEOSFP_REF_FILE) || error("GEOS-FP reference file not found: $GEOSFP_REF_FILE")
 
     @info "  Reading EDGAR: $EDGAR_FILE"
     ds = NCDataset(EDGAR_FILE)
@@ -94,22 +99,19 @@ function main()
     close(ds)
     @info @sprintf("  EDGAR grid: %d × %d", length(edgar_lons), length(edgar_lats))
 
-    @info "  Building CubedSphereGrid C$(NC_GRID)..."
-    config = default_met_config("geosfp")
-    vc = build_vertical_coordinate(config; FT)
+    @info "  Reading GEOS-FP coordinates from: $GEOSFP_REF_FILE"
+    file_lons, file_lats, _, _ = read_geosfp_cs_grid_info(GEOSFP_REF_FILE)
+    Nc_file = size(file_lons, 1)
+    @info "  GEOS-FP grid: C$Nc_file ($(size(file_lons)))"
+    Nc_file == NC_GRID || error("GEOS-FP file is C$Nc_file but expected C$NC_GRID")
+
     params = load_parameters(FT)
     pp = params.planet
 
-    arch = CPU()
-    grid = CubedSphereGrid(arch; FT, Nc=NC_GRID,
-        vertical=vc,
-        radius=pp.radius, gravity=pp.gravity,
-        reference_pressure=pp.reference_surface_pressure)
-
-    @info "  Regridding to C$(NC_GRID) panels (nearest-neighbor)..."
+    @info "  Regridding to C$(NC_GRID) panels (nearest-neighbor, GEOS-FP coords)..."
     t0 = time()
     flux_panels = regrid_edgar_to_cs(edgar_raw, edgar_lons, edgar_lats,
-                                      grid.λᶜ, grid.φᶜ, NC_GRID, pp.radius)
+                                      file_lons, file_lats, NC_GRID, pp.radius)
     @info @sprintf("  Regrid done in %.1fs", time() - t0)
 
     n_panel = NC_GRID * NC_GRID
@@ -124,6 +126,7 @@ function main()
         "n_per_panel"  => n_panel,
         "units"        => "kg/m2/s",
         "source"       => "EDGAR v8.0 CO2 2022 TOTALS",
+        "coords"       => "geosfp_file",
     )
     header_json = JSON3.write(header)
 

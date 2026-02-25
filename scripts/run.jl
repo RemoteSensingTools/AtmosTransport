@@ -45,7 +45,7 @@ using AtmosTransport.IO: build_model_from_config
 import AtmosTransport.Models: run!
 
 @info "Building model..."
-model = build_model_from_config(config)
+model = build_model_from_config(config);
 
 @info "Starting simulation..."
 run!(model)

@@ -1,0 +1,45 @@
+# ===========================================================================
+# ERA5 Preprocessed Mass Fluxes — June 2023 Comparison Run
+#
+# For intercomparison with GEOS-IT C180 cubed-sphere.
+# Uses pre-computed mass flux files (from preprocess_mass_fluxes.jl).
+#
+# Usage:
+#   julia --project=. scripts/run.jl config/runs/era5_june2023.toml
+# ===========================================================================
+
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "latlon"
+met_source = "era5"
+size       = [360, 181, 88]     # 88 levels: model level 50–137
+
+[met_data]
+driver    = "preprocessed_latlon"
+directory = "~/data/metDrivers/era5/era5_ml_10deg_20230601_20230630"
+dt        = 900
+
+[tracers.co2]
+emission      = "edgar"
+edgar_version = "v8.0"
+year          = 2022
+
+[output]
+filename = "~/data/output/era5_june2023.nc"
+interval = 7200
+
+[output.fields]
+co2_column_mean = {type = "column_mean", species = "co2"}
+co2_surface = {type = "surface_slice", species = "co2"}
+co2_800hPa = {type = "sigma_level", species = "co2", sigma = 0.8}
+
+[diffusion]
+type       = "boundary_layer"
+Kz_max     = 100.0
+H_scale    = 8.0
+
+[buffering]
+strategy = "double"

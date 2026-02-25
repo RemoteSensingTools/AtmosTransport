@@ -5,8 +5,13 @@
 # MERRA-2 conventions.  Six panels, each Nc × Nc cells.
 #
 # Resolutions follow the GEOS convention: C48, C90, C180, C360, C720.
-# Panel numbering (GEOS): 1=front (0°E), 2=east (90°E), 3=back (180°E),
-# 4=west (90°W), 5=north, 6=south.
+#
+# NOTE: The gnomonic projection below uses panels 1-4=equatorial, 5=north, 6=south.
+# The GEOS-FP native files use a DIFFERENT panel ordering (see panel_connectivity.jl):
+#   nf=1,2=equatorial, nf=3=north pole, nf=4,5=equatorial(rotated), nf=6=south pole.
+# When running with GEOS-FP data, the connectivity in panel_connectivity.jl matches
+# the file convention. The grid coordinates here are approximate; for precise output
+# regridding, coordinates should be read from the GEOS-FP file.
 #
 # References:
 #   Putman & Lin (2007) — FV3 cubed-sphere advection

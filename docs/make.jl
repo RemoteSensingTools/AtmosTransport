@@ -30,7 +30,8 @@ mkpath(DEV_DST)
 
 for f in ["VALIDATION.md", "TM5_CODE_ALIGNMENT.md", "MASS_FLUX_EVOLUTION.md",
           "METEO_PREPROCESSING.md", "TM5_LOCAL_SETUP.md", "TRANSPORT_COMPARISON.md",
-          "TM5_GRID_REFERENCES.md", "REFERENCE_RUN.md", "GITHUB_SETUP.md"]
+          "TM5_GRID_REFERENCES.md", "REFERENCE_RUN.md", "GITHUB_SETUP.md",
+          "CAVEATS.md"]
     src = joinpath(DEV_SRC, "docs", f)
     dst = joinpath(DEV_DST, f)
     if isfile(src)
@@ -63,6 +64,7 @@ pages = [
         "First Forward Run" => "literated/first_forward_run.md",
         "Met Driver Comparison" => "literated/met_driver_comparison.md",
     ],
+    "Caveats & Troubleshooting" => "developer/CAVEATS.md",
     "Developer Guide" => [
         "Validation" => "developer/VALIDATION.md",
         "TM5 Code Alignment" => "developer/TM5_CODE_ALIGNMENT.md",

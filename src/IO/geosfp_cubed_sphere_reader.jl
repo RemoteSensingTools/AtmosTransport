@@ -37,6 +37,26 @@ using Dates
 const GRAV_GEOSFP = 9.80665  # standard gravity [m/s²]
 
 """
+Registry of GEOS cubed-sphere products available from the WashU archive.
+
+Two layout styles:
+- `:hourly` — one file per hour, organized in `Y<year>/M<mm>/D<dd>/` subdirs (GEOS-FP)
+- `:daily`  — one file per day with 24 timesteps, organized in `YYYY/MM/` subdirs (GEOS-IT)
+"""
+const GEOS_CS_PRODUCTS = Dict(
+    "geosfp_c720" => (base_url   = "http://geoschemdata.wustl.edu/ExtData/GEOS_C720",
+                      collection = "GEOS_FP_Native",
+                      Nc         = 720,
+                      layout     = :hourly,
+                      est_gb     = 2.7),    # per hourly file
+    "geosit_c180" => (base_url   = "http://geoschemdata.wustl.edu/ExtData/GEOS_C180",
+                      collection = "GEOS_IT",
+                      Nc         = 180,
+                      layout     = :daily,
+                      est_gb     = 4.2),    # per daily file
+)
+
+"""
 $(TYPEDEF)
 
 Container for one timestep of GEOS-FP cubed-sphere mass-flux data.
@@ -69,42 +89,65 @@ struct GeosFPCubedSphereTimestep{FT}
     dt_met :: FT
 end
 
-const WASHU_BASE_URL = "http://geoschemdata.wustl.edu/ExtData/GEOS_C720"
+"""
+    _geosfp_filename(date::Date, hour::Int, product::String)
+
+Build the remote filename for a GEOS cubed-sphere file.
+For `:hourly` products (GEOS-FP): one file per hour, e.g.
+  `GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.20240601_0030.V01.nc4`
+For `:daily` products (GEOS-IT): one file per day (24 timesteps), e.g.
+  `GEOSIT.20230601.CTM_A1.C180.nc`
+"""
+function _geosfp_filename(date::Date, product::String; hour::Int = -1)
+    info = GEOS_CS_PRODUCTS[product]
+    datestr = Dates.format(date, "yyyymmdd")
+    if info.layout === :hourly
+        timestamp = lpad(hour, 2, '0') * "30"
+        return "GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.$(datestr)_$(timestamp).V01.nc4"
+    else  # :daily
+        return "GEOSIT.$(datestr).CTM_A1.C$(info.Nc).nc"
+    end
+end
 
 """
-    geosfp_cs_tavg_url(date::Date, hour::Int; collection="GEOS_FP_Native")
+    geosfp_cs_tavg_url(date::Date, hour::Int; product="geosfp_c720")
 
-Build URL for a GEOS-FP C720 cubed-sphere file from the Washington University
-archive (geoschemdata.wustl.edu).
+Build URL for a GEOS cubed-sphere file from the Washington University archive.
 
-The `tavg_1hr_ctm` collection contains MFXC, MFYC, DELP, PS, CX, CY.
-Timestamps are at HH30 (center of hour-long averaging window).
+`product` selects the data source — see `GEOS_CS_PRODUCTS` for available keys
+(e.g. `"geosfp_c720"`, `"geosit_c180"`).
+For hourly products, `hour` selects which hourly file. For daily products,
+`hour` is ignored (the URL points to a whole-day file).
 """
 function geosfp_cs_tavg_url(date::Date, hour::Int;
-                            collection::String = "GEOS_FP_Native")
-    datestr = Dates.format(date, "yyyymmdd")
-    timestamp = lpad(hour, 2, '0') * "30"
+                            product::String = "geosfp_c720")
+    info = GEOS_CS_PRODUCTS[product]
+    fname = _geosfp_filename(date, product; hour)
     y = Dates.year(date)
     m = lpad(Dates.month(date), 2, '0')
     d = lpad(Dates.day(date), 2, '0')
-    return "$WASHU_BASE_URL/$collection/Y$y/M$m/D$d/" *
-           "GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.$(datestr)_$(timestamp).V01.nc4"
+    if info.layout === :hourly
+        return "$(info.base_url)/$(info.collection)/Y$y/M$m/D$d/$fname"
+    else  # :daily — directory is YYYY/MM/
+        return "$(info.base_url)/$(info.collection)/$y/$m/$fname"
+    end
 end
 
 geosfp_cs_url(date::Date, hour::Int; kwargs...) = geosfp_cs_tavg_url(date, hour; kwargs...)
 geosfp_cs_asm_url(date::Date, hour::Int; kwargs...) = geosfp_cs_tavg_url(date, hour; kwargs...)
 
 """
-    geosfp_cs_local_path(date::Date, hour::Int;
-                         base_dir=joinpath(homedir(), "data", "geosfp_cs"))
+    geosfp_cs_local_path(date::Date; hour::Int=-1,
+                         base_dir=joinpath(homedir(), "data", "geosfp_cs"),
+                         product="geosfp_c720")
 
-Build the local file path for a downloaded GEOS-FP cubed-sphere file.
+Build the local file path for a downloaded GEOS cubed-sphere file.
 """
-function geosfp_cs_local_path(date::Date, hour::Int;
-                              base_dir::String = joinpath(homedir(), "data", "geosfp_cs"))
+function geosfp_cs_local_path(date::Date; hour::Int = -1,
+                              base_dir::String = joinpath(homedir(), "data", "geosfp_cs"),
+                              product::String = "geosfp_c720")
+    fname = _geosfp_filename(date, product; hour)
     datestr = Dates.format(date, "yyyymmdd")
-    timestamp = lpad(hour, 2, '0') * "30"
-    fname = "GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.$(datestr)_$(timestamp).V01.nc4"
     return joinpath(base_dir, datestr, fname)
 end
 
@@ -147,6 +190,20 @@ function read_geosfp_cs_timestep(filepath::String;
         @assert size(ps_raw) == (Nc, Nc, 6)
 
         conv = convert_to_kgs ? FT(1 / (GRAV_GEOSFP * dt_met)) : FT(1)
+
+        # Auto-detect inverted vertical ordering: if DELP at level 1 >> level Nz,
+        # the file stores levels bottom-to-top (e.g. GEOS-IT) instead of the
+        # standard top-to-bottom (e.g. GEOS-FP). Flip to ensure level 1 = TOA.
+        mid = div(Nc, 2)
+        delp_top = FT(delp_raw[mid, mid, 1, 1])
+        delp_bot = FT(delp_raw[mid, mid, 1, Nz])
+        need_flip = delp_top > FT(10) * delp_bot  # surface DELP is ~1000× TOA DELP
+        if need_flip
+            @info "Detected inverted vertical ordering — flipping to TOA-first" maxlog=1
+            reverse!(mfxc_raw, dims=4)
+            reverse!(mfyc_raw, dims=4)
+            reverse!(delp_raw, dims=4)
+        end
 
         # Split into per-panel arrays: (Nc, Nc, Nz)
         mfxc_panels = ntuple(6) do p
@@ -204,47 +261,82 @@ function to_haloed_panels(ts::GeosFPCubedSphereTimestep{FT}; Hp::Int = 3) where 
 end
 
 """
-    cgrid_to_staggered_panels(mfxc_panels, mfyc_panels, Nc, Nz)
+    cgrid_to_staggered_panels(mfxc_panels, mfyc_panels)
 
-Convert C-grid mass fluxes (where MFXC(i,j) = flux through east face of cell (i,j))
-to staggered arrays compatible with the advection kernels:
+Convert C-grid mass fluxes (where MFXC(i,j) = flux through east face of cell (i,j),
+MFYC(i,j) = flux through north face of cell (i,j)) to staggered arrays compatible
+with the advection kernels:
   - `am`: (Nc+1, Nc, Nz) — flux through X-faces (am(i,j) = flux into cell i from left)
   - `bm`: (Nc, Nc+1, Nz) — flux through Y-faces (bm(i,j) = flux into cell j from below)
 
-Panel boundary fluxes (am[1,:,:] and bm[:,1,:]) are extracted from the east/north
-face of the adjacent panel using the standard cubed-sphere gnomonic connectivity.
+Panel boundary fluxes (am[1,:,:] and bm[:,1,:]) are extracted from the adjacent
+panel's shared edge, using the correct flux variable (MFXC for east/west edges,
+MFYC for north/south edges) and applying the along-edge orientation flip.
 
-The standard connectivity for GEOS cubed-sphere panels (1-indexed):
-  Panel 1: west=5, south=3, east=2, north=6
-  Panel 2: west=1, south=3, east=4, north=6
-  Panel 3: west=1, south=5, east=4, north=2
-  Panel 4: west=3, south=5, east=6, north=2
-  Panel 5: west=3, south=1, east=6, north=4
-  Panel 6: west=5, south=1, east=2, north=4
+The connectivity matches the GEOS-FP native cubed-sphere file convention
+(nf=1..6), verified from corner coordinate data.
+
+West boundary connectivity: am[1, j, k] reads from neighbor's outgoing flux.
+  Panels 2, 4, 6: neighbor's east edge (highX) → read MFXC[q](Nc, j, k), aligned
+  Panels 1, 3, 5: neighbor's north edge (highY) → read MFYC[q](Nc+1-j, Nc, k), reversed
+
+South boundary connectivity: bm[i, 1, k] reads from neighbor's outgoing flux.
+  Panels 1, 3, 5: neighbor's north edge (highY) → read MFYC[q](i, Nc, k), aligned
+  Panels 2, 4, 6: neighbor's east edge (highX) → read MFXC[q](Nc, Nc+1-i, k), reversed
 """
 function cgrid_to_staggered_panels(mfxc_panels::NTuple{6, Array{FT,3}},
                                     mfyc_panels::NTuple{6, Array{FT,3}}) where FT
     Nc = size(mfxc_panels[1], 1)
     Nz = size(mfxc_panels[1], 3)
 
-    # Connectivity: west_neighbor[p] gives the panel whose east edge abuts p's west edge.
-    # For GEOS gnomonic CS (from file contacts = [west, south, east, north]):
-    west_neighbor = (5, 1, 1, 3, 3, 5)
-    south_neighbor = (3, 3, 5, 5, 1, 1)
+    # West neighbor panel and which edge connects (from GEOS-FP file contacts):
+    #   Panel p west → Panel q at edge_type
+    #   :east  = neighbor's east edge (read MFXC[q](Nc, j, k)), aligned
+    #   :north = neighbor's north edge (read MFYC[q](Nc+1-j, Nc, k)), reversed
+    west_info = (
+        (panel=5, edge=:north),  # P1 west → P5 north, reversed
+        (panel=1, edge=:east),   # P2 west → P1 east, aligned
+        (panel=1, edge=:north),  # P3 west → P1 north, reversed
+        (panel=3, edge=:east),   # P4 west → P3 east, aligned
+        (panel=3, edge=:north),  # P5 west → P3 north, reversed
+        (panel=5, edge=:east),   # P6 west → P5 east, aligned
+    )
+
+    # South neighbor panel and which edge connects:
+    #   :north = neighbor's north edge (read MFYC[q](i, Nc, k)), aligned
+    #   :east  = neighbor's east edge (read MFXC[q](Nc, Nc+1-i, k)), reversed
+    south_info = (
+        (panel=6, edge=:north),  # P1 south → P6 north, aligned
+        (panel=6, edge=:east),   # P2 south → P6 east, reversed
+        (panel=2, edge=:north),  # P3 south → P2 north, aligned
+        (panel=2, edge=:east),   # P4 south → P2 east, reversed
+        (panel=4, edge=:north),  # P5 south → P4 north, aligned
+        (panel=4, edge=:east),   # P6 south → P4 east, reversed
+    )
 
     am_panels = ntuple(6) do p
         am = zeros(FT, Nc + 1, Nc, Nz)
         mfxc = mfxc_panels[p]
 
+        # Interior: shift C-grid to staggered
         @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
             am[i + 1, j, k] = mfxc[i, j, k]
         end
 
-        # West boundary: flux from the east edge of the western neighbor
-        wp = west_neighbor[p]
-        mfxc_w = mfxc_panels[wp]
-        @inbounds for k in 1:Nz, j in 1:Nc
-            am[1, j, k] = mfxc_w[Nc, j, k]
+        # West boundary: flux from neighbor's shared edge
+        wi = west_info[p]
+        if wi.edge === :east
+            # Neighbor's east (highX) edge, aligned: MFXC[q](Nc, j, k)
+            mfxc_q = mfxc_panels[wi.panel]
+            @inbounds for k in 1:Nz, j in 1:Nc
+                am[1, j, k] = mfxc_q[Nc, j, k]
+            end
+        else  # :north
+            # Neighbor's north (highY) edge, reversed: MFYC[q](Nc+1-j, Nc, k)
+            mfyc_q = mfyc_panels[wi.panel]
+            @inbounds for k in 1:Nz, j in 1:Nc
+                am[1, j, k] = mfyc_q[Nc + 1 - j, Nc, k]
+            end
         end
 
         am
@@ -254,14 +346,25 @@ function cgrid_to_staggered_panels(mfxc_panels::NTuple{6, Array{FT,3}},
         bm = zeros(FT, Nc, Nc + 1, Nz)
         mfyc = mfyc_panels[p]
 
+        # Interior: shift C-grid to staggered
         @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
             bm[i, j + 1, k] = mfyc[i, j, k]
         end
 
-        sp = south_neighbor[p]
-        mfyc_s = mfyc_panels[sp]
-        @inbounds for k in 1:Nz, i in 1:Nc
-            bm[i, 1, k] = mfyc_s[i, Nc, k]
+        # South boundary: flux from neighbor's shared edge
+        si = south_info[p]
+        if si.edge === :north
+            # Neighbor's north (highY) edge, aligned: MFYC[q](i, Nc, k)
+            mfyc_q = mfyc_panels[si.panel]
+            @inbounds for k in 1:Nz, i in 1:Nc
+                bm[i, 1, k] = mfyc_q[i, Nc, k]
+            end
+        else  # :east
+            # Neighbor's east (highX) edge, reversed: MFXC[q](Nc, Nc+1-i, k)
+            mfxc_q = mfxc_panels[si.panel]
+            @inbounds for k in 1:Nz, i in 1:Nc
+                bm[i, 1, k] = mfxc_q[Nc, Nc + 1 - i, k]
+            end
         end
 
         bm
@@ -299,15 +402,18 @@ end
     read_geosfp_cs_grid_info(filepath::String)
 
 Read the cubed-sphere grid coordinates (center lons/lats and corner lons/lats)
-from a GEOS-FP file. Returns `(lons, lats, corner_lons, corner_lats)`.
+from a GEOS cubed-sphere file. Returns `(lons, lats, corner_lons, corner_lats)`.
+
+GEOS-FP C720 files have all four; GEOS-IT C180 files only have center
+coordinates, so `corner_lons` and `corner_lats` may be `nothing`.
 """
 function read_geosfp_cs_grid_info(filepath::String)
     ds = NCDataset(filepath, "r")
     try
-        lons = Array{Float64}(ds["lons"][:, :, :])         # (720,720,6)
+        lons = Array{Float64}(ds["lons"][:, :, :])
         lats = Array{Float64}(ds["lats"][:, :, :])
-        clons = Array{Float64}(ds["corner_lons"][:, :, :]) # (721,721,6)
-        clats = Array{Float64}(ds["corner_lats"][:, :, :])
+        clons = haskey(ds, "corner_lons") ? Array{Float64}(ds["corner_lons"][:, :, :]) : nothing
+        clats = haskey(ds, "corner_lats") ? Array{Float64}(ds["corner_lats"][:, :, :]) : nothing
         return lons, lats, clons, clats
     finally
         close(ds)

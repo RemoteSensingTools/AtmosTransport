@@ -1,0 +1,43 @@
+# Quick 1-day test of GEOS-IT C180 to verify CFL fix
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "cubed_sphere"
+Nc         = 180
+met_source = "geosfp"
+
+[met_data]
+driver           = "geosfp_cs"
+product          = "geosit_c180"
+netcdf_dir       = "~/data/geosit_c180"
+start_date       = "2023-06-01"
+end_date         = "2023-06-01"
+dt               = 300
+met_interval     = 3600
+mass_flux_dt     = 450       # GEOS-IT C180 stores per-dynamics-step fluxes (dt_dyn ≈ 450 s)
+Hp               = 3
+
+[tracers.co2]
+emission      = "edgar"
+edgar_version = "v8.0"
+year          = 2022
+
+[output]
+filename    = "~/data/output/geosit_c180_1day_test.nc"
+interval    = 3600
+output_grid = "latlon"
+Nlon        = 360
+Nlat        = 181
+
+[output.fields]
+co2 = "column_mean"
+
+[diffusion]
+type       = "boundary_layer"
+Kz_max     = 100.0
+H_scale    = 8.0
+
+[buffering]
+strategy = "single"

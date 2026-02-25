@@ -126,7 +126,7 @@ end
             compute_cm_panel!(cm_panels[p], am_panels[p], bm_panels[p], gc.bt, Nc, Nz)
         end
 
-        ws = allocate_cs_massflux_workspace(ref)
+        ws = allocate_cs_massflux_workspace(ref, Nc)
         fill_panel_halos!(rm_panels, grid)
         fill_panel_halos!(m_panels, grid)
 
@@ -172,7 +172,7 @@ end
         mass_before = sum(sum(rm_panels[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, :]) for p in 1:6)
 
         am, bm, cm = zero_mass_flux_panels(Nc, Nz)
-        ws = allocate_cs_massflux_workspace(ref)
+        ws = allocate_cs_massflux_workspace(ref, Nc)
 
         strang_split_massflux!(rm_panels, m_panels, am, bm, cm, grid, true, ws)
 

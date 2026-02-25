@@ -9,14 +9,15 @@
 using TOML
 using Dates
 using ..Architectures: CPU, GPU, array_type
-using ..Grids: LatitudeLongitudeGrid, CubedSphereGrid
+using ..Grids: LatitudeLongitudeGrid, CubedSphereGrid, merge_upper_levels
 using ..Parameters: load_parameters
 using ..Sources: AbstractSource, EdgarSource, CarbonTrackerSource, GFASSource,
                  JenaCarboScopeSource, CATRINESource, load_inventory,
                  load_cams_co2, load_gridfed_fossil_co2, load_edgar_sf6, load_zhang_rn222
 using ..Diagnostics: ColumnMeanDiagnostic, SurfaceSliceDiagnostic, RegridDiagnostic,
-                     Full3DDiagnostic, MetField2DDiagnostic
+                     Full3DDiagnostic, MetField2DDiagnostic, SigmaLevelDiagnostic
 using ..Chemistry: NoChemistry, RadioactiveDecay, CompositeChemistry
+using ..Diffusion: BoundaryLayerDiffusion, NoDiffusion
 
 """
 $(SIGNATURES)
@@ -102,6 +103,13 @@ function build_model_from_config(config::Dict)
     met_cfg_default = default_met_config(met_source_name)
     vc = build_vertical_coordinate(met_cfg_default; FT)
 
+    # Optional: merge thin upper-atmosphere levels
+    merge_map = nothing
+    merge_Pa = get(grid_cfg, "merge_levels_above_Pa", nothing)
+    if merge_Pa !== nothing
+        vc, merge_map = merge_upper_levels(vc, FT(merge_Pa))
+    end
+
     grid = if grid_type == "cubed_sphere" || grid_type == "cs"
         Nc = get(grid_cfg, "Nc", 720)
         CubedSphereGrid(arch; FT, Nc,
@@ -125,7 +133,7 @@ function build_model_from_config(config::Dict)
     # --- Met driver ---
     met_data_cfg = get(config, "met_data", Dict())
     driver_type = get(met_data_cfg, "driver", "preprocessed_latlon")
-    met = _build_met_driver(driver_type, met_data_cfg, met_cfg_default, FT)
+    met = _build_met_driver(driver_type, met_data_cfg, met_cfg_default, FT; merge_map)
 
     # --- Tracers + sources ---
     tracers_cfg = get(config, "tracers", Dict())
@@ -134,7 +142,7 @@ function build_model_from_config(config::Dict)
 
     sources = AbstractSource[]
     for (_, tcfg) in tracers_cfg
-        src = _build_emission_source(tcfg, grid, FT)
+        src = _build_emission_source(tcfg, grid, FT; met_driver=met)
         src !== nothing && push!(sources, src)
     end
 
@@ -146,12 +154,17 @@ function build_model_from_config(config::Dict)
     writers = _build_output_writers(output_cfg)
 
     # --- Buffering ---
+    # Reference via parent module (Models is loaded after IO)
+    _Models = parentmodule(@__MODULE__).Models
     buf_cfg = get(config, "buffering", Dict())
     strategy = get(buf_cfg, "strategy", "single")
-    buffering = strategy == "double" ? DoubleBuffer() : SingleBuffer()
+    buffering = strategy == "double" ? _Models.DoubleBuffer() : _Models.SingleBuffer()
 
     # --- Chemistry ---
     chemistry = _build_chemistry(config, tracer_names, FT)
+
+    # --- Diffusion ---
+    diffusion = _build_diffusion(config, FT)
 
     # --- Initial conditions ---
     ic_cfg = get(config, "initial_conditions", Dict())
@@ -175,16 +188,17 @@ function build_model_from_config(config::Dict)
     # --- Build model ---
     Δt = get(met_data_cfg, "dt", 900.0)
 
-    return TransportModel(;
+    return _Models.TransportModel(;
         grid, tracers, met_data=met, Δt,
-        sources, output_writers=writers, buffering, chemistry)
+        sources, output_writers=writers, buffering, chemistry, diffusion)
 end
 
 # =====================================================================
 # Internal builder helpers
 # =====================================================================
 
-function _build_met_driver(driver_type::String, cfg::Dict, met_cfg_default, ::Type{FT}) where FT
+function _build_met_driver(driver_type::String, cfg::Dict, met_cfg_default, ::Type{FT};
+                           merge_map::Union{Nothing, Vector{Int}} = nothing) where FT
     dt = FT(get(cfg, "dt", 900))
     met_interval = FT(get(cfg, "met_interval", 3600))
 
@@ -218,35 +232,47 @@ function _build_met_driver(driver_type::String, cfg::Dict, met_cfg_default, ::Ty
         start_date = Date(get(cfg, "start_date", "2024-06-01"))
         end_date   = Date(get(cfg, "end_date", "2024-06-05"))
         Hp = get(cfg, "Hp", 3)
+        product = get(cfg, "product", "geosfp_c720")
 
         nc_dir = expanduser(get(cfg, "netcdf_dir", ""))
         nc_files = if !isempty(nc_dir) && isdir(nc_dir)
-            find_geosfp_cs_files(nc_dir, start_date, end_date)
+            find_geosfp_cs_files(nc_dir, start_date, end_date; product)
         else
             String[]
         end
 
+        mass_flux_dt = FT(get(cfg, "mass_flux_dt", met_interval))
+
         return GEOSFPCubedSphereMetDriver(; FT,
             preprocessed_dir=preproc_dir,
             netcdf_files=nc_files,
-            start_date, end_date, dt, met_interval, Hp)
+            start_date, end_date, dt, met_interval, Hp, merge_map,
+            mass_flux_dt)
     else
         error("Unknown met driver type: $driver_type. " *
               "Use 'era5', 'preprocessed_latlon', or 'geosfp_cs'.")
     end
 end
 
-function _build_emission_source(tcfg::Dict, grid, ::Type{FT}) where FT
+function _build_emission_source(tcfg::Dict, grid, ::Type{FT}; met_driver=nothing) where FT
     emission = get(tcfg, "emission", "none")
     emission == "none" && return nothing
 
     year = get(tcfg, "year", 2022)
 
+    # Load GEOS-FP file coords for CS emission regridding (on-the-fly fallback)
+    file_lons, file_lats = _get_cs_file_coords_from_driver(met_driver)
+
     if emission == "edgar"
         version  = get(tcfg, "edgar_version", "v8.0")
         filepath = expanduser(get(tcfg, "edgar_file", ""))
         src = EdgarSource(; version, filepath)
-        return load_inventory(src, grid; year, file=filepath)
+        if grid isa CubedSphereGrid
+            return load_inventory(src, grid; year, file=filepath, binary_file=filepath,
+                                  file_lons, file_lats)
+        else
+            return load_inventory(src, grid; year, file=filepath)
+        end
     elseif emission == "carbontracker"
         filepath = expanduser(get(tcfg, "file", ""))
         src = CarbonTrackerSource(; filepath)
@@ -316,25 +342,40 @@ function _build_output_writers(cfg::Dict)
     og = if get(cfg, "output_grid", "") == "latlon"
         Nlon = get(cfg, "Nlon", 720)
         Nlat = get(cfg, "Nlat", 361)
-        LatLonOutputGrid(Nlon, Nlat)
+        lon_range_arr = get(cfg, "lon_range", [-180.0, 180.0])
+        lat_range_arr = get(cfg, "lat_range", [-90.0, 90.0])
+        LatLonOutputGrid(; Nlon, Nlat,
+            lon_range=(lon_range_arr[1], lon_range_arr[2]),
+            lat_range=(lat_range_arr[1], lat_range_arr[2]))
     else
         nothing
     end
 
     fields_cfg = get(cfg, "fields", Dict())
     fields = Dict{Symbol, Any}()
-    for (name, ftype) in fields_cfg
+    for (name, fval) in fields_cfg
         sym = Symbol(name)
+        # Support both string ("column_mean") and dict ({type="surface_slice", species="co2"})
+        if fval isa Dict
+            ftype   = get(fval, "type", "column_mean")
+            species = Symbol(get(fval, "species", name))
+        else
+            ftype   = string(fval)
+            species = sym
+        end
         if ftype == "column_mean"
-            fields[sym] = ColumnMeanDiagnostic(sym)
+            fields[sym] = ColumnMeanDiagnostic(species)
         elseif ftype == "surface_slice"
-            fields[sym] = SurfaceSliceDiagnostic(sym)
+            fields[sym] = SurfaceSliceDiagnostic(species)
         elseif ftype == "regrid"
             Nlon_f = get(cfg, "Nlon", 720)
             Nlat_f = get(cfg, "Nlat", 361)
-            fields[sym] = RegridDiagnostic(sym; Nlon=Nlon_f, Nlat=Nlat_f)
+            fields[sym] = RegridDiagnostic(species; Nlon=Nlon_f, Nlat=Nlat_f)
+        elseif ftype == "sigma_level"
+            sigma = get(fval, "sigma", 0.8)
+            fields[sym] = SigmaLevelDiagnostic(species, Float64(sigma))
         elseif ftype == "full_3d"
-            fields[sym] = Full3DDiagnostic(sym)
+            fields[sym] = Full3DDiagnostic(species)
         elseif ftype == "surface_pressure"
             fields[sym] = MetField2DDiagnostic(:surface_pressure)
         elseif ftype == "pbl_height"
@@ -346,8 +387,27 @@ function _build_output_writers(cfg::Dict)
         end
     end
 
-    writer = NetCDFOutputWriter(expanduser(filename), fields, schedule;
-                                output_grid=og)
+    format = get(cfg, "format", "netcdf")
+    expanded_filename = expanduser(filename)
+
+    writer = if format == "binary"
+        auto_convert = get(cfg, "auto_convert", false)
+        bin_path = if endswith(expanded_filename, ".bin")
+            expanded_filename
+        else
+            replace(expanded_filename, r"\.\w+$" => ".bin")
+        end
+        # Ensure we got a .bin extension even if no extension was present
+        if !endswith(bin_path, ".bin")
+            bin_path = expanded_filename * ".bin"
+        end
+        BinaryOutputWriter(bin_path, fields, schedule;
+                           output_grid=og, auto_convert)
+    else
+        NetCDFOutputWriter(expanded_filename, fields, schedule;
+                           output_grid=og)
+    end
+
     return AbstractOutputWriter[writer]
 end
 
@@ -393,6 +453,56 @@ function _build_per_tracer_chemistry(config::Dict, tracer_names::Vector{Symbol},
         end
     end
     return schemes
+end
+
+"""
+    _get_cs_file_coords_from_driver(met_driver)
+
+Extract GEOS-FP file coordinates from a met driver (if available).
+Returns `(lons, lats)` as `(Nc×Nc×6)` arrays, or `(nothing, nothing)`.
+"""
+function _get_cs_file_coords_from_driver(met_driver)
+    met_driver === nothing && return nothing, nothing
+    # Use coord_file if available (works for both binary and netcdf modes)
+    if hasproperty(met_driver, :coord_file) && !isempty(met_driver.coord_file) &&
+       isfile(met_driver.coord_file)
+        lons, lats, _, _ = read_geosfp_cs_grid_info(met_driver.coord_file)
+        return lons, lats
+    end
+    # Fallback: try first data file in netcdf mode
+    if hasproperty(met_driver, :mode) && met_driver.mode == :netcdf &&
+       hasproperty(met_driver, :files) && !isempty(met_driver.files)
+        lons, lats, _, _ = read_geosfp_cs_grid_info(met_driver.files[1])
+        return lons, lats
+    end
+    return nothing, nothing
+end
+
+"""
+Build diffusion scheme from `[diffusion]` TOML section.
+
+```toml
+[diffusion]
+type = "boundary_layer"    # or "none" (default)
+Kz_max = 100.0             # Pa²/s  maximum diffusivity
+H_scale = 8.0              # e-folding depth in levels from surface
+```
+"""
+function _build_diffusion(config::Dict, ::Type{FT}) where FT
+    diff_cfg = get(config, "diffusion", Dict())
+    isempty(diff_cfg) && return nothing
+
+    dtype = get(diff_cfg, "type", "none")
+    dtype == "none" && return nothing
+
+    if dtype == "boundary_layer"
+        Kz_max  = FT(get(diff_cfg, "Kz_max", 100.0))
+        H_scale = FT(get(diff_cfg, "H_scale", 8.0))
+        return BoundaryLayerDiffusion(Kz_max, H_scale)
+    else
+        @warn "Unknown diffusion type: $dtype — using no diffusion"
+        return nothing
+    end
 end
 
 export load_configuration, build_model_from_config

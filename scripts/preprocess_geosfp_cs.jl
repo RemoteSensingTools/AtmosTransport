@@ -1,10 +1,14 @@
 #!/usr/bin/env julia
 # ===========================================================================
-# Offline preprocessing: GEOS-FP C720 cubed-sphere NetCDF → flat binary
+# Offline preprocessing: GEOS cubed-sphere NetCDF → flat binary
 #
-# Reads native GEOS-FP mass fluxes (MFXC, MFYC, DELP) from NetCDF, converts
+# Reads native GEOS mass fluxes (MFXC, MFYC, DELP) from NetCDF, converts
 # C-grid fluxes to staggered panels (am, bm), pads DELP with halos, and
 # writes per-day flat binary files for mmap-based GPU ingestion.
+#
+# Supports two products:
+#   geosfp_c720 — GEOS-FP C720, hourly files (24 .nc4 per day)
+#   geosit_c180 — GEOS-IT C180, daily files (1 .nc with 24 timesteps)
 #
 # Binary layout per file:
 #   [Header]  8192 bytes — JSON metadata (zero-padded)
@@ -19,7 +23,8 @@
 #   julia --project=. scripts/preprocess_geosfp_cs.jl
 #
 # Environment variables:
-#   GEOSFP_DATA_DIR — directory with date subdirs containing .nc4 files
+#   PRODUCT         — "geosfp_c720" or "geosit_c180" (default: geosfp_c720)
+#   GEOSFP_DATA_DIR — directory with date subdirs containing NetCDF files
 #   OUTDIR          — output directory for binary files
 #   GEOSFP_START    — start date (default: 2024-06-01)
 #   GEOSFP_END      — end date (default: 2024-06-05)
@@ -29,14 +34,16 @@
 using AtmosTransport
 using AtmosTransport.IO: read_geosfp_cs_timestep, to_haloed_panels,
                               cgrid_to_staggered_panels
+import AtmosTransport.IO: GEOS_CS_PRODUCTS
 using NCDatasets
 using Dates
 using Printf
 using JSON3
 
-const FT_STR = get(ENV, "FT_PRECISION", "Float32")
-const FT = FT_STR == "Float64" ? Float64 : Float32
-const Hp = 3
+const FT_STR  = get(ENV, "FT_PRECISION", "Float32")
+const FT      = FT_STR == "Float64" ? Float64 : Float32
+const Hp      = 3
+const PRODUCT = get(ENV, "PRODUCT", "geosfp_c720")
 
 const GEOSFP_DIR = expanduser(get(ENV, "GEOSFP_DATA_DIR",
                        joinpath(homedir(), "data", "geosfp_cs")))
@@ -47,20 +54,54 @@ const END_DATE   = Date(get(ENV, "GEOSFP_END", "2024-06-05"))
 
 const HEADER_SIZE = 8192
 
-function find_geosfp_cs_files_for_day(datadir, date)
+# ---------------------------------------------------------------------------
+# File discovery — dispatch on product layout
+# ---------------------------------------------------------------------------
+
+"""
+Find input files for a given day. Returns (files, n_timesteps_per_file).
+For hourly products: 24 separate files, 1 timestep each.
+For daily products: 1 file, 24 timesteps.
+"""
+function find_files_for_day(datadir, date, product)
+    info = GEOS_CS_PRODUCTS[product]
     daydir = joinpath(datadir, Dates.format(date, "yyyymmdd"))
-    isdir(daydir) || return String[]
-    files = String[]
-    for f in sort(readdir(daydir))
-        if contains(f, "tavg_1hr_ctm_c0720_v72") && endswith(f, ".nc4")
-            push!(files, joinpath(daydir, f))
+    isdir(daydir) || return String[], 0
+
+    if info.layout === :hourly
+        files = String[]
+        for f in sort(readdir(daydir))
+            if contains(f, "tavg_1hr_ctm_c0720_v72") && endswith(f, ".nc4")
+                push!(files, joinpath(daydir, f))
+            end
         end
+        return files, 1  # 1 timestep per file
+    else  # :daily
+        tag = "CTM_A1.C$(info.Nc)"
+        for f in readdir(daydir)
+            if contains(f, tag) && endswith(f, ".nc")
+                filepath = joinpath(daydir, f)
+                # Count timesteps in file
+                nt = NCDataset(filepath, "r") do ds
+                    length(ds["time"])
+                end
+                return [filepath], nt
+            end
+        end
+        return String[], 0
     end
-    return files
 end
 
-function preprocess_day(date::Date, files::Vector{String}, outpath::String)
-    Nt = length(files)
+# ---------------------------------------------------------------------------
+# Per-day preprocessing
+# ---------------------------------------------------------------------------
+
+function preprocess_day(date::Date, files::Vector{String},
+                        n_timesteps_per_file::Int, outpath::String)
+    isempty(files) && return
+
+    # Total windows for this day
+    Nt = length(files) * n_timesteps_per_file
     Nt == 0 && return
 
     @info "  Reading first file for dimensions..."
@@ -100,6 +141,7 @@ function preprocess_day(date::Date, files::Vector{String}, outpath::String)
         "elems_per_window" => elems_per_window,
         "date"             => Dates.format(date, "yyyy-mm-dd"),
         "dt_met_seconds"   => 3600.0,
+        "product"          => PRODUCT,
     )
     header_json = JSON3.write(header)
     length(header_json) < HEADER_SIZE ||
@@ -111,26 +153,31 @@ function preprocess_day(date::Date, files::Vector{String}, outpath::String)
         copyto!(header_buf, 1, Vector{UInt8}(header_json), 1, length(header_json))
         write(io, header_buf)
 
-        for (win, filepath) in enumerate(files)
-            t0 = time()
+        win = 0
+        for filepath in files
+            for tidx in 1:n_timesteps_per_file
+                win += 1
+                t0 = time()
 
-            ts = read_geosfp_cs_timestep(filepath; FT, convert_to_kgs=true)
-            delp_haloed, mfxc, mfyc = to_haloed_panels(ts; Hp)
-            am_panels, bm_panels = cgrid_to_staggered_panels(mfxc, mfyc)
+                ts = read_geosfp_cs_timestep(filepath; FT,
+                        time_index=tidx, convert_to_kgs=true)
+                delp_haloed, mfxc, mfyc = to_haloed_panels(ts; Hp)
+                am_panels, bm_panels = cgrid_to_staggered_panels(mfxc, mfyc)
 
-            for p in 1:6
-                write(io, vec(delp_haloed[p]))
-            end
-            for p in 1:6
-                write(io, vec(am_panels[p]))
-            end
-            for p in 1:6
-                write(io, vec(bm_panels[p]))
-            end
+                for p in 1:6
+                    write(io, vec(delp_haloed[p]))
+                end
+                for p in 1:6
+                    write(io, vec(am_panels[p]))
+                end
+                for p in 1:6
+                    write(io, vec(bm_panels[p]))
+                end
 
-            elapsed = round(time() - t0, digits=2)
-            if win <= 3 || win == Nt || win % 6 == 0
-                @info @sprintf("    Window %d/%d: %.2fs", win, Nt, elapsed)
+                elapsed = round(time() - t0, digits=2)
+                if win <= 3 || win == Nt || win % 6 == 0
+                    @info @sprintf("    Window %d/%d: %.2fs", win, Nt, elapsed)
+                end
             end
         end
     end
@@ -141,9 +188,13 @@ function preprocess_day(date::Date, files::Vector{String}, outpath::String)
     actual == expected || @warn "Size mismatch: expected $expected, got $actual"
 end
 
+# ===========================================================================
+# Main
+# ===========================================================================
+
 function main()
     @info "=" ^ 70
-    @info "GEOS-FP C720 Cubed-Sphere Preprocessing"
+    @info "GEOS Cubed-Sphere Preprocessing (product: $PRODUCT)"
     @info "=" ^ 70
     @info "  Data dir: $GEOSFP_DIR"
     @info "  Output:   $OUTDIR"
@@ -152,6 +203,7 @@ function main()
 
     mkpath(OUTDIR)
     wall_start = time()
+    days_done = 0
 
     for date in START_DATE:Day(1):END_DATE
         datestr = Dates.format(date, "yyyymmdd")
@@ -159,23 +211,26 @@ function main()
 
         if isfile(outpath) && filesize(outpath) > HEADER_SIZE
             @info "  [$datestr] Already exists ($(round(filesize(outpath)/1e9, digits=2)) GB) — skipping"
+            days_done += 1
             continue
         end
 
-        files = find_geosfp_cs_files_for_day(GEOSFP_DIR, date)
+        files, nts = find_files_for_day(GEOSFP_DIR, date, PRODUCT)
         if isempty(files)
             @warn "  [$datestr] No files found — skipping"
             continue
         end
 
-        @info "\n--- [$datestr] Processing $(length(files)) hourly files ---"
-        preprocess_day(date, files, outpath)
+        @info "\n--- [$datestr] Processing ($(length(files)) file(s), $nts timesteps each) ---"
+        preprocess_day(date, files, nts, outpath)
+        days_done += 1
     end
 
     wall_total = round(time() - wall_start, digits=1)
     @info "\n" * "=" ^ 70
     @info "Preprocessing complete!"
     @info "  Wall time: $(wall_total)s"
+    @info "  Days processed: $days_done"
     @info "  Output directory: $OUTDIR"
     for date in START_DATE:Day(1):END_DATE
         datestr = Dates.format(date, "yyyymmdd")

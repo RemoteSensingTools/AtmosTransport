@@ -63,4 +63,79 @@ function level_thickness(vc::HybridSigmaPressure, k, p_s)
     return pressure_at_interface(vc, k + 1, p_s) - pressure_at_interface(vc, k, p_s)
 end
 
+"""
+    merge_upper_levels(vc, merge_above_Pa; min_thickness_Pa=500, p_surface=101325)
+
+Merge thin upper-atmosphere levels above `merge_above_Pa` into coarser layers
+with a minimum thickness of `min_thickness_Pa`. Levels below the threshold are
+kept unchanged.
+
+Returns `(merged_vc, merge_map)` where:
+- `merged_vc`: new `HybridSigmaPressure` with fewer levels
+- `merge_map`: `Vector{Int}` of length `n_levels(vc)` mapping each native
+  level index to its merged level index (for use in met data regridding)
+"""
+function merge_upper_levels(vc::HybridSigmaPressure{FT},
+                            merge_above_Pa::Real;
+                            min_thickness_Pa::Real = FT(500),
+                            p_surface::Real = FT(101325)) where FT
+    Nz = n_levels(vc)
+    ps = FT(p_surface)
+
+    # Find the first interface whose pressure exceeds merge_above_Pa
+    # (everything above that is a candidate for merging)
+    k_threshold = 1
+    for k in 1:(Nz + 1)
+        if pressure_at_interface(vc, k, ps) > FT(merge_above_Pa)
+            k_threshold = k
+            break
+        end
+    end
+
+    # Accumulate thin layers into merged groups above the threshold
+    # keep_interfaces: the A/B interface indices we keep in the merged grid
+    keep_interfaces = Int[1]  # always keep the top boundary
+    accumulated_dp = zero(FT)
+    for k in 1:(k_threshold - 1)
+        dp = pressure_at_interface(vc, k + 1, ps) - pressure_at_interface(vc, k, ps)
+        accumulated_dp += dp
+        if accumulated_dp >= FT(min_thickness_Pa)
+            push!(keep_interfaces, k + 1)
+            accumulated_dp = zero(FT)
+        end
+    end
+    # Close any remaining partial group at the threshold boundary
+    if keep_interfaces[end] != k_threshold
+        push!(keep_interfaces, k_threshold)
+    end
+    # Append all interfaces below the threshold (kept as-is)
+    for k in (k_threshold + 1):(Nz + 1)
+        push!(keep_interfaces, k)
+    end
+
+    # Build merged A/B vectors
+    A_merged = FT[vc.A[k] for k in keep_interfaces]
+    B_merged = FT[vc.B[k] for k in keep_interfaces]
+    merged_vc = HybridSigmaPressure(A_merged, B_merged)
+
+    # Build merge_map: native level index → merged level index
+    Nz_merged = n_levels(merged_vc)
+    merge_map = Vector{Int}(undef, Nz)
+    km = 1  # pointer into merged levels
+    for k_native in 1:Nz
+        # Advance merged pointer when native interface exceeds the merged boundary
+        while km < Nz_merged && keep_interfaces[km + 1] <= k_native
+            km += 1
+        end
+        merge_map[k_native] = km
+    end
+
+    @info "Merged vertical levels: $(Nz) → $(Nz_merged) " *
+          "($(k_threshold - 1) levels above $(merge_above_Pa) Pa → " *
+          "$(count(k -> k < k_threshold, keep_interfaces) - 1) merged)"
+
+    return merged_vc, merge_map
+end
+
 export n_levels, pressure_at_interface, pressure_at_level, level_thickness
+export merge_upper_levels

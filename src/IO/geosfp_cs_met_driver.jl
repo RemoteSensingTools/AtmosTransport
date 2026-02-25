@@ -38,6 +38,12 @@ struct GEOSFPCubedSphereMetDriver{FT} <: AbstractMassFluxMetDriver{FT}
     dt              :: FT
     "number of advection sub-steps per met window"
     steps_per_win   :: Int
+    "NetCDF file for reading panel coordinates (used by binary mode for regridding)"
+    coord_file      :: String
+    "merge map for vertical level merging (native level → merged level index), or nothing"
+    merge_map       :: Union{Nothing, Vector{Int}}
+    "accumulation time for mass fluxes [s] (dynamics timestep; defaults to met_interval)"
+    mass_flux_dt    :: FT
 end
 
 """
@@ -58,7 +64,9 @@ function GEOSFPCubedSphereMetDriver(;
         end_date::Date = Date("2024-06-05"),
         dt::Real = 900,
         met_interval::Real = 3600,
-        Hp::Int = 3)
+        Hp::Int = 3,
+        merge_map::Union{Nothing, Vector{Int}} = nothing,
+        mass_flux_dt::Real = met_interval)
 
     ft_tag = FT == Float32 ? "float32" : "float64"
     steps_per_win = max(1, round(Int, met_interval / dt))
@@ -78,10 +86,17 @@ function GEOSFPCubedSphereMetDriver(;
         end
         total = sum(wins_per)
 
+        # Use first NetCDF file (if available) for panel coordinate reading
+        coord_file = isempty(netcdf_files) ? "" : netcdf_files[1]
+
+        merge_map !== nothing &&
+            error("Binary mode with layer merging not yet supported. Use netcdf_dir instead.")
+
         return GEOSFPCubedSphereMetDriver{FT}(
             bin_files, :binary, wins_per, total,
             Nc, Nz_file, Hp_file,
-            FT(met_interval), FT(dt), steps_per_win)
+            FT(met_interval), FT(dt), steps_per_win,
+            coord_file, nothing, FT(mass_flux_dt))
     else
         # NetCDF mode
         files = isempty(netcdf_files) ? String[] : netcdf_files
@@ -92,13 +107,23 @@ function GEOSFPCubedSphereMetDriver(;
         ts0 = read_geosfp_cs_timestep(files[1]; FT)
         Nc = ts0.Nc
         Nz_file = ts0.Nz
-        n_windows = length(files)  # one timestep per file
-        wins_per = ones(Int, n_windows)
+
+        # Probe time dimension: daily files have 24 timesteps, hourly files have 1
+        wins_per = Int[]
+        for f in files
+            nt = NCDataset(f, "r") do ds
+                length(ds["time"])
+            end
+            push!(wins_per, nt)
+        end
+        n_windows = sum(wins_per)
 
         return GEOSFPCubedSphereMetDriver{FT}(
             files, :netcdf, wins_per, n_windows,
             Nc, Nz_file, Hp,
-            FT(met_interval), FT(dt), steps_per_win)
+            FT(met_interval), FT(dt), steps_per_win,
+            files[1],  # coord_file = first NetCDF file
+            merge_map, FT(mass_flux_dt))
     end
 end
 
@@ -140,20 +165,41 @@ function load_met_window!(cpu_buf::CubedSphereCPUBuffer,
     file_idx, local_win = window_to_file_local(driver, win)
     filepath = driver.files[file_idx]
 
+    @info "  Met window $win: $(basename(filepath)) [t=$local_win]" maxlog=200
+
     if driver.mode === :binary
-        reader = CSBinaryReader(filepath, FT)
+        cached_path = ensure_local_cache(filepath)
+        reader = CSBinaryReader(cached_path, FT)
         load_cs_window!(cpu_buf.delp, cpu_buf.am, cpu_buf.bm, reader, local_win)
         close(reader)
     else
         # NetCDF mode — read, halo, and stagger
-        ts = read_geosfp_cs_timestep(filepath; FT, convert_to_kgs=true)
+        ts = read_geosfp_cs_timestep(filepath; FT, time_index=local_win,
+                                      dt_met=driver.mass_flux_dt,
+                                      convert_to_kgs=true)
         delp_haloed, mfxc, mfyc = to_haloed_panels(ts; Hp=driver.Hp)
         am_stag, bm_stag = cgrid_to_staggered_panels(mfxc, mfyc)
 
-        for p in 1:6
-            copyto!(cpu_buf.delp[p], delp_haloed[p])
-            copyto!(cpu_buf.am[p], am_stag[p])
-            copyto!(cpu_buf.bm[p], bm_stag[p])
+        mm = driver.merge_map
+        if mm !== nothing
+            # Regrid native levels → merged levels by summing within groups
+            for p in 1:6
+                cpu_buf.delp[p] .= zero(FT)
+                cpu_buf.am[p]   .= zero(FT)
+                cpu_buf.bm[p]   .= zero(FT)
+                for k in 1:length(mm)
+                    km = mm[k]
+                    cpu_buf.delp[p][:, :, km] .+= delp_haloed[p][:, :, k]
+                    cpu_buf.am[p][:, :, km]   .+= am_stag[p][:, :, k]
+                    cpu_buf.bm[p][:, :, km]   .+= bm_stag[p][:, :, k]
+                end
+            end
+        else
+            for p in 1:6
+                copyto!(cpu_buf.delp[p], delp_haloed[p])
+                copyto!(cpu_buf.am[p], am_stag[p])
+                copyto!(cpu_buf.bm[p], bm_stag[p])
+            end
         end
     end
     return nothing

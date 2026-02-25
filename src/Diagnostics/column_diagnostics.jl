@@ -137,3 +137,92 @@ function compute_diagnostics!(c_col_panels::NTuple{6}, c_sfc_panels::NTuple{6},
     column_mean!(c_col_panels, rm_panels, m_panels, Nc, Nz, Hp)
     surface_slice!(c_sfc_panels, rm_panels, Nc, Nz, Hp)
 end
+
+# =====================================================================
+# Sigma-level extraction kernels
+# =====================================================================
+
+@kernel function _sigma_level_kernel!(c_out, @Const(c), @Const(m), Nz, sigma)
+    i, j = @index(Global, NTuple)
+    FT = eltype(c)
+    @inbounds begin
+        total_m = zero(FT)
+        for k in 1:Nz
+            total_m += m[i, j, k]
+        end
+        target = FT(sigma) * total_m
+        cum_m = zero(FT)
+        found = false
+        for k in 1:Nz
+            cum_m += m[i, j, k]
+            if !found && cum_m >= target
+                c_out[i, j] = c[i, j, k]
+                found = true
+            end
+        end
+        if !found
+            c_out[i, j] = c[i, j, Nz]
+        end
+    end
+end
+
+"""
+    sigma_level_slice!(c_out, c, m, sigma)
+
+Extract tracer at the model level closest to `sigma × p_surface`.
+`c` is 3D (Nx, Ny, Nz), `m` is air mass (same shape), `c_out` is 2D (Nx, Ny).
+"""
+function sigma_level_slice!(c_out::AbstractMatrix{FT}, c::AbstractArray{FT,3},
+                             m::AbstractArray{FT,3}, sigma::Float64) where FT
+    backend = get_backend(c)
+    Nx, Ny, Nz = size(c)
+    k! = _sigma_level_kernel!(backend, 256)
+    k!(c_out, c, m, Nz, FT(sigma); ndrange=(Nx, Ny))
+    synchronize(backend)
+end
+
+@kernel function _cs_sigma_level_kernel!(c_out, @Const(rm), @Const(m), Hp, Nz, sigma)
+    i, j = @index(Global, NTuple)
+    FT_k = eltype(rm)
+    @inbounds begin
+        total_m = zero(FT_k)
+        for k in 1:Nz
+            total_m += m[Hp + i, Hp + j, k]
+        end
+        target = sigma * total_m
+        cum_m = zero(FT_k)
+        found = false
+        for k in 1:Nz
+            mk = m[Hp + i, Hp + j, k]
+            cum_m += mk
+            if !found && cum_m >= target
+                c_out[i, j] = mk > zero(FT_k) ? rm[Hp + i, Hp + j, k] / mk : zero(FT_k)
+                found = true
+            end
+        end
+        if !found
+            mk = m[Hp + i, Hp + j, Nz]
+            c_out[i, j] = mk > zero(FT_k) ? rm[Hp + i, Hp + j, Nz] / mk : zero(FT_k)
+        end
+    end
+end
+
+"""
+    sigma_level_slice!(c_out_panels, rm_panels, m_panels, Nc, Nz, Hp, sigma)
+
+Extract tracer mixing ratio at the sigma level for cubed-sphere panels.
+`rm_panels` is tracer mass, `m_panels` is air mass (both NTuple{6} of haloed 3D arrays).
+`c_out_panels` is NTuple{6} of (Nc × Nc) 2D arrays.
+"""
+function sigma_level_slice!(c_out_panels::NTuple{6}, rm_panels::NTuple{6},
+                             m_panels::NTuple{6}, Nc::Int, Nz::Int, Hp::Int,
+                             sigma::Float64)
+    backend = get_backend(rm_panels[1])
+    FT = eltype(rm_panels[1])
+    k! = _cs_sigma_level_kernel!(backend, 256)
+    for p in 1:6
+        k!(c_out_panels[p], rm_panels[p], m_panels[p], Hp, Nz, FT(sigma);
+           ndrange=(Nc, Nc))
+    end
+    synchronize(backend)
+end

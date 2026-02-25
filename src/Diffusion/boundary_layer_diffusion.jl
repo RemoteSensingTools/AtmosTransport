@@ -5,14 +5,15 @@
 # where D is a tridiagonal diffusion operator built from Kz profiles.
 # Solved column-by-column with the Thomas algorithm.
 #
-# Two implementations:
+# Three implementations:
 #   1. CPU: column-by-column loop with preallocated workspace
-#   2. GPU: KernelAbstractions @kernel — one (i,j) thread per column,
-#      pre-computed tridiagonal coefficients passed as device vectors
+#   2. GPU (lat-lon): KernelAbstractions @kernel on (Nx, Ny) arrays
+#   3. GPU (cubed-sphere): KernelAbstractions @kernel on haloed panel arrays
+#      with rm ↔ mixing-ratio conversion
 # ---------------------------------------------------------------------------
 
 using ..Fields: interior, AbstractField
-using ..Grids: grid_size, Δz, floattype, LatitudeLongitudeGrid
+using ..Grids: grid_size, Δz, floattype, LatitudeLongitudeGrid, CubedSphereGrid
 using KernelAbstractions: @kernel, @index, synchronize, get_backend
 
 """
@@ -25,14 +26,18 @@ tracer_data(t) = t isa AbstractField ? interior(t) : t
 """
 $(SIGNATURES)
 
-Default exponential Kz profile at interface between level k and k+1.
-Decreases with height (smaller at top, larger near surface).
-Clamped to [0, Kz_max].
+Exponential Kz profile at interface between level k and k+1.
+Largest near surface (k close to Nz), decaying upward with e-folding
+depth `H_scale` levels.
+
+- `k`: interface index (between levels k and k+1)
+- `Nz`: total number of vertical levels
+- `Kz_max`: maximum diffusivity [Pa²/s]
+- `H_scale`: e-folding depth in levels from surface
 """
-function default_Kz_interface(k, Nz, Kz_max, ::Type{FT}) where {FT}
-    scale_height = FT(Nz)
-    Kz = Kz_max * exp(-(Nz - k - FT(0.5)) / scale_height)
-    return clamp(Kz, zero(FT), Kz_max)
+function default_Kz_interface(k, Nz, Kz_max, H_scale, ::Type{FT}) where {FT}
+    frac = FT(Nz - k) / FT(H_scale)
+    return clamp(Kz_max * exp(-frac), zero(FT), Kz_max)
 end
 
 """
@@ -69,9 +74,11 @@ Pre-compute the (a, b, c) tridiagonal coefficient vectors for the implicit
 diffusion solve `(I - Δt·D) c_new = c_old`. Because the Kz profile and Δz
 depend only on level index (at reference surface pressure), the coefficients
 are the same for every (i,j) column and can be computed once.
+
+Works with any grid type that defines `grid_size(grid).Nz` and `Δz(k, grid)`.
 """
-function build_diffusion_coefficients(grid::LatitudeLongitudeGrid{FT},
-                                      Kz_max::FT, Δt) where FT
+function build_diffusion_coefficients(grid::AbstractGrid{FT},
+                                      Kz_max::FT, H_scale::FT, Δt) where FT
     gs = grid_size(grid)
     Nz = gs.Nz
     a_v = Vector{FT}(undef, Nz)
@@ -83,12 +90,12 @@ function build_diffusion_coefficients(grid::LatitudeLongitudeGrid{FT},
         D_above = zero(FT)
         if k > 1
             Δz_int_below = (Δz(k - 1, grid) + Δz_k) / 2
-            Kz_below = default_Kz_interface(k - 1, Nz, Kz_max, FT)
+            Kz_below = default_Kz_interface(k - 1, Nz, Kz_max, H_scale, FT)
             D_below = Kz_below / (Δz_k * Δz_int_below)
         end
         if k < Nz
             Δz_int_above = (Δz_k + Δz(k + 1, grid)) / 2
-            Kz_above = default_Kz_interface(k, Nz, Kz_max, FT)
+            Kz_above = default_Kz_interface(k, Nz, Kz_max, H_scale, FT)
             D_above = Kz_above / (Δz_k * Δz_int_above)
         end
         D_kk = -(D_below + D_above)
@@ -147,6 +154,49 @@ end
 end
 
 # =====================================================================
+# CS kernel: Thomas solve on haloed panels with rm ↔ mixing ratio
+# =====================================================================
+
+"""
+GPU kernel for cubed-sphere boundary-layer diffusion.
+Operates on haloed panel arrays where `rm = air_mass × mixing_ratio`.
+
+For each (i,j) column:
+1. Convert rm → mixing ratio (c = rm/m)
+2. Apply implicit Thomas solve to c
+3. Convert back rm = c_new × m
+"""
+@kernel function _diffuse_cs_panel_kernel!(rm, @Const(m), @Const(a_v), @Const(w_v),
+                                           @Const(inv_d), Hp, Nz)
+    i, j = @index(Global, NTuple)
+    ii = Hp + i
+    jj = Hp + j
+    @inbounds begin
+        # Forward sweep: convert rm→c, apply Thomas elimination
+        # Store g values (modified mixing ratios) temporarily in rm
+        c = rm[ii, jj, 1] / m[ii, jj, 1]
+        g_prev = c * inv_d[1]
+        rm[ii, jj, 1] = g_prev
+        for k in 2:Nz
+            c = rm[ii, jj, k] / m[ii, jj, k]
+            g_prev = (c - a_v[k] * g_prev) * inv_d[k]
+            rm[ii, jj, k] = g_prev
+        end
+
+        # Back substitution in mixing-ratio space
+        # rm currently holds g values (modified mixing ratios)
+        for k in (Nz - 1):-1:1
+            rm[ii, jj, k] -= w_v[k] * rm[ii, jj, k + 1]
+        end
+
+        # Convert back: rm = c_new × m
+        for k in 1:Nz
+            rm[ii, jj, k] *= m[ii, jj, k]
+        end
+    end
+end
+
+# =====================================================================
 # Diffusion workspace — pre-computed device arrays for GPU path
 # =====================================================================
 
@@ -157,9 +207,9 @@ struct DiffusionWorkspace{FT, V <: AbstractVector{FT}}
     Nz      :: Int
 end
 
-function DiffusionWorkspace(grid::LatitudeLongitudeGrid{FT}, Kz_max::FT,
+function DiffusionWorkspace(grid::AbstractGrid{FT}, Kz_max::FT, H_scale::FT,
                             Δt, arr_template::AbstractArray{FT}) where FT
-    a_v, b_v, c_v = build_diffusion_coefficients(grid, Kz_max, FT(Δt))
+    a_v, b_v, c_v = build_diffusion_coefficients(grid, Kz_max, H_scale, FT(Δt))
     w, inv_denom  = build_thomas_factors(a_v, b_v, c_v)
     backend = get_backend(arr_template)
     to_dev(v) = typeof(similar(arr_template, length(v)))(v)
@@ -179,15 +229,36 @@ function diffuse_gpu!(tracers::NamedTuple, dw::DiffusionWorkspace)
     return nothing
 end
 
+"""
+    diffuse_cs_panels!(rm_panels, m_panels, dw, Nc, Nz, Hp)
+
+Apply boundary-layer vertical diffusion to cubed-sphere tracer panels.
+`rm_panels` is NTuple{6} of haloed 3D arrays (air_mass × mixing_ratio).
+`m_panels` is NTuple{6} of haloed 3D arrays (air mass in kg).
+"""
+function diffuse_cs_panels!(rm_panels::NTuple{6}, m_panels::NTuple{6},
+                            dw::DiffusionWorkspace, Nc::Int, Nz::Int, Hp::Int)
+    backend = get_backend(rm_panels[1])
+    kernel! = _diffuse_cs_panel_kernel!(backend, 256)
+    for p in 1:6
+        kernel!(rm_panels[p], m_panels[p], dw.a_v, dw.w_v, dw.inv_d,
+                Hp, Nz; ndrange=(Nc, Nc))
+    end
+    synchronize(backend)
+    return nothing
+end
+
 # =====================================================================
 # CPU path (original column-by-column)
 # =====================================================================
 
-function diffuse!(tracers::NamedTuple, met, grid::LatitudeLongitudeGrid, diff::BoundaryLayerDiffusion, Δt)
+function diffuse!(tracers::NamedTuple, met, grid::LatitudeLongitudeGrid,
+                  diff::BoundaryLayerDiffusion, Δt)
     gs = grid_size(grid)
     Nx, Ny, Nz = gs.Nx, gs.Ny, gs.Nz
     FT = floattype(grid)
-    Kz_max = diff.Kz_max
+    Kz_max = FT(diff.Kz_max)
+    H_scale = FT(diff.H_scale)
 
     a = Vector{FT}(undef, Nz)
     b = Vector{FT}(undef, Nz)
@@ -209,12 +280,12 @@ function diffuse!(tracers::NamedTuple, met, grid::LatitudeLongitudeGrid, diff::B
                 D_above = zero(FT)
                 if k > 1
                     Δz_int_below = (Δz(k - 1, grid) + Δz_k) / 2
-                    Kz_below = default_Kz_interface(k - 1, Nz, Kz_max, FT)
+                    Kz_below = default_Kz_interface(k - 1, Nz, Kz_max, H_scale, FT)
                     D_below = Kz_below / (Δz_k * Δz_int_below)
                 end
                 if k < Nz
                     Δz_int_above = (Δz_k + Δz(k + 1, grid)) / 2
-                    Kz_above = default_Kz_interface(k, Nz, Kz_max, FT)
+                    Kz_above = default_Kz_interface(k, Nz, Kz_max, H_scale, FT)
                     D_above = Kz_above / (Δz_k * Δz_int_above)
                 end
                 D_kk = -(D_below + D_above)

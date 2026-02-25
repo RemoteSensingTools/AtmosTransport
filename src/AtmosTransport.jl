@@ -71,6 +71,10 @@ using .Sources
 include("IO/IO.jl")
 using .IO
 
+# ---- Visualization stubs (implemented by AtmosTransportMakieExt) ----
+include("Visualization/Visualization.jl")
+using .Visualization
+
 # ---- Models (depends on everything above) ----
 include("Models/Models.jl")
 using .Models

@@ -27,7 +27,8 @@ function adjoint_diffuse!(adj_tracers::NamedTuple, met, grid::LatitudeLongitudeG
     gs = grid_size(grid)
     Nx, Ny, Nz = gs.Nx, gs.Ny, gs.Nz
     FT = floattype(grid)
-    Kz_max = diff.Kz_max
+    Kz_max  = FT(diff.Kz_max)
+    H_scale = FT(diff.H_scale)
 
     # Original tridiagonal arrays
     a = Vector{FT}(undef, Nz)
@@ -55,12 +56,12 @@ function adjoint_diffuse!(adj_tracers::NamedTuple, met, grid::LatitudeLongitudeG
                 D_above = zero(FT)
                 if k > 1
                     Δz_int_below = (Δz(k - 1, grid) + Δz_k) / 2
-                    Kz_below = default_Kz_interface(k - 1, Nz, Kz_max, FT)
+                    Kz_below = default_Kz_interface(k - 1, Nz, Kz_max, H_scale, FT)
                     D_below = Kz_below / (Δz_k * Δz_int_below)
                 end
                 if k < Nz
                     Δz_int_above = (Δz_k + Δz(k + 1, grid)) / 2
-                    Kz_above = default_Kz_interface(k, Nz, Kz_max, FT)
+                    Kz_above = default_Kz_interface(k, Nz, Kz_max, H_scale, FT)
                     D_above = Kz_above / (Δz_k * Δz_int_above)
                 end
                 D_kk = -(D_below + D_above)

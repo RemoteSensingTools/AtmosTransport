@@ -16,21 +16,106 @@ using ..Grids: fill_panel_halos!, allocate_cubed_sphere_field
 using ..Architectures: array_type
 using ..Advection: MassFluxWorkspace, allocate_massflux_workspace,
                    allocate_cs_massflux_workspace,
-                   strang_split_massflux!, compute_air_mass!,
+                   strang_split_massflux!, strang_split_massflux_ppm!,
+                   compute_air_mass!,
                    compute_mass_fluxes!, compute_air_mass_panel!, compute_cm_panel!,
-                   build_geometry_cache, max_cfl_x_cs, max_cfl_y_cs
+                   build_geometry_cache, max_cfl_x_cs, max_cfl_y_cs,
+                   SlopesAdvection, PPMAdvection
 using ..Diffusion: DiffusionWorkspace, diffuse_gpu!, diffuse_cs_panels!,
-                   BoundaryLayerDiffusion, build_diffusion_coefficients
+                   BoundaryLayerDiffusion, PBLDiffusion, diffuse_pbl!,
+                   build_diffusion_coefficients
+using ..Parameters: PlanetParameters, load_parameters
+using ..Convection: TiedtkeConvection, convect!
 using ..Sources: AbstractSource, apply_surface_flux!, AbstractGriddedEmission,
                  CubedSphereEmission, GriddedEmission, apply_emissions_window!,
                  M_AIR, M_CO2, M_SF6, M_RN222
 using ..Chemistry: apply_chemistry!
 using ..IO: AbstractMetDriver, AbstractRawMetDriver, AbstractMassFluxMetDriver,
             total_windows, window_dt, steps_per_window, load_met_window!,
+            load_cmfmc_window!, load_surface_fields_window!,
             LatLonMetBuffer, LatLonCPUBuffer, CubedSphereMetBuffer, CubedSphereCPUBuffer,
             upload!, AbstractOutputWriter, write_output!, finalize_output!
 using ..Diagnostics: column_mean!, surface_slice!
 using Printf
+using ProgressMeter
+
+# =====================================================================
+# Physics setup/apply helpers — dispatch instead of isa checks
+# =====================================================================
+
+# --- BoundaryLayerDiffusion workspace (pre-computed tridiagonal factors) ---
+_setup_bld_workspace(d::BoundaryLayerDiffusion, grid, dt, template) =
+    DiffusionWorkspace(grid, eltype(template)(d.Kz_max),
+                       eltype(template)(d.H_scale), dt, template)
+_setup_bld_workspace(::AbstractDiffusion, grid, dt, template) = nothing
+_setup_bld_workspace(::Nothing, grid, dt, template) = nothing
+
+# --- Apply BLD diffusion (static Kz) ---
+_apply_bld!(tracers::NamedTuple, ::Nothing) = nothing
+_apply_bld!(tracers::NamedTuple, dw::DiffusionWorkspace) = diffuse_gpu!(tracers, dw)
+_apply_bld_cs!(rm_panels, m_panels, ::Nothing, Nc, Nz, Hp) = nothing
+_apply_bld_cs!(rm_panels, m_panels, dw::DiffusionWorkspace, Nc, Nz, Hp) =
+    diffuse_cs_panels!(rm_panels, m_panels, dw, Nc, Nz, Hp)
+
+# --- Query whether physics buffers are needed ---
+_needs_convection(::TiedtkeConvection) = true
+_needs_convection(::AbstractConvection) = false
+_needs_convection(::Nothing) = false
+_needs_pbl(::PBLDiffusion) = true
+_needs_pbl(::AbstractDiffusion) = false
+_needs_pbl(::Nothing) = false
+
+# Extract Int32 cluster_sizes for reduced-grid x-advection, or nothing for uniform.
+# Cap at MAX_CLUSTER to keep GPU kernel memory reads O(1) per thread;
+# larger clusters cause O(r) reads which dominates runtime.
+const _MAX_GPU_CLUSTER = Int32(4)
+
+function _get_cluster_sizes_cpu(grid::LatitudeLongitudeGrid)
+    rg = grid.reduced_grid
+    rg === nothing && return nothing
+    # Round cluster sizes down to the nearest power of 2, capped
+    cs = Int32.(rg.cluster_sizes)
+    @inbounds for j in eachindex(cs)
+        r = cs[j]
+        if r > _MAX_GPU_CLUSTER
+            # Find largest power-of-2 divisor of Nx that is ≤ _MAX_GPU_CLUSTER
+            # (must divide Nx evenly for the kernel to work)
+            cs[j] = _MAX_GPU_CLUSTER
+        end
+    end
+    # Verify all cluster sizes divide Nx
+    Nx = grid.Nx
+    @inbounds for j in eachindex(cs)
+        r = cs[j]
+        if r > 1 && Nx % r != 0
+            cs[j] = Int32(1)  # fallback to uniform if it doesn't divide evenly
+        end
+    end
+    return cs
+end
+
+# --- Apply advection with dispatch on scheme type ---
+"""Apply cubed-sphere mass-flux advection, dispatching on advection scheme."""
+function _apply_advection_cs!(rm_panels, m_panels, am, bm, cm, grid,
+                               scheme::SlopesAdvection, ws)
+    strang_split_massflux!(rm_panels, m_panels, am, bm, cm, grid, true, ws)
+end
+
+function _apply_advection_cs!(rm_panels, m_panels, am, bm, cm, grid,
+                               scheme::PPMAdvection{ORD}, ws) where ORD
+    strang_split_massflux_ppm!(rm_panels, m_panels, am, bm, cm, grid, Val(ORD), ws)
+end
+
+"""Apply lat-lon mass-flux advection, dispatching on advection scheme."""
+function _apply_advection_latlon!(tracers, m, am, bm, cm, grid,
+                                   scheme::SlopesAdvection, ws; cfl_limit)
+    strang_split_massflux!(tracers, m, am, bm, cm, grid, true, ws; cfl_limit)
+end
+
+function _apply_advection_latlon!(tracers, m, am, bm, cm, grid,
+                                   scheme::PPMAdvection{ORD}, ws; cfl_limit) where ORD
+    strang_split_massflux_ppm!(tracers, m, am, bm, cm, grid, Val(ORD), ws; cfl_limit)
+end
 
 # =====================================================================
 # Helper: prepare emission data for GPU-compatible injection
@@ -145,24 +230,66 @@ function _run_loop!(model, grid::LatitudeLongitudeGrid{FT},
     arch    = model.architecture
     sources = model.sources
     writers = model.output_writers
+    AT      = array_type(arch)
 
     Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
     n_win     = total_windows(driver)
     n_sub     = steps_per_window(driver)
     dt_sub    = FT(driver.dt)
 
+    # Reduced-grid cluster sizes for x-advection kernel
+    cs_cpu = _get_cluster_sizes_cpu(grid)
+
     # Allocate GPU met buffer + CPU staging
-    gpu_buf = LatLonMetBuffer(arch, FT, Nx, Ny, Nz)
+    gpu_buf = LatLonMetBuffer(arch, FT, Nx, Ny, Nz; cluster_sizes_cpu=cs_cpu)
     cpu_buf = LatLonCPUBuffer(FT, Nx, Ny, Nz)
 
     # Prepare emission data on device
     emi_data, area_j_dev, A_coeff, B_coeff =
         _prepare_latlon_emissions(sources, grid, driver, arch)
 
+    # Diffusion timestep = full window duration
+    dt_window = FT(dt_sub * n_sub)
+
+    # Build diffusion workspace (pre-computed tridiagonal factors on device)
+    dw = _setup_bld_workspace(model.diffusion, grid, dt_window, gpu_buf.m_ref)
+
+    # Physics: convective mass flux buffers
+    has_convection = _needs_convection(model.convection)
+    cmfmc_cpu = has_convection ? Array{FT}(undef, Nx, Ny, Nz + 1) : nothing
+    cmfmc_gpu = has_convection ? AT(zeros(FT, Nx, Ny, Nz + 1)) : nothing
+
+    # Physics: PBL surface field buffers
+    has_pbl_diff = _needs_pbl(model.diffusion)
+    pbl_sfc_cpu = has_pbl_diff ? (
+        pblh  = Array{FT}(undef, Nx, Ny),
+        ustar = Array{FT}(undef, Nx, Ny),
+        hflux = Array{FT}(undef, Nx, Ny),
+        t2m   = Array{FT}(undef, Nx, Ny)) : nothing
+    pbl_sfc_gpu = has_pbl_diff ? (
+        pblh  = AT(zeros(FT, Nx, Ny)),
+        ustar = AT(zeros(FT, Nx, Ny)),
+        hflux = AT(zeros(FT, Nx, Ny)),
+        t2m   = AT(zeros(FT, Nx, Ny))) : nothing
+    w_scratch = has_pbl_diff ? AT(zeros(FT, Nx, Ny, Nz)) : nothing
+
+    # Physics: pressure thickness CPU buffer (m → Δp for convection/PBL kernels)
+    needs_delp = has_convection || has_pbl_diff
+    delp_cpu = needs_delp ? Array{FT}(undef, Nx, Ny, Nz) : nothing
+    area_j = needs_delp ? FT[cell_area(1, j, grid) for j in 1:Ny] : nothing
+
+    # Planet parameters for physics kernels
+    planet = (has_convection || has_pbl_diff) ? load_parameters(FT).planet : nothing
+
     step = 0
     wall_start = time()
 
-    @info "Starting simulation: $n_win windows × $n_sub sub-steps (SingleBuffer, LatLon)"
+    @info "Starting simulation: $n_win windows × $n_sub sub-steps (SingleBuffer, LatLon)" *
+          (dw !== nothing ? " [diffusion: Kz_max=$(model.diffusion.Kz_max), H_scale=$(model.diffusion.H_scale)]" : "") *
+          (has_pbl_diff ? " [diffusion: pbl (β_h=$(model.diffusion.β_h))]" : "") *
+          (has_convection ? " [convection: tiedtke]" : "")
+
+    prog = Progress(n_win; desc="Simulation ", showspeed=true, barlen=40)
 
     for w in 1:n_win
         # Load met data to CPU
@@ -180,20 +307,65 @@ function _run_loop!(model, grid::LatitudeLongitudeGrid{FT},
             copyto!(gpu_buf.v, gpu_buf.bm)
             compute_mass_fluxes!(gpu_buf.am, gpu_buf.bm, gpu_buf.cm,
                                   gpu_buf.u, gpu_buf.v, grid, gpu_buf.Δp, dt_sub / 2)
+        elseif needs_delp
+            # Preprocessed driver: compute Δp = m * g / area from air mass
+            g = FT(grid.gravity)
+            @inbounds for k in 1:Nz, j in 1:Ny, i in 1:Nx
+                delp_cpu[i, j, k] = cpu_buf.m[i, j, k] * g / area_j[j]
+            end
+            copyto!(gpu_buf.Δp, delp_cpu)
+        end
+
+        # Load convective mass flux (optional: returns false if not in file)
+        cmfmc_loaded = false
+        if cmfmc_cpu !== nothing
+            cmfmc_loaded = load_cmfmc_window!(cmfmc_cpu, driver, grid, w)
+            if cmfmc_loaded
+                copyto!(cmfmc_gpu, cmfmc_cpu)
+            end
+        end
+
+        # Load PBL surface fields (optional: returns false if not in file)
+        sfc_loaded = false
+        if pbl_sfc_cpu !== nothing
+            sfc_loaded = load_surface_fields_window!(pbl_sfc_cpu, driver, grid, w)
+            if sfc_loaded
+                copyto!(pbl_sfc_gpu.pblh,  pbl_sfc_cpu.pblh)
+                copyto!(pbl_sfc_gpu.ustar, pbl_sfc_cpu.ustar)
+                copyto!(pbl_sfc_gpu.hflux, pbl_sfc_cpu.hflux)
+                copyto!(pbl_sfc_gpu.t2m,   pbl_sfc_cpu.t2m)
+            end
         end
 
         # Apply emissions (GPU-compatible via KA kernels)
-        dt_window = FT(dt_sub * n_sub)
         _apply_emissions_latlon!(model.tracers, emi_data, area_j_dev,
                                   gpu_buf.ps, A_coeff, B_coeff, grid, dt_window)
 
-        # Advection sub-steps
+        # Advection + convection sub-steps
         for sub in 1:n_sub
             step += 1
             copyto!(gpu_buf.m_dev, gpu_buf.m_ref)
-            strang_split_massflux!(model.tracers, gpu_buf.m_dev,
-                                    gpu_buf.am, gpu_buf.bm, gpu_buf.cm,
-                                    grid, true, gpu_buf.ws; cfl_limit=FT(0.95))
+            _apply_advection_latlon!(model.tracers, gpu_buf.m_dev,
+                                     gpu_buf.am, gpu_buf.bm, gpu_buf.cm,
+                                     grid, model.advection_scheme, gpu_buf.ws;
+                                     cfl_limit=FT(0.95))
+            # Tiedtke convective transport (per substep for CFL stability)
+            if cmfmc_loaded
+                convect!(model.tracers, cmfmc_gpu, gpu_buf.Δp,
+                          model.convection, grid, dt_sub, planet)
+            end
+        end
+
+        # Boundary-layer vertical diffusion (implicit solve, once per window)
+        _apply_bld!(model.tracers, dw)
+
+        # Met-driven PBL diffusion (variable Kz from surface fields)
+        if sfc_loaded
+            diffuse_pbl!(model.tracers, gpu_buf.Δp,
+                          pbl_sfc_gpu.pblh, pbl_sfc_gpu.ustar,
+                          pbl_sfc_gpu.hflux, pbl_sfc_gpu.t2m,
+                          w_scratch,
+                          model.diffusion, grid, dt_window, planet)
         end
 
         # Chemistry (e.g. radioactive decay for ²²²Rn)
@@ -206,14 +378,11 @@ function _run_loop!(model, grid::LatitudeLongitudeGrid{FT},
             write_output!(writer, model, sim_time; air_mass=_current_air_mass)
         end
 
-        # Progress
-        if w % max(1, n_win ÷ 20) == 0 || w == n_win
-            elapsed = round(time() - wall_start, digits=1)
-            rate = w > 1 ? round((time() - wall_start) / w, digits=2) : 0.0
-            @info @sprintf("  Window %d/%d (day %.1f): wall=%.0fs (%.2fs/win)",
-                           w, n_win, sim_time / 86400, elapsed, rate)
-        end
+        # Progress bar
+        next!(prog; showvalues=[(:day, @sprintf("%.1f", sim_time / 86400)),
+                                (:rate, @sprintf("%.2f s/win", w > 1 ? (time() - wall_start) / w : 0.0))])
     end
+    finish!(prog)
 
     wall_total = time() - wall_start
     @info @sprintf("Simulation complete: %d steps, %.1fs (%.2fs/win)",
@@ -235,6 +404,7 @@ function _run_loop!(model, grid::LatitudeLongitudeGrid{FT},
     arch    = model.architecture
     sources = model.sources
     writers = model.output_writers
+    AT      = array_type(arch)
 
     Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
     n_win     = total_windows(driver)
@@ -242,9 +412,12 @@ function _run_loop!(model, grid::LatitudeLongitudeGrid{FT},
     dt_sub    = FT(driver.dt)
     half_dt   = dt_sub / 2
 
+    # Reduced-grid cluster sizes for x-advection kernel
+    cs_cpu = _get_cluster_sizes_cpu(grid)
+
     # Allocate TWO GPU met buffers + TWO CPU staging buffers
-    buf_A = LatLonMetBuffer(arch, FT, Nx, Ny, Nz)
-    buf_B = LatLonMetBuffer(arch, FT, Nx, Ny, Nz)
+    buf_A = LatLonMetBuffer(arch, FT, Nx, Ny, Nz; cluster_sizes_cpu=cs_cpu)
+    buf_B = LatLonMetBuffer(arch, FT, Nx, Ny, Nz; cluster_sizes_cpu=cs_cpu)
     cpu_A = LatLonCPUBuffer(FT, Nx, Ny, Nz)
     cpu_B = LatLonCPUBuffer(FT, Nx, Ny, Nz)
 
@@ -252,10 +425,57 @@ function _run_loop!(model, grid::LatitudeLongitudeGrid{FT},
     emi_data, area_j_dev, A_coeff, B_coeff =
         _prepare_latlon_emissions(sources, grid, driver, arch)
 
+    # Diffusion timestep = full window duration
+    dt_window_const = FT(dt_sub * n_sub)
+
+    # Build diffusion workspace (pre-computed tridiagonal factors on device)
+    dw = _setup_bld_workspace(model.diffusion, grid, dt_window_const, buf_A.m_ref)
+
+    # Physics: convective mass flux buffers
+    has_convection = _needs_convection(model.convection)
+    cmfmc_cpu = has_convection ? Array{FT}(undef, Nx, Ny, Nz + 1) : nothing
+    cmfmc_gpu = has_convection ? AT(zeros(FT, Nx, Ny, Nz + 1)) : nothing
+
+    # Physics: PBL surface field buffers
+    has_pbl_diff = _needs_pbl(model.diffusion)
+    pbl_sfc_cpu = has_pbl_diff ? (
+        pblh  = Array{FT}(undef, Nx, Ny),
+        ustar = Array{FT}(undef, Nx, Ny),
+        hflux = Array{FT}(undef, Nx, Ny),
+        t2m   = Array{FT}(undef, Nx, Ny)) : nothing
+    pbl_sfc_gpu = has_pbl_diff ? (
+        pblh  = AT(zeros(FT, Nx, Ny)),
+        ustar = AT(zeros(FT, Nx, Ny)),
+        hflux = AT(zeros(FT, Nx, Ny)),
+        t2m   = AT(zeros(FT, Nx, Ny))) : nothing
+    w_scratch = has_pbl_diff ? AT(zeros(FT, Nx, Ny, Nz)) : nothing
+
+    # Physics: pressure thickness CPU buffer (m → Δp for convection/PBL kernels)
+    needs_delp = has_convection || has_pbl_diff
+    delp_cpu = needs_delp ? Array{FT}(undef, Nx, Ny, Nz) : nothing
+    area_j = needs_delp ? FT[cell_area(1, j, grid) for j in 1:Ny] : nothing
+
+    # Planet parameters for physics kernels
+    planet = (has_convection || has_pbl_diff) ? load_parameters(FT).planet : nothing
+
+    # Helper: compute Δp from air mass on CPU and upload to gpu_buf.Δp
+    function _compute_delp!(gpu_buf, cpu_buf)
+        g = FT(grid.gravity)
+        @inbounds for k in 1:Nz, j in 1:Ny, i in 1:Nx
+            delp_cpu[i, j, k] = cpu_buf.m[i, j, k] * g / area_j[j]
+        end
+        copyto!(gpu_buf.Δp, delp_cpu)
+    end
+
     step = 0
     wall_start = time()
 
-    @info "Starting simulation: $n_win windows × $n_sub sub-steps (DoubleBuffer, LatLon)"
+    @info "Starting simulation: $n_win windows × $n_sub sub-steps (DoubleBuffer, LatLon)" *
+          (dw !== nothing ? " [diffusion: Kz_max=$(model.diffusion.Kz_max), H_scale=$(model.diffusion.H_scale)]" : "") *
+          (has_pbl_diff ? " [diffusion: pbl (β_h=$(model.diffusion.β_h))]" : "") *
+          (has_convection ? " [convection: tiedtke]" : "")
+
+    prog = Progress(n_win; desc="Simulation ", showspeed=true, barlen=40)
 
     # Preload first window into buffer A
     load_met_window!(cpu_A, driver, grid, 1)
@@ -268,6 +488,8 @@ function _run_loop!(model, grid::LatitudeLongitudeGrid{FT},
         copyto!(buf_A.v, buf_A.bm)
         compute_mass_fluxes!(buf_A.am, buf_A.bm, buf_A.cm,
                               buf_A.u, buf_A.v, grid, buf_A.Δp, half_dt)
+    elseif needs_delp
+        _compute_delp!(buf_A, cpu_A)
     end
 
     curr, next_buf = buf_A, buf_B
@@ -282,17 +504,56 @@ function _run_loop!(model, grid::LatitudeLongitudeGrid{FT},
             load_met_window!(cpu_next, driver, grid, w + 1)
         end
 
+        # Load convective mass flux (optional)
+        cmfmc_loaded = false
+        if cmfmc_cpu !== nothing
+            cmfmc_loaded = load_cmfmc_window!(cmfmc_cpu, driver, grid, w)
+            if cmfmc_loaded
+                copyto!(cmfmc_gpu, cmfmc_cpu)
+            end
+        end
+
+        # Load PBL surface fields (optional)
+        sfc_loaded = false
+        if pbl_sfc_cpu !== nothing
+            sfc_loaded = load_surface_fields_window!(pbl_sfc_cpu, driver, grid, w)
+            if sfc_loaded
+                copyto!(pbl_sfc_gpu.pblh,  pbl_sfc_cpu.pblh)
+                copyto!(pbl_sfc_gpu.ustar, pbl_sfc_cpu.ustar)
+                copyto!(pbl_sfc_gpu.hflux, pbl_sfc_cpu.hflux)
+                copyto!(pbl_sfc_gpu.t2m,   pbl_sfc_cpu.t2m)
+            end
+        end
+
         # Apply emissions (GPU-compatible via KA kernels)
         _apply_emissions_latlon!(model.tracers, emi_data, area_j_dev,
                                   curr.ps, A_coeff, B_coeff, grid, dt_window)
 
-        # Advection sub-steps on current buffer
+        # Advection + convection sub-steps on current buffer
         for sub in 1:n_sub
             step += 1
             copyto!(curr.m_dev, curr.m_ref)
-            strang_split_massflux!(model.tracers, curr.m_dev,
-                                    curr.am, curr.bm, curr.cm,
-                                    grid, true, curr.ws; cfl_limit=FT(0.95))
+            _apply_advection_latlon!(model.tracers, curr.m_dev,
+                                     curr.am, curr.bm, curr.cm,
+                                     grid, model.advection_scheme, curr.ws;
+                                     cfl_limit=FT(0.95))
+            # Tiedtke convective transport (per substep for CFL stability)
+            if cmfmc_loaded
+                convect!(model.tracers, cmfmc_gpu, curr.Δp,
+                          model.convection, grid, dt_sub, planet)
+            end
+        end
+
+        # Boundary-layer vertical diffusion (implicit solve, once per window)
+        _apply_bld!(model.tracers, dw)
+
+        # Met-driven PBL diffusion (variable Kz from surface fields)
+        if sfc_loaded
+            diffuse_pbl!(model.tracers, curr.Δp,
+                          pbl_sfc_gpu.pblh, pbl_sfc_gpu.ustar,
+                          pbl_sfc_gpu.hflux, pbl_sfc_gpu.t2m,
+                          w_scratch,
+                          model.diffusion, grid, dt_window, planet)
         end
 
         # Chemistry (e.g. radioactive decay for ²²²Rn)
@@ -309,6 +570,8 @@ function _run_loop!(model, grid::LatitudeLongitudeGrid{FT},
                 copyto!(next_buf.v, next_buf.bm)
                 compute_mass_fluxes!(next_buf.am, next_buf.bm, next_buf.cm,
                                       next_buf.u, next_buf.v, grid, next_buf.Δp, half_dt)
+            elseif needs_delp
+                _compute_delp!(next_buf, cpu_next)
             end
             # Swap
             curr, next_buf = next_buf, curr
@@ -322,14 +585,11 @@ function _run_loop!(model, grid::LatitudeLongitudeGrid{FT},
             write_output!(writer, model, sim_time; air_mass=_current_air_mass)
         end
 
-        # Progress
-        if w % max(1, n_win ÷ 20) == 0 || w == n_win
-            elapsed = round(time() - wall_start, digits=1)
-            rate = w > 1 ? round((time() - wall_start) / w, digits=2) : 0.0
-            @info @sprintf("  Window %d/%d (day %.1f): wall=%.0fs (%.2fs/win)",
-                           w, n_win, sim_time / 86400, elapsed, rate)
-        end
+        # Progress bar
+        next!(prog; showvalues=[(:day, @sprintf("%.1f", sim_time / 86400)),
+                                (:rate, @sprintf("%.2f s/win", w > 1 ? (time() - wall_start) / w : 0.0))])
     end
+    finish!(prog)
 
     wall_total = time() - wall_start
     @info @sprintf("Simulation complete: %d steps, %.1fs (%.2fs/win)",
@@ -389,13 +649,47 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
     dt_window = FT(dt_sub * n_sub)
 
     # Build diffusion workspace (pre-computed tridiagonal factors on device)
-    dw = if model.diffusion isa BoundaryLayerDiffusion
-        diff = model.diffusion
-        DiffusionWorkspace(grid, FT(diff.Kz_max), FT(diff.H_scale),
-                           dt_window, ref_panel)
+    dw = _setup_bld_workspace(model.diffusion, grid, dt_window, ref_panel)
+
+    # Allocate convective mass flux panels (filled by met driver when CMFMC data is available)
+    has_convection = _needs_convection(model.convection)
+    cmfmc_gpu = if has_convection
+        ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz + 1)), 6)
     else
         nothing
     end
+    cmfmc_cpu = if has_convection
+        ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz + 1), 6)
+    else
+        nothing
+    end
+
+    # PBL diffusion: allocate surface field panels + workspace
+    has_pbl_diff = _needs_pbl(model.diffusion)
+    pbl_sfc_cpu = if has_pbl_diff
+        (pblh  = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp), 6),
+         ustar = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp), 6),
+         hflux = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp), 6),
+         t2m   = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp), 6))
+    else
+        nothing
+    end
+    pbl_sfc_gpu = if has_pbl_diff
+        (pblh  = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp)), 6),
+         ustar = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp)), 6),
+         hflux = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp)), 6),
+         t2m   = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp)), 6))
+    else
+        nothing
+    end
+    w_scratch_panels = if has_pbl_diff
+        ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz)), 6)
+    else
+        nothing
+    end
+
+    # Planet parameters for physics kernels (PBL diffusion, convection)
+    planet = load_parameters(FT).planet
 
     step = 0
     wall_start = time()
@@ -407,13 +701,42 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
     half_dt = FT(dt_sub / 2)
 
     @info "Starting simulation: $n_win windows × $n_sub sub-steps (SingleBuffer, C$Nc)" *
-          (dw !== nothing ? " [diffusion: Kz_max=$(model.diffusion.Kz_max), H_scale=$(model.diffusion.H_scale)]" : "")
+          (dw !== nothing ? " [diffusion: Kz_max=$(model.diffusion.Kz_max), H_scale=$(model.diffusion.H_scale)]" : "") *
+          (has_pbl_diff ? " [diffusion: pbl (β_h=$(model.diffusion.β_h))]" : "") *
+          (has_convection ? " [convection: tiedtke]" : "")
+
+    prog = Progress(n_win; desc="Simulation ", showspeed=true, barlen=40)
 
     for w in 1:n_win
         # ── I/O: load met from disk → CPU → GPU ───────────────────────
         t0 = time()
         load_met_window!(cpu_buf, driver, grid, w)
         upload!(cs_gpu_buf, cpu_buf)
+
+        # Load CMFMC from A3mstE if convection enabled and data available
+        cmfmc_loaded = false
+        if cmfmc_cpu !== nothing
+            cmfmc_loaded = load_cmfmc_window!(cmfmc_cpu, driver, grid, w)
+            if cmfmc_loaded
+                for p in 1:6
+                    copyto!(cmfmc_gpu[p], cmfmc_cpu[p])
+                end
+            end
+        end
+
+        # Load surface fields from A1 if PBL diffusion enabled
+        sfc_loaded = false
+        if pbl_sfc_cpu !== nothing
+            sfc_loaded = load_surface_fields_window!(pbl_sfc_cpu, driver, grid, w)
+            if sfc_loaded
+                for p in 1:6
+                    copyto!(pbl_sfc_gpu.pblh[p],  pbl_sfc_cpu.pblh[p])
+                    copyto!(pbl_sfc_gpu.ustar[p], pbl_sfc_cpu.ustar[p])
+                    copyto!(pbl_sfc_gpu.hflux[p], pbl_sfc_cpu.hflux[p])
+                    copyto!(pbl_sfc_gpu.t2m[p],   pbl_sfc_cpu.t2m[p])
+                end
+            end
+        end
         t_io += time() - t0
 
         # ── GPU compute: air mass + emissions + advection ─────────────
@@ -462,13 +785,24 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
             for p in 1:6
                 copyto!(m_panels[p], m_ref_panels[p])
             end
-            strang_split_massflux!(rm_panels, m_panels,
-                                    am_gpu, bm_gpu, cm_gpu,
-                                    grid, true, ws)
+            _apply_advection_cs!(rm_panels, m_panels,
+                                 am_gpu, bm_gpu, cm_gpu,
+                                 grid, model.advection_scheme, ws)
+            # Convective transport (per substep for CFL stability)
+            if cmfmc_loaded
+                convect!(rm_panels, m_ref_panels, cmfmc_gpu, delp_gpu,
+                          model.convection, grid, dt_sub, planet)
+            end
         end
         # Boundary-layer vertical diffusion (implicit solve, once per window)
-        if dw !== nothing
-            diffuse_cs_panels!(rm_panels, m_ref_panels, dw, Nc, Nz, Hp)
+        _apply_bld_cs!(rm_panels, m_ref_panels, dw, Nc, Nz, Hp)
+        # Met-driven PBL diffusion (variable Kz from surface fields)
+        if sfc_loaded
+            diffuse_pbl!(rm_panels, m_ref_panels, delp_gpu,
+                          pbl_sfc_gpu.pblh, pbl_sfc_gpu.ustar,
+                          pbl_sfc_gpu.hflux, pbl_sfc_gpu.t2m,
+                          w_scratch_panels,
+                          model.diffusion, grid, dt_window, planet)
         end
         # Chemistry (e.g. radioactive decay for ²²²Rn)
         tracer_names = keys(model.tracers)
@@ -487,18 +821,14 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
         t_output += time() - t0
 
         # ── Progress ───────────────────────────────────────────────────
-        if w % max(1, n_win ÷ 20) == 0 || w == 1 || w == n_win
-            elapsed = time() - wall_start
-            day = div(w - 1, 24) + 1
-            max_rm = maximum(maximum(rm_panels[p]) for p in 1:6)
-            min_rm = minimum(minimum(rm_panels[p]) for p in 1:6)
-            @info @sprintf(
-                "  Day %d, win %3d/%d: wall=%5.0fs | IO=%5.2f  GPU=%5.2f  Out=%5.2f  s/win | rm=[%.3e, %.3e]",
-                day, w, n_win, elapsed,
-                t_io / w, t_compute / w, t_output / w,
-                min_rm, max_rm)
-        end
+        # Progress bar with timing breakdown
+        next!(prog; showvalues=[
+            (:day, div(w - 1, 24) + 1),
+            (:IO,  @sprintf("%.2f s/win", t_io / w)),
+            (:GPU, @sprintf("%.2f s/win", t_compute / w)),
+            (:Out, @sprintf("%.2f s/win", t_output / w))])
     end
+    finish!(prog)
 
     wall_total = time() - wall_start
     @info @sprintf(
@@ -562,13 +892,47 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
     dt_window = FT(dt_sub * n_sub)
 
     # Build diffusion workspace (pre-computed tridiagonal factors on device)
-    dw = if model.diffusion isa BoundaryLayerDiffusion
-        diff = model.diffusion
-        DiffusionWorkspace(grid, FT(diff.Kz_max), FT(diff.H_scale),
-                           dt_window, ref_panel)
+    dw = _setup_bld_workspace(model.diffusion, grid, dt_window, ref_panel)
+
+    # Allocate convective mass flux panels (filled by met driver when CMFMC data is available)
+    has_convection = _needs_convection(model.convection)
+    cmfmc_gpu = if has_convection
+        ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz + 1)), 6)
     else
         nothing
     end
+    cmfmc_cpu = if has_convection
+        ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz + 1), 6)
+    else
+        nothing
+    end
+
+    # PBL diffusion: allocate surface field panels + workspace
+    has_pbl_diff = _needs_pbl(model.diffusion)
+    pbl_sfc_cpu = if has_pbl_diff
+        (pblh  = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp), 6),
+         ustar = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp), 6),
+         hflux = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp), 6),
+         t2m   = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp), 6))
+    else
+        nothing
+    end
+    pbl_sfc_gpu = if has_pbl_diff
+        (pblh  = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp)), 6),
+         ustar = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp)), 6),
+         hflux = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp)), 6),
+         t2m   = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp)), 6))
+    else
+        nothing
+    end
+    w_scratch_panels = if has_pbl_diff
+        ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz)), 6)
+    else
+        nothing
+    end
+
+    # Planet parameters for physics kernels (PBL diffusion, convection)
+    planet = load_parameters(FT).planet
 
     # Pre-load window 1 synchronously before the loop
     load_met_window!(cpu_A, driver, grid, 1)
@@ -587,7 +951,11 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
     half_dt = FT(dt_sub / 2)
 
     @info "Starting simulation: $n_win windows × $n_sub sub-steps (DoubleBuffer, C$Nc)" *
-          (dw !== nothing ? " [diffusion: Kz_max=$(model.diffusion.Kz_max), H_scale=$(model.diffusion.H_scale)]" : "")
+          (dw !== nothing ? " [diffusion: Kz_max=$(model.diffusion.Kz_max), H_scale=$(model.diffusion.H_scale)]" : "") *
+          (has_pbl_diff ? " [diffusion: pbl (β_h=$(model.diffusion.β_h))]" : "") *
+          (has_convection ? " [convection: tiedtke]" : "")
+
+    prog = Progress(n_win; desc="Simulation ", showspeed=true, barlen=40)
 
     for w in 1:n_win
         has_next = w < n_win
@@ -601,6 +969,31 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
 
         # Upload current CPU buffer → GPU (main thread, PCIe DMA)
         upload!(curr_gpu, curr_cpu)
+
+        # Load CMFMC from A3mstE if convection enabled and data available
+        cmfmc_loaded = false
+        if cmfmc_cpu !== nothing
+            cmfmc_loaded = load_cmfmc_window!(cmfmc_cpu, driver, grid, w)
+            if cmfmc_loaded
+                for p in 1:6
+                    copyto!(cmfmc_gpu[p], cmfmc_cpu[p])
+                end
+            end
+        end
+
+        # Load surface fields from A1 if PBL diffusion enabled
+        sfc_loaded = false
+        if pbl_sfc_cpu !== nothing
+            sfc_loaded = load_surface_fields_window!(pbl_sfc_cpu, driver, grid, w)
+            if sfc_loaded
+                for p in 1:6
+                    copyto!(pbl_sfc_gpu.pblh[p],  pbl_sfc_cpu.pblh[p])
+                    copyto!(pbl_sfc_gpu.ustar[p], pbl_sfc_cpu.ustar[p])
+                    copyto!(pbl_sfc_gpu.hflux[p], pbl_sfc_cpu.hflux[p])
+                    copyto!(pbl_sfc_gpu.t2m[p],   pbl_sfc_cpu.t2m[p])
+                end
+            end
+        end
         t_io += time() - t0
 
         # ── GPU compute ───────────────────────────────────────────────
@@ -640,14 +1033,25 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
             for p in 1:6
                 copyto!(m_panels[p], m_ref_panels[p])
             end
-            strang_split_massflux!(rm_panels, m_panels,
-                                    curr_gpu.am, curr_gpu.bm, curr_gpu.cm,
-                                    grid, true, ws)
+            _apply_advection_cs!(rm_panels, m_panels,
+                                 curr_gpu.am, curr_gpu.bm, curr_gpu.cm,
+                                 grid, model.advection_scheme, ws)
+            # Convective transport (per substep for CFL stability)
+            if cmfmc_loaded
+                convect!(rm_panels, m_ref_panels, cmfmc_gpu, curr_gpu.delp,
+                          model.convection, grid, dt_sub, planet)
+            end
         end
 
         # Boundary-layer vertical diffusion (implicit solve, once per window)
-        if dw !== nothing
-            diffuse_cs_panels!(rm_panels, m_ref_panels, dw, Nc, Nz, Hp)
+        _apply_bld_cs!(rm_panels, m_ref_panels, dw, Nc, Nz, Hp)
+        # Met-driven PBL diffusion (variable Kz from surface fields)
+        if sfc_loaded
+            diffuse_pbl!(rm_panels, m_ref_panels, curr_gpu.delp,
+                          pbl_sfc_gpu.pblh, pbl_sfc_gpu.ustar,
+                          pbl_sfc_gpu.hflux, pbl_sfc_gpu.t2m,
+                          w_scratch_panels,
+                          model.diffusion, grid, dt_window, planet)
         end
 
         # Chemistry (e.g. radioactive decay for ²²²Rn)
@@ -675,19 +1079,14 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
         curr_cpu, next_cpu = next_cpu, curr_cpu
         curr_gpu, next_gpu = next_gpu, curr_gpu
 
-        # ── Progress ──────────────────────────────────────────────────
-        if w % max(1, n_win ÷ 20) == 0 || w == 1 || w == n_win
-            elapsed = time() - wall_start
-            day = div(w - 1, 24) + 1
-            max_rm = maximum(maximum(rm_panels[p]) for p in 1:6)
-            min_rm = minimum(minimum(rm_panels[p]) for p in 1:6)
-            @info @sprintf(
-                "  Day %d, win %3d/%d: wall=%5.0fs | IO=%5.2f  GPU=%5.2f  Out=%5.2f  s/win | rm=[%.3e, %.3e]",
-                day, w, n_win, elapsed,
-                t_io / w, t_compute / w, t_output / w,
-                min_rm, max_rm)
-        end
+        # Progress bar with timing breakdown
+        next!(prog; showvalues=[
+            (:day, div(w - 1, 24) + 1),
+            (:IO,  @sprintf("%.2f s/win", t_io / w)),
+            (:GPU, @sprintf("%.2f s/win", t_compute / w)),
+            (:Out, @sprintf("%.2f s/win", t_output / w))])
     end
+    finish!(prog)
 
     wall_total = time() - wall_start
     @info @sprintf(

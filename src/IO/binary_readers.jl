@@ -168,7 +168,7 @@ function CSBinaryReader(bin_path::String, ::Type{FT}) where FT
     total  = elems * Nt
 
     seek(io, CS_HEADER_SIZE)
-    data = Mmap.mmap(io, Vector{FT}, total, CS_HEADER_SIZE)
+    data = Mmap.mmap(io, Vector{FT}, (total,), CS_HEADER_SIZE; grow=false)
 
     CSBinaryReader{FT}(data, io, Nc, Nz, Hp, Nt, n_delp, n_am, n_bm, elems)
 end

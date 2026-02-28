@@ -17,7 +17,7 @@ function find_massflux_shards(dir::String, ft_tag::String)
     months = Dict{String, String}()
     for f in all_files
         bn = basename(f)
-        m = match(Regex("massflux_era5_(\\d{6})_" * ft_tag), bn)
+        m = match(Regex("massflux_era5_(?:\\w+_)?(\\d{6})_" * ft_tag), bn)
         m === nothing && continue
         month_key = m[1]
         if endswith(bn, ".bin")
@@ -119,13 +119,20 @@ function ensure_local_cache(src_path::String)
         return src_path
     end
     dst = joinpath(cache_dir, basename(src_path))
-    if isfile(dst) && filesize(dst) == filesize(src_path)
+    if isfile(dst) && filesize(dst) == filesize(src_path) && mtime(dst) >= mtime(src_path)
         @info "  Using local cache: $dst"
         return dst
     end
     @info "  Copying to local NVMe cache: $dst ($(round(filesize(src_path)/1e9, digits=2)) GB)..."
     t0 = time()
-    cp(src_path, dst; force=true)
-    @info "  Cache copy done in $(round(time() - t0, digits=1))s"
-    return dst
+    try
+        cp(src_path, dst; force=true)
+        chmod(dst, 0o644)  # ensure cached file is writable (mmap requires it)
+        @info "  Cache copy done in $(round(time() - t0, digits=1))s"
+        return dst
+    catch e
+        @warn "Cache copy failed ($e); using original path"
+        rm(dst; force=true)  # clean up partial copy
+        return src_path
+    end
 end

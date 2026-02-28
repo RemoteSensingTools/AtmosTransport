@@ -38,6 +38,15 @@ function regrid_edgar_to_cs(edgar_raw::Matrix{FT},
         flux_kgm2s[i, j] = FT(edgar_raw[i, j]) * FT(1000) / (sec_per_yr * cell_area_e)
     end
 
+    # Compute total source mass rate (kg/s) on native grid
+    total_source = zero(FT)
+    @inbounds for j in 1:Nlat_e, i in 1:Nlon_e
+        φ_s = FT(edgar_lats[j]) - Δlat / 2
+        φ_n = FT(edgar_lats[j]) + Δlat / 2
+        cell_area_e = R^2 * deg2rad(Δlon) * abs(sind(φ_n) - sind(φ_s))
+        total_source += flux_kgm2s[i, j] * cell_area_e
+    end
+
     # Nearest-neighbor assignment to each panel cell
     flux_panels = ntuple(6) do p
         pf = zeros(FT, Nc, Nc)
@@ -54,5 +63,19 @@ function regrid_edgar_to_cs(edgar_raw::Matrix{FT},
         end
         pf
     end
+
+    # Renormalize to conserve total mass exactly
+    total_cs = zero(FT)
+    for p in 1:6, j in 1:Nc, i in 1:Nc
+        total_cs += flux_panels[p][i, j] * cell_area(i, j, grid; panel=p)
+    end
+    if abs(total_cs) > zero(FT)
+        scale = total_source / total_cs
+        for p in 1:6
+            flux_panels[p] .*= scale
+        end
+        @info "CS emission renormalization: scale=$(round(scale, digits=6))"
+    end
+
     return flux_panels
 end

@@ -13,8 +13,11 @@
 # ---------------------------------------------------------------------------
 [planet]
 radius                     = 6.371e6     # Earth equatorial radius [m] (WGS84)
-gravity                    = 9.81        # gravitational acceleration [m/s²]
+gravity                    = 9.80665     # gravitational acceleration [m/s²] (standard)
 reference_surface_pressure = 101325.0    # standard surface pressure [Pa]
+kappa_vk                   = 0.4         # von Kármán constant [-]
+cp_dry                     = 1004.0      # specific heat of dry air [J/kg/K]
+rho_ref                    = 1.225       # reference air density [kg/m³] (ISA sea level)
 
 # ---------------------------------------------------------------------------
 # Numerics

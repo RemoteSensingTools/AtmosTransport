@@ -1,0 +1,27 @@
+# ===========================================================================
+# Spectral mass-flux preprocessing — ERA5 June 2023
+#
+# Converts ERA5 spectral VO/D/LNSP GRIB data to mass fluxes on a regular
+# lat-lon grid. Output matches the format of preprocess_mass_fluxes.jl.
+#
+# Usage:
+#   julia --project=. scripts/preprocess_spectral_massflux.jl config/preprocessing/spectral_june2023.toml
+# ===========================================================================
+
+[input]
+spectral_dir = "~/data/metDrivers/era5/spectral_june2023"
+coefficients = "config/era5_L137_coefficients.toml"
+
+[output]
+directory = "~/data/metDrivers/era5/spectral_05deg_june2023"
+
+[grid]
+nlon      = 720      # target longitude count (720 → 0.5°)
+nlat      = 361      # target latitude count  (361 → 0.5°)
+level_top = 1        # topmost model level (1 = TOA)
+level_bot = 137      # bottommost model level (137 = surface)
+
+[numerics]
+float_type   = "Float32"     # "Float32" or "Float64"
+dt           = 900.0         # advection sub-step [s]
+met_interval = 21600.0       # met data interval [s] (6-hourly)

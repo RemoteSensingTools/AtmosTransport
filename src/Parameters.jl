@@ -43,6 +43,12 @@ struct PlanetParameters{FT}
     gravity                    :: FT
     "reference surface pressure [Pa]"
     reference_surface_pressure :: FT
+    "von Kármán constant [-]"
+    kappa_vk                   :: FT
+    "specific heat of dry air [J/kg/K]"
+    cp_dry                     :: FT
+    "reference air density [kg/m³] (ISA sea level)"
+    rho_ref                    :: FT
 end
 
 """
@@ -122,6 +128,9 @@ function load_parameters(::Type{FT};
         FT(d["planet"]["radius"]),
         FT(d["planet"]["gravity"]),
         FT(d["planet"]["reference_surface_pressure"]),
+        FT(d["planet"]["kappa_vk"]),
+        FT(d["planet"]["cp_dry"]),
+        FT(d["planet"]["rho_ref"]),
     )
 
     numerics = NumericsParameters{FT}(

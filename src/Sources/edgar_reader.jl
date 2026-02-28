@@ -56,10 +56,18 @@ function load_edgar_co2(filepath::String, target_grid::LatitudeLongitudeGrid{FT}
     total_native = sum(emi_raw) * 1000 / seconds_per_year  # kg/s
     total_model  = sum(flux_model[i, j] * cell_area(i, j, target_grid)
                        for j in 1:target_grid.Ny, i in 1:target_grid.Nx)
-    ratio = total_model / total_native
+    ratio_raw = total_model / total_native
+
+    # Renormalize to conserve mass exactly (compensates boundary-cell losses)
+    if abs(total_model) > zero(FT)
+        flux_model .*= FT(total_native / total_model)
+    end
+    total_corrected = sum(flux_model[i, j] * cell_area(i, j, target_grid)
+                          for j in 1:target_grid.Ny, i in 1:target_grid.Nx)
+    ratio_corr = total_corrected / total_native
     @info "EDGAR CO2 loaded: native total=$(round(total_native, digits=1)) kg/s, " *
-          "regridded total=$(round(total_model, digits=1)) kg/s, " *
-          "ratio=$(round(ratio, digits=4))"
+          "pre-renorm ratio=$(round(ratio_raw, digits=6)), " *
+          "post-renorm ratio=$(round(ratio_corr, digits=6))"
 
     return GriddedEmission(flux_model, :co2, "EDGAR v8.0 CO2 $year")
 end

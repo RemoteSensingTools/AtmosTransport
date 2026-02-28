@@ -19,9 +19,10 @@ using DocStringExtensions
 using ..Grids: AbstractGrid
 using ..Fields: AbstractField
 
-export AbstractDiffusion, BoundaryLayerDiffusion, NoDiffusion
+export AbstractDiffusion, BoundaryLayerDiffusion, PBLDiffusion, NoDiffusion
 export diffuse!, adjoint_diffuse!
 export DiffusionWorkspace, diffuse_gpu!, diffuse_cs_panels!, build_diffusion_coefficients
+export diffuse_pbl!
 
 """
 $(TYPEDEF)
@@ -61,7 +62,34 @@ end
 BoundaryLayerDiffusion(; Kz_max = 100.0, H_scale = 8.0) =
     BoundaryLayerDiffusion(Float64(Kz_max), Float64(H_scale))
 
+"""
+$(TYPEDEF)
+
+Met-data-driven PBL diffusion following TM5's revised LTG scheme
+(Beljaars & Viterbo 1998). Computes Kz profiles from PBLH, u*, and
+sensible heat flux using Monin-Obukhov similarity theory.
+
+Unlike `BoundaryLayerDiffusion` (static exponential Kz), this scheme
+produces spatially and temporally varying Kz that depends on stability.
+
+$(FIELDS)
+"""
+struct PBLDiffusion{FT} <: AbstractDiffusion
+    "Businger-Dyer heat parameter (TM5 default: 15.0)"
+    β_h    :: FT
+    "background Kz above PBL [m²/s] (TM5 default: 0.1)"
+    Kz_bg  :: FT
+    "minimum Kz in PBL [m²/s]"
+    Kz_min :: FT
+    "maximum allowed Kz [m²/s] (safety clamp)"
+    Kz_max :: FT
+end
+
+PBLDiffusion(; β_h = 15.0, Kz_bg = 0.1, Kz_min = 0.01, Kz_max = 500.0) =
+    PBLDiffusion(Float64(β_h), Float64(Kz_bg), Float64(Kz_min), Float64(Kz_max))
+
 include("boundary_layer_diffusion.jl")
 include("boundary_layer_diffusion_adjoint.jl")
+include("pbl_diffusion.jl")
 
 end # module Diffusion

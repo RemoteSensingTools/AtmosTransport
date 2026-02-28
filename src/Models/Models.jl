@@ -45,7 +45,7 @@ The main atmospheric transport model.
 
 $(FIELDS)
 """
-struct TransportModel{Arch, G, Tr, ATr, M, TS, Src, OW, CB, Buf, Chem, Diff} <: AbstractModel{Arch}
+struct TransportModel{Arch, G, Tr, ATr, M, TS, Src, OW, CB, Buf, Adv, Chem, Diff, Conv} <: AbstractModel{Arch}
     "CPU or GPU"
     architecture   :: Arch
     "the computational grid"
@@ -68,10 +68,14 @@ struct TransportModel{Arch, G, Tr, ATr, M, TS, Src, OW, CB, Buf, Chem, Diff} <: 
     callbacks      :: CB
     "buffering strategy (SingleBuffer or DoubleBuffer)"
     buffering      :: Buf
+    "advection scheme (SlopesAdvection or PPMAdvection{ORD}, default SlopesAdvection)"
+    advection_scheme :: Adv
     "chemistry scheme (NoChemistry, RadioactiveDecay, CompositeChemistry, ...)"
     chemistry      :: Chem
-    "vertical diffusion scheme (nothing or BoundaryLayerDiffusion)"
+    "vertical diffusion scheme (nothing or BoundaryLayerDiffusion or PBLDiffusion)"
     diffusion      :: Diff
+    "convection scheme (nothing or TiedtkeConvection)"
+    convection     :: Conv
 end
 
 """
@@ -149,9 +153,12 @@ function TransportModel(;
 
     clock = Clock(FT; Δt = Δt_ft)
 
+    # Default to SlopesAdvection if no advection scheme specified
+    adv_scheme = advection !== nothing ? advection : SlopesAdvection()
+
     return TransportModel(arch, grid, tracer_fields, adj_tracer_fields,
                           met_data, clock, ts, sources, output_writers,
-                          callbacks, buffering, chemistry, diffusion)
+                          callbacks, buffering, adv_scheme, chemistry, diffusion, convection)
 end
 
 """

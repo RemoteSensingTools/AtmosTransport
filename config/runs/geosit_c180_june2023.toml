@@ -26,14 +26,19 @@ met_source = "geosfp"
 [met_data]
 driver           = "geosfp_cs"
 product          = "geosit_c180"
-# preprocessed_dir = "~/data/geosit_c180/preprocessed"  # stale: pre-dates panel connectivity fix
-netcdf_dir       = "~/data/geosit_c180"
+# NOTE: Binary preprocessing disabled — MFXC units mismatch detected
+# The raw GEOS-IT data has unusually large mass fluxes (physics units unclear)
+# Requires investigation before binary preprocessing can be used
+# For now, using NetCDF mode (on-the-fly reading)
+# preprocessed_dir = "~/data/geosit_c180/preprocessed"
+netcdf_dir       = "~/data/geosit_c180"   # reading raw NetCDF (slower but reliable)
 start_date       = "2023-06-01"
 end_date         = "2023-06-30"
 dt               = 300
 met_interval     = 3600
 mass_flux_dt     = 450       # GEOS-IT C180 stores per-dynamics-step fluxes (dt_dyn ≈ 450 s)
 Hp               = 3
+verbose          = false     # DIAGNOSTIC: disabled to test if sanity check causes blow-up
 
 [tracers.co2]
 emission      = "edgar"
@@ -52,10 +57,18 @@ co2_column_mean = {type = "column_mean", species = "co2"}
 co2_surface = {type = "surface_slice", species = "co2"}
 co2_800hPa = {type = "sigma_level", species = "co2", sigma = 0.8}
 
+[advection]
+scheme    = "slopes"    # Russell-Lerner (2nd order) — baseline for comparison
+
+[convection]
+type = "tiedtke"
+
 [diffusion]
-type       = "boundary_layer"
-Kz_max     = 100.0
-H_scale    = 8.0
+type   = "pbl"
+beta_h = 15.0
+Kz_bg  = 0.1
+Kz_min = 0.01
+Kz_max = 500.0
 
 [buffering]
 strategy = "single"

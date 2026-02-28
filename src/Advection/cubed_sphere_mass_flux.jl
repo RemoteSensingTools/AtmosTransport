@@ -411,7 +411,8 @@ end
 # transport to first-order upwind at extreme-CFL cells while keeping the
 # mass budget perfectly balanced.
 
-@kernel function _massflux_z_cs_column_kernel!(rm, m, @Const(cm), Hp, Nz, use_limiter)
+@kernel function _massflux_z_cs_column_kernel!(rm, m,
+        @Const(rm_src), @Const(m_src), @Const(cm), Hp, Nz, use_limiter)
     i, j = @index(Global, NTuple)
     @inbounds begin
         ii = Hp + i
@@ -419,25 +420,25 @@ end
         FT = eltype(rm)
 
         # Process levels top to bottom.
-        # At each level k we compute the tracer flux through the TOP interface
-        # (cm[i,j,k]) and through the BOTTOM interface (cm[i,j,k+1]), then
-        # update rm and m in-place.  Because we process sequentially, level
-        # k-1's mass has already been updated when we compute the top flux.
+        # All slope and flux computations read from rm_src/m_src (the ORIGINAL
+        # values copied before this kernel launch).  Updates are written to
+        # rm/m.  This guarantees that the tracer flux at each interface is
+        # computed identically by both adjacent levels → exact flux telescoping
+        # → exact mass conservation.
         for k in 1:Nz
             # ── Slopes for the second-order correction ──────────────────
             # Slope at k (needs k-1 and k+1)
-            # Safe mixing ratio: guard against m ≤ 0 from in-place updates
             sz_k = if k > 1 && k < Nz
-                _m = m[ii, jj, k - 1]; ckm = _m > zero(FT) ? rm[ii, jj, k - 1] / _m : zero(FT)
-                _m = m[ii, jj, k];     ck  = _m > zero(FT) ? rm[ii, jj, k]     / _m : zero(FT)
-                _m = m[ii, jj, k + 1]; ckp = _m > zero(FT) ? rm[ii, jj, k + 1] / _m : zero(FT)
+                _m = m_src[ii, jj, k - 1]; ckm = _m > zero(FT) ? rm_src[ii, jj, k - 1] / _m : zero(FT)
+                _m = m_src[ii, jj, k];     ck  = _m > zero(FT) ? rm_src[ii, jj, k]     / _m : zero(FT)
+                _m = m_src[ii, jj, k + 1]; ckp = _m > zero(FT) ? rm_src[ii, jj, k + 1] / _m : zero(FT)
                 sc = (ckp - ckm) / FT(2)
                 if use_limiter
                     sc = minmod_device(sc, FT(2) * (ckp - ck), FT(2) * (ck - ckm))
                 end
-                s = m[ii, jj, k] * sc
+                s = m_src[ii, jj, k] * sc
                 if use_limiter
-                    s = max(min(s, rm[ii, jj, k]), -rm[ii, jj, k])
+                    s = max(min(s, rm_src[ii, jj, k]), -rm_src[ii, jj, k])
                 end
                 s
             else
@@ -446,16 +447,16 @@ end
 
             # Slope at k-1 (needs k-2 and k)
             sz_km = if k > 2 && k - 1 < Nz
-                _m = m[ii, jj, k - 2]; ckmm = _m > zero(FT) ? rm[ii, jj, k - 2] / _m : zero(FT)
-                _m = m[ii, jj, k - 1]; ckm  = _m > zero(FT) ? rm[ii, jj, k - 1] / _m : zero(FT)
-                _m = m[ii, jj, k];     ck   = _m > zero(FT) ? rm[ii, jj, k]     / _m : zero(FT)
+                _m = m_src[ii, jj, k - 2]; ckmm = _m > zero(FT) ? rm_src[ii, jj, k - 2] / _m : zero(FT)
+                _m = m_src[ii, jj, k - 1]; ckm  = _m > zero(FT) ? rm_src[ii, jj, k - 1] / _m : zero(FT)
+                _m = m_src[ii, jj, k];     ck   = _m > zero(FT) ? rm_src[ii, jj, k]     / _m : zero(FT)
                 sc = (ck - ckmm) / FT(2)
                 if use_limiter
                     sc = minmod_device(sc, FT(2) * (ck - ckm), FT(2) * (ckm - ckmm))
                 end
-                s = m[ii, jj, k - 1] * sc
+                s = m_src[ii, jj, k - 1] * sc
                 if use_limiter
-                    s = max(min(s, rm[ii, jj, k - 1]), -rm[ii, jj, k - 1])
+                    s = max(min(s, rm_src[ii, jj, k - 1]), -rm_src[ii, jj, k - 1])
                 end
                 s
             else
@@ -464,16 +465,16 @@ end
 
             # Slope at k+1 (needs k and k+2)
             sz_kp = if k < Nz - 1 && k + 1 > 1
-                _m = m[ii, jj, k];     ck   = _m > zero(FT) ? rm[ii, jj, k]     / _m : zero(FT)
-                _m = m[ii, jj, k + 1]; ckp  = _m > zero(FT) ? rm[ii, jj, k + 1] / _m : zero(FT)
-                _m = m[ii, jj, k + 2]; ckpp = _m > zero(FT) ? rm[ii, jj, k + 2] / _m : zero(FT)
+                _m = m_src[ii, jj, k];     ck   = _m > zero(FT) ? rm_src[ii, jj, k]     / _m : zero(FT)
+                _m = m_src[ii, jj, k + 1]; ckp  = _m > zero(FT) ? rm_src[ii, jj, k + 1] / _m : zero(FT)
+                _m = m_src[ii, jj, k + 2]; ckpp = _m > zero(FT) ? rm_src[ii, jj, k + 2] / _m : zero(FT)
                 sc = (ckpp - ck) / FT(2)
                 if use_limiter
                     sc = minmod_device(sc, FT(2) * (ckpp - ckp), FT(2) * (ckp - ck))
                 end
-                s = m[ii, jj, k + 1] * sc
+                s = m_src[ii, jj, k + 1] * sc
                 if use_limiter
-                    s = max(min(s, rm[ii, jj, k + 1]), -rm[ii, jj, k + 1])
+                    s = max(min(s, rm_src[ii, jj, k + 1]), -rm_src[ii, jj, k + 1])
                 end
                 s
             else
@@ -484,13 +485,13 @@ end
             flux_top = if k > 1
                 cm_t = cm[i, j, k]
                 if cm_t > zero(FT)
-                    md = m[ii, jj, k - 1]
+                    md = m_src[ii, jj, k - 1]
                     gamma = md > zero(FT) ? clamp(cm_t / md, zero(FT), one(FT)) : zero(FT)
-                    gamma * (rm[ii, jj, k - 1] + (one(FT) - gamma) * sz_km)
+                    gamma * (rm_src[ii, jj, k - 1] + (one(FT) - gamma) * sz_km)
                 elseif cm_t < zero(FT)
-                    md = m[ii, jj, k]
+                    md = m_src[ii, jj, k]
                     gamma = md > zero(FT) ? clamp(cm_t / md, -one(FT), zero(FT)) : zero(FT)
-                    gamma * (rm[ii, jj, k] - (one(FT) + gamma) * sz_k)
+                    gamma * (rm_src[ii, jj, k] - (one(FT) + gamma) * sz_k)
                 else
                     zero(FT)
                 end
@@ -502,13 +503,13 @@ end
             flux_bot = if k < Nz
                 cm_b = cm[i, j, k + 1]
                 if cm_b > zero(FT)
-                    md = m[ii, jj, k]
+                    md = m_src[ii, jj, k]
                     gamma = md > zero(FT) ? clamp(cm_b / md, zero(FT), one(FT)) : zero(FT)
-                    gamma * (rm[ii, jj, k] + (one(FT) - gamma) * sz_k)
+                    gamma * (rm_src[ii, jj, k] + (one(FT) - gamma) * sz_k)
                 elseif cm_b < zero(FT)
-                    md = m[ii, jj, k + 1]
+                    md = m_src[ii, jj, k + 1]
                     gamma = md > zero(FT) ? clamp(cm_b / md, -one(FT), zero(FT)) : zero(FT)
-                    gamma * (rm[ii, jj, k + 1] - (one(FT) + gamma) * sz_kp)
+                    gamma * (rm_src[ii, jj, k + 1] - (one(FT) + gamma) * sz_kp)
                 else
                     zero(FT)
                 end
@@ -516,9 +517,9 @@ end
                 zero(FT)
             end
 
-            # ── Update rm and m IN-PLACE ────────────────────────────────
-            rm[ii, jj, k] = rm[ii, jj, k] + flux_top - flux_bot
-            m[ii, jj, k]  = m[ii, jj, k]  + cm[i, j, k] - cm[i, j, k + 1]
+            # ── Update rm and m from ORIGINAL values (exact conservation) ─
+            rm[ii, jj, k] = rm_src[ii, jj, k] + flux_top - flux_bot
+            m[ii, jj, k]  = m_src[ii, jj, k]  + cm[i, j, k] - cm[i, j, k + 1]
         end
     end
 end
@@ -527,19 +528,19 @@ end
 $(SIGNATURES)
 
 Column-sequential Z-direction mass-flux advection for a single cubed-sphere
-panel.  Unlike `advect_z_cs_panel!` (which parallelises over k), this kernel
-processes levels sequentially within each column and clamps gamma to [-1,1],
-preventing negative-mass instabilities at high vertical CFL.
-
-No scratch buffers or subcycling required — a single pass per panel suffices.
+panel.  Reads slopes and fluxes from `rm_src`/`m_src` (original values) and
+writes updates to `rm`/`m`, ensuring exact flux telescoping and mass
+conservation.  Gamma is clamped to [-1,1] to prevent negative-mass
+instabilities at high vertical CFL.
 """
 function advect_z_cs_panel_column!(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
+                                   rm_src::AbstractArray{FT,3}, m_src::AbstractArray{FT,3},
                                    cm::AbstractArray{FT,3},
                                    Hp::Int, Nc::Int, Nz::Int,
                                    use_limiter::Bool) where FT
     backend = get_backend(rm)
     k! = _massflux_z_cs_column_kernel!(backend, 256)
-    k!(rm, m, cm, Hp, Nz, use_limiter; ndrange=(Nc, Nc))
+    k!(rm, m, rm_src, m_src, cm, Hp, Nz, use_limiter; ndrange=(Nc, Nc))
     synchronize(backend)
     return nothing
 end
@@ -770,17 +771,11 @@ function strang_split_massflux!(rm_panels::NTuple{6},
                                 use_limiter::Bool,
                                 ws::CubedSphereMassFluxWorkspace;
                                 cfl_limit::FT = FT(0.95)) where FT
-    # X → Y → Z_full → Y → X (modified Strang splitting)
-    # The Z-sweep is applied once with doubled cm instead of twice with half-step cm.
-    # This avoids intermediate negative mass that occurs when two Z-sweeps each
-    # have CFL >> 1 in thin upper-atmosphere layers (GEOS L72 has 25 levels above
-    # 10 hPa with ≤1 Pa thickness).  The combined mass update gives the physically
-    # correct target mass, which should always be positive.
+    # X → Y → Z → Z → Y → X (Strang splitting)
     _sweep_x!(rm_panels, m_panels, am_panels, grid, use_limiter, ws; cfl_limit)
     _sweep_y!(rm_panels, m_panels, bm_panels, grid, use_limiter, ws; cfl_limit)
-    for p in 1:6; cm_panels[p] .*= FT(2); end
-    _sweep_z!(rm_panels, m_panels, cm_panels, grid, use_limiter)
-    for p in 1:6; cm_panels[p] .*= FT(1) / FT(2); end
+    _sweep_z!(rm_panels, m_panels, cm_panels, grid, use_limiter, ws)
+    _sweep_z!(rm_panels, m_panels, cm_panels, grid, use_limiter, ws)
     _sweep_y!(rm_panels, m_panels, bm_panels, grid, use_limiter, ws; cfl_limit)
     _sweep_x!(rm_panels, m_panels, am_panels, grid, use_limiter, ws; cfl_limit)
     return nothing
@@ -855,15 +850,20 @@ function _sweep_y!(rm_panels, m_panels, bm_panels, grid, use_limiter, ws;
     return n_sub
 end
 
-function _sweep_z!(rm_panels, m_panels, cm_panels, grid, use_limiter)
+function _sweep_z!(rm_panels, m_panels, cm_panels, grid, use_limiter, ws)
     Hp = grid.Hp
     Nc = grid.Nc
     Nz = grid.Nz
     # Column-sequential kernel: processes k=1..Nz sequentially per column,
-    # clamping gamma to [-1,1] to prevent negative mass.  No subcycling needed.
+    # clamping gamma to [-1,1] to prevent negative mass.
+    # We copy rm/m to workspace buffers before each panel so the kernel reads
+    # from ORIGINAL values — this guarantees exact flux telescoping.
     for p in 1:6
-        advect_z_cs_panel_column!(rm_panels[p], m_panels[p], cm_panels[p],
-                                  Hp, Nc, Nz, use_limiter)
+        copyto!(ws.rm_buf, rm_panels[p])
+        copyto!(ws.m_buf, m_panels[p])
+        advect_z_cs_panel_column!(rm_panels[p], m_panels[p],
+                                  ws.rm_buf, ws.m_buf,
+                                  cm_panels[p], Hp, Nc, Nz, use_limiter)
     end
     return 1
 end

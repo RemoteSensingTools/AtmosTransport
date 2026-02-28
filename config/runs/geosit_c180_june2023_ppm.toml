@@ -1,0 +1,65 @@
+# ===========================================================================
+# GEOS-IT C180 Cubed-Sphere — June 2023 (PPM ORD=7 Advection)
+#
+# Identical to geosit_c180_june2023.toml except advection = PPM ORD=7.
+# Compare output against the Russell-Lerner (slopes) run.
+#
+# Usage:
+#   julia --project=. scripts/run.jl config/runs/geosit_c180_june2023_ppm.toml
+# ===========================================================================
+
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "cubed_sphere"
+Nc         = 180
+met_source = "geosfp"
+
+[met_data]
+driver           = "geosfp_cs"
+product          = "geosit_c180"
+# preprocessed_dir = "~/data/geosit_c180/preprocessed"
+netcdf_dir       = "~/data/geosit_c180"
+start_date       = "2023-06-01"
+end_date         = "2023-06-30"
+dt               = 300
+met_interval     = 3600
+mass_flux_dt     = 450
+Hp               = 3
+verbose          = true
+
+[tracers.co2]
+emission      = "edgar"
+edgar_version = "v8.0"
+year          = 2022
+
+[output]
+filename    = "~/data/output/geosit_c180_june2023_ppm7_05deg.nc"
+interval    = 7200
+output_grid = "latlon"
+Nlon        = 720
+Nlat        = 361
+
+[output.fields]
+co2_column_mean = {type = "column_mean", species = "co2"}
+co2_surface = {type = "surface_slice", species = "co2"}
+co2_800hPa = {type = "sigma_level", species = "co2", sigma = 0.8}
+
+[advection]
+scheme    = "ppm"
+ppm_order = 4          # Optimized PPM (LR96 + minmod) — testing stability
+
+[convection]
+type = "tiedtke"
+
+[diffusion]
+type   = "pbl"
+beta_h = 15.0
+Kz_bg  = 0.1
+Kz_min = 0.01
+Kz_max = 500.0
+
+[buffering]
+strategy = "single"

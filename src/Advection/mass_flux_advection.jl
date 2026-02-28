@@ -16,6 +16,20 @@ using KernelAbstractions: @kernel, @index, synchronize, get_backend
     return dev
 end
 
+# ---------------------------------------------------------------------------
+# Reduced-grid helpers for GPU kernels
+# ---------------------------------------------------------------------------
+
+"""Sum an extensive quantity (rm or m) over a cluster of r fine cells."""
+@inline function _cluster_sum(arr, ic::Int, j::Int, k::Int, r::Int)
+    s = zero(eltype(arr))
+    i_start = (ic - 1) * r + 1
+    for off in 0:r-1
+        s += arr[i_start + off, j, k]
+    end
+    return s
+end
+
 # =====================================================================
 # Preprocessing kernels
 # =====================================================================
@@ -68,69 +82,160 @@ end
 # =====================================================================
 
 @kernel function _massflux_x_kernel!(
-    rm_new, @Const(rm), m_new, @Const(m), @Const(am), Nx, use_limiter
+    rm_new, @Const(rm), m_new, @Const(m), @Const(am),
+    Nx, @Const(cluster_sizes), use_limiter
 )
     i, j, k = @index(Global, NTuple)
+    r = Int(cluster_sizes[j])
     @inbounds begin
-        ip  = i == Nx ? 1 : i + 1
-        im  = i == 1  ? Nx : i - 1
-        ipp = ip == Nx ? 1 : ip + 1
-        imm = im == 1  ? Nx : im - 1
         FT = eltype(rm)
+        if r == 1
+            # --- Uniform row: existing fine-grid logic ---
+            ip  = i == Nx ? 1 : i + 1
+            im  = i == 1  ? Nx : i - 1
+            ipp = ip == Nx ? 1 : ip + 1
+            imm = im == 1  ? Nx : im - 1
 
-        c_imm = rm[imm, j, k] / m[imm, j, k]
-        c_im  = rm[im,  j, k] / m[im,  j, k]
-        c_i   = rm[i,   j, k] / m[i,   j, k]
-        c_ip  = rm[ip,  j, k] / m[ip,  j, k]
-        c_ipp = rm[ipp, j, k] / m[ipp, j, k]
+            c_imm = rm[imm, j, k] / m[imm, j, k]
+            c_im  = rm[im,  j, k] / m[im,  j, k]
+            c_i   = rm[i,   j, k] / m[i,   j, k]
+            c_ip  = rm[ip,  j, k] / m[ip,  j, k]
+            c_ipp = rm[ipp, j, k] / m[ipp, j, k]
 
-        sc_im = (c_i - c_imm) / 2
-        if use_limiter
-            sc_im = minmod_device(sc_im, 2 * (c_i - c_im), 2 * (c_im - c_imm))
-        end
-        sx_im = m[im, j, k] * sc_im
-        if use_limiter
-            sx_im = max(min(sx_im, rm[im, j, k]), -rm[im, j, k])
-        end
+            sc_im = (c_i - c_imm) / 2
+            if use_limiter
+                sc_im = minmod_device(sc_im, 2 * (c_i - c_im), 2 * (c_im - c_imm))
+            end
+            sx_im = m[im, j, k] * sc_im
+            if use_limiter
+                sx_im = max(min(sx_im, rm[im, j, k]), -rm[im, j, k])
+            end
 
-        sc_i = (c_ip - c_im) / 2
-        if use_limiter
-            sc_i = minmod_device(sc_i, 2 * (c_ip - c_i), 2 * (c_i - c_im))
-        end
-        sx_i = m[i, j, k] * sc_i
-        if use_limiter
-            sx_i = max(min(sx_i, rm[i, j, k]), -rm[i, j, k])
-        end
+            sc_i = (c_ip - c_im) / 2
+            if use_limiter
+                sc_i = minmod_device(sc_i, 2 * (c_ip - c_i), 2 * (c_i - c_im))
+            end
+            sx_i = m[i, j, k] * sc_i
+            if use_limiter
+                sx_i = max(min(sx_i, rm[i, j, k]), -rm[i, j, k])
+            end
 
-        sc_ip = (c_ipp - c_i) / 2
-        if use_limiter
-            sc_ip = minmod_device(sc_ip, 2 * (c_ipp - c_ip), 2 * (c_ip - c_i))
-        end
-        sx_ip = m[ip, j, k] * sc_ip
-        if use_limiter
-            sx_ip = max(min(sx_ip, rm[ip, j, k]), -rm[ip, j, k])
-        end
+            sc_ip = (c_ipp - c_i) / 2
+            if use_limiter
+                sc_ip = minmod_device(sc_ip, 2 * (c_ipp - c_ip), 2 * (c_ip - c_i))
+            end
+            sx_ip = m[ip, j, k] * sc_ip
+            if use_limiter
+                sx_ip = max(min(sx_ip, rm[ip, j, k]), -rm[ip, j, k])
+            end
 
-        am_l = am[i, j, k]
-        flux_left = if am_l >= zero(FT)
-            alpha = am_l / m[im, j, k]
-            alpha * (rm[im, j, k] + (one(FT) - alpha) * sx_im)
+            am_l = am[i, j, k]
+            flux_left = if am_l >= zero(FT)
+                alpha = am_l / m[im, j, k]
+                alpha * (rm[im, j, k] + (one(FT) - alpha) * sx_im)
+            else
+                alpha = am_l / m[i, j, k]
+                alpha * (rm[i, j, k] - (one(FT) + alpha) * sx_i)
+            end
+
+            am_r = am[i + 1, j, k]
+            flux_right = if am_r >= zero(FT)
+                alpha = am_r / m[i, j, k]
+                alpha * (rm[i, j, k] + (one(FT) - alpha) * sx_i)
+            else
+                alpha = am_r / m[ip, j, k]
+                alpha * (rm[ip, j, k] - (one(FT) + alpha) * sx_ip)
+            end
+
+            rm_new[i, j, k] = rm[i, j, k] + flux_left - flux_right
+            m_new[i, j, k]  = m[i, j, k]  + am[i, j, k] - am[i + 1, j, k]
         else
-            alpha = am_l / m[i, j, k]
-            alpha * (rm[i, j, k] - (one(FT) + alpha) * sx_i)
-        end
+            # --- Reduced row: work on cluster aggregates ---
+            Nx_red = Nx ÷ r
+            ic  = (i - 1) ÷ r + 1
+            ic_m  = ic == 1      ? Nx_red : ic - 1
+            ic_p  = ic == Nx_red ? 1      : ic + 1
+            ic_mm = ic_m == 1      ? Nx_red : ic_m - 1
+            ic_pp = ic_p == Nx_red ? 1      : ic_p + 1
 
-        am_r = am[i + 1, j, k]
-        flux_right = if am_r >= zero(FT)
-            alpha = am_r / m[i, j, k]
-            alpha * (rm[i, j, k] + (one(FT) - alpha) * sx_i)
-        else
-            alpha = am_r / m[ip, j, k]
-            alpha * (rm[ip, j, k] - (one(FT) + alpha) * sx_ip)
-        end
+            # Aggregate rm, m over clusters (extensive: sum)
+            rm_ic  = _cluster_sum(rm, ic, j, k, r)
+            m_ic   = _cluster_sum(m,  ic, j, k, r)
+            rm_im  = _cluster_sum(rm, ic_m, j, k, r)
+            m_im   = _cluster_sum(m,  ic_m, j, k, r)
+            rm_ip  = _cluster_sum(rm, ic_p, j, k, r)
+            m_ip   = _cluster_sum(m,  ic_p, j, k, r)
+            rm_imm = _cluster_sum(rm, ic_mm, j, k, r)
+            m_imm  = _cluster_sum(m,  ic_mm, j, k, r)
+            rm_ipp = _cluster_sum(rm, ic_pp, j, k, r)
+            m_ipp  = _cluster_sum(m,  ic_pp, j, k, r)
 
-        rm_new[i, j, k] = rm[i, j, k] + flux_left - flux_right
-        m_new[i, j, k]  = m[i, j, k]  + am[i, j, k] - am[i + 1, j, k]
+            # Concentrations on reduced grid
+            c_imm_r = rm_imm / m_imm
+            c_im_r  = rm_im  / m_im
+            c_ic_r  = rm_ic  / m_ic
+            c_ip_r  = rm_ip  / m_ip
+            c_ipp_r = rm_ipp / m_ipp
+
+            # Slopes on reduced grid
+            sc_im_r = (c_ic_r - c_imm_r) / 2
+            if use_limiter
+                sc_im_r = minmod_device(sc_im_r, 2 * (c_ic_r - c_im_r), 2 * (c_im_r - c_imm_r))
+            end
+            sx_im_r = m_im * sc_im_r
+            if use_limiter
+                sx_im_r = max(min(sx_im_r, rm_im), -rm_im)
+            end
+
+            sc_ic_r = (c_ip_r - c_im_r) / 2
+            if use_limiter
+                sc_ic_r = minmod_device(sc_ic_r, 2 * (c_ip_r - c_ic_r), 2 * (c_ic_r - c_im_r))
+            end
+            sx_ic_r = m_ic * sc_ic_r
+            if use_limiter
+                sx_ic_r = max(min(sx_ic_r, rm_ic), -rm_ic)
+            end
+
+            sc_ip_r = (c_ipp_r - c_ic_r) / 2
+            if use_limiter
+                sc_ip_r = minmod_device(sc_ip_r, 2 * (c_ipp_r - c_ip_r), 2 * (c_ip_r - c_ic_r))
+            end
+            sx_ip_r = m_ip * sc_ip_r
+            if use_limiter
+                sx_ip_r = max(min(sx_ip_r, rm_ip), -rm_ip)
+            end
+
+            # Face mass fluxes at cluster boundaries
+            am_l_r = am[(ic - 1) * r + 1, j, k]
+            am_r_idx = ic * r + 1
+            am_r_r = am[am_r_idx > Nx ? 1 : am_r_idx, j, k]
+
+            flux_left_r = if am_l_r >= zero(FT)
+                alpha = am_l_r / m_im
+                alpha * (rm_im + (one(FT) - alpha) * sx_im_r)
+            else
+                alpha = am_l_r / m_ic
+                alpha * (rm_ic - (one(FT) + alpha) * sx_ic_r)
+            end
+
+            flux_right_r = if am_r_r >= zero(FT)
+                alpha = am_r_r / m_ic
+                alpha * (rm_ic + (one(FT) - alpha) * sx_ic_r)
+            else
+                alpha = am_r_r / m_ip
+                alpha * (rm_ip - (one(FT) + alpha) * sx_ip_r)
+            end
+
+            # Cluster-level deltas
+            delta_rm = flux_left_r - flux_right_r
+            delta_m  = am_l_r - am_r_r
+
+            # Distribute proportionally to fine cell
+            frac_rm = abs(rm_ic) > eps(FT) ? rm[i, j, k] / rm_ic : one(FT) / FT(r)
+            frac_m  = abs(m_ic) > eps(FT) ? m[i, j, k] / m_ic : one(FT) / FT(r)
+            rm_new[i, j, k] = rm[i, j, k] + delta_rm * frac_rm
+            m_new[i, j, k]  = m[i, j, k]  + delta_m  * frac_m
+        end
     end
 end
 
@@ -308,14 +413,29 @@ end
 # CFL kernels
 # =====================================================================
 
-@kernel function _cfl_x_kernel!(cfl, @Const(am), @Const(m), Nx)
+@kernel function _cfl_x_kernel!(cfl, @Const(am), @Const(m), Nx, @Const(cluster_sizes))
     i, j, k = @index(Global, NTuple)
     FT = eltype(m)
+    r = Int(cluster_sizes[j])
     @inbounds begin
-        il = i == 1 ? Nx : i - 1
-        ir = i > Nx ? 1 : i
-        md = am[i, j, k] >= zero(FT) ? m[il, j, k] : m[ir, j, k]
-        cfl[i, j, k] = md > zero(FT) ? abs(am[i, j, k]) / md : zero(FT)
+        if r == 1
+            il = i == 1 ? Nx : i - 1
+            ir = i > Nx ? 1 : i
+            md = am[i, j, k] >= zero(FT) ? m[il, j, k] : m[ir, j, k]
+            cfl[i, j, k] = md > zero(FT) ? abs(am[i, j, k]) / md : zero(FT)
+        else
+            if i > Nx
+                # Extra periodic face — duplicate of face 1; skip for CFL
+                cfl[i, j, k] = zero(FT)
+            else
+                Nx_red = Nx ÷ r
+                ic = (i - 1) ÷ r + 1
+                am_face = am[(ic - 1) * r + 1, j, k]
+                donor_ic = am_face >= zero(FT) ? (ic == 1 ? Nx_red : ic - 1) : ic
+                m_donor = _cluster_sum(m, donor_ic, j, k, r)
+                cfl[i, j, k] = m_donor > zero(FT) ? abs(am_face) / m_donor : zero(FT)
+            end
+        end
     end
 end
 
@@ -428,32 +548,41 @@ end
 Pre-allocated buffers for mass-flux advection, eliminating all GPU array
 allocations from the inner time-stepping loop.
 """
-struct MassFluxWorkspace{FT, A3 <: AbstractArray{FT,3}}
+struct MassFluxWorkspace{FT, A3 <: AbstractArray{FT,3}, V1 <: AbstractVector{Int32}}
     rm::A3       # tracer mass (Nx, Ny, Nz)
     rm_buf::A3   # advection output buffer for rm (Nx, Ny, Nz)
     m_buf::A3    # advection output buffer for m  (Nx, Ny, Nz)
     cfl_x::A3   # CFL scratch for x (Nx+1, Ny, Nz) — reused as flux_x_eff
     cfl_y::A3   # CFL scratch for y (Nx, Ny+1, Nz) — reused as flux_y_eff
     cfl_z::A3   # CFL scratch for z (Nx, Ny, Nz+1) — reused as flux_z_eff
+    cluster_sizes::V1  # per-latitude clustering for reduced grid (length Ny)
 end
 
 """
 $(SIGNATURES)
 
 Allocate a workspace that matches the sizes of `m`, `am`, `bm`, `cm`.
+`cluster_sizes_cpu` is an `Int32` vector of per-latitude cluster sizes
+(1 = uniform, >1 = reduced). Pass `nothing` for no reduced grid.
 Call once before the time loop; pass to `strang_split_massflux!`.
 """
 function allocate_massflux_workspace(m::AbstractArray{FT,3},
                                      am::AbstractArray{FT,3},
                                      bm::AbstractArray{FT,3},
-                                     cm::AbstractArray{FT,3}) where FT
-    MassFluxWorkspace{FT, typeof(m)}(
+                                     cm::AbstractArray{FT,3};
+                                     cluster_sizes_cpu::Union{Nothing,Vector{Int32}} = nothing) where FT
+    Ny = size(m, 2)
+    cs_cpu = cluster_sizes_cpu !== nothing ? cluster_sizes_cpu : ones(Int32, Ny)
+    cs_dev = similar(m, Int32, Ny)
+    copyto!(cs_dev, cs_cpu)
+    MassFluxWorkspace{FT, typeof(m), typeof(cs_dev)}(
         similar(m),       # rm
         similar(m),       # rm_buf
         similar(m),       # m_buf
         similar(am),      # cfl_x / flux_x_eff
         similar(bm),      # cfl_y / flux_y_eff
         similar(cm),      # cfl_z / flux_z_eff
+        cs_dev,           # cluster_sizes (device)
     )
 end
 
@@ -620,12 +749,13 @@ function advect_x_massflux!(rm_tracers::NamedTuple,
                              grid,
                              use_limiter::Bool,
                              rm_buf::AbstractArray{FT,3},
-                             m_buf::AbstractArray{FT,3}) where FT
+                             m_buf::AbstractArray{FT,3},
+                             cluster_sizes::AbstractVector{Int32}) where FT
     backend = get_backend(m)
     Nx = grid.Nx
     k! = _massflux_x_kernel!(backend, 256)
     for (_, rm) in pairs(rm_tracers)
-        k!(rm_buf, rm, m_buf, m, am, Nx, use_limiter; ndrange=size(m))
+        k!(rm_buf, rm, m_buf, m, am, Nx, cluster_sizes, use_limiter; ndrange=size(m))
         synchronize(backend)
         copyto!(rm, rm_buf)
     end
@@ -890,8 +1020,11 @@ end
 # Backward-compatible versions that allocate internally (for tests)
 function advect_x_massflux!(rm_tracers::NamedTuple, m::AbstractArray{FT,3},
                              am::AbstractArray{FT,3}, grid, use_limiter::Bool) where FT
+    Ny = size(m, 2)
+    cs = similar(m, Int32, Ny)
+    copyto!(cs, ones(Int32, Ny))
     advect_x_massflux!(rm_tracers, m, am, grid, use_limiter,
-                        similar(first(values(rm_tracers))), similar(m))
+                        similar(first(values(rm_tracers))), similar(m), cs)
 end
 function advect_y_massflux!(rm_tracers::NamedTuple, m::AbstractArray{FT,3},
                              bm::AbstractArray{FT,3}, grid, use_limiter::Bool) where FT
@@ -915,11 +1048,12 @@ Maximum mass-based Courant number for x-direction mass fluxes.
 Pre-allocated `cfl_arr` avoids GPU allocation.
 """
 function max_cfl_massflux_x(am::AbstractArray{FT,3}, m::AbstractArray{FT,3},
-                             cfl_arr::AbstractArray{FT,3}) where FT
+                             cfl_arr::AbstractArray{FT,3},
+                             cluster_sizes::AbstractVector{Int32}) where FT
     backend = get_backend(m)
     Nx = size(m, 1)
     k! = _cfl_x_kernel!(backend, 256)
-    k!(cfl_arr, am, m, Nx; ndrange=size(am))
+    k!(cfl_arr, am, m, Nx, cluster_sizes; ndrange=size(am))
     synchronize(backend)
     return FT(maximum(cfl_arr))
 end
@@ -956,7 +1090,10 @@ end
 
 # Backward-compatible versions (allocating)
 function max_cfl_massflux_x(am::AbstractArray{FT,3}, m::AbstractArray{FT,3}) where FT
-    max_cfl_massflux_x(am, m, similar(am))
+    Ny = size(m, 2)
+    cs = similar(m, Int32, Ny)
+    copyto!(cs, ones(Int32, Ny))
+    max_cfl_massflux_x(am, m, similar(am), cs)
 end
 function max_cfl_massflux_y(bm::AbstractArray{FT,3}, m::AbstractArray{FT,3}) where FT
     max_cfl_massflux_y(bm, m, similar(bm))
@@ -979,7 +1116,7 @@ function advect_x_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, am,
                                        grid, use_limiter,
                                        ws::MassFluxWorkspace{FT};
                                        cfl_limit = FT(0.95)) where FT
-    cfl = max_cfl_massflux_x(am, m, ws.cfl_x)
+    cfl = max_cfl_massflux_x(am, m, ws.cfl_x, ws.cluster_sizes)
     n_sub = max(1, ceil(Int, cfl / cfl_limit))
     if n_sub > 1
         ws.cfl_x .= am ./ FT(n_sub)   # reuse cfl_x as flux_eff
@@ -989,7 +1126,7 @@ function advect_x_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, am,
     end
     for _ in 1:n_sub
         advect_x_massflux!(rm_tracers, m, am_eff, grid, use_limiter,
-                            ws.rm_buf, ws.m_buf)
+                            ws.rm_buf, ws.m_buf, ws.cluster_sizes)
     end
     return n_sub
 end

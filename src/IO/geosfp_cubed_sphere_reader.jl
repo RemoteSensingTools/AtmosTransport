@@ -399,6 +399,100 @@ function inspect_geosfp_cs_file(filepath::String)
 end
 
 """
+$(SIGNATURES)
+
+Read convective mass flux (CMFMC) from a GEOS-IT A3mstE file.
+
+CMFMC is at **edge** levels: `(Nc, Nc, 6, Nz+1)` where `Nz+1 = 73` for 72
+vertical layers. The returned NTuple{6} arrays are haloed to
+`(Nc+2Hp, Nc+2Hp, Nz+1)` with zero padding in halos.
+
+GEOS-IT stores levels **bottom-to-top** (k=1 = surface). This function
+auto-detects and flips to **TOA-first** (k=1 = TOA) for consistency with
+the main met data reader.
+
+# Arguments
+- `filepath`: path to a `GEOSIT.YYYYMMDD.A3mstE.C*.nc` file
+- `FT`: float type (default Float32)
+- `time_index`: which 3-hourly timestep to read (1–8 for daily file)
+- `Hp`: halo padding width
+
+# Returns
+- `cmfmc_haloed`: NTuple{6, Array{FT,3}} of shape (Nc+2Hp, Nc+2Hp, Nz+1)
+"""
+function read_geosfp_cs_cmfmc(filepath::String;
+                               FT::Type{<:AbstractFloat} = Float32,
+                               time_index::Int = 1,
+                               Hp::Int = 3)
+    ds = NCDataset(filepath, "r")
+    try
+        # CMFMC: (Xdim=Nc, Ydim=Nc, nf=6, lev=73, time=8)
+        cmfmc_raw = Array{FT}(ds["CMFMC"][:, :, :, :, time_index])  # (Nc, Nc, 6, 73)
+        Nc = size(cmfmc_raw, 1)
+        Nz_edge = size(cmfmc_raw, 4)  # 73 edges for 72 layers
+
+        # GEOS-IT stores bottom-to-top; flip to TOA-first for consistency
+        # with the CTM_A1 reader. The A3mstE profile has:
+        #   k=1 (surface) = 0, active in lower levels, k=Nz_edge (TOA) = 0
+        # After flip: k=1 (TOA) = 0, active in upper indices, k=Nz_edge (surface) = 0
+        reverse!(cmfmc_raw, dims=4)
+
+        # Build haloed panel arrays
+        cmfmc_haloed = ntuple(6) do p
+            arr = zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz_edge)
+            arr[Hp+1:Hp+Nc, Hp+1:Hp+Nc, :] .= cmfmc_raw[:, :, p, :]
+            arr
+        end
+
+        return cmfmc_haloed
+    finally
+        close(ds)
+    end
+end
+
+"""
+$(SIGNATURES)
+
+Read 2D surface fields (PBLH, USTAR, HFLUX, T2M) from a GEOS-IT A1 file.
+
+Returns a NamedTuple `(pblh, ustar, hflux, t2m)` where each is an NTuple{6}
+of haloed 2D arrays `(Nc+2Hp, Nc+2Hp)`.
+
+# Arguments
+- `filepath`: path to a `GEOSIT.YYYYMMDD.A1.C*.nc` file
+- `FT`: float type (default Float32)
+- `time_index`: which hourly timestep to read (1–24 for daily file)
+- `Hp`: halo padding width
+"""
+function read_geosfp_cs_surface_fields(filepath::String;
+                                        FT::Type{<:AbstractFloat} = Float32,
+                                        time_index::Int = 1,
+                                        Hp::Int = 3)
+    ds = NCDataset(filepath, "r")
+    try
+        Nc = Int(ds.dim["Xdim"])
+
+        function _read_2d(varname)
+            raw = Array{FT}(ds[varname][:, :, :, time_index])  # (Nc, Nc, 6)
+            return ntuple(6) do p
+                arr = zeros(FT, Nc + 2Hp, Nc + 2Hp)
+                arr[Hp+1:Hp+Nc, Hp+1:Hp+Nc] .= raw[:, :, p]
+                arr
+            end
+        end
+
+        pblh  = _read_2d("PBLH")
+        ustar = _read_2d("USTAR")
+        hflux = _read_2d("HFLUX")
+        t2m   = _read_2d("T2M")
+
+        return (; pblh, ustar, hflux, t2m)
+    finally
+        close(ds)
+    end
+end
+
+"""
     read_geosfp_cs_grid_info(filepath::String)
 
 Read the cubed-sphere grid coordinates (center lons/lats and corner lons/lats)

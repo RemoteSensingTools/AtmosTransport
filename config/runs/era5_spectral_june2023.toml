@@ -1,0 +1,61 @@
+# ===========================================================================
+# ERA5 Spectral Mass Fluxes + Physics — June 2023 Comparison Run
+#
+# Uses spectral-derived mass fluxes (TM5-style, near-exact mass conservation)
+# with Tiedtke convection + PBL diffusion from ERA5 surface/convective fields.
+#
+# Preprocessing:
+#   julia --project=. scripts/preprocess_spectral_massflux.jl \
+#       config/preprocessing/spectral_june2023.toml
+#
+# Usage:
+#   julia --project=. scripts/run.jl config/runs/era5_spectral_june2023.toml
+# ===========================================================================
+
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "latlon"
+met_source = "era5"
+size       = [720, 361, 137]   # 0.5° × 0.5°, full 137 levels
+
+[met_data]
+driver    = "preprocessed_latlon"
+directory = "~/data/metDrivers/era5/spectral_05deg_june2023"
+dt        = 900
+
+[tracers.co2]
+emission      = "edgar"
+edgar_version = "v8.0"
+year          = 2022
+
+[output]
+filename    = "~/data/output/era5_spectral_june2023_05deg.nc"
+interval    = 7200
+output_grid = "latlon"
+Nlon        = 720
+Nlat        = 361
+
+[output.fields]
+co2_column_mean = {type = "column_mean", species = "co2"}
+co2_surface     = {type = "surface_slice", species = "co2"}
+co2_800hPa      = {type = "sigma_level", species = "co2", sigma = 0.8}
+
+[advection]
+scheme    = "ppm"
+ppm_order = 7          # Putman & Lin (2007): ORD=7 = Huynh + CS edge treatment
+
+[convection]
+type = "tiedtke"
+
+[diffusion]
+type   = "pbl"
+beta_h = 15.0
+Kz_bg  = 0.1
+Kz_min = 0.01
+Kz_max = 500.0
+
+[buffering]
+strategy = "double"

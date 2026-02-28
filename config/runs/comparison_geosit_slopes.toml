@@ -1,0 +1,48 @@
+# GEOS-IT C180 — Slopes Advection — June 2023
+# For systematic ERA5 vs GEOS-IT comparison (matched physics)
+
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "cubed_sphere"
+Nc         = 180
+met_source = "geosfp"
+
+[met_data]
+driver           = "geosfp_cs"
+product          = "geosit_c180"
+netcdf_dir       = "~/data/geosit_c180"
+start_date       = "2023-06-01"
+end_date         = "2023-06-30"
+dt               = 300
+met_interval     = 3600
+mass_flux_dt     = 450
+Hp               = 3
+verbose          = false
+
+[tracers.co2]
+emission      = "edgar"
+edgar_version = "v8.0"
+year          = 2022
+
+[output]
+filename    = "/temp1/atmos_transport/comparison/geosit_slopes_june2023.nc"
+interval    = 7200
+output_grid = "latlon"
+Nlon        = 720
+Nlat        = 361
+
+[output.fields]
+co2_column_mean = {type = "column_mean", species = "co2"}
+co2_surface     = {type = "surface_slice", species = "co2"}
+co2_800hPa      = {type = "sigma_level", species = "co2", sigma = 0.8}
+
+[advection]
+scheme = "slopes"
+
+# No convection/diffusion — matching ERA5 advection-only config
+
+[buffering]
+strategy = "single"

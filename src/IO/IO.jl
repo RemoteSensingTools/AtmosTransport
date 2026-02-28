@@ -56,6 +56,7 @@ export TemporalInterpolator, interpolation_weight
 export load_configuration, build_model_from_config
 export GeosFPCubedSphereTimestep
 export read_geosfp_cs_timestep, to_haloed_panels, cgrid_to_staggered_panels
+export read_geosfp_cs_cmfmc, read_geosfp_cs_surface_fields
 export geosfp_cs_url, geosfp_cs_asm_url, geosfp_cs_tavg_url, geosfp_cs_local_path
 export inspect_geosfp_cs_file, read_geosfp_cs_grid_info
 
@@ -70,6 +71,7 @@ export find_geosfp_cs_files, find_era5_files, ensure_local_cache
 # Met driver abstraction (Phase 4)
 export AbstractMetDriver, AbstractRawMetDriver, AbstractMassFluxMetDriver
 export total_windows, window_dt, steps_per_window, load_met_window!
+export load_cmfmc_window!, load_surface_fields_window!
 
 # Met buffer types
 export AbstractMetBuffer, AbstractCPUStagingBuffer

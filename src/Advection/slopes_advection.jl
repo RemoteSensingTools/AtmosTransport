@@ -51,33 +51,17 @@ function advect_x!(tracers::NamedTuple, velocities, grid::LatitudeLongitudeGrid,
     u = velocities.u
     Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
     use_limiter = scheme.use_limiter
+    FT = floattype(grid)
     arch = architecture(grid)
-    rg = grid.reduced_grid
 
-    if arch isa GPU
-        FT = floattype(grid)
-        for (name, c) in pairs(tracers)
-            c_new = similar(c)
-            Δx_j = array_type(arch)([Δx(1, j, grid) for j in 1:Ny])
-            kernel = advect_x_kernel(device(arch), 256)
-            event = kernel(c_new, c, u, Δx_j, Nx, Ny, Nz, FT(Δt), use_limiter; ndrange=(Nx, Ny, Nz))
-            wait(device(arch), event)
-            copyto!(c, c_new)
-        end
-        return nothing
-    end
-
+    # KA kernel — works on both CPU (Array) and GPU (CuArray) via get_backend
     for (name, c) in pairs(tracers)
         c_new = similar(c)
-        for k in 1:Nz, j in 1:Ny
-            cluster = rg === nothing ? 1 : rg.cluster_sizes[j]
-
-            if cluster > 1
-                _advect_x_reduced_row!(c, c_new, u, grid, j, k, cluster, Δt, use_limiter)
-            else
-                _advect_x_uniform_row!(c, c_new, u, grid, j, k, Δt, use_limiter)
-            end
-        end
+        backend = get_backend(c)
+        Δx_j = array_type(arch)(FT[Δx(1, j, grid) for j in 1:Ny])
+        kernel! = advect_x_kernel(backend, 256)
+        kernel!(c_new, c, u, Δx_j, Nx, Ny, Nz, FT(Δt), use_limiter; ndrange=(Nx, Ny, Nz))
+        synchronize(backend)
         copyto!(c, c_new)
     end
     return nothing
@@ -205,103 +189,16 @@ function advect_y!(tracers::NamedTuple, velocities, grid::LatitudeLongitudeGrid,
     v = velocities.v
     Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
     use_limiter = scheme.use_limiter
-    arch = architecture(grid)
+    FT = floattype(grid)
+    Δy_val = Δy(1, 1, grid)
 
-    if arch isa GPU
-        FT = floattype(grid)
-        Δy_val = Δy(1, 1, grid)
-        for (name, c) in pairs(tracers)
-            c_new = similar(c)
-            kernel = advect_y_kernel(device(arch), 256)
-            event = kernel(c_new, c, v, Δy_val, Nx, Ny, Nz, FT(Δt), use_limiter; ndrange=(Nx, Ny, Nz))
-            wait(device(arch), event)
-            copyto!(c, c_new)
-        end
-        return nothing
-    end
-
+    # KA kernel — works on both CPU (Array) and GPU (CuArray) via get_backend
     for (name, c) in pairs(tracers)
         c_new = similar(c)
-        for k in 1:Nz, j in 1:Ny, i in 1:Nx
-            @inbounds begin
-                Δy_ij = Δy(i, j, grid)
-                j_prev = j - 1
-                j_next = j + 1
-
-                # Slopes: zero at boundaries (no neighbor)
-                s_j = if j > 1 && j < Ny
-                    s_raw = (c[i, j_next, k] - c[i, j_prev, k]) / 2
-                    if use_limiter
-                        minmod(s_raw, 2 * (c[i, j_next, k] - c[i, j, k]), 2 * (c[i, j, k] - c[i, j_prev, k]))
-                    else
-                        s_raw
-                    end
-                else
-                    zero(eltype(c))
-                end
-
-                s_j_next = if j_next <= Ny && j_next > 1
-                    j_next_next = j_next + 1
-                    if j_next_next <= Ny
-                        s_raw = (c[i, j_next_next, k] - c[i, j, k]) / 2
-                        if use_limiter
-                            minmod(s_raw, 2 * (c[i, j_next_next, k] - c[i, j_next, k]), 2 * (c[i, j_next, k] - c[i, j, k]))
-                        else
-                            s_raw
-                        end
-                    else
-                        zero(eltype(c))
-                    end
-                else
-                    zero(eltype(c))
-                end
-
-                s_j_prev = if j_prev >= 1 && j_prev < Ny
-                    j_prev_prev = j_prev - 1
-                    if j_prev_prev >= 1
-                        s_raw = (c[i, j, k] - c[i, j_prev_prev, k]) / 2
-                        if use_limiter
-                            minmod(s_raw, 2 * (c[i, j, k] - c[i, j_prev, k]), 2 * (c[i, j_prev, k] - c[i, j_prev_prev, k]))
-                        else
-                            s_raw
-                        end
-                    else
-                        zero(eltype(c))
-                    end
-                else
-                    zero(eltype(c))
-                end
-
-                v_right = v[i, j + 1, k]
-                v_left = v[i, j, k]
-                Δy_next = j_next <= Ny ? Δy(i, j_next, grid) : Δy_ij
-                Δy_prev = j_prev >= 1 ? Δy(i, j_prev, grid) : Δy_ij
-
-                # Flux at face j+1/2 (right)
-                flux_right = if j < Ny
-                    if v_right > 0
-                        v_right * (c[i, j, k] + (1 - v_right * Δt / Δy_ij) * s_j / 2)
-                    else
-                        v_right * (c[i, j_next, k] - (1 + v_right * Δt / Δy_next) * s_j_next / 2)
-                    end
-                else
-                    v_right > 0 ? v_right * c[i, j, k] : zero(eltype(c))
-                end
-
-                # Flux at face j-1/2 (left)
-                flux_left = if j > 1
-                    if v_left > 0
-                        v_left * (c[i, j_prev, k] + (1 - v_left * Δt / Δy_prev) * s_j_prev / 2)
-                    else
-                        v_left * (c[i, j, k] - (1 + v_left * Δt / Δy_ij) * s_j / 2)
-                    end
-                else
-                    v_left <= 0 ? v_left * c[i, j, k] : zero(eltype(c))
-                end
-
-                c_new[i, j, k] = c[i, j, k] - Δt / Δy_ij * (flux_right - flux_left)
-            end
-        end
+        backend = get_backend(c)
+        kernel! = advect_y_kernel(backend, 256)
+        kernel!(c_new, c, v, Δy_val, Nx, Ny, Nz, FT(Δt), use_limiter; ndrange=(Nx, Ny, Nz))
+        synchronize(backend)
         copyto!(c, c_new)
     end
     return nothing
@@ -321,102 +218,21 @@ function advect_z!(tracers::NamedTuple, velocities, grid::LatitudeLongitudeGrid,
     w = velocities.w
     Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
     use_limiter = scheme.use_limiter
+    FT = floattype(grid)
     arch = architecture(grid)
     ps = _get_p_surface(velocities)
     Δz_3d = _build_Δz_3d(grid, ps)
 
-    if arch isa GPU
-        FT = floattype(grid)
-        Δz_dev = array_type(arch)(Δz_3d)
-        for (name, c) in pairs(tracers)
-            c_new = similar(c)
-            kernel = advect_z_kernel(device(arch), 256)
-            event = kernel(c_new, c, w, Δz_dev, Nx, Ny, Nz, FT(Δt), use_limiter; ndrange=(Nx, Ny, Nz))
-            wait(device(arch), event)
-            copyto!(c, c_new)
-        end
-        return nothing
-    end
+    # Upload Δz to the correct device (GPU or CPU)
+    Δz_dev = array_type(arch)(Δz_3d)
 
+    # KA kernel — works on both CPU (Array) and GPU (CuArray) via get_backend
     for (name, c) in pairs(tracers)
         c_new = similar(c)
-        for k in 1:Nz, j in 1:Ny, i in 1:Nx
-            @inbounds begin
-                Δz_k = Δz_3d[i, j, k]
-                k_prev = k - 1
-                k_next = k + 1
-
-                s_k = if k > 1 && k < Nz
-                    s_raw = (c[i, j, k_next] - c[i, j, k_prev]) / 2
-                    if use_limiter
-                        minmod(s_raw, 2 * (c[i, j, k_next] - c[i, j, k]), 2 * (c[i, j, k] - c[i, j, k_prev]))
-                    else
-                        s_raw
-                    end
-                else
-                    zero(eltype(c))
-                end
-
-                s_k_next = if k_next <= Nz && k_next > 1
-                    k_next_next = k_next + 1
-                    if k_next_next <= Nz
-                        s_raw = (c[i, j, k_next_next] - c[i, j, k]) / 2
-                        if use_limiter
-                            minmod(s_raw, 2 * (c[i, j, k_next_next] - c[i, j, k_next]), 2 * (c[i, j, k_next] - c[i, j, k]))
-                        else
-                            s_raw
-                        end
-                    else
-                        zero(eltype(c))
-                    end
-                else
-                    zero(eltype(c))
-                end
-
-                s_k_prev = if k_prev >= 1 && k_prev < Nz
-                    k_prev_prev = k_prev - 1
-                    if k_prev_prev >= 1
-                        s_raw = (c[i, j, k] - c[i, j, k_prev_prev]) / 2
-                        if use_limiter
-                            minmod(s_raw, 2 * (c[i, j, k] - c[i, j, k_prev]), 2 * (c[i, j, k_prev] - c[i, j, k_prev_prev]))
-                        else
-                            s_raw
-                        end
-                    else
-                        zero(eltype(c))
-                    end
-                else
-                    zero(eltype(c))
-                end
-
-                w_top = w[i, j, k]
-                w_bot = w[i, j, k + 1]
-                Δz_next = k_next <= Nz ? Δz_3d[i, j, k_next] : Δz_k
-                Δz_prev = k_prev >= 1 ? Δz_3d[i, j, k_prev] : Δz_k
-
-                flux_top = if k > 1
-                    if w_top > 0
-                        w_top * (c[i, j, k_prev] + (1 - w_top * Δt / Δz_prev) * s_k_prev / 2)
-                    else
-                        w_top * (c[i, j, k] - (1 + w_top * Δt / Δz_k) * s_k / 2)
-                    end
-                else
-                    w_top <= 0 ? w_top * c[i, j, k] : zero(eltype(c))
-                end
-
-                flux_bot = if k < Nz
-                    if w_bot > 0
-                        w_bot * (c[i, j, k] + (1 - w_bot * Δt / Δz_k) * s_k / 2)
-                    else
-                        w_bot * (c[i, j, k_next] - (1 + w_bot * Δt / Δz_next) * s_k_next / 2)
-                    end
-                else
-                    w_bot > 0 ? w_bot * c[i, j, k] : zero(eltype(c))
-                end
-
-                c_new[i, j, k] = c[i, j, k] - Δt / Δz_k * (flux_bot - flux_top)
-            end
-        end
+        backend = get_backend(c)
+        kernel! = advect_z_kernel(backend, 256)
+        kernel!(c_new, c, w, Δz_dev, Nx, Ny, Nz, FT(Δt), use_limiter; ndrange=(Nx, Ny, Nz))
+        synchronize(backend)
         copyto!(c, c_new)
     end
     return nothing

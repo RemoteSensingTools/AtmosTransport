@@ -9,7 +9,7 @@
 using TOML
 using Dates
 using ..Architectures: CPU, GPU, array_type
-using ..Grids: LatitudeLongitudeGrid, CubedSphereGrid, merge_upper_levels
+using ..Grids: LatitudeLongitudeGrid, CubedSphereGrid, merge_upper_levels, n_levels
 using ..Parameters: load_parameters
 using ..Sources: AbstractSource, EdgarSource, CarbonTrackerSource, GFASSource,
                  JenaCarboScopeSource, CATRINESource, load_inventory,
@@ -17,7 +17,9 @@ using ..Sources: AbstractSource, EdgarSource, CarbonTrackerSource, GFASSource,
 using ..Diagnostics: ColumnMeanDiagnostic, SurfaceSliceDiagnostic, RegridDiagnostic,
                      Full3DDiagnostic, MetField2DDiagnostic, SigmaLevelDiagnostic
 using ..Chemistry: NoChemistry, RadioactiveDecay, CompositeChemistry
-using ..Diffusion: BoundaryLayerDiffusion, NoDiffusion
+using ..Advection: SlopesAdvection, PPMAdvection
+using ..Diffusion: BoundaryLayerDiffusion, NoDiffusion, PBLDiffusion
+using ..Convection: TiedtkeConvection, NoConvection
 
 """
 $(SIGNATURES)
@@ -118,7 +120,10 @@ function build_model_from_config(config::Dict)
             reference_pressure=pp.reference_surface_pressure)
     else
         sz = get(grid_cfg, "size", [360, 181, 72])
-        Nx, Ny, Nz = sz[1], sz[2], sz[3]
+        Nx, Ny = sz[1], sz[2]
+        # Use merged level count when level merging is active;
+        # otherwise fall back to config's size[3]
+        Nz = merge_map !== nothing ? n_levels(vc) : sz[3]
         lons = get(grid_cfg, "longitude", [0.0, 360.0])
         lats = get(grid_cfg, "latitude", [-90.0, 90.0])
         LatitudeLongitudeGrid(arch;
@@ -163,8 +168,14 @@ function build_model_from_config(config::Dict)
     # --- Chemistry ---
     chemistry = _build_chemistry(config, tracer_names, FT)
 
+    # --- Advection ---
+    advection = _build_advection(config, FT)
+
     # --- Diffusion ---
     diffusion = _build_diffusion(config, FT)
+
+    # --- Convection ---
+    convection = _build_convection(config, FT)
 
     # --- Initial conditions ---
     ic_cfg = get(config, "initial_conditions", Dict())
@@ -190,7 +201,7 @@ function build_model_from_config(config::Dict)
 
     return _Models.TransportModel(;
         grid, tracers, met_data=met, Δt,
-        sources, output_writers=writers, buffering, chemistry, diffusion)
+        sources, output_writers=writers, buffering, advection, chemistry, diffusion, convection)
 end
 
 # =====================================================================
@@ -225,7 +236,7 @@ function _build_met_driver(driver_type::String, cfg::Dict, met_cfg_default, ::Ty
             f = expanduser(get(cfg, "file", ""))
             isempty(f) ? String[] : [f]
         end
-        return PreprocessedLatLonMetDriver(; FT, files, dt)
+        return PreprocessedLatLonMetDriver(; FT, files, dt, merge_map)
 
     elseif driver_type == "geosfp_cs"
         preproc_dir = expanduser(get(cfg, "preprocessed_dir", ""))
@@ -242,12 +253,13 @@ function _build_met_driver(driver_type::String, cfg::Dict, met_cfg_default, ::Ty
         end
 
         mass_flux_dt = FT(get(cfg, "mass_flux_dt", met_interval))
+        verbose      = get(cfg, "verbose", false)
 
         return GEOSFPCubedSphereMetDriver(; FT,
             preprocessed_dir=preproc_dir,
             netcdf_files=nc_files,
             start_date, end_date, dt, met_interval, Hp, merge_map,
-            mass_flux_dt)
+            mass_flux_dt, verbose)
     else
         error("Unknown met driver type: $driver_type. " *
               "Use 'era5', 'preprocessed_latlon', or 'geosfp_cs'.")
@@ -499,9 +511,64 @@ function _build_diffusion(config::Dict, ::Type{FT}) where FT
         Kz_max  = FT(get(diff_cfg, "Kz_max", 100.0))
         H_scale = FT(get(diff_cfg, "H_scale", 8.0))
         return BoundaryLayerDiffusion(Kz_max, H_scale)
+    elseif dtype == "pbl"
+        β_h    = FT(get(diff_cfg, "beta_h", 15.0))
+        Kz_bg  = FT(get(diff_cfg, "Kz_bg", 0.1))
+        Kz_min = FT(get(diff_cfg, "Kz_min", 0.01))
+        Kz_max = FT(get(diff_cfg, "Kz_max", 500.0))
+        return PBLDiffusion(β_h, Kz_bg, Kz_min, Kz_max)
     else
         @warn "Unknown diffusion type: $dtype — using no diffusion"
         return nothing
+    end
+end
+
+"""
+Build convection scheme from `[convection]` TOML section.
+
+```toml
+[convection]
+type = "tiedtke"    # or "none" (default)
+```
+"""
+function _build_convection(config::Dict, ::Type{FT}) where FT
+    conv_cfg = get(config, "convection", Dict())
+    isempty(conv_cfg) && return nothing
+
+    ctype = get(conv_cfg, "type", "none")
+    ctype == "none" && return nothing
+
+    if ctype == "tiedtke"
+        return TiedtkeConvection()
+    else
+        @warn "Unknown convection type: $ctype — using no convection"
+        return nothing
+    end
+end
+
+"""
+Build advection scheme from `[advection]` TOML section.
+
+```toml
+[advection]
+scheme = "slopes"       # or "ppm" (default "slopes")
+ppm_order = 7           # ORD ∈ {4, 5, 6, 7}, only if scheme="ppm"
+```
+"""
+function _build_advection(config::Dict, ::Type{FT}) where FT
+    adv_cfg = get(config, "advection", Dict())
+    isempty(adv_cfg) && return SlopesAdvection()
+
+    scheme = get(adv_cfg, "scheme", "slopes")
+    scheme == "slopes" && return SlopesAdvection()
+
+    if scheme == "ppm"
+        ppm_order = get(adv_cfg, "ppm_order", 7)
+        ppm_order ∈ (4, 5, 6, 7) || @error "ppm_order must be in {4, 5, 6, 7}, got $ppm_order"
+        return PPMAdvection{ppm_order}()
+    else
+        @warn "Unknown advection scheme: $scheme — using slopes advection"
+        return SlopesAdvection()
     end
 end
 

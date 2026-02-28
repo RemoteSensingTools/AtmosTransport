@@ -1,0 +1,48 @@
+# DIAGNOSTIC: Pure advection test (no convection, no diffusion)
+# Tests whether the blow-up comes from advection or physics.
+
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "cubed_sphere"
+Nc         = 180
+met_source = "geosfp"
+
+[met_data]
+driver           = "geosfp_cs"
+product          = "geosit_c180"
+netcdf_dir       = "~/data/geosit_c180"
+start_date       = "2023-06-01"
+end_date         = "2023-06-10"
+dt               = 300
+met_interval     = 3600
+mass_flux_dt     = 450
+Hp               = 3
+verbose          = true
+
+[tracers.co2]
+emission      = "edgar"
+edgar_version = "v8.0"
+year          = 2022
+
+[output]
+filename    = "~/data/output/geosit_c180_advonly_05deg.nc"
+interval    = 7200
+output_grid = "latlon"
+Nlon        = 720
+Nlat        = 361
+
+[output.fields]
+co2_column_mean = {type = "column_mean", species = "co2"}
+co2_surface = {type = "surface_slice", species = "co2"}
+
+[advection]
+scheme    = "slopes"
+
+# NO [convection] section
+# NO [diffusion] section
+
+[buffering]
+strategy = "single"

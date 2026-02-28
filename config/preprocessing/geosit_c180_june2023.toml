@@ -1,0 +1,36 @@
+# ===========================================================================
+# GEOS-IT C180 Cubed-Sphere Preprocessing — June 2023
+#
+# Converts GEOS-IT native NetCDF mass fluxes to per-day flat binary files
+# for fast mmap-based GPU ingestion.
+#
+# CRITICAL: mass_flux_dt = 450 s
+#   GEOS-IT C180 MFXC/MFYC are accumulated over the dynamics timestep
+#   (~450 s), NOT the 1-hour met output interval. Using the wrong value
+#   causes transport to run 8× too fast or slow.
+#
+# Usage:
+#   julia --project=. scripts/preprocess_geosfp_cs.jl \
+#       config/preprocessing/geosit_c180_june2023.toml
+# ===========================================================================
+
+[product]
+name         = "geosit_c180"
+mass_flux_dt = 450.0      # dynamics timestep [s] — NOT met_interval (3600 s)
+
+[input]
+data_dir   = "~/data/geosit_c180"
+start_date = "2023-06-01"
+end_date   = "2023-06-30"
+
+[output]
+directory = "~/data/geosit_c180/preprocessed"
+
+[grid]
+halo_width = 3
+
+[numerics]
+float_type = "Float32"
+
+[diagnostics]
+verbose = true    # print sanity checks (wind speed, DELP ordering, NaN) on window 1 and every 6th

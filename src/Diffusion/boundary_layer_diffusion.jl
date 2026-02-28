@@ -5,10 +5,9 @@
 # where D is a tridiagonal diffusion operator built from Kz profiles.
 # Solved column-by-column with the Thomas algorithm.
 #
-# Three implementations:
-#   1. CPU: column-by-column loop with preallocated workspace
-#   2. GPU (lat-lon): KernelAbstractions @kernel on (Nx, Ny) arrays
-#   3. GPU (cubed-sphere): KernelAbstractions @kernel on haloed panel arrays
+# Two KernelAbstractions @kernel implementations (work on both CPU and GPU):
+#   1. Lat-lon: factored Thomas solve on (Nx, Ny) arrays
+#   2. Cubed-sphere: factored Thomas solve on haloed panel arrays
 #      with rm ↔ mixing-ratio conversion
 # ---------------------------------------------------------------------------
 
@@ -249,58 +248,16 @@ function diffuse_cs_panels!(rm_panels::NTuple{6}, m_panels::NTuple{6},
 end
 
 # =====================================================================
-# CPU path (original column-by-column)
+# Unified path: build workspace on-the-fly and use KA kernel
+# (works on both CPU and GPU via get_backend)
 # =====================================================================
 
 function diffuse!(tracers::NamedTuple, met, grid::LatitudeLongitudeGrid,
                   diff::BoundaryLayerDiffusion, Δt)
-    gs = grid_size(grid)
-    Nx, Ny, Nz = gs.Nx, gs.Ny, gs.Nz
     FT = floattype(grid)
-    Kz_max = FT(diff.Kz_max)
-    H_scale = FT(diff.H_scale)
-
-    a = Vector{FT}(undef, Nz)
-    b = Vector{FT}(undef, Nz)
-    c = Vector{FT}(undef, Nz)
-    w = Vector{FT}(undef, Nz)
-    g = Vector{FT}(undef, Nz)
-    col = Vector{FT}(undef, Nz)
-
-    for tracer in values(tracers)
-        arr = tracer_data(tracer)
-        for j in 1:Ny, i in 1:Nx
-            @inbounds for k in 1:Nz
-                col[k] = arr[i, j, k]
-            end
-
-            @inbounds for k in 1:Nz
-                Δz_k = Δz(k, grid)
-                D_below = zero(FT)
-                D_above = zero(FT)
-                if k > 1
-                    Δz_int_below = (Δz(k - 1, grid) + Δz_k) / 2
-                    Kz_below = default_Kz_interface(k - 1, Nz, Kz_max, H_scale, FT)
-                    D_below = Kz_below / (Δz_k * Δz_int_below)
-                end
-                if k < Nz
-                    Δz_int_above = (Δz_k + Δz(k + 1, grid)) / 2
-                    Kz_above = default_Kz_interface(k, Nz, Kz_max, H_scale, FT)
-                    D_above = Kz_above / (Δz_k * Δz_int_above)
-                end
-                D_kk = -(D_below + D_above)
-
-                a[k] = k > 1 ? -Δt * D_below : zero(FT)
-                b[k] = one(FT) - Δt * D_kk
-                c[k] = k < Nz ? -Δt * D_above : zero(FT)
-            end
-
-            thomas_solve!(a, b, c, col, col, w, g, Nz)
-
-            @inbounds for k in 1:Nz
-                arr[i, j, k] = col[k]
-            end
-        end
-    end
+    # Use first tracer array as template for device placement
+    arr_template = tracer_data(first(values(tracers)))
+    dw = DiffusionWorkspace(grid, FT(diff.Kz_max), FT(diff.H_scale), FT(Δt), arr_template)
+    diffuse_gpu!(tracers, dw)
     return nothing
 end

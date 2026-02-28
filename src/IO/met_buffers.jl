@@ -61,7 +61,8 @@ struct LatLonMetBuffer{FT, A3 <: AbstractArray{FT,3}, A2 <: AbstractArray{FT,2}}
     ws    :: MassFluxWorkspace
 end
 
-function LatLonMetBuffer(arch::AbstractArchitecture, ::Type{FT}, Nx, Ny, Nz) where FT
+function LatLonMetBuffer(arch::AbstractArchitecture, ::Type{FT}, Nx, Ny, Nz;
+                         cluster_sizes_cpu::Union{Nothing,Vector{Int32}} = nothing) where FT
     AT = array_type(arch)
     m_ref = AT(zeros(FT, Nx, Ny, Nz))
     m_dev = AT(zeros(FT, Nx, Ny, Nz))
@@ -72,7 +73,8 @@ function LatLonMetBuffer(arch::AbstractArchitecture, ::Type{FT}, Nx, Ny, Nz) whe
     Δp    = AT(zeros(FT, Nx, Ny, Nz))
     u     = AT(zeros(FT, Nx + 1, Ny, Nz))
     v     = AT(zeros(FT, Nx, Ny + 1, Nz))
-    ws    = allocate_massflux_workspace(m_dev, am, bm, cm)
+    ws    = allocate_massflux_workspace(m_dev, am, bm, cm;
+                                         cluster_sizes_cpu = cluster_sizes_cpu)
     LatLonMetBuffer(m_ref, m_dev, am, bm, cm, ps, Δp, u, v, ws)
 end
 

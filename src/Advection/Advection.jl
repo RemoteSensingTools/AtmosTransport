@@ -27,6 +27,7 @@ using ..Grids: reduce_row_mass!, reduce_am_row!, expand_row_mass!
 using ..Grids: fill_panel_halos!, allocate_cubed_sphere_field
 using ..Fields: AbstractField
 using ..Architectures: architecture, device, array_type, CPU, GPU
+using KernelAbstractions: get_backend, synchronize
 
 """
 Extract `p_surface` from velocities if present, otherwise `nothing`.
@@ -57,6 +58,7 @@ end
 
 export AbstractAdvectionScheme
 export SlopesAdvection, UpwindAdvection
+export AbstractPPMScheme, PPMAdvection
 export advect!, adjoint_advect!
 export advect_x!, advect_y!, advect_z!
 export adjoint_advect_x!, adjoint_advect_y!, adjoint_advect_z!
@@ -73,7 +75,7 @@ export MassFluxWorkspace, allocate_massflux_workspace
 export advect_x_massflux!, advect_y_massflux!, advect_z_massflux!
 export advect_x_massflux_subcycled!, advect_y_massflux_subcycled!, advect_z_massflux_subcycled!
 export max_cfl_massflux_x, max_cfl_massflux_y, max_cfl_massflux_z
-export strang_split_massflux!
+export strang_split_massflux!, strang_split_massflux_ppm!
 export advect_x_massflux_reduced!
 export CubedSphereGeometryCache, CubedSphereMassFluxWorkspace
 export allocate_cs_massflux_workspace
@@ -93,5 +95,9 @@ include("subcycling.jl")
 include("mass_correction.jl")
 include("mass_flux_advection.jl")
 include("cubed_sphere_mass_flux.jl")
+include("ppm_advection.jl")
+include("ppm_subgrid_distributions.jl")
+include("cubed_sphere_mass_flux_ppm.jl")
+include("latlon_mass_flux_ppm.jl")
 
 end # module Advection

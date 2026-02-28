@@ -1,0 +1,43 @@
+# ERA5 Spectral — Slopes Advection — June 2023
+# For systematic ERA5 vs GEOS-IT comparison (matched physics)
+
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "latlon"
+met_source = "era5"
+size       = [720, 361, 137]
+merge_levels_above_Pa = 1000.0
+
+[met_data]
+driver    = "preprocessed_latlon"
+directory = "/temp1/atmos_transport/era5_spectral"
+dt        = 900
+
+[tracers.co2]
+emission      = "edgar"
+edgar_version = "v8.0"
+year          = 2022
+
+[output]
+filename    = "/temp1/atmos_transport/comparison/era5_slopes_june2023.nc"
+interval    = 7200
+output_grid = "latlon"
+Nlon        = 720
+Nlat        = 361
+
+[output.fields]
+co2_column_mean = {type = "column_mean", species = "co2"}
+co2_surface     = {type = "surface_slice", species = "co2"}
+co2_800hPa      = {type = "sigma_level", species = "co2", sigma = 0.8}
+
+[advection]
+scheme = "slopes"
+
+# No convection/diffusion — ERA5 CMFMC + surface fields not yet preprocessed
+# Will add when data becomes available
+
+[buffering]
+strategy = "single"

@@ -41,11 +41,11 @@ variables `u`, `v`, `w`, `lnsp` on `model_level` dimensions.
 
 | Aspect | TM5 | Julia AtmosTransport |
 |--------|-----|--------------------------|
-| Advection input | Mass fluxes (kg/s) through cell faces | Wind velocities (m/s) at cell centers |
-| Mass conservation | Guaranteed by spectral integration (Bregman et al. 2003) | Depends on advection scheme discretization |
+| Advection input | Mass fluxes (kg/s) through cell faces | Mass fluxes: spectral (ERA5), native CS (GEOS-FP/IT), or gridpoint winds (stopgap) |
+| Mass conservation | Guaranteed by spectral integration (Bregman et al. 2003) | Near-zero drift (spectral/CS mass fluxes); ~0.9%/month (gridpoint winds) |
 | Vertical coordinate | Hybrid sigma-pressure (A/B coefficients) | Hybrid sigma-pressure (A/B coefficients) |
 | Convective fluxes | Read from ECMWF archive (eu, ed, du, dd) | Read from met data if available |
-| Met format | Preprocessed NetCDF/HDF with specific naming | Standard NetCDF (ERA5, GEOS-FP, MERRA-2) |
+| Met format | Preprocessed NetCDF/HDF with specific naming | NetCDF (ERA5, GEOS-FP/IT), spectral GRIB, or flat binary (mmap) |
 
 ## TM5 Meteo Preprocessing
 
@@ -206,14 +206,28 @@ convection, diffusion) only depends on the `HybridSigmaPressure` interface.
 
 | Source | Config file | Resolution | Levels | Coefficients | Access |
 |--------|------------|------------|--------|-------------|--------|
-| ERA5 | `config/met_sources/era5.toml` | 0.25-2 deg | 137 model | `era5_L137_coefficients.toml` | CDS API (`~/.cdsapirc`) |
-| GEOS-FP (lat-lon) | `config/met_sources/geosfp.toml` | 0.25 deg | 72 hybrid | `geos_L72_coefficients.toml` | OPeNDAP (no auth) |
+| ERA5 (spectral) | `config/preprocessing/spectral_*.toml` | 0.5-2 deg | 137 model | `era5_L137_coefficients.toml` | CDS API (`~/.cdsapirc`) |
+| ERA5 (gridpoint) | `config/met_sources/era5.toml` | 0.25-2 deg | 137 model | `era5_L137_coefficients.toml` | CDS API (`~/.cdsapirc`) |
 | GEOS-FP (native CS) | N/A (direct reader) | C720 (~12.5 km) | 72 hybrid | `geos_L72_coefficients.toml` | WashU archive (no auth) |
+| GEOS-IT (native CS) | N/A (same reader) | C180 (~50 km) | 72 hybrid | `geos_L72_coefficients.toml` | WashU archive (no auth) |
+| GEOS-FP (lat-lon) | `config/met_sources/geosfp.toml` | 0.25 deg | 72 hybrid | `geos_L72_coefficients.toml` | OPeNDAP (no auth) |
 | MERRA-2 | `config/met_sources/merra2.toml` | 0.5x0.625 deg | 72 hybrid | `geos_L72_coefficients.toml` | NASA Earthdata (`~/.netrc`) |
 
-### Processing pipeline
+### Processing pipelines
 
-1. **Read** (`src/IO/met_reader.jl`): Load NetCDF variables, apply unit conversions
+**ERA5 spectral (recommended)**:
+1. Download spectral GRIB (VO, D, LNSP) via `scripts/download_era5_grib_tm5.py`
+2. Preprocess: `scripts/preprocess_spectral_massflux.jl` converts spectral harmonics
+   to mass-conserving mass fluxes (am, bm, cm) following TM5's approach (Bregman et al. 2003)
+3. Run via `driver = "preprocessed_latlon"` — reads preprocessed NetCDF mass fluxes directly
+
+**GEOS-FP/IT cubed-sphere (native mass fluxes)**:
+1. Download MFXC/MFYC/DELP from WashU archive (`scripts/download_geosfp_cs_massflux.jl`)
+2. (Optional) Preprocess to flat binary for ~15x faster I/O (`scripts/preprocess_geosfp_cs.jl`)
+3. Run via `driver = "geosfp_cs"` — reads native cubed-sphere mass fluxes
+
+**ERA5 gridpoint (stopgap)**:
+1. **Read** (`src/IO/met_reader.jl`): Load NetCDF u/v/lnsp, apply unit conversions
 2. **Build vertical coordinate**: `build_vertical_coordinate(config)` loads
    A/B coefficients and constructs `HybridSigmaPressure`
 3. **Stagger** (`src/IO/met_fields_bridge.jl`): Interpolate cell-center winds to faces
@@ -223,25 +237,33 @@ convection, diffusion) only depends on the `HybridSigmaPressure` interface.
 4. **Convection**: Read `conv_mass_flux_up/down` if available, else convection is a no-op
 5. **Diffusivity**: Read `kh` (eddy diffusivity) if available
 
+Note: The gridpoint approach introduces ~0.9% mass drift per month. Use the spectral
+pipeline for production runs.
+
 ### Download scripts
 
 | Script | Source | Output location |
 |--------|--------|----------------|
-| `scripts/download_era5_week.jl` | ERA5 (CDS API) | `~/data/metDrivers/era5/` |
-| `scripts/download_era5_model_levels.jl` | ERA5 model levels (CDS API) | `~/data/metDrivers/era5/` |
+| `scripts/download_era5_grib_tm5.py` | ERA5 spectral GRIB: VO, D, LNSP (CDS API) | `~/data/metDrivers/era5/spectral_*/` |
+| `scripts/download_era5_model_levels.jl` | ERA5 gridpoint: u, v, omega, lnsp (CDS API) | `~/data/metDrivers/era5/` |
+| `scripts/download_era5_surface_fields.py` | ERA5 surface: CMFMC, PBLH, USTAR, HFLUX (CDS API) | `~/data/metDrivers/era5/surface_*/` |
+| `scripts/download_geosfp_cs_massflux.jl` | GEOS-FP C720 native CS (WashU) | `~/data/geosfp_cs/` |
+| `scripts/download_geosit_physics.jl` | GEOS-IT C180 native CS (WashU) | `~/data/geosit_c180/` |
 | `scripts/download_geosfp_week.jl` | GEOS-FP lat-lon (OPeNDAP) | `~/data/metDrivers/geosfp/` |
-| `scripts/download_geosfp_cs_massflux.jl` | GEOS-FP native C720 cubed-sphere (WashU) | `~/data/geosfp_cs/` |
-| `scripts/download_test_data.jl` | All three | `~/data/metDrivers/*/test/` |
+| `scripts/download_test_data.jl` | Test data for CI | `~/data/metDrivers/*/test/` |
 
 ### Current status
 
-- ERA5 model-level data (L137) supported via `scripts/download_era5_model_levels.jl`
-- A/B coefficients available for both ERA5 (137 levels) and GEOS/MERRA (72 levels)
+- **ERA5 spectral mass fluxes** (recommended): `preprocess_spectral_massflux.jl` converts
+  spectral VO/D/LNSP to mass-conserving mass fluxes, achieving near-zero mass drift
+- **GEOS-FP C720** native cubed-sphere mass flux reader (`src/IO/geosfp_cubed_sphere_reader.jl`)
+  with auto-detection of vertical level ordering and panel convention handling
+- **GEOS-IT C180** supported via the same cubed-sphere reader (auto-flips bottom-to-top levels)
+- ERA5 model-level gridpoint data (L137) supported as a stopgap via `scripts/download_era5_model_levels.jl`
+- A/B coefficients available for ERA5 (137 levels) and GEOS/MERRA (72 levels)
 - Universal `build_vertical_coordinate()` works for all met sources
-- Native GEOS-FP C720 cubed-sphere mass flux reader implemented
-  (`src/IO/geosfp_cubed_sphere_reader.jl`)
-- No convective mass flux variables in the ERA5 config yet
-- No spectral processing — uses gridpoint winds directly (TM5 comparison ongoing)
+- ERA5 surface physics fields (CMFMC, PBLH, USTAR, HFLUX) via `download_era5_surface_fields.py`
+- No convective mass flux variables in the ERA5 config yet (Tiedtke uses parameterized fluxes)
 
 ## GEOS-FP Native Cubed-Sphere Mass Fluxes
 
@@ -330,36 +352,41 @@ GEOS-IT uses the same file format and variable names as GEOS-FP.
 ### Using the same ERA5 data
 
 For a fair comparison, both models must process the same underlying ERA5
-meteorology. The pipeline is:
+meteorology. Both the Julia model and TM5 now use the same spectral pipeline:
 
 ```
 ERA5 (ECMWF archive)
     |
-    +--> Spectral GRIB -----> TM5 preprocessing (tmm.F90) -----> TM5 forward run
-    |                              mass-conserving mass fluxes
-    |
-    +--> Gridpoint NetCDF ---> Julia model (met_reader.jl) -----> Julia forward run
-                                   direct wind-based advection
+    +--> Spectral GRIB (VO, D, LNSP)
+            |
+            +--> TM5 preprocessing (tmm.F90) ---------> TM5 forward run
+            |         mass-conserving mass fluxes
+            |
+            +--> Julia preprocessing -----------------> Julia forward run
+                  (preprocess_spectral_massflux.jl)
+                  mass-conserving mass fluxes (same approach)
 ```
 
-Both runs use the same ERA5 fields for the same time period. The comparison then
-tests whether the Julia model's gridpoint approach gives comparable tracer
-transport to TM5's spectral mass-flux approach.
+Both runs use the same ERA5 spectral fields and the same mass-flux derivation
+approach (Bregman et al. 2003) for the same time period.
 
 ### What the comparison tests
 
-- **Advection accuracy**: Gridpoint winds vs spectral mass fluxes
-- **Mass conservation**: TM5 guarantees it; Julia model should be close
+- **Advection accuracy**: Both use spectral mass fluxes (apples-to-apples)
+- **Mass conservation**: Both achieve near-zero drift via spectral integration
 - **Convection**: Both use ECMWF-derived convective mass fluxes (once enabled in Julia)
 - **Overall transport**: Column-integrated tracers, zonal means, time series
 
-### GEOS-FP validation (separate)
+### GEOS-FP/IT validation (separate track)
 
-TM5 has no GEOS-FP reader. For GEOS-FP validation, compare the Julia model
-against:
-- GEOS-Chem (which natively uses GEOS-FP)
+TM5 has no GEOS-FP/IT reader. For cubed-sphere validation, the Julia model
+reads native mass fluxes directly (GEOS-FP C720 and GEOS-IT C180) and can be
+compared against:
+- GEOS-Chem / GCHP (which natively use GEOS-FP/IT)
 - Observations (surface stations, satellite retrievals)
-- The Julia model already has a working GEOS-FP reader
+
+Both GEOS-FP C720 (30-day June 2024) and GEOS-IT C180 (30-day June 2023)
+simulations have been completed with validated `mass_flux_dt = 450`.
 
 ### Mass fluxes vs. winds — lessons from GCHP v13
 
@@ -384,13 +411,14 @@ transport errors in offline models. Key findings relevant to our model:
    archives hourly C720 cubed-sphere mass fluxes. GEOS-IT provides C180 archives
    for 1998-present. These avoid all regridding/restaggering errors.
 
-**Implications for our model:**
-- Our current wind-based approach (cell-center → face staggering) introduces a
-  known ~1% mass conservation error, consistent with our observed 0.9% drift
-- Supporting direct mass flux ingestion from native cubed-sphere GEOS-FP/GEOS-IT
-  archives would eliminate this error source entirely
-- The `CubedSphereGrid` implementation uses the same gnomonic projection as FV3,
-  enabling direct use of native GEOS-FP mass flux archives in the future
+**How our model addresses this:**
+- **ERA5 spectral mass fluxes**: `preprocess_spectral_massflux.jl` follows TM5's approach,
+  achieving near-zero mass drift (same spectral integration as Bregman et al. 2003)
+- **GEOS-FP/IT native cubed-sphere**: Direct ingestion of C720/C180 mass fluxes (MFXC, MFYC)
+  from the WashU archive, avoiding all regridding/restaggering errors
+- **Gridpoint stopgap**: The wind-based approach (cell-center → face staggering) introduces
+  ~0.9% drift/month, consistent with Martin et al.'s findings. Use only when spectral data
+  is unavailable
 
 ## CO2 Surface Flux Components
 

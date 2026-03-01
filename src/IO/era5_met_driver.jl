@@ -47,6 +47,8 @@ struct ERA5MetDriver{FT} <: AbstractRawMetDriver{FT}
     level_top      :: Int
     "bottommost model level index"
     level_bot      :: Int
+    "simulation start date (auto-detected from first file)"
+    _start_date    :: Date
 end
 
 """
@@ -67,14 +69,31 @@ function ERA5MetDriver(; FT::Type{<:AbstractFloat} = Float64,
     isempty(files) && error("ERA5MetDriver: no files provided")
     lons, lats, _, _, _, _, nt_per_file = get_era5_grid_info(files[1], FT)
     steps_per_win = max(1, round(Int, met_interval / dt))
+    actual_window_dt = dt * steps_per_win
+    if abs(actual_window_dt - met_interval) > 0.01 * met_interval
+        error("dt=$dt does not evenly divide met_interval=$met_interval " *
+              "(steps_per_win=$steps_per_win gives window of $(actual_window_dt)s). " *
+              "Choose dt so that met_interval/dt is an integer.")
+    end
     n_windows = nt_per_file * length(files)
+
+    # Auto-detect start date from first file's time variable
+    _start = try
+        NCDataset(files[1], "r") do ds
+            t = ds["time"][1]
+            Date(t)
+        end
+    catch
+        @warn "Could not auto-detect start_date from ERA5 file; defaulting to 2000-01-01"
+        Date(2000, 1, 1)
+    end
 
     ERA5MetDriver{FT}(
         files,
         FT.(A_coeff), FT.(B_coeff),
         FT(met_interval), FT(dt), steps_per_win,
         nt_per_file, n_windows,
-        lons, lats, level_top, level_bot)
+        lons, lats, level_top, level_bot, _start)
 end
 
 # --- Interface implementations ---
@@ -83,6 +102,7 @@ total_windows(d::ERA5MetDriver)    = d.n_windows
 window_dt(d::ERA5MetDriver)        = d.dt * d.steps_per_win
 steps_per_window(d::ERA5MetDriver) = d.steps_per_win
 met_interval(d::ERA5MetDriver)     = d.met_interval
+start_date(d::ERA5MetDriver)       = d._start_date
 
 """
     window_index_to_file(driver::ERA5MetDriver, win) → (filepath, tidx)

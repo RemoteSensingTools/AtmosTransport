@@ -146,6 +146,23 @@ Define one section per tracer (e.g., `[tracers.co2]`):
 | `output_grid` | string | | `"latlon"` to regrid cubed-sphere output |
 | `Nlon` | int | `720` | Output grid longitude points |
 | `Nlat` | int | `361` | Output grid latitude points |
+| `format` | string | `"netcdf"` | `"netcdf"` or `"binary"` (binary auto-converts on finalize) |
+| `deflate_level` | int | `0` | NetCDF compression (0 = off, 1–9 = increasing) |
+
+**Output timing:** Output is written at the **end** of each met window, after all
+physics (advection, diffusion, convection, sources). The timestamp is the elapsed
+simulation time at that point. For evenly-spaced output, `interval` should be a
+multiple of `met_interval`.
+
+**Time variable:** The NetCDF time variable uses CF-convention units
+`"seconds since {start_date} 00:00:00"`, where `start_date` is auto-detected from
+the met data files. Values are seconds elapsed since simulation start, consistent
+with the units string.
+
+**dt / met_interval alignment:** `dt` must evenly divide `met_interval` so that an
+integer number of advection sub-steps exactly covers each met window. The model will
+error if this constraint is violated (e.g. `dt=1000` with `met_interval=3600` fails;
+use `dt=900` instead).
 
 ### `[output.fields]`
 

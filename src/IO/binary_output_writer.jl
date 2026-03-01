@@ -57,17 +57,20 @@ struct BinaryOutputWriter{S <: AbstractOutputSchedule, OG} <: AbstractOutputWrit
     _header       :: Dict{String, Any}
     "if true, convert to NetCDF after finalize"
     auto_convert  :: Bool
+    "simulation start date for CF-convention time units"
+    start_date    :: Date
 end
 
 function BinaryOutputWriter(filepath::String, fields::Dict, schedule::S;
                              output_grid=nothing,
-                             auto_convert::Bool=false) where S <: AbstractOutputSchedule
+                             auto_convert::Bool=false,
+                             start_date::Date=Date(2000,1,1)) where S <: AbstractOutputSchedule
     return BinaryOutputWriter{S, typeof(output_grid)}(
         filepath, fields, schedule, output_grid,
         Ref(0), Ref{Any}(nothing),
         Ref{Union{Nothing, IOStream}}(nothing),
         Dict{String, Any}(),
-        auto_convert)
+        auto_convert, start_date)
 end
 
 # =====================================================================
@@ -82,6 +85,7 @@ function initialize_output!(writer::BinaryOutputWriter, model)
     hdr["FT"]          = "Float32"
     hdr["Nt"]          = 0
     hdr["header_size"] = BINARY_OUTPUT_HEADER_SIZE
+    hdr["start_date"]  = string(writer.start_date)
 
     # Field names in deterministic sorted order
     field_names = sort(collect(keys(writer.fields)))
@@ -354,8 +358,10 @@ function convert_binary_to_netcdf(bin_path::String;
                attrib=Dict("units" => "degrees_east"))[:] = lons
         defVar(ds, "lat", Float32, ("lat",);
                attrib=Dict("units" => "degrees_north"))[:] = lats
+        # Use start_date from header if available, else default epoch
+        _sd = haskey(hdr, :start_date) ? string(hdr.start_date) : "2000-01-01"
         defVar(ds, "time", Float64, ("time",);
-               attrib=Dict("units" => "seconds since 2000-01-01 00:00:00"))
+               attrib=Dict("units" => "seconds since $(_sd) 00:00:00"))
 
         for fname in field_names
             dims = Tuple(String.(field_dims[string(fname)]))

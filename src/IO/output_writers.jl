@@ -137,14 +137,17 @@ struct NetCDFOutputWriter{S <: AbstractOutputSchedule, OG} <: AbstractOutputWrit
     deflate_level :: Int
     "decimal places for rounding before write (nothing = no rounding)"
     digits        :: Union{Nothing, Int}
+    "simulation start date for CF-convention time units"
+    start_date    :: Date
 end
 
 function NetCDFOutputWriter(filename::String, fields::Dict, schedule::S;
                             output_grid=nothing, deflate_level::Int=0,
-                            digits::Union{Nothing,Int}=nothing) where S <: AbstractOutputSchedule
+                            digits::Union{Nothing,Int}=nothing,
+                            start_date::Date=Date(2000,1,1)) where S <: AbstractOutputSchedule
     return NetCDFOutputWriter{S, typeof(output_grid)}(
         filename, fields, schedule, output_grid, Ref(0), Ref{Any}(nothing),
-        deflate_level, digits)
+        deflate_level, digits, start_date)
 end
 
 # Backward compat: 3-arg constructor without output_grid
@@ -464,7 +467,7 @@ function _create_netcdf_file(writer::NetCDFOutputWriter, model, grid::LatitudeLo
         defVar(ds, "lat", FT, ("lat",); attrib=Dict("units" => "degrees_north"))
         defVar(ds, "lev", FT, ("lev",); attrib=Dict("units" => "Pa"))
         defVar(ds, "time", Float64, ("time",);
-               attrib=Dict("units" => "seconds since 2000-01-01 00:00:00"))
+               attrib=Dict("units" => "seconds since $(writer.start_date) 00:00:00"))
 
         ds["lon"][:] = lon
         ds["lat"][:] = lat
@@ -507,7 +510,7 @@ function _create_netcdf_file(writer::NetCDFOutputWriter, model, grid::CubedSpher
             defVar(ds, "lat", Float32, ("lat",);
                    attrib=Dict("units" => "degrees_north"))[:] = Float32.(lats)
             defVar(ds, "time", Float64, ("time",);
-                   attrib=Dict("units" => "seconds since 2000-01-01 00:00:00"))
+                   attrib=Dict("units" => "seconds since $(writer.start_date) 00:00:00"))
 
             dl = writer.deflate_level
             for (name, field_entry) in writer.fields

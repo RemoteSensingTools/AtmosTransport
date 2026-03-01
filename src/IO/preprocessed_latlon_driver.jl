@@ -16,6 +16,7 @@
 # ---------------------------------------------------------------------------
 
 using NCDatasets
+using Dates
 
 """
 $(TYPEDEF)
@@ -48,6 +49,8 @@ struct PreprocessedLatLonMetDriver{FT} <: AbstractMassFluxMetDriver{FT}
     level_bot       :: Int
     "merge map for vertical level merging (native level → merged level index), or nothing"
     merge_map       :: Union{Nothing, Vector{Int}}
+    "simulation start date (auto-detected from file time variable)"
+    _start_date     :: Date
 end
 
 """
@@ -98,7 +101,14 @@ function PreprocessedLatLonMetDriver(; FT::Type{<:AbstractFloat} = Float64,
     end
 
     actual_dt = dt === nothing ? file_dt : FT(dt)
-    steps_per_win = dt === nothing ? steps_per : max(1, round(Int, actual_dt * steps_per / file_dt))
+    file_met_interval = file_dt * steps_per
+    steps_per_win = dt === nothing ? steps_per : max(1, round(Int, file_met_interval / actual_dt))
+    actual_window_dt = actual_dt * steps_per_win
+    if abs(actual_window_dt - file_met_interval) > 0.01 * file_met_interval
+        error("dt=$actual_dt does not evenly divide met window duration=$file_met_interval " *
+              "(steps_per_win=$steps_per_win gives window of $(actual_window_dt)s). " *
+              "Choose dt so that met_interval/dt is an integer.")
+    end
 
     # Count windows per file
     wins_per = Int[]
@@ -116,11 +126,32 @@ function PreprocessedLatLonMetDriver(; FT::Type{<:AbstractFloat} = Float64,
         total += wins_per[end]
     end
 
+    # Auto-detect start date from first file
+    _start = _detect_start_date(files[1])
+
     PreprocessedLatLonMetDriver{FT}(
         files, wins_per, total,
         FT(actual_dt), steps_per_win,
         lons, lats, Nx, Ny, Nz,
-        level_top, level_bot, merge_map)
+        level_top, level_bot, merge_map, _start)
+end
+
+"""Parse start date from a preprocessed file's time variable units attribute."""
+function _detect_start_date(filepath::String)
+    if endswith(filepath, ".bin")
+        return Date(2000, 1, 1)  # binary files have no time metadata
+    end
+    try
+        NCDataset(filepath, "r") do ds
+            units = ds["time"].attrib["units"]  # e.g. "hours since 2023-06-01 00:00:00"
+            m = match(r"since\s+(\d{4})-(\d{2})-(\d{2})", units)
+            m !== nothing && return Date(parse(Int, m[1]), parse(Int, m[2]), parse(Int, m[3]))
+            return Date(2000, 1, 1)
+        end
+    catch
+        @warn "Could not auto-detect start_date from preprocessed file; defaulting to 2000-01-01"
+        return Date(2000, 1, 1)
+    end
 end
 
 # --- Interface implementations ---
@@ -128,6 +159,7 @@ end
 total_windows(d::PreprocessedLatLonMetDriver)    = d.n_windows
 window_dt(d::PreprocessedLatLonMetDriver)        = d.dt * d.steps_per_win
 steps_per_window(d::PreprocessedLatLonMetDriver) = d.steps_per_win
+start_date(d::PreprocessedLatLonMetDriver)       = d._start_date
 
 """
     window_to_file_local(driver, win) → (file_idx, local_win)

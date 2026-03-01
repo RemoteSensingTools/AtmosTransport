@@ -46,6 +46,8 @@ struct GEOSFPCubedSphereMetDriver{FT} <: AbstractMassFluxMetDriver{FT}
     merge_map       :: Union{Nothing, Vector{Int}}
     "accumulation time for mass fluxes [s] (dynamics timestep; defaults to met_interval)"
     mass_flux_dt    :: FT
+    "simulation start date (for output timestamps)"
+    _start_date     :: Date
     "print field statistics (wind speed, DELP ordering, NaN) on first window and every 24th"
     verbose         :: Bool
 end
@@ -76,6 +78,12 @@ function GEOSFPCubedSphereMetDriver(;
 
     ft_tag = FT == Float32 ? "float32" : "float64"
     steps_per_win = max(1, round(Int, met_interval / dt))
+    actual_window_dt = dt * steps_per_win
+    if abs(actual_window_dt - met_interval) > 0.01 * met_interval
+        error("dt=$dt does not evenly divide met_interval=$met_interval " *
+              "(steps_per_win=$steps_per_win gives window of $(actual_window_dt)s). " *
+              "Choose dt so that met_interval/dt is an integer.")
+    end
 
     if !isempty(preprocessed_dir) && isdir(preprocessed_dir)
         # Binary mode
@@ -103,7 +111,7 @@ function GEOSFPCubedSphereMetDriver(;
             bin_files, :binary, wins_per, total,
             Nc, Nz_file, Hp_file,
             FT(met_interval), FT(dt), steps_per_win,
-            cfile, nothing, FT(mass_flux_dt), verbose)
+            cfile, nothing, FT(mass_flux_dt), start_date, verbose)
     else
         # NetCDF mode
         files = isempty(netcdf_files) ? String[] : netcdf_files
@@ -130,7 +138,7 @@ function GEOSFPCubedSphereMetDriver(;
             Nc, Nz_file, Hp,
             FT(met_interval), FT(dt), steps_per_win,
             files[1],  # coord_file = first NetCDF file
-            merge_map, FT(mass_flux_dt), verbose)
+            merge_map, FT(mass_flux_dt), start_date, verbose)
     end
 end
 
@@ -140,6 +148,7 @@ total_windows(d::GEOSFPCubedSphereMetDriver)    = d.n_windows
 window_dt(d::GEOSFPCubedSphereMetDriver)        = d.dt * d.steps_per_win
 steps_per_window(d::GEOSFPCubedSphereMetDriver) = d.steps_per_win
 met_interval(d::GEOSFPCubedSphereMetDriver)     = d.met_interval
+start_date(d::GEOSFPCubedSphereMetDriver)      = d._start_date
 
 """
     window_to_file_local(driver::GEOSFPCubedSphereMetDriver, win) → (file_idx, local_win)

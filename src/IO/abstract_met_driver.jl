@@ -1,3 +1,5 @@
+using Dates
+
 # ---------------------------------------------------------------------------
 # Abstract met driver type hierarchy
 #
@@ -26,6 +28,7 @@ Concrete subtypes must implement:
 
 Optional:
     met_interval(driver)            → FT   (time between met updates, seconds)
+    start_date(driver)              → Date  (simulation start date for output timestamps)
     date_range(driver)              → (start_date, end_date)
 """
 abstract type AbstractMetDriver{FT} end
@@ -55,3 +58,6 @@ function load_met_window! end
 
 """Default met interval: same as window_dt."""
 met_interval(d::AbstractMetDriver) = window_dt(d)
+
+"""Default start date: 2000-01-01 (override per driver for correct output timestamps)."""
+start_date(d::AbstractMetDriver) = Dates.Date(2000, 1, 1)

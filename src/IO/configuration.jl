@@ -156,7 +156,8 @@ function build_model_from_config(config::Dict)
 
     # --- Output ---
     output_cfg = get(config, "output", Dict())
-    writers = _build_output_writers(output_cfg)
+    sim_start_date = start_date(met)
+    writers = _build_output_writers(output_cfg; start_date=sim_start_date)
 
     # --- Buffering ---
     # Reference via parent module (Models is loaded after IO)
@@ -346,7 +347,7 @@ function _build_tracers(names::Vector{Symbol}, grid::CubedSphereGrid{FT},
     return NamedTuple(pairs)
 end
 
-function _build_output_writers(cfg::Dict)
+function _build_output_writers(cfg::Dict; start_date::Date=Date(2000,1,1))
     filename = get(cfg, "filename", "")
     isempty(filename) && return AbstractOutputWriter[]
 
@@ -420,10 +421,10 @@ function _build_output_writers(cfg::Dict)
             bin_path = expanded_filename * ".bin"
         end
         BinaryOutputWriter(bin_path, fields, schedule;
-                           output_grid=og, auto_convert)
+                           output_grid=og, auto_convert, start_date)
     else
         NetCDFOutputWriter(expanded_filename, fields, schedule;
-                           output_grid=og, deflate_level, digits)
+                           output_grid=og, deflate_level, digits, start_date)
     end
 
     return AbstractOutputWriter[writer]

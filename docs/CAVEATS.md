@@ -7,30 +7,36 @@ any error messages.
 
 ## Met Data Caveats
 
-### GEOS-IT Mass Flux Accumulation Time
+### GEOS Mass Flux Accumulation Time (GEOS-IT AND GEOS-FP)
 
 **Severity: Critical — 8× transport speed error if ignored**
 
-GEOS-IT C180 files store mass fluxes (MFXC, MFYC) and Courant numbers (CX, CY)
+Both GEOS-IT C180 and GEOS-FP C720 files store mass fluxes (MFXC, MFYC)
 accumulated over the **dynamics timestep** (~450 s), *not* the full 1-hour met
-interval. Without correction, the model reads these as 1-hour fluxes, making
-transport ~8× too slow.
+interval. The `tavg` prefix means time-averaged: MFXC is the per-dynamics-step
+accumulated mass flux, averaged over the 1-hour output interval. Without
+correction, the model reads these as 1-hour fluxes, making transport ~8× too slow.
 
-**Diagnosis:** Compare CX-derived wind speeds against independent A3dyn U/V
-fields. Without the fix, the ratio is ~0.13; with the fix it is ~1.0.
+**Diagnosis:** Compare derived wind speeds against expected climatology.
+- GEOS-IT C180: CX-derived winds vs A3dyn U/V ratio = 0.13 (without fix) → 1.0 (with fix)
+- GEOS-FP C720: surface RMS wind = 0.87 m/s (without fix) → 6.9 m/s (with fix)
 
 **Fix:** Set `mass_flux_dt` in the TOML config:
 
 ```toml
 [met_data]
-mass_flux_dt = 450   # GEOS-IT C180 dynamics timestep in seconds
+mass_flux_dt = 450   # GEOS dynamics timestep in seconds (both GEOS-IT and GEOS-FP)
 ```
 
-This parameter defaults to `met_interval` (3600 s) for backward compatibility
-with GEOS-FP, which accumulates over the full hour.
+The default is 450 s. All GEOS run configs must include this.
 
-**Stability note:** With the corrected fluxes, GEOS-IT C180 at dt=300 s
-gives max CFL ~0.52 per half-step (stable).
+**Stability note:** With the corrected fluxes, upper-atmosphere CFL can exceed 1.
+Use `merge_levels_above_Pa = 3000` to collapse thin stratospheric levels, or
+reduce `dt` to ~150 s.
+
+**Binary reprocessing:** If you previously preprocessed GEOS-FP/IT data to
+binary format with the wrong `mass_flux_dt` (3600), those binaries produce
+incorrect transport. Delete them and reprocess with `mass_flux_dt = 450`.
 
 ### GEOS-IT Vertical Level Ordering
 
@@ -79,18 +85,20 @@ unaffected by the reordering.
 
 ### ERA5: Spectral vs. Gridpoint Mass Fluxes
 
-The current ERA5 pipeline (`preprocess_mass_fluxes.jl`) derives mass fluxes
-from gridpoint winds. This introduces a ~0.9% mass drift per simulation month,
-compared to TM5's spectral approach (Bregman et al. 2003) which is
-mass-conserving by construction.
+Two ERA5 mass-flux pipelines are available:
 
-**Long-term plan:** Implement spectral-to-mass-flux conversion in Julia
-(currently only TM5's Fortran `tmm.F90` does this). Compare spectral vs.
-gridpoint runs to quantify transport impact before switching.
+1. **Spectral (recommended):** `preprocess_spectral_massflux.jl` converts ERA5
+   spectral harmonics (VO, D, LNSP) to mass-conserving mass fluxes, following
+   TM5's approach (Bregman et al. 2003). This achieves near-zero mass drift.
+   Config: `config/preprocessing/spectral_june2023.toml`.
 
-**Practical impact:** For short simulations (days to weeks), the 0.9% drift
-is negligible. For year-long runs, consider monitoring total atmospheric mass
-and applying a correction if needed.
+2. **Gridpoint (stopgap):** `preprocess_mass_fluxes.jl` derives mass fluxes
+   from gridpoint u/v winds. This introduces ~0.9% mass drift per simulation
+   month. Use only if spectral GRIB data is unavailable.
+
+**Recommendation:** Always use the spectral pipeline for production runs.
+The gridpoint approach is retained for quick prototyping with readily available
+ERA5 gridpoint data.
 
 ## Configuration Caveats
 

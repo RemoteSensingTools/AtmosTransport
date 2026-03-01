@@ -6,9 +6,10 @@ AtmosTransport.jl is a Julia-based atmospheric transport model inspired by
 [TM5](https://doi.org/10.5194/acp-5-445-2005) and designed with
 [Oceananigans.jl](https://github.com/CliMA/Oceananigans.jl)-style multiple dispatch.
 It supports latitude-longitude and cubed-sphere grids, multiple meteorological data
-sources (ERA5, MERRA-2, GEOS-FP), a hand-coded discrete adjoint with Revolve
-checkpointing, and extensible physics operators -- all from a single codebase that
-runs identically on CPU and GPU via
+sources (ERA5, GEOS-FP C720, GEOS-IT C180), multiple advection schemes (slopes and
+PPM), a hand-coded discrete adjoint with Revolve checkpointing, and extensible
+physics operators -- all from a single codebase that runs identically on CPU and
+GPU via
 [KernelAbstractions.jl](https://github.com/JuliaGPU/KernelAbstractions.jl).
 
 ## Example: Column-Mean CO₂ Transport
@@ -60,7 +61,7 @@ grid = LatitudeLongitudeGrid(CPU();
 model = TransportModel(;
     grid       = grid,
     tracers    = (:CO2, :CH4),
-    advection  = SlopesAdvection(),
+    advection  = SlopesAdvection(),       # or PPMAdvection(order=7)
     diffusion  = BoundaryLayerDiffusion(),
     convection = TiedtkeConvection())
 ```
@@ -101,7 +102,7 @@ flowchart TD
 ## Design principles
 
 - **Julian:** Multiple dispatch, parametric types, no OOP inheritance chains
-- **TM5-aligned:** Slopes advection, Tiedtke convection, operator splitting, discrete adjoint
+- **TM5-aligned:** Slopes and PPM advection, Tiedtke convection, operator splitting, discrete adjoint
 - **Grid-agnostic:** Physics code dispatches on grid type; never assumes lat-lon layout
 - **Adjoint-paired:** Every forward operator has a hand-coded adjoint counterpart
 - **Extension-friendly:** Abstract types + interface contracts; adding a new scheme never requires editing core

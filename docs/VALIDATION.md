@@ -70,7 +70,7 @@ See [MASS_FLUX_EVOLUTION.md](MASS_FLUX_EVOLUTION.md) for the design history and
 | 10-step Strang mass drift | 7.3e-5% |
 | Positivity with limiter | 0 negative cells |
 | CFL subcycling | Correct automatic subdivision |
-| Full test suite | 209/209 tests passing |
+| Full test suite | 381/381 tests passing |
 
 ### Comparison with deprecated concentration-based approach
 
@@ -155,30 +155,32 @@ See [TM5_LOCAL_SETUP.md](TM5_LOCAL_SETUP.md) for full build instructions.
 TM5 requires preprocessed meteo (mass fluxes from spectral harmonics), not raw ERA5
 NetCDF. See [METEO_PREPROCESSING.md](METEO_PREPROCESSING.md) for details.
 
-1. Download ERA5 spectral GRIB data (VO, D, LNSP) - **IN PROGRESS**
-2. Configure TM5 GRIB reader (tmm.sourcekey format) - **TODO**
-3. Run TM5 preprocessing mode - **TODO**
-4. Run TM5 forward simulation - **TODO**
-5. Compare outputs - **TODO**
+1. Download ERA5 spectral GRIB data (VO, D, LNSP) - **DONE**
+2. Julia spectral preprocessing (`preprocess_spectral_massflux.jl`) - **DONE**
+3. Configure TM5 GRIB reader (tmm.sourcekey format) - **TODO**
+4. Run TM5 preprocessing mode - **TODO**
+5. Run TM5 forward simulation - **TODO**
+6. Compare outputs - **TODO**
 
-Note: with the mass-flux advection rewrite, our formulation now matches TM5's
-architecture (co-advection of `rm` and `m`, mass-based CFL, continuity-derived
-vertical fluxes). Remaining differences are in the source of mass fluxes: TM5 uses
-spectrally integrated mass fluxes while we compute mass fluxes from gridpoint winds.
+Note: with the mass-flux advection rewrite and spectral preprocessing, our
+formulation now closely matches TM5's architecture: co-advection of `rm` and
+`m`, mass-based CFL, continuity-derived vertical fluxes, and spectral mass
+fluxes from ERA5. The remaining step is running TM5 itself for direct comparison.
 
 | Aspect | TM5 approach | Julia model approach |
 |--------|-------------|---------------------|
-| Advection | Mass fluxes from spectral integration | Mass fluxes from gridpoint winds |
-| Mass conservation | Guaranteed (spectral, Bregman et al. 2003) | Machine precision (mass-flux formulation) |
+| Advection | Mass fluxes from spectral integration | Spectral mass fluxes (same approach) or gridpoint |
+| Mass conservation | Guaranteed (spectral, Bregman et al. 2003) | Near-zero drift (spectral), ~0.9%/month (gridpoint) |
 | Operator splitting | X-Y-Z-Z-Y-X with continuous `m` | X-Y-Z-Z-Y-X with continuous `m` (same) |
-| Vertical flux | `dynam0` spectral continuity | Gridpoint continuity equation (same structure) |
+| Vertical flux | `dynam0` spectral continuity | Continuity equation (same structure) |
 | Convection | ECMWF convective fluxes (eu/ed/du/dd) | ECMWF convective mass fluxes (if available) |
-| Vertical coordinate | Hybrid sigma-pressure (A/B) | Hybrid sigma-pressure or pressure levels |
+| Vertical coordinate | Hybrid sigma-pressure (A/B) | Hybrid sigma-pressure (A/B) |
 
 ## Unit and integration tests
 
-- **Test suite:** `julia --project=. -e 'include("test/runtests.jl")'` (209 tests, all passing).
-- **Mass-flux advection:** Mass conservation (x, y, z, full Strang), uniform field preservation, positivity, CFL subcycling (18 tests).
+- **Test suite:** `julia --project=. -e 'using Pkg; Pkg.test()'` (381 tests, all passing).
+- **Mass-flux advection:** Mass conservation (x, y, z, full Strang), uniform field preservation, positivity, CFL subcycling.
+- **Cubed-sphere advection:** Panel-boundary flux exchange, halo operations, PPM advection on CS grids.
 - **Stencil advection:** Mass conservation (x, y, z), adjoint identity (dot-product at rtol=1e-10), 1D slopes tests.
 - **Convection:** Mass conservation, adjoint identity, single-column redistribution.
 - **Diffusion:** Mass conservation, adjoint.
@@ -186,22 +188,25 @@ spectrally integrated mass fluxes while we compute mass fluxes from gridpoint wi
 
 ## GPU / CUDA
 
-- **Status:** `UpwindAdvection` (x, y, z) uses KernelAbstractions `@kernel` for unified CPU/GPU execution. `SlopesAdvection` x-direction has a GPU kernel; y and z directions are CPU-only (GPU port is a stretch goal). Convection and diffusion remain CPU-only.
+- **Status:** The full simulation loop runs on GPU via KernelAbstractions.jl: all advection directions (x, y, z) for both `SlopesAdvection` and `PPMAdvection`, boundary-layer diffusion (implicit Thomas solver), Tiedtke convection, source injection, air-mass bookkeeping, column-mean/surface/sigma-level diagnostics, and output regridding. Works on both lat-lon and cubed-sphere grids.
+- **Reduced grid on GPU:** TM5-style reduced grid for lat-lon advection runs on GPU, reducing CFL subcycling from ~7x to ~1x near the poles.
 - **Architecture:** Grid carries `architecture` field (`CPU()` or `GPU()`). All arrays dispatch to `Array` or `CuArray` accordingly.
-- **Testing:** Suite runs on CPU. GPU path tested manually with `USE_GPU=true julia --project=. scripts/run_forward_era5.jl`.
-- **Float32/Float64:** Model supports both precisions via `USE_FLOAT32=true` environment variable.
+- **Testing:** Unit test suite runs on CPU. GPU path tested via `scripts/run.jl` with `use_gpu = true` in the TOML config.
+- **Float32/Float64:** Model supports both precisions via `float_type` in the TOML config.
 
 ## Configuration
 
-All physical constants and simulation parameters are loaded from TOML files
-(`config/defaults.toml`) with optional overrides via `CONFIG=/path/to/override.toml`.
-See `src/Parameters.jl` for the type-stable parameter system inspired by CliMA.jl.
+All simulation parameters are specified in TOML configuration files under
+`config/runs/`. The universal runner `scripts/run.jl` reads the config and
+handles GPU loading, grid construction, met driver selection, and output.
+See [QUICKSTART.md](QUICKSTART.md) for the full TOML reference.
 
-## GEOS-FP validation (separate track)
+## GEOS-FP / GEOS-IT validation
 
-TM5 has no GEOS-FP reader. For GEOS-FP validation:
+GEOS-FP C720 and GEOS-IT C180 cubed-sphere transport has been validated:
 
-- Compare the Julia model against **GEOS-Chem** (which natively uses GEOS-FP)
-- Or compare against observations (surface stations, satellite retrievals)
-- The Julia model already has a working GEOS-FP reader and download scripts
-- See [METEO_PREPROCESSING.md](METEO_PREPROCESSING.md) for details
+- **mass_flux_dt = 450** confirmed for both products (8× error without this fix)
+- GEOS-IT C180: CX-derived winds match A3dyn U/V when mass_flux_dt = 450
+- GEOS-FP C720: surface wind RMS = 6.9 m/s (matches climatology) with fix
+- 30-day GEOS-FP C720 simulation with level merging and BL diffusion completed
+- See [CAVEATS.md](CAVEATS.md) for the mass_flux_dt caveat details

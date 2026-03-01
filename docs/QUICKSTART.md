@@ -8,7 +8,7 @@ comparison, see [METEO_PREPROCESSING.md](METEO_PREPROCESSING.md).
 
 ## Prerequisites
 
-- **Julia 1.10+** (tested with 1.12.4 via [juliaup](https://github.com/JuliaLang/juliaup))
+- **Julia 1.10+** (tested with 1.12+ via [juliaup](https://github.com/JuliaLang/juliaup))
 - **Project dependencies**: install once with
   ```bash
   julia --project=. -e 'using Pkg; Pkg.instantiate()'
@@ -33,24 +33,28 @@ julia --threads=2 --project=. scripts/run.jl <config.toml>
 
 ### Available Configurations
 
-| Config | Grid | Met Source | GPU | Buffering | Description |
-|--------|------|-----------|-----|-----------|-------------|
-| `config/runs/geosfp_cs_edgar.toml` | C720 cubed-sphere | GEOS-FP preprocessed | Yes | Single | Native CS mass fluxes, 5 days |
-| `config/runs/geosfp_cs_edgar_scratch.toml` | C720 cubed-sphere | GEOS-FP on `/scratch` | Yes | Single | Fast-disk timing test, 2 days |
-| `config/runs/era5_edgar.toml` | 1° lat-lon | ERA5 model levels | No | Double | Raw ERA5 winds, June 2024 |
-| `config/runs/era5_preprocessed.toml` | 1° lat-lon | Preprocessed binary | Yes | Single | Pre-computed mass fluxes |
+| Config | Grid | Met Source | GPU | Description |
+|--------|------|-----------|-----|-------------|
+| `geosfp_c720_june2024_fixed.toml` | C720 cubed-sphere | GEOS-FP NetCDF | Yes | 30-day June 2024, mass_flux_dt=450, level merging |
+| `geosit_c180_june2023.toml` | C180 cubed-sphere | GEOS-IT NetCDF | Yes | 30-day June 2023, slopes advection |
+| `geosit_c180_june2023_ppm.toml` | C180 cubed-sphere | GEOS-IT NetCDF | Yes | 30-day June 2023, PPM-7 advection |
+| `era5_spectral_june2023.toml` | 720×361 lat-lon | ERA5 spectral | Yes | 30-day June 2023, PPM-7, Tiedtke, PBL |
+| `geosfp_cs_edgar.toml` | C720 cubed-sphere | GEOS-FP preprocessed | Yes | Preprocessed binary, 5 days |
+| `catrine_era5.toml` | 720×361 lat-lon | ERA5 spectral | Yes | CATRINE D7.1: CO2, fCO2, SF6, 222Rn |
+
+All configs are in `config/runs/`.
 
 ### Examples
 
 ```bash
-# GEOS-FP cubed-sphere on GPU (default: 5-day June 2024)
-julia --threads=2 --project=. scripts/run.jl config/runs/geosfp_cs_edgar.toml
+# GEOS-FP C720 cubed-sphere on GPU (30-day, NetCDF mode)
+julia --threads=2 --project=. scripts/run.jl config/runs/geosfp_c720_june2024_fixed.toml
 
-# ERA5 lat-lon on CPU
-julia --project=. scripts/run.jl config/runs/era5_edgar.toml
+# GEOS-IT C180 with PPM advection
+julia --threads=2 --project=. scripts/run.jl config/runs/geosit_c180_june2023_ppm.toml
 
-# ERA5 preprocessed on GPU
-julia --project=. scripts/run.jl config/runs/era5_preprocessed.toml
+# ERA5 spectral on GPU
+julia --threads=2 --project=. scripts/run.jl config/runs/era5_spectral_june2023.toml
 ```
 
 ---
@@ -77,6 +81,7 @@ that were previously set via environment variables are now in the config file.
 | `size` | [int,int,int] | `[360,181,72]` | Grid dimensions for lat-lon `[Nx, Ny, Nz]` |
 | `longitude` | [float,float] | `[0.0, 360.0]` | Longitude range for lat-lon |
 | `latitude` | [float,float] | `[-90.0, 90.0]` | Latitude range for lat-lon |
+| `merge_levels_above_Pa` | float | (none) | Merge thin upper levels above this pressure [Pa]. Reduces CFL in stratosphere. Only supported in NetCDF mode |
 
 ### `[met_data]`
 
@@ -87,6 +92,7 @@ Common keys for all drivers:
 | `driver` | string | (required) | `"era5"`, `"preprocessed_latlon"`, or `"geosfp_cs"` |
 | `dt` | float | `900` | Advection sub-step [seconds] |
 | `met_interval` | float | `3600` | Met update interval [seconds] |
+| `mass_flux_dt` | float | `450` | **Critical for GEOS-FP/IT.** Dynamics timestep over which mass fluxes are accumulated [seconds]. GEOS products use ~450s, not the 1-hour output interval. Wrong value makes transport 8x too slow. See [CAVEATS.md](CAVEATS.md) |
 
 **ERA5 driver** (`driver = "era5"`):
 
@@ -103,15 +109,22 @@ Common keys for all drivers:
 | `directory` | string | Directory containing monthly `.bin` mass flux shards |
 | `file` | string | Single binary file (alternative to `directory`) |
 
-**GEOS-FP cubed-sphere driver** (`driver = "geosfp_cs"`):
+**GEOS-FP/IT cubed-sphere driver** (`driver = "geosfp_cs"`):
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `preprocessed_dir` | string | Directory with per-day `.bin` files |
-| `netcdf_dir` | string | Fallback: directory with raw GEOS-FP `.nc4` files |
+| `netcdf_dir` | string | Directory with raw GEOS-FP/IT `.nc4` files (recommended) |
+| `preprocessed_dir` | string | Directory with per-day `.bin` files (faster I/O, requires preprocessing) |
 | `start_date` | string | Start date `"YYYY-MM-DD"` |
 | `end_date` | string | End date `"YYYY-MM-DD"` |
 | `Hp` | int | Halo width (default: 3) |
+
+### `[advection]`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `scheme` | string | `"slopes"` | `"slopes"` (Russell-Lerner, 2nd order) or `"ppm"` (Putman & Lin) |
+| `ppm_order` | int | `7` | PPM polynomial order: 4, 5, 6, or 7 (only used when `scheme = "ppm"`) |
 
 ### `[tracers.<name>]`
 
@@ -264,23 +277,40 @@ resume on restart.
 Preprocessing converts raw NetCDF files to flat binary format optimized for
 fast mmap-based loading. This is a one-time step per date range.
 
-### GEOS-FP CS: NetCDF to Binary
+### ERA5: Spectral to Mass Fluxes (Recommended)
 
-Converts native GEOS-FP C720 NetCDF mass flux files to flat binary files
-with haloed DELP and staggered mass flux panels (am, bm).
+Converts ERA5 spectral harmonic fields (vorticity, divergence, log surface
+pressure) to mass-conserving mass fluxes, following TM5's approach. This is
+the recommended ERA5 pipeline — it achieves better mass conservation than
+the gridpoint approach.
+
+**Input**: ERA5 spectral GRIB files (VO, D, LNSP)
+**Output**: NetCDF mass fluxes (am, bm, cm, m, ps)
+
+```bash
+julia --project=. scripts/preprocess_spectral_massflux.jl \
+    config/preprocessing/spectral_june2023.toml
+```
+
+See `config/preprocessing/spectral_june2023.toml` for configuration options.
+
+### GEOS-FP/IT CS: NetCDF to Binary
+
+Converts native GEOS-FP/IT cubed-sphere NetCDF mass flux files to flat binary
+files with haloed DELP and staggered mass flux panels (am, bm). This is
+optional — the model can read raw NetCDF directly via `netcdf_dir`, but
+preprocessed binaries are ~15x faster for I/O.
 
 **Input**: Raw `.nc4` files from the download step
 **Output**: Per-day `.bin` files for mmap-based GPU ingestion
 
 ```bash
-export GEOSFP_DATA_DIR=~/data/geosfp_cs         # NetCDF input
-export OUTDIR=~/data/geosfp_cs/preprocessed      # binary output
-export GEOSFP_START=2024-06-01
-export GEOSFP_END=2024-06-05
-export FT_PRECISION=Float32                       # Float32 or Float64
-
-julia --project=. scripts/preprocess_geosfp_cs.jl
+julia --project=. scripts/preprocess_geosfp_cs.jl \
+    config/preprocessing/geosfp_c720_june2024.toml
 ```
+
+See `config/preprocessing/geosfp_c720_june2024.toml` for configuration
+(date range, paths, `mass_flux_dt = 450`).
 
 **Output**:
 
@@ -331,11 +361,11 @@ emission   = "edgar"
 edgar_file = "~/data/emissions/edgar_v8/edgar_cs_c720_float32.bin"
 ```
 
-### ERA5: Winds to Binary Mass Fluxes (Optional)
+### ERA5: Gridpoint Winds to Binary Mass Fluxes (Stopgap)
 
-Pre-computes mass fluxes from ERA5 u/v winds and surface pressure. This
-avoids recomputing staggering at each run, and is required for the
-`preprocessed_latlon` driver.
+Pre-computes mass fluxes from ERA5 gridpoint u/v winds and surface pressure.
+This is a stopgap — the spectral pipeline above is preferred for better mass
+conservation (~0.9% drift/month with gridpoint vs near-zero with spectral).
 
 ```bash
 export ERA5_DIRS=~/data/metDrivers/era5/era5_ml_10deg_20240601_20240607
@@ -355,33 +385,41 @@ julia --project=. scripts/preprocess_mass_fluxes.jl
 
 ```bash
 # 1. Download raw GEOS-FP mass flux files (one-time, ~65 GB/day)
-GEOSFP_START_DATE=2024-06-01 GEOSFP_END_DATE=2024-06-05 \
-  julia --project=. scripts/download_geosfp_cs_massflux.jl
+julia --project=. scripts/download_geosfp_cs_massflux.jl
 
-# 2. Preprocess to flat binary (one-time, ~61 GB/day)
-GEOSFP_DATA_DIR=~/data/geosfp_cs OUTDIR=~/data/geosfp_cs/preprocessed \
-  GEOSFP_START=2024-06-01 GEOSFP_END=2024-06-05 \
-  julia --project=. scripts/preprocess_geosfp_cs.jl
+# 2. (Optional) Preprocess to flat binary for faster I/O (~61 GB/day)
+julia --project=. scripts/preprocess_geosfp_cs.jl \
+    config/preprocessing/geosfp_c720_june2024.toml
 
-# 3. Preprocess EDGAR emissions (one-time, ~12 MB)
-julia --project=. scripts/preprocess_edgar_cs.jl
-
-# 4. Edit config if needed
-#    vim config/runs/geosfp_cs_edgar.toml
-
-# 5. Run!
-julia --threads=2 --project=. scripts/run.jl config/runs/geosfp_cs_edgar.toml
+# 3. Run! (NetCDF mode — reads raw .nc4 directly, no preprocessing needed)
+julia --threads=2 --project=. scripts/run.jl config/runs/geosfp_c720_june2024_fixed.toml
 ```
 
-### ERA5 Lat-Lon (CPU)
+**Important**: The config must set `mass_flux_dt = 450` (GEOS dynamics timestep).
+Without this, transport is 8x too slow. See [CAVEATS.md](CAVEATS.md) for details.
+
+### GEOS-IT C180 Cubed-Sphere (GPU)
 
 ```bash
-# 1. Download ERA5 model-level data (one-time, ~150 MB/day)
-START_DATE=2024-06-01 END_DATE=2024-06-07 \
-  julia --project=. scripts/download_era5_model_levels.jl
+# 1. Download GEOS-IT C180 mass flux files
+julia --project=. scripts/download_geosit_physics.jl
 
-# 2. Run (no preprocessing needed — ERA5 driver reads NetCDF directly)
-julia --project=. scripts/run.jl config/runs/era5_edgar.toml
+# 2. Run
+julia --threads=2 --project=. scripts/run.jl config/runs/geosit_c180_june2023_ppm.toml
+```
+
+### ERA5 Spectral (GPU, Recommended)
+
+```bash
+# 1. Download ERA5 spectral GRIB (VO, D, LNSP)
+python scripts/download_era5_grib_tm5.py
+
+# 2. Preprocess spectral → mass fluxes (one-time)
+julia --project=. scripts/preprocess_spectral_massflux.jl \
+    config/preprocessing/spectral_june2023.toml
+
+# 3. Run
+julia --threads=2 --project=. scripts/run.jl config/runs/era5_spectral_june2023.toml
 ```
 
 ---
@@ -391,16 +429,21 @@ julia --project=. scripts/run.jl config/runs/era5_edgar.toml
 - **Use Float32 for GPU**: `float_type = "Float32"` halves memory and
   doubles throughput on NVIDIA GPUs.
 - **Use DoubleBuffer on GPU**: `strategy = "double"` with `--threads=2`
-  overlaps disk reads with GPU compute (~40% faster on scratch disk).
-- **Fast local disk**: Copy preprocessed binaries to `/scratch` or NVMe
-  for fastest I/O. NAS storage can be 3–4× slower.
-- **GEOS-FP C720 performance** (measured on A100 GPU, scratch disk):
+  overlaps disk reads with GPU compute.
+- **Preprocess to binary**: Preprocessed flat binaries are ~15x faster
+  than on-the-fly NetCDF decompression. The bottleneck is CPU-bound NetCDF
+  decoding, not disk bandwidth.
+- **Level merging**: `merge_levels_above_Pa = 3000` collapses thin
+  stratospheric levels, allowing larger timesteps without CFL violations.
 
-  | Mode | I/O | GPU | Output | Total |
-  |------|-----|-----|--------|-------|
-  | SingleBuffer, NAS | ~3.5 s/win | ~1.5 s/win | ~1.5 s/win | ~6.4 s/win |
-  | SingleBuffer, scratch | 0.97 s/win | 0.61 s/win | 0.17 s/win | 1.75 s/win |
-  | DoubleBuffer, scratch | 0.27 s/win | 0.61 s/win | 0.16 s/win | ~1.0 s/win |
+**Performance baselines** (L40S GPU):
+
+  | Configuration | I/O | GPU | Output | Total |
+  |--------------|-----|-----|--------|-------|
+  | ERA5 LL GPU (spectral, merged 110L) | — | 4.78 s/win | — | 573s / 30d |
+  | GEOS-FP C720 GPU (NetCDF, double-buf) | 13.75 | 1.28 | 3.01 | ~18 s/win |
+  | GEOS-FP C720 GPU + BL diffusion | 13.4 | 0.80 | 0.13 | ~14 s/win |
+  | GEOS-IT C180 GPU (NetCDF, single-buf) | 0.93 | 0.11 | 0.05 | 792s / 30d |
 
 ---
 

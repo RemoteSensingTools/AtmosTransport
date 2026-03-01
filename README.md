@@ -31,8 +31,9 @@ memory-mapped flat-binary I/O for mass-flux ingestion (~15× faster than NetCDF)
 ## Features
 
 - **Multi-grid:** Latitude-longitude and cubed-sphere grids with hybrid sigma-pressure vertical coordinates
-- **Multi-backend:** Single codebase for CPU and GPU via [KernelAbstractions.jl](https://github.com/JuliaGPU/KernelAbstractions.jl)
-- **Multi-met-data:** Readers for ECMWF ERA5, NASA MERRA-2, and GEOS-FP with automatic regridding
+- **Multi-backend:** Single codebase for CPU and GPU via [KernelAbstractions.jl](https://github.com/JuliaGPU/KernelAbstractions.jl). Full simulation loop on GPU: advection (all directions), diffusion, convection, source injection, diagnostics, and output regridding
+- **Multi-met-data:** Readers for ECMWF ERA5, NASA GEOS-FP C720, and GEOS-IT C180 with automatic regridding
+- **Multiple advection schemes:** Russell-Lerner slopes (2nd order) and Putman & Lin PPM (orders 4-7) for both lat-lon and cubed-sphere grids
 - **Hand-coded discrete adjoint:** TM5-4DVar-style adjoint with Revolve checkpointing for bounded memory
 - **Extensible:** Every physics operator is behind an abstract type; new schemes, grids, and data sources plug in via multiple dispatch without modifying core code
 - **Operator splitting:** Symmetric Strang splitting (advection, convection, diffusion, sources) with paired forward/adjoint operators
@@ -43,12 +44,12 @@ memory-mapped flat-binary I/O for mass-flux ingestion (~15× faster than NetCDF)
 flowchart TD
     subgraph inputLayer["Input Layer"]
         ERA5["ERA5"]
-        MERRA2["MERRA-2"]
-        GEOSFP["GEOS-FP"]
+        GEOSFP["GEOS-FP C720"]
+        GEOSIT["GEOS-IT C180"]
         TOMLConfigs["TOML Configs"]
         ERA5 --> TOMLConfigs
-        MERRA2 --> TOMLConfigs
         GEOSFP --> TOMLConfigs
+        GEOSIT --> TOMLConfigs
     end
     
     subgraph coreModel["Core Model"]
@@ -95,7 +96,7 @@ grid = LatitudeLongitudeGrid(CPU();
 model = TransportModel(;
     grid       = grid,
     tracers    = (:CO2, :CH4),
-    advection  = SlopesAdvection(),
+    advection  = SlopesAdvection(),       # or PPMAdvection(order=7)
     diffusion  = BoundaryLayerDiffusion(),
     convection = TiedtkeConvection())
 ```
@@ -110,11 +111,12 @@ model = TransportModel(;
 
 ## Validation
 
-- **Tests:** 209 unit and integration tests (including 18 mass-flux advection tests); gradient tests for the adjoint. See `docs/VALIDATION.md`.
+- **Tests:** 381 unit and integration tests (mass-flux advection, cubed-sphere transport, convection, diffusion, adjoint gradient checks). See `docs/VALIDATION.md`.
 - **Mass-flux advection:** TM5-faithful co-advection of tracer mass and air mass with machine-precision conservation. See `docs/MASS_FLUX_EVOLUTION.md`.
-- **Reproducible run:** `julia --project=. scripts/run_reference_ecmwf.jl` (ECMWF/ERA5 reference case; see `docs/REFERENCE_RUN.md`).
-- **TM5 comparison:** Run TM5 locally (see `docs/TM5_LOCAL_SETUP.md`), then `scripts/compare_tm5_output.jl our_output.nc tm5_output.nc`.
-- **GPU:** The full simulation loop (all advection directions, vertical diffusion, source injection, diagnostics) runs on GPU via KernelAbstractions when `grid = LatitudeLongitudeGrid(GPU(); ...)` and `using CUDA`.
+- **Spectral mass fluxes:** ERA5 spectral preprocessing (`preprocess_spectral_massflux.jl`) computes mass-conserving fluxes from vorticity/divergence, matching TM5's approach.
+- **GEOS-FP/IT validation:** Cubed-sphere transport validated on GEOS-FP C720 and GEOS-IT C180 with corrected `mass_flux_dt = 450` (dynamics timestep). See `docs/CAVEATS.md`.
+- **Reproducible run:** `julia --project=. scripts/run.jl config/runs/era5_spectral_june2023.toml` (see `docs/REFERENCE_RUN.md`).
+- **GPU:** The full simulation loop (advection, diffusion, convection, source injection, diagnostics, output regridding) runs on GPU for both lat-lon and cubed-sphere grids via KernelAbstractions.jl.
 
 ## Documentation
 

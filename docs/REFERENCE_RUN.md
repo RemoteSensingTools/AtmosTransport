@@ -5,35 +5,35 @@ This document defines the canonical forward run used for validation and TM5 comp
 ## Command
 
 ```bash
-# 1. Ensure ERA5 data exists (see Data and paths below)
-julia --project=. scripts/download_era5_week.jl   # if needed
-
-# 2. Run reference forward
-julia --project=. scripts/run_reference_ecmwf.jl
+# Using the TOML-driven universal runner:
+julia --threads=2 --project=. scripts/run.jl config/runs/era5_spectral_june2023.toml
 ```
-
-Output: `data/era5/output/reference_era5_output.nc`
 
 ## Reference config (pinned)
 
 | Parameter | Value |
 |-----------|--------|
-| Met source | ERA5 model levels (spectral/hybrid sigma-pressure, preprocessed to mass fluxes) |
-| Horizontal | 1° × 1° (360 × 180) |
+| Config | `config/runs/era5_spectral_june2023.toml` |
+| Met source | ERA5 spectral (VO, D, LNSP → mass-conserving mass fluxes via `preprocess_spectral_massflux.jl`) |
+| Horizontal | 2° × ~2° (720 × 361) |
 | Vertical | 137 hybrid sigma-pressure levels (ERA5 L137, A/B coefficients from `config/era5_L137_coefficients.toml`) |
 | Time step Δt | 1800 s (30 min) |
-| Simulation length | 1 month (June 2024) |
-| Physics | TM5-faithful mass-flux advection (Russell-Lerner slopes, Strang splitting), boundary-layer diffusion (Thomas solver), EDGAR v8.0 surface emissions |
+| Simulation length | 1 month (June 2023) |
+| Advection | PPM-7 (Putman & Lin 2007) |
+| Physics | Mass-flux advection (Strang splitting), Tiedtke convection, boundary-layer diffusion (Thomas solver), EDGAR v8.0 surface emissions |
 | GPU | Full simulation loop on GPU (Float32, KernelAbstractions.jl) |
 | Initial condition | Uniform 0 ppm (anthropogenic CO₂ enhancement only) |
 
 ## Data and paths
 
-- **Preprocessed mass fluxes:** `~/data/output/era5_edgar_preprocessed_f32/massflux_era5_202406_float32.nc` (or flat binary equivalent)
-- **EDGAR emissions:** `~/data/edgar/v8.0/IEA_EDGAR_CO2_2022_1.nc`
-- **Output:** `~/data/output/era5_edgar_preprocessed_f32/output_era5_edgar.nc`
+- **ERA5 spectral GRIB:** `~/data/metDrivers/era5/spectral_june2023/` (VO, D, LNSP)
+- **Preprocessed mass fluxes:** `/temp1/atmos_transport/era5_spectral/` (from `preprocess_spectral_massflux.jl`)
+- **EDGAR emissions:** auto-downloaded by runner
 
-Download scripts: `scripts/download_era5_model_levels.jl` (CDS API), `scripts/preprocess_mass_fluxes.jl` (wind → mass flux conversion).
+Download scripts: `scripts/download_era5_grib_tm5.py` (spectral GRIB), `scripts/preprocess_spectral_massflux.jl` (spectral → mass fluxes).
+
+**Note:** The spectral pipeline is recommended over the gridpoint pipeline
+(`preprocess_mass_fluxes.jl`) for better mass conservation. See [CAVEATS.md](CAVEATS.md).
 
 ## Use for validation
 

@@ -52,29 +52,27 @@ Source: Lin & Rood (1996), Lin (2004), Putman & Lin (2007).
 
 ### AtmosTransport.jl (this model)
 
-We implement the Russell & Lerner (1981) slopes scheme in **mass-flux form**,
-matching TM5's formulation. The prognostic variables are tracer mass `rm` and
-air mass `m`.
+We implement two advection scheme families:
 
-Key differences from TM5:
+1. **Slopes** (Russell & Lerner 1981): mass-flux form, matching TM5's formulation.
+   Diagnostic slopes recomputed each step from `c = rm / m`. 2nd-order accuracy.
 
-- **Diagnostic slopes**: slopes are recomputed each step from `c = rm / m` rather
-  than carried as prognostic variables. This is simpler and ensures a uniform
-  concentration field has exactly zero slopes, but discards inter-step slope
-  information. Impact on accuracy is minimal (< 4e-13 for uniform fields).
-- **KernelAbstractions.jl**: the same kernel code runs on CPU and GPU. TM5 is
-  Fortran/MPI only.
-- **No Prather scheme**: TM5 also offers Second-Order Moments (Prather 1986);
-  we implement slopes only.
+2. **PPM** (Putman & Lin 2007): Piecewise Parabolic Method with configurable
+   polynomial order (4, 5, 6, or 7). 3rd-order accuracy in smooth regions.
+   Implemented for both lat-lon and cubed-sphere grids.
+
+Both schemes use KernelAbstractions.jl for unified CPU/GPU execution. The PPM
+implementation follows Putman & Lin (2007) with sub-grid distribution polynomials
+computed from cell-averaged values.
 
 The mathematical comparison:
 
 | Property | TM5 | GEOS-Chem Classic | GCHP/FV3 | This Model |
 |----------|-----|-------------------|----------|------------|
-| Sub-cell reconstruction | Linear (slopes) | Parabolic (PPM) | Parabolic (PPM) | Linear (slopes) |
-| Formal accuracy | 2nd order | 3rd order (smooth) | 3rd order | 2nd order |
+| Sub-cell reconstruction | Linear (slopes) | Parabolic (PPM) | Parabolic (PPM) | Linear (slopes) or PPM |
+| Formal accuracy | 2nd order | 3rd order (smooth) | 3rd order | 2nd (slopes) or 3rd (PPM) |
 | Prognostic slopes | Yes | No (recomputed) | No | No (diagnostic) |
-| Grid | Lat-lon (reduced) | Lat-lon | Cubed-sphere | Lat-lon |
+| Grid | Lat-lon (reduced) | Lat-lon | Cubed-sphere | Lat-lon + cubed-sphere |
 | GPU support | No | No | Limited (ESMF) | Yes (KA) |
 
 ## 2. Polar / CFL Handling
@@ -119,30 +117,22 @@ GCHP's cubed-sphere grid has no polar singularity. All cells have roughly
 uniform area (~1:1.4 ratio between largest and smallest). This is one of the
 primary motivations for the cubed-sphere.
 
-### This Model: Reduced Grid (CPU) + CFL Subcycling (GPU)
+### This Model: Reduced Grid (CPU + GPU) + Cubed-Sphere
 
-We implement two strategies:
+We implement three strategies:
 
-1. **CPU path**: TM5-style reduced grid via `ReducedGridSpec`. The
-   `compute_reduced_grid()` function determines cluster sizes per latitude,
-   constrained to be divisors of Nx. Functions `reduce_row!`, `expand_row!`,
-   and `reduce_velocity_row!` handle the reduce/advect/expand cycle. Currently
-   used in `slopes_advection.jl` for concentration-based advection.
+1. **Reduced grid (CPU + GPU)**: TM5-style reduced grid via `ReducedGridSpec`.
+   Cluster sizes per latitude are constrained to divisors of Nx. On GPU, the
+   reduce/advect/expand cycle runs entirely on device. This reduces CFL subcycling
+   from ~7x to ~1x near the poles, giving a ~9x speedup for ERA5 lat-lon runs.
 
-2. **GPU path**: Global CFL-adaptive subcycling. The maximum CFL across all
-   latitudes determines the number of sub-steps `n_sub = ceil(max_cfl / 0.95)`.
-   Mass fluxes are divided by `n_sub` and advection is repeated. This is simple
-   and GPU-friendly (no variable-length rows) but means equatorial latitudes are
-   subcycled unnecessarily when polar CFL is high.
+2. **CFL-adaptive subcycling (GPU fallback)**: When reduced grid is not used,
+   the maximum CFL across all latitudes determines `n_sub = ceil(max_cfl / 0.95)`.
+   Mass fluxes are divided by `n_sub` and advection is repeated.
 
-For a 1-degree grid, the typical max CFL in x is ~6.25 (near the poles), giving
-~7 subcycles. With the m-reset fix (resetting air mass to its precomputed value
-each sub-step), this stabilizes at ~0.005 s/step, completing a 30-day simulation
-in 117 seconds on an NVIDIA L40S GPU.
-
-**Planned improvement**: Extend the reduced-grid approach to mass-flux advection
-on GPU. This would reduce subcycle counts from ~7 to ~1 globally, potentially
-a 7x speedup in x-advection.
+3. **Cubed-sphere (GPU)**: No polar singularity. All cells have roughly uniform
+   area. GEOS-FP C720 and GEOS-IT C180 run natively on the cubed-sphere grid
+   with panel-boundary flux exchange handled by `panel_connectivity.jl`.
 
 ## 3. Mass Conservation
 
@@ -178,34 +168,30 @@ cubed-sphere mass fluxes archived by GEOS-FP. These are computed by the parent
 GCM's dynamical core and satisfy the continuity equation exactly on the native
 grid. No restaggering or regridding is needed.
 
-### This Model: Gridpoint Winds + Continuity Closure
+### This Model: Multiple Mass Flux Sources
 
-We compute mass fluxes from gridpoint winds and reconstruct vertical mass fluxes
-from horizontal convergence using the continuity equation:
+We support three mass flux pipelines with different conservation properties:
+
+1. **ERA5 spectral** (`preprocess_spectral_massflux.jl`): Converts ERA5 spectral
+   harmonics (VO, D, LNSP) to mass-conserving mass fluxes, following TM5's
+   approach. Achieves near-zero mass drift. This is the recommended ERA5 pipeline.
+
+2. **ERA5 gridpoint** (`preprocess_mass_fluxes.jl`): Derives mass fluxes from
+   gridpoint u/v winds. ~0.9% mass drift per 30 days. Retained as a stopgap.
+
+3. **GEOS-FP/IT cubed-sphere**: Reads native C720/C180 mass fluxes (MFXC, MFYC)
+   directly from archived NetCDF. These satisfy the continuity equation on the
+   native grid — no restaggering errors.
+
+All pipelines reconstruct vertical mass fluxes from horizontal convergence:
 
 ```
 cm[k+1] = cm[k] + (am_in - am_out + bm_in - bm_out)[k] - bt[k] * pit
 ```
 
-where `bt[k] = Delta_B[k] / sum(Delta_B)` and `pit` is the total column
-convergence. This ensures each column's mass budget closes by construction
-(column mass conservation).
-
-However, the horizontal mass fluxes themselves are computed from gridpoint winds
-multiplied by pressure thickness and grid spacing, which does not guarantee
-global mass conservation to machine precision. The observed mass drift is
-~0.9% over 30 days, consistent with the restaggering error identified by
-Martin et al. (2022).
-
 **Key insight (from our development)**: the conserved quantity in mass-flux
 advection is `sum(rm)` (total tracer mass), not `sum(c)` (sum of concentrations).
-On a lat-lon grid, `sum(c)` drifts even when `sum(rm)` is exactly conserved
-because `c = rm / m` and `m` varies with the flow. See `MASS_FLUX_EVOLUTION.md`
-for details.
-
-**Future work**: Support direct ingestion of ECMWF mass fluxes (from TM5
-preprocessing or native ERA5 products) and GEOS-FP cubed-sphere mass fluxes
-to achieve machine-precision conservation.
+See `MASS_FLUX_EVOLUTION.md` for details.
 
 ## 4. Operator Splitting
 
@@ -348,41 +334,48 @@ restaggering/regridding errors. This is the gold standard for offline transport.
 
 GEOS-IT provides C180 archives (1998-present) for the same purpose.
 
-### This Model: Gridpoint NetCDF + Offline Preprocessing
+### This Model: Multiple Pipelines
 
-Our pipeline:
+Three met data pipelines:
 
+**ERA5 spectral (recommended):**
 ```
-ERA5 NetCDF (gridpoint, model levels)
-    → met_reader.jl (load u, v, lnsp)
-    → compute_mass_fluxes! (gridpoint winds × Dp/g × grid spacing)
-    → preprocess to NetCDF (am, bm, cm, m, ps per 6-hour window)
-    → forward run reads preprocessed file
+ERA5 GRIB (spectral VO, D, LNSP)
+    → preprocess_spectral_massflux.jl (spectral integration)
+    → NetCDF mass fluxes (am, bm, cm, m, ps)
+    → forward run
 ```
 
-This is architecturally similar to TM5's preprocessing mode, but uses gridpoint
-(not spectral) input. The offline preprocessing step (`preprocess_mass_fluxes.jl`)
-enables:
+**ERA5 gridpoint (stopgap):**
+```
+ERA5 NetCDF (gridpoint u, v, lnsp)
+    → preprocess_mass_fluxes.jl (gridpoint winds × Dp/g × dx)
+    → NetCDF or binary mass fluxes
+    → forward run
+```
 
-- Reuse across forward, adjoint, and sensitivity runs
-- Separation of I/O-bound preprocessing from compute-bound advection
-- Testing mass fluxes independently of the transport model
+**GEOS-FP/IT cubed-sphere:**
+```
+GEOS-FP/IT NetCDF (native C720/C180 MFXC, MFYC, DELP)
+    → (optional) preprocess_geosfp_cs.jl → flat binary
+    → forward run (reads NetCDF or binary directly)
+```
 
 ### Comparison Summary
 
 | Aspect | TM5 | GEOS-Chem Classic | GCHP v13+ | This Model |
 |--------|-----|-------------------|-----------|------------|
-| Input format | Spectral GRIB | Gridpoint NetCDF | Cubed-sphere NetCDF | Gridpoint NetCDF |
-| Mass flux source | Spectral integration | TPCORE from winds | Native GCM archive | Gridpoint winds |
-| Conservation | Machine precision | Pressure fixer | Machine precision | ~0.9% drift/month |
-| Preprocessing | TMM (offline option) | None (online) | None (direct read) | Offline NetCDF |
+| Input format | Spectral GRIB | Gridpoint NetCDF | Cubed-sphere NetCDF | Spectral GRIB, gridpoint NetCDF, or CS NetCDF |
+| Mass flux source | Spectral integration | TPCORE from winds | Native GCM archive | Spectral integration, gridpoint winds, or native archive |
+| Conservation | Machine precision | Pressure fixer | Machine precision | Near-zero (spectral), ~0.9%/mo (gridpoint), native (CS) |
+| Preprocessing | TMM (offline option) | None (online) | None (direct read) | Offline (spectral or gridpoint) or direct read (CS) |
 | Vertical fluxes | From spectral div | From continuity | Native (consistent) | From continuity |
-| Grid support | Lat-lon (reduced) | Lat-lon | Cubed-sphere | Lat-lon (+ cubed-sphere WIP) |
+| Grid support | Lat-lon (reduced) | Lat-lon | Cubed-sphere | Lat-lon (reduced grid) + cubed-sphere |
 
 ## Roadmap: Bridging the Gaps
 
-1. **Reduced-grid mass-flux advection**: Implement TM5-style reduced grid for
-   `mass_flux_advection.jl` to reduce CFL subcycling from ~7x to ~1x.
+1. ~~**Reduced-grid mass-flux advection**~~: **DONE.** TM5-style reduced grid
+   on GPU reduces CFL subcycling from ~7x to ~1x (9x ERA5 speedup).
 
 2. **ERA5 convective mass fluxes**: Add MUMF/MDMF download and config to enable
    Tiedtke convection in ERA5 runs (already working for GEOS-FP).
@@ -390,15 +383,15 @@ enables:
 3. **Boundary layer diffusion with met-driven Kz**: Add ERA5 boundary layer
    height (`blh`, param 159) to the config and derive Kz profiles from it.
 
-4. **Spectral mass flux ingestion**: Support reading TM5-preprocessed mass flux
-   files directly, enabling machine-precision mass conservation with ECMWF data.
+4. ~~**Spectral mass flux preprocessing**~~: **DONE.** `preprocess_spectral_massflux.jl`
+   converts ERA5 spectral VO/D/LNSP to mass-conserving mass fluxes.
 
-5. **Native cubed-sphere support**: The `CubedSphereGrid` implementation uses
-   the same gnomonic projection as FV3, enabling direct reading of GEOS-FP/IT
-   C720 mass flux archives in the future.
+5. ~~**Native cubed-sphere support**~~: **DONE.** Full GPU pipeline for GEOS-FP C720
+   and GEOS-IT C180 with panel-boundary flux exchange, PPM advection, BL diffusion,
+   and output regridding to lat-lon.
 
-6. **PPM advection option**: Add a Piecewise Parabolic Method option alongside
-   slopes for comparison with GEOS-Chem's TPCORE/FV3 family.
+6. ~~**PPM advection option**~~: **DONE.** Putman & Lin (2007) PPM with orders 4-7,
+   implemented for both lat-lon and cubed-sphere grids.
 
 ## References
 

@@ -49,8 +49,7 @@ const cfg = TOML.parsefile(ARGS[1])
 
 # --- Product ---
 const PRODUCT      = cfg["product"]["name"]
-const MASS_FLUX_DT = Float64(get(cfg["product"], "mass_flux_dt",
-                                  PRODUCT == "geosit_c180" ? 450.0 : 3600.0))
+const MASS_FLUX_DT = Float64(get(cfg["product"], "mass_flux_dt", 450.0))
 
 # --- Input / output ---
 const GEOSFP_DIR = expanduser(cfg["input"]["data_dir"])
@@ -115,7 +114,8 @@ end
 #   - Unrealistic wind speeds
 # ---------------------------------------------------------------------------
 
-const GRAV = 9.80616f0   # m/s²
+const GRAV = 9.80616f0     # m/s²
+const R_EARTH = 6.371e6    # m
 const Nc_CELL_SIZE_DEG = 360.0 / (PRODUCT == "geosit_c180" ? 180 : 720)
 
 function sanity_check_window(delp_panels, am_panels, bm_panels, win::Int)
@@ -153,27 +153,25 @@ function sanity_check_window(delp_panels, am_panels, bm_panels, win::Int)
         @warn msg
     end
 
-    # --- Approximate wind speed from am (interior cells, lowest level) ---
-    # am [kg/(m²·s)] × area [m²] / DELP [Pa] × g [m/s²] ≈ u [m/s] × (rho × dz)/(rho × dz) = u
-    # Simpler: u ≈ am / (DELP / g) = am * g / DELP (per unit area, kg/m²/s / (kg/m²) = 1/s × L)
-    # Better: use mean |am| over interior, estimate |u| ≈ am_mean * g / delp_mean / (pi/180 * R_earth * Nc_cells)
+    # --- Approximate surface wind speed from am ---
+    # am is total mass flux through the cell face [kg/s].
+    # u = am * g / (DELP * dy)  where dy is the cell edge length.
+    Nc = size(p1_am, 2)
+    dy = 2π * R_EARTH / (4 * Nc)
     am_interior = p1_am[2:end-1, :, end]   # avoid boundary, surface level
     delp_interior = inner_delp[:, :, end]
     rms_am  = sqrt(mean(x -> x^2, am_interior))
     mean_dp = mean(delp_interior)
-    # u ≈ |am| * g / DELP  (where am is mass flux per unit face area in kg/m²/s)
-    # But am is total flux through face; to get velocity, divide by DELP/g (air column mass/area)
-    # u [m/s] = am [kg/m²/s] / (DELP/g [kg/m²]) = am * g / DELP
-    u_est = rms_am * GRAV / mean_dp
-    if u_est > 200.0
-        msg = @sprintf("  [sanity win=%d] Estimated surface wind ~%.0f m/s — suspiciously high! Check mass_flux_dt (should be %.0fs for %s).", win, u_est, MASS_FLUX_DT, PRODUCT)
+    u_est = rms_am * GRAV / (mean_dp * dy)
+    if u_est > 80.0
+        msg = @sprintf("  [sanity win=%d] Estimated surface wind ~%.1f m/s — suspiciously high! Check mass_flux_dt (should be %.0fs for %s).", win, u_est, MASS_FLUX_DT, PRODUCT)
         @warn msg
-    elseif u_est < 0.1
+    elseif u_est < 0.5
         msg = @sprintf("  [sanity win=%d] Estimated surface wind ~%.3f m/s — suspiciously low! Check mass_flux_dt (should be %.0fs for %s).", win, u_est, MASS_FLUX_DT, PRODUCT)
         @warn msg
     end
 
-    msg = @sprintf("  [sanity win=%d] DELP col-sum: mean=%.0f min=%.0f max=%.0f Pa | DELP top=%.3f bot=%.1f Pa | est |u_sfc|=%.2f m/s", win, ps_mean, ps_min, ps_max, delp_top, delp_bot, u_est)
+    msg = @sprintf("  [sanity win=%d] DELP col-sum: mean=%.0f min=%.0f max=%.0f Pa | DELP top=%.3f bot=%.1f Pa | est |u_sfc|=%.1f m/s (dy=%.0fm)", win, ps_mean, ps_min, ps_max, delp_top, delp_bot, u_est, dy)
     @info msg
 end
 

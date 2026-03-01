@@ -106,12 +106,14 @@ end
 """
     ensure_local_cache(src_path) → String
 
-Copy binary file to local fast storage (NVMe) if not already cached.
-Returns the path to use. Set `LOCAL_CACHE_DIR` environment variable to control
-the cache location (default: `/var/tmp/massflux_cache`).
+Optionally copy a binary file to local fast storage before mmap reading.
+By default, returns `src_path` unchanged (assumes data is already on fast disk).
+Set `LOCAL_CACHE_DIR` to a path to enable caching (e.g. for NFS → local NVMe).
 """
 function ensure_local_cache(src_path::String)
-    cache_dir = get(ENV, "LOCAL_CACHE_DIR", "/var/tmp/massflux_cache")
+    cache_dir = get(ENV, "LOCAL_CACHE_DIR", "")
+    isempty(cache_dir) && return src_path
+
     try
         mkpath(cache_dir)
     catch
@@ -123,16 +125,16 @@ function ensure_local_cache(src_path::String)
         @info "  Using local cache: $dst"
         return dst
     end
-    @info "  Copying to local NVMe cache: $dst ($(round(filesize(src_path)/1e9, digits=2)) GB)..."
+    @info "  Copying to local cache: $dst ($(round(filesize(src_path)/1e9, digits=2)) GB)..."
     t0 = time()
     try
         cp(src_path, dst; force=true)
-        chmod(dst, 0o644)  # ensure cached file is writable (mmap requires it)
+        chmod(dst, 0o644)
         @info "  Cache copy done in $(round(time() - t0, digits=1))s"
         return dst
     catch e
         @warn "Cache copy failed ($e); using original path"
-        rm(dst; force=true)  # clean up partial copy
+        rm(dst; force=true)
         return src_path
     end
 end

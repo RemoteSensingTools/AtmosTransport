@@ -13,7 +13,7 @@ spectral_dir = "~/data/metDrivers/era5/spectral_june2023"
 coefficients = "config/era5_L137_coefficients.toml"
 
 [output]
-directory = "~/data/metDrivers/era5/spectral_05deg_june2023"
+directory = "/temp1/atmos_transport/era5_spectral"
 
 [grid]
 nlon      = 720      # target longitude count (720 → 0.5°)

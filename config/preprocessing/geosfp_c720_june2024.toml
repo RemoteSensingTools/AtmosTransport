@@ -1,0 +1,35 @@
+# ===========================================================================
+# GEOS-FP C720 Cubed-Sphere Preprocessing — June 2024
+#
+# Converts GEOS-FP native hourly NetCDF mass fluxes to per-day flat binary
+# files for fast mmap-based GPU ingestion. Output staged on /temp1 (NVMe).
+#
+# mass_flux_dt = 450 s (GEOS dynamics timestep)
+#   GEOS-FP C720 MFXC/MFYC are accumulated over the dynamics timestep (~450s),
+#   NOT the full 1-hour met interval. Without this, transport is 8x too slow.
+#
+# Usage:
+#   julia --project=. scripts/preprocess_geosfp_cs.jl \
+#       config/preprocessing/geosfp_c720_june2024.toml
+# ===========================================================================
+
+[product]
+name         = "geosfp_c720"
+mass_flux_dt = 450.0      # GEOS dynamics timestep [s]
+
+[input]
+data_dir   = "~/data/geosfp_cs"
+start_date = "2024-06-01"
+end_date   = "2024-06-30"
+
+[output]
+directory = "/temp1/atmos_transport/geosfp_c720/preprocessed"
+
+[grid]
+halo_width = 3
+
+[numerics]
+float_type = "Float32"
+
+[diagnostics]
+verbose = true

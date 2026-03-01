@@ -363,15 +363,20 @@ function spectral_to_grid!(field::Matrix{FT_out},
             fft_buf[m+1] = Gm
         end
 
-        # Inverse FFT (FFTW convention: unnormalized inverse, then divide by N)
-        # f(λ_i) = (1/N) Σ_m G_m exp(2πi m i/N)
-        # But FFTW's ifft already divides by N.
-        f_lon = bfft(fft_buf)  # backward FFT (unnormalized: Σ G_m exp(2πi m i/N))
+        # Fill negative frequencies for real-valued field:
+        # f(λ) = Σ_{m≥0} G_m exp(imλ) + Σ_{m≥1} conj(G_m) exp(-imλ)
+        # In DFT layout: negative freq m maps to index N-m+1
+        for m in 1:min(T, div(Nfft, 2) - 1)
+            fft_buf[Nfft - m + 1] = conj(fft_buf[m + 1])
+        end
 
-        # Scale by 1/Nfft to get proper values
-        scale = 1.0 / Nfft
+        # Fourier synthesis via backward FFT (unnormalized):
+        # bfft(G)[k] = Σ_m G[m] exp(2πi m(k-1)/N) = f(λ_k)
+        # No 1/N scaling — this is a direct evaluation, not an inverse DFT.
+        f_lon = bfft(fft_buf)
+
         @inbounds for i in 1:Nlon
-            field[i, j] = FT_out(real(f_lon[i]) * scale)
+            field[i, j] = FT_out(real(f_lon[i]))
         end
     end
     return nothing

@@ -1,0 +1,56 @@
+# ===========================================================================
+# GEOS-FP C720 Cubed-Sphere — June 2024 Full Month
+#
+# 30-day run with BoundaryLayerDiffusion on preprocessed binary data
+# staged on /temp1 (fast NVMe). No convection (CMFMC not available in
+# native CS format for GEOS-FP).
+#
+# Usage:
+#   julia --project=. scripts/run.jl config/runs/geosfp_c720_june2024.toml
+# ===========================================================================
+
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "cubed_sphere"
+Nc         = 720
+met_source = "geosfp"
+
+[met_data]
+driver           = "geosfp_cs"
+preprocessed_dir = "/temp1/atmos_transport/geosfp_c720/preprocessed"
+coord_file       = "~/data/geosfp_cs/20240601/GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.20240601_0030.V01.nc4"
+start_date       = "2024-06-01"
+end_date         = "2024-06-30"
+dt               = 400
+met_interval     = 3600
+Hp               = 3
+
+[tracers.co2]
+emission      = "edgar"
+edgar_version = "v8.0"
+year          = 2022
+edgar_file    = "/scratch/cfranken/edgar_cs_c720_float32.bin"
+
+[diffusion]
+type     = "boundary_layer"
+Kz_max   = 100.0
+H_scale  = 8.0
+
+[output]
+filename      = "/temp1/atmos_transport/output/geosfp_c720_june2024.nc"
+interval      = 3600
+output_grid   = "latlon"
+Nlon          = 2880
+Nlat          = 1449
+deflate_level = 4
+digits        = 3
+
+[output.fields]
+co2_column_mean = {type = "column_mean", species = "co2"}
+co2_surface     = {type = "surface_slice", species = "co2"}
+
+[buffering]
+strategy = "double"

@@ -64,6 +64,7 @@ function GEOSFPCubedSphereMetDriver(;
         FT::Type{<:AbstractFloat} = Float32,
         preprocessed_dir::String = "",
         netcdf_files::Vector{String} = String[],
+        coord_file::String = "",
         start_date::Date = Date("2024-06-01"),
         end_date::Date = Date("2024-06-05"),
         dt::Real = 900,
@@ -91,8 +92,9 @@ function GEOSFPCubedSphereMetDriver(;
         end
         total = sum(wins_per)
 
-        # Use first NetCDF file (if available) for panel coordinate reading
-        coord_file = isempty(netcdf_files) ? "" : netcdf_files[1]
+        # Use explicit coord_file kwarg, else first NetCDF file, for panel coordinate reading
+        cfile = !isempty(coord_file) ? coord_file :
+                !isempty(netcdf_files) ? netcdf_files[1] : ""
 
         merge_map !== nothing &&
             error("Binary mode with layer merging not yet supported. Use netcdf_dir instead.")
@@ -101,7 +103,7 @@ function GEOSFPCubedSphereMetDriver(;
             bin_files, :binary, wins_per, total,
             Nc, Nz_file, Hp_file,
             FT(met_interval), FT(dt), steps_per_win,
-            coord_file, nothing, FT(mass_flux_dt), verbose)
+            cfile, nothing, FT(mass_flux_dt), verbose)
     else
         # NetCDF mode
         files = isempty(netcdf_files) ? String[] : netcdf_files
@@ -296,11 +298,15 @@ end
 # ---------------------------------------------------------------------------
 
 const _GRAV_CS = 9.80616f0
+const _R_EARTH_CS = 6.371e6
 
 function _sanity_check_cs_buf(delp::NTuple{6}, am::NTuple{6}, bm::NTuple{6},
                                 win::Int, mass_flux_dt::Real)
     p_delp = delp[1]   # (Nc+2Hp, Nc+2Hp, Nz)
     p_am   = am[1]     # (Nc+1, Nc, Nz)
+
+    Nc = size(p_am, 2)
+    dy = 2π * _R_EARTH_CS / (4 * Nc)   # approximate cell edge length [m]
 
     Hp = (size(p_delp, 1) - size(p_am, 1) + 1)   # halo width
     inner = p_delp[Hp:end-Hp+1, Hp:end-Hp+1, :]  # strip halo
@@ -326,21 +332,19 @@ function _sanity_check_cs_buf(delp::NTuple{6}, am::NTuple{6}, bm::NTuple{6},
         @warn msg
     end
 
-    # Estimated surface wind: u ≈ am * g / DELP.  This estimate is only valid when
-    # am is in kg/(m²·s) (per-unit-area flux).  For GEOS-IT C180 the converted
-    # fluxes may still carry cell-area factors, making this estimate unreliable.
-    # CFL diagnostics (printed later) are the authoritative transport check.
+    # Estimated surface wind: am is total mass flux [kg/s] through the cell face.
+    # u = am * g / (DELP * dy)  where dy is the cell edge length.
     am_rms   = sqrt(mean(x -> x^2, p_am[:, :, end]))
-    u_est    = am_rms * _GRAV_CS / delp_bot
-    if u_est > 200.0 && win == 1
-        msg = @sprintf("[met sanity win=%d] Estimated |u_sfc| ≈ %.0f m/s — likely incorrect for this product (check CFL instead). mass_flux_dt=%.0fs.", win, u_est, mass_flux_dt)
+    u_est    = am_rms * _GRAV_CS / (delp_bot * dy)
+    if u_est > 80.0 && win == 1
+        msg = @sprintf("[met sanity win=%d] Estimated |u_sfc| ≈ %.1f m/s — suspiciously high! Check mass_flux_dt (currently %.0fs).", win, u_est, mass_flux_dt)
         @warn msg
-    elseif u_est < 0.05 && win == 1
+    elseif u_est < 0.5 && win == 1
         msg = @sprintf("[met sanity win=%d] Estimated |u_sfc| ≈ %.3f m/s — too low! Check mass_flux_dt (currently %.0fs).", win, u_est, mass_flux_dt)
         @warn msg
     end
 
-    msg = @sprintf("[met sanity win=%d] ps≈%.0fPa | DELP top=%.2f bot=%.1f Pa | est |u_sfc|=%.2f m/s | mass_flux_dt=%.0fs", win, ps_mean, delp_top, delp_bot, u_est, mass_flux_dt)
+    msg = @sprintf("[met sanity win=%d] ps≈%.0fPa | DELP top=%.2f bot=%.1f Pa | est |u_sfc|=%.1f m/s (dy=%.0fm) | mass_flux_dt=%.0fs", win, ps_mean, delp_top, delp_bot, u_est, dy, mass_flux_dt)
     @info msg
 end
 

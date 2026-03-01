@@ -252,12 +252,14 @@ function _build_met_driver(driver_type::String, cfg::Dict, met_cfg_default, ::Ty
             String[]
         end
 
-        mass_flux_dt = FT(get(cfg, "mass_flux_dt", met_interval))
-        verbose      = get(cfg, "verbose", false)
+        coord_file_cfg = expanduser(get(cfg, "coord_file", ""))
+        mass_flux_dt   = FT(get(cfg, "mass_flux_dt", met_interval))
+        verbose        = get(cfg, "verbose", false)
 
         return GEOSFPCubedSphereMetDriver(; FT,
             preprocessed_dir=preproc_dir,
             netcdf_files=nc_files,
+            coord_file=coord_file_cfg,
             start_date, end_date, dt, met_interval, Hp, merge_map,
             mass_flux_dt, verbose)
     else
@@ -402,6 +404,10 @@ function _build_output_writers(cfg::Dict)
     format = get(cfg, "format", "netcdf")
     expanded_filename = expanduser(filename)
 
+    deflate_level = get(cfg, "deflate_level", 0)
+    digits_cfg    = get(cfg, "digits", nothing)
+    digits = digits_cfg === nothing ? nothing : Int(digits_cfg)
+
     writer = if format == "binary"
         auto_convert = get(cfg, "auto_convert", false)
         bin_path = if endswith(expanded_filename, ".bin")
@@ -417,7 +423,7 @@ function _build_output_writers(cfg::Dict)
                            output_grid=og, auto_convert)
     else
         NetCDFOutputWriter(expanded_filename, fields, schedule;
-                           output_grid=og)
+                           output_grid=og, deflate_level, digits)
     end
 
     return AbstractOutputWriter[writer]

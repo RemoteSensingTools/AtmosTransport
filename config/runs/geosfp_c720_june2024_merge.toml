@@ -1,0 +1,58 @@
+# ===========================================================================
+# GEOS-FP C720 Cubed-Sphere — June 2024, 1-day test
+#
+# Fix: mass_flux_dt = 450 (dynamics timestep, not output interval).
+# Uses level merging (merge_above_Pa=3000) to keep CFL < 1 at dt=400.
+# NetCDF mode (reads raw .nc4 files directly, no binary preprocessing).
+#
+# Usage:
+#   julia --project=. scripts/run.jl config/runs/geosfp_c720_june2024_merge.toml
+# ===========================================================================
+
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type                 = "cubed_sphere"
+Nc                   = 720
+met_source           = "geosfp"
+merge_levels_above_Pa = 3000.0
+
+[met_data]
+driver           = "geosfp_cs"
+netcdf_dir       = "~/data/geosfp_cs"
+start_date       = "2024-06-01"
+end_date         = "2024-06-01"
+dt               = 400
+met_interval     = 3600
+Hp               = 3
+mass_flux_dt     = 450
+verbose          = true
+
+[tracers.co2]
+emission      = "edgar"
+edgar_version = "v8.0"
+year          = 2022
+edgar_file    = "/scratch/cfranken/edgar_cs_c720_float32.bin"
+
+[diffusion]
+type     = "boundary_layer"
+Kz_max   = 100.0
+H_scale  = 8.0
+
+[output]
+filename      = "/temp1/atmos_transport/output/geosfp_c720_test_merge.nc"
+interval      = 3600
+output_grid   = "latlon"
+Nlon          = 1440
+Nlat          = 720
+deflate_level = 4
+digits        = 3
+
+[output.fields]
+co2_column_mean = {type = "column_mean", species = "co2"}
+co2_surface     = {type = "surface_slice", species = "co2"}
+
+[buffering]
+strategy = "double"

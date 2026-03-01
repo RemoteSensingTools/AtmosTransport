@@ -23,7 +23,7 @@ size       = [720, 361, 137]   # 0.5° × 0.5°, full 137 levels
 
 [met_data]
 driver    = "preprocessed_latlon"
-directory = "~/data/metDrivers/era5/spectral_05deg_june2023"
+directory = "/temp1/atmos_transport/era5_spectral"
 dt        = 900
 
 [tracers.co2]

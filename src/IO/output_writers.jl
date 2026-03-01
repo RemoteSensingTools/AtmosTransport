@@ -133,12 +133,18 @@ struct NetCDFOutputWriter{S <: AbstractOutputSchedule, OG} <: AbstractOutputWrit
     _write_count  :: Ref{Int}
     "lazily-built RegridMapping for GPU CS→lat-lon regridding (nothing until first write)"
     _regrid_cache :: Ref{Any}
+    "NetCDF deflate compression level (0 = off, 1–9 = increasing compression)"
+    deflate_level :: Int
+    "decimal places for rounding before write (nothing = no rounding)"
+    digits        :: Union{Nothing, Int}
 end
 
 function NetCDFOutputWriter(filename::String, fields::Dict, schedule::S;
-                            output_grid=nothing) where S <: AbstractOutputSchedule
+                            output_grid=nothing, deflate_level::Int=0,
+                            digits::Union{Nothing,Int}=nothing) where S <: AbstractOutputSchedule
     return NetCDFOutputWriter{S, typeof(output_grid)}(
-        filename, fields, schedule, output_grid, Ref(0), Ref{Any}(nothing))
+        filename, fields, schedule, output_grid, Ref(0), Ref{Any}(nothing),
+        deflate_level, digits)
 end
 
 # Backward compat: 3-arg constructor without output_grid
@@ -464,9 +470,10 @@ function _create_netcdf_file(writer::NetCDFOutputWriter, model, grid::LatitudeLo
         ds["lat"][:] = lat
         ds["lev"][:] = lev
 
+        dl = writer.deflate_level
         for (name, field_entry) in writer.fields
             dims = _output_dims(field_entry, grid, writer.output_grid)
-            defVar(ds, string(name), FT, dims)
+            defVar(ds, string(name), FT, dims; deflatelevel=dl)
         end
     end
     return nothing
@@ -502,10 +509,11 @@ function _create_netcdf_file(writer::NetCDFOutputWriter, model, grid::CubedSpher
             defVar(ds, "time", Float64, ("time",);
                    attrib=Dict("units" => "seconds since 2000-01-01 00:00:00"))
 
+            dl = writer.deflate_level
             for (name, field_entry) in writer.fields
                 dims = _output_dims(field_entry, grid, writer.output_grid)
                 defVar(ds, string(name), Float32, dims;
-                       attrib=Dict("units" => "ppm"))
+                       attrib=Dict("units" => "ppm"), deflatelevel=dl)
             end
         else
             # Native cubed-sphere output
@@ -516,8 +524,10 @@ function _create_netcdf_file(writer::NetCDFOutputWriter, model, grid::CubedSpher
 
             defVar(ds, "time", Float64, ("time",))
 
+            dl = writer.deflate_level
             for (name, _) in writer.fields
-                defVar(ds, string(name), Float32, ("x", "y", "panel", "time"))
+                defVar(ds, string(name), Float32, ("x", "y", "panel", "time");
+                       deflatelevel=dl)
             end
         end
     end
@@ -567,6 +577,11 @@ function initialize_output!(writer::NetCDFOutputWriter, model)
     return nothing
 end
 
+# Round array values to `d` decimal places (improves deflate compression).
+_quantize(arr, ::Nothing) = arr
+_quantize(arr::AbstractArray, d::Int) = round.(Float32.(arr); digits=d)
+_quantize(arr::NTuple, d::Int) = ntuple(p -> round.(Float32.(arr[p]); digits=d), length(arr))
+
 """
 $(SIGNATURES)
 
@@ -598,6 +613,7 @@ function write_output!(writer::NetCDFOutputWriter, model, time;
             arr = _extract_field_data(field_entry, model; air_mass, tracers,
                                       regrid_cache=writer._regrid_cache,
                                       output_grid=writer.output_grid)
+            arr = _quantize(arr, writer.digits)
             _write_field_slice!(ds, string(name), arr, grid, writer.output_grid, n_time + 1)
         end
     end

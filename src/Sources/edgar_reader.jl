@@ -17,7 +17,7 @@ This function:
 Returns a `GriddedEmission{FT}`.
 """
 function load_edgar_co2(filepath::String, target_grid::LatitudeLongitudeGrid{FT};
-                        year::Int = 2022) where FT
+                        year::Int = 2022, species::Symbol = :co2) where FT
     ds = NCDataset(filepath)
 
     lon_edgar = ds["lon"][:]
@@ -65,11 +65,12 @@ function load_edgar_co2(filepath::String, target_grid::LatitudeLongitudeGrid{FT}
     total_corrected = sum(flux_model[i, j] * cell_area(i, j, target_grid)
                           for j in 1:target_grid.Ny, i in 1:target_grid.Nx)
     ratio_corr = total_corrected / total_native
-    @info "EDGAR CO2 loaded: native total=$(round(total_native, digits=1)) kg/s, " *
+    sp = uppercase(string(species))
+    @info "EDGAR $sp loaded: native total=$(round(total_native, digits=1)) kg/s, " *
           "pre-renorm ratio=$(round(ratio_raw, digits=6)), " *
           "post-renorm ratio=$(round(ratio_corr, digits=6))"
 
-    return GriddedEmission(flux_model, :co2, "EDGAR v8.0 CO2 $year")
+    return GriddedEmission(flux_model, species, "EDGAR v8.0 $sp $year")
 end
 
 """

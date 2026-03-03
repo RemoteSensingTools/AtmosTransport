@@ -3,10 +3,19 @@
 #
 # Fix: mass_flux_dt = 450 (GEOS dynamics timestep, not 1-hour output interval).
 # Previous runs with mass_flux_dt=3600 had 8× too slow transport.
-# Uses level merging (merge_above_Pa=3000) + dt=400 for good performance.
-# CFL > 1 at thin mesospheric levels is harmless for tropospheric transport.
+# Uses pre-merged binary files (merge_above_Pa=3000, done in preprocessing).
+# Level merging is baked into the binary files — no runtime merge overhead.
 #
-# NetCDF mode reads raw .nc4 files directly from ~/data/geosfp_cs/.
+# PBL diffusion (Monin-Obukhov) + Tiedtke convection using 0.25° GEOS-FP
+# surface fields (PBLH, USTAR, HFLUX, T2M) and CMFMC, bilinearly regridded
+# on-the-fly to C720 cubed-sphere panels at runtime.
+#
+# Preprocess mass fluxes:
+#   julia --project=. -p 8 scripts/preprocess_geosfp_cs.jl \
+#       config/preprocessing/geosfp_c720_june2024_merged.toml
+#
+# Download surface fields (no regridding step needed):
+#   julia --project=. scripts/download_geosfp_surface_fields.jl
 #
 # Usage:
 #   julia --project=. scripts/run.jl config/runs/geosfp_c720_june2024_fixed.toml
@@ -20,31 +29,50 @@ float_type = "Float32"
 type                  = "cubed_sphere"
 Nc                    = 720
 met_source            = "geosfp"
-merge_levels_above_Pa = 3000.0
+merge_levels_above_Pa = 1000.0  # must match preprocessing config
 
 [met_data]
 driver           = "geosfp_cs"
-netcdf_dir       = "~/data/geosfp_cs"
+preprocessed_dir = "/temp1/atmos_transport/geosfp_c720/preprocessed_merged"
+coord_file       = "~/data/geosfp_cs/20240601/GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.20240601_0030.V01.nc4"
 start_date       = "2024-06-01"
-end_date         = "2024-06-30"
-dt               = 400
+end_date         = "2024-06-15"
+dt               = 450
 met_interval     = 3600
 Hp               = 3
-mass_flux_dt     = 450
+mass_flux_dt        = 450
+surface_data_bin_dir = "/temp1/atmos_transport/geosfp_c720/surface_fields_bin"
+# surface_data_dir    = "/temp1/atmos_transport/geosfp_c720/surface_fields_cs"  # NetCDF fallback
+# surface_data_ll_dir = "/temp1/atmos_transport/geosfp_025"  # on-the-fly (slower)
 
 [tracers.co2]
 emission      = "edgar"
 edgar_version = "v8.0"
+species       = "co2"
 year          = 2022
-edgar_file    = "/scratch/cfranken/edgar_cs_c720_float32.bin"
+edgar_file    = "/temp1/atmos_transport/emissions/edgar_v8/edgar_co2_cs_c720_float32.bin"
+
+[tracers.ch4]
+emission      = "edgar"
+edgar_version = "v8.0"
+species       = "ch4"
+year          = 2022
+edgar_file    = "/temp1/atmos_transport/emissions/edgar_v8/edgar_ch4_cs_c720_float32.bin"
 
 [diffusion]
-type     = "boundary_layer"
-Kz_max   = 100.0
-H_scale  = 8.0
+type   = "pbl"
+beta_h = 15.0
+Kz_bg  = 0.1
+Kz_min = 0.01
+Kz_max = 500.0
+
+[convection]
+type = "tiedtke"
 
 [output]
-filename      = "/temp1/atmos_transport/output/geosfp_c720_june2024_fixed.nc"
+filename      = "/temp1/atmos_transport/output/geosfp_c720_june2024_2tracer.bin"
+format        = "binary"
+auto_convert  = true
 interval      = 3600
 output_grid   = "latlon"
 Nlon          = 2880
@@ -55,6 +83,8 @@ digits        = 3
 [output.fields]
 co2_column_mean = {type = "column_mean", species = "co2"}
 co2_surface     = {type = "surface_slice", species = "co2"}
+ch4_column_mean = {type = "column_mean", species = "ch4"}
+ch4_surface     = {type = "surface_slice", species = "ch4"}
 
 [buffering]
 strategy = "double"

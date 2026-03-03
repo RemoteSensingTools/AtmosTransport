@@ -31,12 +31,17 @@ config = TOML.parsefile(ARGS[1])
 @info "Configuration: $(ARGS[1])"
 flush(stderr)
 
-# CRITICAL: Load CUDA before AtmosTransport to trigger the weak-dependency
-# extension AtmosTransportCUDAExt. This cannot be deferred.
+# CRITICAL: Load GPU package before AtmosTransport to trigger the weak-dependency
+# extension (AtmosTransportCUDAExt or AtmosTransportMetalExt). This cannot be deferred.
 if get(get(config, "architecture", Dict()), "use_gpu", false)
-    using CUDA
-    CUDA.allowscalar(false)
-    @info "GPU mode enabled (CUDA loaded)"
+    if Sys.isapple()
+        using Metal
+        @info "GPU mode enabled (Metal loaded)"
+    else
+        using CUDA
+        CUDA.allowscalar(false)
+        @info "GPU mode enabled (CUDA loaded)"
+    end
 else
     @info "CPU mode"
 end

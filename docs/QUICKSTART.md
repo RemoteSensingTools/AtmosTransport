@@ -6,6 +6,28 @@ meteorological data, preprocessing, configuring, and running simulations.
 For a deep dive into met data formats, vertical coordinates, and TM5
 comparison, see [METEO_PREPROCESSING.md](METEO_PREPROCESSING.md).
 
+## 5-Minute Quickstart
+
+Run a 7-day CO₂ transport simulation with a single command — no GPU, no
+external data download, no preprocessing required:
+
+```bash
+# Install dependencies (first time only)
+julia --project=. -e 'using Pkg; Pkg.instantiate()'
+
+# Run quickstart (downloads ~100 MB of coarsened GEOS-FP data, then simulates)
+julia --project=. scripts/quickstart.jl
+```
+
+This downloads coarsened (~4°×5°) GEOS-FP meteorological data via OPeNDAP
+(no authentication needed), runs a 7-day simulation on CPU (~2 min), and
+produces a visualization. Output: `quickstart_output.nc` + snapshot PNG.
+
+To run the quickstart manually with full control:
+```bash
+julia --project=. scripts/run.jl config/runs/quickstart.toml
+```
+
 ## Prerequisites
 
 - **Julia 1.10+** (tested with 1.12+ via [juliaup](https://github.com/JuliaLang/juliaup))
@@ -13,8 +35,9 @@ comparison, see [METEO_PREPROCESSING.md](METEO_PREPROCESSING.md).
   ```bash
   julia --project=. -e 'using Pkg; Pkg.instantiate()'
   ```
-- **GPU** (optional): NVIDIA GPU with CUDA 12+ drivers. The model loads
-  CUDA.jl automatically when the TOML config sets `use_gpu = true`.
+- **GPU** (optional): NVIDIA GPU with CUDA 12+ drivers, or Apple Silicon
+  with Metal.jl. The model loads the appropriate GPU backend automatically
+  when the TOML config sets `use_gpu = true`.
 
 ## Running a Simulation
 
@@ -35,6 +58,7 @@ julia --threads=2 --project=. scripts/run.jl <config.toml>
 
 | Config | Grid | Met Source | GPU | Description |
 |--------|------|-----------|-----|-------------|
+| **`quickstart.toml`** | **144×73 lat-lon** | **GEOS-FP OPeNDAP** | **No** | **7-day demo, auto-downloads data** |
 | `geosfp_c720_june2024_fixed.toml` | C720 cubed-sphere | GEOS-FP NetCDF | Yes | 30-day June 2024, mass_flux_dt=450, level merging |
 | `geosit_c180_june2023.toml` | C180 cubed-sphere | GEOS-IT NetCDF | Yes | 30-day June 2023, slopes advection |
 | `geosit_c180_june2023_ppm.toml` | C180 cubed-sphere | GEOS-IT NetCDF | Yes | 30-day June 2023, PPM-7 advection |

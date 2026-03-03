@@ -1,0 +1,35 @@
+# ===========================================================================
+# GEOS-FP C720 Cubed-Sphere Preprocessing — June 2024 (Level Merging)
+#
+# Same as geosfp_c720_june2024.toml but merges thin upper-atmosphere levels
+# above 3000 Pa during preprocessing. Output binary files contain the merged
+# Nz directly, so the run-time driver does no per-window merging.
+#
+# mass_flux_dt = 450 s (GEOS dynamics timestep)
+#
+# Usage:
+#   julia --project=. scripts/preprocess_geosfp_cs.jl \
+#       config/preprocessing/geosfp_c720_june2024_merged.toml
+# ===========================================================================
+
+[product]
+name         = "geosfp_c720"
+mass_flux_dt = 450.0      # GEOS dynamics timestep [s]
+
+[input]
+data_dir   = "~/data/geosfp_cs"
+start_date = "2024-06-01"
+end_date   = "2024-06-30"
+
+[output]
+directory = "/temp1/atmos_transport/geosfp_c720/preprocessed_merged"
+
+[grid]
+halo_width            = 3
+merge_levels_above_Pa = 1000.0
+
+[numerics]
+float_type = "Float32"
+
+[diagnostics]
+verbose = true

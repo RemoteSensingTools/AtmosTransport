@@ -41,9 +41,12 @@ struct EdgarSource <: AbstractInventorySource
     version  :: String
     "path to EDGAR NetCDF file (optional — can be passed to load_inventory)"
     filepath :: String
+    "species symbol (e.g. :co2, :ch4)"
+    species  :: Symbol
 end
 
-EdgarSource(; version="v8.0", filepath="") = EdgarSource(version, filepath)
+EdgarSource(; version="v8.0", filepath="", species=:co2) =
+    EdgarSource(version, filepath, species)
 
 """
 $(TYPEDEF)
@@ -124,8 +127,8 @@ function load_inventory end
 # --- EDGAR on lat-lon grid ---
 function load_inventory(src::EdgarSource, grid::LatitudeLongitudeGrid{FT};
                         year::Int=2022, file::String=src.filepath) where FT
-    filepath = isempty(file) ? _default_edgar_path(year) : expanduser(file)
-    return load_edgar_co2(filepath, grid; year)
+    filepath = isempty(file) ? _default_edgar_path(year, src.species) : expanduser(file)
+    return load_edgar_co2(filepath, grid; year, species=src.species)
 end
 
 # --- EDGAR on cubed-sphere grid ---
@@ -137,11 +140,12 @@ function load_inventory(src::EdgarSource, grid::CubedSphereGrid{FT};
     ft_tag = FT == Float32 ? "float32" : "float64"
 
     # Try preprocessed binary first
+    sp_tag = lowercase(string(src.species))
     bin_path = if !isempty(binary_file)
         expanduser(binary_file)
     else
         joinpath(homedir(), "data", "emissions", "edgar_v8",
-                 "edgar_cs_c$(Nc)_$(ft_tag).bin")
+                 "edgar_$(sp_tag)_cs_c$(Nc)_$(ft_tag).bin")
     end
 
     if isfile(bin_path)
@@ -149,7 +153,7 @@ function load_inventory(src::EdgarSource, grid::CubedSphereGrid{FT};
         flux_panels = load_edgar_cs_binary(bin_path, FT)
     else
         # Fall back to regridding from NetCDF
-        filepath = isempty(file) ? _default_edgar_path(year) : expanduser(file)
+        filepath = isempty(file) ? _default_edgar_path(year, src.species) : expanduser(file)
         @info "  Regridding EDGAR from NetCDF to C$Nc..."
         isfile(filepath) || error("EDGAR file not found: $filepath")
         ds = NCDataset(filepath)
@@ -162,8 +166,8 @@ function load_inventory(src::EdgarSource, grid::CubedSphereGrid{FT};
         @info "  EDGAR regridded to C$Nc"
     end
 
-    return CubedSphereEmission(flux_panels, :co2,
-        "EDGAR $(src.version) CO2 $year")
+    return CubedSphereEmission(flux_panels, src.species,
+        "EDGAR $(src.version) $(uppercase(string(src.species))) $year")
 end
 
 # --- CarbonTracker on lat-lon grid ---
@@ -220,9 +224,10 @@ end
 # Default file path helpers
 # =====================================================================
 
-function _default_edgar_path(year::Int)
+function _default_edgar_path(year::Int, species::Symbol=:co2)
+    sp = uppercase(string(species))
     joinpath(homedir(), "data", "emissions", "edgar_v8",
-             "v8.0_FT2022_GHG_CO2_$(year)_TOTALS_emi.nc")
+             "v8.0_FT2022_GHG_$(sp)_$(year)_TOTALS_emi.nc")
 end
 
 function _default_ct_path()

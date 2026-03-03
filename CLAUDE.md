@@ -32,11 +32,13 @@ Key directories:
 - **TOML-driven**: all parameters in config files, no hardcoded paths in source
 - **Canonical variables**: physics code uses abstract names (e.g. `surface_pressure`);
   met source TOMLs map native variable names to these canonicals
-- **GPU via extension**: `using CUDA` before `using AtmosTransport` loads `AtmosTransportCUDAExt`
+- **GPU via extension**: `using CUDA` or `using Metal` before `using AtmosTransport` loads
+  the appropriate extension (`AtmosTransportCUDAExt` or `AtmosTransportMetalExt`).
+  `scripts/run.jl` auto-detects: Metal on macOS, CUDA on Linux/Windows.
 - **KernelAbstractions**: all GPU kernels use `@kernel`/`@index` for CUDA/Metal/CPU portability.
-  Currently only CUDA is supported. Metal (Apple Silicon) and AMDGPU backends are future goals —
-  requires adding `AtmosTransportMetalExt`/`AtmosTransportAMDGPUExt`, a backend-agnostic
-  architecture type, and testing atomics (used in GPU regridding via Atomix.jl)
+  CUDA and Metal are supported. AMDGPU is a future goal.
+  One atomic operation in `regridding_diagnostics.jl` (`@atomic` scatter) may need a CPU
+  fallback on Metal if Float32 atomics are unsupported.
 - **Mass conservation first**: advection via mass fluxes (not winds); vertical flux from
   continuity equation; Strang splitting X→Y→Z→Z→Y→X
 

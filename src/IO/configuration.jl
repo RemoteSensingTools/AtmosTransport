@@ -8,6 +8,7 @@
 
 using TOML
 using Dates
+import Pkg
 using ..Architectures: CPU, GPU, array_type
 using ..Grids: LatitudeLongitudeGrid, CubedSphereGrid, merge_upper_levels, n_levels
 using ..Parameters: load_parameters
@@ -209,6 +210,41 @@ end
 # Internal builder helpers
 # =====================================================================
 
+"""
+    _resolve_data_path(raw_path) → String
+
+Resolve a configuration path. Handles:
+- `~` home directory expansion
+- `@artifact:<name>` Julia artifact resolution (lazy download on first access)
+- Ordinary paths (returned as-is after expanduser)
+"""
+function _resolve_data_path(raw_path::String)
+    isempty(raw_path) && return ""
+    if startswith(raw_path, "@artifact:")
+        artifact_name = raw_path[11:end]
+        try
+            # Use Pkg.Artifacts to resolve; triggers lazy download if needed
+            artifacts_toml = joinpath(dirname(dirname(@__DIR__)), "Artifacts.toml")
+            if isfile(artifacts_toml)
+                hash = Pkg.Artifacts.artifact_hash(artifact_name, artifacts_toml)
+                if hash !== nothing
+                    path = Pkg.Artifacts.artifact_path(hash)
+                    if !isdir(path)
+                        Pkg.Artifacts.ensure_artifact_installed(artifact_name, artifacts_toml)
+                    end
+                    return path
+                end
+            end
+            @warn "Artifact '$artifact_name' not found in Artifacts.toml; using raw path"
+            return raw_path
+        catch e
+            @warn "Failed to resolve artifact '$artifact_name': $e"
+            return raw_path
+        end
+    end
+    return expanduser(raw_path)
+end
+
 function _build_met_driver(driver_type::String, cfg::Dict, met_cfg_default, ::Type{FT};
                            merge_map::Union{Nothing, Vector{Int}} = nothing) where FT
     dt = FT(get(cfg, "dt", 900))
@@ -229,12 +265,12 @@ function _build_met_driver(driver_type::String, cfg::Dict, met_cfg_default, ::Ty
                                met_interval, dt, level_top, level_bot)
 
     elseif driver_type == "preprocessed_latlon"
-        dir = expanduser(get(cfg, "directory", ""))
+        dir = _resolve_data_path(get(cfg, "directory", ""))
         ft_tag = FT == Float32 ? "float32" : "float64"
         files = if !isempty(dir) && isdir(dir)
             find_massflux_shards(dir, ft_tag)
         else
-            f = expanduser(get(cfg, "file", ""))
+            f = _resolve_data_path(get(cfg, "file", ""))
             isempty(f) ? String[] : [f]
         end
         return PreprocessedLatLonMetDriver(; FT, files, dt, merge_map)
@@ -253,16 +289,20 @@ function _build_met_driver(driver_type::String, cfg::Dict, met_cfg_default, ::Ty
             String[]
         end
 
-        coord_file_cfg = expanduser(get(cfg, "coord_file", ""))
-        mass_flux_dt   = FT(get(cfg, "mass_flux_dt", met_interval))
-        verbose        = get(cfg, "verbose", false)
+        coord_file_cfg      = expanduser(get(cfg, "coord_file", ""))
+        mass_flux_dt        = FT(get(cfg, "mass_flux_dt", met_interval))
+        surface_data_dir     = expanduser(get(cfg, "surface_data_dir", ""))
+        surface_data_bin_dir = expanduser(get(cfg, "surface_data_bin_dir", ""))
+        surface_data_ll_dir  = expanduser(get(cfg, "surface_data_ll_dir", ""))
+        verbose              = get(cfg, "verbose", false)
 
         return GEOSFPCubedSphereMetDriver(; FT,
             preprocessed_dir=preproc_dir,
             netcdf_files=nc_files,
             coord_file=coord_file_cfg,
             start_date, end_date, dt, met_interval, Hp, merge_map,
-            mass_flux_dt, verbose)
+            mass_flux_dt, surface_data_dir, surface_data_bin_dir,
+            surface_data_ll_dir, verbose)
     else
         error("Unknown met driver type: $driver_type. " *
               "Use 'era5', 'preprocessed_latlon', or 'geosfp_cs'.")
@@ -281,7 +321,8 @@ function _build_emission_source(tcfg::Dict, grid, ::Type{FT}; met_driver=nothing
     if emission == "edgar"
         version  = get(tcfg, "edgar_version", "v8.0")
         filepath = expanduser(get(tcfg, "edgar_file", ""))
-        src = EdgarSource(; version, filepath)
+        species  = Symbol(get(tcfg, "species", "co2"))
+        src = EdgarSource(; version, filepath, species)
         if grid isa CubedSphereGrid
             return load_inventory(src, grid; year, file=filepath, binary_file=filepath,
                                   file_lons, file_lats)
@@ -324,6 +365,17 @@ function _build_emission_source(tcfg::Dict, grid, ::Type{FT}; met_driver=nothing
         filepath = expanduser(get(tcfg, "file", get(tcfg, "dir", "")))
         src = CATRINESource(; dataset, filepath)
         return load_inventory(src, grid; year)
+    elseif emission == "uniform_surface"
+        rate    = FT(get(tcfg, "rate", 1.0e-8))    # kg/m²/s
+        species = Symbol(get(tcfg, "species", "co2"))
+        label   = "Uniform surface $(uppercase(string(species))) $(rate) kg/m²/s"
+        if grid isa CubedSphereGrid
+            flux_panels = ntuple(_ -> fill(rate, grid.Nc, grid.Nc), 6)
+            return CubedSphereEmission(flux_panels, species, label)
+        else
+            flux = fill(rate, grid.Nx, grid.Ny)
+            return GriddedEmission(flux, species, label)
+        end
     else
         @warn "Unknown emission type: $emission"
         return nothing

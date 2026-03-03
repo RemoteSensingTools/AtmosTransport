@@ -1,0 +1,25 @@
+# ===========================================================================
+# Preprocessing config: regrid GEOS-FP 0.25° surface fields → C720 CS
+#
+# Reads 0.25° A1 (PBLH, USTAR, HFLUX, T2M) and A3mstE (CMFMC) files,
+# bilinearly interpolates to C720 panel coordinates, writes per-day NetCDF.
+#
+# Download source data first:
+#   julia scripts/download_geosfp_surface_fields.jl
+#
+# Then regrid:
+#   julia --project=. -p 8 scripts/preprocess_geosfp_surface_to_cs.jl \
+#       config/preprocessing/geosfp_c720_surface_fields.toml
+# ===========================================================================
+
+[input]
+data_dir   = "/temp1/atmos_transport/geosfp_025"
+start_date = "2024-06-01"
+end_date   = "2024-06-30"
+
+[output]
+directory = "/temp1/atmos_transport/geosfp_c720/surface_fields_cs"
+
+[grid]
+coord_file = "~/data/geosfp_cs/20240601/GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.20240601_0030.V01.nc4"
+Nc = 720

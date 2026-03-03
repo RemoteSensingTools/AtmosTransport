@@ -26,13 +26,16 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 [weakdeps]
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+Metal = "dde4c033-4e86-420c-a63e-0dd931031962"
 
 [extensions]
 AtmosTransportCUDAExt = "CUDA"
+AtmosTransportMetalExt = "Metal"
 AtmosTransportMakieExt = ["CairoMakie", "GeoMakie"]
 
 [compat]
 CUDA = "5"
+Metal = "1"
 CairoMakie = "0.12, 0.13"
 CubedSphere = "0.3.4"
 DocStringExtensions = "0.9.5"

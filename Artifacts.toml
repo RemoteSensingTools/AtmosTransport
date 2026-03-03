@@ -9,4 +9,4 @@ lazy = true
 
     [[quickstart_met_data.download]]
     url = "https://github.com/RemoteSensingTools/AtmosTransport/archive/refs/tags/data-v1.tar.gz"
-    sha256 = "220ff841b00a0a0ddf5bbadaa72aa00a29640c22de6276a69d4f2570de5b30b4"
+    sha256 = "14d71c6a01de010853b32f1295a08c9dab21c4b1320cf8c3c093b8e0f0e7b6b2"

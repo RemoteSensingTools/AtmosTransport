@@ -1,15 +1,15 @@
 # ===========================================================================
-# Quickstart demo — runs on any machine (CPU, no external data needed)
+# Quickstart demo — GEOS-IT C180 cubed-sphere (~0.5°)
 #
-# Met data is downloaded automatically as a Julia artifact on first run.
-# Uses coarsened GEOS-FP lat-lon data (~4x5 deg, 7 days, ~100 MB).
+# Preprocessed binary data is downloaded automatically as a Julia artifact
+# on first run (~700 MB compressed, 1 day of GEOS-IT C180).
 #
 # Usage:
 #   julia --project=. scripts/quickstart.jl
 #
 # Or manually:
 #   julia --project=. scripts/run.jl config/runs/quickstart.toml
-#   (requires data at ~/data/metDrivers/geosfp/quickstart/ — see quickstart.jl)
+#   (requires preprocessed data at the artifact path or a local directory)
 # ===========================================================================
 
 [architecture]
@@ -17,16 +17,20 @@ use_gpu    = false
 float_type = "Float32"
 
 [grid]
-type = "latlon"
-Nlon = 144
-Nlat = 73
-Nz   = 72
+type       = "cubed_sphere"
+Nc         = 180
+met_source = "geosfp"
 
 [met_data]
-driver       = "preprocessed_latlon"
-directory    = "@artifact:quickstart_met_data"
-dt           = 1800
-met_interval = 10800
+driver           = "geosfp_cs"
+product          = "geosit_c180"
+preprocessed_dir = "@artifact:quickstart_met_data"
+start_date       = "2023-06-01"
+end_date         = "2023-06-01"
+dt               = 900
+met_interval     = 3600
+mass_flux_dt     = 450       # GEOS-IT dynamics timestep [s]
+Hp               = 3
 
 [tracers.co2]
 emission = "uniform_surface"
@@ -35,18 +39,21 @@ rate     = 1.0e-8    # kg/m^2/s constant everywhere
 
 [output]
 filename    = "quickstart_output.nc"
-interval    = 10800
+interval    = 3600
 output_grid = "latlon"
-Nlon        = 144
-Nlat        = 73
+Nlon        = 360
+Nlat        = 181
 
 [output.fields]
 co2_column_mean = {type = "column_mean", species = "co2"}
 co2_surface     = {type = "surface_slice", species = "co2"}
 
+[advection]
+scheme = "slopes"
+
 [diffusion]
-type   = "boundary_layer"
-Kz_max = 100.0
+type    = "boundary_layer"
+Kz_max  = 100.0
 H_scale = 8.0
 
 [buffering]

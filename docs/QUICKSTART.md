@@ -8,20 +8,21 @@ comparison, see [METEO_PREPROCESSING.md](METEO_PREPROCESSING.md).
 
 ## 5-Minute Quickstart
 
-Run a 7-day CO₂ transport simulation with a single command — no GPU, no
-external data download, no preprocessing required:
+Run a 1-day CO₂ transport simulation on GEOS-IT C180 cubed-sphere (~0.5°)
+with a single command — no GPU, no external data download, no preprocessing
+required:
 
 ```bash
 # Install dependencies (first time only)
 julia --project=. -e 'using Pkg; Pkg.instantiate()'
 
-# Run quickstart (downloads ~100 MB of coarsened GEOS-FP data, then simulates)
+# Run quickstart (downloads ~700 MB of preprocessed GEOS-IT C180 data, then simulates)
 julia --project=. scripts/quickstart.jl
 ```
 
-This downloads coarsened (~4°×5°) GEOS-FP meteorological data via OPeNDAP
-(no authentication needed), runs a 7-day simulation on CPU (~2 min), and
-produces a visualization. Output: `quickstart_output.nc` + snapshot PNG.
+This auto-downloads preprocessed GEOS-IT C180 cubed-sphere met data (via
+Julia Artifacts), runs a 1-day simulation on CPU, and produces a lat-lon
+regridded visualization. Output: `quickstart_output.nc` + snapshot PNG.
 
 To run the quickstart manually with full control:
 ```bash

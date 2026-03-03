@@ -276,7 +276,7 @@ function _build_met_driver(driver_type::String, cfg::Dict, met_cfg_default, ::Ty
         return PreprocessedLatLonMetDriver(; FT, files, dt, merge_map)
 
     elseif driver_type == "geosfp_cs"
-        preproc_dir = expanduser(get(cfg, "preprocessed_dir", ""))
+        preproc_dir = _resolve_data_path(get(cfg, "preprocessed_dir", ""))
         start_date = Date(get(cfg, "start_date", "2024-06-01"))
         end_date   = Date(get(cfg, "end_date", "2024-06-05"))
         Hp = get(cfg, "Hp", 3)

@@ -6,12 +6,12 @@
 #   julia --project=. scripts/quickstart.jl
 #
 # What it does:
-#   1. Downloads coarsened GEOS-FP met data via Julia artifact (or OPeNDAP fallback)
-#   2. Runs a 7-day CO₂ transport simulation on CPU (~2 min)
-#   3. Produces a visualization (PNG snapshot + animated GIF)
+#   1. Downloads preprocessed GEOS-IT C180 data via Julia artifact (~700 MB)
+#   2. Runs a 1-day CO₂ transport simulation on cubed-sphere C180 (~0.5°)
+#   3. Produces a lat-lon regridded visualization (PNG snapshot)
 #
-# Data: ~100 MB, auto-downloaded on first run, cached for subsequent runs.
-# No authentication, GPU, or external preprocessing required.
+# Data: ~700 MB compressed, auto-downloaded on first run, cached thereafter.
+# No authentication, GPU, or manual preprocessing required.
 # ===========================================================================
 
 using Pkg
@@ -20,7 +20,6 @@ using Pkg
 # Step 1: Ensure met data is available
 # ---------------------------------------------------------------------------
 
-const DATA_DIR = joinpath(homedir(), "data", "metDrivers", "geosfp", "quickstart")
 const ARTIFACT_NAME = "quickstart_met_data"
 
 function ensure_data()
@@ -40,21 +39,14 @@ function ensure_data()
                 return path
             end
         catch e
-            @warn "Artifact download failed, trying OPeNDAP fallback: $e"
+            @warn "Artifact download failed: $e"
         end
     end
 
-    # Fallback: download via OPeNDAP (no auth required)
-    if isdir(DATA_DIR) && !isempty(filter(f -> endswith(f, ".bin"), readdir(DATA_DIR)))
-        @info "Using cached quickstart data: $DATA_DIR"
-        return DATA_DIR
-    end
-
-    @info "Downloading quickstart data via OPeNDAP (no authentication required)..."
-    @info "This may take a few minutes on first run."
-    include(joinpath(@__DIR__, "build_quickstart_artifact.jl"))
-    build_quickstart_data(DATA_DIR)
-    return DATA_DIR
+    @warn "Quickstart artifact not configured in Artifacts.toml."
+    @info "To build the artifact locally (maintainer only):"
+    @info "  julia --project=. scripts/build_quickstart_artifact.jl"
+    error("No quickstart data available. See above for instructions.")
 end
 
 # ---------------------------------------------------------------------------
@@ -73,14 +65,14 @@ function run_simulation(data_dir::String)
     config_path = joinpath(@__DIR__, "..", "config", "runs", "quickstart.toml")
     config = TOML.parsefile(config_path)
 
-    # Point met data to resolved path
-    config["met_data"]["directory"] = data_dir
+    # Point met data to resolved preprocessed directory
+    config["met_data"]["preprocessed_dir"] = data_dir
 
     # Put output in current directory
     output_file = joinpath(pwd(), "quickstart_output.nc")
     config["output"]["filename"] = output_file
 
-    @info "Building model (CPU, 144×73×72, 7 days)..."
+    @info "Building model (CPU, C180 cubed-sphere, 1 day)..."
     model = build_model_from_config(config)
 
     @info "Running simulation..."
@@ -145,7 +137,7 @@ end
 function main()
     println("=" ^ 70)
     println("  AtmosTransport Quickstart")
-    println("  7-day CO₂ transport simulation on coarsened GEOS-FP data")
+    println("  1-day CO₂ transport on GEOS-IT C180 cubed-sphere (~0.5°)")
     println("=" ^ 70)
     println()
 

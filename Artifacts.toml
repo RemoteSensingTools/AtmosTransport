@@ -8,5 +8,5 @@ git-tree-sha1 = "18e892a928a8e47159464d1374188937503290d9"
 lazy = true
 
     [[quickstart_met_data.download]]
-    url = "https://github.com/RemoteSensingTools/AtmosTransport/releases/download/data-v1/quickstart_met_data.tar.gz"
+    url = "https://github.com/RemoteSensingTools/AtmosTransport/archive/refs/tags/data-v1.tar.gz"
     sha256 = "220ff841b00a0a0ddf5bbadaa72aa00a29640c22de6276a69d4f2570de5b30b4"

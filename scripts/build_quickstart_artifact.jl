@@ -9,14 +9,16 @@
 # Steps:
 #   1. Download 1 day of GEOS-IT C180 CTM_A1 from WashU archive (~4.2 GB)
 #   2. Preprocess to flat binary via preprocess_geosfp_cs.jl (~4 GB)
-#   3. Package preprocessed binary as tarball (~700 MB compressed)
-#   4. Print SHA256 and Artifacts.toml entry
+#   3. Truncate to 12 hours (keeps tarball < 2 GB GitHub Release limit)
+#   4. Package preprocessed binary as tarball (~1.4 GB compressed)
+#   5. Print SHA256 and Artifacts.toml entry
 #
 # No authentication required (WashU archive is public HTTP).
 # ===========================================================================
 
 using Dates
 using Downloads
+using JSON3
 using SHA
 using TOML
 
@@ -24,10 +26,12 @@ using TOML
 # Configuration
 # ---------------------------------------------------------------------------
 
-const WASHU_BASE  = "http://geoschemdata.wustl.edu/ExtData/GEOS_C180/GEOS_IT"
-const DATE        = Date(2023, 6, 1)
-const Nc          = 180
-const DATESTR     = Dates.format(DATE, "yyyymmdd")
+const WASHU_BASE   = "http://geoschemdata.wustl.edu/ExtData/GEOS_C180/GEOS_IT"
+const DATE         = Date(2023, 6, 1)
+const Nc           = 180
+const DATESTR      = Dates.format(DATE, "yyyymmdd")
+const N_WINDOWS    = 12        # 12 hours (of 24 in the daily file) — keeps tarball < 2 GB
+const HEADER_SIZE  = 8192
 
 # ---------------------------------------------------------------------------
 # Step 1: Download raw GEOS-IT C180 CTM_A1 NetCDF
@@ -131,6 +135,44 @@ function preprocess_data(raw_dir::String, outdir::String)
 end
 
 # ---------------------------------------------------------------------------
+# Step 2b: Truncate binary to N_WINDOWS (keeps artifact under 2 GB)
+# ---------------------------------------------------------------------------
+
+function truncate_binary!(bin_path::String, n_windows::Int)
+    # Read header JSON
+    header_bytes = Vector{UInt8}(undef, HEADER_SIZE)
+    open(bin_path, "r") do io
+        read!(io, header_bytes)
+    end
+    json_end = something(findfirst(==(0x00), header_bytes), HEADER_SIZE + 1) - 1
+    header = JSON3.read(String(header_bytes[1:json_end]))
+
+    old_nt = Int(header[:Nt])
+    if n_windows >= old_nt
+        @info "Binary already has $old_nt windows — no truncation needed"
+        return
+    end
+
+    window_bytes = Int(header[:window_bytes])
+    new_size = HEADER_SIZE + n_windows * window_bytes
+
+    # Rewrite header with updated Nt
+    header_dict = Dict{String,Any}(String(k) => v for (k, v) in pairs(header))
+    header_dict["Nt"] = n_windows
+    new_json = JSON3.write(header_dict)
+
+    new_header = zeros(UInt8, HEADER_SIZE)
+    copyto!(new_header, 1, Vector{UInt8}(new_json), 1, length(new_json))
+
+    open(bin_path, "r+") do io
+        write(io, new_header)
+        truncate(io, new_size)
+    end
+
+    @info "Truncated: $old_nt → $n_windows windows ($(round(new_size / 1e9, digits=2)) GB)"
+end
+
+# ---------------------------------------------------------------------------
 # Step 3: Create tarball for hosting as artifact
 # ---------------------------------------------------------------------------
 
@@ -202,7 +244,13 @@ function main()
 
     raw_dir     = download_geosit_data(outdir)
     preproc_dir = preprocess_data(raw_dir, outdir)
-    tarball     = create_tarball(preproc_dir, outdir)
+
+    # Truncate to N_WINDOWS to keep tarball under GitHub's 2 GB limit
+    ft_tag = "float32"
+    bin_file = joinpath(preproc_dir, "geosfp_cs_$(DATESTR)_$(ft_tag).bin")
+    truncate_binary!(bin_file, N_WINDOWS)
+
+    tarball = create_tarball(preproc_dir, outdir)
 
     println()
     println("=" ^ 70)

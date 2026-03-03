@@ -6,11 +6,11 @@
 #   julia --project=. scripts/quickstart.jl
 #
 # What it does:
-#   1. Downloads preprocessed GEOS-IT C180 data via Julia artifact (~700 MB)
-#   2. Runs a 1-day CO₂ transport simulation on cubed-sphere C180 (~0.5°)
+#   1. Downloads preprocessed GEOS-IT C180 data via Julia artifact (~1.4 GB)
+#   2. Runs a 12-hour CO₂ transport simulation on cubed-sphere C180 (~0.5°)
 #   3. Produces a lat-lon regridded visualization (PNG snapshot)
 #
-# Data: ~700 MB compressed, auto-downloaded on first run, cached thereafter.
+# Data: ~1.4 GB compressed, auto-downloaded on first run, cached thereafter.
 # No authentication, GPU, or manual preprocessing required.
 # ===========================================================================
 
@@ -72,7 +72,7 @@ function run_simulation(data_dir::String)
     output_file = joinpath(pwd(), "quickstart_output.nc")
     config["output"]["filename"] = output_file
 
-    @info "Building model (CPU, C180 cubed-sphere, 1 day)..."
+    @info "Building model (CPU, C180 cubed-sphere, 12 hours)..."
     model = build_model_from_config(config)
 
     @info "Running simulation..."
@@ -137,7 +137,7 @@ end
 function main()
     println("=" ^ 70)
     println("  AtmosTransport Quickstart")
-    println("  1-day CO₂ transport on GEOS-IT C180 cubed-sphere (~0.5°)")
+    println("  12-hour CO₂ transport on GEOS-IT C180 cubed-sphere (~0.5°)")
     println("=" ^ 70)
     println()
 

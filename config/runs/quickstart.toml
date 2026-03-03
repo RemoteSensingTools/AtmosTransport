@@ -2,7 +2,7 @@
 # Quickstart demo — GEOS-IT C180 cubed-sphere (~0.5°)
 #
 # Preprocessed binary data is downloaded automatically as a Julia artifact
-# on first run (~700 MB compressed, 1 day of GEOS-IT C180).
+# on first run (~1.4 GB compressed, 12 hours of GEOS-IT C180).
 #
 # Usage:
 #   julia --project=. scripts/quickstart.jl

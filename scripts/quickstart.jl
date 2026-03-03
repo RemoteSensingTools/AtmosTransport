@@ -1,52 +1,56 @@
 #!/usr/bin/env julia
 # ===========================================================================
-# One-command quickstart: download data → run simulation → visualize
+# One-command quickstart: check data → run simulation → visualize
 #
 # Usage:
 #   julia --project=. scripts/quickstart.jl
 #
-# What it does:
-#   1. Downloads preprocessed GEOS-IT C180 data via Julia artifact (~1.4 GB)
-#   2. Runs a 12-hour CO₂ transport simulation on cubed-sphere C180 (~0.5°)
-#   3. Produces a lat-lon regridded visualization (PNG snapshot)
+# Data setup (one-time):
+#   1. Download the quickstart tarball (~1.4 GB) from:
+#      https://github.com/RemoteSensingTools/AtmosTransport/releases/tag/data-v1
+#   2. Extract:
+#      mkdir -p ~/data/AtmosTransport
+#      tar -xzf quickstart_met_data.tar.gz -C ~/data/AtmosTransport/
 #
-# Data: ~1.4 GB compressed, auto-downloaded on first run, cached thereafter.
-# No authentication, GPU, or manual preprocessing required.
+# What it does:
+#   1. Runs a 12-hour CO₂ transport simulation on cubed-sphere C180 (~0.5°)
+#   2. Uses EDGAR v8.0 anthropogenic CO₂ emissions
+#   3. Produces a lat-lon regridded visualization (PNG snapshot)
 # ===========================================================================
 
-using Pkg
+const DATA_DIR = expanduser("~/data/AtmosTransport/quickstart_met_data")
+const RELEASE_URL = "https://github.com/RemoteSensingTools/AtmosTransport/releases/tag/data-v1"
 
 # ---------------------------------------------------------------------------
-# Step 1: Ensure met data is available
+# Step 1: Check that data is available
 # ---------------------------------------------------------------------------
 
-const ARTIFACT_NAME = "quickstart_met_data"
+function check_data()
+    if !isdir(DATA_DIR)
+        println(stderr, """
+        ERROR: Quickstart data not found at:
+          $DATA_DIR
 
-function ensure_data()
-    # Check if artifact is configured
-    artifacts_toml = joinpath(@__DIR__, "..", "Artifacts.toml")
-    if isfile(artifacts_toml)
-        try
-            hash = Pkg.Artifacts.artifact_hash(ARTIFACT_NAME, artifacts_toml)
-            if hash !== nothing
-                path = Pkg.Artifacts.artifact_path(hash)
-                if isdir(path) && !isempty(readdir(path))
-                    @info "Using artifact data: $path"
-                    return path
-                end
-                Pkg.Artifacts.ensure_artifact_installed(ARTIFACT_NAME, artifacts_toml)
-                @info "Downloaded artifact data: $path"
-                return path
-            end
-        catch e
-            @warn "Artifact download failed: $e"
-        end
+        Download and extract the data first:
+          1. Download quickstart_met_data.tar.gz from:
+             $RELEASE_URL
+          2. Extract:
+             mkdir -p ~/data/AtmosTransport
+             tar -xzf quickstart_met_data.tar.gz -C ~/data/AtmosTransport/
+        """)
+        exit(1)
     end
 
-    @warn "Quickstart artifact not configured in Artifacts.toml."
-    @info "To build the artifact locally (maintainer only):"
-    @info "  julia --project=. scripts/build_quickstart_artifact.jl"
-    error("No quickstart data available. See above for instructions.")
+    # Check for met binary
+    bin_files = filter(f -> endswith(f, ".bin") && startswith(f, "geosfp_cs"),
+                       readdir(DATA_DIR))
+    if isempty(bin_files)
+        println(stderr, "ERROR: No met binary files found in $DATA_DIR")
+        exit(1)
+    end
+
+    @info "Quickstart data found: $DATA_DIR"
+    return DATA_DIR
 end
 
 # ---------------------------------------------------------------------------
@@ -54,19 +58,22 @@ end
 # ---------------------------------------------------------------------------
 
 function run_simulation(data_dir::String)
-    # Load AtmosTransport (CPU mode — no GPU needed)
     @info "Loading AtmosTransport..."
     using AtmosTransport
     using AtmosTransport.IO: build_model_from_config
     import AtmosTransport.Models: run!
     import TOML
 
-    # Read config and override data path
     config_path = joinpath(@__DIR__, "..", "config", "runs", "quickstart.toml")
     config = TOML.parsefile(config_path)
 
-    # Point met data to resolved preprocessed directory
+    # Override paths to use verified data directory
     config["met_data"]["preprocessed_dir"] = data_dir
+
+    edgar_file = joinpath(data_dir, "edgar_co2_cs_c180_float32.bin")
+    if isfile(edgar_file)
+        config["tracers"]["co2"]["edgar_file"] = edgar_file
+    end
 
     # Put output in current directory
     output_file = joinpath(pwd(), "quickstart_output.nc")
@@ -141,7 +148,7 @@ function main()
     println("=" ^ 70)
     println()
 
-    data_dir = ensure_data()
+    data_dir = check_data()
     nc_file  = run_simulation(data_dir)
     visualize(nc_file)
 

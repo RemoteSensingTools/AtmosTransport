@@ -1,7 +1,7 @@
 #!/usr/bin/env julia
 # ===========================================================================
-# Build quickstart artifact: download GEOS-IT C180 from WashU → preprocess
-# to flat binary → create tarball for GitHub Release hosting.
+# Build quickstart data: download GEOS-IT C180 from WashU → preprocess
+# to flat binary → preprocess EDGAR CO2 → create tarball for GitHub Release.
 #
 # Usage (maintainer only):
 #   julia --project=. scripts/build_quickstart_artifact.jl [output_dir]
@@ -10,8 +10,8 @@
 #   1. Download 1 day of GEOS-IT C180 CTM_A1 from WashU archive (~4.2 GB)
 #   2. Preprocess to flat binary via preprocess_geosfp_cs.jl (~4 GB)
 #   3. Truncate to 12 hours (keeps tarball < 2 GB GitHub Release limit)
-#   4. Package preprocessed binary as tarball (~1.4 GB compressed)
-#   5. Print SHA256 and Artifacts.toml entry
+#   4. Preprocess EDGAR v8.0 CO2 emissions to C180 cubed-sphere binary
+#   5. Package everything as tarball (~1.4 GB compressed)
 #
 # No authentication required (WashU archive is public HTTP).
 # ===========================================================================
@@ -49,7 +49,7 @@ function download_geosit_data(outdir::String)
 
     if isfile(dest) && filesize(dest) > 1_000_000
         @info "Raw data already cached: $dest ($(round(filesize(dest) / 1e9, digits=2)) GB)"
-        return joinpath(outdir, "raw")
+        return (joinpath(outdir, "raw"), dest)
     end
 
     @info "Downloading GEOS-IT C$(Nc) CTM_A1 from WashU..."
@@ -62,7 +62,7 @@ function download_geosit_data(outdir::String)
             Downloads.download(url, dest)
             sz = round(filesize(dest) / 1e9, digits=2)
             @info "  Downloaded: $sz GB"
-            return joinpath(outdir, "raw")
+            return (joinpath(outdir, "raw"), dest)
         catch e
             @warn "Attempt $attempt failed: $e"
             isfile(dest) && rm(dest; force=true)
@@ -135,7 +135,7 @@ function preprocess_data(raw_dir::String, outdir::String)
 end
 
 # ---------------------------------------------------------------------------
-# Step 2b: Truncate binary to N_WINDOWS (keeps artifact under 2 GB)
+# Step 2b: Truncate binary to N_WINDOWS (keeps tarball under 2 GB)
 # ---------------------------------------------------------------------------
 
 function truncate_binary!(bin_path::String, n_windows::Int)
@@ -173,7 +173,47 @@ function truncate_binary!(bin_path::String, n_windows::Int)
 end
 
 # ---------------------------------------------------------------------------
-# Step 3: Create tarball for hosting as artifact
+# Step 3: Preprocess EDGAR CO2 to C180 cubed-sphere binary
+# ---------------------------------------------------------------------------
+
+function preprocess_edgar(nc_ref_file::String, outdir::String)
+    edgar_bin = joinpath(outdir, "preprocessed", "edgar_co2_cs_c180_float32.bin")
+
+    if isfile(edgar_bin) && filesize(edgar_bin) > 4096
+        @info "EDGAR binary already exists: $edgar_bin ($(round(filesize(edgar_bin) / 1e6, digits=1)) MB)"
+        return edgar_bin
+    end
+
+    @info "Preprocessing EDGAR CO2 → C180 cubed-sphere..."
+
+    project_dir = dirname(dirname(@__FILE__))
+    edgar_script = joinpath(project_dir, "scripts", "preprocess_edgar_cs.jl")
+
+    # Find EDGAR source NetCDF
+    edgar_file = expanduser("~/data/emissions/edgar_v8/v8.0_FT2022_GHG_CO2_2022_TOTALS_emi.nc")
+    isfile(edgar_file) || error("""
+        EDGAR source NetCDF not found: $edgar_file
+        Download from: https://edgar.jrc.ec.europa.eu/dataset_ghg80
+        Expected: v8.0_FT2022_GHG_CO2_2022_TOTALS_emi.nc (~26 MB)
+    """)
+
+    env = copy(ENV)
+    env["EDGAR_FILE"]      = edgar_file
+    env["OUTFILE"]         = edgar_bin
+    env["NC_GRID"]         = string(Nc)
+    env["GEOSFP_REF_FILE"] = nc_ref_file
+
+    cmd = setenv(`$(Base.julia_cmd()) --project=$project_dir $edgar_script`, env)
+    @info "  Command: $cmd"
+    run(cmd)
+
+    isfile(edgar_bin) || error("EDGAR preprocessing did not produce: $edgar_bin")
+    @info "EDGAR binary: $edgar_bin ($(round(filesize(edgar_bin) / 1e6, digits=1)) MB)"
+    return edgar_bin
+end
+
+# ---------------------------------------------------------------------------
+# Step 4: Create tarball for hosting on GitHub Releases
 # ---------------------------------------------------------------------------
 
 function create_tarball(preproc_dir::String, outdir::String)
@@ -184,8 +224,7 @@ function create_tarball(preproc_dir::String, outdir::String)
     @info "Creating tarball: $tarball"
     @info "  Files: $(join(bin_files, ", "))"
 
-    # Create tarball with preprocessed dir as root, renaming to "quickstart_met_data"
-    # so it unpacks cleanly for the artifact system
+    # Stage files into a clean directory matching the tarball name
     staging = joinpath(outdir, "quickstart_met_data")
     mkpath(staging)
     for f in bin_files
@@ -201,30 +240,6 @@ function create_tarball(preproc_dir::String, outdir::String)
     @info "Tarball: $tarball ($sz MB)"
     @info "SHA256: $sha"
 
-    println()
-    println("=" ^ 70)
-    println("Add to Artifacts.toml:")
-    println("=" ^ 70)
-    println("""
-[quickstart_met_data]
-git-tree-sha1 = "<run Pkg.Artifacts.create_artifact() to compute this>"
-lazy = true
-
-    [[quickstart_met_data.download]]
-    url = "https://github.com/RemoteSensingTools/AtmosTransport/releases/download/data-v1/quickstart_met_data.tar.gz"
-    sha256 = "$sha"
-""")
-    println("To compute git-tree-sha1:")
-    println("""
-    julia -e '
-    using Pkg, Pkg.Artifacts
-    hash = create_artifact() do dir
-        run(`tar -xzf $tarball -C \$dir`)
-    end
-    println("git-tree-sha1 = \\"", bytes2hex(hash.bytes), "\\"")
-    '
-""")
-
     return tarball
 end
 
@@ -237,12 +252,13 @@ function main()
         joinpath(homedir(), "data", "AtmosTransport", "quickstart_build")
 
     println("=" ^ 70)
-    println("  AtmosTransport Quickstart Artifact Builder")
+    println("  AtmosTransport Quickstart Data Builder")
     println("  GEOS-IT C$(Nc) cubed-sphere, $(Dates.format(DATE, "yyyy-mm-dd"))")
+    println("  Includes: met data (12h) + EDGAR CO2 emissions")
     println("=" ^ 70)
     println()
 
-    raw_dir     = download_geosit_data(outdir)
+    raw_dir, nc_ref_file = download_geosit_data(outdir)
     preproc_dir = preprocess_data(raw_dir, outdir)
 
     # Truncate to N_WINDOWS to keep tarball under GitHub's 2 GB limit
@@ -250,13 +266,22 @@ function main()
     bin_file = joinpath(preproc_dir, "geosfp_cs_$(DATESTR)_$(ft_tag).bin")
     truncate_binary!(bin_file, N_WINDOWS)
 
+    # Preprocess EDGAR CO2 emissions for C180
+    preprocess_edgar(nc_ref_file, outdir)
+
     tarball = create_tarball(preproc_dir, outdir)
 
     println()
     println("=" ^ 70)
     println("  Done!")
     println("  Tarball: $tarball")
-    println("  Upload to GitHub Release and update Artifacts.toml")
+    println()
+    println("  To publish:")
+    println("    1. Upload $tarball to GitHub Releases:")
+    println("       https://github.com/RemoteSensingTools/AtmosTransport/releases/tag/data-v1")
+    println("    2. Users download and extract:")
+    println("       mkdir -p ~/data/AtmosTransport")
+    println("       tar -xzf quickstart_met_data.tar.gz -C ~/data/AtmosTransport/")
     println("=" ^ 70)
 end
 

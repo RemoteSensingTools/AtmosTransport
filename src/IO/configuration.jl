@@ -8,13 +8,13 @@
 
 using TOML
 using Dates
-import Pkg
 using ..Architectures: CPU, GPU, array_type
 using ..Grids: LatitudeLongitudeGrid, CubedSphereGrid, merge_upper_levels, n_levels
 using ..Parameters: load_parameters
 using ..Sources: AbstractSource, EdgarSource, CarbonTrackerSource, GFASSource,
                  JenaCarboScopeSource, CATRINESource, load_inventory,
-                 load_cams_co2, load_gridfed_fossil_co2, load_edgar_sf6, load_zhang_rn222
+                 load_cams_co2, load_gridfed_fossil_co2, load_edgar_sf6, load_zhang_rn222,
+                 GriddedEmission, CubedSphereEmission
 using ..Diagnostics: ColumnMeanDiagnostic, SurfaceSliceDiagnostic, RegridDiagnostic,
                      Full3DDiagnostic, MetField2DDiagnostic, SigmaLevelDiagnostic
 using ..Chemistry: NoChemistry, RadioactiveDecay, CompositeChemistry
@@ -213,35 +213,10 @@ end
 """
     _resolve_data_path(raw_path) → String
 
-Resolve a configuration path. Handles:
-- `~` home directory expansion
-- `@artifact:<name>` Julia artifact resolution (lazy download on first access)
-- Ordinary paths (returned as-is after expanduser)
+Resolve a configuration path with `~` home directory expansion.
 """
 function _resolve_data_path(raw_path::String)
     isempty(raw_path) && return ""
-    if startswith(raw_path, "@artifact:")
-        artifact_name = raw_path[11:end]
-        try
-            # Use Pkg.Artifacts to resolve; triggers lazy download if needed
-            artifacts_toml = joinpath(dirname(dirname(@__DIR__)), "Artifacts.toml")
-            if isfile(artifacts_toml)
-                hash = Pkg.Artifacts.artifact_hash(artifact_name, artifacts_toml)
-                if hash !== nothing
-                    path = Pkg.Artifacts.artifact_path(hash)
-                    if !isdir(path)
-                        Pkg.Artifacts.ensure_artifact_installed(artifact_name, artifacts_toml)
-                    end
-                    return path
-                end
-            end
-            @warn "Artifact '$artifact_name' not found in Artifacts.toml; using raw path"
-            return raw_path
-        catch e
-            @warn "Failed to resolve artifact '$artifact_name': $e"
-            return raw_path
-        end
-    end
     return expanduser(raw_path)
 end
 

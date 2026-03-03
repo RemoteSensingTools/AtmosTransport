@@ -9,22 +9,28 @@ comparison, see [METEO_PREPROCESSING.md](METEO_PREPROCESSING.md).
 ## 5-Minute Quickstart
 
 Run a 12-hour CO₂ transport simulation on GEOS-IT C180 cubed-sphere (~0.5°)
-with a single command — no GPU, no external data download, no preprocessing
-required:
+with EDGAR v8.0 anthropogenic emissions — no GPU or preprocessing required.
 
 ```bash
-# Install dependencies (first time only)
+# 1. Install Julia dependencies (first time only)
 julia --project=. -e 'using Pkg; Pkg.instantiate()'
 
-# Run quickstart (downloads ~1.4 GB of preprocessed GEOS-IT C180 data, then simulates)
+# 2. Download quickstart data (~1.4 GB) from GitHub Releases:
+#    https://github.com/RemoteSensingTools/AtmosTransport/releases/tag/data-v1
+#    Then extract:
+mkdir -p ~/data/AtmosTransport
+tar -xzf quickstart_met_data.tar.gz -C ~/data/AtmosTransport/
+
+# 3. Run the quickstart
 julia --project=. scripts/quickstart.jl
 ```
 
-This auto-downloads preprocessed GEOS-IT C180 cubed-sphere met data (via
-Julia Artifacts), runs a 12-hour simulation on CPU, and produces a lat-lon
-regridded visualization. Output: `quickstart_output.nc` + snapshot PNG.
+The tarball contains preprocessed GEOS-IT C180 cubed-sphere met data (12 hours)
+and EDGAR v8.0 CO₂ emissions pre-regridded to the C180 grid. The quickstart
+runs on CPU and produces a lat-lon regridded visualization.
+Output: `quickstart_output.nc` + snapshot PNG.
 
-To run the quickstart manually with full control:
+To run with full control over parameters:
 ```bash
 julia --project=. scripts/run.jl config/runs/quickstart.toml
 ```
@@ -59,7 +65,7 @@ julia --threads=2 --project=. scripts/run.jl <config.toml>
 
 | Config | Grid | Met Source | GPU | Description |
 |--------|------|-----------|-----|-------------|
-| **`quickstart.toml`** | **144×73 lat-lon** | **GEOS-FP OPeNDAP** | **No** | **7-day demo, auto-downloads data** |
+| **`quickstart.toml`** | **C180 cubed-sphere** | **GEOS-IT C180** | **No** | **12-hour demo, EDGAR CO₂** |
 | `geosfp_c720_june2024_fixed.toml` | C720 cubed-sphere | GEOS-FP NetCDF | Yes | 30-day June 2024, mass_flux_dt=450, level merging |
 | `geosit_c180_june2023.toml` | C180 cubed-sphere | GEOS-IT NetCDF | Yes | 30-day June 2023, slopes advection |
 | `geosit_c180_june2023_ppm.toml` | C180 cubed-sphere | GEOS-IT NetCDF | Yes | 30-day June 2023, PPM-7 advection |

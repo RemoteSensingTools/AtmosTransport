@@ -1,15 +1,12 @@
 # Artifact definitions for AtmosTransport
 #
-# To populate: run `julia --project=. scripts/build_quickstart_artifact.jl`
-# then use `Pkg.Artifacts.create_artifact()` to compute git-tree-sha1,
-# and update the hashes below.
-#
+# To rebuild: julia --project=. scripts/build_quickstart_artifact.jl
 # See: https://pkgdocs.julialang.org/v1/artifacts/
 
-# [quickstart_met_data]
-# git-tree-sha1 = "<run build_quickstart_artifact.jl to compute>"
-# lazy = true
-#
-#     [[quickstart_met_data.download]]
-#     url = "https://github.com/RemoteSensingTools/AtmosTransport/releases/download/data-v1/quickstart_met_data.tar.gz"
-#     sha256 = "<run build_quickstart_artifact.jl to compute>"
+[quickstart_met_data]
+git-tree-sha1 = "18e892a928a8e47159464d1374188937503290d9"
+lazy = true
+
+    [[quickstart_met_data.download]]
+    url = "https://github.com/RemoteSensingTools/AtmosTransport/releases/download/data-v1/quickstart_met_data.tar.gz"
+    sha256 = "220ff841b00a0a0ddf5bbadaa72aa00a29640c22de6276a69d4f2570de5b30b4"

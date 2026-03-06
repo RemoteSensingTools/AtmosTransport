@@ -53,7 +53,8 @@ export AbstractOutputWriter, AbstractOutputSchedule, AbstractOutputGrid, LatLonO
 export NetCDFOutputWriter, BinaryOutputWriter, TimeIntervalSchedule, IterationIntervalSchedule
 export finalize_output!, convert_binary_to_netcdf
 export TemporalInterpolator, interpolation_weight
-export load_configuration, build_model_from_config
+export load_configuration, build_model_from_config, get_pending_ic,
+       finalize_ic_vertical_interp!, has_deferred_ic_vinterp
 export GeosFPCubedSphereTimestep
 export read_geosfp_cs_timestep, to_haloed_panels, cgrid_to_staggered_panels
 export read_geosfp_cs_cmfmc, read_geosfp_cs_surface_fields
@@ -71,7 +72,7 @@ export find_geosfp_cs_files, find_era5_files, ensure_local_cache
 # Met driver abstraction (Phase 4)
 export AbstractMetDriver, AbstractRawMetDriver, AbstractMassFluxMetDriver
 export total_windows, window_dt, steps_per_window, load_met_window!
-export load_cmfmc_window!, load_surface_fields_window!
+export load_cmfmc_window!, load_dtrain_window!, load_surface_fields_window!, load_all_window!
 
 # Met buffer types
 export AbstractMetBuffer, AbstractCPUStagingBuffer
@@ -116,6 +117,9 @@ include("output_writers.jl")
 # Binary output writer (fast sequential writes)
 include("binary_output_writer.jl")
 
+# Initial conditions loader (before configuration.jl which uses PendingInitialConditions)
+include("initial_conditions.jl")
+
 # Run configuration
 include("configuration.jl")
 
@@ -141,8 +145,5 @@ include("wind_processing.jl")
 include("era5_met_driver.jl")
 include("preprocessed_latlon_driver.jl")
 include("geosfp_cs_met_driver.jl")
-
-# Initial conditions loader
-include("initial_conditions.jl")
 
 end # module IO

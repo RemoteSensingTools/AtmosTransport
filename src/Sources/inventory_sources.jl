@@ -3,7 +3,7 @@
 #
 # Each inventory is a concrete type carrying metadata (version, species, sector).
 # `load_inventory` dispatches on (inventory type, grid type) to produce either
-# a `GriddedEmission` (lat-lon) or `CubedSphereEmission` (cubed-sphere).
+# a `SurfaceFlux` (lat-lon) or `SurfaceFlux` (cubed-sphere).
 #
 # This enables clean multi-inventory comparisons (e.g. CATRINE project):
 #   sources = [
@@ -23,7 +23,7 @@ about the inventory (version, default file paths, species, sector info).
 
 Use `load_inventory(source, grid; kwargs...)` to load and regrid.
 """
-abstract type AbstractInventorySource <: AbstractSource end
+abstract type AbstractInventorySource <: AbstractSurfaceFlux end
 
 # No-op apply — inventories are loaded via load_inventory, not applied directly
 apply_surface_flux!(tracers, ::AbstractInventorySource, grid, dt) = nothing
@@ -114,13 +114,13 @@ CATRINESource(; dataset="default", version="1.0", filepath="") =
 # =====================================================================
 
 """
-    load_inventory(source, grid; kwargs...) → AbstractGriddedEmission
+    load_inventory(source, grid; kwargs...) → AbstractSurfaceFlux
 
 Load an emission inventory and regrid to `grid`. Dispatches on both
 the inventory type and the grid type:
 
-    load_inventory(::EdgarSource, ::LatitudeLongitudeGrid; year, file)  → GriddedEmission
-    load_inventory(::EdgarSource, ::CubedSphereGrid; year, file)        → CubedSphereEmission
+    load_inventory(::EdgarSource, ::LatitudeLongitudeGrid; year, file)  → SurfaceFlux
+    load_inventory(::EdgarSource, ::CubedSphereGrid; year, file)        → SurfaceFlux
 """
 function load_inventory end
 
@@ -166,8 +166,10 @@ function load_inventory(src::EdgarSource, grid::CubedSphereGrid{FT};
         @info "  EDGAR regridded to C$Nc"
     end
 
-    return CubedSphereEmission(flux_panels, src.species,
+    sf = SurfaceFlux(flux_panels, src.species,
         "EDGAR $(src.version) $(uppercase(string(src.species))) $year")
+    log_flux_integral(sf, grid)
+    return sf
 end
 
 # --- CarbonTracker on lat-lon grid ---
@@ -223,6 +225,51 @@ end
 # =====================================================================
 # Default file path helpers
 # =====================================================================
+
+"""
+    log_flux_integral(sf::SurfaceFlux, grid)
+
+Compute and log the global integral of a SurfaceFlux in useful units.
+For CS grids: sum(flux × Aᶜ) over all 6 panels.
+For lat-lon grids: sum(flux × cell_areas).
+"""
+function log_flux_integral(sf::SurfaceFlux{CubedSphereLayout}, grid::CubedSphereGrid)
+    total_kg_s = zero(Float64)
+    for p in 1:6
+        total_kg_s += sum(Float64.(sf.flux[p]) .* Float64.(grid.Aᶜ[p]))
+    end
+    _print_flux_integral(sf.label, sf.species, total_kg_s)
+end
+
+function log_flux_integral(sf::SurfaceFlux{LatLonLayout}, grid::LatitudeLongitudeGrid)
+    areas = latlon_cell_areas(Float64.(grid.λᶠ), Float64.(grid.φᶠ))
+    total_kg_s = sum(Float64.(sf.flux) .* areas)
+    _print_flux_integral(sf.label, sf.species, total_kg_s)
+end
+
+function log_flux_integral(sf::TimeVaryingSurfaceFlux{CubedSphereLayout}, grid::CubedSphereGrid)
+    # Log integral of first snapshot
+    panels = sf.flux_data[1]
+    total_kg_s = zero(Float64)
+    for p in 1:6
+        total_kg_s += sum(Float64.(panels[p]) .* Float64.(grid.Aᶜ[p]))
+    end
+    _print_flux_integral("$(sf.label) [t=1]", sf.species, total_kg_s)
+end
+
+function _print_flux_integral(label, species, total_kg_s)
+    total_per_yr = total_kg_s * SECONDS_PER_YEAR
+    if species === :co2 || species === :fossil_co2
+        @info "  Flux integral: $label → $(round(total_per_yr / 1e12, digits=3)) PgCO2/yr " *
+              "($(round(total_per_yr / 1e12 / KGC_TO_KGCO2, digits=3)) PgC/yr)"
+    elseif species === :sf6
+        @info "  Flux integral: $label → $(round(total_per_yr / 1e6, digits=3)) kt/yr"
+    elseif species === :rn222
+        @info "  Flux integral: $label → $(round(total_per_yr, digits=3)) kg/yr"
+    else
+        @info "  Flux integral: $label → $(round(total_per_yr, sigdigits=4)) kg/yr"
+    end
+end
 
 function _default_edgar_path(year::Int, species::Symbol=:co2)
     sp = uppercase(string(species))

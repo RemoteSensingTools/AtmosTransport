@@ -26,6 +26,7 @@ import ..Architectures: architecture
 
 export AbstractGrid, AbstractStructuredGrid
 export LatitudeLongitudeGrid, CubedSphereGrid
+export GRID_COORD_STATUS, set_coord_status!, has_gmao_coords
 export AbstractVerticalCoordinate, HybridSigmaPressure
 export AbstractTopology, Periodic, Bounded, CubedPanel, Flat
 export AbstractLocationType, Center, Face

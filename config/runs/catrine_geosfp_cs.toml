@@ -31,43 +31,65 @@ start_date       = "2021-12-01"
 end_date         = "2023-12-31"
 dt               = 900                   # advection sub-step [s]
 met_interval     = 10800                 # 3-hour met updates
+mass_flux_dt     = 450
 Hp               = 3
 
 # --- Initial conditions ---
 [initial_conditions]
-file       = "~/data/catrine/initial_conditions_20211201.nc"
-co2        = "CO2"
-sf6        = "SF6"
+co2.file     = "~/data/AtmosTransport/catrine/InitialConditions/startCO2_202112010000.nc"
+co2.variable = "CO2"
+sf6.file     = "~/data/AtmosTransport/catrine/InitialConditions/startSF6_202112010000.nc"
+sf6.variable = "SF6"
 
 # --- Tracers ---
 
 [tracers.co2]
-emission = "edgar"
-edgar_version = "v8.0"
-year     = 2022
-# Note: For full CATRINE compliance, replace with cams_co2 on lat-lon.
-# CS path uses EDGAR as proxy; true CAMS fluxes need lat-lon→CS regrid.
+emission   = "lmdz_co2"
+dir        = "~/data/AtmosTransport/catrine/Emissions/LMDZ_fluxes"
+species    = "co2"
+flux_var   = "flux_apos"
+start_date = "2021-12-01"
+end_date   = "2023-12-31"
 
 [tracers.fossil_co2]
-emission = "none"
-# GridFED not yet supported on CS; initialize from zero
+emission = "gridfed"
+dir      = "~/data/AtmosTransport/catrine/Emissions/gridfed"
+species  = "fossil_co2"
+year     = 2022
 
 [tracers.sf6]
 emission         = "edgar_sf6"
-file             = "~/data/catrine/v8.0_FT2022_GHG_SF6_2022_TOTALS_emi.nc"
-noaa_growth_file = "~/data/catrine/sf6_gr_gl.txt"
+file             = "~/data/AtmosTransport/catrine/Emissions/edgar_v8/v8.0_FT2022_GHG_SF6_2022_TOTALS_emi.nc"
+noaa_growth_file = "~/data/AtmosTransport/catrine/Emissions/sf6_gr_gl.txt"
 year             = 2022
 scale_year       = 2022
 
 [tracers.rn222]
 emission   = "zhang_rn222"
-dir        = "~/data/catrine/ZHANG_Rn222/"
+dir        = "~/data/AtmosTransport/catrine/Emissions/ZHANG_Rn222/"
 chemistry  = "decay"
 half_life  = 330350.4
 
 # --- Chemistry ---
 [chemistry]
 type      = "composite"
+
+# --- Advection ---
+[advection]
+scheme    = "ppm"
+ppm_order = 7
+
+# --- Convection ---
+[convection]
+type = "tiedtke"
+
+# --- Diffusion ---
+[diffusion]
+type   = "pbl"
+beta_h = 15.0
+Kz_bg  = 0.1
+Kz_min = 0.01
+Kz_max = 500.0
 
 # --- Output (3-hourly, regridded to lat-lon) ---
 [output]

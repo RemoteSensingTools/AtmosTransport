@@ -64,7 +64,7 @@ struct CubedSphereGrid{FT, Arch, VZ} <: AbstractStructuredGrid{FT, Arch}
     λᶠ :: NTuple{6, Matrix{FT}}
     "cell-face latitudes per panel (Nc+1 × Nc+1) [degrees]"
     φᶠ :: NTuple{6, Matrix{FT}}
-    "cell areas per panel [m²]"
+    "cell areas per panel [m²] — gnomonic default, overwritten by GMAO when available"
     Aᶜ :: NTuple{6, Matrix{FT}}
     "local x metric terms (edge lengths) per panel [m]"
     Δxᶜ :: NTuple{6, Matrix{FT}}
@@ -82,6 +82,32 @@ struct CubedSphereGrid{FT, Arch, VZ} <: AbstractStructuredGrid{FT, Arch}
     connectivity :: PanelConnectivity
     "vertical coordinate"
     vertical     :: VZ
+end
+
+# ---------------------------------------------------------------------------
+# Coordinate source tracking
+# ---------------------------------------------------------------------------
+
+"""
+    GRID_COORD_STATUS
+
+Tracks whether grid coordinates were loaded from GMAO files or use default
+gnomonic coordinates. Keyed by `objectid(grid)`.
+
+Set by `_load_gmao_coordinates!` in `src/IO/configuration.jl`.
+Checked by `regrid_latlon_to_cs` to warn about potential coordinate mismatches.
+"""
+const GRID_COORD_STATUS = Dict{UInt, @NamedTuple{source::Symbol, file::String}}()
+
+"""Mark a grid as having GMAO-loaded coordinates."""
+function set_coord_status!(grid, source::Symbol, file::String="")
+    GRID_COORD_STATUS[objectid(grid)] = (source=source, file=file)
+end
+
+"""Check if grid has GMAO coordinates loaded."""
+function has_gmao_coords(grid)
+    status = get(GRID_COORD_STATUS, objectid(grid), nothing)
+    return status !== nothing && status.source === :gmao
 end
 
 # ---------------------------------------------------------------------------

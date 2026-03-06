@@ -85,3 +85,10 @@ These are hard-won correctness constraints. Violating any causes silent wrong re
 7. **Diffusion for column-mean output**: without vertical mixing, surface emissions stay
    in bottom level. Column-mean dilutes by ~72x → looks like zero transport. Always enable
    `[diffusion]` for realistic visualization.
+
+8. **Column-major loop ordering**: Julia is column-major (like Fortran). In nested loops
+   over arrays, the **leftmost/innermost index must be the innermost loop**. For a 3D
+   array `A[i, j, k]`, loop as `for k, for j, for i` (i innermost). Wrong order causes
+   catastrophic cache misses — e.g. a CPU loop over `(Nc, Nc, Nz)` panels went from
+   3.8 s to 0.8 s just by fixing loop order. Always verify loop nesting matches memory
+   layout in any new CPU-side code.

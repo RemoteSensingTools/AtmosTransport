@@ -1,0 +1,33 @@
+# GridFED fossil CO2 emissions → cubed-sphere binary
+#
+# Source: GridFED v2024.0 monthly CO2 emissions (0.1° lat-lon)
+# Units: kgCO2/month/m² → kgCO2/m²/s
+# Reference total: ~39.6 PgCO2/yr (2022)
+
+[source]
+type = "netcdf_latlon"
+path = "~/data/AtmosTransport/catrine/Emissions/gridfed/*.nc"
+variable = "TOTAL"
+lon_coord = "longitude"
+lat_coord = "latitude"
+time_dim = "time"
+
+[units]
+input = "kgCO2/m2/month"
+output = "kgCO2/m2/s"
+conversions = ["divide_by_seconds_per_month"]
+
+[target]
+grid = "cubed_sphere"
+Nc = 180
+coord_file = "~/data/geosit_c180_catrine/20211201/GEOSIT.20211201.CTM_A1.C180.nc"
+gridspec_file = "data/grids/cs_c180_gridspec.nc"
+
+[output]
+path = "~/data/AtmosTransport/catrine/preprocessed_c180/gridfed_fossil_co2_cs_c180_float32.bin"
+species = "fossil_co2"
+float_type = "Float32"
+
+[validation]
+expected_total = 39.6           # reference: ~39.6 PgCO2/yr for 2022
+expected_unit = "PgCO2/yr"

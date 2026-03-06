@@ -375,43 +375,101 @@ const _SFC_BIN_HEADER_SIZE = 8192
 """
 Look up a flat binary surface data file in `surface_data_bin_dir` by date.
 Returns empty string if the file doesn't exist or dir is not set.
+Results are cached to avoid repeated stat syscalls.
 """
+const _PATH_CACHE = Dict{Tuple{String,Int,String}, String}()
+
 function _surface_bin_path(driver::GEOSFPCubedSphereMetDriver, file_idx::Int,
                             collection::String)
     isempty(driver.surface_data_bin_dir) && return ""
-    date = driver._start_date + Day(file_idx - 1)
-    datestr = Dates.format(date, "yyyymmdd")
-    fname = "GEOSFP_CS$(driver.Nc).$(datestr).$(collection).bin"
-    path = joinpath(driver.surface_data_bin_dir, fname)
-    return isfile(path) ? path : ""
+    key = (driver.surface_data_bin_dir, file_idx, collection)
+    return get!(_PATH_CACHE, key) do
+        date = driver._start_date + Day(file_idx - 1)
+        datestr = Dates.format(date, "yyyymmdd")
+        fname = "GEOSFP_CS$(driver.Nc).$(datestr).$(collection).bin"
+        path = joinpath(driver.surface_data_bin_dir, fname)
+        isfile(path) ? path : ""
+    end
 end
 
 """
 Load A1 surface fields directly into pre-allocated `sfc_panels`, avoiding
-intermediate allocations. Reads ~50 MB per timestep (A1 = 4 vars × 6 panels × Nc²).
+intermediate allocations. File handle, header, and read buffer are cached across calls.
+
+Supports v1 binaries (4 vars: PBLH USTAR HFLUX T2M) and v2 binaries
+(adds TROPPT and PS from CTM_A1). The header's `var_names` field determines layout.
 """
+# Cached IO for A1 surface binary: (path, IOStream, n_vars, var_names) or nothing
+const _SFC_BIN_IO_CACHE = Ref{Any}(nothing)
+# Pre-allocated read buffer for A1 binary
+const _SFC_BIN_BUF = Ref{Any}(nothing)
+
+function _get_sfc_bin_io(filepath::String)
+    cache = _SFC_BIN_IO_CACHE[]
+    if cache !== nothing
+        old_path, old_io, old_nvars, old_varnames = cache
+        if old_path == filepath && isopen(old_io)
+            return old_io, old_nvars, old_varnames
+        end
+        isopen(old_io) && close(old_io)
+    end
+    io = open(filepath, "r")
+    # Parse header for var count and names
+    hdr_bytes = Vector{UInt8}(undef, _SFC_BIN_HEADER_SIZE)
+    read!(io, hdr_bytes)
+    json_end = something(findfirst(==(0x00), hdr_bytes), _SFC_BIN_HEADER_SIZE + 1) - 1
+    hdr = JSON3.read(String(hdr_bytes[1:json_end]))
+    n_vars = Int(hdr.n_vars)
+    var_names = String.(hdr.var_names)
+    _SFC_BIN_IO_CACHE[] = (filepath, io, n_vars, var_names)
+    return io, n_vars, var_names
+end
+
 function _load_sfc_from_bin!(sfc_panels::NamedTuple,
                               filepath::String, time_index::Int,
-                              Nc::Int, Hp::Int, ::Type{FT}) where FT
+                              Nc::Int, Hp::Int, ::Type{FT};
+                              ps_panels=nothing, troph_panels=nothing) where FT
+    io, n_vars, var_names = _get_sfc_bin_io(filepath)
+
     panel_elems = Nc * Nc
-    n_vars = 4
     elems_per_ts = n_vars * 6 * panel_elems
     offset = _SFC_BIN_HEADER_SIZE + (time_index - 1) * elems_per_ts * sizeof(FT)
 
-    data = Vector{FT}(undef, elems_per_ts)
-    open(filepath, "r") do io
-        seek(io, offset)
-        read!(io, data)
+    # Reuse pre-allocated buffer
+    buf = _SFC_BIN_BUF[]
+    if buf === nothing || length(buf) != elems_per_ts || eltype(buf) != FT
+        buf = Vector{FT}(undef, elems_per_ts)
+        _SFC_BIN_BUF[] = buf
     end
+    data = buf::Vector{FT}
 
-    # Binary order: PBLH_p1..p6 USTAR_p1..p6 HFLUX_p1..p6 T2M_p1..p6
-    fields_tuple = (sfc_panels.pblh, sfc_panels.ustar, sfc_panels.hflux, sfc_panels.t2m)
-    @inbounds for (var_idx, panels) in enumerate(fields_tuple)
-        for p in 1:6
+    seek(io, offset)
+    read!(io, data)
+
+    # Unpack each variable by name from the header-declared order
+    for (var_idx, varname) in enumerate(var_names)
+        target = if varname == "PBLH"
+            sfc_panels.pblh
+        elseif varname == "USTAR"
+            sfc_panels.ustar
+        elseif varname == "HFLUX"
+            sfc_panels.hflux
+        elseif varname == "T2M"
+            sfc_panels.t2m
+        elseif varname == "PS" && ps_panels !== nothing
+            ps_panels
+        elseif varname == "TROPPT" && troph_panels !== nothing
+            troph_panels
+        else
+            nothing  # unknown or unneeded variable — skip
+        end
+        target === nothing && continue
+
+        @inbounds for p in 1:6
             start = ((var_idx - 1) * 6 + (p - 1)) * panel_elems + 1
-            fill!(panels[p], zero(FT))
+            fill!(target[p], zero(FT))
             for jj in 1:Nc, ii in 1:Nc
-                panels[p][ii + Hp, jj + Hp] = data[start + (jj - 1) * Nc + (ii - 1)]
+                target[p][ii + Hp, jj + Hp] = data[start + (jj - 1) * Nc + (ii - 1)]
             end
         end
     end
@@ -425,26 +483,51 @@ instead of the ~2.7 GB of intermediates that the old path created per call.
 
 Reverses vertical dimension (binary stores bottom-to-top from CS NetCDF source)
 to match model convention (k=1=TOA), consistent with `read_geosfp_cs_cmfmc`.
+
+File handle, parsed header, and panel buffer are cached across calls.
 """
+# Cached IO + header for CMFMC binary: (path, IOStream, Nz_edge) or nothing
+const _CMFMC_BIN_IO_CACHE = Ref{Any}(nothing)
+# Pre-allocated panel buffer for CMFMC binary
+const _CMFMC_PANEL_BUF = Ref{Any}(nothing)
+
+function _get_cmfmc_bin_io(filepath::String)
+    cache = _CMFMC_BIN_IO_CACHE[]
+    if cache !== nothing
+        old_path, old_io, old_nz = cache
+        if old_path == filepath && isopen(old_io)
+            return old_io, old_nz
+        end
+        isopen(old_io) && close(old_io)
+    end
+    io = open(filepath, "r")
+    hdr_bytes = Vector{UInt8}(undef, _SFC_BIN_HEADER_SIZE)
+    read!(io, hdr_bytes)
+    json_end = something(findfirst(==(0x00), hdr_bytes), _SFC_BIN_HEADER_SIZE + 1) - 1
+    hdr = JSON3.read(String(hdr_bytes[1:json_end]))
+    Nz_edge = Int(hdr.Nz_edge)
+    _CMFMC_BIN_IO_CACHE[] = (filepath, io, Nz_edge)
+    return io, Nz_edge
+end
+
 function _load_cmfmc_from_bin!(cmfmc_panels::NTuple{6},
                                 filepath::String, time_index::Int,
                                 Nc::Int, Hp::Int,
                                 merge_map::Union{Nothing, Vector{Int}},
                                 ::Type{FT}) where FT
-    # Parse header for Nz_edge
-    hdr_bytes = Vector{UInt8}(undef, _SFC_BIN_HEADER_SIZE)
-    io = open(filepath, "r")
-    read!(io, hdr_bytes)
-    json_end = something(findfirst(==(0x00), hdr_bytes), _SFC_BIN_HEADER_SIZE + 1) - 1
-    hdr = JSON3.read(String(hdr_bytes[1:json_end]))
-    Nz_edge = Int(hdr.Nz_edge)
+    io, Nz_edge = _get_cmfmc_bin_io(filepath)
 
     panel_elems = Nc * Nc * Nz_edge
     elems_per_ts = 6 * panel_elems
     base_offset = _SFC_BIN_HEADER_SIZE + (time_index - 1) * elems_per_ts * sizeof(FT)
 
-    # Single reusable buffer for one panel (Nc×Nc×Nz_edge)
-    panel_buf = Array{FT}(undef, Nc, Nc, Nz_edge)
+    # Reuse pre-allocated panel buffer
+    pbuf = _CMFMC_PANEL_BUF[]
+    if pbuf === nothing || size(pbuf) != (Nc, Nc, Nz_edge) || eltype(pbuf) != FT
+        pbuf = Array{FT}(undef, Nc, Nc, Nz_edge)
+        _CMFMC_PANEL_BUF[] = pbuf
+    end
+    panel_buf = pbuf::Array{FT, 3}
 
     Nz_edge_merged = merge_map !== nothing ? maximum(merge_map) + 1 : Nz_edge
 
@@ -481,7 +564,6 @@ function _load_cmfmc_from_bin!(cmfmc_panels::NTuple{6},
             end
         end
     end
-    close(io)
     return true
 end
 
@@ -556,8 +638,15 @@ Load convective mass flux (CMFMC) from A3mstE files into pre-allocated panels.
 CMFMC data is 3-hourly (8 timesteps/day) while CTM_A1 is hourly (24/day).
 Each A3mstE timestep covers 3 hourly windows.
 
+Caches the last (file_idx, time_index) to skip redundant re-reads: when
+3 consecutive hourly windows share the same A3mstE timestep, the data in
+`cmfmc_panels` is already correct and the read is skipped entirely.
+
 Returns `true` if CMFMC was loaded, `false` if A3mstE data is not available.
 """
+# Module-level cache for CMFMC timestep deduplication
+const _CMFMC_CACHE = Ref((file_idx=0, time_idx=0))
+
 function load_cmfmc_window!(cmfmc_panels::NTuple{6},
                              driver::GEOSFPCubedSphereMetDriver{FT},
                              grid, win::Int) where FT
@@ -567,12 +656,21 @@ function load_cmfmc_window!(cmfmc_panels::NTuple{6},
     # CTM_A1 local_win 1-3 → A3mstE t=1, 4-6 → t=2, ..., 22-24 → t=8
     a3_time_index = cld(local_win, 3)  # ceiling division
 
+    # Skip re-read when the A3mstE timestep hasn't changed — the data in
+    # cmfmc_panels is already correct from the previous window's load.
+    # Returns :cached so callers can skip redundant GPU uploads.
+    if _CMFMC_CACHE[].file_idx == file_idx && _CMFMC_CACHE[].time_idx == a3_time_index
+        return :cached
+    end
+
     # Priority 0: flat binary — combined read + merge, minimal allocation
     bin_path = _surface_bin_path(driver, file_idx, "A3mstE")
     if !isempty(bin_path)
         local_win == 1 && @info "  CMFMC: binary reader ($(basename(bin_path)), t=$a3_time_index)"
-        return _load_cmfmc_from_bin!(cmfmc_panels, bin_path, a3_time_index,
-                                      driver.Nc, driver.Hp, driver.merge_map, FT)
+        result = _load_cmfmc_from_bin!(cmfmc_panels, bin_path, a3_time_index,
+                                        driver.Nc, driver.Hp, driver.merge_map, FT)
+        result && (_CMFMC_CACHE[] = (file_idx=file_idx, time_idx=a3_time_index))
+        return result
     end
 
     # Priority 1: raw 0.25° lat-lon with on-the-fly bilinear regrid
@@ -621,6 +719,178 @@ function load_cmfmc_window!(cmfmc_panels::NTuple{6},
         end
     end
 
+    _CMFMC_CACHE[] = (file_idx=file_idx, time_idx=a3_time_index)
+    return true
+end
+
+"""
+Derive the A3dyn file path from a CTM_A1 file path by replacing the collection
+name in the filename. Returns empty string if the file doesn't exist.
+
+A3dyn contains 3-hourly dynamics diagnostics including DTRAIN (detraining mass
+flux), OMEGA, RH, U, V at layer centers. Used by the RAS convection scheme.
+"""
+function _a3dyn_path_from_ctm(ctm_path::String)
+    dir = dirname(ctm_path)
+    fname = basename(ctm_path)
+    a3_fname = replace(fname, "CTM_A1" => "A3dyn")
+    a3_path = joinpath(dir, a3_fname)
+    return isfile(a3_path) ? a3_path : ""
+end
+
+"""
+$(SIGNATURES)
+
+Load DTRAIN (detraining mass flux) from A3dyn files into pre-allocated panels.
+
+DTRAIN is the convective detrainment rate [kg/m²/s] at layer centers (Nz levels),
+required by the RAS convection scheme. The data is 3-hourly (8 timesteps/day),
+same cadence as CMFMC in A3mstE.
+
+Priority system (same as CMFMC):
+1. Flat binary in `surface_data_bin_dir` (if available)
+2. Co-located A3dyn alongside CTM_A1 files (GEOS-IT naming convention)
+
+Returns `true` if DTRAIN was loaded, `false` if A3dyn data is not available.
+"""
+# Module-level cache for DTRAIN timestep deduplication (same pattern as CMFMC)
+const _DTRAIN_CACHE = Ref((file_idx=0, time_idx=0))
+
+function load_dtrain_window!(dtrain_panels::NTuple{6},
+                              driver::GEOSFPCubedSphereMetDriver{FT},
+                              grid, win::Int) where FT
+    file_idx, local_win = window_to_file_local(driver, win)
+
+    # Map hourly CTM_A1 window → 3-hourly A3dyn timestep (same as A3mstE)
+    a3_time_index = cld(local_win, 3)
+
+    # Skip re-read when the A3dyn timestep hasn't changed
+    # Returns :cached so callers can skip redundant GPU uploads.
+    if _DTRAIN_CACHE[].file_idx == file_idx && _DTRAIN_CACHE[].time_idx == a3_time_index
+        return :cached
+    end
+
+    # Priority 0: flat binary
+    bin_path = _surface_bin_path(driver, file_idx, "A3dyn")
+    if !isempty(bin_path)
+        local_win == 1 && @info "  DTRAIN: binary reader ($(basename(bin_path)), t=$a3_time_index)"
+        result = _load_dtrain_from_bin!(dtrain_panels, bin_path, a3_time_index,
+                                         driver.Nc, driver.Hp, driver.merge_map, FT)
+        result && (_DTRAIN_CACHE[] = (file_idx=file_idx, time_idx=a3_time_index))
+        return result
+    end
+
+    # Priority 1: co-located A3dyn alongside CTM_A1 (GEOS-IT naming)
+    a3_path = if driver.mode === :netcdf
+        _a3dyn_path_from_ctm(driver.files[file_idx])
+    else
+        ""
+    end
+    isempty(a3_path) && return false
+
+    local_win == 1 && @info "  DTRAIN: NetCDF reader ($(basename(a3_path)), t=$a3_time_index)"
+    dtrain_haloed = read_geosfp_cs_dtrain(a3_path; FT, time_index=a3_time_index, Hp=driver.Hp)
+
+    # Handle vertical level merging if active
+    mm = driver.merge_map
+    if mm !== nothing
+        Nz_merged = maximum(mm)
+        for p in 1:6
+            fill!(dtrain_panels[p], zero(FT))
+            Nz_native = size(dtrain_haloed[p], 3)
+            Nc_h = size(dtrain_panels[p], 1)
+            # DTRAIN at layer centers: sum detrainment from native levels
+            # that map to the same merged level
+            for k_native in 1:Nz_native
+                k_merged = mm[k_native]
+                for jj in 1:Nc_h, ii in 1:Nc_h
+                    dtrain_panels[p][ii, jj, k_merged] += dtrain_haloed[p][ii, jj, k_native]
+                end
+            end
+        end
+    else
+        for p in 1:6
+            copyto!(dtrain_panels[p], dtrain_haloed[p])
+        end
+    end
+
+    _DTRAIN_CACHE[] = (file_idx=file_idx, time_idx=a3_time_index)
+    return true
+end
+
+# Cached IO + header for DTRAIN binary: (path, IOStream, Nz) or nothing
+const _DTRAIN_BIN_IO_CACHE = Ref{Any}(nothing)
+const _DTRAIN_PANEL_BUF = Ref{Any}(nothing)
+
+function _get_dtrain_bin_io(filepath::String)
+    cache = _DTRAIN_BIN_IO_CACHE[]
+    if cache !== nothing
+        old_path, old_io, old_nz = cache
+        if old_path == filepath && isopen(old_io)
+            return old_io, old_nz
+        end
+        isopen(old_io) && close(old_io)
+    end
+    io = open(filepath, "r")
+    hdr_bytes = Vector{UInt8}(undef, _SFC_BIN_HEADER_SIZE)
+    read!(io, hdr_bytes)
+    json_end = something(findfirst(==(0x00), hdr_bytes), _SFC_BIN_HEADER_SIZE + 1) - 1
+    hdr = JSON3.read(String(hdr_bytes[1:json_end]))
+    Nz = Int(hdr.Nz)
+    _DTRAIN_BIN_IO_CACHE[] = (filepath, io, Nz)
+    return io, Nz
+end
+
+"""
+Load DTRAIN from flat binary A3dyn file into pre-allocated panels.
+
+Uses JSON-header binary format (same as A3mstE). Binary layout:
+  [8192-byte JSON header] [timestep 1: DTRAIN p1..p6] [timestep 2] ...
+Each panel is Nc×Nc×Nz Float32 at layer centers, bottom-to-top (GEOS-IT native).
+"""
+function _load_dtrain_from_bin!(dtrain_panels::NTuple{6}, bin_path::String,
+                                 time_index::Int, Nc::Int, Hp::Int,
+                                 merge_map, ::Type{FT}) where FT
+    io, Nz_native = _get_dtrain_bin_io(bin_path)
+
+    panel_elems = Nc * Nc * Nz_native
+    elems_per_ts = 6 * panel_elems
+    base_offset = _SFC_BIN_HEADER_SIZE + (time_index - 1) * elems_per_ts * sizeof(FT)
+
+    # Reuse pre-allocated panel buffer
+    pbuf = _DTRAIN_PANEL_BUF[]
+    if pbuf === nothing || size(pbuf) != (Nc, Nc, Nz_native) || eltype(pbuf) != FT
+        pbuf = Array{FT}(undef, Nc, Nc, Nz_native)
+        _DTRAIN_PANEL_BUF[] = pbuf
+    end
+    panel_buf = pbuf::Array{FT, 3}
+
+    Nz_out = size(dtrain_panels[1], 3)
+
+    for p in 1:6
+        seek(io, base_offset + (p - 1) * panel_elems * sizeof(FT))
+        read!(io, panel_buf)
+
+        fill!(dtrain_panels[p], zero(FT))
+
+        if merge_map !== nothing && Nz_native != Nz_out
+            @inbounds for k_file in 1:Nz_native
+                k_model = Nz_native - k_file + 1  # flip bottom-to-top → TOA-first
+                k_merged = merge_map[k_model]
+                for jj in 1:Nc, ii in 1:Nc
+                    dtrain_panels[p][ii + Hp, jj + Hp, k_merged] +=
+                        FT(panel_buf[ii, jj, k_file])
+                end
+            end
+        else
+            @inbounds for k_file in 1:Nz_native
+                k_model = Nz_native - k_file + 1  # flip bottom-to-top → TOA-first
+                for jj in 1:Nc, ii in 1:Nc
+                    dtrain_panels[p][ii + Hp, jj + Hp, k_model] = panel_buf[ii, jj, k_file]
+                end
+            end
+        end
+    end
     return true
 end
 
@@ -637,7 +907,8 @@ function _a1_path_from_ctm(ctm_path::String)
 end
 
 """
-    load_surface_fields_window!(sfc_panels, driver::GEOSFPCubedSphereMetDriver, grid, win)
+    load_surface_fields_window!(sfc_panels, driver::GEOSFPCubedSphereMetDriver, grid, win;
+                                 troph_panels=nothing, ps_panels=nothing)
 
 Load surface fields (PBLH, USTAR, HFLUX, T2M) from A1 files into pre-allocated panels.
 
@@ -646,11 +917,16 @@ A1 data is hourly (24 timesteps/day), same as CTM_A1, so the time index maps dir
 `sfc_panels` is a NamedTuple `(pblh, ustar, hflux, t2m)` where each is an
 NTuple{6} of 2D arrays (Nc+2Hp, Nc+2Hp).
 
+If `troph_panels` is provided, also loads TROPPT (tropopause pressure, Pa).
+If `ps_panels` is provided, also loads PS (surface pressure, Pa) from v2+ binaries.
+
 Returns `true` if surface fields were loaded, `false` if A1 data is not available.
 """
 function load_surface_fields_window!(sfc_panels::NamedTuple,
                                       driver::GEOSFPCubedSphereMetDriver{FT},
-                                      grid, win::Int) where FT
+                                      grid, win::Int;
+                                      troph_panels=nothing,
+                                      ps_panels=nothing) where FT
     file_idx, local_win = window_to_file_local(driver, win)
 
     # Priority 0: flat binary — direct write into pre-allocated panels
@@ -658,7 +934,8 @@ function load_surface_fields_window!(sfc_panels::NamedTuple,
     if !isempty(bin_path)
         local_win == 1 && @info "  A1: binary reader ($(basename(bin_path)), t=$local_win)"
         return _load_sfc_from_bin!(sfc_panels, bin_path, local_win,
-                                    driver.Nc, driver.Hp, FT)
+                                    driver.Nc, driver.Hp, FT;
+                                    ps_panels=ps_panels, troph_panels=troph_panels)
     end
 
     # Priority 1: raw 0.25° lat-lon with on-the-fly bilinear regrid
@@ -682,6 +959,13 @@ function load_surface_fields_window!(sfc_panels::NamedTuple,
         copyto!(sfc_panels.ustar[p], fields.ustar[p])
         copyto!(sfc_panels.hflux[p], fields.hflux[p])
         copyto!(sfc_panels.t2m[p],   fields.t2m[p])
+    end
+
+    # Copy tropopause pressure if both source data and target buffer exist
+    if troph_panels !== nothing && hasproperty(fields, :troph)
+        for p in 1:6
+            copyto!(troph_panels[p], fields.troph[p])
+        end
     end
 
     return true
@@ -756,19 +1040,37 @@ end
 Read cubed-sphere met fields for window `win` into CPU staging buffer.
 
 In binary mode, reads directly from mmap'd binary via CSBinaryReader.
+The reader is cached across windows in the same file to avoid re-opening
+and re-mmapping the ~4 GB binary every window (keeps page cache warm).
+
 In NetCDF mode, reads raw GEOS-FP data and converts to staggered format.
 """
+# Module-level cache for CSBinaryReader — keeps mmap alive across windows
+const _MET_READER_CACHE = Ref{Any}(nothing)   # (path, reader) or nothing
+
+function _get_cached_reader(filepath::String, ::Type{FT}) where FT
+    cached_path = ensure_local_cache(filepath)
+    cache = _MET_READER_CACHE[]
+    if cache !== nothing
+        old_path, old_reader = cache
+        if old_path == cached_path
+            return old_reader
+        end
+        close(old_reader)
+    end
+    reader = CSBinaryReader(cached_path, FT)
+    _MET_READER_CACHE[] = (cached_path, reader)
+    return reader
+end
+
 function load_met_window!(cpu_buf::CubedSphereCPUBuffer,
                            driver::GEOSFPCubedSphereMetDriver{FT},
                            grid, win::Int) where FT
     file_idx, local_win = window_to_file_local(driver, win)
     filepath = driver.files[file_idx]
 
-    # Per-window logging removed — progress bar in run loop handles this
-
     if driver.mode === :binary
-        cached_path = ensure_local_cache(filepath)
-        reader = CSBinaryReader(cached_path, FT)
+        reader = _get_cached_reader(filepath, FT)
         mm = driver.merge_map
         Nz_target = size(cpu_buf.delp[1], 3)
         if mm !== nothing && reader.Nz != Nz_target
@@ -794,7 +1096,6 @@ function load_met_window!(cpu_buf::CubedSphereCPUBuffer,
             # Binary already at target Nz (pre-merged) or no merge needed
             load_cs_window!(cpu_buf.delp, cpu_buf.am, cpu_buf.bm, reader, local_win)
         end
-        close(reader)
     else  # :netcdf
         # NetCDF mode — read, halo, and stagger
         ts = read_geosfp_cs_timestep(filepath; FT, time_index=local_win,
@@ -831,4 +1132,53 @@ function load_met_window!(cpu_buf::CubedSphereCPUBuffer,
                               win, driver.mass_flux_dt)
     end
     return nothing
+end
+
+"""
+    load_all_window!(cpu_buf, cmfmc_cpu, dtrain_cpu, sfc_cpu, troph_cpu,
+                      driver, grid, win; needs_cmfmc, needs_dtrain, needs_sfc,
+                      ps_panels=nothing)
+
+Load all met data for a single window: mass fluxes + CMFMC + surface fields + DTRAIN.
+Designed to be called from the async background thread in the double-buffer run loop
+so that all disk reads overlap with GPU compute.
+
+Returns a NamedTuple `(cmfmc, dtrain, sfc)` with the status of each load
+(`false`, `true`, or `:cached`).
+"""
+function load_all_window!(cpu_buf::CubedSphereCPUBuffer,
+                           cmfmc_cpu, dtrain_cpu, sfc_cpu, troph_cpu,
+                           driver::GEOSFPCubedSphereMetDriver,
+                           grid, win::Int;
+                           needs_cmfmc::Bool=false,
+                           needs_dtrain::Bool=false,
+                           needs_sfc::Bool=false,
+                           ps_panels=nothing)
+    # 1. Mass fluxes (fast via cached mmap reader)
+    load_met_window!(cpu_buf, driver, grid, win)
+
+    # 2. CMFMC
+    cmfmc_status = if needs_cmfmc && cmfmc_cpu !== nothing
+        load_cmfmc_window!(cmfmc_cpu, driver, grid, win)
+    else
+        false
+    end
+
+    # 3. DTRAIN (only if CMFMC loaded)
+    dtrain_status = if needs_dtrain && dtrain_cpu !== nothing && cmfmc_status !== false
+        load_dtrain_window!(dtrain_cpu, driver, grid, win)
+    else
+        false
+    end
+
+    # 4. Surface fields (+ PS and TROPPT if available in binary)
+    sfc_status = if needs_sfc && sfc_cpu !== nothing
+        load_surface_fields_window!(sfc_cpu, driver, grid, win;
+                                     troph_panels=troph_cpu,
+                                     ps_panels=ps_panels)
+    else
+        false
+    end
+
+    return (; cmfmc=cmfmc_status, dtrain=dtrain_status, sfc=sfc_status)
 end

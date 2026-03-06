@@ -19,8 +19,10 @@
 # ---------------------------------------------------------------------------
 
 using Dates
-using Downloads
 using Printf
+
+include(joinpath(@__DIR__, "download_utils.jl"))
+using .DownloadUtils
 
 const S3_BASE_URL = "https://s3.amazonaws.com/gcgrid/GEOS_0.25x0.3125/GEOS_FP"
 
@@ -36,28 +38,7 @@ function build_url(date::Date, collection::AbstractString)
     return "$(S3_BASE_URL)/$y/$m/$fname"
 end
 
-function download_file(url::String, dest::String; max_retries::Int = 3)
-    if isfile(dest) && filesize(dest) > 1_000_000
-        @info "  Already exists: $(basename(dest)) ($(filesize(dest) ÷ 1_000_000) MB)"
-        return true
-    end
-    mkpath(dirname(dest))
-    for attempt in 1:max_retries
-        try
-            @info "  Downloading $(basename(dest)) (attempt $attempt)..."
-            Downloads.download(url, dest)
-            sz = filesize(dest) ÷ 1_000_000
-            @info "    → $sz MB"
-            return true
-        catch e
-            @warn "  Attempt $attempt failed: $e"
-            isfile(dest) && rm(dest; force=true)
-            attempt < max_retries && sleep(5 * attempt)
-        end
-    end
-    @error "  Failed after $max_retries attempts: $(basename(dest))"
-    return false
-end
+## download_file replaced by verified_download from DownloadUtils
 
 function main()
     start_date = get(ENV, "GEOSFP_START_DATE", "2024-06-01") |> Date
@@ -85,7 +66,7 @@ function main()
             url   = build_url(date, coll)
             fname = basename(url)
             dest  = joinpath(OUTPUT_DIR, fname)
-            ok = download_file(url, dest)
+            ok = verified_download(url, dest)
             ok ? (n_done += 1) : (n_fail += 1)
         end
 
@@ -109,4 +90,22 @@ function main()
     """
 end
 
-main()
+if "--verify" in ARGS
+    start_date = get(ENV, "GEOSFP_START_DATE", "2024-06-01") |> Date
+    end_date   = get(ENV, "GEOSFP_END_DATE",   "2024-06-30") |> Date
+    dates = start_date:Day(1):end_date
+
+    @info "Verifying downloads in $OUTPUT_DIR ($start_date → $end_date)..."
+    for coll in COLLECTIONS
+        result = verify_downloads(
+            OUTPUT_DIR, dates,
+            datestr -> "GEOSFP.$(datestr).$(coll).025x03125.nc";
+            url_builder = datestr -> build_url(Date(datestr, dateformat"yyyymmdd"), coll))
+        @info "  $(coll): $(length(result.ok)) OK, $(length(result.corrupt)) corrupt, $(length(result.missing)) missing"
+        for f in result.corrupt
+            @warn "    Corrupt: $f ($(filesize(f) ÷ 1_000_000) MB)"
+        end
+    end
+else
+    main()
+end

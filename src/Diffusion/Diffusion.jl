@@ -19,10 +19,10 @@ using DocStringExtensions
 using ..Grids: AbstractGrid
 using ..Fields: AbstractField
 
-export AbstractDiffusion, BoundaryLayerDiffusion, PBLDiffusion, NoDiffusion
+export AbstractDiffusion, BoundaryLayerDiffusion, PBLDiffusion, NonLocalPBLDiffusion, NoDiffusion
 export diffuse!, adjoint_diffuse!
 export DiffusionWorkspace, diffuse_gpu!, diffuse_cs_panels!, build_diffusion_coefficients
-export diffuse_pbl!
+export diffuse_pbl!, diffuse_nonlocal_pbl!
 
 """
 $(TYPEDEF)
@@ -88,8 +88,42 @@ end
 PBLDiffusion(; β_h = 15.0, Kz_bg = 0.1, Kz_min = 0.01, Kz_max = 500.0) =
     PBLDiffusion(Float64(β_h), Float64(Kz_bg), Float64(Kz_min), Float64(Kz_max))
 
+"""
+$(TYPEDEF)
+
+Non-local PBL diffusion with counter-gradient transport following
+Holtslag & Boville (1993) / GEOS-Chem VDIFF.
+
+Extends `PBLDiffusion` with a counter-gradient term γ_c that represents
+non-local transport by organized thermals in convective boundary layers.
+The tridiagonal matrix (LHS) is identical to local K-diffusion; only the
+RHS gets an additive source term from γ_c.
+
+$(FIELDS)
+"""
+struct NonLocalPBLDiffusion{FT} <: AbstractDiffusion
+    "Businger-Dyer heat parameter (TM5 default: 15.0)"
+    β_h    :: FT
+    "background Kz above PBL [m²/s]"
+    Kz_bg  :: FT
+    "minimum Kz in PBL [m²/s]"
+    Kz_min :: FT
+    "maximum allowed Kz [m²/s]"
+    Kz_max :: FT
+    "counter-gradient tuning constant (GEOS-Chem/Holtslag-Boville: 8.5)"
+    fak    :: FT
+    "surface layer fraction of PBL (default: 0.1)"
+    sffrac :: FT
+end
+
+NonLocalPBLDiffusion(; β_h = 15.0, Kz_bg = 0.1, Kz_min = 0.01, Kz_max = 500.0,
+                       fak = 8.5, sffrac = 0.1) =
+    NonLocalPBLDiffusion(Float64(β_h), Float64(Kz_bg), Float64(Kz_min), Float64(Kz_max),
+                         Float64(fak), Float64(sffrac))
+
 include("boundary_layer_diffusion.jl")
 include("boundary_layer_diffusion_adjoint.jl")
 include("pbl_diffusion.jl")
+include("nonlocal_pbl_diffusion.jl")
 
 end # module Diffusion

@@ -24,8 +24,8 @@ Load Jena CarboScope ocean CO2 flux from `filepath` and regrid to `target_grid`.
 Converts from PgC/yr/cell to kg(CO2)/m²/s:
     flux_kgCO2_m2_s = (flux_PgC_yr_cell × 1e12 × (44.01/12.011)) / (dxyp × 365.25 × 86400)
 
-Returns a `TimeVaryingEmission` if the file contains multiple time steps,
-or a `GriddedEmission` for a single-time-step file.
+Returns a `TimeVaryingSurfaceFlux` if the file contains multiple time steps,
+or a `SurfaceFlux` for a single-time-step file.
 """
 function load_jena_ocean_flux(filepath::String,
                               target_grid::LatitudeLongitudeGrid{FT};
@@ -59,7 +59,7 @@ function load_jena_ocean_flux(filepath::String,
             @warn "No time steps matching year $year in Jena CarboScope file"
             close(ds)
             Nx_m, Ny_m = target_grid.Nx, target_grid.Ny
-            return GriddedEmission(
+            return SurfaceFlux(
                 zeros(FT, Nx_m, Ny_m), :co2, "Jena CarboScope ocean (empty)")
         end
     end
@@ -94,16 +94,8 @@ function load_jena_ocean_flux(filepath::String,
             flux_native[i, j] = area > 0 ? kg_co2 / (area * seconds_per_year) : zero(FT)
         end
 
-        # Longitude remapping if needed (-180:180 → 0:360)
-        lon_use, flux_use = if minimum(lon_jena) < 0
-            _remap_lon_0_360(lon_jena, flux_native, FT)
-        else
-            FT.(lon_jena), flux_native
-        end
-
-        # Regrid to model grid
-        flux_model = _simple_regrid(flux_use, Float64.(lon_use), Float64.(lat_jena),
-                                    target_grid, FT)
+        # Regrid to model grid (handles lon/lat normalization internally)
+        flux_model = nearest_neighbor_regrid(flux_native, lon_jena, lat_jena, target_grid)
         push!(flux_mats, flux_model)
 
         # Daily time steps → hours
@@ -121,11 +113,11 @@ function load_jena_ocean_flux(filepath::String,
     @info "Jena CarboScope: loaded $Nt_out time steps from $filepath"
 
     if Nt_out == 1
-        return GriddedEmission(
+        return SurfaceFlux(
             flux_mats[1], :co2, "Jena CarboScope ocean $(year)")
     else
         stack = _stack_matrices(flux_mats, Nx_m, Ny_m, FT)
-        return TimeVaryingEmission(stack, time_hours, :co2;
+        return TimeVaryingSurfaceFlux(stack, time_hours, :co2;
                                     label="Jena CarboScope ocean $(year)")
     end
 end

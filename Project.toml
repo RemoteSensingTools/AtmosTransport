@@ -22,6 +22,7 @@ ProgressMeter = "92933f4c-e287-5a05-a399-4b506db050ca"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
 [weakdeps]
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
@@ -30,12 +31,11 @@ Metal = "dde4c033-4e86-420c-a63e-0dd931031962"
 
 [extensions]
 AtmosTransportCUDAExt = "CUDA"
-AtmosTransportMetalExt = "Metal"
 AtmosTransportMakieExt = ["CairoMakie", "GeoMakie"]
+AtmosTransportMetalExt = "Metal"
 
 [compat]
 CUDA = "5"
-Metal = "1"
 CairoMakie = "0.12, 0.13"
 CubedSphere = "0.3.4"
 DocStringExtensions = "0.9.5"
@@ -44,11 +44,13 @@ GRIB = "0.4.0"
 GeoMakie = "0.7, 0.8"
 JSON3 = "1.14.3"
 KernelAbstractions = "0.9"
+Metal = "1"
 NCDatasets = "0.14"
 OffsetArrays = "1"
 PrecompileTools = "1"
 ProgressMeter = "1"
 Statistics = "1"
+Unitful = "1.28.0"
 julia = "1.10"
 
 [extras]

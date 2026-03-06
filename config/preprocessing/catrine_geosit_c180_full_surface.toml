@@ -1,0 +1,21 @@
+# ===========================================================================
+# CATRINE D7.1 — GEOS-IT C180 Full Surface Field Conversion
+#
+# Converts A1 (PBLH, USTAR, HFLUX, T2M, TROPPT, PS) and A3mstE (CMFMC)
+# from native GEOS-IT C180 NetCDF to flat binary. Full 2-year period.
+#
+# Usage:
+#   julia --project=. scripts/preprocessing/convert_surface_cs_to_binary.jl \
+#       config/preprocessing/catrine_geosit_c180_full_surface.toml
+# ===========================================================================
+
+[product]
+name = "geosit_c180"
+
+[input]
+data_dir   = "~/data/geosit_c180_catrine"
+start_date = "2021-12-01"
+end_date   = "2023-12-31"
+
+[output]
+directory = "/temp1/catrine/met/geosit_c180/surface_bin"

@@ -1,0 +1,36 @@
+# ===========================================================================
+# CATRINE D7.1 — GEOS-IT C180 Full Mass Flux Preprocessing
+#
+# Converts GEOS-IT C180 NetCDF mass fluxes to per-day flat binary files
+# for fast mmap-based GPU ingestion. Full 2-year period.
+#
+# Input:  ~/data/geosit_c180_catrine/YYYYMMDD/GEOSIT.*.CTM_A1.C180.nc
+# Output: /temp1/catrine/met/geosit_c180/massflux/
+#
+# CRITICAL: mass_flux_dt = 450 s (dynamics timestep, NOT 3600 s met interval)
+#
+# Usage (parallel, 8 workers):
+#   julia --project=. -p 8 scripts/preprocessing/preprocess_geosfp_cs.jl \
+#       config/preprocessing/catrine_geosit_c180_full_massflux.toml
+# ===========================================================================
+
+[product]
+name         = "geosit_c180"
+mass_flux_dt = 450.0      # dynamics timestep [s]
+
+[input]
+data_dir   = "~/data/geosit_c180_catrine"
+start_date = "2021-12-01"
+end_date   = "2023-12-31"
+
+[output]
+directory = "/temp1/catrine/met/geosit_c180/massflux"
+
+[grid]
+halo_width = 3
+
+[numerics]
+float_type = "Float32"
+
+[diagnostics]
+verbose = true

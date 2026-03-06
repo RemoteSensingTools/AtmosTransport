@@ -1,0 +1,33 @@
+# EDGAR v8.0 SF6 emissions → cubed-sphere binary
+#
+# Source: EDGAR v8.0 annual SF6 (0.1° lat-lon)
+# Units: Tonnes/cell/year → kg/m²/s
+# Reference total: ~10 kt/yr (2022)
+
+[source]
+type = "netcdf_latlon"
+path = "~/data/AtmosTransport/catrine/Emissions/edgar_v8/v8.0_FT2022_GHG_SF6_2022_TOTALS_emi.nc"
+variable = "auto"                # auto-detect first non-coordinate variable
+lon_coord = "lon"
+lat_coord = "lat"
+
+[units]
+input = "tonnes/cell/year"
+output = "kg/m2/s"
+conversions = ["tonnes_per_cell_to_kgm2s"]
+
+[target]
+grid = "cubed_sphere"
+Nc = 180
+coord_file = "~/data/geosit_c180_catrine/20211201/GEOSIT.20211201.CTM_A1.C180.nc"
+gridspec_file = "data/grids/cs_c180_gridspec.nc"
+
+[output]
+path = "~/data/AtmosTransport/catrine/preprocessed_c180/edgar_sf6_cs_c180_float32.bin"
+species = "sf6"
+float_type = "Float32"
+
+[validation]
+expected_total = 10.0
+expected_unit = "kt/yr"
+tolerance = 0.01

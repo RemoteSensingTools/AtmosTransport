@@ -72,6 +72,7 @@ julia --threads=2 --project=. scripts/run.jl <config.toml>
 | `era5_spectral_june2023.toml` | 720×361 lat-lon | ERA5 spectral | Yes | 30-day June 2023, PPM-7, Tiedtke, PBL |
 | `geosfp_cs_edgar.toml` | C720 cubed-sphere | GEOS-FP preprocessed | Yes | Preprocessed binary, 5 days |
 | `catrine_era5.toml` | 720×361 lat-lon | ERA5 spectral | Yes | CATRINE D7.1: CO2, fCO2, SF6, 222Rn |
+| `catrine_geosit_c180.toml` | C180 cubed-sphere | GEOS-IT C180 | Yes | CATRINE D7.1 on CS: 4 tracers, RAS conv, nonlocal PBL |
 
 All configs are in `config/runs/`.
 
@@ -383,31 +384,27 @@ Features: skip-if-exists (safe to re-run), progress tracking per window.
 
 **Storage**: ~61 GB/day at C720 Float32. Five days requires ~305 GB.
 
-### EDGAR Emissions: Lat-Lon to Cubed-Sphere Binary
+### Emission Regridding: Lat-Lon to Cubed-Sphere
 
-Regrids EDGAR v8.0 CO2 emissions from 0.1° lat-lon to cubed-sphere panels
-via nearest-neighbor interpolation with area-weighted unit conversion.
-
-**Input**: EDGAR v8.0 NetCDF (`v8.0_FT2022_GHG_CO2_2022_TOTALS_emi.nc`, ~26 MB)
-**Output**: Compact binary with 6 panels of kg/m²/s flux (~12 MB)
+Conservatively regrids any lat-lon emission inventory to cubed-sphere
+panels using the TOML-driven preprocessor. Supports fine-to-coarse
+(0.1° EDGAR on C180) and coarse-to-fine (1° LMDZ on C180).
 
 ```bash
-export EDGAR_FILE=~/data/emissions/edgar_v8/v8.0_FT2022_GHG_CO2_2022_TOTALS_emi.nc
-export OUTFILE=~/data/emissions/edgar_v8/edgar_cs_c720_float32.bin
-export NC_GRID=720
+# Regrid a single source
+julia --project=. scripts/preprocessing/regrid_emissions.jl \
+    config/emissions/edgar_sf6.toml
 
-julia --project=. scripts/preprocess_edgar_cs.jl
+# Available configs: edgar_sf6, zhang_rn222, lmdz_co2, gridfed_fossil_co2
 ```
 
-The binary format has a 4096-byte JSON header followed by 6 panels of
-`Nc × Nc` Float32 values. The model auto-loads this file if it exists at the
-default path; you can also specify it explicitly in the TOML:
+Output: compact binary with JSON header + 6 panels of `Nc × Nc` Float32
+values per time step. The model auto-discovers preprocessed binaries by
+species name and grid size.
 
-```toml
-[tracers.co2]
-emission   = "edgar"
-edgar_file = "~/data/emissions/edgar_v8/edgar_cs_c720_float32.bin"
-```
+See [EMISSION_REGRIDDING.md](EMISSION_REGRIDDING.md) for the full
+tutorial on adding new sources, the conservative regridding algorithm,
+and validation results.
 
 ### ERA5: Gridpoint Winds to Binary Mass Fluxes (Stopgap)
 
@@ -456,6 +453,34 @@ julia --project=. scripts/download_geosit_physics.jl
 julia --threads=2 --project=. scripts/run.jl config/runs/geosit_c180_june2023_ppm.toml
 ```
 
+### CATRINE D7.1 on GEOS-IT C180 (GPU, 4 Tracers)
+
+Multi-tracer intercomparison run: CO2, fossil CO2, SF6, 222Rn on C180
+cubed-sphere with RAS convection and non-local PBL diffusion.
+
+```bash
+# 1. Download GEOS-IT C180 met data (mass fluxes + surface fields)
+julia --project=. scripts/downloads/download_geosit_physics.jl
+
+# 2. Preprocess met data to binary
+julia --project=. scripts/preprocessing/preprocess_geosfp_cs.jl \
+    config/preprocessing/catrine_geosit_c180.toml
+
+# 3. Preprocess emissions (one-time per source)
+julia --project=. scripts/preprocessing/regrid_emissions.jl config/emissions/edgar_sf6.toml
+julia --project=. scripts/preprocessing/regrid_emissions.jl config/emissions/zhang_rn222.toml
+julia --project=. scripts/preprocessing/regrid_emissions.jl config/emissions/lmdz_co2.toml
+julia --project=. scripts/preprocessing/regrid_emissions.jl config/emissions/gridfed_fossil_co2.toml
+
+# 4. Run (7 days in ~3 min on L40S GPU)
+julia --threads=2 --project=. scripts/run.jl config/runs/catrine_geosit_c180.toml
+```
+
+Output: 3-hourly native CS binary files (~1.8 GB/day) with 4 tracer
+3D fields, column masses, emission fluxes, surface pressure, and PBL height.
+See [EMISSION_REGRIDDING.md](EMISSION_REGRIDDING.md) for emission
+preprocessing details.
+
 ### ERA5 Spectral (GPU, Recommended)
 
 ```bash
@@ -492,11 +517,14 @@ julia --threads=2 --project=. scripts/run.jl config/runs/era5_spectral_june2023.
   | GEOS-FP C720 GPU (NetCDF, double-buf) | 13.75 | 1.28 | 3.01 | ~18 s/win |
   | GEOS-FP C720 GPU + BL diffusion | 13.4 | 0.80 | 0.13 | ~14 s/win |
   | GEOS-IT C180 GPU (NetCDF, single-buf) | 0.93 | 0.11 | 0.05 | 792s / 30d |
+  | GEOS-IT C180 CATRINE (4 tracers, RAS+PBL) | 0.12 | 0.76 | 0.18 | 177s / 7d |
 
 ---
 
 ## Further Reading
 
+- [EMISSION_REGRIDDING.md](EMISSION_REGRIDDING.md) — conservative regridding
+  tutorial: algorithm, TOML configs, validation, adding new sources
 - [METEO_PREPROCESSING.md](METEO_PREPROCESSING.md) — deep dive on met data
   formats, hybrid vertical coordinates, TM5 mass-flux comparison
 - [docs/src/literated/design_principles.md](src/literated/design_principles.md) —

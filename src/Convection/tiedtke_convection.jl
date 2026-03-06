@@ -210,7 +210,8 @@ guaranteeing positivity without the need for a clamp.
 function convect!(rm_panels::NTuple{6}, m_panels::NTuple{6},
                    cmfmc_panels::NTuple{6}, delp_panels::NTuple{6},
                    conv::TiedtkeConvection, grid::CubedSphereGrid, dt,
-                   planet::PlanetParameters)
+                   planet::PlanetParameters;
+                   dtrain_panels=nothing, workspace=nothing)
     FT = eltype(rm_panels[1])
     backend = get_backend(rm_panels[1])
     Nc = grid.Nc
@@ -251,7 +252,8 @@ Adaptive subcycling keeps the convective CFL below 0.9 per substep.
 """
 function convect!(tracers::NamedTuple, cmfmc, delp,
                    conv::TiedtkeConvection, grid::LatitudeLongitudeGrid, dt,
-                   planet::PlanetParameters)
+                   planet::PlanetParameters;
+                   dtrain_panels=nothing, workspace=nothing)
     FT = floattype(grid)
     Nz = size(delp, 3)
 

@@ -21,7 +21,7 @@ GFAS files are daily, 0.1° resolution, with variable `cofire` or `co2fire`
 in units of kg/m²/s (positive = emission).
 
 If `datadir` contains multiple daily files, they are concatenated into a
-`TimeVaryingEmission`. A single file produces a `GriddedEmission`.
+`TimeVaryingSurfaceFlux`. A single file produces a `SurfaceFlux`.
 
 Arguments:
 - `datadir`: directory containing GFAS NetCDF files (one per day or month)
@@ -78,29 +78,10 @@ function load_gfas_fire_flux(datadir::String,
                 FT.(nomissing(ds[co2_var][:, :], 0.0f0))
             end
 
-            # GFAS latitudes are typically N→S; flip to S→N
-            if length(lat_gfas) > 1 && lat_gfas[1] > lat_gfas[end]
-                raw = raw[:, end:-1:1]
-                lat_use = reverse(lat_gfas)
-            else
-                lat_use = lat_gfas
-            end
-
-            # Longitude: GFAS uses 0:360 typically, but handle -180:180
-            lon_use = lon_gfas
-            if minimum(lon_gfas) < 0
-                n = length(lon_gfas)
-                split = findfirst(>=(0), lon_gfas)
-                if split !== nothing
-                    idx = vcat(split:n, 1:split-1)
-                    lon_use = mod.(lon_gfas[idx], 360.0)
-                    raw = raw[idx, :]
-                end
-            end
-
-            # Conservative regridding from 0.1° to model grid
-            flux_model = _conservative_regrid(raw, FT.(lon_use), lat_use,
-                                              target_grid, FT)
+            # Normalize lon/lat and conservative regrid from 0.1° to model grid
+            lon_use, lat_use, raw_norm = normalize_lons_lats(lon_gfas, lat_gfas, raw)
+            flux_model = _conservative_regrid(raw_norm, lon_use, FT.(lat_use),
+                                              target_grid)
 
             push!(flux_mats, flux_model)
 
@@ -116,14 +97,14 @@ function load_gfas_fire_flux(datadir::String,
     @info "GFAS: loaded $Nt_out daily time steps"
 
     if Nt_out == 0
-        return GriddedEmission(
+        return SurfaceFlux(
             zeros(FT, Nx_m, Ny_m), :co2, "GFAS fire (empty)")
     elseif Nt_out == 1
-        return GriddedEmission(
+        return SurfaceFlux(
             flux_mats[1], :co2, "GFAS fire CO2 $year")
     else
         stack = _stack_matrices(flux_mats, Nx_m, Ny_m, FT)
-        return TimeVaryingEmission(stack, time_hours, :co2;
+        return TimeVaryingSurfaceFlux(stack, time_hours, :co2;
                                     label="GFAS fire CO2 $year")
     end
 end

@@ -23,6 +23,20 @@
 #   :rm             — cubed-sphere: convert rm ↔ mixing ratio, with halo offsets
 #   :mixing_ratio   — lat-lon: operate on mixing ratios directly, no offsets
 #
+# Height computation uses hydrostatic approximation with pressure-dependent
+# density: dz = Δp × R_d × T_sfc / (p_mid × g), where R_d = cp/3.5.
+# T_sfc (isothermal) is adequate within the PBL (~lowest 3 km).
+#
+# Above the PBL, Kz transitions smoothly from the BL value to Kz_bg over
+# an entrainment zone from h_pbl to 1.2·h_pbl (linear taper).
+#
+# PBLH definitions vary by met source:
+#   GEOS:  Kh-threshold — 10% of column-max eddy diffusivity
+#          (Molod et al. 2015; McGrath-Spangler & Molod, JAMES 2022)
+#   ERA5:  Bulk Richardson number Ri > 0.25 (Seidel et al. 2012)
+# These give systematically different PBL heights; the physics here is
+# agnostic to the PBLH definition — it just uses whatever the met driver provides.
+#
 # Physical constants (kappa_vk, grav, cp_dry, rho_ref) are passed as kernel
 # arguments from PlanetParameters — nothing is hardcoded here.
 # ---------------------------------------------------------------------------
@@ -40,34 +54,50 @@ Compute Kz [m²/s] at a given height using PBL-similarity (revised LTG).
 Pure function, no side effects — suitable for calling inside GPU kernels.
 
 Physics constants are passed explicitly (no module-level globals).
+
+Above the PBL, Kz is linearly tapered from h_pbl to 1.2·h_pbl
+(smoothed entrainment zone), avoiding the unrealistic sharp cutoff
+that can produce artificial tracer gradients at the inversion.
 """
 @inline function _pbl_kz(z, h_pbl, ustar, L_ob, kappa_vk,
                           β_h, Kz_bg, Kz_min, Kz_max, ::Type{FT}) where FT
     κ = FT(kappa_vk)
 
-    if z >= h_pbl
+    # Above entrainment zone: background only
+    h_taper = FT(1.2) * h_pbl
+    if z >= h_taper
         return FT(Kz_bg)
     end
 
-    zh = z / h_pbl
+    # Compute PBL Kz as if still within BL (clamped to h_pbl for formula)
+    z_eff = min(z, h_pbl - FT(1))  # avoid z/h = 1 singularity
+    zh = z_eff / h_pbl
     zzh2 = (FT(1) - zh)^2  # (1 - z/h)² shape function
 
     if L_ob < FT(0)
         # Unstable BL
-        if z < FT(0.1) * h_pbl
+        if z_eff < FT(0.1) * h_pbl
             # Surface layer (TM5 sffrac = 0.1)
-            Kz = ustar * κ * z * zzh2 * cbrt(FT(1) - β_h * z / L_ob)
+            Kz = ustar * κ * z_eff * zzh2 * cbrt(FT(1) - β_h * z_eff / L_ob)
         else
             # Mixed layer
             w_m = ustar * cbrt(FT(1) - FT(0.1) * β_h * h_pbl / L_ob)
-            Kz = w_m * κ * z * zzh2
+            Kz = w_m * κ * z_eff * zzh2
         end
     else
         # Stable BL
-        Kz = ustar * κ * z * zzh2 / (FT(1) + FT(5) * z / L_ob)
+        Kz = ustar * κ * z_eff * zzh2 / (FT(1) + FT(5) * z_eff / L_ob)
     end
 
-    return clamp(Kz, FT(Kz_min), FT(Kz_max))
+    Kz = clamp(Kz, FT(Kz_min), FT(Kz_max))
+
+    # Taper zone (h_pbl to 1.2·h_pbl): linear blend to Kz_bg
+    if z >= h_pbl
+        frac = (h_taper - z) / (FT(0.2) * h_pbl)
+        Kz = FT(Kz_bg) + frac * (Kz - FT(Kz_bg))
+    end
+
+    return Kz
 end
 
 # =====================================================================
@@ -111,23 +141,42 @@ For each (i,j) column:
     g = FT(grav)
     cp = FT(cp_dry)
     ρ = FT(rho_ref)
-    inv_rho_g = FT(1) / (ρ * g)
+    # R_d = cp / 3.5 for ideal diatomic gas (cp = 7/2 R_d)
+    R_d = cp / FT(3.5)
 
     # --- Surface fields ---
     h_pbl = max(FT(pblh[ii, jj]), FT(100))
     us    = max(FT(ustar[ii, jj]), FT(0.01))
     H_sfc = FT(hflux[ii, jj])
-    T_sfc = FT(t2m[ii, jj])
+    T_sfc = max(FT(t2m[ii, jj]), FT(200))  # clamp cold extremes
 
     # --- Obukhov length ---
     H_kin = H_sfc / (ρ * cp)
     H_safe = H_kin + sign(H_kin + FT(1e-20)) * FT(1e-10)
     L_ob = -T_sfc * us^3 / (κ_vk * g * H_safe)
 
-    # --- Total column height (approximate, for computing z at TOA) ---
-    z_col = FT(0)
+    # --- Compute surface pressure and layer heights using hydrostatic ---
+    # dz_k = Δp_k * R_d * T_sfc / (p_mid_k * g)
+    # where p_mid_k is evaluated at the layer center.
+    # We use T_sfc throughout the PBL (isothermal approximation, adequate
+    # for the lowest ~3 km where diffusion matters).
+    ps = FT(0)
     @inbounds for k in 1:Nz
-        z_col += delp[ii, jj, k] * inv_rho_g
+        ps += delp[ii, jj, k]
+    end
+    R_T_over_g = R_d * T_sfc / g
+
+    z_col = FT(0)
+    p_top = FT(0)  # pressure at top of atmosphere
+    @inbounds for k in 1:Nz
+        delp_k = delp[ii, jj, k]
+        p_top_k = p_top
+        p_bot_k = p_top + delp_k
+        p_mid_k = (p_top_k + p_bot_k) / FT(2)
+        # Avoid division by zero at TOA (p_mid ~ 0)
+        p_mid_k = max(p_mid_k, FT(1))
+        z_col += delp_k * R_T_over_g / p_mid_k
+        p_top = p_bot_k
     end
 
     # --- Convert rm → mixing ratio (CS only) ---
@@ -141,12 +190,17 @@ For each (i,j) column:
     # --- Forward sweep: build tridiagonal + Thomas elimination ---
     # Process top-to-bottom (k=1 = TOA, k=Nz = surface).
     # z_above tracks the height of the top of current layer.
+    # Heights use pressure-dependent density: dz = Δp * R_d * T / (p_mid * g)
     z_above = z_col
     w_prev = FT(0)
     g_prev = FT(0)
+    p_top = FT(0)
 
     @inbounds for k in 1:Nz
-        dz_k = delp[ii, jj, k] * inv_rho_g
+        delp_k = delp[ii, jj, k]
+        p_bot_k = p_top + delp_k
+        p_mid_k = max((p_top + p_bot_k) / FT(2), FT(1))
+        dz_k = delp_k * R_T_over_g / p_mid_k
         z_below = z_above - dz_k
 
         # Kz at interface above (between k-1 and k)
@@ -154,7 +208,10 @@ For each (i,j) column:
         if k > 1
             Kz_a = _pbl_kz(z_above, h_pbl, us, L_ob, κ_vk,
                             β_h, Kz_bg, Kz_min, Kz_max, FT)
-            dz_prev = delp[ii, jj, k - 1] * inv_rho_g
+            delp_prev = delp[ii, jj, k - 1]
+            p_top_prev = p_top - delp_prev
+            p_mid_prev = max((p_top_prev + p_top) / FT(2), FT(1))
+            dz_prev = delp_prev * R_T_over_g / p_mid_prev
             dz_mid = (dz_prev + dz_k) / FT(2)
             D_above = Kz_a / (dz_k * dz_mid)
         end
@@ -164,10 +221,14 @@ For each (i,j) column:
         if k < Nz
             Kz_b = _pbl_kz(z_below, h_pbl, us, L_ob, κ_vk,
                             β_h, Kz_bg, Kz_min, Kz_max, FT)
-            dz_next = delp[ii, jj, k + 1] * inv_rho_g
+            delp_next = delp[ii, jj, k + 1]
+            p_mid_next = max(p_bot_k + delp_next / FT(2), FT(1))
+            dz_next = delp_next * R_T_over_g / p_mid_next
             dz_mid = (dz_k + dz_next) / FT(2)
             D_below = Kz_b / (dz_k * dz_mid)
         end
+
+        p_top = p_bot_k
 
         # Tridiagonal coefficients: (I - dt*D) c_new = c_old
         a_k = k > 1  ? -dt * D_above : FT(0)

@@ -1,0 +1,34 @@
+# Zhang Rn222 soil emissions → cubed-sphere binary
+#
+# Source: Zhang & Liu monthly Rn222 climatology (0.5° lat-lon)
+# Units: kg/m²/s (already in standard units)
+# Reference total: ~14 kg/yr
+
+[source]
+type = "netcdf_latlon"
+path = "~/data/AtmosTransport/catrine/Emissions/ZHANG_Rn222/*.nc"
+variable = "auto"                # auto-detect: rn_emis, rnemis, emis, Rn222
+lon_coord = "auto"
+lat_coord = "auto"
+time_dim = "time"
+
+[units]
+input = "kg/m2/s"
+output = "kg/m2/s"
+conversions = []                 # already in standard units
+
+[target]
+grid = "cubed_sphere"
+Nc = 180
+coord_file = "~/data/geosit_c180_catrine/20211201/GEOSIT.20211201.CTM_A1.C180.nc"
+gridspec_file = "data/grids/cs_c180_gridspec.nc"
+
+[output]
+path = "~/data/AtmosTransport/catrine/preprocessed_c180/zhang_rn222_cs_c180_float32.bin"
+species = "rn222"
+float_type = "Float32"
+
+[validation]
+expected_total = 14.0
+expected_unit = "kg/yr"
+tolerance = 0.02

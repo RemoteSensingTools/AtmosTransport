@@ -1,0 +1,91 @@
+# ===========================================================================
+# CATRINE D7.1 — ERA5 Spectral 0.5° Lat-Lon (2-Month Test)
+#
+# 2-tracer test run: SF6 + fossil CO2
+# Period: 1 Dec 2021 (spin-up) — 31 Jan 2022
+# Met data: ERA5 spectral mass fluxes, preprocessed to 720×361×137
+# Output: 3-hourly, full 3D fields + column mass (NetCDF4, Float32)
+#
+# Protocol: https://www.catrine-project.eu/
+#
+# Preprocessing:
+#   julia --project=. -p 8 scripts/preprocess_spectral_massflux.jl \
+#       config/preprocessing/catrine_spectral.toml
+#
+# Usage:
+#   using CUDA
+#   using AtmosTransport
+#   model = build_model_from_config("config/runs/catrine_era5_spectral.toml")
+#   run!(model)
+# ===========================================================================
+
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "latlon"
+met_source = "era5"
+size       = [720, 361, 137]             # 0.5° × 0.5°, full 137 levels
+
+[met_data]
+driver    = "preprocessed_latlon"
+directory = "/temp1/atmos_transport/era5_spectral_catrine"
+dt        = 900                          # advection sub-step [s]
+
+# --- Tracers ---
+
+[tracers.sf6]
+emission         = "edgar_sf6"
+file             = "~/data/AtmosTransport/catrine/v8.0_FT2022_GHG_SF6_2022_TOTALS_emi.nc"
+noaa_growth_file = "~/data/AtmosTransport/catrine/sf6_gr_gl.txt"
+year             = 2022
+scale_year       = 2022
+
+[tracers.fossil_co2]
+emission = "gridfed"
+dir      = "~/data/AtmosTransport/catrine/gridfed"
+species  = "fossil_co2"
+year     = 2022
+
+# --- Chemistry (none needed for this 2-tracer test) ---
+[chemistry]
+type = "none"
+
+# --- Advection ---
+[advection]
+scheme    = "ppm"
+ppm_order = 7
+
+# --- Convection ---
+[convection]
+type = "tiedtke"
+
+# --- Diffusion ---
+[diffusion]
+type   = "pbl"
+beta_h = 15.0
+Kz_bg  = 0.1
+Kz_min = 0.01
+Kz_max = 500.0
+
+# --- Output (3-hourly, full 3D + column mass) ---
+[output]
+filename      = "~/data/output/catrine_era5_spectral_2month.nc"
+interval      = 10800                    # 3 hours
+deflate_level = 4
+
+[output.fields]
+sf6_3d              = {type = "full_3d", species = "sf6"}
+fossil_co2_3d       = {type = "full_3d", species = "fossil_co2"}
+sf6_column_mass     = {type = "column_mass", species = "sf6"}
+fco2_column_mass    = {type = "column_mass", species = "fossil_co2"}
+surface_pressure    = "surface_pressure"
+pbl_height          = "pbl_height"
+tropopause_height   = "tropopause_height"
+# Column flux diagnostics (CS only — disabled for lat-lon ERA5)
+# sf6_flux_east     = {type = "column_flux", species = "sf6", direction = "east"}
+# sf6_flux_north    = {type = "column_flux", species = "sf6", direction = "north"}
+
+[buffering]
+strategy = "double"

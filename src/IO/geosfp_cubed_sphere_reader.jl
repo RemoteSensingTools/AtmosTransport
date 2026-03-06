@@ -453,10 +453,63 @@ end
 """
 $(SIGNATURES)
 
-Read 2D surface fields (PBLH, USTAR, HFLUX, T2M) from a GEOS-IT A1 file.
+Read DTRAIN (detraining mass flux) from a GEOS-IT/FP A3dyn file.
 
-Returns a NamedTuple `(pblh, ustar, hflux, t2m)` where each is an NTuple{6}
-of haloed 2D arrays `(Nc+2Hp, Nc+2Hp)`.
+DTRAIN is the convective detrainment rate [kg/m²/s] at layer centers,
+used by the RAS convection scheme alongside CMFMC. The detrainment
+flux represents cloud air being mixed back into the environment at
+each level's neutral buoyancy height.
+
+The data is stored at layer centers (Nz levels, not Nz+1 edges like CMFMC).
+GEOS-IT files are bottom-to-top; this function flips to TOA-first convention.
+
+# Arguments
+- `filepath`: path to a `GEOSIT.YYYYMMDD.A3dyn.C*.nc` file
+- `FT`: float type (default Float32)
+- `time_index`: which 3-hourly timestep (1–8 for daily file)
+- `Hp`: halo padding width
+
+# Returns
+- `dtrain_haloed`: NTuple{6, Array{FT,3}} of shape (Nc+2Hp, Nc+2Hp, Nz)
+"""
+function read_geosfp_cs_dtrain(filepath::String;
+                                FT::Type{<:AbstractFloat} = Float32,
+                                time_index::Int = 1,
+                                Hp::Int = 3)
+    ds = NCDataset(filepath, "r")
+    try
+        # DTRAIN: (Xdim=Nc, Ydim=Nc, nf=6, lev=72, time=8)
+        dtrain_raw = Array{FT}(ds["DTRAIN"][:, :, :, :, time_index])  # (Nc, Nc, 6, 72)
+        Nc = size(dtrain_raw, 1)
+        Nz = size(dtrain_raw, 4)  # 72 layer centers
+
+        # GEOS-IT stores bottom-to-top; flip to TOA-first
+        reverse!(dtrain_raw, dims=4)
+
+        # Build haloed panel arrays
+        dtrain_haloed = ntuple(6) do p
+            arr = zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz)
+            arr[Hp+1:Hp+Nc, Hp+1:Hp+Nc, :] .= dtrain_raw[:, :, p, :]
+            arr
+        end
+
+        return dtrain_haloed
+    finally
+        close(ds)
+    end
+end
+
+"""
+$(SIGNATURES)
+
+Read 2D surface fields (PBLH, USTAR, HFLUX, T2M, and optionally TROPPT)
+from a GEOS-IT A1 file.
+
+Returns a NamedTuple `(pblh, ustar, hflux, t2m[, troph])` where each is an
+NTuple{6} of haloed 2D arrays `(Nc+2Hp, Nc+2Hp)`.
+
+TROPPT is the tropopause pressure (Pa) based on the thermal lapse-rate
+definition. It is included when present in the file.
 
 # Arguments
 - `filepath`: path to a `GEOSIT.YYYYMMDD.A1.C*.nc` file
@@ -485,6 +538,12 @@ function read_geosfp_cs_surface_fields(filepath::String;
         ustar = _read_2d("USTAR")
         hflux = _read_2d("HFLUX")
         t2m   = _read_2d("T2M")
+
+        # TROPPT (tropopause pressure, Pa) — optional, present in GEOS-IT A1
+        if haskey(ds, "TROPPT")
+            troph = _read_2d("TROPPT")
+            return (; pblh, ustar, hflux, t2m, troph)
+        end
 
         return (; pblh, ustar, hflux, t2m)
     finally

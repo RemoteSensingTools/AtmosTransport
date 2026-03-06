@@ -1,0 +1,23 @@
+# CATRINE D7.1 — GEOS-IT C180 Preprocessing (Dec 14 onwards)
+# Skips Dec 12-13 which have corrupt CTM_A1 files
+
+[product]
+name         = "geosit_c180"
+mass_flux_dt = 450.0
+
+[input]
+data_dir   = "~/data/geosit_c180_catrine"
+start_date = "2021-12-14"
+end_date   = "2022-01-31"
+
+[output]
+directory = "/temp2/catrine-runs/met/geosit_c180"
+
+[grid]
+halo_width = 3
+
+[numerics]
+float_type = "Float32"
+
+[diagnostics]
+verbose = true

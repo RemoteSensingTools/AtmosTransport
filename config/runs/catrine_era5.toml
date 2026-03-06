@@ -42,41 +42,56 @@ level_bot    = 137
 # CO2 and SF6 from LSCE inversions (1 Dec 2021 00:00 UTC)
 # fossil_co2 and rn222 start from zero
 [initial_conditions]
-file       = "~/data/catrine/initial_conditions_20211201.nc"
-co2        = "CO2"
-sf6        = "SF6"
-# fossil_co2 and rn222 omitted → start from zero
+co2.file     = "~/data/AtmosTransport/catrine/InitialConditions/startCO2_202112010000.nc"
+co2.variable = "CO2"
+sf6.file     = "~/data/AtmosTransport/catrine/InitialConditions/startSF6_202112010000.nc"
+sf6.variable = "SF6"
 
 # --- Tracers ---
 
 [tracers.co2]
-emission = "cams_co2"
-file     = "~/data/catrine/cams_co2_flux.nc"
-species  = "co2"
-year     = 2022
+emission   = "lmdz_co2"
+dir        = "~/data/AtmosTransport/catrine/Emissions/LMDZ_fluxes"
+species    = "co2"
+flux_var   = "flux_apos"
+start_date = "2021-12-01"
+end_date   = "2023-12-31"
 
 [tracers.fossil_co2]
 emission = "gridfed"
-file     = "~/data/catrine/GridFEDv2024.1_monthly.nc"
+dir      = "~/data/AtmosTransport/catrine/Emissions/gridfed"
 species  = "fossil_co2"
 year     = 2022
 
 [tracers.sf6]
 emission         = "edgar_sf6"
-file             = "~/data/catrine/v8.0_FT2022_GHG_SF6_2022_TOTALS_emi.nc"
-noaa_growth_file = "~/data/catrine/sf6_gr_gl.txt"
+file             = "~/data/AtmosTransport/catrine/Emissions/edgar_v8/v8.0_FT2022_GHG_SF6_2022_TOTALS_emi.nc"
+noaa_growth_file = "~/data/AtmosTransport/catrine/Emissions/sf6_gr_gl.txt"
 year             = 2022
 scale_year       = 2022
 
 [tracers.rn222]
 emission   = "zhang_rn222"
-dir        = "~/data/catrine/ZHANG_Rn222/"
+dir        = "~/data/AtmosTransport/catrine/Emissions/ZHANG_Rn222/"
 chemistry  = "decay"
 half_life  = 330350.4                    # 3.8235 days in seconds
 
 # --- Chemistry (222Rn radioactive decay) ---
 [chemistry]
 type      = "composite"
+
+# --- Advection ---
+[advection]
+scheme    = "ppm"
+ppm_order = 7
+
+# --- Diffusion ---
+[diffusion]
+type   = "pbl"
+beta_h = 15.0
+Kz_bg  = 0.1
+Kz_min = 0.01
+Kz_max = 500.0
 
 # --- Output (3-hourly, full 3D) ---
 [output]

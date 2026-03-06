@@ -18,7 +18,9 @@
 # ---------------------------------------------------------------------------
 
 using Dates
-using Downloads
+
+include(joinpath(@__DIR__, "download_utils.jl"))
+using .DownloadUtils
 
 # Product registry (mirrors GEOS_CS_PRODUCTS in geosfp_cubed_sphere_reader.jl)
 const PRODUCTS = Dict(
@@ -53,28 +55,7 @@ function build_url(date::Date, hour::Int, info)
     end
 end
 
-function download_file(url::String, dest::String; max_retries::Int=3)
-    if isfile(dest) && filesize(dest) > 1_000_000
-        @info "Already exists: $(basename(dest)) ($(filesize(dest) ÷ 1_000_000) MB)"
-        return true
-    end
-    mkpath(dirname(dest))
-    for attempt in 1:max_retries
-        try
-            @info "Downloading $(basename(dest)) (attempt $attempt)..."
-            Downloads.download(url, dest)
-            sz = filesize(dest) ÷ 1_000_000
-            @info "  → $sz MB"
-            return true
-        catch e
-            @warn "Attempt $attempt failed: $e"
-            isfile(dest) && rm(dest; force=true)
-            attempt < max_retries && sleep(5 * attempt)
-        end
-    end
-    @error "Failed after $max_retries attempts: $(basename(dest))"
-    return false
-end
+# download_file replaced by verified_download from DownloadUtils
 
 function main()
     haskey(PRODUCTS, PRODUCT) || error(
@@ -117,7 +98,7 @@ function main()
             url = build_url(date, hour, info)
             fname = basename(url)
             dest = joinpath(daydir, fname)
-            ok = download_file(url, dest)
+            ok = verified_download(url, dest)
             ok ? (n_done += 1) : (n_fail += 1)
 
             if (n_done + n_fail) % max(1, length(hours)) == 0
@@ -142,4 +123,28 @@ function main()
     """
 end
 
-main()
+if "--verify" in ARGS
+    # Verify-only mode: scan existing downloads and report status
+    info = PRODUCTS[PRODUCT]
+    start_date = get(ENV, "GEOSFP_START_DATE", "2024-06-01") |> Date
+    end_date   = get(ENV, "GEOSFP_END_DATE",   "2024-06-30") |> Date
+    dates = start_date:Day(1):end_date
+
+    @info "Verifying downloads in $OUTPUT_DIR ($start_date → $end_date)..."
+    result = verify_downloads(
+        OUTPUT_DIR, dates,
+        datestr -> basename(build_url(Date(datestr, dateformat"yyyymmdd"), 0, info));
+        url_builder = datestr -> build_url(Date(datestr, dateformat"yyyymmdd"), 0, info))
+
+    @info "  OK:      $(length(result.ok))"
+    isempty(result.corrupt) || @warn "  Corrupt: $(length(result.corrupt))"
+    for f in result.corrupt
+        @warn "    $f ($(filesize(f) ÷ 1_000_000) MB)"
+    end
+    isempty(result.missing) || @warn "  Missing: $(length(result.missing))"
+    for f in result.missing
+        @warn "    $f"
+    end
+else
+    main()
+end

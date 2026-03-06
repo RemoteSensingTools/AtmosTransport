@@ -1,40 +1,11 @@
 # ---------------------------------------------------------------------------
-# CubedSphereEmission — panel-based surface emission for cubed-sphere grids
+# apply_surface_flux! for SurfaceFlux{CubedSphereLayout} and
+# TimeVaryingSurfaceFlux{CubedSphereLayout}
 #
-# Dispatches apply_surface_flux! on CubedSphereGrid via multiple dispatch.
 # GPU path uses KernelAbstractions; CPU path uses plain loops.
 # ---------------------------------------------------------------------------
 
 using KernelAbstractions: @kernel, @index, @Const, synchronize, get_backend
-
-"""
-$(TYPEDEF)
-
-Surface emission regridded to cubed-sphere panels.
-Each panel has an (Nc × Nc) flux field in kg/m²/s.
-
-$(FIELDS)
-"""
-struct CubedSphereEmission{FT, A <: AbstractMatrix{FT}} <: AbstractGriddedEmission{FT}
-    "emission flux panels [kg/m²/s], NTuple{6, Nc×Nc}"
-    flux_panels :: NTuple{6, A}
-    "tracer name (e.g. :co2)"
-    species     :: Symbol
-    "human-readable label"
-    label       :: String
-    "molar mass of emitted species [kg/mol]"
-    molar_mass  :: FT
-end
-
-"""
-    CubedSphereEmission(flux_panels, species, label; molar_mass=molar_mass_for_species(species))
-
-Construct a `CubedSphereEmission`. Molar mass defaults based on species name.
-"""
-function CubedSphereEmission(flux_panels::NTuple{6, A}, species::Symbol, label::String;
-                             molar_mass::Real=molar_mass_for_species(species)) where {FT, A <: AbstractMatrix{FT}}
-    CubedSphereEmission{FT, A}(flux_panels, species, label, FT(molar_mass))
-end
 
 # ---------------------------------------------------------------------------
 # GPU emission kernel for cubed-sphere panels
@@ -51,22 +22,36 @@ end
 end
 
 """
-    apply_surface_flux!(rm_panels, source::CubedSphereEmission, area_panels, dt, Nc, Hp)
+    apply_surface_flux!(rm_panels, source::SurfaceFlux{CubedSphereLayout}, area_panels, dt, Nc, Hp)
 
-Inject cubed-sphere surface emissions into haloed tracer panels.
+Inject cubed-sphere surface fluxes into haloed tracer panels.
 `rm_panels` is NTuple{6} of haloed 3D arrays (mixing-ratio × air-mass).
 `area_panels` is NTuple{6} of (Nc × Nc) cell area arrays.
 
 Works on both CPU and GPU via KernelAbstractions dispatch.
 """
-function apply_surface_flux!(rm_panels::NTuple{6}, source::CubedSphereEmission{FT},
+function apply_surface_flux!(rm_panels::NTuple{6}, source::SurfaceFlux{CubedSphereLayout, FT},
                               area_panels::NTuple{6},
                               dt, Nc::Int, Hp::Int) where FT
-    mol_ratio = FT(1e6 * M_AIR / source.molar_mass)
+    mol_ratio = FT(M_AIR / source.molar_mass)
     backend = get_backend(rm_panels[1])
     k! = _emit_cs_kernel!(backend, 256)
     for p in 1:6
-        k!(rm_panels[p], source.flux_panels[p], area_panels[p],
+        k!(rm_panels[p], source.flux[p], area_panels[p],
+           FT(dt), mol_ratio, Hp; ndrange=(Nc, Nc))
+    end
+    synchronize(backend)
+end
+
+function apply_surface_flux!(rm_panels::NTuple{6}, source::TimeVaryingSurfaceFlux{CubedSphereLayout, FT},
+                              area_panels::NTuple{6},
+                              dt, Nc::Int, Hp::Int) where FT
+    panels = flux_data(source)
+    mol_ratio = FT(M_AIR / source.molar_mass)
+    backend = get_backend(rm_panels[1])
+    k! = _emit_cs_kernel!(backend, 256)
+    for p in 1:6
+        k!(rm_panels[p], panels[p], area_panels[p],
            FT(dt), mol_ratio, Hp; ndrange=(Nc, Nc))
     end
     synchronize(backend)

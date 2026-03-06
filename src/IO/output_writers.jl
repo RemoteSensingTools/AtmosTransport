@@ -8,15 +8,79 @@
 
 using Dates
 using NCDatasets
-using ..Grids: grid_size, floattype, LatitudeLongitudeGrid, CubedSphereGrid, znode, Center
+using ..Grids: grid_size, floattype, LatitudeLongitudeGrid, CubedSphereGrid, znode, Center,
+               cell_area
 using ..Fields: interior, AbstractField
 using ..Architectures: array_type
-using ..Diagnostics: AbstractDiagnostic, ColumnMeanDiagnostic, SurfaceSliceDiagnostic,
+using ..Diagnostics: AbstractDiagnostic, ColumnMeanDiagnostic, ColumnMassDiagnostic,
+                     SurfaceSliceDiagnostic,
                      RegridDiagnostic, Full3DDiagnostic, MetField2DDiagnostic,
-                     SigmaLevelDiagnostic,
-                     column_mean!, surface_slice!, sigma_level_slice!,
+                     SigmaLevelDiagnostic, ColumnFluxDiagnostic,
+                     EmissionFluxDiagnostic,
+                     column_mean!, column_mass!, surface_slice!, sigma_level_slice!,
+                     column_tracer_flux!,
                      regrid_cs_to_latlon,
                      RegridMapping, build_regrid_mapping, regrid_cs_to_latlon!
+using ..Sources: molar_mass_for_species, M_AIR
+
+# =====================================================================
+# Field metadata — map diagnostic types to CF-convention units/long_name
+# =====================================================================
+
+"""
+    _field_attribs(field_entry) → Dict{String,String}
+
+Return a `Dict` of NetCDF attributes (`units`, `long_name`) for a diagnostic
+or field entry. Used by both direct NetCDF writers and the binary→NC converter.
+"""
+function _field_attribs(field_entry)
+    if field_entry isa ColumnMeanDiagnostic
+        return Dict("units" => "mol mol-1",
+                     "long_name" => "column-mean mole fraction of $(field_entry.species)")
+    elseif field_entry isa ColumnMassDiagnostic
+        return Dict("units" => "kg m-2",
+                     "long_name" => "column mass of $(field_entry.species)")
+    elseif field_entry isa SurfaceSliceDiagnostic
+        return Dict("units" => "mol mol-1",
+                     "long_name" => "surface mole fraction of $(field_entry.species)")
+    elseif field_entry isa SigmaLevelDiagnostic
+        sigma_str = string(round(field_entry.sigma; digits=3))
+        return Dict("units" => "mol mol-1",
+                     "long_name" => "mole fraction of $(field_entry.species) at sigma=$(sigma_str)")
+    elseif field_entry isa Full3DDiagnostic
+        return Dict("units" => "mol mol-1",
+                     "long_name" => "mole fraction of $(field_entry.species)")
+    elseif field_entry isa EmissionFluxDiagnostic
+        return Dict("units" => "kg m-2 s-1",
+                     "long_name" => "surface emission flux of $(field_entry.species)")
+    elseif field_entry isa ColumnFluxDiagnostic
+        dir = field_entry.direction == :east ? "eastward" : "northward"
+        return Dict("units" => "kg m-1",
+                     "long_name" => "column-integrated $(dir) tracer flux of $(field_entry.species)")
+    elseif field_entry isa MetField2DDiagnostic
+        return _met_field_attribs(field_entry.field_name)
+    elseif field_entry isa RegridDiagnostic
+        return Dict("units" => "mol mol-1",
+                     "long_name" => "regridded mole fraction of $(field_entry.species)")
+    else
+        return Dict{String,String}()
+    end
+end
+
+"""Map known met field names to units/long_name."""
+function _met_field_attribs(fname::Symbol)
+    if fname == :surface_pressure
+        return Dict("units" => "Pa", "long_name" => "surface pressure")
+    elseif fname == :pbl_height
+        return Dict("units" => "m", "long_name" => "planetary boundary layer height")
+    elseif fname == :tropopause_height || fname == :tropopause_pressure
+        return Dict("units" => "Pa", "long_name" => "tropopause pressure")
+    elseif fname == :surface_temperature || fname == :t2m
+        return Dict("units" => "K", "long_name" => "2-metre temperature")
+    else
+        return Dict("units" => "", "long_name" => string(fname))
+    end
+end
 
 """
 $(TYPEDEF)
@@ -139,6 +203,8 @@ struct NetCDFOutputWriter{S <: AbstractOutputSchedule, OG} <: AbstractOutputWrit
     digits        :: Union{Nothing, Int}
     "simulation start date for CF-convention time units"
     start_date    :: Date
+    "lazily-built flux accumulator state for ColumnFluxDiagnostic (nothing until first use)"
+    _flux_accumulators :: Ref{Any}
 end
 
 function NetCDFOutputWriter(filename::String, fields::Dict, schedule::S;
@@ -147,7 +213,7 @@ function NetCDFOutputWriter(filename::String, fields::Dict, schedule::S;
                             start_date::Date=Date(2000,1,1)) where S <: AbstractOutputSchedule
     return NetCDFOutputWriter{S, typeof(output_grid)}(
         filename, fields, schedule, output_grid, Ref(0), Ref{Any}(nothing),
-        deflate_level, digits, start_date)
+        deflate_level, digits, start_date, Ref{Any}(nothing))
 end
 
 # Backward compat: 3-arg constructor without output_grid
@@ -186,7 +252,7 @@ Ensures result is a CPU array.
 """
 function _extract_field_data(field_or_func, model;
                              air_mass=nothing, tracers=nothing, regrid_cache=nothing,
-                             output_grid=nothing)
+                             output_grid=nothing, met_fields=nothing)
     if field_or_func isa AbstractField
         arr = interior(field_or_func)
         return Array(arr)  # ensure CPU for NCDatasets
@@ -197,7 +263,7 @@ function _extract_field_data(field_or_func, model;
         return Array(field_or_func)
     elseif field_or_func isa AbstractDiagnostic
         return _compute_diagnostic(field_or_func, model; air_mass, tracers, regrid_cache,
-                                    output_grid)
+                                    output_grid, met_fields)
     else
         error("Field must be AbstractField, Function, Array, or AbstractDiagnostic, " *
               "got $(typeof(field_or_func))")
@@ -209,7 +275,7 @@ Compute a diagnostic from model state. Returns a CPU array.
 """
 function _compute_diagnostic(diag::ColumnMeanDiagnostic, model;
                              air_mass=nothing, tracers=nothing, regrid_cache=nothing,
-                             output_grid=nothing)
+                             output_grid=nothing, met_fields=nothing)
     grid = model.grid
     if grid isa LatitudeLongitudeGrid
         c = _get_tracer(model, diag.species; tracers)
@@ -234,9 +300,48 @@ function _compute_diagnostic(diag::ColumnMeanDiagnostic, model;
     end
 end
 
+function _compute_diagnostic(diag::ColumnMassDiagnostic, model;
+                             air_mass=nothing, tracers=nothing, regrid_cache=nothing,
+                             output_grid=nothing, met_fields=nothing)
+    grid = model.grid
+    # mol_ratio converts rm (mol/mol × kg_air) to tracer mass (kg)
+    mol_ratio = M_AIR / molar_mass_for_species(diag.species)
+    if grid isa LatitudeLongitudeGrid
+        c = _get_tracer(model, diag.species; tracers)
+        m = air_mass !== nothing ? air_mass : _compute_uniform_mass(c)
+        cm_col = similar(c, size(c, 1), size(c, 2))
+        column_mass!(cm_col, c, m)
+        result = Array(cm_col)
+        Nx, Ny = size(result)
+        for j in 1:Ny, i in 1:Nx
+            result[i, j] /= (mol_ratio * cell_area(i, j, grid))
+        end
+        return result
+    elseif grid isa CubedSphereGrid
+        rm = _get_tracer_panels(model, diag.species; tracers)
+        Nc = grid.Nc
+        Nz = size(rm[1], 3)
+        Hp = div(size(rm[1], 1) - Nc, 2)
+        cm_panels = ntuple(_ -> similar(rm[1], Nc, Nc), 6)
+        column_mass!(cm_panels, rm, Nc, Nz, Hp)
+        # Divide by mol_ratio (mol/mol × kg → kg) and cell area to get kg/m²
+        cm_cpu = ntuple(6) do p
+            panel = Array(cm_panels[p])
+            panel ./= (mol_ratio .* grid.Aᶜ[p])
+            panel
+        end
+        if output_grid isa LatLonOutputGrid
+            AT = array_type(model.architecture)
+            cm_device = ntuple(p -> AT(cm_cpu[p]), 6)
+            return _regrid_panels_to_latlon(cm_device, model, grid, output_grid, regrid_cache)
+        end
+        return cm_cpu
+    end
+end
+
 function _compute_diagnostic(diag::SurfaceSliceDiagnostic, model;
                              air_mass=nothing, tracers=nothing, regrid_cache=nothing,
-                             output_grid=nothing)
+                             output_grid=nothing, met_fields=nothing)
     grid = model.grid
     if grid isa LatitudeLongitudeGrid
         c = _get_tracer(model, diag.species; tracers)
@@ -272,7 +377,7 @@ end
 
 function _compute_diagnostic(diag::SigmaLevelDiagnostic, model;
                              air_mass=nothing, tracers=nothing, regrid_cache=nothing,
-                             output_grid=nothing)
+                             output_grid=nothing, met_fields=nothing)
     grid = model.grid
     if grid isa LatitudeLongitudeGrid
         c = _get_tracer(model, diag.species; tracers)
@@ -297,7 +402,7 @@ end
 
 function _compute_diagnostic(diag::RegridDiagnostic, model;
                              air_mass=nothing, tracers=nothing, regrid_cache=nothing,
-                             output_grid=nothing)
+                             output_grid=nothing, met_fields=nothing)
     grid = model.grid
     grid isa CubedSphereGrid || error("RegridDiagnostic only applies to CubedSphereGrid")
     FT = floattype(grid)
@@ -367,7 +472,10 @@ function _regrid_panels_to_latlon(panels::NTuple{6}, model, grid::CubedSphereGri
                                                    file_lons, file_lats)
         end
         mapping = regrid_cache[]::RegridMapping
-        return Array(regrid_cs_to_latlon!(mapping, panels))
+        # Ensure panels are on the same device as the mapping (surface fields live on CPU)
+        AT = array_type(model.architecture)
+        gpu_panels = ntuple(p -> panels[p] isa AT ? panels[p] : AT(panels[p]), 6)
+        return Array(regrid_cs_to_latlon!(mapping, gpu_panels))
     end
     # CPU fallback
     file_lons, file_lats = _get_cs_file_coords(model)
@@ -382,43 +490,135 @@ end
 
 function _compute_diagnostic(diag::Full3DDiagnostic, model;
                              air_mass=nothing, tracers=nothing, regrid_cache=nothing,
-                             output_grid=nothing)
+                             output_grid=nothing, met_fields=nothing)
     grid = model.grid
     if grid isa LatitudeLongitudeGrid
         c = _get_tracer(model, diag.species; tracers)
         return Array(c)
     elseif grid isa CubedSphereGrid
-        # Return panels — will be regridded or written natively by _write_field_slice!
-        c_panels = _get_tracer_panels(model, diag.species; tracers)
-        return ntuple(p -> Array(c_panels[p]), 6)
+        rm_panels = _get_tracer_panels(model, diag.species; tracers)
+        if output_grid isa LatLonOutputGrid
+            # Level-by-level CS → lat-lon regridding of mixing ratio
+            Nc = grid.Nc
+            Hp = div(size(rm_panels[1], 1) - Nc, 2)
+            Nz = size(rm_panels[1], 3)
+            FT = floattype(grid)
+            og = output_grid
+            result = zeros(FT, og.Nlon, og.Nlat, Nz)
+            for k in 1:Nz
+                level_panels = ntuple(6) do p
+                    rm_slice = rm_panels[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, k]
+                    if air_mass !== nothing
+                        m_slice = air_mass[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, k]
+                        rm_slice ./ m_slice  # mixing ratio
+                    else
+                        rm_slice
+                    end
+                end
+                result[:, :, k] = _regrid_panels_to_latlon(
+                    level_panels, model, grid, og, regrid_cache)
+            end
+            return result
+        end
+        # Native CS output — strip halos and convert to mixing ratio
+        Nc = grid.Nc
+        Hp = div(size(rm_panels[1], 1) - Nc, 2)
+        Nz = size(rm_panels[1], 3)
+        return ntuple(6) do p
+            rm_inner = Array(rm_panels[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, 1:Nz])
+            if air_mass !== nothing
+                m_inner = Array(air_mass[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, 1:Nz])
+                rm_inner ./= m_inner  # convert to mixing ratio
+            end
+            rm_inner
+        end
     end
 end
 
 function _compute_diagnostic(diag::MetField2DDiagnostic, model;
                              air_mass=nothing, tracers=nothing, regrid_cache=nothing,
-                             output_grid=nothing)
-    met = model.met_data
+                             output_grid=nothing, met_fields=nothing)
     fn = diag.field_name
+    grid = model.grid
 
-    # Try to extract the field from met_data (NamedTuple or struct with fields)
+    # Canonical field name mapping (config name → NamedTuple key)
+    key = fn === :surface_pressure ? :ps :
+          fn === :pbl_height       ? :pblh :
+          fn === :tropopause_height ? :troph : fn
+
+    # Priority 1: met_fields kwarg (explicitly passed from run loop)
+    if met_fields isa NamedTuple && haskey(met_fields, key)
+        field_data = met_fields[key]
+        # CS panels (NTuple{6}) — strip halos and regrid to lat-lon
+        if field_data isa NTuple && grid isa CubedSphereGrid
+            Nc = grid.Nc
+            Hp = div(size(field_data[1], 1) - Nc, 2)
+            inner = ntuple(p -> Array(field_data[p])[Hp+1:Hp+Nc, Hp+1:Hp+Nc], 6)
+            if output_grid isa LatLonOutputGrid
+                return _regrid_panels_to_latlon(inner, model, grid, output_grid,
+                                                 regrid_cache)
+            end
+            return inner
+        end
+        return Array(field_data)
+    end
+
+    # Priority 2: model.met_data (NamedTuple or struct with fields)
+    met = model.met_data
     if met isa NamedTuple && haskey(met, fn)
         return Array(met[fn])
     elseif hasproperty(met, fn)
         return Array(getproperty(met, fn))
-    elseif met isa NamedTuple && fn === :surface_pressure && haskey(met, :ps)
-        return Array(met[:ps])
-    elseif met isa NamedTuple && fn === :pbl_height && haskey(met, :pblh)
-        return Array(met[:pblh])
-    elseif met isa NamedTuple && fn === :tropopause_height && haskey(met, :troph)
-        return Array(met[:troph])
+    elseif met isa NamedTuple && haskey(met, key)
+        return Array(met[key])
+    end
+
+    @warn "MetField2DDiagnostic: field '$fn' not found in met_data — returning zeros"
+    if grid isa LatitudeLongitudeGrid
+        return zeros(Float32, grid.Nx, grid.Ny)
+    elseif output_grid isa LatLonOutputGrid
+        return zeros(Float32, output_grid.Nlon, output_grid.Nlat)
+    elseif grid isa CubedSphereGrid
+        return ntuple(_ -> zeros(Float32, grid.Nc, grid.Nc), 6)
     else
-        @warn "MetField2DDiagnostic: field '$fn' not found in met_data — returning zeros"
-        grid = model.grid
-        if grid isa LatitudeLongitudeGrid
-            return zeros(Float32, grid.Nx, grid.Ny)
+        return zeros(Float32, grid.Nc, grid.Nc)
+    end
+end
+
+function _compute_diagnostic(diag::EmissionFluxDiagnostic, model;
+                             air_mass=nothing, tracers=nothing, regrid_cache=nothing,
+                             output_grid=nothing, met_fields=nothing)
+    grid = model.grid
+    species = diag.species
+    # Search model.sources for a source matching this species
+    for src in model.sources
+        src_species = hasproperty(src, :species) ? src.species : nothing
+        src_species === species || continue
+        # Time-varying: get active snapshot via flux_data accessor or field
+        if hasproperty(src, :flux_data) && hasproperty(src, :current_idx)
+            fd = src.flux_data
+            panels = fd isa AbstractVector ? fd[src.current_idx] : @view fd[:, :, src.current_idx]
+        elseif hasproperty(src, :flux)
+            fd = src.flux
+            fd isa AbstractMatrix && return Array(fd)
+            panels = fd  # NTuple{6, Matrix} for CS
         else
-            return zeros(Float32, grid.Nc, grid.Nc)
+            continue
         end
+        # CS panels → NTuple{6}
+        if output_grid isa LatLonOutputGrid
+            return _regrid_panels_to_latlon(panels, model, grid, output_grid, regrid_cache)
+        end
+        return panels   # native CS: NTuple{6, Matrix}
+    end
+    @warn "EmissionFluxDiagnostic: no source found for species '$species' — returning zeros"
+    if grid isa LatitudeLongitudeGrid
+        return zeros(Float32, grid.Nx, grid.Ny)
+    elseif output_grid isa LatLonOutputGrid
+        return zeros(Float32, output_grid.Nlon, output_grid.Nlat)
+    else
+        Nc = grid.Nc
+        return ntuple(_ -> zeros(Float32, Nc, Nc), 6)
     end
 end
 
@@ -436,6 +636,131 @@ end
 # Fallback: uniform mass weighting when air mass not provided
 function _compute_uniform_mass(c::AbstractArray{FT}) where FT
     return ones(FT, size(c))
+end
+
+# =====================================================================
+# Flux accumulation for ColumnFluxDiagnostic
+#
+# Called every met window (before should_write check). Computes the
+# vertically-integrated column tracer flux on GPU, downloads the 2D
+# result, and accumulates on CPU. Reset after each output write.
+# =====================================================================
+
+"""
+    _accumulate_flux_diagnostics!(writer, model; air_mass, tracers, met_fields)
+
+Accumulate column tracer flux diagnostics for all `ColumnFluxDiagnostic` fields
+in the writer. Called every met window. Requires `met_fields` to contain:
+- `:mass_flux_x` — NTuple{6} GPU panels (Nc+1, Nc, Nz), scaled by `mf_scale`
+- `:mass_flux_y` — NTuple{6} GPU panels (Nc, Nc+1, Nz), scaled by `mf_scale`
+- `:mf_scale`    — scale factor (half_dt) applied to mass fluxes
+- `:dt_window`   — window duration in seconds
+"""
+function _accumulate_flux_diagnostics!(writer::NetCDFOutputWriter, model;
+                                        air_mass=nothing, tracers=nothing, met_fields=nothing)
+    # Early exit: any ColumnFluxDiagnostic fields?
+    has_flux = any(f -> f isa ColumnFluxDiagnostic, values(writer.fields))
+    !has_flux && return
+
+    # Need mass fluxes from met_fields
+    met_fields isa NamedTuple || return
+    haskey(met_fields, :mass_flux_x) || return
+
+    am = met_fields[:mass_flux_x]
+    bm = met_fields[:mass_flux_y]
+    mf_scale  = met_fields[:mf_scale]    # half_dt (mass fluxes already multiplied by this)
+    dt_window = met_fields[:dt_window]
+
+    grid = model.grid
+    grid isa CubedSphereGrid || return  # CS only for now
+
+    Nc = grid.Nc
+    Nz = grid.Nz
+    Hp = div(size(air_mass[1], 1) - Nc, 2)
+    FT = eltype(air_mass[1])
+
+    # Lazy init: accumulators (CPU) + GPU workspace
+    if writer._flux_accumulators[] === nothing
+        gpu_ws = ntuple(_ -> similar(air_mass[1], Nc, Nc), 6)  # GPU (Nc×Nc) per panel
+        accum  = Dict{Symbol, NTuple{6, Matrix{FT}}}()
+        writer._flux_accumulators[] = (; accum, gpu_ws)
+    end
+    state = writer._flux_accumulators[]
+    accum  = state.accum
+    gpu_ws = state.gpu_ws
+
+    # Scale factor: am_gpu = am_raw × mf_scale, want am_raw × dt_window
+    scale = FT(dt_window / mf_scale)
+
+    for (name, field_entry) in writer.fields
+        field_entry isa ColumnFluxDiagnostic || continue
+
+        # Get tracer data (rm and air mass on GPU)
+        rm = _get_tracer_panels(model, field_entry.species; tracers)
+        m  = air_mass
+
+        # Select mass flux panels based on direction
+        mf = field_entry.direction === :east ? am : bm
+
+        # Compute Σ_k mf[face_k] × (rm[k]/m[k]) on GPU → gpu_ws
+        column_tracer_flux!(gpu_ws, mf, rm, m, Nc, Nz, Hp, field_entry.direction)
+
+        # Init accumulator for this field if first call
+        if !haskey(accum, name)
+            accum[name] = ntuple(_ -> zeros(FT, Nc, Nc), 6)
+        end
+
+        # Download GPU result and accumulate (scale: convert from mf_scale to dt_window)
+        for p in 1:6
+            cpu_flux = Array(gpu_ws[p])
+            accum[name][p] .+= cpu_flux .* scale
+        end
+    end
+end
+
+"""
+    _extract_accumulated_flux(writer, name, model; regrid_cache, output_grid)
+
+Extract accumulated column tracer flux for output. Returns a CPU array
+(regridded to lat-lon if `output_grid` is a `LatLonOutputGrid`).
+"""
+function _extract_accumulated_flux(writer::NetCDFOutputWriter, name::Symbol, model;
+                                    regrid_cache=nothing, output_grid=nothing)
+    state = writer._flux_accumulators[]
+    grid  = model.grid
+
+    if state === nothing || !haskey(state.accum, name)
+        @warn "No accumulated flux data for $name — returning zeros"
+        if output_grid isa LatLonOutputGrid
+            return zeros(Float32, output_grid.Nlon, output_grid.Nlat)
+        elseif grid isa CubedSphereGrid
+            Nc = grid.Nc
+            return ntuple(_ -> zeros(Float32, Nc, Nc), 6)
+        else
+            return zeros(Float32, grid.Nx, grid.Ny)
+        end
+    end
+
+    panels = state.accum[name]  # NTuple{6} of CPU (Nc×Nc) arrays
+
+    if output_grid isa LatLonOutputGrid && grid isa CubedSphereGrid
+        # Upload to GPU for regridding (small: 6 × Nc² × 4 bytes)
+        AT = array_type(model.architecture)
+        panels_gpu = ntuple(p -> AT(panels[p]), 6)
+        return _regrid_panels_to_latlon(panels_gpu, model, grid, output_grid, regrid_cache)
+    end
+    return panels
+end
+
+"""Reset all flux accumulators to zero (called after output write)."""
+function _reset_flux_accumulators!(writer::NetCDFOutputWriter)
+    state = writer._flux_accumulators[]
+    state === nothing && return
+    for (_, panels) in state.accum
+        for p in 1:6
+            fill!(panels[p], 0)
+        end
+    end
 end
 
 # =====================================================================
@@ -476,7 +801,8 @@ function _create_netcdf_file(writer::NetCDFOutputWriter, model, grid::LatitudeLo
         dl = writer.deflate_level
         for (name, field_entry) in writer.fields
             dims = _output_dims(field_entry, grid, writer.output_grid)
-            defVar(ds, string(name), FT, dims; deflatelevel=dl)
+            defVar(ds, string(name), FT, dims;
+                   deflatelevel=dl, attrib=_field_attribs(field_entry))
         end
     end
     return nothing
@@ -486,7 +812,9 @@ end
 Create NetCDF file for cubed-sphere grid output.
 
 If `output_grid` is a `LatLonOutputGrid`, dimensions are (lon, lat, time).
-Otherwise dimensions are (panel, x, y, time) for native CS output.
+Otherwise native CS output uses GEOSCHEM-compatible dimensions:
+(Xdim, Ydim, nf, time) for 2D fields, (Xdim, Ydim, nf, lev, time) for 3D.
+Includes `lons(Xdim, Ydim, nf)` and `lats(Xdim, Ydim, nf)` coordinate arrays.
 """
 function _create_netcdf_file(writer::NetCDFOutputWriter, model, grid::CubedSphereGrid)
     FT = floattype(grid)
@@ -505,6 +833,16 @@ function _create_netcdf_file(writer::NetCDFOutputWriter, model, grid::CubedSpher
             defDim(ds, "lat", Nlat)
             defDim(ds, "time", 0)
 
+            # Add "lev" dimension if any Full3D fields are present
+            has_3d = any(f -> f isa Full3DDiagnostic, values(writer.fields))
+            if has_3d
+                Nz = grid.Nz
+                lev = [znode(k, grid, Center()) for k in 1:Nz]
+                defDim(ds, "lev", Nz)
+                defVar(ds, "lev", Float32, ("lev",);
+                       attrib=Dict("units" => "Pa"))[:] = Float32.(lev)
+            end
+
             defVar(ds, "lon", Float32, ("lon",);
                    attrib=Dict("units" => "degrees_east"))[:] = Float32.(lons)
             defVar(ds, "lat", Float32, ("lat",);
@@ -516,21 +854,48 @@ function _create_netcdf_file(writer::NetCDFOutputWriter, model, grid::CubedSpher
             for (name, field_entry) in writer.fields
                 dims = _output_dims(field_entry, grid, writer.output_grid)
                 defVar(ds, string(name), Float32, dims;
-                       attrib=Dict("units" => "ppm"), deflatelevel=dl)
+                       deflatelevel=dl, attrib=_field_attribs(field_entry))
             end
         else
-            # Native cubed-sphere output
-            defDim(ds, "panel", 6)
-            defDim(ds, "x", Nc)
-            defDim(ds, "y", Nc)
+            # Native cubed-sphere output — GEOSCHEM-compatible format
+            # Dimensions: (Xdim, Ydim, nf, [lev,] time)
+            defDim(ds, "Xdim", Nc)
+            defDim(ds, "Ydim", Nc)
+            defDim(ds, "nf", 6)
             defDim(ds, "time", 0)
 
-            defVar(ds, "time", Float64, ("time",))
+            # Add "lev" dimension if any Full3D fields are present
+            has_3d = any(f -> f isa Full3DDiagnostic, values(writer.fields))
+            if has_3d
+                Nz = grid.Nz
+                lev = [znode(k, grid, Center()) for k in 1:Nz]
+                defDim(ds, "lev", Nz)
+                defVar(ds, "lev", Float32, ("lev",);
+                       attrib=Dict("units" => "Pa"))[:] = Float32.(lev)
+            end
+
+            defVar(ds, "time", Float64, ("time",);
+                   attrib=Dict("units" => "seconds since $(writer.start_date) 00:00:00"))
+
+            # Coordinate arrays: lons(Xdim, Ydim, nf) and lats(Xdim, Ydim, nf)
+            file_lons, file_lats = _get_cs_file_coords(model)
+            if file_lons !== nothing
+                defVar(ds, "lons", Float64, ("Xdim", "Ydim", "nf");
+                       attrib=Dict("units" => "degrees_east",
+                                   "long_name" => "longitude"))[:] = file_lons
+                defVar(ds, "lats", Float64, ("Xdim", "Ydim", "nf");
+                       attrib=Dict("units" => "degrees_north",
+                                   "long_name" => "latitude"))[:] = file_lats
+            end
 
             dl = writer.deflate_level
-            for (name, _) in writer.fields
-                defVar(ds, string(name), Float32, ("x", "y", "panel", "time");
-                       deflatelevel=dl)
+            for (name, field_entry) in writer.fields
+                dims = _output_dims(field_entry, grid, writer.output_grid)
+                attribs = merge(Dict("coordinates" => "lons lats",
+                                     "grid_mapping" => "cubed_sphere"),
+                                _field_attribs(field_entry))
+                defVar(ds, string(name), Float32, dims;
+                       deflatelevel=dl, attrib=attribs)
             end
         end
     end
@@ -539,8 +904,9 @@ end
 
 """Determine NetCDF dimension tuple for a field entry."""
 function _output_dims(field_entry, grid::LatitudeLongitudeGrid, output_grid)
-    if field_entry isa ColumnMeanDiagnostic || field_entry isa SurfaceSliceDiagnostic ||
-       field_entry isa SigmaLevelDiagnostic
+    if field_entry isa ColumnMeanDiagnostic || field_entry isa ColumnMassDiagnostic ||
+       field_entry isa SurfaceSliceDiagnostic || field_entry isa SigmaLevelDiagnostic ||
+       field_entry isa ColumnFluxDiagnostic || field_entry isa EmissionFluxDiagnostic
         return ("lon", "lat", "time")
     elseif field_entry isa RegridDiagnostic
         return ("lon", "lat", "time")
@@ -562,7 +928,13 @@ function _output_dims(field_entry, grid::CubedSphereGrid, output_grid::LatLonOut
 end
 
 function _output_dims(field_entry, grid::CubedSphereGrid, output_grid)
-    return ("x", "y", "panel", "time")
+    # Use internal names (x, y, panel) — _cs_dims_to_nc_dims maps to NetCDF names,
+    # _dims_to_shape maps to sizes
+    if field_entry isa Full3DDiagnostic
+        return ("x", "y", "panel", "lev", "time")
+    else
+        return ("x", "y", "panel", "time")
+    end
 end
 
 # =====================================================================
@@ -592,9 +964,12 @@ Write output if the schedule condition is met. Opens or creates the NetCDF file,
 appends a new time slice for each field, and increments `_write_count`.
 """
 function write_output!(writer::NetCDFOutputWriter, model, time;
-                       air_mass=nothing, tracers=nothing)
+                       air_mass=nothing, tracers=nothing, met_fields=nothing)
     model_time = time isa Number ? Float64(time) : Float64(Dates.value(time) / 1000.0)
     iteration = hasproperty(model, :clock) ? model.clock.iteration : 0
+
+    # Always accumulate flux diagnostics (every window, before schedule check)
+    _accumulate_flux_diagnostics!(writer, model; air_mass, tracers, met_fields)
 
     if !should_write(writer, model_time, iteration)
         return nothing
@@ -613,13 +988,24 @@ function write_output!(writer::NetCDFOutputWriter, model, time;
         ds["time"][n_time + 1] = model_time
 
         for (name, field_entry) in writer.fields
-            arr = _extract_field_data(field_entry, model; air_mass, tracers,
-                                      regrid_cache=writer._regrid_cache,
-                                      output_grid=writer.output_grid)
+            if field_entry isa ColumnFluxDiagnostic
+                # Read from accumulator (already computed every window)
+                arr = _extract_accumulated_flux(writer, name, model;
+                                                 regrid_cache=writer._regrid_cache,
+                                                 output_grid=writer.output_grid)
+            else
+                arr = _extract_field_data(field_entry, model; air_mass, tracers,
+                                          regrid_cache=writer._regrid_cache,
+                                          output_grid=writer.output_grid,
+                                          met_fields)
+            end
             arr = _quantize(arr, writer.digits)
             _write_field_slice!(ds, string(name), arr, grid, writer.output_grid, n_time + 1)
         end
     end
+
+    # Reset flux accumulators after writing
+    _reset_flux_accumulators!(writer)
 
     writer._write_count[] += 1
     return nothing
@@ -637,7 +1023,7 @@ end
 
 function _write_field_slice!(ds, name::String, arr, grid::CubedSphereGrid,
                               output_grid::LatLonOutputGrid, tidx::Int)
-    # arr is either a regridded lat-lon matrix or NTuple{6} of panels
+    # arr is either a regridded lat-lon array (2D or 3D) or NTuple{6} of panels
     if arr isa NTuple
         # Fallback: regrid panels without file coordinates (gnomonic coords only)
         @warn "CS→lat-lon regridding without file coordinates for field '$name'. " *
@@ -649,6 +1035,8 @@ function _write_field_slice!(ds, name::String, arr, grid::CubedSphereGrid,
                                             lon0=FT(output_grid.lon0), lon1=FT(output_grid.lon1),
                                             lat0=FT(output_grid.lat0), lat1=FT(output_grid.lat1))
         ds[name][:, :, tidx] = Float32.(out_ll)
+    elseif arr isa AbstractArray && ndims(arr) == 3
+        ds[name][:, :, :, tidx] = Float32.(arr)
     else
         ds[name][:, :, tidx] = Float32.(arr)
     end
@@ -656,12 +1044,24 @@ end
 
 function _write_field_slice!(ds, name::String, arr, grid::CubedSphereGrid,
                               output_grid, tidx::Int)
-    # Native CS output — write panels
+    # Native CS output — GEOSCHEM-compatible (Xdim, Ydim, nf, [lev,] time)
     if arr isa NTuple
-        for p in 1:6
-            panel_data = arr[p] isa Array ? arr[p] : Array(arr[p])
-            ds[name][:, :, p, tidx] = Float32.(panel_data)
+        if ndims(arr[1]) == 2
+            # 2D panels → (Xdim, Ydim, nf, time)
+            for p in 1:6
+                panel_data = arr[p] isa Array ? arr[p] : Array(arr[p])
+                ds[name][:, :, p, tidx] = Float32.(panel_data)
+            end
+        else
+            # 3D panels → (Xdim, Ydim, nf, lev, time)
+            for p in 1:6
+                panel_data = arr[p] isa Array ? arr[p] : Array(arr[p])
+                ds[name][:, :, p, :, tidx] = Float32.(panel_data)
+            end
         end
+    elseif arr isa AbstractArray && ndims(arr) == 4
+        # Pre-assembled (Xdim, Ydim, nf, lev) array
+        ds[name][:, :, :, :, tidx] = Float32.(arr)
     else
         ds[name][:, :, :, tidx] = Float32.(arr)
     end

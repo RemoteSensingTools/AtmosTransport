@@ -17,8 +17,8 @@ Load CarbonTracker CT-NRT flux components from NetCDF files in `datadir`.
 Files are expected to be named `CT-NRT.v*_flux1x1_YYYY-MM-DD.nc` (daily,
 containing 8 × 3-hourly time steps).
 
-Returns a `CompositeEmission` containing `TimeVaryingEmission` for biosphere,
-ocean, and fire components, plus a static `GriddedEmission` for fossil fuels
+Returns a `CombinedFlux` containing `TimeVaryingSurfaceFlux` for biosphere,
+ocean, and fire components, plus a static `SurfaceFlux` for fossil fuels
 (or `nothing` if `include_fossil=false` since EDGAR may already cover this).
 
 Arguments:
@@ -75,13 +75,13 @@ function load_carbontracker_fluxes(datadir::String,
             fire_raw = _ct_read_var(ds, "fire_flux_imp", ti, FT) .* FT(M_CO2)
 
             if needs_regrid
-                bio_rg  = _simple_regrid(bio_raw, lon_ct, lat_ct, target_grid, FT)
-                ocn_rg  = _simple_regrid(ocn_raw, lon_ct, lat_ct, target_grid, FT)
-                fire_rg = _simple_regrid(fire_raw, lon_ct, lat_ct, target_grid, FT)
+                bio_rg  = nearest_neighbor_regrid(bio_raw, lon_ct, lat_ct, target_grid)
+                ocn_rg  = nearest_neighbor_regrid(ocn_raw, lon_ct, lat_ct, target_grid)
+                fire_rg = nearest_neighbor_regrid(fire_raw, lon_ct, lat_ct, target_grid)
             else
-                bio_rg  = _orient_to_model(bio_raw, lat_ct, FT)
-                ocn_rg  = _orient_to_model(ocn_raw, lat_ct, FT)
-                fire_rg = _orient_to_model(fire_raw, lat_ct, FT)
+                bio_rg  = ensure_south_to_north(bio_raw, lat_ct)[1]
+                ocn_rg  = ensure_south_to_north(ocn_raw, lat_ct)[1]
+                fire_rg = ensure_south_to_north(fire_raw, lat_ct)[1]
             end
 
             push!(bio_all,  bio_rg)
@@ -91,8 +91,8 @@ function load_carbontracker_fluxes(datadir::String,
             if include_fossil
                 fos_raw = _ct_read_var(ds, "fossil_flux_imp", ti, FT) .* FT(M_CO2)
                 fos_rg = needs_regrid ?
-                    _simple_regrid(fos_raw, lon_ct, lat_ct, target_grid, FT) :
-                    _orient_to_model(fos_raw, lat_ct, FT)
+                    nearest_neighbor_regrid(fos_raw, lon_ct, lat_ct, target_grid) :
+                    ensure_south_to_north(fos_raw, lat_ct)[1]
                 push!(fos_all, fos_rg)
             end
 
@@ -110,23 +110,23 @@ function load_carbontracker_fluxes(datadir::String,
     ocn_stack  = _stack_matrices(ocn_all, Nx_m, Ny_m, FT)
     fire_stack = _stack_matrices(fire_all, Nx_m, Ny_m, FT)
 
-    bio_src  = TimeVaryingEmission(bio_stack, time_hours, :co2;
+    bio_src  = TimeVaryingSurfaceFlux(bio_stack, time_hours, :co2;
                                     label="CT-NRT biosphere NEE")
-    ocn_src  = TimeVaryingEmission(ocn_stack, time_hours, :co2;
+    ocn_src  = TimeVaryingSurfaceFlux(ocn_stack, time_hours, :co2;
                                     label="CT-NRT ocean flux")
-    fire_src = TimeVaryingEmission(fire_stack, time_hours, :co2;
+    fire_src = TimeVaryingSurfaceFlux(fire_stack, time_hours, :co2;
                                     label="CT-NRT fire emissions")
 
     components = if include_fossil
         fos_stack = _stack_matrices(fos_all, Nx_m, Ny_m, FT)
-        fos_src = TimeVaryingEmission(fos_stack, time_hours, :co2;
+        fos_src = TimeVaryingSurfaceFlux(fos_stack, time_hours, :co2;
                                        label="CT-NRT fossil fuel")
         (bio_src, ocn_src, fire_src, fos_src)
     else
         (bio_src, ocn_src, fire_src)
     end
 
-    return CompositeEmission(components, "CarbonTracker CT-NRT $year")
+    return CombinedFlux(components, "CarbonTracker CT-NRT $year")
 end
 
 # --- Internal helpers ---
@@ -146,59 +146,6 @@ function _ct_read_var(ds, varname::String, ti::Int, ::Type{FT}) where FT
     return zeros(FT, Nlon, Nlat)
 end
 
-"""
-Ensure flux array is oriented S→N latitude to match model grid convention.
-"""
-function _orient_to_model(flux::Matrix{FT}, lat_src, ::Type{FT}) where FT
-    if length(lat_src) > 1 && lat_src[1] > lat_src[end]
-        return flux[:, end:-1:1]
-    end
-    return copy(flux)
-end
-
-"""
-Nearest-neighbor regridding for 1x1→model grid when grids don't match exactly.
-For matched 1x1 grids this is fast identity. For mismatched grids, uses
-nearest-neighbor interpolation (conservative regridding done elsewhere for
-high-res sources like EDGAR/GFAS).
-"""
-function _simple_regrid(flux_src::Matrix{FT}, lon_src, lat_src,
-                        grid::LatitudeLongitudeGrid{FT}, ::Type{FT}) where FT
-    Nx_m, Ny_m = grid.Nx, grid.Ny
-    flux_out = zeros(FT, Nx_m, Ny_m)
-
-    # Ensure S→N
-    lat_sorted = lat_src[1] > lat_src[end] ? reverse(lat_src) : lat_src
-    flux_sorted = lat_src[1] > lat_src[end] ? flux_src[:, end:-1:1] : flux_src
-
-    # Handle -180:180 vs 0:360
-    lon_use = Float64.(lon_src)
-    if minimum(lon_use) < 0
-        n = length(lon_use)
-        split = findfirst(>=(0), lon_use)
-        if split !== nothing
-            idx = vcat(split:n, 1:split-1)
-            lon_use = mod.(lon_use[idx], 360.0)
-            flux_sorted = flux_sorted[idx, :]
-        end
-    end
-
-    λᶜ = grid.λᶜ_cpu
-    φᶜ = grid.φᶜ_cpu
-
-    for jm in 1:Ny_m, im in 1:Nx_m
-        js = _nearest_idx(φᶜ[jm], lat_sorted)
-        is = _nearest_idx(λᶜ[im], lon_use)
-        flux_out[im, jm] = flux_sorted[is, js]
-    end
-
-    return flux_out
-end
-
-function _nearest_idx(val, arr)
-    _, idx = findmin(abs.(arr .- val))
-    return idx
-end
 
 function _stack_matrices(mats::Vector{Matrix{FT}}, Nx, Ny, ::Type{FT}) where FT
     Nt = length(mats)

@@ -31,7 +31,7 @@ GPU-accelerated surface emission injection for lat-lon grids.
 Uses pressure-dependent air mass at the surface layer.
 
 This is the GPU-optimized path; for CPU-only use, see
-`apply_surface_flux!(tracers, source::GriddedEmission, grid, dt)`.
+`apply_surface_flux!(tracers, source::SurfaceFlux{LatLonLayout}, grid, dt)`.
 """
 function apply_emissions_window!(c, flux_dev, area_j_dev, ps_dev,
                                   A_coeff, B_coeff, Nz, g, dt_window;
@@ -39,7 +39,7 @@ function apply_emissions_window!(c, flux_dev, area_j_dev, ps_dev,
     FT_e = eltype(c)
     ΔA = FT_e(A_coeff[Nz + 1] - A_coeff[Nz])
     ΔB = FT_e(B_coeff[Nz + 1] - B_coeff[Nz])
-    mol = FT_e(1e6 * M_AIR / molar_mass)
+    mol = FT_e(M_AIR / molar_mass)
     backend = get_backend(c)
     Nx, Ny = size(c, 1), size(c, 2)
     k! = _emit_surface_kernel!(backend, 256)

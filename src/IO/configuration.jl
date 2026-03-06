@@ -9,18 +9,69 @@
 using TOML
 using Dates
 using ..Architectures: CPU, GPU, array_type
-using ..Grids: LatitudeLongitudeGrid, CubedSphereGrid, merge_upper_levels, n_levels
+using ..Grids: LatitudeLongitudeGrid, CubedSphereGrid, merge_upper_levels, n_levels, set_coord_status!
 using ..Parameters: load_parameters
-using ..Sources: AbstractSource, EdgarSource, CarbonTrackerSource, GFASSource,
+using ..Sources: AbstractSurfaceFlux, compute_areas_from_corners,
+                 EdgarSource, CarbonTrackerSource, GFASSource,
                  JenaCarboScopeSource, CATRINESource, load_inventory,
-                 load_cams_co2, load_gridfed_fossil_co2, load_edgar_sf6, load_zhang_rn222,
-                 GriddedEmission, CubedSphereEmission
-using ..Diagnostics: ColumnMeanDiagnostic, SurfaceSliceDiagnostic, RegridDiagnostic,
+                 load_cams_co2, load_lmdz_co2, load_gridfed_fossil_co2, load_edgar_sf6, load_zhang_rn222,
+                 SurfaceFlux
+using ..Diagnostics: ColumnMeanDiagnostic, ColumnMassDiagnostic, SurfaceSliceDiagnostic,
+                     RegridDiagnostic, ColumnFluxDiagnostic, EmissionFluxDiagnostic,
                      Full3DDiagnostic, MetField2DDiagnostic, SigmaLevelDiagnostic
 using ..Chemistry: NoChemistry, RadioactiveDecay, CompositeChemistry
 using ..Advection: SlopesAdvection, PPMAdvection
-using ..Diffusion: BoundaryLayerDiffusion, NoDiffusion, PBLDiffusion
-using ..Convection: TiedtkeConvection, NoConvection
+using ..Diffusion: BoundaryLayerDiffusion, NoDiffusion, PBLDiffusion, NonLocalPBLDiffusion
+using ..Convection: TiedtkeConvection, NoConvection, RASConvection
+
+# Module-level storage for deferred CS initial conditions
+const _PENDING_IC = Ref(PendingInitialConditions())
+
+"""
+    get_pending_ic() → PendingInitialConditions
+
+Retrieve and clear any pending initial conditions (for CS run loops).
+"""
+function get_pending_ic()
+    pic = _PENDING_IC[]
+    _PENDING_IC[] = PendingInitialConditions()
+    return pic
+end
+
+"""
+    _parse_initial_conditions(ic_cfg::Dict) → PendingInitialConditions
+
+Parse IC config into entries (file + variable_map + time_index).
+"""
+function _parse_initial_conditions(ic_cfg::Dict)
+    pic = PendingInitialConditions()
+    isempty(ic_cfg) && return pic
+
+    if haskey(ic_cfg, "file")
+        # Legacy format: single file with variable_map
+        ic_file = expanduser(ic_cfg["file"])
+        var_map = Dict{Symbol, String}()
+        for (k, v) in ic_cfg
+            k == "file" && continue
+            k == "time_index" && continue
+            var_map[Symbol(k)] = String(v)
+        end
+        ti = get(ic_cfg, "time_index", 1)
+        push!(pic.entries, (file=ic_file, variable_map=var_map, time_index=ti))
+    else
+        # Per-tracer format
+        for (tracer_key, tracer_ic) in ic_cfg
+            tracer_ic isa Dict || continue
+            haskey(tracer_ic, "file") || continue
+            ic_file = expanduser(tracer_ic["file"])
+            nc_var  = get(tracer_ic, "variable", uppercase(String(tracer_key)))
+            ti      = get(tracer_ic, "time_index", 1)
+            var_map = Dict{Symbol, String}(Symbol(tracer_key) => nc_var)
+            push!(pic.entries, (file=ic_file, variable_map=var_map, time_index=ti))
+        end
+    end
+    return pic
+end
 
 """
 $(SIGNATURES)
@@ -141,14 +192,26 @@ function build_model_from_config(config::Dict)
     driver_type = get(met_data_cfg, "driver", "preprocessed_latlon")
     met = _build_met_driver(driver_type, met_data_cfg, met_cfg_default, FT; merge_map)
 
+    # --- Load authoritative GMAO coordinates for CS grids ---
+    if grid isa CubedSphereGrid
+        coord_file = _find_coord_file(config)
+        if coord_file !== nothing
+            _load_gmao_coordinates!(grid, coord_file)
+        else
+            @warn "No coordinate file found — using gnomonic coordinates. " *
+                  "Set [met_data].coord_file or netcdf_dir for correct GMAO coordinates."
+        end
+    end
+
     # --- Tracers + sources ---
     tracers_cfg = get(config, "tracers", Dict())
     tracer_names = Symbol.(collect(keys(tracers_cfg)))
     isempty(tracer_names) && (tracer_names = [:co2])
 
-    sources = AbstractSource[]
+    sources = AbstractSurfaceFlux[]
     for (_, tcfg) in tracers_cfg
-        src = _build_emission_source(tcfg, grid, FT; met_driver=met)
+        src = _build_emission_source(tcfg, grid, FT; met_driver=met,
+                                     sim_start_date=start_date(met))
         src !== nothing && push!(sources, src)
     end
 
@@ -181,21 +244,14 @@ function build_model_from_config(config::Dict)
 
     # --- Initial conditions ---
     ic_cfg = get(config, "initial_conditions", Dict())
-    if !isempty(ic_cfg) && haskey(ic_cfg, "file")
-        ic_file = expanduser(ic_cfg["file"])
-        var_map = Dict{Symbol, String}()
-        for (k, v) in ic_cfg
-            k == "file" && continue
-            k == "time_index" && continue
-            var_map[Symbol(k)] = String(v)
-        end
-        ti = get(ic_cfg, "time_index", 1)
-        if isfile(ic_file)
-            load_initial_conditions!(tracers, ic_file, grid;
-                                      variable_map=var_map, time_index=ti)
-        else
-            @warn "Initial conditions file not found: $ic_file"
-        end
+    pending_ic = _parse_initial_conditions(ic_cfg)
+
+    if grid isa LatitudeLongitudeGrid
+        # Apply immediately for LL grids (tracers are properly allocated)
+        apply_pending_ic!(tracers, pending_ic, grid)
+    else
+        # CS grids: defer to run loop (tracers are placeholders here)
+        _PENDING_IC[] = pending_ic
     end
 
     # --- Build model ---
@@ -284,7 +340,9 @@ function _build_met_driver(driver_type::String, cfg::Dict, met_cfg_default, ::Ty
     end
 end
 
-function _build_emission_source(tcfg::Dict, grid, ::Type{FT}; met_driver=nothing) where FT
+function _build_emission_source(tcfg::Dict, grid, ::Type{FT};
+                                 met_driver=nothing,
+                                 sim_start_date::Date=Date(2022,1,1)) where FT
     emission = get(tcfg, "emission", "none")
     emission == "none" && return nothing
 
@@ -322,10 +380,19 @@ function _build_emission_source(tcfg::Dict, grid, ::Type{FT}; met_driver=nothing
         filepath = expanduser(get(tcfg, "file", ""))
         species = Symbol(get(tcfg, "species", "co2"))
         return load_cams_co2(filepath, grid; year, species)
+    elseif emission == "lmdz_co2"
+        dirpath = expanduser(get(tcfg, "dir", ""))
+        species = Symbol(get(tcfg, "species", "co2"))
+        flux_var = get(tcfg, "flux_var", "flux_apos")
+        sd = Date(get(tcfg, "start_date", "$(year)-01-01"))
+        ed = Date(get(tcfg, "end_date",   "$(year)-12-31"))
+        return load_lmdz_co2(dirpath, grid; start_date=sd, end_date=ed,
+                              species, flux_var)
     elseif emission == "gridfed" || emission == "gridfed_fossil_co2"
-        filepath = expanduser(get(tcfg, "file", ""))
+        filepath = expanduser(get(tcfg, "dir", get(tcfg, "file", "")))
         species = Symbol(get(tcfg, "species", "fossil_co2"))
-        return load_gridfed_fossil_co2(filepath, grid; year, species)
+        return load_gridfed_fossil_co2(filepath, grid; year, species,
+                                       start_date=sim_start_date)
     elseif emission == "edgar_sf6"
         filepath = expanduser(get(tcfg, "file", ""))
         noaa_file = expanduser(get(tcfg, "noaa_growth_file", ""))
@@ -334,7 +401,7 @@ function _build_emission_source(tcfg::Dict, grid, ::Type{FT}; met_driver=nothing
                                scale_year)
     elseif emission == "zhang_rn222"
         dirpath = expanduser(get(tcfg, "dir", get(tcfg, "file", "")))
-        return load_zhang_rn222(dirpath, grid)
+        return load_zhang_rn222(dirpath, grid; start_date=sim_start_date)
     elseif emission == "catrine"
         dataset = get(tcfg, "dataset", "")
         filepath = expanduser(get(tcfg, "file", get(tcfg, "dir", "")))
@@ -346,10 +413,10 @@ function _build_emission_source(tcfg::Dict, grid, ::Type{FT}; met_driver=nothing
         label   = "Uniform surface $(uppercase(string(species))) $(rate) kg/m²/s"
         if grid isa CubedSphereGrid
             flux_panels = ntuple(_ -> fill(rate, grid.Nc, grid.Nc), 6)
-            return CubedSphereEmission(flux_panels, species, label)
+            return SurfaceFlux(flux_panels, species, label)
         else
             flux = fill(rate, grid.Nx, grid.Ny)
-            return GriddedEmission(flux, species, label)
+            return SurfaceFlux(flux, species, label)
         end
     else
         @warn "Unknown emission type: $emission"
@@ -407,6 +474,8 @@ function _build_output_writers(cfg::Dict; start_date::Date=Date(2000,1,1))
         end
         if ftype == "column_mean"
             fields[sym] = ColumnMeanDiagnostic(species)
+        elseif ftype == "column_mass"
+            fields[sym] = ColumnMassDiagnostic(species)
         elseif ftype == "surface_slice"
             fields[sym] = SurfaceSliceDiagnostic(species)
         elseif ftype == "regrid"
@@ -418,12 +487,18 @@ function _build_output_writers(cfg::Dict; start_date::Date=Date(2000,1,1))
             fields[sym] = SigmaLevelDiagnostic(species, Float64(sigma))
         elseif ftype == "full_3d"
             fields[sym] = Full3DDiagnostic(species)
+        elseif ftype == "column_flux"
+            direction = Symbol(get(fval, "direction", "east"))
+            direction ∈ (:east, :north) || @warn "Unknown flux direction '$direction', expected :east or :north"
+            fields[sym] = ColumnFluxDiagnostic(species, direction)
         elseif ftype == "surface_pressure"
             fields[sym] = MetField2DDiagnostic(:surface_pressure)
         elseif ftype == "pbl_height"
             fields[sym] = MetField2DDiagnostic(:pbl_height)
         elseif ftype == "tropopause_height"
             fields[sym] = MetField2DDiagnostic(:tropopause_height)
+        elseif ftype == "emission_flux"
+            fields[sym] = EmissionFluxDiagnostic(species)
         elseif startswith(string(ftype), "met_")
             fields[sym] = MetField2DDiagnostic(Symbol(ftype[5:end]))
         end
@@ -447,8 +522,10 @@ function _build_output_writers(cfg::Dict; start_date::Date=Date(2000,1,1))
         if !endswith(bin_path, ".bin")
             bin_path = expanded_filename * ".bin"
         end
+        split_mode = Symbol(get(cfg, "split", "none"))
         BinaryOutputWriter(bin_path, fields, schedule;
-                           output_grid=og, auto_convert, start_date)
+                           output_grid=og, auto_convert, start_date,
+                           split=split_mode)
     else
         NetCDFOutputWriter(expanded_filename, fields, schedule;
                            output_grid=og, deflate_level, digits, start_date)
@@ -469,7 +546,7 @@ function _build_chemistry(config::Dict, tracer_names::Vector{Symbol}, ::Type{FT}
     if global_type == "decay"
         species = Symbol(get(chem_cfg, "species", "rn222"))
         half_life = FT(get(chem_cfg, "half_life", 330350.4))
-        return RadioactiveDecay(species, half_life)
+        return RadioactiveDecay(; species, half_life, FT)
     elseif global_type == "composite"
         # Build from per-tracer chemistry sections
         schemes = _build_per_tracer_chemistry(config, tracer_names, FT)
@@ -495,7 +572,7 @@ function _build_per_tracer_chemistry(config::Dict, tracer_names::Vector{Symbol},
         chem = get(tcfg, "chemistry", "none")
         if chem == "decay"
             half_life = FT(get(tcfg, "half_life", 330350.4))
-            push!(schemes, RadioactiveDecay(name, half_life))
+            push!(schemes, RadioactiveDecay(; species=name, half_life, FT))
         end
     end
     return schemes
@@ -525,6 +602,84 @@ function _get_cs_file_coords_from_driver(met_driver)
 end
 
 """
+    _find_coord_file(config::Dict) → Union{String, Nothing}
+
+Find a GEOS cubed-sphere coordinate reference file from the configuration.
+Checks `[met_data].coord_file` first, then falls back to the first `.nc` file
+in `[met_data].netcdf_dir`.
+"""
+function _find_coord_file(config::Dict)
+    met_cfg = get(config, "met_data", Dict())
+
+    # Explicit coord_file
+    cf = expanduser(get(met_cfg, "coord_file", ""))
+    !isempty(cf) && isfile(cf) && return cf
+
+    # Fallback: first .nc file in netcdf_dir
+    nc_dir = expanduser(get(met_cfg, "netcdf_dir", ""))
+    if !isempty(nc_dir) && isdir(nc_dir)
+        for d in sort(readdir(nc_dir))
+            sub = joinpath(nc_dir, d)
+            isdir(sub) || continue
+            for f in readdir(sub)
+                if endswith(f, ".nc")
+                    return joinpath(sub, f)
+                end
+            end
+        end
+        # Maybe .nc files directly in netcdf_dir
+        for f in readdir(nc_dir)
+            endswith(f, ".nc") && return joinpath(nc_dir, f)
+        end
+    end
+
+    return nothing
+end
+
+"""
+    _load_gmao_coordinates!(grid::CubedSphereGrid, filepath::String)
+
+Overwrite the gnomonic-computed cell-center coordinates in `grid` with
+the authoritative GMAO coordinates from a GEOS-FP/GEOS-IT NetCDF file.
+
+Cell areas and metric terms (Δx, Δy) are panel-position-invariant, so only
+the geographic coordinates (λᶜ, φᶜ) need updating.
+"""
+function _load_gmao_coordinates!(grid::CubedSphereGrid, filepath::String)
+    lons, lats, clons, clats = read_geosfp_cs_grid_info(filepath)
+    Nc = grid.Nc
+    @assert size(lons) == (Nc, Nc, 6) "Coordinate file Nc=$(size(lons,1)) doesn't match grid Nc=$Nc"
+    for p in 1:6
+        for j in 1:Nc, i in 1:Nc
+            grid.λᶜ[p][i, j] = lons[i, j, p]
+            grid.φᶜ[p][i, j] = lats[i, j, p]
+        end
+    end
+
+    # Overwrite analytical gnomonic areas with GMAO corner-based areas
+    # when corner coordinates are available. This eliminates up to 30%
+    # per-cell area errors from the gnomonic vs GMAO grid mismatch.
+    if clons !== nothing && clats !== nothing
+        R = Float64(grid.radius)
+        gmao_areas = Sources.compute_areas_from_corners(
+            Float64.(clons), Float64.(clats), R, Nc)
+        for p in 1:6
+            for j in 1:Nc, i in 1:Nc
+                grid.Aᶜ[p][i, j] = eltype(grid.Aᶜ[1])(gmao_areas[p][i, j])
+            end
+        end
+        @info "Loaded GMAO coordinates + cell areas from $(basename(filepath))"
+    else
+        @info "Loaded GMAO coordinates from $(basename(filepath)) (no corner coords — using gnomonic areas)"
+    end
+
+    # Track that this grid has GMAO coordinates
+    set_coord_status!(grid, :gmao, filepath)
+
+    return nothing
+end
+
+"""
 Build diffusion scheme from `[diffusion]` TOML section.
 
 ```toml
@@ -551,6 +706,14 @@ function _build_diffusion(config::Dict, ::Type{FT}) where FT
         Kz_min = FT(get(diff_cfg, "Kz_min", 0.01))
         Kz_max = FT(get(diff_cfg, "Kz_max", 500.0))
         return PBLDiffusion(β_h, Kz_bg, Kz_min, Kz_max)
+    elseif dtype == "nonlocal_pbl"
+        β_h    = FT(get(diff_cfg, "beta_h", 15.0))
+        Kz_bg  = FT(get(diff_cfg, "Kz_bg", 0.1))
+        Kz_min = FT(get(diff_cfg, "Kz_min", 0.01))
+        Kz_max = FT(get(diff_cfg, "Kz_max", 500.0))
+        fak    = FT(get(diff_cfg, "fak", 8.5))
+        sffrac = FT(get(diff_cfg, "sffrac", 0.1))
+        return NonLocalPBLDiffusion(β_h, Kz_bg, Kz_min, Kz_max, fak, sffrac)
     else
         @warn "Unknown diffusion type: $dtype — using no diffusion"
         return nothing
@@ -574,6 +737,8 @@ function _build_convection(config::Dict, ::Type{FT}) where FT
 
     if ctype == "tiedtke"
         return TiedtkeConvection()
+    elseif ctype == "ras"
+        return RASConvection()
     else
         @warn "Unknown convection type: $ctype — using no convection"
         return nothing

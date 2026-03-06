@@ -29,9 +29,12 @@ using DocStringExtensions
 using KernelAbstractions: @kernel, @index, @Const, @atomic, synchronize, get_backend
 using ..Grids: AbstractGrid, LatitudeLongitudeGrid, CubedSphereGrid
 
-export AbstractDiagnostic, ColumnMeanDiagnostic, SurfaceSliceDiagnostic, RegridDiagnostic
+export AbstractDiagnostic, ColumnMeanDiagnostic, ColumnMassDiagnostic,
+       SurfaceSliceDiagnostic, RegridDiagnostic
 export Full3DDiagnostic, MetField2DDiagnostic, SigmaLevelDiagnostic
-export column_mean!, surface_slice!, sigma_level_slice!, compute_diagnostics!
+export ColumnFluxDiagnostic, EmissionFluxDiagnostic
+export column_mean!, column_mass!, surface_slice!, sigma_level_slice!, compute_diagnostics!
+export column_tracer_flux!
 export regrid_cs_to_latlon, regrid_cs_to_latlon!, RegridMapping, build_regrid_mapping
 
 # --- Abstract diagnostic types ---
@@ -126,6 +129,54 @@ struct SigmaLevelDiagnostic <: AbstractDiagnostic
     species :: Symbol
     "target sigma level (0..1, where 1 = surface)"
     sigma   :: Float64
+end
+
+"""
+$(TYPEDEF)
+
+Column-integrated tracer mass (kg/m²). Computes mc = Σ_k(c_k × m_k) / A
+for lat-lon, or mc = Σ_k(rm_k) / A for cubed-sphere, where A is cell area.
+Required by CATRINE protocol: mc = (1/g) ∫₀ᵖˢ qc dp.
+
+$(FIELDS)
+"""
+struct ColumnMassDiagnostic <: AbstractDiagnostic
+    "tracer symbol (e.g. :co2)"
+    species :: Symbol
+end
+
+"""
+$(TYPEDEF)
+
+Time-integrated vertically-integrated column tracer flux (kg/m).
+
+Computes FE = ∫₀ᵀ (1/g) ∫₀ᵖˢ u×qc dp dt  (eastward) or
+         FN = ∫₀ᵀ (1/g) ∫₀ᵖˢ v×qc dp dt  (northward)
+
+where T is the output interval (e.g. 3 hours). Requires an accumulator
+in the output writer that is updated every met window and reset on output.
+
+$(FIELDS)
+"""
+struct ColumnFluxDiagnostic <: AbstractDiagnostic
+    "tracer species symbol (e.g. :co2, :sf6)"
+    species   :: Symbol
+    "flux direction: :east for zonal (u×qc) or :north for meridional (v×qc)"
+    direction :: Symbol
+end
+
+"""
+$(TYPEDEF)
+
+Surface emission flux for a tracer species [kg/m²/s].
+Extracts the current emission flux from the model's source vector.
+For time-varying emissions, returns the active snapshot.
+
+$(FIELDS)
+"""
+struct EmissionFluxDiagnostic <: AbstractDiagnostic
+    "tracer species symbol (e.g. :fossil_co2, :sf6)"
+    species :: Symbol
 end
 
 include("column_diagnostics.jl")

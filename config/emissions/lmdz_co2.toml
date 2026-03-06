@@ -1,0 +1,32 @@
+# LMDZ/CAMS CO2 posterior fluxes → cubed-sphere binary
+#
+# Source: LMDZ 3-hourly CO2 fluxes (1° lat-lon, monthly files)
+# Units: kgC/m²/s → kgCO2/m²/s
+# Reference total: varies by month (net flux includes biosphere + ocean)
+
+[source]
+type = "netcdf_latlon"
+path = "~/data/AtmosTransport/catrine/Emissions/LMDZ_fluxes/*.nc"
+variable = "flux_apos"
+lon_coord = "auto"               # auto-detect longitude/lon
+lat_coord = "auto"               # auto-detect latitude/lat
+time_dim = "time"
+date_range = ["2021-12-01", "2023-12-31"]
+
+[units]
+input = "kgC/m2/s"
+output = "kgCO2/m2/s"
+conversions = ["multiply_by_KGC_TO_KGCO2"]
+
+[target]
+grid = "cubed_sphere"
+Nc = 180
+coord_file = "~/data/geosit_c180_catrine/20211201/GEOSIT.20211201.CTM_A1.C180.nc"
+gridspec_file = "data/grids/cs_c180_gridspec.nc"
+
+[output]
+path = "~/data/AtmosTransport/catrine/preprocessed_c180/lmdz_co2_cs_c180_float32.bin"
+species = "co2"
+float_type = "Float32"
+
+# No validation block: net CO2 flux varies by month, no fixed reference value

@@ -467,11 +467,12 @@ function finalize_ic_vertical_interp!(tracers, m_panels, delp_panels,
                 src_p_mid  = [0.5 * (src_p_half[k] + src_p_half[k+1]) for k in 1:Nlev_src]
 
                 # Target (GEOS) pressure levels from DELP
-                # GEOS-IT: k=1 = surface (bottom-to-top DELP)
+                # Model convention: k=1 = TOA, k=Nz = surface (top-to-bottom).
+                # Accumulate DELP from TOA (k=1) downward to build pressure.
                 tgt_p_half = zeros(Float64, Nz + 1)
-                tgt_p_half[Nz + 1] = 0.0  # TOA
-                for k in Nz:-1:1
-                    tgt_p_half[k] = tgt_p_half[k+1] + Float64(cpu_delp[p][ii, jj, k])
+                tgt_p_half[1] = 0.0  # TOA
+                for k in 1:Nz
+                    tgt_p_half[k + 1] = tgt_p_half[k] + Float64(cpu_delp[p][ii, jj, k])
                 end
                 tgt_p_mid = [0.5 * (tgt_p_half[k] + tgt_p_half[k+1]) for k in 1:Nz]
 

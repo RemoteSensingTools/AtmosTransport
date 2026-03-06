@@ -28,8 +28,8 @@ Nc         = 180
 driver           = "geosfp_cs"
 product          = "geosit_c180"
 netcdf_dir       = "~/data/geosit_c180_catrine"
-preprocessed_dir = "/temp2/catrine-runs/met/geosit_c180"
-surface_data_bin_dir = "/temp2/catrine-runs/met/geosit_c180/surface_bin"
+preprocessed_dir = "/temp1/catrine/met/geosit_c180/massflux"
+surface_data_bin_dir = "/temp1/catrine/met/geosit_c180/surface_bin"
 start_date       = "2021-12-01"
 end_date         = "2021-12-07"
 dt               = 300                   # advection sub-step [s]
@@ -48,14 +48,14 @@ sf6.variable = "SF6"
 
 [tracers.sf6]
 emission         = "edgar_sf6"
-file             = "~/data/AtmosTransport/catrine/Emissions/edgar_v8/v8.0_FT2022_GHG_SF6_2022_TOTALS_emi.nc"
+file             = "~/data/AtmosTransport/catrine/preprocessed_c180/edgar_sf6_cs_c180_float32.bin"
 noaa_growth_file = "~/data/AtmosTransport/catrine/Emissions/sf6_gr_gl.txt"
 year             = 2022
 scale_year       = 2022
 
 [tracers.fossil_co2]
 emission = "gridfed"
-dir      = "~/data/AtmosTransport/catrine/Emissions/gridfed"
+file     = "~/data/AtmosTransport/catrine/preprocessed_c180/gridfed_fossil_co2_cs_c180_float32.bin"
 species  = "fossil_co2"
 year     = 2022
 
@@ -72,17 +72,18 @@ ppm_order = 7
 [convection]
 type = "ras"
 
-# --- Diffusion ---
 [diffusion]
-type   = "pbl"
+type   = "nonlocal_pbl"
 beta_h = 15.0
 Kz_bg  = 0.1
 Kz_min = 0.01
 Kz_max = 500.0
+fak    = 8.5
+sffrac = 0.1
 
 # --- Output (3-hourly, native CS binary, daily files) ---
 [output]
-filename      = "/temp2/catrine-runs/output/catrine_geosit_c180_ras"
+filename      = "/temp1/catrine/output/catrine_geosit_c180_ras"
 format        = "binary"
 split         = "daily"
 interval      = 10800                    # 3 hours

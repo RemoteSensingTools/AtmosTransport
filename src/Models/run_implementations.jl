@@ -111,6 +111,44 @@ function _get_cluster_sizes_cpu(grid::LatitudeLongitudeGrid)
     return cs
 end
 
+# --- Peak location diagnostic for debugging ---
+"""
+    _log_peak_locations(cs_tracers, m_panels, grid, window, label)
+
+Log the location (panel, i, j, lon, lat) of the maximum surface mixing ratio
+for each tracer. Used to track where unphysical peaks develop.
+"""
+function _log_peak_locations(cs_tracers, m_panels, grid, window::Int, label::String)
+    Nc = grid.Nc
+    Hp = grid.Hp
+    Nz = grid.Nz
+    FT = eltype(m_panels[1])
+    for (tname, rm_t) in pairs(cs_tracers)
+        max_q = FT(-Inf)
+        max_p, max_i, max_j = 0, 0, 0
+        for p in 1:6
+            rm_cpu = Array(rm_t[p])
+            m_cpu  = Array(m_panels[p])
+            for j in 1:Nc, i in 1:Nc
+                ii, jj = Hp + i, Hp + j
+                m_val = m_cpu[ii, jj, Nz]
+                m_val <= 0 && continue
+                q = rm_cpu[ii, jj, Nz] / m_val
+                if q > max_q
+                    max_q = q
+                    max_p, max_i, max_j = p, i, j
+                end
+            end
+        end
+        if max_p > 0
+            lon = grid.λᶜ[max_p][max_i, max_j]
+            lat = grid.φᶜ[max_p][max_i, max_j]
+            @info @sprintf("  PEAK %s win=%d [%s]: max_q=%.6e panel=%d (%d,%d) lon=%.1f lat=%.1f",
+                           tname, window, label, max_q, max_p, max_i, max_j, lon, lat)
+        end
+    end
+end
+
 # --- Apply advection with dispatch on scheme type ---
 """Apply cubed-sphere mass-flux advection, dispatching on advection scheme."""
 function _apply_advection_cs!(rm_panels, m_panels, am, bm, cm, grid,
@@ -915,6 +953,11 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
             copyto!(m_ref_panels[p], m_panels[p])
         end
 
+        # Time-0 IC snapshot: log peak locations before any physics
+        if w == 1
+            _log_peak_locations(cs_tracers, m_ref_panels, grid, 0, "IC")
+        end
+
         for p in 1:6
             compute_cm_panel!(cm_gpu[p], am_gpu[p], bm_gpu[p], gc.bt, Nc, Nz)
         end
@@ -979,6 +1022,11 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
         # Chemistry (e.g. radioactive decay for ²²²Rn)
         apply_chemistry!(cs_tracers, grid, model.chemistry, dt_window)
         t_compute += time() - t0
+
+        # Peak location tracker (first 48 windows = 2 days, then every 24th)
+        if w <= 48 || w % 24 == 0
+            _log_peak_locations(cs_tracers, m_ref_panels, grid, w, "post-physics")
+        end
 
         # ── Output: diagnostics + regrid + NetCDF ─────────────────────
         t0 = time()
@@ -1279,6 +1327,11 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
             copyto!(m_ref_panels[p], m_panels[p])
         end
 
+        # Time-0 IC snapshot: log peak locations before any physics
+        if w == 1
+            _log_peak_locations(cs_tracers, m_ref_panels, grid, 0, "IC")
+        end
+
         for p in 1:6
             compute_cm_panel!(curr_gpu.cm[p], curr_gpu.am[p], curr_gpu.bm[p], gc.bt, Nc, Nz)
         end
@@ -1337,6 +1390,10 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
 
         t_compute += time() - t0
 
+        # Peak location tracker (first 48 windows = 2 days, then every 24th)
+        if w <= 48 || w % 24 == 0
+            _log_peak_locations(cs_tracers, m_ref_panels, grid, w, "post-physics")
+        end
         # ── Output ────────────────────────────────────────────────────
         t0 = time()
         sim_time = Float64(step * dt_sub)

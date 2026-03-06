@@ -15,7 +15,7 @@ using ..Sources: AbstractSurfaceFlux, compute_areas_from_corners,
                  EdgarSource, CarbonTrackerSource, GFASSource,
                  JenaCarboScopeSource, CATRINESource, load_inventory,
                  load_cams_co2, load_lmdz_co2, load_gridfed_fossil_co2, load_edgar_sf6, load_zhang_rn222,
-                 SurfaceFlux
+                 SurfaceFlux, TimeVaryingSurfaceFlux, CombinedFlux, NoFlux
 using ..Diagnostics: ColumnMeanDiagnostic, ColumnMassDiagnostic, SurfaceSliceDiagnostic,
                      RegridDiagnostic, ColumnFluxDiagnostic, EmissionFluxDiagnostic,
                      Full3DDiagnostic, MetField2DDiagnostic, SigmaLevelDiagnostic
@@ -215,6 +215,9 @@ function build_model_from_config(config::Dict)
         src !== nothing && push!(sources, src)
     end
 
+    # Print structured summary of all emission sources
+    _log_emission_summary(sources)
+
     # Build tracer NamedTuple
     tracers = _build_tracers(tracer_names, grid, arch, FT)
 
@@ -381,7 +384,7 @@ function _build_emission_source(tcfg::Dict, grid, ::Type{FT};
         species = Symbol(get(tcfg, "species", "co2"))
         return load_cams_co2(filepath, grid; year, species)
     elseif emission == "lmdz_co2"
-        dirpath = expanduser(get(tcfg, "dir", ""))
+        dirpath = expanduser(get(tcfg, "file", get(tcfg, "dir", "")))
         species = Symbol(get(tcfg, "species", "co2"))
         flux_var = get(tcfg, "flux_var", "flux_apos")
         sd = Date(get(tcfg, "start_date", "$(year)-01-01"))
@@ -389,7 +392,7 @@ function _build_emission_source(tcfg::Dict, grid, ::Type{FT};
         return load_lmdz_co2(dirpath, grid; start_date=sd, end_date=ed,
                               species, flux_var)
     elseif emission == "gridfed" || emission == "gridfed_fossil_co2"
-        filepath = expanduser(get(tcfg, "dir", get(tcfg, "file", "")))
+        filepath = expanduser(get(tcfg, "file", get(tcfg, "dir", "")))
         species = Symbol(get(tcfg, "species", "fossil_co2"))
         return load_gridfed_fossil_co2(filepath, grid; year, species,
                                        start_date=sim_start_date)
@@ -400,7 +403,7 @@ function _build_emission_source(tcfg::Dict, grid, ::Type{FT};
         return load_edgar_sf6(filepath, grid; year, noaa_growth_file=noaa_file,
                                scale_year)
     elseif emission == "zhang_rn222"
-        dirpath = expanduser(get(tcfg, "dir", get(tcfg, "file", "")))
+        dirpath = expanduser(get(tcfg, "file", get(tcfg, "dir", "")))
         return load_zhang_rn222(dirpath, grid; start_date=sim_start_date)
     elseif emission == "catrine"
         dataset = get(tcfg, "dataset", "")
@@ -422,6 +425,35 @@ function _build_emission_source(tcfg::Dict, grid, ::Type{FT};
         @warn "Unknown emission type: $emission"
         return nothing
     end
+end
+
+"""Print a structured summary of all loaded emission sources."""
+function _log_emission_summary(sources::Vector{AbstractSurfaceFlux})
+    isempty(sources) && return
+
+    lines = String[]
+    push!(lines, "")
+    push!(lines, "  Emission Sources")
+    push!(lines, "  " * "─"^62)
+
+    for src in sources
+        if src isa TimeVaryingSurfaceFlux
+            Nt = length(src.time_hours)
+            t0 = src.time_hours[1]
+            t1 = src.time_hours[end]
+            push!(lines, "  $(rpad(src.species, 14)) │ $(rpad(src.label, 30)) │ $(Nt) snapshots")
+            push!(lines, "  $(rpad("", 14)) │ time_hours: [$(round(t0, digits=1)) … $(round(t1, digits=1))] h")
+        elseif src isa SurfaceFlux
+            push!(lines, "  $(rpad(src.species, 14)) │ $(rpad(src.label, 30)) │ static")
+        elseif src isa CombinedFlux
+            push!(lines, "  $(rpad("combined", 14)) │ $(rpad(src.label, 30)) │ $(length(src.components)) components")
+        elseif src isa NoFlux
+            push!(lines, "  $(rpad("—", 14)) │ $(rpad("NoFlux", 30)) │ —")
+        end
+    end
+
+    push!(lines, "  " * "─"^62)
+    @info join(lines, "\n")
 end
 
 function _build_tracers(names::Vector{Symbol}, grid::LatitudeLongitudeGrid{FT},

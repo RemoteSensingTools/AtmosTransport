@@ -197,19 +197,21 @@ function load_lmdz_co2(dirpath::String,
                        end_date::Date   = Date(2023, 12, 31),
                        species::Symbol  = :co2,
                        flux_var::String = "flux_apos") where FT
-    isdir(dirpath) || error("LMDZ CO2 directory not found: $(dirpath)")
-
-    # Check for preprocessed binary
-    bin_path = _default_emission_bin_path(dirpath, species, grid.Nc)
-    if !isempty(bin_path) && isfile(bin_path)
-        @info "Loading preprocessed LMDZ CO2 binary: $bin_path"
-        panels_vec, time_hours, _ = load_cs_emission_binary(bin_path, FT)
-        @info "LMDZ CO2 from binary: $(length(panels_vec)) timesteps"
+    # Binary path: load directly
+    if endswith(dirpath, ".bin")
+        isfile(dirpath) || error("LMDZ CO2 binary not found: $(dirpath)")
+        @info "$(species): loading binary $(dirpath)"
+        panels_vec, time_hours, _ = load_cs_emission_binary(dirpath, FT)
+        @info "  $(length(panels_vec)) timesteps, " *
+              "time_hours [$(round(time_hours[1], digits=1)) … $(round(time_hours[end], digits=1))] h"
         return TimeVaryingSurfaceFlux(panels_vec, time_hours, species;
-                                               label="LMDZ CO2 posterior (binary)",
+                                               label="LMDZ CO2 posterior",
                                                molar_mass=M_CO2)
     end
 
+    # NetCDF directory
+    isdir(dirpath) || error("LMDZ CO2 path not found: $(dirpath)")
+    @info "$(species): loading NetCDF from $(dirpath)"
     files = _find_lmdz_files(dirpath, start_date, end_date)
     isempty(files) && error("No LMDZ files found in $(dirpath) for $(start_date) to $(end_date)")
 
@@ -609,46 +611,6 @@ function load_cs_emission_binary(bin_path::String, ::Type{FT}) where FT
 end
 
 """
-    _default_emission_bin_path(filepath, species, Nc) → String
-
-Find preprocessed binary for a CATRINE emission source.
-Searches: preprocessed_c{Nc}/ directory (sibling to Emissions/), then legacy paths.
-"""
-function _default_emission_bin_path(filepath::String, species::Symbol, Nc::Int)
-    dir = isdir(filepath) ? rstrip(filepath, '/') : dirname(filepath)
-    sp_tag = lowercase(string(species))
-
-    # Map species to binary filename prefix
-    bin_name = if sp_tag == "fossil_co2"
-        "gridfed_fossil_co2"
-    elseif sp_tag == "sf6"
-        "edgar_sf6"
-    elseif sp_tag == "co2"
-        "lmdz_co2"
-    elseif sp_tag == "rn222"
-        "zhang_rn222"
-    else
-        sp_tag
-    end
-    bin_file = "$(bin_name)_cs_c$(Nc)_float32.bin"
-
-    # Search: preprocessed_c{Nc}/ (new standard), then parent dir, then input dir
-    parent = dirname(dir)
-    grandparent = dirname(parent)
-    search_dirs = [
-        joinpath(grandparent, "preprocessed_c$(Nc)"),  # ~/data/.../catrine/preprocessed_c180/
-        joinpath(parent, "preprocessed_c$(Nc)"),
-        parent,
-        dir,
-    ]
-    for d in search_dirs
-        bin = joinpath(d, bin_file)
-        isfile(bin) && return bin
-    end
-    return ""
-end
-
-"""
     load_gridfed_fossil_co2(filepath, grid::CubedSphereGrid; year, species)
 
 Load GridFED fossil CO₂ and regrid to cubed-sphere panels.
@@ -666,22 +628,43 @@ function load_gridfed_fossil_co2(filepath::String,
                                  year::Int = 2022,
                                  species::Symbol = :fossil_co2,
                                  start_date::Date = Date(year, 1, 1)) where FT
-    # Check for preprocessed binary first
-    bin_path = _default_emission_bin_path(filepath, species, grid.Nc)
-    if !isempty(bin_path) && isfile(bin_path)
-        @info "Loading preprocessed GridFED binary: $bin_path"
-        panels_vec, time_hours, _ = load_cs_emission_binary(bin_path, FT)
+    # Binary path: load directly (file must be specified explicitly in config)
+    if endswith(filepath, ".bin")
+        isfile(filepath) || error("GridFED binary not found: $(filepath)")
+        @info "$(species): loading binary $(filepath)"
+        panels_vec, raw_time_hours, hdr = load_cs_emission_binary(filepath, FT)
+
+        # Recompute time_hours: binary snapshots are monthly, starting from base_year Jan.
+        # Extract base year from header source field (e.g. "GCP-GridFEDv2024.0_2021.short.nc")
+        base_year = year  # fallback
+        src_str = string(get(hdr, :source, ""))
+        m = match(r"_(\d{4})\.", src_str)
+        if m !== nothing
+            base_year = parse(Int, m[1])
+        end
+        Nt = length(panels_vec)
+        time_hours = Vector{Float64}(undef, Nt)
+        sim_start_dt = DateTime(start_date)
+        for ti in 1:Nt
+            mon_idx = ti - 1  # 0-based month index from binary start
+            snap_year = base_year + div(mon_idx, 12)
+            snap_month = mod(mon_idx, 12) + 1
+            snap_dt = DateTime(snap_year, snap_month, 1)
+            time_hours[ti] = Dates.value(snap_dt - sim_start_dt) / 3_600_000.0
+        end
+        @info "  $(Nt) snapshots, base_year=$base_year, " *
+              "time_hours [$(round(time_hours[1], digits=1)) … $(round(time_hours[end], digits=1))] h"
+
         total_GtCO2_yr = sum(sum(panels_vec[ti][p] .* FT.(grid.Aᶜ[p]))
                               for p in 1:6 for ti in eachindex(panels_vec)) /
                          length(panels_vec) * 365.25 * 86400 / 1e12
-        @info "GridFED fossil CO2 from binary: $(round(Float64(total_GtCO2_yr), digits=2)) GtCO2/yr ($(length(panels_vec)) snapshots)"
+        @info "  total: $(round(Float64(total_GtCO2_yr), digits=2)) GtCO2/yr"
         return TimeVaryingSurfaceFlux(panels_vec, time_hours, species;
-                                               label="GridFED fossil CO2 $year (binary)",
+                                               label="GridFED fossil CO2 $year",
                                                molar_mass=M_CO2)
     end
 
-    # Fall back to on-the-fly regridding
-    # Load all monthly flux fields at native resolution
+    # NetCDF path: on-the-fly regridding from native resolution
     monthly_fluxes, lon_src, lat_src, monthly_time_hours = _load_gridfed_monthly(filepath, year, FT; start_date)
     Nt = length(monthly_fluxes)
 
@@ -954,26 +937,27 @@ function load_edgar_sf6(filepath::String, grid::CubedSphereGrid{FT};
                         year::Int = 2022,
                         noaa_growth_file::String = "",
                         scale_year::Int = year) where FT
-    # Check for preprocessed binary first
-    bin_path = _default_emission_bin_path(filepath, :sf6, grid.Nc)
-    if !isempty(bin_path) && isfile(bin_path)
-        @info "Loading preprocessed EDGAR SF6 binary: $bin_path"
-        panels_vec, _, hdr = load_cs_emission_binary(bin_path, FT)
+    # Binary path: load directly
+    if endswith(filepath, ".bin")
+        isfile(filepath) || error("EDGAR SF6 binary not found: $(filepath)")
+        @info "sf6: loading binary $(filepath)"
+        panels_vec, _, hdr = load_cs_emission_binary(filepath, FT)
         flux_panels = panels_vec[1]  # SF6 is single-snapshot
 
-        # Apply NOAA scaling at runtime (base scale may be baked into binary)
+        # Apply NOAA scaling at runtime
         if !isempty(noaa_growth_file) && isfile(noaa_growth_file)
             scale = FT(_noaa_sf6_scale_factor(noaa_growth_file, year, scale_year))
             flux_panels = ntuple(p -> flux_panels[p] .* scale, 6)
         end
 
         total_kgs = sum(sum(flux_panels[p] .* FT.(grid.Aᶜ[p])) for p in 1:6)
-        @info "EDGAR SF6 from binary: $(round(Float64(total_kgs), digits=4)) kg/s"
+        @info "  total: $(round(Float64(total_kgs), digits=4)) kg/s"
         return SurfaceFlux(flux_panels, :sf6,
-                                    "EDGAR v8.0 SF6 $year (binary)";
+                                    "EDGAR v8.0 SF6 $year";
                                     molar_mass=M_SF6)
     end
 
+    # NetCDF path
     isfile(filepath) || error("EDGAR SF6 file not found: $filepath")
     ds = NCDataset(filepath)
 
@@ -1110,18 +1094,19 @@ Returns a `SurfaceFlux` using the annual mean flux.
 function load_zhang_rn222(dirpath::String, grid::CubedSphereGrid{FT};
                           species::Symbol = :rn222,
                           start_date::Date = Date(2021, 12, 1)) where FT
-    # Check for preprocessed binary
-    bin_path = _default_emission_bin_path(dirpath, species, grid.Nc)
-    if !isempty(bin_path) && isfile(bin_path)
-        @info "Loading preprocessed Zhang Rn222 binary: $bin_path"
-        panels_vec, time_hours, _ = load_cs_emission_binary(bin_path, FT)
-        @info "Zhang Rn222 from binary: $(length(panels_vec)) monthly snapshots"
+    # Binary path: load directly
+    if endswith(dirpath, ".bin")
+        isfile(dirpath) || error("Zhang Rn222 binary not found: $(dirpath)")
+        @info "$(species): loading binary $(dirpath)"
+        panels_vec, time_hours, _ = load_cs_emission_binary(dirpath, FT)
+        @info "  $(length(panels_vec)) monthly snapshots, " *
+              "time_hours [$(round(time_hours[1], digits=1)) … $(round(time_hours[end], digits=1))] h"
         return TimeVaryingSurfaceFlux(panels_vec, time_hours, species;
-                                               label="Zhang Rn222 (binary)",
+                                               label="Zhang Rn222",
                                                molar_mass=M_RN222)
     end
 
-    # Build lat-lon flux at 0.5° (native Zhang resolution) then regrid to CS
+    # NetCDF path: build lat-lon flux at 0.5° then regrid to CS
     if isfile(dirpath)
         filepath = dirpath
     elseif isdir(dirpath)

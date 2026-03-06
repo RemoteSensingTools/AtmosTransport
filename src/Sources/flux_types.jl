@@ -116,6 +116,7 @@ function TimeVaryingSurfaceFlux(flux_data::A, time_hours::Vector{Float64},
                                 label::String="time-varying",
                                 molar_mass::Real=molar_mass_for_species(species)) where {FT, A <: AbstractArray{FT, 3}}
     @assert size(flux_data, 3) == length(time_hours)
+    _warn_suspicious_time_hours(time_hours, label)
     TimeVaryingSurfaceFlux{LatLonLayout, FT, A}(
         flux_data, time_hours, species, label, FT(molar_mass), 1)
 end
@@ -126,8 +127,20 @@ function TimeVaryingSurfaceFlux(flux_data::Vector{NTuple{6, A}}, time_hours::Vec
                                 label::String="time-varying CS",
                                 molar_mass::Real=molar_mass_for_species(species)) where {FT, A <: AbstractMatrix{FT}}
     @assert length(flux_data) == length(time_hours)
+    _warn_suspicious_time_hours(time_hours, label)
     TimeVaryingSurfaceFlux{CubedSphereLayout, FT, Vector{NTuple{6, A}}}(
         flux_data, time_hours, species, label, FT(molar_mass), 1)
+end
+
+"""Warn if time_hours look like sequential indices rather than real hours."""
+function _warn_suspicious_time_hours(time_hours::Vector{Float64}, label::String)
+    length(time_hours) > 1 || return
+    max_gap = maximum(abs, diff(time_hours))
+    if max_gap < 2.0
+        @warn "$(label): time_hours look like sequential indices " *
+              "($(time_hours[1:min(5,end)])...), not hours. " *
+              "Snapshot selection will likely be wrong."
+    end
 end
 
 # ---- Time index management ----
@@ -135,7 +148,13 @@ end
 """Update the active flux snapshot index based on simulation time (hours)."""
 function update_time_index!(source::TimeVaryingSurfaceFlux, sim_hours::Float64)
     idx = searchsortedlast(source.time_hours, sim_hours)
-    source.current_idx = clamp(idx, 1, length(source.time_hours))
+    new_idx = clamp(idx, 1, length(source.time_hours))
+    if new_idx != source.current_idx
+        @debug "$(source.label): snapshot $(source.current_idx) → $(new_idx) " *
+               "(sim_hours=$(round(sim_hours, digits=1)), " *
+               "snap_hours=$(source.time_hours[new_idx]))"
+        source.current_idx = new_idx
+    end
     return source.current_idx
 end
 

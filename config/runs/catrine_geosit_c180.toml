@@ -50,7 +50,7 @@ sf6.variable = "SF6"
 
 [tracers.co2]
 emission   = "lmdz_co2"
-dir        = "~/data/AtmosTransport/catrine/Emissions/LMDZ_fluxes"
+file       = "~/data/AtmosTransport/catrine/preprocessed_c180/lmdz_co2_cs_c180_float32.bin"
 species    = "co2"
 flux_var   = "flux_apos"
 start_date = "2021-12-01"
@@ -58,20 +58,20 @@ end_date   = "2023-12-31"
 
 [tracers.fossil_co2]
 emission = "gridfed"
-dir      = "~/data/AtmosTransport/catrine/Emissions/gridfed"
+file     = "~/data/AtmosTransport/catrine/preprocessed_c180/gridfed_fossil_co2_cs_c180_float32.bin"
 species  = "fossil_co2"
 year     = 2021
 
 [tracers.sf6]
 emission         = "edgar_sf6"
-file             = "~/data/AtmosTransport/catrine/Emissions/edgar_v8/v8.0_FT2022_GHG_SF6_2022_TOTALS_emi.nc"
+file             = "~/data/AtmosTransport/catrine/preprocessed_c180/edgar_sf6_cs_c180_float32.bin"
 noaa_growth_file = "~/data/AtmosTransport/catrine/Emissions/sf6_gr_gl.txt"
 year             = 2022
 scale_year       = 2022
 
 [tracers.rn222]
 emission  = "zhang_rn222"
-dir       = "~/data/AtmosTransport/catrine/Emissions/ZHANG_Rn222/"
+file      = "~/data/AtmosTransport/catrine/preprocessed_c180/zhang_rn222_cs_c180_float32.bin"
 chemistry = "decay"
 half_life = 330350.4                    # 3.8235 days in seconds
 

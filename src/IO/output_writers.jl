@@ -23,6 +23,19 @@ using ..Diagnostics: AbstractDiagnostic, ColumnMeanDiagnostic, ColumnMassDiagnos
                      RegridMapping, build_regrid_mapping, regrid_cs_to_latlon!
 using ..Sources: molar_mass_for_species, M_AIR
 
+# ---- Specific humidity helper for wet → dry mole fraction conversion ----
+
+"""Extract QV panels from met_fields if available, or return nothing."""
+_get_qv(met_fields) = met_fields isa NamedTuple && hasproperty(met_fields, :qv) ? met_fields.qv : nothing
+
+const _QV_WARNED = Ref(false)
+function _warn_no_qv()
+    if !_QV_WARNED[]
+        @warn "QV not available — reporting wet mole fractions (no dry correction)"
+        _QV_WARNED[] = true
+    end
+end
+
 # =====================================================================
 # Field metadata — map diagnostic types to CF-convention units/long_name
 # =====================================================================
@@ -228,10 +241,16 @@ $(SIGNATURES)
 Return true if the schedule says we should write at this time/iteration.
 """
 function should_write(writer::AbstractOutputWriter, model_time, iteration)
+    # Always write the IC snapshot at t=0
+    if writer._write_count[] == 0 && model_time == 0.0
+        return true
+    end
     s = writer.schedule
     if s isa TimeIntervalSchedule
-        # Write when model_time >= (_write_count + 1) * interval
-        threshold = (writer._write_count[] + 1) * s.interval
+        # IC write at t=0 doesn't count toward the regular schedule:
+        # subtract 1 from write_count when an IC was written (write_count >= 1 and t>0)
+        effective_count = writer._write_count[] > 0 ? writer._write_count[] - 1 : writer._write_count[]
+        threshold = (effective_count + 1) * s.interval
         return model_time >= threshold
     elseif s isa IterationIntervalSchedule
         return iteration % s.interval == 0
@@ -289,8 +308,22 @@ function _compute_diagnostic(diag::ColumnMeanDiagnostic, model;
         Nz = size(rm[1], 3)
         Hp = div(size(rm[1], 1) - Nc, 2)
         m = air_mass !== nothing ? air_mass : ntuple(_ -> ones(eltype(rm[1]), size(rm[1])), 6)
+        # Use dry air mass if QV available: m_dry = m * (1 - qv)
+        qv_panels = _get_qv(met_fields)
+        m_for_mean = if qv_panels !== nothing && air_mass !== nothing
+            ntuple(6) do p
+                m_p = Array(m[p])
+                qv_p = qv_panels[p]
+                @inbounds for k in 1:Nz, jj in Hp+1:Hp+Nc, ii in Hp+1:Hp+Nc
+                    m_p[ii, jj, k] *= (1 - qv_p[ii, jj, k])
+                end
+                typeof(m[p])(m_p)  # back to device if needed
+            end
+        else
+            m
+        end
         c_col_panels = ntuple(_ -> similar(rm[1], Nc, Nc), 6)
-        column_mean!(c_col_panels, rm, m, Nc, Nz, Hp)
+        column_mean!(c_col_panels, rm, m_for_mean, Nc, Nz, Hp)
         # Regrid to lat-lon using GEOS-FP file coordinates
         if output_grid isa LatLonOutputGrid
             return _regrid_panels_to_latlon(c_col_panels, model, grid, output_grid, regrid_cache)
@@ -356,11 +389,17 @@ function _compute_diagnostic(diag::SurfaceSliceDiagnostic, model;
         rm_sfc_panels = ntuple(_ -> similar(rm_panels[1], Nc, Nc), 6)
         surface_slice!(rm_sfc_panels, rm_panels, Nc, Nz, Hp)
         # CS tracers are rm = air_mass × mixing_ratio; divide by surface air mass
+        qv_panels = _get_qv(met_fields)
         if air_mass !== nothing
             m_sfc_panels = ntuple(_ -> similar(air_mass[1], Nc, Nc), 6)
             surface_slice!(m_sfc_panels, air_mass, Nc, Nz, Hp)
             sfc_panels = ntuple(6) do p
-                rm_sfc_panels[p] ./= m_sfc_panels[p]  # in-place on device
+                rm_sfc_panels[p] ./= m_sfc_panels[p]  # wet mole fraction
+                # Apply dry correction using surface-level QV
+                if qv_panels !== nothing
+                    qv_sfc = qv_panels[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, Nz]  # surface = last level
+                    rm_sfc_panels[p] ./= (1 .- qv_sfc)
+                end
                 rm_sfc_panels[p]
             end
         else
@@ -498,19 +537,26 @@ function _compute_diagnostic(diag::Full3DDiagnostic, model;
     elseif grid isa CubedSphereGrid
         rm_panels = _get_tracer_panels(model, diag.species; tracers)
         if output_grid isa LatLonOutputGrid
-            # Level-by-level CS → lat-lon regridding of mixing ratio
+            # Level-by-level CS → lat-lon regridding of dry mole fraction
             Nc = grid.Nc
             Hp = div(size(rm_panels[1], 1) - Nc, 2)
             Nz = size(rm_panels[1], 3)
             FT = floattype(grid)
             og = output_grid
+            qv_panels = _get_qv(met_fields)
             result = zeros(FT, og.Nlon, og.Nlat, Nz)
             for k in 1:Nz
                 level_panels = ntuple(6) do p
                     rm_slice = rm_panels[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, k]
                     if air_mass !== nothing
                         m_slice = air_mass[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, k]
-                        rm_slice ./ m_slice  # mixing ratio
+                        q_wet = rm_slice ./ m_slice
+                        if qv_panels !== nothing
+                            qv_slice = qv_panels[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, k]
+                            q_wet ./ (1 .- qv_slice)  # dry mole fraction
+                        else
+                            q_wet
+                        end
                     else
                         rm_slice
                     end
@@ -520,15 +566,21 @@ function _compute_diagnostic(diag::Full3DDiagnostic, model;
             end
             return result
         end
-        # Native CS output — strip halos and convert to mixing ratio
+        # Native CS output — strip halos and convert to dry mole fraction
         Nc = grid.Nc
         Hp = div(size(rm_panels[1], 1) - Nc, 2)
         Nz = size(rm_panels[1], 3)
+        qv_panels = _get_qv(met_fields)
+        qv_panels === nothing && _warn_no_qv()
         return ntuple(6) do p
             rm_inner = Array(rm_panels[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, 1:Nz])
             if air_mass !== nothing
                 m_inner = Array(air_mass[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, 1:Nz])
-                rm_inner ./= m_inner  # convert to mixing ratio
+                rm_inner ./= m_inner  # wet mole fraction
+                if qv_panels !== nothing
+                    qv_inner = qv_panels[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, 1:Nz]
+                    rm_inner ./= (1 .- qv_inner)  # wet → dry
+                end
             end
             rm_inner
         end

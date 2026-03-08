@@ -42,6 +42,7 @@ end
     _parse_initial_conditions(ic_cfg::Dict) → PendingInitialConditions
 
 Parse IC config into entries (file + variable_map + time_index).
+Also stores uniform IC entries (uniform_value) for deferred application.
 """
 function _parse_initial_conditions(ic_cfg::Dict)
     pic = PendingInitialConditions()
@@ -62,6 +63,15 @@ function _parse_initial_conditions(ic_cfg::Dict)
         # Per-tracer format
         for (tracer_key, tracer_ic) in ic_cfg
             tracer_ic isa Dict || continue
+
+            # Uniform IC: constant mixing ratio everywhere
+            if haskey(tracer_ic, "uniform_value")
+                val = Float64(tracer_ic["uniform_value"])
+                _store_uniform_ic(UniformICData(Symbol(tracer_key), val))
+                @info "IC for $(tracer_key): uniform mixing ratio = $val"
+                continue
+            end
+
             haskey(tracer_ic, "file") || continue
             ic_file = expanduser(tracer_ic["file"])
             nc_var  = get(tracer_ic, "variable", uppercase(String(tracer_key)))

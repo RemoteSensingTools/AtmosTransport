@@ -30,7 +30,7 @@ const OUTPUT_DIR = get(ENV, "GEOSFP_DATA_DIR",
                        joinpath(homedir(), "data", "geosit_c180"))
 
 # Parse collections to download
-const COLLECTIONS = split(get(ENV, "COLLECTIONS", "A3mstE,A1,A3dyn"), ",")
+const COLLECTIONS = split(get(ENV, "COLLECTIONS", "A3mstE,A1,A3dyn,I3"), ",")
 
 function build_url(date::Date, collection::AbstractString)
     datestr = Dates.format(date, "yyyymmdd")

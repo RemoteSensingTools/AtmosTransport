@@ -894,6 +894,151 @@ function _load_dtrain_from_bin!(dtrain_panels::NTuple{6}, bin_path::String,
     return true
 end
 
+# ---- Specific humidity (QV) from I3 collection ----
+
+"""
+Derive the I3 file path from a CTM_A1 file path by replacing the collection
+name in the filename. Returns empty string if the file doesn't exist.
+"""
+function _i3_path_from_ctm(ctm_path::String)
+    dir = dirname(ctm_path)
+    fname = basename(ctm_path)
+    i3_fname = replace(fname, "CTM_A1" => "I3")
+    i3_path = joinpath(dir, i3_fname)
+    return isfile(i3_path) ? i3_path : ""
+end
+
+# Module-level cache for QV timestep deduplication (same pattern as DTRAIN)
+const _QV_CACHE = Ref((file_idx=0, time_idx=0))
+const _QV_BIN_IO_CACHE = Ref{Any}(nothing)
+const _QV_PANEL_BUF = Ref{Any}(nothing)
+
+function _get_qv_bin_io(filepath::String)
+    cache = _QV_BIN_IO_CACHE[]
+    if cache !== nothing
+        old_path, old_io, old_nz = cache
+        if old_path == filepath && isopen(old_io)
+            return old_io, old_nz
+        end
+        isopen(old_io) && close(old_io)
+    end
+    io = open(filepath, "r")
+    hdr_bytes = Vector{UInt8}(undef, _SFC_BIN_HEADER_SIZE)
+    read!(io, hdr_bytes)
+    json_end = something(findfirst(==(0x00), hdr_bytes), _SFC_BIN_HEADER_SIZE + 1) - 1
+    hdr = JSON3.read(String(hdr_bytes[1:json_end]))
+    Nz = Int(hdr.Nz)
+    _QV_BIN_IO_CACHE[] = (filepath, io, Nz)
+    return io, Nz
+end
+
+"""
+Load QV (specific humidity) from flat binary I3 file into pre-allocated panels.
+
+Binary layout: [8192-byte JSON header] [timestep 1: QV p1..p6] [timestep 2] ...
+Each panel is Nc×Nc×Nz Float32 at layer centers, bottom-to-top (GEOS-IT native).
+"""
+function _load_qv_from_bin!(qv_panels::NTuple{6}, bin_path::String,
+                             time_index::Int, Nc::Int, Hp::Int,
+                             ::Type{FT}) where FT
+    io, Nz_native = _get_qv_bin_io(bin_path)
+
+    panel_elems = Nc * Nc * Nz_native
+    elems_per_ts = 6 * panel_elems
+    base_offset = _SFC_BIN_HEADER_SIZE + (time_index - 1) * elems_per_ts * sizeof(FT)
+
+    pbuf = _QV_PANEL_BUF[]
+    if pbuf === nothing || size(pbuf) != (Nc, Nc, Nz_native) || eltype(pbuf) != FT
+        pbuf = Array{FT}(undef, Nc, Nc, Nz_native)
+        _QV_PANEL_BUF[] = pbuf
+    end
+    panel_buf = pbuf::Array{FT, 3}
+
+    for p in 1:6
+        seek(io, base_offset + (p - 1) * panel_elems * sizeof(FT))
+        read!(io, panel_buf)
+
+        fill!(qv_panels[p], zero(FT))
+
+        # Flip bottom-to-top → TOA-first (no merge_map — CATRINE uses native 72L)
+        @inbounds for k_file in 1:Nz_native
+            k_model = Nz_native - k_file + 1
+            for jj in 1:Nc, ii in 1:Nc
+                qv_panels[p][ii + Hp, jj + Hp, k_model] = panel_buf[ii, jj, k_file]
+            end
+        end
+    end
+    return true
+end
+
+"""
+$(SIGNATURES)
+
+Load specific humidity (QV) from I3 files into pre-allocated panels.
+
+QV is needed for converting wet mole fractions to dry mole fractions at output time.
+The I3 collection is 3-hourly instantaneous (8 timesteps/day), same cadence as A3dyn.
+
+Returns `true` if QV was loaded, `:cached` if unchanged, `false` if I3 data unavailable.
+"""
+function load_qv_window!(qv_panels::NTuple{6},
+                          driver::GEOSFPCubedSphereMetDriver{FT},
+                          grid, win::Int) where FT
+    file_idx, local_win = window_to_file_local(driver, win)
+    a3_time_index = cld(local_win, 3)
+
+    if _QV_CACHE[].file_idx == file_idx && _QV_CACHE[].time_idx == a3_time_index
+        return :cached
+    end
+
+    # Priority 0: flat binary
+    bin_path = _surface_bin_path(driver, file_idx, "I3")
+    if !isempty(bin_path)
+        local_win == 1 && @info "  QV: binary reader ($(basename(bin_path)), t=$a3_time_index)"
+        result = _load_qv_from_bin!(qv_panels, bin_path, a3_time_index,
+                                     driver.Nc, driver.Hp, FT)
+        result && (_QV_CACHE[] = (file_idx=file_idx, time_idx=a3_time_index))
+        return result
+    end
+
+    # Priority 1: co-located I3 alongside CTM_A1 (GEOS-IT naming)
+    i3_path = if driver.mode === :netcdf
+        _i3_path_from_ctm(driver.files[file_idx])
+    elseif !isempty(driver.coord_file)
+        # Binary mode: derive I3 path from coord_file's parent directory structure
+        # coord_file = .../netcdf_dir/YYYYMMDD/GEOSIT.*.CTM_A1.C180.nc
+        nc_base = dirname(dirname(driver.coord_file))
+        date = driver._start_date + Day(file_idx - 1)
+        datestr = Dates.format(date, "yyyymmdd")
+        candidate = joinpath(nc_base, datestr, "GEOSIT.$(datestr).I3.C$(driver.Nc).nc")
+        isfile(candidate) ? candidate : ""
+    else
+        ""
+    end
+    isempty(i3_path) && return false
+
+    local_win == 1 && @info "  QV: NetCDF reader ($(basename(i3_path)), t=$a3_time_index)"
+    ds = NCDataset(i3_path, "r")
+    Nc_file = Int(ds.dim["Xdim"])
+    Nz_file = Int(ds.dim["lev"])
+    raw = FT.(coalesce.(ds["QV"][:, :, :, :, a3_time_index], FT(0)))
+    close(ds)
+
+    Hp_d = driver.Hp
+    for p in 1:6
+        fill!(qv_panels[p], zero(FT))
+        @inbounds for k_file in 1:Nz_file
+            k_model = Nz_file - k_file + 1  # flip bottom-to-top → TOA-first
+            for jj in 1:Nc_file, ii in 1:Nc_file
+                qv_panels[p][ii + Hp_d, jj + Hp_d, k_model] = raw[ii, jj, p, k_file]
+            end
+        end
+    end
+
+    _QV_CACHE[] = (file_idx=file_idx, time_idx=a3_time_index)
+    return true
+end
+
 """
 Derive the A1 file path from a CTM_A1 file path by replacing the collection
 name in the filename. Returns empty string if the file doesn't exist.
@@ -1137,13 +1282,13 @@ end
 """
     load_all_window!(cpu_buf, cmfmc_cpu, dtrain_cpu, sfc_cpu, troph_cpu,
                       driver, grid, win; needs_cmfmc, needs_dtrain, needs_sfc,
-                      ps_panels=nothing)
+                      needs_qv, qv_cpu, ps_panels)
 
-Load all met data for a single window: mass fluxes + CMFMC + surface fields + DTRAIN.
+Load all met data for a single window: mass fluxes + CMFMC + surface fields + DTRAIN + QV.
 Designed to be called from the async background thread in the double-buffer run loop
 so that all disk reads overlap with GPU compute.
 
-Returns a NamedTuple `(cmfmc, dtrain, sfc)` with the status of each load
+Returns a NamedTuple `(cmfmc, dtrain, sfc, qv)` with the status of each load
 (`false`, `true`, or `:cached`).
 """
 function load_all_window!(cpu_buf::CubedSphereCPUBuffer,
@@ -1153,6 +1298,8 @@ function load_all_window!(cpu_buf::CubedSphereCPUBuffer,
                            needs_cmfmc::Bool=false,
                            needs_dtrain::Bool=false,
                            needs_sfc::Bool=false,
+                           needs_qv::Bool=false,
+                           qv_cpu=nothing,
                            ps_panels=nothing)
     # 1. Mass fluxes (fast via cached mmap reader)
     load_met_window!(cpu_buf, driver, grid, win)
@@ -1180,5 +1327,12 @@ function load_all_window!(cpu_buf::CubedSphereCPUBuffer,
         false
     end
 
-    return (; cmfmc=cmfmc_status, dtrain=dtrain_status, sfc=sfc_status)
+    # 5. QV (specific humidity for dry mole fraction output)
+    qv_status = if needs_qv && qv_cpu !== nothing
+        load_qv_window!(qv_cpu, driver, grid, win)
+    else
+        false
+    end
+
+    return (; cmfmc=cmfmc_status, dtrain=dtrain_status, sfc=sfc_status, qv=qv_status)
 end

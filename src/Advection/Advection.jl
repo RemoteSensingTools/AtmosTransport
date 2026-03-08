@@ -80,7 +80,8 @@ export advect_x_massflux_reduced!
 export CubedSphereGeometryCache, CubedSphereMassFluxWorkspace
 export allocate_cs_massflux_workspace
 export max_cfl_x_cs, max_cfl_y_cs
-export compute_air_mass_panel!, compute_cm_panel!
+export compute_air_mass_panel!, compute_cm_panel!, apply_mass_fixer!
+export compute_cm_pressure_fixer_panel!, compute_dm_per_sub_panel!
 export advect_x_cs_panel!, advect_y_cs_panel!, advect_z_cs_panel!
 export advect_z_cs_panel_column!
 

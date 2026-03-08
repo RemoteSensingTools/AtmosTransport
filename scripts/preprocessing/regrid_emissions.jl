@@ -440,7 +440,7 @@ function process_emission(cfg::EmissionConfig)
                                                        grid; cs_map)
                 push!(snapshots, panels)
 
-                # Compute time offset
+                # Compute time offset (hours since sim_start)
                 hrs = if time_vals !== nothing && ti <= length(time_vals)
                     tv = time_vals[ti]
                     if tv isa DateTime
@@ -448,10 +448,12 @@ function process_emission(cfg::EmissionConfig)
                     elseif tv isa Date
                         Dates.value(DateTime(tv) - sim_start) / 3_600_000.0
                     else
-                        Float64(length(time_hours))
+                        # Numeric time: assume monthly snapshots, compute offset
+                        Float64(length(time_hours)) * (SECONDS_PER_MONTH / 3600.0)
                     end
                 else
-                    Float64(length(time_hours))
+                    # No time coordinate: assume monthly snapshots
+                    Float64(length(time_hours)) * (SECONDS_PER_MONTH / 3600.0)
                 end
                 push!(time_hours, hrs)
             end

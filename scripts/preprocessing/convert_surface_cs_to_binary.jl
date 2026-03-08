@@ -253,6 +253,46 @@ function convert_a3dyn(nc_path::String, bin_path::String)
     return filesize(bin_path)
 end
 
+function convert_i3_qv(nc_path::String, bin_path::String)
+    ds = NCDataset(nc_path, "r")
+    Nc = Int(ds.dim["Xdim"])
+    Nz = Int(ds.dim["lev"])
+    Nt = Int(ds.dim["time"])
+
+    header = Dict{String,Any}(
+        "magic"        => "QV3D",
+        "version"      => 1,
+        "collection"   => "I3",
+        "Nc"           => Nc,
+        "n_panels"     => 6,
+        "Nz"           => Nz,
+        "Nt"           => Nt,
+        "float_type"   => "Float32",
+        "float_bytes"  => 4,
+        "header_bytes" => HEADER_SIZE,
+        "panel_elems"  => Nc * Nc * Nz,
+        "elems_per_timestep" => 6 * Nc * Nc * Nz,
+    )
+
+    open(bin_path, "w") do io
+        hdr_json = JSON3.write(header)
+        hdr_buf = zeros(UInt8, HEADER_SIZE)
+        copyto!(hdr_buf, 1, Vector{UInt8}(hdr_json), 1, length(hdr_json))
+        write(io, hdr_buf)
+
+        panel_buf = Array{FT}(undef, Nc, Nc, Nz)
+        for t in 1:Nt
+            raw = FT.(coalesce.(ds["QV"][:, :, :, :, t], FT(0)))  # (Xdim, Ydim, nf, lev)
+            for p in 1:6
+                copyto!(panel_buf, 1, view(raw, :, :, p, :), 1, Nc * Nc * Nz)
+                write(io, panel_buf)
+            end
+        end
+    end
+    close(ds)
+    return filesize(bin_path)
+end
+
 # ---------------------------------------------------------------------------
 # Main driver
 # ---------------------------------------------------------------------------
@@ -295,7 +335,7 @@ TOML config example:
     @info "  Output:   $output_dir"
     @info "  Dates:    $start_date to $end_date"
 
-    n_a1 = 0; n_a3 = 0; n_dyn = 0; total_bytes = 0
+    n_a1 = 0; n_a3 = 0; n_dyn = 0; n_i3 = 0; total_bytes = 0
 
     for date in start_date:Day(1):end_date
         datestr = Dates.format(date, "yyyymmdd")
@@ -337,10 +377,20 @@ TOML config example:
         else
             @warn "  [$datestr] A3dyn not found in $input_dir"
         end
+
+        # Convert I3 (QV for dry mole fractions)
+        i3_nc = find_surface_nc(prod, input_dir, date, "I3")
+        if !isempty(i3_nc)
+            i3_bin = joinpath(output_dir, surface_bin_name(prod, date, "I3"))
+            t0 = time()
+            sz = convert_i3_qv(i3_nc, i3_bin)
+            @info @sprintf("  [%s] I3 (QV): %.1f MB in %.1fs", datestr, sz / 1e6, time() - t0)
+            n_i3 += 1; total_bytes += sz
+        end
     end
 
-    @info @sprintf("Done. %d A1 + %d A3mstE + %d A3dyn files → %.1f GB total",
-                   n_a1, n_a3, n_dyn, total_bytes / 1e9)
+    @info @sprintf("Done. %d A1 + %d A3mstE + %d A3dyn + %d I3 files → %.1f GB total",
+                   n_a1, n_a3, n_dyn, n_i3, total_bytes / 1e9)
 end
 
 main()

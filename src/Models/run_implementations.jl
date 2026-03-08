@@ -19,6 +19,8 @@ using ..Advection: MassFluxWorkspace, allocate_massflux_workspace,
                    strang_split_massflux!, strang_split_massflux_ppm!,
                    compute_air_mass!,
                    compute_mass_fluxes!, compute_air_mass_panel!, compute_cm_panel!,
+                   compute_cm_pressure_fixer_panel!, compute_dm_per_sub_panel!,
+                   apply_mass_fixer!,
                    build_geometry_cache, max_cfl_x_cs, max_cfl_y_cs,
                    SlopesAdvection, PPMAdvection
 using ..Diffusion: DiffusionWorkspace, diffuse_gpu!, diffuse_cs_panels!,
@@ -37,7 +39,7 @@ using ..Sources: AbstractSurfaceFlux, apply_surface_flux!,
 using ..Chemistry: apply_chemistry!
 using ..IO: AbstractMetDriver, AbstractRawMetDriver, AbstractMassFluxMetDriver,
             total_windows, window_dt, steps_per_window, load_met_window!,
-            load_cmfmc_window!, load_dtrain_window!, load_surface_fields_window!,
+            load_cmfmc_window!, load_dtrain_window!, load_qv_window!, load_surface_fields_window!,
             load_all_window!,
             LatLonMetBuffer, LatLonCPUBuffer, CubedSphereMetBuffer, CubedSphereCPUBuffer,
             upload!, AbstractOutputWriter, write_output!, finalize_output!,
@@ -111,40 +113,121 @@ function _get_cluster_sizes_cpu(grid::LatitudeLongitudeGrid)
     return cs
 end
 
-# --- Peak location diagnostic for debugging ---
+# --- Mass conservation diagnostic ---
 """
-    _log_peak_locations(cs_tracers, m_panels, grid, window, label)
+    _compute_mass_totals(cs_tracers, grid)
 
-Log the location (panel, i, j, lon, lat) of the maximum surface mixing ratio
-for each tracer. Used to track where unphysical peaks develop.
+Compute total tracer mass (kg) for each tracer. Returns `Dict{Symbol,Float64}`.
 """
-function _log_peak_locations(cs_tracers, m_panels, grid, window::Int, label::String)
-    Nc = grid.Nc
-    Hp = grid.Hp
-    Nz = grid.Nz
-    FT = eltype(m_panels[1])
+function _compute_mass_totals(cs_tracers, grid)
+    Nc, Hp, Nz = grid.Nc, grid.Hp, grid.Nz
+    result = Dict{Symbol,Float64}()
     for (tname, rm_t) in pairs(cs_tracers)
-        max_q = FT(-Inf)
-        max_p, max_i, max_j = 0, 0, 0
+        total = 0.0
         for p in 1:6
             rm_cpu = Array(rm_t[p])
-            m_cpu  = Array(m_panels[p])
-            for j in 1:Nc, i in 1:Nc
-                ii, jj = Hp + i, Hp + j
-                m_val = m_cpu[ii, jj, Nz]
-                m_val <= 0 && continue
-                q = rm_cpu[ii, jj, Nz] / m_val
-                if q > max_q
-                    max_q = q
-                    max_p, max_i, max_j = p, i, j
-                end
+            @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
+                total += Float64(rm_cpu[Hp+i, Hp+j, k])
             end
         end
-        if max_p > 0
-            lon = grid.λᶜ[max_p][max_i, max_j]
-            lat = grid.φᶜ[max_p][max_i, max_j]
-            @info @sprintf("  PEAK %s win=%d [%s]: max_q=%.6e panel=%d (%d,%d) lon=%.1f lat=%.1f",
-                           tname, window, label, max_q, max_p, max_i, max_j, lon, lat)
+        result[tname] = total
+    end
+    return result
+end
+
+"""
+    _compute_mass_totals_subset(cs_tracers, grid, subset)
+
+Like `_compute_mass_totals` but only for tracers in `subset` with nonzero values.
+Used to avoid GPU→CPU copies for tracers that don't need mass fixing.
+"""
+function _compute_mass_totals_subset(cs_tracers, grid, subset::Dict{Symbol,Float64})
+    Nc, Hp, Nz = grid.Nc, grid.Hp, grid.Nz
+    result = Dict{Symbol,Float64}()
+    for (tname, rm_t) in pairs(cs_tracers)
+        haskey(subset, tname) || continue
+        subset[tname] == 0.0 && continue
+        total = 0.0
+        for p in 1:6
+            rm_cpu = Array(rm_t[p])
+            @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
+                total += Float64(rm_cpu[Hp+i, Hp+j, k])
+            end
+        end
+        result[tname] = total
+    end
+    return result
+end
+
+"""
+    _mass_showvalue(mass_totals, initial_mass)
+
+Format mass diagnostics as a compact string for progress bar showvalues.
+"""
+function _mass_showvalue(mass_totals::Dict{Symbol,Float64},
+                          initial_mass::Dict{Symbol,Float64})
+    parts = String[]
+    for tname in sort(collect(keys(mass_totals)))
+        total = mass_totals[tname]
+        if haskey(initial_mass, tname) && initial_mass[tname] != 0.0
+            rel = (total - initial_mass[tname]) / abs(initial_mass[tname]) * 100
+            push!(parts, @sprintf("%s:Δ=%.4e%%", tname, rel))
+        end
+    end
+    return join(parts, "  ")
+end
+
+"""
+    _apply_global_mass_fixer!(cs_tracers, grid, target_mass) → String
+
+Scale rm globally so total tracer mass matches `target_mass` for each tracer.
+Returns a compact string describing the correction magnitude (in ppm).
+Typically called with pre-advection mass to correct Strang splitting drift
+while preserving legitimate emission gains.
+"""
+function _apply_global_mass_fixer!(cs_tracers, grid, target_mass::Dict{Symbol,Float64})
+    Nc, Hp, Nz = grid.Nc, grid.Hp, grid.Nz
+    parts = String[]
+    for (tname, rm_t) in pairs(cs_tracers)
+        haskey(target_mass, tname) || continue
+        m0 = target_mass[tname]
+        m0 == 0.0 && continue
+
+        # Compute current total (Float64 accumulation)
+        total = 0.0
+        for p in 1:6
+            rm_cpu = Array(rm_t[p])
+            @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
+                total += Float64(rm_cpu[Hp+i, Hp+j, k])
+            end
+        end
+
+        total == 0.0 && continue
+        scale = m0 / total
+        correction_ppm = (scale - 1.0) * 1e6
+
+        # Apply scaling on GPU
+        FT = eltype(rm_t[1])
+        for p in 1:6
+            rm_t[p] .*= FT(scale)
+        end
+        push!(parts, @sprintf("%s:%.1fppm", tname, correction_ppm))
+    end
+    return join(parts, " ")
+end
+
+"""Legacy wrapper: print mass conservation via @info (used by single-buffer path)."""
+function _log_mass_conservation(cs_tracers, grid, window::Int, label::String;
+                                 initial_mass::Union{Nothing, Dict{Symbol,Float64}}=nothing)
+    totals = _compute_mass_totals(cs_tracers, grid)
+    for tname in sort(collect(keys(totals)))
+        total = totals[tname]
+        if initial_mass !== nothing && haskey(initial_mass, tname)
+            m0 = initial_mass[tname]
+            rel = m0 == 0.0 ? 0.0 : (total - m0) / abs(m0) * 100
+            @info @sprintf("  MASS %s win=%d [%s]: %.6e kg (Δ=%.4e%%)", tname, window, label, total, rel)
+        else
+            @info @sprintf("  MASS %s win=%d [%s]: %.6e kg", tname, window, label, total)
         end
     end
 end
@@ -803,6 +886,9 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
     else
         nothing
     end
+    # QV (specific humidity) for dry mole fraction output — CPU only
+    qv_cpu = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz), 6)
+    qv_loaded = false
     # RAS workspace for updraft concentration tracking (q_cloud)
     ras_workspace = if model.convection isa RASConvection
         ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz)), 6)
@@ -858,6 +944,7 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
           (has_convection ? " [convection: $(nameof(typeof(model.convection)))]" : "")
 
     prog = Progress(n_win; desc="Simulation ", showspeed=true, barlen=40)
+    _initial_mass = Dict{Symbol,Float64}()
 
     for w in 1:n_win
         # ── I/O: load met from disk → CPU → GPU ───────────────────────
@@ -889,6 +976,10 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
                 end
             end
         end
+
+        # Load QV (specific humidity for dry mole fraction output)
+        qv_status = load_qv_window!(qv_cpu, driver, grid, w)
+        qv_loaded = qv_status !== false
 
         # Load surface fields from A1 if PBL diffusion enabled
         sfc_loaded = false
@@ -947,37 +1038,50 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
             finalize_ic_vertical_interp!(cs_tracers, m_panels, delp_gpu, grid)
         end
 
-        # Save reference air mass — reset before each sub-step to prevent
-        # mass drift in convergence/divergence zones (cf. commit 8a03955)
+        # Save reference air mass from DELP for this window.
         for p in 1:6
             copyto!(m_ref_panels[p], m_panels[p])
         end
 
-        # Time-0 IC snapshot: log peak locations before any physics
+        # Time-0 IC snapshot: log mass conservation + write output before any physics
         if w == 1
-            _log_peak_locations(cs_tracers, m_ref_panels, grid, 0, "IC")
+            _initial_mass = Dict{Symbol,Float64}()
+            for (tname, rm_t) in pairs(cs_tracers)
+                total = 0.0
+                for p in 1:6
+                    rm_cpu = Array(rm_t[p])
+                    @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
+                        total += Float64(rm_cpu[Hp+i, Hp+j, k])
+                    end
+                end
+                _initial_mass[tname] = total
+            end
+            _log_mass_conservation(cs_tracers, grid, 0, "IC")
+            _met_ic = (; ps=ps_cpu,
+                         mass_flux_x=am_gpu, mass_flux_y=bm_gpu,
+                         mf_scale=half_dt, dt_window=dt_window)
+            if sfc_loaded && has_pbl_diff
+                _met_ic = merge(_met_ic, (; pblh=pbl_sfc_cpu.pblh))
+            end
+            if troph_loaded
+                _met_ic = merge(_met_ic, (; troph=troph_cpu))
+            end
+            for writer in writers
+                write_output!(writer, model, 0.0;
+                              air_mass=m_ref_panels, tracers=cs_tracers,
+                              met_fields=_met_ic)
+            end
         end
 
         for p in 1:6
             compute_cm_panel!(cm_gpu[p], am_gpu[p], bm_gpu[p], gc.bt, Nc, Nz)
         end
 
-        # CFL diagnostic (first window + every 24th) — X/Y only; Z handled by column kernel
+        # CFL diagnostic (first window + every 24th)
         if w == 1 || w % 24 == 0
             cfl_x = maximum(max_cfl_x_cs(am_gpu[p], m_ref_panels[p], ws.cfl_x, Hp) for p in 1:6)
             cfl_y = maximum(max_cfl_y_cs(bm_gpu[p], m_ref_panels[p], ws.cfl_y, Hp) for p in 1:6)
             @info @sprintf("  CFL diag (win %d): max_x=%.3f max_y=%.3f", w, cfl_x, cfl_y)
-            # Mass budget diagnostic per tracer
-            _total_m  = sum(sum(Array(m_ref_panels[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, :])) for p in 1:6)
-            for (tname, rm_t) in pairs(cs_tracers)
-                _total_rm = sum(sum(Array(rm_t[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, :])) for p in 1:6)
-                _max_ppm  = maximum(
-                    maximum(Array(rm_t[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, Nz]) ./
-                            max.(Array(m_ref_panels[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, Nz]), eps(FT)))
-                    for p in 1:6)
-                @info @sprintf("  Budget %s (win %d): total_rm=%.4e total_m=%.4e max_sfc_ppm=%.4f",
-                               tname, w, _total_rm, _total_m, _max_ppm)
-            end
         end
 
         _sim_hrs = Float64((w - 1) * dt_window) / 3600.0
@@ -994,6 +1098,10 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
                 _apply_advection_cs!(rm_t, m_panels,
                                      am_gpu, bm_gpu, cm_gpu,
                                      grid, model.advection_scheme, ws)
+                # Mass fixer: preserve q = rm/m across air mass reset
+                for p in 1:6
+                    apply_mass_fixer!(rm_t[p], m_ref_panels[p], m_panels[p], Nc, Nz, Hp)
+                end
             end
             # Convective transport per tracer (per substep for CFL stability)
             if cmfmc_loaded
@@ -1023,9 +1131,10 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
         apply_chemistry!(cs_tracers, grid, model.chemistry, dt_window)
         t_compute += time() - t0
 
-        # Peak location tracker (first 48 windows = 2 days, then every 24th)
+        # Mass conservation tracker (first 48 windows = 2 days, then every 24th)
         if w <= 48 || w % 24 == 0
-            _log_peak_locations(cs_tracers, m_ref_panels, grid, w, "post-physics")
+            _log_mass_conservation(cs_tracers, grid, w, "post-physics";
+                                    initial_mass=_initial_mass)
         end
 
         # ── Output: diagnostics + regrid + NetCDF ─────────────────────
@@ -1045,6 +1154,9 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
             merge(_met_base, (; troph=troph_cpu))
         else
             _met_base
+        end
+        if qv_loaded
+            _met_2d = merge(_met_2d, (; qv=qv_cpu))
         end
         for writer in writers
             write_output!(writer, model, sim_time;
@@ -1119,8 +1231,9 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
     end
 
     # Shared air mass (same meteorology for all tracers — not double-buffered)
-    m_panels      = allocate_cubed_sphere_field(grid, Nz)
-    m_ref_panels  = allocate_cubed_sphere_field(grid, Nz)   # reference air mass for sub-step reset
+    m_panels          = allocate_cubed_sphere_field(grid, Nz)
+    m_ref_panels      = allocate_cubed_sphere_field(grid, Nz)   # reference air mass for sub-step reset
+    dm_per_sub_panels = allocate_cubed_sphere_field(grid, Nz)   # pressure-fixer: Δm per sub-step
 
     # TWO GPU met buffers (A = current, B = next)
     gpu_A = CubedSphereMetBuffer(arch, FT, Nc, Nz, Hp)
@@ -1164,6 +1277,9 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
     else
         nothing
     end
+    # QV (specific humidity) for dry mole fraction output — CPU only
+    qv_cpu = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz), 6)
+    qv_loaded = false
     # RAS workspace for updraft concentration tracking (q_cloud)
     ras_workspace = if model.convection isa RASConvection
         ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz)), 6)
@@ -1211,6 +1327,7 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
                                     needs_cmfmc=has_convection,
                                     needs_dtrain=needs_dtrain_alloc,
                                     needs_sfc=true,
+                                    needs_qv=true, qv_cpu=qv_cpu,
                                     ps_panels=ps_cpu)
 
     curr_cpu, next_cpu = cpu_A, cpu_B
@@ -1233,6 +1350,10 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
           (has_convection ? " [convection: $(nameof(typeof(model.convection)))]" : "")
 
     prog = Progress(n_win; desc="Simulation ", showspeed=true, barlen=40)
+    _initial_mass = Dict{Symbol,Float64}()
+    _last_cfl  = ""
+    _last_mass = ""
+    _last_fix  = ""
 
     for w in 1:n_win
         has_next = w < n_win
@@ -1247,6 +1368,7 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
                 needs_cmfmc=has_convection,
                 needs_dtrain=needs_dtrain_alloc,
                 needs_sfc=true,
+                needs_qv=true, qv_cpu=qv_cpu,
                 ps_panels=ps_cpu)
         end
 
@@ -1274,6 +1396,9 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
            (dtrain_loaded && io_status.dtrain !== :cached)
             invalidate_ras_cfl_cache!()
         end
+
+        # QV status (CPU only — no GPU upload, used at output time)
+        qv_loaded = io_status.qv !== false
 
         # Upload surface fields if loaded
         sfc_loaded = io_status.sfc !== false
@@ -1321,35 +1446,81 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
             finalize_ic_vertical_interp!(cs_tracers, m_panels, curr_gpu.delp, grid)
         end
 
-        # Save reference air mass — reset before each sub-step to prevent
-        # mass drift in convergence/divergence zones (cf. commit 8a03955)
+        # Save reference air mass from DELP for this window.
         for p in 1:6
             copyto!(m_ref_panels[p], m_panels[p])
         end
 
-        # Time-0 IC snapshot: log peak locations before any physics
+        # Time-0 IC snapshot: log initial mass + write output before any physics
         if w == 1
-            _log_peak_locations(cs_tracers, m_ref_panels, grid, 0, "IC")
+            _initial_mass = _compute_mass_totals(cs_tracers, grid)
+            for tname in sort(collect(keys(_initial_mass)))
+                @info @sprintf("  IC mass %s: %.6e kg", tname, _initial_mass[tname])
+            end
+            _met_ic = (; ps=ps_cpu,
+                         mass_flux_x=curr_gpu.am, mass_flux_y=curr_gpu.bm,
+                         mf_scale=half_dt, dt_window=dt_window)
+            if sfc_loaded && has_pbl_diff
+                _met_ic = merge(_met_ic, (; pblh=pbl_sfc_cpu.pblh))
+            end
+            if troph_loaded
+                _met_ic = merge(_met_ic, (; troph=troph_cpu))
+            end
+            for writer in writers
+                write_output!(writer, model, 0.0;
+                              air_mass=m_ref_panels, tracers=cs_tracers,
+                              met_fields=_met_ic)
+            end
         end
 
+        # ── Pressure fixer: fetch next DELP for cm computation ────────
+        # Wait for async load of window w+1 so we can use DELP_next.
+        # Binary IO is ~0.06 s/win — typically already complete by now.
+        fetched_early = false
+        if has_next && load_task !== nothing
+            io_status = fetch(load_task)
+            fetched_early = true
+            for p in 1:6
+                copyto!(next_gpu.delp[p], next_cpu.delp[p])
+            end
+        end
+
+        # Compute cm: pressure-fixer (with DELP_next) or bt-only (last window)
         for p in 1:6
-            compute_cm_panel!(curr_gpu.cm[p], curr_gpu.am[p], curr_gpu.bm[p], gc.bt, Nc, Nz)
+            if has_next
+                compute_cm_pressure_fixer_panel!(curr_gpu.cm[p], curr_gpu.am[p], curr_gpu.bm[p],
+                    gc.bt, curr_gpu.delp[p], next_gpu.delp[p], gc.area[p], gc.gravity,
+                    n_sub, Nc, Nz, Hp)
+                compute_dm_per_sub_panel!(dm_per_sub_panels[p], curr_gpu.delp[p], next_gpu.delp[p],
+                    gc.area[p], gc.gravity, n_sub, Nc, Nz, Hp)
+            else
+                compute_cm_panel!(curr_gpu.cm[p], curr_gpu.am[p], curr_gpu.bm[p], gc.bt, Nc, Nz)
+                fill!(dm_per_sub_panels[p], zero(FT))
+            end
         end
 
-        # CFL diagnostic (first window + every 24th)
+        # CFL diagnostic (first window + every 24th) — shown in progress bar
         if w == 1 || w % 24 == 0
             cfl_x = maximum(max_cfl_x_cs(curr_gpu.am[p], m_ref_panels[p], ws.cfl_x, Hp) for p in 1:6)
             cfl_y = maximum(max_cfl_y_cs(curr_gpu.bm[p], m_ref_panels[p], ws.cfl_y, Hp) for p in 1:6)
-            @info @sprintf("  CFL diag (win %d): max_x=%.3f max_y=%.3f", w, cfl_x, cfl_y)
+            _last_cfl = @sprintf("x=%.3f y=%.3f", cfl_x, cfl_y)
         end
 
         _sim_hrs = Float64((w - 1) * dt_window) / 3600.0
         _apply_emissions_cs!(cs_tracers, emi_data, gc.area, dt_window, Nc, Hp;
                               sim_hours=_sim_hrs, arch=model.architecture)
 
+        # Snapshot mass after emissions / before advection — target for mass fixer.
+        # Only computes IC tracers (those with nonzero initial_mass).
+        _pre_adv_mass = if !isempty(_initial_mass)
+            _compute_mass_totals_subset(cs_tracers, grid, _initial_mass)
+        else
+            _initial_mass
+        end
+
         for _ in 1:n_sub
             step += 1
-            # Advect each tracer independently (air mass reset per tracer)
+            # Advect each tracer independently (m reset per tracer; all produce same m_evolved)
             for (_, rm_t) in pairs(cs_tracers)
                 for p in 1:6
                     copyto!(m_panels[p], m_ref_panels[p])
@@ -1357,6 +1528,12 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
                 _apply_advection_cs!(rm_t, m_panels,
                                      curr_gpu.am, curr_gpu.bm, curr_gpu.cm,
                                      grid, model.advection_scheme, ws)
+            end
+            # Pressure fixer: advance m_ref along prescribed trajectory toward m_target.
+            # No per-cell mass fixer needed — cm ensures m_evolved ≈ m_ref_new (~1e-5),
+            # and skipping the fixer gives exact rm conservation (0.000% drift).
+            for p in 1:6
+                m_ref_panels[p] .+= dm_per_sub_panels[p]
             end
 
             # Convective transport per tracer (per substep for CFL stability)
@@ -1390,9 +1567,16 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
 
         t_compute += time() - t0
 
-        # Peak location tracker (first 48 windows = 2 days, then every 24th)
-        if w <= 48 || w % 24 == 0
-            _log_peak_locations(cs_tracers, m_ref_panels, grid, w, "post-physics")
+        # Global mass fixer: correct Strang splitting drift for IC tracers.
+        # Uses pre-advection mass (after emissions) as target, so emissions are preserved.
+        if !isempty(_initial_mass)
+            _last_fix = _apply_global_mass_fixer!(cs_tracers, grid, _pre_adv_mass)
+        end
+
+        # Mass conservation — update showvalue (every 24th window ≈ daily)
+        if w % 24 == 0 || w == 1
+            _mass_totals = _compute_mass_totals(cs_tracers, grid)
+            _last_mass = _mass_showvalue(_mass_totals, _initial_mass)
         end
         # ── Output ────────────────────────────────────────────────────
         t0 = time()
@@ -1410,6 +1594,9 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
         else
             _met_base
         end
+        if qv_loaded
+            _met_2d = merge(_met_2d, (; qv=qv_cpu))
+        end
         for writer in writers
             write_output!(writer, model, sim_time;
                           air_mass=m_ref_panels, tracers=cs_tracers,
@@ -1417,25 +1604,40 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
         end
         t_output += time() - t0
 
-        # ── Wait for disk read, then swap ─────────────────────────────
-        # Any remaining disk-read time that wasn't hidden by GPU+output.
+        # ── Wait for disk read (if not already fetched for pressure fixer) ──
         t0 = time()
-        if has_next
-            io_status = fetch(load_task)  # returns NamedTuple from load_all_window!
+        if has_next && !fetched_early
+            io_status = fetch(load_task)
         end
         t_io += time() - t0
 
         curr_cpu, next_cpu = next_cpu, curr_cpu
         curr_gpu, next_gpu = next_gpu, curr_gpu
 
-        # Progress bar with timing breakdown
-        next!(prog; showvalues=[
-            (:day, div(w - 1, 24) + 1),
-            (:IO,  @sprintf("%.2f s/win", t_io / w)),
-            (:GPU, @sprintf("%.2f s/win", t_compute / w)),
-            (:Out, @sprintf("%.2f s/win", t_output / w))])
+        # Progress bar with timing + diagnostics below the bar
+        _sv = Pair{Symbol,Any}[
+            :day  => div(w - 1, 24) + 1,
+            :IO   => @sprintf("%.2f s/win", t_io / w),
+            :GPU  => @sprintf("%.2f s/win", t_compute / w),
+            :Out  => @sprintf("%.2f s/win", t_output / w)]
+        isempty(_last_cfl)  || push!(_sv, :CFL  => _last_cfl)
+        isempty(_last_fix)  || push!(_sv, :fix  => _last_fix)
+        isempty(_last_mass) || push!(_sv, :mass => _last_mass)
+        next!(prog; showvalues=_sv)
     end
     finish!(prog)
+
+    # Final mass conservation summary
+    _mass_final = _compute_mass_totals(cs_tracers, grid)
+    for tname in sort(collect(keys(_mass_final)))
+        total = _mass_final[tname]
+        if haskey(_initial_mass, tname) && _initial_mass[tname] != 0.0
+            rel = (total - _initial_mass[tname]) / abs(_initial_mass[tname]) * 100
+            @info @sprintf("  Final mass %s: %.6e kg (Δ=%.4e%%)", tname, total, rel)
+        else
+            @info @sprintf("  Final mass %s: %.6e kg", tname, total)
+        end
+    end
 
     wall_total = time() - wall_start
     @info @sprintf(

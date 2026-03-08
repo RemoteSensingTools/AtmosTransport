@@ -126,6 +126,41 @@ function compute_air_mass_panel!(m::AbstractArray{FT,3},
     return nothing
 end
 
+# ---- Mass Fixer: preserve mixing ratio across air mass reset ----------------
+
+@kernel function _mass_fixer_kernel!(rm, @Const(m_ref), @Const(m_evolved), Hp)
+    i, j, k = @index(Global, NTuple)
+    ii = Hp + i
+    jj = Hp + j
+    @inbounds begin
+        m_e = m_evolved[ii, jj, k]
+        rm[ii, jj, k] = if m_e > zero(eltype(rm))
+            (rm[ii, jj, k] / m_e) * m_ref[ii, jj, k]
+        else
+            zero(eltype(rm))
+        end
+    end
+end
+
+"""
+$(SIGNATURES)
+
+Correct tracer mass `rm` to preserve mixing ratio `q = rm/m` when air mass is
+reset from `m_evolved` (post-advection) back to `m_ref` (DELP-derived).
+
+Sets `rm[i,j,k] = (rm[i,j,k] / m_evolved[i,j,k]) * m_ref[i,j,k]` for interior cells.
+"""
+function apply_mass_fixer!(rm::AbstractArray{FT,3},
+                            m_ref::AbstractArray{FT,3},
+                            m_evolved::AbstractArray{FT,3},
+                            Nc::Int, Nz::Int, Hp::Int) where FT
+    backend = get_backend(rm)
+    k! = _mass_fixer_kernel!(backend, 256)
+    k!(rm, m_ref, m_evolved, Hp; ndrange=(Nc, Nc, Nz))
+    synchronize(backend)
+    return nothing
+end
+
 # ---- Vertical Mass-Flux Closure --------------------------------------------
 
 @kernel function _cm_column_cs_kernel!(cm, @Const(am), @Const(bm), @Const(bt), Nc, Nz)
@@ -166,6 +201,91 @@ function compute_cm_panel!(cm::AbstractArray{FT,3},
     fill!(cm, zero(FT))
     k! = _cm_column_cs_kernel!(backend, 256)
     k!(cm, am, bm, bt, Nc, Nz; ndrange=(Nc, Nc))
+    synchronize(backend)
+    return nothing
+end
+
+# ---- Pressure-Fixer Vertical Mass-Flux Closure -----------------------------
+
+@kernel function _cm_pressure_fixer_kernel!(cm, @Const(am), @Const(bm), @Const(bt),
+        @Const(delp_curr), @Const(delp_next), @Const(area), g, n_sub_x2, Hp, Nc, Nz)
+    i, j = @index(Global, NTuple)
+    FT = eltype(cm)
+    @inbounds begin
+        inv_g_n = one(FT) / (g * FT(n_sub_x2))
+        a = area[i, j]
+        pit = zero(FT)
+        dp_sum = zero(FT)
+        for k in 1:Nz
+            pit    += am[i, j, k] - am[i + 1, j, k] + bm[i, j, k] - bm[i, j + 1, k]
+            dp_sum += (delp_next[Hp + i, Hp + j, k] - delp_curr[Hp + i, Hp + j, k]) * a * inv_g_n
+        end
+        residual = pit - dp_sum
+        acc = zero(FT)
+        cm[i, j, 1] = acc
+        for k in 1:Nz
+            conv_k = am[i, j, k] - am[i + 1, j, k] + bm[i, j, k] - bm[i, j + 1, k]
+            dp_k   = (delp_next[Hp + i, Hp + j, k] - delp_curr[Hp + i, Hp + j, k]) * a * inv_g_n
+            acc += conv_k - bt[k] * residual - dp_k
+            cm[i, j, k + 1] = acc
+        end
+    end
+end
+
+"""
+$(SIGNATURES)
+
+Compute vertical mass flux `cm` using pressure-fixer formulation: incorporates the
+pressure tendency (DELP_next - DELP_current) so that air mass evolves toward the
+next window's target across sub-steps.  Falls back to standard bt-only closure
+when `delp_next === nothing`.
+"""
+function compute_cm_pressure_fixer_panel!(cm::AbstractArray{FT,3},
+                                          am::AbstractArray{FT,3},
+                                          bm::AbstractArray{FT,3},
+                                          bt::AbstractVector{FT},
+                                          delp_curr::AbstractArray{FT,3},
+                                          delp_next::AbstractArray{FT,3},
+                                          area::AbstractMatrix{FT},
+                                          g::FT, n_sub::Int,
+                                          Nc::Int, Nz::Int, Hp::Int) where FT
+    backend = get_backend(cm)
+    fill!(cm, zero(FT))
+    n_sub_x2 = 2 * n_sub
+    k! = _cm_pressure_fixer_kernel!(backend, 256)
+    k!(cm, am, bm, bt, delp_curr, delp_next, area, g, n_sub_x2, Hp, Nc, Nz;
+       ndrange=(Nc, Nc))
+    synchronize(backend)
+    return nothing
+end
+
+# ---- Per-Sub-Step Air Mass Increment ----------------------------------------
+
+@kernel function _dm_per_sub_kernel!(dm, @Const(delp_curr), @Const(delp_next),
+                                      @Const(area), inv_g_n, Hp)
+    i, j, k = @index(Global, NTuple)
+    FT = eltype(dm)
+    @inbounds dm[Hp + i, Hp + j, k] =
+        (delp_next[Hp + i, Hp + j, k] - delp_curr[Hp + i, Hp + j, k]) *
+        area[i, j] * inv_g_n
+end
+
+"""
+$(SIGNATURES)
+
+Compute the air-mass increment per sub-step for the pressure-fixer m_ref evolution:
+`dm[i,j,k] = (DELP_next - DELP_curr) * area / (g * n_sub)`.
+"""
+function compute_dm_per_sub_panel!(dm::AbstractArray{FT,3},
+                                    delp_curr::AbstractArray{FT,3},
+                                    delp_next::AbstractArray{FT,3},
+                                    area::AbstractMatrix{FT},
+                                    g::FT, n_sub::Int,
+                                    Nc::Int, Nz::Int, Hp::Int) where FT
+    backend = get_backend(dm)
+    inv_g_n = FT(1) / (g * FT(n_sub))
+    k! = _dm_per_sub_kernel!(backend, 256)
+    k!(dm, delp_curr, delp_next, area, inv_g_n, Hp; ndrange=(Nc, Nc, Nz))
     synchronize(backend)
     return nothing
 end

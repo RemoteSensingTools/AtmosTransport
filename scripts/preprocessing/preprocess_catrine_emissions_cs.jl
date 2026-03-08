@@ -272,6 +272,12 @@ function preprocess_gridfed(grid::CubedSphereGrid{FT}) where FT
             panels, = regrid_and_renormalize!(slice, lon_src, lat_src, grid, cs_map)
             push!(snapshots, panels)
             push!(time_hours, t_offset + (ti - 1) * (SECONDS_PER_MONTH / 3600.0))
+
+            # Per-month total for auditability
+            monthly_kgCO2_s = sum(sum(panels[p] .* FT.(grid.Aᶜ[p])) for p in 1:6)
+            monthly_GtCO2_yr = Float64(monthly_kgCO2_s) * SECONDS_PER_YEAR / 1e12
+            @info @sprintf("    Snapshot %2d (%.0f h): %.2f GtCO2/yr",
+                           length(snapshots), time_hours[end], monthly_GtCO2_yr)
         end
         t_offset += Nt_file * (SECONDS_PER_MONTH / 3600.0)
     end

@@ -108,28 +108,32 @@ mutable struct TimeVaryingSurfaceFlux{G, FT, S} <: AbstractSurfaceFlux
     molar_mass  :: FT
     "currently active time index"
     current_idx :: Int
+    "if true, wrap sim_hours modulo the time span (for climatological data)"
+    cyclic      :: Bool
 end
 
 # Lat-lon constructor (infers G from 3D array)
 function TimeVaryingSurfaceFlux(flux_data::A, time_hours::Vector{Float64},
                                 species::Symbol;
                                 label::String="time-varying",
-                                molar_mass::Real=molar_mass_for_species(species)) where {FT, A <: AbstractArray{FT, 3}}
+                                molar_mass::Real=molar_mass_for_species(species),
+                                cyclic::Bool=false) where {FT, A <: AbstractArray{FT, 3}}
     @assert size(flux_data, 3) == length(time_hours)
     _warn_suspicious_time_hours(time_hours, label)
     TimeVaryingSurfaceFlux{LatLonLayout, FT, A}(
-        flux_data, time_hours, species, label, FT(molar_mass), 1)
+        flux_data, time_hours, species, label, FT(molar_mass), 1, cyclic)
 end
 
 # Cubed-sphere constructor (infers G from Vector of NTuple{6})
 function TimeVaryingSurfaceFlux(flux_data::Vector{NTuple{6, A}}, time_hours::Vector{Float64},
                                 species::Symbol;
                                 label::String="time-varying CS",
-                                molar_mass::Real=molar_mass_for_species(species)) where {FT, A <: AbstractMatrix{FT}}
+                                molar_mass::Real=molar_mass_for_species(species),
+                                cyclic::Bool=false) where {FT, A <: AbstractMatrix{FT}}
     @assert length(flux_data) == length(time_hours)
     _warn_suspicious_time_hours(time_hours, label)
     TimeVaryingSurfaceFlux{CubedSphereLayout, FT, Vector{NTuple{6, A}}}(
-        flux_data, time_hours, species, label, FT(molar_mass), 1)
+        flux_data, time_hours, species, label, FT(molar_mass), 1, cyclic)
 end
 
 """Warn if time_hours look like sequential indices rather than real hours."""
@@ -145,14 +149,29 @@ end
 
 # ---- Time index management ----
 
-"""Update the active flux snapshot index based on simulation time (hours)."""
+"""Update the active flux snapshot index based on simulation time (hours).
+
+For `cyclic=true` sources (e.g. climatological monthly data), wraps `sim_hours`
+modulo the time span so the snapshots repeat every cycle.
+"""
 function update_time_index!(source::TimeVaryingSurfaceFlux, sim_hours::Float64)
-    idx = searchsortedlast(source.time_hours, sim_hours)
-    new_idx = clamp(idx, 1, length(source.time_hours))
+    th = source.time_hours
+    Nt = length(th)
+
+    if source.cyclic && Nt > 1
+        # Wrap sim_hours into the cyclic time range [th[1], th[1] + span)
+        span = th[end] - th[1] + (th[end] - th[end-1])  # assume last step same duration as second-to-last
+        wrapped = th[1] + mod(sim_hours - th[1], span)
+        idx = searchsortedlast(th, wrapped)
+    else
+        idx = searchsortedlast(th, sim_hours)
+    end
+    new_idx = clamp(idx, 1, Nt)
     if new_idx != source.current_idx
-        @debug "$(source.label): snapshot $(source.current_idx) → $(new_idx) " *
-               "(sim_hours=$(round(sim_hours, digits=1)), " *
-               "snap_hours=$(source.time_hours[new_idx]))"
+        cycle_info = source.cyclic ? " [cyclic]" : ""
+        @info "$(source.label): snapshot $(source.current_idx) → $(new_idx)$cycle_info " *
+              "(sim_hours=$(round(sim_hours, digits=1)), " *
+              "snap_hours=$(th[new_idx]))"
         source.current_idx = new_idx
     end
     return source.current_idx

@@ -12,7 +12,8 @@ using NCDatasets
 using ..Grids: LatitudeLongitudeGrid, CubedSphereGrid
 
 export load_initial_conditions!, PendingInitialConditions, apply_pending_ic!,
-       finalize_ic_vertical_interp!, has_deferred_ic_vinterp
+       finalize_ic_vertical_interp!, has_deferred_ic_vinterp,
+       UniformICData, _store_uniform_ic
 
 """
     load_initial_conditions!(tracers, filepath, grid;
@@ -411,14 +412,27 @@ end
 
 const _DEFERRED_IC = Ref(DeferredICData[])
 
-has_deferred_ic_vinterp() = !isempty(_DEFERRED_IC[])
+"""Per-tracer uniform IC: constant mixing ratio everywhere."""
+struct UniformICData
+    tracer_name :: Symbol
+    value       :: Float64   # mixing ratio [mol/mol]
+end
+
+const _DEFERRED_UNIFORM_IC = Ref(UniformICData[])
+
+has_deferred_ic_vinterp() = !isempty(_DEFERRED_IC[]) || !isempty(_DEFERRED_UNIFORM_IC[])
 
 function _store_deferred_ic(data::DeferredICData)
     push!(_DEFERRED_IC[], data)
 end
 
+function _store_uniform_ic(data::UniformICData)
+    push!(_DEFERRED_UNIFORM_IC[], data)
+end
+
 function _clear_deferred_ic()
     _DEFERRED_IC[] = DeferredICData[]
+    _DEFERRED_UNIFORM_IC[] = UniformICData[]
 end
 
 """
@@ -434,7 +448,8 @@ from mixing ratio (mol/mol) to tracer mass (rm = q × m).
 function finalize_ic_vertical_interp!(tracers, m_panels, delp_panels,
                                        grid::CubedSphereGrid{FT}) where FT
     deferred = _DEFERRED_IC[]
-    isempty(deferred) && return nothing
+    has_uniform = !isempty(_DEFERRED_UNIFORM_IC[])
+    isempty(deferred) && !has_uniform && return nothing
 
     Nc = grid.Nc
     Hp = grid.Hp
@@ -526,6 +541,27 @@ function finalize_ic_vertical_interp!(tracers, m_panels, delp_panels,
             @info "IC finalized for $tname: mixing ratio min=$(minimum(q_vals)) " *
                   "max=$(maximum(q_vals)) mean=$(sum(q_vals)/length(q_vals))"
         end
+    end
+
+    # Process uniform ICs (flat mixing ratio everywhere)
+    for uic in _DEFERRED_UNIFORM_IC[]
+        tname = uic.tracer_name
+        haskey(tracers, tname) || continue
+        panels = tracers[tname]
+
+        cpu_m = [Array(m_panels[p]) for p in 1:6]
+        cpu_buf = zeros(FT, size(panels[1]))
+
+        for p in 1:6
+            fill!(cpu_buf, zero(FT))
+            for k in 1:Nz, j in 1:Nc, i in 1:Nc
+                ii = Hp + i
+                jj = Hp + j
+                cpu_buf[ii, jj, k] = FT(uic.value) * FT(cpu_m[p][ii, jj, k])
+            end
+            copyto!(panels[p], cpu_buf)
+        end
+        @info "IC finalized for $tname: uniform mixing ratio = $(uic.value)"
     end
 
     _clear_deferred_ic()

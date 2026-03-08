@@ -632,27 +632,10 @@ function load_gridfed_fossil_co2(filepath::String,
     if endswith(filepath, ".bin")
         isfile(filepath) || error("GridFED binary not found: $(filepath)")
         @info "$(species): loading binary $(filepath)"
-        panels_vec, raw_time_hours, hdr = load_cs_emission_binary(filepath, FT)
-
-        # Recompute time_hours: binary snapshots are monthly, starting from base_year Jan.
-        # Extract base year from header source field (e.g. "GCP-GridFEDv2024.0_2021.short.nc")
-        base_year = year  # fallback
-        src_str = string(get(hdr, :source, ""))
-        m = match(r"_(\d{4})\.", src_str)
-        if m !== nothing
-            base_year = parse(Int, m[1])
-        end
+        panels_vec, time_hours, _ = load_cs_emission_binary(filepath, FT)
         Nt = length(panels_vec)
-        time_hours = Vector{Float64}(undef, Nt)
-        sim_start_dt = DateTime(start_date)
-        for ti in 1:Nt
-            mon_idx = ti - 1  # 0-based month index from binary start
-            snap_year = base_year + div(mon_idx, 12)
-            snap_month = mod(mon_idx, 12) + 1
-            snap_dt = DateTime(snap_year, snap_month, 1)
-            time_hours[ti] = Dates.value(snap_dt - sim_start_dt) / 3_600_000.0
-        end
-        @info "  $(Nt) snapshots, base_year=$base_year, " *
+
+        @info "  $(Nt) snapshots, " *
               "time_hours [$(round(time_hours[1], digits=1)) … $(round(time_hours[end], digits=1))] h"
 
         total_GtCO2_yr = sum(sum(panels_vec[ti][p] .* FT.(grid.Aᶜ[p]))
@@ -1083,7 +1066,8 @@ function load_zhang_rn222(dirpath::String,
         stack = _stack_matrices(flux_mats, Nx_m, Ny_m, FT)
         return TimeVaryingSurfaceFlux(stack, time_hours, species;
                                     label="Zhang Rn222 monthly",
-                                    molar_mass=M_RN222)
+                                    molar_mass=M_RN222,
+                                    cyclic=true)
     end
 end
 
@@ -1103,7 +1087,8 @@ function load_zhang_rn222(dirpath::String, grid::CubedSphereGrid{FT};
               "time_hours [$(round(time_hours[1], digits=1)) … $(round(time_hours[end], digits=1))] h"
         return TimeVaryingSurfaceFlux(panels_vec, time_hours, species;
                                                label="Zhang Rn222",
-                                               molar_mass=M_RN222)
+                                               molar_mass=M_RN222,
+                                               cyclic=true)
     end
 
     # NetCDF path: build lat-lon flux at 0.5° then regrid to CS

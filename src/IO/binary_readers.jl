@@ -132,8 +132,8 @@ Each window contains (in order): delp panels × 6, am panels × 6, bm panels × 
 $(FIELDS)
 """
 struct CSBinaryReader{FT} <: AbstractBinaryReader
-    "mmap'd flat vector over entire data region"
-    data   :: Vector{FT}
+    "mmap'd flat vector over entire data region (always Float32 on disk)"
+    data   :: Vector{Float32}
     "underlying IOStream"
     io     :: IOStream
     "cells per panel edge"
@@ -168,7 +168,8 @@ function CSBinaryReader(bin_path::String, ::Type{FT}) where FT
     total  = elems * Nt
 
     seek(io, CS_HEADER_SIZE)
-    data = Mmap.mmap(io, Vector{FT}, (total,), CS_HEADER_SIZE; grow=false)
+    # Binary files are always Float32 on disk — mmap as Float32, convert at load time
+    data = Mmap.mmap(io, Vector{Float32}, (total,), CS_HEADER_SIZE; grow=false)
 
     CSBinaryReader{FT}(data, io, Nc, Nz, Hp, Nt, n_delp, n_am, n_bm, elems)
 end
@@ -221,10 +222,11 @@ function load_edgar_cs_binary(bin_path::String, ::Type{FT}) where FT
 
     Nc = Int(hdr.Nc)
 
+    # Binary files are always Float32 on disk; convert to FT
+    buf = Array{Float32}(undef, Nc, Nc)
     flux_panels = ntuple(6) do _
-        arr = Array{FT}(undef, Nc, Nc)
-        read!(io, arr)
-        arr
+        read!(io, buf)
+        FT === Float32 ? copy(buf) : FT.(buf)
     end
     close(io)
     return flux_panels

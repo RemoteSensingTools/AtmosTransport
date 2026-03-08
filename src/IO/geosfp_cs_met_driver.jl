@@ -433,15 +433,15 @@ function _load_sfc_from_bin!(sfc_panels::NamedTuple,
 
     panel_elems = Nc * Nc
     elems_per_ts = n_vars * 6 * panel_elems
-    offset = _SFC_BIN_HEADER_SIZE + (time_index - 1) * elems_per_ts * sizeof(FT)
+    offset = _SFC_BIN_HEADER_SIZE + (time_index - 1) * elems_per_ts * sizeof(Float32)
 
-    # Reuse pre-allocated buffer
+    # Reuse pre-allocated buffer (always Float32 — binary format on disk)
     buf = _SFC_BIN_BUF[]
-    if buf === nothing || length(buf) != elems_per_ts || eltype(buf) != FT
-        buf = Vector{FT}(undef, elems_per_ts)
+    if buf === nothing || length(buf) != elems_per_ts || eltype(buf) != Float32
+        buf = Vector{Float32}(undef, elems_per_ts)
         _SFC_BIN_BUF[] = buf
     end
-    data = buf::Vector{FT}
+    data = buf::Vector{Float32}
 
     seek(io, offset)
     read!(io, data)
@@ -519,20 +519,20 @@ function _load_cmfmc_from_bin!(cmfmc_panels::NTuple{6},
 
     panel_elems = Nc * Nc * Nz_edge
     elems_per_ts = 6 * panel_elems
-    base_offset = _SFC_BIN_HEADER_SIZE + (time_index - 1) * elems_per_ts * sizeof(FT)
+    base_offset = _SFC_BIN_HEADER_SIZE + (time_index - 1) * elems_per_ts * sizeof(Float32)
 
-    # Reuse pre-allocated panel buffer
+    # Reuse pre-allocated panel buffer (always Float32 — binary format on disk)
     pbuf = _CMFMC_PANEL_BUF[]
-    if pbuf === nothing || size(pbuf) != (Nc, Nc, Nz_edge) || eltype(pbuf) != FT
-        pbuf = Array{FT}(undef, Nc, Nc, Nz_edge)
+    if pbuf === nothing || size(pbuf) != (Nc, Nc, Nz_edge) || eltype(pbuf) != Float32
+        pbuf = Array{Float32}(undef, Nc, Nc, Nz_edge)
         _CMFMC_PANEL_BUF[] = pbuf
     end
-    panel_buf = pbuf::Array{FT, 3}
+    panel_buf = pbuf::Array{Float32, 3}
 
     Nz_edge_merged = merge_map !== nothing ? maximum(merge_map) + 1 : Nz_edge
 
     for p in 1:6
-        seek(io, base_offset + (p - 1) * panel_elems * sizeof(FT))
+        seek(io, base_offset + (p - 1) * panel_elems * sizeof(Float32))
         read!(io, panel_buf)
 
         fill!(cmfmc_panels[p], zero(FT))
@@ -855,20 +855,20 @@ function _load_dtrain_from_bin!(dtrain_panels::NTuple{6}, bin_path::String,
 
     panel_elems = Nc * Nc * Nz_native
     elems_per_ts = 6 * panel_elems
-    base_offset = _SFC_BIN_HEADER_SIZE + (time_index - 1) * elems_per_ts * sizeof(FT)
+    base_offset = _SFC_BIN_HEADER_SIZE + (time_index - 1) * elems_per_ts * sizeof(Float32)
 
-    # Reuse pre-allocated panel buffer
+    # Reuse pre-allocated panel buffer (always Float32 — binary format on disk)
     pbuf = _DTRAIN_PANEL_BUF[]
-    if pbuf === nothing || size(pbuf) != (Nc, Nc, Nz_native) || eltype(pbuf) != FT
-        pbuf = Array{FT}(undef, Nc, Nc, Nz_native)
+    if pbuf === nothing || size(pbuf) != (Nc, Nc, Nz_native) || eltype(pbuf) != Float32
+        pbuf = Array{Float32}(undef, Nc, Nc, Nz_native)
         _DTRAIN_PANEL_BUF[] = pbuf
     end
-    panel_buf = pbuf::Array{FT, 3}
+    panel_buf = pbuf::Array{Float32, 3}
 
     Nz_out = size(dtrain_panels[1], 3)
 
     for p in 1:6
-        seek(io, base_offset + (p - 1) * panel_elems * sizeof(FT))
+        seek(io, base_offset + (p - 1) * panel_elems * sizeof(Float32))
         read!(io, panel_buf)
 
         fill!(dtrain_panels[p], zero(FT))
@@ -945,17 +945,18 @@ function _load_qv_from_bin!(qv_panels::NTuple{6}, bin_path::String,
 
     panel_elems = Nc * Nc * Nz_native
     elems_per_ts = 6 * panel_elems
-    base_offset = _SFC_BIN_HEADER_SIZE + (time_index - 1) * elems_per_ts * sizeof(FT)
+    base_offset = _SFC_BIN_HEADER_SIZE + (time_index - 1) * elems_per_ts * sizeof(Float32)
 
+    # Reuse pre-allocated panel buffer (always Float32 — binary format on disk)
     pbuf = _QV_PANEL_BUF[]
-    if pbuf === nothing || size(pbuf) != (Nc, Nc, Nz_native) || eltype(pbuf) != FT
-        pbuf = Array{FT}(undef, Nc, Nc, Nz_native)
+    if pbuf === nothing || size(pbuf) != (Nc, Nc, Nz_native) || eltype(pbuf) != Float32
+        pbuf = Array{Float32}(undef, Nc, Nc, Nz_native)
         _QV_PANEL_BUF[] = pbuf
     end
-    panel_buf = pbuf::Array{FT, 3}
+    panel_buf = pbuf::Array{Float32, 3}
 
     for p in 1:6
-        seek(io, base_offset + (p - 1) * panel_elems * sizeof(FT))
+        seek(io, base_offset + (p - 1) * panel_elems * sizeof(Float32))
         read!(io, panel_buf)
 
         fill!(qv_panels[p], zero(FT))

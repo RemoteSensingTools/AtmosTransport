@@ -598,12 +598,14 @@ function load_cs_emission_binary(bin_path::String, ::Type{FT}) where FT
     # Seek to data start (after full header)
     seek(io, header_size)
 
+    # Binary files are always Float32 on disk; convert to FT
+    disk_FT = Float32
+    buf = Array{disk_FT}(undef, Nc, Nc)
     panels_vec = Vector{NTuple{6, Matrix{FT}}}(undef, Nt)
     for t in 1:Nt
         panels_vec[t] = ntuple(6) do _
-            arr = Array{FT}(undef, Nc, Nc)
-            read!(io, arr)
-            arr
+            read!(io, buf)
+            FT === disk_FT ? copy(buf) : FT.(buf)
         end
     end
     close(io)

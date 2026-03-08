@@ -32,3 +32,4 @@ scripts/Manifest.toml
 docs/Manifest.toml
 docs/src/literated/
 docs/src/developer/
+.vscode/mcp.json

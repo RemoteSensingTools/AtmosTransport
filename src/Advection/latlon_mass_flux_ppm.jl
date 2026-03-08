@@ -207,7 +207,7 @@ function advect_x_massflux_ppm_subcycled!(rm_tracers, m::AbstractArray{FT,3}, am
                                            grid, ::Val{ORD},
                                            ws::MassFluxWorkspace{FT};
                                            cfl_limit = FT(0.95)) where {FT, ORD}
-    cfl = max_cfl_massflux_x(am, m, ws.cfl_x)
+    cfl = max_cfl_massflux_x(am, m, ws.cfl_x, ws.cluster_sizes)
     n_sub = max(1, ceil(Int, cfl / cfl_limit))
     if n_sub > 1
         ws.cfl_x .= am ./ FT(n_sub)

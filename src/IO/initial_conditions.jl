@@ -112,11 +112,14 @@ function load_initial_conditions!(tracers::NamedTuple,
         c = tracers[tracer_name]
 
         if grids_match
-            # Direct copy
-            c .= raw
+            # Direct copy (handles GPU via broadcast)
+            copyto!(c, raw)
         else
-            # Regrid via nearest-neighbor interpolation
-            _regrid_3d_to_model!(c, raw, lon_use, lat_use, grid, FT)
+            # Regrid via nearest-neighbor interpolation on CPU, then upload
+            c_cpu = Array{FT}(undef, Nx_m, Ny_m, Nz_m)
+            fill!(c_cpu, zero(FT))
+            _regrid_3d_to_model!(c_cpu, raw, lon_use, lat_use, grid, FT)
+            copyto!(c, c_cpu)
         end
 
         total = sum(raw)

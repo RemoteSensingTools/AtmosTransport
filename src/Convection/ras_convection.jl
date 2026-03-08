@@ -39,8 +39,9 @@
 #   so all updraft air is conserved (no rainout removal).
 #
 # Air mass convention:
-#   Uses total (moist) DELP for BMASS, matching GEOS-Chem. Both CMFMC
-#   and DELP are total-pressure-based, so the scheme is self-consistent.
+#   DELP, CMFMC, and DTRAIN are converted to dry basis on GPU before
+#   this kernel runs (see apply_dry_*_panel! in cubed_sphere_mass_flux.jl).
+#   BMASS = DELP_dry/g, so the scheme is self-consistent on dry air mass.
 #
 # Level ordering:
 #   k=1 = TOA, k=Nz = surface (consistent with internal convention).

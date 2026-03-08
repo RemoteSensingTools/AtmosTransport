@@ -126,6 +126,137 @@ function compute_air_mass_panel!(m::AbstractArray{FT,3},
     return nothing
 end
 
+# ---- Dry-Air Correction Kernels -------------------------------------------
+#
+# Convert wet (total moist) DELP, mass fluxes, and convective fluxes to dry
+# basis using specific humidity QV.  Applied on GPU after upload so that CPU
+# buffers remain unmodified (avoids double-correction on buffer swap).
+#
+#   DELP_dry  = DELP_wet  × (1 − qv)
+#   am_dry    = am_wet    × (1 − qv_face_x)      face avg in x
+#   bm_dry    = bm_wet    × (1 − qv_face_y)      face avg in y
+#   CMFMC_dry = CMFMC_wet × (1 − qv_interface)    vertical interface avg
+#   DTRAIN_dry= DTRAIN_wet× (1 − qv)              layer center
+#
+# QV halos must be filled via fill_panel_halos! before calling am/bm kernels
+# so that boundary-face interpolation uses correct neighbor-panel values.
+# ---------------------------------------------------------------------------
+
+@kernel function _dry_delp_kernel!(delp, @Const(qv), Hp)
+    i, j, k = @index(Global, NTuple)
+    @inbounds delp[Hp + i, Hp + j, k] *= (1 - qv[Hp + i, Hp + j, k])
+end
+
+"""
+$(SIGNATURES)
+
+Scale pressure thickness `delp` from wet to dry basis: `delp *= (1 - qv)`.
+"""
+function apply_dry_delp_panel!(delp::AbstractArray{FT,3},
+                                qv::AbstractArray{FT,3},
+                                Nc::Int, Nz::Int, Hp::Int) where FT
+    backend = get_backend(delp)
+    k! = _dry_delp_kernel!(backend, 256)
+    k!(delp, qv, Hp; ndrange=(Nc, Nc, Nz))
+    return nothing
+end
+
+@kernel function _dry_am_kernel!(am, @Const(qv), Hp)
+    i, j, k = @index(Global, NTuple)
+    @inbounds begin
+        qv_face = eltype(am)(0.5) * (qv[Hp + i - 1, Hp + j, k] + qv[Hp + i, Hp + j, k])
+        am[i, j, k] *= (1 - qv_face)
+    end
+end
+
+"""
+$(SIGNATURES)
+
+Scale x-direction mass flux `am` to dry basis using face-averaged QV.
+`am` is `(Nc+1, Nc, Nz)`, `qv` is `(Nc+2Hp, Nc+2Hp, Nz)` with filled halos.
+"""
+function apply_dry_am_panel!(am::AbstractArray{FT,3},
+                              qv::AbstractArray{FT,3},
+                              Nc::Int, Nz::Int, Hp::Int) where FT
+    backend = get_backend(am)
+    k! = _dry_am_kernel!(backend, 256)
+    k!(am, qv, Hp; ndrange=(Nc + 1, Nc, Nz))
+    return nothing
+end
+
+@kernel function _dry_bm_kernel!(bm, @Const(qv), Hp)
+    i, j, k = @index(Global, NTuple)
+    @inbounds begin
+        qv_face = eltype(bm)(0.5) * (qv[Hp + i, Hp + j - 1, k] + qv[Hp + i, Hp + j, k])
+        bm[i, j, k] *= (1 - qv_face)
+    end
+end
+
+"""
+$(SIGNATURES)
+
+Scale y-direction mass flux `bm` to dry basis using face-averaged QV.
+`bm` is `(Nc, Nc+1, Nz)`, `qv` is `(Nc+2Hp, Nc+2Hp, Nz)` with filled halos.
+"""
+function apply_dry_bm_panel!(bm::AbstractArray{FT,3},
+                              qv::AbstractArray{FT,3},
+                              Nc::Int, Nz::Int, Hp::Int) where FT
+    backend = get_backend(bm)
+    k! = _dry_bm_kernel!(backend, 256)
+    k!(bm, qv, Hp; ndrange=(Nc, Nc + 1, Nz))
+    return nothing
+end
+
+@kernel function _dry_cmfmc_kernel!(cmfmc, @Const(qv), Hp, Nz)
+    i, j, k = @index(Global, NTuple)
+    ii = Hp + i
+    jj = Hp + j
+    @inbounds begin
+        qv_iface = if k == 1
+            qv[ii, jj, 1]
+        elseif k == Nz + 1
+            qv[ii, jj, Nz]
+        else
+            eltype(cmfmc)(0.5) * (qv[ii, jj, k - 1] + qv[ii, jj, k])
+        end
+        cmfmc[ii, jj, k] *= (1 - qv_iface)
+    end
+end
+
+"""
+$(SIGNATURES)
+
+Scale convective mass flux `cmfmc` to dry basis using interface-averaged QV.
+`cmfmc` is `(Nc+2Hp, Nc+2Hp, Nz+1)`, `qv` is `(Nc+2Hp, Nc+2Hp, Nz)`.
+"""
+function apply_dry_cmfmc_panel!(cmfmc::AbstractArray{FT,3},
+                                 qv::AbstractArray{FT,3},
+                                 Nc::Int, Nz::Int, Hp::Int) where FT
+    backend = get_backend(cmfmc)
+    k! = _dry_cmfmc_kernel!(backend, 256)
+    k!(cmfmc, qv, Hp, Nz; ndrange=(Nc, Nc, Nz + 1))
+    return nothing
+end
+
+@kernel function _dry_dtrain_kernel!(dtrain, @Const(qv), Hp)
+    i, j, k = @index(Global, NTuple)
+    @inbounds dtrain[Hp + i, Hp + j, k] *= (1 - qv[Hp + i, Hp + j, k])
+end
+
+"""
+$(SIGNATURES)
+
+Scale detraining mass flux `dtrain` to dry basis: `dtrain *= (1 - qv)`.
+"""
+function apply_dry_dtrain_panel!(dtrain::AbstractArray{FT,3},
+                                  qv::AbstractArray{FT,3},
+                                  Nc::Int, Nz::Int, Hp::Int) where FT
+    backend = get_backend(dtrain)
+    k! = _dry_dtrain_kernel!(backend, 256)
+    k!(dtrain, qv, Hp; ndrange=(Nc, Nc, Nz))
+    return nothing
+end
+
 # ---- Mass Fixer: preserve mixing ratio across air mass reset ----------------
 
 @kernel function _mass_fixer_kernel!(rm, @Const(m_ref), @Const(m_evolved), Hp)

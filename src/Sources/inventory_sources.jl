@@ -213,10 +213,12 @@ function load_edgar_cs_binary(bin_path::String, ::Type{FT}) where FT
     json_end = something(findfirst(==(0x00), hdr_bytes), _EDGAR_HEADER_SIZE + 1) - 1
     hdr = JSON3.read(String(hdr_bytes[1:json_end]))
     Nc = Int(hdr.Nc)
+    # Binary files are always Float32 on disk; convert to FT
+    disk_FT = Float32
+    buf = Array{disk_FT}(undef, Nc, Nc)
     flux_panels = ntuple(6) do _
-        arr = Array{FT}(undef, Nc, Nc)
-        read!(io, arr)
-        arr
+        read!(io, buf)
+        FT === disk_FT ? copy(buf) : FT.(buf)
     end
     close(io)
     return flux_panels

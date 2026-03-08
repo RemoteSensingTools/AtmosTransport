@@ -14,6 +14,7 @@
 using ..Grids: LatitudeLongitudeGrid, CubedSphereGrid, cell_area
 using ..Grids: fill_panel_halos!, allocate_cubed_sphere_field
 using ..Architectures: array_type
+using KernelAbstractions: get_backend, synchronize
 using ..Advection: MassFluxWorkspace, allocate_massflux_workspace,
                    allocate_cs_massflux_workspace,
                    strang_split_massflux!, strang_split_massflux_ppm!,
@@ -21,6 +22,8 @@ using ..Advection: MassFluxWorkspace, allocate_massflux_workspace,
                    compute_mass_fluxes!, compute_air_mass_panel!, compute_cm_panel!,
                    compute_cm_pressure_fixer_panel!, compute_dm_per_sub_panel!,
                    apply_mass_fixer!,
+                   apply_dry_delp_panel!, apply_dry_am_panel!, apply_dry_bm_panel!,
+                   apply_dry_cmfmc_panel!, apply_dry_dtrain_panel!,
                    build_geometry_cache, max_cfl_x_cs, max_cfl_y_cs,
                    SlopesAdvection, PPMAdvection
 using ..Diffusion: DiffusionWorkspace, diffuse_gpu!, diffuse_cs_panels!,
@@ -129,6 +132,25 @@ function _compute_mass_totals(cs_tracers, grid)
             @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
                 total += Float64(rm_cpu[Hp+i, Hp+j, k])
             end
+        end
+        result[tname] = total
+    end
+    return result
+end
+
+"""
+    _compute_mass_totals_ll(tracers, grid)
+
+Compute total tracer mass (kg) for lat-lon tracers (simple 3D arrays, no panels/halos).
+"""
+function _compute_mass_totals_ll(tracers, grid)
+    Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
+    result = Dict{Symbol,Float64}()
+    for (tname, rm) in pairs(tracers)
+        rm_cpu = Array(rm)
+        total = 0.0
+        @inbounds for k in 1:Nz, j in 1:Ny, i in 1:Nx
+            total += Float64(rm_cpu[i, j, k])
         end
         result[tname] = total
     end
@@ -682,6 +704,13 @@ function _run_loop!(model, grid::LatitudeLongitudeGrid{FT},
     curr, next_buf = buf_A, buf_B
     cpu_curr, cpu_next = cpu_A, cpu_B
 
+    # Mass conservation tracking
+    _initial_mass_ll = _compute_mass_totals_ll(model.tracers, grid)
+    for tname in sort(collect(keys(_initial_mass_ll)))
+        @info @sprintf("  IC mass %s: %.6e kg", tname, _initial_mass_ll[tname])
+    end
+    _last_mass_ll = ""
+
     for w in 1:n_win
         has_next = w < n_win
         dt_window = FT(dt_sub * n_sub)
@@ -757,6 +786,12 @@ function _run_loop!(model, grid::LatitudeLongitudeGrid{FT},
         # Chemistry (e.g. radioactive decay for ²²²Rn)
         apply_chemistry!(model.tracers, grid, model.chemistry, dt_window)
 
+        # Mass conservation tracking (every 24th window ≈ daily)
+        if w % 24 == 0 || w == 1
+            _mass_totals = _compute_mass_totals_ll(model.tracers, grid)
+            _last_mass_ll = _mass_showvalue(_mass_totals, _initial_mass_ll)
+        end
+
         # Upload next window (after GPU compute)
         if has_next
             upload!(next_buf, cpu_next)
@@ -784,14 +819,29 @@ function _run_loop!(model, grid::LatitudeLongitudeGrid{FT},
         end
 
         # Progress bar
-        next!(prog; showvalues=[(:day, @sprintf("%.1f", sim_time / 86400)),
-                                (:rate, @sprintf("%.2f s/win", w > 1 ? (time() - wall_start) / w : 0.0))])
+        _sv_ll = Pair{Symbol,Any}[
+            :day  => @sprintf("%.1f", sim_time / 86400),
+            :rate => @sprintf("%.2f s/win", w > 1 ? (time() - wall_start) / w : 0.0)]
+        isempty(_last_mass_ll) || push!(_sv_ll, :mass => _last_mass_ll)
+        next!(prog; showvalues=_sv_ll)
     end
     finish!(prog)
 
     wall_total = time() - wall_start
     @info @sprintf("Simulation complete: %d steps, %.1fs (%.2fs/win)",
                    step, wall_total, wall_total / n_win)
+
+    # Final mass conservation summary
+    _mass_final = _compute_mass_totals_ll(model.tracers, grid)
+    for tname in sort(collect(keys(_mass_final)))
+        total = _mass_final[tname]
+        if haskey(_initial_mass_ll, tname) && _initial_mass_ll[tname] != 0.0
+            rel = (total - _initial_mass_ll[tname]) / abs(_initial_mass_ll[tname]) * 100
+            @info @sprintf("  Final mass %s: %.6e kg (Δ=%.4e%%)", tname, total, rel)
+        else
+            @info @sprintf("  Final mass %s: %.6e kg", tname, total)
+        end
+    end
 
     for writer in writers
         finalize_output!(writer)
@@ -886,8 +936,9 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
     else
         nothing
     end
-    # QV (specific humidity) for dry mole fraction output — CPU only
+    # QV (specific humidity) for dry-air transport and output
     qv_cpu = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz), 6)
+    qv_gpu = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz)), 6)
     qv_loaded = false
     # RAS workspace for updraft concentration tracking (q_cloud)
     ras_workspace = if model.convection isa RASConvection
@@ -977,9 +1028,15 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
             end
         end
 
-        # Load QV (specific humidity for dry mole fraction output)
+        # Load QV (specific humidity) for dry-air transport
         qv_status = load_qv_window!(qv_cpu, driver, grid, w)
         qv_loaded = qv_status !== false
+        if qv_loaded && qv_status !== :cached
+            for p in 1:6
+                copyto!(qv_gpu[p], qv_cpu[p])
+            end
+            fill_panel_halos!(qv_gpu, grid)
+        end
 
         # Load surface fields from A1 if PBL diffusion enabled
         sfc_loaded = false
@@ -1026,6 +1083,27 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
         for p in 1:6
             am_gpu[p] .*= half_dt
             bm_gpu[p] .*= half_dt
+        end
+
+        # Dry-air correction: convert DELP and mass fluxes from wet to dry basis
+        if qv_loaded
+            for p in 1:6
+                apply_dry_delp_panel!(delp_gpu[p], qv_gpu[p], Nc, Nz, Hp)
+                apply_dry_am_panel!(am_gpu[p], qv_gpu[p], Nc, Nz, Hp)
+                apply_dry_bm_panel!(bm_gpu[p], qv_gpu[p], Nc, Nz, Hp)
+            end
+            # Convert convective mass fluxes to dry basis (only when freshly uploaded)
+            if cmfmc_loaded && cmfmc_status !== :cached
+                for p in 1:6
+                    apply_dry_cmfmc_panel!(cmfmc_gpu[p], qv_gpu[p], Nc, Nz, Hp)
+                end
+            end
+            if dtrain_loaded && dtrain_status !== :cached && dtrain_gpu !== nothing
+                for p in 1:6
+                    apply_dry_dtrain_panel!(dtrain_gpu[p], qv_gpu[p], Nc, Nz, Hp)
+                end
+            end
+            synchronize(get_backend(delp_gpu[1]))
         end
 
         for p in 1:6
@@ -1277,8 +1355,9 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
     else
         nothing
     end
-    # QV (specific humidity) for dry mole fraction output — CPU only
+    # QV (specific humidity) for dry-air transport and output
     qv_cpu = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz), 6)
+    qv_gpu = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz)), 6)
     qv_loaded = false
     # RAS workspace for updraft concentration tracking (q_cloud)
     ras_workspace = if model.convection isa RASConvection
@@ -1397,8 +1476,14 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
             invalidate_ras_cfl_cache!()
         end
 
-        # QV status (CPU only — no GPU upload, used at output time)
+        # QV: upload to GPU + halo exchange for dry-air transport
         qv_loaded = io_status.qv !== false
+        if qv_loaded && io_status.qv !== :cached
+            for p in 1:6
+                copyto!(qv_gpu[p], qv_cpu[p])
+            end
+            fill_panel_halos!(qv_gpu, grid)
+        end
 
         # Upload surface fields if loaded
         sfc_loaded = io_status.sfc !== false
@@ -1425,6 +1510,18 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
                 end
             end
         end
+        # ── Fetch next-window data for pressure fixer (before GPU compute) ──
+        # Wait for async load of window w+1 so we can use DELP_next.
+        # Binary IO is ~0.06 s/win — typically already complete by now.
+        fetched_early = false
+        if has_next && load_task !== nothing
+            io_status = fetch(load_task)
+            fetched_early = true
+            for p in 1:6
+                copyto!(next_gpu.delp[p], next_cpu.delp[p])
+            end
+        end
+
         t_io += time() - t0
 
         # ── GPU compute ───────────────────────────────────────────────
@@ -1434,6 +1531,34 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
         for p in 1:6
             curr_gpu.am[p] .*= half_dt
             curr_gpu.bm[p] .*= half_dt
+        end
+
+        # Dry-air correction: convert DELP and mass fluxes from wet to dry basis
+        if qv_loaded
+            for p in 1:6
+                apply_dry_delp_panel!(curr_gpu.delp[p], qv_gpu[p], Nc, Nz, Hp)
+                apply_dry_am_panel!(curr_gpu.am[p], qv_gpu[p], Nc, Nz, Hp)
+                apply_dry_bm_panel!(curr_gpu.bm[p], qv_gpu[p], Nc, Nz, Hp)
+            end
+            # Convert convective mass fluxes to dry basis (only when freshly uploaded,
+            # not when :cached — GPU data is already dry from previous window)
+            if cmfmc_loaded && io_status.cmfmc !== :cached && cmfmc_gpu !== nothing
+                for p in 1:6
+                    apply_dry_cmfmc_panel!(cmfmc_gpu[p], qv_gpu[p], Nc, Nz, Hp)
+                end
+            end
+            if dtrain_loaded && io_status.dtrain !== :cached && dtrain_gpu !== nothing
+                for p in 1:6
+                    apply_dry_dtrain_panel!(dtrain_gpu[p], qv_gpu[p], Nc, Nz, Hp)
+                end
+            end
+            # Dry correction for next-window DELP (pressure fixer needs dry tendency)
+            if has_next && fetched_early
+                for p in 1:6
+                    apply_dry_delp_panel!(next_gpu.delp[p], qv_gpu[p], Nc, Nz, Hp)
+                end
+            end
+            synchronize(get_backend(curr_gpu.delp[1]))
         end
 
         for p in 1:6
@@ -1473,18 +1598,6 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
             end
         end
 
-        # ── Pressure fixer: fetch next DELP for cm computation ────────
-        # Wait for async load of window w+1 so we can use DELP_next.
-        # Binary IO is ~0.06 s/win — typically already complete by now.
-        fetched_early = false
-        if has_next && load_task !== nothing
-            io_status = fetch(load_task)
-            fetched_early = true
-            for p in 1:6
-                copyto!(next_gpu.delp[p], next_cpu.delp[p])
-            end
-        end
-
         # Compute cm: pressure-fixer (with DELP_next) or bt-only (last window)
         for p in 1:6
             if has_next
@@ -1512,11 +1625,12 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
 
         # Snapshot mass after emissions / before advection — target for mass fixer.
         # Only computes IC tracers (those with nonzero initial_mass).
-        _pre_adv_mass = if !isempty(_initial_mass)
-            _compute_mass_totals_subset(cs_tracers, grid, _initial_mass)
-        else
-            _initial_mass
-        end
+        # DISABLED: testing whether dry-air conversion makes global fixer unnecessary.
+        # _pre_adv_mass = if !isempty(_initial_mass)
+        #     _compute_mass_totals_subset(cs_tracers, grid, _initial_mass)
+        # else
+        #     _initial_mass
+        # end
 
         for _ in 1:n_sub
             step += 1
@@ -1569,9 +1683,10 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
 
         # Global mass fixer: correct Strang splitting drift for IC tracers.
         # Uses pre-advection mass (after emissions) as target, so emissions are preserved.
-        if !isempty(_initial_mass)
-            _last_fix = _apply_global_mass_fixer!(cs_tracers, grid, _pre_adv_mass)
-        end
+        # DISABLED: testing whether dry-air conversion makes this unnecessary.
+        # if !isempty(_initial_mass)
+        #     _last_fix = _apply_global_mass_fixer!(cs_tracers, grid, _pre_adv_mass)
+        # end
 
         # Mass conservation — update showvalue (every 24th window ≈ daily)
         if w % 24 == 0 || w == 1

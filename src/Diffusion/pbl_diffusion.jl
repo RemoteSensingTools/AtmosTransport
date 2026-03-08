@@ -188,32 +188,45 @@ For each (i,j) column:
     end
 
     # --- Forward sweep: build tridiagonal + Thomas elimination ---
-    # Process top-to-bottom (k=1 = TOA, k=Nz = surface).
-    # z_above tracks the height of the top of current layer.
-    # Heights use pressure-dependent density: dz = Δp * R_d * T / (p_mid * g)
+    # Pressure-based diffusion coefficients (GeosChem vdiff_mod.F90):
+    #   D = Kz × (g/R)² × (p_int/T)² / (Δp_mid × Δp_k)
+    # ensures D(k) × Δp(k) = D(k±1) × Δp(k±1) at each interface → mass conservation
     z_above = z_col
     w_prev = FT(0)
     g_prev = FT(0)
-    p_top = FT(0)
+    p_top_acc = FT(0)
+    p_mid_prev_k = FT(0)
+
+    # Pressure-based coefficient constants
+    gor = g / R_d
+    gorsq = gor * gor
+    T_inv = FT(1) / T_sfc
+
+    # Pre-diffusion mass-weighted sum (for per-column mass correction)
+    mass_sum_before = FT(0)
+    @inbounds for k in 1:Nz
+        mass_sum_before += arr[ii, jj, k] * delp[ii, jj, k]
+    end
 
     @inbounds for k in 1:Nz
         delp_k = delp[ii, jj, k]
-        p_bot_k = p_top + delp_k
-        p_mid_k = max((p_top + p_bot_k) / FT(2), FT(1))
+        p_bot_k = p_top_acc + delp_k
+        p_mid_k = max((p_top_acc + p_bot_k) / FT(2), FT(1))
         dz_k = delp_k * R_T_over_g / p_mid_k
         z_below = z_above - dz_k
+
+        # Interface pressures
+        p_int_above = p_top_acc
+        p_int_below = p_bot_k
 
         # Kz at interface above (between k-1 and k)
         D_above = FT(0)
         if k > 1
             Kz_a = _pbl_kz(z_above, h_pbl, us, L_ob, κ_vk,
                             β_h, Kz_bg, Kz_min, Kz_max, FT)
-            delp_prev = delp[ii, jj, k - 1]
-            p_top_prev = p_top - delp_prev
-            p_mid_prev = max((p_top_prev + p_top) / FT(2), FT(1))
-            dz_prev = delp_prev * R_T_over_g / p_mid_prev
-            dz_mid = (dz_prev + dz_k) / FT(2)
-            D_above = Kz_a / (dz_k * dz_mid)
+            potbar_a = p_int_above * T_inv
+            dp_mid_a = max(p_mid_k - p_mid_prev_k, FT(0.01))
+            D_above = Kz_a * gorsq * potbar_a * potbar_a / (dp_mid_a * delp_k)
         end
 
         # Kz at interface below (between k and k+1)
@@ -221,14 +234,15 @@ For each (i,j) column:
         if k < Nz
             Kz_b = _pbl_kz(z_below, h_pbl, us, L_ob, κ_vk,
                             β_h, Kz_bg, Kz_min, Kz_max, FT)
+            potbar_b = p_int_below * T_inv
             delp_next = delp[ii, jj, k + 1]
             p_mid_next = max(p_bot_k + delp_next / FT(2), FT(1))
-            dz_next = delp_next * R_T_over_g / p_mid_next
-            dz_mid = (dz_k + dz_next) / FT(2)
-            D_below = Kz_b / (dz_k * dz_mid)
+            dp_mid_b = max(p_mid_next - p_mid_k, FT(0.01))
+            D_below = Kz_b * gorsq * potbar_b * potbar_b / (dp_mid_b * delp_k)
         end
 
-        p_top = p_bot_k
+        p_mid_prev_k = p_mid_k
+        p_top_acc = p_bot_k
 
         # Tridiagonal coefficients: (I - dt*D) c_new = c_old
         a_k = k > 1  ? -dt * D_above : FT(0)
@@ -258,6 +272,18 @@ For each (i,j) column:
     # --- Back-substitution using stored w-factors ---
     @inbounds for k in (Nz - 1):-1:1
         arr[ii, jj, k] -= w_scratch[ii, jj, k] * arr[ii, jj, k + 1]
+    end
+
+    # --- Per-column mass correction (GeosChem vdiff_mod.F90, Jintai Lin fix) ---
+    mass_sum_after = FT(0)
+    @inbounds for k in 1:Nz
+        mass_sum_after += arr[ii, jj, k] * delp[ii, jj, k]
+    end
+    if mass_sum_after > FT(0) && mass_sum_before > FT(0)
+        _mass_corr = mass_sum_before / mass_sum_after
+        @inbounds for k in 1:Nz
+            arr[ii, jj, k] *= _mass_corr
+        end
     end
 
     # --- Convert mixing ratio back to tracer mass (CS only) ---

@@ -1,8 +1,8 @@
 # ===========================================================================
 # CATRINE D7.1 — GEOS-IT C180 Cubed-Sphere (RAS convection)
 #
-# 2-tracer test run: SF6 + fossil CO2
-# Period: 1 Dec 2021 — 7 Dec 2021 (1-week test)
+# 4-tracer run: CO2 + fossil CO2 + SF6 + Rn222
+# Period: 1 Dec 2021 — 9 Dec 2021
 # Met data: GEOS-IT C180, cubed-sphere mass fluxes from WashU
 # Output: 3-hourly, native CS binary, daily files
 #
@@ -31,7 +31,7 @@ netcdf_dir       = "~/data/geosit_c180_catrine"
 preprocessed_dir = "/temp1/catrine/met/geosit_c180/massflux"
 surface_data_bin_dir = "/temp1/catrine/met/geosit_c180/surface_bin"
 start_date       = "2021-12-01"
-end_date         = "2021-12-07"
+end_date         = "2021-12-09"
 dt               = 300                   # advection sub-step [s]
 met_interval     = 3600                  # 1-hour met updates
 mass_flux_dt     = 450                   # dynamics timestep (NOT met interval)
@@ -53,15 +53,29 @@ noaa_growth_file = "~/data/AtmosTransport/catrine/Emissions/sf6_gr_gl.txt"
 year             = 2022
 scale_year       = 2022
 
+[tracers.co2]
+emission   = "lmdz_co2"
+file       = "~/data/AtmosTransport/catrine/preprocessed_c180/lmdz_co2_cs_c180_float32.bin"
+species    = "co2"
+flux_var   = "flux_apos"
+start_date = "2021-12-01"
+end_date   = "2023-12-31"
+
 [tracers.fossil_co2]
 emission = "gridfed"
 file     = "~/data/AtmosTransport/catrine/preprocessed_c180/gridfed_fossil_co2_cs_c180_float32.bin"
 species  = "fossil_co2"
 year     = 2022
 
-# --- Chemistry (none needed for SF6 test period, fossil CO2 is inert) ---
+[tracers.rn222]
+emission  = "zhang_rn222"
+file      = "~/data/AtmosTransport/catrine/preprocessed_c180/zhang_rn222_cs_c180_float32.bin"
+chemistry = "decay"
+half_life = 330350.4
+
+# --- Chemistry (222Rn radioactive decay) ---
 [chemistry]
-type = "none"
+type = "composite"
 
 # --- Advection ---
 [advection]
@@ -83,18 +97,20 @@ sffrac = 0.1
 
 # --- Output (3-hourly, native CS binary, daily files) ---
 [output]
-filename      = "/temp1/catrine/output/catrine_geosit_c180_ras"
+filename      = "/temp1/catrine/output/catrine_geosit_c180_pbl_emit"
 format        = "binary"
 split         = "daily"
 interval      = 10800                    # 3 hours
 
 [output.fields]
+co2_3d           = {type = "full_3d", species = "co2"}
 sf6_3d           = {type = "full_3d", species = "sf6"}
 fossil_co2_3d    = {type = "full_3d", species = "fossil_co2"}
+rn222_3d         = {type = "full_3d", species = "rn222"}
+co2_column_mass  = {type = "column_mass", species = "co2"}
 sf6_column_mass  = {type = "column_mass", species = "sf6"}
 fco2_column_mass = {type = "column_mass", species = "fossil_co2"}
-sf6_emission     = {type = "emission_flux", species = "sf6"}
-fco2_emission    = {type = "emission_flux", species = "fossil_co2"}
+rn222_column_mass = {type = "column_mass", species = "rn222"}
 surface_pressure = "surface_pressure"
 pbl_height       = "pbl_height"
 

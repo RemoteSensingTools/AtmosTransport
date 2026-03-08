@@ -85,9 +85,9 @@ type = "composite"
 scheme    = "slopes"
 # ppm_order = 7
 
-# --- Convection (RAS: uses CMFMC + DTRAIN from A3dyn) ---
-#[convection]
-#type = "tiedtke"
+# --- Convection (Tiedtke: uses CMFMC from surface fields) ---
+[convection]
+type = "tiedtke"
 
 # --- Diffusion (non-local Holtslag-Boville counter-gradient) ---
 [diffusion]

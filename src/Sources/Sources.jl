@@ -28,8 +28,8 @@ export update_time_index!, flux_data
 export load_edgar_co2, load_carbontracker_fluxes
 export load_jena_ocean_flux, load_gfas_fire_flux
 export load_cams_co2, load_lmdz_co2, load_gridfed_fossil_co2, load_edgar_sf6, load_zhang_rn222
-export regrid_emissions!, apply_surface_flux!
-export apply_emissions_window!
+export regrid_emissions!, apply_surface_flux!, apply_surface_flux_pbl!
+export apply_emissions_window!, apply_emissions_window_pbl!
 export regrid_edgar_to_cs
 export regrid_latlon_to_cs, build_latlon_to_cs_map, build_conservative_cs_map
 export ConservativeCSMap

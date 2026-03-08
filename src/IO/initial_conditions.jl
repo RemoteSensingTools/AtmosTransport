@@ -570,3 +570,35 @@ function finalize_ic_vertical_interp!(tracers, m_panels, delp_panels,
     _clear_deferred_ic()
     return nothing
 end
+
+"""
+    finalize_ic_vertical_interp!(tracers, m_3d, grid::LatitudeLongitudeGrid)
+
+Lat-lon version: applies deferred uniform ICs.  Lat-lon tracers store mixing
+ratios (q), so uniform IC simply fills with the constant value.  File-based IC
+vertical interpolation for lat-lon is not yet implemented.
+"""
+function finalize_ic_vertical_interp!(tracers, m_3d,
+                                       grid::LatitudeLongitudeGrid{FT}) where FT
+    deferred = _DEFERRED_IC[]
+    has_uniform = !isempty(_DEFERRED_UNIFORM_IC[])
+    isempty(deferred) && !has_uniform && return nothing
+
+    # File-based deferred ICs: not yet supported for lat-lon
+    for ic_data in deferred
+        @warn "Deferred file-based IC vertical interpolation not implemented for " *
+              "lat-lon grids — skipping $(ic_data.tracer_name). Use uniform_value instead."
+    end
+
+    # Uniform ICs: lat-lon stores mixing ratio q directly (not rm)
+    for uic in _DEFERRED_UNIFORM_IC[]
+        tname = uic.tracer_name
+        haskey(tracers, tname) || continue
+        q = tracers[tname]
+        fill!(q, FT(uic.value))
+        @info "IC finalized for $tname (LatLon): uniform mixing ratio = $(uic.value)"
+    end
+
+    _clear_deferred_ic()
+    return nothing
+end

@@ -373,3 +373,32 @@ function load_surface_fields_window!(sfc::NamedTuple,
     end
     return true
 end
+
+"""
+    load_qv_window!(qv, driver::PreprocessedLatLonMetDriver, grid, win) → Bool
+
+Read specific humidity (QV) for window `win` into `qv` (Nx, Ny, Nz).
+Returns `true` if data was loaded, `false` if the file doesn't contain
+a QV variable (or is binary format).
+"""
+function load_qv_window!(qv::Array{FT, 3},
+                          driver::PreprocessedLatLonMetDriver{FT},
+                          grid, win::Int) where FT
+    file_idx, local_win = window_to_file_local(driver, win)
+    filepath = driver.files[file_idx]
+
+    endswith(filepath, ".bin") && return false
+
+    ds = NCDataset(filepath, "r")
+    try
+        for varname in ("qv", "QV", "q", "specific_humidity")
+            if haskey(ds, varname)
+                qv .= FT.(ds[varname][:, :, :, local_win])
+                return true
+            end
+        end
+        return false
+    finally
+        close(ds)
+    end
+end

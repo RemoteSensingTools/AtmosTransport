@@ -84,6 +84,8 @@ export compute_air_mass_panel!, compute_cm_panel!, apply_mass_fixer!
 export compute_cm_pressure_fixer_panel!, compute_dm_per_sub_panel!
 export apply_dry_delp_panel!, apply_dry_am_panel!, apply_dry_bm_panel!
 export apply_dry_cmfmc_panel!, apply_dry_dtrain_panel!
+export apply_dry_mref_ll!, apply_dry_am_ll!, apply_dry_bm_ll!
+export apply_dry_cmfmc_ll!, apply_dry_dtrain_ll!, recompute_cm_ll!
 export advect_x_cs_panel!, advect_y_cs_panel!, advect_z_cs_panel!
 export advect_z_cs_panel_column!
 
@@ -102,5 +104,6 @@ include("ppm_advection.jl")
 include("ppm_subgrid_distributions.jl")
 include("cubed_sphere_mass_flux_ppm.jl")
 include("latlon_mass_flux_ppm.jl")
+include("latlon_dry_air.jl")
 
 end # module Advection

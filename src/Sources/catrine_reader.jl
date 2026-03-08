@@ -1031,6 +1031,7 @@ function load_zhang_rn222(dirpath::String,
                           target_grid::LatitudeLongitudeGrid{FT};
                           species::Symbol = :rn222,
                           start_date::Date = Date(2021, 12, 1)) where FT
+    Nx_m, Ny_m = target_grid.Nx, target_grid.Ny
     flux_mats = Matrix{FT}[]
     time_hours = Float64[]
 

@@ -1237,18 +1237,29 @@ function strang_split_massflux!(tracers::NamedTuple,
                                  use_limiter::Bool,
                                  ws::MassFluxWorkspace{FT};
                                  cfl_limit::FT = FT(0.95)) where FT
-    # Convert concentration → tracer mass using pre-allocated ws.rm
-    ws.rm .= m .* first(values(tracers))
-    rm_tracers = NamedTuple{keys(tracers)}((ws.rm,))
+    # Multi-tracer: each tracer is advected independently, restoring m between.
+    n_tr = length(tracers)
+    m_save = n_tr > 1 ? similar(m) : m
+    if n_tr > 1
+        copyto!(m_save, m)
+    end
 
-    advect_x_massflux_subcycled!(rm_tracers, m, am, grid, use_limiter, ws; cfl_limit)
-    advect_y_massflux_subcycled!(rm_tracers, m, bm, grid, use_limiter, ws; cfl_limit)
-    advect_z_massflux_subcycled!(rm_tracers, m, cm, use_limiter, ws; cfl_limit)
-    advect_z_massflux_subcycled!(rm_tracers, m, cm, use_limiter, ws; cfl_limit)
-    advect_y_massflux_subcycled!(rm_tracers, m, bm, grid, use_limiter, ws; cfl_limit)
-    advect_x_massflux_subcycled!(rm_tracers, m, am, grid, use_limiter, ws; cfl_limit)
+    for (i, (name, c)) in enumerate(pairs(tracers))
+        if i > 1
+            copyto!(m, m_save)
+        end
+        ws.rm .= m .* c
+        rm_single = NamedTuple{(name,)}((ws.rm,))
 
-    first(values(tracers)) .= ws.rm ./ m
+        advect_x_massflux_subcycled!(rm_single, m, am, grid, use_limiter, ws; cfl_limit)
+        advect_y_massflux_subcycled!(rm_single, m, bm, grid, use_limiter, ws; cfl_limit)
+        advect_z_massflux_subcycled!(rm_single, m, cm, use_limiter, ws; cfl_limit)
+        advect_z_massflux_subcycled!(rm_single, m, cm, use_limiter, ws; cfl_limit)
+        advect_y_massflux_subcycled!(rm_single, m, bm, grid, use_limiter, ws; cfl_limit)
+        advect_x_massflux_subcycled!(rm_single, m, am, grid, use_limiter, ws; cfl_limit)
+
+        c .= ws.rm ./ m
+    end
     return nothing
 end
 

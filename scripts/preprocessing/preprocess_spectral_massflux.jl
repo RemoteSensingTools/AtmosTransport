@@ -46,7 +46,7 @@ length(ARGS) >= 1 || error(
 const config = TOML.parsefile(ARGS[1])
 
 # Physical constants from defaults.toml (single source of truth)
-const _defaults = TOML.parsefile(joinpath(@__DIR__, "..", "config", "defaults.toml"))
+const _defaults = TOML.parsefile(joinpath(@__DIR__, "..", "..", "config", "defaults.toml"))
 const R_EARTH = Float64(_defaults["planet"]["radius"])
 const GRAV    = Float64(_defaults["planet"]["gravity"])
 
@@ -74,7 +74,7 @@ const MET_INTERVAL = Float64(config["numerics"]["met_interval"])
 function load_ab_coefficients(level_range)
     coeff_path = get(get(config, "input", Dict()), "coefficients",
                      "config/era5_L137_coefficients.toml")
-    toml_path = joinpath(@__DIR__, "..", coeff_path)
+    toml_path = joinpath(@__DIR__, "..", "..", coeff_path)
     cfg = TOML.parsefile(toml_path)
     a_all = Float64.(cfg["coefficients"]["a"])  # 138 values, n=0..137
     b_all = Float64.(cfg["coefficients"]["b"])

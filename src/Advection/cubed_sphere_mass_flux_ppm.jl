@@ -83,6 +83,7 @@ Fluxes computed identically to Russell-Lerner path (TM5-style mass conserving).
         sx_L_i  = clamp(m[ii,     jj, k] * (c_i  - q_L_i),  -rm[ii,     jj, k], rm[ii,     jj, k])
         sx_L_ip = clamp(m[ii + 1, jj, k] * (c_ip - q_L_ip), -rm[ii + 1, jj, k], rm[ii + 1, jj, k])
 
+
         # Flux at left face (face index i in am, interior-indexed)
         am_l = am[i, j, k]
         flux_left = if am_l >= zero(FT)
@@ -205,6 +206,7 @@ end
         # Left-edge corrections (c - q_L) for negative-flow branches
         sy_L_j  = clamp(m[ii, jj,     k] * (c_j  - q_L_j),  -rm[ii, jj,     k], rm[ii, jj,     k])
         sy_L_jp = clamp(m[ii, jj + 1, k] * (c_jp - q_L_jp), -rm[ii, jj + 1, k], rm[ii, jj + 1, k])
+
 
         # Flux at south face (j in bm, interior-indexed)
         bm_s = bm[i, j, k]

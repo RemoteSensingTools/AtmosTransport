@@ -33,10 +33,10 @@ using ..Diffusion: DiffusionWorkspace, diffuse_gpu!, diffuse_cs_panels!,
 using ..Parameters: PlanetParameters, load_parameters
 using ..Convection: AbstractConvection, TiedtkeConvection, RASConvection, convect!,
                     invalidate_ras_cfl_cache!
-using ..Sources: AbstractSurfaceFlux, apply_surface_flux!,
+using ..Sources: AbstractSurfaceFlux, apply_surface_flux!, apply_surface_flux_pbl!,
                  SurfaceFlux, TimeVaryingSurfaceFlux,
                  LatLonLayout, CubedSphereLayout,
-                 apply_emissions_window!,
+                 apply_emissions_window!, apply_emissions_window_pbl!,
                  update_time_index!, flux_data,
                  M_AIR, M_CO2, M_SF6, M_RN222
 using ..Chemistry: apply_chemistry!
@@ -238,6 +238,27 @@ function _apply_global_mass_fixer!(cs_tracers, grid, target_mass::Dict{Symbol,Fl
     return join(parts, " ")
 end
 
+"""
+    _mass_total_f64(rm_panels, Nc, Hp, Nz) → Float64
+
+Sum total tracer mass across all 6 panels in Float64 precision.
+Used for per-stage mass balance diagnostics.
+"""
+function _mass_total_f64(rm_panels, Nc, Hp, Nz)
+    total = 0.0
+    for p in 1:6
+        rm_cpu = Array(rm_panels[p])
+        @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
+            total += Float64(rm_cpu[Hp+i, Hp+j, k])
+        end
+    end
+    return total
+end
+
+# Global storage for mass balance diagnostics (populated during first N windows)
+const MASS_DIAG = Dict{String, Vector{Float64}}()
+const MASS_DIAG_WINDOWS = Ref(3)  # how many windows to diagnose
+
 """Legacy wrapper: print mass conservation via @info (used by single-buffer path)."""
 function _log_mass_conservation(cs_tracers, grid, window::Int, label::String;
                                  initial_mass::Union{Nothing, Dict{Symbol,Float64}}=nothing)
@@ -296,12 +317,15 @@ function _prepare_latlon_emissions(sources, grid::LatitudeLongitudeGrid{FT},
     A_coeff = hasproperty(driver, :A_coeff) ? driver.A_coeff : nothing
     B_coeff = hasproperty(driver, :B_coeff) ? driver.B_coeff : nothing
 
-    # Upload emission fluxes to device
+    # Upload emission fluxes to device (static + time-varying)
     emission_data = []
     for src in sources
-        if src isa SurfaceFlux{LatLonLayout}
+        if src isa TimeVaryingSurfaceFlux{LatLonLayout}
+            flux_dev = AT(flux_data(src))
+            push!(emission_data, (src, Ref(flux_dev), Ref(src.current_idx)))
+        elseif src isa SurfaceFlux{LatLonLayout}
             flux_dev = AT(src.flux)
-            push!(emission_data, (src, flux_dev))
+            push!(emission_data, (src, flux_dev, nothing))
         end
     end
 
@@ -310,17 +334,39 @@ end
 
 """
 Apply emissions for lat-lon grids (GPU-compatible via KA kernels).
+Handles both static `SurfaceFlux` and `TimeVaryingSurfaceFlux` sources.
+For time-varying sources, updates the time index and re-uploads the flux
+to GPU when the active snapshot changes.
 """
 function _apply_emissions_latlon!(tracers, emission_data, area_j_dev, ps_dev,
-                                    A_coeff, B_coeff, grid, dt_window)
+                                    A_coeff, B_coeff, grid, dt_window;
+                                    sim_hours::Float64=0.0, arch=nothing,
+                                    delp=nothing, pblh=nothing)
     Nz = grid.Nz
     g = grid.gravity
-    for (src, flux_dev) in emission_data
+    use_pbl = delp !== nothing && pblh !== nothing
+    for (src, flux_ref, idx_ref) in emission_data
+        # Handle time-varying flux updates
+        if src isa TimeVaryingSurfaceFlux{LatLonLayout}
+            update_time_index!(src, sim_hours)
+            if src.current_idx != idx_ref[]
+                AT = array_type(arch)
+                flux_ref[] = AT(flux_data(src))
+                idx_ref[] = src.current_idx
+            end
+            flux_dev = flux_ref[]
+        else
+            flux_dev = flux_ref
+        end
+
         name = src.species
         haskey(tracers, name) || continue
         c = tracers[name]
         mm = src.molar_mass
-        if A_coeff !== nothing && B_coeff !== nothing
+        if use_pbl
+            apply_emissions_window_pbl!(c, flux_dev, delp, pblh,
+                                         g, dt_window; molar_mass=mm)
+        elseif A_coeff !== nothing && B_coeff !== nothing
             apply_emissions_window!(c, flux_dev, area_j_dev, ps_dev,
                                      A_coeff, B_coeff, Nz, g, dt_window;
                                      molar_mass=mm)
@@ -359,10 +405,18 @@ end
 Apply cubed-sphere emissions using pre-uploaded device flux panels.
 For TimeVaryingSurfaceFlux{CubedSphereLayout}, updates the time index and re-uploads
 panels to GPU when the active snapshot changes.
+
+When `delp` and `pblh` are provided, distributes emissions across boundary layer levels
+proportionally to air mass. Otherwise falls back to bottom-cell injection.
 """
 function _apply_emissions_cs!(cs_tracers::NamedTuple, emission_data,
                                 area_panels::NTuple{6}, dt_window, Nc::Int, Hp::Int;
-                                sim_hours::Float64=0.0, arch=nothing)
+                                sim_hours::Float64=0.0, arch=nothing,
+                                delp::Union{NTuple{6}, Nothing}=nothing,
+                                pblh::Union{NTuple{6}, Nothing}=nothing)
+    use_pbl = delp !== nothing && pblh !== nothing
+    FT = eltype(area_panels[1])
+
     for (src, flux_ref, idx_ref) in emission_data
         # Route emission to the correct tracer by species name
         species = src.species
@@ -382,10 +436,17 @@ function _apply_emissions_cs!(cs_tracers::NamedTuple, emission_data,
         else
             flux_dev = flux_ref
         end
-        apply_surface_flux!(rm_t,
-            SurfaceFlux(flux_dev, src.species, src.label;
-                        molar_mass=src.molar_mass),
-            area_panels, dt_window, Nc, Hp)
+
+        if use_pbl
+            mol_ratio = FT(M_AIR / src.molar_mass)
+            apply_surface_flux_pbl!(rm_t, flux_dev, area_panels, delp, pblh,
+                                     FT(dt_window), mol_ratio, Nc, Hp)
+        else
+            apply_surface_flux!(rm_t,
+                SurfaceFlux(flux_dev, src.species, src.label;
+                            molar_mass=src.molar_mass),
+                area_panels, dt_window, Nc, Hp)
+        end
     end
 end
 
@@ -508,6 +569,11 @@ function _run_loop!(model, grid::LatitudeLongitudeGrid{FT},
             copyto!(gpu_buf.Δp, delp_cpu)
         end
 
+        # First window: finalize deferred IC (uniform mixing ratio → tracer mass)
+        if w == 1 && has_deferred_ic_vinterp()
+            finalize_ic_vertical_interp!(model.tracers, gpu_buf.m_ref, grid)
+        end
+
         # Load convective mass flux (optional: returns false if not in file)
         cmfmc_loaded = false
         if cmfmc_cpu !== nothing
@@ -539,8 +605,14 @@ function _run_loop!(model, grid::LatitudeLongitudeGrid{FT},
         end
 
         # Apply emissions (GPU-compatible via KA kernels)
+        # Use PBL-distributed injection when surface fields available
+        sim_hours = Float64((w - 1) * dt_window / 3600)
         _apply_emissions_latlon!(model.tracers, emi_data, area_j_dev,
-                                  gpu_buf.ps, A_coeff, B_coeff, grid, dt_window)
+                                  gpu_buf.ps, A_coeff, B_coeff, grid, dt_window;
+                                  sim_hours, arch,
+                                  delp=(sfc_loaded ? gpu_buf.Δp : nothing),
+                                  pblh=(sfc_loaded && pbl_sfc_gpu !== nothing ?
+                                        pbl_sfc_gpu.pblh : nothing))
 
         # Advection + convection sub-steps
         for sub in 1:n_sub
@@ -667,6 +739,18 @@ function _run_loop!(model, grid::LatitudeLongitudeGrid{FT},
     # Planet parameters for physics kernels
     planet = (has_convection || has_pbl_diff) ? load_parameters(FT).planet : nothing
 
+    # QV (specific humidity) for dry-air transport
+    qv_cpu = Array{FT}(undef, Nx, Ny, Nz)
+    qv_gpu = AT(zeros(FT, Nx, Ny, Nz))
+
+    # Pre-compute bt (B-ratio) vector on device for cm recomputation after dry correction
+    vc = grid.vertical
+    _ΔB_cpu = FT[vc.B[k + 1] - vc.B[k] for k in 1:Nz]
+    _ΔB_total = FT(vc.B[Nz + 1] - vc.B[1])
+    bt_dev = AT(abs(_ΔB_total) > eps(FT) ? _ΔB_cpu ./ _ΔB_total : zeros(FT, Nz))
+    # area_j on device for GPU Δp recomputation after dry correction
+    area_j_gpu = AT(FT[cell_area(1, j, grid) for j in 1:Ny])
+
     # Helper: compute Δp from air mass on CPU and upload to gpu_buf.Δp
     function _compute_delp!(gpu_buf, cpu_buf)
         g = FT(grid.gravity)
@@ -703,6 +787,11 @@ function _run_loop!(model, grid::LatitudeLongitudeGrid{FT},
 
     curr, next_buf = buf_A, buf_B
     cpu_curr, cpu_next = cpu_A, cpu_B
+
+    # First window: finalize deferred IC (uniform mixing ratio → tracer mass)
+    if has_deferred_ic_vinterp()
+        finalize_ic_vertical_interp!(model.tracers, buf_A.m_ref, grid)
+    end
 
     # Mass conservation tracking
     _initial_mass_ll = _compute_mass_totals_ll(model.tracers, grid)
@@ -750,9 +839,45 @@ function _run_loop!(model, grid::LatitudeLongitudeGrid{FT},
             end
         end
 
+        # Load specific humidity for dry-air correction (graceful: false if unavailable)
+        _qv_status = load_qv_window!(qv_cpu, driver, grid, w)
+        _qv_loaded = _qv_status !== false
+        if _qv_loaded && _qv_status !== :cached
+            copyto!(qv_gpu, qv_cpu)
+        end
+
+        # Dry-air corrections: convert wet met fields to dry basis on GPU
+        if _qv_loaded
+            apply_dry_mref_ll!(curr.m_ref, qv_gpu, Nx, Ny, Nz)
+            apply_dry_am_ll!(curr.am, qv_gpu, Nx, Ny, Nz)
+            apply_dry_bm_ll!(curr.bm, qv_gpu, Nx, Ny, Nz)
+            # Recompute cm from dry am/bm (continuity equation)
+            recompute_cm_ll!(curr.cm, curr.am, curr.bm, bt_dev, Nx, Ny, Nz)
+            # Recompute Δp from dry m_ref on GPU
+            if needs_delp
+                g_val = FT(grid.gravity)
+                curr.Δp .= curr.m_ref .* g_val ./ reshape(area_j_gpu, 1, Ny, 1)
+            end
+            # Dry correction for convective fluxes (only when freshly loaded this window)
+            if cmfmc_loaded
+                apply_dry_cmfmc_ll!(cmfmc_gpu, qv_gpu, Nx, Ny, Nz)
+            end
+            if dtrain_loaded
+                apply_dry_dtrain_ll!(dtrain_gpu, qv_gpu, Nx, Ny, Nz)
+            end
+            synchronize(get_backend(curr.m_ref))
+            w == 1 && @info "  Dry-air correction active (QV loaded)"
+        end
+
         # Apply emissions (GPU-compatible via KA kernels)
+        # Use PBL-distributed injection when surface fields available
+        sim_hours = Float64((w - 1) * dt_window / 3600)
         _apply_emissions_latlon!(model.tracers, emi_data, area_j_dev,
-                                  curr.ps, A_coeff, B_coeff, grid, dt_window)
+                                  curr.ps, A_coeff, B_coeff, grid, dt_window;
+                                  sim_hours, arch,
+                                  delp=(sfc_loaded ? curr.Δp : nothing),
+                                  pblh=(sfc_loaded && pbl_sfc_gpu !== nothing ?
+                                        pbl_sfc_gpu.pblh : nothing))
 
         # Advection + convection sub-steps on current buffer
         for sub in 1:n_sub
@@ -1164,7 +1289,9 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
 
         _sim_hrs = Float64((w - 1) * dt_window) / 3600.0
         _apply_emissions_cs!(cs_tracers, emi_data, gc.area, dt_window, Nc, Hp;
-                              sim_hours=_sim_hrs, arch=model.architecture)
+                              sim_hours=_sim_hrs, arch=model.architecture,
+                              delp=delp_gpu,
+                              pblh=(pbl_sfc_gpu !== nothing ? pbl_sfc_gpu.pblh : nothing))
 
         for _ in 1:n_sub
             step += 1
@@ -1620,20 +1747,34 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
         end
 
         _sim_hrs = Float64((w - 1) * dt_window) / 3600.0
+
+        # ── MASS BALANCE DIAGNOSTICS ──────────────────────────────────
+        _do_diag = w <= MASS_DIAG_WINDOWS[]
+        _diag_tname = first(keys(cs_tracers))
+        _diag_rm() = _do_diag ? _mass_total_f64(cs_tracers[_diag_tname], Nc, Hp, Nz) : 0.0
+
+        _m_start = _diag_rm()
+
         _apply_emissions_cs!(cs_tracers, emi_data, gc.area, dt_window, Nc, Hp;
-                              sim_hours=_sim_hrs, arch=model.architecture)
+                              sim_hours=_sim_hrs, arch=model.architecture,
+                              delp=curr_gpu.delp,
+                              pblh=(pbl_sfc_gpu !== nothing ? pbl_sfc_gpu.pblh : nothing))
+
+        _m_after_emit = _diag_rm()
 
         # Snapshot mass after emissions / before advection — target for mass fixer.
         # Only computes IC tracers (those with nonzero initial_mass).
-        # DISABLED: testing whether dry-air conversion makes global fixer unnecessary.
-        # _pre_adv_mass = if !isempty(_initial_mass)
-        #     _compute_mass_totals_subset(cs_tracers, grid, _initial_mass)
-        # else
-        #     _initial_mass
-        # end
+        _pre_adv_mass = if !isempty(_initial_mass)
+            _compute_mass_totals_subset(cs_tracers, grid, _initial_mass)
+        else
+            _initial_mass
+        end
 
-        for _ in 1:n_sub
+        _m_after_adv_total = _m_after_emit  # will be updated after all sub-steps
+        for sub_idx in 1:n_sub
             step += 1
+            _m_before_sub = _do_diag && sub_idx <= 2 ? _diag_rm() : 0.0
+
             # Advect each tracer independently (m reset per tracer; all produce same m_evolved)
             for (_, rm_t) in pairs(cs_tracers)
                 for p in 1:6
@@ -1643,6 +1784,9 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
                                      curr_gpu.am, curr_gpu.bm, curr_gpu.cm,
                                      grid, model.advection_scheme, ws)
             end
+
+            _m_after_adv = _do_diag && sub_idx <= 2 ? _diag_rm() : 0.0
+
             # Pressure fixer: advance m_ref along prescribed trajectory toward m_target.
             # No per-cell mass fixer needed — cm ensures m_evolved ≈ m_ref_new (~1e-5),
             # and skipping the fixer gives exact rm conservation (0.000% drift).
@@ -1659,12 +1803,26 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
                               workspace=ras_workspace)
                 end
             end
+
+            _m_after_conv = _do_diag && sub_idx <= 2 ? _diag_rm() : 0.0
+
+            if _do_diag && sub_idx <= 2
+                @info @sprintf("  [W%d S%d] %s: adv Δ=%+.6e (%.2f ppm)  conv Δ=%+.6e (%.2f ppm)",
+                    w, sub_idx, _diag_tname,
+                    _m_after_adv - _m_before_sub,
+                    (_m_after_adv - _m_before_sub) / max(abs(_m_before_sub), 1e-30) * 1e6,
+                    _m_after_conv - _m_after_adv,
+                    (_m_after_conv - _m_after_adv) / max(abs(_m_after_adv), 1e-30) * 1e6)
+            end
         end
+        _m_after_adv_total = _diag_rm()
 
         # Boundary-layer vertical diffusion per tracer (implicit solve, once per window)
         for (_, rm_t) in pairs(cs_tracers)
             _apply_bld_cs!(rm_t, m_ref_panels, dw, Nc, Nz, Hp)
         end
+        _m_after_bld = _diag_rm()
+
         # Met-driven PBL diffusion per tracer (variable Kz from surface fields)
         if sfc_loaded
             for (_, rm_t) in pairs(cs_tracers)
@@ -1675,18 +1833,35 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
                               model.diffusion, grid, dt_window, planet)
             end
         end
+        _m_after_pbl = _diag_rm()
 
         # Chemistry (e.g. radioactive decay for ²²²Rn)
         apply_chemistry!(cs_tracers, grid, model.chemistry, dt_window)
+        _m_after_chem = _diag_rm()
 
         t_compute += time() - t0
 
-        # Global mass fixer: correct Strang splitting drift for IC tracers.
-        # Uses pre-advection mass (after emissions) as target, so emissions are preserved.
-        # DISABLED: testing whether dry-air conversion makes this unnecessary.
-        # if !isempty(_initial_mass)
-        #     _last_fix = _apply_global_mass_fixer!(cs_tracers, grid, _pre_adv_mass)
-        # end
+        if _do_diag
+            _emit_delta  = _m_after_emit - _m_start
+            _adv_delta   = _m_after_adv_total - _m_after_emit
+            _bld_delta   = _m_after_bld - _m_after_adv_total
+            _pbl_delta   = _m_after_pbl - _m_after_bld
+            _chem_delta  = _m_after_chem - _m_after_pbl
+            _total_delta = _m_after_chem - _m_start
+            _ppm(d) = d / max(abs(_m_start), 1e-30) * 1e6
+            @info string(
+                @sprintf("[W%d] %s MASS BUDGET (kg):", w, _diag_tname),
+                @sprintf("\n  start      = %.10e", _m_start),
+                @sprintf("\n  emit       = %+.6e (%+.4f ppm)", _emit_delta, _ppm(_emit_delta)),
+                @sprintf("\n  advection  = %+.6e (%+.4f ppm)", _adv_delta, _ppm(_adv_delta)),
+                @sprintf("\n  BL diff    = %+.6e (%+.4f ppm)", _bld_delta, _ppm(_bld_delta)),
+                @sprintf("\n  PBL diff   = %+.6e (%+.4f ppm)", _pbl_delta, _ppm(_pbl_delta)),
+                @sprintf("\n  chemistry  = %+.6e (%+.4f ppm)", _chem_delta, _ppm(_chem_delta)),
+                @sprintf("\n  TOTAL      = %+.6e (%+.4f ppm)", _total_delta, _ppm(_total_delta)))
+        end
+        # ── END MASS BALANCE DIAGNOSTICS ──────────────────────────────
+
+        _last_fix = _apply_global_mass_fixer!(cs_tracers, grid, _pre_adv_mass)
 
         # Mass conservation — update showvalue (every 24th window ≈ daily)
         if w % 24 == 0 || w == 1

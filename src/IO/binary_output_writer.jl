@@ -115,11 +115,23 @@ function initialize_output!(writer::BinaryOutputWriter, model)
     grid = model.grid
     hdr = writer._header
     hdr["format"]      = "atmos_transport_output"
-    hdr["version"]     = 1
+    hdr["version"]     = 2
     hdr["FT"]          = "Float32"
     hdr["Nt"]          = 0
     hdr["header_size"] = BINARY_OUTPUT_HEADER_SIZE
     hdr["start_date"]  = string(writer.start_date)
+
+    # Run provenance metadata
+    if hasproperty(model, :metadata) && !isempty(model.metadata)
+        meta = model.metadata
+        hdr["user"]          = get(meta, "user", "unknown")
+        hdr["hostname"]      = get(meta, "hostname", "unknown")
+        hdr["julia_version"] = get(meta, "julia_version", string(VERSION))
+        hdr["run_started"]   = get(meta, "created", string(Dates.now()))
+        if haskey(meta, "config")
+            hdr["config"] = meta["config"]
+        end
+    end
 
     # Field names in deterministic sorted order
     field_names = sort(collect(keys(writer.fields)))
@@ -268,6 +280,7 @@ function _finalize_current_file!(writer::BinaryOutputWriter)
 
     flush(io)
     writer._header["Nt"] = writer._file_write_count[]
+    writer._header["run_finished"] = string(Dates.now())
 
     # Rewrite header in-place with updated Nt
     json_str   = JSON3.write(writer._header)
@@ -556,6 +569,12 @@ function _convert_latlon(io, nc_path, hdr, Nt, field_names, field_dims, Nz, star
         defDim(ds, "time", 0)
 
         ds.attrib["source"] = "AtmosTransport.jl"
+        ds.attrib["Conventions"] = "CF-1.8"
+
+        # Provenance metadata from binary header
+        for pkey in (:user, :hostname, :julia_version, :run_started, :run_finished)
+            haskey(hdr, pkey) && (ds.attrib[string(pkey)] = String(hdr[pkey]))
+        end
 
         # Write emission source metadata as global attributes
         if haskey(hdr, :emission_sources)
@@ -634,6 +653,11 @@ function _convert_cs_native(io, nc_path, hdr, Nt, field_names, field_dims, Nz, s
         ds.attrib["Conventions"] = "COARDS"
         ds.attrib["grid_mapping_name"] = "gnomonic cubed-sphere"
         ds.attrib["source"] = "AtmosTransport.jl"
+
+        # Provenance metadata from binary header
+        for pkey in (:user, :hostname, :julia_version, :run_started, :run_finished)
+            haskey(hdr, pkey) && (ds.attrib[string(pkey)] = String(hdr[pkey]))
+        end
 
         # Write emission source metadata as global attributes
         if haskey(hdr, :emission_sources)

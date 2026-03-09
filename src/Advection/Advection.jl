@@ -82,6 +82,7 @@ export allocate_cs_massflux_workspace
 export max_cfl_x_cs, max_cfl_y_cs
 export compute_air_mass_panel!, compute_cm_panel!, apply_mass_fixer!
 export compute_cm_pressure_fixer_panel!, compute_dm_per_sub_panel!
+export compute_cm_mass_weighted_panel!
 export apply_dry_delp_panel!, apply_dry_am_panel!, apply_dry_bm_panel!
 export apply_dry_cmfmc_panel!, apply_dry_dtrain_panel!
 export apply_dry_mref_ll!, apply_dry_am_ll!, apply_dry_bm_ll!

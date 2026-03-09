@@ -270,9 +270,19 @@ function build_model_from_config(config::Dict)
     # --- Build model ---
     Δt = get(met_data_cfg, "dt", 900.0)
 
+    # --- Run metadata for provenance tracking ---
+    metadata = Dict{String, Any}(
+        "config"    => config,
+        "user"      => get(ENV, "USER", "unknown"),
+        "hostname"  => gethostname(),
+        "julia_version" => string(VERSION),
+        "created"   => string(Dates.now()),
+    )
+
     return _Models.TransportModel(;
         grid, tracers, met_data=met, Δt,
-        sources, output_writers=writers, buffering, advection, chemistry, diffusion, convection)
+        sources, output_writers=writers, buffering, advection, chemistry, diffusion, convection,
+        metadata)
 end
 
 # =====================================================================
@@ -678,14 +688,29 @@ function _find_coord_file(config::Dict)
     return nothing
 end
 
+"""Spherical quadrilateral area from 4 corner lon/lat pairs (degrees), R in meters."""
+function _gmao_cell_area(lon1, lat1, lon2, lat2, lon3, lat3, lon4, lat4, R)
+    _ll2xyz(lo, la) = (cospi(la/180)*cospi(lo/180), cospi(la/180)*sinpi(lo/180), sinpi(la/180))
+    function _tri_area(v1, v2, v3)
+        a = acos(clamp(v2[1]*v3[1]+v2[2]*v3[2]+v2[3]*v3[3], -1.0, 1.0))
+        b = acos(clamp(v1[1]*v3[1]+v1[2]*v3[2]+v1[3]*v3[3], -1.0, 1.0))
+        c = acos(clamp(v1[1]*v2[1]+v1[2]*v2[2]+v1[3]*v2[3], -1.0, 1.0))
+        s = (a + b + c) / 2
+        4 * atan(sqrt(max(tan(s/2)*tan((s-a)/2)*tan((s-b)/2)*tan((s-c)/2), 0.0)))
+    end
+    v1, v2 = _ll2xyz(lon1, lat1), _ll2xyz(lon2, lat2)
+    v3, v4 = _ll2xyz(lon3, lat3), _ll2xyz(lon4, lat4)
+    R^2 * (_tri_area(v1, v2, v3) + _tri_area(v1, v3, v4))
+end
+
 """
     _load_gmao_coordinates!(grid::CubedSphereGrid, filepath::String)
 
 Overwrite the gnomonic-computed cell-center coordinates in `grid` with
-the authoritative GMAO coordinates from a GEOS-FP/GEOS-IT NetCDF file.
-
-Cell areas and metric terms (Δx, Δy) are panel-position-invariant, so only
-the geographic coordinates (λᶜ, φᶜ) need updating.
+the authoritative GMAO coordinates from a GEOS-FP/GEOS-IT NetCDF file
+or gridspec file. When corner coordinates are available, also overwrites
+cell areas — this eliminates up to 44% per-cell area errors that cause
+spurious oscillations in the pressure-fixer cm computation.
 """
 function _load_gmao_coordinates!(grid::CubedSphereGrid, filepath::String)
     lons, lats, clons, clats = read_geosfp_cs_grid_info(filepath)
@@ -699,15 +724,17 @@ function _load_gmao_coordinates!(grid::CubedSphereGrid, filepath::String)
     end
 
     # Overwrite analytical gnomonic areas with GMAO corner-based areas
-    # when corner coordinates are available. This eliminates up to 30%
-    # per-cell area errors from the gnomonic vs GMAO grid mismatch.
+    # when corner coordinates are available. This eliminates up to 44%
+    # per-cell area errors from the gnomonic vs GMAO grid mismatch,
+    # which cause spurious cm residuals in the pressure fixer → oscillations.
     if clons !== nothing && clats !== nothing
         R = Float64(grid.radius)
-        gmao_areas = Sources.compute_areas_from_corners(
-            Float64.(clons), Float64.(clats), R, Nc)
+        FTA = eltype(grid.Aᶜ[1])
         for p in 1:6
             for j in 1:Nc, i in 1:Nc
-                grid.Aᶜ[p][i, j] = eltype(grid.Aᶜ[1])(gmao_areas[p][i, j])
+                grid.Aᶜ[p][i, j] = FTA(_gmao_cell_area(
+                    clons[i,j,p], clats[i,j,p], clons[i+1,j,p], clats[i+1,j,p],
+                    clons[i+1,j+1,p], clats[i+1,j+1,p], clons[i,j+1,p], clats[i,j+1,p], R))
             end
         end
         @info "Loaded GMAO coordinates + cell areas from $(basename(filepath))"

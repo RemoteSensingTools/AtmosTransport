@@ -390,6 +390,69 @@ function compute_cm_pressure_fixer_panel!(cm::AbstractArray{FT,3},
     return nothing
 end
 
+# ---- Mass-Weighted Vertical Mass-Flux Closure (LL-equivalent) ---------------
+
+@kernel function _cm_mass_weighted_kernel!(cm, @Const(am), @Const(bm), @Const(m), Hp, Nc, Nz)
+    i, j = @index(Global, NTuple)
+    FT = eltype(cm)
+    @inbounds begin
+        # Pass 1: compute raw cumulative horizontal convergence and total column mass
+        col_mass = zero(FT)
+        pit = zero(FT)
+        for k in 1:Nz
+            pit += am[i, j, k] - am[i + 1, j, k] + bm[i, j, k] - bm[i, j + 1, k]
+            col_mass += m[Hp + i, Hp + j, k]
+        end
+
+        # Pass 2: raw cm = cumulative convergence (same as LL preprocessor)
+        acc = zero(FT)
+        cm[i, j, 1] = acc
+        for k in 1:Nz
+            conv_k = am[i, j, k] - am[i + 1, j, k] + bm[i, j, k] - bm[i, j + 1, k]
+            acc += conv_k
+            cm[i, j, k + 1] = acc
+        end
+        # At this point cm[Nz+1] = pit (residual, nonzero in general)
+
+        # Pass 3: distribute residual proportionally to cumulative mass fraction
+        # (matches LL preprocessor's _correct_cm_residual!)
+        if abs(pit) > eps(FT) && col_mass > eps(FT)
+            cum_mass = zero(FT)
+            for k in 1:Nz
+                cum_mass += m[Hp + i, Hp + j, k]
+                cm[i, j, k + 1] -= pit * cum_mass / col_mass
+            end
+        end
+        # Now cm[1] = 0, cm[Nz+1] = 0 (surface flux removed)
+    end
+end
+
+"""
+$(SIGNATURES)
+
+Compute vertical mass flux `cm` using mass-weighted residual correction,
+matching the LL preprocessor's approach. The column residual (pit = total
+horizontal convergence) is distributed proportionally to cumulative air mass,
+not to B-ratio (bt). This reduces mass-fixer corrections on CS grids.
+
+- `cm`: (Nc, Nc, Nz+1) — vertical flux at level interfaces
+- `am`: (Nc+1, Nc, Nz) — X-face mass flux (already scaled to kg/half-sub-step)
+- `bm`: (Nc, Nc+1, Nz) — Y-face mass flux (already scaled)
+- `m`:  (Nc+2Hp, Nc+2Hp, Nz) — air mass (haloed), used for mass weighting
+"""
+function compute_cm_mass_weighted_panel!(cm::AbstractArray{FT,3},
+                                          am::AbstractArray{FT,3},
+                                          bm::AbstractArray{FT,3},
+                                          m::AbstractArray{FT,3},
+                                          Nc::Int, Nz::Int, Hp::Int) where FT
+    backend = get_backend(cm)
+    fill!(cm, zero(FT))
+    k! = _cm_mass_weighted_kernel!(backend, 256)
+    k!(cm, am, bm, m, Hp, Nc, Nz; ndrange=(Nc, Nc))
+    synchronize(backend)
+    return nothing
+end
+
 # ---- Per-Sub-Step Air Mass Increment ----------------------------------------
 
 @kernel function _dm_per_sub_kernel!(dm, @Const(delp_curr), @Const(delp_next),

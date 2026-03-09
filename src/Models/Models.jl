@@ -76,6 +76,8 @@ struct TransportModel{Arch, G, Tr, ATr, M, TS, Src, OW, CB, Buf, Adv, Chem, Diff
     diffusion      :: Diff
     "convection scheme (nothing or TiedtkeConvection)"
     convection     :: Conv
+    "run metadata: config, user, hostname, timestamps"
+    metadata       :: Dict{String, Any}
 end
 
 """
@@ -100,7 +102,8 @@ function TransportModel(;
         callbacks      :: Vector = AbstractCallback[],
         buffering      :: AbstractBufferingStrategy = SingleBuffer(),
         adjoint        :: Bool = false,
-        adj_tracers    = nothing) where {FT}
+        adj_tracers    = nothing,
+        metadata       :: Dict{String, Any} = Dict{String, Any}()) where {FT}
 
     arch = architecture(grid)
 
@@ -158,7 +161,8 @@ function TransportModel(;
 
     return TransportModel(arch, grid, tracer_fields, adj_tracer_fields,
                           met_data, clock, ts, sources, output_writers,
-                          callbacks, buffering, adv_scheme, chemistry, diffusion, convection)
+                          callbacks, buffering, adv_scheme, chemistry, diffusion, convection,
+                          metadata)
 end
 
 """

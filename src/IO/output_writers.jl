@@ -777,6 +777,35 @@ end
 # File creation — dispatch on grid type
 # =====================================================================
 
+"""Write run provenance metadata as NetCDF global attributes."""
+function _write_global_metadata!(ds, model)
+    ds.attrib["source"] = "AtmosTransport.jl"
+    ds.attrib["Conventions"] = "CF-1.8"
+    if hasproperty(model, :metadata) && !isempty(model.metadata)
+        meta = model.metadata
+        ds.attrib["user"]          = get(meta, "user", "unknown")
+        ds.attrib["hostname"]      = get(meta, "hostname", "unknown")
+        ds.attrib["julia_version"] = get(meta, "julia_version", string(VERSION))
+        ds.attrib["run_started"]   = get(meta, "created", "")
+        if haskey(meta, "config")
+            cfg = meta["config"]
+            # Flatten key config sections into attributes
+            for section in ("grid", "met_data", "advection", "convection", "diffusion")
+                if haskey(cfg, section) && cfg[section] isa Dict
+                    for (k, v) in cfg[section]
+                        v isa Dict && continue  # skip nested dicts
+                        ds.attrib["config_$(section)_$k"] = string(v)
+                    end
+                end
+            end
+            # Tracers
+            if haskey(cfg, "tracers") && cfg["tracers"] isa Dict
+                ds.attrib["tracers"] = join(keys(cfg["tracers"]), ", ")
+            end
+        end
+    end
+end
+
 """
 $(SIGNATURES)
 
@@ -814,6 +843,7 @@ function _create_netcdf_file(writer::NetCDFOutputWriter, model, grid::LatitudeLo
             defVar(ds, string(name), FT, dims;
                    deflatelevel=dl, attrib=_field_attribs(field_entry))
         end
+        _write_global_metadata!(ds, model)
     end
     return nothing
 end
@@ -908,6 +938,7 @@ function _create_netcdf_file(writer::NetCDFOutputWriter, model, grid::CubedSpher
                        deflatelevel=dl, attrib=attribs)
             end
         end
+        _write_global_metadata!(ds, model)
     end
     return nothing
 end
@@ -1094,6 +1125,14 @@ For `BinaryOutputWriter`, updates the header with final `Nt` and optionally
 converts to NetCDF.
 """
 finalize_output!(::AbstractOutputWriter) = nothing
+
+function finalize_output!(writer::NetCDFOutputWriter)
+    isfile(writer.filename) || return nothing
+    NCDataset(writer.filename, "a") do ds
+        ds.attrib["run_finished"] = string(Dates.now())
+    end
+    return nothing
+end
 
 export AbstractOutputWriter, AbstractOutputSchedule
 export NetCDFOutputWriter, TimeIntervalSchedule, IterationIntervalSchedule

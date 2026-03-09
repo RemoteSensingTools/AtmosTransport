@@ -32,6 +32,7 @@ product          = "geosit_c180"
 # For now, using NetCDF mode (on-the-fly reading)
 # preprocessed_dir = "~/data/geosit_c180/preprocessed"
 netcdf_dir       = "~/data/geosit_c180"   # reading raw NetCDF (slower but reliable)
+coord_file       = "~/code/gitHub/AtmosTransportModel/data/grids/cs_c180_gridspec.nc"
 start_date       = "2023-06-01"
 end_date         = "2023-06-30"
 dt               = 300

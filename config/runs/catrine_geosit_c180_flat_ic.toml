@@ -23,6 +23,7 @@ product          = "geosit_c180"
 netcdf_dir       = "~/data/geosit_c180_catrine"
 preprocessed_dir = "/temp1/catrine/met/geosit_c180/massflux"
 surface_data_bin_dir = "/temp1/catrine/met/geosit_c180/surface_bin"
+coord_file       = "~/code/gitHub/AtmosTransportModel/data/grids/cs_c180_gridspec.nc"
 start_date       = "2021-12-01"
 end_date         = "2021-12-03"
 dt               = 300

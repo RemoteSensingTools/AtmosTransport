@@ -21,6 +21,7 @@ using ..Advection: MassFluxWorkspace, allocate_massflux_workspace,
                    compute_air_mass!,
                    compute_mass_fluxes!, compute_air_mass_panel!, compute_cm_panel!,
                    compute_cm_pressure_fixer_panel!, compute_dm_per_sub_panel!,
+                   compute_cm_mass_weighted_panel!,
                    apply_mass_fixer!,
                    apply_dry_delp_panel!, apply_dry_am_panel!, apply_dry_bm_panel!,
                    apply_dry_cmfmc_panel!, apply_dry_dtrain_panel!,
@@ -739,17 +740,10 @@ function _run_loop!(model, grid::LatitudeLongitudeGrid{FT},
     # Planet parameters for physics kernels
     planet = (has_convection || has_pbl_diff) ? load_parameters(FT).planet : nothing
 
-    # QV (specific humidity) for dry-air transport
+    # QV (specific humidity) for dry-air output conversion
     qv_cpu = Array{FT}(undef, Nx, Ny, Nz)
     qv_gpu = AT(zeros(FT, Nx, Ny, Nz))
-
-    # Pre-compute bt (B-ratio) vector on device for cm recomputation after dry correction
-    vc = grid.vertical
-    _ΔB_cpu = FT[vc.B[k + 1] - vc.B[k] for k in 1:Nz]
-    _ΔB_total = FT(vc.B[Nz + 1] - vc.B[1])
-    bt_dev = AT(abs(_ΔB_total) > eps(FT) ? _ΔB_cpu ./ _ΔB_total : zeros(FT, Nz))
-    # area_j on device for GPU Δp recomputation after dry correction
-    area_j_gpu = AT(FT[cell_area(1, j, grid) for j in 1:Ny])
+    m_dry_ll = AT(zeros(FT, Nx, Ny, Nz))  # scratch for dry mass at output time
 
     # Helper: compute Δp from air mass on CPU and upload to gpu_buf.Δp
     function _compute_delp!(gpu_buf, cpu_buf)
@@ -846,28 +840,9 @@ function _run_loop!(model, grid::LatitudeLongitudeGrid{FT},
             copyto!(qv_gpu, qv_cpu)
         end
 
-        # Dry-air corrections: convert wet met fields to dry basis on GPU
-        if _qv_loaded
-            apply_dry_mref_ll!(curr.m_ref, qv_gpu, Nx, Ny, Nz)
-            apply_dry_am_ll!(curr.am, qv_gpu, Nx, Ny, Nz)
-            apply_dry_bm_ll!(curr.bm, qv_gpu, Nx, Ny, Nz)
-            # Recompute cm from dry am/bm (continuity equation)
-            recompute_cm_ll!(curr.cm, curr.am, curr.bm, bt_dev, Nx, Ny, Nz)
-            # Recompute Δp from dry m_ref on GPU
-            if needs_delp
-                g_val = FT(grid.gravity)
-                curr.Δp .= curr.m_ref .* g_val ./ reshape(area_j_gpu, 1, Ny, 1)
-            end
-            # Dry correction for convective fluxes (only when freshly loaded this window)
-            if cmfmc_loaded
-                apply_dry_cmfmc_ll!(cmfmc_gpu, qv_gpu, Nx, Ny, Nz)
-            end
-            if dtrain_loaded
-                apply_dry_dtrain_ll!(dtrain_gpu, qv_gpu, Nx, Ny, Nz)
-            end
-            synchronize(get_backend(curr.m_ref))
-            w == 1 && @info "  Dry-air correction active (QV loaded)"
-        end
+        # NOTE: No dry-air correction of DELP/am/bm for advection — wet transport
+        # is used. See double-buffer CS path for rationale. Dry VMRs in output via
+        # m_dry = m_wet × (1-qv) at output time only.
 
         # Apply emissions (GPU-compatible via KA kernels)
         # Use PBL-distributed injection when surface fields available
@@ -911,11 +886,9 @@ function _run_loop!(model, grid::LatitudeLongitudeGrid{FT},
         # Chemistry (e.g. radioactive decay for ²²²Rn)
         apply_chemistry!(model.tracers, grid, model.chemistry, dt_window)
 
-        # Mass conservation tracking (every 24th window ≈ daily)
-        if w % 24 == 0 || w == 1
-            _mass_totals = _compute_mass_totals_ll(model.tracers, grid)
-            _last_mass_ll = _mass_showvalue(_mass_totals, _initial_mass_ll)
-        end
+        # Mass conservation tracking
+        _mass_totals = _compute_mass_totals_ll(model.tracers, grid)
+        _last_mass_ll = _mass_showvalue(_mass_totals, _initial_mass_ll)
 
         # Upload next window (after GPU compute)
         if has_next
@@ -938,7 +911,12 @@ function _run_loop!(model, grid::LatitudeLongitudeGrid{FT},
 
         # Output (note: curr may have been swapped, use the buffer that was just computed)
         sim_time = Float64(step * dt_sub)
-        _current_air_mass = has_next ? next_buf.m_ref : curr.m_ref  # pre-swap buffer
+        _wet_mass = has_next ? next_buf.m_ref : curr.m_ref  # pre-swap buffer
+        _current_air_mass = _wet_mass
+        if _qv_loaded
+            m_dry_ll .= _wet_mass .* (1 .- qv_gpu)
+            _current_air_mass = m_dry_ll
+        end
         for writer in writers
             write_output!(writer, model, sim_time; air_mass=_current_air_mass)
         end
@@ -1210,26 +1188,9 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
             bm_gpu[p] .*= half_dt
         end
 
-        # Dry-air correction: convert DELP and mass fluxes from wet to dry basis
-        if qv_loaded
-            for p in 1:6
-                apply_dry_delp_panel!(delp_gpu[p], qv_gpu[p], Nc, Nz, Hp)
-                apply_dry_am_panel!(am_gpu[p], qv_gpu[p], Nc, Nz, Hp)
-                apply_dry_bm_panel!(bm_gpu[p], qv_gpu[p], Nc, Nz, Hp)
-            end
-            # Convert convective mass fluxes to dry basis (only when freshly uploaded)
-            if cmfmc_loaded && cmfmc_status !== :cached
-                for p in 1:6
-                    apply_dry_cmfmc_panel!(cmfmc_gpu[p], qv_gpu[p], Nc, Nz, Hp)
-                end
-            end
-            if dtrain_loaded && dtrain_status !== :cached && dtrain_gpu !== nothing
-                for p in 1:6
-                    apply_dry_dtrain_panel!(dtrain_gpu[p], qv_gpu[p], Nc, Nz, Hp)
-                end
-            end
-            synchronize(get_backend(delp_gpu[1]))
-        end
+        # NOTE: No dry-air correction of DELP/am/bm for advection — wet transport
+        # is used. See double-buffer path for rationale. Dry VMRs in output via
+        # m_dry = m_wet × (1-qv) at output time only.
 
         for p in 1:6
             compute_air_mass_panel!(m_panels[p], delp_gpu[p],
@@ -1269,9 +1230,18 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
             if troph_loaded
                 _met_ic = merge(_met_ic, (; troph=troph_cpu))
             end
+            _ic_mass = m_ref_panels
+            if qv_loaded
+                for p in 1:6
+                    copyto!(m_panels[p], m_ref_panels[p])
+                    apply_dry_delp_panel!(m_panels[p], qv_gpu[p], Nc, Nz, Hp)
+                end
+                synchronize(get_backend(m_panels[1]))
+                _ic_mass = m_panels
+            end
             for writer in writers
                 write_output!(writer, model, 0.0;
-                              air_mass=m_ref_panels, tracers=cs_tracers,
+                              air_mass=_ic_mass, tracers=cs_tracers,
                               met_fields=_met_ic)
             end
         end
@@ -1346,6 +1316,14 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
         t0 = time()
         sim_time = Float64(step * dt_sub)
         _current_air_mass = m_ref_panels
+        if qv_loaded
+            for p in 1:6
+                copyto!(m_panels[p], m_ref_panels[p])
+                apply_dry_delp_panel!(m_panels[p], qv_gpu[p], Nc, Nz, Hp)
+            end
+            synchronize(get_backend(m_panels[1]))
+            _current_air_mass = m_panels
+        end
         # Build met_fields: 2D met fields + mass fluxes for flux diagnostics
         # Mass fluxes am_gpu are scaled by half_dt; include scale factor for unscaling
         _met_base = (; ps=ps_cpu,
@@ -1564,21 +1542,11 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
     for w in 1:n_win
         has_next = w < n_win
 
-        # ── Spawn async disk read for next window (ALL data) ──────────
-        # Runs on a worker thread while main thread does upload + GPU.
         t0 = time()
-        if has_next
-            load_task = Threads.@spawn load_all_window!(
-                next_cpu, cmfmc_cpu, dtrain_cpu, _sfc_for_load, troph_cpu,
-                driver, grid, w + 1;
-                needs_cmfmc=has_convection,
-                needs_dtrain=needs_dtrain_alloc,
-                needs_sfc=true,
-                needs_qv=true, qv_cpu=qv_cpu,
-                ps_panels=ps_cpu)
-        end
 
         # Upload current CPU buffer → GPU (main thread, PCIe DMA)
+        # All shared-buffer reads (cmfmc_cpu, dtrain_cpu, qv_cpu) happen BEFORE
+        # the async spawn below to prevent race conditions.
         upload!(curr_gpu, curr_cpu)
 
         # Upload CMFMC if freshly loaded (not :cached)
@@ -1610,6 +1578,21 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
                 copyto!(qv_gpu[p], qv_cpu[p])
             end
             fill_panel_halos!(qv_gpu, grid)
+        end
+
+        # ── Spawn async disk read for next window (ALL data) ──────────
+        # Spawned AFTER all shared-buffer reads above to prevent race conditions:
+        # the async task writes to qv_cpu, cmfmc_cpu, dtrain_cpu, ps_cpu which
+        # must not be overwritten while the main thread is still reading them.
+        if has_next
+            load_task = Threads.@spawn load_all_window!(
+                next_cpu, cmfmc_cpu, dtrain_cpu, _sfc_for_load, troph_cpu,
+                driver, grid, w + 1;
+                needs_cmfmc=has_convection,
+                needs_dtrain=needs_dtrain_alloc,
+                needs_sfc=true,
+                needs_qv=true, qv_cpu=qv_cpu,
+                ps_panels=ps_cpu)
         end
 
         # Upload surface fields if loaded
@@ -1660,33 +1643,17 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
             curr_gpu.bm[p] .*= half_dt
         end
 
-        # Dry-air correction: convert DELP and mass fluxes from wet to dry basis
-        if qv_loaded
-            for p in 1:6
-                apply_dry_delp_panel!(curr_gpu.delp[p], qv_gpu[p], Nc, Nz, Hp)
-                apply_dry_am_panel!(curr_gpu.am[p], qv_gpu[p], Nc, Nz, Hp)
-                apply_dry_bm_panel!(curr_gpu.bm[p], qv_gpu[p], Nc, Nz, Hp)
-            end
-            # Convert convective mass fluxes to dry basis (only when freshly uploaded,
-            # not when :cached — GPU data is already dry from previous window)
-            if cmfmc_loaded && io_status.cmfmc !== :cached && cmfmc_gpu !== nothing
-                for p in 1:6
-                    apply_dry_cmfmc_panel!(cmfmc_gpu[p], qv_gpu[p], Nc, Nz, Hp)
-                end
-            end
-            if dtrain_loaded && io_status.dtrain !== :cached && dtrain_gpu !== nothing
-                for p in 1:6
-                    apply_dry_dtrain_panel!(dtrain_gpu[p], qv_gpu[p], Nc, Nz, Hp)
-                end
-            end
-            # Dry correction for next-window DELP (pressure fixer needs dry tendency)
-            if has_next && fetched_early
-                for p in 1:6
-                    apply_dry_delp_panel!(next_gpu.delp[p], qv_gpu[p], Nc, Nz, Hp)
-                end
-            end
-            synchronize(get_backend(curr_gpu.delp[1]))
-        end
+        # NOTE: No dry-air correction of DELP/am/bm for advection.
+        # Wet (total moist air) transport is used because:
+        #   (1) The tracer flux q×F is identical in wet and dry bases
+        #       (the (1-qv) factors cancel: q_dry × F_dry / m_dry = q_dry × F_wet / m_wet)
+        #   (2) Wet mass continuity holds (∂DELP/∂t + ∇·F_wet = 0), so
+        #       m_evolved ≈ m_ref → mass fixer applies small corrections only
+        #   (3) Naive dry correction (multiply by 1-qv) violates dry continuity
+        #       by the moisture flux divergence term, creating ~1% per-cell errors
+        #       that the mass fixer amplifies into oscillating tracer gradients
+        # Dry VMR output is achieved by dividing rm by m_dry at output time only.
+        # Ref: GCHP (Eastham+ 2018), TM5 (Huijnen+ 2010)
 
         for p in 1:6
             compute_air_mass_panel!(m_panels[p], curr_gpu.delp[p],
@@ -1718,14 +1685,26 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
             if troph_loaded
                 _met_ic = merge(_met_ic, (; troph=troph_cpu))
             end
+            # Dry mass for IC output (same pattern as end-of-window output)
+            _ic_mass = m_ref_panels
+            if qv_loaded
+                for p in 1:6
+                    copyto!(m_panels[p], m_ref_panels[p])
+                    apply_dry_delp_panel!(m_panels[p], qv_gpu[p], Nc, Nz, Hp)
+                end
+                synchronize(get_backend(m_panels[1]))
+                _ic_mass = m_panels
+            end
             for writer in writers
                 write_output!(writer, model, 0.0;
-                              air_mass=m_ref_panels, tracers=cs_tracers,
+                              air_mass=_ic_mass, tracers=cs_tracers,
                               met_fields=_met_ic)
             end
         end
 
-        # Compute cm: pressure-fixer (with DELP_next) or bt-only (last window)
+        # Compute cm: pressure-fixer (with DELP_next) or bt-only (last window).
+        # The pressure fixer incorporates the DELP tendency directly into cm,
+        # aligning vertical mass flux with dm_per_sub for minimal mass fixer corrections.
         for p in 1:6
             if has_next
                 compute_cm_pressure_fixer_panel!(curr_gpu.cm[p], curr_gpu.am[p], curr_gpu.bm[p],
@@ -1784,12 +1763,22 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
                                      curr_gpu.am, curr_gpu.bm, curr_gpu.cm,
                                      grid, model.advection_scheme, ws)
             end
+            # m_panels now = m_evolved (identical for all tracers: same am/bm/cm, same m_ref start)
 
             _m_after_adv = _do_diag && sub_idx <= 2 ? _diag_rm() : 0.0
 
-            # Pressure fixer: advance m_ref along prescribed trajectory toward m_target.
-            # No per-cell mass fixer needed — cm ensures m_evolved ≈ m_ref_new (~1e-5),
-            # and skipping the fixer gives exact rm conservation (0.000% drift).
+            # Per-cell mass fixer: rm *= m_ref / m_evolved
+            # This is the CS equivalent of the LL path's c = rm/m_evolved → rm = m_ref*c
+            # conversion. Without it, rm drifts from the correct mixing ratio at each
+            # sub-step, compounding into exponential tracer gradient growth.
+            for (_, rm_t) in pairs(cs_tracers)
+                for p in 1:6
+                    apply_mass_fixer!(rm_t[p], m_ref_panels[p], m_panels[p],
+                                      Nc, Nz, Hp)
+                end
+            end
+
+            # Advance m_ref along prescribed pressure trajectory
             for p in 1:6
                 m_ref_panels[p] .+= dm_per_sub_panels[p]
             end
@@ -1824,7 +1813,7 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
         _m_after_bld = _diag_rm()
 
         # Met-driven PBL diffusion per tracer (variable Kz from surface fields)
-        if sfc_loaded
+        if sfc_loaded && has_pbl_diff
             for (_, rm_t) in pairs(cs_tracers)
                 diffuse_pbl!(rm_t, m_ref_panels, curr_gpu.delp,
                               pbl_sfc_gpu.pblh, pbl_sfc_gpu.ustar,
@@ -1863,11 +1852,9 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
 
         _last_fix = _apply_global_mass_fixer!(cs_tracers, grid, _pre_adv_mass)
 
-        # Mass conservation — update showvalue (every 24th window ≈ daily)
-        if w % 24 == 0 || w == 1
-            _mass_totals = _compute_mass_totals(cs_tracers, grid)
-            _last_mass = _mass_showvalue(_mass_totals, _initial_mass)
-        end
+        # Mass conservation — update showvalue every window
+        _mass_totals = _compute_mass_totals(cs_tracers, grid)
+        _last_mass = _mass_showvalue(_mass_totals, _initial_mass)
         # ── Output ────────────────────────────────────────────────────
         t0 = time()
         sim_time = Float64(step * dt_sub)
@@ -1875,9 +1862,9 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
         _met_base = (; ps=ps_cpu,
                        mass_flux_x=curr_gpu.am, mass_flux_y=curr_gpu.bm,
                        mf_scale=half_dt, dt_window=dt_window)
-        _met_2d = if sfc_loaded && troph_loaded
+        _met_2d = if sfc_loaded && has_pbl_diff && troph_loaded
             merge(_met_base, (; pblh=pbl_sfc_cpu.pblh, troph=troph_cpu))
-        elseif sfc_loaded
+        elseif sfc_loaded && has_pbl_diff
             merge(_met_base, (; pblh=pbl_sfc_cpu.pblh))
         elseif troph_loaded
             merge(_met_base, (; troph=troph_cpu))
@@ -1887,9 +1874,22 @@ function _run_loop!(model, grid::CubedSphereGrid{FT},
         if qv_loaded
             _met_2d = merge(_met_2d, (; qv=qv_cpu))
         end
+        # For output: convert wet air mass to dry so that q = rm/m reports dry VMRs.
+        # Uses m_panels as scratch (not needed between windows).
+        _out_mass = m_ref_panels
+        if qv_loaded
+            for p in 1:6
+                copyto!(m_panels[p], m_ref_panels[p])
+            end
+            for p in 1:6
+                apply_dry_delp_panel!(m_panels[p], qv_gpu[p], Nc, Nz, Hp)
+            end
+            synchronize(get_backend(m_panels[1]))
+            _out_mass = m_panels
+        end
         for writer in writers
             write_output!(writer, model, sim_time;
-                          air_mass=m_ref_panels, tracers=cs_tracers,
+                          air_mass=_out_mass, tracers=cs_tracers,
                           met_fields=_met_2d)
         end
         t_output += time() - t0

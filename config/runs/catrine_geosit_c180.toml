@@ -30,6 +30,7 @@ product          = "geosit_c180"
 netcdf_dir       = "~/data/geosit_c180_catrine"
 preprocessed_dir = "/temp1/catrine/met/geosit_c180/massflux"
 surface_data_bin_dir = "/temp1/catrine/met/geosit_c180/surface_bin"
+coord_file       = "~/code/gitHub/AtmosTransportModel/data/grids/cs_c180_gridspec.nc"
 start_date       = "2021-12-01"
 end_date         = "2021-12-08"
 #end_date         = "2023-12-31"
@@ -82,20 +83,21 @@ type = "composite"
 
 # --- Advection ---
 [advection]
-scheme    = "slopes"
-# ppm_order = 7
+scheme    = "ppm"
+ppm_order = 7
 
-# --- Convection (Tiedtke: uses CMFMC from surface fields) ---
+# --- Convection (RAS: uses CMFMC + DTRAIN from A3dyn) ---
 [convection]
-type = "tiedtke"
+type = "ras"
 
-# --- Diffusion (non-local Holtslag-Boville counter-gradient) ---
 [diffusion]
-type   = "pbl"
+type   = "nonlocal_pbl"
 beta_h = 15.0
 Kz_bg  = 0.1
 Kz_min = 0.01
 Kz_max = 500.0
+fak    = 8.5
+sffrac = 0.1
 
 # --- Output (3-hourly, native CS binary, daily files) ---
 [output]

@@ -100,6 +100,77 @@ Two ERA5 mass-flux pipelines are available:
 The gridpoint approach is retained for quick prototyping with readily available
 ERA5 gridpoint data.
 
+### Advection: Lin-Rood vs Strang Splitting (Cubed-Sphere)
+
+**Severity: Medium — directional bias artifacts at panel boundaries**
+
+Standard Strang splitting (X→Y→Z→Z→Y→X) introduces directional bias at
+cubed-sphere panel boundaries, visible as wave artifacts at high latitudes
+where panels meet at oblique angles. The bias arises because X-advection
+always "sees" the field before Y-advection within a horizontal sweep.
+
+**Fix:** Enable Lin-Rood cross-term splitting in the TOML config:
+
+```toml
+[advection]
+scheme   = "ppm"
+linrood  = true
+```
+
+This implements FV3's `fv_tp_2d` algorithm (Lin & Rood, 1996): for each
+horizontal sweep, it computes both X-first and Y-first PPM orderings from
+the original field and averages the result. This eliminates the directional
+bias at the cost of extra halo exchanges and corner ghost-cell fills.
+
+**Performance:** ~2–3× GPU time compared to standard Strang splitting due
+to three halo exchanges and corner fills per horizontal sweep (vs one each
+for Strang). For GEOS-IT C180 CATRINE with 4 tracers, GPU time increases
+from ~0.76 s/win to ~1.3 s/win.
+
+**Recommendation:** Use `linrood = true` for all cubed-sphere PPM production
+runs. The cost is modest and eliminates a systematic error source.
+
+### Mass Conservation on Cubed-Sphere Grids
+
+**Severity: High — mass drift degrades tracer correlations without fixers**
+
+Cubed-sphere advection has three levels of mass conservation enforcement:
+
+1. **Pressure fixer** (`_cm_pressure_fixer_kernel!`): Incorporates the DELP
+   tendency into the vertical mass flux `cm`, so that `m_ref` advances along
+   the prescribed pressure trajectory across sub-steps. This is the primary
+   conservation mechanism and reduces mass drift from ~% to ~ppm level.
+
+2. **Per-cell mass fixer** (`mass_fixer = true` in `[advection]`, default):
+   After each advection step, scales tracer mass as `rm *= m_ref / m_evolved`
+   to correct any residual drift. Without this, R² against reference data
+   drops from ~0.5 to ~0.01 in 8 days.
+
+3. **Global mass fixer** (`_apply_global_mass_fixer!`): Uniform correction
+   across all cells to match pre-advection total mass. Corrects Strang
+   splitting drift at CS panel boundaries (~3 ppm/window). GPU time overhead:
+   ~0.2 s/win.
+
+```toml
+[advection]
+mass_fixer = true    # default; disable only for diagnostics
+```
+
+### Dry-Air Transport
+
+**Severity: Low — automatic, no user configuration needed**
+
+When specific humidity (QV) is available from the met data, the model
+automatically converts all mass-related fields to a dry-air basis:
+DELP, am, bm, CMFMC, and DTRAIN are multiplied by `(1 - QV)` on the GPU.
+This ensures tracer mixing ratios are computed with respect to dry air mass,
+consistent with atmospheric chemistry conventions.
+
+The conversion is gated on the `qv_loaded` flag — when QV is unavailable
+(e.g., quickstart mode), the model falls back to wet-air transport
+transparently. CMFMC/DTRAIN dry corrections are only applied when freshly
+uploaded (not `:cached`) to avoid double-correction.
+
 ## Configuration Caveats
 
 ### Diffusion Required for Realistic Column-Mean Output

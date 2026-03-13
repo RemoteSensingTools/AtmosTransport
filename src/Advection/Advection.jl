@@ -24,7 +24,7 @@ using ..Grids: AbstractGrid, AbstractStructuredGrid, LatitudeLongitudeGrid, Cube
 using ..Grids: Δx, Δy, Δz, floattype, level_thickness, cell_area
 using ..Grids: ReducedGridSpec, reduce_row!, expand_row!, reduce_velocity_row!
 using ..Grids: reduce_row_mass!, reduce_am_row!, expand_row_mass!
-using ..Grids: fill_panel_halos!, allocate_cubed_sphere_field
+using ..Grids: fill_panel_halos!, copy_corners!, allocate_cubed_sphere_field
 using ..Fields: AbstractField
 using ..Architectures: architecture, device, array_type, CPU, GPU
 using KernelAbstractions: get_backend, synchronize
@@ -87,8 +87,14 @@ export apply_dry_delp_panel!, apply_dry_am_panel!, apply_dry_bm_panel!
 export apply_dry_cmfmc_panel!, apply_dry_dtrain_panel!
 export apply_dry_mref_ll!, apply_dry_am_ll!, apply_dry_bm_ll!
 export apply_dry_cmfmc_ll!, apply_dry_dtrain_ll!, recompute_cm_ll!
+export apply_divergence_damping_cs!
 export advect_x_cs_panel!, advect_y_cs_panel!, advect_z_cs_panel!
 export advect_z_cs_panel_column!
+export LinRoodWorkspace, fv_tp_2d_cs!, strang_split_linrood_ppm!
+export VerticalRemapWorkspace, vertical_remap_cs!, fix_target_bottom_pe!
+export compute_target_pressure_from_next_delp!, compute_target_pressure_from_mass!
+export compute_target_pressure_from_delp_direct!, compute_target_pressure_from_mass_direct!
+export update_air_mass_from_target!
 
 include("abstract_advection.jl")
 include("slopes_advection_kernels.jl")
@@ -104,6 +110,8 @@ include("cubed_sphere_mass_flux.jl")
 include("ppm_advection.jl")
 include("ppm_subgrid_distributions.jl")
 include("cubed_sphere_mass_flux_ppm.jl")
+include("cubed_sphere_fvtp2d.jl")
+include("vertical_remap.jl")
 include("latlon_mass_flux_ppm.jl")
 include("latlon_dry_air.jl")
 

@@ -73,6 +73,7 @@ julia --threads=2 --project=. scripts/run.jl <config.toml>
 | `geosfp_cs_edgar.toml` | C720 cubed-sphere | GEOS-FP preprocessed | Yes | Preprocessed binary, 5 days |
 | `catrine_era5.toml` | 720×361 lat-lon | ERA5 spectral | Yes | CATRINE D7.1: CO2, fCO2, SF6, 222Rn |
 | `catrine_geosit_c180.toml` | C180 cubed-sphere | GEOS-IT C180 | Yes | CATRINE D7.1 on CS: 4 tracers, RAS conv, nonlocal PBL |
+| `catrine_geosit_c180_linrood.toml` | C180 cubed-sphere | GEOS-IT C180 | Yes | CATRINE D7.1 + Lin-Rood cross-term advection |
 
 All configs are in `config/runs/`.
 
@@ -147,6 +148,11 @@ Common keys for all drivers:
 |-----|------|-------------|
 | `netcdf_dir` | string | Directory with raw GEOS-FP/IT `.nc4` files (recommended) |
 | `preprocessed_dir` | string | Directory with per-day `.bin` files (faster I/O, requires preprocessing) |
+| `surface_data_dir` | string | Directory with raw 0.25° lat-lon surface NetCDF (A1/A3mstE) |
+| `surface_data_bin_dir` | string | Directory with binary surface fields (PBLH, USTAR, HFLUX, T2M) — preferred for performance |
+| `surface_data_ll_dir` | string | Directory with lat-lon surface data for on-the-fly CS regridding |
+| `coord_file` | string | Path to CS gridspec NetCDF with cell corners and areas (for emission regridding) |
+| `product` | string | `"geosit_c180"` or `"geosfp_c720"` — selects vertical level ordering and file naming |
 | `start_date` | string | Start date `"YYYY-MM-DD"` |
 | `end_date` | string | End date `"YYYY-MM-DD"` |
 | `Hp` | int | Halo width (default: 3) |
@@ -157,6 +163,44 @@ Common keys for all drivers:
 |-----|------|---------|-------------|
 | `scheme` | string | `"slopes"` | `"slopes"` (Russell-Lerner, 2nd order) or `"ppm"` (Putman & Lin) |
 | `ppm_order` | int | `7` | PPM polynomial order: 4, 5, 6, or 7 (only used when `scheme = "ppm"`) |
+| `damp_coeff` | float | `0.0` | Divergence damping coefficient (PPM only) |
+| `linrood` | bool | `false` | Lin-Rood cross-term splitting (CS grids, PPM only). Averages X-first and Y-first PPM orderings to eliminate directional bias at panel boundaries |
+| `mass_fixer` | bool | `true` | Per-cell mass fixer after each advection step |
+
+### `[convection]`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `type` | string | (none) | `"tiedtke"` (Tiedtke mass-flux) or `"ras"` (Relaxed Arakawa-Schubert; requires CMFMC+DTRAIN from A3dyn surface data) |
+
+### `[diffusion]`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `type` | string | (none) | `"boundary_layer"`, `"pbl"`, or `"nonlocal_pbl"` |
+
+Additional keys for `type = "boundary_layer"`:
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `Kz_max` | float | `100.0` | Maximum eddy diffusivity [Pa²/s] |
+| `H_scale` | float | `8.0` | E-folding depth in levels from surface |
+
+Additional keys for `type = "pbl"` or `"nonlocal_pbl"`:
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `beta_h` | float | `15.0` | Businger-Dyer heat parameter |
+| `Kz_bg` | float | `0.1` | Background diffusivity above PBL [m²/s] |
+| `Kz_min` | float | `0.01` | Minimum diffusivity in PBL [m²/s] |
+| `Kz_max` | float | `500.0` | Maximum diffusivity [m²/s] |
+
+Additional keys for `type = "nonlocal_pbl"` only:
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `fak` | float | `8.5` | Counter-gradient tuning constant (Holtslag-Boville) |
+| `sffrac` | float | `0.1` | Surface layer fraction of PBL |
 
 ### `[tracers.<name>]`
 
@@ -446,12 +490,30 @@ Without this, transport is 8x too slow. See [CAVEATS.md](CAVEATS.md) for details
 ### GEOS-IT C180 Cubed-Sphere (GPU)
 
 ```bash
-# 1. Download GEOS-IT C180 mass flux files
-julia --project=. scripts/download_geosit_physics.jl
+# 1. Download GEOS-IT C180 mass flux files (CTM_A1: MFXC, MFYC, DELP)
+julia --project=. scripts/downloads/download_geosit_physics.jl
 
-# 2. Run
+# 2. Download surface fields for PBL diffusion (A1 + A3mstE: PBLH, USTAR, HFLUX, T2M)
+#    Same script with surface=true, or use the general GEOS download framework.
+
+# 3. (Optional) Download A3dyn for RAS convection (CMFMC, DTRAIN)
+#    Required only if [convection] type = "ras"
+
+# 4. Preprocess met data to binary (one-time, ~15× faster I/O)
+julia --project=. scripts/preprocessing/preprocess_geosfp_cs.jl \
+    config/preprocessing/geosit_c180_catrine.toml
+
+# 5. (Optional) Regrid emissions to CS grid
+julia --project=. scripts/preprocessing/regrid_emissions.jl config/emissions/edgar_sf6.toml
+
+# 6. Run (slopes advection)
 julia --threads=2 --project=. scripts/run.jl config/runs/geosit_c180_june2023_ppm.toml
 ```
+
+The `coord_file` in the TOML config must point to a CS gridspec NetCDF file
+containing cell corners and areas for emission regridding. Generate one with
+`scripts/preprocessing/extract_cs_gridspec.jl` or use the bundled
+`data/grids/cs_c180_gridspec.nc`.
 
 ### CATRINE D7.1 on GEOS-IT C180 (GPU, 4 Tracers)
 
@@ -518,6 +580,7 @@ julia --threads=2 --project=. scripts/run.jl config/runs/era5_spectral_june2023.
   | GEOS-FP C720 GPU + BL diffusion | 13.4 | 0.80 | 0.13 | ~14 s/win |
   | GEOS-IT C180 GPU (NetCDF, single-buf) | 0.93 | 0.11 | 0.05 | 792s / 30d |
   | GEOS-IT C180 CATRINE (4 tracers, RAS+PBL) | 0.12 | 0.76 | 0.18 | 177s / 7d |
+  | GEOS-IT C180 CATRINE + Lin-Rood (4 tracers) | 0.12 | 1.3 | 0.18 | ~2.5 s/win |
 
 ---
 

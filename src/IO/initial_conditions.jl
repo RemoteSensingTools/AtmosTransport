@@ -449,7 +449,8 @@ from mixing ratio (mol/mol) to tracer mass (rm = q × m).
 `m_panels` should be NTuple{6} of GPU arrays with air mass [kg].
 """
 function finalize_ic_vertical_interp!(tracers, m_panels, delp_panels,
-                                       grid::CubedSphereGrid{FT}) where FT
+                                       grid::CubedSphereGrid{FT};
+                                       qv_panels=nothing) where FT
     deferred = _DEFERRED_IC[]
     has_uniform = !isempty(_DEFERRED_UNIFORM_IC[])
     isempty(deferred) && !has_uniform && return nothing
@@ -457,6 +458,14 @@ function finalize_ic_vertical_interp!(tracers, m_panels, delp_panels,
     Nc = grid.Nc
     Hp = grid.Hp
     Nz = grid.Nz
+
+    # Compute dry air mass if QV available (output divides by dry mass)
+    cpu_qv = if qv_panels !== nothing
+        @info "IC: using dry air mass (QV available)"
+        [Array(qv_panels[p]) for p in 1:6]
+    else
+        nothing
+    end
 
     for ic_data in deferred
         tname = ic_data.tracer_name
@@ -522,19 +531,21 @@ function finalize_ic_vertical_interp!(tracers, m_panels, delp_panels,
                     end
 
                     # Convert mixing ratio → tracer mass: rm = q × m
+                    # IC values are dry VMR; m is already on correct basis
+                    # (dry when QV available, moist otherwise)
                     cpu_buf[ii, jj, k] *= FT(cpu_m[p][ii, jj, k])
                 end
             end
             copyto!(panels[p], cpu_buf)
         end
 
-        # Log diagnostics
+        # Log diagnostics: VMR = rm / m (m already on correct basis)
         q_vals = Float64[]
         for p in 1:6
             cpu_p = Array(panels[p])
             cpu_mp = Array(m_panels[p])
             for k in 1:Nz, j in Hp+1:Hp+Nc, i in Hp+1:Hp+Nc
-                m_val = cpu_mp[i, j, k]
+                m_val = Float64(cpu_mp[i, j, k])
                 if m_val > 0
                     push!(q_vals, cpu_p[i, j, k] / m_val)
                 end
@@ -560,6 +571,7 @@ function finalize_ic_vertical_interp!(tracers, m_panels, delp_panels,
             for k in 1:Nz, j in 1:Nc, i in 1:Nc
                 ii = Hp + i
                 jj = Hp + j
+                # IC values are dry VMR; m is already on correct basis
                 cpu_buf[ii, jj, k] = FT(uic.value) * FT(cpu_m[p][ii, jj, k])
             end
             copyto!(panels[p], cpu_buf)

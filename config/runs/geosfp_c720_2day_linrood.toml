@@ -1,0 +1,88 @@
+# ===========================================================================
+# GEOS-FP C720 — 2-day diagnostic run (Lin-Rood PPM-7)
+#
+# Cross-grid validation: test whether vertical CO2 redistribution observed
+# on GEOS-IT C180 also appears on GEOS-FP C720 (different met source, same code).
+#
+# If redistribution appears here too → code bug (moist/dry basis mismatch in
+# cm pressure fixer). If absent → GEOS-IT C180 data issue.
+#
+# Tracers: natural CO2 (LMDZ flux_apos) + fossil CO2 (EDGAR v8.0)
+# IC: uniform 400 ppm for both
+#
+# Usage:
+#   julia --project=. scripts/run.jl config/runs/geosfp_c720_2day_linrood.toml
+# ===========================================================================
+
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type                  = "cubed_sphere"
+Nc                    = 720
+met_source            = "geosfp"
+merge_levels_above_Pa = 1000.0
+
+[met_data]
+driver           = "geosfp_cs"
+preprocessed_dir = "/temp1/atmos_transport/geosfp_c720/preprocessed_merged"
+coord_file       = "~/data/geosfp_cs/20240601/GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.20240601_0030.V01.nc4"
+start_date       = "2024-06-01"
+end_date         = "2024-06-03"
+dt               = 150
+met_interval     = 3600
+mass_flux_dt     = 450
+Hp               = 3
+surface_data_bin_dir = "/temp1/atmos_transport/geosfp_c720/surface_fields_bin"
+
+[initial_conditions]
+co2.uniform_value       = 400e-6
+fossil_co2.uniform_value = 0.0
+
+[tracers.co2]
+emission   = "lmdz_co2"
+file       = "~/data/AtmosTransport/catrine/Emissions/LMDZ_fluxes"
+species    = "co2"
+flux_var   = "flux_apos"
+start_date = "2023-06-01"
+end_date   = "2023-06-30"
+
+[tracers.fossil_co2]
+emission      = "edgar"
+edgar_version = "v8.0"
+species       = "fossil_co2"
+year          = 2022
+edgar_file    = "/temp1/atmos_transport/emissions/edgar_v8/edgar_co2_cs_c720_float32.bin"
+
+[advection]
+scheme      = "ppm"
+ppm_order   = 7
+linrood     = true
+mass_fixer  = true
+
+[diffusion]
+type   = "pbl"
+beta_h = 15.0
+Kz_bg  = 0.1
+Kz_min = 0.01
+Kz_max = 500.0
+
+[convection]
+type = "tiedtke"
+
+[output]
+filename      = "/temp2/catrine-runs/output/geosfp_c720_2day_linrood"
+format        = "binary"
+split         = "daily"
+interval      = 10800
+
+[output.fields]
+co2_3d              = {type = "full_3d", species = "co2"}
+fossil_co2_3d       = {type = "full_3d", species = "fossil_co2"}
+co2_column_mean     = {type = "column_mean", species = "co2"}
+co2_surface         = {type = "surface_slice", species = "co2"}
+fossil_co2_surface  = {type = "surface_slice", species = "fossil_co2"}
+
+[buffering]
+strategy = "double"

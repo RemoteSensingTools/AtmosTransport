@@ -969,12 +969,10 @@ function _output_dims(field_entry, grid::CubedSphereGrid, output_grid::LatLonOut
 end
 
 function _output_dims(field_entry, grid::CubedSphereGrid, output_grid)
-    # Use internal names (x, y, panel) — _cs_dims_to_nc_dims maps to NetCDF names,
-    # _dims_to_shape maps to sizes
     if field_entry isa Full3DDiagnostic
-        return ("x", "y", "panel", "lev", "time")
+        return ("Xdim", "Ydim", "nf", "lev", "time")
     else
-        return ("x", "y", "panel", "time")
+        return ("Xdim", "Ydim", "nf", "time")
     end
 end
 

@@ -1,0 +1,61 @@
+# Mass balance diagnostic — slopes advection for comparison
+
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "cubed_sphere"
+met_source = "geosfp"
+Nc         = 180
+
+[met_data]
+driver           = "geosfp_cs"
+product          = "geosit_c180"
+netcdf_dir       = "~/data/geosit_c180_catrine"
+preprocessed_dir = "/temp1/catrine/met/geosit_c180/massflux"
+surface_data_bin_dir = "/temp1/catrine/met/geosit_c180/surface_bin"
+start_date       = "2021-12-01"
+end_date         = "2021-12-01"
+dt               = 300
+met_interval     = 3600
+mass_flux_dt     = 450
+Hp               = 3
+
+[initial_conditions]
+co2.file     = "~/data/AtmosTransport/catrine/InitialConditions/startCO2_202112010000.nc"
+co2.variable = "CO2"
+
+[tracers.co2]
+emission   = "lmdz_co2"
+file       = "~/data/AtmosTransport/catrine/preprocessed_c180/lmdz_co2_cs_c180_float32.bin"
+species    = "co2"
+flux_var   = "flux_apos"
+start_date = "2021-12-01"
+end_date   = "2023-12-31"
+
+[advection]
+scheme = "slopes"
+
+[convection]
+type = "ras"
+
+[diffusion]
+type   = "nonlocal_pbl"
+beta_h = 15.0
+Kz_bg  = 0.1
+Kz_min = 0.01
+Kz_max = 500.0
+fak    = 8.5
+sffrac = 0.1
+
+[output]
+filename = "/tmp/mass_diag_slopes"
+format   = "binary"
+interval = 3600
+
+[output.fields]
+co2_3d = {type = "full_3d", species = "co2"}
+
+[buffering]
+strategy = "double"

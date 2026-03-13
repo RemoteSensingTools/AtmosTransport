@@ -152,3 +152,108 @@ along-edge position `s`. Depth 1 = immediately outside the interior."""
         return (Hp + 1 - d, Hp + s)
     end
 end
+
+# ---------------------------------------------------------------------------
+# Corner halo filling (cube vertex ghost cells)
+#
+# At each cube vertex, 3 panels meet. The edge halos (filled by
+# fill_panel_halos!) cover the 4 edges but leave the Hp×Hp corner regions
+# uninitialized. These corners are needed for the Lin-Rood cross-term
+# correction where the inner PPM operates on the full halo extent.
+#
+# The rotation formulas are derived from FV3's `copy_corners` in tp_core.F90.
+# They are direction-dependent: dir=1 for X-sweep, dir=2 for Y-sweep.
+# The formulas are purely local (operate on a single panel's array using
+# already-filled edge halo data) and are the same for all 6 panels due
+# to the cube's rotational symmetry.
+#
+# Reference: Putman & Lin (2007), tp_core.F90 lines 246-321
+# ---------------------------------------------------------------------------
+
+"""
+$(SIGNATURES)
+
+Fill corner ghost cells for a cubed-sphere 3D field. Must be called AFTER
+`fill_panel_halos!` (which fills edge halos that corner rotations read from).
+
+`dir` selects the rotation:
+- `dir=1`: for X-direction PPM (rotates Y-edge data into corners)
+- `dir=2`: for Y-direction PPM (rotates X-edge data into corners)
+"""
+function copy_corners!(data::NTuple{6, A},
+                       grid::CubedSphereGrid, dir::Int) where {A <: AbstractArray}
+    Nc = grid.Nc
+    Hp = grid.Hp
+    N  = Nc + 2 * Hp  # total array extent per dimension
+
+    for p in 1:6
+        _fill_corners_panel!(data[p], Nc, Hp, N, dir)
+    end
+    synchronize(get_backend(data[1]))
+    return nothing
+end
+
+"""Fill all 4 corner regions of a single panel array."""
+function _fill_corners_panel!(q::AbstractArray{T, 3},
+                              Nc::Int, Hp::Int, N::Int, dir::Int) where T
+    Nk = size(q, 3)
+    backend = get_backend(q)
+
+    if backend isa KernelAbstractions.CPU
+        @inbounds for k in 1:Nk
+            for dj in 1:Hp
+                for di in 1:Hp
+                    _set_corner_cells!(q, di, dj, k, Nc, Hp, N, dir)
+                end
+            end
+        end
+    else
+        k! = _copy_corners_kernel!(backend, 256)
+        k!(q, Nc, Hp, N, dir; ndrange=(Hp, Hp, Nk))
+    end
+    return nothing
+end
+
+@kernel function _copy_corners_kernel!(q, Nc, Hp, N, dir)
+    di, dj, k = @index(Global, NTuple)
+    @inbounds _set_corner_cells!(q, di, dj, k, Nc, Hp, N, dir)
+end
+
+"""Set the 4 corner cells at offset (di, dj) within each corner region."""
+@inline function _set_corner_cells!(q, di::Int, dj::Int, k::Int,
+                                     Nc::Int, Hp::Int, N::Int, dir::Int)
+    # Corner cell indices (1-based offsets within the Hp×Hp corner block)
+    # SW corner: oi = Hp+1-di, oj = Hp+1-dj  (di=1 → nearest to interior)
+    # SE corner: oi = Hp+Nc+di, oj = Hp+1-dj
+    # NE corner: oi = Hp+Nc+di, oj = Hp+Nc+dj
+    # NW corner: oi = Hp+1-di, oj = Hp+Nc+dj
+    oi_sw = Hp + 1 - di;  oj_sw = Hp + 1 - dj
+    oi_se = Hp + Nc + di; oj_se = Hp + 1 - dj
+    oi_ne = Hp + Nc + di; oj_ne = Hp + Nc + dj
+    oi_nw = Hp + 1 - di;  oj_nw = Hp + Nc + dj
+
+    if dir == 1
+        # X-direction: rotate Y-edge halos into corners
+        # FV3 tp_core.F90 formulas translated to our indexing (oi = fi + Hp):
+        #   SW: q(fi,fj) = q(fj, 1-fi)       → q[oi,oj] = q[oj, 2Hp+1-oi]
+        #   SE: q(fi,fj) = q(npy-fj, fi-npx+1) → q[oi,oj] = q[N+1-oj, oi-Nc]
+        #   NE: q(fi,fj) = q(fj, 2npx-1-fi)  → q[oi,oj] = q[oj, 2(Nc+Hp)+1-oi]
+        #   NW: q(fi,fj) = q(npy-fj, fi-1+npx) → q[oi,oj] = q[N+1-oj, oi+Nc]
+        q[oi_sw, oj_sw, k] = q[oj_sw, 2*Hp + 1 - oi_sw, k]
+        q[oi_se, oj_se, k] = q[N + 1 - oj_se, oi_se - Nc, k]
+        q[oi_ne, oj_ne, k] = q[oj_ne, 2*(Nc + Hp) + 1 - oi_ne, k]
+        q[oi_nw, oj_nw, k] = q[N + 1 - oj_nw, oi_nw + Nc, k]
+    else
+        # Y-direction: rotate X-edge halos into corners
+        # FV3 tp_core.F90 formulas translated:
+        #   SW: q(fi,fj) = q(1-fj, fi)       → q[oi,oj] = q[2Hp+1-oj, oi]
+        #   SE: q(fi,fj) = q(npy+fj-1, npx-fi) → q[oi,oj] = q[Nc+oj, N+1-oi]
+        #   NE: q(fi,fj) = q(2npy-1-fj, fi)  → q[oi,oj] = q[2(Nc+Hp)+1-oj, oi]
+        #   NW: q(fi,fj) = q(fj+1-npx, npy-fi) → q[oi,oj] = q[oj-Nc, N+1-oi]
+        q[oi_sw, oj_sw, k] = q[2*Hp + 1 - oj_sw, oi_sw, k]
+        q[oi_se, oj_se, k] = q[Nc + oj_se, N + 1 - oi_se, k]
+        q[oi_ne, oj_ne, k] = q[2*(Nc + Hp) + 1 - oj_ne, oi_ne, k]
+        q[oi_nw, oj_nw, k] = q[oj_nw - Nc, N + 1 - oi_nw, k]
+    end
+    return nothing
+end

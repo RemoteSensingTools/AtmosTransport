@@ -92,3 +92,26 @@ These are hard-won correctness constraints. Violating any causes silent wrong re
    catastrophic cache misses — e.g. a CPU loop over `(Nc, Nc, Nz)` panels went from
    3.8 s to 0.8 s just by fixing loop order. Always verify loop nesting matches memory
    layout in any new CPU-side code.
+
+9. **Moist vs dry mass fluxes in GEOS met data**: FV3's dynamical core operates on dry
+   air mass. The exported variables have DIFFERENT moisture conventions:
+
+   | Variable | Basis | Notes |
+   |----------|-------|-------|
+   | MFXC, MFYC | **DRY** | Horizontal mass fluxes from FV3 dynamics (dry air transport) |
+   | DELP | **MOIST** (total) | Exported as total pressure thickness, NOT dry |
+   | CMFMC | **MOIST** (total) | Convective mass flux — total air including vapor |
+   | DTRAIN | **MOIST** (total) | Detraining mass flux — total air |
+   | QV | — | Specific humidity; convert wet→dry: `x_dry = x_wet × (1 - qv)` |
+
+   **Transport now runs on DRY basis when QV is available.**
+   `compute_air_mass_phase!` computes `m = DELP × (1 - QV) × area / g` via
+   `_dry_air_mass_cs_kernel!`. This makes air mass `m` consistent with the DRY
+   horizontal mass fluxes am/bm, so the vertical mass flux `cm` (from continuity
+   closure) is also on a dry basis. `gpu.delp` stays MOIST — convection, diffusion,
+   PS, and emissions all expect moist DELP.
+   For the vertical remap, `compute_target_pressure_from_dry_delp_direct!` builds
+   target PE from `DELP × (1 - QV)` to match dry-basis source PE.
+   The `apply_dry_*_panel!` kernels remain for backward compatibility but are no
+   longer called in the main transport path.
+   Configs without QV fall back to moist air mass (unchanged behavior).

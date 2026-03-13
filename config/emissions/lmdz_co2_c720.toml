@@ -1,0 +1,29 @@
+# LMDZ/CAMS CO2 posterior fluxes → C720 cubed-sphere binary
+#
+# Same source as lmdz_co2.toml but regridded to C720 for GEOS-FP runs.
+# Source: LMDZ 3-hourly CO2 fluxes (1° lat-lon, monthly files)
+# Units: kgC/m²/s → kgCO2/m²/s
+
+[source]
+type = "netcdf_latlon"
+path = "~/data/AtmosTransport/catrine/Emissions/LMDZ_fluxes/*.nc"
+variable = "flux_apos"
+lon_coord = "auto"
+lat_coord = "auto"
+time_dim = "time"
+date_range = ["2021-12-01", "2023-12-31"]
+
+[units]
+input = "kgC/m2/s"
+output = "kgCO2/m2/s"
+conversions = ["multiply_by_KGC_TO_KGCO2"]
+
+[target]
+grid = "cubed_sphere"
+Nc = 720
+coord_file = "~/data/geosfp_cs/20240601/GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.20240601_0030.V01.nc4"
+
+[output]
+path = "/temp1/atmos_transport/emissions/lmdz_co2_cs_c720_float32.bin"
+species = "co2"
+float_type = "Float32"

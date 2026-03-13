@@ -1,18 +1,8 @@
 # ===========================================================================
-# CATRINE D7.1 — GEOS-IT C180 Cubed-Sphere
+# CATRINE D7.1 — GEOS-IT C180 (Advection-only, NO mass fixers)
 #
-# 4-tracer intercomparison: CO2, fossil CO2, SF6, 222Rn
-# Period: 1 Dec 2021 — 31 Dec 2023 (full 2-year run)
-# Met data: GEOS-IT C180, cubed-sphere mass fluxes from WashU
-# Output: 3-hourly, native CS binary, daily files
-#
-# Protocol: https://www.catrine-project.eu/
-#
-# Usage:
-#   using CUDA
-#   using AtmosTransport
-#   model = build_model_from_config("config/runs/catrine_geosit_c180.toml")
-#   run!(model)
+# Same as advonly but with mass_fixer = false
+# Purpose: isolate whether per-cell + global mass fixer cause wave artifacts
 # ===========================================================================
 
 [architecture]
@@ -33,21 +23,16 @@ surface_data_bin_dir = "/temp1/catrine/met/geosit_c180/surface_bin"
 coord_file       = "~/code/gitHub/AtmosTransportModel/data/grids/cs_c180_gridspec.nc"
 start_date       = "2021-12-01"
 end_date         = "2021-12-31"
-dt               = 300                   # advection sub-step [s]
-met_interval     = 3600                  # 1-hour met updates
-mass_flux_dt     = 450                   # dynamics timestep (NOT met interval)
+dt               = 300
+met_interval     = 3600
+mass_flux_dt     = 450
 Hp               = 3
 
-# --- Initial conditions ---
-# CO2 and SF6 from LSCE inversions (1 Dec 2021 00:00 UTC)
-# fossil_co2 and rn222 start from zero
 [initial_conditions]
 co2.file     = "~/data/AtmosTransport/catrine/InitialConditions/startCO2_202112010000.nc"
 co2.variable = "CO2"
 sf6.file     = "~/data/AtmosTransport/catrine/InitialConditions/startSF6_202112010000.nc"
 sf6.variable = "SF6"
-
-# --- Tracers ---
 
 [tracers.co2]
 emission   = "lmdz_co2"
@@ -74,36 +59,25 @@ scale_year       = 2022
 emission  = "zhang_rn222"
 file      = "~/data/AtmosTransport/catrine/preprocessed_c180/zhang_rn222_cs_c180_float32.bin"
 chemistry = "decay"
-half_life = 330350.4                    # 3.8235 days in seconds
+half_life = 330350.4
 
-# --- Chemistry (222Rn radioactive decay) ---
 [chemistry]
 type = "composite"
 
-# --- Advection ---
 [advection]
-scheme    = "ppm"
-ppm_order = 7
+scheme      = "ppm"
+ppm_order   = 7
+damp_coeff  = 0.02
+mass_fixer  = false
 
-# --- Convection (RAS: uses CMFMC + DTRAIN from A3dyn) ---
-[convection]
-type = "ras"
+# NO convection
+# NO diffusion
 
-[diffusion]
-type   = "nonlocal_pbl"
-beta_h = 15.0
-Kz_bg  = 0.1
-Kz_min = 0.01
-Kz_max = 500.0
-fak    = 8.5
-sffrac = 0.1
-
-# --- Output (3-hourly, native CS binary, daily files) ---
 [output]
-filename      = "/temp2/catrine-runs/output/catrine_geosit_c180"
+filename      = "/temp2/catrine-runs/output/catrine_geosit_c180_nofixer"
 format        = "binary"
 split         = "daily"
-interval      = 10800                    # 3 hours
+interval      = 10800
 
 [output.fields]
 sf6_3d           = {type = "full_3d", species = "sf6"}

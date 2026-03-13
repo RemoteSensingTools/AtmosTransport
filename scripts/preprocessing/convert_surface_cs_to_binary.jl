@@ -219,6 +219,17 @@ function convert_a3dyn(nc_path::String, bin_path::String)
     Nz = Int(ds.dim["lev"])
     Nt = Int(ds.dim["time"])
 
+    # Auto-detect vertical ordering from DTRAIN data:
+    # GEOS-IT (bottom-to-top): active values at small k (lower troposphere)
+    # GEOS-FP (top-to-bottom): active values at large k (lower troposphere)
+    dtrain_sample = FT.(ds["DTRAIN"][:, :, 1, :, 1])  # (Nc, Nc, Nz) panel 1, time 1
+    mid = div(Nc, 2)
+    q1 = div(Nz, 4)
+    abs_lo = sum(abs(dtrain_sample[mid, mid, k]) for k in 1:q1)
+    abs_hi = sum(abs(dtrain_sample[mid, mid, k]) for k in (Nz - q1 + 1):Nz)
+    vertical_order = abs_lo > FT(10) * abs_hi ? "bottom_to_top" : "top_to_bottom"
+    @info "  A3dyn vertical ordering: $vertical_order"
+
     header = Dict{String,Any}(
         "magic"        => "DYN3",
         "version"      => 1,
@@ -232,6 +243,7 @@ function convert_a3dyn(nc_path::String, bin_path::String)
         "header_bytes" => HEADER_SIZE,
         "panel_elems"  => Nc * Nc * Nz,
         "elems_per_timestep" => 6 * Nc * Nc * Nz,
+        "vertical_order" => vertical_order,
     )
 
     open(bin_path, "w") do io
@@ -259,6 +271,16 @@ function convert_i3_qv(nc_path::String, bin_path::String)
     Nz = Int(ds.dim["lev"])
     Nt = Int(ds.dim["time"])
 
+    # Auto-detect vertical ordering from QV data:
+    # GEOS-IT (bottom-to-top): high QV at small k (surface = moist)
+    # GEOS-FP (top-to-bottom): high QV at large k (surface = moist)
+    qv_sample = FT.(coalesce.(ds["QV"][:, :, 1, :, 1], FT(0)))  # (Nc, Nc, Nz) panel 1
+    mid = div(Nc, 2)
+    qv_k1 = qv_sample[mid, mid, 1]
+    qv_kN = qv_sample[mid, mid, Nz]
+    vertical_order = qv_k1 > FT(10) * qv_kN ? "bottom_to_top" : "top_to_bottom"
+    @info "  I3 (QV) vertical ordering: $vertical_order"
+
     header = Dict{String,Any}(
         "magic"        => "QV3D",
         "version"      => 1,
@@ -272,6 +294,7 @@ function convert_i3_qv(nc_path::String, bin_path::String)
         "header_bytes" => HEADER_SIZE,
         "panel_elems"  => Nc * Nc * Nz,
         "elems_per_timestep" => 6 * Nc * Nc * Nz,
+        "vertical_order" => vertical_order,
     )
 
     open(bin_path, "w") do io

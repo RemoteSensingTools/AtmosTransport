@@ -126,6 +126,30 @@ function compute_air_mass_panel!(m::AbstractArray{FT,3},
     return nothing
 end
 
+@kernel function _dry_air_mass_cs_kernel!(m_out, @Const(delp), @Const(qv), @Const(area), g, Hp)
+    i, j, k = @index(Global, NTuple)
+    @inbounds m_out[Hp + i, Hp + j, k] = delp[Hp + i, Hp + j, k] * (1 - qv[Hp + i, Hp + j, k]) * area[i, j] / g
+end
+
+"""
+$(SIGNATURES)
+
+Compute DRY air mass for a single cubed-sphere panel: `m = delp × (1 - qv) × area / g`.
+`m`, `delp`, and `qv` are haloed arrays (Nc+2Hp × Nc+2Hp × Nz).
+`area` is an interior-only array (Nc × Nc).
+"""
+function compute_air_mass_panel!(m::AbstractArray{FT,3},
+                                 delp::AbstractArray{FT,3},
+                                 qv::AbstractArray{FT,3},
+                                 area::AbstractMatrix{FT},
+                                 g::FT, Nc::Int, Nz::Int, Hp::Int) where FT
+    backend = get_backend(m)
+    k! = _dry_air_mass_cs_kernel!(backend, 256)
+    k!(m, delp, qv, area, g, Hp; ndrange=(Nc, Nc, Nz))
+    synchronize(backend)
+    return nothing
+end
+
 # ---- Dry-Air Correction Kernels -------------------------------------------
 #
 # Convert wet (total moist) DELP, mass fluxes, and convective fluxes to dry
@@ -363,6 +387,56 @@ end
     end
 end
 
+# ---- Dry-Air Pressure-Fixer Kernel ------------------------------------------
+#
+# Same as _cm_pressure_fixer_kernel! but converts MOIST DELP to DRY before
+# computing dp_sum. This corrects the moist/dry basis mismatch:
+#   pit (from am/bm = MFXC/MFYC) is DRY air convergence
+#   dp_sum (from DELP tendency) is MOIST unless corrected
+# Without this, residual has systematic bias ~ QV (2-4% in tropics),
+# causing spurious vertical redistribution via bt weights.
+#
+# Uses single QV field (current window) for both delp_curr and delp_next.
+# Approximation error: QV varies <0.1% between hourly windows, so
+# correction is accurate to ~0.002% (0.1% × 2%).
+
+@kernel function _cm_pressure_fixer_dry_kernel!(cm, @Const(am), @Const(bm), @Const(bt),
+        @Const(delp_curr), @Const(delp_next), @Const(qv),
+        @Const(area), g, n_sub_x2, Hp, Nc, Nz)
+    i, j = @index(Global, NTuple)
+    FT = eltype(cm)
+    @inbounds begin
+        inv_g_n = one(FT) / (g * FT(n_sub_x2))
+        a = area[i, j]
+        pit = zero(FT)
+        dp_sum = zero(FT)
+        for k in 1:Nz
+            pit    += am[i, j, k] - am[i + 1, j, k] + bm[i, j, k] - bm[i, j + 1, k]
+            dry_fac = one(FT) - qv[Hp + i, Hp + j, k]
+            dp_diff = delp_next[Hp + i, Hp + j, k] - delp_curr[Hp + i, Hp + j, k]
+            dp_sum += dp_diff * dry_fac * a * inv_g_n
+        end
+        residual = pit - dp_sum
+        acc = zero(FT)
+        cm[i, j, 1] = acc
+        for k in 1:Nz
+            conv_k = am[i, j, k] - am[i + 1, j, k] + bm[i, j, k] - bm[i, j + 1, k]
+            dry_fac = one(FT) - qv[Hp + i, Hp + j, k]
+            dp_diff = delp_next[Hp + i, Hp + j, k] - delp_curr[Hp + i, Hp + j, k]
+            dp_k   = dp_diff * dry_fac * a * inv_g_n
+            acc += conv_k - bt[k] * residual - dp_k
+            cm[i, j, k + 1] = acc
+        end
+    end
+end
+
+# NOTE: The pressure-fixer functions below (compute_cm_pressure_fixer_panel! and
+# compute_dm_per_sub_panel!) are DORMANT — not called in the current run loop.
+# With pre-computed mass fluxes (MFXC/MFYC from FV3), air mass evolves freely
+# from the fluxes via pure continuity closure (compute_cm_panel!). Pressure
+# tendency corrections are not needed. These functions are retained as correct
+# implementations in case a prescribed-pressure transport mode is added later.
+
 """
 $(SIGNATURES)
 
@@ -379,13 +453,20 @@ function compute_cm_pressure_fixer_panel!(cm::AbstractArray{FT,3},
                                           delp_next::AbstractArray{FT,3},
                                           area::AbstractMatrix{FT},
                                           g::FT, n_sub::Int,
-                                          Nc::Int, Nz::Int, Hp::Int) where FT
+                                          Nc::Int, Nz::Int, Hp::Int;
+                                          qv=nothing) where FT
     backend = get_backend(cm)
     fill!(cm, zero(FT))
     n_sub_x2 = 2 * n_sub
-    k! = _cm_pressure_fixer_kernel!(backend, 256)
-    k!(cm, am, bm, bt, delp_curr, delp_next, area, g, n_sub_x2, Hp, Nc, Nz;
-       ndrange=(Nc, Nc))
+    if qv !== nothing
+        k! = _cm_pressure_fixer_dry_kernel!(backend, 256)
+        k!(cm, am, bm, bt, delp_curr, delp_next, qv, area, g, n_sub_x2, Hp, Nc, Nz;
+           ndrange=(Nc, Nc))
+    else
+        k! = _cm_pressure_fixer_kernel!(backend, 256)
+        k!(cm, am, bm, bt, delp_curr, delp_next, area, g, n_sub_x2, Hp, Nc, Nz;
+           ndrange=(Nc, Nc))
+    end
     synchronize(backend)
     return nothing
 end
@@ -464,6 +545,18 @@ end
         area[i, j] * inv_g_n
 end
 
+@kernel function _dm_per_sub_dry_kernel!(dm, @Const(delp_curr), @Const(delp_next),
+                                          @Const(qv), @Const(area), inv_g_n, Hp)
+    i, j, k = @index(Global, NTuple)
+    FT = eltype(dm)
+    @inbounds begin
+        dry_fac = one(FT) - qv[Hp + i, Hp + j, k]
+        dm[Hp + i, Hp + j, k] =
+            (delp_next[Hp + i, Hp + j, k] - delp_curr[Hp + i, Hp + j, k]) *
+            dry_fac * area[i, j] * inv_g_n
+    end
+end
+
 """
 $(SIGNATURES)
 
@@ -475,11 +568,17 @@ function compute_dm_per_sub_panel!(dm::AbstractArray{FT,3},
                                     delp_next::AbstractArray{FT,3},
                                     area::AbstractMatrix{FT},
                                     g::FT, n_sub::Int,
-                                    Nc::Int, Nz::Int, Hp::Int) where FT
+                                    Nc::Int, Nz::Int, Hp::Int;
+                                    qv=nothing) where FT
     backend = get_backend(dm)
     inv_g_n = FT(1) / (g * FT(n_sub))
-    k! = _dm_per_sub_kernel!(backend, 256)
-    k!(dm, delp_curr, delp_next, area, inv_g_n, Hp; ndrange=(Nc, Nc, Nz))
+    if qv !== nothing
+        k! = _dm_per_sub_dry_kernel!(backend, 256)
+        k!(dm, delp_curr, delp_next, qv, area, inv_g_n, Hp; ndrange=(Nc, Nc, Nz))
+    else
+        k! = _dm_per_sub_kernel!(backend, 256)
+        k!(dm, delp_curr, delp_next, area, inv_g_n, Hp; ndrange=(Nc, Nc, Nz))
+    end
     synchronize(backend)
     return nothing
 end

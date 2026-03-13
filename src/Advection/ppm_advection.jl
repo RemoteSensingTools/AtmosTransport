@@ -57,21 +57,29 @@ scheme = PPMAdvection{7}()
 ```
 """
 struct PPMAdvection{ORD} <: AbstractPPMScheme
-    function PPMAdvection{ORD}() where {ORD}
+    damp_coeff::Float64
+    use_linrood::Bool
+    use_vertical_remap::Bool
+    function PPMAdvection{ORD}(; damp_coeff::Real=0.0, use_linrood::Bool=false,
+                                 use_vertical_remap::Bool=false) where {ORD}
         ORD ∈ (4, 5, 6, 7) || throw(ArgumentError("ORD must be in {4,5,6,7}, got $ORD"))
-        return new{ORD}()
+        return new{ORD}(Float64(damp_coeff), use_linrood, use_vertical_remap)
     end
 end
 
-# Convenience constructor
-PPMAdvection(ORD::Int) = PPMAdvection{ORD}()
+# Convenience constructors
+PPMAdvection(ORD::Int; damp_coeff::Real=0.0, use_linrood::Bool=false,
+             use_vertical_remap::Bool=false) =
+    PPMAdvection{ORD}(; damp_coeff, use_linrood, use_vertical_remap)
 
 """
     PPMAdvection{7}()
 
 Return the recommended PPM advection scheme (ORD=7).
 """
-PPMAdvection() = PPMAdvection{7}()
+PPMAdvection(; damp_coeff::Real=0.0) = PPMAdvection{7}(; damp_coeff)
 
-Base.show(io::IO, ::PPMAdvection{ORD}) where {ORD} =
-    print(io, "PPMAdvection{$ORD} (Putman & Lin, ORD=$ORD)")
+function Base.show(io::IO, s::PPMAdvection{ORD}) where {ORD}
+    damp = s.damp_coeff > 0 ? ", damp=$(s.damp_coeff)" : ""
+    print(io, "PPMAdvection{$ORD} (Putman & Lin, ORD=$ORD$damp)")
+end

@@ -271,12 +271,19 @@ function build_model_from_config(config::Dict)
     Δt = get(met_data_cfg, "dt", 900.0)
 
     # --- Run metadata for provenance tracking ---
+    adv_cfg = get(config, "advection", Dict())
+    mass_fixer = get(adv_cfg, "mass_fixer", true)
+    dry_correction = get(adv_cfg, "dry_correction", true)
+    remap_pressure_fix = get(adv_cfg, "remap_pressure_fix", true)
     metadata = Dict{String, Any}(
         "config"    => config,
         "user"      => get(ENV, "USER", "unknown"),
         "hostname"  => gethostname(),
         "julia_version" => string(VERSION),
         "created"   => string(Dates.now()),
+        "mass_fixer" => mass_fixer,
+        "dry_correction" => dry_correction,
+        "remap_pressure_fix" => remap_pressure_fix,
     )
 
     return _Models.TransportModel(;
@@ -821,6 +828,9 @@ Build advection scheme from `[advection]` TOML section.
 [advection]
 scheme = "slopes"       # or "ppm" (default "slopes")
 ppm_order = 7           # ORD ∈ {4, 5, 6, 7}, only if scheme="ppm"
+linrood = false         # Lin-Rood cross-term splitting (CS grids, ppm only)
+vertical_remap = false  # remap path for CS PPM
+remap_pressure_fix = true  # scale target dp column to source mass (remap path)
 ```
 """
 function _build_advection(config::Dict, ::Type{FT}) where FT
@@ -833,7 +843,10 @@ function _build_advection(config::Dict, ::Type{FT}) where FT
     if scheme == "ppm"
         ppm_order = get(adv_cfg, "ppm_order", 7)
         ppm_order ∈ (4, 5, 6, 7) || @error "ppm_order must be in {4, 5, 6, 7}, got $ppm_order"
-        return PPMAdvection{ppm_order}()
+        damp_coeff = get(adv_cfg, "damp_coeff", 0.0)
+        use_linrood = get(adv_cfg, "linrood", false)
+        use_vertical_remap = get(adv_cfg, "vertical_remap", false)
+        return PPMAdvection{ppm_order}(; damp_coeff, use_linrood, use_vertical_remap)
     else
         @warn "Unknown advection scheme: $scheme — using slopes advection"
         return SlopesAdvection()

@@ -1,17 +1,15 @@
 # ===========================================================================
-# CATRINE D7.1 — GEOS-IT C180 Cubed-Sphere
+# CATRINE D7.1 — GEOS-IT C180 Cubed-Sphere (ORD=7 + divergence damping test)
 #
-# 4-tracer intercomparison: CO2, fossil CO2, SF6, 222Rn
-# Period: 1 Dec 2021 — 31 Dec 2023 (full 2-year run)
-# Met data: GEOS-IT C180, cubed-sphere mass fluxes from WashU
-# Output: 3-hourly, native CS binary, daily files
-#
-# Protocol: https://www.catrine-project.eu/
+# Same as catrine_geosit_c180.toml but with:
+#   - damp_coeff = 0.02 (del-2 divergence damping at panel boundaries)
+#   - 1-month run (Dec 2021)
+#   - Separate output directory for comparison
 #
 # Usage:
 #   using CUDA
 #   using AtmosTransport
-#   model = build_model_from_config("config/runs/catrine_geosit_c180.toml")
+#   model = build_model_from_config("config/runs/catrine_geosit_c180_ord7damp.toml")
 #   run!(model)
 # ===========================================================================
 
@@ -80,10 +78,11 @@ half_life = 330350.4                    # 3.8235 days in seconds
 [chemistry]
 type = "composite"
 
-# --- Advection ---
+# --- Advection (PPM ORD=7 + divergence damping) ---
 [advection]
-scheme    = "ppm"
-ppm_order = 7
+scheme     = "ppm"
+ppm_order  = 7
+damp_coeff = 0.02
 
 # --- Convection (RAS: uses CMFMC + DTRAIN from A3dyn) ---
 [convection]
@@ -100,7 +99,7 @@ sffrac = 0.1
 
 # --- Output (3-hourly, native CS binary, daily files) ---
 [output]
-filename      = "/temp2/catrine-runs/output/catrine_geosit_c180"
+filename      = "/temp2/catrine-runs/output/catrine_geosit_c180_ord7damp"
 format        = "binary"
 split         = "daily"
 interval      = 10800                    # 3 hours

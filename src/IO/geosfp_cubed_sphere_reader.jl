@@ -431,11 +431,27 @@ function read_geosfp_cs_cmfmc(filepath::String;
         Nc = size(cmfmc_raw, 1)
         Nz_edge = size(cmfmc_raw, 4)  # 73 edges for 72 layers
 
-        # GEOS-IT stores bottom-to-top; flip to TOA-first for consistency
-        # with the CTM_A1 reader. The A3mstE profile has:
-        #   k=1 (surface) = 0, active in lower levels, k=Nz_edge (TOA) = 0
-        # After flip: k=1 (TOA) = 0, active in upper indices, k=Nz_edge (surface) = 0
-        reverse!(cmfmc_raw, dims=4)
+        # Auto-detect vertical ordering: CMFMC has zero at both TOA and surface
+        # boundaries, with active convective flux in between. For bottom-to-top
+        # (GEOS-IT), the peak activity is at small k; for top-to-bottom (GEOS-FP),
+        # it's at large k. We use the same DELP-based heuristic as the CTM_A1
+        # reader would, but since we don't have DELP here, we check whether the
+        # lower quarter of levels has more activity than the upper quarter.
+        mid = div(Nc, 2)
+        q1 = div(Nz_edge, 4)
+        abs_lo = zero(FT)
+        abs_hi = zero(FT)
+        for k in 1:q1
+            abs_lo += abs(cmfmc_raw[mid, mid, 1, k])
+        end
+        for k in (Nz_edge - q1 + 1):Nz_edge
+            abs_hi += abs(cmfmc_raw[mid, mid, 1, k])
+        end
+        # Bottom-to-top: active flux near small k → abs_lo >> abs_hi
+        if abs_lo > FT(10) * abs_hi
+            @info "CMFMC: detected bottom-to-top ordering — flipping to TOA-first" maxlog=1
+            reverse!(cmfmc_raw, dims=4)
+        end
 
         # Build haloed panel arrays
         cmfmc_haloed = ntuple(6) do p
@@ -483,8 +499,23 @@ function read_geosfp_cs_dtrain(filepath::String;
         Nc = size(dtrain_raw, 1)
         Nz = size(dtrain_raw, 4)  # 72 layer centers
 
-        # GEOS-IT stores bottom-to-top; flip to TOA-first
-        reverse!(dtrain_raw, dims=4)
+        # Auto-detect vertical ordering: DTRAIN (detrainment) is active in the
+        # lower/mid troposphere. For bottom-to-top (GEOS-IT), activity is at
+        # small k; for top-to-bottom (GEOS-FP), it's at large k.
+        mid = div(Nc, 2)
+        q1 = div(Nz, 4)
+        abs_lo = zero(FT)
+        abs_hi = zero(FT)
+        for k in 1:q1
+            abs_lo += abs(dtrain_raw[mid, mid, 1, k])
+        end
+        for k in (Nz - q1 + 1):Nz
+            abs_hi += abs(dtrain_raw[mid, mid, 1, k])
+        end
+        if abs_lo > FT(10) * abs_hi
+            @info "DTRAIN: detected bottom-to-top ordering — flipping to TOA-first" maxlog=1
+            reverse!(dtrain_raw, dims=4)
+        end
 
         # Build haloed panel arrays
         dtrain_haloed = ntuple(6) do p

@@ -1,0 +1,72 @@
+# ===========================================================================
+# CATRINE D7.1 — 8-day validation run for GeosChem comparison
+#
+# Same physics as catrine_geosit_c180.toml but limited to Dec 1-8, 2021.
+# Output pattern matches animate_catrine_vs_geoschem.jl expectations.
+# ===========================================================================
+
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "cubed_sphere"
+met_source = "geosfp"
+Nc         = 180
+
+[met_data]
+driver           = "geosfp_cs"
+product          = "geosit_c180"
+netcdf_dir       = "~/data/geosit_c180_catrine"
+preprocessed_dir = "/temp2/catrine-runs/met/geosit_c180"
+surface_data_bin_dir = "/temp1/catrine/met/geosit_c180/surface_bin"
+coord_file       = "~/code/gitHub/AtmosTransportModel/data/grids/cs_c180_gridspec.nc"
+start_date       = "2021-12-01"
+end_date         = "2021-12-08"
+dt               = 300
+met_interval     = 3600
+mass_flux_dt     = 450
+Hp               = 3
+
+[initial_conditions]
+co2.file     = "~/data/AtmosTransport/catrine/InitialConditions/startCO2_202112010000.nc"
+co2.variable = "CO2"
+
+[tracers.co2]
+emission   = "lmdz_co2"
+file       = "~/data/AtmosTransport/catrine/preprocessed_c180/lmdz_co2_cs_c180_float32.bin"
+species    = "co2"
+flux_var   = "flux_apos"
+start_date = "2021-12-01"
+end_date   = "2023-12-31"
+
+[advection]
+scheme    = "ppm"
+ppm_order = 7
+
+[convection]
+type = "ras"
+
+[diffusion]
+type   = "nonlocal_pbl"
+beta_h = 15.0
+Kz_bg  = 0.1
+Kz_min = 0.01
+Kz_max = 500.0
+fak    = 8.5
+sffrac = 0.1
+
+[output]
+filename      = "/temp2/catrine-runs/output/catrine_geosit_c180_validation"
+format        = "binary"
+split         = "daily"
+interval      = 10800
+auto_convert  = true
+
+[output.fields]
+co2_3d           = {type = "full_3d", species = "co2"}
+co2_column_mass  = {type = "column_mass", species = "co2"}
+surface_pressure = "surface_pressure"
+
+[buffering]
+strategy = "double"

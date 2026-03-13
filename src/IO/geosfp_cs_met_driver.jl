@@ -825,9 +825,9 @@ const _DTRAIN_PANEL_BUF = Ref{Any}(nothing)
 function _get_dtrain_bin_io(filepath::String)
     cache = _DTRAIN_BIN_IO_CACHE[]
     if cache !== nothing
-        old_path, old_io, old_nz = cache
+        old_path, old_io, old_nz, old_need_flip = cache
         if old_path == filepath && isopen(old_io)
-            return old_io, old_nz
+            return old_io, old_nz, old_need_flip
         end
         isopen(old_io) && close(old_io)
     end
@@ -837,8 +837,12 @@ function _get_dtrain_bin_io(filepath::String)
     json_end = something(findfirst(==(0x00), hdr_bytes), _SFC_BIN_HEADER_SIZE + 1) - 1
     hdr = JSON3.read(String(hdr_bytes[1:json_end]))
     Nz = Int(hdr.Nz)
-    _DTRAIN_BIN_IO_CACHE[] = (filepath, io, Nz)
-    return io, Nz
+    # Determine flip: bottom-to-top files need flipping to TOA-first
+    # Default to bottom-to-top for backward compat with old files
+    vorder = get(hdr, :vertical_order, "bottom_to_top")
+    need_flip = (vorder == "bottom_to_top")
+    _DTRAIN_BIN_IO_CACHE[] = (filepath, io, Nz, need_flip)
+    return io, Nz, need_flip
 end
 
 """
@@ -846,12 +850,13 @@ Load DTRAIN from flat binary A3dyn file into pre-allocated panels.
 
 Uses JSON-header binary format (same as A3mstE). Binary layout:
   [8192-byte JSON header] [timestep 1: DTRAIN p1..p6] [timestep 2] ...
-Each panel is Nc×Nc×Nz Float32 at layer centers, bottom-to-top (GEOS-IT native).
+Each panel is Nc×Nc×Nz Float32 at layer centers. Vertical ordering is auto-detected
+from header (bottom-to-top for GEOS-IT, top-to-bottom for GEOS-FP).
 """
 function _load_dtrain_from_bin!(dtrain_panels::NTuple{6}, bin_path::String,
                                  time_index::Int, Nc::Int, Hp::Int,
                                  merge_map, ::Type{FT}) where FT
-    io, Nz_native = _get_dtrain_bin_io(bin_path)
+    io, Nz_native, need_flip = _get_dtrain_bin_io(bin_path)
 
     panel_elems = Nc * Nc * Nz_native
     elems_per_ts = 6 * panel_elems
@@ -875,7 +880,7 @@ function _load_dtrain_from_bin!(dtrain_panels::NTuple{6}, bin_path::String,
 
         if merge_map !== nothing && Nz_native != Nz_out
             @inbounds for k_file in 1:Nz_native
-                k_model = Nz_native - k_file + 1  # flip bottom-to-top → TOA-first
+                k_model = need_flip ? (Nz_native - k_file + 1) : k_file
                 k_merged = merge_map[k_model]
                 for jj in 1:Nc, ii in 1:Nc
                     dtrain_panels[p][ii + Hp, jj + Hp, k_merged] +=
@@ -884,7 +889,7 @@ function _load_dtrain_from_bin!(dtrain_panels::NTuple{6}, bin_path::String,
             end
         else
             @inbounds for k_file in 1:Nz_native
-                k_model = Nz_native - k_file + 1  # flip bottom-to-top → TOA-first
+                k_model = need_flip ? (Nz_native - k_file + 1) : k_file
                 for jj in 1:Nc, ii in 1:Nc
                     dtrain_panels[p][ii + Hp, jj + Hp, k_model] = panel_buf[ii, jj, k_file]
                 end
@@ -916,9 +921,9 @@ const _QV_PANEL_BUF = Ref{Any}(nothing)
 function _get_qv_bin_io(filepath::String)
     cache = _QV_BIN_IO_CACHE[]
     if cache !== nothing
-        old_path, old_io, old_nz = cache
+        old_path, old_io, old_nz, old_need_flip = cache
         if old_path == filepath && isopen(old_io)
-            return old_io, old_nz
+            return old_io, old_nz, old_need_flip
         end
         isopen(old_io) && close(old_io)
     end
@@ -928,20 +933,25 @@ function _get_qv_bin_io(filepath::String)
     json_end = something(findfirst(==(0x00), hdr_bytes), _SFC_BIN_HEADER_SIZE + 1) - 1
     hdr = JSON3.read(String(hdr_bytes[1:json_end]))
     Nz = Int(hdr.Nz)
-    _QV_BIN_IO_CACHE[] = (filepath, io, Nz)
-    return io, Nz
+    # Determine flip: bottom-to-top files need flipping to TOA-first
+    # Default to bottom-to-top for backward compat with old files
+    vorder = get(hdr, :vertical_order, "bottom_to_top")
+    need_flip = (vorder == "bottom_to_top")
+    _QV_BIN_IO_CACHE[] = (filepath, io, Nz, need_flip)
+    return io, Nz, need_flip
 end
 
 """
 Load QV (specific humidity) from flat binary I3 file into pre-allocated panels.
 
 Binary layout: [8192-byte JSON header] [timestep 1: QV p1..p6] [timestep 2] ...
-Each panel is Nc×Nc×Nz Float32 at layer centers, bottom-to-top (GEOS-IT native).
+Each panel is Nc×Nc×Nz Float32 at layer centers. Vertical ordering is auto-detected
+from header (bottom-to-top for GEOS-IT, top-to-bottom for GEOS-FP).
 """
 function _load_qv_from_bin!(qv_panels::NTuple{6}, bin_path::String,
                              time_index::Int, Nc::Int, Hp::Int,
                              ::Type{FT}) where FT
-    io, Nz_native = _get_qv_bin_io(bin_path)
+    io, Nz_native, need_flip = _get_qv_bin_io(bin_path)
 
     panel_elems = Nc * Nc * Nz_native
     elems_per_ts = 6 * panel_elems
@@ -961,9 +971,8 @@ function _load_qv_from_bin!(qv_panels::NTuple{6}, bin_path::String,
 
         fill!(qv_panels[p], zero(FT))
 
-        # Flip bottom-to-top → TOA-first (no merge_map — CATRINE uses native 72L)
         @inbounds for k_file in 1:Nz_native
-            k_model = Nz_native - k_file + 1
+            k_model = need_flip ? (Nz_native - k_file + 1) : k_file
             for jj in 1:Nc, ii in 1:Nc
                 qv_panels[p][ii + Hp, jj + Hp, k_model] = panel_buf[ii, jj, k_file]
             end

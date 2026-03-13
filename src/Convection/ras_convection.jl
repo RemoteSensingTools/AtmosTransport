@@ -39,9 +39,11 @@
 #   so all updraft air is conserved (no rainout removal).
 #
 # Air mass convention:
-#   DELP, CMFMC, and DTRAIN are converted to dry basis on GPU before
-#   this kernel runs (see apply_dry_*_panel! in cubed_sphere_mass_flux.jl).
-#   BMASS = DELP_dry/g, so the scheme is self-consistent on dry air mass.
+#   CMFMC and DTRAIN are on MOIST (total air) basis, as provided by GEOS met data.
+#   DELP is also MOIST. BMASS = DELP/g, so all quantities are on the same basis.
+#   This matches GeosChem's approach (calc_met_mod.F90): mixed moist/dry basis
+#   is standard — horizontal fluxes (MFXC/MFYC) are dry, but convective fluxes
+#   and DELP are moist. No dry conversion is applied before convection.
 #
 # Level ordering:
 #   k=1 = TOA, k=Nz = surface (consistent with internal convention).
@@ -108,13 +110,6 @@ Arguments:
 
     FT = eltype(arr)
     tiny = FT(1e-30)
-
-    # ── Pre-pass: compute total tracer mass before convection ────────
-    # Needed for mass conservation correction (Pass 3).
-    total_rm_before = FT(0)
-    @inbounds for k in 1:Nz
-        total_rm_before += arr[ii, jj, k]
-    end
 
     # ── Pass 1: bottom-to-top — compute updraft concentration ────────
     # q_cloud_below tracks the updraft concentration entering from the
@@ -211,31 +206,12 @@ Arguments:
         end
     end
 
-    # ── Pass 3: mass conservation correction ─────────────────────────
-    # When CMFMC/DTRAIN are inconsistent (entrainment clipping), the
-    # column tracer mass can drift. Apply a uniform mixing ratio
-    # correction to enforce exact column mass conservation.
-    if tracer_mode === :rm
-        total_rm_after = FT(0)
-        total_m = FT(0)
-        @inbounds for k in 1:Nz
-            total_rm_after += arr[ii, jj, k]
-            total_m += m[ii, jj, k]
-        end
-        dm = total_rm_after - total_rm_before
-        if abs(dm) > tiny && total_m > tiny
-            q_corr = dm / total_m
-            @inbounds for k in 1:Nz
-                arr[ii, jj, k] -= q_corr * m[ii, jj, k]
-            end
-        end
-    else
-        # :mixing_ratio mode (LL grids): save mass-weighted sum before pass 2
-        # total_rm_before here is Σ q[k] (unweighted). For proper conservation
-        # we'd need Σ q[k]*delp[k], but arr was already overwritten. The LL
-        # path rarely hits entrainment clipping issues, so skip for now.
-        # CS grids (the primary use case) always use :rm mode above.
-    end
+    # No per-column mass fix: the q_corr = dm/total_m redistribution creates
+    # level-dependent bias (proportional to m[k]), causing systematic surface
+    # depletion that grows unstable over multi-day runs (~100 ppm in 8 days).
+    # Same issue as Tiedtke per-column fix creating Rossby wave artifacts.
+    # The global mass fixer in the run loop handles the small column drift
+    # from entrainment clipping (cmfmc_below > cmout).
 end
 
 

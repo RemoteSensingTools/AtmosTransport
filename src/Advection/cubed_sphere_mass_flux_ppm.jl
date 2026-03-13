@@ -68,6 +68,24 @@ Fluxes computed identically to Russell-Lerner path (TM5-style mass conserving).
         q_L_i,  q_R_i  = _ppm_edge_values(c_imm,  c_im,  c_i,   c_ip,  c_ipp,  Val(ORD))  # edges of cell i
         q_L_ip, q_R_ip = _ppm_edge_values(c_im,   c_i,   c_ip,  c_ipp, c_ipp2, Val(ORD))  # edges of cell i+1
 
+        # ORD=7: discontinuous treatment at CS panel boundaries (Putman & Lin App. C)
+        # Average two one-sided extrapolations at the face discontinuity.
+        # Compile-time eliminated for ORD != 7.
+        if ORD == 7
+            if i == 1
+                # Left panel boundary: face between halo cell i-1 and interior cell i=1
+                q_bdy = _ppm_face_edge_value_ord7_discontinuous(c_im, c_imm, c_i, c_ip)
+                q_R_im = q_bdy
+                q_L_i = q_bdy
+            end
+            if i == Nc
+                # Right panel boundary: face between interior cell i=Nc and halo cell i+1
+                q_bdy = _ppm_face_edge_value_ord7_discontinuous(c_i, c_im, c_ip, c_ipp)
+                q_R_i = q_bdy
+                q_L_ip = q_bdy
+            end
+        end
+
         # Colella & Woodward monotonicity constraint: flatten at local extrema.
         # If both edge departures have opposite sign to expected monotonicity,
         # the reconstruction overshoots — set edges to cell mean (first-order).
@@ -195,6 +213,22 @@ end
         q_L_j,  q_R_j  = _ppm_edge_values(c_jmm,  c_jm,  c_j,   c_jp,  c_jpp,  Val(ORD))  # edges of cell j
         q_L_jp, q_R_jp = _ppm_edge_values(c_jm,   c_j,   c_jp,  c_jpp, c_jpp2, Val(ORD))  # edges of cell j+1
 
+        # ORD=7: discontinuous treatment at CS panel boundaries (Putman & Lin App. C)
+        if ORD == 7
+            if j == 1
+                # South panel boundary: face between halo cell j-1 and interior cell j=1
+                q_bdy = _ppm_face_edge_value_ord7_discontinuous(c_jm, c_jmm, c_j, c_jp)
+                q_R_jm = q_bdy
+                q_L_j = q_bdy
+            end
+            if j == Nc
+                # North panel boundary: face between interior cell j=Nc and halo cell j+1
+                q_bdy = _ppm_face_edge_value_ord7_discontinuous(c_j, c_jm, c_jp, c_jpp)
+                q_R_j = q_bdy
+                q_L_jp = q_bdy
+            end
+        end
+
         # Colella & Woodward monotonicity constraint: flatten at local extrema.
         if (q_R_jm - c_jm) * (c_jm - q_L_jm) <= zero(FT); q_L_jm = c_jm; q_R_jm = c_jm; end
         if (q_R_j  - c_j)  * (c_j  - q_L_j)  <= zero(FT); q_L_j  = c_j;  q_R_j  = c_j;  end
@@ -283,23 +317,100 @@ function _sweep_y_ppm!(rm_panels, m_panels, bm_panels, grid::CubedSphereGrid,
 end
 
 # ---------------------------------------------------------------------------
+# Divergence Damping (del-2 diffusion on mixing ratio)
+#
+# FV3-style horizontal diffusion to suppress grid imprinting at panel boundaries.
+# Conservative flux-form Laplacian: face fluxes telescope exactly → mass conserving.
+# Applied once before the first Strang sweep (not per-subcycle).
+#
+# Reference: tp_core.F90:deln_flux (simplified to del-2 for cubed-sphere)
+# ---------------------------------------------------------------------------
+
+@kernel function _divergence_damping_cs_kernel!(rm_new, @Const(rm), @Const(m), damp, Hp)
+    i, j, k = @index(Global, NTuple)
+    @inbounds begin
+        ii = Hp + i
+        jj = Hp + j
+        FT = eltype(rm)
+
+        # Mixing ratios at cell center and 4 face neighbors
+        m_ij = m[ii, jj, k]
+        c_ij = _safe_mixing_ratio(rm[ii, jj, k], m_ij)
+
+        m_xm = m[ii - 1, jj, k]; c_xm = _safe_mixing_ratio(rm[ii - 1, jj, k], m_xm)
+        m_xp = m[ii + 1, jj, k]; c_xp = _safe_mixing_ratio(rm[ii + 1, jj, k], m_xp)
+        m_ym = m[ii, jj - 1, k]; c_ym = _safe_mixing_ratio(rm[ii, jj - 1, k], m_ym)
+        m_yp = m[ii, jj + 1, k]; c_yp = _safe_mixing_ratio(rm[ii, jj + 1, k], m_yp)
+
+        # Face-averaged air mass for conservative flux form
+        m_face_xm = FT(0.5) * (m_xm + m_ij)
+        m_face_xp = FT(0.5) * (m_xp + m_ij)
+        m_face_ym = FT(0.5) * (m_ym + m_ij)
+        m_face_yp = FT(0.5) * (m_yp + m_ij)
+
+        # Conservative Laplacian: net diffusive flux into cell from all 4 faces
+        diff = m_face_xm * (c_xm - c_ij) + m_face_xp * (c_xp - c_ij) +
+               m_face_ym * (c_ym - c_ij) + m_face_yp * (c_yp - c_ij)
+
+        rm_new[ii, jj, k] = rm[ii, jj, k] + FT(damp) * diff
+    end
+end
+
+"""
+    apply_divergence_damping_cs!(rm_panels, m_panels, grid, ws, damp_coeff)
+
+Apply conservative del-2 divergence damping to tracer panels on cubed-sphere grid.
+Mass-conserving flux-form Laplacian diffusion on mixing ratio (c = rm/m).
+Typical `damp_coeff` values: 0.02–0.05 for mild smoothing of panel-boundary noise.
+"""
+function apply_divergence_damping_cs!(rm_panels, m_panels, grid::CubedSphereGrid, ws, damp_coeff)
+    FT = floattype(grid)
+    Hp = grid.Hp
+    Nc = grid.Nc
+    Nz = grid.Nz
+
+    fill_panel_halos!(rm_panels, grid)
+    fill_panel_halos!(m_panels, grid)
+
+    for p in 1:6
+        backend = get_backend(rm_panels[p])
+        k! = _divergence_damping_cs_kernel!(backend, 256)
+        k!(ws.rm_buf, rm_panels[p], m_panels[p], FT(damp_coeff), Hp;
+           ndrange=(Nc, Nc, Nz))
+        synchronize(backend)
+        _copy_interior!(rm_panels[p], ws.rm_buf, Hp, Nc, Nz)
+    end
+
+    return nothing
+end
+
+# ---------------------------------------------------------------------------
 # Main Strang Split Wrapper for PPM
 # ---------------------------------------------------------------------------
 
 """
     strang_split_massflux_ppm!(rm_panels, m_panels, am_panels, bm_panels, cm_panels,
-                               grid, ::Val{ORD}, ws)
+                               grid, ::Val{ORD}, ws; cfl_limit=0.95, damp_coeff=0.0)
 
 Strang-split mass-flux advection using Putman & Lin PPM (all ORD variants).
 
-Sequence: X → Y → Z → Z → Y → X
+Sequence: [optional damping] → X → Y → Z → Z → Y → X
 where Z uses the standard column-sequential kernel (PPM not needed vertically).
+
+# Keyword arguments
+- `cfl_limit=0.95`: maximum CFL before subcycling
+- `damp_coeff=0.0`: del-2 divergence damping coefficient (0 = off, typical: 0.02–0.05)
 
 Dispatch on Val{ORD} ensures compile-time kernel specialization.
 """
 function strang_split_massflux_ppm!(rm_panels, m_panels, am_panels, bm_panels, cm_panels,
                                     grid::CubedSphereGrid, ::Val{ORD}, ws;
-                                    cfl_limit=0.95) where ORD
+                                    cfl_limit=0.95, damp_coeff=0.0) where ORD
+    # Optional divergence damping (applied once before Strang sweeps)
+    if damp_coeff > 0
+        apply_divergence_damping_cs!(rm_panels, m_panels, grid, ws, damp_coeff)
+    end
+
     # X → Y → Z → Z → Y → X (Strang splitting)
     _sweep_x_ppm!(rm_panels, m_panels, am_panels, grid, Val(ORD), ws; cfl_limit)
     _sweep_y_ppm!(rm_panels, m_panels, bm_panels, grid, Val(ORD), ws; cfl_limit)

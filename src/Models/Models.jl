@@ -258,8 +258,13 @@ function run!(model::TransportModel, met_source::MetDataSource,
     return model
 end
 
-# New driver-based run implementations (dispatch on grid + buffering)
-include("run_implementations.jl")
+# Run loop components (included in dependency order)
+include("run_helpers.jl")         # Physics setup, advection dispatch, emission helpers
+include("mass_diagnostics.jl")    # Mass conservation tracking
+include("io_scheduler.jl")        # IOScheduler: SingleBuffer/DoubleBuffer abstraction
+include("simulation_state.jl")    # Allocation: physics buffers, tracers, air mass, geometry
+include("physics_phases.jl")      # Grid-dispatched phase functions for unified run loop
+include("run_loop.jl")            # Unified run loop (single _run_loop! via dispatch)
 
 # =====================================================================
 # Pretty-print tree for TransportModel

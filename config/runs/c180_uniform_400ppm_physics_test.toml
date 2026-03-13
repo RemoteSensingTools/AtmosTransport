@@ -1,0 +1,79 @@
+# ===========================================================================
+# Uniform 400 ppm physics validation test template
+# Purpose: isolate convection/diffusion bias with fixed advection.
+# Each physics component should preserve a uniform field exactly.
+#
+# Variants (override sections below):
+#   A. Advection only (no conv, no diff) — BASELINE (done, -0.026 ppm drift)
+#   B. + RAS convection: uncomment [convection]
+#   C. + Tiedtke convection: uncomment [convection] with type = "tiedtke"
+#   D. + PBL diffusion only: uncomment [diffusion]
+#   E. Full physics (RAS + diff): uncomment both [convection] and [diffusion]
+# ===========================================================================
+
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "cubed_sphere"
+met_source = "geosfp"
+Nc         = 180
+
+[met_data]
+driver           = "geosfp_cs"
+product          = "geosit_c180"
+netcdf_dir       = "~/data/geosit_c180_catrine"
+preprocessed_dir = "/temp2/catrine-runs/met/geosit_c180"
+surface_data_bin_dir = "/temp1/catrine/met/geosit_c180/surface_bin"
+coord_file       = "~/code/gitHub/AtmosTransportModel/data/grids/cs_c180_gridspec.nc"
+start_date       = "2021-12-01"
+end_date         = "2021-12-08"
+dt               = 300
+met_interval     = 3600
+mass_flux_dt     = 450
+Hp               = 3
+
+[initial_conditions]
+co2.uniform_value = 400e-6
+
+[tracers.co2]
+emission = "none"
+species  = "co2"
+
+[advection]
+scheme         = "ppm"
+ppm_order      = 7
+damp_coeff     = 0.02
+linrood        = false
+mass_fixer     = true
+dry_correction = true
+
+[output]
+filename      = "/temp2/catrine-runs/output/c180_uniform_physics_test"
+format        = "binary"
+split         = "daily"
+interval      = 10800
+auto_convert  = true
+
+[output.fields]
+co2_3d           = {type = "full_3d", species = "co2"}
+co2_column_mass  = {type = "column_mass", species = "co2"}
+surface_pressure = "surface_pressure"
+
+[buffering]
+strategy = "double"
+
+# --- Uncomment the sections below for different test variants ---
+
+# Test B: RAS convection (uncomment next 2 lines)
+# [convection]
+# type = "ras"
+
+# Test C: Tiedtke convection (uncomment next 2 lines instead)
+# [convection]
+# type = "tiedtke"
+
+# Test D/E: PBL diffusion (uncomment next 2 lines)
+# [diffusion]
+# type = "nonlocal_pbl"

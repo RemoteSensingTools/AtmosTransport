@@ -1,0 +1,65 @@
+# ===========================================================================
+# Debug: Remap path step-through — 2 windows, uniform CO2, no physics
+#
+# Purpose: MCP Julia interactive diagnosis of oscillation bug.
+# Uniform 400 ppm should stay perfectly uniform.
+# ===========================================================================
+
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "cubed_sphere"
+met_source = "geosfp"
+Nc         = 180
+
+[met_data]
+driver           = "geosfp_cs"
+product          = "geosit_c180"
+netcdf_dir       = "~/data/geosit_c180_catrine"
+preprocessed_dir = "/temp2/catrine-runs/met/geosit_c180"
+surface_data_bin_dir = "/temp1/catrine/met/geosit_c180/surface_bin"
+coord_file       = "~/code/gitHub/AtmosTransportModel/data/grids/cs_c180_gridspec.nc"
+start_date       = "2021-12-01"
+end_date         = "2021-12-01"
+dt               = 300
+met_interval     = 3600
+mass_flux_dt     = 450
+Hp               = 3
+
+[initial_conditions]
+co2.uniform_value = 400e-6
+
+[tracers.co2]
+emission = "none"
+
+[chemistry]
+type = "none"
+
+[advection]
+scheme          = "ppm"
+ppm_order       = 7
+damp_coeff      = 0.02
+linrood         = true
+vertical_remap  = true
+mass_fixer      = false
+
+# NO convection
+# NO diffusion
+
+[output]
+filename = "/tmp/debug_remap_2win"
+format   = "binary"
+split    = "daily"
+interval = 3600
+
+[output.fields]
+co2_3d = {type = "full_3d", species = "co2"}
+
+[buffering]
+strategy = "double"
+
+[metadata]
+dry_correction      = true
+remap_pressure_fix  = true

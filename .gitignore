@@ -8,6 +8,7 @@
 # Data and outputs (keep scripts; ignore large NetCDF)
 *.nc
 *.gif
+*.png
 data/
 !test/data/
 
@@ -33,3 +34,4 @@ docs/Manifest.toml
 docs/src/literated/
 docs/src/developer/
 .vscode/mcp.json
+catrine_advonly_snapshot.png

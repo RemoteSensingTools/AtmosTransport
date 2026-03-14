@@ -266,6 +266,13 @@ function compute_air_mass_phase!(sched, air, phys, grid::CubedSphereGrid, gc; dr
                                     gc.area[p], gc.gravity, Nc, Nz, Hp)
         end
     end
+    # Always compute MOIST air mass for convection (m_wet = delp × area / g).
+    # Convective mass fluxes (CMFMC, DTRAIN) are on MOIST basis, so rm↔q
+    # conversion must use moist air mass for consistency (GCHP convention).
+    for p in 1:6
+        compute_air_mass_panel!(air.m_wet[p], gpu.delp[p],
+                                gc.area[p], gc.gravity, Nc, Nz, Hp)
+    end
 end
 
 # =====================================================================
@@ -401,12 +408,14 @@ function advection_phase!(tracers, sched, air, phys, model,
                                   gpu.am, gpu.bm, gpu.cm,
                                   grid, model.advection_scheme, gpu.ws;
                                   cfl_limit=FT(0.95))
-        if phys.cmfmc_loaded[]
-            convect!(tracers, phys.cmfmc_gpu, gpu.Δp,
-                      model.convection, grid, dt_sub, phys.planet;
-                      dtrain_panels=phys.dtrain_loaded[] ? phys.dtrain_gpu : nothing,
-                      workspace=phys.ras_workspace)
-        end
+    end
+    # Convective transport ONCE per window (after all substeps).
+    if phys.cmfmc_loaded[]
+        dt_conv = FT(n_sub) * dt_sub
+        convect!(tracers, phys.cmfmc_gpu, gpu.Δp,
+                  model.convection, grid, dt_conv, phys.planet;
+                  dtrain_panels=phys.dtrain_loaded[] ? phys.dtrain_gpu : nothing,
+                  workspace=phys.ras_workspace)
     end
 end
 
@@ -459,54 +468,68 @@ function advection_phase!(tracers, sched, air, phys, model,
                     rm_t[p] .*= ws_vr.m_save[p] ./ air.m[p]
                 end
             end
+        end
 
-            # Convective transport per substep (if enabled)
-            # Restore m to prescribed basis first (rm already rescaled)
-            for p in 1:6; copyto!(air.m[p], ws_vr.m_save[p]); end
-            if phys.cmfmc_loaded[]
-                for (_, rm_t) in pairs(tracers)
-                    convect!(rm_t, air.m, phys.cmfmc_gpu, gpu.delp,
-                              model.convection, grid, dt_sub, phys.planet;
-                              dtrain_panels=phys.dtrain_loaded[] ? phys.dtrain_gpu : nothing,
-                              workspace=phys.ras_workspace)
-                end
+        # ── Convective transport ONCE per window (after all substeps) ─────
+        # Both TM5 and GCHP apply convection as a separate operator outside
+        # the advection substep loop. Interleaving convection with substeps
+        # causes 12× over-mixing because RAS recomputes q_cloud from the
+        # already-mixed environment at each call (nonlinear feedback).
+        # RAS internal subcycling handles CFL stability for the larger dt.
+        for p in 1:6; copyto!(air.m[p], ws_vr.m_save[p]); end
+        if phys.cmfmc_loaded[]
+            dt_conv = FT(n_sub) * dt_sub
+            for (_, rm_t) in pairs(tracers)
+                convect!(rm_t, air.m_wet, phys.cmfmc_gpu, gpu.delp,
+                          model.convection, grid, dt_conv, phys.planet;
+                          dtrain_panels=phys.dtrain_loaded[] ? phys.dtrain_gpu : nothing,
+                          workspace=phys.ras_workspace)
             end
         end
 
-        # Build target PE from next-window DELP (cumulative sum).
-        # When dry_correction + QV available, use dry DELP so target PE matches
-        # dry-basis source PE. Then fix pure-pressure levels (identity remap for
-        # levels where DELP is invariant to surface pressure) and scale only
-        # hybrid levels to absorb the PS difference from horizontal divergence.
-        # NOTE: The GCHP ak+bk*PS_dry approach doesn't work here because our
-        # target is the next met window's actual DELP (which deviates from the
-        # idealized coordinate after GEOS dynamics), not a fixed reference.
-        # For last window: target = source (identity remap, no vertical transport).
-        _dry_corr = get(model.metadata, "dry_correction", true)
-        _remap_fix = get(model.metadata, "remap_pressure_fix", true)
+        # GCHP-style PE computation (fv_tracer2d.F90:988-1035):
+        # Source PE: direct cumsum from actual air mass (m_save = DELP×(1-QV)×area/g).
+        #   Derived inside remap kernel from m_src (hybrid_pe=false).
+        #   GCHP uses cumsum of post-horizontal dpA — our m_save is equivalent
+        #   (prescribed dry air mass on current window's pressure structure).
+        # Target PE: direct cumsum of next-window dry DELP (no hybrid reconstruction).
+        #   The hybrid formula (PE=ak+bk×PS) deviates from actual met DELP by
+        #   0.1-1% per level (up to 250 Pa), causing systematic vertical pumping.
+        #   GCHP compensates with calcScalingFactor; direct cumsum avoids the issue.
         if has_next
             ng = next_gpu(sched)
-            if _dry_corr && phys.qv_loaded[]
-                compute_target_pressure_from_dry_delp_direct!(ws_vr, ng.delp, phys.qv_gpu, gc, grid)
+            if phys.qv_loaded[]
+                compute_target_pressure_from_dry_delp_direct!(ws_vr, ng.delp,
+                    phys.qv_gpu, gc, grid)
             else
                 compute_target_pressure_from_delp_direct!(ws_vr, ng.delp, gc, grid)
-            end
-            if _remap_fix
-                fix_target_bottom_pe!(ws_vr, ws_vr.m_save, gc, grid)
             end
         else
             compute_target_pressure_from_mass_direct!(ws_vr, air.m, gc, grid)
         end
 
-        # Vertical remap: each tracer remapped to target distribution
+        # Vertical remap: source PE from m_src inside kernel (hybrid_pe=false)
         for (_, rm_t) in pairs(tracers)
-            vertical_remap_cs!(rm_t, ws_vr.m_save, ws_vr, ws, gc, grid)
+            vertical_remap_cs!(rm_t, ws_vr.m_save, ws_vr, ws, gc, grid;
+                               hybrid_pe=false)
         end
 
         # Update air.m to target state (m = dp_tgt * area / g)
         update_air_mass_from_target!(air.m, ws_vr, gc, grid)
         # Copy to m_ref for output/diagnostics
         for p in 1:6; copyto!(air.m_ref[p], air.m[p]); end
+
+        # Recompute m_wet from updated air.m for post-advection physics.
+        # After remap, air.m is on target pressure basis; m_wet must match
+        # so that diffusion's q = rm/m_wet is consistent with remapped rm.
+        # m_wet = m_dry / (1-qv). Uses current-window QV (<0.1% approx).
+        if phys.qv_loaded[]
+            for p in 1:6
+                air.m_wet[p] .= air.m[p] ./ max.(1 .- phys.qv_gpu[p], eps(FT))
+            end
+        else
+            for p in 1:6; copyto!(air.m_wet[p], air.m[p]); end
+        end
     else
         # ═══════════════════════════════════════════════════════════════════
         # STRANG PATH: Existing cm-based Z-advection
@@ -532,15 +555,17 @@ function advection_phase!(tracers, sched, air, phys, model,
                     end
                 end
             end
+        end
 
-            # Convective transport per tracer per substep
-            if phys.cmfmc_loaded[]
-                for (_, rm_t) in pairs(tracers)
-                    convect!(rm_t, air.m_ref, phys.cmfmc_gpu, gpu.delp,
-                              model.convection, grid, dt_sub, phys.planet;
-                              dtrain_panels=phys.dtrain_loaded[] ? phys.dtrain_gpu : nothing,
-                              workspace=phys.ras_workspace)
-                end
+        # ── Convective transport ONCE per window (after all substeps) ─────
+        # See remap path comment: TM5/GCHP apply convection outside substeps.
+        if phys.cmfmc_loaded[]
+            dt_conv = FT(n_sub) * dt_sub
+            for (_, rm_t) in pairs(tracers)
+                convect!(rm_t, air.m_wet, phys.cmfmc_gpu, gpu.delp,
+                          model.convection, grid, dt_conv, phys.planet;
+                          dtrain_panels=phys.dtrain_loaded[] ? phys.dtrain_gpu : nothing,
+                          workspace=phys.ras_workspace)
             end
         end
     end
@@ -573,13 +598,19 @@ function post_advection_physics!(tracers, sched, air, phys, model,
     gpu = current_gpu(sched)
     Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
 
+    # Use DRY air mass for rm↔q conversion in diffusion. GeosChem's
+    # pbl_mix_mod.F90 uses AD = State_Met%AD (dry air mass) for PBL mixing.
+    # Using moist mass creates QV-dependent VMR artifacts: ~0.8 ppm
+    # tropical-polar bias in dry VMR output from q_wet/(1-QV) conversion.
+    # TODO: verify convection should also switch to dry (GCHP convection_mod
+    # uses BMASS = DELP_DRY for RAS, but CMFMC flux is moist — needs care).
     for (_, rm_t) in pairs(tracers)
-        _apply_bld_cs!(rm_t, air.m_ref, dw, Nc, Nz, Hp)
+        _apply_bld_cs!(rm_t, air.m, dw, Nc, Nz, Hp)
     end
 
     if phys.sfc_loaded[] && phys.has_pbl
         for (_, rm_t) in pairs(tracers)
-            diffuse_pbl!(rm_t, air.m_ref, gpu.delp,
+            diffuse_pbl!(rm_t, air.m, gpu.delp,
                           phys.pbl_sfc_gpu.pblh, phys.pbl_sfc_gpu.ustar,
                           phys.pbl_sfc_gpu.hflux, phys.pbl_sfc_gpu.t2m,
                           phys.w_scratch,

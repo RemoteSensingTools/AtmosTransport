@@ -55,6 +55,46 @@ download (`scripts/download_*.jl`) → preprocess (`scripts/preprocess_*.jl`, op
 
 - `scheme = "slopes"` (default): van Leer slopes, 2nd-order
 - `scheme = "ppm"` with `ppm_order ∈ {4,5,6,7}`: Putman & Lin (2007) PPM
+- `linrood = true`: Lin-Rood cross-term advection (FV3's `fv_tp_2d` algorithm).
+  Averages X-first and Y-first PPM from original field. Eliminates directional
+  splitting bias at CS panel boundaries. File: `src/Advection/cubed_sphere_fvtp2d.jl`.
+- `vertical_remap = true`: Replaces Strang-split Z-advection with FV3-style
+  conservative PPM remap (`map1_q2` + `ppm_profile`). Horizontal-only Lin-Rood
+  transport on Lagrangian surfaces, then single vertical remap per window.
+  File: `src/Advection/vertical_remap.jl`.
+
+## Vertical remap — GCHP comparison
+
+The vertical remap path is designed to match GCHP's `offline_tracer_advection`:
+- **Identical**: Lin-Rood `fv_tp_2d` per level, dry basis, PPM remap.
+- **PE computation** (fixed 2026-03-13): Source PE from air mass cumsum (inside
+  remap kernel), target PE from `cumsum(next_delp × (1-qv))`. Both use direct
+  cumsum — NO hybrid formula (`ak + bk × PS`). The hybrid approach was tested
+  but caused massive vertical pumping (uniform 400 ppm → 535 ppm surface, 44 ppm
+  std after 2 days) because GEOS DELP deviates from the hybrid formula by 0.1-1%
+  per level (up to 250 Pa). GCHP compensates with `calcScalingFactor`; we avoid
+  the issue entirely by using direct cumsum. See `fv_tracer2d.F90:988-1070`.
+- **GCHP reference** (`offline_tracer_advection`): source PE = cumsum of
+  post-horizontal dpA, target PE = `ak + bk × PS_from_dpA` with bottom PE clamped
+  to source (`pe2(npz+1) = pe1(npz+1)`). The clamping preserves column mass. GCHP
+  then applies `calcScalingFactor` to correct remap-vs-met-PE mismatch. Our direct
+  cumsum approach avoids the hybrid-vs-actual DELP discrepancy entirely.
+- **Validated** (2026-03-13): 48-window (2-day) uniform tracer test: surface std
+  2.0 ppm (vs 93 ppm with hybrid PE), mass drift 0.02% (vs 0.75%), no panel
+  boundary artifacts (edge/interior ratio 0.93).
+- 7-day CATRINE run (LR + vremap + diffusion): 4 min, all tracers Δ < 5e-5%.
+- See `docs/CLAUDE_VERTICAL_REMAP_PATH_FORWARD.md` for validation protocol.
+
+## Run loop architecture
+
+Unified `_run_loop!` via multiple dispatch (replaced 4 duplicated methods, ~1940 lines).
+Files in `src/Models/`:
+- `run_loop.jl` — single entry point `run!(model)` + `_run_loop!`
+- `physics_phases.jl` — grid-dispatched phase functions (IO, compute, advection, output)
+- `simulation_state.jl` — allocation factories for tracers, air mass, workspaces
+- `io_scheduler.jl` — `IOScheduler{B}` abstracts single/double buffering
+- `mass_diagnostics.jl` — `MassDiagnostics` + global mass fixer
+- `run_helpers.jl` — physics helpers, advection dispatch, emission wrappers
 
 ## Critical invariants
 
@@ -104,14 +144,17 @@ These are hard-won correctness constraints. Violating any causes silent wrong re
    | DTRAIN | **MOIST** (total) | Detraining mass flux — total air |
    | QV | — | Specific humidity; convert wet→dry: `x_dry = x_wet × (1 - qv)` |
 
-   **Transport now runs on DRY basis when QV is available.**
-   `compute_air_mass_phase!` computes `m = DELP × (1 - QV) × area / g` via
-   `_dry_air_mass_cs_kernel!`. This makes air mass `m` consistent with the DRY
-   horizontal mass fluxes am/bm, so the vertical mass flux `cm` (from continuity
-   closure) is also on a dry basis. `gpu.delp` stays MOIST — convection, diffusion,
-   PS, and emissions all expect moist DELP.
-   For the vertical remap, `compute_target_pressure_from_dry_delp_direct!` builds
-   target PE from `DELP × (1 - QV)` to match dry-basis source PE.
+   **Transport AND diffusion run on DRY basis; convection on MOIST basis.**
+   GeosChem uses dry air mass (`AD = State_Met%AD`) for both PBL mixing
+   (`pbl_mix_mod.F90`) and convection (`BMASS = DELP_DRY` in `convection_mod.F90`).
+   `compute_air_mass_phase!` computes both:
+   - `air.m` = `DELP × (1 - QV) × area / g` (DRY) — for advection, diffusion,
+     and vertical remap (consistent with DRY horizontal mass fluxes am/bm).
+   - `air.m_wet` = `DELP × area / g` (MOIST) — for convection only
+     (CMFMC/DTRAIN are MOIST fluxes; TODO: may also need dry basis).
+   `gpu.delp` stays MOIST — convection, diffusion, PS, and emissions all expect
+   moist DELP. For vertical remap, `compute_target_pressure_from_dry_delp_direct!`
+   builds target PE from `DELP × (1 - QV)` to match dry-basis source PE.
    The `apply_dry_*_panel!` kernels remain for backward compatibility but are no
    longer called in the main transport path.
    Configs without QV fall back to moist air mass (unchanged behavior).

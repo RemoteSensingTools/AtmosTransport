@@ -846,6 +846,10 @@ function _build_advection(config::Dict, ::Type{FT}) where FT
         damp_coeff = get(adv_cfg, "damp_coeff", 0.0)
         use_linrood = get(adv_cfg, "linrood", false)
         use_vertical_remap = get(adv_cfg, "vertical_remap", false)
+        if use_vertical_remap && !use_linrood
+            @info "vertical_remap requires linrood — enabling automatically"
+            use_linrood = true
+        end
         return PPMAdvection{ppm_order}(; damp_coeff, use_linrood, use_vertical_remap)
     else
         @warn "Unknown advection scheme: $scheme — using slopes advection"

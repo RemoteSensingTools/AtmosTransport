@@ -93,33 +93,37 @@ Fluxes computed identically to Russell-Lerner path (TM5-style mass conserving).
         if (q_R_i  - c_i)  * (c_i  - q_L_i)  <= zero(FT); q_L_i  = c_i;  q_R_i  = c_i;  end
         if (q_R_ip - c_ip) * (c_ip - q_L_ip) <= zero(FT); q_L_ip = c_ip; q_R_ip = c_ip; end
 
-        # PPM correction terms (mass-weighted edge departures), clamped for positivity.
-        # Same role as sx in Russell-Lerner: |correction| ≤ rm prevents negative tracer.
-        sx_im = clamp(m[ii - 1, jj, k] * (q_R_im - c_im), -rm[ii - 1, jj, k], rm[ii - 1, jj, k])
-        sx_i  = clamp(m[ii,     jj, k] * (q_R_i  - c_i),  -rm[ii,     jj, k], rm[ii,     jj, k])
-        # Left-edge corrections (c - q_L) for negative-flow branches
-        sx_L_i  = clamp(m[ii,     jj, k] * (c_i  - q_L_i),  -rm[ii,     jj, k], rm[ii,     jj, k])
-        sx_L_ip = clamp(m[ii + 1, jj, k] * (c_ip - q_L_ip), -rm[ii + 1, jj, k], rm[ii + 1, jj, k])
-
+        # Full parabolic face values (FV3 xppm formula):
+        #   Positive flow: face = c + (1-α)(br - α·b0)
+        #   Negative flow: face = c + (1+α)(bl + α·b0)
+        # where bl = q_L - c, br = q_R - c, b0 = bl + br (curvature).
 
         # Flux at left face (face index i in am, interior-indexed)
         am_l = am[i, j, k]
         flux_left = if am_l >= zero(FT)
-            alpha = am_l / m[ii - 1, jj, k]
-            alpha * (rm[ii - 1, jj, k] + (one(FT) - alpha) * sx_im)
+            m_d = m[ii - 1, jj, k]
+            alpha = m_d > 100 * eps(FT) ? am_l / m_d : zero(FT)
+            bl = q_L_im - c_im; br = q_R_im - c_im; b0 = bl + br
+            am_l * (c_im + (one(FT) - alpha) * (br - alpha * b0))
         else
-            alpha = am_l / m[ii, jj, k]
-            alpha * (rm[ii, jj, k] - (one(FT) + alpha) * sx_L_i)
+            m_d = m[ii, jj, k]
+            alpha = m_d > 100 * eps(FT) ? am_l / m_d : zero(FT)
+            bl = q_L_i - c_i; br = q_R_i - c_i; b0 = bl + br
+            am_l * (c_i + (one(FT) + alpha) * (bl + alpha * b0))
         end
 
         # Flux at right face (face i+1 in am)
         am_r = am[i + 1, j, k]
         flux_right = if am_r >= zero(FT)
-            alpha = am_r / m[ii, jj, k]
-            alpha * (rm[ii, jj, k] + (one(FT) - alpha) * sx_i)
+            m_d = m[ii, jj, k]
+            alpha = m_d > 100 * eps(FT) ? am_r / m_d : zero(FT)
+            bl = q_L_i - c_i; br = q_R_i - c_i; b0 = bl + br
+            am_r * (c_i + (one(FT) - alpha) * (br - alpha * b0))
         else
-            alpha = am_r / m[ii + 1, jj, k]
-            alpha * (rm[ii + 1, jj, k] - (one(FT) + alpha) * sx_L_ip)
+            m_d = m[ii + 1, jj, k]
+            alpha = m_d > 100 * eps(FT) ? am_r / m_d : zero(FT)
+            bl = q_L_ip - c_ip; br = q_R_ip - c_ip; b0 = bl + br
+            am_r * (c_ip + (one(FT) + alpha) * (bl + alpha * b0))
         end
 
         # Update tracers and air mass
@@ -234,32 +238,37 @@ end
         if (q_R_j  - c_j)  * (c_j  - q_L_j)  <= zero(FT); q_L_j  = c_j;  q_R_j  = c_j;  end
         if (q_R_jp - c_jp) * (c_jp - q_L_jp) <= zero(FT); q_L_jp = c_jp; q_R_jp = c_jp; end
 
-        # PPM correction terms (mass-weighted edge departures), clamped for positivity.
-        sy_jm = clamp(m[ii, jj - 1, k] * (q_R_jm - c_jm), -rm[ii, jj - 1, k], rm[ii, jj - 1, k])
-        sy_j  = clamp(m[ii, jj,     k] * (q_R_j  - c_j),  -rm[ii, jj,     k], rm[ii, jj,     k])
-        # Left-edge corrections (c - q_L) for negative-flow branches
-        sy_L_j  = clamp(m[ii, jj,     k] * (c_j  - q_L_j),  -rm[ii, jj,     k], rm[ii, jj,     k])
-        sy_L_jp = clamp(m[ii, jj + 1, k] * (c_jp - q_L_jp), -rm[ii, jj + 1, k], rm[ii, jj + 1, k])
-
+        # Full parabolic face values (FV3 yppm formula):
+        #   Positive flow: face = c + (1-α)(br - α·b0)
+        #   Negative flow: face = c + (1+α)(bl + α·b0)
+        # where bl = q_L - c, br = q_R - c, b0 = bl + br (curvature).
 
         # Flux at south face (j in bm, interior-indexed)
         bm_s = bm[i, j, k]
         flux_south = if bm_s >= zero(FT)
-            alpha = bm_s / m[ii, jj - 1, k]
-            alpha * (rm[ii, jj - 1, k] + (one(FT) - alpha) * sy_jm)
+            m_d = m[ii, jj - 1, k]
+            alpha = m_d > 100 * eps(FT) ? bm_s / m_d : zero(FT)
+            bl = q_L_jm - c_jm; br = q_R_jm - c_jm; b0 = bl + br
+            bm_s * (c_jm + (one(FT) - alpha) * (br - alpha * b0))
         else
-            alpha = bm_s / m[ii, jj, k]
-            alpha * (rm[ii, jj, k] - (one(FT) + alpha) * sy_L_j)
+            m_d = m[ii, jj, k]
+            alpha = m_d > 100 * eps(FT) ? bm_s / m_d : zero(FT)
+            bl = q_L_j - c_j; br = q_R_j - c_j; b0 = bl + br
+            bm_s * (c_j + (one(FT) + alpha) * (bl + alpha * b0))
         end
 
         # Flux at north face (j+1 in bm)
         bm_n = bm[i, j + 1, k]
         flux_north = if bm_n >= zero(FT)
-            alpha = bm_n / m[ii, jj, k]
-            alpha * (rm[ii, jj, k] + (one(FT) - alpha) * sy_j)
+            m_d = m[ii, jj, k]
+            alpha = m_d > 100 * eps(FT) ? bm_n / m_d : zero(FT)
+            bl = q_L_j - c_j; br = q_R_j - c_j; b0 = bl + br
+            bm_n * (c_j + (one(FT) - alpha) * (br - alpha * b0))
         else
-            alpha = bm_n / m[ii, jj + 1, k]
-            alpha * (rm[ii, jj + 1, k] - (one(FT) + alpha) * sy_L_jp)
+            m_d = m[ii, jj + 1, k]
+            alpha = m_d > 100 * eps(FT) ? bm_n / m_d : zero(FT)
+            bl = q_L_jp - c_jp; br = q_R_jp - c_jp; b0 = bl + br
+            bm_n * (c_jp + (one(FT) + alpha) * (bl + alpha * b0))
         end
 
         # Update tracers and air mass

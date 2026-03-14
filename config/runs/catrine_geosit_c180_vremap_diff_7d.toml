@@ -1,8 +1,8 @@
 # ===========================================================================
-# CATRINE D7.1 — GEOS-IT C180 (Lin-Rood + full physics, 7 days)
+# CATRINE D7.1 — GEOS-IT C180 (Lin-Rood + vertical remap + diffusion, 7 days)
 #
-# Lin-Rood PPM-7 advection + RAS convection + nonlocal PBL diffusion.
-# 7-day run for comparison with GEOS-Chem.
+# Lin-Rood cross-term advection with vertical remap (FV3-style) + PBL diffusion.
+# No convection. For comparison with GEOS-Chem.
 # ===========================================================================
 
 [architecture]
@@ -72,12 +72,7 @@ linrood        = true
 vertical_remap = true
 mass_fixer     = true
 
-[metadata]
-dry_correction      = true
-remap_pressure_fix  = true
-
-[convection]
-type = "ras"
+# NO convection
 
 [diffusion]
 type   = "nonlocal_pbl"
@@ -88,8 +83,12 @@ Kz_max = 500.0
 fak    = 8.5
 sffrac = 0.1
 
+[metadata]
+dry_correction      = true
+remap_pressure_fix  = true
+
 [output]
-filename      = "/temp2/catrine-runs/output/catrine_linrood_fullphys_7d"
+filename      = "/temp2/catrine-runs/output/catrine_vremap_diff_7d"
 format        = "binary"
 split         = "daily"
 interval      = 10800

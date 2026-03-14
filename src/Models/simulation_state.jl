@@ -166,7 +166,8 @@ function allocate_air_mass(grid::CubedSphereGrid{FT}, arch) where FT
     Nz = grid.Nz
     m       = allocate_cubed_sphere_field(grid, Nz)
     m_ref   = allocate_cubed_sphere_field(grid, Nz)
-    return (; m, m_ref)
+    m_wet   = allocate_cubed_sphere_field(grid, Nz)  # MOIST air mass for convection
+    return (; m, m_ref, m_wet)
 end
 
 # =====================================================================

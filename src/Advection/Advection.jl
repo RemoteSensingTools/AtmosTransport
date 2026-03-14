@@ -94,6 +94,9 @@ export LinRoodWorkspace, fv_tp_2d_cs!, strang_split_linrood_ppm!
 export VerticalRemapWorkspace, vertical_remap_cs!, fix_target_bottom_pe!
 export compute_target_pressure_from_next_delp!, compute_target_pressure_from_mass!
 export compute_target_pressure_from_delp_direct!, compute_target_pressure_from_mass_direct!
+export compute_target_pressure_from_dry_delp_direct!
+export compute_target_pe_from_hybrid_coords!
+export compute_source_pe_from_hybrid!, compute_target_pe_from_ps_hybrid!
 export update_air_mass_from_target!
 
 include("abstract_advection.jl")

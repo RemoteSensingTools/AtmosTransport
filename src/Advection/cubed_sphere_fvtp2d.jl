@@ -66,20 +66,28 @@ end
     return q_L, q_R
 end
 
-"""Compute upwind PPM face value given mass flux, donor mass, and PPM edges."""
+"""Compute upwind PPM face value given mass flux, donor mass, and PPM edges.
+
+Uses the full parabolic integral (FV3 xppm/yppm formula):
+  Positive flow: face = c + (1-α)(br - α·b0)
+  Negative flow: face = c + (1+α)(bl + α·b0)
+where bl = q_L - c, br = q_R - c, b0 = bl + br (curvature).
+"""
 @inline function _ppm_face_value(flux, m_lo, m_hi, c_lo, c_hi,
-                                  q_R_lo, q_L_hi)
+                                  q_L_lo, q_R_lo, q_L_hi, q_R_hi)
     FT = typeof(c_lo)
     if flux >= zero(FT)
-        m_donor = m_lo
-        alpha = m_donor > 100 * eps(FT) ? flux / m_donor : zero(FT)
-        dc = clamp(q_R_lo - c_lo, -c_lo, c_lo)
-        return c_lo + (one(FT) - alpha) * dc
+        alpha = m_lo > 100 * eps(FT) ? flux / m_lo : zero(FT)
+        bl = q_L_lo - c_lo
+        br = q_R_lo - c_lo
+        b0 = bl + br
+        return c_lo + (one(FT) - alpha) * (br - alpha * b0)
     else
-        m_donor = m_hi
-        alpha = m_donor > 100 * eps(FT) ? flux / m_donor : zero(FT)
-        dc = clamp(c_hi - q_L_hi, -c_hi, c_hi)
-        return c_hi - (one(FT) + alpha) * dc
+        alpha = m_hi > 100 * eps(FT) ? flux / m_hi : zero(FT)
+        bl = q_L_hi - c_hi
+        br = q_R_hi - c_hi
+        b0 = bl + br
+        return c_hi + (one(FT) + alpha) * (bl + alpha * b0)
     end
 end
 
@@ -116,7 +124,7 @@ end
 
         fy_face[i, jf, k] = _ppm_face_value(
             bm[i, jf, k], m[ii, jj_b, k], m[ii, jj_a, k],
-            c_m1, c_0, q_R_m, q_L_0)
+            c_m1, c_0, q_L_m, q_R_m, q_L_0, q_R_0)
     end
 end
 
@@ -145,7 +153,7 @@ end
 
         fx_face[iif, j, k] = _ppm_face_value(
             am[iif, j, k], m[ii_l, jj, k], m[ii_r, jj, k],
-            c_m1, c_0, q_R_m, q_L_0)
+            c_m1, c_0, q_L_m, q_R_m, q_L_0, q_R_0)
     end
 end
 
@@ -171,7 +179,7 @@ end
 
         fx_face[iif, j, k] = _ppm_face_value(
             am[iif, j, k], m[ii_l, jj, k], m[ii_r, jj, k],
-            c_m1, c_0, q_R_m, q_L_0)
+            c_m1, c_0, q_L_m, q_R_m, q_L_0, q_R_0)
     end
 end
 
@@ -197,7 +205,7 @@ end
 
         fy_face[i, jf, k] = _ppm_face_value(
             bm[i, jf, k], m[ii, jj_b, k], m[ii, jj_a, k],
-            c_m1, c_0, q_R_m, q_L_0)
+            c_m1, c_0, q_L_m, q_R_m, q_L_0, q_R_0)
     end
 end
 

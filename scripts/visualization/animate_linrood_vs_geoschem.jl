@@ -111,7 +111,7 @@ function make_animation(gc, at, cw, times, rmap; fps=FPS)
 
     lon2d, lat2d = lon_lat_meshes(rmap)
 
-    fig = Figure(size=(1600, 1300), fontsize=12)
+    fig = Figure(size=(1200, 1000), fontsize=11)
 
     # Row 1: Surface CO2
     ax_sfc_gc = GeoAxis(fig[1, 1]; dest="+proj=robin",

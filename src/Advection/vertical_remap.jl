@@ -35,8 +35,10 @@ struct VerticalRemapWorkspace{FT, A3 <: AbstractArray{FT,3},
                                A1 <: AbstractVector{FT}}
     pe_tgt  :: NTuple{6, A3}   # Target pressure edges (Nc, Nc, Nz+1)
     dp_tgt  :: NTuple{6, A3}   # Target layer thickness (Nc, Nc, Nz)
+    pe_src  :: NTuple{6, A3}   # Source pressure edges from hybrid coords (Nc, Nc, Nz+1)
     m_save  :: NTuple{6, A3}   # Saved m for multi-tracer horizontal transport
     ps_tgt  :: NTuple{6, A2}   # Target surface pressure (Nc, Nc)
+    ps_src  :: NTuple{6, A2}   # Source dry surface pressure (Nc, Nc)
     q_al    :: NTuple{6, A3}   # PPM left edge AL (Nc, Nc, Nz)
     q_ar    :: NTuple{6, A3}   # PPM right edge AR (Nc, Nc, Nz)
     q_a6    :: NTuple{6, A3}   # PPM curvature A6 (Nc, Nc, Nz)
@@ -51,8 +53,10 @@ function VerticalRemapWorkspace(grid::CubedSphereGrid{FT}, arch) where FT
 
     pe_tgt = ntuple(_ -> AT(zeros(FT, Nc, Nc, Nz + 1)), 6)
     dp_tgt = ntuple(_ -> AT(zeros(FT, Nc, Nc, Nz)),     6)
+    pe_src = ntuple(_ -> AT(zeros(FT, Nc, Nc, Nz + 1)), 6)
     m_save = ntuple(_ -> AT(zeros(FT, N, N, Nz)),       6)
     ps_tgt = ntuple(_ -> AT(zeros(FT, Nc, Nc)),         6)
+    ps_src = ntuple(_ -> AT(zeros(FT, Nc, Nc)),         6)
     q_al   = ntuple(_ -> AT(zeros(FT, Nc, Nc, Nz)),     6)
     q_ar   = ntuple(_ -> AT(zeros(FT, Nc, Nc, Nz)),     6)
     q_a6   = ntuple(_ -> AT(zeros(FT, Nc, Nc, Nz)),     6)
@@ -60,7 +64,7 @@ function VerticalRemapWorkspace(grid::CubedSphereGrid{FT}, arch) where FT
     ak_dev = AT(FT.(grid.vertical.A))
     bk_dev = AT(FT.(grid.vertical.B))
 
-    return VerticalRemapWorkspace(pe_tgt, dp_tgt, m_save, ps_tgt,
+    return VerticalRemapWorkspace(pe_tgt, dp_tgt, pe_src, m_save, ps_tgt, ps_src,
                                   q_al, q_ar, q_a6, ak_dev, bk_dev)
 end
 
@@ -460,6 +464,12 @@ where pl, pr are normalized coordinates within the source layer.
         a = area[i, j]
         g = g_val
 
+        # Bottom source layer mixing ratio for extrapolation when target
+        # extends below source (PS_tgt > PS_src between windows).
+        m_bot = m_src[ii, jj, Nz]
+        q_bot = m_bot > FT(100) * eps(FT) ?
+            rm_src[ii, jj, Nz] / m_bot : zero(FT)
+
         # Source state: track current source layer index and running PE edges.
         # Use Float64 for PE accumulation to avoid precision loss on thin layers.
         # With Float32, eps(~100000 Pa) ≈ 0.004 Pa, but TOA layers can be < 0.01 Pa.
@@ -522,6 +532,119 @@ where pl, pr are normalized coordinates within the source layer.
                 end
             end
 
+            # Extrapolate when target extends below source column
+            # (PS_tgt > PS_src between windows). Fill with bottom q.
+            if ks > Nz && pe_s_lo < pe_t_hi
+                dp_extra = FT(pe_t_hi - max(pe_t_lo, pe_s_lo))
+                if dp_extra > zero(FT)
+                    rm_accum += q_bot * dp_extra
+                end
+            end
+
+            rm[ii, jj, kt] = rm_accum * a / g
+        end
+    end
+end
+
+# ---------------------------------------------------------------------------
+# Hybrid-PE remap kernel: uses pre-computed source PE from hybrid coords
+# instead of computing from m_src. This ensures source and target PE are
+# both on the smooth hybrid grid (PE = ak + bk*PS_dry), eliminating noisy
+# per-level displacement at the pure-pressure/hybrid boundary.
+# q = rm/m still uses actual mass (correct mixing ratio).
+# ---------------------------------------------------------------------------
+
+"""
+Conservative PPM vertical remap using pre-computed source pressure edges.
+Same algorithm as `_vertical_remap_column_kernel!`, but reads source PE
+from `pe_src` (hybrid coords) instead of computing from `m_src × g / area`.
+This ensures source and target PE are both on the smooth hybrid grid,
+eliminating noisy per-level displacement at the pure-pressure/hybrid boundary.
+q = rm/m still uses actual mass (correct mixing ratio).
+"""
+@kernel function _vertical_remap_hybrid_pe_kernel!(rm,
+        @Const(rm_src), @Const(m_src), @Const(pe_src),
+        @Const(q_al), @Const(q_ar), @Const(q_a6),
+        @Const(pe_tgt), @Const(dp_tgt),
+        @Const(area), @Const(g_val), Hp, Nc, Nz)
+    i, j = @index(Global, NTuple)
+    @inbounds begin
+        ii = Hp + i
+        jj = Hp + j
+        FT = eltype(rm)
+        a = area[i, j]
+        g = g_val
+
+        # Bottom source layer mixing ratio for extrapolation when target
+        # extends below source (PS_tgt > PS_src between windows).
+        # GCHP avoids this by forcing pe2(npz+1)=pe1(npz+1); we can't,
+        # so we extrapolate with constant q from the bottom source layer.
+        m_bot = m_src[ii, jj, Nz]
+        q_bot = m_bot > FT(100) * eps(FT) ?
+            rm_src[ii, jj, Nz] / m_bot : zero(FT)
+
+        ks = 1
+        pe_s_lo = Float64(pe_src[i, j, 1])
+
+        for kt in 1:Nz
+            pe_t_lo = Float64(pe_tgt[i, j, kt])
+            pe_t_hi = Float64(pe_tgt[i, j, kt + 1])
+            dp_t = dp_tgt[i, j, kt]
+
+            if dp_t <= zero(FT)
+                rm[ii, jj, kt] = zero(FT)
+                continue
+            end
+
+            rm_accum = zero(FT)
+
+            while pe_s_lo < pe_t_hi && ks <= Nz
+                pe_s_hi = Float64(pe_src[i, j, ks + 1])
+                dp_s_k64 = pe_s_hi - Float64(pe_src[i, j, ks])
+                dp_s_k = FT(dp_s_k64)
+                mk = m_src[ii, jj, ks]
+                q_k = mk > FT(100) * eps(FT) ?
+                    rm_src[ii, jj, ks] / mk : zero(FT)
+
+                p_lo = max(pe_t_lo, pe_s_lo)
+                p_hi = min(pe_t_hi, pe_s_hi)
+
+                if p_hi > p_lo && dp_s_k > FT(100) * eps(FT)
+                    dp_overlap = FT(p_hi - p_lo)
+
+                    if pe_s_lo >= pe_t_lo && pe_s_hi <= pe_t_hi
+                        rm_accum += q_k * dp_s_k
+                    else
+                        al = q_al[i, j, ks]
+                        ar = q_ar[i, j, ks]
+                        a6 = q_a6[i, j, ks]
+
+                        pl = FT((p_lo - pe_s_lo) / dp_s_k64)
+                        pr = FT((p_hi - pe_s_lo) / dp_s_k64)
+
+                        q_avg = al + FT(0.5) * (pl + pr) * (ar - al + a6) -
+                                a6 / FT(3) * (pr * pr + pr * pl + pl * pl)
+                        rm_accum += q_avg * dp_overlap
+                    end
+                end
+
+                if pe_s_hi <= pe_t_hi
+                    pe_s_lo = pe_s_hi
+                    ks += 1
+                else
+                    break
+                end
+            end
+
+            # Extrapolate when target extends below source column
+            # (PS_tgt > PS_src). Fill with bottom source layer's q.
+            if ks > Nz && pe_s_lo < pe_t_hi
+                dp_extra = FT(pe_t_hi - max(pe_t_lo, pe_s_lo))
+                if dp_extra > zero(FT)
+                    rm_accum += q_bot * dp_extra
+                end
+            end
+
             rm[ii, jj, kt] = rm_accum * a / g
         end
     end
@@ -532,31 +655,32 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    vertical_remap_cs!(rm_panels, m_src_panels, ws_vr, ws, gc, grid)
+    vertical_remap_cs!(rm_panels, m_src_panels, ws_vr, ws, gc, grid;
+                       flat=false, hybrid_pe=false)
 
 Apply conservative vertical remapping for all 6 CS panels.
-Remaps tracer `rm` from source pressure (derived from `m_src`) to target pressure.
+Remaps tracer `rm` from source pressure to target pressure.
+
+When `hybrid_pe=true`, uses pre-computed `ws_vr.pe_src` (from hybrid coords)
+for source pressure edges instead of deriving them from `m_src`. This ensures
+source and target PE are both on the smooth hybrid grid, eliminating noisy
+displacement at the pure-pressure/hybrid transition.
 
 `m_src_panels` is the SAVED post-horizontal air mass — shared across all tracers
 and NOT modified by this function. The remap only modifies `rm_panels`.
-
-Uses `ws.rm_buf`/`ws.m_buf` as read buffers to avoid in-place read/write
-conflict (same double-buffering pattern as `_sweep_z!`).
 """
 function vertical_remap_cs!(rm_panels, m_src_panels, ws_vr::VerticalRemapWorkspace,
-                              ws, gc, grid; flat::Bool=false)
+                              ws, gc, grid; flat::Bool=false, hybrid_pe::Bool=false)
     Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
     backend = get_backend(rm_panels[1])
     recon_k! = flat ? _flat_reconstruct_kernel!(backend, 256) :
                       _ppm_reconstruct_kernel!(backend, 256)
-    remap_k! = _vertical_remap_column_kernel!(backend, 256)
 
     for p in 1:6
         # Copy rm to buffer (source tracer mass), m_src is read-only
         copyto!(ws.rm_buf, rm_panels[p])
 
         # Phase 1: Reconstruction → compute AL, AR, A6 per column
-        # flat=true uses zeroth-order (AL=AR=q, A6=0) for diagnostic
         if flat
             recon_k!(ws_vr.q_al[p], ws_vr.q_ar[p], ws_vr.q_a6[p],
                      ws.rm_buf, m_src_panels[p], Hp, Nc, Nz; ndrange=(Nc, Nc))
@@ -565,14 +689,24 @@ function vertical_remap_cs!(rm_panels, m_src_panels, ws_vr::VerticalRemapWorkspa
                      ws.rm_buf, m_src_panels[p],
                      gc.area[p], gc.gravity, Hp, Nc, Nz; ndrange=(Nc, Nc))
         end
-        synchronize(backend)  # reconstruction must complete before integration
+        synchronize(backend)
 
         # Phase 2: PPM integration → remap rm onto target pressure levels
-        remap_k!(rm_panels[p], ws.rm_buf, m_src_panels[p],
-                 ws_vr.q_al[p], ws_vr.q_ar[p], ws_vr.q_a6[p],
-                 ws_vr.pe_tgt[p], ws_vr.dp_tgt[p],
-                 gc.area[p], gc.gravity, Hp, Nc, Nz; ndrange=(Nc, Nc))
-        synchronize(backend)  # required: ws.rm_buf reused across panels
+        if hybrid_pe
+            remap_k! = _vertical_remap_hybrid_pe_kernel!(backend, 256)
+            remap_k!(rm_panels[p], ws.rm_buf, m_src_panels[p],
+                     ws_vr.pe_src[p],
+                     ws_vr.q_al[p], ws_vr.q_ar[p], ws_vr.q_a6[p],
+                     ws_vr.pe_tgt[p], ws_vr.dp_tgt[p],
+                     gc.area[p], gc.gravity, Hp, Nc, Nz; ndrange=(Nc, Nc))
+        else
+            remap_k! = _vertical_remap_column_kernel!(backend, 256)
+            remap_k!(rm_panels[p], ws.rm_buf, m_src_panels[p],
+                     ws_vr.q_al[p], ws_vr.q_ar[p], ws_vr.q_a6[p],
+                     ws_vr.pe_tgt[p], ws_vr.dp_tgt[p],
+                     gc.area[p], gc.gravity, Hp, Nc, Nz; ndrange=(Nc, Nc))
+        end
+        synchronize(backend)
     end
     return nothing
 end
@@ -848,6 +982,106 @@ end
             dp_tgt[i, j, k] = pe_tgt[i, j, k + 1] - pe_tgt[i, j, k]
         end
     end
+end
+
+# ---------------------------------------------------------------------------
+# Pure GCHP approach: PE from PS + ak/bk (not from raw DELP accumulation)
+# ---------------------------------------------------------------------------
+
+"""
+    _pe_from_ps_hybrid_kernel!(pe, dp, ps_dry_out, delp, qv, ak, bk, Hp, Nc, Nz)
+
+Compute pressure edges using the pure GCHP algorithm:
+1. PS_total = ptop + sum(DELP)  (total surface pressure from met DELP)
+2. DELP_hybrid[k] = (ak[k+1]-ak[k]) + (bk[k+1]-bk[k]) × PS_total  (exact hybrid formula)
+3. PS_dry = ptop + sum(DELP_hybrid[k] × (1 - QV[k]))  (dry surface pressure)
+4. PE[k] = ak[k] + bk[k] × PS_dry  (smooth hybrid PE)
+
+All intermediate computation in Float64 for precision. This ensures PE is
+exactly on the hybrid grid with no per-level Float32 noise from DELP accumulation.
+Pure-pressure levels (bk=0) get PE=ak exactly.
+
+Reference: GCHP `GCHPctmEnv_GridCompMod.F90:calculate_ple` with SPHU argument.
+"""
+@kernel function _pe_from_ps_hybrid_kernel!(pe, dp, ps_dry_out,
+        @Const(delp), @Const(qv), @Const(ak), @Const(bk), Hp, Nc, Nz)
+    i, j = @index(Global, NTuple)
+    @inbounds begin
+        ii = Hp + i
+        jj = Hp + j
+        FT = eltype(pe)
+
+        # Step 1: Total surface pressure from met DELP
+        ps_total = Float64(ak[1])  # ptop
+        for k in 1:Nz
+            ps_total += Float64(delp[ii, jj, k])
+        end
+
+        # Step 2: Hybrid DELP from PS + ak/bk, then dry surface pressure
+        # DELP_hybrid[k] = PE[k+1] - PE[k] = (ak[k+1]-ak[k]) + (bk[k+1]-bk[k]) × PS
+        ps_dry = Float64(ak[1])  # ptop
+        for k in 1:Nz
+            delp_hybrid = (Float64(ak[k + 1]) - Float64(ak[k])) +
+                          (Float64(bk[k + 1]) - Float64(bk[k])) * ps_total
+            ps_dry += delp_hybrid * (1.0 - Float64(qv[ii, jj, k]))
+        end
+        ps_dry_out[i, j] = FT(ps_dry)
+
+        # Step 3: PE and dp from hybrid coordinates
+        for k in 1:Nz + 1
+            pe[i, j, k] = FT(Float64(ak[k]) + Float64(bk[k]) * ps_dry)
+        end
+        for k in 1:Nz
+            dp[i, j, k] = pe[i, j, k + 1] - pe[i, j, k]
+        end
+    end
+end
+
+"""
+    compute_source_pe_from_hybrid!(ws_vr, delp_panels, qv_panels, gc, grid)
+
+Compute SOURCE pressure edges using the pure GCHP hybrid approach.
+Writes to `ws_vr.pe_src` and `ws_vr.ps_src`. Uses current-window DELP and QV.
+"""
+function compute_source_pe_from_hybrid!(ws_vr::VerticalRemapWorkspace,
+                                         delp_panels, qv_panels, gc, grid)
+    Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
+    backend = get_backend(ws_vr.ak_dev)
+
+    # pe_src has no dp counterpart in workspace — use a temporary view of dp_tgt
+    # that will be overwritten by target PE computation later. Or we compute dp
+    # into a scratch buffer. Since we only need pe_src (not dp_src) for the remap
+    # kernel, we can write dp to dp_tgt as scratch (overwritten by target PE next).
+    k! = _pe_from_ps_hybrid_kernel!(backend, 256)
+    for p in 1:6
+        k!(ws_vr.pe_src[p], ws_vr.dp_tgt[p], ws_vr.ps_src[p],
+           delp_panels[p], qv_panels[p],
+           ws_vr.ak_dev, ws_vr.bk_dev, Hp, Nc, Nz; ndrange=(Nc, Nc))
+    end
+    synchronize(backend)
+    return nothing
+end
+
+"""
+    compute_target_pe_from_ps_hybrid!(ws_vr, delp_panels, qv_panels, gc, grid)
+
+Compute TARGET pressure edges using the pure GCHP hybrid approach.
+Writes to `ws_vr.pe_tgt`, `ws_vr.dp_tgt`, and `ws_vr.ps_tgt`.
+Uses next-window DELP and current-window QV (<0.1% approximation).
+"""
+function compute_target_pe_from_ps_hybrid!(ws_vr::VerticalRemapWorkspace,
+                                             delp_panels, qv_panels, gc, grid)
+    Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
+    backend = get_backend(ws_vr.ak_dev)
+
+    k! = _pe_from_ps_hybrid_kernel!(backend, 256)
+    for p in 1:6
+        k!(ws_vr.pe_tgt[p], ws_vr.dp_tgt[p], ws_vr.ps_tgt[p],
+           delp_panels[p], qv_panels[p],
+           ws_vr.ak_dev, ws_vr.bk_dev, Hp, Nc, Nz; ndrange=(Nc, Nc))
+    end
+    synchronize(backend)
+    return nothing
 end
 
 """

@@ -111,26 +111,25 @@ For each (i,j) column, processes in three phases:
 
 1. (if :rm) **Pre-convert**: convert rm → q in-place (`q = rm/m` for all k).
 
-2. **Flux divergence** in q-space with mass-divergence correction for :rm mode:
-     :rm  →  dq = Δt × g/Δp × [F_below - F_above - q_k × (CMFMC_below - CMFMC_above)]
-     :mixing_ratio  →  dq = Δt × g/Δp × [F_below - F_above]
+2. **Flux divergence** in q-space with mass-divergence correction:
+     dq = Δt × g/Δp × [F_below - F_above - q_k × (CMFMC_below - CMFMC_above)]
    where F[k] = CMFMC[k] × q_upwind, selected by sign of CMFMC.
 
    The mass-divergence correction subtracts the air-mass-dilution term that a
    coupled model would handle via air mass update. This ensures exactly zero
    tendency for spatially uniform mixing ratio fields — critical for offline
-   transport where air mass is held fixed during convection.
+   transport where air mass is held fixed during convection. Applied in both
+   :rm and :mixing_ratio modes.
 
 3. (if :rm) **Post-convert**: convert q → rm (`rm = q × m` for all k).
    No per-column mass fix is applied; the global mass fixer in the run loop
    handles the small Σ rm drift from the correction breaking flux telescoping.
 
 Mass conservation:
-  :mixing_ratio — Σ Δp×q preserved exactly by flux telescoping (F[1]=F[Nz+1]=0)
-  :rm — column Σ rm NOT exactly preserved (mass-divergence correction breaks
-         telescoping), but drift is small (~ppm level) and corrected by the
-         global mass fixer. This avoids the systematic level-dependent bias
-         that per-column mass fixes create.
+  Both modes: column Σ Δp×q / Σ rm NOT exactly preserved (mass-divergence
+  correction breaks flux telescoping), but drift is small (~ppm level) and
+  corrected by the global mass fixer. This avoids the systematic
+  level-dependent bias that per-column mass fixes create.
 
 Zero-flux boundary conditions at top (k=1) and surface (k=Nz+1).
 """
@@ -175,17 +174,12 @@ Zero-flux boundary conditions at top (k=1) and surface (k=Nz+1).
 
         dp_k = delp[ii, jj, k]
 
-        if tracer_mode === :rm
-            # Mass-divergence correction for offline transport:
-            # dq = dt*g/dp * [F_below - F_above - q_k * (CMFMC_below - CMFMC_above)]
-            #    = dt*g/dp * [CMFMC_below*(q_upwind_below - q_k) - CMFMC_above*(q_upwind_above - q_k)]
-            # For uniform q=c: all differences vanish → dq = 0 exactly.
-            mass_div = cmfmc_below - cmfmc_above
-            dq = dt * grav / dp_k * (flux_below - flux_above - q_k * mass_div)
-        else
-            # :mixing_ratio mode: standard flux divergence preserves Σ Δp×q
-            dq = dt * grav / dp_k * (flux_below - flux_above)
-        end
+        # Mass-divergence correction for offline transport:
+        # dq = dt*g/dp * [F_below - F_above - q_k * (CMFMC_below - CMFMC_above)]
+        #    = dt*g/dp * [CMFMC_below*(q_upwind_below - q_k) - CMFMC_above*(q_upwind_above - q_k)]
+        # For uniform q=c: all differences vanish → dq = 0 exactly.
+        mass_div = cmfmc_below - cmfmc_above
+        dq = dt * grav / dp_k * (flux_below - flux_above - q_k * mass_div)
 
         arr[ii, jj, k] = q_k + dq
 

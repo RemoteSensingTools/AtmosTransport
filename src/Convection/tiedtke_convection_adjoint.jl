@@ -65,6 +65,14 @@ function adjoint_convect!(adj_tracers::NamedTuple, met, grid::LatitudeLongitudeG
                 fac = FT(Δt) * grav / Δp_k
                 λv = λ_new[k]
 
+                # Mass-divergence correction adjoint:
+                # Forward: dq -= fac * q[k] * (M_below - M_above)
+                # Adjoint: λ_old[k] -= fac * mass_div * λ_new[k]
+                M_above = k >= 2 ? FT(mf[i, j, k]) : zero(FT)
+                M_below = k < Nz ? FT(mf[i, j, k + 1]) : zero(FT)
+                mass_div = M_below - M_above
+                λ_old[k] -= fac * mass_div * λv
+
                 # +fac * flux[k+1] contribution:
                 # flux[k+1] is non-zero for k+1 ∈ [2, Nz], i.e. k ∈ [1, Nz-1]
                 if k < Nz

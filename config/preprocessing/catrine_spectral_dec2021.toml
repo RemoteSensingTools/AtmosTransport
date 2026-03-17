@@ -1,0 +1,30 @@
+# ===========================================================================
+# Spectral mass-flux preprocessing — ERA5 CATRINE December 2021
+#
+# Converts ERA5 spectral VO/D/LNSP GRIB data to mass fluxes on a regular
+# lat-lon grid for the first month of CATRINE D7.1.
+#
+# Usage:
+#   julia --project=. -p 8 scripts/preprocessing/preprocess_spectral_massflux.jl \
+#       config/preprocessing/catrine_spectral_dec2021.toml
+# ===========================================================================
+
+[input]
+spectral_dir = "~/data/AtmosTransport/met/era5/spectral"
+coefficients = "config/era5_L137_coefficients.toml"
+surface_dir  = "~/data/AtmosTransport/met/era5/surface"
+cmfmc_dir    = "~/data/AtmosTransport/met/era5/cmfmc"
+
+[output]
+directory = "/temp1/atmos_transport/era5_spectral_catrine"
+
+[grid]
+nlon      = 720      # target longitude count (720 → 0.5°)
+nlat      = 361      # target latitude count  (361 → 0.5°)
+level_top = 1        # topmost model level (1 = TOA)
+level_bot = 137      # bottommost model level (137 = surface)
+
+[numerics]
+float_type   = "Float32"
+dt           = 900.0         # advection sub-step [s]
+met_interval = 21600.0       # met data interval [s] (6-hourly)

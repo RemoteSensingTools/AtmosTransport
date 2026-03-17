@@ -1,0 +1,61 @@
+# ===========================================================================
+# Sensitivity test: CO2 only, no emissions, no diffusion, no convection
+# Pure Lin-Rood + vertical remap advection to test transport-only gradient.
+# ===========================================================================
+
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "cubed_sphere"
+met_source = "geosfp"
+Nc         = 180
+
+[met_data]
+driver           = "geosfp_cs"
+product          = "geosit_c180"
+netcdf_dir       = "~/data/geosit_c180_catrine"
+preprocessed_dir = "/temp2/catrine-runs/met/geosit_c180"
+surface_data_bin_dir = "/temp1/catrine/met/geosit_c180/surface_bin"
+coord_file       = "~/code/gitHub/AtmosTransportModel/data/grids/cs_c180_gridspec.nc"
+start_date       = "2021-12-01"
+end_date         = "2021-12-08"
+dt               = 450
+met_interval     = 3600
+mass_flux_dt     = 450
+Hp               = 3
+
+[initial_conditions]
+co2.file     = "~/data/AtmosTransport/catrine/InitialConditions/startCO2_202112010000.nc"
+co2.variable = "CO2"
+
+[tracers.co2]
+species    = "co2"
+
+[advection]
+scheme          = "ppm"
+ppm_order       = 7
+damp_coeff      = 0.02
+linrood         = true
+vertical_remap  = true
+mass_fixer      = true
+dry_correction  = true
+pe_method       = "direct_cumsum"
+
+# No diffusion, no convection, no chemistry
+
+[output]
+filename      = "/temp1/catrine/output/catrine_noEmissions_advOnly_qspace_7d"
+format        = "binary"
+auto_convert  = true
+split         = "daily"
+interval      = 10800
+
+[output.fields]
+co2_3d           = {type = "full_3d", species = "co2"}
+co2_column_mass  = {type = "column_mass", species = "co2"}
+surface_pressure = "surface_pressure"
+
+[buffering]
+strategy = "double"

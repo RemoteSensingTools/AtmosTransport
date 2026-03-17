@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "julia": {
+      "command": "/home/cfranken/.local/bin/uv",
+      "args": ["run", "--directory", "/home/cfranken/code/gitHub/julia-mcp", "python", "server.py", "--startup-file=yes"]
+    }
+  }
+}

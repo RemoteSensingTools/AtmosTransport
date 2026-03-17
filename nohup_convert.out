@@ -1,0 +1,50 @@
+[ Info: Converting 41 binary file(s) to NetCDF (deflate=4)
+[ Info:   [1/41] Skipping catrine_geosit_c180_pbl_emit_20211201.bin — NC exists
+[ Info:   [2/41] Skipping catrine_geosit_c180_pbl_emit_20211202.bin — NC exists
+[ Info:   [3/41] Skipping catrine_geosit_c180_pbl_emit_20211203.bin — NC exists
+[ Info:   [4/41] Skipping catrine_geosit_c180_pbl_emit_20211204.bin — NC exists
+[ Info:   [5/41] Skipping catrine_geosit_c180_pbl_emit_20211205.bin — NC exists
+[ Info:   [6/41] Skipping catrine_geosit_c180_pbl_emit_20211206.bin — NC exists
+[ Info:   [7/41] Skipping catrine_geosit_c180_pbl_emit_20211207.bin — NC exists
+[ Info:   [8/41] Skipping catrine_geosit_c180_pbl_emit_20211208.bin — NC exists
+[ Info:   [9/41] Skipping catrine_geosit_c180_pbl_emit_20211209.bin — NC exists
+[ Info:   [10/41] Skipping catrine_geosit_c180_pbl_emit_20211210.bin — NC exists
+[ Info:   [11/41] Skipping catrine_geosit_c180_ras_20211201.bin — NC exists
+[ Info:   [12/41] Skipping catrine_geosit_c180_ras_20211202.bin — NC exists
+[ Info:   [13/41] Skipping catrine_geosit_c180_ras_20211203.bin — NC exists
+[ Info:   [14/41] Skipping catrine_geosit_c180_ras_20211204.bin — NC exists
+[ Info:   [15/41] Skipping catrine_geosit_c180_ras_20211205.bin — NC exists
+[ Info:   [16/41] Skipping catrine_geosit_c180_ras_20211206.bin — NC exists
+[ Info:   [17/41] Skipping catrine_geosit_c180_ras_20211207.bin — NC exists
+[ Info:   [18/41] Skipping catrine_geosit_c180_ras_20211208.bin — NC exists
+[ Info:   Loading GMAO coordinates from cs_c180_gridspec.nc
+[ Info: Converted /temp1/catrine/output/catrine_linrood_fullphys_21d_20211201.bin → /temp1/catrine/output/catrine_linrood_fullphys_21d_20211201.nc (8 timesteps)
+[ Info:   [20/41] Skipping catrine_linrood_fullphys_21d_20211202.bin — NC exists
+[ Info:   [21/41] Skipping catrine_linrood_fullphys_21d_20211203.bin — NC exists
+[ Info:   [22/41] Skipping catrine_linrood_fullphys_21d_20211204.bin — NC exists
+[ Info:   [23/41] Skipping catrine_linrood_fullphys_21d_20211205.bin — NC exists
+[ Info:   [24/41] Skipping catrine_linrood_fullphys_21d_20211206.bin — NC exists
+[ Info:   [25/41] Skipping catrine_linrood_fullphys_21d_20211207.bin — NC exists
+[ Info:   [26/41] Skipping catrine_linrood_fullphys_21d_20211208.bin — NC exists
+[ Info:   [27/41] Skipping catrine_linrood_fullphys_21d_20211209.bin — NC exists
+[ Info:   [28/41] Skipping catrine_linrood_fullphys_21d_20211210.bin — NC exists
+[ Info:   [29/41] Skipping catrine_linrood_fullphys_21d_20211211.bin — NC exists
+[ Info:   [30/41] Skipping catrine_linrood_fullphys_21d_20211212.bin — NC exists
+[ Info:   Loading GMAO coordinates from cs_c180_gridspec.nc
+[ Info: Converted /temp1/catrine/output/catrine_linrood_fullphys_21d_20211213.bin → /temp1/catrine/output/catrine_linrood_fullphys_21d_20211213.nc (8 timesteps)
+[ Info:   [32/41] Skipping catrine_linrood_fullphys_21d_20211214.bin — NC exists
+[ Info:   [33/41] Skipping catrine_linrood_fullphys_21d_20211215.bin — NC exists
+[ Info:   [34/41] Skipping catrine_linrood_fullphys_21d_20211216.bin — NC exists
+[ Info:   [35/41] Skipping catrine_linrood_fullphys_21d_20211217.bin — NC exists
+[ Info:   [36/41] Skipping catrine_linrood_fullphys_21d_20211218.bin — NC exists
+[ Info:   [37/41] Skipping catrine_linrood_fullphys_21d_20211219.bin — NC exists
+[ Info:   [38/41] Skipping catrine_linrood_fullphys_21d_20211220.bin — NC exists
+[ Info:   [39/41] Skipping catrine_linrood_fullphys_21d_20211221.bin — NC exists
+[ Info:   [40/41] Skipping catrine_linrood_fullphys_21d_20211222.bin — NC exists
+[ Info:   [41/41] Skipping catrine_linrood_fullphys_21d_20211223.bin — NC exists
+┌ Info: Conversion complete.
+│ ====================
+│ Converted: 2 / 41
+│ Skipped:   39
+│ Failed:    0
+└ Elapsed:   110.1s

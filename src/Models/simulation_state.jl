@@ -21,15 +21,28 @@ function allocate_physics_buffers(grid::LatitudeLongitudeGrid{FT}, arch, model) 
 
     has_conv = _needs_convection(model.convection)
     has_dtrain = _needs_dtrain(model.convection)
+    has_tm5conv = _needs_tm5conv(model.convection)
     has_pbl = _needs_pbl(model.diffusion)
     needs_delp = has_conv || has_pbl
 
-    cmfmc_cpu = has_conv ? Array{FT}(undef, Nx, Ny, Nz + 1) : nothing
-    cmfmc_gpu = has_conv ? AT(zeros(FT, Nx, Ny, Nz + 1)) : nothing
+    cmfmc_cpu = (has_conv && !has_tm5conv) ? Array{FT}(undef, Nx, Ny, Nz + 1) : nothing
+    cmfmc_gpu = (has_conv && !has_tm5conv) ? AT(zeros(FT, Nx, Ny, Nz + 1)) : nothing
 
     dtrain_cpu = has_dtrain ? Array{FT}(undef, Nx, Ny, Nz) : nothing
     dtrain_gpu = has_dtrain ? AT(zeros(FT, Nx, Ny, Nz)) : nothing
     ras_workspace = model.convection isa RASConvection ? AT(zeros(FT, Nx, Ny, Nz)) : nothing
+
+    # TM5 matrix convection: 4 fields (entu, detu, entd, detd) on CPU + GPU
+    tm5conv_cpu = has_tm5conv ? (
+        entu = Array{FT}(undef, Nx, Ny, Nz),
+        detu = Array{FT}(undef, Nx, Ny, Nz),
+        entd = Array{FT}(undef, Nx, Ny, Nz),
+        detd = Array{FT}(undef, Nx, Ny, Nz)) : nothing
+    tm5conv_gpu = has_tm5conv ? (
+        entu = AT(zeros(FT, Nx, Ny, Nz)),
+        detu = AT(zeros(FT, Nx, Ny, Nz)),
+        entd = AT(zeros(FT, Nx, Ny, Nz)),
+        detd = AT(zeros(FT, Nx, Ny, Nz))) : nothing
 
     pbl_sfc_cpu = has_pbl ? (
         pblh  = Array{FT}(undef, Nx, Ny),
@@ -53,15 +66,16 @@ function allocate_physics_buffers(grid::LatitudeLongitudeGrid{FT}, arch, model) 
     planet = (has_conv || has_pbl) ? load_parameters(FT).planet : nothing
 
     return (;
-        has_conv, has_dtrain, has_pbl, needs_delp,
+        has_conv, has_dtrain, has_tm5conv, has_pbl, needs_delp,
         cmfmc_cpu, cmfmc_gpu,
         dtrain_cpu, dtrain_gpu, ras_workspace,
+        tm5conv_cpu, tm5conv_gpu,
         pbl_sfc_cpu, pbl_sfc_gpu, w_scratch,
         delp_cpu, area_j,
         qv_cpu, qv_gpu, qv_loaded=Ref(false), m_dry,
         planet,
         cmfmc_loaded=Ref(false), dtrain_loaded=Ref(false), sfc_loaded=Ref(false),
-        troph_loaded=Ref(false)
+        tm5conv_loaded=Ref(false), troph_loaded=Ref(false)
     )
 end
 
@@ -86,6 +100,14 @@ function allocate_physics_buffers(grid::CubedSphereGrid{FT}, arch, model;
 
     qv_cpu = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz), 6)
     qv_gpu = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz)), 6)
+    # Next-window QV for GCHP-style before/after PE (SPHU2)
+    qv_next_cpu = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz), 6)
+    qv_next_gpu = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz)), 6)
+    # PS from CTM_I1 (current + next) for DryPLE computation
+    ps_ctm_i1_cpu = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp), 6)
+    ps_ctm_i1_gpu = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp)), 6)
+    ps_next_ctm_i1_cpu = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp), 6)
+    ps_next_ctm_i1_gpu = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp)), 6)
 
     ras_workspace = model.convection isa RASConvection ?
         ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz)), 6) : nothing
@@ -114,6 +136,9 @@ function allocate_physics_buffers(grid::CubedSphereGrid{FT}, arch, model;
         dtrain_cpu, dtrain_gpu, ras_workspace,
         pbl_sfc_cpu, pbl_sfc_gpu, w_scratch,
         qv_cpu, qv_gpu, qv_loaded=Ref(false),
+        qv_next_cpu, qv_next_gpu, qv_next_loaded=Ref(false),
+        ps_ctm_i1_cpu, ps_ctm_i1_gpu,
+        ps_next_ctm_i1_cpu, ps_next_ctm_i1_gpu,
         troph_cpu, ps_cpu,
         planet,
         cmfmc_loaded=Ref(false), dtrain_loaded=Ref(false),
@@ -177,22 +202,29 @@ end
 """Allocate geometry cache and advection workspace, dispatched on grid."""
 function allocate_geometry_and_workspace(grid::LatitudeLongitudeGrid, arch;
                                           use_linrood::Bool=false,
-                                          use_vertical_remap::Bool=false)
+                                          use_vertical_remap::Bool=false,
+                                          use_gchp::Bool=false)
     # LL uses workspace from met buffer (gpu_buf.ws)
-    return (; gc=nothing, ws=nothing, ws_lr=nothing, ws_vr=nothing)
+    return (; gc=nothing, ws=nothing, ws_lr=nothing, ws_vr=nothing,
+              geom_gchp=nothing, ws_gchp=nothing)
 end
 
 function allocate_geometry_and_workspace(grid::CubedSphereGrid{FT}, arch;
                                           Hp::Int=3, use_linrood::Bool=false,
-                                          use_vertical_remap::Bool=false) where FT
+                                          use_vertical_remap::Bool=false,
+                                          use_gchp::Bool=false) where FT
     AT = array_type(arch)
     Nc, Nz = grid.Nc, grid.Nz
     ref_panel = AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz))
     gc = build_geometry_cache(grid, ref_panel)
     ws = allocate_cs_massflux_workspace(ref_panel, Nc)
-    ws_lr = use_linrood ? LinRoodWorkspace(grid) : nothing
+    # Lin-Rood workspace needed for both standard linrood AND gchp modes
+    ws_lr = (use_linrood || use_gchp) ? LinRoodWorkspace(grid) : nothing
     ws_vr = use_vertical_remap ? VerticalRemapWorkspace(grid, arch) : nothing
-    return (; gc, ws, ws_lr, ws_vr)
+    # GCHP-faithful transport: grid geometry + area flux workspace
+    geom_gchp = use_gchp ? GCHPGridGeometry(grid) : nothing
+    ws_gchp   = use_gchp ? GCHPTransportWorkspace(grid) : nothing
+    return (; gc, ws, ws_lr, ws_vr, geom_gchp, ws_gchp)
 end
 
 # =====================================================================

@@ -118,35 +118,16 @@ If a column's `sfc_flux == 0`, the flux is diagnosed from the tracer gradient.
             w_star = cbrt(g / T_sfc * H_kin * h_pbl)
             w_s = max(w_star, FT(0.01))  # safety minimum
 
-            # Surface tracer flux: use explicit if provided, else diagnose
+            # Surface tracer flux: use explicit value from emissions.
+            # GCHP passes actual emission fluxes to the PBL scheme; the
+            # counter-gradient term only activates for tracers with real
+            # surface sources. When sfc_flux == 0 (no emissions for this
+            # tracer), F_sfc stays zero → γ_c = 0 → no counter-gradient.
+            # The previous gradient-diagnosis fallback was removed because
+            # it treated advection-induced vertical gradients as real surface
+            # fluxes, creating spurious hemispheric biases (0.17 ppm/day
+            # in a no-emission CO2 run with asymmetric SH/NH met fields).
             F_sfc = FT(sfc_flux[ii, jj])
-            if F_sfc == FT(0)
-                # Diagnose from tracer gradient at lowest interface (Nz-1 / Nz)
-                if Nz >= 2
-                    # Compute dz at surface interface
-                    # Recompute p at levels Nz-1 and Nz
-                    p_top_sfc = FT(0)
-                    @inbounds for kk in 1:(Nz - 2)
-                        p_top_sfc += delp[ii, jj, kk]
-                    end
-                    delp_nm1 = delp[ii, jj, Nz - 1]
-                    delp_n   = delp[ii, jj, Nz]
-                    p_mid_nm1 = max(p_top_sfc + delp_nm1 / FT(2), FT(1))
-                    p_mid_n   = max(p_top_sfc + delp_nm1 + delp_n / FT(2), FT(1))
-                    dz_nm1 = delp_nm1 * R_T_over_g / p_mid_nm1
-                    dz_n   = delp_n   * R_T_over_g / p_mid_n
-                    dz_sfc_mid = (dz_nm1 + dz_n) / FT(2)
-
-                    # Height of the interface between Nz-1 and Nz
-                    z_sfc_int = dz_n  # height above ground of lowest interface
-
-                    Kz_sfc = _pbl_kz(z_sfc_int, h_pbl, us, L_ob, κ_vk,
-                                      β_h, Kz_bg, Kz_min, Kz_max, FT)
-
-                    dc_dz = (arr[ii, jj, Nz - 1] - arr[ii, jj, Nz]) / dz_sfc_mid
-                    F_sfc = -Kz_sfc * dc_dz  # upward flux > 0 for surface source
-                end
-            end
 
             γ_c = FT(fak) * FT(sffrac) * F_sfc / (w_s * h_pbl)
         end

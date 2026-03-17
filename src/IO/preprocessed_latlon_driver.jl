@@ -64,7 +64,8 @@ If `merge_map` is provided, levels are merged on load (see `merge_upper_levels`)
 function PreprocessedLatLonMetDriver(; FT::Type{<:AbstractFloat} = Float64,
                                        files::Vector{String},
                                        dt::Union{Nothing, Real} = nothing,
-                                       merge_map::Union{Nothing, Vector{Int}} = nothing)
+                                       merge_map::Union{Nothing, Vector{Int}} = nothing,
+                                       max_windows::Union{Nothing, Int} = nothing)
     isempty(files) && error("PreprocessedLatLonMetDriver: no files provided")
 
     merge_map !== nothing && !isempty(files) && endswith(files[1], ".bin") &&
@@ -124,6 +125,11 @@ function PreprocessedLatLonMetDriver(; FT::Type{<:AbstractFloat} = Float64,
             close(ds)
         end
         total += wins_per[end]
+    end
+
+    # Apply max_windows limit if specified
+    if max_windows !== nothing && max_windows > 0
+        total = min(total, max_windows)
     end
 
     # Auto-detect start date from first file
@@ -337,6 +343,36 @@ function load_cmfmc_window!(cmfmc::Array{FT, 3},
     try
         haskey(ds, "conv_mass_flux") || return false
         cmfmc .= FT.(ds["conv_mass_flux"][:, :, :, local_win])
+    finally
+        close(ds)
+    end
+    return true
+end
+
+"""
+    load_tm5conv_window!(tm5conv, driver::PreprocessedLatLonMetDriver, grid, win) → Bool
+
+Read TM5 convection fields (entu, detu, entd, detd) for window `win`.
+`tm5conv` is a NamedTuple with fields `entu`, `detu`, `entd`, `detd`,
+each of size (Nx, Ny, Nz).
+Returns `true` if all four fields were loaded, `false` if any are missing
+(or binary format).
+"""
+function load_tm5conv_window!(tm5conv::NamedTuple,
+                               driver::PreprocessedLatLonMetDriver{FT},
+                               grid, win::Int) where FT
+    file_idx, local_win = window_to_file_local(driver, win)
+    filepath = driver.files[file_idx]
+
+    endswith(filepath, ".bin") && return false
+
+    ds = NCDataset(filepath, "r")
+    try
+        for (name, arr) in pairs(tm5conv)
+            sname = String(name)
+            haskey(ds, sname) || return false
+            arr .= FT.(ds[sname][:, :, :, local_win])
+        end
     finally
         close(ds)
     end

@@ -23,9 +23,9 @@ include(joinpath(@__DIR__, "cs_regrid_utils.jl"))
 # ---------------------------------------------------------------------------
 const GC_DIR = get(ENV, "GC_DIR",
     joinpath(homedir(), "data", "AtmosTransport", "catrine-geoschem-runs"))
-const AT_DIR   = get(ENV, "AT_DIR", "/temp2/catrine-runs/output")
-const AT_PATTERN = get(ENV, "AT_PATTERN", "catrine_geosit_c180_validation")
-const OUT_GIF  = get(ENV, "OUT_GIF", "catrine_vs_geoschem_co2.gif")
+const AT_DIR   = get(ENV, "AT_DIR", "/temp1/catrine/output")
+const AT_PATTERN = get(ENV, "AT_PATTERN", "catrine_linrood_fullphys_21d_AdvOnly")  # Substring to identify relevant AT files
+const OUT_GIF  = get(ENV, "OUT_GIF", "/temp1/catrine/output/catrine_vs_geoschem_co2_21d_AdvOnly.gif")
 const FPS      = parse(Int, get(ENV, "FPS", "4"))
 
 # CS level indices (k=1 = surface, k=72 = TOA for GEOS-IT)
@@ -33,7 +33,7 @@ const LEV_SURFACE = 1
 const LEV_750HPA  = 15
 
 const DATE_START = DateTime(2021, 12, 1, 3)
-const DATE_END   = DateTime(2021, 12, 8, 21)
+const DATE_END   = DateTime(2021, 12, 21, 9)
 
 # ---------------------------------------------------------------------------
 # Loaders

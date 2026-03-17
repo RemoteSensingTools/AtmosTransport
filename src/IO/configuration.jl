@@ -20,9 +20,9 @@ using ..Diagnostics: ColumnMeanDiagnostic, ColumnMassDiagnostic, SurfaceSliceDia
                      RegridDiagnostic, ColumnFluxDiagnostic, EmissionFluxDiagnostic,
                      Full3DDiagnostic, MetField2DDiagnostic, SigmaLevelDiagnostic
 using ..Chemistry: NoChemistry, RadioactiveDecay, CompositeChemistry
-using ..Advection: SlopesAdvection, PPMAdvection
+using ..Advection: SlopesAdvection, PPMAdvection, PratherAdvection
 using ..Diffusion: BoundaryLayerDiffusion, NoDiffusion, PBLDiffusion, NonLocalPBLDiffusion
-using ..Convection: TiedtkeConvection, NoConvection, RASConvection
+using ..Convection: TiedtkeConvection, NoConvection, RASConvection, TM5MatrixConvection
 
 # Module-level storage for deferred CS initial conditions
 const _PENDING_IC = Ref(PendingInitialConditions())
@@ -275,6 +275,8 @@ function build_model_from_config(config::Dict)
     mass_fixer = get(adv_cfg, "mass_fixer", true)
     dry_correction = get(adv_cfg, "dry_correction", true)
     remap_pressure_fix = get(adv_cfg, "remap_pressure_fix", true)
+    # Transport basis: "dry" (default when dry_correction=true) or "moist" (GCHP-faithful)
+    pressure_basis = get(adv_cfg, "pressure_basis", dry_correction ? "dry" : "moist")
     metadata = Dict{String, Any}(
         "config"    => config,
         "user"      => get(ENV, "USER", "unknown"),
@@ -283,6 +285,7 @@ function build_model_from_config(config::Dict)
         "created"   => string(Dates.now()),
         "mass_fixer" => mass_fixer,
         "dry_correction" => dry_correction,
+        "pressure_basis" => pressure_basis,
         "remap_pressure_fix" => remap_pressure_fix,
     )
 
@@ -334,7 +337,9 @@ function _build_met_driver(driver_type::String, cfg::Dict, met_cfg_default, ::Ty
             f = _resolve_data_path(get(cfg, "file", ""))
             isempty(f) ? String[] : [f]
         end
-        return PreprocessedLatLonMetDriver(; FT, files, dt, merge_map)
+        max_win_cfg = get(cfg, "max_windows", nothing)
+        max_windows = max_win_cfg !== nothing ? Int(max_win_cfg) : nothing
+        return PreprocessedLatLonMetDriver(; FT, files, dt, merge_map, max_windows)
 
     elseif driver_type == "geosfp_cs"
         preproc_dir = _resolve_data_path(get(cfg, "preprocessed_dir", ""))
@@ -437,6 +442,10 @@ function _build_emission_source(tcfg::Dict, grid, ::Type{FT};
         filepath = expanduser(get(tcfg, "file", get(tcfg, "dir", "")))
         src = CATRINESource(; dataset, filepath)
         return load_inventory(src, grid; year)
+    elseif emission == "prebuild" || emission == "prebuilt"
+        filepath = expanduser(get(tcfg, "file", ""))
+        isfile(filepath) || error("Prebuilt emission file not found: $filepath")
+        return _load_prebuilt_emission(filepath, FT)
     elseif emission == "uniform_surface"
         rate    = FT(get(tcfg, "rate", 1.0e-8))    # kg/m²/s
         species = Symbol(get(tcfg, "species", "co2"))
@@ -451,6 +460,36 @@ function _build_emission_source(tcfg::Dict, grid, ::Type{FT};
     else
         @warn "Unknown emission type: $emission"
         return nothing
+    end
+end
+
+"""Load a prebuilt emission binary (4096-byte TOML header + Float64 time + Float32 flux)."""
+function _load_prebuilt_emission(filepath::String, ::Type{FT}) where FT
+    open(filepath, "r") do io
+        header_block = read(io, 4096)
+        null_pos = findfirst(==(0x00), header_block)
+        header_str = String(header_block[1:null_pos-1])
+        header = TOML.parse(header_str)
+
+        Nx = Int(header["Nx"])
+        Ny = Int(header["Ny"])
+        Nt = Int(header["Nt"])
+
+        time_hours = Vector{Float64}(undef, Nt)
+        read!(io, time_hours)
+
+        flux_f32 = Array{Float32}(undef, Nx, Ny, Nt)
+        read!(io, flux_f32)
+
+        species = Symbol(header["species"])
+        molar_mass = FT(header["molar_mass"])
+        label = get(header, "label", "prebuilt")
+        cyclic = get(header, "cyclic", false)
+
+        flux = FT.(flux_f32)
+        @info "Loaded prebuilt emission: $species ($Nx×$Ny×$Nt, $(label))"
+        return TimeVaryingSurfaceFlux(flux, time_hours, species;
+                                       label=label, molar_mass=molar_mass, cyclic=cyclic)
     end
 end
 
@@ -815,6 +854,9 @@ function _build_convection(config::Dict, ::Type{FT}) where FT
         return TiedtkeConvection()
     elseif ctype == "ras"
         return RASConvection()
+    elseif ctype == "tm5"
+        lmax_conv = get(conv_cfg, "lmax_conv", 0)
+        return TM5MatrixConvection(lmax_conv=lmax_conv)
     else
         @warn "Unknown convection type: $ctype — using no convection"
         return nothing
@@ -846,11 +888,18 @@ function _build_advection(config::Dict, ::Type{FT}) where FT
         damp_coeff = get(adv_cfg, "damp_coeff", 0.0)
         use_linrood = get(adv_cfg, "linrood", false)
         use_vertical_remap = get(adv_cfg, "vertical_remap", false)
-        if use_vertical_remap && !use_linrood
+        use_gchp = get(adv_cfg, "gchp", false)
+        if use_vertical_remap && !use_linrood && !use_gchp
             @info "vertical_remap requires linrood — enabling automatically"
             use_linrood = true
         end
-        return PPMAdvection{ppm_order}(; damp_coeff, use_linrood, use_vertical_remap)
+        if use_gchp
+            @info "GCHP-faithful transport enabled — area-based pre-advection + Courant PPM"
+        end
+        return PPMAdvection{ppm_order}(; damp_coeff, use_linrood, use_vertical_remap, use_gchp)
+    elseif scheme == "prather" || scheme == "som"
+        use_limiter = get(adv_cfg, "use_limiter", true)
+        return PratherAdvection(use_limiter)
     else
         @warn "Unknown advection scheme: $scheme — using slopes advection"
         return SlopesAdvection()

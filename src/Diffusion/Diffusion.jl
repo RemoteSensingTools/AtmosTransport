@@ -28,6 +28,25 @@ export diffuse_pbl!, diffuse_nonlocal_pbl!
 $(TYPEDEF)
 
 Supertype for vertical diffusion parameterizations.
+
+# Interface contract
+
+Subtypes must implement:
+
+    diffuse!(tracers, met, grid, diff::YourDiffusion, Δt)
+    adjoint_diffuse!(adj_tracers, met, grid, diff::YourDiffusion, Δt)
+
+For GPU support, implement KernelAbstractions kernels that dispatch on
+`get_backend(array)`. See `BoundaryLayerDiffusion` for a minimal example
+and `NonLocalPBLDiffusion` for a full-featured implementation with
+counter-gradient transport.
+
+# Available implementations
+
+- `NoDiffusion` — no-op pass-through
+- `BoundaryLayerDiffusion` — static exponential Kz profile
+- `PBLDiffusion` — met-data-driven Kz from PBLH, u*, HFLUX (TM5/Beljaars & Viterbo 1998)
+- `NonLocalPBLDiffusion` — local + counter-gradient (Holtslag & Boville 1993 / GEOS-Chem VDIFF)
 """
 abstract type AbstractDiffusion end
 
@@ -59,8 +78,11 @@ struct BoundaryLayerDiffusion{FT} <: AbstractDiffusion
     H_scale     :: FT
 end
 
-BoundaryLayerDiffusion(; Kz_max = 100.0, H_scale = 8.0) =
+function BoundaryLayerDiffusion(; Kz_max = 100.0, H_scale = 8.0)
+    Kz_max > 0 || throw(ArgumentError("Kz_max must be positive, got $Kz_max"))
+    H_scale > 0 || throw(ArgumentError("H_scale must be positive, got $H_scale"))
     BoundaryLayerDiffusion(Float64(Kz_max), Float64(H_scale))
+end
 
 """
 $(TYPEDEF)
@@ -85,8 +107,13 @@ struct PBLDiffusion{FT} <: AbstractDiffusion
     Kz_max :: FT
 end
 
-PBLDiffusion(; β_h = 15.0, Kz_bg = 0.1, Kz_min = 0.01, Kz_max = 500.0) =
+function PBLDiffusion(; β_h = 15.0, Kz_bg = 0.1, Kz_min = 0.01, Kz_max = 500.0)
+    Kz_max > 0  || throw(ArgumentError("Kz_max must be positive, got $Kz_max"))
+    Kz_bg  >= 0 || throw(ArgumentError("Kz_bg must be non-negative, got $Kz_bg"))
+    Kz_min >= 0 || throw(ArgumentError("Kz_min must be non-negative, got $Kz_min"))
+    Kz_min <= Kz_max || throw(ArgumentError("Kz_min ($Kz_min) must be ≤ Kz_max ($Kz_max)"))
     PBLDiffusion(Float64(β_h), Float64(Kz_bg), Float64(Kz_min), Float64(Kz_max))
+end
 
 """
 $(TYPEDEF)
@@ -116,10 +143,17 @@ struct NonLocalPBLDiffusion{FT} <: AbstractDiffusion
     sffrac :: FT
 end
 
-NonLocalPBLDiffusion(; β_h = 15.0, Kz_bg = 0.1, Kz_min = 0.01, Kz_max = 500.0,
-                       fak = 8.5, sffrac = 0.1) =
+function NonLocalPBLDiffusion(; β_h = 15.0, Kz_bg = 0.1, Kz_min = 0.01, Kz_max = 500.0,
+                               fak = 8.5, sffrac = 0.1)
+    Kz_max > 0  || throw(ArgumentError("Kz_max must be positive, got $Kz_max"))
+    Kz_bg  >= 0 || throw(ArgumentError("Kz_bg must be non-negative, got $Kz_bg"))
+    Kz_min >= 0 || throw(ArgumentError("Kz_min must be non-negative, got $Kz_min"))
+    Kz_min <= Kz_max || throw(ArgumentError("Kz_min ($Kz_min) must be ≤ Kz_max ($Kz_max)"))
+    0 < sffrac < 1   || throw(ArgumentError("sffrac must be in (0,1), got $sffrac"))
+    fak > 0          || throw(ArgumentError("fak must be positive, got $fak"))
     NonLocalPBLDiffusion(Float64(β_h), Float64(Kz_bg), Float64(Kz_min), Float64(Kz_max),
                          Float64(fak), Float64(sffrac))
+end
 
 include("boundary_layer_diffusion.jl")
 include("boundary_layer_diffusion_adjoint.jl")

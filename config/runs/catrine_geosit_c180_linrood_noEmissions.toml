@@ -1,0 +1,106 @@
+# ===========================================================================
+# CATRINE D7.1 — GEOS-IT C180 (Lin-Rood cross-term advection)
+#
+# Same as catrine_geosit_c180.toml but with Lin-Rood horizontal splitting.
+# Uses FV3's fv_tp_2d algorithm: averages X-first and Y-first PPM orderings
+# to eliminate directional splitting error at CS panel boundaries.
+# ===========================================================================
+
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "cubed_sphere"
+met_source = "geosfp"
+Nc         = 180
+
+[met_data]
+driver           = "geosfp_cs"
+product          = "geosit_c180"
+netcdf_dir       = "~/data/geosit_c180_catrine"
+preprocessed_dir = "/temp2/catrine-runs/met/geosit_c180"
+surface_data_bin_dir = "/temp1/catrine/met/geosit_c180/surface_bin"
+coord_file       = "~/code/gitHub/AtmosTransportModel/data/grids/cs_c180_gridspec.nc"
+start_date       = "2021-12-01"
+end_date         = "2021-12-22"
+dt               = 450
+met_interval     = 3600
+mass_flux_dt     = 450
+Hp               = 3
+
+[initial_conditions]
+co2.file     = "~/data/AtmosTransport/catrine/InitialConditions/startCO2_202112010000.nc"
+co2.variable = "CO2"
+sf6.file     = "~/data/AtmosTransport/catrine/InitialConditions/startSF6_202112010000.nc"
+sf6.variable = "SF6"
+
+[tracers.co2]
+species    = "co2"
+
+[tracers.fossil_co2]
+emission = "gridfed"
+file     = "~/data/AtmosTransport/catrine/preprocessed_c180/gridfed_fossil_co2_cs_c180_float32.bin"
+species  = "fossil_co2"
+year     = 2021
+
+[tracers.sf6]
+emission         = "edgar_sf6"
+file             = "~/data/AtmosTransport/catrine/preprocessed_c180/edgar_sf6_cs_c180_float32.bin"
+noaa_growth_file = "~/data/AtmosTransport/catrine/Emissions/sf6_gr_gl.txt"
+year             = 2022
+scale_year       = 2022
+
+[tracers.rn222]
+emission  = "zhang_rn222"
+file      = "~/data/AtmosTransport/catrine/preprocessed_c180/zhang_rn222_cs_c180_float32.bin"
+chemistry = "decay"
+half_life = 330350.4
+
+[chemistry]
+type = "composite"
+
+[advection]
+scheme          = "ppm"
+ppm_order       = 7
+damp_coeff      = 0.02
+linrood         = true
+vertical_remap  = true
+mass_fixer      = true
+dry_correction  = true
+
+#[convection]
+#type = "ras"
+
+[diffusion]
+type   = "nonlocal_pbl"
+beta_h = 15.0
+Kz_bg  = 0.1
+Kz_min = 0.01
+Kz_max = 500.0
+fak    = 8.5
+sffrac = 0.1
+
+[output]
+filename      = "/temp1/catrine/output/catrine_linrood_fullphys_21d_noEmissions"
+format        = "binary"
+auto_convert  = true
+split         = "daily"
+interval      = 10800
+
+[output.fields]
+sf6_3d           = {type = "full_3d", species = "sf6"}
+fossil_co2_3d    = {type = "full_3d", species = "fossil_co2"}
+co2_3d           = {type = "full_3d", species = "co2"}
+rn222_3d         = {type = "full_3d", species = "rn222"}
+sf6_column_mass  = {type = "column_mass", species = "sf6"}
+fco2_column_mass = {type = "column_mass", species = "fossil_co2"}
+co2_column_mass  = {type = "column_mass", species = "co2"}
+rn222_column_mass = {type = "column_mass", species = "rn222"}
+sf6_emission     = {type = "emission_flux", species = "sf6"}
+fco2_emission    = {type = "emission_flux", species = "fossil_co2"}
+surface_pressure = "surface_pressure"
+pbl_height       = "pbl_height"
+
+[buffering]
+strategy = "double"

@@ -89,11 +89,13 @@ function _read_surface_zip(path::String)
     result = NCDataset(instant_file, "r") do ds_i
         NCDataset(accum_file, "r") do ds_a
             # ERA5 lat from +90 to -90; flip to -90..+90
-            blh  = FT.(permutedims(reverse(ds_i["blh"][:, :, :], dims=2), (1,2,3)))
-            t2m  = FT.(permutedims(reverse(ds_i["t2m"][:, :, :], dims=2), (1,2,3)))
-            u10  = FT.(permutedims(reverse(ds_i["u10"][:, :, :], dims=2), (1,2,3)))
-            v10  = FT.(permutedims(reverse(ds_i["v10"][:, :, :], dims=2), (1,2,3)))
-            sshf = FT.(permutedims(reverse(ds_a["sshf"][:, :, :], dims=2), (1,2,3)))
+            # Use nomissing to handle missing values (fill with sensible defaults)
+            _nm(v, default) = FT.(nomissing(v[:, :, :], default))
+            blh  = permutedims(reverse(_nm(ds_i["blh"],  FT(1000)), dims=2), (1,2,3))
+            t2m  = permutedims(reverse(_nm(ds_i["t2m"],  FT(285)),  dims=2), (1,2,3))
+            u10  = permutedims(reverse(_nm(ds_i["u10"],  FT(0)),    dims=2), (1,2,3))
+            v10  = permutedims(reverse(_nm(ds_i["v10"],  FT(0)),    dims=2), (1,2,3))
+            sshf = permutedims(reverse(_nm(ds_a["sshf"], FT(0)),    dims=2), (1,2,3))
             (; blh, t2m, u10, v10, sshf)
         end
     end
@@ -105,13 +107,13 @@ function _read_surface_nc(path::String)
     NCDataset(path, "r") do ds
         flip_lat = ds["latitude"][1] > ds["latitude"][end]  # ERA5: N→S
 
-        function _read_flip(v)
-            arr = FT.(ds[v][:, :, :])
+        function _read_flip(v, default=FT(0))
+            arr = FT.(nomissing(ds[v][:, :, :], default))
             flip_lat ? reverse(arr, dims=2) : arr
         end
 
-        blh  = _read_flip("blh")
-        t2m  = _read_flip("t2m")
+        blh  = _read_flip("blh", FT(1000))
+        t2m  = _read_flip("t2m", FT(285))
         u10  = _read_flip("u10")
         v10  = _read_flip("v10")
         sshf = _read_flip("sshf")

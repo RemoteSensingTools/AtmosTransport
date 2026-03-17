@@ -1,0 +1,55 @@
+# C720 flat-IC test: uniform CO2 = 400 ppm, no emissions, GCHP advection only.
+# Uses GEOS-FP C720 June 2024 preprocessed binary (merged levels).
+# No QV available → moist dp basis (DELP as-is), direct cumsum PE.
+# Compare with C180 flat-IC to check resolution/data-quality dependence.
+
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type                  = "cubed_sphere"
+Nc                    = 720
+met_source            = "geosfp"
+merge_levels_above_Pa = 1000.0
+
+[met_data]
+driver           = "geosfp_cs"
+preprocessed_dir = "/temp1/atmos_transport/geosfp_c720/preprocessed_merged"
+coord_file       = "~/data/geosfp_cs/20240601/GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.20240601_0030.V01.nc4"
+start_date       = "2024-06-01"
+end_date         = "2024-06-02"
+dt               = 450
+met_interval     = 3600
+Hp               = 3
+mass_flux_dt     = 450
+
+[initial_conditions]
+co2.uniform_value = 0.0004
+
+[tracers.co2]
+
+[advection]
+scheme          = "ppm"
+ppm_order       = 7
+damp_coeff      = 0.02
+gchp            = true
+linrood         = false
+vertical_remap  = true
+mass_fixer      = false
+dry_correction  = false
+
+[output]
+filename      = "/temp1/atmos_transport/output/geosfp_c720_flat_test"
+format        = "binary"
+auto_convert  = true
+split         = "daily"
+interval      = 10800
+
+[output.fields]
+co2_3d           = {type = "full_3d", species = "co2"}
+co2_column_mass  = {type = "column_mass", species = "co2"}
+surface_pressure = "surface_pressure"
+
+[buffering]
+strategy = "single"

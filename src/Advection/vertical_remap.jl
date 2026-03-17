@@ -31,12 +31,13 @@ GPU workspace for conservative PPM vertical remapping.
 - `bk_dev`: Hybrid B coefficients on GPU (Nz+1)
 """
 struct VerticalRemapWorkspace{FT, A3 <: AbstractArray{FT,3},
+                               A3h <: AbstractArray{FT,3},
                                A2 <: AbstractArray{FT,2},
                                A1 <: AbstractVector{FT}}
     pe_tgt  :: NTuple{6, A3}   # Target pressure edges (Nc, Nc, Nz+1)
     dp_tgt  :: NTuple{6, A3}   # Target layer thickness (Nc, Nc, Nz)
     pe_src  :: NTuple{6, A3}   # Source pressure edges from hybrid coords (Nc, Nc, Nz+1)
-    m_save  :: NTuple{6, A3}   # Saved m for multi-tracer horizontal transport
+    m_save  :: NTuple{6, A3h}  # Saved m for multi-tracer horizontal transport (haloed)
     ps_tgt  :: NTuple{6, A2}   # Target surface pressure (Nc, Nc)
     ps_src  :: NTuple{6, A2}   # Source dry surface pressure (Nc, Nc)
     q_al    :: NTuple{6, A3}   # PPM left edge AL (Nc, Nc, Nz)
@@ -44,6 +45,7 @@ struct VerticalRemapWorkspace{FT, A3 <: AbstractArray{FT,3},
     q_a6    :: NTuple{6, A3}   # PPM curvature A6 (Nc, Nc, Nz)
     ak_dev  :: A1              # ak on GPU (Nz+1)
     bk_dev  :: A1              # bk on GPU (Nz+1)
+    dp_work :: NTuple{6, A3h}  # Evolving dp during q-space transport (haloed, Nc+2Hp × Nc+2Hp × Nz)
 end
 
 function VerticalRemapWorkspace(grid::CubedSphereGrid{FT}, arch) where FT
@@ -64,8 +66,11 @@ function VerticalRemapWorkspace(grid::CubedSphereGrid{FT}, arch) where FT
     ak_dev = AT(FT.(grid.vertical.A))
     bk_dev = AT(FT.(grid.vertical.B))
 
+    # dp_work: evolving pressure thickness during q-space horizontal transport
+    dp_work = ntuple(_ -> AT(zeros(FT, N, N, Nz)), 6)
+
     return VerticalRemapWorkspace(pe_tgt, dp_tgt, pe_src, m_save, ps_tgt, ps_src,
-                                  q_al, q_ar, q_a6, ak_dev, bk_dev)
+                                  q_al, q_ar, q_a6, ak_dev, bk_dev, dp_work)
 end
 
 # ---------------------------------------------------------------------------
@@ -1084,6 +1089,107 @@ function compute_target_pe_from_ps_hybrid!(ws_vr::VerticalRemapWorkspace,
     return nothing
 end
 
+# ---------------------------------------------------------------------------
+# GCHP-aligned PE computation (offline_tracer_advection, lines 988-1035)
+#
+# Source PE: cumsum of evolved dp after horizontal transport (= dpA in GCHP).
+# Target PE: hybrid formula from evolved PS, with pe_tgt(Nz+1) = pe_src(Nz+1)
+#            to ensure zero net column mass change in remap.
+# ---------------------------------------------------------------------------
+
+"""
+    compute_source_pe_from_evolved_mass!(ws_vr, m_evolved, gc, grid)
+
+Compute source PE from EVOLVED air mass after horizontal transport.
+Matches GCHP's `pe1(:,k) = pe1(:,k-1) + dpA(:,j,k-1)` (fv_tracer2d.F90:994-997).
+Writes to `ws_vr.pe_src` and `ws_vr.ps_src`.
+"""
+function compute_source_pe_from_evolved_mass!(ws_vr::VerticalRemapWorkspace,
+                                                m_evolved, gc, grid)
+    Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
+    FT = eltype(ws_vr.ak_dev)
+    ptop = FT(grid.vertical.A[1])
+    backend = get_backend(ws_vr.ak_dev)
+
+    k! = _pe_from_evolved_mass_kernel!(backend, 256)
+    for p in 1:6
+        k!(ws_vr.pe_src[p], ws_vr.ps_src[p], m_evolved[p],
+           gc.area[p], gc.gravity, ptop, Hp, Nc, Nz; ndrange=(Nc, Nc))
+    end
+    synchronize(backend)
+    return nothing
+end
+
+@kernel function _pe_from_evolved_mass_kernel!(pe_src, ps_out,
+        @Const(m_evolved), @Const(area), @Const(g_val), ptop, Hp, Nc, Nz)
+    i, j = @index(Global, NTuple)
+    @inbounds begin
+        ii = Hp + i; jj = Hp + j
+        FT = eltype(pe_src)
+        g = Float64(g_val)
+        a = Float64(area[i, j])
+
+        pe_acc = Float64(ptop)
+        pe_src[i, j, 1] = FT(pe_acc)
+        for k in 1:Nz
+            dp_k = Float64(m_evolved[ii, jj, k]) * g / a
+            pe_acc += dp_k
+            pe_src[i, j, k + 1] = FT(pe_acc)
+        end
+        ps_out[i, j] = FT(pe_acc)
+    end
+end
+
+"""
+    compute_target_pe_from_evolved_ps!(ws_vr, gc, grid)
+
+Compute target PE from hybrid formula using EVOLVED surface pressure.
+Matches GCHP's remap target (fv_tracer2d.F90:999-1005):
+  pe2(:,1) = ptop
+  pe2(:,npz+1) = pe1(:,npz+1)   ← same surface PE as source!
+  pe2(:,k) = ak(k) + bk(k) * pe1(:,npz+1)
+
+Must be called AFTER `compute_source_pe_from_evolved_mass!` (reads `ws_vr.ps_src`).
+Writes to `ws_vr.pe_tgt`, `ws_vr.dp_tgt`, `ws_vr.ps_tgt`.
+"""
+function compute_target_pe_from_evolved_ps!(ws_vr::VerticalRemapWorkspace, gc, grid)
+    Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
+    backend = get_backend(ws_vr.ak_dev)
+
+    k! = _pe_hybrid_from_evolved_ps_kernel!(backend, 256)
+    for p in 1:6
+        k!(ws_vr.pe_tgt[p], ws_vr.dp_tgt[p], ws_vr.ps_tgt[p],
+           ws_vr.pe_src[p], ws_vr.ps_src[p],
+           ws_vr.ak_dev, ws_vr.bk_dev, Nc, Nz; ndrange=(Nc, Nc))
+    end
+    synchronize(backend)
+    return nothing
+end
+
+@kernel function _pe_hybrid_from_evolved_ps_kernel!(pe_tgt, dp_tgt, ps_tgt_out,
+        @Const(pe_src), @Const(ps_src), @Const(ak), @Const(bk), Nc, Nz)
+    i, j = @index(Global, NTuple)
+    @inbounds begin
+        FT = eltype(pe_tgt)
+        ps_evolved = Float64(ps_src[i, j])
+        ps_tgt_out[i, j] = FT(ps_evolved)
+
+        # GCHP: pe2(1) = ptop = ak(1), pe2(npz+1) = pe1(npz+1)
+        pe_tgt[i, j, 1] = FT(Float64(ak[1]))
+        pe_tgt[i, j, Nz + 1] = pe_src[i, j, Nz + 1]  # same surface PE!
+
+        # Interior: hybrid formula from evolved PS
+        for k in 2:Nz
+            pe_tgt[i, j, k] = FT(Float64(ak[k]) + Float64(bk[k]) * ps_evolved)
+        end
+
+        # dp from PE differences
+        for k in 1:Nz
+            dp_tgt[i, j, k] = pe_tgt[i, j, k + 1] - pe_tgt[i, j, k]
+        end
+    end
+end
+
 """
     compute_target_pressure_from_dry_delp_direct!(ws_vr, ng_delp, qv_panels, gc, grid)
 
@@ -1145,6 +1251,355 @@ end
             dp_tgt[i, j, k] = FT(dp)
         end
     end
+end
+
+# ---------------------------------------------------------------------------
+# GCHP-style DryPLE from PS + SPHU (calculate_ple with dry correction)
+#
+# Matches GCHPctmEnv_GridCompMod.F90:1148-1299 (calculate_ple).
+# Computes dry pressure level edges from surface pressure and specific humidity:
+#   1. dp_wet[k] = (ak[k]+bk[k]*PS) - (ak[k+1]+bk[k+1]*PS)  (hybrid layer thickness)
+#   2. PS_dry = ptop + Σ(dp_wet[k] × (1-SPHU[k]))             (dry surface pressure)
+#   3. DryPLE[k] = ak[k] + bk[k] × PS_dry                     (dry pressure edges)
+#
+# Used for before/after PE in vertical remap:
+#   DryPLE0 = calculate_dry_ple(PS1, SPHU1)  → source PE
+#   DryPLE1 = calculate_dry_ple(PS2, SPHU2)  → target PE
+# ---------------------------------------------------------------------------
+
+@kernel function _dry_ple_from_ps_sphu_kernel!(pe, dp, ps_dry_out,
+        @Const(ps), @Const(sphu), @Const(ak), @Const(bk), Hp, Nc, Nz)
+    i, j = @index(Global, NTuple)
+    @inbounds begin
+        ii = Hp + i
+        jj = Hp + j
+        FT = eltype(pe)
+
+        # PS is in hPa from CTM_I1; convert to Pa for consistency
+        # (hybrid coords ak are in Pa, bk are dimensionless)
+        ps_pa = Float64(ps[ii, jj]) * 100.0
+
+        # Step 1: Dry surface pressure from hybrid dp × (1-SPHU)
+        ps_dry = Float64(ak[Nz + 1])  # ptop (top edge)
+        for k in 1:Nz
+            pe_bot = Float64(ak[k])     + Float64(bk[k])     * ps_pa
+            pe_top = Float64(ak[k + 1]) + Float64(bk[k + 1]) * ps_pa
+            dp_wet = pe_bot - pe_top
+            ps_dry += dp_wet * (1.0 - Float64(sphu[ii, jj, k]))
+        end
+        ps_dry_out[i, j] = FT(ps_dry)
+
+        # Step 2: Dry PE from hybrid coords with PS_dry
+        for k in 1:Nz + 1
+            pe[i, j, k] = FT(Float64(ak[k]) + Float64(bk[k]) * ps_dry)
+        end
+        for k in 1:Nz
+            dp[i, j, k] = pe[i, j, k + 1] - pe[i, j, k]
+        end
+    end
+end
+
+"""
+    compute_dry_ple!(ws_vr, ps_panels, sphu_panels, gc, grid)
+
+Compute dry pressure level edges from PS and SPHU using GCHP's `calculate_ple`
+algorithm. Writes to `ws_vr.pe_tgt` and `ws_vr.dp_tgt` (or pe_src/ps_src
+depending on which workspace fields are passed).
+
+PS is 2D (Nc+2Hp, Nc+2Hp) in hPa from CTM_I1.
+SPHU is 3D (Nc+2Hp, Nc+2Hp, Nz) in kg/kg from CTM_I1.
+"""
+function compute_dry_ple!(pe_panels::NTuple{6}, dp_panels::NTuple{6},
+                           ps_dry_panels::NTuple{6},
+                           ps_panels::NTuple{6}, sphu_panels::NTuple{6},
+                           ws_vr::VerticalRemapWorkspace, gc, grid)
+    Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
+    backend = get_backend(ws_vr.ak_dev)
+
+    k! = _dry_ple_from_ps_sphu_kernel!(backend, 256)
+    for p in 1:6
+        k!(pe_panels[p], dp_panels[p], ps_dry_panels[p],
+           ps_panels[p], sphu_panels[p],
+           ws_vr.ak_dev, ws_vr.bk_dev, Hp, Nc, Nz; ndrange=(Nc, Nc))
+    end
+    synchronize(backend)
+    return nothing
+end
+
+# ---------------------------------------------------------------------------
+# GCHP-style global scaling factor (calcScalingFactor)
+#
+# After remapping with hybrid PE, the total tracer mass may differ from the
+# pre-remap mass because met DELP deviates from the hybrid formula by 0.1-1%
+# per level. GCHP compensates by computing a single global multiplicative
+# factor:
+#
+#   scaling = Σ(q × dp_source × area) / Σ(q × dp_target × area)
+#
+# where q is the remapped mixing ratio, dp_source is the pre-remap layer
+# thickness, and dp_target = PE[k+1] - PE[k] from the hybrid formula.
+#
+# The factor is applied uniformly to all cells: q_corrected = q × scaling.
+# Typically scaling ≈ 1.0 ± O(1e-4).
+#
+# Reference: GCHP fv_tracer2d.F90:1142-1186 (calcScalingFactor)
+#            and lines 1077-1137 (calcScalingFactorTrop, troposphere-only variant)
+# ---------------------------------------------------------------------------
+
+"""
+    calc_scaling_factor(rm_panels, m_save_panels, ws_vr, gc, grid) → Float64
+
+Compute the GCHP-style global scaling factor for post-remap mass correction.
+
+Returns `Σ(rm × g / area) / Σ(dp_tgt × q_remap)` where `q_remap = rm / m_save`.
+This is equivalent to `mass_on_source / mass_on_target`, correcting for the
+mismatch between met DELP and hybrid PE target pressure structure.
+
+Applied after `vertical_remap_cs!` when using hybrid PE target computation.
+"""
+function calc_scaling_factor(rm_panels::NTuple{6}, m_save_panels::NTuple{6},
+                              ws_vr::VerticalRemapWorkspace, gc, grid)
+    Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
+    g = Float64(grid.gravity)
+
+    # Numerator: total tracer mass on source pressure grid (pre-remap DELP basis)
+    # = Σ q × dp_source × area / g = Σ rm  (since rm = q × m = q × dp × area / g)
+    # After remap, rm has been remapped but represents mass on TARGET grid.
+    # The PRE-remap mass was just the sum of rm before remap. But we don't
+    # have that anymore. Instead, following GCHP:
+    #   numerator = Σ q_remap × dp_source × area  = Σ (rm/m_save) × m_save = Σ rm
+    # This IS the current total mass (post-remap rm on target grid structure).
+    #
+    # denominator = Σ q_remap × dp_target × area  = Σ (rm/m_save) × (dp_tgt × area / g)
+    # dp_tgt comes from the hybrid PE computation.
+    #
+    # So: scaling = Σ rm / Σ (rm/m_save × dp_tgt × area / g)
+
+    sum_num = 0.0   # Σ rm  (total tracer mass)
+    sum_den = 0.0   # Σ (rm / m_save) × (dp_tgt × area / g)
+
+    for p in 1:6
+        area = gc.area[p]
+        for k in 1:Nz, j in 1:Nc, i in 1:Nc
+            ii, jj = Hp + i, Hp + j
+            rm_val = Float64(rm_panels[p][ii, jj, k])
+            m_val = Float64(m_save_panels[p][ii, jj, k])
+            dp_tgt = Float64(ws_vr.dp_tgt[p][i, j, k])
+            a = Float64(area[i, j])
+
+            sum_num += rm_val
+            if m_val > 0
+                q = rm_val / m_val
+                sum_den += q * dp_tgt * a / g
+            end
+        end
+    end
+
+    return sum_den > 0 ? sum_num / sum_den : 1.0
+end
+
+"""
+    apply_scaling_factor!(rm_panels, scaling, grid)
+
+Apply global scaling factor to remapped tracer mass: `rm *= scaling`.
+"""
+function apply_scaling_factor!(rm_panels::NTuple{6}, scaling::Float64, grid)
+    FT = eltype(rm_panels[1])
+    s = FT(scaling)
+    for p in 1:6
+        rm_panels[p] .*= s
+    end
+    return nothing
+end
+
+"""
+    fillz_panels!(rm_panels, dp_tgt_panels, grid)
+
+Port of FV3's `fillz` (fv_fill.F90:34-139). Fixes negative mixing ratios
+after vertical remap by borrowing mass from neighboring levels, then applying
+a non-local column scaling if needed. Operates on CPU (called once after remap).
+
+`rm_panels` are haloed `(Nc+2Hp, Nc+2Hp, Nz)` tracer mass arrays.
+`dp_tgt_panels` are unhaloed `(Nc, Nc, Nz)` target pressure thickness.
+The algorithm works on q = rm/dp (mixing ratio proxy) with dp weights:
+1. Top layer: if q < 0, borrow from level below
+2. Interior: if q < 0, borrow from above then below (limited)
+3. Bottom layer: if q < 0, borrow from above (limited)
+4. Non-local: if still negative, scale all positive values to conserve column mass
+
+Conserves total tracer mass (Σ rm) per column exactly.
+"""
+function fillz_panels!(rm_panels::NTuple{6}, dp_tgt_panels::NTuple{6},
+                        grid::CubedSphereGrid)
+    Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
+    n_fixed = 0
+
+    for p in 1:6
+        rm_cpu = Array(rm_panels[p])
+        dp_cpu = Array(dp_tgt_panels[p])   # unhaloed (Nc, Nc, Nz)
+        fixed = _fillz_panel!(rm_cpu, dp_cpu, Nc, Nz, Hp)
+        n_fixed += fixed
+        if fixed > 0
+            copyto!(rm_panels[p], rm_cpu)
+        end
+    end
+
+    if n_fixed > 0
+        @debug "fillz: fixed $n_fixed negative columns"
+    end
+    return nothing
+end
+
+"""Column-wise fillz for a single panel. Returns number of columns fixed.
+`rm` is haloed (Nc+2Hp)². `dp` is unhaloed (Nc, Nc, Nz)."""
+function _fillz_panel!(rm::Array{FT,3}, dp::Array{FT2,3},
+                        Nc::Int, Nz::Int, Hp::Int) where {FT, FT2}
+    n_fixed = 0
+
+    @inbounds for j in 1:Nc, i in 1:Nc
+        ii, jj = Hp + i, Hp + j
+        zfix = false
+
+        # 1. Top layer (k=1): borrow from below
+        dp1 = FT(dp[i, j, 1])
+        if dp1 > 0
+            q1 = rm[ii, jj, 1] / dp1
+            if q1 < 0
+                rm[ii, jj, 2] += rm[ii, jj, 1]  # transfer all mass to level 2
+                rm[ii, jj, 1] = zero(FT)
+            end
+        end
+
+        # 2. Interior (k=2:Nz-1): borrow from above, then below
+        for k in 2:Nz-1
+            dp_k = FT(dp[i, j, k])
+            dp_k <= 0 && continue
+            q_k = rm[ii, jj, k] / dp_k
+            if q_k < 0
+                zfix = true
+                # Borrow from above
+                dp_above = FT(dp[i, j, k-1])
+                if dp_above > 0
+                    q_above = rm[ii, jj, k-1] / dp_above
+                    if q_above > 0
+                        dq = min(q_above * dp_above, -q_k * dp_k)
+                        rm[ii, jj, k-1] -= dq
+                        rm[ii, jj, k]   += dq
+                    end
+                end
+                # Still negative? Borrow from below
+                q_k_new = rm[ii, jj, k] / dp_k
+                if q_k_new < 0
+                    dp_below = FT(dp[i, j, k+1])
+                    if dp_below > 0
+                        q_below = rm[ii, jj, k+1] / dp_below
+                        if q_below > 0
+                            dq = min(q_below * dp_below, -q_k_new * dp_k)
+                            rm[ii, jj, k+1] -= dq
+                            rm[ii, jj, k]   += dq
+                        end
+                    end
+                end
+            end
+        end
+
+        # 3. Bottom layer (k=Nz): borrow from above
+        dp_bot = FT(dp[i, j, Nz])
+        if dp_bot > 0
+            q_bot = rm[ii, jj, Nz] / dp_bot
+            if q_bot < 0
+                zfix = true
+                dp_above = FT(dp[i, j, Nz-1])
+                if dp_above > 0
+                    q_above = rm[ii, jj, Nz-1] / dp_above
+                    if q_above > 0
+                        dq = min(q_above * dp_above, -q_bot * dp_bot)
+                        rm[ii, jj, Nz-1] -= dq
+                        rm[ii, jj, Nz]   += dq
+                    end
+                end
+            end
+        end
+
+        # 4. Non-local fix: scale all positive values to conserve column mass
+        if zfix
+            sum0 = zero(Float64)   # total mass (can be + or -)
+            sum1 = zero(Float64)   # sum of positive mass only
+            for k in 2:Nz
+                dm_k = Float64(rm[ii, jj, k])
+                sum0 += dm_k
+                if dm_k > 0
+                    sum1 += dm_k
+                end
+            end
+            if sum0 > 0 && sum1 > 0
+                fac = FT(sum0 / sum1)
+                for k in 2:Nz
+                    rm[ii, jj, k] = max(zero(FT), fac * rm[ii, jj, k])
+                end
+                n_fixed += 1
+            end
+        end
+    end
+
+    return n_fixed
+end
+
+"""
+    gchp_calc_scaling_factor(rm_panels, dp_tgt, delp_next, gc, grid) → Float64
+
+GCHP's calcScalingFactor (fv_tracer2d.F90:1142-1186).
+Computes the ratio of tracer mass on the hybrid remap grid to tracer mass
+on the met target grid:
+
+    scaling = Σ(q_remap × dp_hybrid × area) / Σ(q_remap × delp_next × area)
+
+where q_remap = rm / m_hybrid, m_hybrid = dp_tgt × area / g (air mass on
+the hybrid target grid after remap), and delp_next is the actual met DELP.
+
+Since Σ(q × dp × area) = Σ(rm / (dp_tgt×area/g) × dp × area) and for the
+numerator dp = dp_tgt, this simplifies to Σ(rm × g) = g × Σ(rm).
+The denominator is Σ(rm / (dp_tgt×area/g) × delp_next × area).
+"""
+function gchp_calc_scaling_factor(rm_panels::NTuple{6}, dp_tgt_panels,
+                                    delp_next, gc, grid;
+                                    qv_panels=nothing)
+    Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
+
+    # GCHP formula (fv_tracer2d.F90:1164-1177):
+    #   scaling = Σ(q × dp_hybrid × area) / Σ(q × dp_met × area)
+    # Simplified: scaling = Σ(rm) / Σ(rm × dp_met / dp_tgt)
+    #
+    # Both dp_tgt and dp_met should be on the SAME basis (moist or dry).
+    # If qv_panels provided: dp_met = delp_next × (1-qv) (dry comparison).
+    # If qv_panels=nothing: dp_met = delp_next as-is (moist comparison).
+
+    sum_num = 0.0   # Σ rm
+    sum_den = 0.0   # Σ (rm × dp_met_dry / dp_tgt)
+
+    for p in 1:6
+        rm_cpu    = Array(rm_panels[p])
+        dp_t_cpu  = Array(dp_tgt_panels[p])    # unhaloed (Nc, Nc, Nz)
+        delp_cpu  = Array(delp_next[p])         # haloed
+        qv_cpu    = qv_panels !== nothing ? Array(qv_panels[p]) : nothing
+
+        @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
+            ii, jj = Hp + i, Hp + j
+            rm_val  = Float64(rm_cpu[ii, jj, k])
+            dp_t    = Float64(dp_t_cpu[i, j, k])
+            dp_met  = Float64(delp_cpu[ii, jj, k])
+            if qv_cpu !== nothing
+                dp_met *= (1.0 - Float64(qv_cpu[ii, jj, k]))
+            end
+
+            sum_num += rm_val
+            if abs(dp_t) > 1e-30
+                sum_den += rm_val * dp_met / dp_t
+            end
+        end
+    end
+
+    return sum_den > 0 ? sum_num / sum_den : 1.0
 end
 
 # ---------------------------------------------------------------------------

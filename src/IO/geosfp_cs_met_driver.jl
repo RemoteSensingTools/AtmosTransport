@@ -913,6 +913,19 @@ function _i3_path_from_ctm(ctm_path::String)
     return isfile(i3_path) ? i3_path : ""
 end
 
+"""
+Derive the CTM_I1 (hourly QV+PS) file path from a CTM_A1 file path.
+CTM_I1 is the GCHP-standard hourly instantaneous thermodynamic collection.
+Returns empty string if the file doesn't exist.
+"""
+function _ctm_i1_path_from_ctm(ctm_path::String)
+    dir = dirname(ctm_path)
+    fname = basename(ctm_path)
+    i1_fname = replace(fname, "CTM_A1" => "CTM_I1")
+    i1_path = joinpath(dir, i1_fname)
+    return isfile(i1_path) ? i1_path : ""
+end
+
 # Module-level cache for QV timestep deduplication (same pattern as DTRAIN)
 const _QV_CACHE = Ref((file_idx=0, time_idx=0))
 const _QV_BIN_IO_CACHE = Ref{Any}(nothing)
@@ -984,50 +997,45 @@ end
 """
 $(SIGNATURES)
 
-Load specific humidity (QV) from I3 files into pre-allocated panels.
+Load specific humidity (QV) into pre-allocated panels.
 
-QV is needed for converting wet mole fractions to dry mole fractions at output time.
-The I3 collection is 3-hourly instantaneous (8 timesteps/day), same cadence as A3dyn.
+Tries CTM_I1 (hourly instantaneous, GCHP-standard) first, then falls back
+to I3 (3-hourly instantaneous). CTM_I1 provides QV at the same cadence as
+mass fluxes — this is what GCHP 14.7+ uses for SPHU1/SPHU2 imports.
 
-Returns `true` if QV was loaded, `:cached` if unchanged, `false` if I3 data unavailable.
+Returns `true` if QV was loaded, `:cached` if unchanged, `false` if unavailable.
 """
 function load_qv_window!(qv_panels::NTuple{6},
                           driver::GEOSFPCubedSphereMetDriver{FT},
                           grid, win::Int) where FT
     file_idx, local_win = window_to_file_local(driver, win)
+
+    # --- Try CTM_I1 first (hourly, GCHP-aligned) ---
+    ctm_i1_loaded = _try_load_qv_ctm_i1!(qv_panels, driver, file_idx, local_win, FT)
+    ctm_i1_loaded !== false && return ctm_i1_loaded
+
+    # --- Fallback: I3 (3-hourly) ---
     a3_time_index = cld(local_win, 3)
 
     if _QV_CACHE[].file_idx == file_idx && _QV_CACHE[].time_idx == a3_time_index
         return :cached
     end
 
-    # Priority 0: flat binary
+    # Priority 0: flat binary I3
     bin_path = _surface_bin_path(driver, file_idx, "I3")
     if !isempty(bin_path)
-        local_win == 1 && @info "  QV: binary reader ($(basename(bin_path)), t=$a3_time_index)"
+        local_win == 1 && @info "  QV: I3 binary (3-hourly, t=$a3_time_index)"
         result = _load_qv_from_bin!(qv_panels, bin_path, a3_time_index,
                                      driver.Nc, driver.Hp, FT)
         result && (_QV_CACHE[] = (file_idx=file_idx, time_idx=a3_time_index))
         return result
     end
 
-    # Priority 1: co-located I3 alongside CTM_A1 (GEOS-IT naming)
-    i3_path = if driver.mode === :netcdf
-        _i3_path_from_ctm(driver.files[file_idx])
-    elseif !isempty(driver.coord_file)
-        # Binary mode: derive I3 path from coord_file's parent directory structure
-        # coord_file = .../netcdf_dir/YYYYMMDD/GEOSIT.*.CTM_A1.C180.nc
-        nc_base = dirname(dirname(driver.coord_file))
-        date = driver._start_date + Day(file_idx - 1)
-        datestr = Dates.format(date, "yyyymmdd")
-        candidate = joinpath(nc_base, datestr, "GEOSIT.$(datestr).I3.C$(driver.Nc).nc")
-        isfile(candidate) ? candidate : ""
-    else
-        ""
-    end
+    # Priority 1: co-located I3 NetCDF alongside CTM_A1
+    i3_path = _find_collection_nc(driver, file_idx, "I3")
     isempty(i3_path) && return false
 
-    local_win == 1 && @info "  QV: NetCDF reader ($(basename(i3_path)), t=$a3_time_index)"
+    local_win == 1 && @info "  QV: I3 NetCDF (3-hourly, t=$a3_time_index)"
     ds = NCDataset(i3_path, "r")
     Nc_file = Int(ds.dim["Xdim"])
     Nz_file = Int(ds.dim["lev"])
@@ -1047,6 +1055,196 @@ function load_qv_window!(qv_panels::NTuple{6},
 
     _QV_CACHE[] = (file_idx=file_idx, time_idx=a3_time_index)
     return true
+end
+
+"""
+Try loading QV from CTM_I1 (hourly instantaneous). Returns `true`, `:cached`, or `false`.
+"""
+function _try_load_qv_ctm_i1!(qv_panels::NTuple{6},
+                                driver::GEOSFPCubedSphereMetDriver{FT},
+                                file_idx::Int, local_win::Int,
+                                ::Type{FT}) where FT
+    # CTM_I1 is hourly: time_index = local_win directly
+    qv_time_index = local_win
+
+    # Check cache (hourly = every window is unique, but still need file_idx check)
+    if _QV_CACHE[].file_idx == file_idx && _QV_CACHE[].time_idx == qv_time_index
+        return :cached
+    end
+
+    # Try binary CTM_I1 (graceful fallback on truncated files)
+    bin_path = _surface_bin_path(driver, file_idx, "CTM_I1")
+    if !isempty(bin_path)
+        local_win == 1 && @info "  QV: CTM_I1 binary (hourly, t=$qv_time_index)"
+        try
+            result = _load_qv_from_bin!(qv_panels, bin_path, qv_time_index,
+                                         driver.Nc, driver.Hp, FT)
+            result && (_QV_CACHE[] = (file_idx=file_idx, time_idx=qv_time_index))
+            return result
+        catch e
+            e isa EOFError || rethrow()
+            @warn "CTM_I1 binary truncated at t=$qv_time_index, falling back to I3" maxlog=1
+        end
+    end
+
+    # Try NetCDF CTM_I1
+    i1_path = _find_collection_nc(driver, file_idx, "CTM_I1")
+    isempty(i1_path) && return false
+
+    local_win == 1 && @info "  QV: CTM_I1 NetCDF (hourly, t=$qv_time_index)"
+    ds = NCDataset(i1_path, "r")
+    Nc_file = Int(ds.dim["Xdim"])
+    Nz_file = Int(ds.dim["lev"])
+    raw = FT.(coalesce.(ds["QV"][:, :, :, :, qv_time_index], FT(0)))
+    close(ds)
+
+    Hp_d = driver.Hp
+    for p in 1:6
+        fill!(qv_panels[p], zero(FT))
+        @inbounds for k_file in 1:Nz_file
+            k_model = Nz_file - k_file + 1
+            for jj in 1:Nc_file, ii in 1:Nc_file
+                qv_panels[p][ii + Hp_d, jj + Hp_d, k_model] = raw[ii, jj, p, k_file]
+            end
+        end
+    end
+
+    _QV_CACHE[] = (file_idx=file_idx, time_idx=qv_time_index)
+    return true
+end
+
+"""
+    load_ps_from_ctm_i1!(ps_panels, driver, grid, win) → true|false
+
+Load surface pressure from CTM_I1 (hourly instantaneous) into 2D panels.
+PS is in hPa from CTM_I1. Returns false if CTM_I1 not available.
+"""
+function load_ps_from_ctm_i1!(ps_panels::NTuple{6},
+                                driver::GEOSFPCubedSphereMetDriver{FT},
+                                grid, win::Int) where FT
+    file_idx, local_win = window_to_file_local(driver, win)
+    i1_path = _find_collection_nc(driver, file_idx, "CTM_I1")
+    isempty(i1_path) && return false
+
+    ds = NCDataset(i1_path, "r")
+    ps_raw = FT.(coalesce.(ds["PS"][:, :, :, local_win], FT(0)))
+    close(ds)
+
+    Hp_d = driver.Hp
+    Nc_d = driver.Nc
+    for p in 1:6
+        fill!(ps_panels[p], zero(FT))
+        @inbounds for jj in 1:Nc_d, ii in 1:Nc_d
+            ps_panels[p][ii + Hp_d, jj + Hp_d] = ps_raw[ii, jj, p]
+        end
+    end
+    return true
+end
+
+"""
+    load_qv_and_ps_pair!(qv_curr, qv_next, ps_curr, ps_next, driver, grid, win) → Bool
+
+Load before/after QV+PS from CTM_I1 for GCHP-style DryPLE computation.
+- qv_curr, ps_curr ← CTM_I1 at time=win (SPHU1, PS1)
+- qv_next, ps_next ← CTM_I1 at time=win+1 (SPHU2, PS2)
+
+For the last window of a day, reads PS2/SPHU2 from next day's CTM_I1 t=1.
+Returns false if CTM_I1 is not available.
+"""
+function load_qv_and_ps_pair!(qv_curr::NTuple{6}, qv_next::NTuple{6},
+                                ps_curr::NTuple{6}, ps_next::NTuple{6},
+                                driver::GEOSFPCubedSphereMetDriver{FT},
+                                grid, win::Int) where FT
+    file_idx, local_win = window_to_file_local(driver, win)
+    Hp_d = driver.Hp
+    Nc_d = driver.Nc
+    Nz_d = driver.Nz
+
+    # Load current window QV+PS
+    i1_path = _find_collection_nc(driver, file_idx, "CTM_I1")
+    isempty(i1_path) && return false
+
+    ds = NCDataset(i1_path, "r")
+    Nt_file = Int(ds.dim["time"])
+    Nz_file = Int(ds.dim["lev"])
+
+    # Current QV + PS
+    ps_raw = FT.(coalesce.(ds["PS"][:, :, :, local_win], FT(0)))
+    qv_raw = FT.(coalesce.(ds["QV"][:, :, :, :, local_win], FT(0)))
+
+    # Next-window QV + PS
+    if local_win < Nt_file
+        ps_next_raw = FT.(coalesce.(ds["PS"][:, :, :, local_win + 1], FT(0)))
+        qv_next_raw = FT.(coalesce.(ds["QV"][:, :, :, :, local_win + 1], FT(0)))
+        close(ds)
+    else
+        close(ds)
+        # Next hour is in the next day's file
+        next_file_idx = file_idx + 1
+        i1_next_path = _find_collection_nc(driver, next_file_idx, "CTM_I1")
+        if isempty(i1_next_path)
+            # Last window of simulation — use current as proxy
+            ps_next_raw = copy(ps_raw)
+            qv_next_raw = copy(qv_raw)
+        else
+            ds_next = NCDataset(i1_next_path, "r")
+            ps_next_raw = FT.(coalesce.(ds_next["PS"][:, :, :, 1], FT(0)))
+            qv_next_raw = FT.(coalesce.(ds_next["QV"][:, :, :, :, 1], FT(0)))
+            close(ds_next)
+        end
+    end
+
+    # Copy to panel arrays (with halo offset and vertical flip)
+    for p in 1:6
+        fill!(ps_curr[p], zero(FT)); fill!(ps_next[p], zero(FT))
+        fill!(qv_curr[p], zero(FT)); fill!(qv_next[p], zero(FT))
+        @inbounds for jj in 1:Nc_d, ii in 1:Nc_d
+            ps_curr[p][ii + Hp_d, jj + Hp_d] = ps_raw[ii, jj, p]
+            ps_next[p][ii + Hp_d, jj + Hp_d] = ps_next_raw[ii, jj, p]
+        end
+        @inbounds for k_file in 1:Nz_file
+            k_model = Nz_file - k_file + 1  # flip bottom-to-top → TOA-first
+            for jj in 1:Nc_d, ii in 1:Nc_d
+                qv_curr[p][ii + Hp_d, jj + Hp_d, k_model] = qv_raw[ii, jj, p, k_file]
+                qv_next[p][ii + Hp_d, jj + Hp_d, k_model] = qv_next_raw[ii, jj, p, k_file]
+            end
+        end
+    end
+
+    return true
+end
+
+"""Helper: find a NetCDF collection file co-located with CTM_A1."""
+function _find_collection_nc(driver::GEOSFPCubedSphereMetDriver, file_idx::Int, collection::String)
+    date = driver._start_date + Day(file_idx - 1)
+    datestr = Dates.format(date, "yyyymmdd")
+
+    # Priority 1: co-located with CTM_A1 files (netcdf mode)
+    if driver.mode === :netcdf && !isempty(driver.files)
+        dir = dirname(driver.files[file_idx])
+        fname = basename(driver.files[file_idx])
+        candidate = joinpath(dir, replace(fname, "CTM_A1" => collection))
+        isfile(candidate) && return candidate
+    end
+
+    # Priority 2: search common GEOS-IT data directories
+    # Check surface_data_dir (regridded CS NetCDF), then derive from coord_file
+    for base_dir in [driver.surface_data_dir,
+                     !isempty(driver.coord_file) ? dirname(dirname(driver.coord_file)) : ""]
+        isempty(base_dir) && continue
+        candidate = joinpath(base_dir, datestr, "GEOSIT.$(datestr).$(collection).C$(driver.Nc).nc")
+        isfile(candidate) && return candidate
+    end
+
+    # Priority 3: check next to existing I3/A1 files by scanning known data dirs
+    # Try common GEOS-IT directory pattern: ~/data/geosit_c180_*/YYYYMMDD/
+    for known_dir in [expanduser("~/data/geosit_c180_catrine"),
+                      expanduser("~/data/geosit_c180")]
+        candidate = joinpath(known_dir, datestr, "GEOSIT.$(datestr).$(collection).C$(driver.Nc).nc")
+        isfile(candidate) && return candidate
+    end
+
+    return ""
 end
 
 """
@@ -1286,13 +1484,185 @@ function load_met_window!(cpu_buf::CubedSphereCPUBuffer,
         _sanity_check_cs_buf(cpu_buf.delp, cpu_buf.am, cpu_buf.bm,
                               win, driver.mass_flux_dt)
     end
+
+    # Load CX/CY and XFX/YFX from v2/v3 binary if available
+    if cpu_buf.cx !== nothing && driver.mode === :binary
+        reader = _get_cached_reader(filepath, FT)
+        if reader.has_courant
+            load_cs_cx_cy_window!(cpu_buf.cx, cpu_buf.cy, reader, local_win)
+        end
+        if reader.has_area_flux && cpu_buf.xfx !== nothing
+            load_cs_xfx_yfx_window!(cpu_buf.xfx, cpu_buf.yfx, reader, local_win)
+        end
+    end
+
     return nothing
+end
+
+"""
+    load_cx_cy_window!(cpu_buf::CubedSphereCPUBuffer, driver, grid, win)
+
+Load CX/CY (accumulated Courant numbers) from NetCDF for GCHP-faithful transport.
+Only loads if cpu_buf.cx is not nothing (i.e., use_gchp=true in buffer allocation).
+
+CX and CY have the same staggering as MFXC/MFYC — they're read from the same
+CTM collection (tavg_1hr_ctm) as mass fluxes.
+
+For binary mode, CX/CY must be included in the preprocessed binary (future work).
+"""
+function load_cx_cy_window!(cpu_buf::CubedSphereCPUBuffer,
+                              driver::GEOSFPCubedSphereMetDriver{FT},
+                              grid, win::Int) where FT
+    cpu_buf.cx === nothing && return false
+
+    file_idx, local_win = window_to_file_local(driver, win)
+    filepath = driver.files[file_idx]
+
+    if driver.mode === :binary
+        @warn "CX/CY loading from binary not yet implemented — GCHP transport requires NetCDF" maxlog=1
+        return false
+    end
+
+    # NetCDF mode — read CX/CY from same file as MFXC/MFYC
+    ds = NCDataset(filepath, "r")
+    try
+        if !haskey(ds, "CX") || !haskey(ds, "CY")
+            @warn "CX/CY not found in $filepath — GCHP transport needs Courant numbers" maxlog=1
+            return false
+        end
+
+        cx_raw = Array{FT}(ds["CX"][:, :, :, :, local_win])  # (Nc, Nc, 6, Nz)
+        cy_raw = Array{FT}(ds["CY"][:, :, :, :, local_win])
+
+        Nc = size(cx_raw, 1)
+        Nz = size(cx_raw, 4)
+
+        # Auto-detect vertical flip (same as mass fluxes)
+        mid = div(Nc, 2)
+        delp_top = FT(cpu_buf.delp[1][driver.Hp + mid, driver.Hp + mid, 1])
+        delp_bot = FT(cpu_buf.delp[1][driver.Hp + mid, driver.Hp + mid, Nz])
+        need_flip = delp_top > FT(1000)  # TOA DELP is very small
+
+        for p in 1:6
+            for k in 1:Nz
+                k_src = need_flip ? (Nz + 1 - k) : k
+                for j in 1:Nc, i in 1:Nc
+                    # CX has same C-grid staggering as MFXC: (Xdim, Ydim)
+                    # But CX is (Nc, Nc) in file, needs to become (Nc+1, Nc) staggered
+                    # For now, store as (Nc, Nc) and handle staggering in area flux kernel
+                    cpu_buf.cx[p][i, j, k_src] = cx_raw[i, j, p, k]
+                    cpu_buf.cy[p][i, j, k_src] = cy_raw[i, j, p, k]
+                end
+            end
+        end
+        return true
+    finally
+        close(ds)
+    end
+end
+
+"""
+    _copy_mmap_to_haloed_3d!(dst, src_vec, src_off, Nc, Hp, Nz)
+
+Copy a (Nc, Nc, Nz) contiguous mmap region directly into the interior of a
+(Nc+2Hp, Nc+2Hp, Nz) haloed panel using row-wise copyto! (Nc elements per call).
+No fill! needed — halos are filled by fill_panel_halos! on GPU.
+"""
+@inline function _copy_mmap_to_haloed_3d!(dst::AbstractArray, src_vec::Vector{Float32},
+                                            src_off::Int, Nc::Int, Hp::Int, Nz::Int)
+    N = Nc + 2Hp
+    dst_vec = vec(dst)
+    @inbounds for k in 1:Nz, j in 1:Nc
+        s = src_off + (k - 1) * Nc * Nc + (j - 1) * Nc
+        d = (k - 1) * N * N + (Hp + j - 1) * N + Hp + 1
+        copyto!(dst_vec, d, src_vec, s, Nc)
+    end
+end
+
+"""
+    _copy_mmap_to_haloed_2d!(dst, src_vec, src_off, Nc, Hp)
+
+Copy a (Nc, Nc) contiguous mmap region into a (Nc+2Hp, Nc+2Hp) haloed panel.
+"""
+@inline function _copy_mmap_to_haloed_2d!(dst::AbstractArray, src_vec::Vector{Float32},
+                                            src_off::Int, Nc::Int, Hp::Int)
+    N = Nc + 2Hp
+    dst_vec = vec(dst)
+    @inbounds for j in 1:Nc
+        s = src_off + (j - 1) * Nc
+        d = (Hp + j - 1) * N + Hp + 1
+        copyto!(dst_vec, d, src_vec, s, Nc)
+    end
+end
+
+"""
+    _load_v4_qv_ps!(qv_cpu, ps_panels, qv_next_cpu, ps_next_panels,
+                     reader, local_win, Nc, Hp)
+
+Load QV and PS at window boundaries from a v4 mass flux binary.
+Reads directly from mmap into haloed CPU panels — no intermediate temp buffers,
+no fill!, no element-by-element loops. Row-wise copyto! (Nc=180 elements per call).
+
+Returns `true` if loaded, `false` if unavailable.
+"""
+function _load_v4_qv_ps!(qv_cpu, ps_panels, qv_next_cpu, ps_next_panels,
+                           reader::CSBinaryReader, local_win::Int, Nc::Int, Hp::Int)
+    (reader.has_qv && reader.has_ps) || return false
+
+    Nz = reader.Nz
+    n_qv = reader.n_qv_panel  # Nc×Nc×Nz
+    n_ps = reader.n_ps_panel  # Nc×Nc
+
+    # Compute base offset past v3 fields: DELP(6) + AM(6) + BM(6) + CX(6) + CY(6) + XFX(6) + YFX(6)
+    base = (local_win - 1) * reader.elems_per_window +
+           6 * (reader.n_delp_panel + 3 * reader.n_am_panel + 3 * reader.n_bm_panel)
+
+    # QV_start panels
+    o = base
+    if qv_cpu !== nothing
+        for p in 1:6
+            _copy_mmap_to_haloed_3d!(qv_cpu[p], reader.data, o + 1, Nc, Hp, Nz)
+            o += n_qv
+        end
+    else
+        o += 6 * n_qv
+    end
+
+    # QV_end panels
+    if qv_next_cpu !== nothing
+        for p in 1:6
+            _copy_mmap_to_haloed_3d!(qv_next_cpu[p], reader.data, o + 1, Nc, Hp, Nz)
+            o += n_qv
+        end
+    else
+        o += 6 * n_qv
+    end
+
+    # PS_start panels
+    if ps_panels !== nothing
+        for p in 1:6
+            _copy_mmap_to_haloed_2d!(ps_panels[p], reader.data, o + 1, Nc, Hp)
+            o += n_ps
+        end
+    else
+        o += 6 * n_ps
+    end
+
+    # PS_end panels
+    if ps_next_panels !== nothing
+        for p in 1:6
+            _copy_mmap_to_haloed_2d!(ps_next_panels[p], reader.data, o + 1, Nc, Hp)
+            o += n_ps
+        end
+    end
+
+    return true
 end
 
 """
     load_all_window!(cpu_buf, cmfmc_cpu, dtrain_cpu, sfc_cpu, troph_cpu,
                       driver, grid, win; needs_cmfmc, needs_dtrain, needs_sfc,
-                      needs_qv, qv_cpu, ps_panels)
+                      needs_qv, qv_cpu, ps_panels, qv_next_cpu, ps_next_panels)
 
 Load all met data for a single window: mass fluxes + CMFMC + surface fields + DTRAIN + QV.
 Designed to be called from the async background thread in the double-buffer run loop
@@ -1310,7 +1680,9 @@ function load_all_window!(cpu_buf::CubedSphereCPUBuffer,
                            needs_sfc::Bool=false,
                            needs_qv::Bool=false,
                            qv_cpu=nothing,
-                           ps_panels=nothing)
+                           ps_panels=nothing,
+                           qv_next_cpu=nothing,
+                           ps_next_panels=nothing)
     # 1. Mass fluxes (fast via cached mmap reader)
     load_met_window!(cpu_buf, driver, grid, win)
 
@@ -1337,12 +1709,25 @@ function load_all_window!(cpu_buf::CubedSphereCPUBuffer,
         false
     end
 
-    # 5. QV (specific humidity for dry mole fraction output)
-    qv_status = if needs_qv && qv_cpu !== nothing
-        load_qv_window!(qv_cpu, driver, grid, win)
-    else
-        false
+    # 5. QV — try embedded v4 first (atomic with mass fluxes), then fallback
+    qv_status = false
+    qv_from_v4 = false
+    qv_next_from_v4 = false
+    if needs_qv && qv_cpu !== nothing && driver.mode === :binary
+        file_idx, local_win = window_to_file_local(driver, win)
+        filepath = driver.files[file_idx]
+        reader = _get_cached_reader(filepath, eltype(qv_cpu[1]))
+        if reader.has_qv && reader.has_ps
+            qv_status = _load_v4_qv_ps!(qv_cpu, ps_panels, qv_next_cpu, ps_next_panels,
+                                          reader, local_win, driver.Nc, driver.Hp)
+            qv_from_v4 = qv_status !== false
+            qv_next_from_v4 = qv_from_v4 && qv_next_cpu !== nothing
+        end
+    end
+    if !qv_from_v4 && needs_qv && qv_cpu !== nothing
+        qv_status = load_qv_window!(qv_cpu, driver, grid, win)
     end
 
-    return (; cmfmc=cmfmc_status, dtrain=dtrain_status, sfc=sfc_status, qv=qv_status)
+    return (; cmfmc=cmfmc_status, dtrain=dtrain_status, sfc=sfc_status,
+              qv=qv_status, qv_from_v4, qv_next_from_v4)
 end

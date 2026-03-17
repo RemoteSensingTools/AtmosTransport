@@ -152,6 +152,18 @@ struct CSBinaryReader{FT} <: AbstractBinaryReader
     n_bm_panel   :: Int
     "total elements per window"
     elems_per_window :: Int
+    "v2+: includes CX/CY Courant numbers (same staggering as am/bm)"
+    has_courant :: Bool
+    "v3: includes precomputed XFX/YFX area fluxes (same staggering as am/bm)"
+    has_area_flux :: Bool
+    "v4: includes QV at start/end of each window (Nc×Nc×Nz per panel, no halo)"
+    has_qv :: Bool
+    "v4: includes PS at start/end of each window (Nc×Nc per panel)"
+    has_ps :: Bool
+    "elements per panel for QV (Nc×Nc×Nz, no halo)"
+    n_qv_panel :: Int
+    "elements per panel for PS (Nc×Nc)"
+    n_ps_panel :: Int
 end
 
 function CSBinaryReader(bin_path::String, ::Type{FT}) where FT
@@ -164,14 +176,27 @@ function CSBinaryReader(bin_path::String, ::Type{FT}) where FT
     n_delp = Int(hdr.n_delp_panel)
     n_am   = Int(hdr.n_am_panel)
     n_bm   = Int(hdr.n_bm_panel)
-    elems  = Int(hdr.elems_per_window)
-    total  = elems * Nt
+
+    # v2+: detect CX/CY Courant numbers; v3: detect XFX/YFX area fluxes
+    version = Int(get(hdr, :version, 1))
+    has_courant = version >= 2 && Bool(get(hdr, :include_courant, false))
+    has_area_flux = version >= 3 && Bool(get(hdr, :include_area_flux, false))
+
+    # v4: embedded QV and PS at window boundaries
+    has_qv = version >= 4 && Bool(get(hdr, :include_qv, false))
+    has_ps = version >= 4 && Bool(get(hdr, :include_ps, false))
+    n_qv_panel = has_qv ? Int(get(hdr, :n_qv_panel, 0)) : 0
+    n_ps_panel = has_ps ? Int(get(hdr, :n_ps_panel, 0)) : 0
+
+    elems = Int(hdr.elems_per_window)
+    total = elems * Nt
 
     seek(io, CS_HEADER_SIZE)
-    # Binary files are always Float32 on disk — mmap as Float32, convert at load time
     data = Mmap.mmap(io, Vector{Float32}, (total,), CS_HEADER_SIZE; grow=false)
 
-    CSBinaryReader{FT}(data, io, Nc, Nz, Hp, Nt, n_delp, n_am, n_bm, elems)
+    CSBinaryReader{FT}(data, io, Nc, Nz, Hp, Nt, n_delp, n_am, n_bm, elems,
+                        has_courant, has_area_flux, has_qv, has_ps,
+                        n_qv_panel, n_ps_panel)
 end
 
 """
@@ -200,6 +225,97 @@ function load_cs_window!(delp_cpu::NTuple{6}, am_cpu::NTuple{6}, bm_cpu::NTuple{
         o += n
     end
     return nothing
+end
+
+"""
+    load_cs_cx_cy_window!(cx_cpu, cy_cpu, reader::CSBinaryReader, win)
+
+Load CX/CY Courant numbers from a v2 binary file. Returns `false` if
+the file doesn't contain Courant numbers (v1 format).
+"""
+function load_cs_cx_cy_window!(cx_cpu::NTuple{6}, cy_cpu::NTuple{6},
+                                reader::CSBinaryReader, win::Int)
+    reader.has_courant || return false
+    off = (win - 1) * reader.elems_per_window
+    # CX/CY follow after DELP(6) + AM(6) + BM(6) panels
+    o = off + 6 * (reader.n_delp_panel + reader.n_am_panel + reader.n_bm_panel)
+    for p in 1:6
+        n = reader.n_am_panel   # CX same shape as AM
+        copyto!(vec(cx_cpu[p]), 1, reader.data, o + 1, n)
+        o += n
+    end
+    for p in 1:6
+        n = reader.n_bm_panel   # CY same shape as BM
+        copyto!(vec(cy_cpu[p]), 1, reader.data, o + 1, n)
+        o += n
+    end
+    return true
+end
+
+"""
+    load_cs_xfx_yfx_window!(xfx_cpu, yfx_cpu, reader::CSBinaryReader, win)
+
+Load precomputed area fluxes from a v3 binary file. Returns `false` if
+the file doesn't contain area fluxes (v1/v2 format).
+"""
+function load_cs_xfx_yfx_window!(xfx_cpu::NTuple{6}, yfx_cpu::NTuple{6},
+                                   reader::CSBinaryReader, win::Int)
+    reader.has_area_flux || return false
+    off = (win - 1) * reader.elems_per_window
+    # XFX/YFX follow after DELP(6) + AM(6) + BM(6) + CX(6) + CY(6)
+    o = off + 6 * (reader.n_delp_panel + 2*reader.n_am_panel + 2*reader.n_bm_panel)
+    for p in 1:6
+        n = reader.n_am_panel   # XFX same shape as AM
+        copyto!(vec(xfx_cpu[p]), 1, reader.data, o + 1, n)
+        o += n
+    end
+    for p in 1:6
+        n = reader.n_bm_panel   # YFX same shape as BM
+        copyto!(vec(yfx_cpu[p]), 1, reader.data, o + 1, n)
+        o += n
+    end
+    return true
+end
+
+"""
+    load_cs_qv_ps_window!(qv_start, qv_end, ps_start, ps_end, reader, win)
+
+Load embedded QV and PS at window boundaries from a v4 binary file.
+QV panels are (Nc, Nc, Nz) without halos; PS panels are (Nc, Nc).
+Returns `false` if the file doesn't contain QV/PS (v1-v3 format).
+"""
+function load_cs_qv_ps_window!(qv_start_cpu::NTuple{6}, qv_end_cpu::NTuple{6},
+                                ps_start_cpu::NTuple{6}, ps_end_cpu::NTuple{6},
+                                reader::CSBinaryReader, win::Int)
+    (reader.has_qv && reader.has_ps) || return false
+    off = (win - 1) * reader.elems_per_window
+    # Skip past v3 fields: DELP(6) + AM(6) + BM(6) + CX(6) + CY(6) + XFX(6) + YFX(6)
+    o = off + 6 * (reader.n_delp_panel + 3*reader.n_am_panel + 3*reader.n_bm_panel)
+    # QV_start
+    for p in 1:6
+        n = reader.n_qv_panel
+        copyto!(vec(qv_start_cpu[p]), 1, reader.data, o + 1, n)
+        o += n
+    end
+    # QV_end
+    for p in 1:6
+        n = reader.n_qv_panel
+        copyto!(vec(qv_end_cpu[p]), 1, reader.data, o + 1, n)
+        o += n
+    end
+    # PS_start
+    for p in 1:6
+        n = reader.n_ps_panel
+        copyto!(vec(ps_start_cpu[p]), 1, reader.data, o + 1, n)
+        o += n
+    end
+    # PS_end
+    for p in 1:6
+        n = reader.n_ps_panel
+        copyto!(vec(ps_end_cpu[p]), 1, reader.data, o + 1, n)
+        o += n
+    end
+    return true
 end
 
 Base.close(r::CSBinaryReader) = close(r.io)

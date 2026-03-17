@@ -257,3 +257,118 @@ end
     end
     return nothing
 end
+
+# ---------------------------------------------------------------------------
+# C-grid halo exchange for face-centered Courant/flux arrays
+#
+# CX has shape (Nc+1, Nc, Nz) — face-staggered in i, cell-centered in j.
+# CY has shape (Nc, Nc+1, Nz) — cell-centered in i, face-staggered in j.
+#
+# CY needs i-halos → filled at EAST(3)/WEST(4) edges.
+# CX needs j-halos → filled at NORTH(1)/SOUTH(2) edges.
+#
+# At same-type edges (N↔S, E↔W), CX→CX and CY→CY (no transposition).
+# At cross-type edges (N↔E, N↔W, S↔E, S↔W), CX↔CY swap (Nc+1 maps 1:1).
+#
+# The haloed output arrays have shape:
+#   CY_h: (Nc+2Hp, Nc+1, Nz) — interior at [Hp+1:Hp+Nc, 1:Nc+1, :]
+#   CX_h: (Nc+1, Nc+2Hp, Nz) — interior at [1:Nc+1, Hp+1:Hp+Nc, :]
+#
+# Reference: GCHP mpp_update_domains with CGRID_NE gridtype
+# ---------------------------------------------------------------------------
+
+"""
+$(SIGNATURES)
+
+Fill C-grid halos for face-centered Courant/flux arrays. CY gets i-halos from
+EAST/WEST neighbors; CX gets j-halos from NORTH/SOUTH neighbors. At cross-type
+edges, CX and CY are swapped (Nc+1 face values map 1:1 between directions).
+
+`cx_h[p]` has shape `(Nc+1, Nc+2Hp, Nz)` with interior at `[:, Hp+1:Hp+Nc, :]`.
+`cy_h[p]` has shape `(Nc+2Hp, Nc+1, Nz)` with interior at `[Hp+1:Hp+Nc, :, :]`.
+`cx_src[p]` and `cy_src[p]` are the non-haloed source arrays.
+"""
+function fill_cgrid_halos!(cx_h::NTuple{6}, cy_h::NTuple{6},
+                            cx_src::NTuple{6}, cy_src::NTuple{6},
+                            grid::CubedSphereGrid)
+    conn = grid.connectivity
+    Nc = grid.Nc
+    Hp = grid.Hp
+    Nf = Nc + 1
+
+    # CY needs i-halos → process EAST(3) and WEST(4) edges
+    for p in 1:6
+        for e in (3, 4)
+            nb = conn.neighbors[p][e]
+            q_e = _reciprocal_edge_index(conn, p, e)
+            is_cross = (q_e <= 2)    # neighbor edge is N/S → cross-type
+            src = is_cross ? cx_src[nb.panel] : cy_src[nb.panel]
+            flip = nb.orientation >= 2
+            _fill_cgrid_edge_cpu!(cy_h[p], src, e, q_e, flip, Nf, Nc, Hp, is_cross)
+        end
+    end
+
+    # CX needs j-halos → process NORTH(1) and SOUTH(2) edges
+    for p in 1:6
+        for e in (1, 2)
+            nb = conn.neighbors[p][e]
+            q_e = _reciprocal_edge_index(conn, p, e)
+            is_cross = (q_e >= 3)    # neighbor edge is E/W → cross-type
+            src = is_cross ? cy_src[nb.panel] : cx_src[nb.panel]
+            flip = nb.orientation >= 2
+            _fill_cgrid_edge_cpu!(cx_h[p], src, e, q_e, flip, Nf, Nc, Hp, is_cross)
+        end
+    end
+
+    return nothing
+end
+
+"""
+Copy Hp layers from non-haloed source near edge `q_e` into haloed destination
+outside edge `e`. Handles both same-type and cross-type edges.
+"""
+function _fill_cgrid_edge_cpu!(dst::AbstractArray{T,3}, src::AbstractArray{T,3},
+                                e::Int, q_e::Int, flip::Bool,
+                                Nf::Int, Nc::Int, Hp::Int, is_cross::Bool) where T
+    Nk = size(dst, 3)
+    @inbounds for k in 1:Nk
+        for d in 1:Hp
+            for s in 1:Nf
+                s_src = flip ? (Nf + 1 - s) : s
+                i_src, j_src = _cgrid_src_ij(q_e, d, s_src, Nc, is_cross)
+                i_dst, j_dst = _cgrid_dst_ij(e, d, s, Nc, Hp)
+                dst[i_dst, j_dst, k] = src[i_src, j_src, k]
+            end
+        end
+    end
+    return nothing
+end
+
+"""Source index into non-haloed CX `(Nc+1, Nc)` or CY `(Nc, Nc+1)` array."""
+@inline function _cgrid_src_ij(q_e::Int, d::Int, s::Int, Nc::Int, is_cross::Bool)
+    if is_cross
+        # Cross-type: axes transposed. Face dim (Nc+1) in first axis of CX,
+        # maps to along-edge s. Cell dim (Nc) in second axis, maps to depth d.
+        if q_e == 1;     return (s, Nc + 1 - d)     # North: j from top
+        elseif q_e == 2; return (s, d)               # South: j from bottom
+        elseif q_e == 3; return (Nc + 1 - d, s)      # East: i from right
+        else;            return (d, s)               # West: i from left
+        end
+    else
+        # Same-type: same staggering as destination.
+        if q_e == 1;     return (s, Nc + 1 - d)      # North: j from top
+        elseif q_e == 2; return (s, d)               # South: j from bottom
+        elseif q_e == 3; return (Nc + 1 - d, s)      # East: i from right
+        else;            return (d, s)               # West: i from left
+        end
+    end
+end
+
+"""Destination index into haloed CY_h `(Nc+2Hp, Nc+1)` or CX_h `(Nc+1, Nc+2Hp)`."""
+@inline function _cgrid_dst_ij(e::Int, d::Int, s::Int, Nc::Int, Hp::Int)
+    if e == 1;     return (s, Hp + Nc + d)       # North j-halo (CX_h)
+    elseif e == 2; return (s, Hp + 1 - d)        # South j-halo (CX_h)
+    elseif e == 3; return (Hp + Nc + d, s)       # East i-halo (CY_h)
+    else;          return (Hp + 1 - d, s)        # West i-halo (CY_h)
+    end
+end

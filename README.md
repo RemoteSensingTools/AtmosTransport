@@ -1,5 +1,7 @@
 # AtmosTransport.jl
 
+> **Work in Progress.** This project is under rapid active development. We regularly break things and fix them afterwards. The code is not yet intended for external users — APIs, file formats, and physics implementations may change without notice. If you are interested in contributing or following along, feel free to open an issue.
+
 [![Documentation](https://img.shields.io/badge/docs-dev-blue.svg)](https://RemoteSensingTools.github.io/AtmosTransport/dev/)
 
 A Julia-based atmospheric transport model for GPU and CPU, inspired by TM5 and designed with

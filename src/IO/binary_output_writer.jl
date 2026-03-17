@@ -23,7 +23,7 @@ using ..Diagnostics: AbstractDiagnostic, ColumnMeanDiagnostic, ColumnMassDiagnos
                      column_mean!, surface_slice!, regrid_cs_to_latlon,
                      RegridMapping, build_regrid_mapping, regrid_cs_to_latlon!
 
-const BINARY_OUTPUT_HEADER_SIZE = 8192
+const BINARY_OUTPUT_HEADER_SIZE = 16384
 
 # =====================================================================
 # BinaryOutputWriter struct
@@ -147,8 +147,8 @@ function initialize_output!(writer::BinaryOutputWriter, model)
         hdr["Nx"] = gs.Nx
         hdr["Ny"] = gs.Ny
         hdr["Nz"] = gs.Nz
-        hdr["lons"] = collect(Float32, grid.λᶜ)
-        hdr["lats"] = collect(Float32, grid.φᶜ)
+        hdr["lons"] = Float32.(grid.λᶜ_cpu)
+        hdr["lats"] = Float32.(grid.φᶜ_cpu)
         hdr["levs"] = Float32[znode(k, grid, Center()) for k in 1:gs.Nz]
         for fname in field_names
             fe = writer.fields[fname]
@@ -328,7 +328,16 @@ function write_output!(writer::BinaryOutputWriter, model, time;
             _open_binary_file!(writer, _daily_filepath(writer, current_date))
         elseif current_date != writer._current_date[]
             # Date changed: finalize current file and open new one
-            _finalize_current_file!(writer)
+            prev_path = _finalize_current_file!(writer)
+            # Auto-convert each daily file in background thread
+            if writer.auto_convert && prev_path !== nothing
+                let p = prev_path
+                    Threads.@spawn begin
+                        nc_path = replace(p, ".bin" => ".nc")
+                        convert_binary_to_netcdf(p; nc_path)
+                    end
+                end
+            end
             # NOTE: do NOT reset _write_count — it must stay in sync with
             # absolute sim_time for should_write threshold to work correctly.
             writer._file_write_count[] = 0
@@ -370,7 +379,8 @@ end
 
 function _write_binary_field!(io::IOStream, arr::AbstractArray,
                                grid::LatitudeLongitudeGrid, output_grid)
-    write(io, Float32.(arr))
+    arr_cpu = arr isa Array ? arr : Array(arr)
+    write(io, Float32.(arr_cpu))
 end
 
 function _write_binary_field!(io::IOStream, arr, grid::CubedSphereGrid,

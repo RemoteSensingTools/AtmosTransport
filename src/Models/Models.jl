@@ -27,9 +27,14 @@ using DocStringExtensions
 
 export AbstractModel, TransportModel, run!, update_met_data!
 export AbstractBufferingStrategy, SingleBuffer, DoubleBuffer
+export TransportPolicy, resolve_transport_policy
+export AbstractTransportBasis, DryTransportBasis, MoistTransportBasis, transport_basis_type
 
 # Buffering strategy types
 include("buffering.jl")
+
+# Transport policy — single source of truth for transport configuration
+include("transport_policy.jl")
 
 """
 $(TYPEDEF)

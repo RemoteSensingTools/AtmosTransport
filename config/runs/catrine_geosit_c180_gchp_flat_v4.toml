@@ -1,0 +1,56 @@
+# GCHP flat-IC test with v4 binary (embedded QV/PS): dry basis
+# Uniform CO2 = 400 ppm, no emissions, advection only.
+# Any deviation from 400 ppm reveals transport artifacts.
+
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "cubed_sphere"
+met_source = "geosfp"
+Nc         = 180
+
+[met_data]
+driver           = "geosfp_cs"
+product          = "geosit_c180"
+netcdf_dir       = "~/data/geosit_c180_catrine"
+preprocessed_dir = "/temp1/catrine/met/geosit_c180/massflux_v4"
+surface_data_bin_dir = "/temp1/catrine/met/geosit_c180/surface_bin"
+coord_file       = "~/code/gitHub/AtmosTransportModel/data/grids/cs_c180_gridspec.nc"
+start_date       = "2021-12-01"
+end_date         = "2021-12-03"
+dt               = 450
+met_interval     = 3600
+mass_flux_dt     = 450
+Hp               = 3
+
+[initial_conditions]
+co2.uniform_value = 0.0004
+
+[tracers.co2]
+
+[advection]
+scheme          = "ppm"
+ppm_order       = 7
+damp_coeff      = 0.02
+gchp            = true
+linrood         = false
+vertical_remap  = true
+mass_fixer      = false
+dry_correction  = true
+
+[output]
+filename      = "/temp1/catrine/output/catrine_gchp_flat_v4_dry"
+format        = "binary"
+auto_convert  = true
+split         = "daily"
+interval      = 10800
+
+[output.fields]
+co2_3d           = {type = "full_3d", species = "co2"}
+co2_column_mass  = {type = "column_mass", species = "co2"}
+surface_pressure = "surface_pressure"
+
+[buffering]
+strategy = "double"

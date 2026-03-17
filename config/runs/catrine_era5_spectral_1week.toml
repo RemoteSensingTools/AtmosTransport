@@ -1,0 +1,112 @@
+# ===========================================================================
+# CATRINE D7.1 — ERA5 Spectral 0.5° Lat-Lon (1-Week Test)
+#
+# 4-tracer intercomparison: CO2, fossil CO2, SF6, 222Rn
+# Period: 1 Dec 2021 — 7 Dec 2021 (28 windows = 7 days × 4 windows/day)
+# Met data: ERA5 spectral mass fluxes, preprocessed to 720×361×137
+# Output: 3-hourly, full 3D fields + column mass (BinaryOutputWriter)
+#
+# Preprocessing:
+#   julia --project=. scripts/preprocessing/preprocess_spectral_massflux.jl \
+#       config/preprocessing/catrine_spectral_dec2021.toml
+#
+# Usage:
+#   julia --threads=2 --project=. scripts/run.jl \
+#       config/runs/catrine_era5_spectral_1week.toml
+# ===========================================================================
+
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "latlon"
+met_source = "era5"
+size       = [720, 361, 137]             # 0.5° × 0.5°, full 137 levels
+
+[met_data]
+driver      = "preprocessed_latlon"
+directory   = "/temp1/atmos_transport/era5_spectral_catrine"
+dt          = 300                        # advection sub-step [s] (Prather needs CFL<1)
+max_windows = 28                         # 7 days × 4 windows/day
+
+# --- Initial conditions ---
+# CO2 and SF6 from LSCE inversions (1 Dec 2021 00:00 UTC)
+# Bilinear horizontal + log-pressure vertical interpolation
+# from LMDZ 360×180×79 → ERA5 720×361×137
+# fossil_co2 and rn222 start from zero (no IC entry needed)
+[initial_conditions]
+co2.file     = "~/data/AtmosTransport/catrine/InitialConditions/startCO2_202112010000.nc"
+co2.variable = "CO2"
+sf6.file     = "~/data/AtmosTransport/catrine/InitialConditions/startSF6_202112010000.nc"
+sf6.variable = "SF6"
+
+# --- Tracers ---
+
+[tracers.co2]
+emission = "prebuilt"
+file     = "~/data/AtmosTransport/catrine/output/era5_spectral_1week/emissions_prebuild/co2_720x361.bin"
+species  = "co2"
+
+[tracers.fossil_co2]
+emission = "prebuilt"
+file     = "~/data/AtmosTransport/catrine/output/era5_spectral_1week/emissions_prebuild/fossil_co2_720x361.bin"
+species  = "fossil_co2"
+
+[tracers.sf6]
+emission         = "edgar_sf6"
+file             = "~/data/AtmosTransport/catrine/Emissions/edgar_v8/v8.0_FT2022_GHG_SF6_2022_TOTALS_emi.nc"
+noaa_growth_file = "~/data/AtmosTransport/catrine/Emissions/sf6_gr_gl.txt"
+year             = 2022
+scale_year       = 2022
+
+[tracers.rn222]
+emission   = "prebuilt"
+file       = "~/data/AtmosTransport/catrine/output/era5_spectral_1week/emissions_prebuild/rn222_720x361.bin"
+chemistry  = "decay"
+half_life  = 330350.4                    # 3.8235 days in seconds
+
+# --- Chemistry (222Rn radioactive decay) ---
+[chemistry]
+type = "composite"
+
+# --- Advection ---
+[advection]
+scheme = "slopes"
+
+# --- Convection ---
+# NOTE: Tiedtke convection requires CMFMC fields, which are not yet merged
+# into the preprocessed spectral mass flux files.  Enable once surface fields
+# are integrated via merge_era5_surface_to_massflux.jl.
+#[convection]
+#type = "tiedtke"
+
+# --- Diffusion ---
+[diffusion]
+type   = "pbl"
+beta_h = 15.0
+Kz_bg  = 0.1
+Kz_min = 0.01
+#Kz_max = 500.0
+
+# --- Output (3-hourly, full 3D + column mass) ---
+[output]
+filename = "~/data/AtmosTransport/catrine/output/era5_spectral_1week/catrine_era5_week"
+interval = 10800                         # 3 hours
+auto_convert  = true
+format        = "binary"
+split         = "daily"
+
+[output.fields]
+co2_3d              = {type = "full_3d", species = "co2"}
+fossil_co2_3d       = {type = "full_3d", species = "fossil_co2"}
+sf6_3d              = {type = "full_3d", species = "sf6"}
+rn222_3d            = {type = "full_3d", species = "rn222"}
+co2_column_mass     = {type = "column_mass", species = "co2"}
+fco2_column_mass    = {type = "column_mass", species = "fossil_co2"}
+sf6_column_mass     = {type = "column_mass", species = "sf6"}
+rn222_column_mass   = {type = "column_mass", species = "rn222"}
+surface_pressure    = "surface_pressure"
+
+[buffering]
+strategy = "double"

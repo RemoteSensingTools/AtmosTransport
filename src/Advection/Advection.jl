@@ -59,6 +59,10 @@ end
 export AbstractAdvectionScheme
 export SlopesAdvection, UpwindAdvection
 export AbstractPPMScheme, PPMAdvection
+export PratherAdvection, PratherWorkspace, allocate_prather_workspace
+export CSPratherWorkspace, allocate_cs_prather_workspace, allocate_cs_prather_workspaces
+export strang_split_prather_cs!
+export strang_split_prather!
 export advect!, adjoint_advect!
 export advect_x!, advect_y!, advect_z!
 export adjoint_advect_x!, adjoint_advect_y!, adjoint_advect_z!
@@ -80,7 +84,8 @@ export advect_x_massflux_reduced!
 export CubedSphereGeometryCache, CubedSphereMassFluxWorkspace
 export allocate_cs_massflux_workspace
 export max_cfl_x_cs, max_cfl_y_cs
-export compute_air_mass_panel!, compute_cm_panel!, apply_mass_fixer!
+export compute_air_mass_panel!, compute_cm_panel!, compute_cm_pressure_fixer_panel!
+export apply_mass_fixer!
 export compute_cm_pressure_fixer_panel!, compute_dm_per_sub_panel!
 export compute_cm_mass_weighted_panel!
 export apply_dry_delp_panel!, apply_dry_am_panel!, apply_dry_bm_panel!
@@ -97,7 +102,21 @@ export compute_target_pressure_from_delp_direct!, compute_target_pressure_from_m
 export compute_target_pressure_from_dry_delp_direct!
 export compute_target_pe_from_hybrid_coords!
 export compute_source_pe_from_hybrid!, compute_target_pe_from_ps_hybrid!
+export compute_source_pe_from_evolved_mass!, compute_target_pe_from_evolved_ps!
 export update_air_mass_from_target!
+export calc_scaling_factor, apply_scaling_factor!, gchp_calc_scaling_factor, fillz_panels!
+export compute_dry_ple!
+export fv_tp_2d_cs_q!, rm_to_q_panels!, q_to_rm_panels!, fillz_q!
+export compute_dp_from_m_panels!, set_m_from_dp_panels!
+export GCHPGridGeometry, GCHPTransportWorkspace
+export fv_tp_2d_gchp!, strang_split_gchp_ppm!, compute_area_fluxes!
+export fv_tp_2d_gchp_fluxes!, gchp_tracer_2d!
+export _correct_mfx_humidity_kernel!, _correct_mfy_humidity_kernel!
+export _reverse_mfx_humidity_kernel!, _reverse_mfy_humidity_kernel!
+export _multiply_by_1_minus_qv_kernel!, _divide_by_1_minus_qv_kernel!
+export _compute_dry_dp_kernel!, _copy_nohalo_to_halo_kernel!,
+       _interpolate_dry_dp_kernel!, _interpolate_dp_kernel!,
+       _column_dp_correction_kernel!, _column_dp_correction_moist_kernel!
 
 include("abstract_advection.jl")
 include("slopes_advection_kernels.jl")
@@ -114,8 +133,11 @@ include("ppm_advection.jl")
 include("ppm_subgrid_distributions.jl")
 include("cubed_sphere_mass_flux_ppm.jl")
 include("cubed_sphere_fvtp2d.jl")
+include("cubed_sphere_fvtp2d_gchp.jl")
 include("vertical_remap.jl")
 include("latlon_mass_flux_ppm.jl")
 include("latlon_dry_air.jl")
+include("prather_advection.jl")
+include("cubed_sphere_prather.jl")
 
 end # module Advection

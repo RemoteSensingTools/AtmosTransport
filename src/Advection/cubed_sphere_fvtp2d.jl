@@ -23,6 +23,9 @@ struct LinRoodWorkspace{FT, A3h <: AbstractArray{FT,3},
     fx_out :: NTuple{6, A3x}   # outer X face values
     fy_in  :: NTuple{6, A3y}   # inner Y face values (Nc × Nc+1 × Nz)
     fy_out :: A3y               # outer Y face values (reused per panel)
+    # Per-panel output buffers for parallel Phase 3 (eliminates sequential sync)
+    q_out  :: NTuple{6, A3h}   # q output buffer per panel (haloed)
+    dp_out :: NTuple{6, A3h}   # dp output buffer per panel (haloed)
 end
 
 function LinRoodWorkspace(grid::CubedSphereGrid{FT}) where FT
@@ -35,8 +38,11 @@ function LinRoodWorkspace(grid::CubedSphereGrid{FT}) where FT
     fx_out = ntuple(_ -> AT(zeros(FT, Nc + 1, Nc, Nz)), 6)
     fy_in  = ntuple(_ -> AT(zeros(FT, Nc, Nc + 1, Nz)), 6)
     fy_out = AT(zeros(FT, Nc, Nc + 1, Nz))
+    # Per-panel buffers for parallel q-space Phase 3
+    q_out  = ntuple(_ -> AT(zeros(FT, N, N, Nz)), 6)
+    dp_out = ntuple(_ -> AT(zeros(FT, N, N, Nz)), 6)
 
-    return LinRoodWorkspace(q_buf, fx_in, fx_out, fy_in, fy_out)
+    return LinRoodWorkspace(q_buf, fx_in, fx_out, fy_in, fy_out, q_out, dp_out)
 end
 
 # ---------------------------------------------------------------------------
@@ -279,6 +285,270 @@ end
 end
 
 # ---------------------------------------------------------------------------
+# Q-space kernels for GCHP-aligned transport
+# ---------------------------------------------------------------------------
+
+"""Convert tracer panels from rm (mass) to q (mixing ratio) in-place: data /= m."""
+function rm_to_q_panels!(panels::NTuple{6}, m_panels::NTuple{6}, grid)
+    Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
+    backend = get_backend(panels[1])
+    k! = _rm_to_q_kernel!(backend, 256)
+    for p in 1:6
+        k!(panels[p], m_panels[p], Hp; ndrange=(Nc, Nc, Nz))
+    end
+    synchronize(backend)
+end
+
+"""Convert tracer panels from q (mixing ratio) to rm (mass) in-place: data *= m."""
+function q_to_rm_panels!(panels::NTuple{6}, m_panels::NTuple{6}, grid)
+    Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
+    backend = get_backend(panels[1])
+    k! = _q_to_rm_kernel!(backend, 256)
+    for p in 1:6
+        k!(panels[p], m_panels[p], Hp; ndrange=(Nc, Nc, Nz))
+    end
+    synchronize(backend)
+end
+
+@kernel function _rm_to_q_kernel!(data, @Const(m), Hp)
+    i, j, k = @index(Global, NTuple)
+    @inbounds begin
+        ii = Hp + i; jj = Hp + j
+        FT = eltype(data)
+        mk = m[ii, jj, k]
+        data[ii, jj, k] = mk > FT(100) * eps(FT) ? data[ii, jj, k] / mk : zero(FT)
+    end
+end
+
+@kernel function _q_to_rm_kernel!(data, @Const(m), Hp)
+    i, j, k = @index(Global, NTuple)
+    @inbounds begin
+        ii = Hp + i; jj = Hp + j
+        data[ii, jj, k] *= m[ii, jj, k]
+    end
+end
+
+"""Compute dp (pressure thickness, Pa) from air mass m: dp = m × g / area."""
+function compute_dp_from_m_panels!(dp_panels::NTuple{6}, m_panels::NTuple{6},
+                                     area_panels, gravity, grid)
+    Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
+    backend = get_backend(dp_panels[1])
+    k! = _dp_from_m_kernel!(backend, 256)
+    for p in 1:6
+        k!(dp_panels[p], m_panels[p], area_panels[p], gravity, Hp; ndrange=(Nc, Nc, Nz))
+    end
+    synchronize(backend)
+end
+
+"""Set air mass m from dp (pressure thickness): m = dp × area / g."""
+function set_m_from_dp_panels!(m_panels::NTuple{6}, dp_panels::NTuple{6},
+                                 area_panels, gravity, grid)
+    Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
+    backend = get_backend(m_panels[1])
+    k! = _m_from_dp_kernel!(backend, 256)
+    for p in 1:6
+        k!(m_panels[p], dp_panels[p], area_panels[p], gravity, Hp; ndrange=(Nc, Nc, Nz))
+    end
+    synchronize(backend)
+end
+
+@kernel function _dp_from_m_kernel!(dp, @Const(m), @Const(area), g, Hp)
+    i, j, k = @index(Global, NTuple)
+    @inbounds begin
+        ii = Hp + i; jj = Hp + j
+        dp[ii, jj, k] = m[ii, jj, k] * g / area[i, j]
+    end
+end
+
+@kernel function _m_from_dp_kernel!(m, @Const(dp), @Const(area), g, Hp)
+    i, j, k = @index(Global, NTuple)
+    @inbounds begin
+        ii = Hp + i; jj = Hp + j
+        m[ii, jj, k] = dp[ii, jj, k] * area[i, j] / g
+    end
+end
+
+# --- Q-space Lin-Rood update kernel (GCHP tracer_2d:543-549) ---
+
+@kernel function _linrood_update_q_kernel!(
+    q_new, m_new, @Const(q), @Const(m), @Const(am), @Const(bm),
+    @Const(fx_in), @Const(fx_out), @Const(fy_in), @Const(fy_out), Hp
+)
+    i, j, k = @index(Global, NTuple)
+    @inbounds begin
+        ii = Hp + i;  jj = Hp + j
+        FT = eltype(q)
+        half = FT(0.5)
+
+        avg_fx_w = half * (fx_out[i,   j, k] + fx_in[i,   j, k])
+        avg_fx_e = half * (fx_out[i+1, j, k] + fx_in[i+1, j, k])
+        avg_fy_s = half * (fy_out[i, j,   k] + fy_in[i, j,   k])
+        avg_fy_n = half * (fy_out[i, j+1, k] + fy_in[i, j+1, k])
+
+        am_w = am[i, j, k];  am_e = am[i+1, j, k]
+        bm_s = bm[i, j, k];  bm_n = bm[i, j+1, k]
+
+        m1 = m[ii, jj, k]
+
+        # CFL guard: clamp mass flux divergence to prevent m_new < 0.
+        # At thin TOA levels (k≥70), air mass m ≈ 0.01-0.5 kg but horizontal
+        # fluxes can be 0.1-1 kg → CFL > 1 → m_new < 0 → q inverts → blowup.
+        # Equivalent to GCHP's per-level ksplt subcycling (fv_tracer2d.F90:445-471).
+        mass_div = (am_w - am_e) + (bm_s - bm_n)
+        max_outflow = FT(0.9) * m1
+        scale = mass_div < -max_outflow && m1 > zero(FT) ? max_outflow / (-mass_div) : one(FT)
+
+        m2 = m1 + scale * mass_div
+
+        # GCHP: q_new = (q*m1 + flux_div) / m2
+        rm_old = q[ii, jj, k] * m1
+        tracer_div = (am_w * avg_fx_w - am_e * avg_fx_e) +
+                     (bm_s * avg_fy_s - bm_n * avg_fy_n)
+        rm_new = rm_old + scale * tracer_div
+
+        q_new[ii, jj, k] = m2 > FT(100) * eps(FT) ? rm_new / m2 : zero(FT)
+        m_new[ii, jj, k] = m2
+    end
+end
+
+# --- Q-space pre-advect kernels ---
+
+@kernel function _pre_advect_y_q_kernel!(
+    q_i, @Const(q), @Const(m), @Const(bm), @Const(fy_face), Hp
+)
+    i, j, k = @index(Global, NTuple)
+    @inbounds begin
+        ii = Hp + i;  jj = Hp + j
+        FT = eltype(q)
+        bm_s = bm[i, j, k];  bm_n = bm[i, j + 1, k]
+        m1 = m[ii, jj, k]
+
+        # CFL guard (same as _linrood_update_q_kernel!)
+        mass_div = bm_s - bm_n
+        max_outflow = FT(0.9) * m1
+        scale = mass_div < -max_outflow && m1 > zero(FT) ? max_outflow / (-mass_div) : one(FT)
+
+        m_new = m1 + scale * mass_div
+        tracer_div = bm_s * fy_face[i, j, k] - bm_n * fy_face[i, j + 1, k]
+        rm_new = q[ii, jj, k] * m1 + scale * tracer_div
+        q_i[ii, jj, k] = m_new > FT(100) * eps(FT) ? rm_new / m_new : zero(FT)
+    end
+end
+
+@kernel function _pre_advect_x_q_kernel!(
+    q_j, @Const(q), @Const(m), @Const(am), @Const(fx_face), Hp
+)
+    i, j, k = @index(Global, NTuple)
+    @inbounds begin
+        ii = Hp + i;  jj = Hp + j
+        FT = eltype(q)
+        am_w = am[i, j, k];  am_e = am[i + 1, j, k]
+        m1 = m[ii, jj, k]
+
+        # CFL guard (same as _linrood_update_q_kernel!)
+        mass_div = am_w - am_e
+        max_outflow = FT(0.9) * m1
+        scale = mass_div < -max_outflow && m1 > zero(FT) ? max_outflow / (-mass_div) : one(FT)
+
+        m_new = m1 + scale * mass_div
+        tracer_div = am_w * fx_face[i, j, k] - am_e * fx_face[i + 1, j, k]
+        rm_new = q[ii, jj, k] * m1 + scale * tracer_div
+        q_j[ii, jj, k] = m_new > FT(100) * eps(FT) ? rm_new / m_new : zero(FT)
+    end
+end
+
+# ---------------------------------------------------------------------------
+# Post-advection positivity fixer (GCHP fillz, fv_fill.F90:51-156)
+#
+# Three-pass column fixer for q-space transport:
+#   Pass 1: top→bottom — borrow from level below
+#   Pass 2: bottom→top — borrow from level above
+#   Pass 3: non-local column rescaling if any q still negative
+# One thread per (i,j) column; sequential over k (inherent to algorithm).
+# ---------------------------------------------------------------------------
+
+@kernel function _fillz_q_kernel!(q, @Const(m), Hp, Nz)
+    i, j = @index(Global, NTuple)
+    @inbounds begin
+        ii = Hp + i; jj = Hp + j
+        FT = eltype(q)
+
+        # Pass 1: sweep top to bottom, borrow from k+1
+        for k in 1:Nz-1
+            if q[ii, jj, k] < zero(FT)
+                deficit = -q[ii, jj, k] * m[ii, jj, k]
+                avail = max(q[ii, jj, k+1] * m[ii, jj, k+1], zero(FT))
+                transfer = min(deficit, avail)
+
+                mk  = m[ii, jj, k]
+                mkp = m[ii, jj, k+1]
+                q[ii, jj, k]   += mk  > eps(FT) ? transfer / mk  : zero(FT)
+                q[ii, jj, k+1] -= mkp > eps(FT) ? transfer / mkp : zero(FT)
+            end
+        end
+
+        # Pass 2: sweep bottom to top, borrow from k-1
+        for k in Nz:-1:2
+            if q[ii, jj, k] < zero(FT)
+                deficit = -q[ii, jj, k] * m[ii, jj, k]
+                avail = max(q[ii, jj, k-1] * m[ii, jj, k-1], zero(FT))
+                transfer = min(deficit, avail)
+
+                mk  = m[ii, jj, k]
+                mkm = m[ii, jj, k-1]
+                q[ii, jj, k]   += mk  > eps(FT) ? transfer / mk  : zero(FT)
+                q[ii, jj, k-1] -= mkm > eps(FT) ? transfer / mkm : zero(FT)
+            end
+        end
+
+        # Pass 3: non-local column rescaling if any q still negative
+        total_pos = zero(FT)
+        total_neg = zero(FT)
+        for k in 1:Nz
+            rm_k = q[ii, jj, k] * m[ii, jj, k]
+            if rm_k > zero(FT)
+                total_pos += rm_k
+            else
+                total_neg += rm_k
+            end
+        end
+
+        if total_neg < zero(FT) && total_pos > eps(FT)
+            scl = max((total_pos + total_neg) / total_pos, zero(FT))
+            for k in 1:Nz
+                if q[ii, jj, k] > zero(FT)
+                    q[ii, jj, k] *= scl
+                else
+                    q[ii, jj, k] = zero(FT)
+                end
+            end
+        elseif total_neg < zero(FT)
+            for k in 1:Nz
+                q[ii, jj, k] = zero(FT)
+            end
+        end
+    end
+end
+
+"""
+    fillz_q!(q_panels, m_panels, grid)
+
+Post-advection positivity fixer for q-space transport.
+Fixes negative mixing ratios by borrowing mass from neighboring levels,
+then non-local column rescaling if needed. Port of GCHP's `fillz`
+(fv_fill.F90:51-156).
+"""
+function fillz_q!(q_panels::NTuple{6}, m_panels::NTuple{6}, grid::CubedSphereGrid)
+    (; Nc, Nz, Hp) = grid
+    backend = get_backend(q_panels[1])
+    k! = _fillz_q_kernel!(backend, 256)
+    for p in 1:6
+        k!(q_panels[p], m_panels[p], Hp, Nz; ndrange=(Nc, Nc))
+    end
+    synchronize(backend)
+end
+
+# ---------------------------------------------------------------------------
 # Main Lin-Rood Horizontal Advection
 # ---------------------------------------------------------------------------
 
@@ -374,6 +644,121 @@ function fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
         _copy_interior!(rm_panels[p], ws.rm_buf, Hp, Nc, Nz)
         _copy_interior!(m_panels[p], ws.m_buf, Hp, Nc, Nz)
     end
+
+    return nothing
+end
+
+# ---------------------------------------------------------------------------
+# Q-space Lin-Rood Horizontal Advection (GCHP-aligned)
+#
+# Operates on mixing ratio q and pressure thickness dp instead of rm and m.
+# dp evolves via mass flux divergence; q is updated as:
+#   q_new = (q*dp1 + flux_div) / dp2
+# This matches GCHP's tracer_2d (fv_tracer2d.F90:543-549).
+#
+# m_panels is read-only (used for CFL fraction in PPM face kernels).
+# Phase 3 uses per-panel output buffers (ws_lr.q_out, ws_lr.dp_out)
+# for parallel kernel launch across all 6 panels (no sequential sync).
+# ---------------------------------------------------------------------------
+
+"""
+    fv_tp_2d_cs_q!(q_panels, dp_panels, m_panels, am_panels, bm_panels,
+                     grid, ::Val{ORD}, ws, ws_lr; damp_coeff=0.0)
+
+Q-space Lin-Rood horizontal advection. Evolves `q` (mixing ratio) and `dp`
+(pressure thickness in kg, same units as m) in-place. `m_panels` is read-only
+(used for CFL fraction in PPM face values).
+"""
+function fv_tp_2d_cs_q!(q_panels, m_panels, am_panels, bm_panels,
+                          grid::CubedSphereGrid, ::Val{ORD}, ws, ws_lr::LinRoodWorkspace;
+                          damp_coeff=0.0) where ORD
+    (; Hp, Nc, Nz) = grid
+    N = Nc + 2Hp
+    backend = get_backend(q_panels[1])
+
+    # Pre-instantiate kernels
+    yq_face_k!  = _ppm_y_face_from_q_kernel!(backend, 256)
+    xq_face_k!  = _ppm_x_face_from_q_kernel!(backend, 256)
+    pre_y_q_k!  = _pre_advect_y_q_kernel!(backend, 256)
+    pre_x_q_k!  = _pre_advect_x_q_kernel!(backend, 256)
+    update_q_k! = _linrood_update_q_kernel!(backend, 256)
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Phase 1: Edge halos + Y-corners → inner Y-PPM + pre-advect q_i
+    # ═══════════════════════════════════════════════════════════════════════
+    fill_panel_halos!(q_panels, grid)
+    fill_panel_halos!(m_panels, grid)
+    copy_corners!(q_panels, grid, 2)
+    copy_corners!(m_panels, grid, 2)
+
+    # Initialize q_buf with current q (halos included)
+    for p in eachindex(ws_lr.q_buf)
+        copyto!(ws_lr.q_buf[p], q_panels[p])
+    end
+
+    for p in eachindex(ws_lr.fy_in)
+        yq_face_k!(ws_lr.fy_in[p], q_panels[p], bm_panels[p], m_panels[p],
+                   Hp, Nc, Val(ORD); ndrange=(Nc, Nc + 1, Nz))
+        pre_y_q_k!(ws_lr.q_buf[p], q_panels[p], m_panels[p], bm_panels[p],
+                   ws_lr.fy_in[p], Hp; ndrange=(Nc, Nc, Nz))
+    end
+    synchronize(backend)
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Phase 2: X-corners → outer X-PPM on q_i + inner X-PPM + pre-advect q_j
+    # ═══════════════════════════════════════════════════════════════════════
+    copy_corners!(ws_lr.q_buf, grid, 1)
+    copy_corners!(q_panels, grid, 1)
+    copy_corners!(m_panels, grid, 1)
+
+    for p in eachindex(ws_lr.fx_out)
+        xq_face_k!(ws_lr.fx_out[p], ws_lr.q_buf[p], am_panels[p], m_panels[p],
+                   Hp, Nc, Val(ORD); ndrange=(Nc + 1, Nc, Nz))
+        xq_face_k!(ws_lr.fx_in[p], q_panels[p], am_panels[p], m_panels[p],
+                   Hp, Nc, Val(ORD); ndrange=(Nc + 1, Nc, Nz))
+    end
+    synchronize(backend)
+
+    # Re-initialize q_buf from original q, then overwrite interior with q_j
+    for p in eachindex(ws_lr.q_buf)
+        copyto!(ws_lr.q_buf[p], q_panels[p])
+    end
+
+    for p in eachindex(ws_lr.q_buf)
+        pre_x_q_k!(ws_lr.q_buf[p], q_panels[p], m_panels[p], am_panels[p],
+                   ws_lr.fx_in[p], Hp; ndrange=(Nc, Nc, Nz))
+    end
+    synchronize(backend)
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Phase 3: Y-corners on q_j → outer Y-PPM → averaged update (PARALLEL)
+    #
+    # Both q AND m are updated by the kernel. m evolves via mass flux
+    # divergence (same as rm-space _linrood_update_kernel!). q is updated
+    # as q_new = (q*m1 + flux_div) / m2. Per-panel buffers allow all 6
+    # panels to launch concurrently.
+    # ═══════════════════════════════════════════════════════════════════════
+    copy_corners!(ws_lr.q_buf, grid, 2)
+
+    for p in eachindex(ws_lr.fx_in)
+        yq_face_k!(ws_lr.fy_out, ws_lr.q_buf[p], bm_panels[p], m_panels[p],
+                   Hp, Nc, Val(ORD); ndrange=(Nc, Nc + 1, Nz))
+        # q_out gets q_new, dp_out gets m_new (reusing dp_out buffer for m)
+        update_q_k!(ws_lr.q_out[p], ws_lr.dp_out[p],
+                    q_panels[p], m_panels[p], am_panels[p], bm_panels[p],
+                    ws_lr.fx_in[p], ws_lr.fx_out[p], ws_lr.fy_in[p], ws_lr.fy_out,
+                    Hp; ndrange=(Nc, Nc, Nz))
+    end
+    synchronize(backend)
+
+    # Copy results back — both q and m are updated
+    for p in 1:6
+        _copy_interior!(q_panels[p], ws_lr.q_out[p], Hp, Nc, Nz)
+        _copy_interior!(m_panels[p], ws_lr.dp_out[p], Hp, Nc, Nz)
+    end
+
+    # Post-advection positivity fix (GCHP fillz)
+    fillz_q!(q_panels, m_panels, grid)
 
     return nothing
 end

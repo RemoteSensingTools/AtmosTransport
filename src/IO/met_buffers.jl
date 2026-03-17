@@ -137,16 +137,28 @@ struct CubedSphereMetBuffer{FT, A3 <: AbstractArray{FT,3}} <: AbstractMetBuffer{
     bm   :: NTuple{6, A3}
     "z mass flux panels (Nc, Nc, Nz+1) × 6"
     cm   :: NTuple{6, A3}
+    "x Courant number panels (Nc+1, Nc, Nz) × 6 — for GCHP-faithful transport"
+    cx   :: Union{Nothing, NTuple{6, A3}}
+    "y Courant number panels (Nc, Nc+1, Nz) × 6 — for GCHP-faithful transport"
+    cy   :: Union{Nothing, NTuple{6, A3}}
+    "x area flux panels (Nc+1, Nc, Nz) × 6 — precomputed with exact sin_sg"
+    xfx  :: Union{Nothing, NTuple{6, A3}}
+    "y area flux panels (Nc, Nc+1, Nz) × 6 — precomputed with exact sin_sg"
+    yfx  :: Union{Nothing, NTuple{6, A3}}
 end
 
 function CubedSphereMetBuffer(arch::AbstractArchitecture, ::Type{FT},
-                               Nc, Nz, Hp) where FT
+                               Nc, Nz, Hp; use_gchp::Bool=false) where FT
     AT = array_type(arch)
     delp = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz)), 6)
     am   = ntuple(_ -> AT(zeros(FT, Nc + 1, Nc, Nz)), 6)
     bm   = ntuple(_ -> AT(zeros(FT, Nc, Nc + 1, Nz)), 6)
     cm   = ntuple(_ -> AT(zeros(FT, Nc, Nc, Nz + 1)), 6)
-    CubedSphereMetBuffer(delp, am, bm, cm)
+    cx   = use_gchp ? ntuple(_ -> AT(zeros(FT, Nc + 1, Nc, Nz)), 6) : nothing
+    cy   = use_gchp ? ntuple(_ -> AT(zeros(FT, Nc, Nc + 1, Nz)), 6) : nothing
+    xfx  = use_gchp ? ntuple(_ -> AT(zeros(FT, Nc + 1, Nc, Nz)), 6) : nothing
+    yfx  = use_gchp ? ntuple(_ -> AT(zeros(FT, Nc, Nc + 1, Nz)), 6) : nothing
+    CubedSphereMetBuffer(delp, am, bm, cm, cx, cy, xfx, yfx)
 end
 
 """
@@ -160,13 +172,21 @@ struct CubedSphereCPUBuffer{FT} <: AbstractCPUStagingBuffer{FT}
     delp :: NTuple{6, Array{FT, 3}}
     am   :: NTuple{6, Array{FT, 3}}
     bm   :: NTuple{6, Array{FT, 3}}
+    cx   :: Union{Nothing, NTuple{6, Array{FT, 3}}}
+    cy   :: Union{Nothing, NTuple{6, Array{FT, 3}}}
+    xfx  :: Union{Nothing, NTuple{6, Array{FT, 3}}}
+    yfx  :: Union{Nothing, NTuple{6, Array{FT, 3}}}
 end
 
-function CubedSphereCPUBuffer(::Type{FT}, Nc, Nz, Hp) where FT
+function CubedSphereCPUBuffer(::Type{FT}, Nc, Nz, Hp; use_gchp::Bool=false) where FT
     delp = ntuple(_ -> Array{FT}(undef, Nc + 2Hp, Nc + 2Hp, Nz), 6)
     am   = ntuple(_ -> Array{FT}(undef, Nc + 1, Nc, Nz), 6)
     bm   = ntuple(_ -> Array{FT}(undef, Nc, Nc + 1, Nz), 6)
-    CubedSphereCPUBuffer{FT}(delp, am, bm)
+    cx   = use_gchp ? ntuple(_ -> Array{FT}(undef, Nc + 1, Nc, Nz), 6) : nothing
+    cy   = use_gchp ? ntuple(_ -> Array{FT}(undef, Nc, Nc + 1, Nz), 6) : nothing
+    xfx  = use_gchp ? ntuple(_ -> Array{FT}(undef, Nc + 1, Nc, Nz), 6) : nothing
+    yfx  = use_gchp ? ntuple(_ -> Array{FT}(undef, Nc, Nc + 1, Nz), 6) : nothing
+    CubedSphereCPUBuffer{FT}(delp, am, bm, cx, cy, xfx, yfx)
 end
 
 """
@@ -179,6 +199,19 @@ function upload!(buf::CubedSphereMetBuffer, cpu::CubedSphereCPUBuffer)
         copyto!(buf.delp[p], cpu.delp[p])
         copyto!(buf.am[p], cpu.am[p])
         copyto!(buf.bm[p], cpu.bm[p])
+    end
+    # Upload Courant numbers + area fluxes if available (GCHP-faithful transport)
+    if buf.cx !== nothing && cpu.cx !== nothing
+        for p in 1:6
+            copyto!(buf.cx[p], cpu.cx[p])
+            copyto!(buf.cy[p], cpu.cy[p])
+        end
+    end
+    if buf.xfx !== nothing && cpu.xfx !== nothing
+        for p in 1:6
+            copyto!(buf.xfx[p], cpu.xfx[p])
+            copyto!(buf.yfx[p], cpu.yfx[p])
+        end
     end
     return nothing
 end

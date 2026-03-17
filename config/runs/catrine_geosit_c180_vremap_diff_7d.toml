@@ -22,7 +22,7 @@ preprocessed_dir = "/temp2/catrine-runs/met/geosit_c180"
 surface_data_bin_dir = "/temp1/catrine/met/geosit_c180/surface_bin"
 coord_file       = "~/code/gitHub/AtmosTransportModel/data/grids/cs_c180_gridspec.nc"
 start_date       = "2021-12-01"
-end_date         = "2021-12-08"
+end_date         = "2021-12-22"
 dt               = 300
 met_interval     = 3600
 mass_flux_dt     = 450
@@ -88,7 +88,8 @@ dry_correction      = true
 remap_pressure_fix  = true
 
 [output]
-filename      = "/temp2/catrine-runs/output/catrine_vremap_diff_7d"
+filename      = "/temp1/catrine/output/catrine_vremap_diff_21d"
+auto_convert  = true
 format        = "binary"
 split         = "daily"
 interval      = 10800

@@ -23,8 +23,8 @@ preprocessed_dir = "/temp2/catrine-runs/met/geosit_c180"
 surface_data_bin_dir = "/temp1/catrine/met/geosit_c180/surface_bin"
 coord_file       = "~/code/gitHub/AtmosTransportModel/data/grids/cs_c180_gridspec.nc"
 start_date       = "2021-12-01"
-end_date         = "2021-12-21"
-dt               = 300
+end_date         = "2021-12-22"
+dt               = 450
 met_interval     = 3600
 mass_flux_dt     = 450
 Hp               = 3
@@ -87,7 +87,7 @@ fak    = 8.5
 sffrac = 0.1
 
 [output]
-filename      = "/temp2/catrine-runs/output/catrine_geosit_c180_linrood_pefix"
+filename      = "/temp1/catrine/output/catrine_linrood_fullphys_21d_All"
 format        = "binary"
 auto_convert  = true
 split         = "daily"

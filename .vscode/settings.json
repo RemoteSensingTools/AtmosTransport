@@ -1,3 +1,11 @@
 {
     "fortran.fortls.disabled": true
 }
+
+{
+  "vscode-remote-control.allowedCommands": [
+    "workbench.action.files.saveAll",
+    "editor.action.formatDocument",
+    "workbench.action.debug.start"
+  ]
+}

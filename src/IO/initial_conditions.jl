@@ -9,7 +9,8 @@
 # ---------------------------------------------------------------------------
 
 using NCDatasets
-using ..Grids: LatitudeLongitudeGrid, CubedSphereGrid
+using ..Grids: LatitudeLongitudeGrid, CubedSphereGrid, cell_area
+import ..Grids
 
 export load_initial_conditions!, PendingInitialConditions, apply_pending_ic!,
        finalize_ic_vertical_interp!, has_deferred_ic_vinterp,
@@ -63,6 +64,14 @@ function load_initial_conditions!(tracers::NamedTuple,
     # Check if grids match exactly
     grids_match = (Nlon_s == Nx_m && Nlat_s == Ny_m && Nlev_s == Nz_m)
 
+    # Check for hybrid-sigma vertical coordinates (ap/bp/Psurf)
+    has_hybrid = haskey(ds, "ap") && haskey(ds, "bp") && haskey(ds, "Psurf")
+    needs_vinterp = has_hybrid && Nlev_s != Nz_m
+
+    ap_src = has_hybrid ? Float64.(ds["ap"][:]) : Float64[]
+    bp_src = has_hybrid ? Float64.(ds["bp"][:]) : Float64[]
+    psurf_raw = has_hybrid ? Float64.(nomissing(ds["Psurf"][:, :], 101325.0)) : zeros(Float64, 0, 0)
+
     for (tracer_name, nc_varname) in variable_map
         haskey(tracers, tracer_name) || continue
         haskey(ds, nc_varname) || begin
@@ -82,9 +91,13 @@ function load_initial_conditions!(tracers::NamedTuple,
         end
 
         # Handle latitude direction (ensure S→N)
+        psurf_use = copy(psurf_raw)
         if length(lat_src) > 1 && lat_src[1] > lat_src[end]
             raw = raw[:, end:-1:1, :]
             lat_use = reverse(lat_src)
+            if has_hybrid
+                psurf_use = psurf_use[:, end:-1:1]
+            end
         else
             lat_use = lat_src
         end
@@ -98,33 +111,53 @@ function load_initial_conditions!(tracers::NamedTuple,
                 idx = vcat(split:n, 1:split-1)
                 lon_use = mod.(lon_src[idx], 360.0)
                 raw = raw[idx, :, :]
+                if has_hybrid
+                    psurf_use = psurf_use[idx, :]
+                end
             end
         end
 
-        # Handle vertical orientation (ensure top→bottom matches model)
-        # Convention: model level 1 = top, Nz = surface
-        # If source levels are ascending in pressure (top→bottom), keep as-is
-        # If descending, flip
+        # Handle vertical orientation (ensure surface at index 1 for LMDZ)
+        # LMDZ convention: level 1 = surface, increasing index = upward
+        # After this block, raw[:,:,1] = surface, raw[:,:,end] = TOA
+        vert_flipped = false
         if Nlev_s > 1 && lev_src[1] > lev_src[end]
             raw = raw[:, :, end:-1:1]
+            vert_flipped = true
         end
 
         c = tracers[tracer_name]
 
-        if grids_match
+        if needs_vinterp
+            # --- Deferred vertical interpolation path ---
+            # Bilinear horizontal regrid to model grid, keeping all source levels
+            mr_regrid = _bilinear_regrid_3d(raw, lon_use, lat_use, grid, FT)
+            ps_regrid = _bilinear_regrid_2d(psurf_use, lon_use, lat_use, grid)
+
+            # If vertical was flipped, reverse ap/bp to match flipped data
+            ap_use = vert_flipped ? reverse(ap_src) : ap_src
+            bp_use = vert_flipped ? reverse(bp_src) : bp_src
+
+            _store_deferred_ic_ll(DeferredICDataLL{FT}(
+                tracer_name, mr_regrid, ap_use, bp_use, ps_regrid, Nlev_s))
+
+            # Fill with zero for now (overwritten by finalize)
+            fill!(c, zero(FT))
+
+            @info "Loaded IC for $tracer_name (LatLon, deferred vertical interp: " *
+                  "$(Nlev_s) source levels → $(Nz_m) target levels, bilinear horiz regrid)"
+        elseif grids_match
             # Direct copy (handles GPU via broadcast)
             copyto!(c, raw)
+            @info "Loaded initial condition for $tracer_name from '$nc_varname': " *
+                  "source $(Nlon_s)×$(Nlat_s)×$(Nlev_s), direct copy"
         else
-            # Regrid via nearest-neighbor interpolation on CPU, then upload
-            c_cpu = Array{FT}(undef, Nx_m, Ny_m, Nz_m)
-            fill!(c_cpu, zero(FT))
-            _regrid_3d_to_model!(c_cpu, raw, lon_use, lat_use, grid, FT)
+            # Regrid via bilinear interpolation on CPU, then upload
+            c_cpu = _bilinear_regrid_3d(raw, lon_use, lat_use, grid, FT)
             copyto!(c, c_cpu)
+            @info "Loaded initial condition for $tracer_name from '$nc_varname': " *
+                  "source $(Nlon_s)×$(Nlat_s)×$(Nlev_s), bilinear regrid to $(Nx_m)×$(Ny_m)×$(Nz_m)"
         end
-
-        total = sum(raw)
-        @info "Loaded initial condition for $tracer_name from '$nc_varname': " *
-              "source $(Nlon_s)×$(Nlat_s)×$(Nlev_s), sum=$(round(Float64(total), sigdigits=6))"
     end
 
     close(ds)
@@ -314,7 +347,7 @@ function _ic_find_coord(ds, candidates::Vector{String})
     return nothing
 end
 
-"""Nearest-neighbor regridding of a 3D field to lat-lon model grid."""
+"""Nearest-neighbor regridding of a 3D field to lat-lon model grid (legacy fallback)."""
 function _regrid_3d_to_model!(c::AbstractArray{FT,3}, raw::Array{FT,3},
                                lon_src, lat_src,
                                grid::LatitudeLongitudeGrid{FT},
@@ -350,6 +383,103 @@ function _ic_nearest_idx(val, arr)
         end
     end
     return best
+end
+
+# ---------------------------------------------------------------------------
+# Bilinear interpolation helpers for IC regridding
+# ---------------------------------------------------------------------------
+
+"""Find the lower bracket index and fractional weight for bilinear interpolation.
+Returns (i_lo, w) where val ≈ arr[i_lo] × (1-w) + arr[i_lo+1] × w.
+Clamps to boundaries."""
+function _bilinear_bracket(val::Float64, arr::Vector{Float64})
+    N = length(arr)
+    N == 1 && return (1, 0.0)
+    # Below first point
+    val <= arr[1] && return (1, 0.0)
+    # Above last point
+    val >= arr[N] && return (N, 0.0)
+    # Binary search for bracket
+    lo, hi = 1, N
+    while hi - lo > 1
+        mid = (lo + hi) >> 1
+        if arr[mid] <= val
+            lo = mid
+        else
+            hi = mid
+        end
+    end
+    denom = arr[hi] - arr[lo]
+    w = denom > 0 ? (val - arr[lo]) / denom : 0.0
+    return (lo, w)
+end
+
+"""Bilinear regrid a 3D field (Nlon_s × Nlat_s × Nz) to model grid (Nx_m × Ny_m × Nz)."""
+function _bilinear_regrid_3d(raw::Array{FT,3}, lon_src::Vector{Float64},
+                              lat_src::Vector{Float64},
+                              grid::LatitudeLongitudeGrid{FT2},
+                              ::Type{FT}) where {FT, FT2}
+    Nx_m, Ny_m = grid.Nx, grid.Ny
+    Nlev = size(raw, 3)
+    Nlon_s = length(lon_src)
+
+    out = Array{FT}(undef, Nx_m, Ny_m, Nlev)
+
+    λᶜ = Float64.(grid.λᶜ_cpu)
+    φᶜ = Float64.(grid.φᶜ_cpu)
+
+    for jm in 1:Ny_m
+        jlo, wy = _bilinear_bracket(φᶜ[jm], lat_src)
+        jhi = min(jlo + 1, length(lat_src))
+        for im in 1:Nx_m
+            # Handle longitude wrapping
+            lon_m = mod(λᶜ[im], 360.0)
+            ilo, wx = _bilinear_bracket(lon_m, lon_src)
+            ihi = ilo < Nlon_s ? ilo + 1 : 1  # wrap for periodic longitude
+
+            w00 = (1.0 - wx) * (1.0 - wy)
+            w10 = wx * (1.0 - wy)
+            w01 = (1.0 - wx) * wy
+            w11 = wx * wy
+
+            for k in 1:Nlev
+                out[im, jm, k] = FT(w00 * raw[ilo, jlo, k] +
+                                     w10 * raw[ihi, jlo, k] +
+                                     w01 * raw[ilo, jhi, k] +
+                                     w11 * raw[ihi, jhi, k])
+            end
+        end
+    end
+    return out
+end
+
+"""Bilinear regrid a 2D field (Nlon_s × Nlat_s) to model grid (Nx_m × Ny_m)."""
+function _bilinear_regrid_2d(raw::Matrix{Float64}, lon_src::Vector{Float64},
+                              lat_src::Vector{Float64},
+                              grid::LatitudeLongitudeGrid)
+    Nx_m, Ny_m = grid.Nx, grid.Ny
+    Nlon_s = length(lon_src)
+
+    out = Matrix{Float64}(undef, Nx_m, Ny_m)
+
+    λᶜ = Float64.(grid.λᶜ_cpu)
+    φᶜ = Float64.(grid.φᶜ_cpu)
+
+    for jm in 1:Ny_m
+        jlo, wy = _bilinear_bracket(φᶜ[jm], lat_src)
+        jhi = min(jlo + 1, length(lat_src))
+        for im in 1:Nx_m
+            lon_m = mod(λᶜ[im], 360.0)
+            ilo, wx = _bilinear_bracket(lon_m, lon_src)
+            ihi = ilo < Nlon_s ? ilo + 1 : 1
+
+            out[im, jm] = (1.0 - wx) * (1.0 - wy) * raw[ilo, jlo] +
+                           wx * (1.0 - wy) * raw[ihi, jlo] +
+                           (1.0 - wx) * wy * raw[ilo, jhi] +
+                           wx * wy * raw[ihi, jhi]
+        end
+    end
+    return out
 end
 
 # ---------------------------------------------------------------------------
@@ -415,6 +545,22 @@ end
 
 const _DEFERRED_IC = Ref(DeferredICData[])
 
+"""Per-tracer deferred IC data for LatLon grids: horizontally-regridded mixing ratios on source levels."""
+struct DeferredICDataLL{FT}
+    tracer_name :: Symbol
+    mr :: Array{FT, 3}           # (Nx_m, Ny_m, Nlev_src) - bilinear-regridded mixing ratio
+    ap :: Vector{Float64}         # half-level A [Pa], Nlev_src+1
+    bp :: Vector{Float64}         # half-level B [1], Nlev_src+1
+    psurf :: Matrix{Float64}     # (Nx_m, Ny_m) - bilinear-regridded surface pressure
+    Nlev_src :: Int
+end
+
+const _DEFERRED_IC_LL = Ref(DeferredICDataLL[])
+
+function _store_deferred_ic_ll(data::DeferredICDataLL)
+    push!(_DEFERRED_IC_LL[], data)
+end
+
 """Per-tracer uniform IC: constant mixing ratio everywhere."""
 struct UniformICData
     tracer_name :: Symbol
@@ -423,7 +569,7 @@ end
 
 const _DEFERRED_UNIFORM_IC = Ref(UniformICData[])
 
-has_deferred_ic_vinterp() = !isempty(_DEFERRED_IC[]) || !isempty(_DEFERRED_UNIFORM_IC[])
+has_deferred_ic_vinterp() = !isempty(_DEFERRED_IC[]) || !isempty(_DEFERRED_IC_LL[]) || !isempty(_DEFERRED_UNIFORM_IC[])
 
 function _store_deferred_ic(data::DeferredICData)
     push!(_DEFERRED_IC[], data)
@@ -435,6 +581,7 @@ end
 
 function _clear_deferred_ic()
     _DEFERRED_IC[] = DeferredICData[]
+    _DEFERRED_IC_LL[] = DeferredICDataLL[]
     _DEFERRED_UNIFORM_IC[] = UniformICData[]
 end
 
@@ -586,20 +733,98 @@ end
 """
     finalize_ic_vertical_interp!(tracers, m_3d, grid::LatitudeLongitudeGrid)
 
-Lat-lon version: applies deferred uniform ICs.  Lat-lon tracers store mixing
-ratios (q), so uniform IC simply fills with the constant value.  File-based IC
-vertical interpolation for lat-lon is not yet implemented.
+Lat-lon version: performs pressure-based vertical interpolation for deferred
+file-based ICs, and applies uniform ICs. LatLon tracers store mixing ratios (q),
+so the result is the interpolated mixing ratio directly (no mass conversion).
+
+Target pressure levels are derived from air mass: dp = m × g / area.
+Source pressure levels from hybrid sigma: p = ap + bp × Psurf.
+Interpolation is linear in log-pressure.
 """
 function finalize_ic_vertical_interp!(tracers, m_3d,
                                        grid::LatitudeLongitudeGrid{FT}) where FT
-    deferred = _DEFERRED_IC[]
+    deferred_cs = _DEFERRED_IC[]
+    deferred_ll = _DEFERRED_IC_LL[]
     has_uniform = !isempty(_DEFERRED_UNIFORM_IC[])
-    isempty(deferred) && !has_uniform && return nothing
+    isempty(deferred_cs) && isempty(deferred_ll) && !has_uniform && return nothing
 
-    # File-based deferred ICs: not yet supported for lat-lon
-    for ic_data in deferred
-        @warn "Deferred file-based IC vertical interpolation not implemented for " *
-              "lat-lon grids — skipping $(ic_data.tracer_name). Use uniform_value instead."
+    # CS-format deferred ICs on LatLon grid: warn (shouldn't happen)
+    for ic_data in deferred_cs
+        @warn "CS-format deferred IC on LatLon grid — skipping $(ic_data.tracer_name)"
+    end
+
+    # LatLon deferred ICs: pressure-based vertical interpolation
+    Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
+    g = Float64(grid.gravity)
+
+    for ic_data in deferred_ll
+        tname = ic_data.tracer_name
+        haskey(tracers, tname) || continue
+        q = tracers[tname]
+
+        ap = ic_data.ap
+        bp = ic_data.bp
+        Nlev_src = ic_data.Nlev_src
+
+        # Get air mass on CPU
+        cpu_m = m_3d isa Array ? m_3d : Array(m_3d)
+
+        c_cpu = Array{FT}(undef, Nx, Ny, Nz)
+
+        for j in 1:Ny
+            area_j = Float64(cell_area(1, j, grid))
+            for i in 1:Nx
+                # Source pressure levels from hybrid sigma
+                ps_src = ic_data.psurf[i, j]
+                src_p_half = [ap[k] + bp[k] * ps_src for k in 1:Nlev_src+1]
+                src_p_mid  = [0.5 * (src_p_half[k] + src_p_half[k+1]) for k in 1:Nlev_src]
+
+                # Target pressure levels from air mass: dp = m × g / area
+                tgt_p_half = zeros(Float64, Nz + 1)
+                tgt_p_half[1] = 0.0  # TOA
+                for k in 1:Nz
+                    dp = Float64(cpu_m[i, j, k]) * g / area_j
+                    tgt_p_half[k + 1] = tgt_p_half[k] + dp
+                end
+                tgt_p_mid = [0.5 * (tgt_p_half[k] + tgt_p_half[k+1]) for k in 1:Nz]
+
+                # Source mixing ratio profile
+                src_q = [Float64(ic_data.mr[i, j, k]) for k in 1:Nlev_src]
+
+                # Log-pressure interpolation from source to target
+                for k in 1:Nz
+                    p_tgt = tgt_p_mid[k]
+                    if p_tgt >= src_p_mid[1]
+                        c_cpu[i, j, k] = FT(src_q[1])
+                    elseif p_tgt <= src_p_mid[end]
+                        c_cpu[i, j, k] = FT(src_q[end])
+                    else
+                        # Find bracketing source levels
+                        # src_p_mid: surface → TOA (decreasing pressure)
+                        ks = 1
+                        while ks < Nlev_src && src_p_mid[ks+1] > p_tgt
+                            ks += 1
+                        end
+                        # Linear interp in log-pressure
+                        lp1 = log(src_p_mid[ks])
+                        lp2 = log(src_p_mid[ks+1])
+                        lpt = log(p_tgt)
+                        w = (lpt - lp1) / (lp2 - lp1)
+                        q_interp = src_q[ks] + w * (src_q[ks+1] - src_q[ks])
+                        c_cpu[i, j, k] = FT(q_interp)
+                    end
+                end
+            end
+        end
+
+        copyto!(q, c_cpu)
+
+        # Diagnostics
+        q_min = minimum(c_cpu)
+        q_max = maximum(c_cpu)
+        q_mean = sum(c_cpu) / length(c_cpu)
+        @info "IC finalized for $tname (LatLon, pressure-based vinterp): " *
+              "$(Nlev_src) → $(Nz) levels, q min=$(q_min) max=$(q_max) mean=$(q_mean)"
     end
 
     # Uniform ICs: lat-lon stores mixing ratio q directly (not rm)

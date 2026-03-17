@@ -42,24 +42,36 @@ def parse_args():
     return p.parse_args()
 
 
-def date_range(start, end):
+def date_range(start, end_date):
     d = start
-    while d <= end:
+    while d <= end_date:
         yield d
         d += timedelta(days=1)
 
 
 def grib_to_netcdf(grib_path, nc_path):
-    """Convert GRIB to NetCDF using cfgrib+xarray."""
+    """Convert GRIB to NetCDF using cfgrib+xarray.
+
+    Uses filter_by_keys to extract MUMF and MDMF separately (cfgrib may
+    merge them into a single variable otherwise).
+    """
     import xarray as xr
-    # Open all variables; cfgrib may split into multiple datasets
-    datasets = xr.open_datasets(grib_path, engine="cfgrib")
-    # Merge and write
-    ds = xr.merge(datasets)
-    ds.to_netcdf(nc_path)
-    ds.close()
-    for d in datasets:
-        d.close()
+    try:
+        # Try opening with separate filters for each param
+        ds_mu = xr.open_dataset(grib_path, engine="cfgrib",
+                                backend_kwargs={"filter_by_keys": {"shortName": "mumf"}})
+        ds_md = xr.open_dataset(grib_path, engine="cfgrib",
+                                backend_kwargs={"filter_by_keys": {"shortName": "mdmf"}})
+        ds = xr.merge([ds_mu, ds_md])
+        ds.to_netcdf(nc_path)
+        ds.close()
+        ds_mu.close()
+        ds_md.close()
+    except Exception:
+        # Fallback: open as single dataset
+        ds = xr.open_dataset(grib_path, engine="cfgrib")
+        ds.to_netcdf(nc_path)
+        ds.close()
     print(f"    Converted to NetCDF: {os.path.basename(nc_path)}")
 
 
@@ -76,19 +88,24 @@ def download_cmfmc(client, date_str, resolution, outdir, keep_grib):
 
     if not os.path.exists(grib_path):
         print(f"  Downloading UDMF+DDMF for {date_str}...")
-        # MARS-style request for model-level diagnostic fields
+        # MARS-style request for model-level convective mass flux
+        # MUMF (235071) = updraft mass flux, MDMF (235072) = downdraft mass flux
+        # These are SHORT-RANGE FORECAST fields (type=fc), not analysis.
+        # ERA5 produces 2 forecasts per day (06 and 18 UTC), with steps 0-18h.
+        # To get 6-hourly fields: base 06 + steps 3,6,9,12 and base 18 + steps 3,6,9,12
         client.retrieve(
             "reanalysis-era5-complete",
             {
                 "class": "ea",
                 "expver": "1",
                 "stream": "oper",
-                "type": "an",
+                "type": "fc",
                 "levtype": "ml",
                 "levelist": "/".join(str(i) for i in range(1, 138)),
-                "param": "71.162/72.162",
+                "param": "235071/235072",
                 "date": date_str,
-                "time": "00:00:00/06:00:00/12:00:00/18:00:00",
+                "time": "06:00:00/18:00:00",
+                "step": "3/6/9/12",
                 "grid": f"{resolution}/{resolution}",
             },
             grib_path,
@@ -107,7 +124,7 @@ def download_cmfmc(client, date_str, resolution, outdir, keep_grib):
 def main():
     args = parse_args()
     start = datetime.strptime(args.start, "%Y-%m-%d")
-    end = datetime.strptime(args.end, "%Y-%m-%d")
+    end_date = datetime.strptime(args.end, "%Y-%m-%d")
     outdir = os.path.expanduser(args.outdir)
     os.makedirs(outdir, exist_ok=True)
 
@@ -130,11 +147,11 @@ def main():
     print(f"  Period:     {args.start} to {args.end}")
     print(f"  Resolution: {args.resolution} deg")
     print(f"  Output:     {outdir}")
-    print(f"  Params:     71 (UDMF) + 72 (DDMF), 137 model levels, 6-hourly")
+    print(f"  Params:     235071 (MUMF) + 235072 (MDMF), 137 model levels, forecast")
     print()
 
-    n_days = (end - start).days + 1
-    for i, dt in enumerate(date_range(start, end)):
+    n_days = (end_date - start).days + 1
+    for i, dt in enumerate(date_range(start, end_date)):
         date_str = dt.strftime("%Y-%m-%d")
         print(f"[{i+1}/{n_days}] {date_str}")
         download_cmfmc(client, date_str, args.resolution, outdir,

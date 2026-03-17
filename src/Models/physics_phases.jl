@@ -39,7 +39,8 @@ function physics_load_kwargs(phys, grid::CubedSphereGrid)
         sfc_cpu=sfc, troph_cpu=phys.troph_cpu,
         needs_cmfmc=phys.has_conv, needs_dtrain=phys.has_dtrain,
         needs_sfc=true, needs_qv=true,
-        qv_cpu=phys.qv_cpu, ps_panels=phys.ps_cpu)
+        qv_cpu=phys.qv_cpu, ps_panels=phys.ps_cpu,
+        qv_next_cpu=phys.qv_next_cpu, ps_next_panels=nothing)
 end
 
 """Log simulation start message (unified format for all grid/buffering combos)."""
@@ -77,8 +78,19 @@ IOScheduler's `begin_load!` — just upload to GPU based on `sched.io_result`.
 """
 function load_and_upload_physics!(phys, sched, driver,
                                    grid::LatitudeLongitudeGrid, w; arch=nothing)
-    # CMFMC
-    if phys.has_conv
+    # TM5 convection fields (entu, detu, entd, detd)
+    if phys.has_tm5conv
+        status = load_tm5conv_window!(phys.tm5conv_cpu, driver, grid, w)
+        phys.tm5conv_loaded[] = status !== false
+        if phys.tm5conv_loaded[]
+            for name in (:entu, :detu, :entd, :detd)
+                copyto!(phys.tm5conv_gpu[name], phys.tm5conv_cpu[name])
+            end
+        end
+    end
+
+    # CMFMC (for Tiedtke/RAS, not used with TM5 matrix convection)
+    if phys.has_conv && !phys.has_tm5conv
         status = load_cmfmc_window!(phys.cmfmc_cpu, driver, grid, w)
         phys.cmfmc_loaded[] = status !== false
         if phys.cmfmc_loaded[] && status !== :cached
@@ -153,7 +165,7 @@ function load_and_upload_physics!(phys, sched, driver,
         invalidate_ras_cfl_cache!()
     end
 
-    # QV
+    # QV (current window = SPHU1 in GCHP terminology)
     qv_status = io.qv
     phys.qv_loaded[] = qv_status !== false
     if phys.qv_loaded[] && qv_status !== :cached
@@ -161,6 +173,32 @@ function load_and_upload_physics!(phys, sched, driver,
             copyto!(phys.qv_gpu[p], phys.qv_cpu[p])
         end
         fill_panel_halos!(phys.qv_gpu, grid)
+    end
+
+    # QV next window (= SPHU2 in GCHP terminology)
+    # Used for target PE in dry-basis remap: dp_dry_target = DELP_next × (1-QV_next)
+    if hasproperty(io, :qv_next_from_v4) && io.qv_next_from_v4
+        # v4 binary: QV_end already loaded atomically into qv_next_cpu by load_all_window!
+        phys.qv_next_loaded[] = true
+        for p in 1:6
+            copyto!(phys.qv_next_gpu[p], phys.qv_next_cpu[p])
+        end
+        fill_panel_halos!(phys.qv_next_gpu, grid)
+    else
+        # Fallback: load from separate CTM_I1/I3 file
+        n_win = total_windows(driver)
+        if w < n_win
+            qv_next_status = load_qv_window!(phys.qv_next_cpu, driver, grid, w + 1)
+            phys.qv_next_loaded[] = qv_next_status !== false
+            if phys.qv_next_loaded[] && qv_next_status !== :cached
+                for p in 1:6
+                    copyto!(phys.qv_next_gpu[p], phys.qv_next_cpu[p])
+                end
+                fill_panel_halos!(phys.qv_next_gpu, grid)
+            end
+        else
+            phys.qv_next_loaded[] = false
+        end
     end
 
     # Surface fields
@@ -207,7 +245,7 @@ end
 
 """Process met data after GPU upload. LL: handle raw met + compute DELP. CS: scale fluxes."""
 function process_met_after_upload!(sched, phys, grid::LatitudeLongitudeGrid{FT},
-                                    driver, half_dt) where FT
+                                    driver, half_dt; use_gchp::Bool=false) where FT
     gpu = current_gpu(sched)
     cpu = current_cpu(sched)
 
@@ -225,11 +263,29 @@ function process_met_after_upload!(sched, phys, grid::LatitudeLongitudeGrid{FT},
 end
 
 function process_met_after_upload!(sched, phys, grid::CubedSphereGrid{FT},
-                                    driver, half_dt) where FT
+                                    driver, half_dt; use_gchp::Bool=false) where FT
     gpu = current_gpu(sched)
+    if use_gchp
+        # GCHP path: leave AM/BM/CX/CY/XFX/YFX UNSCALED.
+        # AM/BM are in kg/s; conversion to Pa·m² happens in gchp_offline_advection_phase!.
+        # CX/CY/XFX/YFX stay at full accumulated values; subcycling divides them.
+        return
+    end
     for p in 1:6
         gpu.am[p] .*= half_dt
         gpu.bm[p] .*= half_dt
+    end
+    if gpu.cx !== nothing
+        for p in 1:6
+            gpu.cx[p]  .*= FT(0.5)
+            gpu.cy[p]  .*= FT(0.5)
+        end
+    end
+    if gpu.xfx !== nothing
+        for p in 1:6
+            gpu.xfx[p] .*= FT(0.5)
+            gpu.yfx[p] .*= FT(0.5)
+        end
     end
 end
 
@@ -307,14 +363,17 @@ end
 # =====================================================================
 
 """Compute cm. LL: already in met buffer. CS: from continuity of am/bm."""
-compute_cm_phase!(sched, air, grid::LatitudeLongitudeGrid, gc) = nothing
+compute_cm_phase!(sched, air, phys, grid::LatitudeLongitudeGrid, gc;
+                   has_next::Bool=false, n_sub::Int=1) = nothing
 
-function compute_cm_phase!(sched, air, grid::CubedSphereGrid, gc)
+function compute_cm_phase!(sched, air, phys, grid::CubedSphereGrid, gc;
+                            has_next::Bool=false, n_sub::Int=1)
     gpu = current_gpu(sched)
     Nc, Nz = grid.Nc, grid.Nz
 
-    # Pure mass-flux closure: cm from continuity of am/bm only.
-    # No pressure tendency — air mass evolves freely from the fluxes.
+    # Pure mass-flux closure: cm from continuity of dry am/bm.
+    # Dry air mass is conserved (no sources/sinks), so the dry horizontal
+    # flux divergence exactly determines the dry vertical flux.
     for p in 1:6
         compute_cm_panel!(gpu.cm[p], gpu.am[p], gpu.bm[p], gc.bt, Nc, Nz)
     end
@@ -399,19 +458,25 @@ function advection_phase!(tracers, sched, air, phys, model,
                            grid::LatitudeLongitudeGrid{FT},
                            ws, n_sub, dt_sub, step;
                            ws_lr=nothing, ws_vr=nothing, gc=nothing,
+                           geom_gchp=nothing, ws_gchp=nothing,
                            has_next::Bool=false) where FT
     gpu = current_gpu(sched)
+    # Build advection workspace — for Prather, augment with per-tracer slope storage
+    adv_ws = _build_advection_workspace(gpu.ws, model.advection_scheme, tracers, gpu.m_ref)
     for _ in 1:n_sub
         step[] += 1
         copyto!(gpu.m_dev, gpu.m_ref)
         _apply_advection_latlon!(tracers, gpu.m_dev,
                                   gpu.am, gpu.bm, gpu.cm,
-                                  grid, model.advection_scheme, gpu.ws;
+                                  grid, model.advection_scheme, adv_ws;
                                   cfl_limit=FT(0.95))
     end
     # Convective transport ONCE per window (after all substeps).
-    if phys.cmfmc_loaded[]
-        dt_conv = FT(n_sub) * dt_sub
+    dt_conv = FT(n_sub) * dt_sub
+    if phys.has_tm5conv && phys.tm5conv_loaded[]
+        convect!(tracers, phys.tm5conv_gpu, gpu.Δp,
+                  model.convection, grid, dt_conv, phys.planet)
+    elseif phys.cmfmc_loaded[]
         convect!(tracers, phys.cmfmc_gpu, gpu.Δp,
                   model.convection, grid, dt_conv, phys.planet;
                   dtrain_panels=phys.dtrain_loaded[] ? phys.dtrain_gpu : nothing,
@@ -419,28 +484,412 @@ function advection_phase!(tracers, sched, air, phys, model,
     end
 end
 
+# Lazy-allocated Prather workspace caches (avoids re-allocation per window)
+const _PRATHER_WS_CACHE = Ref{Any}(nothing)
+const _CS_PRATHER_WS_CACHE = Ref{Any}(nothing)
+
+_build_advection_workspace(ws, scheme, tracers, m) = ws  # default: return MassFluxWorkspace as-is
+function _build_advection_workspace(ws, scheme::PratherAdvection, tracers, m)
+    if _PRATHER_WS_CACHE[] === nothing
+        _PRATHER_WS_CACHE[] = allocate_prather_workspaces(tracers, m)
+        @info "Allocated Prather workspaces for $(length(tracers)) tracers"
+    end
+    return (; base=ws, prather=_PRATHER_WS_CACHE[])
+end
+
+"""Get per-tracer CS Prather workspace (lazy-allocated)."""
+function _get_cs_prather_ws(tracers, grid, arch)
+    if _CS_PRATHER_WS_CACHE[] === nothing
+        _CS_PRATHER_WS_CACHE[] = allocate_cs_prather_workspaces(tracers, grid, arch)
+        @info "Allocated CS Prather workspaces for $(length(tracers)) tracers"
+    end
+    return _CS_PRATHER_WS_CACHE[]
+end
+
+# ---------------------------------------------------------------------------
+# GCHP advection: dry-basis implementation
+# ---------------------------------------------------------------------------
+function _gchp_advection_dry!(tracers, sched, air, phys, model,
+        grid::CubedSphereGrid{FT}, ws, ws_lr, ws_vr, gc,
+        n_sub, dt_sub, step, _ORD, has_next) where FT
+    gpu = current_gpu(sched)
+    Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
+    N = Nc + 2Hp
+    cx_gpu, cy_gpu = gpu.cx, gpu.cy
+    backend = get_backend(gpu.delp[1])
+    g_val = FT(grid.gravity)
+
+    step[] += n_sub
+
+    # Step 1: rm → q (dry VMR)
+    for (_, rm_t) in pairs(tracers)
+        rm_to_q_panels!(rm_t, air.m, grid)
+    end
+
+    # Pre-compute constants
+    mfx_dt = FT(model.met_data.mass_flux_dt)
+    am_to_mfx = g_val * mfx_dt
+    inv_am_to_mfx = FT(1) / am_to_mfx
+    rarea = ntuple(p -> FT(1) ./ gc.area[p], 6)
+
+    # ── n_sub loop with dp-reset (interpolated DELP) ───────────────────────
+    # GCHP resets dp from interpolated PLE0 at each dynamics step.
+    # Tracers carry forward in q form; dp is reset to prevent drift.
+    # No intermediate remaps — single remap at the end.
+    n_loop = has_next ? n_sub : 1
+
+    if has_next && phys.qv_loaded[]
+        ng = next_gpu(sched)
+        interp_k! = _interpolate_dry_dp_kernel!(backend, 256)
+        for _isub in 1:n_loop
+            # Reset dp_work from interpolated dry DELP
+            frac = FT(_isub - 1) / FT(n_loop)
+            for p in 1:6
+                interp_k!(ws_vr.dp_work[p], gpu.delp[p], ng.delp[p],
+                          phys.qv_gpu[p], frac; ndrange=(N, N, Nz))
+            end
+            synchronize(backend)
+
+            for p in 1:6
+                gpu.am[p] .*= am_to_mfx
+                gpu.bm[p] .*= am_to_mfx
+            end
+            gchp_tracer_2d!(tracers, ws_vr.dp_work, gpu.am, gpu.bm,
+                              cx_gpu, cy_gpu, gpu.xfx, gpu.yfx,
+                              gc.area, rarea, grid, _ORD, ws_lr, ws_vr.m_save)
+            for p in 1:6
+                gpu.am[p] .*= inv_am_to_mfx
+                gpu.bm[p] .*= inv_am_to_mfx
+            end
+        end
+    else
+        # Single step: use current dry dp
+        if phys.qv_loaded[]
+            dry_dp_k! = _compute_dry_dp_kernel!(backend, 256)
+            for p in 1:6
+                dry_dp_k!(ws_vr.dp_work[p], gpu.delp[p], phys.qv_gpu[p];
+                          ndrange=(N, N, Nz))
+            end
+            synchronize(backend)
+        else
+            for p in 1:6; copyto!(ws_vr.dp_work[p], gpu.delp[p]); end
+        end
+
+        for p in 1:6
+            gpu.am[p] .*= am_to_mfx
+            gpu.bm[p] .*= am_to_mfx
+        end
+        gchp_tracer_2d!(tracers, ws_vr.dp_work, gpu.am, gpu.bm,
+                          cx_gpu, cy_gpu, gpu.xfx, gpu.yfx,
+                          gc.area, rarea, grid, _ORD, ws_lr, ws_vr.m_save)
+        for p in 1:6
+            gpu.am[p] .*= inv_am_to_mfx
+            gpu.bm[p] .*= inv_am_to_mfx
+        end
+    end
+
+    # ── Vertical remap (single, at end) ──────────────────────────────────
+    # dp_work now contains evolved dp after last horizontal step
+    for p in 1:6
+        compute_air_mass_panel!(ws_vr.m_save[p], ws_vr.dp_work[p],
+                                gc.area[p], g_val, Nc, Nz, Hp)
+    end
+    compute_source_pe_from_evolved_mass!(ws_vr, ws_vr.m_save, gc, grid)
+
+    # Use QV_next for target PE when available (matches GCHP's use of SPHU2
+    # for DryPLE1). Fallback to QV_current if QV_next not loaded.
+    qv_tgt = phys.qv_next_loaded[] ? phys.qv_next_gpu :
+             phys.qv_loaded[] ? phys.qv_gpu : nothing
+    if has_next
+        ng = next_gpu(sched)
+        if qv_tgt !== nothing
+            compute_target_pressure_from_dry_delp_direct!(ws_vr, ng.delp,
+                qv_tgt, gc, grid)
+        else
+            compute_target_pressure_from_delp_direct!(ws_vr, ng.delp, gc, grid)
+        end
+    else
+        compute_target_pressure_from_mass_direct!(ws_vr, ws_vr.m_save, gc, grid)
+    end
+    for (_, rm_t) in pairs(tracers)
+        q_to_rm_panels!(rm_t, ws_vr.m_save, grid)
+    end
+    for (_, rm_t) in pairs(tracers)
+        vertical_remap_cs!(rm_t, ws_vr.m_save, ws_vr, ws, gc, grid; hybrid_pe=true)
+    end
+    for (_, rm_t) in pairs(tracers)
+        fillz_panels!(rm_t, ws_vr.dp_tgt, grid)
+    end
+
+    # Scaling against prescribed endpoint (also using QV_next)
+    if has_next
+        ng = next_gpu(sched)
+        for (tname, rm_t) in pairs(tracers)
+            scaling = gchp_calc_scaling_factor(rm_t, ws_vr.dp_tgt, ng.delp, gc, grid;
+                qv_panels=qv_tgt)
+            @info "calcScaling: $tname = $scaling" maxlog=200
+            apply_scaling_factor!(rm_t, scaling, grid)
+        end
+    end
+
+    # air.m = dry mass from prescribed endpoint
+    if has_next
+        ng = next_gpu(sched)
+        if qv_tgt !== nothing
+            for p in 1:6
+                compute_air_mass_panel!(air.m[p], ng.delp[p], qv_tgt[p],
+                                        gc.area[p], g_val, Nc, Nz, Hp)
+            end
+        else
+            for p in 1:6
+                compute_air_mass_panel!(air.m[p], ng.delp[p],
+                                        gc.area[p], g_val, Nc, Nz, Hp)
+            end
+        end
+    else
+        for p in 1:6
+            compute_air_mass_panel!(air.m[p], ws_vr.dp_work[p],
+                                    gc.area[p], g_val, Nc, Nz, Hp)
+        end
+    end
+    for p in 1:6; copyto!(air.m_ref[p], air.m[p]); end
+    if phys.qv_loaded[]
+        for p in 1:6
+            air.m_wet[p] .= air.m[p] ./ max.(1 .- phys.qv_gpu[p], eps(FT))
+        end
+    else
+        for p in 1:6; copyto!(air.m_wet[p], air.m[p]); end
+    end
+    return nothing
+end
+
+# ---------------------------------------------------------------------------
+# GCHP advection: moist-basis with interpolated QV
+#
+# Key differences from dry:
+# 1. dp = moist DELP (no QV correction)
+# 2. MFX = dry × /(1-QV) (moist mass flux)
+# 3. Target PE = hybrid from evolved moist PS (column-preserving!)
+# 4. Back-conversion uses QV_next from met data (NOT prognostic QV)
+#    → no PPM/remap noise in QV, smooth met-data QV at end of window
+# 5. air.m = dry mass from DELP_next × (1-QV_next)
+#
+# Since sum(DELP) = PS exactly in GEOS-IT, the moist basis is perfectly
+# consistent with the hybrid ak/bk coefficients.
+# ---------------------------------------------------------------------------
+function _gchp_advection_moist!(tracers, sched, air, phys, model,
+        grid::CubedSphereGrid{FT}, ws, ws_lr, ws_vr, gc,
+        n_sub, dt_sub, step, _ORD, has_next) where FT
+    gpu = current_gpu(sched)
+    Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
+    N = Nc + 2Hp
+    cx_gpu, cy_gpu = gpu.cx, gpu.cy
+    backend = get_backend(gpu.delp[1])
+    g_val = FT(grid.gravity)
+
+    step[] += n_sub
+
+    # Step 1: rm → q_wet (divide by moist air mass)
+    for (_, rm_t) in pairs(tracers)
+        rm_to_q_panels!(rm_t, air.m_wet, grid)
+    end
+
+    # Pre-compute constants
+    mfx_dt = FT(model.met_data.mass_flux_dt)
+    am_to_mfx = g_val * mfx_dt
+    inv_am_to_mfx = FT(1) / am_to_mfx
+    rarea = ntuple(p -> FT(1) ./ gc.area[p], 6)
+    corr_mfx_k! = _correct_mfx_humidity_kernel!(backend, 256)
+    corr_mfy_k! = _correct_mfy_humidity_kernel!(backend, 256)
+    rev_mfx_k! = _reverse_mfx_humidity_kernel!(backend, 256)
+    rev_mfy_k! = _reverse_mfy_humidity_kernel!(backend, 256)
+
+    # ── n_sub loop with dp-reset (interpolated DELP, moist) ─────────────
+    n_loop = has_next ? n_sub : 1
+
+    if has_next
+        ng = next_gpu(sched)
+        interp_k! = _interpolate_dp_kernel!(backend, 256)
+        for _isub in 1:n_loop
+            frac = FT(_isub - 1) / FT(n_loop)
+            for p in 1:6
+                interp_k!(ws_vr.dp_work[p], gpu.delp[p], ng.delp[p],
+                          frac; ndrange=(N, N, Nz))
+            end
+            synchronize(backend)
+
+            for p in 1:6
+                gpu.am[p] .*= am_to_mfx
+                gpu.bm[p] .*= am_to_mfx
+            end
+            for p in 1:6
+                corr_mfx_k!(gpu.am[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc+1, Nc, Nz))
+                corr_mfy_k!(gpu.bm[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc, Nc+1, Nz))
+            end
+            synchronize(backend)
+            gchp_tracer_2d!(tracers, ws_vr.dp_work, gpu.am, gpu.bm,
+                              cx_gpu, cy_gpu, gpu.xfx, gpu.yfx,
+                              gc.area, rarea, grid, _ORD, ws_lr, ws_vr.m_save)
+            for p in 1:6
+                rev_mfx_k!(gpu.am[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc+1, Nc, Nz))
+                rev_mfy_k!(gpu.bm[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc, Nc+1, Nz))
+            end
+            synchronize(backend)
+            for p in 1:6
+                gpu.am[p] .*= inv_am_to_mfx
+                gpu.bm[p] .*= inv_am_to_mfx
+            end
+        end
+    else
+        for p in 1:6; copyto!(ws_vr.dp_work[p], gpu.delp[p]); end
+        for p in 1:6
+            gpu.am[p] .*= am_to_mfx
+            gpu.bm[p] .*= am_to_mfx
+        end
+        for p in 1:6
+            corr_mfx_k!(gpu.am[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc+1, Nc, Nz))
+            corr_mfy_k!(gpu.bm[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc, Nc+1, Nz))
+        end
+        synchronize(backend)
+        gchp_tracer_2d!(tracers, ws_vr.dp_work, gpu.am, gpu.bm,
+                          cx_gpu, cy_gpu, gpu.xfx, gpu.yfx,
+                          gc.area, rarea, grid, _ORD, ws_lr, ws_vr.m_save)
+        for p in 1:6
+            rev_mfx_k!(gpu.am[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc+1, Nc, Nz))
+            rev_mfy_k!(gpu.bm[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc, Nc+1, Nz))
+        end
+        synchronize(backend)
+        for p in 1:6
+            gpu.am[p] .*= inv_am_to_mfx
+            gpu.bm[p] .*= inv_am_to_mfx
+        end
+    end
+
+    # ── Vertical remap (single, at end) ──────────────────────────────────
+    for p in 1:6
+        compute_air_mass_panel!(ws_vr.m_save[p], ws_vr.dp_work[p],
+                                gc.area[p], g_val, Nc, Nz, Hp)
+    end
+    compute_source_pe_from_evolved_mass!(ws_vr, ws_vr.m_save, gc, grid)
+    compute_target_pe_from_evolved_ps!(ws_vr, gc, grid)
+
+    for (_, rm_t) in pairs(tracers)
+        q_to_rm_panels!(rm_t, ws_vr.m_save, grid)
+    end
+    for (_, rm_t) in pairs(tracers)
+        vertical_remap_cs!(rm_t, ws_vr.m_save, ws_vr, ws, gc, grid; hybrid_pe=true)
+    end
+    for (_, rm_t) in pairs(tracers)
+        fillz_panels!(rm_t, ws_vr.dp_tgt, grid)
+    end
+
+    # Scaling against prescribed endpoint
+    if has_next
+        ng = next_gpu(sched)
+        for (tname, rm_t) in pairs(tracers)
+            scaling = gchp_calc_scaling_factor(rm_t, ws_vr.dp_tgt, ng.delp, gc, grid)
+            @info "calcScaling: $tname = $scaling" maxlog=200
+            apply_scaling_factor!(rm_t, scaling, grid)
+        end
+    end
+
+    # Back-conversion using met-data QV_next
+    qv_back = phys.qv_next_loaded[] ? phys.qv_next_gpu : phys.qv_gpu
+
+    if has_next
+        ng = next_gpu(sched)
+        for p in 1:6
+            compute_air_mass_panel!(ws_vr.m_save[p], ng.delp[p],
+                                    gc.area[p], g_val, Nc, Nz, Hp)
+        end
+    else
+        for p in 1:6
+            compute_air_mass_panel!(ws_vr.m_save[p], ws_vr.dp_work[p],
+                                    gc.area[p], g_val, Nc, Nz, Hp)
+        end
+    end
+
+    for (_, rm_t) in pairs(tracers)
+        rm_to_q_panels!(rm_t, ws_vr.m_save, grid)
+    end
+
+    div_k! = _divide_by_1_minus_qv_kernel!(backend, 256)
+    for (_, q_t) in pairs(tracers)
+        for p in 1:6
+            div_k!(q_t[p], qv_back[p], Hp; ndrange=(Nc, Nc, Nz))
+        end
+    end
+    synchronize(backend)
+
+    if has_next
+        ng = next_gpu(sched)
+        for p in 1:6
+            compute_air_mass_panel!(air.m[p], ng.delp[p], qv_back[p],
+                                    gc.area[p], g_val, Nc, Nz, Hp)
+        end
+    else
+        for p in 1:6
+            compute_air_mass_panel!(air.m[p], ws_vr.dp_work[p],
+                                    gc.area[p], g_val, Nc, Nz, Hp)
+        end
+    end
+
+    for (_, q_t) in pairs(tracers)
+        q_to_rm_panels!(q_t, air.m, grid)
+    end
+
+    for p in 1:6; copyto!(air.m_ref[p], air.m[p]); end
+    for p in 1:6
+        air.m_wet[p] .= air.m[p] ./ max.(1 .- qv_back[p], eps(FT))
+    end
+    return nothing
+end
+
+# ---------------------------------------------------------------------------
+
 function advection_phase!(tracers, sched, air, phys, model,
                            grid::CubedSphereGrid{FT},
                            ws, n_sub, dt_sub, step;
                            ws_lr=nothing, ws_vr=nothing, gc=nothing,
+                           geom_gchp=nothing, ws_gchp=nothing,
                            has_next::Bool=false) where FT
     gpu = current_gpu(sched)
     Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
+    # GCHP-faithful: get CX/CY from GPU met buffer
+    cx_gpu = gpu.cx
+    cy_gpu = gpu.cy
 
-    if ws_vr !== nothing
+    _use_gchp = _needs_gchp(model.advection_scheme)
+    _ORD = model.advection_scheme isa PPMAdvection ?
+        Val(_ppm_order(model.advection_scheme)) : Val(4)
+
+    if _use_gchp && ws_vr !== nothing && cx_gpu !== nothing && gpu.xfx !== nothing
         # ═══════════════════════════════════════════════════════════════════
-        # REMAP PATH: Horizontal-only Lin-Rood + vertical remap
-        #
-        # fv_tp_2d_cs! evolves BOTH rm and m via _linrood_update_kernel!.
-        # m must evolve naturally through both calls per substep so that
-        # q = rm/m stays consistent. After both calls, we RESCALE rm to
-        # match prescribed m: rm_new = (rm/m_evolved) × m_prescribed.
-        # This preserves the true VMR while keeping rm on the prescribed-m
-        # basis for the next substep. Without rescaling, restoring m alone
-        # creates q errors (up to 1500 ppm at TOA in point-source tests).
-        #
-        # Two calls per substep (matching strang_split_linrood_ppm!):
-        # total = 2 × n_sub × half_dt = dt_window.
+        # GCHP PATH: dispatch on transport basis (dry or moist)
+        # ═══════════════════════════════════════════════════════════════════
+        _basis = get(model.metadata, "pressure_basis", "dry")
+        if _basis == "moist" && phys.qv_loaded[]
+            _gchp_advection_moist!(tracers, sched, air, phys, model, grid,
+                ws, ws_lr, ws_vr, gc, n_sub, dt_sub, step, _ORD, has_next)
+        else
+            _gchp_advection_dry!(tracers, sched, air, phys, model, grid,
+                ws, ws_lr, ws_vr, gc, n_sub, dt_sub, step, _ORD, has_next)
+        end
+
+        # ── Convection AFTER full advection ─────────────────────────
+        if phys.cmfmc_loaded[]
+            dt_conv = FT(n_sub) * dt_sub
+            for (_, rm_t) in pairs(tracers)
+                convect!(rm_t, air.m_wet, phys.cmfmc_gpu, gpu.delp,
+                          model.convection, grid, dt_conv, phys.planet;
+                          dtrain_panels=phys.dtrain_loaded[] ? phys.dtrain_gpu : nothing,
+                          workspace=phys.ras_workspace)
+            end
+        end
+
+    elseif ws_vr !== nothing
+        # ═══════════════════════════════════════════════════════════════════
+        # REMAP PATH: Standard Lin-Rood + vertical remap (prescale/rescale)
         # ═══════════════════════════════════════════════════════════════════
 
         # Save prescribed m (from compute_air_mass_phase!)
@@ -450,20 +899,15 @@ function advection_phase!(tracers, sched, air, phys, model,
             step[] += 1
 
             for (_, rm_t) in pairs(tracers)
-                # Restore prescribed m before each tracer's transport
                 for p in 1:6; copyto!(air.m[p], ws_vr.m_save[p]); end
 
-                # Two half-substep Lin-Rood calls = one full substep.
-                # m evolves naturally through both calls (no restore between).
                 fv_tp_2d_cs!(rm_t, air.m, gpu.am, gpu.bm,
-                              grid, Val(_ppm_order(model.advection_scheme)), ws, ws_lr;
+                              grid, _ORD, ws, ws_lr;
                               damp_coeff=model.advection_scheme.damp_coeff)
                 fv_tp_2d_cs!(rm_t, air.m, gpu.am, gpu.bm,
-                              grid, Val(_ppm_order(model.advection_scheme)), ws, ws_lr;
+                              grid, _ORD, ws, ws_lr;
                               damp_coeff=FT(0))
 
-                # Rescale rm to prescribed-m basis while preserving VMR:
-                # rm_new = (rm / m_evolved) × m_prescribed = q_true × m_prescribed
                 for p in 1:6
                     rm_t[p] .*= ws_vr.m_save[p] ./ air.m[p]
                 end
@@ -538,12 +982,18 @@ function advection_phase!(tracers, sched, air, phys, model,
             step[] += 1
 
             # Advect each tracer independently (m reset per tracer)
-            for (_, rm_t) in pairs(tracers)
+            # For Prather, get per-tracer CS workspace (lazy-allocated)
+            _cs_pw_dict = model.advection_scheme isa PratherAdvection ?
+                _get_cs_prather_ws(tracers, grid, model.architecture) : nothing
+            for (tname, rm_t) in pairs(tracers)
                 for p in 1:6
                     copyto!(air.m[p], air.m_ref[p])
                 end
+                _pw_cs = _cs_pw_dict !== nothing ? _cs_pw_dict[tname] : nothing
                 _apply_advection_cs!(rm_t, air.m, gpu.am, gpu.bm, gpu.cm,
-                                      grid, model.advection_scheme, ws; ws_lr)
+                                      grid, model.advection_scheme, ws;
+                                      ws_lr, cx=cx_gpu, cy=cy_gpu,
+                                      geom_gchp, ws_gchp, pw_cs=_pw_cs)
             end
             # air.m now holds m_evolved (same for all tracers)
 
@@ -661,7 +1111,12 @@ end
 
 """Build met_fields NamedTuple for output writers."""
 function build_met_fields(sched, phys, grid::LatitudeLongitudeGrid, half_dt, dt_window)
-    return (;)  # LL output writers don't need met_fields
+    gpu = current_gpu(sched)
+    base = (; ps=Array(gpu.ps))
+    if phys.sfc_loaded[] && phys.has_pbl
+        base = merge(base, (; pblh=Array(phys.pbl_sfc_gpu.pblh)))
+    end
+    return base
 end
 
 function build_met_fields(sched, phys, grid::CubedSphereGrid, half_dt, dt_window)
@@ -750,7 +1205,8 @@ end
 
 """Finalize simulation: log mass conservation summary + close output writers."""
 function finalize_simulation!(writers, diag, tracers, grid,
-                                wall_start, n_win, step, t_io, t_gpu, t_out)
+                                wall_start, n_win, step, t_io, t_gpu, t_out;
+                                t_phases=nothing)
     wall_total = time() - wall_start
 
     # Final mass summary (Δ = mass closure bias vs expected = initial + emissions)

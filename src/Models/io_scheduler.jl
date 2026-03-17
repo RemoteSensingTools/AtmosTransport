@@ -56,7 +56,7 @@ end
 Allocate met buffers and construct the IOScheduler.
 """
 function build_io_scheduler(grid::LatitudeLongitudeGrid{FT}, arch,
-                             ::SingleBuffer) where FT
+                             ::SingleBuffer; use_gchp::Bool=false) where FT
     cs_cpu = _get_cluster_sizes_cpu(grid)
     Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
     gpu = LatLonMetBuffer(arch, FT, Nx, Ny, Nz; cluster_sizes_cpu=cs_cpu)
@@ -65,7 +65,7 @@ function build_io_scheduler(grid::LatitudeLongitudeGrid{FT}, arch,
 end
 
 function build_io_scheduler(grid::LatitudeLongitudeGrid{FT}, arch,
-                             ::DoubleBuffer) where FT
+                             ::DoubleBuffer; use_gchp::Bool=false) where FT
     cs_cpu = _get_cluster_sizes_cpu(grid)
     Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
     gpu_a = LatLonMetBuffer(arch, FT, Nx, Ny, Nz; cluster_sizes_cpu=cs_cpu)
@@ -77,21 +77,25 @@ end
 
 function build_io_scheduler(grid::CubedSphereGrid{FT}, arch,
                              ::SingleBuffer;
-                             Hp::Int=3) where FT
+                             Hp::Int=3, use_gchp::Bool=false) where FT
+    if use_gchp
+        @info "GCHP mode requires DoubleBuffer (next-window DELP needed) — auto-upgrading"
+        return build_io_scheduler(grid, arch, DoubleBuffer(); Hp, use_gchp)
+    end
     Nc, Nz = grid.Nc, grid.Nz
-    gpu = CubedSphereMetBuffer(arch, FT, Nc, Nz, Hp)
-    cpu = CubedSphereCPUBuffer(FT, Nc, Nz, Hp)
+    gpu = CubedSphereMetBuffer(arch, FT, Nc, Nz, Hp; use_gchp)
+    cpu = CubedSphereCPUBuffer(FT, Nc, Nz, Hp; use_gchp)
     IOScheduler(SingleBuffer(), gpu, gpu, cpu, cpu, :a, nothing, nothing)
 end
 
 function build_io_scheduler(grid::CubedSphereGrid{FT}, arch,
                              ::DoubleBuffer;
-                             Hp::Int=3) where FT
+                             Hp::Int=3, use_gchp::Bool=false) where FT
     Nc, Nz = grid.Nc, grid.Nz
-    gpu_a = CubedSphereMetBuffer(arch, FT, Nc, Nz, Hp)
-    gpu_b = CubedSphereMetBuffer(arch, FT, Nc, Nz, Hp)
-    cpu_a = CubedSphereCPUBuffer(FT, Nc, Nz, Hp)
-    cpu_b = CubedSphereCPUBuffer(FT, Nc, Nz, Hp)
+    gpu_a = CubedSphereMetBuffer(arch, FT, Nc, Nz, Hp; use_gchp)
+    gpu_b = CubedSphereMetBuffer(arch, FT, Nc, Nz, Hp; use_gchp)
+    cpu_a = CubedSphereCPUBuffer(FT, Nc, Nz, Hp; use_gchp)
+    cpu_b = CubedSphereCPUBuffer(FT, Nc, Nz, Hp; use_gchp)
     IOScheduler(DoubleBuffer(), gpu_a, gpu_b, cpu_a, cpu_b, :a, nothing, nothing)
 end
 
@@ -116,11 +120,13 @@ function begin_load!(sched::IOScheduler{SingleBuffer}, driver,
                       sfc_cpu=nothing, troph_cpu=nothing,
                       needs_cmfmc::Bool=false, needs_dtrain::Bool=false,
                       needs_sfc::Bool=false, needs_qv::Bool=false,
-                      qv_cpu=nothing, ps_panels=nothing)
+                      qv_cpu=nothing, ps_panels=nothing,
+                      qv_next_cpu=nothing, ps_next_panels=nothing)
     result = load_all_window!(sched.cpu_a, cmfmc_cpu, dtrain_cpu, sfc_cpu, troph_cpu,
                                driver, grid, w;
                                needs_cmfmc, needs_dtrain, needs_sfc,
-                               needs_qv, qv_cpu, ps_panels)
+                               needs_qv, qv_cpu, ps_panels,
+                               qv_next_cpu, ps_next_panels)
     sched.io_result = result
     return nothing
 end
@@ -142,11 +148,13 @@ function initial_load!(sched::IOScheduler{DoubleBuffer}, driver,
                         sfc_cpu=nothing, troph_cpu=nothing,
                         needs_cmfmc::Bool=false, needs_dtrain::Bool=false,
                         needs_sfc::Bool=false, needs_qv::Bool=false,
-                        qv_cpu=nothing, ps_panels=nothing)
+                        qv_cpu=nothing, ps_panels=nothing,
+                        qv_next_cpu=nothing, ps_next_panels=nothing)
     result = load_all_window!(current_cpu(sched), cmfmc_cpu, dtrain_cpu,
                                sfc_cpu, troph_cpu, driver, grid, w;
                                needs_cmfmc, needs_dtrain, needs_sfc,
-                               needs_qv, qv_cpu, ps_panels)
+                               needs_qv, qv_cpu, ps_panels,
+                               qv_next_cpu, ps_next_panels)
     sched.io_result = result
     return nothing
 end
@@ -175,13 +183,15 @@ function begin_load!(sched::IOScheduler{DoubleBuffer}, driver,
                       sfc_cpu=nothing, troph_cpu=nothing,
                       needs_cmfmc::Bool=false, needs_dtrain::Bool=false,
                       needs_sfc::Bool=false, needs_qv::Bool=false,
-                      qv_cpu=nothing, ps_panels=nothing)
+                      qv_cpu=nothing, ps_panels=nothing,
+                      qv_next_cpu=nothing, ps_next_panels=nothing)
     nc = next_cpu(sched)
     sched.load_task = Threads.@spawn load_all_window!(
         nc, cmfmc_cpu, dtrain_cpu, sfc_cpu, troph_cpu,
         driver, grid, w;
         needs_cmfmc, needs_dtrain, needs_sfc,
-        needs_qv, qv_cpu, ps_panels)
+        needs_qv, qv_cpu, ps_panels,
+        qv_next_cpu, ps_next_panels)
     return nothing
 end
 

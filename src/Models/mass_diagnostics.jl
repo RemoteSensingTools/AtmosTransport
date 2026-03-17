@@ -111,7 +111,7 @@ function mass_showvalue(mass_totals::Dict{Symbol, Float64},
     parts = String[]
     for tname in sort(collect(keys(mass_totals)))
         total = mass_totals[tname]
-        if haskey(expected_mass, tname) && expected_mass[tname] != 0.0
+        if haskey(expected_mass, tname) && abs(expected_mass[tname]) > 1e-30
             rel = (total - expected_mass[tname]) / abs(expected_mass[tname]) * 100
             push!(parts, @sprintf("%s:Δ=%.4e%%", tname, rel))
         end

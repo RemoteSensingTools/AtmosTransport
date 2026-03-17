@@ -60,17 +60,19 @@ struct PPMAdvection{ORD} <: AbstractPPMScheme
     damp_coeff::Float64
     use_linrood::Bool
     use_vertical_remap::Bool
+    use_gchp::Bool
     function PPMAdvection{ORD}(; damp_coeff::Real=0.0, use_linrood::Bool=false,
-                                 use_vertical_remap::Bool=false) where {ORD}
+                                 use_vertical_remap::Bool=false,
+                                 use_gchp::Bool=false) where {ORD}
         ORD ∈ (4, 5, 6, 7) || throw(ArgumentError("ORD must be in {4,5,6,7}, got $ORD"))
-        return new{ORD}(Float64(damp_coeff), use_linrood, use_vertical_remap)
+        return new{ORD}(Float64(damp_coeff), use_linrood, use_vertical_remap, use_gchp)
     end
 end
 
 # Convenience constructors
 PPMAdvection(ORD::Int; damp_coeff::Real=0.0, use_linrood::Bool=false,
-             use_vertical_remap::Bool=false) =
-    PPMAdvection{ORD}(; damp_coeff, use_linrood, use_vertical_remap)
+             use_vertical_remap::Bool=false, use_gchp::Bool=false) =
+    PPMAdvection{ORD}(; damp_coeff, use_linrood, use_vertical_remap, use_gchp)
 
 """
     PPMAdvection{7}()

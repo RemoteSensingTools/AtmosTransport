@@ -37,6 +37,7 @@ damp_coeff      = 0.02
 gchp            = true
 linrood         = false
 vertical_remap  = true
+per_step_remap  = true
 mass_fixer      = false
 dry_correction  = true
 

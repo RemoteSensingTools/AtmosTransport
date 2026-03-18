@@ -103,6 +103,9 @@ export compute_target_pressure_from_dry_delp_direct!
 export compute_target_pe_from_hybrid_coords!
 export compute_source_pe_from_hybrid!, compute_target_pe_from_ps_hybrid!
 export compute_source_pe_from_evolved_mass!, compute_target_pe_from_evolved_ps!
+export _lock_surface_pe_kernel!, _copy_dp_tgt_to_dp_work_kernel!
+export _scale_dp_tgt_to_source_ps_kernel!
+export _column_sum_rm_kernel!, _column_mass_correct_kernel!
 export update_air_mass_from_target!
 export calc_scaling_factor, apply_scaling_factor!, gchp_calc_scaling_factor, fillz_panels!
 export compute_dry_ple!

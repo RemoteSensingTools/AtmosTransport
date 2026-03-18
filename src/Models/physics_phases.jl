@@ -532,17 +532,136 @@ function _gchp_advection_dry!(tracers, sched, air, phys, model,
     inv_am_to_mfx = FT(1) / am_to_mfx
     rarea = ntuple(p -> FT(1) ./ gc.area[p], 6)
 
-    # ── n_sub loop with dp-reset (interpolated DELP) ───────────────────────
-    # GCHP resets dp from interpolated PLE0 at each dynamics step.
-    # Tracers carry forward in q form; dp is reset to prevent drift.
-    # No intermediate remaps — single remap at the end.
     n_loop = has_next ? n_sub : 1
+    per_step = model.advection_scheme.per_step_remap
 
-    if has_next && phys.qv_loaded[]
+    # QV_next for target PE / scaling (used in both paths)
+    qv_tgt = phys.qv_next_loaded[] ? phys.qv_next_gpu :
+             phys.qv_loaded[] ? phys.qv_gpu : nothing
+
+    if has_next && phys.qv_loaded[] && per_step
+        # ── Per-substep remap: matches GCHP offline_tracer_advection ────────
+        # Each 450s step: horizontal transport → source PE → target PE
+        # (hybrid from evolved PS) → remap → scale → rm→q for next step.
+        ng = next_gpu(sched)
+        interp_k! = _interpolate_dry_dp_kernel!(backend, 256)
+
+        for _isub in 1:n_loop
+            frac_start = FT(_isub - 1) / FT(n_loop)
+            frac_end   = FT(_isub)     / FT(n_loop)
+
+            # Reset dp_work to interpolated dry DELP at start of substep
+            for p in 1:6
+                interp_k!(ws_vr.dp_work[p], gpu.delp[p], ng.delp[p],
+                          phys.qv_gpu[p], frac_start; ndrange=(N, N, Nz))
+            end
+            synchronize(backend)
+
+            # Horizontal advection: dp_work → evolved dpA
+            for p in 1:6
+                gpu.am[p] .*= am_to_mfx
+                gpu.bm[p] .*= am_to_mfx
+            end
+            gchp_tracer_2d!(tracers, ws_vr.dp_work, gpu.am, gpu.bm,
+                              cx_gpu, cy_gpu, gpu.xfx, gpu.yfx,
+                              gc.area, rarea, grid, _ORD, ws_lr, ws_vr.m_save)
+            for p in 1:6
+                gpu.am[p] .*= inv_am_to_mfx
+                gpu.bm[p] .*= inv_am_to_mfx
+            end
+
+            # Source PE from evolved dpA (dp_work after horizontal step)
+            for p in 1:6
+                compute_air_mass_panel!(ws_vr.m_save[p], ws_vr.dp_work[p],
+                                        gc.area[p], g_val, Nc, Nz, Hp)
+            end
+            compute_source_pe_from_evolved_mass!(ws_vr, ws_vr.m_save, gc, grid)
+
+            # Target PE: direct cumsum from prescribed dp, with surface PE locked
+            # to source (evolved) surface PE. This prevents column mass change
+            # through the remap while keeping interior levels at prescribed positions.
+            # GCHP uses hybrid PE + surface locking, but hybrid needs moist PS.
+            # For dry basis: direct cumsum + surface lock + bottom-layer absorption.
+            if _isub < n_loop
+                # Target PE: direct cumsum from prescribed dp, with column mass
+                # scaled to match source (evolved) surface pressure.
+                # This distributes the mass adjustment proportionally across ALL
+                # levels (not just the bottom layer, which caused q distortion).
+                for p in 1:6
+                    interp_k!(ws_vr.dp_work[p], gpu.delp[p], ng.delp[p],
+                              phys.qv_gpu[p], frac_end; ndrange=(N, N, Nz))
+                end
+                synchronize(backend)
+                compute_target_pressure_from_delp_direct!(ws_vr, ws_vr.dp_work, gc, grid)
+                # Scale dp_tgt so column sum = source column sum (ps_src from evolved mass).
+                # dp_tgt[k] *= ps_src / ps_tgt (proportional distribution).
+                for p in 1:6
+                    _scale_dp_tgt_to_source_ps_kernel!(backend, 256)(
+                        ws_vr.pe_tgt[p], ws_vr.dp_tgt[p],
+                        ws_vr.pe_src[p], ws_vr.ps_src[p],
+                        Nc, Nz; ndrange=(Nc, Nc))
+                end
+                synchronize(backend)
+            else
+                # Last: target = ng.delp × (1-qv_tgt) — identical to single-remap
+                if qv_tgt !== nothing
+                    compute_target_pressure_from_dry_delp_direct!(ws_vr, ng.delp,
+                        qv_tgt, gc, grid)
+                else
+                    compute_target_pressure_from_delp_direct!(ws_vr, ng.delp, gc, grid)
+                end
+            end
+
+            # q → rm, remap, fillz
+            for (_, rm_t) in pairs(tracers)
+                q_to_rm_panels!(rm_t, ws_vr.m_save, grid)
+            end
+            for (_, rm_t) in pairs(tracers)
+                vertical_remap_cs!(rm_t, ws_vr.m_save, ws_vr, ws, gc, grid; hybrid_pe=true)
+            end
+            for (_, rm_t) in pairs(tracers)
+                fillz_panels!(rm_t, ws_vr.dp_tgt, grid)
+            end
+
+            # Scale and prepare for next substep
+            if _isub < n_loop
+                # No intermediate scaling — proportional dp_tgt scaling + surface-locked
+                # PE ensures column mass conservation. Float32 PPM drift is ~0.002%/2d.
+
+                # Convert rm → q using TARGET air mass (surface-locked dp_tgt).
+                # Using prescribed dp_work would cause mass loss because the
+                # prescribed column mass ≠ surface-locked column mass.
+                # Write dp_tgt back to dp_work interior for compute_air_mass_panel!.
+                for p in 1:6
+                    _copy_dp_tgt_to_dp_work_kernel!(backend, 256)(
+                        ws_vr.dp_work[p], ws_vr.dp_tgt[p], Hp, Nc, Nz;
+                        ndrange=(Nc, Nc, Nz))
+                end
+                synchronize(backend)
+                for p in 1:6
+                    compute_air_mass_panel!(ws_vr.m_save[p], ws_vr.dp_work[p],
+                                            gc.area[p], g_val, Nc, Nz, Hp)
+                end
+                for (_, rm_t) in pairs(tracers)
+                    rm_to_q_panels!(rm_t, ws_vr.m_save, grid)
+                end
+            else
+                # Last substep: scale against ng.delp × (1-qv_tgt)
+                for (tname, rm_t) in pairs(tracers)
+                    scaling = gchp_calc_scaling_factor(rm_t, ws_vr.dp_tgt, ng.delp,
+                                  gc, grid; qv_panels=qv_tgt)
+                    @info "calcScaling: $tname = $scaling" maxlog=200
+                    apply_scaling_factor!(rm_t, scaling, grid)
+                end
+                # tracers remain in rm form after last substep
+            end
+        end
+
+    elseif has_next && phys.qv_loaded[]
+        # ── n_sub loop, single remap at end (original behavior) ─────────────
         ng = next_gpu(sched)
         interp_k! = _interpolate_dry_dp_kernel!(backend, 256)
         for _isub in 1:n_loop
-            # Reset dp_work from interpolated dry DELP
             frac = FT(_isub - 1) / FT(n_loop)
             for p in 1:6
                 interp_k!(ws_vr.dp_work[p], gpu.delp[p], ng.delp[p],
@@ -562,8 +681,9 @@ function _gchp_advection_dry!(tracers, sched, air, phys, model,
                 gpu.bm[p] .*= inv_am_to_mfx
             end
         end
+
     else
-        # Single step: use current dry dp
+        # Single step: use current dry dp (no next window available)
         if phys.qv_loaded[]
             dry_dp_k! = _compute_dry_dp_kernel!(backend, 256)
             for p in 1:6
@@ -588,47 +708,43 @@ function _gchp_advection_dry!(tracers, sched, air, phys, model,
         end
     end
 
-    # ── Vertical remap (single, at end) ──────────────────────────────────
-    # dp_work now contains evolved dp after last horizontal step
-    for p in 1:6
-        compute_air_mass_panel!(ws_vr.m_save[p], ws_vr.dp_work[p],
-                                gc.area[p], g_val, Nc, Nz, Hp)
-    end
-    compute_source_pe_from_evolved_mass!(ws_vr, ws_vr.m_save, gc, grid)
-
-    # Use QV_next for target PE when available (matches GCHP's use of SPHU2
-    # for DryPLE1). Fallback to QV_current if QV_next not loaded.
-    qv_tgt = phys.qv_next_loaded[] ? phys.qv_next_gpu :
-             phys.qv_loaded[] ? phys.qv_gpu : nothing
-    if has_next
-        ng = next_gpu(sched)
-        if qv_tgt !== nothing
-            compute_target_pressure_from_dry_delp_direct!(ws_vr, ng.delp,
-                qv_tgt, gc, grid)
-        else
-            compute_target_pressure_from_delp_direct!(ws_vr, ng.delp, gc, grid)
+    # ── Vertical remap (single, at end) — skipped when per_step_remap did it ──
+    if !(has_next && phys.qv_loaded[] && per_step)
+        for p in 1:6
+            compute_air_mass_panel!(ws_vr.m_save[p], ws_vr.dp_work[p],
+                                    gc.area[p], g_val, Nc, Nz, Hp)
         end
-    else
-        compute_target_pressure_from_mass_direct!(ws_vr, ws_vr.m_save, gc, grid)
-    end
-    for (_, rm_t) in pairs(tracers)
-        q_to_rm_panels!(rm_t, ws_vr.m_save, grid)
-    end
-    for (_, rm_t) in pairs(tracers)
-        vertical_remap_cs!(rm_t, ws_vr.m_save, ws_vr, ws, gc, grid; hybrid_pe=true)
-    end
-    for (_, rm_t) in pairs(tracers)
-        fillz_panels!(rm_t, ws_vr.dp_tgt, grid)
-    end
+        compute_source_pe_from_evolved_mass!(ws_vr, ws_vr.m_save, gc, grid)
 
-    # Scaling against prescribed endpoint (also using QV_next)
-    if has_next
-        ng = next_gpu(sched)
-        for (tname, rm_t) in pairs(tracers)
-            scaling = gchp_calc_scaling_factor(rm_t, ws_vr.dp_tgt, ng.delp, gc, grid;
-                qv_panels=qv_tgt)
-            @info "calcScaling: $tname = $scaling" maxlog=200
-            apply_scaling_factor!(rm_t, scaling, grid)
+        if has_next
+            ng = next_gpu(sched)
+            if qv_tgt !== nothing
+                compute_target_pressure_from_dry_delp_direct!(ws_vr, ng.delp,
+                    qv_tgt, gc, grid)
+            else
+                compute_target_pressure_from_delp_direct!(ws_vr, ng.delp, gc, grid)
+            end
+        else
+            compute_target_pressure_from_mass_direct!(ws_vr, ws_vr.m_save, gc, grid)
+        end
+        for (_, rm_t) in pairs(tracers)
+            q_to_rm_panels!(rm_t, ws_vr.m_save, grid)
+        end
+        for (_, rm_t) in pairs(tracers)
+            vertical_remap_cs!(rm_t, ws_vr.m_save, ws_vr, ws, gc, grid; hybrid_pe=true)
+        end
+        for (_, rm_t) in pairs(tracers)
+            fillz_panels!(rm_t, ws_vr.dp_tgt, grid)
+        end
+
+        if has_next
+            ng = next_gpu(sched)
+            for (tname, rm_t) in pairs(tracers)
+                scaling = gchp_calc_scaling_factor(rm_t, ws_vr.dp_tgt, ng.delp, gc, grid;
+                    qv_panels=qv_tgt)
+                @info "calcScaling: $tname = $scaling" maxlog=200
+                apply_scaling_factor!(rm_t, scaling, grid)
+            end
         end
     end
 
@@ -706,8 +822,117 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
 
     # ── n_sub loop with dp-reset (interpolated DELP, moist) ─────────────
     n_loop = has_next ? n_sub : 1
+    per_step = model.advection_scheme.per_step_remap
 
-    if has_next
+    if has_next && per_step
+        # ── Per-substep remap: matches GCHP offline_tracer_advection ────────
+        ng = next_gpu(sched)
+        interp_k! = _interpolate_dp_kernel!(backend, 256)
+
+        for _isub in 1:n_loop
+            frac_start = FT(_isub - 1) / FT(n_loop)
+            frac_end   = FT(_isub)     / FT(n_loop)
+
+            # Reset dp_work to interpolated moist DELP at start of substep
+            for p in 1:6
+                interp_k!(ws_vr.dp_work[p], gpu.delp[p], ng.delp[p],
+                          frac_start; ndrange=(N, N, Nz))
+            end
+            synchronize(backend)
+
+            # Horizontal advection: dp_work → evolved dpA
+            for p in 1:6
+                gpu.am[p] .*= am_to_mfx
+                gpu.bm[p] .*= am_to_mfx
+            end
+            for p in 1:6
+                corr_mfx_k!(gpu.am[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc+1, Nc, Nz))
+                corr_mfy_k!(gpu.bm[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc, Nc+1, Nz))
+            end
+            synchronize(backend)
+            gchp_tracer_2d!(tracers, ws_vr.dp_work, gpu.am, gpu.bm,
+                              cx_gpu, cy_gpu, gpu.xfx, gpu.yfx,
+                              gc.area, rarea, grid, _ORD, ws_lr, ws_vr.m_save)
+            for p in 1:6
+                rev_mfx_k!(gpu.am[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc+1, Nc, Nz))
+                rev_mfy_k!(gpu.bm[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc, Nc+1, Nz))
+            end
+            synchronize(backend)
+            for p in 1:6
+                gpu.am[p] .*= inv_am_to_mfx
+                gpu.bm[p] .*= inv_am_to_mfx
+            end
+
+            # Source PE from evolved dpA (moist)
+            for p in 1:6
+                compute_air_mass_panel!(ws_vr.m_save[p], ws_vr.dp_work[p],
+                                        gc.area[p], g_val, Nc, Nz, Hp)
+            end
+            compute_source_pe_from_evolved_mass!(ws_vr, ws_vr.m_save, gc, grid)
+
+            # Target PE: direct cumsum from prescribed moist DELP, with column
+            # mass scaled proportionally to match evolved surface pressure.
+            # (Same approach as dry fix7 — hybrid PE accumulates drift over 384 substeps.)
+            if _isub < n_loop
+                for p in 1:6
+                    interp_k!(ws_vr.dp_work[p], gpu.delp[p], ng.delp[p],
+                              frac_end; ndrange=(N, N, Nz))
+                end
+                synchronize(backend)
+                compute_target_pressure_from_delp_direct!(ws_vr, ws_vr.dp_work, gc, grid)
+                for p in 1:6
+                    _scale_dp_tgt_to_source_ps_kernel!(backend, 256)(
+                        ws_vr.pe_tgt[p], ws_vr.dp_tgt[p],
+                        ws_vr.pe_src[p], ws_vr.ps_src[p],
+                        Nc, Nz; ndrange=(Nc, Nc))
+                end
+                synchronize(backend)
+            else
+                compute_target_pe_from_evolved_ps!(ws_vr, gc, grid)
+            end
+
+            # q → rm (moist), remap, fillz
+            for (_, rm_t) in pairs(tracers)
+                q_to_rm_panels!(rm_t, ws_vr.m_save, grid)
+            end
+            for (_, rm_t) in pairs(tracers)
+                vertical_remap_cs!(rm_t, ws_vr.m_save, ws_vr, ws, gc, grid; hybrid_pe=true)
+            end
+            for (_, rm_t) in pairs(tracers)
+                fillz_panels!(rm_t, ws_vr.dp_tgt, grid)
+            end
+
+            if _isub < n_loop
+                # No intermediate scaling — proportional dp_tgt scaling + surface-locked
+                # PE ensures column mass conservation. Float32 PPM drift is ~0.002%/2d.
+                # Direct cumsum + proportional scaling ensures column mass conservation.
+
+                # Convert rm → q using TARGET mass (dp_tgt, surface-locked).
+                for p in 1:6
+                    _copy_dp_tgt_to_dp_work_kernel!(backend, 256)(
+                        ws_vr.dp_work[p], ws_vr.dp_tgt[p], Hp, Nc, Nz;
+                        ndrange=(Nc, Nc, Nz))
+                end
+                synchronize(backend)
+                for p in 1:6
+                    compute_air_mass_panel!(ws_vr.m_save[p], ws_vr.dp_work[p],
+                                            gc.area[p], g_val, Nc, Nz, Hp)
+                end
+                for (_, rm_t) in pairs(tracers)
+                    rm_to_q_panels!(rm_t, ws_vr.m_save, grid)
+                end
+            else
+                # Last substep: scale against actual moist ng.delp
+                for (tname, rm_t) in pairs(tracers)
+                    scaling = gchp_calc_scaling_factor(rm_t, ws_vr.dp_tgt, ng.delp, gc, grid)
+                    @info "calcScaling: $tname = $scaling" maxlog=200
+                    apply_scaling_factor!(rm_t, scaling, grid)
+                end
+                # tracers remain in rm form for back-conversion below
+            end
+        end
+
+    elseif has_next
         ng = next_gpu(sched)
         interp_k! = _interpolate_dp_kernel!(backend, 256)
         for _isub in 1:n_loop
@@ -765,31 +990,32 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
         end
     end
 
-    # ── Vertical remap (single, at end) ──────────────────────────────────
-    for p in 1:6
-        compute_air_mass_panel!(ws_vr.m_save[p], ws_vr.dp_work[p],
-                                gc.area[p], g_val, Nc, Nz, Hp)
-    end
-    compute_source_pe_from_evolved_mass!(ws_vr, ws_vr.m_save, gc, grid)
-    compute_target_pe_from_evolved_ps!(ws_vr, gc, grid)
+    # ── Vertical remap (single, at end) — skipped when per_step_remap did it ──
+    if !(has_next && per_step)
+        for p in 1:6
+            compute_air_mass_panel!(ws_vr.m_save[p], ws_vr.dp_work[p],
+                                    gc.area[p], g_val, Nc, Nz, Hp)
+        end
+        compute_source_pe_from_evolved_mass!(ws_vr, ws_vr.m_save, gc, grid)
+        compute_target_pe_from_evolved_ps!(ws_vr, gc, grid)
 
-    for (_, rm_t) in pairs(tracers)
-        q_to_rm_panels!(rm_t, ws_vr.m_save, grid)
-    end
-    for (_, rm_t) in pairs(tracers)
-        vertical_remap_cs!(rm_t, ws_vr.m_save, ws_vr, ws, gc, grid; hybrid_pe=true)
-    end
-    for (_, rm_t) in pairs(tracers)
-        fillz_panels!(rm_t, ws_vr.dp_tgt, grid)
-    end
+        for (_, rm_t) in pairs(tracers)
+            q_to_rm_panels!(rm_t, ws_vr.m_save, grid)
+        end
+        for (_, rm_t) in pairs(tracers)
+            vertical_remap_cs!(rm_t, ws_vr.m_save, ws_vr, ws, gc, grid; hybrid_pe=true)
+        end
+        for (_, rm_t) in pairs(tracers)
+            fillz_panels!(rm_t, ws_vr.dp_tgt, grid)
+        end
 
-    # Scaling against prescribed endpoint
-    if has_next
-        ng = next_gpu(sched)
-        for (tname, rm_t) in pairs(tracers)
-            scaling = gchp_calc_scaling_factor(rm_t, ws_vr.dp_tgt, ng.delp, gc, grid)
-            @info "calcScaling: $tname = $scaling" maxlog=200
-            apply_scaling_factor!(rm_t, scaling, grid)
+        if has_next
+            ng = next_gpu(sched)
+            for (tname, rm_t) in pairs(tracers)
+                scaling = gchp_calc_scaling_factor(rm_t, ws_vr.dp_tgt, ng.delp, gc, grid)
+                @info "calcScaling: $tname = $scaling" maxlog=200
+                apply_scaling_factor!(rm_t, scaling, grid)
+            end
         end
     end
 

@@ -108,13 +108,14 @@ If a column's `sfc_flux == 0`, the flux is diagnosed from the tracer gradient.
         end
     end
 
-    # --- Compute counter-gradient γ_c (unstable BL only) ---
+    # --- Compute counter-gradient γ_c and Prandtl correction (unstable BL only) ---
     γ_c = FT(0)
+    Pr_inv = one(FT)
     if L_ob < FT(0)
         # Convective velocity scale w* = (g/θ × H_kin × h)^(1/3)
         # H_kin = H_sfc / (ρ × cp) is the kinematic heat flux [K·m/s]
         # Only compute if H_kin > 0 (upward heat flux = convective)
-        if H_kin > FT(0)
+        if H_kin > FT(0) && h_pbl > FT(10)
             w_star = cbrt(g / T_sfc * H_kin * h_pbl)
             w_s = max(w_star, FT(0.01))  # safety minimum
 
@@ -130,6 +131,14 @@ If a column's `sfc_flux == 0`, the flux is diagnosed from the tracer gradient.
             F_sfc = FT(sfc_flux[ii, jj])
 
             γ_c = FT(fak) * FT(sffrac) * F_sfc / (w_s * h_pbl)
+
+            # Prandtl number inverse (TM5 diffusion.F90:1213-1230):
+            # In convective BL, scalar diffusivity Kh = Km × Pr_inv > Km.
+            # fL = 1 - 0.5*h/L_ob > 1 for L_ob < 0.
+            fL = max(FT(1) - FT(0.5) * h_pbl / L_ob, FT(1))
+            x_h = cbrt(fL)
+            Pr_inv = x_h / sqrt(fL) + FT(7.2) * w_star / (us * x_h)
+            Pr_inv = max(Pr_inv, one(FT))
         end
     end
 
@@ -170,7 +179,7 @@ If a column's `sfc_flux == 0`, the flux is diagnosed from the tracer gradient.
         Kz_a = FT(0)
         if k > 1
             Kz_a = _pbl_kz(z_above, h_pbl, us, L_ob, κ_vk,
-                            β_h, Kz_bg, Kz_min, Kz_max, FT)
+                            β_h, Kz_bg, Kz_min, Kz_max, Pr_inv, FT)
             potbar_a = p_int_above * T_inv
             dp_mid_a = max(p_mid_k - p_mid_prev_k, FT(0.01))
             D_above = Kz_a * gorsq * potbar_a * potbar_a / (dp_mid_a * delp_k)
@@ -181,7 +190,7 @@ If a column's `sfc_flux == 0`, the flux is diagnosed from the tracer gradient.
         Kz_b = FT(0)
         if k < Nz
             Kz_b = _pbl_kz(z_below, h_pbl, us, L_ob, κ_vk,
-                            β_h, Kz_bg, Kz_min, Kz_max, FT)
+                            β_h, Kz_bg, Kz_min, Kz_max, Pr_inv, FT)
             potbar_b = p_int_below * T_inv
             delp_next = delp[ii, jj, k + 1]
             p_mid_next = max(p_bot_k + delp_next / FT(2), FT(1))

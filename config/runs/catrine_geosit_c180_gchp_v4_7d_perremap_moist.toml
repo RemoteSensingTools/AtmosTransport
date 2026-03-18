@@ -1,12 +1,8 @@
 # ===========================================================================
-# CATRINE D7.1 — GEOS-IT C180 (GCHP-faithful fv_tp_2d)
+# CATRINE D7.1 — GEOS-IT C180 (GCHP-faithful, v4 binary with embedded QV/PS)
 #
-# Same as catrine_geosit_c180_linrood.toml but with GCHP-faithful transport:
-# - Area-based pre-advection (instead of mass-based)
-# - Courant-number PPM (instead of mass-fraction PPM)
-# - CX/CY loaded from v2 binary files
-#
-# Requires preprocessed v2 binary with CX/CY Courant numbers.
+# Full 4-tracer run, 7 days, advection only (no convection/diffusion).
+# Uses v4 binary format for guaranteed QV/PS temporal coherence.
 # ===========================================================================
 
 [architecture]
@@ -22,7 +18,7 @@ Nc         = 180
 driver           = "geosfp_cs"
 product          = "geosit_c180"
 netcdf_dir       = "~/data/geosit_c180_catrine"
-preprocessed_dir = "/temp1/catrine/met/geosit_c180/massflux_v3"
+preprocessed_dir = "/temp1/catrine/met/geosit_c180/massflux_v4"
 surface_data_bin_dir = "/temp1/catrine/met/geosit_c180/surface_bin"
 coord_file       = "~/code/gitHub/AtmosTransportModel/data/grids/cs_c180_gridspec.nc"
 start_date       = "2021-12-01"
@@ -77,22 +73,11 @@ linrood         = false
 vertical_remap  = true
 per_step_remap  = true
 mass_fixer      = false
-dry_correction  = true
-
-#[convection]
-#type = "ras"
-
-#[diffusion]
-#type   = "nonlocal_pbl"
-#beta_h = 15.0
-#Kz_bg  = 0.1
-#Kz_min = 0.01
-#Kz_max = 500.0
-#fak    = 8.5
-#sffrac = 0.1
+dry_correction  = false
+pressure_basis  = "moist"
 
 [output]
-filename      = "/temp1/catrine/output/catrine_gchp_8d"
+filename      = "/temp1/catrine/output/catrine_gchp_v4_2d_perremap_moist"
 format        = "binary"
 auto_convert  = true
 split         = "daily"
@@ -108,7 +93,6 @@ fco2_column_mass = {type = "column_mass", species = "fossil_co2"}
 co2_column_mass  = {type = "column_mass", species = "co2"}
 rn222_column_mass = {type = "column_mass", species = "rn222"}
 surface_pressure = "surface_pressure"
-pbl_height       = "pbl_height"
 
 [buffering]
 strategy = "double"

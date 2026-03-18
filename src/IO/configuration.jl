@@ -889,6 +889,7 @@ function _build_advection(config::Dict, ::Type{FT}) where FT
         use_linrood = get(adv_cfg, "linrood", false)
         use_vertical_remap = get(adv_cfg, "vertical_remap", false)
         use_gchp = get(adv_cfg, "gchp", false)
+        per_step_remap = get(adv_cfg, "per_step_remap", false)
         if use_vertical_remap && !use_linrood && !use_gchp
             @info "vertical_remap requires linrood — enabling automatically"
             use_linrood = true
@@ -896,7 +897,11 @@ function _build_advection(config::Dict, ::Type{FT}) where FT
         if use_gchp
             @info "GCHP-faithful transport enabled — area-based pre-advection + Courant PPM"
         end
-        return PPMAdvection{ppm_order}(; damp_coeff, use_linrood, use_vertical_remap, use_gchp)
+        if per_step_remap
+            @info "per_step_remap enabled — vertical remap after every horizontal substep (matches GCHP)"
+        end
+        return PPMAdvection{ppm_order}(; damp_coeff, use_linrood, use_vertical_remap,
+                                        use_gchp, per_step_remap)
     elseif scheme == "prather" || scheme == "som"
         use_limiter = get(adv_cfg, "use_limiter", true)
         return PratherAdvection(use_limiter)

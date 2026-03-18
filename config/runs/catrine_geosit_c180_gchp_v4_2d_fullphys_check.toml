@@ -1,12 +1,6 @@
 # ===========================================================================
-# CATRINE D7.1 — GEOS-IT C180 (GCHP-faithful fv_tp_2d)
-#
-# Same as catrine_geosit_c180_linrood.toml but with GCHP-faithful transport:
-# - Area-based pre-advection (instead of mass-based)
-# - Courant-number PPM (instead of mass-fraction PPM)
-# - CX/CY loaded from v2 binary files
-#
-# Requires preprocessed v2 binary with CX/CY Courant numbers.
+# CATRINE D7.1 — GEOS-IT C180, GCHP v4, full physics (advection + RAS + PBL)
+# 7 days, 4 tracers, v4 binary with embedded QV/PS
 # ===========================================================================
 
 [architecture]
@@ -22,7 +16,7 @@ Nc         = 180
 driver           = "geosfp_cs"
 product          = "geosit_c180"
 netcdf_dir       = "~/data/geosit_c180_catrine"
-preprocessed_dir = "/temp1/catrine/met/geosit_c180/massflux_v3"
+preprocessed_dir = "/temp1/catrine/met/geosit_c180/massflux_v4"
 surface_data_bin_dir = "/temp1/catrine/met/geosit_c180/surface_bin"
 coord_file       = "~/code/gitHub/AtmosTransportModel/data/grids/cs_c180_gridspec.nc"
 start_date       = "2021-12-01"
@@ -75,24 +69,23 @@ damp_coeff      = 0.02
 gchp            = true
 linrood         = false
 vertical_remap  = true
-per_step_remap  = true
 mass_fixer      = false
 dry_correction  = true
 
-#[convection]
-#type = "ras"
+[convection]
+type = "ras"
 
-#[diffusion]
-#type   = "nonlocal_pbl"
-#beta_h = 15.0
-#Kz_bg  = 0.1
-#Kz_min = 0.01
-#Kz_max = 500.0
-#fak    = 8.5
-#sffrac = 0.1
+[diffusion]
+type   = "nonlocal_pbl"
+beta_h = 15.0
+Kz_bg  = 0.1
+Kz_min = 0.01
+Kz_max = 500.0
+fak    = 8.5
+sffrac = 0.1
 
 [output]
-filename      = "/temp1/catrine/output/catrine_gchp_8d"
+filename      = "/temp1/catrine/output/catrine_gchp_v4_2d_fullphys_check"
 format        = "binary"
 auto_convert  = true
 split         = "daily"

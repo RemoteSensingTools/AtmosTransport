@@ -55,12 +55,16 @@ Pure function, no side effects — suitable for calling inside GPU kernels.
 
 Physics constants are passed explicitly (no module-level globals).
 
+`Pr_inv` (≥ 1) is the inverse Prandtl number applied to the unstable BL.
+It amplifies Kh relative to Km: in convective conditions Kh = Km × Pr_inv.
+Pass `one(FT)` for no correction (stable or neutral).
+
 Above the PBL, Kz is linearly tapered from h_pbl to 1.2·h_pbl
 (smoothed entrainment zone), avoiding the unrealistic sharp cutoff
 that can produce artificial tracer gradients at the inversion.
 """
 @inline function _pbl_kz(z, h_pbl, ustar, L_ob, kappa_vk,
-                          β_h, Kz_bg, Kz_min, Kz_max, ::Type{FT}) where FT
+                          β_h, Kz_bg, Kz_min, Kz_max, Pr_inv, ::Type{FT}) where FT
     κ = FT(kappa_vk)
 
     # Above entrainment zone: background only
@@ -84,6 +88,10 @@ that can produce artificial tracer gradients at the inversion.
             w_m = ustar * cbrt(FT(1) - FT(0.1) * β_h * h_pbl / L_ob)
             Kz = w_m * κ * z_eff * zzh2
         end
+        # Prandtl number correction (TM5 diffusion.F90:1213-1230):
+        # In convective BL, scalar diffusivity Kh > momentum diffusivity Km.
+        # Pr_inv = Kh/Km >= 1. Computed per-column by the calling kernel.
+        Kz *= Pr_inv
     else
         # Stable BL
         Kz = ustar * κ * z_eff * zzh2 / (FT(1) + FT(5) * z_eff / L_ob)
@@ -187,6 +195,20 @@ For each (i,j) column:
         end
     end
 
+    # --- Prandtl number inverse (TM5 diffusion.F90:1213-1230) ---
+    # Pr_inv = Kh/Km >= 1 in unstable BL (scalar diffuses faster than momentum).
+    # Formula: Pr_inv = fL^(1/3)/fL^(1/2) + 7.2*w*/u*/fL^(1/3)
+    # where fL = 1 - 0.5*h_pbl/L_ob > 1 for L_ob < 0.
+    # Only applies in unstable, convective conditions (L_ob < 0, H_kin > 0).
+    Pr_inv = one(FT)
+    if L_ob < zero(FT) && H_kin > zero(FT) && h_pbl > FT(10)
+        fL = max(FT(1) - FT(0.5) * h_pbl / L_ob, FT(1))
+        x_h = cbrt(fL)
+        w_star = cbrt(H_kin * g * h_pbl / T_sfc)
+        Pr_inv = x_h / sqrt(fL) + FT(7.2) * w_star / (us * x_h)
+        Pr_inv = max(Pr_inv, one(FT))
+    end
+
     # --- Forward sweep: build tridiagonal + Thomas elimination ---
     # Pressure-based diffusion coefficients (GeosChem vdiff_mod.F90):
     #   D = Kz × (g/R)² × (p_int/T)² / (Δp_mid × Δp_k)
@@ -223,7 +245,7 @@ For each (i,j) column:
         D_above = FT(0)
         if k > 1
             Kz_a = _pbl_kz(z_above, h_pbl, us, L_ob, κ_vk,
-                            β_h, Kz_bg, Kz_min, Kz_max, FT)
+                            β_h, Kz_bg, Kz_min, Kz_max, Pr_inv, FT)
             potbar_a = p_int_above * T_inv
             dp_mid_a = max(p_mid_k - p_mid_prev_k, FT(0.01))
             D_above = Kz_a * gorsq * potbar_a * potbar_a / (dp_mid_a * delp_k)
@@ -233,7 +255,7 @@ For each (i,j) column:
         D_below = FT(0)
         if k < Nz
             Kz_b = _pbl_kz(z_below, h_pbl, us, L_ob, κ_vk,
-                            β_h, Kz_bg, Kz_min, Kz_max, FT)
+                            β_h, Kz_bg, Kz_min, Kz_max, Pr_inv, FT)
             potbar_b = p_int_below * T_inv
             delp_next = delp[ii, jj, k + 1]
             p_mid_next = max(p_bot_k + delp_next / FT(2), FT(1))

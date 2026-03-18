@@ -91,7 +91,6 @@ fco2_column_mass = {type = "column_mass", species = "fossil_co2"}
 co2_column_mass  = {type = "column_mass", species = "co2"}
 rn222_column_mass = {type = "column_mass", species = "rn222"}
 surface_pressure = "surface_pressure"
-pbl_height       = "pbl_height"
 
 [buffering]
 strategy = "double"

@@ -907,6 +907,92 @@ end
     end
 end
 
+"""Copy interior-only dp_tgt back into haloed dp_work at interior positions."""
+@kernel function _copy_dp_tgt_to_dp_work_kernel!(dp_work, @Const(dp_tgt), Hp, Nc, Nz)
+    i, j, k = @index(Global, NTuple)
+    @inbounds dp_work[Hp + i, Hp + j, k] = dp_tgt[i, j, k]
+end
+
+"""Compute per-column sum of rm (haloed) at interior positions, stored in col_sum (Nc×Nc).
+Uses Kahan compensated summation for Float32 precision."""
+@kernel function _column_sum_rm_kernel!(col_sum, @Const(rm), Hp, Nz)
+    i, j = @index(Global, NTuple)
+    @inbounds begin
+        ii = Hp + i; jj = Hp + j
+        FT = eltype(rm)
+        s = zero(FT)
+        c = zero(FT)  # Kahan compensation
+        for k in 1:Nz
+            y = rm[ii, jj, k] - c
+            t = s + y
+            c = (t - s) - y
+            s = t
+        end
+        col_sum[i, j] = s
+    end
+end
+
+"""Scale rm per column so that Σ(rm_new) = Σ(rm_old) exactly.
+Enforces per-column mass conservation after PPM vertical remap.
+`col_sum_before` is the pre-remap column sum from `_column_sum_rm_kernel!`."""
+@kernel function _column_mass_correct_kernel!(rm, @Const(col_sum_before), Hp, Nz)
+    i, j = @index(Global, NTuple)
+    @inbounds begin
+        ii = Hp + i; jj = Hp + j
+        FT = eltype(rm)
+        # Post-remap column sum (Kahan)
+        new_sum = zero(FT)
+        c = zero(FT)
+        for k in 1:Nz
+            y = rm[ii, jj, k] - c
+            t = new_sum + y
+            c = (t - new_sum) - y
+            new_sum = t
+        end
+        # Scale to match pre-remap sum
+        old_sum = col_sum_before[i, j]
+        ratio = abs(new_sum) > FT(1e-30) ? old_sum / new_sum : one(FT)
+        for k in 1:Nz
+            rm[ii, jj, k] *= ratio
+        end
+    end
+end
+
+"""Scale dp_tgt proportionally so column sum matches source PS.
+Recomputes pe_tgt from scaled dp_tgt. Distributes mass adjustment
+evenly across all levels (unlike bottom-layer-only locking)."""
+@kernel function _scale_dp_tgt_to_source_ps_kernel!(pe_tgt, dp_tgt,
+        @Const(pe_src), @Const(ps_src), Nc, Nz)
+    i, j = @index(Global, NTuple)
+    @inbounds begin
+        FT = eltype(pe_tgt)
+        ps_s = Float64(ps_src[i, j])           # evolved surface pressure
+        ps_t = Float64(pe_tgt[i, j, Nz + 1])   # prescribed target surface
+        ratio = ps_t > 1e-10 ? FT(ps_s / ps_t) : one(FT)
+
+        pe_acc = Float64(pe_tgt[i, j, 1])  # keep TOA
+        for k in 1:Nz
+            dp_new = Float64(dp_tgt[i, j, k]) * Float64(ratio)
+            dp_tgt[i, j, k] = FT(dp_new)
+            pe_acc += dp_new
+            pe_tgt[i, j, k + 1] = FT(pe_acc)
+        end
+    end
+end
+
+"""Lock target surface PE to source surface PE, absorbing the difference in the bottom layer.
+Prevents column mass change through the remap (GCHP: pe2(npz+1) = pe1(npz+1)).
+Must be called AFTER `compute_target_pressure_from_delp_direct!` AND
+`compute_source_pe_from_evolved_mass!`."""
+@kernel function _lock_surface_pe_kernel!(pe_tgt, dp_tgt, @Const(pe_src), Nc, Nz)
+    i, j = @index(Global, NTuple)
+    @inbounds begin
+        FT = eltype(pe_tgt)
+        pe_tgt[i, j, Nz + 1] = pe_src[i, j, Nz + 1]
+        dp_tgt[i, j, Nz] = pe_tgt[i, j, Nz + 1] - pe_tgt[i, j, Nz]
+    end
+end
+
 """
     compute_target_pressure_from_mass_direct!(ws_vr, m_panels, gc, grid)
 

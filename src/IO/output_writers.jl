@@ -583,7 +583,7 @@ function _compute_diagnostic(diag::MetField2DDiagnostic, model;
         return Array(met[key])
     end
 
-    @warn "MetField2DDiagnostic: field '$fn' not found in met_data — returning zeros"
+    @warn "MetField2DDiagnostic: field '$fn' not found in met_data — returning zeros" maxlog=1
     if grid isa LatitudeLongitudeGrid
         return zeros(Float32, grid.Nx, grid.Ny)
     elseif output_grid isa LatLonOutputGrid

@@ -574,7 +574,10 @@ end
 @kernel function _correct_mfx_humidity_kernel!(mfx, @Const(qv), Hp, Nc)
     iif, j, k = @index(Global, NTuple)
     @inbounds begin
-        ii = min(Hp + iif, Hp + Nc)
+        # GCHP (GCHPctmEnv:1029): MFX(I,J,L) /= (1 - SPHU(I,J,L))
+        # am[iif] = mfxc[iif-1], so face iif = east face of cell iif-1.
+        # Use SOURCE cell (iif-1), matching GCHP's cell-I convention.
+        ii = Hp + max(1, iif - 1)
         jj = Hp + j
         FT = eltype(mfx)
         mfx[iif, j, k] /= max(FT(1) - qv[ii, jj, k], eps(FT))
@@ -584,8 +587,10 @@ end
 @kernel function _correct_mfy_humidity_kernel!(mfy, @Const(qv), Hp, Nc)
     i, jf, k = @index(Global, NTuple)
     @inbounds begin
+        # bm[jf] = mfyc[jf-1], so face jf = north face of cell jf-1.
+        # Use SOURCE cell (jf-1).
         ii = Hp + i
-        jj = min(Hp + jf, Hp + Nc)
+        jj = Hp + max(1, jf - 1)
         FT = eltype(mfy)
         mfy[i, jf, k] /= max(FT(1) - qv[ii, jj, k], eps(FT))
     end
@@ -594,7 +599,7 @@ end
 @kernel function _reverse_mfx_humidity_kernel!(mfx, @Const(qv), Hp, Nc)
     iif, j, k = @index(Global, NTuple)
     @inbounds begin
-        ii = min(Hp + iif, Hp + Nc)
+        ii = Hp + max(1, iif - 1)
         jj = Hp + j
         FT = eltype(mfx)
         mfx[iif, j, k] *= max(FT(1) - qv[ii, jj, k], eps(FT))
@@ -605,7 +610,7 @@ end
     i, jf, k = @index(Global, NTuple)
     @inbounds begin
         ii = Hp + i
-        jj = min(Hp + jf, Hp + Nc)
+        jj = Hp + max(1, jf - 1)
         FT = eltype(mfy)
         mfy[i, jf, k] *= max(FT(1) - qv[ii, jj, k], eps(FT))
     end
@@ -657,15 +662,17 @@ Used after vertical remap to prepare dp_work for the next horizontal transport s
     @inbounds dst[Hp + i, Hp + j, k] = src[i, j, k]
 end
 
-"""Interpolate dry dp from two moist DELP snapshots: dp = ((1-frac)×delp0 + frac×delp1) × (1-qv).
-Matches GCHP's per-step dp reset from interpolated PLE0 (GCHPctmEnv_GridCompMod.F90)."""
+"""Interpolate dry dp from two moist DELP snapshots with temporally interpolated QV.
+GCHP uses SPHU0 for DryPLE0 and SPHU2 for DryPLE1 (each endpoint uses its own QV).
+dp = ((1-frac)×delp0 + frac×delp1) × (1 - ((1-frac)×qv0 + frac×qv1))"""
 @kernel function _interpolate_dry_dp_kernel!(dp_out, @Const(delp_0), @Const(delp_1),
-                                              @Const(qv), frac)
+                                              @Const(qv0), @Const(qv1), frac)
     i, j, k = @index(Global, NTuple)
     @inbounds begin
         FT = eltype(dp_out)
+        qv_interp = (one(FT) - frac) * qv0[i, j, k] + frac * qv1[i, j, k]
         dp_out[i, j, k] = ((one(FT) - frac) * delp_0[i, j, k] +
-                            frac * delp_1[i, j, k]) * (one(FT) - qv[i, j, k])
+                            frac * delp_1[i, j, k]) * (one(FT) - qv_interp)
     end
 end
 
@@ -681,25 +688,28 @@ end
 """Per-column dp correction (dry basis): scale evolved dp so column sum matches
 interpolated dry target PS. Prevents dp drift in n_sub loop while keeping q unchanged.
 `frac` = i/n_sub (endpoint fraction for this substep)."""
-@kernel function _column_dp_correction_kernel!(dp, @Const(delp_0), @Const(delp_1),
-                                                @Const(qv), frac, Hp, Nz)
+@kernel function _column_dp_correction_kernel!(dp::AbstractArray{FT, 3},
+                                                @Const(delp_0), @Const(delp_1),
+                                                @Const(qv), frac, Hp, Nz) where {FT}
     i, j = @index(Global, NTuple)
     @inbounds begin
         ii = Hp + i; jj = Hp + j
-        FT = eltype(dp)
         # Target column dry dp = sum of interpolated DELP × (1-QV)
-        ps_tgt = zero(Float64)
+        ps_tgt = zero(FT)
+        comp1 = zero(FT)
         for k in 1:Nz
-            ps_tgt += Float64((one(FT) - frac) * delp_0[ii, jj, k] +
-                              frac * delp_1[ii, jj, k]) * Float64(one(FT) - qv[ii, jj, k])
+            val = ((one(FT) - frac) * delp_0[ii, jj, k] +
+                    frac * delp_1[ii, jj, k]) * (one(FT) - qv[ii, jj, k])
+            ps_tgt, comp1 = _kahan_add(ps_tgt, comp1, val)
         end
         # Evolved column dp
-        ps_evol = zero(Float64)
+        ps_evol = zero(FT)
+        comp2 = zero(FT)
         for k in 1:Nz
-            ps_evol += Float64(dp[ii, jj, k])
+            ps_evol, comp2 = _kahan_add(ps_evol, comp2, dp[ii, jj, k])
         end
         # Scale dp to match target PS
-        scale = FT(ps_tgt / max(ps_evol, 1.0))
+        scale = ps_tgt / max(ps_evol, eps(FT))
         for k in 1:Nz
             dp[ii, jj, k] *= scale
         end
@@ -708,22 +718,24 @@ end
 
 """Per-column dp correction (moist basis): scale evolved dp so column sum matches
 interpolated moist target PS."""
-@kernel function _column_dp_correction_moist_kernel!(dp, @Const(delp_0), @Const(delp_1),
-                                                      frac, Hp, Nz)
+@kernel function _column_dp_correction_moist_kernel!(dp::AbstractArray{FT, 3},
+                                                      @Const(delp_0), @Const(delp_1),
+                                                      frac, Hp, Nz) where {FT}
     i, j = @index(Global, NTuple)
     @inbounds begin
         ii = Hp + i; jj = Hp + j
-        FT = eltype(dp)
-        ps_tgt = zero(Float64)
+        ps_tgt = zero(FT)
+        comp1 = zero(FT)
         for k in 1:Nz
-            ps_tgt += Float64((one(FT) - frac) * delp_0[ii, jj, k] +
-                              frac * delp_1[ii, jj, k])
+            val = (one(FT) - frac) * delp_0[ii, jj, k] + frac * delp_1[ii, jj, k]
+            ps_tgt, comp1 = _kahan_add(ps_tgt, comp1, val)
         end
-        ps_evol = zero(Float64)
+        ps_evol = zero(FT)
+        comp2 = zero(FT)
         for k in 1:Nz
-            ps_evol += Float64(dp[ii, jj, k])
+            ps_evol, comp2 = _kahan_add(ps_evol, comp2, dp[ii, jj, k])
         end
-        scale = FT(ps_tgt / max(ps_evol, 1.0))
+        scale = ps_tgt / max(ps_evol, eps(FT))
         for k in 1:Nz
             dp[ii, jj, k] *= scale
         end

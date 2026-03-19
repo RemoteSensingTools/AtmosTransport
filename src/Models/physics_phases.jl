@@ -553,7 +553,8 @@ function _gchp_advection_dry!(tracers, sched, air, phys, model,
             # Reset dp_work to interpolated dry DELP at start of substep
             for p in 1:6
                 interp_k!(ws_vr.dp_work[p], gpu.delp[p], ng.delp[p],
-                          phys.qv_gpu[p], frac_start; ndrange=(N, N, Nz))
+                          phys.qv_gpu[p], qv_tgt !== nothing ? qv_tgt[p] : phys.qv_gpu[p],
+                          frac_start; ndrange=(N, N, Nz))
             end
             synchronize(backend)
 
@@ -589,7 +590,8 @@ function _gchp_advection_dry!(tracers, sched, air, phys, model,
                 # levels (not just the bottom layer, which caused q distortion).
                 for p in 1:6
                     interp_k!(ws_vr.dp_work[p], gpu.delp[p], ng.delp[p],
-                              phys.qv_gpu[p], frac_end; ndrange=(N, N, Nz))
+                              phys.qv_gpu[p], qv_tgt !== nothing ? qv_tgt[p] : phys.qv_gpu[p],
+                              frac_end; ndrange=(N, N, Nz))
                 end
                 synchronize(backend)
                 compute_target_pressure_from_delp_direct!(ws_vr, ws_vr.dp_work, gc, grid)
@@ -665,7 +667,8 @@ function _gchp_advection_dry!(tracers, sched, air, phys, model,
             frac = FT(_isub - 1) / FT(n_loop)
             for p in 1:6
                 interp_k!(ws_vr.dp_work[p], gpu.delp[p], ng.delp[p],
-                          phys.qv_gpu[p], frac; ndrange=(N, N, Nz))
+                          phys.qv_gpu[p], qv_tgt !== nothing ? qv_tgt[p] : phys.qv_gpu[p],
+                          frac; ndrange=(N, N, Nz))
             end
             synchronize(backend)
 

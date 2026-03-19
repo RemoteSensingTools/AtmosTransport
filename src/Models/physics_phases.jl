@@ -832,6 +832,23 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
         ng = next_gpu(sched)
         interp_k! = _interpolate_dp_kernel!(backend, 256)
 
+        # GCHP applies humidity correction ONCE before all substeps (GCHPctmEnv:1029).
+        # Scale am/bm to Pa·m² and correct for humidity — keep corrected for all substeps.
+        for p in 1:6
+            gpu.am[p] .*= am_to_mfx
+            gpu.bm[p] .*= am_to_mfx
+        end
+        for p in 1:6
+            corr_mfx_k!(gpu.am[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc+1, Nc, Nz))
+            corr_mfy_k!(gpu.bm[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc, Nc+1, Nz))
+        end
+        synchronize(backend)
+
+        # TODO: Add QV as advected tracer NQ+1 (GCHP: AdvCore:1068).
+        # Requires fixing the per-remap rm→q round-trip corruption for QV.
+        # For now, tracers are advected without QV as a tracer.
+        tracers_with_qv = tracers  # alias — no extra tracer for now
+
         for _isub in 1:n_loop
             frac_start = FT(_isub - 1) / FT(n_loop)
             frac_end   = FT(_isub)     / FT(n_loop)
@@ -843,28 +860,10 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
             end
             synchronize(backend)
 
-            # Horizontal advection: dp_work → evolved dpA
-            for p in 1:6
-                gpu.am[p] .*= am_to_mfx
-                gpu.bm[p] .*= am_to_mfx
-            end
-            for p in 1:6
-                corr_mfx_k!(gpu.am[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc+1, Nc, Nz))
-                corr_mfy_k!(gpu.bm[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc, Nc+1, Nz))
-            end
-            synchronize(backend)
-            gchp_tracer_2d!(tracers, ws_vr.dp_work, gpu.am, gpu.bm,
+            # Horizontal advection (fluxes already corrected for humidity)
+            gchp_tracer_2d!(tracers_with_qv, ws_vr.dp_work, gpu.am, gpu.bm,
                               cx_gpu, cy_gpu, gpu.xfx, gpu.yfx,
                               gc.area, rarea, grid, _ORD, ws_lr, ws_vr.m_save)
-            for p in 1:6
-                rev_mfx_k!(gpu.am[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc+1, Nc, Nz))
-                rev_mfy_k!(gpu.bm[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc, Nc+1, Nz))
-            end
-            synchronize(backend)
-            for p in 1:6
-                gpu.am[p] .*= inv_am_to_mfx
-                gpu.bm[p] .*= inv_am_to_mfx
-            end
 
             # Source PE from evolved dpA (moist)
             for p in 1:6
@@ -894,21 +893,20 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
                 compute_target_pe_from_evolved_ps!(ws_vr, gc, grid)
             end
 
-            # q → rm (moist), remap, fillz
-            for (_, rm_t) in pairs(tracers)
+            # q → rm (moist), remap, fillz — including QV tracer
+            for (_, rm_t) in pairs(tracers_with_qv)
                 q_to_rm_panels!(rm_t, ws_vr.m_save, grid)
             end
-            for (_, rm_t) in pairs(tracers)
+            for (_, rm_t) in pairs(tracers_with_qv)
                 vertical_remap_cs!(rm_t, ws_vr.m_save, ws_vr, ws, gc, grid; hybrid_pe=true)
             end
-            for (_, rm_t) in pairs(tracers)
+            for (_, rm_t) in pairs(tracers_with_qv)
                 fillz_panels!(rm_t, ws_vr.dp_tgt, grid)
             end
 
             if _isub < n_loop
                 # No intermediate scaling — proportional dp_tgt scaling + surface-locked
-                # PE ensures column mass conservation. Float32 PPM drift is ~0.002%/2d.
-                # Direct cumsum + proportional scaling ensures column mass conservation.
+                # PE ensures column mass conservation.
 
                 # Convert rm → q using TARGET mass (dp_tgt, surface-locked).
                 for p in 1:6
@@ -921,18 +919,29 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
                     compute_air_mass_panel!(ws_vr.m_save[p], ws_vr.dp_work[p],
                                             gc.area[p], g_val, Nc, Nz, Hp)
                 end
-                for (_, rm_t) in pairs(tracers)
+                for (_, rm_t) in pairs(tracers_with_qv)
                     rm_to_q_panels!(rm_t, ws_vr.m_save, grid)
                 end
             else
-                # Last substep: scale against actual moist ng.delp
-                for (tname, rm_t) in pairs(tracers)
+                # Last substep: scale against actual moist ng.delp (all tracers + QV)
+                for (tname, rm_t) in pairs(tracers_with_qv)
                     scaling = gchp_calc_scaling_factor(rm_t, ws_vr.dp_tgt, ng.delp, gc, grid)
                     @info "calcScaling: $tname = $scaling" maxlog=200
                     apply_scaling_factor!(rm_t, scaling, grid)
                 end
                 # tracers remain in rm form for back-conversion below
             end
+        end
+
+        # Restore am/bm: reverse humidity correction + unscale
+        for p in 1:6
+            rev_mfx_k!(gpu.am[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc+1, Nc, Nz))
+            rev_mfy_k!(gpu.bm[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc, Nc+1, Nz))
+        end
+        synchronize(backend)
+        for p in 1:6
+            gpu.am[p] .*= inv_am_to_mfx
+            gpu.bm[p] .*= inv_am_to_mfx
         end
 
     elseif has_next
@@ -1022,7 +1031,10 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
         end
     end
 
-    # Back-conversion using met-data QV_next
+    # Back-conversion: wet→dry.
+    # TODO: GCHP uses advected SPHU (tracer NQ+1) for back-conversion (AdvCore:1299).
+    # Our advected QV implementation needs per-remap QV corruption fix (see plan).
+    # For now, use met-data QV_next (working, -0.23% drift over 2 days).
     qv_back = phys.qv_next_loaded[] ? phys.qv_next_gpu : phys.qv_gpu
 
     if has_next

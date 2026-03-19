@@ -103,6 +103,9 @@ function allocate_physics_buffers(grid::CubedSphereGrid{FT}, arch, model;
     # Next-window QV for GCHP-style before/after PE (SPHU2)
     qv_next_cpu = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz), 6)
     qv_next_gpu = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz)), 6)
+    # Scratch buffer for advecting QV as tracer NQ+1 (moist per-step remap only).
+    # Separate from qv_gpu to avoid corrupting the met QV during advection.
+    qv_scratch = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz)), 6)
     # PS from CTM_I1 (current + next) for DryPLE computation
     ps_ctm_i1_cpu = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp), 6)
     ps_ctm_i1_gpu = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp)), 6)
@@ -137,6 +140,7 @@ function allocate_physics_buffers(grid::CubedSphereGrid{FT}, arch, model;
         pbl_sfc_cpu, pbl_sfc_gpu, w_scratch,
         qv_cpu, qv_gpu, qv_loaded=Ref(false),
         qv_next_cpu, qv_next_gpu, qv_next_loaded=Ref(false),
+        qv_scratch,
         ps_ctm_i1_cpu, ps_ctm_i1_gpu,
         ps_next_ctm_i1_cpu, ps_next_ctm_i1_gpu,
         troph_cpu, ps_cpu,

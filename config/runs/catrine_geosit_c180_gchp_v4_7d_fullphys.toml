@@ -67,8 +67,9 @@ scheme          = "ppm"
 ppm_order       = 7
 damp_coeff      = 0.02
 gchp            = true
-linrood         = false
+linrood         = true
 vertical_remap  = true
+per_step_remap  = true
 mass_fixer      = false
 dry_correction  = true
 
@@ -102,6 +103,10 @@ co2_column_mass  = {type = "column_mass", species = "co2"}
 rn222_column_mass = {type = "column_mass", species = "rn222"}
 surface_pressure = "surface_pressure"
 pbl_height       = "pbl_height"
+emis_co2         = {type = "emission_flux", species = "co2"}
+emis_fossil_co2  = {type = "emission_flux", species = "fossil_co2"}
+emis_sf6         = {type = "emission_flux", species = "sf6"}
+emis_rn222       = {type = "emission_flux", species = "rn222"}
 
 [buffering]
 strategy = "double"

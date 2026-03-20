@@ -132,13 +132,6 @@ function _run_loop!(model, grid::AbstractGrid{FT},
 
         update_cfl_diagnostic!(diag, sched, air, grid, ws, w)
 
-        # Emissions
-        _t = time()
-        sim_hours = Float64((w - 1) * dt_window / 3600)
-        apply_emissions_phase!(tracers, emi_state, sched, phys, gc,
-                                grid, dt_window; sim_hours, arch)
-        t_phases["gpu_emissions"] += time() - _t
-
         # Pre-advection mass snapshot (target for global mass fixer)
         snapshot_pre_advection!(diag, tracers, grid)
 
@@ -156,12 +149,20 @@ function _run_loop!(model, grid::AbstractGrid{FT},
         end
         t_phases["gpu_cm"] += time() - _t
 
-        # Advection + convection sub-stepping
+        # Advection + convection sub-stepping (BEFORE emissions, matching GCHP)
         _t = time()
         advection_phase!(tracers, sched, air, phys, model,
                           grid, ws, n_sub, dt_sub, step;
                           ws_lr, ws_vr, gc, geom_gchp, ws_gchp, has_next)
         t_phases["gpu_advection"] += time() - _t
+
+        # Emissions (AFTER advection, matching GCHP operator ordering:
+        # transport → emissions → BL mixing → chemistry)
+        _t = time()
+        sim_hours = Float64((w - 1) * dt_window / 3600)
+        apply_emissions_phase!(tracers, emi_state, sched, phys, gc,
+                                grid, dt_window; sim_hours, arch)
+        t_phases["gpu_emissions"] += time() - _t
 
         # Post-advection physics: BLD + PBL + chemistry
         _t = time()

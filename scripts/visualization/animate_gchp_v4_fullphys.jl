@@ -3,12 +3,12 @@
 # 6-panel comparison: GEOS-Chem vs AtmosTransport GCHP (full physics, v4)
 #
 # Layout (3 rows × 2 cols, no difference panels):
-#   Row 1: Surface CO2     (GEOS-Chem | AtmosTransport)
-#   Row 2: CO2 ~750 hPa    (GEOS-Chem | AtmosTransport)
-#   Row 3: Fossil CO2 col  (GEOS-Chem | AtmosTransport)
+#   Row 1: Surface CO2          (GEOS-Chem | AtmosTransport)
+#   Row 2: CO2 ~750 hPa         (GEOS-Chem | AtmosTransport)
+#   Row 3: Column-avg XCO2      (GEOS-Chem | AtmosTransport)
 #
-# Fossil CO2 column: reconstructed from 3D VMR × air mass (GC ColumnMass
-# diagnostic is ~36% too low due to output config issue).
+# XCO2: dp-weighted column average using hybrid coordinate pressure weights.
+# dp_k = (ak[k+1]-ak[k]) + (bk[k+1]-bk[k]) × PS_ref  (fixed weights, PS_ref=1013.25 hPa)
 # ===========================================================================
 
 using CairoMakie
@@ -34,17 +34,47 @@ const DATE_END   = DateTime(2021, 12, 8, 21)
 # MW ratio for VMR→mass conversion
 const MW_CO2_OVER_AIR = 44.009 / 28.97
 
+# Reference surface pressure for hybrid dp weights [Pa]
+const PS_REF = 101325.0
+
+"""Compute hybrid dp weights (fixed, independent of actual surface pressure).
+Returns a vector of length Nz with dp_k = (ak[k+1]-ak[k]) + (bk[k+1]-bk[k])×PS_REF."""
+function hybrid_dp_weights(ak, bk)
+    Nz = length(ak) - 1
+    dp = zeros(Float64, Nz)
+    for k in 1:Nz
+        dp[k] = (ak[k+1] - ak[k]) + (bk[k+1] - bk[k]) * PS_REF
+    end
+    return dp
+end
+
+"""Compute dp-weighted column average XCO2 from 3D VMR field (Nc×Nc×6×Nz).
+Uses fixed hybrid dp weights."""
+function column_avg_xco2(vmr_3d, dp_weights)
+    Nx, Ny, Np, Nz = size(vmr_3d)
+    xco2 = zeros(Float32, Nx, Ny, Np)
+    dp_total = sum(dp_weights)
+    for p in 1:Np, j in 1:Ny, i in 1:Nx
+        s = 0.0
+        for k in 1:Nz
+            s += Float64(vmr_3d[i,j,p,k]) * dp_weights[k]
+        end
+        xco2[i,j,p] = Float32(s / dp_total * 1e6)  # ppm
+    end
+    return xco2
+end
+
 # ---------------------------------------------------------------------------
 # Load AtmosTransport
 # ---------------------------------------------------------------------------
-function load_atmostr(at_dir, rmap, target_times)
+function load_atmostr(at_dir, rmap, target_times, dp_wts)
     daily_files = sort(filter(f -> endswith(f, ".nc") && contains(f, AT_PATTERN),
                                readdir(at_dir)))
     nt  = length(target_times)
     buf = zeros(Float32, rmap.nlon, rmap.nlat)
     sfc_co2  = zeros(Float32, rmap.nlon, rmap.nlat, nt)
     hpa_co2  = zeros(Float32, rmap.nlon, rmap.nlat, nt)
-    fco2_col = zeros(Float32, rmap.nlon, rmap.nlat, nt)
+    xco2_col = zeros(Float32, rmap.nlon, rmap.nlat, nt)
 
     for fname in daily_files
         NCDataset(joinpath(at_dir, fname), "r") do ds
@@ -63,25 +93,24 @@ function load_atmostr(at_dir, rmap, target_times)
                     data_cs = Float32.(ds["co2_3d"][:, :, :, LEV_750HPA, best_idx]) .* 1f6
                     regrid_cs!(buf, data_cs, rmap)
                     hpa_co2[:, :, ti] .= buf
-                end
 
-                # Fossil CO2 column mass from output
-                if haskey(ds, "fco2_column_mass")
-                    data_cs = Float32.(ds["fco2_column_mass"][:, :, :, best_idx])
-                    regrid_cs!(buf, data_cs, rmap)
-                    fco2_col[:, :, ti] .= buf
+                    # Column-average XCO2 (dp-weighted)
+                    vmr_3d = ds["co2_3d"][:, :, :, :, best_idx]
+                    xco2_cs = column_avg_xco2(vmr_3d, dp_wts)
+                    regrid_cs!(buf, xco2_cs, rmap)
+                    xco2_col[:, :, ti] .= buf
                 end
             end
         end
     end
     @info "AtmosTransport: loaded $nt timesteps"
-    return (; sfc_co2, hpa_co2, fco2_col)
+    return (; sfc_co2, hpa_co2, xco2_col)
 end
 
 # ---------------------------------------------------------------------------
 # Load GEOS-Chem
 # ---------------------------------------------------------------------------
-function load_geoschem(gc_dir, rmap; date_start, date_end)
+function load_geoschem(gc_dir, rmap, dp_wts; date_start, date_end)
     all_files = sort(filter(f -> endswith(f, ".nc4") && contains(f, "CATRINE_inst"),
                              readdir(gc_dir)))
     files = String[]
@@ -100,7 +129,7 @@ function load_geoschem(gc_dir, rmap; date_start, date_end)
     buf = zeros(Float32, rmap.nlon, rmap.nlat)
     sfc_co2  = zeros(Float32, rmap.nlon, rmap.nlat, nt)
     hpa_co2  = zeros(Float32, rmap.nlon, rmap.nlat, nt)
-    fco2_col = zeros(Float32, rmap.nlon, rmap.nlat, nt)
+    xco2_col = zeros(Float32, rmap.nlon, rmap.nlat, nt)
 
     for (ti, fname) in enumerate(files)
         NCDataset(joinpath(gc_dir, fname), "r") do ds
@@ -112,25 +141,14 @@ function load_geoschem(gc_dir, rmap; date_start, date_end)
             data_cs = Float64.(ds["SpeciesConcVV_CO2"][:, :, :, LEV_750HPA, 1]) .* 1e6
             regrid_cs!(buf, data_cs, rmap); hpa_co2[:, :, ti] .= buf
 
-            # Fossil CO2 column: reconstruct from 3D VMR × AD
-            # (GC ColumnMass_FossilCO2 is ~36% too low)
-            vmr = ds["SpeciesConcVV_FossilCO2"][:,:,:,:,1]
-            ad  = ds["Met_AD"][:,:,:,:,1]
-            area_m2 = ds["Met_AREAM2"][:,:,:,1]
-            Nz = size(vmr, 4)
-            col_cs = zeros(Float32, size(vmr, 1), size(vmr, 2), 6)
-            for p in 1:6, j in 1:size(vmr,2), i in 1:size(vmr,1)
-                s = 0.0
-                for k in 1:Nz
-                    s += Float64(vmr[i,j,p,k]) * Float64(ad[i,j,p,k])
-                end
-                col_cs[i,j,p] = Float32(s * MW_CO2_OVER_AIR / Float64(area_m2[i,j,p]))
-            end
-            regrid_cs!(buf, col_cs, rmap)
-            fco2_col[:, :, ti] .= buf
+            # Column-average XCO2 (dp-weighted)
+            vmr_3d = ds["SpeciesConcVV_CO2"][:,:,:,:,1]
+            xco2_cs = column_avg_xco2(vmr_3d, dp_wts)
+            regrid_cs!(buf, xco2_cs, rmap)
+            xco2_col[:, :, ti] .= buf
         end
     end
-    return (; times, sfc_co2, hpa_co2, fco2_col)
+    return (; times, sfc_co2, hpa_co2, xco2_col)
 end
 
 # ---------------------------------------------------------------------------
@@ -142,8 +160,7 @@ function make_animation(gc, at, times, rmap; fps=FPS)
 
     sfc_lo, sfc_hi = 350f0, 500f0
     hpa_lo, hpa_hi = 380f0, 430f0
-
-    fco2_lo, fco2_hi = 0f0, 0.01f0
+    xco2_lo, xco2_hi = 405f0, 425f0
 
     lon2d, lat2d = lon_lat_meshes(rmap)
 
@@ -153,15 +170,15 @@ function make_animation(gc, at, times, rmap; fps=FPS)
     ax12 = GeoAxis(fig[1, 2]; dest="+proj=robin", title="AtmosTransport — Surface CO2")
     ax21 = GeoAxis(fig[2, 1]; dest="+proj=robin", title="GEOS-Chem — CO2 ~750 hPa")
     ax22 = GeoAxis(fig[2, 2]; dest="+proj=robin", title="AtmosTransport — CO2 ~750 hPa")
-    ax31 = GeoAxis(fig[3, 1]; dest="+proj=robin", title="GEOS-Chem — Fossil CO2 column")
-    ax32 = GeoAxis(fig[3, 2]; dest="+proj=robin", title="AtmosTransport — Fossil CO2 column")
+    ax31 = GeoAxis(fig[3, 1]; dest="+proj=robin", title="GEOS-Chem — XCO2 (column avg)")
+    ax32 = GeoAxis(fig[3, 2]; dest="+proj=robin", title="AtmosTransport — XCO2 (column avg)")
 
     z_sfc_gc  = Observable(gc.sfc_co2[:,:,1]')
     z_sfc_at  = Observable(at.sfc_co2[:,:,1]')
     z_hpa_gc  = Observable(gc.hpa_co2[:,:,1]')
     z_hpa_at  = Observable(at.hpa_co2[:,:,1]')
-    z_fco2_gc = Observable(gc.fco2_col[:,:,1]')
-    z_fco2_at = Observable(at.fco2_col[:,:,1]')
+    z_xco2_gc = Observable(gc.xco2_col[:,:,1]')
+    z_xco2_at = Observable(at.xco2_col[:,:,1]')
 
     sf1 = surface!(ax11, lon2d, lat2d, z_sfc_gc; shading=NoShading,
         colormap=Reverse(:RdYlBu), colorrange=(sfc_lo, sfc_hi))
@@ -173,10 +190,10 @@ function make_animation(gc, at, times, rmap; fps=FPS)
     surface!(ax22, lon2d, lat2d, z_hpa_at; shading=NoShading,
         colormap=Reverse(:RdYlBu), colorrange=(hpa_lo, hpa_hi))
 
-    sf3 = surface!(ax31, lon2d, lat2d, z_fco2_gc; shading=NoShading,
-        colormap=:OrRd, colorrange=(fco2_lo, fco2_hi))
-    surface!(ax32, lon2d, lat2d, z_fco2_at; shading=NoShading,
-        colormap=:OrRd, colorrange=(fco2_lo, fco2_hi))
+    sf3 = surface!(ax31, lon2d, lat2d, z_xco2_gc; shading=NoShading,
+        colormap=Reverse(:RdYlBu), colorrange=(xco2_lo, xco2_hi))
+    surface!(ax32, lon2d, lat2d, z_xco2_at; shading=NoShading,
+        colormap=Reverse(:RdYlBu), colorrange=(xco2_lo, xco2_hi))
 
     for ax in [ax11, ax12, ax21, ax22, ax31, ax32]
         lines!(ax, GeoMakie.coastlines(); color=(:black, 0.5), linewidth=0.7)
@@ -184,7 +201,7 @@ function make_animation(gc, at, times, rmap; fps=FPS)
 
     Colorbar(fig[1, 3], sf1; label="CO2 [ppm]", width=14)
     Colorbar(fig[2, 3], sf2; label="CO2 [ppm]", width=14)
-    Colorbar(fig[3, 3], sf3; label="Fossil CO2 [kg/m²]", width=14)
+    Colorbar(fig[3, 3], sf3; label="XCO2 [ppm]", width=14)
 
     title_obs = Observable(Dates.format(times[1], "yyyy-mm-dd HH:MM") *
         " UTC — CATRINE: AtmosTransport (GCHP v4 + RAS + PBL) vs GEOS-Chem")
@@ -196,8 +213,8 @@ function make_animation(gc, at, times, rmap; fps=FPS)
         z_sfc_at[]  = at.sfc_co2[:,:,fn]'
         z_hpa_gc[]  = gc.hpa_co2[:,:,fn]'
         z_hpa_at[]  = at.hpa_co2[:,:,fn]'
-        z_fco2_gc[] = gc.fco2_col[:,:,fn]'
-        z_fco2_at[] = at.fco2_col[:,:,fn]'
+        z_xco2_gc[] = gc.xco2_col[:,:,fn]'
+        z_xco2_at[] = at.xco2_col[:,:,fn]'
         title_obs[] = Dates.format(times[fn], "yyyy-mm-dd HH:MM") *
             " UTC — CATRINE: AtmosTransport (GCHP v4 + RAS + PBL) vs GEOS-Chem"
     end
@@ -210,10 +227,21 @@ function main()
     cs_lons, cs_lats = load_cs_coordinates(joinpath(GC_DIR, gc_files[1]))
     @info "Building CS -> lat-lon map (1 deg)..."
     rmap = build_cs_regrid_map(cs_lons, cs_lats; dlon=1.0, dlat=1.0)
+
+    # Load hybrid ak/bk from our output for dp weights
+    @info "Loading hybrid coordinates for XCO2 weighting..."
+    at_files = sort(filter(f -> endswith(f, ".nc") && contains(f, AT_PATTERN),
+                            readdir(AT_DIR)))
+    ak, bk = NCDataset(joinpath(AT_DIR, at_files[1]), "r") do ds
+        Float64.(ds["hyai"][:]), Float64.(ds["hybi"][:])
+    end
+    dp_wts = hybrid_dp_weights(ak, bk)
+    @info "dp weights: $(length(dp_wts)) levels, total=$(round(sum(dp_wts)/100, digits=1)) hPa"
+
     @info "Loading GEOS-Chem..."
-    gc = load_geoschem(GC_DIR, rmap; date_start=DATE_START, date_end=DATE_END)
+    gc = load_geoschem(GC_DIR, rmap, dp_wts; date_start=DATE_START, date_end=DATE_END)
     @info "Loading AtmosTransport..."
-    at = load_atmostr(AT_DIR, rmap, gc.times)
+    at = load_atmostr(AT_DIR, rmap, gc.times, dp_wts)
     make_animation(gc, at, gc.times, rmap)
 end
 

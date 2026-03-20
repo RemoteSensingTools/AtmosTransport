@@ -15,6 +15,8 @@
 
 using KernelAbstractions: @kernel, @index, @Const, synchronize, get_backend
 
+# _kahan_add is defined in Advection.jl (available to all included files)
+
 # ---------------------------------------------------------------------------
 # Workspace
 # ---------------------------------------------------------------------------
@@ -888,21 +890,22 @@ function compute_target_pressure_from_delp_direct!(ws_vr::VerticalRemapWorkspace
     return nothing
 end
 
-@kernel function _pe_from_delp_direct_kernel!(pe_tgt, dp_tgt, @Const(delp),
+@kernel function _pe_from_delp_direct_kernel!(pe_tgt, dp_tgt,
+                                                @Const(delp),
                                                 ptop, Hp, Nc, Nz)
     i, j = @index(Global, NTuple)
     @inbounds begin
         ii = Hp + i
         jj = Hp + j
         FT = eltype(pe_tgt)
-        # Use Float64 accumulator to avoid precision loss in cumsum.
-        pe_acc = Float64(ptop)
-        pe_tgt[i, j, 1] = FT(pe_acc)
+        pe_acc = FT(ptop)
+        comp = zero(FT)
+        pe_tgt[i, j, 1] = pe_acc
         for k in 1:Nz
-            dp = Float64(delp[ii, jj, k])
-            pe_acc += dp
-            pe_tgt[i, j, k + 1] = FT(pe_acc)
-            dp_tgt[i, j, k] = FT(dp)
+            dp = delp[ii, jj, k]
+            pe_acc, comp = _kahan_add(pe_acc, comp, dp)
+            pe_tgt[i, j, k + 1] = pe_acc
+            dp_tgt[i, j, k] = dp
         end
     end
 end
@@ -966,16 +969,17 @@ evenly across all levels (unlike bottom-layer-only locking)."""
     i, j = @index(Global, NTuple)
     @inbounds begin
         FT = eltype(pe_tgt)
-        ps_s = Float64(ps_src[i, j])           # evolved surface pressure
-        ps_t = Float64(pe_tgt[i, j, Nz + 1])   # prescribed target surface
-        ratio = ps_t > 1e-10 ? FT(ps_s / ps_t) : one(FT)
+        ps_s = ps_src[i, j]               # evolved surface pressure
+        ps_t = pe_tgt[i, j, Nz + 1]       # prescribed target surface
+        ratio = abs(ps_t) > eps(FT) ? ps_s / ps_t : one(FT)
 
-        pe_acc = Float64(pe_tgt[i, j, 1])  # keep TOA
+        pe_acc = pe_tgt[i, j, 1]  # keep TOA
+        comp = zero(FT)
         for k in 1:Nz
-            dp_new = Float64(dp_tgt[i, j, k]) * Float64(ratio)
-            dp_tgt[i, j, k] = FT(dp_new)
-            pe_acc += dp_new
-            pe_tgt[i, j, k + 1] = FT(pe_acc)
+            dp_new = dp_tgt[i, j, k] * ratio
+            dp_tgt[i, j, k] = dp_new
+            pe_acc, comp = _kahan_add(pe_acc, comp, dp_new)
+            pe_tgt[i, j, k + 1] = pe_acc
         end
     end
 end
@@ -1102,25 +1106,27 @@ Reference: GCHP `GCHPctmEnv_GridCompMod.F90:calculate_ple` with SPHU argument.
         jj = Hp + j
         FT = eltype(pe)
 
-        # Step 1: Total surface pressure from met DELP
-        ps_total = Float64(ak[1])  # ptop
+        # Step 1: Total surface pressure from met DELP (Kahan cumsum)
+        ps_total = ak[1]  # ptop
+        comp1 = zero(FT)
         for k in 1:Nz
-            ps_total += Float64(delp[ii, jj, k])
+            ps_total, comp1 = _kahan_add(ps_total, comp1, delp[ii, jj, k])
         end
 
         # Step 2: Hybrid DELP from PS + ak/bk, then dry surface pressure
         # DELP_hybrid[k] = PE[k+1] - PE[k] = (ak[k+1]-ak[k]) + (bk[k+1]-bk[k]) × PS
-        ps_dry = Float64(ak[1])  # ptop
+        ps_dry = ak[1]  # ptop
+        comp2 = zero(FT)
         for k in 1:Nz
-            delp_hybrid = (Float64(ak[k + 1]) - Float64(ak[k])) +
-                          (Float64(bk[k + 1]) - Float64(bk[k])) * ps_total
-            ps_dry += delp_hybrid * (1.0 - Float64(qv[ii, jj, k]))
+            delp_hybrid = (ak[k + 1] - ak[k]) + (bk[k + 1] - bk[k]) * ps_total
+            ps_dry, comp2 = _kahan_add(ps_dry, comp2,
+                                        delp_hybrid * (one(FT) - qv[ii, jj, k]))
         end
-        ps_dry_out[i, j] = FT(ps_dry)
+        ps_dry_out[i, j] = ps_dry
 
         # Step 3: PE and dp from hybrid coordinates
         for k in 1:Nz + 1
-            pe[i, j, k] = FT(Float64(ak[k]) + Float64(bk[k]) * ps_dry)
+            pe[i, j, k] = ak[k] + bk[k] * ps_dry
         end
         for k in 1:Nz
             dp[i, j, k] = pe[i, j, k + 1] - pe[i, j, k]
@@ -1207,22 +1213,23 @@ function compute_source_pe_from_evolved_mass!(ws_vr::VerticalRemapWorkspace,
 end
 
 @kernel function _pe_from_evolved_mass_kernel!(pe_src, ps_out,
-        @Const(m_evolved), @Const(area), @Const(g_val), ptop, Hp, Nc, Nz)
+        @Const(m_evolved), @Const(area), g_val, ptop, Hp, Nc, Nz)
     i, j = @index(Global, NTuple)
     @inbounds begin
         ii = Hp + i; jj = Hp + j
         FT = eltype(pe_src)
-        g = Float64(g_val)
-        a = Float64(area[i, j])
+        g = FT(g_val)
+        a = area[i, j]
 
-        pe_acc = Float64(ptop)
-        pe_src[i, j, 1] = FT(pe_acc)
+        pe_acc = FT(ptop)
+        comp = zero(FT)
+        pe_src[i, j, 1] = pe_acc
         for k in 1:Nz
-            dp_k = Float64(m_evolved[ii, jj, k]) * g / a
-            pe_acc += dp_k
-            pe_src[i, j, k + 1] = FT(pe_acc)
+            dp_k = m_evolved[ii, jj, k] * g / a
+            pe_acc, comp = _kahan_add(pe_acc, comp, dp_k)
+            pe_src[i, j, k + 1] = pe_acc
         end
-        ps_out[i, j] = FT(pe_acc)
+        ps_out[i, j] = pe_acc
     end
 end
 
@@ -1256,17 +1263,16 @@ end
         @Const(pe_src), @Const(ps_src), @Const(ak), @Const(bk), Nc, Nz)
     i, j = @index(Global, NTuple)
     @inbounds begin
-        FT = eltype(pe_tgt)
-        ps_evolved = Float64(ps_src[i, j])
-        ps_tgt_out[i, j] = FT(ps_evolved)
+        ps_evolved = ps_src[i, j]
+        ps_tgt_out[i, j] = ps_evolved
 
         # GCHP: pe2(1) = ptop = ak(1), pe2(npz+1) = pe1(npz+1)
-        pe_tgt[i, j, 1] = FT(Float64(ak[1]))
+        pe_tgt[i, j, 1] = ak[1]
         pe_tgt[i, j, Nz + 1] = pe_src[i, j, Nz + 1]  # same surface PE!
 
         # Interior: hybrid formula from evolved PS
         for k in 2:Nz
-            pe_tgt[i, j, k] = FT(Float64(ak[k]) + Float64(bk[k]) * ps_evolved)
+            pe_tgt[i, j, k] = ak[k] + bk[k] * ps_evolved
         end
 
         # dp from PE differences
@@ -1299,21 +1305,22 @@ function compute_target_pressure_from_dry_delp_direct!(ws_vr::VerticalRemapWorks
     return nothing
 end
 
-@kernel function _pe_from_dry_delp_direct_kernel!(pe_tgt, dp_tgt, @Const(delp), @Const(qv),
+@kernel function _pe_from_dry_delp_direct_kernel!(pe_tgt, dp_tgt,
+                                                    @Const(delp), @Const(qv),
                                                     ptop, Hp, Nc, Nz)
     i, j = @index(Global, NTuple)
     @inbounds begin
         ii = Hp + i
         jj = Hp + j
         FT = eltype(pe_tgt)
-        # Use Float64 accumulator to avoid precision loss in cumsum.
-        pe_acc = Float64(ptop)
-        pe_tgt[i, j, 1] = FT(pe_acc)
+        pe_acc = FT(ptop)
+        comp = zero(FT)
+        pe_tgt[i, j, 1] = pe_acc
         for k in 1:Nz
-            dp = Float64(delp[ii, jj, k]) * (1.0 - Float64(qv[ii, jj, k]))
-            pe_acc += dp
-            pe_tgt[i, j, k + 1] = FT(pe_acc)
-            dp_tgt[i, j, k] = FT(dp)
+            dp = delp[ii, jj, k] * (one(FT) - qv[ii, jj, k])
+            pe_acc, comp = _kahan_add(pe_acc, comp, dp)
+            pe_tgt[i, j, k + 1] = pe_acc
+            dp_tgt[i, j, k] = dp
         end
     end
 end
@@ -1325,16 +1332,16 @@ end
         ii = Hp + i
         jj = Hp + j
         FT = eltype(pe_tgt)
-        a = Float64(area[i, j])
-        g = Float64(g_val)
-        # Use Float64 accumulator to avoid precision loss in cumsum.
-        pe_acc = Float64(ptop)
-        pe_tgt[i, j, 1] = FT(pe_acc)
+        a = area[i, j]
+        g = FT(g_val)
+        pe_acc = FT(ptop)
+        comp = zero(FT)
+        pe_tgt[i, j, 1] = pe_acc
         for k in 1:Nz
-            dp = Float64(m[ii, jj, k]) * g / a
-            pe_acc += dp
-            pe_tgt[i, j, k + 1] = FT(pe_acc)
-            dp_tgt[i, j, k] = FT(dp)
+            dp = m[ii, jj, k] * g / a
+            pe_acc, comp = _kahan_add(pe_acc, comp, dp)
+            pe_tgt[i, j, k + 1] = pe_acc
+            dp_tgt[i, j, k] = dp
         end
     end
 end
@@ -1363,21 +1370,23 @@ end
 
         # PS is in hPa from CTM_I1; convert to Pa for consistency
         # (hybrid coords ak are in Pa, bk are dimensionless)
-        ps_pa = Float64(ps[ii, jj]) * 100.0
+        ps_pa = ps[ii, jj] * FT(100)
 
         # Step 1: Dry surface pressure from hybrid dp × (1-SPHU)
-        ps_dry = Float64(ak[Nz + 1])  # ptop (top edge)
+        ps_dry = ak[Nz + 1]  # ptop (top edge)
+        comp = zero(FT)
         for k in 1:Nz
-            pe_bot = Float64(ak[k])     + Float64(bk[k])     * ps_pa
-            pe_top = Float64(ak[k + 1]) + Float64(bk[k + 1]) * ps_pa
+            pe_bot = ak[k]     + bk[k]     * ps_pa
+            pe_top = ak[k + 1] + bk[k + 1] * ps_pa
             dp_wet = pe_bot - pe_top
-            ps_dry += dp_wet * (1.0 - Float64(sphu[ii, jj, k]))
+            ps_dry, comp = _kahan_add(ps_dry, comp,
+                                       dp_wet * (one(FT) - sphu[ii, jj, k]))
         end
-        ps_dry_out[i, j] = FT(ps_dry)
+        ps_dry_out[i, j] = ps_dry
 
         # Step 2: Dry PE from hybrid coords with PS_dry
         for k in 1:Nz + 1
-            pe[i, j, k] = FT(Float64(ak[k]) + Float64(bk[k]) * ps_dry)
+            pe[i, j, k] = ak[k] + bk[k] * ps_dry
         end
         for k in 1:Nz
             dp[i, j, k] = pe[i, j, k + 1] - pe[i, j, k]

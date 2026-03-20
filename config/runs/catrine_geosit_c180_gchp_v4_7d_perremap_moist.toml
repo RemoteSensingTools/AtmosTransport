@@ -22,7 +22,7 @@ preprocessed_dir = "/temp1/catrine/met/geosit_c180/massflux_v4"
 surface_data_bin_dir = "/temp1/catrine/met/geosit_c180/surface_bin"
 coord_file       = "~/code/gitHub/AtmosTransportModel/data/grids/cs_c180_gridspec.nc"
 start_date       = "2021-12-01"
-end_date         = "2021-12-03"
+end_date         = "2021-12-08"
 dt               = 450
 met_interval     = 3600
 mass_flux_dt     = 450
@@ -77,7 +77,7 @@ dry_correction  = false
 pressure_basis  = "moist"
 
 [output]
-filename      = "/temp1/catrine/output/catrine_gchp_v4_2d_perremap_moist"
+filename      = "/temp1/catrine/output/catrine_gchp_v4_7d_perremap_moist"
 format        = "binary"
 auto_convert  = true
 split         = "daily"

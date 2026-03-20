@@ -29,6 +29,7 @@ export AbstractModel, TransportModel, run!, update_met_data!
 export AbstractBufferingStrategy, SingleBuffer, DoubleBuffer
 export TransportPolicy, resolve_transport_policy
 export AbstractTransportBasis, DryTransportBasis, MoistTransportBasis, transport_basis_type
+export MoistSubStepDiag, MOIST_DIAG
 
 # Buffering strategy types
 include("buffering.jl")

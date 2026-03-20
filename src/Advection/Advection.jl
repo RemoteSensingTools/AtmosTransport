@@ -121,6 +121,17 @@ export _compute_dry_dp_kernel!, _copy_nohalo_to_halo_kernel!,
        _interpolate_dry_dp_kernel!, _interpolate_dp_kernel!,
        _column_dp_correction_kernel!, _column_dp_correction_moist_kernel!
 
+# Kahan compensated addition for Float32 precision in cumulative sums.
+# Float32: tracks low-order bits lost in each addition (nearly Float64 precision).
+# Float64: plain addition (compensation is always zero — no overhead).
+@inline function _kahan_add(s::T, c::T, x::T) where {T <: Union{Float16, Float32}}
+    y = x - c
+    t = s + y
+    c_new = (t - s) - y
+    return (t, c_new)
+end
+@inline _kahan_add(s::T, c::T, x::T) where {T <: Float64} = (s + x, zero(T))
+
 include("abstract_advection.jl")
 include("slopes_advection_kernels.jl")
 include("slopes_advection.jl")

@@ -6,6 +6,36 @@
 # ---------------------------------------------------------------------------
 
 # =====================================================================
+# Sub-step diagnostics for moist advection debugging
+# =====================================================================
+
+"""
+Diagnostic container for capturing intermediate moist advection state.
+Set `MOIST_DIAG[] = MoistSubStepDiag(...)` before `run!` to enable.
+"""
+mutable struct MoistSubStepDiag{FT}
+    q_wet_post_hadv::Vector{Array{FT,3}}   # after gchp_tracer_2d!, substep 1
+    rm_post_vremap::Vector{Array{FT,3}}    # after vertical_remap_cs!, substep 1
+    qv_start::Vector{Array{FT,3}}          # QV at window start
+    qv_back::Vector{Array{FT,3}}           # QV used for back-conversion
+    delp_start::Vector{Array{FT,3}}        # moist DELP at start
+    delp_end::Vector{Array{FT,3}}          # moist DELP at end
+    q_dry_init::Vector{Array{FT,3}}        # dry MR before dry→wet conversion
+    q_dry_final::Vector{Array{FT,3}}       # dry MR after wet→dry conversion
+    captured::Bool                          # true once first window captured
+end
+
+function MoistSubStepDiag(FT::Type, Nc::Int, Nz::Int, Hp::Int)
+    N = Nc + 2Hp
+    alloc() = [zeros(FT, N, N, Nz) for _ in 1:6]
+    MoistSubStepDiag{FT}(alloc(), alloc(), alloc(), alloc(),
+                          alloc(), alloc(), alloc(), alloc(), false)
+end
+
+"""Global ref for moist sub-step diagnostics. Set to a `MoistSubStepDiag` to enable capture."""
+const MOIST_DIAG = Ref{Any}(nothing)
+
+# =====================================================================
 # Setup helpers
 # =====================================================================
 
@@ -808,6 +838,20 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
 
     step[] += n_sub
 
+    # ── Moist sub-step diagnostics: capture initial state (first window only) ──
+    _do_diag = MOIST_DIAG[] !== nothing && !(MOIST_DIAG[]::MoistSubStepDiag{FT}).captured
+    if _do_diag
+        _diag = MOIST_DIAG[]::MoistSubStepDiag{FT}
+        for p in 1:6
+            _diag.qv_start[p]   .= Array(phys.qv_gpu[p])
+            _diag.delp_start[p] .= Array(gpu.delp[p])
+        end
+        # q_dry_init: tracers are in rm form at this point (before rm_to_q)
+        if haskey(tracers, :co2)
+            for p in 1:6; _diag.q_dry_init[p] .= Array(tracers.co2[p]); end
+        end
+    end
+
     # Step 1: rm → q_wet (divide by moist air mass)
     for (_, rm_t) in pairs(tracers)
         rm_to_q_panels!(rm_t, air.m_wet, grid)
@@ -844,10 +888,16 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
         end
         synchronize(backend)
 
-        # TODO: Add QV as advected tracer NQ+1 (GCHP: AdvCore:1068).
-        # Requires fixing the per-remap rm→q round-trip corruption for QV.
-        # For now, tracers are advected without QV as a tracer.
-        tracers_with_qv = tracers  # alias — no extra tracer for now
+        # Add QV as advected tracer NQ+1 (GCHP: AdvCore:1068).
+        # Reset QV to prescribed met-data at window start (no drift across windows).
+        # QV is already a total-air mixing ratio (kg_water/kg_total_air),
+        # same basis as the other tracers after rm_to_q (q_wet = q_dry*(1-QV)).
+        # The rm↔q round-trips use m_wet from DELP (not QV), so no circular dependency.
+        _qv_tracer = ntuple(p -> similar(phys.qv_gpu[p]), 6)
+        for p in 1:6
+            copyto!(_qv_tracer[p], phys.qv_gpu[p])  # reset to met-data QV_start
+        end
+        tracers_with_qv = merge(tracers, (; _qv = _qv_tracer))
 
         for _isub in 1:n_loop
             frac_start = FT(_isub - 1) / FT(n_loop)
@@ -864,6 +914,13 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
             gchp_tracer_2d!(tracers_with_qv, ws_vr.dp_work, gpu.am, gpu.bm,
                               cx_gpu, cy_gpu, gpu.xfx, gpu.yfx,
                               gc.area, rarea, grid, _ORD, ws_lr, ws_vr.m_save)
+
+            # ── Diag: capture q_wet after horizontal advection (substep 1, first window) ──
+            if _do_diag && _isub == 1 && haskey(tracers, :co2)
+                for p in 1:6
+                    (MOIST_DIAG[]::MoistSubStepDiag{FT}).q_wet_post_hadv[p] .= Array(tracers.co2[p])
+                end
+            end
 
             # Source PE from evolved dpA (moist)
             for p in 1:6
@@ -902,6 +959,13 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
             end
             for (_, rm_t) in pairs(tracers_with_qv)
                 fillz_panels!(rm_t, ws_vr.dp_tgt, grid)
+            end
+
+            # ── Diag: capture rm after vertical remap + fillz (substep 1, first window) ──
+            if _do_diag && _isub == 1 && haskey(tracers, :co2)
+                for p in 1:6
+                    (MOIST_DIAG[]::MoistSubStepDiag{FT}).rm_post_vremap[p] .= Array(tracers.co2[p])
+                end
             end
 
             if _isub < n_loop
@@ -1032,10 +1096,24 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
     end
 
     # Back-conversion: wet→dry.
-    # TODO: GCHP uses advected SPHU (tracer NQ+1) for back-conversion (AdvCore:1299).
-    # Our advected QV implementation needs per-remap QV corruption fix (see plan).
-    # For now, use met-data QV_next (working, -0.23% drift over 2 days).
-    qv_back = phys.qv_next_loaded[] ? phys.qv_next_gpu : phys.qv_gpu
+    # Use advected QV (tracer NQ+1) for back-conversion (GCHP: AdvCore:1299).
+    # _qv_tracer was co-advected with all tracers, so the QV imprint on q_total
+    # is cancelled: q_dry = q_total / (1 - QV_advected) ≈ q_dry_original.
+    # Fall back to met-data QV_next if _qv_tracer not available (non per_step path).
+    if @isdefined(_qv_tracer)
+        qv_back = _qv_tracer
+    else
+        qv_back = phys.qv_next_loaded[] ? phys.qv_next_gpu : phys.qv_gpu
+    end
+
+    # ── Diag: capture qv_back and delp_end (first window only) ──
+    # NOTE: qv_back is captured AFTER rm_to_q (below), not here,
+    # because at this point _qv_tracer may still be in rm form.
+    if _do_diag && has_next
+        _ng = next_gpu(sched)
+        _diag = MOIST_DIAG[]::MoistSubStepDiag{FT}
+        for p in 1:6; _diag.delp_end[p] .= Array(_ng.delp[p]); end
+    end
 
     if has_next
         ng = next_gpu(sched)
@@ -1053,6 +1131,18 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
     for (_, rm_t) in pairs(tracers)
         rm_to_q_panels!(rm_t, ws_vr.m_save, grid)
     end
+    # Also convert advected QV from rm → q (mixing ratio) for back-conversion
+    if @isdefined(_qv_tracer)
+        rm_to_q_panels!(_qv_tracer, ws_vr.m_save, grid)
+    end
+
+    # ── Diag: capture qv_back AFTER rm_to_q conversion ──
+    if _do_diag
+        _diag = MOIST_DIAG[]::MoistSubStepDiag{FT}
+        for p in 1:6
+            _diag.qv_back[p] .= Array(qv_back[p])
+        end
+    end
 
     div_k! = _divide_by_1_minus_qv_kernel!(backend, 256)
     for (_, q_t) in pairs(tracers)
@@ -1061,6 +1151,15 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
         end
     end
     synchronize(backend)
+
+    # ── Diag: capture q_dry_final after wet→dry back-conversion (first window) ──
+    if _do_diag && haskey(tracers, :co2)
+        for p in 1:6
+            (MOIST_DIAG[]::MoistSubStepDiag{FT}).q_dry_final[p] .= Array(tracers.co2[p])
+        end
+        (MOIST_DIAG[]::MoistSubStepDiag{FT}).captured = true
+        @info "MoistSubStepDiag: first window captured"
+    end
 
     if has_next
         ng = next_gpu(sched)

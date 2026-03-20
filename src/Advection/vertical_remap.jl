@@ -1530,6 +1530,10 @@ function fillz_panels!(rm_panels::NTuple{6}, dp_tgt_panels::NTuple{6},
     n_fixed = 0
 
     for p in 1:6
+        # Skip GPU→CPU transfer if no negatives (GPU reduction is cheap)
+        if minimum(rm_panels[p]) >= 0
+            continue
+        end
         rm_cpu = Array(rm_panels[p])
         dp_cpu = Array(dp_tgt_panels[p])   # unhaloed (Nc, Nc, Nz)
         fixed = _fillz_panel!(rm_cpu, dp_cpu, Nc, Nz, Hp)

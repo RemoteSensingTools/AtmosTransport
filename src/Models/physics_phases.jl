@@ -888,16 +888,12 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
         end
         synchronize(backend)
 
-        # Add QV as advected tracer NQ+1 (GCHP: AdvCore:1068).
-        # Reset QV to prescribed met-data at window start (no drift across windows).
-        # QV is already a total-air mixing ratio (kg_water/kg_total_air),
-        # same basis as the other tracers after rm_to_q (q_wet = q_dry*(1-QV)).
-        # The rm↔q round-trips use m_wet from DELP (not QV), so no circular dependency.
-        _qv_tracer = ntuple(p -> similar(phys.qv_gpu[p]), 6)
-        for p in 1:6
-            copyto!(_qv_tracer[p], phys.qv_gpu[p])  # reset to met-data QV_start
-        end
-        tracers_with_qv = merge(tracers, (; _qv = _qv_tracer))
+        # QV advection as tracer NQ+1 (GCHP: AdvCore:1068) was tested but provides
+        # only ~3% correction to the moist path artifact (see MoistSubStepDiag analysis).
+        # The fundamental issue is that PPM homogenizes q_total, erasing the QV imprint,
+        # while QV retains its structure — so back-conversion reintroduces QV patterns.
+        # Disabled to avoid GPU allocation overhead (6 CuArrays per window).
+        tracers_with_qv = tracers
 
         for _isub in 1:n_loop
             frac_start = FT(_isub - 1) / FT(n_loop)
@@ -1095,20 +1091,12 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
         end
     end
 
-    # Back-conversion: wet→dry.
-    # Use advected QV (tracer NQ+1) for back-conversion (GCHP: AdvCore:1299).
-    # _qv_tracer was co-advected with all tracers, so the QV imprint on q_total
-    # is cancelled: q_dry = q_total / (1 - QV_advected) ≈ q_dry_original.
-    # Fall back to met-data QV_next if _qv_tracer not available (non per_step path).
-    if @isdefined(_qv_tracer)
-        qv_back = _qv_tracer
-    else
-        qv_back = phys.qv_next_loaded[] ? phys.qv_next_gpu : phys.qv_gpu
-    end
+    # Back-conversion: wet→dry using met-data QV.
+    # Note: GCHP uses advected QV (tracer NQ+1) but testing showed only ~3% improvement
+    # due to PPM homogenizing q_total while QV retains its structure.
+    qv_back = phys.qv_next_loaded[] ? phys.qv_next_gpu : phys.qv_gpu
 
-    # ── Diag: capture qv_back and delp_end (first window only) ──
-    # NOTE: qv_back is captured AFTER rm_to_q (below), not here,
-    # because at this point _qv_tracer may still be in rm form.
+    # ── Diag: capture delp_end (first window only) ──
     if _do_diag && has_next
         _ng = next_gpu(sched)
         _diag = MOIST_DIAG[]::MoistSubStepDiag{FT}
@@ -1131,11 +1119,6 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
     for (_, rm_t) in pairs(tracers)
         rm_to_q_panels!(rm_t, ws_vr.m_save, grid)
     end
-    # Also convert advected QV from rm → q (mixing ratio) for back-conversion
-    if @isdefined(_qv_tracer)
-        rm_to_q_panels!(_qv_tracer, ws_vr.m_save, grid)
-    end
-
     # ── Diag: capture qv_back AFTER rm_to_q conversion ──
     if _do_diag
         _diag = MOIST_DIAG[]::MoistSubStepDiag{FT}

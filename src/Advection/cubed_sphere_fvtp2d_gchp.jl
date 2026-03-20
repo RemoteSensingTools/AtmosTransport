@@ -958,10 +958,8 @@ function gchp_tracer_2d!(q_tracers, dp_panels, mfx, mfy, cx, cy,
     # This matches GCHP's #ifdef GLOBAL_CFL behavior.
     cmax_global = zero(FT)
     for p in 1:6
-        cx_cpu = Array(cx[p])
-        cy_cpu = Array(cy[p])
-        cmax_global = max(cmax_global, FT(maximum(abs, cx_cpu)))
-        cmax_global = max(cmax_global, FT(maximum(abs, cy_cpu)))
+        cmax_global = max(cmax_global, FT(maximum(abs, cx[p])))
+        cmax_global = max(cmax_global, FT(maximum(abs, cy[p])))
     end
     nsplt = max(1, Int(floor(1 + cmax_global)))
 

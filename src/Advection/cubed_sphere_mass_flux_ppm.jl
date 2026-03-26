@@ -136,54 +136,76 @@ end
 # Wrapper function: X-direction sweep with PPM
 # ---------------------------------------------------------------------------
 
+"""Dispatch: bare workspace → wrap in single-GPU PerGPUWorkspace."""
 function _sweep_x_ppm!(rm_panels, m_panels, am_panels, grid::CubedSphereGrid,
-                       ::Val{ORD}, ws; cfl_limit=0.95) where ORD
-    """X-direction Strang split sweep using PPM advection (ORD=4,5,6,7)."""
+                       ord::Val{ORD}, ws::CubedSphereMassFluxWorkspace;
+                       cfl_limit=0.95) where ORD
+    _sweep_x_ppm!(rm_panels, m_panels, am_panels, grid, ord,
+                   PerGPUWorkspace([ws], SingleGPUMap()); cfl_limit)
+end
+
+"""X-direction Strang split sweep using PPM advection (ORD=4,5,6,7).
+Multi-GPU: panels grouped by GPU, each group processes sequentially with its own workspace."""
+function _sweep_x_ppm!(rm_panels, m_panels, am_panels, grid::CubedSphereGrid,
+                       ::Val{ORD}, ws_pgw::PerGPUWorkspace; cfl_limit=0.95) where ORD
     FT = floattype(grid)
     Hp = grid.Hp
     Nc = grid.Nc
     Nz = grid.Nz
+    pm = ws_pgw.panel_map
 
-    # 1. Fill halos for tracer and air mass
-    fill_panel_halos!(rm_panels, grid)
-    fill_panel_halos!(m_panels, grid)
+    # 1. Fill halos (global sync barrier)
+    fill_panel_halos_nosync!(rm_panels, grid)
+    fill_panel_halos_nosync!(m_panels, grid)
+    sync_all_gpus(pm)
 
-    # 2. Compute max CFL and determine subcycling
-    max_cfl = zero(FT)
-    for p in 1:6
-        max_cfl = max(max_cfl, max_cfl_x_cs(am_panels[p], m_panels[p], ws.cfl_x, Hp))
+    # 2. Compute max CFL across all panels (per-GPU local max, then reduce)
+    n_groups = pm isa PanelGPUMap ? pm.n_gpus : 1
+    cfl_per_gpu = zeros(FT, n_groups)
+    foreach_gpu_batch_nosync(pm) do gpu_id, panels
+        ws = workspace_for(ws_pgw, first(panels))
+        local_max = zero(FT)
+        for p in panels
+            local_max = max(local_max, max_cfl_x_cs(am_panels[p], m_panels[p], ws.cfl_x, Hp))
+        end
+        cfl_per_gpu[gpu_id + 1] = local_max
     end
+    max_cfl = maximum(cfl_per_gpu)
     n_sub = max(1, ceil(Int, max_cfl / cfl_limit))
 
-    # 3. Subdivide fluxes if needed
+    # 3. Subdivide fluxes
     if n_sub > 1
-        for p in 1:6
-            am_panels[p] .*= inv(FT(n_sub))
+        foreach_gpu_batch_nosync(pm) do _, panels
+            for p in panels
+                am_panels[p] .*= inv(FT(n_sub))
+            end
         end
     end
 
-    # 4. Perform n_sub subcycles
+    # 4. Subcycle sweeps — panels on each GPU run concurrently
     for _ in 1:n_sub
-        for p in 1:6
-            # Launch PPM kernel for this panel (ws.rm_buf is a single shared buffer)
-            backend = get_backend(rm_panels[p])
-            k! = _massflux_x_cs_kernel_ppm!(backend, 256)
-            k!(ws.rm_buf, rm_panels[p], ws.m_buf, m_panels[p], am_panels[p],
-               Hp, Nc, Val(ORD); ndrange=(Nc, Nc, Nz))
-            synchronize(backend)
-
-            # Copy interior cells from buffer back to panel
-            _copy_interior!(rm_panels[p], ws.rm_buf, Hp, Nc, Nz)
-            _copy_interior!(m_panels[p], ws.m_buf, Hp, Nc, Nz)
+        foreach_gpu_batch_nosync(pm) do _, panels
+            ws = workspace_for(ws_pgw, first(panels))
+            for p in panels
+                backend = get_backend(rm_panels[p])
+                k! = _massflux_x_cs_kernel_ppm!(backend, 256)
+                k!(ws.rm_buf, rm_panels[p], ws.m_buf, m_panels[p], am_panels[p],
+                   Hp, Nc, Val(ORD); ndrange=(Nc, Nc, Nz))
+                _copy_interior_nosync!(rm_panels[p], ws.rm_buf, Hp, Nc, Nz)
+                _copy_interior_nosync!(m_panels[p], ws.m_buf, Hp, Nc, Nz)
+            end
         end
     end
 
-    # Restore original flux magnitudes after subcycling
+    # 5. Restore flux magnitudes
     if n_sub > 1
         fwd = FT(n_sub)
-        for p in 1:6; am_panels[p] .*= fwd; end
+        foreach_gpu_batch_nosync(pm) do _, panels
+            for p in panels; am_panels[p] .*= fwd; end
+        end
     end
 
+    sync_all_gpus(pm)
     return nothing
 end
 
@@ -277,51 +299,71 @@ end
     end
 end
 
+"""Dispatch: bare workspace → wrap in single-GPU PerGPUWorkspace."""
 function _sweep_y_ppm!(rm_panels, m_panels, bm_panels, grid::CubedSphereGrid,
-                       ::Val{ORD}, ws; cfl_limit=0.95) where ORD
-    """Y-direction Strang split sweep using PPM advection."""
+                       ord::Val{ORD}, ws::CubedSphereMassFluxWorkspace;
+                       cfl_limit=0.95) where ORD
+    _sweep_y_ppm!(rm_panels, m_panels, bm_panels, grid, ord,
+                   PerGPUWorkspace([ws], SingleGPUMap()); cfl_limit)
+end
+
+"""Y-direction Strang split sweep using PPM advection.
+Multi-GPU: panels grouped by GPU, each group processes sequentially with its own workspace."""
+function _sweep_y_ppm!(rm_panels, m_panels, bm_panels, grid::CubedSphereGrid,
+                       ::Val{ORD}, ws_pgw::PerGPUWorkspace; cfl_limit=0.95) where ORD
     FT = floattype(grid)
     Hp = grid.Hp
     Nc = grid.Nc
     Nz = grid.Nz
+    pm = ws_pgw.panel_map
 
-    # Similar to X sweep (fill halos, compute CFL, subdivide, launch kernel)
-    fill_panel_halos!(rm_panels, grid)
-    fill_panel_halos!(m_panels, grid)
+    fill_panel_halos_nosync!(rm_panels, grid)
+    fill_panel_halos_nosync!(m_panels, grid)
+    sync_all_gpus(pm)
 
-    max_cfl = zero(FT)
-    for p in 1:6
-        max_cfl = max(max_cfl, max_cfl_y_cs(bm_panels[p], m_panels[p], ws.cfl_y, Hp))
+    n_groups = pm isa PanelGPUMap ? pm.n_gpus : 1
+    cfl_per_gpu = zeros(FT, n_groups)
+    foreach_gpu_batch_nosync(pm) do gpu_id, panels
+        ws = workspace_for(ws_pgw, first(panels))
+        local_max = zero(FT)
+        for p in panels
+            local_max = max(local_max, max_cfl_y_cs(bm_panels[p], m_panels[p], ws.cfl_y, Hp))
+        end
+        cfl_per_gpu[gpu_id + 1] = local_max
     end
+    max_cfl = maximum(cfl_per_gpu)
     n_sub = max(1, ceil(Int, max_cfl / cfl_limit))
 
     if n_sub > 1
-        for p in 1:6
-            bm_panels[p] .*= inv(FT(n_sub))
+        foreach_gpu_batch_nosync(pm) do _, panels
+            for p in panels
+                bm_panels[p] .*= inv(FT(n_sub))
+            end
         end
     end
 
     for _ in 1:n_sub
-        for p in 1:6
-            # Launch PPM kernel for this panel (ws.rm_buf is a single shared buffer)
-            backend = get_backend(rm_panels[p])
-            k! = _massflux_y_cs_kernel_ppm!(backend, 256)
-            k!(ws.rm_buf, rm_panels[p], ws.m_buf, m_panels[p], bm_panels[p],
-               Hp, Nc, Val(ORD); ndrange=(Nc, Nc, Nz))
-            synchronize(backend)
-
-            # Copy interior cells from buffer back to panel
-            _copy_interior!(rm_panels[p], ws.rm_buf, Hp, Nc, Nz)
-            _copy_interior!(m_panels[p], ws.m_buf, Hp, Nc, Nz)
+        foreach_gpu_batch_nosync(pm) do _, panels
+            ws = workspace_for(ws_pgw, first(panels))
+            for p in panels
+                backend = get_backend(rm_panels[p])
+                k! = _massflux_y_cs_kernel_ppm!(backend, 256)
+                k!(ws.rm_buf, rm_panels[p], ws.m_buf, m_panels[p], bm_panels[p],
+                   Hp, Nc, Val(ORD); ndrange=(Nc, Nc, Nz))
+                _copy_interior_nosync!(rm_panels[p], ws.rm_buf, Hp, Nc, Nz)
+                _copy_interior_nosync!(m_panels[p], ws.m_buf, Hp, Nc, Nz)
+            end
         end
     end
 
-    # Restore original flux magnitudes after subcycling
     if n_sub > 1
         fwd = FT(n_sub)
-        for p in 1:6; bm_panels[p] .*= fwd; end
+        foreach_gpu_batch_nosync(pm) do _, panels
+            for p in panels; bm_panels[p] .*= fwd; end
+        end
     end
 
+    sync_all_gpus(pm)
     return nothing
 end
 
@@ -378,8 +420,9 @@ function apply_divergence_damping_cs!(rm_panels, m_panels, grid::CubedSphereGrid
     Nc = grid.Nc
     Nz = grid.Nz
 
-    fill_panel_halos!(rm_panels, grid)
-    fill_panel_halos!(m_panels, grid)
+    fill_panel_halos_nosync!(rm_panels, grid)
+    fill_panel_halos_nosync!(m_panels, grid)
+    sync_all_gpus(pm)
 
     for p in 1:6
         backend = get_backend(rm_panels[p])

@@ -1,0 +1,6 @@
+ .../2gpu_sync/20260326T185423Z/step7_commit.txt    |   1 +
+ .../20260326T185423Z/step7_show_name_only.txt      |  29 ++++++
+ .../2gpu_sync/20260326T185423Z/step7_show_stat.txt |  30 ++++++
+ .../20260326T185423Z/step8_precommit_diff_stat.txt |   0
+ docs/perf/claude_2gpu_sync_optimization_memo.md    | 106 +++++++++++++++++++++
+ 5 files changed, 166 insertions(+)

@@ -1,0 +1,5 @@
+artifacts/perf/2gpu_sync/20260326T185423Z/step7_commit.txt
+artifacts/perf/2gpu_sync/20260326T185423Z/step7_show_name_only.txt
+artifacts/perf/2gpu_sync/20260326T185423Z/step7_show_stat.txt
+artifacts/perf/2gpu_sync/20260326T185423Z/step8_precommit_diff_stat.txt
+docs/perf/claude_2gpu_sync_optimization_memo.md

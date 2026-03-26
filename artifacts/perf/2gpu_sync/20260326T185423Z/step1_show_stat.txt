@@ -1,0 +1,14 @@
+ .../2gpu_sync/20260326T185423Z/baseline_run1.log   | 2672 ++++++++++++++++++++
+ .../20260326T185423Z/baseline_run1_metrics.json    |    8 +
+ .../2gpu_sync/20260326T185423Z/baseline_run2.log   | 2660 +++++++++++++++++++
+ .../20260326T185423Z/baseline_run2_metrics.json    |    8 +
+ .../2gpu_sync/20260326T185423Z/baseline_run3.log   | 2660 +++++++++++++++++++
+ .../20260326T185423Z/baseline_run3_metrics.json    |    8 +
+ .../20260326T185423Z/baseline_summary.json         |   36 +
+ .../perf/2gpu_sync/20260326T185423Z/metadata.env   |    1 +
+ .../20260326T185423Z/prechange_diff_stat.txt       |   49 +
+ .../2gpu_sync/20260326T185423Z/prechange_head.txt  |    1 +
+ .../20260326T185423Z/prechange_status.txt          |   58 +
+ .../20260326T185423Z/step1_precommit_diff_stat.txt |    0
+ docs/perf/2gpu_sync_change_ledger.md               |   21 +
+ 13 files changed, 8182 insertions(+)

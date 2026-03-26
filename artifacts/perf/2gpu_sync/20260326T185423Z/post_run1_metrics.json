@@ -1,0 +1,8 @@
+{
+  "total_seconds": 932.9,
+  "io_s_per_win": 0.12,
+  "gpu_s_per_win": 4.65,
+  "out_s_per_win": 0.11,
+  "co2_delta_pct": 7.0591e-02,
+  "sf6_delta_pct": 3.8005e-02
+}

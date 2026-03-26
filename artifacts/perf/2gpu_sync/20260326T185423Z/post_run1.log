@@ -1,0 +1,2657 @@
+[ Info: Configuration: config/runs/catrine_geosit_c180_gchp_v4_7d_fullphys_2gpu.toml
+[ Info: GPU mode enabled (CUDA loaded)
+[ Info: Packages loaded
+[ Info: Building model...
+[ Info: Multi-GPU: 2 GPUs, panels=(0, 0, 0, 1, 1, 1)
+[ Info: CubedSphereGrid C180: 6×180×180×72 cells, Δx range ≈ 39.5–55.6 km
+[ Info: Loaded GMAO coordinates + cell areas from cs_c180_gridspec.nc
+[ Info: sf6: loading binary /home/cfranken/data/AtmosTransport/catrine/preprocessed_c180/edgar_sf6_cs_c180_float32.bin
+[ Info:   total: 0.3164 kg/s
+[ Info: rn222: loading binary /home/cfranken/data/AtmosTransport/catrine/preprocessed_c180/zhang_rn222_cs_c180_float32.bin
+[ Info:   12 monthly snapshots, time_hours [0.0 … 8035.5] h
+[ Info: fossil_co2: loading binary /home/cfranken/data/AtmosTransport/catrine/preprocessed_c180/gridfed_fossil_co2_cs_c180_float32.bin
+[ Info:   36 snapshots, time_hours [0.0 … 25567.5] h
+[ Info:   total: 36.2 GtCO2/yr
+[ Info: co2: loading binary /home/cfranken/data/AtmosTransport/catrine/preprocessed_c180/lmdz_co2_cs_c180_float32.bin
+[ Info:   6088 timesteps, time_hours [0.0 … 18261.0] h
+┌ Info: 
+│   Emission Sources
+│   ──────────────────────────────────────────────────────────────
+│   sf6            │ EDGAR v8.0 SF6 2022            │ static
+│   rn222          │ Zhang Rn222                    │ 12 snapshots
+│                  │ time_hours: [0.0 … 8035.5] h
+│   fossil_co2     │ GridFED fossil CO2 2021        │ 36 snapshots
+│                  │ time_hours: [0.0 … 25567.5] h
+│   co2            │ LMDZ CO2 posterior             │ 6088 snapshots
+│                  │ time_hours: [0.0 … 18261.0] h
+└   ──────────────────────────────────────────────────────────────
+[ Info: GCHP-faithful transport enabled — area-based pre-advection + Courant PPM
+[ Info: per_step_remap enabled — vertical remap after every horizontal substep (matches GCHP)
+[ Info: Git: ed7471a265a808866745d3e838f9368a94f87932-dirty
+[ Info: Starting simulation...
+[ Info: Loaded IC for sf6 (CS C180, deferred vertical interp: 79 source levels → 72 target levels)
+[ Info: Loaded IC for co2 (CS C180, deferred vertical interp: 79 source levels → 72 target levels)
+[ Info:   CMFMC: binary reader (GEOSFP_CS180.20211201.A3mstE.bin, t=1)
+[ Info:   DTRAIN: binary reader (GEOSFP_CS180.20211201.A3dyn.bin, t=1)
+[ Info:   A1: binary reader (GEOSFP_CS180.20211201.A1.bin, t=1)
+[ Info: Starting simulation: 192 windows × 8 sub-steps (DoubleBuffer, C180) [diffusion: nonlocal_pbl (β_h=15.0)] [convection: RASConvection]
+[ Info: IC finalized for sf6: mixing ratio min=9.056644846220078e-12 max=3.170529252238399e-11 mean=1.0206850510181154e-11
+[ Info: IC finalized for co2: mixing ratio min=0.00037498360054865574 max=0.0008939206355452948 mean=0.0004098486860846848
+[ Info:   IC mass co2: 2.121652e+15 kg
+[ Info:   IC mass fossil_co2: 0.000000e+00 kg
+[ Info:   IC mass rn222: 0.000000e+00 kg
+[ Info:   IC mass sf6: 5.535660e+07 kg
+[ Info: calcScaling: sf6 = 0.9999999998836976
+[ Info: calcScaling: rn222 = 1.0
+[ Info: calcScaling: fossil_co2 = 1.0
+[ Info: calcScaling: co2 = 0.9999999998756143
+[ Info: RAS CFL: max=12.83, n_sub=15, dt_conv=240.0s
+[ Info: calcScaling: sf6 = 0.9999999998604155
+[ Info: calcScaling: rn222 = 0.9999999998532583
+[ Info: calcScaling: fossil_co2 = 0.9999999991608493
+[ Info: calcScaling: co2 = 0.9999999998527995
+Simulation   1%|▍                                       |  ETA: 1:28:25 (27.92  s/it)[K
+    day: 1[K
+     IO: 5.15 s/win[K
+    GPU: 22.73 s/win[K
+    Out: 0.06 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=2.0885e-03%  sf6:Δ=1.0789e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998612106
+[ Info: calcScaling: rn222 = 0.9999999999084951
+[ Info: calcScaling: fossil_co2 = 0.9999999995867092
+[ Info: calcScaling: co2 = 0.9999999998536124
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation   2%|▋                                       |  ETA: 1:03:13 (20.07  s/it)[K
+    day: 1[K
+     IO: 3.46 s/win[K
+    GPU: 16.31 s/win[K
+    Out: 0.29 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=3.1217e-03%  sf6:Δ=1.4803e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998663207
+[ Info: calcScaling: rn222 = 0.9999999998180797
+[ Info: calcScaling: fossil_co2 = 0.9999999999767056
+[ Info: calcScaling: co2 = 0.9999999998591153
+[ Info: RAS CFL: max=13.63, n_sub=16, dt_conv=225.0s
+[ Info: LMDZ CO2 posterior: snapshot 1 → 2 (sim_hours=3.0, snap_hours=3.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation   2%|▉                                       |  ETA: 0:49:43 (15.87  s/it)[K
+    day: 1[K
+     IO: 2.61 s/win[K
+    GPU: 13.03 s/win[K
+    Out: 0.22 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=3.9837e-03%  sf6:Δ=1.8688e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998650623
+[ Info: calcScaling: rn222 = 1.00000000012275
+[ Info: calcScaling: fossil_co2 = 0.9999999994447943
+[ Info: calcScaling: co2 = 0.9999999998578883
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation   3%|█                                       |  ETA: 0:41:32 (13.33  s/it)[K
+    day: 1[K
+     IO: 2.10 s/win[K
+    GPU: 11.04 s/win[K
+    Out: 0.18 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=4.8386e-03%  sf6:Δ=2.2390e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998728057
+[ Info: calcScaling: rn222 = 0.9999999999154284
+[ Info: calcScaling: fossil_co2 = 0.9999999998924483
+[ Info: calcScaling: co2 = 0.99999999986511
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation   3%|█▎                                      |  ETA: 0:36:13 (11.68  s/it)[K
+    day: 1[K
+     IO: 1.76 s/win[K
+    GPU: 9.72 s/win[K
+    Out: 0.19 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=5.6687e-03%  sf6:Δ=2.5861e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998596879
+[ Info: calcScaling: rn222 = 0.9999999999613208
+[ Info: calcScaling: fossil_co2 = 0.9999999997762183
+[ Info: calcScaling: co2 = 0.9999999998514296
+[ Info: RAS CFL: max=11.95, n_sub=14, dt_conv=257.1s
+[ Info: LMDZ CO2 posterior: snapshot 2 → 3 (sim_hours=6.0, snap_hours=6.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation   4%|█▌                                      |  ETA: 0:32:16 (10.47  s/it)[K
+    day: 1[K
+     IO: 1.52 s/win[K
+    GPU: 8.78 s/win[K
+    Out: 0.16 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.1814e-03%  sf6:Δ=2.9285e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998384824
+[ Info: calcScaling: rn222 = 0.9999999998052125
+[ Info: calcScaling: fossil_co2 = 0.9999999996102256
+[ Info: calcScaling: co2 = 0.999999999830522
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation   4%|█▋                                      |  ETA: 0:29:17 ( 9.55  s/it)[K
+    day: 1[K
+     IO: 1.34 s/win[K
+    GPU: 8.07 s/win[K
+    Out: 0.14 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.6882e-03%  sf6:Δ=3.2527e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998481445
+[ Info: calcScaling: rn222 = 0.999999999984031
+[ Info: calcScaling: fossil_co2 = 0.9999999999069891
+[ Info: calcScaling: co2 = 0.9999999998404218
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation   5%|█▉                                      |  ETA: 0:27:07 ( 8.89  s/it)[K
+    day: 1[K
+     IO: 1.20 s/win[K
+    GPU: 7.53 s/win[K
+    Out: 0.17 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=7.1846e-03%  sf6:Δ=3.5561e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998619333
+[ Info: calcScaling: rn222 = 0.9999999999862963
+[ Info: calcScaling: fossil_co2 = 0.9999999998745409
+[ Info: calcScaling: co2 = 0.9999999998541598
+[ Info: RAS CFL: max=47.55, n_sub=53, dt_conv=67.9s
+[ Info: LMDZ CO2 posterior: snapshot 3 → 4 (sim_hours=9.0, snap_hours=9.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation   5%|██▏                                     |  ETA: 0:25:17 ( 8.34  s/it)[K
+    day: 1[K
+     IO: 1.08 s/win[K
+    GPU: 7.10 s/win[K
+    Out: 0.15 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=7.4435e-03%  sf6:Δ=3.8648e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998886527
+[ Info: calcScaling: rn222 = 0.9999999999164072
+[ Info: calcScaling: fossil_co2 = 1.0000000001988523
+[ Info: calcScaling: co2 = 0.99999999988065
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation   6%|██▎                                     |  ETA: 0:23:44 ( 7.87  s/it)[K
+    day: 1[K
+     IO: 0.99 s/win[K
+    GPU: 6.74 s/win[K
+    Out: 0.14 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=7.7043e-03%  sf6:Δ=4.1305e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998516135
+[ Info: calcScaling: rn222 = 0.9999999999670619
+[ Info: calcScaling: fossil_co2 = 1.0000000000022027
+[ Info: calcScaling: co2 = 0.9999999998434124
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation   6%|██▌                                     |  ETA: 0:22:36 ( 7.53  s/it)[K
+    day: 1[K
+     IO: 0.91 s/win[K
+    GPU: 6.47 s/win[K
+    Out: 0.15 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=7.9520e-03%  sf6:Δ=4.3490e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998543108
+[ Info: calcScaling: rn222 = 0.9999999999073894
+[ Info: calcScaling: fossil_co2 = 0.9999999999675467
+[ Info: calcScaling: co2 = 0.999999999845737
+[ Info: RAS CFL: max=61.57, n_sub=69, dt_conv=52.2s
+[ Info: LMDZ CO2 posterior: snapshot 4 → 5 (sim_hours=12.0, snap_hours=12.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation   7%|██▊                                     |  ETA: 0:21:36 ( 7.24  s/it)[K
+    day: 1[K
+     IO: 0.85 s/win[K
+    GPU: 6.25 s/win[K
+    Out: 0.14 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=7.8540e-03%  sf6:Δ=4.5640e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998603943
+[ Info: calcScaling: rn222 = 0.9999999999342424
+[ Info: calcScaling: fossil_co2 = 0.99999999998254
+[ Info: calcScaling: co2 = 0.9999999998514716
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation   7%|██▉                                     |  ETA: 0:20:39 ( 6.96  s/it)[K
+    day: 1[K
+     IO: 0.80 s/win[K
+    GPU: 6.04 s/win[K
+    Out: 0.13 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=7.7442e-03%  sf6:Δ=4.7585e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998726811
+[ Info: calcScaling: rn222 = 0.9999999999115687
+[ Info: calcScaling: fossil_co2 = 0.9999999997427144
+[ Info: calcScaling: co2 = 0.9999999998651691
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation   8%|███▏                                    |  ETA: 0:19:53 ( 6.74  s/it)[K
+    day: 1[K
+     IO: 0.75 s/win[K
+    GPU: 5.85 s/win[K
+    Out: 0.14 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=7.6238e-03%  sf6:Δ=4.9395e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.999999999867983
+[ Info: calcScaling: rn222 = 1.0000000000599423
+[ Info: calcScaling: fossil_co2 = 1.000000000309933
+[ Info: calcScaling: co2 = 0.9999999998602019
+[ Info: LMDZ CO2 posterior: snapshot 5 → 6 (sim_hours=15.0, snap_hours=15.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation   8%|███▍                                    |  ETA: 0:19:07 ( 6.52  s/it)[K
+    day: 1[K
+     IO: 0.71 s/win[K
+    GPU: 5.68 s/win[K
+    Out: 0.13 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=7.5290e-03%  sf6:Δ=5.1241e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998562047
+[ Info: calcScaling: rn222 = 0.999999999952007
+[ Info: calcScaling: fossil_co2 = 0.9999999999988302
+[ Info: calcScaling: co2 = 0.9999999998484413
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation   9%|███▌                                    |  ETA: 0:18:27 ( 6.33  s/it)[K
+    day: 1[K
+     IO: 0.67 s/win[K
+    GPU: 5.54 s/win[K
+    Out: 0.13 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=7.4232e-03%  sf6:Δ=5.3058e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998377914
+[ Info: calcScaling: rn222 = 1.0000000000487461
+[ Info: calcScaling: fossil_co2 = 1.0000000003583642
+[ Info: calcScaling: co2 = 0.9999999998301476
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation   9%|███▊                                    |  ETA: 0:17:55 ( 6.18  s/it)[K
+    day: 1[K
+     IO: 0.64 s/win[K
+    GPU: 5.41 s/win[K
+    Out: 0.14 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=7.2987e-03%  sf6:Δ=5.4740e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998679888
+[ Info: calcScaling: rn222 = 0.9999999999228786
+[ Info: calcScaling: fossil_co2 = 0.9999999999686648
+[ Info: calcScaling: co2 = 0.9999999998594907
+[ Info: LMDZ CO2 posterior: snapshot 6 → 7 (sim_hours=18.0, snap_hours=18.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  10%|████                                    |  ETA: 0:17:24 ( 6.03  s/it)[K
+    day: 1[K
+     IO: 0.61 s/win[K
+    GPU: 5.30 s/win[K
+    Out: 0.13 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=7.5303e-03%  sf6:Δ=5.6387e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998496429
+[ Info: calcScaling: rn222 = 0.9999999999821532
+[ Info: calcScaling: fossil_co2 = 1.000000000046429
+[ Info: calcScaling: co2 = 0.9999999998415813
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  10%|████▏                                   |  ETA: 0:16:54 ( 5.90  s/it)[K
+    day: 1[K
+     IO: 0.58 s/win[K
+    GPU: 5.20 s/win[K
+    Out: 0.13 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=7.7535e-03%  sf6:Δ=5.8109e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998507548
+[ Info: calcScaling: rn222 = 0.9999999999113114
+[ Info: calcScaling: fossil_co2 = 0.9999999997981094
+[ Info: calcScaling: co2 = 0.9999999998426744
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  11%|████▍                                   |  ETA: 0:16:31 ( 5.80  s/it)[K
+    day: 1[K
+     IO: 0.56 s/win[K
+    GPU: 5.11 s/win[K
+    Out: 0.14 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=7.9681e-03%  sf6:Δ=5.9868e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998568894
+[ Info: calcScaling: rn222 = 1.0000000000516505
+[ Info: calcScaling: fossil_co2 = 0.9999999997694964
+[ Info: calcScaling: co2 = 0.9999999998489343
+[ Info: LMDZ CO2 posterior: snapshot 7 → 8 (sim_hours=21.0, snap_hours=21.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  11%|████▋                                   |  ETA: 0:16:03 ( 5.67  s/it)[K
+    day: 1[K
+     IO: 0.54 s/win[K
+    GPU: 5.01 s/win[K
+    Out: 0.13 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=8.6248e-03%  sf6:Δ=6.1552e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.999999999871647
+[ Info: calcScaling: rn222 = 1.0000000000203102
+[ Info: calcScaling: fossil_co2 = 1.000000000134993
+[ Info: calcScaling: co2 = 0.9999999998640308
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  12%|████▊                                   |  ETA: 0:15:37 ( 5.55  s/it)[K
+    day: 1[K
+     IO: 0.52 s/win[K
+    GPU: 4.91 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=9.2685e-03%  sf6:Δ=6.2881e-03%[K[A[A[A[A[A[A[ Info:   CMFMC: binary reader (GEOSFP_CS180.20211202.A3mstE.bin, t=1)
+[ Info:   DTRAIN: binary reader (GEOSFP_CS180.20211202.A3dyn.bin, t=1)
+[ Info:   A1: binary reader (GEOSFP_CS180.20211202.A1.bin, t=1)
+[ Info: calcScaling: sf6 = 0.9999999998691329
+[ Info: calcScaling: rn222 = 1.0000000000023568
+[ Info: calcScaling: fossil_co2 = 0.9999999995951754
+[ Info: calcScaling: co2 = 0.9999999998613543
+[ Info: Binary output finalized: 8 timesteps → /temp1/catrine/output/catrine_gchp_v4_7d_fullphys_20211201.bin
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  12%|█████                                   |  ETA: 0:15:15 ( 5.45  s/it)[K
+    day: 1[K
+     IO: 0.50 s/win[K
+    GPU: 4.82 s/win[K
+    Out: 0.13 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=9.9002e-03%  sf6:Δ=6.3865e-03%[K[A[A[A[A[A[A[ Info:   Loading GMAO coordinates from cs_c180_gridspec.nc
+[ Info: calcScaling: sf6 = 0.9999999998725335
+[ Info: calcScaling: rn222 = 1.0000000000939548
+[ Info: calcScaling: fossil_co2 = 1.0000000001172809
+[ Info: calcScaling: co2 = 0.9999999998647093
+[ Info: LMDZ CO2 posterior: snapshot 8 → 9 (sim_hours=24.0, snap_hours=24.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  13%|█████▎                                  |  ETA: 0:14:54 ( 5.35  s/it)[K
+    day: 2[K
+     IO: 0.48 s/win[K
+    GPU: 4.75 s/win[K
+    Out: 0.13 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=1.0859e-02%  sf6:Δ=6.4937e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998491664
+[ Info: calcScaling: rn222 = 0.9999999999292153
+[ Info: calcScaling: fossil_co2 = 1.0000000000593605
+[ Info: calcScaling: co2 = 0.9999999998417638
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  14%|█████▍                                  |  ETA: 0:14:32 ( 5.25  s/it)[K
+    day: 2[K
+     IO: 0.47 s/win[K
+    GPU: 4.67 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=1.1807e-02%  sf6:Δ=6.5938e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998725041
+[ Info: calcScaling: rn222 = 0.9999999999149545
+[ Info: calcScaling: fossil_co2 = 0.9999999998345388
+[ Info: Converted /temp1/catrine/output/catrine_gchp_v4_7d_fullphys_20211201.bin → /temp1/catrine/output/catrine_gchp_v4_7d_fullphys_20211201.nc (8 timesteps)
+[ Info: calcScaling: co2 = 0.9999999998655877
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  14%|█████▋                                  |  ETA: 0:14:16 ( 5.19  s/it)[K
+    day: 2[K
+     IO: 0.45 s/win[K
+    GPU: 4.62 s/win[K
+    Out: 0.13 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=1.2743e-02%  sf6:Δ=6.6889e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.999999999865934
+[ Info: calcScaling: rn222 = 1.0000000000839582
+[ Info: calcScaling: fossil_co2 = 1.0000000000842337
+[ Info: calcScaling: co2 = 0.9999999998587453
+[ Info: LMDZ CO2 posterior: snapshot 9 → 10 (sim_hours=27.0, snap_hours=27.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  15%|█████▉                                  |  ETA: 0:13:58 ( 5.11  s/it)[K
+    day: 2[K
+     IO: 0.44 s/win[K
+    GPU: 4.55 s/win[K
+    Out: 0.13 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=1.3500e-02%  sf6:Δ=6.8096e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998889881
+[ Info: calcScaling: rn222 = 0.9999999999921204
+[ Info: calcScaling: fossil_co2 = 1.0000000001072322
+[ Info: calcScaling: co2 = 0.9999999998818595
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  15%|██████                                  |  ETA: 0:13:39 ( 5.02  s/it)[K
+    day: 2[K
+     IO: 0.43 s/win[K
+    GPU: 4.49 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=1.4234e-02%  sf6:Δ=6.9213e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.999999999882351
+[ Info: calcScaling: rn222 = 0.9999999999526215
+[ Info: calcScaling: fossil_co2 = 0.9999999999242766
+[ Info: calcScaling: co2 = 0.9999999998754635
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  16%|██████▎                                 |  ETA: 0:13:24 ( 4.96  s/it)[K
+    day: 2[K
+     IO: 0.42 s/win[K
+    GPU: 4.43 s/win[K
+    Out: 0.13 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=1.4940e-02%  sf6:Δ=7.0163e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998803177
+[ Info: calcScaling: rn222 = 1.000000000039997
+[ Info: calcScaling: fossil_co2 = 1.000000000008742
+[ Info: calcScaling: co2 = 0.9999999998732277
+[ Info: LMDZ CO2 posterior: snapshot 10 → 11 (sim_hours=30.0, snap_hours=30.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  16%|██████▌                                 |  ETA: 0:13:08 ( 4.89  s/it)[K
+    day: 2[K
+     IO: 0.41 s/win[K
+    GPU: 4.38 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=1.5326e-02%  sf6:Δ=7.1089e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998883541
+[ Info: calcScaling: rn222 = 1.000000000026468
+[ Info: calcScaling: fossil_co2 = 0.999999999958845
+[ Info: calcScaling: co2 = 0.9999999998812181
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  17%|██████▋                                 |  ETA: 0:12:52 ( 4.83  s/it)[K
+    day: 2[K
+     IO: 0.39 s/win[K
+    GPU: 4.33 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=1.5704e-02%  sf6:Δ=7.1890e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998711924
+[ Info: calcScaling: rn222 = 1.0000000000695084
+[ Info: calcScaling: fossil_co2 = 1.0000000002318743
+[ Info: calcScaling: co2 = 0.9999999998640687
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  17%|██████▉                                 |  ETA: 0:12:39 ( 4.78  s/it)[K
+    day: 2[K
+     IO: 0.38 s/win[K
+    GPU: 4.28 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=1.6075e-02%  sf6:Δ=7.2620e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998885434
+[ Info: calcScaling: rn222 = 1.0000000000676295
+[ Info: calcScaling: fossil_co2 = 1.0000000001086609
+[ Info: calcScaling: co2 = 0.9999999998823375
+[ Info: LMDZ CO2 posterior: snapshot 11 → 12 (sim_hours=33.0, snap_hours=33.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  18%|███████▏                                |  ETA: 0:12:25 ( 4.72  s/it)[K
+    day: 2[K
+     IO: 0.37 s/win[K
+    GPU: 4.23 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=1.6210e-02%  sf6:Δ=7.3607e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998944614
+[ Info: calcScaling: rn222 = 0.9999999999416492
+[ Info: calcScaling: fossil_co2 = 1.000000000000361
+[ Info: calcScaling: co2 = 0.999999999888361
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  18%|███████▎                                |  ETA: 0:12:12 ( 4.66  s/it)[K
+    day: 2[K
+     IO: 0.37 s/win[K
+    GPU: 4.19 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=1.6346e-02%  sf6:Δ=7.4367e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998629041
+[ Info: calcScaling: rn222 = 0.9999999999463939
+[ Info: calcScaling: fossil_co2 = 0.999999999750245
+[ Info: calcScaling: co2 = 0.999999999855523
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  19%|███████▌                                |  ETA: 0:12:00 ( 4.62  s/it)[K
+    day: 2[K
+     IO: 0.36 s/win[K
+    GPU: 4.15 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=1.6471e-02%  sf6:Δ=7.4874e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998407237
+[ Info: calcScaling: rn222 = 0.9999999999154559
+[ Info: calcScaling: fossil_co2 = 0.9999999999586365
+[ Info: calcScaling: co2 = 0.9999999998329603
+[ Info: LMDZ CO2 posterior: snapshot 12 → 13 (sim_hours=36.0, snap_hours=36.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  19%|███████▊                                |  ETA: 0:11:48 ( 4.57  s/it)[K
+    day: 2[K
+     IO: 0.35 s/win[K
+    GPU: 4.11 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=1.6256e-02%  sf6:Δ=7.5495e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998676252
+[ Info: calcScaling: rn222 = 0.9999999999512252
+[ Info: calcScaling: fossil_co2 = 1.0000000000105786
+[ Info: calcScaling: co2 = 0.9999999998594742
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  20%|███████▉                                |  ETA: 0:11:36 ( 4.52  s/it)[K
+    day: 2[K
+     IO: 0.34 s/win[K
+    GPU: 4.08 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=1.6040e-02%  sf6:Δ=7.6094e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998655595
+[ Info: calcScaling: rn222 = 1.0000000000693998
+[ Info: calcScaling: fossil_co2 = 1.0000000000286602
+[ Info: calcScaling: co2 = 0.9999999998576724
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  20%|████████▏                               |  ETA: 0:11:26 ( 4.48  s/it)[K
+    day: 2[K
+     IO: 0.33 s/win[K
+    GPU: 4.04 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=1.5824e-02%  sf6:Δ=7.6723e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998662588
+[ Info: calcScaling: rn222 = 1.0000000000577673
+[ Info: calcScaling: fossil_co2 = 1.0000000002259453
+[ Info: calcScaling: co2 = 0.9999999998587674
+[ Info: LMDZ CO2 posterior: snapshot 13 → 14 (sim_hours=39.0, snap_hours=39.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  21%|████████▍                               |  ETA: 0:11:15 ( 4.44  s/it)[K
+    day: 2[K
+     IO: 0.33 s/win[K
+    GPU: 4.01 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=1.5630e-02%  sf6:Δ=7.7441e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998802201
+[ Info: calcScaling: rn222 = 0.9999999999447614
+[ Info: calcScaling: fossil_co2 = 0.9999999999582674
+[ Info: calcScaling: co2 = 0.9999999998727873
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  21%|████████▌                               |  ETA: 0:11:04 ( 4.40  s/it)[K
+    day: 2[K
+     IO: 0.32 s/win[K
+    GPU: 3.98 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=1.5430e-02%  sf6:Δ=7.8208e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998595577
+[ Info: calcScaling: rn222 = 0.999999999975602
+[ Info: calcScaling: fossil_co2 = 0.9999999999560736
+[ Info: calcScaling: co2 = 0.9999999998519808
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  22%|████████▊                               |  ETA: 0:10:55 ( 4.36  s/it)[K
+    day: 2[K
+     IO: 0.32 s/win[K
+    GPU: 3.94 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=1.5214e-02%  sf6:Δ=7.8955e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998645189
+[ Info: calcScaling: rn222 = 1.0000000000313376
+[ Info: calcScaling: fossil_co2 = 1.0000000001349192
+[ Info: calcScaling: co2 = 0.9999999998569483
+[ Info: LMDZ CO2 posterior: snapshot 14 → 15 (sim_hours=42.0, snap_hours=42.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  22%|█████████                               |  ETA: 0:10:44 ( 4.32  s/it)[K
+    day: 2[K
+     IO: 0.31 s/win[K
+    GPU: 3.91 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=1.5360e-02%  sf6:Δ=7.9923e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998638988
+[ Info: calcScaling: rn222 = 0.999999999969176
+[ Info: calcScaling: fossil_co2 = 1.0000000000345663
+[ Info: calcScaling: co2 = 0.9999999998567456
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  23%|█████████▏                              |  ETA: 0:10:34 ( 4.28  s/it)[K
+    day: 2[K
+     IO: 0.30 s/win[K
+    GPU: 3.88 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=1.5503e-02%  sf6:Δ=8.1057e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.999999999869048
+[ Info: calcScaling: rn222 = 1.0000000000580944
+[ Info: calcScaling: fossil_co2 = 1.000000000117375
+[ Info: calcScaling: co2 = 0.9999999998621873
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  23%|█████████▍                              |  ETA: 0:10:25 ( 4.25  s/it)[K
+    day: 2[K
+     IO: 0.30 s/win[K
+    GPU: 3.85 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=1.5647e-02%  sf6:Δ=8.2309e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998755272
+[ Info: calcScaling: rn222 = 1.0000000000042777
+[ Info: calcScaling: fossil_co2 = 0.9999999999811475
+[ Info: calcScaling: co2 = 0.9999999998691607
+[ Info: LMDZ CO2 posterior: snapshot 15 → 16 (sim_hours=45.0, snap_hours=45.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  24%|█████████▋                              |  ETA: 0:10:16 ( 4.22  s/it)[K
+    day: 2[K
+     IO: 0.30 s/win[K
+    GPU: 3.82 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=1.6257e-02%  sf6:Δ=8.3838e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.9999999998571523
+[ Info: calcScaling: rn222 = 1.0000000000469162
+[ Info: calcScaling: fossil_co2 = 1.0000000001212745
+[ Info: calcScaling: co2 = 0.9999999998514087
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  24%|█████████▊                              |  ETA: 0:10:07 ( 4.18  s/it)[K
+    day: 2[K
+     IO: 0.29 s/win[K
+    GPU: 3.79 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=1.6873e-02%  sf6:Δ=8.5382e-03%[K[A[A[A[A[A[A[ Info:   CMFMC: binary reader (GEOSFP_CS180.20211203.A3mstE.bin, t=1)
+[ Info:   DTRAIN: binary reader (GEOSFP_CS180.20211203.A3dyn.bin, t=1)
+[ Info:   A1: binary reader (GEOSFP_CS180.20211203.A1.bin, t=1)
+[ Info: calcScaling: sf6 = 0.9999999998958381
+[ Info: calcScaling: rn222 = 0.9999999999782692
+[ Info: calcScaling: fossil_co2 = 0.9999999999851036
+[ Info: calcScaling: co2 = 0.9999999998903192
+[ Info: Binary output finalized: 8 timesteps → /temp1/catrine/output/catrine_gchp_v4_7d_fullphys_20211202.bin
+[ Info:   Loading GMAO coordinates from cs_c180_gridspec.nc
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  25%|██████████                              |  ETA: 0:10:00 ( 4.17  s/it)[K
+    day: 2[K
+     IO: 0.29 s/win[K
+    GPU: 3.77 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=1.7484e-02%  sf6:Δ=8.6785e-03%[K[A[A[A[A[A[A[ Info: calcScaling: sf6 = 0.999999999889108
+[ Info: calcScaling: rn222 = 1.0000000000806863
+[ Info: calcScaling: fossil_co2 = 1.000000000039338
+[ Info: calcScaling: co2 = 0.9999999998834596
+[ Info: LMDZ CO2 posterior: snapshot 16 → 17 (sim_hours=48.0, snap_hours=48.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  26%|██████████▎                             |  ETA: 0:09:52 ( 4.14  s/it)[K
+    day: 3[K
+     IO: 0.28 s/win[K
+    GPU: 3.75 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=1.8427e-02%  sf6:Δ=8.8314e-03%[K[A[A[A[A[A[A[ Info: Converted /temp1/catrine/output/catrine_gchp_v4_7d_fullphys_20211202.bin → /temp1/catrine/output/catrine_gchp_v4_7d_fullphys_20211202.nc (8 timesteps)
+[ Info: calcScaling: sf6 = 0.9999999998777758
+[ Info: calcScaling: rn222 = 1.0000000000339018
+[ Info: calcScaling: fossil_co2 = 1.0000000000050553
+[ Info: calcScaling: co2 = 0.9999999998718349
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  26%|██████████▍                             |  ETA: 0:09:44 ( 4.11  s/it)[K
+    day: 3[K
+     IO: 0.28 s/win[K
+    GPU: 3.73 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=1.9357e-02%  sf6:Δ=8.9622e-03%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  27%|██████████▋                             |  ETA: 0:09:37 ( 4.09  s/it)[K
+    day: 3[K
+     IO: 0.27 s/win[K
+    GPU: 3.71 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=2.0274e-02%  sf6:Δ=9.0860e-03%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 17 → 18 (sim_hours=51.0, snap_hours=51.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  27%|██████████▉                             |  ETA: 0:09:30 ( 4.07  s/it)[K
+    day: 3[K
+     IO: 0.27 s/win[K
+    GPU: 3.69 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=2.1013e-02%  sf6:Δ=9.2392e-03%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  28%|███████████                             |  ETA: 0:09:22 ( 4.04  s/it)[K
+    day: 3[K
+     IO: 0.27 s/win[K
+    GPU: 3.68 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=2.1741e-02%  sf6:Δ=9.4001e-03%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  28%|███████████▎                            |  ETA: 0:09:16 ( 4.03  s/it)[K
+    day: 3[K
+     IO: 0.26 s/win[K
+    GPU: 3.66 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=2.2450e-02%  sf6:Δ=9.5518e-03%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 18 → 19 (sim_hours=54.0, snap_hours=54.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  29%|███████████▌                            |  ETA: 0:09:08 ( 4.00  s/it)[K
+    day: 3[K
+     IO: 0.26 s/win[K
+    GPU: 3.64 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=2.2841e-02%  sf6:Δ=9.7109e-03%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  29%|███████████▋                            |  ETA: 0:09:01 ( 3.98  s/it)[K
+    day: 3[K
+     IO: 0.25 s/win[K
+    GPU: 3.62 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=2.3223e-02%  sf6:Δ=9.8495e-03%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  30%|███████████▉                            |  ETA: 0:08:55 ( 3.96  s/it)[K
+    day: 3[K
+     IO: 0.25 s/win[K
+    GPU: 3.61 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=2.3598e-02%  sf6:Δ=9.9714e-03%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 19 → 20 (sim_hours=57.0, snap_hours=57.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  30%|████████████▏                           |  ETA: 0:08:48 ( 3.94  s/it)[K
+    day: 3[K
+     IO: 0.25 s/win[K
+    GPU: 3.59 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=2.3738e-02%  sf6:Δ=1.0110e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  31%|████████████▎                           |  ETA: 0:08:42 ( 3.92  s/it)[K
+    day: 3[K
+     IO: 0.25 s/win[K
+    GPU: 3.58 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=2.3879e-02%  sf6:Δ=1.0220e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  31%|████████████▌                           |  ETA: 0:08:36 ( 3.91  s/it)[K
+    day: 3[K
+     IO: 0.24 s/win[K
+    GPU: 3.56 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=2.4010e-02%  sf6:Δ=1.0299e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 20 → 21 (sim_hours=60.0, snap_hours=60.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  32%|████████████▊                           |  ETA: 0:08:30 ( 3.89  s/it)[K
+    day: 3[K
+     IO: 0.24 s/win[K
+    GPU: 3.55 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=2.3806e-02%  sf6:Δ=1.0384e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  32%|████████████▉                           |  ETA: 0:08:24 ( 3.87  s/it)[K
+    day: 3[K
+     IO: 0.24 s/win[K
+    GPU: 3.54 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=2.3598e-02%  sf6:Δ=1.0457e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  33%|█████████████▏                          |  ETA: 0:08:18 ( 3.86  s/it)[K
+    day: 3[K
+     IO: 0.23 s/win[K
+    GPU: 3.53 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=2.3393e-02%  sf6:Δ=1.0536e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 21 → 22 (sim_hours=63.0, snap_hours=63.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  33%|█████████████▍                          |  ETA: 0:08:12 ( 3.85  s/it)[K
+    day: 3[K
+     IO: 0.23 s/win[K
+    GPU: 3.51 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=2.3220e-02%  sf6:Δ=1.0642e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  34%|█████████████▌                          |  ETA: 0:08:07 ( 3.83  s/it)[K
+    day: 3[K
+     IO: 0.23 s/win[K
+    GPU: 3.50 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=2.3040e-02%  sf6:Δ=1.0757e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  34%|█████████████▊                          |  ETA: 0:08:02 ( 3.82  s/it)[K
+    day: 3[K
+     IO: 0.23 s/win[K
+    GPU: 3.49 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=2.2840e-02%  sf6:Δ=1.0868e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 22 → 23 (sim_hours=66.0, snap_hours=66.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  35%|██████████████                          |  ETA: 0:07:56 ( 3.81  s/it)[K
+    day: 3[K
+     IO: 0.22 s/win[K
+    GPU: 3.48 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=2.3007e-02%  sf6:Δ=1.0984e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  35%|██████████████▏                         |  ETA: 0:07:50 ( 3.79  s/it)[K
+    day: 3[K
+     IO: 0.22 s/win[K
+    GPU: 3.47 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=2.3176e-02%  sf6:Δ=1.1118e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  36%|██████████████▍                         |  ETA: 0:07:46 ( 3.78  s/it)[K
+    day: 3[K
+     IO: 0.22 s/win[K
+    GPU: 3.46 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=2.3343e-02%  sf6:Δ=1.1256e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 23 → 24 (sim_hours=69.0, snap_hours=69.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  36%|██████████████▋                         |  ETA: 0:07:40 ( 3.77  s/it)[K
+    day: 3[K
+     IO: 0.22 s/win[K
+    GPU: 3.46 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=2.3974e-02%  sf6:Δ=1.1406e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  37%|██████████████▊                         |  ETA: 0:07:35 ( 3.76  s/it)[K
+    day: 3[K
+     IO: 0.21 s/win[K
+    GPU: 3.45 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=2.4600e-02%  sf6:Δ=1.1541e-02%[K[A[A[A[A[A[A[ Info:   CMFMC: binary reader (GEOSFP_CS180.20211204.A3mstE.bin, t=1)
+[ Info:   DTRAIN: binary reader (GEOSFP_CS180.20211204.A3dyn.bin, t=1)
+[ Info:   A1: binary reader (GEOSFP_CS180.20211204.A1.bin, t=1)
+[ Info: Binary output finalized: 8 timesteps → /temp1/catrine/output/catrine_gchp_v4_7d_fullphys_20211203.bin
+[ Info:   Loading GMAO coordinates from cs_c180_gridspec.nc
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  38%|███████████████                         |  ETA: 0:07:31 ( 3.75  s/it)[K
+    day: 3[K
+     IO: 0.21 s/win[K
+    GPU: 3.44 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=2.5222e-02%  sf6:Δ=1.1675e-02%[K[A[A[A[A[A[A[ Info: Converted /temp1/catrine/output/catrine_gchp_v4_7d_fullphys_20211203.bin → /temp1/catrine/output/catrine_gchp_v4_7d_fullphys_20211203.nc (8 timesteps)
+[ Info: LMDZ CO2 posterior: snapshot 24 → 25 (sim_hours=72.0, snap_hours=72.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  38%|███████████████▎                        |  ETA: 0:07:26 ( 3.75  s/it)[K
+    day: 4[K
+     IO: 0.21 s/win[K
+    GPU: 3.44 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=2.6185e-02%  sf6:Δ=1.1850e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  39%|███████████████▍                        |  ETA: 0:07:21 ( 3.74  s/it)[K
+    day: 4[K
+     IO: 0.21 s/win[K
+    GPU: 3.43 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=2.7139e-02%  sf6:Δ=1.2028e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  39%|███████████████▋                        |  ETA: 0:07:17 ( 3.73  s/it)[K
+    day: 4[K
+     IO: 0.21 s/win[K
+    GPU: 3.42 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=2.8080e-02%  sf6:Δ=1.2204e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 25 → 26 (sim_hours=75.0, snap_hours=75.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  40%|███████████████▉                        |  ETA: 0:07:12 ( 3.72  s/it)[K
+    day: 4[K
+     IO: 0.21 s/win[K
+    GPU: 3.42 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=2.8848e-02%  sf6:Δ=1.2421e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  40%|████████████████                        |  ETA: 0:07:07 ( 3.71  s/it)[K
+    day: 4[K
+     IO: 0.20 s/win[K
+    GPU: 3.41 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=2.9600e-02%  sf6:Δ=1.2661e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  41%|████████████████▎                       |  ETA: 0:07:03 ( 3.71  s/it)[K
+    day: 4[K
+     IO: 0.20 s/win[K
+    GPU: 3.40 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.0330e-02%  sf6:Δ=1.2893e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 26 → 27 (sim_hours=78.0, snap_hours=78.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  41%|████████████████▌                       |  ETA: 0:06:58 ( 3.70  s/it)[K
+    day: 4[K
+     IO: 0.20 s/win[K
+    GPU: 3.40 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.0733e-02%  sf6:Δ=1.3114e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  42%|████████████████▋                       |  ETA: 0:06:53 ( 3.69  s/it)[K
+    day: 4[K
+     IO: 0.20 s/win[K
+    GPU: 3.39 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.1122e-02%  sf6:Δ=1.3314e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  42%|████████████████▉                       |  ETA: 0:06:49 ( 3.68  s/it)[K
+    day: 4[K
+     IO: 0.20 s/win[K
+    GPU: 3.38 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.1503e-02%  sf6:Δ=1.3495e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 27 → 28 (sim_hours=81.0, snap_hours=81.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  43%|█████████████████▏                      |  ETA: 0:06:44 ( 3.67  s/it)[K
+    day: 4[K
+     IO: 0.20 s/win[K
+    GPU: 3.38 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.1646e-02%  sf6:Δ=1.3690e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  43%|█████████████████▎                      |  ETA: 0:06:39 ( 3.66  s/it)[K
+    day: 4[K
+     IO: 0.19 s/win[K
+    GPU: 3.37 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.1782e-02%  sf6:Δ=1.3853e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  44%|█████████████████▌                      |  ETA: 0:06:35 ( 3.66  s/it)[K
+    day: 4[K
+     IO: 0.19 s/win[K
+    GPU: 3.37 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.1912e-02%  sf6:Δ=1.3991e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 28 → 29 (sim_hours=84.0, snap_hours=84.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  44%|█████████████████▊                      |  ETA: 0:06:31 ( 3.65  s/it)[K
+    day: 4[K
+     IO: 0.19 s/win[K
+    GPU: 3.36 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.1718e-02%  sf6:Δ=1.4120e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  45%|█████████████████▉                      |  ETA: 0:06:27 ( 3.65  s/it)[K
+    day: 4[K
+     IO: 0.19 s/win[K
+    GPU: 3.36 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.1516e-02%  sf6:Δ=1.4230e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  45%|██████████████████▏                     |  ETA: 0:06:23 ( 3.64  s/it)[K
+    day: 4[K
+     IO: 0.19 s/win[K
+    GPU: 3.36 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.1296e-02%  sf6:Δ=1.4321e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 29 → 30 (sim_hours=87.0, snap_hours=87.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  46%|██████████████████▍                     |  ETA: 0:06:18 ( 3.64  s/it)[K
+    day: 4[K
+     IO: 0.19 s/win[K
+    GPU: 3.35 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.1096e-02%  sf6:Δ=1.4410e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  46%|██████████████████▌                     |  ETA: 0:06:14 ( 3.63  s/it)[K
+    day: 4[K
+     IO: 0.19 s/win[K
+    GPU: 3.35 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.0888e-02%  sf6:Δ=1.4515e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  47%|██████████████████▊                     |  ETA: 0:06:10 ( 3.63  s/it)[K
+    day: 4[K
+     IO: 0.18 s/win[K
+    GPU: 3.34 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.0664e-02%  sf6:Δ=1.4627e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 30 → 31 (sim_hours=90.0, snap_hours=90.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  47%|███████████████████                     |  ETA: 0:06:06 ( 3.62  s/it)[K
+    day: 4[K
+     IO: 0.18 s/win[K
+    GPU: 3.34 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.0806e-02%  sf6:Δ=1.4755e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  48%|███████████████████▏                    |  ETA: 0:06:01 ( 3.61  s/it)[K
+    day: 4[K
+     IO: 0.18 s/win[K
+    GPU: 3.33 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.0942e-02%  sf6:Δ=1.4884e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  48%|███████████████████▍                    |  ETA: 0:05:57 ( 3.61  s/it)[K
+    day: 4[K
+     IO: 0.18 s/win[K
+    GPU: 3.33 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.1076e-02%  sf6:Δ=1.5004e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 31 → 32 (sim_hours=93.0, snap_hours=93.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  49%|███████████████████▋                    |  ETA: 0:05:53 ( 3.60  s/it)[K
+    day: 4[K
+     IO: 0.18 s/win[K
+    GPU: 3.32 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.1659e-02%  sf6:Δ=1.5115e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  49%|███████████████████▊                    |  ETA: 0:05:49 ( 3.60  s/it)[K
+    day: 4[K
+     IO: 0.18 s/win[K
+    GPU: 3.32 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.2234e-02%  sf6:Δ=1.5207e-02%[K[A[A[A[A[A[A[ Info:   CMFMC: binary reader (GEOSFP_CS180.20211205.A3mstE.bin, t=1)
+[ Info:   DTRAIN: binary reader (GEOSFP_CS180.20211205.A3dyn.bin, t=1)
+[ Info:   A1: binary reader (GEOSFP_CS180.20211205.A1.bin, t=1)
+[ Info: Binary output finalized: 8 timesteps → /temp1/catrine/output/catrine_gchp_v4_7d_fullphys_20211204.bin
+[ Info:   Loading GMAO coordinates from cs_c180_gridspec.nc
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  50%|████████████████████                    |  ETA: 0:05:45 ( 3.60  s/it)[K
+    day: 4[K
+     IO: 0.18 s/win[K
+    GPU: 3.32 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.2801e-02%  sf6:Δ=1.5276e-02%[K[A[A[A[A[A[A[ Info: Converted /temp1/catrine/output/catrine_gchp_v4_7d_fullphys_20211204.bin → /temp1/catrine/output/catrine_gchp_v4_7d_fullphys_20211204.nc (8 timesteps)
+[ Info: LMDZ CO2 posterior: snapshot 32 → 33 (sim_hours=96.0, snap_hours=96.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  51%|████████████████████▎                   |  ETA: 0:05:41 ( 3.59  s/it)[K
+    day: 5[K
+     IO: 0.18 s/win[K
+    GPU: 3.32 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.3694e-02%  sf6:Δ=1.5329e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  51%|████████████████████▍                   |  ETA: 0:05:37 ( 3.59  s/it)[K
+    day: 5[K
+     IO: 0.17 s/win[K
+    GPU: 3.31 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.4577e-02%  sf6:Δ=1.5355e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  52%|████████████████████▋                   |  ETA: 0:05:34 ( 3.59  s/it)[K
+    day: 5[K
+     IO: 0.17 s/win[K
+    GPU: 3.31 s/win[K
+    Out: 0.12 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.5452e-02%  sf6:Δ=1.5390e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 33 → 34 (sim_hours=99.0, snap_hours=99.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  52%|████████████████████▉                   |  ETA: 0:05:29 ( 3.58  s/it)[K
+    day: 5[K
+     IO: 0.17 s/win[K
+    GPU: 3.31 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.6154e-02%  sf6:Δ=1.5456e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  53%|█████████████████████                   |  ETA: 0:05:26 ( 3.58  s/it)[K
+    day: 5[K
+     IO: 0.17 s/win[K
+    GPU: 3.31 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.6847e-02%  sf6:Δ=1.5559e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  53%|█████████████████████▎                  |  ETA: 0:05:22 ( 3.58  s/it)[K
+    day: 5[K
+     IO: 0.17 s/win[K
+    GPU: 3.30 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.7523e-02%  sf6:Δ=1.5674e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 34 → 35 (sim_hours=102.0, snap_hours=102.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  54%|█████████████████████▌                  |  ETA: 0:05:18 ( 3.57  s/it)[K
+    day: 5[K
+     IO: 0.17 s/win[K
+    GPU: 3.30 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.7877e-02%  sf6:Δ=1.5790e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  54%|█████████████████████▋                  |  ETA: 0:05:14 ( 3.56  s/it)[K
+    day: 5[K
+     IO: 0.17 s/win[K
+    GPU: 3.30 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.8231e-02%  sf6:Δ=1.5892e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  55%|█████████████████████▉                  |  ETA: 0:05:10 ( 3.56  s/it)[K
+    day: 5[K
+     IO: 0.17 s/win[K
+    GPU: 3.30 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.8586e-02%  sf6:Δ=1.5985e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 35 → 36 (sim_hours=105.0, snap_hours=105.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  55%|██████████████████████▏                 |  ETA: 0:05:06 ( 3.56  s/it)[K
+    day: 5[K
+     IO: 0.17 s/win[K
+    GPU: 3.29 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.8699e-02%  sf6:Δ=1.6113e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  56%|██████████████████████▎                 |  ETA: 0:05:02 ( 3.55  s/it)[K
+    day: 5[K
+     IO: 0.17 s/win[K
+    GPU: 3.29 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.8813e-02%  sf6:Δ=1.6216e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  56%|██████████████████████▌                 |  ETA: 0:04:58 ( 3.55  s/it)[K
+    day: 5[K
+     IO: 0.16 s/win[K
+    GPU: 3.29 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.8915e-02%  sf6:Δ=1.6285e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 36 → 37 (sim_hours=108.0, snap_hours=108.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  57%|██████████████████████▊                 |  ETA: 0:04:55 ( 3.55  s/it)[K
+    day: 5[K
+     IO: 0.16 s/win[K
+    GPU: 3.29 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.8675e-02%  sf6:Δ=1.6344e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  57%|██████████████████████▉                 |  ETA: 0:04:51 ( 3.54  s/it)[K
+    day: 5[K
+     IO: 0.16 s/win[K
+    GPU: 3.28 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.8423e-02%  sf6:Δ=1.6394e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  58%|███████████████████████▏                |  ETA: 0:04:47 ( 3.54  s/it)[K
+    day: 5[K
+     IO: 0.16 s/win[K
+    GPU: 3.28 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.8166e-02%  sf6:Δ=1.6444e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 37 → 38 (sim_hours=111.0, snap_hours=111.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  58%|███████████████████████▍                |  ETA: 0:04:43 ( 3.54  s/it)[K
+    day: 5[K
+     IO: 0.16 s/win[K
+    GPU: 3.28 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.7932e-02%  sf6:Δ=1.6517e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  59%|███████████████████████▌                |  ETA: 0:04:39 ( 3.53  s/it)[K
+    day: 5[K
+     IO: 0.16 s/win[K
+    GPU: 3.28 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.7696e-02%  sf6:Δ=1.6610e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  59%|███████████████████████▊                |  ETA: 0:04:35 ( 3.53  s/it)[K
+    day: 5[K
+     IO: 0.16 s/win[K
+    GPU: 3.27 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.7445e-02%  sf6:Δ=1.6706e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 38 → 39 (sim_hours=114.0, snap_hours=114.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  60%|████████████████████████                |  ETA: 0:04:32 ( 3.53  s/it)[K
+    day: 5[K
+     IO: 0.16 s/win[K
+    GPU: 3.27 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.7575e-02%  sf6:Δ=1.6824e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  60%|████████████████████████▏               |  ETA: 0:04:28 ( 3.52  s/it)[K
+    day: 5[K
+     IO: 0.16 s/win[K
+    GPU: 3.27 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.7695e-02%  sf6:Δ=1.6951e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  61%|████████████████████████▍               |  ETA: 0:04:24 ( 3.52  s/it)[K
+    day: 5[K
+     IO: 0.16 s/win[K
+    GPU: 3.27 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.7821e-02%  sf6:Δ=1.7103e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 39 → 40 (sim_hours=117.0, snap_hours=117.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  61%|████████████████████████▋               |  ETA: 0:04:20 ( 3.52  s/it)[K
+    day: 5[K
+     IO: 0.16 s/win[K
+    GPU: 3.26 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.8418e-02%  sf6:Δ=1.7292e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  62%|████████████████████████▊               |  ETA: 0:04:16 ( 3.51  s/it)[K
+    day: 5[K
+     IO: 0.16 s/win[K
+    GPU: 3.26 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.004[K
+   mass: co2:Δ=3.9023e-02%  sf6:Δ=1.7499e-02%[K[A[A[A[A[A[A[ Info:   CMFMC: binary reader (GEOSFP_CS180.20211206.A3mstE.bin, t=1)
+[ Info:   DTRAIN: binary reader (GEOSFP_CS180.20211206.A3dyn.bin, t=1)
+[ Info:   A1: binary reader (GEOSFP_CS180.20211206.A1.bin, t=1)
+[ Info: Binary output finalized: 8 timesteps → /temp1/catrine/output/catrine_gchp_v4_7d_fullphys_20211205.bin
+[ Info:   Loading GMAO coordinates from cs_c180_gridspec.nc
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  62%|█████████████████████████               |  ETA: 0:04:13 ( 3.51  s/it)[K
+    day: 5[K
+     IO: 0.15 s/win[K
+    GPU: 3.26 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.003[K
+   mass: co2:Δ=3.9637e-02%  sf6:Δ=1.7724e-02%[K[A[A[A[A[A[A[ Info: Converted /temp1/catrine/output/catrine_gchp_v4_7d_fullphys_20211205.bin → /temp1/catrine/output/catrine_gchp_v4_7d_fullphys_20211205.nc (8 timesteps)
+[ Info: LMDZ CO2 posterior: snapshot 40 → 41 (sim_hours=120.0, snap_hours=120.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  63%|█████████████████████████▎              |  ETA: 0:04:17 ( 3.61  s/it)[K
+    day: 6[K
+     IO: 0.15 s/win[K
+    GPU: 3.36 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.003[K
+   mass: co2:Δ=4.0831e-02%  sf6:Δ=1.8110e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  64%|█████████████████████████▍              |  ETA: 0:04:20 ( 3.71  s/it)[K
+    day: 6[K
+     IO: 0.15 s/win[K
+    GPU: 3.46 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.003[K
+   mass: co2:Δ=4.1977e-02%  sf6:Δ=1.8471e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  64%|█████████████████████████▋              |  ETA: 0:04:23 ( 3.81  s/it)[K
+    day: 6[K
+     IO: 0.15 s/win[K
+    GPU: 3.56 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.003[K
+   mass: co2:Δ=4.3082e-02%  sf6:Δ=1.8826e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 41 → 42 (sim_hours=123.0, snap_hours=123.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  65%|█████████████████████████▉              |  ETA: 0:04:26 ( 3.91  s/it)[K
+    day: 6[K
+     IO: 0.15 s/win[K
+    GPU: 3.66 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.003[K
+   mass: co2:Δ=4.4141e-02%  sf6:Δ=1.9243e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  65%|██████████████████████████              |  ETA: 0:04:28 ( 4.00  s/it)[K
+    day: 6[K
+     IO: 0.15 s/win[K
+    GPU: 3.76 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.003[K
+   mass: co2:Δ=4.5125e-02%  sf6:Δ=1.9612e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  66%|██████████████████████████▎             |  ETA: 0:04:31 ( 4.10  s/it)[K
+    day: 6[K
+     IO: 0.15 s/win[K
+    GPU: 3.85 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.003[K
+   mass: co2:Δ=4.6047e-02%  sf6:Δ=1.9933e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 42 → 43 (sim_hours=126.0, snap_hours=126.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  66%|██████████████████████████▌             |  ETA: 0:04:32 ( 4.19  s/it)[K
+    day: 6[K
+     IO: 0.15 s/win[K
+    GPU: 3.94 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.003[K
+   mass: co2:Δ=4.6789e-02%  sf6:Δ=2.0264e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  67%|██████████████████████████▋             |  ETA: 0:04:33 ( 4.27  s/it)[K
+    day: 6[K
+     IO: 0.15 s/win[K
+    GPU: 4.03 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.003[K
+   mass: co2:Δ=4.7452e-02%  sf6:Δ=2.0521e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  67%|██████████████████████████▉             |  ETA: 0:04:35 ( 4.36  s/it)[K
+    day: 6[K
+     IO: 0.15 s/win[K
+    GPU: 4.11 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.003[K
+   mass: co2:Δ=4.8054e-02%  sf6:Δ=2.0740e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 43 → 44 (sim_hours=129.0, snap_hours=129.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  68%|███████████████████████████▏            |  ETA: 0:04:33 ( 4.41  s/it)[K
+    day: 6[K
+     IO: 0.15 s/win[K
+    GPU: 4.16 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.003[K
+   mass: co2:Δ=4.8641e-02%  sf6:Δ=2.1341e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  68%|███████████████████████████▎            |  ETA: 0:04:32 ( 4.45  s/it)[K
+    day: 6[K
+     IO: 0.15 s/win[K
+    GPU: 4.21 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.003[K
+   mass: co2:Δ=4.9146e-02%  sf6:Δ=2.1875e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  69%|███████████████████████████▌            |  ETA: 0:04:30 ( 4.50  s/it)[K
+    day: 6[K
+     IO: 0.15 s/win[K
+    GPU: 4.26 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.003[K
+   mass: co2:Δ=4.9600e-02%  sf6:Δ=2.2353e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 44 → 45 (sim_hours=132.0, snap_hours=132.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  69%|███████████████████████████▊            |  ETA: 0:04:30 ( 4.58  s/it)[K
+    day: 6[K
+     IO: 0.15 s/win[K
+    GPU: 4.34 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.003[K
+   mass: co2:Δ=4.9641e-02%  sf6:Δ=2.2791e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  70%|███████████████████████████▉            |  ETA: 0:04:30 ( 4.66  s/it)[K
+    day: 6[K
+     IO: 0.15 s/win[K
+    GPU: 4.42 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.003[K
+   mass: co2:Δ=4.9648e-02%  sf6:Δ=2.3192e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  70%|████████████████████████████▏           |  ETA: 0:04:30 ( 4.74  s/it)[K
+    day: 6[K
+     IO: 0.14 s/win[K
+    GPU: 4.50 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.003[K
+   mass: co2:Δ=4.9626e-02%  sf6:Δ=2.3577e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 45 → 46 (sim_hours=135.0, snap_hours=135.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  71%|████████████████████████████▍           |  ETA: 0:04:30 ( 4.81  s/it)[K
+    day: 6[K
+     IO: 0.14 s/win[K
+    GPU: 4.57 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.003[K
+   mass: co2:Δ=4.9800e-02%  sf6:Δ=2.4073e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  71%|████████████████████████████▌           |  ETA: 0:04:29 ( 4.89  s/it)[K
+    day: 6[K
+     IO: 0.14 s/win[K
+    GPU: 4.65 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.003[K
+   mass: co2:Δ=4.9940e-02%  sf6:Δ=2.4538e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  72%|████████████████████████████▊           |  ETA: 0:04:28 ( 4.96  s/it)[K
+    day: 6[K
+     IO: 0.14 s/win[K
+    GPU: 4.72 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.003[K
+   mass: co2:Δ=5.0080e-02%  sf6:Δ=2.4976e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 46 → 47 (sim_hours=138.0, snap_hours=138.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  72%|█████████████████████████████           |  ETA: 0:04:27 ( 5.05  s/it)[K
+    day: 6[K
+     IO: 0.14 s/win[K
+    GPU: 4.81 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.003[K
+   mass: co2:Δ=5.0690e-02%  sf6:Δ=2.5435e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  73%|█████████████████████████████▏          |  ETA: 0:04:27 ( 5.13  s/it)[K
+    day: 6[K
+     IO: 0.14 s/win[K
+    GPU: 4.89 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.003[K
+   mass: co2:Δ=5.1279e-02%  sf6:Δ=2.5838e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  73%|█████████████████████████████▍          |  ETA: 0:04:26 ( 5.21  s/it)[K
+    day: 6[K
+     IO: 0.14 s/win[K
+    GPU: 4.98 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.003[K
+   mass: co2:Δ=5.1851e-02%  sf6:Δ=2.6213e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 47 → 48 (sim_hours=141.0, snap_hours=141.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  74%|█████████████████████████████▋          |  ETA: 0:04:24 ( 5.28  s/it)[K
+    day: 6[K
+     IO: 0.14 s/win[K
+    GPU: 5.04 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.003[K
+   mass: co2:Δ=5.2921e-02%  sf6:Δ=2.6673e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  74%|█████████████████████████████▊          |  ETA: 0:04:22 ( 5.34  s/it)[K
+    day: 6[K
+     IO: 0.14 s/win[K
+    GPU: 5.11 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.004 y=0.003[K
+   mass: co2:Δ=5.3932e-02%  sf6:Δ=2.7108e-02%[K[A[A[A[A[A[A[ Info:   CMFMC: binary reader (GEOSFP_CS180.20211207.A3mstE.bin, t=1)
+[ Info:   DTRAIN: binary reader (GEOSFP_CS180.20211207.A3dyn.bin, t=1)
+[ Info:   A1: binary reader (GEOSFP_CS180.20211207.A1.bin, t=1)
+[ Info: Binary output finalized: 8 timesteps → /temp1/catrine/output/catrine_gchp_v4_7d_fullphys_20211206.bin
+[ Info:   Loading GMAO coordinates from cs_c180_gridspec.nc
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  75%|██████████████████████████████          |  ETA: 0:04:20 ( 5.41  s/it)[K
+    day: 6[K
+     IO: 0.14 s/win[K
+    GPU: 5.18 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=5.4903e-02%  sf6:Δ=2.7522e-02%[K[A[A[A[A[A[A[ Info: Converted /temp1/catrine/output/catrine_gchp_v4_7d_fullphys_20211206.bin → /temp1/catrine/output/catrine_gchp_v4_7d_fullphys_20211206.nc (8 timesteps)
+[ Info: LMDZ CO2 posterior: snapshot 48 → 49 (sim_hours=144.0, snap_hours=144.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  76%|██████████████████████████████▎         |  ETA: 0:04:14 ( 5.40  s/it)[K
+    day: 7[K
+     IO: 0.14 s/win[K
+    GPU: 5.16 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=5.5930e-02%  sf6:Δ=2.7841e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  76%|██████████████████████████████▍         |  ETA: 0:04:08 ( 5.38  s/it)[K
+    day: 7[K
+     IO: 0.14 s/win[K
+    GPU: 5.15 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=5.6942e-02%  sf6:Δ=2.8127e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  77%|██████████████████████████████▋         |  ETA: 0:04:02 ( 5.37  s/it)[K
+    day: 7[K
+     IO: 0.14 s/win[K
+    GPU: 5.13 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=5.7941e-02%  sf6:Δ=2.8391e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 49 → 50 (sim_hours=147.0, snap_hours=147.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  77%|██████████████████████████████▉         |  ETA: 0:03:56 ( 5.35  s/it)[K
+    day: 7[K
+     IO: 0.14 s/win[K
+    GPU: 5.12 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=5.8792e-02%  sf6:Δ=2.8686e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  78%|███████████████████████████████         |  ETA: 0:03:50 ( 5.34  s/it)[K
+    day: 7[K
+     IO: 0.14 s/win[K
+    GPU: 5.11 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=5.9621e-02%  sf6:Δ=2.8986e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  78%|███████████████████████████████▎        |  ETA: 0:03:44 ( 5.32  s/it)[K
+    day: 7[K
+     IO: 0.14 s/win[K
+    GPU: 5.09 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.0423e-02%  sf6:Δ=2.9277e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 50 → 51 (sim_hours=150.0, snap_hours=150.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  79%|███████████████████████████████▌        |  ETA: 0:03:38 ( 5.31  s/it)[K
+    day: 7[K
+     IO: 0.14 s/win[K
+    GPU: 5.08 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.0910e-02%  sf6:Δ=2.9557e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  79%|███████████████████████████████▋        |  ETA: 0:03:32 ( 5.29  s/it)[K
+    day: 7[K
+     IO: 0.14 s/win[K
+    GPU: 5.06 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.1380e-02%  sf6:Δ=2.9796e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  80%|███████████████████████████████▉        |  ETA: 0:03:26 ( 5.28  s/it)[K
+    day: 7[K
+     IO: 0.13 s/win[K
+    GPU: 5.05 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.1828e-02%  sf6:Δ=2.9996e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 51 → 52 (sim_hours=153.0, snap_hours=153.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  80%|████████████████████████████████▏       |  ETA: 0:03:20 ( 5.27  s/it)[K
+    day: 7[K
+     IO: 0.13 s/win[K
+    GPU: 5.04 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.2007e-02%  sf6:Δ=3.0205e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  81%|████████████████████████████████▎       |  ETA: 0:03:14 ( 5.25  s/it)[K
+    day: 7[K
+     IO: 0.13 s/win[K
+    GPU: 5.02 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.2175e-02%  sf6:Δ=3.0395e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  81%|████████████████████████████████▌       |  ETA: 0:03:09 ( 5.24  s/it)[K
+    day: 7[K
+     IO: 0.13 s/win[K
+    GPU: 5.01 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.2320e-02%  sf6:Δ=3.0555e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 52 → 53 (sim_hours=156.0, snap_hours=156.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  82%|████████████████████████████████▊       |  ETA: 0:03:03 ( 5.23  s/it)[K
+    day: 7[K
+     IO: 0.13 s/win[K
+    GPU: 5.00 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.2118e-02%  sf6:Δ=3.0689e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  82%|████████████████████████████████▉       |  ETA: 0:02:57 ( 5.21  s/it)[K
+    day: 7[K
+     IO: 0.13 s/win[K
+    GPU: 4.98 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.1916e-02%  sf6:Δ=3.0793e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  83%|█████████████████████████████████▏      |  ETA: 0:02:52 ( 5.20  s/it)[K
+    day: 7[K
+     IO: 0.13 s/win[K
+    GPU: 4.97 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.1705e-02%  sf6:Δ=3.0882e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 53 → 54 (sim_hours=159.0, snap_hours=159.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  83%|█████████████████████████████████▍      |  ETA: 0:02:46 ( 5.19  s/it)[K
+    day: 7[K
+     IO: 0.13 s/win[K
+    GPU: 4.96 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.1492e-02%  sf6:Δ=3.0989e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  84%|█████████████████████████████████▌      |  ETA: 0:02:40 ( 5.17  s/it)[K
+    day: 7[K
+     IO: 0.13 s/win[K
+    GPU: 4.95 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.1259e-02%  sf6:Δ=3.1107e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  84%|█████████████████████████████████▊      |  ETA: 0:02:35 ( 5.16  s/it)[K
+    day: 7[K
+     IO: 0.13 s/win[K
+    GPU: 4.93 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.0999e-02%  sf6:Δ=3.1218e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 54 → 55 (sim_hours=162.0, snap_hours=162.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  85%|██████████████████████████████████      |  ETA: 0:02:29 ( 5.15  s/it)[K
+    day: 7[K
+     IO: 0.13 s/win[K
+    GPU: 4.92 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.1099e-02%  sf6:Δ=3.1325e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  85%|██████████████████████████████████▏     |  ETA: 0:02:24 ( 5.13  s/it)[K
+    day: 7[K
+     IO: 0.13 s/win[K
+    GPU: 4.91 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.1194e-02%  sf6:Δ=3.1426e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  86%|██████████████████████████████████▍     |  ETA: 0:02:18 ( 5.12  s/it)[K
+    day: 7[K
+     IO: 0.13 s/win[K
+    GPU: 4.90 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.1299e-02%  sf6:Δ=3.1541e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 55 → 56 (sim_hours=165.0, snap_hours=165.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  86%|██████████████████████████████████▋     |  ETA: 0:02:13 ( 5.11  s/it)[K
+    day: 7[K
+     IO: 0.13 s/win[K
+    GPU: 4.89 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.1882e-02%  sf6:Δ=3.1678e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  87%|██████████████████████████████████▊     |  ETA: 0:02:07 ( 5.10  s/it)[K
+    day: 7[K
+     IO: 0.13 s/win[K
+    GPU: 4.88 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.2467e-02%  sf6:Δ=3.1815e-02%[K[A[A[A[A[A[A[ Info:   CMFMC: binary reader (GEOSFP_CS180.20211208.A3mstE.bin, t=1)
+[ Info:   DTRAIN: binary reader (GEOSFP_CS180.20211208.A3dyn.bin, t=1)
+[ Info:   A1: binary reader (GEOSFP_CS180.20211208.A1.bin, t=1)
+[ Info: Binary output finalized: 8 timesteps → /temp1/catrine/output/catrine_gchp_v4_7d_fullphys_20211207.bin
+[ Info:   Loading GMAO coordinates from cs_c180_gridspec.nc
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  88%|███████████████████████████████████     |  ETA: 0:02:02 ( 5.09  s/it)[K
+    day: 7[K
+     IO: 0.13 s/win[K
+    GPU: 4.86 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.3045e-02%  sf6:Δ=3.1947e-02%[K[A[A[A[A[A[A[ Info: Converted /temp1/catrine/output/catrine_gchp_v4_7d_fullphys_20211207.bin → /temp1/catrine/output/catrine_gchp_v4_7d_fullphys_20211207.nc (8 timesteps)
+[ Info: LMDZ CO2 posterior: snapshot 56 → 57 (sim_hours=168.0, snap_hours=168.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  88%|███████████████████████████████████▎    |  ETA: 0:01:57 ( 5.08  s/it)[K
+    day: 8[K
+     IO: 0.13 s/win[K
+    GPU: 4.85 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.3951e-02%  sf6:Δ=3.2113e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  89%|███████████████████████████████████▍    |  ETA: 0:01:51 ( 5.07  s/it)[K
+    day: 8[K
+     IO: 0.13 s/win[K
+    GPU: 4.84 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.4845e-02%  sf6:Δ=3.2270e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  89%|███████████████████████████████████▋    |  ETA: 0:01:46 ( 5.06  s/it)[K
+    day: 8[K
+     IO: 0.13 s/win[K
+    GPU: 4.83 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.5726e-02%  sf6:Δ=3.2405e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 57 → 58 (sim_hours=171.0, snap_hours=171.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  90%|███████████████████████████████████▉    |  ETA: 0:01:41 ( 5.05  s/it)[K
+    day: 8[K
+     IO: 0.13 s/win[K
+    GPU: 4.83 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.6470e-02%  sf6:Δ=3.2576e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  90%|████████████████████████████████████    |  ETA: 0:01:36 ( 5.05  s/it)[K
+    day: 8[K
+     IO: 0.13 s/win[K
+    GPU: 4.83 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.7207e-02%  sf6:Δ=3.2775e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  91%|████████████████████████████████████▎   |  ETA: 0:01:31 ( 5.04  s/it)[K
+    day: 8[K
+     IO: 0.13 s/win[K
+    GPU: 4.82 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.7933e-02%  sf6:Δ=3.2990e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 58 → 59 (sim_hours=174.0, snap_hours=174.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  91%|████████████████████████████████████▌   |  ETA: 0:01:26 ( 5.03  s/it)[K
+    day: 8[K
+     IO: 0.13 s/win[K
+    GPU: 4.81 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.8338e-02%  sf6:Δ=3.3229e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  92%|████████████████████████████████████▋   |  ETA: 0:01:20 ( 5.02  s/it)[K
+    day: 8[K
+     IO: 0.12 s/win[K
+    GPU: 4.80 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.8727e-02%  sf6:Δ=3.3451e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  92%|████████████████████████████████████▉   |  ETA: 0:01:15 ( 5.01  s/it)[K
+    day: 8[K
+     IO: 0.12 s/win[K
+    GPU: 4.79 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.9115e-02%  sf6:Δ=3.3675e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 59 → 60 (sim_hours=177.0, snap_hours=177.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  93%|█████████████████████████████████████▏  |  ETA: 0:01:10 ( 5.00  s/it)[K
+    day: 8[K
+     IO: 0.12 s/win[K
+    GPU: 4.78 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.9242e-02%  sf6:Δ=3.3938e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  93%|█████████████████████████████████████▎  |  ETA: 0:01:05 ( 4.99  s/it)[K
+    day: 8[K
+     IO: 0.12 s/win[K
+    GPU: 4.77 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.9379e-02%  sf6:Δ=3.4195e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  94%|█████████████████████████████████████▌  |  ETA: 0:01:00 ( 4.98  s/it)[K
+    day: 8[K
+     IO: 0.12 s/win[K
+    GPU: 4.76 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.9520e-02%  sf6:Δ=3.4450e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 60 → 61 (sim_hours=180.0, snap_hours=180.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  94%|█████████████████████████████████████▊  |  ETA: 0:00:55 ( 4.97  s/it)[K
+    day: 8[K
+     IO: 0.12 s/win[K
+    GPU: 4.75 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.9337e-02%  sf6:Δ=3.4715e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  95%|█████████████████████████████████████▉  |  ETA: 0:00:50 ( 4.96  s/it)[K
+    day: 8[K
+     IO: 0.12 s/win[K
+    GPU: 4.75 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.9152e-02%  sf6:Δ=3.4973e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  95%|██████████████████████████████████████▏ |  ETA: 0:00:45 ( 4.95  s/it)[K
+    day: 8[K
+     IO: 0.12 s/win[K
+    GPU: 4.74 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.8960e-02%  sf6:Δ=3.5232e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 61 → 62 (sim_hours=183.0, snap_hours=183.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  96%|██████████████████████████████████████▍ |  ETA: 0:00:40 ( 4.94  s/it)[K
+    day: 8[K
+     IO: 0.12 s/win[K
+    GPU: 4.73 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.8757e-02%  sf6:Δ=3.5501e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  96%|██████████████████████████████████████▌ |  ETA: 0:00:35 ( 4.93  s/it)[K
+    day: 8[K
+     IO: 0.12 s/win[K
+    GPU: 4.72 s/win[K
+    Out: 0.10 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.8546e-02%  sf6:Δ=3.5782e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  97%|██████████████████████████████████████▊ |  ETA: 0:00:30 ( 4.92  s/it)[K
+    day: 8[K
+     IO: 0.12 s/win[K
+    GPU: 4.71 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.8325e-02%  sf6:Δ=3.6059e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 62 → 63 (sim_hours=186.0, snap_hours=186.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  97%|███████████████████████████████████████ |  ETA: 0:00:25 ( 4.91  s/it)[K
+    day: 8[K
+     IO: 0.12 s/win[K
+    GPU: 4.70 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.8478e-02%  sf6:Δ=3.6341e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  98%|███████████████████████████████████████▏|  ETA: 0:00:20 ( 4.90  s/it)[K
+    day: 8[K
+     IO: 0.12 s/win[K
+    GPU: 4.69 s/win[K
+    Out: 0.10 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.8629e-02%  sf6:Δ=3.6632e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  98%|███████████████████████████████████████▍|  ETA: 0:00:15 ( 4.90  s/it)[K
+    day: 8[K
+     IO: 0.12 s/win[K
+    GPU: 4.68 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.8772e-02%  sf6:Δ=3.6912e-02%[K[A[A[A[A[A[A[ Info: LMDZ CO2 posterior: snapshot 63 → 64 (sim_hours=189.0, snap_hours=189.0)
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  99%|███████████████████████████████████████▋|  ETA: 0:00:10 ( 4.89  s/it)[K
+    day: 8[K
+     IO: 0.12 s/win[K
+    GPU: 4.67 s/win[K
+    Out: 0.10 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.9379e-02%  sf6:Δ=3.7198e-02%[K[A[A[A[A[A[A
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation  99%|███████████████████████████████████████▊|  ETA: 0:00:05 ( 4.88  s/it)[K
+    day: 8[K
+     IO: 0.12 s/win[K
+    GPU: 4.66 s/win[K
+    Out: 0.10 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=6.9987e-02%  sf6:Δ=3.7482e-02%[K[A[A[A[A[A[A[ Info: Binary output finalized: 8 timesteps → /temp1/catrine/output/catrine_gchp_v4_7d_fullphys_20211208.bin
+[ Info:   Loading GMAO coordinates from cs_c180_gridspec.nc
+
+
+
+
+
+
+[K[A[K[A[K[A[K[A[K[A[K[ASimulation 100%|████████████████████████████████████████| Time: 0:15:32 ( 4.86  s/it)[K
+    day: 8[K
+     IO: 0.12 s/win[K
+    GPU: 4.65 s/win[K
+    Out: 0.11 s/win[K
+    CFL: x=0.003 y=0.003[K
+   mass: co2:Δ=7.0591e-02%  sf6:Δ=3.8005e-02%[K
+HDF5-DIAG: Error detected in HDF5 (1.14.6) thread 1:
+  #000: /workspace/srcdir/hdf5-1.14.6/src/H5D.c line 1347 in H5Dwrite(): can't synchronously write data
+    major: Dataset
+    minor: Write failed
+  #001: /workspace/srcdir/hdf5-1.14.6/src/H5D.c line 1263 in H5D__write_api_common(): dset_id is not a dataset ID
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+[ Info:   Final mass co2: 2.123149e+15 kg (Δ=7.0591e-02%)
+[ Info:   Final mass fossil_co2: 5.629789e+11 kg
+[ Info:   Final mass rn222: 2.055478e-02 kg
+[ Info:   Final mass sf6: 5.537764e+07 kg (Δ=3.8005e-02%)
+[ Info: Simulation complete: 1536 steps, 932.9s | avg IO=0.12 GPU=4.65 Out=0.11 s/win
+[ Info: Binary output finalized: 1 timesteps → /temp1/catrine/output/catrine_gchp_v4_7d_fullphys_20211209.bin
+[ Info:   Loading GMAO coordinates from cs_c180_gridspec.nc
+[ Info: Converted /temp1/catrine/output/catrine_gchp_v4_7d_fullphys_20211209.bin → /temp1/catrine/output/catrine_gchp_v4_7d_fullphys_20211209.nc (1 timesteps)

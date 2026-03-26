@@ -41,9 +41,7 @@ function allocate_cubed_sphere_field(grid::CubedSphereGrid{FT},
     Hp = grid.Hp
     n = Nc + 2 * Hp
     AT = array_type(architecture(grid))
-    return ntuple(6) do _
-        AT(zeros(FT, n, n, Nz))
-    end
+    return allocate_ntuple_panels(grid.panel_map, _ -> AT(zeros(FT, n, n, Nz)))
 end
 
 """
@@ -54,23 +52,69 @@ neighboring panels with the correct edge-to-edge mapping and orientation.
 
 `data` is `NTuple{6, Array{FT, 3}}` with each panel `(Nc + 2*Hp) × (Nc + 2*Hp) × Nz`.
 """
+function fill_panel_halos_nosync!(data::NTuple{6, A},
+                                  grid::CubedSphereGrid) where {A <: AbstractArray}
+    _fill_panel_halos_nosync!(data, grid, grid.panel_map)
+end
+
 function fill_panel_halos!(data::NTuple{6, A},
                            grid::CubedSphereGrid) where {A <: AbstractArray}
-    Nc = grid.Nc
-    Hp = grid.Hp
-    conn = grid.connectivity
+    fill_panel_halos_nosync!(data, grid)
+    _sync_panel_halos!(data, grid.panel_map)
+end
 
-    for p in 1:6
-        for e in 1:4  # 1=north, 2=south, 3=east, 4=west
-            nb = conn.neighbors[p][e]
-            q = nb.panel
-            orient = nb.orientation
-            q_e = _reciprocal_edge_index(conn, p, e)
-            _fill_edge!(data[p], data[q], e, q_e, orient, Nc, Hp)
-        end
+# Single-GPU: all 24 edges in one batch, single sync
+function _fill_panel_halos_nosync!(data::NTuple{6, A}, grid::CubedSphereGrid,
+                             ::SingleGPUMap) where {A <: AbstractArray}
+    Nc, Hp, conn = grid.Nc, grid.Hp, grid.connectivity
+    for p in 1:6, e in 1:4
+        nb = conn.neighbors[p][e]
+        q_e = _reciprocal_edge_index(conn, p, e)
+        _fill_edge!(data[p], data[nb.panel], e, q_e, nb.orientation, Nc, Hp)
     end
-    # Single sync after all 24 edge kernels are queued
-    synchronize(get_backend(data[1]))
+end
+
+# Multi-GPU: same-GPU edges first, then cross-GPU via CPU staging
+function _fill_panel_halos_nosync!(data::NTuple{6, A}, grid::CubedSphereGrid,
+                             pm::PanelGPUMap) where {A <: AbstractArray}
+    Nc, Hp, conn = grid.Nc, grid.Hp, grid.connectivity
+
+    # Pass 1: same-GPU edges (direct kernel, no transfer)
+    for p in 1:6, e in 1:4
+        q = conn.neighbors[p][e].panel
+        is_cross_gpu(pm, p, q) && continue
+        nb = conn.neighbors[p][e]
+        q_e = _reciprocal_edge_index(conn, p, e)
+        _fill_edge!(data[p], data[q], e, q_e, nb.orientation, Nc, Hp)
+    end
+
+    # Pass 2: cross-GPU edges via CPU staging
+    for p in 1:6, e in 1:4
+        q = conn.neighbors[p][e].panel
+        is_cross_gpu(pm, p, q) || continue
+        nb = conn.neighbors[p][e]
+        q_e = _reciprocal_edge_index(conn, p, e)
+        _fill_edge_staged!(data[p], data[q], e, q_e, nb.orientation, Nc, Hp)
+    end
+end
+@inline _sync_panel_halos!(data::NTuple{6}, ::SingleGPUMap) = synchronize(get_backend(data[1]))
+@inline _sync_panel_halos!(_::NTuple{6}, pm::PanelGPUMap) = sync_all_gpus(pm)
+
+"""
+Cross-GPU edge fill via P2P direct access.
+
+With P2P enabled (`CUDA.enable_peer_access`), a kernel on the destination GPU
+can read the source GPU's memory directly over PCIe. This uses the same
+`_fill_edge_kernel!` as same-GPU edges — only the edge strip is touched
+(Nc × Hp × Nk elements ≈ 300 KB), not the full panel.
+
+Falls back to CPU staging if P2P is unavailable (e.g., different NUMA nodes).
+"""
+function _fill_edge_staged!(dst::AbstractArray{T, 3}, src::AbstractArray{T, 3},
+                             e::Int, q_e::Int, orient::Int,
+                             Nc::Int, Hp::Int) where T
+    # P2P path: launch kernel on dst's GPU, read directly from src's GPU
+    _fill_edge!(dst, src, e, q_e, orient, Nc, Hp)
     return nothing
 end
 
@@ -182,15 +226,30 @@ Fill corner ghost cells for a cubed-sphere 3D field. Must be called AFTER
 """
 function copy_corners!(data::NTuple{6, A},
                        grid::CubedSphereGrid, dir::Int) where {A <: AbstractArray}
-    Nc = grid.Nc
-    Hp = grid.Hp
-    N  = Nc + 2 * Hp  # total array extent per dimension
+    _copy_corners!(data, grid, dir, grid.panel_map)
+end
 
+# Single GPU: batch all 6 panels, single sync
+function _copy_corners!(data::NTuple{6, A}, grid::CubedSphereGrid, dir::Int,
+                         ::SingleGPUMap) where {A <: AbstractArray}
+    Nc, Hp = grid.Nc, grid.Hp
+    N = Nc + 2 * Hp
     for p in 1:6
         _fill_corners_panel!(data[p], Nc, Hp, N, dir)
     end
     synchronize(get_backend(data[1]))
-    return nothing
+end
+
+# Multi-GPU: corners only read from same panel's already-filled edge halos,
+# so no cross-GPU transfer — just need per-GPU sync
+function _copy_corners!(data::NTuple{6, A}, grid::CubedSphereGrid, dir::Int,
+                         pm::PanelGPUMap) where {A <: AbstractArray}
+    Nc, Hp = grid.Nc, grid.Hp
+    N = Nc + 2 * Hp
+    for p in 1:6
+        _fill_corners_panel!(data[p], Nc, Hp, N, dir)
+    end
+    sync_all_gpus(pm)
 end
 
 """Fill all 4 corner regions of a single panel array."""

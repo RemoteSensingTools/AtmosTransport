@@ -24,9 +24,12 @@ using ..Grids: AbstractGrid, AbstractStructuredGrid, LatitudeLongitudeGrid, Cube
 using ..Grids: Δx, Δy, Δz, floattype, level_thickness, cell_area
 using ..Grids: ReducedGridSpec, reduce_row!, expand_row!, reduce_velocity_row!
 using ..Grids: reduce_row_mass!, reduce_am_row!, expand_row_mass!
-using ..Grids: fill_panel_halos!, copy_corners!, allocate_cubed_sphere_field
+using ..Grids: fill_panel_halos!, fill_panel_halos_nosync!, copy_corners!, allocate_cubed_sphere_field
 using ..Fields: AbstractField
-using ..Architectures: architecture, device, array_type, CPU, GPU
+using ..Architectures: architecture, device, array_type, CPU, GPU,
+                       AbstractPanelMap, SingleGPUMap, PerGPUWorkspace, workspace_for,
+                       allocate_ntuple_panels, sync_all_gpus, foreach_gpu_batch, foreach_gpu_batch_nosync,
+                       set_panel_map!, active_panel_map, for_panels, for_panels_nosync
 using KernelAbstractions: get_backend, synchronize
 
 """
@@ -84,7 +87,7 @@ export advect_x_massflux_reduced!
 export CubedSphereGeometryCache, CubedSphereMassFluxWorkspace
 export allocate_cs_massflux_workspace
 export max_cfl_x_cs, max_cfl_y_cs
-export compute_air_mass_panel!, compute_cm_panel!, compute_cm_pressure_fixer_panel!
+export compute_air_mass_panel!, compute_air_mass_panels!, compute_cm_panel!, compute_cm_pressure_fixer_panel!
 export apply_mass_fixer!
 export compute_cm_pressure_fixer_panel!, compute_dm_per_sub_panel!
 export compute_cm_mass_weighted_panel!

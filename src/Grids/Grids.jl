@@ -21,7 +21,9 @@ module Grids
 
 using DocStringExtensions
 using KernelAbstractions
-using ..Architectures: AbstractArchitecture, CPU, array_type
+using ..Architectures: AbstractArchitecture, CPU, array_type,
+                       AbstractPanelMap, SingleGPUMap, PanelGPUMap,
+                       allocate_ntuple_panels, sync_all_gpus, is_cross_gpu, is_multi_gpu
 import ..Architectures: architecture
 
 export AbstractGrid, AbstractStructuredGrid
@@ -34,7 +36,7 @@ export xnode, ynode, znode, cell_area, cell_volume
 export Δx, Δy, Δz, level_thickness
 export topology, halo_size, grid_size, floattype
 export ReducedGridSpec, compute_reduced_grid
-export allocate_cubed_sphere_field, fill_panel_halos!, copy_corners!, fill_cgrid_halos!
+export allocate_cubed_sphere_field, fill_panel_halos!, fill_panel_halos_nosync!, copy_corners!, fill_cgrid_halos!
 export merge_upper_levels
 
 include("topology.jl")

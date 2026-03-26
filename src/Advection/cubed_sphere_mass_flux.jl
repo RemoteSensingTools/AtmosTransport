@@ -1022,10 +1022,16 @@ end
     @inbounds dst[Hp + i, Hp + j, k] = src[Hp + i, Hp + j, k]
 end
 
-function _copy_interior!(dst, src, Hp, Nc, Nz)
+function _copy_interior_nosync!(dst, src, Hp, Nc, Nz)
     backend = get_backend(dst)
     k! = _copy_interior_kernel!(backend, 256)
     k!(dst, src, Hp; ndrange=(Nc, Nc, Nz))
+    return nothing
+end
+
+function _copy_interior!(dst, src, Hp, Nc, Nz)
+    backend = get_backend(dst)
+    _copy_interior_nosync!(dst, src, Hp, Nc, Nz)
     synchronize(backend)
 end
 
@@ -1198,8 +1204,9 @@ function _sweep_x!(rm_panels, m_panels, am_panels, grid, use_limiter, ws;
                    cfl_limit = eltype(ws.rm_buf)(0.95))
     FT = eltype(ws.rm_buf)
     Hp = grid.Hp
-    fill_panel_halos!(rm_panels, grid)
-    fill_panel_halos!(m_panels, grid)
+    fill_panel_halos_nosync!(rm_panels, grid)
+    fill_panel_halos_nosync!(m_panels, grid)
+    sync_all_gpus(grid.panel_map)
 
     # Per-face CFL across all panels
     max_cfl = zero(FT)
@@ -1233,8 +1240,9 @@ function _sweep_y!(rm_panels, m_panels, bm_panels, grid, use_limiter, ws;
                    cfl_limit = eltype(ws.rm_buf)(0.95))
     FT = eltype(ws.rm_buf)
     Hp = grid.Hp
-    fill_panel_halos!(rm_panels, grid)
-    fill_panel_halos!(m_panels, grid)
+    fill_panel_halos_nosync!(rm_panels, grid)
+    fill_panel_halos_nosync!(m_panels, grid)
+    sync_all_gpus(grid.panel_map)
 
     max_cfl = zero(FT)
     for p in 1:6
@@ -1263,20 +1271,28 @@ function _sweep_y!(rm_panels, m_panels, bm_panels, grid, use_limiter, ws;
     return n_sub
 end
 
-function _sweep_z!(rm_panels, m_panels, cm_panels, grid, use_limiter, ws)
+"""Dispatch: bare workspace → wrap in single-GPU PerGPUWorkspace."""
+function _sweep_z!(rm_panels, m_panels, cm_panels, grid, use_limiter,
+                   ws::CubedSphereMassFluxWorkspace)
+    _sweep_z!(rm_panels, m_panels, cm_panels, grid, use_limiter,
+              PerGPUWorkspace([ws], SingleGPUMap()))
+end
+
+"""Z-direction sweep with double buffering. Multi-GPU via foreach_gpu_batch."""
+function _sweep_z!(rm_panels, m_panels, cm_panels, grid, use_limiter,
+                   ws_pgw::PerGPUWorkspace)
     Hp = grid.Hp
     Nc = grid.Nc
     Nz = grid.Nz
-    # Column-sequential kernel: processes k=1..Nz sequentially per column,
-    # clamping gamma to [-1,1] to prevent negative mass.
-    # We copy rm/m to workspace buffers before each panel so the kernel reads
-    # from ORIGINAL values — this guarantees exact flux telescoping.
-    for p in 1:6
-        copyto!(ws.rm_buf, rm_panels[p])
-        copyto!(ws.m_buf, m_panels[p])
-        advect_z_cs_panel_column!(rm_panels[p], m_panels[p],
-                                  ws.rm_buf, ws.m_buf,
-                                  cm_panels[p], Hp, Nc, Nz, use_limiter)
+    foreach_gpu_batch(ws_pgw.panel_map) do _, panels
+        ws = workspace_for(ws_pgw, first(panels))
+        for p in panels
+            copyto!(ws.rm_buf, rm_panels[p])
+            copyto!(ws.m_buf, m_panels[p])
+            advect_z_cs_panel_column!(rm_panels[p], m_panels[p],
+                                      ws.rm_buf, ws.m_buf,
+                                      cm_panels[p], Hp, Nc, Nz, use_limiter)
+        end
     end
     return 1
 end

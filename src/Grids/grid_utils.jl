@@ -2,6 +2,10 @@
 # Grid utility functions
 # ---------------------------------------------------------------------------
 
+"""Return the panel map for a grid. SingleGPUMap for LL, grid.panel_map for CS."""
+get_panel_map(::LatitudeLongitudeGrid) = SingleGPUMap()
+get_panel_map(grid::CubedSphereGrid)   = grid.panel_map
+
 """
 $(SIGNATURES)
 

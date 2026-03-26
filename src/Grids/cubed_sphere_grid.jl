@@ -82,6 +82,8 @@ struct CubedSphereGrid{FT, Arch, VZ} <: AbstractStructuredGrid{FT, Arch}
     connectivity :: PanelConnectivity
     "vertical coordinate"
     vertical     :: VZ
+    "panel-to-GPU mapping (SingleGPUMap for single GPU)"
+    panel_map    :: AbstractPanelMap
 end
 
 # ---------------------------------------------------------------------------
@@ -176,7 +178,8 @@ function CubedSphereGrid(arch::AbstractArchitecture;
                          halo = (3, 1),
                          radius = FT(6.371e6),
                          gravity = FT(9.81),
-                         reference_pressure = FT(101325.0))
+                         reference_pressure = FT(101325.0),
+                         panel_map::AbstractPanelMap = SingleGPUMap())
     Hp, Hz = halo
     Nz = n_levels(vertical)
 
@@ -251,7 +254,7 @@ function CubedSphereGrid(arch::AbstractArchitecture;
         λᶜ_panels, φᶜ_panels, λᶠ_panels, φᶠ_panels,
         Aᶜ_panels, Δx_panels, Δy_panels,
         R, FT(gravity), FT(reference_pressure),
-        conn, vertical)
+        conn, vertical, panel_map)
 end
 
 # ---------------------------------------------------------------------------

@@ -10,7 +10,12 @@ and the new driver-based `run!(model)` path with dispatch on
 """
 module Models
 
-using ..Architectures: AbstractArchitecture, architecture, array_type
+using ..Architectures: AbstractArchitecture, architecture, array_type,
+                       AbstractPanelMap, SingleGPUMap, PanelGPUMap,
+                       PerGPUWorkspace, workspace_for,
+                       allocate_ntuple_panels, sync_all_gpus, build_panel_map,
+                       set_panel_map!, active_panel_map, for_panels, for_panels_nosync,
+                       foreach_gpu_batch
 using ..Grids: AbstractGrid
 using ..Fields: Field, Center, TracerFields
 using ..Advection: AbstractAdvectionScheme
@@ -25,11 +30,14 @@ using ..Sources: AbstractSurfaceFlux
 using ..Callbacks: AbstractCallback
 using DocStringExtensions
 
-export AbstractModel, TransportModel, run!, update_met_data!
+export AbstractModel, TransportModel, run!, update_met_data!, preflight_check!, is_verbose
 export AbstractBufferingStrategy, SingleBuffer, DoubleBuffer
 export TransportPolicy, resolve_transport_policy
 export AbstractTransportBasis, DryTransportBasis, MoistTransportBasis, transport_basis_type
 export MoistSubStepDiag, MOIST_DIAG
+
+"""Check if verbose mode is enabled (set by `--verbose` / `-v` flag in run.jl)."""
+@inline is_verbose() = get(ENV, "ATMOSTR_VERBOSE", "") == "1"
 
 # Buffering strategy types
 include("buffering.jl")
@@ -271,6 +279,7 @@ include("io_scheduler.jl")        # IOScheduler: SingleBuffer/DoubleBuffer abstr
 include("simulation_state.jl")    # Allocation: physics buffers, tracers, air mass, geometry
 include("physics_phases.jl")      # Grid-dispatched phase functions for unified run loop
 include("run_loop.jl")            # Unified run loop (single _run_loop! via dispatch)
+include("preflight.jl")           # Pre-run validation (--check / -c flag)
 
 # =====================================================================
 # Pretty-print tree for TransportModel

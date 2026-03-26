@@ -10,7 +10,8 @@
 #   CubedSphereMetBuffer / CubedSphereCPUBuffer — for CubedSphereGrid
 # ---------------------------------------------------------------------------
 
-using ..Architectures: AbstractArchitecture, array_type
+using ..Architectures: AbstractArchitecture, array_type,
+                       AbstractPanelMap, SingleGPUMap, allocate_ntuple_panels
 using ..Advection: MassFluxWorkspace, allocate_massflux_workspace
 
 """
@@ -148,16 +149,18 @@ struct CubedSphereMetBuffer{FT, A3 <: AbstractArray{FT,3}} <: AbstractMetBuffer{
 end
 
 function CubedSphereMetBuffer(arch::AbstractArchitecture, ::Type{FT},
-                               Nc, Nz, Hp; use_gchp::Bool=false) where FT
+                               Nc, Nz, Hp;
+                               use_gchp::Bool=false,
+                               panel_map::AbstractPanelMap=SingleGPUMap()) where FT
     AT = array_type(arch)
-    delp = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz)), 6)
-    am   = ntuple(_ -> AT(zeros(FT, Nc + 1, Nc, Nz)), 6)
-    bm   = ntuple(_ -> AT(zeros(FT, Nc, Nc + 1, Nz)), 6)
-    cm   = ntuple(_ -> AT(zeros(FT, Nc, Nc, Nz + 1)), 6)
-    cx   = use_gchp ? ntuple(_ -> AT(zeros(FT, Nc + 1, Nc, Nz)), 6) : nothing
-    cy   = use_gchp ? ntuple(_ -> AT(zeros(FT, Nc, Nc + 1, Nz)), 6) : nothing
-    xfx  = use_gchp ? ntuple(_ -> AT(zeros(FT, Nc + 1, Nc, Nz)), 6) : nothing
-    yfx  = use_gchp ? ntuple(_ -> AT(zeros(FT, Nc, Nc + 1, Nz)), 6) : nothing
+    delp = allocate_ntuple_panels(panel_map, _ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz)))
+    am   = allocate_ntuple_panels(panel_map, _ -> AT(zeros(FT, Nc + 1, Nc, Nz)))
+    bm   = allocate_ntuple_panels(panel_map, _ -> AT(zeros(FT, Nc, Nc + 1, Nz)))
+    cm   = allocate_ntuple_panels(panel_map, _ -> AT(zeros(FT, Nc, Nc, Nz + 1)))
+    cx   = use_gchp ? allocate_ntuple_panels(panel_map, _ -> AT(zeros(FT, Nc + 1, Nc, Nz))) : nothing
+    cy   = use_gchp ? allocate_ntuple_panels(panel_map, _ -> AT(zeros(FT, Nc, Nc + 1, Nz))) : nothing
+    xfx  = use_gchp ? allocate_ntuple_panels(panel_map, _ -> AT(zeros(FT, Nc + 1, Nc, Nz))) : nothing
+    yfx  = use_gchp ? allocate_ntuple_panels(panel_map, _ -> AT(zeros(FT, Nc, Nc + 1, Nz))) : nothing
     CubedSphereMetBuffer(delp, am, bm, cm, cx, cy, xfx, yfx)
 end
 

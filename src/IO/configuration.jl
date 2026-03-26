@@ -8,7 +8,7 @@
 
 using TOML
 using Dates
-using ..Architectures: CPU, GPU, array_type
+using ..Architectures: CPU, GPU, array_type, build_panel_map, is_multi_gpu
 using ..Grids: LatitudeLongitudeGrid, CubedSphereGrid, merge_upper_levels, n_levels, set_coord_status!
 using ..Parameters: load_parameters
 using ..Sources: AbstractSurfaceFlux, compute_areas_from_corners,
@@ -155,6 +155,11 @@ function build_model_from_config(config::Dict)
     FT = ft_str == "Float32" ? Float32 : Float64
     arch = use_gpu ? GPU() : CPU()
 
+    # --- Multi-GPU panel map ---
+    panel_map = build_panel_map(config)
+    is_multi_gpu(panel_map) &&
+        @info "Multi-GPU: $(panel_map.n_gpus) GPUs, panels=$(panel_map.panel_to_gpu)"
+
     # --- Parameters ---
     params = load_parameters(FT)
     pp = params.planet
@@ -179,7 +184,8 @@ function build_model_from_config(config::Dict)
         CubedSphereGrid(arch; FT, Nc,
             vertical=vc,
             radius=pp.radius, gravity=pp.gravity,
-            reference_pressure=pp.reference_surface_pressure)
+            reference_pressure=pp.reference_surface_pressure,
+            panel_map)
     else
         sz = get(grid_cfg, "size", [360, 181, 72])
         Nx, Ny = sz[1], sz[2]
@@ -273,21 +279,40 @@ function build_model_from_config(config::Dict)
     # --- Run metadata for provenance tracking ---
     adv_cfg = get(config, "advection", Dict())
     mass_fixer = get(adv_cfg, "mass_fixer", true)
+    mass_fixer_tracers = get(adv_cfg, "mass_fixer_tracers", String[])  # empty = all tracers
     dry_correction = get(adv_cfg, "dry_correction", true)
     remap_pressure_fix = get(adv_cfg, "remap_pressure_fix", true)
     # Transport basis: "dry" (default when dry_correction=true) or "moist" (GCHP-faithful)
     pressure_basis = get(adv_cfg, "pressure_basis", dry_correction ? "dry" : "moist")
+    # Git provenance (best-effort, non-fatal)
+    _repo_dir = dirname(dirname(@__DIR__))  # src/IO/ → src/ → repo root
+    git_commit = try
+        strip(read(`git -C $_repo_dir rev-parse HEAD`, String))
+    catch
+        "unknown"
+    end
+    git_dirty = try
+        !isempty(strip(read(`git -C $_repo_dir status --porcelain`, String)))
+    catch
+        false
+    end
+
     metadata = Dict{String, Any}(
         "config"    => config,
         "user"      => get(ENV, "USER", "unknown"),
         "hostname"  => gethostname(),
         "julia_version" => string(VERSION),
         "created"   => string(Dates.now()),
+        "git_commit" => git_dirty ? git_commit * "-dirty" : git_commit,
         "mass_fixer" => mass_fixer,
+        "mass_fixer_tracers" => mass_fixer_tracers,
         "dry_correction" => dry_correction,
         "pressure_basis" => pressure_basis,
         "remap_pressure_fix" => remap_pressure_fix,
+        "panel_map" => panel_map,
     )
+
+    @info "Git: $(metadata["git_commit"])"
 
     return _Models.TransportModel(;
         grid, tracers, met_data=met, Δt,

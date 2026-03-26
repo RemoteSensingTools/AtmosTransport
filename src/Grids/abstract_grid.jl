@@ -121,3 +121,4 @@ architecture(grid::AbstractGrid{FT, Arch}) where {FT, Arch} = Arch()
 
 """Extract float type from a grid via its type parameter."""
 floattype(::AbstractGrid{FT, Arch}) where {FT, Arch} = FT
+

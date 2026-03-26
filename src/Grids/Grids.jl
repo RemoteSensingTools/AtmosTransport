@@ -38,6 +38,7 @@ export topology, halo_size, grid_size, floattype
 export ReducedGridSpec, compute_reduced_grid
 export allocate_cubed_sphere_field, fill_panel_halos!, fill_panel_halos_nosync!, copy_corners!, fill_cgrid_halos!
 export merge_upper_levels
+export get_panel_map
 
 include("topology.jl")
 include("location_types.jl")

@@ -12,6 +12,7 @@ module Convection
 
 using DocStringExtensions
 
+using ..Architectures: for_panels, for_panels_nosync
 using ..Grids: AbstractGrid
 using ..Fields: AbstractField
 

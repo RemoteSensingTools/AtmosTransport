@@ -72,7 +72,7 @@ export find_geosfp_cs_files, find_era5_files, ensure_local_cache
 # Met driver abstraction (Phase 4)
 export AbstractMetDriver, AbstractRawMetDriver, AbstractMassFluxMetDriver
 export total_windows, window_dt, steps_per_window, load_met_window!
-export load_cmfmc_window!, load_dtrain_window!, load_tm5conv_window!, load_qv_window!, load_surface_fields_window!, load_all_window!
+export load_cmfmc_window!, load_dtrain_window!, load_tm5conv_window!, load_qv_window!, load_surface_fields_window!, load_all_window!, load_physics_window!
 export load_qv_and_ps_pair!, load_ps_from_ctm_i1!, load_cx_cy_window!
 
 # Met buffer types

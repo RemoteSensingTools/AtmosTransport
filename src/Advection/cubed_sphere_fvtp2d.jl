@@ -22,25 +22,25 @@ struct LinRoodWorkspace{FT, A3h <: AbstractArray{FT,3},
     fx_in  :: NTuple{6, A3x}   # inner X face values (Nc+1 × Nc × Nz)
     fx_out :: NTuple{6, A3x}   # outer X face values
     fy_in  :: NTuple{6, A3y}   # inner Y face values (Nc × Nc+1 × Nz)
-    fy_out :: A3y               # outer Y face values (reused per panel)
-    # Per-panel output buffers for parallel Phase 3 (eliminates sequential sync)
+    fy_out :: NTuple{6, A3y}   # outer Y face values (per-panel for multi-GPU)
+    # Per-panel output buffers for parallel Phase 3
     q_out  :: NTuple{6, A3h}   # q output buffer per panel (haloed)
     dp_out :: NTuple{6, A3h}   # dp output buffer per panel (haloed)
 end
 
-function LinRoodWorkspace(grid::CubedSphereGrid{FT}) where FT
+function LinRoodWorkspace(grid::CubedSphereGrid{FT};
+                           panel_map::AbstractPanelMap=SingleGPUMap()) where FT
     (; Nc, Hp, Nz) = grid
     N  = Nc + 2Hp
     AT = array_type(architecture(grid))
 
-    q_buf  = ntuple(_ -> AT(zeros(FT, N, N, Nz)), 6)
-    fx_in  = ntuple(_ -> AT(zeros(FT, Nc + 1, Nc, Nz)), 6)
-    fx_out = ntuple(_ -> AT(zeros(FT, Nc + 1, Nc, Nz)), 6)
-    fy_in  = ntuple(_ -> AT(zeros(FT, Nc, Nc + 1, Nz)), 6)
-    fy_out = AT(zeros(FT, Nc, Nc + 1, Nz))
-    # Per-panel buffers for parallel q-space Phase 3
-    q_out  = ntuple(_ -> AT(zeros(FT, N, N, Nz)), 6)
-    dp_out = ntuple(_ -> AT(zeros(FT, N, N, Nz)), 6)
+    q_buf  = allocate_ntuple_panels(panel_map, _ -> AT(zeros(FT, N, N, Nz)))
+    fx_in  = allocate_ntuple_panels(panel_map, _ -> AT(zeros(FT, Nc + 1, Nc, Nz)))
+    fx_out = allocate_ntuple_panels(panel_map, _ -> AT(zeros(FT, Nc + 1, Nc, Nz)))
+    fy_in  = allocate_ntuple_panels(panel_map, _ -> AT(zeros(FT, Nc, Nc + 1, Nz)))
+    fy_out = allocate_ntuple_panels(panel_map, _ -> AT(zeros(FT, Nc, Nc + 1, Nz)))
+    q_out  = allocate_ntuple_panels(panel_map, _ -> AT(zeros(FT, N, N, Nz)))
+    dp_out = allocate_ntuple_panels(panel_map, _ -> AT(zeros(FT, N, N, Nz)))
 
     return LinRoodWorkspace(q_buf, fx_in, fx_out, fy_in, fy_out, q_out, dp_out)
 end
@@ -634,11 +634,11 @@ function fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
     copy_corners!(ws_lr.q_buf, grid, 2)
 
     for p in eachindex(ws_lr.fx_in)
-        yq_face_k!(ws_lr.fy_out, ws_lr.q_buf[p], bm_panels[p], m_panels[p],
+        yq_face_k!(ws_lr.fy_out[p], ws_lr.q_buf[p], bm_panels[p], m_panels[p],
                    Hp, Nc, Val(ORD); ndrange=(Nc, Nc + 1, Nz))
         update_k!(ws.rm_buf, ws.m_buf,
                   rm_panels[p], m_panels[p], am_panels[p], bm_panels[p],
-                  ws_lr.fx_in[p], ws_lr.fx_out[p], ws_lr.fy_in[p], ws_lr.fy_out,
+                  ws_lr.fx_in[p], ws_lr.fx_out[p], ws_lr.fy_in[p], ws_lr.fy_out[p],
                   Hp; ndrange=(Nc, Nc, Nz))
         synchronize(backend)  # required: ws.rm_buf/m_buf reused across panels
         _copy_interior!(rm_panels[p], ws.rm_buf, Hp, Nc, Nz)
@@ -741,12 +741,12 @@ function fv_tp_2d_cs_q!(q_panels, m_panels, am_panels, bm_panels,
     copy_corners!(ws_lr.q_buf, grid, 2)
 
     for p in eachindex(ws_lr.fx_in)
-        yq_face_k!(ws_lr.fy_out, ws_lr.q_buf[p], bm_panels[p], m_panels[p],
+        yq_face_k!(ws_lr.fy_out[p], ws_lr.q_buf[p], bm_panels[p], m_panels[p],
                    Hp, Nc, Val(ORD); ndrange=(Nc, Nc + 1, Nz))
         # q_out gets q_new, dp_out gets m_new (reusing dp_out buffer for m)
         update_q_k!(ws_lr.q_out[p], ws_lr.dp_out[p],
                     q_panels[p], m_panels[p], am_panels[p], bm_panels[p],
-                    ws_lr.fx_in[p], ws_lr.fx_out[p], ws_lr.fy_in[p], ws_lr.fy_out,
+                    ws_lr.fx_in[p], ws_lr.fx_out[p], ws_lr.fy_in[p], ws_lr.fy_out[p],
                     Hp; ndrange=(Nc, Nc, Nz))
     end
     synchronize(backend)

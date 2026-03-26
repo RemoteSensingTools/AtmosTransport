@@ -677,43 +677,53 @@ displacement at the pure-pressure/hybrid transition.
 and NOT modified by this function. The remap only modifies `rm_panels`.
 """
 function vertical_remap_cs!(rm_panels, m_src_panels, ws_vr::VerticalRemapWorkspace,
-                              ws, gc, grid; flat::Bool=false, hybrid_pe::Bool=false)
+                              ws::CubedSphereMassFluxWorkspace, gc, grid;
+                              flat::Bool=false, hybrid_pe::Bool=false)
+    vertical_remap_cs!(rm_panels, m_src_panels, ws_vr,
+                        PerGPUWorkspace([ws], SingleGPUMap()), gc, grid; flat, hybrid_pe)
+end
+
+"""Vertical remap with multi-GPU support via PerGPUWorkspace."""
+function vertical_remap_cs!(rm_panels, m_src_panels, ws_vr::VerticalRemapWorkspace,
+                              ws_pgw::PerGPUWorkspace, gc, grid;
+                              flat::Bool=false, hybrid_pe::Bool=false)
     Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
-    backend = get_backend(rm_panels[1])
-    recon_k! = flat ? _flat_reconstruct_kernel!(backend, 256) :
-                      _ppm_reconstruct_kernel!(backend, 256)
 
-    for p in 1:6
-        # Copy rm to buffer (source tracer mass), m_src is read-only
-        copyto!(ws.rm_buf, rm_panels[p])
+    foreach_gpu_batch(ws_pgw.panel_map) do _, panels
+        ws = workspace_for(ws_pgw, first(panels))
+        backend = get_backend(rm_panels[first(panels)])
+        recon_k! = flat ? _flat_reconstruct_kernel!(backend, 256) :
+                          _ppm_reconstruct_kernel!(backend, 256)
 
-        # Phase 1: Reconstruction → compute AL, AR, A6 per column
-        if flat
-            recon_k!(ws_vr.q_al[p], ws_vr.q_ar[p], ws_vr.q_a6[p],
-                     ws.rm_buf, m_src_panels[p], Hp, Nc, Nz; ndrange=(Nc, Nc))
-        else
-            recon_k!(ws_vr.q_al[p], ws_vr.q_ar[p], ws_vr.q_a6[p],
-                     ws.rm_buf, m_src_panels[p],
-                     gc.area[p], gc.gravity, Hp, Nc, Nz; ndrange=(Nc, Nc))
+        for p in panels
+            copyto!(ws.rm_buf, rm_panels[p])
+
+            if flat
+                recon_k!(ws_vr.q_al[p], ws_vr.q_ar[p], ws_vr.q_a6[p],
+                         ws.rm_buf, m_src_panels[p], Hp, Nc, Nz; ndrange=(Nc, Nc))
+            else
+                recon_k!(ws_vr.q_al[p], ws_vr.q_ar[p], ws_vr.q_a6[p],
+                         ws.rm_buf, m_src_panels[p],
+                         gc.area[p], gc.gravity, Hp, Nc, Nz; ndrange=(Nc, Nc))
+            end
+            synchronize(backend)
+
+            if hybrid_pe
+                remap_k! = _vertical_remap_hybrid_pe_kernel!(backend, 256)
+                remap_k!(rm_panels[p], ws.rm_buf, m_src_panels[p],
+                         ws_vr.pe_src[p],
+                         ws_vr.q_al[p], ws_vr.q_ar[p], ws_vr.q_a6[p],
+                         ws_vr.pe_tgt[p], ws_vr.dp_tgt[p],
+                         gc.area[p], gc.gravity, Hp, Nc, Nz; ndrange=(Nc, Nc))
+            else
+                remap_k! = _vertical_remap_column_kernel!(backend, 256)
+                remap_k!(rm_panels[p], ws.rm_buf, m_src_panels[p],
+                         ws_vr.q_al[p], ws_vr.q_ar[p], ws_vr.q_a6[p],
+                         ws_vr.pe_tgt[p], ws_vr.dp_tgt[p],
+                         gc.area[p], gc.gravity, Hp, Nc, Nz; ndrange=(Nc, Nc))
+            end
+            synchronize(backend)
         end
-        synchronize(backend)
-
-        # Phase 2: PPM integration → remap rm onto target pressure levels
-        if hybrid_pe
-            remap_k! = _vertical_remap_hybrid_pe_kernel!(backend, 256)
-            remap_k!(rm_panels[p], ws.rm_buf, m_src_panels[p],
-                     ws_vr.pe_src[p],
-                     ws_vr.q_al[p], ws_vr.q_ar[p], ws_vr.q_a6[p],
-                     ws_vr.pe_tgt[p], ws_vr.dp_tgt[p],
-                     gc.area[p], gc.gravity, Hp, Nc, Nz; ndrange=(Nc, Nc))
-        else
-            remap_k! = _vertical_remap_column_kernel!(backend, 256)
-            remap_k!(rm_panels[p], ws.rm_buf, m_src_panels[p],
-                     ws_vr.q_al[p], ws_vr.q_ar[p], ws_vr.q_a6[p],
-                     ws_vr.pe_tgt[p], ws_vr.dp_tgt[p],
-                     gc.area[p], gc.gravity, Hp, Nc, Nz; ndrange=(Nc, Nc))
-        end
-        synchronize(backend)
     end
     return nothing
 end
@@ -748,23 +758,19 @@ function compute_target_pressure_from_next_delp!(ws_vr::VerticalRemapWorkspace,
                                                    ng_delp, gc, grid)
     Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
     FT = eltype(ws_vr.ak_dev)
-    backend = get_backend(ws_vr.ak_dev)
     ptop = FT(grid.vertical.A[1])  # TOA pressure (1.0 Pa for GEOS L72)
 
     # Compute ps_tgt from next-window DELP (sum over all levels)
-    ps_k! = _ps_from_delp_kernel!(backend, 256)
-    pe_k! = _compute_target_pe_kernel!(backend, 256)
-
-    for p in 1:6
-        ps_k!(ws_vr.ps_tgt[p], ng_delp[p], ptop, Hp, Nc, Nz; ndrange=(Nc, Nc))
+    for_panels_nosync() do p
+        be = get_backend(ws_vr.ps_tgt[p])
+        _ps_from_delp_kernel!(be, 256)(ws_vr.ps_tgt[p], ng_delp[p], ptop, Hp, Nc, Nz; ndrange=(Nc, Nc))
     end
-    synchronize(backend)
 
-    for p in 1:6
-        pe_k!(ws_vr.pe_tgt[p], ws_vr.dp_tgt[p], ws_vr.ak_dev, ws_vr.bk_dev,
+    for_panels_nosync() do p
+        be = get_backend(ws_vr.pe_tgt[p])
+        _compute_target_pe_kernel!(be, 256)(ws_vr.pe_tgt[p], ws_vr.dp_tgt[p], ws_vr.ak_dev, ws_vr.bk_dev,
               ws_vr.ps_tgt[p], Nz; ndrange=(Nc, Nc))
     end
-    synchronize(backend)
     return nothing
 end
 
@@ -778,23 +784,19 @@ function compute_target_pressure_from_mass!(ws_vr::VerticalRemapWorkspace,
                                               m_panels, gc, grid)
     Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
     FT = eltype(ws_vr.ak_dev)
-    backend = get_backend(ws_vr.ak_dev)
     ptop = FT(grid.vertical.A[1])  # TOA pressure (1.0 Pa for GEOS L72)
 
-    ps_m_k! = _ps_from_mass_kernel!(backend, 256)
-    pe_k!   = _compute_target_pe_kernel!(backend, 256)
-
-    for p in 1:6
-        ps_m_k!(ws_vr.ps_tgt[p], m_panels[p], gc.area[p], gc.gravity, ptop,
+    for_panels_nosync() do p
+        be = get_backend(ws_vr.ps_tgt[p])
+        _ps_from_mass_kernel!(be, 256)(ws_vr.ps_tgt[p], m_panels[p], gc.area[p], gc.gravity, ptop,
                 Hp, Nc, Nz; ndrange=(Nc, Nc))
     end
-    synchronize(backend)
 
-    for p in 1:6
-        pe_k!(ws_vr.pe_tgt[p], ws_vr.dp_tgt[p], ws_vr.ak_dev, ws_vr.bk_dev,
+    for_panels_nosync() do p
+        be = get_backend(ws_vr.pe_tgt[p])
+        _compute_target_pe_kernel!(be, 256)(ws_vr.pe_tgt[p], ws_vr.dp_tgt[p], ws_vr.ak_dev, ws_vr.bk_dev,
               ws_vr.ps_tgt[p], Nz; ndrange=(Nc, Nc))
     end
-    synchronize(backend)
     return nothing
 end
 
@@ -841,14 +843,11 @@ Set air mass to target state: m[k] = dp_tgt[k] * area / g.
 """
 function update_air_mass_from_target!(m_panels, ws_vr::VerticalRemapWorkspace, gc, grid)
     Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
-    backend = get_backend(m_panels[1])
-    k! = _set_mass_from_dp_kernel!(backend, 256)
-
-    for p in 1:6
-        k!(m_panels[p], ws_vr.dp_tgt[p], gc.area[p], gc.gravity,
+    for_panels_nosync() do p
+        be = get_backend(m_panels[p])
+        _set_mass_from_dp_kernel!(be, 256)(m_panels[p], ws_vr.dp_tgt[p], gc.area[p], gc.gravity,
            Hp, Nc, Nz; ndrange=(Nc, Nc, Nz))
     end
-    synchronize(backend)
     return nothing
 end
 
@@ -878,15 +877,13 @@ function compute_target_pressure_from_delp_direct!(ws_vr::VerticalRemapWorkspace
                                                      ng_delp, gc, grid)
     Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
     FT = eltype(ws_vr.ak_dev)
-    backend = get_backend(ws_vr.ak_dev)
     ptop = FT(grid.vertical.A[1])
 
-    k! = _pe_from_delp_direct_kernel!(backend, 256)
-    for p in 1:6
-        k!(ws_vr.pe_tgt[p], ws_vr.dp_tgt[p], ng_delp[p],
+    for_panels_nosync() do p
+        be = get_backend(ws_vr.pe_tgt[p])
+        _pe_from_delp_direct_kernel!(be, 256)(ws_vr.pe_tgt[p], ws_vr.dp_tgt[p], ng_delp[p],
            ptop, Hp, Nc, Nz; ndrange=(Nc, Nc))
     end
-    synchronize(backend)
     return nothing
 end
 
@@ -1008,15 +1005,13 @@ function compute_target_pressure_from_mass_direct!(ws_vr::VerticalRemapWorkspace
                                                      m_panels, gc, grid)
     Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
     FT = eltype(ws_vr.ak_dev)
-    backend = get_backend(ws_vr.ak_dev)
     ptop = FT(grid.vertical.A[1])
 
-    k! = _pe_from_mass_direct_kernel!(backend, 256)
-    for p in 1:6
-        k!(ws_vr.pe_tgt[p], ws_vr.dp_tgt[p], m_panels[p],
+    for_panels_nosync() do p
+        be = get_backend(ws_vr.pe_tgt[p])
+        _pe_from_mass_direct_kernel!(be, 256)(ws_vr.pe_tgt[p], ws_vr.dp_tgt[p], m_panels[p],
            gc.area[p], gc.gravity, ptop, Hp, Nc, Nz; ndrange=(Nc, Nc))
     end
-    synchronize(backend)
     return nothing
 end
 
@@ -1038,15 +1033,13 @@ function compute_target_pe_from_hybrid_coords!(ws_vr::VerticalRemapWorkspace,
                                                  ng_delp, qv_panels, gc, grid)
     Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
     FT = eltype(ws_vr.ak_dev)
-    backend = get_backend(ws_vr.ak_dev)
     ptop = FT(grid.vertical.A[1])
 
-    k! = _pe_from_hybrid_coords_kernel!(backend, 256)
-    for p in 1:6
-        k!(ws_vr.pe_tgt[p], ws_vr.dp_tgt[p], ng_delp[p], qv_panels[p],
+    for_panels_nosync() do p
+        be = get_backend(ws_vr.pe_tgt[p])
+        _pe_from_hybrid_coords_kernel!(be, 256)(ws_vr.pe_tgt[p], ws_vr.dp_tgt[p], ng_delp[p], qv_panels[p],
            ws_vr.ak_dev, ws_vr.bk_dev, ptop, Hp, Nc, Nz; ndrange=(Nc, Nc))
     end
-    synchronize(backend)
     return nothing
 end
 
@@ -1143,19 +1136,16 @@ Writes to `ws_vr.pe_src` and `ws_vr.ps_src`. Uses current-window DELP and QV.
 function compute_source_pe_from_hybrid!(ws_vr::VerticalRemapWorkspace,
                                          delp_panels, qv_panels, gc, grid)
     Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
-    backend = get_backend(ws_vr.ak_dev)
-
     # pe_src has no dp counterpart in workspace — use a temporary view of dp_tgt
     # that will be overwritten by target PE computation later. Or we compute dp
     # into a scratch buffer. Since we only need pe_src (not dp_src) for the remap
     # kernel, we can write dp to dp_tgt as scratch (overwritten by target PE next).
-    k! = _pe_from_ps_hybrid_kernel!(backend, 256)
-    for p in 1:6
-        k!(ws_vr.pe_src[p], ws_vr.dp_tgt[p], ws_vr.ps_src[p],
+    for_panels_nosync() do p
+        be = get_backend(ws_vr.pe_src[p])
+        _pe_from_ps_hybrid_kernel!(be, 256)(ws_vr.pe_src[p], ws_vr.dp_tgt[p], ws_vr.ps_src[p],
            delp_panels[p], qv_panels[p],
            ws_vr.ak_dev, ws_vr.bk_dev, Hp, Nc, Nz; ndrange=(Nc, Nc))
     end
-    synchronize(backend)
     return nothing
 end
 
@@ -1169,15 +1159,12 @@ Uses next-window DELP and current-window QV (<0.1% approximation).
 function compute_target_pe_from_ps_hybrid!(ws_vr::VerticalRemapWorkspace,
                                              delp_panels, qv_panels, gc, grid)
     Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
-    backend = get_backend(ws_vr.ak_dev)
-
-    k! = _pe_from_ps_hybrid_kernel!(backend, 256)
-    for p in 1:6
-        k!(ws_vr.pe_tgt[p], ws_vr.dp_tgt[p], ws_vr.ps_tgt[p],
+    for_panels_nosync() do p
+        be = get_backend(ws_vr.pe_tgt[p])
+        _pe_from_ps_hybrid_kernel!(be, 256)(ws_vr.pe_tgt[p], ws_vr.dp_tgt[p], ws_vr.ps_tgt[p],
            delp_panels[p], qv_panels[p],
            ws_vr.ak_dev, ws_vr.bk_dev, Hp, Nc, Nz; ndrange=(Nc, Nc))
     end
-    synchronize(backend)
     return nothing
 end
 
@@ -1201,14 +1188,12 @@ function compute_source_pe_from_evolved_mass!(ws_vr::VerticalRemapWorkspace,
     Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
     FT = eltype(ws_vr.ak_dev)
     ptop = FT(grid.vertical.A[1])
-    backend = get_backend(ws_vr.ak_dev)
 
-    k! = _pe_from_evolved_mass_kernel!(backend, 256)
-    for p in 1:6
-        k!(ws_vr.pe_src[p], ws_vr.ps_src[p], m_evolved[p],
+    for_panels_nosync() do p
+        be = get_backend(ws_vr.pe_src[p])
+        _pe_from_evolved_mass_kernel!(be, 256)(ws_vr.pe_src[p], ws_vr.ps_src[p], m_evolved[p],
            gc.area[p], gc.gravity, ptop, Hp, Nc, Nz; ndrange=(Nc, Nc))
     end
-    synchronize(backend)
     return nothing
 end
 
@@ -1247,15 +1232,12 @@ Writes to `ws_vr.pe_tgt`, `ws_vr.dp_tgt`, `ws_vr.ps_tgt`.
 """
 function compute_target_pe_from_evolved_ps!(ws_vr::VerticalRemapWorkspace, gc, grid)
     Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
-    backend = get_backend(ws_vr.ak_dev)
-
-    k! = _pe_hybrid_from_evolved_ps_kernel!(backend, 256)
-    for p in 1:6
-        k!(ws_vr.pe_tgt[p], ws_vr.dp_tgt[p], ws_vr.ps_tgt[p],
+    for_panels_nosync() do p
+        be = get_backend(ws_vr.pe_tgt[p])
+        _pe_hybrid_from_evolved_ps_kernel!(be, 256)(ws_vr.pe_tgt[p], ws_vr.dp_tgt[p], ws_vr.ps_tgt[p],
            ws_vr.pe_src[p], ws_vr.ps_src[p],
            ws_vr.ak_dev, ws_vr.bk_dev, Nc, Nz; ndrange=(Nc, Nc))
     end
-    synchronize(backend)
     return nothing
 end
 
@@ -1293,15 +1275,13 @@ function compute_target_pressure_from_dry_delp_direct!(ws_vr::VerticalRemapWorks
                                                          ng_delp, qv_panels, gc, grid)
     Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
     FT = eltype(ws_vr.ak_dev)
-    backend = get_backend(ws_vr.ak_dev)
     ptop = FT(grid.vertical.A[1])
 
-    k! = _pe_from_dry_delp_direct_kernel!(backend, 256)
-    for p in 1:6
-        k!(ws_vr.pe_tgt[p], ws_vr.dp_tgt[p], ng_delp[p], qv_panels[p],
+    for_panels_nosync() do p
+        be = get_backend(ws_vr.pe_tgt[p])
+        _pe_from_dry_delp_direct_kernel!(be, 256)(ws_vr.pe_tgt[p], ws_vr.dp_tgt[p], ng_delp[p], qv_panels[p],
            ptop, Hp, Nc, Nz; ndrange=(Nc, Nc))
     end
-    synchronize(backend)
     return nothing
 end
 
@@ -1409,15 +1389,12 @@ function compute_dry_ple!(pe_panels::NTuple{6}, dp_panels::NTuple{6},
                            ps_panels::NTuple{6}, sphu_panels::NTuple{6},
                            ws_vr::VerticalRemapWorkspace, gc, grid)
     Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
-    backend = get_backend(ws_vr.ak_dev)
-
-    k! = _dry_ple_from_ps_sphu_kernel!(backend, 256)
-    for p in 1:6
-        k!(pe_panels[p], dp_panels[p], ps_dry_panels[p],
+    for_panels_nosync() do p
+        be = get_backend(pe_panels[p])
+        _dry_ple_from_ps_sphu_kernel!(be, 256)(pe_panels[p], dp_panels[p], ps_dry_panels[p],
            ps_panels[p], sphu_panels[p],
            ws_vr.ak_dev, ws_vr.bk_dev, Hp, Nc, Nz; ndrange=(Nc, Nc))
     end
-    synchronize(backend)
     return nothing
 end
 
@@ -1719,16 +1696,14 @@ function fix_target_bottom_pe!(ws_vr::VerticalRemapWorkspace,
                                  m_src_panels, gc, grid)
     Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
     FT = eltype(ws_vr.ak_dev)
-    backend = get_backend(ws_vr.ak_dev)
     ptop = FT(grid.vertical.A[1])
-    k! = _fix_column_pe_kernel!(backend, 256)
 
-    for p in 1:6
-        k!(ws_vr.pe_tgt[p], ws_vr.dp_tgt[p], m_src_panels[p],
+    for_panels_nosync() do p
+        be = get_backend(ws_vr.pe_tgt[p])
+        _fix_column_pe_kernel!(be, 256)(ws_vr.pe_tgt[p], ws_vr.dp_tgt[p], m_src_panels[p],
            gc.area[p], gc.gravity, ws_vr.bk_dev, ptop, Hp, Nc, Nz;
            ndrange=(Nc, Nc))
     end
-    synchronize(backend)
     return nothing
 end
 

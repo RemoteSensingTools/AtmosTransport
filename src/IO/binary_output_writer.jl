@@ -127,6 +127,7 @@ function initialize_output!(writer::BinaryOutputWriter, model)
         hdr["user"]          = get(meta, "user", "unknown")
         hdr["hostname"]      = get(meta, "hostname", "unknown")
         hdr["julia_version"] = get(meta, "julia_version", string(VERSION))
+        hdr["git_commit"]    = get(meta, "git_commit", "unknown")
         hdr["run_started"]   = get(meta, "created", string(Dates.now()))
         if haskey(meta, "config")
             hdr["config"] = meta["config"]
@@ -582,7 +583,7 @@ function _convert_latlon(io, nc_path, hdr, Nt, field_names, field_dims, Nz, star
         ds.attrib["Conventions"] = "CF-1.8"
 
         # Provenance metadata from binary header
-        for pkey in (:user, :hostname, :julia_version, :run_started, :run_finished)
+        for pkey in (:user, :hostname, :julia_version, :git_commit, :run_started, :run_finished)
             haskey(hdr, pkey) && (ds.attrib[string(pkey)] = String(hdr[pkey]))
         end
 
@@ -665,7 +666,7 @@ function _convert_cs_native(io, nc_path, hdr, Nt, field_names, field_dims, Nz, s
         ds.attrib["source"] = "AtmosTransport.jl"
 
         # Provenance metadata from binary header
-        for pkey in (:user, :hostname, :julia_version, :run_started, :run_finished)
+        for pkey in (:user, :hostname, :julia_version, :git_commit, :run_started, :run_finished)
             haskey(hdr, pkey) && (ds.attrib[string(pkey)] = String(hdr[pkey]))
         end
 

@@ -288,12 +288,12 @@ function diffuse_nonlocal_pbl!(rm_panels::NTuple{6}, m_panels::NTuple{6},
                                 diff::NonLocalPBLDiffusion, grid::CubedSphereGrid, dt,
                                 planet::PlanetParameters)
     FT = eltype(rm_panels[1])
-    backend = get_backend(rm_panels[1])
     Nc = grid.Nc
     Hp = grid.Hp
     Nz = grid.Nz
-    kernel! = _nonlocal_pbl_diffuse_kernel!(backend, 256)
-    for p in 1:6
+    for_panels_nosync() do p
+        be = get_backend(rm_panels[p])
+        kernel! = _nonlocal_pbl_diffuse_kernel!(be, 256)
         kernel!(rm_panels[p], m_panels[p], delp_panels[p],
                 pblh_panels[p], ustar_panels[p], hflux_panels[p], t2m_panels[p],
                 sfc_flux_panels[p], w_scratch_panels[p],
@@ -304,7 +304,6 @@ function diffuse_nonlocal_pbl!(rm_panels::NTuple{6}, m_panels::NTuple{6},
                 FT(diff.fak), FT(diff.sffrac),
                 Val(:rm); ndrange=(Nc, Nc))
     end
-    synchronize(backend)
     return nothing
 end
 

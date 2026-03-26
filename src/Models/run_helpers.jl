@@ -7,7 +7,10 @@
 
 using ..Grids: LatitudeLongitudeGrid, CubedSphereGrid, cell_area
 using ..Grids: fill_panel_halos!, allocate_cubed_sphere_field
-using ..Architectures: array_type
+using ..Architectures: array_type,
+                       AbstractPanelMap, SingleGPUMap, PanelGPUMap,
+                       PerGPUWorkspace, workspace_for,
+                       allocate_ntuple_panels, sync_all_gpus
 using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
 using ..Advection: MassFluxWorkspace, allocate_massflux_workspace,
                    allocate_cs_massflux_workspace,
@@ -49,7 +52,7 @@ using ..Advection: MassFluxWorkspace, allocate_massflux_workspace,
                    fillz_panels!,
                    compute_dry_ple!,
                    compute_air_mass!,
-                   compute_mass_fluxes!, compute_air_mass_panel!, compute_cm_panel!,
+                   compute_mass_fluxes!, compute_air_mass_panel!, compute_air_mass_panels!, compute_cm_panel!,
                    compute_cm_pressure_fixer_panel!,
                    compute_cm_mass_weighted_panel!,
                    apply_mass_fixer!,
@@ -76,7 +79,7 @@ using ..IO: AbstractMetDriver, AbstractRawMetDriver, AbstractMassFluxMetDriver,
             load_cmfmc_window!, load_dtrain_window!, load_tm5conv_window!,
             load_qv_window!, load_surface_fields_window!,
             load_qv_and_ps_pair!, load_ps_from_ctm_i1!, load_cx_cy_window!,
-            load_all_window!,
+            load_all_window!, load_physics_window!,
             LatLonMetBuffer, LatLonCPUBuffer, CubedSphereMetBuffer, CubedSphereCPUBuffer,
             upload!, AbstractOutputWriter, write_output!, finalize_output!,
             get_pending_ic, apply_pending_ic!,
@@ -361,6 +364,31 @@ function _apply_emissions_cs!(cs_tracers::NamedTuple, emission_data,
                             molar_mass=src.molar_mass),
                 area_panels, dt_window, Nc, Hp)
         end
+    end
+end
+
+# =====================================================================
+# Staging progress file — for NVMe staging daemon
+# =====================================================================
+
+"""Write current window date to staging progress file (if configured)."""
+function _write_staging_progress(model, w::Int)
+    cfg = get(model.metadata, "config", Dict())
+    stg = get(cfg, "staging", nothing)
+    stg === nothing && return
+    pf = get(stg, "progress_file", "")
+    isempty(pf) && return
+    # Compute date from window index
+    driver = model.met_data
+    dt_window = driver.dt * steps_per_window(driver)
+    sim_seconds = (w - 1) * dt_window
+    date = driver._start_date + Dates.Second(round(Int, sim_seconds))
+    try
+        open(expanduser(pf), "w") do io
+            println(io, Dates.format(Date(date), "yyyy-mm-dd"))
+        end
+    catch
+        # Non-fatal — staging daemon is optional
     end
 end
 

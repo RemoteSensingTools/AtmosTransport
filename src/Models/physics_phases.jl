@@ -164,6 +164,8 @@ end
 
 function load_and_upload_physics!(phys, sched, driver,
                                    grid::CubedSphereGrid, w; arch=nothing)
+    # Wait for async physics load (split from met load for IO overlap)
+    wait_phys!(sched)
     io = sched.io_result
     io === nothing && return
 
@@ -172,7 +174,7 @@ function load_and_upload_physics!(phys, sched, driver,
         cmfmc_status = io.cmfmc
         phys.cmfmc_loaded[] = cmfmc_status !== false
         if phys.cmfmc_loaded[] && cmfmc_status !== :cached
-            for p in 1:6
+            for_panels_nosync() do p
                 copyto!(phys.cmfmc_gpu[p], phys.cmfmc_cpu[p])
             end
         end
@@ -183,7 +185,7 @@ function load_and_upload_physics!(phys, sched, driver,
         dtrain_status = io.dtrain
         phys.dtrain_loaded[] = dtrain_status !== false
         if phys.dtrain_loaded[] && dtrain_status !== :cached
-            for p in 1:6
+            for_panels_nosync() do p
                 copyto!(phys.dtrain_gpu[p], phys.dtrain_cpu[p])
             end
         end
@@ -199,7 +201,7 @@ function load_and_upload_physics!(phys, sched, driver,
     qv_status = io.qv
     phys.qv_loaded[] = qv_status !== false
     if phys.qv_loaded[] && qv_status !== :cached
-        for p in 1:6
+        for_panels_nosync() do p
             copyto!(phys.qv_gpu[p], phys.qv_cpu[p])
         end
         fill_panel_halos!(phys.qv_gpu, grid)
@@ -210,7 +212,7 @@ function load_and_upload_physics!(phys, sched, driver,
     if hasproperty(io, :qv_next_from_v4) && io.qv_next_from_v4
         # v4 binary: QV_end already loaded atomically into qv_next_cpu by load_all_window!
         phys.qv_next_loaded[] = true
-        for p in 1:6
+        for_panels_nosync() do p
             copyto!(phys.qv_next_gpu[p], phys.qv_next_cpu[p])
         end
         fill_panel_halos!(phys.qv_next_gpu, grid)
@@ -221,7 +223,7 @@ function load_and_upload_physics!(phys, sched, driver,
             qv_next_status = load_qv_window!(phys.qv_next_cpu, driver, grid, w + 1)
             phys.qv_next_loaded[] = qv_next_status !== false
             if phys.qv_next_loaded[] && qv_next_status !== :cached
-                for p in 1:6
+                for_panels_nosync() do p
                     copyto!(phys.qv_next_gpu[p], phys.qv_next_cpu[p])
                 end
                 fill_panel_halos!(phys.qv_next_gpu, grid)
@@ -236,7 +238,7 @@ function load_and_upload_physics!(phys, sched, driver,
     phys.sfc_loaded[] = sfc_status !== false
     phys.troph_loaded[] = phys.sfc_loaded[]
     if phys.sfc_loaded[] && phys.has_pbl
-        for p in 1:6
+        for_panels_nosync() do p
             copyto!(phys.pbl_sfc_gpu.pblh[p],  phys.pbl_sfc_cpu.pblh[p])
             copyto!(phys.pbl_sfc_gpu.ustar[p], phys.pbl_sfc_cpu.ustar[p])
             copyto!(phys.pbl_sfc_gpu.hflux[p], phys.pbl_sfc_cpu.hflux[p])
@@ -301,18 +303,18 @@ function process_met_after_upload!(sched, phys, grid::CubedSphereGrid{FT},
         # CX/CY/XFX/YFX stay at full accumulated values; subcycling divides them.
         return
     end
-    for p in 1:6
+    for_panels_nosync() do p
         gpu.am[p] .*= half_dt
         gpu.bm[p] .*= half_dt
     end
     if gpu.cx !== nothing
-        for p in 1:6
+        for_panels_nosync() do p
             gpu.cx[p]  .*= FT(0.5)
             gpu.cy[p]  .*= FT(0.5)
         end
     end
     if gpu.xfx !== nothing
-        for p in 1:6
+        for_panels_nosync() do p
             gpu.xfx[p] .*= FT(0.5)
             gpu.yfx[p] .*= FT(0.5)
         end
@@ -342,12 +344,12 @@ function compute_air_mass_phase!(sched, air, phys, grid::CubedSphereGrid, gc; dr
     gpu = current_gpu(sched)
     Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
     if dry_correction && phys.qv_loaded[]
-        for p in 1:6
+        for_panels_nosync() do p
             compute_air_mass_panel!(air.m[p], gpu.delp[p], phys.qv_gpu[p],
                                     gc.area[p], gc.gravity, Nc, Nz, Hp)
         end
     else
-        for p in 1:6
+        for_panels_nosync() do p
             compute_air_mass_panel!(air.m[p], gpu.delp[p],
                                     gc.area[p], gc.gravity, Nc, Nz, Hp)
         end
@@ -355,7 +357,7 @@ function compute_air_mass_phase!(sched, air, phys, grid::CubedSphereGrid, gc; dr
     # Always compute MOIST air mass for convection (m_wet = delp × area / g).
     # Convective mass fluxes (CMFMC, DTRAIN) are on MOIST basis, so rm↔q
     # conversion must use moist air mass for consistency (GCHP convention).
-    for p in 1:6
+    for_panels_nosync() do p
         compute_air_mass_panel!(air.m_wet[p], gpu.delp[p],
                                 gc.area[p], gc.gravity, Nc, Nz, Hp)
     end
@@ -383,7 +385,7 @@ end
 save_reference_mass!(sched, ::Nothing, ::LatitudeLongitudeGrid) = nothing
 
 function save_reference_mass!(sched, air, grid::CubedSphereGrid)
-    for p in 1:6
+    for_panels_nosync() do p
         copyto!(air.m_ref[p], air.m[p])
     end
 end
@@ -404,7 +406,7 @@ function compute_cm_phase!(sched, air, phys, grid::CubedSphereGrid, gc;
     # Pure mass-flux closure: cm from continuity of dry am/bm.
     # Dry air mass is conserved (no sources/sinks), so the dry horizontal
     # flux divergence exactly determines the dry vertical flux.
-    for p in 1:6
+    for_panels_nosync() do p
         compute_cm_panel!(gpu.cm[p], gpu.am[p], gpu.bm[p], gc.bt, Nc, Nz)
     end
 end
@@ -415,14 +417,14 @@ wait_and_upload_next_delp!(::IOScheduler, ::LatitudeLongitudeGrid) = nothing
 
 function wait_and_upload_next_delp!(sched::IOScheduler{DoubleBuffer},
                                      grid::CubedSphereGrid)
+    # Wait for met-only task (fast: DELP + fluxes). Physics task runs independently.
     if sched.load_task !== nothing
-        result = fetch(sched.load_task)
-        sched.io_result = result isa NamedTuple ? result : nothing
+        fetch(sched.load_task)
         sched.load_task = nothing
     end
     nc = next_cpu(sched)
     ng = next_gpu(sched)
-    for p in 1:6
+    for_panels_nosync() do p
         copyto!(ng.delp[p], nc.delp[p])
     end
 end
@@ -546,7 +548,6 @@ function _gchp_advection_dry!(tracers, sched, air, phys, model,
     Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
     N = Nc + 2Hp
     cx_gpu, cy_gpu = gpu.cx, gpu.cy
-    backend = get_backend(gpu.delp[1])
     g_val = FT(grid.gravity)
 
     step[] += n_sub
@@ -574,35 +575,34 @@ function _gchp_advection_dry!(tracers, sched, air, phys, model,
         # Each 450s step: horizontal transport → source PE → target PE
         # (hybrid from evolved PS) → remap → scale → rm→q for next step.
         ng = next_gpu(sched)
-        interp_k! = _interpolate_dry_dp_kernel!(backend, 256)
 
         for _isub in 1:n_loop
             frac_start = FT(_isub - 1) / FT(n_loop)
             frac_end   = FT(_isub)     / FT(n_loop)
 
             # Reset dp_work to interpolated dry DELP at start of substep
-            for p in 1:6
-                interp_k!(ws_vr.dp_work[p], gpu.delp[p], ng.delp[p],
+            for_panels_nosync() do p
+                be = get_backend(ws_vr.dp_work[p])
+                _interpolate_dry_dp_kernel!(be, 256)(ws_vr.dp_work[p], gpu.delp[p], ng.delp[p],
                           phys.qv_gpu[p], qv_tgt !== nothing ? qv_tgt[p] : phys.qv_gpu[p],
                           frac_start; ndrange=(N, N, Nz))
             end
-            synchronize(backend)
 
             # Horizontal advection: dp_work → evolved dpA
-            for p in 1:6
+            for_panels_nosync() do p
                 gpu.am[p] .*= am_to_mfx
                 gpu.bm[p] .*= am_to_mfx
             end
             gchp_tracer_2d!(tracers, ws_vr.dp_work, gpu.am, gpu.bm,
                               cx_gpu, cy_gpu, gpu.xfx, gpu.yfx,
                               gc.area, rarea, grid, _ORD, ws_lr, ws_vr.m_save)
-            for p in 1:6
+            for_panels_nosync() do p
                 gpu.am[p] .*= inv_am_to_mfx
                 gpu.bm[p] .*= inv_am_to_mfx
             end
 
             # Source PE from evolved dpA (dp_work after horizontal step)
-            for p in 1:6
+            for_panels_nosync() do p
                 compute_air_mass_panel!(ws_vr.m_save[p], ws_vr.dp_work[p],
                                         gc.area[p], g_val, Nc, Nz, Hp)
             end
@@ -618,22 +618,22 @@ function _gchp_advection_dry!(tracers, sched, air, phys, model,
                 # scaled to match source (evolved) surface pressure.
                 # This distributes the mass adjustment proportionally across ALL
                 # levels (not just the bottom layer, which caused q distortion).
-                for p in 1:6
-                    interp_k!(ws_vr.dp_work[p], gpu.delp[p], ng.delp[p],
+                for_panels_nosync() do p
+                    be = get_backend(ws_vr.dp_work[p])
+                    _interpolate_dry_dp_kernel!(be, 256)(ws_vr.dp_work[p], gpu.delp[p], ng.delp[p],
                               phys.qv_gpu[p], qv_tgt !== nothing ? qv_tgt[p] : phys.qv_gpu[p],
                               frac_end; ndrange=(N, N, Nz))
                 end
-                synchronize(backend)
                 compute_target_pressure_from_delp_direct!(ws_vr, ws_vr.dp_work, gc, grid)
                 # Scale dp_tgt so column sum = source column sum (ps_src from evolved mass).
                 # dp_tgt[k] *= ps_src / ps_tgt (proportional distribution).
-                for p in 1:6
-                    _scale_dp_tgt_to_source_ps_kernel!(backend, 256)(
+                for_panels_nosync() do p
+                    be = get_backend(ws_vr.pe_tgt[p])
+                    _scale_dp_tgt_to_source_ps_kernel!(be, 256)(
                         ws_vr.pe_tgt[p], ws_vr.dp_tgt[p],
                         ws_vr.pe_src[p], ws_vr.ps_src[p],
                         Nc, Nz; ndrange=(Nc, Nc))
                 end
-                synchronize(backend)
             else
                 # Last: target = ng.delp × (1-qv_tgt) — identical to single-remap
                 if qv_tgt !== nothing
@@ -664,13 +664,13 @@ function _gchp_advection_dry!(tracers, sched, air, phys, model,
                 # Using prescribed dp_work would cause mass loss because the
                 # prescribed column mass ≠ surface-locked column mass.
                 # Write dp_tgt back to dp_work interior for compute_air_mass_panel!.
-                for p in 1:6
-                    _copy_dp_tgt_to_dp_work_kernel!(backend, 256)(
+                for_panels_nosync() do p
+                    be = get_backend(ws_vr.dp_work[p])
+                    _copy_dp_tgt_to_dp_work_kernel!(be, 256)(
                         ws_vr.dp_work[p], ws_vr.dp_tgt[p], Hp, Nc, Nz;
                         ndrange=(Nc, Nc, Nz))
                 end
-                synchronize(backend)
-                for p in 1:6
+                for_panels_nosync() do p
                     compute_air_mass_panel!(ws_vr.m_save[p], ws_vr.dp_work[p],
                                             gc.area[p], g_val, Nc, Nz, Hp)
                 end
@@ -692,24 +692,23 @@ function _gchp_advection_dry!(tracers, sched, air, phys, model,
     elseif has_next && phys.qv_loaded[]
         # ── n_sub loop, single remap at end (original behavior) ─────────────
         ng = next_gpu(sched)
-        interp_k! = _interpolate_dry_dp_kernel!(backend, 256)
         for _isub in 1:n_loop
             frac = FT(_isub - 1) / FT(n_loop)
-            for p in 1:6
-                interp_k!(ws_vr.dp_work[p], gpu.delp[p], ng.delp[p],
+            for_panels_nosync() do p
+                be = get_backend(ws_vr.dp_work[p])
+                _interpolate_dry_dp_kernel!(be, 256)(ws_vr.dp_work[p], gpu.delp[p], ng.delp[p],
                           phys.qv_gpu[p], qv_tgt !== nothing ? qv_tgt[p] : phys.qv_gpu[p],
                           frac; ndrange=(N, N, Nz))
             end
-            synchronize(backend)
 
-            for p in 1:6
+            for_panels_nosync() do p
                 gpu.am[p] .*= am_to_mfx
                 gpu.bm[p] .*= am_to_mfx
             end
             gchp_tracer_2d!(tracers, ws_vr.dp_work, gpu.am, gpu.bm,
                               cx_gpu, cy_gpu, gpu.xfx, gpu.yfx,
                               gc.area, rarea, grid, _ORD, ws_lr, ws_vr.m_save)
-            for p in 1:6
+            for_panels_nosync() do p
                 gpu.am[p] .*= inv_am_to_mfx
                 gpu.bm[p] .*= inv_am_to_mfx
             end
@@ -718,24 +717,23 @@ function _gchp_advection_dry!(tracers, sched, air, phys, model,
     else
         # Single step: use current dry dp (no next window available)
         if phys.qv_loaded[]
-            dry_dp_k! = _compute_dry_dp_kernel!(backend, 256)
-            for p in 1:6
-                dry_dp_k!(ws_vr.dp_work[p], gpu.delp[p], phys.qv_gpu[p];
+            for_panels_nosync() do p
+                be = get_backend(ws_vr.dp_work[p])
+                _compute_dry_dp_kernel!(be, 256)(ws_vr.dp_work[p], gpu.delp[p], phys.qv_gpu[p];
                           ndrange=(N, N, Nz))
             end
-            synchronize(backend)
         else
-            for p in 1:6; copyto!(ws_vr.dp_work[p], gpu.delp[p]); end
+            for_panels_nosync() do p; copyto!(ws_vr.dp_work[p], gpu.delp[p]); end
         end
 
-        for p in 1:6
+        for_panels_nosync() do p
             gpu.am[p] .*= am_to_mfx
             gpu.bm[p] .*= am_to_mfx
         end
         gchp_tracer_2d!(tracers, ws_vr.dp_work, gpu.am, gpu.bm,
                           cx_gpu, cy_gpu, gpu.xfx, gpu.yfx,
                           gc.area, rarea, grid, _ORD, ws_lr, ws_vr.m_save)
-        for p in 1:6
+        for_panels_nosync() do p
             gpu.am[p] .*= inv_am_to_mfx
             gpu.bm[p] .*= inv_am_to_mfx
         end
@@ -743,7 +741,7 @@ function _gchp_advection_dry!(tracers, sched, air, phys, model,
 
     # ── Vertical remap (single, at end) — skipped when per_step_remap did it ──
     if !(has_next && phys.qv_loaded[] && per_step)
-        for p in 1:6
+        for_panels_nosync() do p
             compute_air_mass_panel!(ws_vr.m_save[p], ws_vr.dp_work[p],
                                     gc.area[p], g_val, Nc, Nz, Hp)
         end
@@ -785,29 +783,29 @@ function _gchp_advection_dry!(tracers, sched, air, phys, model,
     if has_next
         ng = next_gpu(sched)
         if qv_tgt !== nothing
-            for p in 1:6
+            for_panels_nosync() do p
                 compute_air_mass_panel!(air.m[p], ng.delp[p], qv_tgt[p],
                                         gc.area[p], g_val, Nc, Nz, Hp)
             end
         else
-            for p in 1:6
+            for_panels_nosync() do p
                 compute_air_mass_panel!(air.m[p], ng.delp[p],
                                         gc.area[p], g_val, Nc, Nz, Hp)
             end
         end
     else
-        for p in 1:6
+        for_panels_nosync() do p
             compute_air_mass_panel!(air.m[p], ws_vr.dp_work[p],
                                     gc.area[p], g_val, Nc, Nz, Hp)
         end
     end
-    for p in 1:6; copyto!(air.m_ref[p], air.m[p]); end
+    for_panels_nosync() do p; copyto!(air.m_ref[p], air.m[p]); end
     if phys.qv_loaded[]
-        for p in 1:6
+        for_panels_nosync() do p
             air.m_wet[p] .= air.m[p] ./ max.(1 .- phys.qv_gpu[p], eps(FT))
         end
     else
-        for p in 1:6; copyto!(air.m_wet[p], air.m[p]); end
+        for_panels_nosync() do p; copyto!(air.m_wet[p], air.m[p]); end
     end
     return nothing
 end
@@ -833,7 +831,6 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
     Nc, Nz, Hp = grid.Nc, grid.Nz, grid.Hp
     N = Nc + 2Hp
     cx_gpu, cy_gpu = gpu.cx, gpu.cy
-    backend = get_backend(gpu.delp[1])
     g_val = FT(grid.gravity)
 
     step[] += n_sub
@@ -862,10 +859,6 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
     am_to_mfx = g_val * mfx_dt
     inv_am_to_mfx = FT(1) / am_to_mfx
     rarea = ntuple(p -> FT(1) ./ gc.area[p], 6)
-    corr_mfx_k! = _correct_mfx_humidity_kernel!(backend, 256)
-    corr_mfy_k! = _correct_mfy_humidity_kernel!(backend, 256)
-    rev_mfx_k! = _reverse_mfx_humidity_kernel!(backend, 256)
-    rev_mfy_k! = _reverse_mfy_humidity_kernel!(backend, 256)
 
     # ── n_sub loop with dp-reset (interpolated DELP, moist) ─────────────
     n_loop = has_next ? n_sub : 1
@@ -874,19 +867,18 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
     if has_next && per_step
         # ── Per-substep remap: matches GCHP offline_tracer_advection ────────
         ng = next_gpu(sched)
-        interp_k! = _interpolate_dp_kernel!(backend, 256)
 
         # GCHP applies humidity correction ONCE before all substeps (GCHPctmEnv:1029).
         # Scale am/bm to Pa·m² and correct for humidity — keep corrected for all substeps.
-        for p in 1:6
+        for_panels_nosync() do p
             gpu.am[p] .*= am_to_mfx
             gpu.bm[p] .*= am_to_mfx
         end
-        for p in 1:6
-            corr_mfx_k!(gpu.am[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc+1, Nc, Nz))
-            corr_mfy_k!(gpu.bm[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc, Nc+1, Nz))
+        for_panels_nosync() do p
+            be = get_backend(gpu.am[p])
+            _correct_mfx_humidity_kernel!(be, 256)(gpu.am[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc+1, Nc, Nz))
+            _correct_mfy_humidity_kernel!(be, 256)(gpu.bm[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc, Nc+1, Nz))
         end
-        synchronize(backend)
 
         # QV advection as tracer NQ+1 (GCHP: AdvCore:1068) was tested but provides
         # only ~3% correction to the moist path artifact (see MoistSubStepDiag analysis).
@@ -900,11 +892,11 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
             frac_end   = FT(_isub)     / FT(n_loop)
 
             # Reset dp_work to interpolated moist DELP at start of substep
-            for p in 1:6
-                interp_k!(ws_vr.dp_work[p], gpu.delp[p], ng.delp[p],
+            for_panels_nosync() do p
+                be = get_backend(ws_vr.dp_work[p])
+                _interpolate_dp_kernel!(be, 256)(ws_vr.dp_work[p], gpu.delp[p], ng.delp[p],
                           frac_start; ndrange=(N, N, Nz))
             end
-            synchronize(backend)
 
             # Horizontal advection (fluxes already corrected for humidity)
             gchp_tracer_2d!(tracers_with_qv, ws_vr.dp_work, gpu.am, gpu.bm,
@@ -919,7 +911,7 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
             end
 
             # Source PE from evolved dpA (moist)
-            for p in 1:6
+            for_panels_nosync() do p
                 compute_air_mass_panel!(ws_vr.m_save[p], ws_vr.dp_work[p],
                                         gc.area[p], g_val, Nc, Nz, Hp)
             end
@@ -929,19 +921,19 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
             # mass scaled proportionally to match evolved surface pressure.
             # (Same approach as dry fix7 — hybrid PE accumulates drift over 384 substeps.)
             if _isub < n_loop
-                for p in 1:6
-                    interp_k!(ws_vr.dp_work[p], gpu.delp[p], ng.delp[p],
+                for_panels_nosync() do p
+                    be = get_backend(ws_vr.dp_work[p])
+                    _interpolate_dp_kernel!(be, 256)(ws_vr.dp_work[p], gpu.delp[p], ng.delp[p],
                               frac_end; ndrange=(N, N, Nz))
                 end
-                synchronize(backend)
                 compute_target_pressure_from_delp_direct!(ws_vr, ws_vr.dp_work, gc, grid)
-                for p in 1:6
-                    _scale_dp_tgt_to_source_ps_kernel!(backend, 256)(
+                for_panels_nosync() do p
+                    be = get_backend(ws_vr.pe_tgt[p])
+                    _scale_dp_tgt_to_source_ps_kernel!(be, 256)(
                         ws_vr.pe_tgt[p], ws_vr.dp_tgt[p],
                         ws_vr.pe_src[p], ws_vr.ps_src[p],
                         Nc, Nz; ndrange=(Nc, Nc))
                 end
-                synchronize(backend)
             else
                 compute_target_pe_from_evolved_ps!(ws_vr, gc, grid)
             end
@@ -969,13 +961,13 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
                 # PE ensures column mass conservation.
 
                 # Convert rm → q using TARGET mass (dp_tgt, surface-locked).
-                for p in 1:6
-                    _copy_dp_tgt_to_dp_work_kernel!(backend, 256)(
+                for_panels_nosync() do p
+                    be = get_backend(ws_vr.dp_work[p])
+                    _copy_dp_tgt_to_dp_work_kernel!(be, 256)(
                         ws_vr.dp_work[p], ws_vr.dp_tgt[p], Hp, Nc, Nz;
                         ndrange=(Nc, Nc, Nz))
                 end
-                synchronize(backend)
-                for p in 1:6
+                for_panels_nosync() do p
                     compute_air_mass_panel!(ws_vr.m_save[p], ws_vr.dp_work[p],
                                             gc.area[p], g_val, Nc, Nz, Hp)
                 end
@@ -994,69 +986,68 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
         end
 
         # Restore am/bm: reverse humidity correction + unscale
-        for p in 1:6
-            rev_mfx_k!(gpu.am[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc+1, Nc, Nz))
-            rev_mfy_k!(gpu.bm[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc, Nc+1, Nz))
+        for_panels_nosync() do p
+            be = get_backend(gpu.am[p])
+            _reverse_mfx_humidity_kernel!(be, 256)(gpu.am[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc+1, Nc, Nz))
+            _reverse_mfy_humidity_kernel!(be, 256)(gpu.bm[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc, Nc+1, Nz))
         end
-        synchronize(backend)
-        for p in 1:6
+        for_panels_nosync() do p
             gpu.am[p] .*= inv_am_to_mfx
             gpu.bm[p] .*= inv_am_to_mfx
         end
 
     elseif has_next
         ng = next_gpu(sched)
-        interp_k! = _interpolate_dp_kernel!(backend, 256)
         for _isub in 1:n_loop
             frac = FT(_isub - 1) / FT(n_loop)
-            for p in 1:6
-                interp_k!(ws_vr.dp_work[p], gpu.delp[p], ng.delp[p],
+            for_panels_nosync() do p
+                be = get_backend(ws_vr.dp_work[p])
+                _interpolate_dp_kernel!(be, 256)(ws_vr.dp_work[p], gpu.delp[p], ng.delp[p],
                           frac; ndrange=(N, N, Nz))
             end
-            synchronize(backend)
 
-            for p in 1:6
+            for_panels_nosync() do p
                 gpu.am[p] .*= am_to_mfx
                 gpu.bm[p] .*= am_to_mfx
             end
-            for p in 1:6
-                corr_mfx_k!(gpu.am[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc+1, Nc, Nz))
-                corr_mfy_k!(gpu.bm[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc, Nc+1, Nz))
+            for_panels_nosync() do p
+                be = get_backend(gpu.am[p])
+                _correct_mfx_humidity_kernel!(be, 256)(gpu.am[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc+1, Nc, Nz))
+                _correct_mfy_humidity_kernel!(be, 256)(gpu.bm[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc, Nc+1, Nz))
             end
-            synchronize(backend)
             gchp_tracer_2d!(tracers, ws_vr.dp_work, gpu.am, gpu.bm,
                               cx_gpu, cy_gpu, gpu.xfx, gpu.yfx,
                               gc.area, rarea, grid, _ORD, ws_lr, ws_vr.m_save)
-            for p in 1:6
-                rev_mfx_k!(gpu.am[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc+1, Nc, Nz))
-                rev_mfy_k!(gpu.bm[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc, Nc+1, Nz))
+            for_panels_nosync() do p
+                be = get_backend(gpu.am[p])
+                _reverse_mfx_humidity_kernel!(be, 256)(gpu.am[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc+1, Nc, Nz))
+                _reverse_mfy_humidity_kernel!(be, 256)(gpu.bm[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc, Nc+1, Nz))
             end
-            synchronize(backend)
-            for p in 1:6
+            for_panels_nosync() do p
                 gpu.am[p] .*= inv_am_to_mfx
                 gpu.bm[p] .*= inv_am_to_mfx
             end
         end
     else
-        for p in 1:6; copyto!(ws_vr.dp_work[p], gpu.delp[p]); end
-        for p in 1:6
+        for_panels_nosync() do p; copyto!(ws_vr.dp_work[p], gpu.delp[p]); end
+        for_panels_nosync() do p
             gpu.am[p] .*= am_to_mfx
             gpu.bm[p] .*= am_to_mfx
         end
-        for p in 1:6
-            corr_mfx_k!(gpu.am[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc+1, Nc, Nz))
-            corr_mfy_k!(gpu.bm[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc, Nc+1, Nz))
+        for_panels_nosync() do p
+            be = get_backend(gpu.am[p])
+            _correct_mfx_humidity_kernel!(be, 256)(gpu.am[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc+1, Nc, Nz))
+            _correct_mfy_humidity_kernel!(be, 256)(gpu.bm[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc, Nc+1, Nz))
         end
-        synchronize(backend)
         gchp_tracer_2d!(tracers, ws_vr.dp_work, gpu.am, gpu.bm,
                           cx_gpu, cy_gpu, gpu.xfx, gpu.yfx,
                           gc.area, rarea, grid, _ORD, ws_lr, ws_vr.m_save)
-        for p in 1:6
-            rev_mfx_k!(gpu.am[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc+1, Nc, Nz))
-            rev_mfy_k!(gpu.bm[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc, Nc+1, Nz))
+        for_panels_nosync() do p
+            be = get_backend(gpu.am[p])
+            _reverse_mfx_humidity_kernel!(be, 256)(gpu.am[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc+1, Nc, Nz))
+            _reverse_mfy_humidity_kernel!(be, 256)(gpu.bm[p], phys.qv_gpu[p], Hp, Nc; ndrange=(Nc, Nc+1, Nz))
         end
-        synchronize(backend)
-        for p in 1:6
+        for_panels_nosync() do p
             gpu.am[p] .*= inv_am_to_mfx
             gpu.bm[p] .*= inv_am_to_mfx
         end
@@ -1064,7 +1055,7 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
 
     # ── Vertical remap (single, at end) — skipped when per_step_remap did it ──
     if !(has_next && per_step)
-        for p in 1:6
+        for_panels_nosync() do p
             compute_air_mass_panel!(ws_vr.m_save[p], ws_vr.dp_work[p],
                                     gc.area[p], g_val, Nc, Nz, Hp)
         end
@@ -1105,12 +1096,12 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
 
     if has_next
         ng = next_gpu(sched)
-        for p in 1:6
+        for_panels_nosync() do p
             compute_air_mass_panel!(ws_vr.m_save[p], ng.delp[p],
                                     gc.area[p], g_val, Nc, Nz, Hp)
         end
     else
-        for p in 1:6
+        for_panels_nosync() do p
             compute_air_mass_panel!(ws_vr.m_save[p], ws_vr.dp_work[p],
                                     gc.area[p], g_val, Nc, Nz, Hp)
         end
@@ -1127,13 +1118,12 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
         end
     end
 
-    div_k! = _divide_by_1_minus_qv_kernel!(backend, 256)
     for (_, q_t) in pairs(tracers)
-        for p in 1:6
-            div_k!(q_t[p], qv_back[p], Hp; ndrange=(Nc, Nc, Nz))
+        for_panels_nosync() do p
+            be = get_backend(q_t[p])
+            _divide_by_1_minus_qv_kernel!(be, 256)(q_t[p], qv_back[p], Hp; ndrange=(Nc, Nc, Nz))
         end
     end
-    synchronize(backend)
 
     # ── Diag: capture q_dry_final after wet→dry back-conversion (first window) ──
     if _do_diag && haskey(tracers, :co2)
@@ -1146,12 +1136,12 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
 
     if has_next
         ng = next_gpu(sched)
-        for p in 1:6
+        for_panels_nosync() do p
             compute_air_mass_panel!(air.m[p], ng.delp[p], qv_back[p],
                                     gc.area[p], g_val, Nc, Nz, Hp)
         end
     else
-        for p in 1:6
+        for_panels_nosync() do p
             compute_air_mass_panel!(air.m[p], ws_vr.dp_work[p],
                                     gc.area[p], g_val, Nc, Nz, Hp)
         end
@@ -1161,8 +1151,8 @@ function _gchp_advection_moist!(tracers, sched, air, phys, model,
         q_to_rm_panels!(q_t, air.m, grid)
     end
 
-    for p in 1:6; copyto!(air.m_ref[p], air.m[p]); end
-    for p in 1:6
+    for_panels_nosync() do p; copyto!(air.m_ref[p], air.m[p]); end
+    for_panels_nosync() do p
         air.m_wet[p] .= air.m[p] ./ max.(1 .- qv_back[p], eps(FT))
     end
     return nothing
@@ -1216,13 +1206,13 @@ function advection_phase!(tracers, sched, air, phys, model,
         # ═══════════════════════════════════════════════════════════════════
 
         # Save prescribed m (from compute_air_mass_phase!)
-        for p in 1:6; copyto!(ws_vr.m_save[p], air.m[p]); end
+        for_panels_nosync() do p; copyto!(ws_vr.m_save[p], air.m[p]); end
 
         for _ in 1:n_sub
             step[] += 1
 
             for (_, rm_t) in pairs(tracers)
-                for p in 1:6; copyto!(air.m[p], ws_vr.m_save[p]); end
+                for_panels_nosync() do p; copyto!(air.m[p], ws_vr.m_save[p]); end
 
                 fv_tp_2d_cs!(rm_t, air.m, gpu.am, gpu.bm,
                               grid, _ORD, ws, ws_lr;
@@ -1231,7 +1221,7 @@ function advection_phase!(tracers, sched, air, phys, model,
                               grid, _ORD, ws, ws_lr;
                               damp_coeff=FT(0))
 
-                for p in 1:6
+                for_panels_nosync() do p
                     rm_t[p] .*= ws_vr.m_save[p] ./ air.m[p]
                 end
             end
@@ -1243,7 +1233,7 @@ function advection_phase!(tracers, sched, air, phys, model,
         # causes 12× over-mixing because RAS recomputes q_cloud from the
         # already-mixed environment at each call (nonlinear feedback).
         # RAS internal subcycling handles CFL stability for the larger dt.
-        for p in 1:6; copyto!(air.m[p], ws_vr.m_save[p]); end
+        for_panels_nosync() do p; copyto!(air.m[p], ws_vr.m_save[p]); end
         if phys.cmfmc_loaded[]
             dt_conv = FT(n_sub) * dt_sub
             for (_, rm_t) in pairs(tracers)
@@ -1284,18 +1274,18 @@ function advection_phase!(tracers, sched, air, phys, model,
         # Update air.m to target state (m = dp_tgt * area / g)
         update_air_mass_from_target!(air.m, ws_vr, gc, grid)
         # Copy to m_ref for output/diagnostics
-        for p in 1:6; copyto!(air.m_ref[p], air.m[p]); end
+        for_panels_nosync() do p; copyto!(air.m_ref[p], air.m[p]); end
 
         # Recompute m_wet from updated air.m for post-advection physics.
         # After remap, air.m is on target pressure basis; m_wet must match
         # so that diffusion's q = rm/m_wet is consistent with remapped rm.
         # m_wet = m_dry / (1-qv). Uses current-window QV (<0.1% approx).
         if phys.qv_loaded[]
-            for p in 1:6
+            for_panels_nosync() do p
                 air.m_wet[p] .= air.m[p] ./ max.(1 .- phys.qv_gpu[p], eps(FT))
             end
         else
-            for p in 1:6; copyto!(air.m_wet[p], air.m[p]); end
+            for_panels_nosync() do p; copyto!(air.m_wet[p], air.m[p]); end
         end
     else
         # ═══════════════════════════════════════════════════════════════════
@@ -1309,7 +1299,7 @@ function advection_phase!(tracers, sched, air, phys, model,
             _cs_pw_dict = model.advection_scheme isa PratherAdvection ?
                 _get_cs_prather_ws(tracers, grid, model.architecture) : nothing
             for (tname, rm_t) in pairs(tracers)
-                for p in 1:6
+                for_panels_nosync() do p
                     copyto!(air.m[p], air.m_ref[p])
                 end
                 _pw_cs = _cs_pw_dict !== nothing ? _cs_pw_dict[tname] : nothing
@@ -1323,7 +1313,7 @@ function advection_phase!(tracers, sched, air, phys, model,
             # Per-cell mass fixer: rm = (rm / m_evolved) × m_ref
             if get(model.metadata, "mass_fixer", true)
                 for (_, rm_t) in pairs(tracers)
-                    for p in 1:6
+                    for_panels_nosync() do p
                         apply_mass_fixer!(rm_t[p], air.m_ref[p], air.m[p], Nc, Nz, Hp)
                     end
                 end
@@ -1399,12 +1389,18 @@ end
 # =====================================================================
 
 """Apply global mass fixer. No-op for LL; scales tracers for CS."""
-apply_mass_correction!(tracers, grid::LatitudeLongitudeGrid, diag; mass_fixer::Bool=true) = nothing
+apply_mass_correction!(tracers, grid::LatitudeLongitudeGrid, diag;
+                        mass_fixer::Bool=true, mass_fixer_tracers::Vector{String}=String[]) = nothing
 
-function apply_mass_correction!(tracers, grid::CubedSphereGrid, diag; mass_fixer::Bool=true)
+function apply_mass_correction!(tracers, grid::CubedSphereGrid, diag;
+                                 mass_fixer::Bool=true,
+                                 mass_fixer_tracers::Vector{String}=String[])
     mass_fixer || return
     isempty(diag.pre_adv_mass) && return
-    diag.fix_value = apply_global_mass_fixer!(tracers, grid, diag.pre_adv_mass)
+    diag.fix_value = apply_global_mass_fixer!(tracers, grid, diag.pre_adv_mass;
+                                               fix_interval_scale=diag.fix_interval_scale,
+                                               fix_total_scale=diag.fix_total_scale,
+                                               allowed_tracers=mass_fixer_tracers)
 end
 
 # =====================================================================

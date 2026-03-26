@@ -302,15 +302,13 @@ function convect!(rm_panels::NTuple{6}, m_panels::NTuple{6},
 
     # Fall back to Tiedtke if DTRAIN unavailable
     if dtrain_panels === nothing
-        @warn "RAS: DTRAIN not available, falling back to Tiedtke-style transport" maxlog=1
-        _tiedtke = TiedtkeConvection()
-        convect!(rm_panels, m_panels, cmfmc_panels, delp_panels,
-                 _tiedtke, grid, dt, planet)
-        return nothing
+        error("RAS convection requires DTRAIN data but dtrain_panels is nothing. " *
+              "Ensure A3dyn binary files exist for all simulation dates " *
+              "(run convert_surface_cs_to_binary.jl). " *
+              "Use convection type=\"tiedtke\" in config if DTRAIN is intentionally unavailable.")
     end
 
     FT = eltype(rm_panels[1])
-    backend = get_backend(rm_panels[1])
     Nc = grid.Nc
     Hp = grid.Hp
     Nz = grid.Nz
@@ -327,16 +325,16 @@ function convect!(rm_panels::NTuple{6}, m_panels::NTuple{6},
               "Pass `workspace` keyword to convect!.")
     end
 
-    kernel! = _ras_column_kernel!(backend, 256)
     for _ in 1:n_sub_conv
-        for p in 1:6
+        for_panels_nosync() do p
+            be = get_backend(rm_panels[p])
+            kernel! = _ras_column_kernel!(be, 256)
             kernel!(rm_panels[p], m_panels[p],
                     cmfmc_panels[p], dtrain_panels[p], delp_panels[p],
                     workspace[p],
                     Hp, Hp, Nz, dt_conv, FT(planet.gravity),
                     Val(:rm); ndrange=(Nc, Nc))
         end
-        synchronize(backend)
     end
     return nothing
 end

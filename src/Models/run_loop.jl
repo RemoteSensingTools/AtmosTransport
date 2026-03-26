@@ -37,10 +37,15 @@ function _run_loop!(model, grid::AbstractGrid{FT},
     dt_window = FT(dt_sub * n_sub)
     half_dt  = FT(dt_sub / 2)
 
-    # === Allocation ===
+    # === Set active panel map for multi-GPU dispatch ===
+    pm = get_panel_map(grid)
+    set_panel_map!(pm)
+
+    # === Allocation (panel_map from grid — all allocators read it) ===
     _use_gchp_sched = _needs_gchp(model.advection_scheme)
-    sched     = build_io_scheduler(grid, arch, buffering; use_gchp=_use_gchp_sched)
-    phys      = allocate_physics_buffers(grid, arch, model)
+    sched     = build_io_scheduler(grid, arch, buffering; use_gchp=_use_gchp_sched,
+                                    panel_map=pm)
+    phys      = allocate_physics_buffers(grid, arch, model; panel_map=pm)
     tracers   = allocate_tracers(model, grid)
     air       = allocate_air_mass(grid, arch)
     _use_lr   = _needs_linrood(model.advection_scheme)
@@ -48,7 +53,8 @@ function _run_loop!(model, grid::AbstractGrid{FT},
     _use_gchp = _needs_gchp(model.advection_scheme)
     gc_ws     = allocate_geometry_and_workspace(grid, arch; use_linrood=_use_lr,
                                                  use_vertical_remap=_use_vr,
-                                                 use_gchp=_use_gchp)
+                                                 use_gchp=_use_gchp,
+                                                 panel_map=pm)
     gc        = gc_ws.gc
     ws        = gc_ws.ws
     ws_lr     = gc_ws.ws_lr
@@ -101,6 +107,9 @@ function _run_loop!(model, grid::AbstractGrid{FT},
         if has_next
             begin_load!(sched, driver, grid, w + 1; kw...)
         end
+
+        # Write staging progress file (for NVMe staging daemon, if configured)
+        _write_staging_progress(model, w)
 
         # CS: compute PS from DELP (CPU, reads curr_cpu — safe after spawn)
         compute_ps_phase!(phys, sched, grid)
@@ -173,7 +182,8 @@ function _run_loop!(model, grid::AbstractGrid{FT},
         # Global mass correction (CS only)
         _t = time()
         apply_mass_correction!(tracers, grid, diag;
-                                mass_fixer=get(model.metadata, "mass_fixer", true))
+                                mass_fixer=get(model.metadata, "mass_fixer", true),
+                                mass_fixer_tracers=String.(get(model.metadata, "mass_fixer_tracers", String[])))
         t_phases["gpu_massfixer"] += time() - _t
 
         # Mass diagnostics
@@ -192,6 +202,7 @@ function _run_loop!(model, grid::AbstractGrid{FT},
             write_output!(writer, model, sim_time;
                           air_mass=out_mass, tracers=tracers, met_fields=met)
         end
+        snapshot_massfixer_interval!(diag)
         t_phases["output"] += time() - t0
         t_out += time() - t0
 
@@ -200,6 +211,14 @@ function _run_loop!(model, grid::AbstractGrid{FT},
         wait_load!(sched)
         t_phases["io_wait"] += time() - _t
         swap!(sched)
+
+        # Verbose: per-window phase timing (visible with --verbose / -v)
+        if is_verbose()
+            @info @sprintf("  [v] win %d/%d: adv=%.3f io_phys=%.3f out=%.3f delp=%.3f diff=%.3f em=%.3f diag=%.3f",
+                w, n_win, t_phases["gpu_advection"]/w, t_phases["io_upload_phys"]/w,
+                t_phases["output"]/w, t_phases["io_delp_fetch"]/w,
+                t_phases["gpu_diffusion"]/w, t_phases["gpu_emissions"]/w, t_phases["gpu_diag"]/w)
+        end
 
         update_progress!(prog, diag, grid, w, step[], dt_sub,
                           wall_start, t_io, t_gpu, t_out)

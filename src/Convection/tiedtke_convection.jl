@@ -240,7 +240,6 @@ function convect!(rm_panels::NTuple{6}, m_panels::NTuple{6},
                    planet::PlanetParameters;
                    dtrain_panels=nothing, workspace=nothing)
     FT = eltype(rm_panels[1])
-    backend = get_backend(rm_panels[1])
     Nc = grid.Nc
     Hp = grid.Hp
     Nz = grid.Nz
@@ -251,14 +250,14 @@ function convect!(rm_panels::NTuple{6}, m_panels::NTuple{6},
     n_sub = max(1, ceil(Int, max_cfl / FT(0.9)))
     dt_conv = FT(dt) / FT(n_sub)
 
-    kernel! = _convect_column_kernel!(backend, 256)
     for _ in 1:n_sub
-        for p in 1:6
+        for_panels_nosync() do p
+            be = get_backend(rm_panels[p])
+            kernel! = _convect_column_kernel!(be, 256)
             kernel!(rm_panels[p], m_panels[p], cmfmc_panels[p], delp_panels[p],
                     Hp, Hp, Nz, dt_conv, FT(planet.gravity),
                     Val(:rm); ndrange=(Nc, Nc))
         end
-        synchronize(backend)
     end
     return nothing
 end

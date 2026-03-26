@@ -786,6 +786,7 @@ function _write_global_metadata!(ds, model)
         ds.attrib["user"]          = get(meta, "user", "unknown")
         ds.attrib["hostname"]      = get(meta, "hostname", "unknown")
         ds.attrib["julia_version"] = get(meta, "julia_version", string(VERSION))
+        ds.attrib["git_commit"]    = get(meta, "git_commit", "unknown")
         ds.attrib["run_started"]   = get(meta, "created", "")
         if haskey(meta, "config")
             cfg = meta["config"]

@@ -272,17 +272,13 @@ function compute_area_fluxes!(ws_gchp::GCHPTransportWorkspace,
                                geom::GCHPGridGeometry,
                                grid::CubedSphereGrid)
     (; Nc, Nz) = grid
-    backend = get_backend(cx_panels[1])
-    kx! = _compute_xfx_kernel!(backend, 256)
-    ky! = _compute_yfx_kernel!(backend, 256)
-
-    for p in 1:6
-        kx!(ws_gchp.xfx[p], cx_panels[p], geom.dxa_dev[p], geom.dy_dev[p], Nc;
+    for_panels_nosync() do p
+        be = get_backend(cx_panels[p])
+        _compute_xfx_kernel!(be, 256)(ws_gchp.xfx[p], cx_panels[p], geom.dxa_dev[p], geom.dy_dev[p], Nc;
             ndrange=(Nc + 1, Nc, Nz))
-        ky!(ws_gchp.yfx[p], cy_panels[p], geom.dya_dev[p], geom.dx_dev[p], Nc;
+        _compute_yfx_kernel!(be, 256)(ws_gchp.yfx[p], cy_panels[p], geom.dya_dev[p], geom.dx_dev[p], Nc;
             ndrange=(Nc, Nc + 1, Nz))
     end
-    synchronize(backend)
 end
 
 # ---------------------------------------------------------------------------
@@ -426,14 +422,6 @@ function fv_tp_2d_gchp!(q_panels, m_panels, am_panels, bm_panels,
                           grid::CubedSphereGrid, ::Val{ORD},
                           ws, ws_lr::LinRoodWorkspace) where ORD
     (; Hp, Nc, Nz) = grid
-    backend = get_backend(q_panels[1])
-
-    # Pre-instantiate kernels
-    yc_face_k!  = _ppm_y_face_courant_kernel!(backend, 256)
-    xc_face_k!  = _ppm_x_face_courant_kernel!(backend, 256)
-    pre_y_a_k!  = _pre_advect_y_area_kernel!(backend, 256)
-    pre_x_a_k!  = _pre_advect_x_area_kernel!(backend, 256)
-    update_q_k! = _linrood_update_gchp_kernel!(backend, 256)
 
     # ═══════════════════════════════════════════════════════════════════════
     # Phase 1: Edge halos + Y-corners → inner Y-PPM (Courant) + area pre-advect
@@ -443,75 +431,60 @@ function fv_tp_2d_gchp!(q_panels, m_panels, am_panels, bm_panels,
     copy_corners!(q_panels, grid, 2)
     copy_corners!(m_panels, grid, 2)
 
-    # Initialize q_buf with current q (halos included)
-    for p in eachindex(ws_lr.q_buf)
+    for_panels_nosync() do p
         copyto!(ws_lr.q_buf[p], q_panels[p])
     end
 
-    for p in eachindex(ws_lr.fy_in)
-        # Inner Y-PPM: face values from ORIGINAL q, using COURANT number cy
-        yc_face_k!(ws_lr.fy_in[p], q_panels[p], cy_panels[p],
+    for_panels_nosync() do p
+        be = get_backend(q_panels[p])
+        _ppm_y_face_courant_kernel!(be, 256)(ws_lr.fy_in[p], q_panels[p], cy_panels[p],
                    Hp, Nc, Val(ORD); ndrange=(Nc, Nc + 1, Nz))
-        # Area-based Y pre-advection: q_i = (q*area + yfx*fy - yfx*fy) / ra_y
-        pre_y_a_k!(ws_lr.q_buf[p], q_panels[p], ws_lr.fy_in[p],
+        _pre_advect_y_area_kernel!(be, 256)(ws_lr.q_buf[p], q_panels[p], ws_lr.fy_in[p],
                    yfx_panels[p], area_panels[p], Hp; ndrange=(Nc, Nc, Nz))
     end
-    synchronize(backend)
 
     # ═══════════════════════════════════════════════════════════════════════
     # Phase 2: X-corners → outer X-PPM on q_i + inner X-PPM + area pre-advect
     # ═══════════════════════════════════════════════════════════════════════
-    copy_corners!(ws_lr.q_buf, grid, 1)   # X-corners on pre-advected q_i
-    copy_corners!(q_panels, grid, 1)       # X-corners on original q
+    copy_corners!(ws_lr.q_buf, grid, 1)
+    copy_corners!(q_panels, grid, 1)
     copy_corners!(m_panels, grid, 1)
 
-    for p in eachindex(ws_lr.fx_out)
-        # Outer X-PPM: face values from pre-advected q_i, using COURANT number cx
-        xc_face_k!(ws_lr.fx_out[p], ws_lr.q_buf[p], cx_panels[p],
+    for_panels_nosync() do p
+        be = get_backend(q_panels[p])
+        _ppm_x_face_courant_kernel!(be, 256)(ws_lr.fx_out[p], ws_lr.q_buf[p], cx_panels[p],
                    Hp, Nc, Val(ORD); ndrange=(Nc + 1, Nc, Nz))
-        # Inner X-PPM: face values from ORIGINAL q, using COURANT number cx
-        xc_face_k!(ws_lr.fx_in[p], q_panels[p], cx_panels[p],
+        _ppm_x_face_courant_kernel!(be, 256)(ws_lr.fx_in[p], q_panels[p], cx_panels[p],
                    Hp, Nc, Val(ORD); ndrange=(Nc + 1, Nc, Nz))
     end
-    synchronize(backend)
 
-    # Re-initialize q_buf from original q, then overwrite interior with q_j
-    for p in eachindex(ws_lr.q_buf)
+    for_panels_nosync() do p
         copyto!(ws_lr.q_buf[p], q_panels[p])
     end
 
-    for p in eachindex(ws_lr.q_buf)
-        # Area-based X pre-advection: q_j = (q*area + xfx*fx - xfx*fx) / ra_x
-        pre_x_a_k!(ws_lr.q_buf[p], q_panels[p], ws_lr.fx_in[p],
+    for_panels_nosync() do p
+        be = get_backend(q_panels[p])
+        _pre_advect_x_area_kernel!(be, 256)(ws_lr.q_buf[p], q_panels[p], ws_lr.fx_in[p],
                    xfx_panels[p], area_panels[p], Hp; ndrange=(Nc, Nc, Nz))
     end
-    synchronize(backend)
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Phase 3: Y-corners on q_j → outer Y-PPM → averaged update (PARALLEL)
-    #
-    # The update kernel is REUSED from fv_tp_2d_cs_q!:
-    #   q_new = (q*m1 + am*avg_fx + bm*avg_fy) / m2
-    # This is algebraically identical to GCHP's:
-    #   q_new = (q*dp1 + fx*rarea + fy*rarea) / dp2
-    # because dp = m*g/area and mfx = am*g cancel.
+    # Phase 3: Y-corners on q_j → outer Y-PPM → averaged update
     # ═══════════════════════════════════════════════════════════════════════
     copy_corners!(ws_lr.q_buf, grid, 2)
 
-    for p in eachindex(ws_lr.fx_in)
-        # Outer Y-PPM: face values from pre-advected q_j, using COURANT number cy
-        yc_face_k!(ws_lr.fy_out, ws_lr.q_buf[p], cy_panels[p],
+    for_panels_nosync() do p
+        be = get_backend(q_panels[p])
+        _ppm_y_face_courant_kernel!(be, 256)(ws_lr.fy_out[p], ws_lr.q_buf[p], cy_panels[p],
                    Hp, Nc, Val(ORD); ndrange=(Nc, Nc + 1, Nz))
-        # Combined update: average fluxes, update q and m using MASS flux
-        update_q_k!(ws_lr.q_out[p], ws_lr.dp_out[p],
+        _linrood_update_gchp_kernel!(be, 256)(ws_lr.q_out[p], ws_lr.dp_out[p],
                     q_panels[p], m_panels[p], am_panels[p], bm_panels[p],
-                    ws_lr.fx_in[p], ws_lr.fx_out[p], ws_lr.fy_in[p], ws_lr.fy_out,
+                    ws_lr.fx_in[p], ws_lr.fx_out[p], ws_lr.fy_in[p], ws_lr.fy_out[p],
                     Hp; ndrange=(Nc, Nc, Nz))
     end
-    synchronize(backend)
 
-    # Copy results back — both q and m are updated
-    for p in 1:6
+    # Copy results back
+    for_panels_nosync() do p
         _copy_interior!(q_panels[p], ws_lr.q_out[p], Hp, Nc, Nz)
         _copy_interior!(m_panels[p], ws_lr.dp_out[p], Hp, Nc, Nz)
     end
@@ -845,12 +818,6 @@ function fv_tp_2d_gchp_fluxes!(q_panels, cx_panels, cy_panels,
                                  grid::CubedSphereGrid, ::Val{ORD},
                                  ws_lr::LinRoodWorkspace) where ORD
     (; Hp, Nc, Nz) = grid
-    backend = get_backend(q_panels[1])
-
-    yc_face_k!  = _ppm_y_face_courant_kernel!(backend, 256)
-    xc_face_k!  = _ppm_x_face_courant_kernel!(backend, 256)
-    pre_y_a_k!  = _pre_advect_y_area_kernel!(backend, 256)
-    pre_x_a_k!  = _pre_advect_x_area_kernel!(backend, 256)
 
     # ═══════════════════════════════════════════════════════════════════════
     # Phase 1: Y-corners → inner Y-PPM (Courant) + area pre-advect → q_i
@@ -858,21 +825,18 @@ function fv_tp_2d_gchp_fluxes!(q_panels, cx_panels, cy_panels,
     fill_panel_halos!(q_panels, grid)
     copy_corners!(q_panels, grid, 2)
 
-    for p in eachindex(ws_lr.q_buf)
+    for_panels_nosync() do p
         copyto!(ws_lr.q_buf[p], q_panels[p])
     end
 
-    for p in eachindex(ws_lr.fy_in)
-        yc_face_k!(ws_lr.fy_in[p], q_panels[p], cy_panels[p],
+    for_panels_nosync() do p
+        be = get_backend(q_panels[p])
+        _ppm_y_face_courant_kernel!(be, 256)(ws_lr.fy_in[p], q_panels[p], cy_panels[p],
                    Hp, Nc, Val(ORD); ndrange=(Nc, Nc + 1, Nz))
-        pre_y_a_k!(ws_lr.q_buf[p], q_panels[p], ws_lr.fy_in[p],
+        _pre_advect_y_area_kernel!(be, 256)(ws_lr.q_buf[p], q_panels[p], ws_lr.fy_in[p],
                    yfx_panels[p], area_panels[p], Hp; ndrange=(Nc, Nc, Nz))
     end
-    synchronize(backend)
 
-    # Exchange q_i halos from neighboring panels so the outer X-PPM reads
-    # pre-advected values at halo positions (not original q).
-    # Exact at same-type edges (N↔S, E↔W); O(CFL²) at cross-type edges.
     fill_panel_halos!(ws_lr.q_buf, grid)
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -881,22 +845,22 @@ function fv_tp_2d_gchp_fluxes!(q_panels, cx_panels, cy_panels,
     copy_corners!(ws_lr.q_buf, grid, 1)
     copy_corners!(q_panels, grid, 1)
 
-    for p in eachindex(ws_lr.fx_out)
-        xc_face_k!(ws_lr.fx_out[p], ws_lr.q_buf[p], cx_panels[p],
+    for_panels_nosync() do p
+        be = get_backend(q_panels[p])
+        _ppm_x_face_courant_kernel!(be, 256)(ws_lr.fx_out[p], ws_lr.q_buf[p], cx_panels[p],
                    Hp, Nc, Val(ORD); ndrange=(Nc + 1, Nc, Nz))
-        xc_face_k!(ws_lr.fx_in[p], q_panels[p], cx_panels[p],
+        _ppm_x_face_courant_kernel!(be, 256)(ws_lr.fx_in[p], q_panels[p], cx_panels[p],
                    Hp, Nc, Val(ORD); ndrange=(Nc + 1, Nc, Nz))
     end
-    synchronize(backend)
 
-    for p in eachindex(ws_lr.q_buf)
+    for_panels_nosync() do p
         copyto!(ws_lr.q_buf[p], q_panels[p])
     end
-    for p in eachindex(ws_lr.q_buf)
-        pre_x_a_k!(ws_lr.q_buf[p], q_panels[p], ws_lr.fx_in[p],
+    for_panels_nosync() do p
+        be = get_backend(q_panels[p])
+        _pre_advect_x_area_kernel!(be, 256)(ws_lr.q_buf[p], q_panels[p], ws_lr.fx_in[p],
                    xfx_panels[p], area_panels[p], Hp; ndrange=(Nc, Nc, Nz))
     end
-    synchronize(backend)
 
     # Exchange q_j halos from neighboring panels so the outer Y-PPM reads
     # pre-advected values at halo positions (not original q).
@@ -949,13 +913,8 @@ function gchp_tracer_2d!(q_tracers, dp_panels, mfx, mfy, cx, cy,
                            grid::CubedSphereGrid{FT}, ::Val{ORD},
                            ws_lr::LinRoodWorkspace, dp2_work) where {FT, ORD}
     (; Hp, Nc, Nz) = grid
-    backend = get_backend(dp_panels[1])
 
     # ── Step 1: Compute max |CX|, |CY| per level → nsplt ──────────────
-    # GCHP: nsplt = int(1 + global_max(cmax))
-    # Per-level: ksplt(k) = int(1 + cmax(k))
-    # For simplicity, use global nsplt (all levels same subcycling).
-    # This matches GCHP's #ifdef GLOBAL_CFL behavior.
     cmax_global = zero(FT)
     for p in 1:6
         cmax_global = max(cmax_global, FT(maximum(abs, cx[p])))
@@ -966,60 +925,46 @@ function gchp_tracer_2d!(q_tracers, dp_panels, mfx, mfy, cx, cy,
     # ── Step 2: Scale all fluxes by 1/nsplt ────────────────────────────
     if nsplt > 1
         frac = FT(1) / FT(nsplt)
-        for p in 1:6
-            cx[p]  .*= frac
-            cy[p]  .*= frac
-            mfx[p] .*= frac
-            mfy[p] .*= frac
-            xfx[p] .*= frac
-            yfx[p] .*= frac
+        for_panels_nosync() do p
+            cx[p]  .*= frac;  cy[p]  .*= frac
+            mfx[p] .*= frac;  mfy[p] .*= frac
+            xfx[p] .*= frac;  yfx[p] .*= frac
         end
     end
-
-    # Pre-instantiate kernels
-    dp_evolve_k! = _gchp_dp_evolve_kernel!(backend, 256)
-    q_update_k!  = _gchp_q_update_kernel!(backend, 256)
-    yc_face_k!   = _ppm_y_face_courant_kernel!(backend, 256)
 
     # ── Step 3: Subcycled advection loop ───────────────────────────────
     for it in 1:nsplt
         # 3a. dp continuity: dp2 = dp1 + mfx_div × rarea
-        for p in 1:6
-            dp_evolve_k!(dp2_work[p], dp_panels[p], mfx[p], mfy[p], rarea[p],
+        for_panels_nosync() do p
+            be = get_backend(dp_panels[p])
+            _gchp_dp_evolve_kernel!(be, 256)(dp2_work[p], dp_panels[p], mfx[p], mfy[p], rarea[p],
                          Hp; ndrange=(Nc, Nc, Nz))
         end
-        synchronize(backend)
 
         # 3b. For each tracer: compute face values, then update q
-
         for (_, q_t) in pairs(q_tracers)
-            # Phases 1-2: inner Y-PPM, area pre-advect, outer X-PPM, inner X-PPM,
-            # area pre-advect → stores fx_in, fx_out, fy_in, q_buf=q_j with corners
             fv_tp_2d_gchp_fluxes!(q_t, cx, cy, xfx, yfx, area,
                                     grid, Val(ORD), ws_lr)
 
-            # Phase 3 + update: per-panel (fy_out is single shared buffer)
-            for p in 1:6
-                # Outer Y-PPM: face values from q_j (ws_lr.q_buf[p])
-                yc_face_k!(ws_lr.fy_out, ws_lr.q_buf[p], cy[p],
+            # Phase 3 + update: per-panel
+            for_panels_nosync() do p
+                be = get_backend(q_t[p])
+                _ppm_y_face_courant_kernel!(be, 256)(ws_lr.fy_out[p], ws_lr.q_buf[p], cy[p],
                            Hp, Nc, Val(ORD); ndrange=(Nc, Nc + 1, Nz))
-                # q update: uses dp1, dp2, averaged fluxes × mfx/mfy
-                q_update_k!(ws_lr.q_out[p], q_t[p], dp_panels[p], dp2_work[p],
+                _gchp_q_update_kernel!(be, 256)(ws_lr.q_out[p], q_t[p], dp_panels[p], dp2_work[p],
                             ws_lr.fx_in[p], ws_lr.fx_out[p],
-                            ws_lr.fy_in[p], ws_lr.fy_out,
+                            ws_lr.fy_in[p], ws_lr.fy_out[p],
                             mfx[p], mfy[p], rarea[p], Hp;
                             ndrange=(Nc, Nc, Nz))
             end
-            synchronize(backend)
 
-            # Copy q_new back to q_t (interior only)
-            for p in 1:6
+            for_panels_nosync() do p
                 _copy_interior!(q_t[p], ws_lr.q_out[p], Hp, Nc, Nz)
             end
         end
 
         # 3c. dp1 = dp2 for next substep
-        for p in 1:6
+        for_panels_nosync() do p
             copyto!(dp_panels[p], dp2_work[p])
         end
     end
@@ -1027,13 +972,10 @@ function gchp_tracer_2d!(q_tracers, dp_panels, mfx, mfy, cx, cy,
     # ── Step 4: Restore flux scaling ───────────────────────────────────
     if nsplt > 1
         restore = FT(nsplt)
-        for p in 1:6
-            cx[p]  .*= restore
-            cy[p]  .*= restore
-            mfx[p] .*= restore
-            mfy[p] .*= restore
-            xfx[p] .*= restore
-            yfx[p] .*= restore
+        for_panels_nosync() do p
+            cx[p]  .*= restore;  cy[p]  .*= restore
+            mfx[p] .*= restore;  mfy[p] .*= restore
+            xfx[p] .*= restore;  yfx[p] .*= restore
         end
     end
 

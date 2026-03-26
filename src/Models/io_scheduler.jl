@@ -31,7 +31,8 @@ mutable struct IOScheduler{B <: AbstractBufferingStrategy, GM, CM}
     const cpu_a    :: CM
     const cpu_b    :: CM
     current        :: Symbol        # :a or :b
-    load_task      :: Union{Task, Nothing}
+    load_task      :: Union{Task, Nothing}       # met-only (DELP, am, bm, cx, cy, xfx, yfx)
+    phys_task      :: Union{Task, Nothing}       # physics (CMFMC, DTRAIN, QV, surface)
     io_result      :: Union{NamedTuple, Nothing}  # return value from load_all_window!
 end
 
@@ -56,47 +57,47 @@ end
 Allocate met buffers and construct the IOScheduler.
 """
 function build_io_scheduler(grid::LatitudeLongitudeGrid{FT}, arch,
-                             ::SingleBuffer; use_gchp::Bool=false) where FT
+                             ::SingleBuffer; use_gchp::Bool=false,
+                             panel_map::AbstractPanelMap=SingleGPUMap()) where FT
     cs_cpu = _get_cluster_sizes_cpu(grid)
     Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
     gpu = LatLonMetBuffer(arch, FT, Nx, Ny, Nz; cluster_sizes_cpu=cs_cpu)
     cpu = LatLonCPUBuffer(FT, Nx, Ny, Nz)
-    IOScheduler(SingleBuffer(), gpu, gpu, cpu, cpu, :a, nothing, nothing)
+    IOScheduler(SingleBuffer(), gpu, gpu, cpu, cpu, :a, nothing, nothing, nothing)
 end
 
 function build_io_scheduler(grid::LatitudeLongitudeGrid{FT}, arch,
-                             ::DoubleBuffer; use_gchp::Bool=false) where FT
+                             ::DoubleBuffer; use_gchp::Bool=false,
+                             panel_map::AbstractPanelMap=SingleGPUMap()) where FT
     cs_cpu = _get_cluster_sizes_cpu(grid)
     Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
     gpu_a = LatLonMetBuffer(arch, FT, Nx, Ny, Nz; cluster_sizes_cpu=cs_cpu)
     gpu_b = LatLonMetBuffer(arch, FT, Nx, Ny, Nz; cluster_sizes_cpu=cs_cpu)
     cpu_a = LatLonCPUBuffer(FT, Nx, Ny, Nz)
     cpu_b = LatLonCPUBuffer(FT, Nx, Ny, Nz)
-    IOScheduler(DoubleBuffer(), gpu_a, gpu_b, cpu_a, cpu_b, :a, nothing, nothing)
+    IOScheduler(DoubleBuffer(), gpu_a, gpu_b, cpu_a, cpu_b, :a, nothing, nothing, nothing)
 end
 
 function build_io_scheduler(grid::CubedSphereGrid{FT}, arch,
                              ::SingleBuffer;
-                             Hp::Int=3, use_gchp::Bool=false) where FT
-    if use_gchp
-        @info "GCHP mode requires DoubleBuffer (next-window DELP needed) — auto-upgrading"
-        return build_io_scheduler(grid, arch, DoubleBuffer(); Hp, use_gchp)
-    end
+                             Hp::Int=3, use_gchp::Bool=false,
+                             panel_map::AbstractPanelMap=SingleGPUMap()) where FT
     Nc, Nz = grid.Nc, grid.Nz
-    gpu = CubedSphereMetBuffer(arch, FT, Nc, Nz, Hp; use_gchp)
+    gpu = CubedSphereMetBuffer(arch, FT, Nc, Nz, Hp; use_gchp, panel_map)
     cpu = CubedSphereCPUBuffer(FT, Nc, Nz, Hp; use_gchp)
-    IOScheduler(SingleBuffer(), gpu, gpu, cpu, cpu, :a, nothing, nothing)
+    IOScheduler(SingleBuffer(), gpu, gpu, cpu, cpu, :a, nothing, nothing, nothing)
 end
 
 function build_io_scheduler(grid::CubedSphereGrid{FT}, arch,
                              ::DoubleBuffer;
-                             Hp::Int=3, use_gchp::Bool=false) where FT
+                             Hp::Int=3, use_gchp::Bool=false,
+                             panel_map::AbstractPanelMap=SingleGPUMap()) where FT
     Nc, Nz = grid.Nc, grid.Nz
-    gpu_a = CubedSphereMetBuffer(arch, FT, Nc, Nz, Hp; use_gchp)
-    gpu_b = CubedSphereMetBuffer(arch, FT, Nc, Nz, Hp; use_gchp)
+    gpu_a = CubedSphereMetBuffer(arch, FT, Nc, Nz, Hp; use_gchp, panel_map)
+    gpu_b = CubedSphereMetBuffer(arch, FT, Nc, Nz, Hp; use_gchp, panel_map)
     cpu_a = CubedSphereCPUBuffer(FT, Nc, Nz, Hp; use_gchp)
     cpu_b = CubedSphereCPUBuffer(FT, Nc, Nz, Hp; use_gchp)
-    IOScheduler(DoubleBuffer(), gpu_a, gpu_b, cpu_a, cpu_b, :a, nothing, nothing)
+    IOScheduler(DoubleBuffer(), gpu_a, gpu_b, cpu_a, cpu_b, :a, nothing, nothing, nothing)
 end
 
 # =====================================================================
@@ -176,7 +177,9 @@ function begin_load!(sched::IOScheduler{DoubleBuffer}, driver,
     return nothing
 end
 
-"""Spawn async load for next window (DoubleBuffer CS)."""
+"""Spawn split async loads for next window (DoubleBuffer CS).
+Task 1 (load_task): met-only (DELP, am, bm, cx, cy, xfx, yfx) — fast, needed for advection.
+Task 2 (phys_task): physics (CMFMC, DTRAIN, QV, surface) — slower, needed at next window start."""
 function begin_load!(sched::IOScheduler{DoubleBuffer}, driver,
                       grid::CubedSphereGrid, w::Int;
                       cmfmc_cpu=nothing, dtrain_cpu=nothing,
@@ -186,8 +189,14 @@ function begin_load!(sched::IOScheduler{DoubleBuffer}, driver,
                       qv_cpu=nothing, ps_panels=nothing,
                       qv_next_cpu=nothing, ps_next_panels=nothing)
     nc = next_cpu(sched)
-    sched.load_task = Threads.@spawn load_all_window!(
-        nc, cmfmc_cpu, dtrain_cpu, sfc_cpu, troph_cpu,
+    # Task 1: met-only (fast path — DELP + fluxes from mmap binary)
+    sched.load_task = Threads.@spawn begin
+        load_met_window!(nc, driver, grid, w)
+        nothing
+    end
+    # Task 2: physics fields (CMFMC, DTRAIN, QV, surface — can overlap with GPU compute)
+    sched.phys_task = Threads.@spawn load_physics_window!(
+        cmfmc_cpu, dtrain_cpu, sfc_cpu, troph_cpu,
         driver, grid, w;
         needs_cmfmc, needs_dtrain, needs_sfc,
         needs_qv, qv_cpu, ps_panels,
@@ -202,14 +211,23 @@ end
 """No-op wait for SingleBuffer."""
 wait_load!(::IOScheduler{SingleBuffer}) = nothing
 
-"""Wait for async load to complete (DoubleBuffer). Stores result."""
+"""Wait for async met load to complete (DoubleBuffer)."""
 function wait_load!(sched::IOScheduler{DoubleBuffer})
     sched.load_task === nothing && return nothing
-    result = fetch(sched.load_task)
-    sched.io_result = result isa NamedTuple ? result : nothing
+    fetch(sched.load_task)
     sched.load_task = nothing
     return nothing
 end
+
+"""Wait for async physics load to complete (DoubleBuffer). Stores result."""
+function wait_phys!(sched::IOScheduler{DoubleBuffer})
+    sched.phys_task === nothing && return nothing
+    result = fetch(sched.phys_task)
+    sched.io_result = result isa NamedTuple ? result : nothing
+    sched.phys_task = nothing
+    return nothing
+end
+wait_phys!(::IOScheduler{SingleBuffer}) = nothing
 
 """No-op swap for SingleBuffer."""
 swap!(::IOScheduler{SingleBuffer}) = nothing

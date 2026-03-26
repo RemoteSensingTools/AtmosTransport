@@ -1725,9 +1725,62 @@ function load_all_window!(cpu_buf::CubedSphereCPUBuffer,
         end
     end
     if !qv_from_v4 && needs_qv && qv_cpu !== nothing
+        @warn "QV fallback to NetCDF (v4 binary missing QV/PS) — temporal alignment may differ. Re-preprocess with include_qv=true." maxlog=5
         qv_status = load_qv_window!(qv_cpu, driver, grid, win)
     end
 
+    return (; cmfmc=cmfmc_status, dtrain=dtrain_status, sfc=sfc_status,
+              qv=qv_status, qv_from_v4, qv_next_from_v4)
+end
+
+"""Load physics fields only (CMFMC, DTRAIN, QV, surface) — no met/DELP.
+Used by split-IO double buffering where met is loaded in a separate fast task."""
+function load_physics_window!(cmfmc_cpu, dtrain_cpu, sfc_cpu, troph_cpu,
+                                driver::GEOSFPCubedSphereMetDriver,
+                                grid, win::Int;
+                                needs_cmfmc::Bool=false,
+                                needs_dtrain::Bool=false,
+                                needs_sfc::Bool=false,
+                                needs_qv::Bool=false,
+                                qv_cpu=nothing,
+                                ps_panels=nothing,
+                                qv_next_cpu=nothing,
+                                ps_next_panels=nothing)
+    cmfmc_status = if needs_cmfmc && cmfmc_cpu !== nothing
+        load_cmfmc_window!(cmfmc_cpu, driver, grid, win)
+    else
+        false
+    end
+    dtrain_status = if needs_dtrain && dtrain_cpu !== nothing && cmfmc_status !== false
+        load_dtrain_window!(dtrain_cpu, driver, grid, win)
+    else
+        false
+    end
+    sfc_status = if needs_sfc && sfc_cpu !== nothing
+        load_surface_fields_window!(sfc_cpu, driver, grid, win;
+                                     troph_panels=troph_cpu,
+                                     ps_panels=ps_panels)
+    else
+        false
+    end
+    qv_status = false
+    qv_from_v4 = false
+    qv_next_from_v4 = false
+    if needs_qv && qv_cpu !== nothing && driver.mode === :binary
+        file_idx, local_win = window_to_file_local(driver, win)
+        filepath = driver.files[file_idx]
+        reader = _get_cached_reader(filepath, eltype(qv_cpu[1]))
+        if reader.has_qv && reader.has_ps
+            qv_status = _load_v4_qv_ps!(qv_cpu, ps_panels, qv_next_cpu, ps_next_panels,
+                                          reader, local_win, driver.Nc, driver.Hp)
+            qv_from_v4 = qv_status !== false
+            qv_next_from_v4 = qv_from_v4 && qv_next_cpu !== nothing
+        end
+    end
+    if !qv_from_v4 && needs_qv && qv_cpu !== nothing
+        @warn "QV fallback to NetCDF (v4 binary missing QV/PS) — temporal alignment may differ. Re-preprocess with include_qv=true." maxlog=5
+        qv_status = load_qv_window!(qv_cpu, driver, grid, win)
+    end
     return (; cmfmc=cmfmc_status, dtrain=dtrain_status, sfc=sfc_status,
               qv=qv_status, qv_from_v4, qv_next_from_v4)
 end

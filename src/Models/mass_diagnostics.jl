@@ -21,6 +21,10 @@ mutable struct MassDiagnostics
     showvalue     :: String
     fix_value     :: String
     cfl_value     :: String
+    # Mass fixer tracking: cumulative scaling factor (product of per-window corrections)
+    fix_interval_scale :: Dict{Symbol, Float64}   # product of scale factors since last output write (reset at each output)
+    fix_total_scale    :: Dict{Symbol, Float64}   # product of all scale factors from sim start
+    fix_scale_series   :: Dict{Symbol, Vector{Float64}}  # per-output-timestep interval scale factors
 end
 
 MassDiagnostics() = MassDiagnostics(
@@ -28,7 +32,10 @@ MassDiagnostics() = MassDiagnostics(
     Dict{Symbol, Float64}(),
     Dict{Symbol, Float64}(),
     Dict{Symbol, Float64}(),
-    "", "", ""
+    "", "", "",
+    Dict{Symbol, Float64}(),
+    Dict{Symbol, Float64}(),
+    Dict{Symbol, Vector{Float64}}()
 )
 
 # =====================================================================
@@ -126,11 +133,18 @@ Scale rm globally so total tracer mass matches `target_mass` for each tracer.
 Returns a compact string describing the correction magnitude (in ppm).
 """
 function apply_global_mass_fixer!(cs_tracers, grid::CubedSphereGrid,
-                                   target_mass::Dict{Symbol, Float64})
+                                   target_mass::Dict{Symbol, Float64};
+                                   fix_interval_scale::Union{Nothing, Dict{Symbol, Float64}}=nothing,
+                                   fix_total_scale::Union{Nothing, Dict{Symbol, Float64}}=nothing,
+                                   allowed_tracers::Vector{String}=String[])
     Nc, Hp, Nz = grid.Nc, grid.Hp, grid.Nz
     parts = String[]
     for (tname, rm_t) in pairs(cs_tracers)
         haskey(target_mass, tname) || continue
+        # Skip tracers not in the allowed list (if list is non-empty)
+        if !isempty(allowed_tracers) && !(String(tname) in allowed_tracers)
+            continue
+        end
         m0 = target_mass[tname]
         m0 == 0.0 && continue
 
@@ -151,8 +165,28 @@ function apply_global_mass_fixer!(cs_tracers, grid::CubedSphereGrid,
             rm_t[p] .*= FT(scale)
         end
         push!(parts, @sprintf("%s:%.1fppm", tname, correction_ppm))
+
+        # Accumulate scaling factors (multiplicative)
+        if fix_interval_scale !== nothing
+            fix_interval_scale[tname] = get(fix_interval_scale, tname, 1.0) * scale
+        end
+        if fix_total_scale !== nothing
+            fix_total_scale[tname] = get(fix_total_scale, tname, 1.0) * scale
+        end
     end
     return join(parts, " ")
+end
+
+"""Snapshot the interval mass fixer scale into the time series and reset for next interval."""
+function snapshot_massfixer_interval!(diag::MassDiagnostics)
+    for (tname, scale) in diag.fix_interval_scale
+        series = get!(diag.fix_scale_series, tname, Float64[])
+        push!(series, scale)
+    end
+    # Reset interval accumulator to 1.0 (multiplicative identity)
+    for k in keys(diag.fix_interval_scale)
+        diag.fix_interval_scale[k] = 1.0
+    end
 end
 
 """

@@ -338,12 +338,12 @@ function diffuse_pbl!(rm_panels::NTuple{6}, m_panels::NTuple{6},
                        diff::PBLDiffusion, grid::CubedSphereGrid, dt,
                        planet::PlanetParameters)
     FT = eltype(rm_panels[1])
-    backend = get_backend(rm_panels[1])
     Nc = grid.Nc
     Hp = grid.Hp
     Nz = grid.Nz
-    kernel! = _pbl_diffuse_kernel!(backend, 256)
-    for p in 1:6
+    for_panels_nosync() do p
+        be = get_backend(rm_panels[p])
+        kernel! = _pbl_diffuse_kernel!(be, 256)
         kernel!(rm_panels[p], m_panels[p], delp_panels[p],
                 pblh_panels[p], ustar_panels[p], hflux_panels[p], t2m_panels[p],
                 w_scratch_panels[p],
@@ -353,7 +353,6 @@ function diffuse_pbl!(rm_panels::NTuple{6}, m_panels::NTuple{6},
                 FT(diff.β_h), FT(diff.Kz_bg), FT(diff.Kz_min), FT(diff.Kz_max),
                 Val(:rm); ndrange=(Nc, Nc))
     end
-    synchronize(backend)
     return nothing
 end
 

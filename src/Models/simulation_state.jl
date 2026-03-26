@@ -15,7 +15,8 @@
 Allocate all physics auxiliary arrays (CMFMC, DTRAIN, QV, PBL surface fields,
 scratch arrays) on CPU and GPU. Dispatches on grid type.
 """
-function allocate_physics_buffers(grid::LatitudeLongitudeGrid{FT}, arch, model) where FT
+function allocate_physics_buffers(grid::LatitudeLongitudeGrid{FT}, arch, model;
+                                   panel_map::AbstractPanelMap=SingleGPUMap()) where FT
     AT = array_type(arch)
     Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
 
@@ -80,7 +81,8 @@ function allocate_physics_buffers(grid::LatitudeLongitudeGrid{FT}, arch, model) 
 end
 
 function allocate_physics_buffers(grid::CubedSphereGrid{FT}, arch, model;
-                                   Hp::Int=3) where FT
+                                   Hp::Int=3,
+                                   panel_map::AbstractPanelMap=SingleGPUMap()) where FT
     AT = array_type(arch)
     Nc, Nz = grid.Nc, grid.Nz
 
@@ -89,31 +91,31 @@ function allocate_physics_buffers(grid::CubedSphereGrid{FT}, arch, model;
     has_pbl = _needs_pbl(model.diffusion)
 
     cmfmc_gpu = has_conv ?
-        ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz + 1)), 6) : nothing
+        allocate_ntuple_panels(panel_map, _ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz + 1))) : nothing
     cmfmc_cpu = has_conv ?
         ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz + 1), 6) : nothing
 
     dtrain_gpu = has_dtrain ?
-        ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz)), 6) : nothing
+        allocate_ntuple_panels(panel_map, _ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz))) : nothing
     dtrain_cpu = has_dtrain ?
         ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz), 6) : nothing
 
     qv_cpu = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz), 6)
-    qv_gpu = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz)), 6)
+    qv_gpu = allocate_ntuple_panels(panel_map, _ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz)))
     # Next-window QV for GCHP-style before/after PE (SPHU2)
     qv_next_cpu = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz), 6)
-    qv_next_gpu = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz)), 6)
+    qv_next_gpu = allocate_ntuple_panels(panel_map, _ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz)))
     # Scratch buffer for advecting QV as tracer NQ+1 (moist per-step remap only).
     # Separate from qv_gpu to avoid corrupting the met QV during advection.
-    qv_scratch = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz)), 6)
+    qv_scratch = allocate_ntuple_panels(panel_map, _ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz)))
     # PS from CTM_I1 (current + next) for DryPLE computation
     ps_ctm_i1_cpu = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp), 6)
-    ps_ctm_i1_gpu = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp)), 6)
+    ps_ctm_i1_gpu = allocate_ntuple_panels(panel_map, _ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp)))
     ps_next_ctm_i1_cpu = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp), 6)
-    ps_next_ctm_i1_gpu = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp)), 6)
+    ps_next_ctm_i1_gpu = allocate_ntuple_panels(panel_map, _ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp)))
 
     ras_workspace = model.convection isa RASConvection ?
-        ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz)), 6) : nothing
+        allocate_ntuple_panels(panel_map, _ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz))) : nothing
 
     pbl_sfc_cpu = has_pbl ? (
         pblh  = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp), 6),
@@ -121,12 +123,12 @@ function allocate_physics_buffers(grid::CubedSphereGrid{FT}, arch, model;
         hflux = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp), 6),
         t2m   = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp), 6)) : nothing
     pbl_sfc_gpu = has_pbl ? (
-        pblh  = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp)), 6),
-        ustar = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp)), 6),
-        hflux = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp)), 6),
-        t2m   = ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp)), 6)) : nothing
+        pblh  = allocate_ntuple_panels(panel_map, _ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp))),
+        ustar = allocate_ntuple_panels(panel_map, _ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp))),
+        hflux = allocate_ntuple_panels(panel_map, _ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp))),
+        t2m   = allocate_ntuple_panels(panel_map, _ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp)))) : nothing
     w_scratch = has_pbl ?
-        ntuple(_ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz)), 6) : nothing
+        allocate_ntuple_panels(panel_map, _ -> AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz))) : nothing
 
     troph_cpu = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp), 6)
     ps_cpu    = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp), 6)
@@ -162,7 +164,7 @@ For CS grids, allocates 6-panel NTuple per tracer and applies pending ICs.
 """
 allocate_tracers(model, grid::LatitudeLongitudeGrid) = model.tracers
 
-function allocate_tracers(model, grid::CubedSphereGrid)
+function allocate_tracers(model, grid::CubedSphereGrid; kwargs...)
     Nz = grid.Nz
     tracer_names = keys(model.tracers)
     n_tracers = length(tracer_names)
@@ -186,12 +188,11 @@ end
 Allocate air mass arrays. Returns NamedTuple with m (working) and m_ref (reference).
 For CS, also includes dm_per_sub for pressure fixer.
 """
-function allocate_air_mass(grid::LatitudeLongitudeGrid{FT}, arch) where FT
-    # LL uses m_ref and m_dev from the met buffer — no separate allocation needed
+function allocate_air_mass(grid::LatitudeLongitudeGrid{FT}, arch; kwargs...) where FT
     return nothing
 end
 
-function allocate_air_mass(grid::CubedSphereGrid{FT}, arch) where FT
+function allocate_air_mass(grid::CubedSphereGrid{FT}, arch; kwargs...) where FT
     Nz = grid.Nz
     m       = allocate_cubed_sphere_field(grid, Nz)
     m_ref   = allocate_cubed_sphere_field(grid, Nz)
@@ -207,7 +208,8 @@ end
 function allocate_geometry_and_workspace(grid::LatitudeLongitudeGrid, arch;
                                           use_linrood::Bool=false,
                                           use_vertical_remap::Bool=false,
-                                          use_gchp::Bool=false)
+                                          use_gchp::Bool=false,
+                                          panel_map::AbstractPanelMap=SingleGPUMap())
     # LL uses workspace from met buffer (gpu_buf.ws)
     return (; gc=nothing, ws=nothing, ws_lr=nothing, ws_vr=nothing,
               geom_gchp=nothing, ws_gchp=nothing)
@@ -216,14 +218,15 @@ end
 function allocate_geometry_and_workspace(grid::CubedSphereGrid{FT}, arch;
                                           Hp::Int=3, use_linrood::Bool=false,
                                           use_vertical_remap::Bool=false,
-                                          use_gchp::Bool=false) where FT
+                                          use_gchp::Bool=false,
+                                          panel_map::AbstractPanelMap=SingleGPUMap()) where FT
     AT = array_type(arch)
     Nc, Nz = grid.Nc, grid.Nz
     ref_panel = AT(zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz))
     gc = build_geometry_cache(grid, ref_panel)
     ws = allocate_cs_massflux_workspace(ref_panel, Nc)
     # Lin-Rood workspace needed for both standard linrood AND gchp modes
-    ws_lr = (use_linrood || use_gchp) ? LinRoodWorkspace(grid) : nothing
+    ws_lr = (use_linrood || use_gchp) ? LinRoodWorkspace(grid; panel_map) : nothing
     ws_vr = use_vertical_remap ? VerticalRemapWorkspace(grid, arch) : nothing
     # GCHP-faithful transport: grid geometry + area flux workspace
     geom_gchp = use_gchp ? GCHPGridGeometry(grid) : nothing

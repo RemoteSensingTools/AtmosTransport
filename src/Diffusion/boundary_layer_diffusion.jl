@@ -237,13 +237,12 @@ Apply boundary-layer vertical diffusion to cubed-sphere tracer panels.
 """
 function diffuse_cs_panels!(rm_panels::NTuple{6}, m_panels::NTuple{6},
                             dw::DiffusionWorkspace, Nc::Int, Nz::Int, Hp::Int)
-    backend = get_backend(rm_panels[1])
-    kernel! = _diffuse_cs_panel_kernel!(backend, 256)
-    for p in 1:6
+    for_panels_nosync() do p
+        backend = get_backend(rm_panels[p])
+        kernel! = _diffuse_cs_panel_kernel!(backend, 256)
         kernel!(rm_panels[p], m_panels[p], dw.a_v, dw.w_v, dw.inv_d,
                 Hp, Nz; ndrange=(Nc, Nc))
     end
-    synchronize(backend)
     return nothing
 end
 

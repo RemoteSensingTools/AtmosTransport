@@ -19,6 +19,14 @@ module Architectures
 
 export AbstractArchitecture, CPU, GPU
 export array_type, device, architecture
+export AbstractPanelMap, SingleGPUMap, PanelGPUMap
+export gpu_for_panel, is_cross_gpu, is_multi_gpu, n_gpus, panels_on_gpu
+export sync_all_gpus, allocate_ntuple_panels, build_panel_map
+export foreach_gpu_batch, foreach_gpu_batch_nosync
+export PerGPUWorkspace, workspace_for
+export PanelTuple, map_panels!, map_panels_nosync!, reduce_panels
+export copyto_panels!, broadcast_panels!, sync_panels!, fill_panels!, panel_map
+export set_panel_map!, active_panel_map, for_panels, for_panels_nosync
 
 using DocStringExtensions
 using KernelAbstractions: KernelAbstractions as KA
@@ -89,5 +97,12 @@ Return the `AbstractArchitecture` associated with `x`.
 Concrete types (grids, fields, models) should specialize this.
 """
 function architecture end
+
+# ---------------------------------------------------------------------------
+# Multi-GPU panel-split abstractions
+# ---------------------------------------------------------------------------
+
+include("Architectures/multi_gpu.jl")
+include("Architectures/panel_tuple.jl")
 
 end # module Architectures

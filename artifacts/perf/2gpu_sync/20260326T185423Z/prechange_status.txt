@@ -1,0 +1,58 @@
+ D .claude/.nfs00000001e56c9fd600001e40
+ M ext/AtmosTransportCUDAExt.jl
+ D nohup_21d.out
+ D nohup_21d_fullphys.out
+ D nohup_advonly_3way.out
+ D nohup_animation.out
+ D nohup_convert.out
+ D nohup_gchp_aligned.out
+ D nohup_gchp_flat.out
+ D nohup_gchp_pe_fix.out
+ D nohup_prather_catrine.out
+ D nohup_prather_flat.out
+ D nohup_qspace_3d.out
+ D nohup_qspace_7d.out
+ M scripts/downloads/download_era5_cmfmc.py
+ M scripts/preprocessing/preprocess_geosfp_cs_v4.jl
+ M scripts/run.jl
+ M scripts/visualization/animate_gchp_v4_fullphys.jl
+ M src/Advection/Advection.jl
+ M src/Advection/cubed_sphere_fvtp2d.jl
+ M src/Advection/cubed_sphere_fvtp2d_gchp.jl
+ M src/Advection/cubed_sphere_mass_flux.jl
+ M src/Advection/cubed_sphere_mass_flux_ppm.jl
+ M src/Advection/vertical_remap.jl
+ M src/Architectures.jl
+ M src/Convection/Convection.jl
+ M src/Convection/ras_convection.jl
+ M src/Convection/tiedtke_convection.jl
+ M src/Diffusion/Diffusion.jl
+ M src/Diffusion/boundary_layer_diffusion.jl
+ M src/Diffusion/nonlocal_pbl_diffusion.jl
+ M src/Diffusion/pbl_diffusion.jl
+ M src/Grids/Grids.jl
+ M src/Grids/cubed_sphere_grid.jl
+ M src/Grids/halo_exchange.jl
+ M src/IO/IO.jl
+ M src/IO/binary_output_writer.jl
+ M src/IO/configuration.jl
+ M src/IO/geosfp_cs_met_driver.jl
+ M src/IO/met_buffers.jl
+ M src/IO/output_writers.jl
+ M src/Models/Models.jl
+ M src/Models/io_scheduler.jl
+ M src/Models/mass_diagnostics.jl
+ M src/Models/physics_phases.jl
+ M src/Models/run_helpers.jl
+ M src/Models/run_loop.jl
+ M src/Models/simulation_state.jl
+?? artifacts/
+?? config/runs/catrine_geosit_c180_gchp_v4_21d_fullphys.toml
+?? config/runs/catrine_geosit_c180_gchp_v4_7d_fullphys_2gpu.toml
+?? config/runs/catrine_geosit_c180_gchp_v4_7d_perremap.toml.bak
+?? config/runs/catrine_geosit_c180_linrood_v4_7d_perremap.toml
+?? scripts/benchmarks/
+?? scripts/run_21d_fullphys.jl
+?? scripts/staging_daemon.jl
+?? src/Architectures/
+?? src/Models/preflight.jl

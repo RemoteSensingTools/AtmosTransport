@@ -1,0 +1,36 @@
+{
+  "runs": [
+    {
+      "total_seconds": 943.5,
+      "io_s_per_win": 0.13,
+      "gpu_s_per_win": 4.69,
+      "out_s_per_win": 0.11,
+      "co2_delta_pct": 0.070591,
+      "sf6_delta_pct": 0.038005
+    },
+    {
+      "total_seconds": 971.6,
+      "io_s_per_win": 0.13,
+      "gpu_s_per_win": 4.84,
+      "out_s_per_win": 0.11,
+      "co2_delta_pct": 0.070591,
+      "sf6_delta_pct": 0.038005
+    },
+    {
+      "total_seconds": 946.4,
+      "io_s_per_win": 0.13,
+      "gpu_s_per_win": 4.71,
+      "out_s_per_win": 0.10,
+      "co2_delta_pct": 0.070591,
+      "sf6_delta_pct": 0.038005
+    }
+  ],
+  "median": {
+    "total_seconds": 946.4,
+    "io_s_per_win": 0.13,
+    "gpu_s_per_win": 4.71,
+    "out_s_per_win": 0.11,
+    "co2_delta_pct": 0.070591,
+    "sf6_delta_pct": 0.038005
+  }
+}

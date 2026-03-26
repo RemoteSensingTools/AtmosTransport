@@ -2,24 +2,35 @@
 """
 Download ERA5 convective mass flux on model levels for Tiedtke convection.
 
-Downloads updraft (UDMF, param 71.162) and downdraft (DDMF, param 72.162) mass
-flux on all 137 model levels, 6-hourly (00/06/12/18 UTC) at 0.5 deg resolution.
+** IMPORTANT: MUMF/MDMF NOT AVAILABLE THROUGH CDS **
+ERA5 updraft/downdraft mass flux fields (MUMF=235071, MDMF=235072) are NOT
+archived in the CDS ERA5 dataset. Requests for these parameters silently return
+etadot (paramId=77, vertical velocity in hybrid coords), which is WRONG.
+Confirmed 2026-03-17:
+  - param=235071/235072, type=fc → returns etadot (paramId=77), NOT MUMF/MDMF
+  - param=71.162/72.162, type=fc → MarsNoDataError (not in archive)
+These fields require direct ECMWF MARS access (ECMWF account + MARS service),
+not available through the standard CDS API. THIS SCRIPT IS CURRENTLY BROKEN.
 
-These are retrieved from `reanalysis-era5-complete` (MARS syntax). The output
-is GRIB format (model-level diagnostic fields are only available as GRIB).
-A GRIB-to-NetCDF conversion step runs automatically using cfgrib+xarray.
+For now, use [convection] type = "none" in ERA5 run configs.
+TM5MatrixConvection code is in place; data pipeline will work once MARS access
+is available.
 
-Output: one NetCDF per day in the specified output directory:
-    era5_cmfmc_YYYYMMDD.nc
+Original intent: Downloads updraft (MUMF, paramId 235071) and downdraft (MDMF,
+paramId 235072) mass flux on all 137 model levels, 6-hourly at 0.5 deg.
+These would be forecast fields from 06/18 UTC base times, steps 3/6/9/12 h.
+
+Output (when working): one NetCDF per day:
+    era5_cmfmc_YYYYMMDD.nc  → variables: mumf, mdmf (lon, lat, level, time)
 
 Usage:
     python3 scripts/downloads/download_era5_cmfmc.py \
         --start 2021-12-01 --end 2021-12-07 \
-        --outdir ~/data/metDrivers/era5/cmfmc_catrine
+        --outdir ~/data/AtmosTransport/met/era5/cmfmc
 
 Requirements:
     pip install cdsapi cfgrib eccodes xarray
-    (and ~/.cdsapirc configured for CDS access)
+    (and ~/.cdsapirc configured for CDS access with MARS model-level access)
 """
 
 import argparse

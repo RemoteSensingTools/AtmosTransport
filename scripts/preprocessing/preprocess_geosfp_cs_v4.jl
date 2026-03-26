@@ -587,7 +587,8 @@ function main()
     end
     @info "  Found $(length(ctm_a1_files)) CTM_A1 files, $(length(ctm_i1_files)) CTM_I1 files"
 
-    # Process each day
+    # Build work list (skip existing files and missing CTM_A1)
+    work = Tuple{Date, String, Int, String, Union{String,Nothing}, Union{String,Nothing}, Union{String,Nothing}}[]
     for date in all_dates
         datestr = Dates.format(date, "yyyymmdd")
         outpath = joinpath(cfg.output_dir, "geosfp_cs_$(datestr)_float32.bin")
@@ -604,8 +605,6 @@ function main()
 
         filepath, nt = ctm_a1_files[date]
         ctm_i1_path = get(ctm_i1_files, date, nothing)
-
-        # Next day files for day-boundary crossing (last window QV_end/PS_end)
         next_date = date + Day(1)
         next_ctm_a1_path = haskey(ctm_a1_files, next_date) ? ctm_a1_files[next_date][1] : nothing
         next_ctm_i1_path = get(ctm_i1_files, next_date, nothing)
@@ -614,6 +613,14 @@ function main()
             @warn "[$datestr] No CTM_I1 file — QV/PS will not be embedded"
         end
 
+        push!(work, (date, filepath, nt, outpath, ctm_i1_path, next_ctm_a1_path, next_ctm_i1_path))
+    end
+
+    @info "Processing $(length(work)) days (serial — NCDatasets is not thread-safe)"
+
+    for item in work
+        date, filepath, nt, outpath, ctm_i1_path, next_ctm_a1_path, next_ctm_i1_path = item
+        datestr = Dates.format(date, "yyyymmdd")
         @info "\n--- [$datestr] Processing (v4) ---"
         preprocess_day_v4(date, filepath, nt, outpath, cfg, grid_metrics, sin_sg;
                           nb_dxa=nb_dxa, nb_sg=nb_sg,

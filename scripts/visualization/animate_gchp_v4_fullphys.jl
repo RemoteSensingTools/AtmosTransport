@@ -22,14 +22,14 @@ include(joinpath(@__DIR__, "cs_regrid_utils.jl"))
 const GC_DIR = get(ENV, "GC_DIR",
     joinpath(homedir(), "data", "AtmosTransport", "catrine-geoschem-runs"))
 const AT_DIR   = get(ENV, "AT_DIR", "/temp1/catrine/output")
-const AT_PATTERN = get(ENV, "AT_PATTERN", "catrine_gchp_v4_7d_fullphys")
-const OUT_GIF  = get(ENV, "OUT_GIF", "/temp1/catrine/output/gchp_v4_fullphys_vs_geoschem.gif")
-const FPS      = parse(Int, get(ENV, "FPS", "4"))
+const AT_PATTERN = get(ENV, "AT_PATTERN", "catrine_gchp_v4_21d_fullphys")
+const OUT_GIF  = get(ENV, "OUT_GIF", "/temp1/catrine/output/gchp_v4_21d_fullphys_vs_geoschem.gif")
+const FPS      = parse(Int, get(ENV, "FPS", "8"))
 
 const LEV_SURFACE = 1
 const LEV_750HPA  = 15
 const DATE_START = DateTime(2021, 12, 1, 3)
-const DATE_END   = DateTime(2021, 12, 8, 21)
+const DATE_END   = DateTime(2021, 12, 31, 21)
 
 # MW ratio for VMR→mass conversion
 const MW_CO2_OVER_AIR = 44.009 / 28.97
@@ -131,22 +131,37 @@ function load_geoschem(gc_dir, rmap, dp_wts; date_start, date_end)
     hpa_co2  = zeros(Float32, rmap.nlon, rmap.nlat, nt)
     xco2_col = zeros(Float32, rmap.nlon, rmap.nlat, nt)
 
+    bad_indices = Int[]
     for (ti, fname) in enumerate(files)
-        NCDataset(joinpath(gc_dir, fname), "r") do ds
-            # Surface CO2 (GC level 1 = surface)
-            data_cs = Float64.(ds["SpeciesConcVV_CO2"][:, :, :, 1, 1]) .* 1e6
-            regrid_cs!(buf, data_cs, rmap); sfc_co2[:, :, ti] .= buf
+        try
+            NCDataset(joinpath(gc_dir, fname), "r") do ds
+                # Surface CO2 (GC level 1 = surface)
+                data_cs = Float64.(ds["SpeciesConcVV_CO2"][:, :, :, 1, 1]) .* 1e6
+                regrid_cs!(buf, data_cs, rmap); sfc_co2[:, :, ti] .= buf
 
-            # ~750 hPa CO2 (GC level 15)
-            data_cs = Float64.(ds["SpeciesConcVV_CO2"][:, :, :, LEV_750HPA, 1]) .* 1e6
-            regrid_cs!(buf, data_cs, rmap); hpa_co2[:, :, ti] .= buf
+                # ~750 hPa CO2 (GC level 15)
+                data_cs = Float64.(ds["SpeciesConcVV_CO2"][:, :, :, LEV_750HPA, 1]) .* 1e6
+                regrid_cs!(buf, data_cs, rmap); hpa_co2[:, :, ti] .= buf
 
-            # Column-average XCO2 (dp-weighted)
-            vmr_3d = ds["SpeciesConcVV_CO2"][:,:,:,:,1]
-            xco2_cs = column_avg_xco2(vmr_3d, dp_wts)
-            regrid_cs!(buf, xco2_cs, rmap)
-            xco2_col[:, :, ti] .= buf
+                # Column-average XCO2 (dp-weighted)
+                vmr_3d = ds["SpeciesConcVV_CO2"][:,:,:,:,1]
+                xco2_cs = column_avg_xco2(vmr_3d, dp_wts)
+                regrid_cs!(buf, xco2_cs, rmap)
+                xco2_col[:, :, ti] .= buf
+            end
+        catch e
+            @warn "Skipping corrupted GC file: $fname ($e)"
+            push!(bad_indices, ti)
         end
+    end
+    # Remove bad timesteps
+    if !isempty(bad_indices)
+        @warn "Removed $(length(bad_indices)) corrupted timestep(s)"
+        good = setdiff(1:nt, bad_indices)
+        times = times[good]
+        sfc_co2 = sfc_co2[:, :, good]
+        hpa_co2 = hpa_co2[:, :, good]
+        xco2_col = xco2_col[:, :, good]
     end
     return (; times, sfc_co2, hpa_co2, xco2_col)
 end

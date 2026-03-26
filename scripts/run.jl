@@ -7,6 +7,10 @@
 #   julia --project=. scripts/run.jl config/runs/era5_edgar.toml
 #   julia --project=. scripts/run.jl config/runs/era5_preprocessed.toml
 #
+# Flags:
+#   -v, --verbose   Enable debug-level logging (detailed per-window diagnostics)
+#   -c, --check     Run preflight checks before simulation (verify data availability)
+#
 # For double-buffered I/O overlap, start Julia with multiple threads:
 #   julia --threads=2 --project=. scripts/run.jl config/runs/geosfp_cs_edgar.toml
 #
@@ -14,9 +18,27 @@
 # output, and buffering strategy. See config/runs/ for examples.
 # ===========================================================================
 
-if isempty(ARGS)
-    println(stderr, "Usage: julia --project=. scripts/run.jl <config.toml>\n")
-    println(stderr, "Available configurations:")
+using Logging
+
+# --- Parse flags and positional arguments ---
+const FLAGS = filter(a -> startswith(a, "-"), ARGS)
+const POSITIONAL = filter(a -> !startswith(a, "-"), ARGS)
+const VERBOSE = any(a -> a in ("--verbose", "-v"), FLAGS)
+const RUN_CHECKS = any(a -> a in ("--check", "-c"), FLAGS)
+
+# Set verbose mode via environment variable (checked by AtmosTransport code).
+# We keep the global logger at Info to avoid Julia internal debug spam.
+if VERBOSE
+    ENV["ATMOSTR_VERBOSE"] = "1"
+    @info "Verbose mode enabled"
+end
+
+if isempty(POSITIONAL)
+    println(stderr, "Usage: julia --project=. scripts/run.jl [flags] <config.toml>")
+    println(stderr, "\nFlags:")
+    println(stderr, "  -v, --verbose   Enable debug-level logging")
+    println(stderr, "  -c, --check     Run preflight checks before simulation")
+    println(stderr, "\nAvailable configurations:")
     config_dir = joinpath(@__DIR__, "..", "config", "runs")
     if isdir(config_dir)
         for f in sort(readdir(config_dir))
@@ -27,8 +49,8 @@ if isempty(ARGS)
 end
 
 import TOML
-config = TOML.parsefile(ARGS[1])
-@info "Configuration: $(ARGS[1])"
+config = TOML.parsefile(POSITIONAL[1])
+@info "Configuration: $(POSITIONAL[1])"
 flush(stderr)
 
 # CRITICAL: Load GPU package before AtmosTransport to trigger the weak-dependency
@@ -49,13 +71,18 @@ flush(stderr)
 
 using AtmosTransport
 using AtmosTransport.IO: build_model_from_config
-import AtmosTransport.Models: run!
+import AtmosTransport.Models: run!, preflight_check!
 @info "Packages loaded"
 flush(stderr)
 
 @info "Building model..."
 flush(stderr)
 model = build_model_from_config(config);
+
+if RUN_CHECKS
+    @info "Running preflight checks..."
+    preflight_check!(model; verbose=VERBOSE)
+end
 
 @info "Starting simulation..."
 flush(stderr)

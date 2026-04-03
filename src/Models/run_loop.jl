@@ -212,9 +212,10 @@ function _run_loop!(model, grid::AbstractGrid{FT},
         sim_time = Float64(step[] * dt_sub)
         out_mass = compute_output_mass(sched, air, phys, grid)
         met = build_met_fields(sched, phys, grid, half_dt, dt_window)
-        # Use prescribed m_ref for LL output (same as pre-refactor behavior).
-        # m_dev may contain NaN at extreme-CFL pole-adjacent cells.
-        # TODO: switch to m_dev once pole CFL is fully resolved.
+        # Use prescribed m_ref for LL output. m_dev diverges from m_ref over n_sub
+        # Strang cycles (Strang splitting error), causing noise in c = rm/m_dev.
+        # TM5 uses evolved m, but TM5's cm satisfies exact continuity so m_dev ≈ m_ref.
+        # Our Strang error is larger. Session 3 (prognostic slopes) should fix this.
         compute_ll_dry_mass!(phys, sched, grid)
         # Convert rm → dry VMR for output (LL only; CS is identity)
         c_tracers = rm_to_vmr(tracers, sched, phys, grid)

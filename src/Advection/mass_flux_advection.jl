@@ -1289,6 +1289,12 @@ function strang_split_massflux!(tracers::NamedTuple,
 
         advect_x_massflux_subcycled!(rm_single, m, am, grid, use_limiter, ws; cfl_limit)
         advect_y_massflux_subcycled!(rm_single, m, bm, grid, use_limiter, ws; cfl_limit)
+        # Z-advection with standard CFL subcycling. TM5 allows gamma > 1 because it
+        # uses prognostic slopes (rzm) that carry subgrid history. Our diagnostic slopes
+        # (recomputed fresh each step via minmod) cannot prevent negative rm when gamma > 1
+        # with uniform fields: flux = gamma*rm > rm is mathematically unavoidable.
+        # Subcycling with cfl_limit=0.95 ensures gamma < 1 (3 iterations for Z-CFL=2.5).
+        # Implementing prognostic slopes (Session 3) would allow removing this constraint.
         advect_z_massflux_subcycled!(rm_single, m, cm, use_limiter, ws; cfl_limit)
         advect_z_massflux_subcycled!(rm_single, m, cm, use_limiter, ws; cfl_limit)
         advect_y_massflux_subcycled!(rm_single, m, bm, grid, use_limiter, ws; cfl_limit)

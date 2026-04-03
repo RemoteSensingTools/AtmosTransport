@@ -579,10 +579,17 @@ function advection_phase!(tracers, sched, air, phys, model,
                                   gpu.am, gpu.bm, gpu.cm,
                                   grid, model.advection_scheme, adv_ws;
                                   cfl_limit=FT(0.95))
+        # Mass fixer: renormalize rm to preserve mixing ratio across m reset.
+        # After Strang, rm is consistent with m_dev (evolved). Before next substep,
+        # m_dev will be reset to m_ref. To keep rm/m consistent:
+        #   rm_new = (rm / m_dev) × m_ref
+        # This is the same pattern as the CS mass fixer (cubed_sphere_mass_flux.jl:286).
+        # After the last substep, rm is on m_ref basis — consistent with emissions,
+        # diffusion, and output which all use m_ref.
+        for (_, rm) in pairs(tracers)
+            rm .= (rm ./ gpu.m_dev) .* gpu.m_ref
+        end
     end
-
-    # TM5 convention: j=1,Ny are real cells (±89.75°). No pole averaging needed.
-    # The reduced grid handles polar CFL through clustering (cluster_size=720).
 
     # Convective transport ONCE per window (after all substeps).
     # Convert rm↔c using m_ref (moist basis, like TM5; exact roundtrip).

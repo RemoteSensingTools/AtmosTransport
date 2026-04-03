@@ -334,12 +334,9 @@ function process_met_after_upload!(sched, phys, grid::LatitudeLongitudeGrid{FT},
     #   n_sub × 2 × am = steps_per_met × 2 × half_dt = window_dt
     # This matches the CS convention (no /n_sub, no scaling) and the old LL code.
 
-    # Zero pole fluxes — the spectral SHT produces extreme values at poles
-    # (U/cos(lat) → ∞). Poles are zeroed in the preprocessor too, but keep
-    # the runtime guard for safety with non-preprocessed data.
-    Ny = grid.Ny
-    @views gpu.am[:, 1, :]  .= zero(FT)
-    @views gpu.am[:, Ny, :] .= zero(FT)
+    # TM5 convention: j=1,Ny are real cells at ±89.75° (not poles).
+    # Do NOT zero am — polar CFL is handled by the reduced grid (cluster_size=720).
+    # bm at pole faces (j=1, j=Ny+1) is already zero from the preprocessor.
 end
 
 function process_met_after_upload!(sched, phys, grid::CubedSphereGrid{FT},
@@ -576,19 +573,8 @@ function advection_phase!(tracers, sched, air, phys, model,
                                   cfl_limit=FT(0.95))
     end
 
-    # --- Pole averaging: enforce uniform mixing ratio at pole rows ---
-    Ny = grid.Ny
-    Nx = grid.Nx
-    for pole_j in (1, Ny)
-        m_row = @view gpu.m_dev[:, pole_j, :]         # (Nx, Nz)
-        m_mean = sum(m_row; dims=1) ./ FT(Nx)         # (1, Nz)
-        m_row .= m_mean                               # broadcast to all i
-        for (_, rm) in pairs(tracers)
-            rm_row = @view rm[:, pole_j, :]            # (Nx, Nz)
-            rm_mean = sum(rm_row; dims=1) ./ FT(Nx)   # (1, Nz)
-            rm_row .= rm_mean                          # broadcast to all i
-        end
-    end
+    # TM5 convention: j=1,Ny are real cells (±89.75°). No pole averaging needed.
+    # The reduced grid handles polar CFL through clustering (cluster_size=720).
 
     # Convective transport ONCE per window (after all substeps).
     # Convert rm↔c using m_ref (moist basis, like TM5; exact roundtrip).

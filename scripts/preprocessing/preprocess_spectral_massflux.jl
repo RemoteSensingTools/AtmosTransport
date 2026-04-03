@@ -110,19 +110,29 @@ end
 
 function TargetGrid(Nlon, Nlat)
     dlon_deg = 360.0 / Nlon
-    dlat_deg = 180.0 / (Nlat - 1)
-    lons = [dlon_deg * (i - 0.5) for i in 1:Nlon]       # 0.25, 0.75, ... or 0.5, 1.0, ...
-    lats = [-90.0 + dlat_deg * (j - 1) for j in 1:Nlat]  # -90, -89.5, ..., 90
+    # TM5 convention (grid_type_ll.F90:247-278): cell centers OFFSET from poles.
+    # Poles (-90°, +90°) are at cell FACES, not centers.
+    # Cell spacing: dlat = 180/Nlat (NOT 180/(Nlat-1)).
+    # First center at -90 + dlat/2, last at +90 - dlat/2.
+    # Pole cap cells (j=1, j=Nlat) span half the normal Δφ — their outer face
+    # is clamped to ±90° (blat[0]=-90, blat[Nlat]=+90).
+    dlat_deg = 180.0 / Nlat
+    south_deg = -90.0 + dlat_deg / 2
+    lons = [dlon_deg * (i - 0.5) for i in 1:Nlon]
+    lats = [south_deg + dlat_deg * (j - 1) for j in 1:Nlat]
     dlon = deg2rad(dlon_deg)
     dlat = deg2rad(dlat_deg)
     cos_lat = [cosd(lat) for lat in lats]
 
-    # Cell areas: Δλ × R² × |sin(φ_top) - sin(φ_bot)|
+    # Cell faces (Nlat+1 boundaries, clamped to ±90° at poles like TM5)
+    blat_deg = [south_deg + dlat_deg * (j - 1) - dlat_deg / 2 for j in 1:Nlat+1]
+    blat_deg[1]   = max(blat_deg[1],   -90.0)
+    blat_deg[end]  = min(blat_deg[end],  90.0)
+
+    # Cell areas: Δλ × R² × |sin(φ_top) - sin(φ_bot)| using actual faces
     area = zeros(Nlon, Nlat)
     for j in 1:Nlat
-        φ_top = min(lats[j] + dlat_deg/2,  90.0)
-        φ_bot = max(lats[j] - dlat_deg/2, -90.0)
-        cell_a = R_EARTH^2 * dlon * abs(sind(φ_top) - sind(φ_bot))
+        cell_a = R_EARTH^2 * dlon * abs(sind(blat_deg[j+1]) - sind(blat_deg[j]))
         for i in 1:Nlon
             area[i, j] = cell_a
         end
@@ -547,14 +557,31 @@ function compute_mass_fluxes!(am, bm, cm, u_stag, v_stag, dp, ps,
     # But actually cm is computed to conserve mass:
     # m_new = m_old + (flux_in - flux_out) per cell per level
     # cm[k+1] = cm[k] + (am_in - am_out + bm_in - bm_out at level k)
+    # --- Vertical mass flux from hybrid-coordinate continuity (TM5 dynam0 formula) ---
+    # cm[k+1] = cm[k] - div_h[k] + (B[k+1] - B[k]) × pit
+    # where pit = column-integrated horizontal convergence.
+    # The B-term accounts for coordinate surfaces moving with surface pressure.
+    # Accumulate in Float64 to avoid Float32 roundoff (residual drops from ~10⁵ to ~0).
     fill!(cm, zero(eltype(cm)))
-    @inbounds for k in 1:Nz, j in 1:Nlat, i in 1:Nlon
-        # Horizontal flux divergence (out - in) at cell (i,j,k)
-        # am: flux through east face (i+1) minus west face (i)
-        # bm: flux through north face (j+1) minus south face (j)
-        div_h = (am[i+1, j, k] - am[i, j, k]) + (bm[i, j+1, k] - bm[i, j, k])
-        # Continuity: cm[k+1] = cm[k] - div_h  (positive cm = downward)
-        cm[i, j, k+1] = cm[i, j, k] - div_h
+    B_ifc = dA .* 0 .+ dB  # B at interfaces: dB[k] = B[k+1] - B[k] for the dp computation
+    # Actually we need the interface B values, not dB. Reconstruct from dB:
+    # B_interface[k] = sum(dB[1:k-1]) starting from B[1]=0 (TOA).
+    # But for the correction we need B[k+1]-B[k] = dB[k], which we have directly.
+    @inbounds for j in 1:Nlat, i in 1:Nlon
+        # Column-integrated horizontal convergence (Float64)
+        pit = 0.0
+        for k in 1:Nz
+            pit += (Float64(am[i+1, j, k]) - Float64(am[i, j, k])) +
+                   (Float64(bm[i, j+1, k]) - Float64(bm[i, j, k]))
+        end
+        # Build cm from TOA downward with B-correction (Float64 accumulation)
+        acc = 0.0
+        for k in 1:Nz
+            div_h = (Float64(am[i+1, j, k]) - Float64(am[i, j, k])) +
+                     (Float64(bm[i, j+1, k]) - Float64(bm[i, j, k]))
+            acc = acc - div_h + Float64(dB[k]) * pit
+            cm[i, j, k+1] = eltype(cm)(acc)
+        end
     end
 
     return nothing
@@ -640,7 +667,7 @@ function preprocess()
     ================================
     Spectral dir:  $SPECTRAL_DIR
     Output dir:    $OUTDIR
-    Target grid:   $(TARGET_NLON) × $(TARGET_NLAT) ($(360.0/TARGET_NLON)° × $(180.0/(TARGET_NLAT-1))°)
+    Target grid:   $(TARGET_NLON) × $(TARGET_NLAT) ($(360.0/TARGET_NLON)° × $(180.0/TARGET_NLAT)°, TM5 convention)
     Levels:        $(LEVEL_TOP)-$(LEVEL_BOT) ($(Nz) layers)
     Float type:    $(FT)
     DT:            $(DT) s

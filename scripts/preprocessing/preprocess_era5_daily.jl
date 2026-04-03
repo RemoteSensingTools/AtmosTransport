@@ -150,21 +150,30 @@ function recompute_cm_from_divergence!(cm::Array{FT,3}, am::Array{FT,3},
         # TM5-style: include B-coefficient correction for hybrid coordinates
         @inbounds for j in 1:Ny, i in 1:Nx
             # Column-integrated horizontal convergence
-            pit = zero(FT)
+            pit = 0.0
             for k in 1:Nz
-                pit += (am[i+1, j, k] - am[i, j, k]) + (bm[i, j+1, k] - bm[i, j, k])
+                pit += (Float64(am[i+1, j, k]) - Float64(am[i, j, k])) +
+                       (Float64(bm[i, j+1, k]) - Float64(bm[i, j, k]))
             end
             # Build cm from TOA downward with B-correction
+            acc = 0.0
             for k in 1:Nz
-                div_h = (am[i+1, j, k] - am[i, j, k]) + (bm[i, j+1, k] - bm[i, j, k])
-                cm[i, j, k+1] = cm[i, j, k] - div_h + FT(B_ifc[k+1] - B_ifc[k]) * pit
+                div_h = (Float64(am[i+1, j, k]) - Float64(am[i, j, k])) +
+                        (Float64(bm[i, j+1, k]) - Float64(bm[i, j, k]))
+                acc = acc - div_h + (Float64(B_ifc[k+1]) - Float64(B_ifc[k])) * pit
+                cm[i, j, k+1] = FT(acc)
             end
         end
     else
         # Fallback: simple accumulation (no B-correction)
-        @inbounds for k in 1:Nz, j in 1:Ny, i in 1:Nx
-            div_h = (am[i+1, j, k] - am[i, j, k]) + (bm[i, j+1, k] - bm[i, j, k])
-            cm[i, j, k+1] = cm[i, j, k] - div_h
+        @inbounds for j in 1:Ny, i in 1:Nx
+            acc = 0.0
+            for k in 1:Nz
+                div_h = (Float64(am[i+1, j, k]) - Float64(am[i, j, k])) +
+                        (Float64(bm[i, j+1, k]) - Float64(bm[i, j, k]))
+                acc = acc - div_h
+                cm[i, j, k+1] = FT(acc)
+            end
         end
     end
 end
@@ -608,6 +617,8 @@ function process_day(date::Date, cfg, vc_native, merged_vc, merge_map)
                         "entu","detu","entd","detd",
                         "pblh","t2m","ustar","hflux","temperature"],
         "date" => Dates.format(date, "yyyy-mm-dd"),
+        "grid_convention" => "TM5",           # cell centers offset from poles (±89.75° for 0.5°)
+        "spectral_half_dt_seconds" => half_dt, # half_dt used to compute am in spectral preprocessor
     )
     header_json = JSON3.write(header)
     length(header_json) < HEADER_SIZE_V3 ||
@@ -667,17 +678,17 @@ function process_day(date::Date, cfg, vc_native, merged_vc, merge_map)
             merge_cell_field!(am_merged, am_native, merge_map)
             merge_cell_field!(bm_merged, bm_native, merge_map)
 
-            # Zero am at pole rows and bm at pole faces — the spectral SHT
-            # produces extreme values at poles (U/cos(lat) → ∞).
-            # Must zero BEFORE cm recomputation so continuity is consistent.
-            @views am_merged[:, 1, :]    .= zero(FT)   # am at south pole row
-            @views am_merged[:, Ny, :]   .= zero(FT)   # am at north pole row
-            @views bm_merged[:, 1, :]    .= zero(FT)   # bm at south pole face
-            @views bm_merged[:, Ny+1, :] .= zero(FT)   # bm at north pole face
+            # TM5 convention: am at j=1,Ny are real cells at ±89.75° — do NOT zero.
+            # Polar CFL is handled downstream via reduced-grid clustering (cluster_size=720).
+            # Only zero bm at pole FACES (j=1 and j=Ny+1 = ±90°) — these are geometric
+            # singularities where no meridional flux can exist. The spectral preprocessor
+            # also sets bm=0 at these faces.
+            @views bm_merged[:, 1, :]    .= zero(FT)   # bm at south pole face (−90°)
+            @views bm_merged[:, Ny+1, :] .= zero(FT)   # bm at north pole face (+90°)
 
             # Recompute cm from merged horizontal divergence using TM5's
             # hybrid-coordinate formula with B-coefficient correction.
-            # This naturally gives cm=0 at both TOA and surface.
+            # Float64 accumulation prevents roundoff. cm[1]=0 (TOA), cm[Nz+1]≈0 (surface).
             recompute_cm_from_divergence!(cm_merged, am_merged, bm_merged, m_merged;
                                           B_ifc=merged_vc.B)
 

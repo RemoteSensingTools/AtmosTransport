@@ -102,6 +102,9 @@ end
 # Computed once per window; used by IC, emissions, diffusion, convection, output.
 # =====================================================================
 
+    # Mass-CFL pilot is now in src/Advection/mass_cfl_pilot.jl
+    # Called from advection_phase! via Advection.find_mass_cfl_refinement()
+
 """Compute `phys.m_dry = m_ref × (1 - QV)` for LL grids. No-op for CS.
 Skips QV correction if vertical levels don't match (e.g., merged grid)."""
 compute_ll_dry_mass!(phys, sched, grid::CubedSphereGrid) = nothing
@@ -568,15 +571,38 @@ function advection_phase!(tracers, sched, air, phys, model,
     # TM5-faithful: m_dev evolves continuously through all substeps. No reset, no fixer.
     # TM5 (advectx.F90:629, advectz.F90:440) stores m = mnew after each directional
     # sweep. There is no reset to a reference mass between substeps or split steps.
-    # The preprocessor stores am per half_dt; each Strang cycle applies am twice per
-    # direction. Over n_sub sub-steps: n_sub × 2 × half_dt = window_dt.
+    #
+    # Adaptive mass-CFL (TM5 Check_CFL, advectm_cfl.F90:205):
+    # Mass-only pilot replays the full Strang sequence on m, checking per-face
+    # |beta| and per-cell m_floor. If any face violates, refinement factor r doubles.
+    # Float32-only GPU kernels in src/Advection/mass_cfl_pilot.jl.
+    r = find_mass_cfl_refinement(
+        gpu.m_ref, gpu.am, gpu.bm, gpu.cm, grid,
+        adv_ws.cluster_sizes, n_sub;
+        beta_limit=FT(0.95), max_r=16)
+
+    if r > 1
+        @info "LL mass-CFL pilot: refinement r=$r ($(n_sub*r) effective substeps)" maxlog=10
+        gpu.am ./= FT(r)
+        gpu.bm ./= FT(r)
+        gpu.cm ./= FT(r)
+    end
+    n_eff = n_sub * r
+
     copyto!(gpu.m_dev, gpu.m_ref)
-    for _ in 1:n_sub
+    for _ in 1:n_eff
         step[] += 1
         _apply_advection_latlon!(tracers, gpu.m_dev,
                                   gpu.am, gpu.bm, gpu.cm,
                                   grid, model.advection_scheme, adv_ws;
                                   cfl_limit=FT(0.95))
+    end
+
+    # Restore original fluxes if scaled
+    if r > 1
+        gpu.am .*= FT(r)
+        gpu.bm .*= FT(r)
+        gpu.cm .*= FT(r)
     end
 
     # Convective transport ONCE per window (after all substeps).

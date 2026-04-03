@@ -565,30 +565,18 @@ function advection_phase!(tracers, sched, air, phys, model,
     # Build advection workspace — for Prather, augment with per-tracer slope storage
     adv_ws = _build_advection_workspace(gpu.ws, model.advection_scheme, tracers, gpu.m_ref)
 
-    # Apply FULL mass fluxes each sub-step (matching legacy run_forward_preprocessed.jl).
-    # Reset m_dev from m_ref BEFORE EACH substep (not once per window).
-    # Without this reset, m_dev accumulates Strang splitting error across substeps,
-    # diverging from the prescribed pressure field and causing NaN.
-    # The preprocessor stores am per half_dt (= half of one substep). Each Strang
-    # cycle applies am twice per direction. Over n_sub sub-steps the total is:
-    #   n_sub × 2 × half_dt = steps_per_met × dt_spec = window_dt
+    # TM5-faithful: m_dev evolves continuously through all substeps. No reset, no fixer.
+    # TM5 (advectx.F90:629, advectz.F90:440) stores m = mnew after each directional
+    # sweep. There is no reset to a reference mass between substeps or split steps.
+    # The preprocessor stores am per half_dt; each Strang cycle applies am twice per
+    # direction. Over n_sub sub-steps: n_sub × 2 × half_dt = window_dt.
+    copyto!(gpu.m_dev, gpu.m_ref)
     for _ in 1:n_sub
-        copyto!(gpu.m_dev, gpu.m_ref)  # Reset m each substep (legacy convention)
         step[] += 1
         _apply_advection_latlon!(tracers, gpu.m_dev,
                                   gpu.am, gpu.bm, gpu.cm,
                                   grid, model.advection_scheme, adv_ws;
                                   cfl_limit=FT(0.95))
-        # Mass fixer: renormalize rm to preserve mixing ratio across m reset.
-        # After Strang, rm is consistent with m_dev (evolved). Before next substep,
-        # m_dev will be reset to m_ref. To keep rm/m consistent:
-        #   rm_new = (rm / m_dev) × m_ref
-        # This is the same pattern as the CS mass fixer (cubed_sphere_mass_flux.jl:286).
-        # After the last substep, rm is on m_ref basis — consistent with emissions,
-        # diffusion, and output which all use m_ref.
-        for (_, rm) in pairs(tracers)
-            rm .= (rm ./ gpu.m_dev) .* gpu.m_ref
-        end
     end
 
     # Convective transport ONCE per window (after all substeps).

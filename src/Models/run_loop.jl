@@ -212,11 +212,9 @@ function _run_loop!(model, grid::AbstractGrid{FT},
         sim_time = Float64(step[] * dt_sub)
         out_mass = compute_output_mass(sched, air, phys, grid)
         met = build_met_fields(sched, phys, grid, half_dt, dt_window)
-        # Use m_ref for output. After the per-substep mass fixer in advection_phase!,
-        # rm is renormalized to m_ref basis: rm = (rm/m_dev) × m_ref.
-        # So rm/m_ref gives the correct mixing ratio. Emissions, diffusion, and
-        # output all use m_ref consistently.
-        compute_ll_dry_mass!(phys, sched, grid)
+        # TM5-faithful: use evolved m_dev for output. rm and m_dev evolve together
+        # through the Strang cycle, so c = rm/m_dev is the consistent mixing ratio.
+        compute_ll_dry_mass_evolved!(phys, sched, grid)
         # Convert rm → dry VMR for output (LL only; CS is identity)
         c_tracers = rm_to_vmr(tracers, sched, phys, grid)
         for writer in writers

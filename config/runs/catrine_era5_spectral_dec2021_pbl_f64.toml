@@ -1,0 +1,91 @@
+# ===========================================================================
+# CATRINE D7.1 — ERA5 Spectral 0.5° (Dec 2021, PBL diffusion, FLOAT64)
+#
+# Float64 version for mass conservation validation on A100 GPUs.
+# All paths use ~/data (shared across machines, not /temp1 which is local).
+# Preprocessed data (Float32 on disk) is promoted to Float64 on read.
+#
+# Usage (on A100 machine):
+#   julia --threads=2 --project=. scripts/run.jl config/runs/catrine_era5_spectral_dec2021_pbl_f64.toml
+# ===========================================================================
+
+[architecture]
+use_gpu    = true
+float_type = "Float64"
+
+[grid]
+type       = "latlon"
+met_source = "era5"
+size       = [720, 361, 137]
+merge_min_thickness_Pa = 1000
+
+[met_data]
+driver    = "preprocessed_latlon"
+file      = "~/data/AtmosTransport/met/era5/preprocessed_spectral_catrine/massflux_era5_spectral_202112_float32.nc"
+dt        = 900
+max_windows = 28   # 7 days (28 × 6h windows)
+
+[initial_conditions]
+co2.file     = "~/data/AtmosTransport/catrine/InitialConditions/startCO2_202112010000.nc"
+co2.variable = "CO2"
+sf6.file     = "~/data/AtmosTransport/catrine/InitialConditions/startSF6_202112010000.nc"
+sf6.variable = "SF6"
+
+[tracers.co2]
+emission   = "lmdz_co2"
+dir        = "~/data/AtmosTransport/catrine/Emissions/LMDZ_fluxes"
+species    = "co2"
+flux_var   = "flux_apos"
+start_date = "2021-12-01"
+end_date   = "2021-12-31"
+
+[tracers.fossil_co2]
+emission = "gridfed"
+dir      = "~/data/AtmosTransport/catrine/Emissions/gridfed"
+species  = "fossil_co2"
+year     = 2021
+
+[tracers.sf6]
+emission         = "edgar_sf6"
+file             = "~/data/AtmosTransport/catrine/Emissions/edgar_v8/v8.0_FT2022_GHG_SF6_2022_TOTALS_emi.nc"
+noaa_growth_file = "~/data/AtmosTransport/catrine/Emissions/sf6_gr_gl.txt"
+year             = 2022
+scale_year       = 2022
+
+[tracers.rn222]
+emission   = "zhang_rn222"
+dir        = "~/data/AtmosTransport/catrine/Emissions/ZHANG_Rn222/"
+chemistry  = "decay"
+half_life  = 330350.4
+
+[chemistry]
+type = "composite"
+
+[advection]
+scheme    = "ppm"
+ppm_order = 7
+
+[diffusion]
+type   = "pbl"
+beta_h = 15.0
+Kz_bg  = 0.1
+Kz_min = 0.01
+Kz_max = 500.0
+
+[output]
+filename = "~/data/AtmosTransport/catrine/output/era5_spectral_dec2021_pbl_f64/catrine_era5_spectral_pbl_f64.bin"
+interval = 10800
+
+[output.fields]
+co2_3d              = {type = "full_3d", species = "co2"}
+fossil_co2_3d       = {type = "full_3d", species = "fossil_co2"}
+sf6_3d              = {type = "full_3d", species = "sf6"}
+rn222_3d            = {type = "full_3d", species = "rn222"}
+co2_column_mass     = {type = "column_mass", species = "co2"}
+fco2_column_mass    = {type = "column_mass", species = "fossil_co2"}
+sf6_column_mass     = {type = "column_mass", species = "sf6"}
+rn222_column_mass   = {type = "column_mass", species = "rn222"}
+surface_pressure    = "surface_pressure"
+
+[buffering]
+strategy = "double"

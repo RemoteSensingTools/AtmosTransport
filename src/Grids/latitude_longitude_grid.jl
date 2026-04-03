@@ -115,9 +115,9 @@ function LatitudeLongitudeGrid(arch::AbstractArchitecture;
     φᶜ_cpu = FT[(φᶠ_cpu[j] + φᶠ_cpu[j+1]) / 2 for j in 1:Ny]
 
     rg = if use_reduced_grid === :auto
-        Δλ <= 1.0 ? compute_reduced_grid(Nx, φᶜ_cpu) : nothing
+        Δλ <= 1.0 ? compute_reduced_grid_tm5(Nx, φᶜ_cpu) : nothing
     elseif use_reduced_grid === true
-        compute_reduced_grid(Nx, φᶜ_cpu)
+        compute_reduced_grid_tm5(Nx, φᶜ_cpu)
     else
         nothing
     end

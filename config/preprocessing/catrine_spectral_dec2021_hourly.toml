@@ -1,0 +1,21 @@
+# ===========================================================================
+# Spectral mass-flux preprocessing — ERA5 CATRINE December 2021 (HOURLY)
+# ===========================================================================
+
+[input]
+spectral_dir = "~/data/AtmosTransport/met/era5/spectral_hourly"
+coefficients = "config/era5_L137_coefficients.toml"
+
+[output]
+directory = "~/data/AtmosTransport/met/era5/preprocessed_spectral_catrine_hourly"
+
+[grid]
+nlon      = 720
+nlat      = 361
+level_top = 1
+level_bot = 137
+
+[numerics]
+float_type   = "Float32"
+dt           = 900.0          # advection sub-step [s]
+met_interval = 3600.0         # HOURLY met data (was 21600 for 6-hourly)

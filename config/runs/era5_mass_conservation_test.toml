@@ -1,0 +1,36 @@
+# Mass conservation test: real CO2 IC, NO emissions, NO diffusion, advection only
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "latlon"
+met_source = "era5"
+size       = [720, 361, 137]
+merge_min_thickness_Pa = 1000
+
+[met_data]
+driver    = "preprocessed_latlon"
+directory = "~/data/AtmosTransport/met/era5/preprocessed_spectral_catrine"
+dt        = 900
+
+[initial_conditions]
+co2.file     = "~/data/AtmosTransport/catrine/InitialConditions/startCO2_202112010000.nc"
+co2.variable = "CO2"
+
+[tracers.co2]
+emission = "none"
+
+[advection]
+scheme    = "ppm"
+ppm_order = 7
+
+[output]
+filename = "/tmp/era5_mass_test.bin"
+interval = 21600
+
+[output.fields]
+co2_column_mean = {type = "column_mean", species = "co2"}
+
+[buffering]
+strategy = "double"

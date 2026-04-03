@@ -27,9 +27,10 @@ using ..Grids: reduce_row_mass!, reduce_am_row!, expand_row_mass!
 using ..Grids: fill_panel_halos!, fill_panel_halos_nosync!, copy_corners!, allocate_cubed_sphere_field
 using ..Fields: AbstractField
 using ..Architectures: architecture, device, array_type, CPU, GPU,
-                       AbstractPanelMap, SingleGPUMap, PerGPUWorkspace, workspace_for,
+                       AbstractPanelMap, SingleGPUMap, PanelGPUMap, PerGPUWorkspace, workspace_for,
                        allocate_ntuple_panels, sync_all_gpus, foreach_gpu_batch, foreach_gpu_batch_nosync,
-                       set_panel_map!, active_panel_map, for_panels, for_panels_nosync
+                       set_panel_map!, active_panel_map, for_panels, for_panels_nosync,
+                       _kahan_add
 using KernelAbstractions: get_backend, synchronize
 
 """
@@ -81,7 +82,7 @@ export GridGeometryCache, build_geometry_cache
 export MassFluxWorkspace, allocate_massflux_workspace
 export advect_x_massflux!, advect_y_massflux!, advect_z_massflux!
 export advect_x_massflux_subcycled!, advect_y_massflux_subcycled!, advect_z_massflux_subcycled!
-export max_cfl_massflux_x, max_cfl_massflux_y, max_cfl_massflux_z
+export max_cfl_massflux_x, max_cfl_massflux_x_fine, max_cfl_massflux_y, max_cfl_massflux_z
 export strang_split_massflux!, strang_split_massflux_ppm!
 export advect_x_massflux_reduced!
 export CubedSphereGeometryCache, CubedSphereMassFluxWorkspace
@@ -123,17 +124,6 @@ export _multiply_by_1_minus_qv_kernel!, _divide_by_1_minus_qv_kernel!
 export _compute_dry_dp_kernel!, _copy_nohalo_to_halo_kernel!,
        _interpolate_dry_dp_kernel!, _interpolate_dp_kernel!,
        _column_dp_correction_kernel!, _column_dp_correction_moist_kernel!
-
-# Kahan compensated addition for Float32 precision in cumulative sums.
-# Float32: tracks low-order bits lost in each addition (nearly Float64 precision).
-# Float64: plain addition (compensation is always zero — no overhead).
-@inline function _kahan_add(s::T, c::T, x::T) where {T <: Union{Float16, Float32}}
-    y = x - c
-    t = s + y
-    c_new = (t - s) - y
-    return (t, c_new)
-end
-@inline _kahan_add(s::T, c::T, x::T) where {T <: Float64} = (s + x, zero(T))
 
 include("abstract_advection.jl")
 include("slopes_advection_kernels.jl")

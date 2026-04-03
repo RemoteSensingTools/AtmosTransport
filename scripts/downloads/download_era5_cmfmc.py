@@ -1,36 +1,24 @@
 #!/usr/bin/env python3
 """
+** SUPERSEDED by download_era5_physics.py (2026-03-31) **
+
+This script used params 235071/235072 (MUMF/MDMF) which do NOT exist in ERA5
+experiment version 1. ECMWF confirmed the correct parameters are:
+  - 235009: Time-mean updraught mass flux
+  - 235010: Time-mean downdraught mass flux
+  - 235011: Time-mean updraught detrainment rate
+  - 235012: Time-mean downdraught detrainment rate
+
+Use instead:
+    python3 scripts/downloads/download_era5_physics.py \\
+        --start 2021-12-01 --end 2021-12-07 \\
+        --outdir ~/data/AtmosTransport/met/era5/physics \\
+        --fields convection
+
+--- Original docstring (for reference) ---
+
 Download ERA5 convective mass flux on model levels for Tiedtke convection.
-
-** IMPORTANT: MUMF/MDMF NOT AVAILABLE THROUGH CDS **
-ERA5 updraft/downdraft mass flux fields (MUMF=235071, MDMF=235072) are NOT
-archived in the CDS ERA5 dataset. Requests for these parameters silently return
-etadot (paramId=77, vertical velocity in hybrid coords), which is WRONG.
-Confirmed 2026-03-17:
-  - param=235071/235072, type=fc → returns etadot (paramId=77), NOT MUMF/MDMF
-  - param=71.162/72.162, type=fc → MarsNoDataError (not in archive)
-These fields require direct ECMWF MARS access (ECMWF account + MARS service),
-not available through the standard CDS API. THIS SCRIPT IS CURRENTLY BROKEN.
-
-For now, use [convection] type = "none" in ERA5 run configs.
-TM5MatrixConvection code is in place; data pipeline will work once MARS access
-is available.
-
-Original intent: Downloads updraft (MUMF, paramId 235071) and downdraft (MDMF,
-paramId 235072) mass flux on all 137 model levels, 6-hourly at 0.5 deg.
-These would be forecast fields from 06/18 UTC base times, steps 3/6/9/12 h.
-
-Output (when working): one NetCDF per day:
-    era5_cmfmc_YYYYMMDD.nc  → variables: mumf, mdmf (lon, lat, level, time)
-
-Usage:
-    python3 scripts/downloads/download_era5_cmfmc.py \
-        --start 2021-12-01 --end 2021-12-07 \
-        --outdir ~/data/AtmosTransport/met/era5/cmfmc
-
-Requirements:
-    pip install cdsapi cfgrib eccodes xarray
-    (and ~/.cdsapirc configured for CDS access with MARS model-level access)
+Used params 235071/235072 which silently returned etadot (wrong data).
 """
 
 import argparse

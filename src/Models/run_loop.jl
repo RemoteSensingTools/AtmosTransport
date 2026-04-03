@@ -125,6 +125,9 @@ function _run_loop!(model, grid::AbstractGrid{FT},
                                 dry_correction=get(model.metadata, "dry_correction", true))
         t_phases["gpu_airmass"] += time() - _t
 
+        # Compute dry mass for LL rm↔c_dry conversions (m_dry = m_ref × (1 - QV))
+        compute_ll_dry_mass!(phys, sched, grid)
+
         # First window: IC finalization + initial output
         if w == 1
             finalize_ic_phase!(tracers, sched, air, phys, grid)
@@ -158,26 +161,37 @@ function _run_loop!(model, grid::AbstractGrid{FT},
         end
         t_phases["gpu_cm"] += time() - _t
 
-        # Advection + convection sub-stepping (BEFORE emissions, matching GCHP)
+        # Advection + convection sub-stepping
         _t = time()
         advection_phase!(tracers, sched, air, phys, model,
                           grid, ws, n_sub, dt_sub, step;
                           ws_lr, ws_vr, gc, geom_gchp, ws_gchp, has_next)
         t_phases["gpu_advection"] += time() - _t
 
-        # Emissions (AFTER advection, matching GCHP operator ordering:
-        # transport → emissions → BL mixing → chemistry)
+        # Track transport mass change
+        _mass_after_adv = compute_mass_totals(tracers, grid)
+        record_mass_change!(diag.cumulative_transport, diag.pre_adv_mass, _mass_after_adv)
+
+        # Emissions (after advection: transport → emissions → mixing → chemistry)
         _t = time()
         sim_hours = Float64((w - 1) * dt_window / 3600)
         apply_emissions_phase!(tracers, emi_state, sched, phys, gc,
                                 grid, dt_window; sim_hours, arch)
         t_phases["gpu_emissions"] += time() - _t
 
+        # Track emission mass change
+        _mass_after_emi = compute_mass_totals(tracers, grid)
+        record_mass_change!(diag.cumulative_emissions, _mass_after_adv, _mass_after_emi)
+
         # Post-advection physics: BLD + PBL + chemistry
         _t = time()
         post_advection_physics!(tracers, sched, air, phys, model,
                                  grid, dt_window, dw)
         t_phases["gpu_diffusion"] += time() - _t
+
+        # Track physics mass change (diffusion + chemistry)
+        _mass_after_phys = compute_mass_totals(tracers, grid)
+        record_mass_change!(diag.cumulative_physics, _mass_after_emi, _mass_after_phys)
 
         # Global mass correction (CS only)
         _t = time()
@@ -198,9 +212,16 @@ function _run_loop!(model, grid::AbstractGrid{FT},
         sim_time = Float64(step[] * dt_sub)
         out_mass = compute_output_mass(sched, air, phys, grid)
         met = build_met_fields(sched, phys, grid, half_dt, dt_window)
+        # Use prescribed m_ref for LL output (same as pre-refactor behavior).
+        # m_dev may contain NaN at extreme-CFL pole-adjacent cells.
+        # TODO: switch to m_dev once pole CFL is fully resolved.
+        compute_ll_dry_mass!(phys, sched, grid)
+        # Convert rm → dry VMR for output (LL only; CS is identity)
+        c_tracers = rm_to_vmr(tracers, sched, phys, grid)
         for writer in writers
             write_output!(writer, model, sim_time;
-                          air_mass=out_mass, tracers=tracers, met_fields=met)
+                          air_mass=out_mass, tracers=c_tracers, met_fields=met,
+                          rm_tracers=tracers)
         end
         snapshot_massfixer_interval!(diag)
         t_phases["output"] += time() - t0

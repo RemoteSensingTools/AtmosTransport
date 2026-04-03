@@ -438,7 +438,7 @@ end
 
 Full Strang-split advection using Prather (1986) prognostic slopes.
 `pw_dict` is a NamedTuple of `PratherWorkspace` keyed by tracer name.
-Tracers store mixing ratios (q = c); converted to rm = m*c for advection.
+Tracers are tracer mass `rm = c × m` (TM5-style prognostic variable).
 """
 function strang_split_prather!(tracers::NamedTuple,
                                 m::AbstractArray{FT,3},
@@ -454,16 +454,15 @@ function strang_split_prather!(tracers::NamedTuple,
         copyto!(m_save, m)
     end
 
-    for (idx, (name, c)) in enumerate(pairs(tracers))
+    for (idx, (name, rm_tracer)) in enumerate(pairs(tracers))
         if idx > 1
             copyto!(m, m_save)
         end
 
         pw = pw_dict[name]
 
-        # Convert mixing ratio → tracer mass
-        rm = pw.rm_buf  # reuse buffer temporarily
-        rm .= m .* c
+        rm = pw.rm_buf
+        copyto!(rm, rm_tracer)
 
         # Strang splitting: X → Y → Z → Z → Y → X
         _advect_x_prather!(rm, m, am, pw, Nx, use_limiter)
@@ -473,8 +472,7 @@ function strang_split_prather!(tracers::NamedTuple,
         _advect_y_prather!(rm, m, bm, pw, Ny, use_limiter)
         _advect_x_prather!(rm, m, am, pw, Nx, use_limiter)
 
-        # Convert back to mixing ratio
-        c .= rm ./ m
+        copyto!(rm_tracer, rm)
     end
     return nothing
 end

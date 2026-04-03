@@ -9,7 +9,8 @@
 using TOML
 using Dates
 using ..Architectures: CPU, GPU, array_type, build_panel_map, is_multi_gpu
-using ..Grids: LatitudeLongitudeGrid, CubedSphereGrid, merge_upper_levels, n_levels, set_coord_status!
+using ..Grids: LatitudeLongitudeGrid, CubedSphereGrid, HybridSigmaPressure, grid_size,
+               merge_upper_levels, merge_thin_levels, n_levels, set_coord_status!
 using ..Parameters: load_parameters
 using ..Sources: AbstractSurfaceFlux, compute_areas_from_corners,
                  EdgarSource, CarbonTrackerSource, GFASSource,
@@ -172,10 +173,15 @@ function build_model_from_config(config::Dict)
     met_cfg_default = default_met_config(met_source_name)
     vc = build_vertical_coordinate(met_cfg_default; FT)
 
-    # Optional: merge thin upper-atmosphere levels
+    # Optional: merge thin levels
     merge_map = nothing
     merge_Pa = get(grid_cfg, "merge_levels_above_Pa", nothing)
-    if merge_Pa !== nothing
+    merge_min_dp = get(grid_cfg, "merge_min_thickness_Pa", nothing)
+    if merge_min_dp !== nothing
+        # General merge: thin levels from both top and bottom
+        vc, merge_map = merge_thin_levels(vc; min_thickness_Pa=FT(merge_min_dp))
+    elseif merge_Pa !== nothing
+        # Legacy: merge upper-atmosphere levels only
         vc, merge_map = merge_upper_levels(vc, FT(merge_Pa))
     end
 
@@ -207,6 +213,45 @@ function build_model_from_config(config::Dict)
     met_data_cfg = get(config, "met_data", Dict())
     driver_type = get(met_data_cfg, "driver", "preprocessed_latlon")
     met = _build_met_driver(driver_type, met_data_cfg, met_cfg_default, FT; merge_map)
+
+    # --- Auto-detect grid from v2 binary header ---
+    # If the met driver has embedded A/B coefficients (v2 binary), override the
+    # vertical coordinate and rebuild the grid. This makes pre-merged binaries
+    # fully self-describing — no manual size or merge config needed in TOML.
+    # Also auto-detect Nx/Ny from the driver (binary header is authoritative).
+    if grid isa LatitudeLongitudeGrid && met isa PreprocessedLatLonMetDriver && merge_map === nothing
+        _need_rebuild = false
+        gs = grid_size(grid)
+        Nx_new, Ny_new, Nz_new = gs.Nx, gs.Ny, gs.Nz
+        vc_new = vc
+
+        # Check if Nx/Ny from driver differ from config defaults
+        if met.Nx != gs.Nx || met.Ny != gs.Ny
+            Nx_new, Ny_new = met.Nx, met.Ny
+            _need_rebuild = true
+        end
+
+        # Check for embedded vertical coordinate (v2 binary)
+        _vc_embedded = embedded_vertical_coordinate(met)
+        if _vc_embedded !== nothing
+            vc_new = HybridSigmaPressure(FT.(_vc_embedded.A_ifc), FT.(_vc_embedded.B_ifc))
+            Nz_new = n_levels(vc_new)
+            _need_rebuild = _need_rebuild || (Nz_new != gs.Nz)
+        end
+
+        if _need_rebuild
+            @info "Auto-detected grid from binary: $(Nx_new)×$(Ny_new)×$(Nz_new) (was $(gs.Nx)×$(gs.Ny)×$(gs.Nz))"
+            lons = get(grid_cfg, "longitude", [0.0, 360.0])
+            lats = get(grid_cfg, "latitude", [-90.0, 90.0])
+            grid = LatitudeLongitudeGrid(arch;
+                FT, size=(Nx_new, Ny_new, Nz_new),
+                longitude=(FT(lons[1]), FT(lons[2])),
+                latitude=(FT(lats[1]), FT(lats[2])),
+                vertical=vc_new,
+                radius=pp.radius, gravity=pp.gravity,
+                reference_pressure=pp.reference_surface_pressure)
+        end
+    end
 
     # --- Load authoritative GMAO coordinates for CS grids ---
     if grid isa CubedSphereGrid

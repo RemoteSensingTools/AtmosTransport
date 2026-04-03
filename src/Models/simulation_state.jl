@@ -34,6 +34,8 @@ function allocate_physics_buffers(grid::LatitudeLongitudeGrid{FT}, arch, model;
     ras_workspace = model.convection isa RASConvection ? AT(zeros(FT, Nx, Ny, Nz)) : nothing
 
     # TM5 matrix convection: 4 fields (entu, detu, entd, detd) on CPU + GPU
+    # + GPU workspace for the per-column transfer matrix
+    tm5_lmax = has_tm5conv ? (model.convection.lmax_conv > 0 ? min(model.convection.lmax_conv, Nz) : Nz) : 0
     tm5conv_cpu = has_tm5conv ? (
         entu = Array{FT}(undef, Nx, Ny, Nz),
         detu = Array{FT}(undef, Nx, Ny, Nz),
@@ -44,6 +46,7 @@ function allocate_physics_buffers(grid::LatitudeLongitudeGrid{FT}, arch, model;
         detu = AT(zeros(FT, Nx, Ny, Nz)),
         entd = AT(zeros(FT, Nx, Ny, Nz)),
         detd = AT(zeros(FT, Nx, Ny, Nz))) : nothing
+    tm5conv_ws = has_tm5conv ? allocate_tm5conv_workspace(FT, tm5_lmax, Nx, Ny, AT) : nothing
 
     pbl_sfc_cpu = has_pbl ? (
         pblh  = Array{FT}(undef, Nx, Ny),
@@ -70,7 +73,7 @@ function allocate_physics_buffers(grid::LatitudeLongitudeGrid{FT}, arch, model;
         has_conv, has_dtrain, has_tm5conv, has_pbl, needs_delp,
         cmfmc_cpu, cmfmc_gpu,
         dtrain_cpu, dtrain_gpu, ras_workspace,
-        tm5conv_cpu, tm5conv_gpu,
+        tm5conv_cpu, tm5conv_gpu, tm5conv_ws,
         pbl_sfc_cpu, pbl_sfc_gpu, w_scratch,
         delp_cpu, area_j,
         qv_cpu, qv_gpu, qv_loaded=Ref(false), m_dry,

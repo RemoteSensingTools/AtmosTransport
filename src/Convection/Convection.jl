@@ -18,6 +18,7 @@ using ..Fields: AbstractField
 
 export AbstractConvection, TiedtkeConvection, NoConvection, RASConvection, TM5MatrixConvection
 export convect!, adjoint_convect!, invalidate_ras_cfl_cache!
+export TM5ConvWorkspace, allocate_tm5conv_workspace
 export AbstractTracerSolubility, InertTracer, SolubleTracer
 export tracer_solubility, wet_scavenge_fraction
 

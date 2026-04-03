@@ -1,30 +1,23 @@
 #!/usr/bin/env python3
 """
+** SUPERSEDED by download_era5_physics.py (2026-03-31) **
+
+This script used params 214.162/215.162 (UDRF/DDRF) which do NOT exist in ERA5
+experiment version 1, and incorrectly assumed they were analysis fields.
+ECMWF confirmed the correct parameters are forecast fields:
+  - 235011: Time-mean updraught detrainment rate
+  - 235012: Time-mean downdraught detrainment rate
+
+Use instead:
+    python3 scripts/downloads/download_era5_physics.py \\
+        --start 2021-12-01 --end 2021-12-07 \\
+        --outdir ~/data/AtmosTransport/met/era5/physics \\
+        --fields convection
+
+--- Original docstring (for reference) ---
+
 Download ERA5 updraft/downdraft detrainment rates on model levels.
-
-Downloads UDRF (param 214.162, updraft detrainment rate, kg/m3/s) and
-DDRF (param 215.162, downdraft detrainment rate, kg/m3/s) on all 137 model
-levels, 6-hourly (00/06/12/18 UTC) at 0.5 deg resolution.
-
-These are the detrainment RATES (not integrated fluxes!) needed by
-the TM5 matrix convection scheme. The preprocessing step
-(preprocess_era5_tm5_convection.jl) converts them to fluxes (kg/m2/s)
-by multiplying by layer thickness dz.
-
-Retrieved from `reanalysis-era5-complete` (MARS syntax). Output is
-GRIB format, auto-converted to NetCDF via cfgrib+xarray.
-
-Output: one NetCDF per day:
-    era5_detr_YYYYMMDD.nc
-
-Usage:
-    python3 scripts/downloads/download_era5_detrainment.py \
-        --start 2021-12-01 --end 2021-12-07 \
-        --outdir ~/data/AtmosTransport/met/era5/detrainment
-
-Requirements:
-    pip install cdsapi cfgrib eccodes xarray
-    (and ~/.cdsapirc configured for CDS access)
+Used params 214.162/215.162 which do not exist in ERA5 expver 1.
 """
 
 import argparse

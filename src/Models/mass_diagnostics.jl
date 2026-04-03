@@ -17,14 +17,18 @@ mutable struct MassDiagnostics
     initial_mass  :: Dict{Symbol, Float64}
     current_mass  :: Dict{Symbol, Float64}
     pre_adv_mass  :: Dict{Symbol, Float64}
-    expected_mass :: Dict{Symbol, Float64}   # initial + cumulative emissions (no transport error)
+    expected_mass :: Dict{Symbol, Float64}   # initial + emissions + chemistry (exact budget)
     showvalue     :: String
     fix_value     :: String
     cfl_value     :: String
     # Mass fixer tracking: cumulative scaling factor (product of per-window corrections)
-    fix_interval_scale :: Dict{Symbol, Float64}   # product of scale factors since last output write (reset at each output)
-    fix_total_scale    :: Dict{Symbol, Float64}   # product of all scale factors from sim start
-    fix_scale_series   :: Dict{Symbol, Vector{Float64}}  # per-output-timestep interval scale factors
+    fix_interval_scale :: Dict{Symbol, Float64}
+    fix_total_scale    :: Dict{Symbol, Float64}
+    fix_scale_series   :: Dict{Symbol, Vector{Float64}}
+    # Exact mass budget: cumulative changes by operator
+    cumulative_transport :: Dict{Symbol, Float64}  # Σ(mass_after_advection - mass_before_advection)
+    cumulative_emissions :: Dict{Symbol, Float64}  # Σ(mass_after_emissions - mass_before_emissions)
+    cumulative_physics   :: Dict{Symbol, Float64}  # Σ(mass_after_diffchem - mass_before_diffchem)
 end
 
 MassDiagnostics() = MassDiagnostics(
@@ -35,7 +39,10 @@ MassDiagnostics() = MassDiagnostics(
     "", "", "",
     Dict{Symbol, Float64}(),
     Dict{Symbol, Float64}(),
-    Dict{Symbol, Vector{Float64}}()
+    Dict{Symbol, Vector{Float64}}(),
+    Dict{Symbol, Float64}(),
+    Dict{Symbol, Float64}(),
+    Dict{Symbol, Float64}()
 )
 
 # =====================================================================
@@ -235,25 +242,33 @@ end
 # Convenience: update MassDiagnostics in-place
 # =====================================================================
 
-"""Snapshot current mass into `diag.pre_adv_mass` (called after emissions, before advection).
-Also updates `expected_mass` by adding emissions: expected += (pre_adv - current_before_emissions).
-"""
+"""Snapshot mass before advection (called before advection_phase!)."""
 function snapshot_pre_advection!(diag::MassDiagnostics, tracers, grid)
     diag.pre_adv_mass = compute_mass_totals(tracers, grid)
-    # Accumulate emissions into expected mass:
-    # emissions_this_window = pre_adv_mass - current_mass (current_mass still has prev window's value)
-    if !isempty(diag.expected_mass)
-        for (tname, m_pre) in diag.pre_adv_mass
-            emissions = m_pre - get(diag.current_mass, tname, 0.0)
-            diag.expected_mass[tname] = get(diag.expected_mass, tname, 0.0) + emissions
-        end
+end
+
+"""Record mass change from an operator: accumulate into the given Dict."""
+function record_mass_change!(accum::Dict{Symbol, Float64},
+                              before::Dict{Symbol, Float64},
+                              after::Dict{Symbol, Float64})
+    for (tname, m_after) in after
+        m_before = get(before, tname, 0.0)
+        accum[tname] = get(accum, tname, 0.0) + (m_after - m_before)
     end
 end
 
-"""Update `diag.current_mass` and `diag.showvalue` (called after all physics)."""
+"""Update `diag.current_mass`, compute expected mass from budget, and format Δ%.
+expected = initial + emissions + physics (diffusion + chemistry).
+Δ% = (current - expected) / |initial| × 100 = transport-only drift."""
 function update_mass_diagnostics!(diag::MassDiagnostics, tracers, grid)
     diag.current_mass = compute_mass_totals(tracers, grid)
-    if !isempty(diag.expected_mass)
+    if !isempty(diag.initial_mass)
+        # expected = initial + all non-transport changes
+        for tname in keys(diag.initial_mass)
+            diag.expected_mass[tname] = diag.initial_mass[tname] +
+                get(diag.cumulative_emissions, tname, 0.0) +
+                get(diag.cumulative_physics, tname, 0.0)
+        end
         diag.showvalue = mass_showvalue(diag.current_mass, diag.expected_mass)
     end
 end

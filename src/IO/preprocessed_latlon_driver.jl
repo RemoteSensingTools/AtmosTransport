@@ -68,8 +68,8 @@ function PreprocessedLatLonMetDriver(; FT::Type{<:AbstractFloat} = Float64,
                                        max_windows::Union{Nothing, Int} = nothing)
     isempty(files) && error("PreprocessedLatLonMetDriver: no files provided")
 
-    merge_map !== nothing && !isempty(files) && endswith(files[1], ".bin") &&
-        error("Binary mode with layer merging not yet supported. Use NetCDF files instead.")
+    # Note: v2 binary files have pre-merged levels — merge_map should be nothing.
+    # Runtime merging from binary is not supported; use the preprocessor instead.
 
     # Read metadata from first file — dispatch on extension
     if endswith(files[1], ".bin")
@@ -140,6 +140,24 @@ function PreprocessedLatLonMetDriver(; FT::Type{<:AbstractFloat} = Float64,
         FT(actual_dt), steps_per_win,
         lons, lats, Nx, Ny, Nz,
         level_top, level_bot, merge_map, _start)
+end
+
+"""
+    embedded_vertical_coordinate(driver) → (A_ifc, B_ifc) or nothing
+
+Return the A/B interface coefficients embedded in a v2 binary header.
+Returns `nothing` for v1 binary or NetCDF files.
+"""
+function embedded_vertical_coordinate(driver::PreprocessedLatLonMetDriver{FT}) where FT
+    isempty(driver.files) && return nothing
+    filepath = driver.files[1]
+    endswith(filepath, ".bin") || return nothing
+    r = MassFluxBinaryReader(filepath, FT)
+    A = copy(r.A_ifc)
+    B = copy(r.B_ifc)
+    close(r)
+    isempty(A) && return nothing
+    return (A_ifc=A, B_ifc=B)
 end
 
 """Parse start date from a preprocessed file's time variable units attribute."""
@@ -229,15 +247,11 @@ function load_met_window!(cpu_buf::LatLonCPUBuffer,
         end
     end
 
-    # Distribute the continuity residual across all cm interfaces.
-    # The preprocessor computes cm from continuity (top→bottom accumulation),
-    # so the surface value cm[:,:,Nz+1] accumulates the column mass-budget
-    # residual. In relative terms this is tiny (< 0.001% of column mass),
-    # but it can exceed thin-cell mass near the surface, causing CFL_z > 300
-    # and thousands of pointless Z subcycles.
-    # Fix: distribute the residual proportionally to the cumulative mass
-    # fraction above each interface, so cm[1] = cm[Nz+1] = 0.
-    _correct_cm_residual!(cpu_buf.cm, cpu_buf.m)
+    # NOTE: cm residual correction is applied ONCE during preprocessing
+    # (in convert_merged_massflux_to_binary.jl or preprocess_spectral_massflux.jl).
+    # Do NOT apply again here — double correction breaks per-level continuity.
+    # For raw NetCDF without preprocessing correction, uncomment:
+    # _correct_cm_residual!(cpu_buf.cm, cpu_buf.m)
 
     return nothing
 end
@@ -268,15 +282,18 @@ function _merge_levels_latlon!(cpu_buf::LatLonCPUBuffer{FT},
         @views cpu_buf.bm[:, :, km] .+= bm_native[:, :, k]
     end
 
-    # cm at merged interfaces: pick from native cm at group boundaries
-    # cm_merged[:,:,1] = cm_native[:,:,1] = 0 (TOA)
-    @views cpu_buf.cm[:, :, 1] .= cm_native[:, :, 1]
-    for km in 1:Nz_merged
-        # Bottom interface of merged level km = first native interface
-        # after the last native level in group km
-        k_last = findlast(==(km), mm)
-        @views cpu_buf.cm[:, :, km + 1] .= cm_native[:, :, k_last + 1]
+    # Recompute cm from merged horizontal divergence (continuity equation).
+    # Picking native interface values was incorrect — it breaks continuity
+    # when combined with the residual correction.
+    Nx = size(cpu_buf.m, 1)
+    Ny = size(cpu_buf.m, 2)
+    @inbounds for k in 1:Nz_merged, j in 1:Ny, i in 1:Nx
+        div_h = (cpu_buf.am[i+1, j, k] - cpu_buf.am[i, j, k]) +
+                (cpu_buf.bm[i, j+1, k] - cpu_buf.bm[i, j, k])
+        cpu_buf.cm[i, j, k+1] = cpu_buf.cm[i, j, k] - div_h
     end
+    # Do NOT apply _correct_cm_residual! — it breaks per-level continuity.
+    # The recomputed cm satisfies continuity exactly (Float32 precision).
     return nothing
 end
 
@@ -336,13 +353,29 @@ function load_cmfmc_window!(cmfmc::Array{FT, 3},
     file_idx, local_win = window_to_file_local(driver, win)
     filepath = driver.files[file_idx]
 
-    # Binary format doesn't support physics fields
-    endswith(filepath, ".bin") && return false
+    if endswith(filepath, ".bin")
+        reader = MassFluxBinaryReader(filepath, FT)
+        ok = load_cmfmc_window!(cmfmc, reader, local_win)
+        close(reader)
+        return ok
+    end
 
     ds = NCDataset(filepath, "r")
     try
         haskey(ds, "conv_mass_flux") || return false
-        cmfmc .= FT.(ds["conv_mass_flux"][:, :, :, local_win])
+        mm = driver.merge_map
+        if mm === nothing
+            cmfmc .= FT.(ds["conv_mass_flux"][:, :, :, local_win])
+        else
+            # Read native interfaces, merge: pick interface at merged level boundaries
+            cmfmc_native = FT.(ds["conv_mass_flux"][:, :, :, local_win])
+            Nz_merged = maximum(mm)
+            cmfmc[:, :, 1] .= cmfmc_native[:, :, 1]  # TOA
+            for km in 1:Nz_merged
+                k_last = findlast(==(km), mm)
+                cmfmc[:, :, km + 1] .= cmfmc_native[:, :, k_last + 1]
+            end
+        end
     finally
         close(ds)
     end
@@ -364,7 +397,14 @@ function load_tm5conv_window!(tm5conv::NamedTuple,
     file_idx, local_win = window_to_file_local(driver, win)
     filepath = driver.files[file_idx]
 
-    endswith(filepath, ".bin") && return false
+    if endswith(filepath, ".bin")
+        reader = MassFluxBinaryReader(filepath, FT)
+        ok = load_tm5conv_window!(tm5conv.entu, tm5conv.detu,
+                                   tm5conv.entd, tm5conv.detd,
+                                   reader, local_win)
+        close(reader)
+        return ok
+    end
 
     ds = NCDataset(filepath, "r")
     try
@@ -393,7 +433,13 @@ function load_surface_fields_window!(sfc::NamedTuple,
     file_idx, local_win = window_to_file_local(driver, win)
     filepath = driver.files[file_idx]
 
-    endswith(filepath, ".bin") && return false
+    if endswith(filepath, ".bin")
+        reader = MassFluxBinaryReader(filepath, FT)
+        ok = load_surface_window!(sfc.pblh, sfc.t2m, sfc.ustar, sfc.hflux,
+                                   reader, local_win)
+        close(reader)
+        return ok
+    end
 
     ds = NCDataset(filepath, "r")
     try
@@ -414,8 +460,8 @@ end
     load_qv_window!(qv, driver::PreprocessedLatLonMetDriver, grid, win) → Bool
 
 Read specific humidity (QV) for window `win` into `qv` (Nx, Ny, Nz).
-Returns `true` if data was loaded, `false` if the file doesn't contain
-a QV variable (or is binary format).
+If level merging is active, reads native levels and merges with mass-weighting.
+Returns `true` if data was loaded, `false` if not available.
 """
 function load_qv_window!(qv::Array{FT, 3},
                           driver::PreprocessedLatLonMetDriver{FT},
@@ -423,18 +469,91 @@ function load_qv_window!(qv::Array{FT, 3},
     file_idx, local_win = window_to_file_local(driver, win)
     filepath = driver.files[file_idx]
 
-    endswith(filepath, ".bin") && return false
+    if endswith(filepath, ".bin")
+        reader = MassFluxBinaryReader(filepath, FT)
+        ok = load_qv_window!(qv, reader, local_win)
+        close(reader)
+        return ok
+    end
 
     ds = NCDataset(filepath, "r")
     try
         for varname in ("qv", "QV", "q", "specific_humidity")
-            if haskey(ds, varname)
+            haskey(ds, varname) || continue
+            mm = driver.merge_map
+            if mm === nothing
                 qv .= FT.(ds[varname][:, :, :, local_win])
-                return true
+            else
+                # Read native levels, merge QV mass-weighted by air mass
+                qv_native = FT.(ds[varname][:, :, :, local_win])
+                m_native  = FT.(ds["m"][:, :, :, local_win])
+                _merge_qv!(qv, qv_native, m_native, mm)
             end
+            return true
         end
         return false
     finally
         close(ds)
+    end
+end
+
+"""
+    load_temperature_window!(t, driver::PreprocessedLatLonMetDriver, grid, win) → Bool
+
+Read model-level temperature for window `win` into `t` (Nx, Ny, Nz).
+Returns `true` if data was loaded, `false` if not available.
+"""
+function load_temperature_window!(t::Array{FT, 3},
+                                   driver::PreprocessedLatLonMetDriver{FT},
+                                   grid, win::Int) where FT
+    file_idx, local_win = window_to_file_local(driver, win)
+    filepath = driver.files[file_idx]
+
+    if endswith(filepath, ".bin")
+        reader = MassFluxBinaryReader(filepath, FT)
+        ok = load_temperature_window!(t, reader, local_win)
+        close(reader)
+        return ok
+    end
+
+    ds = NCDataset(filepath, "r")
+    try
+        for varname in ("temperature", "t", "T")
+            haskey(ds, varname) || continue
+            mm = driver.merge_map
+            if mm === nothing
+                t .= FT.(ds[varname][:, :, :, local_win])
+            else
+                t_native = FT.(ds[varname][:, :, :, local_win])
+                m_native = FT.(ds["m"][:, :, :, local_win])
+                _merge_qv!(t, t_native, m_native, mm)  # mass-weighted avg same as QV
+            end
+            return true
+        end
+        return false
+    finally
+        close(ds)
+    end
+end
+
+"""Mass-weighted merge of QV: qv_merged[km] = Σ(qv[k] × m[k]) / Σ(m[k]) over native levels in group km."""
+function _merge_qv!(qv_merged::Array{FT,3}, qv_native::Array{FT,3},
+                     m_native::Array{FT,3}, mm::Vector{Int}) where FT
+    Nx, Ny = size(qv_merged, 1), size(qv_merged, 2)
+    Nz_native = length(mm)
+    fill!(qv_merged, zero(FT))
+    m_sum = zeros(FT, Nx, Ny, size(qv_merged, 3))
+    for k in 1:Nz_native
+        km = mm[k]
+        @views begin
+            qv_merged[:, :, km] .+= qv_native[:, :, k] .* m_native[:, :, k]
+            m_sum[:, :, km]     .+= m_native[:, :, k]
+        end
+    end
+    for km in 1:size(qv_merged, 3)
+        @views begin
+            mask = m_sum[:, :, km] .> zero(FT)
+            qv_merged[:, :, km] .= ifelse.(mask, qv_merged[:, :, km] ./ m_sum[:, :, km], zero(FT))
+        end
     end
 end

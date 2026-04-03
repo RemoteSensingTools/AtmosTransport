@@ -16,7 +16,7 @@ module Diffusion
 
 using DocStringExtensions
 
-using ..Architectures: for_panels, for_panels_nosync
+using ..Architectures: for_panels, for_panels_nosync, _kahan_add
 using ..Grids: AbstractGrid
 using ..Fields: AbstractField
 

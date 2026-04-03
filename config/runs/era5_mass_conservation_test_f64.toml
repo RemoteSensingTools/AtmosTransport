@@ -1,0 +1,36 @@
+# Mass conservation test: Float64, real CO2 IC, NO emissions, NO diffusion
+# Run on A100: julia --threads=2 --project=. scripts/run.jl config/runs/era5_mass_conservation_test_f64.toml
+[architecture]
+use_gpu    = true
+float_type = "Float64"
+
+[grid]
+type       = "latlon"
+met_source = "era5"
+size       = [720, 361, 137]
+
+[met_data]
+driver    = "preprocessed_latlon"
+file      = "~/data/AtmosTransport/met/era5/preprocessed_spectral_catrine/massflux_era5_spectral_202112_float32.nc"
+dt        = 900
+
+[initial_conditions]
+co2.file     = "~/data/AtmosTransport/catrine/InitialConditions/startCO2_202112010000.nc"
+co2.variable = "CO2"
+
+[tracers.co2]
+emission = "none"
+
+[advection]
+scheme    = "ppm"
+ppm_order = 7
+
+[output]
+filename = "~/data/AtmosTransport/catrine/output/era5_mass_test_f64/mass_test_f64.bin"
+interval = 21600
+
+[output.fields]
+co2_column_mean = {type = "column_mean", species = "co2"}
+
+[buffering]
+strategy = "double"

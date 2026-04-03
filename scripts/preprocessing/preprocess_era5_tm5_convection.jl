@@ -349,6 +349,7 @@ Two modes:
 
         # Optionally find detrainment file
         ds_detr = nothing
+        detr_from_cmfmc = false  # track if we reuse the cmfmc dataset
         if use_detr
             detr_file = joinpath(detr_dir, "era5_detr_$(date_str).nc")
             if !isfile(detr_file)
@@ -361,12 +362,30 @@ Two modes:
         ds_cmfmc = NCDataset(cmfmc_file, "r")
         try
             # Detect CMFMC variable names
+            # Params 235009/235010 (confirmed by ECMWF 2026-03-31); legacy names kept for compat
             cmfmc_vars = detect_variable_names(ds_cmfmc,
-                [:udmf => ("udmf", "mumf", "mu", "p71.162", "var71"),
-                 :ddmf => ("ddmf", "mdmf", "md", "p72.162", "var72")])
+                [:udmf => ("udmf", "mumf", "mu", "p71.162", "var71",
+                           "var235009", "p235009"),
+                 :ddmf => ("ddmf", "mdmf", "md", "p72.162", "var72",
+                           "var235010", "p235010")])
             if !haskey(cmfmc_vars, :udmf) || !haskey(cmfmc_vars, :ddmf)
                 @warn "Cannot find UDMF/DDMF in $cmfmc_file" keys=keys(ds_cmfmc)
                 continue
+            end
+
+            # Single-file fallback: if no separate detr file, check if the
+            # convection file contains detrainment vars (unified download)
+            if ds_detr === nothing
+                detr_candidates = [:udrf => ("udrf", "p214.162", "var214",
+                                             "var235011", "p235011"),
+                                   :ddrf => ("ddrf", "p215.162", "var215",
+                                             "var235012", "p235012")]
+                detr_in_cmfmc = detect_variable_names(ds_cmfmc, detr_candidates)
+                if haskey(detr_in_cmfmc, :udrf) && haskey(detr_in_cmfmc, :ddrf)
+                    ds_detr = ds_cmfmc
+                    detr_from_cmfmc = true
+                    @info "  Found detrainment vars in CMFMC file (unified download)"
+                end
             end
 
             # Find time index
@@ -402,9 +421,12 @@ Two modes:
             udrf_3d = nothing
             ddrf_3d = nothing
             if ds_detr !== nothing
+                # Params 235011/235012 (confirmed by ECMWF 2026-03-31); legacy names kept
                 detr_vars = detect_variable_names(ds_detr,
-                    [:udrf => ("udrf", "p214.162", "var214"),
-                     :ddrf => ("ddrf", "p215.162", "var215")])
+                    [:udrf => ("udrf", "p214.162", "var214",
+                               "var235011", "p235011"),
+                     :ddrf => ("ddrf", "p215.162", "var215",
+                               "var235012", "p235012")])
                 if haskey(detr_vars, :udrf) && haskey(detr_vars, :ddrf)
                     times_key_d = haskey(ds_detr, "valid_time") ? "valid_time" : "time"
                     times_detr = ds_detr[times_key_d][:]
@@ -474,7 +496,10 @@ Two modes:
             matched += 1
         finally
             close(ds_cmfmc)
-            ds_detr !== nothing && close(ds_detr)
+            # Don't double-close if detr dataset is the same as cmfmc (unified file)
+            if ds_detr !== nothing && !detr_from_cmfmc
+                close(ds_detr)
+            end
         end
     end
 
@@ -499,7 +524,7 @@ Two modes:
     @info "Appending entu/detu/entd/detd to $mf_path ..."
     NCDataset(mf_path, "a") do ds
         attrib_common = Dict("units" => "kg/m2/s",
-                             "source" => "ERA5 params 71.162+72.162+214.162+215.162 via ECconv_to_TMconv")
+                             "source" => "ERA5 params 235009/235010/235011/235012 via ECconv_to_TMconv")
 
         for (name, data, desc) in [
             ("entu", entu_out, "Updraft entrainment rate"),

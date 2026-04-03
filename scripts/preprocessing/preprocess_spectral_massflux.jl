@@ -33,6 +33,7 @@
 
 using GRIB
 using FFTW
+using LinearAlgebra: mul!
 using NCDatasets
 using Dates
 using Printf
@@ -254,8 +255,12 @@ function read_day_spectral(vo_d_path::String, lnsp_path::String;
         level = msg["level"]
         dtime = msg["dataTime"]
 
-        # Map dataTime (0, 600, 1200, 1800) to time index (1..4)
-        t_idx = div(dtime, 600) + 1
+        # Map dataTime (HHMM format: 0,100,...,2300) to time index
+        # For 6-hourly (met_interval=21600): hours 0,6,12,18 → t_idx 1,2,3,4
+        # For hourly (met_interval=3600): hours 0,1,...,23 → t_idx 1,...,24
+        hour = div(dtime, 100)
+        met_hours = round(Int, MET_INTERVAL / 3600)
+        t_idx = div(hour, met_hours) + 1
 
         read_spectral_coeffs!(spec_buf, msg)
         if name == "vo"
@@ -267,6 +272,61 @@ function read_day_spectral(vo_d_path::String, lnsp_path::String;
     destroy(f)
 
     return (; vo_spec, d_spec, lnsp_spec, T, n_times)
+end
+
+"""
+Streaming spectral reader: reads one timestep at a time to avoid memory issues
+with hourly data (24 times × 137 levels × T639 ≈ 67 GB if loaded at once).
+
+Returns an iterator of `(t_idx, lnsp_t, vo_t, d_t)` named tuples.
+"""
+function read_day_spectral_streaming(vo_d_path::String, lnsp_path::String;
+                                      T_target::Int=0)
+    # First pass: determine T from LNSP
+    f = GribFile(lnsp_path)
+    msg1 = first(f)
+    T_file = msg1["J"]
+    destroy(f)
+    T = T_target > 0 ? min(T_target, T_file) : T_file
+    Nlevels = 137
+
+    # Read ALL LNSP (small: n_times × (T+1)²)
+    f = GribFile(lnsp_path)
+    lnsp_all = Dict{Int, Matrix{ComplexF64}}()
+    spec_buf = zeros(ComplexF64, T_file + 1, T_file + 1)
+    for msg in f
+        hour = div(msg["dataTime"], 100)
+        read_spectral_coeffs!(spec_buf, msg)
+        lnsp_all[hour] = copy(@view spec_buf[1:T+1, 1:T+1])
+    end
+    destroy(f)
+
+    # Index VO/D by (hour, level, field)
+    # Read the full VO/D file, grouping by hour
+    vo_by_hour = Dict{Int, Array{ComplexF64,3}}()
+    d_by_hour  = Dict{Int, Array{ComplexF64,3}}()
+    f = GribFile(vo_d_path)
+    for msg in f
+        name  = msg["shortName"]
+        level = msg["level"]
+        hour  = div(msg["dataTime"], 100)
+        read_spectral_coeffs!(spec_buf, msg)
+        if name == "vo"
+            if !haskey(vo_by_hour, hour)
+                vo_by_hour[hour] = zeros(ComplexF64, T+1, T+1, Nlevels)
+            end
+            vo_by_hour[hour][:, :, level] .= @view spec_buf[1:T+1, 1:T+1]
+        elseif name == "d"
+            if !haskey(d_by_hour, hour)
+                d_by_hour[hour] = zeros(ComplexF64, T+1, T+1, Nlevels)
+            end
+            d_by_hour[hour][:, :, level] .= @view spec_buf[1:T+1, 1:T+1]
+        end
+    end
+    destroy(f)
+
+    hours = sort(collect(keys(lnsp_all)))
+    return (; hours, lnsp_all, vo_by_hour, d_by_hour, T, n_times=length(hours))
 end
 
 # ===========================================================================
@@ -343,7 +403,9 @@ function spectral_to_grid!(field::Matrix{FT_out},
                            lats::Vector{Float64},
                            Nlon::Int,
                            P_buf::Matrix{Float64},
-                           fft_buf::Vector{ComplexF64}) where FT_out
+                           fft_buf::Vector{ComplexF64};
+                           fft_out::Union{Nothing,Vector{ComplexF64}}=nothing,
+                           bfft_plan=nothing) where FT_out
     Nlat = length(lats)
     Nfft = Nlon  # number of FFT points
 
@@ -373,7 +435,12 @@ function spectral_to_grid!(field::Matrix{FT_out},
         # Fourier synthesis via backward FFT (unnormalized):
         # bfft(G)[k] = Σ_m G[m] exp(2πi m(k-1)/N) = f(λ_k)
         # No 1/N scaling — this is a direct evaluation, not an inverse DFT.
-        f_lon = bfft(fft_buf)
+        f_lon = if bfft_plan !== nothing && fft_out !== nothing
+            mul!(fft_out, bfft_plan, fft_buf)
+            fft_out
+        else
+            bfft(fft_buf)
+        end
 
         @inbounds for i in 1:Nlon
             field[i, j] = FT_out(real(f_lon[i]))
@@ -447,19 +514,21 @@ function compute_mass_fluxes!(am, bm, cm, u_stag, v_stag, dp, ps,
     dlat = grid.dlat
 
     # --- Eastward mass flux at x-faces: am[Nlon+1, Nlat, Nz] ---
-    # Staggered Δp at x-faces = average of adjacent cells
+    # vod2uv returns U = u*cos(φ), not u. TM5 divides by cos(φ) in IntLat:
+    #   mfu = R/g × ∫ U × dp / cos(φ) dφ = R/g × ∫ u × dp dφ
+    # So: am = U/cos(φ) × dp/g × R × Δφ × half_dt = u × dp/g × R × Δφ × half_dt
     @inbounds for k in 1:Nz, j in 1:Nlat, i in 1:(Nlon+1)
         i_l = i == 1 ? Nlon : i - 1
         i_r = i <= Nlon ? i : 1
         dp_stag = (dp[i_l, j, k] + dp[i_r, j, k]) / 2
-        # Mass flux = ρ × u × face_area × dt
-        # face_area_x = R × dlat × cos(lat) ... wait, this is the face perpendicular to x
-        # Actually: am = u × dp/g × R × Δφ × half_dt  (dp/g = mass per unit area per level)
-        # The face width in y-direction is R × Δφ
-        am[i, j, k] = u_stag[i, j, k] * dp_stag * R_g * dlat * half_dt
+        cos_lat = max(grid.cos_lat[j], 1e-10)
+        am[i, j, k] = u_stag[i, j, k] / cos_lat * dp_stag * R_g * dlat * half_dt
     end
 
     # --- Northward mass flux at y-faces: bm[Nlon, Nlat+1, Nz] ---
+    # vod2uv returns V = v*cos(φ). TM5 IntLon does NOT divide by cos:
+    #   mfv = R/g × ∫ V × dp dλ = R/g × ∫ v*cos(φ) × dp dλ
+    # Face width in x is R × Δλ (not R × cos × Δλ), because V already has cos.
     @inbounds for k in 1:Nz, j in 1:(Nlat+1), i in 1:Nlon
         if j == 1 || j == Nlat + 1
             bm[i, j, k] = 0  # No flux through poles
@@ -467,10 +536,7 @@ function compute_mass_fluxes!(am, bm, cm, u_stag, v_stag, dp, ps,
             j_s = j - 1
             j_n = j
             dp_stag = (dp[i, j_s, k] + dp[i, j_n, k]) / 2
-            # Face width in x-direction = R × cos(lat_face) × Δλ
-            lat_face = (grid.lats[j_s] + grid.lats[j_n]) / 2
-            cos_face = cosd(lat_face)
-            bm[i, j, k] = v_stag[i, j, k] * dp_stag * R_g * dlon * cos_face * half_dt
+            bm[i, j, k] = v_stag[i, j, k] * dp_stag * R_g * dlon * half_dt
         end
     end
 
@@ -624,12 +690,25 @@ function preprocess()
     cm      = Array{FT}(undef, TARGET_NLON, TARGET_NLAT, Nz + 1)
     sp      = Array{FT}(undef, TARGET_NLON, TARGET_NLAT)
 
-    # SHT work buffers
-    P_buf    = zeros(Float64, T_target + 1, T_target + 1)
+    # SHT work buffers — per-thread for parallel level loop
+    nt = Threads.nthreads()
+    P_buf    = zeros(Float64, T_target + 1, T_target + 1)  # kept for LNSP (single-threaded)
     fft_buf  = zeros(ComplexF64, TARGET_NLON)
     u_spec   = zeros(ComplexF64, T_target + 1, T_target + 1)
     v_spec   = zeros(ComplexF64, T_target + 1, T_target + 1)
     field_2d = Array{FT}(undef, TARGET_NLON, TARGET_NLAT)
+    # Per-thread copies (for parallel level loop)
+    # Over-allocate: Julia 1.12 threadid() can exceed nthreads() with task migration
+    nt_max = max(nt, 2 * Threads.nthreads()) + 4
+    P_buf_t    = [zeros(Float64, T_target + 1, T_target + 1) for _ in 1:nt_max]
+    fft_buf_t  = [zeros(ComplexF64, TARGET_NLON) for _ in 1:nt_max]
+    fft_out_t  = [zeros(ComplexF64, TARGET_NLON) for _ in 1:nt_max]
+    u_spec_t   = [zeros(ComplexF64, T_target + 1, T_target + 1) for _ in 1:nt_max]
+    v_spec_t   = [zeros(ComplexF64, T_target + 1, T_target + 1) for _ in 1:nt_max]
+    field_2d_t = [Array{FT}(undef, TARGET_NLON, TARGET_NLAT) for _ in 1:nt_max]
+    # Pre-create FFTW backward plans (plan creation is NOT thread-safe)
+    bfft_plans = [plan_bfft(fft_buf_t[i]) for i in 1:nt_max]
+    @info "SHT buffers: $nt threads ($nt_max slots), $(round(nt_max * (T_target+1)^2 * 8 * 3 / 1e6, digits=0)) MB total"
 
     for (month_key, month_dates) in sort(collect(month_groups))
         sort!(month_dates)
@@ -670,24 +749,28 @@ function preprocess()
                 @. sp = FT(exp(field_2d))
 
                 # --- For each level: VO/D → U/V spectral, then transform ---
-                for k in 1:Nz
+                # Threaded over levels (each level is independent)
+                Threads.@threads for k in 1:Nz
                     level = LEVEL_RANGE[k]
+                    tid = Threads.threadid()
 
-                    # VO/D → U/V in spectral space
-                    vod2uv!(u_spec, v_spec,
+                    # VO/D → U/V in spectral space (thread-local buffers)
+                    vod2uv!(u_spec_t[tid], v_spec_t[tid],
                             @view(spec.vo_spec[:, :, level, t]),
                             @view(spec.d_spec[:, :, level, t]),
                             spec.T)
 
-                    # U spectral → gridpoint
-                    spectral_to_grid!(field_2d, u_spec, spec.T,
-                                     grid.lats, grid.Nlon, P_buf, fft_buf)
-                    u_cc[:, :, k] .= field_2d
+                    # U spectral → gridpoint (thread-safe with pre-planned FFT)
+                    spectral_to_grid!(field_2d_t[tid], u_spec_t[tid], spec.T,
+                                     grid.lats, grid.Nlon, P_buf_t[tid], fft_buf_t[tid];
+                                     fft_out=fft_out_t[tid], bfft_plan=bfft_plans[tid])
+                    u_cc[:, :, k] .= field_2d_t[tid]
 
                     # V spectral → gridpoint
-                    spectral_to_grid!(field_2d, v_spec, spec.T,
-                                     grid.lats, grid.Nlon, P_buf, fft_buf)
-                    v_cc[:, :, k] .= field_2d
+                    spectral_to_grid!(field_2d_t[tid], v_spec_t[tid], spec.T,
+                                     grid.lats, grid.Nlon, P_buf_t[tid], fft_buf_t[tid];
+                                     fft_out=fft_out_t[tid], bfft_plan=bfft_plans[tid])
+                    v_cc[:, :, k] .= field_2d_t[tid]
                 end
 
                 # --- Compute mass fluxes ---

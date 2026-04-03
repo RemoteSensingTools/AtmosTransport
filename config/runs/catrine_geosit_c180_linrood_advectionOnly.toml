@@ -18,7 +18,7 @@ Nc         = 180
 [met_data]
 driver           = "geosfp_cs"
 product          = "geosit_c180"
-netcdf_dir       = "~/data/geosit_c180_catrine"
+netcdf_dir       = "~/data/AtmosTransport/met/geosit_c180/raw_catrine"
 preprocessed_dir = "/temp2/catrine-runs/met/geosit_c180"
 surface_data_bin_dir = "/temp1/catrine/met/geosit_c180/surface_bin"
 coord_file       = "~/code/gitHub/AtmosTransportModel/data/grids/cs_c180_gridspec.nc"

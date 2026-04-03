@@ -13,7 +13,7 @@
 # Reference: TM5 deps/tm5/base/src/advectm_cfl.F90 (uni2red, red2uni)
 # ---------------------------------------------------------------------------
 
-export ReducedGridSpec, compute_reduced_grid
+export ReducedGridSpec, compute_reduced_grid, compute_reduced_grid_tm5
 export reduce_row!, expand_row!, reduce_velocity_row!
 export reduce_row_mass!, reduce_am_row!, expand_row_mass!
 
@@ -73,6 +73,67 @@ function compute_reduced_grid(Nx::Int, φᶜ::AbstractVector;
     end
 
     any_reduced || return nothing
+    return ReducedGridSpec(Nx, cluster_sizes, reduced_counts)
+end
+
+"""
+$(TYPEDSIGNATURES)
+
+TM5-style reduced grid with discrete bands per hemisphere.
+
+TM5 uses hand-tuned cluster sizes that form a strict hierarchy (each divides
+the next), ensuring consistent mass flux at latitude boundaries. The bands are
+defined from the pole toward the equator.
+
+Reference: TM5 `deps/tm5/base/src/redgridZoom.F90` `read_redgrid`,
+           config: `deps/tm5/rc/include/tm5_regions.rc`
+"""
+function compute_reduced_grid_tm5(Nx::Int, φᶜ::AbstractVector)
+    Ny = length(φᶜ)
+
+    # TM5 bands: cluster sizes from pole → equator (per hemisphere)
+    # 1°×1° (Nx=360): 360 360 180 180 90 90 30 30 15 5
+    # 0.5°×0.5° (Nx=720): scale by 2
+    bands = if Nx == 360
+        [360, 360, 180, 180, 90, 90, 30, 30, 15, 5]
+    elseif Nx == 720
+        [720, 720, 360, 360, 180, 180, 60, 60, 30, 10]
+    elseif Nx == 144
+        # Quickstart ~2.5° grid
+        [144, 72, 36, 12, 6]
+    else
+        # Fallback: auto-compute
+        return compute_reduced_grid(Nx, φᶜ)
+    end
+
+    n_bands = length(bands)
+    cluster_sizes  = ones(Int, Ny)
+    reduced_counts = fill(Nx, Ny)
+
+    # Apply bands symmetrically: SH near j=1, NH near j=Ny
+    for b in 1:n_bands
+        r = bands[b]
+        Nx % r == 0 || error("TM5 band cluster size $r does not divide Nx=$Nx")
+        # SH: j = b (from south pole)
+        if b <= Ny
+            cluster_sizes[b] = r
+            reduced_counts[b] = Nx ÷ r
+        end
+        # NH: j = Ny+1-b (from north pole)
+        j_nh = Ny + 1 - b
+        if j_nh >= 1 && j_nh != b  # avoid double-setting equator
+            cluster_sizes[j_nh] = r
+            reduced_counts[j_nh] = Nx ÷ r
+        end
+    end
+
+    any_reduced = any(>(1), cluster_sizes)
+    any_reduced || return nothing
+
+    n_reduced = count(>(1), cluster_sizes)
+    max_r = maximum(cluster_sizes)
+    @info "TM5-style reduced grid: $n_reduced of $Ny latitudes reduced (max cluster=$max_r)"
+
     return ReducedGridSpec(Nx, cluster_sizes, reduced_counts)
 end
 
@@ -205,13 +266,12 @@ end
 """
 $(SIGNATURES)
 
-Distribute mass changes from a reduced-grid advection step back to fine cells.
-Changes in `rm` and `m` are distributed proportionally to each fine cell's
-original mass fraction within the reduced cell, guaranteeing exact conservation
-of both tracer mass and air mass.
+TM5-style distribute-back: redistribute reduced-grid advection results to fine cells
+using air mass fraction. Each fine cell receives its share of the NEW reduced-cell
+total, distributed proportionally to the original fine-cell air mass.
 
-  rm_fine[i] += (rm_red_new[i_r] - rm_red_old[i_r]) × (rm_old[i] / rm_red_old[i_r])
-  m_fine[i]  += (m_red_new[i_r]  - m_red_old[i_r])  × (m_old[i]  / m_red_old[i_r])
+Reference: TM5 redgridZoom.F90 `red2uni`, line 1002:
+  `rm(is:ie,j,l,n) = m_uni(is:ie,j,l) / mass * rmm`
 """
 function expand_row_mass!(rm::AbstractArray, m::AbstractArray,
                           rm_red_new::AbstractVector, rm_red_old::AbstractVector,
@@ -221,22 +281,13 @@ function expand_row_mass!(rm::AbstractArray, m::AbstractArray,
     Nx_red = Nx ÷ r
     @inbounds for i_red in 1:Nx_red
         i_start = (i_red - 1) * r + 1
-        delta_rm = rm_red_new[i_red] - rm_red_old[i_red]
-        delta_m  = m_red_new[i_red]  - m_red_old[i_red]
-        rm_sum = rm_red_old[i_red]
-        m_sum  = m_red_old[i_red]
+        m_sum = m_red_old[i_red]
         for off in 0:r-1
             i = i_start + off
-            if abs(rm_sum) > eps(FT)
-                rm[i, j, k] += delta_rm * (rm[i, j, k] / rm_sum)
-            else
-                rm[i, j, k] += delta_rm / FT(r)
-            end
-            if abs(m_sum) > eps(FT)
-                m[i, j, k] += delta_m * (m[i, j, k] / m_sum)
-            else
-                m[i, j, k] += delta_m / FT(r)
-            end
+            # Distribute by original air mass fraction (smooth, like TM5)
+            frac_m = abs(m_sum) > eps(FT) ? m[i, j, k] / m_sum : one(FT) / FT(r)
+            rm[i, j, k] = rm_red_new[i_red] * frac_m
+            m[i, j, k]  = m_red_new[i_red]  * frac_m
         end
     end
     return nothing

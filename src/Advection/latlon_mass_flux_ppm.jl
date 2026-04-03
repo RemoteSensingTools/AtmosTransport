@@ -41,7 +41,7 @@ using KernelAbstractions: @kernel, @index, @Const, synchronize, get_backend
         c_i3p = _safe_mixing_ratio(rm[i3p, j, k], m[i3p, j, k])
 
         # PPM edge values for cells i-1, i, i+1
-        _,     q_R_im = _ppm_edge_values(c_i3m, c_imm, c_im,  c_ip,  c_ipp,  Val(ORD))
+        _,     q_R_im = _ppm_edge_values(c_i3m, c_imm, c_im,  c_i,   c_ip,   Val(ORD))
         q_L_i, q_R_i  = _ppm_edge_values(c_imm, c_im,  c_i,   c_ip,  c_ipp,  Val(ORD))
         q_L_ip, _     = _ppm_edge_values(c_im,  c_i,   c_ip,  c_ipp, c_i3p,  Val(ORD))
 
@@ -207,8 +207,14 @@ function advect_x_massflux_ppm_subcycled!(rm_tracers, m::AbstractArray{FT,3}, am
                                            grid, ::Val{ORD},
                                            ws::MassFluxWorkspace{FT};
                                            cfl_limit = FT(0.95)) where {FT, ORD}
-    cfl = max_cfl_massflux_x(am, m, ws.cfl_x, ws.cluster_sizes)
+    # PPM operates on the fine grid (no clustering), so use fine-grid CFL
+    # to avoid underestimating alpha at high latitudes where cluster_sizes > 1
+    cfl = max_cfl_massflux_x_fine(am, m, ws.cfl_x)
     n_sub = max(1, ceil(Int, cfl / cfl_limit))
+    if n_sub > 100
+        @warn "Extreme PPM X-CFL subcycling (capped at 100)" cfl n_sub maxlog=3
+        n_sub = 100
+    end
     if n_sub > 1
         ws.cfl_x .= am ./ FT(n_sub)
         am_eff = ws.cfl_x
@@ -228,6 +234,10 @@ function advect_y_massflux_ppm_subcycled!(rm_tracers, m::AbstractArray{FT,3}, bm
                                            cfl_limit = FT(0.95)) where {FT, ORD}
     cfl = max_cfl_massflux_y(bm, m, ws.cfl_y)
     n_sub = max(1, ceil(Int, cfl / cfl_limit))
+    if n_sub > 100
+        @warn "Extreme PPM Y-CFL subcycling (capped at 100)" cfl n_sub maxlog=3
+        n_sub = 100
+    end
     if n_sub > 1
         ws.cfl_y .= bm ./ FT(n_sub)
         bm_eff = ws.cfl_y
@@ -253,6 +263,9 @@ end
 
 Strang-split mass-flux advection using Putman & Lin PPM for horizontal
 directions and Russell-Lerner for vertical.
+
+Tracers are tracer mass `rm = c × m` (TM5-style prognostic variable).
+Internally copies into workspace buffer for double-buffered kernels.
 """
 function strang_split_massflux_ppm!(tracers::NamedTuple,
                                      m::AbstractArray{FT,3},
@@ -270,11 +283,11 @@ function strang_split_massflux_ppm!(tracers::NamedTuple,
         copyto!(m_save, m)
     end
 
-    for (i, (name, c)) in enumerate(pairs(tracers))
+    for (i, (name, rm_tracer)) in enumerate(pairs(tracers))
         if i > 1
             copyto!(m, m_save)
         end
-        ws.rm .= m .* c
+        copyto!(ws.rm, rm_tracer)
         rm_single = NamedTuple{(name,)}((ws.rm,))
 
         # X → Y → Z → Z → Y → X  (PPM horizontal, Russell-Lerner vertical)
@@ -285,7 +298,7 @@ function strang_split_massflux_ppm!(tracers::NamedTuple,
         advect_y_massflux_ppm_subcycled!(rm_single, m, bm, grid, Val(ORD), ws; cfl_limit)
         advect_x_massflux_ppm_subcycled!(rm_single, m, am, grid, Val(ORD), ws; cfl_limit)
 
-        c .= ws.rm ./ m
+        copyto!(rm_tracer, ws.rm)
     end
     return nothing
 end

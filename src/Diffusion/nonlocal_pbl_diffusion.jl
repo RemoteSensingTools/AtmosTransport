@@ -158,9 +158,10 @@ If a column's `sfc_flux == 0`, the flux is diagnosed from the tracer gradient.
     T_inv = FT(1) / T_sfc
 
     # Pre-diffusion mass-weighted sum (for per-column mass correction)
-    mass_sum_before = FT(0)
+    mass_sum_before = FT(0); _c_msb = FT(0)
     @inbounds for k in 1:Nz
-        mass_sum_before += arr[ii, jj, k] * delp[ii, jj, k]
+        (mass_sum_before, _c_msb) = _kahan_add(mass_sum_before, _c_msb,
+                                                arr[ii, jj, k] * delp[ii, jj, k])
     end
 
     @inbounds for k in 1:Nz
@@ -245,9 +246,10 @@ If a column's `sfc_flux == 0`, the flux is diagnosed from the tracer gradient.
 
     # --- Per-column mass correction (GeosChem vdiff_mod.F90, Jintai Lin fix) ---
     # Ensure Σ q × Δp is conserved exactly despite floating-point roundoff
-    mass_sum_after = FT(0)
+    mass_sum_after = FT(0); _c_msa = FT(0)
     @inbounds for k in 1:Nz
-        mass_sum_after += arr[ii, jj, k] * delp[ii, jj, k]
+        (mass_sum_after, _c_msa) = _kahan_add(mass_sum_after, _c_msa,
+                                               arr[ii, jj, k] * delp[ii, jj, k])
     end
     if mass_sum_after > FT(0) && mass_sum_before > FT(0)
         _mass_corr = mass_sum_before / mass_sum_after

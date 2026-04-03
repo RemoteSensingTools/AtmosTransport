@@ -33,7 +33,7 @@ export AbstractDiagnostic, ColumnMeanDiagnostic, ColumnMassDiagnostic,
        SurfaceSliceDiagnostic, RegridDiagnostic
 export Full3DDiagnostic, MetField2DDiagnostic, SigmaLevelDiagnostic
 export ColumnFluxDiagnostic, EmissionFluxDiagnostic
-export column_mean!, column_mass!, surface_slice!, sigma_level_slice!, compute_diagnostics!
+export column_mean!, column_mass!, column_sum!, surface_slice!, sigma_level_slice!, compute_diagnostics!
 export column_tracer_flux!
 export regrid_cs_to_latlon, regrid_cs_to_latlon!, RegridMapping, build_regrid_mapping
 

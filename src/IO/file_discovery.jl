@@ -7,26 +7,37 @@ using Dates
 """
     find_massflux_shards(dir, ft_tag) → Vector{String}
 
-Discover monthly mass-flux shard files in `dir`.
-Prefers `.bin` over `.nc` for each month. Returns sorted list of file paths.
+Discover mass-flux shard files in `dir`.
+Supports both monthly and daily file naming:
+  - Monthly: `massflux_era5_*_YYYYMM_<ft_tag>.{bin,nc}`
+  - Daily v3: `era5_v3_YYYYMMDD_*_<ft_tag>.bin`
 
+Prefers `.bin` over `.nc` for each time key. Returns sorted list of file paths.
 `ft_tag` is `"float32"` or `"float64"`.
 """
 function find_massflux_shards(dir::String, ft_tag::String)
     all_files = readdir(dir; join=true)
-    months = Dict{String, String}()
+    shards = Dict{String, String}()
     for f in all_files
         bn = basename(f)
+        # Try monthly pattern: massflux_era5_*_YYYYMM_<ft_tag>
         m = match(Regex("massflux_era5_(?:\\w+_)?(\\d{6})_" * ft_tag), bn)
-        m === nothing && continue
-        month_key = m[1]
-        if endswith(bn, ".bin")
-            months[month_key] = f          # .bin always wins
-        elseif endswith(bn, ".nc") && !haskey(months, month_key)
-            months[month_key] = f
+        if m !== nothing
+            key = m[1]
+            if endswith(bn, ".bin")
+                shards[key] = f
+            elseif endswith(bn, ".nc") && !haskey(shards, key)
+                shards[key] = f
+            end
+            continue
+        end
+        # Try daily v3 pattern: era5_v3_YYYYMMDD_*_<ft_tag>.bin
+        m = match(Regex("era5_v3_(\\d{8})_.*" * ft_tag * "\\.bin\$"), bn)
+        if m !== nothing
+            shards[m[1]] = f
         end
     end
-    return [months[k] for k in sort(collect(keys(months)))]
+    return [shards[k] for k in sort(collect(keys(shards)))]
 end
 
 """

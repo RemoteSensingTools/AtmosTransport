@@ -136,14 +136,16 @@ end
         @test rel_error < 1e-12
     end
 
-    @testset "Uniform field preservation" begin
+    @testset "Uniform field preservation (rm form)" begin
         grid = make_test_grid()
         Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
         Δp = uniform_dp(grid)
         m = compute_air_mass(Δp, grid)
 
-        c_uniform = fill(FT(420.0), Nx, Ny, Nz)
-        tracers = (; c = copy(c_uniform))
+        # Tracers stored as rm = c × m (TM5-style)
+        c_uniform = FT(420.0)
+        rm_init = fill(c_uniform, Nx, Ny, Nz) .* m
+        tracers = (; c = copy(rm_init))
 
         u = randn(FT, Nx+1, Ny, Nz) .* 5.0
         u[Nx+1, :, :] .= u[1, :, :]
@@ -153,15 +155,19 @@ end
         half_dt = FT(100.0)
 
         mf = compute_mass_fluxes(u, v, grid, Δp, half_dt)
-        strang_split_massflux!(tracers, m, mf.am, mf.bm, mf.cm, grid, true;
+        ws = allocate_massflux_workspace(m, mf.am, mf.bm, mf.cm)
+        m_work = copy(m)
+        strang_split_massflux!(tracers, m_work, mf.am, mf.bm, mf.cm, grid, true, ws;
                                 cfl_limit = FT(0.95))
 
-        max_deviation = maximum(abs.(tracers.c .- 420.0))
+        # After advection, c = rm / m_evolved should still be ~uniform
+        c_after = tracers.c ./ m_work
+        max_deviation = maximum(abs.(c_after .- c_uniform))
         @info "  Uniform field max deviation: $(max_deviation)"
         @test max_deviation < 1e-8
     end
 
-    @testset "Full Strang split mass conservation" begin
+    @testset "Full Strang split mass conservation (rm form)" begin
         grid = make_test_grid()
         Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
         ps = fill(FT(101325.0), Nx, Ny)
@@ -169,10 +175,11 @@ end
         m = compute_air_mass(Δp, grid)
 
         c_init = fill(FT(420.0), Nx, Ny, Nz)
-        # Add a localized perturbation
         ci, cj, ck = Nx ÷ 2, Ny ÷ 2, Nz ÷ 2
         c_init[ci-1:ci+1, cj-1:cj+1, ck-1:ck+1] .= FT(500.0)
-        tracers = (; c = copy(c_init))
+        # Store as rm = c × m (TM5-style)
+        rm_init = c_init .* m
+        tracers = (; c = copy(rm_init))
 
         u = randn(FT, Nx+1, Ny, Nz) .* 8.0
         u[Nx+1, :, :] .= u[1, :, :]
@@ -182,33 +189,36 @@ end
         half_dt = FT(200.0)
 
         mf = compute_mass_fluxes(u, v, grid, Δp, half_dt)
+        ws = allocate_massflux_workspace(m, mf.am, mf.bm, mf.cm)
 
-        # Compute initial mass (pressure-weighted)
-        mass_init = sum(c_init .* Δp)
+        # Initial total tracer mass = sum(rm)
+        mass_init = sum(rm_init)
 
-        # Run 10 Strang splits
+        # Run 10 Strang splits — rm persists, m resets each time (like TM5)
         for _ in 1:10
             m_fresh = compute_air_mass(Δp, grid)
-            strang_split_massflux!(tracers, m_fresh, mf.am, mf.bm, mf.cm, grid, true;
+            strang_split_massflux!(tracers, m_fresh, mf.am, mf.bm, mf.cm, grid, true, ws;
                                     cfl_limit = FT(0.95))
         end
 
-        mass_final = sum(tracers.c .* Δp)
+        mass_final = sum(tracers.c)
         rel_error = abs(mass_final - mass_init) / abs(mass_init)
         @info "  10-step Strang split mass drift: $(rel_error * 100)%"
-        @test rel_error < 0.01  # < 1% drift after 10 splits
+        # With rm as prognostic + workspace, conservation is machine-epsilon
+        @test rel_error < 1e-12
     end
 
-    @testset "Positivity with limiter" begin
+    @testset "Positivity with limiter (rm form)" begin
         grid = make_test_grid()
         Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
         Δp = uniform_dp(grid)
         m = compute_air_mass(Δp, grid)
 
-        # Concentration with a sharp spike (challenging for positivity)
+        # Tracer mass with a sharp spike
         c = fill(FT(1.0), Nx, Ny, Nz)
         c[Nx÷2, Ny÷2, Nz÷2] = FT(1000.0)
-        tracers = (; c)
+        rm = c .* m
+        tracers = (; c = rm)
 
         u = randn(FT, Nx+1, Ny, Nz) .* 5.0
         u[Nx+1, :, :] .= u[1, :, :]

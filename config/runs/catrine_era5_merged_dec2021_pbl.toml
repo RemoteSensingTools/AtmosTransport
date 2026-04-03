@@ -1,0 +1,109 @@
+# ===========================================================================
+# CATRINE D7.1 — ERA5 Spectral, Pre-Merged Levels (December 2021, PBL diffusion)
+#
+# Same physics as catrine_era5_spectral_dec2021_pbl.toml, but uses pre-merged
+# binary data (v2 format). Grid dimensions and vertical coordinate are
+# auto-detected from the binary header — no manual size needed.
+#
+# Pre-merged binary eliminates thin-layer CFL issues (Z-CFL >> 1) and provides
+# fast mmap IO (~0.1 s/win vs ~15 s/win for native-level NetCDF).
+#
+# Preprocessing:
+#   julia -t10 --project=. scripts/preprocessing/convert_merged_massflux_to_binary.jl \
+#       ~/data/AtmosTransport/met/era5/preprocessed_spectral_catrine/massflux_era5_spectral_202112_float32.nc \
+#       --min-dp=1000
+#
+# Usage:
+#   julia --threads=2 --project=. scripts/run.jl config/runs/catrine_era5_merged_dec2021_pbl.toml
+# ===========================================================================
+
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "latlon"
+met_source = "era5"
+# size and vertical coordinate auto-detected from v2 binary header
+# (no merge_min_thickness_Pa needed — merging done at preprocessing)
+
+[met_data]
+driver    = "preprocessed_latlon"
+directory = "~/data/AtmosTransport/met/era5/preprocessed_spectral_catrine"
+dt        = 900                          # advection sub-step [s]
+max_windows = 20   # 5 days
+
+# --- Initial conditions ---
+[initial_conditions]
+co2.file     = "~/data/AtmosTransport/catrine/InitialConditions/startCO2_202112010000.nc"
+co2.variable = "CO2"
+sf6.file     = "~/data/AtmosTransport/catrine/InitialConditions/startSF6_202112010000.nc"
+sf6.variable = "SF6"
+
+# --- Tracers ---
+
+[tracers.co2]
+emission   = "lmdz_co2"
+dir        = "~/data/AtmosTransport/catrine/Emissions/LMDZ_fluxes"
+species    = "co2"
+flux_var   = "flux_apos"
+start_date = "2021-12-01"
+end_date   = "2021-12-31"
+
+[tracers.fossil_co2]
+emission = "gridfed"
+dir      = "~/data/AtmosTransport/catrine/Emissions/gridfed"
+species  = "fossil_co2"
+year     = 2021
+
+[tracers.sf6]
+emission         = "edgar_sf6"
+file             = "~/data/AtmosTransport/catrine/Emissions/edgar_v8/v8.0_FT2022_GHG_SF6_2022_TOTALS_emi.nc"
+noaa_growth_file = "~/data/AtmosTransport/catrine/Emissions/sf6_gr_gl.txt"
+year             = 2022
+scale_year       = 2022
+
+[tracers.rn222]
+emission   = "zhang_rn222"
+dir        = "~/data/AtmosTransport/catrine/Emissions/ZHANG_Rn222/"
+chemistry  = "decay"
+half_life  = 330350.4                    # 3.8235 days in seconds
+
+# --- Chemistry (222Rn radioactive decay) ---
+[chemistry]
+type = "composite"
+
+# --- Advection ---
+[advection]
+scheme = "slopes"
+
+# --- Convection ---
+[convection]
+type = "tiedtke"
+
+# --- Diffusion (TM5-style PBL) ---
+[diffusion]
+type   = "pbl"
+beta_h = 15.0
+Kz_bg  = 0.1
+Kz_min = 0.01
+Kz_max = 500.0
+
+# --- Output (3-hourly, full 3D + column mass) ---
+[output]
+filename      = "~/data/AtmosTransport/catrine/output/era5_merged_dec2021_pbl/catrine_era5_merged_pbl.bin"
+interval      = 10800                    # 3 hours
+
+[output.fields]
+co2_3d              = {type = "full_3d", species = "co2"}
+fossil_co2_3d       = {type = "full_3d", species = "fossil_co2"}
+sf6_3d              = {type = "full_3d", species = "sf6"}
+rn222_3d            = {type = "full_3d", species = "rn222"}
+co2_column_mass     = {type = "column_mass", species = "co2"}
+fco2_column_mass    = {type = "column_mass", species = "fossil_co2"}
+sf6_column_mass     = {type = "column_mass", species = "sf6"}
+rn222_column_mass   = {type = "column_mass", species = "rn222"}
+surface_pressure    = "surface_pressure"
+
+[buffering]
+strategy = "double"

@@ -60,6 +60,33 @@ function surface_slice!(c_sfc::AbstractMatrix{FT}, c::AbstractArray{FT,3}) where
 end
 
 # =====================================================================
+# Column sum kernel (unweighted vertical sum)
+# =====================================================================
+
+@kernel function _column_sum_kernel!(out, @Const(arr), Nz)
+    i, j = @index(Global, NTuple)
+    FT = eltype(arr)
+    @inbounds begin
+        total = zero(FT)
+        for k in 1:Nz; total += arr[i, j, k]; end
+        out[i, j] = total
+    end
+end
+
+"""
+    column_sum!(out, arr)
+
+Unweighted vertical sum: out[i,j] = Σ_k arr[i,j,k].
+"""
+function column_sum!(out::AbstractMatrix{FT}, arr::AbstractArray{FT,3}) where FT
+    backend = get_backend(arr)
+    Nx, Ny, Nz = size(arr)
+    k! = _column_sum_kernel!(backend, 256)
+    k!(out, arr, Nz; ndrange=(Nx, Ny))
+    synchronize(backend)
+end
+
+# =====================================================================
 # Column mass kernels (total tracer mass per column, kg)
 # =====================================================================
 

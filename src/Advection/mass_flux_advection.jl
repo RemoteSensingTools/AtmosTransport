@@ -22,10 +22,12 @@ end
 
 """Sum an extensive quantity (rm or m) over a cluster of r fine cells."""
 @inline function _cluster_sum(arr, ic::Int, j::Int, k::Int, r::Int)
-    s = zero(eltype(arr))
+    T = eltype(arr)
+    s = zero(T)
+    c = zero(T)
     i_start = (ic - 1) * r + 1
     for off in 0:r-1
-        s += arr[i_start + off, j, k]
+        (s, c) = _kahan_add(s, c, arr[i_start + off, j, k])
     end
     return s
 end
@@ -230,11 +232,12 @@ end
             delta_rm = flux_left_r - flux_right_r
             delta_m  = am_l_r - am_r_r
 
-            # Distribute proportionally to fine cell
-            frac_rm = abs(rm_ic) > eps(FT) ? rm[i, j, k] / rm_ic : one(FT) / FT(r)
-            frac_m  = abs(m_ic) > eps(FT) ? m[i, j, k] / m_ic : one(FT) / FT(r)
-            rm_new[i, j, k] = rm[i, j, k] + delta_rm * frac_rm
-            m_new[i, j, k]  = m[i, j, k]  + delta_m  * frac_m
+            # TM5-style distribute-back: use air mass fraction (smooth),
+            # replace fine cell with share of new cluster total (not delta).
+            # This prevents tracer noise from corrupting the distribution.
+            frac_m = abs(m_ic) > eps(FT) ? m[i, j, k] / m_ic : one(FT) / FT(r)
+            rm_new[i, j, k] = (rm_ic + delta_rm) * frac_m
+            m_new[i, j, k]  = (m_ic  + delta_m)  * frac_m
         end
     end
 end
@@ -1061,6 +1064,26 @@ end
 """
 $(SIGNATURES)
 
+Maximum mass-based Courant number for x-direction on the FINE grid,
+ignoring reduced-grid clustering.  Use this for PPM advection which
+operates on every fine cell (not on cluster aggregates).
+"""
+function max_cfl_massflux_x_fine(am::AbstractArray{FT,3}, m::AbstractArray{FT,3},
+                                  cfl_arr::AbstractArray{FT,3}) where FT
+    backend = get_backend(m)
+    Nx = size(m, 1)
+    # Use the r=1 branch of _cfl_x_kernel! by passing all-ones cluster_sizes
+    cs_ones = similar(m, Int32, size(m, 2))
+    fill!(cs_ones, Int32(1))
+    k! = _cfl_x_kernel!(backend, 256)
+    k!(cfl_arr, am, m, Nx, cs_ones; ndrange=size(am))
+    synchronize(backend)
+    return FT(maximum(cfl_arr))
+end
+
+"""
+$(SIGNATURES)
+
 Maximum mass-based Courant number for y-direction mass fluxes.
 """
 function max_cfl_massflux_y(bm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
@@ -1118,6 +1141,10 @@ function advect_x_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, am,
                                        cfl_limit = FT(0.95)) where FT
     cfl = max_cfl_massflux_x(am, m, ws.cfl_x, ws.cluster_sizes)
     n_sub = max(1, ceil(Int, cfl / cfl_limit))
+    if n_sub > 100
+        @warn "Extreme X-CFL subcycling (capped at 100)" cfl n_sub maxlog=3
+        n_sub = 100
+    end
     if n_sub > 1
         ws.cfl_x .= am ./ FT(n_sub)   # reuse cfl_x as flux_eff
         am_eff = ws.cfl_x
@@ -1142,6 +1169,10 @@ function advect_y_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, bm,
                                        cfl_limit = FT(0.95)) where FT
     cfl = max_cfl_massflux_y(bm, m, ws.cfl_y)
     n_sub = max(1, ceil(Int, cfl / cfl_limit))
+    if n_sub > 100
+        @warn "Extreme Y-CFL subcycling (capped at 100)" cfl n_sub maxlog=3
+        n_sub = 100
+    end
     if n_sub > 1
         ws.cfl_y .= bm ./ FT(n_sub)
         bm_eff = ws.cfl_y
@@ -1166,6 +1197,10 @@ function advect_z_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, cm,
                                        cfl_limit = FT(0.95)) where FT
     cfl = max_cfl_massflux_z(cm, m, ws.cfl_z)
     n_sub = max(1, ceil(Int, cfl / cfl_limit))
+    if n_sub > 100
+        @warn "Extreme Z-CFL subcycling (capped at 100)" cfl n_sub maxlog=3
+        n_sub = 100
+    end
     if n_sub > 1
         ws.cfl_z .= cm ./ FT(n_sub)
         cm_eff = ws.cfl_z
@@ -1224,8 +1259,9 @@ $(SIGNATURES)
 Perform a full Strang-split advection step (X-Y-Z-Z-Y-X) using TM5-style
 mass-flux advection.  Runs on CPU or GPU — same code path via KA kernels.
 
-Converts concentration `tracers` to tracer mass, performs the split,
-then converts back.  `m` is updated in-place to track air mass.
+Tracers are tracer mass `rm = c × m` (TM5-style prognostic variable).
+Internally copies into workspace buffer for double-buffered kernels.
+`m` is updated in-place to track air mass.
 
 When `ws::MassFluxWorkspace` is provided, all temporary GPU arrays are
 pre-allocated, reducing per-step allocations from ~90 to zero.
@@ -1244,11 +1280,11 @@ function strang_split_massflux!(tracers::NamedTuple,
         copyto!(m_save, m)
     end
 
-    for (i, (name, c)) in enumerate(pairs(tracers))
+    for (i, (name, rm_tracer)) in enumerate(pairs(tracers))
         if i > 1
             copyto!(m, m_save)
         end
-        ws.rm .= m .* c
+        copyto!(ws.rm, rm_tracer)
         rm_single = NamedTuple{(name,)}((ws.rm,))
 
         advect_x_massflux_subcycled!(rm_single, m, am, grid, use_limiter, ws; cfl_limit)
@@ -1258,7 +1294,7 @@ function strang_split_massflux!(tracers::NamedTuple,
         advect_y_massflux_subcycled!(rm_single, m, bm, grid, use_limiter, ws; cfl_limit)
         advect_x_massflux_subcycled!(rm_single, m, am, grid, use_limiter, ws; cfl_limit)
 
-        c .= ws.rm ./ m
+        copyto!(rm_tracer, ws.rm)
     end
     return nothing
 end
@@ -1281,15 +1317,16 @@ function advect_x_massflux_reduced_subcycled!(rm_tracers, m::Array{FT,3}, am,
     return n_sub
 end
 
-# Backward-compatible version without workspace (allocates internally)
+# Version without workspace (allocates internally). Tracers are rm (tracer mass).
 function strang_split_massflux!(tracers::NamedTuple,
                                  m::AbstractArray{FT,3},
                                  am, bm, cm,
                                  grid::LatitudeLongitudeGrid,
                                  use_limiter::Bool;
                                  cfl_limit::FT = FT(0.95)) where FT
+    # Allocate working copies (the advect_*_subcycled! functions modify rm in-place)
     rm_tracers = NamedTuple{keys(tracers)}(
-        Tuple(m .* c for c in values(tracers))
+        Tuple(copy(rm) for rm in values(tracers))
     )
 
     advect_x_massflux_subcycled!(rm_tracers, m, am, grid, use_limiter; cfl_limit)
@@ -1299,9 +1336,8 @@ function strang_split_massflux!(tracers::NamedTuple,
     advect_y_massflux_subcycled!(rm_tracers, m, bm, grid, use_limiter; cfl_limit)
     advect_x_massflux_subcycled!(rm_tracers, m, am, grid, use_limiter; cfl_limit)
 
-    for (name, c) in pairs(tracers)
-        rm = rm_tracers[name]
-        c .= rm ./ m
+    for (name, rm_tracer) in pairs(tracers)
+        rm_tracer .= rm_tracers[name]
     end
 
     return nothing

@@ -66,7 +66,8 @@ using ..Diffusion: DiffusionWorkspace, diffuse_gpu!, diffuse_cs_panels!,
                    build_diffusion_coefficients
 using ..Parameters: PlanetParameters, load_parameters
 using ..Convection: AbstractConvection, TiedtkeConvection, RASConvection,
-                    TM5MatrixConvection, convect!, invalidate_ras_cfl_cache!
+                    TM5MatrixConvection, convect!, invalidate_ras_cfl_cache!,
+                    TM5ConvWorkspace, allocate_tm5conv_workspace
 using ..Sources: AbstractSurfaceFlux, apply_surface_flux!, apply_surface_flux_pbl!,
                  SurfaceFlux, TimeVaryingSurfaceFlux,
                  LatLonLayout, CubedSphereLayout,
@@ -212,19 +213,24 @@ function _apply_advection_cs!(rm_panels, m_panels, am, bm, cm, grid,
                               cfl_ws_x=ws.cfl_x, cfl_ws_y=ws.cfl_y)
 end
 
-"""Apply lat-lon mass-flux advection, dispatching on advection scheme."""
+"""Apply lat-lon mass-flux advection, dispatching on advection scheme.
+Tracers are tracer mass `rm` (TM5-style prognostic variable)."""
 function _apply_advection_latlon!(tracers, m, am, bm, cm, grid,
-                                   scheme::SlopesAdvection, ws; cfl_limit)
+                                   scheme::SlopesAdvection, ws;
+                                   cfl_limit)
     strang_split_massflux!(tracers, m, am, bm, cm, grid, true, ws; cfl_limit)
 end
 
 function _apply_advection_latlon!(tracers, m, am, bm, cm, grid,
-                                   scheme::PPMAdvection{ORD}, ws; cfl_limit) where ORD
-    strang_split_massflux_ppm!(tracers, m, am, bm, cm, grid, Val(ORD), ws; cfl_limit)
+                                   scheme::PPMAdvection{ORD}, ws;
+                                   cfl_limit) where ORD
+    strang_split_massflux_ppm!(tracers, m, am, bm, cm, grid, Val(ORD), ws;
+                                cfl_limit)
 end
 
 function _apply_advection_latlon!(tracers, m, am, bm, cm, grid,
-                                   scheme::PratherAdvection, ws; cfl_limit)
+                                   scheme::PratherAdvection, ws;
+                                   cfl_limit)
     # ws is a NamedTuple with .base (MassFluxWorkspace) and .prather (per-tracer PratherWorkspace)
     strang_split_prather!(tracers, m, am, bm, cm, grid, ws.prather, scheme.use_limiter)
 end

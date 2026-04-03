@@ -1,0 +1,75 @@
+# ===========================================================================
+# GEOS-FP C720 Cubed-Sphere — June 2024, 3 days, 2-GPU test
+#
+# Same as geosfp_c720_june2024_fixed.toml but with n_gpus = 2 and
+# shortened to 3 days for quick multi-GPU validation.
+# ===========================================================================
+
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+n_gpus     = 2
+
+[grid]
+type                  = "cubed_sphere"
+Nc                    = 720
+met_source            = "geosfp"
+[met_data]
+driver           = "geosfp_cs"
+preprocessed_dir = "/temp1/atmos_transport/geosfp_c720/massflux_v4"
+coord_file       = "~/data/geosfp_cs/20240601/GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.20240601_0030.V01.nc4"
+start_date       = "2024-06-01"
+end_date         = "2024-06-04"
+dt               = 450
+met_interval     = 3600
+Hp               = 3
+mass_flux_dt     = 450
+surface_data_bin_dir = "~/data/AtmosTransport/met/geosfp_c720/preprocessed/surface_bin"
+
+[tracers.co2]
+emission      = "edgar"
+edgar_version = "v8.0"
+species       = "co2"
+year          = 2022
+edgar_file    = "~/data/AtmosTransport/emissions_staging/edgar_v8/edgar_co2_cs_c720_float32.bin"
+
+[tracers.ch4]
+emission      = "edgar"
+edgar_version = "v8.0"
+species       = "ch4"
+year          = 2022
+edgar_file    = "~/data/AtmosTransport/emissions_staging/edgar_v8/edgar_ch4_cs_c720_float32.bin"
+
+[advection]
+scheme = "ppm"
+ppm_order = 7
+
+[diffusion]
+type   = "pbl"
+beta_h = 15.0
+Kz_bg  = 0.1
+Kz_min = 0.01
+Kz_max = 500.0
+
+[convection]
+type = "tiedtke"
+
+[output]
+filename      = "/temp1/atmos_transport/output/geosfp_c720_june2024_2gpu.bin"
+format        = "binary"
+auto_convert  = true
+interval      = 3600
+output_grid   = "latlon"
+Nlon          = 2880
+Nlat          = 1449
+deflate_level = 4
+digits        = 3
+
+[output.fields]
+co2_column_mean = {type = "column_mean", species = "co2"}
+co2_surface     = {type = "surface_slice", species = "co2"}
+ch4_column_mean = {type = "column_mean", species = "ch4"}
+ch4_surface     = {type = "surface_slice", species = "ch4"}
+
+[buffering]
+strategy = "double"

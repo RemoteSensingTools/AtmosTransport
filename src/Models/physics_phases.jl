@@ -96,6 +96,42 @@ function log_simulation_start(model, grid, buffering, n_win, n_sub, dw)
 end
 
 # =====================================================================
+# Dry mass helpers for LL rm↔c_dry conversions
+#
+# c_dry = rm / m_dry, where m_dry = m_moist × (1 - QV).
+# Computed once per window; used by IC, emissions, diffusion, convection, output.
+# =====================================================================
+
+"""Compute `phys.m_dry = m_ref × (1 - QV)` for LL grids. No-op for CS.
+Skips QV correction if vertical levels don't match (e.g., merged grid)."""
+compute_ll_dry_mass!(phys, sched, grid::CubedSphereGrid) = nothing
+function compute_ll_dry_mass!(phys, sched, grid::LatitudeLongitudeGrid)
+    gpu = current_gpu(sched)
+    if phys.qv_loaded[] && size(phys.qv_gpu) == size(gpu.m_ref)
+        phys.m_dry .= gpu.m_ref .* (1 .- phys.qv_gpu)
+    else
+        copyto!(phys.m_dry, gpu.m_ref)
+    end
+end
+
+"""Return dry mass for LL rm↔c_dry conversions (pre-computed by `compute_ll_dry_mass!`)."""
+ll_dry_mass(phys) = phys.m_dry
+
+"""Recompute m_dry from evolved m_dev (post-advection) for LL output.
+TM5 always uses m_evolved for mixing ratios — never m_prescribed.
+The Strang-split advection evolves m_dev away from m_ref; using m_ref
+for output creates noise in c = rm/m because rm was evolved with m_dev."""
+compute_ll_dry_mass_evolved!(phys, sched, grid::CubedSphereGrid) = nothing
+function compute_ll_dry_mass_evolved!(phys, sched, grid::LatitudeLongitudeGrid)
+    gpu = current_gpu(sched)
+    if phys.qv_loaded[] && size(phys.qv_gpu) == size(gpu.m_dev)
+        phys.m_dry .= gpu.m_dev .* (1 .- phys.qv_gpu)
+    else
+        copyto!(phys.m_dry, gpu.m_dev)
+    end
+end
+
+# =====================================================================
 # Phase 1: Load + upload physics fields (CMFMC, DTRAIN, QV, surface)
 # =====================================================================
 
@@ -154,7 +190,7 @@ function load_and_upload_physics!(phys, sched, driver,
         end
     end
 
-    # QV (specific humidity for dry-air output)
+    # QV (specific humidity for dry-air output conversion)
     qv_status = load_qv_window!(phys.qv_cpu, driver, grid, w)
     phys.qv_loaded[] = qv_status !== false
     if phys.qv_loaded[] && qv_status !== :cached
@@ -292,6 +328,18 @@ function process_met_after_upload!(sched, phys, grid::LatitudeLongitudeGrid{FT},
     elseif phys.needs_delp
         _compute_delp_ll!(gpu, cpu, phys, grid)
     end
+    # Preprocessed binary: am/bm/cm are per spectral half_dt and used directly.
+    # NO runtime scaling — the preprocessor stores fluxes per half-step (450s),
+    # and n_sub Strang cycles accumulate the correct total:
+    #   n_sub × 2 × am = steps_per_met × 2 × half_dt = window_dt
+    # This matches the CS convention (no /n_sub, no scaling) and the old LL code.
+
+    # Zero pole fluxes — the spectral SHT produces extreme values at poles
+    # (U/cos(lat) → ∞). Poles are zeroed in the preprocessor too, but keep
+    # the runtime guard for safety with non-preprocessed data.
+    Ny = grid.Ny
+    @views gpu.am[:, 1, :]  .= zero(FT)
+    @views gpu.am[:, Ny, :] .= zero(FT)
 end
 
 function process_met_after_upload!(sched, phys, grid::CubedSphereGrid{FT},
@@ -367,10 +415,18 @@ end
 # Phase 4: IC finalization + reference mass save
 # =====================================================================
 
-"""Finalize deferred initial conditions (first window only)."""
+"""Finalize deferred initial conditions (first window only).
+LL: after vertical interp sets VMR c, convert to tracer mass rm = c × m_ref.
+TM5-faithful: transport on moist basis, dry correction at output only."""
 function finalize_ic_phase!(tracers, sched, air, phys, grid::LatitudeLongitudeGrid)
-    has_deferred_ic_vinterp() || return
-    finalize_ic_vertical_interp!(tracers, current_gpu(sched).m_ref, grid)
+    gpu = current_gpu(sched)
+    if has_deferred_ic_vinterp()
+        finalize_ic_vertical_interp!(tracers, gpu.m_ref, grid)
+    end
+    # Convert VMR → tracer mass: rm = c × m_ref (moist basis, like TM5)
+    for (_, c) in pairs(tracers)
+        c .*= gpu.m_ref
+    end
 end
 
 function finalize_ic_phase!(tracers, sched, air, phys, grid::CubedSphereGrid)
@@ -449,18 +505,28 @@ end
 # Phase 7: Apply emissions
 # =====================================================================
 
-"""Apply emissions, dispatched on grid type."""
+"""Apply emissions, dispatched on grid type.
+LL tracers are rm — convert to VMR for emission kernels, then back (same m_ref → exact).
+TM5-faithful: moist basis for boundary conversions, dry correction at output only."""
 function apply_emissions_phase!(tracers, emi_state, sched, phys, gc,
                                  grid::LatitudeLongitudeGrid, dt_window;
                                  sim_hours::Float64=0.0, arch=nothing)
     emi_data, area_j_dev, A_coeff, B_coeff = emi_state
     gpu = current_gpu(sched)
+    # rm → c for emission kernels (moist basis, like TM5)
+    for (_, rm) in pairs(tracers)
+        rm ./= gpu.m_ref
+    end
     _apply_emissions_latlon!(tracers, emi_data, area_j_dev,
                               gpu.ps, A_coeff, B_coeff, grid, dt_window;
                               sim_hours, arch,
                               delp=(phys.sfc_loaded[] ? gpu.Δp : nothing),
                               pblh=(phys.sfc_loaded[] && phys.pbl_sfc_gpu !== nothing ?
                                     phys.pbl_sfc_gpu.pblh : nothing))
+    # c → rm
+    for (_, c) in pairs(tracers)
+        c .*= gpu.m_ref
+    end
 end
 
 function apply_emissions_phase!(tracers, emi_state, sched, phys, gc,
@@ -495,24 +561,58 @@ function advection_phase!(tracers, sched, air, phys, model,
     gpu = current_gpu(sched)
     # Build advection workspace — for Prather, augment with per-tracer slope storage
     adv_ws = _build_advection_workspace(gpu.ws, model.advection_scheme, tracers, gpu.m_ref)
+
+    # Apply FULL mass fluxes each sub-step (matching CS convention and TM5).
+    # The preprocessor stores am per half_dt (= half of one substep). Each Strang
+    # cycle applies am twice per direction. Over n_sub sub-steps the total is:
+    #   n_sub × 2 × half_dt = steps_per_met × dt_spec = window_dt
+    # Do NOT divide by n_sub — that was a bug that made transport too slow.
+    copyto!(gpu.m_dev, gpu.m_ref)
     for _ in 1:n_sub
         step[] += 1
-        copyto!(gpu.m_dev, gpu.m_ref)
         _apply_advection_latlon!(tracers, gpu.m_dev,
                                   gpu.am, gpu.bm, gpu.cm,
                                   grid, model.advection_scheme, adv_ws;
                                   cfl_limit=FT(0.95))
     end
+
+    # --- Pole averaging: enforce uniform mixing ratio at pole rows ---
+    Ny = grid.Ny
+    Nx = grid.Nx
+    for pole_j in (1, Ny)
+        m_row = @view gpu.m_dev[:, pole_j, :]         # (Nx, Nz)
+        m_mean = sum(m_row; dims=1) ./ FT(Nx)         # (1, Nz)
+        m_row .= m_mean                               # broadcast to all i
+        for (_, rm) in pairs(tracers)
+            rm_row = @view rm[:, pole_j, :]            # (Nx, Nz)
+            rm_mean = sum(rm_row; dims=1) ./ FT(Nx)   # (1, Nz)
+            rm_row .= rm_mean                          # broadcast to all i
+        end
+    end
+
     # Convective transport ONCE per window (after all substeps).
+    # Convert rm↔c using m_ref (moist basis, like TM5; exact roundtrip).
     dt_conv = FT(n_sub) * dt_sub
-    if phys.has_tm5conv && phys.tm5conv_loaded[]
-        convect!(tracers, phys.tm5conv_gpu, gpu.Δp,
-                  model.convection, grid, dt_conv, phys.planet)
-    elseif phys.cmfmc_loaded[]
-        convect!(tracers, phys.cmfmc_gpu, gpu.Δp,
-                  model.convection, grid, dt_conv, phys.planet;
-                  dtrain_panels=phys.dtrain_loaded[] ? phys.dtrain_gpu : nothing,
-                  workspace=phys.ras_workspace)
+    _has_conv = (phys.has_tm5conv && phys.tm5conv_loaded[]) || phys.cmfmc_loaded[]
+    if _has_conv
+        for (_, rm) in pairs(tracers)
+            rm ./= gpu.m_ref
+        end
+        if phys.has_tm5conv && phys.tm5conv_loaded[]
+            # TM5 matrix convection — GPU path via KA kernels.
+            # Uses pre-allocated workspace for the per-column transfer matrix.
+            convect!(tracers, phys.tm5conv_gpu, gpu.Δp,
+                      model.convection, grid, dt_conv, phys.planet;
+                      workspace=phys.tm5conv_ws)
+        else
+            convect!(tracers, phys.cmfmc_gpu, gpu.Δp,
+                      model.convection, grid, dt_conv, phys.planet;
+                      dtrain_panels=phys.dtrain_loaded[] ? phys.dtrain_gpu : nothing,
+                      workspace=phys.ras_workspace)
+        end
+        for (_, c) in pairs(tracers)
+            c .*= gpu.m_ref
+        end
     end
 end
 
@@ -1338,10 +1438,17 @@ end
 # Phase 9: Post-advection physics (BLD + PBL diffusion + chemistry)
 # =====================================================================
 
-"""Post-advection physics: BLD diffusion, PBL diffusion, chemistry."""
+"""Post-advection physics: BLD diffusion, PBL diffusion, chemistry.
+LL tracers are rm — convert to VMR for operators, then back (same m_ref → exact).
+TM5-faithful: moist basis for boundary conversions."""
 function post_advection_physics!(tracers, sched, air, phys, model,
                                   grid::LatitudeLongitudeGrid, dt_window, dw)
     gpu = current_gpu(sched)
+
+    # rm → c (moist VMR) for diffusion and chemistry
+    for (_, rm) in pairs(tracers)
+        rm ./= gpu.m_ref
+    end
 
     _apply_bld!(tracers, dw)
 
@@ -1354,6 +1461,11 @@ function post_advection_physics!(tracers, sched, air, phys, model,
     end
 
     apply_chemistry!(tracers, grid, model.chemistry, dt_window)
+
+    # c → rm
+    for (_, c) in pairs(tracers)
+        c .*= gpu.m_ref
+    end
 end
 
 function post_advection_physics!(tracers, sched, air, phys, model,
@@ -1407,15 +1519,21 @@ end
 # Phase 11: Compute output air mass (dry correction)
 # =====================================================================
 
-"""Compute air mass for output. If QV loaded, returns dry mass."""
+"""Compute air mass for output. If QV loaded and compatible, returns dry mass."""
 function compute_output_mass(sched, air, phys, grid::LatitudeLongitudeGrid)
     gpu = current_gpu(sched)
-    if phys.qv_loaded[]
+    if phys.qv_loaded[] && size(phys.qv_gpu) == size(gpu.m_ref)
         phys.m_dry .= gpu.m_ref .* (1 .- phys.qv_gpu)
         return phys.m_dry
     end
     return gpu.m_ref
 end
+
+"""Convert rm tracers to dry VMR for output. LL: c_dry = rm / m_dry.
+Creates GPU temporaries (once per output interval). CS: tracers are already rm."""
+rm_to_vmr(tracers, sched, phys, grid::LatitudeLongitudeGrid) =
+    map(rm -> rm ./ ll_dry_mass(phys), tracers)
+rm_to_vmr(tracers, sched, phys, grid::CubedSphereGrid) = tracers
 
 function compute_output_mass(sched, air, phys, grid::CubedSphereGrid)
     # Use current air.m — after vertical remap, air.m is the target mass

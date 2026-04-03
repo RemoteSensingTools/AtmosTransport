@@ -16,7 +16,7 @@ using ..Architectures: AbstractArchitecture, architecture, array_type,
                        allocate_ntuple_panels, sync_all_gpus, build_panel_map,
                        set_panel_map!, active_panel_map, for_panels, for_panels_nosync,
                        foreach_gpu_batch
-using ..Grids: AbstractGrid
+using ..Grids: AbstractGrid, get_panel_map
 using ..Fields: Field, Center, TracerFields
 using ..Advection: AbstractAdvectionScheme
 using ..Convection: AbstractConvection

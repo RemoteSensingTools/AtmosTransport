@@ -1,0 +1,46 @@
+# ERA5 v3 daily binary preprocessor config — CATRINE Dec 2021
+#
+# Produces merged-level binary files with all physics fields:
+#   mass fluxes + QV + T + TM5 convection + surface diffusion fields
+#
+# Usage:
+#   julia -t8 --project=. scripts/preprocessing/preprocess_era5_daily.jl \
+#       config/preprocessing/catrine_era5_daily_v3.toml
+#
+#   # Single day:
+#   julia -t8 --project=. scripts/preprocessing/preprocess_era5_daily.jl \
+#       config/preprocessing/catrine_era5_daily_v3.toml --day 2021-12-01
+
+[input]
+# Base mass fluxes from spectral preprocessor (m, am, bm, cm, ps)
+massflux_dir = "~/data/AtmosTransport/met/era5/preprocessed_spectral_catrine_hourly"
+
+# Convection fields (params 235009-235012, from download_era5_physics.py)
+convection_dir = "~/data/AtmosTransport/met/era5/physics"
+
+# Surface fields (BLH, T2M, U10, V10, SSHF, USTAR — ZIP-wrapped NC)
+surface_dir = "~/data/AtmosTransport/met/era5/surface"
+
+# Thermodynamics: T + Q on model levels (from download_era5_physics.py)
+thermo_dir = "~/data/AtmosTransport/met/era5/physics"
+
+# ERA5 hybrid sigma-pressure coefficients (138 interfaces for 137 levels)
+coefficients = "config/era5_L137_coefficients.toml"
+
+[output]
+directory = "/temp1/atmos_transport/era5_daily_v3"
+
+[grid]
+nlon = 720          # 0.5 deg
+nlat = 361          # 0.5 deg
+level_top = 1       # TOA
+level_bot = 137     # Surface
+
+# Merge thin stratospheric levels: 137 → ~75 levels
+# Levels thinner than this threshold (at p_surface=101325 Pa) are merged
+merge_min_thickness_Pa = 1000.0
+
+[numerics]
+float_type = "Float32"
+dt = 450.0              # advection sub-step [s]
+met_interval = 3600.0   # hourly met windows

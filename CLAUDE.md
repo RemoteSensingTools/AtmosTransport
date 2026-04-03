@@ -5,6 +5,8 @@ continuity on latitude-longitude (ERA5) and cubed-sphere (GEOS-FP C720, GEOS-IT 
 grids with mass-conserving advection, Tiedtke/RAS convection, and boundary-layer diffusion.
 Oceananigans-inspired modular architecture; KernelAbstractions.jl for GPU portability.
 
+# Rule 1: Never speculate without evidence, check your own intuition, it was often wrong
+
 ## Quick start
 
 ```bash

@@ -38,9 +38,15 @@ const EDGAR_HEADER_SIZE  = 4096
 $(TYPEDEF)
 
 Mmap-based reader for lat-lon pre-computed mass-flux binary files.
-File layout: [4096-byte JSON header | window₁ data | window₂ data | …]
 
-Each window contains (in order): m, am, bm, cm, ps — as flat Float32/Float64.
+Supports three format versions:
+- **v1**: [4096-byte header | m|am|bm|cm|ps per window] — core mass fluxes only
+- **v2**: [16384-byte header | m|am|bm|cm|ps|qv|cmfmc|sfc per window] — self-describing
+  with embedded QV, CMFMC, surface fields, A/B coefficients, and merge provenance.
+- **v3**: [16384-byte header | v2 layout + tm5conv + temperature per window] — adds
+  TM5 convection fields (entu/detu/entd/detd) and model-level temperature.
+
+The version is auto-detected from the header's `version` field (default 1).
 
 $(FIELDS)
 """
@@ -66,13 +72,49 @@ struct MassFluxBinaryReader{FT} <: AbstractBinaryReader
     steps_per_met   :: Int
     level_top       :: Int
     level_bot       :: Int
+    # v2 fields (all false/empty for v1)
+    "header size in bytes (4096 for v1, 16384 for v2)"
+    header_size     :: Int
+    "v2: has embedded specific humidity"
+    has_qv          :: Bool
+    "v2: has embedded convective mass flux"
+    has_cmfmc       :: Bool
+    "v2: has embedded surface fields (pblh, t2m, ustar, hflux)"
+    has_surface     :: Bool
+    "v2: elements per window for QV (Nx*Ny*Nz, 0 if absent)"
+    n_qv            :: Int
+    "v2: elements per window for CMFMC (Nx*Ny*(Nz+1), 0 if absent)"
+    n_cmfmc         :: Int
+    "v2: elements per window for each surface field (Nx*Ny, 0 if absent)"
+    n_sfc           :: Int
+    "v2: interface A coefficients (Nz+1 values), empty for v1"
+    A_ifc           :: Vector{Float64}
+    "v2: interface B coefficients (Nz+1 values), empty for v1"
+    B_ifc           :: Vector{Float64}
+    # v3 fields (all false/0 for v1/v2)
+    "v3: has TM5 convection fields (entu, detu, entd, detd)"
+    has_tm5conv     :: Bool
+    "v3: has model-level temperature"
+    has_temperature :: Bool
+    "v3: elements per window for each TM5 conv field (Nx*Ny*Nz, 0 if absent)"
+    n_tm5conv       :: Int
+    "v3: elements per window for temperature (Nx*Ny*Nz, 0 if absent)"
+    n_temperature   :: Int
 end
 
 function MassFluxBinaryReader(bin_path::String, ::Type{FT}) where FT
     io = open(bin_path, "r")
-    hdr_bytes = read(io, BINARY_HEADER_SIZE)
-    json_end = something(findfirst(==(0x00), hdr_bytes), BINARY_HEADER_SIZE + 1) - 1
+
+    # Read the maximum possible header to detect version
+    max_hdr = 16384
+    file_sz = filesize(bin_path)
+    read_sz = min(max_hdr, file_sz)
+    hdr_bytes = read(io, read_sz)
+    json_end = something(findfirst(==(0x00), hdr_bytes), read_sz + 1) - 1
     hdr = JSON3.read(String(hdr_bytes[1:json_end]))
+
+    version = Int(get(hdr, :version, 1))
+    hdr_size = version >= 2 ? Int(get(hdr, :header_bytes, 16384)) : BINARY_HEADER_SIZE
 
     Nx = Int(hdr.Nx); Ny = Int(hdr.Ny); Nz = Int(hdr.Nz); Nt = Int(hdr.Nt)
     n_m  = Int(hdr.n_m)
@@ -80,27 +122,59 @@ function MassFluxBinaryReader(bin_path::String, ::Type{FT}) where FT
     n_bm = Int(hdr.n_bm)
     n_cm = Int(hdr.n_cm)
     n_ps = Int(hdr.n_ps)
-    elems_per_window = n_m + n_am + n_bm + n_cm + n_ps
+
+    # v2 optional field counts
+    has_qv      = version >= 2 && Bool(get(hdr, :include_qv, false))
+    has_cmfmc   = version >= 2 && Bool(get(hdr, :include_cmfmc, false))
+    has_surface = version >= 2 && Bool(get(hdr, :include_surface, false))
+    n_qv    = has_qv      ? Int(get(hdr, :n_qv, 0))    : 0
+    n_cmfmc = has_cmfmc   ? Int(get(hdr, :n_cmfmc, 0))  : 0
+    n_sfc   = has_surface  ? Int(get(hdr, :n_pblh, 0))  : 0  # each sfc field same size
+
+    # v3 optional field counts
+    has_tm5conv     = version >= 3 && Bool(get(hdr, :include_tm5conv, false))
+    has_temperature = version >= 3 && Bool(get(hdr, :include_temperature, false))
+    n_tm5conv     = has_tm5conv     ? Int(get(hdr, :n_entu, 0))        : 0
+    n_temperature = has_temperature ? Int(get(hdr, :n_temperature, 0)) : 0
+
+    elems_per_window = n_m + n_am + n_bm + n_cm + n_ps +
+                       n_qv + n_cmfmc +
+                       4 * n_tm5conv +    # entu + detu + entd + detd
+                       4 * n_sfc +        # pblh + t2m + ustar + hflux
+                       n_temperature
     total_elems = elems_per_window * Nt
 
-    seek(io, BINARY_HEADER_SIZE)
-    data = Mmap.mmap(io, Vector{FT}, total_elems, BINARY_HEADER_SIZE)
+    seek(io, hdr_size)
+    data = Mmap.mmap(io, Vector{FT}, total_elems, hdr_size)
 
     lons = FT.(collect(hdr.lons))
     lats = FT.(collect(hdr.lats))
+
+    # v2: embedded vertical coordinate
+    A_ifc = version >= 2 && haskey(hdr, :A_ifc) ? Float64.(collect(hdr.A_ifc)) : Float64[]
+    B_ifc = version >= 2 && haskey(hdr, :B_ifc) ? Float64.(collect(hdr.B_ifc)) : Float64[]
+
+    if version >= 2
+        @info "MassFluxBinaryReader v$(version): $(Nx)x$(Ny)x$(Nz), $(Nt) windows, " *
+              "QV=$(has_qv) CMFMC=$(has_cmfmc) Sfc=$(has_surface)" *
+              (version >= 3 ? " TM5=$(has_tm5conv) T=$(has_temperature)" : "")
+    end
 
     MassFluxBinaryReader{FT}(
         data, io, Nx, Ny, Nz, Nt,
         n_m, n_am, n_bm, n_cm, n_ps, elems_per_window,
         lons, lats,
         FT(hdr.dt_seconds), FT(hdr.half_dt_seconds),
-        Int(hdr.steps_per_met_window), Int(hdr.level_top), Int(hdr.level_bot))
+        Int(hdr.steps_per_met_window), Int(hdr.level_top), Int(hdr.level_bot),
+        hdr_size, has_qv, has_cmfmc, has_surface,
+        n_qv, n_cmfmc, n_sfc, A_ifc, B_ifc,
+        has_tm5conv, has_temperature, n_tm5conv, n_temperature)
 end
 
 """
     load_window!(m, am, bm, cm, ps, reader::MassFluxBinaryReader, win)
 
-Copy met fields for window `win` from the mmap'd binary into pre-allocated
+Copy core met fields for window `win` from the mmap'd binary into pre-allocated
 CPU arrays. Zero-copy from the mmap region via `copyto!`.
 """
 function load_window!(m_cpu, am_cpu, bm_cpu, cm_cpu, ps_cpu,
@@ -113,6 +187,85 @@ function load_window!(m_cpu, am_cpu, bm_cpu, cm_cpu, ps_cpu,
     copyto!(cm_cpu, 1, reader.data, o + 1, reader.n_cm); o += reader.n_cm
     copyto!(ps_cpu, 1, reader.data, o + 1, reader.n_ps)
     return nothing
+end
+
+"""Offset past core fields (m+am+bm+cm+ps) within a window."""
+_core_offset(r::MassFluxBinaryReader) = r.n_m + r.n_am + r.n_bm + r.n_cm + r.n_ps
+
+"""
+    load_qv_window!(qv_cpu, reader::MassFluxBinaryReader, win) → Bool
+
+Load QV from a v2 binary. Returns `false` if QV is not embedded.
+"""
+function load_qv_window!(qv_cpu, reader::MassFluxBinaryReader, win::Int)
+    reader.has_qv || return false
+    off = (win - 1) * reader.elems_per_window + _core_offset(reader)
+    copyto!(qv_cpu, 1, reader.data, off + 1, reader.n_qv)
+    return true
+end
+
+"""
+    load_cmfmc_window!(cmfmc_cpu, reader::MassFluxBinaryReader, win) → Bool
+
+Load convective mass flux from a v2 binary. Returns `false` if not embedded.
+"""
+function load_cmfmc_window!(cmfmc_cpu, reader::MassFluxBinaryReader, win::Int)
+    reader.has_cmfmc || return false
+    off = (win - 1) * reader.elems_per_window + _core_offset(reader) + reader.n_qv
+    copyto!(cmfmc_cpu, 1, reader.data, off + 1, reader.n_cmfmc)
+    return true
+end
+
+"""
+    load_tm5conv_window!(entu, detu, entd, detd, reader::MassFluxBinaryReader, win) → Bool
+
+Load TM5 convection fields from a v3 binary. Returns `false` if not embedded.
+"""
+function load_tm5conv_window!(entu_cpu, detu_cpu, entd_cpu, detd_cpu,
+                               reader::MassFluxBinaryReader, win::Int)
+    reader.has_tm5conv || return false
+    off = (win - 1) * reader.elems_per_window +
+          _core_offset(reader) + reader.n_qv + reader.n_cmfmc
+    n = reader.n_tm5conv
+    copyto!(entu_cpu, 1, reader.data, off + 1,       n)
+    copyto!(detu_cpu, 1, reader.data, off + n + 1,    n)
+    copyto!(entd_cpu, 1, reader.data, off + 2*n + 1,  n)
+    copyto!(detd_cpu, 1, reader.data, off + 3*n + 1,  n)
+    return true
+end
+
+"""Offset past core + qv + cmfmc + tm5conv fields within a window."""
+_pre_surface_offset(r::MassFluxBinaryReader) =
+    _core_offset(r) + r.n_qv + r.n_cmfmc + 4 * r.n_tm5conv
+
+"""
+    load_surface_window!(pblh, t2m, ustar, hflux, reader::MassFluxBinaryReader, win) → Bool
+
+Load surface fields from a v2/v3 binary. Returns `false` if not embedded.
+"""
+function load_surface_window!(pblh_cpu, t2m_cpu, ustar_cpu, hflux_cpu,
+                               reader::MassFluxBinaryReader, win::Int)
+    reader.has_surface || return false
+    off = (win - 1) * reader.elems_per_window + _pre_surface_offset(reader)
+    n = reader.n_sfc
+    copyto!(pblh_cpu,  1, reader.data, off + 1,       n)
+    copyto!(t2m_cpu,   1, reader.data, off + n + 1,    n)
+    copyto!(ustar_cpu, 1, reader.data, off + 2*n + 1,  n)
+    copyto!(hflux_cpu, 1, reader.data, off + 3*n + 1,  n)
+    return true
+end
+
+"""
+    load_temperature_window!(t_cpu, reader::MassFluxBinaryReader, win) → Bool
+
+Load model-level temperature from a v3 binary. Returns `false` if not embedded.
+"""
+function load_temperature_window!(t_cpu, reader::MassFluxBinaryReader, win::Int)
+    reader.has_temperature || return false
+    off = (win - 1) * reader.elems_per_window +
+          _pre_surface_offset(reader) + 4 * reader.n_sfc
+    copyto!(t_cpu, 1, reader.data, off + 1, reader.n_temperature)
+    return true
 end
 
 Base.close(r::MassFluxBinaryReader) = close(r.io)

@@ -292,11 +292,27 @@ function find_ctm_file(data_dir, date, product)
     daydir = joinpath(data_dir, Dates.format(date, "yyyymmdd"))
     isdir(daydir) || return nothing, 0
     info = GEOS_CS_PRODUCTS[product]
-    tag = "CTM_A1.C$(info.Nc)"
-    for f in readdir(daydir)
-        if contains(f, tag) && endswith(f, ".nc")
-            fp = joinpath(daydir, f)
-            nt = NCDataset(fp, "r") do ds; length(ds["time"]); end
+
+    if info.layout === :daily
+        # GEOS-IT: single daily file with CTM_A1.C<Nc> in name
+        tag = "CTM_A1.C$(info.Nc)"
+        for f in readdir(daydir)
+            if contains(f, tag) && endswith(f, ".nc")
+                fp = joinpath(daydir, f)
+                nt = NCDataset(fp, "r") do ds; length(ds["time"]); end
+                return fp, nt
+            end
+        end
+    else
+        # GEOS-FP hourly: 24 files per day, first file = reference
+        # Naming: GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.YYYYMMDD_0030.V01.nc4
+        datestr = Dates.format(date, "yyyymmdd")
+        first_file = "GEOS.fp.asm.tavg_1hr_ctm_c0$(info.Nc)_v72.$(datestr)_0030.V01.nc4"
+        fp = joinpath(daydir, first_file)
+        if isfile(fp)
+            # Count hourly files for this day
+            nt = count(f -> startswith(f, "GEOS.fp.asm.tavg_1hr_ctm") && contains(f, datestr),
+                        readdir(daydir))
             return fp, nt
         end
     end
@@ -383,6 +399,21 @@ end
 # ---------------------------------------------------------------------------
 # Preprocess one day (v4)
 # ---------------------------------------------------------------------------
+"""Resolve the NetCDF file path for a given hour within a day.
+For daily products: always the same file. For hourly products: per-hour file."""
+function _resolve_hourly_file(filepath, date, hour, product)
+    info = GEOS_CS_PRODUCTS[product]
+    if info.layout === :hourly
+        daydir = dirname(filepath)
+        datestr = Dates.format(date, "yyyymmdd")
+        timestamp = lpad(hour, 2, '0') * "30"
+        fname = "GEOS.fp.asm.tavg_1hr_ctm_c0$(info.Nc)_v72.$(datestr)_$(timestamp).V01.nc4"
+        return joinpath(daydir, fname), 1  # hourly file has 1 timestep
+    else
+        return filepath, hour + 1  # daily file, time_index is 1-based
+    end
+end
+
 function preprocess_day_v4(date::Date, filepath, n_timesteps, output_path, cfg,
                             grid_metrics, sin_sg;
                             nb_dxa=nothing, nb_sg=nothing,
@@ -453,21 +484,28 @@ function preprocess_day_v4(date::Date, filepath, n_timesteps, output_path, cfg,
         for tidx in 1:Nt
             t0 = time()
 
+            # Resolve the correct file for this timestep (hourly vs daily)
+            hour = tidx - 1  # 0-based hour
+            ts_file, ts_idx = _resolve_hourly_file(filepath, date, hour, cfg.product)
+
             # Read DELP, MFXC, MFYC
-            ts = read_geosfp_cs_timestep(filepath; FT, time_index=tidx,
+            ts = read_geosfp_cs_timestep(ts_file; FT, time_index=ts_idx,
                                           convert_to_kgs=true, dt_met=mass_flux_dt)
             delp_h, mfxc, mfyc = to_haloed_panels(ts; Hp)
             am_stag, bm_stag = cgrid_to_staggered_panels(mfxc, mfyc)
 
             # Read CX/CY, flip, stagger
-            ds = NCDataset(filepath, "r")
-            cx_raw = Array{FT}(ds["CX"][:, :, :, :, tidx])
-            cy_raw = Array{FT}(ds["CY"][:, :, :, :, tidx])
+            ds = NCDataset(ts_file, "r")
+            cx_raw = Array{FT}(ds["CX"][:, :, :, :, ts_idx])
+            cy_raw = Array{FT}(ds["CY"][:, :, :, :, ts_idx])
             close(ds)
 
-            # GEOS-IT is bottom-to-top — always flip
-            cx_raw = reverse(cx_raw, dims=4)
-            cy_raw = reverse(cy_raw, dims=4)
+            # GEOS-IT is bottom-to-top — flip to top-to-bottom.
+            # GEOS-FP is already top-to-bottom — no flip needed.
+            if GEOS_CS_PRODUCTS[cfg.product].layout === :daily  # GEOS-IT
+                cx_raw = reverse(cx_raw, dims=4)
+                cy_raw = reverse(cy_raw, dims=4)
+            end
 
             cx_panels = ntuple(p -> cx_raw[:, :, p, :], 6)
             cy_panels = ntuple(p -> cy_raw[:, :, p, :], 6)
@@ -616,17 +654,33 @@ function main()
         push!(work, (date, filepath, nt, outpath, ctm_i1_path, next_ctm_a1_path, next_ctm_i1_path))
     end
 
-    @info "Processing $(length(work)) days (serial — NCDatasets is not thread-safe)"
-
-    for item in work
-        date, filepath, nt, outpath, ctm_i1_path, next_ctm_a1_path, next_ctm_i1_path = item
-        datestr = Dates.format(date, "yyyymmdd")
-        @info "\n--- [$datestr] Processing (v4) ---"
-        preprocess_day_v4(date, filepath, nt, outpath, cfg, grid_metrics, sin_sg;
-                          nb_dxa=nb_dxa, nb_sg=nb_sg,
-                          ctm_i1_path=ctm_i1_path,
-                          next_ctm_a1_path=next_ctm_a1_path,
-                          next_ctm_i1_path=next_ctm_i1_path)
+    n_workers = Threads.nthreads()
+    if n_workers > 1
+        @info "Processing $(length(work)) days with $n_workers workers (Distributed)"
+        @sync for item in work
+            date, filepath, nt, outpath, ctm_i1_path, next_ctm_a1_path, next_ctm_i1_path = item
+            Threads.@spawn begin
+                datestr = Dates.format(date, "yyyymmdd")
+                @info "--- [$datestr] Processing (v4) ---"
+                preprocess_day_v4(date, filepath, nt, outpath, cfg, grid_metrics, sin_sg;
+                                  nb_dxa=nb_dxa, nb_sg=nb_sg,
+                                  ctm_i1_path=ctm_i1_path,
+                                  next_ctm_a1_path=next_ctm_a1_path,
+                                  next_ctm_i1_path=next_ctm_i1_path)
+            end
+        end
+    else
+        @info "Processing $(length(work)) days (serial)"
+        for item in work
+            date, filepath, nt, outpath, ctm_i1_path, next_ctm_a1_path, next_ctm_i1_path = item
+            datestr = Dates.format(date, "yyyymmdd")
+            @info "\n--- [$datestr] Processing (v4) ---"
+            preprocess_day_v4(date, filepath, nt, outpath, cfg, grid_metrics, sin_sg;
+                              nb_dxa=nb_dxa, nb_sg=nb_sg,
+                              ctm_i1_path=ctm_i1_path,
+                              next_ctm_a1_path=next_ctm_a1_path,
+                              next_ctm_i1_path=next_ctm_i1_path)
+        end
     end
 
     @info "All done."

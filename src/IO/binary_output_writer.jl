@@ -305,7 +305,8 @@ end
 # =====================================================================
 
 function write_output!(writer::BinaryOutputWriter, model, time;
-                       air_mass=nothing, tracers=nothing, met_fields=nothing)
+                       air_mass=nothing, tracers=nothing, met_fields=nothing,
+                       rm_tracers=nothing)
     model_time = time isa Number ? Float64(time) : Float64(Dates.value(time) / 1000.0)
     iteration  = hasproperty(model, :clock) ? model.clock.iteration : 0
 
@@ -365,7 +366,8 @@ function write_output!(writer::BinaryOutputWriter, model, time;
     for fname in field_names
         arr = _extract_field_data(writer.fields[fname], model; air_mass, tracers,
                                   regrid_cache=writer._regrid_cache,
-                                  output_grid=writer.output_grid, met_fields)
+                                  output_grid=writer.output_grid, met_fields,
+                                  rm_tracers)
         _write_binary_field!(io, arr, grid, writer.output_grid)
     end
 

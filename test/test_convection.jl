@@ -450,5 +450,107 @@ using AtmosTransport.Parameters: PlanetParameters
             convect!(tracers, tm5conv, delp, conv_lmax, grid, Δt, planet)
             @test true  # no error thrown
         end
+
+        @testset "GPU kernel (KA on CPU) matches CPU path" begin
+            # Verify the KA build+solve kernels produce the same result
+            # as the LAPACK LU path when run on the CPU backend.
+            tm5conv = make_simple_tm5conv(Nx, Ny, Nz)
+
+            # Random tracer field
+            c_cpu = rand(Nx, Ny, Nz) .+ 0.1
+            c_gpu = copy(c_cpu)
+
+            # CPU path (LAPACK LU)
+            tracers_cpu = (; c = c_cpu)
+            convect!(tracers_cpu, tm5conv, delp, conv, grid, Δt, planet)
+
+            # GPU path (KA kernels with workspace)
+            ws = allocate_tm5conv_workspace(Float64, Nz, Nx, Ny, Array)
+            tracers_gpu = (; c = c_gpu)
+            convect!(tracers_gpu, tm5conv, delp, conv, grid, Δt, planet;
+                     workspace=ws)
+
+            @test tracers_gpu.c ≈ tracers_cpu.c rtol = 1e-10
+        end
+
+        @testset "GPU kernel: uniform field invariance" begin
+            tm5conv = make_simple_tm5conv(Nx, Ny, Nz)
+            ws = allocate_tm5conv_workspace(Float64, Nz, Nx, Ny, Array)
+
+            c = fill(0.4, Nx, Ny, Nz)
+            c_orig = copy(c)
+            tracers = (; c)
+
+            convect!(tracers, tm5conv, delp, conv, grid, Δt, planet;
+                     workspace=ws)
+            @test tracers.c ≈ c_orig atol = 1e-10
+        end
+
+        @testset "GPU kernel: mass conservation" begin
+            tm5conv = make_simple_tm5conv(Nx, Ny, Nz)
+            ws = allocate_tm5conv_workspace(Float64, Nz, Nx, Ny, Array)
+
+            c = rand(Nx, Ny, Nz) .+ 0.1
+            tracers = (; c)
+
+            mass_before = sum(c[i, j, k] * delp[i, j, k] / grav
+                              for i in 1:Nx, j in 1:Ny, k in 1:Nz)
+
+            convect!(tracers, tm5conv, delp, conv, grid, Δt, planet;
+                     workspace=ws)
+
+            mass_after = sum(tracers.c[i, j, k] * delp[i, j, k] / grav
+                             for i in 1:Nx, j in 1:Ny, k in 1:Nz)
+
+            @test mass_after ≈ mass_before rtol = 1e-12
+        end
+
+        @testset "GPU kernel: multiple tracers" begin
+            tm5conv = make_simple_tm5conv(Nx, Ny, Nz)
+            ws = allocate_tm5conv_workspace(Float64, Nz, Nx, Ny, Array)
+
+            a_cpu = rand(Nx, Ny, Nz) .+ 0.1
+            b_cpu = rand(Nx, Ny, Nz) .+ 0.5
+            a_gpu = copy(a_cpu)
+            b_gpu = copy(b_cpu)
+
+            # CPU path
+            convect!((; a=a_cpu, b=b_cpu), tm5conv, delp, conv, grid, Δt, planet)
+
+            # GPU path
+            convect!((; a=a_gpu, b=b_gpu), tm5conv, delp, conv, grid, Δt, planet;
+                     workspace=ws)
+
+            @test a_gpu ≈ a_cpu rtol = 1e-10
+            @test b_gpu ≈ b_cpu rtol = 1e-10
+        end
+
+        @testset "GPU kernel: with downdraft" begin
+            # Create met data with both updraft and downdraft
+            entu = zeros(Nx, Ny, Nz)
+            detu = zeros(Nx, Ny, Nz)
+            entd = zeros(Nx, Ny, Nz)
+            detd = zeros(Nx, Ny, Nz)
+
+            for j in 1:Ny, i in 1:Nx
+                entu[i, j, Nz]   = 0.01    # updraft entrainment at surface
+                detu[i, j, Nz-2] = 0.005   # updraft detrainment
+                detu[i, j, Nz-3] = 0.005
+                entd[i, j, Nz-2] = 0.003   # downdraft entrainment
+                detd[i, j, Nz]   = 0.003   # downdraft detrainment at surface
+            end
+
+            tm5conv_dd = (; entu, detu, entd, detd)
+            ws = allocate_tm5conv_workspace(Float64, Nz, Nx, Ny, Array)
+
+            c_cpu = rand(Nx, Ny, Nz) .+ 0.1
+            c_gpu = copy(c_cpu)
+
+            convect!((; c=c_cpu), tm5conv_dd, delp, conv, grid, Δt, planet)
+            convect!((; c=c_gpu), tm5conv_dd, delp, conv, grid, Δt, planet;
+                     workspace=ws)
+
+            @test c_gpu ≈ c_cpu rtol = 1e-10
+        end
     end
 end

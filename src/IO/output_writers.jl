@@ -17,7 +17,7 @@ using ..Diagnostics: AbstractDiagnostic, ColumnMeanDiagnostic, ColumnMassDiagnos
                      RegridDiagnostic, Full3DDiagnostic, MetField2DDiagnostic,
                      SigmaLevelDiagnostic, ColumnFluxDiagnostic,
                      EmissionFluxDiagnostic,
-                     column_mean!, column_mass!, surface_slice!, sigma_level_slice!,
+                     column_mean!, column_mass!, column_sum!, surface_slice!, sigma_level_slice!,
                      column_tracer_flux!,
                      regrid_cs_to_latlon,
                      RegridMapping, build_regrid_mapping, regrid_cs_to_latlon!
@@ -258,7 +258,8 @@ Ensures result is a CPU array.
 """
 function _extract_field_data(field_or_func, model;
                              air_mass=nothing, tracers=nothing, regrid_cache=nothing,
-                             output_grid=nothing, met_fields=nothing)
+                             output_grid=nothing, met_fields=nothing,
+                             rm_tracers=nothing)
     if field_or_func isa AbstractField
         arr = interior(field_or_func)
         return Array(arr)  # ensure CPU for NCDatasets
@@ -268,6 +269,11 @@ function _extract_field_data(field_or_func, model;
     elseif field_or_func isa AbstractArray
         return Array(field_or_func)
     elseif field_or_func isa AbstractDiagnostic
+        # Pass rm_tracers only to column diagnostics that use it
+        if (field_or_func isa ColumnMeanDiagnostic || field_or_func isa ColumnMassDiagnostic)
+            return _compute_diagnostic(field_or_func, model; air_mass, tracers, regrid_cache,
+                                        output_grid, met_fields, rm_tracers)
+        end
         return _compute_diagnostic(field_or_func, model; air_mass, tracers, regrid_cache,
                                     output_grid, met_fields)
     else
@@ -281,11 +287,23 @@ Compute a diagnostic from model state. Returns a CPU array.
 """
 function _compute_diagnostic(diag::ColumnMeanDiagnostic, model;
                              air_mass=nothing, tracers=nothing, regrid_cache=nothing,
-                             output_grid=nothing, met_fields=nothing)
+                             output_grid=nothing, met_fields=nothing,
+                             rm_tracers=nothing)
     grid = model.grid
     if grid isa LatitudeLongitudeGrid
+        # Use rm directly for LL: XCO2 = Σ(rm_k) / Σ(m_k) — avoids per-level c_dry noise
+        rm = rm_tracers !== nothing ? _get_tracer(model, diag.species; tracers=rm_tracers) : nothing
+        m = air_mass !== nothing ? air_mass : _compute_uniform_mass(rm !== nothing ? rm : _get_tracer(model, diag.species; tracers))
+        if rm !== nothing
+            # XCO2 = Σ(rm_k) / Σ(m_k) — direct from tracer mass, no per-level c_dry noise
+            rm_col = similar(rm, size(rm, 1), size(rm, 2))
+            m_col  = similar(m, size(m, 1), size(m, 2))
+            column_sum!(rm_col, rm)
+            column_sum!(m_col, m)
+            c_col = rm_col ./ m_col
+            return Array(c_col)
+        end
         c = _get_tracer(model, diag.species; tracers)
-        m = air_mass !== nothing ? air_mass : _compute_uniform_mass(c)
         c_col = similar(c, size(c, 1), size(c, 2))
         column_mean!(c_col, c, m)
         return Array(c_col)
@@ -310,16 +328,25 @@ end
 
 function _compute_diagnostic(diag::ColumnMassDiagnostic, model;
                              air_mass=nothing, tracers=nothing, regrid_cache=nothing,
-                             output_grid=nothing, met_fields=nothing)
+                             output_grid=nothing, met_fields=nothing,
+                             rm_tracers=nothing)
     grid = model.grid
     # mol_ratio converts rm (mol/mol × kg_air) to tracer mass (kg)
     mol_ratio = M_AIR / molar_mass_for_species(diag.species)
     if grid isa LatitudeLongitudeGrid
-        c = _get_tracer(model, diag.species; tracers)
-        m = air_mass !== nothing ? air_mass : _compute_uniform_mass(c)
-        cm_col = similar(c, size(c, 1), size(c, 2))
-        column_mass!(cm_col, c, m)
-        result = Array(cm_col)
+        # Use rm directly: Σ(rm_k) = total tracer mass per column
+        rm = rm_tracers !== nothing ? _get_tracer(model, diag.species; tracers=rm_tracers) : nothing
+        if rm !== nothing
+            rm_col = similar(rm, size(rm, 1), size(rm, 2))
+            column_sum!(rm_col, rm)
+            result = Array(rm_col)
+        else
+            c = _get_tracer(model, diag.species; tracers)
+            m = air_mass !== nothing ? air_mass : _compute_uniform_mass(c)
+            cm_col = similar(c, size(c, 1), size(c, 2))
+            column_mass!(cm_col, c, m)
+            result = Array(cm_col)
+        end
         Nx, Ny = size(result)
         for j in 1:Ny, i in 1:Nx
             result[i, j] /= (mol_ratio * cell_area(i, j, grid))
@@ -1004,7 +1031,8 @@ Write output if the schedule condition is met. Opens or creates the NetCDF file,
 appends a new time slice for each field, and increments `_write_count`.
 """
 function write_output!(writer::NetCDFOutputWriter, model, time;
-                       air_mass=nothing, tracers=nothing, met_fields=nothing)
+                       air_mass=nothing, tracers=nothing, met_fields=nothing,
+                       rm_tracers=nothing)
     model_time = time isa Number ? Float64(time) : Float64(Dates.value(time) / 1000.0)
     iteration = hasproperty(model, :clock) ? model.clock.iteration : 0
 
@@ -1037,7 +1065,7 @@ function write_output!(writer::NetCDFOutputWriter, model, time;
                 arr = _extract_field_data(field_entry, model; air_mass, tracers,
                                           regrid_cache=writer._regrid_cache,
                                           output_grid=writer.output_grid,
-                                          met_fields)
+                                          met_fields, rm_tracers)
             end
             arr = _quantize(arr, writer.digits)
             _write_field_slice!(ds, string(name), arr, grid, writer.output_grid, n_time + 1)

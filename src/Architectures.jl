@@ -27,6 +27,7 @@ export PerGPUWorkspace, workspace_for
 export PanelTuple, map_panels!, map_panels_nosync!, reduce_panels
 export copyto_panels!, broadcast_panels!, sync_panels!, fill_panels!, panel_map
 export set_panel_map!, active_panel_map, for_panels, for_panels_nosync
+export _kahan_add
 
 using DocStringExtensions
 using KernelAbstractions: KernelAbstractions as KA
@@ -85,6 +86,21 @@ Return the KernelAbstractions device for kernel launches.
 CPU returns `KA.CPU()`; GPU is defined by the CUDA extension.
 """
 device(::CPU) = KA.CPU()
+
+# ---------------------------------------------------------------------------
+# Kahan compensated addition — shared by all modules
+#
+# Float32/Float16: tracks low-order bits lost in each addition (near-Float64 precision).
+# Float64: plain addition; compiler eliminates the compensation variable entirely.
+# ---------------------------------------------------------------------------
+
+@inline function _kahan_add(s::T, c::T, x::T) where {T <: Union{Float16, Float32}}
+    y = x - c
+    t = s + y
+    c_new = (t - s) - y
+    return (t, c_new)
+end
+@inline _kahan_add(s::T, c::T, x::T) where {T <: Float64} = (s + x, zero(T))
 
 # ---------------------------------------------------------------------------
 # Utility: extract architecture from objects

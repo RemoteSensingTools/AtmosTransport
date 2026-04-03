@@ -137,5 +137,123 @@ function merge_upper_levels(vc::HybridSigmaPressure{FT},
     return merged_vc, merge_map
 end
 
+"""
+    merge_thin_levels(vc; min_thickness_Pa=1000, p_surface=101325)
+
+Merge consecutive levels thinner than `min_thickness_Pa` (evaluated at
+`p_surface`) into coarser layers.  Works inward from both ends:
+
+1. **Top-down pass**: accumulates thin levels from TOA until each group
+   reaches `min_thickness_Pa`.
+2. **Bottom-up pass**: same from the surface upward.
+3. The two regions are joined at the level where they meet.
+
+Returns `(merged_vc, merge_map)` where:
+- `merged_vc`: new `HybridSigmaPressure` with fewer levels
+- `merge_map`: `Vector{Int}` mapping each native level to its merged level
+"""
+function merge_thin_levels(vc::HybridSigmaPressure{FT};
+                            min_thickness_Pa::Real = FT(1000),
+                            p_surface::Real = FT(101325)) where FT
+    Nz = n_levels(vc)
+    ps = FT(p_surface)
+    min_dp = FT(min_thickness_Pa)
+
+    dp = [level_thickness(vc, k, ps) for k in 1:Nz]
+
+    # Top-down: collect merge boundaries (interface indices) from k=1 downward
+    top_ifaces = Int[1]  # always keep TOA
+    acc = zero(FT)
+    for k in 1:Nz
+        acc += dp[k]
+        if acc >= min_dp
+            push!(top_ifaces, k + 1)
+            acc = zero(FT)
+        end
+    end
+
+    # Bottom-up: collect merge boundaries from k=Nz upward
+    bot_ifaces = Int[Nz + 1]  # always keep surface
+    acc = zero(FT)
+    for k in Nz:-1:1
+        acc += dp[k]
+        if acc >= min_dp
+            pushfirst!(bot_ifaces, k)
+            acc = zero(FT)
+        end
+    end
+
+    # Merge the two sets: use top-down interfaces up to some meeting point,
+    # then switch to bottom-up interfaces for the rest.
+    # Meeting point: first top-down interface that overlaps with bottom-up.
+    # We pick the cleanest join: use top_ifaces as long as they are ≤ first bot_iface.
+    first_bot = bot_ifaces[1]
+    keep_interfaces = Int[]
+    for iface in top_ifaces
+        if iface <= first_bot
+            push!(keep_interfaces, iface)
+        end
+    end
+    # Close any gap: if last top interface < first bot interface, add first_bot
+    if isempty(keep_interfaces) || keep_interfaces[end] < first_bot
+        push!(keep_interfaces, first_bot)
+    end
+    # Add remaining bot interfaces (skip first if already added)
+    for iface in bot_ifaces
+        if iface > keep_interfaces[end]
+            push!(keep_interfaces, iface)
+        end
+    end
+
+    # Build merged A/B
+    A_merged = FT[vc.A[k] for k in keep_interfaces]
+    B_merged = FT[vc.B[k] for k in keep_interfaces]
+    merged_vc = HybridSigmaPressure(A_merged, B_merged)
+    Nz_merged = n_levels(merged_vc)
+
+    # Build merge_map: native level → merged level
+    merge_map = Vector{Int}(undef, Nz)
+    km = 1
+    for k_native in 1:Nz
+        while km < Nz_merged && keep_interfaces[km + 1] <= k_native
+            km += 1
+        end
+        merge_map[k_native] = km
+    end
+
+    # Summary
+    n_top_merged = 0
+    n_bot_merged = 0
+    for k in 1:Nz
+        if dp[k] < min_dp
+            p_mid = pressure_at_level(vc, k, ps)
+            if p_mid < ps / 2
+                n_top_merged += 1
+            else
+                n_bot_merged += 1
+            end
+        end
+    end
+
+    @info "Merged thin levels: $(Nz) → $(Nz_merged) " *
+          "(min_dp=$(min_thickness_Pa) Pa; " *
+          "$(n_top_merged) thin upper + $(n_bot_merged) thin lower levels merged)"
+
+    # Print merged grid summary
+    for km in 1:Nz_merged
+        native_levels = findall(==(km), merge_map)
+        dp_m = level_thickness(merged_vc, km, ps)
+        p_mid = pressure_at_level(merged_vc, km, ps)
+        n = length(native_levels)
+        if n > 1
+            @info "  merged level $(km): $(n) native levels " *
+                  "(k=$(first(native_levels))..$(last(native_levels))), " *
+                  "dp=$(round(dp_m; digits=0)) Pa, p=$(round(p_mid; digits=0)) Pa"
+        end
+    end
+
+    return merged_vc, merge_map
+end
+
 export n_levels, pressure_at_interface, pressure_at_level, level_thickness
-export merge_upper_levels
+export merge_upper_levels, merge_thin_levels

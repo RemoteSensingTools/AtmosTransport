@@ -7,12 +7,13 @@ Fields:
     - BLH   (param 159) — boundary layer height [m]
     - SSHF  (param 146) — surface sensible heat flux [J/m²] (accumulated → deaccumulated)
     - T2M   (param 167) — 2m temperature [K]
-    - U10   (param 165) — 10m U wind [m/s] → u* approximation
+    - U10   (param 165) — 10m U wind [m/s]
     - V10   (param 166) — 10m V wind [m/s]
+    - ZUST  (param 3033) — friction velocity [m/s] (for PBL diffusion)
 
-  Convective mass flux (3-hourly forecast, 0.5° lat-lon):
-    - UDMF  (param 71.162)  — updraft mass flux [kg/m²/s]
-    - DDMF  (param 72.162)  — downdraft mass flux [kg/m²/s]
+  Convective mass flux: ** SUPERSEDED by download_era5_physics.py **
+    Old params 71.162/72.162 don't exist in ERA5.
+    Use download_era5_physics.py --fields convection for correct params 235009-235012.
 
 Output: one NetCDF file per day in the specified output directory.
 
@@ -69,6 +70,7 @@ def download_surface_fields(client, date_str, resolution, outdir):
                 "2m_temperature",
                 "10m_u_component_of_wind",
                 "10m_v_component_of_wind",
+                "friction_velocity",
             ],
             "year": date_str[:4],
             "month": date_str[5:7],

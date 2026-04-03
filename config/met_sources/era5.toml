@@ -163,23 +163,39 @@ collection      = "single_levels"
 cds_name        = "surface_latent_heat_flux"
 
 # ---------------------------------------------------------------------------
-# Convective mass flux variables (from ERA5 forecasts, GRIB table 162)
-#
-# Required for Tiedtke convection scheme. These are forecast-step fields
-# (not analysis) and must be downloaded separately from the main model-level
-# analysis data. Available from CDS as part of the ERA5 complete archive.
+# Convective fields (ERA5 forecast, params 235009-235012)
+# Confirmed by ECMWF 2026-03-31. All are time-mean forecast fields
+# (type=fc, base 06/18 UTC, hourly steps 1-12).
+# Download: scripts/downloads/download_era5_physics.py --fields convection
+# Previous params (235071/235072, 214.162/215.162) do NOT exist in ERA5 expver 1.
 # ---------------------------------------------------------------------------
 [variables.conv_mass_flux_up]
-native_name     = "p71.162"
+native_name     = "udmf"
 collection      = "model_levels"
-cds_name        = "updraft_mass_flux"
-description     = "Updraft convective mass flux (kg m-2 s-1)"
+param_id        = 235009
+field_type      = "fc"
+description     = "Time-mean updraft convective mass flux (kg m-2 s-1)"
 
 [variables.conv_mass_flux_down]
-native_name     = "p72.162"
+native_name     = "ddmf"
 collection      = "model_levels"
-cds_name        = "downdraft_mass_flux"
-description     = "Downdraft convective mass flux (kg m-2 s-1)"
+param_id        = 235010
+field_type      = "fc"
+description     = "Time-mean downdraft convective mass flux (kg m-2 s-1)"
+
+[variables.conv_detrainment_up]
+native_name     = "udrf"
+collection      = "model_levels"
+param_id        = 235011
+field_type      = "fc"
+description     = "Time-mean updraft detrainment rate (kg m-3 s-1)"
+
+[variables.conv_detrainment_down]
+native_name     = "ddrf"
+collection      = "model_levels"
+param_id        = 235012
+field_type      = "fc"
+description     = "Time-mean downdraft detrainment rate (kg m-3 s-1)"
 
 # ---------------------------------------------------------------------------
 # Notes on coordinate transforms needed when reading ERA5:

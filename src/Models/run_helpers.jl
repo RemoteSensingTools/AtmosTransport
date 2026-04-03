@@ -131,7 +131,7 @@ _diff_label(::Nothing) = "none"
 # Extract Int32 cluster_sizes for reduced-grid x-advection, or nothing for uniform.
 # Cap at MAX_CLUSTER to keep GPU kernel memory reads O(1) per thread;
 # larger clusters cause O(r) reads which dominates runtime.
-const _MAX_GPU_CLUSTER = Int32(4)
+const _MAX_GPU_CLUSTER = Int32(720)
 
 function _get_cluster_sizes_cpu(grid::LatitudeLongitudeGrid)
     rg = grid.reduced_grid

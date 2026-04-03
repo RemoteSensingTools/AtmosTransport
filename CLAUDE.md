@@ -7,6 +7,35 @@ Oceananigans-inspired modular architecture; KernelAbstractions.jl for GPU portab
 
 # Rule 1: Never speculate without evidence, check your own intuition, it was often wrong
 
+# Rule 2: Debugging protocol for transport and physics issues
+
+When investigating ANY transport bug, numerical instability, or physics mismatch:
+
+1. **Read the reference code FIRST.** The TM5 F90 source (`deps/tm5/base/src/`) and
+   the old working Julia code (git history, legacy scripts) are the ground truth.
+   Read them LINE BY LINE before forming any hypothesis.
+
+2. **Diff old vs new.** If something used to work and now doesn't, the answer is in
+   the diff. Find the EXACT semantic change — not an approximate summary.
+
+3. **Red team / blue team for every significant change.** Before implementing any
+   fix to advection, preprocessing, or flux scaling:
+   - Launch a PROPOSE agent to design the change with TM5 F90 evidence
+   - Launch an EVALUATE agent to challenge it, find risks, verify against reference
+   - Only implement after both agents agree (or disagreement is explicitly resolved)
+   - NEVER skip this for "obvious" fixes — the ERA5 LL NaN bug (2026-04-03) was a
+     one-line change (m_dev reset inside vs outside substep loop) that was missed
+     for 12+ hours because this protocol was not followed.
+
+4. **One change at a time.** Make one change, test, verify. Never stack multiple
+   untested hypotheses. Each change must have evidence (code reference, math derivation,
+   or diagnostic output) BEFORE implementation.
+
+5. **Never guess at scale factors.** If a flux needs scaling, derive the factor from
+   first principles with the exact TM5 formula, verify the units, and confirm with
+   a diagnostic. The 4× scaling attempt (2026-04-02) wasted hours because the math
+   was done without reading how TM5 actually applies the fluxes.
+
 ## Quick start
 
 ```bash

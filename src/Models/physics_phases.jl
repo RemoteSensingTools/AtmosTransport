@@ -565,13 +565,15 @@ function advection_phase!(tracers, sched, air, phys, model,
     # Build advection workspace — for Prather, augment with per-tracer slope storage
     adv_ws = _build_advection_workspace(gpu.ws, model.advection_scheme, tracers, gpu.m_ref)
 
-    # Apply FULL mass fluxes each sub-step (matching CS convention and TM5).
+    # Apply FULL mass fluxes each sub-step (matching legacy run_forward_preprocessed.jl).
+    # Reset m_dev from m_ref BEFORE EACH substep (not once per window).
+    # Without this reset, m_dev accumulates Strang splitting error across substeps,
+    # diverging from the prescribed pressure field and causing NaN.
     # The preprocessor stores am per half_dt (= half of one substep). Each Strang
     # cycle applies am twice per direction. Over n_sub sub-steps the total is:
     #   n_sub × 2 × half_dt = steps_per_met × dt_spec = window_dt
-    # Do NOT divide by n_sub — that was a bug that made transport too slow.
-    copyto!(gpu.m_dev, gpu.m_ref)
     for _ in 1:n_sub
+        copyto!(gpu.m_dev, gpu.m_ref)  # Reset m each substep (legacy convention)
         step[] += 1
         _apply_advection_latlon!(tracers, gpu.m_dev,
                                   gpu.am, gpu.bm, gpu.cm,

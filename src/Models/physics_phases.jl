@@ -574,21 +574,14 @@ function advection_phase!(tracers, sched, air, phys, model,
     # Mass-only pilot replays the full Strang sequence on m, checking per-face
     # |beta| and per-cell m_floor. If any face violates, refinement factor r doubles.
     # Float32-only GPU kernels in src/Advection/mass_cfl_pilot.jl.
-    r = find_mass_cfl_refinement(
-        gpu.m_ref, gpu.am, gpu.bm, gpu.cm, grid,
-        adv_ws.cluster_sizes, n_sub;
-        beta_limit=FT(0.95), max_r=16)
-
-    if r > 1
-        @info "LL mass-CFL pilot: refinement r=$r ($(n_sub*r) effective substeps)" maxlog=10
-        gpu.am ./= FT(r)
-        gpu.bm ./= FT(r)
-        gpu.cm ./= FT(r)
-    end
-    n_eff = n_sub * r
+    # Adaptive flux-remaining subcycling now handles CFL on evolving m
+    # per-direction (mass_flux_advection.jl). The global pilot is kept as
+    # a diagnostic backstop but disabled for production — uncomment to enable.
+    # r = find_mass_cfl_refinement(gpu.m_ref, gpu.am, gpu.bm, gpu.cm, grid,
+    #     adv_ws.cluster_sizes, n_sub; beta_limit=FT(0.95), max_r=16)
 
     copyto!(gpu.m_dev, gpu.m_ref)
-    for _ in 1:n_eff
+    for _ in 1:n_sub
         step[] += 1
         _apply_advection_latlon!(tracers, gpu.m_dev,
                                   gpu.am, gpu.bm, gpu.cm,
@@ -596,12 +589,8 @@ function advection_phase!(tracers, sched, air, phys, model,
                                   cfl_limit=FT(0.95))
     end
 
-    # Restore original fluxes if scaled
-    if r > 1
-        gpu.am .*= FT(r)
-        gpu.bm .*= FT(r)
-        gpu.cm .*= FT(r)
-    end
+    # Note: fluxes are not scaled globally. Per-direction adaptive subcycling
+    # handles CFL on evolving m via flux-remaining (mass_flux_advection.jl).
 
     # Convective transport ONCE per window (after all substeps).
     # Convert rm↔c using m_ref (moist basis, like TM5; exact roundtrip).

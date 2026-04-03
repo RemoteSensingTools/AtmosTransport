@@ -536,6 +536,13 @@ function process_day(date::Date, cfg, vc_native, merged_vc, merge_map)
     lons = Float64.(ds_mf["lon"][:])
     lats = Float64.(ds_mf["lat"][:])
 
+    # Validate grid convention: reject stale pole-centered spectral files
+    expected_center_1 = -90.0 + (180.0 / Ny) / 2
+    if abs(lats[1] - expected_center_1) > 0.01
+        error("Spectral NetCDF has lat[1]=$(lats[1])° (expected ≈$(round(expected_center_1, digits=2))°). " *
+              "Stale pole-centered file? Rerun preprocess_spectral_massflux.jl with TM5 grid convention.")
+    end
+
     # Find time indices for this date
     date_windows = [(i, DateTime(t)) for (i, t) in enumerate(mf_times)
                     if Date(t) == date]

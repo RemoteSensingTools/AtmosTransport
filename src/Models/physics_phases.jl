@@ -335,8 +335,14 @@ function process_met_after_upload!(sched, phys, grid::LatitudeLongitudeGrid{FT},
     # This matches the CS convention (no /n_sub, no scaling) and the old LL code.
 
     # TM5 convention: j=1,Ny are real cells at ±89.75° (not poles).
-    # Do NOT zero am — polar CFL is handled by the reduced grid (cluster_size=720).
-    # bm at pole faces (j=1, j=Ny+1) is already zero from the preprocessor.
+    # Ideally polar CFL is handled by reduced-grid clustering (TM5 uses cluster_size=720).
+    # However, the GPU kernel currently caps clusters at 4 (_MAX_GPU_CLUSTER in run_helpers.jl),
+    # so effective CFL at j=1,Ny is am/(4×m) ≈ 22, not am/(720×m) ≈ 0.07.
+    # Until the kernel supports full TM5 clustering, zero am at pole rows as a safeguard.
+    # bm at pole FACES (j=1, j=Ny+1) is already zero from the preprocessor.
+    Ny = grid.Ny
+    @views gpu.am[:, 1, :]  .= zero(FT)
+    @views gpu.am[:, Ny, :] .= zero(FT)
 end
 
 function process_met_after_upload!(sched, phys, grid::CubedSphereGrid{FT},

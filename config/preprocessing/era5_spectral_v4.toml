@@ -1,0 +1,39 @@
+# ERA5 fused spectral -> v4 daily binary preprocessor config
+#
+# Goes directly from spectral GRIB to merged-level daily binary,
+# skipping the intermediate NetCDF step. Produces ONLY core transport
+# fields (m, am, bm, cm, ps) plus v4 flux deltas (dam, dbm, dm).
+#
+# Usage:
+#   julia -t8 --project=. scripts/preprocessing/preprocess_spectral_v4_binary.jl \
+#       config/preprocessing/era5_spectral_v4.toml
+#
+#   # Single day:
+#   julia -t8 --project=. scripts/preprocessing/preprocess_spectral_v4_binary.jl \
+#       config/preprocessing/era5_spectral_v4.toml --day 2021-12-01
+
+[input]
+# Spectral GRIB files (VO/D param 138/155, LNSP param 152)
+# Downloaded by: scripts/download_era5_grib_tm5.py
+spectral_dir = "~/data/AtmosTransport/met/era5/spectral_hourly"
+
+# ERA5 hybrid sigma-pressure coefficients (138 interfaces for 137 levels)
+coefficients = "config/era5_L137_coefficients.toml"
+
+[output]
+directory = "/temp1/atmos_transport/era5_v4_hourly"
+
+[grid]
+nlon = 720          # 0.5 deg
+nlat = 361          # 0.5 deg
+level_top = 1       # TOA
+level_bot = 137     # Surface
+
+# Merge thin stratospheric levels: 137 -> ~75 levels
+# Levels thinner than this threshold (at p_surface=101325 Pa) are merged
+merge_min_thickness_Pa = 1000.0
+
+[numerics]
+float_type = "Float32"
+dt = 900.0              # advection sub-step [s]
+met_interval = 3600.0   # hourly met windows

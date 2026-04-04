@@ -43,8 +43,14 @@ function _run_loop!(model, grid::AbstractGrid{FT},
 
     # === Allocation (panel_map from grid — all allocators read it) ===
     _use_gchp_sched = _needs_gchp(model.advection_scheme)
+    _flux_delta = try
+        hasproperty(driver, :files) && !isempty(driver.files) &&
+        endswith(driver.files[1], ".bin") &&
+        _IO.has_flux_delta(driver)
+    catch; false; end
     sched     = build_io_scheduler(grid, arch, buffering; use_gchp=_use_gchp_sched,
-                                    panel_map=pm)
+                                    panel_map=pm,
+                                    flux_delta=_flux_delta)
     phys      = allocate_physics_buffers(grid, arch, model; panel_map=pm)
     tracers   = allocate_tracers(model, grid)
     air       = allocate_air_mass(grid, arch)

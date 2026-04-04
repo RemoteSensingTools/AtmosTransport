@@ -181,6 +181,17 @@ end
 # --- Interface implementations ---
 
 total_windows(d::PreprocessedLatLonMetDriver)    = d.n_windows
+
+"""Check if the first binary file has v4 flux deltas."""
+function has_flux_delta(d::PreprocessedLatLonMetDriver{FT}) where FT
+    isempty(d.files) && return false
+    f = d.files[1]
+    endswith(f, ".bin") || return false
+    r = MassFluxBinaryReader(f, FT)
+    result = r.has_flux_delta
+    close(r)
+    return result
+end
 window_dt(d::PreprocessedLatLonMetDriver)        = d.dt * d.steps_per_win
 steps_per_window(d::PreprocessedLatLonMetDriver) = d.steps_per_win
 start_date(d::PreprocessedLatLonMetDriver)       = d._start_date
@@ -219,6 +230,10 @@ function load_met_window!(cpu_buf::LatLonCPUBuffer,
         reader = MassFluxBinaryReader(filepath, FT)
         load_window!(cpu_buf.m, cpu_buf.am, cpu_buf.bm, cpu_buf.cm, cpu_buf.ps,
                      reader, local_win)
+        # v4: load flux deltas if available and buffer is allocated
+        if length(cpu_buf.dam) > 0
+            load_flux_delta_window!(cpu_buf.dam, cpu_buf.dbm, cpu_buf.dm, reader, local_win)
+        end
         close(reader)
     elseif mm === nothing
         # Direct read — no level merging

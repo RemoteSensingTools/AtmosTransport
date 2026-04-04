@@ -26,6 +26,7 @@ using ..TimeSteppers: AbstractTimeStepper, OperatorSplittingTimeStepper, Clock
 using Dates
 using ..IO: AbstractMetData, AbstractOutputWriter, MetDataSource
 using ..IO: AbstractMetDriver, read_met!, prepare_met_for_physics
+import ..IO as _IO
 using ..Sources: AbstractSurfaceFlux
 using ..Callbacks: AbstractCallback
 using DocStringExtensions

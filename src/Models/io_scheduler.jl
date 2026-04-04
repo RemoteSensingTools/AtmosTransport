@@ -58,23 +58,25 @@ Allocate met buffers and construct the IOScheduler.
 """
 function build_io_scheduler(grid::LatitudeLongitudeGrid{FT}, arch,
                              ::SingleBuffer; use_gchp::Bool=false,
-                             panel_map::AbstractPanelMap=SingleGPUMap()) where FT
+                             panel_map::AbstractPanelMap=SingleGPUMap(),
+                             flux_delta::Bool=false) where FT
     cs_cpu = _get_cluster_sizes_cpu(grid)
     Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
-    gpu = LatLonMetBuffer(arch, FT, Nx, Ny, Nz; cluster_sizes_cpu=cs_cpu)
-    cpu = LatLonCPUBuffer(FT, Nx, Ny, Nz)
+    gpu = LatLonMetBuffer(arch, FT, Nx, Ny, Nz; cluster_sizes_cpu=cs_cpu, flux_delta)
+    cpu = LatLonCPUBuffer(FT, Nx, Ny, Nz; flux_delta)
     IOScheduler(SingleBuffer(), gpu, gpu, cpu, cpu, :a, nothing, nothing, nothing)
 end
 
 function build_io_scheduler(grid::LatitudeLongitudeGrid{FT}, arch,
                              ::DoubleBuffer; use_gchp::Bool=false,
-                             panel_map::AbstractPanelMap=SingleGPUMap()) where FT
+                             panel_map::AbstractPanelMap=SingleGPUMap(),
+                             flux_delta::Bool=false) where FT
     cs_cpu = _get_cluster_sizes_cpu(grid)
     Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
-    gpu_a = LatLonMetBuffer(arch, FT, Nx, Ny, Nz; cluster_sizes_cpu=cs_cpu)
-    gpu_b = LatLonMetBuffer(arch, FT, Nx, Ny, Nz; cluster_sizes_cpu=cs_cpu)
-    cpu_a = LatLonCPUBuffer(FT, Nx, Ny, Nz)
-    cpu_b = LatLonCPUBuffer(FT, Nx, Ny, Nz)
+    gpu_a = LatLonMetBuffer(arch, FT, Nx, Ny, Nz; cluster_sizes_cpu=cs_cpu, flux_delta)
+    gpu_b = LatLonMetBuffer(arch, FT, Nx, Ny, Nz; cluster_sizes_cpu=cs_cpu, flux_delta)
+    cpu_a = LatLonCPUBuffer(FT, Nx, Ny, Nz; flux_delta)
+    cpu_b = LatLonCPUBuffer(FT, Nx, Ny, Nz; flux_delta)
     IOScheduler(DoubleBuffer(), gpu_a, gpu_b, cpu_a, cpu_b, :a, nothing, nothing, nothing)
 end
 

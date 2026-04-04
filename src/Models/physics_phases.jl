@@ -553,6 +553,33 @@ end
 """
     advection_phase!(tracers, sched, air, phys, model, grid, ws, n_sub, dt_sub, step)
 
+Recompute cm from horizontal divergence of am/bm on CPU.
+Simple top-down accumulation per column. Called once per substep when interpolating (v4).
+cm[1] = 0 (TOA), cm[Nz+1] = residual → enforced to zero at boundaries.
+"""
+function _compute_cm_from_divergence_gpu!(cm_gpu, am_gpu, bm_gpu, m_gpu, grid)
+    cm = Array(cm_gpu)
+    am = Array(am_gpu)
+    bm = Array(bm_gpu)
+    FT = eltype(cm)
+    Nx, Ny = grid.Nx, grid.Ny
+    Nz = size(cm, 3) - 1
+    fill!(cm, zero(FT))
+    @inbounds for j in 1:Ny, i in 1:Nx
+        acc = 0.0
+        for k in 1:Nz
+            div_h = (Float64(am[i+1, j, k]) - Float64(am[i, j, k])) +
+                    (Float64(bm[i, j+1, k]) - Float64(bm[i, j, k]))
+            acc -= div_h
+            cm[i, j, k+1] = FT(acc)
+        end
+    end
+    @views cm[:, :, 1]   .= zero(FT)
+    @views cm[:, :, end] .= zero(FT)
+    copyto!(cm_gpu, cm)
+end
+
+"""
 Clamp cm so |cm[k]| / m[k] <= cfl_limit and |cm[k]| / m[k-1] <= cfl_limit at every cell.
 ERA5 spectral data has ~0.02% of cells with extreme Z-CFL from deep convection.
 Operates on CPU buffers before GPU upload (called once per window).
@@ -600,26 +627,48 @@ function advection_phase!(tracers, sched, air, phys, model,
     # Build advection workspace — for Prather, augment with per-tracer slope storage
     adv_ws = _build_advection_workspace(gpu.ws, model.advection_scheme, tracers, gpu.m_ref)
 
-    # Clamp cm so |cm/m| <= cfl_limit at every cell. ERA5 spectral data has
-    # ~0.02% of cells with extreme vertical CFL (deep convection). Clamping
-    # these avoids inner subcycling divergence. TM5 avoids this by using a
-    # coarser grid (3°×2°×25L) that smooths out convective extremes.
-    _clamp_cm_cfl!(gpu.cm, gpu.m_ref, FT(0.95))
+    # TM5-style temporal interpolation (v4 binaries with flux deltas).
+    # Each substep uses linearly interpolated fluxes and prescribed m_target.
+    # Without deltas (v3): use constant fluxes with cm clamp.
+    has_deltas = gpu.dam !== nothing
+    if !has_deltas
+        _clamp_cm_cfl!(gpu.cm, gpu.m_ref, FT(0.95))
+    end
 
-    # m_dev evolves continuously through all substeps (TM5 advectx.F90:629).
+    # Save uninterpolated fluxes (needed to compute per-substep interpolation)
+    # When has_deltas=true, we modify gpu.am/bm/cm in-place each substep.
+    # They'll be overwritten by upload_met! at the next window.
+    am0 = has_deltas ? copy(gpu.am) : gpu.am
+    bm0 = has_deltas ? copy(gpu.bm) : gpu.bm
+    cm0 = has_deltas ? copy(gpu.cm) : gpu.cm
+    m0  = has_deltas ? copy(gpu.m_ref) : nothing
+
     copyto!(gpu.m_dev, gpu.m_ref)
-    for _ in 1:n_sub
+    for s in 1:n_sub
         step[] += 1
+
+        if has_deltas
+            # Interpolate fluxes to substep midpoint (TM5 TimeInterpolation)
+            t = FT(s - FT(0.5)) / FT(n_sub)
+            gpu.am .= am0 .+ t .* gpu.dam
+            gpu.bm .= bm0 .+ t .* gpu.dbm
+            # Prescribe m_target along pressure trajectory (GEOS approach)
+            gpu.m_dev .= m0 .+ t .* gpu.dm
+            # Recompute cm from interpolated am/bm constrained by m_target
+            _compute_cm_from_divergence_gpu!(gpu.cm, gpu.am, gpu.bm, gpu.m_dev, grid)
+            _clamp_cm_cfl!(gpu.cm, gpu.m_dev, FT(0.95))
+        end
+
         _apply_advection_latlon!(tracers, gpu.m_dev,
                                   gpu.am, gpu.bm, gpu.cm,
                                   grid, model.advection_scheme, adv_ws;
                                   cfl_limit=FT(0.95))
     end
 
-    # Sync m_ref to the post-advection m_dev so all downstream phases
-    # (convection, emissions, diffusion, output) divide/multiply rm by
-    # the SAME mass that rm was evolved with. The roundtrip rm./=m → op → c.*=m
-    # is exact regardless of which m, as long as both sides use the same one.
+    # Set m_ref to end-of-window mass (= m0 + dm for v4, = m_dev for v3)
+    if has_deltas
+        gpu.m_ref .= m0 .+ gpu.dm
+    end
     copyto!(gpu.m_ref, gpu.m_dev)
 
     # Convective transport ONCE per window (after all substeps).

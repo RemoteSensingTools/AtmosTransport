@@ -11,7 +11,7 @@ and discrepancies.
 
 | Aspect | Julia Implementation | TM5 F90 Reference | Status |
 |--------|---------------------|-------------------|--------|
-| **Met loading** | Pre-computed binary (v3 constant, v4 interpolated dam/dbm/dm) | `TimeInterpolation` (meteodata.F90:680) blends pu/pv per substep → `dynam0` (advect_tools.F90:638) computes am/bm/cm | ⚠️ v4 approximates |
+| **Met loading** | Pre-computed binary (v3 constant, v4 interpolated dam/dbm/dm) | `TimeInterpolation` (meteodata.F90:533) blends pu/pv per substep → `dynam0` (advect_tools.F90:638) computes am/bm/cm | ⚠️ v4 approximates |
 | **CFL control** | Per-direction inner subdivision, n_sub = ceil(CFL/0.95), capped at 50 | Outer loop `Check_CFL` (advectm_cfl.F90:154) halves ndyn globally, scales ALL fluxes, retries | ⚠️ Differs |
 | **X subcycling** | Global max CFL → uniform n_sub for all rows | Per-row adaptive nloop in `dynamum` (advectm_cfl.F90:1217-1268) with mass evolution tracking | ⚠️ Differs |
 | **Y subcycling** | Same uniform subdivision as X | NO subcycling — relies on outer `Check_CFL` loop (`dynamvm`, advecty.F90:334) | ⚠️ Differs |

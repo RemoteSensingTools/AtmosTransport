@@ -134,23 +134,27 @@ end
             am_l = am[i, j, k]
             flux_left = if am_l >= zero(FT)
                 alpha = am_l / m[im, j, k]
-                alpha * (rm[im, j, k] + (one(FT) - alpha) * sx_im)
+                f = alpha * (rm[im, j, k] + (one(FT) - alpha) * sx_im)
+                min(f, rm[im, j, k])
             else
                 alpha = am_l / m[i, j, k]
-                alpha * (rm[i, j, k] - (one(FT) + alpha) * sx_i)
+                f = alpha * (rm[i, j, k] - (one(FT) + alpha) * sx_i)
+                max(f, -rm[i, j, k])
             end
 
             am_r = am[i + 1, j, k]
             flux_right = if am_r >= zero(FT)
                 alpha = am_r / m[i, j, k]
-                alpha * (rm[i, j, k] + (one(FT) - alpha) * sx_i)
+                f = alpha * (rm[i, j, k] + (one(FT) - alpha) * sx_i)
+                min(f, rm[i, j, k])
             else
                 alpha = am_r / m[ip, j, k]
-                alpha * (rm[ip, j, k] - (one(FT) + alpha) * sx_ip)
+                f = alpha * (rm[ip, j, k] - (one(FT) + alpha) * sx_ip)
+                max(f, -rm[ip, j, k])
             end
 
             rm_new[i, j, k] = rm[i, j, k] + flux_left - flux_right
-            m_new[i, j, k]  = m[i, j, k]  + am[i, j, k] - am[i + 1, j, k]
+            m_new[i, j, k]  = max(m[i, j, k]  + am[i, j, k] - am[i + 1, j, k], eps(FT))
         else
             # --- Reduced row: work on cluster aggregates ---
             Nx_red = Nx ÷ r
@@ -295,12 +299,14 @@ end
             bm_s = bm[i, j, k]
             if bm_s >= zero(FT)
                 beta = bm_s / m[i, j - 1, k]
-                j - 1 == 1 ? beta * rm[i, j - 1, k] :
+                f = j - 1 == 1 ? beta * rm[i, j - 1, k] :
                     beta * (rm[i, j - 1, k] + (one(FT) - beta) * sy_jm)
+                min(f, rm[i, j - 1, k])
             else
                 beta = bm_s / m[i, j, k]
-                j == Ny ? beta * rm[i, j, k] :
+                f = j == Ny ? beta * rm[i, j, k] :
                     beta * (rm[i, j, k] - (one(FT) + beta) * sy_j)
+                max(f, -rm[i, j, k])
             end
         else
             zero(FT)
@@ -311,19 +317,21 @@ end
             bm_n = bm[i, j + 1, k]
             if bm_n >= zero(FT)
                 beta = bm_n / m[i, j, k]
-                j == 1 ? beta * rm[i, j, k] :
+                f = j == 1 ? beta * rm[i, j, k] :
                     beta * (rm[i, j, k] + (one(FT) - beta) * sy_j)
+                min(f, rm[i, j, k])
             else
                 beta = bm_n / m[i, j + 1, k]
-                j + 1 == Ny ? beta * rm[i, j + 1, k] :
+                f = j + 1 == Ny ? beta * rm[i, j + 1, k] :
                     beta * (rm[i, j + 1, k] - (one(FT) + beta) * sy_jp)
+                max(f, -rm[i, j + 1, k])
             end
         else
             zero(FT)
         end
 
         rm_new[i, j, k] = rm[i, j, k] + flux_s - flux_n
-        m_new[i, j, k]  = m[i, j, k]  + bm[i, j, k] - bm[i, j + 1, k]
+        m_new[i, j, k]  = max(m[i, j, k]  + bm[i, j, k] - bm[i, j + 1, k], eps(FT))
     end
 end
 
@@ -380,10 +388,12 @@ end
             cm_t = cm[i, j, k]
             if cm_t > zero(FT)
                 gamma = cm_t / m[i, j, k - 1]
-                gamma * (rm[i, j, k - 1] + (one(FT) - gamma) * sz_km)
+                f = gamma * (rm[i, j, k - 1] + (one(FT) - gamma) * sz_km)
+                min(f, rm[i, j, k - 1])  # positivity: don't extract more than available
             elseif cm_t < zero(FT)
                 gamma = cm_t / m[i, j, k]
-                gamma * (rm[i, j, k] - (one(FT) + gamma) * sz_k)
+                f = gamma * (rm[i, j, k] - (one(FT) + gamma) * sz_k)
+                max(f, -rm[i, j, k])     # positivity: don't extract more than available
             else
                 zero(FT)
             end
@@ -396,10 +406,12 @@ end
             cm_b = cm[i, j, k + 1]
             if cm_b > zero(FT)
                 gamma = cm_b / m[i, j, k]
-                gamma * (rm[i, j, k] + (one(FT) - gamma) * sz_k)
+                f = gamma * (rm[i, j, k] + (one(FT) - gamma) * sz_k)
+                min(f, rm[i, j, k])      # positivity: don't extract more than available
             elseif cm_b < zero(FT)
                 gamma = cm_b / m[i, j, k + 1]
-                gamma * (rm[i, j, k + 1] - (one(FT) + gamma) * sz_kp)
+                f = gamma * (rm[i, j, k + 1] - (one(FT) + gamma) * sz_kp)
+                max(f, -rm[i, j, k + 1]) # positivity: don't extract more than available
             else
                 zero(FT)
             end
@@ -408,7 +420,7 @@ end
         end
 
         rm_new[i, j, k] = rm[i, j, k] + flux_top - flux_bot
-        m_new[i, j, k]  = m[i, j, k]  + cm[i, j, k] - cm[i, j, k + 1]
+        m_new[i, j, k]  = max(m[i, j, k]  + cm[i, j, k] - cm[i, j, k + 1], eps(FT))
     end
 end
 

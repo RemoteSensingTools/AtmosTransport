@@ -59,6 +59,7 @@ using ..Advection: MassFluxWorkspace, allocate_massflux_workspace,
                    apply_dry_delp_panel!, apply_dry_am_panel!, apply_dry_bm_panel!,
                    apply_dry_cmfmc_panel!, apply_dry_dtrain_panel!,
                    build_geometry_cache, max_cfl_x_cs, max_cfl_y_cs,
+                   max_cfl_massflux_x, max_cfl_massflux_y, max_cfl_massflux_z,
                    SlopesAdvection, PPMAdvection
 using ..Diffusion: DiffusionWorkspace, diffuse_gpu!, diffuse_cs_panels!,
                    BoundaryLayerDiffusion, PBLDiffusion, NonLocalPBLDiffusion,
@@ -217,20 +218,20 @@ end
 Tracers are tracer mass `rm` (TM5-style prognostic variable)."""
 function _apply_advection_latlon!(tracers, m, am, bm, cm, grid,
                                    scheme::SlopesAdvection, ws;
-                                   cfl_limit)
-    strang_split_massflux!(tracers, m, am, bm, cm, grid, true, ws; cfl_limit)
+                                   cfl_limit, debug_cb=nothing)
+    strang_split_massflux!(tracers, m, am, bm, cm, grid, true, ws; cfl_limit, debug_cb)
 end
 
 function _apply_advection_latlon!(tracers, m, am, bm, cm, grid,
                                    scheme::PPMAdvection{ORD}, ws;
-                                   cfl_limit) where ORD
+                                   cfl_limit, debug_cb=nothing) where ORD
     strang_split_massflux_ppm!(tracers, m, am, bm, cm, grid, Val(ORD), ws;
                                 cfl_limit)
 end
 
 function _apply_advection_latlon!(tracers, m, am, bm, cm, grid,
                                    scheme::PratherAdvection, ws;
-                                   cfl_limit)
+                                   cfl_limit, debug_cb=nothing)
     # ws is a NamedTuple with .base (MassFluxWorkspace) and .prather (per-tracer PratherWorkspace)
     strang_split_prather!(tracers, m, am, bm, cm, grid, ws.prather, scheme.use_limiter)
 end
@@ -397,4 +398,3 @@ function _write_staging_progress(model, w::Int)
         # Non-fatal — staging daemon is optional
     end
 end
-

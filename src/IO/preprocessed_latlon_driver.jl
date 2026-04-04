@@ -49,6 +49,12 @@ struct PreprocessedLatLonMetDriver{FT} <: AbstractMassFluxMetDriver{FT}
     level_bot       :: Int
     "merge map for vertical level merging (native level → merged level index), or nothing"
     merge_map       :: Union{Nothing, Vector{Int}}
+    "optional directory with external QV/thermo files for binaries that omit embedded QV"
+    qv_dir          :: String
+    "native-grid hybrid A coefficients used to merge external QV with ps weights"
+    native_A_ifc    :: Vector{Float64}
+    "native-grid hybrid B coefficients used to merge external QV with ps weights"
+    native_B_ifc    :: Vector{Float64}
     "simulation start date (auto-detected from file time variable)"
     _start_date     :: Date
 end
@@ -65,7 +71,10 @@ function PreprocessedLatLonMetDriver(; FT::Type{<:AbstractFloat} = Float64,
                                        files::Vector{String},
                                        dt::Union{Nothing, Real} = nothing,
                                        merge_map::Union{Nothing, Vector{Int}} = nothing,
-                                       max_windows::Union{Nothing, Int} = nothing)
+                                       max_windows::Union{Nothing, Int} = nothing,
+                                       qv_dir::String = "",
+                                       native_A_ifc::Vector{Float64} = Float64[],
+                                       native_B_ifc::Vector{Float64} = Float64[])
     isempty(files) && error("PreprocessedLatLonMetDriver: no files provided")
 
     # Note: v2 binary files have pre-merged levels — merge_map should be nothing.
@@ -139,7 +148,8 @@ function PreprocessedLatLonMetDriver(; FT::Type{<:AbstractFloat} = Float64,
         files, wins_per, total,
         FT(actual_dt), steps_per_win,
         lons, lats, Nx, Ny, Nz,
-        level_top, level_bot, merge_map, _start)
+        level_top, level_bot, merge_map,
+        expanduser(qv_dir), native_A_ifc, native_B_ifc, _start)
 end
 
 """
@@ -160,21 +170,310 @@ function embedded_vertical_coordinate(driver::PreprocessedLatLonMetDriver{FT}) w
     return (A_ifc=A, B_ifc=B)
 end
 
+function _extract_date_from_filename(filepath::String)
+    bn = basename(filepath)
+    m = match(r"(20\d{6})", bn)
+    if m !== nothing
+        s = m[1]
+        return Date(parse(Int, s[1:4]), parse(Int, s[5:6]), parse(Int, s[7:8]))
+    end
+    m = match(r"(20\d{4})", bn)
+    if m !== nothing
+        s = m[1]
+        return Date(parse(Int, s[1:4]), parse(Int, s[5:6]), 1)
+    end
+    return nothing
+end
+
 """Parse start date from a preprocessed file's time variable units attribute."""
 function _detect_start_date(filepath::String)
     if endswith(filepath, ".bin")
-        return Date(2000, 1, 1)  # binary files have no time metadata
+        guessed = _extract_date_from_filename(filepath)
+        return something(guessed, Date(2000, 1, 1))
     end
     try
         NCDataset(filepath, "r") do ds
             units = ds["time"].attrib["units"]  # e.g. "hours since 2023-06-01 00:00:00"
             m = match(r"since\s+(\d{4})-(\d{2})-(\d{2})", units)
             m !== nothing && return Date(parse(Int, m[1]), parse(Int, m[2]), parse(Int, m[3]))
-            return Date(2000, 1, 1)
+            guessed = _extract_date_from_filename(filepath)
+            return something(guessed, Date(2000, 1, 1))
         end
     catch
         @warn "Could not auto-detect start_date from preprocessed file; defaulting to 2000-01-01"
         return Date(2000, 1, 1)
+    end
+end
+
+function _window_datetime(driver::PreprocessedLatLonMetDriver, win::Int)
+    seconds_per_window = round(Int, Float64(window_dt(driver)))
+    return DateTime(start_date(driver)) + Dates.Second((win - 1) * seconds_per_window)
+end
+
+function _lookup_external_qv_file(driver::PreprocessedLatLonMetDriver, date::Date)
+    isempty(driver.qv_dir) && return ""
+    isdir(driver.qv_dir) || return ""
+
+    datestr = Dates.format(date, "yyyymmdd")
+    direct_candidates = (
+        joinpath(driver.qv_dir, "era5_thermo_ml_$(datestr).nc"),
+        joinpath(driver.qv_dir, "era5_qv_$(datestr).nc"),
+    )
+    for path in direct_candidates
+        isfile(path) && return path
+    end
+
+    for f in readdir(driver.qv_dir; join=true)
+        bn = lowercase(basename(f))
+        endswith(bn, ".nc") || continue
+        contains(bn, datestr) || continue
+        (contains(bn, "thermo") || contains(bn, "qv")) || continue
+        return f
+    end
+    return ""
+end
+
+function _parse_cf_time_units(units::AbstractString)
+    m = match(r"^\s*([A-Za-z]+)\s+since\s+" *
+              raw"(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2})(?::(\d{2})(?::(\d{2}))?)?)?",
+              units)
+    m === nothing && return nothing
+
+    unit = lowercase(m[1])
+    year = parse(Int, m[2])
+    month = parse(Int, m[3])
+    day = parse(Int, m[4])
+    hour = m[5] === nothing ? 0 : parse(Int, m[5])
+    minute = m[6] === nothing ? 0 : parse(Int, m[6])
+    second = m[7] === nothing ? 0 : parse(Int, m[7])
+    return (; unit, origin=DateTime(year, month, day, hour, minute, second))
+end
+
+function _cf_time_to_datetime(value, units::AbstractString)
+    value isa DateTime && return value
+    value isa Date && return DateTime(value)
+    value isa Real || return nothing
+
+    parsed = _parse_cf_time_units(units)
+    parsed === nothing && return nothing
+
+    seconds_per_unit = if startswith(parsed.unit, "second")
+        1.0
+    elseif startswith(parsed.unit, "minute")
+        60.0
+    elseif startswith(parsed.unit, "hour")
+        3600.0
+    elseif startswith(parsed.unit, "day")
+        86400.0
+    else
+        return nothing
+    end
+
+    delta_ms = round(Int, 1000 * Float64(value) * seconds_per_unit)
+    return parsed.origin + Dates.Millisecond(delta_ms)
+end
+
+function _find_qv_time_index(ds, target_dt::DateTime, fallback_idx::Int)
+    for tkey in ("valid_time", "time")
+        haskey(ds, tkey) || continue
+        tvar = ds[tkey]
+        times = tvar[:]
+        units = try
+            String(tvar.attrib["units"])
+        catch
+            ""
+        end
+
+        for (idx, raw_time) in pairs(times)
+            decoded = _cf_time_to_datetime(raw_time, units)
+            decoded === nothing && continue
+            abs(Dates.value(decoded - target_dt)) <= 1000 && return idx
+        end
+
+        !isempty(times) && return clamp(fallback_idx, 1, length(times))
+    end
+    return fallback_idx
+end
+
+function _needs_lat_flip(ds)
+    for lname in ("latitude", "lat")
+        haskey(ds, lname) || continue
+        lats = ds[lname][:]
+        return length(lats) > 1 && lats[1] > lats[end]
+    end
+    return false
+end
+
+_is_time_dim(name::AbstractString) = name in ("time", "valid_time")
+_is_lon_dim(name::AbstractString) = name in ("lon", "longitude")
+_is_lat_dim(name::AbstractString) = name in ("lat", "latitude")
+_is_level_dim(name::AbstractString) = name in ("lev", "level", "levels", "hybrid", "model_level_number")
+
+function _extract_qv_native(var, tidx::Int, ::Type{FT}) where FT
+    dims = lowercase.(String.(collect(dimnames(var))))
+    nd = ndims(var)
+
+    lon_axis = findfirst(_is_lon_dim, dims)
+    lat_axis = findfirst(_is_lat_dim, dims)
+    lev_axis = findfirst(_is_level_dim, dims)
+    (lon_axis === nothing || lat_axis === nothing || lev_axis === nothing) && return nothing
+
+    time_axis = findfirst(_is_time_dim, dims)
+    idx = if time_axis === nothing
+        ntuple(_ -> Colon(), nd)
+    else
+        ntuple(i -> i == time_axis ? tidx : Colon(), nd)
+    end
+
+    raw = FT.(var[idx...])
+    kept_dims = time_axis === nothing ? dims : [dims[i] for i in 1:nd if i != time_axis]
+    perm = (
+        findfirst(_is_lon_dim, kept_dims),
+        findfirst(_is_lat_dim, kept_dims),
+        findfirst(_is_level_dim, kept_dims),
+    )
+    any(p -> p === nothing, perm) && return nothing
+
+    perm_tuple = (perm[1]::Int, perm[2]::Int, perm[3]::Int)
+    return perm_tuple == (1, 2, 3) ? raw : permutedims(raw, perm_tuple)
+end
+
+function _load_ps_window!(ps::Array{FT,2},
+                          driver::PreprocessedLatLonMetDriver{FT},
+                          win::Int) where FT
+    file_idx, local_win = window_to_file_local(driver, win)
+    filepath = driver.files[file_idx]
+
+    if endswith(filepath, ".bin")
+        reader = MassFluxBinaryReader(filepath, FT)
+        off = (local_win - 1) * reader.elems_per_window +
+              reader.n_m + reader.n_am + reader.n_bm + reader.n_cm
+        copyto!(ps, 1, reader.data, off + 1, reader.n_ps)
+        close(reader)
+        return true
+    end
+
+    ds = NCDataset(filepath, "r")
+    try
+        haskey(ds, "ps") || return false
+        ps .= FT.(ds["ps"][:, :, local_win])
+        return true
+    finally
+        close(ds)
+    end
+end
+
+function _merge_qv_from_ps!(qv_merged::Array{FT,3}, qv_native::Array{FT,3},
+                            ps::Array{FT,2}, A_ifc::Vector{Float64},
+                            B_ifc::Vector{Float64}, mm::Vector{Int}) where FT
+    Nx, Ny = size(qv_merged, 1), size(qv_merged, 2)
+    fill!(qv_merged, zero(FT))
+    m_sum = zeros(FT, Nx, Ny, size(qv_merged, 3))
+
+    @inbounds for k in 1:length(mm)
+        km = mm[k]
+        dA = FT(A_ifc[k + 1] - A_ifc[k])
+        dB = FT(B_ifc[k + 1] - B_ifc[k])
+        @views for j in 1:Ny, i in 1:Nx
+            w = dA + dB * ps[i, j]
+            qv_merged[i, j, km] += qv_native[i, j, k] * w
+            m_sum[i, j, km] += w
+        end
+    end
+
+    @inbounds for km in 1:size(qv_merged, 3), j in 1:Ny, i in 1:Nx
+        ms = m_sum[i, j, km]
+        qv_merged[i, j, km] = ms > zero(FT) ? qv_merged[i, j, km] / ms : zero(FT)
+    end
+    return nothing
+end
+
+function _derive_merge_map_from_interfaces(native_A::Vector{Float64},
+                                           native_B::Vector{Float64},
+                                           merged_A::Vector{Float64},
+                                           merged_B::Vector{Float64})
+    length(native_A) == length(native_B) || return nothing
+    length(merged_A) == length(merged_B) || return nothing
+    length(native_A) >= length(merged_A) || return nothing
+
+    same_ifc(i, j) = isapprox(native_A[i], merged_A[j]; rtol=0, atol=1e-8) &&
+                     isapprox(native_B[i], merged_B[j]; rtol=0, atol=1e-10)
+
+    mm = Vector{Int}(undef, length(native_A) - 1)
+    native_ifc = 1
+    for km in 1:length(merged_A)-1
+        same_ifc(native_ifc, km) || return nothing
+        while native_ifc < length(native_A)
+            mm[native_ifc] = km
+            native_ifc += 1
+            same_ifc(native_ifc, km + 1) && break
+        end
+        same_ifc(native_ifc, km + 1) || return nothing
+    end
+
+    native_ifc == length(native_A) || return nothing
+    return mm
+end
+
+function _load_qv_window_external!(qv::Array{FT,3},
+                                   driver::PreprocessedLatLonMetDriver{FT},
+                                   win::Int) where FT
+    qv_file = _lookup_external_qv_file(driver, Date(_window_datetime(driver, win)))
+    isempty(qv_file) && return false
+
+    ds = NCDataset(qv_file, "r")
+    try
+        varname = nothing
+        for candidate in ("qv", "QV", "q", "specific_humidity")
+            if haskey(ds, candidate)
+                varname = candidate
+                break
+            end
+        end
+        varname === nothing && return false
+
+        target_dt = _window_datetime(driver, win)
+        file_idx, local_win = window_to_file_local(driver, win)
+        tidx = _find_qv_time_index(ds, target_dt, local_win)
+        qv_native = _extract_qv_native(ds[varname], tidx, FT)
+        qv_native === nothing && return false
+        if _needs_lat_flip(ds)
+            qv_native = qv_native[:, end:-1:1, :]
+        end
+
+        size(qv_native, 1) == size(qv, 1) || return false
+        size(qv_native, 2) == size(qv, 2) || return false
+
+        if size(qv_native, 3) == size(qv, 3)
+            qv .= qv_native
+            return true
+        end
+
+        mm = driver.merge_map
+        if mm === nothing
+            embedded_vc = embedded_vertical_coordinate(driver)
+            if embedded_vc !== nothing &&
+               length(driver.native_A_ifc) == size(qv_native, 3) + 1
+                mm = _derive_merge_map_from_interfaces(driver.native_A_ifc,
+                                                       driver.native_B_ifc,
+                                                       embedded_vc.A_ifc,
+                                                       embedded_vc.B_ifc)
+            end
+        end
+        if mm !== nothing &&
+           size(qv_native, 3) == length(mm) &&
+           length(driver.native_A_ifc) == length(mm) + 1 &&
+           length(driver.native_B_ifc) == length(mm) + 1
+            ps = Array{FT}(undef, size(qv, 1), size(qv, 2))
+            _load_ps_window!(ps, driver, win) || return false
+            _merge_qv_from_ps!(qv, qv_native, ps,
+                               driver.native_A_ifc, driver.native_B_ifc, mm)
+            return true
+        end
+
+        return false
+    finally
+        close(ds)
     end
 end
 
@@ -496,7 +795,8 @@ function load_qv_window!(qv::Array{FT, 3},
         reader = MassFluxBinaryReader(filepath, FT)
         ok = load_qv_window!(qv, reader, local_win)
         close(reader)
-        return ok
+        ok && return ok
+        return _load_qv_window_external!(qv, driver, win)
     end
 
     ds = NCDataset(filepath, "r")

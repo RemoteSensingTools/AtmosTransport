@@ -1270,7 +1270,8 @@ function strang_split_massflux!(tracers::NamedTuple,
                                  grid::LatitudeLongitudeGrid,
                                  use_limiter::Bool,
                                  ws::MassFluxWorkspace{FT};
-                                 cfl_limit::FT = FT(0.95)) where FT
+                                 cfl_limit::FT = FT(0.95),
+                                 debug_cb=nothing) where FT
     # Multi-tracer: each tracer is advected independently, restoring m between.
     n_tr = length(tracers)
     m_save = n_tr > 1 ? similar(m) : m
@@ -1285,8 +1286,11 @@ function strang_split_massflux!(tracers::NamedTuple,
         copyto!(ws.rm, rm_tracer)
         rm_single = NamedTuple{(name,)}((ws.rm,))
 
+        debug_cb !== nothing && debug_cb("start", name, ws.rm, m)
         advect_x_massflux_subcycled!(rm_single, m, am, grid, use_limiter, ws; cfl_limit)
+        debug_cb !== nothing && debug_cb("after_x1", name, ws.rm, m)
         advect_y_massflux_subcycled!(rm_single, m, bm, grid, use_limiter, ws; cfl_limit)
+        debug_cb !== nothing && debug_cb("after_y1", name, ws.rm, m)
         # Z-advection with standard CFL subcycling. TM5 allows gamma > 1 because it
         # uses prognostic slopes (rzm) that carry subgrid history. Our diagnostic slopes
         # (recomputed fresh each step via minmod) cannot prevent negative rm when gamma > 1
@@ -1294,9 +1298,13 @@ function strang_split_massflux!(tracers::NamedTuple,
         # Subcycling with cfl_limit=0.95 ensures gamma < 1 (3 iterations for Z-CFL=2.5).
         # Implementing prognostic slopes (Session 3) would allow removing this constraint.
         advect_z_massflux_subcycled!(rm_single, m, cm, use_limiter, ws; cfl_limit)
+        debug_cb !== nothing && debug_cb("after_z1", name, ws.rm, m)
         advect_z_massflux_subcycled!(rm_single, m, cm, use_limiter, ws; cfl_limit)
+        debug_cb !== nothing && debug_cb("after_z2", name, ws.rm, m)
         advect_y_massflux_subcycled!(rm_single, m, bm, grid, use_limiter, ws; cfl_limit)
+        debug_cb !== nothing && debug_cb("after_y2", name, ws.rm, m)
         advect_x_massflux_subcycled!(rm_single, m, am, grid, use_limiter, ws; cfl_limit)
+        debug_cb !== nothing && debug_cb("after_x2", name, ws.rm, m)
 
         copyto!(rm_tracer, ws.rm)
     end
@@ -1327,18 +1335,26 @@ function strang_split_massflux!(tracers::NamedTuple,
                                  am, bm, cm,
                                  grid::LatitudeLongitudeGrid,
                                  use_limiter::Bool;
-                                 cfl_limit::FT = FT(0.95)) where FT
+                                 cfl_limit::FT = FT(0.95),
+                                 debug_cb=nothing) where FT
     # Allocate working copies (the advect_*_subcycled! functions modify rm in-place)
     rm_tracers = NamedTuple{keys(tracers)}(
         Tuple(copy(rm) for rm in values(tracers))
     )
 
+    debug_cb !== nothing && debug_cb("start", :all, rm_tracers, m)
     advect_x_massflux_subcycled!(rm_tracers, m, am, grid, use_limiter; cfl_limit)
+    debug_cb !== nothing && debug_cb("after_x1", :all, rm_tracers, m)
     advect_y_massflux_subcycled!(rm_tracers, m, bm, grid, use_limiter; cfl_limit)
+    debug_cb !== nothing && debug_cb("after_y1", :all, rm_tracers, m)
     advect_z_massflux_subcycled!(rm_tracers, m, cm, use_limiter; cfl_limit)
+    debug_cb !== nothing && debug_cb("after_z1", :all, rm_tracers, m)
     advect_z_massflux_subcycled!(rm_tracers, m, cm, use_limiter; cfl_limit)
+    debug_cb !== nothing && debug_cb("after_z2", :all, rm_tracers, m)
     advect_y_massflux_subcycled!(rm_tracers, m, bm, grid, use_limiter; cfl_limit)
+    debug_cb !== nothing && debug_cb("after_y2", :all, rm_tracers, m)
     advect_x_massflux_subcycled!(rm_tracers, m, am, grid, use_limiter; cfl_limit)
+    debug_cb !== nothing && debug_cb("after_x2", :all, rm_tracers, m)
 
     for (name, rm_tracer) in pairs(tracers)
         rm_tracer .= rm_tracers[name]

@@ -141,6 +141,7 @@ Common keys for all drivers:
 |-----|------|-------------|
 | `directory` | string | Directory containing monthly `.bin` mass flux shards |
 | `file` | string | Single binary file (alternative to `directory`) |
+| `qv_directory` | string | Optional directory with external ERA5 thermo/QV NetCDF used when `.bin` shards omit embedded QV |
 
 **GEOS-FP/IT cubed-sphere driver** (`driver = "geosfp_cs"`):
 
@@ -165,6 +166,8 @@ Common keys for all drivers:
 | `ppm_order` | int | `7` | PPM polynomial order: 4, 5, 6, or 7 (only used when `scheme = "ppm"`) |
 | `damp_coeff` | float | `0.0` | Divergence damping coefficient (PPM only) |
 | `linrood` | bool | `false` | Lin-Rood cross-term splitting (CS grids, PPM only). Averages X-first and Y-first PPM orderings to eliminate directional bias at panel boundaries |
+| `enable_flux_delta` | bool | `false` | Enable LL v4 flux-delta interpolation (`dam/dbm/dm`) for preprocessed binaries that carry it |
+| `debug_first_window` | bool | `false` | Log first-window LL sweep diagnostics after each X/Y/Z stage (useful for NaN localization) |
 | `mass_fixer` | bool | `true` | Per-cell mass fixer after each advection step |
 
 ### `[convection]`

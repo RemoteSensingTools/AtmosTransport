@@ -400,6 +400,7 @@ function _build_met_driver(driver_type::String, cfg::Dict, met_cfg_default, ::Ty
 
     elseif driver_type == "preprocessed_latlon"
         dir = _resolve_data_path(get(cfg, "directory", ""))
+        qv_dir = _resolve_data_path(get(cfg, "qv_directory", ""))
         ft_tag = FT == Float32 ? "float32" : "float64"
         files = if !isempty(dir) && isdir(dir)
             find_massflux_shards(dir, ft_tag)
@@ -409,7 +410,13 @@ function _build_met_driver(driver_type::String, cfg::Dict, met_cfg_default, ::Ty
         end
         max_win_cfg = get(cfg, "max_windows", nothing)
         max_windows = max_win_cfg !== nothing ? Int(max_win_cfg) : nothing
-        return PreprocessedLatLonMetDriver(; FT, files, dt, merge_map, max_windows)
+        native_A_ifc, native_B_ifc = try
+            load_vertical_coefficients(met_cfg_default; FT=Float64)
+        catch
+            Float64[], Float64[]
+        end
+        return PreprocessedLatLonMetDriver(; FT, files, dt, merge_map, max_windows,
+                                           qv_dir, native_A_ifc, native_B_ifc)
 
     elseif driver_type == "geosfp_cs"
         preproc_dir = _resolve_data_path(get(cfg, "preprocessed_dir", ""))

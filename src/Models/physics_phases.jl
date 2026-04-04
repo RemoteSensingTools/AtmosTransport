@@ -35,6 +35,79 @@ end
 """Global ref for moist sub-step diagnostics. Set to a `MoistSubStepDiag` to enable capture."""
 const MOIST_DIAG = Ref{Any}(nothing)
 
+_ll_advection_cfg(model) = get(get(model.metadata, "config", Dict()), "advection", Dict())
+
+function _ll_debug_first_window(model)
+    adv_cfg = _ll_advection_cfg(model)
+    return get(adv_cfg, "debug_first_window", false) ||
+           get(adv_cfg, "debug_ll_first_window", false)
+end
+
+function _ll_use_flux_delta(model, gpu)
+    adv_cfg = _ll_advection_cfg(model)
+    enabled = get(adv_cfg, "enable_flux_delta", get(adv_cfg, "use_flux_delta", false))
+    enabled || return false
+    gpu.dam === nothing && return false
+    gpu.dbm === nothing && return false
+    gpu.dm === nothing && return false
+    return length(gpu.dam) > 0 && length(gpu.dbm) > 0 && length(gpu.dm) > 0
+end
+
+_ll_massflux_workspace(adv_ws) = hasproperty(adv_ws, :base) ? adv_ws.base : adv_ws
+
+function _finite_array_stats(arr)
+    host = Array(arr)
+    n_nan = 0
+    n_inf = 0
+    n_nonpos = 0
+    n_finite = 0
+    minv = 0.0
+    maxv = 0.0
+    have_finite = false
+
+    @inbounds for x in host
+        if isnan(x)
+            n_nan += 1
+        elseif isinf(x)
+            n_inf += 1
+        else
+            xf = Float64(x)
+            n_finite += 1
+            x <= zero(x) && (n_nonpos += 1)
+            if have_finite
+                minv = min(minv, xf)
+                maxv = max(maxv, xf)
+            else
+                minv = xf
+                maxv = xf
+                have_finite = true
+            end
+        end
+    end
+
+    return (; n_nan, n_inf, n_nonpos, n_finite,
+             min=have_finite ? minv : NaN,
+             max=have_finite ? maxv : NaN)
+end
+
+function _ll_first_window_debug_cb(tracers, gpu, adv_ws)
+    ws = _ll_massflux_workspace(adv_ws)
+    ws isa MassFluxWorkspace || return nothing
+    target_name = first(keys(tracers))
+
+    return function (stage, name, rm_state, m_state)
+        (name == :all || name == target_name) || return nothing
+        rm_arr = rm_state isa NamedTuple ? rm_state[target_name] : rm_state
+        rm_stats = _finite_array_stats(rm_arr)
+        m_stats = _finite_array_stats(m_state)
+        cfl_x = max_cfl_massflux_x(gpu.am, m_state, ws.cfl_x, ws.cluster_sizes)
+        cfl_y = max_cfl_massflux_y(gpu.bm, m_state, ws.cfl_y)
+        cfl_z = max_cfl_massflux_z(gpu.cm, m_state, ws.cfl_z)
+        @info "[LL first-window debug]" stage=stage tracer=target_name rm_stats=rm_stats m_stats=m_stats cfl=(x=cfl_x, y=cfl_y, z=cfl_z)
+        return nothing
+    end
+end
+
 # =====================================================================
 # Setup helpers
 # =====================================================================
@@ -651,10 +724,13 @@ function advection_phase!(tracers, sched, air, phys, model,
     # TM5-style temporal interpolation (v4 binaries with flux deltas).
     # Each substep uses linearly interpolated fluxes and prescribed m_target.
     # Without deltas (v3): use constant fluxes with cm clamp.
-    has_deltas = false  # DISABLED: v4 interpolation produces NaN — needs debugging
+    has_deltas = _ll_use_flux_delta(model, gpu)
     if !has_deltas
         _clamp_cm_cfl!(gpu.cm, gpu.m_ref, FT(0.95))
     end
+
+    debug_cb = (_ll_debug_first_window(model) && step[] == 0) ?
+        _ll_first_window_debug_cb(tracers, gpu, adv_ws) : nothing
 
     # Save uninterpolated fluxes (needed to compute per-substep interpolation)
     # When has_deltas=true, we modify gpu.am/bm/cm in-place each substep.
@@ -689,17 +765,21 @@ function advection_phase!(tracers, sched, air, phys, model,
         _apply_advection_latlon!(tracers, gpu.m_dev,
                                   gpu.am, gpu.bm, gpu.cm,
                                   grid, model.advection_scheme, adv_ws;
-                                  cfl_limit=FT(0.95))
+                                  cfl_limit=FT(0.95),
+                                  debug_cb=(s == 1 ? debug_cb : nothing))
     end
 
-    # Set m_ref to end-of-window mass (= m0 + dm for v4, = m_dev for v3)
+    # Set end-of-window mass. For v4, reset both reference and working mass
+    # to the prescribed window endpoint before convection/output.
     if has_deltas
         gpu.m_ref .= m0 .+ gpu.dm
+        copyto!(gpu.m_dev, gpu.m_ref)
+    else
+        copyto!(gpu.m_ref, gpu.m_dev)
     end
-    copyto!(gpu.m_ref, gpu.m_dev)
 
     # Convective transport ONCE per window (after all substeps).
-    # rm↔c roundtrip uses m_ref (now = m_dev, consistent with rm).
+    # rm↔c roundtrip uses m_ref.
     dt_conv = FT(n_sub) * dt_sub
     _has_conv = (phys.has_tm5conv && phys.tm5conv_loaded[]) || phys.cmfmc_loaded[]
     if _has_conv

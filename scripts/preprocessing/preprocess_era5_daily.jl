@@ -1,6 +1,6 @@
 #!/usr/bin/env julia
 # ===========================================================================
-# Unified ERA5 daily preprocessor → merged-level flat binary (v3)
+# Unified ERA5 daily preprocessor → merged-level flat binary (v4)
 #
 # Reads:
 #   - Base mass fluxes from spectral-preprocessed NetCDF (m, am, bm, cm, ps)
@@ -20,10 +20,15 @@
 #   julia -t8 --project=. scripts/preprocessing/preprocess_era5_daily.jl \
 #       config/preprocessing/catrine_era5_daily_v3.toml [--day 2021-12-01]
 #
-# Binary layout (v3):
+# Binary layout (v4):
 #   [16384-byte JSON header | per-window data × Nt]
 #   Per window: m|am|bm|cm|ps | qv | cmfmc | entu|detu|entd|detd |
-#               pblh|t2m|ustar|hflux | temperature
+#               pblh|t2m|ustar|hflux | temperature | dam|dbm|dm
+#
+# v4 adds dam/dbm/dm: flux deltas for TM5-style temporal interpolation.
+#   dam = am_next - am_curr, dbm = bm_next - bm_curr, dm = m_next - m_curr
+#   Runtime uses: am_eff = am + t*dam, bm_eff = bm + t*dbm, m_target = m + t*dm
+#   cm is recomputed from continuity of am_eff/bm_eff constrained by m_target.
 # ===========================================================================
 
 using NCDatasets
@@ -543,11 +548,25 @@ function process_day(date::Date, cfg, vc_native, merged_vc, merge_map)
               "Stale pole-centered file? Rerun preprocess_spectral_massflux.jl with TM5 grid convention.")
     end
 
-    # Find time indices for this date
-    date_windows = [(i, DateTime(t)) for (i, t) in enumerate(mf_times)
-                    if Date(t) == date]
+    # Find time indices for this date + build next-window lookup for v4 deltas
+    all_time_indices = [(i, DateTime(t)) for (i, t) in enumerate(mf_times)]
+    date_windows = [(i, dt) for (i, dt) in all_time_indices if Date(dt) == date]
     Nt = length(date_windows)
     Nt > 0 || (close(ds_mf); error("No windows found for $date in $mf_file"))
+
+    # Build next-window NetCDF index for each window (for TM5-style flux deltas)
+    # The next window is the following hour in the NetCDF; for the last window
+    # of the day, it's the first hour of the next day (if available in the file).
+    all_nc_indices = [i for (i, _) in all_time_indices]
+    next_mf_tidx = Dict{Int,Int}()
+    for (win_idx, (mf_tidx, _)) in enumerate(date_windows)
+        pos = findfirst(==(mf_tidx), all_nc_indices)
+        if pos !== nothing && pos < length(all_nc_indices)
+            next_mf_tidx[mf_tidx] = all_nc_indices[pos + 1]
+        end
+    end
+    n_with_next = count(k -> haskey(next_mf_tidx, k), first.(date_windows))
+    @info @sprintf("  Flux deltas: %d/%d windows have next-window data", n_with_next, Nt)
     @info @sprintf("  Found %d windows for %s in %s", Nt, date, basename(mf_file))
 
     # Detect available external data — probe a mid-day hour (12) since forecast
@@ -581,8 +600,14 @@ function process_day(date::Date, cfg, vc_native, merged_vc, merge_map)
     n_temp  = has_temperature ? n_3d : Int64(0)
     n_sfc   = has_surface_out ? n_2d : Int64(0)
 
+    # v4: flux deltas for TM5-style temporal interpolation
+    n_dam = n_am   # same shape as am: (Nx+1) × Ny × Nz
+    n_dbm = n_bm   # same shape as bm: Nx × (Ny+1) × Nz
+    n_dm  = n_m    # same shape as m:  Nx × Ny × Nz
+
     elems_per_window = n_m + n_am + n_bm + n_cm + n_ps +
-                       n_qv + n_cmfmc + 4 * n_entu + 4 * n_sfc + n_temp
+                       n_qv + n_cmfmc + 4 * n_entu + 4 * n_sfc + n_temp +
+                       n_dam + n_dbm + n_dm
     bytes_per_window = elems_per_window * sizeof(FT)
     total_bytes = Int64(HEADER_SIZE_V3) + bytes_per_window * Nt
 
@@ -590,7 +615,7 @@ function process_day(date::Date, cfg, vc_native, merged_vc, merge_map)
     mkpath(out_dir)
     min_dp = Float64(cfg["grid"]["merge_min_thickness_Pa"])
     dp_tag = @sprintf("merged%dPa", round(Int, min_dp))
-    bin_path = joinpath(out_dir, "era5_v3_$(date_str)_$(dp_tag)_float32.bin")
+    bin_path = joinpath(out_dir, "era5_v4_$(date_str)_$(dp_tag)_float32.bin")
 
     if isfile(bin_path) && filesize(bin_path) == total_bytes
         @info "  SKIP (exists, correct size): $(basename(bin_path))"
@@ -602,7 +627,7 @@ function process_day(date::Date, cfg, vc_native, merged_vc, merge_map)
 
     # Build header
     header = Dict{String,Any}(
-        "magic" => "MFLX", "version" => 3, "header_bytes" => HEADER_SIZE_V3,
+        "magic" => "MFLX", "version" => 4, "header_bytes" => HEADER_SIZE_V3,
         "Nx" => Nx, "Ny" => Ny, "Nz" => Nz, "Nz_native" => Nz_native, "Nt" => Nt,
         "float_type" => "Float32", "float_bytes" => sizeof(FT),
         "window_bytes" => bytes_per_window,
@@ -611,6 +636,8 @@ function process_day(date::Date, cfg, vc_native, merged_vc, merge_map)
         "n_entu" => n_entu, "n_detu" => n_entu, "n_entd" => n_entu, "n_detd" => n_entu,
         "n_pblh" => n_sfc, "n_t2m" => n_sfc, "n_ustar" => n_sfc, "n_hflux" => n_sfc,
         "n_temperature" => n_temp,
+        "n_dam" => n_dam, "n_dbm" => n_dbm, "n_dm" => n_dm,
+        "include_flux_delta" => true,
         "dt_seconds" => dt, "half_dt_seconds" => half_dt,
         "steps_per_met_window" => steps_per_met,
         "level_top" => level_top, "level_bot" => level_bot,
@@ -622,10 +649,11 @@ function process_day(date::Date, cfg, vc_native, merged_vc, merge_map)
         "include_temperature" => has_temperature,
         "var_names" => ["m","am","bm","cm","ps","qv","cmfmc",
                         "entu","detu","entd","detd",
-                        "pblh","t2m","ustar","hflux","temperature"],
+                        "pblh","t2m","ustar","hflux","temperature",
+                        "dam","dbm","dm"],
         "date" => Dates.format(date, "yyyy-mm-dd"),
-        "grid_convention" => "TM5",           # cell centers offset from poles (±89.75° for 0.5°)
-        "spectral_half_dt_seconds" => half_dt, # half_dt used to compute am in spectral preprocessor
+        "grid_convention" => "TM5",
+        "spectral_half_dt_seconds" => half_dt,
     )
     header_json = JSON3.write(header)
     length(header_json) < HEADER_SIZE_V3 ||
@@ -663,6 +691,15 @@ function process_day(date::Date, cfg, vc_native, merged_vc, merge_map)
     entd_native = has_tm5conv ? Array{FT}(undef, Nx, Ny, Nz_native) : nothing
     detd_native = has_tm5conv ? Array{FT}(undef, Nx, Ny, Nz_native) : nothing
     cmfmc_native = has_cmfmc ? Array{FT}(undef, Nx, Ny, Nz_native + 1) : nothing
+
+    # v4 delta buffers (next-window minus current-window)
+    dam_merged = Array{FT}(undef, Nx + 1, Ny, Nz)
+    dbm_merged = Array{FT}(undef, Nx, Ny + 1, Nz)
+    dm_merged  = Array{FT}(undef, Nx, Ny, Nz)
+    # Temporary for next-window merged fields
+    m_next_merged  = Array{FT}(undef, Nx, Ny, Nz)
+    am_next_merged = Array{FT}(undef, Nx + 1, Ny, Nz)
+    bm_next_merged = Array{FT}(undef, Nx, Ny + 1, Nz)
 
     bytes_written = Int64(0)
     open(bin_path, "w") do io
@@ -806,6 +843,30 @@ function process_day(date::Date, cfg, vc_native, merged_vc, merge_map)
                 end
                 bytes_written += write_array!(io, temp_merged)
             end
+
+            # --- v4: Flux deltas (dam, dbm, dm) for TM5-style interpolation ---
+            if haskey(next_mf_tidx, mf_tidx)
+                nxt = next_mf_tidx[mf_tidx]
+                m_next_native  = FT.(ds_mf["m"][:, :, :, nxt])
+                am_next_native = FT.(ds_mf["am"][:, :, :, nxt])
+                bm_next_native = FT.(ds_mf["bm"][:, :, :, nxt])
+                merge_cell_field!(m_next_merged, m_next_native, merge_map)
+                merge_cell_field!(am_next_merged, am_next_native, merge_map)
+                merge_cell_field!(bm_next_merged, bm_next_native, merge_map)
+                @views bm_next_merged[:, 1, :]    .= zero(FT)
+                @views bm_next_merged[:, Ny+1, :] .= zero(FT)
+                dam_merged .= am_next_merged .- am_merged
+                dbm_merged .= bm_next_merged .- bm_merged
+                dm_merged  .= m_next_merged  .- m_merged
+            else
+                # Last window of the month: no next data available → zero deltas
+                fill!(dam_merged, zero(FT))
+                fill!(dbm_merged, zero(FT))
+                fill!(dm_merged, zero(FT))
+            end
+            bytes_written += write_array!(io, dam_merged)
+            bytes_written += write_array!(io, dbm_merged)
+            bytes_written += write_array!(io, dm_merged)
 
             t_win = round(time() - t0, digits=2)
             if win_idx <= 3 || win_idx == Nt || win_idx % 8 == 0

@@ -6,6 +6,7 @@ float_type = "Float32"
 [grid]
 type       = "latlon"
 met_source = "era5"
+size       = [720, 361, 68]
 
 [met_data]
 driver      = "preprocessed_latlon"

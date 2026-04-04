@@ -651,7 +651,7 @@ function advection_phase!(tracers, sched, air, phys, model,
     # TM5-style temporal interpolation (v4 binaries with flux deltas).
     # Each substep uses linearly interpolated fluxes and prescribed m_target.
     # Without deltas (v3): use constant fluxes with cm clamp.
-    has_deltas = gpu.dam !== nothing
+    has_deltas = false  # DISABLED: v4 interpolation produces NaN — needs debugging
     if !has_deltas
         _clamp_cm_cfl!(gpu.cm, gpu.m_ref, FT(0.95))
     end

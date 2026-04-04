@@ -1,0 +1,55 @@
+# ===========================================================================
+# Point Source Transport Test — Pure advection with impulse IC
+#
+# Zero initial conditions everywhere. A single-cell pulse is injected
+# programmatically at the equator (surface level) before calling run!().
+# No convection, no diffusion, no chemistry, no emissions.
+#
+# Purpose: isolate transport bugs from IC/conversion/physics issues.
+# See scripts/diagnostics/point_source_test.jl for the driver script.
+#
+# Usage:
+#   julia --threads=2 --project=. scripts/diagnostics/point_source_test.jl
+# ===========================================================================
+
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "latlon"
+met_source = "era5"
+size       = [720, 361, 137]   # 0.5° × 0.5°, full 137 levels
+
+[met_data]
+driver      = "preprocessed_latlon"
+directory   = "~/data/metDrivers/era5/spectral_05deg_june2023"
+dt          = 900
+max_windows = 72    # 3 days (72 hours × 1 window/hour)
+
+# No initial conditions — tracers start as zero arrays.
+# The driver script injects a point source pulse before run!().
+
+[tracers.co2]
+emission = "none"
+
+[advection]
+scheme    = "ppm"
+ppm_order = 7
+
+# No convection, diffusion, or chemistry — pure transport test.
+
+[output]
+filename = "/tmp/era5_point_source_test.nc"
+interval = 3600    # every window (1 hour = dt × n_sub = 900 × 4)
+
+output_grid = "latlon"
+Nlon = 720
+Nlat = 361
+
+[output.fields]
+co2_surface     = {type = "surface_slice", species = "co2"}
+co2_column_mean = {type = "column_mean", species = "co2"}
+
+[buffering]
+strategy = "double"

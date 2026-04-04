@@ -31,8 +31,8 @@ function find_massflux_shards(dir::String, ft_tag::String)
             end
             continue
         end
-        # Try daily v3 pattern: era5_v3_YYYYMMDD_*_<ft_tag>.bin
-        m = match(Regex("era5_v3_(\\d{8})_.*" * ft_tag * "\\.bin\$"), bn)
+        # Try daily v3/v4 pattern: era5_v{3,4}_YYYYMMDD_*_<ft_tag>.bin
+        m = match(Regex("era5_v[34]_(\\d{8})_.*" * ft_tag * "\\.bin\$"), bn)
         if m !== nothing
             shards[m[1]] = f
         end

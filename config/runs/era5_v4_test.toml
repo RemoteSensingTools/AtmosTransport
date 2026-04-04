@@ -1,0 +1,37 @@
+# ERA5 v4 hourly binary test — Dec 2021, merged 68L, slopes + flux interpolation
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "latlon"
+met_source = "era5"
+
+[met_data]
+driver      = "preprocessed_latlon"
+directory   = "/temp1/atmos_transport/era5_v4_hourly"
+dt          = 900
+max_windows = 48    # 2 days
+
+[initial_conditions]
+co2.file     = "~/data/AtmosTransport/catrine/InitialConditions/startCO2_202112010000.nc"
+co2.variable = "CO2"
+
+[tracers.co2]
+emission      = "uniform_surface"
+rate          = 1.0e-8
+species       = "co2"
+
+[advection]
+scheme = "slopes"
+
+[output]
+filename = "/tmp/era5_v4_test.nc"
+interval = 10800
+
+[output.fields]
+co2_surface     = {type = "surface_slice", species = "co2"}
+co2_column_mean = {type = "column_mean", species = "co2"}
+
+[buffering]
+strategy = "double"

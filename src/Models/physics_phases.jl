@@ -565,13 +565,34 @@ function _compute_cm_from_divergence_gpu!(cm_gpu, am_gpu, bm_gpu, m_gpu, grid)
     Nx, Ny = grid.Nx, grid.Ny
     Nz = size(cm, 3) - 1
     fill!(cm, zero(FT))
-    @inbounds for j in 1:Ny, i in 1:Nx
-        acc = 0.0
-        for k in 1:Nz
-            div_h = (Float64(am[i+1, j, k]) - Float64(am[i, j, k])) +
-                    (Float64(bm[i, j+1, k]) - Float64(bm[i, j, k]))
-            acc -= div_h
-            cm[i, j, k+1] = FT(acc)
+
+    # Use B-coefficient correction (TM5 dynam0 formula) if available
+    B_ifc = hasproperty(grid.vertical, :B) ? Float64.(grid.vertical.B) : Float64[]
+
+    if !isempty(B_ifc) && length(B_ifc) == Nz + 1
+        @inbounds for j in 1:Ny, i in 1:Nx
+            pit = 0.0
+            for k in 1:Nz
+                pit += (Float64(am[i+1, j, k]) - Float64(am[i, j, k])) +
+                       (Float64(bm[i, j+1, k]) - Float64(bm[i, j, k]))
+            end
+            acc = 0.0
+            for k in 1:Nz
+                div_h = (Float64(am[i+1, j, k]) - Float64(am[i, j, k])) +
+                        (Float64(bm[i, j+1, k]) - Float64(bm[i, j, k]))
+                acc = acc - div_h + (B_ifc[k+1] - B_ifc[k]) * pit
+                cm[i, j, k+1] = FT(acc)
+            end
+        end
+    else
+        @inbounds for j in 1:Ny, i in 1:Nx
+            acc = 0.0
+            for k in 1:Nz
+                div_h = (Float64(am[i+1, j, k]) - Float64(am[i, j, k])) +
+                        (Float64(bm[i, j+1, k]) - Float64(bm[i, j, k]))
+                acc -= div_h
+                cm[i, j, k+1] = FT(acc)
+            end
         end
     end
     @views cm[:, :, 1]   .= zero(FT)
@@ -652,6 +673,12 @@ function advection_phase!(tracers, sched, air, phys, model,
             t = FT(s - FT(0.5)) / FT(n_sub)
             gpu.am .= am0 .+ t .* gpu.dam
             gpu.bm .= bm0 .+ t .* gpu.dbm
+            # Re-apply pole zeroing (dam/dbm may have non-zero polar values)
+            Ny = grid.Ny
+            @views gpu.am[:, 1, :]    .= zero(FT)
+            @views gpu.am[:, Ny, :]   .= zero(FT)
+            @views gpu.bm[:, 1, :]    .= zero(FT)
+            @views gpu.bm[:, Ny+1, :] .= zero(FT)
             # Prescribe m_target along pressure trajectory (GEOS approach)
             gpu.m_dev .= m0 .+ t .* gpu.dm
             # Recompute cm from interpolated am/bm constrained by m_target

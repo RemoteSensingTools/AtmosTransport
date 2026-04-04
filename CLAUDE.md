@@ -7,6 +7,12 @@ Oceananigans-inspired modular architecture; KernelAbstractions.jl for GPU portab
 
 # Rule 1: Never speculate without evidence, check your own intuition, it was often wrong
 
+# Rule 1b: Assume bugs first. If a result looks unphysical, it IS a bug until proven
+# otherwise with quantitative evidence. Do NOT rationalize wrong numbers. CO2 does not
+# double at the surface in 6 hours. Wind speeds are 5-10 m/s, not 50. Mass doesn't
+# appear from nowhere. When you see a suspicious result, say "this looks wrong, let me
+# find the bug" — not "this could be explained by X."
+
 # Rule 2: Debugging protocol for transport and physics issues
 
 When investigating ANY transport bug, numerical instability, or physics mismatch:

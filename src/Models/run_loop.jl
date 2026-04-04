@@ -212,10 +212,8 @@ function _run_loop!(model, grid::AbstractGrid{FT},
         sim_time = Float64(step[] * dt_sub)
         out_mass = compute_output_mass(sched, air, phys, grid)
         met = build_met_fields(sched, phys, grid, half_dt, dt_window)
-        # Use m_ref for output until the rm/m_dev contract is fully resolved.
-        # Transport with evolving m_dev is correct (verified by MCP tests), but
-        # emissions/diffusion still use m_ref for rm↔c conversion, creating
-        # inconsistency. Using m_ref for output matches the post-physics state.
+        # m_ref was synced to m_dev after advection (in advection_phase!),
+        # so rm and m_ref are on the same basis for output VMR = rm / m_ref.
         compute_ll_dry_mass!(phys, sched, grid)
         # Convert rm → dry VMR for output (LL only; CS is identity)
         c_tracers = rm_to_vmr(tracers, sched, phys, grid)

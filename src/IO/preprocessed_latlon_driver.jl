@@ -247,11 +247,11 @@ function load_met_window!(cpu_buf::LatLonCPUBuffer,
         end
     end
 
-    # NOTE: cm residual correction is applied ONCE during preprocessing
-    # (in convert_merged_massflux_to_binary.jl or preprocess_spectral_massflux.jl).
-    # Do NOT apply again here — double correction breaks per-level continuity.
-    # For raw NetCDF without preprocessing correction, uncomment:
-    # _correct_cm_residual!(cpu_buf.cm, cpu_buf.m)
+    # Enforce cm boundary: cm[:,:,1]=0 (TOA) and cm[:,:,Nz+1]=0 (surface).
+    # Binary files have residual correction applied during preprocessing.
+    # Raw NetCDF files may have non-zero surface cm from Float32 accumulation
+    # or missing B-correction. TM5 explicitly enforces these (advectz.F90:320).
+    _enforce_cm_boundaries!(cpu_buf.cm)
 
     return nothing
 end
@@ -295,6 +295,14 @@ function _merge_levels_latlon!(cpu_buf::LatLonCPUBuffer{FT},
     # Do NOT apply _correct_cm_residual! — it breaks per-level continuity.
     # The recomputed cm satisfies continuity exactly (Float32 precision).
     return nothing
+end
+
+"""
+Enforce cm[:,:,1]=0 and cm[:,:,Nz+1]=0 (TM5 advectz.F90:320).
+"""
+function _enforce_cm_boundaries!(cm::Array{FT,3}) where FT
+    @views cm[:, :, 1]   .= zero(FT)
+    @views cm[:, :, end] .= zero(FT)
 end
 
 """

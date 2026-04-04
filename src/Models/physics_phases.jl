@@ -589,11 +589,14 @@ function advection_phase!(tracers, sched, air, phys, model,
                                   cfl_limit=FT(0.95))
     end
 
-    # Note: fluxes are not scaled globally. Per-direction adaptive subcycling
-    # handles CFL on evolving m via flux-remaining (mass_flux_advection.jl).
+    # Sync m_ref to the post-advection m_dev so all downstream phases
+    # (convection, emissions, diffusion, output) divide/multiply rm by
+    # the SAME mass that rm was evolved with. The roundtrip rm./=m → op → c.*=m
+    # is exact regardless of which m, as long as both sides use the same one.
+    copyto!(gpu.m_ref, gpu.m_dev)
 
     # Convective transport ONCE per window (after all substeps).
-    # Convert rm↔c using m_ref (moist basis, like TM5; exact roundtrip).
+    # rm↔c roundtrip uses m_ref (now = m_dev, consistent with rm).
     dt_conv = FT(n_sub) * dt_sub
     _has_conv = (phys.has_tm5conv && phys.tm5conv_loaded[]) || phys.cmfmc_loaded[]
     if _has_conv

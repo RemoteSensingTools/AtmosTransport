@@ -553,6 +553,40 @@ end
 """
     advection_phase!(tracers, sched, air, phys, model, grid, ws, n_sub, dt_sub, step)
 
+Clamp cm so |cm[k]| / m[k] <= cfl_limit and |cm[k]| / m[k-1] <= cfl_limit at every cell.
+ERA5 spectral data has ~0.02% of cells with extreme Z-CFL from deep convection.
+Operates on CPU buffers before GPU upload (called once per window).
+"""
+function _clamp_cm_cfl!(cm_gpu, m_gpu, cfl_limit)
+    cm = Array(cm_gpu)
+    m = Array(m_gpu)
+    Nx, Ny, Nz = size(m)
+    FT = eltype(cm)
+    n_clamped = 0
+    @inbounds for k in 2:Nz, j in 1:Ny, i in 1:Nx
+        # cm[i,j,k] is flux at interface between level k-1 (above) and k (below)
+        m_above = m[i, j, k-1]
+        m_below = m[i, j, k]
+        cm_val = cm[i, j, k]
+        if cm_val > zero(FT)
+            # Upward: donor is level k (below)
+            max_flux = cfl_limit * m_below
+        else
+            # Downward: donor is level k-1 (above)
+            max_flux = cfl_limit * m_above
+        end
+        if abs(cm_val) > max_flux
+            cm[i, j, k] = sign(cm_val) * max_flux
+            n_clamped += 1
+        end
+    end
+    if n_clamped > 0
+        copyto!(cm_gpu, cm)
+        @info "Clamped $n_clamped cm faces ($(round(n_clamped/(Nx*Ny*Nz)*100, digits=4))%) to CFL<$cfl_limit" maxlog=5
+    end
+end
+
+"""
 Advection + convection sub-stepping. LL: NamedTuple dispatch (all tracers together).
 CS: per-tracer advection with mass fixer + m_ref advance along pressure trajectory.
 """
@@ -566,20 +600,13 @@ function advection_phase!(tracers, sched, air, phys, model,
     # Build advection workspace — for Prather, augment with per-tracer slope storage
     adv_ws = _build_advection_workspace(gpu.ws, model.advection_scheme, tracers, gpu.m_ref)
 
-    # TM5-faithful: m_dev evolves continuously through all substeps. No reset, no fixer.
-    # TM5 (advectx.F90:629, advectz.F90:440) stores m = mnew after each directional
-    # sweep. There is no reset to a reference mass between substeps or split steps.
-    #
-    # Adaptive mass-CFL (TM5 Check_CFL, advectm_cfl.F90:205):
-    # Mass-only pilot replays the full Strang sequence on m, checking per-face
-    # |beta| and per-cell m_floor. If any face violates, refinement factor r doubles.
-    # Float32-only GPU kernels in src/Advection/mass_cfl_pilot.jl.
-    # Adaptive flux-remaining subcycling now handles CFL on evolving m
-    # per-direction (mass_flux_advection.jl). The global pilot is kept as
-    # a diagnostic backstop but disabled for production — uncomment to enable.
-    # r = find_mass_cfl_refinement(gpu.m_ref, gpu.am, gpu.bm, gpu.cm, grid,
-    #     adv_ws.cluster_sizes, n_sub; beta_limit=FT(0.95), max_r=16)
+    # Clamp cm so |cm/m| <= cfl_limit at every cell. ERA5 spectral data has
+    # ~0.02% of cells with extreme vertical CFL (deep convection). Clamping
+    # these avoids inner subcycling divergence. TM5 avoids this by using a
+    # coarser grid (3°×2°×25L) that smooths out convective extremes.
+    _clamp_cm_cfl!(gpu.cm, gpu.m_ref, FT(0.95))
 
+    # m_dev evolves continuously through all substeps (TM5 advectx.F90:629).
     copyto!(gpu.m_dev, gpu.m_ref)
     for _ in 1:n_sub
         step[] += 1

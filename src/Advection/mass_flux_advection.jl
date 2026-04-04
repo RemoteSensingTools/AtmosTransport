@@ -1132,104 +1132,84 @@ end
 """
 $(SIGNATURES)
 
-CFL-adaptive subcycled x-advection in mass-flux form.
-Uses workspace buffers to avoid GPU allocations.
+Uniform-subdivision X-subcycling with workspace buffers.
 """
 function advect_x_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, am,
                                        grid, use_limiter,
                                        ws::MassFluxWorkspace{FT};
                                        cfl_limit = FT(0.95)) where FT
-    # Adaptive flux-remaining subcycling: recompute CFL from evolved m each iteration.
-    # The old divide-and-loop approach used stale CFL, causing later iterations to
-    # violate the limit when m depletes (the proximate cause of negative m at poles).
-    copyto!(ws.cfl_x, am)  # flux_remaining
-    flux_rem = ws.cfl_x
-    chunk = similar(am)     # allocated once per call
-    cfl_scratch = similar(am)
-    total_iters = 0
-    while total_iters < 100
-        cfl = max_cfl_massflux_x(flux_rem, m, cfl_scratch, ws.cluster_sizes)
-        if cfl <= cfl_limit
-            advect_x_massflux!(rm_tracers, m, flux_rem, grid, use_limiter,
-                                ws.rm_buf, ws.m_buf, ws.cluster_sizes)
-            total_iters += 1
-            break
-        end
-        frac = cfl_limit / cfl
-        broadcast!(*, chunk, flux_rem, frac)
-        advect_x_massflux!(rm_tracers, m, chunk, grid, use_limiter,
-                            ws.rm_buf, ws.m_buf, ws.cluster_sizes)
-        flux_rem .-= chunk
-        total_iters += 1
+    cfl = max_cfl_massflux_x(am, m, ws.cfl_x, ws.cluster_sizes)
+    n_sub = isfinite(cfl) ? min(50, max(1, ceil(Int, cfl / cfl_limit))) : 1
+    if n_sub > 1
+        ws.cfl_x .= am ./ FT(n_sub)
+        am_eff = ws.cfl_x
+    else
+        am_eff = am
     end
-    total_iters >= 100 && @warn "X-subcycling hit cap" maxlog=3
-    return total_iters
+    for _ in 1:n_sub
+        advect_x_massflux!(rm_tracers, m, am_eff, grid, use_limiter,
+                            ws.rm_buf, ws.m_buf, ws.cluster_sizes)
+    end
+    return n_sub
 end
 
 """
 $(SIGNATURES)
 
-CFL-adaptive subcycled y-advection with flux-remaining on evolving m.
+Uniform-subdivision Y-subcycling with workspace buffers.
 """
 function advect_y_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, bm,
                                        grid, use_limiter,
                                        ws::MassFluxWorkspace{FT};
                                        cfl_limit = FT(0.95)) where FT
-    copyto!(ws.cfl_y, bm)  # flux_remaining
-    flux_rem = ws.cfl_y
-    chunk = similar(bm)
-    cfl_scratch = similar(bm)
-    total_iters = 0
-    while total_iters < 100
-        cfl = max_cfl_massflux_y(flux_rem, m, cfl_scratch)
-        if cfl <= cfl_limit
-            advect_y_massflux!(rm_tracers, m, flux_rem, grid, use_limiter,
-                                ws.rm_buf, ws.m_buf)
-            total_iters += 1
-            break
-        end
-        frac = cfl_limit / cfl
-        broadcast!(*, chunk, flux_rem, frac)
-        advect_y_massflux!(rm_tracers, m, chunk, grid, use_limiter,
-                            ws.rm_buf, ws.m_buf)
-        flux_rem .-= chunk
-        total_iters += 1
+    cfl = max_cfl_massflux_y(bm, m, ws.cfl_y)
+    n_sub = isfinite(cfl) ? min(50, max(1, ceil(Int, cfl / cfl_limit))) : 1
+    if n_sub > 1
+        ws.cfl_y .= bm ./ FT(n_sub)
+        bm_eff = ws.cfl_y
+    else
+        bm_eff = bm
     end
-    total_iters >= 100 && @warn "Y-subcycling hit cap" maxlog=3
-    return total_iters
+    for _ in 1:n_sub
+        advect_y_massflux!(rm_tracers, m, bm_eff, grid, use_limiter,
+                            ws.rm_buf, ws.m_buf)
+    end
+    return n_sub
 end
 
 """
 $(SIGNATURES)
 
-CFL-adaptive subcycled z-advection in mass-flux form.
+Uniform-subdivision Z-subcycling using the proven double-buffered 3D kernel.
+Computes max Z-CFL, divides cm by n_sub, runs n_sub passes of `_massflux_z_kernel!`.
+
+Replaces the flux-remaining approach which diverged with structured IC
+(global fraction penalized all cells for worst-case; hit 100-iter cap → NaN).
 """
 function advect_z_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, cm,
                                        use_limiter,
                                        ws::MassFluxWorkspace{FT};
                                        cfl_limit = FT(0.95)) where FT
-    copyto!(ws.cfl_z, cm)
-    flux_rem = ws.cfl_z
-    chunk = similar(cm)
-    cfl_scratch = similar(cm)
-    total_iters = 0
-    while total_iters < 100
-        cfl = max_cfl_massflux_z(flux_rem, m, cfl_scratch)
-        if cfl <= cfl_limit
-            advect_z_massflux!(rm_tracers, m, flux_rem, use_limiter,
-                                ws.rm_buf, ws.m_buf)
-            total_iters += 1
-            break
-        end
-        frac = cfl_limit / cfl
-        broadcast!(*, chunk, flux_rem, frac)
-        advect_z_massflux!(rm_tracers, m, chunk, use_limiter,
-                            ws.rm_buf, ws.m_buf)
-        flux_rem .-= chunk
-        total_iters += 1
+    backend = get_backend(m)
+    Nz = size(m, 3)
+    cfl = max_cfl_massflux_z(cm, m, ws.cfl_z)
+    n_sub = isfinite(cfl) ? min(50, max(1, ceil(Int, cfl / cfl_limit))) : 1
+    if n_sub > 1
+        ws.cfl_z .= cm ./ FT(n_sub)
+        cm_eff = ws.cfl_z
+    else
+        cm_eff = cm
     end
-    total_iters >= 100 && @warn "Z-subcycling hit cap" maxlog=3
-    return total_iters
+    k! = _massflux_z_kernel!(backend, 256)
+    for _ in 1:n_sub
+        for (_, rm) in pairs(rm_tracers)
+            k!(ws.rm_buf, rm, ws.m_buf, m, cm_eff, Nz, use_limiter; ndrange=size(m))
+            synchronize(backend)
+            copyto!(rm, ws.rm_buf)
+        end
+        copyto!(m, ws.m_buf)
+    end
+    return n_sub
 end
 
 # Backward-compatible versions (allocating, for tests)

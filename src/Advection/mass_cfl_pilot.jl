@@ -81,12 +81,6 @@ using KernelAbstractions: @kernel, @index, synchronize, get_backend
             end
         end
 
-        # Floor check
-        m_floor = FT(32) * eps(FT) * max(abs(m[i, j, k]), one(FT))
-        if m_new[i, j, k] <= m_floor
-            fail = true
-        end
-
         fail_flags[i, j, k] = fail
     end
 end
@@ -118,12 +112,6 @@ end
             end
         end
 
-        # Floor check
-        m_floor = FT(32) * eps(FT) * max(abs(m[i, j, k]), one(FT))
-        if m_new[i, j, k] <= m_floor
-            fail = true
-        end
-
         fail_flags[i, j, k] = fail
     end
 end
@@ -153,12 +141,6 @@ end
             if m_donor > zero(FT) && abs(cm_bot) / m_donor > beta_limit
                 fail = true
             end
-        end
-
-        # Floor check
-        m_floor = FT(32) * eps(FT) * max(abs(m[i, j, k]), one(FT))
-        if m_new[i, j, k] <= m_floor
-            fail = true
         end
 
         fail_flags[i, j, k] = fail

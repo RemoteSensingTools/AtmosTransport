@@ -60,10 +60,18 @@ struct LatLonMetBuffer{FT, A3 <: AbstractArray{FT,3}, A2 <: AbstractArray{FT,2}}
     v     :: A3
     "pre-allocated advection workspace"
     ws    :: MassFluxWorkspace
+    # v4: flux deltas for TM5-style temporal interpolation (nothing if v3)
+    "x flux delta: am_next - am_curr (Nx+1, Ny, Nz) or nothing"
+    dam   :: Union{A3, Nothing}
+    "y flux delta: bm_next - bm_curr (Nx, Ny+1, Nz) or nothing"
+    dbm   :: Union{A3, Nothing}
+    "mass delta: m_next - m_curr (Nx, Ny, Nz) or nothing"
+    dm    :: Union{A3, Nothing}
 end
 
 function LatLonMetBuffer(arch::AbstractArchitecture, ::Type{FT}, Nx, Ny, Nz;
-                         cluster_sizes_cpu::Union{Nothing,Vector{Int32}} = nothing) where FT
+                         cluster_sizes_cpu::Union{Nothing,Vector{Int32}} = nothing,
+                         flux_delta::Bool = false) where FT
     AT = array_type(arch)
     m_ref = AT(zeros(FT, Nx, Ny, Nz))
     m_dev = AT(zeros(FT, Nx, Ny, Nz))
@@ -76,7 +84,10 @@ function LatLonMetBuffer(arch::AbstractArchitecture, ::Type{FT}, Nx, Ny, Nz;
     v     = AT(zeros(FT, Nx, Ny + 1, Nz))
     ws    = allocate_massflux_workspace(m_dev, am, bm, cm;
                                          cluster_sizes_cpu = cluster_sizes_cpu)
-    LatLonMetBuffer(m_ref, m_dev, am, bm, cm, ps, Δp, u, v, ws)
+    dam = flux_delta ? AT(zeros(FT, Nx + 1, Ny, Nz)) : nothing
+    dbm = flux_delta ? AT(zeros(FT, Nx, Ny + 1, Nz)) : nothing
+    dm  = flux_delta ? AT(zeros(FT, Nx, Ny, Nz))     : nothing
+    LatLonMetBuffer(m_ref, m_dev, am, bm, cm, ps, Δp, u, v, ws, dam, dbm, dm)
 end
 
 """
@@ -87,20 +98,27 @@ CPU-side staging buffer for lat-lon met data (H→D transfer source).
 $(FIELDS)
 """
 struct LatLonCPUBuffer{FT} <: AbstractCPUStagingBuffer{FT}
-    m  :: Array{FT, 3}
-    am :: Array{FT, 3}
-    bm :: Array{FT, 3}
-    cm :: Array{FT, 3}
-    ps :: Array{FT, 2}
+    m   :: Array{FT, 3}
+    am  :: Array{FT, 3}
+    bm  :: Array{FT, 3}
+    cm  :: Array{FT, 3}
+    ps  :: Array{FT, 2}
+    # v4 flux deltas (empty arrays if v3)
+    dam :: Array{FT, 3}
+    dbm :: Array{FT, 3}
+    dm  :: Array{FT, 3}
 end
 
-function LatLonCPUBuffer(::Type{FT}, Nx, Ny, Nz) where FT
+function LatLonCPUBuffer(::Type{FT}, Nx, Ny, Nz; flux_delta::Bool=false) where FT
     LatLonCPUBuffer{FT}(
         Array{FT}(undef, Nx, Ny, Nz),
         Array{FT}(undef, Nx + 1, Ny, Nz),
         Array{FT}(undef, Nx, Ny + 1, Nz),
         Array{FT}(undef, Nx, Ny, Nz + 1),
-        Array{FT}(undef, Nx, Ny))
+        Array{FT}(undef, Nx, Ny),
+        flux_delta ? Array{FT}(undef, Nx + 1, Ny, Nz) : Array{FT}(undef, 0, 0, 0),
+        flux_delta ? Array{FT}(undef, Nx, Ny + 1, Nz) : Array{FT}(undef, 0, 0, 0),
+        flux_delta ? Array{FT}(undef, Nx, Ny, Nz)     : Array{FT}(undef, 0, 0, 0))
 end
 
 """
@@ -115,6 +133,12 @@ function upload!(buf::LatLonMetBuffer, cpu::LatLonCPUBuffer)
     copyto!(buf.bm, cpu.bm)
     copyto!(buf.cm, cpu.cm)
     copyto!(buf.ps, cpu.ps)
+    # v4 flux deltas (skip if not allocated)
+    if buf.dam !== nothing && length(cpu.dam) > 0
+        copyto!(buf.dam, cpu.dam)
+        copyto!(buf.dbm, cpu.dbm)
+        copyto!(buf.dm, cpu.dm)
+    end
     return nothing
 end
 

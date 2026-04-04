@@ -100,6 +100,15 @@ struct MassFluxBinaryReader{FT} <: AbstractBinaryReader
     n_tm5conv       :: Int
     "v3: elements per window for temperature (Nx*Ny*Nz, 0 if absent)"
     n_temperature   :: Int
+    # v4 fields: flux deltas for TM5-style temporal interpolation
+    "v4: has flux deltas (dam, dbm, dm) for per-substep interpolation"
+    has_flux_delta  :: Bool
+    "v4: elements for dam = am_next - am_curr ((Nx+1)*Ny*Nz)"
+    n_dam           :: Int
+    "v4: elements for dbm = bm_next - bm_curr (Nx*(Ny+1)*Nz)"
+    n_dbm           :: Int
+    "v4: elements for dm = m_next - m_curr (Nx*Ny*Nz)"
+    n_dm            :: Int
 end
 
 function MassFluxBinaryReader(bin_path::String, ::Type{FT}) where FT
@@ -137,11 +146,18 @@ function MassFluxBinaryReader(bin_path::String, ::Type{FT}) where FT
     n_tm5conv     = has_tm5conv     ? Int(get(hdr, :n_entu, 0))        : 0
     n_temperature = has_temperature ? Int(get(hdr, :n_temperature, 0)) : 0
 
+    # v4: flux deltas for TM5-style temporal interpolation
+    has_flux_delta = version >= 4 && Bool(get(hdr, :include_flux_delta, false))
+    n_dam = has_flux_delta ? Int(get(hdr, :n_dam, 0)) : 0
+    n_dbm = has_flux_delta ? Int(get(hdr, :n_dbm, 0)) : 0
+    n_dm  = has_flux_delta ? Int(get(hdr, :n_dm, 0))  : 0
+
     elems_per_window = n_m + n_am + n_bm + n_cm + n_ps +
                        n_qv + n_cmfmc +
                        4 * n_tm5conv +    # entu + detu + entd + detd
                        4 * n_sfc +        # pblh + t2m + ustar + hflux
-                       n_temperature
+                       n_temperature +
+                       n_dam + n_dbm + n_dm
     total_elems = elems_per_window * Nt
 
     seek(io, hdr_size)
@@ -157,7 +173,8 @@ function MassFluxBinaryReader(bin_path::String, ::Type{FT}) where FT
     if version >= 2
         @info "MassFluxBinaryReader v$(version): $(Nx)x$(Ny)x$(Nz), $(Nt) windows, " *
               "QV=$(has_qv) CMFMC=$(has_cmfmc) Sfc=$(has_surface)" *
-              (version >= 3 ? " TM5=$(has_tm5conv) T=$(has_temperature)" : "")
+              (version >= 3 ? " TM5=$(has_tm5conv) T=$(has_temperature)" : "") *
+              (version >= 4 ? " FluxDelta=$(has_flux_delta)" : "")
     end
 
     MassFluxBinaryReader{FT}(
@@ -168,7 +185,8 @@ function MassFluxBinaryReader(bin_path::String, ::Type{FT}) where FT
         Int(hdr.steps_per_met_window), Int(hdr.level_top), Int(hdr.level_bot),
         hdr_size, has_qv, has_cmfmc, has_surface,
         n_qv, n_cmfmc, n_sfc, A_ifc, B_ifc,
-        has_tm5conv, has_temperature, n_tm5conv, n_temperature)
+        has_tm5conv, has_temperature, n_tm5conv, n_temperature,
+        has_flux_delta, n_dam, n_dbm, n_dm)
 end
 
 """
@@ -265,6 +283,26 @@ function load_temperature_window!(t_cpu, reader::MassFluxBinaryReader, win::Int)
     off = (win - 1) * reader.elems_per_window +
           _pre_surface_offset(reader) + 4 * reader.n_sfc
     copyto!(t_cpu, 1, reader.data, off + 1, reader.n_temperature)
+    return true
+end
+
+"""Offset past all pre-delta fields within a window."""
+_pre_delta_offset(r::MassFluxBinaryReader) =
+    _pre_surface_offset(r) + 4 * r.n_sfc + r.n_temperature
+
+"""
+    load_flux_delta_window!(dam, dbm, dm, reader, win) �� Bool
+
+Load v4 flux deltas (dam, dbm, dm) for TM5-style temporal interpolation.
+Returns `false` if not a v4 binary.
+"""
+function load_flux_delta_window!(dam_cpu, dbm_cpu, dm_cpu,
+                                  reader::MassFluxBinaryReader, win::Int)
+    reader.has_flux_delta || return false
+    off = (win - 1) * reader.elems_per_window + _pre_delta_offset(reader)
+    copyto!(dam_cpu, 1, reader.data, off + 1,                          reader.n_dam)
+    copyto!(dbm_cpu, 1, reader.data, off + reader.n_dam + 1,           reader.n_dbm)
+    copyto!(dm_cpu,  1, reader.data, off + reader.n_dam + reader.n_dbm + 1, reader.n_dm)
     return true
 end
 

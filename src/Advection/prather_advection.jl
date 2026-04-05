@@ -14,16 +14,7 @@
 using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
 
 export PratherAdvection, PratherWorkspace, allocate_prather_workspace
-export initialize_prather_workspace!
 export strang_split_prather!, allocate_prather_workspaces
-
-@inline function _limit_prather_slope(s, rm_cell)
-    T = typeof(rm_cell)
-    if rm_cell > zero(T)
-        return max(min(s, rm_cell), -rm_cell)
-    end
-    return zero(T)
-end
 
 # ---------------------------------------------------------------------------
 # Types
@@ -67,8 +58,6 @@ struct PratherWorkspace{FT, A3 <: AbstractArray{FT,3}}
     rym_buf :: A3
     "double-buffer output for rzm"
     rzm_buf :: A3
-    "whether prognostic slopes have been initialized from rm/m"
-    initialized :: Base.RefValue{Bool}
 end
 
 """
@@ -89,106 +78,7 @@ function allocate_prather_workspace(m::AbstractArray{FT,3}) where FT
         make(),                    # rxm_buf
         make(),                    # rym_buf
         make(),                    # rzm_buf
-        Ref(false),                # initialized
     )
-end
-
-@inline function _prather_concentration(rm_val, m_val)
-    FT = typeof(m_val)
-    return abs(m_val) > eps(FT) * FT(100) ? rm_val / m_val : zero(FT)
-end
-
-@kernel function _init_prather_x_slopes_kernel!(rxm, @Const(rm), @Const(m), Nx, use_limiter)
-    i, j, k = @index(Global, NTuple)
-    FT = eltype(rm)
-    @inbounds begin
-        im = i == 1 ? Nx : i - 1
-        ip = i == Nx ? 1 : i + 1
-
-        c_im = _prather_concentration(rm[im, j, k], m[im, j, k])
-        c_i  = _prather_concentration(rm[i,  j, k], m[i,  j, k])
-        c_ip = _prather_concentration(rm[ip, j, k], m[ip, j, k])
-
-        sc = (c_ip - c_im) / 2
-        if use_limiter
-            sc = minmod_device(sc, 2 * (c_ip - c_i), 2 * (c_i - c_im))
-        end
-
-        s = m[i, j, k] * sc
-        if use_limiter
-            s = _limit_prather_slope(s, rm[i, j, k])
-        end
-        rxm[i, j, k] = s
-    end
-end
-
-@kernel function _init_prather_y_slopes_kernel!(rym, @Const(rm), @Const(m), Ny, use_limiter)
-    i, j, k = @index(Global, NTuple)
-    FT = eltype(rm)
-    @inbounds begin
-        if j > 1 && j < Ny
-            c_jm = _prather_concentration(rm[i, j - 1, k], m[i, j - 1, k])
-            c_j  = _prather_concentration(rm[i, j,     k], m[i, j,     k])
-            c_jp = _prather_concentration(rm[i, j + 1, k], m[i, j + 1, k])
-
-            sc = (c_jp - c_jm) / 2
-            if use_limiter
-                sc = minmod_device(sc, 2 * (c_jp - c_j), 2 * (c_j - c_jm))
-            end
-
-            s = m[i, j, k] * sc
-            if use_limiter
-                s = _limit_prather_slope(s, rm[i, j, k])
-            end
-            rym[i, j, k] = s
-        else
-            rym[i, j, k] = zero(FT)
-        end
-    end
-end
-
-@kernel function _init_prather_z_slopes_kernel!(rzm, @Const(rm), @Const(m), Nz, use_limiter)
-    i, j, k = @index(Global, NTuple)
-    FT = eltype(rm)
-    @inbounds begin
-        if k > 1 && k < Nz
-            c_km = _prather_concentration(rm[i, j, k - 1], m[i, j, k - 1])
-            c_k  = _prather_concentration(rm[i, j, k],     m[i, j, k])
-            c_kp = _prather_concentration(rm[i, j, k + 1], m[i, j, k + 1])
-
-            sc = (c_kp - c_km) / 2
-            if use_limiter
-                sc = minmod_device(sc, 2 * (c_kp - c_k), 2 * (c_k - c_km))
-            end
-
-            s = m[i, j, k] * sc
-            if use_limiter
-                s = _limit_prather_slope(s, rm[i, j, k])
-            end
-            rzm[i, j, k] = s
-        else
-            rzm[i, j, k] = zero(FT)
-        end
-    end
-end
-
-function initialize_prather_workspace!(pw::PratherWorkspace{FT},
-                                       rm::AbstractArray{FT,3},
-                                       m::AbstractArray{FT,3},
-                                       use_limiter::Bool=true) where FT
-    backend = get_backend(rm)
-    Nx, Ny, Nz = size(m)
-
-    kx! = _init_prather_x_slopes_kernel!(backend, 256)
-    ky! = _init_prather_y_slopes_kernel!(backend, 256)
-    kz! = _init_prather_z_slopes_kernel!(backend, 256)
-
-    kx!(pw.rxm, rm, m, Int32(Nx), use_limiter; ndrange=size(rm))
-    ky!(pw.rym, rm, m, Int32(Ny), use_limiter; ndrange=size(rm))
-    kz!(pw.rzm, rm, m, Int32(Nz), use_limiter; ndrange=size(rm))
-    synchronize(backend)
-    pw.initialized[] = true
-    return nothing
 end
 
 # ---------------------------------------------------------------------------
@@ -222,9 +112,9 @@ end
 
         # Apply positivity limiter on slopes before flux computation
         if use_limiter
-            rxm_im = _limit_prather_slope(rxm_im, rm_im)
-            rxm_i  = _limit_prather_slope(rxm_i, rm_i)
-            rxm_ip = _limit_prather_slope(rxm_ip, rm_ip)
+            rxm_im = max(min(rxm_im, rm_im), -rm_im)
+            rxm_i  = max(min(rxm_i,  rm_i),  -rm_i)
+            rxm_ip = max(min(rxm_ip, rm_ip), -rm_ip)
         end
 
         # --- Left face flux (am[i, j, k]) ---
@@ -280,7 +170,7 @@ end
 
         # Apply limiter on new slope
         if use_limiter
-            rxm_new_val = _limit_prather_slope(rxm_new_val, rm_new_val)
+            rxm_new_val = max(min(rxm_new_val, rm_new_val), -rm_new_val)
         end
 
         rm_new[i, j, k]  = rm_new_val
@@ -311,7 +201,7 @@ end
         rzm_i = rzm[i, j, k]
 
         # Apply limiter on along-slope before flux computation
-        rym_lim = use_limiter ? _limit_prather_slope(rym_i, rm_i) : rym_i
+        rym_lim = use_limiter ? max(min(rym_i, rm_i), -rm_i) : rym_i
 
         # --- South face (bm[i, j, k]) ---
         am_s = bm[i, j, k]
@@ -325,7 +215,7 @@ end
             # Donor = cell j-1
             rm_jm  = rm[i, j-1, k];  m_jm = m[i, j-1, k]
             rym_jm = rym[i, j-1, k]
-            if use_limiter; rym_jm = _limit_prather_slope(rym_jm, rm_jm); end
+            if use_limiter; rym_jm = max(min(rym_jm, rm_jm), -rm_jm); end
             alpha  = m_jm > eps(FT) * 100 ? am_s / m_jm : zero(FT)
             f_s    = alpha * (rm_jm + (one(FT) - alpha) * rym_jm)
             pf_s   = am_s * (alpha * alpha * rym_jm - FT(3) * f_s)
@@ -359,7 +249,7 @@ end
             # Donor = cell j+1
             rm_jp  = rm[i, j+1, k];  m_jp = m[i, j+1, k]
             rym_jp = rym[i, j+1, k]
-            if use_limiter; rym_jp = _limit_prather_slope(rym_jp, rm_jp); end
+            if use_limiter; rym_jp = max(min(rym_jp, rm_jp), -rm_jp); end
             alpha  = m_jp > eps(FT) * 100 ? am_n / m_jp : zero(FT)
             f_n    = alpha * (rm_jp - (one(FT) + alpha) * rym_jp)
             pf_n   = am_n * (alpha * alpha * rym_jp - FT(3) * f_n)
@@ -381,7 +271,7 @@ end
         rzm_new_val = rzm_i + fz_s - fz_n
 
         if use_limiter
-            rym_new_val = _limit_prather_slope(rym_new_val, rm_new_val)
+            rym_new_val = max(min(rym_new_val, rm_new_val), -rm_new_val)
         end
 
         rm_new[i, j, k]  = rm_new_val
@@ -412,7 +302,7 @@ end
         rym_i = rym[i, j, k]
 
         # Apply limiter on along-slope
-        rzm_lim = use_limiter ? _limit_prather_slope(rzm_i, rm_i) : rzm_i
+        rzm_lim = use_limiter ? max(min(rzm_i, rm_i), -rm_i) : rzm_i
 
         # --- Top face (cm[i, j, k]) ---
         cm_t = cm[i, j, k]
@@ -426,7 +316,7 @@ end
             # Donor = cell k-1 (downward flux = positive cm means mass moves down)
             rm_km  = rm[i, j, k-1];  m_km = m[i, j, k-1]
             rzm_km = rzm[i, j, k-1]
-            if use_limiter; rzm_km = _limit_prather_slope(rzm_km, rm_km); end
+            if use_limiter; rzm_km = max(min(rzm_km, rm_km), -rm_km); end
             alpha  = m_km > eps(FT) * 100 ? cm_t / m_km : zero(FT)
             f_t    = alpha * (rm_km + (one(FT) - alpha) * rzm_km)
             pf_t   = cm_t * (alpha * alpha * rzm_km - FT(3) * f_t)
@@ -460,7 +350,7 @@ end
             # Donor = cell k+1
             rm_kp  = rm[i, j, k+1];  m_kp = m[i, j, k+1]
             rzm_kp = rzm[i, j, k+1]
-            if use_limiter; rzm_kp = _limit_prather_slope(rzm_kp, rm_kp); end
+            if use_limiter; rzm_kp = max(min(rzm_kp, rm_kp), -rm_kp); end
             alpha  = m_kp > eps(FT) * 100 ? cm_b / m_kp : zero(FT)
             f_b    = alpha * (rm_kp - (one(FT) + alpha) * rzm_kp)
             pf_b   = cm_b * (alpha * alpha * rzm_kp - FT(3) * f_b)
@@ -482,7 +372,7 @@ end
         rym_new_val = rym_i + fy_t - fy_b
 
         if use_limiter
-            rzm_new_val = _limit_prather_slope(rzm_new_val, rm_new_val)
+            rzm_new_val = max(min(rzm_new_val, rm_new_val), -rm_new_val)
         end
 
         rm_new[i, j, k]  = rm_new_val
@@ -544,7 +434,7 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    strang_split_prather!(tracers, m, am, bm, cm, grid, pw_dict, use_limiter; debug_cb=nothing)
+    strang_split_prather!(tracers, m, am, bm, cm, grid, pw_dict, use_limiter)
 
 Full Strang-split advection using Prather (1986) prognostic slopes.
 `pw_dict` is a NamedTuple of `PratherWorkspace` keyed by tracer name.
@@ -555,8 +445,7 @@ function strang_split_prather!(tracers::NamedTuple,
                                 am, bm, cm,
                                 grid::LatitudeLongitudeGrid,
                                 pw_dict::NamedTuple,
-                                use_limiter::Bool;
-                                debug_cb=nothing) where FT
+                                use_limiter::Bool) where FT
     Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
 
     n_tr = length(tracers)
@@ -571,26 +460,17 @@ function strang_split_prather!(tracers::NamedTuple,
         end
 
         pw = pw_dict[name]
-        if !pw.initialized[]
-            initialize_prather_workspace!(pw, rm_tracer, m, use_limiter)
-        end
 
         rm = pw.rm_buf
         copyto!(rm, rm_tracer)
 
         # Strang splitting: X → Y → Z → Z → Y → X
         _advect_x_prather!(rm, m, am, pw, Nx, use_limiter)
-        debug_cb !== nothing && debug_cb("after_x1", name, rm, m)
         _advect_y_prather!(rm, m, bm, pw, Ny, use_limiter)
-        debug_cb !== nothing && debug_cb("after_y1", name, rm, m)
         _advect_z_prather!(rm, m, cm, pw, Nz, use_limiter)
-        debug_cb !== nothing && debug_cb("after_z1", name, rm, m)
         _advect_z_prather!(rm, m, cm, pw, Nz, use_limiter)
-        debug_cb !== nothing && debug_cb("after_z2", name, rm, m)
         _advect_y_prather!(rm, m, bm, pw, Ny, use_limiter)
-        debug_cb !== nothing && debug_cb("after_y2", name, rm, m)
         _advect_x_prather!(rm, m, am, pw, Nx, use_limiter)
-        debug_cb !== nothing && debug_cb("after_x2", name, rm, m)
 
         copyto!(rm_tracer, rm)
     end

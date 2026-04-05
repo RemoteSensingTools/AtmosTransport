@@ -109,8 +109,6 @@ struct MassFluxBinaryReader{FT} <: AbstractBinaryReader
     n_dbm           :: Int
     "v4: elements for dm = m_next - m_curr (Nx*Ny*Nz)"
     n_dm            :: Int
-    "v4: elements for dcm = cm_next - cm_curr (Nx*Ny*(Nz+1))"
-    n_dcm           :: Int
 end
 
 function MassFluxBinaryReader(bin_path::String, ::Type{FT}) where FT
@@ -153,14 +151,13 @@ function MassFluxBinaryReader(bin_path::String, ::Type{FT}) where FT
     n_dam = has_flux_delta ? Int(get(hdr, :n_dam, 0)) : 0
     n_dbm = has_flux_delta ? Int(get(hdr, :n_dbm, 0)) : 0
     n_dm  = has_flux_delta ? Int(get(hdr, :n_dm, 0))  : 0
-    n_dcm = has_flux_delta ? Int(get(hdr, :n_dcm, 0)) : 0
 
     elems_per_window = n_m + n_am + n_bm + n_cm + n_ps +
                        n_qv + n_cmfmc +
                        4 * n_tm5conv +    # entu + detu + entd + detd
                        4 * n_sfc +        # pblh + t2m + ustar + hflux
                        n_temperature +
-                       n_dam + n_dbm + n_dm + n_dcm
+                       n_dam + n_dbm + n_dm
     total_elems = elems_per_window * Nt
 
     seek(io, hdr_size)
@@ -189,7 +186,7 @@ function MassFluxBinaryReader(bin_path::String, ::Type{FT}) where FT
         hdr_size, has_qv, has_cmfmc, has_surface,
         n_qv, n_cmfmc, n_sfc, A_ifc, B_ifc,
         has_tm5conv, has_temperature, n_tm5conv, n_temperature,
-        has_flux_delta, n_dam, n_dbm, n_dm, n_dcm)
+        has_flux_delta, n_dam, n_dbm, n_dm)
 end
 
 """
@@ -299,24 +296,14 @@ _pre_delta_offset(r::MassFluxBinaryReader) =
 Load v4 flux deltas (dam, dbm, dm) for TM5-style temporal interpolation.
 Returns `false` if not a v4 binary.
 """
-function load_flux_delta_window!(dam_cpu, dbm_cpu, dm_cpu, dcm_cpu,
+function load_flux_delta_window!(dam_cpu, dbm_cpu, dm_cpu,
                                   reader::MassFluxBinaryReader, win::Int)
     reader.has_flux_delta || return false
     off = (win - 1) * reader.elems_per_window + _pre_delta_offset(reader)
-    o = off
-    copyto!(dam_cpu, 1, reader.data, o + 1, reader.n_dam); o += reader.n_dam
-    copyto!(dbm_cpu, 1, reader.data, o + 1, reader.n_dbm); o += reader.n_dbm
-    copyto!(dm_cpu,  1, reader.data, o + 1, reader.n_dm);  o += reader.n_dm
-    if reader.n_dcm > 0 && length(dcm_cpu) > 0
-        copyto!(dcm_cpu, 1, reader.data, o + 1, reader.n_dcm)
-    end
+    copyto!(dam_cpu, 1, reader.data, off + 1,                          reader.n_dam)
+    copyto!(dbm_cpu, 1, reader.data, off + reader.n_dam + 1,           reader.n_dbm)
+    copyto!(dm_cpu,  1, reader.data, off + reader.n_dam + reader.n_dbm + 1, reader.n_dm)
     return true
-end
-
-# Backward-compatible 3-argument version (no dcm)
-function load_flux_delta_window!(dam_cpu, dbm_cpu, dm_cpu,
-                                  reader::MassFluxBinaryReader, win::Int)
-    load_flux_delta_window!(dam_cpu, dbm_cpu, dm_cpu, Float32[], reader, win)
 end
 
 Base.close(r::MassFluxBinaryReader) = close(r.io)

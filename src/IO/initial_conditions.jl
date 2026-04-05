@@ -565,9 +565,7 @@ end
 struct UniformICData
     tracer_name :: Symbol
     value       :: Float64   # mixing ratio [mol/mol]
-    basis       :: Symbol    # :wet or :dry
 end
-UniformICData(tracer_name::Symbol, value::Float64) = UniformICData(tracer_name, value, :wet)
 
 const _DEFERRED_UNIFORM_IC = Ref(UniformICData[])
 
@@ -744,8 +742,7 @@ Source pressure levels from hybrid sigma: p = ap + bp × Psurf.
 Interpolation is linear in log-pressure.
 """
 function finalize_ic_vertical_interp!(tracers, m_3d,
-                                       grid::LatitudeLongitudeGrid{FT};
-                                       qv_3d=nothing) where FT
+                                       grid::LatitudeLongitudeGrid{FT}) where FT
     deferred_cs = _DEFERRED_IC[]
     deferred_ll = _DEFERRED_IC_LL[]
     has_uniform = !isempty(_DEFERRED_UNIFORM_IC[])
@@ -835,14 +832,8 @@ function finalize_ic_vertical_interp!(tracers, m_3d,
         tname = uic.tracer_name
         haskey(tracers, tname) || continue
         q = tracers[tname]
-        if uic.basis == :dry && qv_3d !== nothing && size(qv_3d) == size(q)
-            q .= FT(uic.value) .* (one(FT) .- qv_3d)
-            @info "IC finalized for $tname (LatLon): uniform dry mixing ratio = $(uic.value)"
-        else
-            fill!(q, FT(uic.value))
-            label = uic.basis == :dry ? "dry" : "wet"
-            @info "IC finalized for $tname (LatLon): uniform $(label) mixing ratio = $(uic.value)"
-        end
+        fill!(q, FT(uic.value))
+        @info "IC finalized for $tname (LatLon): uniform mixing ratio = $(uic.value)"
     end
 
     _clear_deferred_ic()

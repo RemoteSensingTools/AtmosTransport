@@ -169,149 +169,6 @@ function recompute_cm_from_divergence!(cm::Array{FT,3}, am::Array{FT,3},
     end
 end
 
-"""
-Summarize the discrete mass-balance residual for one met window:
-
-  residual = (m1 - m0) - scale * (div_h + div_v)
-
-`am`, `bm`, and `cm` are stored as mass transported over one spectral half-step,
-so a full met window corresponds to `scale = 2 * steps_per_met`.
-"""
-function summarize_mass_balance_residual(m0::Array{FT,3}, m1::Array{FT,3},
-                                         am::Array{FT,3}, bm::Array{FT,3},
-                                         cm::Array{FT,3}, grid;
-                                         scale::Real,
-                                         hour_start::Int,
-                                         hour_end::Union{Nothing,Int}=nothing) where FT
-    Nx, Ny, Nz = size(m0)
-    scale_f = Float64(scale)
-    n_cells = Nx * Ny * Nz
-    eps64 = eps(Float64)
-
-    res_sum = 0.0
-    res_abs_sum = 0.0
-    res_sq_sum = 0.0
-    res_absmax = 0.0
-    res_absmax_i = 1
-    res_absmax_j = 1
-    res_absmax_k = 1
-
-    rel_sq_sum = 0.0
-    rel_absmax = 0.0
-
-    dm_sum = 0.0
-    dm_abs_sum = 0.0
-    dm_absmax = 0.0
-
-    pred_sum = 0.0
-    pred_abs_sum = 0.0
-    pred_absmax = 0.0
-
-    col_sq_sum = 0.0
-    col_absmax = 0.0
-    col_absmax_i = 1
-    col_absmax_j = 1
-
-    level_absmax = zeros(Float64, Nz)
-    level_rms = zeros(Float64, Nz)
-    level_mean_abs = zeros(Float64, Nz)
-    level_rel_rms = zeros(Float64, Nz)
-
-    @inbounds for j in 1:Ny, i in 1:Nx
-        col_res = 0.0
-        for k in 1:Nz
-            div_half = (Float64(am[i, j, k]) - Float64(am[i + 1, j, k])) +
-                       (Float64(bm[i, j, k]) - Float64(bm[i, j + 1, k])) +
-                       (Float64(cm[i, j, k]) - Float64(cm[i, j, k + 1]))
-            predicted = scale_f * div_half
-            dm = Float64(m1[i, j, k]) - Float64(m0[i, j, k])
-            residual = dm - predicted
-            abs_res = abs(residual)
-
-            res_sum += residual
-            res_abs_sum += abs_res
-            res_sq_sum += residual * residual
-            if abs_res > res_absmax
-                res_absmax = abs_res
-                res_absmax_i = i
-                res_absmax_j = j
-                res_absmax_k = k
-            end
-
-            mass_scale = max(abs(Float64(m0[i, j, k])), abs(Float64(m1[i, j, k])), eps64)
-            rel_res = residual / mass_scale
-            rel_sq_sum += rel_res * rel_res
-            rel_absmax = max(rel_absmax, abs(rel_res))
-
-            abs_dm = abs(dm)
-            dm_sum += dm
-            dm_abs_sum += abs_dm
-            dm_absmax = max(dm_absmax, abs_dm)
-
-            abs_pred = abs(predicted)
-            pred_sum += predicted
-            pred_abs_sum += abs_pred
-            pred_absmax = max(pred_absmax, abs_pred)
-
-            level_absmax[k] = max(level_absmax[k], abs_res)
-            level_rms[k] += residual * residual
-            level_mean_abs[k] += abs_res
-            level_rel_rms[k] += rel_res * rel_res
-
-            col_res += residual
-        end
-
-        abs_col_res = abs(col_res)
-        col_sq_sum += col_res * col_res
-        if abs_col_res > col_absmax
-            col_absmax = abs_col_res
-            col_absmax_i = i
-            col_absmax_j = j
-        end
-    end
-
-    inv_n_cells = 1.0 / n_cells
-    inv_n_cols = 1.0 / (Nx * Ny)
-    inv_n_xy = 1.0 / (Nx * Ny)
-    @inbounds for k in 1:Nz
-        level_rms[k] = sqrt(level_rms[k] * inv_n_xy)
-        level_mean_abs[k] *= inv_n_xy
-        level_rel_rms[k] = sqrt(level_rel_rms[k] * inv_n_xy)
-    end
-
-    return Dict{String,Any}(
-        "hour_start" => hour_start,
-        "hour_end" => hour_end,
-        "scale_factor" => scale_f,
-        "residual_absmax_kg" => res_absmax,
-        "residual_rms_kg" => sqrt(res_sq_sum * inv_n_cells),
-        "residual_mean_abs_kg" => res_abs_sum * inv_n_cells,
-        "residual_mean_kg" => res_sum * inv_n_cells,
-        "residual_total_kg" => res_sum,
-        "residual_rel_absmax" => rel_absmax,
-        "residual_rel_rms" => sqrt(rel_sq_sum * inv_n_cells),
-        "dm_absmax_kg" => dm_absmax,
-        "dm_mean_abs_kg" => dm_abs_sum * inv_n_cells,
-        "dm_total_kg" => dm_sum,
-        "predicted_absmax_kg" => pred_absmax,
-        "predicted_mean_abs_kg" => pred_abs_sum * inv_n_cells,
-        "predicted_total_kg" => pred_sum,
-        "column_residual_absmax_kg" => col_absmax,
-        "column_residual_rms_kg" => sqrt(col_sq_sum * inv_n_cols),
-        "hotspot" => Dict(
-            "lon_deg" => grid.lons[res_absmax_i],
-            "lat_deg" => grid.lats[res_absmax_j],
-            "level" => res_absmax_k,
-            "column_lon_deg" => grid.lons[col_absmax_i],
-            "column_lat_deg" => grid.lats[col_absmax_j],
-        ),
-        "level_residual_absmax_kg" => level_absmax,
-        "level_residual_rms_kg" => level_rms,
-        "level_residual_mean_abs_kg" => level_mean_abs,
-        "level_residual_rel_rms" => level_rel_rms,
-    )
-end
-
 # ===========================================================================
 # Target regular lat-lon grid (TM5 convention: poles at cell faces)
 # ===========================================================================
@@ -853,9 +710,8 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
     n_dam = n_am
     n_dbm = n_bm
     n_dm  = n_m
-    n_dcm = n_cm
 
-    elems_per_window = n_m + n_am + n_bm + n_cm + n_ps + n_dam + n_dbm + n_dm + n_dcm
+    elems_per_window = n_m + n_am + n_bm + n_cm + n_ps + n_dam + n_dbm + n_dm
     bytes_per_window = elems_per_window * sizeof(FT)
     total_bytes = Int64(HEADER_SIZE) + bytes_per_window * Nt
 
@@ -863,19 +719,13 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
     mkpath(out_dir)
     dp_tag = @sprintf("merged%dPa", round(Int, min_dp))
     bin_path = joinpath(out_dir, "era5_v4_$(date_str)_$(dp_tag)_float32.bin")
-    diag_path = joinpath(out_dir, "era5_v4_$(date_str)_$(dp_tag)_float32_mass_balance.json")
-    bin_ready = isfile(bin_path) && filesize(bin_path) == total_bytes
-    diag_ready = isfile(diag_path)
 
-    if bin_ready && diag_ready
+    if isfile(bin_path) && filesize(bin_path) == total_bytes
         @info "  SKIP (exists, correct size): $(basename(bin_path))"
         return bin_path
     end
 
     @info @sprintf("  Output: %s (%.2f GB, %d windows)", basename(bin_path), total_bytes / 1e9, Nt)
-    if bin_ready && !diag_ready
-        @info "  Binary exists but mass-balance sidecar is missing; recomputing diagnostics"
-    end
 
     # --- Build header ---
     header = Dict{String,Any}(
@@ -888,7 +738,7 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
         "n_entu" => 0, "n_detu" => 0, "n_entd" => 0, "n_detd" => 0,
         "n_pblh" => 0, "n_t2m" => 0, "n_ustar" => 0, "n_hflux" => 0,
         "n_temperature" => 0,
-        "n_dam" => n_dam, "n_dbm" => n_dbm, "n_dm" => n_dm, "n_dcm" => n_dcm,
+        "n_dam" => n_dam, "n_dbm" => n_dbm, "n_dm" => n_dm,
         "include_flux_delta" => true,
         "include_qv" => false, "include_cmfmc" => false,
         "include_tm5conv" => false, "include_surface" => false,
@@ -949,7 +799,6 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
     dam_merged = Array{FT}(undef, Nx + 1, Ny, Nz)
     dbm_merged = Array{FT}(undef, Nx, Ny + 1, Nz)
     dm_merged  = Array{FT}(undef, Nx, Ny, Nz)
-    dcm_merged = Array{FT}(undef, Nx, Ny, Nz + 1)
 
     # Next-window merged fields for last-hour delta via next day's hour 0
     m_next_merged  = Array{FT}(undef, Nx, Ny, Nz)
@@ -1024,7 +873,6 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
     last_hour_next_m  = nothing
     last_hour_next_am = nothing
     last_hour_next_bm = nothing
-    last_hour_next_cm = nothing
 
     if next_day_hour0 !== nothing
         @info "  Computing next day hour 0 for last-window delta..."
@@ -1044,195 +892,57 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
         merge_cell_field!(bm_next_merged, bm_native, merge_map)
         @views bm_next_merged[:, 1, :]    .= zero(FT)
         @views bm_next_merged[:, Ny+1, :] .= zero(FT)
-        # Recompute cm for the next day's merged fields
-        recompute_cm_from_divergence!(cm_merged, am_next_merged, bm_next_merged, m_next_merged;
-                                      B_ifc=merged_vc.B)
-        cm_merged[1, :, 1]   .= zero(FT)
-        cm_merged[:, :, end] .= zero(FT)
         last_hour_next_m  = copy(m_next_merged)
         last_hour_next_am = copy(am_next_merged)
         last_hour_next_bm = copy(bm_next_merged)
-        last_hour_next_cm = copy(cm_merged)
     end
-
-    # --- Segers-style mass-balance residual diagnostics ---
-    @info "  Computing mass-balance residual diagnostics..."
-    window_scale = 2 * steps_per_met
-    mass_balance_windows = Vector{Dict{String,Any}}(undef, Nt)
-    current_peak_absmax = -Inf
-    current_peak_window = 0
-    midpoint_peak_absmax = -Inf
-    midpoint_peak_window = 0
-
-    for win_idx in 1:Nt
-        next_m = nothing
-        next_am = nothing
-        next_bm = nothing
-        hour_end = nothing
-        uses_next_day_hour0 = false
-
-        if win_idx < Nt
-            next_m = all_m[win_idx + 1]
-            next_am = all_am[win_idx + 1]
-            next_bm = all_bm[win_idx + 1]
-            hour_end = hours[win_idx + 1]
-        elseif last_hour_next_m !== nothing
-            next_m = last_hour_next_m
-            next_am = last_hour_next_am
-            next_bm = last_hour_next_bm
-            hour_end = 0
-            uses_next_day_hour0 = true
-        end
-
-        if next_m === nothing
-            mass_balance_windows[win_idx] = Dict{String,Any}(
-                "window_index" => win_idx,
-                "hour_start" => hours[win_idx],
-                "hour_end" => hour_end,
-                "available" => false,
-                "reason" => "missing_next_window_state",
-            )
-            continue
-        end
-
-        current_summary = summarize_mass_balance_residual(
-            all_m[win_idx], next_m, all_am[win_idx], all_bm[win_idx], all_cm[win_idx], grid;
-            scale=window_scale, hour_start=hours[win_idx], hour_end=hour_end)
-
-        dam_merged .= all_am[win_idx]
-        dam_merged .+= next_am
-        dam_merged .*= FT(0.5)
-        dbm_merged .= all_bm[win_idx]
-        dbm_merged .+= next_bm
-        dbm_merged .*= FT(0.5)
-        @views dam_merged[:, 1, :]    .= zero(FT)
-        @views dam_merged[:, Ny, :]   .= zero(FT)
-        @views dbm_merged[:, 1, :]    .= zero(FT)
-        @views dbm_merged[:, Ny+1, :] .= zero(FT)
-        recompute_cm_from_divergence!(cm_merged, dam_merged, dbm_merged, all_m[win_idx];
-                                      B_ifc=merged_vc.B)
-        @views cm_merged[:, :, 1]      .= zero(FT)
-        @views cm_merged[:, :, Nz + 1] .= zero(FT)
-
-        midpoint_summary = summarize_mass_balance_residual(
-            all_m[win_idx], next_m, dam_merged, dbm_merged, cm_merged, grid;
-            scale=window_scale, hour_start=hours[win_idx], hour_end=hour_end)
-
-        current_absmax = Float64(current_summary["residual_absmax_kg"])
-        if current_absmax > current_peak_absmax
-            current_peak_absmax = current_absmax
-            current_peak_window = win_idx
-        end
-
-        midpoint_absmax = Float64(midpoint_summary["residual_absmax_kg"])
-        if midpoint_absmax > midpoint_peak_absmax
-            midpoint_peak_absmax = midpoint_absmax
-            midpoint_peak_window = win_idx
-        end
-
-        mass_balance_windows[win_idx] = Dict{String,Any}(
-            "window_index" => win_idx,
-            "hour_start" => hours[win_idx],
-            "hour_end" => hour_end,
-            "available" => true,
-            "uses_next_day_hour0" => uses_next_day_hour0,
-            "current_flux" => current_summary,
-            "midpoint_flux" => midpoint_summary,
-        )
-
-        if win_idx <= 3 || win_idx == Nt || win_idx % 8 == 0
-            @info @sprintf(
-                "    Residual window %d/%d hour %02d->%02d endpoint_absmax=%.3e midpoint_absmax=%.3e",
-                win_idx, Nt, hours[win_idx], hour_end === nothing ? -1 : hour_end,
-                current_absmax, midpoint_absmax)
-        end
-    end
-
-    diag_payload = Dict{String,Any}(
-        "date" => Dates.format(date, "yyyy-mm-dd"),
-        "bin_path" => bin_path,
-        "window_scale_factor" => window_scale,
-        "steps_per_met" => steps_per_met,
-        "dt_seconds" => dt,
-        "half_dt_seconds" => half_dt,
-        "met_interval_seconds" => met_interval,
-        "diagnostic_definition" => "residual = (m_next - m_current) - scale*(am_left-am_right + bm_south-bm_north + cm_top-cm_bottom)",
-        "flux_units" => "kg per spectral half-step",
-        "summary" => Dict(
-            "current_flux_peak_absmax_kg" => current_peak_absmax,
-            "current_flux_peak_window" => current_peak_window,
-            "midpoint_flux_peak_absmax_kg" => midpoint_peak_absmax,
-            "midpoint_flux_peak_window" => midpoint_peak_window,
-        ),
-        "windows" => mass_balance_windows,
-    )
-    open(diag_path, "w") do io
-        write(io, JSON3.write(diag_payload))
-    end
-    @info @sprintf(
-        "  Wrote mass-balance diagnostics: %s (peak midpoint residual %.3e kg in window %d)",
-        basename(diag_path), midpoint_peak_absmax, midpoint_peak_window)
 
     # --- Write binary ---
-    if !bin_ready
-        @info "  Writing binary..."
-        bytes_written = Int64(0)
-        open(bin_path, "w") do io
-            hdr_buf = zeros(UInt8, HEADER_SIZE)
-            copyto!(hdr_buf, 1, Vector{UInt8}(header_json), 1, length(header_json))
-            write(io, hdr_buf)
-            bytes_written += HEADER_SIZE
+    @info "  Writing binary..."
+    bytes_written = Int64(0)
+    open(bin_path, "w") do io
+        hdr_buf = zeros(UInt8, HEADER_SIZE)
+        copyto!(hdr_buf, 1, Vector{UInt8}(header_json), 1, length(header_json))
+        write(io, hdr_buf)
+        bytes_written += HEADER_SIZE
 
-            for win_idx in 1:Nt
-                # Write core fields: m | am | bm | cm | ps
-                bytes_written += write_array!(io, all_m[win_idx])
-                bytes_written += write_array!(io, all_am[win_idx])
-                bytes_written += write_array!(io, all_bm[win_idx])
-                bytes_written += write_array!(io, all_cm[win_idx])
-                bytes_written += write_array!(io, all_ps[win_idx])
+        for win_idx in 1:Nt
+            # Write core fields: m | am | bm | cm | ps
+            bytes_written += write_array!(io, all_m[win_idx])
+            bytes_written += write_array!(io, all_am[win_idx])
+            bytes_written += write_array!(io, all_bm[win_idx])
+            bytes_written += write_array!(io, all_cm[win_idx])
+            bytes_written += write_array!(io, all_ps[win_idx])
 
-                # Compute deltas: dam = next - current, dbm = next - current, dm = next - current
-                if win_idx < Nt
-                    # Next window is within this day
-                    dam_merged .= all_am[win_idx + 1] .- all_am[win_idx]
-                    dbm_merged .= all_bm[win_idx + 1] .- all_bm[win_idx]
-                    dm_merged  .= all_m[win_idx + 1]  .- all_m[win_idx]
-                elseif last_hour_next_m !== nothing
-                    # Last window: use next day's hour 0
-                    dam_merged .= last_hour_next_am .- all_am[win_idx]
-                    dbm_merged .= last_hour_next_bm .- all_bm[win_idx]
-                    dm_merged  .= last_hour_next_m  .- all_m[win_idx]
-                else
-                    # No next data available -> zero deltas
-                    fill!(dam_merged, zero(FT))
-                    fill!(dbm_merged, zero(FT))
-                    fill!(dm_merged, zero(FT))
-                end
-
-                # Compute dcm = cm_next - cm_curr
-                if win_idx < Nt
-                    dcm_merged .= all_cm[win_idx + 1] .- all_cm[win_idx]
-                elseif last_hour_next_cm !== nothing
-                    dcm_merged .= last_hour_next_cm .- all_cm[win_idx]
-                else
-                    fill!(dcm_merged, zero(FT))
-                end
-
-                bytes_written += write_array!(io, dam_merged)
-                bytes_written += write_array!(io, dbm_merged)
-                bytes_written += write_array!(io, dm_merged)
-                bytes_written += write_array!(io, dcm_merged)
+            # Compute deltas: dam = next - current, dbm = next - current, dm = next - current
+            if win_idx < Nt
+                # Next window is within this day
+                dam_merged .= all_am[win_idx + 1] .- all_am[win_idx]
+                dbm_merged .= all_bm[win_idx + 1] .- all_bm[win_idx]
+                dm_merged  .= all_m[win_idx + 1]  .- all_m[win_idx]
+            elseif last_hour_next_m !== nothing
+                # Last window: use next day's hour 0
+                dam_merged .= last_hour_next_am .- all_am[win_idx]
+                dbm_merged .= last_hour_next_bm .- all_bm[win_idx]
+                dm_merged  .= last_hour_next_m  .- all_m[win_idx]
+            else
+                # No next data available -> zero deltas
+                fill!(dam_merged, zero(FT))
+                fill!(dbm_merged, zero(FT))
+                fill!(dm_merged, zero(FT))
             end
-            flush(io)
-        end
 
-        actual = filesize(bin_path)
-        @info @sprintf("  Done: %s (%.2f GB, %.1fs)", basename(bin_path), actual / 1e9, time() - t_day)
-        actual == total_bytes ||
-            error(@sprintf("SIZE MISMATCH: expected %d bytes, got %d", total_bytes, actual))
-    else
-        @info @sprintf("  Done diagnostics-only: %s (%.1fs)", basename(diag_path), time() - t_day)
+            bytes_written += write_array!(io, dam_merged)
+            bytes_written += write_array!(io, dbm_merged)
+            bytes_written += write_array!(io, dm_merged)
+        end
+        flush(io)
     end
+
+    actual = filesize(bin_path)
+    @info @sprintf("  Done: %s (%.2f GB, %.1fs)", basename(bin_path), actual / 1e9, time() - t_day)
+    actual == total_bytes ||
+        error(@sprintf("SIZE MISMATCH: expected %d bytes, got %d", total_bytes, actual))
 
     # Return the last window's merged fields for the next day's prev_day_last_hour
     last_merged = (m=all_m[Nt], am=all_am[Nt], bm=all_bm[Nt])

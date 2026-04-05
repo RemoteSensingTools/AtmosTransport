@@ -64,7 +64,6 @@ export AbstractAdvectionScheme
 export SlopesAdvection, UpwindAdvection
 export AbstractPPMScheme, PPMAdvection
 export PratherAdvection, PratherWorkspace, allocate_prather_workspace
-export initialize_prather_workspace!
 export CSPratherWorkspace, allocate_cs_prather_workspace, allocate_cs_prather_workspaces
 export strang_split_prather_cs!
 export strang_split_prather!

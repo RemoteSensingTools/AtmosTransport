@@ -8,5 +8,3 @@
 - [LL advection chain review](ll_advection_chain_review.md) — Full call chain trace from run! to GPU kernels, TM5 comparison, missing n_sub cap bug
 - [Fused spectral v4 review](fused_spectral_v4_review.md) — APPROVED: faithful copy from two refs, Float64-only improvement, binary layout matches reader
 - [CS transport full trace](cs_transport_trace.md) — Complete run! to output trace for CS grid: Strang/LinRood/GCHP paths, file:line refs, unit conventions
-- [V4 interpolation NaN root cause](v4_interpolation_nan_analysis.md) — Runtime cm recomputation amplifies Z-CFL 3.3x via B-correction; 590K cells exceed CFL=1
-- [TM5 TimeInterpolation trace](tm5_time_interpolation_trace.md) — Full TM5 interp architecture: pu/pv interp3, dynam0 B-correction, vs our v4 am/bm delta approach

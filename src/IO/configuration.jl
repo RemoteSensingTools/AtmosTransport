@@ -73,13 +73,6 @@ function _parse_initial_conditions(ic_cfg::Dict)
                 continue
             end
 
-            if haskey(tracer_ic, "uniform_dry_value")
-                val = Float64(tracer_ic["uniform_dry_value"])
-                _store_uniform_ic(UniformICData(Symbol(tracer_key), val, :dry))
-                @info "IC for $(tracer_key): uniform dry mixing ratio = $val"
-                continue
-            end
-
             haskey(tracer_ic, "file") || continue
             ic_file = expanduser(tracer_ic["file"])
             nc_var  = get(tracer_ic, "variable", uppercase(String(tracer_key)))
@@ -407,8 +400,6 @@ function _build_met_driver(driver_type::String, cfg::Dict, met_cfg_default, ::Ty
 
     elseif driver_type == "preprocessed_latlon"
         dir = _resolve_data_path(get(cfg, "directory", ""))
-        qv_dir = _resolve_data_path(get(cfg, "qv_directory", ""))
-        disable_qv = get(cfg, "disable_qv", false)
         ft_tag = FT == Float32 ? "float32" : "float64"
         files = if !isempty(dir) && isdir(dir)
             find_massflux_shards(dir, ft_tag)
@@ -418,13 +409,7 @@ function _build_met_driver(driver_type::String, cfg::Dict, met_cfg_default, ::Ty
         end
         max_win_cfg = get(cfg, "max_windows", nothing)
         max_windows = max_win_cfg !== nothing ? Int(max_win_cfg) : nothing
-        native_A_ifc, native_B_ifc = try
-            load_vertical_coefficients(met_cfg_default; FT=Float64)
-        catch
-            Float64[], Float64[]
-        end
-        return PreprocessedLatLonMetDriver(; FT, files, dt, merge_map, max_windows,
-                                           qv_dir, disable_qv, native_A_ifc, native_B_ifc)
+        return PreprocessedLatLonMetDriver(; FT, files, dt, merge_map, max_windows)
 
     elseif driver_type == "geosfp_cs"
         preproc_dir = _resolve_data_path(get(cfg, "preprocessed_dir", ""))

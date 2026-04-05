@@ -16,7 +16,5 @@ using AtmosTransport
     include("test_regridding.jl")
     include("test_callbacks.jl")
     include("test_mass_flux_advection.jl")
-    include("test_ll_tm5_audit.jl")
-    include("test_prather_advection.jl")
     include("test_cubed_sphere_mass_flux.jl")
 end

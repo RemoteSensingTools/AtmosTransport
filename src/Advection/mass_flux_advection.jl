@@ -16,14 +16,6 @@ using KernelAbstractions: @kernel, @index, synchronize, get_backend
     return dev
 end
 
-@inline function _limit_mass_slope(s, rm_cell)
-    T = typeof(rm_cell)
-    if rm_cell > zero(T)
-        return max(min(s, rm_cell), -rm_cell)
-    end
-    return zero(T)
-end
-
 # ---------------------------------------------------------------------------
 # Reduced-grid helpers for GPU kernels
 # ---------------------------------------------------------------------------
@@ -118,7 +110,7 @@ end
             end
             sx_im = m[im, j, k] * sc_im
             if use_limiter
-                sx_im = _limit_mass_slope(sx_im, rm[im, j, k])
+                sx_im = max(min(sx_im, rm[im, j, k]), -rm[im, j, k])
             end
 
             sc_i = (c_ip - c_im) / 2
@@ -127,7 +119,7 @@ end
             end
             sx_i = m[i, j, k] * sc_i
             if use_limiter
-                sx_i = _limit_mass_slope(sx_i, rm[i, j, k])
+                sx_i = max(min(sx_i, rm[i, j, k]), -rm[i, j, k])
             end
 
             sc_ip = (c_ipp - c_i) / 2
@@ -136,7 +128,7 @@ end
             end
             sx_ip = m[ip, j, k] * sc_ip
             if use_limiter
-                sx_ip = _limit_mass_slope(sx_ip, rm[ip, j, k])
+                sx_ip = max(min(sx_ip, rm[ip, j, k]), -rm[ip, j, k])
             end
 
             am_l = am[i, j, k]
@@ -194,7 +186,7 @@ end
             end
             sx_im_r = m_im * sc_im_r
             if use_limiter
-                sx_im_r = _limit_mass_slope(sx_im_r, rm_im)
+                sx_im_r = max(min(sx_im_r, rm_im), -rm_im)
             end
 
             sc_ic_r = (c_ip_r - c_im_r) / 2
@@ -203,7 +195,7 @@ end
             end
             sx_ic_r = m_ic * sc_ic_r
             if use_limiter
-                sx_ic_r = _limit_mass_slope(sx_ic_r, rm_ic)
+                sx_ic_r = max(min(sx_ic_r, rm_ic), -rm_ic)
             end
 
             sc_ip_r = (c_ipp_r - c_ic_r) / 2
@@ -212,7 +204,7 @@ end
             end
             sx_ip_r = m_ip * sc_ip_r
             if use_limiter
-                sx_ip_r = _limit_mass_slope(sx_ip_r, rm_ip)
+                sx_ip_r = max(min(sx_ip_r, rm_ip), -rm_ip)
             end
 
             # Face mass fluxes at cluster boundaries
@@ -264,7 +256,7 @@ end
             sc = (cjp - cjm) / 2
             if use_limiter; sc = minmod_device(sc, 2 * (cjp - cj), 2 * (cj - cjm)); end
             s = m[i, j, k] * sc
-            if use_limiter; s = _limit_mass_slope(s, rm[i, j, k]); end
+            if use_limiter; s = max(min(s, rm[i, j, k]), -rm[i, j, k]); end
             s
         else
             zero(FT)
@@ -278,7 +270,7 @@ end
             sc = (cj - cjmm) / 2
             if use_limiter; sc = minmod_device(sc, 2 * (cj - cjm), 2 * (cjm - cjmm)); end
             s = m[i, j - 1, k] * sc
-            if use_limiter; s = _limit_mass_slope(s, rm[i, j - 1, k]); end
+            if use_limiter; s = max(min(s, rm[i, j - 1, k]), -rm[i, j - 1, k]); end
             s
         else
             zero(FT)
@@ -292,7 +284,7 @@ end
             sc = (cjpp - cj) / 2
             if use_limiter; sc = minmod_device(sc, 2 * (cjpp - cjp), 2 * (cjp - cj)); end
             s = m[i, j + 1, k] * sc
-            if use_limiter; s = _limit_mass_slope(s, rm[i, j + 1, k]); end
+            if use_limiter; s = max(min(s, rm[i, j + 1, k]), -rm[i, j + 1, k]); end
             s
         else
             zero(FT)
@@ -349,7 +341,7 @@ end
             sc = (ckp - ckm) / 2
             if use_limiter; sc = minmod_device(sc, 2 * (ckp - ck), 2 * (ck - ckm)); end
             s = m[i, j, k] * sc
-            if use_limiter; s = _limit_mass_slope(s, rm[i, j, k]); end
+            if use_limiter; s = max(min(s, rm[i, j, k]), -rm[i, j, k]); end
             s
         else
             zero(FT)
@@ -363,7 +355,7 @@ end
             sc = (ck - ckmm) / 2
             if use_limiter; sc = minmod_device(sc, 2 * (ck - ckm), 2 * (ckm - ckmm)); end
             s = m[i, j, k - 1] * sc
-            if use_limiter; s = _limit_mass_slope(s, rm[i, j, k - 1]); end
+            if use_limiter; s = max(min(s, rm[i, j, k - 1]), -rm[i, j, k - 1]); end
             s
         else
             zero(FT)
@@ -377,7 +369,7 @@ end
             sc = (ckpp - ck) / 2
             if use_limiter; sc = minmod_device(sc, 2 * (ckpp - ckp), 2 * (ckp - ck)); end
             s = m[i, j, k + 1] * sc
-            if use_limiter; s = _limit_mass_slope(s, rm[i, j, k + 1]); end
+            if use_limiter; s = max(min(s, rm[i, j, k + 1]), -rm[i, j, k + 1]); end
             s
         else
             zero(FT)
@@ -856,7 +848,7 @@ function _advect_x_row_massflux!(rm_vec::AbstractVector{FT},
         end
         sx_im = m_vec[im] * sc_im
         if use_limiter
-            sx_im = _limit_mass_slope(sx_im, rm_vec[im])
+            sx_im = max(min(sx_im, rm_vec[im]), -rm_vec[im])
         end
 
         sc_i = (c_ip - c_im) / 2
@@ -865,7 +857,7 @@ function _advect_x_row_massflux!(rm_vec::AbstractVector{FT},
         end
         sx_i = m_vec[i] * sc_i
         if use_limiter
-            sx_i = _limit_mass_slope(sx_i, rm_vec[i])
+            sx_i = max(min(sx_i, rm_vec[i]), -rm_vec[i])
         end
 
         sc_ip = (c_ipp - c_i) / 2
@@ -874,7 +866,7 @@ function _advect_x_row_massflux!(rm_vec::AbstractVector{FT},
         end
         sx_ip = m_vec[ip] * sc_ip
         if use_limiter
-            sx_ip = _limit_mass_slope(sx_ip, rm_vec[ip])
+            sx_ip = max(min(sx_ip, rm_vec[ip]), -rm_vec[ip])
         end
 
         am_l = am_vec[i]
@@ -1278,8 +1270,7 @@ function strang_split_massflux!(tracers::NamedTuple,
                                  grid::LatitudeLongitudeGrid,
                                  use_limiter::Bool,
                                  ws::MassFluxWorkspace{FT};
-                                 cfl_limit::FT = FT(0.95),
-                                 debug_cb=nothing) where FT
+                                 cfl_limit::FT = FT(0.95)) where FT
     # Multi-tracer: each tracer is advected independently, restoring m between.
     n_tr = length(tracers)
     m_save = n_tr > 1 ? similar(m) : m
@@ -1294,11 +1285,8 @@ function strang_split_massflux!(tracers::NamedTuple,
         copyto!(ws.rm, rm_tracer)
         rm_single = NamedTuple{(name,)}((ws.rm,))
 
-        debug_cb !== nothing && debug_cb("start", name, ws.rm, m)
         advect_x_massflux_subcycled!(rm_single, m, am, grid, use_limiter, ws; cfl_limit)
-        debug_cb !== nothing && debug_cb("after_x1", name, ws.rm, m)
         advect_y_massflux_subcycled!(rm_single, m, bm, grid, use_limiter, ws; cfl_limit)
-        debug_cb !== nothing && debug_cb("after_y1", name, ws.rm, m)
         # Z-advection with standard CFL subcycling. TM5 allows gamma > 1 because it
         # uses prognostic slopes (rzm) that carry subgrid history. Our diagnostic slopes
         # (recomputed fresh each step via minmod) cannot prevent negative rm when gamma > 1
@@ -1306,13 +1294,9 @@ function strang_split_massflux!(tracers::NamedTuple,
         # Subcycling with cfl_limit=0.95 ensures gamma < 1 (3 iterations for Z-CFL=2.5).
         # Implementing prognostic slopes (Session 3) would allow removing this constraint.
         advect_z_massflux_subcycled!(rm_single, m, cm, use_limiter, ws; cfl_limit)
-        debug_cb !== nothing && debug_cb("after_z1", name, ws.rm, m)
         advect_z_massflux_subcycled!(rm_single, m, cm, use_limiter, ws; cfl_limit)
-        debug_cb !== nothing && debug_cb("after_z2", name, ws.rm, m)
         advect_y_massflux_subcycled!(rm_single, m, bm, grid, use_limiter, ws; cfl_limit)
-        debug_cb !== nothing && debug_cb("after_y2", name, ws.rm, m)
         advect_x_massflux_subcycled!(rm_single, m, am, grid, use_limiter, ws; cfl_limit)
-        debug_cb !== nothing && debug_cb("after_x2", name, ws.rm, m)
 
         copyto!(rm_tracer, ws.rm)
     end
@@ -1343,26 +1327,18 @@ function strang_split_massflux!(tracers::NamedTuple,
                                  am, bm, cm,
                                  grid::LatitudeLongitudeGrid,
                                  use_limiter::Bool;
-                                 cfl_limit::FT = FT(0.95),
-                                 debug_cb=nothing) where FT
+                                 cfl_limit::FT = FT(0.95)) where FT
     # Allocate working copies (the advect_*_subcycled! functions modify rm in-place)
     rm_tracers = NamedTuple{keys(tracers)}(
         Tuple(copy(rm) for rm in values(tracers))
     )
 
-    debug_cb !== nothing && debug_cb("start", :all, rm_tracers, m)
     advect_x_massflux_subcycled!(rm_tracers, m, am, grid, use_limiter; cfl_limit)
-    debug_cb !== nothing && debug_cb("after_x1", :all, rm_tracers, m)
     advect_y_massflux_subcycled!(rm_tracers, m, bm, grid, use_limiter; cfl_limit)
-    debug_cb !== nothing && debug_cb("after_y1", :all, rm_tracers, m)
     advect_z_massflux_subcycled!(rm_tracers, m, cm, use_limiter; cfl_limit)
-    debug_cb !== nothing && debug_cb("after_z1", :all, rm_tracers, m)
     advect_z_massflux_subcycled!(rm_tracers, m, cm, use_limiter; cfl_limit)
-    debug_cb !== nothing && debug_cb("after_z2", :all, rm_tracers, m)
     advect_y_massflux_subcycled!(rm_tracers, m, bm, grid, use_limiter; cfl_limit)
-    debug_cb !== nothing && debug_cb("after_y2", :all, rm_tracers, m)
     advect_x_massflux_subcycled!(rm_tracers, m, am, grid, use_limiter; cfl_limit)
-    debug_cb !== nothing && debug_cb("after_x2", :all, rm_tracers, m)
 
     for (name, rm_tracer) in pairs(tracers)
         rm_tracer .= rm_tracers[name]

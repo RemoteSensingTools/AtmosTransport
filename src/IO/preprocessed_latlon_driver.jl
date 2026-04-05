@@ -534,7 +534,7 @@ function load_met_window!(cpu_buf::LatLonCPUBuffer,
                      reader, local_win)
         # v4: load flux deltas if available and buffer is allocated
         if length(cpu_buf.dam) > 0
-            load_flux_delta_window!(cpu_buf.dam, cpu_buf.dbm, cpu_buf.dm, reader, local_win)
+            load_flux_delta_window!(cpu_buf.dam, cpu_buf.dbm, cpu_buf.dm, cpu_buf.dcm, reader, local_win)
         end
         close(reader)
     elseif mm === nothing

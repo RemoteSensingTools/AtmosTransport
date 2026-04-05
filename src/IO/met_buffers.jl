@@ -67,6 +67,8 @@ struct LatLonMetBuffer{FT, A3 <: AbstractArray{FT,3}, A2 <: AbstractArray{FT,2}}
     dbm   :: Union{A3, Nothing}
     "mass delta: m_next - m_curr (Nx, Ny, Nz) or nothing"
     dm    :: Union{A3, Nothing}
+    "cm delta: cm_next - cm_curr (Nx, Ny, Nz+1) or nothing"
+    dcm   :: Union{A3, Nothing}
 end
 
 function LatLonMetBuffer(arch::AbstractArchitecture, ::Type{FT}, Nx, Ny, Nz;
@@ -87,7 +89,8 @@ function LatLonMetBuffer(arch::AbstractArchitecture, ::Type{FT}, Nx, Ny, Nz;
     dam = flux_delta ? AT(zeros(FT, Nx + 1, Ny, Nz)) : nothing
     dbm = flux_delta ? AT(zeros(FT, Nx, Ny + 1, Nz)) : nothing
     dm  = flux_delta ? AT(zeros(FT, Nx, Ny, Nz))     : nothing
-    LatLonMetBuffer(m_ref, m_dev, am, bm, cm, ps, Δp, u, v, ws, dam, dbm, dm)
+    dcm = flux_delta ? AT(zeros(FT, Nx, Ny, Nz + 1)) : nothing
+    LatLonMetBuffer(m_ref, m_dev, am, bm, cm, ps, Δp, u, v, ws, dam, dbm, dm, dcm)
 end
 
 """
@@ -107,6 +110,7 @@ struct LatLonCPUBuffer{FT} <: AbstractCPUStagingBuffer{FT}
     dam :: Array{FT, 3}
     dbm :: Array{FT, 3}
     dm  :: Array{FT, 3}
+    dcm :: Array{FT, 3}
 end
 
 function LatLonCPUBuffer(::Type{FT}, Nx, Ny, Nz; flux_delta::Bool=false) where FT
@@ -118,7 +122,8 @@ function LatLonCPUBuffer(::Type{FT}, Nx, Ny, Nz; flux_delta::Bool=false) where F
         Array{FT}(undef, Nx, Ny),
         flux_delta ? Array{FT}(undef, Nx + 1, Ny, Nz) : Array{FT}(undef, 0, 0, 0),
         flux_delta ? Array{FT}(undef, Nx, Ny + 1, Nz) : Array{FT}(undef, 0, 0, 0),
-        flux_delta ? Array{FT}(undef, Nx, Ny, Nz)     : Array{FT}(undef, 0, 0, 0))
+        flux_delta ? Array{FT}(undef, Nx, Ny, Nz)     : Array{FT}(undef, 0, 0, 0),
+        flux_delta ? Array{FT}(undef, Nx, Ny, Nz + 1) : Array{FT}(undef, 0, 0, 0))
 end
 
 """
@@ -138,6 +143,9 @@ function upload!(buf::LatLonMetBuffer, cpu::LatLonCPUBuffer)
         copyto!(buf.dam, cpu.dam)
         copyto!(buf.dbm, cpu.dbm)
         copyto!(buf.dm, cpu.dm)
+    end
+    if buf.dcm !== nothing && length(cpu.dcm) > 0
+        copyto!(buf.dcm, cpu.dcm)
     end
     return nothing
 end

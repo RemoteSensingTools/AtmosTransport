@@ -853,8 +853,9 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
     n_dam = n_am
     n_dbm = n_bm
     n_dm  = n_m
+    n_dcm = n_cm
 
-    elems_per_window = n_m + n_am + n_bm + n_cm + n_ps + n_dam + n_dbm + n_dm
+    elems_per_window = n_m + n_am + n_bm + n_cm + n_ps + n_dam + n_dbm + n_dm + n_dcm
     bytes_per_window = elems_per_window * sizeof(FT)
     total_bytes = Int64(HEADER_SIZE) + bytes_per_window * Nt
 
@@ -887,7 +888,7 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
         "n_entu" => 0, "n_detu" => 0, "n_entd" => 0, "n_detd" => 0,
         "n_pblh" => 0, "n_t2m" => 0, "n_ustar" => 0, "n_hflux" => 0,
         "n_temperature" => 0,
-        "n_dam" => n_dam, "n_dbm" => n_dbm, "n_dm" => n_dm,
+        "n_dam" => n_dam, "n_dbm" => n_dbm, "n_dm" => n_dm, "n_dcm" => n_dcm,
         "include_flux_delta" => true,
         "include_qv" => false, "include_cmfmc" => false,
         "include_tm5conv" => false, "include_surface" => false,
@@ -948,6 +949,7 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
     dam_merged = Array{FT}(undef, Nx + 1, Ny, Nz)
     dbm_merged = Array{FT}(undef, Nx, Ny + 1, Nz)
     dm_merged  = Array{FT}(undef, Nx, Ny, Nz)
+    dcm_merged = Array{FT}(undef, Nx, Ny, Nz + 1)
 
     # Next-window merged fields for last-hour delta via next day's hour 0
     m_next_merged  = Array{FT}(undef, Nx, Ny, Nz)
@@ -1022,6 +1024,7 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
     last_hour_next_m  = nothing
     last_hour_next_am = nothing
     last_hour_next_bm = nothing
+    last_hour_next_cm = nothing
 
     if next_day_hour0 !== nothing
         @info "  Computing next day hour 0 for last-window delta..."
@@ -1041,9 +1044,15 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
         merge_cell_field!(bm_next_merged, bm_native, merge_map)
         @views bm_next_merged[:, 1, :]    .= zero(FT)
         @views bm_next_merged[:, Ny+1, :] .= zero(FT)
+        # Recompute cm for the next day's merged fields
+        recompute_cm_from_divergence!(cm_merged, am_next_merged, bm_next_merged, m_next_merged;
+                                      B_ifc=merged_vc.B)
+        cm_merged[1, :, 1]   .= zero(FT)
+        cm_merged[:, :, end] .= zero(FT)
         last_hour_next_m  = copy(m_next_merged)
         last_hour_next_am = copy(am_next_merged)
         last_hour_next_bm = copy(bm_next_merged)
+        last_hour_next_cm = copy(cm_merged)
     end
 
     # --- Segers-style mass-balance residual diagnostics ---
@@ -1200,9 +1209,19 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
                     fill!(dm_merged, zero(FT))
                 end
 
+                # Compute dcm = cm_next - cm_curr
+                if win_idx < Nt
+                    dcm_merged .= all_cm[win_idx + 1] .- all_cm[win_idx]
+                elseif last_hour_next_cm !== nothing
+                    dcm_merged .= last_hour_next_cm .- all_cm[win_idx]
+                else
+                    fill!(dcm_merged, zero(FT))
+                end
+
                 bytes_written += write_array!(io, dam_merged)
                 bytes_written += write_array!(io, dbm_merged)
                 bytes_written += write_array!(io, dm_merged)
+                bytes_written += write_array!(io, dcm_merged)
             end
             flush(io)
         end

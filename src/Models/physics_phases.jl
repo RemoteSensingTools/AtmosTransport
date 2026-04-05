@@ -1614,19 +1614,24 @@ function advection_phase!(tracers, sched, air, phys, model,
         t = FT(s - FT(0.5)) / FT(n_sub)
         cm_preclamp = nothing
         if has_deltas
-            # Interpolate fluxes to substep midpoint (TM5 TimeInterpolation)
+            # Interpolate ALL fluxes to substep midpoint (TM5 TimeInterpolation)
             gpu.am .= am0 .+ t .* gpu.dam
             gpu.bm .= bm0 .+ t .* gpu.dbm
+            # Interpolate cm DIRECTLY from preprocessor-quality endpoints.
+            # Do NOT recompute from am/bm — that amplifies Z-CFL by 3.3×
+            # (Blue+Red team finding: runtime B-correction creates Z-CFL=276 vs 82).
+            if gpu.dcm !== nothing
+                gpu.cm .= cm0 .+ t .* gpu.dcm
+            end
             # Re-apply pole zeroing (dam/dbm may have non-zero polar values)
             Ny = grid.Ny
             @views gpu.am[:, 1, :]    .= zero(FT)
             @views gpu.am[:, Ny, :]   .= zero(FT)
             @views gpu.bm[:, 1, :]    .= zero(FT)
             @views gpu.bm[:, Ny+1, :] .= zero(FT)
-            # Prescribe m_target along pressure trajectory (GEOS approach)
-            gpu.m_dev .= m0 .+ t .* gpu.dm
-            # Recompute cm from interpolated am/bm constrained by m_target
-            _compute_cm_from_divergence_gpu!(gpu.cm, gpu.am, gpu.bm, gpu.m_dev, grid)
+            _enforce_cm_boundaries!(gpu.cm)
+            # Let m_dev evolve freely through advection (TM5-faithful).
+            # Do NOT overwrite m_dev — that creates rm/m inconsistency.
             if _ll_audit_enabled(audit, current_window, step[])
                 cm_preclamp = copy(gpu.cm)
             end

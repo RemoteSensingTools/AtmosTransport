@@ -1,0 +1,32 @@
+# ERA5 spectral -> v4 daily binary with TM5 r1112 level selection (ml137->tropo34)
+#
+# Uses TM5's echlevs index selection: picks 34 native level interfaces from 137.
+# No summation — am/bm at selected levels are native values. This gives better
+# vertical resolution than pressure-threshold merging and matches the published
+# TM5-MP r1112 configuration exactly.
+#
+# Usage:
+#   julia -t8 --project=. scripts/preprocessing/preprocess_spectral_v4_binary.jl \
+#       config/preprocessing/era5_spectral_v4_tropo34.toml
+
+[input]
+spectral_dir = "~/data/AtmosTransport/met/era5/spectral_hourly"
+coefficients = "config/era5_L137_coefficients.toml"
+
+[output]
+directory = "/temp1/atmos_transport/era5_v4_tropo34"
+
+[grid]
+nlon = 720
+nlat = 361
+level_top = 1
+level_bot = 137
+
+# TM5 r1112 level selection (replaces merge_min_thickness_Pa)
+echlevs = "ml137_tropo34"
+merge_min_thickness_Pa = 1000.0  # fallback, not used with echlevs
+
+[numerics]
+float_type = "Float32"
+dt = 900.0
+met_interval = 3600.0

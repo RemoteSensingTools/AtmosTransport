@@ -71,6 +71,19 @@ function _run_loop!(model, grid::AbstractGrid{FT},
     dw        = setup_diffusion_phase(model, grid, dt_window, sched)
     diag      = MassDiagnostics()
 
+    # Precompute dB = B_ifc[k+1] - B_ifc[k] for runtime dynam0 (TM5 B-correction).
+    # Uploaded to GPU once; reused every substep for cm recomputation.
+    AT = array_type(arch)
+    _dB_gpu = try
+        vc = _IO.embedded_vertical_coordinate(driver)
+        if vc !== nothing && length(vc.B_ifc) == grid.Nz + 1
+            dB = FT[FT(vc.B_ifc[k+1] - vc.B_ifc[k]) for k in 1:grid.Nz]
+            AT(dB)
+        else
+            nothing
+        end
+    catch; nothing; end
+
     # === Initial load ===
     kw = physics_load_kwargs(phys, grid)
     initial_load!(sched, driver, grid, 1; kw...)
@@ -125,7 +138,16 @@ function _run_loop!(model, grid::AbstractGrid{FT},
 
         # ── GPU Compute Phase ────────────────────────────────────────
         _t = time(); process_met_after_upload!(sched, phys, grid, driver, half_dt;
-            use_gchp=_needs_gchp(model.advection_scheme)); t_phases["gpu_met_proc"] += time() - _t
+            use_gchp=_needs_gchp(model.advection_scheme))
+        # Clamp bm+cm at pole cells to prevent cumulative flux drain.
+        # With Strang X→Y→Z→Z→Y→X and n_sub cycles, each flux face is applied
+        # 2×n_sub times. TM5 avoids this via real-time flux recomputation (dynam0);
+        # this static clamp approximates that feedback for constant-flux paths.
+        if grid isa LatitudeLongitudeGrid
+            _gpu = current_gpu(sched)
+            clamp_fluxes_at_poles!(_gpu.bm, _gpu.cm, _gpu.m_ref, grid.Ny, n_sub)
+        end
+        t_phases["gpu_met_proc"] += time() - _t
         _t = time()
         compute_air_mass_phase!(sched, air, phys, grid, gc;
                                 dry_correction=get(model.metadata, "dry_correction", true))
@@ -171,7 +193,8 @@ function _run_loop!(model, grid::AbstractGrid{FT},
         _t = time()
         advection_phase!(tracers, sched, air, phys, model,
                           grid, ws, n_sub, dt_sub, step;
-                          ws_lr, ws_vr, gc, geom_gchp, ws_gchp, has_next)
+                          ws_lr, ws_vr, gc, geom_gchp, ws_gchp, has_next,
+                          dB_gpu=_dB_gpu)
         t_phases["gpu_advection"] += time() - _t
 
         # Track transport mass change

@@ -97,6 +97,57 @@ function merge_thin_levels(vc::HybridSigmaPressure{FT};
     return merged_vc, mm
 end
 
+"""
+    select_levels_echlevs(vc_native, echlevs)
+
+TM5 r1112-style level selection: pick specific native levels by index.
+No summation — am/bm at selected levels are the native values at those levels,
+and cm at selected interfaces are the native cm at those interfaces.
+
+`echlevs` is a vector of native level INTERFACE indices (0-based, bottom-up),
+e.g., [137, 134, 129, ..., 7, 0] for TM5's ml137→tropo34 config.
+Index 0 = TOA, 137 = surface.
+
+Returns (selected_vc, merge_map) where merge_map[k] = merged level index
+for native level k. Levels between selected interfaces are summed (like TM5).
+"""
+function select_levels_echlevs(vc_native::HybridSigmaPressure{FT},
+                                echlevs::Vector{Int}) where FT
+    Nz_native = n_levels(vc_native)
+    # echlevs are 0-based interface indices; convert to 1-based Julia
+    # TM5 convention: echlevs[0]=Nz (surface), echlevs[end]=0 (TOA)
+    # We need the interface indices in top-to-bottom order (Julia convention)
+    ifaces_0based = sort(echlevs)  # sorted: 0, 7, 12, ..., 134, 137
+    # Convert to 1-based: interface k in Julia = native level boundary k
+    # Native vc has Nz_native+1 interfaces (A[1]..A[Nz_native+1])
+    # echlevs 0-based index i → Julia index Nz_native+1-i (flip for top-down)
+    keep = Int[Nz_native + 1 - i for i in reverse(ifaces_0based)]
+    # keep is now 1-based, top-to-bottom: [1, ..., Nz_native+1]
+
+    selected_vc = HybridSigmaPressure(FT[vc_native.A[k] for k in keep],
+                                       FT[vc_native.B[k] for k in keep])
+    Nz_selected = n_levels(selected_vc)
+
+    # Build merge_map: for each native level k, which selected level contains it?
+    mm = Vector{Int}(undef, Nz_native)
+    km = 1
+    for k in 1:Nz_native
+        while km < Nz_selected && keep[km + 1] <= k; km += 1; end
+        mm[k] = km
+    end
+
+    @info "echlevs level selection: $(Nz_native) → $(Nz_selected) levels " *
+          "($(length(echlevs)) interfaces)"
+    return selected_vc, mm
+end
+
+# TM5 r1112 level configurations (from deps/tm5-mp-r1112/levels/)
+const ECHLEVS_ML137_TROPO34 = [
+    137, 134, 129, 124, 119, 114, 110, 105, 101,  97,
+     93,  88,  84,  81,  78,  76,  73,  70,  67,  65,
+     62,  59,  57,  54,  51,  46,  42,  37,  32,  27,
+     22,  17,  12,   7,   0]
+
 function load_era5_vertical_coordinate(coeff_path::String, level_top::Int, level_bot::Int)
     isfile(coeff_path) || error("Coefficients not found: $coeff_path")
     cfg = TOML.parsefile(coeff_path)
@@ -116,6 +167,99 @@ function merge_cell_field!(merged::Array{FT,3}, native::Array{FT,3}, mm::Vector{
     @inbounds for k in 1:length(mm)
         @views merged[:, :, mm[k]] .+= native[:, :, k]
     end
+end
+
+"""
+    balance_mass_fluxes!(am, bm, dm_dt, Nx, Ny, Nz)
+
+TM5-style Poisson mass flux balance (grid_type_ll.F90:2536-2653, r1112).
+Adjusts am/bm so that horizontal convergence exactly matches the prescribed
+mass tendency dm_dt at every cell and level.
+
+For each level l:
+  residual = convergence(am,bm) - dm_dt
+  Solve ∇²ψ = residual (periodic in x, via 2D FFT)
+  am += dψ/dx, bm += dψ/dy
+
+After balancing, cm computed from the balanced am/bm via B-correction will
+produce zero surface residual, eliminating the moist flux inconsistency that
+caused 171 ppm SH std growth from uniform IC.
+"""
+function balance_mass_fluxes!(am::Array{FT,3}, bm::Array{FT,3},
+                               dm_dt::Array{FT,3}) where FT
+    Nx = size(am, 1) - 1
+    Ny = size(bm, 2) - 1
+    Nz = size(am, 3)
+
+    # Precompute FFT eigenvalues: fac(i,j) = 2(cos(2π(i-1)/Nx) + cos(2π(j-1)/Ny) - 2)
+    fac = Array{Float64}(undef, Nx, Ny)
+    @inbounds for j in 1:Ny, i in 1:Nx
+        fac[i, j] = 2.0 * (cos(2π * (i - 1) / Nx) + cos(2π * (j - 1) / Ny) - 2.0)
+    end
+    fac[1, 1] = 1.0  # avoid division by zero (mean mode)
+
+    psi = Array{Float64}(undef, Nx, Ny)
+    residual = Array{Float64}(undef, Nx, Ny)
+
+    n_balanced = 0
+    max_residual = 0.0
+
+    for k in 1:Nz
+        # Compute residual: convergence(am,bm) - dm_dt
+        @inbounds for j in 1:Ny, i in 1:Nx
+            conv = (Float64(am[i, j, k]) - Float64(am[i+1, j, k])) +
+                   (Float64(bm[i, j, k]) - Float64(bm[i, j+1, k]))
+            residual[i, j] = conv - Float64(dm_dt[i, j, k])
+        end
+
+        max_res_k = maximum(abs, residual)
+        max_residual = max(max_residual, max_res_k)
+        max_res_k < 1e-10 && continue  # already balanced
+
+        # 2D FFT Poisson solve (TM5 SolvePoissonEq_zoom)
+        A = fft(complex.(residual))
+        # Solve: fac * Ψ_hat = residual_hat → Ψ_hat = residual_hat / fac
+        @inbounds for j in 1:Ny, i in 1:Nx
+            A[i, j] /= fac[i, j]
+        end
+        A[1, 1] = 0.0 + 0.0im  # zero mean mode
+        psi .= real.(ifft(A))
+
+        # Correction fluxes from potential ψ (TM5 SolvePoissonEq_zoom:2873-2897)
+        # u = dψ/dx, v = dψ/dy, then subtract boundary values to enforce zero-flux BCs.
+
+        # X-direction: compute u[0:Nx] for each j, subtract boundary, apply
+        @inbounds for j in 1:Ny
+            # Compute all u corrections (periodic differences)
+            u_wrap = psi[1, j] - psi[Nx, j]  # u[0] = u[Nx] (periodic)
+            # Subtract boundary flux (TM5 line 2881: col = u(0,:))
+            # All u values are shifted so u[0] = 0
+            # u[i] - u[0] = (psi[i+1]-psi[i]) - (psi[1]-psi[Nx])
+            for i in 2:Nx
+                du = (psi[i, j] - psi[i-1, j]) - u_wrap
+                am[i, j, k] += FT(du)  # TM5: pu += cqu (ADDITION)
+            end
+            # i=1: u[1]-u[0] = (psi[2]-psi[1]) - (psi[1]-psi[Nx]) — but we skip
+            # i=1 because it matches i=Nx+1 (periodic); handle both:
+            am[1, j, k] += FT(0)     # u[0]-u[0] = 0 (zeroed by boundary subtraction)
+            am[Nx+1, j, k] += FT(0)  # same as i=1 (periodic)
+        end
+
+        # Y-direction: compute v[0:Ny] for each i, subtract boundary, apply
+        @inbounds for i in 1:Nx
+            v_wrap = psi[i, 1] - psi[i, Ny]  # v[0] = v[Ny] (periodic in TM5)
+            for j in 2:Ny
+                dv = (psi[i, j] - psi[i, j-1]) - v_wrap
+                bm[i, j, k] += FT(dv)  # TM5: pv += cqv (ADDITION)
+            end
+            # j=1 and j=Ny+1: pole faces stay zero (no correction applied)
+        end
+
+        n_balanced += 1
+    end
+
+    @info "Poisson balance: corrected $n_balanced/$Nz levels, " *
+          "max pre-balance residual: $(round(max_residual, sigdigits=3)) kg"
 end
 
 """
@@ -897,6 +1041,33 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
         last_hour_next_bm = copy(bm_next_merged)
     end
 
+    # --- Poisson mass flux balance (TM5 BalanceMassFluxes) ---
+    # Adjust am/bm so horizontal convergence matches prescribed mass change dm_dt
+    # at every cell and level. Then recompute cm from balanced am/bm.
+    @info "  Applying Poisson mass flux balance..."
+    dm_dt_buf = Array{FT}(undef, Nx, Ny, Nz)
+    for win_idx in 1:Nt
+        # dm_dt = m_next - m_curr
+        if win_idx < Nt
+            dm_dt_buf .= all_m[win_idx + 1] .- all_m[win_idx]
+        elseif last_hour_next_m !== nothing
+            dm_dt_buf .= last_hour_next_m .- all_m[win_idx]
+        else
+            fill!(dm_dt_buf, zero(FT))
+        end
+        # Balance am/bm against dm_dt
+        balance_mass_fluxes!(all_am[win_idx], all_bm[win_idx], dm_dt_buf)
+        # Re-zero pole bm after balance (corrections may have touched them)
+        @views all_bm[win_idx][:, 1, :]    .= zero(FT)
+        @views all_bm[win_idx][:, Ny+1, :] .= zero(FT)
+        # Recompute cm from balanced am/bm
+        recompute_cm_from_divergence!(all_cm[win_idx], all_am[win_idx], all_bm[win_idx],
+                                      all_m[win_idx]; B_ifc=merged_vc.B)
+        @views all_cm[win_idx][:, :, 1]      .= zero(FT)
+        @views all_cm[win_idx][:, :, Nz + 1] .= zero(FT)
+    end
+    @info "  Poisson balance complete for $Nt windows"
+
     # --- Write binary ---
     @info "  Writing binary..."
     bytes_written = Int64(0)
@@ -1060,7 +1231,19 @@ function main()
 
     # --- Vertical merging ---
     vc_native = load_era5_vertical_coordinate(coeff_path, level_top, level_bot)
-    merged_vc, merge_map = merge_thin_levels(vc_native; min_thickness_Pa=min_dp)
+    echlevs_name = get(get(cfg, "grid", Dict()), "echlevs", "")
+    if !isempty(echlevs_name)
+        # TM5 r1112-style index selection
+        echlevs_map = Dict(
+            "ml137_tropo34" => ECHLEVS_ML137_TROPO34,
+        )
+        haskey(echlevs_map, echlevs_name) || error("Unknown echlevs config: $echlevs_name. " *
+            "Available: $(join(keys(echlevs_map), ", "))")
+        merged_vc, merge_map = select_levels_echlevs(vc_native, echlevs_map[echlevs_name])
+    else
+        # Pressure-threshold merging (original approach)
+        merged_vc, merge_map = merge_thin_levels(vc_native; min_thickness_Pa=min_dp)
+    end
     Nz_merged = n_levels(merged_vc)
 
     @info """

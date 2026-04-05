@@ -1,0 +1,21 @@
+# ERA5 spectral -> v4 binary with 5000Pa merging + Poisson mass balance
+# Same as the original 5000Pa config but with the Poisson balance step.
+
+[input]
+spectral_dir = "~/data/AtmosTransport/met/era5/spectral_hourly"
+coefficients = "config/era5_L137_coefficients.toml"
+
+[output]
+directory = "/temp1/atmos_transport/era5_v4_5000Pa_balanced"
+
+[grid]
+nlon = 720
+nlat = 361
+level_top = 1
+level_bot = 137
+merge_min_thickness_Pa = 5000.0
+
+[numerics]
+float_type = "Float32"
+dt = 900.0
+met_interval = 3600.0

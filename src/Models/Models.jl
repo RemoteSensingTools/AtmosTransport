@@ -18,7 +18,7 @@ using ..Architectures: AbstractArchitecture, architecture, array_type,
                        foreach_gpu_batch
 using ..Grids: AbstractGrid, get_panel_map
 using ..Fields: Field, Center, TracerFields
-using ..Advection: AbstractAdvectionScheme, find_mass_cfl_refinement
+using ..Advection: AbstractAdvectionScheme, find_mass_cfl_refinement, clamp_fluxes_at_poles!
 using ..Convection: AbstractConvection
 using ..Diffusion: AbstractDiffusion
 using ..Chemistry: AbstractChemistry, NoChemistry

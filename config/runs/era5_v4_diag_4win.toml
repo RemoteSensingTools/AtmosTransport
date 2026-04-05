@@ -1,0 +1,32 @@
+# Minimal 4-window diagnostic: uniform IC, no physics, slopes advection
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "latlon"
+met_source = "era5"
+size       = [720, 361, 18]
+
+[met_data]
+driver      = "preprocessed_latlon"
+directory   = "/temp1/atmos_transport/era5_v4_5000Pa"
+dt          = 900
+max_windows = 4
+
+[tracers.co2]
+emission = "none"
+
+[advection]
+scheme = "slopes"
+
+[output]
+filename = "/tmp/era5_v4_diag_4win.nc"
+interval = 3600
+
+[output.fields]
+co2_surface     = {type = "surface_slice", species = "co2"}
+co2_column_mean = {type = "column_mean", species = "co2"}
+
+[buffering]
+strategy = "single"

@@ -470,6 +470,75 @@ end
 end
 
 # =====================================================================
+# Pole flux clamp — prevent cumulative Y/Z flux from draining pole cells
+# =====================================================================
+
+"""
+    clamp_fluxes_at_poles!(bm, cm, m, Ny, n_sub)
+
+Clamp bm and cm at pole cells so that the combined cumulative flux over
+`2×n_sub` Strang applications stays within cell mass. For each pole cell
+(i, j=1 or Ny, k), the outgoing CFL from bm (Y-face) and cm (both Z-faces)
+is computed, and if the cumulative total exceeds a safety margin, all fluxes
+at that cell are scaled down proportionally.
+
+TM5 avoids this via real-time bm/cm recomputation (dynam0, advect_tools.F90:638)
+each substep. This static clamp approximates that feedback for constant-flux paths.
+
+Operates in-place on GPU arrays.
+"""
+function clamp_fluxes_at_poles!(bm::AbstractArray{FT,3}, cm::AbstractArray{FT,3},
+                                 m::AbstractArray{FT,3}, Ny::Int, n_sub::Int) where FT
+    backend = get_backend(bm)
+    Nx, _, Nz = size(m)
+    k! = _clamp_pole_fluxes_kernel!(backend, 256)
+    k!(bm, cm, m, Int32(Ny), Int32(Nz), Int32(n_sub); ndrange=(Nx, Nz))
+    return nothing
+end
+
+@kernel function _clamp_pole_fluxes_kernel!(bm, cm, @Const(m), Ny, Nz, n_sub)
+    i, k = @index(Global, NTuple)
+    FT = eltype(bm)
+    n_apps = FT(2 * n_sub)   # number of Strang applications per window
+    safety = FT(0.5)         # leave 50% headroom for Strang interaction
+    @inbounds begin
+        # --- South pole (j=1) ---
+        m_cell = m[i, 1, k]
+        # Outgoing fluxes (all face fluxes that can drain this cell):
+        #   Y: bm[i,2,k] > 0 drains pole northward (bm[i,1,k]=0 by convention)
+        #   Z-above: cm[i,1,k] < 0 drains cell upward (mass flows from k to k-1)
+        #   Z-below: cm[i,1,k+1] > 0 drains cell downward (mass flows from k to k+1)
+        # Per-app outgoing CFL = sum of outgoing |flux|/m
+        bm_out = abs(bm[i, 2, k])
+        cm_above_out = k > 1 ? max(-cm[i, 1, k], zero(FT)) : zero(FT)
+        cm_below_out = k < Nz ? max(cm[i, 1, k + 1], zero(FT)) : zero(FT)
+        total_out = bm_out + cm_above_out + cm_below_out
+        # Cumulative outgoing over all applications
+        max_out = safety * m_cell / n_apps
+        if total_out > max_out && total_out > zero(FT)
+            scale = max_out / total_out
+            bm[i, 2, k] *= scale
+            if k > 1; cm[i, 1, k] *= scale; end
+            if k < Nz; cm[i, 1, k + 1] *= scale; end
+        end
+
+        # --- North pole (j=Ny) ---
+        m_cell_np = m[i, Ny, k]
+        bm_out_np = abs(bm[i, Ny, k])
+        cm_above_out_np = k > 1 ? max(-cm[i, Ny, k], zero(FT)) : zero(FT)
+        cm_below_out_np = k < Nz ? max(cm[i, Ny, k + 1], zero(FT)) : zero(FT)
+        total_out_np = bm_out_np + cm_above_out_np + cm_below_out_np
+        max_out_np = safety * m_cell_np / n_apps
+        if total_out_np > max_out_np && total_out_np > zero(FT)
+            scale_np = max_out_np / total_out_np
+            bm[i, Ny, k] *= scale_np
+            if k > 1; cm[i, Ny, k] *= scale_np; end
+            if k < Nz; cm[i, Ny, k + 1] *= scale_np; end
+        end
+    end
+end
+
+# =====================================================================
 # Grid geometry cache — computed once, reused every met window (TM5 dynam0)
 # =====================================================================
 

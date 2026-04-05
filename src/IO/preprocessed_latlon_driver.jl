@@ -51,6 +51,8 @@ struct PreprocessedLatLonMetDriver{FT} <: AbstractMassFluxMetDriver{FT}
     merge_map       :: Union{Nothing, Vector{Int}}
     "optional directory with external QV/thermo files for binaries that omit embedded QV"
     qv_dir          :: String
+    "if true, suppress all LL QV loading even when files provide it"
+    disable_qv      :: Bool
     "native-grid hybrid A coefficients used to merge external QV with ps weights"
     native_A_ifc    :: Vector{Float64}
     "native-grid hybrid B coefficients used to merge external QV with ps weights"
@@ -73,6 +75,7 @@ function PreprocessedLatLonMetDriver(; FT::Type{<:AbstractFloat} = Float64,
                                        merge_map::Union{Nothing, Vector{Int}} = nothing,
                                        max_windows::Union{Nothing, Int} = nothing,
                                        qv_dir::String = "",
+                                       disable_qv::Bool = false,
                                        native_A_ifc::Vector{Float64} = Float64[],
                                        native_B_ifc::Vector{Float64} = Float64[])
     isempty(files) && error("PreprocessedLatLonMetDriver: no files provided")
@@ -149,7 +152,7 @@ function PreprocessedLatLonMetDriver(; FT::Type{<:AbstractFloat} = Float64,
         FT(actual_dt), steps_per_win,
         lons, lats, Nx, Ny, Nz,
         level_top, level_bot, merge_map,
-        expanduser(qv_dir), native_A_ifc, native_B_ifc, _start)
+        expanduser(qv_dir), disable_qv, native_A_ifc, native_B_ifc, _start)
 end
 
 """
@@ -788,6 +791,7 @@ Returns `true` if data was loaded, `false` if not available.
 function load_qv_window!(qv::Array{FT, 3},
                           driver::PreprocessedLatLonMetDriver{FT},
                           grid, win::Int) where FT
+    driver.disable_qv && return false
     file_idx, local_win = window_to_file_local(driver, win)
     filepath = driver.files[file_idx]
 

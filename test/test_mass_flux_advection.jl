@@ -15,6 +15,7 @@ using AtmosTransport
 using AtmosTransport.Architectures
 using AtmosTransport.Grids
 using AtmosTransport.Advection
+const ModelPhases = AtmosTransport.Models
 
 const FT = Float64
 
@@ -134,6 +135,88 @@ end
         rel_error = abs(mass_after - mass_before) / abs(mass_before)
         @info "  Z-advection mass conservation: $(rel_error)"
         @test rel_error < 1e-12
+    end
+
+    @testset "Z donor convention and clamp invariants" begin
+        m = reshape(FT[2.0, 5.0, 7.0], 1, 1, 3)
+
+        cm_pos = zeros(FT, 1, 1, 4)
+        cm_pos[1, 1, 2] = FT(1.6)
+        @test max_cfl_massflux_z(cm_pos, m) ≈ FT(0.8) atol=1e-12
+
+        cm_neg = zeros(FT, 1, 1, 4)
+        cm_neg[1, 1, 2] = FT(-2.0)
+        @test max_cfl_massflux_z(cm_neg, m) ≈ FT(0.4) atol=1e-12
+
+        cm_clamped = zeros(FT, 1, 1, 4)
+        cm_clamped[1, 1, 1] = FT(3.0)
+        cm_clamped[1, 1, 2] = FT(4.0)
+        cm_clamped[1, 1, 3] = FT(-7.0)
+        cm_clamped[1, 1, 4] = FT(-2.0)
+        ModelPhases._clamp_cm_cfl!(cm_clamped, m, FT(0.95))
+        @test cm_clamped[1, 1, 1] == FT(0)
+        @test cm_clamped[1, 1, 2] ≈ FT(1.9) atol=1e-12
+        @test cm_clamped[1, 1, 3] ≈ FT(-6.65) atol=1e-12
+        @test cm_clamped[1, 1, 4] == FT(0)
+        @test max_cfl_massflux_z(cm_clamped, m) <= FT(0.95) + 1e-12
+
+        mass_before_air = sum(m)
+        m_work = copy(m)
+        rm = (; c = copy(m_work))
+        mass_before_tracer = sum(rm.c)
+        advect_z_massflux!(rm, m_work, cm_clamped, true)
+        @test sum(m_work) ≈ mass_before_air atol=1e-12
+        @test sum(rm.c) ≈ mass_before_tracer atol=1e-12
+        @test minimum(m_work) > 0
+        @test minimum(rm.c) > 0
+    end
+
+    @testset "Z clamp preserves column mass balance" begin
+        m = reshape(FT[
+            3.0, 4.0, 5.0,
+            6.0, 7.0, 8.0,
+            2.5, 3.5, 4.5,
+            5.5, 6.5, 7.5,
+        ], 2, 2, 3)
+        c = reshape(FT[
+            410.0, 415.0, 420.0,
+            425.0, 430.0, 435.0,
+            440.0, 445.0, 450.0,
+            455.0, 460.0, 465.0,
+        ], 2, 2, 3)
+        rm_init = c .* m
+
+        cm = zeros(FT, 2, 2, 4)
+        cm[:, :, 1] .= FT(9.0)
+        cm[:, :, 2] .= FT.([7.0  -12.0; -4.0  10.0])
+        cm[:, :, 3] .= FT.([-20.0  14.0; 11.0  -18.0])
+        cm[:, :, 4] .= FT(-6.0)
+
+        ModelPhases._clamp_cm_cfl!(cm, m, FT(0.95))
+
+        @test all(cm[:, :, 1] .== 0)
+        @test all(cm[:, :, 4] .== 0)
+        @test max_cfl_massflux_z(cm, m) <= FT(0.95) + 1e-12
+
+        air_before_cols = dropdims(sum(m, dims=3), dims=3)
+        tracer_before_cols = dropdims(sum(rm_init, dims=3), dims=3)
+        m_work = copy(m)
+        rm = (; c = copy(rm_init))
+        advect_z_massflux!(rm, m_work, cm, true)
+
+        air_after_cols = dropdims(sum(m_work, dims=3), dims=3)
+        tracer_after_cols = dropdims(sum(rm.c, dims=3), dims=3)
+        @test maximum(abs.(air_after_cols .- air_before_cols)) < 1e-12
+        @test maximum(abs.(tracer_after_cols .- tracer_before_cols)) < 1e-12
+        @test sum(m_work) ≈ sum(m) atol=1e-12
+        @test sum(rm.c) ≈ sum(rm_init) atol=1e-12
+    end
+
+    @testset "Limiter degrades safely for negative rm" begin
+        @test Advection._limit_mass_slope(FT(3), FT(-2)) == FT(0)
+        @test Advection._limit_mass_slope(FT(-3), FT(-2)) == FT(0)
+        @test Advection._limit_mass_slope(FT(3), FT(2)) == FT(2)
+        @test Advection._limit_mass_slope(FT(-3), FT(2)) == FT(-2)
     end
 
     @testset "Uniform field preservation (rm form)" begin

@@ -1,4 +1,4 @@
-# ERA5 v4 hourly binary test — Dec 2021, merged 68L, slopes + flux interpolation
+# ERA5 v4 hourly binary test — two-window LL debug
 [architecture]
 use_gpu    = true
 float_type = "Float32"
@@ -9,29 +9,29 @@ met_source = "era5"
 size       = [720, 361, 18]
 
 [met_data]
-driver      = "preprocessed_latlon"
-directory   = "/temp1/atmos_transport/era5_v4_5000Pa"
+driver       = "preprocessed_latlon"
+directory    = "/temp1/atmos_transport/era5_v4_5000Pa"
 qv_directory = "~/data/AtmosTransport/met/era5/physics"
-dt          = 900
-max_windows = 48    # 2 days
+dt           = 900
+max_windows  = 2
 
 [initial_conditions]
 co2.file     = "~/data/AtmosTransport/catrine/InitialConditions/startCO2_202112010000.nc"
 co2.variable = "CO2"
 
 [tracers.co2]
-emission      = "uniform_surface"
-rate          = 1.0e-8
-species       = "co2"
+emission = "uniform_surface"
+rate     = 1.0e-8
+species  = "co2"
 
 [advection]
-scheme = "slopes"
-enable_flux_delta = true
-use_mass_cfl_pilot = true
-debug_first_window = true
+scheme              = "slopes"
+enable_flux_delta   = true
+use_mass_cfl_pilot  = true
+debug_first_window  = true
 
 [output]
-filename = "/tmp/era5_v4_test.nc"
+filename = "/tmp/era5_v4_test_2win.nc"
 interval = 10800
 
 [output.fields]

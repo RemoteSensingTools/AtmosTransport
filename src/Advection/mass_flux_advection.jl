@@ -16,6 +16,14 @@ using KernelAbstractions: @kernel, @index, synchronize, get_backend
     return dev
 end
 
+@inline function _limit_mass_slope(s, rm_cell)
+    T = typeof(rm_cell)
+    if rm_cell > zero(T)
+        return max(min(s, rm_cell), -rm_cell)
+    end
+    return zero(T)
+end
+
 # ---------------------------------------------------------------------------
 # Reduced-grid helpers for GPU kernels
 # ---------------------------------------------------------------------------
@@ -110,7 +118,7 @@ end
             end
             sx_im = m[im, j, k] * sc_im
             if use_limiter
-                sx_im = max(min(sx_im, rm[im, j, k]), -rm[im, j, k])
+                sx_im = _limit_mass_slope(sx_im, rm[im, j, k])
             end
 
             sc_i = (c_ip - c_im) / 2
@@ -119,7 +127,7 @@ end
             end
             sx_i = m[i, j, k] * sc_i
             if use_limiter
-                sx_i = max(min(sx_i, rm[i, j, k]), -rm[i, j, k])
+                sx_i = _limit_mass_slope(sx_i, rm[i, j, k])
             end
 
             sc_ip = (c_ipp - c_i) / 2
@@ -128,7 +136,7 @@ end
             end
             sx_ip = m[ip, j, k] * sc_ip
             if use_limiter
-                sx_ip = max(min(sx_ip, rm[ip, j, k]), -rm[ip, j, k])
+                sx_ip = _limit_mass_slope(sx_ip, rm[ip, j, k])
             end
 
             am_l = am[i, j, k]
@@ -186,7 +194,7 @@ end
             end
             sx_im_r = m_im * sc_im_r
             if use_limiter
-                sx_im_r = max(min(sx_im_r, rm_im), -rm_im)
+                sx_im_r = _limit_mass_slope(sx_im_r, rm_im)
             end
 
             sc_ic_r = (c_ip_r - c_im_r) / 2
@@ -195,7 +203,7 @@ end
             end
             sx_ic_r = m_ic * sc_ic_r
             if use_limiter
-                sx_ic_r = max(min(sx_ic_r, rm_ic), -rm_ic)
+                sx_ic_r = _limit_mass_slope(sx_ic_r, rm_ic)
             end
 
             sc_ip_r = (c_ipp_r - c_ic_r) / 2
@@ -204,7 +212,7 @@ end
             end
             sx_ip_r = m_ip * sc_ip_r
             if use_limiter
-                sx_ip_r = max(min(sx_ip_r, rm_ip), -rm_ip)
+                sx_ip_r = _limit_mass_slope(sx_ip_r, rm_ip)
             end
 
             # Face mass fluxes at cluster boundaries
@@ -256,7 +264,7 @@ end
             sc = (cjp - cjm) / 2
             if use_limiter; sc = minmod_device(sc, 2 * (cjp - cj), 2 * (cj - cjm)); end
             s = m[i, j, k] * sc
-            if use_limiter; s = max(min(s, rm[i, j, k]), -rm[i, j, k]); end
+            if use_limiter; s = _limit_mass_slope(s, rm[i, j, k]); end
             s
         else
             zero(FT)
@@ -270,7 +278,7 @@ end
             sc = (cj - cjmm) / 2
             if use_limiter; sc = minmod_device(sc, 2 * (cj - cjm), 2 * (cjm - cjmm)); end
             s = m[i, j - 1, k] * sc
-            if use_limiter; s = max(min(s, rm[i, j - 1, k]), -rm[i, j - 1, k]); end
+            if use_limiter; s = _limit_mass_slope(s, rm[i, j - 1, k]); end
             s
         else
             zero(FT)
@@ -284,7 +292,7 @@ end
             sc = (cjpp - cj) / 2
             if use_limiter; sc = minmod_device(sc, 2 * (cjpp - cjp), 2 * (cjp - cj)); end
             s = m[i, j + 1, k] * sc
-            if use_limiter; s = max(min(s, rm[i, j + 1, k]), -rm[i, j + 1, k]); end
+            if use_limiter; s = _limit_mass_slope(s, rm[i, j + 1, k]); end
             s
         else
             zero(FT)
@@ -341,7 +349,7 @@ end
             sc = (ckp - ckm) / 2
             if use_limiter; sc = minmod_device(sc, 2 * (ckp - ck), 2 * (ck - ckm)); end
             s = m[i, j, k] * sc
-            if use_limiter; s = max(min(s, rm[i, j, k]), -rm[i, j, k]); end
+            if use_limiter; s = _limit_mass_slope(s, rm[i, j, k]); end
             s
         else
             zero(FT)
@@ -355,7 +363,7 @@ end
             sc = (ck - ckmm) / 2
             if use_limiter; sc = minmod_device(sc, 2 * (ck - ckm), 2 * (ckm - ckmm)); end
             s = m[i, j, k - 1] * sc
-            if use_limiter; s = max(min(s, rm[i, j, k - 1]), -rm[i, j, k - 1]); end
+            if use_limiter; s = _limit_mass_slope(s, rm[i, j, k - 1]); end
             s
         else
             zero(FT)
@@ -369,7 +377,7 @@ end
             sc = (ckpp - ck) / 2
             if use_limiter; sc = minmod_device(sc, 2 * (ckpp - ckp), 2 * (ckp - ck)); end
             s = m[i, j, k + 1] * sc
-            if use_limiter; s = max(min(s, rm[i, j, k + 1]), -rm[i, j, k + 1]); end
+            if use_limiter; s = _limit_mass_slope(s, rm[i, j, k + 1]); end
             s
         else
             zero(FT)
@@ -848,7 +856,7 @@ function _advect_x_row_massflux!(rm_vec::AbstractVector{FT},
         end
         sx_im = m_vec[im] * sc_im
         if use_limiter
-            sx_im = max(min(sx_im, rm_vec[im]), -rm_vec[im])
+            sx_im = _limit_mass_slope(sx_im, rm_vec[im])
         end
 
         sc_i = (c_ip - c_im) / 2
@@ -857,7 +865,7 @@ function _advect_x_row_massflux!(rm_vec::AbstractVector{FT},
         end
         sx_i = m_vec[i] * sc_i
         if use_limiter
-            sx_i = max(min(sx_i, rm_vec[i]), -rm_vec[i])
+            sx_i = _limit_mass_slope(sx_i, rm_vec[i])
         end
 
         sc_ip = (c_ipp - c_i) / 2
@@ -866,7 +874,7 @@ function _advect_x_row_massflux!(rm_vec::AbstractVector{FT},
         end
         sx_ip = m_vec[ip] * sc_ip
         if use_limiter
-            sx_ip = max(min(sx_ip, rm_vec[ip]), -rm_vec[ip])
+            sx_ip = _limit_mass_slope(sx_ip, rm_vec[ip])
         end
 
         am_l = am_vec[i]

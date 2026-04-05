@@ -233,7 +233,8 @@ function _apply_advection_latlon!(tracers, m, am, bm, cm, grid,
                                    scheme::PratherAdvection, ws;
                                    cfl_limit, debug_cb=nothing)
     # ws is a NamedTuple with .base (MassFluxWorkspace) and .prather (per-tracer PratherWorkspace)
-    strang_split_prather!(tracers, m, am, bm, cm, grid, ws.prather, scheme.use_limiter)
+    strang_split_prather!(tracers, m, am, bm, cm, grid, ws.prather, scheme.use_limiter;
+                          debug_cb)
 end
 
 # =====================================================================

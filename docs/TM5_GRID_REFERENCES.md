@@ -54,7 +54,8 @@ This document points to TM5 sources and how this model aligns with TM5 conventio
 - **Advection scheme**: Same family -- **Russell & Lerner (1981) slopes scheme**
   (see `src/Advection/slopes_advection.jl`). GPU kernels via KernelAbstractions.jl
   for x, y, and z directions. Optional minmod flux limiter; Strang splitting.
-  TM5 also offers the second-order moments (Prather) scheme; we have slopes only.
+  TM5 also offers the second-order moments (Prather) scheme; we now expose an
+  experimental Prather path, but the LL production baseline remains `scheme = "slopes"`.
 - **Mass fluxes**: TM5 computes mass-conserving fluxes via spectral integration.
   We use gridpoint winds directly. Comparison and validation are ongoing.
 - **Met data**: TM5 requires ECMWF spectral GRIB data. Our model reads standard

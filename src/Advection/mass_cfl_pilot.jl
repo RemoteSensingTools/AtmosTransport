@@ -6,7 +6,7 @@
 #   - |beta| = |flux / m_donor| > beta_limit (0.95) → flux empties donor
 #   - m_new <= m_floor = 32*eps(FT)*max(m_ref, 1) → Float32 noise floor
 #
-# Returns a refinement factor r ∈ {1,2,4,8,16}. The caller scales
+# Returns a refinement factor r over powers of two up to `max_r`. The caller scales
 # am/bm/cm by 1/r and runs n_sub*r substeps instead of n_sub.
 #
 # All GPU kernels are Float32-only. No Float64 promotion in kernels.
@@ -41,6 +41,10 @@ using KernelAbstractions: @kernel, @index, synchronize, get_backend
             am_l = am[i, j, k] * r_inv
             am_r = am[ip, j, k] * r_inv
             m_new[i, j, k] = m[i, j, k] + am_l - am_r
+            m_floor = FT(32) * eps(FT) * max(abs(m[i, j, k]), one(FT))
+            if !(m_new[i, j, k] > m_floor)
+                fail = true
+            end
 
             # Beta at left face
             im = i == 1 ? Nx : i - 1
@@ -67,6 +71,10 @@ using KernelAbstractions: @kernel, @index, synchronize, get_backend
             delta_m = am_l - am_r
             frac_m = abs(m_ic) > eps(FT) ? m[i, j, k] / m_ic : one(FT) / FT(r)
             m_new[i, j, k] = (m_ic + delta_m) * frac_m
+            m_floor = FT(32) * eps(FT) * max(abs(m[i, j, k]), one(FT))
+            if !(m_new[i, j, k] > m_floor)
+                fail = true
+            end
 
             # Beta at cluster faces
             ic_m = ic == 1 ? Nx_red : ic - 1
@@ -96,6 +104,10 @@ end
         bm_s = j > 1 ? bm[i, j, k] * r_inv : zero(FT)
         bm_n = j < Ny ? bm[i, j + 1, k] * r_inv : zero(FT)
         m_new[i, j, k] = m[i, j, k] + bm_s - bm_n
+        m_floor = FT(32) * eps(FT) * max(abs(m[i, j, k]), one(FT))
+        if !(m_new[i, j, k] > m_floor)
+            fail = true
+        end
 
         # South face beta
         if j > 1
@@ -127,6 +139,10 @@ end
         cm_top = k > 1 ? cm[i, j, k] * r_inv : zero(FT)
         cm_bot = k < Nz ? cm[i, j, k + 1] * r_inv : zero(FT)
         m_new[i, j, k] = m[i, j, k] + cm_top - cm_bot
+        m_floor = FT(32) * eps(FT) * max(abs(m[i, j, k]), one(FT))
+        if !(m_new[i, j, k] > m_floor)
+            fail = true
+        end
 
         # Top face beta
         if k > 1
@@ -158,16 +174,17 @@ const _MASS_PILOT_FAIL = Ref{Any}(nothing)
 
 """
     find_mass_cfl_refinement(m_ref, am, bm, cm, grid, cluster_sizes, n_sub;
-                              beta_limit=0.95, max_r=16) -> Int
+                              beta_limit=0.95, max_r=64) -> Int
 
-TM5-style evolving-mass preflight. Returns refinement factor r ∈ {1,2,4,8,16}.
+TM5-style evolving-mass preflight. Returns refinement factor r over powers of two
+up to `max_r`.
 Caller should scale am/bm/cm by 1/r and run n_sub*r substeps.
 """
 function find_mass_cfl_refinement(m_ref::AbstractArray{FT,3},
                                    am, bm, cm, grid,
                                    cluster_sizes, n_sub;
                                    beta_limit::FT = FT(0.95),
-                                   max_r::Int = 16) where FT
+                                   max_r::Int = 64) where FT
     Nx, Ny, Nz = size(m_ref)
     backend = get_backend(m_ref)
 
@@ -181,8 +198,8 @@ function find_mass_cfl_refinement(m_ref::AbstractArray{FT,3},
     m_new = _MASS_PILOT_MNEW[]
     fail_flags = _MASS_PILOT_FAIL[]
 
-    for r in (1, 2, 4, 8, 16)
-        r > max_r && break
+    r = 1
+    while r <= max_r
         copyto!(m_pilot, m_ref)
         r_inv = FT(1) / FT(r)
         n_eff = n_sub * r
@@ -227,8 +244,10 @@ function find_mass_cfl_refinement(m_ref::AbstractArray{FT,3},
         if ok
             return r
         end
+
+        r *= 2
     end
 
-    @warn "Mass-CFL pilot: all candidates up to r=$max_r failed" maxlog=3
+    @info "Mass-CFL pilot reached conservative fallback r=$max_r" maxlog=10
     return max_r
 end

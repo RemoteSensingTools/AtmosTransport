@@ -162,11 +162,12 @@ Common keys for all drivers:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `scheme` | string | `"slopes"` | `"slopes"` (Russell-Lerner, 2nd order) or `"ppm"` (Putman & Lin) |
+| `scheme` | string | `"slopes"` | `"slopes"` (Russell-Lerner, 2nd order), `"ppm"` (Putman & Lin), or experimental `"prather"` / `"som"` |
 | `ppm_order` | int | `7` | PPM polynomial order: 4, 5, 6, or 7 (only used when `scheme = "ppm"`) |
 | `damp_coeff` | float | `0.0` | Divergence damping coefficient (PPM only) |
 | `linrood` | bool | `false` | Lin-Rood cross-term splitting (CS grids, PPM only). Averages X-first and Y-first PPM orderings to eliminate directional bias at panel boundaries |
 | `enable_flux_delta` | bool | `false` | Enable LL v4 flux-delta interpolation (`dam/dbm/dm`) for preprocessed binaries that carry it |
+| `use_mass_cfl_pilot` | bool | `true` | Run the LL mass-only CFL pilot before each substep window and apply one uniform refinement factor when needed |
 | `debug_first_window` | bool | `false` | Log first-window LL sweep diagnostics after each X/Y/Z stage (useful for NaN localization) |
 | `mass_fixer` | bool | `true` | Per-cell mass fixer after each advection step |
 

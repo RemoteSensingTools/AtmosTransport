@@ -36,6 +36,7 @@ export AbstractBufferingStrategy, SingleBuffer, DoubleBuffer
 export TransportPolicy, resolve_transport_policy
 export AbstractTransportBasis, DryTransportBasis, MoistTransportBasis, transport_basis_type
 export MoistSubStepDiag, MOIST_DIAG
+export LLTransportAudit, LL_AUDIT
 
 """Check if verbose mode is enabled (set by `--verbose` / `-v` flag in run.jl)."""
 @inline is_verbose() = get(ENV, "ATMOSTR_VERBOSE", "") == "1"

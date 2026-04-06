@@ -768,29 +768,28 @@ function advection_phase!(tracers, sched, air, phys, model,
                                   grid, model.advection_scheme, adv_ws;
                                   cfl_limit=FT(0.95))
 
-        # Per-substep mass correction: prescribe m_dev along the met-data
-        # mass trajectory. Always reset m_dev to prevent divergence from
-        # B-correction errors accumulating across substeps.
-        # Optionally scale rm to preserve VMR (mass_fixer=true, default).
-        # TM5 doesn't scale rm — it lets VMR evolve freely. Disabling the
-        # rm scaling (mass_fixer=false) avoids amplifying gradients at fronts.
-        if gpu.dm !== nothing
+        # Per-substep mass correction.
+        # mass_fixer=true (default): prescribe m_dev along the met-data mass
+        #   trajectory and scale rm to preserve VMR. Needed for F32 stability
+        #   but amplifies gradients at fronts.
+        # mass_fixer=false (TM5-faithful): let m evolve freely with the fluxes.
+        #   No rm scaling, no m_dev reset. Requires F64 to avoid B-correction
+        #   accumulation errors driving cells negative.
+        if _use_mass_fixer && gpu.dm !== nothing
             t_end = FT(s) / FT(n_sub)
             m_prescribed = gpu.m_ref .+ t_end .* gpu.dm
-            if _use_mass_fixer
-                scale = m_prescribed ./ max.(gpu.m_dev, FT(1))
-                for (_, rm_t) in pairs(tracers)
-                    rm_t .*= scale
-                end
+            scale = m_prescribed ./ max.(gpu.m_dev, FT(1))
+            for (_, rm_t) in pairs(tracers)
+                rm_t .*= scale
             end
             copyto!(gpu.m_dev, m_prescribed)
         end
     end
 
     # Set m_ref to end-of-window mass.
-    # m_dev was reset to m_prescribed each substep (stability requirement).
-    # Use prescribed trajectory for m_ref to stay on the met-data mass path.
-    if gpu.dm !== nothing
+    # mass_fixer=true: use prescribed trajectory (m_ref += dm).
+    # mass_fixer=false: use evolved mass from advection (TM5-faithful).
+    if _use_mass_fixer && gpu.dm !== nothing
         gpu.m_ref .+= gpu.dm
     else
         copyto!(gpu.m_ref, gpu.m_dev)

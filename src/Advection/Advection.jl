@@ -80,10 +80,12 @@ export advect_x_mass_corrected_subcycled!, advect_y_mass_corrected_subcycled!, a
 export compute_air_mass, compute_air_mass!, compute_mass_fluxes, compute_mass_fluxes!
 export GridGeometryCache, build_geometry_cache
 export MassFluxWorkspace, allocate_massflux_workspace
+export PrognosticSlopeWorkspace, allocate_prognostic_slope_workspace, allocate_prognostic_slope_workspaces
 export advect_x_massflux!, advect_y_massflux!, advect_z_massflux!
 export advect_x_massflux_subcycled!, advect_y_massflux_subcycled!, advect_z_massflux_subcycled!
 export max_cfl_massflux_x, max_cfl_massflux_x_fine, max_cfl_massflux_y, max_cfl_massflux_z
-export strang_split_massflux!, strang_split_massflux_ppm!
+export strang_split_massflux!, strang_split_massflux_ppm!, strang_split_prognostic!
+export enable_sweep_debug!
 export advect_x_massflux_reduced!
 export CubedSphereGeometryCache, CubedSphereMassFluxWorkspace
 export allocate_cs_massflux_workspace

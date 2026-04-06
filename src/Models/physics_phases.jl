@@ -737,6 +737,10 @@ function advection_phase!(tracers, sched, air, phys, model,
     if _use_dynam0
         recompute_cm_runtime!(gpu.cm, gpu.am, gpu.bm, dB_gpu)
     end
+    # Clamp cm to keep Z-CFL < 0.95.  Required while using diagnostic slopes
+    # (recomputed fresh each step).  TM5 allows gamma > 1 via prognostic slopes
+    # that prevent flux reversal; once prognostic slopes are implemented, this
+    # clamping can be removed.  See docs/TM5_ALIGNMENT_GAPS_AND_NUMERICAL_RISKS.md.
     _clamp_cm_cfl!(gpu.cm, gpu.m_ref, FT(0.95))
 
     copyto!(gpu.m_dev, gpu.m_ref)
@@ -821,11 +825,23 @@ function advection_phase!(tracers, sched, air, phys, model,
     end
 end
 
-# Lazy-allocated Prather workspace caches (avoids re-allocation per window)
+# Lazy-allocated workspace caches (avoids re-allocation per window)
 const _PRATHER_WS_CACHE = Ref{Any}(nothing)
 const _CS_PRATHER_WS_CACHE = Ref{Any}(nothing)
+const _PROG_SLOPES_CACHE = Ref{Any}(nothing)
 
-_build_advection_workspace(ws, scheme, tracers, m) = ws  # default: return MassFluxWorkspace as-is
+function _build_advection_workspace(ws, scheme, tracers, m)
+    # Check if prognostic slopes are enabled via model metadata
+    # (set by configuration when advection.prognostic_slopes = true)
+    if scheme isa SlopesAdvection && scheme.prognostic_slopes
+        if _PROG_SLOPES_CACHE[] === nothing
+            _PROG_SLOPES_CACHE[] = allocate_prognostic_slope_workspaces(tracers, m)
+            @info "Allocated prognostic slope workspaces for $(length(tracers)) tracers"
+        end
+        return (; base=ws, prog_slopes=_PROG_SLOPES_CACHE[])
+    end
+    return ws  # default: return MassFluxWorkspace as-is
+end
 function _build_advection_workspace(ws, scheme::PratherAdvection, tracers, m)
     if _PRATHER_WS_CACHE[] === nothing
         _PRATHER_WS_CACHE[] = allocate_prather_workspaces(tracers, m)

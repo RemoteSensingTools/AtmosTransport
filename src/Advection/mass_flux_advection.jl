@@ -332,12 +332,16 @@ end
 )
     i, j, k = @index(Global, NTuple)
     FT = eltype(rm)
+    # Minimum mass for safe division. Met-data cm satisfies continuity
+    # (m_new > 0), so m should stay positive. This guards only against
+    # pathological edge cases (e.g., top-of-model near-vacuum).
+    m_eps = eps(FT)
     @inbounds begin
         # --- Slope at k ---
         sz_k = if k > 1 && k < Nz
-            ckm = rm[i, j, k - 1] / m[i, j, k - 1]
-            ck  = rm[i, j, k]     / m[i, j, k]
-            ckp = rm[i, j, k + 1] / m[i, j, k + 1]
+            ckm = rm[i, j, k - 1] / max(m[i, j, k - 1], m_eps)
+            ck  = rm[i, j, k]     / max(m[i, j, k],     m_eps)
+            ckp = rm[i, j, k + 1] / max(m[i, j, k + 1], m_eps)
             sc = (ckp - ckm) / 2
             if use_limiter; sc = minmod_device(sc, 2 * (ckp - ck), 2 * (ck - ckm)); end
             s = m[i, j, k] * sc
@@ -349,9 +353,9 @@ end
 
         # --- Slope at k-1 (for top flux) ---
         sz_km = if k > 2 && k - 1 < Nz
-            ckmm = rm[i, j, k - 2] / m[i, j, k - 2]
-            ckm  = rm[i, j, k - 1] / m[i, j, k - 1]
-            ck   = rm[i, j, k]     / m[i, j, k]
+            ckmm = rm[i, j, k - 2] / max(m[i, j, k - 2], m_eps)
+            ckm  = rm[i, j, k - 1] / max(m[i, j, k - 1], m_eps)
+            ck   = rm[i, j, k]     / max(m[i, j, k],     m_eps)
             sc = (ck - ckmm) / 2
             if use_limiter; sc = minmod_device(sc, 2 * (ck - ckm), 2 * (ckm - ckmm)); end
             s = m[i, j, k - 1] * sc
@@ -363,9 +367,9 @@ end
 
         # --- Slope at k+1 (for bottom flux) ---
         sz_kp = if k < Nz - 1 && k + 1 > 1
-            ck   = rm[i, j, k]     / m[i, j, k]
-            ckp  = rm[i, j, k + 1] / m[i, j, k + 1]
-            ckpp = rm[i, j, k + 2] / m[i, j, k + 2]
+            ck   = rm[i, j, k]     / max(m[i, j, k],     m_eps)
+            ckp  = rm[i, j, k + 1] / max(m[i, j, k + 1], m_eps)
+            ckpp = rm[i, j, k + 2] / max(m[i, j, k + 2], m_eps)
             sc = (ckpp - ck) / 2
             if use_limiter; sc = minmod_device(sc, 2 * (ckpp - ckp), 2 * (ckp - ck)); end
             s = m[i, j, k + 1] * sc
@@ -376,13 +380,17 @@ end
         end
 
         # --- Flux at top face (face k) ---
+        # With diagnostic slopes, gamma must stay in [-1, 1] to prevent flux
+        # reversal (gamma > 2 makes f = gamma*(rm+(1-gamma)*sz) flip sign).
+        # TM5 allows gamma > 1 via prognostic slopes (advectz.F90:462);
+        # removing this clamp requires implementing prognostic slope evolution.
         flux_top = if k > 1
             cm_t = cm[i, j, k]
             if cm_t > zero(FT)
-                gamma = cm_t / m[i, j, k - 1]
+                gamma = m[i, j, k - 1] > m_eps ? cm_t / m[i, j, k - 1] : zero(FT)
                 gamma * (rm[i, j, k - 1] + (one(FT) - gamma) * sz_km)
             elseif cm_t < zero(FT)
-                gamma = cm_t / m[i, j, k]
+                gamma = m[i, j, k] > m_eps ? cm_t / m[i, j, k] : zero(FT)
                 gamma * (rm[i, j, k] - (one(FT) + gamma) * sz_k)
             else
                 zero(FT)
@@ -395,10 +403,10 @@ end
         flux_bot = if k < Nz
             cm_b = cm[i, j, k + 1]
             if cm_b > zero(FT)
-                gamma = cm_b / m[i, j, k]
+                gamma = m[i, j, k] > m_eps ? cm_b / m[i, j, k] : zero(FT)
                 gamma * (rm[i, j, k] + (one(FT) - gamma) * sz_k)
             elseif cm_b < zero(FT)
-                gamma = cm_b / m[i, j, k + 1]
+                gamma = m[i, j, k + 1] > m_eps ? cm_b / m[i, j, k + 1] : zero(FT)
                 gamma * (rm[i, j, k + 1] - (one(FT) + gamma) * sz_kp)
             else
                 zero(FT)
@@ -409,6 +417,295 @@ end
 
         rm_new[i, j, k] = rm[i, j, k] + flux_top - flux_bot
         m_new[i, j, k]  = m[i, j, k]  + cm[i, j, k] - cm[i, j, k + 1]
+    end
+end
+
+# =====================================================================
+# Mass-only kernels for evolving-mass CFL pilots
+# (TM5 advectm_cfl.F90 + advectx__slopes.F90:430-520 style)
+# =====================================================================
+
+@kernel function _mass_only_x_kernel!(m_new, @Const(m), @Const(am), Nx)
+    i, j, k = @index(Global, NTuple)
+    @inbounds begin
+        ip = i == Nx ? 1 : i + 1
+        m_new[i, j, k] = m[i, j, k] + am[i, j, k] - am[ip, j, k]
+    end
+end
+
+@kernel function _mass_only_y_kernel!(m_new, @Const(m), @Const(bm), Ny)
+    i, j, k = @index(Global, NTuple)
+    @inbounds begin
+        FT = eltype(m)
+        bm_s = j > 1  ? bm[i, j, k]     : zero(FT)
+        bm_n = j < Ny ? bm[i, j + 1, k] : zero(FT)
+        m_new[i, j, k] = m[i, j, k] + bm_s - bm_n
+    end
+end
+
+@kernel function _mass_only_z_kernel!(m_new, @Const(m), @Const(cm), Nz)
+    i, j, k = @index(Global, NTuple)
+    @inbounds begin
+        FT = eltype(m)
+        cm_t = k > 1  ? cm[i, j, k]     : zero(FT)
+        cm_b = k < Nz ? cm[i, j, k + 1] : zero(FT)
+        m_new[i, j, k] = m[i, j, k] + cm_t - cm_b
+    end
+end
+
+# =====================================================================
+# Prognostic-slope kernels (TM5 second-order moments)
+#
+# These kernels evolve rxm/rym/rzm alongside rm using the pf-term
+# from TM5 advect{x,y,z}.F90.  The "along" slope gets the full
+# second-moment update; cross-slopes are passively advected.
+# =====================================================================
+
+@kernel function _prognostic_z_kernel!(
+    rm_new, @Const(rm), m_new, @Const(m), @Const(cm),
+    rzm_new, @Const(rzm), rxm_new, @Const(rxm), rym_new, @Const(rym),
+    Nz, use_limiter
+)
+    i, j, k = @index(Global, NTuple)
+    FT = eltype(rm)
+    m_eps = FT(100) * eps(FT)
+    @inbounds begin
+        rm_i  = rm[i, j, k];   m_i  = m[i, j, k]
+        rzm_i = rzm[i, j, k];  rxm_i = rxm[i, j, k];  rym_i = rym[i, j, k]
+
+        # Pre-limit along-slope (TM5 advectz.F90:447)
+        if use_limiter
+            rzm_i = max(min(rzm_i, rm_i), -rm_i)
+        end
+
+        # --- Top face flux (interface k, between k-1 and k) ---
+        cm_t = k > 1 ? cm[i, j, k] : zero(FT)
+        if cm_t > zero(FT)
+            # Downward: donor = k-1
+            rm_km  = rm[i, j, k-1];  m_km = m[i, j, k-1]
+            rzm_km = rzm[i, j, k-1]
+            if use_limiter; rzm_km = max(min(rzm_km, rm_km), -rm_km); end
+            gamma = m_km > m_eps ? cm_t / m_km : zero(FT)
+            f_t   = gamma * (rm_km + (one(FT) - gamma) * rzm_km)
+            pf_t  = cm_t * (gamma * gamma * rzm_km - FT(3) * f_t)
+            fx_t  = gamma * rxm[i, j, k-1]
+            fy_t  = gamma * rym[i, j, k-1]
+        elseif cm_t < zero(FT)
+            # Upward: donor = k
+            gamma = m_i > m_eps ? cm_t / m_i : zero(FT)
+            f_t   = gamma * (rm_i - (one(FT) + gamma) * rzm_i)
+            pf_t  = cm_t * (gamma * gamma * rzm_i - FT(3) * f_t)
+            fx_t  = gamma * rxm_i
+            fy_t  = gamma * rym_i
+        else
+            f_t = zero(FT); pf_t = zero(FT); fx_t = zero(FT); fy_t = zero(FT)
+        end
+
+        # --- Bottom face flux (interface k+1, between k and k+1) ---
+        cm_b = k < Nz ? cm[i, j, k+1] : zero(FT)
+        if cm_b > zero(FT)
+            # Downward: donor = k
+            gamma = m_i > m_eps ? cm_b / m_i : zero(FT)
+            f_b   = gamma * (rm_i + (one(FT) - gamma) * rzm_i)
+            pf_b  = cm_b * (gamma * gamma * rzm_i - FT(3) * f_b)
+            fx_b  = gamma * rxm_i
+            fy_b  = gamma * rym_i
+        elseif cm_b < zero(FT)
+            # Upward: donor = k+1
+            rm_kp  = rm[i, j, k+1];  m_kp = m[i, j, k+1]
+            rzm_kp = rzm[i, j, k+1]
+            if use_limiter; rzm_kp = max(min(rzm_kp, rm_kp), -rm_kp); end
+            gamma = m_kp > m_eps ? cm_b / m_kp : zero(FT)
+            f_b   = gamma * (rm_kp - (one(FT) + gamma) * rzm_kp)
+            pf_b  = cm_b * (gamma * gamma * rzm_kp - FT(3) * f_b)
+            fx_b  = gamma * rxm[i, j, k+1]
+            fy_b  = gamma * rym[i, j, k+1]
+        else
+            f_b = zero(FT); pf_b = zero(FT); fx_b = zero(FT); fy_b = zero(FT)
+        end
+
+        # --- Updates (TM5 advectz.F90:480-490) ---
+        rm_new_val = rm_i + f_t - f_b
+        mnew_val   = m_i + cm_t - cm_b
+        m_safe     = max(mnew_val, m_eps)
+
+        # Along-slope update: TM5 advectz.F90:481-485
+        # rzm_new = rzm + correction/mnew
+        rzm_new_val = rzm_i + ((pf_t - pf_b)
+                                - (cm_t - cm_b) * rzm_i
+                                + FT(3) * ((cm_t + cm_b) * rm_new_val
+                                           - (f_t + f_b) * m_i)
+                               ) / m_safe
+        if use_limiter
+            rzm_new_val = max(min(rzm_new_val, rm_new_val), -rm_new_val)
+        end
+
+        # Cross-slopes: simple flux divergence (TM5 advectz.F90:489-490)
+        rxm_new_val = rxm_i + fx_t - fx_b
+        rym_new_val = rym_i + fy_t - fy_b
+
+        rm_new[i, j, k]  = rm_new_val
+        m_new[i, j, k]   = mnew_val
+        rzm_new[i, j, k] = rzm_new_val
+        rxm_new[i, j, k] = rxm_new_val
+        rym_new[i, j, k] = rym_new_val
+    end
+end
+
+@kernel function _prognostic_x_kernel!(
+    rm_new, @Const(rm), m_new, @Const(m), @Const(am),
+    rxm_new, @Const(rxm), rym_new, @Const(rym), rzm_new, @Const(rzm),
+    Nx, use_limiter
+)
+    i, j, k = @index(Global, NTuple)
+    FT = eltype(rm)
+    m_eps = FT(100) * eps(FT)
+    @inbounds begin
+        im = i == 1  ? Nx : i - 1
+        ip = i == Nx ? 1  : i + 1
+
+        rm_i  = rm[i, j, k];   m_i  = m[i, j, k]
+        rxm_i = rxm[i, j, k];  rym_i = rym[i, j, k];  rzm_i = rzm[i, j, k]
+        if use_limiter; rxm_i = max(min(rxm_i, rm_i), -rm_i); end
+
+        # --- Left face (am[i, j, k]) ---
+        am_l = am[i, j, k]
+        if am_l >= zero(FT)
+            rm_im = rm[im, j, k]; m_im = m[im, j, k]; rxm_im = rxm[im, j, k]
+            if use_limiter; rxm_im = max(min(rxm_im, rm_im), -rm_im); end
+            alpha = m_im > m_eps ? am_l / m_im : zero(FT)
+            f_l   = alpha * (rm_im + (one(FT) - alpha) * rxm_im)
+            pf_l  = am_l * (alpha * alpha * rxm_im - FT(3) * f_l)
+            fy_l  = alpha * rym[im, j, k]
+            fz_l  = alpha * rzm[im, j, k]
+        else
+            alpha = m_i > m_eps ? am_l / m_i : zero(FT)
+            f_l   = alpha * (rm_i - (one(FT) + alpha) * rxm_i)
+            pf_l  = am_l * (alpha * alpha * rxm_i - FT(3) * f_l)
+            fy_l  = alpha * rym_i
+            fz_l  = alpha * rzm_i
+        end
+
+        # --- Right face (am[i+1, j, k]) ---
+        am_r = am[i + 1, j, k]
+        if am_r >= zero(FT)
+            alpha = m_i > m_eps ? am_r / m_i : zero(FT)
+            f_r   = alpha * (rm_i + (one(FT) - alpha) * rxm_i)
+            pf_r  = am_r * (alpha * alpha * rxm_i - FT(3) * f_r)
+            fy_r  = alpha * rym_i
+            fz_r  = alpha * rzm_i
+        else
+            rm_ip = rm[ip, j, k]; m_ip = m[ip, j, k]; rxm_ip = rxm[ip, j, k]
+            if use_limiter; rxm_ip = max(min(rxm_ip, rm_ip), -rm_ip); end
+            alpha = m_ip > m_eps ? am_r / m_ip : zero(FT)
+            f_r   = alpha * (rm_ip - (one(FT) + alpha) * rxm_ip)
+            pf_r  = am_r * (alpha * alpha * rxm_ip - FT(3) * f_r)
+            fy_r  = alpha * rym[ip, j, k]
+            fz_r  = alpha * rzm[ip, j, k]
+        end
+
+        # --- Updates (TM5 advectx.F90:706-716) ---
+        rm_new_val = rm_i + f_l - f_r
+        mnew_val   = m_i + am_l - am_r
+        m_safe     = max(mnew_val, m_eps)
+
+        # rxm_new = rxm + correction/mnew (TM5 advectx.F90:707-710)
+        rxm_new_val = rxm_i + ((pf_l - pf_r)
+                                - (am_l - am_r) * rxm_i
+                                + FT(3) * ((am_l + am_r) * rm_new_val
+                                           - (f_l + f_r) * m_i)
+                               ) / m_safe
+        if use_limiter
+            rxm_new_val = max(min(rxm_new_val, rm_new_val), -rm_new_val)
+        end
+
+        rym_new_val = rym_i + fy_l - fy_r
+        rzm_new_val = rzm_i + fz_l - fz_r
+
+        rm_new[i, j, k]  = rm_new_val
+        m_new[i, j, k]   = mnew_val
+        rxm_new[i, j, k] = rxm_new_val
+        rym_new[i, j, k] = rym_new_val
+        rzm_new[i, j, k] = rzm_new_val
+    end
+end
+
+@kernel function _prognostic_y_kernel!(
+    rm_new, @Const(rm), m_new, @Const(m), @Const(bm),
+    rym_new, @Const(rym), rxm_new, @Const(rxm), rzm_new, @Const(rzm),
+    Ny, use_limiter
+)
+    i, j, k = @index(Global, NTuple)
+    FT = eltype(rm)
+    m_eps = FT(100) * eps(FT)
+    @inbounds begin
+        rm_i  = rm[i, j, k];   m_i  = m[i, j, k]
+        rym_i = rym[i, j, k];  rxm_i = rxm[i, j, k];  rzm_i = rzm[i, j, k]
+        if use_limiter; rym_i = max(min(rym_i, rm_i), -rm_i); end
+
+        # --- South face (bm[i, j, k]) ---
+        bm_s = bm[i, j, k]
+        if j == 1
+            f_s = zero(FT); pf_s = zero(FT); fx_s = zero(FT); fz_s = zero(FT)
+        elseif bm_s >= zero(FT)
+            rm_jm = rm[i, j-1, k]; m_jm = m[i, j-1, k]; rym_jm = rym[i, j-1, k]
+            if use_limiter; rym_jm = max(min(rym_jm, rm_jm), -rm_jm); end
+            beta = m_jm > m_eps ? bm_s / m_jm : zero(FT)
+            f_s  = beta * (rm_jm + (one(FT) - beta) * rym_jm)
+            pf_s = bm_s * (beta * beta * rym_jm - FT(3) * f_s)
+            fx_s = beta * rxm[i, j-1, k]
+            fz_s = beta * rzm[i, j-1, k]
+        else
+            beta = m_i > m_eps ? bm_s / m_i : zero(FT)
+            f_s  = beta * (rm_i - (one(FT) + beta) * rym_i)
+            pf_s = bm_s * (beta * beta * rym_i - FT(3) * f_s)
+            fx_s = beta * rxm_i
+            fz_s = beta * rzm_i
+        end
+
+        # --- North face (bm[i, j+1, k]) ---
+        bm_n = bm[i, j + 1, k]
+        if j == Ny
+            f_n = zero(FT); pf_n = zero(FT); fx_n = zero(FT); fz_n = zero(FT)
+        elseif bm_n >= zero(FT)
+            beta = m_i > m_eps ? bm_n / m_i : zero(FT)
+            f_n  = beta * (rm_i + (one(FT) - beta) * rym_i)
+            pf_n = bm_n * (beta * beta * rym_i - FT(3) * f_n)
+            fx_n = beta * rxm_i
+            fz_n = beta * rzm_i
+        else
+            rm_jp = rm[i, j+1, k]; m_jp = m[i, j+1, k]; rym_jp = rym[i, j+1, k]
+            if use_limiter; rym_jp = max(min(rym_jp, rm_jp), -rm_jp); end
+            beta = m_jp > m_eps ? bm_n / m_jp : zero(FT)
+            f_n  = beta * (rm_jp - (one(FT) + beta) * rym_jp)
+            pf_n = bm_n * (beta * beta * rym_jp - FT(3) * f_n)
+            fx_n = beta * rxm[i, j+1, k]
+            fz_n = beta * rzm[i, j+1, k]
+        end
+
+        # --- Updates (TM5 advecty.F90:617-625) ---
+        rm_new_val = rm_i + f_s - f_n
+        mnew_val   = m_i + bm_s - bm_n
+        m_safe     = max(mnew_val, m_eps)
+
+        # rym_new = rym + correction/mnew (TM5 advecty.F90:620-623)
+        rym_new_val = rym_i + ((pf_s - pf_n)
+                                - (bm_s - bm_n) * rym_i
+                                + FT(3) * ((bm_s + bm_n) * rm_new_val
+                                           - (f_s + f_n) * m_i)
+                               ) / m_safe
+        if use_limiter
+            rym_new_val = max(min(rym_new_val, rm_new_val), -rm_new_val)
+        end
+
+        rxm_new_val = rxm_i + fx_s - fx_n
+        rzm_new_val = rzm_i + fz_s - fz_n
+
+        rm_new[i, j, k]  = rm_new_val
+        m_new[i, j, k]   = mnew_val
+        rym_new[i, j, k] = rym_new_val
+        rxm_new[i, j, k] = rxm_new_val
+        rzm_new[i, j, k] = rzm_new_val
     end
 end
 
@@ -555,6 +852,7 @@ struct MassFluxWorkspace{FT, A3 <: AbstractArray{FT,3}, V1 <: AbstractVector{Int
     rm::A3       # tracer mass (Nx, Ny, Nz)
     rm_buf::A3   # advection output buffer for rm (Nx, Ny, Nz)
     m_buf::A3    # advection output buffer for m  (Nx, Ny, Nz)
+    m_pilot::A3  # mass evolution scratch for evolving-mass CFL pilot (Nx, Ny, Nz)
     cfl_x::A3   # CFL scratch for x (Nx+1, Ny, Nz) — reused as flux_x_eff
     cfl_y::A3   # CFL scratch for y (Nx, Ny+1, Nz) — reused as flux_y_eff
     cfl_z::A3   # CFL scratch for z (Nx, Ny, Nz+1) — reused as flux_z_eff
@@ -582,11 +880,60 @@ function allocate_massflux_workspace(m::AbstractArray{FT,3},
         similar(m),       # rm
         similar(m),       # rm_buf
         similar(m),       # m_buf
+        similar(m),       # m_pilot (evolving-mass CFL pilot scratch)
         similar(am),      # cfl_x / flux_x_eff
         similar(bm),      # cfl_y / flux_y_eff
         similar(cm),      # cfl_z / flux_z_eff
         cs_dev,           # cluster_sizes (device)
     )
+end
+
+# =====================================================================
+# Prognostic slope workspace (TM5 second-order moments)
+# =====================================================================
+
+"""
+    PrognosticSlopeWorkspace{FT, A3}
+
+Per-tracer workspace holding prognostic slopes (rxm, rym, rzm) and
+double-buffer outputs for GPU kernels.  Slopes are initialized to zero
+and evolve with TM5's pf-term update (advectz.F90:481-485).
+"""
+struct PrognosticSlopeWorkspace{FT, A3 <: AbstractArray{FT,3}}
+    rxm     :: A3
+    rym     :: A3
+    rzm     :: A3
+    rxm_buf :: A3
+    rym_buf :: A3
+    rzm_buf :: A3
+end
+
+"""
+    allocate_prognostic_slope_workspace(m) → PrognosticSlopeWorkspace
+
+Allocate slope and buffer arrays matching the shape of air mass `m`.
+"""
+function allocate_prognostic_slope_workspace(m::AbstractArray{FT,3}) where FT
+    make = () -> similar(m)
+    PrognosticSlopeWorkspace{FT, typeof(m)}(
+        fill!(make(), zero(FT)),  # rxm — initialized to zero
+        fill!(make(), zero(FT)),  # rym
+        fill!(make(), zero(FT)),  # rzm
+        make(),                    # rxm_buf
+        make(),                    # rym_buf
+        make(),                    # rzm_buf
+    )
+end
+
+"""
+    allocate_prognostic_slope_workspaces(tracers, m) → NamedTuple
+
+Allocate one PrognosticSlopeWorkspace per tracer, keyed by tracer name.
+"""
+function allocate_prognostic_slope_workspaces(tracers::NamedTuple, m::AbstractArray{FT,3}) where FT
+    names = keys(tracers)
+    ws_tuple = ntuple(i -> allocate_prognostic_slope_workspace(m), length(names))
+    NamedTuple{names}(ws_tuple)
 end
 
 # =====================================================================
@@ -1130,22 +1477,60 @@ end
 # =====================================================================
 
 """
+    _x_pilot_succeeds(ws, m, am_eff, n_sub, beta) → Bool
+
+Run an m-only pilot of `n_sub` passes of am_eff applied to the evolving mass.
+Returns true if all passes keep `m > 0` and `max(|am_eff|/m) < beta`.
+"""
+function _x_pilot_succeeds(ws::MassFluxWorkspace{FT}, m::AbstractArray{FT,3},
+                            am_eff, n_sub::Int, beta::FT) where FT
+    backend = get_backend(m)
+    Nx = size(m, 1)
+    copyto!(ws.m_pilot, m)
+    k! = _mass_only_x_kernel!(backend, 256)
+    for _ in 1:n_sub
+        cfl = max_cfl_massflux_x(am_eff, ws.m_pilot, ws.cfl_x, ws.cluster_sizes)
+        if !isfinite(cfl) || cfl >= beta
+            return false
+        end
+        k!(ws.m_buf, ws.m_pilot, am_eff, Nx; ndrange=size(m))
+        synchronize(backend)
+        copyto!(ws.m_pilot, ws.m_buf)
+        if minimum(ws.m_pilot) <= zero(FT)
+            return false
+        end
+    end
+    return true
+end
+
+"""
 $(SIGNATURES)
 
-Uniform-subdivision X-subcycling with workspace buffers.
+TM5-style evolving-mass X-subcycling.  Iteratively finds the minimum n_sub
+such that running am/n_sub through the mass update n_sub times keeps m > 0
+and CFL < cfl_limit at every pass.
 """
 function advect_x_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, am,
                                        grid, use_limiter,
                                        ws::MassFluxWorkspace{FT};
                                        cfl_limit = FT(0.95)) where FT
-    cfl = max_cfl_massflux_x(am, m, ws.cfl_x, ws.cluster_sizes)
-    n_sub = isfinite(cfl) ? min(50, max(1, ceil(Int, cfl / cfl_limit))) : 1
-    if n_sub > 1
+    cfl_static = max_cfl_massflux_x(am, m, ws.cfl_x, ws.cluster_sizes)
+    n_sub = (isfinite(cfl_static) && cfl_static > zero(FT)) ?
+            max(1, ceil(Int, min(cfl_static, FT(100)) / cfl_limit)) : 1
+    max_n_sub = 256
+    while n_sub <= max_n_sub
         ws.cfl_x .= am ./ FT(n_sub)
-        am_eff = ws.cfl_x
-    else
-        am_eff = am
+        if _x_pilot_succeeds(ws, m, ws.cfl_x, n_sub, cfl_limit)
+            break
+        end
+        n_sub *= 2
     end
+    if n_sub > max_n_sub
+        @warn "advect_x_massflux_subcycled!: pilot failed even at n_sub=$max_n_sub" maxlog=3
+        n_sub = max_n_sub
+        ws.cfl_x .= am ./ FT(n_sub)
+    end
+    am_eff = ws.cfl_x
     for _ in 1:n_sub
         advect_x_massflux!(rm_tracers, m, am_eff, grid, use_limiter,
                             ws.rm_buf, ws.m_buf, ws.cluster_sizes)
@@ -1154,23 +1539,55 @@ function advect_x_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, am,
 end
 
 """
+    _y_pilot_succeeds(ws, m, bm_eff, n_sub, beta) → Bool
+"""
+function _y_pilot_succeeds(ws::MassFluxWorkspace{FT}, m::AbstractArray{FT,3},
+                            bm_eff, n_sub::Int, beta::FT) where FT
+    backend = get_backend(m)
+    Ny = size(m, 2)
+    copyto!(ws.m_pilot, m)
+    k! = _mass_only_y_kernel!(backend, 256)
+    for _ in 1:n_sub
+        cfl = max_cfl_massflux_y(bm_eff, ws.m_pilot, ws.cfl_y)
+        if !isfinite(cfl) || cfl >= beta
+            return false
+        end
+        k!(ws.m_buf, ws.m_pilot, bm_eff, Ny; ndrange=size(m))
+        synchronize(backend)
+        copyto!(ws.m_pilot, ws.m_buf)
+        if minimum(ws.m_pilot) <= zero(FT)
+            return false
+        end
+    end
+    return true
+end
+
+"""
 $(SIGNATURES)
 
-Uniform-subdivision Y-subcycling with workspace buffers.
+TM5-style evolving-mass Y-subcycling.
 """
 function advect_y_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, bm,
                                        grid, use_limiter,
                                        ws::MassFluxWorkspace{FT};
                                        cfl_limit = FT(0.95)) where FT
-    cfl = max_cfl_massflux_y(bm, m, ws.cfl_y)
-    n_sub = isfinite(cfl) ? min(50, max(1, ceil(Int, cfl / cfl_limit))) : 1
-    if n_sub > 1
-        @debug "Y-CFL subcycling" cfl n_sub maxlog=10
+    cfl_static = max_cfl_massflux_y(bm, m, ws.cfl_y)
+    n_sub = (isfinite(cfl_static) && cfl_static > zero(FT)) ?
+            max(1, ceil(Int, min(cfl_static, FT(100)) / cfl_limit)) : 1
+    max_n_sub = 256
+    while n_sub <= max_n_sub
         ws.cfl_y .= bm ./ FT(n_sub)
-        bm_eff = ws.cfl_y
-    else
-        bm_eff = bm
+        if _y_pilot_succeeds(ws, m, ws.cfl_y, n_sub, cfl_limit)
+            break
+        end
+        n_sub *= 2
     end
+    if n_sub > max_n_sub
+        @warn "advect_y_massflux_subcycled!: pilot failed even at n_sub=$max_n_sub" maxlog=3
+        n_sub = max_n_sub
+        ws.cfl_y .= bm ./ FT(n_sub)
+    end
+    bm_eff = ws.cfl_y
     for _ in 1:n_sub
         advect_y_massflux!(rm_tracers, m, bm_eff, grid, use_limiter,
                             ws.rm_buf, ws.m_buf)
@@ -1179,13 +1596,45 @@ function advect_y_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, bm,
 end
 
 """
+    _z_pilot_succeeds(ws, m, cm_eff, n_sub, beta) → Bool
+
+Run an m-only pilot of `n_sub` passes of cm_eff applied to the evolving mass.
+Returns `true` if all passes keep `m > 0` and `max(|cm_eff|/m) < beta`.
+Used by `advect_z_massflux_subcycled!` for evolving-mass CFL refinement.
+"""
+function _z_pilot_succeeds(ws::MassFluxWorkspace{FT}, m::AbstractArray{FT,3},
+                            cm_eff, n_sub::Int, beta::FT) where FT
+    backend = get_backend(m)
+    Nz = size(m, 3)
+    copyto!(ws.m_pilot, m)
+    k! = _mass_only_z_kernel!(backend, 256)
+    for _ in 1:n_sub
+        # CFL check on current pilot mass
+        cfl = max_cfl_massflux_z(cm_eff, ws.m_pilot, ws.cfl_z)
+        if !isfinite(cfl) || cfl >= beta
+            return false
+        end
+        # Mass update
+        k!(ws.m_buf, ws.m_pilot, cm_eff, Nz; ndrange=size(m))
+        synchronize(backend)
+        copyto!(ws.m_pilot, ws.m_buf)
+        # Positivity check
+        if minimum(ws.m_pilot) <= zero(FT)
+            return false
+        end
+    end
+    return true
+end
+
+"""
 $(SIGNATURES)
 
-Uniform-subdivision Z-subcycling using the proven double-buffered 3D kernel.
-Computes max Z-CFL, divides cm by n_sub, runs n_sub passes of `_massflux_z_kernel!`.
+TM5-style evolving-mass Z-subcycling.  Iteratively finds the minimum n_sub
+such that running cm/n_sub through the mass update n_sub times keeps m > 0
+and CFL < cfl_limit at every pass.  Then runs the actual tracer advection
+with the converged n_sub.
 
-Replaces the flux-remaining approach which diverged with structured IC
-(global fraction penalized all cells for worst-case; hit 100-iter cap → NaN).
+Reference: TM5 advectx__slopes.F90:430-520 (CFL refinement via flux reduction).
 """
 function advect_z_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, cm,
                                        use_limiter,
@@ -1193,14 +1642,28 @@ function advect_z_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, cm,
                                        cfl_limit = FT(0.95)) where FT
     backend = get_backend(m)
     Nz = size(m, 3)
-    cfl = max_cfl_massflux_z(cm, m, ws.cfl_z)
-    n_sub = isfinite(cfl) ? min(50, max(1, ceil(Int, cfl / cfl_limit))) : 1
-    if n_sub > 1
+
+    # Phase 1: find n_sub via evolving-mass pilot.
+    # Start from the static-CFL estimate and double until pilot succeeds.
+    cfl_static = max_cfl_massflux_z(cm, m, ws.cfl_z)
+    n_sub = (isfinite(cfl_static) && cfl_static > zero(FT)) ?
+            max(1, ceil(Int, min(cfl_static, FT(100)) / cfl_limit)) : 1
+    max_n_sub = 256
+    while n_sub <= max_n_sub
         ws.cfl_z .= cm ./ FT(n_sub)
-        cm_eff = ws.cfl_z
-    else
-        cm_eff = cm
+        if _z_pilot_succeeds(ws, m, ws.cfl_z, n_sub, cfl_limit)
+            break
+        end
+        n_sub *= 2
     end
+    if n_sub > max_n_sub
+        @warn "advect_z_massflux_subcycled!: pilot failed even at n_sub=$max_n_sub" maxlog=3
+        n_sub = max_n_sub
+        ws.cfl_z .= cm ./ FT(n_sub)
+    end
+    cm_eff = ws.cfl_z
+
+    # Phase 2: run actual tracer advection with converged cm_eff.
     k! = _massflux_z_kernel!(backend, 256)
     for _ in 1:n_sub
         for (_, rm) in pairs(rm_tracers)
@@ -1265,6 +1728,30 @@ Internally copies into workspace buffer for double-buffered kernels.
 When `ws::MassFluxWorkspace` is provided, all temporary GPU arrays are
 pre-allocated, reducing per-step allocations from ~90 to zero.
 """
+# Per-sweep instrumentation toggle.  Set via `enable_sweep_debug!()` or
+# via env var `ATMOSTRANSPORT_DEBUG_SWEEPS=1` before loading the module.
+const _DEBUG_SWEEPS = Ref(get(ENV, "ATMOSTRANSPORT_DEBUG_SWEEPS", "") == "1")
+
+"""Enable per-sweep mass instrumentation (min m, max CFL) for debugging."""
+enable_sweep_debug!(flag::Bool=true) = (_DEBUG_SWEEPS[] = flag; nothing)
+
+function _log_sweep(label::String, m::AbstractArray{FT,3}, am_or_bm_or_cm,
+                     max_cfl::Union{Nothing,FT}, n_sub::Int) where FT
+    _DEBUG_SWEEPS[] || return
+    mmin = minimum(m)
+    mmax = maximum(m)
+    msg = "[sweep $label] m∈[$(mmin), $(mmax)]"
+    if max_cfl !== nothing
+        msg *= "  max_cfl=$(max_cfl)"
+    end
+    msg *= "  n_sub=$n_sub"
+    if mmin <= zero(FT)
+        ibad = argmin(m)
+        msg *= "  FIRST_NONPOS at $(Tuple(ibad))"
+    end
+    @info msg
+end
+
 function strang_split_massflux!(tracers::NamedTuple,
                                  m::AbstractArray{FT,3},
                                  am, bm, cm,
@@ -1286,18 +1773,19 @@ function strang_split_massflux!(tracers::NamedTuple,
         copyto!(ws.rm, rm_tracer)
         rm_single = NamedTuple{(name,)}((ws.rm,))
 
-        advect_x_massflux_subcycled!(rm_single, m, am, grid, use_limiter, ws; cfl_limit)
-        advect_y_massflux_subcycled!(rm_single, m, bm, grid, use_limiter, ws; cfl_limit)
-        # Z-advection with standard CFL subcycling. TM5 allows gamma > 1 because it
-        # uses prognostic slopes (rzm) that carry subgrid history. Our diagnostic slopes
-        # (recomputed fresh each step via minmod) cannot prevent negative rm when gamma > 1
-        # with uniform fields: flux = gamma*rm > rm is mathematically unavoidable.
-        # Subcycling with cfl_limit=0.95 ensures gamma < 1 (3 iterations for Z-CFL=2.5).
-        # Implementing prognostic slopes (Session 3) would allow removing this constraint.
-        advect_z_massflux_subcycled!(rm_single, m, cm, use_limiter, ws; cfl_limit)
-        advect_z_massflux_subcycled!(rm_single, m, cm, use_limiter, ws; cfl_limit)
-        advect_y_massflux_subcycled!(rm_single, m, bm, grid, use_limiter, ws; cfl_limit)
-        advect_x_massflux_subcycled!(rm_single, m, am, grid, use_limiter, ws; cfl_limit)
+        _DEBUG_SWEEPS[] && _log_sweep("pre", m, am, nothing, 0)
+        n = advect_x_massflux_subcycled!(rm_single, m, am, grid, use_limiter, ws; cfl_limit)
+        _DEBUG_SWEEPS[] && _log_sweep("X1", m, am, nothing, n)
+        n = advect_y_massflux_subcycled!(rm_single, m, bm, grid, use_limiter, ws; cfl_limit)
+        _DEBUG_SWEEPS[] && _log_sweep("Y1", m, bm, nothing, n)
+        n = advect_z_massflux_subcycled!(rm_single, m, cm, use_limiter, ws; cfl_limit)
+        _DEBUG_SWEEPS[] && _log_sweep("Z1", m, cm, nothing, n)
+        n = advect_z_massflux_subcycled!(rm_single, m, cm, use_limiter, ws; cfl_limit)
+        _DEBUG_SWEEPS[] && _log_sweep("Z2", m, cm, nothing, n)
+        n = advect_y_massflux_subcycled!(rm_single, m, bm, grid, use_limiter, ws; cfl_limit)
+        _DEBUG_SWEEPS[] && _log_sweep("Y2", m, bm, nothing, n)
+        n = advect_x_massflux_subcycled!(rm_single, m, am, grid, use_limiter, ws; cfl_limit)
+        _DEBUG_SWEEPS[] && _log_sweep("X2", m, am, nothing, n)
 
         copyto!(rm_tracer, ws.rm)
     end
@@ -1320,6 +1808,120 @@ function advect_x_massflux_reduced_subcycled!(rm_tracers, m::Array{FT,3}, am,
         advect_x_massflux_reduced!(rm_tracers, m, am_eff, grid, use_limiter)
     end
     return n_sub
+end
+
+# =====================================================================
+# Prognostic-slope Strang split (TM5-faithful)
+# =====================================================================
+
+"""
+    _advect_x_prognostic!(rm, m, am, ws, pw, Nx, use_limiter)
+
+CFL-subcycled X-advection with prognostic slope evolution.
+"""
+function _advect_x_prognostic!(rm, m, am, ws::MassFluxWorkspace{FT},
+                                pw::PrognosticSlopeWorkspace{FT},
+                                Nx, use_limiter; cfl_limit=FT(0.95)) where FT
+    backend = get_backend(m)
+    cfl = max_cfl_massflux_x(am, m, ws.cfl_x, ws.cluster_sizes)
+    n_sub = (isfinite(cfl) && cfl > zero(FT)) ? min(100, max(1, ceil(Int, min(cfl, FT(100)) / cfl_limit))) : 1
+    am_eff = n_sub > 1 ? (ws.cfl_x .= am ./ FT(n_sub); ws.cfl_x) : am
+    k! = _prognostic_x_kernel!(backend, 256)
+    for _ in 1:n_sub
+        k!(ws.rm_buf, rm, ws.m_buf, m, am_eff,
+           pw.rxm_buf, pw.rxm, pw.rym_buf, pw.rym, pw.rzm_buf, pw.rzm,
+           Int32(Nx), use_limiter; ndrange=size(m))
+        synchronize(backend)
+        copyto!(rm, ws.rm_buf);  copyto!(m, ws.m_buf)
+        copyto!(pw.rxm, pw.rxm_buf);  copyto!(pw.rym, pw.rym_buf);  copyto!(pw.rzm, pw.rzm_buf)
+    end
+end
+
+"""
+    _advect_y_prognostic!(rm, m, bm, ws, pw, Ny, use_limiter)
+
+CFL-subcycled Y-advection with prognostic slope evolution.
+"""
+function _advect_y_prognostic!(rm, m, bm, ws::MassFluxWorkspace{FT},
+                                pw::PrognosticSlopeWorkspace{FT},
+                                Ny, use_limiter; cfl_limit=FT(0.95)) where FT
+    backend = get_backend(m)
+    cfl = max_cfl_massflux_y(bm, m, ws.cfl_y)
+    n_sub = (isfinite(cfl) && cfl > zero(FT)) ? min(100, max(1, ceil(Int, min(cfl, FT(100)) / cfl_limit))) : 1
+    bm_eff = n_sub > 1 ? (ws.cfl_y .= bm ./ FT(n_sub); ws.cfl_y) : bm
+    k! = _prognostic_y_kernel!(backend, 256)
+    for _ in 1:n_sub
+        k!(ws.rm_buf, rm, ws.m_buf, m, bm_eff,
+           pw.rym_buf, pw.rym, pw.rxm_buf, pw.rxm, pw.rzm_buf, pw.rzm,
+           Int32(Ny), use_limiter; ndrange=size(m))
+        synchronize(backend)
+        copyto!(rm, ws.rm_buf);  copyto!(m, ws.m_buf)
+        copyto!(pw.rym, pw.rym_buf);  copyto!(pw.rxm, pw.rxm_buf);  copyto!(pw.rzm, pw.rzm_buf)
+    end
+end
+
+"""
+    _advect_z_prognostic!(rm, m, cm, ws, pw, Nz, use_limiter)
+
+CFL-subcycled Z-advection with prognostic slope evolution.
+"""
+function _advect_z_prognostic!(rm, m, cm, ws::MassFluxWorkspace{FT},
+                                pw::PrognosticSlopeWorkspace{FT},
+                                Nz, use_limiter; cfl_limit=FT(0.95)) where FT
+    backend = get_backend(m)
+    cfl = max_cfl_massflux_z(cm, m, ws.cfl_z)
+    n_sub = (isfinite(cfl) && cfl > zero(FT)) ? min(100, max(1, ceil(Int, min(cfl, FT(100)) / cfl_limit))) : 1
+    cm_eff = n_sub > 1 ? (ws.cfl_z .= cm ./ FT(n_sub); ws.cfl_z) : cm
+    k! = _prognostic_z_kernel!(backend, 256)
+    for _ in 1:n_sub
+        k!(ws.rm_buf, rm, ws.m_buf, m, cm_eff,
+           pw.rzm_buf, pw.rzm, pw.rxm_buf, pw.rxm, pw.rym_buf, pw.rym,
+           Int32(Nz), use_limiter; ndrange=size(m))
+        synchronize(backend)
+        copyto!(rm, ws.rm_buf);  copyto!(m, ws.m_buf)
+        copyto!(pw.rzm, pw.rzm_buf);  copyto!(pw.rxm, pw.rxm_buf);  copyto!(pw.rym, pw.rym_buf)
+    end
+end
+
+"""
+    strang_split_prognostic!(tracers, m, am, bm, cm, grid, ws, pw_dict, use_limiter)
+
+Strang-split advection with TM5-faithful prognostic slope evolution.
+`pw_dict` is a NamedTuple of `PrognosticSlopeWorkspace` keyed by tracer name.
+"""
+function strang_split_prognostic!(tracers::NamedTuple,
+                                   m::AbstractArray{FT,3},
+                                   am, bm, cm,
+                                   grid::LatitudeLongitudeGrid,
+                                   ws::MassFluxWorkspace{FT},
+                                   pw_dict::NamedTuple,
+                                   use_limiter::Bool;
+                                   cfl_limit::FT = FT(0.95)) where FT
+    Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
+    n_tr = length(tracers)
+    m_save = n_tr > 1 ? similar(m) : m
+    if n_tr > 1; copyto!(m_save, m); end
+
+    for (idx, (name, rm_tracer)) in enumerate(pairs(tracers))
+        if idx > 1; copyto!(m, m_save); end
+        rm = ws.rm
+        copyto!(rm, rm_tracer)
+        pw = pw_dict[name]
+        rm_single = NamedTuple{(name,)}((rm,))
+
+        # Strang: X → Y → Z → Z → Y → X
+        # X and Y: use proven diagnostic kernels (handles reduced grid)
+        # Z: use prognostic kernel (evolves rzm, no reduced grid needed)
+        advect_x_massflux_subcycled!(rm_single, m, am, grid, use_limiter, ws; cfl_limit)
+        advect_y_massflux_subcycled!(rm_single, m, bm, grid, use_limiter, ws; cfl_limit)
+        _advect_z_prognostic!(rm, m, cm, ws, pw, Nz, use_limiter; cfl_limit)
+        _advect_z_prognostic!(rm, m, cm, ws, pw, Nz, use_limiter; cfl_limit)
+        advect_y_massflux_subcycled!(rm_single, m, bm, grid, use_limiter, ws; cfl_limit)
+        advect_x_massflux_subcycled!(rm_single, m, am, grid, use_limiter, ws; cfl_limit)
+
+        copyto!(rm_tracer, rm)
+    end
+    return nothing
 end
 
 # Version without workspace (allocates internally). Tracers are rm (tracer mass).

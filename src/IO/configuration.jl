@@ -410,6 +410,7 @@ function _build_met_driver(driver_type::String, cfg::Dict, met_cfg_default, ::Ty
         max_win_cfg = get(cfg, "max_windows", nothing)
         max_windows = max_win_cfg !== nothing ? Int(max_win_cfg) : nothing
         qv_dir_cfg = expanduser(get(cfg, "qv_directory", ""))
+        disable_qv_cfg = Bool(get(cfg, "disable_qv", false))
         # Load native-grid A/B coefficients for QV merging (137→merged levels)
         native_A = Float64[]
         native_B = Float64[]
@@ -420,6 +421,7 @@ function _build_met_driver(driver_type::String, cfg::Dict, met_cfg_default, ::Ty
         catch; end
         return PreprocessedLatLonMetDriver(; FT, files, dt, merge_map, max_windows,
                                             qv_dir=qv_dir_cfg,
+                                            disable_qv=disable_qv_cfg,
                                             native_A_ifc=native_A,
                                             native_B_ifc=native_B)
 
@@ -962,7 +964,10 @@ function _build_advection(config::Dict, ::Type{FT}) where FT
     isempty(adv_cfg) && return SlopesAdvection()
 
     scheme = get(adv_cfg, "scheme", "slopes")
-    scheme == "slopes" && return SlopesAdvection()
+    if scheme == "slopes"
+        prog_slopes = get(adv_cfg, "prognostic_slopes", false)
+        return SlopesAdvection(; prognostic_slopes=prog_slopes)
+    end
 
     if scheme == "ppm"
         ppm_order = get(adv_cfg, "ppm_order", 7)

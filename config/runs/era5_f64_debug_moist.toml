@@ -1,0 +1,58 @@
+# ERA5 F64 debug run — TM5-faithful moist path
+#
+# Goals per ToClaude.md:
+#   - Float64 on A100
+#   - mass_fixer = false (prove mass stepping keeps m positive)
+#   - No dry-IC correction (moist basis)
+#   - No QV loading (moist rm/m output)
+#   - Diagnostic slopes initially
+#   - No emissions / diffusion / convection / chemistry
+#   - Single tracer (co2)
+#
+# Acceptance criteria:
+#   - Uniform 411 ppm IC preserved to machine precision
+#   - No NaN, no negative m
+#
+# Run:
+#   julia --threads=2 --project=. scripts/run.jl config/runs/era5_f64_debug_moist.toml
+
+[architecture]
+use_gpu    = true
+float_type = "Float64"
+
+[grid]
+type       = "latlon"
+met_source = "era5"
+# Grid auto-rebuilt from binary header; these are placeholders.
+size       = [720, 361, 137]
+
+[met_data]
+driver       = "preprocessed_latlon"
+file         = "~/data/AtmosTransport/met/era5/preprocessed_spectral_catrine_hourly/5day/massflux_era5_spectral_merged_202112_float32.bin"
+disable_qv   = true          # moist basis, no QV loading
+dt           = 900
+max_windows  = 8             # 2 days
+
+[initial_conditions]
+dry_ic            = false    # moist IC
+co2.uniform_value = 411e-6
+
+[tracers.co2]
+emission = "none"
+species  = "co2"
+
+[advection]
+scheme            = "slopes"
+prognostic_slopes = false    # diagnostic slopes (revisit after mass path stable)
+mass_fixer        = false    # TM5-faithful: no fixer
+
+[output]
+filename = "/tmp/era5_f64_debug_moist.nc"
+interval = 10800             # 3 hourly
+
+[output.fields]
+co2_surface     = {type = "surface_slice", species = "co2"}
+co2_column_mean = {type = "column_mean", species = "co2"}
+
+[buffering]
+strategy = "double"

@@ -1,0 +1,49 @@
+# ERA5 F64 mass conservation test — NO mass fixer (TM5-faithful)
+#
+# Tests whether Float64 eliminates the B-correction accumulation error
+# that forces mass fixer at Float32. Advection-only (no emissions/diffusion).
+# Uniform 411 ppm IC on dry basis.
+#
+# Run on A100:
+#   julia --threads=2 --project=. scripts/run.jl config/runs/era5_f64_nofixer_2day.toml
+
+[architecture]
+use_gpu    = true
+float_type = "Float64"
+
+[grid]
+type       = "latlon"
+met_source = "era5"
+size       = [720, 361, 137]
+
+[met_data]
+driver       = "preprocessed_latlon"
+file         = "~/data/AtmosTransport/met/era5/preprocessed_spectral_catrine_hourly/5day/massflux_era5_spectral_merged_202112_float32.bin"
+qv_directory = "~/data/AtmosTransport/met/era5/physics"
+dt           = 900
+max_windows  = 8
+
+[initial_conditions]
+dry_ic             = true
+co2.uniform_value  = 411e-6
+
+[tracers.co2]
+emission = "none"
+species  = "co2"
+
+[advection]
+scheme              = "slopes"
+prognostic_slopes   = true       # TM5 second-order moments (rxm/rym/rzm)
+enable_flux_delta   = true
+mass_fixer          = true
+
+[output]
+filename = "/tmp/era5_f64_nofixer_dryic.nc"
+interval = 3600
+
+[output.fields]
+co2_surface     = {type = "surface_slice", species = "co2"}
+co2_column_mean = {type = "column_mean", species = "co2"}
+
+[buffering]
+strategy = "double"

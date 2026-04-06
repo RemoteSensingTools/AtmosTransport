@@ -14,7 +14,9 @@ using ..Architectures: array_type,
 using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
 using ..Advection: MassFluxWorkspace, allocate_massflux_workspace,
                    allocate_cs_massflux_workspace,
+                   PrognosticSlopeWorkspace, allocate_prognostic_slope_workspaces,
                    strang_split_massflux!, strang_split_massflux_ppm!,
+                   strang_split_prognostic!,
                    PratherAdvection, PratherWorkspace,
                    allocate_prather_workspace, allocate_prather_workspaces,
                    strang_split_prather!,
@@ -218,7 +220,10 @@ Tracers are tracer mass `rm` (TM5-style prognostic variable)."""
 function _apply_advection_latlon!(tracers, m, am, bm, cm, grid,
                                    scheme::SlopesAdvection, ws;
                                    cfl_limit)
-    strang_split_massflux!(tracers, m, am, bm, cm, grid, true, ws; cfl_limit)
+    # NOTE: prognostic slopes path is disabled pending TM5-faithful
+    # per-row evolving-mass loop refinement (see ToClaude.md plan).
+    actual_ws = ws isa NamedTuple && haskey(ws, :base) ? ws.base : ws
+    strang_split_massflux!(tracers, m, am, bm, cm, grid, true, actual_ws; cfl_limit)
 end
 
 function _apply_advection_latlon!(tracers, m, am, bm, cm, grid,

@@ -20,9 +20,12 @@ $(FIELDS)
 struct SlopesAdvection{L} <: AbstractAdvectionScheme
     "enable/disable flux limiter. When off: forward is linear, adjoint is exact (machine precision). When on: monotone but adjoint is approximate (continuous adjoint)."
     use_limiter :: L
+    "use TM5-style prognostic slopes (rxm/rym/rzm evolved with pf-term). Requires more GPU memory but enables mass_fixer=false."
+    prognostic_slopes :: Bool
 end
 
-SlopesAdvection(; use_limiter::Bool = true) = SlopesAdvection(use_limiter)
+SlopesAdvection(; use_limiter::Bool = true, prognostic_slopes::Bool = false) =
+    SlopesAdvection(use_limiter, prognostic_slopes)
 
 """
 $(SIGNATURES)

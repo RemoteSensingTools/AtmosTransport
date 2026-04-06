@@ -40,6 +40,7 @@ using JSON3
 using Dates
 using Printf
 using TOML
+using NCDatasets
 
 # ===========================================================================
 # Physical constants from defaults.toml (single source of truth)
@@ -147,6 +148,17 @@ const ECHLEVS_ML137_TROPO34 = [
      93,  88,  84,  81,  78,  76,  73,  70,  67,  65,
      62,  59,  57,  54,  51,  46,  42,  37,  32,  27,
      22,  17,  12,   7,   0]
+
+# 66 levels: fine BL (every native level k=0..30), mid-trop (every 2nd k=30..60),
+# upper trop (every 3rd k=60..100), stratosphere (every 5th k=100..137)
+const ECHLEVS_ML137_66L = [
+    137, 135, 130, 125, 120, 115, 110, 105, 100,
+     96,  93,  90,  87,  84,  81,  78,  75,  72,  69,  66,
+     63,  60,  58,  56,  54,  52,  50,  48,  46,  44,
+     42,  40,  38,  36,  34,  32,  30,  29,  28,  27,
+     26,  25,  24,  23,  22,  21,  20,  19,  18,  17,
+     16,  15,  14,  13,  12,  11,  10,   9,   8,   7,
+      6,   5,   4,   3,   2,   1,   0]
 
 function load_era5_vertical_coordinate(coeff_path::String, level_top::Int, level_bot::Int)
     isfile(coeff_path) || error("Coefficients not found: $coeff_path")
@@ -260,6 +272,51 @@ function balance_mass_fluxes!(am::Array{FT,3}, bm::Array{FT,3},
 
     @info "Poisson balance: corrected $n_balanced/$Nz levels, " *
           "max pre-balance residual: $(round(max_residual, sigdigits=3)) kg"
+end
+
+"""
+Merge QV (specific humidity) from native to merged levels using mass-weighted averaging.
+QV is an intensive quantity — merge by mass-weighted mean, not sum.
+"""
+function merge_qv!(qv_merged::Array{FT,3}, qv_native::Array{FT,3},
+                    m_native::Array{FT,3}, mm::Vector{Int}) where FT
+    Nx, Ny = size(qv_merged, 1), size(qv_merged, 2)
+    Nz_merged = size(qv_merged, 3)
+    fill!(qv_merged, zero(FT))
+    m_sum = zeros(FT, Nx, Ny, Nz_merged)
+    @inbounds for k in 1:length(mm)
+        km = mm[k]
+        @views qv_merged[:, :, km] .+= qv_native[:, :, k] .* m_native[:, :, k]
+        @views m_sum[:, :, km]     .+= m_native[:, :, k]
+    end
+    @inbounds for km in 1:Nz_merged
+        @views qv_merged[:, :, km] ./= max.(m_sum[:, :, km], FT(1))
+    end
+end
+
+"""
+Read QV from ERA5 thermo NetCDF file for a specific hour.
+Returns Array{Float32, 3} of shape (Nx, Ny, Nz_native).
+"""
+function read_qv_from_thermo(thermo_path::String, hour_idx::Int, Nx::Int, Ny::Int, Nz::Int)
+    NCDataset(thermo_path) do ds
+        # q has shape (time, hybrid, lat, lon) or (lon, lat, hybrid, time)
+        q_var = ds["q"]
+        dims = dimnames(q_var)
+        if dims[1] == "longitude"
+            # (lon, lat, hybrid, time)
+            q = Float32.(q_var[:, :, :, hour_idx])  # Nx × Ny × Nz
+        else
+            # (time, hybrid, lat, lon) — need to permute
+            q_raw = Float32.(q_var[hour_idx, :, :, :])  # Nz × Ny × Nx
+            q = permutedims(q_raw, (3, 2, 1))  # Nx × Ny × Nz
+        end
+        # ERA5 lat is N→S, our grid is S→N: flip latitude
+        if size(q, 2) == Ny && ds["latitude"][1] > ds["latitude"][end]
+            q = q[:, end:-1:1, :]
+        end
+        return q
+    end
 end
 
 """
@@ -817,7 +874,9 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
                      spectral_dir::String, out_dir::String,
                      half_dt::Float64, dt::Float64, met_interval::Float64,
                      T_target::Int, min_dp::Float64;
-                     next_day_hour0=nothing)
+                     next_day_hour0=nothing,
+                     thermo_dir::String="",
+                     include_qv::Bool=false)
     FT = Float32
     Nz_native = n_levels(vc_native)
     Nz = n_levels(merged_vc)
@@ -854,8 +913,9 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
     n_dam = n_am
     n_dbm = n_bm
     n_dm  = n_m
+    n_qv  = include_qv ? n_m : Int64(0)
 
-    elems_per_window = n_m + n_am + n_bm + n_cm + n_ps + n_dam + n_dbm + n_dm
+    elems_per_window = n_m + n_am + n_bm + n_cm + n_ps + n_qv + n_dam + n_dbm + n_dm
     bytes_per_window = elems_per_window * sizeof(FT)
     total_bytes = Int64(HEADER_SIZE) + bytes_per_window * Nt
 
@@ -878,13 +938,13 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
         "float_type" => "Float32", "float_bytes" => sizeof(FT),
         "window_bytes" => bytes_per_window,
         "n_m" => n_m, "n_am" => n_am, "n_bm" => n_bm, "n_cm" => n_cm, "n_ps" => n_ps,
-        "n_qv" => 0, "n_cmfmc" => 0,
+        "n_qv" => n_qv, "n_cmfmc" => 0,
         "n_entu" => 0, "n_detu" => 0, "n_entd" => 0, "n_detd" => 0,
         "n_pblh" => 0, "n_t2m" => 0, "n_ustar" => 0, "n_hflux" => 0,
         "n_temperature" => 0,
         "n_dam" => n_dam, "n_dbm" => n_dbm, "n_dm" => n_dm,
         "include_flux_delta" => true,
-        "include_qv" => false, "include_cmfmc" => false,
+        "include_qv" => include_qv, "include_cmfmc" => false,
         "include_tm5conv" => false, "include_surface" => false,
         "include_temperature" => false,
         "dt_seconds" => dt, "half_dt_seconds" => half_dt,
@@ -956,6 +1016,16 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
     all_bm = Vector{Array{FT,3}}(undef, Nt)
     all_cm = Vector{Array{FT,3}}(undef, Nt)
     all_ps = Vector{Array{FT,2}}(undef, Nt)
+    all_qv = include_qv ? Vector{Array{FT,3}}(undef, Nt) : nothing
+
+    # QV file path (thermo NetCDF)
+    thermo_path = ""
+    if include_qv
+        thermo_path = joinpath(thermo_dir, "era5_thermo_ml_$(date_str).nc")
+        isfile(thermo_path) || error("Thermo file not found: $thermo_path")
+    end
+    qv_native = include_qv ? Array{FT}(undef, Nx, Ny, Nz_native) : nothing
+    qv_merged = include_qv ? Array{FT}(undef, Nx, Ny, Nz) : nothing
 
     @info "  Computing spectral -> gridpoint -> merged for $Nt windows..."
 
@@ -999,12 +1069,19 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
         @views cm_merged[:, :, 1]      .= zero(FT)  # TOA
         @views cm_merged[:, :, Nz + 1] .= zero(FT)  # surface
 
+        # Read and merge QV from thermo file
+        if include_qv
+            qv_native .= read_qv_from_thermo(thermo_path, win_idx, Nx, Ny, Nz_native)
+            merge_qv!(qv_merged, qv_native, m_native, merge_map)
+        end
+
         # Store for binary write + delta computation
         all_m[win_idx]  = copy(m_merged)
         all_am[win_idx] = copy(am_merged)
         all_bm[win_idx] = copy(bm_merged)
         all_cm[win_idx] = copy(cm_merged)
         all_ps[win_idx] = FT.(sp)
+        if include_qv; all_qv[win_idx] = copy(qv_merged); end
 
         elapsed = round(time() - t0, digits=2)
         if win_idx <= 3 || win_idx == Nt || win_idx % 8 == 0
@@ -1084,6 +1161,9 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
             bytes_written += write_array!(io, all_bm[win_idx])
             bytes_written += write_array!(io, all_cm[win_idx])
             bytes_written += write_array!(io, all_ps[win_idx])
+            if include_qv
+                bytes_written += write_array!(io, all_qv[win_idx])
+            end
 
             # Compute deltas: dam = next - current, dbm = next - current, dm = next - current
             if win_idx < Nt
@@ -1207,7 +1287,9 @@ function main()
     # --- Config ---
     spectral_dir = expanduser(cfg["input"]["spectral_dir"])
     coeff_path   = expanduser(cfg["input"]["coefficients"])
+    thermo_dir   = expanduser(get(get(cfg, "input", Dict()), "thermo_dir", ""))
     out_dir      = expanduser(cfg["output"]["directory"])
+    include_qv   = !isempty(thermo_dir)
 
     Nlon      = cfg["grid"]["nlon"]
     Nlat      = cfg["grid"]["nlat"]
@@ -1236,6 +1318,8 @@ function main()
         # TM5 r1112-style index selection
         echlevs_map = Dict(
             "ml137_tropo34" => ECHLEVS_ML137_TROPO34,
+            "ml137_66L" => ECHLEVS_ML137_66L,
+            "ml137_full" => collect(137:-1:0),  # all 137 native levels
         )
         haskey(echlevs_map, echlevs_name) || error("Unknown echlevs config: $echlevs_name. " *
             "Available: $(join(keys(echlevs_map), ", "))")
@@ -1298,7 +1382,9 @@ function main()
                              spectral_dir, out_dir,
                              half_dt, dt, met_interval,
                              T_target, min_dp;
-                             next_day_hour0=next_day_h0)
+                             next_day_hour0=next_day_h0,
+                             thermo_dir=thermo_dir,
+                             include_qv=include_qv)
 
         result === nothing && continue
     end

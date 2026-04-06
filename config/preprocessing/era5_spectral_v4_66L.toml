@@ -1,0 +1,22 @@
+# ERA5 spectral -> v4 binary: 66 levels + Poisson balance (no QV in binary)
+# QV handled at runtime from thermo NetCDF files.
+
+[input]
+spectral_dir = "~/data/AtmosTransport/met/era5/spectral_hourly"
+coefficients = "config/era5_L137_coefficients.toml"
+
+[output]
+directory = "/temp1/atmos_transport/era5_v4_66L"
+
+[grid]
+nlon = 720
+nlat = 361
+level_top = 1
+level_bot = 137
+echlevs = "ml137_66L"
+merge_min_thickness_Pa = 1000.0
+
+[numerics]
+float_type = "Float32"
+dt = 900.0
+met_interval = 3600.0

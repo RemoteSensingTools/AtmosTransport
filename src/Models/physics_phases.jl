@@ -339,7 +339,7 @@ function process_met_after_upload!(sched, phys, grid::LatitudeLongitudeGrid{FT},
 
     # TM5 convention: j=1,Ny are real cells at ±89.75°.
     # GPU reduced-grid clustering now supports full TM5 sizes (_MAX_GPU_CLUSTER=720).
-    # Zero am at pole rows as temporary guard until mass-CFL pilot is validated.
+    # Zero am at pole rows — no zonal transport at geographic poles (TM5 convention).
     # bm at pole FACES (j=1, j=Ny+1) is already zero from the preprocessor.
     Ny = grid.Ny
     @views gpu.am[:, 1, :]  .= zero(FT)
@@ -601,27 +601,6 @@ function _compute_cm_from_divergence_gpu!(cm_gpu, am_gpu, bm_gpu, m_gpu, grid)
     copyto!(cm_gpu, cm)
 end
 
-"""Compute max Y-CFL at pole-adjacent faces (j=2 and j=Ny) for adaptive n_sub."""
-function _compute_max_polar_cfl(bm_gpu, m_gpu, Ny)
-    bm = Array(bm_gpu)
-    m = Array(m_gpu)
-    FT = eltype(bm)
-    max_cfl = zero(FT)
-    Nz = size(m, 3)
-    Nx = size(m, 1)
-    @inbounds for k in 1:Nz, i in 1:Nx
-        m_sp = m[i, 1, k]
-        m_np = m[i, Ny, k]
-        if m_sp > zero(FT)
-            max_cfl = max(max_cfl, abs(bm[i, 2, k]) / m_sp)
-        end
-        if m_np > zero(FT)
-            max_cfl = max(max_cfl, abs(bm[i, Ny, k]) / m_np)
-        end
-    end
-    return max_cfl
-end
-
 """Enforce cm[:,:,1]=0 and cm[:,:,end]=0 on GPU arrays (TM5 advectz.F90:320)."""
 function _enforce_cm_boundaries_gpu!(cm)
     FT = eltype(cm)
@@ -753,32 +732,12 @@ function advection_phase!(tracers, sched, air, phys, model,
     bm0 = has_deltas ? copy(gpu.bm) : gpu.bm
     Ny = grid.Ny
 
-    # Pole flux clamp (supplementary safety net)
-    clamp_fluxes_at_poles!(gpu.bm, gpu.cm, gpu.m_ref, Ny, n_sub)
-
     if _use_dynam0
         recompute_cm_runtime!(gpu.cm, gpu.am, gpu.bm, dB_gpu)
     end
     _clamp_cm_cfl!(gpu.cm, gpu.m_ref, FT(0.95))
 
     copyto!(gpu.m_dev, gpu.m_ref)
-
-    # Pole restore: at 0.5° hourly, total Y-flux per window exceeds cell mass
-    # at some pole cells (window CFL = 8×0.34 = 2.72). This is a physical
-    # property of the hourly wind field — no temporal subdivision can prevent it.
-    # TM5 uses 6-hourly meteo where winds reverse direction across the window,
-    # reducing net transport. For hourly data, freeze 20 reduced-grid rows
-    # (10/pole, ~0.6% of cells) per window. Refreshed from met data each window.
-    rg = grid.reduced_grid
-    _pole_js = rg !== nothing ? Int[j for j in 1:Ny if rg.cluster_sizes[j] > 1] : Int[]
-    _pole_rm_saved = Dict{Symbol, Vector}()
-    _pole_m_saved = typeof(gpu.m_ref[:, 1, :])[]
-    if !isempty(_pole_js)
-        for (name, rm_t) in pairs(tracers)
-            _pole_rm_saved[name] = [copy(@view rm_t[:, j, :]) for j in _pole_js]
-        end
-        _pole_m_saved = [copy(@view gpu.m_ref[:, j, :]) for j in _pole_js]
-    end
 
     for s in 1:n_sub
         step[] += 1
@@ -793,8 +752,6 @@ function advection_phase!(tracers, sched, air, phys, model,
             @views gpu.am[:, Ny, :]   .= zero(FT)
             @views gpu.bm[:, 1, :]    .= zero(FT)
             @views gpu.bm[:, Ny+1, :] .= zero(FT)
-            # Re-apply pole flux budget for interpolated fluxes
-            clamp_fluxes_at_poles!(gpu.bm, gpu.cm, gpu.m_dev, Ny, n_sub)
         end
 
         if _use_dynam0
@@ -822,14 +779,6 @@ function advection_phase!(tracers, sched, air, phys, model,
                 rm_t .*= scale
             end
             copyto!(gpu.m_dev, m_prescribed)
-        end
-
-        # Restore frozen pole rows
-        for (idx, j) in enumerate(_pole_js)
-            @views gpu.m_dev[:, j, :] .= _pole_m_saved[idx]
-            for (name, rm_t) in pairs(tracers)
-                @views rm_t[:, j, :] .= _pole_rm_saved[name][idx]
-            end
         end
     end
 

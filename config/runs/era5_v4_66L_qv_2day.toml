@@ -1,0 +1,40 @@
+# ERA5 v4 66L + QV — 2-day advection test
+[architecture]
+use_gpu    = true
+float_type = "Float32"
+
+[grid]
+type       = "latlon"
+met_source = "era5"
+# size auto-detected from binary header (66 levels from echlevs ml137_66L)
+size       = [720, 361, 66]
+
+[met_data]
+driver       = "preprocessed_latlon"
+directory    = "/temp1/atmos_transport/era5_v4_66L"
+qv_directory = "~/data/AtmosTransport/met/era5/physics"
+dt           = 900
+max_windows  = 48
+
+[initial_conditions]
+co2.file     = "~/data/AtmosTransport/catrine/InitialConditions/startCO2_202112010000.nc"
+co2.variable = "CO2"
+
+[tracers.co2]
+emission = "none"
+species  = "co2"
+
+[advection]
+scheme              = "slopes"
+enable_flux_delta   = true
+
+[output]
+filename = "/tmp/era5_v4_66L_qv_2day.nc"
+interval = 21600
+
+[output.fields]
+co2_surface     = {type = "surface_slice", species = "co2"}
+co2_column_mean = {type = "column_mean", species = "co2"}
+
+[buffering]
+strategy = "double"

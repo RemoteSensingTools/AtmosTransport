@@ -19,7 +19,7 @@ using AtmosTransport.IO: MassFluxBinaryReader, load_window!, LatLonCPUBuffer,
     load_flux_delta_window!
 using AtmosTransport.Advection: allocate_massflux_workspace,
     advect_x_massflux_subcycled!, advect_y_massflux_subcycled!,
-    advect_z_massflux_subcycled!, clamp_fluxes_at_poles!
+    advect_z_massflux_subcycled!
 using AtmosTransport.Models: _get_cluster_sizes_cpu
 using NCDatasets
 
@@ -160,9 +160,6 @@ for w in 1:N_WINDOWS
     am_gpu = CuArray(am_cpu)
     bm_gpu = CuArray(bm_cpu)
     cm_gpu = CuArray(cm_cpu)
-
-    # Apply pole flux clamp
-    clamp_fluxes_at_poles!(bm_gpu, cm_gpu, m_gpu, Ny, N_SUB)
 
     # Save fluxes for this window
     save_fluxes!(ds, am_gpu, bm_gpu, cm_gpu, w)

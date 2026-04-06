@@ -139,14 +139,6 @@ function _run_loop!(model, grid::AbstractGrid{FT},
         # ── GPU Compute Phase ────────────────────────────────────────
         _t = time(); process_met_after_upload!(sched, phys, grid, driver, half_dt;
             use_gchp=_needs_gchp(model.advection_scheme))
-        # Clamp bm+cm at pole cells to prevent cumulative flux drain.
-        # With Strang X→Y→Z→Z→Y→X and n_sub cycles, each flux face is applied
-        # 2×n_sub times. TM5 avoids this via real-time flux recomputation (dynam0);
-        # this static clamp approximates that feedback for constant-flux paths.
-        if grid isa LatitudeLongitudeGrid
-            _gpu = current_gpu(sched)
-            clamp_fluxes_at_poles!(_gpu.bm, _gpu.cm, _gpu.m_ref, grid.Ny, n_sub)
-        end
         t_phases["gpu_met_proc"] += time() - _t
         _t = time()
         compute_air_mass_phase!(sched, air, phys, grid, gc;

@@ -84,7 +84,6 @@ export advect_x_massflux!, advect_y_massflux!, advect_z_massflux!
 export advect_x_massflux_subcycled!, advect_y_massflux_subcycled!, advect_z_massflux_subcycled!
 export max_cfl_massflux_x, max_cfl_massflux_x_fine, max_cfl_massflux_y, max_cfl_massflux_z
 export strang_split_massflux!, strang_split_massflux_ppm!
-export clamp_fluxes_at_poles!
 export advect_x_massflux_reduced!
 export CubedSphereGeometryCache, CubedSphereMassFluxWorkspace
 export allocate_cs_massflux_workspace

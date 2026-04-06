@@ -409,7 +409,19 @@ function _build_met_driver(driver_type::String, cfg::Dict, met_cfg_default, ::Ty
         end
         max_win_cfg = get(cfg, "max_windows", nothing)
         max_windows = max_win_cfg !== nothing ? Int(max_win_cfg) : nothing
-        return PreprocessedLatLonMetDriver(; FT, files, dt, merge_map, max_windows)
+        qv_dir_cfg = expanduser(get(cfg, "qv_directory", ""))
+        # Load native-grid A/B coefficients for QV merging (137→merged levels)
+        native_A = Float64[]
+        native_B = Float64[]
+        try
+            A_full, B_full = load_vertical_coefficients(met_cfg_default; FT=Float64)
+            native_A = A_full
+            native_B = B_full
+        catch; end
+        return PreprocessedLatLonMetDriver(; FT, files, dt, merge_map, max_windows,
+                                            qv_dir=qv_dir_cfg,
+                                            native_A_ifc=native_A,
+                                            native_B_ifc=native_B)
 
     elseif driver_type == "geosfp_cs"
         preproc_dir = _resolve_data_path(get(cfg, "preprocessed_dir", ""))

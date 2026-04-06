@@ -151,6 +151,17 @@ function _run_loop!(model, grid::AbstractGrid{FT},
         # First window: IC finalization + initial output
         if w == 1
             finalize_ic_phase!(tracers, sched, air, phys, grid)
+            # Optional: correct IC from wet to dry basis (rm *= 1-QV).
+            # Use [initial_conditions] dry_ic = true in config.
+            _ic_cfg = get(get(model.metadata, "config", Dict()), "initial_conditions", Dict())
+            _dry_ic = get(_ic_cfg, "dry_ic", false)
+            if _dry_ic && grid isa LatitudeLongitudeGrid && phys.qv_loaded[] &&
+               size(phys.qv_gpu) == size(current_gpu(sched).m_ref)
+                for (_, rm_t) in pairs(tracers)
+                    rm_t .*= (1 .- phys.qv_gpu)
+                end
+                @info "IC corrected to dry basis: rm *= (1-QV)"
+            end
             save_reference_mass!(sched, air, grid)
             record_initial_mass!(diag, tracers, grid)
             for tname in sort(collect(keys(diag.initial_mass)))

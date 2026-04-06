@@ -120,6 +120,7 @@ end
 """Return dry mass for LL rm↔c_dry conversions (pre-computed by `compute_ll_dry_mass!`)."""
 ll_dry_mass(phys) = phys.m_dry
 
+
 """Recompute m_dry from evolved m_dev (post-advection) for LL output.
 TM5 always uses m_evolved for mixing ratios — never m_prescribed.
 The Strang-split advection evolves m_dev away from m_ref; using m_ref
@@ -727,6 +728,7 @@ function advection_phase!(tracers, sched, air, phys, model,
     # Per-substep flux interpolation (v4) + runtime cm recomputation (dynam0).
     has_deltas = gpu.dam !== nothing
     _use_dynam0 = dB_gpu !== nothing
+    _use_mass_fixer = get(model.metadata, "mass_fixer", true)
 
     am0 = has_deltas ? copy(gpu.am) : gpu.am
     bm0 = has_deltas ? copy(gpu.bm) : gpu.bm
@@ -766,28 +768,28 @@ function advection_phase!(tracers, sched, air, phys, model,
                                   grid, model.advection_scheme, adv_ws;
                                   cfl_limit=FT(0.95))
 
-        # Prescribe m_dev along the met-data mass trajectory AND scale rm
-        # to preserve VMR. Without this, m_evolved drifts from m_prescribed
-        # by ~7% per window and rm/m diverges → 171 ppm std from uniform IC.
-        # The tracer mass fixer: rm_new = rm_advected × (m_prescribed / m_advected)
+        # Per-substep mass correction: prescribe m_dev along the met-data
+        # mass trajectory. Always reset m_dev to prevent divergence from
+        # B-correction errors accumulating across substeps.
+        # Optionally scale rm to preserve VMR (mass_fixer=true, default).
+        # TM5 doesn't scale rm — it lets VMR evolve freely. Disabling the
+        # rm scaling (mass_fixer=false) avoids amplifying gradients at fronts.
         if gpu.dm !== nothing
             t_end = FT(s) / FT(n_sub)
             m_prescribed = gpu.m_ref .+ t_end .* gpu.dm
-            # Scale rm to preserve VMR: rm/m_prescribed = rm_old/m_evolved
-            scale = m_prescribed ./ max.(gpu.m_dev, FT(1))
-            for (_, rm_t) in pairs(tracers)
-                rm_t .*= scale
+            if _use_mass_fixer
+                scale = m_prescribed ./ max.(gpu.m_dev, FT(1))
+                for (_, rm_t) in pairs(tracers)
+                    rm_t .*= scale
+                end
             end
             copyto!(gpu.m_dev, m_prescribed)
         end
     end
 
     # Set m_ref to end-of-window mass.
-    # If dm is available (v4), use the PRESCRIBED mass trajectory: m_ref += dm.
-    # m_ref still holds the window-start mass (only m_dev was modified by advection).
-    # This ensures VMR consistency across windows. Without this, m_evolved drifts
-    # from m_prescribed by ~7% per window (from zeroed surface cm residual + moist
-    # flux inconsistency), causing 29 ppm/window VMR error → 200 ppm std in 2 days.
+    # m_dev was reset to m_prescribed each substep (stability requirement).
+    # Use prescribed trajectory for m_ref to stay on the met-data mass path.
     if gpu.dm !== nothing
         gpu.m_ref .+= gpu.dm
     else

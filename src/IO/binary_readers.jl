@@ -51,8 +51,8 @@ The version is auto-detected from the header's `version` field (default 1).
 $(FIELDS)
 """
 struct MassFluxBinaryReader{FT} <: AbstractBinaryReader
-    "mmap'd flat vector over entire data region"
-    data   :: Vector{FT}
+    "mmap'd flat vector over entire data region (always Float32 on disk, promoted to FT on read)"
+    data   :: Vector{Float32}
     "underlying IOStream (must stay open while mmap is live)"
     io     :: IOStream
     Nx     :: Int
@@ -163,8 +163,10 @@ function MassFluxBinaryReader(bin_path::String, ::Type{FT}) where FT
                        n_dam + n_dbm + n_dm + n_dcm
     total_elems = elems_per_window * Nt
 
+    # Always mmap as Float32 (disk format). Promotion to FT happens in load_window!
+    # via copyto!, which handles Float32→Float64 conversion automatically.
     seek(io, hdr_size)
-    data = Mmap.mmap(io, Vector{FT}, total_elems, hdr_size)
+    data = Mmap.mmap(io, Vector{Float32}, total_elems, hdr_size)
 
     lons = FT.(collect(hdr.lons))
     lats = FT.(collect(hdr.lats))

@@ -423,13 +423,37 @@ end
 # =====================================================================
 # Mass-only kernels for evolving-mass CFL pilots
 # (TM5 advectm_cfl.F90 + advectx__slopes.F90:430-520 style)
+#
+# Mirrors the mass update path of the real X/Y/Z advection kernels
+# (including the reduced-grid clustering for X) so the pilot's mass
+# evolution matches what the real sweep will see.
 # =====================================================================
 
-@kernel function _mass_only_x_kernel!(m_new, @Const(m), @Const(am), Nx)
+@kernel function _mass_only_x_kernel!(
+    m_new, @Const(m), @Const(am), Nx, @Const(cluster_sizes)
+)
     i, j, k = @index(Global, NTuple)
     @inbounds begin
-        ip = i == Nx ? 1 : i + 1
-        m_new[i, j, k] = m[i, j, k] + am[i, j, k] - am[ip, j, k]
+        FT = eltype(m)
+        r = Int(cluster_sizes[j])
+        if r == 1
+            # Uniform fine row: same update as _massflux_x_kernel! line 153
+            m_new[i, j, k] = m[i, j, k] + am[i, j, k] - am[i + 1, j, k]
+        else
+            # Reduced row: cluster-aggregate update, distributed by air-mass
+            # fraction back to fine cells.  Mirrors _massflux_x_kernel! lines
+            # 154-241 (mass-only path).
+            Nx_red = Nx ÷ r
+            ic = (i - 1) ÷ r + 1
+            m_ic = _cluster_sum(m, ic, j, k, r)
+            am_l_idx = (ic - 1) * r + 1
+            am_r_idx = ic * r + 1
+            am_l = am[am_l_idx, j, k]
+            am_r = am[am_r_idx > Nx ? 1 : am_r_idx, j, k]
+            delta_m = am_l - am_r
+            frac_m = abs(m_ic) > eps(FT) ? m[i, j, k] / m_ic : one(FT) / FT(r)
+            m_new[i, j, k] = (m_ic + delta_m) * frac_m
+        end
     end
 end
 
@@ -853,9 +877,15 @@ struct MassFluxWorkspace{FT, A3 <: AbstractArray{FT,3}, V1 <: AbstractVector{Int
     rm_buf::A3   # advection output buffer for rm (Nx, Ny, Nz)
     m_buf::A3    # advection output buffer for m  (Nx, Ny, Nz)
     m_pilot::A3  # mass evolution scratch for evolving-mass CFL pilot (Nx, Ny, Nz)
-    cfl_x::A3   # CFL scratch for x (Nx+1, Ny, Nz) — reused as flux_x_eff
-    cfl_y::A3   # CFL scratch for y (Nx, Ny+1, Nz) — reused as flux_y_eff
-    cfl_z::A3   # CFL scratch for z (Nx, Ny, Nz+1) — reused as flux_z_eff
+    cfl_x::A3   # CFL scratch for x (Nx+1, Ny, Nz) — also reused as flux_x_eff
+    cfl_y::A3   # CFL scratch for y (Nx, Ny+1, Nz) — also reused as flux_y_eff
+    cfl_z::A3   # CFL scratch for z (Nx, Ny, Nz+1) — also reused as flux_z_eff
+    # Pilot-only scratch buffers — separate from cfl_x/y/z so the pilot can
+    # store scaled fluxes in cfl_x/y/z and write CFL values into these without
+    # aliasing.
+    cfl_scratch_x::A3
+    cfl_scratch_y::A3
+    cfl_scratch_z::A3
     cluster_sizes::V1  # per-latitude clustering for reduced grid (length Ny)
 end
 
@@ -884,6 +914,9 @@ function allocate_massflux_workspace(m::AbstractArray{FT,3},
         similar(am),      # cfl_x / flux_x_eff
         similar(bm),      # cfl_y / flux_y_eff
         similar(cm),      # cfl_z / flux_z_eff
+        similar(am),      # cfl_scratch_x (pilot CFL output, separate from cfl_x)
+        similar(bm),      # cfl_scratch_y
+        similar(cm),      # cfl_scratch_z
         cs_dev,           # cluster_sizes (device)
     )
 end
@@ -1489,11 +1522,12 @@ function _x_pilot_succeeds(ws::MassFluxWorkspace{FT}, m::AbstractArray{FT,3},
     copyto!(ws.m_pilot, m)
     k! = _mass_only_x_kernel!(backend, 256)
     for _ in 1:n_sub
-        cfl = max_cfl_massflux_x(am_eff, ws.m_pilot, ws.cfl_x, ws.cluster_sizes)
+        # Use cfl_scratch_x (NOT cfl_x — which holds am_eff!) as the CFL output buffer
+        cfl = max_cfl_massflux_x(am_eff, ws.m_pilot, ws.cfl_scratch_x, ws.cluster_sizes)
         if !isfinite(cfl) || cfl >= beta
             return false
         end
-        k!(ws.m_buf, ws.m_pilot, am_eff, Nx; ndrange=size(m))
+        k!(ws.m_buf, ws.m_pilot, am_eff, Int32(Nx), ws.cluster_sizes; ndrange=size(m))
         synchronize(backend)
         copyto!(ws.m_pilot, ws.m_buf)
         if minimum(ws.m_pilot) <= zero(FT)
@@ -1548,11 +1582,11 @@ function _y_pilot_succeeds(ws::MassFluxWorkspace{FT}, m::AbstractArray{FT,3},
     copyto!(ws.m_pilot, m)
     k! = _mass_only_y_kernel!(backend, 256)
     for _ in 1:n_sub
-        cfl = max_cfl_massflux_y(bm_eff, ws.m_pilot, ws.cfl_y)
+        cfl = max_cfl_massflux_y(bm_eff, ws.m_pilot, ws.cfl_scratch_y)
         if !isfinite(cfl) || cfl >= beta
             return false
         end
-        k!(ws.m_buf, ws.m_pilot, bm_eff, Ny; ndrange=size(m))
+        k!(ws.m_buf, ws.m_pilot, bm_eff, Int32(Ny); ndrange=size(m))
         synchronize(backend)
         copyto!(ws.m_pilot, ws.m_buf)
         if minimum(ws.m_pilot) <= zero(FT)
@@ -1609,13 +1643,14 @@ function _z_pilot_succeeds(ws::MassFluxWorkspace{FT}, m::AbstractArray{FT,3},
     copyto!(ws.m_pilot, m)
     k! = _mass_only_z_kernel!(backend, 256)
     for _ in 1:n_sub
-        # CFL check on current pilot mass
-        cfl = max_cfl_massflux_z(cm_eff, ws.m_pilot, ws.cfl_z)
+        # CFL check on current pilot mass.  Use cfl_scratch_z to avoid aliasing
+        # with cm_eff (which IS ws.cfl_z from the caller).
+        cfl = max_cfl_massflux_z(cm_eff, ws.m_pilot, ws.cfl_scratch_z)
         if !isfinite(cfl) || cfl >= beta
             return false
         end
         # Mass update
-        k!(ws.m_buf, ws.m_pilot, cm_eff, Nz; ndrange=size(m))
+        k!(ws.m_buf, ws.m_pilot, cm_eff, Int32(Nz); ndrange=size(m))
         synchronize(backend)
         copyto!(ws.m_pilot, ws.m_buf)
         # Positivity check

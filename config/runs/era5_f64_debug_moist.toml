@@ -31,7 +31,7 @@ driver       = "preprocessed_latlon"
 file         = "~/data/AtmosTransport/met/era5/preprocessed_spectral_catrine_hourly/5day/massflux_era5_spectral_merged_202112_float32.bin"
 disable_qv   = true          # moist basis, no QV loading
 dt           = 900
-max_windows  = 8             # 2 days
+max_windows  = 1             # one window for instrumentation
 
 [initial_conditions]
 dry_ic            = false    # moist IC

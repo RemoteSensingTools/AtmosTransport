@@ -186,6 +186,9 @@ These are hard-won correctness constraints. Violating any causes silent wrong re
 | Surface emissions invisible in column mean | Missing `[diffusion]` section | Invariant 7 |
 | 5x slower CPU loops | Wrong loop nesting order | Invariant 8 |
 | CO2 surface 535 ppm from 400 ppm uniform | Hybrid PE in vertical remap | Use direct cumsum PE |
+| Polar mass drainage / Y nloop max_nloop hit | Stale binary from old preprocessor OR mass_fixer=false | Invariant 10 |
+| `STALE BINARY WARNING` at startup | Binary written by older preprocessor than current source | Invariant 10 |
+| `cm-continuity check FAILED` at startup | Binary's cm doesn't match its am/bm divergence — regenerate | Invariant 10 |
 
 ### Invariant details
 
@@ -236,6 +239,33 @@ These are hard-won correctness constraints. Violating any causes silent wrong re
    vertical remap target PE expect moist surface pressure.
 
    **Non-GCHP paths**: Transport and diffusion run on DRY basis; convection on MOIST basis.
+
+10. **ERA5 LL binaries MUST be made by `preprocess_spectral_v4_binary.jl` or
+    `preprocess_era5_daily.jl`** — both call `recompute_cm_from_divergence!`
+    to rebuild cm from continuity using the merged am/bm. The OBSOLETE
+    `convert_merged_massflux_to_binary.jl` PICKS native cm at merged
+    interfaces and smears the residual via `correct_cm_residual!`, producing
+    a cm that does NOT satisfy local continuity (89.7% of cells violated
+    in the broken Dec 2021 binary). Symptoms: polar Y nloop hits max_nloop,
+    polar cells go negative, cumulative drainage. **Foolproof check (added
+    2026-04-06)**: `MassFluxBinaryReader` runs a `_verify_cm_continuity` pass
+    on window 1 at driver construction time. Errors LOUDLY if the binary's
+    cm is inconsistent. Disable with `ENV["ATMOSTR_NO_CM_CHECK"]="1"`.
+    Provenance fields (script_path, script_mtime, git_commit, git_dirty)
+    in v4 headers also trigger a stale-binary warning if the source has
+    moved on. Disable with `ENV["ATMOSTR_NO_STALE_CHECK"]="1"`.
+
+11. **Mass fixer is REQUIRED for polar cells in ERA5 LL at high resolution**.
+    The pole-adjacent stratospheric cells (j ∈ {1, 2, Ny-1, Ny}) have
+    |bm|/m ≈ 0.30 per face from the spectral preprocessor. Cumulative
+    drainage over a window of 4 substeps × 6 sweeps (X-Y-Z-Z-Y-X) reaches
+    98% of cell mass — no amount of local nloop refinement or global
+    Check_CFL halving can prevent collapse without mass replenishment.
+    TM5 r1112 effectively does mass-fixing via `m = (at + bt × ps) × area / g`
+    each substep. Set `[advection] mass_fixer = true` for the F64 LL path.
+    The previous "TM5-faithful means mass_fixer=false" assumption is wrong;
+    TM5 does maintain m from surface pressure, which IS the mass fixer in
+    different clothing.
 
 ---
 

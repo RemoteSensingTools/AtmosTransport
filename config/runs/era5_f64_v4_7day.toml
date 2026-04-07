@@ -1,0 +1,47 @@
+# ERA5 F64 v4 7-day stress test (Dec 1-7 2021)
+#
+# Now that the full December 2021 v4 binaries exist, run a multi-day test
+# to verify mass conservation and tracer preservation across day boundaries.
+# Each day-boundary requires switching from one binary file to the next,
+# and the time-interpolation deltas must be correct across that switch.
+
+[architecture]
+use_gpu    = true
+float_type = "Float64"
+
+[grid]
+type       = "latlon"
+met_source = "era5"
+size       = [720, 361, 34]
+
+[met_data]
+driver       = "preprocessed_latlon"
+directory    = "~/data/AtmosTransport/met/era5/spectral_v4_tropo34_dec2021"
+disable_qv   = true
+disable_flux_delta = false
+dt           = 900
+max_windows  = 168           # 7 days × 24 hourly windows
+
+[initial_conditions]
+file = "~/data/AtmosTransport/catrine/InitialConditions/startCO2_202112010000.nc"
+co2  = "CO2"
+
+[tracers.co2]
+emission = "none"
+species  = "co2"
+
+[advection]
+scheme            = "slopes"
+prognostic_slopes = false
+mass_fixer        = true
+
+[output]
+filename = "/tmp/era5_f64_v4_7day.nc"
+interval = 21600             # 6-hourly snapshots (28 total over 7 days)
+
+[output.fields]
+co2_surface     = {type = "surface_slice", species = "co2"}
+co2_column_mean = {type = "column_mean", species = "co2"}
+
+[buffering]
+strategy = "double"

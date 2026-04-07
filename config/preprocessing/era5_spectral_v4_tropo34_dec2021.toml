@@ -1,0 +1,26 @@
+# ERA5 spectral -> v4 daily binary, TM5 r1112 tropo34 level selection
+# Output to ~/data/ (kiwi-data, /temp1/ doesn't exist on this host).
+# December 2021 month — used by config/runs/era5_f64_debug_moist.toml.
+
+[input]
+spectral_dir = "~/data/AtmosTransport/met/era5/spectral_hourly"
+coefficients = "config/era5_L137_coefficients.toml"
+
+[output]
+directory = "~/data/AtmosTransport/met/era5/spectral_v4_tropo34_dec2021"
+
+[grid]
+nlon = 720
+nlat = 361
+level_top = 1
+level_bot = 137
+
+# TM5 r1112 level selection: 34 native interfaces from 137 native levels
+# (no summation; native fluxes at selected levels). Most TM5-faithful choice.
+echlevs = "ml137_tropo34"
+merge_min_thickness_Pa = 1000.0  # fallback, not used with echlevs
+
+[numerics]
+float_type = "Float32"
+dt = 900.0
+met_interval = 3600.0

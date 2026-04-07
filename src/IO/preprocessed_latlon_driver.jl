@@ -147,12 +147,154 @@ function PreprocessedLatLonMetDriver(; FT::Type{<:AbstractFloat} = Float64,
     # Auto-detect start date from first file
     _start = _detect_start_date(files[1])
 
-    PreprocessedLatLonMetDriver{FT}(
+    driver = PreprocessedLatLonMetDriver{FT}(
         files, wins_per, total,
         FT(actual_dt), steps_per_win,
         lons, lats, Nx, Ny, Nz,
         level_top, level_bot, merge_map,
         expanduser(qv_dir), disable_qv, native_A_ifc, native_B_ifc, _start)
+
+    # Foolproof check (added 2026-04-06): verify cm satisfies local continuity
+    # with am/bm on window 1. Catches the silent-stale failure mode where the
+    # binary's cm doesn't match the binary's am/bm (e.g. produced by the
+    # obsolete convert_merged_massflux_to_binary.jl pipeline). Only runs on
+    # binary files (NetCDF doesn't have the bug). Disable with
+    # ENV["ATMOSTR_NO_CM_CHECK"]="1".
+    if get(ENV, "ATMOSTR_NO_CM_CHECK", "") != "1" &&
+       !isempty(driver.files) && endswith(driver.files[1], ".bin") &&
+       driver.n_windows > 0
+        _verify_cm_continuity(driver)
+    end
+
+    return driver
+end
+
+"""
+    _verify_cm_continuity(driver) → nothing
+
+Load window 1 and verify that the cm field satisfies local continuity
+with am/bm at every cell:
+
+    cm[k+1] - cm[k] ≈ -div_h[k] + dB[k] × pit
+
+where `dB[k] = B_ifc[k+1] - B_ifc[k]` and `pit` is the column-integrated
+horizontal divergence. Errors loudly if any cell violates this beyond a
+generous tolerance.
+
+Specifically targets the failure mode from 2026-04-06 where binaries
+produced by `convert_merged_massflux_to_binary.jl` had cm at j ∈ {1,2,360,361}
+that violated continuity by ~13% per substep, causing pole drainage.
+"""
+function _verify_cm_continuity(driver::PreprocessedLatLonMetDriver{FT}) where FT
+    Nx, Ny, Nz = driver.Nx, driver.Ny, driver.Nz
+    A_ifc, B_ifc = embedded_vertical_coordinate(driver)
+    if A_ifc === nothing || isempty(B_ifc)
+        @info "cm-continuity check: skipped (no embedded B_ifc — old v1 binary)"
+        return nothing
+    end
+
+    # Allocate scratch buffers (CPU-side, F64 for precision)
+    m_buf  = Array{Float64}(undef, Nx, Ny, Nz)
+    am_buf = Array{Float64}(undef, Nx + 1, Ny, Nz)
+    bm_buf = Array{Float64}(undef, Nx, Ny + 1, Nz)
+    cm_buf = Array{Float64}(undef, Nx, Ny, Nz + 1)
+    ps_buf = Array{Float64}(undef, Nx, Ny)
+
+    # Read window 1 directly from the first file at full F64 precision
+    filepath = driver.files[1]
+    reader = MassFluxBinaryReader(filepath, Float64)
+    try
+        load_window!(m_buf, am_buf, bm_buf, cm_buf, ps_buf, reader, 1)
+    finally
+        close(reader)
+    end
+
+    dB = [B_ifc[k+1] - B_ifc[k] for k in 1:Nz]
+
+    # Tolerance: cm magnitudes are typically ~1e10 in F64 mass-flux units;
+    # F32 storage gives ~7 sig figs of relative precision. Set tol such that
+    # legitimate F32 round-off (~1e3 absolute, ~1e-7 relative) passes but
+    # the 13% / ~1e8 absolute drainage from broken binaries fails loudly.
+    rel_tol = 1e-3   # 0.1% of the local cm magnitude OR
+    abs_tol_pit = 1e-3  # 0.1% of |pit| (the column total)
+
+    bad_cells = NTuple{4, Int}[]   # (i, j, k, severity_class)
+    max_rel_violation = 0.0
+    max_abs_violation = 0.0
+    max_violation_cell = (0, 0, 0)
+    max_violation_pit = 0.0
+
+    @inbounds for j in 1:Ny, i in 1:Nx
+        # Column total convergence
+        pit = 0.0
+        for k in 1:Nz
+            pit += (am_buf[i+1, j, k] - am_buf[i, j, k]) +
+                   (bm_buf[i, j+1, k] - bm_buf[i, j, k])
+        end
+        for k in 1:Nz
+            div_h = (am_buf[i+1, j, k] - am_buf[i, j, k]) +
+                    (bm_buf[i, j+1, k] - bm_buf[i, j, k])
+            expected_dcm = -div_h + dB[k] * pit
+            actual_dcm = cm_buf[i, j, k+1] - cm_buf[i, j, k]
+            err = actual_dcm - expected_dcm
+
+            # Combined tolerance: max of relative-to-cm and relative-to-pit
+            tol = max(rel_tol * max(abs(actual_dcm), abs(expected_dcm)),
+                      abs_tol_pit * abs(pit),
+                      1e-3)  # absolute floor for low-flux cells
+
+            if abs(err) > tol
+                push!(bad_cells, (i, j, k, 1))
+                rel_v = abs(err) / max(abs(expected_dcm), 1e-30)
+                if rel_v > max_rel_violation
+                    max_rel_violation = rel_v
+                    max_abs_violation = abs(err)
+                    max_violation_cell = (i, j, k)
+                    max_violation_pit = pit
+                end
+            end
+        end
+    end
+
+    if isempty(bad_cells)
+        @info "cm-continuity check: PASS — $(Nx)×$(Ny)×$(Nz) cells satisfy " *
+              "cm[k+1]-cm[k] = -div_h + dB[k]·pit (window 1, F64 precision)"
+        return nothing
+    end
+
+    # Failure: report and error
+    n_bad = length(bad_cells)
+    pole_bad = count(c -> c[2] in (1, 2, Ny-1, Ny), bad_cells)
+    interior_bad = n_bad - pole_bad
+    sample = first(bad_cells, 10)
+
+    error("""
+
+    ╔══════════════════════════════════════════════════════════════════╗
+    ║ cm-continuity check FAILED on $(basename(filepath))
+    ╠══════════════════════════════════════════════════════════════════╣
+    The binary's cm field does NOT satisfy local continuity with am/bm.
+    This binary was likely produced by an obsolete preprocessor (e.g.
+    convert_merged_massflux_to_binary.jl) and will cause unphysical mass
+    transport — most visibly polar drainage. Regenerate using
+    preprocess_spectral_v4_binary.jl or preprocess_era5_daily.jl.
+
+    Total bad cells: $n_bad / $(Nx*Ny*Nz)
+    Pole-row (j ∈ {1,2,$(Ny-1),$Ny}): $pole_bad
+    Interior: $interior_bad
+
+    Worst violation:
+      cell    = $max_violation_cell
+      |err|   = $(round(max_abs_violation, sigdigits=4))
+      rel err = $(round(max_rel_violation, sigdigits=4)) (target ≤ 1e-3)
+      column pit = $(round(max_violation_pit, sigdigits=4))
+
+    First 10 bad (i, j, k):
+      $(join(["  " * string(c[1:3]) for c in sample], "\n      "))
+
+    To suppress this check (NOT RECOMMENDED): ENV["ATMOSTR_NO_CM_CHECK"]="1"
+    ╚══════════════════════════════════════════════════════════════════╝
+    """)
 end
 
 """

@@ -30,6 +30,90 @@ const BINARY_HEADER_SIZE = 4096
 const CS_HEADER_SIZE     = 8192
 const EDGAR_HEADER_SIZE  = 4096
 
+"""
+    _check_binary_provenance(bin_path, hdr) → nothing
+
+Compare a binary file's recorded provenance (script_path, script_mtime,
+git_commit, git_dirty, creation_time) against the current source tree.
+Warns loudly if any mismatch is detected — designed to catch the silent
+"runtime running against a stale binary written by an obsolete pipeline"
+failure mode that wasted hours on 2026-04-06.
+
+Provenance fields are optional (only present in binaries written by
+preprocess_spectral_v4_binary.jl 2026-04-06 or later). Older binaries
+trigger a single "no provenance" info line — not an error.
+
+Set ENV["ATMOSTR_NO_STALE_CHECK"]="1" to disable.
+"""
+function _check_binary_provenance(bin_path::String, hdr)
+    get(ENV, "ATMOSTR_NO_STALE_CHECK", "") == "1" && return nothing
+
+    has_prov = haskey(hdr, :script_path) && haskey(hdr, :script_mtime_unix)
+    if !has_prov
+        @info "BinaryProvenance: $(basename(bin_path)) has NO provenance fields. " *
+              "Cannot verify staleness — was likely written by an old preprocessor. " *
+              "Regenerate with preprocess_spectral_v4_binary.jl to enable checks."
+        return nothing
+    end
+
+    script_path = String(hdr.script_path)
+    script_mtime_recorded = Float64(hdr.script_mtime_unix)
+    git_commit_recorded = haskey(hdr, :git_commit) ? String(hdr.git_commit) : "unknown"
+    git_dirty_recorded = haskey(hdr, :git_dirty) ? Bool(hdr.git_dirty) : false
+    creation_time = haskey(hdr, :creation_time) ? String(hdr.creation_time) : "unknown"
+
+    issues = String[]
+
+    # Check 1: does the script still exist?
+    if !isfile(script_path)
+        push!(issues, "preprocessor script no longer exists at $script_path")
+    else
+        script_mtime_now = mtime(script_path)
+        if script_mtime_now > script_mtime_recorded + 1.0  # 1s tolerance for fs precision
+            push!(issues, "preprocessor script has been modified since binary was written " *
+                  "(recorded mtime $(round(Int, script_mtime_recorded)), current $(round(Int, script_mtime_now)))")
+        end
+    end
+
+    # Check 2: is the git commit current?
+    git_commit_now = try
+        readchomp(`git -C $(dirname(@__FILE__)) rev-parse HEAD`)
+    catch
+        "unknown"
+    end
+    if git_commit_now != "unknown" && git_commit_recorded != "unknown" &&
+       git_commit_now != git_commit_recorded
+        push!(issues, "binary written at git $git_commit_recorded, current HEAD is $git_commit_now")
+    end
+
+    # Check 3: was the source tree dirty when the binary was written?
+    git_dirty_recorded && push!(issues, "binary was written from a DIRTY working tree (uncommitted changes)")
+
+    if !isempty(issues)
+        @warn """
+        ╔══════════════════════════════════════════════════════════════════╗
+        ║ STALE BINARY WARNING — $(basename(bin_path))
+        ╠══════════════════════════════════════════════════════════════════╣
+        Binary creation: $creation_time
+        Recorded script: $script_path
+        Recorded commit: $git_commit_recorded$(git_dirty_recorded ? " (DIRTY)" : "")
+
+        Issues:
+        $(join("  • " .* issues, "\n        "))
+
+        The binary may not reflect the current preprocessor source. If you
+        want to be sure your run is using the LATEST preprocessor logic,
+        regenerate the binary. To suppress this warning set
+        ENV["ATMOSTR_NO_STALE_CHECK"]="1".
+        ╚══════════════════════════════════════════════════════════════════╝
+        """
+    else
+        @info "BinaryProvenance: $(basename(bin_path)) — OK " *
+              "(written $creation_time, git $(git_commit_recorded[1:min(7, length(git_commit_recorded))]))"
+    end
+    return nothing
+end
+
 # =====================================================================
 # Lat-lon mass-flux binary reader
 # =====================================================================
@@ -181,6 +265,14 @@ function MassFluxBinaryReader(bin_path::String, ::Type{FT}) where FT
               (version >= 3 ? " TM5=$(has_tm5conv) T=$(has_temperature)" : "") *
               (version >= 4 ? " FluxDelta=$(has_flux_delta)" : "")
     end
+
+    # --- Provenance staleness check (added 2026-04-06) ---
+    # If the binary was written by a preprocessor older than the current
+    # source tree, warn loudly. This catches the silent-stale failure mode
+    # we hit on 2026-04-06 where the active binary was made by the now-obsolete
+    # convert_merged_massflux_to_binary.jl pipeline (broken cm) but the runtime
+    # was reading it as if fresh. Fields are optional — only checked if present.
+    _check_binary_provenance(bin_path, hdr)
 
     MassFluxBinaryReader{FT}(
         data, io, Nx, Ny, Nz, Nt,

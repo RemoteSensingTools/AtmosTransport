@@ -932,6 +932,26 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
     @info @sprintf("  Output: %s (%.2f GB, %d windows)", basename(bin_path), total_bytes / 1e9, Nt)
 
     # --- Build header ---
+    # --- Provenance tracking (added 2026-04-06 to detect stale binaries) ---
+    # The script path + mtime + git commit lets the runtime warn if a binary
+    # was generated with a different version of the preprocessor than the
+    # current source tree. This is the foolproof check for the silent-stale
+    # bug we hit when convert_merged_massflux_to_binary.jl produced broken
+    # cm fields and we ran a fresh model against an old binary for hours.
+    script_path = abspath(@__FILE__)
+    script_mtime = isfile(script_path) ? mtime(script_path) : 0.0
+    git_commit = try
+        readchomp(`git -C $(dirname(script_path)) rev-parse HEAD`)
+    catch
+        "unknown"
+    end
+    git_dirty = try
+        !isempty(readchomp(`git -C $(dirname(script_path)) status --porcelain`))
+    catch
+        false
+    end
+    creation_time = Dates.format(now(), "yyyy-mm-ddTHH:MM:SS")
+
     header = Dict{String,Any}(
         "magic" => "MFLX", "version" => 4, "header_bytes" => HEADER_SIZE,
         "Nx" => Nx, "Ny" => Ny, "Nz" => Nz, "Nz_native" => Nz_native, "Nt" => Nt,
@@ -957,6 +977,12 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
         "date" => Dates.format(date, "yyyy-mm-dd"),
         "grid_convention" => "TM5",
         "spectral_half_dt_seconds" => half_dt,
+        # Provenance — used by binary_readers.jl staleness check at load
+        "script_path" => script_path,
+        "script_mtime_unix" => script_mtime,
+        "git_commit" => git_commit,
+        "git_dirty" => git_dirty,
+        "creation_time" => creation_time,
     )
     header_json = JSON3.write(header)
     length(header_json) < HEADER_SIZE ||

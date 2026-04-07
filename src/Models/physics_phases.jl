@@ -737,11 +737,14 @@ function advection_phase!(tracers, sched, air, phys, model,
     if _use_dynam0
         recompute_cm_runtime!(gpu.cm, gpu.am, gpu.bm, dB_gpu)
     end
-    # Clamp cm to keep Z-CFL < 0.95.  Required while using diagnostic slopes
-    # (recomputed fresh each step).  TM5 allows gamma > 1 via prognostic slopes
-    # that prevent flux reversal; once prognostic slopes are implemented, this
-    # clamping can be removed.  See docs/TM5_ALIGNMENT_GAPS_AND_NUMERICAL_RISKS.md.
-    _clamp_cm_cfl!(gpu.cm, gpu.m_ref, FT(0.95))
+    # NO cm clamping.  The raw cm from the preprocessor satisfies cell-level
+    # mass continuity (m + cm[k] - cm[k+1] > 0 for every cell).  The previous
+    # per-face clamp was unphysical: it independently capped cm[k] and cm[k+1]
+    # at the per-face CFL=0.95, which creates two-sided drain at polar cells
+    # (e.g. cm[k]=-0.95*m AND cm[k+1]=+0.95*m → m_new=-0.9*m).
+    # The evolving-mass pilot in advect_z_massflux_subcycled! handles per-pass
+    # CFL by subcycling.  Verified: raw cm has max Z-CFL ≈ 9.1, all cells
+    # maintain m_new > 0 at every timestep.
 
     copyto!(gpu.m_dev, gpu.m_ref)
 
@@ -764,7 +767,7 @@ function advection_phase!(tracers, sched, air, phys, model,
             # Runtime dynam0: recompute cm from current am/bm + B-correction
             # (TM5 advect.F90:215-282, r1112). Neumaier GPU accumulation.
             recompute_cm_runtime!(gpu.cm, gpu.am, gpu.bm, dB_gpu)
-            _clamp_cm_cfl!(gpu.cm, gpu.m_dev, FT(0.95))
+            # No cm clamping — see comment above the substep loop.
         end
 
         _apply_advection_latlon!(tracers, gpu.m_dev,

@@ -1163,22 +1163,20 @@ function _global_pilot_strang_sequence!(ws::MassFluxWorkspace{FT}, grid,
         if reset_per_substep && m_initial !== nothing
             copyto!(ws.m_pilot, m_initial)
         end
-        # Strang sequence X → Y → Z → Z → Y → X
-        # X: positivity check only (cluster grid)
+        # CFL checks use the INITIAL m at the start of each substep (not the
+        # within-substep evolved m). This matches TM5 Check_CFL which checks
+        # |bm[i,j,l]|/m[donor] using the start-of-substep m, not the evolved
+        # value. Within a substep, the local nloop refinement handles per-pass
+        # CFL via subcycling — the global pre-pass only needs to verify the
+        # PER-SUBSTEP magnitudes are bounded.
+        f = check_y_cfl_or_fail(substep, "Y"); f !== nothing && return f
+        f = check_z_cfl_or_fail(substep, "Z"); f !== nothing && return f
+        # Strang sequence X → Y → Z → Z → Y → X (positivity check only)
         m1 = apply_x!(); m1 <= zero(FT) && return fail(substep, "X1", m1); last_mmin = m1
-        # Y1: per-face CFL check, then apply
-        f = check_y_cfl_or_fail(substep, "Y1"); f !== nothing && return f
         m2 = apply_y!(); m2 <= zero(FT) && return fail(substep, "Y1", m2); last_mmin = m2
-        # Z1
-        f = check_z_cfl_or_fail(substep, "Z1"); f !== nothing && return f
         m3 = apply_z!(); m3 <= zero(FT) && return fail(substep, "Z1", m3); last_mmin = m3
-        # Z2
-        f = check_z_cfl_or_fail(substep, "Z2"); f !== nothing && return f
         m4 = apply_z!(); m4 <= zero(FT) && return fail(substep, "Z2", m4); last_mmin = m4
-        # Y2
-        f = check_y_cfl_or_fail(substep, "Y2"); f !== nothing && return f
         m5 = apply_y!(); m5 <= zero(FT) && return fail(substep, "Y2", m5); last_mmin = m5
-        # X2
         m6 = apply_x!(); m6 <= zero(FT) && return fail(substep, "X2", m6); last_mmin = m6
     end
     return true, (substep=n_substeps, sweep="done",

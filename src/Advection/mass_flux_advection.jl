@@ -872,7 +872,7 @@ end
 Pre-allocated buffers for mass-flux advection, eliminating all GPU array
 allocations from the inner time-stepping loop.
 """
-struct MassFluxWorkspace{FT, A3 <: AbstractArray{FT,3}, V1 <: AbstractVector{Int32}}
+struct MassFluxWorkspace{FT, A3 <: AbstractArray{FT,3}, V1 <: AbstractVector{Int32}, M2 <: AbstractArray{Int32,2}}
     rm::A3       # tracer mass (Nx, Ny, Nz)
     rm_buf::A3   # advection output buffer for rm (Nx, Ny, Nz)
     m_buf::A3    # advection output buffer for m  (Nx, Ny, Nz)
@@ -888,9 +888,14 @@ struct MassFluxWorkspace{FT, A3 <: AbstractArray{FT,3}, V1 <: AbstractVector{Int
     cfl_scratch_z::A3
     cluster_sizes::V1  # per-latitude clustering for reduced grid (length Ny)
     # Per-level Y nloop (host) and device mirror for kernel masking.
-    # Length Nz, set by `_y_discover_nloop!` (TM5 advecty__slopes.F90:236-289).
+    # Length Nz, set by `_y_discover_nloop_per_level!` (TM5 advecty__slopes.F90:236-289).
     nloop_y_cpu::Vector{Int32}
     nloop_y_dev::V1
+    # Per-(j,l) X nloop (host) and device mirror.
+    # Shape (Ny, Nz), set by `_x_discover_nloop_per_row!`
+    # (TM5 advectx__slopes.F90:436-516).
+    nloop_x_cpu::Matrix{Int32}
+    nloop_x_dev::M2
 end
 
 """
@@ -913,7 +918,10 @@ function allocate_massflux_workspace(m::AbstractArray{FT,3},
     nloop_y_cpu = ones(Int32, Nz)
     nloop_y_dev = similar(m, Int32, Nz)
     copyto!(nloop_y_dev, nloop_y_cpu)
-    MassFluxWorkspace{FT, typeof(m), typeof(cs_dev)}(
+    nloop_x_cpu = ones(Int32, Ny, Nz)
+    nloop_x_dev = similar(m, Int32, Ny, Nz)
+    copyto!(nloop_x_dev, nloop_x_cpu)
+    MassFluxWorkspace{FT, typeof(m), typeof(cs_dev), typeof(nloop_x_dev)}(
         similar(m),       # rm
         similar(m),       # rm_buf
         similar(m),       # m_buf
@@ -927,6 +935,8 @@ function allocate_massflux_workspace(m::AbstractArray{FT,3},
         cs_dev,           # cluster_sizes (device)
         nloop_y_cpu,      # per-level Y nloop (host)
         nloop_y_dev,      # per-level Y nloop (device mirror)
+        nloop_x_cpu,      # per-(j,l) X nloop (host)
+        nloop_x_dev,      # per-(j,l) X nloop (device mirror)
     )
 end
 
@@ -1519,66 +1529,351 @@ end
 # =====================================================================
 
 """
-    _x_pilot_succeeds(ws, m, am_eff, n_sub, beta) → Bool
+    _x_discover_nloop_per_row!(ws, m, am_buf, cluster_sizes_cpu;
+                                max_nloop=50, beta_thresh=1.0) → Matrix{Int32}
 
-Run an m-only pilot of `n_sub` passes of am_eff applied to the evolving mass.
-Returns true if all passes keep `m > 0` and `max(|am_eff|/m) < beta`.
+Per-(j,l) X nloop discovery, matching TM5 advectx__slopes.F90:436-516.
+
+For each (latitude row j, vertical level k):
+1. Initialize a 1D pilot mass slice from m[:, j, k]
+2. Loop: while CFL >= beta_thresh and nloop[j,k] < max_nloop
+   a. Try iloop = 1..nloop[j,k]: at each iloop, check max |am[j,k]/mx_donor|
+      at every face, then update mx via X mass conservation
+   b. If any iloop fails: scale am[:, j, k] *= nloop/(nloop+1), increment
+   c. Otherwise: converged for this (j,k)
+
+Reduced grid: rows with cluster_sizes[j] > 1 use cluster aggregates for both
+the CFL check and mass update (matching the real X kernel).
+
+Modifies `am_buf` in place per (j, k).  Sets `ws.nloop_x_cpu` and copies
+to `ws.nloop_x_dev`.
+
+CPU implementation: copies m, am_buf to host, runs discovery, copies modified
+am_buf back.  Each (j, k) is a 1D problem (Nx ~ 720 cells), fast on CPU.
 """
-function _x_pilot_succeeds(ws::MassFluxWorkspace{FT}, m::AbstractArray{FT,3},
-                            am_eff, n_sub::Int, beta::FT) where FT
-    backend = get_backend(m)
-    Nx = size(m, 1)
-    copyto!(ws.m_pilot, m)
-    k! = _mass_only_x_kernel!(backend, 256)
-    for _ in 1:n_sub
-        # Use cfl_scratch_x (NOT cfl_x — which holds am_eff!) as the CFL output buffer
-        cfl = max_cfl_massflux_x(am_eff, ws.m_pilot, ws.cfl_scratch_x, ws.cluster_sizes)
-        if !isfinite(cfl) || cfl >= beta
-            return false
-        end
-        k!(ws.m_buf, ws.m_pilot, am_eff, Int32(Nx), ws.cluster_sizes; ndrange=size(m))
-        synchronize(backend)
-        copyto!(ws.m_pilot, ws.m_buf)
-        if minimum(ws.m_pilot) <= zero(FT)
-            return false
+function _x_discover_nloop_per_row!(ws::MassFluxWorkspace{FT},
+                                     m::AbstractArray{FT,3},
+                                     am_buf::AbstractArray{FT,3};
+                                     max_nloop::Int = 50,
+                                     beta_thresh::FT = FT(1.0)) where FT
+    Nx, Ny, Nz = size(m)
+    @assert size(am_buf, 1) == Nx + 1 && size(am_buf, 2) == Ny && size(am_buf, 3) == Nz
+
+    # Copy to host
+    m_h  = Array(m)
+    am_h = Array(am_buf)
+    cluster_sizes_h = Array(ws.cluster_sizes)
+
+    nloop = ws.nloop_x_cpu
+    fill!(nloop, Int32(1))
+
+    for k in 1:Nz, j in 1:Ny
+        r = Int(cluster_sizes_h[j])
+        nloop_jk = 1
+        while true
+            # Re-init pilot mass for this row from ORIGINAL m
+            # For uniform rows: per-cell mx[i] = m[i, j, k]
+            # For reduced rows: per-cluster mx_red[ic] = sum(m[ic*r-r+1 : ic*r, j, k])
+            if r == 1
+                mx = collect(@view m_h[:, j, k])  # length Nx
+            else
+                Nx_red = Nx ÷ r
+                mx = zeros(FT, Nx_red)
+                @inbounds for ic in 1:Nx_red
+                    s = zero(FT)
+                    for ii in ((ic - 1) * r + 1):(ic * r)
+                        s += m_h[ii, j, k]
+                    end
+                    mx[ic] = s
+                end
+            end
+
+            cfl_ok = true
+            for iloop in 1:nloop_jk
+                local_max = zero(FT)
+                if r == 1
+                    # Uniform row: faces are at i = 1..Nx+1 (am_h[i, j, k])
+                    # am_h[1, j, k] is the left face of cell 1 (= right face of cell Nx, periodic)
+                    # am_h[i+1, j, k] is the right face of cell i.
+                    # Donor: if am[i+1] >= 0, donor is cell i; else cell i+1 (periodic)
+                    @inbounds for i in 1:Nx
+                        am_v = am_h[i + 1, j, k]
+                        ip = i == Nx ? 1 : i + 1
+                        md = am_v >= zero(FT) ? mx[i] : mx[ip]
+                        if md > zero(FT)
+                            b = abs(am_v) / md
+                            if b > local_max; local_max = b; end
+                        end
+                    end
+                else
+                    # Reduced row: cluster faces only
+                    Nx_red = Nx ÷ r
+                    @inbounds for ic in 1:Nx_red
+                        am_l_idx = (ic - 1) * r + 1   # left face of cluster ic
+                        am_l = am_h[am_l_idx, j, k]
+                        ic_m = ic == 1 ? Nx_red : ic - 1
+                        md = am_l >= zero(FT) ? mx[ic_m] : mx[ic]
+                        if md > zero(FT)
+                            b = abs(am_l) / md
+                            if b > local_max; local_max = b; end
+                        end
+                    end
+                end
+                if local_max >= beta_thresh
+                    cfl_ok = false
+                    break
+                end
+                # Update mx for next iloop
+                if iloop != nloop_jk
+                    if r == 1
+                        # mx_new[i] = mx[i] + am[i] - am[i+1]
+                        # Build new mx from current mx
+                        mx_new = similar(mx)
+                        @inbounds for i in 1:Nx
+                            mx_new[i] = mx[i] + am_h[i, j, k] - am_h[i + 1, j, k]
+                        end
+                        mx = mx_new
+                    else
+                        Nx_red = Nx ÷ r
+                        mx_new = similar(mx)
+                        @inbounds for ic in 1:Nx_red
+                            am_l_idx = (ic - 1) * r + 1
+                            am_r_idx = ic * r + 1
+                            am_l = am_h[am_l_idx, j, k]
+                            am_r = am_h[am_r_idx > Nx ? 1 : am_r_idx, j, k]
+                            mx_new[ic] = mx[ic] + am_l - am_r
+                        end
+                        mx = mx_new
+                    end
+                end
+            end
+
+            if cfl_ok
+                nloop[j, k] = Int32(nloop_jk)
+                break
+            end
+
+            # CFL failed: reduce am at this (j, k) and increment
+            scale = FT(nloop_jk) / FT(nloop_jk + 1)
+            @inbounds for i in 1:(Nx + 1)
+                am_h[i, j, k] *= scale
+            end
+            nloop_jk += 1
+            if nloop_jk >= max_nloop
+                # TM5 also aborts here (advectx__slopes.F90:504-507)
+                error("X nloop hit max_nloop=$max_nloop at (j=$j, k=$k). " *
+                      "Local X-CFL fundamentally exceeds what max_nloop=$max_nloop can handle. " *
+                      "TM5 also aborts here.")
+            end
         end
     end
-    return true
+
+    # Copy modified am back to device, and nloop to device
+    copyto!(am_buf, am_h)
+    copyto!(ws.nloop_x_dev, nloop)
+    return nloop
+end
+
+@kernel function _massflux_x_perjl_kernel!(
+    rm_new, @Const(rm), m_new, @Const(m),
+    @Const(am), @Const(nloop_x), Nx, @Const(cluster_sizes), iter, use_limiter
+)
+    i, j, k = @index(Global, NTuple)
+    FT = eltype(rm)
+    @inbounds begin
+        if Int32(iter) > nloop_x[j, k]
+            # Per-(j,k) skip: this row × level has converged with fewer iters
+            rm_new[i, j, k] = rm[i, j, k]
+            m_new[i, j, k]  = m[i, j, k]
+        else
+            # Standard X advection logic — same as _massflux_x_kernel!
+            r = Int(cluster_sizes[j])
+            if r == 1
+                ip  = i == Nx ? 1 : i + 1
+                im  = i == 1  ? Nx : i - 1
+                ipp = ip == Nx ? 1 : ip + 1
+                imm = im == 1  ? Nx : im - 1
+
+                c_imm = rm[imm, j, k] / m[imm, j, k]
+                c_im  = rm[im,  j, k] / m[im,  j, k]
+                c_i   = rm[i,   j, k] / m[i,   j, k]
+                c_ip  = rm[ip,  j, k] / m[ip,  j, k]
+                c_ipp = rm[ipp, j, k] / m[ipp, j, k]
+
+                sc_im = (c_i - c_imm) / 2
+                if use_limiter
+                    sc_im = minmod_device(sc_im, 2 * (c_i - c_im), 2 * (c_im - c_imm))
+                end
+                sx_im = m[im, j, k] * sc_im
+                if use_limiter
+                    sx_im = max(min(sx_im, rm[im, j, k]), -rm[im, j, k])
+                end
+
+                sc_i = (c_ip - c_im) / 2
+                if use_limiter
+                    sc_i = minmod_device(sc_i, 2 * (c_ip - c_i), 2 * (c_i - c_im))
+                end
+                sx_i = m[i, j, k] * sc_i
+                if use_limiter
+                    sx_i = max(min(sx_i, rm[i, j, k]), -rm[i, j, k])
+                end
+
+                sc_ip = (c_ipp - c_i) / 2
+                if use_limiter
+                    sc_ip = minmod_device(sc_ip, 2 * (c_ipp - c_ip), 2 * (c_ip - c_i))
+                end
+                sx_ip = m[ip, j, k] * sc_ip
+                if use_limiter
+                    sx_ip = max(min(sx_ip, rm[ip, j, k]), -rm[ip, j, k])
+                end
+
+                am_l = am[i, j, k]
+                flux_left = if am_l >= zero(FT)
+                    alpha = am_l / m[im, j, k]
+                    alpha * (rm[im, j, k] + (one(FT) - alpha) * sx_im)
+                else
+                    alpha = am_l / m[i, j, k]
+                    alpha * (rm[i, j, k] - (one(FT) + alpha) * sx_i)
+                end
+
+                am_r = am[i + 1, j, k]
+                flux_right = if am_r >= zero(FT)
+                    alpha = am_r / m[i, j, k]
+                    alpha * (rm[i, j, k] + (one(FT) - alpha) * sx_i)
+                else
+                    alpha = am_r / m[ip, j, k]
+                    alpha * (rm[ip, j, k] - (one(FT) + alpha) * sx_ip)
+                end
+
+                rm_new[i, j, k] = rm[i, j, k] + flux_left - flux_right
+                m_new[i, j, k]  = m[i, j, k]  + am[i, j, k] - am[i + 1, j, k]
+            else
+                # Reduced row: cluster aggregate path (same as _massflux_x_kernel!)
+                Nx_red = Nx ÷ r
+                ic  = (i - 1) ÷ r + 1
+                ic_m  = ic == 1      ? Nx_red : ic - 1
+                ic_p  = ic == Nx_red ? 1      : ic + 1
+                ic_mm = ic_m == 1      ? Nx_red : ic_m - 1
+                ic_pp = ic_p == Nx_red ? 1      : ic_p + 1
+
+                rm_ic  = _cluster_sum(rm, ic, j, k, r)
+                m_ic   = _cluster_sum(m,  ic, j, k, r)
+                rm_im  = _cluster_sum(rm, ic_m, j, k, r)
+                m_im   = _cluster_sum(m,  ic_m, j, k, r)
+                rm_ip  = _cluster_sum(rm, ic_p, j, k, r)
+                m_ip   = _cluster_sum(m,  ic_p, j, k, r)
+                rm_imm = _cluster_sum(rm, ic_mm, j, k, r)
+                m_imm  = _cluster_sum(m,  ic_mm, j, k, r)
+                rm_ipp = _cluster_sum(rm, ic_pp, j, k, r)
+                m_ipp  = _cluster_sum(m,  ic_pp, j, k, r)
+
+                c_imm_r = rm_imm / m_imm
+                c_im_r  = rm_im  / m_im
+                c_ic_r  = rm_ic  / m_ic
+                c_ip_r  = rm_ip  / m_ip
+                c_ipp_r = rm_ipp / m_ipp
+
+                sc_im_r = (c_ic_r - c_imm_r) / 2
+                if use_limiter
+                    sc_im_r = minmod_device(sc_im_r, 2 * (c_ic_r - c_im_r), 2 * (c_im_r - c_imm_r))
+                end
+                sx_im_r = m_im * sc_im_r
+                if use_limiter
+                    sx_im_r = max(min(sx_im_r, rm_im), -rm_im)
+                end
+
+                sc_ic_r = (c_ip_r - c_im_r) / 2
+                if use_limiter
+                    sc_ic_r = minmod_device(sc_ic_r, 2 * (c_ip_r - c_ic_r), 2 * (c_ic_r - c_im_r))
+                end
+                sx_ic_r = m_ic * sc_ic_r
+                if use_limiter
+                    sx_ic_r = max(min(sx_ic_r, rm_ic), -rm_ic)
+                end
+
+                sc_ip_r = (c_ipp_r - c_ic_r) / 2
+                if use_limiter
+                    sc_ip_r = minmod_device(sc_ip_r, 2 * (c_ipp_r - c_ip_r), 2 * (c_ip_r - c_ic_r))
+                end
+                sx_ip_r = m_ip * sc_ip_r
+                if use_limiter
+                    sx_ip_r = max(min(sx_ip_r, rm_ip), -rm_ip)
+                end
+
+                am_l_r = am[(ic - 1) * r + 1, j, k]
+                am_r_idx = ic * r + 1
+                am_r_r = am[am_r_idx > Nx ? 1 : am_r_idx, j, k]
+
+                flux_left_r = if am_l_r >= zero(FT)
+                    alpha = am_l_r / m_im
+                    alpha * (rm_im + (one(FT) - alpha) * sx_im_r)
+                else
+                    alpha = am_l_r / m_ic
+                    alpha * (rm_ic - (one(FT) + alpha) * sx_ic_r)
+                end
+
+                flux_right_r = if am_r_r >= zero(FT)
+                    alpha = am_r_r / m_ic
+                    alpha * (rm_ic + (one(FT) - alpha) * sx_ic_r)
+                else
+                    alpha = am_r_r / m_ip
+                    alpha * (rm_ip - (one(FT) + alpha) * sx_ip_r)
+                end
+
+                delta_rm = flux_left_r - flux_right_r
+                delta_m  = am_l_r - am_r_r
+
+                frac_m = abs(m_ic) > eps(FT) ? m[i, j, k] / m_ic : one(FT) / FT(r)
+                rm_new[i, j, k] = (rm_ic + delta_rm) * frac_m
+                m_new[i, j, k]  = (m_ic  + delta_m)  * frac_m
+            end
+        end
+    end
 end
 
 """
 $(SIGNATURES)
 
-TM5-style evolving-mass X-subcycling.  Iteratively finds the minimum n_sub
-such that running am/n_sub through the mass update n_sub times keeps m > 0
-and CFL < cfl_limit at every pass.
+TM5-style per-(j,l) evolving-mass X subcycling, matching `advectx__slopes.F90:436-516`.
+
+1. Discovery (`_x_discover_nloop_per_row!`): for each (latitude row, level),
+   find the minimum nloop[j,k] such that the per-pass CFL stays under
+   threshold and m stays positive.  am gets scaled in place per (j,k).
+2. Application: run `max(nloop)` passes of `_massflux_x_perjl_kernel!` with
+   a per-(j,k) mask.
+
+TM5 max_nloop = 50, threshold = 1.0 (line 332, 446 of advectx__slopes.F90).
+Aborts on max_nloop reached, matching TM5.
 """
 function advect_x_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, am,
                                        grid, use_limiter,
                                        ws::MassFluxWorkspace{FT};
-                                       cfl_limit = FT(0.95)) where FT
-    cfl_static = max_cfl_massflux_x(am, m, ws.cfl_x, ws.cluster_sizes)
-    n_sub = (isfinite(cfl_static) && cfl_static > zero(FT)) ?
-            max(1, ceil(Int, min(cfl_static, FT(100)) / cfl_limit)) : 1
-    max_n_sub = 256
-    while n_sub <= max_n_sub
-        ws.cfl_x .= am ./ FT(n_sub)
-        if _x_pilot_succeeds(ws, m, ws.cfl_x, n_sub, cfl_limit)
-            break
-        end
-        n_sub *= 2
-    end
-    if n_sub > max_n_sub
-        @warn "advect_x_massflux_subcycled!: pilot failed even at n_sub=$max_n_sub" maxlog=3
-        n_sub = max_n_sub
-        ws.cfl_x .= am ./ FT(n_sub)
-    end
+                                       cfl_limit = FT(1.0),  # TM5 hardcodes 1.0
+                                       max_nloop::Int = 50) where FT
+    backend = get_backend(m)
+    Nx, Ny, Nz = size(m)
+
+    # Phase 1: per-(j,k) discovery.  am scaled in place into ws.cfl_x.
+    copyto!(ws.cfl_x, am)
+    nloop = _x_discover_nloop_per_row!(ws, m, ws.cfl_x;
+                                        max_nloop=max_nloop,
+                                        beta_thresh=FT(1.0))
     am_eff = ws.cfl_x
-    for _ in 1:n_sub
-        advect_x_massflux!(rm_tracers, m, am_eff, grid, use_limiter,
-                            ws.rm_buf, ws.m_buf, ws.cluster_sizes)
+    max_iter = maximum(nloop)
+
+    # Phase 2: run actual tracer advection with per-(j,k) nloop mask
+    k! = _massflux_x_perjl_kernel!(backend, 256)
+    for iter in 1:max_iter
+        for (_, rm) in pairs(rm_tracers)
+            k!(ws.rm_buf, rm, ws.m_buf, m, am_eff,
+               ws.nloop_x_dev, Int32(Nx), ws.cluster_sizes,
+               Int32(iter), use_limiter; ndrange=size(m))
+            synchronize(backend)
+            copyto!(rm, ws.rm_buf)
+        end
+        copyto!(m, ws.m_buf)
     end
-    return n_sub
+    return Int(max_iter)
 end
 
 """

@@ -57,7 +57,14 @@ species  = "co2"
 [advection]
 scheme            = "slopes"
 prognostic_slopes = false    # diagnostic slopes (revisit after mass path stable)
-mass_fixer        = false    # TM5-faithful: no fixer
+# Mass fixer ENABLED: TM5 r1112 effectively does this via the
+# m = (at + bt × ps_evolving) × area / g formula at every substep.
+# Disabling mass_fixer is incompatible with the polar drainage at high
+# resolution because the cell mass cumulatively drains over a window
+# without replenishment from the time interpolation. Even at 0.30 |bm|/m
+# per face, 24 sweeps × 6 directions per window cumulatively drain
+# 98% of polar cell mass. TM5 prevents this via its m-from-ps reset.
+mass_fixer        = true
 
 [output]
 filename = "/tmp/era5_f64_debug_moist_v4.nc"

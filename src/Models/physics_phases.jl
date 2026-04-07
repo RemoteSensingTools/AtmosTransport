@@ -745,9 +745,6 @@ function advection_phase!(tracers, sched, air, phys, model,
     has_deltas = gpu.dam !== nothing
     _use_dynam0 = dB_gpu !== nothing
     _use_mass_fixer = get(model.metadata, "mass_fixer", true)
-
-    am0 = has_deltas ? copy(gpu.am) : gpu.am
-    bm0 = has_deltas ? copy(gpu.bm) : gpu.bm
     Ny = grid.Ny
 
     if _use_dynam0
@@ -770,16 +767,38 @@ function advection_phase!(tracers, sched, air, phys, model,
     # the substep count.  Complements the per-(j,l)/per-level local nloop
     # refinement inside X/Y by handling cumulative drainage.
     #
-    # Only run for the no-deltas path (the debug config). The has_deltas
-    # path needs a more careful integration with the time interpolation
-    # which is deferred.
+    # 2026-04-07: also runs for the has_deltas (v4) path. After halving the
+    # base am/bm/cm in place, we ALSO halve dam/dbm/dcm so the substep
+    # interpolation `am(t) = am0 + t·dam` still gives per-substep fluxes
+    # at 1/n_extra of original. dm is NOT halved (whole-window mass change
+    # is invariant under refinement). Total transport over the window is
+    # preserved.
     n_sub_eff = n_sub
-    if !has_deltas && adv_ws isa Advection.MassFluxWorkspace
+    if adv_ws isa Advection.MassFluxWorkspace
+        # When mass_fixer is on, the pilot must reset m at every substep to
+        # mimic the runtime fixer (otherwise the pilot accumulates drainage
+        # that the actual run wouldn't see).
         n_extra = Advection.check_global_cfl_and_scale!(
             gpu.am, gpu.bm, gpu.cm, gpu.m_dev, grid, adv_ws;
-            n_sub=n_sub, cfl_limit=FT(1.0), max_halvings=5)
+            n_sub=n_sub, cfl_limit=FT(1.0), max_halvings=5,
+            reset_per_substep=_use_mass_fixer)
+        if has_deltas && n_extra > 1
+            inv_n = FT(1) / FT(n_extra)
+            gpu.dam .*= inv_n
+            gpu.dbm .*= inv_n
+            gpu.dcm !== nothing && (gpu.dcm .*= inv_n)
+            # NOT dm — it's the whole-window mass change, sampled at
+            # t_end = s/n_sub_eff in the mass_fixer. Halving dm would
+            # under-prescribe the mass trajectory.
+        end
         n_sub_eff = n_sub * n_extra
     end
+
+    # IMPORTANT: am0/bm0 must be captured AFTER the pre-pass, so they
+    # reflect the (possibly halved) base values. Otherwise the substep
+    # interpolation would re-apply the original (unhalved) am0.
+    am0 = has_deltas ? copy(gpu.am) : gpu.am
+    bm0 = has_deltas ? copy(gpu.bm) : gpu.bm
 
     for s in 1:n_sub_eff
         step[] += 1

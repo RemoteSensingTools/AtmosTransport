@@ -982,7 +982,8 @@ function check_global_cfl_and_scale!(am::AbstractArray{FT,3},
                                        ws::MassFluxWorkspace{FT};
                                        n_sub::Int = 1,
                                        cfl_limit::FT = FT(1.0),
-                                       max_halvings::Int = 5) where FT
+                                       max_halvings::Int = 5,
+                                       reset_per_substep::Bool = false) where FT
     backend = get_backend(m)
     Nx, Ny, Nz = size(m)
 
@@ -990,6 +991,12 @@ function check_global_cfl_and_scale!(am::AbstractArray{FT,3},
     # synchronization on every substep iteration.  The mass field is small
     # enough that this is acceptable for the global pre-pass (called once
     # per met window per advection_phase! call).
+    #
+    # `reset_per_substep` mimics the runtime mass_fixer: at the start of every
+    # substep, m_pilot is reset to m. This decouples substeps so the pilot
+    # checks the WORST-CASE single-substep CFL rather than cumulative drainage
+    # across substeps. Required for the v4 has_deltas + mass_fixer path where
+    # cumulative drainage is irrelevant (every substep starts from m_target).
     n_extra = 1
     last_info = (substep=0, sweep="none", mmin=Float64(NaN), argmin_idx=(0, 0, 0),
                  max_cfl=NaN, cfl_loc=(0, 0, 0))
@@ -998,7 +1005,9 @@ function check_global_cfl_and_scale!(am::AbstractArray{FT,3},
         # Use existing mass-only kernels via the same pilot pattern.
         copyto!(ws.m_pilot, m)
         ok, info = _global_pilot_strang_sequence!(ws, grid, am, bm, cm,
-                                                    n_sub * n_extra, cfl_limit)
+                                                    n_sub * n_extra, cfl_limit;
+                                                    reset_per_substep=reset_per_substep,
+                                                    m_initial=m)
         last_info = info
         if ok
             if halving > 0
@@ -1051,7 +1060,9 @@ The mass update for each direction is the SAME formula as the real kernels
 """
 function _global_pilot_strang_sequence!(ws::MassFluxWorkspace{FT}, grid,
                                           am, bm, cm, n_substeps::Int,
-                                          cfl_limit::FT) where FT
+                                          cfl_limit::FT;
+                                          reset_per_substep::Bool=false,
+                                          m_initial=nothing) where FT
     backend = get_backend(ws.m_pilot)
     Nx, Ny, Nz = size(ws.m_pilot)
     kx! = _mass_only_x_kernel!(backend, 256)
@@ -1146,6 +1157,12 @@ function _global_pilot_strang_sequence!(ws::MassFluxWorkspace{FT}, grid,
 
     last_mmin = typemax(FT)
     for substep in 1:n_substeps
+        # Reset m_pilot to m_initial at the start of each substep, mimicking
+        # the mass_fixer in the runtime substep loop. This decouples substeps
+        # so the pilot only checks per-substep CFL, not cumulative drainage.
+        if reset_per_substep && m_initial !== nothing
+            copyto!(ws.m_pilot, m_initial)
+        end
         # Strang sequence X → Y → Z → Z → Y → X
         # X: positivity check only (cluster grid)
         m1 = apply_x!(); m1 <= zero(FT) && return fail(substep, "X1", m1); last_mmin = m1

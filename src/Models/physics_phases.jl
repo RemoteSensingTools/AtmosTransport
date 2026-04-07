@@ -780,7 +780,7 @@ function advection_phase!(tracers, sched, air, phys, model,
         # that the actual run wouldn't see).
         n_extra = Advection.check_global_cfl_and_scale!(
             gpu.am, gpu.bm, gpu.cm, gpu.m_dev, grid, adv_ws;
-            n_sub=n_sub, cfl_limit=FT(1.0), max_halvings=5,
+            n_sub=n_sub, cfl_limit=FT(1.0),
             reset_per_substep=_use_mass_fixer)
         if has_deltas && n_extra > 1
             inv_n = FT(1) / FT(n_extra)

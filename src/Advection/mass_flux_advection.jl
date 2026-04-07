@@ -458,23 +458,22 @@ end
 end
 
 @kernel function _mass_only_y_kernel!(m_new, @Const(m), @Const(bm), Ny)
+    # Match runtime _massflux_y_kernel! exactly (line 326): unconditional
+    # bm[j] - bm[j+1]. Pole faces bm[:,1,:] and bm[:,Ny+1,:] are zeroed by
+    # the preprocessor, so accessing them is safe and mathematically
+    # equivalent to the conditional form. Aligning the pilot kernel with
+    # the runtime kernel removes a class of false-positive pilot trips at
+    # polar rows when post-Poisson noise is non-exact-zero.
     i, j, k = @index(Global, NTuple)
-    @inbounds begin
-        FT = eltype(m)
-        bm_s = j > 1  ? bm[i, j, k]     : zero(FT)
-        bm_n = j < Ny ? bm[i, j + 1, k] : zero(FT)
-        m_new[i, j, k] = m[i, j, k] + bm_s - bm_n
-    end
+    @inbounds m_new[i, j, k] = m[i, j, k] + bm[i, j, k] - bm[i, j + 1, k]
 end
 
 @kernel function _mass_only_z_kernel!(m_new, @Const(m), @Const(cm), Nz)
+    # Match runtime _massflux_z_kernel! exactly: unconditional
+    # cm[k] - cm[k+1]. TOA face cm[:,:,1] and surface face cm[:,:,Nz+1]
+    # are zeroed by the preprocessor (closed boundaries).
     i, j, k = @index(Global, NTuple)
-    @inbounds begin
-        FT = eltype(m)
-        cm_t = k > 1  ? cm[i, j, k]     : zero(FT)
-        cm_b = k < Nz ? cm[i, j, k + 1] : zero(FT)
-        m_new[i, j, k] = m[i, j, k] + cm_t - cm_b
-    end
+    @inbounds m_new[i, j, k] = m[i, j, k] + cm[i, j, k] - cm[i, j, k + 1]
 end
 
 # =====================================================================
@@ -944,15 +943,24 @@ end
 # Global Check_CFL pre-pass (TM5 advectm_cfl.F90:217-336)
 #
 # Runs the FULL X→Y→Z→Z→Y→X mass-only Strang sequence on a pilot mass.
-# If any face exceeds cfl_limit OR m_pilot goes negative anywhere, halves
-# am/bm/cm globally (× 1/2) and doubles the substep count.  Repeats until
-# success or max_halvings.
+# Before each Y/Z sweep, checks per-face CFL `|flux|/m_donor` against
+# `cfl_limit` on the EVOLVED pilot mass (matching TM5 dynamum/dynamvm/
+# dynamwm at advectm_cfl.F90:1242-1248, 2194-2204). If any face exceeds
+# the limit, refines the substep count using the n_extra sequence and
+# rescales am/bm/cm in place. Repeats until success or `max_halvings`.
 #
 # This complements the local per-(j,l)/per-level nloop refinement inside
-# the X/Y subcycled functions: the GLOBAL halving handles cumulative
+# the X/Y subcycled functions: the GLOBAL refinement handles cumulative
 # drainage that local refinement can't fix (because local refinement
-# preserves total transport per substep, while global halving REDUCES the
-# per-substep total transport by spreading across more substeps).
+# preserves total transport per substep, while global refinement REDUCES
+# the per-substep total transport by spreading across more substeps).
+#
+# Audit reference: `.claude/agent-memory/rigorous-code-reviewer/
+# tm5_polar_audit_findings.md` (2026-04-07). Key TM5-faithfulness fixes:
+# (1) `max_halvings = 32` (was 5); (2) NO m<=0 positivity check in pilot
+# (TM5 only checks per-face CFL); (3) per-operator CFL check on evolved
+# mass (was once-per-substep on start-of-substep mass); (4) finer ~1.5×
+# n_extra cadence (was strict ÷2).
 #
 # NOTE: Defined AFTER `MassFluxWorkspace` so the type annotation in the
 # signature resolves at parse time. The mass-only kernels it calls
@@ -970,9 +978,12 @@ Modifies am, bm, cm in place: multiplied by `1/n_extra` after the call.
 
 Pilot loop:
 1. Test the full X→Y→Z→Z→Y→X mass-only Strang sequence on m_pilot, repeated
-   `n_sub * n_extra` times (matching what the real substep loop will do)
-2. If any cell goes negative or any per-face CFL >= cfl_limit, halve and retry
-3. Aborts after `max_halvings` halvings
+   `n_sub * n_extra` times (matching what the real substep loop will do).
+   CFL is checked per-operator on the evolved m_pilot before each Y and Z
+   sweep (TM5 dynamum/dynamvm/dynamwm pattern).
+2. If any per-face CFL >= cfl_limit, refine n_extra (next value in the
+   integer sequence) and retry.
+3. Aborts after `max_halvings` refinements.
 """
 function check_global_cfl_and_scale!(am::AbstractArray{FT,3},
                                        bm::AbstractArray{FT,3},
@@ -982,7 +993,7 @@ function check_global_cfl_and_scale!(am::AbstractArray{FT,3},
                                        ws::MassFluxWorkspace{FT};
                                        n_sub::Int = 1,
                                        cfl_limit::FT = FT(1.0),
-                                       max_halvings::Int = 5,
+                                       max_halvings::Int = 32,
                                        reset_per_substep::Bool = false) where FT
     backend = get_backend(m)
     Nx, Ny, Nz = size(m)
@@ -997,12 +1008,37 @@ function check_global_cfl_and_scale!(am::AbstractArray{FT,3},
     # checks the WORST-CASE single-substep CFL rather than cumulative drainage
     # across substeps. Required for the v4 has_deltas + mass_fixer path where
     # cumulative drainage is irrelevant (every substep starts from m_target).
+    # n_extra sequence: instead of strict ÷2 (powers of 2), use a finer
+    # ~1.5× growth with integer values. Mirrors the SPIRIT of TM5's
+    # `new_valid_timestep` (datetime.F90:866-895), which finds the largest
+    # valid divisor of nread less than the current dtime — a much finer
+    # cadence than power-of-2. We don't need TM5's exact valid-divisor
+    # constraint because our runtime accepts non-integer dt_sub, but the
+    # finer 1.5× growth avoids over-shooting (e.g., jumping from 4 to 16
+    # substeps when 8 would suffice). Sequence: 1, 2, 3, 4, 6, 8, 12, 16,
+    # 24, 32, 48, 64, 96, 128, ... — about 1.5× per step, always integer.
+    n_extra_seq = (1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128,
+                   192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096,
+                   6144, 8192, 12288, 16384, 24576, 32768, 49152, 65536,
+                   98304, 131072)
+    n_max_iter = min(max_halvings + 1, length(n_extra_seq))
+
     n_extra = 1
     last_info = (substep=0, sweep="none", mmin=Float64(NaN), argmin_idx=(0, 0, 0),
                  max_cfl=NaN, cfl_loc=(0, 0, 0))
-    for halving in 0:max_halvings
+    for halving in 1:n_max_iter
+        n_extra_target = n_extra_seq[halving]
+        # Rescale am/bm/cm from previous n_extra to new n_extra_target so
+        # the per-substep fluxes correspond to the new substep count.
+        if n_extra_target != n_extra
+            scale = FT(n_extra) / FT(n_extra_target)
+            am .*= scale
+            bm .*= scale
+            cm .*= scale
+            n_extra = n_extra_target
+        end
+
         # Run mass-only Strang sequence n_sub * n_extra times on m_pilot.
-        # Use existing mass-only kernels via the same pilot pattern.
         copyto!(ws.m_pilot, m)
         ok, info = _global_pilot_strang_sequence!(ws, grid, am, bm, cm,
                                                     n_sub * n_extra, cfl_limit;
@@ -1010,34 +1046,26 @@ function check_global_cfl_and_scale!(am::AbstractArray{FT,3},
                                                     m_initial=m)
         last_info = info
         if ok
-            if halving > 0
-                @info "check_global_cfl: halved $(halving) times → n_extra=$(n_extra), substeps=$(n_sub * n_extra), final mmin=$(info.mmin)" maxlog=10
+            if halving > 1
+                @info "check_global_cfl: $(halving-1) refinement(s) → n_extra=$(n_extra), substeps=$(n_sub * n_extra), final mmin=$(info.mmin)" maxlog=10
             end
             return n_extra
         end
 
-        # Per-halving failure breadcrumb (always logged at low halving levels,
-        # rate-limited at high levels to avoid spam).
-        if halving < 3 || halving == max_halvings
+        # Per-iteration failure breadcrumb (always logged at low levels,
+        # rate-limited at high levels).
+        if halving <= 4 || halving == n_max_iter
             cfl_str = isnan(info.max_cfl) ? "" : " | CFL=$(round(info.max_cfl, sigdigits=4)) at $(info.cfl_loc)"
-            @info "check_global_cfl: halving=$(halving) (substeps=$(n_sub * n_extra), scale=$(1/n_extra)) FAILED at substep=$(info.substep) sweep=$(info.sweep) mmin=$(info.mmin) argmin=$(info.argmin_idx)$cfl_str"
+            @info "check_global_cfl: iter=$(halving-1) (n_extra=$(n_extra), substeps=$(n_sub * n_extra), scale=$(round(1/n_extra, sigdigits=4))) FAILED at substep=$(info.substep) sweep=$(info.sweep) mmin=$(info.mmin) argmin=$(info.argmin_idx)$cfl_str"
         end
-
-        if halving == max_halvings
-            cfl_str = isnan(last_info.max_cfl) ? "" : ", max_cfl=$(last_info.max_cfl) at $(last_info.cfl_loc)"
-            error("check_global_cfl_and_scale!: failed to converge after $max_halvings halvings " *
-                  "(would have run $(n_sub * n_extra) substeps with am/bm/cm scaled by $(1/n_extra)). " *
-                  "Last failure: substep=$(last_info.substep) sweep=$(last_info.sweep) " *
-                  "mmin=$(last_info.mmin) argmin=$(last_info.argmin_idx)$cfl_str")
-        end
-
-        # Halve fluxes and double n_extra
-        am .*= FT(0.5)
-        bm .*= FT(0.5)
-        cm .*= FT(0.5)
-        n_extra *= 2
     end
-    return n_extra  # unreachable
+
+    # Exhausted the sequence — error out.
+    cfl_str = isnan(last_info.max_cfl) ? "" : ", max_cfl=$(last_info.max_cfl) at $(last_info.cfl_loc)"
+    error("check_global_cfl_and_scale!: failed to converge after $n_max_iter refinement iterations " *
+          "(reached n_extra=$n_extra, substeps=$(n_sub * n_extra), scale=$(round(1/n_extra, sigdigits=4))). " *
+          "Last failure: substep=$(last_info.substep) sweep=$(last_info.sweep) " *
+          "mmin=$(last_info.mmin) argmin=$(last_info.argmin_idx)$cfl_str")
 end
 
 """
@@ -1046,14 +1074,18 @@ Returns `(ok::Bool, info::NamedTuple)` where `info` carries the failure
 breadcrumb (`substep`, `sweep`, `mmin`/`max_cfl`, `argmin_idx`) when
 `ok==false`, or the final `mmin` when `ok==true`.
 
-The pilot enforces TWO conditions per sweep, matching TM5 Check_CFL
-(advectm_cfl.F90):
-  1. min(m) > 0   — no cell may go negative
-  2. max(|flux|/m_donor) < cfl_limit  — no face may exceed local CFL
+The pilot enforces ONLY the per-face CFL condition `|flux|/m_donor < cfl_limit`,
+matching TM5 `dynamum`/`dynamvm`/`dynamwm` at `advectm_cfl.F90:1242-1248,
+2194-2204`. We do NOT check pilot positivity (`min(m) > 0`) because TM5's
+Check_CFL doesn't either — see audit `.claude/agent-memory/rigorous-code-
+reviewer/tm5_polar_audit_findings.md`. The runtime kernels are responsible
+for guaranteeing positivity at the actual advection step (via the local
+per-(j,l)/per-level nloop refinement); the pilot only verifies the per-face
+CFL bound.
 
-Condition 2 catches cells where the local nloop refinement would also
-fail (e.g. polar pole-adjacent stratospheric cells with bm/m > 1). This
-matches TM5's per-face CFL check.
+The CFL check uses the EVOLVED m_pilot just before each Y / Z sweep (matching
+TM5's per-operator pattern), not the start-of-substep m. X has no global CFL
+check here because its per-(j,l) nloop handles X CFL locally.
 
 The mass update for each direction is the SAME formula as the real kernels
 (reduced grid for X, simple for Y/Z).
@@ -1163,21 +1195,31 @@ function _global_pilot_strang_sequence!(ws::MassFluxWorkspace{FT}, grid,
         if reset_per_substep && m_initial !== nothing
             copyto!(ws.m_pilot, m_initial)
         end
-        # CFL checks use the INITIAL m at the start of each substep (not the
-        # within-substep evolved m). This matches TM5 Check_CFL which checks
-        # |bm[i,j,l]|/m[donor] using the start-of-substep m, not the evolved
-        # value. Within a substep, the local nloop refinement handles per-pass
-        # CFL via subcycling — the global pre-pass only needs to verify the
-        # PER-SUBSTEP magnitudes are bounded.
-        f = check_y_cfl_or_fail(substep, "Y"); f !== nothing && return f
-        f = check_z_cfl_or_fail(substep, "Z"); f !== nothing && return f
-        # Strang sequence X → Y → Z → Z → Y → X (positivity check only)
-        m1 = apply_x!(); m1 <= zero(FT) && return fail(substep, "X1", m1); last_mmin = m1
-        m2 = apply_y!(); m2 <= zero(FT) && return fail(substep, "Y1", m2); last_mmin = m2
-        m3 = apply_z!(); m3 <= zero(FT) && return fail(substep, "Z1", m3); last_mmin = m3
-        m4 = apply_z!(); m4 <= zero(FT) && return fail(substep, "Z2", m4); last_mmin = m4
-        m5 = apply_y!(); m5 <= zero(FT) && return fail(substep, "Y2", m5); last_mmin = m5
-        m6 = apply_x!(); m6 <= zero(FT) && return fail(substep, "X2", m6); last_mmin = m6
+
+        # TM5-faithful Check_CFL: check per-face CFL on the EVOLVED mass
+        # just before each direction's update (mirrors TM5's dynamum / dynamvm
+        # / dynamwm at advectm_cfl.F90:1242-1248, 2194-2204). The CFL
+        # condition is |flux|/m_donor < cfl_limit at every face. We do NOT
+        # check m_pilot positivity (TM5's Check_CFL does not — see audit
+        # finding 2 at .claude/agent-memory/rigorous-code-reviewer/
+        # tm5_polar_audit_findings.md). The runtime kernels are responsible
+        # for guaranteeing positivity at the actual advection step; the
+        # pilot only verifies the per-face CFL bound.
+        #
+        # Strang sequence X → Y → Z → Z → Y → X. X has no global CFL check
+        # in the pilot because its per-(j,l) nloop refinement handles X CFL
+        # locally. Y and Z have CFL checks before each application.
+        apply_x!()  # X1
+        f = check_y_cfl_or_fail(substep, "Y1"); f !== nothing && return f
+        apply_y!()  # Y1
+        f = check_z_cfl_or_fail(substep, "Z1"); f !== nothing && return f
+        apply_z!()  # Z1
+        f = check_z_cfl_or_fail(substep, "Z2"); f !== nothing && return f
+        apply_z!()  # Z2
+        f = check_y_cfl_or_fail(substep, "Y2"); f !== nothing && return f
+        apply_y!()  # Y2
+        apply_x!()  # X2
+        last_mmin = minimum(ws.m_pilot)
     end
     return true, (substep=n_substeps, sweep="done",
                   mmin=Float64(last_mmin), argmin_idx=(0, 0, 0),

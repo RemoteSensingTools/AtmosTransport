@@ -9,3 +9,4 @@
 - [Fused spectral v4 review](fused_spectral_v4_review.md) — APPROVED: faithful copy from two refs, Float64-only improvement, binary layout matches reader
 - [CS transport full trace](cs_transport_trace.md) — Complete run! to output trace for CS grid: Strang/LinRood/GCHP paths, file:line refs, unit conventions
 - [Pole bm clamp review](pole_bm_clamp_review.md) — clamp_bm_at_poles! correctness: indexing OK, but clamps inflow too + cm not recomputed
+- [TM5 cy3-4dvar polar audit](tm5_polar_audit_findings.md) — max_halvings=5 vs 32, m<=0 pilot check (we stricter than TM5), 0.5° redgrid unvalidated, no Y nloop in TM5

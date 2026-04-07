@@ -1,0 +1,48 @@
+# ERA5 F64 v4 test with NON-UNIFORM CO2 IC from startCO2 file
+#
+# Loads CO2 from a real initial condition file (range 375-894 ppm).
+# This is the more rigorous test: mass_fixer can preserve uniform mixing
+# ratio trivially, but a non-uniform IC actually exercises the advection
+# operator. After 24h, the spatial pattern should evolve sensibly
+# (not collapse to uniform, not spike, not go negative).
+
+[architecture]
+use_gpu    = true
+float_type = "Float64"
+
+[grid]
+type       = "latlon"
+met_source = "era5"
+size       = [720, 361, 34]
+
+[met_data]
+driver       = "preprocessed_latlon"
+directory    = "~/data/AtmosTransport/met/era5/spectral_v4_tropo34_dec2021"
+disable_qv   = true
+disable_flux_delta = false
+dt           = 900
+max_windows  = 24
+
+[initial_conditions]
+file = "~/data/AtmosTransport/catrine/InitialConditions/startCO2_202112010000.nc"
+co2  = "CO2"
+
+[tracers.co2]
+emission = "none"
+species  = "co2"
+
+[advection]
+scheme            = "slopes"
+prognostic_slopes = false
+mass_fixer        = true
+
+[output]
+filename = "/tmp/era5_f64_v4_startCO2_24h.nc"
+interval = 10800
+
+[output.fields]
+co2_surface     = {type = "surface_slice", species = "co2"}
+co2_column_mean = {type = "column_mean", species = "co2"}
+
+[buffering]
+strategy = "double"

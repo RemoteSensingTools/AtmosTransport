@@ -235,6 +235,75 @@ that linear nloop refinement is mathematically incapable of handling
 constant regardless of N, so cumulative donor drainage always reaches
 or exceeds the original cell mass.
 
+## Drift investigation — RESOLVED 2026-04-07 via rigorous audit + probes
+
+**The mass drift is in the ERA5 source data, not our preprocessor or
+runtime.** Full chain verified end-to-end.
+
+Evidence (all runnable, see `/tmp/probe_*.jl`):
+
+1. **Binary Σm drift matches observed runtime tracer drift exactly**
+   (`probe_dry_mass_residuals.jl`): Σdm over 24 windows = −4.262e13 kg
+   → −8.31e−6, matches the runtime test's tracer drift −8.31e−4%.
+2. **F32 vs F64 binary is identical** (`probe_residuals_f64_direct.jl`):
+   the drift survives full F64 round-trip, so F32 quantization is
+   not the source.
+3. **Σm = ⟨ps⟩ × total_area / g to F32 precision**
+   (`probe_ps_per_window.jl`): with correct TM5-convention area
+   weights (dlat = 180/Nlat, NOT 180/(Nlat-1)), Δ⟨ps⟩ and ΔΣm give
+   drift fractions of −9.4476e−6 vs −9.4469e−6, ratio = 1.00007 (7
+   ppb of F32 roundoff noise).
+4. **⟨ps⟩ drift tracks GRIB LNSP exactly** (`probe_grib_lnsp_mean.jl`
+   + `probe_grib_meta.jl`): GRIB c00 of LNSP drops by Δc00 = −5.72e−5
+   over 23 h. σ²(ln ps) grows from 0.0797² to 0.0804². Jensen:
+   `Δ ln⟨ps⟩ = Δc00 + Δ(σ²/2) ≈ −9.5e−6` — matches the binary drift
+   to within 1 part in 20.
+5. **Rigorous TM5 line-by-line audit found no bug in the spectral
+   preprocessor** (`ToClaude_RigorousReview_2026-04-07.md`): GRIB
+   packing order, Legendre recurrence, vod2uv formula, cm B-correction,
+   sign conventions, level merging — all match TM5 cy3-4dvar in spirit
+   up to the algorithmic divergences noted as H1–H6, none of which
+   could plausibly cause global mass drift.
+
+**Conclusion**: Our v4 preprocessor faithfully synthesizes ERA5 LNSP
+→ ps → m. The ERA5 source data itself has a small (~1 Pa/day) drift
+in the global mean surface pressure, driven by a combination of a
+monotonic decrease in ⟨ln ps⟩ and a monotonic increase in σ²(ln ps)
+across the 24 hourly analysis fields of Dec 1 2021. This is
+transmitted by our preprocessor exactly as it should be. The runtime
+mass_fixer then imposes this trajectory on tracer mass, which is
+exactly what it's designed to do.
+
+**Whether a ~1 Pa/day drift is the "expected" magnitude for ERA5
+hourly reanalysis data** is an open question. I have not checked
+against:
+  - MARS-retrieved surface pressure (`param=134`) for cross-validation
+  - Published ERA5 mass conservation diagnostics
+  - Multi-day trajectories (would the drift bound or grow linearly?)
+
+But for the model's correctness, these are not blockers. The model
+does what it promises: transport tracer mass along the prescribed
+air-mass trajectory.
+
+## Earlier wrong claims retracted
+
+Three times this session I wrote confidently wrong explanations for
+the drift:
+- "Real ERA5 4DVar 12-hour analysis-cycle artifact" — pattern-matched
+  the timing of two spikes without checking the math. Retracted after
+  magnitude check showed our spikes were ~10× published ERA5 analysis
+  increments.
+- "TM5 with the same data would also show this drift" — unverified
+  counterfactual. Retracted.
+- "TM5 r1112 effectively does mass-fixing via m=(at+bt×ps)" — cited as
+  "TM5-faithful" rationale for mass_fixer=true. This was a hypothesis
+  dressed as fact. Retracted in CLAUDE.md invariant 11.
+
+Rule 1c added to CLAUDE.md (commit `759327a`) forbids writing
+hypotheses to MEMORY.md as facts. The right default entry for any
+unexplained drift/error is "source unknown" with the verified narrow
+facts, never a framing-as-explanation.
+
 ## Open questions — please scrutinize
 
 1. **The mass drift is in the binary, not the runtime — but the

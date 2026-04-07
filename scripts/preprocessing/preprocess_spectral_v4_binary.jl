@@ -896,8 +896,9 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
                      T_target::Int, min_dp::Float64;
                      next_day_hour0=nothing,
                      thermo_dir::String="",
-                     include_qv::Bool=false)
-    FT = Float32
+                     include_qv::Bool=false,
+                     output_float_type::Type=Float32)
+    FT = output_float_type
     Nz_native = n_levels(vc_native)
     Nz = n_levels(merged_vc)
     Nx = grid.Nlon
@@ -942,7 +943,8 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
     # --- Output path ---
     mkpath(out_dir)
     dp_tag = @sprintf("merged%dPa", round(Int, min_dp))
-    bin_path = joinpath(out_dir, "era5_v4_$(date_str)_$(dp_tag)_float32.bin")
+    ft_tag = FT == Float64 ? "float64" : "float32"
+    bin_path = joinpath(out_dir, "era5_v4_$(date_str)_$(dp_tag)_$(ft_tag).bin")
 
     if isfile(bin_path) && filesize(bin_path) == total_bytes
         @info "  SKIP (exists, correct size): $(basename(bin_path))"
@@ -975,7 +977,7 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
     header = Dict{String,Any}(
         "magic" => "MFLX", "version" => 4, "header_bytes" => HEADER_SIZE,
         "Nx" => Nx, "Ny" => Ny, "Nz" => Nz, "Nz_native" => Nz_native, "Nt" => Nt,
-        "float_type" => "Float32", "float_bytes" => sizeof(FT),
+        "float_type" => string(FT), "float_bytes" => sizeof(FT),
         "window_bytes" => bytes_per_window,
         "n_m" => n_m, "n_am" => n_am, "n_bm" => n_bm, "n_cm" => n_cm, "n_ps" => n_ps,
         "n_qv" => n_qv, "n_cmfmc" => 0,
@@ -1356,6 +1358,12 @@ function main()
     met_interval = Float64(cfg["numerics"]["met_interval"])
     half_dt      = dt / 2.0
 
+    # Optional: write output as Float64 instead of the default Float32.
+    # Use sparingly — doubles binary size to ~12 GB/day for tropo34.
+    # Useful for diagnosing F32 quantization in the dm field, etc.
+    ft_str = String(get(cfg["numerics"], "float_type", "Float32"))
+    output_float_type = ft_str == "Float64" ? Float64 : Float32
+
     level_range = level_top:level_bot
     Nz_native = length(level_range)
 
@@ -1439,7 +1447,8 @@ function main()
                              T_target, min_dp;
                              next_day_hour0=next_day_h0,
                              thermo_dir=thermo_dir,
-                             include_qv=include_qv)
+                             include_qv=include_qv,
+                             output_float_type=output_float_type)
 
         result === nothing && continue
     end

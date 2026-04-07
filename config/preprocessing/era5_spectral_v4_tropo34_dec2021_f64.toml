@@ -1,0 +1,25 @@
+# ERA5 spectral -> v4 daily binary, TM5 r1112 tropo34 level selection,
+# Float64 disk format. Used to test whether F32 quantization in dm/am/bm/cm
+# is the source of the small mass drift observed on the F32 binary.
+#
+# Output is 2x larger (~12 GB/day for tropo34, 720x361x34, 24 windows).
+
+[input]
+spectral_dir = "~/data/AtmosTransport/met/era5/spectral_hourly"
+coefficients = "config/era5_L137_coefficients.toml"
+
+[output]
+directory = "~/data/AtmosTransport/met/era5/spectral_v4_tropo34_dec2021_f64"
+
+[grid]
+nlon = 720
+nlat = 361
+level_top = 1
+level_bot = 137
+echlevs = "ml137_tropo34"
+merge_min_thickness_Pa = 1000.0  # fallback, not used with echlevs
+
+[numerics]
+float_type = "Float64"   # ← test config: full F64 disk format
+dt = 900.0
+met_interval = 3600.0

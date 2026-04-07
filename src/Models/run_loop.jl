@@ -117,6 +117,18 @@ function _run_loop!(model, grid::AbstractGrid{FT},
         "output"       => 0.0,  # write_output!
     )
 
+    # Initialize output writers — creates fresh files, replacing any leftover
+    # from a previous run. Without this, NetCDF outputs from prior crashed
+    # runs would silently mix with the current run, producing files with
+    # out-of-order timestamps and ghost data (observed 2026-04-07).
+    for writer in model.output_writers
+        try
+            _IO.initialize_output!(writer, model)
+        catch e
+            @warn "initialize_output! failed for $(typeof(writer)): $e"
+        end
+    end
+
     log_simulation_start(model, grid, buffering, n_win, n_sub, dw)
     prog = Progress(n_win; desc="Simulation ", showspeed=true, barlen=40)
 

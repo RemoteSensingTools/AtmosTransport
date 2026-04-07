@@ -39,6 +39,10 @@ driver       = "preprocessed_latlon"
 # config/preprocessing/era5_spectral_v4_tropo34_dec2021.toml
 directory    = "~/data/AtmosTransport/met/era5/spectral_v4_tropo34_dec2021"
 disable_qv   = true          # moist basis, no QV loading
+# Use time-interpolated flux deltas (v4 path). The v4 binary's Poisson
+# balance + time interpolation provides cell mass replenishment that the
+# static-flux path cannot. Local nloop refinement handles per-substep CFL.
+disable_flux_delta = false
 dt           = 900
 max_windows  = 1             # one window for instrumentation
 

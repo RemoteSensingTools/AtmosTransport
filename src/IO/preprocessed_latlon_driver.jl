@@ -59,6 +59,8 @@ struct PreprocessedLatLonMetDriver{FT} <: AbstractMassFluxMetDriver{FT}
     native_B_ifc    :: Vector{Float64}
     "simulation start date (auto-detected from file time variable)"
     _start_date     :: Date
+    "if true, ignore flux deltas in the binary header — force static-flux runtime path"
+    disable_flux_delta :: Bool
 end
 
 """
@@ -76,6 +78,7 @@ function PreprocessedLatLonMetDriver(; FT::Type{<:AbstractFloat} = Float64,
                                        max_windows::Union{Nothing, Int} = nothing,
                                        qv_dir::String = "",
                                        disable_qv::Bool = false,
+                                       disable_flux_delta::Bool = false,
                                        native_A_ifc::Vector{Float64} = Float64[],
                                        native_B_ifc::Vector{Float64} = Float64[])
     isempty(files) && error("PreprocessedLatLonMetDriver: no files provided")
@@ -152,7 +155,8 @@ function PreprocessedLatLonMetDriver(; FT::Type{<:AbstractFloat} = Float64,
         FT(actual_dt), steps_per_win,
         lons, lats, Nx, Ny, Nz,
         level_top, level_bot, merge_map,
-        expanduser(qv_dir), disable_qv, native_A_ifc, native_B_ifc, _start)
+        expanduser(qv_dir), disable_qv, native_A_ifc, native_B_ifc, _start,
+        disable_flux_delta)
 
     # Foolproof check (added 2026-04-06): verify cm satisfies local continuity
     # with am/bm on window 1. Catches the silent-stale failure mode where the

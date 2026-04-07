@@ -44,6 +44,12 @@ function _run_loop!(model, grid::AbstractGrid{FT},
     # === Allocation (panel_map from grid — all allocators read it) ===
     _use_gchp_sched = _needs_gchp(model.advection_scheme)
     _flux_delta = try
+        # Honor explicit disable: if config sets disable_flux_delta=true, force
+        # static-flux runtime path even if the binary header says deltas exist.
+        # This is required to enable the global Check_CFL pre-pass which is
+        # gated to the no-deltas branch.
+        disable_fd = hasproperty(driver, :disable_flux_delta) && driver.disable_flux_delta
+        !disable_fd &&
         hasproperty(driver, :files) && !isempty(driver.files) &&
         endswith(driver.files[1], ".bin") &&
         _IO.has_flux_delta(driver)

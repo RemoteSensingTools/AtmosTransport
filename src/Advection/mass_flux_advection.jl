@@ -991,7 +991,8 @@ function check_global_cfl_and_scale!(am::AbstractArray{FT,3},
     # enough that this is acceptable for the global pre-pass (called once
     # per met window per advection_phase! call).
     n_extra = 1
-    last_info = (substep=0, sweep="none", mmin=Float64(NaN), argmin_idx=(0, 0, 0))
+    last_info = (substep=0, sweep="none", mmin=Float64(NaN), argmin_idx=(0, 0, 0),
+                 max_cfl=NaN, cfl_loc=(0, 0, 0))
     for halving in 0:max_halvings
         # Run mass-only Strang sequence n_sub * n_extra times on m_pilot.
         # Use existing mass-only kernels via the same pilot pattern.
@@ -1009,14 +1010,16 @@ function check_global_cfl_and_scale!(am::AbstractArray{FT,3},
         # Per-halving failure breadcrumb (always logged at low halving levels,
         # rate-limited at high levels to avoid spam).
         if halving < 3 || halving == max_halvings
-            @info "check_global_cfl: halving=$(halving) (substeps=$(n_sub * n_extra), scale=$(1/n_extra)) FAILED at substep=$(info.substep) sweep=$(info.sweep) mmin=$(info.mmin) argmin=$(info.argmin_idx)"
+            cfl_str = isnan(info.max_cfl) ? "" : " | CFL=$(round(info.max_cfl, sigdigits=4)) at $(info.cfl_loc)"
+            @info "check_global_cfl: halving=$(halving) (substeps=$(n_sub * n_extra), scale=$(1/n_extra)) FAILED at substep=$(info.substep) sweep=$(info.sweep) mmin=$(info.mmin) argmin=$(info.argmin_idx)$cfl_str"
         end
 
         if halving == max_halvings
+            cfl_str = isnan(last_info.max_cfl) ? "" : ", max_cfl=$(last_info.max_cfl) at $(last_info.cfl_loc)"
             error("check_global_cfl_and_scale!: failed to converge after $max_halvings halvings " *
                   "(would have run $(n_sub * n_extra) substeps with am/bm/cm scaled by $(1/n_extra)). " *
                   "Last failure: substep=$(last_info.substep) sweep=$(last_info.sweep) " *
-                  "mmin=$(last_info.mmin) argmin=$(last_info.argmin_idx)")
+                  "mmin=$(last_info.mmin) argmin=$(last_info.argmin_idx)$cfl_str")
         end
 
         # Halve fluxes and double n_extra
@@ -1031,14 +1034,20 @@ end
 """
 Internal helper: run `n_substeps` of mass-only Strang on ws.m_pilot.
 Returns `(ok::Bool, info::NamedTuple)` where `info` carries the failure
-breadcrumb (`substep`, `sweep`, `mmin`, `argmin_idx`) when `ok==false`,
-or the final `mmin` when `ok==true`.
+breadcrumb (`substep`, `sweep`, `mmin`/`max_cfl`, `argmin_idx`) when
+`ok==false`, or the final `mmin` when `ok==true`.
+
+The pilot enforces TWO conditions per sweep, matching TM5 Check_CFL
+(advectm_cfl.F90):
+  1. min(m) > 0   — no cell may go negative
+  2. max(|flux|/m_donor) < cfl_limit  — no face may exceed local CFL
+
+Condition 2 catches cells where the local nloop refinement would also
+fail (e.g. polar pole-adjacent stratospheric cells with bm/m > 1). This
+matches TM5's per-face CFL check.
 
 The mass update for each direction is the SAME formula as the real kernels
-(reduced grid for X, simple for Y/Z).  This is the conservative pilot:
-it does NOT do per-(j,l) or per-level local nloop refinement — instead,
-if a single mass-only Strang sequence fails, we conclude that GLOBAL
-halving is needed (the local nloop won't help with cumulative drainage).
+(reduced grid for X, simple for Y/Z).
 """
 function _global_pilot_strang_sequence!(ws::MassFluxWorkspace{FT}, grid,
                                           am, bm, cm, n_substeps::Int,
@@ -1048,6 +1057,51 @@ function _global_pilot_strang_sequence!(ws::MassFluxWorkspace{FT}, grid,
     kx! = _mass_only_x_kernel!(backend, 256)
     ky! = _mass_only_y_kernel!(backend, 256)
     kz! = _mass_only_z_kernel!(backend, 256)
+
+    # Host buffers for per-face CFL checks (computed on CPU for simplicity)
+    bm_h = Array{FT}(undef, Nx, Ny + 1, Nz)
+    cm_h = Array{FT}(undef, Nx, Ny, Nz + 1)
+    copyto!(bm_h, bm)
+    copyto!(cm_h, cm)
+    m_h  = Array{FT}(undef, Nx, Ny, Nz)
+
+    function check_cfl_y!()
+        # Per-face Y CFL: max |bm[i,j,k]| / m_donor where donor depends on bm sign
+        copyto!(m_h, ws.m_pilot)
+        max_cfl = zero(FT)
+        max_loc = (0, 0, 0)
+        @inbounds for k in 1:Nz, j in 2:Ny, i in 1:Nx
+            bm_v = bm_h[i, j, k]
+            md = bm_v >= zero(FT) ? m_h[i, j-1, k] : m_h[i, j, k]
+            if md > zero(FT)
+                c = abs(bm_v) / md
+                if c > max_cfl
+                    max_cfl = c
+                    max_loc = (i, j, k)
+                end
+            end
+        end
+        return max_cfl, max_loc
+    end
+
+    function check_cfl_z!()
+        # Per-face Z CFL: max |cm[i,j,k]| / m_donor (k=interface, donor depends on sign)
+        copyto!(m_h, ws.m_pilot)
+        max_cfl = zero(FT)
+        max_loc = (0, 0, 0)
+        @inbounds for k in 2:Nz, j in 1:Ny, i in 1:Nx
+            cm_v = cm_h[i, j, k]
+            md = cm_v >= zero(FT) ? m_h[i, j, k-1] : m_h[i, j, k]
+            if md > zero(FT)
+                c = abs(cm_v) / md
+                if c > max_cfl
+                    max_cfl = c
+                    max_loc = (i, j, k)
+                end
+            end
+        end
+        return max_cfl, max_loc
+    end
 
     function apply_x!()
         kx!(ws.m_buf, ws.m_pilot, am, Int32(Nx), ws.cluster_sizes; ndrange=size(ws.m_pilot))
@@ -1067,24 +1121,52 @@ function _global_pilot_strang_sequence!(ws::MassFluxWorkspace{FT}, grid,
         copyto!(ws.m_pilot, ws.m_buf)
         return minimum(ws.m_pilot)
     end
-    function fail(substep::Int, sweep::String, mmin)
+    function fail(substep::Int, sweep::String, mmin; max_cfl=NaN, cfl_loc=(0,0,0))
         argmin_idx = Tuple(argmin(ws.m_pilot))
         return false, (substep=substep, sweep=sweep,
-                       mmin=Float64(mmin), argmin_idx=argmin_idx)
+                       mmin=Float64(mmin), argmin_idx=argmin_idx,
+                       max_cfl=Float64(max_cfl), cfl_loc=cfl_loc)
+    end
+    function check_y_cfl_or_fail(substep, sweep)
+        cfl, loc = check_cfl_y!()
+        if cfl >= cfl_limit
+            return fail(substep, sweep * ":CFL", minimum(ws.m_pilot);
+                        max_cfl=cfl, cfl_loc=loc)
+        end
+        return nothing
+    end
+    function check_z_cfl_or_fail(substep, sweep)
+        cfl, loc = check_cfl_z!()
+        if cfl >= cfl_limit
+            return fail(substep, sweep * ":CFL", minimum(ws.m_pilot);
+                        max_cfl=cfl, cfl_loc=loc)
+        end
+        return nothing
     end
 
     last_mmin = typemax(FT)
     for substep in 1:n_substeps
         # Strang sequence X → Y → Z → Z → Y → X
+        # X: positivity check only (cluster grid)
         m1 = apply_x!(); m1 <= zero(FT) && return fail(substep, "X1", m1); last_mmin = m1
+        # Y1: per-face CFL check, then apply
+        f = check_y_cfl_or_fail(substep, "Y1"); f !== nothing && return f
         m2 = apply_y!(); m2 <= zero(FT) && return fail(substep, "Y1", m2); last_mmin = m2
+        # Z1
+        f = check_z_cfl_or_fail(substep, "Z1"); f !== nothing && return f
         m3 = apply_z!(); m3 <= zero(FT) && return fail(substep, "Z1", m3); last_mmin = m3
+        # Z2
+        f = check_z_cfl_or_fail(substep, "Z2"); f !== nothing && return f
         m4 = apply_z!(); m4 <= zero(FT) && return fail(substep, "Z2", m4); last_mmin = m4
+        # Y2
+        f = check_y_cfl_or_fail(substep, "Y2"); f !== nothing && return f
         m5 = apply_y!(); m5 <= zero(FT) && return fail(substep, "Y2", m5); last_mmin = m5
+        # X2
         m6 = apply_x!(); m6 <= zero(FT) && return fail(substep, "X2", m6); last_mmin = m6
     end
     return true, (substep=n_substeps, sweep="done",
-                  mmin=Float64(last_mmin), argmin_idx=(0, 0, 0))
+                  mmin=Float64(last_mmin), argmin_idx=(0, 0, 0),
+                  max_cfl=NaN, cfl_loc=(0, 0, 0))
 end
 
 # =====================================================================

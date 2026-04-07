@@ -400,9 +400,13 @@ function _build_met_driver(driver_type::String, cfg::Dict, met_cfg_default, ::Ty
 
     elseif driver_type == "preprocessed_latlon"
         dir = _resolve_data_path(get(cfg, "directory", ""))
-        ft_tag = FT == Float32 ? "float32" : "float64"
+        # Disk format is always Float32 for binaries (v3/v4) and configurable
+        # for NetCDFs. Try float32 first (the canonical disk format) then
+        # float64 as a fallback for legacy float64 NetCDFs. The runtime
+        # promotes to FT on read regardless of disk format.
         files = if !isempty(dir) && isdir(dir)
-            find_massflux_shards(dir, ft_tag)
+            f32 = find_massflux_shards(dir, "float32")
+            !isempty(f32) ? f32 : find_massflux_shards(dir, "float64")
         else
             f = _resolve_data_path(get(cfg, "file", ""))
             isempty(f) ? String[] : [f]
@@ -411,6 +415,7 @@ function _build_met_driver(driver_type::String, cfg::Dict, met_cfg_default, ::Ty
         max_windows = max_win_cfg !== nothing ? Int(max_win_cfg) : nothing
         qv_dir_cfg = expanduser(get(cfg, "qv_directory", ""))
         disable_qv_cfg = Bool(get(cfg, "disable_qv", false))
+        disable_flux_delta_cfg = Bool(get(cfg, "disable_flux_delta", false))
         # Load native-grid A/B coefficients for QV merging (137→merged levels)
         native_A = Float64[]
         native_B = Float64[]
@@ -422,6 +427,7 @@ function _build_met_driver(driver_type::String, cfg::Dict, met_cfg_default, ::Ty
         return PreprocessedLatLonMetDriver(; FT, files, dt, merge_map, max_windows,
                                             qv_dir=qv_dir_cfg,
                                             disable_qv=disable_qv_cfg,
+                                            disable_flux_delta=disable_flux_delta_cfg,
                                             native_A_ifc=native_A,
                                             native_B_ifc=native_B)
 

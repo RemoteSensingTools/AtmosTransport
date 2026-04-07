@@ -887,6 +887,10 @@ struct MassFluxWorkspace{FT, A3 <: AbstractArray{FT,3}, V1 <: AbstractVector{Int
     cfl_scratch_y::A3
     cfl_scratch_z::A3
     cluster_sizes::V1  # per-latitude clustering for reduced grid (length Ny)
+    # Per-level Y nloop (host) and device mirror for kernel masking.
+    # Length Nz, set by `_y_discover_nloop!` (TM5 advecty__slopes.F90:236-289).
+    nloop_y_cpu::Vector{Int32}
+    nloop_y_dev::V1
 end
 
 """
@@ -902,10 +906,13 @@ function allocate_massflux_workspace(m::AbstractArray{FT,3},
                                      bm::AbstractArray{FT,3},
                                      cm::AbstractArray{FT,3};
                                      cluster_sizes_cpu::Union{Nothing,Vector{Int32}} = nothing) where FT
-    Ny = size(m, 2)
+    Nx, Ny, Nz = size(m)
     cs_cpu = cluster_sizes_cpu !== nothing ? cluster_sizes_cpu : ones(Int32, Ny)
     cs_dev = similar(m, Int32, Ny)
     copyto!(cs_dev, cs_cpu)
+    nloop_y_cpu = ones(Int32, Nz)
+    nloop_y_dev = similar(m, Int32, Nz)
+    copyto!(nloop_y_dev, nloop_y_cpu)
     MassFluxWorkspace{FT, typeof(m), typeof(cs_dev)}(
         similar(m),       # rm
         similar(m),       # rm_buf
@@ -918,6 +925,8 @@ function allocate_massflux_workspace(m::AbstractArray{FT,3},
         similar(bm),      # cfl_scratch_y
         similar(cm),      # cfl_scratch_z
         cs_dev,           # cluster_sizes (device)
+        nloop_y_cpu,      # per-level Y nloop (host)
+        nloop_y_dev,      # per-level Y nloop (device mirror)
     )
 end
 
@@ -1573,60 +1582,265 @@ function advect_x_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, am,
 end
 
 """
-    _y_pilot_succeeds(ws, m, bm_eff, n_sub, beta) → Bool
+    _y_discover_nloop_per_level!(ws, m, bm_buf, max_nloop, beta_thresh) → Vector{Int32}
+
+Per-level Y nloop discovery, matching TM5 advecty__slopes.F90:236-289.
+
+For each vertical level k:
+1. Initialize a pilot mass slice from m[:, :, k]
+2. Loop: while CFL >= beta_thresh and nloop[k] < max_nloop
+   a. Try iloop = 1..nloop[k]: at each iloop, check max |bm[k]/m_pilot| at every face,
+      then update m_pilot via Y mass conservation
+   b. If any iloop fails CFL: scale bm[:, :, k] *= nloop[k]/(nloop[k]+1), increment nloop[k]
+   c. Otherwise: converged for this level
+
+Modifies `bm_buf` in place (per-level scaling).  Sets `ws.nloop_y_cpu` and copies
+to `ws.nloop_y_dev`.  Returns `ws.nloop_y_cpu` (host array).
+
+CPU implementation: copies m, bm_buf to host, runs discovery, copies modified
+bm_buf back.  This is simpler than a per-level GPU kernel and fast enough since
+each level is a 720x361 = 260K-cell 2D problem.
 """
-function _y_pilot_succeeds(ws::MassFluxWorkspace{FT}, m::AbstractArray{FT,3},
-                            bm_eff, n_sub::Int, beta::FT) where FT
-    backend = get_backend(m)
-    Ny = size(m, 2)
-    copyto!(ws.m_pilot, m)
-    k! = _mass_only_y_kernel!(backend, 256)
-    for _ in 1:n_sub
-        cfl = max_cfl_massflux_y(bm_eff, ws.m_pilot, ws.cfl_scratch_y)
-        if !isfinite(cfl) || cfl >= beta
-            return false
-        end
-        k!(ws.m_buf, ws.m_pilot, bm_eff, Int32(Ny); ndrange=size(m))
-        synchronize(backend)
-        copyto!(ws.m_pilot, ws.m_buf)
-        if minimum(ws.m_pilot) <= zero(FT)
-            return false
+function _y_discover_nloop_per_level!(ws::MassFluxWorkspace{FT},
+                                       m::AbstractArray{FT,3},
+                                       bm_buf::AbstractArray{FT,3};
+                                       max_nloop::Int = 6,
+                                       beta_thresh::FT = FT(1.0)) where FT
+    Nx, Ny, Nz = size(m)
+    @assert size(bm_buf, 1) == Nx && size(bm_buf, 2) == Ny + 1 && size(bm_buf, 3) == Nz
+
+    # Copy to host for the discovery
+    m_h  = Array(m)
+    bm_h = Array(bm_buf)
+
+    nloop = ws.nloop_y_cpu
+    fill!(nloop, Int32(1))
+
+    for k in 1:Nz
+        nloop_k = 1
+        # Track:
+        #   - worst_cfl_overall: max across all attempts and iterations
+        #   - last_fail_iloop, last_fail_loc, last_fail_cfl: cell+iter that
+        #     CAUSED the most recent failure (truly diagnostic)
+        worst_cfl = zero(FT)
+        worst_loc = (0, 0, 0)  # (i, j, iloop)
+        last_fail_iloop = 0
+        last_fail_loc = (0, 0)
+        last_fail_cfl = zero(FT)
+        last_fail_m_pilot = zero(FT)
+        last_fail_bm_eff = zero(FT)
+        # Outer loop: try increasing nloop until CFL is satisfied or we hit max
+        while true
+            mx = view(m_h, :, :, k) |> copy
+
+            cfl_ok = true
+            for iloop in 1:nloop_k
+                local_max = zero(FT)
+                local_loc = (0, 0)
+                @inbounds for j in 2:Ny, i in 1:Nx
+                    bm_v = bm_h[i, j, k]
+                    md = bm_v >= zero(FT) ? mx[i, j-1] : mx[i, j]
+                    if md > zero(FT)
+                        b = abs(bm_v) / md
+                        if b > local_max
+                            local_max = b
+                            local_loc = (i, j)
+                        end
+                    end
+                end
+                if local_max > worst_cfl
+                    worst_cfl = local_max
+                    worst_loc = (local_loc[1], local_loc[2], iloop)
+                end
+                if local_max >= beta_thresh
+                    cfl_ok = false
+                    last_fail_iloop = iloop
+                    last_fail_loc = local_loc
+                    last_fail_cfl = local_max
+                    # Capture the donor mass and bm at failure
+                    ix, jx = local_loc
+                    if ix > 0 && jx > 0
+                        bm_v = bm_h[ix, jx, k]
+                        last_fail_bm_eff = bm_v
+                        last_fail_m_pilot = bm_v >= zero(FT) ? mx[ix, jx-1] : mx[ix, jx]
+                    end
+                    break
+                end
+                if iloop != nloop_k
+                    @inbounds for j in 1:Ny, i in 1:Nx
+                        bm_s = bm_h[i, j, k]
+                        bm_n = bm_h[i, j+1, k]
+                        mx[i, j] = mx[i, j] + bm_s - bm_n
+                    end
+                end
+            end
+
+            if cfl_ok
+                nloop[k] = Int32(nloop_k)
+                break
+            end
+
+            # CFL failed: reduce bm at this level and increment nloop
+            scale = FT(nloop_k) / FT(nloop_k + 1)
+            @inbounds for j in 1:(Ny+1), i in 1:Nx
+                bm_h[i, j, k] *= scale
+            end
+            nloop_k += 1
+            if nloop_k >= max_nloop
+                ix, jx = last_fail_loc
+                worst_i, worst_j, worst_iloop = worst_loc
+                # Original (unreduced) bm at the failing cell, for context
+                bm_orig = ix > 0 && jx > 0 ? Array(bm_buf)[ix, jx, k] : zero(FT)
+                m_orig  = ix > 0 && jx > 0 ? m_h[ix, jx, k]            : zero(FT)
+                error("Y nloop hit max_nloop=$max_nloop at level k=$k.\n" *
+                      "  Last failure: cell (i=$ix, j=$jx) at iloop=$last_fail_iloop\n" *
+                      "    bm_eff = $last_fail_bm_eff (after $(max_nloop-1) reductions)\n" *
+                      "    m_pilot at donor = $last_fail_m_pilot\n" *
+                      "    CFL_per_pass = $last_fail_cfl  (>= $beta_thresh)\n" *
+                      "  Original (unreduced) bm at this cell = $bm_orig\n" *
+                      "  Original m at this cell = $m_orig\n" *
+                      "  Worst CFL across all attempts: $worst_cfl at (i=$worst_i, j=$worst_j) iloop=$worst_iloop\n" *
+                      "TM5 also aborts here.")
+            end
         end
     end
-    return true
+
+    # Copy modified bm back to device, and nloop to device
+    copyto!(bm_buf, bm_h)
+    copyto!(ws.nloop_y_dev, nloop)
+    return nloop
+end
+
+@kernel function _massflux_y_perlevel_kernel!(
+    rm_new, @Const(rm), m_new, @Const(m),
+    @Const(bm), @Const(nloop_y), Ny, iter, use_limiter
+)
+    i, j, k = @index(Global, NTuple)
+    FT = eltype(rm)
+    @inbounds begin
+        # Per-level mask: only apply this iteration if iter <= nloop_y[k]
+        if Int32(iter) > nloop_y[k]
+            rm_new[i, j, k] = rm[i, j, k]
+            m_new[i, j, k]  = m[i, j, k]
+        else
+            # Standard Y advection logic (matches _massflux_y_kernel!)
+            cjm = j > 1  ? rm[i, j - 1, k] / m[i, j - 1, k] : zero(FT)
+            cj  = rm[i, j, k] / m[i, j, k]
+            cjp = j < Ny ? rm[i, j + 1, k] / m[i, j + 1, k] : zero(FT)
+
+            sj = if j > 1 && j < Ny
+                sc = (cjp - cjm) / 2
+                if use_limiter; sc = minmod_device(sc, 2 * (cjp - cj), 2 * (cj - cjm)); end
+                s = m[i, j, k] * sc
+                if use_limiter; s = max(min(s, rm[i, j, k]), -rm[i, j, k]); end
+                s
+            else
+                zero(FT)
+            end
+
+            sjm = if j > 2 && j - 1 < Ny
+                cjmm = rm[i, j - 2, k] / m[i, j - 2, k]
+                ckm  = rm[i, j - 1, k] / m[i, j - 1, k]
+                cjk  = rm[i, j, k]     / m[i, j, k]
+                sc   = (cjk - cjmm) / 2
+                if use_limiter; sc = minmod_device(sc, 2 * (cjk - ckm), 2 * (ckm - cjmm)); end
+                s = m[i, j - 1, k] * sc
+                if use_limiter; s = max(min(s, rm[i, j - 1, k]), -rm[i, j - 1, k]); end
+                s
+            else
+                zero(FT)
+            end
+
+            sjp = if j < Ny - 1 && j + 1 > 1
+                cjk  = rm[i, j, k]     / m[i, j, k]
+                cjp_ = rm[i, j + 1, k] / m[i, j + 1, k]
+                cjpp = rm[i, j + 2, k] / m[i, j + 2, k]
+                sc   = (cjpp - cjk) / 2
+                if use_limiter; sc = minmod_device(sc, 2 * (cjpp - cjp_), 2 * (cjp_ - cjk)); end
+                s = m[i, j + 1, k] * sc
+                if use_limiter; s = max(min(s, rm[i, j + 1, k]), -rm[i, j + 1, k]); end
+                s
+            else
+                zero(FT)
+            end
+
+            bm_s = bm[i, j, k]
+            flux_s = if j == 1
+                zero(FT)
+            elseif bm_s >= zero(FT)
+                beta = bm_s / m[i, j - 1, k]
+                beta * (rm[i, j - 1, k] + (one(FT) - beta) * sjm)
+            else
+                beta = bm_s / m[i, j, k]
+                beta * (rm[i, j, k] - (one(FT) + beta) * sj)
+            end
+
+            bm_n = bm[i, j + 1, k]
+            flux_n = if j == Ny
+                zero(FT)
+            elseif bm_n >= zero(FT)
+                beta = bm_n / m[i, j, k]
+                beta * (rm[i, j, k] + (one(FT) - beta) * sj)
+            else
+                beta = bm_n / m[i, j + 1, k]
+                beta * (rm[i, j + 1, k] - (one(FT) + beta) * sjp)
+            end
+
+            rm_new[i, j, k] = rm[i, j, k] + flux_s - flux_n
+            m_new[i, j, k]  = m[i, j, k]  + bm_s - bm_n
+        end
+    end
 end
 
 """
 $(SIGNATURES)
 
-TM5-style evolving-mass Y-subcycling.
+TM5-style per-level evolving-mass Y subcycling, matching `advecty__slopes.F90:236-507`.
+
+1. Discovery (`_y_discover_nloop_per_level!`): for each vertical level, find
+   the minimum nloop[k] such that the per-pass CFL stays under threshold and
+   m stays positive.  bm gets scaled in place per level.
+2. Application: run `max(nloop)` passes of `_massflux_y_perlevel_kernel!`
+   with a per-level mask.
+
+Differences vs TM5:
+- TM5 max_nloop = 6 (we follow this)
+- TM5 threshold = 1.0 (we follow this; pass `cfl_limit` to override for tighter)
+- TM5 aborts on max_nloop reached; we warn and accept the result.
 """
 function advect_y_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, bm,
                                        grid, use_limiter,
                                        ws::MassFluxWorkspace{FT};
-                                       cfl_limit = FT(0.95)) where FT
-    cfl_static = max_cfl_massflux_y(bm, m, ws.cfl_y)
-    n_sub = (isfinite(cfl_static) && cfl_static > zero(FT)) ?
-            max(1, ceil(Int, min(cfl_static, FT(100)) / cfl_limit)) : 1
-    max_n_sub = 256
-    while n_sub <= max_n_sub
-        ws.cfl_y .= bm ./ FT(n_sub)
-        if _y_pilot_succeeds(ws, m, ws.cfl_y, n_sub, cfl_limit)
-            break
-        end
-        n_sub *= 2
-    end
-    if n_sub > max_n_sub
-        @warn "advect_y_massflux_subcycled!: pilot failed even at n_sub=$max_n_sub" maxlog=3
-        n_sub = max_n_sub
-        ws.cfl_y .= bm ./ FT(n_sub)
-    end
+                                       cfl_limit = FT(1.0),  # TM5 hardcodes 1.0; ignore caller
+                                       max_nloop::Int = 6) where FT
+    backend = get_backend(m)
+    Nx, Ny, Nz = size(m)
+
+    # Phase 1: per-level discovery.  bm is scaled in place into ws.cfl_y
+    # so we don't mutate the caller's bm.
+    # Threshold is hardcoded to 1.0 to match TM5 advecty__slopes.F90:242
+    # (`do while(abs(beta) >= one ...)`).  Caller's cfl_limit is ignored
+    # for Y to keep TM5 parity.
+    copyto!(ws.cfl_y, bm)
+    nloop = _y_discover_nloop_per_level!(ws, m, ws.cfl_y;
+                                          max_nloop=max_nloop,
+                                          beta_thresh=FT(1.0))
     bm_eff = ws.cfl_y
-    for _ in 1:n_sub
-        advect_y_massflux!(rm_tracers, m, bm_eff, grid, use_limiter,
-                            ws.rm_buf, ws.m_buf)
+    max_iter = maximum(nloop)
+
+    # Phase 2: run actual tracer advection with per-level nloop mask
+    k! = _massflux_y_perlevel_kernel!(backend, 256)
+    for iter in 1:max_iter
+        for (_, rm) in pairs(rm_tracers)
+            k!(ws.rm_buf, rm, ws.m_buf, m, bm_eff,
+               ws.nloop_y_dev, Int32(Ny), Int32(iter), use_limiter;
+               ndrange=size(m))
+            synchronize(backend)
+            copyto!(rm, ws.rm_buf)
+        end
+        copyto!(m, ws.m_buf)
     end
-    return n_sub
+    return Int(max_iter)
 end
 
 """
@@ -1711,39 +1925,38 @@ function advect_z_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, cm,
     return n_sub
 end
 
-# Backward-compatible versions (allocating, for tests)
+# Backward-compatible versions (for tests).  These allocate a temporary
+# MassFluxWorkspace and dispatch to the workspace path so they exercise
+# the same TM5-style local nloop refinement as production.
 function advect_x_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, am,
                                        grid, use_limiter;
                                        cfl_limit = FT(0.95)) where FT
-    cfl = max_cfl_massflux_x(am, m)
-    n_sub = max(1, ceil(Int, cfl / cfl_limit))
-    am_eff = n_sub > 1 ? am ./ FT(n_sub) : am
-    for _ in 1:n_sub
-        advect_x_massflux!(rm_tracers, m, am_eff, grid, use_limiter)
-    end
-    return n_sub
+    bm_dummy = similar(m, FT, size(m, 1), size(m, 2) + 1, size(m, 3))
+    cm_dummy = similar(m, FT, size(m, 1), size(m, 2),     size(m, 3) + 1)
+    fill!(bm_dummy, zero(FT)); fill!(cm_dummy, zero(FT))
+    ws = allocate_massflux_workspace(m, am, bm_dummy, cm_dummy)
+    return advect_x_massflux_subcycled!(rm_tracers, m, am, grid, use_limiter, ws;
+                                         cfl_limit=cfl_limit)
 end
 function advect_y_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, bm,
                                        grid, use_limiter;
-                                       cfl_limit = FT(0.95)) where FT
-    cfl = max_cfl_massflux_y(bm, m)
-    n_sub = max(1, ceil(Int, cfl / cfl_limit))
-    bm_eff = n_sub > 1 ? bm ./ FT(n_sub) : bm
-    for _ in 1:n_sub
-        advect_y_massflux!(rm_tracers, m, bm_eff, grid, use_limiter)
-    end
-    return n_sub
+                                       cfl_limit = FT(1.0)) where FT
+    am_dummy = similar(m, FT, size(m, 1) + 1, size(m, 2), size(m, 3))
+    cm_dummy = similar(m, FT, size(m, 1),     size(m, 2), size(m, 3) + 1)
+    fill!(am_dummy, zero(FT)); fill!(cm_dummy, zero(FT))
+    ws = allocate_massflux_workspace(m, am_dummy, bm, cm_dummy)
+    return advect_y_massflux_subcycled!(rm_tracers, m, bm, grid, use_limiter, ws;
+                                         cfl_limit=cfl_limit)
 end
 function advect_z_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, cm,
                                        use_limiter;
                                        cfl_limit = FT(0.95)) where FT
-    cfl = max_cfl_massflux_z(cm, m)
-    n_sub = max(1, ceil(Int, cfl / cfl_limit))
-    cm_eff = n_sub > 1 ? cm ./ FT(n_sub) : cm
-    for _ in 1:n_sub
-        advect_z_massflux!(rm_tracers, m, cm_eff, use_limiter)
-    end
-    return n_sub
+    am_dummy = similar(m, FT, size(m, 1) + 1, size(m, 2),     size(m, 3))
+    bm_dummy = similar(m, FT, size(m, 1),     size(m, 2) + 1, size(m, 3))
+    fill!(am_dummy, zero(FT)); fill!(bm_dummy, zero(FT))
+    ws = allocate_massflux_workspace(m, am_dummy, bm_dummy, cm)
+    return advect_z_massflux_subcycled!(rm_tracers, m, cm, use_limiter, ws;
+                                         cfl_limit=cfl_limit)
 end
 
 # =====================================================================

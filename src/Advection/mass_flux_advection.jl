@@ -1848,16 +1848,18 @@ Aborts on max_nloop reached, matching TM5.
 function advect_x_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, am,
                                        grid, use_limiter,
                                        ws::MassFluxWorkspace{FT};
-                                       cfl_limit = FT(1.0),  # TM5 hardcodes 1.0
+                                       cfl_limit = FT(1.0),  # TM5 default
                                        max_nloop::Int = 50) where FT
     backend = get_backend(m)
     Nx, Ny, Nz = size(m)
 
     # Phase 1: per-(j,k) discovery.  am scaled in place into ws.cfl_x.
+    # The discovery threshold honors the caller-supplied cfl_limit so
+    # X and Y use the same effective acceptance (addressing Codex ToClaude6.md #3).
     copyto!(ws.cfl_x, am)
     nloop = _x_discover_nloop_per_row!(ws, m, ws.cfl_x;
                                         max_nloop=max_nloop,
-                                        beta_thresh=FT(1.0))
+                                        beta_thresh=cfl_limit)
     am_eff = ws.cfl_x
     max_iter = maximum(nloop)
 
@@ -2106,20 +2108,19 @@ Differences vs TM5:
 function advect_y_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, bm,
                                        grid, use_limiter,
                                        ws::MassFluxWorkspace{FT};
-                                       cfl_limit = FT(1.0),  # TM5 hardcodes 1.0; ignore caller
+                                       cfl_limit = FT(1.0),  # TM5 default
                                        max_nloop::Int = 6) where FT
     backend = get_backend(m)
     Nx, Ny, Nz = size(m)
 
     # Phase 1: per-level discovery.  bm is scaled in place into ws.cfl_y
     # so we don't mutate the caller's bm.
-    # Threshold is hardcoded to 1.0 to match TM5 advecty__slopes.F90:242
-    # (`do while(abs(beta) >= one ...)`).  Caller's cfl_limit is ignored
-    # for Y to keep TM5 parity.
+    # TM5 uses threshold 1.0 (advecty__slopes.F90:242).  We honor the
+    # caller-supplied cfl_limit for consistency with X (Codex ToClaude6.md #3).
     copyto!(ws.cfl_y, bm)
     nloop = _y_discover_nloop_per_level!(ws, m, ws.cfl_y;
                                           max_nloop=max_nloop,
-                                          beta_thresh=FT(1.0))
+                                          beta_thresh=cfl_limit)
     bm_eff = ws.cfl_y
     max_iter = maximum(nloop)
 
@@ -2292,6 +2293,11 @@ function _log_sweep(label::String, m::AbstractArray{FT,3}, am_or_bm_or_cm,
         ibad = argmin(m)
         msg *= "  FIRST_NONPOS at $(Tuple(ibad))"
     end
+    # Targeted polar diagnostic: m at i=616, j=358..361, k=2 (the failure cell)
+    if size(m, 2) >= 361 && size(m, 3) >= 2
+        m_h = Array(view(m, 616:616, 358:361, 2))
+        msg *= "  poles[616,358..361,k=2]=[" * join([string(round(m_h[1, jj-357, 1], sigdigits=5)) for jj in 358:361], ", ") * "]"
+    end
     @info msg
 end
 
@@ -2301,7 +2307,7 @@ function strang_split_massflux!(tracers::NamedTuple,
                                  grid::LatitudeLongitudeGrid,
                                  use_limiter::Bool,
                                  ws::MassFluxWorkspace{FT};
-                                 cfl_limit::FT = FT(0.95)) where FT
+                                 cfl_limit::FT = FT(1.0)) where FT
     # Multi-tracer: each tracer is advected independently, restoring m between.
     n_tr = length(tracers)
     m_save = n_tr > 1 ? similar(m) : m
@@ -2439,7 +2445,7 @@ function strang_split_prognostic!(tracers::NamedTuple,
                                    ws::MassFluxWorkspace{FT},
                                    pw_dict::NamedTuple,
                                    use_limiter::Bool;
-                                   cfl_limit::FT = FT(0.95)) where FT
+                                   cfl_limit::FT = FT(1.0)) where FT
     Nx, Ny, Nz = grid.Nx, grid.Ny, grid.Nz
     n_tr = length(tracers)
     m_save = n_tr > 1 ? similar(m) : m
@@ -2473,7 +2479,7 @@ function strang_split_massflux!(tracers::NamedTuple,
                                  am, bm, cm,
                                  grid::LatitudeLongitudeGrid,
                                  use_limiter::Bool;
-                                 cfl_limit::FT = FT(0.95)) where FT
+                                 cfl_limit::FT = FT(1.0)) where FT
     # Allocate working copies (the advect_*_subcycled! functions modify rm in-place)
     rm_tracers = NamedTuple{keys(tracers)}(
         Tuple(copy(rm) for rm in values(tracers))

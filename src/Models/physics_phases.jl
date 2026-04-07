@@ -338,10 +338,26 @@ function process_met_after_upload!(sched, phys, grid::LatitudeLongitudeGrid{FT},
     #   n_sub × 2 × am = steps_per_met × 2 × half_dt = window_dt
     # This matches the CS convention (no /n_sub, no scaling) and the old LL code.
 
-    # TM5 convention: j=1,Ny are real cells at ±89.75°.
-    # GPU reduced-grid clustering now supports full TM5 sizes (_MAX_GPU_CLUSTER=720).
-    # Zero am at pole rows — no zonal transport at geographic poles (TM5 convention).
-    # bm at pole FACES (j=1, j=Ny+1) is already zero from the preprocessor.
+    # === Pole-row am cleanup (NOT a TM5 deviation) ===
+    #
+    # TM5 convention: j=1, Ny are real cells at ±89.75°.  TM5's dynam0
+    # (advect_tools.F90:767-773) computes am = dtu*pu at j=1..jmr, where
+    # pu is a gridded mass flux.  At the geographic pole, pu is physically
+    # zero (zonal velocity is undefined there) so TM5 gets am≈0 naturally.
+    #
+    # Our spectral preprocessor (preprocess_spectral_v4_binary.jl:748)
+    # computes am = u_stag/cos(lat) * dp * R * dlat * half_dt.
+    # At j=1 and j=Ny=361, cos(lat) ≈ 0.00436 (cell center at ±89.75°).
+    # Any residual u from the spectral interpolation (~1e-10) gets
+    # multiplied by 1/cos_lat → huge garbage values (observed up to 4e17).
+    # These are NOT physical mass flux; they are numerical noise.
+    #
+    # Zeroing am at the pole rows restores TM5-equivalent behavior by
+    # setting am to its physical value of ~0.  This is a PREPROCESSOR
+    # ARTIFACT CLEANUP, not a TM5 algorithmic deviation.
+    #
+    # bm at pole FACES (j=1 = south pole face, j=Ny+1 = north pole face)
+    # is already zero from the preprocessor (no meridional flux through pole).
     Ny = grid.Ny
     @views gpu.am[:, 1, :]  .= zero(FT)
     @views gpu.am[:, Ny, :] .= zero(FT)

@@ -237,57 +237,65 @@ or exceeds the original cell mass.
 
 ## Open questions — please scrutinize
 
-1. **The mass drift is in the BINARY, not the runtime.** Initially
-   I called it "real atmospheric tendency" in MEMORY.md (wrong; user
-   corrected). Then I listed several runtime candidates as "unknown".
-   **Diagnosed 2026-04-07 AM via `/tmp/probe_dry_mass_residuals.jl`**:
+1. **The mass drift is in the binary, not the runtime — but the
+   source within the binary is not yet identified.**
 
+   What's proven (`/tmp/probe_dry_mass_residuals.jl`):
    - Binary `Σdm` over 24 windows = −4.262e+13 kg ≈ −8.31e−06 of total
      mass — **exactly equal to the observed runtime tracer drift of
      −8.31e−04%**. The runtime is faithfully transporting what's in
      the binary. No runtime bug.
 
-   - Per-window `Σdm` shows two large negative spikes at windows 10
-     (Dec 1 09:00) and 22 (Dec 1 21:00), 12 hours apart. These look
-     like **ERA5 4DVar 12-hour analysis cycle increments to LNSP**.
-     The IFS data assimilation introduces non-conservative corrections
-     to surface pressure at each analysis cycle. This is a real IFS
-     artifact, not our code.
+   What's proven (`/tmp/probe_dry_mass_with_qv.jl`, with proper
+   dp_native weights for the QV merging):
+   - Moist drift over 24h: −8.31e−06
+   - Dry drift over 24h: −1.02e−05
+   - Both moist AND dry mass drop together. **Water cycle is NOT the
+     source** — water-cycle non-conservation would make dry much
+     smaller than moist.
 
-   - **`Σconv(am, bm) = 0.0000e+00` at every single window**, structurally.
-     bm is zeroed at j=1 / j=Ny+1 (pole boundaries) and am is cyclic
-     in i, so the global flux balance is zero by construction. But
-     `Σdm ≠ 0` because dm includes the IFS analysis increment. The
-     Poisson balance therefore **cannot** make `conv = dm` globally.
-     The solver discards the mean mode at
+   What's observed (not proven):
+   - Two large negative `Σdm` spikes at win 10 and win 22, 12 hours
+     apart (4.87e13 and 2.93e13 kg, both moist and dry track together).
+   - The 22 other windows have small ±1e12 kg drift per window, ~1e−7
+     fraction per hour, consistent with random ~1 LSB / cell Float32
+     noise integrated over 8.8M cells.
+
+   **My initial claim that this was a "confirmed ERA5 4DVar
+   12-hour analysis-cycle artifact" was overclaimed.** Magnitude
+   check: 4.87e13 kg → ~0.95 Pa equivalent global LNSP increment.
+   Hersbach et al. 2020 reports ERA5 analysis increments to LNSP
+   typically much smaller (~0.01–0.1 Pa per cycle), so our spikes
+   are ~10× larger than the typical published number. Also, the
+   spike timing (hours 9–10 and 21–22) doesn't cleanly match
+   ERA5's 4DVar windows (03 UTC and 15 UTC). So the IFS
+   analysis-cycle hypothesis is plausible but not proven.
+
+   Other candidate sources I have not ruled out:
+   - A bug in our spectral preprocessor's LNSP handling, perhaps
+     interacting with the T639 → T359 truncation
+   - F32 quantization in `dm = m_next − m_curr` at
+     [scripts/preprocessing/preprocess_spectral_v4_binary.jl](scripts/preprocessing/preprocess_spectral_v4_binary.jl):1129-1131
+   - A real but undocumented IFS feature
+
+   **Currently running**: F64 binary regen for Dec 1 (config
+   [config/preprocessing/era5_spectral_v4_tropo34_dec2021_f64.toml](config/preprocessing/era5_spectral_v4_tropo34_dec2021_f64.toml)).
+   When it finishes I'll re-run the residual probe on the F64 output.
+   If the spikes vanish in F64, F32 quantization is the culprit. If
+   they persist, the issue is upstream of the binary write.
+
+   What we know for sure:
+   - **`Σconv(am, bm) = 0.0000e+00` at every window**, structurally.
+     bm is zeroed at j=1 / j=Ny+1 and am is cyclic in i, so the
+     global flux balance is zero by construction. The Poisson solver
+     in
      [scripts/preprocessing/preprocess_spectral_v4_binary.jl](scripts/preprocessing/preprocess_spectral_v4_binary.jl):237
-     (`A[1, 1] = 0.0 + 0.0im  # zero mean mode`), leaving a uniform
-     per-cell residual `-mean(dm_dt) ≈ +4.8e6 kg/cell` at every cell.
-     Probe finds max per-cell residual 2.6e7 kg, rel 1.3e−5, consistent
-     with that uniform floor plus Float32 noise.
-
-   - The runtime `mass_fixer` enforces `m_dev → m_prescribed = m + s/n_sub × dm`
-     each substep ([src/Models/physics_phases.jl](src/Models/physics_phases.jl):817-828),
-     so the Σdm increment IS imposed even though no flux divergence
-     produces it. That's exactly what mass_fixer is for. The tracer
-     scales by `m_prescribed / m_dev` per cell, so total tracer
-     follows `c × Σm_prescribed = c × (Σm_curr + Σdm)`.
-
-   **About dry vs moist**: with `disable_qv=true` the binary's `m`
-   field is moist air mass (= `(dA + dB × moist_ps) × area / g`). The
-   probe ran on this moist basis. Real water-cycle non-conservation
-   (P − E imbalance) is O(1e−5/day), much smaller than the observed
-   −8e−6/day, so most of the drift is consistent with IFS analysis
-   artifacts on LNSP itself, not water cycle physics.
-
-   **What this means for "TM5-faithful"**: TM5 with the same data
-   would show the same drift. The mass_fixer + dm pathway is faithful
-   to the IFS-derived m and dm fields. To verify bit-precise agreement
-   we'd need TM5 to actually run on this binary — that hasn't been
-   done.
-
-   The key insight: the runtime is correct. The data has a known
-   intermittent artifact that the runtime accurately reproduces.
+     discards the global mean mode (`A[1,1] = 0`), leaving a uniform
+     per-cell residual `−mean(dm_dt) ≈ +4.8e6 kg/cell`. The runtime
+     mass_fixer absorbs this each substep — that's its job.
+   - The mass_fixer + dm pathway is well-defined. It imposes the
+     binary's `dm` trajectory on cell mass and rescales tracer to
+     match. Whatever drift is in `dm` propagates to the tracer.
 
 2. **`mass_fixer=true` is required at this resolution.** The original
    F64 debug intent was to verify `mass_fixer=false`. But the polar

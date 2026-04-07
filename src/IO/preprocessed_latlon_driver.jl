@@ -748,6 +748,17 @@ function _merge_levels_latlon!(cpu_buf::LatLonCPUBuffer{FT},
     # Recompute cm from merged horizontal divergence (continuity equation).
     # Picking native interface values was incorrect — it breaks continuity
     # when combined with the residual correction.
+    #
+    # TODO (M3 from ToClaude_RigorousReview_2026-04-07.md): this path does
+    # NOT apply the TM5 dynam0 B-correction `+ dB[k] × pit`. To match the
+    # v4 binary preprocessor's `recompute_cm_from_divergence!`, we'd need
+    # to thread merged dB through the API here (currently only native
+    # A_ifc/B_ifc are stored on the driver). Without the B-correction,
+    # cm[Nz+1] is NOT guaranteed to be zero per cell for data with
+    # non-stationary surface pressure. This function is only called for
+    # NetCDF files with a merge_map — NOT for the v4 binary path (which
+    # reads cm directly from disk and is the only path exercised by
+    # current tests). Fix when/if the NetCDF+merge_map path is revived.
     Nx = size(cpu_buf.m, 1)
     Ny = size(cpu_buf.m, 2)
     @inbounds for k in 1:Nz_merged, j in 1:Ny, i in 1:Nx

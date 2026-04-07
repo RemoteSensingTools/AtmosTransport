@@ -638,6 +638,13 @@ Transform a single spectral field to a regular lat-lon grid.
 - T = spectral truncation
 - lats = target latitudes [degrees]
 - Nlon = number of target longitudes
+- lon_shift_rad = phase shift applied to spectral coefficients before BFFT.
+    The unshifted BFFT output `bfft(G)[k] = sum_m G[m] exp(2πi m (k-1)/N)`
+    samples at λ = (k-1)·dlon. To sample at the cell CENTERS λ = (k-0.5)·dlon
+    used by `TargetGrid` (offset from poles, TM5 convention), pass
+    `lon_shift_rad = dlon_rad / 2`. To sample at the cell FACES (TM5
+    `IntLat`/`IntLon` evaluation locations), pass 0. Fix for finding H2 in
+    ToClaude_RigorousReview_2026-04-07.md.
 Writes into field[Nlon, Nlat].
 """
 function spectral_to_grid!(field::Matrix{Float64},
@@ -648,7 +655,8 @@ function spectral_to_grid!(field::Matrix{Float64},
                            P_buf::Matrix{Float64},
                            fft_buf::Vector{ComplexF64};
                            fft_out::Union{Nothing,Vector{ComplexF64}}=nothing,
-                           bfft_plan=nothing)
+                           bfft_plan=nothing,
+                           lon_shift_rad::Float64=0.0)
     Nlat = length(lats)
     Nfft = Nlon
 
@@ -659,11 +667,17 @@ function spectral_to_grid!(field::Matrix{Float64},
         compute_legendre_column!(P_buf, T, sin_lat)
 
         # Legendre sum: G_m = sum_n spec[n+1, m+1] * P[n+1, m+1]
+        # Optionally apply longitudinal phase shift: G_m → G_m × exp(i·m·shift)
+        # so the BFFT output lands at λ = (k-1)·dlon + shift instead of
+        # λ = (k-1)·dlon. With shift = dlon/2 the samples are at cell centers.
         fill!(fft_buf, zero(ComplexF64))
         for m in 0:min(T, div(Nfft, 2))
             Gm = zero(ComplexF64)
             @inbounds for n in m:T
                 Gm += spec[n+1, m+1] * P_buf[n+1, m+1]
+            end
+            if lon_shift_rad != 0.0 && m > 0
+                Gm *= exp(im * m * lon_shift_rad)
             end
             fft_buf[m+1] = Gm
         end
@@ -703,15 +717,29 @@ end
 # ===========================================================================
 
 """
-Stagger cell-center winds to faces (periodic in longitude, poles = 0).
+Stagger cell-center winds to faces.
+
+After H2 fix (ToClaude_RigorousReview_2026-04-07.md):
+- u_cc lives at WEST FACES of cells in longitude (BFFT samples without shift),
+  so u_stag[i] = u_cc[i] directly (no longitudinal averaging). For
+  u_stag[Nlon+1] (= west face of cell Nlon+1 = wraps to west face of cell 1),
+  use u_cc[1].
+- v_cc lives at cell CENTERS in longitude (BFFT samples with dlon/2 shift)
+  and at cell CENTERS in latitude. Stagger latitudinally:
+  v_stag[i, j] = (v_cc[i, j-1] + v_cc[i, j])/2 = at south face of cell j.
+  Pole faces (j=1, j=Nlat+1) are zero.
 """
 function stagger_winds!(u_stag, v_stag, u_cc, v_cc, Nlon, Nlat, Nz)
+    # u: no longitudinal averaging (u_cc is already at west faces)
     @inbounds for k in 1:Nz, j in 1:Nlat, i in 1:Nlon
-        ip = i == Nlon ? 1 : i + 1
-        u_stag[i, j, k] = (u_cc[i, j, k] + u_cc[ip, j, k]) / 2
+        u_stag[i, j, k] = u_cc[i, j, k]
     end
-    u_stag[Nlon + 1, :, :] .= u_stag[1, :, :]
+    # u_stag[Nlon+1] = west face of (Nlon+1) wraps to west face of cell 1
+    @inbounds for k in 1:Nz, j in 1:Nlat
+        u_stag[Nlon + 1, j, k] = u_cc[1, j, k]
+    end
 
+    # v: stagger latitudinally only
     @inbounds for k in 1:Nz, j in 2:Nlat, i in 1:Nlon
         v_stag[i, j, k] = (v_cc[i, j - 1, k] + v_cc[i, j, k]) / 2
     end
@@ -745,9 +773,14 @@ end
 """
 Compute horizontal mass fluxes (staggered) and vertical mass flux from continuity.
 
-am[i, j, k] = dp_stag * cos(lat) * dlat * R / g * u_stag * half_dt
-bm[i, j, k] = dp_stag * dlon * R / g * v_stag * half_dt
+am[i, j, k] = dp_face * cos(lat) * dlat * R / g * u_stag * half_dt
+bm[i, j, k] = dp_face * dlon * R / g * v_stag * half_dt
 cm from continuity: TM5 hybrid-coordinate formula with B-correction.
+
+dp_face uses exp((LNSP[i-1] + LNSP[i])/2) instead of
+(exp(LNSP[i-1]) + exp(LNSP[i]))/2 to fix the Jensen bias flagged as
+H1/M4 in ToClaude_RigorousReview_2026-04-07.md. ln(ps) is smoother than
+ps itself, so the average-in-log is closer to the true face value.
 """
 function compute_mass_fluxes!(am, bm, cm, u_stag, v_stag, dp, ps,
                                dA, dB, grid::TargetGrid, half_dt, Nz)
@@ -756,29 +789,51 @@ function compute_mass_fluxes!(am, bm, cm, u_stag, v_stag, dp, ps,
     dlon = grid.dlon
     dlat = grid.dlat
 
+    # LNSP at cell centers (matching the shifted-BFFT sp). Used for
+    # Jensen-corrected face averaging.
+    lnsp_center = log.(ps)
+
     # --- Eastward mass flux at x-faces: am[Nlon+1, Nlat, Nz] ---
     # vod2uv returns U = u*cos(phi), not u. TM5 divides by cos(phi) in IntLat:
     #   mfu = R/g * integral U * dp / cos(phi) dphi = R/g * integral u * dp dphi
     # So: am = U/cos(phi) * dp/g * R * dphi * half_dt
+    #
+    # H5 fix: pole rows (j=1, j=Nlat) are explicitly zeroed to avoid the
+    # 1/cos(89.75°) amplification of spectral-aliasing noise in u near the
+    # pole (max|am| was O(1e17) with a uniform-in-i pattern that cancels
+    # in discrete divergence but feeds noise into the Poisson balance).
+    # TM5's IntLat handles this by averaging from the neighbouring row
+    # when lat is within 1e-4 of ±π/2. We use the simpler approach of
+    # zeroing am at the pole rows, consistent with the fact that the mass
+    # flux through a degenerate pole cell is not physically well-defined
+    # on a lat-lon grid.
     @inbounds for k in 1:Nz, j in 1:Nlat, i in 1:(Nlon+1)
         i_l = i == 1 ? Nlon : i - 1
         i_r = i <= Nlon ? i : 1
-        dp_stag = (dp[i_l, j, k] + dp[i_r, j, k]) / 2
-        cos_lat = max(grid.cos_lat[j], 1e-10)
-        am[i, j, k] = u_stag[i, j, k] / cos_lat * dp_stag * R_g * dlat * half_dt
+        # Jensen-corrected face ps: ps_face = exp((lnsp_l + lnsp_r)/2)
+        ps_face = exp((lnsp_center[i_l, j] + lnsp_center[i_r, j]) / 2)
+        dp_face = abs(dA[k] + dB[k] * ps_face)
+        cos_lat = grid.cos_lat[j]
+        if j == 1 || j == Nlat
+            am[i, j, k] = 0
+        else
+            am[i, j, k] = u_stag[i, j, k] / cos_lat * dp_face * R_g * dlat * half_dt
+        end
     end
 
     # --- Northward mass flux at y-faces: bm[Nlon, Nlat+1, Nz] ---
     # vod2uv returns V = v*cos(phi). TM5 IntLon does NOT divide by cos:
     #   mfv = R/g * integral V * dp dlambda
+    # Jensen-corrected: ps_face_y = exp((lnsp[j_s] + lnsp[j_n])/2)
     @inbounds for k in 1:Nz, j in 1:(Nlat+1), i in 1:Nlon
         if j == 1 || j == Nlat + 1
             bm[i, j, k] = 0  # No flux through poles
         else
             j_s = j - 1
             j_n = j
-            dp_stag = (dp[i, j_s, k] + dp[i, j_n, k]) / 2
-            bm[i, j, k] = v_stag[i, j, k] * dp_stag * R_g * dlon * half_dt
+            ps_face = exp((lnsp_center[i, j_s] + lnsp_center[i, j_n]) / 2)
+            dp_face = abs(dA[k] + dB[k] * ps_face)
+            bm[i, j, k] = v_stag[i, j, k] * dp_face * R_g * dlon * half_dt
         end
     end
 
@@ -847,8 +902,26 @@ function spectral_to_native_fields!(
     Nlat = grid.Nlat
     Nz = length(level_range)
 
-    # --- Transform LNSP -> SP on target grid ---
-    spectral_to_grid!(field_2d, lnsp_spec, T, grid.lats, Nlon, P_buf, fft_buf)
+    # H2 fix (ToClaude_RigorousReview_2026-04-07.md):
+    # The unshifted BFFT output samples at λ = (i-1)·dlon = the WEST FACE of
+    # cell i in TM5 convention. The cell center is at lons[i] = (i-0.5)·dlon.
+    # Different fields need different sample locations:
+    #
+    #   - u (zonal flux at am[i,j,k] = west face of cell i):
+    #       sample at west face → no shift, use u directly without staggering
+    #   - v (meridional flux at bm[i,j,k] = cell center longitudinally,
+    #     south face latitudinally):
+    #       sample at cell center longitudinally → shift by dlon/2,
+    #       then stagger latitudinally
+    #   - LNSP (sp at cell center for m = (dA + dB·sp)·area/g):
+    #       sample at cell center → shift by dlon/2
+    #
+    # This eliminates the half-cell longitudinal shift the audit flagged.
+    center_shift = grid.dlon / 2
+
+    # --- Transform LNSP -> SP on target grid (cell centers) ---
+    spectral_to_grid!(field_2d, lnsp_spec, T, grid.lats, Nlon, P_buf, fft_buf;
+                       lon_shift_rad=center_shift)
     @. sp = exp(field_2d)
 
     # --- For each level: VO/D -> U/V spectral, then transform ---
@@ -863,16 +936,19 @@ function spectral_to_native_fields!(
                 @view(d_hour[:, :, level]),
                 T)
 
-        # U spectral -> gridpoint (thread-safe with pre-planned FFT)
+        # U at WEST FACES (no longitudinal shift); thread-safe with
+        # pre-planned FFT.
         spectral_to_grid!(field_2d_t[tid], u_spec_t[tid], T,
                          grid.lats, Nlon, P_buf_t[tid], fft_buf_t[tid];
                          fft_out=fft_out_t[tid], bfft_plan=bfft_plans[tid])
         u_cc[:, :, k] .= field_2d_t[tid]
 
-        # V spectral -> gridpoint
+        # V at CELL CENTERS in longitude (shifted by dlon/2). Latitude is
+        # the cell center; latitudinal staggering happens in stagger_winds!.
         spectral_to_grid!(field_2d_t[tid], v_spec_t[tid], T,
                          grid.lats, Nlon, P_buf_t[tid], fft_buf_t[tid];
-                         fft_out=fft_out_t[tid], bfft_plan=bfft_plans[tid])
+                         fft_out=fft_out_t[tid], bfft_plan=bfft_plans[tid],
+                         lon_shift_rad=center_shift)
         v_cc[:, :, k] .= field_2d_t[tid]
     end
 
@@ -1108,6 +1184,10 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
         # TM5 convention: zero bm at pole FACES only
         @views bm_merged[:, 1, :]    .= zero(FT)
         @views bm_merged[:, Ny+1, :] .= zero(FT)
+        # H5: defensive re-zero of merged am at pole rows (compute_mass_fluxes!
+        # already zeros native am at j=1/Ny; this ensures it survives merging)
+        @views am_merged[:, 1, :]    .= zero(FT)
+        @views am_merged[:, Ny, :]   .= zero(FT)
 
         # Recompute cm from merged horizontal divergence (TM5 B-correction)
         recompute_cm_from_divergence!(cm_merged, am_merged, bm_merged, m_merged;
@@ -1161,6 +1241,9 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
         merge_cell_field!(bm_next_merged, bm_native, merge_map)
         @views bm_next_merged[:, 1, :]    .= zero(FT)
         @views bm_next_merged[:, Ny+1, :] .= zero(FT)
+        # H5: defensive re-zero of merged am at pole rows
+        @views am_next_merged[:, 1, :]    .= zero(FT)
+        @views am_next_merged[:, Ny, :]   .= zero(FT)
         last_hour_next_m  = copy(m_next_merged)
         last_hour_next_am = copy(am_next_merged)
         last_hour_next_bm = copy(bm_next_merged)
@@ -1185,6 +1268,12 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
         # Re-zero pole bm after balance (corrections may have touched them)
         @views all_bm[win_idx][:, 1, :]    .= zero(FT)
         @views all_bm[win_idx][:, Ny+1, :] .= zero(FT)
+        # H5 fix: re-zero pole-row am after balance. The Poisson correction
+        # is a gradient of psi, which is nonzero at j=1 and j=Ny even though
+        # the pre-balance am was zeroed there. This keeps am=0 at the pole
+        # rows end-to-end, consistent with the compute_mass_fluxes! fix.
+        @views all_am[win_idx][:, 1, :]  .= zero(FT)
+        @views all_am[win_idx][:, Ny, :] .= zero(FT)
         # Recompute cm from balanced am/bm
         recompute_cm_from_divergence!(all_cm[win_idx], all_am[win_idx], all_bm[win_idx],
                                       all_m[win_idx]; B_ifc=merged_vc.B)

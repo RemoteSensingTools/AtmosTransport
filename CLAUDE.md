@@ -13,6 +13,18 @@ Oceananigans-inspired modular architecture; KernelAbstractions.jl for GPU portab
 # appear from nowhere. When you see a suspicious result, say "this looks wrong, let me
 # find the bug" — not "this could be explained by X."
 
+# Rule 1c: NEVER write a hypothesis to MEMORY.md (or any persistent doc) labeled as
+# fact. Persistent memory is read by future agents who treat it as ground truth.
+# If you are pattern-matching, say "consistent with X" or "candidate: X" — never
+# "real X", "confirmed X", or "TM5 would also do X". Especially never claim that
+# an unexplained drift, error, or artifact is "real / physical / expected" without
+# (a) a back-of-envelope number that quantitatively matches, AND (b) a citation
+# (paper, code line, or independent run). Pattern-matching the timing of two spikes
+# to "looks like a 12h cycle" is NOT evidence — it's a guess. If you do not have
+# both (a) and (b), the right entry is "drift -X% over Y, source unknown". Saving
+# a wrong "explanation" is worse than saving "I don't know" because it ends the
+# investigation prematurely.
+
 # Rule 2: Debugging protocol for transport and physics issues
 
 When investigating ANY transport bug, numerical instability, or physics mismatch:
@@ -255,17 +267,24 @@ These are hard-won correctness constraints. Violating any causes silent wrong re
     in v4 headers also trigger a stale-binary warning if the source has
     moved on. Disable with `ENV["ATMOSTR_NO_STALE_CHECK"]="1"`.
 
-11. **Mass fixer is REQUIRED for polar cells in ERA5 LL at high resolution**.
-    The pole-adjacent stratospheric cells (j ∈ {1, 2, Ny-1, Ny}) have
-    |bm|/m ≈ 0.30 per face from the spectral preprocessor. Cumulative
-    drainage over a window of 4 substeps × 6 sweeps (X-Y-Z-Z-Y-X) reaches
-    98% of cell mass — no amount of local nloop refinement or global
-    Check_CFL halving can prevent collapse without mass replenishment.
-    TM5 r1112 effectively does mass-fixing via `m = (at + bt × ps) × area / g`
-    each substep. Set `[advection] mass_fixer = true` for the F64 LL path.
-    The previous "TM5-faithful means mass_fixer=false" assumption is wrong;
-    TM5 does maintain m from surface pressure, which IS the mass fixer in
-    different clothing.
+11. **`mass_fixer = true` is currently required for the ERA5 LL F64 debug
+    test to run to completion.** Pole-adjacent stratospheric cells
+    (j ∈ {1, 2, Ny-1, Ny}) have |bm|/m ≈ 0.30 per face from the spectral
+    preprocessor. With `mass_fixer = false`, cumulative drainage over a
+    window of 4 substeps × 6 sweeps (X-Y-Z-Z-Y-X) exceeds cell mass at
+    those cells; the local nloop refinement hits its max and the run
+    aborts (regression test:
+    `config/runs/era5_f64_debug_moist_v4_nofix.toml`).
+
+    **OPEN: whether this matches TM5 r1112 behavior is NOT verified.**
+    A previous CLAUDE.md draft asserted "TM5 r1112 effectively does
+    mass-fixing via m = (at + bt × ps) × area / g each substep". That
+    was a hypothesis, not a checked claim — do not propagate as fact.
+    Verifying it requires reading TM5 r1112's actual m-evolution path
+    (advect_tools.F90 / dynam0 / Setup_MassFlow) and possibly running
+    TM5 on the same data. Until that's done, the honest position is
+    "we need mass_fixer=true to avoid polar drainage; whether TM5 needs
+    it too is unknown".
 
 ---
 

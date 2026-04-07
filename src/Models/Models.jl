@@ -19,6 +19,7 @@ using ..Architectures: AbstractArchitecture, architecture, array_type,
 using ..Grids: AbstractGrid, get_panel_map
 using ..Fields: Field, Center, TracerFields
 using ..Advection: AbstractAdvectionScheme, find_mass_cfl_refinement
+import ..Advection
 using ..Convection: AbstractConvection
 using ..Diffusion: AbstractDiffusion
 using ..Chemistry: AbstractChemistry, NoChemistry

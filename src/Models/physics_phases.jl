@@ -764,12 +764,29 @@ function advection_phase!(tracers, sched, air, phys, model,
 
     copyto!(gpu.m_dev, gpu.m_ref)
 
-    for s in 1:n_sub
+    # === TM5 global Check_CFL pre-pass (advectm_cfl.F90:217-336) ===
+    # Tests the full Strang sequence on a pilot mass; if any cell would go
+    # negative or any face exceeds CFL, halves am/bm/cm globally and doubles
+    # the substep count.  Complements the per-(j,l)/per-level local nloop
+    # refinement inside X/Y by handling cumulative drainage.
+    #
+    # Only run for the no-deltas path (the debug config). The has_deltas
+    # path needs a more careful integration with the time interpolation
+    # which is deferred.
+    n_sub_eff = n_sub
+    if !has_deltas && adv_ws isa Advection.MassFluxWorkspace
+        n_extra = Advection.check_global_cfl_and_scale!(
+            gpu.am, gpu.bm, gpu.cm, gpu.m_dev, grid, adv_ws;
+            n_sub=n_sub, cfl_limit=FT(1.0), max_halvings=5)
+        n_sub_eff = n_sub * n_extra
+    end
+
+    for s in 1:n_sub_eff
         step[] += 1
 
         if has_deltas
             # Interpolate am/bm to substep midpoint (TM5 TimeInterpolation)
-            t = FT(s - FT(0.5)) / FT(n_sub)
+            t = FT(s - FT(0.5)) / FT(n_sub_eff)
             gpu.am .= am0 .+ t .* gpu.dam
             gpu.bm .= bm0 .+ t .* gpu.dbm
             # Re-apply pole zeroing
@@ -789,7 +806,7 @@ function advection_phase!(tracers, sched, air, phys, model,
         _apply_advection_latlon!(tracers, gpu.m_dev,
                                   gpu.am, gpu.bm, gpu.cm,
                                   grid, model.advection_scheme, adv_ws;
-                                  cfl_limit=FT(0.95))
+                                  cfl_limit=FT(1.0))  # TM5 advecty/x__slopes.F90 default
 
         # Per-substep mass correction.
         # mass_fixer=true (default): prescribe m_dev along the met-data mass
@@ -799,7 +816,9 @@ function advection_phase!(tracers, sched, air, phys, model,
         #   No rm scaling, no m_dev reset. Requires F64 to avoid B-correction
         #   accumulation errors driving cells negative.
         if _use_mass_fixer && gpu.dm !== nothing
-            t_end = FT(s) / FT(n_sub)
+            # Use n_sub_eff so the prescribed trajectory is sampled at the
+            # right substep when global Check_CFL has refined dt.
+            t_end = FT(s) / FT(n_sub_eff)
             m_prescribed = gpu.m_ref .+ t_end .* gpu.dm
             scale = m_prescribed ./ max.(gpu.m_dev, FT(1))
             for (_, rm_t) in pairs(tracers)

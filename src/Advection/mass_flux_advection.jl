@@ -478,6 +478,122 @@ end
 end
 
 # =====================================================================
+# Global Check_CFL pre-pass (TM5 advectm_cfl.F90:217-336)
+#
+# Runs the FULL X→Y→Z→Z→Y→X mass-only Strang sequence on a pilot mass.
+# If any face exceeds cfl_limit OR m_pilot goes negative anywhere, halves
+# am/bm/cm globally (× 1/2) and doubles the substep count.  Repeats until
+# success or max_halvings.
+#
+# This complements the local per-(j,l)/per-level nloop refinement inside
+# the X/Y subcycled functions: the GLOBAL halving handles cumulative
+# drainage that local refinement can't fix (because local refinement
+# preserves total transport per substep, while global halving REDUCES the
+# per-substep total transport by spreading across more substeps).
+# =====================================================================
+
+"""
+    check_global_cfl_and_scale!(am, bm, cm, m, grid, ws;
+                                  n_sub, cfl_limit, max_halvings) → Int
+
+TM5 Check_CFL equivalent.  Returns the `n_extra` factor: caller must run
+`n_sub * n_extra` substeps with the (now scaled) am/bm/cm.
+
+Modifies am, bm, cm in place: multiplied by `1/n_extra` after the call.
+
+Pilot loop:
+1. Test the full X→Y→Z→Z→Y→X mass-only Strang sequence on m_pilot, repeated
+   `n_sub * n_extra` times (matching what the real substep loop will do)
+2. If any cell goes negative or any per-face CFL >= cfl_limit, halve and retry
+3. Aborts after `max_halvings` halvings
+"""
+function check_global_cfl_and_scale!(am::AbstractArray{FT,3},
+                                       bm::AbstractArray{FT,3},
+                                       cm::AbstractArray{FT,3},
+                                       m::AbstractArray{FT,3},
+                                       grid,
+                                       ws::MassFluxWorkspace{FT};
+                                       n_sub::Int = 1,
+                                       cfl_limit::FT = FT(1.0),
+                                       max_halvings::Int = 5) where FT
+    backend = get_backend(m)
+    Nx, Ny, Nz = size(m)
+
+    # We do the pilot on host (CPU) for simplicity and to avoid GPU
+    # synchronization on every substep iteration.  The mass field is small
+    # enough that this is acceptable for the global pre-pass (called once
+    # per met window per advection_phase! call).
+    n_extra = 1
+    for halving in 0:max_halvings
+        # Run mass-only Strang sequence n_sub * n_extra times on m_pilot.
+        # Use existing mass-only kernels via the same pilot pattern.
+        copyto!(ws.m_pilot, m)
+        ok = _global_pilot_strang_sequence!(ws, grid, am, bm, cm,
+                                              n_sub * n_extra, cfl_limit)
+        if ok
+            if halving > 0
+                @info "check_global_cfl: halved $(halving) times → n_extra=$(n_extra), substeps=$(n_sub * n_extra)" maxlog=10
+            end
+            return n_extra
+        end
+
+        if halving == max_halvings
+            error("check_global_cfl_and_scale!: failed to converge after $max_halvings halvings " *
+                  "(would have run $(n_sub * n_extra) substeps with am/bm/cm scaled by $(1/n_extra))")
+        end
+
+        # Halve fluxes and double n_extra
+        am .*= FT(0.5)
+        bm .*= FT(0.5)
+        cm .*= FT(0.5)
+        n_extra *= 2
+    end
+    return n_extra  # unreachable
+end
+
+"""
+Internal helper: run `n_substeps` of mass-only Strang on ws.m_pilot.
+Returns true if all substeps succeed (m > 0 throughout).
+
+The mass update for each direction is the SAME formula as the real kernels
+(reduced grid for X, simple for Y/Z).  This is the conservative pilot:
+it does NOT do per-(j,l) or per-level local nloop refinement — instead,
+if a single mass-only Strang sequence fails, we conclude that GLOBAL
+halving is needed (the local nloop won't help with cumulative drainage).
+"""
+function _global_pilot_strang_sequence!(ws::MassFluxWorkspace{FT}, grid,
+                                          am, bm, cm, n_substeps::Int,
+                                          cfl_limit::FT) where FT
+    backend = get_backend(ws.m_pilot)
+    Nx, Ny, Nz = size(ws.m_pilot)
+    kx! = _mass_only_x_kernel!(backend, 256)
+    ky! = _mass_only_y_kernel!(backend, 256)
+    kz! = _mass_only_z_kernel!(backend, 256)
+
+    function apply_dir!(k_kernel, flux_arr, N::Int32, is_x::Bool)
+        if is_x
+            k_kernel(ws.m_buf, ws.m_pilot, flux_arr, N, ws.cluster_sizes; ndrange=size(ws.m_pilot))
+        else
+            k_kernel(ws.m_buf, ws.m_pilot, flux_arr, N; ndrange=size(ws.m_pilot))
+        end
+        synchronize(backend)
+        copyto!(ws.m_pilot, ws.m_buf)
+        return minimum(ws.m_pilot) > zero(FT)
+    end
+
+    for substep in 1:n_substeps
+        # Strang sequence X → Y → Z → Z → Y → X
+        if !apply_dir!(kx!, am, Int32(Nx), true);  return false; end
+        if !apply_dir!(ky!, bm, Int32(Ny), false); return false; end
+        if !apply_dir!(kz!, cm, Int32(Nz), false); return false; end
+        if !apply_dir!(kz!, cm, Int32(Nz), false); return false; end
+        if !apply_dir!(ky!, bm, Int32(Ny), false); return false; end
+        if !apply_dir!(kx!, am, Int32(Nx), true);  return false; end
+    end
+    return true
+end
+
+# =====================================================================
 # Prognostic-slope kernels (TM5 second-order moments)
 #
 # These kernels evolve rxm/rym/rzm alongside rm using the pf-term

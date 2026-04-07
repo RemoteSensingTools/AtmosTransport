@@ -1,5 +1,32 @@
 #!/usr/bin/env julia
 # ===========================================================================
+# OBSOLETE — DO NOT USE FOR NEW BINARIES (deprecated 2026-04-06)
+# ===========================================================================
+#
+# This script PICKS native cm at merged interface boundaries (merge_interface_field!)
+# and then smears the surface-BC residual via correct_cm_residual!. The result is a
+# cm field that does NOT satisfy local continuity with the merged am/bm — most
+# visibly at the polar caps, where the resulting binary causes the global Check_CFL
+# pre-pass to reject all 5 halvings (era5_f64_debug_moist.toml). See
+# `~/.claude/projects/-home-cfranken-code-gitHub-AtmosTransportModel/memory/tm5_preprocessing_comparison.md`
+# for the full analysis.
+#
+# REPLACEMENTS:
+#   - For core-only (no physics) binaries:
+#       scripts/preprocessing/preprocess_spectral_v4_binary.jl
+#       (goes spectral GRIB → binary directly, recomputes cm from continuity,
+#        then Poisson-balances am/bm, then recomputes cm again)
+#   - For full-physics binaries (convection, surface, QV, etc.):
+#       scripts/preprocessing/preprocess_era5_daily.jl
+#       (consumes spectral NetCDF + physics NetCDFs, also uses
+#        recompute_cm_from_divergence! for cm)
+#
+# This file is kept ONLY for historical reference and to support reading old
+# binaries that were generated with it. Do not generate new binaries with this.
+# Run-time configs that point at binaries produced by this script should be
+# regenerated with one of the replacements above.
+#
+# ===========================================================================
 # Convert preprocessed mass-flux NetCDF → merged-level flat binary (v2)
 #
 # Reads native-level ERA5 mass flux NetCDF (from preprocess_spectral_massflux.jl),
@@ -531,6 +558,27 @@ function parse_min_dp(args)
     end
     return parse(Float64, get(ENV, "MIN_DP", "1000"))
 end
+
+@warn """
+================================================================================
+convert_merged_massflux_to_binary.jl is OBSOLETE (deprecated 2026-04-06).
+
+This script PICKS native cm at merged interface boundaries and smears the
+surface-BC residual via correct_cm_residual!. The result does NOT satisfy local
+continuity with the merged am/bm and causes polar-cap mass drainage in the
+runtime model (see era5_f64_debug_moist.toml failure mode).
+
+USE INSTEAD:
+  - preprocess_spectral_v4_binary.jl  (core only, spectral GRIB → binary direct)
+  - preprocess_era5_daily.jl          (full physics: convection, surface, QV)
+
+Both replacements use recompute_cm_from_divergence! which produces a cm that
+exactly satisfies continuity with the merged am/bm.
+
+Continuing in 5 seconds (Ctrl-C to abort)...
+================================================================================
+"""
+sleep(5)
 
 min_dp = parse_min_dp(ARGS)
 file_args = filter(a -> !startswith(a, "--"), ARGS)

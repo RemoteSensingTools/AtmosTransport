@@ -1,0 +1,50 @@
+# ERA5 F64 debug, v4 binary, NO mass fixer (TM5-strict path)
+#
+# This is the unrelaxed TM5-faithful test: no mass fixer, pure mass-flux
+# advection only. Expected to FAIL on polar cells due to cumulative drainage
+# (98% loss per window from 24 sweeps × 0.30 |bm|/m). Documented as a
+# known limitation in MEMORY.md and era5_f64_debug_moist_v4.toml.
+#
+# Run anyway as a regression test to confirm the failure mode is exactly
+# what we expect: local nloop hits max_nloop on a polar pole-adjacent cell.
+
+[architecture]
+use_gpu    = true
+float_type = "Float64"
+
+[grid]
+type       = "latlon"
+met_source = "era5"
+size       = [720, 361, 34]
+
+[met_data]
+driver       = "preprocessed_latlon"
+directory    = "~/data/AtmosTransport/met/era5/spectral_v4_tropo34_dec2021"
+disable_qv   = true
+disable_flux_delta = false
+dt           = 900
+max_windows  = 1
+
+[initial_conditions]
+dry_ic            = false
+co2.uniform_value = 411e-6
+
+[tracers.co2]
+emission = "none"
+species  = "co2"
+
+[advection]
+scheme            = "slopes"
+prognostic_slopes = false
+mass_fixer        = false    # TM5-strict: NO fixer (will fail on polar cells)
+
+[output]
+filename = "/tmp/era5_f64_debug_moist_v4_nofix.nc"
+interval = 10800
+
+[output.fields]
+co2_surface     = {type = "surface_slice", species = "co2"}
+co2_column_mean = {type = "column_mean", species = "co2"}
+
+[buffering]
+strategy = "double"

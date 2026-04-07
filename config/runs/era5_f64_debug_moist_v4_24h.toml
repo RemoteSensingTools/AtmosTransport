@@ -1,0 +1,47 @@
+# ERA5 F64 debug 24-hour stress test on v4 binary
+#
+# Same as era5_f64_debug_moist_v4.toml but runs the full 24-window day
+# (Dec 1 2021 hours 0-24) to stress-test the full TM5-faithful path.
+# Expected: tracer mixing ratio preserved to ≤ F32 precision after 24
+# windows of advection on the polar-vulnerable cells.
+
+[architecture]
+use_gpu    = true
+float_type = "Float64"
+
+[grid]
+type       = "latlon"
+met_source = "era5"
+size       = [720, 361, 34]
+
+[met_data]
+driver       = "preprocessed_latlon"
+directory    = "~/data/AtmosTransport/met/era5/spectral_v4_tropo34_dec2021"
+disable_qv   = true
+disable_flux_delta = false   # use v4 time-interpolation path
+dt           = 900
+max_windows  = 24            # full day (24 hourly windows)
+
+[initial_conditions]
+dry_ic            = false
+co2.uniform_value = 411e-6
+
+[tracers.co2]
+emission = "none"
+species  = "co2"
+
+[advection]
+scheme            = "slopes"
+prognostic_slopes = false
+mass_fixer        = true     # TM5-faithful: equivalent to TM5 r1112 m=(at+bt*ps)
+
+[output]
+filename = "/tmp/era5_f64_debug_moist_v4_24h.nc"
+interval = 10800             # 3-hourly snapshots
+
+[output.fields]
+co2_surface     = {type = "surface_slice", species = "co2"}
+co2_column_mean = {type = "column_mean", species = "co2"}
+
+[buffering]
+strategy = "double"

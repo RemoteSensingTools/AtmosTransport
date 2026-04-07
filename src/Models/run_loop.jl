@@ -259,7 +259,13 @@ function _run_loop!(model, grid::AbstractGrid{FT},
         t0 = time()
 
         # ── Output Phase ─────────────────────────────────────────────
-        sim_time = Float64(step[] * dt_sub)
+        # sim_time is the END-OF-WINDOW physical time. Compute from the
+        # window index w and the FIXED window duration (dt_window) so that
+        # global Check_CFL halving (which inflates step[] by n_extra) does
+        # NOT distort the elapsed time. Bug observed 2026-04-07: with
+        # n_extra=4 the step[]*dt_sub calculation reported 4× actual
+        # physical time, giving NetCDF outputs labeled at the wrong dates.
+        sim_time = Float64(w * dt_window)
         out_mass = compute_output_mass(sched, air, phys, grid)
         met = build_met_fields(sched, phys, grid, half_dt, dt_window)
         # m_ref was synced to m_dev after advection (in advection_phase!),
@@ -290,8 +296,11 @@ function _run_loop!(model, grid::AbstractGrid{FT},
                 t_phases["gpu_diffusion"]/w, t_phases["gpu_emissions"]/w, t_phases["gpu_diag"]/w)
         end
 
+        # Pass sim_time (= w * dt_window) directly so the progress display
+        # matches the model time even when global Check_CFL has inflated step[].
         update_progress!(prog, diag, grid, w, step[], dt_sub,
-                          wall_start, t_io, t_gpu, t_out)
+                          wall_start, t_io, t_gpu, t_out;
+                          sim_time=Float64(w * dt_window))
     end
 
     finish!(prog)

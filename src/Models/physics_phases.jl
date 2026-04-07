@@ -1893,17 +1893,23 @@ end
 
 """Update progress bar with timing + diagnostics."""
 function update_progress!(prog, diag, grid::LatitudeLongitudeGrid,
-                           w, step, dt_sub, wall_start, t_io, t_gpu, t_out)
-    sim_time = Float64(step * dt_sub)
+                           w, step, dt_sub, wall_start, t_io, t_gpu, t_out;
+                           sim_time=nothing)
+    # Prefer caller-provided sim_time; fall back to step*dt_sub for callers
+    # that don't yet pass it. The fallback is wrong when the global
+    # Check_CFL pre-pass has inflated step[] (n_extra > 1) — pass sim_time
+    # explicitly to get correct day display.
+    actual_sim_time = sim_time === nothing ? Float64(step * dt_sub) : Float64(sim_time)
     sv = Pair{Symbol,Any}[
-        :day  => @sprintf("%.1f", sim_time / 86400),
+        :day  => @sprintf("%.1f", actual_sim_time / 86400),
         :rate => @sprintf("%.2f s/win", w > 1 ? (time() - wall_start) / w : 0.0)]
     isempty(diag.showvalue) || push!(sv, :mass => diag.showvalue)
     next!(prog; showvalues=sv)
 end
 
 function update_progress!(prog, diag, grid::CubedSphereGrid,
-                           w, step, dt_sub, wall_start, t_io, t_gpu, t_out)
+                           w, step, dt_sub, wall_start, t_io, t_gpu, t_out;
+                           sim_time=nothing)
     sv = Pair{Symbol,Any}[
         :day  => div(w - 1, 24) + 1,
         :IO   => @sprintf("%.2f s/win", t_io / w),

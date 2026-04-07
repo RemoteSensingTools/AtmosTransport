@@ -991,22 +991,32 @@ function check_global_cfl_and_scale!(am::AbstractArray{FT,3},
     # enough that this is acceptable for the global pre-pass (called once
     # per met window per advection_phase! call).
     n_extra = 1
+    last_info = (substep=0, sweep="none", mmin=Float64(NaN), argmin_idx=(0, 0, 0))
     for halving in 0:max_halvings
         # Run mass-only Strang sequence n_sub * n_extra times on m_pilot.
         # Use existing mass-only kernels via the same pilot pattern.
         copyto!(ws.m_pilot, m)
-        ok = _global_pilot_strang_sequence!(ws, grid, am, bm, cm,
-                                              n_sub * n_extra, cfl_limit)
+        ok, info = _global_pilot_strang_sequence!(ws, grid, am, bm, cm,
+                                                    n_sub * n_extra, cfl_limit)
+        last_info = info
         if ok
             if halving > 0
-                @info "check_global_cfl: halved $(halving) times → n_extra=$(n_extra), substeps=$(n_sub * n_extra)" maxlog=10
+                @info "check_global_cfl: halved $(halving) times → n_extra=$(n_extra), substeps=$(n_sub * n_extra), final mmin=$(info.mmin)" maxlog=10
             end
             return n_extra
         end
 
+        # Per-halving failure breadcrumb (always logged at low halving levels,
+        # rate-limited at high levels to avoid spam).
+        if halving < 3 || halving == max_halvings
+            @info "check_global_cfl: halving=$(halving) (substeps=$(n_sub * n_extra), scale=$(1/n_extra)) FAILED at substep=$(info.substep) sweep=$(info.sweep) mmin=$(info.mmin) argmin=$(info.argmin_idx)"
+        end
+
         if halving == max_halvings
             error("check_global_cfl_and_scale!: failed to converge after $max_halvings halvings " *
-                  "(would have run $(n_sub * n_extra) substeps with am/bm/cm scaled by $(1/n_extra))")
+                  "(would have run $(n_sub * n_extra) substeps with am/bm/cm scaled by $(1/n_extra)). " *
+                  "Last failure: substep=$(last_info.substep) sweep=$(last_info.sweep) " *
+                  "mmin=$(last_info.mmin) argmin=$(last_info.argmin_idx)")
         end
 
         # Halve fluxes and double n_extra
@@ -1020,7 +1030,9 @@ end
 
 """
 Internal helper: run `n_substeps` of mass-only Strang on ws.m_pilot.
-Returns true if all substeps succeed (m > 0 throughout).
+Returns `(ok::Bool, info::NamedTuple)` where `info` carries the failure
+breadcrumb (`substep`, `sweep`, `mmin`, `argmin_idx`) when `ok==false`,
+or the final `mmin` when `ok==true`.
 
 The mass update for each direction is the SAME formula as the real kernels
 (reduced grid for X, simple for Y/Z).  This is the conservative pilot:
@@ -1037,27 +1049,42 @@ function _global_pilot_strang_sequence!(ws::MassFluxWorkspace{FT}, grid,
     ky! = _mass_only_y_kernel!(backend, 256)
     kz! = _mass_only_z_kernel!(backend, 256)
 
-    function apply_dir!(k_kernel, flux_arr, N::Int32, is_x::Bool)
-        if is_x
-            k_kernel(ws.m_buf, ws.m_pilot, flux_arr, N, ws.cluster_sizes; ndrange=size(ws.m_pilot))
-        else
-            k_kernel(ws.m_buf, ws.m_pilot, flux_arr, N; ndrange=size(ws.m_pilot))
-        end
+    function apply_x!()
+        kx!(ws.m_buf, ws.m_pilot, am, Int32(Nx), ws.cluster_sizes; ndrange=size(ws.m_pilot))
         synchronize(backend)
         copyto!(ws.m_pilot, ws.m_buf)
-        return minimum(ws.m_pilot) > zero(FT)
+        return minimum(ws.m_pilot)
+    end
+    function apply_y!()
+        ky!(ws.m_buf, ws.m_pilot, bm, Int32(Ny); ndrange=size(ws.m_pilot))
+        synchronize(backend)
+        copyto!(ws.m_pilot, ws.m_buf)
+        return minimum(ws.m_pilot)
+    end
+    function apply_z!()
+        kz!(ws.m_buf, ws.m_pilot, cm, Int32(Nz); ndrange=size(ws.m_pilot))
+        synchronize(backend)
+        copyto!(ws.m_pilot, ws.m_buf)
+        return minimum(ws.m_pilot)
+    end
+    function fail(substep::Int, sweep::String, mmin)
+        argmin_idx = Tuple(argmin(ws.m_pilot))
+        return false, (substep=substep, sweep=sweep,
+                       mmin=Float64(mmin), argmin_idx=argmin_idx)
     end
 
+    last_mmin = typemax(FT)
     for substep in 1:n_substeps
         # Strang sequence X → Y → Z → Z → Y → X
-        if !apply_dir!(kx!, am, Int32(Nx), true);  return false; end
-        if !apply_dir!(ky!, bm, Int32(Ny), false); return false; end
-        if !apply_dir!(kz!, cm, Int32(Nz), false); return false; end
-        if !apply_dir!(kz!, cm, Int32(Nz), false); return false; end
-        if !apply_dir!(ky!, bm, Int32(Ny), false); return false; end
-        if !apply_dir!(kx!, am, Int32(Nx), true);  return false; end
+        m1 = apply_x!(); m1 <= zero(FT) && return fail(substep, "X1", m1); last_mmin = m1
+        m2 = apply_y!(); m2 <= zero(FT) && return fail(substep, "Y1", m2); last_mmin = m2
+        m3 = apply_z!(); m3 <= zero(FT) && return fail(substep, "Z1", m3); last_mmin = m3
+        m4 = apply_z!(); m4 <= zero(FT) && return fail(substep, "Z2", m4); last_mmin = m4
+        m5 = apply_y!(); m5 <= zero(FT) && return fail(substep, "Y2", m5); last_mmin = m5
+        m6 = apply_x!(); m6 <= zero(FT) && return fail(substep, "X2", m6); last_mmin = m6
     end
-    return true
+    return true, (substep=n_substeps, sweep="done",
+                  mmin=Float64(last_mmin), argmin_idx=(0, 0, 0))
 end
 
 # =====================================================================

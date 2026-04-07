@@ -23,3 +23,10 @@ merge_min_thickness_Pa = 1000.0  # fallback, not used with echlevs
 float_type = "Float64"   # ← test config: full F64 disk format
 dt = 900.0
 met_interval = 3600.0
+
+# TM5-style global mean ps fix — pin DRY atmospheric mass each window.
+# See era5_spectral_v4_tropo34_dec2021.toml for full notes.
+[mass_fix]
+enable = true
+target_ps_dry_pa = 98726.0
+qv_global_climatology = 0.00247

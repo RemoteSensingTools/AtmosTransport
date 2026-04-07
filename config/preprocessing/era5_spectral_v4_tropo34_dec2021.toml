@@ -24,3 +24,15 @@ merge_min_thickness_Pa = 1000.0  # fallback, not used with echlevs
 float_type = "Float32"
 dt = 900.0
 met_interval = 3600.0
+
+# TM5-style global mean ps fix — pin DRY atmospheric mass each window.
+# Mirrors TM5 cy3-4dvar meteo.F90 Match('area-aver', sp_region0=p_global).
+# Eliminates ERA5 4DVar's analysis-cycle mass drift (~10⁻⁴/day) by uniform
+# additive shift on sp so that ⟨sp⟩_area corresponds to a fixed dry-mass
+# target (Trenberth & Smith 2005, J. Climate vol 18: M_dry = 5.1352e18 kg
+# → ⟨ps_dry⟩ ≈ 98726 Pa via M_dry·g/A_Earth).
+# Set enable=false to keep the raw ERA5 drift (regression diagnostic).
+[mass_fix]
+enable = true
+target_ps_dry_pa = 98726.0
+qv_global_climatology = 0.00247

@@ -198,9 +198,10 @@ These are hard-won correctness constraints. Violating any causes silent wrong re
 | Surface emissions invisible in column mean | Missing `[diffusion]` section | Invariant 7 |
 | 5x slower CPU loops | Wrong loop nesting order | Invariant 8 |
 | CO2 surface 535 ppm from 400 ppm uniform | Hybrid PE in vertical remap | Use direct cumsum PE |
-| Polar mass drainage / Y nloop max_nloop hit | Stale binary from old preprocessor OR mass_fixer=false | Invariant 10 |
+| Polar mass drainage / Y nloop max_nloop hit | Stale binary from old preprocessor OR mass_fixer=false | Invariant 10, 11 |
 | `STALE BINARY WARNING` at startup | Binary written by older preprocessor than current source | Invariant 10 |
 | `cm-continuity check FAILED` at startup | Binary's cm doesn't match its am/bm divergence — regenerate | Invariant 10 |
+| Tracer mass drifts ~10⁻⁴/day with uniform IC (ERA5 LL) | Mass fix disabled in preprocessor; raw ERA5 ⟨ps⟩ drift not absorbed | Invariant 12 |
 
 ### Invariant details
 
@@ -267,14 +268,16 @@ These are hard-won correctness constraints. Violating any causes silent wrong re
     in v4 headers also trigger a stale-binary warning if the source has
     moved on. Disable with `ENV["ATMOSTR_NO_STALE_CHECK"]="1"`.
 
-11. **`mass_fixer = true` is currently required for the ERA5 LL F64 debug
-    test to run to completion.** Pole-adjacent stratospheric cells
+11. **`mass_fixer = true` is required for the ERA5 LL F64 debug test to
+    run to completion.** Pole-adjacent stratospheric cells
     (j ∈ {1, 2, Ny-1, Ny}) have |bm|/m ≈ 0.30 per face from the spectral
     preprocessor. With `mass_fixer = false`, cumulative drainage over a
     window of 4 substeps × 6 sweeps (X-Y-Z-Z-Y-X) exceeds cell mass at
     those cells; the local nloop refinement hits its max and the run
     aborts (regression test:
-    `config/runs/era5_f64_debug_moist_v4_nofix.toml`).
+    `config/runs/era5_f64_debug_moist_v4_nofix.toml`). This is a LOCAL
+    cell-stability issue and is independent of the global mass drift fix
+    in invariant 12 below — both are needed for ERA5 LL.
 
     **OPEN: whether this matches TM5 r1112 behavior is NOT verified.**
     A previous CLAUDE.md draft asserted "TM5 r1112 effectively does
@@ -285,6 +288,34 @@ These are hard-won correctness constraints. Violating any causes silent wrong re
     TM5 on the same data. Until that's done, the honest position is
     "we need mass_fixer=true to avoid polar drainage; whether TM5 needs
     it too is unknown".
+
+12. **Global mean ps is pinned in the v4 spectral preprocessor (TM5
+    `Match('area-aver')` equivalent).** ERA5's 4DVar analysis is not
+    mass-conserving; raw ⟨ps⟩ drifts ~10⁻⁴/day, which translates
+    directly into a Σm drift in the binary because
+    `Σm = const + (A_Earth/g)·⟨sp⟩_area` (with `Σ_k b_k = 1`). To
+    eliminate this, `preprocess_spectral_v4_binary.jl` applies a
+    uniform additive shift to the gridded `sp` immediately after
+    `sp = exp(LNSP_grid)` so that `⟨sp⟩_area` corresponds to a fixed
+    dry-air mass target (Trenberth & Smith 2005:
+    `M_dry = 5.1352e18 kg → ⟨ps_dry⟩ ≈ 98726 Pa`, converted to total
+    via `target_total = target_dry / (1 - ⟨qv⟩_global ≈ 0.00247)`).
+    The implementation mirrors TM5 cy3-4dvar `meteo.F90:1361-1374`
+    which calls `Match('area-aver', sp_region0=p_global=98500 Pa)`
+    via `grid_type_ll.F90:1147-1155`.
+
+    **Verified 2026-04-07**: 24h F64 LL test with non-uniform ps drift
+    in raw ERA5 → after fix, Σm drift drops from -8.31e-04% to
+    +5.88e-09% (~140,000× improvement, F32 quantization noise floor).
+    Per-window offsets logged in the binary header
+    (`ps_offsets_pa_per_window`). Disable via `[mass_fix] enable=false`
+    in the preprocessor TOML for diagnostic purposes.
+
+    **What this does NOT fix**: local polar drainage (invariant 11).
+    The shift is uniform globally and only changes local `m` by
+    `b_k · Δps` (~0.4% at the surface, less aloft). It does not
+    change `|bm|/m` enough at the troubled polar cells to remove the
+    need for `mass_fixer = true` at runtime.
 
 ---
 

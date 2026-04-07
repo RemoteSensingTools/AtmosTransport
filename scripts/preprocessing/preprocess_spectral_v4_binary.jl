@@ -391,6 +391,56 @@ function recompute_cm_from_divergence!(cm::Array{FT,3}, am::Array{FT,3},
 end
 
 # ===========================================================================
+# Global mean ps fix — pin dry atmospheric mass (TM5 area-aver Match)
+# ===========================================================================
+"""
+    pin_global_mean_ps!(sp, area; target_ps_dry_pa, qv_global) -> Float64
+
+Apply a uniform additive offset to `sp` so that ⟨sp⟩_area corresponds to a
+prescribed dry-air mass target. Returns the offset (Pa) applied.
+
+Mirrors TM5 cy3-4dvar `Match('area-aver', sp_region0=p_global)` from
+`meteo.F90:1361-1374` (and the symmetric sp2 call at `:1458-1470`), but with a
+**dry-mass target** rather than TM5's nominal 98500 Pa total target.
+
+The TM5 implementation (`grid_type_ll.F90:1147-1155`, `Match_cell` /
+`area-aver` case) is a uniform additive shift on the fine grid that pins its
+area-weighted mean to the parent's value. With one parent cell covering the
+globe and `pg = sp_region0 = p_global`, the operation reduces to:
+
+    sp .+= (p_global - ⟨sp⟩_area_weighted)
+
+We use Trenberth & Smith 2005 dry mass `M_dry = 5.1352e18 kg`, which gives
+`⟨ps_dry⟩ = M_dry · g / A_Earth ≈ 98726 Pa`. To convert this to a total-ps
+target (since `sp` here is total ps, including water vapor), we divide by
+`(1 - ⟨qv⟩_global)` where `⟨qv⟩_global ≈ 0.00247` is the climatological
+column-mean specific humidity (Trenberth):
+
+    target_ps_total = target_ps_dry / (1 - qv_global)
+
+Why this eliminates `Σm` drift: with hybrid-sigma `m = (a + b·sp)·area/g` and
+`Σ_k b_k = 1` over a column, `Σm = const + (A_Earth/g)·⟨sp⟩_area`. Pinning
+`⟨sp⟩_area` to a constant pins `Σm` exactly.
+"""
+function pin_global_mean_ps!(sp::AbstractMatrix{Float64},
+                              area::AbstractMatrix{Float64};
+                              target_ps_dry_pa::Float64 = 98726.0,
+                              qv_global::Float64 = 0.00247)
+    target_ps_total = target_ps_dry_pa / (1.0 - qv_global)
+    sum_ps_area = 0.0
+    sum_area = 0.0
+    @inbounds for j in axes(sp, 2), i in axes(sp, 1)
+        a = area[i, j]
+        sum_ps_area += sp[i, j] * a
+        sum_area += a
+    end
+    ps_mean_current = sum_ps_area / sum_area
+    offset = target_ps_total - ps_mean_current
+    @. sp += offset
+    return offset
+end
+
+# ===========================================================================
 # Target regular lat-lon grid (TM5 convention: poles at cell faces)
 # ===========================================================================
 struct TargetGrid
@@ -896,7 +946,13 @@ function spectral_to_native_fields!(
     P_buf::Matrix{Float64}, fft_buf::Vector{ComplexF64},
     field_2d::Matrix{Float64},
     P_buf_t, fft_buf_t, fft_out_t, u_spec_t, v_spec_t, field_2d_t,
-    bfft_plans)
+    bfft_plans;
+    # Global mean ps fix (TM5 area-aver Match equivalent):
+    mass_fix_enable::Bool = true,
+    target_ps_dry_pa::Float64 = 98726.0,
+    qv_global_climatology::Float64 = 0.00247,
+    ps_offset_record::Union{Nothing,Vector{Float64}} = nothing,
+    ps_offset_slot::Int = 0)
 
     Nlon = grid.Nlon
     Nlat = grid.Nlat
@@ -923,6 +979,23 @@ function spectral_to_native_fields!(
     spectral_to_grid!(field_2d, lnsp_spec, T, grid.lats, Nlon, P_buf, fft_buf;
                        lon_shift_rad=center_shift)
     @. sp = exp(field_2d)
+
+    # === TM5-style global mean ps fix (pin dry mass) ===
+    # Uniform additive shift on sp so that ⟨sp⟩_area corresponds to a fixed
+    # dry-air mass target. Eliminates ERA5's analysis-cycle Σm drift by
+    # construction (Σ_cells m = const + (A_Earth/g)·⟨sp⟩_area; with Σ_k b_k=1
+    # the second term is the only window-varying contribution to Σm).
+    # Reference: TM5 cy3-4dvar meteo.F90:1361-1374, calling
+    # Match('area-aver', sp_region0=p_global) from grid_type_ll.F90:1147-1155.
+    if mass_fix_enable
+        ps_offset = pin_global_mean_ps!(sp, grid.area;
+                                        target_ps_dry_pa = target_ps_dry_pa,
+                                        qv_global = qv_global_climatology)
+        if ps_offset_record !== nothing && ps_offset_slot > 0
+            ps_offset_record[ps_offset_slot] = ps_offset
+        end
+    end
+    # === end mass fix ===
 
     # --- For each level: VO/D -> U/V spectral, then transform ---
     # Threaded over levels (each level is independent)
@@ -973,7 +1046,10 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
                      next_day_hour0=nothing,
                      thermo_dir::String="",
                      include_qv::Bool=false,
-                     output_float_type::Type=Float32)
+                     output_float_type::Type=Float32,
+                     mass_fix_enable::Bool = true,
+                     target_ps_dry_pa::Float64 = 98726.0,
+                     qv_global_climatology::Float64 = 0.00247)
     FT = output_float_type
     Nz_native = n_levels(vc_native)
     Nz = n_levels(merged_vc)
@@ -1081,6 +1157,14 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
         "git_commit" => git_commit,
         "git_dirty" => git_dirty,
         "creation_time" => creation_time,
+        # Mass fix (TM5 area-aver Match equivalent — pin dry mass)
+        # Filled with zeros here; populated with real per-window offsets
+        # after the window loop and re-serialized before binary write.
+        "mass_fix_enabled" => mass_fix_enable,
+        "mass_fix_target_ps_dry_pa" => target_ps_dry_pa,
+        "mass_fix_qv_global_climatology" => qv_global_climatology,
+        "ps_offsets_pa_per_window" => zeros(Float64, Nt),
+        "ps_offsets_next_day_hour0_pa" => 0.0,
     )
     header_json = JSON3.write(header)
     length(header_json) < HEADER_SIZE ||
@@ -1151,6 +1235,18 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
     qv_native = include_qv ? Array{FT}(undef, Nx, Ny, Nz_native) : nothing
     qv_merged = include_qv ? Array{FT}(undef, Nx, Ny, Nz) : nothing
 
+    # Per-window mass-fix offsets (Pa). Slot Nt+1 reserved for next-day-hour-0
+    # transform used to compute the last window's flux delta.
+    ps_offsets = zeros(Float64, Nt + 1)
+
+    if mass_fix_enable
+        target_total = target_ps_dry_pa / (1.0 - qv_global_climatology)
+        @info @sprintf("  Mass fix ENABLED: pin ⟨ps_dry⟩→%.2f Pa (⟨ps_total⟩→%.2f Pa, qv_global=%.5f)",
+                       target_ps_dry_pa, target_total, qv_global_climatology)
+    else
+        @info "  Mass fix DISABLED"
+    end
+
     @info "  Computing spectral -> gridpoint -> merged for $Nt windows..."
 
     for (win_idx, hour) in enumerate(hours)
@@ -1169,7 +1265,12 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
             spec.T, level_range, ab, grid, half_dt,
             P_buf, fft_buf, field_2d,
             P_buf_t, fft_buf_t, fft_out_t, u_spec_t, v_spec_t, field_2d_t,
-            bfft_plans)
+            bfft_plans;
+            mass_fix_enable = mass_fix_enable,
+            target_ps_dry_pa = target_ps_dry_pa,
+            qv_global_climatology = qv_global_climatology,
+            ps_offset_record = ps_offsets,
+            ps_offset_slot = win_idx)
 
         # Cast to Float32 for merging
         @. m_native  = FT(m_arr)
@@ -1213,8 +1314,16 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
 
         elapsed = round(time() - t0, digits=2)
         if win_idx <= 3 || win_idx == Nt || win_idx % 8 == 0
-            @info @sprintf("    Window %d/%d (hour %02d): %.2fs", win_idx, Nt, hour, elapsed)
+            @info @sprintf("    Window %d/%d (hour %02d): %.2fs  ps_offset=%+.3f Pa",
+                           win_idx, Nt, hour, elapsed, ps_offsets[win_idx])
         end
+    end
+
+    if mass_fix_enable
+        @info @sprintf("  Mass-fix offsets (Pa) min/max/mean: %+.3f / %+.3f / %+.3f",
+                       minimum(ps_offsets[1:Nt]),
+                       maximum(ps_offsets[1:Nt]),
+                       sum(ps_offsets[1:Nt]) / Nt)
     end
 
     # --- Compute next-window merged fields for last hour's delta ---
@@ -1232,7 +1341,12 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
             next_day_hour0.T, level_range, ab, grid, half_dt,
             P_buf, fft_buf, field_2d,
             P_buf_t, fft_buf_t, fft_out_t, u_spec_t, v_spec_t, field_2d_t,
-            bfft_plans)
+            bfft_plans;
+            mass_fix_enable = mass_fix_enable,
+            target_ps_dry_pa = target_ps_dry_pa,
+            qv_global_climatology = qv_global_climatology,
+            ps_offset_record = ps_offsets,
+            ps_offset_slot = Nt + 1)
         @. m_native  = FT(m_arr)
         @. am_native = FT(am_arr)
         @. bm_native = FT(bm_arr)
@@ -1268,12 +1382,13 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
         # Re-zero pole bm after balance (corrections may have touched them)
         @views all_bm[win_idx][:, 1, :]    .= zero(FT)
         @views all_bm[win_idx][:, Ny+1, :] .= zero(FT)
-        # H5 fix: re-zero pole-row am after balance. The Poisson correction
-        # is a gradient of psi, which is nonzero at j=1 and j=Ny even though
-        # the pre-balance am was zeroed there. This keeps am=0 at the pole
-        # rows end-to-end, consistent with the compute_mass_fluxes! fix.
-        @views all_am[win_idx][:, 1, :]  .= zero(FT)
-        @views all_am[win_idx][:, Ny, :] .= zero(FT)
+        # NOTE: am at pole rows is NOT re-zeroed here. The H5 fix zeroes am
+        # at j=1/Ny in compute_mass_fluxes! (removing the 1/cos garbage
+        # from spectral aliasing), then the Poisson solver is allowed to
+        # write physically-meaningful corrections at those rows based on
+        # the dm_dt residual. Re-zeroing after balance would break
+        # Poisson's local conservation (observed residuals of ~20% at
+        # pole cells instead of ~0.2%).
         # Recompute cm from balanced am/bm
         recompute_cm_from_divergence!(all_cm[win_idx], all_am[win_idx], all_bm[win_idx],
                                       all_m[win_idx]; B_ifc=merged_vc.B)
@@ -1281,6 +1396,14 @@ function process_day(date::Date, grid::TargetGrid, ab, level_range,
         @views all_cm[win_idx][:, :, Nz + 1] .= zero(FT)
     end
     @info "  Poisson balance complete for $Nt windows"
+
+    # Update header with real per-window mass-fix offsets and re-serialize.
+    header["ps_offsets_pa_per_window"] = ps_offsets[1:Nt]
+    header["ps_offsets_next_day_hour0_pa"] = ps_offsets[Nt + 1]
+    header_json = JSON3.write(header)
+    length(header_json) < HEADER_SIZE ||
+        error("Header JSON too large after offsets update: " *
+              "$(length(header_json)) >= $(HEADER_SIZE)")
 
     # --- Write binary ---
     @info "  Writing binary..."
@@ -1453,6 +1576,15 @@ function main()
     ft_str = String(get(cfg["numerics"], "float_type", "Float32"))
     output_float_type = ft_str == "Float64" ? Float64 : Float32
 
+    # Mass fix (TM5 area-aver Match equivalent — pin dry mass).
+    # Defaults reflect Trenberth & Smith 2005:
+    #   M_dry = 5.1352e18 kg → ⟨ps_dry⟩ = M_dry·g/A_Earth ≈ 98726 Pa
+    #   ⟨qv⟩_global ≈ 0.00247 (climatological column-mean specific humidity)
+    mass_fix_cfg = get(cfg, "mass_fix", Dict{String,Any}())
+    mass_fix_enable = Bool(get(mass_fix_cfg, "enable", true))
+    target_ps_dry_pa = Float64(get(mass_fix_cfg, "target_ps_dry_pa", 98726.0))
+    qv_global_climatology = Float64(get(mass_fix_cfg, "qv_global_climatology", 0.00247))
+
     level_range = level_top:level_bot
     Nz_native = length(level_range)
 
@@ -1494,6 +1626,8 @@ function main()
     Met interval:  $(met_interval) s
     T_target:      $(T_target) (Nyquist for Nlon=$(Nlon))
     Threads:       $(Threads.nthreads())
+    Float type:    $(output_float_type)
+    Mass fix:      $(mass_fix_enable ? "ON  (target_ps_dry=$(target_ps_dry_pa) Pa, qv_global=$(qv_global_climatology))" : "OFF")
     """
 
     # --- Find available dates ---
@@ -1537,7 +1671,10 @@ function main()
                              next_day_hour0=next_day_h0,
                              thermo_dir=thermo_dir,
                              include_qv=include_qv,
-                             output_float_type=output_float_type)
+                             output_float_type=output_float_type,
+                             mass_fix_enable=mass_fix_enable,
+                             target_ps_dry_pa=target_ps_dry_pa,
+                             qv_global_climatology=qv_global_climatology)
 
         result === nothing && continue
     end

@@ -2417,6 +2417,60 @@ function advect_y_massflux_subcycled!(rm_tracers, m::AbstractArray{FT,3}, bm,
                                        ws::MassFluxWorkspace{FT};
                                        cfl_limit = FT(1.0),  # TM5 default
                                        max_nloop::Int = 6) where FT
+    Nx, Ny, Nz = size(m)
+    @assert size(bm, 1) == Nx && size(bm, 2) == Ny + 1 && size(bm, 3) == Nz
+
+    polar_band = try
+        parse(Int, get(ENV, "ATMOSTR_POLAR_Y_BAND", "0"))
+    catch
+        0
+    end
+    if polar_band <= 0
+        return _advect_y_massflux_subcycled_core!(rm_tracers, m, bm, grid, use_limiter, ws;
+                                                  cfl_limit=cfl_limit, max_nloop=max_nloop)
+    end
+
+    polar_band = clamp(polar_band, 1, max(1, Ny ÷ 2))
+    polar_max_nloop = try
+        parse(Int, get(ENV, "ATMOSTR_POLAR_Y_MAX_NLOOP", string(max_nloop)))
+    catch
+        max_nloop
+    end
+    polar_max_nloop = max(polar_max_nloop, max_nloop)
+    polar_cfl_limit = try
+        FT(parse(Float64, get(ENV, "ATMOSTR_POLAR_Y_CFL_LIMIT", string(cfl_limit))))
+    catch
+        cfl_limit
+    end
+
+    # Experimental "polar-only faster subcycling" path:
+    # split bm into non-polar faces + polar faces and run Y-advection twice.
+    # This keeps the default TM5-faithful path unchanged unless env vars are set.
+    bm_nonpolar = ws.cfl_scratch_y
+    bm_polar = ws.cfl_y
+    copyto!(bm_nonpolar, bm)
+    fill!(bm_polar, zero(FT))
+    @inbounds for k in 1:Nz, j in 1:(Ny + 1), i in 1:Nx
+        south_or_north = (j <= polar_band + 1) || (j >= Ny - polar_band + 1)
+        if south_or_north
+            bm_polar[i, j, k] = bm[i, j, k]
+            bm_nonpolar[i, j, k] = zero(FT)
+        end
+    end
+
+    @info "ATMOSTR_POLAR_Y_* enabled: split Y sweep into non-polar + polar passes" polar_band polar_max_nloop polar_cfl_limit maxlog=5
+    n_nonpolar = _advect_y_massflux_subcycled_core!(rm_tracers, m, bm_nonpolar, grid, use_limiter, ws;
+                                                     cfl_limit=cfl_limit, max_nloop=max_nloop)
+    n_polar = _advect_y_massflux_subcycled_core!(rm_tracers, m, bm_polar, grid, use_limiter, ws;
+                                                 cfl_limit=polar_cfl_limit, max_nloop=polar_max_nloop)
+    return max(n_nonpolar, n_polar)
+end
+
+function _advect_y_massflux_subcycled_core!(rm_tracers, m::AbstractArray{FT,3}, bm,
+                                            grid, use_limiter,
+                                            ws::MassFluxWorkspace{FT};
+                                            cfl_limit = FT(1.0),
+                                            max_nloop::Int = 6) where FT
     backend = get_backend(m)
     Nx, Ny, Nz = size(m)
 

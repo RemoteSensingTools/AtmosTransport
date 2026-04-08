@@ -1,0 +1,45 @@
+# ERA5 F64 debug, v4 binary, full 137 levels, NO mass fixer
+#
+# A/B companion to era5_f64_debug_moist_v4_nofix.toml for comparing
+# full-level (137L) behavior against the merged tropo34 product.
+
+[architecture]
+use_gpu    = true
+float_type = "Float64"
+
+[grid]
+type       = "latlon"
+met_source = "era5"
+size       = [720, 361, 137]
+
+[met_data]
+driver            = "preprocessed_latlon"
+directory         = "~/data/AtmosTransport/met/era5/spectral_v4_137L_dec2021_latest"
+disable_qv        = true
+disable_flux_delta = false
+dt                = 900
+max_windows       = 1
+
+[initial_conditions]
+dry_ic            = false
+co2.uniform_value = 411e-6
+
+[tracers.co2]
+emission = "none"
+species  = "co2"
+
+[advection]
+scheme            = "slopes"
+prognostic_slopes = false
+mass_fixer        = false
+
+[output]
+filename = "/tmp/era5_f64_debug_moist_v4_137L_nofix.nc"
+interval = 10800
+
+[output.fields]
+co2_surface     = {type = "surface_slice", species = "co2"}
+co2_column_mean = {type = "column_mean", species = "co2"}
+
+[buffering]
+strategy = "double"

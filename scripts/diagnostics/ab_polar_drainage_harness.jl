@@ -21,15 +21,22 @@ using Printf
 using Statistics
 using TOML
 
+using NCDatasets
+
+if Sys.isapple()
+    using Metal
+else
+    using CUDA
+    CUDA.allowscalar(false)
+end
 using AtmosTransport
 using AtmosTransport.IO: build_model_from_config
 import AtmosTransport.Models: run!
 
-using NCDatasets
-
 struct RunSummary
     label::String
     config_path::String
+    env_overrides::Dict{String,String}
     output_path::String
     success::Bool
     elapsed_s::Float64
@@ -46,6 +53,8 @@ function _parse_cli(argv::Vector{String})
     positional = String[]
     max_windows = nothing
     workdir = "/tmp/ab_polar_drainage"
+    env_a = Dict{String,String}()
+    env_b = Dict{String,String}()
     i = 1
     while i <= length(argv)
         a = argv[i]
@@ -57,13 +66,27 @@ function _parse_cli(argv::Vector{String})
             i == length(argv) && error("--workdir requires a path")
             workdir = expanduser(argv[i + 1])
             i += 2
+        elseif a == "--env-a" || a == "--env-b"
+            i == length(argv) && error("$a requires KEY=VALUE")
+            kv = argv[i + 1]
+            eq = findfirst(==('='), kv)
+            eq === nothing && error("$a requires KEY=VALUE, got: $kv")
+            key = strip(kv[1:eq-1])
+            val = kv[eq+1:end]
+            isempty(key) && error("$a key must be non-empty")
+            if a == "--env-a"
+                env_a[key] = val
+            else
+                env_b[key] = val
+            end
+            i += 2
         else
             push!(positional, a)
             i += 1
         end
     end
     length(positional) == 2 || error("Need exactly two config paths. Got $(length(positional)).")
-    return positional[1], positional[2], max_windows, workdir
+    return positional[1], positional[2], max_windows, workdir, env_a, env_b
 end
 
 function _set_output_path!(cfg::Dict{String,Any}, outpath::String)
@@ -132,31 +155,54 @@ function _surface_metrics_from_netcdf(path::String)
     end
 end
 
-function _run_case(label::String, cfg_path::String, outpath::String, max_windows)
-    cfg = TOML.parsefile(cfg_path)
-    _set_output_path!(cfg, outpath)
-    if max_windows !== nothing
-        _set_max_windows!(cfg, max_windows)
+function _with_env_overrides(f::Function, env_overrides::Dict{String,String})
+    old_vals = Dict{String,Union{Nothing,String}}()
+    for (k, v) in env_overrides
+        old_vals[k] = haskey(ENV, k) ? ENV[k] : nothing
+        ENV[k] = v
     end
-    model = build_model_from_config(cfg)
+    try
+        return f()
+    finally
+        for (k, oldv) in old_vals
+            if oldv === nothing
+                pop!(ENV, k, nothing)
+            else
+                ENV[k] = oldv
+            end
+        end
+    end
+end
 
-    t0 = time()
+function _run_case(label::String, cfg_path::String, outpath::String, max_windows,
+                   env_overrides::Dict{String,String})
     ok = true
     err = ""
-    try
-        run!(model)
-    catch e
-        ok = false
-        err = sprint(showerror, e, catch_backtrace())
+    elapsed = 0.0
+    model = _with_env_overrides(env_overrides) do
+        cfg = TOML.parsefile(cfg_path)
+        _set_output_path!(cfg, outpath)
+        if max_windows !== nothing
+            _set_max_windows!(cfg, max_windows)
+        end
+        mdl = build_model_from_config(cfg)
+        t0 = time()
+        try
+            run!(mdl)
+        catch e
+            ok = false
+            err = sprint(showerror, e, catch_backtrace())
+        end
+        elapsed = time() - t0
+        mdl
     end
-    elapsed = time() - t0
 
     co2_nan, co2_neg = _co2_quality_metrics(model)
     sh_pole_std, sh_mid_std, global_mean = _surface_metrics_from_netcdf(outpath)
     has_nloop = occursin("nloop hit max_nloop", lowercase(err))
 
     return RunSummary(
-        label, cfg_path, outpath, ok, elapsed, err, has_nloop,
+        label, cfg_path, env_overrides, outpath, ok, elapsed, err, has_nloop,
         co2_nan, co2_neg, sh_pole_std, sh_mid_std, global_mean
     )
 end
@@ -174,6 +220,12 @@ function _print_summary(a::RunSummary, b::RunSummary)
     for s in (a, b)
         println("\n--- $(s.label) ---")
         @printf("config:   %s\n", s.config_path)
+        if isempty(s.env_overrides)
+            @printf("env:      (none)\n")
+        else
+            env_str = join(sort(collect(["$k=$v" for (k, v) in s.env_overrides])), ", ")
+            @printf("env:      %s\n", env_str)
+        end
         @printf("output:   %s\n", s.output_path)
         @printf("success:  %s\n", string(s.success))
         @printf("elapsed:  %.1f s\n", s.elapsed_s)
@@ -218,7 +270,7 @@ Usage:
         return
     end
 
-    cfg_a, cfg_b, max_windows, workdir = _parse_cli(ARGS)
+    cfg_a, cfg_b, max_windows, workdir, env_a, env_b = _parse_cli(ARGS)
     mkpath(workdir)
     stamp = Dates.format(now(), "yyyymmdd_HHMMSS")
     out_a = joinpath(workdir, "A_$(stamp).nc")
@@ -229,9 +281,11 @@ Usage:
     println("B: $cfg_b")
     println("workdir: $workdir")
     max_windows !== nothing && println("max_windows override: $max_windows")
+    !isempty(env_a) && println("env A overrides: " * join(["$k=$v" for (k, v) in sort(collect(env_a))], ", "))
+    !isempty(env_b) && println("env B overrides: " * join(["$k=$v" for (k, v) in sort(collect(env_b))], ", "))
 
-    A = _run_case("A", cfg_a, out_a, max_windows)
-    B = _run_case("B", cfg_b, out_b, max_windows)
+    A = _run_case("A", cfg_a, out_a, max_windows, env_a)
+    B = _run_case("B", cfg_b, out_b, max_windows, env_b)
     _print_summary(A, B)
 
     if !A.success

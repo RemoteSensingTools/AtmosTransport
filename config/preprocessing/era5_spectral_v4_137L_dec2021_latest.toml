@@ -1,0 +1,21 @@
+# ERA5 spectral -> v4 binary: full 137 native levels (latest preprocessor code)
+
+[input]
+spectral_dir = "~/data/AtmosTransport/met/era5/spectral_hourly"
+coefficients = "config/era5_L137_coefficients.toml"
+
+[output]
+directory = "~/data/AtmosTransport/met/era5/spectral_v4_137L_dec2021_latest"
+
+[grid]
+nlon = 720
+nlat = 361
+level_top = 1
+level_bot = 137
+echlevs = "ml137_full"
+merge_min_thickness_Pa = 1.0
+
+[numerics]
+float_type = "Float32"
+dt = 900.0
+met_interval = 3600.0

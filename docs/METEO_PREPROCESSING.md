@@ -108,6 +108,9 @@ TM5's mass flux computation requires these ERA5 fields **in spectral form**
 | VO | 138 | Vorticity | Spectral |
 | D | 155 | Divergence | Spectral |
 | LNSP | 152 | Log surface pressure | Spectral |
+
+Hour-to-hour **spatial structure** of implied surface-pressure increments (whether global mass steps behave like a uniform `Δps` or like systematic lat–lon redistribution) is documented with figures in `docs/src/developer/ERA5_LNSP_MASS_DRIFT_SPATIAL.md` (also *Developer Guide → ERA5 LNSP mass drift (spatial)* in the Documenter build).
+
 | T | 130 | Temperature | Spectral or gridpoint |
 | Q | 133 | Specific humidity | Gridpoint |
 | CLWC | 246 | Cloud liquid water | Gridpoint |

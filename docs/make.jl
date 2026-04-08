@@ -75,6 +75,7 @@ pages = [
         "TM5 Grid References" => "developer/TM5_GRID_REFERENCES.md",
         "Reference Run" => "developer/REFERENCE_RUN.md",
         "GitHub Setup" => "developer/GITHUB_SETUP.md",
+        "ERA5 LNSP mass drift (spatial)" => "developer/ERA5_LNSP_MASS_DRIFT_SPATIAL.md",
     ],
     "Performance" => [
         "GPU Double Buffering" => "gpu_double_buffering.md",

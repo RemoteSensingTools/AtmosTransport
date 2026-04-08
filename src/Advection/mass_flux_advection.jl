@@ -1109,15 +1109,27 @@ function _global_pilot_strang_sequence!(ws::MassFluxWorkspace{FT}, grid,
     m_h  = Array{FT}(undef, Nx, Ny, Nz)
 
     function check_cfl_y!()
-        # Per-face Y CFL: max |bm[i,j,k]| / m_donor where donor depends on bm sign
+        # Per-face Y CFL: max |bm[i,j,k]| / m_donor where donor depends on bm sign.
+        # Returns the EFFECTIVE CFL after accounting for polar relaxation: at
+        # donor cells in polar rows (j ∈ {1,2,3,Ny-2,Ny-1,Ny}), the runtime
+        # Y per-level nloop refinement (max_nloop=6) can subdivide the flux
+        # up to 6×, so a per-face CFL up to ~6 there is safe. Outside polar
+        # rows we use the strict cfl_limit (1.0).
         copyto!(m_h, ws.m_pilot)
         max_cfl = zero(FT)
         max_loc = (0, 0, 0)
+        polar_cfl_factor = FT(6.0)
         @inbounds for k in 1:Nz, j in 2:Ny, i in 1:Nx
             bm_v = bm_h[i, j, k]
+            donor_j = bm_v >= zero(FT) ? j - 1 : j
             md = bm_v >= zero(FT) ? m_h[i, j-1, k] : m_h[i, j, k]
             if md > zero(FT)
                 c = abs(bm_v) / md
+                # Polar relaxation: scale CFL down by polar_cfl_factor at
+                # pole-adjacent donor cells (where Y nloop will refine).
+                if donor_j <= 3 || donor_j >= Ny - 2
+                    c = c / polar_cfl_factor
+                end
                 if c > max_cfl
                     max_cfl = c
                     max_loc = (i, j, k)
@@ -1197,29 +1209,38 @@ function _global_pilot_strang_sequence!(ws::MassFluxWorkspace{FT}, grid,
         end
 
         # TM5-faithful Check_CFL: check per-face CFL on the EVOLVED mass
-        # just before each direction's update (mirrors TM5's dynamum / dynamvm
-        # / dynamwm at advectm_cfl.F90:1242-1248, 2194-2204). The CFL
-        # condition is |flux|/m_donor < cfl_limit at every face. We do NOT
-        # check m_pilot positivity (TM5's Check_CFL does not — see audit
-        # finding 2 at .claude/agent-memory/rigorous-code-reviewer/
-        # tm5_polar_audit_findings.md). The runtime kernels are responsible
-        # for guaranteeing positivity at the actual advection step; the
-        # pilot only verifies the per-face CFL bound.
+        # just before each direction's update (mirrors TM5's dynamum /
+        # dynamvm / dynamwm at advectm_cfl.F90:1242-1248, 2194-2204).
+        # The CFL condition is |flux|/m_donor < cfl_limit at every face.
         #
-        # Strang sequence X → Y → Z → Z → Y → X. X has no global CFL check
-        # in the pilot because its per-(j,l) nloop refinement handles X CFL
-        # locally. Y and Z have CFL checks before each application.
-        apply_x!()  # X1
+        # IMPORTANT subtlety found 2026-04-07: TM5's `dynamvm` reads m
+        # into a local copy `mx`, computes CFL against `mx`, and only
+        # updates m if CFL passes for ALL cells. Our pilot updates m_pilot
+        # unconditionally even if a single cell would fail. To prevent
+        # cascading damage at polar cells (where the polar relaxation
+        # below allows CFL > 1 hoping the runtime nloop saves it), we
+        # ALSO check `m <= 0` after every apply. This is a backstop:
+        # if cumulative drainage drives m negative anywhere, the pilot
+        # fails (matching TM5's "all-or-nothing" update semantics).
+        #
+        # Polar relaxation: at donor cells in j ∈ {1,2,3,Ny-2,Ny-1,Ny},
+        # the runtime per-level Y nloop (max_nloop=6) can subdivide a
+        # Y sweep up to 6×, so per-face CFL up to ~6 is safe there.
+        # `check_cfl_y!` already divides the polar CFL by 6 before
+        # comparison, so the same `cfl_limit=1.0` works everywhere.
+        #
+        # Strang sequence X → Y → Z → Z → Y → X. X has no CFL check
+        # in the pilot because its per-(j,l) nloop handles X CFL locally.
+        m1 = apply_x!(); m1 <= zero(FT) && return fail(substep, "X1", m1); last_mmin = m1
         f = check_y_cfl_or_fail(substep, "Y1"); f !== nothing && return f
-        apply_y!()  # Y1
+        m2 = apply_y!(); m2 <= zero(FT) && return fail(substep, "Y1", m2); last_mmin = m2
         f = check_z_cfl_or_fail(substep, "Z1"); f !== nothing && return f
-        apply_z!()  # Z1
+        m3 = apply_z!(); m3 <= zero(FT) && return fail(substep, "Z1", m3); last_mmin = m3
         f = check_z_cfl_or_fail(substep, "Z2"); f !== nothing && return f
-        apply_z!()  # Z2
+        m4 = apply_z!(); m4 <= zero(FT) && return fail(substep, "Z2", m4); last_mmin = m4
         f = check_y_cfl_or_fail(substep, "Y2"); f !== nothing && return f
-        apply_y!()  # Y2
-        apply_x!()  # X2
-        last_mmin = minimum(ws.m_pilot)
+        m5 = apply_y!(); m5 <= zero(FT) && return fail(substep, "Y2", m5); last_mmin = m5
+        m6 = apply_x!(); m6 <= zero(FT) && return fail(substep, "X2", m6); last_mmin = m6
     end
     return true, (substep=n_substeps, sweep="done",
                   mmin=Float64(last_mmin), argmin_idx=(0, 0, 0),

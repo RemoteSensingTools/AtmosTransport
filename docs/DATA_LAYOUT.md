@@ -35,9 +35,11 @@ All paths are relative to a **data root** specified in the run config.
 │   │   └── preprocessed/
 │   │
 │   └── era5/                          # ERA5 (spectral or gridpoint)
-│       ├── spectral/                  # GRIB spectral VO/D/LNSP (T639)
+│       ├── spectral/                  # GRIB spectral VO/D/LNSP (T639), 4×/day
 │       │   ├── era5_spectral_YYYYMMDD_vo_d.gb    (~850 MB/day)
 │       │   └── era5_spectral_YYYYMMDD_lnsp.gb    (~6 MB/day)
+│       ├── spectral_hourly/           # Same layout; hourly LNSP+VO/D if retrieved with hourly times
+│       │   └── era5_spectral_YYYYMMDD_*.gb       (24 LNSP messages/day; vo_d much larger)
 │       ├── cmfmc/                     # GRIB model-level convective mass flux
 │       │   └── era5_cmfmc_YYYYMMDD.nc            (~540 MB/day, UDMF+DDMF)
 │       ├── detrainment/              # GRIB model-level detrainment rates

@@ -13,6 +13,8 @@ Provides:
 """
 module State
 
+using ..Grids: StructuredFluxTopology
+
 include("CellState.jl")
 include("FaceFluxState.jl")
 include("MetState.jl")

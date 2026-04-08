@@ -22,5 +22,10 @@ using .ERA5
 
 # Re-export ERA5 types
 export PreprocessedERA5Driver
+export ERA5BinaryReader, ERA5BinaryHeader
+export load_window!, load_qv_window!, load_flux_delta_window!
+export window_count, has_qv, has_flux_delta, A_ifc, B_ifc
+export diagnose_cm_from_continuity!, diagnose_cm_from_continuity_vc!
+export diagnose_cm_from_continuity_ka!
 
 end # module MetDrivers

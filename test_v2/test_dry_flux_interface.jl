@@ -41,6 +41,13 @@ include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
     @test isdefined(AtmosTransportV2, :StructuredFluxTopology)
     @test isdefined(AtmosTransportV2, :FaceIndexedFluxTopology)
     @test isdefined(AtmosTransportV2, :flux_topology)
+    # Basis types
+    @test isdefined(AtmosTransportV2, :AbstractMassFluxBasis)
+    @test isdefined(AtmosTransportV2, :MoistMassFluxBasis)
+    @test isdefined(AtmosTransportV2, :DryMassFluxBasis)
+    @test isdefined(AtmosTransportV2, :flux_basis)
+    @test isdefined(AtmosTransportV2, :DryStructuredFluxState)
+    @test isdefined(AtmosTransportV2, :MoistStructuredFluxState)
 end
 
 @testset "Flux topology trait" begin
@@ -50,15 +57,44 @@ end
     sfs = StructuredFaceFluxState(zeros(11,8,4), zeros(10,9,4), zeros(10,8,5))
     @test sfs isa AbstractStructuredFaceFluxState
     @test sfs isa AbstractFaceFluxState
+    @test sfs isa StructuredFaceFluxState{DryMassFluxBasis}
 
     @test face_flux_x(sfs, 1, 1, 1) == 0.0
     @test face_flux_y(sfs, 1, 1, 1) == 0.0
     @test face_flux_z(sfs, 1, 1, 1) == 0.0
 end
 
+@testset "MassFluxBasis type safety" begin
+    am = zeros(11, 8, 4); bm = zeros(10, 9, 4); cm = zeros(10, 8, 5)
+
+    dry = StructuredFaceFluxState{DryMassFluxBasis}(am, bm, cm)
+    @test flux_basis(dry) isa DryMassFluxBasis
+    @test dry isa DryStructuredFluxState
+
+    moist = StructuredFaceFluxState{MoistMassFluxBasis}(am, bm, cm)
+    @test flux_basis(moist) isa MoistMassFluxBasis
+    @test moist isa MoistStructuredFluxState
+
+    default = StructuredFaceFluxState(am, bm, cm)
+    @test flux_basis(default) isa DryMassFluxBasis
+
+    @test !(moist isa StructuredFaceFluxState{DryMassFluxBasis})
+    @test !(dry isa StructuredFaceFluxState{MoistMassFluxBasis})
+
+    alloc_dry = allocate_face_fluxes(StructuredFluxTopology(), 10, 8, 4;
+                                      basis=DryMassFluxBasis)
+    @test flux_basis(alloc_dry) isa DryMassFluxBasis
+
+    alloc_moist = allocate_face_fluxes(StructuredFluxTopology(), 10, 8, 4;
+                                        basis=MoistMassFluxBasis)
+    @test flux_basis(alloc_moist) isa MoistMassFluxBasis
+end
+
 # =========================================================================
-# Test 1b: Abstraction boundary — mock flux state proves dispatch is on
-#           AbstractStructuredFaceFluxState, not the concrete type
+# Test 1b: Basis safety — strang_split! only accepts DryMassFluxBasis.
+#           A mock subtype of AbstractStructuredFaceFluxState (not
+#           StructuredFaceFluxState) is rejected by dispatch.
+#           StructuredFaceFluxState{MoistMassFluxBasis} is also rejected.
 # =========================================================================
 struct MockStructuredFluxState{AX, AY, AZ} <: AbstractStructuredFaceFluxState
     am :: AX
@@ -66,7 +102,7 @@ struct MockStructuredFluxState{AX, AY, AZ} <: AbstractStructuredFaceFluxState
     cm :: AZ
 end
 
-@testset "Abstraction boundary: mock flux state" begin
+@testset "Basis safety: strang_split! rejects non-dry flux states" begin
     FT = Float64
     Nx, Ny, Nz = 10, 8, 4
 
@@ -92,26 +128,31 @@ end
     bm = zeros(FT, Nx, Ny+1, Nz)
     cm = zeros(FT, Nx, Ny, Nz+1)
 
-    mock_fluxes = MockStructuredFluxState(am, bm, cm)
-
-    @test mock_fluxes isa AbstractStructuredFaceFluxState
-    @test mock_fluxes isa AbstractFaceFluxState
-    @test !(mock_fluxes isa StructuredFaceFluxState)
-
-    @test face_flux_x(mock_fluxes, 1, 1, 1) == 0.0
-    @test face_flux_y(mock_fluxes, 1, 1, 1) == 0.0
-    @test face_flux_z(mock_fluxes, 1, 1, 1) == 0.0
-
     scheme = RussellLernerAdvection(use_limiter=true)
     ws = AdvectionWorkspace(m)
 
+    # Mock subtype → MethodError (not StructuredFaceFluxState at all)
+    mock_fluxes = MockStructuredFluxState(am, bm, cm)
+    @test mock_fluxes isa AbstractStructuredFaceFluxState
+    @test !(mock_fluxes isa StructuredFaceFluxState)
+    @test_throws MethodError strang_split!(state, mock_fluxes, grid, scheme; workspace=ws)
+
+    # Moist basis → MethodError (wrong basis)
+    moist_fluxes = StructuredFaceFluxState{MoistMassFluxBasis}(am, bm, cm)
+    @test_throws MethodError strang_split!(state, moist_fluxes, grid, scheme; workspace=ws)
+
+    # Dry basis → works
+    dry_fluxes = StructuredFaceFluxState{DryMassFluxBasis}(am, bm, cm)
     m_before = sum(state.air_dry_mass)
     rm_before = total_mass(state, :CO2)
-
-    strang_split!(state, mock_fluxes, grid, scheme; workspace=ws)
-
+    strang_split!(state, dry_fluxes, grid, scheme; workspace=ws)
     @test sum(state.air_dry_mass) ≈ m_before atol=eps(FT)*m_before*1000
     @test total_mass(state, :CO2)  ≈ rm_before atol=eps(FT)*rm_before*1000
+
+    # Scoped accessors still work for mock and moist types
+    @test face_flux_x(mock_fluxes, 1, 1, 1) == 0.0
+    @test face_flux_y(moist_fluxes, 1, 1, 1) == 0.0
+    @test face_flux_z(dry_fluxes, 1, 1, 1) == 0.0
 end
 
 # =========================================================================
@@ -128,8 +169,12 @@ end
     fl_x = face_length(mesh, 1)
     @test fl_x ≈ R * deg2rad(mesh.Δφ)
 
-    fl_y = face_length(mesh, n_xfaces + 1)
-    @test fl_y > 0.0
+    # y-face at index n_xfaces+1 is j=1 (south pole), where cos(φ)=0
+    fl_y_pole = face_length(mesh, n_xfaces + 1)
+    @test fl_y_pole >= 0.0
+    # A y-face away from the pole should have positive length
+    fl_y_mid = face_length(mesh, n_xfaces + mesh.Nx * div(mesh.Ny, 2) + 1)
+    @test fl_y_mid > 0.0
 
     nx_x, ny_x = face_normal(mesh, 1)
     @test nx_x == 1.0

@@ -106,7 +106,7 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    strang_split!(state::CellState, fluxes::AbstractStructuredFaceFluxState,
+    strang_split!(state::CellState, fluxes::StructuredFaceFluxState{DryMassFluxBasis},
                   grid::AtmosGrid{<:AbstractStructuredMesh},
                   scheme::AbstractAdvection;
                   workspace::AdvectionWorkspace)
@@ -115,8 +115,10 @@ Perform one full Strang-split advection step on a structured mesh.
 
 Operates on each tracer independently, restoring air mass between tracers.
 The X→Y→Z→Z→Y→X sequence is the TM5-standard Strang splitting.
+
+Only accepts `DryMassFluxBasis` fluxes — passing moist fluxes is a type error.
 """
-function strang_split!(state::CellState, fluxes::AbstractStructuredFaceFluxState,
+function strang_split!(state::CellState, fluxes::StructuredFaceFluxState{DryMassFluxBasis},
                        grid::AtmosGrid{<:AbstractStructuredMesh},
                        scheme::AbstractAdvection;
                        workspace::AdvectionWorkspace)
@@ -147,15 +149,17 @@ function strang_split!(state::CellState, fluxes::AbstractStructuredFaceFluxState
 end
 
 """
-    apply!(state::CellState, fluxes::AbstractStructuredFaceFluxState,
+    apply!(state::CellState, fluxes::StructuredFaceFluxState{DryMassFluxBasis},
            grid::AtmosGrid{<:AbstractStructuredMesh},
            scheme::AbstractAdvection, dt;
            workspace::AdvectionWorkspace)
 
 Structured-mesh advection entry point. Delegates to `strang_split!`.
 `dt` is informational (fluxes are already scaled to the half-timestep).
+
+Only accepts `DryMassFluxBasis` fluxes — passing moist fluxes is a type error.
 """
-function apply!(state::CellState, fluxes::AbstractStructuredFaceFluxState,
+function apply!(state::CellState, fluxes::StructuredFaceFluxState{DryMassFluxBasis},
                 grid::AtmosGrid{<:AbstractStructuredMesh},
                 scheme::AbstractAdvection, dt;
                 workspace::AdvectionWorkspace)

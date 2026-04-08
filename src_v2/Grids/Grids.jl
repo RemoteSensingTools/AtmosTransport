@@ -12,6 +12,7 @@ Provides:
 module Grids
 
 using DocStringExtensions
+using KernelAbstractions: CPU
 
 include("AbstractMeshes.jl")
 include("VerticalCoordinates.jl")

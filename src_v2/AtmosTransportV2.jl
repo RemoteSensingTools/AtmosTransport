@@ -68,10 +68,13 @@ using .Kernels
 export AtmosGrid, LatLonMesh, CubedSphereMesh, ReducedGaussianMesh
 export HybridSigmaPressure
 export AbstractFluxTopology, StructuredFluxTopology, FaceIndexedFluxTopology, flux_topology
-export ncells, nfaces, nlevels, cell_area, nx, ny
+export ncells, nfaces, nlevels, cell_area, nx, ny, cell_areas_by_latitude
+export face_length, face_normal, face_cells, floattype
 export n_levels, pressure_at_interface, pressure_at_level, level_thickness
 
-# State
+# State — types and basis tags
+export AbstractMassFluxBasis, MoistMassFluxBasis, DryMassFluxBasis, flux_basis
+export DryStructuredFluxState, MoistStructuredFluxState
 export CellState
 export AbstractFaceFluxState, AbstractStructuredFaceFluxState, AbstractUnstructuredFaceFluxState
 export StructuredFaceFluxState, FaceIndexedFluxState
@@ -86,7 +89,12 @@ export diagnose_cm!
 
 # MetDrivers
 export AbstractMetDriver, PreprocessedERA5Driver
+export ERA5BinaryReader, ERA5BinaryHeader
+export load_window!, load_qv_window!, load_flux_delta_window!
+export window_count, has_qv, has_flux_delta, A_ifc, B_ifc
 export build_dry_fluxes!, build_air_mass!
+export diagnose_cm_from_continuity!, diagnose_cm_from_continuity_vc!
+export diagnose_cm_from_continuity_ka!
 export DiagnoseVerticalFromHorizontal, PressureTendencyClosure
 export supports_diffusion, supports_convection
 

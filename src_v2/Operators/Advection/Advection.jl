@@ -12,8 +12,11 @@ Provides:
 """
 module Advection
 
+using DocStringExtensions
+
 import ..AbstractAdvection, ..AbstractOperator, ..apply!
-using ...State: CellState, AbstractStructuredFaceFluxState, AbstractFaceFluxState
+using ...State: CellState, AbstractStructuredFaceFluxState, AbstractFaceFluxState,
+    StructuredFaceFluxState, DryMassFluxBasis, DryStructuredFluxState
 using ...Grids: AtmosGrid, AbstractStructuredMesh
 
 include("FaceReconstruction.jl")

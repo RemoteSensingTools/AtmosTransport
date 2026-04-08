@@ -167,4 +167,4 @@ function apply!(state::CellState, fluxes::StructuredFaceFluxState{DryMassFluxBas
     return nothing
 end
 
-export AdvectionWorkspace, strang_split!, sweep_x!, sweep_y!, sweep_z!
+export AdvectionWorkspace, strang_split!

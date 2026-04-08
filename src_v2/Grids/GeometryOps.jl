@@ -18,7 +18,13 @@ function ncells end
 """
     cell_area(mesh::AbstractHorizontalMesh, c) -> FT
 
-Area [m²] of cell `c`. For structured meshes, `c` can be `(i, j)`.
+Area [m²] of cell `c`.
+
+`c` can be:
+- A flat integer index (column-major: `c = i + (j-1)*Nx` for structured)
+- A tuple `(i, j)` for structured meshes
+
+Both forms must be implemented by all concrete mesh types.
 """
 function cell_area end
 
@@ -50,8 +56,21 @@ function face_length end
 """
     face_normal(mesh::AbstractHorizontalMesh, f) -> (nx, ny)
 
-Outward unit normal of face `f` in the local tangent plane.
-For structured lat-lon grids, x-faces have normal (1,0), y-faces (0,1).
+Unit normal of face `f` in **logical coordinates** (not geographic).
+
+For structured meshes, components are in the `(i, j)` index directions:
+- X-faces → `(1, 0)` (positive = increasing `i` = eastward on LatLon)
+- Y-faces → `(0, 1)` (positive = increasing `j` = northward on LatLon)
+
+For unstructured meshes, implementations should return components in
+a **local tangent-plane frame** defined per face (e.g., east/north or
+panel-local). The frame convention MUST be documented by each mesh type
+so that flux-signing is unambiguous.
+
+The transport operators multiply `face_normal` by `face_length` and
+the face flux to compute the signed contribution to cell convergence.
+Consistent normal orientation between `face_cells` (left → right = positive)
+and `face_normal` is required.
 """
 function face_normal end
 

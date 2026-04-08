@@ -82,16 +82,24 @@ export face_flux_x, face_flux_y, face_flux_z, face_flux
 export MetState, allocate_face_fluxes, allocate_tracers
 export mixing_ratio, total_mass, total_air_mass, tracer_names
 
-# Operators
+# Operators — public transport API
 export AbstractAdvection, RussellLernerAdvection, PPMAdvection
 export AdvectionWorkspace, strang_split!, apply!
 export diagnose_cm!
+# NOTE: sweep_x!, sweep_y!, sweep_z!, max_cfl_*, minmod, van_leer_slope
+# are intentionally NOT exported. They accept raw arrays without basis
+# checking and are implementation details of strang_split!.
+# Access via AtmosTransportV2.Operators.Advection.sweep_x! if needed.
 
 # MetDrivers
 export AbstractMetDriver, PreprocessedERA5Driver
 export ERA5BinaryReader, ERA5BinaryHeader
 export load_window!, load_qv_window!, load_flux_delta_window!
-export window_count, has_qv, has_flux_delta, A_ifc, B_ifc
+export load_cmfmc_window!, load_surface_window!, load_tm5conv_window!
+export load_temperature_window!
+export window_count, has_qv, has_flux_delta, has_cmfmc
+export has_surface, has_tm5conv, has_temperature
+export mass_basis, A_ifc, B_ifc
 export build_dry_fluxes!, build_air_mass!
 export diagnose_cm_from_continuity!, diagnose_cm_from_continuity_vc!
 export diagnose_cm_from_continuity_ka!

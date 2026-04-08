@@ -24,7 +24,11 @@ using .ERA5
 export PreprocessedERA5Driver
 export ERA5BinaryReader, ERA5BinaryHeader
 export load_window!, load_qv_window!, load_flux_delta_window!
-export window_count, has_qv, has_flux_delta, A_ifc, B_ifc
+export load_cmfmc_window!, load_surface_window!, load_tm5conv_window!
+export load_temperature_window!
+export window_count, has_qv, has_flux_delta, has_cmfmc
+export has_surface, has_tm5conv, has_temperature
+export mass_basis, A_ifc, B_ifc
 export diagnose_cm_from_continuity!, diagnose_cm_from_continuity_vc!
 export diagnose_cm_from_continuity_ka!
 

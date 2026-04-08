@@ -21,9 +21,7 @@ using .Advection
 
 # Re-export advection types and functions
 export RussellLernerAdvection, PPMAdvection, ppm_order
-export AdvectionWorkspace, strang_split!, sweep_x!, sweep_y!, sweep_z!
-export minmod, van_leer_slope
-export max_cfl_x, max_cfl_y, max_cfl_z
+export AdvectionWorkspace, strang_split!
 export diagnose_cm!
 
 end # module Operators

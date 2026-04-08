@@ -574,4 +574,148 @@ end
     println("  Max relative m  difference: ", maximum(abs.(m_v2 .- m_v1)) / maximum(abs.(m_v1)))
 end
 
+# =========================================================================
+# Test 9: cell_area with flat integer index
+# =========================================================================
+@testset "cell_area flat index" begin
+    mesh = LatLonMesh(; Nx=60, Ny=45, FT=Float64)
+    Nx, Ny = mesh.Nx, mesh.Ny
+
+    for j in 1:Ny
+        c_flat = 1 + (j - 1) * Nx
+        @test cell_area(mesh, c_flat) ≈ cell_area(mesh, 1, j)
+    end
+
+    for j in [1, div(Ny, 2), Ny], i in [1, div(Nx, 2), Nx]
+        c_flat = i + (j - 1) * Nx
+        @test cell_area(mesh, c_flat) ≈ cell_area(mesh, (i, j))
+    end
+end
+
+# =========================================================================
+# Test 10: Multi-tracer mass conservation
+# =========================================================================
+@testset "Multi-tracer mass conservation" begin
+    grid = make_test_grid(; Nx=60, Ny=30, Nz=4)
+    FT = floattype(grid)
+    mesh = grid.horizontal
+    vc = grid.vertical
+    Nx, Ny = nx(mesh), ny(mesh)
+    Nz = n_levels(vc)
+    g = grid.gravity
+    ps_val = grid.reference_pressure
+    areas = cell_areas_by_latitude(mesh)
+
+    m = zeros(FT, Nx, Ny, Nz)
+    for k in 1:Nz, j in 1:Ny, i in 1:Nx
+        dp_k = level_thickness(vc, k, ps_val)
+        m[i, j, k] = dp_k * areas[j] / g
+    end
+
+    rm_co2 = m .* FT(400e-6)
+    rm_sf6 = m .* FT(10e-12)
+    rm_ch4 = m .* FT(1.8e-6)
+
+    state = CellState(m; CO2=rm_co2, SF6=rm_sf6, CH4=rm_ch4)
+    @test length(tracer_names(state)) == 3
+    @test :CO2 in tracer_names(state)
+    @test :SF6 in tracer_names(state)
+    @test :CH4 in tracer_names(state)
+
+    fluxes = make_simple_fluxes(grid)
+    scheme = RussellLernerAdvection(use_limiter=true)
+    ws = AdvectionWorkspace(m)
+
+    m_before = sum(state.air_dry_mass)
+    co2_before = total_mass(state, :CO2)
+    sf6_before = total_mass(state, :SF6)
+    ch4_before = total_mass(state, :CH4)
+
+    strang_split!(state, fluxes, grid, scheme; workspace=ws)
+
+    m_after = sum(state.air_dry_mass)
+    co2_after = total_mass(state, :CO2)
+    sf6_after = total_mass(state, :SF6)
+    ch4_after = total_mass(state, :CH4)
+
+    @test abs(m_after - m_before) / m_before < 1e-12
+    @test abs(co2_after - co2_before) / co2_before < 1e-12
+    @test abs(sf6_after - sf6_before) / sf6_before < 1e-12
+    @test abs(ch4_after - ch4_before) / ch4_before < 1e-12
+
+    # Each tracer should have a different field (not accidentally shared)
+    χ_co2 = mixing_ratio(state, :CO2)
+    χ_sf6 = mixing_ratio(state, :SF6)
+    @test maximum(abs.(χ_co2 .- χ_sf6)) > 1e-6
+end
+
+# =========================================================================
+# Test 11: Multi-window time-stepping (synthetic)
+# =========================================================================
+@testset "Multi-window time stepping" begin
+    grid = make_test_grid(; Nx=60, Ny=30, Nz=4)
+    FT = floattype(grid)
+    mesh = grid.horizontal
+    vc = grid.vertical
+    Nx, Ny = nx(mesh), ny(mesh)
+    Nz = n_levels(vc)
+    g = grid.gravity
+    ps_val = grid.reference_pressure
+    areas = cell_areas_by_latitude(mesh)
+
+    m_init = zeros(FT, Nx, Ny, Nz)
+    for k in 1:Nz, j in 1:Ny, i in 1:Nx
+        dp_k = level_thickness(vc, k, ps_val)
+        m_init[i, j, k] = dp_k * areas[j] / g
+    end
+
+    state = CellState(copy(m_init); CO2 = m_init .* FT(400e-6))
+    scheme = RussellLernerAdvection(use_limiter=true)
+    ws = AdvectionWorkspace(state.air_dry_mass)
+
+    m_total_0 = sum(state.air_dry_mass)
+    rm_total_0 = total_mass(state, :CO2)
+
+    n_windows = 4
+    for win in 1:n_windows
+        # Rebuild fluxes each window (simulating fresh met data)
+        fluxes = make_simple_fluxes(grid)
+
+        m_before = sum(state.air_dry_mass)
+        rm_before = total_mass(state, :CO2)
+
+        strang_split!(state, fluxes, grid, scheme; workspace=ws)
+
+        m_after = sum(state.air_dry_mass)
+        rm_after = total_mass(state, :CO2)
+
+        @test abs(m_after - m_before) / m_before < 1e-12
+        @test abs(rm_after - rm_before) / rm_before < 1e-12
+    end
+
+    # Cumulative conservation across all windows
+    m_total_final = sum(state.air_dry_mass)
+    rm_total_final = total_mass(state, :CO2)
+    @test abs(m_total_final - m_total_0) / m_total_0 < 1e-11
+    @test abs(rm_total_final - rm_total_0) / rm_total_0 < 1e-11
+end
+
+# =========================================================================
+# Test 12: sweep functions are NOT exported (basis discipline)
+# =========================================================================
+@testset "Sweep functions not in public API" begin
+    @test !isdefined(AtmosTransportV2, :sweep_x!)
+    @test !isdefined(AtmosTransportV2, :sweep_y!)
+    @test !isdefined(AtmosTransportV2, :sweep_z!)
+    @test !isdefined(AtmosTransportV2, :max_cfl_x)
+    @test !isdefined(AtmosTransportV2, :max_cfl_y)
+    @test !isdefined(AtmosTransportV2, :max_cfl_z)
+    @test !isdefined(AtmosTransportV2, :minmod)
+    @test !isdefined(AtmosTransportV2, :van_leer_slope)
+
+    # But strang_split! and AdvectionWorkspace ARE exported
+    @test isdefined(AtmosTransportV2, :strang_split!)
+    @test isdefined(AtmosTransportV2, :AdvectionWorkspace)
+end
+
 println("\n✓ All v2 dry-flux interface tests passed!")

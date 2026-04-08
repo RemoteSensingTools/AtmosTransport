@@ -66,6 +66,12 @@ function cell_area(m::LatLonMesh{FT}, i::Integer, j::Integer) where FT
 end
 cell_area(m::LatLonMesh, c::Tuple{<:Integer, <:Integer}) = cell_area(m, c[1], c[2])
 
+"""Cell area [m²] from flat cell index `c` (column-major: `c = i + (j-1)*Nx`)."""
+function cell_area(m::LatLonMesh, c::Integer)
+    j = div(c - 1, m.Nx) + 1
+    return cell_area(m, 1, j)
+end
+
 """Cell area vector (precomputed, one per latitude band)."""
 function cell_areas_by_latitude(m::LatLonMesh{FT}) where FT
     R = m.radius

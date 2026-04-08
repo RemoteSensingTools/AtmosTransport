@@ -72,6 +72,8 @@ function cell_areas_by_latitude(m::LatLonMesh{FT}) where FT
     return FT[R^2 * deg2rad(m.Δλ) * abs(sind(m.φᶠ[j+1]) - sind(m.φᶠ[j])) for j in 1:m.Ny]
 end
 
+# ---- Internal structured-only metric helpers (not exported) ----
+
 """x-spacing [m] at latitude j. Clamped to Δy near poles."""
 function dx(m::LatLonMesh{FT}, j::Integer) where FT
     R = m.radius
@@ -85,12 +87,44 @@ function dy(m::LatLonMesh{FT}) where FT
     return m.radius * deg2rad(m.Δφ)
 end
 
-"""Face length [m] for x-faces (meridional edges) at latitude j."""
-face_length_x(m::LatLonMesh{FT}, j::Integer) where FT = m.radius * deg2rad(m.Δφ)
+"""x-face length [m] (meridional edges) at latitude band j."""
+_face_length_x(m::LatLonMesh{FT}, j::Integer) where FT = m.radius * deg2rad(m.Δφ)
 
-"""Face length [m] for y-faces (zonal edges) at face latitude j (1:Ny+1)."""
-function face_length_y(m::LatLonMesh{FT}, j::Integer) where FT
+"""y-face length [m] (zonal edges) at face latitude j (1:Ny+1)."""
+function _face_length_y(m::LatLonMesh{FT}, j::Integer) where FT
     return m.radius * cosd(m.φᶠ[j]) * deg2rad(m.Δλ)
+end
+
+# ---- Universal face_length(mesh, f) implementation ----
+
+"""
+    face_length(m::LatLonMesh, f) -> FT
+
+Length [m] of face `f` using the universal face-indexed API.
+
+X-faces (f ∈ 1:(Nx+1)*Ny) return the meridional edge length.
+Y-faces (f ∈ (Nx+1)*Ny+1 : nfaces) return the zonal edge length.
+"""
+function face_length(m::LatLonMesh{FT}, f::Integer) where FT
+    n_xfaces = (m.Nx + 1) * m.Ny
+    if f <= n_xfaces
+        j = div(f - 1, m.Nx + 1) + 1
+        return _face_length_x(m, j)
+    else
+        fi = f - n_xfaces
+        j = div(fi - 1, m.Nx) + 1
+        return _face_length_y(m, j)
+    end
+end
+
+"""
+    face_normal(m::LatLonMesh, f) -> (nx, ny)
+
+Unit normal of face `f`. X-faces → (1, 0), Y-faces → (0, 1).
+"""
+function face_normal(m::LatLonMesh{FT}, f::Integer) where FT
+    n_xfaces = (m.Nx + 1) * m.Ny
+    return ifelse(f <= n_xfaces, (one(FT), zero(FT)), (zero(FT), one(FT)))
 end
 
 # ---- Face connectivity (structured shortcut) ----
@@ -120,5 +154,4 @@ function face_cells(m::LatLonMesh, f::Integer)
     end
 end
 
-export LatLonMesh, cell_areas_by_latitude, dx, dy
-export face_length_x, face_length_y
+export LatLonMesh, cell_areas_by_latitude

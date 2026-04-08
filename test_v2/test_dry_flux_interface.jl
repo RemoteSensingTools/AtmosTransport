@@ -57,6 +57,90 @@ end
 end
 
 # =========================================================================
+# Test 1b: Abstraction boundary — mock flux state proves dispatch is on
+#           AbstractStructuredFaceFluxState, not the concrete type
+# =========================================================================
+struct MockStructuredFluxState{AX, AY, AZ} <: AbstractStructuredFaceFluxState
+    am :: AX
+    bm :: AY
+    cm :: AZ
+end
+
+@testset "Abstraction boundary: mock flux state" begin
+    FT = Float64
+    Nx, Ny, Nz = 10, 8, 4
+
+    mesh = LatLonMesh(; Nx=Nx, Ny=Ny, FT=FT)
+    A = FT[0.0, 500.0, 5000.0, 30000.0, 0.0]
+    B = FT[0.0, 0.0,   0.1,    0.5,     1.0]
+    vc = HybridSigmaPressure(A, B)
+    grid = AtmosGrid(mesh, vc, AtmosTransportV2.Grids.CPU(); FT=FT)
+
+    g = grid.gravity
+    ps_val = grid.reference_pressure
+    areas = cell_areas_by_latitude(mesh)
+
+    m = zeros(FT, Nx, Ny, Nz)
+    for k in 1:Nz, j in 1:Ny, i in 1:Nx
+        dp_k = level_thickness(vc, k, ps_val)
+        m[i, j, k] = dp_k * areas[j] / g
+    end
+    rm = m .* FT(400e-6)
+    state = CellState(m; CO2=rm)
+
+    am = zeros(FT, Nx+1, Ny, Nz)
+    bm = zeros(FT, Nx, Ny+1, Nz)
+    cm = zeros(FT, Nx, Ny, Nz+1)
+
+    mock_fluxes = MockStructuredFluxState(am, bm, cm)
+
+    @test mock_fluxes isa AbstractStructuredFaceFluxState
+    @test mock_fluxes isa AbstractFaceFluxState
+    @test !(mock_fluxes isa StructuredFaceFluxState)
+
+    @test face_flux_x(mock_fluxes, 1, 1, 1) == 0.0
+    @test face_flux_y(mock_fluxes, 1, 1, 1) == 0.0
+    @test face_flux_z(mock_fluxes, 1, 1, 1) == 0.0
+
+    scheme = RussellLernerAdvection(use_limiter=true)
+    ws = AdvectionWorkspace(m)
+
+    m_before = sum(state.air_dry_mass)
+    rm_before = total_mass(state, :CO2)
+
+    strang_split!(state, mock_fluxes, grid, scheme; workspace=ws)
+
+    @test sum(state.air_dry_mass) ≈ m_before atol=eps(FT)*m_before*1000
+    @test total_mass(state, :CO2)  ≈ rm_before atol=eps(FT)*rm_before*1000
+end
+
+# =========================================================================
+# Test 1c: Universal face geometry API
+# =========================================================================
+@testset "Universal face_length and face_normal" begin
+    mesh = LatLonMesh(; Nx=10, Ny=8, FT=Float64)
+    R = mesh.radius
+
+    n_xfaces = (mesh.Nx + 1) * mesh.Ny
+    total = nfaces(mesh)
+    @test total == n_xfaces + mesh.Nx * (mesh.Ny + 1)
+
+    fl_x = face_length(mesh, 1)
+    @test fl_x ≈ R * deg2rad(mesh.Δφ)
+
+    fl_y = face_length(mesh, n_xfaces + 1)
+    @test fl_y > 0.0
+
+    nx_x, ny_x = face_normal(mesh, 1)
+    @test nx_x == 1.0
+    @test ny_x == 0.0
+
+    nx_y, ny_y = face_normal(mesh, n_xfaces + 1)
+    @test nx_y == 0.0
+    @test ny_y == 1.0
+end
+
+# =========================================================================
 # Test 2: Geometry API correctness for LatLonMesh
 # =========================================================================
 @testset "LatLonMesh geometry" begin

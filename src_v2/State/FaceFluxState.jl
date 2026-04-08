@@ -90,6 +90,14 @@ Face-centered dry mass fluxes for unstructured meshes (Phase 2+).
 - `horizontal_flux :: A` — dry mass flux per horizontal face [kg per half-timestep].
   Layout: `(nfaces, Nz)`. Positive = flow in face-normal direction.
 - `cm :: AZ` — vertical flux, same convention as structured.
+
+# Vertical storage convention
+The `cm` field assumes vertical fluxes are columnar (one column per horizontal
+cell, same for all mesh types). This is a convenience that holds for every
+atmospheric grid we currently target (ERA5, GEOS-FP, GEOS-IT, reduced Gaussian).
+If a future mesh requires non-columnar vertical connectivity, define a new
+concrete subtype of `AbstractUnstructuredFaceFluxState` with different storage —
+the abstract hierarchy supports this without breaking existing code.
 """
 struct FaceIndexedFluxState{A <: AbstractArray, AZ <: AbstractArray} <: AbstractUnstructuredFaceFluxState
     horizontal_flux :: A

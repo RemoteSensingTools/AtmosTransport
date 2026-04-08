@@ -154,4 +154,34 @@ function face_cells(m::LatLonMesh, f::Integer)
     end
 end
 
+"""
+    cell_faces(m::LatLonMesh, c) -> (west, east, south, north)
+
+Indices of the 4 faces bounding cell `c`. Accepts either a flat cell index
+(column-major: `c = i + (j-1)*Nx`) or a tuple `(i, j)`.
+
+Returns face indices consistent with the face_length/face_normal/face_cells
+numbering: X-faces 1:(Nx+1)*Ny, then Y-faces (Nx+1)*Ny+1 : nfaces.
+"""
+function cell_faces(m::LatLonMesh, c::Integer)
+    Nx = m.Nx
+    i = mod(c - 1, Nx) + 1
+    j = div(c - 1, Nx) + 1
+    return _cell_faces_ij(m, i, j)
+end
+
+function cell_faces(m::LatLonMesh, c::Tuple{<:Integer, <:Integer})
+    return _cell_faces_ij(m, c[1], c[2])
+end
+
+function _cell_faces_ij(m::LatLonMesh, i::Integer, j::Integer)
+    Nx = m.Nx
+    n_xfaces = (Nx + 1) * m.Ny
+    west  = (j - 1) * (Nx + 1) + i
+    east  = (j - 1) * (Nx + 1) + i + 1
+    south = n_xfaces + (j - 1) * Nx + i
+    north = n_xfaces + j * Nx + i
+    return (west, east, south, north)
+end
+
 export LatLonMesh, cell_areas_by_latitude

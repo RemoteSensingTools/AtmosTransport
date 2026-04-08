@@ -224,6 +224,36 @@ end
     lc, rc = face_cells(mesh, f)
     @test lc isa Integer
     @test rc isa Integer
+
+    # cell_faces — returns (west, east, south, north) face indices for a cell
+    Nx, Ny = mesh.Nx, mesh.Ny
+    n_xfaces = (Nx + 1) * Ny
+
+    # Interior cell (i=3, j=4)
+    w, e, s, n = cell_faces(mesh, (3, 4))
+    @test w == (4-1)*(Nx+1) + 3
+    @test e == (4-1)*(Nx+1) + 4
+    @test s == n_xfaces + (4-1)*Nx + 3
+    @test n == n_xfaces + 4*Nx + 3
+
+    # Flat-index version: cell c = i + (j-1)*Nx = 3 + 3*60 = 183
+    c_flat = 3 + (4-1)*Nx
+    w2, e2, s2, n2 = cell_faces(mesh, c_flat)
+    @test (w2, e2, s2, n2) == (w, e, s, n)
+
+    # Round-trip: face_cells ∘ cell_faces should be consistent
+    # The west face of cell (3,4) should have (3,4) as its right cell
+    _, rc_w = face_cells(mesh, w)
+    @test rc_w == 3 + (4-1)*Nx  # flat index of cell (3,4)
+
+    # The east face of cell (3,4) should have (3,4) as its left cell
+    lc_e, _ = face_cells(mesh, e)
+    @test lc_e == 3 + (4-1)*Nx
+
+    # Corner cell (1,1): west face wraps to Nx
+    w1, _, _, _ = cell_faces(mesh, (1, 1))
+    lc1, _ = face_cells(mesh, w1)
+    @test lc1 == Nx + (1-1)*Nx  # flat index of (Nx, 1)
 end
 
 # =========================================================================

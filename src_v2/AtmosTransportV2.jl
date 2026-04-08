@@ -68,7 +68,7 @@ using .Kernels
 export AtmosGrid, LatLonMesh, CubedSphereMesh, ReducedGaussianMesh
 export HybridSigmaPressure
 export AbstractFluxTopology, StructuredFluxTopology, FaceIndexedFluxTopology, flux_topology
-export ncells, nfaces, nlevels, cell_area, nx, ny, cell_areas_by_latitude
+export ncells, nfaces, nlevels, cell_area, cell_faces, nx, ny, cell_areas_by_latitude
 export face_length, face_normal, face_cells, floattype
 export n_levels, pressure_at_interface, pressure_at_level, level_thickness
 

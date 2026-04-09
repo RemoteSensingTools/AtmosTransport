@@ -1,0 +1,22 @@
+# ERA5 spectral -> v4 binary smoke test using the current on-disk 0.5x0.5 Dec 2021 archive
+
+[input]
+spectral_dir = "~/data/AtmosTransport/met/era5/0.5x0.5/spectral_hourly"
+coefficients = "config/era5_L137_coefficients.toml"
+
+[output]
+directory = "~/data/AtmosTransport/met/era5/0.5x0.5/preprocessed/massflux/v4_137L_smoketest_current"
+
+[grid]
+type = "latlon"
+nlon = 720
+nlat = 361
+level_top = 1
+level_bot = 137
+echlevs = "ml137_full"
+merge_min_thickness_Pa = 1.0
+
+[numerics]
+float_type = "Float32"
+dt = 900.0
+met_interval = 3600.0

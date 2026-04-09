@@ -6,8 +6,8 @@ Meteorological data adapters for the dry-mass transport architecture.
 Provides:
 - Abstract driver types with capability traits
 - Mass closure strategies (diagnose cm, pressure tendency, native vertical)
-- `build_dry_fluxes!` interface — the key met→transport boundary
-- ERA5 dry flux builder (preprocessed binary path)
+- `build_dry_fluxes!` interface -- the key met -> transport boundary
+- ERA5 preprocessed-binary reader and native reduced-Gaussian GRIB geometry helpers
 """
 module MetDrivers
 
@@ -31,5 +31,7 @@ export has_surface, has_tm5conv, has_temperature
 export mass_basis, A_ifc, B_ifc
 export diagnose_cm_from_continuity!, diagnose_cm_from_continuity_vc!
 export diagnose_cm_from_continuity_ka!
+export ERA5ReducedGaussianGeometry
+export read_era5_reduced_gaussian_geometry, read_era5_reduced_gaussian_mesh
 
 end # module MetDrivers

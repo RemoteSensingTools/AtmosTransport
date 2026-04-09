@@ -156,6 +156,8 @@ struct MassFluxBinaryReader{FT} <: AbstractBinaryReader
     steps_per_met   :: Int
     level_top       :: Int
     level_bot       :: Int
+    "transport mass basis encoded in the binary header (:moist default, :dry when explicitly requested)"
+    mass_basis      :: Symbol
     # v2 fields (all false/empty for v1)
     "header size in bytes (4096 for v1, 16384 for v2)"
     header_size     :: Int
@@ -197,6 +199,18 @@ struct MassFluxBinaryReader{FT} <: AbstractBinaryReader
     n_dcm           :: Int
 end
 
+function _header_latlon_axis(hdr, ::Type{FT}, n::Int,
+                             axis_key::Symbol, start_key::Symbol, step_key::Symbol) where FT
+    if haskey(hdr, axis_key)
+        return FT.(collect(getproperty(hdr, axis_key)))
+    end
+    haskey(hdr, start_key) || error("Binary header missing $axis_key and $start_key")
+    haskey(hdr, step_key)  || error("Binary header missing $axis_key and $step_key")
+    start = Float64(get(hdr, start_key, 0.0))
+    step  = Float64(get(hdr, step_key, 0.0))
+    return FT.(collect(range(start; step=step, length=n)))
+end
+
 function MassFluxBinaryReader(bin_path::String, ::Type{FT}) where FT
     io = open(bin_path, "r")
 
@@ -217,6 +231,9 @@ function MassFluxBinaryReader(bin_path::String, ::Type{FT}) where FT
     n_bm = Int(hdr.n_bm)
     n_cm = Int(hdr.n_cm)
     n_ps = Int(hdr.n_ps)
+    mass_basis = let basis = lowercase(String(get(hdr, :mass_basis, "moist")))
+        basis == "dry" ? :dry : :moist
+    end
 
     # v2 optional field counts
     has_qv      = version >= 2 && Bool(get(hdr, :include_qv, false))
@@ -252,8 +269,8 @@ function MassFluxBinaryReader(bin_path::String, ::Type{FT}) where FT
     seek(io, hdr_size)
     data = Mmap.mmap(io, Vector{Float32}, total_elems, hdr_size)
 
-    lons = FT.(collect(hdr.lons))
-    lats = FT.(collect(hdr.lats))
+    lons = _header_latlon_axis(hdr, FT, Nx, :lons, :lon_center_start_deg, :lon_center_step_deg)
+    lats = _header_latlon_axis(hdr, FT, Ny, :lats, :lat_center_start_deg, :lat_center_step_deg)
 
     # v2: embedded vertical coordinate
     A_ifc = version >= 2 && haskey(hdr, :A_ifc) ? Float64.(collect(hdr.A_ifc)) : Float64[]
@@ -280,6 +297,7 @@ function MassFluxBinaryReader(bin_path::String, ::Type{FT}) where FT
         lons, lats,
         FT(hdr.dt_seconds), FT(hdr.half_dt_seconds),
         Int(hdr.steps_per_met_window), Int(hdr.level_top), Int(hdr.level_bot),
+        mass_basis,
         hdr_size, has_qv, has_cmfmc, has_surface,
         n_qv, n_cmfmc, n_sfc, A_ifc, B_ifc,
         has_tm5conv, has_temperature, n_tm5conv, n_temperature,

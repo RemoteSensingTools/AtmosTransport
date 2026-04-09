@@ -164,7 +164,7 @@ function _run_loop!(model, grid::AbstractGrid{FT},
         t_phases["gpu_airmass"] += time() - _t
 
         # Compute dry mass for LL rm↔c_dry conversions (m_dry = m_ref × (1 - QV))
-        compute_ll_dry_mass!(phys, sched, grid)
+        compute_ll_dry_mass!(phys, sched, grid, driver)
 
         # First window: IC finalization + initial output
         if w == 1
@@ -266,11 +266,11 @@ function _run_loop!(model, grid::AbstractGrid{FT},
         # n_extra=4 the step[]*dt_sub calculation reported 4× actual
         # physical time, giving NetCDF outputs labeled at the wrong dates.
         sim_time = Float64(w * dt_window)
-        out_mass = compute_output_mass(sched, air, phys, grid)
+        out_mass = compute_output_mass(sched, air, phys, grid, driver)
         met = build_met_fields(sched, phys, grid, half_dt, dt_window)
         # m_ref was synced to m_dev after advection (in advection_phase!),
         # so rm and m_ref are on the same basis for output VMR = rm / m_ref.
-        compute_ll_dry_mass!(phys, sched, grid)
+        compute_ll_dry_mass!(phys, sched, grid, driver)
         # Convert rm → dry VMR for output (LL only; CS is identity)
         c_tracers = rm_to_vmr(tracers, sched, phys, grid)
         for writer in writers

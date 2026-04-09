@@ -74,6 +74,7 @@ export AbstractMetDriver, AbstractRawMetDriver, AbstractMassFluxMetDriver
 export total_windows, window_dt, steps_per_window, load_met_window!
 export load_cmfmc_window!, load_dtrain_window!, load_tm5conv_window!, load_qv_window!, load_surface_fields_window!, load_all_window!, load_physics_window!
 export load_qv_and_ps_pair!, load_ps_from_ctm_i1!, load_cx_cy_window!
+export mass_basis
 
 # Met buffer types
 export AbstractMetBuffer, AbstractCPUStagingBuffer

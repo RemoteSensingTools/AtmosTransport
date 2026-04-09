@@ -62,5 +62,8 @@ met_interval(d::AbstractMetDriver) = window_dt(d)
 """Default start date: 2000-01-01 (override per driver for correct output timestamps)."""
 start_date(d::AbstractMetDriver) = Dates.Date(2000, 1, 1)
 
+"""Default transport mass basis for met drivers."""
+mass_basis(::AbstractMetDriver) = :moist
+
 """Fallback: QV not available for this driver. Override per driver to enable dry-air transport."""
 load_qv_window!(qv, driver::AbstractMetDriver, grid, win) = false

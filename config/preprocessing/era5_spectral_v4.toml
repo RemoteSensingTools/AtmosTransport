@@ -24,10 +24,16 @@ coefficients = "config/era5_L137_coefficients.toml"
 directory = "/temp1/atmos_transport/era5_v4_hourly"
 
 [grid]
+type = "latlon"
 nlon = 720          # 0.5 deg
 nlat = 361          # 0.5 deg
 level_top = 1       # TOA
 level_bot = 137     # Surface
+
+# Future native reduced-Gaussian path:
+# type = "era5_native_reduced_gaussian"
+# geometry_source_grib = "~/data/AtmosTransport/met/era5/native_q/era5_q_ml_20211201.grib"
+# geometry_param_id = 133
 
 # Merge thin stratospheric levels: 137 -> ~75 levels
 # Levels thinner than this threshold (at p_surface=101325 Pa) are merged

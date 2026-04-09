@@ -1,0 +1,48 @@
+# ERA5 F64 v4 — non-uniform CO2 IC, 24h, 3-field output for visualization
+#
+# Loads CO2 from startCO2 IC file (range ~375-894 ppm). Outputs:
+#   - surface CO2 mixing ratio
+#   - ~750 hPa CO2 (sigma=0.74)
+#   - column-mean CO2 (dry column average)
+
+[architecture]
+use_gpu    = true
+float_type = "Float64"
+
+[grid]
+type       = "latlon"
+met_source = "era5"
+size       = [720, 361, 34]
+
+[met_data]
+driver       = "preprocessed_latlon"
+directory    = "~/data/AtmosTransport/met/era5/spectral_v4_tropo34_dec2021"
+disable_qv   = true
+disable_flux_delta = false
+dt           = 900
+max_windows  = 24
+
+[initial_conditions]
+file = "~/data/AtmosTransport/catrine/InitialConditions/startCO2_202112010000.nc"
+co2  = "CO2"
+
+[tracers.co2]
+emission = "none"
+species  = "co2"
+
+[advection]
+scheme            = "slopes"
+prognostic_slopes = false
+mass_fixer        = true
+
+[output]
+filename = "/tmp/era5_f64_startCO2_viz.nc"
+interval = 3600
+
+[output.fields]
+co2_surface     = {type = "surface_slice", species = "co2"}
+co2_750hPa      = {type = "sigma_level", species = "co2", sigma = 0.74}
+co2_column_mean = {type = "column_mean", species = "co2"}
+
+[buffering]
+strategy = "double"

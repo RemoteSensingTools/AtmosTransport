@@ -239,8 +239,8 @@ function _parse_header(raw_bytes::Vector{UInt8})
     _A_ifc = version >= 2 && haskey(hdr, :A_ifc) ? Float64.(collect(hdr.A_ifc)) : Float64[]
     _B_ifc = version >= 2 && haskey(hdr, :B_ifc) ? Float64.(collect(hdr.B_ifc)) : Float64[]
 
-    lons = Float64.(collect(hdr.lons))
-    lats = Float64.(collect(hdr.lats))
+    lons = _header_latlon_axis(hdr, nx, :lons, :lon_center_start_deg, :lon_center_step_deg)
+    lats = _header_latlon_axis(hdr, ny, :lats, :lat_center_start_deg, :lat_center_step_deg)
 
     _mass_basis = _parse_mass_basis(hdr, version)
 
@@ -263,6 +263,20 @@ end
 
 function _disk_float_type(sym::Symbol)
     sym === :Float64 ? Float64 : Float32
+end
+
+function _header_latlon_axis(hdr, n::Int, arr_key::Symbol, start_key::Symbol, step_key::Symbol)
+    if haskey(hdr, arr_key)
+        return Float64.(collect(getproperty(hdr, arr_key)))
+    end
+
+    if haskey(hdr, start_key) && haskey(hdr, step_key)
+        start = Float64(getproperty(hdr, start_key))
+        step = Float64(getproperty(hdr, step_key))
+        return Float64.(collect(range(start; step=step, length=n)))
+    end
+
+    error("Binary header missing $arr_key and fallback keys $start_key/$step_key")
 end
 
 function ERA5BinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = Float32)

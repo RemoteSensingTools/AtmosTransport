@@ -1,7 +1,7 @@
 """
     ERA5 met driver (v2)
 
-ERA5-specific dry flux building from spectral or gridded fields.
+ERA5-specific dry flux building from spectral, gridded, and native-GRIB fields.
 """
 module ERA5
 
@@ -13,10 +13,11 @@ using ...State: MetState,
     AbstractStructuredFaceFluxState, StructuredFaceFluxState,
     AbstractMassFluxBasis, MoistMassFluxBasis, DryMassFluxBasis,
     MoistStructuredFluxState, DryStructuredFluxState
-using ...Grids: AtmosGrid, LatLonMesh, HybridSigmaPressure,
+using ...Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, HybridSigmaPressure,
     n_levels, pressure_at_interface, level_thickness, b_diff, cell_areas_by_latitude
 
 include("BinaryReader.jl")
+include("NativeGRIBGeometry.jl")
 include("VerticalClosure.jl")
 include("DryFluxBuilder.jl")
 

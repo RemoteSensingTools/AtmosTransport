@@ -35,6 +35,12 @@ end
 """Global ref for moist sub-step diagnostics. Set to a `MoistSubStepDiag` to enable capture."""
 const MOIST_DIAG = Ref{Any}(nothing)
 
+_ll_mass_basis(::Nothing) = Val(:moist)
+_ll_mass_basis(driver) = _IO.mass_basis(driver) === :dry ? Val(:dry) : Val(:moist)
+
+_compute_ll_dry_mass!(dest, src, qv, ::Val{:dry}) = copyto!(dest, src)
+_compute_ll_dry_mass!(dest, src, qv, ::Val{:moist}) = (dest .= src .* (1 .- qv))
+
 # =====================================================================
 # Setup helpers
 # =====================================================================
@@ -105,13 +111,16 @@ end
     # Mass-CFL pilot is now in src/Advection/mass_cfl_pilot.jl
     # Called from advection_phase! via Advection.find_mass_cfl_refinement()
 
-"""Compute `phys.m_dry = m_ref × (1 - QV)` for LL grids. No-op for CS.
-Skips QV correction if vertical levels don't match (e.g., merged grid)."""
-compute_ll_dry_mass!(phys, sched, grid::CubedSphereGrid) = nothing
-function compute_ll_dry_mass!(phys, sched, grid::LatitudeLongitudeGrid)
+"""Compute LL dry air mass for rm↔VMR conversions.
+
+For moist-basis transport, `m_dry = m × (1 - QV)`.
+For dry-basis binaries, `m` is already dry and is copied directly.
+Skips QV correction if vertical levels don't match (e.g. merged-grid output)."""
+compute_ll_dry_mass!(phys, sched, grid::CubedSphereGrid, driver=nothing) = nothing
+function compute_ll_dry_mass!(phys, sched, grid::LatitudeLongitudeGrid, driver=nothing)
     gpu = current_gpu(sched)
     if phys.qv_loaded[] && size(phys.qv_gpu) == size(gpu.m_ref)
-        phys.m_dry .= gpu.m_ref .* (1 .- phys.qv_gpu)
+        _compute_ll_dry_mass!(phys.m_dry, gpu.m_ref, phys.qv_gpu, _ll_mass_basis(driver))
     else
         copyto!(phys.m_dry, gpu.m_ref)
     end
@@ -125,11 +134,11 @@ ll_dry_mass(phys) = phys.m_dry
 TM5 always uses m_evolved for mixing ratios — never m_prescribed.
 The Strang-split advection evolves m_dev away from m_ref; using m_ref
 for output creates noise in c = rm/m because rm was evolved with m_dev."""
-compute_ll_dry_mass_evolved!(phys, sched, grid::CubedSphereGrid) = nothing
-function compute_ll_dry_mass_evolved!(phys, sched, grid::LatitudeLongitudeGrid)
+compute_ll_dry_mass_evolved!(phys, sched, grid::CubedSphereGrid, driver=nothing) = nothing
+function compute_ll_dry_mass_evolved!(phys, sched, grid::LatitudeLongitudeGrid, driver=nothing)
     gpu = current_gpu(sched)
     if phys.qv_loaded[] && size(phys.qv_gpu) == size(gpu.m_dev)
-        phys.m_dry .= gpu.m_dev .* (1 .- phys.qv_gpu)
+        _compute_ll_dry_mass!(phys.m_dry, gpu.m_dev, phys.qv_gpu, _ll_mass_basis(driver))
     else
         copyto!(phys.m_dry, gpu.m_dev)
     end
@@ -1798,11 +1807,14 @@ end
 # Phase 11: Compute output air mass (dry correction)
 # =====================================================================
 
-"""Compute air mass for output. If QV loaded and compatible, returns dry mass."""
-function compute_output_mass(sched, air, phys, grid::LatitudeLongitudeGrid)
+"""Compute LL output air mass in the transport basis expected by diagnostics.
+
+Moist-basis binaries are converted to dry mass when QV is available.
+Dry-basis binaries return their stored mass directly."""
+function compute_output_mass(sched, air, phys, grid::LatitudeLongitudeGrid, driver=nothing)
     gpu = current_gpu(sched)
     if phys.qv_loaded[] && size(phys.qv_gpu) == size(gpu.m_ref)
-        phys.m_dry .= gpu.m_ref .* (1 .- phys.qv_gpu)
+        _compute_ll_dry_mass!(phys.m_dry, gpu.m_ref, phys.qv_gpu, _ll_mass_basis(driver))
         return phys.m_dry
     end
     return gpu.m_ref
@@ -1859,9 +1871,19 @@ end
 # IC output (first window only)
 # =====================================================================
 
-"""Write IC output snapshot (no-op for LL, writes t=0 output for CS)."""
-write_ic_output!(writers, model, tracers, sched, air, phys, gc,
-                  grid::LatitudeLongitudeGrid, half_dt, dt_window) = nothing
+"""Write IC output snapshot (t=0) for all grid types."""
+function write_ic_output!(writers, model, tracers, sched, air, phys, gc,
+                          grid::LatitudeLongitudeGrid, half_dt, dt_window)
+    met_ic = build_met_fields(sched, phys, grid, half_dt, dt_window)
+    ic_mass = compute_output_mass(sched, air, phys, grid, model.met_data)
+    compute_ll_dry_mass!(phys, sched, grid, model.met_data)
+    c_tracers = rm_to_vmr(tracers, sched, phys, grid)
+    for writer in writers
+        write_output!(writer, model, 0.0;
+                      air_mass=ic_mass, tracers=c_tracers, met_fields=met_ic,
+                      rm_tracers=tracers)
+    end
+end
 
 function write_ic_output!(writers, model, tracers, sched, air, phys, gc,
                             grid::CubedSphereGrid, half_dt, dt_window)

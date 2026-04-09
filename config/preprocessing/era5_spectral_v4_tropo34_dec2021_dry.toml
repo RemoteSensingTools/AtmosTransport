@@ -1,0 +1,33 @@
+# ERA5 spectral -> v4 daily binary (dry basis), TM5 r1112 tropo34 levels
+#
+# Generates dry-basis core transport fields for src_v2 FluxState:
+#   m, am, bm, cm on dry basis (mass_basis="dry")
+# with ps on total-pressure basis and optional qv payload disabled by default.
+
+[input]
+spectral_dir = "~/data/AtmosTransport/met/era5/spectral_hourly"
+coefficients = "config/era5_L137_coefficients.toml"
+thermo_dir = "~/data/AtmosTransport/met/era5/physics"
+
+[output]
+directory = "~/data/AtmosTransport/met/era5/spectral_v4_tropo34_dec2021_dry"
+mass_basis = "dry"
+include_qv = false
+
+[grid]
+nlon = 720
+nlat = 361
+level_top = 1
+level_bot = 137
+echlevs = "ml137_tropo34"
+merge_min_thickness_Pa = 1000.0
+
+[numerics]
+float_type = "Float32"
+dt = 900.0
+met_interval = 3600.0
+
+[mass_fix]
+enable = true
+target_ps_dry_pa = 98726.0
+qv_global_climatology = 0.00247

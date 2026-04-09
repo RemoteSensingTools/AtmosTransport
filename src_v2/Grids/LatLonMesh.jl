@@ -29,23 +29,68 @@ struct LatLonMesh{FT <: AbstractFloat} <: AbstractStructuredMesh
     radius :: FT
 end
 
+Base.eltype(::LatLonMesh{FT}) where FT = FT
+Base.eltype(::Type{<:LatLonMesh{FT}}) where FT = FT
+
+function _validate_latlon_size(Nx, Ny, size)
+    if isnothing(size)
+        isnothing(Nx) && throw(ArgumentError("LatLonMesh requires either Nx/Ny or size=(Nx, Ny)"))
+        isnothing(Ny) && throw(ArgumentError("LatLonMesh requires either Nx/Ny or size=(Nx, Ny)"))
+        Nx = Int(Nx)
+        Ny = Int(Ny)
+    else
+        length(size) == 2 || throw(ArgumentError("size must be a 2-tuple (Nx, Ny)"))
+        Nx_size, Ny_size = Int.(size)
+        if !isnothing(Nx) && Nx != Nx_size
+            throw(ArgumentError("Nx=$Nx conflicts with size[1]=$Nx_size"))
+        end
+        if !isnothing(Ny) && Ny != Ny_size
+            throw(ArgumentError("Ny=$Ny conflicts with size[2]=$Ny_size"))
+        end
+        Nx, Ny = Nx_size, Ny_size
+    end
+
+    Nx > 0 || throw(ArgumentError("Nx must be positive"))
+    Ny > 0 || throw(ArgumentError("Ny must be positive"))
+
+    return Nx, Ny
+end
+
+function _validate_interval(name::AbstractString, interval, ::Type{FT};
+                            lower = -Inf, upper = Inf,
+                            max_extent = Inf) where FT <: AbstractFloat
+    length(interval) == 2 || throw(ArgumentError("$name must be a 2-tuple"))
+    left, right = FT.(interval)
+    left < right || throw(ArgumentError("$name must be strictly increasing"))
+    left >= FT(lower) || throw(ArgumentError("$name lower bound must be >= $lower"))
+    right <= FT(upper) || throw(ArgumentError("$name upper bound must be <= $upper"))
+    right - left <= FT(max_extent) || throw(ArgumentError("$name extent must be <= $max_extent"))
+    return left, right
+end
+
+@inline _regular_faces(left, right, N, ::Type{FT}) where FT = collect(range(left, right, length=N+1) .|> FT)
+@inline _regular_centers(faces::AbstractVector{FT}) where FT = FT[(faces[i] + faces[i+1]) / 2 for i in 1:length(faces)-1]
+
 function LatLonMesh(;
         FT::Type{<:AbstractFloat} = Float64,
-        Nx::Int, Ny::Int,
+        Nx::Union{Nothing, Int} = nothing,
+        Ny::Union{Nothing, Int} = nothing,
+        size = nothing,
         longitude = (-180, 180),
         latitude  = (-90, 90),
         radius    = FT(6.371e6))
 
-    λ_west, λ_east  = FT.(longitude)
-    φ_south, φ_north = FT.(latitude)
+    Nx, Ny = _validate_latlon_size(Nx, Ny, size)
+    λ_west, λ_east = _validate_interval("longitude", longitude, FT; max_extent=360)
+    φ_south, φ_north = _validate_interval("latitude", latitude, FT; lower=-90, upper=90)
 
     Δλ = (λ_east - λ_west) / Nx
     Δφ = (φ_north - φ_south) / Ny
 
-    λᶠ = collect(range(λ_west,  λ_east,  length=Nx+1) .|> FT)
-    λᶜ = FT[(λᶠ[i] + λᶠ[i+1]) / 2 for i in 1:Nx]
-    φᶠ = collect(range(φ_south, φ_north, length=Ny+1) .|> FT)
-    φᶜ = FT[(φᶠ[j] + φᶠ[j+1]) / 2 for j in 1:Ny]
+    λᶠ = _regular_faces(λ_west, λ_east, Nx, FT)
+    λᶜ = _regular_centers(λᶠ)
+    φᶠ = _regular_faces(φ_south, φ_north, Ny, FT)
+    φᶜ = _regular_centers(φᶠ)
 
     return LatLonMesh{FT}(Nx, Ny, Δλ, Δφ, λᶜ, λᶠ, φᶜ, φᶠ, FT(radius))
 end
@@ -57,10 +102,39 @@ ny(m::LatLonMesh) = m.Ny
 ncells(m::LatLonMesh) = m.Nx * m.Ny
 nfaces(m::LatLonMesh) = (m.Nx + 1) * m.Ny + m.Nx * (m.Ny + 1)
 
+function Base.summary(m::LatLonMesh)
+    FT = eltype(m)
+    return string(m.Nx, "×", m.Ny, " LatLonMesh{", FT, "}")
+end
+
+function Base.show(io::IO, m::LatLonMesh)
+    print(io, summary(m), "\n",
+          "├── longitude: [", first(m.λᶠ), ", ", last(m.λᶠ), "] degrees with Δλ=", m.Δλ, "\n",
+          "├── latitude:  [", first(m.φᶠ), ", ", last(m.φᶠ), "] degrees with Δφ=", m.Δφ, "\n",
+          "└── radius:    ", m.radius, " m")
+end
+
+@inline function _check_latlon_ij(m::LatLonMesh, i::Integer, j::Integer)
+    1 <= i <= m.Nx || throw(BoundsError(1:m.Nx, i))
+    1 <= j <= m.Ny || throw(BoundsError(1:m.Ny, j))
+    return i, j
+end
+
+@inline function _check_latlon_cell(m::LatLonMesh, c::Integer)
+    1 <= c <= ncells(m) || throw(BoundsError(1:ncells(m), c))
+    return c
+end
+
+@inline function _check_latlon_face(m::LatLonMesh, f::Integer)
+    1 <= f <= nfaces(m) || throw(BoundsError(1:nfaces(m), f))
+    return f
+end
+
 # ---- Geometry: cell metrics ----
 
 """Cell area [m²] at structured index (i, j)."""
 function cell_area(m::LatLonMesh{FT}, i::Integer, j::Integer) where FT
+    _check_latlon_ij(m, i, j)
     R = m.radius
     return R^2 * deg2rad(m.Δλ) * abs(sind(m.φᶠ[j+1]) - sind(m.φᶠ[j]))
 end
@@ -68,6 +142,7 @@ cell_area(m::LatLonMesh, c::Tuple{<:Integer, <:Integer}) = cell_area(m, c[1], c[
 
 """Cell area [m²] from flat cell index `c` (column-major: `c = i + (j-1)*Nx`)."""
 function cell_area(m::LatLonMesh, c::Integer)
+    _check_latlon_cell(m, c)
     j = div(c - 1, m.Nx) + 1
     return cell_area(m, 1, j)
 end
@@ -82,6 +157,7 @@ end
 
 """x-spacing [m] at latitude j. Clamped to Δy near poles."""
 function dx(m::LatLonMesh{FT}, j::Integer) where FT
+    1 <= j <= m.Ny || throw(BoundsError(1:m.Ny, j))
     R = m.radius
     dx_val = R * cosd(m.φᶜ[j]) * deg2rad(m.Δλ)
     dy_val = R * deg2rad(m.Δφ)
@@ -112,6 +188,7 @@ X-faces (f ∈ 1:(Nx+1)*Ny) return the meridional edge length.
 Y-faces (f ∈ (Nx+1)*Ny+1 : nfaces) return the zonal edge length.
 """
 function face_length(m::LatLonMesh{FT}, f::Integer) where FT
+    _check_latlon_face(m, f)
     n_xfaces = (m.Nx + 1) * m.Ny
     if f <= n_xfaces
         j = div(f - 1, m.Nx + 1) + 1
@@ -129,6 +206,7 @@ end
 Unit normal of face `f`. X-faces → (1, 0), Y-faces → (0, 1).
 """
 function face_normal(m::LatLonMesh{FT}, f::Integer) where FT
+    _check_latlon_face(m, f)
     n_xfaces = (m.Nx + 1) * m.Ny
     return ifelse(f <= n_xfaces, (one(FT), zero(FT)), (zero(FT), one(FT)))
 end
@@ -142,6 +220,7 @@ For structured LatLon, faces are implicitly indexed:
 Direct (i,j,k) array access is preferred over these for performance.
 """
 function face_cells(m::LatLonMesh, f::Integer)
+    _check_latlon_face(m, f)
     Nx = m.Nx
     n_xfaces = (Nx + 1) * m.Ny
     if f <= n_xfaces
@@ -170,6 +249,7 @@ Returns face indices consistent with the face_length/face_normal/face_cells
 numbering: X-faces 1:(Nx+1)*Ny, then Y-faces (Nx+1)*Ny+1 : nfaces.
 """
 function cell_faces(m::LatLonMesh, c::Integer)
+    _check_latlon_cell(m, c)
     Nx = m.Nx
     i = mod(c - 1, Nx) + 1
     j = div(c - 1, Nx) + 1
@@ -181,6 +261,7 @@ function cell_faces(m::LatLonMesh, c::Tuple{<:Integer, <:Integer})
 end
 
 function _cell_faces_ij(m::LatLonMesh, i::Integer, j::Integer)
+    _check_latlon_ij(m, i, j)
     Nx = m.Nx
     n_xfaces = (Nx + 1) * m.Ny
     west  = (j - 1) * (Nx + 1) + i

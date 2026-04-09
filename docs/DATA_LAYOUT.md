@@ -3,12 +3,71 @@
 Standard folder structure for met data, emissions, initial conditions, and output.
 All paths are relative to a **data root** specified in the run config.
 
+## Canonical naming (new default)
+
+Use canonical grid names from `docs/GRID_CONVENTIONS.md` directly in folder paths.
+Organize first by met source family, then by canonical grid name, cadence, and payload type.
+
+Recommended hierarchy:
+
+```
+<data_root>/met/<met_source>/<grid_name>/<cadence>/<payload_type>/<dataset_variant>/...
+```
+
+Where:
+
+- `met_source`: `era5`, `geosfp`, `geosit`, `merra2`, ...
+- `grid_name`: canonical names (`0.5x0.5`, `1.0x1.0`, `N320`, `O1280`, `C180`, `C720`, ...)
+- `cadence`: `hourly`, `3hourly`, `6hourly`, `daily`, ...
+- `payload_type`: `spectral`, `gridpoint`, `surface`, `massflux`, `physics`, ...
+- `dataset_variant`: optional source-specific tag (for example
+  `v4_tropo34_dry`, `ctm_i1`, `catrine_hourly`)
+
+Examples:
+
+- `met/era5/N320/hourly/spectral/era5_spectral_20211201_vo_d.gb`
+- `met/era5/N320/hourly/gridpoint/...`
+- `met/era5/N320/hourly/surface/...`
+- `met/era5/0.5x0.5/hourly/massflux/v4_tropo34_dry/era5_v4_20211201_merged1000Pa_float32.bin`
+- `met/geosfp/C720/hourly/raw/...`
+- `met/geosit/C180/hourly/massflux/...`
+
+### ERA5 spectral note (current state)
+
+As of Apr 2026, the old ERA5 6-hourly spectral archive was removed to avoid
+ambiguity. Keep only the hourly spectral set for active preprocessing.
+
+### Manifest metadata (required per dataset root)
+
+Each dataset root should include a small `manifest.json` with at least:
+
+- `met_source`
+- `grid_name` (canonical, e.g. `C180`, `N320`, `0.5x0.5`)
+- `grid_type` (`latlon`, `reduced_gaussian`, `cubed_sphere`)
+- `horizontal_topology` (`StructuredDirectional` or `FaceIndexed`)
+- `panel_convention` (for cubed-sphere datasets: `GEOSNative` or `Gnomonic`)
+- `mass_basis` (`moist` or `dry`)
+- `vertical_coordinate_type`
+- `format_version`
+
+This keeps runtime path discovery simple and avoids encoding too much logic in
+folder-name parsing.
+
+### Legacy aliases
+
+Legacy folder names are still common (`geosit_c180`, `geosfp_c720`, etc.), but
+new data should use canonical split paths:
+
+- `geosit_c180` -> `geosit/C180`
+- `geosfp_c720` -> `geosfp/C720`
+- `era5` remains `era5`, but add explicit grid folder such as `0.5x0.5` or `N320`
+
 ## Overview
 
 ```
 <data_root>/                           # e.g., ~/data/AtmosTransport
 ├── met/                               # Meteorological driver data
-│   ├── geosit_c180/                   # GEOS-IT C180 (long-term archive)
+│   ├── geosit/C180/                   # GEOS-IT C180 (canonical)
 │   │   ├── raw/                       # Original NetCDF from WashU
 │   │   │   ├── 20211201/
 │   │   │   │   ├── GEOSIT.20211201.CTM_A1.C180.nc   (4.2 GB, hourly mass flux)
@@ -30,27 +89,22 @@ All paths are relative to a **data root** specified in the run config.
 │   │           ├── GEOSFP_CS180.20211201.CTM_I1.bin   (hourly QV, GCHP-aligned)
 │   │           └── GEOSFP_CS180.20211201.I3.bin       (3-hr QV, fallback)
 │   │
-│   ├── geosfp_c720/                   # GEOS-FP C720 (same structure)
+│   ├── geosfp/C720/                   # GEOS-FP C720 (canonical)
 │   │   ├── raw/
 │   │   └── preprocessed/
 │   │
-│   └── era5/                          # ERA5 (spectral or gridpoint)
-│       ├── spectral/                  # GRIB spectral VO/D/LNSP (T639), 4×/day
-│       │   ├── era5_spectral_YYYYMMDD_vo_d.gb    (~850 MB/day)
-│       │   └── era5_spectral_YYYYMMDD_lnsp.gb    (~6 MB/day)
-│       ├── spectral_hourly/           # Same layout; hourly LNSP+VO/D if retrieved with hourly times
-│       │   └── era5_spectral_YYYYMMDD_*.gb       (24 LNSP messages/day; vo_d much larger)
-│       ├── cmfmc/                     # GRIB model-level convective mass flux
-│       │   └── era5_cmfmc_YYYYMMDD.nc            (~540 MB/day, UDMF+DDMF)
-│       ├── detrainment/              # GRIB model-level detrainment rates
-│       │   └── era5_detr_YYYYMMDD.nc             (~540 MB/day, UDRF+DDRF)
-│       ├── surface/                   # NetCDF single-level fields
-│       │   ├── era5_surface_YYYYMMDD.nc           (~50 MB/day)
-│       │   └── era5_convective_YYYYMMDD.nc        (~180 MB/day, pressure-level omega)
-│       ├── model_level_1deg/          # NetCDF gridpoint u/v/w (1°, monthly files)
-│       │   └── era5_ml_YYYYMM.nc                 (~8 GB/month)
-│       └── preprocessed/              # NetCDF mass fluxes (from spectral)
-│           └── era5_massflux_YYYYMM.nc            (on NVMe: /temp1/)
+│   └── era5/                          # ERA5 (canonical split by grid + cadence + payload)
+│       ├── N320/
+│       │   └── hourly/
+│       │       ├── spectral/          # GRIB spectral VO/D/LNSP (hourly archive)
+│       │       ├── gridpoint/         # (optional) N320 gridpoint products
+│       │       └── surface/           # (optional) N320 surface products
+│       └── 0.5x0.5/
+│           └── hourly/
+│               ├── massflux/          # transport-ready binaries (v4/v5, moist/dry)
+│               ├── cmfmc/             # GRIB/NC convective mass flux staging
+│               ├── detrainment/       # GRIB/NC detrainment staging
+│               └── surface/           # NetCDF single-level fields
 │
 ├── emissions/                         # Emission inventories
 │   ├── edgar_v8/                      # EDGAR v8.0 gridded
@@ -78,11 +132,32 @@ All paths are relative to a **data root** specified in the run config.
     └── ...
 ```
 
+## Migration map (current -> canonical)
+
+The table below gives concrete mapping examples from current paths to the
+canonical convention above.
+
+| Current path (example) | Canonical path (target) | Notes |
+|---|---|---|
+| `met/geosit_c180/raw/...` | `met/geosit/C180/raw/...` | Completed; legacy symlink retained |
+| `met/geosit_c180/preprocessed/...` | `met/geosit/C180/preprocessed/...` | Completed; legacy symlink retained |
+| `met/geosfp_c720/raw/...` | `met/geosfp/C720/raw/...` | Completed; legacy symlink retained |
+| `met/geosfp_c720/preprocessed/...` | `met/geosfp/C720/preprocessed/...` | Completed; legacy symlink retained |
+| `met/era5/spectral_hourly/...` | `met/era5/N320/hourly/spectral/...` | Target canonical path for hourly spectral GRIB |
+| `met/era5/spectral/...` (6-hourly) | `met/era5/N320/6hourly/spectral/...` | Removed from active archive (Apr 2026 cleanup) |
+| `met/era5/spectral_v4_tropo34_dec2021/...` | `met/era5/0.5x0.5/preprocessed/massflux_v4_moist_tropo34_dec2021/...` | Include basis (`moist`/`dry`) in variant |
+| `met/era5/spectral_v4_tropo34_dec2021_dry/...` | `met/era5/0.5x0.5/preprocessed/massflux_v4_dry_tropo34_dec2021/...` | Dry-basis explicit in path + manifest |
+| `met/era5/model_level_1deg/...` | `met/era5/1.0x1.0/raw/model_level/...` | Keep resolution explicit |
+
+Practical rollout rule: do not break existing runs; support both legacy and
+canonical roots during transition, but write new outputs only to canonical
+paths.
+
 ## Storage Tiers
 
 | Tier | Location | Speed | Capacity | Purpose |
 |------|----------|-------|----------|---------|
-| **Archive** | `~/data/AtmosTransport/met/<product>/raw/` | HDD ~200 MB/s | 20+ TB | Long-term NetCDF storage |
+| **Archive** | `~/data/AtmosTransport/met/<source>/<grid>/<cadence>/<payload>/` | HDD ~200 MB/s | 20+ TB | Long-term raw + staging storage |
 | **Staging** | `/temp1/` (NVMe) | NVMe ~3 GB/s | 7 TB (2.3 free) | Preprocessed binary for active runs |
 | **GPU** | Device memory | ~900 GB/s | 46 GB per L40S | Current + next window buffers |
 
@@ -121,11 +196,11 @@ The TOML config maps to this structure:
 ```toml
 [met_data]
 # Raw NetCDF (for direct reading or reference)
-netcdf_dir           = "~/data/AtmosTransport/met/geosit_c180/raw"
+netcdf_dir           = "~/data/AtmosTransport/met/geosit/C180/raw"
 
 # Preprocessed binary (fast mmap path)
-preprocessed_dir     = "/temp1/met/geosit_c180/preprocessed/massflux"
-surface_data_bin_dir = "/temp1/met/geosit_c180/preprocessed/physics"
+preprocessed_dir     = "/temp1/met/geosit/C180/preprocessed/massflux"
+surface_data_bin_dir = "/temp1/met/geosit/C180/preprocessed/physics"
 
 # Grid specification
 coord_file           = "~/data/AtmosTransport/grids/cs_c180_gridspec.nc"
@@ -140,16 +215,19 @@ For CTM_I1 (hourly QV), the runtime checks:
 2. `netcdf_dir/YYYYMMDD/GEOSIT.YYYYMMDD.CTM_I1.C180.nc`
 3. Falls back to I3 (3-hourly) if CTM_I1 unavailable
 
-## Size Budget per Day (ERA5 Spectral, 0.5°)
+Legacy aliases (`geosit_c180`, `geosfp_c720`, etc.) may still exist as
+symlinks during transition, but new configs should use canonical paths.
+
+## Size Budget per Day (ERA5 Spectral, hourly archive)
 
 | Collection | Size/day | Windows/day | Note |
 |------------|----------|-------------|------|
-| Spectral VO/D | ~850 MB | 4 | T639 GRIB, all 137 levels |
-| Spectral LNSP | ~6 MB | 4 | Level 1 only |
+| Spectral VO/D | ~5.4 GB | 24 | TL639 spectral GRIB, all 137 levels |
+| Spectral LNSP | ~20 MB | 24 | Level 1 spectral GRIB |
 | CMFMC (model-level) | ~540 MB | 4 | 137-level UDMF+DDMF |
 | Detrainment rates | ~540 MB | 4 | 137-level UDRF+DDRF (for TM5 convection) |
 | Surface fields | ~50 MB | 24 | BLH, SSHF, T2M, U10, V10 |
-| **Raw total** | **~2.0 GB** | | |
+| **Raw total** | **~6.5 GB** | | |
 | Preprocessed mass flux | ~2 GB | 4 | NetCDF am/bm/cm/m + entu/detu/entd/detd |
 
 For 31 days (Dec 2021): Raw ~45 GB, Preprocessed ~62 GB.

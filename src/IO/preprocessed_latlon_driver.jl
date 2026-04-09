@@ -47,6 +47,8 @@ struct PreprocessedLatLonMetDriver{FT} <: AbstractMassFluxMetDriver{FT}
     level_top       :: Int
     "bottommost model level index"
     level_bot       :: Int
+    "transport mass basis encoded by the source file (:moist default, :dry if the binary is already dry-air based)"
+    mass_basis      :: Symbol
     "merge map for vertical level merging (native level → merged level index), or nothing"
     merge_map       :: Union{Nothing, Vector{Int}}
     "optional directory with external QV/thermo files for binaries that omit embedded QV"
@@ -96,6 +98,7 @@ function PreprocessedLatLonMetDriver(; FT::Type{<:AbstractFloat} = Float64,
         lats = copy(r.lats)
         level_top = r.level_top
         level_bot = r.level_bot
+        basis = r.mass_basis
         close(r)
     else
         # NetCDF mass-flux shard
@@ -111,6 +114,7 @@ function PreprocessedLatLonMetDriver(; FT::Type{<:AbstractFloat} = Float64,
             level_bot = get(ds.attrib, "level_bot", 137)
             file_dt = FT(get(ds.attrib, "dt_seconds", 900))
             steps_per = get(ds.attrib, "steps_per_met_window", 4)
+            basis = :moist
         finally
             close(ds)
         end
@@ -154,7 +158,7 @@ function PreprocessedLatLonMetDriver(; FT::Type{<:AbstractFloat} = Float64,
         files, wins_per, total,
         FT(actual_dt), steps_per_win,
         lons, lats, Nx, Ny, Nz,
-        level_top, level_bot, merge_map,
+        level_top, level_bot, basis, merge_map,
         expanduser(qv_dir), disable_qv, native_A_ifc, native_B_ifc, _start,
         disable_flux_delta)
 
@@ -172,6 +176,8 @@ function PreprocessedLatLonMetDriver(; FT::Type{<:AbstractFloat} = Float64,
 
     return driver
 end
+
+mass_basis(d::PreprocessedLatLonMetDriver) = d.mass_basis
 
 """
     _verify_cm_continuity(driver) → nothing

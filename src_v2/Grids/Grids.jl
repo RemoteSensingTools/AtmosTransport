@@ -7,7 +7,9 @@ Provides:
 - `AbstractHorizontalMesh` hierarchy with face/cell oriented API
 - `AbstractVerticalCoordinate` with `HybridSigmaPressure`
 - `AtmosGrid` composite type (mesh + vertical + architecture)
-- Concrete meshes: `LatLonMesh` (Phase 1), `CubedSphereMesh` / `ReducedGaussianMesh` (stubs)
+- Concrete meshes: `LatLonMesh` (structured fast path), `ReducedGaussianMesh`
+  (variable-ring native ERA5 / IFS path), and `CubedSphereMesh`
+  (structured GEOS/FV3 metadata with explicit panel conventions)
 """
 module Grids
 

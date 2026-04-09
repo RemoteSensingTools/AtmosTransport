@@ -41,4 +41,14 @@ Compute dry air mass from surface pressure and humidity.
 """
 function build_air_mass! end
 
+function build_dry_fluxes!(fluxes, cell_mass, met, grid, driver,
+                           ::PressureTendencyClosure)
+    throw(ArgumentError("PressureTendencyClosure is Phase 3+: no src_v2 implementation exists yet"))
+end
+
+function build_dry_fluxes!(fluxes, cell_mass, met, grid, driver,
+                           ::NativeVerticalFluxClosure)
+    throw(ArgumentError("NativeVerticalFluxClosure is Phase 3+: no src_v2 implementation exists yet"))
+end
+
 export build_dry_fluxes!, build_air_mass!

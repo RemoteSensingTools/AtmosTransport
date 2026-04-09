@@ -27,7 +27,7 @@ Set tracer `name` to uniform mixing ratio χ: tracer_mass = χ × air_dry_mass.
 """
 function set_uniform_mixing_ratio!(state, name::Symbol, χ)
     rm = getfield(state.tracers, name)
-    rm .= χ .* state.air_dry_mass
+    rm .= χ .* state.air_mass
     return nothing
 end
 

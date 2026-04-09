@@ -11,6 +11,7 @@
 Strategy for ensuring column dry mass conservation.
 """
 abstract type AbstractMassClosure end
+const AbstractClosure = AbstractMassClosure
 
 """
     DiagnoseVerticalFromHorizontal <: AbstractMassClosure
@@ -38,4 +39,5 @@ host model). No diagnosis needed.
 struct NativeVerticalFluxClosure <: AbstractMassClosure end
 
 export AbstractMassClosure
+export AbstractClosure
 export DiagnoseVerticalFromHorizontal, PressureTendencyClosure, NativeVerticalFluxClosure

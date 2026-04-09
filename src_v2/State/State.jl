@@ -4,8 +4,8 @@
 Prognostic and diagnostic state containers for the dry-mass transport architecture.
 
 Provides:
-- `CellState` — cell-centered dry air mass + tracer masses (prognostic)
-- `AbstractFaceFluxState` hierarchy — face dry mass fluxes
+- `CellState` — cell-centered air mass + tracer masses (prognostic)
+- `AbstractFaceFluxState` hierarchy — face mass fluxes
   - `AbstractStructuredFaceFluxState` → `StructuredFaceFluxState` (am, bm, cm)
   - `AbstractUnstructuredFaceFluxState` → `FaceIndexedFluxState` (Phase 2+)
 - `MetState` — upstream meteorological fields (consumed by flux builders, not transport)
@@ -13,8 +13,11 @@ Provides:
 """
 module State
 
-using ..Grids: StructuredFluxTopology
+using ..Grids: AbstractHorizontalMesh, AbstractStructuredMesh,
+    StructuredFluxTopology, FaceIndexedFluxTopology,
+    flux_topology, ncells, nfaces, nx, ny
 
+include("Basis.jl")
 include("CellState.jl")
 include("FaceFluxState.jl")
 include("MetState.jl")

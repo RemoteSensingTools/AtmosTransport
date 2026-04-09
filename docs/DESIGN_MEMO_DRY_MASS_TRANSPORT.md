@@ -5,8 +5,11 @@
 > transport engine with host-model-specific meteorological adapters. It is the
 > single source of truth for the `src_v2/` layered architecture.
 >
-> **Status**: Phase 1 (formalize dry-flux interface) is implemented on the
-> `restructure/dry-flux-interface` branch. Phases 2–5 are future work.
+> **Status**: Historical design memo. The dry-flux interface work described
+> here informed the first `src_v2` foundation, but new runtime work is now
+> guided by
+> [DESIGN_MEMO_BASIS_EXPLICIT_TRANSPORT.md](/home/cfranken/code/gitHub/AtmosTransportModel/docs/DESIGN_MEMO_BASIS_EXPLICIT_TRANSPORT.md),
+> which generalizes the core away from a dry-only architecture.
 
 ---
 

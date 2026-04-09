@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Abstract operator hierarchy for the dry-mass transport architecture
+# Abstract operator hierarchy for the basis-explicit transport architecture
 #
 # All physics operators dispatch on these abstract types. The universal
 # interface is:
@@ -27,7 +27,7 @@ abstract type AbstractOperator end
 """
     AbstractAdvection <: AbstractOperator
 
-Advection operators consume dry face mass fluxes and cell state.
+Advection operators consume matching-basis face mass fluxes and cell state.
 
 ## Required method
 

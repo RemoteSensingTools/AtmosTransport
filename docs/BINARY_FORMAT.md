@@ -135,8 +135,13 @@ Declares whether `m`, horizontal fluxes, and `cm` are on a total-air
 For a file with humidity and physics extensions:
 
 ```json
-["m", "hflux", "cm", "ps", "qv", "cmfmc", "temperature"]
+["m", "hflux", "cm", "ps", "qv_start", "qv_end", "cmfmc", "temperature"]
 ```
+
+For moist-mass transport files that may later need dry-air diagnostics or
+dry-VMR output, `qv_start` + `qv_end` is the recommended contract. A
+single `qv` field remains valid as a legacy fallback, but it does not
+carry endpoint semantics.
 
 The reader uses this manifest to compute offsets and skip sections it
 does not need.
@@ -145,7 +150,8 @@ does not need.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `include_qv` | bool | false | Specific humidity |
+| `include_qv` | bool | false | Single specific-humidity field `qv` (legacy / no explicit endpoint semantics) |
+| `include_qv_endpoints` | bool | false | Endpoint humidity fields `qv_start` and `qv_end`; preferred for moist transport with dry diagnostics |
 | `include_cmfmc` | bool | false | Convective mass flux |
 | `include_surface` | bool | false | Surface fields |
 | `include_convection` | bool | false | Convection scheme fields |
@@ -277,6 +283,8 @@ Appear in `payload_sections` order when present:
 | Section | Shape (LL) | Shape (FaceIndexed) |
 |---------|-----------|-------------------|
 | `qv` | (Nx, Ny, Nz) | (ncell, Nz) |
+| `qv_start` | (Nx, Ny, Nz) | (ncell, Nz) |
+| `qv_end` | (Nx, Ny, Nz) | (ncell, Nz) |
 | `cmfmc` | (Nx, Ny, Nz+1) | (ncell, Nz+1) |
 | `temperature` | (Nx, Ny, Nz) | (ncell, Nz) |
 | surface fields | per-field (Nx, Ny) | per-field (ncell,) |
@@ -326,6 +334,30 @@ Boundary conditions: `cm[:, 1] = 0` (TOA), `cm[:, Nz+1] = 0` (surface).
 
 `ps[c]` is the surface pressure [Pa] at the start of the window.
 
+### 6.5 Humidity endpoint semantics
+
+`qv` is a single specific-humidity field with file-specific timing. It is
+kept for compatibility, but it should not be used as the default contract
+for new moist-basis binaries when downstream dry-air diagnostics matter.
+
+`qv_start` and `qv_end` are the preferred humidity sections for new files:
+
+- `qv_start[c,k]` = specific humidity at the start of the transport window
+- `qv_end[c,k]` = specific humidity at the end of the transport window
+
+For a moist-mass transport run that later writes dry VMR, the expected
+end-of-window conversion is:
+
+- use the advected moist air mass `m_end` produced by the runtime
+- use `qv_end` for the corresponding endpoint humidity
+- compute dry-air diagnostics from the matched end state, not from a
+  stale window-start humidity field
+
+If an adapter wants to reconstruct endpoint dry reference mass from
+pressure fields instead of the transported `m`, it may also need a
+`ps_end` surface-field extension. That is optional adapter metadata, not a
+requirement of the core transport contract.
+
 ---
 
 ## 7. Reader contract
@@ -333,7 +365,7 @@ Boundary conditions: `cm[:, 1] = 0` (TOA), `cm[:, Nz+1] = 0` (surface).
 ### 7.1 Universal reader entry point
 
 ```julia
-reader = MassFluxBinaryReader(path; FT=Float64)
+reader = TransportBinaryReader(path; FT=Float64)
 
 # Properties available for all topologies:
 reader.grid_type          # :latlon, :cubed_sphere, :reduced_gaussian
@@ -365,6 +397,7 @@ Both are subtypes of `AbstractFaceFluxState`. The basis parameter
 
 ```julia
 load_qv_window!(reader, win)          # → Array or nothing
+load_qv_pair_window!(reader, win)      # → (; qv_start, qv_end) or nothing
 load_flux_delta_window!(reader, win)   # → NamedTuple or nothing
 load_cmfmc_window!(reader, win)        # → Array or nothing
 load_temperature_window!(reader, win)  # → Array or nothing

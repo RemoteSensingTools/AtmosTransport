@@ -23,4 +23,12 @@ PPMAdvection(; order::Int = 4, use_limiter::Bool = true) =
 
 ppm_order(::PPMAdvection{ORD}) where ORD = ORD
 
+function apply!(state::CellState{B},
+                fluxes::StructuredFaceFluxState{B},
+                grid::AtmosGrid{<:AbstractStructuredMesh},
+                ::PPMAdvection, dt;
+                kwargs...) where {B <: AbstractMassBasis}
+    throw(ArgumentError("PPMAdvection is Phase 4+: kernels are not implemented in src_v2 yet"))
+end
+
 export PPMAdvection, ppm_order

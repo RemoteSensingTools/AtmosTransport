@@ -13,8 +13,8 @@ Provides:
 """
 module Grids
 
-using DocStringExtensions
-using KernelAbstractions: CPU
+using ..Architectures: CPU
+using ..Parameters: PlanetParameters, earth_parameters
 
 include("AbstractMeshes.jl")
 include("VerticalCoordinates.jl")

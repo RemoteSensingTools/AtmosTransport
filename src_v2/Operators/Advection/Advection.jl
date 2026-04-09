@@ -4,6 +4,7 @@
 Advection operators for the dry-mass transport architecture.
 
 Provides:
+- `FirstOrderUpwindAdvection` — simple conservative reference operator
 - `RussellLernerAdvection` — TM5-faithful van Leer slopes (fully implemented)
 - `PPMAdvection` — Putman & Lin PPM (type + stub, Phase 2 kernels)
 - `AdvectionWorkspace` + `strang_split!` — Strang splitting orchestrator
@@ -16,11 +17,16 @@ using DocStringExtensions
 
 import ..AbstractAdvection, ..AbstractOperator, ..apply!
 using ...State: CellState, AbstractStructuredFaceFluxState, AbstractFaceFluxState,
-    StructuredFaceFluxState, DryMassFluxBasis, DryStructuredFluxState
-using ...Grids: AtmosGrid, AbstractStructuredMesh
+    StructuredFaceFluxState, AbstractUnstructuredFaceFluxState,
+    DryMassFluxBasis, DryStructuredFluxState, AbstractMassBasis,
+    FaceIndexedFluxState
+using ...Grids: AtmosGrid, AbstractHorizontalMesh, AbstractStructuredMesh,
+    face_cells, nfaces
+using ...MetDrivers: diagnose_cm_from_continuity!
 
 include("FaceReconstruction.jl")
 include("MassCFLPilot.jl")
+include("Upwind.jl")
 include("RussellLerner.jl")
 include("PPM.jl")
 include("Divergence.jl")

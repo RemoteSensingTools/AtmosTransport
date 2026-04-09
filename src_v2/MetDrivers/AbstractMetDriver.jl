@@ -4,12 +4,12 @@
 # Met drivers are responsible for:
 #   1. Reading native meteorological fields
 #   2. Reconstructing pressures and layer masses
-#   3. Computing dry mass fluxes
+#   3. Computing basis-aware mass fluxes
 #   4. Diagnosing or ingesting vertical fluxes
 #   5. Enforcing continuity / closure
 #
 # The transport core should never see raw met fields.
-# Met drivers produce AbstractFaceFluxState + CellState.air_dry_mass.
+# Met drivers produce AbstractFaceFluxState + CellState.air_mass.
 # ---------------------------------------------------------------------------
 
 using Dates
@@ -26,6 +26,7 @@ Supertype for all meteorological data drivers.
     load_met_window!(met::MetState, driver, grid, win_index)
 """
 abstract type AbstractMetDriver end
+const AbstractDriver = AbstractMetDriver
 
 """
     AbstractRawMetDriver <: AbstractMetDriver
@@ -67,6 +68,7 @@ supports_native_vertical_flux(::AbstractMetDriver) = false
 supports_moisture(::AbstractMetDriver) = false
 
 export AbstractMetDriver, AbstractRawMetDriver, AbstractMassFluxMetDriver
+export AbstractDriver
 export total_windows, window_dt, steps_per_window, load_met_window!
 export supports_diffusion, supports_convection
 export supports_native_vertical_flux, supports_moisture

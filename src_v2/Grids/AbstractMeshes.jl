@@ -78,6 +78,9 @@ struct FaceIndexedFluxTopology <: AbstractFluxTopology end
 flux_topology(::AbstractStructuredMesh) = StructuredFluxTopology()
 flux_topology(::AbstractHorizontalMesh) = FaceIndexedFluxTopology()
 
+const StructuredTopology = StructuredFluxTopology
+const FaceConnectedTopology = FaceIndexedFluxTopology
+
 """
     AbstractVerticalCoordinate{FT}
 
@@ -103,38 +106,70 @@ on `H` selects mesh-specific geometry; dispatch on `Arch` selects backend.
 - `horizontal :: H` — horizontal mesh (LatLonMesh, CubedSphereMesh, ReducedGaussianMesh)
 - `vertical   :: V` — vertical coordinate (HybridSigmaPressure)
 - `arch       :: Arch` — compute architecture (CPU, GPU)
-- `radius     :: FT` — planet radius [m]
-- `gravity    :: FT` — gravitational acceleration [m/s²]
-- `reference_pressure :: FT` — reference surface pressure [Pa]
+- `planet     :: PlanetParameters{FT}` — physical constants [m, m/s², Pa]
 """
 struct AtmosGrid{H <: AbstractHorizontalMesh,
                  V <: AbstractVerticalCoordinate,
                  Arch,
+                 P,
                  FT <: AbstractFloat} 
     horizontal         :: H
     vertical           :: V
     arch               :: Arch
-    radius             :: FT
-    gravity            :: FT
-    reference_pressure :: FT
+    planet             :: P
 end
+
+@inline _vertical_floattype(::AbstractVerticalCoordinate{FT}) where FT = FT
+@inline _planet_floattype(::PlanetParameters{FT}) where FT = FT
+@inline _float_typeof_number(x::Real) = typeof(float(x))
 
 function AtmosGrid(horizontal::H, vertical::V, arch::Arch;
-                   FT::Type{<:AbstractFloat} = Float64,
-                   radius            = FT(6.371e6),
-                   gravity           = FT(9.80665),
-                   reference_pressure = FT(101325.0)) where {H, V, Arch}
-    return AtmosGrid{H, V, Arch, FT}(
-        horizontal, vertical, arch,
-        FT(radius), FT(gravity), FT(reference_pressure))
+                   FT::Union{Nothing, Type{<:AbstractFloat}} = nothing,
+                   planet::PlanetParameters{<:AbstractFloat} = earth_parameters(),
+                   radius = planet.radius,
+                   gravity = planet.gravity,
+                   reference_pressure = planet.reference_pressure) where {H, V, Arch}
+    FT_out = isnothing(FT) ?
+        promote_type(eltype(horizontal),
+                     _vertical_floattype(vertical),
+                     _planet_floattype(planet),
+                     _float_typeof_number(radius),
+                     _float_typeof_number(gravity),
+                     _float_typeof_number(reference_pressure)) :
+        FT
+    planet_ft = PlanetParameters(; FT=FT_out,
+                                 radius=radius,
+                                 gravity=gravity,
+                                 reference_pressure=reference_pressure)
+    return AtmosGrid{H, V, Arch, typeof(planet_ft), FT_out}(horizontal, vertical, arch, planet_ft)
 end
 
-floattype(::AtmosGrid{H, V, Arch, FT}) where {H, V, Arch, FT} = FT
+floattype(::AtmosGrid{H, V, Arch, P, FT}) where {H, V, Arch, P, FT} = FT
 architecture(g::AtmosGrid) = g.arch
 nlevels(g::AtmosGrid) = n_levels(g.vertical)
 
+planet_parameters(g::AtmosGrid) = g.planet
+radius(g::AtmosGrid) = g.planet.radius
+gravity(g::AtmosGrid) = g.planet.gravity
+reference_pressure(g::AtmosGrid) = g.planet.reference_pressure
+const Grid = AtmosGrid
+
+function Base.getproperty(g::AtmosGrid, s::Symbol)
+    if s === :radius
+        return getfield(getfield(g, :planet), :radius)
+    elseif s === :gravity
+        return getfield(getfield(g, :planet), :gravity)
+    elseif s === :reference_pressure
+        return getfield(getfield(g, :planet), :reference_pressure)
+    else
+        return getfield(g, s)
+    end
+end
+
 export AbstractHorizontalMesh, AbstractStructuredMesh
 export AbstractFluxTopology, StructuredFluxTopology, FaceIndexedFluxTopology
+export StructuredTopology, FaceConnectedTopology
 export flux_topology
 export AbstractVerticalCoordinate
-export AtmosGrid, floattype, architecture, nlevels
+export AtmosGrid, Grid, floattype, architecture, nlevels
+export planet_parameters, radius, gravity, reference_pressure

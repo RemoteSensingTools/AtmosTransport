@@ -88,6 +88,16 @@ function Base.show(io::IO, m::CubedSphereMesh)
           "└── radius:    ", m.radius, " m")
 end
 
+@inline function _cubed_sphere_geometry_error(::CubedSphereMesh, feature::AbstractString)
+    throw(ArgumentError("CubedSphereMesh currently provides metadata only in src_v2; $feature is not implemented yet"))
+end
+
+cell_area(m::CubedSphereMesh, args...) = _cubed_sphere_geometry_error(m, "cell_area")
+face_length(m::CubedSphereMesh, args...) = _cubed_sphere_geometry_error(m, "face_length")
+face_normal(m::CubedSphereMesh, args...) = _cubed_sphere_geometry_error(m, "face_normal")
+face_cells(m::CubedSphereMesh, args...) = _cubed_sphere_geometry_error(m, "face_cells")
+cell_faces(m::CubedSphereMesh, args...) = _cubed_sphere_geometry_error(m, "cell_faces")
+
 export AbstractCubedSpherePanelConvention
 export GnomonicPanelConvention, GEOSNativePanelConvention
 export CubedSphereMesh, panel_count, panel_convention, panel_labels

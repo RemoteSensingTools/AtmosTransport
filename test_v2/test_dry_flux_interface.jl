@@ -96,11 +96,14 @@ end
 #           StructuredFaceFluxState) is rejected by dispatch.
 #           StructuredFaceFluxState{MoistMassFluxBasis} is also rejected.
 # =========================================================================
-struct MockStructuredFluxState{AX, AY, AZ} <: AbstractStructuredFaceFluxState
+struct MockStructuredFluxState{B, AX, AY, AZ} <: AbstractStructuredFaceFluxState{B}
     am :: AX
     bm :: AY
     cm :: AZ
 end
+
+MockStructuredFluxState{B}(am, bm, cm) where {B} =
+    MockStructuredFluxState{B, typeof(am), typeof(bm), typeof(cm)}(am, bm, cm)
 
 @testset "Basis safety: strang_split! rejects non-dry flux states" begin
     FT = Float64
@@ -132,7 +135,7 @@ end
     ws = AdvectionWorkspace(m)
 
     # Mock subtype → MethodError (not StructuredFaceFluxState at all)
-    mock_fluxes = MockStructuredFluxState(am, bm, cm)
+    mock_fluxes = MockStructuredFluxState{DryBasis}(am, bm, cm)
     @test mock_fluxes isa AbstractStructuredFaceFluxState
     @test !(mock_fluxes isa StructuredFaceFluxState)
     @test_throws MethodError strang_split!(state, mock_fluxes, grid, scheme; workspace=ws)

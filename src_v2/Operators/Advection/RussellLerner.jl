@@ -5,7 +5,7 @@ $(SIGNATURES)
 
 Second-order van Leer slopes advection (TM5 `advectx__slopes`, `advecty__slopes`).
 """
-struct RussellLernerAdvection <: AbstractAdvection
+struct RussellLernerAdvection <: AbstractLinearReconstruction
     use_limiter :: Bool
 end
 

@@ -23,7 +23,9 @@ Supertype for all meteorological data drivers.
     total_windows(driver) -> Int
     window_dt(driver) -> FT (seconds per met window)
     steps_per_window(driver) -> Int
-    load_met_window!(met::MetState, driver, grid, win_index)
+    load_transport_window(driver, win_index)
+    driver_grid(driver)
+    air_mass_basis(driver)
 """
 abstract type AbstractMetDriver end
 const AbstractDriver = AbstractMetDriver
@@ -46,6 +48,9 @@ abstract type AbstractMassFluxMetDriver <: AbstractMetDriver end
 function total_windows end
 function window_dt end
 function steps_per_window end
+function load_transport_window end
+function driver_grid end
+function air_mass_basis end
 function load_met_window! end
 
 met_interval(d::AbstractMetDriver) = window_dt(d)
@@ -69,6 +74,7 @@ supports_moisture(::AbstractMetDriver) = false
 
 export AbstractMetDriver, AbstractRawMetDriver, AbstractMassFluxMetDriver
 export AbstractDriver
-export total_windows, window_dt, steps_per_window, load_met_window!
+export total_windows, window_dt, steps_per_window, load_transport_window, load_met_window!
+export driver_grid, air_mass_basis
 export supports_diffusion, supports_convection
 export supports_native_vertical_flux, supports_moisture

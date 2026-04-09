@@ -58,12 +58,17 @@ function build_v4_header(date::Date,
                          sizes,
                          provenance)
     payload_sections = String["m", "am", "bm", "cm", "ps"]
-    settings.include_qv && push!(payload_sections, "qv")
-    append!(payload_sections, ["dam", "dbm", "dm"])
+    settings.include_qv && append!(payload_sections, ["qv_start", "qv_end"])
+    append!(payload_sections, ["dam", "dbm", "dcm", "dm"])
     var_names = copy(payload_sections)
 
+    ncell = sizes.Nx * sizes.Ny
+    nface_h = (sizes.Nx + 1) * sizes.Ny + sizes.Nx * (sizes.Ny + 1)
+
     header = Dict{String, Any}(
-        "magic" => "MFLX", "version" => 4, "header_bytes" => HEADER_SIZE,
+        "magic" => "MFLX", "version" => 4, "format_version" => 1, "header_bytes" => HEADER_SIZE,
+        "grid_type" => "latlon", "horizontal_topology" => "StructuredDirectional",
+        "ncell" => ncell, "nface_h" => nface_h, "nlevel" => sizes.Nz, "nwindow" => sizes.Nt,
         "Nx" => sizes.Nx, "Ny" => sizes.Ny, "Nz" => sizes.Nz,
         "Nz_native" => sizes.Nz_native, "Nt" => sizes.Nt,
         "float_type" => string(FT), "float_bytes" => sizeof(FT),
@@ -73,16 +78,21 @@ function build_v4_header(date::Date,
         "window_bytes" => counts.bytes_per_window,
         "n_m" => counts.n_m, "n_am" => counts.n_am, "n_bm" => counts.n_bm,
         "n_cm" => counts.n_cm, "n_ps" => counts.n_ps, "n_qv" => counts.n_qv,
+        "n_qv_start" => counts.n_qv_start, "n_qv_end" => counts.n_qv_end,
         "n_cmfmc" => 0,
         "n_entu" => 0, "n_detu" => 0, "n_entd" => 0, "n_detd" => 0,
         "n_pblh" => 0, "n_t2m" => 0, "n_ustar" => 0, "n_hflux" => 0,
         "n_temperature" => 0,
-        "n_dam" => counts.n_dam, "n_dbm" => counts.n_dbm, "n_dm" => counts.n_dm,
+        "n_dam" => counts.n_dam, "n_dbm" => counts.n_dbm, "n_dcm" => counts.n_dcm, "n_dm" => counts.n_dm,
         "include_flux_delta" => true,
-        "include_qv" => settings.include_qv, "include_cmfmc" => false,
+        "include_qv" => false, "include_qv_endpoints" => settings.include_qv,
+        "include_cmfmc" => false,
         "include_tm5conv" => false, "include_surface" => false,
         "include_temperature" => false,
-        "dt_seconds" => settings.dt, "half_dt_seconds" => settings.half_dt,
+        "dt_met_seconds" => settings.met_interval,
+        "dt_seconds" => settings.dt,
+        "half_dt_seconds" => settings.half_dt,
+        "steps_per_window" => sizes.steps_per_met,
         "steps_per_met_window" => sizes.steps_per_met,
         "level_top" => first(vertical.level_range), "level_bot" => last(vertical.level_range),
         "A_ifc" => Float64.(vertical.merged_vc.A), "B_ifc" => Float64.(vertical.merged_vc.B),
@@ -107,9 +117,9 @@ function build_v4_header(date::Date,
         "qv_variable_name" => settings.include_qv || settings.mass_basis == :dry ? "q" : "",
         "qv_units" => settings.include_qv || settings.mass_basis == :dry ? "kg kg-1" : "",
         "qv_time_alignment" => settings.include_qv || settings.mass_basis == :dry ?
-            "window i uses same-day thermo file time index i (valid_time 0..23 UTC)" : "",
+            "qv_start uses same-day thermo time index i; qv_end uses time index i+1, with next-day 00 UTC for the final window" : "",
         "qv_next_day_alignment" => settings.include_qv || settings.mass_basis == :dry ?
-            "next-day hour-0 delta uses next-day thermo file time index 1 (00 UTC)" : "",
+            "final-window qv_end uses next-day thermo file time index 1 (00 UTC) when available" : "",
         "qv_latitude_handling" => settings.include_qv || settings.mass_basis == :dry ?
             "flip latitude to south-to-north if thermo file is stored north-to-south" : "",
     )
@@ -167,7 +177,9 @@ function window_element_counts(grid::LatLonTargetGeometry, Nz::Int; include_qv::
     n_bm = Int64(Nx) * (Ny + 1) * Nz
     n_cm = Int64(Nx) * Ny * (Nz + 1)
     n_ps = Int64(Nx) * Ny
-    n_qv = include_qv ? n_m : Int64(0)
+    n_qv = Int64(0)
+    n_qv_start = include_qv ? n_m : Int64(0)
+    n_qv_end = include_qv ? n_m : Int64(0)
 
     return (
         n_m = n_m,
@@ -176,10 +188,13 @@ function window_element_counts(grid::LatLonTargetGeometry, Nz::Int; include_qv::
         n_cm = n_cm,
         n_ps = n_ps,
         n_qv = n_qv,
+        n_qv_start = n_qv_start,
+        n_qv_end = n_qv_end,
         n_dam = n_am,
         n_dbm = n_bm,
+        n_dcm = n_cm,
         n_dm = n_m,
-        elems_per_window = n_m + n_am + n_bm + n_cm + n_ps + n_qv + n_am + n_bm + n_m,
+        elems_per_window = n_m + n_am + n_bm + n_cm + n_ps + n_qv_start + n_qv_end + n_am + n_bm + n_cm + n_m,
     )
 end
 
@@ -204,7 +219,7 @@ function output_binary_path(date::Date, out_dir::String, min_dp::Float64, ::Type
     dp_tag = @sprintf("merged%dPa", round(Int, min_dp))
     ft_tag = FT == Float64 ? "float64" : "float32"
     date_str = Dates.format(date, "yyyymmdd")
-    return joinpath(out_dir, "era5_v4_$(date_str)_$(dp_tag)_$(ft_tag).bin")
+    return joinpath(out_dir, "era5_transport_$(date_str)_$(dp_tag)_$(ft_tag).bin")
 end
 
 """
@@ -248,7 +263,7 @@ end
     MergeWorkspace
 
 Scratch storage used while collapsing native fields onto the merged transport
-levels and while forming forward differences for `dam`, `dbm`, and `dm`.
+levels and while forming forward differences for `dam`, `dbm`, `dcm`, and `dm`.
 """
 struct MergeWorkspace{FT}
     m_merged       :: Array{FT, 3}
@@ -260,6 +275,7 @@ struct MergeWorkspace{FT}
     bm_native      :: Array{FT, 3}
     dam_merged     :: Array{FT, 3}
     dbm_merged     :: Array{FT, 3}
+    dcm_merged     :: Array{FT, 3}
     dm_merged      :: Array{FT, 3}
     m_next_merged  :: Array{FT, 3}
     am_next_merged :: Array{FT, 3}
@@ -273,12 +289,13 @@ In-memory storage for all windows of the current day before the final binary
 write.
 """
 struct WindowStorage{FT}
-    all_m  :: Vector{Array{FT, 3}}
-    all_am :: Vector{Array{FT, 3}}
-    all_bm :: Vector{Array{FT, 3}}
-    all_cm :: Vector{Array{FT, 3}}
-    all_ps :: Vector{Array{FT, 2}}
-    all_qv :: Union{Nothing, Vector{Array{FT, 3}}}
+    all_m        :: Vector{Array{FT, 3}}
+    all_am       :: Vector{Array{FT, 3}}
+    all_bm       :: Vector{Array{FT, 3}}
+    all_cm       :: Vector{Array{FT, 3}}
+    all_ps       :: Vector{Array{FT, 2}}
+    all_qv_start :: Union{Nothing, Vector{Array{FT, 3}}}
+    all_qv_end   :: Union{Nothing, Vector{Array{FT, 3}}}
 end
 
 abstract type AbstractQVWorkspace{FT} end
@@ -371,6 +388,7 @@ function allocate_merge_workspace(grid::LatLonTargetGeometry, Nz_native::Int, Nz
                               Array{FT}(undef, Nx, Ny + 1, Nz_native),
                               Array{FT}(undef, Nx + 1, Ny, Nz),
                               Array{FT}(undef, Nx, Ny + 1, Nz),
+                              Array{FT}(undef, Nx, Ny, Nz + 1),
                               Array{FT}(undef, Nx, Ny, Nz),
                               Array{FT}(undef, Nx, Ny, Nz),
                               Array{FT}(undef, Nx + 1, Ny, Nz),
@@ -388,6 +406,7 @@ function allocate_window_storage(Nt::Int, ::Type{FT}; include_qv::Bool=false) wh
                              Vector{Array{FT, 3}}(undef, Nt),
                              Vector{Array{FT, 3}}(undef, Nt),
                              Vector{Array{FT, 2}}(undef, Nt),
+                             include_qv ? Vector{Array{FT, 3}}(undef, Nt) : nothing,
                              include_qv ? Vector{Array{FT, 3}}(undef, Nt) : nothing)
 end
 
@@ -505,8 +524,8 @@ Persist the merged `qv` field for one window into the daily storage bundle.
 function store_qv_output!(storage::WindowStorage,
                           qv::NativeQVWorkspace,
                           win_idx::Int)
-    storage.all_qv === nothing && return nothing
-    storage.all_qv[win_idx] = copy(qv.qv_merged)
+    storage.all_qv_start === nothing && return nothing
+    storage.all_qv_start[win_idx] = copy(qv.qv_merged)
     return nothing
 end
 
@@ -734,7 +753,9 @@ function next_day_merged_fields(next_day_hour0,
 
     return (m=copy(merged.m_merged),
             am=copy(merged.am_merged),
-            bm=copy(merged.bm_merged))
+            bm=copy(merged.bm_merged),
+            cm=copy(merged.cm_merged),
+            qv=settings.include_qv ? copy(qv.qv_merged) : nothing)
 end
 
 """
@@ -792,7 +813,7 @@ end
 """
     compute_window_deltas!(merged, storage, win_idx, last_hour_next)
 
-Form the forward-in-time `dam`, `dbm`, and `dm` payloads for one window.
+Form the forward-in-time `dam`, `dbm`, `dcm`, and `dm` payloads for one window.
 """
 function compute_window_deltas!(merged::MergeWorkspace{FT},
                                 storage::WindowStorage{FT},
@@ -803,15 +824,36 @@ function compute_window_deltas!(merged::MergeWorkspace{FT},
     if win_idx < Nt
         merged.dam_merged .= storage.all_am[win_idx + 1] .- storage.all_am[win_idx]
         merged.dbm_merged .= storage.all_bm[win_idx + 1] .- storage.all_bm[win_idx]
+        merged.dcm_merged .= storage.all_cm[win_idx + 1] .- storage.all_cm[win_idx]
         merged.dm_merged  .= storage.all_m[win_idx + 1]  .- storage.all_m[win_idx]
     elseif last_hour_next !== nothing
         merged.dam_merged .= last_hour_next.am .- storage.all_am[win_idx]
         merged.dbm_merged .= last_hour_next.bm .- storage.all_bm[win_idx]
+        merged.dcm_merged .= last_hour_next.cm .- storage.all_cm[win_idx]
         merged.dm_merged  .= last_hour_next.m  .- storage.all_m[win_idx]
     else
         fill!(merged.dam_merged, zero(FT))
         fill!(merged.dbm_merged, zero(FT))
+        fill!(merged.dcm_merged, zero(FT))
         fill!(merged.dm_merged, zero(FT))
+    end
+
+    return nothing
+end
+
+function fill_qv_endpoints!(storage::WindowStorage{FT}, last_hour_next) where FT
+    storage.all_qv_start === nothing && return nothing
+    Nt = length(storage.all_qv_start)
+    Nt == 0 && return nothing
+
+    for win_idx in 1:Nt-1
+        storage.all_qv_end[win_idx] = copy(storage.all_qv_start[win_idx + 1])
+    end
+
+    if last_hour_next !== nothing && hasproperty(last_hour_next, :qv) && last_hour_next.qv !== nothing
+        storage.all_qv_end[Nt] = copy(last_hour_next.qv)
+    else
+        storage.all_qv_end[Nt] = copy(storage.all_qv_start[Nt])
     end
 
     return nothing
@@ -835,12 +877,14 @@ function write_window!(io::IO,
     bytes_written += write_array!(io, storage.all_cm[win_idx])
     bytes_written += write_array!(io, storage.all_ps[win_idx])
     if settings.include_qv
-        bytes_written += write_array!(io, storage.all_qv[win_idx])
+        bytes_written += write_array!(io, storage.all_qv_start[win_idx])
+        bytes_written += write_array!(io, storage.all_qv_end[win_idx])
     end
 
     compute_window_deltas!(merged, storage, win_idx, last_hour_next)
     bytes_written += write_array!(io, merged.dam_merged)
     bytes_written += write_array!(io, merged.dbm_merged)
+    bytes_written += write_array!(io, merged.dcm_merged)
     bytes_written += write_array!(io, merged.dm_merged)
 
     return bytes_written
@@ -974,6 +1018,7 @@ function process_day(date::Date,
                                             settings, transform, merged, qv, ps_offsets)
 
     apply_poisson_balance!(storage, last_hour_next, vertical)
+    fill_qv_endpoints!(storage, last_hour_next)
 
     header["ps_offsets_pa_per_window"] = ps_offsets[1:Nt]
     header["ps_offsets_next_day_hour0_pa"] = ps_offsets[Nt + 1]

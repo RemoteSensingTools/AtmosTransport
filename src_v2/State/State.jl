@@ -1,7 +1,7 @@
 """
     State (v2)
 
-Prognostic and diagnostic state containers for the dry-mass transport architecture.
+Prognostic and diagnostic state containers for the basis-explicit transport architecture.
 
 Provides:
 - `CellState` — cell-centered air mass + tracer masses (prognostic)

@@ -18,6 +18,7 @@ include("AbstractMetDriver.jl")
 include("MassClosure.jl")
 include("DryFluxBuilder.jl")
 include("TransportBinary.jl")
+include("TransportBinaryDriver.jl")
 include("ERA5/ERA5.jl")
 using .ERA5
 
@@ -25,8 +26,13 @@ using .ERA5
 export PreprocessedERA5Driver
 export ERA5BinaryReader, ERA5BinaryHeader
 export TransportBinaryReader, TransportBinaryHeader, write_transport_binary
+export TransportBinaryDriver, AbstractTransportWindow
+export StructuredFluxDeltas, FaceIndexedFluxDeltas
+export StructuredTransportWindow, FaceIndexedTransportWindow
 export load_window!, load_qv_window!, load_flux_delta_window!
-export load_qv_pair_window!, load_grid
+export load_qv_pair_window!, load_grid, load_transport_window
+export driver_grid, air_mass_basis, has_humidity_endpoints
+export interpolate_fluxes!, expected_air_mass!, interpolate_qv!, copy_fluxes!
 export load_cmfmc_window!, load_surface_window!, load_tm5conv_window!
 export load_temperature_window!
 export window_count, has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc

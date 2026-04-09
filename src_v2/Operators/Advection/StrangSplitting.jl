@@ -53,7 +53,7 @@ Single x-sweep: updates rm and m in-place using double buffering.
 """
 function sweep_x!(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
                   am::AbstractArray{FT,3},
-                  scheme::FirstOrderUpwindAdvection,
+                  scheme::UpwindAdvection,
                   ws::AdvectionWorkspace{FT}) where FT
     backend = get_backend(m)
     Nx = size(m, 1)
@@ -90,7 +90,7 @@ Single y-sweep: updates rm and m in-place using double buffering.
 """
 function sweep_y!(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
                   bm::AbstractArray{FT,3},
-                  scheme::FirstOrderUpwindAdvection,
+                  scheme::UpwindAdvection,
                   ws::AdvectionWorkspace{FT}) where FT
     backend = get_backend(m)
     Ny = size(m, 2)
@@ -127,7 +127,7 @@ Single z-sweep: updates rm and m in-place using double buffering.
 """
 function sweep_z!(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
                   cm::AbstractArray{FT,3},
-                  scheme::FirstOrderUpwindAdvection,
+                  scheme::UpwindAdvection,
                   ws::AdvectionWorkspace{FT}) where FT
     backend = get_backend(m)
     Nz = size(m, 3)
@@ -225,7 +225,7 @@ end
 function sweep_horizontal!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
                            horizontal_flux::AbstractArray{FT,2},
                            mesh::AbstractHorizontalMesh,
-                           scheme::FirstOrderUpwindAdvection,
+                           scheme::UpwindAdvection,
                            ws::AdvectionWorkspace{FT}) where FT
     _horizontal_face_tendency!(ws.rm_buf, rm, ws.m_buf, m, horizontal_flux, mesh)
     copyto!(rm, ws.rm_buf)
@@ -235,7 +235,7 @@ end
 
 function sweep_vertical!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
                          cm::AbstractArray{FT,2},
-                         scheme::FirstOrderUpwindAdvection,
+                         scheme::UpwindAdvection,
                          ws::AdvectionWorkspace{FT}) where FT
     _vertical_column_tendency!(ws.rm_buf, rm, ws.m_buf, m, cm)
     copyto!(rm, ws.rm_buf)
@@ -334,8 +334,20 @@ end
 
 function apply!(state::CellState{B}, fluxes::FaceIndexedFluxState{B},
                 grid::AtmosGrid{<:AbstractHorizontalMesh},
+                scheme::AbstractLinearReconstruction, dt; kwargs...) where {B <: AbstractMassBasis}
+    throw(ArgumentError("Face-connected advection does not implement linear-reconstruction schemes yet for $(typeof(grid.horizontal))"))
+end
+
+function apply!(state::CellState{B}, fluxes::FaceIndexedFluxState{B},
+                grid::AtmosGrid{<:AbstractHorizontalMesh},
+                scheme::AbstractQuadraticReconstruction, dt; kwargs...) where {B <: AbstractMassBasis}
+    throw(ArgumentError("Face-connected advection does not implement quadratic-reconstruction schemes yet for $(typeof(grid.horizontal))"))
+end
+
+function apply!(state::CellState{B}, fluxes::FaceIndexedFluxState{B},
+                grid::AtmosGrid{<:AbstractHorizontalMesh},
                 scheme::AbstractAdvection, dt; kwargs...) where {B <: AbstractMassBasis}
-    throw(ArgumentError("Face-connected advection currently implements only $(FirstOrderUpwindAdvection) for $(typeof(grid.horizontal))"))
+    throw(ArgumentError("Face-connected advection currently implements only constant-reconstruction upwind ($(UpwindAdvection)) for $(typeof(grid.horizontal))"))
 end
 
 export AdvectionWorkspace, strang_split!

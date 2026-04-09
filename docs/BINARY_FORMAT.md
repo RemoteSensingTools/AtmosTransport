@@ -143,6 +143,16 @@ dry-VMR output, `qv_start` + `qv_end` is the recommended contract. A
 single `qv` field remains valid as a legacy fallback, but it does not
 carry endpoint semantics.
 
+If time interpolation is part of the contract, the preferred transport-delta
+payload is the full set of mass and flux tendencies:
+
+```json
+["dam", "dbm", "dcm", "dm"]
+```
+
+This keeps vertical-flux variation explicit in the binary and avoids runtime
+closure inside advection kernels.
+
 The reader uses this manifest to compute offsets and skip sections it
 does not need.
 
@@ -156,7 +166,7 @@ does not need.
 | `include_surface` | bool | false | Surface fields |
 | `include_convection` | bool | false | Convection scheme fields |
 | `include_temperature` | bool | false | Model-level temperature |
-| `include_flux_delta` | bool | false | Temporal interpolation deltas |
+| `include_flux_delta` | bool | false | Temporal interpolation deltas such as `dam`, `dbm`, `dcm`, `dm`, or `dhflux` |
 
 ---
 
@@ -357,6 +367,13 @@ If an adapter wants to reconstruct endpoint dry reference mass from
 pressure fields instead of the transported `m`, it may also need a
 `ps_end` surface-field extension. That is optional adapter metadata, not a
 requirement of the core transport contract.
+
+When `include_flux_delta = true`, the reference `src_v2` runtime samples the
+interpolated forcing at the transport-substep midpoint. For substep `s` in a
+window with `steps_per_window = N`, the interpolation fraction is
+`λ = (s - 0.5) / N`. This convention applies to `m`, horizontal flux deltas,
+vertical flux deltas, and any endpoint humidity diagnostics carried alongside
+the window payload.
 
 ---
 

@@ -1,12 +1,14 @@
 using KernelAbstractions: @kernel, @index
 
 """
-    FirstOrderUpwindAdvection <: AbstractAdvection
+    UpwindAdvection <: AbstractConstantReconstruction
 
 First-order upwind advection. This is the simplest conservative operator and
 serves as the reference implementation for the generic `src_v2` core.
 """
-struct FirstOrderUpwindAdvection <: AbstractAdvection end
+struct UpwindAdvection <: AbstractConstantReconstruction end
+
+const FirstOrderUpwindAdvection = UpwindAdvection
 
 @inline function _upwind_face_flux(face_flux, c_left, c_right)
     return ifelse(face_flux >= zero(face_flux), face_flux * c_left, face_flux * c_right)
@@ -109,4 +111,4 @@ end
     end
 end
 
-export FirstOrderUpwindAdvection
+export UpwindAdvection, FirstOrderUpwindAdvection

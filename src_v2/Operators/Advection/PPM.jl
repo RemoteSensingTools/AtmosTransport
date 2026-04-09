@@ -7,7 +7,7 @@
 # ---------------------------------------------------------------------------
 
 """
-    PPMAdvection{ORD} <: AbstractAdvection
+    PPMAdvection{ORD} <: AbstractQuadraticReconstruction
 
 Piecewise Parabolic Method advection following Putman & Lin (2007).
 `ORD` is the reconstruction order (4, 5, 6, or 7).
@@ -15,7 +15,7 @@ Piecewise Parabolic Method advection following Putman & Lin (2007).
 # Fields
 - `use_limiter :: Bool` — enable monotonicity constraint
 """
-struct PPMAdvection{ORD} <: AbstractAdvection
+struct PPMAdvection{ORD} <: AbstractQuadraticReconstruction
     use_limiter :: Bool
 end
 PPMAdvection(; order::Int = 4, use_limiter::Bool = true) =

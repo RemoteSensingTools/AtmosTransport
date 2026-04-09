@@ -20,6 +20,9 @@ using .AtmosTransportV2
 end
 
 @testset "Basis-explicit core types" begin
+    @test UpwindAdvection <: AbstractConstantReconstruction
+    @test RussellLernerAdvection <: AbstractLinearReconstruction
+    @test PPMAdvection <: AbstractQuadraticReconstruction
     m = ones(Float64, 4, 3, 2)
     state_dry = @inferred CellState(DryBasis, m; CO2=copy(m) .* 400e-6)
     state_moist = @inferred CellState(MoistBasis, copy(m); CO2=copy(m) .* 400e-6)
@@ -94,4 +97,20 @@ end
     @test sim.iteration == 2
     @test total_air_mass(sim.model.state) ≈ m0 atol=eps(FT) * m0 * 10
     @test total_mass(sim.model.state, :CO2) ≈ rm0 atol=eps(FT) * rm0 * 10
+end
+
+@testset "Face-connected unsupported reconstruction families fail honestly" begin
+    FT = Float64
+    Nz = 2
+    mesh = ReducedGaussianMesh(FT[-45, 45], [4, 4]; FT=FT)
+    vc = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
+    grid = AtmosGrid(mesh, vc, AtmosTransportV2.CPU(); FT=FT)
+
+    m = ones(FT, ncells(mesh), Nz)
+    state = CellState(DryBasis, copy(m); CO2=copy(m) .* FT(400e-6))
+    fluxes = allocate_face_fluxes(mesh, Nz; FT=FT, basis=DryBasis)
+    ws = AdvectionWorkspace(m)
+
+    @test_throws ArgumentError apply!(state, fluxes, grid, RussellLernerAdvection(), FT(1800); workspace=ws)
+    @test_throws ArgumentError apply!(state, fluxes, grid, PPMAdvection(), FT(1800); workspace=ws)
 end

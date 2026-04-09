@@ -157,8 +157,13 @@ As of this memo:
 
 - `PlanetParameters` exists in `src_v2`
 - basis-explicit `CellState` and `FluxState` exist
-- a standalone `TransportModel` and `Simulation` exist
-- `FirstOrderUpwindAdvection` runs on:
+- topology-generic transport binaries can now carry full time-varying forcing,
+  including `dcm` and endpoint humidity (`qv_start`, `qv_end`)
+- `TransportBinaryDriver` provides typed transport windows instead of pushing
+  raw met arrays directly into the runtime
+- a standalone `TransportModel`, fixed-flux `Simulation`, and driver-backed
+  `DrivenSimulation` exist
+- `UpwindAdvection` runs on:
   - structured lat-lon
   - face-connected reduced-Gaussian meshes
 - unsupported cubed-sphere geometry is now explicitly metadata-only and should

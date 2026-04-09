@@ -66,8 +66,13 @@ using .MetDrivers: AbstractDriver, AbstractClosure, AbstractMetDriver,
                    PreprocessedERA5Driver,
                    ERA5BinaryReader, ERA5BinaryHeader,
                    TransportBinaryReader, TransportBinaryHeader, write_transport_binary,
+                   TransportBinaryDriver, AbstractTransportWindow,
+                   StructuredFluxDeltas, FaceIndexedFluxDeltas,
+                   StructuredTransportWindow, FaceIndexedTransportWindow,
                    load_window!, load_qv_window!, load_flux_delta_window!,
-                   load_qv_pair_window!, load_grid,
+                   load_qv_pair_window!, load_grid, load_transport_window,
+                   driver_grid, air_mass_basis, has_humidity_endpoints,
+                   interpolate_fluxes!, expected_air_mass!, interpolate_qv!, copy_fluxes!,
                    load_cmfmc_window!, load_surface_window!, load_tm5conv_window!,
                    load_temperature_window!,
                    window_count, has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc,
@@ -79,7 +84,7 @@ using .MetDrivers: AbstractDriver, AbstractClosure, AbstractMetDriver,
                    ERA5ReducedGaussianGeometry,
                    read_era5_reduced_gaussian_geometry, read_era5_reduced_gaussian_mesh,
                    build_dry_fluxes!, build_air_mass!,
-                   supports_diffusion, supports_convection,
+                   total_windows, window_dt, steps_per_window, supports_diffusion, supports_convection,
                    DiagnoseVerticalFromHorizontal, PressureTendencyClosure
 
 # ---- Physics operators ----
@@ -129,7 +134,8 @@ export MetState, allocate_face_fluxes, allocate_tracers
 export mixing_ratio, total_mass, total_air_mass, tracer_names
 
 # Operators -- public transport API
-export AbstractAdvection, FirstOrderUpwindAdvection, RussellLernerAdvection, PPMAdvection
+export AbstractAdvection, AbstractConstantReconstruction, AbstractLinearReconstruction, AbstractQuadraticReconstruction
+export UpwindAdvection, FirstOrderUpwindAdvection, RussellLernerAdvection, PPMAdvection
 export AdvectionWorkspace, strang_split!, apply!
 export diagnose_cm!
 # NOTE: sweep_x!, sweep_y!, sweep_z!, max_cfl_*, minmod, van_leer_slope
@@ -142,8 +148,13 @@ export AbstractDriver, AbstractClosure
 export AbstractMetDriver, PreprocessedERA5Driver
 export ERA5BinaryReader, ERA5BinaryHeader
 export TransportBinaryReader, TransportBinaryHeader, write_transport_binary
+export TransportBinaryDriver, AbstractTransportWindow
+export StructuredFluxDeltas, FaceIndexedFluxDeltas
+export StructuredTransportWindow, FaceIndexedTransportWindow
 export load_window!, load_qv_window!, load_flux_delta_window!
-export load_qv_pair_window!, load_grid
+export load_qv_pair_window!, load_grid, load_transport_window
+export driver_grid, air_mass_basis, has_humidity_endpoints
+export interpolate_fluxes!, expected_air_mass!, interpolate_qv!, copy_fluxes!
 export load_cmfmc_window!, load_surface_window!, load_tm5conv_window!
 export load_temperature_window!
 export window_count, has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc
@@ -151,6 +162,7 @@ export has_surface, has_tm5conv, has_temperature
 export grid_type, horizontal_topology
 export A_ifc, B_ifc
 export build_dry_fluxes!, build_air_mass!
+export total_windows, window_dt, steps_per_window
 export diagnose_cm_from_continuity!, diagnose_cm_from_continuity_vc!
 export diagnose_cm_from_continuity_ka!
 export ERA5ReducedGaussianGeometry
@@ -159,6 +171,7 @@ export DiagnoseVerticalFromHorizontal, PressureTendencyClosure
 export supports_diffusion, supports_convection
 
 # Models
-export TransportModel, Simulation, step!, run!
+export TransportModel, Simulation, DrivenSimulation, step!, run!, run_window!
+export window_index, substep_index, current_qv
 
 end # module AtmosTransportV2

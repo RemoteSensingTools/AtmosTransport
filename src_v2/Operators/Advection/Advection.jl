@@ -1,21 +1,21 @@
 """
     Advection (v2)
 
-Advection operators for the dry-mass transport architecture.
+Advection operators for the basis-explicit transport architecture.
 
 Provides:
-- `FirstOrderUpwindAdvection` — simple conservative reference operator
-- `RussellLernerAdvection` — TM5-faithful van Leer slopes (fully implemented)
-- `PPMAdvection` — Putman & Lin PPM (type + stub, Phase 2 kernels)
+- `UpwindAdvection` — simple conservative reference operator
+- `RussellLernerAdvection` — linear reconstruction with van Leer-type slopes
+- `PPMAdvection` — quadratic reconstruction family stub (Phase 4 kernels)
 - `AdvectionWorkspace` + `strang_split!` — Strang splitting orchestrator
-- `diagnose_cm!` — vertical flux from horizontal continuity
+- `diagnose_cm!` — compatibility shim for vertical-flux diagnosis outside the core stepping path
 - CFL utilities for subcycling decisions
 """
 module Advection
 
 using DocStringExtensions
 
-import ..AbstractAdvection, ..AbstractOperator, ..apply!
+import ..AbstractAdvection, ..AbstractConstantReconstruction, ..AbstractLinearReconstruction, ..AbstractQuadraticReconstruction, ..AbstractOperator, ..apply!
 using ...State: CellState, AbstractStructuredFaceFluxState, AbstractFaceFluxState,
     StructuredFaceFluxState, AbstractUnstructuredFaceFluxState,
     DryMassFluxBasis, DryStructuredFluxState, AbstractMassBasis,

@@ -22,6 +22,12 @@ struct TransportBinaryHeader
     dt_met_seconds       :: Float64
     half_dt_seconds      :: Float64
     steps_per_window     :: Int
+    source_flux_sampling :: Symbol
+    air_mass_sampling    :: Symbol
+    flux_sampling        :: Symbol
+    flux_kind            :: Symbol
+    humidity_sampling    :: Symbol
+    delta_semantics      :: Symbol
     A_ifc                :: Vector{Float64}
     B_ifc                :: Vector{Float64}
     mass_basis           :: Symbol
@@ -60,10 +66,87 @@ struct TransportBinaryReader{FT, DiskFT}
     path   :: String
 end
 
+@inline function _transport_geometry_summary(h::TransportBinaryHeader)
+    if _transport_is_structured(h)
+        return string(h.Nx, "×", h.Ny, " structured cells, ", h.nlevel, " levels")
+    elseif _transport_is_faceindexed(h)
+        return string(h.ncell, " cells, ", h.nface_h, " faces, ", h.nlevel, " levels")
+    else
+        return string(h.ncell, " cells, ", h.nlevel, " levels")
+    end
+end
+
+@inline function _transport_qv_summary(h::TransportBinaryHeader)
+    if h.include_qv_endpoints
+        return "qv_start/qv_end"
+    elseif h.include_qv
+        return "qv"
+    else
+        return "none"
+    end
+end
+
+@inline function _transport_semantics_summary(h::TransportBinaryHeader)
+    return string(
+        "air_mass=", h.air_mass_sampling,
+        ", flux=", h.flux_sampling, "/", h.flux_kind,
+        ", humidity=", h.humidity_sampling,
+        ", delta=", h.delta_semantics,
+        h.source_flux_sampling === :unknown ? "" : string(", source_flux=", h.source_flux_sampling)
+    )
+end
+
+function Base.summary(h::TransportBinaryHeader)
+    return string(
+        "TransportBinaryHeader(v", h.format_version, ", ",
+        h.grid_type, "/", h.horizontal_topology, ", ",
+        h.nwindow, " windows)"
+    )
+end
+
+function Base.show(io::IO, h::TransportBinaryHeader)
+    print(io, summary(h), "\n",
+          "├── geometry:      ", _transport_geometry_summary(h), "\n",
+          "├── storage:       ", h.on_disk_float_type, " on disk, basis=", h.mass_basis, "\n",
+          "├── timing:        dt=", h.dt_met_seconds, " s, steps/window=", h.steps_per_window, "\n",
+          "├── payload:       ", join(String.(h.payload_sections), ", "), "\n",
+          "├── humidity:      ", _transport_qv_summary(h), "\n",
+          "├── semantics:     ", _transport_semantics_summary(h), "\n",
+          "└── header bytes:  ", h.header_bytes)
+end
+
+function Base.summary(r::TransportBinaryReader{FT, DiskFT}) where {FT, DiskFT}
+    return string(
+        "TransportBinaryReader{", FT, "←", DiskFT, "}(",
+        basename(r.path), ", ", r.header.grid_type, "/", r.header.horizontal_topology, ", ",
+        r.header.nwindow, " windows)"
+    )
+end
+
+function Base.show(io::IO, r::TransportBinaryReader)
+    h = r.header
+    print(io, summary(r), "\n",
+          "├── path:          ", r.path, "\n",
+          "├── geometry:      ", _transport_geometry_summary(h), "\n",
+          "├── storage:       ", h.on_disk_float_type, " on disk, load as ", eltype(r.data), "\n",
+          "├── basis:         ", h.mass_basis, "\n",
+          "├── timing:        dt=", h.dt_met_seconds, " s, steps/window=", h.steps_per_window, "\n",
+          "├── payload:       ", join(String.(h.payload_sections), ", "), "\n",
+          "├── humidity:      ", _transport_qv_summary(h), "\n",
+          "├── semantics:     ", _transport_semantics_summary(h), "\n",
+          "└── windows:       ", h.nwindow)
+end
+
 window_count(r::TransportBinaryReader) = r.header.nwindow
 mass_basis(r::TransportBinaryReader) = r.header.mass_basis
 grid_type(r::TransportBinaryReader) = r.header.grid_type
 horizontal_topology(r::TransportBinaryReader) = r.header.horizontal_topology
+source_flux_sampling(r::TransportBinaryReader) = r.header.source_flux_sampling
+air_mass_sampling(r::TransportBinaryReader) = r.header.air_mass_sampling
+flux_sampling(r::TransportBinaryReader) = r.header.flux_sampling
+flux_kind(r::TransportBinaryReader) = r.header.flux_kind
+humidity_sampling(r::TransportBinaryReader) = r.header.humidity_sampling
+delta_semantics(r::TransportBinaryReader) = r.header.delta_semantics
 A_ifc(r::TransportBinaryReader) = r.header.A_ifc
 B_ifc(r::TransportBinaryReader) = r.header.B_ifc
 has_qv(r::TransportBinaryReader) = r.header.include_qv || r.header.include_qv_endpoints
@@ -91,6 +174,29 @@ end
 function _transport_parse_mass_basis(hdr)
     basis_str = lowercase(string(get(hdr, :mass_basis, "moist")))
     return basis_str == "dry" ? :dry : :moist
+end
+
+@inline function _transport_normalize_symbol(value)
+    return Symbol(replace(lowercase(String(value)), '-' => '_', ' ' => '_'))
+end
+
+@inline function _transport_parse_symbol_key(hdr, key::Symbol, default::Symbol)
+    return _transport_normalize_symbol(get(hdr, key, String(default)))
+end
+
+@inline function _transport_default_humidity_sampling(payload_sections::AbstractVector{Symbol})
+    if (:qv_start in payload_sections) || (:qv_end in payload_sections)
+        return :window_endpoints
+    elseif :qv in payload_sections
+        return :single_field
+    else
+        return :none
+    end
+end
+
+@inline function _transport_default_delta_semantics(payload_sections::AbstractVector{Symbol})
+    return any(section in (:dam, :dbm, :dcm, :dm, :dhflux) for section in payload_sections) ?
+           :forward_window_endpoint_difference : :none
 end
 
 _transport_parse_grid_type(hdr) = Symbol(lowercase(string(hdr.grid_type)))
@@ -144,6 +250,12 @@ function _parse_transport_header(raw_bytes::Vector{UInt8})
     payload_sections = _transport_parse_sections(hdr)
     include_qv = Bool(get(hdr, :include_qv, false))
     include_qv_endpoints = Bool(get(hdr, :include_qv_endpoints, false))
+    source_flux_sampling = _transport_parse_symbol_key(hdr, :source_flux_sampling, :unknown)
+    air_mass_sampling = _transport_parse_symbol_key(hdr, :air_mass_sampling, :window_start_endpoint)
+    flux_sampling = _transport_parse_symbol_key(hdr, :flux_sampling, :window_start_endpoint)
+    flux_kind = _transport_parse_symbol_key(hdr, :flux_kind, :substep_mass_amount)
+    humidity_sampling = _transport_parse_symbol_key(hdr, :humidity_sampling, _transport_default_humidity_sampling(payload_sections))
+    delta_semantics = _transport_parse_symbol_key(hdr, :delta_semantics, _transport_default_delta_semantics(payload_sections))
     n_qv = Int(get(hdr, :n_qv, include_qv ? ncell * nlevel : 0))
     n_qv_start = Int(get(hdr, :n_qv_start, include_qv_endpoints ? ncell * nlevel : 0))
     n_qv_end = Int(get(hdr, :n_qv_end, include_qv_endpoints ? ncell * nlevel : 0))
@@ -181,6 +293,12 @@ function _parse_transport_header(raw_bytes::Vector{UInt8})
         Float64(hdr.dt_met_seconds),
         Float64(hdr.half_dt_seconds),
         Int(hdr.steps_per_window),
+        source_flux_sampling,
+        air_mass_sampling,
+        flux_sampling,
+        flux_kind,
+        humidity_sampling,
+        delta_semantics,
         A_ifc,
         B_ifc,
         _transport_parse_mass_basis(hdr),
@@ -483,10 +601,18 @@ function _transport_common_header(grid_type::String,
                                   dt_met_seconds::Real,
                                   half_dt_seconds::Real,
                                   steps_per_window::Integer,
-                                  mass_basis::Symbol)
+                                  mass_basis::Symbol,
+                                  source_flux_sampling::Symbol,
+                                  air_mass_sampling::Symbol,
+                                  flux_sampling::Symbol,
+                                  flux_kind::Symbol,
+                                  humidity_sampling::Symbol,
+                                  delta_semantics::Symbol)
     n_qv = (:qv in payload_sections) ? ncell * nlevel : 0
     n_qv_start = (:qv_start in payload_sections) ? ncell * nlevel : 0
     n_qv_end = (:qv_end in payload_sections) ? ncell * nlevel : 0
+    humidity_sampling = humidity_sampling === :auto ? _transport_default_humidity_sampling(payload_sections) : _transport_normalize_symbol(humidity_sampling)
+    delta_semantics = delta_semantics === :auto ? _transport_default_delta_semantics(payload_sections) : _transport_normalize_symbol(delta_semantics)
 
     return Dict{String, Any}(
         "magic" => "MFLX",
@@ -506,6 +632,12 @@ function _transport_common_header(grid_type::String,
         "dt_met_seconds" => Float64(dt_met_seconds),
         "half_dt_seconds" => Float64(half_dt_seconds),
         "steps_per_window" => Int(steps_per_window),
+        "source_flux_sampling" => String(_transport_normalize_symbol(source_flux_sampling)),
+        "air_mass_sampling" => String(_transport_normalize_symbol(air_mass_sampling)),
+        "flux_sampling" => String(_transport_normalize_symbol(flux_sampling)),
+        "flux_kind" => String(_transport_normalize_symbol(flux_kind)),
+        "humidity_sampling" => String(humidity_sampling),
+        "delta_semantics" => String(delta_semantics),
         "mass_basis" => String(mass_basis),
         "payload_sections" => String.(payload_sections),
         "include_qv" => :qv in payload_sections,
@@ -539,6 +671,12 @@ function write_transport_binary(path::AbstractString,
                                 dt_met_seconds::Real = 3600.0,
                                 half_dt_seconds::Real = dt_met_seconds / 2,
                                 steps_per_window::Integer = 2,
+                                source_flux_sampling::Symbol = :unknown,
+                                air_mass_sampling::Symbol = :window_start_endpoint,
+                                flux_sampling::Symbol = :window_start_endpoint,
+                                flux_kind::Symbol = :substep_mass_amount,
+                                humidity_sampling::Symbol = :auto,
+                                delta_semantics::Symbol = :auto,
                                 mass_basis::Symbol = :moist)
     isempty(windows) && throw(ArgumentError("write_transport_binary requires at least one window"))
 
@@ -569,7 +707,13 @@ function write_transport_binary(path::AbstractString,
                                       dt_met_seconds=dt_met_seconds,
                                       half_dt_seconds=half_dt_seconds,
                                       steps_per_window=steps_per_window,
-                                      mass_basis=basis_sym)
+                                      mass_basis=basis_sym,
+                                      source_flux_sampling=source_flux_sampling,
+                                      air_mass_sampling=air_mass_sampling,
+                                      flux_sampling=flux_sampling,
+                                      flux_kind=flux_kind,
+                                      humidity_sampling=humidity_sampling,
+                                      delta_semantics=delta_semantics)
     merge!(header, Dict{String, Any}(
         "Nx" => Nx,
         "Ny" => Ny,
@@ -610,6 +754,12 @@ function write_transport_binary(path::AbstractString,
                                 dt_met_seconds::Real = 3600.0,
                                 half_dt_seconds::Real = dt_met_seconds / 2,
                                 steps_per_window::Integer = 2,
+                                source_flux_sampling::Symbol = :unknown,
+                                air_mass_sampling::Symbol = :window_start_endpoint,
+                                flux_sampling::Symbol = :window_start_endpoint,
+                                flux_kind::Symbol = :substep_mass_amount,
+                                humidity_sampling::Symbol = :auto,
+                                delta_semantics::Symbol = :auto,
                                 mass_basis::Symbol = :moist)
     isempty(windows) && throw(ArgumentError("write_transport_binary requires at least one window"))
 
@@ -638,7 +788,13 @@ function write_transport_binary(path::AbstractString,
                                       dt_met_seconds=dt_met_seconds,
                                       half_dt_seconds=half_dt_seconds,
                                       steps_per_window=steps_per_window,
-                                      mass_basis=basis_sym)
+                                      mass_basis=basis_sym,
+                                      source_flux_sampling=source_flux_sampling,
+                                      air_mass_sampling=air_mass_sampling,
+                                      flux_sampling=flux_sampling,
+                                      flux_kind=flux_kind,
+                                      humidity_sampling=humidity_sampling,
+                                      delta_semantics=delta_semantics)
     merge!(header, Dict{String, Any}(
         "nlat" => nrings(mesh),
         "latitudes" => Float64.(mesh.latitudes),
@@ -953,3 +1109,4 @@ end
 export TransportBinaryHeader, TransportBinaryReader
 export grid_type, horizontal_topology, load_grid, load_qv_window!, load_qv_pair_window!, load_flux_delta_window!
 export has_qv, has_qv_endpoints, has_flux_delta, write_transport_binary
+export source_flux_sampling, air_mass_sampling, flux_sampling, flux_kind, humidity_sampling, delta_semantics

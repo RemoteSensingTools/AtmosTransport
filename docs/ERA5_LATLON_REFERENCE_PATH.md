@@ -60,12 +60,23 @@ Recommended delta sections for time-interpolated forcing:
 
 The design intent is explicit: if the runtime interpolates fluxes through the
 window, `dcm` should be present so vertical forcing is not reconstructed by a
-closure routine during stepping.
+closure routine during stepping. The stored runtime contract for this ERA5 path
+is:
+
+- `air_mass_sampling = "window_start_endpoint"`
+- `flux_sampling = "window_start_endpoint"`
+- `flux_kind = "substep_mass_amount"`
+- `delta_semantics = "forward_window_endpoint_difference"`
+
+If the raw met source uses interval means or interval-integrated fluxes, the
+preprocessor must normalize them into this stored contract before writing the
+binary.
 
 ## Timing Semantics
 
 For the ERA5 spectral transport preprocessor:
 
+- `source_flux_sampling` should record what the raw met product actually was
 - `qv_start` is the humidity field aligned with the current window
 - `qv_end` is the next humidity field in time
 - for the last window of the day, `qv_end` comes from next-day 00 UTC when

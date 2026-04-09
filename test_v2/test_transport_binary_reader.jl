@@ -5,7 +5,7 @@ using Test
 include(joinpath(@__DIR__, "..", "src_v2", "AtmosTransportV2.jl"))
 using .AtmosTransportV2
 
-function write_test_transport_binary_reduced(path::AbstractString; FT::Type{<:AbstractFloat}=Float64)
+function write_test_transport_binary_reduced(path::AbstractString; FT::Type{<:AbstractFloat}=Float64, binary_kwargs...)
     mesh = ReducedGaussianMesh(FT[-45, 45], [4, 4]; FT=FT)
     vertical = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
     grid = AtmosGrid(mesh, vertical, CPU(); FT=FT)
@@ -30,11 +30,12 @@ function write_test_transport_binary_reduced(path::AbstractString; FT::Type{<:Ab
                            dt_met_seconds=3600.0,
                            half_dt_seconds=1800.0,
                            steps_per_window=2,
-                           mass_basis=:moist)
+                           mass_basis=:moist,
+                           binary_kwargs...)
     return grid
 end
 
-function write_test_transport_binary_latlon(path::AbstractString; FT::Type{<:AbstractFloat}=Float64)
+function write_test_transport_binary_latlon(path::AbstractString; FT::Type{<:AbstractFloat}=Float64, binary_kwargs...)
     Nx, Ny, Nz = 6, 4, 3
     mesh = LatLonMesh(; FT=FT, Nx=Nx, Ny=Ny)
     vertical = HybridSigmaPressure(FT[0, 100, 300, 1000], FT[0, 0, 0, 1])
@@ -62,7 +63,8 @@ function write_test_transport_binary_latlon(path::AbstractString; FT::Type{<:Abs
                            dt_met_seconds=3600.0,
                            half_dt_seconds=1800.0,
                            steps_per_window=2,
-                           mass_basis=:moist)
+                           mass_basis=:moist,
+                           binary_kwargs...)
     return grid
 end
 
@@ -79,6 +81,21 @@ end
         @test has_qv(reader)
         @test has_qv_endpoints(reader)
         @test has_flux_delta(reader)
+        @test source_flux_sampling(reader) == :unknown
+        @test air_mass_sampling(reader) == :window_start_endpoint
+        @test flux_sampling(reader) == :window_start_endpoint
+        @test flux_kind(reader) == :substep_mass_amount
+        @test humidity_sampling(reader) == :window_endpoints
+        @test delta_semantics(reader) == :forward_window_endpoint_difference
+
+        header_repr = sprint(show, reader.header)
+        @test occursin("TransportBinaryHeader", header_repr)
+        @test occursin("qv_start/qv_end", header_repr)
+        @test occursin("substep_mass_amount", header_repr)
+
+        reader_repr = sprint(show, reader)
+        @test occursin("TransportBinaryReader", reader_repr)
+        @test occursin("latlon/structureddirectional", reader_repr)
 
         grid = load_grid(reader; FT=Float64, arch=CPU())
         @test grid.horizontal isa LatLonMesh
@@ -117,6 +134,10 @@ end
         @test steps_per_window(driver) == 2
         @test air_mass_basis(driver) == :moist
         @test driver_grid(driver).horizontal isa LatLonMesh
+
+        driver_repr = sprint(show, driver)
+        @test occursin("TransportBinaryDriver", driver_repr)
+        @test occursin("steps/window=2", driver_repr)
 
         window = load_transport_window(driver, 1)
         @test window isa StructuredTransportWindow{MoistBasis}
@@ -163,6 +184,11 @@ end
         @test has_qv(reader)
         @test has_qv_endpoints(reader)
         @test !has_flux_delta(reader)
+        @test delta_semantics(reader) == :none
+
+        reduced_reader_repr = sprint(show, reader)
+        @test occursin("reduced_gaussian/faceindexed", reduced_reader_repr)
+        @test occursin("qv_start/qv_end", reduced_reader_repr)
 
         grid = load_grid(reader; FT=Float64, arch=CPU())
         @test grid.horizontal isa ReducedGaussianMesh
@@ -189,5 +215,14 @@ end
         run!(sim)
         @test total_air_mass(sim.model.state) ≈ m0 atol=eps(Float64) * m0 * 10
         @test total_mass(sim.model.state, :CO2) ≈ rm0 atol=eps(Float64) * rm0 * 10
+    end
+end
+
+
+@testset "TransportBinaryDriver timing semantics validation" begin
+    mktemp() do path, io
+        close(io)
+        write_test_transport_binary_latlon(path; FT=Float64, flux_kind=:mass_rate)
+        @test_throws ArgumentError TransportBinaryDriver(path; FT=Float64, arch=CPU())
     end
 end

@@ -74,10 +74,61 @@ struct TransportBinaryDriver{FT, ReaderT, GridT} <: AbstractMassFluxMetDriver
     grid   :: GridT
 end
 
+function _validate_runtime_semantics(reader::TransportBinaryReader)
+    h = reader.header
+
+    h.flux_kind === :substep_mass_amount ||
+        throw(ArgumentError("TransportBinaryDriver requires flux_kind = :substep_mass_amount, got $(h.flux_kind)"))
+
+    h.air_mass_sampling === :window_start_endpoint ||
+        throw(ArgumentError("TransportBinaryDriver requires air_mass_sampling = :window_start_endpoint, got $(h.air_mass_sampling)"))
+
+    if has_flux_delta(reader)
+        h.flux_sampling === :window_start_endpoint ||
+            throw(ArgumentError("TransportBinaryDriver requires flux_sampling = :window_start_endpoint when deltas are present, got $(h.flux_sampling)"))
+        h.delta_semantics === :forward_window_endpoint_difference ||
+            throw(ArgumentError("TransportBinaryDriver requires delta_semantics = :forward_window_endpoint_difference, got $(h.delta_semantics)"))
+    else
+        h.flux_sampling in (:window_start_endpoint, :window_mean) ||
+            throw(ArgumentError("TransportBinaryDriver supports flux_sampling = :window_start_endpoint or :window_mean without deltas, got $(h.flux_sampling)"))
+    end
+
+    if has_qv_endpoints(reader)
+        h.humidity_sampling === :window_endpoints ||
+            throw(ArgumentError("TransportBinaryDriver requires humidity_sampling = :window_endpoints when qv_start/qv_end are present, got $(h.humidity_sampling)"))
+    elseif has_qv(reader)
+        h.humidity_sampling in (:single_field, :none) ||
+            throw(ArgumentError("TransportBinaryDriver only supports humidity_sampling = :single_field for legacy qv payloads, got $(h.humidity_sampling)"))
+    end
+
+    return nothing
+end
+
+function Base.summary(driver::TransportBinaryDriver{FT}) where {FT}
+    return string(
+        "TransportBinaryDriver{", FT, "}(",
+        basename(driver.reader.path), ", ", grid_type(driver.reader), "/", horizontal_topology(driver.reader), ")"
+    )
+end
+
+function Base.show(io::IO, driver::TransportBinaryDriver)
+    reader = driver.reader
+    h = reader.header
+    print(io, summary(driver), "\n",
+          "├── grid:          ", summary(driver.grid.horizontal), "\n",
+          "├── basis:         ", air_mass_basis(driver), "\n",
+          "├── timing:        dt=", window_dt(driver), " s, steps/window=", steps_per_window(driver), "\n",
+          "├── payload:       ", join(String.(h.payload_sections), ", "), "\n",
+          "├── humidity:      ", has_qv_endpoints(reader) ? "qv_start/qv_end" : (has_qv(reader) ? "qv" : "none"), "\n",
+          "├── semantics:     air_mass=", h.air_mass_sampling, ", flux=", h.flux_sampling, "/", h.flux_kind, "\n",
+          "└── windows:       ", total_windows(driver))
+end
+
 function TransportBinaryDriver(path::AbstractString;
                                FT::Type{<:AbstractFloat} = Float64,
                                arch = CPU())
     reader = TransportBinaryReader(String(path); FT=FT)
+    _validate_runtime_semantics(reader)
     grid = load_grid(reader; FT=FT, arch=arch)
     return TransportBinaryDriver{FT, typeof(reader), typeof(grid)}(reader, grid)
 end

@@ -109,6 +109,22 @@ and `horizontal_topology` for the rest.
 | `dt_met_seconds` | float | Met-window duration [s] |
 | `half_dt_seconds` | float | Half-timestep, flux time basis [s] |
 | `steps_per_window` | int | Advection substeps per window |
+| `source_flux_sampling` | string | Raw met-flux provenance: `"unknown"`, `"instantaneous_endpoint"`, `"interval_mean"`, or `"interval_integrated"` |
+| `air_mass_sampling` | string | Stored air-mass timing semantics; current `src_v2` runtime expects `"window_start_endpoint"` |
+| `flux_sampling` | string | Stored horizontal/vertical flux timing semantics; current runtime expects `"window_start_endpoint"` when deltas are present |
+| `flux_kind` | string | Stored flux value contract; current runtime expects `"substep_mass_amount"` |
+| `humidity_sampling` | string | `"window_endpoints"`, `"single_field"`, or `"none"` |
+| `delta_semantics` | string | `"forward_window_endpoint_difference"` or `"none"` |
+
+The crucial distinction is between raw met provenance and stored runtime semantics.
+A preprocessor may ingest interval-mean or interval-integrated source products,
+but the binary should normalize them into the runtime contract expected by
+`src_v2`. The current `DrivenSimulation` path assumes:
+
+- `air_mass_sampling = "window_start_endpoint"`
+- `flux_sampling = "window_start_endpoint"`
+- `flux_kind = "substep_mass_amount"`
+- `delta_semantics = "forward_window_endpoint_difference"` when deltas are present
 
 ### 3.6 Mass basis
 
@@ -371,9 +387,16 @@ requirement of the core transport contract.
 When `include_flux_delta = true`, the reference `src_v2` runtime samples the
 interpolated forcing at the transport-substep midpoint. For substep `s` in a
 window with `steps_per_window = N`, the interpolation fraction is
-`λ = (s - 0.5) / N`. This convention applies to `m`, horizontal flux deltas,
-vertical flux deltas, and any endpoint humidity diagnostics carried alongside
-the window payload.
+`λ = (s - 0.5) / N`. This convention applies only to binaries whose stored
+semantics declare:
+
+- `air_mass_sampling = "window_start_endpoint"`
+- `flux_sampling = "window_start_endpoint"`
+- `flux_kind = "substep_mass_amount"`
+- `delta_semantics = "forward_window_endpoint_difference"`
+
+The advection kernels do not perform this interpolation themselves. They consume
+the fully prepared instantaneous/substep forcing state produced by the driver.
 
 ---
 

@@ -38,6 +38,7 @@ export load_temperature_window!
 export window_count, has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc
 export has_surface, has_tm5conv, has_temperature
 export mass_basis, grid_type, horizontal_topology, A_ifc, B_ifc
+export source_flux_sampling, air_mass_sampling, flux_sampling, flux_kind, humidity_sampling, delta_semantics
 export diagnose_cm_from_continuity!, diagnose_cm_from_continuity_vc!
 export diagnose_cm_from_continuity_ka!
 export ERA5ReducedGaussianGeometry

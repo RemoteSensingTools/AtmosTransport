@@ -78,6 +78,7 @@ using .MetDrivers: AbstractDriver, AbstractClosure, AbstractMetDriver,
                    window_count, has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc,
                    has_surface, has_tm5conv, has_temperature,
                    grid_type, horizontal_topology,
+                   source_flux_sampling, air_mass_sampling, flux_sampling, flux_kind, humidity_sampling, delta_semantics,
                    A_ifc, B_ifc,
                    diagnose_cm_from_continuity!, diagnose_cm_from_continuity_vc!,
                    diagnose_cm_from_continuity_ka!,
@@ -160,6 +161,7 @@ export load_temperature_window!
 export window_count, has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc
 export has_surface, has_tm5conv, has_temperature
 export grid_type, horizontal_topology
+export source_flux_sampling, air_mass_sampling, flux_sampling, flux_kind, humidity_sampling, delta_semantics
 export A_ifc, B_ifc
 export build_dry_fluxes!, build_air_mass!
 export total_windows, window_dt, steps_per_window

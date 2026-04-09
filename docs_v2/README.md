@@ -29,6 +29,10 @@ Suggested reading order:
 4. [30_BINARY_AND_DRIVERS.md](/home/cfranken/code/gitHub/AtmosTransportModel/docs_v2/30_BINARY_AND_DRIVERS.md)
 5. [40_QUALITY_GATES.md](/home/cfranken/code/gitHub/AtmosTransportModel/docs_v2/40_QUALITY_GATES.md)
 
+Quick inspection helper:
+
+- `julia --project=. scripts/diagnostics/inspect_transport_binary_v2.jl path/to/file.bin`
+
 Source-of-truth pointers in the existing docs tree:
 
 - [DESIGN_MEMO_BASIS_EXPLICIT_TRANSPORT.md](/home/cfranken/code/gitHub/AtmosTransportModel/docs/DESIGN_MEMO_BASIS_EXPLICIT_TRANSPORT.md)

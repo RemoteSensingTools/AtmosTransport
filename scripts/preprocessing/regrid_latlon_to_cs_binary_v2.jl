@@ -258,12 +258,33 @@ cm[i,j,k+1] = cm[i,j,k] + am[i,j,k] - am[i+1,j,k] + bm[i,j,k] - bm[i,j+1,k] - dm
 where dm = (m_next - m_curr) / (2 * steps_per_window).
 cm[:,:,1] = 0 (TOA), cm[:,:,Nz+1] = 0 (surface, enforced by construction if balanced).
 """
-function diagnose_cm!(cm, am, bm, dm, Nc, Nz)
+function diagnose_cm!(cm, am, bm, dm, m, Nc, Nz)
     @inbounds for j in 1:Nc, i in 1:Nc
-        cm[i, j, 1] = 0.0  # TOA
+        # Pass 1: raw cm from cumulative sum TOA→surface
+        cm[i, j, 1] = 0.0  # TOA boundary
         for k in 1:Nz
             div_h = am[i, j, k] - am[i+1, j, k] + bm[i, j, k] - bm[i, j+1, k]
             cm[i, j, k+1] = cm[i, j, k] + div_h - dm[i, j, k]
+        end
+
+        # Pass 2: redistribute surface residual to enforce cm[Nz+1] = 0
+        # The residual arises because interpolated am/bm don't satisfy
+        # exact global mass balance on the CS grid. We distribute the
+        # residual proportionally to cell mass (proxy for dp).
+        residual = cm[i, j, Nz + 1]
+        if abs(residual) > 0
+            total_m = 0.0
+            for k in 1:Nz
+                total_m += m[i, j, k]
+            end
+            if total_m > 0
+                cum_fix = 0.0
+                for k in 1:Nz
+                    frac = m[i, j, k] / total_m
+                    cum_fix += frac * residual
+                    cm[i, j, k + 1] -= cum_fix
+                end
+            end
         end
     end
     return nothing
@@ -430,7 +451,7 @@ function main()
             @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
                 dm_panel[i, j, k] = (m_next_p[i, j, k] - m_panels[p][i, j, k]) / (2 * steps_per_window)
             end
-            diagnose_cm!(cm_panels[p], am_panels[p], bm_panels[p], dm_panel, Nc, Nz)
+            diagnose_cm!(cm_panels[p], am_panels[p], bm_panels[p], dm_panel, m_panels[p], Nc, Nz)
         end
 
         # Store window data

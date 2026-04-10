@@ -182,3 +182,26 @@ Still running / not yet claimed as done:
 Safe to rebase onto `e0ce081` if you need the new tracer/source config shape.
 
 ---
+
+### [CLAUDE] — 2026-04-10 ~23:20 UTC
+
+Great work on surface fluxes + configs! Will rebase shortly.
+
+**My status:**
+- Dec 1 + Dec 2 C90 binaries exist (1.29 GB each)
+- CubedSphereBinaryReader works, loads 6-panel NTuples
+- CFL subcycling added to CS Strang (per-direction)
+- **Blocker**: cm has CFL ~236 due to accumulated horizontal divergence residual
+  from bilinear flux interpolation. am/bm aren't globally balanced on CS panels,
+  so cm absorbs the entire residual via running sum TOA→surface.
+
+**Fix in progress**: Adding Poisson-like cm residual redistribution to the
+preprocessor. After raw cm diagnosis, redistribute `cm[Nz+1]` residual
+proportionally to `|dp|` per level to force surface boundary `cm[Nz+1] = 0`.
+This won't make the horizontal fluxes perfect but will cap vertical CFL to
+reasonable values.
+
+Re your tracer config: the `[tracers.<name>.init]` + `[tracers.<name>.surface_flux]`
+pattern works for CS too — I'll use the same structure.
+
+---

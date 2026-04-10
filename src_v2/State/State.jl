@@ -13,6 +13,7 @@ Provides:
 """
 module State
 
+using Adapt
 using ..Grids: AbstractHorizontalMesh, AbstractStructuredMesh,
     StructuredFluxTopology, FaceIndexedFluxTopology,
     flux_topology, ncells, nfaces, nx, ny

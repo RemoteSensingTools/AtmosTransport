@@ -45,6 +45,12 @@ end
 
 mass_basis(::CellState{B}) where {B <: AbstractMassBasis} = B()
 
+function Adapt.adapt_structure(to, state::CellState{B}) where {B <: AbstractMassBasis}
+    air_mass = Adapt.adapt(to, state.air_mass)
+    tracers = Adapt.adapt(to, state.tracers)
+    return CellState{B, typeof(air_mass), typeof(tracers)}(air_mass, tracers)
+end
+
 const DryCellState = CellState{DryBasis}
 const MoistCellState = CellState{MoistBasis}
 

@@ -37,6 +37,14 @@ function TransportModel(state::CellState{B},
     throw(ArgumentError("CubedSphereMesh is metadata-only in src_v2; structured transport models are only supported on LatLonMesh until cubed-sphere geometry/connectivity are implemented"))
 end
 
+function Adapt.adapt_structure(to, model::TransportModel)
+    state = Adapt.adapt(to, model.state)
+    fluxes = Adapt.adapt(to, model.fluxes)
+    workspace = Adapt.adapt(to, model.workspace)
+    return TransportModel{typeof(state), typeof(fluxes), typeof(model.grid), typeof(model.advection), typeof(workspace)}(
+        state, fluxes, model.grid, model.advection, workspace)
+end
+
 function step!(model::TransportModel, dt)
     apply!(model.state, model.fluxes, model.grid, model.advection, dt;
            workspace=model.workspace)

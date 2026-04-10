@@ -114,6 +114,13 @@ end
 
 StructuredFaceFluxState(am, bm, cm) = StructuredFaceFluxState{DryMassFluxBasis}(am, bm, cm)
 
+function Adapt.adapt_structure(to, fluxes::StructuredFaceFluxState{B}) where {B <: AbstractMassBasis}
+    am = Adapt.adapt(to, fluxes.am)
+    bm = Adapt.adapt(to, fluxes.bm)
+    cm = Adapt.adapt(to, fluxes.cm)
+    return StructuredFaceFluxState{B, typeof(am), typeof(bm), typeof(cm)}(am, bm, cm)
+end
+
 # ---------------------------------------------------------------------------
 # Concrete unstructured type — Phase 2+
 # ---------------------------------------------------------------------------
@@ -154,6 +161,12 @@ function FaceIndexedFluxState{B}(hflux::A, cm::AZ) where {B <: AbstractMassBasis
 end
 
 FaceIndexedFluxState(hflux, cm) = FaceIndexedFluxState{DryMassFluxBasis}(hflux, cm)
+
+function Adapt.adapt_structure(to, fluxes::FaceIndexedFluxState{B}) where {B <: AbstractMassBasis}
+    hflux = Adapt.adapt(to, fluxes.horizontal_flux)
+    cm = Adapt.adapt(to, fluxes.cm)
+    return FaceIndexedFluxState{B, typeof(hflux), typeof(cm)}(hflux, cm)
+end
 
 # ---------------------------------------------------------------------------
 # Basis accessor

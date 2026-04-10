@@ -48,6 +48,43 @@ struct FaceIndexedTransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D} <:
     deltas           :: D
 end
 
+function Adapt.adapt_structure(to, deltas::StructuredFluxDeltas)
+    dam = Adapt.adapt(to, deltas.dam)
+    dbm = Adapt.adapt(to, deltas.dbm)
+    dcm = Adapt.adapt(to, deltas.dcm)
+    dm = Adapt.adapt(to, deltas.dm)
+    return StructuredFluxDeltas{typeof(dam), typeof(dbm), typeof(dcm), typeof(dm)}(dam, dbm, dcm, dm)
+end
+
+function Adapt.adapt_structure(to, deltas::FaceIndexedFluxDeltas)
+    dhflux = Adapt.adapt(to, deltas.dhflux)
+    dcm = Adapt.adapt(to, deltas.dcm)
+    dm = Adapt.adapt(to, deltas.dm)
+    return FaceIndexedFluxDeltas{typeof(dhflux), typeof(dcm), typeof(dm)}(dhflux, dcm, dm)
+end
+
+function Adapt.adapt_structure(to, window::StructuredTransportWindow{B}) where {B <: AbstractMassBasis}
+    air_mass = Adapt.adapt(to, window.air_mass)
+    surface_pressure = Adapt.adapt(to, window.surface_pressure)
+    fluxes = Adapt.adapt(to, window.fluxes)
+    qv_start = Adapt.adapt(to, window.qv_start)
+    qv_end = Adapt.adapt(to, window.qv_end)
+    deltas = Adapt.adapt(to, window.deltas)
+    return StructuredTransportWindow{B, typeof(air_mass), typeof(surface_pressure), typeof(fluxes), typeof(qv_start), typeof(deltas)}(
+        air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas)
+end
+
+function Adapt.adapt_structure(to, window::FaceIndexedTransportWindow{B}) where {B <: AbstractMassBasis}
+    air_mass = Adapt.adapt(to, window.air_mass)
+    surface_pressure = Adapt.adapt(to, window.surface_pressure)
+    fluxes = Adapt.adapt(to, window.fluxes)
+    qv_start = Adapt.adapt(to, window.qv_start)
+    qv_end = Adapt.adapt(to, window.qv_end)
+    deltas = Adapt.adapt(to, window.deltas)
+    return FaceIndexedTransportWindow{B, typeof(air_mass), typeof(surface_pressure), typeof(fluxes), typeof(qv_start), typeof(deltas)}(
+        air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas)
+end
+
 mass_basis(::AbstractTransportWindow{B}) where {B} = B()
 has_humidity_endpoints(window::AbstractTransportWindow) = window.qv_start !== nothing && window.qv_end !== nothing
 has_flux_delta(window::AbstractTransportWindow) = window.deltas !== nothing

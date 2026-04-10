@@ -11,6 +11,7 @@ Provides:
 """
 module MetDrivers
 
+using Adapt
 using ..State
 using ..Grids
 

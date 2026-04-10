@@ -26,6 +26,7 @@ Provides:
 """
 module Advection
 
+using Adapt
 using DocStringExtensions
 
 import ..AbstractAdvection, ..AbstractConstantReconstruction, ..AbstractLinearReconstruction, ..AbstractQuadraticReconstruction, ..AbstractOperator, ..apply!

@@ -5,6 +5,7 @@ Minimal standalone runtime layer for `src_v2`.
 """
 module Models
 
+using Adapt
 using ..State
 using ..Grids
 using ..Operators

@@ -1,9 +1,17 @@
 #!/usr/bin/env julia
 
 using Test
+using Adapt
 
 include(joinpath(@__DIR__, "..", "src_v2", "AtmosTransportV2.jl"))
 using .AtmosTransportV2
+
+const HAS_CUDA_FOR_ADAPT = try
+    using CUDA
+    CUDA.functional()
+catch
+    false
+end
 
 @testset "PlanetParameters and AtmosGrid" begin
     params = PlanetParameters(; FT=Float32, radius=6.0f6, gravity=9.8f0, reference_pressure=1.0f5)
@@ -174,4 +182,31 @@ end
     @test_throws ArgumentError apply!(state, fluxes, grid, PPMScheme(), FT(1800); workspace=ws)
     @test_throws ArgumentError apply!(state, fluxes, grid, RussellLernerAdvection(), FT(1800); workspace=ws)
     @test_throws ArgumentError apply!(state, fluxes, grid, PPMAdvection(), FT(1800); workspace=ws)
+end
+
+
+@testset "Adapt.jl container conversions" begin
+    FT = Float64
+    Nx, Ny, Nz = 4, 3, 2
+    mesh = LatLonMesh(; Nx=Nx, Ny=Ny, FT=FT)
+    vc = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
+    grid = AtmosGrid(mesh, vc, AtmosTransportV2.CPU(); FT=FT)
+    m = ones(FT, Nx, Ny, Nz)
+    state = CellState(DryBasis, copy(m); CO2=copy(m) .* FT(400e-6))
+    fluxes = allocate_face_fluxes(StructuredTopology(), Nx, Ny, Nz; FT=FT, basis=DryBasis)
+    model = TransportModel(state, fluxes, grid, UpwindScheme())
+
+    model_host = Adapt.adapt(Array, model)
+    @test model_host.state.air_mass isa Array{FT,3}
+    @test model_host.fluxes.am isa Array{FT,3}
+    @test model_host.workspace.rm_buf isa Array{FT,3}
+    @test model_host.grid === model.grid
+
+    if HAS_CUDA_FOR_ADAPT
+        model_gpu = Adapt.adapt(CUDA.CuArray, model)
+        @test model_gpu.state.air_mass isa CUDA.CuArray{FT,3}
+        @test model_gpu.fluxes.am isa CUDA.CuArray{FT,3}
+        @test model_gpu.workspace.rm_buf isa CUDA.CuArray{FT,3}
+        @test model_gpu.grid === model.grid
+    end
 end

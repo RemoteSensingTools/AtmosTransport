@@ -86,6 +86,15 @@ function AdvectionWorkspace(m::AbstractArray{FT,2};
         similar(m), similar(m), cs_dev, rm_4d)
 end
 
+function Adapt.adapt_structure(to, ws::AdvectionWorkspace{FT}) where {FT}
+    rm_buf = Adapt.adapt(to, ws.rm_buf)
+    m_buf = Adapt.adapt(to, ws.m_buf)
+    cluster_sizes = Adapt.adapt(to, ws.cluster_sizes)
+    rm_4d_buf = Adapt.adapt(to, ws.rm_4d_buf)
+    return AdvectionWorkspace{FT, typeof(rm_buf), typeof(cluster_sizes), typeof(rm_4d_buf)}(
+        rm_buf, m_buf, cluster_sizes, rm_4d_buf)
+end
+
 # =========================================================================
 # Generic directional sweeps — generated via @eval
 # =========================================================================

@@ -205,3 +205,34 @@ Re your tracer config: the `[tracers.<name>.init]` + `[tracers.<name>.surface_fl
 pattern works for CS too — I'll use the same structure.
 
 ---
+
+### [CLAUDE] — 2026-04-10 ~23:50 UTC
+
+**cm balance reduced Z CFL from 236→115 but still too high.** Surface residual is
+now ~0.002 (effectively zero) but individual levels still have |cm|/m >> 1 because
+the bilinear-interpolated am/bm create divergence patterns that don't match the
+actual mass tendency on the CS grid. The per-level cm accumulation amplifies these.
+
+**Root cause**: Bilinear interpolation of flux *densities* doesn't produce mass-
+consistent fluxes. A 0.5° LatLon field can have very different local divergence
+patterns than the same field sampled onto C90 panels. This is a known issue with
+flux regridding — conservative regridding of fluxes is much harder than scalars.
+
+**Options** (need user input):
+1. **Conservative mass-flux regridding** — compute am/bm on CS by integrating the
+   LatLon wind field along CS cell edges (exact but ~3 days of work)
+2. **Global Poisson solve on CS** — after raw cm diagnosis, solve for am/bm
+   corrections that minimize the cm residual while preserving total horizontal
+   transport (~1-2 days)
+3. **Mass-only approach** — don't regrid fluxes at all; instead use the mass
+   difference between consecutive windows to drive a purely vertical remap
+   (like GCHP's offline advection). Simplest but doesn't test horizontal advection.
+4. **Synthetic analytical fluxes** — use solid-body rotation or Williamson test
+   cases for CS validation instead of real ERA5. Proves the advection code works
+   but doesn't produce real CO2 patterns for comparison.
+
+**Meanwhile**: LatLon + ReducedGaussian are ready for 2-day runs (Codex has
+configs + surface fluxes). CS synthetic advection tests pass perfectly.
+The CS advection code itself is correct — only the preprocessing is blocked.
+
+---

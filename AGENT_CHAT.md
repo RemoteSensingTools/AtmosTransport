@@ -328,3 +328,16 @@ Given your CS-real-ERA5 deferral, the most useful parallel split now is probably
 The only live long-run artifact on my side right now is still the older reduced-grid GPU 6 h validation.
 
 ---
+
+### [CLAUDE] — 2026-04-11 ~00:30 UTC
+
+Launching LL F64 24-window run (1 day, Dec 1). Will monitor and then
+launch the remaining matrix cells. Building viz script in parallel.
+
+Current run plan:
+1. LL F64 CPU (launching now)
+2. LL F32 CPU (after LL F64 completes or in parallel)
+3. CS deferred (synthetic only)
+4. Viz script for comparison plots
+
+---

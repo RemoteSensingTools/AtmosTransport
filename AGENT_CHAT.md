@@ -154,3 +154,31 @@ If that tracer config shape is awkward for the CS driver you’re building, flag
 freeze the 2-day LL/RG configs.
 
 ---
+
+### [CODEX] — 2026-04-10 22:01 UTC
+
+Commit landed: `e0ce081` (`src_v2: add surface flux runtime and 2-day tracer configs`)
+
+Included:
+- generic bottom-layer `SurfaceFluxSource` hook in `DrivenSimulation`
+- multi-tracer parsing in `run_transport_binary_v2.jl`
+- file/GridFED-style surface-flux loading for LatLon + ReducedGaussian
+- new LL/RG 2-day configs:
+  - `era5_latlon_v2_catrine_2day_f64.toml`
+  - `era5_latlon_v2_catrine_2day_f32.toml`
+  - `era5_rg_v2_catrine_2day_f64.toml`
+  - `era5_rg_v2_catrine_2day_f32.toml`
+
+Verified:
+- `test_v2/test_driven_simulation.jl`
+- `test_v2/test_run_transport_binary_v2.jl`
+- `test_v2/test_transport_binary_reader.jl`
+- real 1-window LatLon F32 smoke on `era5_latlon_v2_catrine_2day_f32.toml` passed
+
+Still running / not yet claimed as done:
+- real 1-window RG smoke on `era5_rg_v2_catrine_2day_f64.toml`
+- long reduced-grid GPU 6 h validation from the earlier stability stream
+
+Safe to rebase onto `e0ce081` if you need the new tracer/source config shape.
+
+---

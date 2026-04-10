@@ -203,23 +203,53 @@ end
 # Public API: strang_split_cs!
 # =========================================================================
 
+# =========================================================================
+# CFL-based subcycle count
+# =========================================================================
+
+"""Compute number of subcycles needed for CFL < `cfl_limit` across all panels."""
+function _cs_subcycle_count(panels_flux::NTuple{6}, panels_m::NTuple{6},
+                            Nc::Int, Hp::Int, Nz::Int, cfl_limit::Real,
+                            direction::Symbol)
+    FT = eltype(panels_m[1])
+    max_cfl = zero(FT)
+
+    @inbounds for p in 1:6
+        flux = panels_flux[p]
+        m = panels_m[p]
+        for k in 1:Nz, j in 1:Nc, i in 1:Nc
+            mi = m[Hp + i, Hp + j, k]
+            mi <= zero(FT) && continue
+
+            if direction === :x
+                c = max(abs(flux[Hp + i, Hp + j, k]),
+                        abs(flux[Hp + i + 1, Hp + j, k])) / mi
+            elseif direction === :y
+                c = max(abs(flux[Hp + i, Hp + j, k]),
+                        abs(flux[Hp + i, Hp + j + 1, k])) / mi
+            else  # :z
+                c = max(abs(flux[Hp + i, Hp + j, k]),
+                        abs(flux[Hp + i, Hp + j, k + 1])) / mi
+            end
+            max_cfl = max(max_cfl, c)
+        end
+    end
+
+    max_cfl <= cfl_limit && return 1
+    return ceil(Int, max_cfl / cfl_limit)
+end
+
 """
     strang_split_cs!(panels_rm, panels_m, panels_am, panels_bm, panels_cm,
-                     mesh, scheme, workspace; flux_scale=1)
+                     mesh, scheme, workspace; flux_scale=1, cfl_limit=0.95)
 
-Perform one Strang-split advection step on a 6-panel cubed-sphere field.
+Perform one Strang-split advection step on a 6-panel cubed-sphere field
+with automatic CFL-based subcycling per direction.
 
 Splitting sequence: X → halo → Y → halo → Z → Z → halo → Y → halo → X
 
-# Arguments
-- `panels_rm :: NTuple{6, Array{FT,3}}` — tracer mass per panel `(N, N, Nz)`
-- `panels_m  :: NTuple{6, Array{FT,3}}` — air mass per panel
-- `panels_am :: NTuple{6, Array{FT,3}}` — x-face mass flux `(N+1, N, Nz)` (halo-padded)
-- `panels_bm :: NTuple{6, Array{FT,3}}` — y-face mass flux `(N, N+1, Nz)` (halo-padded)
-- `panels_cm :: NTuple{6, Array{FT,3}}` — z-face mass flux `(N, N, Nz+1)` (halo-padded)
-- `mesh :: CubedSphereMesh`
-- `scheme` — advection scheme (SlopesScheme, UpwindScheme, etc.)
-- `workspace :: CSAdvectionWorkspace`
+Each direction is subcycled independently: if max CFL for X exceeds
+`cfl_limit`, the X sweep is repeated n_sub times with flux_scale/n_sub.
 """
 function strang_split_cs!(panels_rm::NTuple{6},
                           panels_m::NTuple{6},
@@ -229,52 +259,80 @@ function strang_split_cs!(panels_rm::NTuple{6},
                           mesh::CubedSphereMesh,
                           scheme,
                           workspace::CSAdvectionWorkspace;
-                          flux_scale = one(eltype(panels_m[1])))
+                          flux_scale = one(eltype(panels_m[1])),
+                          cfl_limit::Real = 0.95)
     Nc, Hp = mesh.Nc, mesh.Hp
     Nz = size(panels_rm[1], 3)
     rm_buf, m_buf = workspace.rm_buf, workspace.m_buf
-    fs = convert(eltype(panels_m[1]), flux_scale)
+    FT = eltype(panels_m[1])
+    fs = convert(FT, flux_scale)
+    cfl_ft = convert(FT, cfl_limit)
 
-    # ---- X sweep (all panels) ----
-    for p in 1:6
-        _sweep_x_panel!(panels_rm[p], panels_m[p], panels_am[p],
-                         scheme, rm_buf, m_buf, Nc, Hp, Nz; flux_scale=fs)
-    end
-    fill_panel_halos!(panels_rm, mesh; dir=1)
-    fill_panel_halos!(panels_m, mesh; dir=1)
+    # Compute subcycle counts per direction
+    n_x = _cs_subcycle_count(panels_am, panels_m, Nc, Hp, Nz, cfl_ft, :x)
+    n_y = _cs_subcycle_count(panels_bm, panels_m, Nc, Hp, Nz, cfl_ft, :y)
+    n_z = _cs_subcycle_count(panels_cm, panels_m, Nc, Hp, Nz, cfl_ft, :z)
 
-    # ---- Y sweep (all panels) ----
-    for p in 1:6
-        _sweep_y_panel!(panels_rm[p], panels_m[p], panels_bm[p],
-                         scheme, rm_buf, m_buf, Nc, Hp, Nz; flux_scale=fs)
+    fs_x = fs / FT(n_x)
+    fs_y = fs / FT(n_y)
+    fs_z = fs / FT(n_z)
+
+    # ---- X sweep (subcycled) ----
+    for _ in 1:n_x
+        for p in 1:6
+            _sweep_x_panel!(panels_rm[p], panels_m[p], panels_am[p],
+                             scheme, rm_buf, m_buf, Nc, Hp, Nz; flux_scale=fs_x)
+        end
+        fill_panel_halos!(panels_rm, mesh; dir=1)
+        fill_panel_halos!(panels_m, mesh; dir=1)
     end
+
+    # ---- Y sweep (subcycled) ----
+    for _ in 1:n_y
+        for p in 1:6
+            _sweep_y_panel!(panels_rm[p], panels_m[p], panels_bm[p],
+                             scheme, rm_buf, m_buf, Nc, Hp, Nz; flux_scale=fs_y)
+        end
+        fill_panel_halos!(panels_rm, mesh; dir=2)
+        fill_panel_halos!(panels_m, mesh; dir=2)
+    end
+
+    # ---- Z sweep × 2 (subcycled) ----
+    for _ in 1:n_z
+        for p in 1:6
+            _sweep_z_panel!(panels_rm[p], panels_m[p], panels_cm[p],
+                             scheme, rm_buf, m_buf, Nc, Hp, Nz; flux_scale=fs_z)
+        end
+    end
+    for _ in 1:n_z
+        for p in 1:6
+            _sweep_z_panel!(panels_rm[p], panels_m[p], panels_cm[p],
+                             scheme, rm_buf, m_buf, Nc, Hp, Nz; flux_scale=fs_z)
+        end
+    end
+
+    # ---- Reverse: Y sweep (subcycled) ----
     fill_panel_halos!(panels_rm, mesh; dir=2)
     fill_panel_halos!(panels_m, mesh; dir=2)
-
-    # ---- Z sweep × 2 (panel-local, no halo needed) ----
-    for p in 1:6
-        _sweep_z_panel!(panels_rm[p], panels_m[p], panels_cm[p],
-                         scheme, rm_buf, m_buf, Nc, Hp, Nz; flux_scale=fs)
-    end
-    for p in 1:6
-        _sweep_z_panel!(panels_rm[p], panels_m[p], panels_cm[p],
-                         scheme, rm_buf, m_buf, Nc, Hp, Nz; flux_scale=fs)
+    for _ in 1:n_y
+        for p in 1:6
+            _sweep_y_panel!(panels_rm[p], panels_m[p], panels_bm[p],
+                             scheme, rm_buf, m_buf, Nc, Hp, Nz; flux_scale=fs_y)
+        end
+        fill_panel_halos!(panels_rm, mesh; dir=2)
+        fill_panel_halos!(panels_m, mesh; dir=2)
     end
 
-    # ---- Reverse: Y sweep ----
-    fill_panel_halos!(panels_rm, mesh; dir=2)
-    fill_panel_halos!(panels_m, mesh; dir=2)
-    for p in 1:6
-        _sweep_y_panel!(panels_rm[p], panels_m[p], panels_bm[p],
-                         scheme, rm_buf, m_buf, Nc, Hp, Nz; flux_scale=fs)
-    end
-
-    # ---- Reverse: X sweep ----
+    # ---- Reverse: X sweep (subcycled) ----
     fill_panel_halos!(panels_rm, mesh; dir=1)
     fill_panel_halos!(panels_m, mesh; dir=1)
-    for p in 1:6
-        _sweep_x_panel!(panels_rm[p], panels_m[p], panels_am[p],
-                         scheme, rm_buf, m_buf, Nc, Hp, Nz; flux_scale=fs)
+    for _ in 1:n_x
+        for p in 1:6
+            _sweep_x_panel!(panels_rm[p], panels_m[p], panels_am[p],
+                             scheme, rm_buf, m_buf, Nc, Hp, Nz; flux_scale=fs_x)
+        end
+        fill_panel_halos!(panels_rm, mesh; dir=1)
+        fill_panel_halos!(panels_m, mesh; dir=1)
     end
 
     return nothing

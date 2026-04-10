@@ -17,7 +17,25 @@ All grids should agree within expected numerical precision.
 
 "Cast" = read F64 binary, convert to F32 at load time.
 "Primary" = native precision run.
-GPU F64 only on curry (A100). GPU F32 on either server.
+
+### Server & GPU Environment
+
+| Server | GPUs | F64 capable | Use for |
+|--------|------|-------------|---------|
+| **wurst** (current) | 2× NVIDIA L40S | No (F32 only) | CPU runs, GPU F32 |
+| **curry** (`ssh curry`) | 2× NVIDIA A100-PCIE-40GB | Yes | GPU F64, GPU F32 |
+
+**CRITICAL**: Only use GPU 0 on both servers. GPU 1 runs other workloads.
+Always set `CUDA_VISIBLE_DEVICES=0` before any GPU run.
+
+Home folders (`~`) and data (`~/data/`) are NFS-mounted identically on both.
+Only `/tmp` is local. Julia shared via juliaup.
+
+### Operational rules
+- **Quota management**: Both agents have ~5hr compute quotas. Before quota expires:
+  commit all work, post status in `AGENT_CHAT.md`, wait for reset.
+- **Cross-agent review**: Post `[REVIEW REQUEST]` in `AGENT_CHAT.md` for peer review.
+  Claude reviews CS/geometry/regridding. Codex reviews runtime/GPU/face-indexed kernels.
 
 ---
 

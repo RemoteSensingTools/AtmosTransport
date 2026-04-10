@@ -13,8 +13,8 @@ end
 
 function TransportModel(state::CellState{B},
                         fluxes::StructuredFaceFluxState{B},
-                        grid::AtmosGrid{<:AbstractStructuredMesh},
-                        advection::AbstractAdvection;
+                        grid::AtmosGrid{<:LatLonMesh},
+                        advection::Union{AbstractAdvection, AbstractAdvectionScheme};
                         workspace = AdvectionWorkspace(state.air_mass)) where {B <: AbstractMassBasis}
     return TransportModel{typeof(state), typeof(fluxes), typeof(grid), typeof(advection), typeof(workspace)}(
         state, fluxes, grid, advection, workspace)
@@ -23,10 +23,18 @@ end
 function TransportModel(state::CellState{B},
                         fluxes::FaceIndexedFluxState{B},
                         grid::AtmosGrid,
-                        advection::AbstractAdvection;
+                        advection::Union{AbstractAdvection, AbstractAdvectionScheme};
                         workspace = AdvectionWorkspace(state.air_mass)) where {B <: AbstractMassBasis}
     return TransportModel{typeof(state), typeof(fluxes), typeof(grid), typeof(advection), typeof(workspace)}(
         state, fluxes, grid, advection, workspace)
+end
+
+function TransportModel(state::CellState{B},
+                        fluxes::StructuredFaceFluxState{B},
+                        grid::AtmosGrid{<:CubedSphereMesh},
+                        advection::Union{AbstractAdvection, AbstractAdvectionScheme};
+                        workspace = AdvectionWorkspace(state.air_mass)) where {B <: AbstractMassBasis}
+    throw(ArgumentError("CubedSphereMesh is metadata-only in src_v2; structured transport models are only supported on LatLonMesh until cubed-sphere geometry/connectivity are implemented"))
 end
 
 function step!(model::TransportModel, dt)

@@ -1,9 +1,10 @@
 # ---------------------------------------------------------------------------
 # PPM (Piecewise Parabolic Method) advection — v2 interface stub
 #
-# Phase 1 provides the type and dispatch entry point. The actual PPM
-# kernels from src/Advection/ppm_advection.jl and
-# src/Advection/ppm_subgrid_distributions.jl will be ported in Phase 2.
+# This file keeps the legacy `PPMAdvection` wrapper as an explicit stub while
+# the new `PPMScheme` path matures. Structured generic kernels live in
+# `reconstruction.jl` / `structured_kernels.jl`; the legacy wrapper remains
+# unsupported until a clean migration/replacement is chosen.
 # ---------------------------------------------------------------------------
 
 """
@@ -28,7 +29,7 @@ function apply!(state::CellState{B},
                 grid::AtmosGrid{<:AbstractStructuredMesh},
                 ::PPMAdvection, dt;
                 kwargs...) where {B <: AbstractMassBasis}
-    throw(ArgumentError("PPMAdvection is Phase 4+: kernels are not implemented in src_v2 yet"))
+    throw(ArgumentError("PPMAdvection remains a legacy stub in src_v2; use PPMScheme for the structured generic kernel path"))
 end
 
 export PPMAdvection, ppm_order

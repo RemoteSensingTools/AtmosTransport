@@ -20,8 +20,11 @@ function max_cfl_x(am::AbstractArray{FT,3}, m::AbstractArray{FT,3},
     @inbounds for k in 1:Nz, j in 1:Ny, i in 1:Nx+1
         r = Int(cluster_sizes[j])
         if r == 1
-            donor = am[i, j, k] >= zero(FT) ? max(i - 1, 1) : min(i, Nx)
-            donor = donor == 0 ? Nx : donor
+            donor = if am[i, j, k] >= zero(FT)
+                i == 1 ? Nx : i - 1
+            else
+                i > Nx ? 1 : i
+            end
             cfl_val = abs(am[i, j, k]) / max(m[donor, j, k], eps(FT))
         else
             Nx_red = Nx ÷ r

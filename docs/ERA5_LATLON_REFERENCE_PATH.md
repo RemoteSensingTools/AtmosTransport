@@ -76,7 +76,7 @@ binary.
 
 For the ERA5 spectral transport preprocessor:
 
-- `source_flux_sampling` should record what the raw met product actually was
+- `source_flux_sampling` must be written explicitly as one of `window_start_endpoint`, `window_end_endpoint`, `window_mean`, or `interval_integrated`
 - `qv_start` is the humidity field aligned with the current window
 - `qv_end` is the next humidity field in time
 - for the last window of the day, `qv_end` comes from next-day 00 UTC when

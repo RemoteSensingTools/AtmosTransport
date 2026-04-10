@@ -5,7 +5,7 @@ using Test
 include(joinpath(@__DIR__, "..", "src_v2", "AtmosTransportV2.jl"))
 using .AtmosTransportV2
 
-function write_test_transport_binary_reduced(path::AbstractString; FT::Type{<:AbstractFloat}=Float64, binary_kwargs...)
+function write_test_transport_binary_reduced(path::AbstractString; FT::Type{<:AbstractFloat}=Float64, source_flux_sampling::Symbol=:window_start_endpoint, binary_kwargs...)
     mesh = ReducedGaussianMesh(FT[-45, 45], [4, 4]; FT=FT)
     vertical = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
     grid = AtmosGrid(mesh, vertical, CPU(); FT=FT)
@@ -31,11 +31,12 @@ function write_test_transport_binary_reduced(path::AbstractString; FT::Type{<:Ab
                            half_dt_seconds=1800.0,
                            steps_per_window=2,
                            mass_basis=:moist,
+                           source_flux_sampling=source_flux_sampling,
                            binary_kwargs...)
     return grid
 end
 
-function write_test_transport_binary_latlon(path::AbstractString; FT::Type{<:AbstractFloat}=Float64, binary_kwargs...)
+function write_test_transport_binary_latlon(path::AbstractString; FT::Type{<:AbstractFloat}=Float64, source_flux_sampling::Symbol=:window_start_endpoint, binary_kwargs...)
     Nx, Ny, Nz = 6, 4, 3
     mesh = LatLonMesh(; FT=FT, Nx=Nx, Ny=Ny)
     vertical = HybridSigmaPressure(FT[0, 100, 300, 1000], FT[0, 0, 0, 1])
@@ -64,6 +65,7 @@ function write_test_transport_binary_latlon(path::AbstractString; FT::Type{<:Abs
                            half_dt_seconds=1800.0,
                            steps_per_window=2,
                            mass_basis=:moist,
+                           source_flux_sampling=source_flux_sampling,
                            binary_kwargs...)
     return grid
 end
@@ -81,7 +83,7 @@ end
         @test has_qv(reader)
         @test has_qv_endpoints(reader)
         @test has_flux_delta(reader)
-        @test source_flux_sampling(reader) == :unknown
+        @test source_flux_sampling(reader) == :window_start_endpoint
         @test air_mass_sampling(reader) == :window_start_endpoint
         @test flux_sampling(reader) == :window_start_endpoint
         @test flux_kind(reader) == :substep_mass_amount
@@ -161,7 +163,7 @@ end
         close(driver)
 
         state = CellState(MoistBasis, copy(m); CO2=copy(m) .* 400e-6)
-        model = TransportModel(state, fluxes, grid, UpwindAdvection())
+        model = TransportModel(state, fluxes, grid, UpwindScheme())
         sim = Simulation(model; Δt=1800.0, stop_time=3600.0)
         m0 = total_air_mass(state)
         rm0 = total_mass(state, :CO2)
@@ -184,6 +186,7 @@ end
         @test has_qv(reader)
         @test has_qv_endpoints(reader)
         @test !has_flux_delta(reader)
+        @test source_flux_sampling(reader) == :window_start_endpoint
         @test delta_semantics(reader) == :none
 
         reduced_reader_repr = sprint(show, reader)
@@ -208,7 +211,7 @@ end
         @test all(qv_pair.qv_end .== 0.011)
 
         state = CellState(MoistBasis, copy(m); CO2=copy(m) .* 400e-6)
-        model = TransportModel(state, fluxes, grid, UpwindAdvection())
+        model = TransportModel(state, fluxes, grid, UpwindScheme())
         sim = Simulation(model; Δt=1800.0, stop_time=3600.0)
         m0 = total_air_mass(state)
         rm0 = total_mass(state, :CO2)

@@ -107,9 +107,9 @@ and `horizontal_topology` for the rest.
 | Key | Type | Description |
 |-----|------|-------------|
 | `dt_met_seconds` | float | Met-window duration [s] |
-| `half_dt_seconds` | float | Half-timestep, flux time basis [s] |
+| `half_dt_seconds` | float | Legacy timing metadata retained for interoperability; `src_v2` kernels do not read this field directly |
 | `steps_per_window` | int | Advection substeps per window |
-| `source_flux_sampling` | string | Raw met-flux provenance: `"unknown"`, `"instantaneous_endpoint"`, `"interval_mean"`, or `"interval_integrated"` |
+| `source_flux_sampling` | string | Raw met-flux provenance recorded by the writer: `"window_start_endpoint"`, `"window_end_endpoint"`, `"window_mean"`, or `"interval_integrated"` (`"unknown"` is reader-only legacy compatibility) |
 | `air_mass_sampling` | string | Stored air-mass timing semantics; current `src_v2` runtime expects `"window_start_endpoint"` |
 | `flux_sampling` | string | Stored horizontal/vertical flux timing semantics; current runtime expects `"window_start_endpoint"` when deltas are present |
 | `flux_kind` | string | Stored flux value contract; current runtime expects `"substep_mass_amount"` |
@@ -334,8 +334,8 @@ evolved by advection.
 
 ### 6.2 Horizontal fluxes
 
-The horizontal flux is the mass transported per half-timestep across
-a horizontal face [kg per `half_dt_seconds`].
+The horizontal flux is the prepared mass transported across
+a horizontal face [kg for the prepared transport substep].
 
 **StructuredDirectional** stores separate directional arrays:
 - `am[i,j,k]` — positive eastward (increasing i)
@@ -349,8 +349,8 @@ the signed mass flux across each horizontal face.
 
 ### 6.3 Vertical flux `cm`
 
-`cm[c, k]` is the mass transported per half-timestep across vertical
-interface `k` [kg per `half_dt_seconds`].
+`cm[c, k]` is the prepared mass transported across the vertical
+interface `k` [kg for the prepared transport substep].
 
 Positive = downward (increasing k, toward surface).
 
@@ -508,13 +508,13 @@ connectivity and metrics. Per-window payload uses flat cell/face indexing.
 
 - **Header schema**: every file starts with the same common keys
 - **Physical variable meanings**: `m` is always cell layer mass, fluxes
-  are always per-half-timestep mass transport, `ps` is always surface
+  are always prepared substep mass transport, `ps` is always surface
   pressure, `cm` is always vertical interface flux
 - **Basis tagging**: every file declares moist vs dry
 - **Reader output contract**: every reader produces
   `(m, ps, AbstractFaceFluxState)` — the transport core never sees
   topology-specific details
 - **Time/window semantics**: same `dt_met_seconds`, `steps_per_window`,
-  `half_dt_seconds` convention everywhere
+  and explicit sampling semantics everywhere
 - **Optional section protocol**: same `include_*` / `payload_sections`
   mechanism for all topologies

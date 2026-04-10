@@ -69,11 +69,11 @@ indicate whether the stored values are moist or dry.
 - `Basis <: AbstractMassFluxBasis` — `MoistMassFluxBasis` or `DryMassFluxBasis`
 
 # Fields
-- `am :: AX` — x-face (longitude) mass flux [kg per half-timestep].
+- `am :: AX` — x-face (longitude) prepared substep mass transport [kg for the active transport substep].
   Layout: `(Nx+1, Ny, Nz)` for LatLon, `(Nc+1, Nc, Nz)` per panel for CS.
-- `bm :: AY` — y-face (latitude) mass flux [kg per half-timestep].
+- `bm :: AY` — y-face (latitude) prepared substep mass transport [kg for the active transport substep].
   Layout: `(Nx, Ny+1, Nz)` for LatLon, `(Nc, Nc+1, Nz)` per panel for CS.
-- `cm :: AZ` — z-face (vertical) mass flux [kg per half-timestep].
+- `cm :: AZ` — z-face (vertical) prepared substep mass transport [kg for the active transport substep].
   Layout: `(Nx, Ny, Nz+1)` for LatLon.
 
 # Convention
@@ -128,7 +128,7 @@ Face-centered mass fluxes for unstructured meshes (Phase 2+), tagged with
 - `Basis <: AbstractMassFluxBasis` — `MoistMassFluxBasis` or `DryMassFluxBasis`
 
 # Fields
-- `horizontal_flux :: A` — mass flux per horizontal face [kg per half-timestep].
+- `horizontal_flux :: A` — prepared substep mass transport per horizontal face [kg for the active transport substep].
   Layout: `(nfaces, Nz)`. Positive = flow in face-normal direction.
 - `cm :: AZ` — vertical flux, same convention as structured.
 

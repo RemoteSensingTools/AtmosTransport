@@ -13,7 +13,7 @@
     PreprocessedERA5Driver <: AbstractMassFluxMetDriver
 
 Reads preprocessed ERA5 mass fluxes from binary files (v4 spectral preprocessor).
-The binary already contains am, bm, cm, m, ps scaled to half-timestep.
+The binary already contains prepared transport fields (`am`, `bm`, `cm`, `m`, `ps`) in the stored runtime contract expected by `src_v2`.
 """
 struct PreprocessedERA5Driver <: AbstractMassFluxMetDriver
     n_windows :: Int

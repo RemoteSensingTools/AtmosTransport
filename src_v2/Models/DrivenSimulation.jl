@@ -23,9 +23,10 @@ mutable struct DrivenSimulation{ModelT, DriverT, WindowT, AT, QT, FT, CB}
     current_window_index  :: Int
     stop_window           :: Int
     final_iteration       :: Int
-    callbacks             :: CB
-    initialize_air_mass   :: Bool
-    use_midpoint_forcing  :: Bool
+    callbacks                 :: CB
+    initialize_air_mass       :: Bool
+    use_midpoint_forcing      :: Bool
+    reset_air_mass_each_window :: Bool
 end
 
 @inline _basis_symbol(::DryBasis) = :dry
@@ -93,6 +94,9 @@ function _maybe_advance_window!(sim::DrivenSimulation, substep::Int)
         if sim.qv_buffer !== nothing && !has_humidity_endpoints(sim.window)
             throw(ArgumentError("driver humidity endpoint support changed between windows"))
         end
+        if sim.reset_air_mass_each_window
+            copyto!(sim.model.state.air_mass, sim.window.air_mass)
+        end
     end
     return nothing
 end
@@ -107,6 +111,7 @@ Keyword arguments:
 - `stop_window=total_windows(driver)`
 - `initialize_air_mass=true`
 - `use_midpoint_forcing=true`
+- `reset_air_mass_each_window=true`
 - `callbacks=NamedTuple()`
 """
 function DrivenSimulation(model::TransportModel,
@@ -115,6 +120,7 @@ function DrivenSimulation(model::TransportModel,
                           stop_window::Integer = total_windows(driver),
                           initialize_air_mass::Bool = true,
                           use_midpoint_forcing::Bool = true,
+                          reset_air_mass_each_window::Bool = true,
                           callbacks = NamedTuple()) where {D <: AbstractMetDriver}
     1 <= start_window <= stop_window <= total_windows(driver) ||
         throw(ArgumentError("invalid window range: start_window=$(start_window), stop_window=$(stop_window), total_windows=$(total_windows(driver))"))
@@ -148,6 +154,7 @@ function DrivenSimulation(model::TransportModel,
         callbacks,
         initialize_air_mass,
         use_midpoint_forcing,
+        reset_air_mass_each_window,
     )
 
     if initialize_air_mass

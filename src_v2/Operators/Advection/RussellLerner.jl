@@ -59,7 +59,7 @@ end
 
 @kernel function _rl_x_kernel!(
     rm_new, @Const(rm), m_new, @Const(m), @Const(am),
-    Nx, @Const(cluster_sizes), use_limiter
+    Nx, @Const(cluster_sizes), use_limiter, flux_scale
 )
     i, j, k = @index(Global, NTuple)
     r = Int(cluster_sizes[j])
@@ -87,15 +87,17 @@ end
             sc_ip = _limited_slope((c_ipp - c_i) / two, c_i, c_ip, c_ipp, use_limiter)
             sx_ip = _limited_moment(m[ip, j, k] * sc_ip, rm[ip, j, k], use_limiter)
 
-            flux_left  = _upwind_flux(am[i, j, k],
+            am_l = flux_scale * am[i, j, k]
+            am_r = flux_scale * am[i + 1, j, k]
+            flux_left  = _upwind_flux(am_l,
                                       m[im, j, k], rm[im, j, k], sx_im,
                                       m[i, j, k],  rm[i, j, k],  sx_i)
-            flux_right = _upwind_flux(am[i + 1, j, k],
+            flux_right = _upwind_flux(am_r,
                                       m[i, j, k],  rm[i, j, k],  sx_i,
                                       m[ip, j, k], rm[ip, j, k], sx_ip)
 
             rm_new[i, j, k] = rm[i, j, k] + flux_left - flux_right
-            m_new[i, j, k]  = m[i, j, k]  + am[i, j, k] - am[i + 1, j, k]
+            m_new[i, j, k]  = m[i, j, k]  + am_l - am_r
         else
             Nx_red = Nx ÷ r
             ic     = (i - 1) ÷ r + 1
@@ -130,9 +132,9 @@ end
             sc_ip_r = _limited_slope((c_ipp_r - c_ic_r) / two, c_ic_r, c_ip_r, c_ipp_r, use_limiter)
             sx_ip_r = _limited_moment(m_ip * sc_ip_r, rm_ip, use_limiter)
 
-            am_l_r = am[(ic - 1) * r + 1, j, k]
+            am_l_r = flux_scale * am[(ic - 1) * r + 1, j, k]
             am_r_idx = ic * r + 1
-            am_r_r = am[ifelse(am_r_idx > Nx, 1, am_r_idx), j, k]
+            am_r_r = flux_scale * am[ifelse(am_r_idx > Nx, 1, am_r_idx), j, k]
 
             flux_left_r  = _upwind_flux(am_l_r, m_im, rm_im, sx_im_r,
                                                  m_ic, rm_ic, sx_ic_r)
@@ -153,7 +155,7 @@ end
 # ---------------------------------------------------------------------------
 
 @kernel function _rl_y_kernel!(
-    rm_new, @Const(rm), m_new, @Const(m), @Const(bm), Ny, use_limiter
+    rm_new, @Const(rm), m_new, @Const(m), @Const(bm), Ny, use_limiter, flux_scale
 )
     i, j, k = @index(Global, NTuple)
     FT = eltype(rm)
@@ -186,7 +188,7 @@ end
         sy_jp = ifelse(interior_jp, sy_jp, zero(FT))
 
         # South face (j)
-        bm_s = bm[i, j, k]
+        bm_s = flux_scale * bm[i, j, k]
         sy_jm_use = ifelse(jm == 1, zero(FT), sy_jm)
         sy_j_use_s = ifelse(j == Ny, zero(FT), sy_j)
         flux_s = ifelse(j > 1,
@@ -196,17 +198,18 @@ end
                         zero(FT))
 
         # North face (j+1)
-        bm_n = bm[i, jp, k]
+        bm_n_flux = flux_scale * bm[i, jp, k]
+        bm_n_mass = flux_scale * bm[i, j + 1, k]
         sy_j_use_n = ifelse(j == 1, zero(FT), sy_j)
         sy_jp_use = ifelse(jp == Ny, zero(FT), sy_jp)
         flux_n = ifelse(j < Ny,
-                        _upwind_flux(bm_n,
+                        _upwind_flux(bm_n_flux,
                                      m[i, j,  k], rm[i, j,  k], sy_j_use_n,
                                      m[i, jp, k], rm[i, jp, k], sy_jp_use),
                         zero(FT))
 
         rm_new[i, j, k] = rm[i, j, k] + flux_s - flux_n
-        m_new[i, j, k]  = m[i, j, k]  + bm[i, j, k] - bm[i, j + 1, k]
+        m_new[i, j, k]  = m[i, j, k]  + bm_s - bm_n_mass
     end
 end
 
@@ -215,7 +218,7 @@ end
 # ---------------------------------------------------------------------------
 
 @kernel function _rl_z_kernel!(
-    rm_new, @Const(rm), m_new, @Const(m), @Const(cm), Nz, use_limiter
+    rm_new, @Const(rm), m_new, @Const(m), @Const(cm), Nz, use_limiter, flux_scale
 )
     i, j, k = @index(Global, NTuple)
     FT = eltype(rm)
@@ -249,7 +252,7 @@ end
         sz_kp = ifelse(interior_kp, sz_kp, zero(FT))
 
         # Top face (k)
-        cm_t = cm[i, j, k]
+        cm_t = flux_scale * cm[i, j, k]
         sz_km_use = ifelse(km == 1, zero(FT), sz_km)
         sz_k_use_t = ifelse(k == Nz, zero(FT), sz_k)
         flux_top = ifelse(k > 1,
@@ -259,7 +262,7 @@ end
                           zero(FT))
 
         # Bottom face (k+1)
-        cm_b = cm[i, j, k + 1]
+        cm_b = flux_scale * cm[i, j, k + 1]
         sz_k_use_b = ifelse(k == 1, zero(FT), sz_k)
         sz_kp_use = ifelse(kp == Nz, zero(FT), sz_kp)
         flux_bot = ifelse(k < Nz,
@@ -269,7 +272,7 @@ end
                           zero(FT))
 
         rm_new[i, j, k] = rm[i, j, k] + flux_top - flux_bot
-        m_new[i, j, k]  = m[i, j, k]  + cm[i, j, k] - cm[i, j, k + 1]
+        m_new[i, j, k]  = m[i, j, k]  + cm_t - cm_b
     end
 end
 

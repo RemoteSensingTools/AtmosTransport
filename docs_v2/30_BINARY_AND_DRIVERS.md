@@ -37,8 +37,9 @@ The binary should distinguish:
 
 That is why the header should carry provenance like:
 
-- `source_flux_sampling = "instantaneous_endpoint"`
-- `source_flux_sampling = "interval_mean"`
+- `source_flux_sampling = "window_start_endpoint"`
+- `source_flux_sampling = "window_end_endpoint"`
+- `source_flux_sampling = "window_mean"`
 - `source_flux_sampling = "interval_integrated"`
 
 But the runtime should only consume normalized stored semantics that it

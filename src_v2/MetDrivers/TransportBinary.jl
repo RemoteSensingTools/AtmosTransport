@@ -181,6 +181,22 @@ end
     return Symbol(replace(lowercase(String(value)), '-' => '_', ' ' => '_'))
 end
 
+const _TRANSPORT_ALLOWED_SOURCE_FLUX_SAMPLINGS = (
+    :window_start_endpoint,
+    :window_end_endpoint,
+    :window_mean,
+    :interval_integrated,
+)
+
+@inline function _transport_validate_source_flux_sampling(value)
+    sym = _transport_normalize_symbol(value)
+    sym in _TRANSPORT_ALLOWED_SOURCE_FLUX_SAMPLINGS || throw(ArgumentError(
+        "unsupported source_flux_sampling=$(value); supported values are " *
+        join(string.(Tuple(_TRANSPORT_ALLOWED_SOURCE_FLUX_SAMPLINGS)), ", ")
+    ))
+    return sym
+end
+
 @inline function _transport_parse_symbol_key(hdr, key::Symbol, default::Symbol)
     return _transport_normalize_symbol(get(hdr, key, String(default)))
 end
@@ -633,7 +649,7 @@ function _transport_common_header(grid_type::String,
         "dt_met_seconds" => Float64(dt_met_seconds),
         "half_dt_seconds" => Float64(half_dt_seconds),
         "steps_per_window" => Int(steps_per_window),
-        "source_flux_sampling" => String(_transport_normalize_symbol(source_flux_sampling)),
+        "source_flux_sampling" => String(_transport_validate_source_flux_sampling(source_flux_sampling)),
         "air_mass_sampling" => String(_transport_normalize_symbol(air_mass_sampling)),
         "flux_sampling" => String(_transport_normalize_symbol(flux_sampling)),
         "flux_kind" => String(_transport_normalize_symbol(flux_kind)),
@@ -714,7 +730,7 @@ function write_transport_binary(path::AbstractString,
                                 dt_met_seconds::Real = 3600.0,
                                 half_dt_seconds::Real = dt_met_seconds / 2,
                                 steps_per_window::Integer = 2,
-                                source_flux_sampling::Symbol = :unknown,
+                                source_flux_sampling::Symbol,
                                 air_mass_sampling::Symbol = :window_start_endpoint,
                                 flux_sampling::Symbol = :window_start_endpoint,
                                 flux_kind::Symbol = :substep_mass_amount,
@@ -798,7 +814,7 @@ function write_transport_binary(path::AbstractString,
                                 dt_met_seconds::Real = 3600.0,
                                 half_dt_seconds::Real = dt_met_seconds / 2,
                                 steps_per_window::Integer = 2,
-                                source_flux_sampling::Symbol = :unknown,
+                                source_flux_sampling::Symbol,
                                 air_mass_sampling::Symbol = :window_start_endpoint,
                                 flux_sampling::Symbol = :window_start_endpoint,
                                 flux_kind::Symbol = :substep_mass_amount,

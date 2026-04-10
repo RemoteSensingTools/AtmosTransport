@@ -5,7 +5,7 @@ using Test
 include(joinpath(@__DIR__, "..", "src_v2", "AtmosTransportV2.jl"))
 using .AtmosTransportV2
 
-function write_driven_latlon_binary(path::AbstractString; FT::Type{<:AbstractFloat}=Float64)
+function write_driven_latlon_binary(path::AbstractString; FT::Type{<:AbstractFloat}=Float64, source_flux_sampling::Symbol=:window_start_endpoint)
     Nx, Ny, Nz = 4, 3, 2
     mesh = LatLonMesh(; FT=FT, Nx=Nx, Ny=Ny)
     vertical = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
@@ -33,7 +33,8 @@ function write_driven_latlon_binary(path::AbstractString; FT::Type{<:AbstractFlo
                            dt_met_seconds=3600.0,
                            half_dt_seconds=1800.0,
                            steps_per_window=2,
-                           mass_basis=:moist)
+                           mass_basis=:moist,
+                           source_flux_sampling=source_flux_sampling)
     return grid
 end
 
@@ -50,7 +51,7 @@ end
 
         state = CellState(MoistBasis, ones(Float64, 4, 3, 2); CO2=fill(400e-6, 4, 3, 2))
         fluxes = allocate_face_fluxes(grid.horizontal, 2; FT=Float64, basis=MoistBasis)
-        model = @inferred TransportModel(state, fluxes, grid, UpwindAdvection())
+        model = @inferred TransportModel(state, fluxes, grid, UpwindScheme())
         sim = DrivenSimulation(model, driver; start_window=1, stop_window=2)
 
         @test sim.Δt == 1800.0
@@ -66,7 +67,7 @@ end
 
         state_window = CellState(MoistBasis, ones(Float64, 4, 3, 2); CO2=fill(400e-6, 4, 3, 2))
         fluxes_window = allocate_face_fluxes(grid.horizontal, 2; FT=Float64, basis=MoistBasis)
-        model_window = TransportModel(state_window, fluxes_window, grid, UpwindAdvection())
+        model_window = TransportModel(state_window, fluxes_window, grid, UpwindScheme())
         sim_window = DrivenSimulation(model_window, driver; start_window=1, stop_window=2)
         run_window!(sim_window)
         @test sim_window.iteration == 2
@@ -113,6 +114,17 @@ end
         @test total_air_mass(sim.model.state) ≈ m0 atol=eps(Float64) * m0 * 10
         @test total_mass(sim.model.state, :CO2) ≈ rm0 atol=eps(Float64) * rm0 * 10
         @test_throws ArgumentError step!(sim)
+
+        state_slopes = CellState(MoistBasis, ones(Float64, 4, 3, 2); CO2=fill(400e-6, 4, 3, 2))
+        fluxes_slopes = allocate_face_fluxes(grid.horizontal, 2; FT=Float64, basis=MoistBasis)
+        model_slopes = @inferred TransportModel(state_slopes, fluxes_slopes, grid, SlopesScheme())
+        sim_slopes = DrivenSimulation(model_slopes, driver; start_window=1, stop_window=1)
+        m0_slopes = total_air_mass(sim_slopes.model.state)
+        rm0_slopes = total_mass(sim_slopes.model.state, :CO2)
+        run_window!(sim_slopes)
+        @test sim_slopes.iteration == 2
+        @test total_air_mass(sim_slopes.model.state) ≈ m0_slopes atol=eps(Float64) * m0_slopes * 10
+        @test total_mass(sim_slopes.model.state, :CO2) ≈ rm0_slopes atol=eps(Float64) * rm0_slopes * 10
 
         close(driver)
     end

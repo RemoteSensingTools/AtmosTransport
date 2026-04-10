@@ -58,19 +58,77 @@ end
     m0 = total_air_mass(state)
     rm0 = total_mass(state, :CO2)
 
-    model = @inferred TransportModel(state, fluxes, grid, FirstOrderUpwindAdvection())
+    model = @inferred TransportModel(state, fluxes, grid, UpwindScheme())
     sim = Simulation(model; Δt=FT(1800), stop_time=FT(3600))
     run!(sim)
 
     @test sim.iteration == 2
     @test total_air_mass(sim.model.state) ≈ m0 atol=eps(FT) * m0 * 10
     @test total_mass(sim.model.state, :CO2) ≈ rm0 atol=eps(FT) * rm0 * 10
+
+    state_slopes = CellState(DryBasis, copy(m); CO2=copy(m) .* FT(400e-6))
+    fluxes_slopes = allocate_face_fluxes(StructuredTopology(), Nx, Ny, Nz; FT=FT, basis=DryBasis)
+    model_slopes = @inferred TransportModel(state_slopes, fluxes_slopes, grid, SlopesScheme())
+    sim_slopes = Simulation(model_slopes; Δt=FT(1800), stop_time=FT(3600))
+    run!(sim_slopes)
+
+    @test sim_slopes.iteration == 2
+    @test total_air_mass(sim_slopes.model.state) ≈ m0 atol=eps(FT) * m0 * 10
+    @test total_mass(sim_slopes.model.state, :CO2) ≈ rm0 atol=eps(FT) * rm0 * 10
+end
+
+@testset "Structured x-direction evolving-mass pilot" begin
+    FT = Float64
+    Nx, Ny, Nz = 4, 1, 1
+    m = ones(FT, Nx, Ny, Nz)
+    rm = copy(m) .* FT(400e-6)
+    am = zeros(FT, Nx + 1, Ny, Nz)
+    bm = zeros(FT, Nx, Ny + 1, Nz)
+    cm = zeros(FT, Nx, Ny, Nz + 1)
+
+    # Periodic inflow through face 1 / Nx+1 plus stronger outflow through face 2.
+    # Initial max CFL is 1.5, but evolving donor mass requires 3 substeps to keep
+    # every mini-pass below CFL < 1.
+    am[1, 1, 1] = FT(1.0)
+    am[2, 1, 1] = FT(1.5)
+    am[Nx + 1, 1, 1] = FT(1.0)
+
+    ws = AtmosTransportV2.Operators.Advection.AdvectionWorkspace(m)
+    nsub = AtmosTransportV2.Operators.Advection._x_subcycling_pass_count(am, m, ws, FT(1))
+    @test nsub == 3
+
+    m0 = sum(m)
+    rm0 = sum(rm)
+    flux_scale = inv(FT(nsub))
+    for _ in 1:nsub
+        AtmosTransportV2.Operators.Advection.sweep_x!(rm, m, am, UpwindScheme(), ws, flux_scale)
+    end
+
+    @test minimum(m) ≥ -eps(FT) * 10
+    @test sum(m) ≈ m0 atol=eps(FT) * m0 * 10
+    @test sum(rm) ≈ rm0 atol=eps(FT) * rm0 * 10
+    @test all(isfinite, m)
+    @test all(isfinite, rm)
 end
 
 @testset "Honest metadata-only CubedSphere API" begin
     mesh = CubedSphereMesh(; FT=Float64, Nc=4)
     @test_throws ArgumentError cell_area(mesh, 1)
     @test_throws ArgumentError face_cells(mesh, 1)
+
+    vc = HybridSigmaPressure([0.0, 100.0, 300.0], [0.0, 0.0, 1.0])
+    grid = AtmosGrid(mesh, vc, AtmosTransportV2.CPU(); FT=Float64)
+    m = ones(Float64, 12, 4, 2)
+    state = CellState(DryBasis, copy(m); CO2=copy(m) .* 400e-6)
+    fluxes = StructuredFaceFluxState{DryBasis}(zeros(Float64, 13, 4, 2), zeros(Float64, 12, 5, 2), zeros(Float64, 12, 4, 3))
+    ws = AdvectionWorkspace(state.air_mass)
+
+    @test_throws ArgumentError TransportModel(state, fluxes, grid, UpwindScheme())
+    @test_throws ArgumentError apply!(state, fluxes, grid, UpwindScheme(), 1800.0; workspace=ws)
+    @test_throws ArgumentError strang_split!(state, fluxes, grid, UpwindScheme(); workspace=ws)
+    @test_throws ArgumentError TransportModel(state, fluxes, grid, UpwindAdvection())
+    @test_throws ArgumentError apply!(state, fluxes, grid, UpwindAdvection(), 1800.0; workspace=ws)
+    @test_throws ArgumentError strang_split!(state, fluxes, grid, UpwindAdvection(); workspace=ws)
 end
 
 @testset "Face-connected reduced-Gaussian smoke test" begin
@@ -90,13 +148,14 @@ end
     m0 = total_air_mass(state)
     rm0 = total_mass(state, :CO2)
 
-    model = @inferred TransportModel(state, fluxes, grid, FirstOrderUpwindAdvection())
+    model = @inferred TransportModel(state, fluxes, grid, UpwindScheme())
     sim = Simulation(model; Δt=FT(1800), stop_time=FT(3600))
     run!(sim)
 
     @test sim.iteration == 2
     @test total_air_mass(sim.model.state) ≈ m0 atol=eps(FT) * m0 * 10
     @test total_mass(sim.model.state, :CO2) ≈ rm0 atol=eps(FT) * rm0 * 10
+
 end
 
 @testset "Face-connected unsupported reconstruction families fail honestly" begin
@@ -111,6 +170,8 @@ end
     fluxes = allocate_face_fluxes(mesh, Nz; FT=FT, basis=DryBasis)
     ws = AdvectionWorkspace(m)
 
+    @test_throws ArgumentError apply!(state, fluxes, grid, SlopesScheme(), FT(1800); workspace=ws)
+    @test_throws ArgumentError apply!(state, fluxes, grid, PPMScheme(), FT(1800); workspace=ws)
     @test_throws ArgumentError apply!(state, fluxes, grid, RussellLernerAdvection(), FT(1800); workspace=ws)
     @test_throws ArgumentError apply!(state, fluxes, grid, PPMAdvection(), FT(1800); workspace=ws)
 end

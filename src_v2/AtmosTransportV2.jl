@@ -134,11 +134,20 @@ export face_flux_x, face_flux_y, face_flux_z, face_flux
 export MetState, allocate_face_fluxes, allocate_tracers
 export mixing_ratio, total_mass, total_air_mass, tracer_names
 
-# Operators -- public transport API
+# Operators -- public transport API (legacy hierarchy)
 export AbstractAdvection, AbstractConstantReconstruction, AbstractLinearReconstruction, AbstractQuadraticReconstruction
 export UpwindAdvection, FirstOrderUpwindAdvection, RussellLernerAdvection, PPMAdvection
-export AdvectionWorkspace, strang_split!, apply!
+export AdvectionWorkspace, strang_split!, strang_split_mt!, apply!
+export TracerView
 export diagnose_cm!
+
+# Operators -- new scheme hierarchy
+export AbstractAdvectionScheme
+export AbstractConstantScheme, AbstractLinearScheme, AbstractQuadraticScheme
+export AbstractLimiter, NoLimiter, MonotoneLimiter, PositivityLimiter
+export UpwindScheme, SlopesScheme, PPMScheme
+export reconstruction_order
+
 # NOTE: sweep_x!, sweep_y!, sweep_z!, max_cfl_*, minmod, van_leer_slope
 # are intentionally NOT exported. They accept raw arrays without basis
 # checking and are implementation details of strang_split!.

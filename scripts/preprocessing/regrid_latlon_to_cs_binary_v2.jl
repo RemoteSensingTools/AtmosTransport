@@ -503,8 +503,13 @@ function main()
         "n_bm" => n_bm,
         "n_cm" => n_cm,
         "n_ps" => n_ps,
-        "Nx" => Nc,  # for reader compatibility
+        "Nx" => Nc,  # for reader compatibility (not real LL coords)
         "Ny" => Nc,
+        # Dummy lons/lats to satisfy reader parser (CS doesn't have global lon/lat)
+        "lons" => collect(range(0.0, 360.0 - 360.0/Nc, length=Nc)),
+        "lats" => collect(range(-90.0 + 90.0/Nc, 90.0 - 90.0/Nc, length=Nc)),
+        "longitude_interval" => [0.0, 360.0],
+        "latitude_interval" => [-90.0, 90.0],
         "source_binary" => input_path,
         "regrid_method" => "bilinear_cell_center",
         "creation_time" => string(Dates.now()),

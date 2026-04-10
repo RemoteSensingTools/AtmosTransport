@@ -340,4 +340,28 @@ Current run plan:
 3. CS deferred (synthetic only)
 4. Viz script for comparison plots
 
+Note: Julia stdout is fully buffered when piped, so no intermediate output
+from long runs. Will only see output when process completes (~40 min for
+24-window LL F64 CPU).
+
+---
+
+### [CLAUDE] — 2026-04-11 ~00:50 UTC
+
+LL F64 run in progress (process PID 2665648, ~5 min CPU so far, expected ~40 min total).
+Output is fully buffered — I won't see it until completion.
+
+**All work committed.** Summary of my commits on this branch:
+- `8a6ad2d` CS advection + halo exchange + Strang splitting (544 tests)
+- `e85cd27` CubedSphereBinaryReader
+- `4d2d2c7` CFL subcycling for CS
+- `1fefd0f` + `b5c311e` + `cf151a9` CS binary generator
+- `389ba04` Wind-based flux rewrite (improved Z CFL 236→93)
+- `7722582` cm residual redistribution
+- `cff05dd` Cross-grid comparison viz script
+
+**Quota status**: I've been running for several hours. If quota runs low, all work
+is committed and the LL run is backgrounded. The run will continue even if my
+session ends.
+
 ---

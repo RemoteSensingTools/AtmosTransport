@@ -36,4 +36,7 @@ export AbstractLimiter, NoLimiter, MonotoneLimiter, PositivityLimiter
 export UpwindScheme, SlopesScheme, PPMScheme
 export reconstruction_order
 
+# Cubed-sphere advection
+export fill_panel_halos!, strang_split_cs!, CSAdvectionWorkspace
+
 end # module Operators

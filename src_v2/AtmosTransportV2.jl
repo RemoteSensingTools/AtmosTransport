@@ -120,6 +120,8 @@ export planet_parameters, radius, gravity, reference_pressure
 export ring_cell_count, ring_longitudes, cell_index
 export boundary_face_count, boundary_face_offset, boundary_face_range
 export panel_count, panel_convention, panel_labels
+export PanelEdge, PanelConnectivity, default_panel_connectivity, reciprocal_edge
+export EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST
 export n_levels, pressure_at_interface, pressure_at_level, level_thickness
 
 # State -- types and basis tags
@@ -147,6 +149,9 @@ export AbstractConstantScheme, AbstractLinearScheme, AbstractQuadraticScheme
 export AbstractLimiter, NoLimiter, MonotoneLimiter, PositivityLimiter
 export UpwindScheme, SlopesScheme, PPMScheme
 export reconstruction_order
+
+# Cubed-sphere advection
+export fill_panel_halos!, strang_split_cs!, CSAdvectionWorkspace
 
 # NOTE: sweep_x!, sweep_y!, sweep_z!, max_cfl_*, minmod, van_leer_slope
 # are intentionally NOT exported. They accept raw arrays without basis

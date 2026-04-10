@@ -20,6 +20,7 @@ include("AbstractMeshes.jl")
 include("VerticalCoordinates.jl")
 include("GeometryOps.jl")
 include("LatLonMesh.jl")
+include("PanelConnectivity.jl")
 include("CubedSphereMesh.jl")
 include("ReducedGaussianMesh.jl")
 

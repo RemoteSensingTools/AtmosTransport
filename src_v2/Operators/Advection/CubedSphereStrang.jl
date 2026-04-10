@@ -1,0 +1,283 @@
+# ---------------------------------------------------------------------------
+# Cubed-sphere Strang splitting orchestrator for src_v2
+#
+# Performs X → Y → Z → Z → Y → X dimensionally-split advection on 6
+# gnomonic panels with halo exchange between horizontal sweeps.
+#
+# Panel-interior kernels reuse the SAME reconstruction functions
+# (_xface_tracer_flux, _yface_tracer_flux, _zface_tracer_flux) as the
+# LatLon path. The only CS-specific logic is:
+#   1. Halo exchange after each horizontal sweep (fill_panel_halos!)
+#   2. Kernel launch on interior indices with Hp offset
+#   3. Per-panel loop over 6 panels
+#
+# The panel arrays have layout (Nc+2Hp, Nc+2Hp, Nz) with interior at
+# [Hp+1:Hp+Nc, Hp+1:Hp+Nc, :]. The reconstruction stencil reads into
+# the halo region naturally.
+#
+# Mass conservation: guaranteed by the telescoping identity, same as
+# LatLon. Each panel's X sweep is periodic (halo wraps around), Y sweep
+# reads from halo at panel edges, Z sweep is panel-local closed.
+#
+# References:
+#   Strang (1968) — symmetric splitting for second-order accuracy
+#   Putman & Lin (2007) — FV3 cubed-sphere transport
+# ---------------------------------------------------------------------------
+
+using KernelAbstractions: @kernel, @index, @Const, synchronize, get_backend,
+    CPU as KA_CPU
+
+# =========================================================================
+# CS panel sweep kernels
+#
+# These launch on ndrange=(Nc, Nc, Nz) and read/write the interior region
+# of halo-padded arrays. The Hp offset is added to all indices.
+# =========================================================================
+
+"""X-sweep kernel on one CS panel. Interior i ∈ [1,Nc], periodic via halo."""
+@kernel function _cs_xsweep_kernel!(rm_new, @Const(rm), m_new, @Const(m),
+                                     @Const(am), scheme, Nc, Hp, flux_scale)
+    ii, jj, k = @index(Global, NTuple)
+    @inbounds begin
+        # Map to halo-padded indices
+        i = ii + Hp
+        j = jj + Hp
+        # Face fluxes: am has same halo-padded layout
+        am_l = flux_scale * am[i, j, k]
+        am_r = flux_scale * am[i + 1, j, k]
+        # Reconstruction on the full halo-padded array (Nx = Nc + 2Hp for stencil)
+        Nx_padded = Int32(Nc + 2 * Hp)
+        flux_L = _xface_tracer_flux(Int32(i), j, k, rm, m, am_l, scheme, Nx_padded)
+        flux_R = _xface_tracer_flux(Int32(i) + Int32(1), j, k, rm, m, am_r, scheme, Nx_padded)
+        rm_new[i, j, k] = rm[i, j, k] + flux_L - flux_R
+        m_new[i, j, k]  = m[i, j, k]  + am_l - am_r
+    end
+end
+
+"""Y-sweep kernel on one CS panel. Interior j ∈ [1,Nc], halo provides neighbors."""
+@kernel function _cs_ysweep_kernel!(rm_new, @Const(rm), m_new, @Const(m),
+                                     @Const(bm), scheme, Nc, Hp, flux_scale)
+    ii, jj, k = @index(Global, NTuple)
+    @inbounds begin
+        i = ii + Hp
+        j = jj + Hp
+        bm_s = flux_scale * bm[i, j, k]
+        bm_n = flux_scale * bm[i, j + 1, k]
+        Ny_padded = Int32(Nc + 2 * Hp)
+        flux_S = _yface_tracer_flux(i, Int32(j), k, rm, m, bm_s, scheme, Ny_padded)
+        flux_N = _yface_tracer_flux(i, Int32(j) + Int32(1), k, rm, m, bm_n, scheme, Ny_padded)
+        rm_new[i, j, k] = rm[i, j, k] + flux_S - flux_N
+        m_new[i, j, k]  = m[i, j, k]  + bm_s - bm_n
+    end
+end
+
+"""Z-sweep kernel on one CS panel. Same as LatLon z-kernel but with Hp offset."""
+@kernel function _cs_zsweep_kernel!(rm_new, @Const(rm), m_new, @Const(m),
+                                     @Const(cm), scheme, Nz, Hp, flux_scale)
+    ii, jj, k = @index(Global, NTuple)
+    @inbounds begin
+        i = ii + Hp
+        j = jj + Hp
+        cm_t = flux_scale * cm[i, j, k]
+        cm_b = flux_scale * cm[i, j, k + 1]
+        flux_T = _zface_tracer_flux(i, j, Int32(k), rm, m, cm_t, scheme, Int32(Nz))
+        flux_B = _zface_tracer_flux(i, j, Int32(k) + Int32(1), rm, m, cm_b, scheme, Int32(Nz))
+        rm_new[i, j, k] = rm[i, j, k] + flux_T - flux_B
+        m_new[i, j, k]  = m[i, j, k]  + cm_t - cm_b
+    end
+end
+
+# =========================================================================
+# Per-panel sweep functions (double-buffered)
+# =========================================================================
+
+"""Run X-sweep on one panel's interior with double buffering."""
+function _sweep_x_panel!(rm, m, am, scheme, rm_buf, m_buf, Nc, Hp, Nz;
+                         flux_scale = one(eltype(m)))
+    backend = get_backend(rm)
+    if backend isa KA_CPU
+        # CPU: direct loop over interior
+        @inbounds for k in 1:Nz, jj in 1:Nc, ii in 1:Nc
+            i = ii + Hp; j = jj + Hp
+            am_l = flux_scale * am[i, j, k]
+            am_r = flux_scale * am[i + 1, j, k]
+            Nx_padded = Int32(Nc + 2Hp)
+            fl = _xface_tracer_flux(Int32(i), j, k, rm, m, am_l, scheme, Nx_padded)
+            fr = _xface_tracer_flux(Int32(i) + Int32(1), j, k, rm, m, am_r, scheme, Nx_padded)
+            rm_buf[i, j, k] = rm[i, j, k] + fl - fr
+            m_buf[i, j, k]  = m[i, j, k]  + am_l - am_r
+        end
+    else
+        k! = _cs_xsweep_kernel!(backend, 256)
+        k!(rm_buf, rm, m_buf, m, am, scheme, Nc, Hp, flux_scale; ndrange=(Nc, Nc, Nz))
+        synchronize(backend)
+    end
+    # Copy buffer back to interior
+    _copy_interior!(rm, rm_buf, Nc, Hp, Nz)
+    _copy_interior!(m, m_buf, Nc, Hp, Nz)
+    return nothing
+end
+
+"""Run Y-sweep on one panel's interior with double buffering."""
+function _sweep_y_panel!(rm, m, bm, scheme, rm_buf, m_buf, Nc, Hp, Nz;
+                         flux_scale = one(eltype(m)))
+    backend = get_backend(rm)
+    if backend isa KA_CPU
+        @inbounds for k in 1:Nz, jj in 1:Nc, ii in 1:Nc
+            i = ii + Hp; j = jj + Hp
+            bm_s = flux_scale * bm[i, j, k]
+            bm_n = flux_scale * bm[i, j + 1, k]
+            Ny_padded = Int32(Nc + 2Hp)
+            fs = _yface_tracer_flux(i, Int32(j), k, rm, m, bm_s, scheme, Ny_padded)
+            fn = _yface_tracer_flux(i, Int32(j) + Int32(1), k, rm, m, bm_n, scheme, Ny_padded)
+            rm_buf[i, j, k] = rm[i, j, k] + fs - fn
+            m_buf[i, j, k]  = m[i, j, k]  + bm_s - bm_n
+        end
+    else
+        k! = _cs_ysweep_kernel!(backend, 256)
+        k!(rm_buf, rm, m_buf, m, bm, scheme, Nc, Hp, flux_scale; ndrange=(Nc, Nc, Nz))
+        synchronize(backend)
+    end
+    _copy_interior!(rm, rm_buf, Nc, Hp, Nz)
+    _copy_interior!(m, m_buf, Nc, Hp, Nz)
+    return nothing
+end
+
+"""Run Z-sweep on one panel's interior with double buffering."""
+function _sweep_z_panel!(rm, m, cm, scheme, rm_buf, m_buf, Nc, Hp, Nz;
+                         flux_scale = one(eltype(m)))
+    backend = get_backend(rm)
+    if backend isa KA_CPU
+        @inbounds for k in 1:Nz, jj in 1:Nc, ii in 1:Nc
+            i = ii + Hp; j = jj + Hp
+            cm_t = flux_scale * cm[i, j, k]
+            cm_b = flux_scale * cm[i, j, k + 1]
+            ft = _zface_tracer_flux(i, j, Int32(k), rm, m, cm_t, scheme, Int32(Nz))
+            fb = _zface_tracer_flux(i, j, Int32(k) + Int32(1), rm, m, cm_b, scheme, Int32(Nz))
+            rm_buf[i, j, k] = rm[i, j, k] + ft - fb
+            m_buf[i, j, k]  = m[i, j, k]  + cm_t - cm_b
+        end
+    else
+        k! = _cs_zsweep_kernel!(backend, 256)
+        k!(rm_buf, rm, m_buf, m, cm, scheme, Nz, Hp, flux_scale; ndrange=(Nc, Nc, Nz))
+        synchronize(backend)
+    end
+    _copy_interior!(rm, rm_buf, Nc, Hp, Nz)
+    _copy_interior!(m, m_buf, Nc, Hp, Nz)
+    return nothing
+end
+
+"""Copy interior region from buffer back to array."""
+function _copy_interior!(dst, src, Nc, Hp, Nz)
+    @inbounds for k in 1:Nz, jj in 1:Nc, ii in 1:Nc
+        i = ii + Hp; j = jj + Hp
+        dst[i, j, k] = src[i, j, k]
+    end
+    return nothing
+end
+
+# =========================================================================
+# CS workspace — pre-allocated buffers for one panel
+# =========================================================================
+
+"""
+    CSAdvectionWorkspace{FT, A}
+
+Pre-allocated double buffers for cubed-sphere panel advection.
+One workspace is shared across all 6 panels (sequential panel loop).
+"""
+struct CSAdvectionWorkspace{FT, A <: AbstractArray{FT, 3}}
+    rm_buf :: A
+    m_buf  :: A
+end
+
+function CSAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
+                              FT::Type{<:AbstractFloat} = Float64)
+    N = mesh.Nc + 2 * mesh.Hp
+    rm_buf = zeros(FT, N, N, Nz)
+    m_buf  = zeros(FT, N, N, Nz)
+    return CSAdvectionWorkspace{FT, typeof(rm_buf)}(rm_buf, m_buf)
+end
+
+# =========================================================================
+# Public API: strang_split_cs!
+# =========================================================================
+
+"""
+    strang_split_cs!(panels_rm, panels_m, panels_am, panels_bm, panels_cm,
+                     mesh, scheme, workspace; flux_scale=1)
+
+Perform one Strang-split advection step on a 6-panel cubed-sphere field.
+
+Splitting sequence: X → halo → Y → halo → Z → Z → halo → Y → halo → X
+
+# Arguments
+- `panels_rm :: NTuple{6, Array{FT,3}}` — tracer mass per panel `(N, N, Nz)`
+- `panels_m  :: NTuple{6, Array{FT,3}}` — air mass per panel
+- `panels_am :: NTuple{6, Array{FT,3}}` — x-face mass flux `(N+1, N, Nz)` (halo-padded)
+- `panels_bm :: NTuple{6, Array{FT,3}}` — y-face mass flux `(N, N+1, Nz)` (halo-padded)
+- `panels_cm :: NTuple{6, Array{FT,3}}` — z-face mass flux `(N, N, Nz+1)` (halo-padded)
+- `mesh :: CubedSphereMesh`
+- `scheme` — advection scheme (SlopesScheme, UpwindScheme, etc.)
+- `workspace :: CSAdvectionWorkspace`
+"""
+function strang_split_cs!(panels_rm::NTuple{6},
+                          panels_m::NTuple{6},
+                          panels_am::NTuple{6},
+                          panels_bm::NTuple{6},
+                          panels_cm::NTuple{6},
+                          mesh::CubedSphereMesh,
+                          scheme,
+                          workspace::CSAdvectionWorkspace;
+                          flux_scale = one(eltype(panels_m[1])))
+    Nc, Hp = mesh.Nc, mesh.Hp
+    Nz = size(panels_rm[1], 3)
+    rm_buf, m_buf = workspace.rm_buf, workspace.m_buf
+    fs = convert(eltype(panels_m[1]), flux_scale)
+
+    # ---- X sweep (all panels) ----
+    for p in 1:6
+        _sweep_x_panel!(panels_rm[p], panels_m[p], panels_am[p],
+                         scheme, rm_buf, m_buf, Nc, Hp, Nz; flux_scale=fs)
+    end
+    fill_panel_halos!(panels_rm, mesh; dir=1)
+    fill_panel_halos!(panels_m, mesh; dir=1)
+
+    # ---- Y sweep (all panels) ----
+    for p in 1:6
+        _sweep_y_panel!(panels_rm[p], panels_m[p], panels_bm[p],
+                         scheme, rm_buf, m_buf, Nc, Hp, Nz; flux_scale=fs)
+    end
+    fill_panel_halos!(panels_rm, mesh; dir=2)
+    fill_panel_halos!(panels_m, mesh; dir=2)
+
+    # ---- Z sweep × 2 (panel-local, no halo needed) ----
+    for p in 1:6
+        _sweep_z_panel!(panels_rm[p], panels_m[p], panels_cm[p],
+                         scheme, rm_buf, m_buf, Nc, Hp, Nz; flux_scale=fs)
+    end
+    for p in 1:6
+        _sweep_z_panel!(panels_rm[p], panels_m[p], panels_cm[p],
+                         scheme, rm_buf, m_buf, Nc, Hp, Nz; flux_scale=fs)
+    end
+
+    # ---- Reverse: Y sweep ----
+    fill_panel_halos!(panels_rm, mesh; dir=2)
+    fill_panel_halos!(panels_m, mesh; dir=2)
+    for p in 1:6
+        _sweep_y_panel!(panels_rm[p], panels_m[p], panels_bm[p],
+                         scheme, rm_buf, m_buf, Nc, Hp, Nz; flux_scale=fs)
+    end
+
+    # ---- Reverse: X sweep ----
+    fill_panel_halos!(panels_rm, mesh; dir=1)
+    fill_panel_halos!(panels_m, mesh; dir=1)
+    for p in 1:6
+        _sweep_x_panel!(panels_rm[p], panels_m[p], panels_am[p],
+                         scheme, rm_buf, m_buf, Nc, Hp, Nz; flux_scale=fs)
+    end
+
+    return nothing
+end
+
+export strang_split_cs!, CSAdvectionWorkspace

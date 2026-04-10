@@ -35,7 +35,9 @@ using ...State: CellState, AbstractStructuredFaceFluxState, AbstractFaceFluxStat
     DryMassFluxBasis, DryStructuredFluxState, AbstractMassBasis,
     FaceIndexedFluxState
 using ...Grids: AtmosGrid, AbstractHorizontalMesh, AbstractStructuredMesh,
-    LatLonMesh, CubedSphereMesh, face_cells, nfaces
+    LatLonMesh, CubedSphereMesh, face_cells, nfaces,
+    PanelConnectivity, reciprocal_edge,
+    EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST
 using ...MetDrivers: diagnose_cm_from_continuity!
 
 # New scheme hierarchy (include before anything that references these types)
@@ -44,6 +46,10 @@ include("limiters.jl")
 include("reconstruction.jl")
 include("structured_kernels.jl")
 include("multitracer_kernels.jl")
+
+# Cubed-sphere halo exchange and Strang splitting
+include("HaloExchange.jl")
+include("CubedSphereStrang.jl")
 
 # Legacy scheme files
 include("FaceReconstruction.jl")

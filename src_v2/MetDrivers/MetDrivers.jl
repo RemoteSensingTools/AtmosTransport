@@ -20,6 +20,7 @@ include("MassClosure.jl")
 include("DryFluxBuilder.jl")
 include("TransportBinary.jl")
 include("TransportBinaryDriver.jl")
+include("CubedSphereBinaryReader.jl")
 include("ERA5/ERA5.jl")
 using .ERA5
 
@@ -44,5 +45,9 @@ export diagnose_cm_from_continuity!, diagnose_cm_from_continuity_vc!
 export diagnose_cm_from_continuity_ka!
 export ERA5ReducedGaussianGeometry
 export read_era5_reduced_gaussian_geometry, read_era5_reduced_gaussian_mesh
+
+# Cubed-sphere binary reader
+export CubedSphereBinaryReader, CubedSphereBinaryHeader
+export load_cs_window, cs_window_count
 
 end # module MetDrivers

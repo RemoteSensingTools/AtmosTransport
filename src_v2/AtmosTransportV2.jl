@@ -86,7 +86,9 @@ using .MetDrivers: AbstractDriver, AbstractClosure, AbstractMetDriver,
                    read_era5_reduced_gaussian_geometry, read_era5_reduced_gaussian_mesh,
                    build_dry_fluxes!, build_air_mass!,
                    total_windows, window_dt, steps_per_window, supports_diffusion, supports_convection,
-                   DiagnoseVerticalFromHorizontal, PressureTendencyClosure
+                   DiagnoseVerticalFromHorizontal, PressureTendencyClosure,
+                   CubedSphereBinaryReader, CubedSphereBinaryHeader,
+                   load_cs_window, cs_window_count
 
 # ---- Physics operators ----
 include("Operators/Operators.jl")
@@ -185,6 +187,8 @@ export ERA5ReducedGaussianGeometry
 export read_era5_reduced_gaussian_geometry, read_era5_reduced_gaussian_mesh
 export DiagnoseVerticalFromHorizontal, PressureTendencyClosure
 export supports_diffusion, supports_convection
+export CubedSphereBinaryReader, CubedSphereBinaryHeader
+export load_cs_window, cs_window_count
 
 # Models
 export TransportModel, Simulation, DrivenSimulation, step!, run!, run_window!

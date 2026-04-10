@@ -258,7 +258,7 @@ cm[i,j,k+1] = cm[i,j,k] + am[i,j,k] - am[i+1,j,k] + bm[i,j,k] - bm[i,j+1,k] - dm
 where dm = (m_next - m_curr) / (2 * steps_per_window).
 cm[:,:,1] = 0 (TOA), cm[:,:,Nz+1] = 0 (surface, enforced by construction if balanced).
 """
-function diagnose_cm!(cm, am, bm, dm, m, Nc, Nz)
+function diagnose_cm!(cm, am, bm, dm, m, Nc, Nz; max_cfl::Float64 = 40.0)
     @inbounds for j in 1:Nc, i in 1:Nc
         # Pass 1: raw cm from cumulative sum TOA→surface
         cm[i, j, 1] = 0.0  # TOA boundary
@@ -267,10 +267,24 @@ function diagnose_cm!(cm, am, bm, dm, m, Nc, Nz)
             cm[i, j, k+1] = cm[i, j, k] + div_h - dm[i, j, k]
         end
 
-        # Pass 2: redistribute surface residual to enforce cm[Nz+1] = 0
-        # The residual arises because interpolated am/bm don't satisfy
-        # exact global mass balance on the CS grid. We distribute the
-        # residual proportionally to cell mass (proxy for dp).
+        # Pass 2: cap per-interface cm to prevent Z CFL blowup.
+        # The bilinear wind interpolation creates horizontal divergence
+        # residuals that accumulate in cm. At thin TOA layers, even small
+        # residuals produce huge CFL. We cap |cm[k]| ≤ max_cfl × m[k]
+        # (using the thinner of the two adjacent cells) and absorb the
+        # excess into neighboring levels.
+        for k in 2:Nz  # skip TOA (k=1 is always 0) and surface (fixed below)
+            m_thin = min(m[i, j, k-1], m[i, j, k])
+            limit = max_cfl * max(m_thin, 1e-10)
+            if abs(cm[i, j, k]) > limit
+                excess = cm[i, j, k] - sign(cm[i, j, k]) * limit
+                cm[i, j, k] = sign(cm[i, j, k]) * limit
+                # Push excess to the next interface (downward)
+                cm[i, j, k+1] += excess
+            end
+        end
+
+        # Pass 3: redistribute surface residual to enforce cm[Nz+1] = 0
         residual = cm[i, j, Nz + 1]
         if abs(residual) > 0
             total_m = 0.0

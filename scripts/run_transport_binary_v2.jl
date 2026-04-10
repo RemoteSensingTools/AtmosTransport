@@ -33,6 +33,7 @@ struct FileSurfaceFluxField{FT}
     raw           :: Array{FT, 2}
     lon           :: Vector{Float64}
     lat           :: Vector{Float64}
+    native_total_mass_rate :: Float64
 end
 
 struct TransportTracerSpec
@@ -183,9 +184,16 @@ function _load_file_surface_flux_field(cfg, ::Type{FT}) where FT
             throw(ArgumentError("surface-flux variable '$variable' must be 2D or 3D, got ndims=$(ndims(raw_var))"))
         end
 
+        cell_area = if haskey(ds, "cell_area")
+            Float64.(nomissing(ds["cell_area"][:, :], 0.0))
+        else
+            nothing
+        end
+
         if length(lat_src) > 1 && lat_src[1] > lat_src[end]
             raw = raw[:, end:-1:1]
             lat_src = reverse(lat_src)
+            cell_area === nothing || (cell_area = cell_area[:, end:-1:1])
         end
 
         if minimum(lon_src) < 0
@@ -194,6 +202,7 @@ function _load_file_surface_flux_field(cfg, ::Type{FT}) where FT
                 idx = vcat(split:length(lon_src), 1:split-1)
                 lon_src = mod.(lon_src[idx], 360.0)
                 raw = raw[idx, :]
+                cell_area === nothing || (cell_area = cell_area[idx, :])
             end
         end
 
@@ -205,10 +214,20 @@ function _load_file_surface_flux_field(cfg, ::Type{FT}) where FT
         end
 
         raw .*= FT(get(cfg, "scale", 1.0))
-        return FileSurfaceFluxField{FT}(raw, lon_src, lat_src)
+        native_total_mass_rate = cell_area === nothing ? NaN : sum(Float64.(raw) .* cell_area)
+        return FileSurfaceFluxField{FT}(raw, lon_src, lat_src, native_total_mass_rate)
     finally
         close(ds)
     end
+end
+
+function _renormalize_surface_flux_rate!(rate::AbstractArray{FT}, source::FileSurfaceFluxField) where FT
+    isfinite(source.native_total_mass_rate) || return rate
+    sampled_total = Float64(sum(rate))
+    sampled_total > 0 || return rate
+    scale = source.native_total_mass_rate / sampled_total
+    rate .*= FT(scale)
+    return rate
 end
 
 _copy_cfg_dict(cfg) = Dict{String, Any}(String(k) => v for (k, v) in pairs(cfg))
@@ -555,6 +574,7 @@ function build_surface_flux_source(grid::AtmosTransportV2.AtmosGrid{<:AtmosTrans
         end
     end
 
+    _renormalize_surface_flux_rate!(rate, source)
     return AtmosTransportV2.SurfaceFluxSource(tracer_name, rate)
 end
 
@@ -579,6 +599,7 @@ function build_surface_flux_source(grid::AtmosTransportV2.AtmosGrid{<:AtmosTrans
         end
     end
 
+    _renormalize_surface_flux_rate!(rate, source)
     return AtmosTransportV2.SurfaceFluxSource(tracer_name, rate)
 end
 

@@ -288,3 +288,30 @@ CS synthetic tests (544 passing) prove the advection code works. I'll
 pivot to helping get LL/RG 2-day runs completed.
 
 ---
+
+### [CODEX] — 2026-04-10 23:23 UTC
+
+Found and fixed a source-side comparison bias in my stream:
+- the initial GridFED loader used bilinear sampling only, so global fossil emission
+  totals were grid-dependent
+- native Dec-2021 GridFED total for `time_index=12` is `1.252119456364986e6 kg/s`
+- pre-fix sampled totals were:
+  - LatLon F32: `1.192538375e6 kg/s` (`-4.8%`)
+  - ReducedGaussian F64: `1.249171981810e6 kg/s` (`-0.24%`)
+
+Fix now in `run_transport_binary_v2.jl`:
+- if the source file provides `cell_area` (GridFED does), compute the native total
+- after sampling onto the target grid, renormalize the sampled field so
+  `sum(cell_mass_rate)` matches the native source integral exactly
+
+Verified:
+- `test_v2/test_run_transport_binary_v2.jl` updated and passing
+- real loader sums now match native total:
+  - LatLon F32: `1.2521195e6 kg/s`
+  - ReducedGaussian F64: `1.252119456364986e6 kg/s`
+- real 1-window LatLon F32 smoke now ends with
+  `fossil_co2 = 4.507629568e9 kg`, matching `native_total * 3600 s` to Float32 precision
+
+This makes the LL/RG fossil source globally comparable enough for the 2-day runs.
+
+---

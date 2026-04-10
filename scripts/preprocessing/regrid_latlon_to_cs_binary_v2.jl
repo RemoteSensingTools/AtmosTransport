@@ -308,7 +308,7 @@ function main()
 
     # --- Load LatLon binary ---
     println("\n[1/4] Reading LatLon binary header...")
-    reader = TransportBinaryReader{FT}(input_path)
+    reader = TransportBinaryReader(input_path; FT=FT)
     h = reader.header
     Nx_ll = h.Nx
     Ny_ll = h.Ny
@@ -355,11 +355,17 @@ function main()
     bm_panels = [zeros(FT, Nc, Nc+1, Nz) for _ in 1:6]
     cm_panels = [zeros(FT, Nc, Nc, Nz+1) for _ in 1:6]
 
-    # Temp arrays for interpolated winds
-    u_panel  = zeros(FT, Nc, Nc, Nz)
-    v_panel  = zeros(FT, Nc, Nc, Nz)
-    dp_panel = zeros(FT, Nc, Nc, Nz)
+    # Temp arrays
     dm_panel = zeros(FT, Nc, Nc, Nz)
+
+    # Preallocate LatLon flux density arrays (reused per window)
+    am_cc = zeros(FT, Nx_ll, Ny_ll, Nz)
+    bm_cc = zeros(FT, Nx_ll, Ny_ll, Nz)
+
+    # LatLon grid spacings
+    Δlat_ll = abs(src_lats[2] - src_lats[1]) * FT(π) / 180
+    Δlon_ll = abs(src_lons[2] - src_lons[1]) * FT(π) / 180
+    Δy_ll = R_earth * Δlat_ll
 
     # Storage for all windows
     windows_data = Vector{NamedTuple}(undef, nwindow)
@@ -367,29 +373,12 @@ function main()
     for win in 1:nwindow
         t0 = time()
 
-        # Load LatLon window
-        window = load_transport_window(reader, win)
-        m_ll  = window.air_mass       # (Nx, Ny, Nz)
-        ps_ll = window.surface_pressure  # (Nx, Ny)
+        # Load LatLon window: returns (m, ps, fluxes::StructuredFaceFluxState)
+        m_ll, ps_ll, fluxes_ll = load_window!(reader, win)
+        am_ll = fluxes_ll.am  # (Nx+1, Ny, Nz)
+        bm_ll = fluxes_ll.bm  # (Nx, Ny+1, Nz)
 
-        # Reconstruct winds from mass fluxes:
-        # am[i,j,k] ≈ u_face * dp * Δy / g * dt_factor
-        # We'll use m as proxy for dp*area/g, and back-derive cell-center u,v
-        # from the mass divergence pattern. But simpler: just use m and am
-        # directly since m already encodes the mass structure.
-        #
-        # Actually, for the regridding approach, we need to:
-        # 1. Regrid m (cell mass) to CS → get CS cell mass
-        # 2. Regrid ps to CS → compute dp on CS
-        # 3. Either regrid am/bm directly (scale by area ratios) or
-        #    derive face fluxes from regridded mass tendency.
-        #
-        # SIMPLEST: regrid m to CS, and for am/bm, regrid the LatLon
-        # fluxes to CS faces via the mass fraction approach.
-        # For now, let's regrid m and ps, compute dp, and use the
-        # LatLon flux divergence scaled by the mass ratio.
-
-        # Approach: regrid cell mass and surface pressure to CS panels
+        # Regrid cell mass and surface pressure to CS panels
         for p in 1:6
             bilinear_interp_3d!(m_panels[p], m_ll,
                                 cell_lons[p], cell_lats[p], src_lons, src_lats)
@@ -397,62 +386,19 @@ function main()
                                 cell_lons[p], cell_lats[p], src_lons, src_lats)
         end
 
-        # Compute dp from ps and A/B coefficients
-        for p in 1:6, k in 1:Nz, j in 1:Nc, i in 1:Nc
-            dp_panel[i, j, k] = abs((A_ifc[k] - A_ifc[k+1]) +
-                                    (B_ifc[k] - B_ifc[k+1]) * ps_panels[p][i, j])
-        end
-
-        # Compute am/bm from the mass structure.
-        # Strategy: the fractional mass flux at each face should be
-        # proportional to what the LatLon grid sees. Since we're
-        # interpolating to CS faces, we use the LatLon am/bm
-        # interpolated to CS face positions, scaled so that the
-        # local CFL = |am|/m matches the source.
-        #
-        # For C90 from 0.5° (factor ~2 coarser), the face fluxes
-        # need rescaling by the area ratio. But the simplest correct
-        # approach: interpolate the LatLon flux per unit edge length
-        # (= am / Δy_ll) to CS face centers, then multiply by CS Δy.
-
-        # Reconstruct flux-per-unit-edge from LatLon
-        am_ll = window.am  # (Nx+1, Ny, Nz)
-        bm_ll = window.bm  # (Nx, Ny+1, Nz)
-
-        # For LatLon, Δy is constant (= R * Δlat), Δx varies with latitude
-        Δlat_ll = abs(src_lats[2] - src_lats[1]) * π / 180
-        Δlon_ll = abs(src_lons[2] - src_lons[1]) * π / 180
-        Δy_ll = R_earth * Δlat_ll
-
-        # am_ll[i,j,k] is a mass flux [kg per substep] through the x-face.
-        # To regrid: compute flux per unit edge = am_ll / Δy_ll,
-        # interpolate that to CS x-faces, then multiply by CS Δy.
-
-        # x-flux density: am_ll / Δy_ll (Nx+1, Ny, Nz) — but am has Nx+1,
-        # the extra face is the periodic wrap. Treat as cell-center-like
-        # by averaging adjacent faces: f_x[i,j,k] = 0.5*(am[i]+am[i+1])/Δy
-        # Actually simpler: interpolate am directly at face positions.
-        # Since am is on faces and we need it at CS faces, we need to
-        # interpolate the face field. Use cell-center am ~ 0.5*(am[i]+am[i+1]).
-
-        # Cell-center flux density (unit: kg/m/substep)
-        am_cc = zeros(FT, Nx_ll, Ny_ll, Nz)
-        bm_cc = zeros(FT, Nx_ll, Ny_ll, Nz)
-
+        # Build cell-center flux density [kg/m/substep] from LatLon face fluxes.
+        # Average adjacent face values to cell centers, divide by edge length.
         @inbounds for k in 1:Nz, j in 1:Ny_ll, i in 1:Nx_ll
-            ip1 = mod1(i + 1, Nx_ll + 1)
-            if ip1 > Nx_ll + 1; ip1 = 1; end
-            am_cc[i, j, k] = 0.5 * (am_ll[i, j, k] + am_ll[i+1, j, k]) / Δy_ll
+            am_cc[i, j, k] = FT(0.5) * (am_ll[i, j, k] + am_ll[i+1, j, k]) / Δy_ll
         end
         @inbounds for k in 1:Nz, j in 1:Ny_ll, i in 1:Nx_ll
             cos_lat = cosd(src_lats[j])
             Δx_ll = R_earth * Δlon_ll * max(cos_lat, FT(1e-6))
-            bm_cc[i, j, k] = 0.5 * (bm_ll[i, j, k] + bm_ll[i, min(j+1, Ny_ll+1), k]) / Δx_ll
+            bm_cc[i, j, k] = FT(0.5) * (bm_ll[i, j, k] + bm_ll[i, min(j+1, Ny_ll+1), k]) / Δx_ll
         end
 
-        # Interpolate cell-center flux densities to CS face positions
+        # Interpolate flux densities to CS face positions, scale by CS edge lengths
         for p in 1:6
-            # x-face flux density → am
             u_xface = zeros(FT, Nc+1, Nc, Nz)
             bilinear_interp_3d!(u_xface, am_cc,
                                 xface_lons[p], xface_lats[p], src_lons, src_lats)
@@ -460,7 +406,6 @@ function main()
                 am_panels[p][i, j, k] = u_xface[i, j, k] * Δy[min(i, Nc), j]
             end
 
-            # y-face flux density → bm
             v_yface = zeros(FT, Nc, Nc+1, Nz)
             bilinear_interp_3d!(v_yface, bm_cc,
                                 yface_lons[p], yface_lats[p], src_lons, src_lats)
@@ -469,10 +414,9 @@ function main()
             end
         end
 
-        # Load next window's mass for dm computation (or zeros for last window)
+        # Load next window's mass for dm computation
         if win < nwindow
-            window_next = load_transport_window(reader, win + 1)
-            m_next_ll = window_next.air_mass
+            m_next_ll, _, _ = load_window!(reader, win + 1)
         else
             m_next_ll = m_ll  # last window: dm = 0
         end

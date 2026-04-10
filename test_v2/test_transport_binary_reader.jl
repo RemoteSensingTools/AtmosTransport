@@ -32,11 +32,15 @@ function write_test_transport_binary_reduced(path::AbstractString; FT::Type{<:Ab
                            steps_per_window=2,
                            mass_basis=:moist,
                            source_flux_sampling=source_flux_sampling,
+                           extra_header=Dict(
+                               "poisson_balance_target_scale" => 0.25,
+                               "poisson_balance_target_semantics" => "forward_window_mass_difference / (2 * steps_per_window)",
+                           ),
                            binary_kwargs...)
     return grid
 end
 
-function write_test_transport_binary_latlon(path::AbstractString; FT::Type{<:AbstractFloat}=Float64, source_flux_sampling::Symbol=:window_start_endpoint, binary_kwargs...)
+function write_test_transport_binary_latlon(path::AbstractString; FT::Type{<:AbstractFloat}=Float64, source_flux_sampling::Symbol=:window_start_endpoint, flux_sampling::Symbol=:window_constant, binary_kwargs...)
     Nx, Ny, Nz = 6, 4, 3
     mesh = LatLonMesh(; FT=FT, Nx=Nx, Ny=Ny)
     vertical = HybridSigmaPressure(FT[0, 100, 300, 1000], FT[0, 0, 0, 1])
@@ -66,6 +70,11 @@ function write_test_transport_binary_latlon(path::AbstractString; FT::Type{<:Abs
                            steps_per_window=2,
                            mass_basis=:moist,
                            source_flux_sampling=source_flux_sampling,
+                           flux_sampling=flux_sampling,
+                           extra_header=Dict(
+                               "poisson_balance_target_scale" => 0.25,
+                               "poisson_balance_target_semantics" => "forward_window_mass_difference / (2 * steps_per_window)",
+                           ),
                            binary_kwargs...)
     return grid
 end
@@ -85,10 +94,12 @@ end
         @test has_flux_delta(reader)
         @test source_flux_sampling(reader) == :window_start_endpoint
         @test air_mass_sampling(reader) == :window_start_endpoint
-        @test flux_sampling(reader) == :window_start_endpoint
+        @test flux_sampling(reader) == :window_constant
         @test flux_kind(reader) == :substep_mass_amount
         @test humidity_sampling(reader) == :window_endpoints
         @test delta_semantics(reader) == :forward_window_endpoint_difference
+        @test reader.header.poisson_balance_target_scale == 0.25
+        @test reader.header.poisson_balance_target_semantics == "forward_window_mass_difference / (2 * steps_per_window)"
 
         header_repr = sprint(show, reader.header)
         @test occursin("TransportBinaryHeader", header_repr)

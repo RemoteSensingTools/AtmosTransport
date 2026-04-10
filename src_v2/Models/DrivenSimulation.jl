@@ -23,10 +23,11 @@ mutable struct DrivenSimulation{ModelT, DriverT, WindowT, AT, QT, FT, CB}
     current_window_index  :: Int
     stop_window           :: Int
     final_iteration       :: Int
-    callbacks                 :: CB
-    initialize_air_mass       :: Bool
-    use_midpoint_forcing      :: Bool
-    reset_air_mass_each_window :: Bool
+    callbacks                   :: CB
+    initialize_air_mass         :: Bool
+    use_midpoint_forcing        :: Bool
+    reset_air_mass_each_window  :: Bool
+    interpolate_fluxes_within_window :: Bool
 end
 
 @inline _basis_symbol(::DryBasis) = :dry
@@ -72,7 +73,11 @@ end
 
 function _refresh_forcing!(sim::DrivenSimulation, substep::Int)
     λ = _substep_fraction(substep, sim.steps_per_window, typeof(sim.Δt), sim.use_midpoint_forcing)
-    interpolate_fluxes!(sim.model.fluxes, sim.window, λ)
+    if sim.interpolate_fluxes_within_window
+        interpolate_fluxes!(sim.model.fluxes, sim.window, λ)
+    else
+        copy_fluxes!(sim.model.fluxes, sim.window.fluxes)
+    end
     expected_air_mass!(sim.expected_air_mass, sim.window, λ)
     if sim.qv_buffer !== nothing
         interpolate_qv!(sim.qv_buffer, sim.window, λ)
@@ -112,6 +117,7 @@ Keyword arguments:
 - `initialize_air_mass=true`
 - `use_midpoint_forcing=true`
 - `reset_air_mass_each_window=true`
+- `interpolate_fluxes_within_window=nothing` (derive from driver)
 - `callbacks=NamedTuple()`
 """
 function DrivenSimulation(model::TransportModel,
@@ -121,6 +127,7 @@ function DrivenSimulation(model::TransportModel,
                           initialize_air_mass::Bool = true,
                           use_midpoint_forcing::Bool = true,
                           reset_air_mass_each_window::Bool = true,
+                          interpolate_fluxes_within_window = nothing,
                           callbacks = NamedTuple()) where {D <: AbstractMetDriver}
     1 <= start_window <= stop_window <= total_windows(driver) ||
         throw(ArgumentError("invalid window range: start_window=$(start_window), stop_window=$(stop_window), total_windows=$(total_windows(driver))"))
@@ -136,6 +143,9 @@ function DrivenSimulation(model::TransportModel,
     FT = promote_type(eltype(model.state.air_mass), typeof(window_dt(driver)))
     Δt = FT(window_dt(driver) / steps_per_window(driver))
     nsteps_total = (stop_window - start_window + 1) * steps_per_window(driver)
+
+    flux_interp = interpolate_fluxes_within_window === nothing ?
+                  (flux_interpolation_mode(driver) === :interpolate) : Bool(interpolate_fluxes_within_window)
 
     sim = DrivenSimulation{typeof(model), typeof(driver), typeof(window), typeof(expected_air_mass), typeof(qv_buffer), FT, typeof(callbacks)}(
         model,
@@ -155,6 +165,7 @@ function DrivenSimulation(model::TransportModel,
         initialize_air_mass,
         use_midpoint_forcing,
         reset_air_mass_each_window,
+        flux_interp,
     )
 
     if initialize_air_mass

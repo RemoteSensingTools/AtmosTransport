@@ -33,7 +33,12 @@ function write_sequence_binary(path::AbstractString; FT::Type{<:AbstractFloat}=F
                            half_dt_seconds=450.0,
                            steps_per_window=1,
                            mass_basis=:moist,
-                           source_flux_sampling=:window_start_endpoint)
+                           source_flux_sampling=:window_start_endpoint,
+                           flux_sampling=:window_constant,
+                           extra_header=Dict(
+                               "poisson_balance_target_scale" => 0.5,
+                               "poisson_balance_target_semantics" => "forward_window_mass_difference / (2 * steps_per_window)",
+                           ))
     return nothing
 end
 

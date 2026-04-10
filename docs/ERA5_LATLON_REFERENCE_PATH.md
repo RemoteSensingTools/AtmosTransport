@@ -10,7 +10,7 @@ This path is intentionally narrow:
 
 - grid: ERA5-derived structured lat-lon
 - runtime: `src_v2` only
-- operator: `UpwindAdvection`
+- operators: `UpwindScheme`, `SlopesScheme`
 - physics: pure advection only
 - basis: explicit dry or moist, with moist as the default reference path
 
@@ -51,20 +51,17 @@ Recommended humidity sections for moist transport that may later write dry VMR:
 - `qv_start`
 - `qv_end`
 
-Recommended delta sections for time-interpolated forcing:
+Recommended delta sections for explicit forward-window provenance:
 
 - `dam`
 - `dbm`
 - `dcm`
 - `dm`
 
-The design intent is explicit: if the runtime interpolates fluxes through the
-window, `dcm` should be present so vertical forcing is not reconstructed by a
-closure routine during stepping. The stored runtime contract for this ERA5 path
-is:
+The stored runtime contract for the current ERA5 path is:
 
 - `air_mass_sampling = "window_start_endpoint"`
-- `flux_sampling = "window_start_endpoint"`
+- `flux_sampling = "window_constant"`
 - `flux_kind = "substep_mass_amount"`
 - `delta_semantics = "forward_window_endpoint_difference"`
 
@@ -87,13 +84,20 @@ For dry-air diagnostics from moist transport:
 - use runtime end-state moist mass together with `qv_end`
 - do not reuse stale `qv_start` for output conversion
 
-For runtime interpolation of delta payloads in `DrivenSimulation`:
+The lat-lon preprocessor also records the Poisson-balance normalization used to make the stored horizontal fluxes consistent with the Strang-split mass path:
+
+- `poisson_balance_target_scale = 1 / (2 * steps_per_window)`
+- this means the balance target is `(m_next - m_curr) / (2 * steps_per_window)`
+- the factor of `2` comes from the repeated horizontal sweeps inside `X Y Z Z Y X`
+
+For the current reference path:
 
 - each met window contains `steps_per_window` transport substeps
-- forcing is sampled at the substep midpoint
-- the interpolation fraction is `λ = (s - 0.5) / steps_per_window`
-- the same convention is applied to `am`, `bm`, `cm`, `m`, and optional
-  humidity diagnostics carried in the current window state
+- `am`, `bm`, and `cm` stay constant within the window
+- endpoint humidity diagnostics may still use `qv_start/qv_end`
+- `dam`, `dbm`, `dcm`, and `dm` remain in the binary as explicit forward-window
+  deltas and provenance, but the current lat-lon runtime does not interpolate
+  fluxes with them
 
 ## `src_v2` Driver Path
 
@@ -109,7 +113,7 @@ The clean met-driver seam is now:
    - exposes endpoint humidity and optional flux deltas
 3. `DrivenSimulation`
    - owns window/substep orchestration
-   - interpolates forcing into the model flux workspace
+   - prepares forcing into the model flux workspace
    - keeps tracer and air-mass prognostics inside the model
 4. `TransportModel`
    - owns prognostic air mass and tracer masses
@@ -128,9 +132,11 @@ Implemented now:
 - typed `StructuredTransportWindow`
 - endpoint humidity loading
 - optional full flux-delta loading, including `dcm`
-- standalone `src_v2` upwind stepping on structured lat-lon
-- standalone `DrivenSimulation` multi-window runtime with midpoint forcing
-  interpolation
+- standalone `src_v2` upwind and slopes stepping on structured lat-lon
+- standalone `DrivenSimulation` multi-window runtime with driver-controlled
+  forcing semantics
+- verified 2-day real-data Dec 2021 pure-advection runs for both `UpwindScheme`
+  and `SlopesScheme` on the current reference binaries
 
 ## What Is Not Implemented Yet
 
@@ -140,36 +146,23 @@ Not implemented yet:
 - higher-order structured advection on this path as a production-ready option
 - reduced-Gaussian preprocessing through the same native path
 - cubed-sphere runtime support in `src_v2`
-- threaded payload packing/writing in the preprocessor
 
 ## Minimal Usage Sketch
 
 Preprocess one day:
 
 ```bash
-julia --project=. scripts/preprocessing/preprocess_spectral_v4_binary.jl \
-  config/preprocessing/era5_spectral_v4.toml --day 2021-12-01
+julia -t24 --project=. scripts/preprocessing/preprocess_era5_latlon_transport_binary_v2.jl \
+  config/preprocessing/era5_latlon_transport_binary_v2.toml --day 2021-12-01
 ```
 
-Run two windows through the standalone `src_v2` runtime:
+Run the standalone `src_v2` reference path:
 
-```julia
-include("src_v2/AtmosTransportV2.jl")
-using .AtmosTransportV2
-
-path = "path/to/era5_transport_20211201_merged33Pa_float64.bin"
-driver = TransportBinaryDriver(path; FT=Float64)
-grid = driver_grid(driver)
-
-window1 = load_transport_window(driver, 1)
-state = CellState(MoistBasis, copy(window1.air_mass); CO2 = copy(window1.air_mass) .* 400e-6)
-fluxes = allocate_face_fluxes(grid.horizontal, nlevels(grid); FT=Float64, basis=MoistBasis)
-model = TransportModel(state, fluxes, grid, UpwindAdvection())
-sim = DrivenSimulation(model, driver; start_window=1, stop_window=2)
-
-run!(sim)
+```bash
+julia --project=. scripts/run_transport_binary_v2.jl path/to/run_transport_v2_upwind.toml
 ```
 
 Current status: the binary, driver, and multi-window runtime layers are now in
-place for this path. The next step is a documented real-data Dec 2021 smoke run
-through the same contract.
+place for this path and the first 2-day Dec 2021 reference runs are complete.
+The next step is to carry the same validated forcing contract into the native
+ReducedGaussian path.

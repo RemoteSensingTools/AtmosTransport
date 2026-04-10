@@ -27,7 +27,10 @@ Suggested reading order:
 2. [10_CORE_CONTRACTS.md](/home/cfranken/code/gitHub/AtmosTransportModel/docs_v2/10_CORE_CONTRACTS.md)
 3. [20_RUNTIME_FLOW.md](/home/cfranken/code/gitHub/AtmosTransportModel/docs_v2/20_RUNTIME_FLOW.md)
 4. [30_BINARY_AND_DRIVERS.md](/home/cfranken/code/gitHub/AtmosTransportModel/docs_v2/30_BINARY_AND_DRIVERS.md)
-5. [40_QUALITY_GATES.md](/home/cfranken/code/gitHub/AtmosTransportModel/docs_v2/40_QUALITY_GATES.md)
+5. [35_RUNTIME_STABILITY_AND_SUBCYCLING.md](/home/cfranken/code/gitHub/AtmosTransportModel/docs_v2/35_RUNTIME_STABILITY_AND_SUBCYCLING.md)
+6. [36_POISSON_BALANCE_TARGET_BUG_2026-04-09.md](/home/cfranken/code/gitHub/AtmosTransportModel/docs_v2/36_POISSON_BALANCE_TARGET_BUG_2026-04-09.md)
+7. [37_WINDOW_CONSTANT_FLUX_INTERPRETATION_BUG_2026-04-09.md](/home/cfranken/code/gitHub/AtmosTransportModel/docs_v2/37_WINDOW_CONSTANT_FLUX_INTERPRETATION_BUG_2026-04-09.md)
+8. [40_QUALITY_GATES.md](/home/cfranken/code/gitHub/AtmosTransportModel/docs_v2/40_QUALITY_GATES.md)
 
 Quick inspection helper:
 

@@ -5,7 +5,7 @@ using Test
 include(joinpath(@__DIR__, "..", "src_v2", "AtmosTransportV2.jl"))
 using .AtmosTransportV2
 
-function write_driven_latlon_binary(path::AbstractString; FT::Type{<:AbstractFloat}=Float64, source_flux_sampling::Symbol=:window_start_endpoint)
+function write_driven_latlon_binary(path::AbstractString; FT::Type{<:AbstractFloat}=Float64, source_flux_sampling::Symbol=:window_start_endpoint, flux_sampling::Symbol=:window_constant)
     Nx, Ny, Nz = 4, 3, 2
     mesh = LatLonMesh(; FT=FT, Nx=Nx, Ny=Ny)
     vertical = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
@@ -34,7 +34,12 @@ function write_driven_latlon_binary(path::AbstractString; FT::Type{<:AbstractFlo
                            half_dt_seconds=1800.0,
                            steps_per_window=2,
                            mass_basis=:moist,
-                           source_flux_sampling=source_flux_sampling)
+                           source_flux_sampling=source_flux_sampling,
+                           flux_sampling=flux_sampling,
+                           extra_header=Dict(
+                               "poisson_balance_target_scale" => 0.25,
+                               "poisson_balance_target_semantics" => "forward_window_mass_difference / (2 * steps_per_window)",
+                           ))
     return grid
 end
 
@@ -53,6 +58,7 @@ end
         fluxes = allocate_face_fluxes(grid.horizontal, 2; FT=Float64, basis=MoistBasis)
         model = @inferred TransportModel(state, fluxes, grid, UpwindScheme())
         sim = DrivenSimulation(model, driver; start_window=1, stop_window=2)
+        @test sim.interpolate_fluxes_within_window == false
 
         @test sim.Δt == 1800.0
         @test sim.window_dt == 3600.0
@@ -79,9 +85,9 @@ end
         @test sim.time == 1800.0
         @test window_index(sim) == 1
         @test substep_index(sim) == 2
-        @test all(isapprox.(sim.model.fluxes.am, 0.05; atol=eps(Float64) * 10))
-        @test all(isapprox.(sim.model.fluxes.bm, 0.1; atol=eps(Float64) * 10))
-        @test all(isapprox.(sim.model.fluxes.cm, 0.15; atol=eps(Float64) * 10))
+        @test all(iszero, sim.model.fluxes.am)
+        @test all(iszero, sim.model.fluxes.bm)
+        @test all(iszero, sim.model.fluxes.cm)
         @test all(isapprox.(sim.expected_air_mass, 1.2; atol=eps(Float64) * 10))
         @test all(isapprox.(current_qv(sim), 0.0125; atol=eps(Float64) * 10))
 
@@ -90,9 +96,9 @@ end
         @test sim.time == 3600.0
         @test window_index(sim) == 1
         @test substep_index(sim) == 1
-        @test all(isapprox.(sim.model.fluxes.am, 0.15; atol=eps(Float64) * 10))
-        @test all(isapprox.(sim.model.fluxes.bm, 0.3; atol=eps(Float64) * 10))
-        @test all(isapprox.(sim.model.fluxes.cm, 0.45; atol=eps(Float64) * 10))
+        @test all(iszero, sim.model.fluxes.am)
+        @test all(iszero, sim.model.fluxes.bm)
+        @test all(iszero, sim.model.fluxes.cm)
         @test all(isapprox.(sim.expected_air_mass, 1.6; atol=eps(Float64) * 10))
         @test all(isapprox.(current_qv(sim), 0.0175; atol=eps(Float64) * 10))
 
@@ -101,9 +107,9 @@ end
         @test sim.time == 5400.0
         @test window_index(sim) == 2
         @test substep_index(sim) == 2
-        @test all(isapprox.(sim.model.fluxes.am, 0.1; atol=eps(Float64) * 10))
-        @test all(isapprox.(sim.model.fluxes.bm, 0.2; atol=eps(Float64) * 10))
-        @test all(isapprox.(sim.model.fluxes.cm, 0.3; atol=eps(Float64) * 10))
+        @test all(iszero, sim.model.fluxes.am)
+        @test all(iszero, sim.model.fluxes.bm)
+        @test all(iszero, sim.model.fluxes.cm)
         @test all(isapprox.(sim.expected_air_mass, 1.4; atol=eps(Float64) * 10))
         @test all(isapprox.(current_qv(sim), 0.0225; atol=eps(Float64) * 10))
 

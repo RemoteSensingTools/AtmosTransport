@@ -11,71 +11,56 @@ It is intentionally narrow:
 - `src_v2` only
 - ERA5 lat-lon reference path first
 - `UpwindScheme` as the first runtime truth baseline
-- `SlopesScheme` only after the `UpwindScheme` path is stable enough to serve as
-  the comparison target
+- `SlopesScheme` validated against the same binaries after the upwind path was
+  stable
 
 ## Current Real-Data Status
 
-The first standalone `src_v2` ERA5 lat-lon transport binaries for
-`2021-12-01` and `2021-12-02` were successfully produced and can be read and
-executed through the new runtime.
+The current standalone `src_v2` ERA5 lat-lon reference path now works for the
+first full 2-day real-data smoke test on `2021-12-01` to `2021-12-02`.
 
-What now works:
+Verified results:
 
-- a full real-data `2021-12-01` run completes with `UpwindScheme`
-- the same full real-data `2021-12-01` run completes with `SlopesScheme`
-- both runs stay finite for all 24 windows
-- both runs preserve a uniform tracer exactly to the reported precision
-- the kernel comparison suite passes again, including legacy
-  `RussellLernerAdvection` vs `SlopesScheme`
+- `UpwindScheme` completes both days on the rebuilt reference binaries
+- `SlopesScheme` completes the same 2-day run on the same binaries
+- both runs stay finite for all 48 windows
+- the day-boundary air-mass mismatch before day 2 is `9.153e-07`
+- the first-day worst hourly endpoint mismatch is `7.671e-06` local and
+  `9.492e-06` global across all 23 handoffs
+- tracer-mass drift for a uniform tracer is `0` for upwind and `1.219e-16` for
+  slopes
 
-So the original day-scale blow-up on the real `0.5°` lat-lon binary was fixed
-well enough to produce a usable single-day baseline.
+So the original multi-day mass-loss bug on the real `0.5°` lat-lon reference
+path is fixed for the current forcing contract.
 
-## What Still Fails: Multi-Day Endpoint Fidelity
+## Why The Final Air-Mass Number Is Not The Main Metric
 
-A two-day carry-forward run is **not** yet a clean reference path.
+The runner reports a final air-mass change relative to the initial state. That
+number is not a pure conservation metric here because the driver resets air mass
+from the met window at each new window boundary.
 
-Observed behavior:
-
-- the binary day handoff itself is exact:
-  - `day1.window24.air_mass + day1.window24.deltas.dm == day2.window1.air_mass`
-- but the runtime state at the end of day 1 does **not** land close to the day-2
-  window-1 air-mass state
-- the measured local boundary mismatch before day 2 is about `5.0e-2`
-
-This means:
-
-- the remaining bug is **not** in the binary payload continuity
-- the remaining bug is in the runtime integration of the window forcing
-- single-day stability is therefore necessary but not sufficient to claim the
-  lat-lon path is ready for multi-day reference runs
-
-## Why This Matters
-
-The current runner was originally reporting a final "air-mass drift" relative to
-initial state. That number is not a pure conservation metric because the driver
-resets air mass from the met window at each new window boundary.
-
-The important diagnostic for multi-day correctness is instead:
+The important diagnostics for multi-day correctness are instead:
 
 - does the runtime state at the end of window `n` land near the stored air-mass
   state at window `n+1`?
+- do uniform-tracer runs preserve tracer mass on the same forced air-mass path?
 
-That is now the key acceptance criterion for the lat-lon runtime.
+Those are now the key acceptance criteria for the lat-lon runtime.
 
 ## What The Current Flux Contract Means
 
 The new transport-binary runtime contract currently says:
 
 - `flux_kind = :substep_mass_amount`
-- flux interpolation is done upstream in the driver/runtime layer
+- flux interpretation is done upstream in the driver/runtime layer
 - advection kernels only consume prepared flux fields
 
 That architectural split is still correct.
 
-However, the current ERA5 lat-lon preprocessor still reuses the legacy spectral
-pipeline convention where `am`, `bm`, and `cm` are scaled to `half_dt`.
+The current ERA5 lat-lon reference binaries reuse the legacy spectral pipeline
+convention where `am`, `bm`, and `cm` are scaled to `half_dt`, but after
+preprocessing they should be treated as **window-constant substep transport
+amounts**, not as endpoint states to interpolate toward the next hour.
 
 Relevant source:
 
@@ -89,10 +74,9 @@ So the right reading of the current ERA5 lat-lon contract is:
 
 - the binary stores prepared Strang-sweep transport amounts for one substep
 - the runtime should not multiply fluxes by `dt`
-- the remaining question is whether midpoint interpolation of hourly endpoint
-  sweep fluxes is endpoint-faithful enough over a full hour
-
-The current two-day mismatch says: **not yet**.
+- the current reference path should keep those fluxes constant within the hour
+- endpoint interpolation inside the current hour was the remaining bug, not the
+  intended contract
 
 ## Structured Subcycling Status
 
@@ -104,13 +88,13 @@ That was enough to remove the original full-day instability on the real
 
 - it is global per direction, not row-adaptive
 - it is CPU-only; GPU arrays currently fall back to a single pass
-- it improves stability, but it does not guarantee endpoint fidelity across
-  hourly windows
+- it improves stability, but it was not the final endpoint-fidelity fix
 
 So the current state is:
 
-- stable enough for a one-day upwind/slopes baseline
-- not yet accurate enough for a trusted two-day carry-forward reference run
+- stable enough for the current 2-day lat-lon reference run
+- still not the final word on long-run efficiency or TM5-style latitude-adaptive
+  policies
 
 ## Where TM5 Still Matters
 
@@ -136,28 +120,54 @@ But `src_v2` should still stay generic. That argues for:
 2. scheme-independent CFL handling
 3. topology-aware implementations behind a stable API
 
-## Likely Next Numerical Step
+## Root Cause Found
 
-The next bug to solve is no longer "make the day run finite". It is:
+The multi-day endpoint-fidelity problem turned out to be two coupled forcing
+bugs, not an advection-kernel bug.
 
-- make the runtime land near the next stored window state
+### Bug 1: Poisson-balance target normalization
 
-The most likely places to inspect next are:
+What was wrong:
 
-1. structured mass-only endpoint fidelity over one window
-2. consistency between midpoint flux interpolation and stored `dm`
-3. whether the current number of substeps per hour is sufficient for the
-   Strang-split mass path
+- the Poisson-balance target used the raw forward window mass difference
+  `m_next - m_curr`
+- but the stored horizontal fluxes are half-sweep transport amounts consumed
+  over `2 * steps_per_window` horizontal half-sweeps per met window
+- so the correct balance target is:
+  - `(m_next - m_curr) / (2 * steps_per_window)`
 
-The first concrete experiment should be:
+This fix alone reduced hourly mismatch by about an order of magnitude, but it
+was not sufficient.
 
-- keep the same binary payload structure
-- measure end-of-window mismatch systematically
-- test whether a smaller `dt` / more substeps per hour reduces the day-boundary
-  mismatch materially
+### Bug 2: wrong intra-window flux interpretation
 
-If it does, the remaining issue is primarily runtime integration error, not
-binary semantics.
+Even after Bug 1, the runtime was still interpolating `am`, `bm`, and `cm`
+toward the next hour inside the current met window.
+
+That was wrong for the current reference binaries. The balanced flux fields are
+only consistent when interpreted as **window-constant** substep transport
+amounts.
+
+Key evidence:
+
+- old interpolated runtime on rebuilt binaries still showed hourly mismatch of
+  `O(1e-3)`
+- constant-flux replay of the same window dropped those mismatches to
+  `O(1e-7)` to `O(1e-6)`
+- the same fix made the day-boundary mismatch collapse from `5.3e-2` to
+  `9.153e-07`
+
+## Current Reference Conclusion
+
+For the ERA5 lat-lon `src_v2` reference path:
+
+- `source_flux_sampling = :window_start_endpoint`
+- `flux_kind = :substep_mass_amount`
+- `flux_sampling = :window_constant`
+- `poisson_balance_target_scale = 1 / (2 * steps_per_window)`
+
+The driver must keep fluxes constant within each met window for this path.
+Advection kernels should not diagnose closure or reinterpret timing semantics.
 
 ## PrecompileTools: Useful, But Not For This Bug
 
@@ -169,7 +179,7 @@ binary semantics.
 
 It does **not** solve:
 
-- multi-day endpoint mismatch
+- forcing-contract mistakes
 - large x-direction CFL by itself
 - slow GRIB or NetCDF I/O
 - expensive spectral transforms
@@ -187,11 +197,11 @@ the biggest costs are not binary packing:
 
 Representative timing for one day was about:
 
-- total: `~313 s`
-- spectral GRIB read: `~125 s`
-- spectral transforms: `~76 s`
-- QV loads: `~55 s`
-- write: `~17 s`
+- total: `~303-312 s`
+- spectral GRIB read: `~126-131 s`
+- spectral transforms: `~76-80 s`
+- QV loads: `~43-44 s`
+- write: `~18 s`
 
 So the first preprocessing optimizations should be:
 
@@ -207,38 +217,5 @@ The natural parallel units are:
 
 Not recommended as a first move:
 
-- splitting `VO`, `D`, and `LNSP` across separate workers
-
-Those fields belong to one coupled spectral transform path.
-
-## Immediate Next Step
-
-The next implementation step should be:
-
-- keep the current stable single-day lat-lon path
-- add explicit diagnostics for end-of-window air-mass mismatch
-- test whether more substeps per hour materially improve endpoint fidelity
-- only after that start treating the lat-lon path as ready for two-day
-  reference runs
-
-ReducedGaussian should stay on hold until this lat-lon endpoint-fidelity issue is
-understood, because that same question will otherwise just reappear on the next
-mesh.
-
-## Useful Diagnostic Command
-
-To measure runtime endpoint fidelity against the next stored window state:
-
-```bash
-julia --project=. scripts/diagnostics/check_window_endpoint_v2.jl \
-  ~/data/AtmosTransport/met/era5/0.5x0.5/transport_binary_v2_tropo34_dec2021_f64/\
-  era5_transport_v2_20211201_merged1000Pa_float64.bin upwind 6
-```
-
-The current baseline result is:
-
-- local hourly air-mass mismatch: roughly `2.6e-2` to `3.5e-2`
-- global hourly air-mass mismatch: roughly `1e-6`
-
-That is the metric to watch while changing `dt`, subcycling policy, or the
-window-forcing interpolation scheme.
+- distributing by spectral variable (`VO`, `D`, `LNSP`) because they are tightly
+  coupled in one transform path

@@ -202,18 +202,23 @@ function write_transport_binary_v2_from_storage!(bin_path::AbstractString,
 
     transport_grid = build_transport_binary_grid(grid, vertical, FT)
     t_write = time()
+    steps_per_met = exact_steps_per_window(settings.met_interval, settings.dt)
     write_transport_binary(bin_path, transport_grid, windows;
                            FT=FT,
                            dt_met_seconds=settings.met_interval,
                            half_dt_seconds=settings.half_dt,
-                           steps_per_window=max(1, round(Int, settings.met_interval / settings.dt)),
+                           steps_per_window=steps_per_met,
                            source_flux_sampling=:window_start_endpoint,
                            air_mass_sampling=:window_start_endpoint,
-                           flux_sampling=:window_start_endpoint,
+                           flux_sampling=:window_constant,
                            flux_kind=:substep_mass_amount,
                            humidity_sampling=:window_endpoints,
                            delta_semantics=:forward_window_endpoint_difference,
                            mass_basis=settings.mass_basis,
+                           extra_header=Dict(
+                               "poisson_balance_target_scale" => poisson_balance_target_scale(steps_per_met),
+                               "poisson_balance_target_semantics" => "forward_window_mass_difference / (2 * steps_per_window)",
+                           ),
                            threaded=true)
     write_seconds = time() - t_write
     return pack_seconds, write_seconds
@@ -229,7 +234,7 @@ function process_day_transport_binary_v2(date::Date,
     Nz = vertical.Nz
     Nx = nlon(grid)
     Ny = nlat(grid)
-    steps_per_met = max(1, round(Int, settings.met_interval / settings.dt))
+    steps_per_met = exact_steps_per_window(settings.met_interval, settings.dt)
     date_str = Dates.format(date, "yyyymmdd")
 
     vo_d_path = joinpath(settings.spectral_dir, "era5_spectral_$(date_str)_vo_d.gb")
@@ -285,7 +290,7 @@ function process_day_transport_binary_v2(date::Date,
     next_day_seconds = time() - t0
 
     t0 = time()
-    apply_poisson_balance!(storage, last_hour_next, vertical)
+    apply_poisson_balance!(storage, last_hour_next, vertical, steps_per_met)
     poisson_seconds = time() - t0
 
     t0 = time()

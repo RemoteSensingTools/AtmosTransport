@@ -15,6 +15,18 @@ end
 
 const HEADER_SIZE = 16384
 
+@inline function exact_steps_per_window(dt_met::Real, dt::Real)
+    ratio = Float64(dt_met) / Float64(dt)
+    steps = round(Int, ratio)
+    isapprox(ratio, steps; atol=1e-12, rtol=0.0) ||
+        error("met_interval / dt must be an integer for the current transport-binary contract; got dt_met=$(dt_met), dt=$(dt), ratio=$(ratio)")
+    steps >= 1 || error("steps_per_window must be >= 1; got $(steps)")
+    return steps
+end
+
+@inline poisson_balance_target_scale(steps_per_window::Integer, ::Type{FT}=Float64) where FT =
+    FT(inv(2 * max(Int(steps_per_window), 1)))
+
 """
     script_provenance() -> NamedTuple
 
@@ -100,6 +112,8 @@ function build_v4_header(date::Date,
         "var_names" => var_names,
         "date" => Dates.format(date, "yyyy-mm-dd"),
         "spectral_half_dt_seconds" => settings.half_dt,
+        "poisson_balance_target_scale" => poisson_balance_target_scale(sizes.steps_per_met),
+        "poisson_balance_target_semantics" => "forward_window_mass_difference / (2 * steps_per_window)",
         "script_path" => provenance.script_path,
         "script_mtime_unix" => provenance.script_mtime,
         "git_commit" => provenance.git_commit,
@@ -759,21 +773,26 @@ function next_day_merged_fields(next_day_hour0,
 end
 
 """
-    fill_window_mass_tendency!(dm_dt_buf, storage, last_hour_next, win_idx)
+    fill_window_mass_tendency!(dm_dt_buf, storage, last_hour_next, win_idx, steps_per_window)
 
-Fill the per-window cell-mass tendency used by the Poisson horizontal-flux
-balance step.
+Fill the cell-mass target used by the Poisson horizontal-flux balance step.
+
+The stored `am/bm/cm` fields are half-sweep transport amounts. A full Strang
+substep applies the horizontal fluxes twice, so the Poisson target must be the
+forward window mass difference divided by `2 * steps_per_window`.
 """
 function fill_window_mass_tendency!(dm_dt_buf::Array{FT, 3},
                                     storage::WindowStorage{FT},
                                     last_hour_next,
-                                    win_idx::Int) where FT
+                                    win_idx::Int,
+                                    steps_per_window::Int) where FT
     Nt = length(storage.all_m)
+    scale = poisson_balance_target_scale(steps_per_window, FT)
 
     if win_idx < Nt
-        dm_dt_buf .= storage.all_m[win_idx + 1] .- storage.all_m[win_idx]
+        dm_dt_buf .= (storage.all_m[win_idx + 1] .- storage.all_m[win_idx]) .* scale
     elseif last_hour_next !== nothing
-        dm_dt_buf .= last_hour_next.m .- storage.all_m[win_idx]
+        dm_dt_buf .= (last_hour_next.m .- storage.all_m[win_idx]) .* scale
     else
         fill!(dm_dt_buf, zero(FT))
     end
@@ -782,20 +801,22 @@ function fill_window_mass_tendency!(dm_dt_buf::Array{FT, 3},
 end
 
 """
-    apply_poisson_balance!(storage, last_hour_next, vertical)
+    apply_poisson_balance!(storage, last_hour_next, vertical, steps_per_window)
 
 Apply the TM5-style Poisson horizontal-flux correction to every stored window
-so horizontal convergence matches the forward cell-mass tendency exactly.
+so horizontal convergence matches the per-half-sweep mass target implied by the
+forward window endpoints.
 """
 function apply_poisson_balance!(storage::WindowStorage{FT},
                                 last_hour_next,
-                                vertical) where FT
+                                vertical,
+                                steps_per_window::Int) where FT
     Nx, Ny, Nz = size(storage.all_m[1])
     dm_dt_buf = Array{FT}(undef, Nx, Ny, Nz)
 
     @info "  Applying Poisson mass flux balance..."
     for win_idx in eachindex(storage.all_m)
-        fill_window_mass_tendency!(dm_dt_buf, storage, last_hour_next, win_idx)
+        fill_window_mass_tendency!(dm_dt_buf, storage, last_hour_next, win_idx, steps_per_window)
         balance_mass_fluxes!(storage.all_am[win_idx], storage.all_bm[win_idx], dm_dt_buf)
         @views storage.all_bm[win_idx][:, 1, :] .= zero(FT)
         @views storage.all_bm[win_idx][:, Ny + 1, :] .= zero(FT)
@@ -953,7 +974,7 @@ function process_day(date::Date,
     Nz = vertical.Nz
     Nx = nlon(grid)
     Ny = nlat(grid)
-    steps_per_met = max(1, round(Int, settings.met_interval / settings.dt))
+    steps_per_met = exact_steps_per_window(settings.met_interval, settings.dt)
     date_str = Dates.format(date, "yyyymmdd")
 
     vo_d_path = joinpath(settings.spectral_dir, "era5_spectral_$(date_str)_vo_d.gb")
@@ -1017,7 +1038,7 @@ function process_day(date::Date,
     last_hour_next = next_day_merged_fields(next_day_hour0, date, grid, vertical,
                                             settings, transform, merged, qv, ps_offsets)
 
-    apply_poisson_balance!(storage, last_hour_next, vertical)
+    apply_poisson_balance!(storage, last_hour_next, vertical, sizes.steps_per_met)
     fill_qv_endpoints!(storage, last_hour_next)
 
     header["ps_offsets_pa_per_window"] = ps_offsets[1:Nt]

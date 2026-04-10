@@ -113,6 +113,7 @@ end
 
 function _validate_runtime_semantics(reader::TransportBinaryReader)
     h = reader.header
+    expected_poisson_scale = 1.0 / (2 * h.steps_per_window)
 
     h.flux_kind === :substep_mass_amount ||
         throw(ArgumentError("TransportBinaryDriver requires flux_kind = :substep_mass_amount, got $(h.flux_kind)"))
@@ -121,8 +122,8 @@ function _validate_runtime_semantics(reader::TransportBinaryReader)
         throw(ArgumentError("TransportBinaryDriver requires air_mass_sampling = :window_start_endpoint, got $(h.air_mass_sampling)"))
 
     if has_flux_delta(reader)
-        h.flux_sampling === :window_start_endpoint ||
-            throw(ArgumentError("TransportBinaryDriver requires flux_sampling = :window_start_endpoint when deltas are present, got $(h.flux_sampling)"))
+        h.flux_sampling in (:window_start_endpoint, :window_constant) ||
+            throw(ArgumentError("TransportBinaryDriver requires flux_sampling = :window_start_endpoint or :window_constant when deltas are present, got $(h.flux_sampling)"))
         h.delta_semantics === :forward_window_endpoint_difference ||
             throw(ArgumentError("TransportBinaryDriver requires delta_semantics = :forward_window_endpoint_difference, got $(h.delta_semantics)"))
     else
@@ -136,6 +137,15 @@ function _validate_runtime_semantics(reader::TransportBinaryReader)
     elseif has_qv(reader)
         h.humidity_sampling in (:single_field, :none) ||
             throw(ArgumentError("TransportBinaryDriver only supports humidity_sampling = :single_field for legacy qv payloads, got $(h.humidity_sampling)"))
+    end
+
+    if has_flux_delta(reader)
+        isfinite(h.poisson_balance_target_scale) ||
+            throw(ArgumentError("TransportBinaryDriver requires poisson_balance_target_scale metadata for delta-bearing transport binaries"))
+        isapprox(h.poisson_balance_target_scale, expected_poisson_scale; atol=eps(Float64)*8, rtol=0.0) ||
+            throw(ArgumentError("TransportBinaryDriver requires poisson_balance_target_scale=$(expected_poisson_scale), got $(h.poisson_balance_target_scale)"))
+        h.poisson_balance_target_semantics == "forward_window_mass_difference / (2 * steps_per_window)" ||
+            throw(ArgumentError("TransportBinaryDriver requires poisson_balance_target_semantics = 'forward_window_mass_difference / (2 * steps_per_window)', got $(repr(h.poisson_balance_target_semantics))"))
     end
 
     return nothing
@@ -179,6 +189,8 @@ air_mass_basis(driver::TransportBinaryDriver) = mass_basis(driver.reader)
 supports_moisture(driver::TransportBinaryDriver) = has_qv(driver.reader)
 supports_native_vertical_flux(::TransportBinaryDriver) = true
 driver_grid(driver::TransportBinaryDriver) = driver.grid
+flux_interpolation_mode(driver::TransportBinaryDriver) =
+    has_flux_delta(driver.reader) && driver.reader.header.flux_sampling !== :window_constant ? :interpolate : :constant
 
 @inline function _interpolate_field!(dest, base, delta, λ)
     @. dest = base + λ * delta

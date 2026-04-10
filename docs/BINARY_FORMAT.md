@@ -111,18 +111,21 @@ and `horizontal_topology` for the rest.
 | `steps_per_window` | int | Advection substeps per window |
 | `source_flux_sampling` | string | Raw met-flux provenance recorded by the writer: `"window_start_endpoint"`, `"window_end_endpoint"`, `"window_mean"`, or `"interval_integrated"` (`"unknown"` is reader-only legacy compatibility) |
 | `air_mass_sampling` | string | Stored air-mass timing semantics; current `src_v2` runtime expects `"window_start_endpoint"` |
-| `flux_sampling` | string | Stored horizontal/vertical flux timing semantics; current runtime expects `"window_start_endpoint"` when deltas are present |
+| `flux_sampling` | string | Stored horizontal/vertical flux timing semantics; current runtime support is driver-specific, and the ERA5 lat-lon reference path uses `"window_constant"` |
 | `flux_kind` | string | Stored flux value contract; current runtime expects `"substep_mass_amount"` |
 | `humidity_sampling` | string | `"window_endpoints"`, `"single_field"`, or `"none"` |
 | `delta_semantics` | string | `"forward_window_endpoint_difference"` or `"none"` |
+| `poisson_balance_target_scale` | float | Preprocessing continuity target scale applied to `(m_next - m_curr)` before Poisson balancing horizontal fluxes |
+| `poisson_balance_target_semantics` | string | Human-readable description of the Poisson target normalization |
 
 The crucial distinction is between raw met provenance and stored runtime semantics.
 A preprocessor may ingest interval-mean or interval-integrated source products,
 but the binary should normalize them into the runtime contract expected by
-`src_v2`. The current `DrivenSimulation` path assumes:
+`src_v2`. The current `DrivenSimulation` path assumes a validated stored
+contract chosen by the driver. For the ERA5 lat-lon reference path that means:
 
 - `air_mass_sampling = "window_start_endpoint"`
-- `flux_sampling = "window_start_endpoint"`
+- `flux_sampling = "window_constant"`
 - `flux_kind = "substep_mass_amount"`
 - `delta_semantics = "forward_window_endpoint_difference"` when deltas are present
 

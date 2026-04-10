@@ -19,9 +19,17 @@ The current standalone runtime expects stored transport binaries with explicit
 semantics that match this contract:
 
 - `air_mass_sampling = "window_start_endpoint"`
-- `flux_sampling = "window_start_endpoint"` when deltas are present
+- `flux_sampling = "window_constant"` for the current ERA5 lat-lon reference path
 - `flux_kind = "substep_mass_amount"`
 - `delta_semantics = "forward_window_endpoint_difference"`
+- `poisson_balance_target_scale = 1 / (2 * steps_per_window)` for the current lat-lon Poisson-balanced preprocessor
+
+The driver may still support other stored semantics explicitly, but only when
+they are validated and normalized up front. The current reference path is:
+
+- source flux provenance: `source_flux_sampling = "window_start_endpoint"`
+- stored runtime forcing: constant within the met window
+- advection kernels consume prepared substep mass amounts directly
 
 Humidity semantics:
 
@@ -52,6 +60,7 @@ Drivers should:
 - validate header semantics early
 - refuse unsupported files
 - prepare substep forcing cleanly
+- keep fluxes constant or interpolate only when the header explicitly says so
 
 Drivers should not:
 

@@ -18,7 +18,8 @@
 # Requirements:
 #   - Input binary must have v2 header with embedded A_ifc, B_ifc
 #   - Input must have m, am, bm, cm, ps fields
-#   - The repair Poisson-balances am, bm against dm/dt = m_next - m_curr,
+#   - The repair Poisson-balances am, bm against
+#     (m_next - m_curr) / (2 * steps_per_window),
 #     then recomputes cm from the balanced am/bm.
 #   - For the LAST window of the input, dm/dt is taken as zero (no next).
 # ===========================================================================
@@ -146,7 +147,7 @@ function main()
 
         Repairs an obsolete v2/v3 binary by:
         1. Reading m, am, bm, cm, ps for every window
-        2. Computing dm/dt = m_next - m_curr (zero for last window)
+        2. Computing dm/dt = (m_next - m_curr) / (2 * steps_per_window)
         3. Poisson-balancing am, bm so conv = dm/dt at every cell
         4. Recomputing cm from continuity using B-correction
         5. Writing repaired v4 binary with provenance fields
@@ -186,7 +187,10 @@ function main()
 
     A_ifc = Float64.(collect(hdr.A_ifc))
     B_ifc = Float64.(collect(hdr.B_ifc))
+    steps_per_window = Int(get(hdr, :steps_per_window, get(hdr, :steps_per_met_window, 1)))
+    balance_scale = FT(inv(2 * max(steps_per_window, 1)))
     @info "  Grid: $(Nx)×$(Ny)×$(Nz), $Nt windows, elems_per_window=$elems_per_window_in_total"
+    @info "  Poisson target scale: 1 / (2 * steps_per_window) = $(balance_scale)"
 
     seek(io_in, hdr_size_in)
     raw = Mmap.mmap(io_in, Vector{Float32}, elems_per_window_in_total * Nt, hdr_size_in)
@@ -216,7 +220,7 @@ function main()
     for win in 1:Nt
         @info "  Window $win/$Nt: balance + recompute cm"
         if win < Nt
-            dm_dt_buf .= all_m[win + 1] .- all_m[win]
+            dm_dt_buf .= (all_m[win + 1] .- all_m[win]) .* balance_scale
         else
             fill!(dm_dt_buf, zero(FT))
         end
@@ -287,6 +291,8 @@ function main()
         "dt_seconds" => Float64(get(hdr, :dt_seconds, 900.0)),
         "half_dt_seconds" => Float64(get(hdr, :half_dt_seconds, 450.0)),
         "steps_per_met_window" => Int(get(hdr, :steps_per_met_window, 4)),
+        "poisson_balance_target_scale" => Float64(balance_scale),
+        "poisson_balance_target_semantics" => "forward_window_mass_difference / (2 * steps_per_window)",
         "level_top" => Int(get(hdr, :level_top, 1)),
         "level_bot" => Int(get(hdr, :level_bot, 137)),
         "lons" => collect(hdr.lons),

@@ -29,6 +29,8 @@ struct TransportBinaryHeader
     flux_kind            :: Symbol
     humidity_sampling    :: Symbol
     delta_semantics      :: Symbol
+    poisson_balance_target_scale :: Float64
+    poisson_balance_target_semantics :: String
     A_ifc                :: Vector{Float64}
     B_ifc                :: Vector{Float64}
     mass_basis           :: Symbol
@@ -113,6 +115,8 @@ function Base.show(io::IO, h::TransportBinaryHeader)
           "├── payload:       ", join(String.(h.payload_sections), ", "), "\n",
           "├── humidity:      ", _transport_qv_summary(h), "\n",
           "├── semantics:     ", _transport_semantics_summary(h), "\n",
+          "├── poisson:       ", isnan(h.poisson_balance_target_scale) ? "unspecified" :
+                               string("scale=", h.poisson_balance_target_scale, ", ", h.poisson_balance_target_semantics), "\n",
           "└── header bytes:  ", h.header_bytes)
 end
 
@@ -135,6 +139,8 @@ function Base.show(io::IO, r::TransportBinaryReader)
           "├── payload:       ", join(String.(h.payload_sections), ", "), "\n",
           "├── humidity:      ", _transport_qv_summary(h), "\n",
           "├── semantics:     ", _transport_semantics_summary(h), "\n",
+          "├── poisson:       ", isnan(h.poisson_balance_target_scale) ? "unspecified" :
+                               string("scale=", h.poisson_balance_target_scale, ", ", h.poisson_balance_target_semantics), "\n",
           "└── windows:       ", h.nwindow)
 end
 
@@ -273,6 +279,10 @@ function _parse_transport_header(raw_bytes::Vector{UInt8})
     flux_kind = _transport_parse_symbol_key(hdr, :flux_kind, :substep_mass_amount)
     humidity_sampling = _transport_parse_symbol_key(hdr, :humidity_sampling, _transport_default_humidity_sampling(payload_sections))
     delta_semantics = _transport_parse_symbol_key(hdr, :delta_semantics, _transport_default_delta_semantics(payload_sections))
+    poisson_balance_target_scale = haskey(hdr, :poisson_balance_target_scale) ?
+                                   Float64(hdr.poisson_balance_target_scale) : NaN
+    poisson_balance_target_semantics = haskey(hdr, :poisson_balance_target_semantics) ?
+                                       String(hdr.poisson_balance_target_semantics) : ""
     n_qv = Int(get(hdr, :n_qv, include_qv ? ncell * nlevel : 0))
     n_qv_start = Int(get(hdr, :n_qv_start, include_qv_endpoints ? ncell * nlevel : 0))
     n_qv_end = Int(get(hdr, :n_qv_end, include_qv_endpoints ? ncell * nlevel : 0))
@@ -316,6 +326,8 @@ function _parse_transport_header(raw_bytes::Vector{UInt8})
         flux_kind,
         humidity_sampling,
         delta_semantics,
+        poisson_balance_target_scale,
+        poisson_balance_target_semantics,
         A_ifc,
         B_ifc,
         _transport_parse_mass_basis(hdr),
@@ -737,6 +749,7 @@ function write_transport_binary(path::AbstractString,
                                 humidity_sampling::Symbol = :auto,
                                 delta_semantics::Symbol = :auto,
                                 mass_basis::Symbol = :moist,
+                                extra_header::AbstractDict{<:AbstractString,<:Any} = Dict{String,Any}(),
                                 threaded::Bool = Threads.nthreads() > 1)
     isempty(windows) && throw(ArgumentError("write_transport_binary requires at least one window"))
 
@@ -792,6 +805,7 @@ function write_transport_binary(path::AbstractString,
         "n_dcm" => (:dcm in payload_sections) ? _transport_structured_section_elements(Nx, Ny, ncell, nlevel, :dcm) : 0,
         "n_dm" => (:dm in payload_sections) ? _transport_structured_section_elements(Nx, Ny, ncell, nlevel, :dm) : 0,
     ))
+    isempty(extra_header) || merge!(header, Dict{String, Any}(extra_header))
 
     header_json = JSON3.write(header)
     pad = header_bytes - ncodeunits(header_json)
@@ -821,6 +835,7 @@ function write_transport_binary(path::AbstractString,
                                 humidity_sampling::Symbol = :auto,
                                 delta_semantics::Symbol = :auto,
                                 mass_basis::Symbol = :moist,
+                                extra_header::AbstractDict{<:AbstractString,<:Any} = Dict{String,Any}(),
                                 threaded::Bool = Threads.nthreads() > 1)
     isempty(windows) && throw(ArgumentError("write_transport_binary requires at least one window"))
 
@@ -864,6 +879,7 @@ function write_transport_binary(path::AbstractString,
         "n_dcm" => (:dcm in payload_sections) ? _transport_faceindexed_section_elements(ncell, nface_h, nlevel, :dcm) : 0,
         "n_dm" => (:dm in payload_sections) ? _transport_faceindexed_section_elements(ncell, nface_h, nlevel, :dm) : 0,
     ))
+    isempty(extra_header) || merge!(header, Dict{String, Any}(extra_header))
 
     header_json = JSON3.write(header)
     pad = header_bytes - ncodeunits(header_json)

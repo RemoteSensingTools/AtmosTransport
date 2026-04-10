@@ -26,6 +26,10 @@ include(joinpath(@__DIR__, "..", "scripts", "preprocessing", "preprocess_spectra
     @test settings.output_float_type == Float32
     @test settings.mass_basis == :moist
     @test settings.T_target == 359
+    @test exact_steps_per_window(3600.0, 900.0) == 4
+    @test_throws ErrorException exact_steps_per_window(3600.0, 700.0)
+    @test poisson_balance_target_scale(4, Float64) == 0.125
+    @test poisson_balance_target_scale(1, Float64) == 0.5
 
     @test vertical.Nz_native == 137
     @test vertical.Nz > 0

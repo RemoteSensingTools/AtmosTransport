@@ -127,8 +127,8 @@ function _validate_runtime_semantics(reader::TransportBinaryReader)
         h.delta_semantics === :forward_window_endpoint_difference ||
             throw(ArgumentError("TransportBinaryDriver requires delta_semantics = :forward_window_endpoint_difference, got $(h.delta_semantics)"))
     else
-        h.flux_sampling in (:window_start_endpoint, :window_mean) ||
-            throw(ArgumentError("TransportBinaryDriver supports flux_sampling = :window_start_endpoint or :window_mean without deltas, got $(h.flux_sampling)"))
+        h.flux_sampling in (:window_start_endpoint, :window_mean, :window_constant) ||
+            throw(ArgumentError("TransportBinaryDriver supports flux_sampling = :window_start_endpoint, :window_mean, or :window_constant without deltas, got $(h.flux_sampling)"))
     end
 
     if has_qv_endpoints(reader)
@@ -294,7 +294,7 @@ function load_transport_window(driver::TransportBinaryDriver{FT, ReaderT, <:Atmo
     return _make_transport_window(m, ps, fluxes; qv_pair=qv_pair, deltas=deltas)
 end
 
-function load_transport_window(driver::TransportBinaryDriver{FT, ReaderT, <:AtmosGrid{ReducedGaussianMesh}}, win::Int) where {FT, ReaderT}
+function load_transport_window(driver::TransportBinaryDriver{FT, ReaderT, <:AtmosGrid{<:ReducedGaussianMesh}}, win::Int) where {FT, ReaderT}
     m, ps, fluxes_any = load_window!(driver.reader, win)
     fluxes = fluxes_any::FaceIndexedFluxState
     qv_pair = load_qv_pair_window!(driver.reader, win)

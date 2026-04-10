@@ -353,7 +353,7 @@ end
 
 function TransportBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = Float32)
     io = open(bin_path, "r")
-    read_sz = min(16384, filesize(bin_path))
+    read_sz = min(262144, filesize(bin_path))
     raw = read(io, read_sz)
     header = _parse_transport_header(raw)
 
@@ -824,7 +824,7 @@ function write_transport_binary(path::AbstractString,
                                 grid::AtmosGrid{<:ReducedGaussianMesh},
                                 windows::AbstractVector;
                                 FT::Type{<:AbstractFloat} = floattype(grid),
-                                header_bytes::Int = 16384,
+                                header_bytes::Int = 131072,
                                 dt_met_seconds::Real = 3600.0,
                                 half_dt_seconds::Real = dt_met_seconds / 2,
                                 steps_per_window::Integer = 2,

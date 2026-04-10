@@ -1,0 +1,31 @@
+# ERA5 spectral -> src_v2 transport-binary preprocessor config
+# Native ERA5 reduced-Gaussian reference path.
+
+[input]
+spectral_dir = "~/data/AtmosTransport/met/era5/0.5x0.5/spectral_hourly"
+coefficients = "config/era5_L137_coefficients.toml"
+
+[output]
+directory = "~/data/AtmosTransport/met/era5/N320/transport_binary_v2_tropo34_dec2021_f64"
+include_qv = false
+mass_basis = "moist"
+
+[grid]
+type = "era5_native_reduced_gaussian"
+geometry_source_grib = "~/data/AtmosTransport/met/era5/N320/hourly/raw/ml_an_native_q/era5_ml_an_native_q_20211201_20211202.grib"
+geometry_param_id = 133
+geometry_level = 1
+geometry_date = 20211201
+geometry_time = 0
+echlevs = "ml137_tropo34"
+level_top = 1
+level_bot = 137
+merge_min_thickness_Pa = 1000.0
+
+[numerics]
+float_type = "Float64"
+dt = 900.0
+met_interval = 3600.0
+
+[mass_fix]
+enable = false

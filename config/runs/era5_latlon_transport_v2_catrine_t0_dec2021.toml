@@ -1,0 +1,28 @@
+# src_v2 transport-binary snapshot export config
+#
+# Purpose: compare t=0 horizontal sampling biases with the CATRINE startCO2 IC.
+# Intended for use with:
+#   julia --project=. scripts/diagnostics/export_transport_v2_snapshots.jl \
+#       config/runs/era5_latlon_transport_v2_catrine_t0_dec2021.toml
+
+[input]
+binary_paths = [
+    "~/data/AtmosTransport/met/era5/0.5x0.5/transport_binary_v2_tropo34_dec2021_f64/era5_transport_v2_20211201_merged1000Pa_float64.bin",
+]
+
+[numerics]
+float_type = "Float64"
+
+[run]
+scheme = "upwind"
+tracer_name = "CO2"
+start_window = 1
+stop_window = 0
+reset_air_mass_each_window = false
+
+[init]
+kind = "catrine_co2"
+
+[output]
+snapshot_hours = [0]
+snapshot_file = "~/data/AtmosTransport/output/src_v2_snapshots/era5_latlon_transport_v2_catrine_t0_dec2021.nc"

@@ -24,7 +24,7 @@ function TransportModel(state::CellState{B},
                         fluxes::FaceIndexedFluxState{B},
                         grid::AtmosGrid,
                         advection::Union{AbstractAdvection, AbstractAdvectionScheme};
-                        workspace = AdvectionWorkspace(state.air_mass)) where {B <: AbstractMassBasis}
+                        workspace = AdvectionWorkspace(state.air_mass; mesh=grid.horizontal)) where {B <: AbstractMassBasis}
     return TransportModel{typeof(state), typeof(fluxes), typeof(grid), typeof(advection), typeof(workspace)}(
         state, fluxes, grid, advection, workspace)
 end

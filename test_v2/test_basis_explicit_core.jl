@@ -119,6 +119,44 @@ end
     @test all(isfinite, rm)
 end
 
+@testset "Face-indexed horizontal subcycling preserves positivity" begin
+    FT = Float64
+    Nz = 1
+    mesh = ReducedGaussianMesh(FT[0], [4]; FT=FT)
+    vc = HybridSigmaPressure(FT[0, 100], FT[0, 1])
+    grid = AtmosGrid(mesh, vc, AtmosTransportV2.CPU(); FT=FT)
+
+    m = ones(FT, ncells(mesh), Nz)
+    rm = reshape(FT[1, 0, 0, 0], :, 1)
+    state = CellState(DryBasis, copy(m); CO2=copy(rm))
+    fluxes = allocate_face_fluxes(mesh, Nz; FT=FT, basis=DryBasis)
+    fluxes.horizontal_flux .= zero(FT)
+    fluxes.cm .= zero(FT)
+
+    # Cell 1 sees one strong outflow and one weaker inflow in the same sweep.
+    # The integrated step is physically admissible (net mass stays positive),
+    # but the raw outgoing ratio is > 1 and therefore requires subcycling.
+    fluxes.horizontal_flux[1, 1] = FT(0.4)
+    fluxes.horizontal_flux[2, 1] = FT(1.2)
+
+    ws = AtmosTransportV2.Operators.Advection.AdvectionWorkspace(state.air_mass)
+    nsub = AtmosTransportV2.Operators.Advection._horizontal_face_subcycling_pass_count(
+        fluxes.horizontal_flux, state.air_mass, mesh, ws, FT(1))
+    @test nsub == 3
+
+    flux_scale = inv(FT(nsub))
+    for _ in 1:nsub
+        AtmosTransportV2.Operators.Advection.sweep_horizontal!(
+            state.tracers.CO2, state.air_mass, fluxes.horizontal_flux, mesh,
+            UpwindScheme(), ws, flux_scale)
+    end
+
+    q = mixing_ratio(state, :CO2)
+    @test minimum(state.air_mass) > zero(FT)
+    @test minimum(q) ≥ -eps(FT) * 10
+    @test maximum(q) ≤ one(FT) + eps(FT) * 10
+end
+
 @testset "Honest metadata-only CubedSphere API" begin
     mesh = CubedSphereMesh(; FT=Float64, Nc=4)
     @test_throws ArgumentError cell_area(mesh, 1)
@@ -164,6 +202,43 @@ end
     @test total_air_mass(sim.model.state) ≈ m0 atol=eps(FT) * m0 * 10
     @test total_mass(sim.model.state, :CO2) ≈ rm0 atol=eps(FT) * rm0 * 10
 
+end
+
+@testset "Face-connected reduced-Gaussian GPU matches CPU for Upwind" begin
+    FT = Float64
+    Nz = 2
+    mesh = ReducedGaussianMesh(FT[-45, 45], [4, 4]; FT=FT)
+    vc = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
+    grid = AtmosGrid(mesh, vc, AtmosTransportV2.CPU(); FT=FT)
+
+    m = ones(FT, ncells(mesh), Nz)
+    q = reshape(range(FT(390e-6), FT(410e-6); length=ncells(mesh) * Nz), ncells(mesh), Nz)
+    rm = q .* m
+    fluxes = allocate_face_fluxes(mesh, Nz; FT=FT, basis=DryBasis)
+    fluxes.horizontal_flux .= zero(FT)
+    fluxes.cm .= zero(FT)
+    fluxes.horizontal_flux[1, 1] = FT(0.10)
+    fluxes.horizontal_flux[2, 1] = FT(-0.04)
+    fluxes.horizontal_flux[5, 2] = FT(0.06)
+    fluxes.cm[:, 2] .= reshape(range(FT(-0.03), FT(0.03); length=ncells(mesh)), :, 1)
+
+    state_cpu = CellState(DryBasis, copy(m); CO2=copy(rm))
+    model_cpu = TransportModel(state_cpu, deepcopy(fluxes), grid, UpwindScheme())
+    step!(model_cpu, FT(1800))
+
+    if HAS_CUDA_FOR_ADAPT
+        model_gpu = Adapt.adapt(CUDA.CuArray, TransportModel(CellState(DryBasis, copy(m); CO2=copy(rm)),
+                                                             deepcopy(fluxes), grid, UpwindScheme()))
+        @test model_gpu.workspace.face_left isa CUDA.CuArray{Int32, 1}
+        @test model_gpu.workspace.face_right isa CUDA.CuArray{Int32, 1}
+
+        step!(model_gpu, FT(1800))
+
+        @test Array(model_gpu.state.air_mass) ≈ model_cpu.state.air_mass atol=eps(FT) * 200 rtol=eps(FT) * 200
+        @test Array(model_gpu.state.tracers.CO2) ≈ model_cpu.state.tracers.CO2 atol=eps(FT) * 200 rtol=eps(FT) * 200
+    else
+        @test_skip false
+    end
 end
 
 @testset "Face-connected unsupported reconstruction families fail honestly" begin

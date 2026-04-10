@@ -40,7 +40,12 @@ function write_test_transport_binary_reduced(path::AbstractString; FT::Type{<:Ab
     return grid
 end
 
-function write_test_transport_binary_latlon(path::AbstractString; FT::Type{<:AbstractFloat}=Float64, source_flux_sampling::Symbol=:window_start_endpoint, flux_sampling::Symbol=:window_constant, binary_kwargs...)
+function write_test_transport_binary_latlon(path::AbstractString;
+                                            FT::Type{<:AbstractFloat}=Float64,
+                                            source_flux_sampling::Symbol=:window_start_endpoint,
+                                            flux_sampling::Symbol=:window_constant,
+                                            include_poisson_metadata::Bool=true,
+                                            binary_kwargs...)
     Nx, Ny, Nz = 6, 4, 3
     mesh = LatLonMesh(; FT=FT, Nx=Nx, Ny=Ny)
     vertical = HybridSigmaPressure(FT[0, 100, 300, 1000], FT[0, 0, 0, 1])
@@ -63,6 +68,11 @@ function write_test_transport_binary_latlon(path::AbstractString; FT::Type{<:Abs
         end for win in 1:2
     ]
 
+    extra_header = include_poisson_metadata ? Dict(
+        "poisson_balance_target_scale" => 0.25,
+        "poisson_balance_target_semantics" => "forward_window_mass_difference / (2 * steps_per_window)",
+    ) : Dict{String, Any}()
+
     write_transport_binary(path, grid, windows;
                            FT=FT,
                            dt_met_seconds=3600.0,
@@ -71,10 +81,7 @@ function write_test_transport_binary_latlon(path::AbstractString; FT::Type{<:Abs
                            mass_basis=:moist,
                            source_flux_sampling=source_flux_sampling,
                            flux_sampling=flux_sampling,
-                           extra_header=Dict(
-                               "poisson_balance_target_scale" => 0.25,
-                               "poisson_balance_target_semantics" => "forward_window_mass_difference / (2 * steps_per_window)",
-                           ),
+                           extra_header=extra_header,
                            binary_kwargs...)
     return grid
 end
@@ -238,5 +245,16 @@ end
         close(io)
         write_test_transport_binary_latlon(path; FT=Float64, flux_kind=:mass_rate)
         @test_throws ArgumentError TransportBinaryDriver(path; FT=Float64, arch=CPU())
+    end
+end
+
+@testset "TransportBinaryDriver accepts legacy delta-bearing headers without poisson metadata" begin
+    mktemp() do path, io
+        close(io)
+        write_test_transport_binary_latlon(path; FT=Float64, include_poisson_metadata=false)
+        driver = TransportBinaryDriver(path; FT=Float64, arch=CPU())
+        @test total_windows(driver) == 2
+        @test window_dt(driver) == 3600.0
+        close(driver)
     end
 end

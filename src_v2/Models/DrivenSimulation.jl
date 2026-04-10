@@ -71,6 +71,21 @@ end
     return similar(window.qv_start)
 end
 
+@inline function _window_backend_adapter(reference_array)
+    if isdefined(Main, :CUDA)
+        CUDA = getfield(Main, :CUDA)
+        if reference_array isa CUDA.AbstractGPUArray
+            return CUDA.CuArray
+        end
+    end
+    return Array
+end
+
+@inline function _adapt_window_to_model_backend(window, model_air_mass)
+    adaptor = _window_backend_adapter(model_air_mass)
+    return adaptor === Array ? window : Adapt.adapt(adaptor, window)
+end
+
 function _refresh_forcing!(sim::DrivenSimulation, substep::Int)
     λ = _substep_fraction(substep, sim.steps_per_window, typeof(sim.Δt), sim.use_midpoint_forcing)
     if sim.interpolate_fluxes_within_window
@@ -94,7 +109,7 @@ function _maybe_advance_window!(sim::DrivenSimulation, substep::Int)
         next_window = sim.current_window_index + 1
         next_window <= sim.stop_window ||
             throw(ArgumentError("DrivenSimulation attempted to step past stop_window=$(sim.stop_window)"))
-        sim.window = _load_window(sim.driver, next_window)
+        sim.window = _adapt_window_to_model_backend(_load_window(sim.driver, next_window), sim.model.state.air_mass)
         sim.current_window_index = next_window
         if sim.qv_buffer !== nothing && !has_humidity_endpoints(sim.window)
             throw(ArgumentError("driver humidity endpoint support changed between windows"))
@@ -137,7 +152,7 @@ function DrivenSimulation(model::TransportModel,
     _check_grid_compatibility(model.grid, driver_grid(driver))
     _check_basis_compatibility(model, driver)
 
-    window = _load_window(driver, start_window)
+    window = _adapt_window_to_model_backend(_load_window(driver, start_window), model.state.air_mass)
     expected_air_mass = similar(model.state.air_mass)
     qv_buffer = _allocate_qv_buffer(window)
     FT = promote_type(eltype(model.state.air_mass), typeof(window_dt(driver)))

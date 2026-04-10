@@ -5,7 +5,11 @@ using Test
 include(joinpath(@__DIR__, "..", "src_v2", "AtmosTransportV2.jl"))
 using .AtmosTransportV2
 
-function write_driven_latlon_binary(path::AbstractString; FT::Type{<:AbstractFloat}=Float64, source_flux_sampling::Symbol=:window_start_endpoint, flux_sampling::Symbol=:window_constant)
+function write_driven_latlon_binary(path::AbstractString;
+                                    FT::Type{<:AbstractFloat}=Float64,
+                                    source_flux_sampling::Symbol=:window_start_endpoint,
+                                    flux_sampling::Symbol=:window_constant,
+                                    window_mass_scales::Tuple{Vararg{Real}}=(1, 1))
     Nx, Ny, Nz = 4, 3, 2
     mesh = LatLonMesh(; FT=FT, Nx=Nx, Ny=Ny)
     vertical = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
@@ -13,7 +17,7 @@ function write_driven_latlon_binary(path::AbstractString; FT::Type{<:AbstractFlo
 
     windows = [
         begin
-            m = ones(FT, Nx, Ny, Nz)
+            m = fill(FT(window_mass_scales[win]), Nx, Ny, Nz)
             am = zeros(FT, Nx + 1, Ny, Nz)
             bm = zeros(FT, Nx, Ny + 1, Nz)
             cm = zeros(FT, Nx, Ny, Nz + 1)
@@ -25,7 +29,7 @@ function write_driven_latlon_binary(path::AbstractString; FT::Type{<:AbstractFlo
             dcm = fill(FT(0.6win), Nx, Ny, Nz + 1)
             dm = fill(FT(0.8win), Nx, Ny, Nz)
             (; m, am, bm, cm, ps, qv_start, qv_end, dam, dbm, dcm, dm)
-        end for win in 1:2
+        end for win in 1:length(window_mass_scales)
     ]
 
     write_transport_binary(path, grid, windows;
@@ -41,6 +45,33 @@ function write_driven_latlon_binary(path::AbstractString; FT::Type{<:AbstractFlo
                                "poisson_balance_target_semantics" => "forward_window_mass_difference / (2 * steps_per_window)",
                            ))
     return grid
+end
+
+@testset "DrivenSimulation optional no-reset window carry preserves mixing ratio" begin
+    mktemp() do path, io
+        close(io)
+        write_driven_latlon_binary(path; FT=Float64, window_mass_scales=(1, 2))
+
+        driver = TransportBinaryDriver(path; FT=Float64, arch=CPU())
+        grid = driver_grid(driver)
+        state = CellState(MoistBasis, ones(Float64, 4, 3, 2); CO2=fill(400e-6, 4, 3, 2))
+        fluxes = allocate_face_fluxes(grid.horizontal, 2; FT=Float64, basis=MoistBasis)
+        model = TransportModel(state, fluxes, grid, UpwindScheme())
+        sim = DrivenSimulation(model, driver;
+                               start_window=1,
+                               stop_window=2,
+                               reset_air_mass_each_window=false)
+
+        step!(sim)
+        step!(sim)
+        step!(sim)
+
+        @test window_index(sim) == 2
+        @test all(isapprox.(sim.model.state.air_mass, 1.0; atol=eps(Float64) * 10))
+        @test all(isapprox.(mixing_ratio(sim.model.state, :CO2), 400e-6; atol=eps(Float64) * 10))
+
+        close(driver)
+    end
 end
 
 @testset "DrivenSimulation window-forcing runtime" begin

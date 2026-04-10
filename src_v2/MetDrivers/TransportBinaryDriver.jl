@@ -114,6 +114,7 @@ end
 function _validate_runtime_semantics(reader::TransportBinaryReader)
     h = reader.header
     expected_poisson_scale = 1.0 / (2 * h.steps_per_window)
+    expected_poisson_semantics = "forward_window_mass_difference / (2 * steps_per_window)"
 
     h.flux_kind === :substep_mass_amount ||
         throw(ArgumentError("TransportBinaryDriver requires flux_kind = :substep_mass_amount, got $(h.flux_kind)"))
@@ -140,12 +141,26 @@ function _validate_runtime_semantics(reader::TransportBinaryReader)
     end
 
     if has_flux_delta(reader)
-        isfinite(h.poisson_balance_target_scale) ||
-            throw(ArgumentError("TransportBinaryDriver requires poisson_balance_target_scale metadata for delta-bearing transport binaries"))
-        isapprox(h.poisson_balance_target_scale, expected_poisson_scale; atol=eps(Float64)*8, rtol=0.0) ||
-            throw(ArgumentError("TransportBinaryDriver requires poisson_balance_target_scale=$(expected_poisson_scale), got $(h.poisson_balance_target_scale)"))
-        h.poisson_balance_target_semantics == "forward_window_mass_difference / (2 * steps_per_window)" ||
-            throw(ArgumentError("TransportBinaryDriver requires poisson_balance_target_semantics = 'forward_window_mass_difference / (2 * steps_per_window)', got $(repr(h.poisson_balance_target_semantics))"))
+        poisson_scale = h.poisson_balance_target_scale
+        if !isfinite(poisson_scale)
+            h.format_version == 1 ||
+                throw(ArgumentError("TransportBinaryDriver requires poisson_balance_target_scale metadata for delta-bearing transport binaries"))
+            @warn "Legacy transport binary $(basename(reader.path)) is missing poisson_balance_target_scale; assuming $(expected_poisson_scale)"
+            poisson_scale = expected_poisson_scale
+        end
+
+        poisson_semantics = h.poisson_balance_target_semantics
+        if isempty(poisson_semantics)
+            h.format_version == 1 ||
+                throw(ArgumentError("TransportBinaryDriver requires poisson_balance_target_semantics metadata for delta-bearing transport binaries"))
+            @warn "Legacy transport binary $(basename(reader.path)) is missing poisson_balance_target_semantics; assuming $(repr(expected_poisson_semantics))"
+            poisson_semantics = expected_poisson_semantics
+        end
+
+        isapprox(poisson_scale, expected_poisson_scale; atol=eps(Float64)*8, rtol=0.0) ||
+            throw(ArgumentError("TransportBinaryDriver requires poisson_balance_target_scale=$(expected_poisson_scale), got $(poisson_scale)"))
+        poisson_semantics == expected_poisson_semantics ||
+            throw(ArgumentError("TransportBinaryDriver requires poisson_balance_target_semantics = '$(expected_poisson_semantics)', got $(repr(poisson_semantics))"))
     end
 
     return nothing

@@ -407,31 +407,71 @@ function main()
                                 cell_lons[p], cell_lats[p], src_lons, src_lats)
         end
 
-        # Build cell-center flux density [kg/m/substep] from LatLon face fluxes.
-        # Average adjacent face values to cell centers, divide by edge length.
+        # Strategy: recover cell-center WINDS from LatLon mass fluxes, interpolate
+        # winds to CS cell centers, then compute CS face mass fluxes from winds + CS dp.
+        # This ensures am/bm on the CS grid are consistent with the local mass structure,
+        # avoiding the divergence-inconsistency problem of interpolating flux densities.
+        #
+        # LatLon mass flux: am[i,j,k] = u_face × dp_face × Δy / g × dt_factor
+        # Cell-center wind: u[i,j,k] ≈ 0.5*(am[i]+am[i+1]) × g / (dp × Δy × dt_factor)
+
+        # Recover cell-center zonal wind (u) from am
         @inbounds for k in 1:Nz, j in 1:Ny_ll, i in 1:Nx_ll
-            am_cc[i, j, k] = FT(0.5) * (am_ll[i, j, k] + am_ll[i+1, j, k]) / Δy_ll
+            dp = abs((A_ifc[k] - A_ifc[k+1]) + (B_ifc[k] - B_ifc[k+1]) * ps_ll[i, j])
+            area_factor = Δy_ll * dp / g * dt_factor
+            am_cc[i, j, k] = area_factor > 1e-10 ?
+                FT(0.5) * (am_ll[i, j, k] + am_ll[i+1, j, k]) / area_factor : zero(FT)
         end
+        # Recover cell-center meridional wind (v) from bm
         @inbounds for k in 1:Nz, j in 1:Ny_ll, i in 1:Nx_ll
             cos_lat = cosd(src_lats[j])
             Δx_ll = R_earth * Δlon_ll * max(cos_lat, FT(1e-6))
-            bm_cc[i, j, k] = FT(0.5) * (bm_ll[i, j, k] + bm_ll[i, min(j+1, Ny_ll+1), k]) / Δx_ll
+            dp = abs((A_ifc[k] - A_ifc[k+1]) + (B_ifc[k] - B_ifc[k+1]) * ps_ll[i, j])
+            area_factor = Δx_ll * dp / g * dt_factor
+            bm_cc[i, j, k] = area_factor > 1e-10 ?
+                FT(0.5) * (bm_ll[i, j, k] + bm_ll[i, min(j+1, Ny_ll+1), k]) / area_factor : zero(FT)
         end
 
-        # Interpolate flux densities to CS face positions, scale by CS edge lengths
+        # Interpolate winds to CS cell centers, then compute face fluxes on CS grid
         for p in 1:6
-            u_xface = zeros(FT, Nc+1, Nc, Nz)
-            bilinear_interp_3d!(u_xface, am_cc,
-                                xface_lons[p], xface_lats[p], src_lons, src_lats)
-            @inbounds for k in 1:Nz, j in 1:Nc, i in 1:(Nc+1)
-                am_panels[p][i, j, k] = u_xface[i, j, k] * Δy[min(i, Nc), j]
+            # Interpolate u, v to CS cell centers
+            u_cs = zeros(FT, Nc, Nc, Nz)
+            v_cs = zeros(FT, Nc, Nc, Nz)
+            bilinear_interp_3d!(u_cs, am_cc,
+                                cell_lons[p], cell_lats[p], src_lons, src_lats)
+            bilinear_interp_3d!(v_cs, bm_cc,
+                                cell_lons[p], cell_lats[p], src_lons, src_lats)
+
+            # Compute dp on CS from interpolated ps
+            dp_cs = zeros(FT, Nc, Nc, Nz)
+            @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
+                dp_cs[i, j, k] = abs((A_ifc[k] - A_ifc[k+1]) +
+                                     (B_ifc[k] - B_ifc[k+1]) * ps_panels[p][i, j])
             end
 
-            v_yface = zeros(FT, Nc, Nc+1, Nz)
-            bilinear_interp_3d!(v_yface, bm_cc,
-                                yface_lons[p], yface_lats[p], src_lons, src_lats)
-            @inbounds for k in 1:Nz, j in 1:(Nc+1), i in 1:Nc
-                bm_panels[p][i, j, k] = v_yface[i, j, k] * Δx[i, min(j, Nc)]
+            # Compute x-face mass fluxes: am[i,j,k] = u_face × dp_face × Δy / g × dt_factor
+            @inbounds for k in 1:Nz, j in 1:Nc
+                # West boundary face
+                am_panels[p][1, j, k] = u_cs[1, j, k] * dp_cs[1, j, k] * Δy[1, j] / g * dt_factor
+                # Interior faces: average adjacent cell winds and dp
+                for i in 2:Nc
+                    u_face = FT(0.5) * (u_cs[i-1, j, k] + u_cs[i, j, k])
+                    dp_face = FT(0.5) * (dp_cs[i-1, j, k] + dp_cs[i, j, k])
+                    am_panels[p][i, j, k] = u_face * dp_face * Δy[i, j] / g * dt_factor
+                end
+                # East boundary face
+                am_panels[p][Nc+1, j, k] = u_cs[Nc, j, k] * dp_cs[Nc, j, k] * Δy[Nc, j] / g * dt_factor
+            end
+
+            # Compute y-face mass fluxes: bm[i,j,k] = v_face × dp_face × Δx / g × dt_factor
+            @inbounds for k in 1:Nz, i in 1:Nc
+                bm_panels[p][i, 1, k] = v_cs[i, 1, k] * dp_cs[i, 1, k] * Δx[i, 1] / g * dt_factor
+                for j in 2:Nc
+                    v_face = FT(0.5) * (v_cs[i, j-1, k] + v_cs[i, j, k])
+                    dp_face = FT(0.5) * (dp_cs[i, j-1, k] + dp_cs[i, j, k])
+                    bm_panels[p][i, j, k] = v_face * dp_face * Δx[i, j] / g * dt_factor
+                end
+                bm_panels[p][i, Nc+1, k] = v_cs[i, Nc, k] * dp_cs[i, Nc, k] * Δx[i, Nc] / g * dt_factor
             end
         end
 

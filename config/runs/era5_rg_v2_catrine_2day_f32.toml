@@ -1,0 +1,29 @@
+# src_v2 transport-binary 2-day ReducedGaussian N320 run with CATRINE
+# natural CO2 IC plus GridFED fossil CO2 surface flux, runtime-cast to Float32.
+
+[input]
+binary_paths = [
+    "~/data/AtmosTransport/met/era5/N320/transport_binary_v2_tropo34_dec2021_f64/era5_transport_v2_rgN320_20211201_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/N320/transport_binary_v2_tropo34_dec2021_f64/era5_transport_v2_rgN320_20211202_merged1000Pa_float64.bin",
+]
+
+[numerics]
+float_type = "Float32"
+
+[run]
+scheme = "upwind"
+start_window = 1
+stop_window = 24
+reset_air_mass_each_window = false
+
+[tracers.natural_co2.init]
+kind = "catrine_co2"
+
+[tracers.fossil_co2.init]
+kind = "uniform"
+background = 0.0
+
+[tracers.fossil_co2.surface_flux]
+kind = "gridfed_fossil_co2"
+file = "~/data/AtmosTransport/catrine/Emissions/gridfed/GCP-GridFEDv2024.0_2021.short.nc"
+time_index = 12

@@ -14,7 +14,10 @@ using .AtmosTransportV2
 
 @inline _init_kind(cfg) = Symbol(lowercase(String(get(cfg, "kind", "uniform"))))
 @inline _is_file_init_kind(kind::Symbol) = kind in (:file, :netcdf, :file_field, :catrine_co2)
+@inline _surface_flux_kind(cfg) = Symbol(lowercase(String(get(cfg, "kind", "none"))))
 @inline _use_gpu(cfg) = Bool(get(get(cfg, "architecture", Dict{String, Any}()), "use_gpu", false))
+
+const SECONDS_PER_MONTH = 365.25 * 86400 / 12
 
 struct FileInitialConditionSource{FT}
     raw           :: Array{FT, 3}
@@ -24,6 +27,18 @@ struct FileInitialConditionSource{FT}
     bp            :: Vector{Float64}
     psurf         :: Matrix{Float64}
     needs_vinterp :: Bool
+end
+
+struct FileSurfaceFluxField{FT}
+    raw           :: Array{FT, 2}
+    lon           :: Vector{Float64}
+    lat           :: Vector{Float64}
+end
+
+struct TransportTracerSpec
+    name             :: Symbol
+    init_cfg         :: Dict{String, Any}
+    surface_flux_cfg :: Dict{String, Any}
 end
 
 function _ic_find_coord(ds, candidates::Vector{String})
@@ -91,11 +106,11 @@ function _sample_bilinear_profile!(dest::AbstractVector{FT},
     return nothing
 end
 
-function _sample_bilinear_scalar(raw::Matrix{Float64},
+function _sample_bilinear_scalar(raw::AbstractMatrix{T},
                                  lon_src::Vector{Float64},
                                  lat_src::Vector{Float64},
                                  lon::Real,
-                                 lat::Real)
+                                 lat::Real) where T
     ilo, ihi, jlo, jhi, w00, w10, w01, w11 = _horizontal_interp_weights(lon, lat, lon_src, lat_src)
     return w00 * raw[ilo, jlo] +
            w10 * raw[ihi, jlo] +
@@ -115,6 +130,129 @@ function _resolve_file_init(cfg, kind::Symbol)
     isempty(variable) && throw(ArgumentError("file-based init.kind=$(kind) requires init.variable"))
     time_index = Int(get(cfg, "time_index", 1))
     return file, variable, time_index
+end
+
+function _resolve_surface_flux_file(cfg, kind::Symbol)
+    default_file, default_variable = if kind === :gridfed_fossil_co2
+        ("~/data/AtmosTransport/catrine/Emissions/gridfed/GCP-GridFEDv2024.0_2021.short.nc", "TOTAL")
+    else
+        ("", "")
+    end
+    file = expanduser(String(get(cfg, "file", default_file)))
+    variable = String(get(cfg, "variable", default_variable))
+    isempty(file) && throw(ArgumentError("surface_flux.kind=$(kind) requires surface_flux.file"))
+    isempty(variable) && throw(ArgumentError("surface_flux.kind=$(kind) requires surface_flux.variable"))
+
+    default_time_index = kind === :gridfed_fossil_co2 ? Int(get(cfg, "month", 0)) : 1
+    time_index = Int(get(cfg, "time_index", default_time_index))
+    if kind === :gridfed_fossil_co2 && time_index < 1
+        throw(ArgumentError("surface_flux.kind=gridfed_fossil_co2 requires surface_flux.time_index or surface_flux.month"))
+    end
+    time_index < 1 && throw(ArgumentError("surface_flux.time_index must be >= 1"))
+    return file, variable, time_index
+end
+
+function _normalize_units_string(units)
+    units_str = String(units)
+    return lowercase(replace(strip(units_str), " " => "", "^" => "", "²" => "2"))
+end
+
+function _load_file_surface_flux_field(cfg, ::Type{FT}) where FT
+    kind = _surface_flux_kind(cfg)
+    kind === :none && return nothing
+    file, variable, time_index = _resolve_surface_flux_file(cfg, kind)
+    isfile(file) || throw(ArgumentError("surface-flux file not found: $file"))
+
+    ds = NCDataset(file)
+    try
+        lon_var = _ic_find_coord(ds, ["lon", "longitude", "x"])
+        lat_var = _ic_find_coord(ds, ["lat", "latitude", "y"])
+        isnothing(lon_var) && throw(ArgumentError("could not find longitude coordinate in $file"))
+        isnothing(lat_var) && throw(ArgumentError("could not find latitude coordinate in $file"))
+        haskey(ds, variable) || throw(ArgumentError("variable '$variable' not found in $file"))
+
+        lon_src = Float64.(ds[lon_var][:])
+        lat_src = Float64.(ds[lat_var][:])
+
+        raw_var = ds[variable]
+        raw = if ndims(raw_var) == 3
+            FT.(nomissing(raw_var[:, :, time_index], zero(FT)))
+        elseif ndims(raw_var) == 2
+            FT.(nomissing(raw_var[:, :], zero(FT)))
+        else
+            throw(ArgumentError("surface-flux variable '$variable' must be 2D or 3D, got ndims=$(ndims(raw_var))"))
+        end
+
+        if length(lat_src) > 1 && lat_src[1] > lat_src[end]
+            raw = raw[:, end:-1:1]
+            lat_src = reverse(lat_src)
+        end
+
+        if minimum(lon_src) < 0
+            split = findfirst(>=(0), lon_src)
+            if split !== nothing
+                idx = vcat(split:length(lon_src), 1:split-1)
+                lon_src = mod.(lon_src[idx], 360.0)
+                raw = raw[idx, :]
+            end
+        end
+
+        units_norm = _normalize_units_string(get(raw_var.attrib, "units", ""))
+        if kind === :gridfed_fossil_co2 || units_norm == "kgco2/month/m2"
+            raw ./= FT(SECONDS_PER_MONTH)
+        elseif !(isempty(units_norm) || occursin("/s", units_norm) || occursin("s-1", units_norm))
+            throw(ArgumentError("unsupported surface-flux units '$units_norm' in $file; expected kgCO2/month/m2 or per-second flux units"))
+        end
+
+        raw .*= FT(get(cfg, "scale", 1.0))
+        return FileSurfaceFluxField{FT}(raw, lon_src, lat_src)
+    finally
+        close(ds)
+    end
+end
+
+_copy_cfg_dict(cfg) = Dict{String, Any}(String(k) => v for (k, v) in pairs(cfg))
+
+function _tracer_init_cfg(tracer_cfg)
+    if haskey(tracer_cfg, "init")
+        return _copy_cfg_dict(tracer_cfg["init"])
+    end
+
+    cfg = Dict{String, Any}()
+    for key in ("kind", "background", "lon0_deg", "lat0_deg", "sigma_lon_deg",
+                "sigma_lat_deg", "amplitude", "file", "variable", "time_index")
+        haskey(tracer_cfg, key) && (cfg[key] = tracer_cfg[key])
+    end
+    isempty(cfg) && return Dict{String, Any}("kind" => "uniform", "background" => 0.0)
+    return cfg
+end
+
+function _tracer_surface_flux_cfg(tracer_cfg)
+    if haskey(tracer_cfg, "surface_flux")
+        return _copy_cfg_dict(tracer_cfg["surface_flux"])
+    end
+
+    cfg = Dict{String, Any}()
+    for (src_key, dst_key) in (("surface_flux_kind", "kind"),
+                               ("surface_flux_file", "file"),
+                               ("surface_flux_variable", "variable"),
+                               ("surface_flux_time_index", "time_index"),
+                               ("surface_flux_month", "month"),
+                               ("surface_flux_scale", "scale"))
+        haskey(tracer_cfg, src_key) && (cfg[dst_key] = tracer_cfg[src_key])
+    end
+    return cfg
+end
+
+function _parse_tracer_specs(cfg)
+    tracers_cfg = get(cfg, "tracers", nothing)
+    tracers_cfg isa AbstractDict || return nothing
+
+    names = sort!(collect(keys(tracers_cfg)))
+    isempty(names) && throw(ArgumentError("config has [tracers] but no tracer sections"))
+    return Tuple(TransportTracerSpec(Symbol(name),
+                                     _tracer_init_cfg(tracers_cfg[name]),
+                                     _tracer_surface_flux_cfg(tracers_cfg[name])) for name in names)
 end
 
 function _load_file_initial_condition_source(cfg, ::Type{FT}, Nz_target::Integer) where FT
@@ -396,20 +534,91 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
     return q
 end
 
+function build_surface_flux_source(grid::AtmosTransportV2.AtmosGrid{<:AtmosTransportV2.LatLonMesh},
+                                   tracer_name::Symbol,
+                                   cfg,
+                                   ::Type{FT}) where FT
+    kind = _surface_flux_kind(cfg)
+    kind === :none && return nothing
+
+    source = _load_file_surface_flux_field(cfg, FT)
+    mesh = grid.horizontal
+    rate = Array{FT}(undef, AtmosTransportV2.nx(mesh), AtmosTransportV2.ny(mesh))
+
+    for j in axes(rate, 2)
+        area = Float64(AtmosTransportV2.cell_area(mesh, 1, j))
+        lat = mesh.φᶜ[j]
+        for i in axes(rate, 1)
+            lon = mesh.λᶜ[i]
+            flux_density = _sample_bilinear_scalar(source.raw, source.lon, source.lat, lon, lat)
+            rate[i, j] = FT(flux_density * area)
+        end
+    end
+
+    return AtmosTransportV2.SurfaceFluxSource(tracer_name, rate)
+end
+
+function build_surface_flux_source(grid::AtmosTransportV2.AtmosGrid{<:AtmosTransportV2.ReducedGaussianMesh},
+                                   tracer_name::Symbol,
+                                   cfg,
+                                   ::Type{FT}) where FT
+    kind = _surface_flux_kind(cfg)
+    kind === :none && return nothing
+
+    source = _load_file_surface_flux_field(cfg, FT)
+    mesh = grid.horizontal
+    rate = Array{FT}(undef, AtmosTransportV2.ncells(mesh))
+
+    for j in 1:AtmosTransportV2.nrings(mesh)
+        lat = mesh.latitudes[j]
+        lons = AtmosTransportV2.ring_longitudes(mesh, j)
+        for i in eachindex(lons)
+            c = AtmosTransportV2.cell_index(mesh, i, j)
+            flux_density = _sample_bilinear_scalar(source.raw, source.lon, source.lat, lons[i], lat)
+            rate[c] = FT(flux_density * Float64(AtmosTransportV2.cell_area(mesh, c)))
+        end
+    end
+
+    return AtmosTransportV2.SurfaceFluxSource(tracer_name, rate)
+end
+
+function build_surface_flux_sources(grid, tracer_specs, ::Type{FT}) where FT
+    sources = Any[]
+    for spec in tracer_specs
+        source = build_surface_flux_source(grid, spec.name, spec.surface_flux_cfg, FT)
+        source === nothing || push!(sources, source)
+    end
+    return Tuple(sources)
+end
+
 function make_model(driver::AtmosTransportV2.TransportBinaryDriver;
                     FT::Type{<:AbstractFloat},
                     scheme_name::Symbol,
-                    tracer_name::Symbol,
-                    init_cfg,
-                    cfg)
+                    tracer_name::Union{Symbol, Nothing}=nothing,
+                    init_cfg=nothing,
+                    tracer_specs=nothing,
+                    cfg=Dict{String, Any}())
     grid = AtmosTransportV2.driver_grid(driver)
     window = AtmosTransportV2.load_transport_window(driver, 1)
     air_mass = copy(window.air_mass)
-    q = build_initial_mixing_ratio(air_mass, grid, init_cfg)
-    rm = q .* air_mass
+
+    tracer_specs_tuple = if tracer_specs === nothing
+        name = something(tracer_name, :CO2)
+        init_cfg_dict = init_cfg === nothing ? Dict{String, Any}("kind" => "uniform", "background" => 0.0) : _copy_cfg_dict(init_cfg)
+        (TransportTracerSpec(name, init_cfg_dict, Dict{String, Any}()),)
+    else
+        Tuple(tracer_specs)
+    end
+    isempty(tracer_specs_tuple) && throw(ArgumentError("at least one tracer must be configured"))
+
+    tracer_names = Tuple(spec.name for spec in tracer_specs_tuple)
+    rm_arrays = map(tracer_specs_tuple) do spec
+        q = build_initial_mixing_ratio(air_mass, grid, spec.init_cfg)
+        return q .* air_mass
+    end
 
     basis_type = AtmosTransportV2.air_mass_basis(driver) == :dry ? AtmosTransportV2.DryBasis : AtmosTransportV2.MoistBasis
-    tracer_tuple = NamedTuple{(tracer_name,)}((rm,))
+    tracer_tuple = NamedTuple{tracer_names}(Tuple(rm_arrays))
     state = if basis_type === AtmosTransportV2.DryBasis
         AtmosTransportV2.CellState{AtmosTransportV2.DryBasis, typeof(air_mass), typeof(tracer_tuple)}(air_mass, tracer_tuple)
     else
@@ -426,20 +635,29 @@ function run_sequence(binary_paths::Vector{String}, cfg)
     FT = Symbol(get(get(cfg, "numerics", Dict{String, Any}()), "float_type", "Float64")) == :Float32 ? Float32 : Float64
     run_cfg = get(cfg, "run", Dict{String, Any}())
     scheme_name = Symbol(lowercase(String(get(run_cfg, "scheme", "upwind"))))
-    tracer_name = Symbol(get(run_cfg, "tracer_name", "CO2"))
     start_window = Int(get(run_cfg, "start_window", 1))
     stop_window_override = get(run_cfg, "stop_window", nothing)
     reset_air_mass_each_window = Bool(get(run_cfg, "reset_air_mass_each_window", false))
     init_cfg = get(cfg, "init", Dict{String, Any}())
+    tracer_specs = something(_parse_tracer_specs(cfg),
+                             (TransportTracerSpec(Symbol(get(run_cfg, "tracer_name", "CO2")),
+                                                  _copy_cfg_dict(init_cfg),
+                                                  Dict{String, Any}()),))
 
     isempty(binary_paths) && throw(ArgumentError("no binary_paths configured"))
     ensure_gpu_runtime!(cfg)
 
     first_driver = AtmosTransportV2.TransportBinaryDriver(first(binary_paths); FT=FT, arch=AtmosTransportV2.CPU())
-    model = make_model(first_driver; FT=FT, scheme_name=scheme_name, tracer_name=tracer_name, init_cfg=init_cfg, cfg=cfg)
+    model = make_model(first_driver; FT=FT, scheme_name=scheme_name, tracer_specs=tracer_specs, cfg=cfg)
+    surface_sources = build_surface_flux_sources(AtmosTransportV2.driver_grid(first_driver), tracer_specs, FT)
     m0 = AtmosTransportV2.total_air_mass(model.state)
-    rm0 = AtmosTransportV2.total_mass(model.state, tracer_name)
+    tracer_masses0 = Dict(name => AtmosTransportV2.total_mass(model.state, name) for name in AtmosTransportV2.tracer_names(model.state))
+    source_tracers = Set(source.tracer_name for source in surface_sources)
     @info "Backend: $(backend_label(cfg))"
+    for source in surface_sources
+        @info @sprintf("Surface source %s total mass rate: %.12e kg/s",
+                       String(source.tracer_name), Float64(sum(source.cell_mass_rate)))
+    end
 
     for (idx, path) in enumerate(binary_paths)
         driver = idx == 1 ? first_driver : AtmosTransportV2.TransportBinaryDriver(path; FT=FT, arch=AtmosTransportV2.CPU())
@@ -449,7 +667,8 @@ function run_sequence(binary_paths::Vector{String}, cfg)
                                start_window=start_window,
                                stop_window=stop_window,
                                initialize_air_mass=initialize_air_mass,
-                               reset_air_mass_each_window=reset_air_mass_each_window)
+                               reset_air_mass_each_window=reset_air_mass_each_window,
+                               surface_sources=surface_sources)
         if !initialize_air_mass
             boundary_rel = maximum(abs.(model.state.air_mass .- sim.window.air_mass)) / max(maximum(abs.(sim.window.air_mass)), eps(FT))
             @info @sprintf("Boundary air-mass mismatch before %s: %.3e", basename(path), boundary_rel)
@@ -464,9 +683,18 @@ function run_sequence(binary_paths::Vector{String}, cfg)
     end
 
     m1 = AtmosTransportV2.total_air_mass(model.state)
-    rm1 = AtmosTransportV2.total_mass(model.state, tracer_name)
     @info @sprintf("Final air-mass change vs initial state:  %.3e", (m1 - m0) / m0)
-    @info @sprintf("Final tracer-mass drift:                 %.3e", (rm1 - rm0) / rm0)
+    for name in AtmosTransportV2.tracer_names(model.state)
+        rm0 = Float64(tracer_masses0[name])
+        rm1 = Float64(AtmosTransportV2.total_mass(model.state, name))
+        if name in source_tracers
+            @info @sprintf("Final tracer mass for %s (with source): %.12e kg", String(name), rm1)
+        elseif abs(rm0) > eps(Float64)
+            @info @sprintf("Final tracer-mass drift for %s:         %.3e", String(name), (rm1 - rm0) / rm0)
+        else
+            @info @sprintf("Final tracer mass for %s:               %.12e kg", String(name), rm1)
+        end
+    end
     return model
 end
 

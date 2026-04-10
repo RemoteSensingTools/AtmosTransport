@@ -9,7 +9,20 @@ The runtime interpolates forcing within each met window and advances the model
 with the same `step!(model, Δt)` entry point used by the fixed-flux smoke
 harness.
 """
-mutable struct DrivenSimulation{ModelT, DriverT, WindowT, AT, QT, FT, CB}
+struct SurfaceFluxSource{RateT}
+    tracer_name     :: Symbol
+    cell_mass_rate  :: RateT
+end
+
+SurfaceFluxSource(tracer_name::Symbol, cell_mass_rate) =
+    SurfaceFluxSource{typeof(cell_mass_rate)}(tracer_name, cell_mass_rate)
+
+function Adapt.adapt_structure(to, source::SurfaceFluxSource)
+    cell_mass_rate = Adapt.adapt(to, source.cell_mass_rate)
+    return SurfaceFluxSource{typeof(cell_mass_rate)}(source.tracer_name, cell_mass_rate)
+end
+
+mutable struct DrivenSimulation{ModelT, DriverT, WindowT, AT, QT, FT, CB, SS}
     model                 :: ModelT
     driver                :: DriverT
     window                :: WindowT
@@ -24,6 +37,7 @@ mutable struct DrivenSimulation{ModelT, DriverT, WindowT, AT, QT, FT, CB}
     stop_window           :: Int
     final_iteration       :: Int
     callbacks                   :: CB
+    surface_sources             :: SS
     initialize_air_mass         :: Bool
     use_midpoint_forcing        :: Bool
     reset_air_mass_each_window  :: Bool
@@ -86,6 +100,49 @@ end
     return adaptor === Array ? window : Adapt.adapt(adaptor, window)
 end
 
+@inline function _adapt_sources_to_model_backend(surface_sources, model_air_mass)
+    adaptor = _window_backend_adapter(model_air_mass)
+    return adaptor === Array ? surface_sources : map(source -> Adapt.adapt(adaptor, source), surface_sources)
+end
+
+@inline function _surface_shape(rm::AbstractArray{<:Any, 3})
+    return (size(rm, 1), size(rm, 2))
+end
+
+@inline function _surface_shape(rm::AbstractArray{<:Any, 2})
+    return (size(rm, 1),)
+end
+
+function _check_surface_source_compatibility(state::CellState, source::SurfaceFluxSource)
+    haskey(state.tracers, source.tracer_name) ||
+        throw(ArgumentError("surface source tracer $(source.tracer_name) is not present in model state"))
+    rm = getfield(state.tracers, source.tracer_name)
+    size(source.cell_mass_rate) == _surface_shape(rm) ||
+        throw(ArgumentError("surface source $(source.tracer_name) has shape $(size(source.cell_mass_rate)) but tracer surface shape is $(_surface_shape(rm))"))
+    return nothing
+end
+
+function _apply_surface_source!(rm::AbstractArray{FT, 3}, source::SurfaceFluxSource, dt) where FT
+    Nz = size(rm, 3)
+    @views rm[:, :, Nz] .+= source.cell_mass_rate .* dt
+    return nothing
+end
+
+function _apply_surface_source!(rm::AbstractArray{FT, 2}, source::SurfaceFluxSource, dt) where FT
+    Nz = size(rm, 2)
+    @views rm[:, Nz] .+= source.cell_mass_rate .* dt
+    return nothing
+end
+
+function _apply_surface_sources!(sim::DrivenSimulation)
+    isempty(sim.surface_sources) && return nothing
+    for source in sim.surface_sources
+        rm = getfield(sim.model.state.tracers, source.tracer_name)
+        _apply_surface_source!(rm, source, sim.Δt)
+    end
+    return nothing
+end
+
 function _refresh_forcing!(sim::DrivenSimulation, substep::Int)
     λ = _substep_fraction(substep, sim.steps_per_window, typeof(sim.Δt), sim.use_midpoint_forcing)
     if sim.interpolate_fluxes_within_window
@@ -133,6 +190,7 @@ Keyword arguments:
 - `use_midpoint_forcing=true`
 - `reset_air_mass_each_window=true`
 - `interpolate_fluxes_within_window=nothing` (derive from driver)
+- `surface_sources=()`
 - `callbacks=NamedTuple()`
 """
 function DrivenSimulation(model::TransportModel,
@@ -143,6 +201,7 @@ function DrivenSimulation(model::TransportModel,
                           use_midpoint_forcing::Bool = true,
                           reset_air_mass_each_window::Bool = true,
                           interpolate_fluxes_within_window = nothing,
+                          surface_sources = (),
                           callbacks = NamedTuple()) where {D <: AbstractMetDriver}
     1 <= start_window <= stop_window <= total_windows(driver) ||
         throw(ArgumentError("invalid window range: start_window=$(start_window), stop_window=$(stop_window), total_windows=$(total_windows(driver))"))
@@ -155,6 +214,8 @@ function DrivenSimulation(model::TransportModel,
     window = _adapt_window_to_model_backend(_load_window(driver, start_window), model.state.air_mass)
     expected_air_mass = similar(model.state.air_mass)
     qv_buffer = _allocate_qv_buffer(window)
+    surface_sources_adapted = _adapt_sources_to_model_backend(Tuple(surface_sources), model.state.air_mass)
+    foreach(source -> _check_surface_source_compatibility(model.state, source), surface_sources_adapted)
     FT = promote_type(eltype(model.state.air_mass), typeof(window_dt(driver)))
     Δt = FT(window_dt(driver) / steps_per_window(driver))
     nsteps_total = (stop_window - start_window + 1) * steps_per_window(driver)
@@ -162,7 +223,7 @@ function DrivenSimulation(model::TransportModel,
     flux_interp = interpolate_fluxes_within_window === nothing ?
                   (flux_interpolation_mode(driver) === :interpolate) : Bool(interpolate_fluxes_within_window)
 
-    sim = DrivenSimulation{typeof(model), typeof(driver), typeof(window), typeof(expected_air_mass), typeof(qv_buffer), FT, typeof(callbacks)}(
+    sim = DrivenSimulation{typeof(model), typeof(driver), typeof(window), typeof(expected_air_mass), typeof(qv_buffer), FT, typeof(callbacks), typeof(surface_sources_adapted)}(
         model,
         driver,
         window,
@@ -177,6 +238,7 @@ function DrivenSimulation(model::TransportModel,
         Int(stop_window),
         Int(nsteps_total),
         callbacks,
+        surface_sources_adapted,
         initialize_air_mass,
         use_midpoint_forcing,
         reset_air_mass_each_window,
@@ -207,6 +269,7 @@ function step!(sim::DrivenSimulation)
     _refresh_forcing!(sim, substep)
 
     step!(sim.model, sim.Δt)
+    _apply_surface_sources!(sim)
     sim.time += sim.Δt
     sim.iteration += 1
     for callback in values(sim.callbacks)
@@ -231,4 +294,4 @@ function run!(sim::DrivenSimulation)
     return sim
 end
 
-export DrivenSimulation, run_window!, window_index, substep_index, current_qv
+export SurfaceFluxSource, DrivenSimulation, run_window!, window_index, substep_index, current_qv

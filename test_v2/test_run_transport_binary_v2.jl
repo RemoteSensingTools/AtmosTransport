@@ -84,6 +84,30 @@ function write_test_ic_file(path::AbstractString)
     return nothing
 end
 
+function write_test_surface_flux_file(path::AbstractString)
+    ds = NCDataset(path, "c")
+    try
+        defDim(ds, "longitude", 4)
+        defDim(ds, "latitude", 2)
+        defDim(ds, "time", 2)
+
+        vlon = defVar(ds, "longitude", Float64, ("longitude",))
+        vlat = defVar(ds, "latitude", Float64, ("latitude",))
+        vtime = defVar(ds, "time", Float64, ("time",))
+        vtotal = defVar(ds, "TOTAL", Float64, ("longitude", "latitude", "time"))
+
+        vlon[:] = [-135.0, -45.0, 45.0, 135.0]
+        vlat[:] = [45.0, -45.0]  # descending on purpose
+        vtime[:] = [1.0, 2.0]
+        vtotal[:, :, 1] = fill(SECONDS_PER_MONTH, 4, 2)      # 1 kgCO2 / m² / s after conversion
+        vtotal[:, :, 2] = fill(2 * SECONDS_PER_MONTH, 4, 2)
+        vtotal.attrib["units"] = "kgCO2/month/m2"
+    finally
+        close(ds)
+    end
+    return nothing
+end
+
 @testset "transport-binary sequence runner" begin
     mktempdir() do dir
         path1 = joinpath(dir, "day1.bin")
@@ -141,5 +165,73 @@ end
                 @test q_rg[c, 2] ≈ expected atol=1e-12
             end
         end
+    end
+end
+
+@testset "surface-flux loader supports latlon and reduced grids" begin
+    mktempdir() do dir
+        flux_path = joinpath(dir, "gridfed.nc")
+        write_test_surface_flux_file(flux_path)
+
+        flux_cfg = Dict{String, Any}(
+            "kind" => "gridfed_fossil_co2",
+            "file" => flux_path,
+            "time_index" => 1,
+        )
+
+        vertical = AtmosTransportV2.HybridSigmaPressure(Float64[0, 0], Float64[1, 0])
+
+        latlon_mesh = AtmosTransportV2.LatLonMesh(; FT=Float64, Nx=4, Ny=2)
+        latlon_grid = AtmosTransportV2.AtmosGrid(latlon_mesh, vertical, AtmosTransportV2.CPU(); FT=Float64)
+        ll_source = build_surface_flux_source(latlon_grid, :fossil_co2, flux_cfg, Float64)
+        for j in 1:2, i in 1:4
+            @test ll_source.cell_mass_rate[i, j] ≈ AtmosTransportV2.cell_area(latlon_mesh, i, j) atol=1e-6
+        end
+
+        reduced_mesh = AtmosTransportV2.ReducedGaussianMesh([-45.0, 45.0], [4, 4]; FT=Float64)
+        reduced_grid = AtmosTransportV2.AtmosGrid(reduced_mesh, vertical, AtmosTransportV2.CPU(); FT=Float64)
+        rg_source = build_surface_flux_source(reduced_grid, :fossil_co2, flux_cfg, Float64)
+        for j in 1:AtmosTransportV2.nrings(reduced_mesh)
+            for i in 1:AtmosTransportV2.ring_cell_count(reduced_mesh, j)
+                c = AtmosTransportV2.cell_index(reduced_mesh, i, j)
+                @test rg_source.cell_mass_rate[c] ≈ AtmosTransportV2.cell_area(reduced_mesh, c) atol=1e-6
+            end
+        end
+    end
+end
+
+@testset "transport-binary sequence runner supports multi-tracer surface flux sources" begin
+    mktempdir() do dir
+        path = joinpath(dir, "day1.bin")
+        flux_path = joinpath(dir, "gridfed.nc")
+        write_sequence_binary(path; scale=1)
+        write_test_surface_flux_file(flux_path)
+
+        cfg = Dict{String, Any}(
+            "input" => Dict("binary_paths" => [path]),
+            "numerics" => Dict("float_type" => "Float64"),
+            "run" => Dict("scheme" => "upwind", "start_window" => 1),
+            "tracers" => Dict(
+                "natural_co2" => Dict(
+                    "init" => Dict("kind" => "uniform", "background" => 4.0e-4),
+                ),
+                "fossil_co2" => Dict(
+                    "init" => Dict("kind" => "uniform", "background" => 0.0),
+                    "surface_flux" => Dict(
+                        "kind" => "gridfed_fossil_co2",
+                        "file" => flux_path,
+                        "time_index" => 1,
+                    ),
+                ),
+            ),
+        )
+
+        model = run_sequence([path], cfg)
+        mesh = AtmosTransportV2.LatLonMesh(; FT=Float64, Nx=4, Ny=3)
+        total_area = sum(AtmosTransportV2.cell_area(mesh, i, j) for j in 1:3 for i in 1:4)
+
+        @test AtmosTransportV2.total_air_mass(model.state) ≈ 24.0 atol=eps(Float64) * 100
+        @test AtmosTransportV2.total_mass(model.state, :natural_co2) ≈ 24.0 * 4.0e-4 atol=eps(Float64) * 100
+        @test AtmosTransportV2.total_mass(model.state, :fossil_co2) ≈ total_area * 3600.0 rtol=1e-12
     end
 end

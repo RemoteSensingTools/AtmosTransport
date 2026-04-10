@@ -267,20 +267,21 @@ function diagnose_cm!(cm, am, bm, dm, m, Nc, Nz; max_cfl::Float64 = 40.0)
             cm[i, j, k+1] = cm[i, j, k] + div_h - dm[i, j, k]
         end
 
-        # Pass 2: cap per-interface cm to prevent Z CFL blowup.
-        # The bilinear wind interpolation creates horizontal divergence
-        # residuals that accumulate in cm. At thin TOA layers, even small
-        # residuals produce huge CFL. We cap |cm[k]| ≤ max_cfl × m[k]
-        # (using the thinner of the two adjacent cells) and absorb the
-        # excess into neighboring levels.
-        for k in 2:Nz  # skip TOA (k=1 is always 0) and surface (fixed below)
+        # Pass 2: scale entire column's cm if max Z CFL exceeds limit.
+        # Find the worst CFL in this column and scale ALL cm values by
+        # a single factor so the worst doesn't exceed max_cfl.
+        # This preserves the relative vertical flux structure.
+        worst_cfl = 0.0
+        for k in 2:Nz
             m_thin = min(m[i, j, k-1], m[i, j, k])
-            limit = max_cfl * max(m_thin, 1e-10)
-            if abs(cm[i, j, k]) > limit
-                excess = cm[i, j, k] - sign(cm[i, j, k]) * limit
-                cm[i, j, k] = sign(cm[i, j, k]) * limit
-                # Push excess to the next interface (downward)
-                cm[i, j, k+1] += excess
+            m_thin > 0 || continue
+            cfl_k = abs(cm[i, j, k]) / m_thin
+            worst_cfl = max(worst_cfl, cfl_k)
+        end
+        if worst_cfl > max_cfl
+            scale = max_cfl / worst_cfl
+            for k in 2:Nz+1
+                cm[i, j, k] *= scale
             end
         end
 

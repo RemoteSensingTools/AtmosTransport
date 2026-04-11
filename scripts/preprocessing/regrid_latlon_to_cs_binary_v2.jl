@@ -251,14 +251,10 @@ function compute_panel_face_fluxes!(am, bm,
     return nothing
 end
 
-"""
-Diagnose vertical mass flux cm from horizontal flux divergence and mass tendency.
+# Diagnose vertical mass flux cm from horizontal flux divergence and mass tendency.
+# cm[k+1] = cm[k] + am[i]-am[i+1] + bm[j]-bm[j+1] - dm[i,j,k]
+# cm[:,:,1] = 0 (TOA), cm[:,:,Nz+1] = 0 (surface).
 
-cm[i,j,k+1] = cm[i,j,k] + am[i,j,k] - am[i+1,j,k] + bm[i,j,k] - bm[i,j+1,k] - dm[i,j,k]
-
-where dm = (m_next - m_curr) / (2 * steps_per_window).
-cm[:,:,1] = 0 (TOA), cm[:,:,Nz+1] = 0 (surface, enforced by construction if balanced).
-"""
 """
     balance_panel_mass_fluxes!(am, bm, dm_dt, Nc, Nz)
 

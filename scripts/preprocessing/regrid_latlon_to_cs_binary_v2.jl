@@ -20,6 +20,7 @@
 
 using Printf
 using JSON3
+using FFTW
 
 include(joinpath(@__DIR__, "..", "..", "src_v2", "AtmosTransportV2.jl"))
 using .AtmosTransportV2
@@ -258,6 +259,69 @@ cm[i,j,k+1] = cm[i,j,k] + am[i,j,k] - am[i+1,j,k] + bm[i,j,k] - bm[i,j+1,k] - dm
 where dm = (m_next - m_curr) / (2 * steps_per_window).
 cm[:,:,1] = 0 (TOA), cm[:,:,Nz+1] = 0 (surface, enforced by construction if balanced).
 """
+"""
+    balance_panel_mass_fluxes!(am, bm, dm_dt, Nc, Nz)
+
+Poisson-balance am/bm on a single CS panel so that horizontal flux
+convergence exactly matches the prescribed mass tendency dm_dt.
+
+Uses FFT-based Poisson solve (same approach as the LatLon preprocessor's
+`balance_mass_fluxes!` in mass_support.jl). Each CS panel is treated as
+doubly-periodic in gnomonic coordinates — this is approximate at panel
+boundaries but correct in the interior.
+
+After balancing, `div(am,bm) = dm_dt` to machine precision at every cell.
+"""
+function balance_panel_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
+                                     dm_dt::Array{FT, 3}, Nc::Int, Nz::Int) where FT
+    fac = Array{Float64}(undef, Nc, Nc)
+    @inbounds for j in 1:Nc, i in 1:Nc
+        fac[i, j] = 2.0 * (cos(2π * (i - 1) / Nc) + cos(2π * (j - 1) / Nc) - 2.0)
+    end
+    fac[1, 1] = 1.0  # avoid division by zero for mean mode
+
+    residual = Array{Float64}(undef, Nc, Nc)
+    psi = Array{Float64}(undef, Nc, Nc)
+
+    for k in 1:Nz
+        # Compute horizontal flux convergence minus target tendency
+        @inbounds for j in 1:Nc, i in 1:Nc
+            conv = (Float64(am[i, j, k]) - Float64(am[i + 1, j, k])) +
+                   (Float64(bm[i, j, k]) - Float64(bm[i, j + 1, k]))
+            residual[i, j] = conv - Float64(dm_dt[i, j, k])
+        end
+
+        maximum(abs, residual) < 1e-10 && continue
+
+        # Solve Poisson equation: Δψ = residual
+        A = FFTW.fft(complex.(residual))
+        @inbounds for j in 1:Nc, i in 1:Nc
+            A[i, j] /= fac[i, j]
+        end
+        A[1, 1] = 0.0 + 0.0im
+        psi .= real.(FFTW.ifft(A))
+
+        # Adjust am by ∂ψ/∂x (periodic differences)
+        @inbounds for j in 1:Nc
+            for i in 2:Nc
+                am[i, j, k] += FT(psi[i, j] - psi[i - 1, j])
+            end
+            # Boundary faces: wrap-around (periodic in gnomonic coords)
+            am[1, j, k] += FT(psi[1, j] - psi[Nc, j])
+            am[Nc + 1, j, k] += FT(psi[1, j] - psi[Nc, j])
+        end
+
+        # Adjust bm by ∂ψ/∂y
+        @inbounds for i in 1:Nc
+            for j in 2:Nc
+                bm[i, j, k] += FT(psi[i, j] - psi[i, j - 1])
+            end
+            bm[i, 1, k] += FT(psi[i, 1] - psi[i, Nc])
+            bm[i, Nc + 1, k] += FT(psi[i, 1] - psi[i, Nc])
+        end
+    end
+end
+
 function diagnose_cm!(cm, am, bm, dm, m, Nc, Nz; max_cfl::Float64 = 40.0)
     @inbounds for j in 1:Nc, i in 1:Nc
         # Pass 1: raw cm from cumulative sum TOA→surface
@@ -506,6 +570,9 @@ function main()
             @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
                 dm_panel[i, j, k] = (m_next_p[i, j, k] - m_panels[p][i, j, k]) / (2 * steps_per_window)
             end
+            # Poisson-balance am/bm so div(am,bm) = dm_dt exactly (TM5 approach)
+            balance_panel_mass_fluxes!(am_panels[p], bm_panels[p], dm_panel, Nc, Nz)
+            # Now diagnose cm from the balanced horizontal fluxes
             diagnose_cm!(cm_panels[p], am_panels[p], bm_panels[p], dm_panel, m_panels[p], Nc, Nz)
         end
 

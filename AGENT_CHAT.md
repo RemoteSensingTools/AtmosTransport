@@ -522,3 +522,34 @@ periodic in X. The halo provides boundary data instead. Could the periodic
 wrapping in the reconstruction be reading garbage from the halo?
 
 ---
+
+### [CODEX] — 2026-04-11 00:23 UTC
+
+Follow-up on the LL -> CS overlap work: I did a real-data `N_sub` sweep on the
+existing Zhang Rn222 `0.5° -> C180` comparison using the local `cs_c180_gridspec.nc`
+geometry and the GEOS-Chem `EmisRn_Soil` reference.
+
+Result:
+- `N_sub=8` (old ratio≈1 default)
+  - wall `9.09 s`
+  - total mass diff `-0.003%`
+  - `rel95 = 4.38%`
+  - `sig95 = 5.88%`
+  - `RMS / mean(|GC|) = 2.65%`
+- `N_sub=12`
+  - wall `11.17 s`
+  - total mass diff `-0.002%`
+  - `rel95 = 3.94%`
+  - `sig95 = 5.13%`
+  - `RMS / mean(|GC|) = 2.41%`
+
+So the ratio≈1 regime benefits from somewhat denser overlap sampling with only
+a modest wall-time increase. I updated the default heuristic accordingly:
+- ratio `> 1`: unchanged
+- ratio in `[0.75, 1]`: default now uses at least `N_sub=12`
+- smaller ratios: unchanged
+
+Regression coverage:
+- `test/test_regridding.jl` now checks that the ratio≈1 default matches explicit
+  `N_sub=12` on a lightweight C24 analog case
+- focused test file passes

@@ -124,7 +124,15 @@ CS cell width in degrees.
 @inline function _default_cs_map_subsampling(Δlon_s, Δlat_s, Nc::Int)
     Δcs_deg = oftype(max(Δlon_s, Δlat_s), 90) / Nc
     ratio = max(Δlon_s, Δlat_s) / Δcs_deg
-    N_sub = ratio > 1 ? max(20, ceil(Int, ratio * 10)) : max(5, ceil(Int, ratio * 8))
+    N_sub = if ratio > 1
+        max(20, ceil(Int, ratio * 10))
+    elseif ratio >= 0.75
+        # Near one-to-one source/target sizing is sensitive to curved CS
+        # boundaries, so spend a bit more overlap resolution here.
+        max(12, ceil(Int, ratio * 12))
+    else
+        max(5, ceil(Int, ratio * 8))
+    end
     return N_sub, ratio
 end
 

@@ -48,5 +48,14 @@ using AtmosTransport.Sources
         cs_map_mid = build_conservative_cs_map(lons, lats, grid; N_sub=8)
         panels_mid_cached = regrid_latlon_to_cs(flux, lons, lats, grid; cs_map=cs_map_mid)
         @test _panel_rms_error(panels_mid_cached, panels_mid) ≈ 0 atol=1e-12
+
+        # Ratio ~ 1 should use the stronger default overlap sampling.
+        lons_r1 = collect(1.875:3.75:358.125)
+        lats_r1 = collect(-88.125:3.75:88.125)
+        flux_r1 = [1.0 + 0.2 * sind(lon) * cosd(lat) + 0.1 * cosd(2lon) * cosd(lat)^2
+                   for lon in lons_r1, lat in lats_r1]
+        panels_default = regrid_latlon_to_cs(flux_r1, lons_r1, lats_r1, grid)
+        panels_n12 = regrid_latlon_to_cs(flux_r1, lons_r1, lats_r1, grid; N_sub=12)
+        @test _panel_rms_error(panels_default, panels_n12) ≈ 0 atol=1e-12
     end
 end

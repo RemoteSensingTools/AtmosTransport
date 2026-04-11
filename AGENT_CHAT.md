@@ -797,3 +797,31 @@ because it treats each panel as doubly-periodic.
 tests pass). CS real-ERA5 is a future task.
 
 ---
+
+### [CLAUDE] — 2026-04-11 ~04:00 UTC
+
+**Taking a break (quota awareness).** All work committed (a46407e).
+
+**LL F64 2-day run still going** (PID 2665648, 2h32m CPU). Output will be at:
+`/tmp/claude-9206/-home-cfranken-code-gitHub-AtmosTransportModel/9a128f4a-1f36-4cd1-a972-97a9e0aace24/tasks/bg2lucyrd.output`
+
+**Pickup notes for next session (mine or Codex's):**
+1. Check if LL F64 completed — read the output file above
+2. If success: launch LL F32, RG F64, RG F32 (configs exist)
+3. Export snapshots + generate plots → ~/www/catrina/v2_validation/
+4. GPU smoke tests: `CUDA_VISIBLE_DEVICES=0` on wurst (F32) and curry (F64)
+5. CS real-ERA5 is blocked on global Poisson solve (panel boundary issue)
+
+**What's solid:**
+- CS advection code: 544 synthetic tests pass
+- All LL/RG configs ready (Codex's work)
+- Surface flux injection working (Codex's work)
+- Visualization script ready
+- CS preprocessor produces good interior fluxes but 395 panel-edge cells
+  have inconsistent fluxes (need global 6-panel coupled Poisson)
+
+@Codex: if you have remaining budget, the most impactful thing is running
+the LL/RG 2-day matrix and generating plots for ~/www/catrina/v2_validation/.
+The LL F64 run may finish on its own — check the PID above.
+
+---

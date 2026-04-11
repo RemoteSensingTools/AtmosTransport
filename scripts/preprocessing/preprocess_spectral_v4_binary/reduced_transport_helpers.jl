@@ -432,11 +432,39 @@ cell matches the prescribed forward-window mass tendency per substep:
 
     dm_dt[c, k] = (m_next[c, k] - m_cur[c, k]) / (2 * steps_per_window)
 
-Uses a graph-Laplacian Conjugate-Gradient solve per level (constant
-null-space projected out). After the correction, the recomputed cm from
-`recompute_faceindexed_cm_from_divergence!` will be near machine zero,
-matching the LL-path balanced behaviour. Returns a short diagnostic
-`(; max_pre_residual, max_post_residual, max_cg_iter)`.
+Uses a graph-Laplacian Conjugate-Gradient solve per level. The graph
+Laplacian with interior-only face degrees is singular (1-D constant
+null space), so the solver projects `rhs` onto range(L) before
+solving. Any part of `rhs` that lives in the null space (uniform
+per-cell offset, from pole-cap boundary stubs or from a global
+mass-tendency mismatch that isn't closed by the raw spectral fluxes)
+**cannot** be corrected by interior-face flux adjustments and is
+absorbed downstream by the continuity `cm` cumsum. The physics
+truth is the post-balance `max(|cm|/m)` probe, not the raw
+divergence residuals reported here.
+
+Returns a diagnostic NamedTuple:
+  `max_pre_raw_residual`    — `max(|rhs|)` BEFORE mean projection
+                              (target - div(hflux) in raw units)
+  `max_rhs_mean`            — `max(|mean(rhs)|)` across levels
+                              (the null-space component magnitude)
+  `max_pre_projected`       — `max(|rhs - mean(rhs)|)`, the part of
+                              the residual in range(L)
+  `max_post_projected`      — `max(|L·psi - (rhs - mean(rhs))|)`, the
+                              actual PCG residual on range(L); this
+                              is the number you want near zero
+  `max_post_raw_residual`   — `max(|div(new hflux) - target|)`; will
+                              include the null-space component and
+                              so stays ~`max_rhs_mean` even when the
+                              PCG solve is exact. Kept as a
+                              backwards-compat proxy for the old
+                              `max_post_residual` but do NOT use it
+                              as a solver-convergence metric.
+  `max_cg_iter`             — worst CG iteration count across levels
+
+Also returned for backwards-compat:
+  `max_pre_residual = max_pre_raw_residual`,
+  `max_post_residual = max_post_raw_residual`.
 """
 function balance_reduced_horizontal_fluxes!(hflux::AbstractMatrix{Float64},
                                             m_cur::AbstractMatrix{Float64},
@@ -452,8 +480,11 @@ function balance_reduced_horizontal_fluxes!(hflux::AbstractMatrix{Float64},
     size(hflux, 2) == Nz || error("hflux Nz mismatch with m")
     inv_scale = 1.0 / (2.0 * steps_per_window)
 
-    max_pre = 0.0
-    max_post = 0.0
+    max_pre_raw = 0.0           # max(|rhs|) before mean projection
+    max_rhs_mean = 0.0          # max(|mean(rhs)|) — null-space magnitude
+    max_pre_proj = 0.0          # max(|rhs - mean(rhs)|)
+    max_post_proj = 0.0         # max(|L*psi - (rhs - mean(rhs))|) on range(L)
+    max_post_raw = 0.0          # max(|div(new hflux) - target|)
     max_it = 0
 
     psi = scratch.psi
@@ -474,25 +505,51 @@ function balance_reduced_horizontal_fluxes!(hflux::AbstractMatrix{Float64},
         @inbounds for c in 1:nc
             rhs[c] = div[c] - (m_next[c, k] - m_cur[c, k]) * inv_scale
         end
-        pre_res = maximum(abs, rhs)
-        pre_res > max_pre && (max_pre = pre_res)
-        if pre_res < tol
-            # Already balanced at this level.
+
+        # 2a. Raw (pre-projection) diagnostics.
+        rhs_sum = 0.0
+        rhs_raw_linf = 0.0
+        @inbounds for c in 1:nc
+            rhs_sum += rhs[c]
+            a = abs(rhs[c])
+            a > rhs_raw_linf && (rhs_raw_linf = a)
+        end
+        rhs_mean = rhs_sum / nc
+        rhs_raw_linf > max_pre_raw && (max_pre_raw = rhs_raw_linf)
+        a_mean = abs(rhs_mean)
+        a_mean > max_rhs_mean && (max_rhs_mean = a_mean)
+
+        # 2b. Projected `rhs` L∞ (magnitude of the part of rhs
+        # that the solver can actually kill).
+        pre_proj = 0.0
+        @inbounds for c in 1:nc
+            a = abs(rhs[c] - rhs_mean)
+            a > pre_proj && (pre_proj = a)
+        end
+        pre_proj > max_pre_proj && (max_pre_proj = pre_proj)
+
+        if pre_proj < tol
+            # Projected residual already at tol: nothing left for the
+            # solver to do on this level. The raw residual may still be
+            # nonzero if rhs_mean is large, but that's null-space and
+            # not fixable here.
             continue
         end
+
         # 3. Solve L · psi = rhs (psi is per-cell scalar correction potential).
+        #    solve_graph_poisson_pcg! projects `rhs` to mean-zero in-place;
+        #    `rhs` exits the call as the PCG residual on range(L).
         _, it = solve_graph_poisson_pcg!(psi, rhs, face_left, face_right, degree,
                                          scratch; tol=tol, max_iter=max_iter)
         it > max_it && (max_it = it)
-        # 4. Apply flux correction: hflux[f] += psi[right] - psi[left].
-        @inbounds for f in eachindex(face_left)
-            left  = Int(face_left[f])
-            right = Int(face_right[f])
-            if left > 0 && right > 0
-                hflux[f, k] += psi[right] - psi[left]
-            end
-        end
-        # 5. Verify post-balance residual.
+
+        # 3a. Post-solve residual on range(L): max(|L*psi - rhs_projected|).
+        # Compute L*psi explicitly to avoid trusting the CG internal metric.
+        Lpsi = scratch.Ap  # reuse buffer
+        _graph_laplacian_mul!(Lpsi, psi, face_left, face_right, degree)
+        # `rhs` has been overwritten by the solver to (rhs_projected - alpha * L*p).
+        # What we want is `max(|L*psi_final - rhs_projected|)`. Recompute
+        # rhs_projected from the current hflux and the known mean:
         fill!(div, 0.0)
         @inbounds for f in eachindex(face_left)
             flux = hflux[f, k]
@@ -501,15 +558,54 @@ function balance_reduced_horizontal_fluxes!(hflux::AbstractMatrix{Float64},
             left > 0 && (div[left]  += flux)
             right > 0 && (div[right] -= flux)
         end
-        post_res = 0.0
+        @inbounds for c in 1:nc
+            rhs[c] = (div[c] - (m_next[c, k] - m_cur[c, k]) * inv_scale) - rhs_mean
+        end
+        post_proj = 0.0
+        @inbounds for c in 1:nc
+            a = abs(Lpsi[c] - rhs[c])
+            a > post_proj && (post_proj = a)
+        end
+        post_proj > max_post_proj && (max_post_proj = post_proj)
+
+        # 4. Apply flux correction: hflux[f] += psi[right] - psi[left].
+        @inbounds for f in eachindex(face_left)
+            left  = Int(face_left[f])
+            right = Int(face_right[f])
+            if left > 0 && right > 0
+                hflux[f, k] += psi[right] - psi[left]
+            end
+        end
+
+        # 5. Raw post-balance residual (includes the irremovable
+        # null-space component).
+        fill!(div, 0.0)
+        @inbounds for f in eachindex(face_left)
+            flux = hflux[f, k]
+            left  = Int(face_left[f])
+            right = Int(face_right[f])
+            left > 0 && (div[left]  += flux)
+            right > 0 && (div[right] -= flux)
+        end
+        post_raw = 0.0
         @inbounds for c in 1:nc
             r = abs(div[c] - (m_next[c, k] - m_cur[c, k]) * inv_scale)
-            r > post_res && (post_res = r)
+            r > post_raw && (post_raw = r)
         end
-        post_res > max_post && (max_post = post_res)
+        post_raw > max_post_raw && (max_post_raw = post_raw)
     end
 
-    return (; max_pre_residual=max_pre, max_post_residual=max_post, max_cg_iter=max_it)
+    return (;
+        max_pre_raw_residual = max_pre_raw,
+        max_rhs_mean = max_rhs_mean,
+        max_pre_projected = max_pre_proj,
+        max_post_projected = max_post_proj,
+        max_post_raw_residual = max_post_raw,
+        max_cg_iter = max_it,
+        # Backwards-compat aliases (kept for older call sites):
+        max_pre_residual = max_pre_raw,
+        max_post_residual = max_post_raw,
+    )
 end
 
 function recompute_faceindexed_cm_from_divergence!(cm::AbstractMatrix{FT},
@@ -586,8 +682,11 @@ function apply_reduced_poisson_balance!(storage::ReducedWindowStorage{FT},
                z = work.balance_z)
 
     @info "  Applying Poisson mass flux balance (reduced-Gaussian)..."
-    worst_pre = 0.0
-    worst_post = 0.0
+    worst_pre_raw = 0.0
+    worst_rhs_mean = 0.0
+    worst_pre_proj = 0.0
+    worst_post_proj = 0.0
+    worst_post_raw = 0.0
     worst_iter = 0
 
     for win in 1:Nt
@@ -605,8 +704,11 @@ function apply_reduced_poisson_balance!(storage::ReducedWindowStorage{FT},
             steps_per_window, scratch;
             tol=tol, max_iter=max_iter,
         )
-        worst_pre = max(worst_pre, diag.max_pre_residual)
-        worst_post = max(worst_post, diag.max_post_residual)
+        worst_pre_raw  = max(worst_pre_raw,  diag.max_pre_raw_residual)
+        worst_rhs_mean = max(worst_rhs_mean, diag.max_rhs_mean)
+        worst_pre_proj = max(worst_pre_proj, diag.max_pre_projected)
+        worst_post_proj = max(worst_post_proj, diag.max_post_projected)
+        worst_post_raw = max(worst_post_raw, diag.max_post_raw_residual)
         worst_iter = max(worst_iter, diag.max_cg_iter)
 
         # Store balanced hflux back as FT.
@@ -621,10 +723,14 @@ function apply_reduced_poisson_balance!(storage::ReducedWindowStorage{FT},
         storage.all_cm[win] = FT.(cm_buf)
     end
 
-    @info "  Poisson balance complete for $Nt windows. " *
-          "Residual: pre=$(round(worst_pre, sigdigits=4)) kg, " *
-          "post=$(round(worst_post, sigdigits=4)) kg, " *
-          "max_cg_iter=$worst_iter"
+    @info @sprintf("  Poisson balance complete for %d windows.", Nt)
+    @info @sprintf("    pre_raw=%.3e  pre_proj=%.3e  post_proj=%.3e  post_raw=%.3e kg",
+                   worst_pre_raw, worst_pre_proj, worst_post_proj, worst_post_raw)
+    @info @sprintf("    null-space component max|mean(rhs)|=%.3e kg  (not correctable by interior-face fluxes,",
+                   worst_rhs_mean)
+    @info "                                                      absorbed by downstream cm cumsum)"
+    @info @sprintf("    max_cg_iter=%d. Physics truth is max(|cm|/m) after cm recomputation,", worst_iter)
+    @info "                not the raw residuals above (see TransportBinaryDriver sanity guard)."
     return nothing
 end
 

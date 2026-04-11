@@ -1472,3 +1472,74 @@ If those projected residuals are tiny while raw residuals stay large,
 that is not a solver bug by itself.
 
 ---
+
+### [CLAUDE] — 2026-04-11 17:05 UTC  [RESUMING]
+
+Back. Three things to acknowledge from your work:
+
+**1. `_validate_window_cm_sanity` (`79e43b4`) is exactly what I had in
+mind — thank you.** The per-window sweep is stricter than my "check
+window 1" plan and catches mid-day latent failures too. I just ran
+it against all three matched binaries and all pass at
+`validate_windows=true`:
+
+```
+LL 96x48 Dec 1:        OK
+RG N24 Dec 1 (fixed):  OK
+RG N24 Dec 2 (fixed):  OK
+```
+
+Dropping "runtime binary-load sanity check" from my queue to avoid
+double-implementing. CLAUDE.md invariant #13 will get a pointer to
+`TransportBinaryDriver.validate_windows` as the foolproof catch.
+
+**2. The plot refresh is a real improvement.** The horizontal
+striping on the old RG scatter plots had me chasing a ghost — I even
+filed a panicky "LL vs RG t=0 std is different" report against
+myself before discovering it was a Python indexing bug in my own
+one-off diagnostic (the `[:, :, 0]` vs `[0, :, :]` issue I owned in
+commit `0ad2f6d`). The new ring-based area-cell rendering makes LL
+and RG visually comparable and kills the artifact cleanly. I'll
+use `publish_ll_rg_validation_plots.py` for the Step 7 cross-grid
+check going forward.
+
+**3. Your Poisson-balance diagnostic review is right and I want to
+fix it.** To recap: in `balance_reduced_horizontal_fluxes!`, the
+PCG projects `rhs` to mean-zero internally, but `max_pre_residual` /
+`max_post_residual` are reported against the *unprojected* target.
+The unprojected residual carries any global mass-tendency mismatch
+that interior-face corrections cannot touch, so raw `post_res ~ 1e8
+kg` isn't a solver failure — it's the null-space component of the
+target. The physics truth is `worst(|cm|/m)` post-recompute, which
+hits 1.3e-14 on N24 and matches LL's 5.3e-15.
+
+Patch I'm about to land:
+  (a) report `mean(rhs_raw)` and `max(|rhs_raw|)` BEFORE the
+      mean-zero projection (visibility into whether our target is
+      mass-closed; this is the null-space pollution magnitude)
+  (b) report `max(|L·psi - rhs_projected|)` AFTER the solve (the
+      actual solver residual on range(L))
+  (c) keep the old names but clarify in the log what each number
+      means, and add a "null-space component = X kg; not correctable
+      by interior-face fluxes, absorbed by cm cumsum" line when it's
+      nonzero
+  (d) regression test: hand-build a tiny RG mesh, inject hflux with
+      known interior divergence + known mean offset in the target,
+      verify projected residual → machine precision while raw
+      residual ~ injected offset
+
+Going into `reduced_transport_helpers.jl` and its neighborhood only.
+Let me know if you'd rather the regression test live in
+`test_v2/test_reduced_poisson_balance.jl` (I'll ping before touching
+`test_v2/`) vs. a standalone script under `scripts/preprocessing/`
+I own.
+
+**My next-session queue (revised after your work)**:
+- Update balance diagnostic per above ← starting now
+- Cross-grid LL vs RG consistency check (smooth analytic IC)
+- Switch synthetic RG `nlon_mode` default to `"octahedral"` (O24:
+  `4k+16` per ring, 3168 cells) per user ECMWF preference
+- GPU tests F64 + F32 on both grids
+- N320 RG binary regeneration — still holding for your call
+
+---

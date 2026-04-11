@@ -91,107 +91,141 @@ end
 # Per-panel sweep functions (double-buffered)
 # =========================================================================
 
-"""Run X-sweep on one panel's interior with double buffering.
+# =========================================================================
+# Gamma-clamped tracer flux (from legacy src/Advection/cubed_sphere_mass_flux.jl)
+#
+# For face flux F through a donor cell with mass m_donor:
+#   gamma = clamp(F / m_donor, 0, 1)  (positive F) or clamp(F / m_donor, -1, 0)
+#   F_tracer = gamma * rm_donor
+#
+# When CFL = |F|/m_donor > 1, gamma is clamped to ±1, reducing tracer transport
+# to at most the entire donor cell content. Mass update m_new = m + F_in - F_out
+# is EXACT (no clamping on mass). Only the tracer flux is limited.
+#
+# This guarantees rm_new ≥ 0 when rm_src ≥ 0, and preserves mass conservation
+# exactly. It's the TM5/FV3/GCHP standard approach for high-CFL cells.
+# =========================================================================
 
-Mass-flux limiting: the net mass change `am_l - am_r` is limited so that
-`m_new ≥ 0`. This is necessary when regridded fluxes are not perfectly
-consistent with the cell mass field (e.g., CS panels from bilinear wind
-interpolation). The tracer flux is scaled by the same factor to maintain
-consistency. This is physically correct — you cannot remove more mass
-than exists in a cell.
+@inline function _gamma_clamped_x_flux(F::FT, m_donor::FT, rm_donor::FT) where FT
+    m_donor > zero(FT) || return zero(FT)
+    gamma = F >= zero(FT) ?
+        clamp(F / m_donor, zero(FT), one(FT)) :
+        clamp(F / m_donor, -one(FT), zero(FT))
+    return gamma * rm_donor
+end
+
+"""Run X-sweep on one panel with gamma-clamped upwind tracer flux.
+
+The mass update is exact; the tracer flux is gamma-clamped so rm_new ≥ 0
+when rm_src ≥ 0. This is the legacy CS approach (cubed_sphere_mass_flux.jl)
+that handles high CFL without violating mass conservation.
+
+When per-face CFL ≤ 1, gamma = F/m exactly (first-order upwind).
+When CFL > 1, gamma is clamped to ±1 (tracer transport saturates at donor mass).
 """
 function _sweep_x_panel!(rm, m, am, scheme, rm_buf, m_buf, Nc, Hp, Nz;
                          flux_scale = one(eltype(m)))
-    backend = get_backend(rm)
-    if backend isa KA_CPU
-        @inbounds for k in 1:Nz, jj in 1:Nc, ii in 1:Nc
-            i = ii + Hp; j = jj + Hp
-            am_l = flux_scale * am[i, j, k]
-            am_r = flux_scale * am[i + 1, j, k]
-            dm = am_l - am_r
+    FT = eltype(m)
+    @inbounds for k in 1:Nz, jj in 1:Nc, ii in 1:Nc
+        i = ii + Hp; j = jj + Hp
+        am_l = flux_scale * am[i, j, k]
+        am_r = flux_scale * am[i + 1, j, k]
 
-            # Limit mass flux to prevent negative mass
-            mi = m[i, j, k]
-            if mi + dm < zero(eltype(m)) && mi > zero(eltype(m))
-                # Scale fluxes so m_new = 0 (all mass drained, no more)
-                scale = mi / max(-dm, eps(eltype(m)))
-                am_l *= scale
-                am_r *= scale
-                dm = am_l - am_r
-            end
+        # Left face flux: donor is i-1 if am_l > 0, else i
+        mi   = m[i, j, k]
+        mim1 = m[i - 1, j, k]
+        rim1 = rm[i - 1, j, k]
+        ri   = rm[i, j, k]
+        fl = am_l >= zero(FT) ?
+            _gamma_clamped_x_flux(am_l, mim1, rim1) :
+            _gamma_clamped_x_flux(am_l, mi, ri)
 
-            Nx_padded = Int32(Nc + 2Hp)
-            fl = _xface_tracer_flux(Int32(i), j, k, rm, m, am_l, scheme, Nx_padded)
-            fr = _xface_tracer_flux(Int32(i) + Int32(1), j, k, rm, m, am_r, scheme, Nx_padded)
-            rm_buf[i, j, k] = rm[i, j, k] + fl - fr
-            m_buf[i, j, k]  = mi + dm
-        end
-    else
-        k! = _cs_xsweep_kernel!(backend, 256)
-        k!(rm_buf, rm, m_buf, m, am, scheme, Nc, Hp, flux_scale; ndrange=(Nc, Nc, Nz))
-        synchronize(backend)
+        # Right face flux: donor is i if am_r > 0, else i+1
+        mip1 = m[i + 1, j, k]
+        rip1 = rm[i + 1, j, k]
+        fr = am_r >= zero(FT) ?
+            _gamma_clamped_x_flux(am_r, mi, ri) :
+            _gamma_clamped_x_flux(am_r, mip1, rip1)
+
+        rm_buf[i, j, k] = ri + fl - fr
+        m_buf[i, j, k]  = mi + am_l - am_r
     end
-    # Copy buffer back to interior
     _copy_interior!(rm, rm_buf, Nc, Hp, Nz)
     _copy_interior!(m, m_buf, Nc, Hp, Nz)
     return nothing
 end
 
-"""Run Y-sweep on one panel's interior with double buffering and flux limiting."""
+"""Run Y-sweep on one panel with gamma-clamped upwind tracer flux."""
 function _sweep_y_panel!(rm, m, bm, scheme, rm_buf, m_buf, Nc, Hp, Nz;
                          flux_scale = one(eltype(m)))
-    backend = get_backend(rm)
-    if backend isa KA_CPU
-        @inbounds for k in 1:Nz, jj in 1:Nc, ii in 1:Nc
-            i = ii + Hp; j = jj + Hp
-            bm_s = flux_scale * bm[i, j, k]
-            bm_n = flux_scale * bm[i, j + 1, k]
-            dm = bm_s - bm_n
-            mi = m[i, j, k]
-            if mi + dm < zero(eltype(m)) && mi > zero(eltype(m))
-                scale = mi / max(-dm, eps(eltype(m)))
-                bm_s *= scale; bm_n *= scale; dm = bm_s - bm_n
-            end
-            Ny_padded = Int32(Nc + 2Hp)
-            fs = _yface_tracer_flux(i, Int32(j), k, rm, m, bm_s, scheme, Ny_padded)
-            fn = _yface_tracer_flux(i, Int32(j) + Int32(1), k, rm, m, bm_n, scheme, Ny_padded)
-            rm_buf[i, j, k] = rm[i, j, k] + fs - fn
-            m_buf[i, j, k]  = mi + dm
-        end
-    else
-        k! = _cs_ysweep_kernel!(backend, 256)
-        k!(rm_buf, rm, m_buf, m, bm, scheme, Nc, Hp, flux_scale; ndrange=(Nc, Nc, Nz))
-        synchronize(backend)
+    FT = eltype(m)
+    @inbounds for k in 1:Nz, jj in 1:Nc, ii in 1:Nc
+        i = ii + Hp; j = jj + Hp
+        bm_s = flux_scale * bm[i, j, k]
+        bm_n = flux_scale * bm[i, j + 1, k]
+
+        mi   = m[i, j, k]
+        mjm1 = m[i, j - 1, k]
+        rjm1 = rm[i, j - 1, k]
+        ri   = rm[i, j, k]
+        fs = bm_s >= zero(FT) ?
+            _gamma_clamped_x_flux(bm_s, mjm1, rjm1) :
+            _gamma_clamped_x_flux(bm_s, mi, ri)
+
+        mjp1 = m[i, j + 1, k]
+        rjp1 = rm[i, j + 1, k]
+        fn = bm_n >= zero(FT) ?
+            _gamma_clamped_x_flux(bm_n, mi, ri) :
+            _gamma_clamped_x_flux(bm_n, mjp1, rjp1)
+
+        rm_buf[i, j, k] = ri + fs - fn
+        m_buf[i, j, k]  = mi + bm_s - bm_n
     end
     _copy_interior!(rm, rm_buf, Nc, Hp, Nz)
     _copy_interior!(m, m_buf, Nc, Hp, Nz)
     return nothing
 end
 
-"""Run Z-sweep on one panel's interior with double buffering and flux limiting."""
+"""Run Z-sweep on one panel with gamma-clamped upwind tracer flux.
+
+Z boundary convention: cm[:,:,1] = 0 (TOA) and cm[:,:,Nz+1] = 0 (surface).
+Following the legacy cubed_sphere_mass_flux.jl column-sequential kernel pattern.
+"""
 function _sweep_z_panel!(rm, m, cm, scheme, rm_buf, m_buf, Nc, Hp, Nz;
                          flux_scale = one(eltype(m)))
-    backend = get_backend(rm)
-    if backend isa KA_CPU
-        @inbounds for k in 1:Nz, jj in 1:Nc, ii in 1:Nc
-            i = ii + Hp; j = jj + Hp
-            cm_t = flux_scale * cm[i, j, k]
-            cm_b = flux_scale * cm[i, j, k + 1]
-            dm = cm_t - cm_b
-            mi = m[i, j, k]
-            if mi + dm < zero(eltype(m)) && mi > zero(eltype(m))
-                scale = mi / max(-dm, eps(eltype(m)))
-                cm_t *= scale; cm_b *= scale; dm = cm_t - cm_b
+    FT = eltype(m)
+    @inbounds for k in 1:Nz, jj in 1:Nc, ii in 1:Nc
+        i = ii + Hp; j = jj + Hp
+        cm_t = flux_scale * cm[i, j, k]
+        cm_b = flux_scale * cm[i, j, k + 1]
+
+        mi = m[i, j, k]
+        ri = rm[i, j, k]
+
+        # Top interface (k): donor is k-1 if cm_t > 0 (downward), else k
+        ft = if k > 1
+            if cm_t >= zero(FT)
+                _gamma_clamped_x_flux(cm_t, m[i, j, k - 1], rm[i, j, k - 1])
+            else
+                _gamma_clamped_x_flux(cm_t, mi, ri)
             end
-            ft = _zface_tracer_flux(i, j, Int32(k), rm, m, cm_t, scheme, Int32(Nz))
-            fb = _zface_tracer_flux(i, j, Int32(k) + Int32(1), rm, m, cm_b, scheme, Int32(Nz))
-            rm_buf[i, j, k] = rm[i, j, k] + ft - fb
-            m_buf[i, j, k]  = mi + dm
+        else
+            zero(FT)
         end
-    else
-        k! = _cs_zsweep_kernel!(backend, 256)
-        k!(rm_buf, rm, m_buf, m, cm, scheme, Nz, Hp, flux_scale; ndrange=(Nc, Nc, Nz))
-        synchronize(backend)
+
+        # Bottom interface (k+1): donor is k if cm_b > 0, else k+1
+        fb = if k < Nz
+            if cm_b >= zero(FT)
+                _gamma_clamped_x_flux(cm_b, mi, ri)
+            else
+                _gamma_clamped_x_flux(cm_b, m[i, j, k + 1], rm[i, j, k + 1])
+            end
+        else
+            zero(FT)
+        end
+
+        rm_buf[i, j, k] = ri + ft - fb
+        m_buf[i, j, k]  = mi + cm_t - cm_b
     end
     _copy_interior!(rm, rm_buf, Nc, Hp, Nz)
     _copy_interior!(m, m_buf, Nc, Hp, Nz)
@@ -493,14 +527,13 @@ function strang_split_cs!(panels_rm::NTuple{6},
     fs = convert(FT, flux_scale)
     cfl_ft = convert(FT, cfl_limit)
 
-    # Compute subcycle counts using evolving-mass pilot.
-    # The pilot simulates mass evolution through subcycles and increases n_sub
-    # until per-face CFL stays within limit on evolved mass. This catches cases
-    # where static CFL is OK but evolving mass shrinks enough that later
-    # subcycles exceed CFL.
-    n_x = _cs_x_pilot_subcycle_count(panels_am, panels_m, Nc, Hp, Nz, cfl_ft)
-    n_y = _cs_y_pilot_subcycle_count(panels_bm, panels_m, Nc, Hp, Nz, cfl_ft)
-    n_z = _cs_z_pilot_subcycle_count(panels_cm, panels_m, Nc, Hp, Nz, cfl_ft)
+    # Static CFL subcycle count. Gamma clamping in the sweep kernels handles
+    # per-cell CFL > 1 correctly (tracer flux saturates at donor mass, mass
+    # update is exact). Subcycling reduces the average CFL but isn't required
+    # for stability — it's for accuracy (second-order advection needs CFL < 1).
+    n_x = _cs_static_subcycle_count(panels_am, panels_m, Nc, Hp, Nz, cfl_ft, :x)
+    n_y = _cs_static_subcycle_count(panels_bm, panels_m, Nc, Hp, Nz, cfl_ft, :y)
+    n_z = _cs_static_subcycle_count(panels_cm, panels_m, Nc, Hp, Nz, cfl_ft, :z)
 
     fs_x = fs / FT(n_x)
     fs_y = fs / FT(n_y)

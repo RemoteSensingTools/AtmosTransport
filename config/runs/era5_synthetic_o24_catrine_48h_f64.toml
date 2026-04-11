@@ -1,0 +1,29 @@
+# src_v2 synthetic octahedral O24 48-hour Catrine CO2 — F64.
+# Per user preference: ECMWF octahedral layout, `4k+16` per hemisphere,
+# 3168 cells total (vs 4608 in the matched "regular" N24 sibling).
+#
+# Usage:
+#   julia --project=. scripts/diagnostics/export_transport_v2_snapshots.jl \
+#       config/runs/era5_synthetic_o24_catrine_48h_f64.toml
+
+[input]
+binary_paths = [
+    "~/data/AtmosTransport/met/era5/o24/transport_binary_v2_tropo34_dec2021_f64/era5_transport_v2_rgN24_20211201_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/o24/transport_binary_v2_tropo34_dec2021_f64/era5_transport_v2_rgN24_20211202_merged1000Pa_float64.bin",
+]
+
+[numerics]
+float_type = "Float64"
+
+[run]
+scheme = "upwind"
+tracer_name = "CO2"
+reset_air_mass_each_window = false
+stop_window = 48
+
+[init]
+kind = "catrine_co2"
+
+[output]
+snapshot_hours = [0, 6, 12, 24, 36, 48]
+snapshot_file = "~/data/AtmosTransport/output/src_v2_snapshots/era5_synthetic_o24_catrine_natco2_48h.nc"

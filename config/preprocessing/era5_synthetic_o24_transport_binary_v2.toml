@@ -1,0 +1,43 @@
+# Synthetic octahedral reduced-Gaussian O24 (ECMWF convention:
+# 48 rings = 2N Gauss-Legendre latitudes with nlon[k] = 4k + 16 per
+# hemisphere, mirrored, giving 4·24·(24+9) = 3168 horizontal cells).
+#
+# This is the grid user specifically asked for ("strongly prefer O24
+# over N24") on 2026-04-11 for:
+#   - legacy-free, fully-octahedral ECMWF convention
+#   - predictable nlon progression toward the poles (easier to debug
+#     than the older N24 "reduced" layout)
+#
+# Sibling config `era5_synthetic_rgN24_transport_binary_v2.toml` uses
+# `nlon_mode = "regular"` (96 per ring, 4608 cells) for matched-cell-
+# count comparison with `era5_ll96x48_transport_binary_v2.toml`.
+#
+# Usage (preprocess a single day):
+#   julia --project=. scripts/preprocessing/preprocess_era5_reduced_gaussian_transport_binary_v2.jl \
+#       config/preprocessing/era5_synthetic_o24_transport_binary_v2.toml --day 2021-12-01
+
+[input]
+spectral_dir = "~/data/AtmosTransport/met/era5/0.5x0.5/spectral_hourly"
+coefficients = "config/era5_L137_coefficients.toml"
+
+[output]
+directory = "~/data/AtmosTransport/met/era5/o24/transport_binary_v2_tropo34_dec2021_f64"
+include_qv = false
+mass_basis = "moist"
+
+[grid]
+type = "synthetic_reduced_gaussian"
+gaussian_number = 24
+nlon_mode = "octahedral"
+echlevs = "ml137_tropo34"
+level_top = 1
+level_bot = 137
+merge_min_thickness_Pa = 1000.0  # fallback, not used with echlevs
+
+[numerics]
+float_type = "Float64"
+dt = 900.0
+met_interval = 3600.0
+
+[mass_fix]
+enable = false

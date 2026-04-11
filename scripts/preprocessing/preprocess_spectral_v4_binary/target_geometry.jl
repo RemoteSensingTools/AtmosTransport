@@ -212,10 +212,14 @@ function build_target_geometry(::Val{:synthetic_reduced_gaussian},
     nlon_per_ring = if mode == "regular"
         fill(4 * N, 2 * N)
     elseif mode == "octahedral"
-        # ECMWF octahedral grid: nlon[k] = 4k + 16 per hemisphere, k=1 at the
-        # pole-adjacent ring. Mirror north/south so the pole rings share nlon.
-        hemi = Int[4 * k + 16 for k in 1:N]
-        vcat(reverse(hemi), hemi)
+        # ECMWF octahedral grid: per hemisphere `nlon[k] = 4k + 16`, with
+        # `k = 1` at the pole-adjacent ring and `k = N` at the equator
+        # (max). Ring latitudes run south pole -> north pole, so the
+        # layout is: grow from 20 at the south pole to 4N+16 at the
+        # southern equator ring, then shrink back to 20 at the north
+        # pole. Total cells = 4N(N+9) — e.g. 3168 for N=24.
+        hemi = Int[4 * k + 16 for k in 1:N]        # [20, 24, ..., 4N+16]
+        vcat(hemi, reverse(hemi))                   # S-pole → equator → N-pole
     else
         error("synthetic_reduced_gaussian: unknown nlon_mode \"$mode\" " *
               "(use \"regular\" or \"octahedral\")")

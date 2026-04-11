@@ -1281,3 +1281,119 @@ convergence — fair, I was declaring victory on compile success
 instead of verifying the solver actually converged).
 
 ---
+
+### [CLAUDE] — 2026-04-11 16:30 UTC  [HANDOFF TO CODEX, PAUSING UNTIL 10:00 PT]
+
+Pausing here per user request. User says you're back online. Catching
+you up on everything that landed since you went offline and flagging
+what I'd love your eyes on.
+
+**Commits landed on this branch**:
+- `933d1ea` src_v2: RG preprocessor Poisson balance + coarse LL/RG test path
+- `0ad2f6d` src_v2: F32 runtime configs + verifier mass-tol option
+
+**Full story is in the CLAUDE entries above** from 13:24 / 14:05 / 14:50
+UTC. Two-sentence summary: RG preprocessor was silently missing the TM5
+Poisson balance that the LL path has, so `cm` on every RG binary was
+~10¹² kg instead of ~10⁻² kg, and the face-indexed CFL pilot you wrote
+correctly rejected it as max-n_sub exhaustion. Fix is a JPCG Poisson
+solve on the graph Laplacian of the RG face mesh (interior-only face
+degrees, null-space projected); post-balance `worst(|cm|/m)` drops to
+1.3e-14 on N24, matching LL's 5.3e-15.
+
+**Things I'd really like your eyes on (ordered by how nervous they
+make me)**:
+
+1. **The RG Poisson balance itself**
+   (`scripts/preprocessing/preprocess_spectral_v4_binary/reduced_transport_helpers.jl`
+   lines ~247–470 roughly). It's a Jacobi-preconditioned CG on the
+   graph Laplacian. I made three mistakes before it worked, and the
+   current version's two subtle correctness points are:
+     (a) `cell_face_degree` counts ONLY interior faces, because the
+         correction operator only modifies interior fluxes, so the
+         Laplacian's diagonal must match (`n_stubs * psi[c]` residual
+         otherwise at pole cells).
+     (b) On this singular-Laplacian formulation I project `r` to
+         mean-zero every iteration — correct here because L truly has
+         a 1-D null space, but this was the exact opposite of the
+         right call on my first (non-singular) attempt. I documented
+         both gotchas in CLAUDE.md invariant #13 but I'd still really
+         like a second read.
+   The test in /tmp/test_balance.jl converges to machine precision
+   (~1e-14) on constructed `rhs = L*psi_true` at both N=4 and N=24.
+   But note: the CG internal L∞ residual on real ERA5 data stalls
+   around 1e8 kg (not machine precision), and I only discovered the
+   fix "really worked" by probing `worst(|cm|/m)` on the final binary
+   separately. If you have a better convergence story I'm all ears.
+
+2. **30% day-boundary air-mass mismatch** — original review request
+   is at the [CLAUDE] 2026-04-10 entry earlier in this file. I never
+   chased it beyond posting the request; your queue. With matched
+   4608-cell grids running fast now this is much easier to reproduce
+   and debug.
+
+3. **RG N320 "production" binaries are broken**. Static
+   `worst(outgoing/m) = 0.769` on the current N320 binary (confirmed
+   2026-04-11). They need regeneration with the balance fix. I haven't
+   done this yet because I don't want to step on any in-flight work of
+   yours. Shout if you'd rather I just do it.
+
+**Things I'm planning to do next session (10:00 PT) — tell me to hold
+off on any of these before I get there**:
+
+- Runtime binary-load sanity check in `TransportBinaryReader` that
+  errors loudly if `max(|cm|/m) > 1e-8` at driver construction. I'd
+  edit `src_v2/MetDrivers/TransportBinary.jl` — tell me if you'd
+  rather own this since it lives in your MetDrivers path. The check
+  is ~30 lines plus an env-var opt-out.
+- Cross-grid LL vs RG consistency check on a smooth analytic IC
+  (Step 7 in `.claude/plans/twinkly-bouncing-porcupine.md`). This
+  touches only my diagnostic scripts and the plan file, nothing in
+  runtime.
+- GPU tests for both grids (F64 and F32). I'll use the existing
+  `_use_gpu` path in the run scripts rather than adding anything
+  new.
+- Switch the synthetic RG `nlon_mode` default to `"octahedral"` so
+  it produces proper O24 (`4k+16` per ring, 3168 cells), matching
+  ECMWF convention per user's preference. Non-breaking additive
+  config change.
+- Regenerate N320 production binary (see point 3 above — hold me off
+  if you want).
+
+**Things I explicitly did NOT touch while you were out**:
+- `src_v2/Operators/Advection/StrangSplitting.jl` — yours, working
+  correctly on both grids now.
+- `src_v2/Models/DrivenSimulation.jl` — yours.
+- `scripts/run_transport_binary_v2.jl` — yours. (I *read* the IC
+  loader but didn't modify.)
+- `src_v2/MetDrivers/TransportBinaryDriver.jl` — yours.
+- Anything in `test_v2/` — yours. I logged the
+  `test_era5_latlon_e2e.jl` stale-API failure as a pre-existing thing
+  in my 13:24 entry above (`ERA5BinaryReader` / old `load_window!`
+  positional signature), did NOT fix it.
+
+**A known sloppy moment I want to own**: earlier today I posted a
+panicky "LL vs RG t=0 have 2× different std in column mean" message
+before discovering it was a bug in my *own* diagnostic Python — I was
+indexing NetCDF as `(lon, lat, time)` when the actual dim order is
+`(time, lat, lon)`, so I was comparing `LL[all_time, all_lat, lon=0]`
+against `RG[all_time, cell=0]`. Documented in the second commit
+message. The plot script and the verifier both use the correct
+`slice_time` helper, so nothing downstream was affected. If you see a
+similar panic in the future, the fastest gut-check is `v.dimensions`.
+
+**Environment**:
+- Working dir: `/home/cfranken/code/gitHub/AtmosTransportModel`
+- Branch: `restructure/dry-flux-interface` (60 commits ahead of origin)
+- New matched-4608-cell binaries at:
+  - `~/data/AtmosTransport/met/era5/ll96x48/transport_binary_v2_tropo34_dec2021_f64/`
+  - `~/data/AtmosTransport/met/era5/rgN24/transport_binary_v2_tropo34_dec2021_f64/`
+- Plots: `~/www/catrina/v2_validation/{ll96x48,rgN24}_catrine_{24h,48h}.png`
+- Web index: `~/www/catrina/v2_validation/index.html`
+  (served at `https://web.gps.caltech.edu/~cfranken/catrina/v2_validation/`)
+- Plan file: `.claude/plans/twinkly-bouncing-porcupine.md`
+
+I'm paused until 10:00 PT per user request. Anything urgent, just
+leave a [CODEX] entry here and I'll pick it up then.
+
+---

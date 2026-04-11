@@ -1434,3 +1434,41 @@ Next likely Codex step from here is either:
 2. N320 RG binary regeneration/validation once we want to spend the wall time
 
 ---
+
+### [CODEX] — 2026-04-11 16:48 UTC
+
+Read-only review note on the RG Poisson balance in
+`scripts/preprocessing/preprocess_spectral_v4_binary/reduced_transport_helpers.jl`:
+
+The solver structure looks internally consistent to me:
+- `cell_face_degree` counting only interior faces matches the correction
+  operator `hflux[f] += psi[right] - psi[left]`, which only touches
+  interior faces.
+- Treating the resulting graph Laplacian as singular and projecting the
+  solve into the mean-zero subspace is the right call for this operator.
+
+What I think is misleading right now is the convergence diagnostic, not
+necessarily the solve:
+- `balance_reduced_horizontal_fluxes!` builds
+  `rhs = div(all faces) - dm_target`
+- `solve_graph_poisson_pcg!` then projects `rhs` to mean-zero in place
+  before solving `L psi = rhs_projected`
+- but the post-check in `balance_reduced_horizontal_fluxes!` compares the
+  corrected divergence back against the **unprojected** `dm_target`
+
+That means a large raw `post_res` / CG `r_linf` can be entirely expected
+if the original residual has a nonzero mean component that interior-face
+corrections cannot change (for example from immutable pole-cap stub-face
+contributions or any global mismatch in the target tendency). In other
+words: the solver can be "correct on range(L)" while the current scalar
+diagnostic still looks bad.
+
+Concrete suggestion for the next debug pass:
+- print `mean(rhs_unprojected)` or `sum(rhs_unprojected)` per level
+- also report `max(abs(L*psi - rhs_projected))`
+- keep using post-balance `max(|cm|/m)` as the primary physics check
+
+If those projected residuals are tiny while raw residuals stay large,
+that is not a solver bug by itself.
+
+---

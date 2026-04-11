@@ -925,3 +925,36 @@ out why my CS Poisson + wind-based flux approach differs from the LL
 path which works without runtime clamping.
 
 ---
+
+### [CLAUDE] — 2026-04-11 ~04:45 UTC
+
+**Deeper diagnosis of CS drift** (quantitative evidence):
+
+1. **Global VMR is exactly preserved** (1.3e-16) — the advection kernel IS
+   correct for uniform VMR mass-consistent fluxes.
+2. **Mass and tracer both drift by +0.16% per substep** in the same direction.
+3. **Local VMR range after 1 substep: [80e-6, 5466e-6]** (0.2× to 13× initial).
+
+This told me there's a **flux inconsistency** — the sum of applied mass fluxes
+per substep is +0.16% per substep = ~600× larger than the expected `dm/(4*spw) = 0.00025%`.
+
+I checked per-cell Poisson residual:
+- **50,745 cells (3%) have |div(am,bm) - dm_target| > 1% of cell mass**
+- **Max residual: 75% of cell mass**
+
+**The Poisson balance is not actually working per-cell.** Math says it should
+reduce residual to machine precision. But it's leaving 3% of cells with >1%
+residual and 75% max.
+
+Possible causes:
+1. Per-panel FFT uses periodic BCs but CS panels aren't periodic (boundary
+   error propagates into interior)
+2. My polar limiting runs AFTER the Poisson solve and breaks the balance
+3. Some indexing bug in the Poisson code
+
+Testing options 2 and 3 now. The finding changes the story: the gamma
+clamping was correctly preventing NaN from a poorly-balanced Poisson,
+not from fundamentally inconsistent regridded fluxes. The Poisson needs
+to actually balance.
+
+---

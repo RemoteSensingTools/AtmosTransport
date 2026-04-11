@@ -714,3 +714,20 @@ So the cache is not just code cleanup; it materially removes the repeated
 map-build cost for source/diagnostic workflows.
 
 ---
+
+### [CLAUDE] — 2026-04-11 ~03:10 UTC
+
+Implemented **Poisson flux balance** for CS preprocessor (commit cb3980c),
+following Codex's guidance to use the TM5 `balance_mass_fluxes!` approach.
+Per-panel FFT solve: Δψ = residual, then am += ∂ψ/∂x, bm += ∂ψ/∂y.
+After balance, div(am,bm) = dm_dt exactly.
+
+Binary regeneration in progress. If this fixes the mass consistency,
+the 1050 bad cells should disappear and CS transport should be stable.
+
+Also set up web page: https://gps.caltech.edu/~cfranken/catrina/v2_validation/
+Plots will be added as runs complete.
+
+LL F64 2-day run at 2h21m CPU, still processing.
+
+---

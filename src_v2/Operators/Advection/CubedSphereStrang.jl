@@ -238,6 +238,33 @@ end
 # CFL-based subcycle count
 # =========================================================================
 
+"""Static CFL subcycle count from initial mass (no evolving-mass pilot)."""
+function _cs_static_subcycle_count(panels_flux::NTuple{6}, panels_m::NTuple{6},
+                                    Nc::Int, Hp::Int, Nz::Int, cfl_limit::Real,
+                                    direction::Symbol)
+    FT = eltype(panels_m[1])
+    max_cfl = zero(FT)
+    @inbounds for p in 1:6
+        for k in 1:Nz, j in 1:Nc, i in 1:Nc
+            mi = panels_m[p][Hp+i, Hp+j, k]
+            mi <= zero(FT) && continue
+            c = if direction === :x
+                max(abs(panels_flux[p][Hp+i, Hp+j, k]),
+                    abs(panels_flux[p][Hp+i+1, Hp+j, k])) / mi
+            elseif direction === :y
+                max(abs(panels_flux[p][Hp+i, Hp+j, k]),
+                    abs(panels_flux[p][Hp+i, Hp+j+1, k])) / mi
+            else
+                max(abs(panels_flux[p][Hp+i, Hp+j, k]),
+                    abs(panels_flux[p][Hp+i, Hp+j, k+1])) / mi
+            end
+            max_cfl = max(max_cfl, c)
+        end
+    end
+    max_cfl <= cfl_limit && return 1
+    return ceil(Int, max_cfl / cfl_limit)
+end
+
 """
     _cs_x_pilot_subcycle_count(panels_am, panels_m, Nc, Hp, Nz, cfl_limit) -> Int
 
@@ -466,10 +493,13 @@ function strang_split_cs!(panels_rm::NTuple{6},
     fs = convert(FT, flux_scale)
     cfl_ft = convert(FT, cfl_limit)
 
-    # Compute subcycle counts per direction using evolving-mass pilot
-    n_x = _cs_x_pilot_subcycle_count(panels_am, panels_m, Nc, Hp, Nz, cfl_ft)
-    n_y = _cs_y_pilot_subcycle_count(panels_bm, panels_m, Nc, Hp, Nz, cfl_ft)
-    n_z = _cs_z_pilot_subcycle_count(panels_cm, panels_m, Nc, Hp, Nz, cfl_ft)
+    # Compute subcycle counts from static CFL (initial mass).
+    # The evolving-mass pilot doesn't converge for CS because ~0.06% of
+    # cells have net flux > mass due to preprocessing inconsistency.
+    # The runtime flux limiter prevents negative mass at those cells.
+    n_x = _cs_static_subcycle_count(panels_am, panels_m, Nc, Hp, Nz, cfl_ft, :x)
+    n_y = _cs_static_subcycle_count(panels_bm, panels_m, Nc, Hp, Nz, cfl_ft, :y)
+    n_z = _cs_static_subcycle_count(panels_cm, panels_m, Nc, Hp, Nz, cfl_ft, :z)
 
     fs_x = fs / FT(n_x)
     fs_y = fs / FT(n_y)

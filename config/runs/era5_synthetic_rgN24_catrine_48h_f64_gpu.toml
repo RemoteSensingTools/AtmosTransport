@@ -1,0 +1,26 @@
+# src_v2 synthetic RG N24 regular 48h Catrine — F64 GPU.
+
+[input]
+binary_paths = [
+    "~/data/AtmosTransport/met/era5/rgN24/transport_binary_v2_tropo34_dec2021_f64/era5_transport_v2_rgN24_20211201_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/rgN24/transport_binary_v2_tropo34_dec2021_f64/era5_transport_v2_rgN24_20211202_merged1000Pa_float64.bin",
+]
+
+[numerics]
+float_type = "Float64"
+
+[architecture]
+use_gpu = true
+
+[run]
+scheme = "upwind"
+tracer_name = "CO2"
+reset_air_mass_each_window = false
+stop_window = 48
+
+[init]
+kind = "catrine_co2"
+
+[output]
+snapshot_hours = [0, 6, 12, 24, 36, 48]
+snapshot_file = "~/data/AtmosTransport/output/src_v2_snapshots/era5_synthetic_rgN24_catrine_natco2_48h_f64_gpu.nc"

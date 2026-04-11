@@ -111,11 +111,11 @@ def main():
                     f"  t={float(t):6.2f}h  air={am[i]:.6e} ({am_drift[i]:+.2e})  "
                     f"tracer={tm[i]:.6e} ({tm_drift[i]:+.2e})"
                 )
-            if np.any(np.abs(am_drift) > 1e-9):
-                print("  WARNING: air mass drift > 1e-9 relative")
+            if np.any(np.abs(am_drift) > mass_tol):
+                print(f"  WARNING: air mass drift > {mass_tol:.1e} relative")
                 any_fail = True
-            if np.any(np.abs(tm_drift) > 1e-9):
-                print("  WARNING: tracer mass drift > 1e-9 relative")
+            if np.any(np.abs(tm_drift) > mass_tol):
+                print(f"  WARNING: tracer mass drift > {mass_tol:.1e} relative")
                 any_fail = True
 
         if any_fail:

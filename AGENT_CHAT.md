@@ -461,7 +461,18 @@ progress (40+ min CPU). Will time all runs and report CPU/GPU comparison.
 validation, once we get CS advection working we can use the Catrine IC
 sampling quality as a reference (known 1° → C90 regrid).
 
-**LL F64 run**: still going (40+ min CPU, processing Dec 2). Should
-complete within ~15 min.
+**LL F64 run**: at 55 min CPU (processing Dec 2, 48 windows total).
+Should complete soon.
+
+**CS NaN deeper diagnosis**: After subcycle 2 (of 42 X subcycles), mass
+goes negative at TOA cells. Cell at k=1 has m=1.5e7 but receives flux ~9e8
+from neighboring cell. With flux_scale=1/42=0.024, CFL per subcycle is
+9e8*0.024/1.5e7=1.4 — CFL>1 because the CFL computation uses the GLOBAL
+max CFL (39 at k=7, not 115 at k=1 for this specific cell). The per-cell
+CFL at TOA can exceed the global average. Fix: per-level or per-cell CFL
+adaptation (as LatLon path does with per-(j,l) nloop in TM5 style).
+
+This is a production-quality fix, not a quick hack. Deferring CS to
+a proper implementation with TM5-style per-cell subcycling.
 
 ---

@@ -183,6 +183,58 @@ build_target_geometry(::Val{:reduced_gaussian}, cfg_grid, ::Type{FT}) where FT <
     build_target_geometry(Val(:era5_native_reduced_gaussian), cfg_grid, FT)
 
 """
+    build_target_geometry(::Val{:synthetic_reduced_gaussian}, cfg_grid, FT)
+
+Build a reduced-Gaussian target geometry from scratch without needing a source
+GRIB file. `cfg_grid["gaussian_number"]` controls the truncation N so the mesh
+has `2N` Gauss-Legendre latitude rings. `cfg_grid["nlon_mode"]` selects the
+longitude layout:
+
+* `"regular"` (default): every ring has `4N` cells — the classical "regular
+  reduced" Gaussian grid used e.g. in the TL159/N80 family.
+* `"octahedral"`: ECMWF octahedral layout `nlon = 4k + 16` per hemisphere,
+  mirrored between the two hemispheres with `k = 1` at the pole-adjacent ring.
+
+Mesh latitudes are produced from `FastGaussQuadrature.gausslegendre(2N)`,
+which returns ascending Gauss-Legendre nodes on `(-1, 1)`. `geometry_source_grib`
+is left as an empty string to mark the grid as synthetic.
+"""
+function build_target_geometry(::Val{:synthetic_reduced_gaussian},
+                               cfg_grid, ::Type{FT}) where FT <: AbstractFloat
+    N = Int(cfg_grid["gaussian_number"])
+    N > 0 || error("synthetic_reduced_gaussian: gaussian_number must be positive, got $N")
+    mode = lowercase(String(get(cfg_grid, "nlon_mode", "regular")))
+
+    # 2N Gauss-Legendre latitudes on (-1, 1), ascending south -> north.
+    nodes, _ = gausslegendre(2 * N)
+    lat_deg = FT.(asind.(nodes))
+
+    nlon_per_ring = if mode == "regular"
+        fill(4 * N, 2 * N)
+    elseif mode == "octahedral"
+        # ECMWF octahedral grid: nlon[k] = 4k + 16 per hemisphere, k=1 at the
+        # pole-adjacent ring. Mirror north/south so the pole rings share nlon.
+        hemi = Int[4 * k + 16 for k in 1:N]
+        vcat(reverse(hemi), hemi)
+    else
+        error("synthetic_reduced_gaussian: unknown nlon_mode \"$mode\" " *
+              "(use \"regular\" or \"octahedral\")")
+    end
+
+    mesh = ReducedGaussianMesh(lat_deg, nlon_per_ring; FT=FT, radius=FT(R_EARTH))
+    lons_by_ring = [FT.(ring_longitudes(mesh, j)) for j in 1:nrings(mesh)]
+
+    return ReducedGaussianTargetGeometry{FT, typeof(mesh)}(
+        mesh,
+        "",                 # synthetic: no GRIB source
+        N,
+        copy(nlon_per_ring),
+        copy(lat_deg),
+        lons_by_ring,
+    )
+end
+
+"""
     build_target_geometry(cfg_grid, FT=Float64) -> AbstractTargetGeometry
 
 Dispatch configuration-driven target-geometry construction from the user-facing

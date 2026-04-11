@@ -196,7 +196,13 @@ function export_snapshots(binary_paths::Vector{String}, cfg)
     t0 = time()
     for (idx, path) in enumerate(binary_paths)
         driver = idx == 1 ? first_driver : _open_driver(path, FT)
-        stop_window = idx == 1 ? local_stop : min(AtmosTransportV2.total_windows(driver), max(0, local_stop - global_window))
+        # Per-driver stop_window is the minimum of this binary's window count
+        # and the remaining target windows (`local_stop - global_window`).
+        # Previously the first driver used `local_stop` directly, which
+        # failed when `stop_window` in the config exceeded Day 1's window
+        # count (e.g. 48h run spanning two daily binaries).
+        stop_window = min(AtmosTransportV2.total_windows(driver),
+                          max(0, local_stop - global_window))
         stop_window <= 0 && break
         sim = AtmosTransportV2.DrivenSimulation(model, driver;
                                                 start_window=1,

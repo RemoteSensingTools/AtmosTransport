@@ -29,13 +29,14 @@
 
 using GRIB
 using FFTW
-using LinearAlgebra: mul!
+using LinearAlgebra: mul!, dot
 using JSON3
 using Dates
 using Printf
 using TOML
 using NCDatasets
 using Logging
+using FastGaussQuadrature: gausslegendre
 
 const PREPROCESS_SPECTRAL_V4_SCRIPT = @__FILE__
 const PREPROCESS_SPECTRAL_V4_DIR = joinpath(@__DIR__, "preprocess_spectral_v4_binary")

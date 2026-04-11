@@ -317,6 +317,54 @@ These are hard-won correctness constraints. Violating any causes silent wrong re
     change `|bm|/m` enough at the troubled polar cells to remove the
     need for `mass_fixer = true` at runtime.
 
+13. **Every binary preprocessor that diagnoses `cm` from continuity
+    MUST apply a Poisson mass-flux balance to the horizontal fluxes
+    first.** Without balance, the raw spectral-synthesis fluxes have
+    divergence residuals of ~10¹² kg per cell (for ERA5 at T47),
+    which then integrate through the continuity diagnosis into
+    unphysically large vertical mass fluxes `cm`. Symptoms: the
+    face-indexed runtime CFL pilot hits `max_n_sub=4096` in window 1,
+    or (on older schemes with limiters) silently unstable transport
+    that drifts over time.
+
+    **Reference implementations**:
+    * **LL path**: `mass_support.jl:balance_mass_fluxes!` — 2D FFT on
+      the circulant Laplacian (`fac = 2*(cos(2π(i-1)/Nx) + cos(2π(j-1)/Ny) - 2)`),
+      called from `binary_pipeline.jl:apply_poisson_balance!`. Exact
+      to machine precision up to roundoff.
+    * **RG path**: `reduced_transport_helpers.jl:balance_reduced_horizontal_fluxes!`
+      — Jacobi-Preconditioned Conjugate Gradient on the graph Laplacian
+      with **interior-only face degrees** (boundary-stub pole-cap faces
+      NOT counted, because the correction operator only touches interior
+      fluxes). The graph Laplacian is singular (constant null space), so
+      `rhs`, `r`, `p` are kept in range(L) by subtracting their means
+      every CG iteration. Called from
+      `preprocess_era5_reduced_gaussian_transport_binary_v2.jl` via
+      `apply_reduced_poisson_balance!`.
+
+    **Validation** (2026-04-11): at matched 4608 cells,
+    post-balance worst `|cm|/m` should be ~1e-14 (F64 machine
+    precision). LL 96×48 reference: 5.3e-15. Synthetic RG N24:
+    1.3e-14. RG N320 production binaries (pre-fix): 0.77 — these
+    were quietly broken and silently unstable.
+
+    **When adding a new grid-type preprocessor** (CS, any variant):
+    verify that the post-balance `max(|cm|/m)` probe matches the LL
+    reference before declaring the binary working. Never trust
+    "the binary compiles and exit-code-0 runs" without this check.
+
+    Two CG-solver gotchas discovered during the fix:
+    a. `cell_face_degree` must count ONLY interior faces. Counting
+       pole-cap boundary stubs in the diagonal produces a
+       `n_stubs * psi[c]` residual at pole cells that the solver
+       can't see.
+    b. Do NOT project `r` to mean-zero inside CG if the Laplacian is
+       non-singular (e.g., Dirichlet BCs). DO project if it is
+       singular (the range-of-L condition). Getting this wrong gives
+       a false-positive convergence where CG reports tight L2
+       residuals but the actual max|L*psi - rhs| is 13 orders of
+       magnitude larger.
+
 ---
 
 ## Workflow: Adding a new advection scheme

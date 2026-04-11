@@ -1,0 +1,41 @@
+# Synthetic reduced-Gaussian N24 (regular: 48 rings × 96 lon = 4608 cells).
+# Uses the :synthetic_reduced_gaussian dispatch in
+# scripts/preprocessing/preprocess_spectral_v4_binary/target_geometry.jl
+# so no GRIB file is needed to define the target geometry — latitudes
+# come from FastGaussQuadrature.gausslegendre(2N).
+#
+# Matched cell count with config/preprocessing/era5_ll96x48_transport_binary_v2.toml
+# so LL vs RG runs at ~3.75 deg resolution are directly comparable.
+#
+# Usage (preprocess a single day):
+#   julia --project=. scripts/preprocessing/preprocess_era5_reduced_gaussian_transport_binary_v2.jl \
+#       config/preprocessing/era5_synthetic_rgN24_transport_binary_v2.toml --day 2021-12-01
+
+[input]
+spectral_dir = "~/data/AtmosTransport/met/era5/0.5x0.5/spectral_hourly"
+coefficients = "config/era5_L137_coefficients.toml"
+
+[output]
+directory = "~/data/AtmosTransport/met/era5/rgN24/transport_binary_v2_tropo34_dec2021_f64"
+include_qv = false
+mass_basis = "moist"
+
+[grid]
+type = "synthetic_reduced_gaussian"
+gaussian_number = 24
+nlon_mode = "regular"
+echlevs = "ml137_tropo34"
+level_top = 1
+level_bot = 137
+merge_min_thickness_Pa = 1000.0  # fallback, not used with echlevs
+
+[numerics]
+float_type = "Float64"
+dt = 900.0
+met_interval = 3600.0
+
+# mass_fix support not yet wired through the RG preprocessor. The LL
+# matched-resolution config uses enable = true; RG relies on the
+# spectral-synthesis pipeline's native Poisson balance for now.
+[mass_fix]
+enable = false

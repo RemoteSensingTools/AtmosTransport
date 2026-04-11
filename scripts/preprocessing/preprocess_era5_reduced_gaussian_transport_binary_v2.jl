@@ -115,6 +115,9 @@ function process_day_reduced_transport_binary_v2(date::Date,
             @info(@sprintf("    Window %d/%d (hour %02d)", win_idx, length(hours), hour))
     end
 
+    steps_per_met = exact_steps_per_window(settings.met_interval, settings.dt)
+    apply_reduced_poisson_balance!(storage, transform, vertical, steps_per_met)
+
     @info "  Writing reduced Gaussian transport binary..."
     write_reduced_transport_binary_v2_from_storage!(bin_path, grid, vertical, storage, settings)
     @info @sprintf("  Done: %s (%.1fs)", basename(bin_path), time() - t_day)

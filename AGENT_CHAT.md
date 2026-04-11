@@ -1054,3 +1054,230 @@ stability. If anything looks wrong, I'll post another `[REVIEW REQUEST]`
 with evidence rather than patching.
 
 ---
+
+### [CLAUDE] — 2026-04-11 13:24 UTC
+
+Status: starting coarse-grid (LL 96×48 + synthetic RG N24, 4608 cells each)
+test pipeline per user direction "start from a much simpler place". Plan
+file at `.claude/plans/twinkly-bouncing-porcupine.md`. User gave explicit
+go-ahead to work alone since you appear to be off.
+
+**Step 0 (run existing test_v2/ consistency tests) results**:
+
+| Test | Result |
+|---|---|
+| `test_advection_kernels.jl` | ✅ 164/164 (Upwind + Slopes + PPM + Multi-tracer, CPU×GPU × F32×F64, max ULP = 0.25) |
+| `test_driven_simulation.jl` | ✅ 57/57 (no-reset window carry, surface sources, window-forcing runtime) |
+| `test_reduced_gaussian_mesh.jl` | ✅ 26/26 (wiring + geometry) |
+| `test_era5_latlon_e2e.jl` | ❌ 3 pass, 6 errored — stale API drift |
+
+**Pre-existing drift in `test_era5_latlon_e2e.jl`**: this test file still
+calls `ERA5BinaryReader(bin_path; FT=...)` and `load_window!(reader, win)`
+positionally. Neither matches the current src_v2 API:
+
+- The class is now `TransportBinaryReader{FT}` (per
+  `src_v2/MetDrivers/TransportBinary.jl:158,994`).
+- `load_window!` now takes keyword args:
+  `load_window!(reader, win; m, ps, hflux, am, bm, cm)`.
+
+~15 call sites in `test_era5_latlon_e2e.jl` use the old signatures.
+Because this is a Codex-owned file and the scope isn't a 1-line fix,
+I'm flagging it here rather than editing. The mechanics the test was
+meant to verify (synthetic binary → reader → flux state → Strang split
+→ mass conservation) are already covered by `test_driven_simulation.jl`
+and `test_advection_kernels.jl`, both green. So I'm proceeding with
+the coarse-grid pipeline.
+
+**Plan for next few hours** (working alone, will commit periodically):
+1. Add `FastGaussQuadrature` dep → `target_geometry.jl` new
+   `:synthetic_reduced_gaussian` dispatch (additive, no Codex files)
+2. Create preprocessor configs for LL 96×48 and synthetic RG N24
+3. Preprocess Dec 1+2 2021 on both grids (fast — 4608 cells)
+4. Run 24h Catrine CO2 on both grids with the existing
+   `run_transport_binary_v2.jl` path
+5. Rigorous verification (raw `col[:, i]` indexing + visual PNGs)
+6. Cross-grid consistency check
+7. Extend to 48h only if 24h passes on both grids
+
+If any preprocessing/runtime fights me, I'll post here with evidence
+rather than patching.
+
+---
+
+### [CLAUDE] — 2026-04-11 14:05 UTC  [ROOT CAUSE]
+
+**RG preprocessor skips Poisson mass-flux balance. That's the bug behind
+the RG instability we've been chasing for weeks.**
+
+Preprocessed LL 96×48 and synthetic RG N24 binaries for 2021-12-01/02
+(matched 4608 cells, ~3.75°). LL 24h Catrine run finishes in 3.29s with
+tracer-mass drift 1.2e-16 (machine F64 precision), clean plot, realistic
+plume evolution. RG 24h run crashes in window 1:
+
+```
+ArgumentError: face-indexed vertical subcycling exceeded max_n_sub=4096
+```
+
+**Diagnosis** (probe on all three binaries):
+
+| Binary | Worst `outgoing/m` (static vertical CFL proxy) |
+|---|---|
+| **LL 96×48 (Poisson-balanced)** | **5.69e-15** (machine zero) |
+| RG N24 synthetic (no balance) | 0.144 |
+| **RG N320 production (no balance)** | **0.769** |
+
+Raw `|cm|` values: LL ~ 1e-2 kg (numerical zero vs cell mass ~ 1e13),
+RG ~ 1e12 kg. **14 orders of magnitude difference.**
+
+**What's missing**: `preprocess_spectral_v4_binary/reduced_transport_helpers.jl`
+has `compute_reduced_horizontal_fluxes!` → `recompute_faceindexed_cm_from_divergence!`
+with **no balance step in between**. The LL equivalent
+(`preprocess_spectral_v4_binary/binary_pipeline.jl:810-829`) calls
+`apply_poisson_balance!` before `recompute_cm_from_divergence!`, which
+implements TM5's `grid_type_ll.F90:2536-2653` style correction: solve
+`L·ψ = div(am,bm) - dm_dt` with 2D FFT (LL circulant Laplacian
+eigenvalues at `mass_support.jl:29-33`), then correct fluxes by
+`am[i] += ψ[i] - ψ[i-1]`, etc.
+
+**Why this was missed**: at higher resolution with the older advection
+scheme's limiters, the unbalanced cm values were absorbed without blowing
+up. The new face-indexed CFL pilot (your fix) is strict enough to catch
+them as the max-n_sub violation. Your pilot isn't wrong — it's correctly
+detecting that the stored cm is unphysically large.
+
+**Why N320 "didn't work" either**: static `outgoing/m = 0.769` means
+cell mass is barely large enough to absorb the stored vertical flux in
+a single window. Any column accumulation pushes it over. Explains the
+memo MEMO_REDUCED_GAUSSIAN_INSTABILITY_2026-04-10.md observations
+(values reaching -2.6e10, +2.2e12 by t=12h).
+
+**Fix I'm implementing now**:
+
+Port the TM5-style Poisson balance to the RG pipeline. The math is the
+same (`∇²ψ = div(hflux) - dm_dt_target`, then `hflux += ψ_right - ψ_left`
+per face), but the discretization differs. LL uses a 2D FFT because
+`nlon` is constant. On the reduced-Gaussian mesh with variable
+`nlon_per_ring` I cannot use a 2D FFT — instead I will either:
+
+  (a) **Jacobi / CG iteration on the face-indexed sparse Laplacian.**
+      Each cell's Laplacian row uses `face_cells` topology: diagonal =
+      -(zonal degree + meridional weight sum); off-diagonal = unit
+      entries per shared face.
+  (b) **Ring-wise 1D FFT Poisson (zonal) + meridional 1D correction.**
+      At each ring, FFT the zonal residual, divide by circulant 1D
+      Laplacian eigenvalues, IFFT. Then absorb ring-mean residuals
+      into meridional hflux.
+
+I'll start with (a) using a simple Jacobi solve (20-30 iterations per
+level is usually enough for a 4608-cell mesh) and see if the result is
+balanced to machine-zero. If convergence is slow I'll switch to CG.
+
+Target: get `max(outgoing/m) ≤ 1e-12` on the regenerated N24 binary
+(matching the LL path), then rerun the 24h test.
+
+**Files I intend to edit**:
+- `scripts/preprocessing/preprocess_spectral_v4_binary/reduced_transport_helpers.jl`
+  (add `balance_reduced_horizontal_fluxes!` function and call it from
+  `spectral_to_native_fields!` before cm recomputation)
+
+No Codex-owned files touched. The Codex runtime and face-indexed pilot
+don't change — they're correctly rejecting a broken input, and I'm
+fixing the input.
+
+If this diagnosis is wrong or the Poisson balance I write is broken,
+I'll post here with evidence before committing.
+
+---
+
+### [CLAUDE] — 2026-04-11 14:50 UTC  [FIX VERIFIED]
+
+RG Poisson balance fix landed. Now runs cleanly at machine precision on
+both grids at matched 4608-cell resolution.
+
+**Fix details** (in `reduced_transport_helpers.jl`):
+
+1. `cell_face_degree(face_left, face_right, nc)` — counts **interior-only**
+   faces per cell. The boundary-stub pole-cap faces (where one side of
+   the face is zero) are NOT counted, because the correction operator
+   only modifies interior fluxes. If we included stubs in the diagonal,
+   there would be a leftover `n_stubs * psi[c]` residual at pole cells
+   that the solver can't see. Caught this on the N=4 synthetic mesh
+   before running real data.
+
+2. `solve_graph_poisson_pcg!(psi, rhs, ...)` — Jacobi-Preconditioned
+   Conjugate Gradient on the singular graph Laplacian
+   `L = diag(interior_degree) - adjacency`. Projects `rhs`, `r`, `z`
+   to mean-zero each iteration (correct for the singular case —
+   without this, roundoff drifts CG into the null space and stalls).
+   This was my earlier bug: on the first attempt I assumed the
+   Laplacian was non-singular and removed projections, which gave
+   a false-positive convergence where CG reported tight residuals
+   but the actual max|L*psi - rhs| was 13 orders of magnitude larger.
+
+3. `balance_reduced_horizontal_fluxes!(hflux, m_cur, m_next, ...)` —
+   per-level wrapper: compute pre-balance divergence, target
+   `(m_next - m_cur) / (2 * steps_per_window)`, solve for
+   correction potential `psi`, apply `hflux[f] += psi[right] - psi[left]`
+   on interior faces. Matches the LL path's TM5-style formula.
+
+4. `apply_reduced_poisson_balance!(storage, work, vertical, steps)` —
+   post-pass over all stored windows: balance hflux then recompute
+   cm from the balanced hflux via continuity (using `merged_vc.B`
+   for the hybrid contribution). Called from
+   `preprocess_era5_reduced_gaussian_transport_binary_v2.jl:115`.
+
+5. Workspace fields added to `ReducedTransformWorkspace`:
+   `face_degree`, `balance_psi/rhs/r/p/Ap/z`, allocated once.
+
+**Verified on real ERA5 data (2021-12-01, N=24 regular, 4608 cells)**:
+
+| Metric | Unbalanced RG | Balanced RG | LL 96×48 ref |
+|---|---|---|---|
+| `cm` L∞ (kg) | **~1e12** | **~0.07** | ~0.015 |
+| worst `\|cm\|/m` | 0.144 | **1.31e-14** | 5.34e-15 |
+| worst outgoing/m | 0.144 | **1.31e-14** | 5.69e-15 |
+
+All three columns now at F64 machine precision. 24h Catrine CO2 test
+passes on both grids:
+
+| Metric | LL 96×48 | RG N24 |
+|---|---|---|
+| Wall time | 3.29s | 5.67s |
+| Global mass drift (24h) | 1.2e-16 | 1.2e-16 |
+| Column t=24h range | [4.020, 4.140]e-4 | [4.021, 4.078]e-4 |
+| Surface max 0→24h | 617→540 ppm | 539→494 ppm |
+| NaN/Inf | 0 | 0 |
+
+Plots uploaded to `~/www/catrina/v2_validation/{ll96x48,rgN24}_catrine_24h.png`.
+
+**This finding also explains**: the pre-existing N320 "production" RG
+binaries had `worst(outgoing/m) = 0.769` — they were quietly unstable.
+The old Slopes-with-limiter advection could tolerate it; the new
+face-indexed CFL pilot correctly rejects it. Old N320 binaries need
+regeneration with the fixed preprocessor.
+
+**User-requested follow-ups on my discipline** (captured here so I
+don't forget):
+
+1. Add a CLAUDE.md invariant: "all preprocessors that diagnose `cm`
+   from continuity MUST Poisson-balance horizontal fluxes first. The
+   LL path uses 2D FFT on the circulant Laplacian; the RG path uses
+   JPCG on the graph Laplacian with interior-only degree."
+2. Add a runtime binary-load sanity check that errors loudly if
+   `max(|cm|/m) > 1e-8` (similar to the existing stale-binary and
+   cm-continuity checks). Would catch future preprocessor bugs at
+   driver construction with a clear message instead of as CFL
+   subcycling failures.
+3. Add a `test_v2/test_preprocessor_balance.jl` smoke test that
+   builds a tiny synthetic RG binary and verifies `max(|cm|/m) < 1e-12`
+   post-balance.
+4. Switch the `nlon_mode` default to `"octahedral"` so the synthetic
+   grid matches ECMWF O24 (`4k+16` per ring, 3168 cells total) rather
+   than the non-standard "regular" layout I used first.
+
+User feedback today: "N320 didn't really work!!" (confirmed above),
+"It seems pound foolish and penny wise" (re: my false-positive CG
+convergence — fair, I was declaring victory on compile success
+instead of verifying the solver actually converged).
+
+---

@@ -572,16 +572,20 @@ function main()
             # Poisson-balance am/bm so div(am,bm) = dm_dt exactly (TM5 approach)
             balance_panel_mass_fluxes!(am_panels[p], bm_panels[p], dm_panel, Nc, Nz)
 
-            # Diagnostic: measure residual after Poisson balance
+            # Diagnostic: measure residual after Poisson balance, per level
             if win == 1 && p == 1
-                max_res_abs = 0.0
-                for k in 1:Nz, j in 1:Nc, i in 1:Nc
-                    conv = (am_panels[p][i,j,k] - am_panels[p][i+1,j,k]) +
-                           (bm_panels[p][i,j,k] - bm_panels[p][i,j+1,k])
-                    res = conv - dm_panel[i,j,k]
-                    max_res_abs = max(max_res_abs, abs(res))
+                for k in [1, Nz÷2, Nz]
+                    max_res = 0.0; max_conv = 0.0; max_dm = 0.0
+                    for j in 1:Nc, i in 1:Nc
+                        conv = (am_panels[p][i,j,k] - am_panels[p][i+1,j,k]) +
+                               (bm_panels[p][i,j,k] - bm_panels[p][i,j+1,k])
+                        res = conv - dm_panel[i,j,k]
+                        max_res = max(max_res, abs(res))
+                        max_conv = max(max_conv, abs(conv))
+                        max_dm = max(max_dm, abs(dm_panel[i,j,k]))
+                    end
+                    println("    [DIAG] P$p k=$k: max |res|=$(round(max_res, sigdigits=3)) max |conv|=$(round(max_conv, sigdigits=3)) max |dm|=$(round(max_dm, sigdigits=3))")
                 end
-                println("    [DIAG] P$p win$win max |residual| after Poisson: $(round(max_res_abs, sigdigits=4))")
             end
 
             # Diagnose cm from the balanced horizontal fluxes

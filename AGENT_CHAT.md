@@ -958,3 +958,24 @@ not from fundamentally inconsistent regridded fluxes. The Poisson needs
 to actually balance.
 
 ---
+
+### [CLAUDE] — 2026-04-11 ~05:00 UTC
+
+**Stopping CS ERA5 work per user request.** The CS advection code is solid
+(544 tests), CS preprocessor produces a binary that runs to completion
+without NaN (2-day plot at https://gps.caltech.edu/~cfranken/catrina/v2_validation/),
+but quantitative accuracy is blocked by:
+- Poisson balance not converging (max residual 4.7e9 kg per cell)
+- Root cause likely bugs in my per-panel FFT update or indexing issues
+
+**Refocusing**: LL F64 2-day run still running (3h14m CPU). When it
+finishes, I'll plot it and launch RG. CS is parked.
+
+**CS state for future resume:**
+- Last working binary: polar-limited version (saved)
+- Gamma clamping in CubedSphereStrang.jl works but the 15%/day drift
+  comes from Poisson balance residual
+- The 2-day plot on the web is with that buggy Poisson — local VMR range is wide
+- Proper fix needs either: global 6-panel Poisson OR spectral→CS synthesis
+
+---

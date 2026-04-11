@@ -274,10 +274,28 @@ function spectral_to_native_fields!(
     Nlon = nlon(grid)
     Nlat = nlat(grid)
     Nz = length(level_range)
-    center_shift = grid.dlon / 2
+
+    # Compute spectral synthesis longitude phase shifts FROM THE MESH
+    # coordinates, not from `dlon / 2`. The old `center_shift = dlon/2`
+    # only aligned with a `longitude=(0,360)` mesh where the first cell
+    # center is at `1.875°`. For the default `longitude=(-180,180)` mesh
+    # the first cell center is at `-178.125°` and the first west face
+    # is at `-180°`, so `spectral_to_grid!` needs a negative shift to
+    # move the FFT's natural origin (physical lon = 0°) to the mesh's
+    # first point. Prior bug: every LL v4 binary was 180° off in
+    # longitude relative to its stored `λᶜ`. See 2026-04-11 AGENT_CHAT
+    # entry for full diagnosis.
+    #
+    # `spectral_to_grid!` applies `Gm *= exp(im * m * lon_shift_rad)`,
+    # which makes FFT output index 1 represent the field at physical
+    # lon = `lon_shift_rad`. So `lon_shift_rad = deg2rad(λᶜ[1])` for
+    # cell-centered scalars (sp, v_cc) and `deg2rad(λᶠ[1])` for the
+    # west-face-located u_cc.
+    sp_shift = deg2rad(grid.lons[1])
+    u_edge_shift = deg2rad(first(grid.mesh.λᶠ))
 
     spectral_to_grid!(field_2d, lnsp_spec, T, grid.lats, Nlon, P_buf, fft_buf;
-                      lon_shift_rad=center_shift)
+                      lon_shift_rad=sp_shift)
     @. sp = exp(field_2d)
 
     Threads.@threads for k in 1:Nz
@@ -289,15 +307,18 @@ function spectral_to_native_fields!(
                 @view(d_hour[:, :, level]),
                 T)
 
+        # u_cc is located at the west face in longitude (cell edges)
         spectral_to_grid!(field_2d_t[tid], u_spec_t[tid], T,
                           grid.lats, Nlon, P_buf_t[tid], fft_buf_t[tid];
-                          fft_out=fft_out_t[tid], bfft_plan=bfft_plans[tid])
+                          fft_out=fft_out_t[tid], bfft_plan=bfft_plans[tid],
+                          lon_shift_rad=u_edge_shift)
         u_cc[:, :, k] .= field_2d_t[tid]
 
+        # v_cc is located at cell center in longitude
         spectral_to_grid!(field_2d_t[tid], v_spec_t[tid], T,
                           grid.lats, Nlon, P_buf_t[tid], fft_buf_t[tid];
                           fft_out=fft_out_t[tid], bfft_plan=bfft_plans[tid],
-                          lon_shift_rad=center_shift)
+                          lon_shift_rad=sp_shift)
         v_cc[:, :, k] .= field_2d_t[tid]
     end
 

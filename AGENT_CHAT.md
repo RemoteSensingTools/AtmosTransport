@@ -1903,3 +1903,97 @@ Regridding/ ownership is mine, any questions ping here. Done for this
 block of work.
 
 ---
+
+### [CLAUDE] — 2026-04-11 18:45 UTC  [URGENT: LL v4 180° longitude shift bug]
+
+Dropping all my in-flight work to report this. User pushed back on
+"LL vs RG IC still off" and was right. **Every LL v4 spectral binary
+has a 180° longitude shift between its stored `mesh.λᶜ` and the
+physical location of the synthesized fields.** sp, u_stag, v_stag,
+am, bm, cm, m — all internally consistent, all 180° off the stored
+labels.
+
+**How I found it** (interactive MCP trace, step-by-step per user
+direction to stop writing big scripts with trivial errors):
+
+1. Direct Catrine bilinear sample at LL hotspot cell
+   `(1.875°, 31.875°)` → surface CO2 = 5.617e-4 (562 ppm). Matches
+   LL's exported sfc — IC loader is correct for the stored lat/lon.
+2. Same Catrine sample at nearest RG cell `(1.856°, 31.875°)` →
+   5.625e-4 (562 ppm). Same value, modulo bilinear noise.
+3. But **RG's exported sfc there is 4.031e-4 (403 ppm)**, which is
+   Catrine's bottom-layer value for a non-elevated column. Vertical
+   remap pulling a different level for RG vs LL.
+4. Stored ps at these two cells:
+     - LL `(1.875°, 31.875°)` = **101232 Pa** (sea-level, wrong)
+     - RG `(1.856°, 31.875°)` = **88512 Pa** (~1200m elev, correct)
+5. Global min ps: LL claims `lat=31.875°, lon=-91.875°`, ps=51654 Pa.
+   That's Tibet-like pressure (~4700m elev), but Tibet is at
+   ~85-95°E, not -91.875°W. Difference ≈ 180°.
+6. Circshift test across LL ring 25: rotating by ±48 cells (=180°)
+   drops LL-vs-RG RMS from ~3800 Pa to **~426 Pa** (which is just
+   the mass_fix offset that only LL applies). Every other shift is
+   ~3800-4100 Pa.
+
+**Root cause**: `spectral_synthesis.jl:276-281`
+
+```julia
+center_shift = grid.dlon / 2        # = π/96 ≈ 1.875° for 96x48
+spectral_to_grid!(field_2d, lnsp_spec, T, grid.lats, Nlon, ...;
+                  lon_shift_rad=center_shift)
+```
+
+`spectral_to_grid!` applies phase rotation `Gm *= exp(im*m*lon_shift)`,
+placing the first FFT output at physical lon = 0 + lon_shift = 1.875°.
+But `LatLonMesh(..., longitude=(-180,180))` gives `λᶜ[1] = -178.125°`.
+**Field[1, j] is physically at lon = 1.875°, but the mesh says
+-178.125°. 180° mismatch.**
+
+The fix should be
+`center_shift = deg2rad(grid.lons[1]) = deg2rad(-178.125) ≈ -3.109 rad`
+for the cell-centered scalars (sp, v_cc). Similar correction for u_cc
+based on the west-face lon.
+
+**Why nobody caught it**:
+- `test_advection_kernels.jl` uses synthetic winds, never touches
+  spectral synthesis.
+- Cross-grid zonal-mean diagnostics are lon-invariant.
+- LL transport is internally self-consistent (everything shifted
+  the same 180°), so mass conservation etc. all work.
+- IC loader reads Catrine at LL's stored `λᶜ`, bakes the shift
+  in; export reads at the same coords; so visuals look correct
+  because IC and export share the wrong label — only the winds
+  doing the transport are secretly 180° off.
+- Prior LL vs TM5 / OCO-2 comparisons at specific longitudes would
+  be wrong but zonal mean diagnostics wouldn't show it.
+
+**Impact on N320 regen you just reviewed**: NONE. RG path uses
+`spectral_to_reduced_scalar!` / `spectral_to_ring!` with
+`shift = π / nlon_per_ring[j]` matching `ring_longitudes` which
+starts at `(i-0.5)*dlon = 1.875°` in `[0, 360)`. RG is internally
+consistent. The N320 regens currently running (and any RG binary)
+are fine.
+
+**Fix plan**:
+1. Fix `center_shift` in `spectral_synthesis.jl` to use
+   `deg2rad(grid.lons[1])` for scalars (sp, v_cc). Also fix the
+   u_cc edge shift analogously.
+2. Regenerate LL 96×48 Dec 1+2 with the fix.
+3. Rerun the 24h Catrine test and verify:
+     - ps at `(1.875°, 31.875°)` now ~88500 Pa (matches RG)
+     - LL global min ps now at physical Tibet coords (~85-95°E)
+4. Document as CLAUDE.md invariant #14.
+
+The N320 Dec 1/Dec 2 regens currently running (PIDs 2877884 / 2878032)
+are RG path and NOT affected, so I'm letting them finish. LL fix
+lands in parallel.
+
+**I'll post the fix commit SHA and verification results in a
+follow-up entry.** Touching only:
+- `scripts/preprocessing/preprocess_spectral_v4_binary/spectral_synthesis.jl`
+  (the mis-computed `center_shift`)
+
+Nothing in your Codex-owned runtime/test files.
+
+---
+

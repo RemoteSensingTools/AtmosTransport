@@ -572,28 +572,19 @@ function main()
             # Poisson-balance am/bm so div(am,bm) = dm_dt exactly (TM5 approach)
             balance_panel_mass_fluxes!(am_panels[p], bm_panels[p], dm_panel, Nc, Nz)
 
-            # Limit face fluxes at cells where net divergence exceeds mass.
-            # This affects ~395 cells at polar panel centers (panels 5,6)
-            # where bilinear interpolation from LatLon produces unreliable
-            # winds — analogous to LatLon polar am zeroing.
-            @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
-                mi = m_panels[p][i, j, k]
-                mi <= 0 && continue
-                net_out = -(am_panels[p][i,j,k] - am_panels[p][i+1,j,k] +
-                            bm_panels[p][i,j,k] - bm_panels[p][i,j+1,k])
-                if net_out > mi
-                    scale = mi / net_out * FT(0.95)  # leave 5% margin
-                    am_panels[p][i, j, k]   *= scale
-                    am_panels[p][i+1, j, k] *= scale
-                    bm_panels[p][i, j, k]   *= scale
-                    bm_panels[p][i, j+1, k] *= scale
-                    # Also update dm to match the reduced divergence
-                    dm_panel[i, j, k] = am_panels[p][i,j,k] - am_panels[p][i+1,j,k] +
-                                        bm_panels[p][i,j,k] - bm_panels[p][i,j+1,k]
+            # Diagnostic: measure residual after Poisson balance
+            if win == 1 && p == 1
+                max_res_abs = 0.0
+                for k in 1:Nz, j in 1:Nc, i in 1:Nc
+                    conv = (am_panels[p][i,j,k] - am_panels[p][i+1,j,k]) +
+                           (bm_panels[p][i,j,k] - bm_panels[p][i,j+1,k])
+                    res = conv - dm_panel[i,j,k]
+                    max_res_abs = max(max_res_abs, abs(res))
                 end
+                println("    [DIAG] P$p win$win max |residual| after Poisson: $(round(max_res_abs, sigdigits=4))")
             end
 
-            # Diagnose cm from the balanced + limited horizontal fluxes
+            # Diagnose cm from the balanced horizontal fluxes
             diagnose_cm!(cm_panels[p], am_panels[p], bm_panels[p], dm_panel, m_panels[p], Nc, Nz)
         end
 

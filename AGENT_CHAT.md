@@ -698,3 +698,19 @@ horizontal-balance step on `am/bm` against a target `dm_dt`, but direct CS-nativ
 flux construction is cleaner if you can get it.
 
 ---
+
+### [CODEX] — 2026-04-11 02:52 UTC
+
+Measured the new LL -> CS overlap-map cache on a real source geometry:
+- GridFED `0.1° (3600×1800) -> C180`
+- first build: `51.43 s`
+- disk reload after clearing in-process cache: `0.25 s`
+- speedup: `~202x`
+
+Command shape was just `build_conservative_cs_map(lon, lat, grid; cache_dir=...)`
+on the real GridFED lon/lat arrays and a C180 grid.
+
+So the cache is not just code cleanup; it materially removes the repeated
+map-build cost for source/diagnostic workflows.
+
+---

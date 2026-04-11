@@ -1,4 +1,5 @@
 using Test
+using AtmosTransport
 using AtmosTransport.Regridding
 using AtmosTransport.Architectures: CPU
 using AtmosTransport.Grids: CubedSphereGrid
@@ -48,6 +49,22 @@ using AtmosTransport.Sources
         cs_map_mid = build_conservative_cs_map(lons, lats, grid; N_sub=8)
         panels_mid_cached = regrid_latlon_to_cs(flux, lons, lats, grid; cs_map=cs_map_mid)
         @test _panel_rms_error(panels_mid_cached, panels_mid) ≈ 0 atol=1e-12
+
+        cache_dir = mktempdir()
+        AtmosTransport.Sources._clear_conservative_cs_map_cache!()
+        map_disk = build_conservative_cs_map(lons, lats, grid; N_sub=8, cache_dir=cache_dir)
+        @test length(readdir(cache_dir)) == 1
+        AtmosTransport.Sources._clear_conservative_cs_map_cache!()
+        map_disk_reload = @test_logs (:info, r"build_conservative_cs_map") (:info, r"Loaded conservative CS map from disk cache") begin
+            build_conservative_cs_map(lons, lats, grid; N_sub=8, cache_dir=cache_dir)
+        end
+        @test map_disk_reload.offsets == map_disk.offsets
+        @test map_disk_reload.target_p == map_disk.target_p
+        @test map_disk_reload.target_i == map_disk.target_i
+        @test map_disk_reload.target_j == map_disk.target_j
+        @test map_disk_reload.weight == map_disk.weight
+        @test _panel_rms_error(regrid_latlon_to_cs(flux, lons, lats, grid; cs_map=map_disk_reload),
+                               panels_mid) ≈ 0 atol=1e-12
 
         # Ratio ~ 1 should use the stronger default overlap sampling.
         lons_r1 = collect(1.875:3.75:358.125)

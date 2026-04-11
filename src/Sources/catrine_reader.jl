@@ -250,7 +250,8 @@ function load_lmdz_co2(dirpath::String,
 
             if cs_map === nothing
                 @info "Building LMDZ→C$(Nc) regrid map..."
-                cs_map = build_latlon_to_cs_map(lon_typed, lat_typed, grid)
+                cs_map = build_latlon_to_cs_map(lon_typed, lat_typed, grid;
+                                                cache_dir=_default_conservative_cs_map_cache_dir())
                 @info "  Regrid map built."
             end
 
@@ -668,7 +669,8 @@ function load_gridfed_fossil_co2(filepath::String,
     lat_typed = FT.(lat_use)
     lon_typed = FT.(lon_src)
     @info "Building conservative regrid map (0.1° → C$(Nc))..."
-    cs_map = build_latlon_to_cs_map(lon_typed, lat_typed, grid)
+    cs_map = build_latlon_to_cs_map(lon_typed, lat_typed, grid;
+                                    cache_dir=_default_conservative_cs_map_cache_dir())
     @info "  Regrid map built."
 
     for ti in 1:Nt
@@ -1138,7 +1140,8 @@ function load_zhang_rn222(dirpath::String, grid::CubedSphereGrid{FT};
 
     # Regrid to cubed-sphere via nearest-neighbor
     raw_sn, lat_use = ensure_south_to_north(raw, Float64.(lat_src))
-    flux_panels = regrid_latlon_to_cs(FT.(raw_sn), FT.(lon_src), FT.(lat_use), grid)
+    flux_panels = regrid_latlon_to_cs(FT.(raw_sn), FT.(lon_src), FT.(lat_use), grid;
+                                      cache_dir=_default_conservative_cs_map_cache_dir())
 
     return SurfaceFlux(flux_panels, species,
                                 "Zhang Rn222"; molar_mass=M_RN222)

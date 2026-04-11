@@ -7,6 +7,8 @@
 
 using ..Grids: CubedSphereGrid, LatitudeLongitudeGrid, cell_area, floattype,
                has_gmao_coords, set_coord_status!
+using Serialization: deserialize, serialize
+using SHA: sha1
 
 # =====================================================================
 # Longitude / latitude normalization
@@ -136,6 +138,102 @@ CS cell width in degrees.
     return N_sub, ratio
 end
 
+const _CONSERVATIVE_CS_MAP_CACHE_VERSION = 1
+const _CONSERVATIVE_CS_MAP_MEMORY_CACHE = Dict{String, Any}()
+
+@inline function _default_conservative_cs_map_cache_dir()
+    return get(ENV, "ATMOS_TRANSPORT_REGRID_CACHE_DIR",
+               joinpath(homedir(), ".cache", "AtmosTransport", "regridding"))
+end
+
+@inline function _normalize_conservative_cs_map_cache_dir(cache_dir)
+    cache_dir === nothing && return nothing
+    cache_dir_str = String(cache_dir)
+    isempty(cache_dir_str) && return nothing
+    return abspath(expanduser(cache_dir_str))
+end
+
+function _conservative_cs_map_cache_key(lons, lats, grid, cs_area, N_sub_eff::Int)
+    io = IOBuffer()
+    serialize(io, _CONSERVATIVE_CS_MAP_CACHE_VERSION)
+    serialize(io, eltype(lons))
+    serialize(io, eltype(lats))
+    serialize(io, Int(grid.Nc))
+    serialize(io, grid.radius)
+    serialize(io, N_sub_eff)
+    serialize(io, collect(lons))
+    serialize(io, collect(lats))
+    for p in 1:6
+        serialize(io, collect(grid.λᶜ[p]))
+        serialize(io, collect(grid.φᶜ[p]))
+        serialize(io, collect(cs_area[p]))
+    end
+    return bytes2hex(sha1(take!(io)))
+end
+
+@inline function _conservative_cs_map_cache_path(cache_dir::AbstractString,
+                                                 cache_key::AbstractString)
+    return joinpath(cache_dir, "ll_to_cs_" * cache_key * ".jls")
+end
+
+function _load_cached_conservative_cs_map(cache_key::AbstractString,
+                                          cache_dir::AbstractString)
+    if haskey(_CONSERVATIVE_CS_MAP_MEMORY_CACHE, cache_key)
+        @info "Using in-memory conservative CS map cache: $cache_key" maxlog=1
+        return _CONSERVATIVE_CS_MAP_MEMORY_CACHE[cache_key]
+    end
+
+    cache_path = _conservative_cs_map_cache_path(cache_dir, cache_key)
+    isfile(cache_path) || return nothing
+
+    try
+        payload = open(cache_path, "r") do io
+            deserialize(io)
+        end
+        if payload isa NamedTuple &&
+           hasproperty(payload, :version) &&
+           hasproperty(payload, :key) &&
+           hasproperty(payload, :map) &&
+           payload.version == _CONSERVATIVE_CS_MAP_CACHE_VERSION &&
+           payload.key == cache_key
+            _CONSERVATIVE_CS_MAP_MEMORY_CACHE[cache_key] = payload.map
+            @info "Loaded conservative CS map from disk cache: $(basename(cache_path))" maxlog=1
+            return payload.map
+        end
+        @warn "Ignoring incompatible conservative CS map cache: $cache_path"
+    catch err
+        @warn "Failed to load conservative CS map cache: $cache_path" exception=(err, catch_backtrace())
+    end
+
+    return nothing
+end
+
+function _store_cached_conservative_cs_map!(cache_key::AbstractString, cs_map,
+                                            cache_dir::AbstractString)
+    _CONSERVATIVE_CS_MAP_MEMORY_CACHE[cache_key] = cs_map
+
+    try
+        mkpath(cache_dir)
+        cache_path = _conservative_cs_map_cache_path(cache_dir, cache_key)
+        tmp_path = cache_path * ".tmp." * string(getpid())
+        payload = (version=_CONSERVATIVE_CS_MAP_CACHE_VERSION, key=String(cache_key), map=cs_map)
+        open(tmp_path, "w") do io
+            serialize(io, payload)
+        end
+        mv(tmp_path, cache_path; force=true)
+        @info "Saved conservative CS map cache: $(basename(cache_path))" maxlog=1
+    catch err
+        @warn "Failed to save conservative CS map cache in $cache_dir" exception=(err, catch_backtrace())
+    end
+
+    return cs_map
+end
+
+function _clear_conservative_cs_map_cache!()
+    empty!(_CONSERVATIVE_CS_MAP_MEMORY_CACHE)
+    return nothing
+end
+
 # =====================================================================
 # Conservative lat-lon → cubed-sphere regridding map
 # =====================================================================
@@ -215,7 +313,10 @@ function _find_nearest_cs_cell(src_lon::Float64, src_lat::Float64,
 end
 
 """
-    build_conservative_cs_map(lons, lats, grid; cs_areas=nothing, N_sub=nothing)
+    build_conservative_cs_map(lons, lats, grid;
+                              cs_areas=nothing,
+                              N_sub=nothing,
+                              cache_dir=nothing)
         → ConservativeCSMap
 
 Build a conservative regridding map from a regular lat-lon grid to
@@ -235,11 +336,15 @@ grid.Aᶜ (gnomonic areas) is used as fallback.
 
 `N_sub` optionally overrides the adaptive sub-cell sampling resolution. This is
 useful for accuracy studies where the overlap approximation should be tightened.
+
+If `cache_dir` is provided, the computed overlap map is memoized on disk and
+reused across repeated runs with the same source grid, CS geometry, and `N_sub`.
 """
 function build_conservative_cs_map(lons::AbstractVector{FT}, lats::AbstractVector{FT},
                                     grid::CubedSphereGrid{FT};
                                     cs_areas::Union{Nothing, NTuple{6, Matrix{FT}}} = nothing,
-                                    N_sub::Union{Nothing, Int} = nothing
+                                    N_sub::Union{Nothing, Int} = nothing,
+                                    cache_dir::Union{Nothing, AbstractString} = nothing
                                     ) where FT
     Nc = grid.Nc
 
@@ -280,6 +385,14 @@ function build_conservative_cs_map(lons::AbstractVector{FT}, lats::AbstractVecto
         N_sub_eff = max(1, N_sub)
     end
     @info "build_conservative_cs_map: N_sub=$N_sub_eff ($(Nlon)×$(Nlat) → C$(Nc), ratio=$(round(ratio, digits=2)))" maxlog=1
+
+    cache_key = nothing
+    cache_dir_eff = _normalize_conservative_cs_map_cache_dir(cache_dir)
+    if cache_dir_eff !== nothing
+        cache_key = _conservative_cs_map_cache_key(lons, lats, grid, area, N_sub_eff)
+        cached_map = _load_cached_conservative_cs_map(cache_key, cache_dir_eff)
+        cached_map !== nothing && return cached_map
+    end
 
     # Build spatial index: bin CS cell centers by lon/lat
     bin_size = max(1.0, 90.0 / Nc * 2)
@@ -371,8 +484,12 @@ function build_conservative_cs_map(lons::AbstractVector{FT}, lats::AbstractVecto
     @info "Conservative CS map: $(n_entries_total) entries, " *
           "avg $(round(avg_targets, digits=2)) CS cells/source cell"
 
-    return ConservativeCSMap{FT}(offsets, target_p, target_i, target_j, weight,
-                                  native_area, eff_area, area, Nlon, Nlat)
+    cs_map = ConservativeCSMap{FT}(offsets, target_p, target_i, target_j, weight,
+                                   native_area, eff_area, area, Nlon, Nlat)
+    if cache_dir_eff !== nothing
+        return _store_cached_conservative_cs_map!(cache_key, cs_map, cache_dir_eff)
+    end
+    return cs_map
 end
 
 # Keep old API for backward compatibility
@@ -385,7 +502,10 @@ build_latlon_to_cs_map(lons::AbstractVector{FT}, lats::AbstractVector{FT},
 # =====================================================================
 
 """
-    regrid_latlon_to_cs(flux_kgm2s, lons, lats, grid; cs_map=nothing, N_sub=nothing)
+    regrid_latlon_to_cs(flux_kgm2s, lons, lats, grid;
+                        cs_map=nothing,
+                        N_sub=nothing,
+                        cache_dir=nothing)
         → NTuple{6, Matrix}
 
 Conservative regridding from lat-lon to cubed-sphere via mass accumulation.
@@ -403,6 +523,7 @@ function regrid_latlon_to_cs(flux_kgm2s::Matrix{FT}, lons::AbstractVector{FT},
                               cs_map = nothing,
                               cs_areas = nothing,
                               N_sub::Union{Nothing, Int} = nothing,
+                              cache_dir::Union{Nothing, AbstractString} = nothing,
                               renormalize = false) where FT
     Nc = grid.Nc
     Nlon = length(lons)
@@ -415,7 +536,8 @@ function regrid_latlon_to_cs(flux_kgm2s::Matrix{FT}, lons::AbstractVector{FT},
 
     if cs_map === nothing
         cs_map = build_conservative_cs_map(lons, lats, grid;
-                                           cs_areas=cs_areas, N_sub=N_sub)
+                                           cs_areas=cs_areas, N_sub=N_sub,
+                                           cache_dir=cache_dir)
     end
 
     (; offsets, target_p, target_i, target_j, weight, native_area, eff_area, cs_area) = cs_map

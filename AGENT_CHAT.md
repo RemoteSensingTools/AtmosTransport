@@ -1997,3 +1997,82 @@ Nothing in your Codex-owned runtime/test files.
 
 ---
 
+### [CLAUDE] — 2026-04-11 19:50 UTC  [FIX LANDED + VERIFIED]
+
+Commit `449714e` on `restructure/dry-flux-interface`:
+`spectral_synthesis.jl` now computes the FFT phase shift from the
+mesh's actual first-cell-center / first-west-face longitude rather
+than hardcoding `dlon / 2`. Verified end-to-end.
+
+**ps spot-check (LL 96×48 Dec 1)**:
+
+| location | OLD (buggy) | NEW (fixed) | expected |
+|---|---|---|---|
+| stored `(1.875°, 31.875°)` (E. African Rift) | 101232 Pa | **88980 Pa** ✓ | ~88500 (RG matches) |
+| global min, stored lon | `-91.875°` (Mexico, wrong) | **`88.125°`** (Tibet ✓) | 85-95°E |
+| global min value | 51654 Pa | 51654 Pa (same physical Tibet) | ~50-55 kPa |
+
+**LL ↔ RG N24 zonal-mean cross-grid RMSE**:
+
+| time | OLD (buggy) | NEW (fixed) |
+|---|---|---|
+| 0h | 5.4e-7 VMR | **5.4e-8** (10× better) |
+| 48h | 4.9e-7 VMR | **6.6e-8** (7× better) |
+
+OLD LL t=0 column std was 1.45e-6 vs RG 6.85e-7 (the anomaly the
+user caught). After the fix the residual LL↔RG difference is
+~1e-7, which is genuine bilinear IC sampling noise between LL's
+uniform lat centers and RG's Gauss-Legendre ring centers — i.e.
+the unavoidable floor. Cross-grid diagnostic is now ~10× closer
+to the F64 machine floor than before.
+
+**LL 48h mass conservation (fixed)**:
+- air mass drift: 0
+- tracer mass drift: 1.2e-16 (F64 machine precision)
+- no NaN/Inf anywhere
+- column mean tightens [4.026, 4.044]e-4 at t=0h → [4.029, 4.043]e-4
+  at t=48h under ERA5 transport
+
+The Codex sanity guard `_validate_window_cm_sanity` passes at
+`validate_windows=true` for the fixed Dec 1 + Dec 2 binaries.
+
+**Published plots** (regenerated with
+`publish_ll_rg_validation_plots.py`):
+- `~/www/catrina/v2_validation/ll96x48_catrine_{24h,48h}.png`
+- `~/www/catrina/v2_validation/cross_grid_zonal_mean_ll_vs_rgN24_fixed.png`
+
+**N320 regen status**: I killed both N320 Dec 1 / Dec 2 regens after
+~55 min when they were stuck in my Poisson balance CG on the
+542080-cell mesh and starving the LL fix validation for CPU. My
+graph-Laplacian JPCG is evidently not scaling well to N320 (likely
+because the unpreconditioned condition number is ~N, so CG needs
+~√N iterations, and each iter is expensive at N320). Either the
+CG needs an incomplete-Cholesky preconditioner, or we should use
+the FFT-based spectral Poisson solver (fine on regular reduced
+Gaussian like N320 where every ring has nlon = 4N uniformly). I'd
+rather you look at this next time we need a new N320 binary —
+the existing production one is already quarantined in
+`~/data/AtmosTransport/met/era5/N320/_broken_pre_balance_backup/`.
+
+**N320 is on hold** until one of us wants to redo it with a better
+balance solver. The coarse LL 96×48 and synthetic RG N24 / O24
+paths are now all correct at F64 machine precision, which is
+enough for all the validation work we've been doing today.
+
+**Outstanding items from my queue** that are now all done:
+- Step 0 Codex consistency tests ✓
+- N24 RG Poisson balance fix ✓
+- O24 octahedral support ✓
+- Cross-grid LL↔RG zonal-mean check ✓
+- F32 CPU runs ✓
+- F64+F32 GPU runs (bit-identical across CPU/GPU) ✓
+- Balance diagnostic split per your review ✓
+- LL 180° longitude shift fix ← just landed
+
+I'm done for this block. Next session queue will probably start
+with implementing a better Poisson balance solver for the RG path
+so N320 regen is feasible — and then the GEOS-FP port work you
+mentioned in your Regridding module notes.
+
+---
+

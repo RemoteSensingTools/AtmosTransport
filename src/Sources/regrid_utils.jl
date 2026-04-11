@@ -98,6 +98,36 @@ function latlon_cell_area(j::Int, lons::AbstractVector{FT}, lats::AbstractVector
     return R^2 * deg2rad(Δlon) * abs(sind(φ_n) - sind(φ_s))
 end
 
+"""
+    _equal_area_sample_lat(lat_south, lat_north, frac) → lat
+
+Sample a latitude inside `[lat_south, lat_north]` using uniform spacing in
+`sin(lat)`, which corresponds to uniform sampling in spherical cell area.
+`frac` should lie in `[0, 1]`.
+"""
+@inline function _equal_area_sample_lat(lat_south::Float64,
+                                        lat_north::Float64,
+                                        frac::Float64)
+    sin_s = sind(lat_south)
+    sin_n = sind(lat_north)
+    sin_lat = muladd(frac, sin_n - sin_s, sin_s)
+    return asind(clamp(sin_lat, -1.0, 1.0))
+end
+
+"""
+    _default_cs_map_subsampling(Δlon_s, Δlat_s, Nc) → (N_sub, ratio)
+
+Heuristic sub-cell sampling resolution for lat-lon -> cubed-sphere overlap
+approximation. `ratio` is the maximum source-cell width relative to the target
+CS cell width in degrees.
+"""
+@inline function _default_cs_map_subsampling(Δlon_s, Δlat_s, Nc::Int)
+    Δcs_deg = oftype(max(Δlon_s, Δlat_s), 90) / Nc
+    ratio = max(Δlon_s, Δlat_s) / Δcs_deg
+    N_sub = ratio > 1 ? max(20, ceil(Int, ratio * 10)) : max(5, ceil(Int, ratio * 8))
+    return N_sub, ratio
+end
+
 # =====================================================================
 # Conservative lat-lon → cubed-sphere regridding map
 # =====================================================================
@@ -177,14 +207,16 @@ function _find_nearest_cs_cell(src_lon::Float64, src_lat::Float64,
 end
 
 """
-    build_conservative_cs_map(lons, lats, grid; cs_areas=nothing) → ConservativeCSMap
+    build_conservative_cs_map(lons, lats, grid; cs_areas=nothing, N_sub=nothing)
+        → ConservativeCSMap
 
 Build a conservative regridding map from a regular lat-lon grid to
 cubed-sphere using sub-cell sampling.
 
 For each source cell, `N_sub × N_sub` sample points are placed uniformly
-within its bounds. Each sample finds the nearest CS cell center. The
-fraction of samples mapping to each CS cell becomes the weight.
+in longitude and uniformly in `sin(lat)` within its bounds. Each sample
+finds the nearest CS cell center. The fraction of samples mapping to each
+CS cell becomes the weight.
 
 This handles both fine→coarse (most samples → same CS cell, weight ≈ 1.0)
 and coarse→fine (samples spread across multiple CS cells).
@@ -192,10 +224,14 @@ and coarse→fine (samples spread across multiple CS cells).
 If `cs_areas` is provided (e.g., from Met_AREAM2 or corner-based computation),
 these exact areas are stored in the map for density conversion. Otherwise,
 grid.Aᶜ (gnomonic areas) is used as fallback.
+
+`N_sub` optionally overrides the adaptive sub-cell sampling resolution. This is
+useful for accuracy studies where the overlap approximation should be tightened.
 """
 function build_conservative_cs_map(lons::AbstractVector{FT}, lats::AbstractVector{FT},
                                     grid::CubedSphereGrid{FT};
-                                    cs_areas::Union{Nothing, NTuple{6, Matrix{FT}}} = nothing
+                                    cs_areas::Union{Nothing, NTuple{6, Matrix{FT}}} = nothing,
+                                    N_sub::Union{Nothing, Int} = nothing
                                     ) where FT
     Nc = grid.Nc
 
@@ -226,14 +262,16 @@ function build_conservative_cs_map(lons::AbstractVector{FT}, lats::AbstractVecto
     # Use exact areas if provided, otherwise fall back to grid areas
     area = cs_areas !== nothing ? cs_areas : ntuple(p -> FT.(grid.Aᶜ[p]), 6)
 
-    # Determine sub-cell sampling resolution
+    # Determine sub-cell sampling resolution.
     # Need enough samples that each CS cell gets many hits for accurate weights.
-    # For coarse→fine (e.g., 1° on C180 ~0.5°), each source cell covers ~4 CS cells
-    # across, so N_sub must be large enough for smooth fractional coverage.
-    Δcs_deg = FT(90) / Nc
-    ratio = max(Δlon_s, Δlat_s) / Δcs_deg
-    N_sub = ratio > 1 ? max(20, ceil(Int, ratio * 10)) : max(5, ceil(Int, ratio * 8))
-    @info "build_conservative_cs_map: N_sub=$N_sub ($(Nlon)×$(Nlat) → C$(Nc), ratio=$(round(ratio, digits=2)))" maxlog=1
+    # For coarse->fine (e.g., 1 degree on C180 ~0.5 degree), each source cell
+    # covers multiple CS cells across, so N_sub must be large enough for smooth
+    # fractional coverage.
+    N_sub_eff, ratio = _default_cs_map_subsampling(Δlon_s, Δlat_s, Nc)
+    if N_sub !== nothing
+        N_sub_eff = max(1, N_sub)
+    end
+    @info "build_conservative_cs_map: N_sub=$N_sub_eff ($(Nlon)×$(Nlat) → C$(Nc), ratio=$(round(ratio, digits=2)))" maxlog=1
 
     # Build spatial index: bin CS cell centers by lon/lat
     bin_size = max(1.0, 90.0 / Nc * 2)
@@ -257,18 +295,21 @@ function build_conservative_cs_map(lons::AbstractVector{FT}, lats::AbstractVecto
 
     n_entries_total = 0
     counts = Dict{Tuple{Int32, Int32, Int32}, Int}()
-    N_sub_sq = N_sub * N_sub
+    N_sub_sq = N_sub_eff * N_sub_eff
 
     for js in 1:Nlat, is in 1:Nlon
         lin = (js - 1) * Nlon + is
         lon_west = Float64(lons[is]) - Float64(Δlon_s) / 2
         lat_south = Float64(lats[js]) - Float64(Δlat_s) / 2
+        lat_north = Float64(lats[js]) + Float64(Δlat_s) / 2
 
         empty!(counts)
 
-        for sj in 1:N_sub, si in 1:N_sub
-            lon_s = mod(lon_west + (si - 0.5) / N_sub * Float64(Δlon_s), 360.0)
-            lat_s = clamp(lat_south + (sj - 0.5) / N_sub * Float64(Δlat_s), -90.0, 90.0)
+        for sj in 1:N_sub_eff, si in 1:N_sub_eff
+            lon_s = mod(lon_west + (si - 0.5) / N_sub_eff * Float64(Δlon_s), 360.0)
+            # Sample uniformly in sin(lat) so each sub-cell point represents an
+            # equal share of the spherical source-cell area.
+            lat_s = _equal_area_sample_lat(lat_south, lat_north, (sj - 0.5) / N_sub_eff)
             p, ic, jc = _find_nearest_cs_cell(lon_s, lat_s, bins, n_lon_bins,
                                                n_lat_bins, bin_size, grid)
             p == 0 && continue
@@ -336,7 +377,8 @@ build_latlon_to_cs_map(lons::AbstractVector{FT}, lats::AbstractVector{FT},
 # =====================================================================
 
 """
-    regrid_latlon_to_cs(flux_kgm2s, lons, lats, grid; cs_map=nothing) → NTuple{6, Matrix}
+    regrid_latlon_to_cs(flux_kgm2s, lons, lats, grid; cs_map=nothing, N_sub=nothing)
+        → NTuple{6, Matrix}
 
 Conservative regridding from lat-lon to cubed-sphere via mass accumulation.
 
@@ -352,6 +394,7 @@ function regrid_latlon_to_cs(flux_kgm2s::Matrix{FT}, lons::AbstractVector{FT},
                               grid::CubedSphereGrid{FT};
                               cs_map = nothing,
                               cs_areas = nothing,
+                              N_sub::Union{Nothing, Int} = nothing,
                               renormalize = false) where FT
     Nc = grid.Nc
     Nlon = length(lons)
@@ -363,7 +406,8 @@ function regrid_latlon_to_cs(flux_kgm2s::Matrix{FT}, lons::AbstractVector{FT},
     end
 
     if cs_map === nothing
-        cs_map = build_conservative_cs_map(lons, lats, grid; cs_areas)
+        cs_map = build_conservative_cs_map(lons, lats, grid;
+                                           cs_areas=cs_areas, N_sub=N_sub)
     end
 
     (; offsets, target_p, target_i, target_j, weight, native_area, eff_area, cs_area) = cs_map

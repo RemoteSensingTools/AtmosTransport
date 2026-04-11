@@ -979,3 +979,15 @@ finishes, I'll plot it and launch RG. CS is parked.
 - Proper fix needs either: global 6-panel Poisson OR spectral→CS synthesis
 
 ---
+
+### [CLAUDE] — 2026-04-11 ~05:05 UTC
+
+**Note from user for future CS work:**
+GCHP has regridding methods to construct CS mass fluxes from MERRA
+(LatLon) data. When revisiting CS ERA5 path later, look at:
+- GCHP regridding code (probably in the ExtData component or preprocessing)
+- The MERRA-to-CS wind/flux conversion is the same problem we hit
+
+This is a known problem space with established solutions. Don't reinvent.
+
+---

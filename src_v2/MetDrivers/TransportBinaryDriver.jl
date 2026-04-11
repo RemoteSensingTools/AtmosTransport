@@ -111,6 +111,73 @@ struct TransportBinaryDriver{FT, ReaderT, GridT} <: AbstractMassFluxMetDriver
     grid   :: GridT
 end
 
+@inline function _cm_interface_mass(m, i, j, k, Nz)
+    if k <= 1
+        return m[i, j, 1]
+    elseif k > Nz
+        return m[i, j, Nz]
+    else
+        return max(m[i, j, k - 1], m[i, j, k])
+    end
+end
+
+@inline function _cm_interface_mass(m, c, k, Nz)
+    if k <= 1
+        return m[c, 1]
+    elseif k > Nz
+        return m[c, Nz]
+    else
+        return max(m[c, k - 1], m[c, k])
+    end
+end
+
+function _window_max_rel_cm(m::AbstractArray{FT, 3}, fluxes::StructuredFaceFluxState) where FT
+    Nz = size(m, 3)
+    worst = 0.0
+    @inbounds for k in 1:size(fluxes.cm, 3), j in 1:size(fluxes.cm, 2), i in 1:size(fluxes.cm, 1)
+        denom = max(Float64(_cm_interface_mass(m, i, j, k, Nz)), floatmin(Float64))
+        ratio = abs(Float64(fluxes.cm[i, j, k])) / denom
+        worst = max(worst, ratio)
+    end
+    return worst
+end
+
+function _window_max_rel_cm(m::AbstractMatrix{FT}, fluxes::FaceIndexedFluxState) where FT
+    Nz = size(m, 2)
+    worst = 0.0
+    @inbounds for k in 1:size(fluxes.cm, 2), c in 1:size(fluxes.cm, 1)
+        denom = max(Float64(_cm_interface_mass(m, c, k, Nz)), floatmin(Float64))
+        ratio = abs(Float64(fluxes.cm[c, k])) / denom
+        worst = max(worst, ratio)
+    end
+    return worst
+end
+
+function _validate_window_cm_sanity(reader::TransportBinaryReader; max_rel_cm::Real=1e-8)
+    threshold = Float64(max_rel_cm)
+    worst_ratio = 0.0
+    worst_window = 0
+
+    for win in 1:window_count(reader)
+        m, _ps, fluxes = load_window!(reader, win)
+        ratio = _window_max_rel_cm(m, fluxes)
+        if ratio > worst_ratio
+            worst_ratio = ratio
+            worst_window = win
+        end
+        if ratio > threshold
+            throw(ArgumentError(
+                "TransportBinaryDriver sanity check failed for $(basename(reader.path)) " *
+                "at window $win: max(abs(cm)/m)=$(ratio) exceeds threshold $(threshold). " *
+                "This transport binary likely has inconsistent vertical mass fluxes; regenerate it " *
+                "with the fixed Poisson-balanced preprocessor or disable validation explicitly."
+            ))
+        end
+    end
+
+    return worst_window, worst_ratio
+end
+
 function _validate_runtime_semantics(reader::TransportBinaryReader)
     h = reader.header
     expected_poisson_scale = 1.0 / (2 * h.steps_per_window)
@@ -188,9 +255,12 @@ end
 
 function TransportBinaryDriver(path::AbstractString;
                                FT::Type{<:AbstractFloat} = Float64,
-                               arch = CPU())
+                               arch = CPU(),
+                               validate_windows::Bool = true,
+                               max_rel_cm::Real = 1e-8)
     reader = TransportBinaryReader(String(path); FT=FT)
     _validate_runtime_semantics(reader)
+    validate_windows && _validate_window_cm_sanity(reader; max_rel_cm=max_rel_cm)
     grid = load_grid(reader; FT=FT, arch=arch)
     return TransportBinaryDriver{FT, typeof(reader), typeof(grid)}(reader, grid)
 end

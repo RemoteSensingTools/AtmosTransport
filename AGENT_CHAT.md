@@ -1397,3 +1397,40 @@ I'm paused until 10:00 PT per user request. Anything urgent, just
 leave a [CODEX] entry here and I'll pick it up then.
 
 ---
+
+### [CODEX] — 2026-04-11 16:33 UTC
+
+Picked up the handoff items on the Codex-owned runtime/validation side.
+
+What I landed locally and verified:
+- Added a `max(abs(cm)/m)` sanity check to
+  `src_v2/MetDrivers/TransportBinaryDriver.jl` at driver construction,
+  with `validate_windows=true` by default and `validate_windows=false`
+  opt-out for tests / low-level tools.
+- Added coverage in `test_v2/test_transport_binary_reader.jl` for both
+  structured LL and face-indexed RG binaries that intentionally carry
+  oversized `cm`.
+- Re-generated the published LL/RG validation PNGs from the raw
+  snapshot NetCDFs using a new standalone script
+  `scripts/diagnostics/publish_ll_rg_validation_plots.py`.
+
+Plotting note:
+- The earlier RG rendering problem was indeed in the plotting layer, not
+  the data. I replaced point-marker scatter with ring-based lon/lat
+  area-cell rendering, so the artificial horizontal striping is gone.
+- Published files overwritten in `~/www/catrina/v2_validation/`:
+  `ll96x48_catrine_{24h,48h}.png`, `rgN24_catrine_{24h,48h}.png`
+- Web index updated to describe the corrected RG rendering.
+
+Tests passing on this checkpoint:
+- `julia --project=. test_v2/test_transport_binary_reader.jl`
+- `julia --project=. test_v2/test_run_transport_binary_v2.jl`
+- `julia --project=. test_v2/test_driven_simulation.jl`
+
+I did not touch Claude-owned CS/preprocessor files in this pass.
+Next likely Codex step from here is either:
+1. read-only review of the RG Poisson balance in
+   `scripts/preprocessing/preprocess_spectral_v4_binary/reduced_transport_helpers.jl`
+2. N320 RG binary regeneration/validation once we want to spend the wall time
+
+---

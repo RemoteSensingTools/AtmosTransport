@@ -5,7 +5,11 @@ using Test
 include(joinpath(@__DIR__, "..", "src_v2", "AtmosTransportV2.jl"))
 using .AtmosTransportV2
 
-function write_test_transport_binary_reduced(path::AbstractString; FT::Type{<:AbstractFloat}=Float64, source_flux_sampling::Symbol=:window_start_endpoint, binary_kwargs...)
+function write_test_transport_binary_reduced(path::AbstractString;
+                                             FT::Type{<:AbstractFloat}=Float64,
+                                             source_flux_sampling::Symbol=:window_start_endpoint,
+                                             cm_fill::Union{Nothing, Real}=nothing,
+                                             binary_kwargs...)
     mesh = ReducedGaussianMesh(FT[-45, 45], [4, 4]; FT=FT)
     vertical = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
     grid = AtmosGrid(mesh, vertical, CPU(); FT=FT)
@@ -18,6 +22,7 @@ function write_test_transport_binary_reduced(path::AbstractString; FT::Type{<:Ab
             m = reshape(FT.(1:(ncell * nlevel)) .* FT(win), ncell, nlevel)
             hflux = zeros(FT, nface_h, nlevel)
             cm = zeros(FT, ncell, nlevel + 1)
+            cm_fill === nothing || fill!(cm, FT(cm_fill))
             ps = fill(FT(90000 + 1000win), ncell)
             qv_start = fill(FT(0.01win), ncell, nlevel)
             qv_end = fill(FT(0.01win + 0.001), ncell, nlevel)
@@ -45,6 +50,7 @@ function write_test_transport_binary_latlon(path::AbstractString;
                                             source_flux_sampling::Symbol=:window_start_endpoint,
                                             flux_sampling::Symbol=:window_constant,
                                             include_poisson_metadata::Bool=true,
+                                            cm_fill::Union{Nothing, Real}=nothing,
                                             binary_kwargs...)
     Nx, Ny, Nz = 6, 4, 3
     mesh = LatLonMesh(; FT=FT, Nx=Nx, Ny=Ny)
@@ -57,6 +63,7 @@ function write_test_transport_binary_latlon(path::AbstractString;
             am = zeros(FT, Nx + 1, Ny, Nz)
             bm = zeros(FT, Nx, Ny + 1, Nz)
             cm = zeros(FT, Nx, Ny, Nz + 1)
+            cm_fill === nothing || fill!(cm, FT(cm_fill))
             ps = fill(FT(95000 + 1000win), Nx, Ny)
             qv_start = fill(FT(0.002win), Nx, Ny, Nz)
             qv_end = fill(FT(0.002win + 0.0005), Nx, Ny, Nz)
@@ -256,5 +263,23 @@ end
         @test total_windows(driver) == 2
         @test window_dt(driver) == 3600.0
         close(driver)
+    end
+end
+
+@testset "TransportBinaryDriver rejects binaries with oversized cm relative to cell mass" begin
+    mktemp() do path, io
+        close(io)
+        write_test_transport_binary_latlon(path; FT=Float64, cm_fill=1e-3)
+        @test_throws ArgumentError TransportBinaryDriver(path; FT=Float64, arch=CPU())
+
+        driver = TransportBinaryDriver(path; FT=Float64, arch=CPU(), validate_windows=false)
+        @test total_windows(driver) == 2
+        close(driver)
+    end
+
+    mktemp() do path, io
+        close(io)
+        write_test_transport_binary_reduced(path; FT=Float64, cm_fill=1e-3)
+        @test_throws ArgumentError TransportBinaryDriver(path; FT=Float64, arch=CPU())
     end
 end

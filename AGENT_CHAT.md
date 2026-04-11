@@ -991,3 +991,21 @@ GCHP has regridding methods to construct CS mass fluxes from MERRA
 This is a known problem space with established solutions. Don't reinvent.
 
 ---
+
+### [CLAUDE] — 2026-04-11 ~05:20 UTC
+
+**LL F64 run analysis after kill:**
+- Day 1 COMPLETED in 1367.58s (22.8 min wall time) ✓
+- Day 2 was in progress when killed
+- I was confused by the CPU time (3h18m) — that's accumulated across both
+  threads, not wall time. The run was NEVER stuck.
+- **Boundary air-mass mismatch before Day 2: 0.303 (30%!)** — 
+  this is a BIG warning. Codex, is this expected? It means the last
+  substep of Day 1 and the first substep of Day 2 disagree on air mass by 30%.
+  Sounds wrong for contiguous days.
+
+**Relaunched both LL F64 and RG F64 in parallel.** Expected:
+- LL F64: ~45 min wall time for 2 days (day 1 = 23 min × 2 ≈ 45)
+- RG F64: ~2-3 hours wall time (Codex's 333s/window × 48 ≈ 4.4 hours)
+
+---

@@ -91,21 +91,40 @@ end
 # Per-panel sweep functions (double-buffered)
 # =========================================================================
 
-"""Run X-sweep on one panel's interior with double buffering."""
+"""Run X-sweep on one panel's interior with double buffering.
+
+Mass-flux limiting: the net mass change `am_l - am_r` is limited so that
+`m_new ≥ 0`. This is necessary when regridded fluxes are not perfectly
+consistent with the cell mass field (e.g., CS panels from bilinear wind
+interpolation). The tracer flux is scaled by the same factor to maintain
+consistency. This is physically correct — you cannot remove more mass
+than exists in a cell.
+"""
 function _sweep_x_panel!(rm, m, am, scheme, rm_buf, m_buf, Nc, Hp, Nz;
                          flux_scale = one(eltype(m)))
     backend = get_backend(rm)
     if backend isa KA_CPU
-        # CPU: direct loop over interior
         @inbounds for k in 1:Nz, jj in 1:Nc, ii in 1:Nc
             i = ii + Hp; j = jj + Hp
             am_l = flux_scale * am[i, j, k]
             am_r = flux_scale * am[i + 1, j, k]
+            dm = am_l - am_r
+
+            # Limit mass flux to prevent negative mass
+            mi = m[i, j, k]
+            if mi + dm < zero(eltype(m)) && mi > zero(eltype(m))
+                # Scale fluxes so m_new = 0 (all mass drained, no more)
+                scale = mi / max(-dm, eps(eltype(m)))
+                am_l *= scale
+                am_r *= scale
+                dm = am_l - am_r
+            end
+
             Nx_padded = Int32(Nc + 2Hp)
             fl = _xface_tracer_flux(Int32(i), j, k, rm, m, am_l, scheme, Nx_padded)
             fr = _xface_tracer_flux(Int32(i) + Int32(1), j, k, rm, m, am_r, scheme, Nx_padded)
             rm_buf[i, j, k] = rm[i, j, k] + fl - fr
-            m_buf[i, j, k]  = m[i, j, k]  + am_l - am_r
+            m_buf[i, j, k]  = mi + dm
         end
     else
         k! = _cs_xsweep_kernel!(backend, 256)
@@ -118,7 +137,7 @@ function _sweep_x_panel!(rm, m, am, scheme, rm_buf, m_buf, Nc, Hp, Nz;
     return nothing
 end
 
-"""Run Y-sweep on one panel's interior with double buffering."""
+"""Run Y-sweep on one panel's interior with double buffering and flux limiting."""
 function _sweep_y_panel!(rm, m, bm, scheme, rm_buf, m_buf, Nc, Hp, Nz;
                          flux_scale = one(eltype(m)))
     backend = get_backend(rm)
@@ -127,11 +146,17 @@ function _sweep_y_panel!(rm, m, bm, scheme, rm_buf, m_buf, Nc, Hp, Nz;
             i = ii + Hp; j = jj + Hp
             bm_s = flux_scale * bm[i, j, k]
             bm_n = flux_scale * bm[i, j + 1, k]
+            dm = bm_s - bm_n
+            mi = m[i, j, k]
+            if mi + dm < zero(eltype(m)) && mi > zero(eltype(m))
+                scale = mi / max(-dm, eps(eltype(m)))
+                bm_s *= scale; bm_n *= scale; dm = bm_s - bm_n
+            end
             Ny_padded = Int32(Nc + 2Hp)
             fs = _yface_tracer_flux(i, Int32(j), k, rm, m, bm_s, scheme, Ny_padded)
             fn = _yface_tracer_flux(i, Int32(j) + Int32(1), k, rm, m, bm_n, scheme, Ny_padded)
             rm_buf[i, j, k] = rm[i, j, k] + fs - fn
-            m_buf[i, j, k]  = m[i, j, k]  + bm_s - bm_n
+            m_buf[i, j, k]  = mi + dm
         end
     else
         k! = _cs_ysweep_kernel!(backend, 256)
@@ -143,7 +168,7 @@ function _sweep_y_panel!(rm, m, bm, scheme, rm_buf, m_buf, Nc, Hp, Nz;
     return nothing
 end
 
-"""Run Z-sweep on one panel's interior with double buffering."""
+"""Run Z-sweep on one panel's interior with double buffering and flux limiting."""
 function _sweep_z_panel!(rm, m, cm, scheme, rm_buf, m_buf, Nc, Hp, Nz;
                          flux_scale = one(eltype(m)))
     backend = get_backend(rm)
@@ -152,10 +177,16 @@ function _sweep_z_panel!(rm, m, cm, scheme, rm_buf, m_buf, Nc, Hp, Nz;
             i = ii + Hp; j = jj + Hp
             cm_t = flux_scale * cm[i, j, k]
             cm_b = flux_scale * cm[i, j, k + 1]
+            dm = cm_t - cm_b
+            mi = m[i, j, k]
+            if mi + dm < zero(eltype(m)) && mi > zero(eltype(m))
+                scale = mi / max(-dm, eps(eltype(m)))
+                cm_t *= scale; cm_b *= scale; dm = cm_t - cm_b
+            end
             ft = _zface_tracer_flux(i, j, Int32(k), rm, m, cm_t, scheme, Int32(Nz))
             fb = _zface_tracer_flux(i, j, Int32(k) + Int32(1), rm, m, cm_b, scheme, Int32(Nz))
             rm_buf[i, j, k] = rm[i, j, k] + ft - fb
-            m_buf[i, j, k]  = m[i, j, k]  + cm_t - cm_b
+            m_buf[i, j, k]  = mi + dm
         end
     else
         k! = _cs_zsweep_kernel!(backend, 256)
@@ -265,13 +296,20 @@ function _cs_x_pilot_subcycle_count(panels_am::NTuple{6}, panels_m::NTuple{6},
             end
             cfl_ok || break
 
-            # Evolve pilot mass (only if not last pass — saves work)
+            # Evolve pilot mass with flux limiting (matching runtime behavior)
             if pass < n_sub
                 @inbounds for p in 1:6
                     for k in 1:Nz, j in 1:Nc, i in 1:Nc
                         ii = Hp + i; jj = Hp + j
-                        mx[p][ii, jj, k] += flux_scale * panels_am[p][ii, jj, k] -
-                                              flux_scale * panels_am[p][ii+1, jj, k]
+                        am_l = flux_scale * panels_am[p][ii, jj, k]
+                        am_r = flux_scale * panels_am[p][ii+1, jj, k]
+                        dm = am_l - am_r
+                        mi = mx[p][ii, jj, k]
+                        if mi + dm < zero(FT) && mi > zero(FT)
+                            scale = mi / max(-dm, eps(FT))
+                            dm *= scale
+                        end
+                        mx[p][ii, jj, k] = max(mi + dm, zero(FT))
                     end
                 end
             end
@@ -323,8 +361,14 @@ function _cs_y_pilot_subcycle_count(panels_bm::NTuple{6}, panels_m::NTuple{6},
                 @inbounds for p in 1:6
                     for k in 1:Nz, j in 1:Nc, i in 1:Nc
                         ii = Hp + i; jj = Hp + j
-                        mx[p][ii, jj, k] += flux_scale * panels_bm[p][ii, jj, k] -
-                                              flux_scale * panels_bm[p][ii, jj+1, k]
+                        bm_s = flux_scale * panels_bm[p][ii, jj, k]
+                        bm_n = flux_scale * panels_bm[p][ii, jj+1, k]
+                        dm = bm_s - bm_n
+                        mi = mx[p][ii, jj, k]
+                        if mi + dm < zero(FT) && mi > zero(FT)
+                            dm *= mi / max(-dm, eps(FT))
+                        end
+                        mx[p][ii, jj, k] = max(mi + dm, zero(FT))
                     end
                 end
             end
@@ -375,8 +419,14 @@ function _cs_z_pilot_subcycle_count(panels_cm::NTuple{6}, panels_m::NTuple{6},
                 @inbounds for p in 1:6
                     for k in 1:Nz, j in 1:Nc, i in 1:Nc
                         ii = Hp + i; jj = Hp + j
-                        mx[p][ii, jj, k] += flux_scale * panels_cm[p][ii, jj, k] -
-                                              flux_scale * panels_cm[p][ii, jj, k+1]
+                        cm_t = flux_scale * panels_cm[p][ii, jj, k]
+                        cm_b = flux_scale * panels_cm[p][ii, jj, k+1]
+                        dm = cm_t - cm_b
+                        mi = mx[p][ii, jj, k]
+                        if mi + dm < zero(FT) && mi > zero(FT)
+                            dm *= mi / max(-dm, eps(FT))
+                        end
+                        mx[p][ii, jj, k] = max(mi + dm, zero(FT))
                     end
                 end
             end

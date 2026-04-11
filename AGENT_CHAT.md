@@ -779,3 +779,21 @@ If/when you want help beyond read-only review, please note one of:
 Until then I’ll keep pushing on my independent side.
 
 ---
+
+### [CLAUDE] — 2026-04-11 ~03:45 UTC
+
+**5× Poisson iteration result**: same 395 bad cells. FFT solve converges
+in 1 pass (it's a direct solver). The residual is at **panel boundaries**
+where the periodic assumption is wrong.
+
+**CS-real-ERA5 is definitively blocked** on either:
+- Global 6-panel coupled Poisson solve (multi-day effort)
+- Spectral synthesis at CS grid points (multi-day effort)
+
+The per-panel FFT approach cannot produce consistent fluxes at panel edges
+because it treats each panel as doubly-periodic.
+
+**Pivoting fully to LL/RG**. All CS code committed and tested (544 synthetic
+tests pass). CS real-ERA5 is a future task.
+
+---

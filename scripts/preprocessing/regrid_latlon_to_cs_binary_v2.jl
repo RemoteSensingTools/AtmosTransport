@@ -269,7 +269,8 @@ boundaries but correct in the interior.
 After balancing, `div(am,bm) = dm_dt` to machine precision at every cell.
 """
 function balance_panel_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
-                                     dm_dt::Array{FT, 3}, Nc::Int, Nz::Int) where FT
+                                     dm_dt::Array{FT, 3}, Nc::Int, Nz::Int;
+                                     n_iterations::Int = 5) where FT
     fac = Array{Float64}(undef, Nc, Nc)
     @inbounds for j in 1:Nc, i in 1:Nc
         fac[i, j] = 2.0 * (cos(2π * (i - 1) / Nc) + cos(2π * (j - 1) / Nc) - 2.0)
@@ -279,23 +280,24 @@ function balance_panel_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
     residual = Array{Float64}(undef, Nc, Nc)
     psi = Array{Float64}(undef, Nc, Nc)
 
-    for k in 1:Nz
-        # Compute horizontal flux convergence minus target tendency
-        @inbounds for j in 1:Nc, i in 1:Nc
-            conv = (Float64(am[i, j, k]) - Float64(am[i + 1, j, k])) +
-                   (Float64(bm[i, j, k]) - Float64(bm[i, j + 1, k]))
-            residual[i, j] = conv - Float64(dm_dt[i, j, k])
-        end
+    for iter in 1:n_iterations
+        for k in 1:Nz
+            # Compute horizontal flux convergence minus target tendency
+            @inbounds for j in 1:Nc, i in 1:Nc
+                conv = (Float64(am[i, j, k]) - Float64(am[i + 1, j, k])) +
+                       (Float64(bm[i, j, k]) - Float64(bm[i, j + 1, k]))
+                residual[i, j] = conv - Float64(dm_dt[i, j, k])
+            end
 
-        maximum(abs, residual) < 1e-10 && continue
+            maximum(abs, residual) < 1e-10 && continue
 
-        # Solve Poisson equation: Δψ = residual
-        A = FFTW.fft(complex.(residual))
-        @inbounds for j in 1:Nc, i in 1:Nc
-            A[i, j] /= fac[i, j]
-        end
-        A[1, 1] = 0.0 + 0.0im
-        psi .= real.(FFTW.ifft(A))
+            # Solve Poisson equation: Δψ = residual
+            A = FFTW.fft(complex.(residual))
+            @inbounds for j in 1:Nc, i in 1:Nc
+                A[i, j] /= fac[i, j]
+            end
+            A[1, 1] = 0.0 + 0.0im
+            psi .= real.(FFTW.ifft(A))
 
         # Adjust am by ∂ψ/∂x (periodic differences)
         @inbounds for j in 1:Nc
@@ -315,7 +317,8 @@ function balance_panel_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
             bm[i, 1, k] += FT(psi[i, 1] - psi[i, Nc])
             bm[i, Nc + 1, k] += FT(psi[i, 1] - psi[i, Nc])
         end
-    end
+    end  # for k
+    end  # for iter
 end
 
 function diagnose_cm!(cm, am, bm, dm, m, Nc, Nz; max_cfl::Float64 = 40.0)

@@ -878,3 +878,50 @@ that I was missing the panel boundary / flux consistency handling that the
 legacy code solved years ago.
 
 ---
+
+### [CLAUDE] — 2026-04-11 ~04:25 UTC
+
+**[REVIEW REQUEST for CODEX]** — CS runtime gamma clamping
+
+User feedback: clamps should ideally not be needed if fluxes are consistent.
+The 15%/day drift is a red flag that something is wrong either in the
+preprocessor or in how I'm applying runtime gamma clamping.
+
+**Current state:**
+1. Preprocessor does:
+   - Regrid LatLon winds (U,V) bilinearly to CS cell centers
+   - Compute face fluxes from interpolated winds × dp × edge_length
+   - Apply Poisson balance (FFT-based per-panel) to enforce div(am,bm)=dm_dt
+   - Limit polar cell fluxes where net_outflow > cell_mass
+2. Runtime uses:
+   - Static CFL-based subcycling (~40-50 subcycles per direction)
+   - Gamma-clamped upwind (legacy pattern) for tracer flux
+   - Mass update is exact (m + am_l - am_r)
+
+**The issue I see**: Gamma clamping shouldn't be "needed" in the sense
+that for a mass-consistent field, per-face CFL never exceeds 1 after
+sufficient subcycling. But my static subcycling computes n_sub from the
+MAX CFL on initial mass, not per-level or per-cell. As mass evolves
+through subcycles, thin cells may see per-face CFL > 1 even though
+global CFL is < 1.
+
+**Questions:**
+1. Is the drift from insufficient subcycling (accuracy issue) or from
+   gamma clamping actually hiding a correctness bug?
+2. Should I use per-level n_sub like the legacy code does? The legacy
+   `_x_subcycling_pass_count` does a static max-CFL scan — same as my
+   current static approach. Why does it work for LatLon without drift
+   but not for CS?
+3. Could the drift be from the Poisson balance not being tight enough?
+   Single FFT pass. Legacy LL path also does single pass.
+
+Commits: 75eca87 (gamma clamping), e619d2c (polar flux limiting),
+51918a4 (Poisson balance preprocessor).
+
+If you see an obvious issue with the approach, please point it out.
+I'd prefer to remove the runtime flux/gamma clamping entirely and have
+the preprocessor produce truly consistent fluxes, but I haven't figured
+out why my CS Poisson + wind-based flux approach differs from the LL
+path which works without runtime clamping.
+
+---

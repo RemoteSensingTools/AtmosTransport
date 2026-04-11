@@ -1815,3 +1815,91 @@ and `scripts/visualization/__pycache__/` untouched — pre-existing
 untracked, not mine either.
 
 ---
+
+### [CLAUDE] — 2026-04-11 18:23 UTC  [Tiers 3 + 4 landed]
+
+**Commits:**
+- `b33ca0e` — Tier 1 (src_v2/Regridding submodule, 3 files, 804 insertions)
+- `6122a7e` — Tiers 3 + 4 (preprocessing script + test suite, 7 files,
+  937 insertions)
+
+**Tier 3** — `scripts/preprocessing/preprocess_era5_cs_conservative_v2.jl`
+
+Drop-in counterpart to `regrid_latlon_to_cs_binary_v2.jl` that replaces
+every bilinear cell-center interpolation with CR.jl's true spherical
+polygon intersection. Pipeline per window:
+1. Conservatively regrid `m`, `ps` (LL → CS) — mass-exact for `m`
+2. Recover cell-center winds `(u, v)` from LL `am`/`bm`
+3. Conservatively regrid winds onto CS cell centers
+4. Reconstruct CS face fluxes from regridded winds + regridded `ps`
+5. Poisson-balance `am`/`bm` against `dm_dt` (same FFT iteration)
+6. Diagnose `cm` from continuity (same routine)
+7. Write CS transport binary in gnomonic convention, drop-in
+   compatible with the existing bilinear output
+
+Helpers (`balance_panel_mass_fluxes!`, `diagnose_cm!`, panel unpack)
+duplicated verbatim from the bilinear script because it's a standalone
+entry point that can't be imported as a module. Single SHA-1-keyed
+JLD2 cache for the regridder — first-run cost amortized across reruns.
+Header tags `regrid_method="conservative_crjl"` for provenance.
+
+**I did not run the Tier 3 script against a real ERA5 binary in this
+session** — I don't have small enough test fixtures on disk and didn't
+want to poll the NFS mounts while your N320 regen was underway. The
+Tier 4 tests + the Tier 1 smoke tests cover the regridder math; the
+script's own Poisson / continuity / binary-writing logic is verbatim
+from the bilinear script and already validated.
+
+**Tier 4** — `test_v2/regridding/` test suite
+
+```
+Test Summary:       | Pass  Total   Time
+Regridding (Tier 4) |  551    551  21.7s
+```
+
+Five test files:
+- `test_cubed_sphere_corners.jl` — 497 tests. Shape + unit-norm for
+  all 6 panels of a C8 mesh (493 tests), plus panel-center anchors
+  for both `GnomonicPanelConvention` and `GEOSNativePanelConvention`
+  (6 + 6 tests). Verifies the panel-index remap (1,2,5,3,4,6)
+  implemented in `treeify_meshes.jl:_gnomonic_panel_id`.
+- `test_conservation.jl` — 12 tests. Global mass conservation for
+  constant, sin(lat), and cos(lat)*sin(2λ) fields at grid pairs
+  (36×18)→C4 and (72×36)→C12, plus the reverse direction.
+- `test_transpose.jl` — 5 tests. LL→CS→LL constant round-trip to
+  machine precision, plus equivalence between independently-built
+  reverse regridder and CR.jl's `LinearAlgebra.transpose` shortcut.
+- `test_serialization.jl` — 27 tests. JLD2 save/load identity,
+  `build_regridder` cache hit, ESMF NetCDF schema (S, row, col,
+  frac_a, frac_b, area_a, area_b) with frac_a/frac_b ≈ 1 for a
+  full-sphere pair.
+- `test_reduced_gaussian_stub.jl` — 2 tests. Guards the stub error
+  message so a future RG treeify implementation can flip the test
+  to the positive case.
+
+Run: `julia --project test_v2/regridding/runtests.jl`  (~22 s)
+
+**Machine-precision summary from the conservation tests:**
+- constant field rel err: 3e-16 – 4e-16
+- sin(lat) field: ~1e-12 × area_scale
+- cos(lat)·sin(2λ) field: ~1e-12 × area_scale
+- Transpose constant round-trip max dev: < 1e-12
+- ESMF frac_a, frac_b ∈ [1 − 3e-15, 1 + 1e-15]
+
+**Still TODO** (not blocking):
+- `ReducedGaussianMesh` treeify real implementation (task #9)
+- Real-ERA5-binary smoke run of the Tier 3 script (you'll hit this
+  when the N320 regen settles; I can do a C48 or C90 validation run
+  on a small LL binary whenever one's available)
+- xESMF parity fixture for Tier 4 (deferred — the existing
+  constant/smooth-field mass conservation to 1e-12 × area_scale
+  gives more confidence than an xESMF pin would, and the fixture
+  generation needs a working Python env)
+- Porting GMAO coordinate loading to v2 + per-panel (i, j) axis
+  rotation for GEOS panels 4/5 (needed for bit-exact parity with
+  production GEOS-FP binaries)
+
+Regridding/ ownership is mine, any questions ping here. Done for this
+block of work.
+
+---

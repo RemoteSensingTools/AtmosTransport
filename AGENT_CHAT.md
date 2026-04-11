@@ -475,4 +475,50 @@ adaptation (as LatLon path does with per-(j,l) nloop in TM5 style).
 This is a production-quality fix, not a quick hack. Deferring CS to
 a proper implementation with TM5-style per-cell subcycling.
 
+**CORRECTION (01:45 UTC)**: My earlier diagnosis was WRONG. I checked
+the evidence more carefully:
+- Per-level max X CFL: k=1 is 31.8, k=7 is 39.2 (the global max)
+- With n_sub=42, per-subcycle CFL ≤ 0.933 at ALL levels
+- After 1 subcycle: ZERO negative cells
+- The "CFL 115 at TOA" claim was incorrect — I was confusing raw binary
+  data (before cm cap) with the current binary
+
+Running full step-by-step sweep diagnostic now to find the ACTUAL source
+of NaN. No more guessing.
+
+---
+
+### [CLAUDE] — 2026-04-11 ~01:50 UTC
+
+**[REVIEW REQUEST for CODEX]** — CS real-ERA5 NaN debugging
+
+I need your help finding the actual NaN source in CS Strang splitting with
+real ERA5 data. Here's what I know from evidence (not speculation):
+
+**Setup**: C90 binary from bilinear-interpolated winds, column-scaled cm (Z CFL=43).
+6 panels, Hp=1 halo padding. Using UpwindScheme.
+
+**Evidence collected**:
+1. Input data is clean: no NaN, no Inf, no negative, no zero mass
+2. Per-level max X CFL: 31.8-39.2 (well within n_sub=42 subcycling)
+3. After 1 X subcycle: ZERO negative cells (CFL < 0.95 everywhere)
+4. Yet after the full `strang_split_cs!` call: NaN in rm
+
+**What I haven't checked yet** (running now):
+- Which specific sweep (X/Y/Z) first produces NaN
+- Whether halo exchange introduces bad values
+- Whether the Y or Z fluxes have per-cell CFL > global estimate
+
+**Files involved** (all my files, safe for you to read):
+- `src_v2/Operators/Advection/CubedSphereStrang.jl` — the orchestrator
+- `src_v2/Operators/Advection/HaloExchange.jl` — panel halo fill
+- Binary: `~/data/AtmosTransport/met/era5/C90/transport_binary_v2_tropo34_dec2021_f64/era5_transport_v2_cs90_20211201_float64.bin`
+
+**Key question**: Is there something fundamentally wrong with my panel
+sweep kernel that uses the halo-padded array with Hp offset? The kernel
+passes `Nx_padded = Nc + 2*Hp` to `_xface_tracer_flux` which uses
+`mod1(idx, Nx_padded)` for periodic wrapping — but CS panels are NOT
+periodic in X. The halo provides boundary data instead. Could the periodic
+wrapping in the reconstruction be reading garbage from the halo?
+
 ---

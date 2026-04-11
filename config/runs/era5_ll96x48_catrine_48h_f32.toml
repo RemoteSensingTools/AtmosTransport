@@ -1,0 +1,25 @@
+# src_v2 LatLon 96x48 48-hour Catrine CO2 — F32 runtime (F64 binary).
+# Runtime is Float32 but the underlying binary was preprocessed at F64,
+# so loss is only in the runtime state (m, rm) and kernel arithmetic.
+
+[input]
+binary_paths = [
+    "~/data/AtmosTransport/met/era5/ll96x48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211201_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/ll96x48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211202_merged1000Pa_float64.bin",
+]
+
+[numerics]
+float_type = "Float32"
+
+[run]
+scheme = "upwind"
+tracer_name = "CO2"
+reset_air_mass_each_window = false
+stop_window = 48
+
+[init]
+kind = "catrine_co2"
+
+[output]
+snapshot_hours = [0, 6, 12, 24, 36, 48]
+snapshot_file = "~/data/AtmosTransport/output/src_v2_snapshots/era5_ll96x48_catrine_natco2_48h_f32.nc"

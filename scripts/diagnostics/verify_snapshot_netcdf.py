@@ -8,9 +8,11 @@ actual netCDF dimension order — NOT `var[i]` which was the 2026-04-09 bug.
 
 Usage:
     python3 scripts/diagnostics/verify_snapshot_netcdf.py <file.nc> \
-        [vmin vmax]
+        [vmin vmax] [--mass-tol=1e-9]
 
-Defaults to Catrine CO2 physical range [3.9e-4, 4.5e-4].
+Defaults to Catrine CO2 physical range [3.9e-4, 4.5e-4] and a F64 mass
+drift threshold of 1e-9. For F32 runs pass `--mass-tol=1e-6` (F32 noise
+floor) to avoid false-positive failures on single-precision runs.
 """
 import sys
 import numpy as np
@@ -57,11 +59,16 @@ def summary(name, arr, vmin, vmax):
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: verify_snapshot_netcdf.py <file.nc> [vmin vmax]")
+        print("Usage: verify_snapshot_netcdf.py <file.nc> [vmin vmax] [--mass-tol=1e-9]")
         sys.exit(1)
     path = sys.argv[1]
-    vmin = float(sys.argv[2]) if len(sys.argv) > 2 else 3.9e-4
-    vmax = float(sys.argv[3]) if len(sys.argv) > 3 else 4.5e-4
+    positional = [a for a in sys.argv[2:] if not a.startswith("--")]
+    vmin = float(positional[0]) if len(positional) > 0 else 3.9e-4
+    vmax = float(positional[1]) if len(positional) > 1 else 4.5e-4
+    mass_tol = 1e-9
+    for arg in sys.argv[2:]:
+        if arg.startswith("--mass-tol="):
+            mass_tol = float(arg.split("=", 1)[1])
 
     ds = nc.Dataset(path, "r")
     try:

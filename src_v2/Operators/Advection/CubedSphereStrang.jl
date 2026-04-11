@@ -493,13 +493,14 @@ function strang_split_cs!(panels_rm::NTuple{6},
     fs = convert(FT, flux_scale)
     cfl_ft = convert(FT, cfl_limit)
 
-    # Compute subcycle counts from static CFL (initial mass).
-    # The evolving-mass pilot doesn't converge for CS because ~0.06% of
-    # cells have net flux > mass due to preprocessing inconsistency.
-    # The runtime flux limiter prevents negative mass at those cells.
-    n_x = _cs_static_subcycle_count(panels_am, panels_m, Nc, Hp, Nz, cfl_ft, :x)
-    n_y = _cs_static_subcycle_count(panels_bm, panels_m, Nc, Hp, Nz, cfl_ft, :y)
-    n_z = _cs_static_subcycle_count(panels_cm, panels_m, Nc, Hp, Nz, cfl_ft, :z)
+    # Compute subcycle counts using evolving-mass pilot.
+    # The pilot simulates mass evolution through subcycles and increases n_sub
+    # until per-face CFL stays within limit on evolved mass. This catches cases
+    # where static CFL is OK but evolving mass shrinks enough that later
+    # subcycles exceed CFL.
+    n_x = _cs_x_pilot_subcycle_count(panels_am, panels_m, Nc, Hp, Nz, cfl_ft)
+    n_y = _cs_y_pilot_subcycle_count(panels_bm, panels_m, Nc, Hp, Nz, cfl_ft)
+    n_z = _cs_z_pilot_subcycle_count(panels_cm, panels_m, Nc, Hp, Nz, cfl_ft)
 
     fs_x = fs / FT(n_x)
     fs_y = fs / FT(n_y)

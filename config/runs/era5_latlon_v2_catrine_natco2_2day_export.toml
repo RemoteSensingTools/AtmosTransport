@@ -1,0 +1,27 @@
+# src_v2 LatLon 2-day snapshot export config — natural CO2 only
+# (single-tracer for compatibility with export_transport_v2_snapshots.jl)
+#
+# Usage:
+#   julia --project=. scripts/diagnostics/export_transport_v2_snapshots.jl \
+#       config/runs/era5_latlon_v2_catrine_natco2_2day_export.toml
+
+[input]
+binary_paths = [
+    "~/data/AtmosTransport/met/era5/0.5x0.5/transport_binary_v2_tropo34_dec2021_f64/era5_transport_v2_20211201_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/0.5x0.5/transport_binary_v2_tropo34_dec2021_f64/era5_transport_v2_20211202_merged1000Pa_float64.bin",
+]
+
+[numerics]
+float_type = "Float64"
+
+[run]
+scheme = "upwind"
+tracer_name = "CO2"
+reset_air_mass_each_window = false
+
+[init]
+kind = "catrine_co2"
+
+[output]
+snapshot_hours = [0, 6, 12, 24, 36, 48]
+snapshot_file = "~/data/AtmosTransport/output/src_v2_snapshots/era5_latlon_v2_catrine_natco2_2day.nc"

@@ -102,6 +102,10 @@ using .Kernels
 include("Models/Models.jl")
 using .Models
 
+# ---- Offline regridding glue (preprocessing only; hard deps on CR.jl + JLD2) ----
+include("Regridding/Regridding.jl")
+using .Regridding
+
 # ---- Re-exports for convenience ----
 
 # Architectures and parameters
@@ -193,5 +197,10 @@ export load_cs_window, cs_window_count
 # Models
 export TransportModel, Simulation, DrivenSimulation, step!, run!, run_window!
 export window_index, substep_index, current_qv
+
+# Offline regridding (preprocessing only)
+export build_regridder, save_regridder, load_regridder
+export save_esmf_weights, apply_regridder!
+export cubed_sphere_face_corners
 
 end # module AtmosTransportV2

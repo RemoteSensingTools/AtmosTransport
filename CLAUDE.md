@@ -5,6 +5,46 @@ continuity on latitude-longitude (ERA5) and cubed-sphere (GEOS-FP C720, GEOS-IT 
 grids with mass-conserving advection, Tiedtke/RAS convection, and boundary-layer diffusion.
 Oceananigans-inspired modular architecture; KernelAbstractions.jl for GPU portability.
 
+# Rule 0: TEST EVERY ASSUMPTION WITH A PROBE BEFORE BUILDING ON IT.
+#
+# The recurring failure mode in this project is: correct high-level reasoning
+# followed by sloppy implementation that introduces trivial bugs (wrong index,
+# wrong sign, wrong dimension order, wrong convention). These bugs then cascade
+# into hours of debugging or silently wrong results.
+#
+# BEFORE writing any function that transforms data (spectral synthesis, vertical
+# remap, Poisson balance, IC loading, flux scaling), validate the INPUTS and
+# OUTPUTS with a short MCP probe:
+#
+#   1. Print the shape, dtype, and a few representative values of every array
+#      BEFORE the function processes them.
+#   2. After the function runs, print the output at a known physical location
+#      (e.g. ps at Tibet should be ~55 kPa, ps at equatorial ocean ~101 kPa)
+#      and verify it matches physical reality.
+#   3. Compare against an independent reference (RG vs LL at the same point,
+#      Catrine source vs model-loaded IC, ERA5 GRIB vs spectral-synthesized).
+#
+# Examples of bugs this rule would have caught in < 30 seconds:
+#   - LL 180° longitude shift (spectral_synthesis.jl center_shift=dlon/2
+#     instead of deg2rad(λᶜ[1])): probe `ps[57, 25]` at (1.875°, 31.875°)
+#     would show 101232 Pa instead of expected ~88500 Pa. Caught by the user
+#     pushing back on "LL vs RG IC looks different", not by me.
+#   - RG Poisson balance false convergence: probe `max(|L*psi - rhs|)` after
+#     the CG solve, not just the CG's internal residual metric. Three
+#     iterations of bugs (wrong degree, wrong projection, mean-zero on
+#     non-singular L) before it worked.
+#   - NetCDF dim-order confusion: `var[:, :, 0]` on a `(lon, lat, time)`
+#     file gives `(lon, lat)` at time=0, but on `(time, lat, lon)` gives
+#     `(time, lat)` at lon=0. One `print(var.dimensions, var.shape)` would
+#     have shown the real layout.
+#   - Catrine surface level: `co2[k=0]` could be TOA or surface depending
+#     on the ap/bp convention. One `print(ap[1], bp[1])` reveals p[0]=ps
+#     → surface.
+#
+# The cost of a probe is 5 seconds and 2 lines of code. The cost of NOT
+# probing is hours of debugging, false conclusions written to MEMORY.md,
+# and user trust erosion. When in doubt, probe first, code second.
+
 # Rule 1: Never speculate without evidence, check your own intuition, it was often wrong
 
 # Rule 1b: Assume bugs first. If a result looks unphysical, it IS a bug until proven

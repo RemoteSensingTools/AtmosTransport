@@ -405,6 +405,50 @@ function _load_file_initial_condition_source(cfg, ::Type{FT}, Nz_target::Integer
     end
 end
 
+"""
+    _interpolate_log_pressure_profile!(dest, src_q, air_mass_col, ap, bp, ps_src, area, g)
+
+Vertically interpolate a source profile `src_q[1:Nsrc]` onto target model
+levels `dest[1:Nz]` using log-pressure linear interpolation.
+
+## Source pressure levels
+
+Source half-level pressures from the IC file's hybrid coordinates:
+
+    src_p_half[k] = ap[k] + bp[k] × ps_src     k = 1..Nsrc+1
+
+**Ordering convention** (Catrine startCO2): `ap[1] = 0, bp[1] = 1.0` →
+`src_p_half[1] = ps_src` (SURFACE). `ap[end] = 0, bp[end] = 0` →
+`src_p_half[end] = 0` (TOA). So `src_p_mid` is **decreasing** from
+surface to TOA (k=1 is surface, k=Nsrc is TOA).
+
+## Target pressure levels
+
+Target half-level pressures from the model's air mass column:
+
+    tgt_p_half[1] = 0          (TOA, model convention k=1 = top)
+    tgt_p_half[k+1] = tgt_p_half[k] + air_mass[k] × g / area
+
+So `tgt_p_mid` is **increasing** from TOA to surface (k=1 small, k=Nz large).
+
+## Interpolation
+
+For each target level `k`, find the bracket in `src_p_mid` where
+`src_p_mid[ks] > p_tgt ≥ src_p_mid[ks+1]` (decreasing source → advance
+`ks` forward for larger p_tgt). Then linear interpolation in log-pressure:
+
+    w = (log p_tgt − log p_src[ks]) / (log p_src[ks+1] − log p_src[ks])
+    dest[k] = src_q[ks] + w × (src_q[ks+1] − src_q[ks])
+
+Clamps: if `p_tgt > src_p_mid[1]` (below source surface), use `src_q[1]`.
+If `p_tgt < src_p_mid[end]` (above source TOA), use `src_q[end]`.
+
+**NOTE**: the `ks` index is persistent across the `k` loop (not reset)
+because `p_tgt` is monotonically **increasing** with `k` (target goes
+TOA → surface), so `ks` only needs to advance forward (toward lower src
+pressures) — never backward. This relies on the source `src_p_mid` being
+monotonically **decreasing**.
+"""
 function _interpolate_log_pressure_profile!(dest::AbstractVector{FT},
                                             src_q::AbstractVector{FT},
                                             air_mass_col,
@@ -416,33 +460,43 @@ function _interpolate_log_pressure_profile!(dest::AbstractVector{FT},
     Nsrc = length(src_q)
     Nz = length(dest)
 
+    # Source half-level pressures: src_p_half[1] = ps (surface), src_p_half[end] = 0 (TOA)
     src_p_half = Vector{Float64}(undef, Nsrc + 1)
     @inbounds for k in 1:(Nsrc + 1)
         src_p_half[k] = ap[k] + bp[k] * ps_src
     end
+    # Source mid-level pressures (decreasing: surface → TOA)
     src_p_mid = Vector{Float64}(undef, Nsrc)
     @inbounds for k in 1:Nsrc
         src_p_mid[k] = 0.5 * (src_p_half[k] + src_p_half[k + 1])
     end
 
+    # Target half-level pressures: tgt_p_half[1] = 0 (TOA), cumulating to ps (surface)
+    # (model convention: k=1 is TOA, k=Nz is surface-adjacent)
     tgt_p_half = Vector{Float64}(undef, Nz + 1)
-    tgt_p_half[1] = 0.0
+    tgt_p_half[1] = 0.0   # TOA boundary
     @inbounds for k in 1:Nz
-        dp = Float64(air_mass_col[k]) * g / area
+        dp = Float64(air_mass_col[k]) * g / area   # pressure thickness [Pa]
         tgt_p_half[k + 1] = tgt_p_half[k] + dp
     end
 
+    # Persistent bracket index (advances forward as p_tgt increases with k)
     ks = 1
     @inbounds for k in 1:Nz
-        p_tgt = 0.5 * (tgt_p_half[k] + tgt_p_half[k + 1])
+        p_tgt = 0.5 * (tgt_p_half[k] + tgt_p_half[k + 1])  # target mid-level [Pa]
         if p_tgt >= src_p_mid[1]
+            # Below source surface → clamp to surface-level value
             dest[k] = src_q[1]
         elseif p_tgt <= src_p_mid[end]
+            # Above source TOA → clamp to TOA-level value
             dest[k] = src_q[end]
         else
+            # Find bracket: src_p_mid[ks] > p_tgt ≥ src_p_mid[ks+1]
+            # (src is decreasing, so advance ks until src_p_mid[ks+1] ≤ p_tgt)
             while ks < Nsrc && src_p_mid[ks + 1] > p_tgt
                 ks += 1
             end
+            # Log-pressure linear interpolation
             lp1 = log(max(src_p_mid[ks], floatmin(Float64)))
             lp2 = log(max(src_p_mid[ks + 1], floatmin(Float64)))
             lpt = log(max(p_tgt, floatmin(Float64)))

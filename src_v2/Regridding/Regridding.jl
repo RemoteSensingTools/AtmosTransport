@@ -32,18 +32,33 @@ save_regridder("weights.jld2", r)
 save_esmf_weights("weights_esmf.nc", r)
 ```
 
-## Status (Tier 1)
+## Supported mesh types
 
-- `LatLonMesh` and `CubedSphereMesh` are fully wired via `Trees.treeify`.
-- `ReducedGaussianMesh` is handled by a `FlatNoTree` fallback — correct but
-  slow at N320 scale until an STR-tree path is added.
+| Source/Destination | Tree strategy | Spatial acceleration |
+|--------------------|---------------|----------------------|
+| `LatLonMesh`       | `CellBasedGrid` from `(Nx+1)×(Ny+1)` face corners → `TopDownQuadtreeCursor` | O(log(Nx·Ny)) |
+| `CubedSphereMesh`  | 6 per-panel `CellBasedGrid` from gnomonic corners → `CubedSphereToplevelTree` | O(log Nc²) per panel |
+| `ReducedGaussianMesh` | Per-ring `CellBasedGrid(nlon+1, 2)` → `MultiTreeWrapper` | O(nrings · log nlon) |
+
+All three produce `SphericalCap` extents at every tree level, which is
+required by CR.jl's spherical dual-DFS intersection search.
+
+## Known limitations
+
 - `CubedSphereMesh` uses the **analytical gnomonic** projection from
   `src_v2/Grids/CubedSphereMesh.jl`. Real GEOS-FP native cubed-sphere data
   has panel-4/5 axis rotations and small (~1–2°) corner offsets relative to
   the gnomonic projection; GMAO coordinate loading must be ported to v2 for
   bit-exact parity with production GEOS-FP binaries.
+- `ReducedGaussianMesh` clamps polar face latitudes by 0.001° to avoid
+  degenerate polygons at the poles. The omitted cap area is ~8e-11 of the
+  full sphere — negligible, but means `frac_a`/`frac_b` at poles are
+  ~0.987 rather than exactly 1.0.
 
-See also: `/home/cfranken/.claude/plans/luminous-prancing-firefly.md`.
+## Architecture reference
+
+See `docs/CONSERVATIVE_REGRIDDING.md` for a full write-up of the algorithm,
+conventions, and verification results.
 """
 module Regridding
 

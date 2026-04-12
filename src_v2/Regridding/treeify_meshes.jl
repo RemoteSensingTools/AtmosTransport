@@ -7,9 +7,16 @@
 # ---------------------------------------------------------------------------
 
 # --- best_manifold overloads --------------------------------------------------
+#
+# GeometryOpsCore.best_manifold tells CR.jl which manifold (Planar or
+# Spherical) a grid lives on, and at what radius. All AtmosTransport
+# meshes are spherical with radius = mesh.radius (default 6.371e6 m).
 
+"""Return `Spherical(radius=mesh.radius)` for a `LatLonMesh`."""
 GOCore.best_manifold(mesh::LatLonMesh)          = GO.Spherical(; radius = mesh.radius)
+"""Return `Spherical(radius=mesh.radius)` for a `CubedSphereMesh`."""
 GOCore.best_manifold(mesh::CubedSphereMesh)     = GO.Spherical(; radius = mesh.radius)
+"""Return `Spherical(radius=mesh.radius)` for a `ReducedGaussianMesh`."""
 GOCore.best_manifold(mesh::ReducedGaussianMesh) = GO.Spherical(; radius = mesh.radius)
 
 # ---------------------------------------------------------------------------
@@ -52,6 +59,44 @@ function _latlon_corner_matrix(mesh::LatLonMesh)
     return pts
 end
 
+"""
+    Trees.treeify(::Spherical, mesh::LatLonMesh)
+
+Build a spatial tree for a `LatLonMesh` on the sphere.
+
+## Algorithm
+
+1. Build an `(Nx+1) × (Ny+1)` matrix of cell-face corner points as
+   `UnitSphericalPoint`s, from the mesh's face vectors `λᶠ` (longitude)
+   and `φᶠ` (latitude). Each corner `(i, j)` is at geographic coordinate
+   `(λᶠ[i], φᶠ[j])`, converted to Cartesian `(x, y, z)` on the unit
+   sphere via `GO.UnitSphereFromGeographic()`.
+
+2. Wrap in `CellBasedGrid{Spherical}`, which builds cell polygons on the
+   fly as quadrilaterals from 4 adjacent corner points. Cell `(i, j)` has
+   vertices SW=`(i,j)`, SE=`(i+1,j)`, NE=`(i+1,j+1)`, NW=`(i,j+1)`.
+
+3. Wrap in `TopDownQuadtreeCursor` for O(log(Nx·Ny)) spatial pruning.
+
+4. If the mesh covers the full sphere (360° longitude, ±90° latitude),
+   wrap in `KnownFullSphereExtentWrapper` to skip expensive extent
+   computation at the root.
+
+## Longitude convention
+
+The mesh's `λᶠ` vector defines cell-face longitudes. The default
+`LatLonMesh()` uses `[-180, 180]`. The UnitSphericalPoint representation
+is the same physical location regardless of whether the source convention
+is `[-180, 180]` or `[0, 360]` — the Cartesian `(x, y, z)` coordinates
+are unambiguous.
+
+## Cell indexing
+
+CR.jl's `CellBasedGrid` uses column-major linear indexing:
+`linear_idx = i + (j-1) * Nx`, where `i` is the longitude index (1:Nx)
+and `j` is the latitude index (1:Ny). This matches Julia's default
+`vec(reshape(field, Nx, Ny))` memory layout.
+"""
 function Trees.treeify(manifold::GOCore.Spherical, mesh::LatLonMesh)
     corners = _latlon_corner_matrix(mesh)
     grid    = Trees.CellBasedGrid(manifold, corners)
@@ -165,6 +210,46 @@ function cubed_sphere_face_corners(mesh::CubedSphereMesh)
     return panels
 end
 
+"""
+    Trees.treeify(::Spherical, mesh::CubedSphereMesh)
+
+Build a spatial tree for a `CubedSphereMesh` on the sphere.
+
+## Algorithm
+
+1. Call [`cubed_sphere_face_corners`](@ref) to produce 6 matrices of
+   `(Nc+1) × (Nc+1)` `UnitSphericalPoint` corner coordinates, one per
+   panel. The panel ordering follows `mesh.convention` (gnomonic or
+   GEOS-native), with panel-index remapping via `_gnomonic_panel_id`.
+
+2. For each panel `p`, build a `CellBasedGrid{Spherical}` from the
+   corner matrix, and wrap it in an `IndexOffsetQuadtreeCursor` with
+   offset `(p-1) × Nc²`. This ensures the global cell index is:
+
+       global_idx = (panel - 1) × Nc² + local_linear_idx
+
+   where `local_linear_idx = i + (j-1) × Nc` (column-major within
+   the panel, `i` = local ξ-index, `j` = local η-index).
+
+3. Assemble all 6 per-panel cursors into a `CubedSphereToplevelTree`,
+   whose top-level extent is the full sphere.
+
+## Cell indexing
+
+The global flat index space is `1 : 6·Nc²`. Panel `p` occupies indices
+`(p-1)·Nc² + 1 : p·Nc²`. Within a panel, cells are column-major in
+`(i, j)` gnomonic indices: `i` varies fastest (ξ direction), `j` second
+(η direction). This layout matches `vec(panel_data[:, :])` in Julia.
+
+## Known limitation
+
+Uses analytical gnomonic coordinates only. GEOS panels 4/5 have a 90° CW
+local-axis rotation relative to the gnomonic `(ξ, η)` parameterization.
+The current implementation places polygons at the correct physical
+location but uses gnomonic `(i, j)` ordering within each panel. For
+bit-exact parity with production GEOS-FP panel data, GMAO coordinate
+loading must be ported to v2 and the per-panel `(i, j)` rotation applied.
+"""
 function Trees.treeify(manifold::GOCore.Spherical, mesh::CubedSphereMesh)
     corners = cubed_sphere_face_corners(mesh)
     Nc = mesh.Nc

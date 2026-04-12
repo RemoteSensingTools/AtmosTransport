@@ -797,6 +797,9 @@ function _horizontal_face_subcycling_pass_count(horizontal_flux::AbstractArray{F
                                                 mesh::AbstractHorizontalMesh,
                                                 ws::AdvectionWorkspace{FT},
                                                 cfl_limit::FT; max_n_sub::Int = 4096) where FT
+    # Fast path: if cfl_limit is Inf or very large, subcycling is disabled —
+    # skip the pilot entirely (no GPU→CPU transfer, no computation).
+    isinf(cfl_limit) && return 1
     # GPU path: static CFL computed on CPU from small transferred arrays.
     # The face-indexed outgoing-flux accumulation needs face connectivity
     # (face_left/face_right) which requires scatter — not efficiently
@@ -863,6 +866,7 @@ function _vertical_face_subcycling_pass_count(cm::AbstractArray{FT,2},
                                               m::AbstractArray{FT,2},
                                               ws::AdvectionWorkspace{FT},
                                               cfl_limit::FT; max_n_sub::Int = 4096) where FT
+    isinf(cfl_limit) && return 1
     # GPU path: static CFL via broadcast reduction — no GPU→CPU transfer.
     if !(m isa Array)
         nc, Nz = size(m)

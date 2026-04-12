@@ -269,14 +269,18 @@ of cell `(c, k)`. Positive cm = downward (toward surface).
     c, k = @index(Global, NTuple)
     FT = eltype(rm)
     @inbounds begin
-        # Branchless boundary handling: ifelse evaluates both branches but
-        # selects the correct one. cm[c, 1] and cm[c, Nz+1] are boundary
-        # faces (zero by preprocessor convention), so the "wrong" branch
-        # just reads a zero flux — safe.
+        # NOTE: `?:` (branch) is used here intentionally, NOT `ifelse`.
+        # `ifelse` evaluates BOTH branches, but `_vface_tracer_flux` reads
+        # `rm[c, k±1]` which is out-of-bounds at the boundaries:
+        #   k=1:  k-1 = 0     → rm[c, 0] is OOB
+        #   k=Nz: k+1 = Nz+1 → rm[c, Nz+1] is OOB (rm is nc×Nz, not nc×Nz+1)
+        # The `?:` branch avoids evaluating the OOB branch entirely.
+        # Warp divergence is not a concern because `k` is typically constant
+        # within a warp (KA maps (c, k) with c as the fast dimension).
         # k=1: TOA boundary → flux_t = 0 (no flux above top level)
-        flux_t = ifelse(k > 1,  _vface_tracer_flux(rm, m, flux_scale * cm[c, k],     c, k - 1, k,     scheme), zero(FT))
+        flux_t = k > 1  ? _vface_tracer_flux(rm, m, flux_scale * cm[c, k],     c, k - 1, k,     scheme) : zero(FT)
         # k=Nz: surface boundary → flux_b = 0 (no flux below bottom level)
-        flux_b = ifelse(k < Nz, _vface_tracer_flux(rm, m, flux_scale * cm[c, k + 1], c, k,     k + 1, scheme), zero(FT))
+        flux_b = k < Nz ? _vface_tracer_flux(rm, m, flux_scale * cm[c, k + 1], c, k,     k + 1, scheme) : zero(FT)
         rm_new[c, k] = rm[c, k] + flux_t - flux_b
         m_new[c, k]  = m[c, k]  + flux_scale * cm[c, k] - flux_scale * cm[c, k + 1]
     end

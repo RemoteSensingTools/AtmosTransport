@@ -70,5 +70,5 @@ For a new contributor or agent:
 ## Quick Inspection
 
 ```bash
-julia --project=. scripts/diagnostics/inspect_transport_binary_v2.jl path/to/file.bin
+julia --project=. scripts/diagnostics/inspect_transport_binary.jl path/to/file.bin
 ```

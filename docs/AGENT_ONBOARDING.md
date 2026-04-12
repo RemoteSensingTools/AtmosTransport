@@ -68,7 +68,7 @@ When Claude and Codex work in parallel, ownership is tracked in `AGENT_CHAT.md`:
 - **Claude** owns: CS files (CubedSphereMesh, HaloExchange, CubedSphereStrang),
   preprocessing scripts, visualization
 - **Codex** owns: Runtime files (DrivenSimulation, StrangSplitting,
-  run_transport_binary_v2, TransportBinaryDriver), test/ files
+  run_transport_binary, TransportBinaryDriver), test/ files
 - **Shared** (coordinate before editing): AtmosTransport.jl, Grids.jl,
   Operators.jl, FaceFluxState.jl
 

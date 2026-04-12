@@ -797,9 +797,31 @@ function _horizontal_face_subcycling_pass_count(horizontal_flux::AbstractArray{F
                                                 mesh::AbstractHorizontalMesh,
                                                 ws::AdvectionWorkspace{FT},
                                                 cfl_limit::FT; max_n_sub::Int = 4096) where FT
+    # GPU path: static CFL via pre-cached face connectivity on device.
+    # Avoids the expensive GPU→CPU copy that the old path did. Computes
+    # per-cell outgoing flux from the face_left/face_right index vectors
+    # already stored in ws, then reduces to a scalar max via `maximum`.
     if !(m isa Array)
-        return _horizontal_face_subcycling_pass_count_host(Array(horizontal_flux), Array(m), mesh, cfl_limit;
-                                                           max_n_sub=max_n_sub)
+        fl = ws.face_left; fr = ws.face_right
+        nc, Nz = size(m)
+        nf = length(fl)
+        # Accumulate outgoing flux per cell using the face table
+        outgoing = fill!(similar(m), zero(FT))
+        @inbounds for k in 1:Nz
+            for f in 1:nf
+                l = Int(fl[f]); r = Int(fr[f])
+                if l > 0 && r > 0
+                    flux = horizontal_flux[f, k]
+                    if flux >= zero(FT)
+                        outgoing[l, k] += flux
+                    else
+                        outgoing[r, k] -= flux
+                    end
+                end
+            end
+        end
+        static_cfl = maximum(outgoing ./ max.(m, eps(FT)))
+        return _subcycling_pass_count(static_cfl, cfl_limit)
     end
     nc, Nz = size(m)
     mx = ws.m_buf
@@ -854,9 +876,13 @@ function _vertical_face_subcycling_pass_count(cm::AbstractArray{FT,2},
                                               m::AbstractArray{FT,2},
                                               ws::AdvectionWorkspace{FT},
                                               cfl_limit::FT; max_n_sub::Int = 4096) where FT
+    # GPU path: static CFL via broadcast reduction — no GPU→CPU transfer.
     if !(m isa Array)
-        return _vertical_face_subcycling_pass_count_host(Array(cm), Array(m), cfl_limit;
-                                                         max_n_sub=max_n_sub)
+        nc, Nz = size(m)
+        # cm is (nc, Nz+1): top face at k, bottom face at k+1
+        out = max.(@view(cm[:, 1:Nz]), zero(FT)) .+ max.(.- @view(cm[:, 2:Nz+1]), zero(FT))
+        static_cfl = maximum(out ./ max.(m, eps(FT)))
+        return _subcycling_pass_count(static_cfl, cfl_limit)
     end
     nc, Nz = size(m)
     mx = ws.m_buf

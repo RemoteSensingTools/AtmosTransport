@@ -5,8 +5,8 @@ using Printf
 const COMPARE_V4_SCRIPT_DIR = @__DIR__
 const COMPARE_V4_REPO_ROOT = abspath(joinpath(COMPARE_V4_SCRIPT_DIR, "..", ".."))
 
-include(joinpath(COMPARE_V4_REPO_ROOT, "src_v2", "AtmosTransportV2.jl"))
-using .AtmosTransportV2
+include(joinpath(COMPARE_V4_REPO_ROOT, "src", "AtmosTransport.jl"))
+using .AtmosTransport
 
 mutable struct FieldComparisonStats
     max_abs  :: Float64

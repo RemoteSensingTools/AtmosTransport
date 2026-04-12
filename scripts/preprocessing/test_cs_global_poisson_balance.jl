@@ -10,8 +10,8 @@
 #   5. Per-panel ↔ global divergence agreement after balance
 #   6. Scaling: C24 × 34 levels completes in reasonable time
 
-include(joinpath(@__DIR__, "..", "..", "src_v2", "AtmosTransportV2.jl"))
-using .AtmosTransportV2
+include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+using .AtmosTransport
 
 include(joinpath(@__DIR__, "cs_global_poisson_balance.jl"))
 

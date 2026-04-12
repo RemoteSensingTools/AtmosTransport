@@ -11,9 +11,9 @@
 
 using Logging
 
-include(joinpath(@__DIR__, "..", "..", "src_v2", "AtmosTransportV2.jl"))
-using .AtmosTransportV2
-using .AtmosTransportV2.Regridding
+include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+using .AtmosTransport
+using .AtmosTransport.Regridding
 
 include(joinpath(@__DIR__, "transport_binary_v2_dispatch.jl"))
 include(joinpath(@__DIR__, "transport_binary_v2_cs_conservative.jl"))

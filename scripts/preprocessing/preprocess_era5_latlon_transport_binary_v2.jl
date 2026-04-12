@@ -13,7 +13,7 @@ using TOML
 
 include(joinpath(@__DIR__, "preprocess_spectral_v4_binary.jl"))
 include(joinpath(@__DIR__, "spectral_transport_binary_v2_dispatch.jl"))
-using .AtmosTransportV2: AtmosGrid, CPU, write_transport_binary, TransportBinaryReader
+using .AtmosTransport: AtmosGrid, CPU, write_transport_binary, TransportBinaryReader
 
 struct WindowStageTiming
     spectral_seconds  :: Float64
@@ -94,7 +94,7 @@ function output_transport_binary_v2_path(date::Date, out_dir::String, min_dp::Fl
 end
 
 function build_transport_binary_grid(grid::LatLonTargetGeometry, vertical, ::Type{FT}) where FT
-    vc = AtmosTransportV2.HybridSigmaPressure(FT.(vertical.merged_vc.A), FT.(vertical.merged_vc.B))
+    vc = AtmosTransport.HybridSigmaPressure(FT.(vertical.merged_vc.A), FT.(vertical.merged_vc.B))
     return AtmosGrid(grid.mesh, vc, CPU(); FT=FT)
 end
 
@@ -375,7 +375,7 @@ function main_v2(argv=ARGS)
 
     if isempty(argv)
         println("""
-        ERA5 spectral -> src_v2 transport-binary preprocessor
+        ERA5 spectral -> src transport-binary preprocessor
 
         Usage:
           julia -t8 --project=. $(PROGRAM_FILE) config.toml [--day 2021-12-01]

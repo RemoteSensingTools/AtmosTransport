@@ -36,15 +36,15 @@ include(joinpath(@__DIR__, "preprocess_era5_reduced_gaussian_transport_binary_v2
                     "gaussian_number" => 4, "nlon_mode" => "regular")
     grid = build_target_geometry(cfg_grid, Float64)
     mesh = grid.mesh
-    nc = AtmosTransportV2.ncells(mesh)
-    nf = AtmosTransportV2.nfaces(mesh)
+    nc = AtmosTransport.ncells(mesh)
+    nf = AtmosTransport.nfaces(mesh)
     @test nc == 128
     @test nf > nc
 
     face_left  = Vector{Int32}(undef, nf)
     face_right = Vector{Int32}(undef, nf)
     for f in 1:nf
-        l, r = AtmosTransportV2.face_cells(mesh, f)
+        l, r = AtmosTransport.face_cells(mesh, f)
         face_left[f]  = Int32(l)
         face_right[f] = Int32(r)
     end

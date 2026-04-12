@@ -6,8 +6,8 @@ using TOML
 using NCDatasets
 using Adapt
 
-include(joinpath(@__DIR__, "..", "src_v2", "AtmosTransportV2.jl"))
-using .AtmosTransportV2
+include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
+using .AtmosTransport
 
 # Wrap longitude to [0, 360) for periodic bilinear interpolation.
 # NOTE: the source arrays (Catrine, GridFED) may be in [-180, 180)
@@ -553,7 +553,7 @@ function synchronize_backend!(cfg)
     return nothing
 end
 
-function build_initial_mixing_ratio(air_mass::AbstractArray{FT}, mesh::AtmosTransportV2.LatLonMesh{FT}, cfg) where FT
+function build_initial_mixing_ratio(air_mass::AbstractArray{FT}, mesh::AtmosTransport.LatLonMesh{FT}, cfg) where FT
     kind = _init_kind(cfg)
     background = FT(get(cfg, "background", 4.0e-4))
     if kind === :uniform
@@ -576,7 +576,7 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT}, mesh::AtmosTran
     end
 end
 
-function build_initial_mixing_ratio(air_mass::AbstractArray{FT}, mesh::AtmosTransportV2.ReducedGaussianMesh{FT}, cfg) where FT
+function build_initial_mixing_ratio(air_mass::AbstractArray{FT}, mesh::AtmosTransport.ReducedGaussianMesh{FT}, cfg) where FT
     kind = _init_kind(cfg)
     background = FT(get(cfg, "background", 4.0e-4))
     if kind === :uniform
@@ -588,11 +588,11 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT}, mesh::AtmosTran
         sigma_lat = FT(get(cfg, "sigma_lat_deg", 10.0))
         amplitude = FT(get(cfg, "amplitude", background))
         q = Array{FT}(undef, size(air_mass))
-        for j in 1:AtmosTransportV2.nrings(mesh)
+        for j in 1:AtmosTransport.nrings(mesh)
             lats = mesh.latitudes[j]
-            lons = AtmosTransportV2.ring_longitudes(mesh, j)
+            lons = AtmosTransport.ring_longitudes(mesh, j)
             for i in eachindex(lons)
-                c = AtmosTransportV2.cell_index(mesh, i, j)
+                c = AtmosTransport.cell_index(mesh, i, j)
                 dlon = wrapped_longitude_distance(lons[i], lon0)
                 dlat = lats - lat0
                 value = background + amplitude * exp(-FT(0.5) * ((dlon / sigma_lon)^2 + (dlat / sigma_lat)^2))
@@ -606,7 +606,7 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT}, mesh::AtmosTran
 end
 
 function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
-                                    grid::AtmosTransportV2.AtmosGrid{<:AtmosTransportV2.LatLonMesh},
+                                    grid::AtmosTransport.AtmosGrid{<:AtmosTransport.LatLonMesh},
                                     cfg) where FT
     kind = _init_kind(cfg)
     _is_file_init_kind(kind) || return build_initial_mixing_ratio(air_mass, grid.horizontal, cfg)
@@ -615,10 +615,10 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
     mesh = grid.horizontal
     q = Array{FT}(undef, size(air_mass))
     src_q = Vector{FT}(undef, size(source.raw, 3))
-    g = Float64(AtmosTransportV2.gravity(grid))
+    g = Float64(AtmosTransport.gravity(grid))
 
     for j in axes(q, 2)
-        area = Float64(AtmosTransportV2.cell_area(mesh, 1, j))
+        area = Float64(AtmosTransport.cell_area(mesh, 1, j))
         lat = mesh.φᶜ[j]
         for i in axes(q, 1)
             lon = mesh.λᶜ[i]
@@ -637,7 +637,7 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
 end
 
 function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
-                                    grid::AtmosTransportV2.AtmosGrid{<:AtmosTransportV2.ReducedGaussianMesh},
+                                    grid::AtmosTransport.AtmosGrid{<:AtmosTransport.ReducedGaussianMesh},
                                     cfg) where FT
     kind = _init_kind(cfg)
     _is_file_init_kind(kind) || return build_initial_mixing_ratio(air_mass, grid.horizontal, cfg)
@@ -646,18 +646,18 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
     mesh = grid.horizontal
     q = Array{FT}(undef, size(air_mass))
     src_q = Vector{FT}(undef, size(source.raw, 3))
-    g = Float64(AtmosTransportV2.gravity(grid))
+    g = Float64(AtmosTransport.gravity(grid))
 
-    for j in 1:AtmosTransportV2.nrings(mesh)
+    for j in 1:AtmosTransport.nrings(mesh)
         lat = mesh.latitudes[j]
-        lons = AtmosTransportV2.ring_longitudes(mesh, j)
+        lons = AtmosTransport.ring_longitudes(mesh, j)
         for i in eachindex(lons)
-            c = AtmosTransportV2.cell_index(mesh, i, j)
+            c = AtmosTransport.cell_index(mesh, i, j)
             lon = lons[i]
             _sample_bilinear_profile!(src_q, source.raw, source.lon, source.lat, lon, lat)
             if source.needs_vinterp
                 ps_src = _sample_bilinear_scalar(source.psurf, source.lon, source.lat, lon, lat)
-                area = Float64(AtmosTransportV2.cell_area(mesh, c))
+                area = Float64(AtmosTransport.cell_area(mesh, c))
                 _interpolate_log_pressure_profile!(@view(q[c, :]), src_q, @view(air_mass[c, :]),
                                                   source.ap, source.bp, ps_src, area, g)
             else
@@ -669,7 +669,7 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
     return q
 end
 
-function build_surface_flux_source(grid::AtmosTransportV2.AtmosGrid{<:AtmosTransportV2.LatLonMesh},
+function build_surface_flux_source(grid::AtmosTransport.AtmosGrid{<:AtmosTransport.LatLonMesh},
                                    tracer_name::Symbol,
                                    cfg,
                                    ::Type{FT}) where FT
@@ -678,10 +678,10 @@ function build_surface_flux_source(grid::AtmosTransportV2.AtmosGrid{<:AtmosTrans
 
     source = _load_file_surface_flux_field(cfg, FT)
     mesh = grid.horizontal
-    rate = Array{FT}(undef, AtmosTransportV2.nx(mesh), AtmosTransportV2.ny(mesh))
+    rate = Array{FT}(undef, AtmosTransport.nx(mesh), AtmosTransport.ny(mesh))
 
     for j in axes(rate, 2)
-        area = Float64(AtmosTransportV2.cell_area(mesh, 1, j))
+        area = Float64(AtmosTransport.cell_area(mesh, 1, j))
         lat = mesh.φᶜ[j]
         for i in axes(rate, 1)
             lon = mesh.λᶜ[i]
@@ -691,10 +691,10 @@ function build_surface_flux_source(grid::AtmosTransportV2.AtmosGrid{<:AtmosTrans
     end
 
     _renormalize_surface_flux_rate!(rate, source)
-    return AtmosTransportV2.SurfaceFluxSource(tracer_name, rate)
+    return AtmosTransport.SurfaceFluxSource(tracer_name, rate)
 end
 
-function build_surface_flux_source(grid::AtmosTransportV2.AtmosGrid{<:AtmosTransportV2.ReducedGaussianMesh},
+function build_surface_flux_source(grid::AtmosTransport.AtmosGrid{<:AtmosTransport.ReducedGaussianMesh},
                                    tracer_name::Symbol,
                                    cfg,
                                    ::Type{FT}) where FT
@@ -703,20 +703,20 @@ function build_surface_flux_source(grid::AtmosTransportV2.AtmosGrid{<:AtmosTrans
 
     source = _load_file_surface_flux_field(cfg, FT)
     mesh = grid.horizontal
-    rate = Array{FT}(undef, AtmosTransportV2.ncells(mesh))
+    rate = Array{FT}(undef, AtmosTransport.ncells(mesh))
 
-    for j in 1:AtmosTransportV2.nrings(mesh)
+    for j in 1:AtmosTransport.nrings(mesh)
         lat = mesh.latitudes[j]
-        lons = AtmosTransportV2.ring_longitudes(mesh, j)
+        lons = AtmosTransport.ring_longitudes(mesh, j)
         for i in eachindex(lons)
-            c = AtmosTransportV2.cell_index(mesh, i, j)
+            c = AtmosTransport.cell_index(mesh, i, j)
             flux_density = _sample_bilinear_scalar(source.raw, source.lon, source.lat, lons[i], lat)
-            rate[c] = FT(flux_density * Float64(AtmosTransportV2.cell_area(mesh, c)))
+            rate[c] = FT(flux_density * Float64(AtmosTransport.cell_area(mesh, c)))
         end
     end
 
     _renormalize_surface_flux_rate!(rate, source)
-    return AtmosTransportV2.SurfaceFluxSource(tracer_name, rate)
+    return AtmosTransport.SurfaceFluxSource(tracer_name, rate)
 end
 
 function build_surface_flux_sources(grid, tracer_specs, ::Type{FT}) where FT
@@ -728,15 +728,15 @@ function build_surface_flux_sources(grid, tracer_specs, ::Type{FT}) where FT
     return Tuple(sources)
 end
 
-function make_model(driver::AtmosTransportV2.TransportBinaryDriver;
+function make_model(driver::AtmosTransport.TransportBinaryDriver;
                     FT::Type{<:AbstractFloat},
                     scheme_name::Symbol,
                     tracer_name::Union{Symbol, Nothing}=nothing,
                     init_cfg=nothing,
                     tracer_specs=nothing,
                     cfg=Dict{String, Any}())
-    grid = AtmosTransportV2.driver_grid(driver)
-    window = AtmosTransportV2.load_transport_window(driver, 1)
+    grid = AtmosTransport.driver_grid(driver)
+    window = AtmosTransport.load_transport_window(driver, 1)
     air_mass = copy(window.air_mass)
 
     tracer_specs_tuple = if tracer_specs === nothing
@@ -754,16 +754,16 @@ function make_model(driver::AtmosTransportV2.TransportBinaryDriver;
         return q .* air_mass
     end
 
-    basis_type = AtmosTransportV2.air_mass_basis(driver) == :dry ? AtmosTransportV2.DryBasis : AtmosTransportV2.MoistBasis
+    basis_type = AtmosTransport.air_mass_basis(driver) == :dry ? AtmosTransport.DryBasis : AtmosTransport.MoistBasis
     tracer_tuple = NamedTuple{tracer_names}(Tuple(rm_arrays))
-    state = if basis_type === AtmosTransportV2.DryBasis
-        AtmosTransportV2.CellState{AtmosTransportV2.DryBasis, typeof(air_mass), typeof(tracer_tuple)}(air_mass, tracer_tuple)
+    state = if basis_type === AtmosTransport.DryBasis
+        AtmosTransport.CellState{AtmosTransport.DryBasis, typeof(air_mass), typeof(tracer_tuple)}(air_mass, tracer_tuple)
     else
-        AtmosTransportV2.CellState{AtmosTransportV2.MoistBasis, typeof(air_mass), typeof(tracer_tuple)}(air_mass, tracer_tuple)
+        AtmosTransport.CellState{AtmosTransport.MoistBasis, typeof(air_mass), typeof(tracer_tuple)}(air_mass, tracer_tuple)
     end
-    fluxes = AtmosTransportV2.allocate_face_fluxes(grid.horizontal, AtmosTransportV2.nlevels(grid); FT=FT, basis=basis_type)
-    scheme = scheme_name == :slopes ? AtmosTransportV2.SlopesScheme() : AtmosTransportV2.UpwindScheme()
-    model = AtmosTransportV2.TransportModel(state, fluxes, grid, scheme)
+    fluxes = AtmosTransport.allocate_face_fluxes(grid.horizontal, AtmosTransport.nlevels(grid); FT=FT, basis=basis_type)
+    scheme = scheme_name == :slopes ? AtmosTransport.SlopesScheme() : AtmosTransport.UpwindScheme()
+    model = AtmosTransport.TransportModel(state, fluxes, grid, scheme)
     adaptor = backend_array_adapter(cfg)
     return adaptor === Array ? model : Adapt.adapt(adaptor, model)
 end
@@ -784,11 +784,11 @@ function run_sequence(binary_paths::Vector{String}, cfg)
     isempty(binary_paths) && throw(ArgumentError("no binary_paths configured"))
     ensure_gpu_runtime!(cfg)
 
-    first_driver = AtmosTransportV2.TransportBinaryDriver(first(binary_paths); FT=FT, arch=AtmosTransportV2.CPU())
+    first_driver = AtmosTransport.TransportBinaryDriver(first(binary_paths); FT=FT, arch=AtmosTransport.CPU())
     model = make_model(first_driver; FT=FT, scheme_name=scheme_name, tracer_specs=tracer_specs, cfg=cfg)
-    surface_sources = build_surface_flux_sources(AtmosTransportV2.driver_grid(first_driver), tracer_specs, FT)
-    m0 = AtmosTransportV2.total_air_mass(model.state)
-    tracer_masses0 = Dict(name => AtmosTransportV2.total_mass(model.state, name) for name in AtmosTransportV2.tracer_names(model.state))
+    surface_sources = build_surface_flux_sources(AtmosTransport.driver_grid(first_driver), tracer_specs, FT)
+    m0 = AtmosTransport.total_air_mass(model.state)
+    tracer_masses0 = Dict(name => AtmosTransport.total_mass(model.state, name) for name in AtmosTransport.tracer_names(model.state))
     source_tracers = Set(source.tracer_name for source in surface_sources)
     @info "Backend: $(backend_label(cfg))"
     for source in surface_sources
@@ -797,10 +797,10 @@ function run_sequence(binary_paths::Vector{String}, cfg)
     end
 
     for (idx, path) in enumerate(binary_paths)
-        driver = idx == 1 ? first_driver : AtmosTransportV2.TransportBinaryDriver(path; FT=FT, arch=AtmosTransportV2.CPU())
-        stop_window = stop_window_override === nothing ? AtmosTransportV2.total_windows(driver) : Int(stop_window_override)
+        driver = idx == 1 ? first_driver : AtmosTransport.TransportBinaryDriver(path; FT=FT, arch=AtmosTransport.CPU())
+        stop_window = stop_window_override === nothing ? AtmosTransport.total_windows(driver) : Int(stop_window_override)
         initialize_air_mass = idx == 1
-        sim = AtmosTransportV2.DrivenSimulation(model, driver;
+        sim = AtmosTransport.DrivenSimulation(model, driver;
                                start_window=start_window,
                                stop_window=stop_window,
                                initialize_air_mass=initialize_air_mass,
@@ -810,20 +810,20 @@ function run_sequence(binary_paths::Vector{String}, cfg)
             boundary_rel = maximum(abs.(model.state.air_mass .- sim.window.air_mass)) / max(maximum(abs.(sim.window.air_mass)), eps(FT))
             @info @sprintf("Boundary air-mass mismatch before %s: %.3e", basename(path), boundary_rel)
         end
-        @info @sprintf("Running %s with %s on %s (%d windows)", basename(path), scheme_name, summary(AtmosTransportV2.driver_grid(driver).horizontal), stop_window - start_window + 1)
+        @info @sprintf("Running %s with %s on %s (%d windows)", basename(path), scheme_name, summary(AtmosTransport.driver_grid(driver).horizontal), stop_window - start_window + 1)
         synchronize_backend!(cfg)
         t0 = time()
-        AtmosTransportV2.run!(sim)
+        AtmosTransport.run!(sim)
         synchronize_backend!(cfg)
         @info @sprintf("Finished %s in %.2f s", basename(path), time() - t0)
         close(driver)
     end
 
-    m1 = AtmosTransportV2.total_air_mass(model.state)
+    m1 = AtmosTransport.total_air_mass(model.state)
     @info @sprintf("Final air-mass change vs initial state:  %.3e", (m1 - m0) / m0)
-    for name in AtmosTransportV2.tracer_names(model.state)
+    for name in AtmosTransport.tracer_names(model.state)
         rm0 = Float64(tracer_masses0[name])
-        rm1 = Float64(AtmosTransportV2.total_mass(model.state, name))
+        rm1 = Float64(AtmosTransport.total_mass(model.state, name))
         if name in source_tracers
             @info @sprintf("Final tracer mass for %s (with source): %.12e kg", String(name), rm1)
         elseif abs(rm0) > eps(Float64)

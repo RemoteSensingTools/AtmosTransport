@@ -42,8 +42,8 @@ const PREPROCESS_SPECTRAL_V4_SCRIPT = @__FILE__
 const PREPROCESS_SPECTRAL_V4_DIR = joinpath(@__DIR__, "preprocess_spectral_v4_binary")
 const PREPROCESS_SPECTRAL_V4_REPO_ROOT = abspath(joinpath(@__DIR__, "..", ".."))
 
-include(joinpath(PREPROCESS_SPECTRAL_V4_REPO_ROOT, "src_v2", "AtmosTransportV2.jl"))
-using .AtmosTransportV2: LatLonMesh, ReducedGaussianMesh, cell_areas_by_latitude,
+include(joinpath(PREPROCESS_SPECTRAL_V4_REPO_ROOT, "src", "AtmosTransport.jl"))
+using .AtmosTransport: LatLonMesh, ReducedGaussianMesh, cell_areas_by_latitude,
     nrings, ring_longitudes, read_era5_reduced_gaussian_geometry, read_era5_reduced_gaussian_mesh
 
 include(joinpath(PREPROCESS_SPECTRAL_V4_DIR, "logging.jl"))

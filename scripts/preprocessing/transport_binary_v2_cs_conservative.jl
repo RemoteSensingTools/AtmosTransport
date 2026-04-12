@@ -13,8 +13,8 @@ using Dates
 using Printf
 using JSON3
 
-using .AtmosTransportV2
-using .AtmosTransportV2.Regridding
+using .AtmosTransport
+using .AtmosTransport.Regridding
 
 include(joinpath(@__DIR__, "cs_global_poisson_balance.jl"))
 

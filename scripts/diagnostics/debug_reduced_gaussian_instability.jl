@@ -4,8 +4,8 @@ using Printf
 using TOML
 using NCDatasets
 
-include(joinpath(@__DIR__, "..", "..", "src_v2", "AtmosTransportV2.jl"))
-using .AtmosTransportV2
+include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+using .AtmosTransport
 include(joinpath(@__DIR__, "..", "run_transport_binary_v2.jl"))
 
 function usage()
@@ -48,15 +48,15 @@ end
 function _build_sim(path::AbstractString; stop_window_override=nothing,
                     reset_air_mass_each_window::Bool = true)
     rcfg = _load_run_config(path)
-    driver = AtmosTransportV2.TransportBinaryDriver(first(rcfg.binary_paths); FT=rcfg.FT, arch=AtmosTransportV2.CPU())
+    driver = AtmosTransport.TransportBinaryDriver(first(rcfg.binary_paths); FT=rcfg.FT, arch=AtmosTransport.CPU())
     stop_window = stop_window_override === nothing ?
-        (rcfg.stop_window === nothing ? AtmosTransportV2.total_windows(driver) : Int(rcfg.stop_window)) :
+        (rcfg.stop_window === nothing ? AtmosTransport.total_windows(driver) : Int(rcfg.stop_window)) :
         Int(stop_window_override)
     model = make_model(driver; FT=rcfg.FT,
                        scheme_name=rcfg.scheme_name,
                        tracer_name=rcfg.tracer_name,
                        init_cfg=rcfg.init_cfg)
-    sim = AtmosTransportV2.DrivenSimulation(model, driver;
+    sim = AtmosTransport.DrivenSimulation(model, driver;
                                             start_window=rcfg.start_window,
                                             stop_window=stop_window,
                                             initialize_air_mass=true,
@@ -74,19 +74,19 @@ end
 function step_trace(config_path::AbstractString, nsteps::Int)
     reset_each_window = _env_flag("AT_DEBUG_RESET_AIR_MASS_EACH_WINDOW", true)
     run = _build_sim(config_path; reset_air_mass_each_window=reset_each_window)
-    step_fn = getfield(AtmosTransportV2, Symbol("step!"))
-    rm0 = AtmosTransportV2.total_mass(run.model.state, run.tracer_name)
+    step_fn = getfield(AtmosTransport, Symbol("step!"))
+    rm0 = AtmosTransport.total_mass(run.model.state, run.tracer_name)
 
     println("reset_air_mass_each_window = $(reset_each_window)")
     println("iter win sub time_h min_m max_m min_q max_q tracer_drift")
     for step in 0:nsteps
         qmin, qmax = _q_extrema(run.model.state, run.tracer_name)
         m = run.model.state.air_mass
-        drift = (AtmosTransportV2.total_mass(run.model.state, run.tracer_name) - rm0) / rm0
+        drift = (AtmosTransport.total_mass(run.model.state, run.tracer_name) - rm0) / rm0
         @printf("%3d %3d %3d %6.2f %.3e %.3e %.3e %.3e %.3e\n",
                 run.sim.iteration,
-                AtmosTransportV2.window_index(run.sim),
-                AtmosTransportV2.substep_index(run.sim),
+                AtmosTransport.window_index(run.sim),
+                AtmosTransport.substep_index(run.sim),
                 run.sim.time / 3600,
                 minimum(m), maximum(m), qmin, qmax, drift)
         if step == nsteps || !all(isfinite.(m)) || minimum(m) <= zero(eltype(m)) || !all(isfinite.(getproperty(run.model.state.tracers, run.tracer_name)))
@@ -98,12 +98,12 @@ function step_trace(config_path::AbstractString, nsteps::Int)
     return nothing
 end
 
-function _face_endpoints(mesh::AtmosTransportV2.ReducedGaussianMesh)
-    nface = AtmosTransportV2.nfaces(mesh)
+function _face_endpoints(mesh::AtmosTransport.ReducedGaussianMesh)
+    nface = AtmosTransport.nfaces(mesh)
     left = Vector{Int32}(undef, nface)
     right = Vector{Int32}(undef, nface)
     for f in 1:nface
-        l, r = AtmosTransportV2.face_cells(mesh, f)
+        l, r = AtmosTransport.face_cells(mesh, f)
         left[f] = Int32(l)
         right[f] = Int32(r)
     end
@@ -180,17 +180,17 @@ end
 function outgoing_cfl(config_path::AbstractString, nwindows::Int)
     run = _build_sim(config_path; stop_window_override=max(1, nwindows))
     mesh = run.model.grid.horizontal
-    mesh isa AtmosTransportV2.ReducedGaussianMesh ||
+    mesh isa AtmosTransport.ReducedGaussianMesh ||
         throw(ArgumentError("outgoing-cfl only supports ReducedGaussianMesh configs"))
 
     left, right = _face_endpoints(mesh)
-    zonal_faces = 1:AtmosTransportV2.ncells(mesh)
-    meridional_faces = (AtmosTransportV2.ncells(mesh) + 1):AtmosTransportV2.nfaces(mesh)
-    total_windows = min(nwindows, AtmosTransportV2.total_windows(run.driver))
+    zonal_faces = 1:AtmosTransport.ncells(mesh)
+    meridional_faces = (AtmosTransport.ncells(mesh) + 1):AtmosTransport.nfaces(mesh)
+    total_windows = min(nwindows, AtmosTransport.total_windows(run.driver))
 
     println("win horiz_total zonal_only merid_only vertical")
     for win in 1:total_windows
-        window = AtmosTransportV2.load_transport_window(run.driver, win)
+        window = AtmosTransport.load_transport_window(run.driver, win)
         h_all = _max_outgoing_ratio(window.fluxes.horizontal_flux, window.air_mass, left, right, eachindex(left))
         h_zonal = _max_outgoing_ratio(window.fluxes.horizontal_flux, window.air_mass, left, right, zonal_faces)
         h_merid = _max_outgoing_ratio(window.fluxes.horizontal_flux, window.air_mass, left, right, meridional_faces)

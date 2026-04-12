@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>GPU Double Buffering · AtmosTransport.jl</title><meta name="title" content="GPU Double Buffering · AtmosTransport.jl"/><meta property="og:title" content="GPU Double Buffering · AtmosTransport.jl"/><meta property="twitter:title" content="GPU Double Buffering · AtmosTransport.jl"/><meta name="description" content="Documentation for AtmosTransport.jl."/><meta property="og:description" content="Documentation for AtmosTransport.jl."/><meta property="twitter:description" content="Documentation for AtmosTransport.jl."/><meta property="og:url" content="https://RemoteSensingTools.github.io/AtmosTransport/gpu_double_buffering.html"/><meta property="twitter:url" content="https://RemoteSensingTools.github.io/AtmosTransport/gpu_double_buffering.html"/><link rel="canonical" href="https://RemoteSensingTools.github.io/AtmosTransport/gpu_double_buffering.html"/><script data-outdated-warner src="assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="assets/documenter.js"></script><script src="search_index.js"></script><script src="siteinfo.js"></script><script src="../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="index.html">AtmosTransport.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="index.html">Home</a></li><li><a class="tocitem" href="grids.html">Grids</a></li><li><span class="tocitem">Theory</span><ul><li><a class="tocitem" href="literated/advection_theory.html">Advection Theory</a></li><li><a class="tocitem" href="literated/design_principles.html">Design Principles</a></li></ul></li><li><span class="tocitem">Tutorials</span><ul><li><a class="tocitem" href="literated/first_forward_run.html">First Forward Run</a></li><li><a class="tocitem" href="literated/met_driver_comparison.html">Met Driver Comparison</a></li></ul></li><li><a class="tocitem" href="developer/CAVEATS.html">Caveats &amp; Troubleshooting</a></li><li><span class="tocitem">Developer Guide</span><ul><li><a class="tocitem" href="developer/VALIDATION.html">Validation</a></li><li><a class="tocitem" href="developer/TM5_CODE_ALIGNMENT.html">TM5 Code Alignment</a></li><li><a class="tocitem" href="developer/MASS_FLUX_EVOLUTION.html">Mass-Flux Evolution</a></li><li><a class="tocitem" href="developer/METEO_PREPROCESSING.html">Meteo Preprocessing</a></li><li><a class="tocitem" href="developer/TM5_LOCAL_SETUP.html">TM5 Local Setup</a></li><li><a class="tocitem" href="developer/TRANSPORT_COMPARISON.html">Transport Comparison</a></li><li><a class="tocitem" href="developer/TM5_GRID_REFERENCES.html">TM5 Grid References</a></li><li><a class="tocitem" href="developer/REFERENCE_RUN.html">Reference Run</a></li><li><a class="tocitem" href="developer/GITHUB_SETUP.html">GitHub Setup</a></li></ul></li><li><span class="tocitem">Performance</span><ul><li class="is-active"><a class="tocitem" href="gpu_double_buffering.html">GPU Double Buffering</a><ul class="internal"><li><a class="tocitem" href="#The-Problem:-Synchronous-Pipeline"><span>The Problem: Synchronous Pipeline</span></a></li><li><a class="tocitem" href="#Solution:-Double-Buffered-Ping-Pong"><span>Solution: Double-Buffered Ping-Pong</span></a></li><li><a class="tocitem" href="#Application-1:-ERA5-Timestep-Pipeline"><span>Application 1: ERA5 Timestep Pipeline</span></a></li><li><a class="tocitem" href="#Application-2:-Cubed-Sphere-Panel-Pipeline"><span>Application 2: Cubed-Sphere Panel Pipeline</span></a></li><li><a class="tocitem" href="#Expected-Speedup"><span>Expected Speedup</span></a></li><li><a class="tocitem" href="#Configuration"><span>Configuration</span></a></li></ul></li></ul></li><li><a class="tocitem" href="api.html">API Reference</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Performance</a></li><li class="is-active"><a href="gpu_double_buffering.html">GPU Double Buffering</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href="gpu_double_buffering.html">GPU Double Buffering</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/RemoteSensingTools/AtmosTransport" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/RemoteSensingTools/AtmosTransport/blob/main/docs/src/gpu_double_buffering.md" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="GPU-Double-Buffering-(Ping-Pong-Strategy)"><a class="docs-heading-anchor" href="#GPU-Double-Buffering-(Ping-Pong-Strategy)">GPU Double Buffering (Ping-Pong Strategy)</a><a id="GPU-Double-Buffering-(Ping-Pong-Strategy)-1"></a><a class="docs-heading-anchor-permalink" href="#GPU-Double-Buffering-(Ping-Pong-Strategy)" title="Permalink"></a></h1><p>This page describes a key GPU optimization for overlapping data transfer with computation. The technique applies to both the <strong>ERA5 timestep pipeline</strong> and the <strong>cubed-sphere panel pipeline</strong>, and can roughly double GPU utilization when I/O transfer time is comparable to compute time.</p><h2 id="The-Problem:-Synchronous-Pipeline"><a class="docs-heading-anchor" href="#The-Problem:-Synchronous-Pipeline">The Problem: Synchronous Pipeline</a><a id="The-Problem:-Synchronous-Pipeline-1"></a><a class="docs-heading-anchor-permalink" href="#The-Problem:-Synchronous-Pipeline" title="Permalink"></a></h2><p>In the current forward simulation loop (see <code>scripts/run_forward_hybrid.jl</code>), every timestep follows a strictly sequential pattern:</p><pre><code class="language-julia hljs">for step in 1:Nt
+    # --- CPU work (GPU idle) ---
+    u, v, ω, Δp, ps = load_timestep(datafile, step, ...)   # NetCDF read
+    met = stagger_winds!(u, v, ω, ...)                        # CPU compute
+    _build_Δz_3d!(Δp_cpu, grid, ps)                          # CPU compute
+    copyto!(Δp_dev, Δp_cpu)                                  # H→D transfer
+    copyto!(u_dev, met.u)                                    # H→D transfer
+    copyto!(v_dev, met.v)                                    # H→D transfer
+
+    # --- GPU work ---
+    compute_air_mass!(m_dev, Δp_dev, gc)
+    compute_mass_fluxes!(am_dev, bm_dev, cm_dev, ...)
+    strang_split_massflux!(tracers, m_dev, am_dev, bm_dev, cm_dev, ...)
+end</code></pre><p>The GPU sits idle during ~6 sequential CPU operations (disk read, velocity staggering, pressure thickness computation, and three <code>copyto!</code> transfers) before it gets any work:</p><p><img src="assets/gpu_sync_pipeline.png" alt="Synchronous pipeline"/></p><div class="mermaid">sequenceDiagram
+    participant Disk
+    participant CPU
+    participant GPU
+
+    rect rgb(240, 240, 255)
+    Note over Disk,GPU: Step N
+    Disk-&gt;&gt;CPU: Load timestep N
+    CPU-&gt;&gt;CPU: Stagger velocities
+    CPU-&gt;&gt;CPU: Build pressure thickness
+    CPU-&gt;&gt;GPU: H2D transfer (blocking)
+    Note over CPU: idle
+    GPU-&gt;&gt;GPU: Compute air mass
+    GPU-&gt;&gt;GPU: Compute mass fluxes
+    GPU-&gt;&gt;GPU: Strang split advection
+    end
+
+    rect rgb(240, 240, 255)
+    Note over Disk,GPU: Step N+1 (same pattern)
+    Disk-&gt;&gt;CPU: Load timestep N+1
+    CPU-&gt;&gt;GPU: H2D transfer (blocking)
+    Note over CPU: idle
+    GPU-&gt;&gt;GPU: Compute step N+1
+    end</div><p>The idle fraction grows as the computation becomes faster (e.g., with Float32, fewer vertical levels, or a smaller grid), making data movement the bottleneck.</p><h2 id="Solution:-Double-Buffered-Ping-Pong"><a class="docs-heading-anchor" href="#Solution:-Double-Buffered-Ping-Pong">Solution: Double-Buffered Ping-Pong</a><a id="Solution:-Double-Buffered-Ping-Pong-1"></a><a class="docs-heading-anchor-permalink" href="#Solution:-Double-Buffered-Ping-Pong" title="Permalink"></a></h2><p>The idea is simple: <strong>pre-allocate two sets of GPU buffers</strong> (A and B) and use <strong>two CUDA streams</strong> (one for compute, one for async data transfer) so that loading the next timestep overlaps with processing the current one.</p><p>The pipeline becomes:</p><ol><li>Upload timestep N to buffer A (blocking, first iteration only)</li><li>Launch compute on buffer A (compute stream)</li><li>While GPU computes on A, CPU loads and preprocesses timestep N+1, then async-copies it to buffer B (transfer stream)</li><li>Wait for both streams; swap A ↔ B; repeat</li></ol><p><img src="assets/gpu_double_buffer_era5.png" alt="Double-buffered ERA5 pipeline"/></p><div class="mermaid">sequenceDiagram
+    participant Disk
+    participant CPU
+    participant TransferStream as GPU Transfer Stream
+    participant ComputeStream as GPU Compute Stream
+
+    Disk-&gt;&gt;CPU: Load timestep 1
+    CPU-&gt;&gt;CPU: Preprocess
+    CPU-&gt;&gt;TransferStream: Upload to Buffer A
+
+    rect rgb(230, 255, 230)
+    Note over Disk,ComputeStream: Overlapped execution
+    ComputeStream-&gt;&gt;ComputeStream: Compute on Buffer A
+    par While GPU computes
+        Disk-&gt;&gt;CPU: Load timestep 2
+        CPU-&gt;&gt;CPU: Preprocess
+        CPU-&gt;&gt;TransferStream: Upload to Buffer B
+    end
+    end
+
+    Note over TransferStream,ComputeStream: Synchronize both streams, swap A and B
+
+    rect rgb(230, 255, 230)
+    ComputeStream-&gt;&gt;ComputeStream: Compute on Buffer B
+    par While GPU computes
+        Disk-&gt;&gt;CPU: Load timestep 3
+        CPU-&gt;&gt;TransferStream: Upload to Buffer A
+    end
+    end</div><h3 id="Implementation-Sketch"><a class="docs-heading-anchor" href="#Implementation-Sketch">Implementation Sketch</a><a id="Implementation-Sketch-1"></a><a class="docs-heading-anchor-permalink" href="#Implementation-Sketch" title="Permalink"></a></h3><pre><code class="language-julia hljs">using CUDA
+
+# Pre-allocate two buffer slots
+buf = ntuple(_ -&gt; (
+    Δp = CuArray{FT}(undef, Nx, Ny, Nz),
+    u  = CuArray{FT}(undef, Nx+1, Ny, Nz),
+    v  = CuArray{FT}(undef, Nx, Ny+1, Nz),
+), 2)
+
+compute_stream  = CuStream()
+transfer_stream = CuStream()
+
+# Initial load into buffer 1
+upload!(buf[1], load_and_preprocess(1), transfer_stream)
+CUDA.synchronize(transfer_stream)
+
+curr, next = 1, 2
+for step in 1:Nt
+    # Launch compute on current buffer (compute stream)
+    @cuda stream=compute_stream compute_step!(tracers, buf[curr]...)
+
+    if step &lt; Nt
+        # Overlap: CPU loads next step, then async-upload to `next` buffer
+        cpu_data = load_and_preprocess(step + 1)          # CPU work
+        upload!(buf[next], cpu_data, transfer_stream)      # async H→D
+    end
+
+    CUDA.synchronize(compute_stream)
+    CUDA.synchronize(transfer_stream)
+    curr, next = next, curr   # swap buffers
+end</code></pre><p>The key CUDA.jl primitives are:</p><ul><li><strong><code>CuStream()</code></strong> — create an independent execution stream</li><li><strong><code>copyto!(dst, src; stream=s)</code></strong> — async copy on stream <code>s</code></li><li><strong><code>@cuda stream=s kernel!(...)</code></strong> — launch kernel on stream <code>s</code></li><li><strong><code>CUDA.synchronize(s)</code></strong> — block until stream <code>s</code> completes</li></ul><p>With KernelAbstractions.jl, use <code>synchronize(backend)</code> after each kernel group, scoped to the appropriate stream.</p><h2 id="Application-1:-ERA5-Timestep-Pipeline"><a class="docs-heading-anchor" href="#Application-1:-ERA5-Timestep-Pipeline">Application 1: ERA5 Timestep Pipeline</a><a id="Application-1:-ERA5-Timestep-Pipeline-1"></a><a class="docs-heading-anchor-permalink" href="#Application-1:-ERA5-Timestep-Pipeline" title="Permalink"></a></h2><p>For the ERA5 mass-flux advection run, each timestep loads three 3D arrays (<code>Δp</code>, <code>u</code>, <code>v</code>) from disk. At 1° × 1° × 137 levels in Float32, this is roughly:</p><table><tr><th style="text-align: left">Array</th><th style="text-align: left">Shape</th><th style="text-align: left">Size</th></tr><tr><td style="text-align: left">Δp</td><td style="text-align: left">360 × 180 × 137</td><td style="text-align: left">~34 MB</td></tr><tr><td style="text-align: left">u</td><td style="text-align: left">361 × 180 × 137</td><td style="text-align: left">~34 MB</td></tr><tr><td style="text-align: left">v</td><td style="text-align: left">360 × 181 × 137</td><td style="text-align: left">~34 MB</td></tr><tr><td style="text-align: left"><strong>Total per step</strong></td><td style="text-align: left"></td><td style="text-align: left"><strong>~100 MB</strong></td></tr></table><p>On PCIe Gen4 x16 (~25 GB/s), transfer takes ~4 ms. On PCIe Gen3, ~8 ms. If GPU compute per step is 20-50 ms, the overlap saves 4-8 ms per step (10-40% of total step time). Over thousands of steps, this adds up.</p><p>The double-buffer option would be exposed as:</p><pre><code class="language-julia hljs">ws = allocate_massflux_workspace(m, am, bm, cm; double_buffer=true)</code></pre><h2 id="Application-2:-Cubed-Sphere-Panel-Pipeline"><a class="docs-heading-anchor" href="#Application-2:-Cubed-Sphere-Panel-Pipeline">Application 2: Cubed-Sphere Panel Pipeline</a><a id="Application-2:-Cubed-Sphere-Panel-Pipeline-1"></a><a class="docs-heading-anchor-permalink" href="#Application-2:-Cubed-Sphere-Panel-Pipeline" title="Permalink"></a></h2><p>For the cubed-sphere grid, the model processes 6 panels sequentially. Each panel&#39;s data (MFXC, MFYC, DELP, tracer) must be on the GPU before advection kernels can run. With double buffering, while the GPU advects panel P on buffer A, we upload panel P+1&#39;s data to buffer B:</p><p><img src="assets/gpu_double_buffer_cs.png" alt="Double-buffered cubed-sphere panel pipeline"/></p><div class="mermaid">sequenceDiagram
+    participant Host
+    participant BufA as GPU Buffer A
+    participant BufB as GPU Buffer B
+
+    Host-&gt;&gt;BufA: Upload Panel 1
+    BufA-&gt;&gt;BufA: Advect Panel 1
+    par Overlapped
+        Host-&gt;&gt;BufB: Upload Panel 2
+    end
+    BufB-&gt;&gt;BufB: Advect Panel 2
+    par Overlapped
+        Host-&gt;&gt;BufA: Upload Panel 3
+    end
+    BufA-&gt;&gt;BufA: Advect Panel 3
+    par Overlapped
+        Host-&gt;&gt;BufB: Upload Panel 4
+    end
+    BufB-&gt;&gt;BufB: Advect Panel 4
+    par Overlapped
+        Host-&gt;&gt;BufA: Upload Panel 5
+    end
+    BufA-&gt;&gt;BufA: Advect Panel 5
+    par Overlapped
+        Host-&gt;&gt;BufB: Upload Panel 6
+    end
+    BufB-&gt;&gt;BufB: Advect Panel 6</div><p>This is particularly effective because:</p><ul><li>Each C720 panel is 720 × 720 × 72 — substantial transfer volume (~280 MB in Float32)</li><li>The 6-panel sequential loop provides a natural pipeline with clear chunk boundaries</li><li>Panel computations are independent (modulo halos, which are small)</li></ul><p>The same <code>curr/next</code> buffer-swapping pattern applies, with the loop iterating over panels 1–6 instead of timesteps.</p><h2 id="Expected-Speedup"><a class="docs-heading-anchor" href="#Expected-Speedup">Expected Speedup</a><a id="Expected-Speedup-1"></a><a class="docs-heading-anchor-permalink" href="#Expected-Speedup" title="Permalink"></a></h2><p>The theoretical speedup from double buffering is:</p><pre><code class="nohighlight hljs">Speedup = T_sequential / T_overlapped
+        = (T_cpu + T_transfer + T_compute) / max(T_compute, T_cpu + T_transfer)</code></pre><table><tr><th style="text-align: left">Regime</th><th style="text-align: left">T_compute vs T_transfer</th><th style="text-align: left">Speedup</th></tr><tr><td style="text-align: left">Compute-bound</td><td style="text-align: left">T_compute &gt;&gt; T_transfer</td><td style="text-align: left">~1× (no benefit)</td></tr><tr><td style="text-align: left">Balanced</td><td style="text-align: left">T_compute ≈ T_transfer</td><td style="text-align: left">~2×</td></tr><tr><td style="text-align: left">Transfer-bound</td><td style="text-align: left">T_compute &lt;&lt; T_transfer</td><td style="text-align: left">~1× (limited by transfer)</td></tr></table><p>The sweet spot is when compute and transfer times are comparable, which is often the case for moderate-resolution grids on consumer GPUs. For very large grids (C720), the compute time dominates and the benefit is smaller per step but the absolute time saved is still significant over many steps.</p><h2 id="Configuration"><a class="docs-heading-anchor" href="#Configuration">Configuration</a><a id="Configuration-1"></a><a class="docs-heading-anchor-permalink" href="#Configuration" title="Permalink"></a></h2><p>The double-buffer strategy is an <strong>optional optimization</strong> controlled by a flag. When disabled, the model uses the simpler synchronous pipeline (easier to debug, deterministic timing). When enabled, the model pre-allocates 2× the met-data GPU memory in exchange for overlapped execution.</p><pre><code class="language-julia hljs"># Synchronous (default, simpler)
+ws = allocate_massflux_workspace(m, am, bm, cm)
+
+# Double-buffered (faster when I/O is significant)
+ws = allocate_massflux_workspace(m, am, bm, cm; double_buffer=true)</code></pre><script type="module">import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+mermaid.initialize({
+    startOnLoad: true,
+    theme: "neutral"
+});
+</script></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="developer/GITHUB_SETUP.html">« GitHub Setup</a><a class="docs-footer-nextpage" href="api.html">API Reference »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Wednesday 25 February 2026 14:00">Wednesday 25 February 2026</span>. Using Julia version 1.12.4.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

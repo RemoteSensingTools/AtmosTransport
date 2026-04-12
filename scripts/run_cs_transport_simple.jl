@@ -4,7 +4,7 @@
 # and exports snapshot NetCDF files for visualization.
 #
 # This is a simplified version that doesn't depend on DrivenSimulation
-# (which has src_v2 runtime complexities). It directly uses
+# (which has src runtime complexities). It directly uses
 # strang_split_cs! and exports snapshots on a regridded lat-lon grid
 # for easy plotting.
 #
@@ -16,9 +16,9 @@
 using Printf
 using NCDatasets
 
-include(joinpath(@__DIR__, "..", "src_v2", "AtmosTransportV2.jl"))
-using .AtmosTransportV2
-using .AtmosTransportV2.Operators.Advection: fill_panel_halos!, strang_split_cs!, CSAdvectionWorkspace
+include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
+using .AtmosTransport
+using .AtmosTransport.Operators.Advection: fill_panel_halos!, strang_split_cs!, CSAdvectionWorkspace
 
 function parse_args()
     args = Dict{String, String}()

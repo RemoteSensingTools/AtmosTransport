@@ -94,6 +94,25 @@ When investigating ANY transport bug, numerical instability, or physics mismatch
    a diagnostic. The 4× scaling attempt (2026-04-02) wasted hours because the math
    was done without reading how TM5 actually applies the fluxes.
 
+# Rule 3: This is a production-level codebase — prefer long-term solutions
+#
+# Every piece of code added here will be maintained, extended, and relied upon
+# for years. Prefer clean, mathematically correct, future-proof implementations
+# over quick hacks that "kind of work" but are neither rigorous nor elegant.
+# Specifically:
+#   - If two approaches exist and one is more accurate / more general / cleaner
+#     but requires more work, choose it. The extra effort pays for itself in
+#     reduced debugging and easier extension later.
+#   - No ad-hoc limiters, clamps, or fudge factors without a first-principles
+#     derivation and a comment explaining WHY the limiter is needed.
+#   - No "temporary" workarounds that silently become permanent. If a shortcut
+#     is truly needed for iteration speed, mark it with `# HACK:` and a TODO
+#     with the clean replacement path.
+#   - Code should be self-documenting with clear docstrings, inline convention
+#     comments, and unit annotations on physical quantities. A newcomer reading
+#     any function should understand the math, the sign conventions, and the
+#     index layout without consulting external docs.
+
 ## Quick start
 
 ```bash
@@ -101,7 +120,7 @@ julia --project=. scripts/run.jl config/runs/<config>.toml
 ```
 
 All simulation parameters live in TOML configs under `config/runs/`. Preprocessing
-configs are in `config/preprocessing/`. See `docs/QUICKSTART.md` for full reference.
+configs are in `config/preprocessing/`. See `docs/reference/QUICKSTART.md` for full reference.
 
 ---
 
@@ -161,15 +180,19 @@ AbstractOutputWriter         → BinaryOutputWriter, NetCDFOutputWriter
 ### Source layout
 
 Key directories:
-- `src/` — all Julia source code, organized by module
+- `src/` — active Julia source (basis-explicit transport core, promoted from src_v2)
+- `test/` — active test suite (promoted from test_v2)
 - `scripts/` — download, preprocess, run, diagnostic, and visualization scripts
 - `config/runs/` — simulation configs
 - `config/preprocessing/` — preprocessor configs
 - `config/met_sources/` — per-source variable mappings to canonical names
 - `config/canonical_variables.toml` — the contract between met sources and physics code
-- `test/` — test suite (15 files, 4570+ tests)
-- `docs/` — Documenter.jl + Literate.jl documentation
-- `ext/` — GPU extensions (CUDA, Metal)
+- `docs/` — active documentation (contracts, reference, memos)
+- `src_legacy/` — original TM5-aligned module (parked, not loaded by Project.toml)
+- `test_legacy/` — tests for src_legacy
+- `ext_legacy/` — GPU extensions for src_legacy (CUDA, Metal)
+- `docs_legacy/` — Documenter.jl site + session logs for src_legacy
+- `scripts_legacy/` — v1-only run/diagnostic/validation scripts
 
 ---
 
@@ -388,7 +411,17 @@ These are hard-won correctness constraints. Violating any causes silent wrong re
     1.3e-14. RG N320 production binaries (pre-fix): 0.77 — these
     were quietly broken and silently unstable.
 
-    **When adding a new grid-type preprocessor** (CS, any variant):
+    * **CS path**: `cs_global_poisson_balance.jl:balance_cs_global_mass_fluxes!`
+      — JPCG on the global 6-panel graph Laplacian with 12Nc² faces
+      (interior + cross-panel). All cells have degree 4 (no boundary
+      stubs on a closed sphere). Cross-panel faces use canonical/mirror
+      pairs with same-sign convention (outgoing edge ↔ incoming edge).
+      Replaces the per-panel FFT that wrongly treated panels as
+      doubly-periodic. Called from
+      `preprocess_era5_cs_conservative_v2.jl`. Validated: C24×34 in
+      0.13s, 224 CG iterations, projected residual 8.5e-14.
+
+    **When adding a new grid-type preprocessor**:
     verify that the post-balance `max(|cm|/m)` probe matches the LL
     reference before declaring the binary working. Never trust
     "the binary compiles and exit-code-0 runs" without this check.
@@ -527,9 +560,9 @@ julia --project=. -e 'using Pkg; Pkg.test()'
 
 ## Reference: GEOS-Chem comparison notes
 
-See `docs/TRANSPORT_COMPARISON.md` for detailed comparison of
+See `docs/reference/TRANSPORT_COMPARISON.md` for detailed comparison of
 AtmosTransport vs TM5 vs GEOS-Chem/GCHP algorithms, including the phased
 implementation blueprint for unified ERA5/GEOS transport. Parts might be obsolete now...
 
 ## Data Layout
-Follow the data guide in `docs/DATA_LAYOUT.md`
+Follow the data guide in `docs/reference/DATA_LAYOUT.md`

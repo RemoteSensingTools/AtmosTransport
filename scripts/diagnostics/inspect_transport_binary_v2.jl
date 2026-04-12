@@ -1,7 +1,7 @@
 #!/usr/bin/env julia
 
-include(joinpath(@__DIR__, "..", "..", "src_v2", "AtmosTransportV2.jl"))
-using .AtmosTransportV2
+include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+using .AtmosTransport
 
 function _usage()
     println("Usage: julia --project=. scripts/diagnostics/inspect_transport_binary_v2.jl <path/to/file.bin>")
@@ -50,7 +50,7 @@ function main(args)
         println(driver)
         close(driver)
     catch err
-        println("Driver: incompatible with current src_v2 runtime")
+        println("Driver: incompatible with current src runtime")
         println("  ", sprint(showerror, err))
     end
 

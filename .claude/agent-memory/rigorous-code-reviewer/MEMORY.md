@@ -10,3 +10,4 @@
 - [CS transport full trace](cs_transport_trace.md) — Complete run! to output trace for CS grid: Strang/LinRood/GCHP paths, file:line refs, unit conventions
 - [Pole bm clamp review](pole_bm_clamp_review.md) — clamp_bm_at_poles! correctness: indexing OK, but clamps inflow too + cm not recomputed
 - [TM5 cy3-4dvar polar audit](tm5_polar_audit_findings.md) — max_halvings=5 vs 32, m<=0 pilot check (we stricter than TM5), 0.5° redgrid unvalidated, no Y nloop in TM5
+- [CS Poisson balance review](cs_poisson_balance_review.md) — Global CG balance: sign convention verified, cm uses explicit dm not B-coeff, test import gap

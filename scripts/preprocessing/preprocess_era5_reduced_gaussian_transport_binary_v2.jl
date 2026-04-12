@@ -14,7 +14,7 @@ using TOML
 include(joinpath(@__DIR__, "preprocess_spectral_v4_binary.jl"))
 include(joinpath(@__DIR__, "spectral_transport_binary_v2_dispatch.jl"))
 include(joinpath(PREPROCESS_SPECTRAL_V4_DIR, "reduced_transport_helpers.jl"))
-using .AtmosTransportV2: AtmosGrid, CPU, write_transport_binary,
+using .AtmosTransport: AtmosGrid, CPU, write_transport_binary,
     ncells, nfaces, nrings, cell_area, face_cells
 
 function output_reduced_transport_binary_v2_path(date::Date,
@@ -29,7 +29,7 @@ function output_reduced_transport_binary_v2_path(date::Date,
 end
 
 function build_reduced_transport_binary_grid(grid::ReducedGaussianTargetGeometry, vertical, ::Type{FT}) where FT
-    vc = AtmosTransportV2.HybridSigmaPressure(FT.(vertical.merged_vc.A), FT.(vertical.merged_vc.B))
+    vc = AtmosTransport.HybridSigmaPressure(FT.(vertical.merged_vc.A), FT.(vertical.merged_vc.B))
     return AtmosGrid(grid.mesh, vc, CPU(); FT=FT)
 end
 

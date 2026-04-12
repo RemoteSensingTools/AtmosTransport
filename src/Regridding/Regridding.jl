@@ -1,90 +1,97 @@
 """
-    Regridding
+    Regridding (src)
 
-Interpolation between met data grids and model grids.
+Offline conservative regridding between v2 mesh types, built on
+[ConservativeRegridding.jl](https://github.com/JuliaGeo/ConservativeRegridding.jl).
 
-When the met data grid differs from the model grid (e.g. ERA5 lat-lon 0.25°
-to model CubedSphereGrid C90), a regridder maps fields between them.
+Designed for the preprocessing stage: build a sparse weights matrix once per
+`(source_mesh, target_mesh)` pair, cache it to disk, and reuse at every
+subsequent run. The runtime transport core never calls into this module —
+`TransportBinaryReader` / `CubedSphereBinaryReader` consume binaries that are
+already on the target grid.
 
-# Regridder types
+## Workflow
 
-- `ConservativeRegridder` — mass-preserving remapping (for tracers, mass fluxes)
-- `BilinearRegridder` — smooth interpolation (for winds, temperature)
-- `IdentityRegridder` — no-op when grids match
+```julia
+using AtmosTransport: LatLonMesh, CubedSphereMesh
+using AtmosTransport.Regridding
 
-# Interface contract
+src = LatLonMesh(Nx=1440, Ny=721)
+dst = CubedSphereMesh(Nc=90)
 
-    regrid!(target_field, source_data, regridder)
+# Build weights (expensive — minutes for C90, cached to disk)
+r = build_regridder(src, dst; cache_dir="/tmp/atmos_regrid_cache")
+
+# Apply to a 2D field
+src_field = zeros(src.Nx * src.Ny)
+dst_field = zeros(6 * dst.Nc * dst.Nc)
+apply_regridder!(dst_field, r, src_field)
+
+# Persist / export
+save_regridder("weights.jld2", r)
+save_esmf_weights("weights_esmf.nc", r)
+```
+
+## Supported mesh types
+
+| Source/Destination | Tree strategy | Spatial acceleration |
+|--------------------|---------------|----------------------|
+| `LatLonMesh`       | `CellBasedGrid` from `(Nx+1)×(Ny+1)` face corners → `TopDownQuadtreeCursor` | O(log(Nx·Ny)) |
+| `CubedSphereMesh`  | 6 per-panel `CellBasedGrid` from gnomonic corners → `CubedSphereToplevelTree` | O(log Nc²) per panel |
+| `ReducedGaussianMesh` | Per-ring `CellBasedGrid(nlon+1, 2)` → `MultiTreeWrapper` | O(nrings · log nlon) |
+
+All three produce `SphericalCap` extents at every tree level, which is
+required by CR.jl's spherical dual-DFS intersection search.
+
+## Known limitations
+
+- `CubedSphereMesh` uses the **analytical gnomonic** projection from
+  `src/Grids/CubedSphereMesh.jl`. Real GEOS-FP native cubed-sphere data
+  has panel-4/5 axis rotations and small (~1–2°) corner offsets relative to
+  the gnomonic projection; GMAO coordinate loading must be ported to v2 for
+  bit-exact parity with production GEOS-FP binaries.
+- `ReducedGaussianMesh` clamps polar face latitudes by 0.001° to avoid
+  degenerate polygons at the poles. The omitted cap area is ~8e-11 of the
+  full sphere — negligible, but means `frac_a`/`frac_b` at poles are
+  ~0.987 rather than exactly 1.0.
+
+## Architecture reference
+
+See `docs/CONSERVATIVE_REGRIDDING.md` for a full write-up of the algorithm,
+conventions, and verification results.
 """
 module Regridding
 
-using DocStringExtensions
-using SparseArrays: SparseMatrixCSC
+using ..Grids: AbstractHorizontalMesh, AbstractStructuredMesh,
+               LatLonMesh, CubedSphereMesh, ReducedGaussianMesh,
+               AbstractCubedSpherePanelConvention,
+               GnomonicPanelConvention, GEOSNativePanelConvention,
+               nrings, nboundaries, ring_cell_count, cell_index,
+               nx, ny, ncells
 
-export AbstractRegridder
-export ConservativeRegridder, BilinearRegridder, IdentityRegridder
-export regrid!, compute_weights
+using ConservativeRegridding
+using ConservativeRegridding: Regridder
+using ConservativeRegridding.Trees
 
-"""
-$(TYPEDEF)
+import GeometryOps as GO
+import GeometryOpsCore as GOCore
+import GeoInterface as GI
+import GeometryOps: SpatialTreeInterface as STI
+using GeometryOps.UnitSpherical: UnitSphericalPoint
 
-Supertype for all regridding methods.
-"""
-abstract type AbstractRegridder end
+using JLD2
+using NCDatasets
+using SparseArrays
+using LinearAlgebra
+using Dates
+using SHA
+using StaticArrays: SA
 
-"""
-$(TYPEDEF)
+export build_regridder, save_regridder, load_regridder
+export save_esmf_weights, apply_regridder!
+export cubed_sphere_face_corners
 
-No-op regridder for when met data and model grids match.
-"""
-struct IdentityRegridder <: AbstractRegridder end
-
-regrid!(target, source, ::IdentityRegridder) = copyto!(target, source)
-
-"""
-$(TYPEDEF)
-
-Conservative (mass-preserving) regridding using precomputed sparse weights.
-
-$(FIELDS)
-"""
-struct ConservativeRegridder{FT} <: AbstractRegridder
-    "precomputed remapping weights"
-    weights :: SparseMatrixCSC{FT, Int}
-end
-
-"""
-$(TYPEDEF)
-
-Bilinear interpolation using precomputed sparse weights.
-Fast but not mass-conserving; suitable for smooth fields (wind, temperature).
-
-$(FIELDS)
-"""
-struct BilinearRegridder{FT} <: AbstractRegridder
-    "precomputed interpolation weights"
-    weights :: SparseMatrixCSC{FT, Int}
-end
-
-"""
-$(SIGNATURES)
-
-Interpolate `source` data onto `target` field using `regridder`.
-"""
-function regrid!(target, source, r::Union{ConservativeRegridder{FT}, BilinearRegridder{FT}}) where FT
-    # target[:] = r.weights * source[:]
-    # Actual implementation depends on data layout; stub for now.
-    error("regrid! not yet implemented for $(typeof(r))")
-end
-
-"""
-$(SIGNATURES)
-
-Precompute interpolation weights for mapping from `source_grid` to `target_grid`.
-Implementation stub.
-"""
-function compute_weights(source_grid, target_grid, ::Type{<:AbstractRegridder})
-    error("compute_weights not yet implemented")
-end
+include("treeify_meshes.jl")
+include("weights_io.jl")
 
 end # module Regridding

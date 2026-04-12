@@ -48,17 +48,17 @@ function allocate_reduced_transform_workspace(grid::ReducedGaussianTargetGeometr
                                               T::Int,
                                               Nz_native::Int)
     mesh = grid.mesh
-    nc = AtmosTransportV2.ncells(mesh)
-    nf = AtmosTransportV2.nfaces(mesh)
+    nc = AtmosTransport.ncells(mesh)
+    nf = AtmosTransport.nfaces(mesh)
     nt = Threads.nthreads()
     nt_max = max(nt, 2 * nt) + 4
 
-    cell_areas = [AtmosTransportV2.cell_area(mesh, c) for c in 1:nc]
+    cell_areas = [AtmosTransport.cell_area(mesh, c) for c in 1:nc]
     buffer_lengths = sort!(unique(vcat(collect(mesh.nlon_per_ring), collect(mesh.boundary_counts))))
     face_left = Vector{Int32}(undef, nf)
     face_right = Vector{Int32}(undef, nf)
     for f in 1:nf
-        left, right = AtmosTransportV2.face_cells(mesh, f)
+        left, right = AtmosTransport.face_cells(mesh, f)
         face_left[f] = Int32(left)
         face_right[f] = Int32(right)
     end
@@ -100,8 +100,8 @@ function allocate_reduced_merge_workspace(grid::ReducedGaussianTargetGeometry,
                                           Nz::Int,
                                           ::Type{FT}) where FT
     mesh = grid.mesh
-    nc = AtmosTransportV2.ncells(mesh)
-    nf = AtmosTransportV2.nfaces(mesh)
+    nc = AtmosTransport.ncells(mesh)
+    nf = AtmosTransport.nfaces(mesh)
     return ReducedMergeWorkspace{FT}(
         zeros(FT, nc, Nz_native),
         zeros(FT, nf, Nz_native),
@@ -169,7 +169,7 @@ function spectral_to_reduced_scalar!(field::Vector{Float64},
                                      cache::ReducedSpectralThreadCache;
                                      centered::Bool = true)
     mesh = grid.mesh
-    @inbounds for j in 1:AtmosTransportV2.nrings(mesh)
+    @inbounds for j in 1:AtmosTransport.nrings(mesh)
         start = mesh.ring_offsets[j]
         stop = mesh.ring_offsets[j + 1] - 1
         shift = centered ? (pi / mesh.nlon_per_ring[j]) : 0.0
@@ -218,7 +218,7 @@ function compute_reduced_horizontal_fluxes!(hflux::AbstractVector{Float64},
     R_g = mesh.radius / GRAV
     fill!(hflux, 0.0)
 
-    @inbounds for j in 1:AtmosTransportV2.nrings(mesh)
+    @inbounds for j in 1:AtmosTransport.nrings(mesh)
         nlon = mesh.nlon_per_ring[j]
         ring_vals = _real_buffer!(cache, nlon)
         spectral_to_ring!(ring_vals, u_spec, T, grid.lats[j], cache; lon_shift_rad=0.0)
@@ -235,7 +235,7 @@ function compute_reduced_horizontal_fluxes!(hflux::AbstractVector{Float64},
         end
     end
 
-    @inbounds for b in 2:AtmosTransportV2.nrings(mesh)
+    @inbounds for b in 2:AtmosTransport.nrings(mesh)
         nseg = mesh.boundary_counts[b]
         seg_vals = _real_buffer!(cache, nseg)
         spectral_to_reduced_boundary!(seg_vals, v_spec, T, mesh.lat_faces[b], cache)

@@ -4,12 +4,12 @@ using Logging
 using TOML
 using NCDatasets
 
-include(joinpath(@__DIR__, "..", "..", "src_v2", "AtmosTransportV2.jl"))
-using .AtmosTransportV2
+include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+using .AtmosTransport
 include(joinpath(@__DIR__, "..", "run_transport_binary_v2.jl"))
 
-@inline _basis_symbol(::AtmosTransportV2.DryBasis) = "dry"
-@inline _basis_symbol(::AtmosTransportV2.MoistBasis) = "moist"
+@inline _basis_symbol(::AtmosTransport.DryBasis) = "dry"
+@inline _basis_symbol(::AtmosTransport.MoistBasis) = "moist"
 
 function _parse_snapshot_hours(cfg)
     out_cfg = get(cfg, "output", Dict{String, Any}())
@@ -24,8 +24,8 @@ end
 
 _column_mean(rm, m) = sum(rm; dims=ndims(rm)) ./ sum(m; dims=ndims(m))
 
-function _capture_snapshot(mesh::AtmosTransportV2.LatLonMesh{FT}, state, tracer_name::Symbol) where FT
-    χ = AtmosTransportV2.mixing_ratio(state, tracer_name)
+function _capture_snapshot(mesh::AtmosTransport.LatLonMesh{FT}, state, tracer_name::Symbol) where FT
+    χ = AtmosTransport.mixing_ratio(state, tracer_name)
     column = _column_mean(getproperty(state.tracers, tracer_name), state.air_mass)
     surface = permutedims(@view(χ[:, :, size(χ, 3)]), (2, 1))
     column2d = permutedims(dropdims(column; dims=3), (2, 1))
@@ -37,14 +37,14 @@ function _capture_snapshot(mesh::AtmosTransportV2.LatLonMesh{FT}, state, tracer_
     )
 end
 
-function _reduced_cell_centers(mesh::AtmosTransportV2.ReducedGaussianMesh{FT}) where FT
-    lon = Vector{FT}(undef, AtmosTransportV2.ncells(mesh))
-    lat = Vector{FT}(undef, AtmosTransportV2.ncells(mesh))
-    for j in 1:AtmosTransportV2.nrings(mesh)
-        lons = AtmosTransportV2.ring_longitudes(mesh, j)
+function _reduced_cell_centers(mesh::AtmosTransport.ReducedGaussianMesh{FT}) where FT
+    lon = Vector{FT}(undef, AtmosTransport.ncells(mesh))
+    lat = Vector{FT}(undef, AtmosTransport.ncells(mesh))
+    for j in 1:AtmosTransport.nrings(mesh)
+        lons = AtmosTransport.ring_longitudes(mesh, j)
         φ = mesh.latitudes[j]
         for i in eachindex(lons)
-            c = AtmosTransportV2.cell_index(mesh, i, j)
+            c = AtmosTransport.cell_index(mesh, i, j)
             lon[c] = lons[i]
             lat[c] = φ
         end
@@ -52,8 +52,8 @@ function _reduced_cell_centers(mesh::AtmosTransportV2.ReducedGaussianMesh{FT}) w
     return lon, lat
 end
 
-function _capture_snapshot(mesh::AtmosTransportV2.ReducedGaussianMesh{FT}, state, tracer_name::Symbol) where FT
-    χ = AtmosTransportV2.mixing_ratio(state, tracer_name)
+function _capture_snapshot(mesh::AtmosTransport.ReducedGaussianMesh{FT}, state, tracer_name::Symbol) where FT
+    χ = AtmosTransport.mixing_ratio(state, tracer_name)
     column = _column_mean(getproperty(state.tracers, tracer_name), state.air_mass)
     lon, lat = _reduced_cell_centers(mesh)
     return (
@@ -65,7 +65,7 @@ function _capture_snapshot(mesh::AtmosTransportV2.ReducedGaussianMesh{FT}, state
 end
 
 function _write_snapshot_netcdf(path::AbstractString,
-                                mesh::AtmosTransportV2.LatLonMesh{FT},
+                                mesh::AtmosTransport.LatLonMesh{FT},
                                 snapshots,
                                 metadata) where FT
     mkpath(dirname(path))
@@ -108,7 +108,7 @@ function _write_snapshot_netcdf(path::AbstractString,
 end
 
 function _write_snapshot_netcdf(path::AbstractString,
-                                mesh::AtmosTransportV2.ReducedGaussianMesh{FT},
+                                mesh::AtmosTransport.ReducedGaussianMesh{FT},
                                 snapshots,
                                 metadata) where FT
     mkpath(dirname(path))
@@ -152,13 +152,13 @@ function _capture_named_snapshot!(snapshots, model, tracer_name::Symbol, time_ho
     snap = _capture_snapshot(model.grid.horizontal, model.state, tracer_name)
     push!(snapshots, merge(snap, (
         time_hours = Float64(time_hours),
-        air_mass_total = Float64(AtmosTransportV2.total_air_mass(model.state)),
-        tracer_mass_total = Float64(AtmosTransportV2.total_mass(model.state, tracer_name)),
+        air_mass_total = Float64(AtmosTransport.total_air_mass(model.state)),
+        tracer_mass_total = Float64(AtmosTransport.total_mass(model.state, tracer_name)),
     )))
     return nothing
 end
 
-_open_driver(path::AbstractString, ::Type{FT}) where FT = AtmosTransportV2.TransportBinaryDriver(path; FT=FT, arch=AtmosTransportV2.CPU())
+_open_driver(path::AbstractString, ::Type{FT}) where FT = AtmosTransport.TransportBinaryDriver(path; FT=FT, arch=AtmosTransport.CPU())
 
 function export_snapshots(binary_paths::Vector{String}, cfg)
     FT = Symbol(get(get(cfg, "numerics", Dict{String, Any}()), "float_type", "Float64")) == :Float32 ? Float32 : Float64
@@ -169,7 +169,7 @@ function export_snapshots(binary_paths::Vector{String}, cfg)
     init_cfg = get(cfg, "init", Dict{String, Any}())
     out_cfg = get(cfg, "output", Dict{String, Any}())
     out_path = expanduser(String(get(out_cfg, "snapshot_file",
-        joinpath(homedir(), "data", "AtmosTransport", "output", "src_v2_snapshots", "transport_v2_snapshots.nc"))))
+        joinpath(homedir(), "data", "AtmosTransport", "output", "src_snapshots", "transport_v2_snapshots.nc"))))
 
     isempty(binary_paths) && throw(ArgumentError("no binary_paths configured"))
     ensure_gpu_runtime!(cfg)
@@ -179,10 +179,10 @@ function export_snapshots(binary_paths::Vector{String}, cfg)
     @info "Backend: $(backend_label(cfg))"
 
     stop_window_cfg = get(run_cfg, "stop_window", nothing)
-    local_stop = stop_window_cfg === nothing ? AtmosTransportV2.total_windows(first_driver) : Int(stop_window_cfg)
+    local_stop = stop_window_cfg === nothing ? AtmosTransport.total_windows(first_driver) : Int(stop_window_cfg)
 
     target_hours = _parse_snapshot_hours(cfg)
-    target_windows = sort!(unique!(vcat(0, [clamp(round(Int, hour * 3600 / AtmosTransportV2.window_dt(first_driver)), 0, local_stop) for hour in target_hours])))
+    target_windows = sort!(unique!(vcat(0, [clamp(round(Int, hour * 3600 / AtmosTransport.window_dt(first_driver)), 0, local_stop) for hour in target_hours])))
 
     snapshots = NamedTuple[]
     captured = Set{Int}()
@@ -201,19 +201,19 @@ function export_snapshots(binary_paths::Vector{String}, cfg)
         # Previously the first driver used `local_stop` directly, which
         # failed when `stop_window` in the config exceeded Day 1's window
         # count (e.g. 48h run spanning two daily binaries).
-        stop_window = min(AtmosTransportV2.total_windows(driver),
+        stop_window = min(AtmosTransport.total_windows(driver),
                           max(0, local_stop - global_window))
         stop_window <= 0 && break
-        sim = AtmosTransportV2.DrivenSimulation(model, driver;
+        sim = AtmosTransport.DrivenSimulation(model, driver;
                                                 start_window=1,
                                                 stop_window=stop_window,
                                                 initialize_air_mass=(idx == 1),
                                                 reset_air_mass_each_window=reset_air_mass_each_window)
         for _ in 1:stop_window
-            AtmosTransportV2.run_window!(sim)
+            AtmosTransport.run_window!(sim)
             global_window += 1
             if global_window in target_windows && !(global_window in captured)
-                _capture_named_snapshot!(snapshots, model, tracer_name, global_window * AtmosTransportV2.window_dt(driver) / 3600)
+                _capture_named_snapshot!(snapshots, model, tracer_name, global_window * AtmosTransport.window_dt(driver) / 3600)
                 push!(captured, global_window)
             end
         end
@@ -225,7 +225,7 @@ function export_snapshots(binary_paths::Vector{String}, cfg)
     metadata = (
         scheme = String(scheme_name),
         tracer_name = tracer_name,
-        mass_basis = _basis_symbol(AtmosTransportV2.mass_basis(model.state)),
+        mass_basis = _basis_symbol(AtmosTransport.mass_basis(model.state)),
         binary_label = join(basename.(binary_paths), ", "),
     )
     return _write_snapshot_netcdf(out_path, model.grid.horizontal, snapshots, metadata)

@@ -17,7 +17,6 @@ float_type = "Float32"
 [run]
 scheme = "upwind"
 reset_air_mass_each_window = false
-stop_window = 48
 
 [tracers.co2]
 [tracers.co2.init]

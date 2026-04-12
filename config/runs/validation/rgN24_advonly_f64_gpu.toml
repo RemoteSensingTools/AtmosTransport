@@ -1,0 +1,39 @@
+# --- Reduced Gaussian N24 (4608 cells) advection-only validation --- F64 GPU ---
+#
+# Usage:
+#   julia --project=. scripts/run_transport_binary.jl \
+#       config/runs/validation/rgN24_advonly_f64_gpu.toml
+
+[input]
+binary_paths = [
+    "~/data/AtmosTransport/met/era5/rgN24/transport_binary_v2_tropo34_dec2021_f64/era5_transport_v2_rgN24_20211201_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/rgN24/transport_binary_v2_tropo34_dec2021_f64/era5_transport_v2_rgN24_20211202_merged1000Pa_float64.bin",
+]
+
+[architecture]
+use_gpu = true
+float_type = "Float64"
+
+[run]
+scheme = "upwind"
+reset_air_mass_each_window = false
+stop_window = 48
+
+[tracers.co2]
+[tracers.co2.init]
+kind = "catrine_co2"
+
+[tracers.fossil_co2]
+[tracers.fossil_co2.init]
+kind = "uniform"
+background = 0.0
+
+[tracers.sf6]
+[tracers.sf6.init]
+kind = "file"
+file = "~/data/AtmosTransport/catrine/InitialConditions/startSF6_202112010000.nc"
+variable = "SF6"
+
+[output]
+snapshot_hours = [0, 6, 12, 24, 36, 48]
+snapshot_file = "~/data/AtmosTransport/output/validation/rgN24_advonly_f64_gpu.nc"

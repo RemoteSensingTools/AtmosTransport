@@ -182,51 +182,135 @@ end
 Trees.treeify(mesh::CubedSphereMesh) = Trees.treeify(GOCore.best_manifold(mesh), mesh)
 
 # ---------------------------------------------------------------------------
-# ReducedGaussianMesh
+# ReducedGaussianMesh → per-ring CellBasedGrid trees → MultiTreeWrapper
 #
-# TODO (Tier 1 follow-up): ReducedGaussianMesh treeify is a design choice
-# between two approaches, neither of which is trivial:
+# A reduced Gaussian mesh has variable `nlon` per latitude ring, so it
+# cannot be directly represented as a single rectangular
+# AbstractCurvilinearGrid. Instead, we treat each ring as an independent
+# `CellBasedGrid{Spherical}` with shape `(nlon+1, 2)` — the +1 in the
+# longitude dimension gives face edges, and the 2 latitudes are the
+# ring's south and north boundaries.
 #
-#   A) Padded-matrix ExplicitPolygonGrid with a custom index-remapping
-#      wrapper to translate the padded `(max_nlon, nrings)` linear index
-#      back to the mesh's natural ring-flattened index. Reuses
-#      TopDownQuadtreeCursor's spherical cell_range_extent for fast pruning
-#      but requires writing a new cursor.
+# Each ring tree is an `IndexOffsetQuadtreeCursor` that maps the ring's
+# local cell indices (1:nlon) to the mesh's global flat index:
+#   global_idx = ring_offsets[j] + local_idx - 1
+# via offset = ring_offsets[j] - 1.
 #
-#   B) Flat Vector of polygons in a custom spherical spatial tree
-#      (SphericalCap-based bulk-loaded tree, e.g. recursive ring grouping).
-#      More work upfront but arguably the "right" solution.
+# The per-ring trees are combined into a `MultiTreeWrapper` (from
+# CR.jl's wrappers.jl), which uses cumulative cell offsets for O(1)
+# ring lookup given a global index. The whole thing is wrapped in
+# `KnownFullSphereExtentWrapper` since a reduced Gaussian mesh
+# (ERA5 / IFS native) always covers the full sphere.
 #
-#   The obvious Option C — `FlatNoTree(polys_with_unit_spherical_vertices)` —
-#   does not currently work: FlatNoTree's per-cell extents fall back to
-#   planar `Extents.Extent{(:X, :Y, :Z)}`, which CR.jl's spherical
-#   `_intersects` does not know how to handle against the `SphericalCap`
-#   extents produced by the other side of a regridder build. See
-#   error trace in `/home/cfranken/.claude/plans/luminous-prancing-firefly.md`.
+# This approach:
+#   - Reuses CellBasedGrid{Spherical}'s `cell_range_extent`, which
+#     correctly produces SphericalCap extents (avoids the
+#     SphericalCap vs Extent{(:X,:Y,:Z)} type mismatch that crashes
+#     FlatNoTree on spherical manifolds)
+#   - Gives O(log nlon) spatial pruning within each ring via
+#     IndexOffsetQuadtreeCursor's recursive subdivision
+#   - Gives O(nrings) lookup at the top level, acceptable for ERA5
+#     (nrings ~ 320)
+#   - Uses only existing CR.jl infrastructure: CellBasedGrid,
+#     IndexOffsetQuadtreeCursor, MultiTreeWrapper,
+#     KnownFullSphereExtentWrapper
 #
-# For Tier 1 we stub this path with a clear error and ship the LatLon and
-# CubedSphere paths, which cover the immediate ERA5 → C* preprocessing
-# use case. N320-scale reduced Gaussian sources will be addressed in a
-# dedicated follow-up.
+# Cell index convention:
+#   Cells are flattened ring-by-ring south→north, west→east within
+#   each ring, starting at longitude 0° with uniform spacing
+#   Δlon = 360° / nlon. This matches ReducedGaussianMesh's own
+#   `cell_index(mesh, i, j) = ring_offsets[j] + i - 1`.
+#
+# Corner-point construction:
+#   For ring j with nlon cells:
+#     - Longitude face edges: lon_k = (k-1) * 360/nlon for k = 1:nlon+1
+#       (first face at 0°, last at 360° — numerically equal as
+#       UnitSphericalPoint to ~1e-15)
+#     - Latitude face edges: lat_faces[j] (south), lat_faces[j+1] (north)
+#     - Corner matrix pts[k, ℓ] where k = 1:nlon+1 (lon faces),
+#       ℓ = 1 (south lat) or 2 (north lat)
+#     - All corners are UnitSphericalPoint via GO.UnitSphereFromGeographic()
+#   CellBasedGrid.getcell(grid, i, 1) builds the polygon:
+#     pts[i,1] (SW) → pts[i+1,1] (SE) → pts[i+1,2] (NE) → pts[i,2] (NW)
+#   Winding: counter-clockwise when viewed from outside the sphere. ✓
 # ---------------------------------------------------------------------------
 
-function Trees.treeify(::GOCore.Spherical, ::ReducedGaussianMesh)
-    error("""
-    Trees.treeify(::Spherical, ::ReducedGaussianMesh) is not yet implemented.
+"""
+    Trees.treeify(::Spherical, mesh::ReducedGaussianMesh) -> KnownFullSphereExtentWrapper{MultiTreeWrapper}
 
-    Tier 1 implementation (LatLonMesh + CubedSphereMesh) ships without this
-    path because CR.jl's dual DFS on a spherical manifold requires
-    per-cell `SphericalCap` extents, and `FlatNoTree` over polygons with
-    UnitSphericalPoint vertices falls back to planar (X, Y, Z) `Extent`s
-    that trip the intersection check.
+Build a spatial tree for a `ReducedGaussianMesh` by treating each latitude
+ring as an independent `CellBasedGrid{Spherical}` and combining all rings
+into a `MultiTreeWrapper`.
 
-    Workaround for ERA5 until this is implemented: regrid ERA5 reduced
-    Gaussian → ERA5 regular LatLon upstream in the preprocessing pipeline,
-    then use `build_regridder(::LatLonMesh, ::CubedSphereMesh)`.
+Each ring `j` (south to north) becomes a `(nlon+1, 2)` corner-point grid
+wrapped in an `IndexOffsetQuadtreeCursor` with offset `ring_offsets[j] - 1`,
+so that the cursor's global cell indices match the mesh's flat cell indexing:
 
-    See /home/cfranken/.claude/plans/luminous-prancing-firefly.md for the
-    planned follow-up.
-    """)
+    global_cell_index = ring_offsets[j] + in_ring_index - 1
+
+The resulting tree correctly produces `SphericalCap` extents at every level
+(via `CellBasedGrid{Spherical}`'s specialized `cell_range_extent`) and
+provides O(log nlon) pruning within each ring via the cursor's recursive
+subdivision.
+
+## Longitude convention
+
+Within each ring, the `nlon` cells span `[0°, 360°)` uniformly:
+- Cell `i` covers longitude `[(i-1) × 360/nlon, i × 360/nlon]`
+- Cell centers are at `(i - 0.5) × 360/nlon` (matching
+  `ReducedGaussianMesh.ring_longitudes`)
+
+## Latitude convention
+
+Ring boundaries come from `mesh.lat_faces` (south to north, with
+`lat_faces[1] = -90°` and `lat_faces[end] = +90°`).
+"""
+function Trees.treeify(manifold::GOCore.Spherical, mesh::ReducedGaussianMesh)
+    to_sphere = GO.UnitSphereFromGeographic()
+    nr = nrings(mesh)
+
+    ring_trees = map(1:nr) do j
+        nlon = mesh.nlon_per_ring[j]
+        dlon = 360.0 / nlon
+        φ_s  = Float64(mesh.lat_faces[j])
+        φ_n  = Float64(mesh.lat_faces[j + 1])
+
+        # Epsilon-clamp polar latitudes to avoid degenerate polygons.
+        #
+        # At exactly ±90°, all longitude face edges map to the same
+        # UnitSphericalPoint (the pole). This makes the polygon a
+        # degenerate quadrilateral (two vertices coincide), and
+        # GO.area(Spherical(), polygon) can underestimate the area by
+        # up to ~6% for large polar cells. Clamping by ε = 0.001°
+        # (~111 m at the pole) creates a tiny but non-degenerate
+        # quadrilateral. The omitted polar cap area is
+        # π × (R × ε_rad)² ≈ 4e4 m² — negligible relative to the
+        # full sphere (5.1e14 m²), ratio ~8e-11.
+        φ_s = max(φ_s, -90.0 + 0.001)
+        φ_n = min(φ_n,  90.0 - 0.001)
+
+        # Build (nlon+1) × 2 corner-point matrix.
+        # Dimension 1: longitude face edges (0° to 360° inclusive).
+        # Dimension 2: latitude face edges (south=1, north=2).
+        pts = Matrix{UnitSphericalPoint{Float64}}(undef, nlon + 1, 2)
+        @inbounds for k in 1:(nlon + 1)
+            lon = (k - 1) * dlon
+            pts[k, 1] = to_sphere((lon, φ_s))
+            pts[k, 2] = to_sphere((lon, φ_n))
+        end
+
+        ring_grid = Trees.CellBasedGrid(manifold, pts)
+        # IndexOffsetQuadtreeCursor maps local index → global:
+        #   global = local + offset, where offset = ring_offsets[j] - 1
+        Trees.IndexOffsetQuadtreeCursor(ring_grid, mesh.ring_offsets[j] - 1)
+    end
+
+    # Cumulative cell counts for MultiTreeWrapper's searchsortedfirst.
+    # offsets[j] = total cells in rings 1:j = ring_offsets[j+1] - 1.
+    offsets = [mesh.ring_offsets[j + 1] - 1 for j in 1:nr]
+
+    tree = Trees.MultiTreeWrapper(ring_trees, offsets)
+    return Trees.KnownFullSphereExtentWrapper(tree)
 end
 
 Trees.treeify(mesh::ReducedGaussianMesh) = Trees.treeify(GOCore.best_manifold(mesh), mesh)

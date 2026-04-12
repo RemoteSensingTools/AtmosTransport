@@ -16,21 +16,71 @@ end
 """
     balance_mass_fluxes!(am, bm, dm_dt)
 
-TM5-style Poisson mass flux balance (grid_type_ll.F90:2536-2653, r1112).
-Adjusts am/bm so that horizontal convergence exactly matches the prescribed
-mass tendency dm_dt at every cell and level.
+TM5-style Poisson mass-flux balance (TM5 r1112 grid_type_ll.F90:2536-2653).
+
+Adjusts `am` and `bm` in-place so that the discrete horizontal convergence
+at each cell `(i, j)` matches the prescribed mass tendency `dm_dt`:
+
+    (am[i] − am[i+1]) + (bm[j] − bm[j+1])  =  dm_dt[i, j]     ∀ (i, j)
+
+The correction is a streamfunction `ψ` found by solving the 2D discrete
+Poisson equation `∇²ψ = residual` on the periodic lat-lon grid via FFT.
+
+## Algorithm
+
+For each level `k`:
+
+1. Compute the residual: `r[i, j] = convergence[i, j] − dm_dt[i, j]`.
+2. Forward FFT: `R̂ = FFT(r)`.
+3. Divide by the discrete Laplacian eigenvalues:
+   `fac[i, j] = 2 (cos(2π(i−1)/Nx) + cos(2π(j−1)/Ny) − 2)`
+   which are the eigenvalues of the 2D circulant Laplacian with periodic
+   BCs in both lon and lat. The (1,1) mode (global mean) is set to 1
+   to avoid division by zero (constant null space).
+4. Inverse FFT: `ψ = real(IFFT(R̂ / fac))`.
+5. Apply flux correction from the gradient of ψ:
+   `am[i, j] += ψ[i] − ψ[i−1]` (zonal)
+   `bm[i, j] += ψ[j] − ψ[j−1]` (meridional)
+   with periodic wrapping in both directions.
+
+After this, the horizontal convergence at each cell equals `dm_dt` to
+machine precision (~1e-2 kg residual at F64). The residual is the
+GLOBAL mean of `r`, which cannot be corrected by divergence-free
+adjustments — it's absorbed by the downstream `cm` cumsum. See
+CLAUDE.md invariant #13 for the full discussion.
+
+## The dm_dt target
+
+The target is computed by `fill_window_mass_tendency!` as:
+
+    dm_dt[i, j, k] = (m_next − m_cur)[i, j, k] / (2 × steps_per_window)
+
+The factor of 2 is because the Strang splitting applies horizontal
+fluxes twice per full step (forward X-Y-Z + reverse Z-Y-X), so the
+per-application mass tendency is half the total window tendency. This
+is TM5's `poisson_balance_target_scale`.
+
+## Latitude BC note
+
+The FFT solver assumes periodicity in BOTH lon and lat. The lat wrap
+(south pole ↔ north pole) is unphysical but harmless because the
+pole-row fluxes are forced to zero immediately after the balance pass
+(see `apply_structured_pole_constraints!` in binary_pipeline.jl).
 """
 function balance_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
                               dm_dt::Array{FT, 3}) where FT
-    Nx = size(am, 1) - 1
-    Ny = size(bm, 2) - 1
-    Nz = size(am, 3)
+    Nx = size(am, 1) - 1   # number of longitude cells
+    Ny = size(bm, 2) - 1   # number of latitude cells
+    Nz = size(am, 3)        # number of vertical levels
 
+    # Eigenvalues of the 2D discrete Laplacian on an (Nx × Ny) periodic grid.
+    # fac[i, j] = 2(cos(2π(i-1)/Nx) + cos(2π(j-1)/Ny) - 2)
+    # fac[1, 1] = 0 for the (0,0) mode (mean); set to 1 to avoid ÷0.
     fac = Array{Float64}(undef, Nx, Ny)
     @inbounds for j in 1:Ny, i in 1:Nx
         fac[i, j] = 2.0 * (cos(2π * (i - 1) / Nx) + cos(2π * (j - 1) / Ny) - 2.0)
     end
-    fac[1, 1] = 1.0
+    fac[1, 1] = 1.0   # null-space mode — div by 1 then zero explicitly below
 
     psi = Array{Float64}(undef, Nx, Ny)
     residual = Array{Float64}(undef, Nx, Ny)
@@ -38,6 +88,9 @@ function balance_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
     max_residual = 0.0
 
     for k in 1:Nz
+        # Residual = horizontal convergence − target mass tendency.
+        # convergence = (am_west − am_east) + (bm_south − bm_north)
+        # (positive convergence = mass accumulating in cell).
         @inbounds for j in 1:Ny, i in 1:Nx
             conv = (Float64(am[i, j, k]) - Float64(am[i + 1, j, k])) +
                    (Float64(bm[i, j, k]) - Float64(bm[i, j + 1, k]))
@@ -46,27 +99,30 @@ function balance_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
 
         max_res_k = maximum(abs, residual)
         max_residual = max(max_residual, max_res_k)
-        max_res_k < 1e-10 && continue
+        max_res_k < 1e-10 && continue  # already balanced at this level
 
+        # Solve ∇²ψ = residual via FFT division by the Laplacian eigenvalues.
         A = fft(complex.(residual))
         @inbounds for j in 1:Ny, i in 1:Nx
-            A[i, j] /= fac[i, j]
+            A[i, j] /= fac[i, j]    # ψ̂ = R̂ / eigenvalue
         end
-        A[1, 1] = 0.0 + 0.0im
-        psi .= real.(ifft(A))
+        A[1, 1] = 0.0 + 0.0im       # zero out the (0,0) mode (global mean)
+        psi .= real.(ifft(A))        # streamfunction in physical space
 
+        # Apply zonal flux correction: am[i] += ψ[i] − ψ[i−1] (periodic).
         @inbounds for j in 1:Ny
-            u_wrap = psi[1, j] - psi[Nx, j]
+            u_wrap = psi[1, j] - psi[Nx, j]  # periodic wrap contribution
             for i in 2:Nx
                 du = (psi[i, j] - psi[i - 1, j]) - u_wrap
                 am[i, j, k] += FT(du)
             end
-            am[1, j, k] += FT(0)
-            am[Nx + 1, j, k] += FT(0)
+            am[1, j, k] += FT(0)          # boundary faces: correction wraps
+            am[Nx + 1, j, k] += FT(0)     # (already exact via periodicity)
         end
 
+        # Apply meridional flux correction: bm[j] += ψ[j] − ψ[j−1] (periodic lat wrap).
         @inbounds for i in 1:Nx
-            v_wrap = psi[i, 1] - psi[i, Ny]
+            v_wrap = psi[i, 1] - psi[i, Ny]  # periodic wrap contribution
             for j in 2:Ny
                 dv = (psi[i, j] - psi[i, j - 1]) - v_wrap
                 bm[i, j, k] += FT(dv)

@@ -24,6 +24,12 @@ const HEADER_SIZE = 16384
     return steps
 end
 
+# The Poisson balance target is the forward-window mass difference divided
+# by `2 × steps_per_window`. The factor of 2 comes from the Strang splitting:
+# each full time step applies horizontal fluxes TWICE (once in the forward
+# sweep X-Y-Z and once in the reverse Z-Y-X), so the per-application
+# mass tendency is half the total tendency. This matches TM5 r1112's
+# `poisson_balance_target_scale` in grid_type_ll.F90.
 @inline poisson_balance_target_scale(steps_per_window::Integer, ::Type{FT}=Float64) where FT =
     FT(inv(2 * max(Int(steps_per_window), 1)))
 

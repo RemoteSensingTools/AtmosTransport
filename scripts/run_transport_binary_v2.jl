@@ -9,6 +9,9 @@ using Adapt
 include(joinpath(@__DIR__, "..", "src_v2", "AtmosTransportV2.jl"))
 using .AtmosTransportV2
 
+# Wrap longitude to [0, 360) for periodic bilinear interpolation.
+# NOTE: the source arrays (Catrine, GridFED) may be in [-180, 180)
+# convention; this wraps both to a common [0, 360) before looking up.
 @inline wrapped_longitude_distance(lon, lon0) = abs(mod(lon - lon0 + 180, 360) - 180)
 @inline wrapped_longitude_360(lon) = mod(lon, 360)
 
@@ -19,6 +22,26 @@ using .AtmosTransportV2
 
 const SECONDS_PER_MONTH = 365.25 * 86400 / 12
 
+"""
+    FileInitialConditionSource{FT}
+
+Container for a file-based initial condition (e.g. Catrine startCO2).
+
+# Fields
+- `raw`            — 3D mixing ratio field `(nlon_src, nlat_src, nlevel_src)`.
+                     Level ordering follows the source file (Catrine: k=1 is
+                     SURFACE, k=end is TOA — verify via `ap[1]+bp[1]*ps ≈ ps`).
+- `lon`, `lat`     — source coordinate vectors [degrees]. May be in [-180,180)
+                     or [0,360); the bilinear sampler wraps to [0,360)
+                     internally via `wrapped_longitude_360`.
+- `ap`, `bp`       — hybrid half-level coefficients `(nlevel_src + 1)`:
+                     `p_half[k] = ap[k] + bp[k] × ps_src`. Units: `ap` [Pa],
+                     `bp` [dimensionless].
+- `psurf`          — surface pressure `(nlon_src, nlat_src)` [Pa].
+- `needs_vinterp`  — `true` if source levels ≠ target levels (triggers
+                     log-pressure vertical interpolation in
+                     `_interpolate_log_pressure_profile!`).
+"""
 struct FileInitialConditionSource{FT}
     raw           :: Array{FT, 3}
     lon           :: Vector{Float64}
@@ -49,6 +72,16 @@ function _ic_find_coord(ds, candidates::Vector{String})
     return nothing
 end
 
+"""
+    _bilinear_bracket(val, arr) -> (lo, w)
+
+Find the 1-based bracket index `lo` and fractional weight `w ∈ [0, 1]`
+such that `val ≈ arr[lo] + w × (arr[lo+1] − arr[lo])`. Uses binary
+search on a **strictly increasing, non-periodic** array (e.g. latitude).
+
+Clamps: if `val ≤ arr[1]`, returns `(1, 0.0)` (extrapolate to first value).
+If `val ≥ arr[end]`, returns `(N, 0.0)` (extrapolate to last value).
+"""
 function _bilinear_bracket(val::Float64, arr::Vector{Float64})
     N = length(arr)
     N == 1 && return (1, 0.0)
@@ -68,22 +101,51 @@ function _bilinear_bracket(val::Float64, arr::Vector{Float64})
     return lo, w
 end
 
+"""
+    _periodic_bilinear_bracket(val, arr) -> (ilo, w)
+
+Periodic (longitude) version of `_bilinear_bracket`. `arr` must be
+strictly increasing with uniform spacing `Δ = arr[2] − arr[1]` over a
+360° domain (e.g. `[-179.5, -178.5, ..., 179.5]` or `[0.5, 1.5, ..., 359.5]`).
+
+Returns 1-based index `ilo` and fractional weight `w` for the bracket
+surrounding `mod(val − arr[1], 360)` in the periodic domain. Wraps both
+`val` and the index modulo `length(arr)`.
+
+The caller should also compute `ihi = (ilo == N) ? 1 : ilo + 1` for the
+upper bracket (periodic wrap at the last cell).
+"""
 function _periodic_bilinear_bracket(val::Float64, arr::Vector{Float64})
     N = length(arr)
     N == 1 && return (1, 0.0)
-    Δ = arr[2] - arr[1]
+    Δ = arr[2] - arr[1]   # assumed uniform spacing [degrees]
     Δ > 0 || throw(ArgumentError("longitude coordinate must be strictly increasing"))
-    u = mod(val - arr[1], 360.0) / Δ
+    u = mod(val - arr[1], 360.0) / Δ   # fractional index into the periodic domain
     ilo0 = floor(Int, u)
-    return mod1(ilo0 + 1, N), u - ilo0
+    return mod1(ilo0 + 1, N), u - ilo0  # (1-indexed, fractional weight)
 end
 
+"""
+    _horizontal_interp_weights(lon, lat, lon_src, lat_src)
+
+Compute bilinear interpolation indices and weights for a target point
+`(lon, lat)` on source arrays with coordinates `lon_src` [degrees, periodic]
+and `lat_src` [degrees, non-periodic clamped].
+
+Returns `(ilo, ihi, jlo, jhi, w00, w10, w01, w11)` where `w00` through
+`w11` are the four bilinear weights for cells `(ilo, jlo)`, `(ihi, jlo)`,
+`(ilo, jhi)`, `(ihi, jhi)` respectively.
+
+**Longitude convention**: `lon` is first wrapped to [0, 360) via
+`wrapped_longitude_360` before the periodic bracket. This handles both
+`[-180, 180)` and `[0, 360)` input conventions transparently.
+"""
 function _horizontal_interp_weights(lon::Real, lat::Real, lon_src::Vector{Float64}, lat_src::Vector{Float64})
-    lon_m = wrapped_longitude_360(Float64(lon))
+    lon_m = wrapped_longitude_360(Float64(lon))  # → [0, 360)
     ilo, wx = _periodic_bilinear_bracket(lon_m, lon_src)
-    ihi = ilo == length(lon_src) ? 1 : ilo + 1
+    ihi = ilo == length(lon_src) ? 1 : ilo + 1   # periodic wrap at last cell
     jlo, wy = _bilinear_bracket(Float64(lat), lat_src)
-    jhi = min(jlo + 1, length(lat_src))
+    jhi = min(jlo + 1, length(lat_src))           # clamp at poles (no wrap)
     w00 = (1.0 - wx) * (1.0 - wy)
     w10 = wx * (1.0 - wy)
     w01 = (1.0 - wx) * wy

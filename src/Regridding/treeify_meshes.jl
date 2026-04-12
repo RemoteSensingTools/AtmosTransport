@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Trees.treeify methods for v2 mesh types
+# Trees.treeify methods for mesh types
 #
 # Each mesh type is converted into a ConservativeRegridding spatial tree that
 # implements the SpatialTreeInterface. The tree is consumed by CR.jl's dual
@@ -109,7 +109,7 @@ Trees.treeify(mesh::LatLonMesh) = Trees.treeify(GOCore.best_manifold(mesh), mesh
 # ---------------------------------------------------------------------------
 # CubedSphereMesh → CubedSphereToplevelTree of 6 CellBasedGrids
 #
-# v2 CubedSphereMesh does not store face-corner coordinates; we regenerate
+# CubedSphereMesh does not store face-corner coordinates; we regenerate
 # them from the analytical gnomonic projection. Panel index remapping between
 # conventions is handled by _gnomonic_panel_id.
 # ---------------------------------------------------------------------------
@@ -157,7 +157,7 @@ mapping places polygons at the right physical location but assumes gnomonic
 (i, j) ordering within each panel. Real GEOS-FP binary data uses the rotated
 (i, j) ordering, and for bit-exact parity with production binaries this
 function must be paired with a per-panel (i, j) rotation. TODO when GMAO
-coordinate loading is ported to v2.
+coordinate loading is ported .
 """
 @inline function _gnomonic_panel_id(::GnomonicPanelConvention, p::Int)
     return p
@@ -248,7 +248,7 @@ local-axis rotation relative to the gnomonic `(ξ, η)` parameterization.
 The current implementation places polygons at the correct physical
 location but uses gnomonic `(i, j)` ordering within each panel. For
 bit-exact parity with production GEOS-FP panel data, GMAO coordinate
-loading must be ported to v2 and the per-panel `(i, j)` rotation applied.
+loading must be ported and the per-panel `(i, j)` rotation applied.
 """
 function Trees.treeify(manifold::GOCore.Spherical, mesh::CubedSphereMesh)
     corners = cubed_sphere_face_corners(mesh)

@@ -1,6 +1,6 @@
 #!/usr/bin/env julia
 """
-Validation tests for the v2 dry-mass face-flux transport architecture.
+Validation tests for dry-mass face-flux transport architecture.
 
 Tests:
 1. Module loading and type construction
@@ -15,7 +15,7 @@ Tests:
 
 using Test
 
-# Load v2 module
+# Load module
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 using .AtmosTransport: Grids, State, Operators, MetDrivers
@@ -26,7 +26,7 @@ include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 # =========================================================================
 # Test 1: Module loading and type construction
 # =========================================================================
-@testset "v2 module loading" begin
+@testset "module loading" begin
     @test isdefined(AtmosTransport, :LatLonMesh)
     @test isdefined(AtmosTransport, :CellState)
     @test isdefined(AtmosTransport, :AbstractFaceFluxState)
@@ -292,7 +292,7 @@ function make_test_grid(; Nx=60, Ny=30, Nz=4, FT=Float64)
     B_proper = FT[0.0, 0.0,   0.1,    0.5,     1.0]
     vc = HybridSigmaPressure(A_proper, B_proper)
 
-    # Use a simple CPU() arch. Since v2 doesn't re-export src/ Architectures,
+    # Use a simple CPU() arch. Since the module doesn't re-export legacy Architectures,
     # we create a minimal stand-in.
     grid = AtmosGrid(mesh, vc, AtmosTransport.Grids.CPU();
                      FT=FT, radius=FT(6.371e6), gravity=FT(9.80665))
@@ -721,4 +721,4 @@ end
     @test isdefined(AtmosTransport, :AdvectionWorkspace)
 end
 
-println("\n✓ All v2 dry-flux interface tests passed!")
+println("\n✓ All dry-flux interface tests passed!")

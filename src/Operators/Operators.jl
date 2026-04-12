@@ -1,5 +1,5 @@
 """
-    Operators (v2)
+    Operators
 
 Physics operators for the basis-explicit transport architecture.
 

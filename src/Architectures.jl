@@ -1,5 +1,5 @@
 """
-    Architectures (v2)
+    Architectures
 
 Standalone architecture layer for `src`, following the same Oceananigans-style
 pattern as the production runtime without depending on `src/AtmosTransport.jl`.

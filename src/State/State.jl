@@ -1,5 +1,5 @@
 """
-    State (v2)
+    State
 
 Prognostic and diagnostic state containers for the basis-explicit transport architecture.
 

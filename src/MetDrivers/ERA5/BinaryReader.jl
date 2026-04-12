@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------------------
 # ERA5BinaryReader — mmap-based reader for lat-lon mass-flux binary files
 #
-# Reads preprocessed ERA5 mass-flux binaries (v1–v5 format) into v2 types.
+# Reads preprocessed ERA5 mass-flux binaries (v1–v5 format) into types.
 #
 # The format stores a padded JSON header followed by contiguous per-window
 # payload blocks. See docs/BINARY_FORMAT_V5.md for the full specification.

@@ -1,6 +1,6 @@
 #!/usr/bin/env julia
 """
-End-to-end test for the ERA5 LatLon v2 path.
+End-to-end test for the ERA5 LatLon path.
 
 Tests the full chain:
   disk → ERA5BinaryReader → moist flux state → build_dry_fluxes!
@@ -591,4 +591,4 @@ end
     close(reader)
 end
 
-println("\n✓ All ERA5 LatLon end-to-end v2 tests passed!")
+println("\n✓ All ERA5 LatLon end-to-end tests passed!")

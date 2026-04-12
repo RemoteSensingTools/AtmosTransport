@@ -1,5 +1,5 @@
 """
-    MetDrivers (v2)
+    MetDrivers
 
 Meteorological data adapters for the basis-explicit transport architecture.
 

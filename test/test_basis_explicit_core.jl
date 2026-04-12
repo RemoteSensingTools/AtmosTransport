@@ -52,7 +52,7 @@ end
     @test_throws MethodError apply!(state_dry, flux_moist, grid, FirstOrderUpwindAdvection(), 1800.0; workspace=ws)
 end
 
-@testset "Standalone src runtime smoke test" begin
+@testset "Standalone runtime smoke test" begin
     FT = Float64
     Nx, Ny, Nz = 4, 3, 2
     mesh = LatLonMesh(; Nx=Nx, Ny=Ny, FT=FT)

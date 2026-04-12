@@ -1,5 +1,5 @@
 """
-    Grids (v2)
+    Grids
 
 Geometry layer for the dry-mass transport architecture.
 

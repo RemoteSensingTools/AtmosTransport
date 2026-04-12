@@ -2,7 +2,7 @@
 # ---------------------------------------------------------------------------
 # Step 2: Real moist→dry conversion using QV from ERA5 thermo NetCDF
 #
-# Tests the full v2 dry-flux pipeline:
+# Tests the full dry-flux pipeline:
 #   1. Load moist binary (m, am, bm, ps) at merged 34 levels
 #   2. Load specific humidity (q) from thermo NetCDF at native 137 levels
 #   3. Mass-weighted remap QV 137→34 using dp-weighting and the embedded merge_map

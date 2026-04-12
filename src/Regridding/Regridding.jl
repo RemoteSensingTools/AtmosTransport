@@ -1,7 +1,7 @@
 """
     Regridding (src)
 
-Offline conservative regridding between v2 mesh types, built on
+Offline conservative regridding between mesh types, built on
 [ConservativeRegridding.jl](https://github.com/JuliaGeo/ConservativeRegridding.jl).
 
 Designed for the preprocessing stage: build a sparse weights matrix once per
@@ -48,7 +48,7 @@ required by CR.jl's spherical dual-DFS intersection search.
 - `CubedSphereMesh` uses the **analytical gnomonic** projection from
   `src/Grids/CubedSphereMesh.jl`. Real GEOS-FP native cubed-sphere data
   has panel-4/5 axis rotations and small (~1–2°) corner offsets relative to
-  the gnomonic projection; GMAO coordinate loading must be ported to v2 for
+  the gnomonic projection; GMAO coordinate loading must be ported for
   bit-exact parity with production GEOS-FP binaries.
 - `ReducedGaussianMesh` clamps polar face latitudes by 0.001° to avoid
   degenerate polygons at the poles. The omitted cap area is ~8e-11 of the

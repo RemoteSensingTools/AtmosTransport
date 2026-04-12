@@ -1,5 +1,5 @@
 """
-    Advection (v2)
+    Advection
 
 Advection operators for the basis-explicit transport architecture.
 

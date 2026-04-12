@@ -1,5 +1,5 @@
 """
-    Models (v2)
+    Models
 
 Minimal standalone runtime layer for `src`.
 """

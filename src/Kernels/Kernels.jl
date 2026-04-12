@@ -1,5 +1,5 @@
 """
-    Kernels (v2)
+    Kernels
 
 KernelAbstractions kernel patterns organized by dependency structure.
 

@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# PPM (Piecewise Parabolic Method) advection — v2 interface stub
+# PPM (Piecewise Parabolic Method) advection — interface stub
 #
 # This file keeps the legacy `PPMAdvection` wrapper as an explicit stub while
 # the new `PPMScheme` path matures. Structured generic kernels live in

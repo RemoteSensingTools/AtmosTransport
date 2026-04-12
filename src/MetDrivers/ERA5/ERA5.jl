@@ -1,5 +1,5 @@
 """
-    ERA5 met driver (v2)
+    ERA5 met driver
 
 ERA5-specific dry flux building from spectral, gridded, and native-GRIB fields.
 """

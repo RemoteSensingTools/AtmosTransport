@@ -1,5 +1,5 @@
 """
-    Parameters (v2)
+    Parameters
 
 Small immutable parameter objects shared across the generic transport core.
 """

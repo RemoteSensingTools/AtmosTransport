@@ -97,14 +97,35 @@ function _ring_offsets(nlon_per_ring::AbstractVector{Int})
     return ring_offsets
 end
 
+"""
+    _boundary_counts(nlon_per_ring) -> Vector{Int}
+
+Compute the number of meridional-face segments on each latitude boundary.
+
+Between ring `j` (nlon_j cells) and ring `j+1` (nlon_{j+1} cells), the
+shared boundary is divided into `lcm(nlon_j, nlon_{j+1})` segments so
+that each segment aligns with exactly one cell on each ring. This
+ensures conservative face-based flux accumulation: each cell on ring `j`
+contributes `lcm/nlon_j` boundary segments, and each cell on ring `j+1`
+contributes `lcm/nlon_{j+1}` segments.
+
+Boundary 1 (south pole cap) and boundary `nr+1` (north pole cap) each
+have `nlon_per_ring[1]` and `nlon_per_ring[end]` segments respectively
+(one per cell on the pole-adjacent ring; the other side is the pole
+singularity, represented by face_left=0 or face_right=0).
+
+**Performance note**: for octahedral grids (nlon = 4k+16), adjacent
+rings can have large LCMs (e.g. lcm(108, 112) = 3024), leading to
+high face counts. This is correct but expensive for runtime solvers.
+"""
 function _boundary_counts(nlon_per_ring::AbstractVector{Int})
     nr = length(nlon_per_ring)
     boundary_counts = Vector{Int}(undef, nr + 1)
-    boundary_counts[1] = nlon_per_ring[1]
+    boundary_counts[1] = nlon_per_ring[1]       # south pole cap: one segment per cell on ring 1
     for j in 1:nr-1
         boundary_counts[j + 1] = lcm(nlon_per_ring[j], nlon_per_ring[j + 1])
     end
-    boundary_counts[end] = nlon_per_ring[end]
+    boundary_counts[end] = nlon_per_ring[end]   # north pole cap: one segment per cell on last ring
 
     return boundary_counts
 end
@@ -181,10 +202,21 @@ end
     return m.nlon_per_ring[_check_ring_index(m, j)]
 end
 
+"""
+    ring_longitudes(m, j) -> Vector{FT}
+
+Return the cell-center longitudes for ring `j`, in [0°, 360°) convention
+with half-cell offset: `lon[i] = (i − 0.5) × (360° / nlon)`.
+
+For `nlon = 96`: `[1.875, 5.625, ..., 358.125]`.
+
+This convention matches the spectral synthesis `spectral_to_ring!` which
+uses `lon_shift_rad = π / nlon` to place FFT output at cell centers.
+"""
 function ring_longitudes(m::ReducedGaussianMesh{FT}, j::Integer) where FT
     nlon = ring_cell_count(m, j)
     dlon = FT(360 / nlon)
-    return FT[(i - FT(0.5)) * dlon for i in 1:nlon]
+    return FT[(i - FT(0.5)) * dlon for i in 1:nlon]  # cell centers in [0, 360)
 end
 
 @inline function boundary_face_count(m::ReducedGaussianMesh, b::Integer)
@@ -253,30 +285,65 @@ function face_normal(m::ReducedGaussianMesh{FT}, f::Integer) where FT
     return f <= m._ncells ? (one(FT), zero(FT)) : (zero(FT), one(FT))
 end
 
+"""
+    face_cells(m, f) -> (left, right)
+
+Return the two cell indices adjacent to face `f`. For the face-indexed
+transport operator, flux through face `f` goes from `left` to `right`
+(positive flux = transfer from left to right).
+
+## Face types
+
+Faces `1..ncells` are **zonal (X) faces** within each ring:
+- Face `f` sits between the western cell `left_i = i-1` (periodic wrap)
+  and the eastern cell `right_i = i` in the same ring `j`.
+- These faces are always interior (both indices > 0).
+
+Faces `ncells+1..nfaces` are **meridional (Y) boundary faces** between
+adjacent latitude rings (or at the poles):
+
+- **South pole cap** (boundary 1): `left = 0` (pole singularity),
+  `right = cell on ring 1`. A face_left=0 tells the transport kernel
+  to treat this as a boundary — no flux accumulation on the left side.
+- **North pole cap** (boundary `nrings+1`): `left = cell on last ring`,
+  `right = 0` (pole singularity).
+- **Interior boundaries** (boundary `b`, between ring `b-1` and ring `b`):
+  the boundary has `lcm(nlon[b-1], nlon[b])` segments. Segment `seg`
+  maps to cell `south_i` in ring `b-1` and cell `north_i` in ring `b`
+  via integer division: `cell_i = ((seg-1) × nlon_ring) ÷ nseg + 1`.
+  This distributes boundary segments evenly among cells.
+"""
 function face_cells(m::ReducedGaussianMesh, f::Integer)
     _check_face_index(m, f)
     nr = nrings(m)
 
+    # Zonal (X) faces: f ∈ 1..ncells — between left and right cells in same ring
     if f <= m._ncells
         j = _block_index(m.ring_offsets, f)
         i = f - m.ring_offsets[j] + 1
         nlon = m.nlon_per_ring[j]
-        left_i = i == 1 ? nlon : i - 1
+        left_i = i == 1 ? nlon : i - 1   # periodic wrap within ring
         return cell_index(m, left_i, j), cell_index(m, i, j)
     end
 
+    # Meridional (Y) boundary faces: between adjacent rings or at poles
     yf = f - m._ncells
     b = _block_index(m.boundary_offsets, yf)
     seg = yf - m.boundary_offsets[b] + 1
 
     if b == 1
+        # South pole cap: left = 0 (pole singularity), right = cell on ring 1
         return 0, cell_index(m, seg, 1)
     elseif b == nr + 1
+        # North pole cap: left = cell on last ring, right = 0 (pole singularity)
         return cell_index(m, seg, nr), 0
     else
+        # Interior boundary between ring (b-1) and ring b:
+        # distribute `nseg = lcm(nlon[b-1], nlon[b])` segments across cells
         south_ring = b - 1
         north_ring = b
         nseg = m.boundary_counts[b]
+        # Integer division maps segment index to the owning cell on each ring
         south_i = ((seg - 1) * m.nlon_per_ring[south_ring]) ÷ nseg + 1
         north_i = ((seg - 1) * m.nlon_per_ring[north_ring]) ÷ nseg + 1
         return cell_index(m, south_i, south_ring), cell_index(m, north_i, north_ring)

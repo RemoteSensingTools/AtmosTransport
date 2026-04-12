@@ -12,6 +12,8 @@ binary_paths = [
 
 [architecture]
 use_gpu = false
+
+[numerics]
 float_type = "Float32"
 
 [run]

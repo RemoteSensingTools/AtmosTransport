@@ -22,7 +22,7 @@ function Adapt.adapt_structure(to, source::SurfaceFluxSource)
     return SurfaceFluxSource{typeof(cell_mass_rate)}(source.tracer_name, cell_mass_rate)
 end
 
-mutable struct DrivenSimulation{ModelT, DriverT, WindowT, AT, QT, FT, CB, SS}
+mutable struct DrivenSimulation{ModelT, DriverT, WindowT, AT, QT, FT, CB, SS, CT}
     model                 :: ModelT
     driver                :: DriverT
     window                :: WindowT
@@ -38,6 +38,7 @@ mutable struct DrivenSimulation{ModelT, DriverT, WindowT, AT, QT, FT, CB, SS}
     final_iteration       :: Int
     callbacks                   :: CB
     surface_sources             :: SS
+    chemistry                   :: CT
     initialize_air_mass         :: Bool
     use_midpoint_forcing        :: Bool
     reset_air_mass_each_window  :: Bool
@@ -191,6 +192,7 @@ Keyword arguments:
 - `reset_air_mass_each_window=true`
 - `interpolate_fluxes_within_window=nothing` (derive from driver)
 - `surface_sources=()`
+- `chemistry=NoChemistry()` — applied after advection + surface sources each step
 - `callbacks=NamedTuple()`
 """
 function DrivenSimulation(model::TransportModel,
@@ -202,6 +204,7 @@ function DrivenSimulation(model::TransportModel,
                           reset_air_mass_each_window::Bool = true,
                           interpolate_fluxes_within_window = nothing,
                           surface_sources = (),
+                          chemistry::AbstractChemistry = NoChemistry(),
                           callbacks = NamedTuple()) where {D <: AbstractMetDriver}
     1 <= start_window <= stop_window <= total_windows(driver) ||
         throw(ArgumentError("invalid window range: start_window=$(start_window), stop_window=$(stop_window), total_windows=$(total_windows(driver))"))
@@ -223,7 +226,7 @@ function DrivenSimulation(model::TransportModel,
     flux_interp = interpolate_fluxes_within_window === nothing ?
                   (flux_interpolation_mode(driver) === :interpolate) : Bool(interpolate_fluxes_within_window)
 
-    sim = DrivenSimulation{typeof(model), typeof(driver), typeof(window), typeof(expected_air_mass), typeof(qv_buffer), FT, typeof(callbacks), typeof(surface_sources_adapted)}(
+    sim = DrivenSimulation{typeof(model), typeof(driver), typeof(window), typeof(expected_air_mass), typeof(qv_buffer), FT, typeof(callbacks), typeof(surface_sources_adapted), typeof(chemistry)}(
         model,
         driver,
         window,
@@ -239,6 +242,7 @@ function DrivenSimulation(model::TransportModel,
         Int(nsteps_total),
         callbacks,
         surface_sources_adapted,
+        chemistry,
         initialize_air_mass,
         use_midpoint_forcing,
         reset_air_mass_each_window,
@@ -270,6 +274,7 @@ function step!(sim::DrivenSimulation)
 
     step!(sim.model, sim.Δt)
     _apply_surface_sources!(sim)
+    apply_chemistry!(sim.model.state.tracers, sim.chemistry, sim.Δt)
     sim.time += sim.Δt
     sim.iteration += 1
     for callback in values(sim.callbacks)

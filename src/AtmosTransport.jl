@@ -155,6 +155,10 @@ export AbstractLimiter, NoLimiter, MonotoneLimiter, PositivityLimiter
 export UpwindScheme, SlopesScheme, PPMScheme
 export reconstruction_order
 
+# Chemistry
+export AbstractChemistry, NoChemistry, RadioactiveDecay, CompositeChemistry
+export apply_chemistry!
+
 # Cubed-sphere advection
 export fill_panel_halos!, strang_split_cs!, CSAdvectionWorkspace
 
@@ -194,7 +198,8 @@ export CubedSphereBinaryReader, CubedSphereBinaryHeader
 export load_cs_window, cs_window_count
 
 # Models
-export TransportModel, Simulation, DrivenSimulation, step!, run!, run_window!
+export TransportModel, Simulation, DrivenSimulation, SurfaceFluxSource
+export step!, run!, run_window!
 export window_index, substep_index, current_qv
 
 # Offline regridding (preprocessing only)

@@ -22,6 +22,9 @@ include("AbstractOperators.jl")
 include("Advection/Advection.jl")
 using .Advection
 
+include("Chemistry/Chemistry.jl")
+using .Chemistry
+
 # Re-export legacy advection types
 export AbstractConstantReconstruction, AbstractLinearReconstruction, AbstractQuadraticReconstruction
 export UpwindAdvection, FirstOrderUpwindAdvection, RussellLernerAdvection, PPMAdvection, ppm_order
@@ -35,6 +38,10 @@ export AbstractConstantScheme, AbstractLinearScheme, AbstractQuadraticScheme
 export AbstractLimiter, NoLimiter, MonotoneLimiter, PositivityLimiter
 export UpwindScheme, SlopesScheme, PPMScheme
 export reconstruction_order
+
+# Chemistry
+export AbstractChemistry, NoChemistry, RadioactiveDecay, CompositeChemistry
+export apply_chemistry!
 
 # Cubed-sphere advection
 export fill_panel_halos!, strang_split_cs!, CSAdvectionWorkspace

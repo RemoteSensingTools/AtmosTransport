@@ -202,6 +202,12 @@ The output binary is drop-in compatible with `CubedSphereBinaryReader` and
 uses the gnomonic panel convention. The header tags
 `regrid_method="conservative_crjl"` for provenance.
 
+Both this conservative wrapper and the legacy bilinear wrapper
+`scripts/preprocessing/regrid_latlon_to_cs_binary_v2.jl` now route through the
+same stable transport-binary target interface documented in
+[`PREPROCESSING_PHILOSOPHY.md`](PREPROCESSING_PHILOSOPHY.md). The difference is
+the target kind and the regridding method recorded in the output header.
+
 ## Verification results
 
 All tests in `test_v2/regridding/runtests.jl` (564 tests, ~24 seconds):

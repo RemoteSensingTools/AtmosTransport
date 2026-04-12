@@ -2192,3 +2192,181 @@ fast — **8 ms for a full 24h at N24 on GPU**.
 
 ---
 
+### [CODEX] — 2026-04-12 09:05 UTC  [REVIEW COMPLETE: fixes landed for 3 regressions]
+
+Picked up the kernel review request after reading the last commits and this
+chat file. I found and fixed three concrete regressions in the recent
+advection changes:
+
+1. `RussellLerner.jl` zero-mass protection was incomplete in x/y:
+   the new `rm / max(m, eps)` floor prevented NaNs in the slope inputs,
+   but `_upwind_flux(...)` still received raw donor masses in x/y, so
+   a zero-mass donor still produced `flux_face / 0 -> Inf/NaN`.
+   Fixed by carrying floored donor masses through the x/y RL kernels,
+   including the reduced-grid clustered x branch.
+
+2. `1d96c24` `Int32 cluster_sizes` change broke clustered x sweeps:
+   `_cluster_sum` only accepted `r::Int`, so `r = cluster_sizes[j]`
+   (`Int32`) threw `MethodError` on the `r > 1` branch for both
+   `UpwindAdvection` and `RussellLernerAdvection`. Fixed by widening
+   `_cluster_sum` to accept `Integer` indices.
+
+3. The new GPU static-CFL paths ignored `max_n_sub` entirely:
+   CPU still threw past the cap, but GPU returned the raw
+   `ceil(max_cfl / cfl_limit)` with no guard. Fixed by restoring the
+   `max_n_sub` check in all static GPU helpers and adding the same
+   `isinf(cfl_limit) && return 1` fast path to structured x/y/z that
+   face-indexed already had.
+
+**Targeted verification**:
+- `test_v2/test_basis_explicit_core.jl` new regression blocks passed:
+  - clustered x sweeps with `cluster_sizes_cpu=Int32[2]`
+  - RL y-sweep stays finite with a zero-mass donor
+  - GPU static CFL now throws on `max_n_sub=4` instead of returning 10
+- The full file still stops later on a pre-existing unrelated failure in
+  "Honest metadata-only CubedSphere API": tests expect `ArgumentError`
+  but current behavior is `MethodError` for `cell_area(mesh, 1)` and
+  `face_cells(mesh, 1)`.
+
+Files touched:
+- `src_v2/Operators/Advection/RussellLerner.jl`
+- `src_v2/Operators/Advection/StrangSplitting.jl`
+- `test_v2/test_basis_explicit_core.jl`
+
+---
+
+### [CODEX] — 2026-04-12 09:42 UTC  [CS PREPROCESSOR: dispatch seam started]
+
+Picked up the "multiple dispatch style preprocessing" handoff and did the
+first minimal extraction around the CS conservative binary path.
+
+**What changed**:
+- Added `scripts/preprocessing/transport_binary_v2_dispatch.jl`
+  with a tiny generic runner:
+  - `AbstractTransportBinaryV2Target`
+  - `run_transport_binary_v2_preprocessor(target)`
+  - target-specific hooks for prepare / collect windows / header / write
+- Added `scripts/preprocessing/transport_binary_v2_cs_conservative.jl`
+  with the first concrete implementation:
+  - `CubedSphereConservativeTransportBinaryTarget`
+  - CS setup context/workspace structs
+  - methods for the current conservative LL -> CS workflow
+- Replaced `scripts/preprocessing/preprocess_era5_cs_conservative_v2.jl`
+  with a thin CLI wrapper that just:
+  1. parses args into the CS target
+  2. calls the generic runner
+
+**Intent**:
+- This is NOT a repo-wide preprocessing redesign yet.
+- It gives you a real dispatch seam to keep going from, without the old
+  500+ line `main()` owning every concern itself.
+- LL/RG scripts are unchanged for now.
+
+**Verification**:
+- Import/build smoke check passes:
+  `include("scripts/preprocessing/preprocess_era5_cs_conservative_v2.jl")`
+  then `build_transport_binary_v2_target(Val(:cubed_sphere_conservative), ...)`
+  returns the target cleanly.
+- Existing solver regression still passes:
+  `scripts/preprocessing/test_cs_global_poisson_balance.jl`
+  → 215/215 pass.
+
+**Where to continue next** if you pick this back up:
+1. Decide whether LL/RG wrappers should eventually implement the same
+   `AbstractTransportBinaryV2Target` interface or stay separate.
+2. If yes, factor shared header-writing / payload-writing pieces out of the
+   CS target so LL/RG can reuse them.
+3. If no, at least keep CS additions behind this target/context split and
+   avoid growing the wrapper script again.
+
+---
+
+### [CODEX] — 2026-04-12 10:28 UTC  [PREPROCESSING DOCS + STABLE API]
+
+Continued the dispatch-seam work and documented it as a stable in-repo
+transport-binary preprocessing API, without trying to rewrite the full
+legacy preprocessing stack.
+
+**What changed**:
+- Added `docs/PREPROCESSING_PHILOSOPHY.md` as the new preprocessing front
+  door:
+  - why preprocessing exists
+  - which preprocessing family to pick
+  - stable transport-binary API in one screen
+  - links to the deeper met/binary/regridding/emissions docs
+- Linked that anchor from:
+  - `docs/QUICKSTART.md`
+  - `docs/METEO_PREPROCESSING.md`
+  - `docs/ARCHITECTURE.md`
+- Hardened the stable API in
+  `scripts/preprocessing/transport_binary_v2_dispatch.jl`:
+  - public `build_transport_binary_v2_target(kind::Symbol, argv; FT=...)`
+  - `target_summary(target)` docstring + intent
+  - contributor hook docstrings for prepare / collect / header / write
+  - clear comment that `Val(...)` builders are internal dispatch, not the
+    primary user-facing surface
+- Documented the first concrete target in
+  `scripts/preprocessing/transport_binary_v2_cs_conservative.jl`:
+  - target type docstring
+  - builder docstring
+  - CLI and programmatic examples
+- Updated the CLI wrapper to use the stable symbol-based builder.
+
+**New targeted tests**:
+- Added `test_v2/test_transport_binary_v2_dispatch.jl`
+  covering:
+  - a tiny dummy target that exercises the documented hook contract
+  - the stable symbol-based builder smoke test
+  - a tiny end-to-end LL -> CS conservative conversion
+  - docs-link smoke checks for the new preprocessing anchor
+
+**Scope intentionally kept narrow**:
+- This does NOT yet migrate the LL or reduced-Gaussian preprocessors onto
+  the same target interface.
+- The new philosophy page is intentionally short; detailed science and
+  format notes still live in the existing deep-dive docs.
+
+---
+
+### [CODEX] — 2026-04-12 11:02 UTC  [SECOND CS TARGET: bilinear path migrated]
+
+Extended the stable transport-binary target seam to a second real
+implementation so the interface is no longer "CS conservative only".
+
+**What changed**:
+- Added `scripts/preprocessing/transport_binary_v2_cs_bilinear.jl`
+  with `CubedSphereBilinearTransportBinaryTarget` and the historical
+  bilinear LL -> CS path behind the same target hooks:
+  - bilinear cell-center interpolation
+  - per-panel FFT Poisson balancing
+  - continuity-based `cm` diagnosis
+  - CS binary header/payload writing
+- Replaced `scripts/preprocessing/regrid_latlon_to_cs_binary_v2.jl`
+  with a thin CLI wrapper that now calls:
+  `build_transport_binary_v2_target(:cubed_sphere_bilinear, ...)`
+- Tightened the generic dispatcher in
+  `transport_binary_v2_dispatch.jl` with an explicit `Val{kind}`
+  fallback, so unknown target kinds fail cleanly without the old
+  MethodError leakage.
+- Updated docs so the stable API now names both currently supported
+  binary-in / binary-out target kinds:
+  - `:cubed_sphere_bilinear`
+  - `:cubed_sphere_conservative`
+
+**New/expanded verification**:
+- `test_v2/test_transport_binary_v2_dispatch.jl` now covers:
+  - conservative builder + tiny e2e
+  - bilinear builder + tiny e2e
+  - docs anchor still linked correctly
+- Wrapper smoke check:
+  `include("scripts/preprocessing/regrid_latlon_to_cs_binary_v2.jl")`
+  then symbol-based builder construction works.
+
+**Why this was the next step**:
+- The stable target API is currently a binary-in / binary-out abstraction.
+- The bilinear LL -> CS regrid path fits that seam naturally.
+- The raw ERA5 LL / reduced-Gaussian day builders do NOT fit this seam
+  yet because they start from spectral GRIB + TOML configs rather than
+  an existing transport binary.
+
+---

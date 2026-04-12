@@ -3,6 +3,9 @@
 > **New users**: For step-by-step instructions on downloading data,
 > preprocessing, and running the model, see the Quick Start Guide
 > (`docs/QUICKSTART.md` in the repository root).
+> For the short overview of all preprocessing families and the stable
+> transport-binary API, start with
+> [`docs/PREPROCESSING_PHILOSOPHY.md`](PREPROCESSING_PHILOSOPHY.md).
 > This document is a deep-dive reference on met data formats, vertical
 > coordinates, and the TM5 comparison.
 

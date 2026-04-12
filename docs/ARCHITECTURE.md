@@ -1,5 +1,8 @@
 # AtmosTransport.jl — Architecture Guide
 
+For the preprocessing-layer overview and the stable transport-binary target
+API, start with [PREPROCESSING_PHILOSOPHY.md](PREPROCESSING_PHILOSOPHY.md).
+
 ## Design Philosophy
 
 AtmosTransport.jl follows the [Oceananigans.jl](https://github.com/CliMA/Oceananigans.jl)

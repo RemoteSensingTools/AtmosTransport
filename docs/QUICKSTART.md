@@ -3,6 +3,9 @@
 End-to-end instructions for running AtmosTransport: downloading
 meteorological data, preprocessing, configuring, and running simulations.
 
+For the high-level preprocessing map and the stable transport-binary API, see
+[PREPROCESSING_PHILOSOPHY.md](PREPROCESSING_PHILOSOPHY.md).
+
 For a deep dive into met data formats, vertical coordinates, and TM5
 comparison, see [METEO_PREPROCESSING.md](METEO_PREPROCESSING.md).
 
@@ -370,6 +373,9 @@ resume on restart.
 Preprocessing converts raw NetCDF files to flat binary format optimized for
 fast mmap-based loading. This is a one-time step per date range.
 
+Start here if you need to choose between preprocessing families:
+[PREPROCESSING_PHILOSOPHY.md](PREPROCESSING_PHILOSOPHY.md).
+
 ### ERA5: Spectral to Mass Fluxes (Recommended)
 
 Converts ERA5 spectral harmonic fields (vorticity, divergence, log surface
@@ -586,6 +592,8 @@ julia --threads=2 --project=. scripts/run.jl config/runs/era5_spectral_june2023.
 
 ## Further Reading
 
+- [PREPROCESSING_PHILOSOPHY.md](PREPROCESSING_PHILOSOPHY.md) — front door for
+  preprocessing paths and the stable transport-binary API
 - [EMISSION_REGRIDDING.md](EMISSION_REGRIDDING.md) — conservative regridding
   tutorial: algorithm, TOML configs, validation, adding new sources
 - [METEO_PREPROCESSING.md](METEO_PREPROCESSING.md) — deep dive on met data

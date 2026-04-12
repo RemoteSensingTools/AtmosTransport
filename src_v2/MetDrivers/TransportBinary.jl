@@ -8,32 +8,55 @@ import ..State: mass_basis
     TransportBinaryHeader
 
 Metadata for a topology-generic preprocessed transport binary.
+
+## Key fields
+
+- `grid_type`: `:latlon` or `:reduced_gaussian`
+- `horizontal_topology`: `:structureddirectional` (LL, arrays `(Nx, Ny, Nz)`)
+  or `:faceindexed` (RG, arrays `(ncell, Nz)` + `(nface_h, Nz)`)
+- `ncell`: total horizontal cells (LL: `Nx × Ny`; RG: sum of nlon_per_ring)
+- `nface_h`: total horizontal faces (LL: `(Nx+1)×Ny + Nx×(Ny+1)`;
+  RG: `ncell + Σ boundary_counts`)
+- `nlevel`: number of vertical levels (k=1 = TOA, k=nlevel = surface)
+- `nwindow`: windows per day (typically 24 for hourly ERA5)
+- `A_ifc`: hybrid A coefficients [Pa] at `nlevel + 1` half-levels.
+  `p_half[k] = A_ifc[k] + B_ifc[k] × ps`. For ERA5 tropo34: `A_ifc[1] = 0`
+  (TOA), `A_ifc[end] = 0` (surface where B=1).
+- `B_ifc`: hybrid B coefficients [dimensionless] at `nlevel + 1` half-levels.
+  `B_ifc[1] = 0` (TOA, pure pressure levels), `B_ifc[end] = 1.0` (surface,
+  pure sigma level).
+- `mass_basis`: `:moist` or `:dry` — determines whether the stored air mass
+  includes or excludes water vapour.
+- `flux_kind`: `:substep_mass_amount` — stored flux is the mass [kg] per
+  substep (divide by `steps_per_window` to get per-window total).
+- `flux_sampling`: `:window_constant` — same flux applied at every substep
+  within a window.
 """
 struct TransportBinaryHeader
     format_version       :: Int
     header_bytes         :: Int
-    on_disk_float_type   :: Symbol
-    float_bytes          :: Int
-    grid_type            :: Symbol
-    horizontal_topology  :: Symbol
-    ncell                :: Int
-    nface_h              :: Int
-    nlevel               :: Int
-    nwindow              :: Int
-    dt_met_seconds       :: Float64
-    half_dt_seconds      :: Float64
-    steps_per_window     :: Int
+    on_disk_float_type   :: Symbol      # :Float32 or :Float64
+    float_bytes          :: Int         # 4 or 8
+    grid_type            :: Symbol      # :latlon or :reduced_gaussian
+    horizontal_topology  :: Symbol      # :structureddirectional or :faceindexed
+    ncell                :: Int         # total horizontal cells
+    nface_h              :: Int         # total horizontal faces
+    nlevel               :: Int         # vertical levels (k=1 TOA, k=nlevel surface)
+    nwindow              :: Int         # windows per day (typically 24)
+    dt_met_seconds       :: Float64     # met-data window interval [s] (3600 for hourly)
+    half_dt_seconds      :: Float64     # half-step time [s] for flux scaling
+    steps_per_window     :: Int         # substeps per window (window_dt / dt)
     source_flux_sampling :: Symbol
     air_mass_sampling    :: Symbol
-    flux_sampling        :: Symbol
-    flux_kind            :: Symbol
+    flux_sampling        :: Symbol      # :window_constant
+    flux_kind            :: Symbol      # :substep_mass_amount
     humidity_sampling    :: Symbol
     delta_semantics      :: Symbol
     poisson_balance_target_scale :: Float64
     poisson_balance_target_semantics :: String
-    A_ifc                :: Vector{Float64}
-    B_ifc                :: Vector{Float64}
-    mass_basis           :: Symbol
+    A_ifc                :: Vector{Float64}  # hybrid A [Pa], length nlevel+1
+    B_ifc                :: Vector{Float64}  # hybrid B [1],  length nlevel+1
+    mass_basis           :: Symbol           # :moist or :dry
     payload_sections     :: Vector{Symbol}
     include_qv           :: Bool
     include_qv_endpoints :: Bool

@@ -214,6 +214,25 @@ for (sweep_fn, scheme_type, kernel_fn, dim, extra_args) in (
     end
 end
 
+"""
+    _horizontal_face_atomic_kernel!(rm_new, rm, m_new, m, horizontal_flux,
+                                     face_left, face_right, scheme, flux_scale)
+
+Face-indexed horizontal advection kernel for **unstructured meshes** (e.g.
+reduced-Gaussian). Each work item processes one face `f` at level `k`.
+
+The face topology is defined by `face_left[f]` and `face_right[f]`:
+- Both > 0: interior face connecting two cells. Flux is accumulated via
+  `@atomic` additions to rm_new/m_new at both left and right cells
+  (race-safe for GPU workgroups that share cells across faces).
+- `face_left[f] == 0`: south pole boundary stub (only right cell exists).
+  **Skipped** — no mass enters or leaves through the pole singularity.
+- `face_right[f] == 0`: north pole boundary stub. **Skipped**.
+
+Flux sign convention: positive `horizontal_flux[f, k]` = mass moving from
+`left` to `right`. The tracer flux `_hface_tracer_flux` uses the donor
+cell's mixing ratio (upwind) or higher-order reconstruction.
+"""
 @kernel function _horizontal_face_atomic_kernel!(rm_new, @Const(rm), m_new, @Const(m),
                                                  @Const(horizontal_flux),
                                                  @Const(face_left), @Const(face_right),
@@ -222,23 +241,37 @@ end
     @inbounds begin
         left = Int(face_left[f])
         right = Int(face_right[f])
+        # Skip boundary stubs: left=0 (south pole) or right=0 (north pole)
         if left > 0 && right > 0
             flux = flux_scale * horizontal_flux[f, k]
             tracer_flux = _hface_tracer_flux(rm, m, flux, left, right, k, scheme)
-            @atomic rm_new[left,  k] += -tracer_flux
-            @atomic rm_new[right, k] +=  tracer_flux
-            @atomic m_new[left,   k] += -flux
-            @atomic m_new[right,  k] +=  flux
+            # Atomic accumulation: multiple faces share the same cell
+            @atomic rm_new[left,  k] += -tracer_flux   # tracer leaving left cell
+            @atomic rm_new[right, k] +=  tracer_flux   # tracer entering right cell
+            @atomic m_new[left,   k] += -flux           # mass leaving left cell
+            @atomic m_new[right,  k] +=  flux           # mass entering right cell
         end
     end
 end
 
+"""
+    _vertical_face_kernel!(rm_new, rm, m_new, m, cm, scheme, flux_scale, Nz)
+
+Vertical advection kernel for face-indexed meshes. Each work item processes
+one cell `c` at level `k`.
+
+Vertical boundaries: `k=1` is TOA (no flux above), `k=Nz` is deepest level
+(no flux below). `cm[c, k]` is the vertical mass flux through the TOP face
+of cell `(c, k)`. Positive cm = downward (toward surface).
+"""
 @kernel function _vertical_face_kernel!(rm_new, @Const(rm), m_new, @Const(m),
                                         @Const(cm), scheme, flux_scale, Nz)
     c, k = @index(Global, NTuple)
     FT = eltype(rm)
     @inbounds begin
+        # k=1: TOA boundary → flux_t = 0 (no flux above top level)
         flux_t = k > 1  ? _vface_tracer_flux(rm, m, flux_scale * cm[c, k],     c, k - 1, k,     scheme) : zero(FT)
+        # k=Nz: surface boundary → flux_b = 0 (no flux below bottom level)
         flux_b = k < Nz ? _vface_tracer_flux(rm, m, flux_scale * cm[c, k + 1], c, k,     k + 1, scheme) : zero(FT)
         rm_new[c, k] = rm[c, k] + flux_t - flux_b
         m_new[c, k]  = m[c, k]  + flux_scale * cm[c, k] - flux_scale * cm[c, k + 1]

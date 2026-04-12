@@ -106,8 +106,32 @@ end
 # exactly. It's the TM5/FV3/GCHP standard approach for high-CFL cells.
 # =========================================================================
 
+"""
+    _gamma_clamped_x_flux(F, m_donor, rm_donor) -> tracer_flux
+
+Gamma-clamped upwind tracer flux (legacy cubed_sphere_mass_flux.jl pattern).
+
+Given mass flux `F` [kg] through a face, donor cell mass `m_donor` [kg],
+and donor tracer mass `rm_donor` [kg]:
+
+    γ = clamp(F / m_donor, {0, 1} or {-1, 0})
+    tracer_flux = γ × rm_donor
+
+This ensures:
+- When CFL = |F|/m ≤ 1 (normal): `γ = F/m`, recovering first-order upwind.
+- When CFL > 1 (overshooting): `γ` is clamped to ±1, so the tracer flux
+  never exceeds the donor cell's total tracer mass. This guarantees
+  `rm_new ≥ 0` when `rm ≥ 0` (positivity preservation).
+- Mass update `m_new = m + F_west − F_east` is EXACT (unclamped), so total
+  mass is conserved. Only the tracer distribution is limited.
+
+The gamma clamping should ideally not be needed if CFL < 1 via the
+subcycling pilot. It's a safety net for preprocessing flux-inconsistency
+(see CLAUDE.md: clamps should ideally not be needed).
+"""
 @inline function _gamma_clamped_x_flux(F::FT, m_donor::FT, rm_donor::FT) where FT
     m_donor > zero(FT) || return zero(FT)
+    # γ = F/m clamped to [0, 1] for positive flux, [-1, 0] for negative
     gamma = F >= zero(FT) ?
         clamp(F / m_donor, zero(FT), one(FT)) :
         clamp(F / m_donor, -one(FT), zero(FT))
@@ -505,10 +529,51 @@ end
 Perform one Strang-split advection step on a 6-panel cubed-sphere field
 with automatic CFL-based subcycling per direction.
 
-Splitting sequence: X → halo → Y → halo → Z → Z → halo → Y → halo → X
+## Splitting sequence
 
-Each direction is subcycled independently: if max CFL for X exceeds
-`cfl_limit`, the X sweep is repeated n_sub times with flux_scale/n_sub.
+    X sweep (n_x subcycles)
+    → fill_panel_halos!(dir=1)     ← exchange halos between panels (X direction)
+    → Y sweep (n_y subcycles)
+    → fill_panel_halos!(dir=2)     ← exchange halos between panels (Y direction)
+    → Z sweep (n_z subcycles)      ← first Z half-step
+    → Z sweep (n_z subcycles)      ← second Z half-step (palindrome)
+    → fill_panel_halos!(dir=2)
+    → Y sweep (n_y subcycles)
+    → fill_panel_halos!(dir=1)
+    → X sweep (n_x subcycles)
+
+This palindromic sequence (X-Y-Z-Z-Y-X) gives second-order temporal accuracy
+via Strang (1968) symmetry. The halo exchanges must happen BETWEEN successive
+horizontal sweeps because the panel-edge reconstruction stencil reads from
+adjacent panels.
+
+## Subcycling
+
+Each direction `D ∈ {X, Y, Z}` has its own subcycle count `n_D` determined
+by an evolving-mass CFL pilot: the pilot applies `n_D` passes of
+`flux_scale/n_D`, checking that no cell mass goes negative or that
+`|outgoing_flux| < cfl_limit × cell_mass` at each pass. If the pilot fails,
+`n_D` is incremented until it passes (or hits `max_n_sub` and errors).
+
+## Panel array layout
+
+Each panel's rm and m arrays are `(Nc+2Hp, Nc+2Hp, Nz)` with Hp-wide halos.
+Interior cells are at indices `[Hp+1:Hp+Nc, Hp+1:Hp+Nc, :]`. The sweep
+kernels only update interior cells; halo regions are filled by
+`fill_panel_halos!` from adjacent panels.
+
+## Arguments
+
+- `panels_rm`, `panels_m`: NTuple{6} of 3D arrays `(Nc+2Hp, Nc+2Hp, Nz)` —
+  tracer mass and air mass. Modified in-place.
+- `panels_am`, `panels_bm`, `panels_cm`: NTuple{6} of flux arrays.
+  `am[Nc+2Hp+1, Nc+2Hp, Nz]`, `bm[Nc+2Hp, Nc+2Hp+1, Nz]`,
+  `cm[Nc+2Hp, Nc+2Hp, Nz+1]`. Read-only.
+- `mesh`: `CubedSphereMesh` with Nc, Hp, and panel connectivity.
+- `scheme`: advection scheme (e.g. `UpwindScheme()`) for tracer flux.
+- `workspace`: pre-allocated `CSAdvectionWorkspace` buffers.
+- `flux_scale`: overall scaling applied to all fluxes (default 1.0).
+- `cfl_limit`: maximum CFL per subcycle pass (default 0.95).
 """
 function strang_split_cs!(panels_rm::NTuple{6},
                           panels_m::NTuple{6},

@@ -38,21 +38,41 @@ struct GEOSNativePanelConvention <: AbstractCubedSpherePanelConvention end
 # ---------------------------------------------------------------------------
 
 """
-    _gnomonic_xyz(ξ, η, panel)
+    _gnomonic_xyz(ξ, η, panel) -> (x, y, z)
 
 Map local tangent-plane coordinates `(ξ, η)` to Cartesian `(x, y, z)` on the
 unit sphere via the gnomonic (central) projection for the given `panel`.
 
-`ξ = tan(α)`, `η = tan(β)` where `α, β ∈ [-π/4, π/4]`.
+The gnomonic projection maps from a tangent plane touching the sphere at the
+panel center to the sphere surface via a straight line through the sphere's
+center. In angular coordinates, `α` and `β` are the local east and north
+angles from the panel center, both in `[-π/4, π/4]`. The tangent-plane
+coordinates are `ξ = tan(α)` and `η = tan(β)`.
+
+The normalisation factor `d = 1 / √(1 + ξ² + η²)` projects back onto the
+unit sphere (ensures `x² + y² + z² = 1`).
+
+## Panel orientation (gnomonic convention)
+
+| Panel | Center face | (x, y, z) at ξ=η=0 | Local ξ → global | Local η → global |
+|-------|------------|---------------------|-----------------|-----------------|
+| 1     | +x face    | (1, 0, 0)           | ξ → +y          | η → +z          |
+| 2     | +y face    | (0, 1, 0)           | ξ → −x          | η → +z          |
+| 3     | −x face    | (−1, 0, 0)          | ξ → −y          | η → +z          |
+| 4     | −y face    | (0, −1, 0)          | ξ → +x          | η → +z          |
+| 5     | +z (N pole)| (0, 0, 1)           | ξ → +y          | η → −x          |
+| 6     | −z (S pole)| (0, 0, −1)          | ξ → +y          | η → +x          |
+
+Panels 1-4 are the equatorial belt; panels 5, 6 are the polar caps.
 """
 @inline function _gnomonic_xyz(ξ::FT, η::FT, panel::Int) where FT
-    d = one(FT) / sqrt(one(FT) + ξ^2 + η^2)
-    if     panel == 1;  return ( d,  ξ*d,  η*d)
-    elseif panel == 2;  return (-ξ*d,  d,  η*d)
-    elseif panel == 3;  return (-d, -ξ*d,  η*d)
-    elseif panel == 4;  return ( ξ*d, -d,  η*d)
-    elseif panel == 5;  return (-η*d,  ξ*d,  d)
-    else;               return ( η*d,  ξ*d, -d)
+    d = one(FT) / sqrt(one(FT) + ξ^2 + η^2)   # gnomonic normalisation
+    if     panel == 1;  return ( d,  ξ*d,  η*d)   # +x face
+    elseif panel == 2;  return (-ξ*d,  d,  η*d)   # +y face
+    elseif panel == 3;  return (-d, -ξ*d,  η*d)   # −x face
+    elseif panel == 4;  return ( ξ*d, -d,  η*d)   # −y face
+    elseif panel == 5;  return (-η*d,  ξ*d,  d)   # +z (north pole)
+    else;               return ( η*d,  ξ*d, -d)   # −z (south pole)
     end
 end
 
@@ -94,20 +114,40 @@ end
 Base.eltype(::CubedSphereMesh{FT}) where FT = FT
 Base.eltype(::Type{<:CubedSphereMesh{FT}}) where FT = FT
 
+"""Number of panels (always 6 for a cubed sphere)."""
 @inline panel_count(::CubedSphereMesh) = 6
+
+"""Return the panel-numbering convention struct (Gnomonic or GEOSNative)."""
 @inline panel_convention(m::CubedSphereMesh) = m.convention
 
+"""
+    panel_labels(convention) -> NTuple{6, Symbol}
+
+Return symbolic labels for each panel under the given convention.
+
+- **Gnomonic**: `(:x_plus, :y_plus, :x_minus, :y_minus, :north_pole, :south_pole)`
+  — panels 1-4 are equatorial (centred on ±x, ±y axes), 5 and 6 are polar.
+- **GEOS native**: `(:equatorial_1, ..., :north_pole, ..., :south_pole)`
+  — panels 1-2 and 4-5 are equatorial, 3 is north pole, 6 is south pole.
+  This matches the file-panel ordering in GEOS-FP/GEOS-IT NetCDF variables.
+"""
 panel_labels(::GnomonicPanelConvention) =
     (:x_plus, :y_plus, :x_minus, :y_minus, :north_pole, :south_pole)
 panel_labels(::GEOSNativePanelConvention) =
     (:equatorial_1, :equatorial_2, :north_pole, :equatorial_4, :equatorial_5, :south_pole)
 panel_labels(m::CubedSphereMesh) = panel_labels(panel_convention(m))
 
+"""Cells per panel edge (same in both x and y by construction)."""
 nx(m::CubedSphereMesh) = m.Nc
 ny(m::CubedSphereMesh) = m.Nc
+
+"""Total number of cells across all 6 panels: `6 × Nc²`."""
 ncells(m::CubedSphereMesh) = panel_count(m) * m.Nc^2
+
+"""Total number of faces across all 6 panels: `6 × 2 × Nc × (Nc + 1)` (x + y faces per panel)."""
 nfaces(m::CubedSphereMesh) = panel_count(m) * 2 * m.Nc * (m.Nc + 1)
 
+"""Cell area [m²] at local panel indices `(i, j)`. Same on all 6 panels by gnomonic symmetry."""
 cell_area(m::CubedSphereMesh, i::Integer, j::Integer) = m.cell_areas[i, j]
 
 # ---------------------------------------------------------------------------

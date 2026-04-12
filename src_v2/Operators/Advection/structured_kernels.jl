@@ -79,10 +79,16 @@ The face flux function `_xface_tracer_flux` dispatches on `scheme` type.
                                   @Const(am), scheme, Nx, flux_scale)
     i, j, k = @index(Global, NTuple)
     @inbounds begin
-        am_l = flux_scale * am[i, j, k]
-        am_r = flux_scale * am[i + 1, j, k]
+        # am[i, j, k] = mass flux through the WEST face of cell (i, j, k).
+        # Positive am = eastward mass transport [kg per substep].
+        # flux_scale = 1/n_sub for subcycled passes.
+        am_l = flux_scale * am[i, j, k]         # flux into cell from west face
+        am_r = flux_scale * am[i + 1, j, k]     # flux out of cell through east face
+        # Tracer flux: F_q = χ_donor × |am| (upwind), or higher-order (slopes/PPM).
         flux_L = _xface_tracer_flux(Int32(i), j, k, rm, m, am_l, scheme, Nx)
         flux_R = _xface_tracer_flux(Int32(i) + Int32(1), j, k, rm, m, am_r, scheme, Nx)
+        # Divergence form: new = old + (left flux in) − (right flux out).
+        # Telescoping: Σ_i (flux_L − flux_R) = am[1] − am[Nx+1] = 0 (periodic).
         rm_new[i, j, k] = rm[i, j, k] + flux_L - flux_R
         m_new[i, j, k]  = m[i, j, k]  + am_l - am_r
     end
@@ -136,10 +142,14 @@ m_{\\text{new}}[i,j,k] = m[i,j,k] + c_m[i,j,k] - c_m[i,j,k+1]
                                   @Const(cm), scheme, Nz, flux_scale)
     i, j, k = @index(Global, NTuple)
     @inbounds begin
-        cm_t = flux_scale * cm[i, j, k]
-        cm_b = flux_scale * cm[i, j, k + 1]
+        # cm[i, j, k] = vertical mass flux through the TOP face of cell (i, j, k).
+        # Positive cm = downward (toward surface). cm[k=1] = 0 (TOA boundary),
+        # cm[k=Nz+1] = 0 (surface boundary).
+        cm_t = flux_scale * cm[i, j, k]         # flux entering from above (top face)
+        cm_b = flux_scale * cm[i, j, k + 1]     # flux leaving below (bottom face)
         flux_T = _zface_tracer_flux(i, j, Int32(k), rm, m, cm_t, scheme, Nz)
         flux_B = _zface_tracer_flux(i, j, Int32(k) + Int32(1), rm, m, cm_b, scheme, Nz)
+        # Divergence form: new = old + (top flux in) − (bottom flux out).
         rm_new[i, j, k] = rm[i, j, k] + flux_T - flux_B
         m_new[i, j, k]  = m[i, j, k]  + cm_t - cm_b
     end

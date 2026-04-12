@@ -33,14 +33,22 @@ struct ReducedGaussianTargetGeometry{FT, M <: ReducedGaussianMesh{FT}} <: Abstra
     lons_by_ring         :: Vector{Vector{FT}}
 end
 
+"""Number of longitude cells (LatLon only)."""
 nlon(grid::LatLonTargetGeometry) = grid.mesh.Nx
+
+"""Number of latitude cells (LatLon only)."""
 nlat(grid::LatLonTargetGeometry) = grid.mesh.Ny
+
+"""Return a symbol identifying the grid type (`:latlon` or `:era5_native_reduced_gaussian`)."""
 grid_kind(::LatLonTargetGeometry) = :latlon
 grid_kind(::ReducedGaussianTargetGeometry) = :era5_native_reduced_gaussian
 
+"""Whether this target geometry supports the LL v4 spectral mass-flux path
+(only `LatLonTargetGeometry` does; RG uses its own `reduced_transport_helpers.jl`)."""
 supports_spectral_massflux_preprocessing(::AbstractTargetGeometry) = false
 supports_spectral_massflux_preprocessing(::LatLonTargetGeometry) = true
 
+"""Spectral truncation T for the target grid: Nyquist = `nlon ÷ 2 − 1` to avoid aliasing."""
 target_spectral_truncation(grid::LatLonTargetGeometry) = div(nlon(grid), 2) - 1
 target_spectral_truncation(grid::ReducedGaussianTargetGeometry) =
     div(maximum(grid.nlon_per_ring), 2) - 1

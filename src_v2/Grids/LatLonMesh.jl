@@ -71,26 +71,56 @@ end
 @inline _regular_faces(left, right, N, ::Type{FT}) where FT = collect(range(left, right, length=N+1) .|> FT)
 @inline _regular_centers(faces::AbstractVector{FT}) where FT = FT[(faces[i] + faces[i+1]) / 2 for i in 1:length(faces)-1]
 
+"""
+    LatLonMesh(; Nx, Ny, longitude=(-180, 180), latitude=(-90, 90), ...)
+
+Construct a regular latitude-longitude mesh.
+
+## Coordinate conventions
+
+- **Longitude**: cell faces at `λᶠ[1..Nx+1]` spanning `[λ_west, λ_east]`,
+  cell centers at midpoints `λᶜ[i] = (λᶠ[i] + λᶠ[i+1]) / 2`.
+  Default range `(-180, 180)` → `λᶜ[1] = -178.125°` for `Nx=96`.
+  **IMPORTANT**: the spectral preprocessor's FFT synthesis
+  (`spectral_to_grid!`) must use `lon_shift_rad = deg2rad(λᶜ[1])` to align
+  its output with this mesh. Using `dlon/2` instead causes a 180° shift
+  for `(-180, 180)` meshes (see 2026-04-11 bug fix in spectral_synthesis.jl).
+
+- **Latitude**: cell faces at `φᶠ[1..Ny+1]` spanning `[φ_south, φ_north]`,
+  cell centers at `φᶜ[j]`. Default `(-90, 90)` → `φᶜ[1] = -88.125°` for
+  `Ny=48`. Latitude is NOT periodic (closed pole boundaries).
+
+## Indexing (column-major)
+
+3D arrays on this mesh are `(Nx, Ny, Nz)` where:
+- `i` (lon) is the **fastest-varying** index (column-major, Julia/Fortran style)
+- `j` (lat) is the middle index
+- `k` (level) is the slowest-varying index; `k=1` is TOA, `k=Nz` is surface
+
+The flat cell index is `c = i + (j-1) × Nx` (1-based). Face arrays for
+the Arakawa C-grid are `am[Nx+1, Ny, Nz]` (zonal, at west edges) and
+`bm[Nx, Ny+1, Nz]` (meridional, at south edges).
+"""
 function LatLonMesh(;
         FT::Type{<:AbstractFloat} = Float64,
         Nx::Union{Nothing, Int} = nothing,
         Ny::Union{Nothing, Int} = nothing,
         size = nothing,
-        longitude = (-180, 180),
-        latitude  = (-90, 90),
-        radius    = FT(6.371e6))
+        longitude = (-180, 180),   # [degrees] — determines λᶜ and λᶠ
+        latitude  = (-90, 90),     # [degrees] — determines φᶜ and φᶠ
+        radius    = FT(6.371e6))   # [m] — planet radius
 
     Nx, Ny = _validate_latlon_size(Nx, Ny, size)
     λ_west, λ_east = _validate_interval("longitude", longitude, FT; max_extent=360)
     φ_south, φ_north = _validate_interval("latitude", latitude, FT; lower=-90, upper=90)
 
-    Δλ = (λ_east - λ_west) / Nx
-    Δφ = (φ_north - φ_south) / Ny
+    Δλ = (λ_east - λ_west) / Nx    # [degrees] — longitudinal cell width
+    Δφ = (φ_north - φ_south) / Ny   # [degrees] — latitudinal cell width
 
-    λᶠ = _regular_faces(λ_west, λ_east, Nx, FT)
-    λᶜ = _regular_centers(λᶠ)
-    φᶠ = _regular_faces(φ_south, φ_north, Ny, FT)
-    φᶜ = _regular_centers(φᶠ)
+    λᶠ = _regular_faces(λ_west, λ_east, Nx, FT)   # cell-edge longitudes [Nx+1]
+    λᶜ = _regular_centers(λᶠ)                      # cell-center longitudes [Nx]
+    φᶠ = _regular_faces(φ_south, φ_north, Ny, FT)  # cell-edge latitudes [Ny+1]
+    φᶜ = _regular_centers(φᶠ)                      # cell-center latitudes [Ny]
 
     return LatLonMesh{FT}(Nx, Ny, Δλ, Δφ, λᶜ, λᶠ, φᶜ, φᶠ, FT(radius))
 end

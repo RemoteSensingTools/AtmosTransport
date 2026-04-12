@@ -19,7 +19,7 @@ end
     i, j, k = @index(Global, NTuple)
     FT = eltype(rm)
     m_floor = eps(FT)
-    r = Int(cluster_sizes[j])
+    r = cluster_sizes[j]  # keep as Int32 — avoids Int64 emulation on GPU PTX
     @inbounds begin
         if r == 1
             ip = ifelse(i == Nx, 1, i + 1)

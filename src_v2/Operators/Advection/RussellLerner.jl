@@ -62,7 +62,7 @@ end
     Nx, @Const(cluster_sizes), use_limiter, flux_scale
 )
     i, j, k = @index(Global, NTuple)
-    r = Int(cluster_sizes[j])
+    r = cluster_sizes[j]  # keep as Int32 — avoids Int64 emulation on GPU PTX
     FT = eltype(rm)
     two = convert(FT, 2)
     m_floor = eps(FT)  # prevent NaN if cell mass → 0 (consistent with z-kernel line 226)

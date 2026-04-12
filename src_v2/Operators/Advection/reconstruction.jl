@@ -620,12 +620,14 @@ Tracer mass flux through x-face `face_i` for PPM advection.
     i_p  = _wrap_periodic(face_i + Int32(1), Nx)
     i_pp = _wrap_periodic(face_i + Int32(2), Nx)
 
-    c_3  = rm[i_3,  j, k] / m[i_3,  j, k]
-    c_2  = rm[i_2,  j, k] / m[i_2,  j, k]
-    c_1  = rm[i_1,  j, k] / m[i_1,  j, k]
-    c_0  = rm[i_0,  j, k] / m[i_0,  j, k]
-    c_p  = rm[i_p,  j, k] / m[i_p,  j, k]
-    c_pp = rm[i_pp, j, k] / m[i_pp, j, k]
+    # Floor prevents NaN if cell mass → 0 (consistent with all other schemes)
+    m_floor = eps(FT)
+    c_3  = rm[i_3,  j, k] / max(m[i_3,  j, k], m_floor)
+    c_2  = rm[i_2,  j, k] / max(m[i_2,  j, k], m_floor)
+    c_1  = rm[i_1,  j, k] / max(m[i_1,  j, k], m_floor)
+    c_0  = rm[i_0,  j, k] / max(m[i_0,  j, k], m_floor)
+    c_p  = rm[i_p,  j, k] / max(m[i_p,  j, k], m_floor)
+    c_pp = rm[i_pp, j, k] / max(m[i_pp, j, k], m_floor)
 
     e_left  = _ppm_edge_value(c_3, c_2, c_1, c_0)
     e_face  = _ppm_edge_value(c_2, c_1, c_0, c_p)
@@ -634,11 +636,11 @@ Tracer mass flux through x-face `face_i` for PPM advection.
     q_L_l, q_R_l = _ppm_limit_profile(e_left, c_1, e_face, limiter)
     q_L_r, q_R_r = _ppm_limit_profile(e_face, c_0, e_right, limiter)
 
-    sx_l = _limited_moment(m[i_1, j, k] * (q_R_l - c_1), rm[i_1, j, k], limiter)
-    sx_r = _limited_moment(m[i_0, j, k] * (c_0 - q_L_r), rm[i_0, j, k], limiter)
+    sx_l = _limited_moment(max(m[i_1, j, k], m_floor) * (q_R_l - c_1), rm[i_1, j, k], limiter)
+    sx_r = _limited_moment(max(m[i_0, j, k], m_floor) * (c_0 - q_L_r), rm[i_0, j, k], limiter)
 
-    return _slopes_face_flux(F, m[i_1, j, k], rm[i_1, j, k], sx_l,
-                                m[i_0, j, k], rm[i_0, j, k], sx_r)
+    return _slopes_face_flux(F, max(m[i_1, j, k], m_floor), rm[i_1, j, k], sx_l,
+                                max(m[i_0, j, k], m_floor), rm[i_0, j, k], sx_r)
 end
 
 # ---- PPM y-face flux (closed boundaries) --------------------------------
@@ -667,12 +669,13 @@ Tracer mass flux through y-face `face_j` for PPM advection.
     jrr = min(face_j + Int32(1), Ny)
     j3r = min(face_j + Int32(2), Ny)
 
-    c_3l = rm[i, j3l, k] / m[i, j3l, k]
-    c_ll = rm[i, jll, k] / m[i, jll, k]
-    c_l  = rm[i, jl,  k] / m[i, jl,  k]
-    c_r  = rm[i, jr,  k] / m[i, jr,  k]
-    c_rr = rm[i, jrr, k] / m[i, jrr, k]
-    c_3r = rm[i, j3r, k] / m[i, j3r, k]
+    m_floor = eps(FT)  # prevent NaN if cell mass → 0 (consistent with z-direction)
+    c_3l = rm[i, j3l, k] / max(m[i, j3l, k], m_floor)
+    c_ll = rm[i, jll, k] / max(m[i, jll, k], m_floor)
+    c_l  = rm[i, jl,  k] / max(m[i, jl,  k], m_floor)
+    c_r  = rm[i, jr,  k] / max(m[i, jr,  k], m_floor)
+    c_rr = rm[i, jrr, k] / max(m[i, jrr, k], m_floor)
+    c_3r = rm[i, j3r, k] / max(m[i, j3r, k], m_floor)
 
     e_left  = _ppm_edge_value(c_3l, c_ll, c_l, c_r)
     e_face  = _ppm_edge_value(c_ll, c_l, c_r, c_rr)
@@ -682,15 +685,15 @@ Tracer mass flux through y-face `face_j` for PPM advection.
     q_L_r, q_R_r = _ppm_limit_profile(e_face, c_r, e_right, limiter)
 
     interior_l = (jl > Int32(2)) & (jl < Ny - Int32(1))
-    sx_l = _limited_moment(m[i, jl, k] * (q_R_l - c_l), rm[i, jl, k], limiter)
+    sx_l = _limited_moment(max(m[i, jl, k], m_floor) * (q_R_l - c_l), rm[i, jl, k], limiter)
     sx_l = ifelse(interior_l, sx_l, zero(FT))
 
     interior_r = (jr > Int32(2)) & (jr < Ny - Int32(1))
-    sx_r = _limited_moment(m[i, jr, k] * (c_r - q_L_r), rm[i, jr, k], limiter)
+    sx_r = _limited_moment(max(m[i, jr, k], m_floor) * (c_r - q_L_r), rm[i, jr, k], limiter)
     sx_r = ifelse(interior_r, sx_r, zero(FT))
 
-    flux = _slopes_face_flux(F, m[i, jl, k], rm[i, jl, k], sx_l,
-                                m[i, jr, k], rm[i, jr, k], sx_r)
+    flux = _slopes_face_flux(F, max(m[i, jl, k], m_floor), rm[i, jl, k], sx_l,
+                                max(m[i, jr, k], m_floor), rm[i, jr, k], sx_r)
     return ifelse(at_boundary, zero(FT), flux)
 end
 

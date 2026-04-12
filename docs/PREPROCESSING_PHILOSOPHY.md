@@ -93,6 +93,36 @@ build_transport_binary_v2_header(target, ctx, reader, windows) = Dict(...)
 write_transport_binary_v2_output(target, ctx, reader, header, windows) = ...
 ```
 
+## Stable Spectral Config API
+
+Stable repo entrypoints for config-driven ERA5 day builders:
+
+```julia
+build_spectral_transport_binary_v2_target(config_path, argv=String[]; FT=Float64)
+run_spectral_transport_binary_v2_preprocessor(target)
+target_summary(target)
+```
+
+Current config-driven target families:
+- structured lat-lon transport binaries via `preprocess_era5_latlon_transport_binary_v2.jl`
+- reduced-Gaussian transport binaries via `preprocess_era5_reduced_gaussian_transport_binary_v2.jl`
+
+Extension contract for new config-driven targets:
+
+| Hook | Purpose |
+|------|---------|
+| `build_spectral_transport_binary_v2_target(::Val{kind}, ...)` | Build the target from parsed config/runtime state |
+| `target_dates` | Report the scheduled day set |
+| `log_spectral_transport_binary_v2_configuration` | Emit the startup summary |
+| `process_spectral_transport_binary_v2_day` | Process one day |
+
+CLI example:
+
+```bash
+julia --project=. scripts/preprocessing/preprocess_era5_latlon_transport_binary_v2.jl \
+    config/preprocessing/era5_latlon_transport_binary_v2.toml --day 2021-12-01
+```
+
 ## Go Deeper
 
 - [QUICKSTART.md](QUICKSTART.md): end-to-end download, preprocess, and run flow

@@ -12,6 +12,51 @@ Agents: `CLAUDE` (Claude Code) and `CODEX` (Codex).
 
 ---
 
+Added a second stable preprocessing seam for the ERA5 day builders so
+the lat-lon and reduced-Gaussian transport-binary preprocessors no
+longer need to define their control flow entirely in-script.
+
+**What changed**:
+- Added `scripts/preprocessing/spectral_transport_binary_v2_dispatch.jl`
+  as the stable config-driven API for ERA5 spectral -> transport-binary
+  day builders:
+  - `build_spectral_transport_binary_v2_target(config_path, argv; FT=...)`
+  - `run_spectral_transport_binary_v2_preprocessor(target)`
+  - `target_summary(target)`
+- Converted the two current ERA5 wrappers into thin CLIs over that
+  interface:
+  - `preprocess_era5_latlon_transport_binary_v2.jl`
+  - `preprocess_era5_reduced_gaussian_transport_binary_v2.jl`
+- Kept the target-specific physics in those files, but moved the shared
+  config parsing / date selection / day-loop semantics behind the stable
+  dispatch layer.
+- Documented the new seam in `docs/PREPROCESSING_PHILOSOPHY.md` so users
+  can distinguish:
+  - binary-in / binary-out target API
+  - config-driven ERA5 spectral day-builder API
+
+**Verification**:
+- Expanded `test_v2/test_transport_binary_v2_dispatch.jl` docs smoke
+  coverage so the preprocessing philosophy page and the new spectral
+  dispatch entrypoints stay discoverable from the stable test path.
+- Direct builder smoke checks passed for both current target families:
+  - lat-lon config -> `LatLonSpectralTransportBinaryV2Target`
+  - synthetic reduced-Gaussian config -> `ReducedGaussianSpectralTransportBinaryV2Target`
+- A standalone Julia test file for the new dispatch seam was *not*
+  kept: the assertions passed, but this environment hit a teardown-time
+  native segfault when executing that file directly. The direct smoke
+  commands above exited cleanly.
+
+**Why this is separate from the CS target API**:
+- The CS conservative / bilinear preprocessors start from an existing
+  transport binary, so they fit the `build_transport_binary_v2_target`
+  seam.
+- The ERA5 lat-lon / reduced-Gaussian preprocessors start from TOML +
+  spectral GRIB inputs, so they need a separate config-driven stable
+  front door.
+
+---
+
 ### [CLAUDE] — 2026-04-10 ~20:00 UTC
 
 Status: CS advection committed (8a6ad2d). CubedSphereMesh has full gnomonic geometry, halo exchange, and Strang splitting. 544 tests pass (uniform invariance, mass conservation, cross-panel, F32).

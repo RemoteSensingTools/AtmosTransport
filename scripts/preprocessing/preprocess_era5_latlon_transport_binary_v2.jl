@@ -1,4 +1,10 @@
 #!/usr/bin/env julia
+# Thin CLI wrapper plus target implementation for the config-driven ERA5
+# spectral -> structured transport-binary v2 path.
+#
+# Users normally run this script directly. Contributors can reuse the stable
+# target API via `build_spectral_transport_binary_v2_target` and
+# `run_spectral_transport_binary_v2_preprocessor`.
 
 using Dates
 using Logging
@@ -6,6 +12,7 @@ using Printf
 using TOML
 
 include(joinpath(@__DIR__, "preprocess_spectral_v4_binary.jl"))
+include(joinpath(@__DIR__, "spectral_transport_binary_v2_dispatch.jl"))
 using .AtmosTransportV2: AtmosGrid, CPU, write_transport_binary, TransportBinaryReader
 
 struct WindowStageTiming
@@ -313,14 +320,60 @@ function process_day_transport_binary_v2(date::Date,
     return (path = bin_path, report = report)
 end
 
-function main_v2()
+"""
+    LatLonSpectralTransportBinaryV2Target
+
+Config-driven ERA5 spectral -> structured lat-lon transport-binary v2 target.
+"""
+struct LatLonSpectralTransportBinaryV2Target{G, S, V} <: AbstractSpectralTransportBinaryV2Target
+    config_path :: String
+    grid :: G
+    settings :: S
+    vertical :: V
+    dates :: Vector{Date}
+end
+
+target_dates(target::LatLonSpectralTransportBinaryV2Target) = target.dates
+target_summary(target::LatLonSpectralTransportBinaryV2Target) =
+    "ERA5 spectral -> transport binary v2 lat-lon ($(target_summary(target.grid)))"
+
+log_spectral_transport_binary_v2_configuration(target::LatLonSpectralTransportBinaryV2Target) =
+    log_preprocessor_configuration(target.settings, target.grid, target.vertical)
+
+function build_spectral_transport_binary_v2_target(::Val{:latlon},
+                                                   config_path::AbstractString,
+                                                   cfg,
+                                                   argv::AbstractVector{<:AbstractString},
+                                                   grid::LatLonTargetGeometry,
+                                                   settings,
+                                                   vertical,
+                                                   dates;
+                                                   FT::Type{T} = Float64) where T <: AbstractFloat
+    return LatLonSpectralTransportBinaryV2Target(
+        String(config_path),
+        grid,
+        settings,
+        vertical,
+        collect(dates),
+    )
+end
+
+function process_spectral_transport_binary_v2_day(target::LatLonSpectralTransportBinaryV2Target,
+                                                  date::Date)
+    next_day_h0 = next_day_hour0(date, target.dates, target.settings.spectral_dir, target.settings.T_target)
+    next_day_h0 !== nothing && @info("  Next day hour 0 available for last-window delta")
+    return process_day_transport_binary_v2(date, target.grid, target.settings, target.vertical;
+                                           next_day_hour0=next_day_h0)
+end
+
+function main_v2(argv=ARGS)
     base_logger = ConsoleLogger(stderr, Logging.Info; show_limited=false)
     global_logger(_FlushingLogger(base_logger))
     println(stderr, "[transport-v2] Logger installed, starting…")
     flush(stderr)
     atexit(() -> (try flush(stderr) catch; end; try flush(stdout) catch; end))
 
-    if isempty(ARGS)
+    if isempty(argv)
         println("""
         ERA5 spectral -> src_v2 transport-binary preprocessor
 
@@ -330,34 +383,10 @@ function main_v2()
         return
     end
 
-    config_path = expanduser(ARGS[1])
-    isfile(config_path) || error("Config not found: $config_path")
-    cfg = TOML.parsefile(config_path)
-
-    day_filter = parse_day_filter(ARGS)
-    grid = build_target_geometry(cfg["grid"], Float64)
-    ensure_supported_target(grid)
-    grid isa LatLonTargetGeometry || error("This script currently supports only LatLonTargetGeometry")
-
-    settings = resolve_runtime_settings(cfg)
-    settings = merge(settings, (T_target = target_spectral_truncation(grid),))
-    vertical = build_vertical_setup(settings.coeff_path, settings.level_range, settings.min_dp, cfg["grid"])
-    log_preprocessor_configuration(settings, grid, vertical)
-
-    dates = select_processing_dates(available_spectral_dates(settings.spectral_dir), day_filter)
-    @info @sprintf("Processing %d days: %s to %s", length(dates), first(dates), last(dates))
-
-    t_total = time()
-    for (i, date) in enumerate(dates)
-        @info @sprintf("[%d/%d] %s", i, length(dates), date)
-        next_day_h0 = next_day_hour0(date, dates, settings.spectral_dir, settings.T_target)
-        next_day_h0 !== nothing && @info("  Next day hour 0 available for last-window delta")
-        process_day_transport_binary_v2(date, grid, settings, vertical; next_day_hour0=next_day_h0)
-    end
-
-    wall_total = round(time() - t_total, digits=1)
-    @info @sprintf("All done! %d days in %.1fs (%.1fs/day)", length(dates), wall_total,
-                   length(dates) > 0 ? wall_total / length(dates) : 0.0)
+    target = build_spectral_transport_binary_v2_target(argv[1], argv[2:end]; FT=Float64)
+    target isa LatLonSpectralTransportBinaryV2Target ||
+        error("This script currently supports only LatLonTargetGeometry")
+    run_spectral_transport_binary_v2_preprocessor(target)
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__

@@ -1,4 +1,10 @@
 #!/usr/bin/env julia
+# Thin CLI wrapper plus target implementation for the config-driven ERA5
+# spectral -> reduced-Gaussian transport-binary v2 path.
+#
+# Users normally run this script directly. Contributors can reuse the stable
+# target API via `build_spectral_transport_binary_v2_target` and
+# `run_spectral_transport_binary_v2_preprocessor`.
 
 using Dates
 using Logging
@@ -6,6 +12,7 @@ using Printf
 using TOML
 
 include(joinpath(@__DIR__, "preprocess_spectral_v4_binary.jl"))
+include(joinpath(@__DIR__, "spectral_transport_binary_v2_dispatch.jl"))
 include(joinpath(PREPROCESS_SPECTRAL_V4_DIR, "reduced_transport_helpers.jl"))
 using .AtmosTransportV2: AtmosGrid, CPU, write_transport_binary,
     ncells, nfaces, nrings, cell_area, face_cells
@@ -124,40 +131,69 @@ function process_day_reduced_transport_binary_v2(date::Date,
     return (path = bin_path, report = nothing)
 end
 
-function main()
+"""
+    ReducedGaussianSpectralTransportBinaryV2Target
+
+Config-driven ERA5 spectral -> reduced-Gaussian transport-binary v2 target.
+"""
+struct ReducedGaussianSpectralTransportBinaryV2Target{G, S, V} <: AbstractSpectralTransportBinaryV2Target
+    config_path :: String
+    grid :: G
+    settings :: S
+    vertical :: V
+    dates :: Vector{Date}
+end
+
+target_dates(target::ReducedGaussianSpectralTransportBinaryV2Target) = target.dates
+target_summary(target::ReducedGaussianSpectralTransportBinaryV2Target) =
+    "ERA5 spectral -> transport binary v2 reduced Gaussian ($(target_summary(target.grid)))"
+
+function log_spectral_transport_binary_v2_configuration(target::ReducedGaussianSpectralTransportBinaryV2Target)
+    @info "ERA5 reduced-Gaussian transport-binary v2 preprocessor"
+    @info "  Spectral dir: $(target.settings.spectral_dir)"
+    @info "  Output dir:   $(target.settings.out_dir)"
+    @info "  Target grid:  $(target_summary(target.grid))"
+    @info "  DT:           $(target.settings.dt) s (half_dt=$(target.settings.half_dt) s)"
+    @info "  Merged levels: $(target.vertical.Nz)"
+    @info "  Float type:   $(target.settings.output_float_type)"
+    return nothing
+end
+
+function build_spectral_transport_binary_v2_target(::Val{:era5_native_reduced_gaussian},
+                                                   config_path::AbstractString,
+                                                   cfg,
+                                                   argv::AbstractVector{<:AbstractString},
+                                                   grid::ReducedGaussianTargetGeometry,
+                                                   settings,
+                                                   vertical,
+                                                   dates;
+                                                   FT::Type{T} = Float64) where T <: AbstractFloat
+    return ReducedGaussianSpectralTransportBinaryV2Target(
+        String(config_path),
+        grid,
+        settings,
+        vertical,
+        collect(dates),
+    )
+end
+
+function process_spectral_transport_binary_v2_day(target::ReducedGaussianSpectralTransportBinaryV2Target,
+                                                  date::Date)
+    return process_day_reduced_transport_binary_v2(date, target.grid, target.settings, target.vertical)
+end
+
+function main(argv=ARGS)
     base_logger = ConsoleLogger(stderr, Logging.Info; show_limited=false)
     global_logger(_FlushingLogger(base_logger))
     println(stderr, "[transport-v2-rg] Logger installed, starting…")
     flush(stderr)
 
-    isempty(ARGS) && error("Usage: julia --project=. scripts/preprocessing/preprocess_era5_reduced_gaussian_transport_binary_v2.jl config.toml [--day YYYY-MM-DD]")
-    cfg = TOML.parsefile(expanduser(ARGS[1]))
-    day_filter = parse_day_filter(ARGS)
+    isempty(argv) && error("Usage: julia --project=. scripts/preprocessing/preprocess_era5_reduced_gaussian_transport_binary_v2.jl config.toml [--day YYYY-MM-DD]")
 
-    grid = build_target_geometry(cfg["grid"], Float64)
-    grid isa ReducedGaussianTargetGeometry || error("grid.type must be a reduced-Gaussian target for this script")
-    settings = resolve_runtime_settings(cfg)
-    settings = merge(settings, (T_target = target_spectral_truncation(grid),))
-    vertical = build_vertical_setup(settings.coeff_path, settings.level_range, settings.min_dp, cfg["grid"])
-
-    @info "ERA5 reduced-Gaussian transport-binary v2 preprocessor"
-    @info "  Spectral dir: $(settings.spectral_dir)"
-    @info "  Output dir:   $(settings.out_dir)"
-    @info "  Target grid:  $(target_summary(grid))"
-    @info "  DT:           $(settings.dt) s (half_dt=$(settings.half_dt) s)"
-    @info "  Merged levels: $(vertical.Nz)"
-    @info "  Float type:   $(settings.output_float_type)"
-
-    dates = select_processing_dates(available_spectral_dates(settings.spectral_dir), day_filter)
-    @info @sprintf("Processing %d days: %s to %s", length(dates), first(dates), last(dates))
-    t_total = time()
-    for (i, date) in enumerate(dates)
-        @info @sprintf("[%d/%d] %s", i, length(dates), date)
-        process_day_reduced_transport_binary_v2(date, grid, settings, vertical)
-    end
-    wall_total = round(time() - t_total, digits=1)
-    @info @sprintf("All done! %d days in %.1fs (%.1fs/day)", length(dates), wall_total,
-                   length(dates) > 0 ? wall_total / length(dates) : 0.0)
+    target = build_spectral_transport_binary_v2_target(argv[1], argv[2:end]; FT=Float64)
+    target isa ReducedGaussianSpectralTransportBinaryV2Target ||
+        error("grid.type must be a reduced-Gaussian target for this script")
+    run_spectral_transport_binary_v2_preprocessor(target)
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__

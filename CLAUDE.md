@@ -478,6 +478,30 @@ See `src/Diffusion/Diffusion.jl` for a clean example with 4 implementations.
 
 - **GPU vs CPU**: GPU kernels via KernelAbstractions. Same code runs on both.
   All array allocation dispatches on `array_type(arch)` → `Array` (CPU) or `CuArray` (GPU).
+
+- **CFL pilot dominates GPU runtime on unstructured grids**. The face-indexed
+  (RG) CFL subcycling pilot transfers arrays GPU→CPU every substep. With
+  Poisson-balanced binaries (`max(|flux|/m) ≈ 1e-14`), the pilot always returns
+  `n_sub=1`, so it's pure overhead. Pass `cfl_limit=Inf` to `apply!` to bypass
+  the pilot entirely. Measured impact (2026-04-12, NVIDIA L40S, F32, 24h):
+
+  | Grid     | Type        | CPU (16t)  | GPU (pilot) | GPU (bypass) | Speedup |
+  |----------|-------------|------------|-------------|--------------|---------|
+  | N24      | RG face-idx | 860 ms     | 862 ms      | **8 ms**     | **103×** |
+  | N90      | RG face-idx | 13.7 s     | 12.5 s      | **23 ms**    | **588×** |
+  | N160     | RG face-idx | 45.9 s     | 45.5 s      | **161 ms**   | **285×** |
+  | 720×361  | LL struct   | 19.6 s     | —           | **432 ms**   | 46×     |
+
+  The face-indexed `@atomic` scatter kernel is actually faster than structured
+  LL at matched cell counts because it has fewer sweep directions (H-V-V-H
+  vs X-Y-Z-Z-Y-X) and the L40S handles atomic accumulation efficiently at
+  high occupancy.
+
+- **Higher-order schemes (Slopes, PPM) are free on GPU**: they cost 2× on CPU
+  (wider stencil) but the GPU's arithmetic throughput absorbs the extra
+  computation while memory access time stays constant. At 720×361×34:
+  LL Upwind 432 ms, LL Slopes 429 ms, LL PPM 445 ms — all within noise.
+
 - **IO dominates for NetCDF**: preprocessed binary < 1 s/win vs 15+ s/win for on-the-fly NetCDF
 - **Double buffering**: overlaps IO with GPU compute. Use `buffering = "double"` in config.
 - **Column-major loops**: see invariant 8. Always verify loop nesting matches memory layout.

@@ -926,10 +926,15 @@ end
 function _x_subcycling_pass_count(am::AbstractArray{FT,3}, m::AbstractArray{FT,3},
                                   ws::AdvectionWorkspace{FT},
                                   cfl_limit::FT; max_n_sub::Int = 4096) where FT
-    # Device-side CFL pilots are not implemented yet. Keep GPU and other
-    # non-Array backends on the existing single-pass path until a proper
-    # reduction-based pilot is added.
-    m isa Array || return 1
+    # GPU path: use static CFL only (no evolving-mass pilot). The static CFL
+    # overestimates n_sub slightly but stays entirely on device via broadcast
+    # + maximum reduction — no GPU→CPU transfer.
+    if !(m isa Array)
+        Nx = size(m, 1)
+        out = max.(@view(am[1:Nx, :, :]), zero(FT)) .+ max.(.- @view(am[2:Nx+1, :, :]), zero(FT))
+        static_cfl = maximum(out ./ max.(m, eps(FT)))
+        return _subcycling_pass_count(static_cfl, cfl_limit)
+    end
     Nx, Ny, Nz = size(m)
     mx = ws.m_buf
     mx_next = ws.rm_buf
@@ -968,10 +973,13 @@ end
 function _y_subcycling_pass_count(bm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
                                   ws::AdvectionWorkspace{FT},
                                   cfl_limit::FT; max_n_sub::Int = 4096) where FT
-    # Device-side CFL pilots are not implemented yet. Keep GPU and other
-    # non-Array backends on the existing single-pass path until a proper
-    # reduction-based pilot is added.
-    m isa Array || return 1
+    # GPU path: static CFL via broadcast + maximum reduction (stays on device).
+    if !(m isa Array)
+        Ny = size(m, 2)
+        out = max.(@view(bm[:, 1:Ny, :]), zero(FT)) .+ max.(.- @view(bm[:, 2:Ny+1, :]), zero(FT))
+        static_cfl = maximum(out ./ max.(m, eps(FT)))
+        return _subcycling_pass_count(static_cfl, cfl_limit)
+    end
     Nx, Ny, Nz = size(m)
     mx = ws.m_buf
     mx_next = ws.rm_buf
@@ -1010,10 +1018,13 @@ end
 function _z_subcycling_pass_count(cm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
                                   ws::AdvectionWorkspace{FT},
                                   cfl_limit::FT; max_n_sub::Int = 4096) where FT
-    # Device-side CFL pilots are not implemented yet. Keep GPU and other
-    # non-Array backends on the existing single-pass path until a proper
-    # reduction-based pilot is added.
-    m isa Array || return 1
+    # GPU path: static CFL via broadcast + maximum reduction (stays on device).
+    if !(m isa Array)
+        Nz = size(m, 3)
+        out = max.(@view(cm[:, :, 1:Nz]), zero(FT)) .+ max.(.- @view(cm[:, :, 2:Nz+1]), zero(FT))
+        static_cfl = maximum(out ./ max.(m, eps(FT)))
+        return _subcycling_pass_count(static_cfl, cfl_limit)
+    end
     Nx, Ny, Nz = size(m)
     mx = ws.m_buf
     mx_next = ws.rm_buf

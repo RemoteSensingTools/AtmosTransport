@@ -65,6 +65,7 @@ end
     r = Int(cluster_sizes[j])
     FT = eltype(rm)
     two = convert(FT, 2)
+    m_floor = eps(FT)  # prevent NaN if cell mass → 0 (consistent with z-kernel line 226)
     @inbounds begin
         if r == 1
             ip  = ifelse(i == Nx, 1, i + 1)
@@ -72,11 +73,11 @@ end
             ipp = ifelse(ip == Nx, 1, ip + 1)
             imm = ifelse(im == 1,  Nx, im - 1)
 
-            c_imm = rm[imm, j, k] / m[imm, j, k]
-            c_im  = rm[im,  j, k] / m[im,  j, k]
-            c_i   = rm[i,   j, k] / m[i,   j, k]
-            c_ip  = rm[ip,  j, k] / m[ip,  j, k]
-            c_ipp = rm[ipp, j, k] / m[ipp, j, k]
+            c_imm = rm[imm, j, k] / max(m[imm, j, k], m_floor)
+            c_im  = rm[im,  j, k] / max(m[im,  j, k], m_floor)
+            c_i   = rm[i,   j, k] / max(m[i,   j, k], m_floor)
+            c_ip  = rm[ip,  j, k] / max(m[ip,  j, k], m_floor)
+            c_ipp = rm[ipp, j, k] / max(m[ipp, j, k], m_floor)
 
             sc_im = _limited_slope((c_i - c_imm) / two, c_imm, c_im, c_i, use_limiter)
             sx_im = _limited_moment(m[im, j, k] * sc_im, rm[im, j, k], use_limiter)
@@ -160,17 +161,18 @@ end
     i, j, k = @index(Global, NTuple)
     FT = eltype(rm)
     two = convert(FT, 2)
+    m_floor = eps(FT)  # prevent NaN if cell mass → 0 (consistent with z-kernel)
     @inbounds begin
         jm  = max(j - 1, 1)
         jp  = min(j + 1, Ny)
         jmm = max(j - 2, 1)
         jpp = min(j + 2, Ny)
 
-        cjm  = rm[i, jm,  k] / m[i, jm,  k]
-        cj   = rm[i, j,   k] / m[i, j,   k]
-        cjp  = rm[i, jp,  k] / m[i, jp,  k]
-        cjmm = rm[i, jmm, k] / m[i, jmm, k]
-        cjpp = rm[i, jpp, k] / m[i, jpp, k]
+        cjm  = rm[i, jm,  k] / max(m[i, jm,  k], m_floor)
+        cj   = rm[i, j,   k] / max(m[i, j,   k], m_floor)
+        cjp  = rm[i, jp,  k] / max(m[i, jp,  k], m_floor)
+        cjmm = rm[i, jmm, k] / max(m[i, jmm, k], m_floor)
+        cjpp = rm[i, jpp, k] / max(m[i, jpp, k], m_floor)
 
         interior = (j > 1) & (j < Ny)
         sc_j = _limited_slope((cjp - cjm) / two, cjm, cj, cjp, use_limiter)

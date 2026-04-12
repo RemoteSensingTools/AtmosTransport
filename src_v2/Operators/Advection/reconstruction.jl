@@ -302,19 +302,21 @@ All indices wrapped via `mod1(·, Nx)` for periodic boundaries.
     i_r  = _wrap_periodic(face_i, Nx)
     i_rr = _wrap_periodic(face_i + Int32(1), Nx)
 
-    c_ll = rm[i_ll, j, k] / m[i_ll, j, k]
-    c_l  = rm[i_l,  j, k] / m[i_l,  j, k]
-    c_r  = rm[i_r,  j, k] / m[i_r,  j, k]
-    c_rr = rm[i_rr, j, k] / m[i_rr, j, k]
+    # Floor prevents NaN if cell mass → 0 (consistent with z-direction at line 399)
+    m_floor = eps(eltype(rm))
+    c_ll = rm[i_ll, j, k] / max(m[i_ll, j, k], m_floor)
+    c_l  = rm[i_l,  j, k] / max(m[i_l,  j, k], m_floor)
+    c_r  = rm[i_r,  j, k] / max(m[i_r,  j, k], m_floor)
+    c_rr = rm[i_rr, j, k] / max(m[i_rr, j, k], m_floor)
 
     sc_l = _limited_slope(c_ll, c_l, c_r, limiter)
-    sx_l = _limited_moment(m[i_l, j, k] * sc_l, rm[i_l, j, k], limiter)
+    sx_l = _limited_moment(max(m[i_l, j, k], m_floor) * sc_l, rm[i_l, j, k], limiter)
 
     sc_r = _limited_slope(c_l, c_r, c_rr, limiter)
-    sx_r = _limited_moment(m[i_r, j, k] * sc_r, rm[i_r, j, k], limiter)
+    sx_r = _limited_moment(max(m[i_r, j, k], m_floor) * sc_r, rm[i_r, j, k], limiter)
 
-    return _slopes_face_flux(F, m[i_l, j, k], rm[i_l, j, k], sx_l,
-                                m[i_r, j, k], rm[i_r, j, k], sx_r)
+    return _slopes_face_flux(F, max(m[i_l, j, k], m_floor), rm[i_l, j, k], sx_l,
+                                max(m[i_r, j, k], m_floor), rm[i_r, j, k], sx_r)
 end
 
 """
@@ -347,23 +349,24 @@ Indices clamped: `jLL = max(face_j-2, 1)`, `jRR = min(face_j+1, Ny)`.
     jll = max(face_j - Int32(2), Int32(1))
     jrr = min(face_j + Int32(1), Ny)
 
-    c_ll = rm[i, jll, k] / m[i, jll, k]
-    c_l  = rm[i, jl,  k] / m[i, jl,  k]
-    c_r  = rm[i, jr,  k] / m[i, jr,  k]
-    c_rr = rm[i, jrr, k] / m[i, jrr, k]
+    m_floor = eps(FT)  # prevent NaN if cell mass → 0 (consistent with z-direction)
+    c_ll = rm[i, jll, k] / max(m[i, jll, k], m_floor)
+    c_l  = rm[i, jl,  k] / max(m[i, jl,  k], m_floor)
+    c_r  = rm[i, jr,  k] / max(m[i, jr,  k], m_floor)
+    c_rr = rm[i, jrr, k] / max(m[i, jrr, k], m_floor)
 
     interior_l = (jl > Int32(1)) & (jl < Ny)
     sc_l = _limited_slope(c_ll, c_l, c_r, limiter)
-    sx_l = _limited_moment(m[i, jl, k] * sc_l, rm[i, jl, k], limiter)
+    sx_l = _limited_moment(max(m[i, jl, k], m_floor) * sc_l, rm[i, jl, k], limiter)
     sx_l = ifelse(interior_l, sx_l, zero(FT))
 
     interior_r = (jr > Int32(1)) & (jr < Ny)
     sc_r = _limited_slope(c_l, c_r, c_rr, limiter)
-    sx_r = _limited_moment(m[i, jr, k] * sc_r, rm[i, jr, k], limiter)
+    sx_r = _limited_moment(max(m[i, jr, k], m_floor) * sc_r, rm[i, jr, k], limiter)
     sx_r = ifelse(interior_r, sx_r, zero(FT))
 
-    flux = _slopes_face_flux(F, m[i, jl, k], rm[i, jl, k], sx_l,
-                                m[i, jr, k], rm[i, jr, k], sx_r)
+    flux = _slopes_face_flux(F, max(m[i, jl, k], m_floor), rm[i, jl, k], sx_l,
+                                max(m[i, jr, k], m_floor), rm[i, jr, k], sx_r)
     return ifelse(at_boundary, zero(FT), flux)
 end
 

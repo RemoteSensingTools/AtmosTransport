@@ -1,25 +1,45 @@
-# Download Script Notes
+# Download Scripts
 
-This directory still contains a mix of current entrypoints and older
-ERA5-specific download helpers.
+## Unified entry point
 
-## Current ERA5 entrypoints
+All downloads are now driven by TOML configs via a single script:
 
-- `download_era5_native_monthly.py`
-  Canonical native ERA5 monthly GRIB downloader for the new
-  `~/data/AtmosTransport/met/era5/N320/hourly/raw/...` layout.
-- `download_era5_physics.py`
-  Current daily lat-lon NetCDF staging path for the existing ERA5
-  preprocessing pipeline.
-- `download_era5_grib_tm5.py`
-  TM5-oriented native GRIB pull with TM5 filename conventions.
+```bash
+julia --project=. scripts/downloads/download_data.jl config/downloads/<recipe>.toml \
+    [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--dry-run] [--verify]
+```
 
-## Backup snapshot
+Download recipe TOMLs are in `config/downloads/`. They reference met source
+definitions in `config/met_sources/`. Output paths follow the canonical
+Data Layout hierarchy (`docs/reference/DATA_LAYOUT.md`).
 
-Older or transitional ERA5 download helpers are copied into:
+### Available recipes
 
-- `scripts/downloads/bck/era5_legacy/`
+| Recipe | Source | Chunk | Description |
+|--------|--------|-------|-------------|
+| `era5_native_monthly.toml` | ERA5 | Monthly | All fields: core (VO/D/T/Q/LNSP), convection, surface |
+| `geosfp_c720.toml` | GEOS-FP | Per-file | C720 cubed-sphere CTM mass fluxes from WashU |
+| `geosit_c180.toml` | GEOS-IT | Per-file | C180 cubed-sphere from AWS S3 |
+| `merra2.toml` | MERRA-2 | Per-day | OPeNDAP download (not yet implemented) |
 
-These copies are intentionally redundant for now. The goal is to make it easy
-to prune the main directory later without losing historical entrypoints while
-the docs and preprocessing scripts are still being updated.
+### Examples
+
+```bash
+# Preview what would be downloaded (no network calls)
+julia --project=. scripts/downloads/download_data.jl \
+    config/downloads/geosit_c180.toml --dry-run
+
+# Download one month of ERA5
+julia --project=. scripts/downloads/download_data.jl \
+    config/downloads/era5_native_monthly.toml \
+    --start 2021-12-01 --end 2021-12-31
+
+# Check existing files for completeness
+julia --project=. scripts/downloads/download_data.jl \
+    config/downloads/geosit_c180.toml --verify
+```
+
+## Legacy scripts
+
+Individual download scripts have been moved to `legacy/` and are retained
+for reference only. They will eventually be removed.

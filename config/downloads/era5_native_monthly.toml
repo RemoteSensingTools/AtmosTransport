@@ -28,7 +28,7 @@
 met_source = "config/met_sources/era5.toml"
 
 [download]
-protocol = "mars"                                # prefer MARS (fast), auto-fallback to CDS
+protocol = "cds"                                  # CDS API (MARS requires special access)
 
 # ---------------------------------------------------------------------------
 # Request groups — each becomes one API call per month

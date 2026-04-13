@@ -117,6 +117,6 @@ include("binary_pipeline.jl")
 
 # Exports for the CLI script and advanced users
 export build_target_geometry, target_summary
-export process_day, preprocess_day!
+export process_day
 
 end # module Preprocessing

@@ -1091,6 +1091,16 @@ function process_day(date::Date,
         regrid_3d_to_cs_panels!(m_out, regridder, merged.m_merged, cs_ws, Nc)
         regrid_2d_to_cs_panels!(ps_out, regridder, transform.sp, cs_ws, Nc)
 
+        # Per-level mean correction on regridded m.
+        # On a closed sphere, Σ div_h = 0 (topological). For the Poisson
+        # system to be fully solvable, we need Σ(m_next - m_cur) = 0 at each
+        # level. Conservative regridding preserves global mass but shifts the
+        # per-level distribution by O(10⁻⁶) relative. We absorb this by
+        # adjusting regridded m so each level's global sum matches the staging
+        # LL grid's sum. The correction is applied HERE (not in a hidden
+        # projection) so the stored m and the balance target are consistent.
+        _enforce_perlevel_mass_consistency!(m_out, merged.m_merged, Nc, Nz)
+
         # Recover LL cell-center winds from merged fluxes
         stg_lats = staging_grid.lats
         Δy_ll = FT(staging_grid.mesh.radius * deg2rad(staging_grid.mesh.Δφ))

@@ -106,8 +106,6 @@ function ensure_supported_target(grid::AbstractTargetGeometry)
           "spectral synthesis and flux construction still need dedicated methods.")
 end
 
-@inline _grid_float_type(::Type{FT}) where FT <: AbstractFloat = FT
-
 """
     _latlon_area_matrix(mesh) -> Matrix
 

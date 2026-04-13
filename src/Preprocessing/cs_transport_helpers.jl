@@ -299,6 +299,45 @@ function reconstruct_cs_fluxes!(am_panels::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
 end
 
 # ---------------------------------------------------------------------------
+# Per-level mass consistency correction
+# ---------------------------------------------------------------------------
+
+"""
+    _enforce_perlevel_mass_consistency!(m_cs, m_ll, Nc, Nz)
+
+Adjust regridded CS mass panels so that the global sum at each level matches
+the source LL grid's sum. Conservative regridding preserves total mass but can
+shift the per-level distribution by O(10⁻⁶) relative. This small uniform
+correction ensures Σ(m_next - m_cur) = 0 per level, which is required for the
+Poisson balance on a closed sphere (where Σ div_h = 0 topologically).
+
+The correction is applied to the regridded m BEFORE it's stored, so the
+binary's m and the balance target are consistent (no hidden projection).
+"""
+function _enforce_perlevel_mass_consistency!(m_cs::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                              m_ll::AbstractArray{FT, 3},
+                                              Nc::Int, Nz::Int) where FT
+    nc_cs = CS_PANEL_COUNT * Nc * Nc
+    for k in 1:Nz
+        # Target: sum of LL mass at this level
+        ll_sum = sum(view(m_ll, :, :, k))
+
+        # Current: sum of CS mass at this level
+        cs_sum = zero(FT)
+        for p in 1:CS_PANEL_COUNT, j in 1:Nc, i in 1:Nc
+            cs_sum += m_cs[p][i, j, k]
+        end
+
+        # Uniform additive correction per CS cell
+        offset = (ll_sum - cs_sum) / nc_cs
+        for p in 1:CS_PANEL_COUNT, j in 1:Nc, i in 1:Nc
+            m_cs[p][i, j, k] += offset
+        end
+    end
+    return nothing
+end
+
+# ---------------------------------------------------------------------------
 # Wind normalization: area-weighted sum → area average
 # ---------------------------------------------------------------------------
 

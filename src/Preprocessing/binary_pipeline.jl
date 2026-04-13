@@ -1101,7 +1101,14 @@ function process_day(date::Date,
             A_ifc, B_ifc, stg_lats, Δy_ll, Δlon_ll,
             FT(staging_grid.mesh.radius), gravity, dt_factor)
 
-        # Regrid winds to CS panels
+        # Regrid winds to CS panels.
+        # KNOWN LIMITATION: geographic u_east/v_north are regridded as scalars
+        # and used directly as panel-local u_x/v_y. On rotated panels (4, 5)
+        # and polar caps (3, 6), the panel axes differ from east/north. The
+        # Poisson balance corrects the integrated divergence but the per-face
+        # flux patterns carry this bias. A proper fix requires east/north →
+        # panel-local rotation after regridding. Same limitation as the legacy
+        # scripts_legacy/preprocessing/transport_binary_v2_cs_conservative.jl.
         regrid_3d_to_cs_panels!(cs_ws.u_cs_panels, regridder, cs_ws.u_cc, cs_ws, Nc)
         regrid_3d_to_cs_panels!(cs_ws.v_cs_panels, regridder, cs_ws.v_cc, cs_ws, Nc)
 
@@ -1136,24 +1143,11 @@ function process_day(date::Date,
             cs_ws.m_panels, cs_ws.ps_panels, cs_ws.am_panels, cs_ws.bm_panels)
         t_synth = time() - t0
 
-        # Copy m_next for balance, with per-level mean correction.
-        # On a closed sphere, Σ div_h = 0 (topological), so the Poisson
-        # system requires Σ(m_next - m_cur) = 0 at each level. Conservative
-        # regridding preserves total mass globally but not per-level, so we
-        # subtract the per-level mean from m_next to enforce solvability.
-        nc_total = CS_PANEL_COUNT * Nc * Nc
+        # Copy m_next for balance (unmodified — the Poisson CG internally
+        # projects the RHS to mean-zero, handling the topological constraint
+        # Σ div_h = 0 on a closed sphere without modifying the stored m)
         for p in 1:CS_PANEL_COUNT
             copyto!(cs_ws.m_next_panels[p], cs_ws.m_panels[p])
-        end
-        for k in 1:Nz
-            dm_sum = zero(FT)
-            for p in 1:CS_PANEL_COUNT, j in 1:Nc, i in 1:Nc
-                dm_sum += cs_ws.m_next_panels[p][i, j, k] - cur_m[p][i, j, k]
-            end
-            dm_mean = dm_sum / nc_total
-            for p in 1:CS_PANEL_COUNT, j in 1:Nc, i in 1:Nc
-                cs_ws.m_next_panels[p][i, j, k] -= dm_mean
-            end
         end
 
         # Balance the PREVIOUS window using (m_cur, m_next)
@@ -1161,34 +1155,25 @@ function process_day(date::Date,
         bal_diag = balance_cs_global_mass_fluxes!(
             cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
             grid.face_table, grid.cell_degree, steps_per_met,
-            grid.poisson_scratch; tol=1e-14, max_iter=5000)
+            grid.poisson_scratch; tol=1e-14, max_iter=20000)
         t_bal = time() - t_bal
 
         worst_pre  = max(worst_pre,  bal_diag.max_pre_residual)
         worst_post = max(worst_post, bal_diag.max_post_residual)
         worst_iter = max(worst_iter, bal_diag.max_cg_iter)
 
-        # Diagnose cm for previous window
-        # Subtract per-level global mean from dm so Σ dm[c,k] = 0 at each level.
-        # On a closed sphere, Σ div_h[c,k] = 0 (topological), so the Poisson
-        # system is only solvable if the RHS (div - dm) has zero mean. Without
-        # this correction, regridding-induced mass imbalance creates a mean
-        # residual that accumulates in cm (~7e-3 |cm|/m).
-        nc_total = CS_PANEL_COUNT * Nc * Nc
+        # Diagnose cm from balanced am/bm and raw mass tendency.
+        # Uses mass-budget residual convention: cm[k+1] = cm[k] + conv_h - dm.
+        # After balance, conv_h ≈ dm (projected), so cm is small but non-zero
+        # due to the per-level mean residual (Σ dm ≠ 0 from regridding) and
+        # CG convergence noise. diagnose_cs_cm! redistributes any bottom
+        # residual proportionally to m.
+        # KNOWN: max(|cm|/m) ≈ 7e-3, driven by per-level mean of dm that
+        # the CG can't fix (Σ div_h = 0 topologically but Σ dm ≠ 0).
         for p in 1:CS_PANEL_COUNT
             @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
                 cs_ws.dm_panels[p][i, j, k] =
                     (cs_ws.m_next_panels[p][i, j, k] - cur_m[p][i, j, k]) / (2 * steps_per_met)
-            end
-        end
-        for k in 1:Nz
-            dm_mean = zero(FT)
-            for p in 1:CS_PANEL_COUNT, j in 1:Nc, i in 1:Nc
-                dm_mean += cs_ws.dm_panels[p][i, j, k]
-            end
-            dm_mean /= nc_total
-            for p in 1:CS_PANEL_COUNT, j in 1:Nc, i in 1:Nc
-                cs_ws.dm_panels[p][i, j, k] -= dm_mean
             end
         end
         cur_cm = ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), CS_PANEL_COUNT)

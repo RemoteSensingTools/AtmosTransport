@@ -42,7 +42,7 @@ function main()
 
     # Delegate to the Preprocessing module's process_day function
     # (which dispatches on source × target × level selection)
-    process_day(cfg; day_override=day_str, caller_file=@__FILE__)
+    process_day(cfg; day_override=day_str)
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__

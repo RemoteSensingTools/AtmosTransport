@@ -1,0 +1,45 @@
+# ===========================================================================
+# GEOS-FP C720 cubed-sphere mass flux download
+#
+# Downloads hourly CTM mass flux files from WashU archive.
+# ~2.7 GB per file, 24 files per day.
+#
+# Output: met/geosfp/C720/raw/YYYYMMDD/
+#
+# Usage:
+#   julia --project=. scripts/downloads/download_data.jl \
+#       config/downloads/geosfp_c720.toml \
+#       --start 2024-06-01 --end 2024-06-07
+# ===========================================================================
+
+[source]
+met_source = "config/met_sources/geosfp.toml"
+
+[download]
+protocol = "http"
+base_url = "http://geoschemdata.wustl.edu/ExtData/GEOS_C720/GEOS_FP_Native"
+product = "geosfp_c720"
+
+[[download.requests]]
+name = "ctm_massflux"
+description = "Hourly C720 cubed-sphere CTM mass fluxes (MFXC, MFYC, DELP)"
+collections = ["tavg_1hr_ctm_c0720_v72"]
+
+[output]
+data_root = "~/data/AtmosTransport"
+met_source = "geosfp"
+grid_name = "C720"
+cadence = "hourly"
+payload_type = "raw"
+subdirectory_by_date = true
+
+[schedule]
+start_date = "2024-06-01"
+end_date = "2024-06-30"
+chunk = "per_file"
+
+[options]
+max_concurrent = 4
+max_retries = 3
+retry_wait_seconds = 30
+skip_existing = true

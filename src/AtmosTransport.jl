@@ -109,6 +109,10 @@ using .Regridding
 include("Preprocessing/Preprocessing.jl")
 using .Preprocessing
 
+# ---- Download pipeline (TOML-driven met/emissions data download) ----
+include("Downloads/Downloads.jl")
+using .Downloads
+
 # ---- Re-exports for convenience ----
 
 # Architectures and parameters

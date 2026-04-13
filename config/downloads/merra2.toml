@@ -1,0 +1,43 @@
+# ===========================================================================
+# MERRA-2 download via OPeNDAP
+#
+# Downloads 3-hourly model-level data from NASA GES DISC.
+# Requires NASA Earthdata authentication (~/.netrc).
+#
+# Stream codes: 100 (1980-91), 200 (92-00), 300 (01-10), 400 (11-99)
+#
+# Output: met/merra2/0.5x0.625/3hourly/raw/
+#
+# Usage:
+#   julia --project=. scripts/downloads/download_data.jl \
+#       config/downloads/merra2.toml \
+#       --start 2021-12-01 --end 2021-12-31
+# ===========================================================================
+
+[source]
+met_source = "config/met_sources/merra2.toml"
+
+[download]
+protocol = "opendap"
+
+[[download.requests]]
+name = "transport"
+description = "3-hourly instantaneous state + turbulence (U, V, T, QV, PS, DELP, KH, PLE)"
+collections = ["asm_Nv_inst", "trb_Ne"]
+
+[output]
+data_root = "~/data/AtmosTransport"
+met_source = "merra2"
+grid_name = "0.5x0.625"
+cadence = "3hourly"
+payload_type = "raw"
+
+[schedule]
+start_date = "2021-12-01"
+end_date = "2021-12-31"
+chunk = "daily"
+
+[options]
+max_retries = 3
+retry_wait_seconds = 60
+skip_existing = true

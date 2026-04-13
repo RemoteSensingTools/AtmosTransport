@@ -1,0 +1,52 @@
+# ===========================================================================
+# GEOS-IT C180 cubed-sphere download
+#
+# Downloads daily NetCDF files from AWS S3 (public, no authentication).
+# Output follows canonical Data Layout: met/geosit/C180/raw/YYYYMMDD/
+#
+# Usage:
+#   julia --project=. scripts/downloads/download_data.jl \
+#       config/downloads/geosit_c180.toml
+#
+#   # Single month:
+#   julia --project=. scripts/downloads/download_data.jl \
+#       config/downloads/geosit_c180.toml \
+#       --start 2021-12-01 --end 2021-12-31
+#
+#   # Dry run (preview files):
+#   julia --project=. scripts/downloads/download_data.jl \
+#       config/downloads/geosit_c180.toml --dry-run
+# ===========================================================================
+
+[source]
+met_source = "config/met_sources/geosit.toml"
+
+[download]
+protocol = "s3"
+bucket = "geos-chem"
+prefix = "GEOS_C180/GEOS_IT"
+no_sign_request = true
+
+[[download.requests]]
+name = "transport"
+description = "CTM mass fluxes + dynamics + convection + surface"
+collections = ["CTM_A1", "A3mstE", "A1", "A3dyn"]
+
+[output]
+data_root = "~/data/AtmosTransport"
+met_source = "geosit"
+grid_name = "C180"
+cadence = "daily"
+payload_type = "raw"
+subdirectory_by_date = true
+
+[schedule]
+start_date = "2021-12-01"
+end_date = "2023-12-31"
+chunk = "per_file"
+
+[options]
+max_concurrent = 4
+max_retries = 3
+retry_wait_seconds = 30
+skip_existing = true

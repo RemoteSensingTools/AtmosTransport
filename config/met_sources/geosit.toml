@@ -1,0 +1,151 @@
+# ===========================================================================
+# GEOS-IT (Integrated Tropospheric) — Met Data Source Configuration
+#
+# NASA GMAO GEOS Integrated Tropospheric chemistry system.
+# Retrospective assimilated meteorological fields (1998–2023).
+# Same vertical coordinate as GEOS-FP and MERRA-2.
+#
+# Primary access: AWS S3 (public, no authentication) and WashU archive.
+# ===========================================================================
+
+[source]
+name        = "GEOS-IT"
+description = "NASA GEOS Integrated Tropospheric chemistry (retrospective)"
+institution = "NASA Global Modeling and Assimilation Office (GMAO)"
+reference   = "https://gmao.gsfc.nasa.gov/GMAO_products/"
+
+# ---------------------------------------------------------------------------
+# Native grid specification
+# ---------------------------------------------------------------------------
+[grid]
+type      = "CubedSphere"
+Nc        = 180            # cubed-sphere face size
+Nz        = 72             # number of native model levels
+resolution_km = 50.0       # approximate resolution
+
+# ---------------------------------------------------------------------------
+# Vertical coordinate: 72 hybrid sigma-pressure levels (same as GEOS-FP)
+# ---------------------------------------------------------------------------
+[vertical]
+coordinate_type   = "HybridSigmaPressure"
+coefficients_file = "config/geos_L72_coefficients.toml"
+n_levels          = 72
+n_interfaces      = 73
+surface_pressure_var = "surface_pressure"
+
+# ---------------------------------------------------------------------------
+# Data access configuration
+# ---------------------------------------------------------------------------
+[access]
+protocol      = "s3"
+bucket        = "geos-chem"
+prefix        = "GEOS_C180/GEOS_IT"
+auth_required = false
+no_sign_request = true
+time_interval = 3600.0     # hourly for CTM, 3-hourly for physics
+
+# Also available from WashU HTTP archive
+[access.http]
+base_url = "http://geoschemdata.wustl.edu/ExtData/GEOS_C180/GEOS_IT"
+
+# ---------------------------------------------------------------------------
+# Collections
+# ---------------------------------------------------------------------------
+[collections.CTM_A1]
+dataset     = "CTM_A1"
+frequency   = "hourly"
+description = "Hourly CTM mass fluxes (MFXC, MFYC, DELP, QV, PS)"
+size_gb_day = 4.2
+
+[collections.CTM_I1]
+dataset     = "CTM_I1"
+frequency   = "hourly"
+description = "Hourly instantaneous QV + PS (GCHP-aligned)"
+size_gb_day = 0.85
+
+[collections.A1]
+dataset     = "A1"
+frequency   = "hourly"
+description = "Hourly surface fields (PBLH, USTAR, HFLUX, etc.)"
+size_gb_day = 0.2
+
+[collections.A3mstE]
+dataset     = "A3mstE"
+frequency   = "3hourly"
+description = "3-hourly moist processes at edges (CMFMC, PFICU, PFLCU)"
+size_gb_day = 1.4
+
+[collections.A3dyn]
+dataset     = "A3dyn"
+frequency   = "3hourly"
+description = "3-hourly dynamics (DTRAIN, U, V, OMEGA)"
+size_gb_day = 2.5
+
+[collections.I3]
+dataset     = "I3"
+frequency   = "3hourly"
+description = "3-hourly instantaneous thermodynamics (T, QV, PS)"
+size_gb_day = 0.33
+
+# ---------------------------------------------------------------------------
+# Variable mapping: canonical_name → native name + collection
+#
+# GEOS-IT uses UPPERCASE native variable names (GEOS-5 convention).
+# Same naming as MERRA-2.
+# ---------------------------------------------------------------------------
+
+[variables.u_wind]
+native_name = "U"
+collection  = "A3dyn"
+
+[variables.v_wind]
+native_name = "V"
+collection  = "A3dyn"
+
+[variables.w_wind]
+native_name = "OMEGA"
+collection  = "A3dyn"
+
+[variables.temperature]
+native_name = "T"
+collection  = "I3"
+
+[variables.specific_humidity]
+native_name = "QV"
+collection  = "CTM_A1"
+
+[variables.surface_pressure]
+native_name = "PS"
+collection  = "CTM_A1"
+
+[variables.pressure_thickness]
+native_name = "DELP"
+collection  = "CTM_A1"
+
+[variables.horizontal_mass_flux_x]
+native_name = "MFXC"
+collection  = "CTM_A1"
+
+[variables.horizontal_mass_flux_y]
+native_name = "MFYC"
+collection  = "CTM_A1"
+
+[variables.conv_mass_flux]
+native_name = "CMFMC"
+collection  = "A3mstE"
+
+[variables.detraining_mass_flux]
+native_name = "DTRAIN"
+collection  = "A3dyn"
+
+[variables.boundary_layer_height]
+native_name = "PBLH"
+collection  = "A1"
+
+[variables.friction_velocity]
+native_name = "USTAR"
+collection  = "A1"
+
+[variables.sensible_heat_flux]
+native_name = "HFLUX"
+collection  = "A1"

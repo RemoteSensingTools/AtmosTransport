@@ -1,0 +1,90 @@
+# ===========================================================================
+# ERA5 native monthly GRIB download (production default)
+#
+# Downloads all ERA5 fields needed for AtmosTransport in monthly GRIB
+# bundles. One CDS/MARS API request per month per field group — much
+# more efficient than daily requests.
+#
+# Produces native-resolution GRIB files (T639 spectral / N320 reduced
+# Gaussian) in the canonical layout:
+#   met/era5/N320/hourly/raw/ml_an_native_core/     (VO, D, T, Q, LNSP)
+#   met/era5/N320/hourly/raw/ml_fc_convection/       (UDMF, DDMF, UDRF, DDRF)
+#   met/era5/N320/hourly/raw/sfc_an_native/          (SP, BLH, fluxes)
+#
+# Usage:
+#   julia --project=. scripts/downloads/download_data.jl \
+#       config/downloads/era5_native_monthly.toml
+#
+#   # Single month:
+#   julia --project=. scripts/downloads/download_data.jl \
+#       config/downloads/era5_native_monthly.toml \
+#       --start 2021-12-01 --end 2021-12-31
+#
+# Requires: ~/.ecmwfapirc (MARS, fast) or ~/.cdsapirc (CDS, slower)
+# Python packages: cdsapi or ecmwf-api-client
+# ===========================================================================
+
+[source]
+met_source = "config/met_sources/era5.toml"
+
+[download]
+protocol = "mars"                                # prefer MARS (fast), auto-fallback to CDS
+
+# ---------------------------------------------------------------------------
+# Request groups — each becomes one API call per month
+# ---------------------------------------------------------------------------
+
+[[download.requests]]
+name = "core"
+description = "Model-level analyses: T, Q, VO, LNSP, D (native spectral/N320)"
+dataset = "reanalysis-era5-complete"
+params = "130/133/138/152/155"
+field_type = "an"
+levels = "1/to/137"
+times = "hourly"
+format = "grib"
+
+[[download.requests]]
+name = "convection"
+description = "Convective mass flux and detrainment (forecast, params 235009-235012)"
+dataset = "reanalysis-era5-complete"
+params = "235009/235010/235011/235012"
+field_type = "fc"
+levels = "1/to/137"
+times = "06:00:00/18:00:00"
+steps = "1/2/3/4/5/6/7/8/9/10/11/12"
+format = "grib"
+
+[[download.requests]]
+name = "surface"
+description = "Surface pressure, BLH, heat fluxes, 10m winds, geopotential"
+dataset = "reanalysis-era5-single-levels"
+variables = [
+    "surface_pressure", "geopotential", "land_sea_mask",
+    "boundary_layer_height", "friction_velocity",
+    "10m_u_component_of_wind", "10m_v_component_of_wind",
+    "2m_temperature", "2m_dewpoint_temperature",
+    "surface_sensible_heat_flux", "surface_latent_heat_flux",
+]
+field_type = "an"
+times = "hourly"
+format = "grib"
+
+[output]
+data_root = "~/data/AtmosTransport"
+met_source = "era5"
+grid_name = "N320"
+cadence = "hourly"
+payload_type = "raw"
+subdirectory_by_request = true                    # ml_an_native_core/, ml_fc_convection/, sfc_an_native/
+filename_template = "era5_{request_name}_{year_month}.grib"
+
+[schedule]
+start_date = "2021-12-01"
+end_date = "2022-12-31"
+chunk = "monthly"                                 # one API call per month (efficient)
+
+[options]
+max_retries = 5
+retry_wait_seconds = 120
+skip_existing = true

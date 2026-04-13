@@ -137,17 +137,17 @@ new data should use canonical split paths:
 The table below gives concrete mapping examples from current paths to the
 canonical convention above.
 
-| Current path (example) | Canonical path (target) | Notes |
+| Current path (example) | Canonical path (target) | Status |
 |---|---|---|
-| `met/geosit_c180/raw/...` | `met/geosit/C180/raw/...` | Completed; legacy symlink retained |
-| `met/geosit_c180/preprocessed/...` | `met/geosit/C180/preprocessed/...` | Completed; legacy symlink retained |
-| `met/geosfp_c720/raw/...` | `met/geosfp/C720/raw/...` | Completed; legacy symlink retained |
-| `met/geosfp_c720/preprocessed/...` | `met/geosfp/C720/preprocessed/...` | Completed; legacy symlink retained |
-| `met/era5/spectral_hourly/...` | `met/era5/N320/hourly/spectral/...` | Target canonical path for hourly spectral GRIB |
+| `met/geosit_c180/raw/...` | `met/geosit/C180/raw/...` | Planned — run configs still use legacy |
+| `met/geosit_c180/preprocessed/...` | `met/geosit/C180/preprocessed/...` | Planned — run configs still use legacy |
+| `met/geosfp_c720/raw/...` | `met/geosfp/C720/raw/...` | Planned — run configs still use legacy |
+| `met/geosfp_c720/preprocessed/...` | `met/geosfp/C720/preprocessed/...` | Planned — run configs still use legacy |
+| `met/era5/spectral_hourly/...` | `met/era5/N320/hourly/spectral/...` | Planned — preprocessing configs use legacy |
 | `met/era5/spectral/...` (6-hourly) | `met/era5/N320/6hourly/spectral/...` | Removed from active archive (Apr 2026 cleanup) |
-| `met/era5/spectral_v4_tropo34_dec2021/...` | `met/era5/0.5x0.5/preprocessed/massflux_v4_moist_tropo34_dec2021/...` | Include basis (`moist`/`dry`) in variant |
-| `met/era5/spectral_v4_tropo34_dec2021_dry/...` | `met/era5/0.5x0.5/preprocessed/massflux_v4_dry_tropo34_dec2021/...` | Dry-basis explicit in path + manifest |
-| `met/era5/model_level_1deg/...` | `met/era5/1.0x1.0/raw/model_level/...` | Keep resolution explicit |
+| `met/era5/spectral_v4_tropo34_dec2021/...` | `met/era5/0.5x0.5/preprocessed/massflux_v4_moist_tropo34_dec2021/...` | Planned — include basis (`moist`/`dry`) in variant |
+| `met/era5/spectral_v4_tropo34_dec2021_dry/...` | `met/era5/0.5x0.5/preprocessed/massflux_v4_dry_tropo34_dec2021/...` | Planned — dry-basis explicit in path + manifest |
+| `met/era5/model_level_1deg/...` | `met/era5/1.0x1.0/raw/model_level/...` | Planned — keep resolution explicit |
 
 Practical rollout rule: do not break existing runs; support both legacy and
 canonical roots during transition, but write new outputs only to canonical
@@ -233,24 +233,55 @@ symlinks during transition, but new configs should use canonical paths.
 For 31 days (Dec 2021): Raw ~45 GB, Preprocessed ~62 GB.
 For 761 days (CATRINE): Raw ~1.1 TB, Preprocessed ~1.5 TB.
 
-## Download Scripts
+## Download System
 
-### ERA5
+### Unified entry point
+
+All downloads are driven by TOML configs in `config/downloads/` and executed via
+a single CLI:
+
+```bash
+julia --project=. scripts/downloads/download_data.jl config/downloads/<recipe>.toml \
+    [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--dry-run] [--verify]
+```
+
+Download recipes reference source definitions in `config/met_sources/` and produce
+output in canonical paths automatically.
+
+### Download recipes → canonical output paths
+
+| Recipe TOML | Optimal chunk | Canonical output path |
+|-------------|---------------|----------------------|
+| `era5_native_monthly.toml` | Monthly | `met/era5/N320/hourly/raw/{ml_an_native_core,ml_fc_convection,sfc_an_native}/` |
+| `era5_spectral_daily.toml` | Daily (test) | `met/era5/N320/hourly/spectral/` |
+| `geosfp_c720.toml` | Per-file | `met/geosfp/C720/raw/YYYYMMDD/` |
+| `geosfp_surface.toml` | Per-file | `met/geosfp/0.25x0.3125/hourly/surface/` |
+| `geosit_c180.toml` | Per-file | `met/geosit/C180/raw/YYYYMMDD/` |
+| `geosit_physics.toml` | Per-file | `met/geosit/C180/raw/YYYYMMDD/` |
+| `merra2.toml` | Per-day | `met/merra2/0.5x0.625/3hourly/raw/` |
+
+### Legacy scripts (in `scripts/downloads/legacy/`)
+
+Individual download scripts are retained for reference but deprecated in favor
+of the unified system above.
+
+#### ERA5
 
 | Script | Collection | Source | API |
 |--------|-----------|--------|-----|
-| `scripts/downloads/download_era5_spectral.py` | VO, D, LNSP (spectral GRIB) | ECMWF MARS / CDS | MARS preferred |
-| `scripts/downloads/download_era5_cmfmc.py` | CMFMC (model-level GRIB) | CDS (reanalysis-era5-complete) | CDS w/ MARS access |
-| `scripts/downloads/download_era5_detrainment.py` | UDRF+DDRF (model-level GRIB) | CDS (reanalysis-era5-complete) | CDS w/ MARS access |
-| `scripts/downloads/download_era5_surface_fields.py` | BLH, SSHF, T2M, U10, V10 + omega | CDS | CDS |
-| `scripts/downloads/download_era5_model_levels.jl` | u, v, w, lnsp (gridpoint NC) | CDS | CDS |
+| `download_era5_spectral.py` | VO, D, LNSP (spectral GRIB) | ECMWF MARS / CDS | MARS preferred |
+| `download_era5_native_monthly.py` | All core+convection+surface (monthly GRIB) | CDS | CDS |
+| `download_era5_physics.py` | Convection + thermodynamics | CDS | CDS |
+| `download_era5_surface_fields.py` | BLH, SSHF, T2M, U10, V10 | CDS | CDS |
+| `download_era5_model_levels.jl` | u, v, w, lnsp (gridpoint NC) | CDS | CDS |
 
-### GEOS-IT / GEOS-FP
+#### GEOS-IT / GEOS-FP
 
 | Script | Collection | Source |
 |--------|-----------|--------|
-| `scripts/download_geosit_ctm_i1.jl` | CTM_I1 | WashU GEOS-IT archive |
-| (built into preprocessor) | CTM_A1, A1, A3mstE, A3dyn, I3 | WashU |
+| `download_geosfp_cs_massflux.jl` | C720/C180 CTM mass flux | WashU archive |
+| `download_geosit_c180_s3.sh` | C180 all collections | AWS S3 (public) |
+| `download_geosfp_surface_fields.jl` | 0.25° surface+physics | AWS S3 (public) |
 
 ## Preprocessing Scripts
 

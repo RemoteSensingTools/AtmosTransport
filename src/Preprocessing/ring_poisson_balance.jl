@@ -1,19 +1,25 @@
 # =========================================================================
-# Fast Poisson balance for reduced-Gaussian meshes.
+# Compressed-Laplacian Poisson balance for reduced-Gaussian meshes.
 #
-# Two-level approach:
+# The LCM boundary segmentation in ReducedGaussianMesh creates millions
+# of faces (O90: 2.25M for 35K cells) because lcm(nlon_j, nlon_{j+1})
+# explodes for adjacent octahedral rings.  However, each cell has only
+# ~4-6 UNIQUE neighbors — the LCM duplicates are redundant for the
+# graph Laplacian.
 #
-# 1. **Compressed Laplacian**: collapses the LCM-inflated face mesh
-#    (millions of faces) into cell-to-cell adjacency (~4-6 unique
-#    neighbors per cell), reducing CG MatVec cost by 10-30×.
+# This module precomputes a compressed cell-to-cell adjacency with
+# integer multiplicity weights, mathematically equivalent to the full
+# face-indexed graph Laplacian.  The CG MatVec cost drops from
+# O(nfaces) to O(4 × ncells), giving 10-30× speedup.
 #
-# 2. **Ring-FFT preconditioner**: solves the zonal (within-ring) part
-#    of the Poisson equation exactly via per-ring FFT, leaving only
-#    the meridional coupling residual for the CG. Reduces CG iterations
-#    from ~1300 to ~50-100.
+# Measured: O90 222s → 19s/window (11×).
 #
-# Combined: O90 balance drops from 220s → ~1-2s per window.
-#           O160 balance drops from 33min → ~5-10s per window.
+# The solver uses Jacobi-preconditioned CG on the exact multiplicity-
+# weighted discrete operator.  Future speedup paths (not yet implemented):
+#   - Normalized-overlap-weight Laplacian as PCG preconditioner
+#   - Ring-block smoother (zonal FFT) as preconditioning component
+#   - Graph AMG on the compressed operator
+# These would reduce the ~1300 CG iterations without changing the answer.
 # =========================================================================
 
 """

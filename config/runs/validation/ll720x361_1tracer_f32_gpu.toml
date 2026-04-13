@@ -1,0 +1,31 @@
+# 0.5-degree LatLon, single CO2 tracer, F32 GPU — production resolution test
+# Uses v4-preprocessed binary (Poisson-balanced, mass-fixed)
+#
+# Usage:
+#   CUDA_VISIBLE_DEVICES=0 julia --project=. scripts/run_transport_binary.jl \
+#       config/runs/validation/ll720x361_1tracer_f32_gpu.toml
+
+[input]
+binary_paths = [
+    "~/data/AtmosTransport/met/era5/ll720x361_v4/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211201_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/ll720x361_v4/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211202_merged1000Pa_float64.bin",
+]
+
+[architecture]
+use_gpu = true
+
+[numerics]
+float_type = "Float32"
+
+[run]
+scheme = "slopes"
+reset_air_mass_each_window = false
+
+[tracers.co2]
+[tracers.co2.init]
+kind = "uniform"
+background = 411e-6
+
+[output]
+snapshot_hours = [0, 12, 24, 36, 48]
+snapshot_file = "~/data/AtmosTransport/output/validation/ll720x361_1tracer_f32_gpu.nc"

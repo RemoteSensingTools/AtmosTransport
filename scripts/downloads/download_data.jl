@@ -20,9 +20,9 @@ using Logging
 using TOML
 using Dates
 
-# Load the Downloads module (standalone — does not need the full AtmosTransport)
+# Load the DataDownloads module (standalone — does not need the full AtmosTransport)
 include(joinpath(@__DIR__, "..", "..", "src", "Downloads", "Downloads.jl"))
-using .Downloads
+using .DataDownloads
 
 function main()
     base_logger = ConsoleLogger(stderr, Logging.Info; show_limited=false)

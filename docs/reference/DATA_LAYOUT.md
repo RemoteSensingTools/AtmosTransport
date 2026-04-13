@@ -253,14 +253,11 @@ output in canonical paths automatically.
 | Recipe TOML | Optimal chunk | Canonical output path |
 |-------------|---------------|----------------------|
 | `era5_native_monthly.toml` | Monthly | `met/era5/N320/hourly/raw/{ml_an_native_core,ml_fc_convection,sfc_an_native}/` |
-| `era5_spectral_daily.toml` | Daily (test) | `met/era5/N320/hourly/spectral/` |
-| `geosfp_c720.toml` | Per-file | `met/geosfp/C720/raw/YYYYMMDD/` |
-| `geosfp_surface.toml` | Per-file | `met/geosfp/0.25x0.3125/hourly/surface/` |
-| `geosit_c180.toml` | Per-file | `met/geosit/C180/raw/YYYYMMDD/` |
-| `geosit_physics.toml` | Per-file | `met/geosit/C180/raw/YYYYMMDD/` |
+| `geosfp_c720.toml` | Per-file | `met/geosfp/C720/hourly/raw/YYYYMMDD/` |
+| `geosit_c180.toml` | Per-file | `met/geosit/C180/daily/raw/YYYYMMDD/` |
 | `merra2.toml` | Per-day | `met/merra2/0.5x0.625/3hourly/raw/` |
 
-### Legacy scripts (in `scripts/downloads/legacy/`)
+### Legacy scripts (in `scripts/downloads/`)
 
 Individual download scripts are retained for reference but deprecated in favor
 of the unified system above.

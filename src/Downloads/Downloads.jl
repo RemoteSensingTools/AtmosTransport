@@ -34,7 +34,7 @@ julia --project=. scripts/downloads/download_data.jl config/downloads/era5_nativ
 Output paths follow the canonical Data Layout hierarchy:
     <data_root>/met/<source>/<grid>/<cadence>/<payload>/
 """
-module Downloads
+module DataDownloads
 
 using Dates
 using Logging
@@ -70,4 +70,4 @@ export CDSProtocol, MARSProtocol, OPeNDAPProtocol, HTTPProtocol, S3Protocol
 export verified_download, verify_downloads
 export detect_python_env, PythonEnvironment
 
-end # module Downloads
+end # module DataDownloads

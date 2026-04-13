@@ -67,13 +67,18 @@ function _geosfp_file_urls(source::GEOSFPSource, protocol::HTTPProtocol,
     datestr = Dates.format(date, "yyyymmdd")
     results = Tuple{String, String, Float64}[]
 
+    y = year(date)
+    m = @sprintf("%02d", month(date))
+    d = @sprintf("%02d", day(date))
+
     if source.product == "geosfp_c720"
-        # C720 hourly CTM files from WashU
+        # C720 hourly CTM files from WashU — timestamp is HHMM (30-min offset
+        # for time-averaged data), URL path is Y$y/M$m/D$d/
         for coll in collections
             for hour in 0:23
-                time_tag = @sprintf("%s_%02d3000", datestr, hour)
-                fname = "GEOS.fp.asm.$(coll).$(time_tag).V01.nc4"
-                url = "$(protocol.base_url)/$datestr/$fname"
+                timestamp = @sprintf("%02d30", hour)
+                fname = "GEOS.fp.asm.$(coll).$(datestr)_$(timestamp).V01.nc4"
+                url = "$(protocol.base_url)/$(coll)/Y$y/M$m/D$d/$fname"
                 push!(results, (url, fname, 2700.0))  # ~2.7 GB per file
             end
         end

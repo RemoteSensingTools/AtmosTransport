@@ -87,7 +87,10 @@ using .MetDrivers: AbstractDriver, AbstractClosure, AbstractMetDriver,
                    total_windows, window_dt, steps_per_window, supports_diffusion, supports_convection,
                    DiagnoseVerticalFromHorizontal, PressureTendencyClosure,
                    CubedSphereBinaryReader, CubedSphereBinaryHeader,
-                   load_cs_window, cs_window_count
+                   load_cs_window, cs_window_count,
+                   StreamingTransportBinaryWriter,
+                   open_streaming_transport_binary, write_streaming_window!,
+                   close_streaming_transport_binary!
 
 # ---- Physics operators ----
 include("Operators/Operators.jl")
@@ -111,7 +114,7 @@ using .Preprocessing
 
 # ---- Download pipeline (TOML-driven met/emissions data download) ----
 include("Downloads/Downloads.jl")
-using .Downloads
+using .DataDownloads
 
 # ---- Re-exports for convenience ----
 
@@ -204,6 +207,8 @@ export DiagnoseVerticalFromHorizontal, PressureTendencyClosure
 export supports_diffusion, supports_convection
 export CubedSphereBinaryReader, CubedSphereBinaryHeader
 export load_cs_window, cs_window_count
+export StreamingTransportBinaryWriter
+export open_streaming_transport_binary, write_streaming_window!, close_streaming_transport_binary!
 
 # Models
 export TransportModel, Simulation, DrivenSimulation, SurfaceFluxSource

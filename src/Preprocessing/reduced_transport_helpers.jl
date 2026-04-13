@@ -809,6 +809,45 @@ function store_reduced_window!(storage::ReducedWindowStorage{FT},
     return nothing
 end
 
+"""
+    SlidingWindowBuffer{FT}
+
+Two-slot circular buffer for streaming RG preprocessing.  Only two windows'
+worth of `(m, hflux, cm, ps)` are kept in memory at any time, enabling
+O160/O320 binary generation without OOM.
+"""
+struct SlidingWindowBuffer{FT}
+    m     :: Vector{Matrix{FT}}     # length-2 circular buffer
+    hflux :: Vector{Matrix{FT}}
+    cm    :: Vector{Matrix{FT}}
+    ps    :: Vector{Vector{FT}}
+end
+
+function allocate_sliding_window_buffer(nc::Int, nf::Int, Nz::Int, ::Type{FT}) where FT
+    SlidingWindowBuffer{FT}(
+        [zeros(FT, nc, Nz)     for _ in 1:2],
+        [zeros(FT, nf, Nz)     for _ in 1:2],
+        [zeros(FT, nc, Nz + 1) for _ in 1:2],
+        [zeros(FT, nc)         for _ in 1:2],
+    )
+end
+
+"""
+    fill_buffer_slot!(buf, slot, merged, ps_vec, FT)
+
+Copy merged results into the given slot (1 or 2) of the sliding buffer.
+"""
+function fill_buffer_slot!(buf::SlidingWindowBuffer{FT},
+                           slot::Int,
+                           merged::ReducedMergeWorkspace{FT},
+                           ps_vec::AbstractVector) where FT
+    copyto!(buf.m[slot],     merged.m_merged)
+    copyto!(buf.hflux[slot], merged.hflux_merged)
+    copyto!(buf.cm[slot],    merged.cm_merged)
+    buf.ps[slot] .= ps_vec   # broadcast handles Float64→FT conversion in-place
+    return nothing
+end
+
 # =========================================================================
 # RG process_window! and process_day — mirrors the LL path in binary_pipeline.jl
 # =========================================================================
@@ -861,11 +900,113 @@ function process_window!(win_idx::Int,
 end
 
 """
+    synthesize_and_merge_window!(work, merged, hour, spec, grid, vertical,
+                                 settings, ps_offsets, win_idx)
+
+Spectral synthesis → native fields → mass fix → level merge for one window.
+Results are left in `merged.m_merged`, `merged.hflux_merged`, `merged.cm_merged`
+and `work.sp` (surface pressure).  No allocation.
+"""
+function synthesize_and_merge_window!(work::ReducedTransformWorkspace,
+                                      merged::ReducedMergeWorkspace{FT},
+                                      hour::Int,
+                                      spec,
+                                      grid::ReducedGaussianTargetGeometry,
+                                      vertical,
+                                      settings,
+                                      ps_offsets::Vector{Float64},
+                                      win_idx::Int) where FT
+    spectral_to_native_fields!(work,
+        spec.lnsp_all[hour], spec.vo_by_hour[hour], spec.d_by_hour[hour],
+        spec.T, vertical.level_range, vertical.ab, grid, settings.half_dt)
+
+    if settings.mass_fix_enable
+        target_ps = settings.target_ps_dry_pa / (1.0 - settings.qv_global_climatology)
+        area_sum = sum(work.cell_areas)
+        mean_ps = dot(work.sp, work.cell_areas) / area_sum
+        offset = target_ps - mean_ps
+        work.sp .+= offset
+        ps_offsets[win_idx] = offset
+        compute_reduced_dp_and_mass!(work.dp, work.m_arr, work.sp, work.cell_areas,
+                                     vertical.ab.dA, vertical.ab.dB)
+    end
+
+    merge_reduced_window!(merged, work, vertical)
+    return nothing
+end
+
+"""
+    balance_window!(hflux_work, m_cur_work, m_next_work, cm_work, div_scratch,
+                    buf, slot, m_next, work, vertical, steps_per_window;
+                    tol, max_iter)
+
+Poisson-balance the horizontal fluxes in buffer `slot` using
+`buf.m[slot]` as current mass and `m_next` as next-window mass target,
+then recompute `cm` from the balanced fluxes.  Mutates `buf.hflux[slot]`
+and `buf.cm[slot]` in-place.
+
+All scratch arrays (`hflux_work`, `m_cur_work`, `m_next_work`, `cm_work`,
+`div_scratch`) are preallocated Float64 buffers from the caller — no
+per-call allocation.
+
+Returns a diagnostics NamedTuple (from `balance_reduced_horizontal_fluxes!`).
+"""
+function balance_window!(hflux_work::Matrix{Float64},
+                         m_cur_work::Matrix{Float64},
+                         m_next_work::Matrix{Float64},
+                         cm_work::Matrix{Float64},
+                         div_scratch::Matrix{Float64},
+                         buf::SlidingWindowBuffer{FT},
+                         slot::Int,
+                         m_next::AbstractMatrix{FT},
+                         work::ReducedTransformWorkspace,
+                         vertical,
+                         steps_per_window::Int;
+                         tol::Float64 = 1e-14,
+                         max_iter::Int = 20000) where FT
+
+    copyto!(hflux_work, buf.hflux[slot])
+    copyto!(m_cur_work, buf.m[slot])
+    copyto!(m_next_work, m_next)
+
+    scratch = (psi = work.balance_psi, rhs = work.balance_rhs,
+               r = work.balance_r, p = work.balance_p,
+               Ap = work.balance_Ap, z = work.balance_z)
+
+    diag = balance_reduced_horizontal_fluxes!(
+        hflux_work, m_cur_work, m_next_work,
+        work.face_left, work.face_right, work.face_degree,
+        steps_per_window, scratch; tol=tol, max_iter=max_iter)
+
+    # Store balanced hflux back as FT.
+    buf.hflux[slot] .= FT.(hflux_work)
+
+    # Recompute cm from balanced hflux (in Float64, then convert to FT).
+    # Note: recompute_faceindexed_cm_from_divergence! fills cm_work and
+    # div_scratch internally, so no fill! needed here.
+    recompute_faceindexed_cm_from_divergence!(
+        cm_work, hflux_work,
+        work.face_left, work.face_right, div_scratch;
+        B_ifc = vertical.merged_vc.B)
+    buf.cm[slot] .= FT.(cm_work)
+
+    return diag
+end
+
+"""
     process_day(date, grid::ReducedGaussianTargetGeometry, settings, vertical;
                 next_day_hour0=nothing)
 
-Full one-day preprocessing for reduced-Gaussian targets: read spectral data,
-process all windows, Poisson-balance horizontal fluxes, write binary.
+Streaming one-day preprocessing for reduced-Gaussian targets.
+
+Uses a 2-window sliding buffer: at any time only two windows' worth of
+`(m, hflux, cm, ps)` are held in memory.  Each window is Poisson-balanced
+and written to disk before the next pair is computed.  This reduces peak
+memory from `O(Nt)` to `O(1)` and enables O160/O320 binary generation.
+
+Pipeline per window:
+  spectral synthesis → mass fix → level merge → (wait for next window) →
+  Poisson balance using (m_cur, m_next) → cm recomputation → stream-write
 """
 function process_day(date::Date,
                      grid::ReducedGaussianTargetGeometry,
@@ -899,70 +1040,142 @@ function process_day(date::Date,
     mkpath(settings.out_dir)
     bin_path = output_binary_path(date, settings.out_dir, settings.min_dp, FT)
 
-    # Note: skip-check disabled for RG because the actual header size (131072 bytes)
-    # is determined by write_transport_binary, not by HEADER_SIZE (16384).
-    # We rely on the post-write size log for verification instead.
-
-    @info @sprintf("  Output: %s (%.2f GB, %d windows, %d cells, %d faces)",
-                   basename(bin_path), expected_total / 1e9, Nt, nc, nf)
-
-    work = allocate_reduced_transform_workspace(grid, spec.T, Nz_native)
+    # Allocate workspaces — shared across all windows (no per-window allocation)
+    work   = allocate_reduced_transform_workspace(grid, spec.T, Nz_native)
     merged = allocate_reduced_merge_workspace(grid, Nz_native, Nz, FT)
-    storage = allocate_reduced_window_storage(Nt, FT, grid, Nz)
-    ps_offsets = zeros(Float64, Nt + 1)
+    buf    = allocate_sliding_window_buffer(nc, nf, Nz, FT)
+    ps_offsets = zeros(Float64, Nt)
 
-    log_mass_fix_configuration(settings)
-    @info "  Computing spectral -> RG gridpoint -> merged for $Nt windows..."
+    # Poisson-balance scratch (Float64, reused every window — no per-call allocation)
+    hflux_work    = zeros(Float64, nf, Nz)
+    m_cur_work    = zeros(Float64, nc, Nz)
+    m_next_work   = zeros(Float64, nc, Nz)
+    cm_work       = zeros(Float64, nc, Nz + 1)
+    div_scratch_b = zeros(Float64, nc, Nz)
 
-    for (win_idx, hour) in enumerate(spec.hours)
-        process_window!(win_idx, hour, spec, grid, vertical, settings,
-                        work, merged, storage, ps_offsets)
-    end
-
-    if settings.mass_fix_enable
-        @info @sprintf("  Mass-fix offsets (Pa) min/max/mean: %+.3f / %+.3f / %+.3f",
-                       minimum(ps_offsets[1:Nt]),
-                       maximum(ps_offsets[1:Nt]),
-                       sum(ps_offsets[1:Nt]) / Nt)
-    end
-
-    # Poisson balance + cm recomputation
-    @info "  Applying Poisson mass flux balance..."
-    apply_reduced_poisson_balance!(storage, work, vertical, steps_per_met)
-    @info "  Poisson balance complete for $Nt windows"
-
-    # Write using the MetDrivers write_transport_binary for RG
-    @info "  Writing binary..."
+    # Open the streaming binary writer
     vc_merged = vertical.merged_vc
     transport_grid = AtmosGrid(mesh, vc_merged, CPU(); FT=FT)
+    sample_window = (m = buf.m[1], hflux = buf.hflux[1],
+                     cm = buf.cm[1], ps = buf.ps[1])
 
-    windows = map(1:Nt) do win
-        (m     = storage.all_m[win],
-         ps    = storage.all_ps[win],
-         hflux = storage.all_hflux[win],
-         cm    = storage.all_cm[win])
-    end
-
-    write_transport_binary(bin_path, transport_grid, windows;
-        FT=FT,
-        dt_met_seconds = settings.met_interval,
-        half_dt_seconds = settings.half_dt,
-        steps_per_window = steps_per_met,
+    writer = open_streaming_transport_binary(
+        bin_path, transport_grid, Nt, sample_window;
+        FT = FT,
+        dt_met_seconds     = settings.met_interval,
+        half_dt_seconds    = settings.half_dt,
+        steps_per_window   = steps_per_met,
         source_flux_sampling = :window_start_endpoint,
         mass_basis = Symbol(settings.mass_basis),
         extra_header = Dict{String, Any}(
-            "preprocessor" => "preprocess_transport_binary.jl",
-            "source_type" => "era5_spectral",
-            "target_type" => "reduced_gaussian",
-            "gaussian_number" => grid.gaussian_number,
+            "preprocessor"     => "preprocess_transport_binary.jl",
+            "source_type"      => "era5_spectral",
+            "target_type"      => "reduced_gaussian",
+            "gaussian_number"  => grid.gaussian_number,
             "poisson_balanced" => true,
             "mass_fix_enabled" => settings.mass_fix_enable,
-            "ps_offsets_pa_per_window" => ps_offsets[1:Nt],
         ))
 
+    bytes_per_window = writer.elems_per_window * sizeof(eltype(writer.pack_buffer))
+    expected_total = writer.header_bytes + Nt * bytes_per_window
+    @info @sprintf("  Output: %s (%.2f GB, %d windows, %d cells, %d faces)",
+                   basename(bin_path), expected_total / 1e9, Nt, nc, nf)
+
+    log_mass_fix_configuration(settings)
+    @info "  Streaming: synthesize → balance → write (2-window sliding buffer)..."
+
+    # Worst-case balance diagnostics across all windows
+    worst_pre_raw  = 0.0
+    worst_post_proj = 0.0
+    worst_post_raw = 0.0
+    worst_iter     = 0
+
+    # cur/nxt are indices into the 2-slot buffer (swap instead of copy)
+    cur = 1
+    nxt = 2
+
+    # ── Process first window into slot `cur` ──
+    t0 = time()
+    synthesize_and_merge_window!(work, merged, spec.hours[1], spec, grid,
+                                 vertical, settings, ps_offsets, 1)
+    fill_buffer_slot!(buf, cur, merged, work.sp)
+    should_log_window(1, Nt) &&
+        @info @sprintf("    Window  1/%d (hour %02d): synth %.2fs  offset=%+.3f Pa",
+                       Nt, spec.hours[1], time() - t0, ps_offsets[1])
+
+    # ── Sliding-buffer loop: windows 2..Nt ──
+    for win in 2:Nt
+        t0 = time()
+        synthesize_and_merge_window!(work, merged, spec.hours[win], spec, grid,
+                                     vertical, settings, ps_offsets, win)
+        fill_buffer_slot!(buf, nxt, merged, work.sp)
+        t_synth = time() - t0
+
+        # Balance the PREVIOUS window using (m_cur, m_next)
+        t_bal = time()
+        diag = balance_window!(hflux_work, m_cur_work, m_next_work,
+                               cm_work, div_scratch_b,
+                               buf, cur, buf.m[nxt],
+                               work, vertical, steps_per_met)
+        t_bal = time() - t_bal
+
+        worst_pre_raw   = max(worst_pre_raw,   diag.max_pre_raw_residual)
+        worst_post_proj = max(worst_post_proj,  diag.max_post_projected)
+        worst_post_raw  = max(worst_post_raw,   diag.max_post_raw_residual)
+        worst_iter      = max(worst_iter,       diag.max_cg_iter)
+
+        # Write the balanced previous window
+        window_nt = (m = buf.m[cur], hflux = buf.hflux[cur],
+                     cm = buf.cm[cur], ps = buf.ps[cur])
+        write_streaming_window!(writer, window_nt)
+
+        written_win = win - 1  # balance diagnostics are for the PREVIOUS window
+        should_log_window(written_win, Nt) &&
+            @info @sprintf("    Window %2d/%d: wrote (bal %.2fs pre_raw=%.2e post_proj=%.2e iter=%d) | synth %2d (%.2fs) offset=%+.3f Pa",
+                           written_win, Nt, t_bal, diag.max_pre_raw_residual, diag.max_post_projected, diag.max_cg_iter, win, t_synth, ps_offsets[win])
+
+        # Swap slots
+        cur, nxt = nxt, cur
+    end
+
+    # ── Balance & write the LAST window (zero-tendency fallback) ──
+    t_bal = time()
+    diag = balance_window!(hflux_work, m_cur_work, m_next_work,
+                           cm_work, div_scratch_b,
+                           buf, cur, buf.m[cur],   # m_next = m_cur → zero tendency
+                           work, vertical, steps_per_met)
+    t_bal = time() - t_bal
+
+    worst_pre_raw   = max(worst_pre_raw,   diag.max_pre_raw_residual)
+    worst_post_proj = max(worst_post_proj,  diag.max_post_projected)
+    worst_post_raw  = max(worst_post_raw,   diag.max_post_raw_residual)
+    worst_iter      = max(worst_iter,       diag.max_cg_iter)
+
+    window_nt = (m = buf.m[cur], hflux = buf.hflux[cur],
+                 cm = buf.cm[cur], ps = buf.ps[cur])
+    write_streaming_window!(writer, window_nt)
+
+    @info @sprintf("    Window %2d/%d (last): bal %.2fs  pre_raw=%.2e post_proj=%.2e iter=%d",
+                   Nt, Nt, t_bal, diag.max_pre_raw_residual,
+                   diag.max_post_projected, diag.max_cg_iter)
+
+    # ── Finalize ──
+    close_streaming_transport_binary!(writer)
+
+    if settings.mass_fix_enable
+        @info @sprintf("  Mass-fix offsets (Pa) min/max/mean: %+.3f / %+.3f / %+.3f",
+                       minimum(ps_offsets), maximum(ps_offsets),
+                       sum(ps_offsets) / Nt)
+    end
+
+    @info @sprintf("  Poisson balance summary: pre_raw=%.3e  post_proj=%.3e  post_raw=%.3e  max_cg_iter=%d",
+                   worst_pre_raw, worst_post_proj, worst_post_raw, worst_iter)
+
     actual = filesize(bin_path)
-    @info @sprintf("  Done: %s (%.2f GB, %.1fs)", basename(bin_path), actual / 1e9, time() - t_day)
-    actual > 0 || error("Binary write produced empty file: $bin_path")
+    @info @sprintf("  Done: %s (%.2f GB, %.1fs)", basename(bin_path),
+                   actual / 1e9, time() - t_day)
+    actual == expected_total ||
+        @warn @sprintf("File size mismatch: expected %d bytes, got %d", expected_total, actual)
 
     return bin_path
 end

@@ -199,6 +199,14 @@ function _with_retries(f::Function, label::String, dest::String;
     return false
 end
 
+# OPeNDAP protocol execution (Phase 4 — requires NCDatasets remote access)
+function execute!(task::DownloadTask, proto::OPeNDAPProtocol;
+                  max_retries::Int=3, retry_wait::Int=30)
+    # TODO: implement OPeNDAP subset download via NCDatasets remote read
+    error("OPeNDAP download not yet implemented. " *
+          "Use the legacy script for MERRA-2: scripts/downloads/download_test_data.jl")
+end
+
 # HTTP protocol execution
 function execute!(task::DownloadTask, ::HTTPProtocol;
                   max_retries::Int=3, retry_wait::Int=30)

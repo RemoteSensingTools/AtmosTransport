@@ -21,12 +21,15 @@ function build_tasks(source::GEOSITSource, protocol::S3Protocol,
 
     for date in dates
         datestr = Dates.format(date, "yyyymmdd")
+        y = string(year(date))
+        m = @sprintf("%02d", month(date))
         out_dir = output.subdirectory_by_date ?
                   joinpath(out_base, datestr) : out_base
 
         for coll in collections
             fname = "GEOSIT.$(datestr).$(coll).C180.nc"
-            s3_key = joinpath(protocol.prefix, datestr, fname)
+            # S3 path uses YYYY/MM/ subdirectories (not YYYYMMDD/)
+            s3_key = "$(protocol.prefix)/$y/$m/$fname"
             est_mb = _geosit_collection_size(coll)
 
             push!(tasks, DownloadTask(

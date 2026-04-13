@@ -64,7 +64,10 @@ using ..Grids: LatLonMesh, ReducedGaussianMesh, HybridSigmaPressure,
                AtmosGrid, ncells, nfaces, nrings, nlevels, face_cells, cell_area,
                ring_longitudes, ring_cell_count, cell_areas_by_latitude,
                n_levels, pressure_at_interface, level_thickness, floattype
-using ..MetDrivers: TransportBinaryReader, TransportBinaryHeader, write_transport_binary
+using ..MetDrivers: TransportBinaryReader, TransportBinaryHeader, write_transport_binary,
+                    StreamingTransportBinaryWriter,
+                    open_streaming_transport_binary, write_streaming_window!,
+                    close_streaming_transport_binary!
 
 # Physical constants
 include("constants.jl")

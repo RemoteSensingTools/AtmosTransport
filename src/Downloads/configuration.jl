@@ -142,13 +142,11 @@ end
 # Schedule configuration
 # ---------------------------------------------------------------------------
 
-function _build_schedule(cfg::Dict{String, Any};
-                         start_override::Union{Date, Nothing}=nothing,
-                         end_override::Union{Date, Nothing}=nothing)
+function _build_schedule(cfg::Dict{String, Any})
     sched = cfg["schedule"]
 
-    start_date = isnothing(start_override) ? Date(sched["start_date"]) : start_override
-    end_date   = isnothing(end_override)   ? Date(sched["end_date"])   : end_override
+    start_date = Date(sched["start_date"])
+    end_date   = Date(sched["end_date"])
 
     chunk_str = get(sched, "chunk", "monthly")
     chunk = Symbol(chunk_str)

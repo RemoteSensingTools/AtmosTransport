@@ -141,12 +141,17 @@ function _era5_api_request(req::Dict{String, Any}, date_str::String, dates::Vect
         end
     end
 
-    # Times
+    # Times — MARS uses slash-separated strings, CDS v2 single-levels uses lists
     times_str = get(req, "times", "")
+    is_single_level = get(req, "dataset", "") == "reanalysis-era5-single-levels"
     if times_str == "hourly"
-        request["time"] = join([@sprintf("%02d:00:00", h) for h in 0:23], "/")
+        if is_single_level
+            request["time"] = [@sprintf("%02d:00", h) for h in 0:23]
+        else
+            request["time"] = join([@sprintf("%02d:00:00", h) for h in 0:23], "/")
+        end
     elseif !isempty(times_str)
-        request["time"] = times_str
+        request["time"] = is_single_level ? split(times_str, "/") : times_str
     end
 
     # Forecast steps (for convection fields)

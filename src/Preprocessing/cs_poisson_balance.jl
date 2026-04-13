@@ -514,6 +514,10 @@ function balance_cs_global_mass_fluxes!(
         end
 
         # 2. RHS = divergence - target mass tendency
+        #    div[c] = net outflow (positive = mass leaves cell), so the
+        #    balance target must be NEGATIVE dm: when mass increases
+        #    (m_next > m_cur), net outflow should decrease (inflow > outflow).
+        #    target = -(m_next - m_cur) / (2*steps) = (m_cur - m_next) * inv_scale
         rhs = scratch.rhs
         @inbounds for c in 1:nc
             p_idx = (c - 1) ÷ (Nc * Nc) + 1
@@ -521,8 +525,8 @@ function balance_cs_global_mass_fluxes!(
             j_local = local_idx ÷ Nc + 1
             i_local = local_idx % Nc + 1
 
-            target = (Float64(panels_m_next[p_idx][i_local, j_local, k]) -
-                      Float64(panels_m[p_idx][i_local, j_local, k])) * inv_scale
+            target = (Float64(panels_m[p_idx][i_local, j_local, k]) -
+                      Float64(panels_m_next[p_idx][i_local, j_local, k])) * inv_scale
             rhs[c] = div[c] - target
         end
 
@@ -570,8 +574,8 @@ function balance_cs_global_mass_fluxes!(
             local_idx = (c - 1) % (Nc * Nc)
             j_local = local_idx ÷ Nc + 1
             i_local = local_idx % Nc + 1
-            target = (Float64(panels_m_next[p_idx][i_local, j_local, k]) -
-                      Float64(panels_m[p_idx][i_local, j_local, k])) * inv_scale
+            target = (Float64(panels_m[p_idx][i_local, j_local, k]) -
+                      Float64(panels_m_next[p_idx][i_local, j_local, k])) * inv_scale
             rhs[c] = (div[c] - target) - rhs_mean
         end
         post_proj = 0.0
@@ -604,8 +608,8 @@ function balance_cs_global_mass_fluxes!(
             local_idx = (c - 1) % (Nc * Nc)
             j_local = local_idx ÷ Nc + 1
             i_local = local_idx % Nc + 1
-            target = (Float64(panels_m_next[p_idx][i_local, j_local, k]) -
-                      Float64(panels_m[p_idx][i_local, j_local, k])) * inv_scale
+            target = (Float64(panels_m[p_idx][i_local, j_local, k]) -
+                      Float64(panels_m_next[p_idx][i_local, j_local, k])) * inv_scale
             r = abs(div[c] - target)
             r > post_raw && (post_raw = r)
         end

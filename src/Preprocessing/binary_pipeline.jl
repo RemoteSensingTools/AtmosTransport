@@ -1101,14 +1101,12 @@ function process_day(date::Date,
             A_ifc, B_ifc, stg_lats, Δy_ll, Δlon_ll,
             FT(staging_grid.mesh.radius), gravity, dt_factor)
 
-        # Regrid geographic winds to CS panels, normalize, and rotate to panel-local.
-        # The regridder uses normalize=false (area-weighted sum for extensive m/ps),
-        # so intensive winds need explicit normalization by destination cell area.
+        # Regrid geographic winds to CS panels and rotate to panel-local.
+        # ConservativeRegridding.regrid! already divides by dst_areas internally,
+        # so the regridded winds are correctly area-averaged (intensive quantity).
         # Then rotate east/north → panel-local (x, y) using the gnomonic Jacobian.
         regrid_3d_to_cs_panels!(cs_ws.u_cs_panels, regridder, cs_ws.u_cc, cs_ws, Nc)
         regrid_3d_to_cs_panels!(cs_ws.v_cs_panels, regridder, cs_ws.v_cc, cs_ws, Nc)
-        normalize_regridded_intensive!(cs_ws.u_cs_panels, grid.mesh.cell_areas, Nc, Nz)
-        normalize_regridded_intensive!(cs_ws.v_cs_panels, grid.mesh.cell_areas, Nc, Nz)
         rotate_winds_to_panel_local!(cs_ws.u_cs_panels, cs_ws.v_cs_panels,
                                       cs_ws.u_cs_panels, cs_ws.v_cs_panels,
                                       Nc, Nz)

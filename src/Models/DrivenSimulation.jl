@@ -14,8 +14,6 @@ struct SurfaceFluxSource{RateT}
     cell_mass_rate  :: RateT
 end
 
-SurfaceFluxSource(tracer_name::Symbol, cell_mass_rate) =
-    SurfaceFluxSource{typeof(cell_mass_rate)}(tracer_name, cell_mass_rate)
 
 function Adapt.adapt_structure(to, source::SurfaceFluxSource)
     cell_mass_rate = Adapt.adapt(to, source.cell_mass_rate)

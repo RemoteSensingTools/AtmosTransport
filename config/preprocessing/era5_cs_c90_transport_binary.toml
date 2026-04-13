@@ -1,0 +1,35 @@
+# Cubed-sphere C90 — spectral→in-memory LL staging→CS regrid→binary
+#
+# Usage:
+#   julia -t8 --project=. scripts/preprocessing/preprocess_transport_binary.jl \
+#       config/preprocessing/era5_cs_c90_transport_binary.toml --day 2021-12-01
+
+[input]
+spectral_dir = "~/data/AtmosTransport/met/era5/0.5x0.5/spectral_hourly"
+coefficients = "config/era5_L137_coefficients.toml"
+
+[output]
+directory = "~/data/AtmosTransport/met/era5/cs_c90/transport_binary_v2_tropo34_dec2021_f64"
+include_qv = false
+mass_basis = "moist"
+
+[grid]
+type = "cubed_sphere"
+Nc = 90
+regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
+# staging_nlon = 360  # defaults to max(4*Nc, 360) = 360
+# staging_nlat = 181  # defaults to max(2*Nc+1, 181) = 181
+echlevs = "ml137_tropo34"
+level_top = 1
+level_bot = 137
+merge_min_thickness_Pa = 1000.0
+
+[numerics]
+float_type = "Float64"
+dt = 900.0
+met_interval = 3600.0
+
+[mass_fix]
+enable = true
+target_ps_dry_pa = 98726.0
+qv_global_climatology = 0.00247

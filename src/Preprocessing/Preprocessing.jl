@@ -60,14 +60,20 @@ using FastGaussQuadrature: gausslegendre
 
 # Re-export parent module types we need
 using ..Architectures: CPU
-using ..Grids: LatLonMesh, ReducedGaussianMesh, HybridSigmaPressure,
+using ..Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
+               HybridSigmaPressure, PanelConnectivity,
                AtmosGrid, ncells, nfaces, nrings, nlevels, face_cells, cell_area,
                ring_longitudes, ring_cell_count, cell_areas_by_latitude,
-               n_levels, pressure_at_interface, level_thickness, floattype
+               n_levels, pressure_at_interface, level_thickness, floattype,
+               default_panel_connectivity, reciprocal_edge,
+               GnomonicPanelConvention, GEOSNativePanelConvention,
+               EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST
+using ..Regridding: build_regridder, apply_regridder!
 using ..MetDrivers: TransportBinaryReader, TransportBinaryHeader, write_transport_binary,
                     StreamingTransportBinaryWriter,
                     open_streaming_transport_binary, write_streaming_window!,
-                    close_streaming_transport_binary!
+                    close_streaming_transport_binary!,
+                    open_streaming_cs_transport_binary, write_streaming_cs_window!
 
 # Physical constants
 include("constants.jl")
@@ -78,7 +84,11 @@ include("logging.jl")
 # Vertical coordinate handling and level merging
 include("vertical_coordinates.jl")
 
-# Target grid geometry (LL and RG)
+# Global 6-panel Poisson balance for cubed-sphere grids
+# (must precede target_geometry.jl which uses CSGlobalFaceTable)
+include("cs_poisson_balance.jl")
+
+# Target grid geometry (LL, RG, and CS)
 include("target_geometry.jl")
 
 # GRIB spectral IO
@@ -95,6 +105,9 @@ include("ring_poisson_balance.jl")
 
 # Reduced Gaussian helpers (RG synthesis, RG balance, RG cm diagnosis)
 include("reduced_transport_helpers.jl")
+
+# Cubed-sphere transport helpers (regrid, wind recovery, flux reconstruction)
+include("cs_transport_helpers.jl")
 
 # Configuration parsing
 include("configuration.jl")

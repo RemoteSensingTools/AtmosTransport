@@ -247,6 +247,86 @@ function build_target_geometry(::Val{:synthetic_reduced_gaussian},
 end
 
 """
+    CubedSphereTargetGeometry
+
+Target geometry for spectral→CS transport binary preprocessing. The CS mesh
+stores gnomonic cell areas and metric terms; the face table and Poisson scratch
+are pre-built at construction time for efficient per-window balance.
+
+The `staging_nlon × staging_nlat` fields define an internal LL grid used for
+spectral synthesis before conservative regridding to CS panels.
+"""
+struct CubedSphereTargetGeometry{FT, M <: CubedSphereMesh{FT}} <: AbstractTargetGeometry
+    mesh             :: M
+    Nc               :: Int
+    face_table       :: CSGlobalFaceTable
+    cell_degree      :: Vector{Int}
+    poisson_scratch  :: CSPoissonScratch
+    cache_dir        :: String
+    staging_nlon     :: Int
+    staging_nlat     :: Int
+end
+
+grid_kind(::CubedSphereTargetGeometry) = :cubed_sphere
+supports_spectral_massflux_preprocessing(::CubedSphereTargetGeometry) = true
+
+function target_spectral_truncation(grid::CubedSphereTargetGeometry)
+    # Nyquist on the staging LL grid
+    return div(grid.staging_nlon, 2) - 1
+end
+
+function target_header_metadata(grid::CubedSphereTargetGeometry)
+    return Dict{String, Any}(
+        "horizontal_topology" => "StructuredDirectional",
+        "grid_type" => "cubed_sphere",
+        "Nc" => grid.Nc,
+        "npanel" => 6,
+    )
+end
+
+function target_summary(grid::CubedSphereTargetGeometry)
+    nc = 6 * grid.Nc^2
+    return "C$(grid.Nc) cubed sphere ($(nc) cells, staging $(grid.staging_nlon)×$(grid.staging_nlat))"
+end
+
+"""
+    build_target_geometry(::Val{:cubed_sphere}, cfg_grid, FT)
+
+Build a cubed-sphere target geometry from the `[grid]` config section.
+
+Required keys:
+- `Nc :: Int` — cells per panel edge
+
+Optional keys:
+- `regridder_cache_dir` — directory for CR.jl weight cache (default `~/.cache/AtmosTransport/cr_regridding`)
+- `staging_nlon`, `staging_nlat` — override the internal LL staging grid size
+  (defaults: `max(4Nc, 360)` × `max(2Nc+1, 181)`)
+"""
+function build_target_geometry(::Val{:cubed_sphere}, cfg_grid, ::Type{FT}) where FT <: AbstractFloat
+    Nc = Int(cfg_grid["Nc"])
+    Nc > 0 || error("cubed_sphere: Nc must be positive, got $Nc")
+
+    cache_dir = expanduser(String(get(cfg_grid, "regridder_cache_dir",
+                                      "~/.cache/AtmosTransport/cr_regridding")))
+
+    staging_nlon = Int(get(cfg_grid, "staging_nlon", max(4 * Nc, 360)))
+    staging_nlat = Int(get(cfg_grid, "staging_nlat", max(2 * Nc + 1, 181)))
+
+    mesh = CubedSphereMesh(; Nc=Nc, FT=FT, radius=FT(R_EARTH),
+                            convention=GnomonicPanelConvention())
+
+    conn = default_panel_connectivity()
+    ft = build_cs_global_face_table(Nc, conn)
+    degree = cs_cell_face_degree(ft)
+    scratch = CSPoissonScratch(ft.nc)
+
+    return CubedSphereTargetGeometry{FT, typeof(mesh)}(
+        mesh, Nc, ft, degree, scratch, cache_dir,
+        staging_nlon, staging_nlat,
+    )
+end
+
+"""
     build_target_geometry(cfg_grid, FT=Float64) -> AbstractTargetGeometry
 
 Dispatch configuration-driven target-geometry construction from the user-facing

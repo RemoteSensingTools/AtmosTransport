@@ -966,6 +966,266 @@ function process_day(date::Date,
 end
 
 """
+    process_day(date, grid::CubedSphereTargetGeometry, settings, vertical; ...)
+
+Spectral→CS transport binary: spectral synthesis to an internal LL staging grid,
+conservative regridding to CS panels, global Poisson balance, cm diagnosis,
+and streaming binary write. No on-disk LL intermediate.
+"""
+function process_day(date::Date,
+                     grid::CubedSphereTargetGeometry,
+                     settings,
+                     vertical;
+                     next_day_hour0=nothing)
+    FT = settings.output_float_type
+    Nc = grid.Nc
+    Nz_native = vertical.Nz_native
+    Nz = vertical.Nz
+    steps_per_met = exact_steps_per_window(settings.met_interval, settings.dt)
+    date_str = Dates.format(date, "yyyymmdd")
+
+    vo_d_path = joinpath(settings.spectral_dir, "era5_spectral_$(date_str)_vo_d.gb")
+    lnsp_path = joinpath(settings.spectral_dir, "era5_spectral_$(date_str)_lnsp.gb")
+
+    if !isfile(vo_d_path) || !isfile(lnsp_path)
+        @warn "Missing GRIB files for $date_str, skipping"
+        return nothing
+    end
+
+    t_day = time()
+    @info "  Reading spectral data for $date_str..."
+    spec = read_day_spectral_streaming(vo_d_path, lnsp_path; T_target=settings.T_target)
+    @info @sprintf("  Spectral data read: T=%d, %d hours (%.1fs)",
+                   spec.T, spec.n_times, time() - t_day)
+    Nt = spec.n_times
+
+    mkpath(settings.out_dir)
+    bin_path = output_binary_path(date, settings.out_dir, settings.min_dp, FT)
+
+    # --- Build the internal LL staging grid ---
+    staging_grid = build_target_geometry(Val(:latlon),
+        Dict{String,Any}("type" => "latlon",
+                          "nlon" => grid.staging_nlon,
+                          "nlat" => grid.staging_nlat), FT)
+    Nx_stg = nlon(staging_grid)
+    Ny_stg = nlat(staging_grid)
+    @info @sprintf("  Staging grid: %d×%d LL → C%d CS (%d panels)",
+                   Nx_stg, Ny_stg, Nc, CS_PANEL_COUNT)
+
+    # --- Build conservative regridder (LL→CS, cached) ---
+    t_reg = time()
+    regridder = build_regridder(staging_grid.mesh, grid.mesh;
+                                normalize=false,
+                                cache_dir=grid.cache_dir)
+    n_src = length(regridder.src_areas)
+    n_dst = length(regridder.dst_areas)
+    @info @sprintf("  Regridder: %d×%d  nnz=%d (%.1fs)",
+                   n_src, n_dst, length(regridder.intersections.nzval), time() - t_reg)
+
+    # --- Allocate workspaces ---
+    # LL staging workspaces (reuse existing LL infrastructure)
+    transform = allocate_transform_workspace(staging_grid, spec.T, Nz_native)
+    merged = allocate_merge_workspace(staging_grid, Nz_native, Nz, FT)
+    qv = allocate_qv_workspace(staging_grid, settings, date, Nz_native, Nz, FT)
+    ps_offsets = zeros(Float64, Nt)
+
+    # CS workspaces
+    cs_ws = allocate_cs_preprocess_workspace(Nc, Nx_stg, Ny_stg, Nz, n_src, n_dst, FT)
+
+    # Vertical coordinate and CS geometry
+    vc_merged = vertical.merged_vc
+    A_ifc = Float64.(vc_merged.A)
+    B_ifc = Float64.(vc_merged.B)
+    gravity = FT(GRAV)
+    dt_factor = FT(settings.met_interval / (2 * steps_per_met))
+    Δx = grid.mesh.Δx  # (Nc, Nc) matrix
+    Δy = grid.mesh.Δy  # (Nc, Nc) matrix
+
+    # --- Open streaming CS binary writer ---
+    writer = open_streaming_cs_transport_binary(
+        bin_path, Nc, CS_PANEL_COUNT, Nz, Nt, vc_merged;
+        FT=FT,
+        dt_met_seconds=settings.met_interval,
+        half_dt_seconds=settings.half_dt,
+        steps_per_window=steps_per_met,
+        mass_basis=Symbol(settings.mass_basis),
+        extra_header=Dict{String, Any}(
+            "preprocessor"     => "preprocess_transport_binary.jl",
+            "source_type"      => "era5_spectral",
+            "target_type"      => "cubed_sphere",
+            "staging_nlon"     => Nx_stg,
+            "staging_nlat"     => Ny_stg,
+            "regrid_method"    => "conservative",
+            "poisson_balanced" => true,
+            "mass_fix_enabled" => settings.mass_fix_enable,
+        ))
+
+    bytes_per_window = writer.elems_per_window * sizeof(FT)
+    expected_total = writer.header_bytes + Nt * bytes_per_window
+    @info @sprintf("  Output: %s (%.2f GB, %d windows)", basename(bin_path),
+                   expected_total / 1e9, Nt)
+
+    log_mass_fix_configuration(settings)
+    @info "  Streaming: spectral → LL staging → CS regrid → balance → write..."
+
+    # --- Helper: synthesize one window to staging LL, merge, then regrid to CS ---
+    function _synth_and_regrid_to_cs!(win_idx, hour, m_out, ps_out, am_out, bm_out)
+        # Spectral → staging LL (native levels)
+        spectral_to_native_fields!(
+            transform.m_arr, transform.am_arr, transform.bm_arr, transform.cm_arr, transform.sp,
+            transform.u_cc, transform.v_cc, transform.u_stag, transform.v_stag, transform.dp,
+            spec.lnsp_all[hour], spec.vo_by_hour[hour], spec.d_by_hour[hour],
+            spec.T, vertical.level_range, vertical.ab, staging_grid, settings.half_dt,
+            transform.P_buf, transform.fft_buf, transform.field_2d,
+            transform.P_buf_t, transform.fft_buf_t, transform.fft_out_t,
+            transform.u_spec_t, transform.v_spec_t, transform.field_2d_t,
+            transform.bfft_plans)
+
+        # Mass fix + merge vertical levels
+        read_window_qv!(qv, win_idx, Nx_stg, Ny_stg, Nz_native)
+        apply_mass_fix_if_needed!(qv, transform, staging_grid, vertical, settings, ps_offsets, win_idx)
+        apply_dry_basis_if_needed!(settings.mass_basis, transform, qv)
+        merge_native_window!(merged, transform, qv, vertical, settings)
+
+        # Conservative regrid scalars: m, ps → CS panels
+        regrid_3d_to_cs_panels!(m_out, regridder, merged.m_merged, cs_ws, Nc)
+        regrid_2d_to_cs_panels!(ps_out, regridder, transform.sp, cs_ws, Nc)
+
+        # Recover LL cell-center winds from merged fluxes
+        stg_lats = staging_grid.lats
+        Δy_ll = FT(staging_grid.mesh.radius * deg2rad(staging_grid.mesh.Δφ))
+        Δlon_ll = FT(deg2rad(staging_grid.mesh.Δλ))
+
+        recover_ll_cell_center_winds!(cs_ws.u_cc, cs_ws.v_cc,
+            merged.am_merged, merged.bm_merged, transform.sp,
+            A_ifc, B_ifc, stg_lats, Δy_ll, Δlon_ll,
+            FT(staging_grid.mesh.radius), gravity, dt_factor)
+
+        # Regrid winds to CS panels
+        regrid_3d_to_cs_panels!(cs_ws.u_cs_panels, regridder, cs_ws.u_cc, cs_ws, Nc)
+        regrid_3d_to_cs_panels!(cs_ws.v_cs_panels, regridder, cs_ws.v_cc, cs_ws, Nc)
+
+        # Reconstruct CS face fluxes from regridded winds
+        reconstruct_cs_fluxes!(am_out, bm_out, cs_ws.u_cs_panels, cs_ws.v_cs_panels,
+                               cs_ws.dp_panels, ps_out,
+                               A_ifc, B_ifc, Δx, Δy, gravity, dt_factor, Nc, Nz)
+    end
+
+    # Worst-case diagnostics
+    worst_pre = 0.0
+    worst_post = 0.0
+    worst_iter = 0
+
+    # --- Process first window ---
+    t0 = time()
+    _synth_and_regrid_to_cs!(1, spec.hours[1],
+        cs_ws.m_panels, cs_ws.ps_panels, cs_ws.am_panels, cs_ws.bm_panels)
+    @info @sprintf("    Window  1/%d (hour %02d): synth+regrid %.2fs  offset=%+.3f Pa",
+                   Nt, spec.hours[1], time() - t0, ps_offsets[1])
+
+    # Deep copy current panels as "cur" state
+    cur_m  = copy_panel_tuple(cs_ws.m_panels)
+    cur_ps = copy_panel_tuple(cs_ws.ps_panels)
+    cur_am = copy_panel_tuple(cs_ws.am_panels)
+    cur_bm = copy_panel_tuple(cs_ws.bm_panels)
+
+    # --- Sliding-window loop: windows 2..Nt ---
+    for win in 2:Nt
+        t0 = time()
+        _synth_and_regrid_to_cs!(win, spec.hours[win],
+            cs_ws.m_panels, cs_ws.ps_panels, cs_ws.am_panels, cs_ws.bm_panels)
+        t_synth = time() - t0
+
+        # Copy m_next for balance
+        for p in 1:CS_PANEL_COUNT
+            copyto!(cs_ws.m_next_panels[p], cs_ws.m_panels[p])
+        end
+
+        # Balance the PREVIOUS window using (m_cur, m_next)
+        t_bal = time()
+        bal_diag = balance_cs_global_mass_fluxes!(
+            cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
+            grid.face_table, grid.cell_degree, steps_per_met,
+            grid.poisson_scratch; tol=1e-14, max_iter=5000)
+        t_bal = time() - t_bal
+
+        worst_pre  = max(worst_pre,  bal_diag.max_pre_residual)
+        worst_post = max(worst_post, bal_diag.max_post_residual)
+        worst_iter = max(worst_iter, bal_diag.max_cg_iter)
+
+        # Diagnose cm for previous window
+        for p in 1:CS_PANEL_COUNT
+            @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
+                cs_ws.dm_panels[p][i, j, k] =
+                    (cs_ws.m_next_panels[p][i, j, k] - cur_m[p][i, j, k]) / (2 * steps_per_met)
+            end
+        end
+        cur_cm = ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), CS_PANEL_COUNT)
+        diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz)
+
+        # Write balanced previous window
+        window_nt = (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps)
+        write_streaming_cs_window!(writer, window_nt, Nc, CS_PANEL_COUNT)
+
+        should_log_window(win - 1, Nt) &&
+            @info @sprintf("    Window %2d/%d: wrote (bal %.2fs pre=%.2e post=%.2e iter=%d) | synth %2d (%.2fs)",
+                           win - 1, Nt, t_bal, bal_diag.max_pre_residual,
+                           bal_diag.max_post_residual, bal_diag.max_cg_iter, win, t_synth)
+
+        # Swap: current window becomes the just-synthesized one
+        cur_m  = copy_panel_tuple(cs_ws.m_panels)
+        cur_ps = copy_panel_tuple(cs_ws.ps_panels)
+        cur_am = copy_panel_tuple(cs_ws.am_panels)
+        cur_bm = copy_panel_tuple(cs_ws.bm_panels)
+    end
+
+    # --- Balance & write LAST window (zero-tendency fallback) ---
+    t_bal = time()
+    bal_diag = balance_cs_global_mass_fluxes!(
+        cur_am, cur_bm, cur_m, cur_m,  # m_next = m_cur → zero tendency
+        grid.face_table, grid.cell_degree, steps_per_met,
+        grid.poisson_scratch; tol=1e-14, max_iter=5000)
+    t_bal = time() - t_bal
+
+    worst_pre  = max(worst_pre,  bal_diag.max_pre_residual)
+    worst_post = max(worst_post, bal_diag.max_post_residual)
+    worst_iter = max(worst_iter, bal_diag.max_cg_iter)
+
+    # Zero dm for last window → cm = pure horizontal divergence integral
+    for p in 1:CS_PANEL_COUNT
+        fill!(cs_ws.dm_panels[p], zero(FT))
+    end
+    last_cm = ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), CS_PANEL_COUNT)
+    diagnose_cs_cm!(last_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz)
+
+    window_nt = (m=cur_m, am=cur_am, bm=cur_bm, cm=last_cm, ps=cur_ps)
+    write_streaming_cs_window!(writer, window_nt, Nc, CS_PANEL_COUNT)
+
+    @info @sprintf("    Window %2d/%d (last): bal %.2fs  pre=%.2e post=%.2e iter=%d",
+                   Nt, Nt, t_bal, bal_diag.max_pre_residual,
+                   bal_diag.max_post_residual, bal_diag.max_cg_iter)
+
+    # --- Finalize ---
+    close_streaming_transport_binary!(writer)
+
+    if settings.mass_fix_enable
+        @info @sprintf("  Mass-fix offsets (Pa) min/max/mean: %+.3f / %+.3f / %+.3f",
+                       minimum(ps_offsets), maximum(ps_offsets), sum(ps_offsets) / Nt)
+    end
+
+    @info @sprintf("  Poisson balance summary: pre=%.3e  post=%.3e  max_iter=%d",
+                   worst_pre, worst_post, worst_iter)
+
+    actual = filesize(bin_path)
+    @info @sprintf("  Done: %s (%.2f GB, %.1fs)", basename(bin_path),
+                   actual / 1e9, time() - t_day)
+    actual == expected_total ||
+        @warn @sprintf("File size mismatch: expected %d bytes, got %d", expected_total, actual)
+
+    return bin_path
+end
+
+"""
     process_day(date, grid::LatLonTargetGeometry, settings, vertical; next_day_hour0=nothing)
 
 Run the full one-day preprocessing workflow for the structured lat-lon target:

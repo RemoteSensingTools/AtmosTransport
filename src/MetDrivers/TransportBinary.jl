@@ -1063,6 +1063,148 @@ function close_streaming_transport_binary!(writer::StreamingTransportBinaryWrite
     return writer.path
 end
 
+# =========================================================================
+# CS streaming writer
+# =========================================================================
+
+"""
+    _cs_section_elements(Nc, npanel, nlevel, section) -> Int
+
+Return the number of float elements for a given section in a CS binary.
+Panels are stored sequentially within each section.
+"""
+function _cs_section_elements(Nc::Int, npanel::Int, nlevel::Int, section::Symbol)
+    if section === :m
+        return npanel * Nc * Nc * nlevel
+    elseif section === :am
+        return npanel * (Nc + 1) * Nc * nlevel
+    elseif section === :bm
+        return npanel * Nc * (Nc + 1) * nlevel
+    elseif section === :cm
+        return npanel * Nc * Nc * (nlevel + 1)
+    elseif section === :ps
+        return npanel * Nc * Nc
+    else
+        error("Unsupported CS section: $section")
+    end
+end
+
+"""
+    _pack_cs_window!(dest, offset, window, payload_sections, Nc, npanel)
+
+Pack a CS window (with NTuple-of-panels fields) into a flat buffer.
+Each section's panels are stored sequentially: [P1][P2]...[P6].
+"""
+function _pack_cs_window!(dest::Vector{FT}, offset::Int,
+                           window, payload_sections::Vector{Symbol},
+                           Nc::Int, npanel::Int) where FT
+    o = offset
+    for section in payload_sections
+        panels = getfield(window, section)
+        for p in 1:npanel
+            panel_data = panels[p]
+            n = length(panel_data)
+            @inbounds for idx in 1:n
+                dest[o + idx] = convert(FT, panel_data[idx])
+            end
+            o += n
+        end
+    end
+    return nothing
+end
+
+"""
+    open_streaming_cs_transport_binary(path, Nc, npanel, nlevel, nwindow, vc;
+                                       kwargs...) -> StreamingTransportBinaryWriter
+
+Open a CS transport binary for streaming per-window writes.
+
+`vc` is a `HybridSigmaPressure` vertical coordinate. The CS binary uses
+per-panel structured arrays with `StructuredDirectional` topology.
+"""
+function open_streaming_cs_transport_binary(
+        path::AbstractString,
+        Nc::Int,
+        npanel::Int,
+        nlevel::Int,
+        nwindow::Int,
+        vc;
+        FT::Type{<:AbstractFloat} = Float64,
+        header_bytes::Int = 131072,
+        dt_met_seconds::Real = 3600.0,
+        half_dt_seconds::Real = dt_met_seconds / 2,
+        steps_per_window::Integer = 4,
+        source_flux_sampling::Symbol = :window_start_endpoint,
+        air_mass_sampling::Symbol = :window_start_endpoint,
+        flux_sampling::Symbol = :window_constant,
+        flux_kind::Symbol = :substep_mass_amount,
+        mass_basis::Symbol = :moist,
+        extra_header::AbstractDict{<:AbstractString,<:Any} = Dict{String,Any}())
+
+    ncell = npanel * Nc * Nc
+    nface_h = npanel * 2 * Nc * (Nc + 1)
+    payload_sections = Symbol[:m, :am, :bm, :cm, :ps]
+
+    elems_per_window = sum(_cs_section_elements(Nc, npanel, nlevel, s)
+                           for s in payload_sections)
+
+    header = _transport_common_header("cubed_sphere", "StructuredDirectional",
+                                      ncell, nface_h, nlevel, nwindow, vc,
+                                      payload_sections, elems_per_window;
+                                      FT=FT,
+                                      header_bytes=header_bytes,
+                                      dt_met_seconds=dt_met_seconds,
+                                      half_dt_seconds=half_dt_seconds,
+                                      steps_per_window=steps_per_window,
+                                      mass_basis=mass_basis,
+                                      source_flux_sampling=source_flux_sampling,
+                                      air_mass_sampling=air_mass_sampling,
+                                      flux_sampling=flux_sampling,
+                                      flux_kind=flux_kind,
+                                      humidity_sampling=:none,
+                                      delta_semantics=:none)
+
+    merge!(header, Dict{String, Any}(
+        "Nc" => Nc,
+        "npanel" => npanel,
+        "Hp" => 0,
+        "poisson_balance_method" => "global_cg_graph_laplacian",
+        "poisson_balance_target_scale" => 1.0 / (2 * steps_per_window),
+        "poisson_balance_target_semantics" => "forward_window_mass_difference / (2 * steps_per_window)",
+    ))
+    isempty(extra_header) || merge!(header, Dict{String, Any}(extra_header))
+
+    header_json = JSON3.write(header)
+    pad = header_bytes - ncodeunits(header_json)
+    pad >= 0 || error("transport binary header exceeds header_bytes=$(header_bytes)")
+
+    io = open(path, "w")
+    write(io, header_json)
+    write(io, zeros(UInt8, pad))
+
+    pack_buffer = Vector{FT}(undef, elems_per_window)
+
+    return StreamingTransportBinaryWriter{FT}(
+        io, String(path), payload_sections, elems_per_window,
+        header_bytes, nwindow, 0, pack_buffer)
+end
+
+"""
+    write_streaming_cs_window!(writer, window, Nc, npanel)
+
+Pack and write a single CS window to the streaming transport binary.
+`window` is a NamedTuple with NTuple-of-panels fields `:m`, `:am`, `:bm`, `:cm`, `:ps`.
+"""
+function write_streaming_cs_window!(writer::StreamingTransportBinaryWriter{FT},
+                                     window, Nc::Int, npanel::Int) where FT
+    writer.written_windows >= writer.expected_windows &&
+        error("Already wrote $(writer.written_windows)/$(writer.expected_windows) windows")
+    _pack_cs_window!(writer.pack_buffer, 0, window, writer.payload_sections, Nc, npanel)
+    write(writer.io, writer.pack_buffer)
+    writer.written_windows += 1
+    return nothing
+end
+
 function _transport_interval_from_centers(centers::Vector{Float64}, fallback_Δ::Float64)
     isempty(centers) && error("Cannot reconstruct interval from empty center array")
     Δ = length(centers) > 1 ? centers[2] - centers[1] : fallback_Δ

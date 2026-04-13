@@ -1167,6 +1167,7 @@ function open_streaming_cs_transport_binary(
     merge!(header, Dict{String, Any}(
         "Nc" => Nc,
         "npanel" => npanel,
+        "panel_convention" => "gnomonic",
         "Hp" => 0,
         "poisson_balance_method" => "global_cg_graph_laplacian",
         "poisson_balance_target_scale" => 1.0 / (2 * steps_per_window),

@@ -299,6 +299,182 @@ function reconstruct_cs_fluxes!(am_panels::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
 end
 
 # ---------------------------------------------------------------------------
+# Wind normalization: area-weighted sum → area average
+# ---------------------------------------------------------------------------
+
+"""
+    normalize_regridded_intensive!(panels, cell_areas, Nc, Nz)
+
+Convert an area-weighted sum (from `normalize=false` regridding) to an area
+average by dividing each cell by its area. Required for intensive quantities
+(winds in m/s) but NOT for extensive quantities (mass in kg).
+
+`cell_areas` is the `(Nc, Nc)` matrix from `CubedSphereMesh.cell_areas`
+(same for all panels by gnomonic symmetry).
+"""
+function normalize_regridded_intensive!(panels::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                         cell_areas::AbstractMatrix,
+                                         Nc::Int, Nz::Int) where FT
+    for p in 1:CS_PANEL_COUNT
+        @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
+            panels[p][i, j, k] /= FT(cell_areas[i, j])
+        end
+    end
+    return nothing
+end
+
+# ---------------------------------------------------------------------------
+# East/north → panel-local wind rotation
+# ---------------------------------------------------------------------------
+
+"""
+    rotate_winds_to_panel_local!(u_panel, v_panel, u_east, v_north,
+                                  mesh::CubedSphereMesh, Nc, Nz)
+
+Rotate geographic (east, north) wind components to panel-local (x, y)
+components for all 6 CS panels.
+
+On the gnomonic cubed sphere, each panel's local (x, y) axes are related
+to geographic (east, north) by a rotation that depends on the panel and
+cell position. For each cell center (lon, lat), the panel-local unit
+vectors ê_x and ê_y are computed from the gnomonic projection, and the
+wind is projected: u_x = u_east·cos(α) + v_north·sin(α), etc.
+
+This uses the analytical gnomonic-to-geographic Jacobian at each cell center.
+"""
+function rotate_winds_to_panel_local!(u_panel::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                       v_panel::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                       u_east::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                       v_north::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                       Nc::Int, Nz::Int) where FT
+    # Gnomonic cell centers: uniform in α ∈ [-π/4, π/4]
+    dα = FT(π) / (2 * Nc)
+    α_centers = [FT(-π/4) + (i - FT(0.5)) * dα for i in 1:Nc]
+
+    for p in 1:6
+        for j in 1:Nc, i in 1:Nc
+            ξ = tan(α_centers[i])
+            η = tan(α_centers[j])
+
+            # Geographic coordinates (lon, lat) of cell center on panel p
+            lon, lat = _gnomonic_to_lonlat(ξ, η, p)
+            cos_lat = cos(lat)
+            cos_lat = max(cos_lat, FT(1e-10))
+
+            # Jacobian of gnomonic → geographic mapping
+            # ∂lon/∂ξ, ∂lon/∂η, ∂lat/∂ξ, ∂lat/∂η
+            dlon_dξ, dlon_dη, dlat_dξ, dlat_dη = _gnomonic_jacobian(ξ, η, p, cos_lat)
+
+            # Panel-local x-direction in geographic components:
+            #   ê_x = (∂lon/∂ξ · cos_lat, ∂lat/∂ξ)  (unnormalized)
+            # Panel-local y-direction:
+            #   ê_y = (∂lon/∂η · cos_lat, ∂lat/∂η)  (unnormalized)
+            ex_east  = dlon_dξ * cos_lat
+            ex_north = dlat_dξ
+            ey_east  = dlon_dη * cos_lat
+            ey_north = dlat_dη
+
+            # Normalize
+            nx = sqrt(ex_east^2 + ex_north^2)
+            ny = sqrt(ey_east^2 + ey_north^2)
+            nx = max(nx, FT(1e-30))
+            ny = max(ny, FT(1e-30))
+            ex_east  /= nx; ex_north /= nx
+            ey_east  /= ny; ey_north /= ny
+
+            # Project winds
+            @inbounds for k in 1:Nz
+                ue = u_east[p][i, j, k]
+                vn = v_north[p][i, j, k]
+                u_panel[p][i, j, k] = ue * ex_east + vn * ex_north
+                v_panel[p][i, j, k] = ue * ey_east + vn * ey_north
+            end
+        end
+    end
+    return nothing
+end
+
+"""
+    _gnomonic_to_lonlat(ξ, η, panel) -> (lon, lat)
+
+Convert gnomonic coordinates (ξ, η) on `panel` to geographic (lon, lat) in radians.
+Uses the standard gnomonic projection for equidistant cubed sphere.
+"""
+function _gnomonic_to_lonlat(ξ::FT, η::FT, panel::Int) where FT
+    r = sqrt(one(FT) + ξ^2 + η^2)
+    if panel == 1      # +x face
+        x, y, z = one(FT)/r, ξ/r, η/r
+    elseif panel == 2  # +y face
+        x, y, z = -ξ/r, one(FT)/r, η/r
+    elseif panel == 3  # north pole (+z face)
+        x, y, z = -η/r, ξ/r, one(FT)/r
+    elseif panel == 4  # -x face
+        x, y, z = -one(FT)/r, -ξ/r, η/r
+    elseif panel == 5  # -y face
+        x, y, z = ξ/r, -one(FT)/r, η/r
+    else               # south pole (-z face)
+        x, y, z = η/r, ξ/r, -one(FT)/r
+    end
+    lon = atan(y, x)
+    lat = asin(clamp(z, -one(FT), one(FT)))
+    return (lon, lat)
+end
+
+"""
+    _gnomonic_jacobian(ξ, η, panel, cos_lat) -> (dlon_dξ, dlon_dη, dlat_dξ, dlat_dη)
+
+Analytical Jacobian of the gnomonic-to-geographic mapping at (ξ, η) on `panel`.
+"""
+function _gnomonic_jacobian(ξ::FT, η::FT, panel::Int, cos_lat::FT) where FT
+    r2 = one(FT) + ξ^2 + η^2
+    r = sqrt(r2)
+    r3 = r2 * r
+
+    # Cartesian (x, y, z) and their derivatives w.r.t. (ξ, η)
+    if panel == 1
+        x, y, z = one(FT)/r, ξ/r, η/r
+        dx_dξ = -ξ/r3;     dx_dη = -η/r3
+        dy_dξ = (one(FT) + η^2)/r3; dy_dη = -ξ*η/r3
+        dz_dξ = -ξ*η/r3;  dz_dη = (one(FT) + ξ^2)/r3
+    elseif panel == 2
+        x, y, z = -ξ/r, one(FT)/r, η/r
+        dx_dξ = -(one(FT) + η^2)/r3; dx_dη = ξ*η/r3
+        dy_dξ = ξ/r3;               dy_dη = -η/r3
+        dz_dξ = -ξ*η/r3;           dz_dη = (one(FT) + ξ^2)/r3
+    elseif panel == 3
+        x, y, z = -η/r, ξ/r, one(FT)/r
+        dx_dξ = ξ*η/r3;             dx_dη = -(one(FT) + ξ^2)/r3
+        dy_dξ = (one(FT) + η^2)/r3; dy_dη = -ξ*η/r3
+        dz_dξ = ξ/r3;               dz_dη = η/r3
+    elseif panel == 4
+        x, y, z = -one(FT)/r, -ξ/r, η/r
+        dx_dξ = ξ/r3;                dx_dη = η/r3
+        dy_dξ = -(one(FT) + η^2)/r3; dy_dη = ξ*η/r3
+        dz_dξ = -ξ*η/r3;            dz_dη = (one(FT) + ξ^2)/r3
+    elseif panel == 5
+        x, y, z = ξ/r, -one(FT)/r, η/r
+        dx_dξ = (one(FT) + η^2)/r3; dx_dη = -ξ*η/r3
+        dy_dξ = -ξ/r3;              dy_dη = η/r3
+        dz_dξ = -ξ*η/r3;           dz_dη = (one(FT) + ξ^2)/r3
+    else  # panel 6
+        x, y, z = η/r, ξ/r, -one(FT)/r
+        dx_dξ = -ξ*η/r3;            dx_dη = (one(FT) + ξ^2)/r3
+        dy_dξ = (one(FT) + η^2)/r3; dy_dη = -ξ*η/r3
+        dz_dξ = -ξ/r3;              dz_dη = -η/r3
+    end
+
+    # lon = atan(y, x), lat = asin(z)
+    rxy2 = x^2 + y^2
+    rxy2 = max(rxy2, FT(1e-30))
+    dlon_dξ = (x * dy_dξ - y * dx_dξ) / rxy2
+    dlon_dη = (x * dy_dη - y * dx_dη) / rxy2
+    dlat_dξ = dz_dξ / max(cos_lat, FT(1e-10))
+    dlat_dη = dz_dη / max(cos_lat, FT(1e-10))
+
+    return (dlon_dξ, dlon_dη, dlat_dξ, dlat_dη)
+end
+
+# ---------------------------------------------------------------------------
 # Utility: copy panel tuple (for snapshot storage)
 # ---------------------------------------------------------------------------
 

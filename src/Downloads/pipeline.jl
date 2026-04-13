@@ -215,19 +215,24 @@ function execute!(task::DownloadTask, ::HTTPProtocol;
                              max_retries=max_retries)
 end
 
-# S3 protocol execution
+# S3 protocol execution — uses public HTTPS URL for no_sign_request buckets,
+# falls back to aws CLI for authenticated buckets
 function execute!(task::DownloadTask, proto::S3Protocol;
                   max_retries::Int=3, retry_wait::Int=30)
     mkpath(dirname(task.dest_path))
-    s3_url = "s3://$(proto.bucket)/$(task.source_url)"
-    _with_retries(basename(task.dest_path), task.dest_path;
-                  max_retries, retry_wait) do attempt
-        cmd = proto.no_sign_request ?
-              `aws s3 cp --no-sign-request $s3_url $(task.dest_path)` :
-              `aws s3 cp $s3_url $(task.dest_path)`
-        @info "  Downloading $(basename(task.dest_path)) (attempt $attempt)..."
-        run(cmd)
-        isfile(task.dest_path) && filesize(task.dest_path) > 0
+    if proto.no_sign_request
+        # Public bucket: use HTTPS URL directly (no aws CLI needed)
+        https_url = "https://$(proto.bucket).s3.amazonaws.com/$(task.source_url)"
+        return verified_download(https_url, task.dest_path;
+                                 max_retries=max_retries)
+    else
+        s3_url = "s3://$(proto.bucket)/$(task.source_url)"
+        _with_retries(basename(task.dest_path), task.dest_path;
+                      max_retries, retry_wait) do attempt
+            @info "  Downloading $(basename(task.dest_path)) (attempt $attempt)..."
+            run(`aws s3 cp $s3_url $(task.dest_path)`)
+            isfile(task.dest_path) && filesize(task.dest_path) > 0
+        end
     end
 end
 

@@ -24,7 +24,7 @@ using .AtmosTransport.Preprocessing
 
 function main()
     base_logger = ConsoleLogger(stderr, Logging.Info; show_limited=false)
-    global_logger(base_logger)
+    global_logger(AtmosTransport.Preprocessing._FlushingLogger(base_logger))
 
     isempty(ARGS) && error("Usage: julia --project=. scripts/preprocessing/preprocess_transport_binary.jl config.toml [--day YYYY-MM-DD]")
 

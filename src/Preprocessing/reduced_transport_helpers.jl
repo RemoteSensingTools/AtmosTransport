@@ -937,19 +937,16 @@ end
 
 """
     balance_window!(hflux_work, m_cur_work, m_next_work, cm_work, div_scratch,
-                    buf, slot, m_next, work, vertical, steps_per_window;
+                    buf, slot, m_next, work, cL, vertical, steps_per_window;
                     tol, max_iter)
 
-Poisson-balance the horizontal fluxes in buffer `slot` using
-`buf.m[slot]` as current mass and `m_next` as next-window mass target,
-then recompute `cm` from the balanced fluxes.  Mutates `buf.hflux[slot]`
-and `buf.cm[slot]` in-place.
+Poisson-balance the horizontal fluxes in buffer `slot` using the
+compressed Laplacian `cL` for the CG solver.  Mathematically identical
+to the old face-indexed CG but ~16-27× faster because the compressed
+MatVec iterates over ~4×ncells entries instead of nfaces (millions).
 
-All scratch arrays (`hflux_work`, `m_cur_work`, `m_next_work`, `cm_work`,
-`div_scratch`) are preallocated Float64 buffers from the caller — no
-per-call allocation.
-
-Returns a diagnostics NamedTuple (from `balance_reduced_horizontal_fluxes!`).
+All scratch arrays are preallocated Float64 buffers — no per-call allocation.
+Returns a diagnostics NamedTuple.
 """
 function balance_window!(hflux_work::Matrix{Float64},
                          m_cur_work::Matrix{Float64},
@@ -960,6 +957,7 @@ function balance_window!(hflux_work::Matrix{Float64},
                          slot::Int,
                          m_next::AbstractMatrix{FT},
                          work::ReducedTransformWorkspace,
+                         cL::CompressedLaplacian,
                          vertical,
                          steps_per_window::Int;
                          tol::Float64 = 1e-14,
@@ -973,17 +971,15 @@ function balance_window!(hflux_work::Matrix{Float64},
                r = work.balance_r, p = work.balance_p,
                Ap = work.balance_Ap, z = work.balance_z)
 
-    diag = balance_reduced_horizontal_fluxes!(
+    diag = balance_compressed_horizontal_fluxes!(
         hflux_work, m_cur_work, m_next_work,
-        work.face_left, work.face_right, work.face_degree,
+        work.face_left, work.face_right, cL,
         steps_per_window, scratch; tol=tol, max_iter=max_iter)
 
     # Store balanced hflux back as FT.
     buf.hflux[slot] .= FT.(hflux_work)
 
     # Recompute cm from balanced hflux (in Float64, then convert to FT).
-    # Note: recompute_faceindexed_cm_from_divergence! fills cm_work and
-    # div_scratch internally, so no fill! needed here.
     recompute_faceindexed_cm_from_divergence!(
         cm_work, hflux_work,
         work.face_left, work.face_right, div_scratch;
@@ -1045,6 +1041,14 @@ function process_day(date::Date,
     merged = allocate_reduced_merge_workspace(grid, Nz_native, Nz, FT)
     buf    = allocate_sliding_window_buffer(nc, nf, Nz, FT)
     ps_offsets = zeros(Float64, Nt)
+
+    # Build compressed Laplacian for fast Poisson balance (~16-27× faster than face-indexed CG)
+    t_cl = time()
+    cL = build_compressed_laplacian(work.face_left, work.face_right, nc)
+    total_entries = cL.row_ptr[end] - 1
+    avg_neighbors = total_entries / nc
+    @info @sprintf("  Compressed Laplacian: %d unique entries (avg %.1f neighbors/cell) from %d faces (%.0f× compression, %.2fs)",
+                   total_entries, avg_neighbors, nf, nf / max(total_entries, 1), time() - t_cl)
 
     # Poisson-balance scratch (Float64, reused every window — no per-call allocation)
     hflux_work    = zeros(Float64, nf, Nz)
@@ -1116,7 +1120,7 @@ function process_day(date::Date,
         diag = balance_window!(hflux_work, m_cur_work, m_next_work,
                                cm_work, div_scratch_b,
                                buf, cur, buf.m[nxt],
-                               work, vertical, steps_per_met)
+                               work, cL, vertical, steps_per_met)
         t_bal = time() - t_bal
 
         worst_pre_raw   = max(worst_pre_raw,   diag.max_pre_raw_residual)
@@ -1143,7 +1147,7 @@ function process_day(date::Date,
     diag = balance_window!(hflux_work, m_cur_work, m_next_work,
                            cm_work, div_scratch_b,
                            buf, cur, buf.m[cur],   # m_next = m_cur → zero tendency
-                           work, vertical, steps_per_met)
+                           work, cL, vertical, steps_per_met)
     t_bal = time() - t_bal
 
     worst_pre_raw   = max(worst_pre_raw,   diag.max_pre_raw_residual)

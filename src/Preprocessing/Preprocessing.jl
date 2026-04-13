@@ -90,6 +90,9 @@ include("spectral_synthesis.jl")
 # Poisson balance (LL FFT + RG conjugate gradient)
 include("mass_support.jl")
 
+# Compressed-Laplacian Poisson balance for RG (replaces slow CG on LCM faces)
+include("ring_poisson_balance.jl")
+
 # Reduced Gaussian helpers (RG synthesis, RG balance, RG cm diagnosis)
 include("reduced_transport_helpers.jl")
 

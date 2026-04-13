@@ -52,7 +52,7 @@ end
 
 function allocate_cs_preprocess_workspace(Nc::Int, Nx_stg::Int, Ny_stg::Int,
                                           Nz::Int, n_src::Int, n_dst::Int,
-                                          ::Type{FT}) where FT
+                                          ::Type{FT}) where FT <: AbstractFloat
     return CubedSpherePreprocessWorkspace{FT}(
         ntuple(_ -> zeros(FT, Nc, Nc, Nz), CS_PANEL_COUNT),
         ntuple(_ -> zeros(FT, Nc, Nc), CS_PANEL_COUNT),
@@ -90,7 +90,7 @@ function unpack_flat_to_panels_3d!(panels::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
         r = _cs_panel_flat_range(p, Nc)
         for k in 1:Nz
             @inbounds for (linear, flat_idx) in enumerate(r)
-                j, i = fldmod1(linear, Nc)
+                j, i = fldmod1(linear, Nc)  # (div, mod) = (j, i) for column-major (j-1)*Nc+i
                 panels[p][i, j, k] = flat[flat_idx, k]
             end
         end
@@ -108,7 +108,7 @@ function unpack_flat_to_panels_2d!(panels::NTuple{CS_PANEL_COUNT, Matrix{FT}},
     for p in 1:CS_PANEL_COUNT
         r = _cs_panel_flat_range(p, Nc)
         @inbounds for (linear, flat_idx) in enumerate(r)
-            j, i = fldmod1(linear, Nc)
+            j, i = fldmod1(linear, Nc)  # (div, mod) = (j, i) for column-major (j-1)*Nc+i
             panels[p][i, j] = flat[flat_idx]
         end
     end
@@ -128,7 +128,7 @@ function pack_panels_3d_to_flat!(flat::AbstractMatrix{FT},
         r = _cs_panel_flat_range(p, Nc)
         for k in 1:Nz
             @inbounds for (linear, flat_idx) in enumerate(r)
-                j, i = fldmod1(linear, Nc)
+                j, i = fldmod1(linear, Nc)  # (div, mod) = (j, i) for column-major (j-1)*Nc+i
                 flat[flat_idx, k] = panels[p][i, j, k]
             end
         end
@@ -199,7 +199,7 @@ function recover_ll_cell_center_winds!(u_cc::Array{FT, 3},
                                         dt_factor::FT) where FT
     Nx, Ny, Nz = size(u_cc)
 
-    # u from am
+    # u from am: average face fluxes to cell centers, divide by area factor
     @inbounds for k in 1:Nz, j in 1:Ny, i in 1:Nx
         dp = abs((A_ifc[k] - A_ifc[k + 1]) +
                  (B_ifc[k] - B_ifc[k + 1]) * ps_ll[i, j])
@@ -209,7 +209,7 @@ function recover_ll_cell_center_winds!(u_cc::Array{FT, 3},
             zero(FT)
     end
 
-    # v from bm
+    # v from bm: average face fluxes to cell centers, divide by area factor
     @inbounds for k in 1:Nz, j in 1:Ny, i in 1:Nx
         cos_lat = cosd(lats_deg[j])
         Δx_loc = radius * Δlon_ll * max(cos_lat, FT(1e-6))
@@ -329,7 +329,7 @@ end
 
 """
     rotate_winds_to_panel_local!(u_panel, v_panel, u_east, v_north,
-                                  mesh::CubedSphereMesh, Nc, Nz)
+                                  Nc, Nz)
 
 Rotate geographic (east, north) wind components to panel-local (x, y)
 components for all 6 CS panels.
@@ -349,7 +349,7 @@ function rotate_winds_to_panel_local!(u_panel::NTuple{CS_PANEL_COUNT, Array{FT, 
                                        Nc::Int, Nz::Int) where FT
     # Gnomonic cell centers: uniform in α ∈ [-π/4, π/4]
     dα = FT(π) / (2 * Nc)
-    α_centers = [FT(-π/4) + (i - FT(0.5)) * dα for i in 1:Nc]
+    α_centers = FT[-π/4 + (i - FT(0.5)) * dα for i in 1:Nc]
 
     for p in 1:6
         for j in 1:Nc, i in 1:Nc
@@ -358,8 +358,7 @@ function rotate_winds_to_panel_local!(u_panel::NTuple{CS_PANEL_COUNT, Array{FT, 
 
             # Geographic coordinates (lon, lat) of cell center on panel p
             lon, lat = _gnomonic_to_lonlat(ξ, η, p)
-            cos_lat = cos(lat)
-            cos_lat = max(cos_lat, FT(1e-10))
+            cos_lat = max(cos(lat), FT(1e-10))
 
             # Jacobian of gnomonic → geographic mapping
             # ∂lon/∂ξ, ∂lon/∂η, ∂lat/∂ξ, ∂lat/∂η
@@ -375,10 +374,8 @@ function rotate_winds_to_panel_local!(u_panel::NTuple{CS_PANEL_COUNT, Array{FT, 
             ey_north = dlat_dη
 
             # Normalize
-            nx = sqrt(ex_east^2 + ex_north^2)
-            ny = sqrt(ey_east^2 + ey_north^2)
-            nx = max(nx, FT(1e-30))
-            ny = max(ny, FT(1e-30))
+            nx = max(sqrt(ex_east^2 + ex_north^2), FT(1e-30))
+            ny = max(sqrt(ey_east^2 + ey_north^2), FT(1e-30))
             ex_east  /= nx; ex_north /= nx
             ey_east  /= ny; ey_north /= ny
 
@@ -445,7 +442,7 @@ function _gnomonic_jacobian(ξ::FT, η::FT, panel::Int, cos_lat::FT) where FT
         x, y, z = -η/r, ξ/r, one(FT)/r
         dx_dξ = ξ*η/r3;             dx_dη = -(one(FT) + ξ^2)/r3
         dy_dξ = (one(FT) + η^2)/r3; dy_dη = -ξ*η/r3
-        dz_dξ = ξ/r3;               dz_dη = η/r3
+        dz_dξ = -ξ/r3;              dz_dη = -η/r3
     elseif panel == 4
         x, y, z = -one(FT)/r, -ξ/r, η/r
         dx_dξ = ξ/r3;                dx_dη = η/r3
@@ -460,7 +457,7 @@ function _gnomonic_jacobian(ξ::FT, η::FT, panel::Int, cos_lat::FT) where FT
         x, y, z = η/r, ξ/r, -one(FT)/r
         dx_dξ = -ξ*η/r3;            dx_dη = (one(FT) + ξ^2)/r3
         dy_dξ = (one(FT) + η^2)/r3; dy_dη = -ξ*η/r3
-        dz_dξ = -ξ/r3;              dz_dη = -η/r3
+        dz_dξ = ξ/r3;               dz_dη = η/r3
     end
 
     # lon = atan(y, x), lat = asin(z)

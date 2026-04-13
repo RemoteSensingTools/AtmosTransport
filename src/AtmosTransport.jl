@@ -105,6 +105,10 @@ using .Models
 include("Regridding/Regridding.jl")
 using .Regridding
 
+# ---- Preprocessing pipeline (spectral/gridded → transport binary) ----
+include("Preprocessing/Preprocessing.jl")
+using .Preprocessing
+
 # ---- Re-exports for convenience ----
 
 # Architectures and parameters

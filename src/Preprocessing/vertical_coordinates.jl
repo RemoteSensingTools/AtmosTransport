@@ -1,13 +1,13 @@
-struct HybridSigmaPressure{FT}
-    A :: Vector{FT}
-    B :: Vector{FT}
-end
+# HybridSigmaPressure, n_levels, pressure_at_interface, level_thickness
+# are imported from ..Grids via the parent Preprocessing module.
 
-n_levels(vc::HybridSigmaPressure) = length(vc.A) - 1
-pressure_at_interface(vc::HybridSigmaPressure, k, p_s) = vc.A[k] + vc.B[k] * p_s
-level_thickness(vc::HybridSigmaPressure, k, p_s) =
-    pressure_at_interface(vc, k + 1, p_s) - pressure_at_interface(vc, k, p_s)
+"""
+    merge_thin_levels(vc; min_thickness_Pa=1000, p_surface=101325)
 
+Merge adjacent vertical levels that are thinner than `min_thickness_Pa` at
+the reference surface pressure. Returns `(merged_vc, merge_map)` where
+`merge_map[k]` maps native level `k` to the merged level index.
+"""
 function merge_thin_levels(vc::HybridSigmaPressure{FT};
                            min_thickness_Pa::Real = FT(1000),
                            p_surface::Real = FT(101325)) where FT

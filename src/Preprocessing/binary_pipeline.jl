@@ -34,20 +34,22 @@ end
     FT(inv(2 * max(Int(steps_per_window), 1)))
 
 """
-    script_provenance() -> NamedTuple
+    script_provenance(; caller_file=nothing) -> NamedTuple
 
-Collect reproducibility metadata for the current script invocation.
+Collect reproducibility metadata. `caller_file` is the path of the CLI script
+that invoked the preprocessing (set by the entry point, not the library).
 """
-function script_provenance()
-    script_path = abspath(PREPROCESS_SPECTRAL_V4_SCRIPT)
+function script_provenance(; caller_file::Union{String, Nothing}=nothing)
+    src_dir = @__DIR__
+    script_path = caller_file !== nothing ? abspath(caller_file) : src_dir
     script_mtime = isfile(script_path) ? mtime(script_path) : 0.0
     git_commit = try
-        readchomp(`git -C $(dirname(script_path)) rev-parse HEAD`)
+        readchomp(`git -C $(src_dir) rev-parse HEAD`)
     catch
         "unknown"
     end
     git_dirty = try
-        !isempty(readchomp(`git -C $(dirname(script_path)) status --porcelain`))
+        !isempty(readchomp(`git -C $(src_dir) status --porcelain`))
     catch
         false
     end

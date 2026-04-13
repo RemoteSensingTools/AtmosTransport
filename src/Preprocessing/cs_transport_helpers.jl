@@ -436,7 +436,7 @@ function _gnomonic_jacobian(ξ::FT, η::FT, panel::Int, cos_lat::FT) where FT
     elseif panel == 2
         x, y, z = -ξ/r, one(FT)/r, η/r
         dx_dξ = -(one(FT) + η^2)/r3; dx_dη = ξ*η/r3
-        dy_dξ = ξ/r3;               dy_dη = -η/r3
+        dy_dξ = -ξ/r3;              dy_dη = -η/r3  # y=1/r → dy/dξ = -ξ/r³
         dz_dξ = -ξ*η/r3;           dz_dη = (one(FT) + ξ^2)/r3
     elseif panel == 3
         x, y, z = -η/r, ξ/r, one(FT)/r
@@ -451,7 +451,7 @@ function _gnomonic_jacobian(ξ::FT, η::FT, panel::Int, cos_lat::FT) where FT
     elseif panel == 5
         x, y, z = ξ/r, -one(FT)/r, η/r
         dx_dξ = (one(FT) + η^2)/r3; dx_dη = -ξ*η/r3
-        dy_dξ = -ξ/r3;              dy_dη = η/r3
+        dy_dξ = ξ/r3;               dy_dη = η/r3  # y=-1/r → dy/dξ = +ξ/r³
         dz_dξ = -ξ*η/r3;           dz_dη = (one(FT) + ξ^2)/r3
     else  # panel 6
         x, y, z = η/r, ξ/r, -one(FT)/r

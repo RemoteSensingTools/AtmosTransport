@@ -43,10 +43,10 @@ nlat(grid::LatLonTargetGeometry) = grid.mesh.Ny
 grid_kind(::LatLonTargetGeometry) = :latlon
 grid_kind(::ReducedGaussianTargetGeometry) = :era5_native_reduced_gaussian
 
-"""Whether this target geometry supports the LL v4 spectral mass-flux path
-(only `LatLonTargetGeometry` does; RG uses its own `reduced_transport_helpers.jl`)."""
+"""Whether this target geometry supports spectral mass-flux preprocessing."""
 supports_spectral_massflux_preprocessing(::AbstractTargetGeometry) = false
 supports_spectral_massflux_preprocessing(::LatLonTargetGeometry) = true
+supports_spectral_massflux_preprocessing(::ReducedGaussianTargetGeometry) = true
 
 """Spectral truncation T for the target grid: Nyquist = `nlon ÷ 2 − 1` to avoid aliasing."""
 target_spectral_truncation(grid::LatLonTargetGeometry) = div(nlon(grid), 2) - 1

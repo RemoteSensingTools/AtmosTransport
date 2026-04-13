@@ -808,3 +808,161 @@ function store_reduced_window!(storage::ReducedWindowStorage{FT},
     storage.all_ps[win_idx] = FT.(ps)
     return nothing
 end
+
+# =========================================================================
+# RG process_window! and process_day — mirrors the LL path in binary_pipeline.jl
+# =========================================================================
+
+"""
+    process_window!(win_idx, hour, spec, grid::ReducedGaussianTargetGeometry,
+                    vertical, settings, work, merged, storage, ps_offsets)
+
+Process one analysis window on a reduced-Gaussian target grid.
+Spectral synthesis → mass fluxes → level merge → store.
+"""
+function process_window!(win_idx::Int,
+                         hour::Int,
+                         spec,
+                         grid::ReducedGaussianTargetGeometry,
+                         vertical,
+                         settings,
+                         work::ReducedTransformWorkspace,
+                         merged::ReducedMergeWorkspace{FT},
+                         storage::ReducedWindowStorage{FT},
+                         ps_offsets::Vector{Float64}) where FT
+    t0 = time()
+
+    spectral_to_native_fields!(work,
+        spec.lnsp_all[hour], spec.vo_by_hour[hour], spec.d_by_hour[hour],
+        spec.T, vertical.level_range, vertical.ab, grid, settings.half_dt)
+
+    # Mass fix: pin global mean total ps (same formula as LL path)
+    if settings.mass_fix_enable
+        target_ps = settings.target_ps_dry_pa / (1.0 - settings.qv_global_climatology)
+        area_sum = sum(work.cell_areas)
+        mean_ps = dot(work.sp, work.cell_areas) / area_sum
+        offset = target_ps - mean_ps
+        work.sp .+= offset
+        ps_offsets[win_idx] = offset
+        # Recompute mass with fixed ps
+        compute_reduced_dp_and_mass!(work.dp, work.m_arr, work.sp, work.cell_areas,
+                                     vertical.ab.dA, vertical.ab.dB)
+    end
+
+    merge_reduced_window!(merged, work, vertical)
+    store_reduced_window!(storage, merged, work.sp, win_idx)
+
+    elapsed = round(time() - t0, digits=2)
+    should_log_window(win_idx, length(storage.all_m)) &&
+        @info(@sprintf("    Window %d/%d (hour %02d): %.2fs  ps_offset=%+.3f Pa",
+                       win_idx, length(storage.all_m), hour, elapsed, ps_offsets[win_idx]))
+
+    return nothing
+end
+
+"""
+    process_day(date, grid::ReducedGaussianTargetGeometry, settings, vertical;
+                next_day_hour0=nothing)
+
+Full one-day preprocessing for reduced-Gaussian targets: read spectral data,
+process all windows, Poisson-balance horizontal fluxes, write binary.
+"""
+function process_day(date::Date,
+                     grid::ReducedGaussianTargetGeometry,
+                     settings,
+                     vertical;
+                     next_day_hour0=nothing)
+    FT = settings.output_float_type
+    mesh = grid.mesh
+    nc = ncells(mesh)
+    nf = nfaces(mesh)
+    Nz_native = vertical.Nz_native
+    Nz = vertical.Nz
+    steps_per_met = exact_steps_per_window(settings.met_interval, settings.dt)
+    date_str = Dates.format(date, "yyyymmdd")
+
+    vo_d_path = joinpath(settings.spectral_dir, "era5_spectral_$(date_str)_vo_d.gb")
+    lnsp_path = joinpath(settings.spectral_dir, "era5_spectral_$(date_str)_lnsp.gb")
+
+    if !isfile(vo_d_path) || !isfile(lnsp_path)
+        @warn "Missing GRIB files for $date_str, skipping"
+        return nothing
+    end
+
+    t_day = time()
+    @info "  Reading spectral data for $date_str..."
+    spec = read_day_spectral_streaming(vo_d_path, lnsp_path; T_target=settings.T_target)
+    @info @sprintf("  Spectral data read: T=%d, %d hours (%.1fs)",
+                   spec.T, spec.n_times, time() - t_day)
+
+    Nt = spec.n_times
+    mkpath(settings.out_dir)
+    bin_path = output_binary_path(date, settings.out_dir, settings.min_dp, FT)
+
+    # Note: skip-check disabled for RG because the actual header size (131072 bytes)
+    # is determined by write_transport_binary, not by HEADER_SIZE (16384).
+    # We rely on the post-write size log for verification instead.
+
+    @info @sprintf("  Output: %s (%.2f GB, %d windows, %d cells, %d faces)",
+                   basename(bin_path), expected_total / 1e9, Nt, nc, nf)
+
+    work = allocate_reduced_transform_workspace(grid, spec.T, Nz_native)
+    merged = allocate_reduced_merge_workspace(grid, Nz_native, Nz, FT)
+    storage = allocate_reduced_window_storage(Nt, FT, grid, Nz)
+    ps_offsets = zeros(Float64, Nt + 1)
+
+    log_mass_fix_configuration(settings)
+    @info "  Computing spectral -> RG gridpoint -> merged for $Nt windows..."
+
+    for (win_idx, hour) in enumerate(spec.hours)
+        process_window!(win_idx, hour, spec, grid, vertical, settings,
+                        work, merged, storage, ps_offsets)
+    end
+
+    if settings.mass_fix_enable
+        @info @sprintf("  Mass-fix offsets (Pa) min/max/mean: %+.3f / %+.3f / %+.3f",
+                       minimum(ps_offsets[1:Nt]),
+                       maximum(ps_offsets[1:Nt]),
+                       sum(ps_offsets[1:Nt]) / Nt)
+    end
+
+    # Poisson balance + cm recomputation
+    @info "  Applying Poisson mass flux balance..."
+    apply_reduced_poisson_balance!(storage, work, vertical, steps_per_met)
+    @info "  Poisson balance complete for $Nt windows"
+
+    # Write using the MetDrivers write_transport_binary for RG
+    @info "  Writing binary..."
+    vc_merged = vertical.merged_vc
+    transport_grid = AtmosGrid(mesh, vc_merged, CPU(); FT=FT)
+
+    windows = map(1:Nt) do win
+        (m     = storage.all_m[win],
+         ps    = storage.all_ps[win],
+         hflux = storage.all_hflux[win],
+         cm    = storage.all_cm[win])
+    end
+
+    write_transport_binary(bin_path, transport_grid, windows;
+        FT=FT,
+        dt_met_seconds = settings.met_interval,
+        half_dt_seconds = settings.half_dt,
+        steps_per_window = steps_per_met,
+        source_flux_sampling = :window_start_endpoint,
+        mass_basis = Symbol(settings.mass_basis),
+        extra_header = Dict{String, Any}(
+            "preprocessor" => "preprocess_transport_binary.jl",
+            "source_type" => "era5_spectral",
+            "target_type" => "reduced_gaussian",
+            "gaussian_number" => grid.gaussian_number,
+            "poisson_balanced" => true,
+            "mass_fix_enabled" => settings.mass_fix_enable,
+            "ps_offsets_pa_per_window" => ps_offsets[1:Nt],
+        ))
+
+    actual = filesize(bin_path)
+    @info @sprintf("  Done: %s (%.2f GB, %.1fs)", basename(bin_path), actual / 1e9, time() - t_day)
+    actual > 0 || error("Binary write produced empty file: $bin_path")
+
+    return bin_path
+end

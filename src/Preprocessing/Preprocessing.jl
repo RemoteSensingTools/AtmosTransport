@@ -59,10 +59,11 @@ using GRIB
 using FastGaussQuadrature: gausslegendre
 
 # Re-export parent module types we need
+using ..Architectures: CPU
 using ..Grids: LatLonMesh, ReducedGaussianMesh, HybridSigmaPressure,
-               AtmosGrid, ncells, nfaces, nrings, face_cells, cell_area,
+               AtmosGrid, ncells, nfaces, nrings, nlevels, face_cells, cell_area,
                ring_longitudes, ring_cell_count, cell_areas_by_latitude,
-               n_levels, pressure_at_interface, level_thickness, nlevels
+               n_levels, pressure_at_interface, level_thickness, floattype
 using ..MetDrivers: TransportBinaryReader, TransportBinaryHeader, write_transport_binary
 
 # Physical constants

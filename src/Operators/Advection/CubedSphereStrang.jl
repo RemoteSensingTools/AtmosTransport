@@ -34,11 +34,12 @@ using KernelAbstractions: @kernel, @index, @Const, synchronize, get_backend,
 # of halo-padded arrays. The Hp offset is added to all indices.
 # =========================================================================
 
-# NOTE: These KA kernels dispatch on `scheme` via _xface_tracer_flux and work
-# for UpwindScheme, SlopesScheme, and PPMScheme. They are defined for future
-# GPU CS advection but not yet wired into the runtime. The CPU path currently
-# uses _sweep_x_panel! (gamma-clamped upwind only). To enable higher-order
-# schemes on CS, wire these kernels into _sweep_x/y/z_panel! dispatches.
+# These KA kernels dispatch on `scheme` via _xface_tracer_flux and work for
+# UpwindScheme, SlopesScheme, and PPMScheme. They are used by the higher-order
+# _sweep_x/y/z_panel! methods (AbstractAdvectionScheme fallback) via KA_CPU().
+# On GPU backends, they can be launched directly with the appropriate backend.
+# The UpwindScheme specialization uses hand-written gamma-clamped loops instead
+# (positivity-safe even at CFL > 1).
 
 """X-sweep kernel on one CS panel. Interior i ∈ [1,Nc], periodic via halo."""
 @kernel function _cs_xsweep_kernel!(rm_new, @Const(rm), m_new, @Const(m),
@@ -95,7 +96,21 @@ end
 
 # =========================================================================
 # Per-panel sweep functions (double-buffered)
+#
+# Dispatch strategy:
+#   UpwindScheme  → hand-written gamma-clamped loops (positivity-safe)
+#   SlopesScheme  → KA kernel via _xface_tracer_flux dispatch (needs Hp ≥ 2)
+#   PPMScheme     → KA kernel via _xface_tracer_flux dispatch (needs Hp ≥ 3)
 # =========================================================================
+
+"""Validate that the halo width Hp is sufficient for the advection scheme's stencil."""
+@inline function _validate_halo_for_scheme(scheme::AbstractAdvectionScheme, Hp::Int)
+    order = reconstruction_order(scheme)
+    min_hp = order == 0 ? 1 : order == 1 ? 2 : 3   # upwind=1, slopes=2, PPM=3
+    Hp >= min_hp || error("CS panel sweep with $(typeof(scheme)) requires Hp ≥ $min_hp, got Hp=$Hp. " *
+                          "Construct CubedSphereMesh with Hp=$min_hp.")
+    return nothing
+end
 
 # =========================================================================
 # Gamma-clamped tracer flux (from legacy src/Advection/cubed_sphere_mass_flux.jl)
@@ -144,20 +159,28 @@ subcycling pilot. It's a safety net for preprocessing flux-inconsistency
     return gamma * rm_donor
 end
 
-"""Run X-sweep on one panel with gamma-clamped upwind tracer flux.
+"""Higher-order X-sweep via KA kernel dispatching on scheme (Slopes, PPM, etc.).
 
-The mass update is exact; the tracer flux is gamma-clamped so rm_new ≥ 0
-when rm_src ≥ 0. This is the legacy CS approach (cubed_sphere_mass_flux.jl)
-that handles high CFL without violating mass conservation.
-
-When per-face CFL ≤ 1, gamma = F/m exactly (first-order upwind).
-When CFL > 1, gamma is clamped to ±1 (tracer transport saturates at donor mass).
+Requires sufficient halo padding: Hp >= 2 for SlopesScheme, Hp >= 3 for PPMScheme.
+The `_xface_tracer_flux` reconstruction reads neighbors up to `face_i ± 3` for PPM,
+which stays within the halo-padded array when Hp is large enough. The periodic wrap
+in `_wrap_periodic` is a safety net that should never trigger with correct Hp.
 """
-function _sweep_x_panel!(rm, m, am, ::AbstractAdvectionScheme, rm_buf, m_buf, Nc, Hp, Nz; kwargs...)
-    error("CS panel X-sweep only supports UpwindScheme (gamma-clamped); got unsupported scheme. " *
-          "Wire _cs_xsweep_kernel! for higher-order schemes (Slopes, PPM).")
+function _sweep_x_panel!(rm, m, am, scheme::AbstractAdvectionScheme, rm_buf, m_buf, Nc, Hp, Nz;
+                         flux_scale = one(eltype(m)))
+    _validate_halo_for_scheme(scheme, Hp)
+    FT = eltype(m)
+    backend = KA_CPU()
+    kernel! = _cs_xsweep_kernel!(backend, 256)
+    kernel!(rm_buf, rm, m_buf, m, am, scheme, Int32(Nc), Int32(Hp), FT(flux_scale);
+            ndrange=(Nc, Nc, Nz))
+    synchronize(backend)
+    _copy_interior!(rm, rm_buf, Nc, Hp, Nz)
+    _copy_interior!(m, m_buf, Nc, Hp, Nz)
+    return nothing
 end
 
+"""Gamma-clamped upwind X-sweep: positivity-safe even at CFL > 1."""
 function _sweep_x_panel!(rm, m, am, scheme::UpwindScheme, rm_buf, m_buf, Nc, Hp, Nz;
                          flux_scale = one(eltype(m)))
     FT = eltype(m)
@@ -190,10 +213,19 @@ function _sweep_x_panel!(rm, m, am, scheme::UpwindScheme, rm_buf, m_buf, Nc, Hp,
     return nothing
 end
 
-"""Run Y-sweep on one panel with gamma-clamped upwind tracer flux."""
-function _sweep_y_panel!(rm, m, bm, ::AbstractAdvectionScheme, rm_buf, m_buf, Nc, Hp, Nz; kwargs...)
-    error("CS panel Y-sweep only supports UpwindScheme (gamma-clamped); got unsupported scheme. " *
-          "Wire _cs_ysweep_kernel! for higher-order schemes (Slopes, PPM).")
+"""Higher-order Y-sweep via KA kernel dispatching on scheme (Slopes, PPM, etc.)."""
+function _sweep_y_panel!(rm, m, bm, scheme::AbstractAdvectionScheme, rm_buf, m_buf, Nc, Hp, Nz;
+                         flux_scale = one(eltype(m)))
+    _validate_halo_for_scheme(scheme, Hp)
+    FT = eltype(m)
+    backend = KA_CPU()
+    kernel! = _cs_ysweep_kernel!(backend, 256)
+    kernel!(rm_buf, rm, m_buf, m, bm, scheme, Int32(Nc), Int32(Hp), FT(flux_scale);
+            ndrange=(Nc, Nc, Nz))
+    synchronize(backend)
+    _copy_interior!(rm, rm_buf, Nc, Hp, Nz)
+    _copy_interior!(m, m_buf, Nc, Hp, Nz)
+    return nothing
 end
 
 function _sweep_y_panel!(rm, m, bm, scheme::UpwindScheme, rm_buf, m_buf, Nc, Hp, Nz;
@@ -226,14 +258,23 @@ function _sweep_y_panel!(rm, m, bm, scheme::UpwindScheme, rm_buf, m_buf, Nc, Hp,
     return nothing
 end
 
-"""Run Z-sweep on one panel with gamma-clamped upwind tracer flux.
+"""Higher-order Z-sweep via KA kernel dispatching on scheme (Slopes, PPM, etc.).
 
-Z boundary convention: cm[:,:,1] = 0 (TOA) and cm[:,:,Nz+1] = 0 (surface).
-Following the legacy cubed_sphere_mass_flux.jl column-sequential kernel pattern.
+Z boundary: `_zface_tracer_flux` handles k=1 (TOA) and k=Nz+1 (surface) boundaries
+by falling back to upwind at the domain edges.
 """
-function _sweep_z_panel!(rm, m, cm, ::AbstractAdvectionScheme, rm_buf, m_buf, Nc, Hp, Nz; kwargs...)
-    error("CS panel Z-sweep only supports UpwindScheme (gamma-clamped); got unsupported scheme. " *
-          "Wire _cs_zsweep_kernel! for higher-order schemes (Slopes, PPM).")
+function _sweep_z_panel!(rm, m, cm, scheme::AbstractAdvectionScheme, rm_buf, m_buf, Nc, Hp, Nz;
+                         flux_scale = one(eltype(m)))
+    # Z-direction does not need halo validation (vertical boundaries are closed, not halo-exchanged)
+    FT = eltype(m)
+    backend = KA_CPU()
+    kernel! = _cs_zsweep_kernel!(backend, 256)
+    kernel!(rm_buf, rm, m_buf, m, cm, scheme, Int32(Nz), Int32(Hp), FT(flux_scale);
+            ndrange=(Nc, Nc, Nz))
+    synchronize(backend)
+    _copy_interior!(rm, rm_buf, Nc, Hp, Nz)
+    _copy_interior!(m, m_buf, Nc, Hp, Nz)
+    return nothing
 end
 
 function _sweep_z_panel!(rm, m, cm, scheme::UpwindScheme, rm_buf, m_buf, Nc, Hp, Nz;
@@ -398,10 +439,10 @@ kernels only update interior cells; halo regions are filled by
   `am[Nc+2Hp+1, Nc+2Hp, Nz]`, `bm[Nc+2Hp, Nc+2Hp+1, Nz]`,
   `cm[Nc+2Hp, Nc+2Hp, Nz+1]`. Read-only.
 - `mesh`: `CubedSphereMesh` with Nc, Hp, and panel connectivity.
-- `scheme`: advection scheme — currently only `UpwindScheme()` is supported
-  on the CS CPU path (gamma-clamped upwind). Passing `SlopesScheme()` or
-  `PPMScheme()` will error. KA kernels for higher-order schemes are defined
-  but not yet wired in (see `_cs_xsweep_kernel!` etc.).
+- `scheme`: advection scheme — `UpwindScheme()` uses gamma-clamped upwind
+  (positivity-safe). `SlopesScheme()` and `PPMScheme()` use the generic
+  KA kernels with `_xface_tracer_flux` dispatch. Higher-order schemes
+  require `mesh.Hp ≥ 2` (Slopes) or `mesh.Hp ≥ 3` (PPM).
 - `workspace`: pre-allocated `CSAdvectionWorkspace` buffers.
 - `flux_scale`: overall scaling applied to all fluxes (default 1.0).
 - `cfl_limit`: maximum CFL per subcycle pass (default 0.95).

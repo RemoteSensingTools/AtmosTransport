@@ -316,8 +316,8 @@ struct WindowStorage{FT}
     all_bm       :: Vector{Array{FT, 3}}
     all_cm       :: Vector{Array{FT, 3}}
     all_ps       :: Vector{Array{FT, 2}}
-    all_qv_start :: Union{Nothing, Vector{Array{FT, 3}}}
-    all_qv_end   :: Union{Nothing, Vector{Array{FT, 3}}}
+    all_qv_start :: Vector{Array{FT, 3}}   # empty vector when include_qv=false
+    all_qv_end   :: Vector{Array{FT, 3}}   # empty vector when include_qv=false
 end
 
 abstract type AbstractQVWorkspace{FT} end
@@ -337,8 +337,9 @@ Humidity workspace backed by daily ERA5 thermo NetCDF files.
 struct NativeQVWorkspace{FT} <: AbstractQVWorkspace{FT}
     thermo_path   :: String
     qv_native     :: Array{Float64, 3}
-    qv_native_ft  :: Union{Nothing, Array{FT, 3}}
-    qv_merged     :: Union{Nothing, Array{FT, 3}}
+    qv_native_ft  :: Array{FT, 3}
+    qv_merged     :: Array{FT, 3}
+    include_qv    :: Bool    # whether to write qv output (arrays always allocated)
 end
 
 Base.summary(ws::SpectralTransformWorkspace) =
@@ -428,8 +429,8 @@ function allocate_window_storage(Nt::Int, ::Type{FT}; include_qv::Bool=false) wh
                              Vector{Array{FT, 3}}(undef, Nt),
                              Vector{Array{FT, 3}}(undef, Nt),
                              Vector{Array{FT, 2}}(undef, Nt),
-                             include_qv ? Vector{Array{FT, 3}}(undef, Nt) : nothing,
-                             include_qv ? Vector{Array{FT, 3}}(undef, Nt) : nothing)
+                             include_qv ? Vector{Array{FT, 3}}(undef, Nt) : Vector{Array{FT, 3}}(),
+                             include_qv ? Vector{Array{FT, 3}}(undef, Nt) : Vector{Array{FT, 3}}())
 end
 
 """
@@ -452,8 +453,9 @@ function allocate_qv_workspace(grid::LatLonTargetGeometry,
 
     return NativeQVWorkspace{FT}(setup.thermo_path,
                                  Array{Float64}(undef, Nx, Ny, Nz_native),
-                                 settings.include_qv ? Array{FT}(undef, Nx, Ny, Nz_native) : nothing,
-                                 settings.include_qv ? Array{FT}(undef, Nx, Ny, Nz) : nothing)
+                                 Array{FT}(undef, Nx, Ny, Nz_native),
+                                 Array{FT}(undef, Nx, Ny, Nz),
+                                 settings.include_qv)
 end
 
 read_window_qv!(::NoQVWorkspace, args...) = nothing
@@ -546,7 +548,7 @@ Persist the merged `qv` field for one window into the daily storage bundle.
 function store_qv_output!(storage::WindowStorage,
                           qv::NativeQVWorkspace,
                           win_idx::Int)
-    storage.all_qv_start === nothing && return nothing
+    isempty(storage.all_qv_start) && return nothing
     storage.all_qv_start[win_idx] = copy(qv.qv_merged)
     return nothing
 end
@@ -872,9 +874,8 @@ function compute_window_deltas!(merged::MergeWorkspace{FT},
 end
 
 function fill_qv_endpoints!(storage::WindowStorage{FT}, last_hour_next) where FT
-    storage.all_qv_start === nothing && return nothing
+    isempty(storage.all_qv_start) && return nothing
     Nt = length(storage.all_qv_start)
-    Nt == 0 && return nothing
 
     for win_idx in 1:Nt-1
         storage.all_qv_end[win_idx] = copy(storage.all_qv_start[win_idx + 1])

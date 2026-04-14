@@ -14,7 +14,37 @@ function merge_cell_field!(merged::Array{FT, 3}, native::Array{FT, 3}, mm::Vecto
 end
 
 """
-    balance_mass_fluxes!(am, bm, dm_dt)
+    LLPoissonWorkspace
+
+Pre-allocated scratch and cached FFT plans for the LL Poisson mass-flux balance.
+Construct once per grid size and reuse across all windows and levels.
+"""
+struct LLPoissonWorkspace{P, Q}
+    fac        :: Matrix{Float64}       # Laplacian eigenvalues (Nx × Ny)
+    psi        :: Matrix{Float64}       # streamfunction scratch
+    residual   :: Matrix{Float64}       # residual scratch
+    cmplx_buf  :: Matrix{ComplexF64}    # in-place FFT I/O buffer
+    fft_plan   :: P                     # plan_fft!(cmplx_buf) — concrete FFTW plan
+    ifft_plan  :: Q                     # plan_ifft!(cmplx_buf) — ScaledPlan wrapper
+end
+
+function LLPoissonWorkspace(Nx::Int, Ny::Int)
+    fac = Array{Float64}(undef, Nx, Ny)
+    @inbounds for j in 1:Ny, i in 1:Nx
+        fac[i, j] = 2.0 * (cos(2π * (i - 1) / Nx) + cos(2π * (j - 1) / Ny) - 2.0)
+    end
+    fac[1, 1] = 1.0
+    cmplx_buf = zeros(ComplexF64, Nx, Ny)
+    return LLPoissonWorkspace(fac,
+                              zeros(Float64, Nx, Ny),
+                              zeros(Float64, Nx, Ny),
+                              cmplx_buf,
+                              plan_fft!(cmplx_buf),
+                              plan_ifft!(cmplx_buf))
+end
+
+"""
+    balance_mass_fluxes!(am, bm, dm_dt, ws::LLPoissonWorkspace)
 
 TM5-style Poisson mass-flux balance (TM5 r1112 grid_type_ll.F90:2536-2653).
 
@@ -23,108 +53,64 @@ at each cell `(i, j)` matches the prescribed mass tendency `dm_dt`:
 
     (am[i] − am[i+1]) + (bm[j] − bm[j+1])  =  dm_dt[i, j]     ∀ (i, j)
 
-The correction is a streamfunction `ψ` found by solving the 2D discrete
-Poisson equation `∇²ψ = residual` on the periodic lat-lon grid via FFT.
+The correction is a streamfunction `ψ` found by solving `∇²ψ = residual` on
+the periodic lat-lon grid via FFT division by the discrete Laplacian eigenvalues.
+The `ws::LLPoissonWorkspace` provides pre-computed eigenvalues, scratch arrays,
+and cached in-place FFT plans for zero-allocation operation.
 
-## Algorithm
-
-For each level `k`:
-
-1. Compute the residual: `r[i, j] = convergence[i, j] − dm_dt[i, j]`.
-2. Forward FFT: `R̂ = FFT(r)`.
-3. Divide by the discrete Laplacian eigenvalues:
-   `fac[i, j] = 2 (cos(2π(i−1)/Nx) + cos(2π(j−1)/Ny) − 2)`
-   which are the eigenvalues of the 2D circulant Laplacian with periodic
-   BCs in both lon and lat. The (1,1) mode (global mean) is set to 1
-   to avoid division by zero (constant null space).
-4. Inverse FFT: `ψ = real(IFFT(R̂ / fac))`.
-5. Apply flux correction from the gradient of ψ:
-   `am[i, j] += ψ[i] − ψ[i−1]` (zonal)
-   `bm[i, j] += ψ[j] − ψ[j−1]` (meridional)
-   with periodic wrapping in both directions.
-
-After this, the horizontal convergence at each cell equals `dm_dt` to
-machine precision (~1e-2 kg residual at F64). The residual is the
-GLOBAL mean of `r`, which cannot be corrected by divergence-free
-adjustments — it's absorbed by the downstream `cm` cumsum. See
-CLAUDE.md invariant #13 for the full discussion.
-
-## The dm_dt target
-
-The target is computed by `fill_window_mass_tendency!` as:
-
-    dm_dt[i, j, k] = (m_next − m_cur)[i, j, k] / (2 × steps_per_window)
-
-The factor of 2 is because the Strang splitting applies horizontal
-fluxes twice per full step (forward X-Y-Z + reverse Z-Y-X), so the
-per-application mass tendency is half the total window tendency. This
-is TM5's `poisson_balance_target_scale`.
-
-## Latitude BC note
-
-The FFT solver assumes periodicity in BOTH lon and lat. The lat wrap
-(south pole ↔ north pole) is unphysical but harmless because the
-pole-row fluxes are forced to zero immediately after the balance pass
-(see `apply_structured_pole_constraints!` in binary_pipeline.jl).
+See CLAUDE.md invariant #13 for details on the balance requirement.
 """
 function balance_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
-                              dm_dt::Array{FT, 3}) where FT
-    Nx = size(am, 1) - 1   # number of longitude cells
-    Ny = size(bm, 2) - 1   # number of latitude cells
-    Nz = size(am, 3)        # number of vertical levels
+                              dm_dt::Array{FT, 3},
+                              ws::LLPoissonWorkspace) where FT
+    Nx = size(am, 1) - 1
+    Ny = size(bm, 2) - 1
+    Nz = size(am, 3)
 
-    # Eigenvalues of the 2D discrete Laplacian on an (Nx × Ny) periodic grid.
-    # fac[i, j] = 2(cos(2π(i-1)/Nx) + cos(2π(j-1)/Ny) - 2)
-    # fac[1, 1] = 0 for the (0,0) mode (mean); set to 1 to avoid ÷0.
-    fac = Array{Float64}(undef, Nx, Ny)
-    @inbounds for j in 1:Ny, i in 1:Nx
-        fac[i, j] = 2.0 * (cos(2π * (i - 1) / Nx) + cos(2π * (j - 1) / Ny) - 2.0)
-    end
-    fac[1, 1] = 1.0   # null-space mode — div by 1 then zero explicitly below
-
-    psi = Array{Float64}(undef, Nx, Ny)
-    residual = Array{Float64}(undef, Nx, Ny)
     n_balanced = 0
     max_residual = 0.0
 
     for k in 1:Nz
-        # Residual = horizontal convergence − target mass tendency.
-        # convergence = (am_west − am_east) + (bm_south − bm_north)
-        # (positive convergence = mass accumulating in cell).
         @inbounds for j in 1:Ny, i in 1:Nx
             conv = (Float64(am[i, j, k]) - Float64(am[i + 1, j, k])) +
                    (Float64(bm[i, j, k]) - Float64(bm[i, j + 1, k]))
-            residual[i, j] = conv - Float64(dm_dt[i, j, k])
+            ws.residual[i, j] = conv - Float64(dm_dt[i, j, k])
         end
 
-        max_res_k = maximum(abs, residual)
+        max_res_k = maximum(abs, ws.residual)
         max_residual = max(max_residual, max_res_k)
-        max_res_k < 1e-10 && continue  # already balanced at this level
+        max_res_k < 1e-10 && continue
 
-        # Solve ∇²ψ = residual via FFT division by the Laplacian eigenvalues.
-        A = fft(complex.(residual))
+        # In-place FFT solve: ψ̂ = R̂ / eigenvalue
         @inbounds for j in 1:Ny, i in 1:Nx
-            A[i, j] /= fac[i, j]    # ψ̂ = R̂ / eigenvalue
+            ws.cmplx_buf[i, j] = complex(ws.residual[i, j])
         end
-        A[1, 1] = 0.0 + 0.0im       # zero out the (0,0) mode (global mean)
-        psi .= real.(ifft(A))        # streamfunction in physical space
+        ws.fft_plan * ws.cmplx_buf
+        @inbounds for j in 1:Ny, i in 1:Nx
+            ws.cmplx_buf[i, j] /= ws.fac[i, j]
+        end
+        ws.cmplx_buf[1, 1] = 0.0 + 0.0im
+        ws.ifft_plan * ws.cmplx_buf
+        @inbounds for j in 1:Ny, i in 1:Nx
+            ws.psi[i, j] = real(ws.cmplx_buf[i, j])
+        end
 
-        # Apply zonal flux correction: am[i] += ψ[i] − ψ[i−1] (periodic).
+        # Zonal flux correction
         @inbounds for j in 1:Ny
-            u_wrap = psi[1, j] - psi[Nx, j]  # periodic wrap contribution
+            u_wrap = ws.psi[1, j] - ws.psi[Nx, j]
             for i in 2:Nx
-                du = (psi[i, j] - psi[i - 1, j]) - u_wrap
+                du = (ws.psi[i, j] - ws.psi[i - 1, j]) - u_wrap
                 am[i, j, k] += FT(du)
             end
-            am[1, j, k] += FT(0)          # boundary faces: correction wraps
-            am[Nx + 1, j, k] += FT(0)     # (already exact via periodicity)
+            am[1, j, k] += FT(0)
+            am[Nx + 1, j, k] += FT(0)
         end
 
-        # Apply meridional flux correction: bm[j] += ψ[j] − ψ[j−1] (periodic lat wrap).
+        # Meridional flux correction
         @inbounds for i in 1:Nx
-            v_wrap = psi[i, 1] - psi[i, Ny]  # periodic wrap contribution
+            v_wrap = ws.psi[i, 1] - ws.psi[i, Ny]
             for j in 2:Ny
-                dv = (psi[i, j] - psi[i, j - 1]) - v_wrap
+                dv = (ws.psi[i, j] - ws.psi[i, j - 1]) - v_wrap
                 bm[i, j, k] += FT(dv)
             end
         end
@@ -134,6 +120,20 @@ function balance_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
 
     @info "Poisson balance: corrected $n_balanced/$Nz levels, " *
           "max pre-balance residual: $(round(max_residual, sigdigits=3)) kg"
+end
+
+"""
+    balance_mass_fluxes!(am, bm, dm_dt)
+
+Convenience overload that allocates a temporary workspace. Prefer the
+`LLPoissonWorkspace` overload when calling in a loop (e.g., per window).
+"""
+function balance_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
+                              dm_dt::Array{FT, 3}) where FT
+    Nx = size(am, 1) - 1
+    Ny = size(bm, 2) - 1
+    ws = LLPoissonWorkspace(Nx, Ny)
+    balance_mass_fluxes!(am, bm, dm_dt, ws)
 end
 
 """

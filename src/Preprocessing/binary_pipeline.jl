@@ -278,7 +278,7 @@ struct SpectralTransformWorkspace
     u_spec_t   :: Vector{Matrix{ComplexF64}}
     v_spec_t   :: Vector{Matrix{ComplexF64}}
     field_2d_t :: Vector{Matrix{Float64}}
-    bfft_plans :: Vector
+    bfft_plans :: Vector{FFTW.cFFTWPlan{ComplexF64, 1, false, 1, Tuple{Int64}}}
 end
 
 """
@@ -821,11 +821,12 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
                                 steps_per_window::Int) where FT
     Nx, Ny, Nz = size(storage.all_m[1])
     dm_dt_buf = Array{FT}(undef, Nx, Ny, Nz)
+    poisson_ws = LLPoissonWorkspace(Nx, Ny)
 
     @info "  Applying Poisson mass flux balance..."
     for win_idx in eachindex(storage.all_m)
         fill_window_mass_tendency!(dm_dt_buf, storage, last_hour_next, win_idx, steps_per_window)
-        balance_mass_fluxes!(storage.all_am[win_idx], storage.all_bm[win_idx], dm_dt_buf)
+        balance_mass_fluxes!(storage.all_am[win_idx], storage.all_bm[win_idx], dm_dt_buf, poisson_ws)
         @views storage.all_bm[win_idx][:, 1, :] .= zero(FT)
         @views storage.all_bm[win_idx][:, Ny + 1, :] .= zero(FT)
         recompute_cm_from_divergence!(storage.all_cm[win_idx], storage.all_am[win_idx],

@@ -32,44 +32,57 @@ Returns a NamedTuple with hours, lnsp_all, vo_by_hour, d_by_hour, T, n_times.
 """
 function read_day_spectral_streaming(vo_d_path::String, lnsp_path::String;
                                      T_target::Int=0)
+    # Read T from first LNSP message
     f = GribFile(lnsp_path)
-    msg1 = first(f)
-    T_file = msg1["J"]
-    destroy(f)
+    local T_file::Int
+    try
+        msg1 = first(f)
+        T_file = msg1["J"]
+    finally
+        destroy(f)
+    end
     T = T_target > 0 ? min(T_target, T_file) : T_file
     Nlevels = 137
 
-    f = GribFile(lnsp_path)
+    # Read all LNSP hours
     lnsp_all = Dict{Int, Matrix{ComplexF64}}()
     spec_buf = zeros(ComplexF64, T_file + 1, T_file + 1)
-    for msg in f
-        hour = div(msg["dataTime"], 100)
-        read_spectral_coeffs!(spec_buf, msg)
-        lnsp_all[hour] = copy(@view spec_buf[1:T + 1, 1:T + 1])
+    f = GribFile(lnsp_path)
+    try
+        for msg in f
+            hour = div(msg["dataTime"], 100)
+            read_spectral_coeffs!(spec_buf, msg)
+            lnsp_all[hour] = copy(@view spec_buf[1:T + 1, 1:T + 1])
+        end
+    finally
+        destroy(f)
     end
-    destroy(f)
 
+    # Read all VO/D hours
     vo_by_hour = Dict{Int, Array{ComplexF64, 3}}()
     d_by_hour  = Dict{Int, Array{ComplexF64, 3}}()
     f = GribFile(vo_d_path)
-    for msg in f
-        name = msg["shortName"]
-        level = msg["level"]
-        hour = div(msg["dataTime"], 100)
-        read_spectral_coeffs!(spec_buf, msg)
-        if name == "vo"
-            if !haskey(vo_by_hour, hour)
-                vo_by_hour[hour] = zeros(ComplexF64, T + 1, T + 1, Nlevels)
+    try
+        for msg in f
+            name = msg["shortName"]
+            level = msg["level"]
+            hour = div(msg["dataTime"], 100)
+            read_spectral_coeffs!(spec_buf, msg)
+            if name == "vo"
+                if !haskey(vo_by_hour, hour)
+                    vo_by_hour[hour] = zeros(ComplexF64, T + 1, T + 1, Nlevels)
+                end
+                vo_by_hour[hour][:, :, level] .= @view spec_buf[1:T + 1, 1:T + 1]
+            elseif name == "d"
+                if !haskey(d_by_hour, hour)
+                    d_by_hour[hour] = zeros(ComplexF64, T + 1, T + 1, Nlevels)
+                end
+                d_by_hour[hour][:, :, level] .= @view spec_buf[1:T + 1, 1:T + 1]
             end
-            vo_by_hour[hour][:, :, level] .= @view spec_buf[1:T + 1, 1:T + 1]
-        elseif name == "d"
-            if !haskey(d_by_hour, hour)
-                d_by_hour[hour] = zeros(ComplexF64, T + 1, T + 1, Nlevels)
-            end
-            d_by_hour[hour][:, :, level] .= @view spec_buf[1:T + 1, 1:T + 1]
         end
+    finally
+        destroy(f)
     end
-    destroy(f)
 
     hours = sort(collect(keys(lnsp_all)))
     return (; hours, lnsp_all, vo_by_hour, d_by_hour, T, n_times=length(hours))
@@ -82,43 +95,56 @@ function read_hour0_spectral(spectral_dir::String, date::Date; T_target::Int=0)
 
     (!isfile(vo_d_path) || !isfile(lnsp_path)) && return nothing
 
+    # Read T from first LNSP message
     f = GribFile(lnsp_path)
-    msg1 = first(f)
-    T_file = msg1["J"]
-    destroy(f)
+    local T_file::Int
+    try
+        msg1 = first(f)
+        T_file = msg1["J"]
+    finally
+        destroy(f)
+    end
     T = T_target > 0 ? min(T_target, T_file) : T_file
     Nlevels = 137
 
+    # Read hour-0 LNSP
     spec_buf = zeros(ComplexF64, T_file + 1, T_file + 1)
     lnsp_h0 = nothing
     f = GribFile(lnsp_path)
-    for msg in f
-        hour = div(msg["dataTime"], 100)
-        if hour == 0
-            read_spectral_coeffs!(spec_buf, msg)
-            lnsp_h0 = copy(@view spec_buf[1:T + 1, 1:T + 1])
-            break
+    try
+        for msg in f
+            hour = div(msg["dataTime"], 100)
+            if hour == 0
+                read_spectral_coeffs!(spec_buf, msg)
+                lnsp_h0 = copy(@view spec_buf[1:T + 1, 1:T + 1])
+                break
+            end
         end
+    finally
+        destroy(f)
     end
-    destroy(f)
     lnsp_h0 === nothing && return nothing
 
+    # Read hour-0 VO/D
     vo_h0 = zeros(ComplexF64, T + 1, T + 1, Nlevels)
     d_h0 = zeros(ComplexF64, T + 1, T + 1, Nlevels)
     f = GribFile(vo_d_path)
-    for msg in f
-        hour = div(msg["dataTime"], 100)
-        hour == 0 || continue
-        name = msg["shortName"]
-        level = msg["level"]
-        read_spectral_coeffs!(spec_buf, msg)
-        if name == "vo"
-            vo_h0[:, :, level] .= @view spec_buf[1:T + 1, 1:T + 1]
-        elseif name == "d"
-            d_h0[:, :, level] .= @view spec_buf[1:T + 1, 1:T + 1]
+    try
+        for msg in f
+            hour = div(msg["dataTime"], 100)
+            hour == 0 || continue
+            name = msg["shortName"]
+            level = msg["level"]
+            read_spectral_coeffs!(spec_buf, msg)
+            if name == "vo"
+                vo_h0[:, :, level] .= @view spec_buf[1:T + 1, 1:T + 1]
+            elseif name == "d"
+                d_h0[:, :, level] .= @view spec_buf[1:T + 1, 1:T + 1]
+            end
         end
+    finally
+        destroy(f)
     end
-    destroy(f)
 
     return (lnsp=lnsp_h0, vo=vo_h0, d=d_h0, T=T)
 end

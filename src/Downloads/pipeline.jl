@@ -227,8 +227,8 @@ function execute!(task::DownloadTask, proto::S3Protocol;
                                  max_retries=max_retries)
     else
         s3_url = "s3://$(proto.bucket)/$(task.source_url)"
-        _with_retries(basename(task.dest_path), task.dest_path;
-                      max_retries, retry_wait) do attempt
+        return _with_retries(basename(task.dest_path), task.dest_path;
+                             max_retries, retry_wait) do attempt
             @info "  Downloading $(basename(task.dest_path)) (attempt $attempt)..."
             run(`aws s3 cp $s3_url $(task.dest_path)`)
             isfile(task.dest_path) && filesize(task.dest_path) > 0

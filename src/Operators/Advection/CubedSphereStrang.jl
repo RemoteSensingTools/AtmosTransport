@@ -34,6 +34,12 @@ using KernelAbstractions: @kernel, @index, @Const, synchronize, get_backend,
 # of halo-padded arrays. The Hp offset is added to all indices.
 # =========================================================================
 
+# NOTE: These KA kernels dispatch on `scheme` via _xface_tracer_flux and work
+# for UpwindScheme, SlopesScheme, and PPMScheme. They are defined for future
+# GPU CS advection but not yet wired into the runtime. The CPU path currently
+# uses _sweep_x_panel! (gamma-clamped upwind only). To enable higher-order
+# schemes on CS, wire these kernels into _sweep_x/y/z_panel! dispatches.
+
 """X-sweep kernel on one CS panel. Interior i ∈ [1,Nc], periodic via halo."""
 @kernel function _cs_xsweep_kernel!(rm_new, @Const(rm), m_new, @Const(m),
                                      @Const(am), scheme, Nc, Hp, flux_scale)
@@ -147,7 +153,12 @@ that handles high CFL without violating mass conservation.
 When per-face CFL ≤ 1, gamma = F/m exactly (first-order upwind).
 When CFL > 1, gamma is clamped to ±1 (tracer transport saturates at donor mass).
 """
-function _sweep_x_panel!(rm, m, am, scheme, rm_buf, m_buf, Nc, Hp, Nz;
+function _sweep_x_panel!(rm, m, am, ::AbstractAdvectionScheme, rm_buf, m_buf, Nc, Hp, Nz; kwargs...)
+    error("CS panel X-sweep only supports UpwindScheme (gamma-clamped); got unsupported scheme. " *
+          "Wire _cs_xsweep_kernel! for higher-order schemes (Slopes, PPM).")
+end
+
+function _sweep_x_panel!(rm, m, am, scheme::UpwindScheme, rm_buf, m_buf, Nc, Hp, Nz;
                          flux_scale = one(eltype(m)))
     FT = eltype(m)
     @inbounds for k in 1:Nz, jj in 1:Nc, ii in 1:Nc
@@ -180,7 +191,12 @@ function _sweep_x_panel!(rm, m, am, scheme, rm_buf, m_buf, Nc, Hp, Nz;
 end
 
 """Run Y-sweep on one panel with gamma-clamped upwind tracer flux."""
-function _sweep_y_panel!(rm, m, bm, scheme, rm_buf, m_buf, Nc, Hp, Nz;
+function _sweep_y_panel!(rm, m, bm, ::AbstractAdvectionScheme, rm_buf, m_buf, Nc, Hp, Nz; kwargs...)
+    error("CS panel Y-sweep only supports UpwindScheme (gamma-clamped); got unsupported scheme. " *
+          "Wire _cs_ysweep_kernel! for higher-order schemes (Slopes, PPM).")
+end
+
+function _sweep_y_panel!(rm, m, bm, scheme::UpwindScheme, rm_buf, m_buf, Nc, Hp, Nz;
                          flux_scale = one(eltype(m)))
     FT = eltype(m)
     @inbounds for k in 1:Nz, jj in 1:Nc, ii in 1:Nc
@@ -215,7 +231,12 @@ end
 Z boundary convention: cm[:,:,1] = 0 (TOA) and cm[:,:,Nz+1] = 0 (surface).
 Following the legacy cubed_sphere_mass_flux.jl column-sequential kernel pattern.
 """
-function _sweep_z_panel!(rm, m, cm, scheme, rm_buf, m_buf, Nc, Hp, Nz;
+function _sweep_z_panel!(rm, m, cm, ::AbstractAdvectionScheme, rm_buf, m_buf, Nc, Hp, Nz; kwargs...)
+    error("CS panel Z-sweep only supports UpwindScheme (gamma-clamped); got unsupported scheme. " *
+          "Wire _cs_zsweep_kernel! for higher-order schemes (Slopes, PPM).")
+end
+
+function _sweep_z_panel!(rm, m, cm, scheme::UpwindScheme, rm_buf, m_buf, Nc, Hp, Nz;
                          flux_scale = one(eltype(m)))
     FT = eltype(m)
     @inbounds for k in 1:Nz, jj in 1:Nc, ii in 1:Nc
@@ -323,204 +344,11 @@ function _cs_static_subcycle_count(panels_flux::NTuple{6}, panels_m::NTuple{6},
     return ceil(Int, max_cfl / cfl_limit)
 end
 
-"""
-    _cs_x_pilot_subcycle_count(panels_am, panels_m, Nc, Hp, Nz, cfl_limit) -> Int
 
-Evolving-mass pilot for X-direction subcycling (TM5-style).
-
-Copies panel mass to pilot buffers, simulates the mass evolution through
-subcycles, and checks per-face CFL on evolved mass. Increases n_sub until
-no face exceeds cfl_limit at any subcycle step.
-
-This is the CS equivalent of the LatLon `_x_subcycling_pass_count` in
-StrangSplitting.jl, which also simulates evolving mass.
-"""
-function _cs_x_pilot_subcycle_count(panels_am::NTuple{6}, panels_m::NTuple{6},
-                                     Nc::Int, Hp::Int, Nz::Int,
-                                     cfl_limit::Real; max_n_sub::Int = 1024)
-    FT = eltype(panels_m[1])
-
-    # Initial estimate from static CFL
-    max_cfl = zero(FT)
-    @inbounds for p in 1:6
-        for k in 1:Nz, j in 1:Nc, i in 1:Nc
-            mi = panels_m[p][Hp+i, Hp+j, k]
-            mi <= zero(FT) && continue
-            c = max(abs(panels_am[p][Hp+i, Hp+j, k]),
-                    abs(panels_am[p][Hp+i+1, Hp+j, k])) / mi
-            max_cfl = max(max_cfl, c)
-        end
-    end
-    max_cfl <= cfl_limit && return 1
-    n_sub = ceil(Int, max_cfl / cfl_limit)
-
-    # Pilot: simulate mass evolution and verify CFL stays within limit
-    mx = ntuple(p -> copy(panels_m[p]), 6)
-    while true
-        # Reset pilot to initial mass
-        for p in 1:6
-            copyto!(mx[p], panels_m[p])
-        end
-        flux_scale = inv(FT(n_sub))
-        cfl_ok = true
-
-        for pass in 1:n_sub
-            # Check CFL on evolved mass for this pass
-            @inbounds for p in 1:6
-                cfl_ok || break
-                for k in 1:Nz, j in 1:Nc, i in 1:Nc
-                    mi = mx[p][Hp+i, Hp+j, k]
-                    mi <= zero(FT) && (cfl_ok = false; break)
-                    am_l = abs(flux_scale * panels_am[p][Hp+i, Hp+j, k])
-                    am_r = abs(flux_scale * panels_am[p][Hp+i+1, Hp+j, k])
-                    if max(am_l, am_r) >= cfl_limit * mi
-                        cfl_ok = false
-                        break
-                    end
-                end
-            end
-            cfl_ok || break
-
-            # Evolve pilot mass with flux limiting (matching runtime behavior)
-            if pass < n_sub
-                @inbounds for p in 1:6
-                    for k in 1:Nz, j in 1:Nc, i in 1:Nc
-                        ii = Hp + i; jj = Hp + j
-                        am_l = flux_scale * panels_am[p][ii, jj, k]
-                        am_r = flux_scale * panels_am[p][ii+1, jj, k]
-                        dm = am_l - am_r
-                        mi = mx[p][ii, jj, k]
-                        if mi + dm < zero(FT) && mi > zero(FT)
-                            scale = mi / max(-dm, eps(FT))
-                            dm *= scale
-                        end
-                        mx[p][ii, jj, k] = max(mi + dm, zero(FT))
-                    end
-                end
-            end
-        end
-
-        cfl_ok && return n_sub
-        n_sub += 1
-        n_sub <= max_n_sub || error("CS X subcycling exceeded max_n_sub=$max_n_sub")
-    end
-end
-
-"""Same evolving-mass pilot for Y direction."""
-function _cs_y_pilot_subcycle_count(panels_bm::NTuple{6}, panels_m::NTuple{6},
-                                     Nc::Int, Hp::Int, Nz::Int,
-                                     cfl_limit::Real; max_n_sub::Int = 1024)
-    FT = eltype(panels_m[1])
-    max_cfl = zero(FT)
-    @inbounds for p in 1:6
-        for k in 1:Nz, j in 1:Nc, i in 1:Nc
-            mi = panels_m[p][Hp+i, Hp+j, k]
-            mi <= zero(FT) && continue
-            c = max(abs(panels_bm[p][Hp+i, Hp+j, k]),
-                    abs(panels_bm[p][Hp+i, Hp+j+1, k])) / mi
-            max_cfl = max(max_cfl, c)
-        end
-    end
-    max_cfl <= cfl_limit && return 1
-    n_sub = ceil(Int, max_cfl / cfl_limit)
-
-    mx = ntuple(p -> copy(panels_m[p]), 6)
-    while true
-        for p in 1:6; copyto!(mx[p], panels_m[p]); end
-        flux_scale = inv(FT(n_sub))
-        cfl_ok = true
-        for pass in 1:n_sub
-            @inbounds for p in 1:6
-                cfl_ok || break
-                for k in 1:Nz, j in 1:Nc, i in 1:Nc
-                    mi = mx[p][Hp+i, Hp+j, k]
-                    mi <= zero(FT) && (cfl_ok = false; break)
-                    if max(abs(flux_scale * panels_bm[p][Hp+i, Hp+j, k]),
-                           abs(flux_scale * panels_bm[p][Hp+i, Hp+j+1, k])) >= cfl_limit * mi
-                        cfl_ok = false; break
-                    end
-                end
-            end
-            cfl_ok || break
-            if pass < n_sub
-                @inbounds for p in 1:6
-                    for k in 1:Nz, j in 1:Nc, i in 1:Nc
-                        ii = Hp + i; jj = Hp + j
-                        bm_s = flux_scale * panels_bm[p][ii, jj, k]
-                        bm_n = flux_scale * panels_bm[p][ii, jj+1, k]
-                        dm = bm_s - bm_n
-                        mi = mx[p][ii, jj, k]
-                        if mi + dm < zero(FT) && mi > zero(FT)
-                            dm *= mi / max(-dm, eps(FT))
-                        end
-                        mx[p][ii, jj, k] = max(mi + dm, zero(FT))
-                    end
-                end
-            end
-        end
-        cfl_ok && return n_sub
-        n_sub += 1
-        n_sub <= max_n_sub || error("CS Y subcycling exceeded max_n_sub=$max_n_sub")
-    end
-end
-
-"""Same evolving-mass pilot for Z direction."""
-function _cs_z_pilot_subcycle_count(panels_cm::NTuple{6}, panels_m::NTuple{6},
-                                     Nc::Int, Hp::Int, Nz::Int,
-                                     cfl_limit::Real; max_n_sub::Int = 1024)
-    FT = eltype(panels_m[1])
-    max_cfl = zero(FT)
-    @inbounds for p in 1:6
-        for k in 1:Nz, j in 1:Nc, i in 1:Nc
-            mi = panels_m[p][Hp+i, Hp+j, k]
-            mi <= zero(FT) && continue
-            c = max(abs(panels_cm[p][Hp+i, Hp+j, k]),
-                    abs(panels_cm[p][Hp+i, Hp+j, k+1])) / mi
-            max_cfl = max(max_cfl, c)
-        end
-    end
-    max_cfl <= cfl_limit && return 1
-    n_sub = ceil(Int, max_cfl / cfl_limit)
-
-    mx = ntuple(p -> copy(panels_m[p]), 6)
-    while true
-        for p in 1:6; copyto!(mx[p], panels_m[p]); end
-        flux_scale = inv(FT(n_sub))
-        cfl_ok = true
-        for pass in 1:n_sub
-            @inbounds for p in 1:6
-                cfl_ok || break
-                for k in 1:Nz, j in 1:Nc, i in 1:Nc
-                    mi = mx[p][Hp+i, Hp+j, k]
-                    mi <= zero(FT) && (cfl_ok = false; break)
-                    if max(abs(flux_scale * panels_cm[p][Hp+i, Hp+j, k]),
-                           abs(flux_scale * panels_cm[p][Hp+i, Hp+j, k+1])) >= cfl_limit * mi
-                        cfl_ok = false; break
-                    end
-                end
-            end
-            cfl_ok || break
-            if pass < n_sub
-                @inbounds for p in 1:6
-                    for k in 1:Nz, j in 1:Nc, i in 1:Nc
-                        ii = Hp + i; jj = Hp + j
-                        cm_t = flux_scale * panels_cm[p][ii, jj, k]
-                        cm_b = flux_scale * panels_cm[p][ii, jj, k+1]
-                        dm = cm_t - cm_b
-                        mi = mx[p][ii, jj, k]
-                        if mi + dm < zero(FT) && mi > zero(FT)
-                            dm *= mi / max(-dm, eps(FT))
-                        end
-                        mx[p][ii, jj, k] = max(mi + dm, zero(FT))
-                    end
-                end
-            end
-        end
-        cfl_ok && return n_sub
-        n_sub += 1
-        n_sub <= max_n_sub || error("CS Z subcycling exceeded max_n_sub=$max_n_sub")
-    end
-end
+# NOTE: Evolving-mass pilot functions (_cs_x/y/z_pilot_subcycle_count) were
+# removed — they were dead code (strang_split_cs! uses _cs_static_subcycle_count).
+# The static pilot is sufficient because the gamma-clamped sweep handles CFL > 1
+# safely. If evolving-mass pilots are needed in the future, see git history.
 
 """
     strang_split_cs!(panels_rm, panels_m, panels_am, panels_bm, panels_cm,
@@ -570,7 +398,10 @@ kernels only update interior cells; halo regions are filled by
   `am[Nc+2Hp+1, Nc+2Hp, Nz]`, `bm[Nc+2Hp, Nc+2Hp+1, Nz]`,
   `cm[Nc+2Hp, Nc+2Hp, Nz+1]`. Read-only.
 - `mesh`: `CubedSphereMesh` with Nc, Hp, and panel connectivity.
-- `scheme`: advection scheme (e.g. `UpwindScheme()`) for tracer flux.
+- `scheme`: advection scheme — currently only `UpwindScheme()` is supported
+  on the CS CPU path (gamma-clamped upwind). Passing `SlopesScheme()` or
+  `PPMScheme()` will error. KA kernels for higher-order schemes are defined
+  but not yet wired in (see `_cs_xsweep_kernel!` etc.).
 - `workspace`: pre-allocated `CSAdvectionWorkspace` buffers.
 - `flux_scale`: overall scaling applied to all fluxes (default 1.0).
 - `cfl_limit`: maximum CFL per subcycle pass (default 0.95).

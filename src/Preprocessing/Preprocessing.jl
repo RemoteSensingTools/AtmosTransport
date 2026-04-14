@@ -1,49 +1,46 @@
 """
     Preprocessing
 
-Transport binary generation from meteorological source data.
+Transport binary generation from ERA5 spectral meteorological data.
 
-Provides the complete pipeline from raw met data (spectral GRIB, gridded NetCDF)
-to Poisson-balanced transport binaries ready for the runtime `TransportBinaryDriver`.
+Provides the complete pipeline from raw spectral GRIB (VO, D, LNSP) to
+Poisson-balanced transport binaries ready for the runtime `TransportBinaryDriver`.
 
 ## Architecture
 
-Three dispatch axes control the pipeline:
+The pipeline dispatches on `AbstractTargetGeometry` subtypes:
 
-    AbstractMetSource         — where the data comes from
-    ├── SpectralSource        — ERA5 spectral GRIB (VO, D, LNSP)
-    ├── GriddedFluxSource     — GEOS-FP/IT NetCDF (MFXC, MFYC, DELP)
-    └── GriddedWindSource     — MERRA-2 NetCDF (U, V, DELP, PS)
+    AbstractTargetGeometry
+    ├── LatLonTargetGeometry              — regular lat-lon (any Nx × Ny)
+    ├── ReducedGaussianTargetGeometry     — native ERA5 RG (O90, O160, N320, …)
+    └── CubedSphereTargetGeometry         — gnomonic CS (C24, C90, C180, …)
 
-    AbstractTargetGrid        — what grid the binary uses
-    ├── LatLonTarget          — regular lat-lon (any Nx × Ny)
-    └── ReducedGaussianTarget — octahedral or regular RG (O160, O320, N320)
+Each target geometry has a dedicated `process_day` method:
 
-    AbstractLevelSelection    — how to merge vertical levels
-    ├── EchlevsSelection      — TM5-style explicit interface indices
-    ├── AutoMergeSelection    — merge by minimum pressure thickness
-    └── TargetCountSelection  — merge to ~N levels preserving BL
+    process_day(date, grid::LatLonTargetGeometry, settings, vertical; …)
+    process_day(date, grid::ReducedGaussianTargetGeometry, settings, vertical; …)
+    process_day(date, grid::CubedSphereTargetGeometry, settings, vertical; …)
 
-## Pipeline
+## Pipeline (per day)
 
-    preprocess_day!(source, target, levels, date, settings)
-
-1. `load_source_data!(source, date)` — read raw met fields
-2. `compute_native_fields!(raw, target, settings)` — spectral synthesis or wind→flux
-3. `merge_levels!(native, levels, settings)` — vertical level merging
-4. `balance_fluxes!(merged, target, settings)` — Poisson balance (FFT or CG)
-5. `validate!(balanced, target, settings)` — CFL + cm sanity checks
-6. `write_binary!(balanced, target, date, settings)` — transport binary output
+1. Read ERA5 spectral GRIB (VO, D, LNSP) — `spectral_io.jl`
+2. Spectral synthesis (Legendre + FFT → gridpoint) — `spectral_synthesis.jl`
+3. Merge native 137L → transport levels — `vertical_coordinates.jl`
+4. Pin global mean ps (mass fix) — `binary_pipeline.jl`
+5. Poisson mass-flux balance:
+   - LL: FFT on circulant Laplacian — `mass_support.jl`
+   - RG: compressed-Laplacian CG — `ring_poisson_balance.jl`
+   - CS: global 6-panel graph-Laplacian CG — `cs_poisson_balance.jl`
+6. Diagnose cm from balanced divergence — continuity equation
+7. Write transport binary (batch LL, streaming RG/CS)
 
 ## Usage
-
-The library is called from a thin CLI script:
 
 ```bash
 julia --project=. scripts/preprocessing/preprocess_transport_binary.jl config.toml --day 2021-12-01
 ```
 
-Advanced users can call the pipeline functions directly from Julia.
+Advanced users can call `process_day` directly from Julia.
 """
 module Preprocessing
 

@@ -62,6 +62,7 @@ Create workspace for a 2D face-indexed grid (cell × level layout).
 struct AdvectionWorkspace{FT, A <: AbstractArray{FT}, V1 <: AbstractVector{Int32}, A4}
     rm_buf        :: A
     m_buf         :: A
+    m_save        :: A       # backup of m for multi-tracer strang_split!
     cluster_sizes :: V1
     face_left     :: V1
     face_right    :: V1
@@ -90,7 +91,7 @@ function AdvectionWorkspace(m::AbstractArray{FT,3};
     face_right = similar(m, Int32, 0)
     rm_4d = n_tracers > 0 ? similar(m, Nx, Ny, Nz, n_tracers) : similar(m, 0, 0, 0, 0)
     AdvectionWorkspace{FT, typeof(m), typeof(cs_dev), typeof(rm_4d)}(
-        similar(m), similar(m), cs_dev, face_left, face_right, rm_4d)
+        similar(m), similar(m), similar(m), cs_dev, face_left, face_right, rm_4d)
 end
 
 function AdvectionWorkspace(m::AbstractArray{FT,2};
@@ -109,18 +110,19 @@ function AdvectionWorkspace(m::AbstractArray{FT,2};
     end
     rm_4d = similar(m, 0, 0)
     AdvectionWorkspace{FT, typeof(m), typeof(cs_dev), typeof(rm_4d)}(
-        similar(m), similar(m), cs_dev, face_left, face_right, rm_4d)
+        similar(m), similar(m), similar(m), cs_dev, face_left, face_right, rm_4d)
 end
 
 function Adapt.adapt_structure(to, ws::AdvectionWorkspace{FT}) where {FT}
     rm_buf = Adapt.adapt(to, ws.rm_buf)
     m_buf = Adapt.adapt(to, ws.m_buf)
+    m_save = Adapt.adapt(to, ws.m_save)
     cluster_sizes = Adapt.adapt(to, ws.cluster_sizes)
     face_left = Adapt.adapt(to, ws.face_left)
     face_right = Adapt.adapt(to, ws.face_right)
     rm_4d_buf = Adapt.adapt(to, ws.rm_4d_buf)
     return AdvectionWorkspace{FT, typeof(rm_buf), typeof(cluster_sizes), typeof(rm_4d_buf)}(
-        rm_buf, m_buf, cluster_sizes, face_left, face_right, rm_4d_buf)
+        rm_buf, m_buf, m_save, cluster_sizes, face_left, face_right, rm_4d_buf)
 end
 
 # =========================================================================
@@ -1209,7 +1211,7 @@ function strang_split!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
     cfl_limit_ft = convert(eltype(m), cfl_limit)
 
     n_tr = length(state.tracers)
-    m_save = n_tr > 1 ? similar(m) : m
+    m_save = workspace.m_save
     if n_tr > 1
         copyto!(m_save, m)
     end
@@ -1342,12 +1344,13 @@ for (sweep_fn, kernel_fn, dim) in (
         function $sweep_fn(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
                            flux::AbstractArray{FT,3},
                            scheme::AbstractAdvectionScheme,
-                           ws::AdvectionWorkspace{FT}) where FT
+                           ws::AdvectionWorkspace{FT},
+                           flux_scale::FT = one(FT)) where FT
             backend = get_backend(m)
             Nt = Int32(size(rm_4d, 4))
             kernel! = $kernel_fn(backend, 256)
             kernel!(ws.rm_4d_buf, rm_4d, ws.m_buf, m, flux, scheme,
-                    Int32(size(m, $dim)), Nt, one(FT);
+                    Int32(size(m, $dim)), Nt, flux_scale;
                     ndrange=size(m))
             synchronize(backend)
             copyto!(rm_4d, ws.rm_4d_buf)
@@ -1384,13 +1387,25 @@ function strang_split_mt!(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
                           am::AbstractArray{FT,3}, bm::AbstractArray{FT,3},
                           cm::AbstractArray{FT,3},
                           scheme::AbstractAdvectionScheme,
-                          ws::AdvectionWorkspace{FT}) where FT
-    sweep_x_mt!(rm_4d, m, am, scheme, ws)
-    sweep_y_mt!(rm_4d, m, bm, scheme, ws)
-    sweep_z_mt!(rm_4d, m, cm, scheme, ws)
-    sweep_z_mt!(rm_4d, m, cm, scheme, ws)
-    sweep_y_mt!(rm_4d, m, bm, scheme, ws)
-    sweep_x_mt!(rm_4d, m, am, scheme, ws)
+                          ws::AdvectionWorkspace{FT};
+                          cfl_limit::Real = one(FT)) where FT
+    cfl_ft = convert(FT, cfl_limit)
+
+    # CFL subcycling per direction (reuse single-tracer pilot on the 3D mass)
+    n_x = _x_subcycling_pass_count(am, m, ws, cfl_ft)
+    n_y = _y_subcycling_pass_count(bm, m, ws, cfl_ft)
+    n_z = _z_subcycling_pass_count(cm, m, ws, cfl_ft)
+
+    fs_x = inv(FT(n_x))
+    fs_y = inv(FT(n_y))
+    fs_z = inv(FT(n_z))
+
+    for _ in 1:n_x; sweep_x_mt!(rm_4d, m, am, scheme, ws, fs_x); end
+    for _ in 1:n_y; sweep_y_mt!(rm_4d, m, bm, scheme, ws, fs_y); end
+    for _ in 1:n_z; sweep_z_mt!(rm_4d, m, cm, scheme, ws, fs_z); end
+    for _ in 1:n_z; sweep_z_mt!(rm_4d, m, cm, scheme, ws, fs_z); end
+    for _ in 1:n_y; sweep_y_mt!(rm_4d, m, bm, scheme, ws, fs_y); end
+    for _ in 1:n_x; sweep_x_mt!(rm_4d, m, am, scheme, ws, fs_x); end
     return nothing
 end
 

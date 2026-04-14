@@ -226,7 +226,7 @@ end
 
 @testset "CS Strang splitting — SlopesScheme{MonotoneLimiter}" begin
     @testset "Uniform field invariance" begin
-        mesh, panels_m, panels_rm = make_cs_test_state(Nc=12, Hp=1, Nz=4, vmr=411.0)
+        mesh, panels_m, panels_rm = make_cs_test_state(Nc=12, Hp=2, Nz=4, vmr=411.0)
         Nc, Hp, Nz = mesh.Nc, mesh.Hp, 4
         N = Nc + 2Hp
 
@@ -262,7 +262,7 @@ end
     end
 
     @testset "Mass conservation — interior fluxes" begin
-        mesh, panels_m, panels_rm = make_cs_test_state(Nc=16, Hp=1, Nz=4, vmr=350.0)
+        mesh, panels_m, panels_rm = make_cs_test_state(Nc=16, Hp=2, Nz=4, vmr=350.0)
         Nc, Hp, Nz = mesh.Nc, mesh.Hp, 4
         N = Nc + 2Hp
 
@@ -306,7 +306,7 @@ end
     end
 
     @testset "Cross-panel conservation — uniform flux" begin
-        mesh, panels_m, panels_rm = make_cs_test_state(Nc=12, Hp=1, Nz=4, vmr=100.0)
+        mesh, panels_m, panels_rm = make_cs_test_state(Nc=12, Hp=2, Nz=4, vmr=100.0)
         Nc, Hp, Nz = mesh.Nc, mesh.Hp, 4
         N = Nc + 2Hp
 
@@ -329,7 +329,7 @@ end
     end
 
     @testset "Panel interior symmetry — central cells match across panels" begin
-        mesh, panels_m, panels_rm = make_cs_test_state(Nc=12, Hp=1, Nz=4, vmr=411.0)
+        mesh, panels_m, panels_rm = make_cs_test_state(Nc=12, Hp=2, Nz=4, vmr=411.0)
         Nc, Hp, Nz = mesh.Nc, mesh.Hp, 4
         N = Nc + 2Hp
 
@@ -368,8 +368,158 @@ end
 # F32 precision
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# CS Strang splitting — PPMScheme
+# ---------------------------------------------------------------------------
+
+@testset "CS Strang splitting — PPMScheme" begin
+    @testset "Uniform field invariance" begin
+        mesh, panels_m, panels_rm = make_cs_test_state(Nc=12, Hp=3, Nz=4, vmr=411.0)
+        Nc, Hp, Nz = mesh.Nc, mesh.Hp, 4
+        N = Nc + 2Hp
+
+        panels_am = ntuple(6) do _
+            am = zeros(Float64, N+1, N, Nz)
+            for k in 1:Nz, j in (Hp+1):(Hp+Nc), i in (Hp+1):(Hp+Nc+1)
+                am[i, j, k] = 0.03 * sin(Float64(i)*0.5 + Float64(j)*1.1 + Float64(k)*0.4)
+            end
+            am
+        end
+        panels_bm = ntuple(6) do _
+            bm = zeros(Float64, N, N+1, Nz)
+            for k in 1:Nz, j in (Hp+1):(Hp+Nc+1), i in (Hp+1):(Hp+Nc)
+                bm[i, j, k] = 0.03 * cos(Float64(i)*1.3 + Float64(j)*0.7 + Float64(k)*0.2)
+            end
+            bm
+        end
+        panels_cm = ntuple(6) do _
+            cm = zeros(Float64, N, N, Nz+1)
+            for k in 2:Nz, j in (Hp+1):(Hp+Nc), i in (Hp+1):(Hp+Nc)
+                cm[i, j, k] = 0.015 * sin(Float64(i)*0.3 + Float64(k)*2.1)
+            end
+            cm
+        end
+
+        ws = CSAdvectionWorkspace(mesh, Nz)
+        strang_split_cs!(panels_rm, panels_m, panels_am, panels_bm, panels_cm,
+                         mesh, PPMScheme(), ws)
+
+        dev = max_vmr_deviation(panels_rm, panels_m, Nc, Hp, Nz, 411.0)
+        @test dev < 1e-10
+    end
+
+    @testset "Mass conservation — interior fluxes" begin
+        mesh, panels_m, panels_rm = make_cs_test_state(Nc=16, Hp=3, Nz=4, vmr=350.0)
+        Nc, Hp, Nz = mesh.Nc, mesh.Hp, 4
+        N = Nc + 2Hp
+
+        margin = 4  # PPM has wider stencil
+        panels_am = ntuple(6) do _
+            am = zeros(Float64, N+1, N, Nz)
+            for k in 1:Nz, j in (Hp+margin):(Hp+Nc-margin+1)
+                for i in (Hp+margin):(Hp+Nc-margin+2)
+                    am[i, j, k] = 0.04 * sin(Float64(i)*0.7 + Float64(j)*1.3 + Float64(k)*0.5)
+                end
+            end
+            am
+        end
+        panels_bm = ntuple(6) do _
+            bm = zeros(Float64, N, N+1, Nz)
+            for k in 1:Nz, j in (Hp+margin):(Hp+Nc-margin+2)
+                for i in (Hp+margin):(Hp+Nc-margin+1)
+                    bm[i, j, k] = 0.04 * cos(Float64(i)*1.1 + Float64(j)*0.9 + Float64(k)*0.3)
+                end
+            end
+            bm
+        end
+        panels_cm = ntuple(6) do _
+            cm = zeros(Float64, N, N, Nz+1)
+            for k in 2:Nz, j in (Hp+1):(Hp+Nc), i in (Hp+1):(Hp+Nc)
+                cm[i, j, k] = 0.02 * sin(Float64(i)*0.3 + Float64(k)*2.1)
+            end
+            cm
+        end
+
+        rm0 = total_interior(panels_rm, Nc, Hp, Nz)
+        m0  = total_interior(panels_m, Nc, Hp, Nz)
+        ws = CSAdvectionWorkspace(mesh, Nz)
+        strang_split_cs!(panels_rm, panels_m, panels_am, panels_bm, panels_cm,
+                         mesh, PPMScheme(), ws)
+        rm1 = total_interior(panels_rm, Nc, Hp, Nz)
+        m1  = total_interior(panels_m, Nc, Hp, Nz)
+
+        @test abs(rm1 - rm0) / rm0 < 1e-13
+        @test abs(m1 - m0) / m0 < 1e-13
+    end
+end
+
+# ---------------------------------------------------------------------------
+# Halo validation
+# ---------------------------------------------------------------------------
+
+@testset "CS halo validation" begin
+    @testset "SlopesScheme requires Hp ≥ 2" begin
+        mesh_hp1 = CubedSphereMesh(Nc=8, Hp=1)
+        N = 8 + 2; Nz = 2
+        ws = CSAdvectionWorkspace(mesh_hp1, Nz)
+        pr = ntuple(_ -> ones(Float64, N, N, Nz), 6)
+        pm = ntuple(_ -> ones(Float64, N, N, Nz), 6)
+        pa = ntuple(_ -> zeros(Float64, N+1, N, Nz), 6)
+        pb = ntuple(_ -> zeros(Float64, N, N+1, Nz), 6)
+        pc = ntuple(_ -> zeros(Float64, N, N, Nz+1), 6)
+
+        @test_throws ErrorException strang_split_cs!(pr, pm, pa, pb, pc,
+                                                      mesh_hp1, SlopesScheme(), ws)
+    end
+
+    @testset "PPMScheme requires Hp ≥ 3" begin
+        mesh_hp2 = CubedSphereMesh(Nc=8, Hp=2)
+        N = 8 + 4; Nz = 2
+        ws = CSAdvectionWorkspace(mesh_hp2, Nz)
+        pr = ntuple(_ -> ones(Float64, N, N, Nz), 6)
+        pm = ntuple(_ -> ones(Float64, N, N, Nz), 6)
+        pa = ntuple(_ -> zeros(Float64, N+1, N, Nz), 6)
+        pb = ntuple(_ -> zeros(Float64, N, N+1, Nz), 6)
+        pc = ntuple(_ -> zeros(Float64, N, N, Nz+1), 6)
+
+        @test_throws ErrorException strang_split_cs!(pr, pm, pa, pb, pc,
+                                                      mesh_hp2, PPMScheme(), ws)
+    end
+end
+
+# ---------------------------------------------------------------------------
+# CS Poisson balance (LLPoissonWorkspace zero-allocation)
+# ---------------------------------------------------------------------------
+
+@testset "LLPoissonWorkspace zero-allocation balance" begin
+    Prep = AtmosTransport.Preprocessing
+    if isdefined(Prep, :LLPoissonWorkspace) && isdefined(Prep, :balance_mass_fluxes!)
+        Nx, Ny, Nz = 24, 12, 4
+        am = rand(Float64, Nx+1, Ny, Nz) .* 0.01
+        bm = rand(Float64, Nx, Ny+1, Nz) .* 0.01
+        dm = rand(Float64, Nx, Ny, Nz) .* 1e-6
+
+        ws = Prep.LLPoissonWorkspace(Nx, Ny)
+
+        # Warm up
+        Prep.balance_mass_fluxes!(copy(am), copy(bm), copy(dm), ws)
+
+        # Measure allocation
+        am2 = copy(am); bm2 = copy(bm); dm2 = copy(dm)
+        alloc = @allocated Prep.balance_mass_fluxes!(am2, bm2, dm2, ws)
+        # Should be near-zero (only the @info string allocation)
+        @test alloc < 10_000  # < 10 KB
+    else
+        @test true  # skip if Preprocessing not available
+    end
+end
+
+# ---------------------------------------------------------------------------
+# F32 precision
+# ---------------------------------------------------------------------------
+
 @testset "CS advection — Float32" begin
-    mesh, panels_m, panels_rm = make_cs_test_state(Nc=12, Hp=1, Nz=4, FT=Float32, vmr=411f0)
+    mesh, panels_m, panels_rm = make_cs_test_state(Nc=12, Hp=2, Nz=4, FT=Float32, vmr=411f0)
     Nc, Hp, Nz = mesh.Nc, mesh.Hp, 4
     N = Nc + 2Hp
 

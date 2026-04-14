@@ -100,10 +100,9 @@ but does not yet have a spectral mass-flux implementation.
 """
 function ensure_supported_target(grid::AbstractTargetGeometry)
     supports_spectral_massflux_preprocessing(grid) && return nothing
-    error("Target grid $(target_summary(grid)) is configured, but this preprocessor currently " *
-          "implements only the regular lat-lon spectral synthesis and mass-flux path. " *
-          "The mesh-aware target-geometry wiring is now in place; native reduced-Gaussian " *
-          "spectral synthesis and flux construction still need dedicated methods.")
+    error("Target grid $(target_summary(grid)) is configured, but spectral mass-flux " *
+          "preprocessing is not implemented for this target geometry type. " *
+          "Supported targets: LatLon, ReducedGaussian, CubedSphere.")
 end
 
 """

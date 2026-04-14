@@ -122,10 +122,10 @@ This is the limiter used by TM5's `advectx__slopes` and
 `advecty__slopes` routines (Russell & Lerner 1981).
 """
 @inline function _limited_slope(c_left, c_center, c_right, ::MonotoneLimiter)
-    sc = (c_right - c_left) / convert(typeof(c_center), 2)
+    sc = (c_right - c_left) / 2
     return _minmod3(sc,
-                    convert(typeof(sc), 2) * (c_right  - c_center),
-                    convert(typeof(sc), 2) * (c_center - c_left))
+                    2 * (c_right  - c_center),
+                    2 * (c_center - c_left))
 end
 
 """
@@ -138,7 +138,7 @@ oscillations) near sharp gradients.  Useful for smooth test problems
 and as a reference for limiter comparison.
 """
 @inline function _limited_slope(c_left, c_center, c_right, ::NoLimiter)
-    return (c_right - c_left) / convert(typeof(c_center), 2)
+    return (c_right - c_left) / 2
 end
 
 """
@@ -158,7 +158,7 @@ non-negative reconstructed values — important for species mixing
 ratios that must remain ≥ 0.
 """
 @inline function _limited_slope(c_left, c_center, c_right, ::PositivityLimiter)
-    sc = (c_right - c_left) / convert(typeof(c_center), 2)
+    sc = (c_right - c_left) / 2
     return _minmod_slope(sc, c_center)
 end
 

@@ -372,7 +372,7 @@ function allocate_transform_workspace(grid::LatLonTargetGeometry, T::Int, Nz_nat
     sp = Array{Float64}(undef, Nx, Ny)
 
     nt = Threads.nthreads()
-    nt_max = max(nt, 2 * nt) + 4
+    nt_max = nt + 2  # small margin over nthreads() for thread-pool headroom
     P_buf = zeros(Float64, T + 1, T + 1)
     fft_buf = zeros(ComplexF64, Nx)
     field_2d = Array{Float64}(undef, Nx, Ny)

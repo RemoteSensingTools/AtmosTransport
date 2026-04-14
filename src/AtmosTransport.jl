@@ -173,7 +173,7 @@ export apply_chemistry!
 # Cubed-sphere advection
 export fill_panel_halos!, strang_split_cs!, CSAdvectionWorkspace
 
-# NOTE: sweep_x!, sweep_y!, sweep_z!, max_cfl_*, minmod, van_leer_slope
+# NOTE: sweep_x!, sweep_y!, sweep_z!, max_cfl_*
 # are intentionally NOT exported. They accept raw arrays without basis
 # checking and are implementation details of strang_split!.
 # Access via AtmosTransport.Operators.Advection.sweep_x! if needed.

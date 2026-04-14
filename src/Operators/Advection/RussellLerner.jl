@@ -24,8 +24,8 @@ end
 
 @inline function _limited_slope(sc, c_left, c_center, c_right, use_limiter)
     return ifelse(use_limiter,
-                  _minmod(sc, convert(typeof(sc), 2) * (c_right - c_center),
-                              convert(typeof(sc), 2) * (c_center - c_left)),
+                  _minmod(sc, 2 * (c_right - c_center),
+                              2 * (c_center - c_left)),
                   sc)
 end
 

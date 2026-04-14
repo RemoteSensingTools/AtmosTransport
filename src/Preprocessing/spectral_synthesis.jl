@@ -333,15 +333,14 @@ function compute_mass_fluxes!(am, bm, cm, u_stag, v_stag, dp, ps,
     R_g = R_EARTH / GRAV   # [m × s²/m] = [s²/m²] — converts dp × R / g to mass/area
     dlon = grid.dlon        # [radians] — longitudinal grid spacing
     dlat = grid.dlat        # [radians] — latitudinal grid spacing
-    lnsp_center = log.(ps)  # ln(ps) at cell centers for Jensen-corrected face ps
-
     # --- Zonal mass flux: am[i, j, k] at west face of cell (i, j) ---
     # Positive am = eastward. Pole rows (j=1, j=Nlat) are zeroed.
     # Face ps uses Jensen correction: exp(mean(ln ps)) instead of mean(exp(ln ps)).
+    # log(ps) is computed inline to avoid allocating a scratch matrix.
     @inbounds for k in 1:Nz, j in 1:Nlat, i in 1:(Nlon + 1)
         i_l = i == 1 ? Nlon : i - 1   # periodic wrap: west neighbour of i=1 is Nlon
         i_r = i <= Nlon ? i : 1        # periodic wrap: east neighbour of Nlon+1 is 1
-        ps_face = exp((lnsp_center[i_l, j] + lnsp_center[i_r, j]) / 2)  # Jensen-corrected
+        ps_face = exp((log(ps[i_l, j]) + log(ps[i_r, j])) / 2)  # Jensen-corrected
         dp_face = abs(dA[k] + dB[k] * ps_face)  # face-level pressure thickness [Pa]
         cos_lat = grid.cos_lat[j]
         if j == 1 || j == Nlat
@@ -362,7 +361,7 @@ function compute_mass_fluxes!(am, bm, cm, u_stag, v_stag, dp, ps,
         else
             j_s = j - 1   # cell south of this face
             j_n = j        # cell north of this face
-            ps_face = exp((lnsp_center[i, j_s] + lnsp_center[i, j_n]) / 2)
+            ps_face = exp((log(ps[i, j_s]) + log(ps[i, j_n])) / 2)
             dp_face = abs(dA[k] + dB[k] * ps_face)
             # v_stag is already the physical meridional wind (no cos scaling).
             # bm = v × R/g × Δp × Δλ × Δt/2   [kg per half-step]
@@ -448,6 +447,7 @@ function spectral_to_native_fields!(
     u_edge_shift = deg2rad(first(grid.mesh.λᶠ))
 
     spectral_to_grid!(field_2d, lnsp_spec, T, grid.lats, Nlon, P_buf, fft_buf;
+                      fft_out=fft_out_t[1], bfft_plan=bfft_plans[1],
                       lon_shift_rad=sp_shift)
     @. sp = exp(field_2d)
 

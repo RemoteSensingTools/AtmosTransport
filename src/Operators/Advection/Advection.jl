@@ -51,8 +51,7 @@ include("multitracer_kernels.jl")
 include("HaloExchange.jl")
 include("CubedSphereStrang.jl")
 
-# Legacy scheme files
-include("FaceReconstruction.jl")
+# Legacy scheme files (FaceReconstruction.jl removed — dead code, see limiters.jl)
 include("MassCFLPilot.jl")
 include("Upwind.jl")
 include("RussellLerner.jl")

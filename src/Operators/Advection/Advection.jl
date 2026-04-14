@@ -39,6 +39,7 @@ using ...Grids: AtmosGrid, AbstractHorizontalMesh, AbstractStructuredMesh,
     PanelConnectivity, reciprocal_edge,
     EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST
 using ...MetDrivers: diagnose_cm_from_continuity!
+using ...Architectures: _kahan_add
 
 # New scheme hierarchy (include before anything that references these types)
 include("schemes.jl")
@@ -50,6 +51,9 @@ include("multitracer_kernels.jl")
 # Cubed-sphere halo exchange and Strang splitting
 include("HaloExchange.jl")
 include("CubedSphereStrang.jl")
+
+# Vertical remap (FV3-style conservative PPM, per-column)
+include("VerticalRemap.jl")
 
 # Legacy scheme files (FaceReconstruction.jl removed — dead code, see limiters.jl)
 include("MassCFLPilot.jl")

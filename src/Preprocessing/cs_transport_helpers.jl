@@ -442,12 +442,12 @@ function _gnomonic_to_lonlat(ξ::FT, η::FT, panel::Int) where FT
         x, y, z = one(FT)/r, ξ/r, η/r
     elseif panel == 2  # +y face
         x, y, z = -ξ/r, one(FT)/r, η/r
-    elseif panel == 3  # north pole (+z face)
-        x, y, z = -η/r, ξ/r, one(FT)/r
-    elseif panel == 4  # -x face
+    elseif panel == 3  # -x face
         x, y, z = -one(FT)/r, -ξ/r, η/r
-    elseif panel == 5  # -y face
+    elseif panel == 4  # -y face
         x, y, z = ξ/r, -one(FT)/r, η/r
+    elseif panel == 5  # north pole (+z face)
+        x, y, z = -η/r, ξ/r, one(FT)/r
     else               # south pole (-z face)
         x, y, z = η/r, ξ/r, -one(FT)/r
     end
@@ -477,21 +477,21 @@ function _gnomonic_jacobian(ξ::FT, η::FT, panel::Int, cos_lat::FT) where FT
         dx_dξ = -(one(FT) + η^2)/r3; dx_dη = ξ*η/r3
         dy_dξ = -ξ/r3;              dy_dη = -η/r3  # y=1/r → dy/dξ = -ξ/r³
         dz_dξ = -ξ*η/r3;           dz_dη = (one(FT) + ξ^2)/r3
-    elseif panel == 3
-        x, y, z = -η/r, ξ/r, one(FT)/r
-        dx_dξ = ξ*η/r3;             dx_dη = -(one(FT) + ξ^2)/r3
-        dy_dξ = (one(FT) + η^2)/r3; dy_dη = -ξ*η/r3
-        dz_dξ = -ξ/r3;              dz_dη = -η/r3
-    elseif panel == 4
+    elseif panel == 3  # -x face
         x, y, z = -one(FT)/r, -ξ/r, η/r
         dx_dξ = ξ/r3;                dx_dη = η/r3
         dy_dξ = -(one(FT) + η^2)/r3; dy_dη = ξ*η/r3
         dz_dξ = -ξ*η/r3;            dz_dη = (one(FT) + ξ^2)/r3
-    elseif panel == 5
+    elseif panel == 4  # -y face
         x, y, z = ξ/r, -one(FT)/r, η/r
         dx_dξ = (one(FT) + η^2)/r3; dx_dη = -ξ*η/r3
         dy_dξ = ξ/r3;               dy_dη = η/r3  # y=-1/r → dy/dξ = +ξ/r³
         dz_dξ = -ξ*η/r3;           dz_dη = (one(FT) + ξ^2)/r3
+    elseif panel == 5  # north pole (+z face)
+        x, y, z = -η/r, ξ/r, one(FT)/r
+        dx_dξ = ξ*η/r3;             dx_dη = -(one(FT) + ξ^2)/r3
+        dy_dξ = (one(FT) + η^2)/r3; dy_dη = -ξ*η/r3
+        dz_dξ = -ξ/r3;              dz_dη = -η/r3
     else  # panel 6
         x, y, z = η/r, ξ/r, -one(FT)/r
         dx_dξ = -ξ*η/r3;            dx_dη = (one(FT) + ξ^2)/r3

@@ -30,6 +30,7 @@ struct CubedSphereBinaryHeader
     dt_met_seconds   :: Float64
     steps_per_window :: Int
     mass_basis       :: Symbol
+    panel_convention :: Symbol   # :gnomonic or :geos_native
     A_ifc            :: Vector{Float64}
     B_ifc            :: Vector{Float64}
     payload_sections :: Vector{Symbol}
@@ -71,6 +72,15 @@ function CubedSphereBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = F
     dt_met = Float64(hdr.dt_met_seconds)
     steps_per_window = Int(hdr.steps_per_window)
     mass_basis = Symbol(lowercase(String(get(hdr, :mass_basis, "moist"))))
+    panel_convention_str = lowercase(String(get(hdr, :panel_convention, "gnomonic")))
+    panel_convention = if panel_convention_str in ("gnomonic", "gnomic")
+        :gnomonic
+    elseif panel_convention_str in ("geos_native", "geosnative", "geos-native")
+        :geos_native
+    else
+        @warn "Unknown panel_convention '$panel_convention_str' in binary header, defaulting to gnomonic"
+        :gnomonic
+    end
     A_ifc = Float64.(collect(hdr.A_ifc))
     B_ifc = Float64.(collect(hdr.B_ifc))
 
@@ -80,7 +90,7 @@ function CubedSphereBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = F
 
     cs_header = CubedSphereBinaryHeader(
         Nc, npanel, nlevel, nwindow, header_bytes, float_bytes,
-        dt_met, steps_per_window, mass_basis, A_ifc, B_ifc,
+        dt_met, steps_per_window, mass_basis, panel_convention, A_ifc, B_ifc,
         payload_sections, elems_per_window,
         Dict{String, Any}(String(k) => v for (k, v) in pairs(hdr))
     )
@@ -199,5 +209,28 @@ Number of time windows in the binary.
 """
 cs_window_count(reader::CubedSphereBinaryReader) = reader.header.nwindow
 
+"""
+    mesh_convention(reader::CubedSphereBinaryReader) -> AbstractCubedSpherePanelConvention
+
+Return the panel-numbering convention declared in the binary header.
+
+Returns `GnomonicPanelConvention()` for all ERA5-CS binaries (the default) and
+`GEOSNativePanelConvention()` for legacy GEOS-IT/FP binaries that predate the
+panel convention field. Callers should pass the result directly to
+`CubedSphereMesh(; convention=mesh_convention(reader))` to guarantee that the
+halo exchange uses the correct edge-to-edge connectivity table.
+"""
+function mesh_convention(reader::CubedSphereBinaryReader)
+    conv = reader.header.panel_convention
+    if conv === :gnomonic
+        return GnomonicPanelConvention()
+    elseif conv === :geos_native
+        return GEOSNativePanelConvention()
+    else
+        @warn "Unrecognised panel_convention :$conv in binary, defaulting to GnomonicPanelConvention"
+        return GnomonicPanelConvention()
+    end
+end
+
 export CubedSphereBinaryReader, CubedSphereBinaryHeader
-export load_cs_window, cs_window_count
+export load_cs_window, cs_window_count, mesh_convention

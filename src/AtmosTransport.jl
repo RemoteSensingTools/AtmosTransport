@@ -87,7 +87,7 @@ using .MetDrivers: AbstractDriver, AbstractClosure, AbstractMetDriver,
                    total_windows, window_dt, steps_per_window, supports_diffusion, supports_convection,
                    DiagnoseVerticalFromHorizontal, PressureTendencyClosure,
                    CubedSphereBinaryReader, CubedSphereBinaryHeader,
-                   load_cs_window, cs_window_count,
+                   load_cs_window, cs_window_count, mesh_convention,
                    StreamingTransportBinaryWriter,
                    open_streaming_transport_binary, write_streaming_window!,
                    close_streaming_transport_binary!
@@ -171,7 +171,11 @@ export AbstractChemistry, NoChemistry, RadioactiveDecay, CompositeChemistry
 export apply_chemistry!
 
 # Cubed-sphere advection
-export fill_panel_halos!, strang_split_cs!, CSAdvectionWorkspace
+export fill_panel_halos!, copy_corners!, strang_split_cs!, CSAdvectionWorkspace
+
+# Lin-Rood cross-term advection (FV3 fv_tp_2d)
+export LinRoodWorkspace, fv_tp_2d_cs!, fv_tp_2d_cs_q!, strang_split_linrood_ppm!
+export fillz_q!, apply_divergence_damping_cs!
 
 # NOTE: sweep_x!, sweep_y!, sweep_z!, max_cfl_*
 # are intentionally NOT exported. They accept raw arrays without basis
@@ -206,7 +210,7 @@ export read_era5_reduced_gaussian_geometry, read_era5_reduced_gaussian_mesh
 export DiagnoseVerticalFromHorizontal, PressureTendencyClosure
 export supports_diffusion, supports_convection
 export CubedSphereBinaryReader, CubedSphereBinaryHeader
-export load_cs_window, cs_window_count
+export load_cs_window, cs_window_count, mesh_convention
 export StreamingTransportBinaryWriter
 export open_streaming_transport_binary, write_streaming_window!, close_streaming_transport_binary!
 

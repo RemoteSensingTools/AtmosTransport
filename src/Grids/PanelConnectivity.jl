@@ -88,6 +88,42 @@ function default_panel_connectivity()
 end
 
 """
+    gnomonic_panel_connectivity() -> PanelConnectivity
+
+Return the classical gnomonic cubed-sphere panel connectivity.
+
+Panels 1-4 are the equatorial belt (+x, +y, -x, -y faces); panel 5 is the
+north polar cap (+z face); panel 6 is the south polar cap (-z face).
+
+This matches the gnomonic ordering used by the ERA5-CS preprocessor and all
+CS transport binaries written by `open_streaming_cs_transport_binary`.
+
+Edge-to-edge connections (P→Q with orientation 0=aligned, 2=reversed):
+  P1 N→P5_S(0)  P1 S→P6_N(0)  P1 E→P2_W(0)  P1 W→P4_E(0)
+  P2 N→P5_E(0)  P2 S→P6_E(2)  P2 E→P3_W(0)  P2 W→P1_E(0)
+  P3 N→P5_N(2)  P3 S→P6_S(2)  P3 E→P4_W(0)  P3 W→P2_E(0)
+  P4 N→P5_W(2)  P4 S→P6_W(0)  P4 E→P1_W(0)  P4 W→P3_E(0)
+  P5 N→P3_N(2)  P5 S→P1_N(0)  P5 E→P2_N(0)  P5 W→P4_N(2)
+  P6 N→P1_S(0)  P6 S→P3_S(2)  P6 E→P2_S(2)  P6 W→P4_S(0)
+"""
+function gnomonic_panel_connectivity()
+    return PanelConnectivity((
+        # Panel 1 (+x equatorial face)
+        (PanelEdge(5, 0), PanelEdge(6, 0), PanelEdge(2, 0), PanelEdge(4, 0)),
+        # Panel 2 (+y equatorial face)
+        (PanelEdge(5, 0), PanelEdge(6, 2), PanelEdge(3, 0), PanelEdge(1, 0)),
+        # Panel 3 (-x equatorial face)
+        (PanelEdge(5, 2), PanelEdge(6, 2), PanelEdge(4, 0), PanelEdge(2, 0)),
+        # Panel 4 (-y equatorial face)
+        (PanelEdge(5, 2), PanelEdge(6, 0), PanelEdge(1, 0), PanelEdge(3, 0)),
+        # Panel 5 (north polar cap, +z face)
+        (PanelEdge(3, 2), PanelEdge(1, 0), PanelEdge(2, 0), PanelEdge(4, 2)),
+        # Panel 6 (south polar cap, -z face)
+        (PanelEdge(1, 0), PanelEdge(3, 2), PanelEdge(2, 2), PanelEdge(4, 0)),
+    ))
+end
+
+"""
     reciprocal_edge(conn, p, e) -> Int
 
 Find which edge of the neighbor panel connects back to panel `p` edge `e`.
@@ -101,5 +137,6 @@ function reciprocal_edge(conn::PanelConnectivity, p::Int, e::Int)
 end
 
 export PanelEdge, PanelConnectivity
-export default_panel_connectivity, reciprocal_edge
+export default_panel_connectivity, gnomonic_panel_connectivity
+export reciprocal_edge
 export EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST

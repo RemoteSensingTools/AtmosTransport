@@ -62,7 +62,7 @@ using ..Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                AtmosGrid, ncells, nfaces, nrings, nlevels, face_cells, cell_area,
                ring_longitudes, ring_cell_count, cell_areas_by_latitude,
                n_levels, pressure_at_interface, level_thickness, floattype,
-               default_panel_connectivity, reciprocal_edge,
+               default_panel_connectivity, gnomonic_panel_connectivity, reciprocal_edge,
                GnomonicPanelConvention, GEOSNativePanelConvention,
                EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST
 using ..Regridding: build_regridder, apply_regridder!

@@ -33,6 +33,16 @@ panels 1-2 are equatorial, 3 is north-pole, 4-5 are equatorial, 6 is south-pole.
 """
 struct GEOSNativePanelConvention <: AbstractCubedSpherePanelConvention end
 
+"""
+    panel_connectivity_for(convention) -> PanelConnectivity
+
+Return the `PanelConnectivity` that matches the given panel-numbering convention.
+Dispatches to `gnomonic_panel_connectivity()` or `default_panel_connectivity()`
+so that the mesh and all downstream code automatically use the right edge table.
+"""
+panel_connectivity_for(::GnomonicPanelConvention)   = gnomonic_panel_connectivity()
+panel_connectivity_for(::GEOSNativePanelConvention) = default_panel_connectivity()
+
 # ---------------------------------------------------------------------------
 # Gnomonic projection
 # ---------------------------------------------------------------------------
@@ -161,28 +171,33 @@ end
 
 """
     CubedSphereMesh(; Nc, FT=Float64, Hp=1, radius=6.371e6,
-                      convention=GEOSNativePanelConvention())
+                      convention=GnomonicPanelConvention())
 
 Construct an equidistant gnomonic cubed-sphere mesh with `Nc` cells per panel
 edge. Cell areas and metric terms are computed from the gnomonic projection.
+
+The default convention is `GnomonicPanelConvention()` (panels 1-4 equatorial,
+5=north pole, 6=south pole), which matches all ERA5-CS binaries written by
+the preprocessing pipeline. Pass `convention=GEOSNativePanelConvention()` only
+when reading legacy GEOS-IT/FP binaries that use GEOS panel ordering.
 
 # Keyword arguments
 - `Nc :: Int` — cells per panel edge (e.g. 48, 90, 180, 720)
 - `FT :: Type` — floating-point type (default `Float64`)
 - `Hp :: Int` — halo padding width (default 1 for slopes; use 3 for PPM)
 - `radius` — planet radius [m] (default Earth)
-- `convention` — panel numbering convention (default GEOS-FP native)
+- `convention` — panel numbering convention (default gnomonic)
 """
 function CubedSphereMesh(; FT::Type{<:AbstractFloat} = Float64,
                            Nc::Int,
                            Hp::Int = 1,
                            radius = FT(6.371e6),
-                           convention::AbstractCubedSpherePanelConvention = GEOSNativePanelConvention())
+                           convention::AbstractCubedSpherePanelConvention = GnomonicPanelConvention())
     Nc = _validate_cubed_sphere_size(Nc)
     Hp >= 0 || throw(ArgumentError("Hp must be non-negative, got $Hp"))
 
     R = FT(radius)
-    conn = default_panel_connectivity()
+    conn = panel_connectivity_for(convention)
 
     # Angular grid: uniform spacing in α ∈ [-π/4, π/4]
     dα = FT(π) / (2 * Nc)
@@ -243,5 +258,5 @@ function Base.show(io::IO, m::CubedSphereMesh)
 end
 
 export AbstractCubedSpherePanelConvention
-export GnomonicPanelConvention, GEOSNativePanelConvention
+export GnomonicPanelConvention, GEOSNativePanelConvention, panel_connectivity_for
 export CubedSphereMesh, panel_count, panel_convention, panel_labels

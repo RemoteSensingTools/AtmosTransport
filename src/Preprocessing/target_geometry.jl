@@ -312,7 +312,7 @@ function build_target_geometry(::Val{:cubed_sphere}, cfg_grid, ::Type{FT}) where
     mesh = CubedSphereMesh(; Nc=Nc, FT=FT, radius=FT(R_EARTH),
                             convention=GnomonicPanelConvention())
 
-    conn = default_panel_connectivity()
+    conn = gnomonic_panel_connectivity()
     ft = build_cs_global_face_table(Nc, conn)
     degree = cs_cell_face_degree(ft)
     scratch = CSPoissonScratch(ft.nc)

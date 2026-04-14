@@ -8,6 +8,7 @@ using Adapt
 
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
+using .AtmosTransport.Regridding: build_regridder, apply_regridder!
 
 # Wrap longitude to [0, 360) for periodic bilinear interpolation.
 # NOTE: the source arrays (Catrine, GridFED) may be in [-180, 180)
@@ -669,6 +670,78 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
     return q
 end
 
+# ---------------------------------------------------------------------------
+# Surface flux regridding: bilinear (legacy) and conservative
+# ---------------------------------------------------------------------------
+
+const _REGRID_CACHE_DIR = expanduser("~/.cache/AtmosTransport/cr_regridding")
+
+"""
+    _build_emission_source_mesh(source::FileSurfaceFluxField)
+
+Construct a `LatLonMesh` matching the source emission file's regular grid.
+The source coordinates after `_load_file_surface_flux_field` are guaranteed
+to be in [0, 360) longitude and ascending latitude.
+"""
+function _build_emission_source_mesh(source::FileSurfaceFluxField)
+    Nx_src = length(source.lon)
+    Ny_src = length(source.lat)
+    dlon = source.lon[2] - source.lon[1]
+    dlat = source.lat[2] - source.lat[1]
+    # Infer face boundaries from cell centers
+    lon_west = source.lon[1] - dlon / 2
+    lon_east = source.lon[end] + dlon / 2
+    lat_south = source.lat[1] - dlat / 2
+    lat_north = source.lat[end] + dlat / 2
+    # Clamp to valid ranges (floating point from [-180,180)→[0,360) shift
+    # can produce lon_east slightly > 360)
+    lat_south = max(lat_south, -90.0)
+    lat_north = min(lat_north, 90.0)
+    if lon_east - lon_west > 360.0
+        lon_east = lon_west + 360.0
+    end
+    return AtmosTransport.LatLonMesh(; Nx=Nx_src, Ny=Ny_src,
+        longitude=(lon_west, lon_east), latitude=(lat_south, lat_north))
+end
+
+"""
+    _conservative_surface_flux_rate(source, dst_mesh, FT)
+
+Conservatively regrid emission flux density [kg/m²/s] from the source LL grid
+to the destination mesh. Returns cell mass rates [kg/s] as a flat vector.
+"""
+function _conservative_surface_flux_rate(source::FileSurfaceFluxField,
+                                         dst_mesh::AtmosTransport.AbstractHorizontalMesh,
+                                         ::Type{FT}) where FT
+    src_mesh = _build_emission_source_mesh(source)
+    regridder = build_regridder(src_mesh, dst_mesh; cache_dir=_REGRID_CACHE_DIR)
+
+    # Flatten source flux density to 1D (column-major: i + (j-1)*Nx)
+    src_flat = vec(Float64.(source.raw))
+    n_dst = length(regridder.dst_areas)
+    dst_flat = zeros(Float64, n_dst)
+    apply_regridder!(dst_flat, regridder, src_flat)
+
+    # Convert flux density [kg/m²/s] → mass rate [kg/s] using regridder areas
+    rate = Array{FT}(undef, n_dst)
+    for c in 1:n_dst
+        rate[c] = FT(dst_flat[c] * regridder.dst_areas[c])
+    end
+
+    # Verify global mass conservation
+    src_total = sum(src_flat .* regridder.src_areas)
+    dst_total = sum(Float64.(rate))
+    rel_err = abs(dst_total - src_total) / max(abs(src_total), 1e-30)
+    @info @sprintf("  Conservative regrid: src_total=%.6e  dst_total=%.6e  rel_err=%.2e kg/s",
+                   src_total, dst_total, rel_err)
+    rel_err > 1e-6 && @warn @sprintf("  Conservative regrid mass conservation warning: rel_err=%.2e", rel_err)
+
+    return rate
+end
+
+"""Parse regridding method from config: "conservative" or "bilinear" (default)."""
+_regridding_method(cfg) = Symbol(lowercase(String(get(cfg, "regridding", "bilinear"))))
+
 function build_surface_flux_source(grid::AtmosTransport.AtmosGrid{<:AtmosTransport.LatLonMesh},
                                    tracer_name::Symbol,
                                    cfg,
@@ -677,20 +750,28 @@ function build_surface_flux_source(grid::AtmosTransport.AtmosGrid{<:AtmosTranspo
     kind === :none && return nothing
 
     source = _load_file_surface_flux_field(cfg, FT)
+    method = _regridding_method(cfg)
     mesh = grid.horizontal
-    rate = Array{FT}(undef, AtmosTransport.nx(mesh), AtmosTransport.ny(mesh))
 
-    for j in axes(rate, 2)
-        area = Float64(AtmosTransport.cell_area(mesh, 1, j))
-        lat = mesh.φᶜ[j]
-        for i in axes(rate, 1)
-            lon = mesh.λᶜ[i]
-            flux_density = _sample_bilinear_scalar(source.raw, source.lon, source.lat, lon, lat)
-            rate[i, j] = FT(flux_density * area)
+    if method === :conservative
+        rate_flat = _conservative_surface_flux_rate(source, mesh, FT)
+        # Reshape to (Nx, Ny) for structured grids
+        rate = reshape(rate_flat, AtmosTransport.nx(mesh), AtmosTransport.ny(mesh))
+    else
+        # Legacy bilinear sampling
+        rate = Array{FT}(undef, AtmosTransport.nx(mesh), AtmosTransport.ny(mesh))
+        for j in axes(rate, 2)
+            area = Float64(AtmosTransport.cell_area(mesh, 1, j))
+            lat = mesh.φᶜ[j]
+            for i in axes(rate, 1)
+                lon = mesh.λᶜ[i]
+                flux_density = _sample_bilinear_scalar(source.raw, source.lon, source.lat, lon, lat)
+                rate[i, j] = FT(flux_density * area)
+            end
         end
+        _renormalize_surface_flux_rate!(rate, source)
     end
 
-    _renormalize_surface_flux_rate!(rate, source)
     return AtmosTransport.SurfaceFluxSource(tracer_name, rate)
 end
 
@@ -702,20 +783,26 @@ function build_surface_flux_source(grid::AtmosTransport.AtmosGrid{<:AtmosTranspo
     kind === :none && return nothing
 
     source = _load_file_surface_flux_field(cfg, FT)
+    method = _regridding_method(cfg)
     mesh = grid.horizontal
-    rate = Array{FT}(undef, AtmosTransport.ncells(mesh))
 
-    for j in 1:AtmosTransport.nrings(mesh)
-        lat = mesh.latitudes[j]
-        lons = AtmosTransport.ring_longitudes(mesh, j)
-        for i in eachindex(lons)
-            c = AtmosTransport.cell_index(mesh, i, j)
-            flux_density = _sample_bilinear_scalar(source.raw, source.lon, source.lat, lons[i], lat)
-            rate[c] = FT(flux_density * Float64(AtmosTransport.cell_area(mesh, c)))
+    if method === :conservative
+        rate = _conservative_surface_flux_rate(source, mesh, FT)
+    else
+        # Legacy bilinear sampling
+        rate = Array{FT}(undef, AtmosTransport.ncells(mesh))
+        for j in 1:AtmosTransport.nrings(mesh)
+            lat = mesh.latitudes[j]
+            lons = AtmosTransport.ring_longitudes(mesh, j)
+            for i in eachindex(lons)
+                c = AtmosTransport.cell_index(mesh, i, j)
+                flux_density = _sample_bilinear_scalar(source.raw, source.lon, source.lat, lons[i], lat)
+                rate[c] = FT(flux_density * Float64(AtmosTransport.cell_area(mesh, c)))
+            end
         end
+        _renormalize_surface_flux_rate!(rate, source)
     end
 
-    _renormalize_surface_flux_rate!(rate, source)
     return AtmosTransport.SurfaceFluxSource(tracer_name, rate)
 end
 
@@ -762,10 +849,171 @@ function make_model(driver::AtmosTransport.TransportBinaryDriver;
         AtmosTransport.CellState{AtmosTransport.MoistBasis, typeof(air_mass), typeof(tracer_tuple)}(air_mass, tracer_tuple)
     end
     fluxes = AtmosTransport.allocate_face_fluxes(grid.horizontal, AtmosTransport.nlevels(grid); FT=FT, basis=basis_type)
-    scheme = scheme_name == :slopes ? AtmosTransport.SlopesScheme() : AtmosTransport.UpwindScheme()
+    scheme = if scheme_name == :slopes
+        AtmosTransport.SlopesScheme()
+    elseif scheme_name == :ppm
+        AtmosTransport.PPMScheme()
+    else
+        AtmosTransport.UpwindScheme()
+    end
     model = AtmosTransport.TransportModel(state, fluxes, grid, scheme)
     adaptor = backend_array_adapter(cfg)
     return adaptor === Array ? model : Adapt.adapt(adaptor, model)
+end
+
+"""Capture column-mean mixing ratio for each tracer at current model state.
+
+Handles both structured grids (3D arrays: Nx × Ny × Nz) and face-indexed
+grids like reduced Gaussian (2D arrays: ncells × Nz).
+"""
+function _capture_snapshot(model)
+    names = AtmosTransport.tracer_names(model.state)
+    m = Array(model.state.air_mass)
+    result = Dict{Symbol, Vector{Float64}}()
+    for name in names
+        rm = Array(getfield(model.state.tracers, name))
+        # Column-mean VMR: Σ(rm_k) / Σ(m_k) per column
+        if ndims(rm) == 3
+            # Structured grid: (Nx, Ny, Nz)
+            Nx, Ny, Nz = size(rm)
+            col_mean = zeros(Float64, Nx * Ny)
+            for j in 1:Ny, i in 1:Nx
+                sum_rm = 0.0; sum_m = 0.0
+                for k in 1:Nz
+                    sum_rm += Float64(rm[i, j, k])
+                    sum_m  += Float64(m[i, j, k])
+                end
+                col_mean[(j-1)*Nx + i] = sum_m > 0 ? sum_rm / sum_m : 0.0
+            end
+        elseif ndims(rm) == 2
+            # Face-indexed grid (reduced Gaussian): (ncells, Nz)
+            Nc, Nz = size(rm)
+            col_mean = zeros(Float64, Nc)
+            for c in 1:Nc
+                sum_rm = 0.0; sum_m = 0.0
+                for k in 1:Nz
+                    sum_rm += Float64(rm[c, k])
+                    sum_m  += Float64(m[c, k])
+                end
+                col_mean[c] = sum_m > 0 ? sum_rm / sum_m : 0.0
+            end
+        else
+            error("_capture_snapshot: unsupported tracer array ndims=$(ndims(rm))")
+        end
+        result[name] = col_mean
+    end
+    return result
+end
+
+"""Write captured snapshots to a CF-compliant NetCDF file.
+
+For LatLon grids: uses proper `(lon, lat, time)` dimensions so Panoply
+renders them directly on a map.
+
+For ReducedGaussian grids: uses `(cell, time)` with auxiliary `lon(cell)`
+and `lat(cell)` coordinate variables + CF `coordinates` attribute so
+Panoply can do unstructured scatter rendering.
+"""
+function _write_snapshot_netcdf(path, snapshots, snapshot_hours, grid)
+    isempty(snapshots) && return
+    mkpath(dirname(path))
+    mesh = grid.horizontal
+    ntime = length(snapshots)
+
+    NCDataset(path, "c") do ds
+        ds.attrib["Conventions"] = "CF-1.8"
+        ds.attrib["grid"] = summary(mesh)
+
+        if mesh isa AtmosTransport.LatLonMesh
+            _write_snapshot_ll!(ds, snapshots, snapshot_hours, mesh, ntime)
+        else
+            _write_snapshot_unstructured!(ds, snapshots, snapshot_hours, mesh, ntime)
+        end
+    end
+    @info "Saved snapshots: $path ($(length(snapshots)) times)"
+end
+
+function _write_snapshot_ll!(ds, snapshots, snapshot_hours, mesh, ntime)
+    Nx, Ny = AtmosTransport.nx(mesh), AtmosTransport.ny(mesh)
+
+    defDim(ds, "lon", Nx)
+    defDim(ds, "lat", Ny)
+    defDim(ds, "time", ntime)
+
+    v_lon = defVar(ds, "lon", Float64, ("lon",),
+                   attrib=Dict("units" => "degrees_east", "long_name" => "longitude",
+                               "standard_name" => "longitude"))
+    v_lat = defVar(ds, "lat", Float64, ("lat",),
+                   attrib=Dict("units" => "degrees_north", "long_name" => "latitude",
+                               "standard_name" => "latitude"))
+    v_time = defVar(ds, "time", Float64, ("time",),
+                    attrib=Dict("units" => "hours since start", "long_name" => "time"))
+
+    v_lon[:] = Float64.(mesh.λᶜ)
+    v_lat[:] = Float64.(mesh.φᶜ)
+    v_time[:] = snapshot_hours[1:ntime]
+
+    for name in keys(first(snapshots))
+        vname = "$(name)_column_mean"
+        v = defVar(ds, vname, Float64, ("lon", "lat", "time"),
+                   attrib=Dict("units" => "mol mol-1",
+                               "long_name" => "Column-mean $name VMR"))
+        for t in 1:ntime
+            flat = snapshots[t][name]
+            v[:, :, t] = reshape(flat, Nx, Ny)
+        end
+    end
+end
+
+function _write_snapshot_unstructured!(ds, snapshots, snapshot_hours, mesh, ntime)
+    ncell = length(first(values(first(snapshots))))
+
+    defDim(ds, "cell", ncell)
+    defDim(ds, "time", ntime)
+
+    # Compute cell-center lon/lat coordinates
+    lons = zeros(Float64, ncell)
+    lats = zeros(Float64, ncell)
+    if mesh isa AtmosTransport.ReducedGaussianMesh
+        for j in 1:AtmosTransport.nrings(mesh)
+            ring_lons = AtmosTransport.ring_longitudes(mesh, j)
+            lat = Float64(mesh.latitudes[j])
+            for i in eachindex(ring_lons)
+                c = AtmosTransport.cell_index(mesh, i, j)
+                lons[c] = Float64(ring_lons[i])
+                lats[c] = lat
+            end
+        end
+        ds.attrib["grid_type"] = "reduced_gaussian"
+        ds.attrib["nrings"] = AtmosTransport.nrings(mesh)
+    else
+        # Generic fallback: leave zeros (will need extending for CS etc.)
+        ds.attrib["grid_type"] = "unstructured"
+    end
+
+    v_lon = defVar(ds, "lon", Float64, ("cell",),
+                   attrib=Dict("units" => "degrees_east", "long_name" => "longitude",
+                               "standard_name" => "longitude"))
+    v_lat = defVar(ds, "lat", Float64, ("cell",),
+                   attrib=Dict("units" => "degrees_north", "long_name" => "latitude",
+                               "standard_name" => "latitude"))
+    v_time = defVar(ds, "time", Float64, ("time",),
+                    attrib=Dict("units" => "hours since start", "long_name" => "time"))
+
+    v_lon[:] = lons
+    v_lat[:] = lats
+    v_time[:] = snapshot_hours[1:ntime]
+
+    for name in keys(first(snapshots))
+        vname = "$(name)_column_mean"
+        v = defVar(ds, vname, Float64, ("cell", "time"),
+                   attrib=Dict("units" => "mol mol-1",
+                               "long_name" => "Column-mean $name VMR",
+                               "coordinates" => "lon lat"))
+        for t in 1:ntime
+            v[:, t] = snapshots[t][name]
+        end
+    end
 end
 
 function run_sequence(binary_paths::Vector{String}, cfg)
@@ -780,6 +1028,12 @@ function run_sequence(binary_paths::Vector{String}, cfg)
                              (TransportTracerSpec(Symbol(get(run_cfg, "tracer_name", "CO2")),
                                                   _copy_cfg_dict(init_cfg),
                                                   Dict{String, Any}()),))
+
+    # Snapshot configuration
+    output_cfg = get(cfg, "output", Dict{String, Any}())
+    snapshot_hours = Float64.(get(output_cfg, "snapshot_hours", Float64[]))
+    snapshot_file = expanduser(String(get(output_cfg, "snapshot_file", "")))
+    do_snapshots = !isempty(snapshot_hours) && !isempty(snapshot_file)
 
     isempty(binary_paths) && throw(ArgumentError("no binary_paths configured"))
     ensure_gpu_runtime!(cfg)
@@ -796,6 +1050,18 @@ function run_sequence(binary_paths::Vector{String}, cfg)
                        String(source.tracer_name), Float64(sum(source.cell_mass_rate)))
     end
 
+    # Snapshot state
+    snapshots = Dict{Symbol, Vector{Float64}}[]
+    snap_idx = 1
+    total_elapsed_hours = 0.0
+
+    # Capture initial snapshot (hour 0) if requested
+    if do_snapshots && snap_idx <= length(snapshot_hours) && abs(snapshot_hours[snap_idx]) < 0.5
+        push!(snapshots, _capture_snapshot(model))
+        @info @sprintf("Snapshot %d at t=%.0fh", snap_idx, 0.0)
+        snap_idx += 1
+    end
+
     for (idx, path) in enumerate(binary_paths)
         driver = idx == 1 ? first_driver : AtmosTransport.TransportBinaryDriver(path; FT=FT, arch=AtmosTransport.CPU())
         stop_window = stop_window_override === nothing ? AtmosTransport.total_windows(driver) : Int(stop_window_override)
@@ -810,13 +1076,39 @@ function run_sequence(binary_paths::Vector{String}, cfg)
             boundary_rel = maximum(abs.(model.state.air_mass .- sim.window.air_mass)) / max(maximum(abs.(sim.window.air_mass)), eps(FT))
             @info @sprintf("Boundary air-mass mismatch before %s: %.3e", basename(path), boundary_rel)
         end
-        @info @sprintf("Running %s with %s on %s (%d windows)", basename(path), scheme_name, summary(AtmosTransport.driver_grid(driver).horizontal), stop_window - start_window + 1)
+        window_hours = Float64(AtmosTransport.window_dt(driver)) / 3600.0
+        n_windows = stop_window - start_window + 1
+        @info @sprintf("Running %s with %s on %s (%d windows)", basename(path), scheme_name, summary(AtmosTransport.driver_grid(driver).horizontal), n_windows)
         synchronize_backend!(cfg)
         t0 = time()
-        AtmosTransport.run!(sim)
+
+        if do_snapshots
+            # Window-by-window loop with snapshot capture
+            for w in 1:n_windows
+                AtmosTransport.run_window!(sim)
+                total_elapsed_hours += window_hours
+                # Check if current hour matches a snapshot hour
+                while snap_idx <= length(snapshot_hours) &&
+                      abs(total_elapsed_hours - snapshot_hours[snap_idx]) < 0.5
+                    push!(snapshots, _capture_snapshot(model))
+                    @info @sprintf("Snapshot %d at t=%.0fh", snap_idx, total_elapsed_hours)
+                    snap_idx += 1
+                end
+            end
+        else
+            AtmosTransport.run!(sim)
+            total_elapsed_hours += n_windows * window_hours
+        end
+
         synchronize_backend!(cfg)
         @info @sprintf("Finished %s in %.2f s", basename(path), time() - t0)
         close(driver)
+    end
+
+    # Write snapshots if configured
+    if do_snapshots && !isempty(snapshots)
+        _write_snapshot_netcdf(snapshot_file, snapshots, snapshot_hours,
+                              AtmosTransport.driver_grid(first_driver))
     end
 
     m1 = AtmosTransport.total_air_mass(model.state)

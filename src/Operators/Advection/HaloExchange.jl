@@ -202,4 +202,15 @@ function fill_panel_halos!(panels::NTuple{6, A},
     return nothing
 end
 
-export fill_panel_halos!
+"""
+    copy_corners!(panels, mesh, dir)
+
+Standalone corner fill for 6-panel fields. Rotates corner halo cells
+according to sweep direction `dir` (1 = X-sweep, 2 = Y-sweep).
+"""
+function copy_corners!(panels::NTuple{6}, mesh::CubedSphereMesh, dir::Int)
+    _fill_corners!(panels, mesh.Nc, mesh.Hp, dir)
+    return nothing
+end
+
+export fill_panel_halos!, copy_corners!

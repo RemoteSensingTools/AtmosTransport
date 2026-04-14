@@ -69,7 +69,7 @@ function _build_protocol(cfg::Dict{String, Any}, source::AbstractDownloadSource)
     return _build_protocol(Val(Symbol(proto)), dl, source)
 end
 
-_default_protocol(::ERA5Source)    = "mars"
+_default_protocol(::ERA5Source)    = "cds"
 _default_protocol(::GEOSFPSource) = "http"
 _default_protocol(::GEOSITSource) = "s3"
 _default_protocol(::MERRA2Source)  = "opendap"

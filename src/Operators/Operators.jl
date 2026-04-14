@@ -44,6 +44,10 @@ export AbstractChemistry, NoChemistry, RadioactiveDecay, CompositeChemistry
 export apply_chemistry!
 
 # Cubed-sphere advection
-export fill_panel_halos!, strang_split_cs!, CSAdvectionWorkspace
+export fill_panel_halos!, copy_corners!, strang_split_cs!, CSAdvectionWorkspace
+
+# Lin-Rood cross-term advection (FV3 fv_tp_2d)
+export LinRoodWorkspace, fv_tp_2d_cs!, fv_tp_2d_cs_q!, strang_split_linrood_ppm!
+export fillz_q!, apply_divergence_damping_cs!
 
 end # module Operators

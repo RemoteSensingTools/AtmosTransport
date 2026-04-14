@@ -1257,6 +1257,250 @@ function process_day(date::Date,
 end
 
 """
+    regrid_ll_binary_to_cs(ll_binary_path, cs_grid, out_path; FT=Float64, kwargs...)
+
+Regrid an existing LL transport binary to a cubed-sphere binary.
+
+Reads each window from the LL binary, recovers cell-center winds from am/bm,
+conservatively regrids m/ps/winds to CS panels, rotates winds to panel-local
+coordinates, reconstructs CS face fluxes, applies global Poisson balance,
+diagnoses cm from continuity, and stream-writes the CS binary.
+
+This reuses the entire CS regrid/balance/write infrastructure from the
+spectral→CS path — the only difference is the data source (binary reader
+instead of spectral synthesis).
+
+## Required keyword arguments
+- `steps_per_window::Int` — substeps per window (must match LL binary)
+- `met_interval::Float64` — met data interval in seconds (e.g. 3600.0)
+- `dt::Float64` — transport timestep in seconds (e.g. 900.0)
+
+## Optional keyword arguments
+- `FT::Type = Float64` — output float type
+- `mass_basis::Symbol = :moist` — mass basis for output binary
+"""
+function regrid_ll_binary_to_cs(ll_binary_path::String,
+                                cs_grid::CubedSphereTargetGeometry,
+                                out_path::String;
+                                FT::Type{<:AbstractFloat} = Float64,
+                                met_interval::Float64 = 3600.0,
+                                dt::Float64 = 900.0,
+                                mass_basis::Symbol = :moist)
+    t_start = time()
+    Nc = cs_grid.Nc
+
+    # --- Open LL binary reader ---
+    reader = TransportBinaryReader(ll_binary_path; FT=FT)
+    h = reader.header
+    Nx_ll = h.Nx
+    Ny_ll = h.Ny
+    Nz = h.nlevel
+    Nt = h.nwindow
+    A_ifc = Float64.(h.A_ifc)
+    B_ifc = Float64.(h.B_ifc)
+
+    steps_per_met = exact_steps_per_window(met_interval, dt)
+    dt_factor = FT(met_interval / (2 * steps_per_met))
+    gravity = FT(GRAV)
+
+    @info @sprintf("  LL source: %s (%d×%d×%d, %d windows)",
+                   basename(ll_binary_path), Nx_ll, Ny_ll, Nz, Nt)
+    @info @sprintf("  CS target: C%d (%d panels, %d levels)", Nc, CS_PANEL_COUNT, Nz)
+
+    # --- Build LL source mesh for regridder ---
+    # Reconstruct the LL mesh from the binary header metadata
+    ll_mesh = LatLonMesh(; FT=FT,
+                          size=(Nx_ll, Ny_ll),
+                          longitude=(-180, 180),
+                          latitude=(-90, 90),
+                          radius=FT(R_EARTH))
+    ll_lats = FT.(ll_mesh.φᶜ)
+    Δy_ll = FT(ll_mesh.radius * deg2rad(ll_mesh.Δφ))
+    Δlon_ll = FT(deg2rad(ll_mesh.Δλ))
+
+    # --- Build conservative regridder (LL → CS) ---
+    t_reg = time()
+    regridder = build_regridder(ll_mesh, cs_grid.mesh;
+                                normalize=false,
+                                cache_dir=cs_grid.cache_dir)
+    n_src = length(regridder.src_areas)
+    n_dst = length(regridder.dst_areas)
+    @info @sprintf("  Regridder: %d→%d  nnz=%d (%.1fs)",
+                   n_src, n_dst, length(regridder.intersections.nzval), time() - t_reg)
+
+    # --- Allocate workspaces ---
+    cs_ws = allocate_cs_preprocess_workspace(Nc, Nx_ll, Ny_ll, Nz, n_src, n_dst, FT)
+    Δx = cs_grid.mesh.Δx
+    Δy = cs_grid.mesh.Δy
+
+    # Pre-allocate LL read buffers
+    m_ll  = Array{FT}(undef, Nx_ll, Ny_ll, Nz)
+    am_ll = Array{FT}(undef, Nx_ll + 1, Ny_ll, Nz)
+    bm_ll = Array{FT}(undef, Nx_ll, Ny_ll + 1, Nz)
+    cm_ll = Array{FT}(undef, Nx_ll, Ny_ll, Nz + 1)
+    ps_ll = Array{FT}(undef, Nx_ll, Ny_ll)
+
+    # --- Build vertical coordinate from binary header ---
+    vc_merged = HybridSigmaPressure(A_ifc, B_ifc)
+
+    # --- Open streaming CS binary writer ---
+    mkpath(dirname(out_path))
+    writer = open_streaming_cs_transport_binary(
+        out_path, Nc, CS_PANEL_COUNT, Nz, Nt, vc_merged;
+        FT=FT,
+        dt_met_seconds=met_interval,
+        half_dt_seconds=met_interval / 2,
+        steps_per_window=steps_per_met,
+        mass_basis=mass_basis,
+        extra_header=Dict{String, Any}(
+            "preprocessor"      => "regrid_ll_binary_to_cs",
+            "source_type"       => "ll_transport_binary",
+            "source_path"       => ll_binary_path,
+            "target_type"       => "cubed_sphere",
+            "regrid_method"     => "conservative",
+            "poisson_balanced"  => true,
+        ))
+
+    bytes_per_window = writer.elems_per_window * sizeof(FT)
+    expected_total = writer.header_bytes + Nt * bytes_per_window
+    @info @sprintf("  Output: %s (%.2f GB, %d windows)", basename(out_path),
+                   expected_total / 1e9, Nt)
+    @info "  Streaming: LL binary → CS regrid → balance → write..."
+
+    # --- Helper: read one LL window and regrid to CS ---
+    function _read_and_regrid_to_cs!(win_idx, m_out, ps_out, am_out, bm_out)
+        load_window!(reader, win_idx; m=m_ll, ps=ps_ll, am=am_ll, bm=bm_ll, cm=cm_ll)
+
+        # Conservative regrid scalars: m, ps → CS panels
+        regrid_3d_to_cs_panels!(m_out, regridder, m_ll, cs_ws, Nc)
+        regrid_2d_to_cs_panels!(ps_out, regridder, ps_ll, cs_ws, Nc)
+        _enforce_perlevel_mass_consistency!(m_out, m_ll, Nc, Nz)
+
+        # Recover LL cell-center winds from binary's am/bm
+        recover_ll_cell_center_winds!(cs_ws.u_cc, cs_ws.v_cc,
+            am_ll, bm_ll, ps_ll,
+            A_ifc, B_ifc, ll_lats, Δy_ll, Δlon_ll,
+            FT(ll_mesh.radius), gravity, dt_factor)
+
+        # Regrid geographic winds to CS + rotate to panel-local
+        regrid_3d_to_cs_panels!(cs_ws.u_cs_panels, regridder, cs_ws.u_cc, cs_ws, Nc)
+        regrid_3d_to_cs_panels!(cs_ws.v_cs_panels, regridder, cs_ws.v_cc, cs_ws, Nc)
+        rotate_winds_to_panel_local!(cs_ws.u_cs_panels, cs_ws.v_cs_panels,
+                                      cs_ws.u_cs_panels, cs_ws.v_cs_panels,
+                                      Nc, Nz)
+
+        # Reconstruct CS face fluxes
+        reconstruct_cs_fluxes!(am_out, bm_out, cs_ws.u_cs_panels, cs_ws.v_cs_panels,
+                               cs_ws.dp_panels, ps_out,
+                               A_ifc, B_ifc, Δx, Δy, gravity, dt_factor, Nc, Nz)
+    end
+
+    # --- Pre-allocate sliding buffer ---
+    cur_m  = ntuple(_ -> zeros(FT, Nc, Nc, Nz), CS_PANEL_COUNT)
+    cur_ps = ntuple(_ -> zeros(FT, Nc, Nc), CS_PANEL_COUNT)
+    cur_am = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz), CS_PANEL_COUNT)
+    cur_bm = ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz), CS_PANEL_COUNT)
+    cur_cm = ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), CS_PANEL_COUNT)
+
+    @inline function _copy_panels_regrid!(dst, src)
+        for p in 1:CS_PANEL_COUNT; copyto!(dst[p], src[p]); end
+    end
+
+    worst_pre = 0.0; worst_post = 0.0; worst_iter = 0
+
+    # --- Process first window ---
+    t0 = time()
+    _read_and_regrid_to_cs!(1, cs_ws.m_panels, cs_ws.ps_panels, cs_ws.am_panels, cs_ws.bm_panels)
+    @info @sprintf("    Window  1/%d: read+regrid %.2fs", Nt, time() - t0)
+
+    _copy_panels_regrid!(cur_m,  cs_ws.m_panels)
+    _copy_panels_regrid!(cur_ps, cs_ws.ps_panels)
+    _copy_panels_regrid!(cur_am, cs_ws.am_panels)
+    _copy_panels_regrid!(cur_bm, cs_ws.bm_panels)
+
+    # --- Sliding-window loop: windows 2..Nt ---
+    for win in 2:Nt
+        t0 = time()
+        _read_and_regrid_to_cs!(win, cs_ws.m_panels, cs_ws.ps_panels, cs_ws.am_panels, cs_ws.bm_panels)
+        t_read = time() - t0
+
+        _copy_panels_regrid!(cs_ws.m_next_panels, cs_ws.m_panels)
+
+        t_bal = time()
+        bal_diag = balance_cs_global_mass_fluxes!(
+            cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
+            cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
+            cs_grid.poisson_scratch; tol=1e-14, max_iter=20000)
+        t_bal = time() - t_bal
+
+        worst_pre  = max(worst_pre,  bal_diag.max_pre_residual)
+        worst_post = max(worst_post, bal_diag.max_post_residual)
+        worst_iter = max(worst_iter, bal_diag.max_cg_iter)
+
+        for p in 1:CS_PANEL_COUNT
+            @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
+                cs_ws.dm_panels[p][i, j, k] =
+                    (cs_ws.m_next_panels[p][i, j, k] - cur_m[p][i, j, k]) / (2 * steps_per_met)
+            end
+        end
+        for p in 1:CS_PANEL_COUNT; fill!(cur_cm[p], zero(FT)); end
+        diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz)
+
+        window_nt = (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps)
+        write_streaming_cs_window!(writer, window_nt, Nc, CS_PANEL_COUNT)
+
+        should_log_window(win - 1, Nt) &&
+            @info @sprintf("    Window %2d/%d: wrote (bal %.2fs pre=%.2e post=%.2e iter=%d) | read %2d (%.2fs)",
+                           win - 1, Nt, t_bal, bal_diag.max_pre_residual,
+                           bal_diag.max_post_residual, bal_diag.max_cg_iter, win, t_read)
+
+        _copy_panels_regrid!(cur_m,  cs_ws.m_panels)
+        _copy_panels_regrid!(cur_ps, cs_ws.ps_panels)
+        _copy_panels_regrid!(cur_am, cs_ws.am_panels)
+        _copy_panels_regrid!(cur_bm, cs_ws.bm_panels)
+    end
+
+    # --- Balance & write LAST window (zero-tendency fallback) ---
+    t_bal = time()
+    bal_diag = balance_cs_global_mass_fluxes!(
+        cur_am, cur_bm, cur_m, cur_m,
+        cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
+        cs_grid.poisson_scratch; tol=1e-14, max_iter=5000)
+    t_bal = time() - t_bal
+
+    worst_pre  = max(worst_pre,  bal_diag.max_pre_residual)
+    worst_post = max(worst_post, bal_diag.max_post_residual)
+    worst_iter = max(worst_iter, bal_diag.max_cg_iter)
+
+    for p in 1:CS_PANEL_COUNT
+        fill!(cs_ws.dm_panels[p], zero(FT))
+        fill!(cur_cm[p], zero(FT))
+    end
+    diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz)
+
+    window_nt = (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps)
+    write_streaming_cs_window!(writer, window_nt, Nc, CS_PANEL_COUNT)
+
+    @info @sprintf("    Window %2d/%d (last): bal %.2fs  pre=%.2e post=%.2e iter=%d",
+                   Nt, Nt, t_bal, bal_diag.max_pre_residual,
+                   bal_diag.max_post_residual, bal_diag.max_cg_iter)
+
+    close_streaming_transport_binary!(writer)
+    close(reader)
+
+    @info @sprintf("  Poisson balance summary: pre=%.3e  post=%.3e  max_iter=%d",
+                   worst_pre, worst_post, worst_iter)
+
+    actual = filesize(out_path)
+    @info @sprintf("  Done: %s (%.2f GB, %.1fs)", basename(out_path),
+                   actual / 1e9, time() - t_start)
+    actual == expected_total ||
+        @warn @sprintf("File size mismatch: expected %d bytes, got %d", expected_total, actual)
+
+    return out_path
+end
+
+"""
     process_day(date, grid::LatLonTargetGeometry, settings, vertical; next_day_hour0=nothing)
 
 Run the full one-day preprocessing workflow for the structured lat-lon target:

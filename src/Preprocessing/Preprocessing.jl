@@ -70,7 +70,8 @@ using ..MetDrivers: TransportBinaryReader, TransportBinaryHeader, write_transpor
                     StreamingTransportBinaryWriter,
                     open_streaming_transport_binary, write_streaming_window!,
                     close_streaming_transport_binary!,
-                    open_streaming_cs_transport_binary, write_streaming_cs_window!
+                    open_streaming_cs_transport_binary, write_streaming_cs_window!,
+                    load_window!
 
 # Physical constants
 include("constants.jl")
@@ -114,6 +115,6 @@ include("binary_pipeline.jl")
 
 # Exports for the CLI script and advanced users
 export build_target_geometry, target_summary
-export process_day
+export process_day, regrid_ll_binary_to_cs
 
 end # module Preprocessing

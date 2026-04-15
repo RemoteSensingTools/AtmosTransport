@@ -338,31 +338,6 @@ function _enforce_perlevel_mass_consistency!(m_cs::NTuple{CS_PANEL_COUNT, Array{
 end
 
 # ---------------------------------------------------------------------------
-# Wind normalization: area-weighted sum → area average
-# ---------------------------------------------------------------------------
-
-"""
-    normalize_regridded_intensive!(panels, cell_areas, Nc, Nz)
-
-Convert an area-weighted sum (from `normalize=false` regridding) to an area
-average by dividing each cell by its area. Required for intensive quantities
-(winds in m/s) but NOT for extensive quantities (mass in kg).
-
-`cell_areas` is the `(Nc, Nc)` matrix from `CubedSphereMesh.cell_areas`
-(same for all panels by gnomonic symmetry).
-"""
-function normalize_regridded_intensive!(panels::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
-                                         cell_areas::AbstractMatrix,
-                                         Nc::Int, Nz::Int) where FT
-    for p in 1:CS_PANEL_COUNT
-        @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
-            panels[p][i, j, k] /= FT(cell_areas[i, j])
-        end
-    end
-    return nothing
-end
-
-# ---------------------------------------------------------------------------
 # East/north → panel-local wind rotation
 # ---------------------------------------------------------------------------
 

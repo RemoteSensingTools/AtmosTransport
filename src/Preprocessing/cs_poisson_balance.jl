@@ -72,6 +72,7 @@ struct CSGlobalFaceTable
     mirror_dir   :: Vector{Int32}
     mirror_idx_i :: Vector{Int32}
     mirror_idx_j :: Vector{Int32}
+    mirror_sign  :: Vector{Int32}   # +1 or -1: sign flip when writing mirror entry
     nf :: Int
     nc :: Int
     Nc :: Int
@@ -142,6 +143,7 @@ function build_cs_global_face_table(Nc::Int, conn::PanelConnectivity)
     md = zeros(Int32, max_nf)
     mi = zeros(Int32, max_nf)
     mj = zeros(Int32, max_nf)
+    ms = ones(Int32, max_nf)    # mirror_sign: default +1
 
     nf = 0
 
@@ -173,11 +175,20 @@ function build_cs_global_face_table(Nc::Int, conn::PanelConnectivity)
 
     # --- Phase 2: Cross-panel faces ---
     # Only from outgoing edges (north, east) to avoid double-counting.
+    # Additional guard: when BOTH the canonical edge and the reciprocal edge
+    # are outgoing (both NORTH or EAST), the same physical edge would be
+    # enumerated twice. Skip the duplicate by requiring p < q for such pairs.
     for p in 1:6
         for e in (EDGE_NORTH, EDGE_EAST)
             q   = conn.neighbors[p][e].panel
             ori = conn.neighbors[p][e].orientation
             eq  = reciprocal_edge(conn, p, e)
+
+            # De-duplicate: if the reciprocal is also an outgoing edge,
+            # only create from the lower-numbered panel.
+            if (eq == EDGE_NORTH || eq == EDGE_EAST) && p > q
+                continue
+            end
 
             for s in 1:Nc
                 t = ori == 0 ? s : Nc + 1 - s
@@ -202,6 +213,21 @@ function build_cs_global_face_table(Nc::Int, conn::PanelConnectivity)
                 md[nf] = Int32(mir_dir)
                 mi[nf] = Int32(mir_i)
                 mj[nf] = Int32(mir_j)
+
+                # Mirror sign: determines whether the mirror value must be
+                # negated so that per-panel flux telescoping conserves mass.
+                #
+                # The canonical face is always at an "outflow" boundary
+                # (north or east → index Nc+1, subtracted in the kernel).
+                # The mirror must be at the "inflow" boundary of the
+                # neighboring panel (index 1, added in the kernel) for the
+                # fluxes to cancel globally.  When the mirror is ALSO at an
+                # outflow position (index Nc+1, e.g. P2 north → P5 east),
+                # the stored value must be negated so the kernel subtracts
+                # a negative → effectively adds.
+                mir_at_outflow = (mir_dir == 1 && mir_i == Nc + 1) ||
+                                 (mir_dir == 2 && mir_j == Nc + 1)
+                ms[nf] = mir_at_outflow ? Int32(-1) : Int32(1)
             end
         end
     end
@@ -214,7 +240,7 @@ function build_cs_global_face_table(Nc::Int, conn::PanelConnectivity)
 
     return CSGlobalFaceTable(
         fl[1:nf], fr[1:nf], fp[1:nf], fd[1:nf], fi[1:nf], fj[1:nf],
-        mp[1:nf], md[1:nf], mi[1:nf], mj[1:nf],
+        mp[1:nf], md[1:nf], mi[1:nf], mj[1:nf], ms[1:nf],
         nf, nc, Nc,
     )
 end
@@ -393,15 +419,17 @@ function apply_cs_flux_correction!(panels_am::NTuple{6, Array{FT, 3}},
         mq = Int(ft.mirror_panel[f])
         mq == 0 && continue   # interior face
 
-        mdir = Int(ft.mirror_dir[f])
-        mi   = Int(ft.mirror_idx_i[f])
-        mj   = Int(ft.mirror_idx_j[f])
+        mdir  = Int(ft.mirror_dir[f])
+        mi    = Int(ft.mirror_idx_i[f])
+        mj    = Int(ft.mirror_idx_j[f])
+        msign = Int(ft.mirror_sign[f])
 
         canonical_val = dir == 1 ? panels_am[p][i, j, k] : panels_bm[p][i, j, k]
+        mirror_val = FT(msign) * canonical_val
         if mdir == 1
-            panels_am[mq][mi, mj, k] = canonical_val
+            panels_am[mq][mi, mj, k] = mirror_val
         else
-            panels_bm[mq][mi, mj, k] = canonical_val
+            panels_bm[mq][mi, mj, k] = mirror_val
         end
     end
     return nothing
@@ -425,20 +453,22 @@ function _sync_cs_mirrors!(panels_am::NTuple{6, Array{FT, 3}},
         mq = Int(ft.mirror_panel[f])
         mq == 0 && continue
 
-        p    = Int(ft.face_panel[f])
-        dir  = Int(ft.face_dir[f])
-        i    = Int(ft.face_idx_i[f])
-        j    = Int(ft.face_idx_j[f])
-        mdir = Int(ft.mirror_dir[f])
-        mi   = Int(ft.mirror_idx_i[f])
-        mj   = Int(ft.mirror_idx_j[f])
+        p     = Int(ft.face_panel[f])
+        dir   = Int(ft.face_dir[f])
+        i     = Int(ft.face_idx_i[f])
+        j     = Int(ft.face_idx_j[f])
+        mdir  = Int(ft.mirror_dir[f])
+        mi    = Int(ft.mirror_idx_i[f])
+        mj    = Int(ft.mirror_idx_j[f])
+        msign = Int(ft.mirror_sign[f])
 
         for k in 1:Nz
             canonical_val = dir == 1 ? panels_am[p][i, j, k] : panels_bm[p][i, j, k]
+            mirror_val = FT(msign) * canonical_val
             if mdir == 1
-                panels_am[mq][mi, mj, k] = canonical_val
+                panels_am[mq][mi, mj, k] = mirror_val
             else
-                panels_bm[mq][mi, mj, k] = canonical_val
+                panels_bm[mq][mi, mj, k] = mirror_val
             end
         end
     end

@@ -265,6 +265,8 @@ These are hard-won correctness constraints. Violating any causes silent wrong re
 | `STALE BINARY WARNING` at startup | Binary written by older preprocessor than current source | Invariant 10 |
 | `cm-continuity check FAILED` at startup | Binary's cm doesn't match its am/bm divergence — regenerate | Invariant 10 |
 | Tracer mass drifts ~10⁻⁴/day with uniform IC (ERA5 LL) | Mass fix disabled in preprocessor; raw ERA5 ⟨ps⟩ drift not absorbed | Invariant 12 |
+| CS Poisson balance absorbs moisture signal | Moist-basis preprocessing: Poisson on moist fluxes | Invariant 14 |
+| `mass_basis field missing` warning at startup | Old binary without mass_basis in header — regenerate on dry basis | Invariant 14 |
 
 ### Invariant details
 
@@ -437,6 +439,36 @@ These are hard-won correctness constraints. Violating any causes silent wrong re
        a false-positive convergence where CG reports tight L2
        residuals but the actual max|L*psi - rhs| is 13 orders of
        magnitude larger.
+
+14. **Dry-basis is the default and required contract for all transport
+    binaries (Invariant 14).** Runtime transport never performs moist-to-dry
+    conversion. All carrier-mass conversion and continuity closure are
+    completed during preprocessing. The canonical chain is:
+
+    ```
+    native spectral/gridpoint synthesis (moist)
+      → load native QV from thermo NetCDF
+      → convert m, am, bm to dry basis: field *= (1 - qv)
+      → merge native levels to transport levels
+      → Poisson-balance on dry fluxes
+      → diagnose dry vertical fluxes (cm)
+      → write dry-basis binary (header: mass_basis = :dry)
+      → runtime transport reads dry fields directly
+      → tracer mass initialized as rm = vmr × m_dry
+    ```
+
+    All three grid paths (LL, CS, RG) support dry preprocessing:
+    - **LL/CS**: `apply_dry_basis_native!` in `mass_support.jl` on 3D arrays
+    - **RG**: `apply_dry_basis_reduced!` in `reduced_transport_helpers.jl`
+      with bilinear QV interpolation from LL thermo grid to RG cells
+
+    The `DryFluxBuilder` runtime converter (`src/MetDrivers/ERA5/DryFluxBuilder.jl`)
+    is retained for backward compatibility with old moist-basis binaries only.
+    Binary headers without `mass_basis` default to `:moist` with a warning.
+
+    **Config**: all preprocessing TOMLs must set `mass_basis = "dry"` and
+    `thermo_dir` pointing to ERA5 thermo NetCDF files with hourly `q`.
+    The default in `resolve_mass_basis` is `:dry`.
 
 ---
 

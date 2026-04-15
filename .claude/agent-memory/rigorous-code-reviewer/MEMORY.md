@@ -11,3 +11,7 @@
 - [Pole bm clamp review](pole_bm_clamp_review.md) — clamp_bm_at_poles! correctness: indexing OK, but clamps inflow too + cm not recomputed
 - [TM5 cy3-4dvar polar audit](tm5_polar_audit_findings.md) — max_halvings=5 vs 32, m<=0 pilot check (we stricter than TM5), 0.5° redgrid unvalidated, no Y nloop in TM5
 - [CS Poisson balance review](cs_poisson_balance_review.md) — Global CG balance: sign convention verified, cm uses explicit dm not B-coeff, test import gap
+- [CS cm diagnosis convention](cs_cm_diagnosis_convention.md) — CS uses conv-dm (near-zero cm), LL uses B-coeff hybrid; both self-consistent, different vertical profiles
+- [CS pipeline final review](cs_pipeline_final_review.md) — TWO CRITICAL BUGS: double wind normalization + Poisson target sign error (numerically confirmed)
+- [Preprocessing pipeline review](preprocessing_pipeline_review.md) — Full 14-file review: LL/RG/CS paths, balance bugs, missing GEOS/MERRA paths, memory patterns
+- [CS runner flux scaling](cs_runner_flux_scaling.md) — LinRood scales by 1/total_sub (wrong, 4× too little); non-LinRood correct; pm_raw stale; surface_flux silently ignored

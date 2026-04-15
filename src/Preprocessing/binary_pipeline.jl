@@ -333,13 +333,21 @@ struct NoQVWorkspace{FT} <: AbstractQVWorkspace{FT} end
     NativeQVWorkspace
 
 Humidity workspace backed by daily ERA5 thermo NetCDF files.
+
+When the thermo grid resolution differs from the target grid (e.g. thermo is
+720×361 but target is 96×48), `qv_thermo` holds the raw read and
+`_interpolate_qv_to_target!` bilinear-interpolates into `qv_native`.
+When resolutions match, `qv_thermo` is empty and the read goes directly
+into `qv_native`.
 """
 struct NativeQVWorkspace{FT} <: AbstractQVWorkspace{FT}
     thermo_path   :: String
-    qv_native     :: Array{Float64, 3}
+    qv_native     :: Array{Float64, 3}   # (Nx_target, Ny_target, Nz_native)
     qv_native_ft  :: Array{FT, 3}
     qv_merged     :: Array{FT, 3}
-    include_qv    :: Bool    # whether to write qv output (arrays always allocated)
+    include_qv    :: Bool
+    qv_thermo     :: Array{Float64, 3}   # (Nx_thermo, Ny_thermo, Nz_native) or empty
+    needs_interp  :: Bool
 end
 
 Base.summary(ws::SpectralTransformWorkspace) =
@@ -451,11 +459,40 @@ function allocate_qv_workspace(grid::LatLonTargetGeometry,
 
     setup.needs_qv || return NoQVWorkspace{FT}()
 
+    # Detect thermo/target grid mismatch
+    Nx_thermo, Ny_thermo = _detect_thermo_grid_size(setup.thermo_path)
+    needs_interp = (Nx_thermo != Nx || Ny_thermo != Ny)
+    qv_thermo = needs_interp ? Array{Float64}(undef, Nx_thermo, Ny_thermo, Nz_native) :
+                               Array{Float64}(undef, 0, 0, 0)
+    if needs_interp
+        @info @sprintf("  QV interpolation: thermo %d×%d → target %d×%d",
+                       Nx_thermo, Ny_thermo, Nx, Ny)
+    end
+
     return NativeQVWorkspace{FT}(setup.thermo_path,
                                  Array{Float64}(undef, Nx, Ny, Nz_native),
                                  Array{FT}(undef, Nx, Ny, Nz_native),
                                  Array{FT}(undef, Nx, Ny, Nz),
-                                 settings.include_qv)
+                                 settings.include_qv,
+                                 qv_thermo,
+                                 needs_interp)
+end
+
+"""
+    _detect_thermo_grid_size(thermo_path) -> (Nx, Ny)
+
+Read the lon/lat dimensions of the thermo NetCDF file.
+"""
+function _detect_thermo_grid_size(thermo_path::String)
+    NCDataset(thermo_path) do ds
+        q_var = ds["q"]
+        dims = dimnames(q_var)
+        if dims[1] == "longitude"
+            return (size(q_var, 1), size(q_var, 2))
+        else
+            return (size(q_var, 4), size(q_var, 3))
+        end
+    end
 end
 
 read_window_qv!(::NoQVWorkspace, args...) = nothing
@@ -464,14 +501,62 @@ read_window_qv!(::NoQVWorkspace, args...) = nothing
     read_window_qv!(qv, win_idx, Nx, Ny, Nz_native)
 
 Load the humidity field associated with one analysis window into the native
-humidity workspace.
+humidity workspace. When the thermo grid differs from the target grid,
+bilinear-interpolates QV to the target resolution.
 """
 function read_window_qv!(qv::NativeQVWorkspace,
                          win_idx::Int,
                          Nx::Int,
                          Ny::Int,
                          Nz_native::Int)
-    qv.qv_native .= read_qv_from_thermo(qv.thermo_path, win_idx, Nx, Ny, Nz_native; FT=Float64)
+    if qv.needs_interp
+        Nx_t = size(qv.qv_thermo, 1)
+        Ny_t = size(qv.qv_thermo, 2)
+        qv.qv_thermo .= read_qv_from_thermo(qv.thermo_path, win_idx, Nx_t, Ny_t, Nz_native; FT=Float64)
+        _interpolate_ll_qv!(qv.qv_native, qv.qv_thermo, Nx, Ny, Nx_t, Ny_t, Nz_native)
+    else
+        qv.qv_native .= read_qv_from_thermo(qv.thermo_path, win_idx, Nx, Ny, Nz_native; FT=Float64)
+    end
+    return nothing
+end
+
+"""
+    _interpolate_ll_qv!(dst, src, Nx_dst, Ny_dst, Nx_src, Ny_src, Nz)
+
+Bilinear-interpolate QV from a regular LL source grid to a regular LL target grid.
+Both grids are assumed to span [-180,180) × [-90,90] with uniform spacing.
+"""
+function _interpolate_ll_qv!(dst::Array{Float64, 3}, src::Array{Float64, 3},
+                              Nx_dst::Int, Ny_dst::Int,
+                              Nx_src::Int, Ny_src::Int,
+                              Nz::Int)
+    Δlon_src = 360.0 / Nx_src
+    Δlat_src = 180.0 / (Ny_src - 1)
+    Δlon_dst = 360.0 / Nx_dst
+    Δlat_dst = 180.0 / (Ny_dst - 1)
+
+    @inbounds for k in 1:Nz, j in 1:Ny_dst, i in 1:Nx_dst
+        # Target cell center in degrees
+        lon = -180.0 + (i - 0.5) * Δlon_dst
+        lat = -90.0 + (j - 1) * Δlat_dst
+
+        # Source fractional indices
+        if_val = (lon + 180.0) / Δlon_src + 0.5
+        jf_val = (lat + 90.0) / Δlat_src + 1.0
+
+        i0 = clamp(floor(Int, if_val), 1, Nx_src)
+        j0 = clamp(floor(Int, jf_val), 1, Ny_src - 1)
+        i1 = i0 == Nx_src ? 1 : i0 + 1  # periodic longitude
+        j1 = min(j0 + 1, Ny_src)
+
+        wi = if_val - floor(if_val)
+        wj = jf_val - j0
+
+        dst[i, j, k] = (1 - wi) * (1 - wj) * src[i0, j0, k] +
+                        wi       * (1 - wj) * src[i1, j0, k] +
+                        (1 - wi) * wj       * src[i0, j1, k] +
+                        wi       * wj       * src[i1, j1, k]
+    end
     return nothing
 end
 
@@ -492,7 +577,14 @@ function read_next_day_qv!(qv::NativeQVWorkspace,
     next_thermo_path = joinpath(settings.thermo_dir,
                                 "era5_thermo_ml_$(Dates.format(date + Day(1), "yyyymmdd")).nc")
     isfile(next_thermo_path) || error("Thermo file not found: $next_thermo_path")
-    qv.qv_native .= read_qv_from_thermo(next_thermo_path, 1, Nx, Ny, Nz_native; FT=Float64)
+    if qv.needs_interp
+        Nx_t = size(qv.qv_thermo, 1)
+        Ny_t = size(qv.qv_thermo, 2)
+        qv.qv_thermo .= read_qv_from_thermo(next_thermo_path, 1, Nx_t, Ny_t, Nz_native; FT=Float64)
+        _interpolate_ll_qv!(qv.qv_native, qv.qv_thermo, Nx, Ny, Nx_t, Ny_t, Nz_native)
+    else
+        qv.qv_native .= read_qv_from_thermo(next_thermo_path, 1, Nx, Ny, Nz_native; FT=Float64)
+    end
     return nothing
 end
 
@@ -1278,7 +1370,7 @@ instead of spectral synthesis).
 
 ## Optional keyword arguments
 - `FT::Type = Float64` — output float type
-- `mass_basis::Symbol = :moist` — mass basis for output binary
+- `mass_basis::Symbol = :dry` — mass basis for output binary (Invariant 14: dry default)
 """
 function regrid_ll_binary_to_cs(ll_binary_path::String,
                                 cs_grid::CubedSphereTargetGeometry,
@@ -1286,7 +1378,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                                 FT::Type{<:AbstractFloat} = Float64,
                                 met_interval::Float64 = 3600.0,
                                 dt::Float64 = 900.0,
-                                mass_basis::Symbol = :moist)
+                                mass_basis::Symbol = :dry)
     t_start = time()
     Nc = cs_grid.Nc
 

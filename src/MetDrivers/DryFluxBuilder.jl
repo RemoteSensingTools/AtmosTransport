@@ -1,5 +1,10 @@
 # ---------------------------------------------------------------------------
-# Dry flux builder interface
+# Dry flux builder interface — LEGACY for moist-basis binaries
+#
+# With Invariant 14 (dry-basis default), transport binaries are preprocessed
+# on dry basis. The build_dry_fluxes! interface is retained for backward
+# compatibility with old moist-basis binaries, but new production runs should
+# use dry-basis binaries where the transport core reads dry fields directly.
 #
 # This is the key boundary between meteorology and transport:
 #

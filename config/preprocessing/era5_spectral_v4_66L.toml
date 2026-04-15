@@ -3,10 +3,12 @@
 
 [input]
 spectral_dir = "~/data/AtmosTransport/met/era5/spectral_hourly"
+thermo_dir = "~/data/AtmosTransport/met/era5/physics"
 coefficients = "config/era5_L137_coefficients.toml"
 
 [output]
 directory = "/temp1/atmos_transport/era5_v4_66L"
+mass_basis = "dry"
 
 [grid]
 nlon = 720

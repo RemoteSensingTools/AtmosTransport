@@ -16,12 +16,14 @@
 # Spectral GRIB files (VO/D param 138/155, LNSP param 152)
 # Downloaded by: scripts/download_era5_grib_tm5.py
 spectral_dir = "~/data/AtmosTransport/met/era5/spectral_hourly"
+thermo_dir = "~/data/AtmosTransport/met/era5/physics"
 
 # ERA5 hybrid sigma-pressure coefficients (138 interfaces for 137 levels)
 coefficients = "config/era5_L137_coefficients.toml"
 
 [output]
 directory = "/temp1/atmos_transport/era5_v4_hourly"
+mass_basis = "dry"
 
 [grid]
 type = "latlon"

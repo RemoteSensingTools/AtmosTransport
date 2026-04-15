@@ -13,8 +13,8 @@
 
 [input]
 binary_paths = [
-    "~/data/AtmosTransport/met/era5/rgN24/transport_binary_v2_tropo34_dec2021_f64/era5_transport_v2_rgN24_20211201_merged1000Pa_float64.bin",
-    "~/data/AtmosTransport/met/era5/rgN24/transport_binary_v2_tropo34_dec2021_f64/era5_transport_v2_rgN24_20211202_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/rgN24/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211201_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/rgN24/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211202_merged1000Pa_float64.bin",
 ]
 
 [numerics]

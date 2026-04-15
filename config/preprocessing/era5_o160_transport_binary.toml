@@ -7,12 +7,13 @@
 
 [input]
 spectral_dir = "~/data/AtmosTransport/met/era5/0.5x0.5/spectral_hourly"
+thermo_dir = "~/data/AtmosTransport/met/era5/0.5x0.5/physics"
 coefficients = "config/era5_L137_coefficients.toml"
 
 [output]
 directory = "~/data/AtmosTransport/met/era5/o160/transport_binary_v2_tropo34_dec2021_f64"
 include_qv = false
-mass_basis = "moist"
+mass_basis = "dry"
 
 [grid]
 type = "synthetic_reduced_gaussian"

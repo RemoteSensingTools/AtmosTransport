@@ -1,12 +1,19 @@
 # ---------------------------------------------------------------------------
-# ERA5 dry flux builder
+# ERA5 dry flux builder — LEGACY WORKAROUND for moist-basis binaries
+#
+# With Invariant 14 (dry-basis default), transport binaries are now generated
+# on dry basis during preprocessing. This file provides runtime moist→dry
+# conversion for legacy moist-basis binaries only. New binaries should NOT
+# need this path — the preprocessor handles dry conversion before Poisson
+# balance and cm diagnosis.
 #
 # Two paths:
 #   1. PreprocessedERA5Driver — reads preprocessed binary (am, bm, cm, m already
 #      in mass-flux form from the v4 spectral preprocessor)
 #   2. RawERA5Driver — reads u, v, lnsp, q and computes fluxes on the fly
 #
-# Path (1) is the production path. Path (2) is for testing / on-the-fly.
+# Path (1) with dry binaries is the production path. The build_dry_fluxes!
+# method here is only invoked when the binary header says mass_basis=:moist.
 # ---------------------------------------------------------------------------
 
 """

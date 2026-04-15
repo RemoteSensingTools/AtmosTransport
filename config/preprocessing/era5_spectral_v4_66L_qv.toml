@@ -8,6 +8,7 @@ thermo_dir   = "~/data/AtmosTransport/met/era5/physics"
 
 [output]
 directory = "/temp1/atmos_transport/era5_v4_66L_qv"
+mass_basis = "dry"
 
 [grid]
 nlon = 720

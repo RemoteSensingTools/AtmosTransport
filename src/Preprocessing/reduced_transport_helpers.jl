@@ -44,6 +44,160 @@ struct ReducedWindowStorage{FT}
     all_ps    :: Vector{Vector{FT}}
 end
 
+"""
+    ReducedQVWorkspace
+
+Humidity workspace for dry-basis conversion on reduced Gaussian grids.
+Loads QV from ERA5 thermo NetCDF on a regular LL grid and bilinear-interpolates
+to RG cell centers. The interpolation mapping is precomputed at allocation time.
+"""
+struct ReducedQVWorkspace
+    qv_cell    :: Matrix{Float64}   # (nc, Nz_native) — QV at RG cell centers
+    qv_ll      :: Array{Float64, 3} # (Nx_ll, Ny_ll, Nz_native) — LL buffer
+    i0         :: Vector{Int32}     # bilinear: left lon index per cell
+    j0         :: Vector{Int32}     # bilinear: bottom lat index per cell
+    wi         :: Vector{Float64}   # bilinear: lon fractional weight
+    wj         :: Vector{Float64}   # bilinear: lat fractional weight
+    Nx_ll      :: Int
+    Ny_ll      :: Int
+end
+
+"""
+    allocate_reduced_qv_workspace(grid, Nz_native, thermo_path)
+
+Build the RG QV workspace with precomputed bilinear interpolation from the LL
+thermo grid to RG cell centers. The LL grid dimensions are read from the first
+available thermo file.
+"""
+function allocate_reduced_qv_workspace(grid::ReducedGaussianTargetGeometry,
+                                       Nz_native::Int,
+                                       thermo_path::String)
+    # Discover LL grid dimensions from thermo file
+    Nx_ll, Ny_ll = NCDataset(thermo_path) do ds
+        q_var = ds["q"]
+        dims = dimnames(q_var)
+        if dims[1] == "longitude"
+            (size(q_var, 1), size(q_var, 2))
+        else
+            (size(q_var, 4), size(q_var, 3))
+        end
+    end
+
+    mesh = grid.mesh
+    nc = ncells(mesh)
+
+    i0 = Vector{Int32}(undef, nc)
+    j0 = Vector{Int32}(undef, nc)
+    wi = Vector{Float64}(undef, nc)
+    wj = Vector{Float64}(undef, nc)
+
+    Δlon = 360.0 / Nx_ll
+    Δlat = 180.0 / (Ny_ll - 1)
+
+    n_rings = length(grid.lats)
+    for j_ring in 1:n_rings
+        lat = grid.lats[j_ring]
+        nlon = grid.nlon_per_ring[j_ring]
+        start = mesh.ring_offsets[j_ring]
+
+        jf = (lat + 90.0) / Δlat + 1.0
+        j0_val = clamp(floor(Int32, jf), Int32(1), Int32(Ny_ll - 1))
+        wj_val = jf - j0_val
+
+        for ic in 0:(nlon - 1)
+            c = start + ic
+            lon = grid.lons_by_ring[j_ring][ic + 1]
+
+            if_val = (lon + 180.0) / Δlon + 1.0
+            i0_val = mod1(floor(Int32, if_val), Int32(Nx_ll))
+            wi_val = if_val - floor(if_val)
+
+            i0[c] = i0_val
+            j0[c] = j0_val
+            wi[c] = wi_val
+            wj[c] = wj_val
+        end
+    end
+
+    return ReducedQVWorkspace(
+        zeros(Float64, nc, Nz_native),
+        zeros(Float64, Nx_ll, Ny_ll, Nz_native),
+        i0, j0, wi, wj, Nx_ll, Ny_ll)
+end
+
+"""
+    load_rg_qv!(qv_ws, thermo_path, hour_idx, Nz_native)
+
+Read QV from ERA5 thermo NetCDF for one hour, then bilinear-interpolate from
+the regular LL grid to all RG cell centers.
+"""
+function load_rg_qv!(qv_ws::ReducedQVWorkspace,
+                     thermo_path::String,
+                     hour_idx::Int,
+                     Nz_native::Int)
+    qv_ws.qv_ll .= read_qv_from_thermo(thermo_path, hour_idx,
+                                         qv_ws.Nx_ll, qv_ws.Ny_ll, Nz_native;
+                                         FT=Float64)
+    _interpolate_ll_to_rg!(qv_ws)
+    return nothing
+end
+
+"""
+    _interpolate_ll_to_rg!(qv_ws)
+
+Bilinear-interpolate `qv_ll` (regular LL grid) → `qv_cell` (RG cell centers)
+using the precomputed index/weight mapping.
+"""
+function _interpolate_ll_to_rg!(qv_ws::ReducedQVWorkspace)
+    nc = size(qv_ws.qv_cell, 1)
+    Nz = size(qv_ws.qv_cell, 2)
+    Nx = qv_ws.Nx_ll
+    Ny = qv_ws.Ny_ll
+
+    @inbounds for k in 1:Nz, c in 1:nc
+        i0 = Int(qv_ws.i0[c])
+        j0 = Int(qv_ws.j0[c])
+        i1 = i0 == Nx ? 1 : i0 + 1   # periodic in longitude
+        j1 = min(j0 + 1, Ny)          # clamp at pole
+        w_i = qv_ws.wi[c]
+        w_j = qv_ws.wj[c]
+
+        qv_ws.qv_cell[c, k] =
+            (1 - w_i) * (1 - w_j) * qv_ws.qv_ll[i0, j0, k] +
+            w_i       * (1 - w_j) * qv_ws.qv_ll[i1, j0, k] +
+            (1 - w_i) * w_j       * qv_ws.qv_ll[i0, j1, k] +
+            w_i       * w_j       * qv_ws.qv_ll[i1, j1, k]
+    end
+    return nothing
+end
+
+"""
+    apply_dry_basis_reduced!(work, qv_cell)
+
+Convert RG native-level moist mass and horizontal face fluxes to dry basis.
+Face humidity is the average of the two adjacent cell values.
+"""
+function apply_dry_basis_reduced!(work::ReducedTransformWorkspace,
+                                  qv_cell::Matrix{Float64})
+    nc = size(work.m_arr, 1)
+    Nz = size(work.m_arr, 2)
+    nf = size(work.hflux_arr, 1)
+
+    @inbounds for k in 1:Nz, c in 1:nc
+        q = clamp(qv_cell[c, k], 0.0, 0.999999)
+        work.m_arr[c, k] *= (1.0 - q)
+    end
+
+    @inbounds for k in 1:Nz, f in 1:nf
+        left  = work.face_left[f]
+        right = work.face_right[f]
+        q_face = 0.5 * (qv_cell[left, k] + qv_cell[right, k])
+        q_face = clamp(q_face, 0.0, 0.999999)
+        work.hflux_arr[f, k] *= (1.0 - q_face)
+    end
+    return nothing
+end
+
 function allocate_reduced_transform_workspace(grid::ReducedGaussianTargetGeometry,
                                               T::Int,
                                               Nz_native::Int)
@@ -901,11 +1055,16 @@ end
 
 """
     synthesize_and_merge_window!(work, merged, hour, spec, grid, vertical,
-                                 settings, ps_offsets, win_idx)
+                                 settings, ps_offsets, win_idx;
+                                 qv_ws=nothing, thermo_path="")
 
-Spectral synthesis → native fields → mass fix → level merge for one window.
-Results are left in `merged.m_merged`, `merged.hflux_merged`, `merged.cm_merged`
-and `work.sp` (surface pressure).  No allocation.
+Spectral synthesis → native fields → mass fix → dry conversion → level merge
+for one window. Results are left in `merged.m_merged`, `merged.hflux_merged`,
+`merged.cm_merged` and `work.sp` (surface pressure). No allocation.
+
+When `qv_ws` is provided and `settings.mass_basis == :dry`, loads QV from the
+thermo file, interpolates to RG cells, and converts m/hflux to dry basis before
+the vertical merge (Invariant 14).
 """
 function synthesize_and_merge_window!(work::ReducedTransformWorkspace,
                                       merged::ReducedMergeWorkspace{FT},
@@ -915,7 +1074,9 @@ function synthesize_and_merge_window!(work::ReducedTransformWorkspace,
                                       vertical,
                                       settings,
                                       ps_offsets::Vector{Float64},
-                                      win_idx::Int) where FT
+                                      win_idx::Int;
+                                      qv_ws::Union{ReducedQVWorkspace, Nothing}=nothing,
+                                      thermo_path::String="") where FT
     spectral_to_native_fields!(work,
         spec.lnsp_all[hour], spec.vo_by_hour[hour], spec.d_by_hour[hour],
         spec.T, vertical.level_range, vertical.ab, grid, settings.half_dt)
@@ -929,6 +1090,13 @@ function synthesize_and_merge_window!(work::ReducedTransformWorkspace,
         ps_offsets[win_idx] = offset
         compute_reduced_dp_and_mass!(work.dp, work.m_arr, work.sp, work.cell_areas,
                                      vertical.ab.dA, vertical.ab.dB)
+    end
+
+    # Dry-basis conversion: load QV, interpolate to RG cells, scale m and hflux
+    if settings.mass_basis == :dry && qv_ws !== nothing
+        load_rg_qv!(qv_ws, thermo_path, win_idx,
+                     vertical.Nz_native)
+        apply_dry_basis_reduced!(work, qv_ws.qv_cell)
     end
 
     merge_reduced_window!(merged, work, vertical)
@@ -1042,6 +1210,17 @@ function process_day(date::Date,
     buf    = allocate_sliding_window_buffer(nc, nf, Nz, FT)
     ps_offsets = zeros(Float64, Nt)
 
+    # QV workspace for dry-basis conversion (Invariant 14)
+    thermo_path = ""
+    qv_ws = nothing
+    if settings.mass_basis == :dry
+        thermo_path = joinpath(settings.thermo_dir,
+                               "era5_thermo_ml_$(date_str).nc")
+        isfile(thermo_path) || error("Thermo file not found for dry-basis conversion: $thermo_path")
+        qv_ws = allocate_reduced_qv_workspace(grid, Nz_native, thermo_path)
+        @info "  Dry-basis: QV from $thermo_path → $(qv_ws.Nx_ll)×$(qv_ws.Ny_ll) LL → $(nc) RG cells"
+    end
+
     # Build compressed Laplacian for fast Poisson balance (~16-27× faster than face-indexed CG)
     t_cl = time()
     cL = build_compressed_laplacian(work.face_left, work.face_right, nc)
@@ -1101,7 +1280,8 @@ function process_day(date::Date,
     # ── Process first window into slot `cur` ──
     t0 = time()
     synthesize_and_merge_window!(work, merged, spec.hours[1], spec, grid,
-                                 vertical, settings, ps_offsets, 1)
+                                 vertical, settings, ps_offsets, 1;
+                                 qv_ws=qv_ws, thermo_path=thermo_path)
     fill_buffer_slot!(buf, cur, merged, work.sp)
     should_log_window(1, Nt) &&
         @info @sprintf("    Window  1/%d (hour %02d): synth %.2fs  offset=%+.3f Pa",
@@ -1111,7 +1291,8 @@ function process_day(date::Date,
     for win in 2:Nt
         t0 = time()
         synthesize_and_merge_window!(work, merged, spec.hours[win], spec, grid,
-                                     vertical, settings, ps_offsets, win)
+                                     vertical, settings, ps_offsets, win;
+                                     qv_ws=qv_ws, thermo_path=thermo_path)
         fill_buffer_slot!(buf, nxt, merged, work.sp)
         t_synth = time() - t0
 

@@ -202,6 +202,10 @@ function _transport_parse_on_disk_float_type(hdr)
 end
 
 function _transport_parse_mass_basis(hdr)
+    if !haskey(hdr, :mass_basis)
+        @warn "Transport binary header has no mass_basis field — assuming moist (legacy binary). " *
+              "Regenerate with the current preprocessor for dry-basis binaries (Invariant 14)."
+    end
     basis_str = lowercase(string(get(hdr, :mass_basis, "moist")))
     return basis_str == "dry" ? :dry : :moist
 end
@@ -771,7 +775,7 @@ function write_transport_binary(path::AbstractString,
                                 flux_kind::Symbol = :substep_mass_amount,
                                 humidity_sampling::Symbol = :auto,
                                 delta_semantics::Symbol = :auto,
-                                mass_basis::Symbol = :moist,
+                                mass_basis::Symbol = :dry,
                                 extra_header::AbstractDict{<:AbstractString,<:Any} = Dict{String,Any}(),
                                 threaded::Bool = Threads.nthreads() > 1)
     isempty(windows) && throw(ArgumentError("write_transport_binary requires at least one window"))
@@ -857,7 +861,7 @@ function write_transport_binary(path::AbstractString,
                                 flux_kind::Symbol = :substep_mass_amount,
                                 humidity_sampling::Symbol = :auto,
                                 delta_semantics::Symbol = :auto,
-                                mass_basis::Symbol = :moist,
+                                mass_basis::Symbol = :dry,
                                 extra_header::AbstractDict{<:AbstractString,<:Any} = Dict{String,Any}(),
                                 threaded::Bool = Threads.nthreads() > 1)
     isempty(windows) && throw(ArgumentError("write_transport_binary requires at least one window"))

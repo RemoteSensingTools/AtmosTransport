@@ -21,12 +21,16 @@ Parse humidity-related runtime choices from the TOML configuration.
 - `mass_basis` is `:moist` or `:dry` and determines whether native fields are
   converted to dry basis before vertical merging.
 
-Dry-basis preprocessing requires a humidity source.
+Dry-basis is the default (Invariant 14). All transport binaries should use dry
+basis so that Poisson balance and cm diagnosis operate on dry mass. Moist basis
+is available as an explicit opt-out for diagnostic purposes only.
+
+Dry-basis preprocessing requires a humidity source (`input.thermo_dir`).
 """
 function resolve_mass_basis(cfg)
     thermo_dir = expanduser(get(get(cfg, "input", Dict()), "thermo_dir", ""))
     include_qv = Bool(get(get(cfg, "output", Dict{String, Any}()), "include_qv", !isempty(thermo_dir)))
-    basis_str = lowercase(String(get(get(cfg, "output", Dict{String, Any}()), "mass_basis", "moist")))
+    basis_str = lowercase(String(get(get(cfg, "output", Dict{String, Any}()), "mass_basis", "dry")))
     mass_basis = basis_str == "dry" ? :dry : :moist
 
     if basis_str != "moist" && basis_str != "dry"

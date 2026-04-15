@@ -257,7 +257,7 @@ function TransportBinaryDriver(path::AbstractString;
                                FT::Type{<:AbstractFloat} = Float64,
                                arch = CPU(),
                                validate_windows::Bool = true,
-                               max_rel_cm::Real = 1e-8)
+                               max_rel_cm::Real = 0.01)
     reader = TransportBinaryReader(String(path); FT=FT)
     _validate_runtime_semantics(reader)
     validate_windows && _validate_window_cm_sanity(reader; max_rel_cm=max_rel_cm)

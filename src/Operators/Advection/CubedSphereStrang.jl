@@ -24,8 +24,7 @@
 #   Putman & Lin (2007) — FV3 cubed-sphere transport
 # ---------------------------------------------------------------------------
 
-using KernelAbstractions: @kernel, @index, @Const, synchronize, get_backend,
-    CPU as KA_CPU
+using KernelAbstractions: @kernel, @index, @Const, synchronize, get_backend
 
 # =========================================================================
 # CS panel sweep kernels
@@ -170,7 +169,7 @@ function _sweep_x_panel!(rm, m, am, scheme::AbstractAdvectionScheme, rm_buf, m_b
                          flux_scale = one(eltype(m)))
     _validate_halo_for_scheme(scheme, Hp)
     FT = eltype(m)
-    backend = KA_CPU()
+    backend = get_backend(rm)
     kernel! = _cs_xsweep_kernel!(backend, 256)
     kernel!(rm_buf, rm, m_buf, m, am, scheme, Int32(Nc), Int32(Hp), FT(flux_scale);
             ndrange=(Nc, Nc, Nz))
@@ -218,7 +217,7 @@ function _sweep_y_panel!(rm, m, bm, scheme::AbstractAdvectionScheme, rm_buf, m_b
                          flux_scale = one(eltype(m)))
     _validate_halo_for_scheme(scheme, Hp)
     FT = eltype(m)
-    backend = KA_CPU()
+    backend = get_backend(rm)
     kernel! = _cs_ysweep_kernel!(backend, 256)
     kernel!(rm_buf, rm, m_buf, m, bm, scheme, Int32(Nc), Int32(Hp), FT(flux_scale);
             ndrange=(Nc, Nc, Nz))
@@ -267,7 +266,7 @@ function _sweep_z_panel!(rm, m, cm, scheme::AbstractAdvectionScheme, rm_buf, m_b
                          flux_scale = one(eltype(m)))
     # Z-direction does not need halo validation (vertical boundaries are closed, not halo-exchanged)
     FT = eltype(m)
-    backend = KA_CPU()
+    backend = get_backend(rm)
     kernel! = _cs_zsweep_kernel!(backend, 256)
     kernel!(rm_buf, rm, m_buf, m, cm, scheme, Int32(Nz), Int32(Hp), FT(flux_scale);
             ndrange=(Nc, Nc, Nz))
@@ -320,10 +319,8 @@ end
 
 """Copy interior region from buffer back to array."""
 function _copy_interior!(dst, src, Nc, Hp, Nz)
-    @inbounds for k in 1:Nz, jj in 1:Nc, ii in 1:Nc
-        i = ii + Hp; j = jj + Hp
-        dst[i, j, k] = src[i, j, k]
-    end
+    r = Hp+1:Hp+Nc
+    dst[r, r, 1:Nz] .= src[r, r, 1:Nz]
     return nothing
 end
 
@@ -343,10 +340,11 @@ struct CSAdvectionWorkspace{FT, A <: AbstractArray{FT, 3}}
 end
 
 function CSAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
-                              FT::Type{<:AbstractFloat} = Float64)
+                              FT::Type{<:AbstractFloat} = Float64,
+                              array_type::Type{<:AbstractArray} = Array)
     N = mesh.Nc + 2 * mesh.Hp
-    rm_buf = zeros(FT, N, N, Nz)
-    m_buf  = zeros(FT, N, N, Nz)
+    rm_buf = array_type(zeros(FT, N, N, Nz))
+    m_buf  = array_type(zeros(FT, N, N, Nz))
     return CSAdvectionWorkspace{FT, typeof(rm_buf)}(rm_buf, m_buf)
 end
 

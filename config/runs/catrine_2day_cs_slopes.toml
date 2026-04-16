@@ -7,6 +7,9 @@ binary_paths = [
     "~/data/AtmosTransport/met/era5/cs_c90/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211202_merged1000Pa_float64.bin",
 ]
 
+[architecture]
+use_gpu = true
+
 [numerics]
 float_type = "Float64"
 

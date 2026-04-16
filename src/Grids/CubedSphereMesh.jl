@@ -257,6 +257,54 @@ function Base.show(io::IO, m::CubedSphereMesh)
           "└── radius:    ", m.radius, " m")
 end
 
+# ---------------------------------------------------------------------------
+# Visualization helpers — lat/lon coordinates for cell centers and corners
+# ---------------------------------------------------------------------------
+
+"""Convert Cartesian `(x, y, z)` on the unit sphere to `(lon, lat)` in degrees, lon in [0, 360)."""
+@inline function _xyz_to_lonlat(x, y, z)
+    lon = atand(y, x)
+    lat = asind(z / sqrt(x^2 + y^2 + z^2))
+    lon < 0 && (lon += 360)
+    return lon, lat
+end
+
+"""
+    panel_cell_center_lonlat(Nc, panel, FT) -> (lons, lats)
+
+Return `(Nc, Nc)` arrays of cell-center longitudes and latitudes in degrees
+for the given `panel` of a C`Nc` gnomonic cubed sphere.
+"""
+function panel_cell_center_lonlat(Nc::Int, panel::Int, FT::Type{<:AbstractFloat})
+    dα = FT(π) / (2 * Nc)
+    α_centers = [FT(-π/4) + (i - FT(0.5)) * dα for i in 1:Nc]
+    lons = zeros(FT, Nc, Nc)
+    lats = zeros(FT, Nc, Nc)
+    for j in 1:Nc, i in 1:Nc
+        x, y, z = _gnomonic_xyz(tan(α_centers[i]), tan(α_centers[j]), panel)
+        lons[i, j], lats[i, j] = _xyz_to_lonlat(x, y, z)
+    end
+    return lons, lats
+end
+
+"""
+    panel_cell_corner_lonlat(Nc, panel, FT) -> (lons, lats)
+
+Return `(Nc+1, Nc+1)` arrays of cell-corner longitudes and latitudes in degrees.
+"""
+function panel_cell_corner_lonlat(Nc::Int, panel::Int, FT::Type{<:AbstractFloat})
+    dα = FT(π) / (2 * Nc)
+    α_faces = [FT(-π/4) + (i - 1) * dα for i in 1:(Nc + 1)]
+    lons = zeros(FT, Nc + 1, Nc + 1)
+    lats = zeros(FT, Nc + 1, Nc + 1)
+    for j in 1:(Nc + 1), i in 1:(Nc + 1)
+        x, y, z = _gnomonic_xyz(tan(α_faces[i]), tan(α_faces[j]), panel)
+        lons[i, j], lats[i, j] = _xyz_to_lonlat(x, y, z)
+    end
+    return lons, lats
+end
+
 export AbstractCubedSpherePanelConvention
 export GnomonicPanelConvention, GEOSNativePanelConvention, panel_connectivity_for
 export CubedSphereMesh, panel_count, panel_convention, panel_labels
+export panel_cell_center_lonlat, panel_cell_corner_lonlat

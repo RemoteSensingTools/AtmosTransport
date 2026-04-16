@@ -45,8 +45,13 @@ def load_snapshot(path):
         return None
     times = np.array(times[:])
 
-    # Find lon/lat variables
-    if "lon_cell" in ds.variables:
+    # Find lon/lat variables — handle GCHP-compatible (Xdim, Ydim, nf) and legacy flat formats
+    is_cs_structured = "lons" in ds.variables and "nf" in ds.dimensions
+    if is_cs_structured:
+        # GCHP-compatible: lons(Xdim, Ydim, nf) → flatten to 1D
+        lons = np.array(ds.variables["lons"][:]).ravel(order="F")  # column-major (Julia)
+        lats = np.array(ds.variables["lats"][:]).ravel(order="F")
+    elif "lon_cell" in ds.variables:
         lons = np.array(ds.variables["lon_cell"][:])
         lats = np.array(ds.variables["lat_cell"][:])
     elif "lon" in ds.dimensions:
@@ -65,7 +70,12 @@ def load_snapshot(path):
         if vname.endswith("_column_mean"):
             tname = vname.replace("_column_mean", "")
             data = np.array(ds.variables[vname][:])
-            if data.ndim == 2:
+            if is_cs_structured and data.ndim == 4:
+                # (Xdim, Ydim, nf, time) → (cell, time) with column-major panel flatten
+                Nx, Ny, Npanel, Nt = data.shape
+                flat = data.reshape(Nx * Ny * Npanel, Nt, order="F")
+                tracers[tname] = flat
+            elif data.ndim == 2:
                 # Ensure shape is (cell, time) — may come as (time, cell)
                 if data.shape[0] == len(lons):
                     tracers[tname] = data  # already (cell, time)

@@ -926,8 +926,10 @@ function _write_snapshot_netcdf(path, snapshots, snapshot_hours, grid)
 
         if mesh isa AtmosTransport.LatLonMesh
             _write_snapshot_ll!(ds, snapshots, snapshot_hours, mesh, ntime)
+        elseif mesh isa AtmosTransport.ReducedGaussianMesh
+            _write_snapshot_rg!(ds, snapshots, snapshot_hours, mesh, ntime)
         else
-            _write_snapshot_unstructured!(ds, snapshots, snapshot_hours, mesh, ntime)
+            error("Unsupported mesh type for snapshot output: $(typeof(mesh))")
         end
     end
     @info "Saved snapshots: $path ($(length(snapshots)) times)"
@@ -965,53 +967,69 @@ function _write_snapshot_ll!(ds, snapshots, snapshot_hours, mesh, ntime)
     end
 end
 
-function _write_snapshot_unstructured!(ds, snapshots, snapshot_hours, mesh, ntime)
-    ncell = length(first(values(first(snapshots))))
+"""Write RG snapshots regridded to a regular LatLon grid for Panoply compatibility.
 
-    defDim(ds, "cell", ncell)
-    defDim(ds, "time", ntime)
+Uses nearest-ring mapping: each output latitude picks the closest RG ring,
+and each output longitude picks the closest cell on that ring. This is exact
+for visualization — no smoothing, no weight building.
+"""
+function _write_snapshot_rg!(ds, snapshots, snapshot_hours, mesh, ntime)
+    nr = AtmosTransport.nrings(mesh)
 
-    # Compute cell-center lon/lat coordinates
-    lons = zeros(Float64, ncell)
-    lats = zeros(Float64, ncell)
-    if mesh isa AtmosTransport.ReducedGaussianMesh
-        for j in 1:AtmosTransport.nrings(mesh)
-            ring_lons = AtmosTransport.ring_longitudes(mesh, j)
-            lat = Float64(mesh.latitudes[j])
-            for i in eachindex(ring_lons)
-                c = AtmosTransport.cell_index(mesh, i, j)
-                lons[c] = Float64(ring_lons[i])
-                lats[c] = lat
-            end
+    # Build output grid: nlat = nrings, nlon = max(nlon_per_ring)
+    Nlon = maximum(mesh.nlon_per_ring)
+    Nlat = nr
+    dlon = 360.0 / Nlon
+    out_lons = [(i - 0.5) * dlon for i in 1:Nlon]  # cell centers [0, 360)
+    out_lats = Float64.(mesh.latitudes)             # ring center latitudes
+
+    # Build nearest-neighbor map: for each (i_lon, j_lat) in output, find the
+    # index of the closest RG cell on ring j_lat.
+    nn_map = zeros(Int, Nlon, Nlat)
+    for j in 1:Nlat
+        nlon_ring = mesh.nlon_per_ring[j]
+        dlon_ring = 360.0 / nlon_ring
+        for i in 1:Nlon
+            # Find nearest cell on this ring
+            i_ring = round(Int, out_lons[i] / dlon_ring + 0.5)
+            i_ring = clamp(i_ring, 1, nlon_ring)
+            nn_map[i, j] = AtmosTransport.cell_index(mesh, i_ring, j)
         end
-        ds.attrib["grid_type"] = "reduced_gaussian"
-        ds.attrib["nrings"] = AtmosTransport.nrings(mesh)
-    else
-        # Generic fallback: leave zeros (will need extending for CS etc.)
-        ds.attrib["grid_type"] = "unstructured"
     end
 
-    v_lon = defVar(ds, "lon", Float64, ("cell",),
+    defDim(ds, "lon", Nlon)
+    defDim(ds, "lat", Nlat)
+    defDim(ds, "time", ntime)
+
+    ds.attrib["grid_type"] = "reduced_gaussian_regridded"
+    ds.attrib["nrings"] = nr
+    ds.attrib["regridding"] = "nearest-neighbor from reduced Gaussian"
+
+    v_lon = defVar(ds, "lon", Float64, ("lon",),
                    attrib=Dict("units" => "degrees_east", "long_name" => "longitude",
                                "standard_name" => "longitude"))
-    v_lat = defVar(ds, "lat", Float64, ("cell",),
+    v_lat = defVar(ds, "lat", Float64, ("lat",),
                    attrib=Dict("units" => "degrees_north", "long_name" => "latitude",
                                "standard_name" => "latitude"))
     v_time = defVar(ds, "time", Float64, ("time",),
                     attrib=Dict("units" => "hours since start", "long_name" => "time"))
 
-    v_lon[:] = lons
-    v_lat[:] = lats
+    v_lon[:] = out_lons
+    v_lat[:] = out_lats
     v_time[:] = snapshot_hours[1:ntime]
 
     for name in keys(first(snapshots))
         vname = "$(name)_column_mean"
-        v = defVar(ds, vname, Float64, ("cell", "time"),
+        v = defVar(ds, vname, Float64, ("lon", "lat", "time"),
                    attrib=Dict("units" => "mol mol-1",
-                               "long_name" => "Column-mean $name VMR",
-                               "coordinates" => "lon lat"))
+                               "long_name" => "Column-mean $name VMR"))
         for t in 1:ntime
-            v[:, t] = snapshots[t][name]
+            flat = snapshots[t][name]
+            regridded = zeros(Float64, Nlon, Nlat)
+            for j in 1:Nlat, i in 1:Nlon
+                regridded[i, j] = flat[nn_map[i, j]]
+            end
+            v[:, :, t] = regridded
         end
     end
 end

@@ -174,21 +174,19 @@ function build_cs_global_face_table(Nc::Int, conn::PanelConnectivity)
     n_interior = nf
 
     # --- Phase 2: Cross-panel faces ---
-    # Only from outgoing edges (north, east) to avoid double-counting.
-    # Additional guard: when BOTH the canonical edge and the reciprocal edge
-    # are outgoing (both NORTH or EAST), the same physical edge would be
-    # enumerated twice. Skip the duplicate by requiring p < q for such pairs.
+    # Iterate ALL 4 edges of each panel.  De-duplicate by keeping only the
+    # (p, e) side where p < q (the lower-numbered panel is canonical).
+    # This correctly enumerates all 12 physical edges regardless of which
+    # combination of NORTH/SOUTH/EAST/WEST they land on.
     for p in 1:6
-        for e in (EDGE_NORTH, EDGE_EAST)
+        for e in (EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST)
             q   = conn.neighbors[p][e].panel
             ori = conn.neighbors[p][e].orientation
             eq  = reciprocal_edge(conn, p, e)
 
-            # De-duplicate: if the reciprocal is also an outgoing edge,
-            # only create from the lower-numbered panel.
-            if (eq == EDGE_NORTH || eq == EDGE_EAST) && p > q
-                continue
-            end
+            # De-duplicate: each physical edge is shared by (p, q).
+            # Keep only the p < q side.
+            p > q && continue
 
             for s in 1:Nc
                 t = ori == 0 ? s : Nc + 1 - s
@@ -202,9 +200,24 @@ function build_cs_global_face_table(Nc::Int, conn::PanelConnectivity)
                 can_dir, can_i, can_j = _cs_edge_face_location(e, s, Nc)
                 mir_dir, mir_i, mir_j = _cs_edge_face_location(eq, t, Nc)
 
+                # Face-table convention: fl = cell on the lower-index side of
+                # the face, fr = cell on the higher-index side.
+                # For NORTH/EAST canonicals (outflow at Nc+1): fl = P-cell (inside),
+                #   fr = Q-cell (outside).
+                # For SOUTH/WEST canonicals (inflow at 1): fl = Q-cell (outside),
+                #   fr = P-cell (inside) — swap because the P-cell is on the
+                #   higher-index side of the boundary face.
+                can_at_outflow = (can_dir == 1 && can_i == Nc + 1) ||
+                                 (can_dir == 2 && can_j == Nc + 1)
+
                 nf += 1
-                fl[nf] = gp
-                fr[nf] = gq
+                if can_at_outflow
+                    fl[nf] = gp
+                    fr[nf] = gq
+                else
+                    fl[nf] = gq
+                    fr[nf] = gp
+                end
                 fp[nf] = Int32(p)
                 fd[nf] = Int32(can_dir)
                 fi[nf] = Int32(can_i)
@@ -217,17 +230,14 @@ function build_cs_global_face_table(Nc::Int, conn::PanelConnectivity)
                 # Mirror sign: determines whether the mirror value must be
                 # negated so that per-panel flux telescoping conserves mass.
                 #
-                # The canonical face is always at an "outflow" boundary
-                # (north or east → index Nc+1, subtracted in the kernel).
-                # The mirror must be at the "inflow" boundary of the
-                # neighboring panel (index 1, added in the kernel) for the
-                # fluxes to cancel globally.  When the mirror is ALSO at an
-                # outflow position (index Nc+1, e.g. P2 north → P5 east),
-                # the stored value must be negated so the kernel subtracts
-                # a negative → effectively adds.
+                # The advection kernel computes:
+                #   m_new = m + flux_in(j=1 or i=1) - flux_out(j=Nc+1 or i=Nc+1)
+                # For global mass conservation, the canonical and mirror must
+                # cancel.  When both are at the SAME position type (both inflow
+                # or both outflow), negate; when at OPPOSITE types, keep as-is.
                 mir_at_outflow = (mir_dir == 1 && mir_i == Nc + 1) ||
                                  (mir_dir == 2 && mir_j == Nc + 1)
-                ms[nf] = mir_at_outflow ? Int32(-1) : Int32(1)
+                ms[nf] = (can_at_outflow == mir_at_outflow) ? Int32(-1) : Int32(1)
             end
         end
     end
@@ -469,6 +479,92 @@ function _sync_cs_mirrors!(panels_am::NTuple{6, Array{FT, 3}},
                 panels_am[mq][mi, mj, k] = mirror_val
             else
                 panels_bm[mq][mi, mj, k] = mirror_val
+            end
+        end
+    end
+    return nothing
+end
+
+"""
+    sync_all_cs_boundary_mirrors!(panels_am, panels_bm, conn, Nc, Nz)
+
+Comprehensive boundary flux mirror sync using panel connectivity directly.
+
+Iterates all 12 physical edges of the cubed sphere (all 4 directions per panel,
+de-duplicated by p < q). For each edge, syncs both directions: canonical panel's
+boundary → neighbor's mirror, AND neighbor's boundary → canonical panel's mirror.
+
+Sign convention: when canonical and mirror are both at inflow positions (i=1 or
+j=1) or both at outflow positions (i=Nc+1 or j=Nc+1), negate so that per-panel
+flux telescoping conserves mass.
+
+Must be called AFTER Poisson balance to propagate balanced canonical values
+to all mirror positions.
+"""
+function sync_all_cs_boundary_mirrors!(panels_am::NTuple{6, Array{FT, 3}},
+                                        panels_bm::NTuple{6, Array{FT, 3}},
+                                        conn::PanelConnectivity,
+                                        Nc::Int, Nz::Int) where FT
+    # Iterate all 4 edges of each panel with p < q dedup — same canonical
+    # ordering as the face table.  For each canonical edge (p, e) → (q, eq),
+    # sync both directions: p's boundary → q's mirror AND q's boundary → p's
+    # mirror.
+    for p in 1:6
+        for e in (EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST)
+            q   = conn.neighbors[p][e].panel
+            ori = conn.neighbors[p][e].orientation
+            eq  = reciprocal_edge(conn, p, e)
+
+            p > q && continue   # other side is canonical
+
+            # --- Forward: canonical on p → mirror on q ---
+            for s in 1:Nc
+                t = ori == 0 ? s : Nc + 1 - s
+
+                can_dir, can_i, can_j = _cs_edge_face_location(e, s, Nc)
+                mir_dir, mir_i, mir_j = _cs_edge_face_location(eq, t, Nc)
+
+                can_at_outflow = (can_dir == 1 && can_i == Nc + 1) ||
+                                 (can_dir == 2 && can_j == Nc + 1)
+                mir_at_outflow = (mir_dir == 1 && mir_i == Nc + 1) ||
+                                 (mir_dir == 2 && mir_j == Nc + 1)
+                msign = (can_at_outflow == mir_at_outflow) ? FT(-1) : FT(1)
+
+                @inbounds for k in 1:Nz
+                    canonical = can_dir == 1 ? panels_am[p][can_i, can_j, k] :
+                                               panels_bm[p][can_i, can_j, k]
+                    mirror_val = msign * canonical
+                    if mir_dir == 1
+                        panels_am[q][mir_i, mir_j, k] = mirror_val
+                    else
+                        panels_bm[q][mir_i, mir_j, k] = mirror_val
+                    end
+                end
+            end
+
+            # --- Reverse: q's boundary → p's mirror ---
+            for s in 1:Nc
+                t = ori == 0 ? s : Nc + 1 - s
+
+                can_dir, can_i, can_j = _cs_edge_face_location(eq, t, Nc)
+                mir_dir, mir_i, mir_j = _cs_edge_face_location(e, s, Nc)
+
+                can_at_outflow = (can_dir == 1 && can_i == Nc + 1) ||
+                                 (can_dir == 2 && can_j == Nc + 1)
+                mir_at_outflow = (mir_dir == 1 && mir_i == Nc + 1) ||
+                                 (mir_dir == 2 && mir_j == Nc + 1)
+                msign = (can_at_outflow == mir_at_outflow) ? FT(-1) : FT(1)
+
+                @inbounds for k in 1:Nz
+                    canonical = can_dir == 1 ? panels_am[q][can_i, can_j, k] :
+                                               panels_bm[q][can_i, can_j, k]
+                    mirror_val = msign * canonical
+                    if mir_dir == 1
+                        panels_am[p][mir_i, mir_j, k] = mirror_val
+                    else
+                        panels_bm[p][mir_i, mir_j, k] = mirror_val
+                    end
+                end
             end
         end
     end

@@ -1274,11 +1274,11 @@ function process_day(date::Date,
         worst_post = max(worst_post, bal_diag.max_post_residual)
         worst_iter = max(worst_iter, bal_diag.max_cg_iter)
 
+        # Sync ALL boundary mirrors (including de-duplicated faces) so that
+        # per-panel flux divergence and the advection kernel telescope correctly.
+        sync_all_cs_boundary_mirrors!(cur_am, cur_bm, grid.mesh.connectivity, Nc, Nz)
+
         # Diagnose cm from balanced am/bm and raw mass tendency.
-        # Uses mass-budget residual convention: cm[k+1] = cm[k] + conv_h - dm.
-        # After balance, conv_h ≈ dm (mean-zero projected), so cm is small
-        # but non-zero due to the per-level mean residual and CG noise.
-        # diagnose_cs_cm! redistributes any bottom residual proportionally to m.
         for p in 1:CS_PANEL_COUNT
             @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
                 cs_ws.dm_panels[p][i, j, k] =
@@ -1315,6 +1315,9 @@ function process_day(date::Date,
     worst_pre  = max(worst_pre,  bal_diag.max_pre_residual)
     worst_post = max(worst_post, bal_diag.max_post_residual)
     worst_iter = max(worst_iter, bal_diag.max_cg_iter)
+
+    # Sync ALL boundary mirrors (including de-duplicated faces) — same as main loop.
+    sync_all_cs_boundary_mirrors!(cur_am, cur_bm, grid.mesh.connectivity, Nc, Nz)
 
     for p in 1:CS_PANEL_COUNT
         fill!(cs_ws.dm_panels[p], zero(FT))

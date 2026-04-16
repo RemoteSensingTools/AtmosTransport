@@ -44,32 +44,48 @@ function parse_args()
     return args
 end
 
-"""Panel cell centers in lat-lon degrees (for viz)."""
+"""Gnomonic projection (ξ, η) → (x, y, z) on the unit sphere for panel `p`."""
+function _gnomonic_xyz(ξ::FT, η::FT, p::Int) where FT
+    d = one(FT) / sqrt(one(FT) + ξ^2 + η^2)
+    if     p == 1;  return ( d,  ξ*d,  η*d)
+    elseif p == 2;  return (-ξ*d,  d,  η*d)
+    elseif p == 3;  return (-d, -ξ*d,  η*d)
+    elseif p == 4;  return ( ξ*d, -d,  η*d)
+    elseif p == 5;  return (-η*d,  ξ*d,  d)
+    else;           return ( η*d,  ξ*d, -d)
+    end
+end
+
+"""Convert (x, y, z) on unit sphere to (lon, lat) in degrees, lon ∈ [0, 360)."""
+function _xyz_to_lonlat(x, y, z)
+    lon = atand(y, x)
+    lat = asind(z / sqrt(x^2 + y^2 + z^2))
+    lon < 0 && (lon += 360)
+    return lon, lat
+end
+
+"""Panel cell centers in lat-lon degrees (for viz). Returns `(lons, lats)` each `(Nc, Nc)`."""
 function panel_cell_center_lonlat(Nc::Int, p::Int, FT::Type{<:AbstractFloat})
     dα = FT(π) / (2 * Nc)
     α_centers = [FT(-π/4) + (i - 0.5) * dα for i in 1:Nc]
     lons = zeros(FT, Nc, Nc)
     lats = zeros(FT, Nc, Nc)
     for j in 1:Nc, i in 1:Nc
-        ξ = tan(α_centers[i])
-        η = tan(α_centers[j])
-        d = one(FT) / sqrt(one(FT) + ξ^2 + η^2)
-        x, y, z = if p == 1
-            (d, ξ*d, η*d)
-        elseif p == 2
-            (-ξ*d, d, η*d)
-        elseif p == 3
-            (-d, -ξ*d, η*d)
-        elseif p == 4
-            (ξ*d, -d, η*d)
-        elseif p == 5
-            (-η*d, ξ*d, d)
-        else
-            (η*d, ξ*d, -d)
-        end
-        lons[i, j] = atand(y, x)
-        lats[i, j] = asind(z / sqrt(x^2 + y^2 + z^2))
-        lons[i, j] < 0 && (lons[i, j] += 360)
+        x, y, z = _gnomonic_xyz(tan(α_centers[i]), tan(α_centers[j]), p)
+        lons[i, j], lats[i, j] = _xyz_to_lonlat(x, y, z)
+    end
+    return lons, lats
+end
+
+"""Panel cell corners in lat-lon degrees. Returns `(lons, lats)` each `(Nc+1, Nc+1)`."""
+function panel_cell_corner_lonlat(Nc::Int, p::Int, FT::Type{<:AbstractFloat})
+    dα = FT(π) / (2 * Nc)
+    α_faces = [FT(-π/4) + (i - 1) * dα for i in 1:(Nc + 1)]
+    lons = zeros(FT, Nc + 1, Nc + 1)
+    lats = zeros(FT, Nc + 1, Nc + 1)
+    for j in 1:(Nc + 1), i in 1:(Nc + 1)
+        x, y, z = _gnomonic_xyz(tan(α_faces[i]), tan(α_faces[j]), p)
+        lons[i, j], lats[i, j] = _xyz_to_lonlat(x, y, z)
     end
     return lons, lats
 end
@@ -110,67 +126,136 @@ end
 # Snapshot export
 # ---------------------------------------------------------------------------
 
+"""
+    export_snapshot(nc_path, cs_lons, cs_lats, snap_data, snap_m,
+                    snapshot_hours, Nc, Nz)
+
+Write cubed-sphere snapshots to a GCHP/MAPL-compatible NetCDF file.
+
+Output format matches GCHP `CATRINE_inst` files that Panoply renders natively:
+- Dimensions: `(Xdim, Ydim, nf, time)` for 2D fields
+- Coordinate variables: `lons(Xdim, Ydim, nf)`, `lats(Xdim, Ydim, nf)`,
+  `corner_lons(XCdim, YCdim, nf)`, `corner_lats(XCdim, YCdim, nf)`
+- Fake `Xdim`/`Ydim` for GrADS; `nf` with `axis="e"`
+- Data variables carry `coordinates = "lons lats"` attribute
+"""
 function export_snapshot(nc_path::String, cs_lons, cs_lats,
                          snap_data::Vector,  # Vector of Dict{Symbol, NTuple{6, Array}}
                          snap_m::Vector,     # Vector of NTuple{6, Array} for air mass
                          snapshot_hours::Vector{Float64}, Nc::Int, Nz::Int)
     ntime = length(snap_data)
-    ncell = 6 * Nc * Nc
 
-    # Precompute flat lon/lat
-    lons_flat = zeros(Float64, ncell)
-    lats_flat = zeros(Float64, ncell)
-    idx = 1
-    for p in 1:6, j in 1:Nc, i in 1:Nc
-        lons_flat[idx] = cs_lons[p][i, j]
-        lats_flat[idx] = cs_lats[p][i, j]
-        idx += 1
-    end
+    # Compute corner coordinates for each panel
+    cs_corner_lons = [panel_cell_corner_lonlat(Nc, p, Float64)[1] for p in 1:6]
+    cs_corner_lats = [panel_cell_corner_lonlat(Nc, p, Float64)[2] for p in 1:6]
 
     isfile(nc_path) && rm(nc_path)
     mkpath(dirname(nc_path))
     ds = NCDataset(nc_path, "c")
-    defDim(ds, "cell", ncell)
+
+    # Dimensions — match GCHP/MAPL convention
+    defDim(ds, "Xdim", Nc)
+    defDim(ds, "Ydim", Nc)
+    defDim(ds, "nf", 6)
+    defDim(ds, "XCdim", Nc + 1)
+    defDim(ds, "YCdim", Nc + 1)
     defDim(ds, "time", ntime)
-    ds.attrib["grid_type"] = "cubed_sphere"
+
+    # Global attributes
+    ds.attrib["Conventions"] = "CF"
+    ds.attrib["grid_mapping_name"] = "gnomonic cubed-sphere"
+    ds.attrib["Source"] = "AtmosTransport.jl"
     ds.attrib["Nc"] = Nc
 
-    defVar(ds, "lon_cell", Float64, ("cell",))[:] = lons_flat
-    defVar(ds, "lat_cell", Float64, ("cell",))[:] = lats_flat
-    defVar(ds, "time_hours", Float64, ("time",))[:] = snapshot_hours[1:ntime]
+    # Fake Xdim / Ydim coordinate variables (for GrADS / Panoply)
+    v_xdim = defVar(ds, "Xdim", Float64, ("Xdim",),
+                     attrib=Dict("long_name" => "Fake Longitude for GrADS Compatibility",
+                                 "units" => "degrees_east"))
+    v_ydim = defVar(ds, "Ydim", Float64, ("Ydim",),
+                     attrib=Dict("long_name" => "Fake Latitude for GrADS Compatibility",
+                                 "units" => "degrees_north"))
+    # Use panel-1 center coordinates as fake values (same as GCHP)
+    v_xdim[:] = cs_lons[1][:, 1]
+    v_ydim[:] = cs_lats[1][1, :]
+
+    # nf coordinate
+    v_nf = defVar(ds, "nf", Int32, ("nf",),
+                   attrib=Dict("long_name" => "cubed-sphere face",
+                               "axis" => "e",
+                               "grads_dim" => "e"))
+    v_nf[:] = Int32[1, 2, 3, 4, 5, 6]
+
+    # Real lon/lat coordinates — cell centers (Xdim, Ydim, nf)
+    v_lons = defVar(ds, "lons", Float64, ("Xdim", "Ydim", "nf"),
+                     attrib=Dict("long_name" => "longitude",
+                                 "units" => "degrees_east"))
+    v_lats = defVar(ds, "lats", Float64, ("Xdim", "Ydim", "nf"),
+                     attrib=Dict("long_name" => "latitude",
+                                 "units" => "degrees_north"))
+    for p in 1:6
+        v_lons[:, :, p] = cs_lons[p]
+        v_lats[:, :, p] = cs_lats[p]
+    end
+
+    # Corner coordinates (XCdim, YCdim, nf)
+    v_clons = defVar(ds, "corner_lons", Float64, ("XCdim", "YCdim", "nf"),
+                      attrib=Dict("long_name" => "longitude",
+                                  "units" => "degrees_east"))
+    v_clats = defVar(ds, "corner_lats", Float64, ("XCdim", "YCdim", "nf"),
+                      attrib=Dict("long_name" => "latitude",
+                                  "units" => "degrees_north"))
+    for p in 1:6
+        v_clons[:, :, p] = cs_corner_lons[p]
+        v_clats[:, :, p] = cs_corner_lats[p]
+    end
+
+    # Time coordinate
+    v_time = defVar(ds, "time", Float64, ("time",),
+                     attrib=Dict("long_name" => "time",
+                                 "units" => "hours since start"))
+    v_time[:] = snapshot_hours[1:ntime]
 
     # Get tracer names from first snapshot
     tracer_names = collect(keys(first(snap_data)))
 
+    # Data variables: (Xdim, Ydim, nf, time)
+    data_attribs = Dict("units" => "mol mol-1 dry",
+                        "coordinates" => "lons lats",
+                        "grid_mapping" => "cubed_sphere")
+
     for name in tracer_names
-        col_var = defVar(ds, "$(name)_column_mean", Float64, ("cell", "time"),
-                         attrib=Dict("units" => "mol mol-1"))
-        sfc_var = defVar(ds, "$(name)_surface", Float64, ("cell", "time"),
-                         attrib=Dict("units" => "mol mol-1"))
+        col_var = defVar(ds, "$(name)_column_mean", Float64, ("Xdim", "Ydim", "nf", "time"),
+                         attrib=merge(data_attribs,
+                                      Dict("long_name" => "Column-mean $name VMR")))
+        sfc_var = defVar(ds, "$(name)_surface", Float64, ("Xdim", "Ydim", "nf", "time"),
+                         attrib=merge(data_attribs,
+                                      Dict("long_name" => "Surface $name VMR")))
+
         for t in 1:ntime
-            col_mean = zeros(Float64, ncell)
-            surface  = zeros(Float64, ncell)
             rm_panels = snap_data[t][name]
             m_panels  = snap_m[t]
-            idx = 1
-            for p in 1:6, j in 1:Nc, i in 1:Nc
-                m_col = 0.0; rm_col = 0.0
-                for k in 1:Nz
-                    m_col += m_panels[p][i, j, k]
-                    rm_col += rm_panels[p][i, j, k]
+            for p in 1:6
+                col_mean = zeros(Float64, Nc, Nc)
+                surface  = zeros(Float64, Nc, Nc)
+                for j in 1:Nc, i in 1:Nc
+                    m_col = 0.0; rm_col = 0.0
+                    for k in 1:Nz
+                        m_col += m_panels[p][i, j, k]
+                        rm_col += rm_panels[p][i, j, k]
+                    end
+                    col_mean[i, j] = m_col > 0 ? rm_col / m_col : 0.0
+                    m_sfc = m_panels[p][i, j, Nz]
+                    rm_sfc = rm_panels[p][i, j, Nz]
+                    surface[i, j] = m_sfc > 0 ? rm_sfc / m_sfc : 0.0
                 end
-                col_mean[idx] = m_col > 0 ? rm_col / m_col : 0.0
-                m_sfc = m_panels[p][i, j, Nz]
-                rm_sfc = rm_panels[p][i, j, Nz]
-                surface[idx] = m_sfc > 0 ? rm_sfc / m_sfc : 0.0
-                idx += 1
+                col_var[:, :, p, t] = col_mean
+                sfc_var[:, :, p, t] = surface
             end
-            col_var[:, t] = col_mean
-            sfc_var[:, t] = surface
         end
     end
+
     close(ds)
-    println("Saved: $nc_path ($ncell cells × $ntime snapshots, $(length(tracer_names)) tracers)")
+    println("Saved: $nc_path (C$Nc × 6 panels × $ntime snapshots, $(length(tracer_names)) tracers)")
 end
 
 # ---------------------------------------------------------------------------
@@ -350,7 +435,15 @@ function run_cs_toml(cfg)
             # Substep loop
             for sub in 1:steps_per_window
                 for lr_sub in 1:n_lr_sub
+                    # Save air mass before first tracer — each tracer must see
+                    # the same starting mass.  strang_split_cs! updates pm in
+                    # place, so without this restore the mass would evolve
+                    # N_tracers times per substep instead of once.
+                    pm_snap = ntuple(p -> copy(pm[p]), 6)
                     for name in tracer_names
+                        for p in 1:6
+                            pm[p] .= pm_snap[p]
+                        end
                         if scheme_name == :linrood
                             strang_split_linrood_ppm!(
                                 tracer_panels[name], pm, pam_p, pbm_p, pcm_p,

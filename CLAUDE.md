@@ -153,7 +153,7 @@ Physics code dispatches on concrete types — no if/else on grid or scheme.
 ```
 AbstractArchitecture        → CPU, GPU
 AbstractGrid{FT, Arch}      → LatitudeLongitudeGrid, CubedSphereGrid
-AbstractAdvectionScheme      → SlopesAdvection, PPMAdvection{ORD}
+AbstractAdvectionScheme      → UpwindScheme, SlopesScheme{L}, PPMScheme{L}
 AbstractConvection           → NoConvection, TiedtkeConvection, RASConvection
 AbstractDiffusion            → NoDiffusion, BoundaryLayerDiffusion, PBLDiffusion, NonLocalPBLDiffusion
 AbstractChemistry            → NoChemistry, RadioactiveDecay, CompositeChemistry

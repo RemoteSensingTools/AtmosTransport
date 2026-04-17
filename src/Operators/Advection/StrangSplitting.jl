@@ -78,8 +78,8 @@ struct AdvectionWorkspace{FT, A <: AbstractArray{FT}, V1 <: AbstractVector{Int32
     rm_B           :: A
     m_B            :: A
     m_save         :: A       # backup of m for multi-tracer strang_split!
-    cfl_scratch_m  :: A       # dedicated CFL-pilot scratch (mass)
-    cfl_scratch_rm :: A       # dedicated CFL-pilot scratch (evolving mass)
+    cfl_scratch_m  :: A       # dead: pre-plan-13 evolving-mass pilot scratch
+    cfl_scratch_rm :: A       # dead: pre-plan-13 evolving-mass pilot scratch
     cluster_sizes  :: V1
     face_left      :: V1
     face_right     :: V1

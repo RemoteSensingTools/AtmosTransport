@@ -1,0 +1,9 @@
+Strang sweep benchmark (medium / cpu: Nx=288 Ny=144 Nz=32 Nt=5, steps=40)
+FT         Scheme       median(ms)      MAD(ms)
+--------------------------------------------------------------------------------
+Float64    Upwind          483.542       45.144
+Float64    Slopes         2769.413        8.084
+Float64    PPM            2521.123        4.453
+Float32    Upwind          356.362        0.378
+Float32    Slopes         2382.732        0.802
+Float32    PPM            2170.529       31.766

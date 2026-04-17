@@ -286,12 +286,11 @@ These are hard-won correctness constraints. Violating any causes silent wrong re
    pairs (`rm_A`/`m_A` + `rm_B`/`m_B`), and `strang_split!` / `strang_split_mt!` alternate
    source ↔ destination across the six-sweep palindrome, tracking parity so the final
    result lands back in the caller's arrays with zero inter-sweep `copyto!` in the common
-   `n_sub == 1` case. Prior implementation copied kernel output back via `ws.rm_buf` each
-   sweep; those names are preserved as `getproperty` aliases for the A pair so LinRood,
-   CubedSphereStrang, and direct tests continue to work unchanged. In-place (src == dst)
-   kernel update still breaks flux telescoping (~10% mass loss) — only the buffer-management
-   implementation changed, not the no-aliasing contract. See ping-pong refactor commit
-   sequence on `restructure/dry-flux-interface` (`fb55852`, `1a7e2ba`).
+   `n_sub == 1` case. In-place (src == dst) kernel update still breaks flux telescoping
+   (~10% mass loss). Plan 11 shipped with `rm_buf`/`m_buf`/`rm_4d_buf` preserved as
+   `getproperty` aliases; plan 13 Commit 4 (`12560be`) dropped the shim and renamed all
+   callers (LinRood, CubedSphereStrang, tests) to the final `rm_A`/`m_A`/`rm_4d_A` names.
+   See commit sequence on `restructure/dry-flux-interface` (`fb55852`, `1a7e2ba`, `12560be`).
 
 5. **Tiedtke convection**: explicit upwind, conditionally stable. Adaptive subcycling in
    `_max_conv_cfl_cs` keeps CFL < 0.9. No positivity clamp needed.
@@ -583,6 +582,16 @@ See `src/Diffusion/Diffusion.jl` for a clean example with 4 implementations.
   by reading directly into output panels with a single buffer).
 - **Kernel launch overhead**: fuse small sequential kernels where memory traffic dominates.
 - **Coalesced access**: ensure fastest-varying thread dimension matches innermost array index.
+- **Measure, don't subtract (sync cost in particular)**. Plan 13 hypothesized
+  that removing `synchronize(backend)` from Strang sweeps would give 20–40%
+  GPU speedup. Direct CUDA-event measurement (`CUDA.@elapsed` wrapped inside
+  `gpu_event_time` in [bench_strang_sweep.jl](scripts/benchmarks/bench_strang_sweep.jl)
+  with `--events`) showed Δ host − cuda is only **~10–12 μs per
+  `strang_split!`** on L40S F32, regardless of problem size (medium ~3 ms/step,
+  large ~47 ms/step). The ~3 ms / ~47 ms is kernel arithmetic, not sync.
+  When budgeting performance from removing an operation, time the operation
+  directly with CUDA events or nsys rather than inferring from subtraction.
+  Full write-up: [artifacts/plan13/perf/sync_thesis_report.md](artifacts/plan13/perf/sync_thesis_report.md).
 
 ## Testing
 

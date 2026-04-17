@@ -95,21 +95,118 @@ MAD is robust to outliers; median-relative MAD < 1% everywhere → clean signal.
 | Slopes |   47.080 |   47.068 |       0.012 |
 | PPM    |   49.277 |   49.265 |       0.012 |
 
-### After Commit 2 (CFL unification)
-_To be filled_
+### After Commit 2 (CFL unification) — wurst L40S
+
+Ran concurrently with test suite, so CPU F64 numbers are contaminated
+by CPU contention (MAD 8–45 ms vs baseline's 1 ms). GPU is clean.
+
+| backend | scheme | median(ms) | MAD(ms) | vs. baseline |
+|---------|--------|-----------:|--------:|-------------:|
+| cpu F64 | Upwind |    483.542 |  45.144 | (noisy)      |
+| cpu F64 | Slopes |   2769.413 |   8.084 | (noisy)      |
+| cpu F64 | PPM    |   2521.123 |   4.453 | +10.9%       |
+| cpu F32 | Upwind |    356.362 |   0.378 | −6.1%        |
+| cpu F32 | Slopes |   2382.732 |   0.802 | −1.0%        |
+| cpu F32 | PPM    |   2170.529 |  31.766 | (noisy)      |
+| gpu F32 med | Upwind | 3.067 host / 3.057 cuda | 0.013 | −0.8% |
+| gpu F32 med | Slopes | 3.123 host / 3.114 cuda | 0.006 | −0.7% |
+| gpu F32 med | PPM    | 3.291 host / 3.282 cuda | 0.005 | −0.4% |
 
 ### After Commit 3′ (sync thesis report)
-_No bench re-run — no code changes_
+_No bench re-run — no code changes. Report lives at
+[perf/sync_thesis_report.md](perf/sync_thesis_report.md)._
 
-### After Commit 4 (rename)
-_To be filled_
+### After Commit 4 (rename + shim drop) — wurst L40S, clean run
 
-### Final (commit 5)
-_To be filled_
+| backend       | scheme | median(ms) | MAD(ms) | vs. baseline |
+|---------------|--------|-----------:|--------:|-------------:|
+| cpu F64       | Upwind |    475.047 |  32.234 | (noisy)      |
+| cpu F64       | Slopes |   2766.306 |  18.816 | (noisy)      |
+| cpu F64       | PPM    |   2539.588 |  15.254 | (noisy)      |
+| cpu F32       | Upwind |    357.437 |   0.545 | −5.8%        |
+| cpu F32       | Slopes |   2387.287 |   0.964 | −0.8%        |
+| cpu F32       | PPM    |   2151.267 |   2.198 | −1.1%        |
+| gpu F32 med   | Upwind |      2.997 (host) / 2.987 (cuda) | 0.014 | **−3.0%** |
+| gpu F32 med   | Slopes |      3.085 (host) / 3.076 (cuda) | 0.008 | **−1.9%** |
+| gpu F32 med   | PPM    |      3.252 (host) / 3.244 (cuda) | 0.006 | **−1.5%** |
+| gpu F32 large | Upwind |     46.103 (host) / 46.092 (cuda) | 0.084 | −0.2% |
+| gpu F32 large | Slopes |     46.958 (host) / 46.948 (cuda) | 0.114 | −0.3% |
+| gpu F32 large | PPM    |     49.333 (host) / 49.322 (cuda) | 0.351 | +0.1% |
+
+Δ host − cuda stays ~10 μs, confirming the plan-13 finding: sync
+overhead is tiny. The small GPU-medium improvement (−1.5 to −3.0%)
+comes from the unified CFL pilot staying on device (no GPU→CPU transfer
+on the structured path) + dropping the 3-check `getproperty` shim per
+workspace access in LinRood / tests. At large, Δ is within MAD noise.
+CPU F64 numbers remain noisy from shared-host load; F32 is clean and
+within ±5% of baseline as planned.
+
+## Retrospective
+
+### What worked
+
+- **Measurement-first in Commit 0.** Adding `--events` and MAD stats to
+  the benchmark *before* any code change falsified the plan's core
+  thesis within 5 minutes of reading the first numbers. The premise-
+  check pattern is load-bearing.
+- **Scope discipline.** Once the sync thesis fell, the other refactors
+  were independently motivated and shipped without drama. Three
+  deliverables out of four is still a clean plan.
+- **Sign-bug catch in Commit 1.** The premise test failing on Z direction
+  surfaced a real pre-existing bug in the GPU static CFL path (inflow
+  vs outflow). Commit 2 fixed it while unifying — a side-effect win.
+- **Worktree pattern was unnecessary.** At Commit 0 I was at the
+  baseline HEAD, so a worktree was overkill. The pattern still applies
+  for mid-commit before/after comparisons; here it didn't save work.
+
+### What didn't
+
+- **The original plan-13 thesis.** Plan 13 §1.2 extrapolated sync cost
+  from a bandwidth ceiling by subtraction. Direct measurement showed
+  the subtrahend was wrong. Any refactor promising a perf win from
+  removing an operation needs direct measurement of that operation's
+  cost, not inference.
+- **n_sub semantics changed subtly in Commit 2.** Two existing tests
+  expected the evolving-mass pilot's n_sub (which can exceed the static
+  estimate by 1 in transient-mass scenarios). Updated to assert the
+  physical invariants (positivity + mass conservation) that are the
+  real contract. No user-visible behavior change in production runs —
+  Δn_sub ≤1 in pathological flows, cfl_limit safety margin preserved.
+
+### Deferred for future plans
+
+- `cfl_scratch_m` / `cfl_scratch_rm` fields in AdvectionWorkspace are
+  now dead (only the evolving-mass pilot used them). Removable in a
+  follow-up.
+- LinRood panel-loop sync (`LinRood.jl:709`) may be redundant post-
+  ping-pong but was kept per user-tightened scope rules.
+- `cluster_sizes::V1` in workspace is still used by legacy
+  UpwindAdvection/RussellLernerAdvection kernels. When plan 12 removes
+  those, the field goes too.
+
+### Final plan-13 impact summary
+
+- `StrangSplitting.jl`: net ≈ −430 lines (~47% of original).
+- File deleted: `MassCFLPilot.jl` (76 lines).
+- One CFL algorithm across CPU/GPU, bit-identical decisions.
+- One pre-existing sign bug fixed (GPU static CFL summed inflow, not outflow).
+- Rename `rm_buf → rm_A` complete; no old-name matches in advection
+  workspace scope.
+- Plan-13 finding ("sync is not the GPU bottleneck at these problem
+  sizes") captured in [CLAUDE.md Performance tips](../../CLAUDE.md) so
+  future plans start from measurement-based reality.
 
 ## Commit log
-- Commit 0: NOTES.md + baseline (77 pre-existing test failures captured,
-  same as plan-11 baseline) + bench extension (--events, MAD, tighter
-  n_steps) + CPU & GPU baselines captured. Premise check of
-  sync-removal thesis: FAILED (sync = ~12 μs, not 2-3 ms). Plan
-  rescoped in approved plan file.
+
+- Commit 0 (`3bc06ea`): NOTES.md + baseline tests + bench extension +
+  CPU/GPU baselines. Sync thesis falsified by CUDA-event measurement.
+- Commit 1 (`fdcec0b`): CFL static-vs-evolving premise-check test.
+  Surfaced pre-existing inflow-vs-outflow sign bug in passing.
+- Commit 2 (`9f894c1`): unified CFL pilot (single static algorithm,
+  fixed sign bug); deleted MassCFLPilot.jl. Net −469 lines.
+- Commit 3′ (`bb1540c`): sync-removal investigation report
+  (no code changes).
+- Commit 4 (`12560be`): dropped getproperty shim, renamed
+  rm_buf/m_buf/rm_4d_buf → rm_A/m_A/rm_4d_A at all call sites.
+- Commit 5: docs (CLAUDE.md, docstring, retrospective) + final bench
+  artifacts.

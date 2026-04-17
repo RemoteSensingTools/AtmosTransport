@@ -31,3 +31,9 @@ _(populate as execution proceeds)_
 ## Commit log
 
 - **Commit 0**: plan 12 NOTES.md + baseline capture.
+- **Commit 1** (empty): premise check. Ran
+  `test/test_advection_kernels.jl`. All equivalence testsets pass
+  with `rm_ulp=0.0 m_ulp=0.0` across {F32,F64}×{MonotoneLimiter,
+  NoLimiter} for RussellLernerAdvection vs SlopesScheme, and the
+  UpwindAdvection-vs-UpwindScheme `==` bit-identical assertions
+  pass. Premise for plan 12 holds; proceeding to migration.

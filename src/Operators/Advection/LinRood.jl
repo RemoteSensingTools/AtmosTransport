@@ -68,10 +68,10 @@ function apply_divergence_damping_cs!(rm_panels, m_panels,
     for p in 1:6
         backend = get_backend(rm_panels[p])
         k! = _divergence_damping_cs_kernel!(backend, 256)
-        k!(ws.rm_buf, rm_panels[p], m_panels[p], FT(damp_coeff), Hp;
+        k!(ws.rm_A, rm_panels[p], m_panels[p], FT(damp_coeff), Hp;
            ndrange=(Nc, Nc, Nz))
         synchronize(backend)
-        _copy_interior!(rm_panels[p], ws.rm_buf, Nc, Hp, Nz)
+        _copy_interior!(rm_panels[p], ws.rm_A, Nc, Hp, Nz)
     end
 
     return nothing
@@ -702,13 +702,13 @@ function fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
     for p in eachindex(ws_lr.fx_in)
         yq_face_k!(ws_lr.fy_out[p], ws_lr.q_buf[p], bm_panels[p], m_panels[p],
                    Hp, Nc, Val(ORD); ndrange=(Nc, Nc + 1, Nz))
-        update_k!(ws.rm_buf, ws.m_buf,
+        update_k!(ws.rm_A, ws.m_A,
                   rm_panels[p], m_panels[p], am_panels[p], bm_panels[p],
                   ws_lr.fx_in[p], ws_lr.fx_out[p], ws_lr.fy_in[p], ws_lr.fy_out[p],
                   Hp; ndrange=(Nc, Nc, Nz))
-        synchronize(backend)  # required: ws.rm_buf/m_buf reused across panels
-        _copy_interior!(rm_panels[p], ws.rm_buf, Nc, Hp, Nz)
-        _copy_interior!(m_panels[p], ws.m_buf, Nc, Hp, Nz)
+        synchronize(backend)  # required: ws.rm_A/m_A reused across panels
+        _copy_interior!(rm_panels[p], ws.rm_A, Nc, Hp, Nz)
+        _copy_interior!(m_panels[p], ws.m_A, Nc, Hp, Nz)
     end
 
     return nothing

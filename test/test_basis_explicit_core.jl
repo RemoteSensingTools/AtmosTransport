@@ -326,14 +326,14 @@ end
     model_host = Adapt.adapt(Array, model)
     @test model_host.state.air_mass isa Array{FT,3}
     @test model_host.fluxes.am isa Array{FT,3}
-    @test model_host.workspace.rm_buf isa Array{FT,3}
+    @test model_host.workspace.rm_A isa Array{FT,3}
     @test model_host.grid === model.grid
 
     if HAS_CUDA_FOR_ADAPT
         model_gpu = Adapt.adapt(CUDA.CuArray, model)
         @test model_gpu.state.air_mass isa CUDA.CuArray{FT,3}
         @test model_gpu.fluxes.am isa CUDA.CuArray{FT,3}
-        @test model_gpu.workspace.rm_buf isa CUDA.CuArray{FT,3}
+        @test model_gpu.workspace.rm_A isa CUDA.CuArray{FT,3}
         @test model_gpu.grid === model.grid
     end
 end

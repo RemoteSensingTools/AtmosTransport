@@ -165,22 +165,22 @@ The `_xface_tracer_flux` reconstruction reads neighbors up to `face_i ± 3` for 
 which stays within the halo-padded array when Hp is large enough. The periodic wrap
 in `_wrap_periodic` is a safety net that should never trigger with correct Hp.
 """
-function _sweep_x_panel!(rm, m, am, scheme::AbstractAdvectionScheme, rm_buf, m_buf, Nc, Hp, Nz;
+function _sweep_x_panel!(rm, m, am, scheme::AbstractAdvectionScheme, rm_A, m_A, Nc, Hp, Nz;
                          flux_scale = one(eltype(m)))
     _validate_halo_for_scheme(scheme, Hp)
     FT = eltype(m)
     backend = get_backend(rm)
     kernel! = _cs_xsweep_kernel!(backend, 256)
-    kernel!(rm_buf, rm, m_buf, m, am, scheme, Int32(Nc), Int32(Hp), FT(flux_scale);
+    kernel!(rm_A, rm, m_A, m, am, scheme, Int32(Nc), Int32(Hp), FT(flux_scale);
             ndrange=(Nc, Nc, Nz))
     synchronize(backend)
-    _copy_interior!(rm, rm_buf, Nc, Hp, Nz)
-    _copy_interior!(m, m_buf, Nc, Hp, Nz)
+    _copy_interior!(rm, rm_A, Nc, Hp, Nz)
+    _copy_interior!(m, m_A, Nc, Hp, Nz)
     return nothing
 end
 
 """Gamma-clamped upwind X-sweep: positivity-safe even at CFL > 1."""
-function _sweep_x_panel!(rm, m, am, scheme::UpwindScheme, rm_buf, m_buf, Nc, Hp, Nz;
+function _sweep_x_panel!(rm, m, am, scheme::UpwindScheme, rm_A, m_A, Nc, Hp, Nz;
                          flux_scale = one(eltype(m)))
     FT = eltype(m)
     @inbounds for k in 1:Nz, jj in 1:Nc, ii in 1:Nc
@@ -204,30 +204,30 @@ function _sweep_x_panel!(rm, m, am, scheme::UpwindScheme, rm_buf, m_buf, Nc, Hp,
             _gamma_clamped_x_flux(am_r, mi, ri) :
             _gamma_clamped_x_flux(am_r, mip1, rip1)
 
-        rm_buf[i, j, k] = ri + fl - fr
-        m_buf[i, j, k]  = mi + am_l - am_r
+        rm_A[i, j, k] = ri + fl - fr
+        m_A[i, j, k]  = mi + am_l - am_r
     end
-    _copy_interior!(rm, rm_buf, Nc, Hp, Nz)
-    _copy_interior!(m, m_buf, Nc, Hp, Nz)
+    _copy_interior!(rm, rm_A, Nc, Hp, Nz)
+    _copy_interior!(m, m_A, Nc, Hp, Nz)
     return nothing
 end
 
 """Higher-order Y-sweep via KA kernel dispatching on scheme (Slopes, PPM, etc.)."""
-function _sweep_y_panel!(rm, m, bm, scheme::AbstractAdvectionScheme, rm_buf, m_buf, Nc, Hp, Nz;
+function _sweep_y_panel!(rm, m, bm, scheme::AbstractAdvectionScheme, rm_A, m_A, Nc, Hp, Nz;
                          flux_scale = one(eltype(m)))
     _validate_halo_for_scheme(scheme, Hp)
     FT = eltype(m)
     backend = get_backend(rm)
     kernel! = _cs_ysweep_kernel!(backend, 256)
-    kernel!(rm_buf, rm, m_buf, m, bm, scheme, Int32(Nc), Int32(Hp), FT(flux_scale);
+    kernel!(rm_A, rm, m_A, m, bm, scheme, Int32(Nc), Int32(Hp), FT(flux_scale);
             ndrange=(Nc, Nc, Nz))
     synchronize(backend)
-    _copy_interior!(rm, rm_buf, Nc, Hp, Nz)
-    _copy_interior!(m, m_buf, Nc, Hp, Nz)
+    _copy_interior!(rm, rm_A, Nc, Hp, Nz)
+    _copy_interior!(m, m_A, Nc, Hp, Nz)
     return nothing
 end
 
-function _sweep_y_panel!(rm, m, bm, scheme::UpwindScheme, rm_buf, m_buf, Nc, Hp, Nz;
+function _sweep_y_panel!(rm, m, bm, scheme::UpwindScheme, rm_A, m_A, Nc, Hp, Nz;
                          flux_scale = one(eltype(m)))
     FT = eltype(m)
     @inbounds for k in 1:Nz, jj in 1:Nc, ii in 1:Nc
@@ -249,11 +249,11 @@ function _sweep_y_panel!(rm, m, bm, scheme::UpwindScheme, rm_buf, m_buf, Nc, Hp,
             _gamma_clamped_x_flux(bm_n, mi, ri) :
             _gamma_clamped_x_flux(bm_n, mjp1, rjp1)
 
-        rm_buf[i, j, k] = ri + fs - fn
-        m_buf[i, j, k]  = mi + bm_s - bm_n
+        rm_A[i, j, k] = ri + fs - fn
+        m_A[i, j, k]  = mi + bm_s - bm_n
     end
-    _copy_interior!(rm, rm_buf, Nc, Hp, Nz)
-    _copy_interior!(m, m_buf, Nc, Hp, Nz)
+    _copy_interior!(rm, rm_A, Nc, Hp, Nz)
+    _copy_interior!(m, m_A, Nc, Hp, Nz)
     return nothing
 end
 
@@ -262,21 +262,21 @@ end
 Z boundary: `_zface_tracer_flux` handles k=1 (TOA) and k=Nz+1 (surface) boundaries
 by falling back to upwind at the domain edges.
 """
-function _sweep_z_panel!(rm, m, cm, scheme::AbstractAdvectionScheme, rm_buf, m_buf, Nc, Hp, Nz;
+function _sweep_z_panel!(rm, m, cm, scheme::AbstractAdvectionScheme, rm_A, m_A, Nc, Hp, Nz;
                          flux_scale = one(eltype(m)))
     # Z-direction does not need halo validation (vertical boundaries are closed, not halo-exchanged)
     FT = eltype(m)
     backend = get_backend(rm)
     kernel! = _cs_zsweep_kernel!(backend, 256)
-    kernel!(rm_buf, rm, m_buf, m, cm, scheme, Int32(Nz), Int32(Hp), FT(flux_scale);
+    kernel!(rm_A, rm, m_A, m, cm, scheme, Int32(Nz), Int32(Hp), FT(flux_scale);
             ndrange=(Nc, Nc, Nz))
     synchronize(backend)
-    _copy_interior!(rm, rm_buf, Nc, Hp, Nz)
-    _copy_interior!(m, m_buf, Nc, Hp, Nz)
+    _copy_interior!(rm, rm_A, Nc, Hp, Nz)
+    _copy_interior!(m, m_A, Nc, Hp, Nz)
     return nothing
 end
 
-function _sweep_z_panel!(rm, m, cm, scheme::UpwindScheme, rm_buf, m_buf, Nc, Hp, Nz;
+function _sweep_z_panel!(rm, m, cm, scheme::UpwindScheme, rm_A, m_A, Nc, Hp, Nz;
                          flux_scale = one(eltype(m)))
     FT = eltype(m)
     @inbounds for k in 1:Nz, jj in 1:Nc, ii in 1:Nc
@@ -309,11 +309,11 @@ function _sweep_z_panel!(rm, m, cm, scheme::UpwindScheme, rm_buf, m_buf, Nc, Hp,
             zero(FT)
         end
 
-        rm_buf[i, j, k] = ri + ft - fb
-        m_buf[i, j, k]  = mi + cm_t - cm_b
+        rm_A[i, j, k] = ri + ft - fb
+        m_A[i, j, k]  = mi + cm_t - cm_b
     end
-    _copy_interior!(rm, rm_buf, Nc, Hp, Nz)
-    _copy_interior!(m, m_buf, Nc, Hp, Nz)
+    _copy_interior!(rm, rm_A, Nc, Hp, Nz)
+    _copy_interior!(m, m_A, Nc, Hp, Nz)
     return nothing
 end
 
@@ -335,17 +335,17 @@ Pre-allocated double buffers for cubed-sphere panel advection.
 One workspace is shared across all 6 panels (sequential panel loop).
 """
 struct CSAdvectionWorkspace{FT, A <: AbstractArray{FT, 3}}
-    rm_buf :: A
-    m_buf  :: A
+    rm_A :: A
+    m_A  :: A
 end
 
 function CSAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
                               FT::Type{<:AbstractFloat} = Float64,
                               array_type::Type{<:AbstractArray} = Array)
     N = mesh.Nc + 2 * mesh.Hp
-    rm_buf = array_type(zeros(FT, N, N, Nz))
-    m_buf  = array_type(zeros(FT, N, N, Nz))
-    return CSAdvectionWorkspace{FT, typeof(rm_buf)}(rm_buf, m_buf)
+    rm_A = array_type(zeros(FT, N, N, Nz))
+    m_A  = array_type(zeros(FT, N, N, Nz))
+    return CSAdvectionWorkspace{FT, typeof(rm_A)}(rm_A, m_A)
 end
 
 # =========================================================================
@@ -457,7 +457,7 @@ function strang_split_cs!(panels_rm::NTuple{6},
                           cfl_limit::Real = 0.95)
     Nc, Hp = mesh.Nc, mesh.Hp
     Nz = size(panels_rm[1], 3)
-    rm_buf, m_buf = workspace.rm_buf, workspace.m_buf
+    rm_A, m_A = workspace.rm_A, workspace.m_A
     FT = eltype(panels_m[1])
     fs = convert(FT, flux_scale)
     cfl_ft = convert(FT, cfl_limit)
@@ -478,7 +478,7 @@ function strang_split_cs!(panels_rm::NTuple{6},
     for _ in 1:n_x
         for p in 1:6
             _sweep_x_panel!(panels_rm[p], panels_m[p], panels_am[p],
-                             scheme, rm_buf, m_buf, Nc, Hp, Nz; flux_scale=fs_x)
+                             scheme, rm_A, m_A, Nc, Hp, Nz; flux_scale=fs_x)
         end
         fill_panel_halos!(panels_rm, mesh; dir=1)
         fill_panel_halos!(panels_m, mesh; dir=1)
@@ -488,7 +488,7 @@ function strang_split_cs!(panels_rm::NTuple{6},
     for _ in 1:n_y
         for p in 1:6
             _sweep_y_panel!(panels_rm[p], panels_m[p], panels_bm[p],
-                             scheme, rm_buf, m_buf, Nc, Hp, Nz; flux_scale=fs_y)
+                             scheme, rm_A, m_A, Nc, Hp, Nz; flux_scale=fs_y)
         end
         fill_panel_halos!(panels_rm, mesh; dir=2)
         fill_panel_halos!(panels_m, mesh; dir=2)
@@ -498,13 +498,13 @@ function strang_split_cs!(panels_rm::NTuple{6},
     for _ in 1:n_z
         for p in 1:6
             _sweep_z_panel!(panels_rm[p], panels_m[p], panels_cm[p],
-                             scheme, rm_buf, m_buf, Nc, Hp, Nz; flux_scale=fs_z)
+                             scheme, rm_A, m_A, Nc, Hp, Nz; flux_scale=fs_z)
         end
     end
     for _ in 1:n_z
         for p in 1:6
             _sweep_z_panel!(panels_rm[p], panels_m[p], panels_cm[p],
-                             scheme, rm_buf, m_buf, Nc, Hp, Nz; flux_scale=fs_z)
+                             scheme, rm_A, m_A, Nc, Hp, Nz; flux_scale=fs_z)
         end
     end
 
@@ -514,7 +514,7 @@ function strang_split_cs!(panels_rm::NTuple{6},
     for _ in 1:n_y
         for p in 1:6
             _sweep_y_panel!(panels_rm[p], panels_m[p], panels_bm[p],
-                             scheme, rm_buf, m_buf, Nc, Hp, Nz; flux_scale=fs_y)
+                             scheme, rm_A, m_A, Nc, Hp, Nz; flux_scale=fs_y)
         end
         fill_panel_halos!(panels_rm, mesh; dir=2)
         fill_panel_halos!(panels_m, mesh; dir=2)
@@ -526,7 +526,7 @@ function strang_split_cs!(panels_rm::NTuple{6},
     for _ in 1:n_x
         for p in 1:6
             _sweep_x_panel!(panels_rm[p], panels_m[p], panels_am[p],
-                             scheme, rm_buf, m_buf, Nc, Hp, Nz; flux_scale=fs_x)
+                             scheme, rm_A, m_A, Nc, Hp, Nz; flux_scale=fs_x)
         end
         fill_panel_halos!(panels_rm, mesh; dir=1)
         fill_panel_halos!(panels_m, mesh; dir=1)
@@ -550,7 +550,7 @@ function _sweep_z!(rm_panels, m_panels, cm_panels,
     Nz = size(rm_panels[1], 3)
     for p in 1:6
         _sweep_z_panel!(rm_panels[p], m_panels[p], cm_panels[p],
-                         UpwindScheme(), ws.rm_buf, ws.m_buf, Nc, Hp, Nz)
+                         UpwindScheme(), ws.rm_A, ws.m_A, Nc, Hp, Nz)
     end
     return nothing
 end

@@ -46,29 +46,19 @@ the double-buffer contract, and in-place updates would violate the
 stencil's read-before-write assumption and break mass conservation by
 ~10% per step.
 
-The legacy field names `rm_buf`, `m_buf`, `rm_4d_buf` are preserved as
-`getproperty` aliases for `rm_A`, `m_A`, `rm_4d_A` so that callers that
-reach into the workspace directly (LinRood, CubedSphereStrang, existing
-tests) continue to work unchanged.
-
 # Fields
 - `rm_A::A`, `rm_B::A` — 3D tracer-mass ping-pong pair (same size as `rm`)
 - `m_A::A`, `m_B::A`   — 3D air-mass ping-pong pair (same size as `m`)
 - `m_save::A` — backup of `m` for the per-tracer multi-tracer protocol
-- `cfl_scratch_m::A`, `cfl_scratch_rm::A` — private scratch for the
-  evolving-mass CPU CFL pilot. Dedicated so that the ping-pong sweeps'
-  live data in `rm_A/rm_B/m_A/m_B` is never clobbered by a pilot run.
+- `cfl_scratch_m::A`, `cfl_scratch_rm::A` — preserved scratch pair from
+  the pre-plan-13 evolving-mass CPU CFL pilot. No longer referenced by
+  the unified static pilot and candidate for removal in a follow-up.
 - `cluster_sizes::V1` — per-latitude clustering factors for reduced grids
   (`Int32[Ny]`; all ones for uniform grids; empty for face-indexed meshes)
 - `face_left::V1`, `face_right::V1` — face connectivity for face-indexed meshes
 - `rm_4d_A::A4`, `rm_4d_B::A4` — 4D tracer-mass ping-pong pair for the
   multi-tracer fused path (`(Nx, Ny, Nz, Nt)`). Both are allocated to
   size 0×0×0×0 when `n_tracers == 0`.
-
-# Legacy aliases (via `getproperty`)
-- `ws.rm_buf`    ≡ `ws.rm_A`
-- `ws.m_buf`     ≡ `ws.m_A`
-- `ws.rm_4d_buf` ≡ `ws.rm_4d_A`
 
 # Constructors
 
@@ -95,22 +85,6 @@ struct AdvectionWorkspace{FT, A <: AbstractArray{FT}, V1 <: AbstractVector{Int32
     face_right     :: V1
     rm_4d_A        :: A4
     rm_4d_B        :: A4
-end
-
-# Backward-compat aliases: keep legacy field names working for callers
-# that reach directly into the workspace (LinRood, CubedSphereStrang,
-# existing tests). `rm_buf`/`m_buf`/`rm_4d_buf` all map to the A-pair,
-# which is the one the kernels write to FIRST at the start of every
-# ping-pong sweep cycle.
-@inline function Base.getproperty(ws::AdvectionWorkspace, name::Symbol)
-    name === :rm_buf     && return getfield(ws, :rm_A)
-    name === :m_buf      && return getfield(ws, :m_A)
-    name === :rm_4d_buf  && return getfield(ws, :rm_4d_A)
-    return getfield(ws, name)
-end
-
-@inline function Base.propertynames(ws::AdvectionWorkspace, private::Bool = false)
-    return (fieldnames(AdvectionWorkspace)..., :rm_buf, :m_buf, :rm_4d_buf)
 end
 
 function _face_connectivity_vectors(mesh::AbstractHorizontalMesh)
@@ -377,14 +351,14 @@ function _sweep_horizontal_face_gpu!(rm::AbstractArray{FT,2}, m::AbstractArray{F
     isempty(ws.face_left) &&
         throw(ArgumentError("face-indexed GPU sweep requires mesh connectivity in AdvectionWorkspace"))
     backend = get_backend(rm)
-    copyto!(ws.rm_buf, rm)
-    copyto!(ws.m_buf, m)
+    copyto!(ws.rm_A, rm)
+    copyto!(ws.m_A, m)
     kernel! = _horizontal_face_atomic_kernel!(backend, 256)
-    kernel!(ws.rm_buf, rm, ws.m_buf, m, horizontal_flux, ws.face_left, ws.face_right, scheme, flux_scale;
+    kernel!(ws.rm_A, rm, ws.m_A, m, horizontal_flux, ws.face_left, ws.face_right, scheme, flux_scale;
             ndrange=size(horizontal_flux))
     synchronize(backend)
-    copyto!(rm, ws.rm_buf)
-    copyto!(m, ws.m_buf)
+    copyto!(rm, ws.rm_A)
+    copyto!(m, ws.m_A)
     return nothing
 end
 
@@ -395,11 +369,11 @@ function _sweep_vertical_face_gpu!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,
                                    flux_scale::FT) where FT
     backend = get_backend(rm)
     kernel! = _vertical_face_kernel!(backend, 256)
-    kernel!(ws.rm_buf, rm, ws.m_buf, m, cm, scheme, flux_scale, Int32(size(m, 2));
+    kernel!(ws.rm_A, rm, ws.m_A, m, cm, scheme, flux_scale, Int32(size(m, 2));
             ndrange=size(m))
     synchronize(backend)
-    copyto!(rm, ws.rm_buf)
-    copyto!(m, ws.m_buf)
+    copyto!(rm, ws.rm_A)
+    copyto!(m, ws.m_A)
     return nothing
 end
 
@@ -450,9 +424,9 @@ function sweep_horizontal!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
                            scheme::UpwindScheme,
                            ws::AdvectionWorkspace{FT}) where FT
     if rm isa Array
-        _horizontal_face_tendency!(ws.rm_buf, rm, ws.m_buf, m, horizontal_flux, mesh, scheme, one(FT))
-        copyto!(rm, ws.rm_buf)
-        copyto!(m, ws.m_buf)
+        _horizontal_face_tendency!(ws.rm_A, rm, ws.m_A, m, horizontal_flux, mesh, scheme, one(FT))
+        copyto!(rm, ws.rm_A)
+        copyto!(m, ws.m_A)
     else
         _sweep_horizontal_face_gpu!(rm, m, horizontal_flux, scheme, ws, one(FT))
     end
@@ -466,9 +440,9 @@ function sweep_horizontal!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
                            ws::AdvectionWorkspace{FT},
                            flux_scale::FT) where FT
     if rm isa Array
-        _horizontal_face_tendency!(ws.rm_buf, rm, ws.m_buf, m, horizontal_flux, mesh, scheme, flux_scale)
-        copyto!(rm, ws.rm_buf)
-        copyto!(m, ws.m_buf)
+        _horizontal_face_tendency!(ws.rm_A, rm, ws.m_A, m, horizontal_flux, mesh, scheme, flux_scale)
+        copyto!(rm, ws.rm_A)
+        copyto!(m, ws.m_A)
     else
         _sweep_horizontal_face_gpu!(rm, m, horizontal_flux, scheme, ws, flux_scale)
     end
@@ -480,9 +454,9 @@ function sweep_vertical!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
                          scheme::UpwindScheme,
                          ws::AdvectionWorkspace{FT}) where FT
     if rm isa Array
-        _vertical_column_tendency!(ws.rm_buf, rm, ws.m_buf, m, cm, scheme, one(FT))
-        copyto!(rm, ws.rm_buf)
-        copyto!(m, ws.m_buf)
+        _vertical_column_tendency!(ws.rm_A, rm, ws.m_A, m, cm, scheme, one(FT))
+        copyto!(rm, ws.rm_A)
+        copyto!(m, ws.m_A)
     else
         _sweep_vertical_face_gpu!(rm, m, cm, scheme, ws, one(FT))
     end
@@ -495,9 +469,9 @@ function sweep_vertical!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
                          ws::AdvectionWorkspace{FT},
                          flux_scale::FT) where FT
     if rm isa Array
-        _vertical_column_tendency!(ws.rm_buf, rm, ws.m_buf, m, cm, scheme, flux_scale)
-        copyto!(rm, ws.rm_buf)
-        copyto!(m, ws.m_buf)
+        _vertical_column_tendency!(ws.rm_A, rm, ws.m_A, m, cm, scheme, flux_scale)
+        copyto!(rm, ws.rm_A)
+        copyto!(m, ws.m_A)
     else
         _sweep_vertical_face_gpu!(rm, m, cm, scheme, ws, flux_scale)
     end
@@ -717,9 +691,9 @@ for (scheme_type, h_args, v_args) in (
                                          mesh::AbstractHorizontalMesh,
                                          scheme::$scheme_type,
                                          ws::AdvectionWorkspace{FT}) where FT
-            _horizontal_face_tendency!(ws.rm_buf, rm, ws.m_buf, m, horizontal_flux, $(h_args...), one(FT))
-            copyto!(rm, ws.rm_buf)
-            copyto!(m, ws.m_buf)
+            _horizontal_face_tendency!(ws.rm_A, rm, ws.m_A, m, horizontal_flux, $(h_args...), one(FT))
+            copyto!(rm, ws.rm_A)
+            copyto!(m, ws.m_A)
             return nothing
         end
 
@@ -729,9 +703,9 @@ for (scheme_type, h_args, v_args) in (
                                          scheme::$scheme_type,
                                          ws::AdvectionWorkspace{FT},
                                          flux_scale::FT) where FT
-            _horizontal_face_tendency!(ws.rm_buf, rm, ws.m_buf, m, horizontal_flux, $(h_args...), flux_scale)
-            copyto!(rm, ws.rm_buf)
-            copyto!(m, ws.m_buf)
+            _horizontal_face_tendency!(ws.rm_A, rm, ws.m_A, m, horizontal_flux, $(h_args...), flux_scale)
+            copyto!(rm, ws.rm_A)
+            copyto!(m, ws.m_A)
             return nothing
         end
 
@@ -745,9 +719,9 @@ for (scheme_type, h_args, v_args) in (
                                        cm::AbstractArray{FT,2},
                                        scheme::$scheme_type,
                                        ws::AdvectionWorkspace{FT}) where FT
-            _vertical_column_tendency!(ws.rm_buf, rm, ws.m_buf, m, cm, $(v_args...), one(FT))
-            copyto!(rm, ws.rm_buf)
-            copyto!(m, ws.m_buf)
+            _vertical_column_tendency!(ws.rm_A, rm, ws.m_A, m, cm, $(v_args...), one(FT))
+            copyto!(rm, ws.rm_A)
+            copyto!(m, ws.m_A)
             return nothing
         end
 
@@ -756,9 +730,9 @@ for (scheme_type, h_args, v_args) in (
                                        scheme::$scheme_type,
                                        ws::AdvectionWorkspace{FT},
                                        flux_scale::FT) where FT
-            _vertical_column_tendency!(ws.rm_buf, rm, ws.m_buf, m, cm, $(v_args...), flux_scale)
-            copyto!(rm, ws.rm_buf)
-            copyto!(m, ws.m_buf)
+            _vertical_column_tendency!(ws.rm_A, rm, ws.m_A, m, cm, $(v_args...), flux_scale)
+            copyto!(rm, ws.rm_A)
+            copyto!(m, ws.m_A)
             return nothing
         end
     end

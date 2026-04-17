@@ -1551,30 +1551,38 @@ for (sweep_fn, kernel_fn, dim) in (
     (:sweep_z_mt!, :_zsweep_mt_kernel!, 3),
 )
     @eval begin
+        # Ping-pong entry point: writes (rm4d_out, m_out), reads (rm4d_in, m_in).
+        function $sweep_fn(rm4d_in::AbstractArray{FT,4},  rm4d_out::AbstractArray{FT,4},
+                           m_in::AbstractArray{FT,3},     m_out::AbstractArray{FT,3},
+                           flux::AbstractArray{FT,3},
+                           scheme::AbstractAdvectionScheme,
+                           ws::AdvectionWorkspace{FT},
+                           flux_scale::FT = one(FT)) where FT
+            backend = get_backend(m_in)
+            Nt = Int32(size(rm4d_in, 4))
+            kernel! = $kernel_fn(backend, 256)
+            kernel!(rm4d_out, rm4d_in, m_out, m_in, flux, scheme,
+                    Int32(size(m_in, $dim)), Nt, flux_scale;
+                    ndrange=size(m_in))
+            synchronize(backend)
+            return nothing
+        end
+
         """
-            $($sweep_fn)(rm_4d, m, flux, scheme, ws)
+            $($sweep_fn)(rm_4d, m, flux, scheme, ws[, flux_scale])
 
-        Multi-tracer directional sweep operating on a 4D tracer array
-        `rm_4d[Nx, Ny, Nz, Nt]`.  Launches a single kernel that processes
-        all tracers, sharing the mass update computation.
-
-        Uses `ws.rm_4d_buf` as the double buffer for the 4D tracer array
-        and `ws.m_buf` for the 3D mass array.
+        Backward-compat wrapper: write into workspace B buffers, then
+        copy back. New callers should use the 7-arg / 8-arg ping-pong
+        form instead.
         """
         function $sweep_fn(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
                            flux::AbstractArray{FT,3},
                            scheme::AbstractAdvectionScheme,
                            ws::AdvectionWorkspace{FT},
                            flux_scale::FT = one(FT)) where FT
-            backend = get_backend(m)
-            Nt = Int32(size(rm_4d, 4))
-            kernel! = $kernel_fn(backend, 256)
-            kernel!(ws.rm_4d_buf, rm_4d, ws.m_buf, m, flux, scheme,
-                    Int32(size(m, $dim)), Nt, flux_scale;
-                    ndrange=size(m))
-            synchronize(backend)
-            copyto!(rm_4d, ws.rm_4d_buf)
-            copyto!(m, ws.m_buf)
+            $sweep_fn(rm_4d, ws.rm_4d_B, m, ws.m_B, flux, scheme, ws, flux_scale)
+            copyto!(rm_4d, ws.rm_4d_B)
+            copyto!(m,     ws.m_B)
             return nothing
         end
     end
@@ -1620,12 +1628,35 @@ function strang_split_mt!(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
     fs_y = inv(FT(n_y))
     fs_z = inv(FT(n_z))
 
-    for _ in 1:n_x; sweep_x_mt!(rm_4d, m, am, scheme, ws, fs_x); end
-    for _ in 1:n_y; sweep_y_mt!(rm_4d, m, bm, scheme, ws, fs_y); end
-    for _ in 1:n_z; sweep_z_mt!(rm_4d, m, cm, scheme, ws, fs_z); end
-    for _ in 1:n_z; sweep_z_mt!(rm_4d, m, cm, scheme, ws, fs_z); end
-    for _ in 1:n_y; sweep_y_mt!(rm_4d, m, bm, scheme, ws, fs_y); end
-    for _ in 1:n_x; sweep_x_mt!(rm_4d, m, am, scheme, ws, fs_x); end
+    # Ping-pong state. (rm_cur, m_cur) starts as the caller's buffers;
+    # (rm_alt, m_alt) is the workspace B pair. Each kernel launch reads
+    # from cur and writes to alt; we then rebind cur ↔ alt so the next
+    # launch continues the chain with zero inter-sweep copies.
+    rm_cur, m_cur = rm_4d,       m
+    rm_alt, m_alt = ws.rm_4d_B,  ws.m_B
+
+    # Inline one palindrome direction at a time. The helper does the
+    # rebinding to avoid @eval-ing a parametric loop body.
+    @inline function _pass!(sweep_fn, rm_cur_, rm_alt_, m_cur_, m_alt_, flux, fs)
+        sweep_fn(rm_cur_, rm_alt_, m_cur_, m_alt_, flux, scheme, ws, fs)
+        return rm_alt_, rm_cur_, m_alt_, m_cur_
+    end
+
+    for _ in 1:n_x; rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_x_mt!, rm_cur, rm_alt, m_cur, m_alt, am, fs_x); end
+    for _ in 1:n_y; rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_y_mt!, rm_cur, rm_alt, m_cur, m_alt, bm, fs_y); end
+    for _ in 1:n_z; rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_z_mt!, rm_cur, rm_alt, m_cur, m_alt, cm, fs_z); end
+    for _ in 1:n_z; rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_z_mt!, rm_cur, rm_alt, m_cur, m_alt, cm, fs_z); end
+    for _ in 1:n_y; rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_y_mt!, rm_cur, rm_alt, m_cur, m_alt, bm, fs_y); end
+    for _ in 1:n_x; rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_x_mt!, rm_cur, rm_alt, m_cur, m_alt, am, fs_x); end
+
+    # If total parity wound up in the alternate (B) buffer, copy back.
+    # When (n_x + n_y + n_z + n_z + n_y + n_x) is even — the common case,
+    # e.g. all-ones — the final result lands in the caller's arrays with
+    # zero copyto! calls.
+    if rm_cur !== rm_4d
+        copyto!(rm_4d, rm_cur)
+        copyto!(m,     m_cur)
+    end
     return nothing
 end
 

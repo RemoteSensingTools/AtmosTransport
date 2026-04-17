@@ -191,7 +191,7 @@ end
     dry_fluxes = AtmosTransport.StructuredFaceFluxState{AtmosTransport.DryMassFluxBasis}(
         am_v2, bm_v2, cm_v2)
     ws_v2 = AtmosTransport.AdvectionWorkspace(m_v2)
-    scheme_v2 = AtmosTransport.RussellLernerAdvection(use_limiter=true)
+    scheme_v2 = AtmosTransport.SlopesScheme(AtmosTransport.MonotoneLimiter())
     AtmosTransport.strang_split!(cell_state, dry_fluxes, grid_v2, scheme_v2;
                                     workspace=ws_v2)
 

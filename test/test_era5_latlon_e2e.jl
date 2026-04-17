@@ -335,7 +335,7 @@ end
         rm_init = cell_mass .* FT(400e-6)
         state = CellState(cell_mass; CO2=copy(rm_init))
 
-        scheme = RussellLernerAdvection(use_limiter=true)
+        scheme = SlopesScheme(MonotoneLimiter())
         ws = AdvectionWorkspace(cell_mass)
 
         m_total_before = sum(state.air_dry_mass)
@@ -377,7 +377,7 @@ end
     cm = zeros(FT, Nx, Ny, Nz+1)
 
     moist = StructuredFaceFluxState{MoistMassFluxBasis}(am, bm, cm)
-    scheme = RussellLernerAdvection(use_limiter=true)
+    scheme = SlopesScheme(MonotoneLimiter())
     ws = AdvectionWorkspace(m)
 
     @test_throws MethodError strang_split!(state, moist, grid, scheme; workspace=ws)

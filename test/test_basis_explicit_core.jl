@@ -28,9 +28,9 @@ end
 end
 
 @testset "Basis-explicit core types" begin
-    @test UpwindAdvection <: AbstractConstantReconstruction
-    @test RussellLernerAdvection <: AbstractLinearReconstruction
-    @test PPMAdvection <: AbstractQuadraticReconstruction
+    @test UpwindScheme <: AbstractConstantScheme
+    @test SlopesScheme <: AbstractLinearScheme
+    @test PPMScheme <: AbstractQuadraticScheme
     m = ones(Float64, 4, 3, 2)
     state_dry = @inferred CellState(DryBasis, m; CO2=copy(m) .* 400e-6)
     state_moist = @inferred CellState(MoistBasis, copy(m); CO2=copy(m) .* 400e-6)
@@ -49,7 +49,7 @@ end
 
     ws = AdvectionWorkspace(state_dry.air_mass)
 
-    @test_throws MethodError apply!(state_dry, flux_moist, grid, FirstOrderUpwindAdvection(), 1800.0; workspace=ws)
+    @test_throws MethodError apply!(state_dry, flux_moist, grid, UpwindScheme(), 1800.0; workspace=ws)
 end
 
 @testset "Standalone runtime smoke test" begin
@@ -127,7 +127,7 @@ end
     rm0 = copy(m0) .* FT(400e-6)
     am = zeros(FT, 5, 1, 1)
 
-    for scheme in (UpwindAdvection(), RussellLernerAdvection())
+    for scheme in (UpwindScheme(), SlopesScheme(MonotoneLimiter()))
         m = copy(m0)
         rm = copy(rm0)
         ws = AtmosTransport.Operators.Advection.AdvectionWorkspace(m; cluster_sizes_cpu=Int32[2])
@@ -149,7 +149,7 @@ end
     bm[1, 2, 1] = FT(0.1)
     ws = AtmosTransport.Operators.Advection.AdvectionWorkspace(m)
 
-    AtmosTransport.Operators.Advection.sweep_y!(rm, m, bm, RussellLernerAdvection(), ws)
+    AtmosTransport.Operators.Advection.sweep_y!(rm, m, bm, SlopesScheme(MonotoneLimiter()), ws)
 
     @test all(isfinite, m)
     @test all(isfinite, rm)
@@ -224,9 +224,6 @@ end
     @test_throws ArgumentError TransportModel(state, fluxes, grid, UpwindScheme())
     @test_throws ArgumentError apply!(state, fluxes, grid, UpwindScheme(), 1800.0; workspace=ws)
     @test_throws ArgumentError strang_split!(state, fluxes, grid, UpwindScheme(); workspace=ws)
-    @test_throws ArgumentError TransportModel(state, fluxes, grid, UpwindAdvection())
-    @test_throws ArgumentError apply!(state, fluxes, grid, UpwindAdvection(), 1800.0; workspace=ws)
-    @test_throws ArgumentError strang_split!(state, fluxes, grid, UpwindAdvection(); workspace=ws)
 end
 
 @testset "Face-connected reduced-Gaussian smoke test" begin
@@ -307,8 +304,6 @@ end
 
     @test_throws ArgumentError apply!(state, fluxes, grid, SlopesScheme(), FT(1800); workspace=ws)
     @test_throws ArgumentError apply!(state, fluxes, grid, PPMScheme(), FT(1800); workspace=ws)
-    @test_throws ArgumentError apply!(state, fluxes, grid, RussellLernerAdvection(), FT(1800); workspace=ws)
-    @test_throws ArgumentError apply!(state, fluxes, grid, PPMAdvection(), FT(1800); workspace=ws)
 end
 
 

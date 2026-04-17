@@ -133,7 +133,7 @@ end
         state = AtmosTransport.CellState(copy(m_dry); CO2=copy(tracer0))
         fluxes_scaled = AtmosTransport.StructuredFaceFluxState{AtmosTransport.DryMassFluxBasis}(am, bm, cm)
         ws = AtmosTransport.AdvectionWorkspace(m_dry)
-        scheme = AtmosTransport.RussellLernerAdvection(use_limiter=true)
+        scheme = AtmosTransport.SlopesScheme(AtmosTransport.MonotoneLimiter())
 
         total_m0 = sum(state.air_dry_mass)
         total_t0 = sum(state.tracers.CO2)

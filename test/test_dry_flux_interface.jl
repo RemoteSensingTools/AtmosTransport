@@ -33,7 +33,7 @@ include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
     @test isdefined(AtmosTransport, :AbstractStructuredFaceFluxState)
     @test isdefined(AtmosTransport, :StructuredFaceFluxState)
     @test isdefined(AtmosTransport, :FaceIndexedFluxState)
-    @test isdefined(AtmosTransport, :RussellLernerAdvection)
+    @test isdefined(AtmosTransport, :SlopesScheme)
     @test isdefined(AtmosTransport, :AtmosGrid)
     @test isdefined(AtmosTransport, :HybridSigmaPressure)
     @test isdefined(AtmosTransport, :PreprocessedERA5Driver)
@@ -131,7 +131,7 @@ MockStructuredFluxState{B}(am, bm, cm) where {B} =
     bm = zeros(FT, Nx, Ny+1, Nz)
     cm = zeros(FT, Nx, Ny, Nz+1)
 
-    scheme = RussellLernerAdvection(use_limiter=true)
+    scheme = SlopesScheme(MonotoneLimiter())
     ws = AdvectionWorkspace(m)
 
     # Mock subtype → MethodError (not StructuredFaceFluxState at all)
@@ -403,7 +403,7 @@ end
     state = make_test_state(grid; χ=400e-6)
     fluxes = make_zero_fluxes(grid)
 
-    scheme = RussellLernerAdvection(use_limiter=true)
+    scheme = SlopesScheme(MonotoneLimiter())
     ws = AdvectionWorkspace(state.air_dry_mass)
 
     m_before = sum(state.air_dry_mass)
@@ -430,7 +430,7 @@ end
     state = make_test_state(grid; χ=400e-6)
     fluxes = make_simple_fluxes(grid)
 
-    scheme = RussellLernerAdvection(use_limiter=true)
+    scheme = SlopesScheme(MonotoneLimiter())
     ws = AdvectionWorkspace(state.air_dry_mass)
 
     m_before = sum(state.air_dry_mass)
@@ -545,7 +545,7 @@ end
     rm_v2 = copy(rm_init)
     state_v2 = CellState(m_v2; CO2=rm_v2)
     fluxes_v2 = StructuredFaceFluxState(copy(am), copy(bm), copy(cm))
-    scheme_v2 = RussellLernerAdvection(use_limiter=true)
+    scheme_v2 = SlopesScheme(MonotoneLimiter())
     ws_v2 = AdvectionWorkspace(m_v2)
 
     strang_split!(state_v2, fluxes_v2, grid_v2, scheme_v2; workspace=ws_v2)
@@ -626,7 +626,7 @@ end
     @test :CH4 in tracer_names(state)
 
     fluxes = make_simple_fluxes(grid)
-    scheme = RussellLernerAdvection(use_limiter=true)
+    scheme = SlopesScheme(MonotoneLimiter())
     ws = AdvectionWorkspace(m)
 
     m_before = sum(state.air_dry_mass)
@@ -673,7 +673,7 @@ end
     end
 
     state = CellState(copy(m_init); CO2 = m_init .* FT(400e-6))
-    scheme = RussellLernerAdvection(use_limiter=true)
+    scheme = SlopesScheme(MonotoneLimiter())
     ws = AdvectionWorkspace(state.air_dry_mass)
 
     m_total_0 = sum(state.air_dry_mass)

@@ -1,0 +1,90 @@
+[ Info: Running test_basis_explicit_core.jl
+ERROR: LoadError: Some tests did not pass: 6 passed, 2 failed, 0 errored, 0 broken.
+in expression starting at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_basis_explicit_core.jl:209
+in expression starting at /home/cfranken/code/gitHub/AtmosTransportModel/test/runtests.jl:27
+Test Summary:                  | Pass  Total  Time
+PlanetParameters and AtmosGrid |    6      6  0.5s
+Test Summary:             | Pass  Total  Time
+Basis-explicit core types |    8      8  0.7s
+Test Summary:                 | Pass  Total  Time
+Standalone runtime smoke test |    6      6  1.8s
+Test Summary:                              | Pass  Total  Time
+Structured x-direction evolving-mass pilot |    6      6  2.7s
+Test Summary:                                 | Pass  Total  Time
+Clustered x-sweeps accept Int32 cluster_sizes |    8      8  1.0s
+Test Summary:                                           | Pass  Total  Time
+RussellLerner y-sweep stays finite with zero-mass donor |    4      4  0.5s
+Test Summary:                                           | Pass  Total  Time
+Face-indexed horizontal subcycling preserves positivity |    4      4  1.0s
+Test Summary:                     | Pass  Total   Time
+GPU static CFL enforces max_n_sub |    1      1  14.6s
+Honest metadata-only CubedSphere API: Test Failed at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_basis_explicit_core.jl:211
+  Expression: cell_area(mesh, 1)
+    Expected: ArgumentError
+      Thrown: MethodError
+      MethodError: no method matching cell_area(::CubedSphereMesh{Float64, GnomonicPanelConvention}, ::Int64)
+      The function `cell_area` exists, but no method is defined for this combination of argument types.
+      
+      Closest candidates are:
+        cell_area(::CubedSphereMesh, ::Integer, !Matched::Integer)
+         @ Main.AtmosTransport ~/code/gitHub/AtmosTransportModel/src/Grids/CubedSphereMesh.jl:161
+        cell_area(!Matched::ReducedGaussianMesh{FT}, ::Integer) where FT
+         @ Main.AtmosTransport ~/code/gitHub/AtmosTransportModel/src/Grids/ReducedGaussianMesh.jl:260
+        cell_area(!Matched::LatLonMesh, ::Integer)
+         @ Main.AtmosTransport ~/code/gitHub/AtmosTransportModel/src/Grids/LatLonMesh.jl:174
+        ...
+      
+      Stacktrace:
+       [1] top-level scope
+         @ ~/code/gitHub/AtmosTransportModel/test/test_basis_explicit_core.jl:210
+       [2] macro expansion
+         @ ~/.julia/juliaup/julia-1.12.5+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1776 [inlined]
+       [3] macro expansion
+         @ ~/code/gitHub/AtmosTransportModel/test/test_basis_explicit_core.jl:211 [inlined]
+       [4] macro expansion
+         @ ~/.julia/juliaup/julia-1.12.5+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:774 [inlined]
+       [5] macro expansion
+         @ ~/code/gitHub/AtmosTransportModel/test/test_basis_explicit_core.jl:211 [inlined]
+
+Stacktrace:
+ [1] top-level scope
+   @ ~/code/gitHub/AtmosTransportModel/test/test_basis_explicit_core.jl:210
+ [2] macro expansion
+   @ ~/.julia/juliaup/julia-1.12.5+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1776 [inlined]
+ [3] macro expansion
+   @ ~/code/gitHub/AtmosTransportModel/test/test_basis_explicit_core.jl:211 [inlined]
+Honest metadata-only CubedSphere API: Test Failed at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_basis_explicit_core.jl:212
+  Expression: face_cells(mesh, 1)
+    Expected: ArgumentError
+      Thrown: MethodError
+      MethodError: no method matching face_cells(::CubedSphereMesh{Float64, GnomonicPanelConvention}, ::Int64)
+      The function `face_cells` exists, but no method is defined for this combination of argument types.
+      
+      Closest candidates are:
+        face_cells(!Matched::ReducedGaussianMesh, ::Integer)
+         @ Main.AtmosTransport ~/code/gitHub/AtmosTransportModel/src/Grids/ReducedGaussianMesh.jl:316
+        face_cells(!Matched::LatLonMesh, ::Integer)
+         @ Main.AtmosTransport ~/code/gitHub/AtmosTransportModel/src/Grids/LatLonMesh.jl:252
+      
+      Stacktrace:
+       [1] top-level scope
+         @ ~/code/gitHub/AtmosTransportModel/test/test_basis_explicit_core.jl:210
+       [2] macro expansion
+         @ ~/.julia/juliaup/julia-1.12.5+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1776 [inlined]
+       [3] macro expansion
+         @ ~/code/gitHub/AtmosTransportModel/test/test_basis_explicit_core.jl:212 [inlined]
+       [4] macro expansion
+         @ ~/.julia/juliaup/julia-1.12.5+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:774 [inlined]
+       [5] macro expansion
+         @ ~/code/gitHub/AtmosTransportModel/test/test_basis_explicit_core.jl:212 [inlined]
+
+Stacktrace:
+ [1] top-level scope
+   @ ~/code/gitHub/AtmosTransportModel/test/test_basis_explicit_core.jl:210
+ [2] macro expansion
+   @ ~/.julia/juliaup/julia-1.12.5+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1776 [inlined]
+ [3] macro expansion
+   @ ~/code/gitHub/AtmosTransportModel/test/test_basis_explicit_core.jl:212 [inlined]
+Test Summary:                        | Pass  Fail  Total  Time
+Honest metadata-only CubedSphere API |    6     2      8  3.7s
+RNG of the outermost testset: Random.Xoshiro(0x286d31a028fcc199, 0x526247475990db3f, 0x4703f91cc4813ec3, 0xf2790215d9e1e00d, 0x23f6f39f0162ad80)

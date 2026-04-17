@@ -1,0 +1,35 @@
+=== test_basis_explicit_core ===
+RNG of the outermost testset: Random.Xoshiro(0x8b041188b94ea417, 0x7ef9c0aea3b2b6d7, 0x64280e2d2d70f45f, 0x1d7c3efe85ebba70, 0xcb1f536c310da787)
+ERROR: LoadError: Some tests did not pass: 6 passed, 2 failed, 0 errored, 0 broken.
+in expression starting at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_basis_explicit_core.jl:209
+exit=0
+=== test_advection_kernels ===
+Multi-tracer kernel fusion |   84     84  8.7s
+
+✓ All advection kernel cross-backend/precision tests completed!
+exit=0
+=== test_structured_mesh_metadata ===
+RNG of the outermost testset: Random.Xoshiro(0xd52855cead2e457e, 0x33fca3ad5e9e2894, 0x15fbac930436b7ce, 0x62ac0b32383079c2, 0x91bcee15676daa8e)
+ERROR: LoadError: Some tests did not pass: 10 passed, 3 failed, 0 errored, 0 broken.
+in expression starting at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_structured_mesh_metadata.jl:28
+exit=0
+=== test_reduced_gaussian_mesh ===
+ReducedGaussianMesh wiring |    4      4  0.1s
+Test Summary:                | Pass  Total  Time
+ReducedGaussianMesh geometry |   22     22  0.7s
+exit=0
+=== test_driven_simulation ===
+DrivenSimulation applies bottom-layer surface sources |    4      4  1.0s
+Test Summary:                           | Pass  Total  Time
+DrivenSimulation window-forcing runtime |   50     50  2.0s
+exit=0
+=== test_cubed_sphere_advection ===
+LLPoissonWorkspace zero-allocation balance |    1      1  0.8s
+Test Summary:          | Pass  Total  Time
+CS advection — Float32 |    1      1  1.8s
+exit=0
+=== test_poisson_balance ===
+RNG of the outermost testset: Random.Xoshiro(0xc60d09e3967f74bf, 0xe5bb8d57951d09d5, 0x5ac4fe0ce2acfde1, 0xf2f7304855eaf312, 0xe1dafa251ca42d21)
+ERROR: LoadError: Some tests did not pass: 245 passed, 72 failed, 0 errored, 0 broken.
+in expression starting at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_poisson_balance.jl:116
+exit=0

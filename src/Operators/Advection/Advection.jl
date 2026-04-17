@@ -5,7 +5,7 @@ Advection operators for the basis-explicit transport architecture.
 
 Provides:
 
-**New hierarchy** (preferred):
+**Scheme hierarchy**:
 - `UpwindScheme <: AbstractConstantScheme` — first-order upwind via generic kernels
 - `SlopesScheme <: AbstractLinearScheme`   — van Leer slopes (limiter-dispatched)
 - `PPMScheme <: AbstractQuadraticScheme`   — structured-grid PPM (not yet an official real-data reference path)
@@ -15,9 +15,6 @@ Provides:
 - `TracerView` — zero-cost 3D slice adapter for 4D tracer arrays
 - Multi-tracer kernel shells fuse the N-tracer loop into GPU kernels,
   reducing launches from 6N to 6 per Strang split
-
-**Legacy types** (kept for backward compatibility during transition):
-- `UpwindAdvection`, `RussellLernerAdvection`, `PPMAdvection`
 
 **Infrastructure**:
 - `AdvectionWorkspace` + `strang_split!` — Strang splitting orchestrator
@@ -29,7 +26,7 @@ module Advection
 using Adapt
 using DocStringExtensions
 
-import ..AbstractAdvection, ..AbstractConstantReconstruction, ..AbstractLinearReconstruction, ..AbstractQuadraticReconstruction, ..AbstractOperator, ..apply!
+import ..AbstractOperator, ..apply!
 using ...State: CellState, AbstractStructuredFaceFluxState, AbstractFaceFluxState,
     StructuredFaceFluxState, AbstractUnstructuredFaceFluxState,
     DryMassFluxBasis, DryStructuredFluxState, AbstractMassBasis,
@@ -61,10 +58,6 @@ include("LinRood.jl")
 # Vertical remap (FV3-style conservative PPM, per-column)
 include("VerticalRemap.jl")
 
-# Legacy scheme files (FaceReconstruction.jl removed — dead code, see limiters.jl)
-include("Upwind.jl")
-include("RussellLerner.jl")
-include("PPM.jl")
 include("Divergence.jl")
 include("StrangSplitting.jl")
 

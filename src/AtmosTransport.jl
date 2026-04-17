@@ -152,14 +152,12 @@ export face_flux_x, face_flux_y, face_flux_z, face_flux
 export MetState, allocate_face_fluxes, allocate_tracers
 export mixing_ratio, total_mass, total_air_mass, tracer_names
 
-# Operators -- public transport API (legacy hierarchy)
-export AbstractAdvection, AbstractConstantReconstruction, AbstractLinearReconstruction, AbstractQuadraticReconstruction
-export UpwindAdvection, FirstOrderUpwindAdvection, RussellLernerAdvection, PPMAdvection
+# Operators -- public transport API
 export AdvectionWorkspace, strang_split!, strang_split_mt!, apply!
 export TracerView
 export diagnose_cm!
 
-# Operators -- new scheme hierarchy
+# Advection scheme hierarchy
 export AbstractAdvectionScheme
 export AbstractConstantScheme, AbstractLinearScheme, AbstractQuadraticScheme
 export AbstractLimiter, NoLimiter, MonotoneLimiter, PositivityLimiter

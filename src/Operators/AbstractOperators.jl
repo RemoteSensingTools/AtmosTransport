@@ -25,52 +25,6 @@ Root type for all physics operators in the transport model.
 abstract type AbstractOperator end
 
 """
-    AbstractAdvection <: AbstractOperator
-
-Advection operators consume matching-basis face mass fluxes and cell state.
-
-## Required method
-
-    apply!(state::CellState, fluxes::AbstractFaceFluxState,
-           grid::AtmosGrid, op::AbstractAdvection, dt; kwargs...)
-
-## Structured-grid specializations
-
-On structured meshes, the Strang-splitting orchestrator provides
-directional sweep functions (`sweep_x!`, `sweep_y!`, `sweep_z!`) that
-operate on raw arrays extracted from `AbstractStructuredFaceFluxState`.
-These are implementation details of the structured fast-path, not part
-of the universal operator contract.
-"""
-abstract type AbstractAdvection <: AbstractOperator end
-
-"""
-    AbstractConstantReconstruction <: AbstractAdvection
-
-Advection operators that reconstruct a piecewise-constant donor state during
-each sweep. These schemes do not carry prognostic subcell moments; any
-reconstruction data are diagnostic workspace.
-"""
-abstract type AbstractConstantReconstruction <: AbstractAdvection end
-
-"""
-    AbstractLinearReconstruction <: AbstractAdvection
-
-Advection operators that reconstruct a piecewise-linear donor state during
-each sweep using diagnostic slopes.
-"""
-abstract type AbstractLinearReconstruction <: AbstractAdvection end
-
-"""
-    AbstractQuadraticReconstruction <: AbstractAdvection
-
-Advection operators that reconstruct a piecewise-quadratic donor state during
-each sweep. This family covers higher-order parabolic reconstructions such as
-PPM-like and Prather-style schemes.
-"""
-abstract type AbstractQuadraticReconstruction <: AbstractAdvection end
-
-"""
     AbstractDiffusion <: AbstractOperator
 
 Vertical diffusion operators (implicit Thomas solver, PBL schemes).
@@ -100,8 +54,7 @@ abstract type AbstractSourceSink <: AbstractOperator end
 
 function apply! end
 
-export AbstractOperator, AbstractAdvection
-export AbstractConstantReconstruction, AbstractLinearReconstruction, AbstractQuadraticReconstruction
+export AbstractOperator
 export AbstractDiffusion
 export AbstractConvection, AbstractSourceSink
 export apply!

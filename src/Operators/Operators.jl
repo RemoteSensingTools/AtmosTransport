@@ -4,10 +4,10 @@
 Physics operators for the basis-explicit transport architecture.
 
 Provides:
-- Abstract operator types (`AbstractAdvection`, `AbstractDiffusion`, etc.)
-- New advection hierarchy: `AbstractConstantScheme`, `AbstractLinearScheme`,
-  `AbstractQuadraticScheme` with concrete `UpwindScheme`, `SlopesScheme`, and structured-grid `PPMScheme`
-- Legacy advection types: `UpwindAdvection`, `RussellLernerAdvection`, `PPMAdvection`
+- Abstract operator types (`AbstractOperator`, `AbstractDiffusion`, etc.)
+- Advection hierarchy: `AbstractAdvectionScheme` → `AbstractConstantScheme`,
+  `AbstractLinearScheme`, `AbstractQuadraticScheme` with concrete
+  `UpwindScheme`, `SlopesScheme`, and structured-grid `PPMScheme`
 - Strang splitting orchestrator: `strang_split!`, `apply!`
 - Vertical flux diagnosis: `diagnose_cm!`
 """
@@ -25,14 +25,11 @@ using .Advection
 include("Chemistry/Chemistry.jl")
 using .Chemistry
 
-# Re-export legacy advection types
-export AbstractConstantReconstruction, AbstractLinearReconstruction, AbstractQuadraticReconstruction
-export UpwindAdvection, FirstOrderUpwindAdvection, RussellLernerAdvection, PPMAdvection, ppm_order
 export AdvectionWorkspace, strang_split!, strang_split_mt!
 export TracerView
 export diagnose_cm!
 
-# Re-export new advection hierarchy
+# Advection scheme hierarchy
 export AbstractAdvectionScheme
 export AbstractConstantScheme, AbstractLinearScheme, AbstractQuadraticScheme
 export AbstractLimiter, NoLimiter, MonotoneLimiter, PositivityLimiter

@@ -675,7 +675,7 @@ end
 @inline function _sweep_horizontal_face_subcycled!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
                                                    horizontal_flux::AbstractArray{FT,2},
                                                    mesh::AbstractHorizontalMesh,
-                                                   scheme::Union{AbstractAdvection, AbstractAdvectionScheme},
+                                                   scheme::AbstractAdvectionScheme,
                                                    ws::AdvectionWorkspace{FT},
                                                    cfl_limit::FT) where FT
     n_sub = _horizontal_face_subcycling_pass_count(horizontal_flux, m, mesh, ws, cfl_limit)
@@ -692,7 +692,7 @@ end
 
 @inline function _sweep_vertical_face_subcycled!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
                                                  cm::AbstractArray{FT,2},
-                                                 scheme::Union{AbstractAdvection, AbstractAdvectionScheme},
+                                                 scheme::AbstractAdvectionScheme,
                                                  ws::AdvectionWorkspace{FT},
                                                  cfl_limit::FT) where FT
     n_sub = _vertical_face_subcycling_pass_count(cm, m, ws, cfl_limit)
@@ -763,7 +763,7 @@ end
 
 @inline function _sweep_x_subcycled!(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
                                      am::AbstractArray{FT,3},
-                                     scheme::Union{AbstractAdvection, AbstractAdvectionScheme},
+                                     scheme::AbstractAdvectionScheme,
                                      ws::AdvectionWorkspace{FT},
                                      cfl_limit::FT) where FT
     n_sub = _x_subcycling_pass_count(am, m, ws, cfl_limit)
@@ -780,7 +780,7 @@ end
 
 @inline function _sweep_y_subcycled!(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
                                      bm::AbstractArray{FT,3},
-                                     scheme::Union{AbstractAdvection, AbstractAdvectionScheme},
+                                     scheme::AbstractAdvectionScheme,
                                      ws::AdvectionWorkspace{FT},
                                      cfl_limit::FT) where FT
     n_sub = _y_subcycling_pass_count(bm, m, ws, cfl_limit)
@@ -797,7 +797,7 @@ end
 
 @inline function _sweep_z_subcycled!(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
                                      cm::AbstractArray{FT,3},
-                                     scheme::Union{AbstractAdvection, AbstractAdvectionScheme},
+                                     scheme::AbstractAdvectionScheme,
                                      ws::AdvectionWorkspace{FT},
                                      cfl_limit::FT) where FT
     n_sub = _z_subcycling_pass_count(cm, m, ws, cfl_limit)
@@ -823,7 +823,7 @@ end
 @inline function _sweep_x_pp_subcycled!(rm_in::AbstractArray{FT,3},  rm_out::AbstractArray{FT,3},
                                         m_in::AbstractArray{FT,3},   m_out::AbstractArray{FT,3},
                                         am::AbstractArray{FT,3},
-                                        scheme::Union{AbstractAdvection, AbstractAdvectionScheme},
+                                        scheme::AbstractAdvectionScheme,
                                         ws::AdvectionWorkspace{FT},
                                         cfl_limit::FT) where FT
     n_sub = _x_subcycling_pass_count(am, m_in, ws, cfl_limit)
@@ -845,7 +845,7 @@ end
 @inline function _sweep_y_pp_subcycled!(rm_in::AbstractArray{FT,3},  rm_out::AbstractArray{FT,3},
                                         m_in::AbstractArray{FT,3},   m_out::AbstractArray{FT,3},
                                         bm::AbstractArray{FT,3},
-                                        scheme::Union{AbstractAdvection, AbstractAdvectionScheme},
+                                        scheme::AbstractAdvectionScheme,
                                         ws::AdvectionWorkspace{FT},
                                         cfl_limit::FT) where FT
     n_sub = _y_subcycling_pass_count(bm, m_in, ws, cfl_limit)
@@ -867,7 +867,7 @@ end
 @inline function _sweep_z_pp_subcycled!(rm_in::AbstractArray{FT,3},  rm_out::AbstractArray{FT,3},
                                         m_in::AbstractArray{FT,3},   m_out::AbstractArray{FT,3},
                                         cm::AbstractArray{FT,3},
-                                        scheme::Union{AbstractAdvection, AbstractAdvectionScheme},
+                                        scheme::AbstractAdvectionScheme,
                                         ws::AdvectionWorkspace{FT},
                                         cfl_limit::FT) where FT
     n_sub = _z_subcycling_pass_count(cm, m_in, ws, cfl_limit)
@@ -932,12 +932,12 @@ This ensures each tracer sees the same initial air mass distribution.
 - `state::CellState` — cell state containing `air_mass` and `tracers`
 - `fluxes::StructuredFaceFluxState` — mass fluxes (am, bm, cm)
 - `grid::AtmosGrid{<:LatLonMesh}` — structured lat-lon grid
-- `scheme` — advection scheme (new `AbstractAdvectionScheme` or legacy `AbstractAdvection`)
+- `scheme` — advection scheme (`AbstractAdvectionScheme`)
 - `workspace::AdvectionWorkspace` — pre-allocated double buffers
 """
 function strang_split!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
                        grid::AtmosGrid{<:LatLonMesh},
-                       scheme::Union{AbstractAdvection, AbstractAdvectionScheme};
+                       scheme::AbstractAdvectionScheme;
                        workspace::AdvectionWorkspace,
                        cfl_limit::Real = one(eltype(state.air_mass))) where {B <: AbstractMassBasis}
     m = state.air_mass
@@ -1003,7 +1003,7 @@ end
 
 function strang_split!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
                        grid::AtmosGrid{<:CubedSphereMesh},
-                       scheme::Union{AbstractAdvection, AbstractAdvectionScheme};
+                       scheme::AbstractAdvectionScheme;
                        workspace::AdvectionWorkspace) where {B <: AbstractMassBasis}
     throw(ArgumentError("CubedSphereMesh remains metadata-only in src; structured advection is only supported on LatLonMesh until cubed-sphere geometry/connectivity are implemented"))
 end
@@ -1022,7 +1022,7 @@ for preparing `fluxes` so they already represent the intended substep forcing.
 """
 function apply!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
                 grid::AtmosGrid{<:LatLonMesh},
-                scheme::Union{AbstractAdvection, AbstractAdvectionScheme}, dt;
+                scheme::AbstractAdvectionScheme, dt;
                 workspace::AdvectionWorkspace,
                 cfl_limit::Real = one(eltype(state.air_mass))) where {B <: AbstractMassBasis}
     strang_split!(state, fluxes, grid, scheme; workspace=workspace, cfl_limit=cfl_limit)
@@ -1031,7 +1031,7 @@ end
 
 function apply!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
                 grid::AtmosGrid{<:CubedSphereMesh},
-                scheme::Union{AbstractAdvection, AbstractAdvectionScheme}, dt;
+                scheme::AbstractAdvectionScheme, dt;
                 workspace::AdvectionWorkspace) where {B <: AbstractMassBasis}
     throw(ArgumentError("CubedSphereMesh remains metadata-only in src; structured advection is only supported on LatLonMesh until cubed-sphere geometry/connectivity are implemented"))
 end

@@ -62,7 +62,6 @@ include("LinRood.jl")
 include("VerticalRemap.jl")
 
 # Legacy scheme files (FaceReconstruction.jl removed — dead code, see limiters.jl)
-include("MassCFLPilot.jl")
 include("Upwind.jl")
 include("RussellLerner.jl")
 include("PPM.jl")

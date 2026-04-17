@@ -85,7 +85,7 @@ end
     @test total_mass(sim_slopes.model.state, :CO2) ≈ rm0 atol=eps(FT) * rm0 * 10
 end
 
-@testset "Structured x-direction evolving-mass pilot" begin
+@testset "Structured x-direction static CFL pilot" begin
     FT = Float64
     Nx, Ny, Nz = 4, 1, 1
     m = ones(FT, Nx, Ny, Nz)
@@ -95,15 +95,17 @@ end
     cm = zeros(FT, Nx, Ny, Nz + 1)
 
     # Periodic inflow through face 1 / Nx+1 plus stronger outflow through face 2.
-    # Initial max CFL is 1.5, but evolving donor mass requires 3 substeps to keep
-    # every mini-pass below CFL < 1.
+    # Static outflow-based CFL: cell 1 loses max(am[2],0)=1.5 per step, m=1.0, so
+    # CFL=1.5 → n_sub = ceil(1.5/1.0) = 2. The pre-plan-13 evolving-mass pilot
+    # returned n_sub=3 because it flagged a post-first-pass transient CFL=1.0
+    # equality as a violation; the static pilot accepts CFL<=cfl_limit.
     am[1, 1, 1] = FT(1.0)
     am[2, 1, 1] = FT(1.5)
     am[Nx + 1, 1, 1] = FT(1.0)
 
     ws = AtmosTransport.Operators.Advection.AdvectionWorkspace(m)
     nsub = AtmosTransport.Operators.Advection._x_subcycling_pass_count(am, m, ws, FT(1))
-    @test nsub == 3
+    @test nsub == 2
 
     m0 = sum(m)
     rm0 = sum(rm)
@@ -170,15 +172,16 @@ end
     fluxes.cm .= zero(FT)
 
     # Cell 1 sees one strong outflow and one weaker inflow in the same sweep.
-    # The integrated step is physically admissible (net mass stays positive),
-    # but the raw outgoing ratio is > 1 and therefore requires subcycling.
+    # Static outflow-based CFL = 1.2 → n_sub = ceil(1.2/1.0) = 2. The
+    # pre-plan-13 evolving-mass pilot returned n_sub=3 because it flagged a
+    # post-first-pass transient CFL=1.0 equality as a violation.
     fluxes.horizontal_flux[1, 1] = FT(0.4)
     fluxes.horizontal_flux[2, 1] = FT(1.2)
 
     ws = AtmosTransport.Operators.Advection.AdvectionWorkspace(state.air_mass)
     nsub = AtmosTransport.Operators.Advection._horizontal_face_subcycling_pass_count(
         fluxes.horizontal_flux, state.air_mass, mesh, ws, FT(1))
-    @test nsub == 3
+    @test nsub == 2
 
     flux_scale = inv(FT(nsub))
     for _ in 1:nsub

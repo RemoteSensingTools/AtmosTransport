@@ -801,181 +801,40 @@ end
 
 function _vertical_face_outgoing_ratio(cm::AbstractArray{FT,2},
                                        m::AbstractArray{FT,2}) where FT
-    nc, Nz = size(m)
-    max_ratio = zero(FT)
-
-    @inbounds for k in 1:Nz
-        outgoing = max.(cm[:, k], zero(FT)) .+ max.(-cm[:, k + 1], zero(FT))
-        max_ratio = max(max_ratio, maximum(outgoing ./ max.(m[:, k], eps(FT))))
-    end
-
-    return max_ratio
+    # cm is (nc, Nz+1). `cm[:, k]` is the flux through the TOP face of cell
+    # (:, k) (positive = downward = inflow from above). `cm[:, k+1]` is the
+    # flux through the BOTTOM face (positive = downward = outflow to below).
+    # So per-cell OUTFLOW = upward through top (max(-cm[:,k], 0)) + downward
+    # through bottom (max(cm[:,k+1], 0)). Single broadcast over all (:, :)
+    # stays on device for GPU callers. Correction of the pre-plan-13 bug
+    # that summed inflow, not outflow (GPU and CPU saw CFL half the true
+    # value in flows where inflow ≠ outflow).
+    Nz = size(m, 2)
+    out = max.(.- @view(cm[:, 1:Nz]), zero(FT)) .+ max.(@view(cm[:, 2:Nz+1]), zero(FT))
+    return maximum(out ./ max.(m, eps(FT)))
 end
 
-function _horizontal_face_subcycling_pass_count_host(horizontal_flux::Array{FT,2},
-                                                     m::Array{FT,2},
-                                                     mesh::AbstractHorizontalMesh,
-                                                     cfl_limit::FT; max_n_sub::Int = 4096) where FT
-    nc, Nz = size(m)
-    mx = similar(m)
-    mx_next = similar(m)
-    outgoing = zeros(FT, nc)
-    n_sub = _subcycling_pass_count(_horizontal_face_outgoing_ratio(horizontal_flux, m, mesh), cfl_limit)
-
-    while true
-        copyto!(mx, m)
-        flux_scale = inv(FT(n_sub))
-        cfl_ok = true
-
-        for pass in 1:n_sub
-            copyto!(mx_next, mx)
-            @inbounds for k in 1:Nz
-                outgoing .= zero(FT)
-                for f in 1:nfaces(mesh)
-                    left, right = face_cells(mesh, f)
-                    if left > 0 && right > 0
-                        flux = flux_scale * horizontal_flux[f, k]
-                        if flux >= zero(FT)
-                            outgoing[left] += flux
-                        else
-                            outgoing[right] -= flux
-                        end
-                        mx_next[left,  k] -= flux
-                        mx_next[right, k] += flux
-                    end
-                end
-                for c in 1:nc
-                    if outgoing[c] >= cfl_limit * max(mx[c, k], eps(FT))
-                        cfl_ok = false
-                        break
-                    end
-                end
-                cfl_ok || break
-            end
-            cfl_ok || break
-
-            if pass != n_sub
-                mx, mx_next = mx_next, mx
-            end
-        end
-
-        cfl_ok && return n_sub
-        n_sub += 1
-        n_sub <= max_n_sub || throw(ArgumentError("face-indexed horizontal subcycling exceeded max_n_sub=$(max_n_sub)"))
-    end
-end
-
-function _vertical_face_subcycling_pass_count_host(cm::Array{FT,2},
-                                                   m::Array{FT,2},
-                                                   cfl_limit::FT; max_n_sub::Int = 4096) where FT
-    nc, Nz = size(m)
-    mx = similar(m)
-    mx_next = similar(m)
-    n_sub = _subcycling_pass_count(_vertical_face_outgoing_ratio(cm, m), cfl_limit)
-
-    while true
-        copyto!(mx, m)
-        flux_scale = inv(FT(n_sub))
-        cfl_ok = true
-
-        for pass in 1:n_sub
-            copyto!(mx_next, mx)
-            @inbounds for k in 1:Nz
-                for c in 1:nc
-                    flux_t = flux_scale * cm[c, k]
-                    flux_b = flux_scale * cm[c, k + 1]
-                    outgoing = max(flux_t, zero(FT)) + max(-flux_b, zero(FT))
-                    if outgoing >= cfl_limit * max(mx[c, k], eps(FT))
-                        cfl_ok = false
-                        break
-                    end
-                    mx_next[c, k] = mx[c, k] + flux_t - flux_b
-                end
-                cfl_ok || break
-            end
-            cfl_ok || break
-
-            if pass != n_sub
-                mx, mx_next = mx_next, mx
-            end
-        end
-
-        cfl_ok && return n_sub
-        n_sub += 1
-        n_sub <= max_n_sub || throw(ArgumentError("face-indexed vertical subcycling exceeded max_n_sub=$(max_n_sub)"))
-    end
-end
-
+# Face-indexed pilots — unified static algorithm (plan 13).
+#
+# The horizontal path requires mesh connectivity (face_cells) which lives on
+# CPU, so device arrays are materialized via Array(...) before the static
+# ratio is computed. For realistic problem sizes the transfer is ~1–10 MB and
+# happens once per sweep — far cheaper than the old evolving-mass iteration
+# that transferred on every pilot pass.
+#
+# The vertical path is a pure broadcast reduction — stays on device.
 function _horizontal_face_subcycling_pass_count(horizontal_flux::AbstractArray{FT,2},
                                                 m::AbstractArray{FT,2},
                                                 mesh::AbstractHorizontalMesh,
                                                 ws::AdvectionWorkspace{FT},
                                                 cfl_limit::FT; max_n_sub::Int = 4096) where FT
-    # Fast path: if cfl_limit is Inf or very large, subcycling is disabled —
-    # skip the pilot entirely (no GPU→CPU transfer, no computation).
     isinf(cfl_limit) && return 1
-    # GPU path: static CFL computed on CPU from small transferred arrays.
-    # The face-indexed outgoing-flux accumulation needs face connectivity
-    # (face_left/face_right) which requires scatter — not efficiently
-    # expressible as a GPU broadcast. Instead, we copy the small flux/mass
-    # arrays to CPU (~1 MB for N24, ~10 MB for N320), compute the exact
-    # static CFL using the mesh connectivity, and return n_sub. This is
-    # a single O(nf×Nz) pass — much cheaper than the old evolving-mass
-    # pilot which ran O(n_sub × nf × Nz) with GPU→CPU transfers at each
-    # pilot iteration.
-    if !(m isa Array)
-        static_cfl = _horizontal_face_outgoing_ratio(Array(horizontal_flux), Array(m), mesh)
-        n_sub = _subcycling_pass_count(static_cfl, cfl_limit)
-        n_sub <= max_n_sub || throw(ArgumentError("face-indexed horizontal subcycling exceeded max_n_sub=$(max_n_sub)"))
-        return n_sub
-    end
-    nc, Nz = size(m)
-    mx = ws.cfl_scratch_m
-    mx_next = ws.cfl_scratch_rm
-    outgoing = zeros(FT, nc)
-    n_sub = _subcycling_pass_count(_horizontal_face_outgoing_ratio(horizontal_flux, m, mesh), cfl_limit)
-
-    while true
-        copyto!(mx, m)
-        flux_scale = inv(FT(n_sub))
-        cfl_ok = true
-
-        for pass in 1:n_sub
-            copyto!(mx_next, mx)
-            @inbounds for k in 1:Nz
-                outgoing .= zero(FT)
-                for f in 1:nfaces(mesh)
-                    left, right = face_cells(mesh, f)
-                    if left > 0 && right > 0
-                        flux = flux_scale * horizontal_flux[f, k]
-                        if flux >= zero(FT)
-                            outgoing[left] += flux
-                        else
-                            outgoing[right] -= flux
-                        end
-                        mx_next[left,  k] -= flux
-                        mx_next[right, k] += flux
-                    end
-                end
-                for c in 1:nc
-                    if outgoing[c] >= cfl_limit * max(mx[c, k], eps(FT))
-                        cfl_ok = false
-                        break
-                    end
-                end
-                cfl_ok || break
-            end
-            cfl_ok || break
-
-            if pass != n_sub
-                mx, mx_next = mx_next, mx
-            end
-        end
-
-        cfl_ok && return n_sub
-        n_sub += 1
-        n_sub <= max_n_sub || throw(ArgumentError("face-indexed horizontal subcycling exceeded max_n_sub=$(max_n_sub)"))
-    end
+    static_cfl = m isa Array ?
+        _horizontal_face_outgoing_ratio(horizontal_flux, m, mesh) :
+        _horizontal_face_outgoing_ratio(Array(horizontal_flux), Array(m), mesh)
+    n_sub = _subcycling_pass_count(static_cfl, cfl_limit)
+    n_sub <= max_n_sub || throw(ArgumentError("face-indexed horizontal subcycling exceeded max_n_sub=$(max_n_sub)"))
+    return n_sub
 end
 
 function _vertical_face_subcycling_pass_count(cm::AbstractArray{FT,2},
@@ -983,52 +842,10 @@ function _vertical_face_subcycling_pass_count(cm::AbstractArray{FT,2},
                                               ws::AdvectionWorkspace{FT},
                                               cfl_limit::FT; max_n_sub::Int = 4096) where FT
     isinf(cfl_limit) && return 1
-    # GPU path: static CFL via broadcast reduction — no GPU→CPU transfer.
-    if !(m isa Array)
-        nc, Nz = size(m)
-        # cm is (nc, Nz+1): top face at k, bottom face at k+1
-        out = max.(@view(cm[:, 1:Nz]), zero(FT)) .+ max.(.- @view(cm[:, 2:Nz+1]), zero(FT))
-        static_cfl = maximum(out ./ max.(m, eps(FT)))
-        n_sub = _subcycling_pass_count(static_cfl, cfl_limit)
-        n_sub <= max_n_sub || throw(ArgumentError("face-indexed vertical subcycling exceeded max_n_sub=$(max_n_sub)"))
-        return n_sub
-    end
-    nc, Nz = size(m)
-    mx = ws.cfl_scratch_m
-    mx_next = ws.cfl_scratch_rm
-    n_sub = _subcycling_pass_count(_vertical_face_outgoing_ratio(cm, m), cfl_limit)
-
-    while true
-        copyto!(mx, m)
-        flux_scale = inv(FT(n_sub))
-        cfl_ok = true
-
-        for pass in 1:n_sub
-            copyto!(mx_next, mx)
-            @inbounds for k in 1:Nz
-                for c in 1:nc
-                    flux_t = flux_scale * cm[c, k]
-                    flux_b = flux_scale * cm[c, k + 1]
-                    outgoing = max(flux_t, zero(FT)) + max(-flux_b, zero(FT))
-                    if outgoing >= cfl_limit * max(mx[c, k], eps(FT))
-                        cfl_ok = false
-                        break
-                    end
-                    mx_next[c, k] = mx[c, k] + flux_t - flux_b
-                end
-                cfl_ok || break
-            end
-            cfl_ok || break
-
-            if pass != n_sub
-                mx, mx_next = mx_next, mx
-            end
-        end
-
-        cfl_ok && return n_sub
-        n_sub += 1
-        n_sub <= max_n_sub || throw(ArgumentError("face-indexed vertical subcycling exceeded max_n_sub=$(max_n_sub)"))
-    end
+    static_cfl = _vertical_face_outgoing_ratio(cm, m)
+    n_sub = _subcycling_pass_count(static_cfl, cfl_limit)
+    n_sub <= max_n_sub || throw(ArgumentError("face-indexed vertical subcycling exceeded max_n_sub=$(max_n_sub)"))
+    return n_sub
 end
 
 @inline function _sweep_horizontal_face_subcycled!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
@@ -1066,150 +883,58 @@ end
     return n_sub
 end
 
+# Unified CFL pilot — single static algorithm for CPU and GPU (plan 13).
+#
+# For each cell (i,j,k), CFL = total_outflow / cell_mass. Total outflow is
+# the sum of flux leaving the cell through its two faces in the active
+# direction; the maximum over all cells determines n_sub.
+#
+# For the structured x direction, face flux `am[face, j, k]` lives between
+# cells (face-1, j, k) and (face, j, k):
+#   positive am[i]   = rightward flow   → leaves cell i-1 through its right face
+#   negative am[i]   = leftward flow    → leaves cell i   through its left face
+# so outflow(cell i) = max(-am[i], 0) + max(am[i+1], 0). y and z are analogous
+# (positive cm = downward; cell k's outflow is upward through cm[:,:,k] and
+# downward through cm[:,:,k+1]).
+#
+# Plan 13 Commit 2 replaces the pre-existing dual-path (CPU evolving-mass,
+# GPU static-inflow) with one algorithm that (a) is backend-agnostic via
+# pure broadcast, (b) computes OUTFLOW correctly (the prior GPU path
+# summed inflow — a sign bug that under-estimated CFL on device).
 function _x_subcycling_pass_count(am::AbstractArray{FT,3}, m::AbstractArray{FT,3},
                                   ws::AdvectionWorkspace{FT},
                                   cfl_limit::FT; max_n_sub::Int = 4096) where FT
     isinf(cfl_limit) && return 1
-    # GPU path: use static CFL only (no evolving-mass pilot). The static CFL
-    # overestimates n_sub slightly but stays entirely on device via broadcast
-    # + maximum reduction — no GPU→CPU transfer.
-    if !(m isa Array)
-        Nx = size(m, 1)
-        out = max.(@view(am[1:Nx, :, :]), zero(FT)) .+ max.(.- @view(am[2:Nx+1, :, :]), zero(FT))
-        static_cfl = maximum(out ./ max.(m, eps(FT)))
-        n_sub = _subcycling_pass_count(static_cfl, cfl_limit)
-        n_sub <= max_n_sub || throw(ArgumentError("x-direction subcycling exceeded max_n_sub=$(max_n_sub)"))
-        return n_sub
-    end
-    Nx, Ny, Nz = size(m)
-    mx = ws.cfl_scratch_m
-    mx_next = ws.cfl_scratch_rm
-    n_sub = _subcycling_pass_count(max_cfl_x(am, m, ws.cluster_sizes), cfl_limit)
-
-    while true
-        copyto!(mx, m)
-        flux_scale = inv(FT(n_sub))
-        cfl_ok = true
-
-        for pass in 1:n_sub
-            @inbounds for k in 1:Nz, j in 1:Ny, face in 1:(Nx + 1)
-                flux = flux_scale * am[face, j, k]
-                donor = flux >= zero(FT) ? (face == 1 ? Nx : face - 1) : (face > Nx ? 1 : face)
-                if abs(flux) >= cfl_limit * max(mx[donor, j, k], eps(FT))
-                    cfl_ok = false
-                    break
-                end
-            end
-            cfl_ok || break
-
-            if pass != n_sub
-                @inbounds for k in 1:Nz, j in 1:Ny, i in 1:Nx
-                    mx_next[i, j, k] = mx[i, j, k] + flux_scale * am[i, j, k] - flux_scale * am[i + 1, j, k]
-                end
-                mx, mx_next = mx_next, mx
-            end
-        end
-
-        cfl_ok && return n_sub
-        n_sub += 1
-        n_sub <= max_n_sub || throw(ArgumentError("x-direction subcycling exceeded max_n_sub=$(max_n_sub)"))
-    end
+    Nx = size(m, 1)
+    out = max.(.- @view(am[1:Nx, :, :]), zero(FT)) .+ max.(@view(am[2:Nx+1, :, :]), zero(FT))
+    static_cfl = maximum(out ./ max.(m, eps(FT)))
+    n_sub = _subcycling_pass_count(static_cfl, cfl_limit)
+    n_sub <= max_n_sub || throw(ArgumentError("x-direction subcycling exceeded max_n_sub=$(max_n_sub)"))
+    return n_sub
 end
 
 function _y_subcycling_pass_count(bm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
                                   ws::AdvectionWorkspace{FT},
                                   cfl_limit::FT; max_n_sub::Int = 4096) where FT
     isinf(cfl_limit) && return 1
-    # GPU path: static CFL via broadcast + maximum reduction (stays on device).
-    if !(m isa Array)
-        Ny = size(m, 2)
-        out = max.(@view(bm[:, 1:Ny, :]), zero(FT)) .+ max.(.- @view(bm[:, 2:Ny+1, :]), zero(FT))
-        static_cfl = maximum(out ./ max.(m, eps(FT)))
-        n_sub = _subcycling_pass_count(static_cfl, cfl_limit)
-        n_sub <= max_n_sub || throw(ArgumentError("y-direction subcycling exceeded max_n_sub=$(max_n_sub)"))
-        return n_sub
-    end
-    Nx, Ny, Nz = size(m)
-    mx = ws.cfl_scratch_m
-    mx_next = ws.cfl_scratch_rm
-    n_sub = _subcycling_pass_count(max_cfl_y(bm, m), cfl_limit)
-
-    while true
-        copyto!(mx, m)
-        flux_scale = inv(FT(n_sub))
-        cfl_ok = true
-
-        for pass in 1:n_sub
-            @inbounds for k in 1:Nz, j in 1:(Ny + 1), i in 1:Nx
-                flux = flux_scale * bm[i, j, k]
-                donor = flux >= zero(FT) ? max(j - 1, 1) : min(j, Ny)
-                if abs(flux) >= cfl_limit * max(mx[i, donor, k], eps(FT))
-                    cfl_ok = false
-                    break
-                end
-            end
-            cfl_ok || break
-
-            if pass != n_sub
-                @inbounds for k in 1:Nz, j in 1:Ny, i in 1:Nx
-                    mx_next[i, j, k] = mx[i, j, k] + flux_scale * bm[i, j, k] - flux_scale * bm[i, j + 1, k]
-                end
-                mx, mx_next = mx_next, mx
-            end
-        end
-
-        cfl_ok && return n_sub
-        n_sub += 1
-        n_sub <= max_n_sub || throw(ArgumentError("y-direction subcycling exceeded max_n_sub=$(max_n_sub)"))
-    end
+    Ny = size(m, 2)
+    out = max.(.- @view(bm[:, 1:Ny, :]), zero(FT)) .+ max.(@view(bm[:, 2:Ny+1, :]), zero(FT))
+    static_cfl = maximum(out ./ max.(m, eps(FT)))
+    n_sub = _subcycling_pass_count(static_cfl, cfl_limit)
+    n_sub <= max_n_sub || throw(ArgumentError("y-direction subcycling exceeded max_n_sub=$(max_n_sub)"))
+    return n_sub
 end
 
 function _z_subcycling_pass_count(cm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
                                   ws::AdvectionWorkspace{FT},
                                   cfl_limit::FT; max_n_sub::Int = 4096) where FT
     isinf(cfl_limit) && return 1
-    # GPU path: static CFL via broadcast + maximum reduction (stays on device).
-    if !(m isa Array)
-        Nz = size(m, 3)
-        out = max.(@view(cm[:, :, 1:Nz]), zero(FT)) .+ max.(.- @view(cm[:, :, 2:Nz+1]), zero(FT))
-        static_cfl = maximum(out ./ max.(m, eps(FT)))
-        n_sub = _subcycling_pass_count(static_cfl, cfl_limit)
-        n_sub <= max_n_sub || throw(ArgumentError("z-direction subcycling exceeded max_n_sub=$(max_n_sub)"))
-        return n_sub
-    end
-    Nx, Ny, Nz = size(m)
-    mx = ws.cfl_scratch_m
-    mx_next = ws.cfl_scratch_rm
-    n_sub = _subcycling_pass_count(max_cfl_z(cm, m), cfl_limit)
-
-    while true
-        copyto!(mx, m)
-        flux_scale = inv(FT(n_sub))
-        cfl_ok = true
-
-        for pass in 1:n_sub
-            @inbounds for k in 1:(Nz + 1), j in 1:Ny, i in 1:Nx
-                flux = flux_scale * cm[i, j, k]
-                donor = flux >= zero(FT) ? max(k - 1, 1) : min(k, Nz)
-                if abs(flux) >= cfl_limit * max(mx[i, j, donor], eps(FT))
-                    cfl_ok = false
-                    break
-                end
-            end
-            cfl_ok || break
-
-            if pass != n_sub
-                @inbounds for k in 1:Nz, j in 1:Ny, i in 1:Nx
-                    mx_next[i, j, k] = mx[i, j, k] + flux_scale * cm[i, j, k] - flux_scale * cm[i, j, k + 1]
-                end
-                mx, mx_next = mx_next, mx
-            end
-        end
-
-        cfl_ok && return n_sub
-        n_sub += 1
-        n_sub <= max_n_sub || throw(ArgumentError("z-direction subcycling exceeded max_n_sub=$(max_n_sub)"))
-    end
+    Nz = size(m, 3)
+    out = max.(.- @view(cm[:, :, 1:Nz]), zero(FT)) .+ max.(@view(cm[:, :, 2:Nz+1]), zero(FT))
+    static_cfl = maximum(out ./ max.(m, eps(FT)))
+    n_sub = _subcycling_pass_count(static_cfl, cfl_limit)
+    n_sub <= max_n_sub || throw(ArgumentError("z-direction subcycling exceeded max_n_sub=$(max_n_sub)"))
+    return n_sub
 end
 
 @inline function _sweep_x_subcycled!(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},

@@ -1,0 +1,8 @@
+Strang sweep benchmark (medium / gpu: Nx=288 Ny=144 Nz=32 Nt=5, steps=20)
+Baseline commit: 8b8d283 (pre-ping-pong)
+Host: wurst (NVIDIA L40S, Float32 only — L40S has no F64 units)
+FT         Scheme       median(ms)     mean(ms)      std(ms)
+------------------------------------------------------------
+Float32    Upwind            3.223        3.226        0.031
+Float32    Slopes            3.317        4.113        3.567
+Float32    PPM               3.483        3.508        0.079

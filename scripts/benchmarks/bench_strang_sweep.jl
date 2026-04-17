@@ -4,11 +4,16 @@
 #
 # Measures per-step wall time for strang_split! (LatLon, structured path)
 # on a synthetic problem. Use this to compare ping-pong refactor
-# before/after. Reports median, mean, std for Upwind / Slopes / PPM in
-# Float64 and Float32.
+# before/after. Reports median, mean, std for Upwind / Slopes / PPM.
 #
 # Usage:
-#   julia --project=. scripts/benchmarks/bench_strang_sweep.jl [small|medium|large]
+#   julia --project=. scripts/benchmarks/bench_strang_sweep.jl [size] [backend]
+# where
+#   size    ∈ {small, medium, large}   (default: medium)
+#   backend ∈ {cpu, gpu}               (default: cpu; gpu requires CUDA)
+#
+# On GPU, only Float32 is reported because L40S has no Float64 units.
+# On CPU both Float64 and Float32 are reported.
 # ===========================================================================
 
 using AtmosTransport
@@ -20,7 +25,13 @@ using AtmosTransport: AdvectionWorkspace, strang_split!,
 using Statistics
 using Printf
 
-const SIZE = length(ARGS) >= 1 ? Symbol(ARGS[1]) : :medium
+const SIZE    = length(ARGS) >= 1 ? Symbol(ARGS[1]) : :medium
+const BACKEND = length(ARGS) >= 2 ? Symbol(ARGS[2]) : :cpu
+
+if BACKEND === :gpu
+    using CUDA
+    CUDA.functional() || error("CUDA requested but not functional")
+end
 
 const DIMS = Dict(
     :small  => (Nx =  72, Ny =  36, Nz =  4, Nt = 1,  n_steps = 50),
@@ -77,45 +88,72 @@ function build_problem(::Type{FT}, cfg) where {FT}
     return grid, m, rms, am, bm, cm
 end
 
-function run_benchmark(::Type{FT}, scheme, cfg) where {FT}
-    grid, m, rms, am, bm, cm = build_problem(FT, cfg)
+function run_benchmark(::Type{FT}, scheme, cfg, backend::Symbol) where {FT}
+    grid, m_cpu, rms_cpu, am_cpu, bm_cpu, cm_cpu = build_problem(FT, cfg)
 
     tracer_syms = ntuple(t -> Symbol("tr$t"), cfg.Nt)
-    tracer_vals = ntuple(t -> copy(rms[t]), cfg.Nt)
+
+    if backend === :gpu
+        # Move to GPU. The grid stays a CPU object (it's immutable
+        # metadata); only the prognostic arrays live on device.
+        m      = CUDA.CuArray(m_cpu)
+        am     = CUDA.CuArray(am_cpu)
+        bm     = CUDA.CuArray(bm_cpu)
+        cm     = CUDA.CuArray(cm_cpu)
+        tracer_vals = ntuple(t -> CUDA.CuArray(rms_cpu[t]), cfg.Nt)
+    else
+        m      = copy(m_cpu)
+        am     = copy(am_cpu)
+        bm     = copy(bm_cpu)
+        cm     = copy(cm_cpu)
+        tracer_vals = ntuple(t -> copy(rms_cpu[t]), cfg.Nt)
+    end
+
     tracers = NamedTuple{tracer_syms}(tracer_vals)
+    state   = CellState(DryBasis, m; tracers...)
+    fluxes  = StructuredFaceFluxState(am, bm, cm)
+    ws      = AdvectionWorkspace(state.air_mass; n_tracers = cfg.Nt)
 
-    state  = CellState(DryBasis, copy(m); tracers...)
-    fluxes = StructuredFaceFluxState(copy(am), copy(bm), copy(cm))
-    ws = AdvectionWorkspace(state.air_mass; n_tracers = cfg.Nt)
-
-    # Warmup
+    # Warmup (compile + JIT)
     for _ in 1:3
         strang_split!(state, fluxes, grid, scheme; workspace = ws)
     end
+    backend === :gpu && CUDA.synchronize()
 
     times = Float64[]
     for _ in 1:cfg.n_steps
-        t = @elapsed strang_split!(state, fluxes, grid, scheme; workspace = ws)
-        push!(times, t)
+        if backend === :gpu
+            CUDA.synchronize()
+            t0 = time_ns()
+            strang_split!(state, fluxes, grid, scheme; workspace = ws)
+            CUDA.synchronize()
+            push!(times, (time_ns() - t0) * 1e-9)
+        else
+            t = @elapsed strang_split!(state, fluxes, grid, scheme; workspace = ws)
+            push!(times, t)
+        end
     end
 
     return median(times) * 1e3, mean(times) * 1e3, std(times) * 1e3
 end
 
 function main()
-    @printf("Strang sweep benchmark (%s: Nx=%d Ny=%d Nz=%d Nt=%d, steps=%d)\n",
-            SIZE, DIMS.Nx, DIMS.Ny, DIMS.Nz, DIMS.Nt, DIMS.n_steps)
+    # On GPU (L40S), skip Float64 — no F64 units.
+    ft_list = BACKEND === :gpu ? (Float32,) : (Float64, Float32)
+
+    @printf("Strang sweep benchmark (%s / %s: Nx=%d Ny=%d Nz=%d Nt=%d, steps=%d)\n",
+            SIZE, BACKEND, DIMS.Nx, DIMS.Ny, DIMS.Nz, DIMS.Nt, DIMS.n_steps)
     @printf("%-10s %-10s %12s %12s %12s\n",
             "FT", "Scheme", "median(ms)", "mean(ms)", "std(ms)")
     println("-"^60)
 
-    for FT in (Float64, Float32)
+    for FT in ft_list
         for (scheme, tag) in (
             (UpwindScheme(),                      "Upwind"),
             (SlopesScheme(MonotoneLimiter()),     "Slopes"),
             (PPMScheme(MonotoneLimiter()),        "PPM"),
         )
-            med, avg, sd = run_benchmark(FT, scheme, DIMS)
+            med, avg, sd = run_benchmark(FT, scheme, DIMS, BACKEND)
             @printf("%-10s %-10s %12.3f %12.3f %12.3f\n",
                     string(FT), tag, med, avg, sd)
         end

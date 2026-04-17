@@ -1,0 +1,10 @@
+│        @ Base ./client.jl:317
+│     [15] _start()
+│        @ Base ./client.jl:550
+└ @ Base loading.jl:1617
+Strang sweep benchmark (medium / gpu: Nx=288 Ny=144 Nz=32 Nt=5, steps=20)
+FT         Scheme       median(ms)     mean(ms)      std(ms)
+------------------------------------------------------------
+Float32    Upwind            3.030        3.033        0.020
+Float32    Slopes            3.130        3.147        0.078
+Float32    PPM               3.305        3.303        0.011

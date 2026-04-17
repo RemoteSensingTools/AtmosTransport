@@ -12,6 +12,32 @@ Refactor: `restructure/dry-flux-interface` branch, commits
 - CPU: single-threaded (`JULIA_NUM_THREADS=1`) on the dev host
 - Reports: median / mean / std of per-step wall time (20 steps)
 
+## GPU results (wurst, NVIDIA L40S, Float32 only)
+
+L40S has no Float64 hardware units, so only F32 is reported on GPU.
+
+| FT      | Scheme | Before (ms) | After (ms) | Δ (ms) | Speedup |
+|---------|--------|-------------|------------|--------|---------|
+| Float32 | Upwind | 3.223       | 3.030      |  -0.19 |  -6.0%  |
+| Float32 | Slopes | 3.317       | 3.130      |  -0.19 |  -5.6%  |
+| Float32 | PPM    | 3.483       | 3.305      |  -0.18 |  -5.1%  |
+
+Measured with `CUDA.synchronize` bracketing each `strang_split!` call
+(20 timed steps, 3 warmup). Kernel + `synchronize(backend)` overhead
+dominates per-step time at this problem size (~3 ms/step vs 12 MB
+of HBM copyto ≈ 15 us at 864 GB/s × 60 copytos = ~0.9 ms theoretical
+max savings). We observe ~0.18 ms actual savings — about 20% of the
+theoretical bandwidth ceiling — which is the expected result given
+that KernelAbstractions `synchronize(backend)` after every kernel
+(intentionally retained per the plan) already serializes the stream
+and largely hides dtod memcpy behind kernel launches.
+
+The larger GPU speedup the plan predicted (≥20%) will come from the
+**next** refactor in the sequence (plan 13, sync removal). Ping-pong
+(plan 11) is its prerequisite: having separate source/destination
+arrays per sweep is what allows the `synchronize` barriers to be
+removed without introducing read/write races.
+
 ## CPU results (this host, single-threaded Float64 & Float32)
 
 | FT      | Scheme | Before (ms) | After (ms) | Δ (ms) | Speedup |
@@ -36,12 +62,13 @@ kernel-bound schemes (Slopes, PPM) the copyto fraction of total time is
 small, so the per-step speedup is small. For the bandwidth-bound Upwind
 scheme the fraction is larger and the speedup is too.
 
-The GPU ratio is different: HBM bandwidth is much higher relative to
-device compute, so the copyto fraction of total time is much larger —
-the plan's 20%+ GPU prediction still stands. The dev host has no CUDA
-GPU available; GPU numbers need to be captured separately on curry
-(A100) for Float64 and wurst (L40S) for Float32 by rerunning this
-benchmark in the CUDA environment.
+On GPU (L40S F32, measured above) the per-step savings are ~0.18 ms —
+real but much smaller than the plan's 20% prediction, because
+`synchronize(backend)` after every kernel (intentionally kept in this
+refactor) already serializes the stream and causes the dtod `copyto!`
+to overlap trivially with kernel launches. The full GPU speedup will
+land in plan 13 (sync removal). Curry (A100 F64) was not re-measured
+here; the same structural argument applies.
 
 ## Correctness
 

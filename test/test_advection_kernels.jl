@@ -673,4 +673,58 @@ end
 
 end
 
+# =========================================================================
+# Plan 13 premise check: the static per-cell-outflow CFL estimate (which
+# the unified pilot will use on both CPU and GPU) must not produce a
+# wildly larger n_sub than the per-face `max_cfl_x/y/z` that seeds the
+# current CPU evolving-mass loop. Ratio > 2.5 means the static estimate
+# is not a drop-in replacement and plan 13 Commit 2 must halt.
+# =========================================================================
+
+@testset "CFL pilot static-vs-evolving premise (plan 13)" begin
+    for FT in (Float64, Float32)
+        precision_tag = FT == Float64 ? "F64" : "F32"
+        _, m, _, _, am, bm, cm = build_test_problem(FT)
+        ws = AdvectionWorkspace(m)
+        Nx, Ny, Nz = size(m)
+
+        # Per-cell total outflow: for cell (i,j,k), mass leaves through
+        # the left face (face i, negative am) and the right face
+        # (face i+1, positive am). Analogous for y and z. cm convention:
+        # positive = downward, so cell k's outflow is upward through its
+        # TOP face (negative cm[:,:,k]) plus downward through its BOTTOM
+        # face (positive cm[:,:,k+1]).
+        out_x = max.(.- @view(am[1:Nx, :, :]), zero(FT)) .+
+                max.(@view(am[2:Nx+1, :, :]), zero(FT))
+        static_cfl_x = maximum(out_x ./ max.(m, eps(FT)))
+
+        out_y = max.(.- @view(bm[:, 1:Ny, :]), zero(FT)) .+
+                max.(@view(bm[:, 2:Ny+1, :]), zero(FT))
+        static_cfl_y = maximum(out_y ./ max.(m, eps(FT)))
+
+        out_z = max.(.- @view(cm[:, :, 1:Nz]), zero(FT)) .+
+                max.(@view(cm[:, :, 2:Nz+1]), zero(FT))
+        static_cfl_z = maximum(out_z ./ max.(m, eps(FT)))
+
+        face_cfl_x = Operators.Advection.max_cfl_x(am, m, ws.cluster_sizes)
+        face_cfl_y = Operators.Advection.max_cfl_y(bm, m)
+        face_cfl_z = Operators.Advection.max_cfl_z(cm, m)
+
+        for (tag, static_v, face_v) in (
+            ("x", static_cfl_x, face_cfl_x),
+            ("y", static_cfl_y, face_cfl_y),
+            ("z", static_cfl_z, face_cfl_z),
+        )
+            ratio = static_v / max(face_v, eps(FT))
+            println("    $precision_tag $tag: face=$(face_v), static=$(static_v), ratio=$(ratio)")
+            # Static (per-cell total outflow / cell-mass) is an upper bound
+            # on the per-face max / donor-mass, modulo tiny roundoff.
+            @test static_v >= face_v - FT(10) * eps(FT) * max(face_v, one(FT))
+            # And not wildly larger — ratio ≤ 2.5 keeps n_sub within
+            # 2.5× of today's CPU pilot.
+            @test ratio <= FT(2.5)
+        end
+    end
+end
+
 println("\n✓ All advection kernel cross-backend/precision tests completed!")

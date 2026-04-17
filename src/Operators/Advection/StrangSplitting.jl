@@ -193,16 +193,17 @@ end
 # Generic directional sweeps — generated via @eval
 # =========================================================================
 #
-# Pattern (from CUDA.jl wrappers.jl):
-#   for (symbol_tuple...) in table
-#       @eval function $sweep_fn(...) ... $kernel_fn ... end
-#   end
-#
-# Each sweep:
-# 1. Compiles the appropriate KA kernel for the current backend
-# 2. Launches it with ndrange = size(m), writing to ws.rm_buf / ws.m_buf
-# 3. Synchronizes (GPU fence)
-# 4. Copies results back to rm / m (completing the double-buffer swap)
+# Ping-pong contract (post-refactor):
+#   - The 7-arg form `sweep_x!(rm_in, rm_out, m_in, m_out, flux, scheme, ws)`
+#     is the KERNEL entry point. It reads from (rm_in, m_in), writes to
+#     (rm_out, m_out), synchronizes the backend, and returns. NO copyto!.
+#     `strang_split!` uses this form and tracks parity so the output of
+#     one sweep becomes the input of the next.
+#   - The 5-arg form `sweep_x!(rm, m, flux, scheme, ws)` is a backward-
+#     compat wrapper used by callers that bypass the orchestrator (LinRood,
+#     CubedSphereStrang, direct tests). It kernels into `(ws.rm_B, ws.m_B)`
+#     then copies back to `(rm, m)`, preserving the pre-refactor semantics.
+#   - The 6-arg / 8-arg `flux_scale` variants follow the same pattern.
 #
 # The three sweeps differ ONLY in:
 #   - Which kernel function to call (_xsweep_kernel!, etc.)
@@ -214,32 +215,35 @@ for (sweep_fn, kernel_fn, dim) in (
     (:sweep_z!, :_zsweep_kernel!, 3),
 )
     @eval begin
+        # Ping-pong entry point: writes (rm_out, m_out), reads (rm_in, m_in).
+        function $sweep_fn(rm_in::AbstractArray{FT,3},  rm_out::AbstractArray{FT,3},
+                            m_in::AbstractArray{FT,3},   m_out::AbstractArray{FT,3},
+                            flux::AbstractArray{FT,3},
+                            scheme::AbstractAdvectionScheme,
+                            ws::AdvectionWorkspace{FT}) where FT
+            backend = get_backend(m_in)
+            kernel! = $kernel_fn(backend, 256)
+            kernel!(rm_out, rm_in, m_out, m_in, flux, scheme,
+                    Int32(size(m_in, $dim)), one(FT);
+                    ndrange=size(m_in))
+            synchronize(backend)
+            return nothing
+        end
+
         """
             $($sweep_fn)(rm, m, flux, scheme, ws)
 
-        One directional advection sweep using the new scheme hierarchy.
-
-        Launches `$($kernel_fn)` on the current backend, writing into
-        workspace buffers, then copies results back to `rm` and `m`.
-
-        # Arguments
-        - `rm::AbstractArray{FT,3}` — tracer mass (mutated in place)
-        - `m::AbstractArray{FT,3}` — air mass (mutated in place)
-        - `flux::AbstractArray{FT,3}` — staggered-grid mass flux for this direction
-        - `scheme::AbstractAdvectionScheme` — determines the face-flux function
-        - `ws::AdvectionWorkspace{FT}` — pre-allocated double buffers
+        Backward-compat wrapper: write into the workspace B pair, then
+        copy back to `rm` and `m`. New callers should use the 7-arg
+        ping-pong form instead.
         """
         function $sweep_fn(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
-                                  flux::AbstractArray{FT,3},
-                                  scheme::AbstractAdvectionScheme,
-                                  ws::AdvectionWorkspace{FT}) where FT
-            backend = get_backend(m)
-            kernel! = $kernel_fn(backend, 256)
-            kernel!(ws.rm_buf, rm, ws.m_buf, m, flux, scheme, Int32(size(m, $dim)), one(FT);
-                    ndrange=size(m))
-            synchronize(backend)
-            copyto!(rm, ws.rm_buf)
-            copyto!(m,  ws.m_buf)
+                           flux::AbstractArray{FT,3},
+                           scheme::AbstractAdvectionScheme,
+                           ws::AdvectionWorkspace{FT}) where FT
+            $sweep_fn(rm, ws.rm_B, m, ws.m_B, flux, scheme, ws)
+            copyto!(rm, ws.rm_B)
+            copyto!(m,  ws.m_B)
             return nothing
         end
     end
@@ -264,19 +268,32 @@ for (sweep_fn, scheme_type, kernel_fn, dim, extra_args) in (
     (:sweep_y!, :RussellLernerAdvection, :_rl_y_kernel!,     2, (:(scheme.use_limiter),)),
     (:sweep_z!, :RussellLernerAdvection, :_rl_z_kernel!,     3, (:(scheme.use_limiter),)),
 )
-    @eval function $sweep_fn(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
-                              flux::AbstractArray{FT,3},
-                              scheme::$scheme_type,
-                              ws::AdvectionWorkspace{FT}) where FT
-        backend = get_backend(m)
-        kernel! = $kernel_fn(backend, 256)
-        kernel!(ws.rm_buf, rm, ws.m_buf, m, flux,
-                Int32(size(m, $dim)), $(extra_args...), one(FT);
-                ndrange=size(m))
-        synchronize(backend)
-        copyto!(rm, ws.rm_buf)
-        copyto!(m,  ws.m_buf)
-        return nothing
+    @eval begin
+        # Ping-pong entry point for legacy schemes.
+        function $sweep_fn(rm_in::AbstractArray{FT,3},  rm_out::AbstractArray{FT,3},
+                            m_in::AbstractArray{FT,3},   m_out::AbstractArray{FT,3},
+                            flux::AbstractArray{FT,3},
+                            scheme::$scheme_type,
+                            ws::AdvectionWorkspace{FT}) where FT
+            backend = get_backend(m_in)
+            kernel! = $kernel_fn(backend, 256)
+            kernel!(rm_out, rm_in, m_out, m_in, flux,
+                    Int32(size(m_in, $dim)), $(extra_args...), one(FT);
+                    ndrange=size(m_in))
+            synchronize(backend)
+            return nothing
+        end
+
+        # Backward-compat 5-arg wrapper.
+        function $sweep_fn(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
+                           flux::AbstractArray{FT,3},
+                           scheme::$scheme_type,
+                           ws::AdvectionWorkspace{FT}) where FT
+            $sweep_fn(rm, ws.rm_B, m, ws.m_B, flux, scheme, ws)
+            copyto!(rm, ws.rm_B)
+            copyto!(m,  ws.m_B)
+            return nothing
+        end
     end
 end
 
@@ -388,25 +405,42 @@ end
 
 # Additional structured sweep overloads with explicit flux scaling.
 # These are used by the CFL-based subcycling wrappers to reapply the same
-# directional forcing in smaller conservative pieces.
+# directional forcing in smaller conservative pieces. Same ping-pong
+# contract as the one(FT) variants above: the 8-arg form does the kernel
+# launch only (no copyto!); the 6-arg form is a backward-compat wrapper.
 for (sweep_fn, kernel_fn, dim) in (
     (:sweep_x!, :_xsweep_kernel!, 1),
     (:sweep_y!, :_ysweep_kernel!, 2),
     (:sweep_z!, :_zsweep_kernel!, 3),
 )
-    @eval function $sweep_fn(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
-                             flux::AbstractArray{FT,3},
-                             scheme::AbstractAdvectionScheme,
-                             ws::AdvectionWorkspace{FT},
-                             flux_scale::FT) where FT
-        backend = get_backend(m)
-        kernel! = $kernel_fn(backend, 256)
-        kernel!(ws.rm_buf, rm, ws.m_buf, m, flux, scheme, Int32(size(m, $dim)), flux_scale;
-                ndrange=size(m))
-        synchronize(backend)
-        copyto!(rm, ws.rm_buf)
-        copyto!(m,  ws.m_buf)
-        return nothing
+    @eval begin
+        # Ping-pong entry point with explicit flux scale.
+        function $sweep_fn(rm_in::AbstractArray{FT,3},  rm_out::AbstractArray{FT,3},
+                            m_in::AbstractArray{FT,3},   m_out::AbstractArray{FT,3},
+                            flux::AbstractArray{FT,3},
+                            scheme::AbstractAdvectionScheme,
+                            ws::AdvectionWorkspace{FT},
+                            flux_scale::FT) where FT
+            backend = get_backend(m_in)
+            kernel! = $kernel_fn(backend, 256)
+            kernel!(rm_out, rm_in, m_out, m_in, flux, scheme,
+                    Int32(size(m_in, $dim)), flux_scale;
+                    ndrange=size(m_in))
+            synchronize(backend)
+            return nothing
+        end
+
+        # Backward-compat 6-arg wrapper.
+        function $sweep_fn(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
+                           flux::AbstractArray{FT,3},
+                           scheme::AbstractAdvectionScheme,
+                           ws::AdvectionWorkspace{FT},
+                           flux_scale::FT) where FT
+            $sweep_fn(rm, ws.rm_B, m, ws.m_B, flux, scheme, ws, flux_scale)
+            copyto!(rm, ws.rm_B)
+            copyto!(m,  ws.m_B)
+            return nothing
+        end
     end
 end
 
@@ -478,20 +512,34 @@ for (sweep_fn, scheme_type, kernel_fn, dim, extra_args) in (
     (:sweep_y!, :RussellLernerAdvection, :_rl_y_kernel!,     2, (:(scheme.use_limiter),)),
     (:sweep_z!, :RussellLernerAdvection, :_rl_z_kernel!,     3, (:(scheme.use_limiter),)),
 )
-    @eval function $sweep_fn(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
-                             flux::AbstractArray{FT,3},
-                             scheme::$scheme_type,
-                             ws::AdvectionWorkspace{FT},
-                             flux_scale::FT) where FT
-        backend = get_backend(m)
-        kernel! = $kernel_fn(backend, 256)
-        kernel!(ws.rm_buf, rm, ws.m_buf, m, flux,
-                Int32(size(m, $dim)), $(extra_args...), flux_scale;
-                ndrange=size(m))
-        synchronize(backend)
-        copyto!(rm, ws.rm_buf)
-        copyto!(m,  ws.m_buf)
-        return nothing
+    @eval begin
+        # Ping-pong entry point with flux scale for legacy schemes.
+        function $sweep_fn(rm_in::AbstractArray{FT,3},  rm_out::AbstractArray{FT,3},
+                            m_in::AbstractArray{FT,3},   m_out::AbstractArray{FT,3},
+                            flux::AbstractArray{FT,3},
+                            scheme::$scheme_type,
+                            ws::AdvectionWorkspace{FT},
+                            flux_scale::FT) where FT
+            backend = get_backend(m_in)
+            kernel! = $kernel_fn(backend, 256)
+            kernel!(rm_out, rm_in, m_out, m_in, flux,
+                    Int32(size(m_in, $dim)), $(extra_args...), flux_scale;
+                    ndrange=size(m_in))
+            synchronize(backend)
+            return nothing
+        end
+
+        # Backward-compat 6-arg wrapper.
+        function $sweep_fn(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
+                           flux::AbstractArray{FT,3},
+                           scheme::$scheme_type,
+                           ws::AdvectionWorkspace{FT},
+                           flux_scale::FT) where FT
+            $sweep_fn(rm, ws.rm_B, m, ws.m_B, flux, scheme, ws, flux_scale)
+            copyto!(rm, ws.rm_B)
+            copyto!(m,  ws.m_B)
+            return nothing
+        end
     end
 end
 
@@ -1215,6 +1263,80 @@ end
     return n_sub
 end
 
+# -------------------------------------------------------------------------
+# Ping-pong subcycled sweeps — used by strang_split! to eliminate the
+# per-sweep copyto!. Each helper reads from (rm_in, m_in) and — after
+# n_sub internal passes — leaves the result either in (rm_out, m_out)
+# when n_sub is odd, or back in (rm_in, m_in) when n_sub is even.
+# The caller rebinds `cur` / `alt` locally based on `isodd(n_sub)`.
+# -------------------------------------------------------------------------
+
+@inline function _sweep_x_pp_subcycled!(rm_in::AbstractArray{FT,3},  rm_out::AbstractArray{FT,3},
+                                        m_in::AbstractArray{FT,3},   m_out::AbstractArray{FT,3},
+                                        am::AbstractArray{FT,3},
+                                        scheme::Union{AbstractAdvection, AbstractAdvectionScheme},
+                                        ws::AdvectionWorkspace{FT},
+                                        cfl_limit::FT) where FT
+    n_sub = _x_subcycling_pass_count(am, m_in, ws, cfl_limit)
+    if n_sub == 1
+        sweep_x!(rm_in, rm_out, m_in, m_out, am, scheme, ws)
+        return n_sub
+    end
+    flux_scale = inv(FT(n_sub))
+    @inbounds for pass in 1:n_sub
+        if isodd(pass)
+            sweep_x!(rm_in,  rm_out, m_in,  m_out, am, scheme, ws, flux_scale)
+        else
+            sweep_x!(rm_out, rm_in,  m_out, m_in,  am, scheme, ws, flux_scale)
+        end
+    end
+    return n_sub
+end
+
+@inline function _sweep_y_pp_subcycled!(rm_in::AbstractArray{FT,3},  rm_out::AbstractArray{FT,3},
+                                        m_in::AbstractArray{FT,3},   m_out::AbstractArray{FT,3},
+                                        bm::AbstractArray{FT,3},
+                                        scheme::Union{AbstractAdvection, AbstractAdvectionScheme},
+                                        ws::AdvectionWorkspace{FT},
+                                        cfl_limit::FT) where FT
+    n_sub = _y_subcycling_pass_count(bm, m_in, ws, cfl_limit)
+    if n_sub == 1
+        sweep_y!(rm_in, rm_out, m_in, m_out, bm, scheme, ws)
+        return n_sub
+    end
+    flux_scale = inv(FT(n_sub))
+    @inbounds for pass in 1:n_sub
+        if isodd(pass)
+            sweep_y!(rm_in,  rm_out, m_in,  m_out, bm, scheme, ws, flux_scale)
+        else
+            sweep_y!(rm_out, rm_in,  m_out, m_in,  bm, scheme, ws, flux_scale)
+        end
+    end
+    return n_sub
+end
+
+@inline function _sweep_z_pp_subcycled!(rm_in::AbstractArray{FT,3},  rm_out::AbstractArray{FT,3},
+                                        m_in::AbstractArray{FT,3},   m_out::AbstractArray{FT,3},
+                                        cm::AbstractArray{FT,3},
+                                        scheme::Union{AbstractAdvection, AbstractAdvectionScheme},
+                                        ws::AdvectionWorkspace{FT},
+                                        cfl_limit::FT) where FT
+    n_sub = _z_subcycling_pass_count(cm, m_in, ws, cfl_limit)
+    if n_sub == 1
+        sweep_z!(rm_in, rm_out, m_in, m_out, cm, scheme, ws)
+        return n_sub
+    end
+    flux_scale = inv(FT(n_sub))
+    @inbounds for pass in 1:n_sub
+        if isodd(pass)
+            sweep_z!(rm_in,  rm_out, m_in,  m_out, cm, scheme, ws, flux_scale)
+        else
+            sweep_z!(rm_out, rm_in,  m_out, m_in,  cm, scheme, ws, flux_scale)
+        end
+    end
+    return n_sub
+end
+
 # =========================================================================
 # Strang splitting: X → Y → Z → Z → Y → X
 # =========================================================================
@@ -1280,17 +1402,51 @@ function strang_split!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
         copyto!(m_save, m)
     end
 
+    # Ping-pong alternate buffers used as the "other side" of each sweep.
+    rm_alt0 = workspace.rm_B
+    m_alt0  = workspace.m_B
+
     for (idx, (name, rm_tracer)) in enumerate(pairs(state.tracers))
         if idx > 1
             copyto!(m, m_save)
         end
 
-        _sweep_x_subcycled!(rm_tracer, m, am, scheme, workspace, cfl_limit_ft)
-        _sweep_y_subcycled!(rm_tracer, m, bm, scheme, workspace, cfl_limit_ft)
-        _sweep_z_subcycled!(rm_tracer, m, cm, scheme, workspace, cfl_limit_ft)
-        _sweep_z_subcycled!(rm_tracer, m, cm, scheme, workspace, cfl_limit_ft)
-        _sweep_y_subcycled!(rm_tracer, m, bm, scheme, workspace, cfl_limit_ft)
-        _sweep_x_subcycled!(rm_tracer, m, am, scheme, workspace, cfl_limit_ft)
+        # Local ping-pong state: (rm_cur, m_cur) holds the current values,
+        # (rm_alt, m_alt) is the scratch destination for the next sweep.
+        # At entry, (rm_cur, m_cur) = caller's (rm_tracer, m). After each
+        # sweep we rebind so the output becomes input for the next direction.
+        rm_cur, m_cur = rm_tracer, m
+        rm_alt, m_alt = rm_alt0,   m_alt0
+
+        # X → Y → Z → Z → Y → X palindrome, six sweeps. The helper returns
+        # n_sub for the sweep; when n_sub is odd, the result is in (alt),
+        # so we flip the cur/alt bindings.
+        n = _sweep_x_pp_subcycled!(rm_cur, rm_alt, m_cur, m_alt, am, scheme, workspace, cfl_limit_ft)
+        if isodd(n); rm_cur, rm_alt = rm_alt, rm_cur; m_cur, m_alt = m_alt, m_cur; end
+
+        n = _sweep_y_pp_subcycled!(rm_cur, rm_alt, m_cur, m_alt, bm, scheme, workspace, cfl_limit_ft)
+        if isodd(n); rm_cur, rm_alt = rm_alt, rm_cur; m_cur, m_alt = m_alt, m_cur; end
+
+        n = _sweep_z_pp_subcycled!(rm_cur, rm_alt, m_cur, m_alt, cm, scheme, workspace, cfl_limit_ft)
+        if isodd(n); rm_cur, rm_alt = rm_alt, rm_cur; m_cur, m_alt = m_alt, m_cur; end
+
+        n = _sweep_z_pp_subcycled!(rm_cur, rm_alt, m_cur, m_alt, cm, scheme, workspace, cfl_limit_ft)
+        if isodd(n); rm_cur, rm_alt = rm_alt, rm_cur; m_cur, m_alt = m_alt, m_cur; end
+
+        n = _sweep_y_pp_subcycled!(rm_cur, rm_alt, m_cur, m_alt, bm, scheme, workspace, cfl_limit_ft)
+        if isodd(n); rm_cur, rm_alt = rm_alt, rm_cur; m_cur, m_alt = m_alt, m_cur; end
+
+        n = _sweep_x_pp_subcycled!(rm_cur, rm_alt, m_cur, m_alt, am, scheme, workspace, cfl_limit_ft)
+        if isodd(n); rm_cur, rm_alt = rm_alt, rm_cur; m_cur, m_alt = m_alt, m_cur; end
+
+        # If total parity wound up in the alternate buffer, copy it back
+        # to the caller-provided arrays. In the typical case where all six
+        # n_sub values are 1 (or all even), the final parity lands back in
+        # (rm_tracer, m) and NO copies happen — that is the ping-pong win.
+        if rm_cur !== rm_tracer
+            copyto!(rm_tracer, rm_cur)
+            copyto!(m,         m_cur)
+        end
     end
 
     return nothing

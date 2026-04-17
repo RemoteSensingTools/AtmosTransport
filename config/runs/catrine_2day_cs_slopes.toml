@@ -11,7 +11,7 @@ binary_paths = [
 use_gpu = true
 
 [numerics]
-float_type = "Float64"
+float_type = "Float32"
 
 [run]
 scheme = "slopes"

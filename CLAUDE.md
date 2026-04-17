@@ -256,7 +256,7 @@ These are hard-won correctness constraints. Violating any causes silent wrong re
 |---------|-------------|---------------|
 | Transport 8x too slow | Missing `mass_flux_dt = 450` | Invariant 3 below |
 | Extreme CFL, NaN | Wrong vertical level ordering | Invariant 2 |
-| ~10% mass loss per step | In-place Z-advection (no double buffer) | Invariant 4 |
+| ~10% mass loss per step | In-place sweep update (kernel wrote dst == src) | Invariant 4 |
 | Panel boundary waves (CS) | Wrong flux rotation or missing `linrood` | Invariant 1 |
 | Surface emissions invisible in column mean | Missing `[diffusion]` section | Invariant 7 |
 | 5x slower CPU loops | Wrong loop nesting order | Invariant 8 |
@@ -281,8 +281,17 @@ These are hard-won correctness constraints. Violating any causes silent wrong re
    (~450s), NOT the 1-hour met interval. Config: `mass_flux_dt = 450` in `[met_data]`.
    Without this, transport is 8x too slow. Verified for both GEOS-IT C180 and GEOS-FP C720.
 
-4. **Z-advection double buffering**: kernel reads from `ws.rm_buf`/`ws.m_buf` (copies of
-   originals), writes to `rm`/`m`. In-place update breaks flux telescoping (~10% mass loss).
+4. **Ping-pong double buffering** (all directional sweeps, not just Z): every sweep kernel
+   writes to a DIFFERENT array than it reads from. `AdvectionWorkspace` carries two buffer
+   pairs (`rm_A`/`m_A` + `rm_B`/`m_B`), and `strang_split!` / `strang_split_mt!` alternate
+   source ↔ destination across the six-sweep palindrome, tracking parity so the final
+   result lands back in the caller's arrays with zero inter-sweep `copyto!` in the common
+   `n_sub == 1` case. Prior implementation copied kernel output back via `ws.rm_buf` each
+   sweep; those names are preserved as `getproperty` aliases for the A pair so LinRood,
+   CubedSphereStrang, and direct tests continue to work unchanged. In-place (src == dst)
+   kernel update still breaks flux telescoping (~10% mass loss) — only the buffer-management
+   implementation changed, not the no-aliasing contract. See ping-pong refactor commit
+   sequence on `restructure/dry-flux-interface` (`fb55852`, `1a7e2ba`).
 
 5. **Tiedtke convection**: explicit upwind, conditionally stable. Adaptive subcycling in
    `_max_conv_cfl_cs` keeps CFL < 0.9. No positivity clamp needed.

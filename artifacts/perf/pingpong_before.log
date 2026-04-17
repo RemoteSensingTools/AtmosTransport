@@ -1,0 +1,9 @@
+Strang sweep benchmark (medium: Nx=288 Ny=144 Nz=32 Nt=5, steps=20)
+FT         Scheme       median(ms)     mean(ms)      std(ms)
+------------------------------------------------------------
+Float64    Upwind          458.686      461.038        5.438
+Float64    Slopes         2564.061     2567.478        9.158
+Float64    PPM            2327.489     2330.138        7.849
+Float32    Upwind          395.660      395.704        0.666
+Float32    Slopes         2421.618     2423.706        5.637
+Float32    PPM            2175.612     2176.450        4.124

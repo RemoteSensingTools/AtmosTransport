@@ -281,57 +281,6 @@ end
         @test abs(bias) < 1e-6
     end
 
-    # --- Legacy vs new scheme equivalence ---
-
-    @testset "UpwindAdvection vs UpwindScheme equivalence" begin
-        for FT in (Float64, Float32)
-            tag = FT == Float64 ? "F64" : "F32"
-            grid, m, _, rm_grad, am, bm, cm = build_test_problem(FT)
-
-            m_old, rm_old = run_strang!(m, rm_grad, am, bm, cm, grid, UpwindAdvection(); n_steps=4)
-            m_new, rm_new = run_strang!(m, rm_grad, am, bm, cm, grid, UpwindScheme();    n_steps=4)
-
-            @testset "bit-identical $tag" begin
-                @test rm_old == rm_new
-                @test m_old  == m_new
-            end
-        end
-    end
-
-    @testset "RussellLernerAdvection vs SlopesScheme equivalence" begin
-        # The legacy RL kernels have an `if r==1` branch (reduced-grid path)
-        # that can alter FMA fusion vs the new branchless generic kernel shells.
-        # Algebraically identical, but ≤1 ULP difference from compiler FMA.
-        for FT in (Float64, Float32)
-            tag = FT == Float64 ? "F64" : "F32"
-            grid, m, _, rm_grad, am, bm, cm = build_test_problem(FT)
-
-            @testset "MonotoneLimiter $tag" begin
-                m_old, rm_old = run_strang!(m, rm_grad, am, bm, cm, grid,
-                    RussellLernerAdvection(use_limiter=true); n_steps=4)
-                m_new, rm_new = run_strang!(m, rm_grad, am, bm, cm, grid,
-                    SlopesScheme(MonotoneLimiter()); n_steps=4)
-                rm_ulp = maximum(abs.(rm_old .- rm_new)) / eps(maximum(abs.(rm_old)))
-                m_ulp  = maximum(abs.(m_old .- m_new))   / eps(maximum(abs.(m_old)))
-                println("    RL vs Slopes Mono $tag: rm_ulp=$rm_ulp  m_ulp=$m_ulp")
-                @test rm_ulp < FT(1)
-                @test m_ulp  < FT(1)
-            end
-
-            @testset "NoLimiter $tag" begin
-                m_old, rm_old = run_strang!(m, rm_grad, am, bm, cm, grid,
-                    RussellLernerAdvection(use_limiter=false); n_steps=4)
-                m_new, rm_new = run_strang!(m, rm_grad, am, bm, cm, grid,
-                    SlopesScheme(NoLimiter()); n_steps=4)
-                rm_ulp = maximum(abs.(rm_old .- rm_new)) / eps(maximum(abs.(rm_old)))
-                m_ulp  = maximum(abs.(m_old .- m_new))   / eps(maximum(abs.(m_old)))
-                println("    RL vs Slopes NoLim $tag: rm_ulp=$rm_ulp  m_ulp=$m_ulp")
-                @test rm_ulp < FT(1)
-                @test m_ulp  < FT(1)
-            end
-        end
-    end
-
 end
 
 # =========================================================================

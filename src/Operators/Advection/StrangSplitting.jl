@@ -223,54 +223,6 @@ for (sweep_fn, kernel_fn, dim) in (
     end
 end
 
-# =========================================================================
-# Legacy per-scheme directional sweeps — also generated via @eval
-# =========================================================================
-#
-# These use the old monolithic kernels from Upwind.jl / RussellLerner.jl.
-# They exist for backward compatibility and equivalence testing.
-#
-# The `extra_args` tuple captures per-direction / per-scheme extra kernel
-# arguments (e.g., cluster_sizes for legacy x-kernels, use_limiter for
-# the Russell–Lerner scheme).
-
-for (sweep_fn, scheme_type, kernel_fn, dim, extra_args) in (
-    (:sweep_x!, :UpwindAdvection,        :_upwind_x_kernel!, 1, (:(ws.cluster_sizes),)),
-    (:sweep_y!, :UpwindAdvection,        :_upwind_y_kernel!, 2, ()),
-    (:sweep_z!, :UpwindAdvection,        :_upwind_z_kernel!, 3, ()),
-    (:sweep_x!, :RussellLernerAdvection, :_rl_x_kernel!,     1, (:(ws.cluster_sizes), :(scheme.use_limiter))),
-    (:sweep_y!, :RussellLernerAdvection, :_rl_y_kernel!,     2, (:(scheme.use_limiter),)),
-    (:sweep_z!, :RussellLernerAdvection, :_rl_z_kernel!,     3, (:(scheme.use_limiter),)),
-)
-    @eval begin
-        # Ping-pong entry point for legacy schemes.
-        function $sweep_fn(rm_in::AbstractArray{FT,3},  rm_out::AbstractArray{FT,3},
-                            m_in::AbstractArray{FT,3},   m_out::AbstractArray{FT,3},
-                            flux::AbstractArray{FT,3},
-                            scheme::$scheme_type,
-                            ws::AdvectionWorkspace{FT}) where FT
-            backend = get_backend(m_in)
-            kernel! = $kernel_fn(backend, 256)
-            kernel!(rm_out, rm_in, m_out, m_in, flux,
-                    Int32(size(m_in, $dim)), $(extra_args...), one(FT);
-                    ndrange=size(m_in))
-            synchronize(backend)
-            return nothing
-        end
-
-        # Backward-compat 5-arg wrapper.
-        function $sweep_fn(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
-                           flux::AbstractArray{FT,3},
-                           scheme::$scheme_type,
-                           ws::AdvectionWorkspace{FT}) where FT
-            $sweep_fn(rm, ws.rm_B, m, ws.m_B, flux, scheme, ws)
-            copyto!(rm, ws.rm_B)
-            copyto!(m,  ws.m_B)
-            return nothing
-        end
-    end
-end
-
 """
     _horizontal_face_atomic_kernel!(rm_new, rm, m_new, m, horizontal_flux,
                                      face_left, face_right, scheme, flux_scale)
@@ -478,45 +430,6 @@ function sweep_vertical!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
     return nothing
 end
 
-for (sweep_fn, scheme_type, kernel_fn, dim, extra_args) in (
-    (:sweep_x!, :UpwindAdvection,        :_upwind_x_kernel!, 1, (:(ws.cluster_sizes),)),
-    (:sweep_y!, :UpwindAdvection,        :_upwind_y_kernel!, 2, ()),
-    (:sweep_z!, :UpwindAdvection,        :_upwind_z_kernel!, 3, ()),
-    (:sweep_x!, :RussellLernerAdvection, :_rl_x_kernel!,     1, (:(ws.cluster_sizes), :(scheme.use_limiter))),
-    (:sweep_y!, :RussellLernerAdvection, :_rl_y_kernel!,     2, (:(scheme.use_limiter),)),
-    (:sweep_z!, :RussellLernerAdvection, :_rl_z_kernel!,     3, (:(scheme.use_limiter),)),
-)
-    @eval begin
-        # Ping-pong entry point with flux scale for legacy schemes.
-        function $sweep_fn(rm_in::AbstractArray{FT,3},  rm_out::AbstractArray{FT,3},
-                            m_in::AbstractArray{FT,3},   m_out::AbstractArray{FT,3},
-                            flux::AbstractArray{FT,3},
-                            scheme::$scheme_type,
-                            ws::AdvectionWorkspace{FT},
-                            flux_scale::FT) where FT
-            backend = get_backend(m_in)
-            kernel! = $kernel_fn(backend, 256)
-            kernel!(rm_out, rm_in, m_out, m_in, flux,
-                    Int32(size(m_in, $dim)), $(extra_args...), flux_scale;
-                    ndrange=size(m_in))
-            synchronize(backend)
-            return nothing
-        end
-
-        # Backward-compat 6-arg wrapper.
-        function $sweep_fn(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
-                           flux::AbstractArray{FT,3},
-                           scheme::$scheme_type,
-                           ws::AdvectionWorkspace{FT},
-                           flux_scale::FT) where FT
-            $sweep_fn(rm, ws.rm_B, m, ws.m_B, flux, scheme, ws, flux_scale)
-            copyto!(rm, ws.rm_B)
-            copyto!(m,  ws.m_B)
-            return nothing
-        end
-    end
-end
-
 # =========================================================================
 # Face-indexed tendency functions
 # =========================================================================
@@ -608,74 +521,11 @@ at TOA (k=1) and surface (k=Nz) are enforced explicitly with branch guards.
     return nothing
 end
 
-# ---- Legacy overloads (no scheme argument) for old UpwindAdvection path ----
-
-@inline function _horizontal_face_tendency!(rm_new::AbstractArray{FT,2},
-                                            rm::AbstractArray{FT,2},
-                                            m_new::AbstractArray{FT,2},
-                                            m::AbstractArray{FT,2},
-                                            horizontal_flux::AbstractArray{FT,2},
-                                            mesh::AbstractHorizontalMesh,
-                                            flux_scale::FT = one(FT)) where FT
-    copyto!(rm_new, rm)
-    copyto!(m_new, m)
-    m_floor = eps(FT)
-    nface = nfaces(mesh)
-    Nz = size(m, 2)
-
-    @inbounds for k in 1:Nz
-        for f in 1:nface
-            left, right = face_cells(mesh, f)
-            if left > 0 && right > 0
-                flux = flux_scale * horizontal_flux[f, k]
-                c_left = rm[left, k] / max(m[left, k], m_floor)
-                c_right = rm[right, k] / max(m[right, k], m_floor)
-                tracer_flux = _upwind_face_flux(flux, c_left, c_right)
-                rm_new[left,  k] -= tracer_flux
-                rm_new[right, k] += tracer_flux
-                m_new[left,   k] -= flux
-                m_new[right,  k] += flux
-            end
-        end
-    end
-
-    return nothing
-end
-
-@inline function _vertical_column_tendency!(rm_new::AbstractArray{FT,2},
-                                            rm::AbstractArray{FT,2},
-                                            m_new::AbstractArray{FT,2},
-                                            m::AbstractArray{FT,2},
-                                            cm::AbstractArray{FT,2},
-                                            flux_scale::FT = one(FT)) where FT
-    copyto!(rm_new, rm)
-    copyto!(m_new, m)
-    m_floor = eps(FT)
-    nc = size(m, 1)
-    Nz = size(m, 2)
-
-    @inbounds for k in 1:Nz
-        for c in 1:nc
-            flux_t = k > 1 ? _upwind_face_flux(flux_scale * cm[c, k],
-                                               rm[c, k - 1] / max(m[c, k - 1], m_floor),
-                                               rm[c, k]     / max(m[c, k],     m_floor)) : zero(FT)
-            flux_b = k < Nz ? _upwind_face_flux(flux_scale * cm[c, k + 1],
-                                               rm[c, k]     / max(m[c, k],     m_floor),
-                                               rm[c, k + 1] / max(m[c, k + 1], m_floor)) : zero(FT)
-            rm_new[c, k] = rm[c, k] + flux_t - flux_b
-            m_new[c, k]  = m[c, k]  + flux_scale * cm[c, k] - flux_scale * cm[c, k + 1]
-        end
-    end
-
-    return nothing
-end
-
 # =========================================================================
-# Face-indexed sweep helpers — generated via @eval for both legacy and new
+# Face-indexed sweep helpers — generated via @eval
 # =========================================================================
 
 for (scheme_type, h_args, v_args) in (
-    (:UpwindAdvection,    (:mesh,), ()),
     (:AbstractConstantScheme, (:mesh, :scheme), (:scheme,)),
 )
     @eval begin
@@ -1188,7 +1038,6 @@ end
 
 # Face-indexed apply! — shared tracer loop, generated for each topology
 for (scheme_type, h_sweep, v_sweep) in (
-    (:FirstOrderUpwindAdvection, :sweep_horizontal!, :sweep_vertical!),
     (:AbstractConstantScheme,    :sweep_horizontal!, :sweep_vertical!),
 )
     @eval function apply!(state::CellState{B}, fluxes::FaceIndexedFluxState{B},
@@ -1223,9 +1072,6 @@ end
 
 # Error stubs for unsupported face-indexed scheme families
 for (scheme_type, label) in (
-    (:AbstractLinearReconstruction,    "linear-reconstruction"),
-    (:AbstractQuadraticReconstruction, "quadratic-reconstruction"),
-    (:AbstractAdvection,               "this"),
     (:AbstractLinearScheme,            "linear-reconstruction"),
     (:AbstractQuadraticScheme,         "quadratic-reconstruction"),
 )

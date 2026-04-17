@@ -55,6 +55,9 @@ tests) continue to work unchanged.
 - `rm_A::A`, `rm_B::A` — 3D tracer-mass ping-pong pair (same size as `rm`)
 - `m_A::A`, `m_B::A`   — 3D air-mass ping-pong pair (same size as `m`)
 - `m_save::A` — backup of `m` for the per-tracer multi-tracer protocol
+- `cfl_scratch_m::A`, `cfl_scratch_rm::A` — private scratch for the
+  evolving-mass CPU CFL pilot. Dedicated so that the ping-pong sweeps'
+  live data in `rm_A/rm_B/m_A/m_B` is never clobbered by a pilot run.
 - `cluster_sizes::V1` — per-latitude clustering factors for reduced grids
   (`Int32[Ny]`; all ones for uniform grids; empty for face-indexed meshes)
 - `face_left::V1`, `face_right::V1` — face connectivity for face-indexed meshes
@@ -80,16 +83,18 @@ uniform (all ones).
 Create workspace for a 2D face-indexed grid (cell × level layout).
 """
 struct AdvectionWorkspace{FT, A <: AbstractArray{FT}, V1 <: AbstractVector{Int32}, A4}
-    rm_A          :: A
-    m_A           :: A
-    rm_B          :: A
-    m_B           :: A
-    m_save        :: A       # backup of m for multi-tracer strang_split!
-    cluster_sizes :: V1
-    face_left     :: V1
-    face_right    :: V1
-    rm_4d_A       :: A4
-    rm_4d_B       :: A4
+    rm_A           :: A
+    m_A            :: A
+    rm_B           :: A
+    m_B            :: A
+    m_save         :: A       # backup of m for multi-tracer strang_split!
+    cfl_scratch_m  :: A       # dedicated CFL-pilot scratch (mass)
+    cfl_scratch_rm :: A       # dedicated CFL-pilot scratch (evolving mass)
+    cluster_sizes  :: V1
+    face_left      :: V1
+    face_right     :: V1
+    rm_4d_A        :: A4
+    rm_4d_B        :: A4
 end
 
 # Backward-compat aliases: keep legacy field names working for callers
@@ -134,6 +139,7 @@ function AdvectionWorkspace(m::AbstractArray{FT,3};
         similar(m), similar(m),                       # rm_A, m_A
         similar(m), similar(m),                       # rm_B, m_B
         similar(m),                                   # m_save
+        similar(m), similar(m),                       # cfl_scratch_m, cfl_scratch_rm
         cs_dev, face_left, face_right,
         rm_4d_A, rm_4d_B)
 end
@@ -158,23 +164,27 @@ function AdvectionWorkspace(m::AbstractArray{FT,2};
         similar(m), similar(m),                       # rm_A, m_A
         similar(m), similar(m),                       # rm_B, m_B
         similar(m),                                   # m_save
+        similar(m), similar(m),                       # cfl_scratch_m, cfl_scratch_rm
         cs_dev, face_left, face_right,
         rm_4d_A, rm_4d_B)
 end
 
 function Adapt.adapt_structure(to, ws::AdvectionWorkspace{FT}) where {FT}
-    rm_A          = Adapt.adapt(to, getfield(ws, :rm_A))
-    m_A           = Adapt.adapt(to, getfield(ws, :m_A))
-    rm_B          = Adapt.adapt(to, getfield(ws, :rm_B))
-    m_B           = Adapt.adapt(to, getfield(ws, :m_B))
-    m_save        = Adapt.adapt(to, getfield(ws, :m_save))
-    cluster_sizes = Adapt.adapt(to, getfield(ws, :cluster_sizes))
-    face_left     = Adapt.adapt(to, getfield(ws, :face_left))
-    face_right    = Adapt.adapt(to, getfield(ws, :face_right))
-    rm_4d_A       = Adapt.adapt(to, getfield(ws, :rm_4d_A))
-    rm_4d_B       = Adapt.adapt(to, getfield(ws, :rm_4d_B))
+    rm_A           = Adapt.adapt(to, getfield(ws, :rm_A))
+    m_A            = Adapt.adapt(to, getfield(ws, :m_A))
+    rm_B           = Adapt.adapt(to, getfield(ws, :rm_B))
+    m_B            = Adapt.adapt(to, getfield(ws, :m_B))
+    m_save         = Adapt.adapt(to, getfield(ws, :m_save))
+    cfl_scratch_m  = Adapt.adapt(to, getfield(ws, :cfl_scratch_m))
+    cfl_scratch_rm = Adapt.adapt(to, getfield(ws, :cfl_scratch_rm))
+    cluster_sizes  = Adapt.adapt(to, getfield(ws, :cluster_sizes))
+    face_left      = Adapt.adapt(to, getfield(ws, :face_left))
+    face_right     = Adapt.adapt(to, getfield(ws, :face_right))
+    rm_4d_A        = Adapt.adapt(to, getfield(ws, :rm_4d_A))
+    rm_4d_B        = Adapt.adapt(to, getfield(ws, :rm_4d_B))
     return AdvectionWorkspace{FT, typeof(rm_A), typeof(cluster_sizes), typeof(rm_4d_A)}(
         rm_A, m_A, rm_B, m_B, m_save,
+        cfl_scratch_m, cfl_scratch_rm,
         cluster_sizes, face_left, face_right,
         rm_4d_A, rm_4d_B)
 end
@@ -872,8 +882,8 @@ function _horizontal_face_subcycling_pass_count(horizontal_flux::AbstractArray{F
         return n_sub
     end
     nc, Nz = size(m)
-    mx = ws.m_buf
-    mx_next = ws.rm_buf
+    mx = ws.cfl_scratch_m
+    mx_next = ws.cfl_scratch_rm
     outgoing = zeros(FT, nc)
     n_sub = _subcycling_pass_count(_horizontal_face_outgoing_ratio(horizontal_flux, m, mesh), cfl_limit)
 
@@ -936,8 +946,8 @@ function _vertical_face_subcycling_pass_count(cm::AbstractArray{FT,2},
         return n_sub
     end
     nc, Nz = size(m)
-    mx = ws.m_buf
-    mx_next = ws.rm_buf
+    mx = ws.cfl_scratch_m
+    mx_next = ws.cfl_scratch_rm
     n_sub = _subcycling_pass_count(_vertical_face_outgoing_ratio(cm, m), cfl_limit)
 
     while true
@@ -1024,8 +1034,8 @@ function _x_subcycling_pass_count(am::AbstractArray{FT,3}, m::AbstractArray{FT,3
         return n_sub
     end
     Nx, Ny, Nz = size(m)
-    mx = ws.m_buf
-    mx_next = ws.rm_buf
+    mx = ws.cfl_scratch_m
+    mx_next = ws.cfl_scratch_rm
     n_sub = _subcycling_pass_count(max_cfl_x(am, m, ws.cluster_sizes), cfl_limit)
 
     while true
@@ -1072,8 +1082,8 @@ function _y_subcycling_pass_count(bm::AbstractArray{FT,3}, m::AbstractArray{FT,3
         return n_sub
     end
     Nx, Ny, Nz = size(m)
-    mx = ws.m_buf
-    mx_next = ws.rm_buf
+    mx = ws.cfl_scratch_m
+    mx_next = ws.cfl_scratch_rm
     n_sub = _subcycling_pass_count(max_cfl_y(bm, m), cfl_limit)
 
     while true
@@ -1120,8 +1130,8 @@ function _z_subcycling_pass_count(cm::AbstractArray{FT,3}, m::AbstractArray{FT,3
         return n_sub
     end
     Nx, Ny, Nz = size(m)
-    mx = ws.m_buf
-    mx_next = ws.rm_buf
+    mx = ws.cfl_scratch_m
+    mx_next = ws.cfl_scratch_rm
     n_sub = _subcycling_pass_count(max_cfl_z(cm, m), cfl_limit)
 
     while true

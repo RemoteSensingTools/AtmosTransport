@@ -29,44 +29,83 @@ using KernelAbstractions: get_backend, synchronize, @kernel, @index, @Const, @at
 # =========================================================================
 
 """
-    AdvectionWorkspace{FT, A, V1}
+    AdvectionWorkspace{FT, A, V1, A4}
 
 Pre-allocated buffers for mass-flux Strang splitting.  Eliminates all
 array allocations from the inner time-stepping loop.
 
-The workspace provides two buffer arrays (`rm_buf`, `m_buf`) that serve
-as output targets for the advection kernels (double-buffering pattern).
-The kernel writes to the buffers while reading from the original arrays,
-then the sweep function copies the buffers back.  This is ESSENTIAL for
-correctness — in-place kernel updates would violate the stencil's
-read-before-write contract and break mass conservation by ~10% per step.
+The workspace provides TWO complete buffer pairs (`(rm_A, m_A)` and
+`(rm_B, m_B)`) used as ping-pong source/destination by
+[`strang_split!`](@ref). Each directional sweep reads from one pair and
+writes to the other; the palindrome's six sweeps flip parity an even
+number of times, so the caller's home arrays receive the final result
+naturally.
+
+Kernels always write to a DIFFERENT array than they read from — this is
+the double-buffer contract, and in-place updates would violate the
+stencil's read-before-write assumption and break mass conservation by
+~10% per step.
+
+The legacy field names `rm_buf`, `m_buf`, `rm_4d_buf` are preserved as
+`getproperty` aliases for `rm_A`, `m_A`, `rm_4d_A` so that callers that
+reach into the workspace directly (LinRood, CubedSphereStrang, existing
+tests) continue to work unchanged.
 
 # Fields
-- `rm_buf::A` — double-buffer target for tracer mass (same size as `rm`)
-- `m_buf::A` — double-buffer target for air mass (same size as `m`)
+- `rm_A::A`, `rm_B::A` — 3D tracer-mass ping-pong pair (same size as `rm`)
+- `m_A::A`, `m_B::A`   — 3D air-mass ping-pong pair (same size as `m`)
+- `m_save::A` — backup of `m` for the per-tracer multi-tracer protocol
 - `cluster_sizes::V1` — per-latitude clustering factors for reduced grids
   (`Int32[Ny]`; all ones for uniform grids; empty for face-indexed meshes)
+- `face_left::V1`, `face_right::V1` — face connectivity for face-indexed meshes
+- `rm_4d_A::A4`, `rm_4d_B::A4` — 4D tracer-mass ping-pong pair for the
+  multi-tracer fused path (`(Nx, Ny, Nz, Nt)`). Both are allocated to
+  size 0×0×0×0 when `n_tracers == 0`.
+
+# Legacy aliases (via `getproperty`)
+- `ws.rm_buf`    ≡ `ws.rm_A`
+- `ws.m_buf`     ≡ `ws.m_A`
+- `ws.rm_4d_buf` ≡ `ws.rm_4d_A`
 
 # Constructors
 
-    AdvectionWorkspace(m::AbstractArray{FT,3}; cluster_sizes_cpu=nothing)
+    AdvectionWorkspace(m::AbstractArray{FT,3}; cluster_sizes_cpu=nothing, n_tracers=0)
 
-Create workspace for a 3D structured grid, allocating buffers matching
-the size of `m`.  If `cluster_sizes_cpu` is nothing, defaults to uniform
-(all ones).
+Create workspace for a 3D structured grid, allocating both buffer pairs
+matching the size of `m`.  If `cluster_sizes_cpu` is nothing, defaults to
+uniform (all ones).
 
-    AdvectionWorkspace(m::AbstractArray{FT,2}; cluster_sizes_cpu=nothing)
+    AdvectionWorkspace(m::AbstractArray{FT,2}; cluster_sizes_cpu=nothing, mesh=nothing)
 
 Create workspace for a 2D face-indexed grid (cell × level layout).
 """
 struct AdvectionWorkspace{FT, A <: AbstractArray{FT}, V1 <: AbstractVector{Int32}, A4}
-    rm_buf        :: A
-    m_buf         :: A
+    rm_A          :: A
+    m_A           :: A
+    rm_B          :: A
+    m_B           :: A
     m_save        :: A       # backup of m for multi-tracer strang_split!
     cluster_sizes :: V1
     face_left     :: V1
     face_right    :: V1
-    rm_4d_buf     :: A4
+    rm_4d_A       :: A4
+    rm_4d_B       :: A4
+end
+
+# Backward-compat aliases: keep legacy field names working for callers
+# that reach directly into the workspace (LinRood, CubedSphereStrang,
+# existing tests). `rm_buf`/`m_buf`/`rm_4d_buf` all map to the A-pair,
+# which is the one the kernels write to FIRST at the start of every
+# ping-pong sweep cycle.
+@inline function Base.getproperty(ws::AdvectionWorkspace, name::Symbol)
+    name === :rm_buf     && return getfield(ws, :rm_A)
+    name === :m_buf      && return getfield(ws, :m_A)
+    name === :rm_4d_buf  && return getfield(ws, :rm_4d_A)
+    return getfield(ws, name)
+end
+
+@inline function Base.propertynames(ws::AdvectionWorkspace, private::Bool = false)
+    return (fieldnames(AdvectionWorkspace)..., :rm_buf, :m_buf, :rm_4d_buf)
 end
 
 function _face_connectivity_vectors(mesh::AbstractHorizontalMesh)
@@ -89,9 +128,14 @@ function AdvectionWorkspace(m::AbstractArray{FT,3};
     copyto!(cs_dev, cs_cpu)
     face_left = similar(m, Int32, 0)
     face_right = similar(m, Int32, 0)
-    rm_4d = n_tracers > 0 ? similar(m, Nx, Ny, Nz, n_tracers) : similar(m, 0, 0, 0, 0)
-    AdvectionWorkspace{FT, typeof(m), typeof(cs_dev), typeof(rm_4d)}(
-        similar(m), similar(m), similar(m), cs_dev, face_left, face_right, rm_4d)
+    rm_4d_A = n_tracers > 0 ? similar(m, Nx, Ny, Nz, n_tracers) : similar(m, 0, 0, 0, 0)
+    rm_4d_B = n_tracers > 0 ? similar(m, Nx, Ny, Nz, n_tracers) : similar(m, 0, 0, 0, 0)
+    AdvectionWorkspace{FT, typeof(m), typeof(cs_dev), typeof(rm_4d_A)}(
+        similar(m), similar(m),                       # rm_A, m_A
+        similar(m), similar(m),                       # rm_B, m_B
+        similar(m),                                   # m_save
+        cs_dev, face_left, face_right,
+        rm_4d_A, rm_4d_B)
 end
 
 function AdvectionWorkspace(m::AbstractArray{FT,2};
@@ -108,21 +152,31 @@ function AdvectionWorkspace(m::AbstractArray{FT,2};
         copyto!(face_left, left_cpu)
         copyto!(face_right, right_cpu)
     end
-    rm_4d = similar(m, 0, 0)
-    AdvectionWorkspace{FT, typeof(m), typeof(cs_dev), typeof(rm_4d)}(
-        similar(m), similar(m), similar(m), cs_dev, face_left, face_right, rm_4d)
+    rm_4d_A = similar(m, 0, 0)
+    rm_4d_B = similar(m, 0, 0)
+    AdvectionWorkspace{FT, typeof(m), typeof(cs_dev), typeof(rm_4d_A)}(
+        similar(m), similar(m),                       # rm_A, m_A
+        similar(m), similar(m),                       # rm_B, m_B
+        similar(m),                                   # m_save
+        cs_dev, face_left, face_right,
+        rm_4d_A, rm_4d_B)
 end
 
 function Adapt.adapt_structure(to, ws::AdvectionWorkspace{FT}) where {FT}
-    rm_buf = Adapt.adapt(to, ws.rm_buf)
-    m_buf = Adapt.adapt(to, ws.m_buf)
-    m_save = Adapt.adapt(to, ws.m_save)
-    cluster_sizes = Adapt.adapt(to, ws.cluster_sizes)
-    face_left = Adapt.adapt(to, ws.face_left)
-    face_right = Adapt.adapt(to, ws.face_right)
-    rm_4d_buf = Adapt.adapt(to, ws.rm_4d_buf)
-    return AdvectionWorkspace{FT, typeof(rm_buf), typeof(cluster_sizes), typeof(rm_4d_buf)}(
-        rm_buf, m_buf, m_save, cluster_sizes, face_left, face_right, rm_4d_buf)
+    rm_A          = Adapt.adapt(to, getfield(ws, :rm_A))
+    m_A           = Adapt.adapt(to, getfield(ws, :m_A))
+    rm_B          = Adapt.adapt(to, getfield(ws, :rm_B))
+    m_B           = Adapt.adapt(to, getfield(ws, :m_B))
+    m_save        = Adapt.adapt(to, getfield(ws, :m_save))
+    cluster_sizes = Adapt.adapt(to, getfield(ws, :cluster_sizes))
+    face_left     = Adapt.adapt(to, getfield(ws, :face_left))
+    face_right    = Adapt.adapt(to, getfield(ws, :face_right))
+    rm_4d_A       = Adapt.adapt(to, getfield(ws, :rm_4d_A))
+    rm_4d_B       = Adapt.adapt(to, getfield(ws, :rm_4d_B))
+    return AdvectionWorkspace{FT, typeof(rm_A), typeof(cluster_sizes), typeof(rm_4d_A)}(
+        rm_A, m_A, rm_B, m_B, m_save,
+        cluster_sizes, face_left, face_right,
+        rm_4d_A, rm_4d_B)
 end
 
 # =========================================================================

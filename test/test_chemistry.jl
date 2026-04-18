@@ -199,4 +199,106 @@ for FT in (Float64, Float32)
     end
 end  # for FT
 
+# =========================================================================
+# End-to-end: advection + decay composition via TransportModel.step!
+# =========================================================================
+
+@testset "End-to-end advection + decay composition (TransportModel.step!)" begin
+    FT = Float64
+
+    # Small synthetic LatLon problem. Uniform Rn-222 + uniform CO2 + zero
+    # mass fluxes ⇒ advection is exactly mass-preserving, decay is exact.
+    # This verifies that `step!` composes the two operators correctly.
+    Nx, Ny, Nz = 6, 4, 2
+    mesh = LatLonMesh(; Nx = Nx, Ny = Ny, FT = FT)
+    A_ifc = zeros(FT, Nz + 1)
+    B_ifc = FT.(collect(range(0, 1, length = Nz + 1)))
+    vc = AtmosTransport.HybridSigmaPressure(A_ifc, B_ifc)
+    grid = AtmosTransport.AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT = FT)
+
+    # Uniform air mass, uniform tracers.
+    m = ones(FT, Nx, Ny, Nz)
+    rm_co2 = fill(FT(1.5), Nx, Ny, Nz)    # non-decaying
+    rm_rn  = fill(FT(2.5), Nx, Ny, Nz)    # decaying
+    state = CellState(m; CO2 = rm_co2, Rn222 = rm_rn)
+
+    # Zero mass fluxes — advection is a no-op on mass (and on tracers
+    # since the field is uniform).
+    am = zeros(FT, Nx + 1, Ny, Nz)
+    bm = zeros(FT, Nx, Ny + 1, Nz)
+    cm = zeros(FT, Nx, Ny, Nz + 1)
+    fluxes = AtmosTransport.StructuredFaceFluxState(am, bm, cm)
+
+    chem = ExponentialDecay(FT; Rn222 = RN222_HALF_LIFE)
+    model = TransportModel(state, fluxes, grid, UpwindScheme();
+                           chemistry = chem)
+
+    n_steps = 8
+    dt = FT(3600)    # 1-hour steps, 8 hours total
+    m_rn_initial = sum(state.tracers.Rn222)
+    m_co2_initial = sum(state.tracers.CO2)
+
+    for _ in 1:n_steps
+        step!(model, dt)
+    end
+
+    # Rn-222: total mass = M₀ · exp(-λ · n_steps · dt)
+    expected_rn = m_rn_initial * exp(-FT(RN222_LAMBDA) * n_steps * dt)
+    rn_final = sum(state.tracers.Rn222)
+    @test abs(rn_final - expected_rn) / expected_rn < 1e-13
+
+    # CO2: exactly preserved (no decay, no advection flux, no source).
+    @test sum(state.tracers.CO2) == m_co2_initial
+
+    # Air mass: preserved (zero fluxes).
+    @test sum(state.air_mass) == Nx * Ny * Nz
+end
+
+# =========================================================================
+# End-to-end: ordering — chemistry runs AFTER advection per §3.1
+# =========================================================================
+
+@testset "step!(model) composes advection then chemistry (order check)" begin
+    FT = Float64
+
+    # Construct a problem where order matters: non-uniform Rn-222 with
+    # zero flux ⇒ advection preserves spatial pattern, chemistry scales
+    # it uniformly. Compare `step!(model)` vs manual apply! sequence.
+    Nx, Ny, Nz = 4, 3, 2
+    mesh = LatLonMesh(; Nx = Nx, Ny = Ny, FT = FT)
+    A_ifc = zeros(FT, Nz + 1)
+    B_ifc = FT.(collect(range(0, 1, length = Nz + 1)))
+    vc = AtmosTransport.HybridSigmaPressure(A_ifc, B_ifc)
+    grid = AtmosTransport.AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT = FT)
+
+    m = ones(FT, Nx, Ny, Nz)
+    # Non-uniform Rn-222 so we can detect pattern changes.
+    rm_rn = reshape(FT.(1:Nx*Ny*Nz), Nx, Ny, Nz)
+    state = CellState(m; Rn222 = copy(rm_rn))
+    state_ref = CellState(m; Rn222 = copy(rm_rn))
+
+    fluxes = AtmosTransport.StructuredFaceFluxState(
+        zeros(FT, Nx+1, Ny, Nz), zeros(FT, Nx, Ny+1, Nz), zeros(FT, Nx, Ny, Nz+1))
+    fluxes_ref = AtmosTransport.StructuredFaceFluxState(
+        zeros(FT, Nx+1, Ny, Nz), zeros(FT, Nx, Ny+1, Nz), zeros(FT, Nx, Ny, Nz+1))
+
+    chem = ExponentialDecay(FT; Rn222 = RN222_HALF_LIFE)
+    model = TransportModel(state, fluxes, grid, UpwindScheme();
+                           chemistry = chem)
+    model_ref = TransportModel(state_ref, fluxes_ref, grid, UpwindScheme())
+
+    dt = FT(7_200)
+
+    # Combined step!
+    step!(model, dt)
+
+    # Manual: advection then chemistry
+    apply!(state_ref, fluxes_ref, grid, UpwindScheme(), dt;
+           workspace = model_ref.workspace)
+    apply!(state_ref, nothing, grid, chem, dt)
+
+    @test get_tracer(model.state, :Rn222) ≈ get_tracer(state_ref, :Rn222)
+    @test model.state.air_mass ≈ state_ref.air_mass
+end
+
 end  # @testset

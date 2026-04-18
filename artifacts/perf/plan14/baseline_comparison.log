@@ -1,0 +1,106 @@
+=== plan 14 baseline: per-tracer vs multi-tracer, production paths unchanged ===
+commit: e22246087ebe2bd4568b470015d686f64c8ad27b
+date:   2026-04-17T22:20:48Z
+
+### CPU medium ###
+Strang sweep benchmark — medium / cpu  (grid=288x144x32, steps=40)
+modes=per-tracer,multi-tracer  Nt=1,5,10,30  cfl_limits=0.4,Inf  schemes=upwind,slopes,ppm  dtypes=f64,f32
+mode         dtype  scheme     Nt    cfl   median(ms)      MAD(ms)
+------------------------------------------------------------------------------------------
+per-tracer   Float64 upwind      1   0.40       88.745        5.021
+multi-tracer Float64 upwind      1   0.40      137.435        2.030
+per-tracer   Float64 upwind      1    Inf       62.357        0.308
+multi-tracer Float64 upwind      1    Inf      123.595        0.211
+per-tracer   Float64 slopes      1   0.40      504.762        0.224
+multi-tracer Float64 slopes      1   0.40      513.130        0.510
+per-tracer   Float64 slopes      1    Inf      480.311        0.105
+multi-tracer Float64 slopes      1    Inf      500.383        0.141
+per-tracer   Float64 ppm         1   0.40      456.971        0.201
+multi-tracer Float64 ppm         1   0.40      463.076        0.404
+per-tracer   Float64 ppm         1    Inf      432.304        0.168
+multi-tracer Float64 ppm         1    Inf      451.890        0.301
+per-tracer   Float64 upwind      5   0.40      472.783       39.263
+multi-tracer Float64 upwind      5   0.40      336.495        0.951
+per-tracer   Float64 upwind      5    Inf      317.653        0.647
+multi-tracer Float64 upwind      5    Inf      330.004        0.495
+per-tracer   Float64 slopes      5   0.40     2815.517       50.147
+multi-tracer Float64 slopes      5   0.40     2401.537        0.943
+per-tracer   Float64 slopes      5    Inf     2407.198        0.478
+multi-tracer Float64 slopes      5    Inf     2366.783        0.365
+per-tracer   Float64 ppm         5   0.40     2529.667       60.633
+multi-tracer Float64 ppm         5   0.40     2096.629        1.200
+per-tracer   Float64 ppm         5    Inf     2165.872        0.851
+multi-tracer Float64 ppm         5    Inf     2074.798        0.859
+per-tracer   Float64 upwind     10   0.40      862.275        0.524
+multi-tracer Float64 upwind     10   0.40      593.581        3.650
+per-tracer   Float64 upwind     10    Inf      636.075        0.745
+multi-tracer Float64 upwind     10    Inf      579.106        0.591
+per-tracer   Float64 slopes     10   0.40     5045.363        0.542
+multi-tracer Float64 slopes     10   0.40     4854.471        1.254
+per-tracer   Float64 slopes     10    Inf     4813.640        0.547
+multi-tracer Float64 slopes     10    Inf     4909.399        0.633
+per-tracer   Float64 ppm        10   0.40     4565.904        0.546
+multi-tracer Float64 ppm        10   0.40     4252.927        5.418
+per-tracer   Float64 ppm        10    Inf     4333.926        0.881
+multi-tracer Float64 ppm        10    Inf     4315.046       42.664
+per-tracer   Float64 upwind     30   0.40     2563.060        1.100
+multi-tracer Float64 upwind     30   0.40     1685.988        1.996
+per-tracer   Float64 upwind     30    Inf     1908.495        1.928
+multi-tracer Float64 upwind     30    Inf     1683.742        1.413
+per-tracer   Float64 slopes     30   0.40    15113.507        1.056
+multi-tracer Float64 slopes     30   0.40    15837.017        6.065
+per-tracer   Float64 slopes     30    Inf    14441.158        1.346
+multi-tracer Float64 slopes     30    Inf    15811.021        3.596
+per-tracer   Float64 ppm        30   0.40    14159.362       32.103
+multi-tracer Float64 ppm        30   0.40    13998.947        7.449
+per-tracer   Float64 ppm        30    Inf    13009.331        9.851
+multi-tracer Float64 ppm        30    Inf    13980.991        3.860
+per-tracer   Float32 upwind      1   0.40       72.924        1.139
+multi-tracer Float32 upwind      1   0.40      127.756        0.580
+per-tracer   Float32 upwind      1    Inf       61.980        0.327
+multi-tracer Float32 upwind      1    Inf      123.636        0.120
+per-tracer   Float32 slopes      1   0.40      477.254        0.344
+multi-tracer Float32 slopes      1   0.40      491.347        0.328
+per-tracer   Float32 slopes      1    Inf      466.534        0.129
+multi-tracer Float32 slopes      1    Inf      485.907        0.298
+per-tracer   Float32 ppm         1   0.40      428.351        0.457
+multi-tracer Float32 ppm         1   0.40      438.683        0.628
+per-tracer   Float32 ppm         1    Inf      417.950        0.192
+multi-tracer Float32 ppm         1    Inf      434.334        0.528
+per-tracer   Float32 upwind      5   0.40      363.950        2.110
+multi-tracer Float32 upwind      5   0.40      313.098        0.606
+per-tracer   Float32 upwind      5    Inf      310.845        0.640
+multi-tracer Float32 upwind      5    Inf      306.103        0.425
+per-tracer   Float32 slopes      5   0.40     2385.348        0.915
+multi-tracer Float32 slopes      5   0.40     2292.356        1.081
+per-tracer   Float32 slopes      5    Inf     2334.203        0.407
+multi-tracer Float32 slopes      5    Inf     2287.211        0.258
+per-tracer   Float32 ppm         5   0.40     2142.478        0.829
+multi-tracer Float32 ppm         5   0.40     1978.459        1.186
+per-tracer   Float32 ppm         5    Inf     2091.698        0.502
+multi-tracer Float32 ppm         5    Inf     1970.519        0.613
+per-tracer   Float32 upwind     10   0.40      730.696        7.438
+multi-tracer Float32 upwind     10   0.40      515.345        0.851
+per-tracer   Float32 upwind     10    Inf      622.817        0.779
+multi-tracer Float32 upwind     10    Inf      508.828        0.485
+per-tracer   Float32 slopes     10   0.40     5020.812       23.577
+multi-tracer Float32 slopes     10   0.40     4671.077        1.220
+per-tracer   Float32 slopes     10    Inf     4669.217        0.566
+multi-tracer Float32 slopes     10    Inf     4652.831        0.426
+per-tracer   Float32 ppm        10   0.40     4534.526       22.765
+multi-tracer Float32 ppm        10   0.40     4037.496        1.697
+per-tracer   Float32 ppm        10    Inf     4183.733        0.911
+multi-tracer Float32 ppm        10    Inf     4023.187        0.827
+per-tracer   Float32 upwind     30   0.40     2431.385       41.592
+multi-tracer Float32 upwind     30   0.40     1548.316        1.057
+per-tracer   Float32 upwind     30    Inf     1864.703        1.409
+multi-tracer Float32 upwind     30    Inf     1434.700        0.459
+per-tracer   Float32 slopes     30   0.40    14574.436       36.316
+multi-tracer Float32 slopes     30   0.40    14299.826        6.239
+
+### Run was cut short (SIGKILL) ###
+# wurst run interrupted at CPU medium F32 Slopes Nt=30 cfl=0.4 multi-tracer.
+# Missing from wurst: CPU F32 Slopes Nt=30 cfl=Inf + PPM Nt=30 (4 configs x 2 modes); GPU medium F32; GPU large F32.
+# All decision-gate data captured: clear >=5% multi-tracer wins at Nt >= 5 (see CPU F64 Nt=30 Upwind: 34% / 12%, CPU F32 Nt=30 Upwind: 36% / 23%).
+# Curry A100 F64 complete matrix in baseline_curry_gpu_f64.log.
+# Full GPU F32 medium+large reruns to happen in Commit 7 for before/after comparison.

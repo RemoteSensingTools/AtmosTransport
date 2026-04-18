@@ -2,10 +2,13 @@
 # ===========================================================================
 # Strang split per-step benchmark
 #
-# Measures per-step wall time for strang_split! (LatLon, structured path)
-# on a synthetic problem. Reports median ± MAD (robust to outliers).
+# Measures per-step wall time for the two advection pipelines on a
+# synthetic LatLon problem, so that Plan 14's per-tracer vs. multi-tracer
+# decision has a direct measurement rather than a theoretical estimate.
 #
-# Usage:
+# Reports median ± MAD (robust to outliers).
+#
+# Usage (basic):
 #   julia --project=. scripts/benchmarks/bench_strang_sweep.jl [size] [backend] [--events]
 # where
 #   size    ∈ {small, medium, large}   (default: medium)
@@ -13,20 +16,22 @@
 #   --events                           on GPU: also report CUDA-event-based
 #                                      device time (vs. host wall time).
 #
-# On GPU, only Float32 is reported because L40S has no Float64 units.
-# On CPU both Float64 and Float32 are reported.
+# Plan 14 matrix flags (comma-separated lists override defaults):
+#   --mode=per-tracer,multi-tracer     (default: per-tracer)
+#   --ntracers=1,5,10,30               (default: DIMS.Nt for size)
+#   --cfl-limits=0.4,Inf               (default: 1.0 — no subcycling cap)
+#   --schemes=upwind,slopes,ppm        (default: all three)
+#   --dtype=f32,f64                    (default: Float64 on CPU, Float32 on GPU)
 #
-# With --events on GPU:
-#   - host(ms): wall time measured with synchronize bracketing; includes
-#              host-side kernel-launch overhead + any synchronize cost
-#   - cuda(ms): pure GPU time measured via CUDA events; kernel work only
-#   - delta = host - cuda: time the CPU spent on Julia dispatch, kernel
-#              launches, and blocked on synchronize. Sync removal (plan 13)
-#              targets this delta.
+# Columns emitted (one line per grid point in the matrix):
+#   mode  dtype  scheme  Nt  cfl   median(ms)  MAD(ms)  [host/cuda/Δ if --events]
+#
+# On GPU Float64 is omitted (L40S has no F64 units); pass --dtype=f64 to
+# override if you're on A100/H100.
 # ===========================================================================
 
 using AtmosTransport
-using AtmosTransport: AdvectionWorkspace, strang_split!,
+using AtmosTransport: AdvectionWorkspace, strang_split!, strang_split_mt!,
     UpwindScheme, SlopesScheme, PPMScheme, MonotoneLimiter,
     LatLonMesh, AtmosGrid, HybridSigmaPressure, CPU,
     cell_areas_by_latitude, gravity, reference_pressure, level_thickness,
@@ -34,19 +39,53 @@ using AtmosTransport: AdvectionWorkspace, strang_split!,
 using Statistics
 using Printf
 
+# ---------------------------------------------------------------------------
+# CLI parsing
+# ---------------------------------------------------------------------------
+
 const POSITIONAL = filter(a -> !startswith(a, "--"), ARGS)
 const SIZE    = length(POSITIONAL) >= 1 ? Symbol(POSITIONAL[1]) : :medium
 const BACKEND = length(POSITIONAL) >= 2 ? Symbol(POSITIONAL[2]) : :cpu
 const EVENTS  = "--events" in ARGS
 
-if BACKEND === :gpu
-    using CUDA
-    CUDA.functional() || error("CUDA requested but not functional")
-    # Wrap CUDA.@elapsed in a regular function so it's only parsed when
-    # CUDA is loaded. run_benchmark can then reference gpu_event_time
-    # at compile time on CPU without pulling in CUDA.
-    @eval gpu_event_time(f::Function) = CUDA.@elapsed f()
+"Return the comma-separated value of `--key=...`, or `nothing` if not present."
+function _flag_value(key::AbstractString)
+    prefix = key * "="
+    for a in ARGS
+        if startswith(a, prefix)
+            return a[lastindex(prefix)+1:end]
+        end
+    end
+    return nothing
 end
+
+function _flag_list(key::AbstractString; default::Vector{String})
+    v = _flag_value(key)
+    return v === nothing ? default : String.(split(v, ","))
+end
+
+const MODE_LIST    = _flag_list("--mode";    default = ["per-tracer"])
+const SCHEME_LIST  = _flag_list("--schemes"; default = ["upwind", "slopes", "ppm"])
+const DTYPE_LIST_S = _flag_list("--dtype";   default = BACKEND === :gpu ? ["f32"] : ["f64", "f32"])
+
+"Parse `--cfl-limits=0.4,Inf` into Float64 values; `Inf` disables subcycling."
+function _parse_cfl_list()
+    raw = _flag_value("--cfl-limits")
+    return raw === nothing ? [1.0] :
+           [lowercase(s) == "inf" ? Inf : parse(Float64, s) for s in split(raw, ",")]
+end
+
+const CFL_LIST = _parse_cfl_list()
+
+"Parse `--ntracers=1,5,10,30`; fall back to DIMS default per size."
+_parse_nt_list() = (v = _flag_value("--ntracers");
+                    v === nothing ? nothing : parse.(Int, split(v, ",")))
+
+const NT_OVERRIDE = _parse_nt_list()
+
+# ---------------------------------------------------------------------------
+# Problem presets
+# ---------------------------------------------------------------------------
 
 const DIMS = Dict(
     :small  => (Nx =  72, Ny =  36, Nz =  4, Nt = 1,  n_steps = 50),
@@ -54,13 +93,38 @@ const DIMS = Dict(
     :large  => (Nx = 576, Ny = 288, Nz = 72, Nt = 10, n_steps = 60),
 )[SIZE]
 
+const NT_LIST = NT_OVERRIDE === nothing ? [DIMS.Nt] : NT_OVERRIDE
+
+const SCHEME_TABLE = Dict(
+    "upwind" => UpwindScheme(),
+    "slopes" => SlopesScheme(MonotoneLimiter()),
+    "ppm"    => PPMScheme(MonotoneLimiter()),
+)
+
+const DTYPE_TABLE = Dict(
+    "f64" => Float64,
+    "f32" => Float32,
+)
+
+# ---------------------------------------------------------------------------
+# GPU setup — CUDA only loaded when backend=gpu
+# ---------------------------------------------------------------------------
+
+if BACKEND === :gpu
+    using CUDA
+    CUDA.functional() || error("CUDA requested but not functional")
+    @eval gpu_event_time(f::Function) = CUDA.@elapsed f()
+end
+
+# ---------------------------------------------------------------------------
+# Problem builder
+# ---------------------------------------------------------------------------
+
 "Median absolute deviation (robust scale)."
 median_abs_dev(v::AbstractVector) = median(abs.(v .- median(v)))
 
-function build_problem(::Type{FT}, cfg) where {FT}
-    Nx, Ny, Nz = cfg.Nx, cfg.Ny, cfg.Nz
+function build_problem(::Type{FT}, Nx, Ny, Nz, Nt) where {FT}
     mesh = LatLonMesh(; Nx = Nx, Ny = Ny, FT = FT)
-    # Pure-sigma coordinate: A = 0 everywhere, B linear from 0 (TOA) to 1 (surface).
     A_ifc = zeros(FT, Nz + 1)
     B_ifc = FT.(collect(range(0.0, 1.0, length = Nz + 1)))
     vc = HybridSigmaPressure(A_ifc, B_ifc)
@@ -75,8 +139,8 @@ function build_problem(::Type{FT}, cfg) where {FT}
         m[i, j, k] = FT(level_thickness(vc, k, ps)) * areas[j] / g
     end
 
-    rms = [similar(m) for _ in 1:cfg.Nt]
-    @inbounds for t in 1:cfg.Nt
+    rms = [similar(m) for _ in 1:Nt]
+    @inbounds for t in 1:Nt
         chi0 = FT(100e-6) * t
         for k in 1:Nz, j in 1:Ny, i in 1:Nx
             lat_frac = FT(j - 1) / FT(Ny - 1)
@@ -103,56 +167,98 @@ function build_problem(::Type{FT}, cfg) where {FT}
     return grid, m, rms, am, bm, cm
 end
 
-function run_benchmark(::Type{FT}, scheme, cfg, backend::Symbol, use_events::Bool) where {FT}
-    grid, m_cpu, rms_cpu, am_cpu, bm_cpu, cm_cpu = build_problem(FT, cfg)
+# ---------------------------------------------------------------------------
+# Device adaptation — lift CPU arrays to GPU if needed
+# ---------------------------------------------------------------------------
 
-    tracer_syms = ntuple(t -> Symbol("tr$t"), cfg.Nt)
+function _to_backend(x, backend::Symbol)
+    backend === :gpu ? CUDA.CuArray(x) : copy(x)
+end
 
-    if backend === :gpu
-        m      = CUDA.CuArray(m_cpu)
-        am     = CUDA.CuArray(am_cpu)
-        bm     = CUDA.CuArray(bm_cpu)
-        cm     = CUDA.CuArray(cm_cpu)
-        tracer_vals = ntuple(t -> CUDA.CuArray(rms_cpu[t]), cfg.Nt)
-    else
-        m      = copy(m_cpu)
-        am     = copy(am_cpu)
-        bm     = copy(bm_cpu)
-        cm     = copy(cm_cpu)
-        tracer_vals = ntuple(t -> copy(rms_cpu[t]), cfg.Nt)
-    end
+# ---------------------------------------------------------------------------
+# Per-tracer (NamedTuple) benchmark — current production path
+# ---------------------------------------------------------------------------
 
+function bench_per_tracer(::Type{FT}, scheme, grid, m_cpu, rms_cpu, am_cpu, bm_cpu, cm_cpu,
+                          backend::Symbol, cfl_limit::Real, n_steps::Int, use_events::Bool) where {FT}
+    Nt = length(rms_cpu)
+    m      = _to_backend(m_cpu,  backend)
+    am     = _to_backend(am_cpu, backend)
+    bm     = _to_backend(bm_cpu, backend)
+    cm     = _to_backend(cm_cpu, backend)
+    tracer_vals = ntuple(t -> _to_backend(rms_cpu[t], backend), Nt)
+    tracer_syms = ntuple(t -> Symbol("tr$t"), Nt)
     tracers = NamedTuple{tracer_syms}(tracer_vals)
+
     state   = CellState(DryBasis, m; tracers...)
     fluxes  = StructuredFaceFluxState(am, bm, cm)
-    ws      = AdvectionWorkspace(state.air_mass; n_tracers = cfg.Nt)
+    ws      = AdvectionWorkspace(state.air_mass; n_tracers = Nt)
+    cfl     = FT(cfl_limit)
 
-    # Warmup (compile + JIT)
     for _ in 1:3
-        strang_split!(state, fluxes, grid, scheme; workspace = ws)
+        strang_split!(state, fluxes, grid, scheme; workspace = ws, cfl_limit = cfl)
     end
     backend === :gpu && CUDA.synchronize()
 
+    _time_loop(n_steps, backend, use_events) do
+        strang_split!(state, fluxes, grid, scheme; workspace = ws, cfl_limit = cfl)
+    end
+end
+
+# ---------------------------------------------------------------------------
+# Multi-tracer (4D) benchmark — target pipeline
+# ---------------------------------------------------------------------------
+
+function bench_multi_tracer(::Type{FT}, scheme, grid, m_cpu, rms_cpu, am_cpu, bm_cpu, cm_cpu,
+                            backend::Symbol, cfl_limit::Real, n_steps::Int, use_events::Bool) where {FT}
+    Nt = length(rms_cpu)
+    Nx, Ny, Nz = size(m_cpu)
+
+    rm_4d_cpu = zeros(FT, Nx, Ny, Nz, Nt)
+    @inbounds for t in 1:Nt
+        rm_4d_cpu[:, :, :, t] .= rms_cpu[t]
+    end
+
+    m      = _to_backend(m_cpu,     backend)
+    am     = _to_backend(am_cpu,    backend)
+    bm     = _to_backend(bm_cpu,    backend)
+    cm     = _to_backend(cm_cpu,    backend)
+    rm_4d  = _to_backend(rm_4d_cpu, backend)
+
+    ws = AdvectionWorkspace(m; n_tracers = Nt)
+    cfl = FT(cfl_limit)
+
+    for _ in 1:3
+        strang_split_mt!(rm_4d, m, am, bm, cm, scheme, ws; cfl_limit = cfl)
+    end
+    backend === :gpu && CUDA.synchronize()
+
+    _time_loop(n_steps, backend, use_events) do
+        strang_split_mt!(rm_4d, m, am, bm, cm, scheme, ws; cfl_limit = cfl)
+    end
+end
+
+# ---------------------------------------------------------------------------
+# Timing loop — shared between both paths
+# ---------------------------------------------------------------------------
+
+function _time_loop(step_fn::Function, n_steps::Int, backend::Symbol, use_events::Bool)
     host_times_ms = Float64[]
     evt_times_ms  = Float64[]
-    for _ in 1:cfg.n_steps
+    for _ in 1:n_steps
         if backend === :gpu
             CUDA.synchronize()
             t0 = time_ns()
             if use_events
-                # CUDA events bracket the call on-device; returns elapsed
-                # device time in seconds. Isolates GPU work from host-side
-                # launch + synchronize overhead.
-                evt_s = gpu_event_time(() ->
-                    strang_split!(state, fluxes, grid, scheme; workspace = ws))
+                evt_s = gpu_event_time(step_fn)
                 push!(evt_times_ms, evt_s * 1e3)
             else
-                strang_split!(state, fluxes, grid, scheme; workspace = ws)
+                step_fn()
             end
             CUDA.synchronize()
             push!(host_times_ms, (time_ns() - t0) * 1e-6)
         else
-            t = @elapsed strang_split!(state, fluxes, grid, scheme; workspace = ws)
+            t = @elapsed step_fn()
             push!(host_times_ms, t * 1e3)
         end
     end
@@ -164,36 +270,64 @@ function run_benchmark(::Type{FT}, scheme, cfg, backend::Symbol, use_events::Boo
     return med_host, mad_host, med_evt, mad_evt
 end
 
+# ---------------------------------------------------------------------------
+# Main driver
+# ---------------------------------------------------------------------------
+
 function main()
-    ft_list = BACKEND === :gpu ? (Float32,) : (Float64, Float32)
     show_events = EVENTS && BACKEND === :gpu
 
-    @printf("Strang sweep benchmark (%s / %s: Nx=%d Ny=%d Nz=%d Nt=%d, steps=%d%s)\n",
-            SIZE, BACKEND, DIMS.Nx, DIMS.Ny, DIMS.Nz, DIMS.Nt, DIMS.n_steps,
+    @printf("Strang sweep benchmark — %s / %s  (grid=%dx%dx%d, steps=%d%s)\n",
+            SIZE, BACKEND, DIMS.Nx, DIMS.Ny, DIMS.Nz, DIMS.n_steps,
             show_events ? ", events" : "")
-    if show_events
-        @printf("%-10s %-10s %12s %12s %12s %12s %12s\n",
-                "FT", "Scheme", "host(ms)", "host MAD", "cuda(ms)", "cuda MAD", "Δhost-cuda")
-    else
-        @printf("%-10s %-10s %12s %12s\n",
-                "FT", "Scheme", "median(ms)", "MAD(ms)")
-    end
-    println("-"^80)
+    @printf("modes=%s  Nt=%s  cfl_limits=%s  schemes=%s  dtypes=%s\n",
+            join(MODE_LIST, ","), join(NT_LIST, ","),
+            join(CFL_LIST, ","), join(SCHEME_LIST, ","), join(DTYPE_LIST_S, ","))
 
-    for FT in ft_list
-        for (scheme, tag) in (
-            (UpwindScheme(),                      "Upwind"),
-            (SlopesScheme(MonotoneLimiter()),     "Slopes"),
-            (PPMScheme(MonotoneLimiter()),        "PPM"),
-        )
-            med_host, mad_host, med_evt, mad_evt = run_benchmark(FT, scheme, DIMS, BACKEND, EVENTS)
-            if show_events
-                @printf("%-10s %-10s %12.3f %12.3f %12.3f %12.3f %12.3f\n",
-                        string(FT), tag, med_host, mad_host, med_evt, mad_evt,
-                        med_host - med_evt)
-            else
-                @printf("%-10s %-10s %12.3f %12.3f\n",
-                        string(FT), tag, med_host, mad_host)
+    if show_events
+        @printf("%-12s %-6s %-8s %4s %6s %12s %12s %12s %12s %12s\n",
+                "mode", "dtype", "scheme", "Nt", "cfl",
+                "host(ms)", "host MAD", "cuda(ms)", "cuda MAD", "Δhost-cuda")
+    else
+        @printf("%-12s %-6s %-8s %4s %6s %12s %12s\n",
+                "mode", "dtype", "scheme", "Nt", "cfl",
+                "median(ms)", "MAD(ms)")
+    end
+    println("-"^90)
+
+    for dtype_s in DTYPE_LIST_S
+        FT = DTYPE_TABLE[dtype_s]
+        for Nt in NT_LIST
+            grid, m_cpu, rms_cpu, am_cpu, bm_cpu, cm_cpu =
+                build_problem(FT, DIMS.Nx, DIMS.Ny, DIMS.Nz, Nt)
+
+            for scheme_s in SCHEME_LIST
+                scheme = SCHEME_TABLE[scheme_s]
+                for cfl in CFL_LIST
+                    for mode in MODE_LIST
+                        med_host, mad_host, med_evt, mad_evt = if mode == "per-tracer"
+                            bench_per_tracer(FT, scheme, grid, m_cpu, rms_cpu,
+                                             am_cpu, bm_cpu, cm_cpu,
+                                             BACKEND, cfl, DIMS.n_steps, EVENTS)
+                        elseif mode == "multi-tracer"
+                            bench_multi_tracer(FT, scheme, grid, m_cpu, rms_cpu,
+                                               am_cpu, bm_cpu, cm_cpu,
+                                               BACKEND, cfl, DIMS.n_steps, EVENTS)
+                        else
+                            error("Unknown mode: $mode (expected per-tracer or multi-tracer)")
+                        end
+                        cfl_s = isinf(cfl) ? "Inf" : @sprintf("%.2f", cfl)
+                        if show_events
+                            @printf("%-12s %-6s %-8s %4d %6s %12.3f %12.3f %12.3f %12.3f %12.3f\n",
+                                    mode, string(FT), scheme_s, Nt, cfl_s,
+                                    med_host, mad_host, med_evt, mad_evt, med_host - med_evt)
+                        else
+                            @printf("%-12s %-6s %-8s %4d %6s %12.3f %12.3f\n",
+                                    mode, string(FT), scheme_s, Nt, cfl_s,
+                                    med_host, mad_host)
+                        end
+                    end
+                end
             end
         end
     end

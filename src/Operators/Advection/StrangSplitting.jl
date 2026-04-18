@@ -49,10 +49,6 @@ stencil's read-before-write assumption and break mass conservation by
 # Fields
 - `rm_A::A`, `rm_B::A` — 3D tracer-mass ping-pong pair (same size as `rm`)
 - `m_A::A`, `m_B::A`   — 3D air-mass ping-pong pair (same size as `m`)
-- `m_save::A` — backup of `m` for the per-tracer multi-tracer protocol
-- `cfl_scratch_m::A`, `cfl_scratch_rm::A` — preserved scratch pair from
-  the pre-plan-13 evolving-mass CPU CFL pilot. No longer referenced by
-  the unified static pilot and candidate for removal in a follow-up.
 - `cluster_sizes::V1` — per-latitude clustering factors for reduced grids
   (`Int32[Ny]`; all ones for uniform grids; empty for face-indexed meshes)
 - `face_left::V1`, `face_right::V1` — face connectivity for face-indexed meshes
@@ -77,9 +73,6 @@ struct AdvectionWorkspace{FT, A <: AbstractArray{FT}, V1 <: AbstractVector{Int32
     m_A            :: A
     rm_B           :: A
     m_B            :: A
-    m_save         :: A       # backup of m for multi-tracer strang_split!
-    cfl_scratch_m  :: A       # dead: pre-plan-13 evolving-mass pilot scratch
-    cfl_scratch_rm :: A       # dead: pre-plan-13 evolving-mass pilot scratch
     cluster_sizes  :: V1
     face_left      :: V1
     face_right     :: V1
@@ -112,8 +105,6 @@ function AdvectionWorkspace(m::AbstractArray{FT,3};
     AdvectionWorkspace{FT, typeof(m), typeof(cs_dev), typeof(rm_4d_A)}(
         similar(m), similar(m),                       # rm_A, m_A
         similar(m), similar(m),                       # rm_B, m_B
-        similar(m),                                   # m_save
-        similar(m), similar(m),                       # cfl_scratch_m, cfl_scratch_rm
         cs_dev, face_left, face_right,
         rm_4d_A, rm_4d_B)
 end
@@ -140,8 +131,6 @@ function AdvectionWorkspace(m::AbstractArray{FT,2};
     AdvectionWorkspace{FT, typeof(m), typeof(cs_dev), typeof(rm_4d_A)}(
         similar(m), similar(m),                       # rm_A, m_A
         similar(m), similar(m),                       # rm_B, m_B
-        similar(m),                                   # m_save
-        similar(m), similar(m),                       # cfl_scratch_m, cfl_scratch_rm
         cs_dev, face_left, face_right,
         rm_4d_A, rm_4d_B)
 end
@@ -175,17 +164,13 @@ function Adapt.adapt_structure(to, ws::AdvectionWorkspace{FT}) where {FT}
     m_A            = Adapt.adapt(to, getfield(ws, :m_A))
     rm_B           = Adapt.adapt(to, getfield(ws, :rm_B))
     m_B            = Adapt.adapt(to, getfield(ws, :m_B))
-    m_save         = Adapt.adapt(to, getfield(ws, :m_save))
-    cfl_scratch_m  = Adapt.adapt(to, getfield(ws, :cfl_scratch_m))
-    cfl_scratch_rm = Adapt.adapt(to, getfield(ws, :cfl_scratch_rm))
     cluster_sizes  = Adapt.adapt(to, getfield(ws, :cluster_sizes))
     face_left      = Adapt.adapt(to, getfield(ws, :face_left))
     face_right     = Adapt.adapt(to, getfield(ws, :face_right))
     rm_4d_A        = Adapt.adapt(to, getfield(ws, :rm_4d_A))
     rm_4d_B        = Adapt.adapt(to, getfield(ws, :rm_4d_B))
     return AdvectionWorkspace{FT, typeof(rm_A), typeof(cluster_sizes), typeof(rm_4d_A)}(
-        rm_A, m_A, rm_B, m_B, m_save,
-        cfl_scratch_m, cfl_scratch_rm,
+        rm_A, m_A, rm_B, m_B,
         cluster_sizes, face_left, face_right,
         rm_4d_A, rm_4d_B)
 end

@@ -151,6 +151,7 @@ export StructuredFaceFluxState, FaceIndexedFluxState, FluxState
 export face_flux_x, face_flux_y, face_flux_z, face_flux
 export MetState, allocate_face_fluxes, allocate_tracers
 export mixing_ratio, total_mass, total_air_mass, tracer_names
+export ntracers, tracer_index, tracer_name, get_tracer, eachtracer
 
 # Operators -- public transport API
 export AdvectionWorkspace, strang_split!, strang_split_mt!, apply!

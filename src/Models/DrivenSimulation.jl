@@ -113,9 +113,9 @@ end
 end
 
 function _check_surface_source_compatibility(state::CellState, source::SurfaceFluxSource)
-    haskey(state.tracers, source.tracer_name) ||
+    tracer_index(state, source.tracer_name) === nothing &&
         throw(ArgumentError("surface source tracer $(source.tracer_name) is not present in model state"))
-    rm = getfield(state.tracers, source.tracer_name)
+    rm = get_tracer(state, source.tracer_name)
     size(source.cell_mass_rate) == _surface_shape(rm) ||
         throw(ArgumentError("surface source $(source.tracer_name) has shape $(size(source.cell_mass_rate)) but tracer surface shape is $(_surface_shape(rm))"))
     return nothing
@@ -136,7 +136,7 @@ end
 function _apply_surface_sources!(sim::DrivenSimulation)
     isempty(sim.surface_sources) && return nothing
     for source in sim.surface_sources
-        rm = getfield(sim.model.state.tracers, source.tracer_name)
+        rm = get_tracer(sim.model.state, source.tracer_name)
         _apply_surface_source!(rm, source, sim.Δt)
     end
     return nothing

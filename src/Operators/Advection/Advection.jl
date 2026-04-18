@@ -30,7 +30,8 @@ import ..AbstractOperator, ..apply!
 using ...State: CellState, AbstractStructuredFaceFluxState, AbstractFaceFluxState,
     StructuredFaceFluxState, AbstractUnstructuredFaceFluxState,
     DryMassFluxBasis, DryStructuredFluxState, AbstractMassBasis,
-    FaceIndexedFluxState
+    FaceIndexedFluxState,
+    ntracers, tracer_index, tracer_name, get_tracer, eachtracer
 using ...Grids: AtmosGrid, AbstractHorizontalMesh, AbstractStructuredMesh,
     LatLonMesh, CubedSphereMesh, face_cells, nfaces,
     PanelConnectivity, reciprocal_edge,

@@ -69,7 +69,7 @@ Compute mixing ratio `q = tracer_mass / air_dry_mass` for the named tracer.
 Returns a lazy or materialized array depending on the backend.
 """
 function mixing_ratio(state::CellState, name::Symbol)
-    return getfield(state.tracers, name) ./ state.air_mass
+    return _get_tracer_impl(state.tracers, name) ./ state.air_mass
 end
 
 """
@@ -78,7 +78,7 @@ end
 Sum of tracer mass across all cells and levels.
 """
 function total_mass(state::CellState, name::Symbol)
-    return sum(getfield(state.tracers, name))
+    return sum(_get_tracer_impl(state.tracers, name))
 end
 
 """
@@ -91,9 +91,12 @@ total_air_mass(state::CellState) = sum(state.air_mass)
 """
     tracer_names(state::CellState) -> Tuple of Symbols
 
-Names of all tracers in the state.
+Names of all tracers in `state`, in stored order. Dispatches on the
+tracer-storage type through `_tracer_names_impl` so Commit 4's storage
+flip only needs to add a new impl method.
 """
-tracer_names(::CellState{B, A, <:NamedTuple{names}}) where {B, A, names} = names
+tracer_names(state::CellState) = _tracer_names_impl(state.tracers)
+_tracer_names_impl(::NamedTuple{names}) where {names} = names
 
 export CellState, DryCellState, MoistCellState
 export mixing_ratio, total_mass, total_air_mass, tracer_names

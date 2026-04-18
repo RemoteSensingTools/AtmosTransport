@@ -945,7 +945,7 @@ function strang_split!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
 
     cfl_limit_ft = convert(eltype(m), cfl_limit)
 
-    n_tr = length(state.tracers)
+    n_tr = ntracers(state)
     m_save = workspace.m_save
     if n_tr > 1
         copyto!(m_save, m)
@@ -955,7 +955,7 @@ function strang_split!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
     rm_alt0 = workspace.rm_B
     m_alt0  = workspace.m_B
 
-    for (idx, (name, rm_tracer)) in enumerate(pairs(state.tracers))
+    for (idx, (name, rm_tracer)) in enumerate(eachtracer(state))
         if idx > 1
             copyto!(m, m_save)
         end
@@ -1049,13 +1049,13 @@ for (scheme_type, h_sweep, v_sweep) in (
         hflux, cm = fluxes.horizontal_flux, fluxes.cm
         cfl_limit_ft = convert(eltype(m), cfl_limit)
 
-        n_tr = length(state.tracers)
+        n_tr = ntracers(state)
         m_save = n_tr > 1 ? similar(m) : m
         if n_tr > 1
             copyto!(m_save, m)
         end
 
-        for (idx, (_, rm_tracer)) in enumerate(pairs(state.tracers))
+        for (idx, (_, rm_tracer)) in enumerate(eachtracer(state))
             if idx > 1
                 copyto!(m, m_save)
             end

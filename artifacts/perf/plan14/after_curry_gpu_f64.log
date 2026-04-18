@@ -1,0 +1,305 @@
+=== plan 14 after-refactor bench (curry, A100 F64) ===
+host:   curry.gps.caltech.edu
+commit: d3f9f6860fbbb906f1b153f1c3fabb3ebb6ad3c2
+branch: advection-unification
+date:   2026-04-18T02:45:43Z
+gpu:    NVIDIA A100-PCIE-40GB
+
+### GPU medium (F64, production Nt=5,10,30) ###
+Precompiling packages...
+   1051.8 ms  ✓ CodeTracking
+   6242.9 ms  ✓ JuliaInterpreter
+   7518.6 ms  ✓ LoweredCodeUtils
+  10097.1 ms  ✓ Revise
+  4 dependencies successfully precompiled in 25 seconds. 19 already precompiled.
+Precompiling packages...
+    679.2 ms  ✓ dlfcn_win32_jll
+    691.2 ms  ✓ ZipFile
+    783.9 ms  ✓ Graphite2_jll
+    808.7 ms  ✓ Libmount_jll
+    802.0 ms  ✓ Xorg_libXau_jll
+    797.4 ms  ✓ libfdk_aac_jll
+    802.2 ms  ✓ libpng_jll
+    794.0 ms  ✓ Imath_jll
+    831.9 ms  ✓ Giflib_jll
+    806.1 ms  ✓ Pixman_jll
+    817.6 ms  ✓ LAME_jll
+    781.1 ms  ✓ WoodburyMatrices
+    787.9 ms  ✓ LERC_jll
+    793.7 ms  ✓ EarCut_jll
+    795.5 ms  ✓ Ogg_jll
+    793.1 ms  ✓ Xorg_libXdmcp_jll
+    818.7 ms  ✓ x264_jll
+    820.2 ms  ✓ x265_jll
+    754.6 ms  ✓ Xorg_xtrans_jll
+    792.7 ms  ✓ Opus_jll
+    805.3 ms  ✓ LZO_jll
+    813.4 ms  ✓ Expat_jll
+    848.9 ms  ✓ libaom_jll
+    917.8 ms  ✓ JpegTurbo_jll
+   2060.0 ms  ✓ StructUtils
+   2064.4 ms  ✓ ComputePipeline
+    558.1 ms  ✓ Distances → DistancesChainRulesCoreExt
+    779.5 ms  ✓ Libffi_jll
+    787.3 ms  ✓ isoband_jll
+    785.5 ms  ✓ Libuuid_jll
+    809.1 ms  ✓ FriBidi_jll
+    812.5 ms  ✓ FreeType2_jll
+   2305.6 ms  ✓ QuadGK
+    938.0 ms  ✓ GettextRuntime_jll
+   1144.1 ms  ✓ TaylorSeries → TaylorSeriesSAExt
+    598.3 ms  ✓ StatsFuns → StatsFunsInverseFunctionsExt
+   1018.3 ms  ✓ Revise → DistributedExt
+    817.3 ms  ✓ SQLite_jll
+    755.1 ms  ✓ AxisAlgorithms
+   1015.9 ms  ✓ OpenEXR_jll
+   2062.8 ms  ✓ StructArrays → StructArraysStaticArraysExt
+    889.6 ms  ✓ libvorbis_jll
+   2233.0 ms  ✓ CoordinateTransformations
+   3750.9 ms  ✓ StatsBase
+   1674.2 ms  ✓ FastGaussQuadrature
+    842.1 ms  ✓ Libtiff_jll
+    802.1 ms  ✓ libsixel_jll
+    529.9 ms  ✓ StructUtils → StructUtilsTablesExt
+   2025.3 ms  ✓ ImageAxes
+    526.5 ms  ✓ Isoband
+   1006.0 ms  ✓ FreeType
+   1113.6 ms  ✓ Fontconfig_jll
+   2135.5 ms  ✓ Xorg_libxcb_jll
+   1142.9 ms  ✓ Glib_jll
+    823.0 ms  ✓ PDMats → StatsBaseExt
+   3568.3 ms  ✓ IntervalArithmetic
+   1597.3 ms  ✓ OpenEXR
+    895.2 ms  ✓ LittleCMS_jll
+    865.3 ms  ✓ Xorg_libX11_jll
+   1330.9 ms  ✓ PROJ_jll
+   3976.9 ms  ✓ PNGFiles
+    555.2 ms  ✓ IntervalArithmetic → IntervalArithmeticIntervalSetsExt
+   1415.6 ms  ✓ ImageMetadata
+    807.8 ms  ✓ IntervalArithmetic → IntervalArithmeticSparseArraysExt
+   3188.8 ms  ✓ JpegTurbo
+    775.6 ms  ✓ IntervalArithmetic → IntervalArithmeticLinearAlgebraExt
+   2949.4 ms  ✓ Geodesy
+    799.1 ms  ✓ Xorg_libXrender_jll
+    892.8 ms  ✓ OpenJpeg_jll
+   3281.4 ms  ✓ Interpolations
+    810.3 ms  ✓ Xorg_libXext_jll
+   1222.3 ms  ✓ TaylorSeries → TaylorSeriesIAExt
+    800.3 ms  ✓ Xorg_libXfixes_jll
+   2481.9 ms  ✓ Sixel
+    960.7 ms  ✓ libva_jll
+   4591.0 ms  ✓ JSON
+   1048.7 ms  ✓ Cairo_jll
+   1167.7 ms  ✓ Libglvnd_jll
+   1228.4 ms  ✓ Interpolations → InterpolationsUnitfulExt
+   1809.8 ms  ✓ Netpbm
+   1753.6 ms  ✓ eccodes_jll
+   1003.5 ms  ✓ HarfBuzz_jll
+   1162.8 ms  ✓ ColorBrewer
+    695.5 ms  ✓ GRIB
+   1184.6 ms  ✓ libwebp_jll
+   3219.1 ms  ✓ Proj
+   8647.5 ms  ✓ PlotUtils
+    882.8 ms  ✓ libass_jll
+   5436.8 ms  ✓ Distributions
+   9769.0 ms  ✓ SIMD
+   4185.8 ms  ✓ ExactPredicates
+   1390.8 ms  ✓ FFMPEG_jll
+   2197.8 ms  ✓ WebP
+   1500.9 ms  ✓ Distributions → DistributionsTestExt
+   2434.3 ms  ✓ Distributions → DistributionsChainRulesCoreExt
+   1724.4 ms  ✓ KernelDensity
+  13001.5 ms  ✓ GeometryBasics
+    957.0 ms  ✓ GeometryBasics → GeometryBasicsGeoInterfaceExt
+   1028.5 ms  ✓ Packing
+   5811.0 ms  ✓ DelaunayTriangulation
+   2136.0 ms  ✓ ShaderAbstractions
+   2321.0 ms  ✓ FreeTypeAbstraction
+   5915.5 ms  ✓ GridLayoutBase
+   4840.6 ms  ✓ GeometryOps
+  10881.7 ms  ✓ Automa
+   1022.2 ms  ✓ GeometryOps → GeometryOpsProjExt
+   3262.7 ms  ✓ ConservativeRegridding
+   6318.3 ms  ✓ MathTeXEngine
+  24877.4 ms  ✓ TiffImages
+  48725.1 ms  ✓ JET
+ 152296.5 ms  ✓ Makie
+   6350.3 ms  ✓ GeometryOps → GeometryOpsMakieExt
+   6450.4 ms  ✓ GeoJSON → GeoJSONMakieExt
+   6537.7 ms  ✓ GeoInterface → GeoInterfaceMakieExt
+  10908.4 ms  ✓ GeoMakie
+   7367.7 ms  ✓ AtmosTransport
+  116 dependencies successfully precompiled in 214 seconds. 240 already precompiled.
+Precompiling packages...
+  51833.5 ms  ✓ CUDA (serial)
+  1 dependency successfully precompiled in 52 seconds
+Precompiling packages...
+   2200.0 ms  ✓ JLD2Ext (serial)
+  1 dependency successfully precompiled in 2 seconds
+Precompiling packages...
+   1525.3 ms  ✓ GeometryOpsDataFramesExt (serial)
+  1 dependency successfully precompiled in 2 seconds
+Precompiling packages...
+   5893.1 ms  ✓ AtomixCUDAExt (serial)
+  1 dependency successfully precompiled in 6 seconds
+┌ Error: Error during loading of extension AtmosTransportCUDAExt of AtmosTransport, use `Base.retry_load_extensions()` to retry.
+│   exception =
+│    1-element ExceptionStack:
+│    ArgumentError: Package AtmosTransportCUDAExt [75c1e8d0-5789-5489-a6b2-339989990b0e] is required but does not seem to be installed:
+│     - Run `Pkg.instantiate()` to install all recorded dependencies.
+│    
+│    Stacktrace:
+│      [1] __require_prelocked(pkg::Base.PkgId, env::Nothing)
+│        @ Base ./loading.jl:2615
+│      [2] _require_prelocked(uuidkey::Base.PkgId, env::Nothing)
+│        @ Base ./loading.jl:2493
+│      [3] _require_prelocked(uuidkey::Base.PkgId)
+│        @ Base ./loading.jl:2487
+│      [4] run_extension_callbacks(extid::Base.ExtensionId)
+│        @ Base ./loading.jl:1607
+│      [5] run_extension_callbacks(pkgid::Base.PkgId)
+│        @ Base ./loading.jl:1644
+│      [6] run_package_callbacks(modkey::Base.PkgId)
+│        @ Base ./loading.jl:1460
+│      [7] _require_prelocked(uuidkey::Base.PkgId, env::String)
+│        @ Base ./loading.jl:2501
+│      [8] macro expansion
+│        @ ./loading.jl:2421 [inlined]
+│      [9] macro expansion
+│        @ ./lock.jl:376 [inlined]
+│     [10] __require(into::Module, mod::Symbol)
+│        @ Base ./loading.jl:2386
+│     [11] require(into::Module, mod::Symbol)
+│        @ Base ./loading.jl:2362
+│     [12] top-level scope
+│        @ ~/code/gitHub/AtmosTransportModel/scripts/benchmarks/bench_strang_sweep.jl:114
+│     [13] include(mod::Module, _path::String)
+│        @ Base ./Base.jl:306
+│     [14] exec_options(opts::Base.JLOptions)
+│        @ Base ./client.jl:317
+│     [15] _start()
+│        @ Base ./client.jl:550
+└ @ Base loading.jl:1617
+Precompiling packages...
+   6018.1 ms  ✓ SpecialFunctionsExt (serial)
+  1 dependency successfully precompiled in 6 seconds. 21 already precompiled.
+Strang sweep benchmark — medium / gpu  (grid=288x144x32, steps=40, events)
+modes=per-tracer,multi-tracer  Nt=5,10,30  cfl_limits=0.4,Inf  schemes=upwind,slopes,ppm  dtypes=f64
+mode         dtype  scheme     Nt    cfl     host(ms)     host MAD     cuda(ms)     cuda MAD   Δhost-cuda
+------------------------------------------------------------------------------------------
+per-tracer   Float64 upwind      5   0.40        3.490        0.009        3.472        0.009        0.018
+multi-tracer Float64 upwind      5   0.40        2.525        0.004        2.508        0.004        0.017
+per-tracer   Float64 upwind      5    Inf        2.022        0.003        2.005        0.003        0.017
+multi-tracer Float64 upwind      5    Inf        1.575        0.002        1.561        0.002        0.014
+per-tracer   Float64 slopes      5   0.40        8.501        0.013        8.483        0.013        0.018
+multi-tracer Float64 slopes      5   0.40        5.403        0.006        5.387        0.006        0.015
+per-tracer   Float64 slopes      5    Inf        4.995        0.006        4.979        0.005        0.016
+multi-tracer Float64 slopes      5    Inf        4.984        0.008        4.968        0.007        0.015
+per-tracer   Float64 ppm         5   0.40       10.418        0.034       10.400        0.033        0.018
+multi-tracer Float64 ppm         5   0.40        5.914        0.007        5.897        0.007        0.016
+per-tracer   Float64 ppm         5    Inf        5.507        0.006        5.491        0.005        0.016
+multi-tracer Float64 ppm         5    Inf        5.500        0.005        5.485        0.005        0.016
+per-tracer   Float64 upwind     10   0.40        3.166        0.004        3.149        0.004        0.016
+multi-tracer Float64 upwind     10   0.40        3.346        0.010        3.330        0.009        0.016
+per-tracer   Float64 upwind     10    Inf        2.757        0.003        2.741        0.003        0.016
+multi-tracer Float64 upwind     10    Inf        2.748        0.004        2.732        0.003        0.016
+per-tracer   Float64 slopes     10   0.40        9.678        0.005        9.662        0.005        0.015
+multi-tracer Float64 slopes     10   0.40        9.671        0.009        9.655        0.009        0.016
+per-tracer   Float64 slopes     10    Inf        9.263        0.008        9.246        0.008        0.017
+multi-tracer Float64 slopes     10    Inf        9.257        0.006        9.240        0.006        0.017
+per-tracer   Float64 ppm        10   0.40       10.727        0.009       10.711        0.008        0.016
+multi-tracer Float64 ppm        10   0.40       10.725        0.009       10.709        0.010        0.016
+per-tracer   Float64 ppm        10    Inf       10.307        0.004       10.290        0.004        0.017
+multi-tracer Float64 ppm        10    Inf       10.313        0.008       10.296        0.008        0.016
+per-tracer   Float64 upwind     30   0.40        7.815        0.052        7.799        0.052        0.015
+multi-tracer Float64 upwind     30   0.40        7.864        0.014        7.848        0.014        0.016
+per-tracer   Float64 upwind     30    Inf        7.527        0.012        7.510        0.012        0.017
+multi-tracer Float64 upwind     30    Inf        7.500        0.022        7.484        0.022        0.015
+per-tracer   Float64 slopes     30   0.40       27.086        0.060       27.068        0.061        0.018
+multi-tracer Float64 slopes     30   0.40       26.872        0.022       26.854        0.022        0.018
+per-tracer   Float64 slopes     30    Inf       26.447        0.018       26.430        0.016        0.017
+multi-tracer Float64 slopes     30    Inf       26.451        0.018       26.428        0.014        0.022
+per-tracer   Float64 ppm        30   0.40       29.950        0.030       29.932        0.028        0.018
+multi-tracer Float64 ppm        30   0.40       29.956        0.030       29.933        0.028        0.023
+per-tracer   Float64 ppm        30    Inf       29.530        0.025       29.512        0.023        0.018
+multi-tracer Float64 ppm        30    Inf       29.523        0.022       29.503        0.023        0.019
+
+### GPU large (F64, production Nt=5,10,30) ###
+┌ Error: Error during loading of extension AtmosTransportCUDAExt of AtmosTransport, use `Base.retry_load_extensions()` to retry.
+│   exception =
+│    1-element ExceptionStack:
+│    ArgumentError: Package AtmosTransportCUDAExt [75c1e8d0-5789-5489-a6b2-339989990b0e] is required but does not seem to be installed:
+│     - Run `Pkg.instantiate()` to install all recorded dependencies.
+│    
+│    Stacktrace:
+│      [1] __require_prelocked(pkg::Base.PkgId, env::Nothing)
+│        @ Base ./loading.jl:2615
+│      [2] _require_prelocked(uuidkey::Base.PkgId, env::Nothing)
+│        @ Base ./loading.jl:2493
+│      [3] _require_prelocked(uuidkey::Base.PkgId)
+│        @ Base ./loading.jl:2487
+│      [4] run_extension_callbacks(extid::Base.ExtensionId)
+│        @ Base ./loading.jl:1607
+│      [5] run_extension_callbacks(pkgid::Base.PkgId)
+│        @ Base ./loading.jl:1644
+│      [6] run_package_callbacks(modkey::Base.PkgId)
+│        @ Base ./loading.jl:1460
+│      [7] _require_prelocked(uuidkey::Base.PkgId, env::String)
+│        @ Base ./loading.jl:2501
+│      [8] macro expansion
+│        @ ./loading.jl:2421 [inlined]
+│      [9] macro expansion
+│        @ ./lock.jl:376 [inlined]
+│     [10] __require(into::Module, mod::Symbol)
+│        @ Base ./loading.jl:2386
+│     [11] require(into::Module, mod::Symbol)
+│        @ Base ./loading.jl:2362
+│     [12] top-level scope
+│        @ ~/code/gitHub/AtmosTransportModel/scripts/benchmarks/bench_strang_sweep.jl:114
+│     [13] include(mod::Module, _path::String)
+│        @ Base ./Base.jl:306
+│     [14] exec_options(opts::Base.JLOptions)
+│        @ Base ./client.jl:317
+│     [15] _start()
+│        @ Base ./client.jl:550
+└ @ Base loading.jl:1617
+Strang sweep benchmark — large / gpu  (grid=576x288x72, steps=60, events)
+modes=per-tracer,multi-tracer  Nt=5,10,30  cfl_limits=0.4,Inf  schemes=upwind,slopes,ppm  dtypes=f64
+mode         dtype  scheme     Nt    cfl     host(ms)     host MAD     cuda(ms)     cuda MAD   Δhost-cuda
+------------------------------------------------------------------------------------------
+per-tracer   Float64 upwind      5   0.40       14.955        0.432       14.940        0.432        0.016
+multi-tracer Float64 upwind      5   0.40       14.629        0.038       14.615        0.037        0.015
+per-tracer   Float64 upwind      5    Inf       12.506        0.010       12.490        0.006        0.017
+multi-tracer Float64 upwind      5    Inf       12.485        0.003       12.469        0.003        0.016
+per-tracer   Float64 slopes      5   0.40       38.615        0.018       38.598        0.017        0.017
+multi-tracer Float64 slopes      5   0.40       38.635        0.039       38.614        0.034        0.021
+per-tracer   Float64 slopes      5    Inf       36.476        0.045       36.447        0.033        0.029
+multi-tracer Float64 slopes      5    Inf       36.469        0.041       36.448        0.041        0.021
+per-tracer   Float64 ppm         5   0.40       43.121        0.066       43.106        0.066        0.015
+multi-tracer Float64 ppm         5   0.40       43.129        0.029       43.112        0.029        0.017
+per-tracer   Float64 ppm         5    Inf       40.949        0.018       40.929        0.017        0.020
+multi-tracer Float64 ppm         5    Inf       40.953        0.021       40.933        0.019        0.020
+per-tracer   Float64 upwind     10   0.40       24.809        0.019       24.791        0.021        0.018
+multi-tracer Float64 upwind     10   0.40       24.827        0.042       24.809        0.040        0.018
+per-tracer   Float64 upwind     10    Inf       22.726        0.024       22.709        0.026        0.017
+multi-tracer Float64 upwind     10    Inf       22.715        0.018       22.697        0.016        0.018
+per-tracer   Float64 slopes     10   0.40       72.255        0.283       72.237        0.285        0.018
+multi-tracer Float64 slopes     10   0.40       72.578        0.175       72.562        0.174        0.017
+per-tracer   Float64 slopes     10    Inf       70.379        0.018       70.358        0.015        0.021
+multi-tracer Float64 slopes     10    Inf       70.373        0.017       70.356        0.016        0.017
+per-tracer   Float64 ppm        10   0.40       81.012        0.195       80.995        0.195        0.018
+multi-tracer Float64 ppm        10   0.40       81.079        0.314       81.058        0.313        0.020
+per-tracer   Float64 ppm        10    Inf       79.354        0.118       79.337        0.120        0.017
+multi-tracer Float64 ppm        10    Inf       79.375        0.025       79.358        0.024        0.017
+per-tracer   Float64 upwind     30   0.40       65.143        0.208       65.125        0.206        0.018
+multi-tracer Float64 upwind     30   0.40       65.160        0.085       65.141        0.084        0.018
+per-tracer   Float64 upwind     30    Inf       62.900        0.067       62.878        0.070        0.022
+multi-tracer Float64 upwind     30    Inf       62.890        0.074       62.870        0.071        0.021
+per-tracer   Float64 slopes     30   0.40      207.410        0.349      207.393        0.350        0.017
+multi-tracer Float64 slopes     30   0.40      207.891        0.219      207.871        0.222        0.019
+per-tracer   Float64 slopes     30    Inf      205.882        0.157      205.862        0.154        0.020
+multi-tracer Float64 slopes     30    Inf      205.919        0.140      205.901        0.140        0.018
+per-tracer   Float64 ppm        30   0.40      234.047        0.254      234.018        0.243        0.029
+multi-tracer Float64 ppm        30   0.40      234.005        0.358      233.986        0.355        0.020
+per-tracer   Float64 ppm        30    Inf      232.109        0.306      232.091        0.305        0.018
+multi-tracer Float64 ppm        30    Inf      232.206        0.283      232.189        0.284        0.017

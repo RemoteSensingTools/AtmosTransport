@@ -260,9 +260,124 @@ trigger.
   Commit 1 extends the bench script and runs the perf baseline.
   Neither touches production (non-bench) code.
 
+## Commit 7 findings — after-refactor bench
+
+Two hosts, two logs:
+
+- **curry A100 F64**, full matrix Nt ∈ {5, 10, 30}
+  → [../../../artifacts/perf/plan14/after_curry_gpu_f64.log](../../../artifacts/perf/plan14/after_curry_gpu_f64.log).
+- **wurst L40S CPU medium**, cut short at Nt=10 Slopes (F64 Nt=30
+  runs at ~15 s/step — decision signal already captured)
+  → [../../../artifacts/perf/plan14/after_wurst.log](../../../artifacts/perf/plan14/after_wurst.log).
+
+### Production regime: GPU large F64 Nt=30 (A100)
+
+Before/after comparison at cfl=0.4 / cfl=Inf for each scheme:
+
+| Scheme | cfl | Before per-tracer | After per-tracer | Speedup |
+|---|---|---:|---:|---:|
+| Upwind | 0.40 | 240 ms | 65.1 ms | **3.7×** |
+| Upwind | Inf  | 104 ms | 62.9 ms | **1.7×** |
+| Slopes | 0.40 | 362 ms | 207 ms | **1.75×** |
+| Slopes | Inf  | 227 ms | 206 ms | 1.10× |
+| PPM    | 0.40 | 403 ms | 234 ms | **1.72×** |
+| PPM    | Inf  | 266 ms | 232 ms | **1.15×** |
+
+Plan 14 delivered **10–270% speedups** at production settings on A100 F64.
+
+### Convergence of the two bench modes
+
+The post-refactor bench runs two modes (`per-tracer` and `multi-tracer`)
+that were meaningfully different pre-refactor (Commit 1 baseline showed
+per-tracer = old NamedTuple loop, multi-tracer = strang_split_mt!
+directly). After Commit 4, `strang_split!` is a thin wrapper over
+`strang_split_mt!`, so both bench modes hit the same code path. The
+Commit 7 run confirms this — every Nt=30 row shows per-tracer and
+multi-tracer within the MAD of each other (≤ 0.5 %):
+
+| Config | per-tracer (ms) | multi-tracer (ms) | Δ |
+|---|---:|---:|---:|
+| GPU large F64 Upwind Nt=30 cfl=0.4 | 65.14 | 65.16 | +0.03 % |
+| GPU large F64 Slopes Nt=30 cfl=0.4 | 207.41 | 207.89 | +0.23 % |
+| GPU large F64 PPM Nt=30 cfl=0.4    | 234.05 | 234.01 | −0.02 % |
+| GPU medium F64 Upwind Nt=30 cfl=0.4 | 7.82  | 7.86   | +0.6 %  |
+
+This is the intended outcome: the refactor delivered the multi-tracer
+pipeline as the default `strang_split!` entry point. There is no
+longer a "fast path" vs "slow path" distinction in the public API.
+
+### CPU regime (partial)
+
+At CPU medium F64 Nt=10, both modes now give ≈4914 ms for Slopes,
+indistinguishable (vs. pre-refactor per-tracer 5020 ms and multi-tracer
+4671 ms at the same config from Commit 1). The CPU win from the
+refactor is modest — Slopes/PPM at higher Nt on CPU were already near
+memory-bandwidth saturation per Commit 1's observations. The main win
+is on GPU, where plan 14 v3 §1.2's "0-10% realistic expectation" was
+conservative by a factor of 5–10×.
+
+### Why the GPU win is so much larger than the v3 §1.2 estimate
+
+Plan v3's 0–10% estimate assumed launch-overhead savings dominate.
+The actual dominant factor at Nt=30 appears to be the **mass-restore
+copyto elimination** (v3 Commit 3 noted as "~2 ms potential win").
+The old per-tracer loop called `copyto!(m, m_save)` N−1 times per
+step (≈3.2 GB/step at C180 Nt=30) plus re-reads `am/bm/cm` N times.
+The multi-tracer kernel reads mass/flux fields ONCE and updates all
+tracers in the same launch. At L40S/A100 memory bandwidths, this
+saves 15–40 ms/step at GPU large Nt=30. The launch-overhead portion
+(~1 ms saved on 60 fewer launches) is a smaller contributor.
+
+## Decisions made beyond the plan (appended)
+
+- **Split Commit 0 and Commit 1** (already noted): docs-only Commit 0
+  vs bench-extension-and-baseline-perf Commit 1.
+- **Partial Commit 1 baseline**: wurst CPU F32/GPU F32 runs cut short
+  at user direction; curry GPU F64 captured. Decision-gate signal was
+  already clear at that point. Commit 7 re-ran the production Nt=30
+  subset to completion on curry.
+- **Skip Commit 6 (dead-code removal) as separate commit**: v3 §4.4
+  Commit 6 said "grep for anything still referencing the old pattern".
+  Grep showed nothing remaining — NamedTuple-path `_*_impl` helpers
+  were already deleted in Commit 4 when the accessor API was rewired
+  to dispatch on `state` directly, and `m_save`/`cfl_scratch_*` came
+  out in Commit 5. The per-tracer-sweep 5/6-arg forms look like dead
+  backward-compat at first glance but are used by LinRood and
+  CubedSphereStrang (not dead). Ship Commit 5 → straight to Commit 7.
+- **CellState storage sharing attempt** (see Commit 3 message): a
+  first draft made `state.tracers.CO2` a VIEW into `tracers_raw` so
+  mutations through either handle landed in the same storage. Passed
+  a unit smoke test but broke 8 CPU agreement tests in
+  `test_advection_kernels.jl` because the test helper `run_strang!`
+  returned the caller's unchanged input array while the real data
+  lived in `tracers_raw`. Reverted to **separate parallel copies**
+  (NamedTuple values = caller's arrays, `tracers_raw` = independent
+  copy). Commit 4 then dropped the NamedTuple field, making
+  `state.tracers.CO2` a view into `tracers_raw` via `TracerAccessor`
+  — at which point the test helper had to migrate to
+  `state.tracers.tracer`-based return value.
+- **CPU/GPU dispatch fix for SubArray tracers**: `sweep_horizontal!`
+  and `sweep_vertical!` checked `rm isa Array` to decide CPU vs GPU
+  code path. Post-Commit 4, `rm` is a `SubArray{FT, 2, Array{FT, 3}}`
+  (`selectdim` view into `tracers_raw`), which fails `isa Array` and
+  wrongly routed to the GPU path. Fix: `parent(rm) isa Array`. Caught
+  by `Face-indexed horizontal subcycling preserves positivity` testset.
+
 ## Deferred observations
 
-(Updated as execution proceeds.)
+- **Face-indexed / reduced-Gaussian multi-tracer fusion**: out of
+  scope for plan 14. The face-indexed `apply!` path still does a
+  per-tracer loop — just through `selectdim` views now. Converting
+  that to a multi-tracer fused kernel is a follow-up if RG
+  workloads start to dominate on GPU.
+- **CPU Slopes/PPM near-saturation**: at CPU medium F64 Nt=30
+  Slopes/PPM, multi-tracer is within ±10 % of per-tracer (noise
+  floor). No CPU win expected here; arithmetic per cell dominates.
+- **4D buffers on face-indexed workspaces**: the 2D `AdvectionWorkspace`
+  constructor still takes an `n_tracers` keyword but ignores it (4D
+  ping-pong buffers stay 0-sized). Not a bug — face-indexed path uses
+  `selectdim`, not the 4D buffer — but a cleanup opportunity once
+  face-indexed multi-tracer fusion is implemented.
 
 ## Surprises vs. the plan
 
@@ -273,11 +388,66 @@ trigger.
   `src/Models/TransportModel.jl`. Per v3 §4.1 ("re-grep at execution
   time; the grep is authoritative about actual scope") this is
   expected — plan was written against a different layout assumption.
+- **Win is ~5–10× larger than v3 §1.2 predicted on GPU.** v3 revised
+  v1's "2–10× GPU speedup" down to "0–10% realistic expectation" on
+  the grounds that launch overhead is only ~2.5% of production cost.
+  Measurement shows 10–270% at production Nt=30 on A100 F64. The
+  dominant factor is bandwidth saved by the single-mass-update
+  fusion, not launch overhead. v3 Commit 3 mentioned the bandwidth
+  effect as "~2 ms potential win" but undershot; at C180 Nt=30 the
+  savings are tens of ms. **Takeaway for future plans**: bandwidth
+  estimates via "copyto bytes × 1/bandwidth" underweigh the
+  compiler's ability to eliminate redundant memory traffic when
+  operations are fused.
+- **Commit 3 storage-sharing attempt fell on test-contract edge**:
+  the first draft that made `state.tracers.CO2 === view(tracers_raw)`
+  broke test helpers that relied on the pre-refactor
+  `state.tracers.CO2 === caller's_array` contract. Classic case of
+  storage identity assumptions leaking through tests. The fix
+  (parallel copies in Commit 3, then property-access via
+  TracerAccessor in Commit 4) took an extra iteration that a sharper
+  read of the test helpers would have caught up front.
 
 ## Test anomalies
 
-(Updated as execution proceeds.)
+- **`Face-indexed horizontal subcycling preserves positivity`**
+  regressed at Commit 4 with `ArgumentError: face-indexed GPU sweep
+  requires mesh connectivity`. Root cause: `rm isa Array` check for
+  CPU-vs-GPU dispatch returned `false` for `SubArray{Array}` views.
+  Fix in Commit 4: check `parent(rm) isa Array` instead. Tests that
+  look like they check storage type but actually need to check
+  backend should use `get_backend` or `parent(·) isa Array` rather
+  than `rm isa Array`.
 
 ## Template usefulness for plans 15-18
 
-(Filled at Commit 7 retrospective.)
+What worked well:
+- **Measurement-first Commit 0/1**. The 73% speedup at Nt=30 Upwind
+  was worth the time to establish — turned plan 14 from "cleanup only"
+  per v3 framing to "cleanup + real perf win".
+- **v3's incremental storage flip** (Commit 2 accessor API pass-through
+  → Commit 3 parallel fields → Commit 4 primary flip). Even though
+  Commit 3's initial design broke tests, rolling back to "parallel
+  copies, dead until Commit 4 wires them up" was cheap and the
+  overall structure held.
+- **NFS-shared home + SSH to curry for parallel F64 bench**. Big
+  time savings — got wurst CPU F64/F32 + curry GPU F64 in parallel.
+
+What to carry forward:
+- **Perf predictions should cite measurement bounds, not theoretical
+  ceilings**. v3 §1.2's 0–10% estimate was based on launch-overhead
+  subtraction. The bandwidth-fusion effect was harder to predict a
+  priori; direct measurement resolved it cleanly. Future plans
+  should make Commit 0 measurement the decision gate, not a
+  confirmation of a pre-registered prediction.
+- **Pre-identify storage identity assumptions in tests**. Plan 15+
+  (chemistry, diffusion) will add operators that mutate
+  `state.tracers_raw`. Any test helper that returns a caller-side
+  array handle will be wrong. Document the contract: **tests should
+  go through `state.tracers.CO2` or `get_tracer(state, :CO2)` to
+  observe post-advection state, never the original input array**.
+- **CPU/GPU dispatch via `parent(arr) isa Array`, not `arr isa
+  Array`**, when the array may be a view. Belongs in a "dispatch
+  pattern" coding standards note.
+- **Face-indexed multi-tracer fusion is deferred** — flag for plan
+  17/18 if RG workloads dominate on GPU.

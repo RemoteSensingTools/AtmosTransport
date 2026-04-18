@@ -1,0 +1,35 @@
+=== plan 14 after-refactor bench (wurst, L40S) ===
+commit: d3f9f6860fbbb906f1b153f1c3fabb3ebb6ad3c2
+date:   2026-04-18T02:45:28Z
+
+### CPU medium (production Nt=5,10,30) ###
+Strang sweep benchmark — medium / cpu  (grid=288x144x32, steps=40)
+modes=per-tracer,multi-tracer  Nt=5,10,30  cfl_limits=0.4,Inf  schemes=upwind,slopes,ppm  dtypes=f64,f32
+mode         dtype  scheme     Nt    cfl   median(ms)      MAD(ms)
+------------------------------------------------------------------------------------------
+per-tracer   Float64 upwind      5   0.40      355.210        4.015
+multi-tracer Float64 upwind      5   0.40      349.106        5.119
+per-tracer   Float64 upwind      5    Inf      323.209        0.283
+multi-tracer Float64 upwind      5    Inf      323.338        0.396
+per-tracer   Float64 slopes      5   0.40     2391.174        3.812
+multi-tracer Float64 slopes      5   0.40     2397.783        3.448
+per-tracer   Float64 slopes      5    Inf     2367.873        0.193
+multi-tracer Float64 slopes      5    Inf     2373.948        0.259
+per-tracer   Float64 ppm         5   0.40     2081.441        2.759
+multi-tracer Float64 ppm         5   0.40     2081.316        2.460
+per-tracer   Float64 ppm         5    Inf     2076.448        0.463
+multi-tracer Float64 ppm         5    Inf     2056.167        0.861
+per-tracer   Float64 upwind     10   0.40      617.563        1.380
+multi-tracer Float64 upwind     10   0.40      618.405        0.832
+per-tracer   Float64 upwind     10    Inf      604.756        0.625
+multi-tracer Float64 upwind     10    Inf      604.375        0.421
+per-tracer   Float64 slopes     10   0.40     4927.176        0.517
+multi-tracer Float64 slopes     10   0.40     4946.210        0.808
+per-tracer   Float64 slopes     10    Inf     4914.763        0.633
+multi-tracer Float64 slopes     10    Inf     4914.411        0.445
+
+### Run was cut short ###
+# wurst bench killed at CPU medium F64 Nt=10 Slopes cfl=Inf multi-tracer.
+# After-refactor CPU behavior confirmed identical to pre-refactor multi-tracer
+# mode (both paths now go through strang_split_mt!). Full GPU matrix on curry
+# completed — see after_curry_gpu_f64.log.

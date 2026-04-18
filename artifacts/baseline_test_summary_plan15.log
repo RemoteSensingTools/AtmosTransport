@@ -1,0 +1,92 @@
+=== test/test_basis_explicit_core.jl ===
+       [5] macro expansion
+         @ ~/code/gitHub/AtmosTransportModel/test/test_basis_explicit_core.jl:215 [inlined]
+
+Stacktrace:
+ [1] top-level scope
+   @ ~/code/gitHub/AtmosTransportModel/test/test_basis_explicit_core.jl:213
+ [2] macro expansion
+   @ ~/.julia/juliaup/julia-1.12.5+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1776 [inlined]
+ [3] macro expansion
+   @ ~/code/gitHub/AtmosTransportModel/test/test_basis_explicit_core.jl:215 [inlined]
+Test Summary:                        | Pass  Fail  Total  Time
+Honest metadata-only CubedSphere API |    3     2      5  3.9s
+RNG of the outermost testset: Random.Xoshiro(0x3da089ffad95a32b, 0x8f721448787bbcdf, 0x5ddb365d34ca162f, 0x4d16a5bca64cb9c0, 0xdcdd5ed3ab145cf3)
+ERROR: LoadError: Some tests did not pass: 3 passed, 2 failed, 0 errored, 0 broken.
+in expression starting at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_basis_explicit_core.jl:212
+=== test/test_advection_kernels.jl ===
+    CPU-GPU PPM F32 4-step: rm_ulp=0.25 m_ulp=0.0
+  PPM F32 vs F64 max relative difference (4 steps): 1.257094e-6
+  PPM F32 vs F64 global mass bias (4 steps):        -2.1969321594608833e-8
+Test Summary:                            | Pass  Total  Time
+PPMScheme kernels: {CPU,GPU} × {F32,F64} |   20     20  3.8s
+    MT CPU-GPU F64: m_ulp=0.0
+    MT CPU-GPU F32: m_ulp=0.0
+Test Summary:              | Pass  Total  Time
+Multi-tracer kernel fusion |   84     84  5.0s
+    F64: n_sub = (1, 1, 1)
+    F32: n_sub = (1, 1, 1)
+Test Summary:               | Pass  Total  Time
+Unified CFL pilot (plan 13) |    6      6  0.0s
+
+✓ All advection kernel cross-backend/precision tests completed!
+=== test/test_structured_mesh_metadata.jl ===
+
+Stacktrace:
+ [1] top-level scope
+   @ ~/code/gitHub/AtmosTransportModel/test/test_structured_mesh_metadata.jl:29
+ [2] macro expansion
+   @ ~/.julia/juliaup/julia-1.12.5+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1776 [inlined]
+ [3] macro expansion
+   @ ~/code/gitHub/AtmosTransportModel/test/test_structured_mesh_metadata.jl:45 [inlined]
+ [4] macro expansion
+   @ ~/.julia/juliaup/julia-1.12.5+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:680 [inlined]
+Test Summary:               | Pass  Fail  Total  Time
+CubedSphereMesh conventions |   10     3     13  2.1s
+RNG of the outermost testset: Random.Xoshiro(0xd617d8064211e291, 0x6eb93bcad68911e9, 0xbd061465b25818df, 0x3fcf3c8a632df76f, 0x920c992bf7a758b0)
+ERROR: LoadError: Some tests did not pass: 10 passed, 3 failed, 0 errored, 0 broken.
+in expression starting at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_structured_mesh_metadata.jl:28
+=== test/test_reduced_gaussian_mesh.jl ===
+Test Summary:              | Pass  Total  Time
+ReducedGaussianMesh wiring |    4      4  0.1s
+Test Summary:                | Pass  Total  Time
+ReducedGaussianMesh geometry |   22     22  0.7s
+=== test/test_driven_simulation.jl ===
+Test Summary:                                                          | Pass  Total  Time
+DrivenSimulation optional no-reset window carry preserves mixing ratio |    3      3  8.8s
+Test Summary:                                         | Pass  Total  Time
+DrivenSimulation applies bottom-layer surface sources |    4      4  1.4s
+Test Summary:                           | Pass  Total  Time
+DrivenSimulation window-forcing runtime |   50     50  2.1s
+=== test/test_cubed_sphere_advection.jl ===
+Halo exchange |  496    496  0.6s
+Test Summary:                      | Pass  Total  Time
+CS Strang splitting — UpwindScheme |    2      2  1.3s
+Test Summary:                                       | Pass  Total  Time
+CS Strang splitting — SlopesScheme{MonotoneLimiter} |    9      9  2.4s
+Test Summary:                   | Pass  Total  Time
+CS Strang splitting — PPMScheme |    3      3  1.0s
+Test Summary:      | Pass  Total  Time
+CS halo validation |    2      2  0.5s
+[ Info: Poisson balance: corrected 4/4 levels, max pre-balance residual: 0.0168 kg
+[ Info: Poisson balance: corrected 4/4 levels, max pre-balance residual: 0.0168 kg
+Test Summary:                              | Pass  Total  Time
+LLPoissonWorkspace zero-allocation balance |    1      1  0.8s
+Test Summary:          | Pass  Total  Time
+CS advection — Float32 |    1      1  1.8s
+=== test/test_poisson_balance.jl ===
+   @ ~/code/gitHub/AtmosTransportModel/test/test_poisson_balance.jl:207 [inlined]
+ [6] macro expansion
+   @ ~/.julia/juliaup/julia-1.12.5+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:680 [inlined]
+Test Summary:                                                   | Pass  Fail  Total  Time
+CS global Poisson balance                                       |  245    72    317  5.1s
+  Zero fluxes → zero correction                                 |   12           12  1.5s
+  Random fluxes → post-balance residual near machine precision  |    1            1  0.3s
+  All cells have degree 4                                       |    6            6  0.0s
+  cm diagnosis gives zero bottom boundary                       |    6            6  0.3s
+  mirror_sign: inflow positions get +1, outflow get -1          |  216    72    288  1.5s
+  mirror_sign: per-panel div matches global face-table div      |    3            3  0.6s
+  mirror_sign: balance + cm diagnosis conserves mass per column |    1            1  0.8s
+RNG of the outermost testset: Random.Xoshiro(0xd1d2a08156a4d072, 0x86a30377ffff7ef5, 0x384e69177e1edecf, 0x08c5e0bae63ecfe4, 0xbcacdd7b18f55698)
+ERROR: LoadError: Some tests did not pass: 245 passed, 72 failed, 0 errored, 0 broken.
+in expression starting at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_poisson_balance.jl:116

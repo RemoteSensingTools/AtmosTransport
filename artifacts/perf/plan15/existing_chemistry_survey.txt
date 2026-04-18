@@ -1,0 +1,26 @@
+src/Operators/AbstractOperators.jl:46:Source/sink operators (emissions, deposition, chemistry).
+src/Operators/Operators.jl:41:export apply_chemistry!
+src/Operators/Chemistry/Chemistry.jl:4:Source/sink operators for tracer transformations (decay, photolysis, etc.).
+src/Operators/Chemistry/Chemistry.jl:10:    ├── RadioactiveDecay{FT}      — constant first-order decay (e.g. ²²²Rn)
+src/Operators/Chemistry/Chemistry.jl:13:Interface: `apply_chemistry!(tracers, chem, Δt)`
+src/Operators/Chemistry/Chemistry.jl:18:export apply_chemistry!
+src/Operators/Chemistry/Chemistry.jl:23:apply_chemistry!(tracers, ::NoChemistry, Δt) = nothing
+src/Operators/Chemistry/Chemistry.jl:26:    RadioactiveDecay{FT}(; species, half_life, FT=Float64)
+src/Operators/Chemistry/Chemistry.jl:28:First-order radioactive decay: `rm .*= exp(-λ·Δt)` where `λ = ln(2)/half_life`.
+src/Operators/Chemistry/Chemistry.jl:33:- ²²²Rn: half_life = 330_350.4 s (3.8235 days)
+src/Operators/Chemistry/Chemistry.jl:34:- ⁸⁵Kr:  half_life = 3.394e8 s (10.76 years)
+src/Operators/Chemistry/Chemistry.jl:38:    half_life :: FT
+src/Operators/Chemistry/Chemistry.jl:42:function RadioactiveDecay(; species::Symbol, half_life::Real, FT::Type{<:AbstractFloat}=Float64)
+src/Operators/Chemistry/Chemistry.jl:43:    RadioactiveDecay{FT}(species, FT(half_life), FT(log(2) / half_life))
+src/Operators/Chemistry/Chemistry.jl:46:function apply_chemistry!(tracers, chem::RadioactiveDecay{FT}, Δt) where FT
+src/Operators/Chemistry/Chemistry.jl:56:Apply multiple chemistry schemes sequentially. For multi-tracer runs where
+src/Operators/Chemistry/Chemistry.jl:60:        RadioactiveDecay(; species=:rn222, half_life=330_350.4)
+src/Operators/Chemistry/Chemistry.jl:70:function apply_chemistry!(tracers, chem::CompositeChemistry, Δt)
+src/Operators/Chemistry/Chemistry.jl:72:        apply_chemistry!(tracers, scheme, Δt)
+src/Models/DrivenSimulation.jl:39:    chemistry                   :: CT
+src/Models/DrivenSimulation.jl:193:- `chemistry=NoChemistry()` — applied after advection + surface sources each step
+src/Models/DrivenSimulation.jl:205:                          chemistry::AbstractChemistry = NoChemistry(),
+src/Models/DrivenSimulation.jl:227:    sim = DrivenSimulation{typeof(model), typeof(driver), typeof(window), typeof(expected_air_mass), typeof(qv_buffer), FT, typeof(callbacks), typeof(surface_sources_adapted), typeof(chemistry)}(
+src/Models/DrivenSimulation.jl:243:        chemistry,
+src/Models/DrivenSimulation.jl:275:    apply_chemistry!(sim.model.state.tracers, sim.chemistry, sim.Δt)
+src/AtmosTransport.jl:170:export apply_chemistry!

@@ -202,7 +202,7 @@ function DrivenSimulation(model::TransportModel,
                           reset_air_mass_each_window::Bool = true,
                           interpolate_fluxes_within_window = nothing,
                           surface_sources = (),
-                          chemistry::AbstractChemistry = NoChemistry(),
+                          chemistry::AbstractChemistryOperator = NoChemistry(),
                           callbacks = NamedTuple()) where {D <: AbstractMetDriver}
     1 <= start_window <= stop_window <= total_windows(driver) ||
         throw(ArgumentError("invalid window range: start_window=$(start_window), stop_window=$(stop_window), total_windows=$(total_windows(driver))"))
@@ -272,7 +272,7 @@ function step!(sim::DrivenSimulation)
 
     step!(sim.model, sim.Δt)
     _apply_surface_sources!(sim)
-    apply_chemistry!(sim.model.state.tracers, sim.chemistry, sim.Δt)
+    apply!(sim.model.state, nothing, sim.model.grid, sim.chemistry, sim.Δt)
     sim.time += sim.Δt
     sim.iteration += 1
     for callback in values(sim.callbacks)

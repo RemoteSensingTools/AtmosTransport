@@ -166,8 +166,7 @@ export UpwindScheme, SlopesScheme, PPMScheme
 export reconstruction_order
 
 # Chemistry
-export AbstractChemistry, NoChemistry, RadioactiveDecay, CompositeChemistry
-export apply_chemistry!
+export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemistry
 
 # Cubed-sphere advection
 export fill_panel_halos!, copy_corners!, strang_split_cs!, CSAdvectionWorkspace

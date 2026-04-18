@@ -1,21 +1,21 @@
 # ---------------------------------------------------------------------------
 # Tracer utilities and storage-agnostic accessor API
 #
-# The accessor functions below (`ntracers`, `tracer_index`, `tracer_name`,
-# `get_tracer`, `eachtracer`) are the PRIMARY interface for non-kernel code
-# that needs to reach into `state.tracers`. They dispatch through `_*_impl`
-# helpers on the concrete storage type, so the public API stays stable
-# across a future storage change from `NamedTuple` to `Array{FT, 4}`.
+# The accessor functions below are the PRIMARY interface for non-kernel
+# code that needs to touch `state.tracers`. They read directly from
+# `state.tracers_raw` + `state.tracer_names` (see CellState.jl).
 #
-# Kernel code (see `StrangSplitting.jl`, multi-tracer sweeps) bypasses the
-# API and reads the raw storage directly — that is intentional and fast.
+# Kernels (multi-tracer sweeps, vertical remap) bypass this API and
+# dispatch on raw storage directly — that is intentional and fast.
 # ---------------------------------------------------------------------------
 
 """
     allocate_tracers(names::NTuple{N, Symbol}, Nx, Ny, Nz;
-                     FT=Float64, ArrayType=Array, fill=zero(FT))
+                     FT=Float64, ArrayType=Array, fill_value=zero(FT))
 
-Allocate a NamedTuple of 3D tracer mass arrays for structured grids.
+Allocate a NamedTuple of 3D tracer mass arrays. Still useful for test
+fixtures that want to pre-build per-tracer 3D arrays for a
+`CellState(m; tracers...)` keyword-form constructor call.
 """
 function allocate_tracers(names::NTuple{N, Symbol}, Nx::Int, Ny::Int, Nz::Int;
                           FT::Type{<:AbstractFloat} = Float64,
@@ -30,7 +30,7 @@ function allocate_tracers(names::NTuple{N, Symbol}, Nx::Int, Ny::Int, Nz::Int;
 end
 
 # =========================================================================
-# Storage-agnostic accessor API
+# Accessor API
 # =========================================================================
 
 """
@@ -38,50 +38,61 @@ end
 
 Number of tracers carried by `state`.
 """
-ntracers(state::CellState) = _ntracers_impl(state.tracers)
-_ntracers_impl(t::NamedTuple) = length(t)
+ntracers(state::CellState) = length(state.tracer_names)
 
 """
     tracer_index(state::CellState, name::Symbol) -> Union{Int, Nothing}
 
-Index of the tracer named `name`, or `nothing` if it is not present.
+Index of the tracer named `name` in `state.tracer_names`, or `nothing`
+if absent.
 """
-tracer_index(state::CellState, name::Symbol) = _tracer_index_impl(state.tracers, name)
-_tracer_index_impl(t::NamedTuple, name::Symbol) = findfirst(==(name), keys(t))
+function tracer_index(state::CellState, name::Symbol)
+    return findfirst(==(name), state.tracer_names)
+end
 
 """
     tracer_name(state::CellState, idx::Integer) -> Symbol
 
-Name of the tracer at index `idx`. Throws `BoundsError` if out of range.
+Name of the tracer at index `idx`. Throws `BoundsError` if out of
+range.
 """
-tracer_name(state::CellState, idx::Integer) = _tracer_name_impl(state.tracers, Int(idx))
-_tracer_name_impl(t::NamedTuple, idx::Int) = keys(t)[idx]
+tracer_name(state::CellState, idx::Integer) = state.tracer_names[Int(idx)]
 
 """
     get_tracer(state::CellState, name::Symbol)
     get_tracer(state::CellState, idx::Integer)
 
-Return the tracer-mass array for the given name or index. Returns the
-underlying storage slice (a view into `tracers_raw` after the storage
-flip in plan 14's Commit 4); callers MUST treat mutations as reflected
-in `state`.
+Return a view of the tracer mass slice. For a structured grid with
+`state.tracers_raw :: Array{FT, 4}`, this is
+`selectdim(state.tracers_raw, 4, idx)`, a contiguous
+`SubArray{FT, 3}` (because Julia is column-major and the tracer axis
+is the slowest-varying). Mutations through the returned view are
+reflected in `state.tracers_raw`.
+
+Throws `KeyError(name)` if `name` is not a tracer in `state`.
 """
-get_tracer(state::CellState, name::Symbol)    = _get_tracer_impl(state.tracers, name)
-get_tracer(state::CellState, idx::Integer)    = _get_tracer_impl(state.tracers, Int(idx))
-_get_tracer_impl(t::NamedTuple, name::Symbol) = getfield(t, name)
-_get_tracer_impl(t::NamedTuple, idx::Int)     = t[idx]
+function get_tracer(state::CellState, name::Symbol)
+    idx = tracer_index(state, name)
+    idx === nothing && throw(KeyError(name))
+    return get_tracer(state, idx)
+end
+
+function get_tracer(state::CellState, idx::Integer)
+    raw = state.tracers_raw
+    return selectdim(raw, ndims(raw), Int(idx))
+end
 
 """
     eachtracer(state::CellState)
 
-Iterate `(name::Symbol, tracer_mass) ` pairs for every tracer in `state`.
-Yields the same `name => array` shape regardless of the underlying
-storage, so destructuring `for (name, rm) in eachtracer(state)` works
-both for the current NamedTuple storage and for the post-Commit-4 4D
-array storage.
+Iterate `name => tracer_slice` pairs for every tracer in `state`, in
+storage order. The yielded shape matches the previous
+`pairs(::NamedTuple)` contract so callers that destructure
+`for (name, rm) in eachtracer(state)` continue to work.
 """
-eachtracer(state::CellState) = _eachtracer_impl(state.tracers)
-_eachtracer_impl(t::NamedTuple) = pairs(t)
+function eachtracer(state::CellState)
+    return (n => get_tracer(state, i) for (i, n) in enumerate(state.tracer_names))
+end
 
 # =========================================================================
 # Mutating utilities
@@ -92,7 +103,7 @@ _eachtracer_impl(t::NamedTuple) = pairs(t)
 
 Set tracer `name` to uniform mixing ratio χ: tracer_mass = χ × air_dry_mass.
 """
-function set_uniform_mixing_ratio!(state, name::Symbol, χ)
+function set_uniform_mixing_ratio!(state::CellState, name::Symbol, χ)
     rm = get_tracer(state, name)
     rm .= χ .* state.air_mass
     return nothing

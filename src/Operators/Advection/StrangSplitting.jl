@@ -120,7 +120,8 @@ end
 
 function AdvectionWorkspace(m::AbstractArray{FT,2};
                             cluster_sizes_cpu::Union{Nothing, Vector{Int32}} = nothing,
-                            mesh::Union{Nothing, AbstractHorizontalMesh} = nothing) where FT
+                            mesh::Union{Nothing, AbstractHorizontalMesh} = nothing,
+                            n_tracers::Int = 0) where FT
     cs_dev = similar(m, Int32, 0)
     if mesh === nothing
         face_left = similar(m, Int32, 0)
@@ -132,6 +133,8 @@ function AdvectionWorkspace(m::AbstractArray{FT,2};
         copyto!(face_left, left_cpu)
         copyto!(face_right, right_cpu)
     end
+    # Face-indexed path does NOT use strang_split_mt!; it loops over
+    # tracer slices via selectdim. 4D ping-pong buffers stay 0-sized.
     rm_4d_A = similar(m, 0, 0)
     rm_4d_B = similar(m, 0, 0)
     AdvectionWorkspace{FT, typeof(m), typeof(cs_dev), typeof(rm_4d_A)}(
@@ -141,6 +144,30 @@ function AdvectionWorkspace(m::AbstractArray{FT,2};
         similar(m), similar(m),                       # cfl_scratch_m, cfl_scratch_rm
         cs_dev, face_left, face_right,
         rm_4d_A, rm_4d_B)
+end
+
+"""
+    AdvectionWorkspace(state::CellState; cluster_sizes_cpu=nothing, mesh=nothing)
+
+Construct a workspace sized for `state`: infers `n_tracers` from
+`ntracers(state)` so the 4D ping-pong buffers match the packed tracer
+storage. This is the preferred form; the raw `AdvectionWorkspace(m;
+n_tracers=…)` is kept for low-level callers.
+"""
+function AdvectionWorkspace(state::CellState;
+                            cluster_sizes_cpu::Union{Nothing, Vector{Int32}} = nothing,
+                            mesh::Union{Nothing, AbstractHorizontalMesh} = nothing)
+    nt = ntracers(state)
+    m = state.air_mass
+    if ndims(m) == 3
+        return AdvectionWorkspace(m; cluster_sizes_cpu = cluster_sizes_cpu,
+                                  n_tracers = nt)
+    elseif ndims(m) == 2
+        return AdvectionWorkspace(m; cluster_sizes_cpu = cluster_sizes_cpu,
+                                  mesh = mesh, n_tracers = nt)
+    else
+        throw(ArgumentError("unsupported air_mass rank $(ndims(m))"))
+    end
 end
 
 function Adapt.adapt_structure(to, ws::AdvectionWorkspace{FT}) where {FT}
@@ -375,7 +402,7 @@ function sweep_horizontal!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
                            mesh::AbstractHorizontalMesh,
                            scheme::UpwindScheme,
                            ws::AdvectionWorkspace{FT}) where FT
-    if rm isa Array
+    if parent(rm) isa Array
         _horizontal_face_tendency!(ws.rm_A, rm, ws.m_A, m, horizontal_flux, mesh, scheme, one(FT))
         copyto!(rm, ws.rm_A)
         copyto!(m, ws.m_A)
@@ -391,7 +418,7 @@ function sweep_horizontal!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
                            scheme::UpwindScheme,
                            ws::AdvectionWorkspace{FT},
                            flux_scale::FT) where FT
-    if rm isa Array
+    if parent(rm) isa Array
         _horizontal_face_tendency!(ws.rm_A, rm, ws.m_A, m, horizontal_flux, mesh, scheme, flux_scale)
         copyto!(rm, ws.rm_A)
         copyto!(m, ws.m_A)
@@ -405,7 +432,7 @@ function sweep_vertical!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
                          cm::AbstractArray{FT,2},
                          scheme::UpwindScheme,
                          ws::AdvectionWorkspace{FT}) where FT
-    if rm isa Array
+    if parent(rm) isa Array
         _vertical_column_tendency!(ws.rm_A, rm, ws.m_A, m, cm, scheme, one(FT))
         copyto!(rm, ws.rm_A)
         copyto!(m, ws.m_A)
@@ -420,7 +447,7 @@ function sweep_vertical!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
                          scheme::UpwindScheme,
                          ws::AdvectionWorkspace{FT},
                          flux_scale::FT) where FT
-    if rm isa Array
+    if parent(rm) isa Array
         _vertical_column_tendency!(ws.rm_A, rm, ws.m_A, m, cm, scheme, flux_scale)
         copyto!(rm, ws.rm_A)
         copyto!(m, ws.m_A)
@@ -916,24 +943,21 @@ Perform one full Strang-split advection step on a structured mesh.
   half    half   full  half    half
 ```
 
-Each directional sweep updates both tracer mass (`rm`) and air mass (`m`)
-using the divergence of the prepared substep face mass flux.  The kernels do
-not perform any time interpolation or vertical-flux closure.
-
-# Multi-tracer protocol
-When `state.tracers` contains multiple tracers:
-1. Save the initial air mass (`m_save = copy(m)`)
-2. For each tracer: restore `m` from `m_save`, then run the full
-   X-Y-Z-Z-Y-X sequence
-
-This ensures each tracer sees the same initial air mass distribution.
+All `Nt = ntracers(state)` tracers are advanced together in a single
+multi-tracer kernel launch per direction. The mass update is computed
+once per cell; tracer fluxes are evaluated per-tracer inside the
+kernel. The per-tracer Julia loop has been eliminated (plan 14
+Commit 4) in favour of `strang_split_mt!` on the packed
+`state.tracers_raw` buffer.
 
 # Arguments
-- `state::CellState` — cell state containing `air_mass` and `tracers`
+- `state::CellState` — contains `air_mass` and `tracers_raw`
 - `fluxes::StructuredFaceFluxState` — mass fluxes (am, bm, cm)
 - `grid::AtmosGrid{<:LatLonMesh}` — structured lat-lon grid
 - `scheme` — advection scheme (`AbstractAdvectionScheme`)
-- `workspace::AdvectionWorkspace` — pre-allocated double buffers
+- `workspace::AdvectionWorkspace` — pre-allocated double buffers;
+  use `AdvectionWorkspace(state)` so the 4D ping-pong buffers are
+  sized for `ntracers(state)`.
 """
 function strang_split!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
                        grid::AtmosGrid{<:LatLonMesh},
@@ -943,61 +967,12 @@ function strang_split!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
     m = state.air_mass
     am, bm, cm = fluxes.am, fluxes.bm, fluxes.cm
 
-    cfl_limit_ft = convert(eltype(m), cfl_limit)
-
-    n_tr = ntracers(state)
-    m_save = workspace.m_save
-    if n_tr > 1
-        copyto!(m_save, m)
+    if ntracers(state) == 0
+        return nothing
     end
 
-    # Ping-pong alternate buffers used as the "other side" of each sweep.
-    rm_alt0 = workspace.rm_B
-    m_alt0  = workspace.m_B
-
-    for (idx, (name, rm_tracer)) in enumerate(eachtracer(state))
-        if idx > 1
-            copyto!(m, m_save)
-        end
-
-        # Local ping-pong state: (rm_cur, m_cur) holds the current values,
-        # (rm_alt, m_alt) is the scratch destination for the next sweep.
-        # At entry, (rm_cur, m_cur) = caller's (rm_tracer, m). After each
-        # sweep we rebind so the output becomes input for the next direction.
-        rm_cur, m_cur = rm_tracer, m
-        rm_alt, m_alt = rm_alt0,   m_alt0
-
-        # X → Y → Z → Z → Y → X palindrome, six sweeps. The helper returns
-        # n_sub for the sweep; when n_sub is odd, the result is in (alt),
-        # so we flip the cur/alt bindings.
-        n = _sweep_x_pp_subcycled!(rm_cur, rm_alt, m_cur, m_alt, am, scheme, workspace, cfl_limit_ft)
-        if isodd(n); rm_cur, rm_alt = rm_alt, rm_cur; m_cur, m_alt = m_alt, m_cur; end
-
-        n = _sweep_y_pp_subcycled!(rm_cur, rm_alt, m_cur, m_alt, bm, scheme, workspace, cfl_limit_ft)
-        if isodd(n); rm_cur, rm_alt = rm_alt, rm_cur; m_cur, m_alt = m_alt, m_cur; end
-
-        n = _sweep_z_pp_subcycled!(rm_cur, rm_alt, m_cur, m_alt, cm, scheme, workspace, cfl_limit_ft)
-        if isodd(n); rm_cur, rm_alt = rm_alt, rm_cur; m_cur, m_alt = m_alt, m_cur; end
-
-        n = _sweep_z_pp_subcycled!(rm_cur, rm_alt, m_cur, m_alt, cm, scheme, workspace, cfl_limit_ft)
-        if isodd(n); rm_cur, rm_alt = rm_alt, rm_cur; m_cur, m_alt = m_alt, m_cur; end
-
-        n = _sweep_y_pp_subcycled!(rm_cur, rm_alt, m_cur, m_alt, bm, scheme, workspace, cfl_limit_ft)
-        if isodd(n); rm_cur, rm_alt = rm_alt, rm_cur; m_cur, m_alt = m_alt, m_cur; end
-
-        n = _sweep_x_pp_subcycled!(rm_cur, rm_alt, m_cur, m_alt, am, scheme, workspace, cfl_limit_ft)
-        if isodd(n); rm_cur, rm_alt = rm_alt, rm_cur; m_cur, m_alt = m_alt, m_cur; end
-
-        # If total parity wound up in the alternate buffer, copy it back
-        # to the caller-provided arrays. In the typical case where all six
-        # n_sub values are 1 (or all even), the final parity lands back in
-        # (rm_tracer, m) and NO copies happen — that is the ping-pong win.
-        if rm_cur !== rm_tracer
-            copyto!(rm_tracer, rm_cur)
-            copyto!(m,         m_cur)
-        end
-    end
-
+    strang_split_mt!(state.tracers_raw, m, am, bm, cm, scheme, workspace;
+                     cfl_limit = cfl_limit)
     return nothing
 end
 
@@ -1050,15 +1025,26 @@ for (scheme_type, h_sweep, v_sweep) in (
         cfl_limit_ft = convert(eltype(m), cfl_limit)
 
         n_tr = ntracers(state)
+        n_tr == 0 && return nothing
+
         m_save = n_tr > 1 ? similar(m) : m
         if n_tr > 1
             copyto!(m_save, m)
         end
 
-        for (idx, (_, rm_tracer)) in enumerate(eachtracer(state))
+        # Face-indexed path keeps a per-tracer loop (multi-tracer fusion
+        # on unstructured grids is out of scope for plan 14). Slices are
+        # taken as views into state.tracers_raw so the algorithm is
+        # identical to the pre-plan-14 NamedTuple-iterating version; only
+        # the data source changed.
+        raw = state.tracers_raw
+        last_dim = ndims(raw)
+        for idx in 1:n_tr
             if idx > 1
                 copyto!(m, m_save)
             end
+
+            rm_tracer = selectdim(raw, last_dim, idx)
 
             _sweep_horizontal_face_subcycled!(rm_tracer, m, hflux, grid.horizontal, scheme, workspace, cfl_limit_ft)
             _sweep_vertical_face_subcycled!(rm_tracer, m, cm, scheme, workspace, cfl_limit_ft)

@@ -114,11 +114,14 @@ function run_strang!(m, rm, am, bm, cm, grid, scheme; n_steps=1)
     rm_work = copy(rm)
     state   = CellState(m_work; tracer=rm_work)
     fluxes  = StructuredFaceFluxState(copy(am), copy(bm), copy(cm))
-    ws      = AdvectionWorkspace(m_work)
+    ws      = AdvectionWorkspace(state)
     for _ in 1:n_steps
         strang_split!(state, fluxes, grid, scheme; workspace=ws)
     end
-    return m_work, rm_work
+    # Post-plan-14 storage: advection mutates state.tracers_raw, not the
+    # input rm_work. Materialize the view into a fresh array to match
+    # the pre-refactor return contract (a 3D Array, not a SubArray).
+    return m_work, Array(state.tracers.tracer)
 end
 
 """
@@ -181,7 +184,7 @@ end
 
                 state_g  = CellState(copy(m_g); tracer=copy(rm_g))
                 fluxes_g = StructuredFaceFluxState(copy(am_g), copy(bm_g), copy(cm_g))
-                ws_g     = AdvectionWorkspace(state_g.air_dry_mass)
+                ws_g     = AdvectionWorkspace(state_g)
 
                 for _ in 1:4
                     strang_split!(state_g, fluxes_g, grid, scheme; workspace=ws_g)
@@ -200,7 +203,7 @@ end
 
                 state_g  = CellState(copy(m_g); tracer=copy(rm_g))
                 fluxes_g = StructuredFaceFluxState(copy(am_g), copy(bm_g), copy(cm_g))
-                ws_g     = AdvectionWorkspace(state_g.air_dry_mass)
+                ws_g     = AdvectionWorkspace(state_g)
 
                 strang_split!(state_g, fluxes_g, grid, scheme; workspace=ws_g)
 
@@ -216,7 +219,7 @@ end
                 m_g, rm_g, am_g, bm_g, cm_g = to_gpu(m_cpu, rm_grad_cpu, am_cpu, bm_cpu, cm_cpu)
                 state_g  = CellState(copy(m_g); tracer=copy(rm_g))
                 fluxes_g = StructuredFaceFluxState(copy(am_g), copy(bm_g), copy(cm_g))
-                ws_g     = AdvectionWorkspace(state_g.air_dry_mass)
+                ws_g     = AdvectionWorkspace(state_g)
                 strang_split!(state_g, fluxes_g, grid, scheme; workspace=ws_g)
 
                 rm_gpu = Array(state_g.tracers[:tracer])
@@ -237,7 +240,7 @@ end
                 m_g, rm_g, am_g, bm_g, cm_g = to_gpu(m_cpu, rm_grad_cpu, am_cpu, bm_cpu, cm_cpu)
                 state_g  = CellState(copy(m_g); tracer=copy(rm_g))
                 fluxes_g = StructuredFaceFluxState(copy(am_g), copy(bm_g), copy(cm_g))
-                ws_g     = AdvectionWorkspace(state_g.air_dry_mass)
+                ws_g     = AdvectionWorkspace(state_g)
                 for _ in 1:4
                     strang_split!(state_g, fluxes_g, grid, scheme; workspace=ws_g)
                 end
@@ -328,7 +331,7 @@ end
                 m_g, rm_g, am_g, bm_g, cm_g = to_gpu(m_cpu, rm_grad_cpu, am_cpu, bm_cpu, cm_cpu)
                 state_g  = CellState(copy(m_g); tracer=copy(rm_g))
                 fluxes_g = StructuredFaceFluxState(copy(am_g), copy(bm_g), copy(cm_g))
-                ws_g     = AdvectionWorkspace(state_g.air_dry_mass)
+                ws_g     = AdvectionWorkspace(state_g)
                 for _ in 1:4
                     strang_split!(state_g, fluxes_g, grid, scheme; workspace=ws_g)
                 end
@@ -345,7 +348,7 @@ end
                 m_g, rm_g, am_g, bm_g, cm_g = to_gpu(m_cpu, rm_grad_cpu, am_cpu, bm_cpu, cm_cpu)
                 state_g  = CellState(copy(m_g); tracer=copy(rm_g))
                 fluxes_g = StructuredFaceFluxState(copy(am_g), copy(bm_g), copy(cm_g))
-                ws_g     = AdvectionWorkspace(state_g.air_dry_mass)
+                ws_g     = AdvectionWorkspace(state_g)
                 for _ in 1:4
                     strang_split!(state_g, fluxes_g, grid, scheme; workspace=ws_g)
                 end
@@ -434,7 +437,7 @@ end
                 m_g, rm_g, am_g, bm_g, cm_g = to_gpu(m_cpu, rm_grad_cpu, am_cpu, bm_cpu, cm_cpu)
                 state_g  = CellState(copy(m_g); tracer=copy(rm_g))
                 fluxes_g = StructuredFaceFluxState(copy(am_g), copy(bm_g), copy(cm_g))
-                ws_g     = AdvectionWorkspace(state_g.air_dry_mass)
+                ws_g     = AdvectionWorkspace(state_g)
                 for _ in 1:4
                     strang_split!(state_g, fluxes_g, grid, scheme; workspace=ws_g)
                 end
@@ -451,7 +454,7 @@ end
                 m_g, rm_g, am_g, bm_g, cm_g = to_gpu(m_cpu, rm_grad_cpu, am_cpu, bm_cpu, cm_cpu)
                 state_g  = CellState(copy(m_g); tracer=copy(rm_g))
                 fluxes_g = StructuredFaceFluxState(copy(am_g), copy(bm_g), copy(cm_g))
-                ws_g     = AdvectionWorkspace(state_g.air_dry_mass)
+                ws_g     = AdvectionWorkspace(state_g)
                 for _ in 1:4
                     strang_split!(state_g, fluxes_g, grid, scheme; workspace=ws_g)
                 end

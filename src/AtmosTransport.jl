@@ -153,6 +153,9 @@ export MetState, allocate_face_fluxes, allocate_tracers
 export mixing_ratio, total_mass, total_air_mass, tracer_names
 export ntracers, tracer_index, tracer_name, get_tracer, eachtracer
 
+# Time-varying field abstraction (plan 16a)
+export AbstractTimeVaryingField, ConstantField, field_value, update_field!
+
 # Operators -- public transport API
 export AdvectionWorkspace, strang_split!, strang_split_mt!, apply!
 export TracerView
@@ -166,8 +169,8 @@ export UpwindScheme, SlopesScheme, PPMScheme
 export reconstruction_order
 
 # Chemistry
-export AbstractChemistry, NoChemistry, RadioactiveDecay, CompositeChemistry
-export apply_chemistry!
+export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemistry
+export chemistry_block!
 
 # Cubed-sphere advection
 export fill_panel_halos!, copy_corners!, strang_split_cs!, CSAdvectionWorkspace

@@ -1,0 +1,239 @@
+=== plan 15 chemistry overhead (curry A100 F64) ===
+host:   curry.gps.caltech.edu
+commit: eb131d81410c1832a27345a6ab8ab03ffd3a4e3b
+date:   2026-04-18T11:38:33Z
+
+Precompiling packages...
+   1048.4 ms  ✓ CodeTracking
+   6244.8 ms  ✓ JuliaInterpreter
+   7506.1 ms  ✓ LoweredCodeUtils
+  10174.3 ms  ✓ Revise
+  4 dependencies successfully precompiled in 25 seconds. 19 already precompiled.
+Precompiling packages...
+    678.2 ms  ✓ dlfcn_win32_jll
+    703.7 ms  ✓ ZipFile
+    807.9 ms  ✓ Graphite2_jll
+    804.0 ms  ✓ Libmount_jll
+    802.0 ms  ✓ Xorg_libXau_jll
+    801.1 ms  ✓ libfdk_aac_jll
+    799.0 ms  ✓ Imath_jll
+    809.9 ms  ✓ libpng_jll
+    832.4 ms  ✓ Giflib_jll
+    810.4 ms  ✓ Pixman_jll
+    821.0 ms  ✓ LAME_jll
+    793.9 ms  ✓ WoodburyMatrices
+    792.1 ms  ✓ LERC_jll
+    788.5 ms  ✓ EarCut_jll
+    797.2 ms  ✓ Xorg_libXdmcp_jll
+    802.9 ms  ✓ Ogg_jll
+    820.2 ms  ✓ x265_jll
+    821.3 ms  ✓ x264_jll
+    743.3 ms  ✓ Xorg_xtrans_jll
+    817.8 ms  ✓ Expat_jll
+    795.8 ms  ✓ LZO_jll
+    787.4 ms  ✓ Opus_jll
+    858.8 ms  ✓ libaom_jll
+    931.3 ms  ✓ JpegTurbo_jll
+   2114.3 ms  ✓ StructUtils
+   2054.3 ms  ✓ ComputePipeline
+    561.2 ms  ✓ Distances → DistancesChainRulesCoreExt
+    790.7 ms  ✓ Libffi_jll
+    781.6 ms  ✓ isoband_jll
+    778.8 ms  ✓ Libuuid_jll
+    811.0 ms  ✓ FriBidi_jll
+    805.9 ms  ✓ FreeType2_jll
+   2299.4 ms  ✓ QuadGK
+    937.4 ms  ✓ GettextRuntime_jll
+   1139.7 ms  ✓ TaylorSeries → TaylorSeriesSAExt
+    591.1 ms  ✓ StatsFuns → StatsFunsInverseFunctionsExt
+   1001.1 ms  ✓ Revise → DistributedExt
+    807.3 ms  ✓ SQLite_jll
+    762.6 ms  ✓ AxisAlgorithms
+   1006.4 ms  ✓ OpenEXR_jll
+   2040.3 ms  ✓ StructArrays → StructArraysStaticArraysExt
+   2227.7 ms  ✓ CoordinateTransformations
+   1671.4 ms  ✓ FastGaussQuadrature
+   3767.2 ms  ✓ StatsBase
+    889.9 ms  ✓ libvorbis_jll
+    843.1 ms  ✓ Libtiff_jll
+    804.3 ms  ✓ libsixel_jll
+    526.7 ms  ✓ StructUtils → StructUtilsTablesExt
+   2030.6 ms  ✓ ImageAxes
+    515.8 ms  ✓ Isoband
+   1000.1 ms  ✓ FreeType
+   2115.5 ms  ✓ Xorg_libxcb_jll
+   1108.6 ms  ✓ Fontconfig_jll
+   1125.7 ms  ✓ Glib_jll
+    817.0 ms  ✓ PDMats → StatsBaseExt
+   3579.3 ms  ✓ IntervalArithmetic
+   1573.6 ms  ✓ OpenEXR
+    890.9 ms  ✓ LittleCMS_jll
+    862.2 ms  ✓ Xorg_libX11_jll
+   1289.8 ms  ✓ PROJ_jll
+   1247.5 ms  ✓ ImageMetadata
+   3986.9 ms  ✓ PNGFiles
+    563.2 ms  ✓ IntervalArithmetic → IntervalArithmeticIntervalSetsExt
+    788.9 ms  ✓ IntervalArithmetic → IntervalArithmeticSparseArraysExt
+   3181.5 ms  ✓ JpegTurbo
+    778.2 ms  ✓ IntervalArithmetic → IntervalArithmeticLinearAlgebraExt
+   2949.4 ms  ✓ Geodesy
+    792.5 ms  ✓ Xorg_libXrender_jll
+    892.0 ms  ✓ OpenJpeg_jll
+    798.2 ms  ✓ Xorg_libXext_jll
+    806.2 ms  ✓ Xorg_libXfixes_jll
+   1219.9 ms  ✓ TaylorSeries → TaylorSeriesIAExt
+   3296.1 ms  ✓ Interpolations
+   2462.4 ms  ✓ Sixel
+    936.5 ms  ✓ libva_jll
+   1036.0 ms  ✓ Cairo_jll
+   1139.9 ms  ✓ Libglvnd_jll
+   4593.3 ms  ✓ JSON
+   1248.0 ms  ✓ Interpolations → InterpolationsUnitfulExt
+   1844.0 ms  ✓ Netpbm
+   1746.1 ms  ✓ eccodes_jll
+   1010.5 ms  ✓ HarfBuzz_jll
+   1189.1 ms  ✓ ColorBrewer
+   1198.4 ms  ✓ libwebp_jll
+    710.4 ms  ✓ GRIB
+   3228.2 ms  ✓ Proj
+   8395.8 ms  ✓ PlotUtils
+    893.1 ms  ✓ libass_jll
+   5412.1 ms  ✓ Distributions
+   9766.8 ms  ✓ SIMD
+   4197.9 ms  ✓ ExactPredicates
+   1396.9 ms  ✓ FFMPEG_jll
+   2254.9 ms  ✓ WebP
+   1479.3 ms  ✓ Distributions → DistributionsTestExt
+   2436.9 ms  ✓ Distributions → DistributionsChainRulesCoreExt
+   1762.1 ms  ✓ KernelDensity
+  12930.1 ms  ✓ GeometryBasics
+    958.2 ms  ✓ GeometryBasics → GeometryBasicsGeoInterfaceExt
+   1065.6 ms  ✓ Packing
+   5913.4 ms  ✓ DelaunayTriangulation
+   2137.4 ms  ✓ ShaderAbstractions
+   2346.8 ms  ✓ FreeTypeAbstraction
+   5871.9 ms  ✓ GridLayoutBase
+  10778.6 ms  ✓ Automa
+   4937.6 ms  ✓ GeometryOps
+   1035.8 ms  ✓ GeometryOps → GeometryOpsProjExt
+   3296.6 ms  ✓ ConservativeRegridding
+   6260.4 ms  ✓ MathTeXEngine
+  24815.4 ms  ✓ TiffImages
+  48144.2 ms  ✓ JET
+ 153542.1 ms  ✓ Makie
+   6551.2 ms  ✓ GeometryOps → GeometryOpsMakieExt
+   6603.9 ms  ✓ GeoInterface → GeoInterfaceMakieExt
+   6714.8 ms  ✓ GeoJSON → GeoJSONMakieExt
+  10604.0 ms  ✓ GeoMakie
+   7376.9 ms  ✓ AtmosTransport
+  116 dependencies successfully precompiled in 215 seconds. 240 already precompiled.
+Precompiling packages...
+  52761.0 ms  ✓ CUDA (serial)
+  1 dependency successfully precompiled in 53 seconds
+Precompiling packages...
+   2267.1 ms  ✓ JLD2Ext (serial)
+  1 dependency successfully precompiled in 2 seconds
+Precompiling packages...
+   1584.4 ms  ✓ GeometryOpsDataFramesExt (serial)
+  1 dependency successfully precompiled in 2 seconds
+Precompiling packages...
+   6260.5 ms  ✓ AtomixCUDAExt (serial)
+  1 dependency successfully precompiled in 6 seconds
+┌ Error: Error during loading of extension AtmosTransportCUDAExt of AtmosTransport, use `Base.retry_load_extensions()` to retry.
+│   exception =
+│    1-element ExceptionStack:
+│    ArgumentError: Package AtmosTransportCUDAExt [75c1e8d0-5789-5489-a6b2-339989990b0e] is required but does not seem to be installed:
+│     - Run `Pkg.instantiate()` to install all recorded dependencies.
+│    
+│    Stacktrace:
+│      [1] __require_prelocked(pkg::Base.PkgId, env::Nothing)
+│        @ Base ./loading.jl:2615
+│      [2] _require_prelocked(uuidkey::Base.PkgId, env::Nothing)
+│        @ Base ./loading.jl:2493
+│      [3] _require_prelocked(uuidkey::Base.PkgId)
+│        @ Base ./loading.jl:2487
+│      [4] run_extension_callbacks(extid::Base.ExtensionId)
+│        @ Base ./loading.jl:1607
+│      [5] run_extension_callbacks(pkgid::Base.PkgId)
+│        @ Base ./loading.jl:1644
+│      [6] run_package_callbacks(modkey::Base.PkgId)
+│        @ Base ./loading.jl:1460
+│      [7] _require_prelocked(uuidkey::Base.PkgId, env::String)
+│        @ Base ./loading.jl:2501
+│      [8] macro expansion
+│        @ ./loading.jl:2421 [inlined]
+│      [9] macro expansion
+│        @ ./lock.jl:376 [inlined]
+│     [10] __require(into::Module, mod::Symbol)
+│        @ Base ./loading.jl:2386
+│     [11] require(into::Module, mod::Symbol)
+│        @ Base ./loading.jl:2362
+│     [12] top-level scope
+│        @ ~/code/gitHub/AtmosTransportModel/scripts/benchmarks/bench_chemistry_overhead.jl:30
+│     [13] include(mod::Module, _path::String)
+│        @ Base ./Base.jl:306
+│     [14] exec_options(opts::Base.JLOptions)
+│        @ Base ./client.jl:317
+│     [15] _start()
+│        @ Base ./client.jl:550
+└ @ Base loading.jl:1617
+Precompiling packages...
+   6156.4 ms  ✓ SpecialFunctionsExt (serial)
+  1 dependency successfully precompiled in 6 seconds. 21 already precompiled.
+Chemistry overhead bench — medium / gpu (grid=288x144x32, steps=40)
+dtype      scheme     Nt  no-chem(ms)     chem(ms)        Δ(ms)         Δ%
+--------------------------------------------------------------------------------
+Float32    upwind      5        2.609        2.232       -0.377    -14.44%
+Float32    upwind     10        3.168        4.058        0.890     28.08%
+Float32    upwind     30        5.347        6.513        1.166     21.81%
+Float32    slopes      5        4.934        2.952       -1.983    -40.18%
+Float32    slopes     10        4.823        5.011        0.188      3.90%
+Float32    slopes     30       12.631       13.421        0.790      6.25%
+
+┌ Error: Error during loading of extension AtmosTransportCUDAExt of AtmosTransport, use `Base.retry_load_extensions()` to retry.
+│   exception =
+│    1-element ExceptionStack:
+│    ArgumentError: Package AtmosTransportCUDAExt [75c1e8d0-5789-5489-a6b2-339989990b0e] is required but does not seem to be installed:
+│     - Run `Pkg.instantiate()` to install all recorded dependencies.
+│    
+│    Stacktrace:
+│      [1] __require_prelocked(pkg::Base.PkgId, env::Nothing)
+│        @ Base ./loading.jl:2615
+│      [2] _require_prelocked(uuidkey::Base.PkgId, env::Nothing)
+│        @ Base ./loading.jl:2493
+│      [3] _require_prelocked(uuidkey::Base.PkgId)
+│        @ Base ./loading.jl:2487
+│      [4] run_extension_callbacks(extid::Base.ExtensionId)
+│        @ Base ./loading.jl:1607
+│      [5] run_extension_callbacks(pkgid::Base.PkgId)
+│        @ Base ./loading.jl:1644
+│      [6] run_package_callbacks(modkey::Base.PkgId)
+│        @ Base ./loading.jl:1460
+│      [7] _require_prelocked(uuidkey::Base.PkgId, env::String)
+│        @ Base ./loading.jl:2501
+│      [8] macro expansion
+│        @ ./loading.jl:2421 [inlined]
+│      [9] macro expansion
+│        @ ./lock.jl:376 [inlined]
+│     [10] __require(into::Module, mod::Symbol)
+│        @ Base ./loading.jl:2386
+│     [11] require(into::Module, mod::Symbol)
+│        @ Base ./loading.jl:2362
+│     [12] top-level scope
+│        @ ~/code/gitHub/AtmosTransportModel/scripts/benchmarks/bench_chemistry_overhead.jl:30
+│     [13] include(mod::Module, _path::String)
+│        @ Base ./Base.jl:306
+│     [14] exec_options(opts::Base.JLOptions)
+│        @ Base ./client.jl:317
+│     [15] _start()
+│        @ Base ./client.jl:550
+└ @ Base loading.jl:1617
+Chemistry overhead bench — large / gpu (grid=576x288x72, steps=40)
+dtype      scheme     Nt  no-chem(ms)     chem(ms)        Δ(ms)         Δ%
+--------------------------------------------------------------------------------
+Float32    upwind      5       10.533       10.866        0.333      3.16%
+Float32    upwind     10       16.513       17.877        1.364      8.26%
+Float32    upwind     30       42.429       48.073        5.645     13.30%
+Float32    slopes      5       21.489       21.960        0.470      2.19%
+Float32    slopes     10       38.534       39.892        1.358      3.52%
+Float32    slopes     30      105.257      111.449        6.192      5.88%

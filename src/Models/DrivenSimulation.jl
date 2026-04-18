@@ -202,7 +202,7 @@ function DrivenSimulation(model::TransportModel,
                           reset_air_mass_each_window::Bool = true,
                           interpolate_fluxes_within_window = nothing,
                           surface_sources = (),
-                          chemistry::AbstractChemistry = NoChemistry(),
+                          chemistry::AbstractChemistryOperator = NoChemistry(),
                           callbacks = NamedTuple()) where {D <: AbstractMetDriver}
     1 <= start_window <= stop_window <= total_windows(driver) ||
         throw(ArgumentError("invalid window range: start_window=$(start_window), stop_window=$(stop_window), total_windows=$(total_windows(driver))"))
@@ -211,6 +211,15 @@ function DrivenSimulation(model::TransportModel,
 
     _check_grid_compatibility(model.grid, driver_grid(driver))
     _check_basis_compatibility(model, driver)
+
+    # DrivenSimulation holds chemistry at the sim level (not at the model
+    # level), so the step order stays `advection → emissions → chemistry`
+    # as before plan 15. TransportModel.chemistry is still supported for
+    # direct-TransportModel users; here we force NoChemistry() inside the
+    # wrapped model to avoid double-application, and run the user-
+    # supplied chemistry via `chemistry_block!` inside `step!(sim)` after
+    # surface sources.
+    model = with_chemistry(model, NoChemistry())
 
     window = _adapt_window_to_model_backend(_load_window(driver, start_window), model.state.air_mass)
     expected_air_mass = similar(model.state.air_mass)
@@ -270,9 +279,9 @@ function step!(sim::DrivenSimulation)
     _maybe_advance_window!(sim, substep)
     _refresh_forcing!(sim, substep)
 
-    step!(sim.model, sim.Δt)
+    step!(sim.model, sim.Δt)            # advection only (chemistry forced off at construction)
     _apply_surface_sources!(sim)
-    apply_chemistry!(sim.model.state.tracers, sim.chemistry, sim.Δt)
+    chemistry_block!(sim.model.state, nothing, sim.model.grid, sim.chemistry, sim.Δt)
     sim.time += sim.Δt
     sim.iteration += 1
     for callback in values(sim.callbacks)

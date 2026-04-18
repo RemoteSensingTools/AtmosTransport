@@ -29,6 +29,7 @@ using KernelAbstractions: get_backend, synchronize
 
 using ...State: CellState
 using ...State: ntracers, tracer_index, tracer_names
+using ...State: AbstractTimeVaryingField, ConstantField, field_value, update_field!
 import ..apply!
 
 export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemistry
@@ -51,33 +52,43 @@ chemistry.
 struct NoChemistry <: AbstractChemistryOperator end
 
 """
-    ExponentialDecay{FT, N}(decay_rates, tracer_names)
+    ExponentialDecay{FT, N, R}(decay_rates, tracer_names)
 
 Multi-tracer first-order decay: `c *= exp(-rate * dt)` applied in-place
 to every selected tracer at every cell. Exact for constant rate and any
 `dt`; unconditionally stable; trivially parallel.
 
 # Fields
-- `decay_rates  :: NTuple{N, FT}` — one decay rate per selected tracer [1/s]
+- `decay_rates  :: R` — an `NTuple{N, <: AbstractTimeVaryingField{FT, 0}}`
+  of rate-valued fields, one per selected tracer [1/s]. `apply!` calls
+  `update_field!` on each rate before launching the kernel.
 - `tracer_names :: NTuple{N, Symbol}` — which tracers this operator applies to
 
 # Construction
 ```julia
-ExponentialDecay{Float64, 1}((2.098e-6,), (:Rn222,))   # direct
-
 ExponentialDecay(; Rn222 = 330_350.4)                   # from half-lives [s]
 ExponentialDecay(Float32; Rn222 = 330_350.4, Kr85 = 3.394e8)
 ```
 The keyword constructor converts half-life `T` to decay rate
-`λ = log(2) / T` (first-order exponential decay).
+`λ = log(2) / T` (first-order exponential decay) and wraps each rate
+in a `ConstantField{FT, 0}`. Future plans may pass time-varying rates
+(e.g. temperature-dependent reaction rates) through the same field
+interface.
 
 Common isotopes:
 - ²²²Rn: half-life = 330_350.4 s (3.8235 days) → λ ≈ 2.098e-6 s⁻¹
 - ⁸⁵Kr:  half-life = 3.394e8 s (10.76 years)  → λ ≈ 2.042e-9 s⁻¹
 """
-struct ExponentialDecay{FT, N} <: AbstractChemistryOperator
-    decay_rates  :: NTuple{N, FT}
+struct ExponentialDecay{FT, N, R} <: AbstractChemistryOperator
+    decay_rates  :: R
     tracer_names :: NTuple{N, Symbol}
+
+    function ExponentialDecay{FT, N, R}(rates::R, names::NTuple{N, Symbol}) where {FT, N, R}
+        R <: NTuple{N, AbstractTimeVaryingField{FT, 0}} ||
+            throw(ArgumentError("ExponentialDecay: decay_rates must be an " *
+                "NTuple{$N, <:AbstractTimeVaryingField{$FT, 0}}, got $R"))
+        return new{FT, N, R}(rates, names)
+    end
 end
 
 "Keyword constructor: `ExponentialDecay(; Rn222 = half_life_seconds, ...)`."
@@ -85,8 +96,8 @@ function ExponentialDecay(FT::Type{<:AbstractFloat} = Float64; half_lives...)
     nt = NamedTuple(half_lives)
     names = keys(nt)
     N = length(names)
-    rates = ntuple(i -> FT(log(2) / nt[i]), N)
-    return ExponentialDecay{FT, N}(rates, names)
+    rates = ntuple(i -> ConstantField{FT, 0}(FT(log(2) / nt[i])), N)
+    return ExponentialDecay{FT, N, typeof(rates)}(rates, names)
 end
 
 """
@@ -149,6 +160,17 @@ function apply!(state::CellState, meteo, grid,
         Int32(idx)
     end
 
+    # Refresh rate caches for the current time, then materialize to scalars
+    # for the kernel. `meteo` may be `nothing` (chemistry does not consume
+    # meteorology in plan 16a); `ConstantField.update_field!` ignores `t`.
+    # When non-constant rate fields land (plan 16b+), pass `current_time(meteo)`.
+    t = zero(FT)
+    rates = ntuple(N) do n
+        r = op.decay_rates[n]
+        update_field!(r, t)
+        field_value(r, ())
+    end
+
     raw = state.tracers_raw
     backend = get_backend(raw)
     kernel! = _exp_decay_kernel!(backend, 256)
@@ -156,7 +178,7 @@ function apply!(state::CellState, meteo, grid,
     # Launch across the spatial axes; the trailing tracer axis is handled
     # by the kernel's inner loop over `indices`.
     spatial_shape = ntuple(i -> size(raw, i), ndims(raw) - 1)
-    kernel!(raw, indices, op.decay_rates, FT(dt), Int32(N);
+    kernel!(raw, indices, rates, FT(dt), Int32(N);
             ndrange = spatial_shape)
     synchronize(backend)
     return state

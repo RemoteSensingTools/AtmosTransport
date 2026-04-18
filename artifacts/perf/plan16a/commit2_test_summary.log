@@ -1,0 +1,41 @@
+=== test/test_basis_explicit_core.jl ===
+    Expected: ArgumentError
+      Thrown: MethodError
+      MethodError: no method matching face_cells(::CubedSphereMesh{Float64, GnomonicPanelConvention}, ::Int64)
+Test Summary:                        | Pass  Fail  Total  Time
+ERROR: LoadError: Some tests did not pass: 3 passed, 2 failed, 0 errored, 0 broken.
+=== test/test_advection_kernels.jl ===
+Test Summary:                            | Pass  Total   Time
+Test Summary:                               | Pass  Total  Time
+Test Summary:                            | Pass  Total  Time
+Test Summary:              | Pass  Total  Time
+Test Summary:               | Pass  Total  Time
+=== test/test_structured_mesh_metadata.jl ===
+CubedSphereMesh conventions: Test Failed at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_structured_mesh_metadata.jl:38
+CubedSphereMesh conventions: Test Failed at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_structured_mesh_metadata.jl:40
+CubedSphereMesh conventions: Test Failed at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_structured_mesh_metadata.jl:45
+Test Summary:               | Pass  Fail  Total  Time
+ERROR: LoadError: Some tests did not pass: 10 passed, 3 failed, 0 errored, 0 broken.
+=== test/test_reduced_gaussian_mesh.jl ===
+Test Summary:              | Pass  Total  Time
+Test Summary:                | Pass  Total  Time
+=== test/test_driven_simulation.jl ===
+Test Summary:                                                          | Pass  Total  Time
+Test Summary:                                         | Pass  Total  Time
+Test Summary:                           | Pass  Total  Time
+=== test/test_cubed_sphere_advection.jl ===
+Test Summary:                                       | Pass  Total  Time
+Test Summary:                   | Pass  Total  Time
+Test Summary:      | Pass  Total  Time
+Test Summary:                              | Pass  Total  Time
+Test Summary:          | Pass  Total  Time
+=== test/test_poisson_balance.jl ===
+mirror_sign: inflow positions get +1, outflow get -1: Test Failed at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_poisson_balance.jl:207
+mirror_sign: inflow positions get +1, outflow get -1: Test Failed at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_poisson_balance.jl:207
+mirror_sign: inflow positions get +1, outflow get -1: Test Failed at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_poisson_balance.jl:207
+Test Summary:                                                   | Pass  Fail  Total  Time
+ERROR: LoadError: Some tests did not pass: 245 passed, 72 failed, 0 errored, 0 broken.
+=== test/test_chemistry.jl ===
+Test Summary:                 | Pass  Total   Time
+=== test/test_fields.jl ===
+Test Summary:                    | Pass  Total  Time

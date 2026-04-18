@@ -77,7 +77,9 @@ for FT in (Float64, Float32)
     @testset "CPU $precision_tag: Rn-222 decays by exp(-λ·dt) exactly" begin
         state = _make_state(FT)
         op    = ExponentialDecay(FT; Rn222 = RN222_HALF_LIFE)
-        @test op.decay_rates[1] ≈ FT(RN222_LAMBDA)
+        # decay_rates are AbstractTimeVaryingField{FT, 0} (ConstantField)
+        # after plan 16a retrofit — observe via field_value, not struct equality.
+        @test field_value(op.decay_rates[1], ()) ≈ FT(RN222_LAMBDA)
         @test op.tracer_names == (:Rn222,)
 
         dt = FT(3600)  # 1 hour

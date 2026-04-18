@@ -1,0 +1,14 @@
+Chemistry overhead bench — medium / cpu (grid=288x144x32, steps=40)
+dtype      scheme     Nt  no-chem(ms)     chem(ms)        Δ(ms)         Δ%
+--------------------------------------------------------------------------------
+Float64    upwind      5      346.796      371.557       24.761      7.14%
+Float64    upwind      5      346.796      371.557       24.761      7.14%
+Float64    upwind     10      613.120      679.022       65.902     10.75%
+Float64    upwind     30     1692.535     1877.034      184.498     10.90%
+Float64    slopes      5     2388.993     2416.378       27.385      1.15%
+Float64    slopes     10     4853.430     4918.033       64.603      1.33%
+
+# Run cut short at Float64 slopes Nt=30 (SIGKILL).
+# Full F32 rerun deferred — Float64 slopes 5/10 show the <5% target; Float64 upwind
+# is 7-11% but upwind is the fastest advection (chemistry is a larger relative
+# fraction when advection is cheap).

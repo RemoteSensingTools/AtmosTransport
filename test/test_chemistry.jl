@@ -147,6 +147,35 @@ for FT in (Float64, Float32)
     end
 
     # -------------------------------------------------------------------
+    # chemistry_block! — tuple composer
+    # -------------------------------------------------------------------
+    @testset "CPU $precision_tag: chemistry_block! on tuple of ops" begin
+        state = _make_state(FT)
+        op1 = ExponentialDecay(FT; Rn222 = RN222_HALF_LIFE)
+        op2 = ExponentialDecay(FT; Rn222 = RN222_HALF_LIFE)  # apply twice
+        dt = FT(3600)
+        chemistry_block!(state, nothing, nothing, (op1, op2), dt)
+        expected = FT(2.0) * exp(-FT(RN222_LAMBDA) * 2 * dt)
+        @test all(state.tracers.Rn222 .≈ expected)
+    end
+
+    @testset "CPU $precision_tag: chemistry_block! on single op (wrapped)" begin
+        state = _make_state(FT)
+        op = ExponentialDecay(FT; Rn222 = RN222_HALF_LIFE)
+        dt = FT(3600)
+        chemistry_block!(state, nothing, nothing, op, dt)   # not wrapped in tuple
+        expected = FT(2.0) * exp(-FT(RN222_LAMBDA) * dt)
+        @test all(state.tracers.Rn222 .≈ expected)
+    end
+
+    @testset "CPU $precision_tag: chemistry_block! empty tuple is identity" begin
+        state = _make_state(FT)
+        rn_before = copy(state.tracers.Rn222)
+        chemistry_block!(state, nothing, nothing, (), FT(3600))
+        @test state.tracers.Rn222 == rn_before
+    end
+
+    # -------------------------------------------------------------------
     # GPU agreement (F32 only on L40S / F64 only on A100)
     # -------------------------------------------------------------------
     if HAS_GPU_CHEM

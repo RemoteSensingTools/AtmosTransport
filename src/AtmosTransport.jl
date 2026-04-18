@@ -167,6 +167,7 @@ export reconstruction_order
 
 # Chemistry
 export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemistry
+export chemistry_block!
 
 # Cubed-sphere advection
 export fill_panel_halos!, copy_corners!, strang_split_cs!, CSAdvectionWorkspace

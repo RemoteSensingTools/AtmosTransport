@@ -32,6 +32,7 @@ using ...State: ntracers, tracer_index, tracer_names
 import ..apply!
 
 export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemistry
+export chemistry_block!
 
 include("chemistry_kernels.jl")
 
@@ -174,5 +175,11 @@ function apply!(state::CellState, meteo, grid,
     end
     return state
 end
+
+# =========================================================================
+# chemistry_block! — step-level block composer (plan 15 Decision 7)
+# =========================================================================
+
+include("chemistry_block.jl")
 
 end # module Chemistry

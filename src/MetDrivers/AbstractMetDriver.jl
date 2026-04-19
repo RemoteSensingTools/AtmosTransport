@@ -57,6 +57,25 @@ function load_met_window! end
 met_interval(d::AbstractMetDriver) = window_dt(d)
 start_date(::AbstractMetDriver) = Date(2000, 1, 1)
 
+"""
+    current_time(driver::AbstractMetDriver) -> Float64
+
+Simulation time [s] currently represented by `driver`. Used by
+operators that need a sampling point for time-varying fields
+(plan 16b Decision 10): for example, `DerivedKzField`'s
+`update_field!` will read `current_time(meteo)` once the driver-
+aware integration path is wired.
+
+The base definition returns `0.0` and is NOT required to reflect
+real driver state — concrete drivers should override if they want
+operators to see anything other than "step-zero placeholder".
+
+For `nothing` inputs (the shape used by `TransportModel` when no
+meteorology is threaded through), operator `apply!` methods fall
+back to `zero(FT)` directly; they do not call `current_time(nothing)`.
+"""
+current_time(::AbstractMetDriver) = 0.0
+
 # ---------------------------------------------------------------------------
 # Capability traits — what physics the met data supports
 # ---------------------------------------------------------------------------
@@ -82,3 +101,4 @@ export total_windows, window_dt, steps_per_window, load_transport_window, load_m
 export driver_grid, air_mass_basis, flux_interpolation_mode
 export supports_diffusion, supports_convection
 export supports_native_vertical_flux, supports_moisture
+export current_time

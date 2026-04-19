@@ -62,7 +62,7 @@ using .State
 # ---- Met-data adapters ----
 include("MetDrivers/MetDrivers.jl")
 using .MetDrivers: AbstractDriver, AbstractClosure, AbstractMetDriver,
-                   PreprocessedERA5Driver,
+                   PreprocessedERA5Driver, current_time,
                    ERA5BinaryReader, ERA5BinaryHeader,
                    TransportBinaryReader, TransportBinaryHeader, write_transport_binary,
                    TransportBinaryDriver, AbstractTransportWindow,
@@ -194,6 +194,7 @@ export fillz_q!, apply_divergence_damping_cs!
 # MetDrivers
 export AbstractDriver, AbstractClosure
 export AbstractMetDriver, PreprocessedERA5Driver
+export current_time
 export ERA5BinaryReader, ERA5BinaryHeader
 export TransportBinaryReader, TransportBinaryHeader, write_transport_binary
 export TransportBinaryDriver, AbstractTransportWindow
@@ -227,6 +228,7 @@ export open_streaming_transport_binary, write_streaming_window!, close_streaming
 export TransportModel, Simulation, DrivenSimulation, SurfaceFluxSource
 export step!, run!, run_window!
 export window_index, substep_index, current_qv
+export with_chemistry, with_diffusion
 
 # Offline regridding (preprocessing only)
 export build_regridder, save_regridder, load_regridder

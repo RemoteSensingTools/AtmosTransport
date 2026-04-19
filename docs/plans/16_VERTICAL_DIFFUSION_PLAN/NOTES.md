@@ -416,6 +416,90 @@ and `test_driven_simulation.jl` (57 tests) both pass unchanged,
 confirming that the bit-exact `NoDiffusion` default preserves
 pre-16b behavior byte-for-byte.
 
+### Commit 5 — `TransportModel` + `DrivenSimulation` integration
+
+Minimal wiring to route a diffusion operator from the simulation
+layer down through `TransportModel.step!` into the palindrome.
+
+Changes:
+
+- [src/Models/TransportModel.jl](../../../src/Models/TransportModel.jl):
+  - Added `diffusion::DiffT` field (type parameter `DiffT`). All
+    three constructors accept a `diffusion` kwarg with default
+    `NoDiffusion()`. `with_chemistry` preserves `diffusion`;
+    parallel `with_diffusion` swaps only the diffusion operator.
+    `Adapt.adapt_structure` carries the field through unchanged
+    (operator is small, stays on host).
+  - `step!(model, dt)` now passes
+    `diffusion_op = model.diffusion` through the advection
+    `apply!` call. Diffusion rides inside the transport block at
+    the palindrome center (Commit 4).
+- [src/MetDrivers/AbstractMetDriver.jl](../../../src/MetDrivers/AbstractMetDriver.jl):
+  - Added `current_time(::AbstractMetDriver) -> Float64 = 0.0` stub
+    per plan Decision 10. Exported from the submodule and re-
+    exported at the `AtmosTransport` level. Concrete drivers may
+    override; nothing shipped in this commit depends on a non-
+    zero override.
+
+**`DrivenSimulation` integration.** No direct change to
+`DrivenSimulation.jl`. The existing
+`DrivenSimulation.step!` delegates to `step!(sim.model, sim.Δt)`,
+so diffusion rides through automatically when the wrapped
+`TransportModel` was constructed with a non-trivial diffusion
+operator. The plan-15 chemistry workaround (sim calls
+`with_chemistry(model, NoChemistry())` before wrapping; applies
+chemistry at sim level after transport) is untouched — chemistry
+ordering is outside Commit 5's scope (plan 17).
+
+Tests in [test/test_transport_model_diffusion.jl](../../../test/test_transport_model_diffusion.jl),
+24 new tests across 5 testsets:
+
+1. Default `TransportModel` carries `NoDiffusion` (1).
+2. `with_diffusion` returns a new model with only diffusion
+   replaced; state / fluxes / workspace / chemistry / advection /
+   grid all shared with the original (7).
+3. **Default `step!` is bit-exact to the pre-16b no-diffusion
+   path** (1) — critical regression. Two identical models stepped
+   side-by-side for 5 steps; outputs compared with `==`, not `≈`.
+4. `step!` with `ImplicitVerticalDiffusion + ConstantField` Kz
+   mixes a Gaussian vertical profile; control model with
+   `NoDiffusion` is bit-exact unchanged; column mass preserved
+   to 1e-12 under Neumann BCs (14).
+5. `current_time` default stub returns `0.0` (1).
+
+Test totals: `test_transport_model_diffusion.jl` 24/24;
+`test_driven_simulation.jl` 57/57 unchanged (confirms the
+`TransportModel` field addition didn't break the sim runtime);
+`test_advection_kernels.jl`, `test_chemistry.jl`,
+`test_fields.jl`, `test_diffusion_kernels.jl`,
+`test_diffusion_operator.jl`, `test_diffusion_palindrome.jl` all
+unchanged.
+
+### Deferred from Commit 5 (explicit scope trim)
+
+- **Threading `current_time` through `apply!`.** The `current_time`
+  accessor exists and is exported, but the operators (chemistry +
+  diffusion) still use `t = zero(FT)` as the argument to
+  `update_field!`. Full end-to-end threading requires:
+  1. `TransportModel.step!` to accept a time argument (or carry a
+     meteorology reference), and
+  2. The `apply!` signatures to accept `t` directly OR the
+     operators to accept meteo and call `current_time(meteo)`.
+
+  Neither is strictly needed for Commit 5 since all field types
+  shipped so far (`ConstantField`, `ProfileKzField`,
+  `PreComputedKzField`, `DerivedKzField`) have `update_field!`
+  implementations that ignore `t` (the three non-`DerivedKzField`
+  types) or that get their time from a separately-managed cache
+  (`DerivedKzField`). Full plumbing lands when an end-to-end
+  `DerivedKzField` integration test actually needs a nonzero
+  simulation time.
+
+- **`dz_scratch` filler.** Still caller-owned. Commit 5's tests
+  fill it with `fill!(workspace.dz_scratch, 100.0)` — a uniform
+  100 m per-layer placeholder. Operational paths (met-driven
+  hydrostatic `delp → dz`) are out of scope here.
+
 ## Decisions beyond the plan
 
 (To be filled in as they arise.)

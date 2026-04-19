@@ -19,13 +19,15 @@ Concrete types:
 - `ConstantField{FT, N}` — one scalar presented as a rank-N field (plan 16a).
 - `ProfileKzField{FT}` — rank-3 vertical profile, horizontally uniform (plan 16b).
 - `PreComputedKzField{FT, A}` — rank-3 wrapper over a 3D array (plan 16b).
+- `DerivedKzField{FT, ...}` — Beljaars-Viterbo Kz from surface fields (plan 16b).
 
-Plan 16b will further add `DerivedKzField` (Beljaars-Viterbo from
-surface fields) once a meteorology coupling lands.
+`PBLPhysicsParameters{FT}` carries the physical constants for
+`DerivedKzField`.
 """
 module Fields
 
 export AbstractTimeVaryingField, ConstantField, ProfileKzField, PreComputedKzField
+export DerivedKzField, PBLPhysicsParameters
 export field_value, update_field!
 
 # =========================================================================
@@ -103,5 +105,6 @@ update_field!(f::ConstantField, ::Real) = f
 
 include("ProfileKzField.jl")
 include("PreComputedKzField.jl")
+include("DerivedKzField.jl")
 
 end # module Fields

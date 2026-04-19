@@ -155,7 +155,8 @@ export ntracers, tracer_index, tracer_name, get_tracer, eachtracer
 
 # Time-varying field abstraction (plan 16a, extended in 16b)
 export AbstractTimeVaryingField, ConstantField, ProfileKzField,
-       PreComputedKzField, field_value, update_field!
+       PreComputedKzField, DerivedKzField, PBLPhysicsParameters,
+       field_value, update_field!
 
 # Operators -- public transport API
 export AdvectionWorkspace, strang_split!, strang_split_mt!, apply!

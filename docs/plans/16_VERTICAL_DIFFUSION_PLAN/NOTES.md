@@ -126,6 +126,68 @@ in the plan (`NTuple{Nz, FT}` storage) is mechanical.
 tests unchanged (total 66 in `test_fields.jl`). GPU kernel-safety
 deferred to Commit 3.
 
+### Commit 1c — `DerivedKzField` Beljaars-Viterbo port
+
+- Created [src/State/Fields/DerivedKzField.jl](../../../src/State/Fields/DerivedKzField.jl):
+  - `PBLPhysicsParameters{FT}` struct (β_h, Kz_bg, Kz_min, Kz_max,
+    kappa_vk, gravity, cp_dry, rho_ref — legacy defaults).
+  - `_beljaars_viterbo_kz` — line-for-line port of legacy `_pbl_kz`
+    (src_legacy/Diffusion/pbl_diffusion.jl:66). Pure, GPU-safe,
+    `@inline`. Returns Kz in m²/s geometric.
+  - `_obukhov_length` — pure, returns `(L_ob, H_kin)`. Includes
+    the signed 1e-10 safety offset from the legacy implementation
+    so hflux=0 doesn't blow up.
+  - `_prandtl_inverse` — pure, matches legacy formula
+    (diffusion.F90:1213-1230 via pbl_diffusion.jl:198-210). Returns
+    `one(FT)` unless L_ob<0, H_kin>0, h_pbl>10.
+  - `DerivedKzField{FT, SF, DELP, A, P} <: AbstractTimeVaryingField{FT, 3}`
+    struct holding 4 rank-2 surface fields, rank-3 delp,
+    3D cache, params. Inner constructor validates rank of each
+    surface entry.
+  - `update_field!(f, t)` — refreshes every input field via
+    `update_field!`, then fills cache column-by-column on the host
+    (two-pass hydrostatic integration: first for z_col, second
+    for cell-center heights + Kz).
+  - `field_value(f, (i,j,k))` — direct cache read.
+- Wired through `Fields → State → AtmosTransport`.
+- Extended [test/test_fields.jl](../../../test/test_fields.jl) with
+  79 new tests across 4 testsets:
+  - `PBLPhysicsParameters defaults` (13) — value checks, FT propagation,
+    kwarg overrides.
+  - `_beljaars_viterbo_kz` (15) — regime corners: above taper returns
+    Kz_bg exactly; stable, unstable surface-layer, unstable mixed-layer
+    spot values checked against hand-expanded formulas; Kz_min / Kz_max
+    clamping; taper-zone blend formula; type stability.
+  - `_obukhov_length` (9) — sign convention (hflux>0 → unstable L<0);
+    zero-hflux safety (finite L via offset); hand-verified spot value.
+  - `_prandtl_inverse` (7) — returns 1 in stable, non-positive H_kin,
+    tiny h_pbl; > 1 in convective unstable.
+  - `DerivedKzField` (35) — construction + type bounds; rank-mismatch
+    rejection; `update_field!` populates cache; high-altitude cells
+    return Kz_bg; `field_value` reads from cache; changing surface
+    fields changes cache; type stability.
+
+**Results:** 145 tests in `test_fields.jl` (was 66); 37 chemistry
+tests unchanged. The physics port line-matches the legacy reference;
+deviations are limited to scope (no pressure-basis D coefficients,
+no Thomas solve — those belong to Commits 2/3).
+
+**Subtlety found during tests:** The taper-zone blend formula is
+`Kz = Kz_bg + frac × (Kz_in_pbl_clamped - Kz_bg)`. When the in-PBL
+Kz clamps to `Kz_min` (0.01) because `(1-z/h)² → 0` near the PBL
+top, the blend *increases* Kz from 0.01 at z=h through 0.055 at
+z=1.1h to 0.1 (=Kz_bg) at z=1.2h. My initial test assumed a
+decreasing blend (which only holds when in-PBL > Kz_bg, i.e. strong
+mixing). Fixed to allow either direction; test now verifies the
+blend formula directly, not a particular sign.
+
+**Julia gotcha hit:** default kwarg `params = PBLPhysicsParameters{FT}()`
+in a `where FT` method evaluates at module scope, not method-body
+scope, producing `UndefVarError: FT not defined`. Worked around by
+using `params = nothing` and resolving inside the body — a pattern
+worth remembering when writing generic constructors with type-
+parameterized defaults.
+
 ## Decisions beyond the plan
 
 (To be filled in as they arise.)

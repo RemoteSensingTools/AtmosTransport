@@ -25,6 +25,9 @@ using .Advection
 include("Chemistry/Chemistry.jl")
 using .Chemistry
 
+include("Diffusion/Diffusion.jl")
+using .Diffusion
+
 export AdvectionWorkspace, strang_split!, strang_split_mt!
 export TracerView
 export diagnose_cm!
@@ -39,6 +42,9 @@ export reconstruction_order
 # Chemistry
 export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemistry
 export chemistry_block!
+
+# Diffusion solver infrastructure (plan 16b Commit 2)
+export solve_tridiagonal!, build_diffusion_coefficients
 
 # Cubed-sphere advection
 export fill_panel_halos!, copy_corners!, strang_split_cs!, CSAdvectionWorkspace

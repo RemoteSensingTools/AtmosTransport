@@ -188,6 +188,82 @@ using `params = nothing` and resolving inside the body — a pattern
 worth remembering when writing generic constructors with type-
 parameterized defaults.
 
+### Commit 2 — Thomas solve + vertical diffusion kernel
+
+Shipped the solver infrastructure that will sit under Commit 3's
+`ImplicitVerticalDiffusion.apply!`. No operator type yet; no
+palindrome integration yet.
+
+- Created [src/Operators/Diffusion/](../../../src/Operators/Diffusion/):
+  - `Diffusion.jl` — module file, `using ...State: AbstractTimeVaryingField, field_value`,
+    exports `solve_tridiagonal!`, `build_diffusion_coefficients`,
+    `_vertical_diffusion_kernel!`.
+  - `thomas_solve.jl` — `solve_tridiagonal!(x, a, b, c, d, w)`
+    with caller-supplied workspace (plan's Commit-2 constraint #2);
+    `a, b, c, d` read-only. `build_diffusion_coefficients(Kz_col, dz_col, dt)`
+    as the **reference** Backward-Euler coefficient builder, returning
+    three `Vector{FT}`s. Adjoint-transposition rule documented in the
+    header.
+  - `diffusion_kernels.jl` — `_vertical_diffusion_kernel!` with
+    ndrange `(Nx, Ny, Nt)`. Inlines the same coefficient formulas as
+    the reference; `(a_k, b_k, c_k, d_k)` are named locals at each k
+    rather than pre-factored (plan's Commit-2 constraint #3).
+    `w_scratch[i, j, k]` holds the Thomas forward-elimination factor
+    between the two passes.
+- Wired into `Operators.jl` (`include("Diffusion/Diffusion.jl")`;
+  `using .Diffusion`; exports). Top-level re-export from
+  `AtmosTransport.jl`.
+- Created [test/test_diffusion_kernels.jl](../../../test/test_diffusion_kernels.jl)
+  with 33 tests across 7 testsets:
+  1. `build_diffusion_coefficients` (19) — hand-computed uniform case;
+     Neumann BCs (`a[1] = c[Nz] = 0`); `dt = 0` gives identity;
+     varying Kz produces asymmetric `a` vs `c` at the same interface;
+     dimension-mismatch throws; type stability.
+  2. `solve_tridiagonal!` (8) — identity matrix returns `d`; matches
+     Julia's dense `Tridiagonal \ d` on a random SPD system; does
+     not mutate `a, b, c, d`; workspace-length check fires via
+     `@boundscheck`; type stability.
+  3. Adjoint-structure test (2) — built forward L on Nz=8, constructed
+     L^T via documented rule, confirmed `Matrix(L_T) ≈ Matrix(L)'`,
+     and verified adjoint identity `⟨y, Lx⟩ = ⟨e, x⟩` (with
+     `L^T y = e`).
+  4. KA kernel vs. pure-Julia reference (1) — random (Nx=3, Ny=2,
+     Nz=6, Nt=2) with random Kz and dz, tight agreement (atol=1e-12).
+  5. Gaussian broadening (1) — Nz=201, uniform K=1 m²/s, dt=0.5,
+     fitted variance growth matches `σ₀² + 2Kt` within 5% (tolerance
+     scales with K·dt/dz²=0.5).
+  6. Mass conservation under Neumann BCs (1) — `Σq` preserved to
+     relative 1e-12 after one step.
+  7. `ConstantField{FT, 3}` dispatch (1) — kernel accepts it via
+     `field_value`, matches reference.
+- Test totals: `test_diffusion_kernels.jl` 33/33; `test_fields.jl`
+  145/145 (unchanged); `test_chemistry.jl` 37/37 (unchanged).
+
+**Key design choices locked in** (all three per user's revised scope):
+
+1. **`dz` is `AbstractArray{FT, 3}`, not a `TimeVaryingField`.**
+   The codebase already represents layer thicknesses as plain arrays
+   (`level_thickness`, `delp`); wrapping dz just for diffusion would
+   introduce cross-operator inconsistency. Commit 3's `apply!` will
+   supply a `dz_scratch::AbstractArray{FT, 3}` via the workspace.
+2. **Workspace supplied by caller.** `solve_tridiagonal!` takes
+   `w::AbstractVector{FT}` and does not allocate. The kernel takes
+   `w_scratch::AbstractArray{FT, 3}`. Commit 3 extends
+   `AdvectionWorkspace` with `w_scratch` and `dz_scratch` fields.
+3. **Kernel inlines coefficient arithmetic; reference is a separate
+   function.** `_vertical_diffusion_kernel!` computes `(a_k, b_k, c_k, d_k)`
+   as named locals; `build_diffusion_coefficients` exists for tests
+   and for the eventual adjoint kernel's reference. Docstrings at
+   both sites cross-reference and note that "any change to the
+   formulas here requires updating the reference (or vice versa)".
+
+**Adjoint-structure preservation — verified by test.** The
+transposition rule (`a_T[k] = c[k-1]`, `b_T[k] = b[k]`, `c_T[k] = a[k+1]`)
+is documented at the top of `thomas_solve.jl` and at the kernel's
+adjoint-note comment. The adjoint-identity test ships in
+`test_diffusion_kernels.jl`; a future adjoint solver only needs to
+apply the transposition rule and call `solve_tridiagonal!`.
+
 ## Decisions beyond the plan
 
 (To be filled in as they arise.)

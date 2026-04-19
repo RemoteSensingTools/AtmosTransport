@@ -15,15 +15,16 @@ Required interface (every concrete type):
 - `field_value(f, idx::NTuple{N, Int}) -> FT` — kernel-safe read
 - `update_field!(f, t::Real) -> f` — refresh caches for time `t`
 
-Concrete types in this plan (16a):
-- `ConstantField{FT, N}` — one scalar presented as a rank-N field.
+Concrete types:
+- `ConstantField{FT, N}` — one scalar presented as a rank-N field (plan 16a).
+- `ProfileKzField{FT}` — rank-3 vertical profile, horizontally uniform (plan 16b).
 
-Plan 16b will add rank-3 concrete types for diffusion Kz
-(`ProfileKzField`, `PreComputedKzField`, `DerivedKzField`).
+Plan 16b will further add `PreComputedKzField` (full 3D, stepwise in time)
+and `DerivedKzField` (Beljaars-Viterbo from surface fields).
 """
 module Fields
 
-export AbstractTimeVaryingField, ConstantField
+export AbstractTimeVaryingField, ConstantField, ProfileKzField
 export field_value, update_field!
 
 # =========================================================================
@@ -94,5 +95,11 @@ end
 @inline field_value(f::ConstantField{FT, N}, ::NTuple{N, Int}) where {FT, N} = f.value
 
 update_field!(f::ConstantField, ::Real) = f
+
+# =========================================================================
+# Rank-3 concrete types
+# =========================================================================
+
+include("ProfileKzField.jl")
 
 end # module Fields

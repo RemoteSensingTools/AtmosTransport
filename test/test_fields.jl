@@ -14,7 +14,7 @@ extends this suite.
 """
 
 using Test
-using AtmosTransport: AbstractTimeVaryingField, ConstantField,
+using AtmosTransport: AbstractTimeVaryingField, ConstantField, ProfileKzField,
                       field_value, update_field!
 using KernelAbstractions: @kernel, @index, get_backend, synchronize
 
@@ -102,5 +102,85 @@ using KernelAbstractions: @kernel, @index, get_backend, synchronize
         _fill_from_volume_field!(backend, 64)(out, g; ndrange = size(out))
         synchronize(backend)
         @test all(out .== -1.0)
+    end
+end
+
+@testset "TimeVaryingField — ProfileKzField" begin
+
+    @testset "construction + type bounds" begin
+        profile = [0.1, 0.5, 1.0, 2.0, 5.0]
+        f = ProfileKzField(profile)
+        @test f isa AbstractTimeVaryingField{Float64, 3}
+        @test f isa ProfileKzField{Float64}
+
+        g = ProfileKzField(Float32[0.0, 1.0, 2.0])
+        @test g isa AbstractTimeVaryingField{Float32, 3}
+    end
+
+    @testset "field_value selects the k coordinate" begin
+        profile = [10.0, 20.0, 30.0, 40.0, 50.0]
+        f = ProfileKzField(profile)
+        @test field_value(f, (1, 1, 1)) === 10.0
+        @test field_value(f, (1, 1, 2)) === 20.0
+        @test field_value(f, (1, 1, 3)) === 30.0
+        @test field_value(f, (1, 1, 5)) === 50.0
+    end
+
+    @testset "field_value ignores i, j" begin
+        profile = [1.0, 2.0, 3.0]
+        f = ProfileKzField(profile)
+        # Same k, different (i, j) → same value
+        @test field_value(f, (1,   1,  2)) === 2.0
+        @test field_value(f, (100, 50, 2)) === 2.0
+        @test field_value(f, (1,   72, 2)) === 2.0
+        @test field_value(f, (144, 1,  2)) === 2.0
+    end
+
+    @testset "update_field! is a no-op" begin
+        profile = [1.0, 2.0, 3.0]
+        f = ProfileKzField(profile)
+        @test update_field!(f, 0.0) === f
+        @test update_field!(f, 1.0e9) === f
+        # Profile unchanged
+        @test f.profile == [1.0, 2.0, 3.0]
+        # Subsequent reads still return the originals
+        @test field_value(f, (1, 1, 1)) === 1.0
+        @test field_value(f, (1, 1, 3)) === 3.0
+    end
+
+    @testset "type stability" begin
+        f = ProfileKzField([1.0, 2.0, 3.0])
+        @test @inferred(field_value(f, (1, 1, 1))) === 1.0
+
+        g = ProfileKzField(Float32[0.5f0, 1.5f0])
+        @test @inferred(field_value(g, (1, 1, 2))) === 1.5f0
+    end
+
+    @testset "rank-mismatched index does not dispatch" begin
+        f = ProfileKzField([1.0, 2.0, 3.0])
+        @test_throws MethodError field_value(f, (1, 1))
+        @test_throws MethodError field_value(f, ())
+    end
+
+    @testset "kernel-safety — CPU backend" begin
+        # Verify field_value is callable from inside a KA kernel.
+        # Write a k-varying profile into every column of an output array.
+        profile = [10.0, 20.0, 30.0, 40.0]
+        f = ProfileKzField(profile)
+        out = zeros(Float64, 3, 2, 4)
+        backend = get_backend(out)
+
+        @kernel function _fill_from_profile_field!(out, field)
+            i, j, k = @index(Global, NTuple)
+            @inbounds out[i, j, k] = field_value(field, (i, j, k))
+        end
+
+        _fill_from_profile_field!(backend, 64)(out, f; ndrange = size(out))
+        synchronize(backend)
+
+        # Every column should match the profile
+        for i in 1:3, j in 1:2
+            @test out[i, j, :] == profile
+        end
     end
 end

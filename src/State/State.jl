@@ -25,7 +25,9 @@ include("MetState.jl")
 include("Tracers.jl")
 include("Fields/Fields.jl")
 
-using .Fields: AbstractTimeVaryingField, ConstantField, field_value, update_field!
-export AbstractTimeVaryingField, ConstantField, field_value, update_field!
+using .Fields: AbstractTimeVaryingField, ConstantField, ProfileKzField,
+                field_value, update_field!
+export AbstractTimeVaryingField, ConstantField, ProfileKzField,
+       field_value, update_field!
 
 end # module State

@@ -69,6 +69,37 @@ Moved `docs/plans/16_VERTICAL_DIFFUSION_PLAN.md` into the subfolder
 to match the plan-folder layout used by 14/15/16a. Wrote this file
 as the execution log.
 
+### Commit 1a — `ProfileKzField` rank-3 profile
+
+- Created [src/State/Fields/ProfileKzField.jl](../../../src/State/Fields/ProfileKzField.jl):
+  `struct ProfileKzField{FT} <: AbstractTimeVaryingField{FT, 3}`
+  with a single `profile::Vector{FT}` field. `field_value(f, (i,j,k))`
+  returns `@inbounds f.profile[k]`; `update_field!` is a no-op.
+- Re-exported `ProfileKzField` through the module chain
+  (`Fields` → `State` → `AtmosTransport`).
+- Extended [test/test_fields.jl](../../../test/test_fields.jl) with
+  a `ProfileKzField` testset (7 blocks, 26 tests):
+  - Construction + type bounds (FT=Float64, Float32)
+  - `field_value` selects the k coordinate
+  - `field_value` ignores i, j (horizontal invariance)
+  - `update_field!` is a no-op (field unchanged, returns `f`)
+  - Type stability (`@inferred`)
+  - Rank-mismatched index → MethodError
+  - Kernel-safety on CPU backend (KA kernel writes k-varying profile
+    into every column)
+
+**Results:** 26 new tests pass; 21 pre-existing `ConstantField`
+tests unchanged; chemistry regression unchanged (37/37). Rank-3
+path validated beyond the spatially-uniform `ConstantField{FT, 3}`
+special case.
+
+**Storage note:** `profile` is a host `Vector{FT}`. On CPU backends
+the kernel-safety test passes directly. GPU dispatch is deferred
+until Commit 3 (diffusion operator) — the first call site that
+launches a kernel consuming `ProfileKzField`. If GPU dispatch on
+`Vector{FT}.getindex` fails inside a kernel, the fallback noted
+in the plan (`NTuple{Nz, FT}` storage) is mechanical.
+
 ## Decisions beyond the plan
 
 (To be filled in as they arise.)

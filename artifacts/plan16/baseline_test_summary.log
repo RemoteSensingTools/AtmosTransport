@@ -1,0 +1,25 @@
+Plan 16b baseline test capture
+Branch: vertical-diffusion
+HEAD:   3cd90102e9fb7fe9c5f3e519cd9dbe8e281a9066 (plan 16a Commit 3)
+Date:   2026-04-19
+
+=== test/test_fields.jl ===
+Test Summary:                    | Pass  Total  Time
+TimeVaryingField — ConstantField |   21     21  1.0s
+
+=== test/test_chemistry.jl ===
+Test Summary:                 | Pass  Total   Time
+Chemistry operators (plan 15) |   37     37  26.1s
+
+=== Broader baseline ===
+Inherited from plan 16a Commit 3 (3cd9010): 77 pre-existing failures
+unchanged from plans 11-15 baseline:
+  - test_basis_explicit_core:     2 failures
+  - test_structured_mesh_metadata: 3 failures
+  - test_poisson_balance:        72 failures
+These were already validated at 16a's final commit; 16b starts
+from that same tree + untracked plan doc only. No new sources
+touched by the branch-creation step.
+
+Plan 16b must preserve: 58 passes (21 fields + 37 chemistry)
+unchanged, 77 pre-existing failures unchanged, no new failures.

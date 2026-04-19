@@ -26,8 +26,8 @@ include("Tracers.jl")
 include("Fields/Fields.jl")
 
 using .Fields: AbstractTimeVaryingField, ConstantField, ProfileKzField,
-                field_value, update_field!
+                PreComputedKzField, field_value, update_field!
 export AbstractTimeVaryingField, ConstantField, ProfileKzField,
-       field_value, update_field!
+       PreComputedKzField, field_value, update_field!
 
 end # module State

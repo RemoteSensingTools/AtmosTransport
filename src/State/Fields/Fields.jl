@@ -18,13 +18,14 @@ Required interface (every concrete type):
 Concrete types:
 - `ConstantField{FT, N}` — one scalar presented as a rank-N field (plan 16a).
 - `ProfileKzField{FT}` — rank-3 vertical profile, horizontally uniform (plan 16b).
+- `PreComputedKzField{FT, A}` — rank-3 wrapper over a 3D array (plan 16b).
 
-Plan 16b will further add `PreComputedKzField` (full 3D, stepwise in time)
-and `DerivedKzField` (Beljaars-Viterbo from surface fields).
+Plan 16b will further add `DerivedKzField` (Beljaars-Viterbo from
+surface fields) once a meteorology coupling lands.
 """
 module Fields
 
-export AbstractTimeVaryingField, ConstantField, ProfileKzField
+export AbstractTimeVaryingField, ConstantField, ProfileKzField, PreComputedKzField
 export field_value, update_field!
 
 # =========================================================================
@@ -101,5 +102,6 @@ update_field!(f::ConstantField, ::Real) = f
 # =========================================================================
 
 include("ProfileKzField.jl")
+include("PreComputedKzField.jl")
 
 end # module Fields

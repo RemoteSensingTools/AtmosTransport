@@ -100,6 +100,32 @@ launches a kernel consuming `ProfileKzField`. If GPU dispatch on
 `Vector{FT}.getindex` fails inside a kernel, the fallback noted
 in the plan (`NTuple{Nz, FT}` storage) is mechanical.
 
+### Commit 1b — `PreComputedKzField` rank-3 array wrapper
+
+- Created [src/State/Fields/PreComputedKzField.jl](../../../src/State/Fields/PreComputedKzField.jl):
+  `struct PreComputedKzField{FT, A} <: AbstractTimeVaryingField{FT, 3}`
+  wrapping a 3D `AbstractArray{FT, 3}` (Array, CuArray, MtlArray —
+  parametric on `A`). `field_value(f, (i,j,k))` is a direct indexed
+  read; `update_field!` is a no-op.
+- Inner constructor enforces rank-3 via
+  `A <: AbstractArray{FT, 3}` — a 2D or 4D input raises
+  `MethodError` at construction, not at the first `field_value` call.
+- Caller-owned storage: the field holds a reference, not a copy.
+  Operational path (met window advances) is "caller mutates
+  `f.data` in place"; `update_field!` is a no-op because the array
+  is already current. A future stepwise-in-time variant (4D buffer
+  + window index) can be added as a separate concrete type.
+- Wired through `Fields → State → AtmosTransport`.
+- Extended `test/test_fields.jl` with 19 new tests:
+  construction + type bounds, (i,j,k)-independent access (distinct
+  fingerprinted data ≠ fingerprint-elsewhere), no-op `update_field!`,
+  caller-owned mutation visibility, type stability, rank-mismatched
+  construction rejection, CPU kernel-safety via element-wise copy.
+
+**Results:** 19 new tests pass; 21 `ConstantField` + 26 `ProfileKzField`
+tests unchanged (total 66 in `test_fields.jl`). GPU kernel-safety
+deferred to Commit 3.
+
 ## Decisions beyond the plan
 
 (To be filled in as they arise.)

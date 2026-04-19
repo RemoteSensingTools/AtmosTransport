@@ -15,7 +15,7 @@ extends this suite.
 
 using Test
 using AtmosTransport: AbstractTimeVaryingField, ConstantField, ProfileKzField,
-                      field_value, update_field!
+                      PreComputedKzField, field_value, update_field!
 using KernelAbstractions: @kernel, @index, get_backend, synchronize
 
 @testset "TimeVaryingField — ConstantField" begin
@@ -182,5 +182,97 @@ end
         for i in 1:3, j in 1:2
             @test out[i, j, :] == profile
         end
+    end
+end
+
+@testset "TimeVaryingField — PreComputedKzField" begin
+
+    @testset "construction + type bounds" begin
+        data = rand(Float64, 4, 3, 5)
+        f = PreComputedKzField(data)
+        @test f isa AbstractTimeVaryingField{Float64, 3}
+        @test f isa PreComputedKzField{Float64}
+
+        data32 = rand(Float32, 2, 2, 3)
+        g = PreComputedKzField(data32)
+        @test g isa AbstractTimeVaryingField{Float32, 3}
+    end
+
+    @testset "field_value respects (i, j, k) independently" begin
+        # Construct data where each cell's value is a unique fingerprint
+        data = Array{Float64, 3}(undef, 4, 3, 5)
+        for i in 1:4, j in 1:3, k in 1:5
+            data[i, j, k] = 100 * i + 10 * j + k
+        end
+        f = PreComputedKzField(data)
+
+        @test field_value(f, (1, 1, 1)) === 111.0
+        @test field_value(f, (4, 3, 5)) === 435.0
+        @test field_value(f, (2, 1, 3)) === 213.0
+        # Varying only i or only j must change the value (vs. ProfileKzField)
+        @test field_value(f, (1, 1, 2)) !== field_value(f, (2, 1, 2))
+        @test field_value(f, (1, 1, 2)) !== field_value(f, (1, 2, 2))
+    end
+
+    @testset "update_field! is a no-op" begin
+        data = [1.0; 2.0; 3.0 ;; 4.0; 5.0; 6.0 ;;; 7.0; 8.0; 9.0 ;; 10.0; 11.0; 12.0]
+        # Built as 3×2×2. Content doesn't matter; we test identity + preservation.
+        f = PreComputedKzField(data)
+        pre = copy(f.data)
+        @test update_field!(f, 0.0) === f
+        @test update_field!(f, 1.0e9) === f
+        @test f.data == pre
+    end
+
+    @testset "caller-owned storage: external mutation visible" begin
+        # The field does not own the array — mutating the backing array
+        # (e.g. when met-window advances) is immediately visible through
+        # field_value.
+        data = zeros(Float64, 2, 2, 2)
+        f = PreComputedKzField(data)
+        @test field_value(f, (1, 1, 1)) === 0.0
+
+        data[1, 1, 1] = 42.0
+        @test field_value(f, (1, 1, 1)) === 42.0
+
+        fill!(data, -1.0)
+        @test field_value(f, (2, 2, 2)) === -1.0
+    end
+
+    @testset "type stability" begin
+        data = rand(Float64, 3, 3, 3)
+        f = PreComputedKzField(data)
+        @test @inferred(field_value(f, (1, 1, 1))) isa Float64
+
+        data32 = rand(Float32, 2, 2, 2)
+        g = PreComputedKzField(data32)
+        @test @inferred(field_value(g, (1, 1, 1))) isa Float32
+    end
+
+    @testset "rank-mismatched construction rejected" begin
+        # 2D or 4D arrays must not be accepted — rank-3 is the interface contract
+        @test_throws MethodError PreComputedKzField(rand(Float64, 3, 3))
+        @test_throws MethodError PreComputedKzField(rand(Float64, 2, 2, 2, 2))
+    end
+
+    @testset "kernel-safety — CPU backend" begin
+        # Launch a KA kernel that reads every element of the backing array
+        # through field_value and copies it into an output buffer. If the
+        # field path matches direct array indexing, the output equals the
+        # input elementwise.
+        Nx, Ny, Nz = 3, 4, 5
+        src = reshape(collect(1.0:Nx*Ny*Nz), Nx, Ny, Nz)
+        f = PreComputedKzField(src)
+        out = zeros(Float64, Nx, Ny, Nz)
+        backend = get_backend(out)
+
+        @kernel function _copy_from_volume_field!(out, field)
+            i, j, k = @index(Global, NTuple)
+            @inbounds out[i, j, k] = field_value(field, (i, j, k))
+        end
+
+        _copy_from_volume_field!(backend, 64)(out, f; ndrange = size(out))
+        synchronize(backend)
+        @test out == src
     end
 end

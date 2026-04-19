@@ -98,12 +98,12 @@ end
 
 Apply one Backward-Euler implicit diffusion step to every tracer in
 `state.tracers_raw` using the column Kz field `op.kz_field` and the
-dz stored in `workspace.dz_scratch` (caller-filled).
+dz stored in `workspace.dz_scratch` (caller-filled). Delegates to
+[`apply_vertical_diffusion!`](@ref), which is the lower-level entry
+point consumed by `strang_split_mt!` at the palindrome center.
 
-Throws if `workspace` is not supplied (diffusion cannot run without
-`w_scratch` / `dz_scratch` buffers) or if the workspace's `dz_scratch`
-is 0-sized (face-indexed grids; diffusion is structured-grid-only
-in this commit).
+Throws if `workspace` is not supplied or if its `dz_scratch` shape
+doesn't match `state.tracers_raw`.
 """
 function apply!(state::CellState, meteo, grid,
                 op::ImplicitVerticalDiffusion{FT}, dt;
@@ -111,34 +111,63 @@ function apply!(state::CellState, meteo, grid,
     workspace === nothing && throw(ArgumentError(
         "ImplicitVerticalDiffusion.apply!: workspace is required " *
         "(w_scratch and dz_scratch must be supplied)"))
+    apply_vertical_diffusion!(state.tracers_raw, op, workspace, dt)
+    return state
+end
 
-    raw = state.tracers_raw
-    ndims(raw) == 4 || throw(ArgumentError(
-        "ImplicitVerticalDiffusion.apply!: tracers_raw must be rank-4, got ndims=$(ndims(raw))"))
+# =========================================================================
+# Lower-level apply_vertical_diffusion! — array-level entry point
+# =========================================================================
 
+"""
+    apply_vertical_diffusion!(q_raw, op, workspace, dt) -> nothing
+
+Low-level entry point. Applies one Backward-Euler diffusion step to
+a 4D tracer buffer `q_raw::AbstractArray{FT, 4}` of shape
+`(Nx, Ny, Nz, Nt)`. Mutates `q_raw` in place.
+
+This is the function `strang_split_mt!` calls at the palindrome
+center (plan 16b Commit 4). Operating on a raw 4D array lets the
+caller pass whichever ping-pong buffer currently holds the
+post-forward-half tracer state (`rm_4d` or `workspace.rm_4d_B`) —
+no pre-diffusion copy required.
+
+`NoDiffusion` is a no-op: the method is `= nothing` so Julia's
+dispatch reduces the call site to a dead branch when
+`diffusion_op isa NoDiffusion`. This is what makes the Commit 4
+palindrome integration bit-exact backward-compatible.
+"""
+function apply_vertical_diffusion! end
+
+apply_vertical_diffusion!(q_raw::AbstractArray{<:Any, 4},
+                          ::NoDiffusion, workspace, dt) = nothing
+
+function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 4},
+                                   op::ImplicitVerticalDiffusion{FT},
+                                   workspace, dt) where FT
     w_scratch  = workspace.w_scratch
     dz_scratch = workspace.dz_scratch
     length(dz_scratch) == 0 && throw(ArgumentError(
-        "ImplicitVerticalDiffusion.apply!: workspace.dz_scratch is 0-sized — " *
+        "apply_vertical_diffusion!: workspace.dz_scratch is 0-sized — " *
         "diffusion is only supported on structured 3D grids in this commit"))
     size(dz_scratch) == size(w_scratch) ||
         throw(DimensionMismatch("w_scratch and dz_scratch sizes must match"))
 
-    Nx, Ny, Nz, Nt = size(raw)
+    Nx, Ny, Nz, Nt = size(q_raw)
     (size(dz_scratch) == (Nx, Ny, Nz)) || throw(DimensionMismatch(
-        "workspace scratch arrays are $(size(dz_scratch)) but tracers_raw " *
+        "workspace scratch arrays are $(size(dz_scratch)) but q_raw " *
         "spatial shape is ($Nx, $Ny, $Nz)"))
 
     # Refresh Kz cache for the current time. Placeholder `t = zero(FT)`
     # matches the plan-15 chemistry convention until the meteorology
-    # ships a `current_time` accessor (deferred; see plan 16b NOTES.md).
+    # ships a `current_time` accessor (Commit 5).
     t = zero(FT)
     update_field!(op.kz_field, t)
 
-    backend = get_backend(raw)
+    backend = get_backend(q_raw)
     kernel = _vertical_diffusion_kernel!(backend, (8, 8, 1))
-    kernel(raw, op.kz_field, dz_scratch, w_scratch, FT(dt), Nz;
+    kernel(q_raw, op.kz_field, dz_scratch, w_scratch, FT(dt), Nz;
            ndrange = (Nx, Ny, Nt))
     synchronize(backend)
-    return state
+    return nothing
 end

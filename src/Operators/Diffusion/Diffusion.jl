@@ -32,6 +32,7 @@ import ..apply!
 export solve_tridiagonal!, build_diffusion_coefficients
 export _vertical_diffusion_kernel!
 export AbstractDiffusionOperator, NoDiffusion, ImplicitVerticalDiffusion
+export apply_vertical_diffusion!
 
 include("thomas_solve.jl")
 include("diffusion_kernels.jl")

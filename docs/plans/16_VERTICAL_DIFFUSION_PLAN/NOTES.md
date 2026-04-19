@@ -316,36 +316,105 @@ Test totals: `test_diffusion_operator.jl` 15/15;
 unchanged; `test_chemistry.jl` 37/37 unchanged;
 `test_driven_simulation.jl` 57/57 unchanged.
 
-**Design notes recorded for the retrospective:**
+### Commit 4 — Palindrome integration
 
-1. **`apply!` signature works unchanged from plan 15** (the
-   `(state, meteo, grid, op, dt; workspace)` pattern), with one
-   nuance: diffusion requires a real workspace (not `nothing`) because
-   the Thomas solve needs `w_scratch` / `dz_scratch`. Chemistry's
-   "accept nothing" path is not available here. The test suite makes
-   this explicit with an `ArgumentError` check.
+Insert a `V(dt)` call at the center of `strang_split_mt!`'s
+`X → Y → Z → Z → Y → X` palindrome, producing `X → Y → Z → V → Z → Y → X`.
+No advection math changes — only the palindrome center gains an
+optional call.
 
-2. **`TimeVaryingField` for rank-3 Kz validated at kernel scale.**
-   Three concrete types (`ConstantField{FT, 3}`, `ProfileKzField`,
-   `PreComputedKzField`) were exercised in `apply!` tests at
-   `ndrange = (Nx, Ny, Nt)`. All three dispatch cleanly through
-   `field_value` into the kernel. `DerivedKzField` was tested at
-   the cache-recomputation level in Commit 1c; integration through
-   `apply!` is mechanically identical but needs meteorology to
-   exercise — deferred.
+- Reordered `Operators.jl` so `Diffusion/Diffusion.jl` is `include`d
+  **before** `Advection/Advection.jl`. Diffusion has no dependency
+  on Advection; the reorder lets `StrangSplitting.jl` `using ..Diffusion`
+  at module-load time for the palindrome hook. Confirmed no cross-
+  dependency by greping Advection for `using ..Chemistry|..Diffusion`
+  before the reorder.
+- Added `apply_vertical_diffusion!(q_raw, op, workspace, dt)` as a
+  lower-level array-based entry point in `operators.jl`. Two methods:
+  - `::NoDiffusion → nothing` (literal dead branch; Julia dispatch
+    produces no floating-point work).
+  - `::ImplicitVerticalDiffusion{FT}` → validates workspace shapes,
+    refreshes Kz cache, launches
+    `_vertical_diffusion_kernel!`.
 
-3. **GPU dispatch for `ProfileKzField` deferred.** Commit 3 ships only
-   the CPU path; all tests run on CPU. The `Vector{FT}` storage in
-   `ProfileKzField` may require a materialization pass on GPU (plan
-   pitfall 11: NTuple option 1, Adapt option 2, 3D cache option 3).
-   Commit 6 (benchmarks) is the natural place to resolve this,
-   with a GPU run of each Kz field type.
+  Refactored the state-level `apply!(state, meteo, grid, op::ImplicitVerticalDiffusion, dt; workspace)`
+  to delegate to `apply_vertical_diffusion!(state.tracers_raw, ...)`.
+  All Commit 3 tests still pass unchanged — the refactor is
+  mechanical.
+- Modified `strang_split_mt!` to accept two new kwargs with backward-
+  compatible defaults:
 
-4. **`dz_scratch` is caller-owned input, not workspace scratch.**
-   Per the Commit 2 design conversation: `apply!` READS it but does
-   not WRITE it. A future commit (or `DrivenSimulation` integration)
-   will fill it via hydrostatic from `delp`. Tests use
-   `fill!(workspace.dz_scratch, dz_val)` or `copyto!`.
+      diffusion_op::AbstractDiffusionOperator = NoDiffusion()
+      dt::Union{Nothing, Real} = nothing
+
+  Inserted `apply_vertical_diffusion!(rm_cur, diffusion_op, ws, dt)`
+  between the two Z-sweep loops. `rm_cur` is the buffer that
+  currently holds the post-forward-half tracer state (might be
+  `rm_4d` or `ws.rm_4d_B` depending on parity). The kernel
+  operates in place on whichever it is — no pre-diffusion copy
+  required. Threaded the same kwargs through `strang_split!` and
+  the structured-mesh `apply!` wrapper.
+
+Tests in [test/test_diffusion_palindrome.jl](../../../test/test_diffusion_palindrome.jl),
+27 new tests across 6 testsets:
+
+1. **Bit-exact default kwargs == explicit `NoDiffusion`** (2) —
+   critical regression. Default path must be bit-`==` identical
+   to `diffusion_op = NoDiffusion()` explicit path. Verified both
+   on `rm_4d` and `m`.
+2. **`NoDiffusion` + zero fluxes = identity** (2) — input arrays
+   preserved byte-for-byte.
+3. **Diffusion actually runs at palindrome center** (19) — with
+   zero fluxes and non-trivial Kz, a Gaussian vertical profile
+   evolves; column mass preserved to 1e-12 under Neumann BCs.
+4. **Palindrome diffusion matches standalone `apply_vertical_diffusion!`** (1) —
+   full palindrome reduces to one `V(dt)` when all fluxes are zero.
+5. **`V(dt)` and `V(dt/2) ∘ V(dt/2)` agree to O(dt²)** (2) — see
+   Decision 8 refinement below.
+6. **`dt = nothing` with non-`NoDiffusion` rejected** (1) — currently
+   via `MethodError` from the downstream kernel's `FT(nothing)`
+   conversion.
+
+Test totals: `test_diffusion_palindrome.jl` 27/27;
+`test_advection_kernels.jl` unchanged (multi-tracer kernel fusion
+still passes — critical since the palindrome is hot-path);
+`test_driven_simulation.jl` 57/57 unchanged;
+`test_diffusion_operator.jl` 15/15 (the `apply!` delegation refactor
+didn't break anything); `test_diffusion_kernels.jl` 33/33 unchanged;
+`test_fields.jl` 145/145; `test_chemistry.jl` 37/37.
+
+**Refinement to plan Decision 8.** Plan 16b §4.3 Decision 8 asserts
+that `V(dt) = V(dt/2) ∘ V(dt/2)` for linear V, justifying a single
+`V(dt)` call at the palindrome center. This is exactly true for the
+continuous linear-ODE flow (`e^(dt·D) = e^(dt/2·D) · e^(dt/2·D)`)
+but NOT exactly true for the Backward-Euler discretization used here:
+`(I - dt·D)⁻¹ ≠ [(I - dt/2·D)⁻¹]²`. Both are second-order
+approximations to `e^(dt·D)`, so they agree to O((dt·D)²). Testset 5
+verifies this convergence rate (halving dt shrinks the discrepancy
+by ~4×).
+
+Architecturally, the single-call choice is still correct — there is
+no benefit to running two BE half-steps over one full step (same
+truncation order, strictly more work). But the mathematical
+equivalence claim in Decision 8 should be read as "agrees to leading
+order," not "exactly equal." Recorded here for the retrospective.
+
+**Sub-timestep-varying Kz caveat.** `V(dt)` as a single call is
+appropriate when Kz is time-constant within a timestep. For
+meteorology-coupled `DerivedKzField` (Commit 5+), Kz could evolve
+sub-timestep if the meteorology is interpolated between windows.
+In that case a single `V(dt)` with Kz sampled at t₀ (or t₀+dt/2)
+is no longer second-order in the operator-splitting error —
+splitting into `V(dt/2, Kz₀) ∘ V(dt/2, Kz(dt/2))` or similar
+would be needed for sharper accuracy. Noted here; revisit if
+end-to-end validation in Commit 5+ shows accuracy issues.
+
+**Hot-path safety confirmed.** The palindrome touches
+`strang_split_mt!`, which is on every advection call. Existing
+`test_advection_kernels.jl` (multi-tracer kernel fusion, 84 tests)
+and `test_driven_simulation.jl` (57 tests) both pass unchanged,
+confirming that the bit-exact `NoDiffusion` default preserves
+pre-16b behavior byte-for-byte.
 
 ## Decisions beyond the plan
 
@@ -357,7 +426,64 @@ unchanged; `test_chemistry.jl` 37/37 unchanged;
 
 ## Interface validation findings
 
-(To be filled in — per plan doc §5.3, three specific items:
-`apply!` signature works unchanged for diffusion; tridiagonal
-structure is transposable without rewrite; `TimeVaryingField`
-works cleanly for 3D Kz.)
+Per plan doc §5.3, three required retrospective items. All three
+confirmed by Commits 2-3; reproduced here for Commit 7's synthesis.
+
+1. **`apply!` signature works unchanged from plan 15.** The
+   `(state, meteo, grid, op, dt; workspace)` pattern from plan 15's
+   `AbstractChemistryOperator` carries through for diffusion without
+   modification. One nuance vs. chemistry: diffusion REQUIRES a real
+   workspace (not `nothing`) because the Thomas solve needs
+   `w_scratch` / `dz_scratch` — chemistry's "accept nothing" path is
+   not available. Captured in `test_diffusion_operator.jl` via an
+   explicit `ArgumentError` check.
+
+   `DerivedKzField` operators specifically need real meteorology
+   (not `nothing`) because `update_field!` reads surface fields via
+   `field_value`. Chemistry's pattern of accepting `nothing` does not
+   apply to the derived-Kz path. Test writers using
+   `ConstantField{FT, 3}` / `ProfileKzField` / `PreComputedKzField`
+   may pass `meteo = nothing` since those fields' `update_field!` is
+   a no-op; this inconsistency is acceptable and noted here.
+
+2. **Adjoint-structure preservation verified.** The tridiagonal
+   transposition rule (`a_T[k] = c[k-1]`, `b_T[k] = b[k]`,
+   `c_T[k] = a[k+1]`) is documented at the top of `thomas_solve.jl`
+   and at the kernel's adjoint-note comment. The adjoint-identity
+   test in `test_diffusion_kernels.jl` verifies
+   `⟨y, L x⟩ = ⟨e, x⟩` for `L x = d`, `L^T y = e` on a non-symmetric
+   Nz=8 forward tridiagonal. A future adjoint kernel writes the
+   same coefficient formulas, applies the transposition rule at the
+   tridiagonal interface, and calls `solve_tridiagonal!` — no
+   structural change required. `(a, b, c)` are named locals at each
+   level k in the forward kernel, not pre-factored into
+   `w[k]`/`inv_denom[k]`.
+
+3. **`TimeVaryingField` for 3D Kz validated at kernel-launch scale.**
+   Three rank-3 concrete types (`ConstantField{FT, 3}`,
+   `ProfileKzField`, `PreComputedKzField`) were exercised through
+   `apply!` at `ndrange = (Nx, Ny, Nt)` in
+   `test_diffusion_operator.jl`. All three dispatch cleanly via
+   `field_value`. `DerivedKzField` was tested at the cache-
+   recomputation level in Commit 1c; kernel integration is mechanical
+   but requires meteorology, so full end-to-end validation is deferred
+   to Commit 5's TransportModel wiring.
+
+### Deferred from Commits 2-3
+
+- **GPU dispatch for `ProfileKzField`.** All tests ship CPU-only.
+  The `Vector{FT}` storage may require materialization to
+  `NTuple{Nz, FT}` (option 1), `Adapt.jl` (option 2), or a 3D
+  broadcast cache (option 3) at kernel-launch time on GPU.
+  Commit 6 (benchmarks) is the natural place to resolve.
+
+- **`dz_scratch` filling helper.** `dz_scratch` is **input**, not
+  scratch — `ImplicitVerticalDiffusion.apply!` READS it, never
+  writes. The operational filler (hydrostatic from `delp` + `T_sfc`)
+  belongs to `DrivenSimulation` or a standalone helper in Commit 5.
+  Tests use `copyto!(workspace.dz_scratch, dz_arr)` directly.
+
+- **`current_time(meteo)` accessor.** Chemistry and diffusion both
+  use `zero(FT)` as the `update_field!` time argument. Plan Decision
+  10 confirms this accessor is in scope for Commit 5 (TransportModel
+  wiring); there it replaces the placeholder uniformly.

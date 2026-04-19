@@ -27,6 +27,12 @@ using Adapt
 using DocStringExtensions
 
 import ..AbstractOperator, ..apply!
+# Diffusion is loaded before Advection in Operators.jl so the palindrome
+# center of `strang_split_mt!` can dispatch on `AbstractDiffusionOperator`
+# concretions. `NoDiffusion`'s `apply_vertical_diffusion!` method is
+# `= nothing`, keeping the default path bit-exact with pre-16b behavior.
+using ..Diffusion: AbstractDiffusionOperator, NoDiffusion,
+                   apply_vertical_diffusion!
 using ...State: CellState, AbstractStructuredFaceFluxState, AbstractFaceFluxState,
     StructuredFaceFluxState, AbstractUnstructuredFaceFluxState,
     DryMassFluxBasis, DryStructuredFluxState, AbstractMassBasis,

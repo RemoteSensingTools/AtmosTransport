@@ -19,14 +19,20 @@ using ..Grids
 using ..MetDrivers
 
 include("AbstractOperators.jl")
+
+# Diffusion is included BEFORE Advection so `strang_split_mt!`
+# (plan 16b Commit 4 palindrome integration) can import
+# `NoDiffusion`, `AbstractDiffusionOperator`, and
+# `apply_vertical_diffusion!`. Diffusion has no dependency on
+# Advection; reordering preserves correctness.
+include("Diffusion/Diffusion.jl")
+using .Diffusion
+
 include("Advection/Advection.jl")
 using .Advection
 
 include("Chemistry/Chemistry.jl")
 using .Chemistry
-
-include("Diffusion/Diffusion.jl")
-using .Diffusion
 
 export AdvectionWorkspace, strang_split!, strang_split_mt!
 export TracerView
@@ -43,9 +49,10 @@ export reconstruction_order
 export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemistry
 export chemistry_block!
 
-# Diffusion solver infrastructure + operator types (plan 16b Commits 2-3)
+# Diffusion solver infrastructure + operator types (plan 16b Commits 2-4)
 export solve_tridiagonal!, build_diffusion_coefficients
 export AbstractDiffusionOperator, NoDiffusion, ImplicitVerticalDiffusion
+export apply_vertical_diffusion!
 
 # Cubed-sphere advection
 export fill_panel_halos!, copy_corners!, strang_split_cs!, CSAdvectionWorkspace

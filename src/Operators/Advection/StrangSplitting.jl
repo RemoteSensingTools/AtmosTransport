@@ -963,7 +963,9 @@ function strang_split!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
                        grid::AtmosGrid{<:LatLonMesh},
                        scheme::AbstractAdvectionScheme;
                        workspace::AdvectionWorkspace,
-                       cfl_limit::Real = one(eltype(state.air_mass))) where {B <: AbstractMassBasis}
+                       cfl_limit::Real = one(eltype(state.air_mass)),
+                       diffusion_op::AbstractDiffusionOperator = NoDiffusion(),
+                       dt::Union{Nothing, Real} = nothing) where {B <: AbstractMassBasis}
     m = state.air_mass
     am, bm, cm = fluxes.am, fluxes.bm, fluxes.cm
 
@@ -972,7 +974,9 @@ function strang_split!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
     end
 
     strang_split_mt!(state.tracers_raw, m, am, bm, cm, scheme, workspace;
-                     cfl_limit = cfl_limit)
+                     cfl_limit = cfl_limit,
+                     diffusion_op = diffusion_op,
+                     dt = dt)
     return nothing
 end
 
@@ -999,8 +1003,11 @@ function apply!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
                 grid::AtmosGrid{<:LatLonMesh},
                 scheme::AbstractAdvectionScheme, dt;
                 workspace::AdvectionWorkspace,
-                cfl_limit::Real = one(eltype(state.air_mass))) where {B <: AbstractMassBasis}
-    strang_split!(state, fluxes, grid, scheme; workspace=workspace, cfl_limit=cfl_limit)
+                cfl_limit::Real = one(eltype(state.air_mass)),
+                diffusion_op::AbstractDiffusionOperator = NoDiffusion()) where {B <: AbstractMassBasis}
+    strang_split!(state, fluxes, grid, scheme;
+                  workspace = workspace, cfl_limit = cfl_limit,
+                  diffusion_op = diffusion_op, dt = dt)
     return nothing
 end
 
@@ -1147,7 +1154,9 @@ function strang_split_mt!(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
                           cm::AbstractArray{FT,3},
                           scheme::AbstractAdvectionScheme,
                           ws::AdvectionWorkspace{FT};
-                          cfl_limit::Real = one(FT)) where FT
+                          cfl_limit::Real = one(FT),
+                          diffusion_op::AbstractDiffusionOperator = NoDiffusion(),
+                          dt::Union{Nothing, Real} = nothing) where FT
     cfl_ft = convert(FT, cfl_limit)
 
     # CFL subcycling per direction (reuse single-tracer pilot on the 3D mass)
@@ -1173,9 +1182,23 @@ function strang_split_mt!(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
         return rm_alt_, rm_cur_, m_alt_, m_cur_
     end
 
+    # Forward half: X → Y → Z
     for _ in 1:n_x; rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_x_mt!, rm_cur, rm_alt, m_cur, m_alt, am, fs_x); end
     for _ in 1:n_y; rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_y_mt!, rm_cur, rm_alt, m_cur, m_alt, bm, fs_y); end
     for _ in 1:n_z; rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_z_mt!, rm_cur, rm_alt, m_cur, m_alt, cm, fs_z); end
+
+    # Palindrome center: V(dt) vertical diffusion (plan 16b Commit 4).
+    # `NoDiffusion`'s method is `= nothing`, so Julia's dispatch makes this
+    # a no-op dead branch by default — no floating-point work, hence bit-
+    # exact backward compatibility with pre-16b behavior.
+    #
+    # Linear-operator caveat: V(dt/2) ∘ V(dt/2) = V(dt) holds because Kz
+    # is state-independent within a timestep. When meteorology-coupled Kz
+    # (`DerivedKzField`) evolves sub-timestep in Commits 5+, this single-
+    # step approximation should be revisited.
+    apply_vertical_diffusion!(rm_cur, diffusion_op, ws, dt)
+
+    # Reverse half: Z → Y → X
     for _ in 1:n_z; rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_z_mt!, rm_cur, rm_alt, m_cur, m_alt, cm, fs_z); end
     for _ in 1:n_y; rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_y_mt!, rm_cur, rm_alt, m_cur, m_alt, bm, fs_y); end
     for _ in 1:n_x; rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_x_mt!, rm_cur, rm_alt, m_cur, m_alt, am, fs_x); end

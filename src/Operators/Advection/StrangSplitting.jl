@@ -55,6 +55,13 @@ stencil's read-before-write assumption and break mass conservation by
 - `rm_4d_A::A4`, `rm_4d_B::A4` — 4D tracer-mass ping-pong pair for the
   multi-tracer fused path (`(Nx, Ny, Nz, Nt)`). Both are allocated to
   size 0×0×0×0 when `n_tracers == 0`.
+- `w_scratch::A` — 3D Thomas-factor scratch (`(Nx, Ny, Nz)`) for
+  implicit vertical diffusion (plan 16b). Face-indexed grids
+  allocate it 0-sized — diffusion dispatches only on structured 3D.
+- `dz_scratch::A` — 3D layer-thickness input (`(Nx, Ny, Nz)`) for
+  implicit vertical diffusion. Caller is expected to fill this with
+  current dz [m] (via hydrostatic from delp) before each diffusion
+  apply!. 0-sized on face-indexed grids.
 
 # Constructors
 
@@ -78,6 +85,8 @@ struct AdvectionWorkspace{FT, A <: AbstractArray{FT}, V1 <: AbstractVector{Int32
     face_right     :: V1
     rm_4d_A        :: A4
     rm_4d_B        :: A4
+    w_scratch      :: A
+    dz_scratch     :: A
 end
 
 function _face_connectivity_vectors(mesh::AbstractHorizontalMesh)
@@ -106,7 +115,8 @@ function AdvectionWorkspace(m::AbstractArray{FT,3};
         similar(m), similar(m),                       # rm_A, m_A
         similar(m), similar(m),                       # rm_B, m_B
         cs_dev, face_left, face_right,
-        rm_4d_A, rm_4d_B)
+        rm_4d_A, rm_4d_B,
+        similar(m), similar(m))                       # w_scratch, dz_scratch
 end
 
 function AdvectionWorkspace(m::AbstractArray{FT,2};
@@ -126,13 +136,15 @@ function AdvectionWorkspace(m::AbstractArray{FT,2};
     end
     # Face-indexed path does NOT use strang_split_mt!; it loops over
     # tracer slices via selectdim. 4D ping-pong buffers stay 0-sized.
+    # Diffusion is structured-grid-only for now — w/dz scratch also 0-sized.
     rm_4d_A = similar(m, 0, 0)
     rm_4d_B = similar(m, 0, 0)
     AdvectionWorkspace{FT, typeof(m), typeof(cs_dev), typeof(rm_4d_A)}(
         similar(m), similar(m),                       # rm_A, m_A
         similar(m), similar(m),                       # rm_B, m_B
         cs_dev, face_left, face_right,
-        rm_4d_A, rm_4d_B)
+        rm_4d_A, rm_4d_B,
+        similar(m, 0, 0), similar(m, 0, 0))           # w_scratch, dz_scratch
 end
 
 """
@@ -169,10 +181,13 @@ function Adapt.adapt_structure(to, ws::AdvectionWorkspace{FT}) where {FT}
     face_right     = Adapt.adapt(to, getfield(ws, :face_right))
     rm_4d_A        = Adapt.adapt(to, getfield(ws, :rm_4d_A))
     rm_4d_B        = Adapt.adapt(to, getfield(ws, :rm_4d_B))
+    w_scratch      = Adapt.adapt(to, getfield(ws, :w_scratch))
+    dz_scratch     = Adapt.adapt(to, getfield(ws, :dz_scratch))
     return AdvectionWorkspace{FT, typeof(rm_A), typeof(cluster_sizes), typeof(rm_4d_A)}(
         rm_A, m_A, rm_B, m_B,
         cluster_sizes, face_left, face_right,
-        rm_4d_A, rm_4d_B)
+        rm_4d_A, rm_4d_B,
+        w_scratch, dz_scratch)
 end
 
 # =========================================================================

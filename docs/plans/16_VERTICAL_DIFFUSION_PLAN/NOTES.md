@@ -264,6 +264,89 @@ adjoint-note comment. The adjoint-identity test ships in
 `test_diffusion_kernels.jl`; a future adjoint solver only needs to
 apply the transposition rule and call `solve_tridiagonal!`.
 
+### Commit 3 — `ImplicitVerticalDiffusion` operator + `apply!`
+
+- Extended `AdvectionWorkspace` with `w_scratch::A` and `dz_scratch::A`
+  (both `(Nx, Ny, Nz)` on structured 3D grids, 0-sized on face-
+  indexed grids). Constructor, docstring, and `Adapt.adapt_structure`
+  all updated. Driven-simulation tests still pass, confirming no
+  downstream breakage.
+- Added [src/Operators/Diffusion/operators.jl](../../../src/Operators/Diffusion/operators.jl):
+  - `AbstractDiffusionOperator` supertype.
+  - `NoDiffusion` — no-op; `apply!` returns `state` unchanged.
+  - `ImplicitVerticalDiffusion{FT, KzF}` — holds a single
+    `kz_field::AbstractTimeVaryingField{FT, 3}`. Keyword
+    constructor `ImplicitVerticalDiffusion(; kz_field)` with type
+    assertion for FT dispatch; inner constructor enforces rank-3
+    on the field.
+  - `apply!(state, meteo, grid, op::ImplicitVerticalDiffusion, dt; workspace)` —
+    validates workspace (throws `ArgumentError` if `nothing`,
+    `DimensionMismatch` if shapes don't align with
+    `state.tracers_raw`); calls `update_field!(op.kz_field, zero(FT))`
+    (placeholder per plan 15's chemistry convention — deferred
+    until `current_time(meteo)` lands); launches
+    `_vertical_diffusion_kernel!` with `ndrange = (Nx, Ny, Nt)`.
+- Wired into `Diffusion.jl` (imports extended with `CellState`,
+  `update_field!`, `get_backend`, `synchronize`, `apply!`; `operators.jl`
+  included). `Operators.jl` and `AtmosTransport.jl` exports extended.
+
+Added [test/test_diffusion_operator.jl](../../../test/test_diffusion_operator.jl)
+with 15 tests across 9 testsets:
+
+- Diffusion type hierarchy (2) — concrete types subtype `AbstractDiffusionOperator`.
+- `NoDiffusion` is a no-op (2) — both tracer arrays preserved exactly.
+- `ImplicitVerticalDiffusion` constructor validation (3) — rank-2
+  field rejected via `MethodError` on outer keyword constructor's
+  type assertion; rank-3 accepted; FT inferred correctly.
+- `apply!` requires workspace (1) — `workspace = nothing` raises
+  `ArgumentError`.
+- `apply!` catches size mismatches (1) — workspace sized for a
+  different grid raises `DimensionMismatch`.
+- `apply!` with `ConstantField` Kz matches direct kernel (2) —
+  multi-tracer case, accessor-API comparison per plan-14 discipline.
+- `apply!` with `PreComputedKzField` Kz matches direct kernel (1) —
+  random (i,j,k)-varying Kz and dz.
+- `apply!` conserves column mass under Neumann BCs (2) — uniform dz,
+  random Kz, two tracers, rel. error < 1e-12.
+- `apply!` with `ProfileKzField` Kz (1) — CPU path validated against
+  `PreComputedKzField` broadcast of the same profile.
+
+Test totals: `test_diffusion_operator.jl` 15/15;
+`test_diffusion_kernels.jl` 33/33 unchanged; `test_fields.jl` 145/145
+unchanged; `test_chemistry.jl` 37/37 unchanged;
+`test_driven_simulation.jl` 57/57 unchanged.
+
+**Design notes recorded for the retrospective:**
+
+1. **`apply!` signature works unchanged from plan 15** (the
+   `(state, meteo, grid, op, dt; workspace)` pattern), with one
+   nuance: diffusion requires a real workspace (not `nothing`) because
+   the Thomas solve needs `w_scratch` / `dz_scratch`. Chemistry's
+   "accept nothing" path is not available here. The test suite makes
+   this explicit with an `ArgumentError` check.
+
+2. **`TimeVaryingField` for rank-3 Kz validated at kernel scale.**
+   Three concrete types (`ConstantField{FT, 3}`, `ProfileKzField`,
+   `PreComputedKzField`) were exercised in `apply!` tests at
+   `ndrange = (Nx, Ny, Nt)`. All three dispatch cleanly through
+   `field_value` into the kernel. `DerivedKzField` was tested at
+   the cache-recomputation level in Commit 1c; integration through
+   `apply!` is mechanically identical but needs meteorology to
+   exercise — deferred.
+
+3. **GPU dispatch for `ProfileKzField` deferred.** Commit 3 ships only
+   the CPU path; all tests run on CPU. The `Vector{FT}` storage in
+   `ProfileKzField` may require a materialization pass on GPU (plan
+   pitfall 11: NTuple option 1, Adapt option 2, 3D cache option 3).
+   Commit 6 (benchmarks) is the natural place to resolve this,
+   with a GPU run of each Kz field type.
+
+4. **`dz_scratch` is caller-owned input, not workspace scratch.**
+   Per the Commit 2 design conversation: `apply!` READS it but does
+   not WRITE it. A future commit (or `DrivenSimulation` integration)
+   will fill it via hydrostatic from `delp`. Tests use
+   `fill!(workspace.dz_scratch, dz_val)` or `copyto!`.
+
 ## Decisions beyond the plan
 
 (To be filled in as they arise.)

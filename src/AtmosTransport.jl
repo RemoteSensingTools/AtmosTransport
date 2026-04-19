@@ -163,8 +163,9 @@ export AdvectionWorkspace, strang_split!, strang_split_mt!, apply!
 export TracerView
 export diagnose_cm!
 
-# Diffusion solver infrastructure (plan 16b Commit 2)
+# Diffusion solver infrastructure + operator types (plan 16b Commits 2-3)
 export solve_tridiagonal!, build_diffusion_coefficients
+export AbstractDiffusionOperator, NoDiffusion, ImplicitVerticalDiffusion
 
 # Advection scheme hierarchy
 export AbstractAdvectionScheme

@@ -43,8 +43,9 @@ export reconstruction_order
 export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemistry
 export chemistry_block!
 
-# Diffusion solver infrastructure (plan 16b Commit 2)
+# Diffusion solver infrastructure + operator types (plan 16b Commits 2-3)
 export solve_tridiagonal!, build_diffusion_coefficients
+export AbstractDiffusionOperator, NoDiffusion, ImplicitVerticalDiffusion
 
 # Cubed-sphere advection
 export fill_panel_halos!, copy_corners!, strang_split_cs!, CSAdvectionWorkspace

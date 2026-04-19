@@ -25,13 +25,16 @@ mechanically (see docstring in [`thomas_solve.jl`](@ref)).
 """
 module Diffusion
 
-using KernelAbstractions: @kernel, @index, @Const
-using ...State: AbstractTimeVaryingField, field_value
+using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
+using ...State: CellState, AbstractTimeVaryingField, field_value, update_field!
+import ..apply!
 
 export solve_tridiagonal!, build_diffusion_coefficients
 export _vertical_diffusion_kernel!
+export AbstractDiffusionOperator, NoDiffusion, ImplicitVerticalDiffusion
 
 include("thomas_solve.jl")
 include("diffusion_kernels.jl")
+include("operators.jl")
 
 end # module Diffusion

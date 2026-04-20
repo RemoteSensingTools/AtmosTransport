@@ -1028,7 +1028,29 @@ function apply!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
     throw(ArgumentError("CubedSphereMesh remains metadata-only in src; structured advection is only supported on LatLonMesh until cubed-sphere geometry/connectivity are implemented"))
 end
 
-# Face-indexed apply! — shared tracer loop, generated for each topology
+# Face-indexed apply! — shared tracer loop, generated for each topology.
+#
+# Plan 18 A1 extension: accept `diffusion_op`, `emissions_op`, and
+# `meteo` kwargs to match the structured-path signature
+# (`apply!(...; workspace, cfl_limit, diffusion_op, emissions_op, meteo)`).
+# `TransportModel.step!` forwards these unconditionally; before plan 18 A1
+# the face-indexed dispatch threw `MethodError` for any reduced-Gaussian
+# model even in the all-default configuration. The kwargs are accepted
+# here with defaults matching the structured path.
+#
+# Face-indexed diffusion and emissions are NOT shipped in plan 18.
+# `ImplicitVerticalDiffusion` and `SurfaceFluxOperator` are 4D-only
+# (structured lat-lon). When the user constructs a face-indexed
+# `TransportModel` with a non-trivial diffusion or emissions operator,
+# we error with a clear message pointing at the follow-up. The default
+# case (both `NoDiffusion()` and `NoSurfaceFlux()`) falls through to
+# the bit-exact H → V → V → H sweep sequence that pre-existed — no
+# behavior change for reduced-Gaussian runs that don't opt in.
+#
+# Follow-up: face-indexed analogs of `apply_vertical_diffusion!` and
+# `apply_surface_flux!` (plan 16b / 17 kernels are 4D-only — see
+# `src/Operators/Diffusion/operators.jl:148-184`). Tracked as "Plan 18b:
+# Face-indexed physics suite" in plan 18 v5.1 Part 6.
 for (scheme_type, h_sweep, v_sweep) in (
     (:AbstractConstantScheme,    :sweep_horizontal!, :sweep_vertical!),
 )
@@ -1036,7 +1058,26 @@ for (scheme_type, h_sweep, v_sweep) in (
                           grid::AtmosGrid{<:AbstractHorizontalMesh},
                           scheme::$scheme_type, dt;
                           workspace::AdvectionWorkspace,
-                          cfl_limit::Real = one(eltype(state.air_mass))) where {B <: AbstractMassBasis}
+                          cfl_limit::Real = one(eltype(state.air_mass)),
+                          diffusion_op::AbstractDiffusionOperator = NoDiffusion(),
+                          emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
+                          meteo = nothing) where {B <: AbstractMassBasis}
+        # Face-indexed physics operators are out of plan 18 scope.
+        # Accept the defaults (no-op), reject anything else with a
+        # clear pointer to the follow-up plan.
+        diffusion_op isa NoDiffusion || throw(ArgumentError(
+            "Face-indexed vertical diffusion is not shipped in plan 18. " *
+            "`ImplicitVerticalDiffusion` is structured-lat-lon only " *
+            "(plan 16b). Use `NoDiffusion()` on face-indexed grids " *
+            "until a follow-up plan extends the kernel — tracked as " *
+            "Plan 18b in plan 18 v5.1 Part 6."))
+        emissions_op isa NoSurfaceFlux || throw(ArgumentError(
+            "Face-indexed surface emissions are not shipped in plan 18. " *
+            "`SurfaceFluxOperator` is structured-lat-lon only (plan 17). " *
+            "Use `NoSurfaceFlux()` on face-indexed grids until a follow-up " *
+            "plan extends the kernel — tracked as Plan 18b in plan 18 " *
+            "v5.1 Part 6."))
+
         m = state.air_mass
         hflux, cm = fluxes.horizontal_flux, fluxes.cm
         cfl_limit_ft = convert(eltype(m), cfl_limit)
@@ -1073,7 +1114,10 @@ for (scheme_type, h_sweep, v_sweep) in (
     end
 end
 
-# Error stubs for unsupported face-indexed scheme families
+# Error stubs for unsupported face-indexed scheme families.
+# `kwargs...` also swallows plan 18 A1's `diffusion_op` / `emissions_op`
+# / `meteo` forwarding; the stubs still throw `ArgumentError` so no
+# additional work is needed.
 for (scheme_type, label) in (
     (:AbstractLinearScheme,            "linear-reconstruction"),
     (:AbstractQuadraticScheme,         "quadratic-reconstruction"),

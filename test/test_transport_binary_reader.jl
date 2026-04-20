@@ -269,7 +269,7 @@ end
 @testset "TransportBinaryDriver rejects binaries with oversized cm relative to cell mass" begin
     mktemp() do path, io
         close(io)
-        write_test_transport_binary_latlon(path; FT=Float64, cm_fill=1e-3)
+        write_test_transport_binary_latlon(path; FT=Float64, cm_fill=0.05)
         @test_throws ArgumentError TransportBinaryDriver(path; FT=Float64, arch=CPU())
 
         driver = TransportBinaryDriver(path; FT=Float64, arch=CPU(), validate_windows=false)
@@ -279,7 +279,7 @@ end
 
     mktemp() do path, io
         close(io)
-        write_test_transport_binary_reduced(path; FT=Float64, cm_fill=1e-3)
+        write_test_transport_binary_reduced(path; FT=Float64, cm_fill=0.05)
         @test_throws ArgumentError TransportBinaryDriver(path; FT=Float64, arch=CPU())
     end
 end

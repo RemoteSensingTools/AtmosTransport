@@ -28,6 +28,15 @@ include("AbstractOperators.jl")
 include("Diffusion/Diffusion.jl")
 using .Diffusion
 
+# SurfaceFlux is included BEFORE Advection so `strang_split_mt!`
+# (plan 17 Commit 5 palindrome integration) can import
+# `NoSurfaceFlux`, `AbstractSurfaceFluxOperator`, and
+# `apply_surface_flux!`. Commit 2 ships only the data types
+# (`SurfaceFluxSource`, `PerTracerFluxMap`); the operator types
+# and kernel land in Commit 3.
+include("SurfaceFlux/SurfaceFlux.jl")
+using .SurfaceFlux
+
 include("Advection/Advection.jl")
 using .Advection
 
@@ -53,6 +62,9 @@ export chemistry_block!
 export solve_tridiagonal!, build_diffusion_coefficients
 export AbstractDiffusionOperator, NoDiffusion, ImplicitVerticalDiffusion
 export apply_vertical_diffusion!
+
+# SurfaceFlux data types (plan 17 Commit 2); operator hierarchy lands in Commit 3.
+export SurfaceFluxSource, PerTracerFluxMap, flux_for
 
 # Cubed-sphere advection
 export fill_panel_halos!, copy_corners!, strang_split_cs!, CSAdvectionWorkspace

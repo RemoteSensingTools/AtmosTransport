@@ -8,18 +8,12 @@ while the model retains ownership of prognostic tracer and air-mass state.
 The runtime interpolates forcing within each met window and advances the model
 with the same `step!(model, Δt)` entry point used by the fixed-flux smoke
 harness.
+
+`SurfaceFluxSource` (previously defined here) was migrated to
+`src/Operators/SurfaceFlux/` in plan 17 Commit 2; it is still re-exported
+below for backward compatibility with external callers that imported it
+via `AtmosTransport.SurfaceFluxSource`.
 """
-struct SurfaceFluxSource{RateT}
-    tracer_name     :: Symbol
-    cell_mass_rate  :: RateT
-end
-
-
-function Adapt.adapt_structure(to, source::SurfaceFluxSource)
-    cell_mass_rate = Adapt.adapt(to, source.cell_mass_rate)
-    return SurfaceFluxSource{typeof(cell_mass_rate)}(source.tracer_name, cell_mass_rate)
-end
-
 mutable struct DrivenSimulation{ModelT, DriverT, WindowT, AT, QT, FT, CB, SS, CT}
     model                 :: ModelT
     driver                :: DriverT
@@ -104,34 +98,14 @@ end
     return adaptor === Array ? surface_sources : map(source -> Adapt.adapt(adaptor, source), surface_sources)
 end
 
-@inline function _surface_shape(rm::AbstractArray{<:Any, 3})
-    return (size(rm, 1), size(rm, 2))
-end
-
-@inline function _surface_shape(rm::AbstractArray{<:Any, 2})
-    return (size(rm, 1),)
-end
-
-function _check_surface_source_compatibility(state::CellState, source::SurfaceFluxSource)
-    tracer_index(state, source.tracer_name) === nothing &&
-        throw(ArgumentError("surface source tracer $(source.tracer_name) is not present in model state"))
-    rm = get_tracer(state, source.tracer_name)
-    size(source.cell_mass_rate) == _surface_shape(rm) ||
-        throw(ArgumentError("surface source $(source.tracer_name) has shape $(size(source.cell_mass_rate)) but tracer surface shape is $(_surface_shape(rm))"))
-    return nothing
-end
-
-function _apply_surface_source!(rm::AbstractArray{FT, 3}, source::SurfaceFluxSource, dt) where FT
-    Nz = size(rm, 3)
-    @views rm[:, :, Nz] .+= source.cell_mass_rate .* dt
-    return nothing
-end
-
-function _apply_surface_source!(rm::AbstractArray{FT, 2}, source::SurfaceFluxSource, dt) where FT
-    Nz = size(rm, 2)
-    @views rm[:, Nz] .+= source.cell_mass_rate .* dt
-    return nothing
-end
+# Surface-source helpers (`_surface_shape`, `_check_surface_source_compatibility`,
+# `_apply_surface_source!`) migrated to `src/Operators/SurfaceFlux/sources.jl`
+# in plan 17 Commit 2. Imported here from the SurfaceFlux submodule so the
+# sim-level application path (`_apply_surface_sources!` below) keeps working
+# unchanged until plan 17 Commit 6 moves the call site into the palindrome.
+using ..Operators.SurfaceFlux: _surface_shape,
+                                _check_surface_source_compatibility,
+                                _apply_surface_source!
 
 function _apply_surface_sources!(sim::DrivenSimulation)
     isempty(sim.surface_sources) && return nothing
@@ -306,4 +280,7 @@ function run!(sim::DrivenSimulation)
     return sim
 end
 
+# `SurfaceFluxSource` re-exported for backward compat with external callers.
+# The symbol resolves to `Operators.SurfaceFlux.SurfaceFluxSource` — its
+# canonical location post plan 17 Commit 2.
 export SurfaceFluxSource, DrivenSimulation, run_window!, window_index, substep_index, current_qv

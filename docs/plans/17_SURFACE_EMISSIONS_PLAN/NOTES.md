@@ -117,6 +117,49 @@ log captured. Plan docs `17_SURFACE_EMISSIONS_PLAN.md`,
 `ARCHITECTURAL_SKETCH_v2.md`, `CLAUDE_additions.md` (pre-existing
 untracked, authored by user) included in Commit 0.
 
+### Commit 1 — `StepwiseField{FT, N, A, B, W}`
+
+Created [src/State/Fields/StepwiseField.jl](../../../src/State/Fields/StepwiseField.jl).
+Wired through `Fields → State → AtmosTransport` export chain; also
+exported `integral_between` (first concrete type to ship this
+previously-reserved optional method).
+
+**Design surprises encountered:**
+
+1. **`Ref{Int}` is not kernel-safe.** Initial draft stored
+   `current_window::Base.RefValue{Int}`. Adapt would have carried a
+   host-side Ref into kernel closures — subsequent `current_window[]`
+   reads on GPU would pull from host memory (or error). Switched to a
+   1-element `AbstractVector{Int}` which adapts naturally to
+   `CuArray{Int, 1}`.
+
+2. **Adapt.adapt_structure cannot use the validating inner constructor.**
+   `issorted(boundaries::CuDeviceVector)` tries to iterate device
+   memory on the host and errors. Added a second inner constructor
+   gated by `Val(:unchecked)` that `Adapt.adapt_structure` calls
+   after the host-side object already validated. Pattern to reuse
+   in future field types that hold device-convertible metadata.
+
+3. **5-arg outer constructor needed for Adapt.** Adapt's generic
+   reconstruction calls `StepwiseField(samples_new, boundaries_new, current_window_new)`
+   (3 args). The original outer constructor was 2-arg
+   `(samples, boundaries)`, adding a fresh `current_window = [1]`.
+   Added a 3-arg outer that preserves the adapted `current_window`.
+
+**Test state** (relative to Commit 0 baseline):
+
+- `test_fields.jl`: 300 pass → 343 pass (+43 new `StepwiseField` tests).
+- `test_chemistry.jl`: 37 pass (unchanged).
+- `test_diffusion_palindrome.jl`: 27 pass (unchanged).
+- `test_transport_model_diffusion.jl`: 24 pass (unchanged).
+- Baseline 77 failure count preserved.
+
+**Deviation from plan doc §4.4 Commit 1 spec:** none. Plan doc's eight
+tests become our 19 testsets totaling 43 assertions. The mass-accounting
+invariant (user acceptance criterion for plan 17 Decision 1) was added
+as an extra test here rather than deferred to Commit 3 — it exercises
+only `StepwiseField` + `integral_between` and has no other dependencies.
+
 ---
 
 Subsequent commit sections will be filled in as execution proceeds

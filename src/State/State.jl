@@ -27,9 +27,11 @@ include("Fields/Fields.jl")
 
 using .Fields: AbstractTimeVaryingField, ConstantField, ProfileKzField,
                 PreComputedKzField, DerivedKzField, PBLPhysicsParameters,
-                field_value, update_field!
+                StepwiseField,
+                field_value, update_field!, integral_between
 export AbstractTimeVaryingField, ConstantField, ProfileKzField,
        PreComputedKzField, DerivedKzField, PBLPhysicsParameters,
-       field_value, update_field!
+       StepwiseField,
+       field_value, update_field!, integral_between
 
 end # module State

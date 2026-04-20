@@ -153,10 +153,11 @@ export MetState, allocate_face_fluxes, allocate_tracers
 export mixing_ratio, total_mass, total_air_mass, tracer_names
 export ntracers, tracer_index, tracer_name, get_tracer, eachtracer
 
-# Time-varying field abstraction (plan 16a, extended in 16b)
+# Time-varying field abstraction (plan 16a, extended in 16b/17)
 export AbstractTimeVaryingField, ConstantField, ProfileKzField,
        PreComputedKzField, DerivedKzField, PBLPhysicsParameters,
-       field_value, update_field!
+       StepwiseField,
+       field_value, update_field!, integral_between
 
 # Operators -- public transport API
 export AdvectionWorkspace, strang_split!, strang_split_mt!, apply!

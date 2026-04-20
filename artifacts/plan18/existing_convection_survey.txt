@@ -1,0 +1,60 @@
+/home/cfranken/code/gitHub/AtmosTransportModel/src/State/Fields/DerivedKzField.jl:41:Return Kz [m²/s] at height `z` using the revised Louis-Tiedtke-Geleyn
+/home/cfranken/code/gitHub/AtmosTransportModel/src/Operators/AbstractOperators.jl:36:    AbstractConvection <: AbstractOperator
+/home/cfranken/code/gitHub/AtmosTransportModel/src/Operators/AbstractOperators.jl:38:Convective transport operators (Tiedtke, RAS, host-driven).
+/home/cfranken/code/gitHub/AtmosTransportModel/src/Operators/AbstractOperators.jl:41:abstract type AbstractConvection <: AbstractOperator end
+/home/cfranken/code/gitHub/AtmosTransportModel/src/Operators/AbstractOperators.jl:59:export AbstractConvection, AbstractSourceSink
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:13:# Tier 2 (physics):          cmfmc, surface, tm5conv, temperature
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:61:- `has_cmfmc`, `n_cmfmc` — convective mass flux
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:63:- `has_tm5conv`, `n_tm5conv` — TM5 convection (entu, detu, entd, detd)
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:103:    has_cmfmc       :: Bool
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:104:    n_cmfmc         :: Int
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:173:has_cmfmc(r::ERA5BinaryReader) = r.header.has_cmfmc
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:216:    _has_cmfmc   = version >= 2 && Bool(get(hdr, :include_cmfmc, false))
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:219:    _n_cmfmc = _has_cmfmc   ? Int(get(hdr, :n_cmfmc, 0)) : 0
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:224:    _n_tm5conv     = _has_tm5conv     ? Int(get(hdr, :n_entu, 0))        : 0
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:234:            _n_qv + _n_cmfmc +
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:256:        _has_cmfmc, _n_cmfmc,
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:313:    _core_offset(h) + h.n_qv + h.n_cmfmc +
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:422:    load_cmfmc_window!(reader, win; cmfmc=...)
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:428:function load_cmfmc_window!(reader::ERA5BinaryReader{FT}, win::Int;
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:429:                              cmfmc = Array{FT}(undef, reader.header.Nx, reader.header.Ny, reader.header.Nz + 1)
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:432:    h.has_cmfmc || return nothing
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:434:    copyto!(cmfmc, 1, reader.data, o + 1, h.n_cmfmc)
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:435:    return cmfmc
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:453:    o = _window_offset(reader, win) + _core_offset(h) + h.n_qv + h.n_cmfmc +
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:463:    load_tm5conv_window!(reader, win; entu=..., detu=..., entd=..., detd=...)
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:466:Load TM5 convection fields for window `win` (Tier 2).
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:470:                                entu = Array{FT}(undef, reader.header.Nx, reader.header.Ny, reader.header.Nz),
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:471:                                detu = Array{FT}(undef, reader.header.Nx, reader.header.Ny, reader.header.Nz),
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:472:                                entd = Array{FT}(undef, reader.header.Nx, reader.header.Ny, reader.header.Nz),
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:473:                                detd = Array{FT}(undef, reader.header.Nx, reader.header.Ny, reader.header.Nz)
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:477:    o = _window_offset(reader, win) + _core_offset(h) + h.n_qv + h.n_cmfmc
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:478:    copyto!(entu, 1, reader.data, o + 1, h.n_tm5conv); o += h.n_tm5conv
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:479:    copyto!(detu, 1, reader.data, o + 1, h.n_tm5conv); o += h.n_tm5conv
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:480:    copyto!(entd, 1, reader.data, o + 1, h.n_tm5conv); o += h.n_tm5conv
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:481:    copyto!(detd, 1, reader.data, o + 1, h.n_tm5conv)
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:482:    return (; entu, detu, entd, detd)
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:497:    o = _window_offset(reader, win) + _core_offset(h) + h.n_qv + h.n_cmfmc +
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:509:export load_cmfmc_window!, load_surface_window!, load_tm5conv_window!
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/ERA5/BinaryReader.jl:511:export window_count, has_qv, has_flux_delta, has_cmfmc
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/MetDrivers.jl:40:export load_cmfmc_window!, load_surface_window!, load_tm5conv_window!
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/MetDrivers.jl:42:export window_count, has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/AbstractMetDriver.jl:97:"""Does this driver provide convective mass flux / detrainment for convection?"""
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/AbstractMetDriver.jl:98:supports_convection(::AbstractMetDriver) = false
+/home/cfranken/code/gitHub/AtmosTransportModel/src/MetDrivers/AbstractMetDriver.jl:113:export supports_diffusion, supports_convection
+/home/cfranken/code/gitHub/AtmosTransportModel/src/Kernels/ColumnKernels.jl:4:# Used for: vertical diffusion (Thomas solver), convection closures,
+/home/cfranken/code/gitHub/AtmosTransportModel/src/Models/DrivenSimulation.jl:274:time-varying Kz, future convection DerivedConvMassFluxField) read
+/home/cfranken/code/gitHub/AtmosTransportModel/src/Models/DrivenSimulation.jl:277:(e.g. `supports_cmfmc(meteo.driver)`).
+/home/cfranken/code/gitHub/AtmosTransportModel/src/AtmosTransport.jl:75:                   load_cmfmc_window!, load_surface_window!, load_tm5conv_window!,
+/home/cfranken/code/gitHub/AtmosTransportModel/src/AtmosTransport.jl:77:                   window_count, has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc,
+/home/cfranken/code/gitHub/AtmosTransportModel/src/AtmosTransport.jl:87:                   total_windows, window_dt, steps_per_window, supports_diffusion, supports_convection,
+/home/cfranken/code/gitHub/AtmosTransportModel/src/AtmosTransport.jl:214:export load_cmfmc_window!, load_surface_window!, load_tm5conv_window!
+/home/cfranken/code/gitHub/AtmosTransportModel/src/AtmosTransport.jl:216:export window_count, has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc
+/home/cfranken/code/gitHub/AtmosTransportModel/src/AtmosTransport.jl:228:export supports_diffusion, supports_convection
+/home/cfranken/code/gitHub/AtmosTransportModel/src/Preprocessing/binary_pipeline.jl:102:        "n_cmfmc" => 0,
+/home/cfranken/code/gitHub/AtmosTransportModel/src/Preprocessing/binary_pipeline.jl:103:        "n_entu" => 0, "n_detu" => 0, "n_entd" => 0, "n_detd" => 0,
+/home/cfranken/code/gitHub/AtmosTransportModel/src/Preprocessing/binary_pipeline.jl:109:        "include_cmfmc" => false,
+/home/cfranken/code/gitHub/AtmosTransportModel/src/Downloads/sources/era5.jl:9:#   - "convection": forecast fields (UDMF, DDMF, UDRF, DDRF)
+/home/cfranken/code/gitHub/AtmosTransportModel/src/Downloads/sources/era5.jl:71:        "convection" => "ml_fc_convection",
+/home/cfranken/code/gitHub/AtmosTransportModel/src/Downloads/sources/era5.jl:157:    # Forecast steps (for convection fields)
+/home/cfranken/code/gitHub/AtmosTransportModel/src/Downloads/sources/era5.jl:185:    elseif name == "convection"

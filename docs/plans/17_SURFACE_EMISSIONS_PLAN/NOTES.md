@@ -160,7 +160,135 @@ invariant (user acceptance criterion for plan 17 Decision 1) was added
 as an extra test here rather than deferred to Commit 3 — it exercises
 only `StepwiseField` + `integral_between` and has no other dependencies.
 
+### Commit 2 — Migrate `SurfaceFluxSource` + `PerTracerFluxMap`
+
+Created [src/Operators/SurfaceFlux/](../../../src/Operators/SurfaceFlux/)
+and moved `SurfaceFluxSource` + surface-slice helpers
+(`_surface_shape`, `_check_surface_source_compatibility`,
+`_apply_surface_source!`) out of
+[src/Models/DrivenSimulation.jl](../../../src/Models/DrivenSimulation.jl).
+Added `PerTracerFluxMap{S <: Tuple}` NTuple-backed lookup structure.
+
+**Surprises:**
+
+1. **`using ..Operators.SurfaceFlux: ...` at file scope (not module
+   scope).** DrivenSimulation.jl needed the migrated helpers. Added
+   the `using` mid-file inside the non-module DrivenSimulation.jl
+   rather than in the enclosing `Models.jl`. Julia accepts this at
+   top-level file scope, but the IDE lint-analyzer loses track of
+   subsequent name resolution and emits spurious "unused binding"
+   warnings for everything below the mid-file import. False positives,
+   no functional issue.
+
+2. **Exports must be surfaced explicitly at `AtmosTransport.jl` level.**
+   `using .Operators` in `src/AtmosTransport.jl` brings Operators-
+   exported names into scope, but those names are only re-exported
+   from AtmosTransport if added to the `export` line. `SurfaceFluxSource`
+   was already listed (from the old Models export); `PerTracerFluxMap`
+   and `flux_for` had to be added explicitly. Easy to miss during a
+   migration because the module loads fine either way.
+
+3. **`unique(names) == names` is the right duplicate check**, not just
+   `length(unique) == length(names)`. Both work, but the length form
+   is idiomatic Julia for this use case and catches subtle iteration-
+   order bugs if the NTuple ordering is ever changed.
+
+**Test state** (relative to Commit 1):
+
+- `test_per_tracer_flux_map.jl`: 36 new tests (construction variants,
+  duplicate rejection, lookup, iteration, Adapt CPU + GPU).
+- `test_driven_simulation.jl`: 57 pass unchanged. `SurfaceFluxSource`
+  still usable by-name via backward-compat export.
+- `test_fields.jl`, `test_chemistry.jl`,
+  `test_diffusion_palindrome.jl`, `test_transport_model_diffusion.jl`:
+  all pass unchanged.
+- 77 baseline failure count preserved.
+
+**Deviation from plan doc §4.4 Commit 2 spec:** plan doc suggested
+Dict-backed map; chose NTuple-backed instead. Rationale in NOTES §
+"Deviations from plan doc §4.4" item 1 above. Plan doc also listed
+Commit 3's migration of `SurfaceFluxSource` as a separate task;
+pulling it into Commit 2 was necessary because the module include
+order (Operators before Models) forced the type to move before any
+`SurfaceFluxOperator` could reference it.
+
+### Commit 3 — `SurfaceFluxOperator` + kernel + `apply!`
+
+Created `AbstractSurfaceFluxOperator` hierarchy with `NoSurfaceFlux`
+(identity) and `SurfaceFluxOperator{M}` (wraps `PerTracerFluxMap`).
+Shipped:
+
+- [surface_flux_kernels.jl](../../../src/Operators/SurfaceFlux/surface_flux_kernels.jl)
+  — `_surface_flux_kernel!(q_raw, rate, dt, tracer_idx, Nz)` writes
+  `q_raw[i, j, Nz, tracer_idx] += rate[i, j] × dt` over the (Nx, Ny)
+  grid.
+- [operators.jl](../../../src/Operators/SurfaceFlux/operators.jl) —
+  type hierarchy, state-level `apply!`, array-level
+  `apply_surface_flux!` (for Commit 5 palindrome use), Adapt
+  structures, `emitting_tracer_indices` introspection helper.
+
+**Design choices:**
+
+1. **One kernel launch per emitting source, not a fused multi-tracer
+   kernel.** CPU-side `findfirst(==(name), tracer_names)` resolves
+   each source's index before launch. For typical N ≤ 10 emitting
+   tracers the launch overhead is negligible compared to O(Nx · Ny)
+   kernel work. A fused kernel would need the rate tuple as a
+   captured argument; tuples of arrays are supported on GPU via
+   Adapt but add complexity without measurable perf benefit at
+   small N.
+
+2. **Array-level `apply_surface_flux!` takes `tracer_names` as a
+   kwarg.** The palindrome (Commit 5) operates on a raw 4D buffer
+   that is NOT necessarily `state.tracers_raw` — it can be the
+   workspace's ping-pong alternate. Passing `tracer_names`
+   explicitly lets the entry point work without a CellState
+   reference.
+
+3. **Tracers in map but absent from state are silently skipped.**
+   CATRINE configs carry a superset of sources (fossil_co2, SF6,
+   Rn222, CH4, …); an individual run might only advect a subset.
+   Throwing an error on missing tracers would force configs to
+   match runs exactly. Silent skip is the friendlier default;
+   users who want strict checking can call
+   `_check_surface_source_compatibility` explicitly.
+
+4. **Empty-variadic `SurfaceFluxOperator()` is allowed.** Returns
+   an operator with a zero-length map. Semantically identical to
+   `NoSurfaceFlux` but type-distinguishable (useful for configs that
+   toggle emission presence without rebuilding the TransportModel).
+
+**Surprises:**
+
+1. **`@kernel function _surface_flux_kernel!(..., @Const(rate), ...)`
+   triggers the IDE static analyzer's "unused argument" warning.**
+   The `@kernel` macro expands `rate` into indexed access inside
+   the generated struct, but the analyzer walks the pre-macro AST.
+   Same false positive as plan 16b Commit 2's diffusion kernel.
+
+2. **IDE also complains about `NoSurfaceFlux`'s explicit signature
+   arguments (`meteo`, `grid`, `workspace`, `dt`, `tracer_names`)
+   being "unused" in the dead-branch method.** Interface-consistency
+   arguments required by the operator contract are still hints-
+   flagged as unused by the linter. False positive; these are
+   necessary for multiple-dispatch correctness.
+
+**Test state** (relative to Commit 2):
+
+- `test_surface_flux_operator.jl`: 38 new tests covering type
+  hierarchy, constructor variants, `NoSurfaceFlux` dead branch (state
+  and array levels), k=Nz surface-only write, upper layers unchanged,
+  rate × dt arithmetic (F64 + F32), per-tracer index resolution,
+  skipping absent tracers, untouching non-emitting tracers, global
+  mass accounting (acceptance criterion), array-level
+  `apply_surface_flux!` on arbitrary 4D buffers, `emitting_tracer_indices`,
+  repeated apply accumulation, Adapt CPU + GPU, GPU vs CPU agreement.
+- All pre-existing test files unchanged. 77 baseline failures preserved.
+
+**Cumulative new tests plan 17 Commits 1-3:** 43 + 36 + 38 = 117.
+
 ---
 
 Subsequent commit sections will be filled in as execution proceeds
-(per CLAUDE_additions.md §"Retrospective sections are cumulative").
+(per CLAUDE.md §"Plan execution rhythm — Retrospective sections are
+cumulative").

@@ -20,9 +20,6 @@ include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 using .AtmosTransport: Grids, State, Operators, MetDrivers
 
-# For numerical equivalence test, also load v1
-include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
-
 # =========================================================================
 # Test 1: Module loading and type construction
 # =========================================================================
@@ -490,92 +487,12 @@ end
 end
 
 # =========================================================================
-# Test 8: Numerical equivalence with src/ mass-flux advection
+# Test 8 (numerical equivalence v1 vs v2) was removed: the v1/v2
+# distinction no longer exists after the `src_v2 → src` promotion.
+# The v1 paths (`LatitudeLongitudeGrid`, `strang_split_massflux!`,
+# `allocate_massflux_workspace`) are gone from `src/`. Removed per
+# plan 18 PRE_PLAN_18_FIXES.md §A2.
 # =========================================================================
-@testset "Numerical equivalence v1 vs v2" begin
-    FT = Float64
-    Nx, Ny, Nz = 60, 30, 4
-
-    # Create matching state in v1 format
-    mesh = LatLonMesh(; Nx=Nx, Ny=Ny, FT=FT)
-    A = FT[0.0, 500.0, 5000.0, 30000.0, 0.0]
-    B = FT[0.0, 0.0,   0.1,    0.5,     1.0]
-    vc_v2 = HybridSigmaPressure(A, B)
-    grid_v2 = AtmosGrid(mesh, vc_v2, AtmosTransport.Grids.CPU();
-                         FT=FT, radius=FT(6.371e6), gravity=FT(9.80665))
-
-    areas = cell_areas_by_latitude(mesh)
-    ps_val = FT(101325.0)
-    g = FT(9.80665)
-
-    m_init = zeros(FT, Nx, Ny, Nz)
-    for k in 1:Nz, j in 1:Ny, i in 1:Nx
-        dp_k = level_thickness(vc_v2, k, ps_val)
-        m_init[i, j, k] = dp_k * areas[j] / g
-    end
-    rm_init = m_init .* FT(400e-6)
-
-    # Create non-trivial am (pure zonal, periodic)
-    m_min = minimum(m_init)
-    am = zeros(FT, Nx+1, Ny, Nz)
-    for k in 1:Nz, j in 2:Ny-1, i in 1:Nx+1
-        am[i, j, k] = FT(0.05) * m_min
-    end
-    bm = zeros(FT, Nx, Ny+1, Nz)
-    cm = zeros(FT, Nx, Ny, Nz+1)
-
-    # Diagnose cm
-    bt = FT[B[k+1] - B[k] for k in 1:Nz]
-    for j in 1:Ny, i in 1:Nx
-        pit = zero(FT)
-        for k in 1:Nz
-            pit += am[i, j, k] - am[i+1, j, k] + bm[i, j, k] - bm[i, j+1, k]
-        end
-        acc = zero(FT)
-        cm[i, j, 1] = acc
-        for k in 1:Nz
-            conv_k = am[i, j, k] - am[i+1, j, k] + bm[i, j, k] - bm[i, j+1, k]
-            acc += conv_k - bt[k] * pit
-            cm[i, j, k+1] = acc
-        end
-    end
-
-    # --- V2 path ---
-    m_v2 = copy(m_init)
-    rm_v2 = copy(rm_init)
-    state_v2 = CellState(m_v2; CO2=rm_v2)
-    fluxes_v2 = StructuredFaceFluxState(copy(am), copy(bm), copy(cm))
-    scheme_v2 = SlopesScheme(MonotoneLimiter())
-    ws_v2 = AdvectionWorkspace(m_v2)
-
-    strang_split!(state_v2, fluxes_v2, grid_v2, scheme_v2; workspace=ws_v2)
-
-    # --- V1 path ---
-    # Build v1 grid
-    vc_v1 = AtmosTransport.Grids.HybridSigmaPressure(A, B)
-    grid_v1 = AtmosTransport.Grids.LatitudeLongitudeGrid(
-        AtmosTransport.Architectures.CPU();
-        FT=FT, size=(Nx, Ny, Nz),
-        longitude=(-180, 180), latitude=(-90, 90),
-        vertical=vc_v1, halo=(3, 3, 1))
-
-    m_v1 = copy(m_init)
-    rm_v1 = copy(rm_init)
-    tracers_v1 = (CO2=rm_v1,)
-
-    ws_v1 = AtmosTransport.Advection.allocate_massflux_workspace(m_v1, am, bm, cm)
-
-    AtmosTransport.Advection.strang_split_massflux!(
-        tracers_v1, m_v1, copy(am), copy(bm), copy(cm),
-        grid_v1, true, ws_v1; cfl_limit=FT(1.0))
-
-    # Compare results
-    @test maximum(abs.(rm_v2 .- rm_v1)) / maximum(abs.(rm_v1)) < 1e-12
-    @test maximum(abs.(m_v2 .- m_v1)) / maximum(abs.(m_v1)) < 1e-12
-
-    println("  Max relative rm difference: ", maximum(abs.(rm_v2 .- rm_v1)) / maximum(abs.(rm_v1)))
-    println("  Max relative m  difference: ", maximum(abs.(m_v2 .- m_v1)) / maximum(abs.(m_v1)))
-end
 
 # =========================================================================
 # Test 9: cell_area with flat integer index

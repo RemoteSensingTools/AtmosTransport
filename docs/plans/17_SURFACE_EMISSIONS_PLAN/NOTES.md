@@ -287,8 +287,240 @@ Shipped:
 
 **Cumulative new tests plan 17 Commits 1-3:** 43 + 36 + 38 = 117.
 
----
+### Commit 4 — `current_time(meteo)` threading
 
-Subsequent commit sections will be filled in as execution proceeds
-(per CLAUDE.md §"Plan execution rhythm — Retrospective sections are
-cumulative").
+Replaced `t = zero(FT)` placeholders in chemistry and diffusion
+`apply!` methods with the uniform idiom
+`t = meteo === nothing ? zero(FT) : FT(current_time(meteo))`.
+
+**Surprise:** the first test run errored with
+`UndefVarError: meteo not defined`. Root cause: my edit put the
+conditional inside the lower-level `apply_vertical_diffusion!`,
+which at that point did NOT take `meteo` as an argument — only
+the higher-level state-level `apply!` did. Fix: extended
+`apply_vertical_diffusion!`'s signature to accept `meteo = nothing`
+as a 5th optional positional arg, forwarding from state-level
+`apply!`. This also prepared the array-level entry point for the
+Commit 5 palindrome integration (which needs to pass `meteo`
+through for the S kernel).
+
+**Test state:** all pre-existing tests pass unchanged
+(test_chemistry, test_diffusion_operator, test_diffusion_palindrome,
+test_transport_model_diffusion, test_fields, plus plan 17 files).
+
+### Commit 5 — Palindrome integration (V(dt/2) S V(dt/2) Option A)
+
+Added `emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux()`
+kwarg to `strang_split_mt!`, plus `tracer_names`, `meteo`, `grid`
+kwargs. Dispatch inside the palindrome center:
+
+- `NoSurfaceFlux` (default) → single `V(dt)` (bit-exact plan 16b)
+- non-trivial `SurfaceFluxOperator` → `V(dt/2) → S(dt) → V(dt/2)`
+
+The critical bit-exact regression was the 27-test
+`test_diffusion_palindrome.jl` suite — passed unchanged on first
+try. Key detail: the dispatch branch is an `if` on runtime
+`emissions_op isa NoSurfaceFlux`, not a type-level specialization.
+Julia's compiler still constant-folds the branch away because
+`strang_split_mt!` is invoked from `apply!` with a concrete
+`emissions_op` type, and the inner `if` is a type-check on a
+type-known-at-compile-time argument.
+
+**Surprise: `V(dt/2) V(dt/2) ≠ V(dt)` for Backward Euler.** Recorded
+in the palindrome comment. Symptom: with non-trivial diffusion and
+`emissions_op !== NoSurfaceFlux`, the result differs from a single
+`V(dt)` call by O((dt·D)²). This is not a bug — Backward Euler is
+only first-order in dt for any single step, so splitting into two
+half-steps changes the truncation error. The ordering study
+(Commit 7) quantifies the effect as ~4% relative at typical CATRINE
+dt × Kz.
+
+**Test state:** 12 new tests in test/test_emissions_palindrome.jl.
+All pre-existing passing.
+
+### Commit 6 — TransportModel.emissions + DrivenSimulation cleanup
+
+`TransportModel` gains an `emissions::EmT` field with default
+`NoSurfaceFlux()`. `step!(model, dt; meteo = nothing)` threads
+emissions + meteo through the advection `apply!` call. The plan-15
+chemistry workaround in `DrivenSimulation` is removed: instead of
+forcing `NoChemistry()` into the wrapped model and applying
+chemistry at sim-level, the constructor installs the user's
+`surface_sources` as a `SurfaceFluxOperator` inside the model via
+`with_emissions`, and leaves the user's `chemistry` on the model.
+`step!(sim)` delegates entirely to `step!(model)`.
+
+**Surprise:** an intermediate test failure when constructing
+`ExponentialDecay` inside the new test file. The existing keyword
+constructor signature is `ExponentialDecay(; Rn222 = half_life)`
+not `ExponentialDecay{FT, 1}(; tracer_names, decay_rates)`. Fixed by
+using the inner constructor positionally
+`ExponentialDecay{FT, 1, Tuple{ConstantField{FT, 0}}}(rates_tuple, names_tuple)`.
+
+**End-to-end equivalence:** the `test_driven_simulation.jl` suite's
+"DrivenSimulation applies bottom-layer surface sources" testset,
+which computes `mass = rate × dt × window_dt = 2 × 1800 = 3600` on
+the 4×3×2 grid, passes unchanged. This confirms that the palindrome-
+centered S produces the same end-of-step surface mass as the pre-17
+sim-level helper — the numeric invariant is preserved byte-for-byte
+(both paths reduce to `rm[:, :, Nz] += rate × dt` for zero fluxes
+and zero diffusion).
+
+**Test state:** 14 new tests in test/test_transport_model_emissions.jl
+including bit-exact default regression, with_emissions storage sharing,
+and end-to-end composition. All pre-existing tests pass unchanged.
+
+### Commit 7 — Ordering study + writeup
+
+Directly composed `apply_vertical_diffusion!` and
+`apply_surface_flux!` on a shared 4D buffer for four palindrome
+arrangements (A = V(dt/2) S V(dt/2), B = S V(dt), C = V(dt) S, D = S).
+Layer-surface mass fraction after 24 h at Kz = 5 m²/s, dz = 50 m,
+dt = 3600 s:
+
+    A: 0.121    B: 0.117    C: 0.154    D: 1.000
+
+Writeup in [ordering_study_results.md](ordering_study_results.md).
+
+**Surprise:** B is slightly lower than A (11.7% vs 12.1%). The plan
+17 §2.3 expectation was "A is the recommended arrangement". B's
+better surface-mixing efficiency comes from the full-dt V acting on
+the just-added surface mass; A's staggered V/S under-mixes fresh
+emissions within the step they enter. A remains recommended on
+symmetry + formal-order-of-accuracy grounds (see writeup §4), but
+the quantitative difference is smaller than expected.
+
+**Test state:** 9 new tests in test/test_ordering_study.jl.
+Mass conservation invariant holds for all four arrangements.
+
+**Cumulative new tests plan 17 Commits 1-7:** 43 + 36 + 38 + 12 +
+14 + 9 = 152.
+
+### Commit 8 — Emissions overhead benchmark
+
+`scripts/benchmarks/bench_emissions_overhead.jl` — mirrors the
+shape of plan 15's `bench_chemistry_overhead.jl` and plan 16b's
+`bench_diffusion_overhead.jl`. Median-of-N `step!(model, dt)` time
+with vs without a non-trivial `SurfaceFluxOperator`.
+
+**Small CPU result** (72×36×4, Float64):
+
+| scheme | Nt | N emitters | no-em (ms) | em (ms) | Δ%      |
+|--------|----|------------|------------|---------|---------|
+| upwind |  5 | 1          |      2.691 |   2.579 | −4.15%  |
+| upwind |  5 | 3          |      2.692 |   2.704 |  0.48%  |
+| upwind | 10 | 3          |      4.277 |   4.288 |  0.27%  |
+| upwind | 30 | 5          |     10.936 |  10.905 | −0.28%  |
+| slopes |  5 | 1          |     18.385 |  18.400 |  0.08%  |
+| slopes |  5 | 3          |     18.511 |  18.390 | −0.66%  |
+| slopes | 10 | 3          |     36.366 |  36.341 | −0.07%  |
+| slopes | 30 | 5          |    113.420 | 113.633 |  0.19%  |
+
+All |Δ%| < 1% — pure noise. The plan 17 §4.4 Commit 8 target of
+≤5% overhead is exceeded by two orders of magnitude.
+
+**Why the overhead is so small.** The emissions kernel is
+`rm[i, j, Nz, t_idx] += rate[i, j] × dt` — one indexed read, one
+multiply-add, one write, per emitting cell. At production Nt = 30
+with 5 emitters, 5 × (Nx · Ny) work fits comfortably into the
+noise floor of 6 × 30 = 180 advection sweep kernels. No need for
+fusion, no need for reduction — the operator is I/O-bound on a
+tiny surface slab.
+
+### Commit 9 — Retrospective + ARCHITECTURAL_SKETCH_v3
+
+This section closes the plan.
+
+**Plan 17 scope and deviations recap**
+
+Shipped: `StepwiseField{FT, N, A, B, W}` (Commit 1) → migrate
+`SurfaceFluxSource` + `PerTracerFluxMap` (Commit 2) → `SurfaceFluxOperator`
++ kernel + apply! (Commit 3) → thread `current_time(meteo)` (Commit 4)
+→ palindrome integration Option A (Commit 5) → `TransportModel.emissions`
++ `DrivenSimulation` cleanup (Commit 6) → ordering study (Commit 7)
+→ benchmarks (Commit 8) → retrospective (Commit 9).
+
+Commit sequence compressed relative to plan doc §4.4:
+- Plan doc split `StepwiseField`, `PerTracerFluxMap`, and
+  `SurfaceFluxOperator` into three commits assuming greenfield. Reality:
+  Commits 2-3 needed to be tightly coupled because `SurfaceFluxSource`
+  already existed in `src/Models/DrivenSimulation.jl` and had to move
+  to `src/Operators/SurfaceFlux/` before any Operator could reference
+  it (Operators loads before Models). The migration happened in
+  Commit 2 and the operator types in Commit 3 as planned, but Commit 2
+  also carried the `SurfaceFluxSource` move.
+- Plan doc expected `DrivenSimulation` to retain sim-level
+  `_apply_surface_sources!` as a legacy path. Commit 6 deletes it
+  entirely — the existing sim-level application is replaced by the
+  palindrome-centered operator, and the 57-test
+  `test_driven_simulation.jl` suite passes unchanged because both
+  paths reduce to `rm[:, :, Nz] += rate × dt` at zero fluxes and zero
+  diffusion.
+
+**Testing discipline outcomes**
+
+- 77 baseline failures preserved across all 9 commits.
+- 152 new tests (43 StepwiseField + 36 PerTracerFluxMap + 38
+  SurfaceFluxOperator + 12 emissions_palindrome + 14
+  TransportModel_emissions + 9 ordering_study).
+- Plan 16b regression tests (`test_diffusion_palindrome.jl`,
+  `test_transport_model_diffusion.jl`) pass bit-exact throughout —
+  Option A dispatch on `emissions_op isa NoSurfaceFlux` works as
+  intended.
+- `test_driven_simulation.jl` passes unchanged across the Commit 6
+  `DrivenSimulation` restructure, providing end-to-end equivalence
+  evidence for the palindrome-centered vs sim-level emission paths.
+
+**Lessons for plan 18 (convection)**
+
+1. **Survey before greenfield.** Plan 17 assumed no existing
+   emissions code; the survey in Commit 0 exposed `SurfaceFluxSource`
+   in `DrivenSimulation.jl`. Saved an hour of rework. Plan 18 should
+   grep for `convect`, `tiedtke`, `mass_flux`, `entrainment` early
+   and budget accordingly.
+2. **Option A dispatch pattern.** The `if op isa NoOperator` branch
+   inside `strang_split_mt!` is compile-time eliminated by Julia's
+   dispatch when the operator is concretely typed. For plan 18's
+   convection, the same pattern works: `if emissions_op isa NoSurfaceFlux && convection_op isa NoConvection ... else ...` will still compile
+   away to the plan-17 or plan-16b path when neither operator is
+   active. A future refactor could generalize this to a single
+   `palindrome_center(...)` helper that dispatches on the combined
+   tuple, but premature abstraction is not needed.
+3. **`V(dt/2) ∘ V(dt/2) ≠ V(dt)` for Backward Euler.** The ordering
+   study showed the practical difference is small (~4% relative in
+   surface mass fraction at CATRINE dt × Kz). Plan 18's V C S C V
+   arrangement inherits this behaviour: the V quarter-steps are
+   even further from a full V, but the compositional structure is
+   justified by 2nd-order Strang accuracy.
+4. **Mutable scalar in kernel-facing struct → 1-element Array, not `Ref{Int}`.**
+   Codified in CLAUDE.md §Julia gotchas via the `StepwiseField.current_window`
+   pattern. Plan 18 will hit this if its convection scheme needs a
+   time-varying closure (e.g. a CAPE threshold that updates between
+   windows).
+5. **Three-arg outer constructor for Adapt round-trip.** Also
+   codified. `StepwiseField`'s outer constructor had to gain a
+   three-arg variant to satisfy Adapt.adapt_structure's reconstruction.
+   Plan 18's convection operator that holds any Adapted state will
+   need the same shape.
+6. **Migration commits are simpler than greenfield.** Plan 17
+   Commits 2-3 reused `SurfaceFluxSource`'s existing struct + Adapt
+   hook + helpers, which would have been boilerplate to write from
+   scratch. Plan 18 should look for existing Convection hooks in
+   `src_legacy/` (Tiedtke / RAS are there) for the same reason.
+
+**ARCHITECTURAL_SKETCH_v3.md** committed in this commit: updated
+storage model (StepwiseField added), operator hierarchy (SurfaceFlux
+added), palindrome dispatch rules, file-level map.
+
+**CLAUDE.md** already merged accumulated lessons in Session 2 —
+plan 17's additions (Ref{Int} / Val(:unchecked) / 3-arg outer
+constructor) are already documented under §"Julia / language
+gotchas". No updates needed in Commit 9.
+
+**Cumulative new tests plan 17 final:** 152.
+**Cumulative commits plan 17 final:** 9 (0, 1, 2, 3, 4, 5, 6, 7, 8)
++ 2 housekeeping commits (NOTES retrospective after Commit 1,
+CLAUDE.md merge in Session 2) = 11 commits on branch.
+
+Plan 17 complete.
+

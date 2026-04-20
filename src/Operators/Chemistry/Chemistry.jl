@@ -30,6 +30,7 @@ using KernelAbstractions: get_backend, synchronize
 using ...State: CellState
 using ...State: ntracers, tracer_index, tracer_names
 using ...State: AbstractTimeVaryingField, ConstantField, field_value, update_field!
+using ...MetDrivers: current_time
 import ..apply!
 
 export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemistry
@@ -161,10 +162,14 @@ function apply!(state::CellState, meteo, grid,
     end
 
     # Refresh rate caches for the current time, then materialize to scalars
-    # for the kernel. `meteo` may be `nothing` (chemistry does not consume
-    # meteorology in plan 16a); `ConstantField.update_field!` ignores `t`.
-    # When non-constant rate fields land (plan 16b+), pass `current_time(meteo)`.
-    t = zero(FT)
+    # for the kernel. `ConstantField.update_field!` ignores `t`; once
+    # non-constant rate fields (e.g. `StepwiseField{FT, 0}` for time-varying
+    # decay rates) are wired in, this is where they consume simulation time.
+    # For `meteo === nothing` (test fixtures, direct TransportModel callers
+    # without a met driver), fall back to `zero(FT)`; the stub at
+    # `AbstractMetDriver.jl:77` already returns `0.0` so concrete drivers
+    # wanting to drive time-varying fields must override.
+    t = meteo === nothing ? zero(FT) : FT(current_time(meteo))
     rates = ntuple(N) do n
         r = op.decay_rates[n]
         update_field!(r, t)

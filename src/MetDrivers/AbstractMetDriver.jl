@@ -60,19 +60,27 @@ start_date(::AbstractMetDriver) = Date(2000, 1, 1)
 """
     current_time(driver::AbstractMetDriver) -> Float64
 
-Simulation time [s] currently represented by `driver`. Used by
-operators that need a sampling point for time-varying fields
-(plan 16b Decision 10): for example, `DerivedKzField`'s
-`update_field!` will read `current_time(meteo)` once the driver-
-aware integration path is wired.
+Simulation time [s] currently represented by `driver`. Threaded
+through operator `apply!` methods by plan 17 Commit 4:
 
-The base definition returns `0.0` and is NOT required to reflect
-real driver state — concrete drivers should override if they want
-operators to see anything other than "step-zero placeholder".
+    apply!(state, meteo, grid, op, dt; workspace)
 
-For `nothing` inputs (the shape used by `TransportModel` when no
-meteorology is threaded through), operator `apply!` methods fall
-back to `zero(FT)` directly; they do not call `current_time(nothing)`.
+Every operator that consumes time (`ExponentialDecay` rates,
+`ImplicitVerticalDiffusion` Kz refresh, future emission-rate
+`StepwiseField`s, etc.) reads `current_time(meteo)` once per call
+and passes the resulting scalar to each `update_field!(f, t)`.
+
+The base definition returns `0.0` — concrete drivers should override
+if they want operators to see anything other than "step-zero
+placeholder". A real driver typically stores a running-time
+accumulator advanced by `DrivenSimulation.step!`; the stub is a
+safe default for test fixtures and pure-advection configs.
+
+For `meteo === nothing` (the shape used by `TransportModel` when no
+meteorology is threaded through, and by many tests), operator
+`apply!` methods fall back to `zero(FT)` directly; they do NOT
+call `current_time(nothing)`. The `nothing` branch is explicit in
+each operator's `apply!`.
 """
 current_time(::AbstractMetDriver) = 0.0
 

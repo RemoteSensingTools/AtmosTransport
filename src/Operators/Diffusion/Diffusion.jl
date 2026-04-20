@@ -27,6 +27,7 @@ module Diffusion
 
 using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
 using ...State: CellState, AbstractTimeVaryingField, field_value, update_field!
+using ...MetDrivers: current_time
 import ..apply!
 
 export solve_tridiagonal!, build_diffusion_coefficients

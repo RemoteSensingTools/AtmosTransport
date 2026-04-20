@@ -74,6 +74,7 @@ using .MetDrivers: AbstractDriver, AbstractClosure, AbstractMetDriver,
                    interpolate_fluxes!, expected_air_mass!, interpolate_qv!, copy_fluxes!,
                    load_cmfmc_window!, load_surface_window!, load_tm5conv_window!,
                    load_temperature_window!,
+                   ConvectionForcing, has_convection_forcing,
                    window_count, has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc,
                    has_surface, has_tm5conv, has_temperature,
                    grid_type, horizontal_topology,
@@ -175,6 +176,12 @@ export PerTracerFluxMap, flux_for
 export AbstractSurfaceFluxOperator, NoSurfaceFlux, SurfaceFluxOperator
 export apply_surface_flux!
 
+# Convection operator hierarchy (plan 18 Commit 1). Concrete operators
+# (`CMFMCConvection`, `TM5Convection`) land in plan 18 Commits 3 and 4.
+# `ConvectionForcing` lives in MetDrivers and is re-exported below.
+export AbstractConvectionOperator, NoConvection
+export apply_convection!
+
 # Advection scheme hierarchy
 export AbstractAdvectionScheme
 export AbstractConstantScheme, AbstractLinearScheme, AbstractQuadraticScheme
@@ -213,6 +220,7 @@ export driver_grid, air_mass_basis, has_humidity_endpoints
 export interpolate_fluxes!, expected_air_mass!, interpolate_qv!, copy_fluxes!
 export load_cmfmc_window!, load_surface_window!, load_tm5conv_window!
 export load_temperature_window!
+export ConvectionForcing, has_convection_forcing
 export window_count, has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc
 export has_surface, has_tm5conv, has_temperature
 export grid_type, horizontal_topology

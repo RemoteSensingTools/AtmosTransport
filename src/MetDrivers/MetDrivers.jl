@@ -18,6 +18,7 @@ using ..Grids
 include("AbstractMetDriver.jl")
 include("MassClosure.jl")
 include("DryFluxBuilder.jl")
+include("ConvectionForcing.jl")
 include("TransportBinary.jl")
 include("TransportBinaryDriver.jl")
 include("CubedSphereBinaryReader.jl")
@@ -39,6 +40,7 @@ export driver_grid, air_mass_basis, has_humidity_endpoints
 export interpolate_fluxes!, expected_air_mass!, interpolate_qv!, copy_fluxes!
 export load_cmfmc_window!, load_surface_window!, load_tm5conv_window!
 export load_temperature_window!
+export ConvectionForcing, has_convection_forcing
 export window_count, has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc
 export has_surface, has_tm5conv, has_temperature
 export mass_basis, grid_type, horizontal_topology, A_ifc, B_ifc

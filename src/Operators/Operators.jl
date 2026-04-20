@@ -37,6 +37,15 @@ using .Diffusion
 include("SurfaceFlux/SurfaceFlux.jl")
 using .SurfaceFlux
 
+# Convection is included before Advection. Plan 18 v5.1 Decision 1
+# runs convection as a SEPARATE block in `TransportModel.step!`
+# (between the transport palindrome and the chemistry block), so
+# `strang_split_mt!` doesn't need the convection types. The include
+# order still puts Convection alongside Diffusion/SurfaceFlux (both
+# column/point-local physics) for consistency.
+include("Convection/Convection.jl")
+using .Convection
+
 include("Advection/Advection.jl")
 using .Advection
 
@@ -67,6 +76,11 @@ export apply_vertical_diffusion!
 export SurfaceFluxSource, PerTracerFluxMap, flux_for
 export AbstractSurfaceFluxOperator, NoSurfaceFlux, SurfaceFluxOperator
 export apply_surface_flux!
+
+# Convection operator hierarchy (plan 18 Commit 1). Concrete operators
+# (`CMFMCConvection`, `TM5Convection`) land in plan 18 Commits 3 and 4.
+export AbstractConvectionOperator, NoConvection
+export apply_convection!
 
 # Cubed-sphere advection
 export fill_panel_halos!, copy_corners!, strang_split_cs!, CSAdvectionWorkspace

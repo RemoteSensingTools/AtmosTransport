@@ -186,20 +186,34 @@ function DrivenSimulation(model::TransportModel,
     _check_grid_compatibility(model.grid, driver_grid(driver))
     _check_basis_compatibility(model, driver)
 
-    # DrivenSimulation holds chemistry at the sim level (not at the model
-    # level), so the step order stays `advection → emissions → chemistry`
-    # as before plan 15. TransportModel.chemistry is still supported for
-    # direct-TransportModel users; here we force NoChemistry() inside the
-    # wrapped model to avoid double-application, and run the user-
-    # supplied chemistry via `chemistry_block!` inside `step!(sim)` after
-    # surface sources.
-    model = with_chemistry(model, NoChemistry())
-
     window = _adapt_window_to_model_backend(_load_window(driver, start_window), model.state.air_mass)
     expected_air_mass = similar(model.state.air_mass)
     qv_buffer = _allocate_qv_buffer(window)
     surface_sources_adapted = _adapt_sources_to_model_backend(Tuple(surface_sources), model.state.air_mass)
     foreach(source -> _check_surface_source_compatibility(model.state, source), surface_sources_adapted)
+
+    # Plan 17 Commit 6: move chemistry + emissions from sim-level post-
+    # step application into the model's transport block. `with_emissions`
+    # installs the user-supplied surface sources as a `SurfaceFluxOperator`
+    # inside the wrapped model so the palindrome's S slot runs at the
+    # correct center-of-transport position. `with_chemistry` installs the
+    # user's chemistry in the model; `step!(model)` runs
+    # `advection → emissions → diffusion → chemistry` as ONE composed
+    # call. The sim's `_apply_surface_sources!` helper and post-step
+    # `chemistry_block!` are no longer called at sim level — they are
+    # retained on the sim struct for adaptive reconfiguration via
+    # future helpers but the step loop no longer invokes them directly.
+    #
+    # Pre-plan-17 the sim held chemistry at the sim level as a plan-15
+    # workaround to preserve TM5's `advection → emissions → chemistry`
+    # order while emissions still lived outside the palindrome. That
+    # workaround is now resolved by the palindrome integration (plan 17
+    # Commit 5), so the sim delegates entirely to `step!(model)`.
+    model = with_chemistry(model, chemistry)
+    if !isempty(surface_sources_adapted)
+        emissions_op = SurfaceFluxOperator(PerTracerFluxMap(surface_sources_adapted))
+        model = with_emissions(model, emissions_op)
+    end
     FT = promote_type(eltype(model.state.air_mass), typeof(window_dt(driver)))
     Δt = FT(window_dt(driver) / steps_per_window(driver))
     nsteps_total = (stop_window - start_window + 1) * steps_per_window(driver)
@@ -253,9 +267,12 @@ function step!(sim::DrivenSimulation)
     _maybe_advance_window!(sim, substep)
     _refresh_forcing!(sim, substep)
 
-    step!(sim.model, sim.Δt)            # advection only (chemistry forced off at construction)
-    _apply_surface_sources!(sim)
-    chemistry_block!(sim.model.state, nothing, sim.model.grid, sim.chemistry, sim.Δt)
+    # Plan 17 Commit 6: step!(model) now runs the full operator suite
+    # (advection with palindrome-centered V and S, then chemistry) in
+    # one call. `meteo = sim.driver` threads `current_time` so time-
+    # varying fields (e.g., StepwiseField emission rates) refresh from
+    # the driver's simulation time.
+    step!(sim.model, sim.Δt; meteo = sim.driver)
     sim.time += sim.Δt
     sim.iteration += 1
     for callback in values(sim.callbacks)

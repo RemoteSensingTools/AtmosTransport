@@ -129,21 +129,26 @@ configs are in `config/preprocessing/`. See `docs/reference/QUICKSTART.md` for f
 ### Module dependency chain
 
 ```
-Architectures → Parameters → Communications
+Architectures → Parameters → Grids
        ↓
-Grids → Fields
+State (CellState, FluxState, Fields/AbstractTimeVaryingField, MetState)
        ↓
-Advection → Convection → Diffusion → Chemistry
+MetDrivers (ERA5, GEOS binaries, current_time accessor)
        ↓
-TimeSteppers → Adjoint → Callbacks
+Operators (Diffusion → SurfaceFlux → Advection → Chemistry)
        ↓
-Regridding → Diagnostics → Sources
+Kernels (CellKernels, FaceKernels, ColumnKernels)
        ↓
-IO → Visualization → Models
+Models (TransportModel, DrivenSimulation, Simulation)
+       ↓
+Regridding → Preprocessing → Downloads
 ```
 
 `src/AtmosTransport.jl` includes all modules in this strict order. Each module
-may import from earlier modules but never from later ones.
+may import from earlier modules but never from later ones. Inside
+`src/Operators/`, `Operators.jl` pulls Diffusion before Advection (so the
+palindrome's `V` call can dispatch) and SurfaceFlux before Advection in
+plan 17 (so the palindrome's `S` call can dispatch).
 
 ### Type hierarchy (multiple dispatch)
 
@@ -151,19 +156,20 @@ All physics and infrastructure is organized via abstract type hierarchies.
 Physics code dispatches on concrete types — no if/else on grid or scheme.
 
 ```
-AbstractArchitecture        → CPU, GPU
-AbstractGrid{FT, Arch}      → LatitudeLongitudeGrid, CubedSphereGrid
-AbstractAdvectionScheme      → UpwindScheme, SlopesScheme{L}, PPMScheme{L}
-AbstractConvection           → NoConvection, TiedtkeConvection, RASConvection  (legacy; src_legacy)
-AbstractDiffusionOperator    → NoDiffusion, ImplicitVerticalDiffusion{FT, KzF}  (plan 16b, src/Operators/Diffusion/)
-AbstractDiffusion            → (src_legacy only: BoundaryLayerDiffusion, PBLDiffusion, NonLocalPBLDiffusion — parked)
-AbstractTimeVaryingField{FT, N} → ConstantField{FT, N}, ProfileKzField{FT, V}, PreComputedKzField{FT, A}, DerivedKzField  (plan 16a/16b, src/State/Fields/)
-AbstractChemistryOperator    → NoChemistry, ExponentialDecay{FT, N, R}, CompositeChemistry  (plan 15)
-AbstractMetDriver{FT}        → ERA5MetDriver, PreprocessedLatLonMetDriver, GEOSFPCubedSphereMetDriver
-AbstractSurfaceFlux          → SurfaceFlux, TimeVaryingSurfaceFlux, EdgarSource, ...
-AbstractBufferingStrategy    → SingleBuffer, DoubleBuffer
-AbstractOutputWriter         → BinaryOutputWriter, NetCDFOutputWriter
+AbstractArchitecture             → CPU, GPU
+AbstractGrid{FT, Arch}           → AtmosGrid{<:LatLonMesh}, AtmosGrid{<:CubedSphereMesh}
+AbstractAdvectionScheme          → UpwindScheme, SlopesScheme{L}, PPMScheme{L, ORD}
+AbstractDiffusionOperator        → NoDiffusion, ImplicitVerticalDiffusion{FT, KzF}        (plan 16b, src/Operators/Diffusion/)
+AbstractChemistryOperator        → NoChemistry, ExponentialDecay{FT, N, R}, CompositeChemistry  (plan 15)
+AbstractSurfaceFluxOperator      → NoSurfaceFlux, SurfaceFluxOperator{FT, M}              (plan 17, src/Operators/SurfaceFlux/)
+AbstractTimeVaryingField{FT, N}  → ConstantField{FT, N}, ProfileKzField{FT, V},
+                                   PreComputedKzField{FT, A}, DerivedKzField{FT, ...},
+                                   StepwiseField{FT, N, A, B, W}                         (plan 16a/16b/17, src/State/Fields/)
+AbstractMetDriver                → PreprocessedERA5Driver, TransportBinaryDriver, CubedSphereBinaryReader, ...
+AbstractMassBasis                → DryBasis, MoistBasis
 ```
+
+Legacy src_legacy/ hierarchies (parked, not loaded): `AbstractConvection` (NoConvection / TiedtkeConvection / RASConvection), `AbstractDiffusion` (BoundaryLayerDiffusion / PBLDiffusion / NonLocalPBLDiffusion), and the pre-restructure `AbstractSurfaceFlux` hierarchy.
 
 ### Key design patterns
 
@@ -484,60 +490,108 @@ These are hard-won correctness constraints. Violating any causes silent wrong re
 
 ## Workflow: Adding a new advection scheme
 
-1. **Define the type** in `src/Advection/`:
+1. **Define the type** in `src/Operators/Advection/schemes.jl`:
    ```julia
    struct MyScheme <: AbstractAdvectionScheme
        param1::Float64
    end
    ```
 
-2. **Implement the interface** (see `src/Advection/abstract_advection.jl` for contract):
-   ```julia
-   advect!(tracers, vel, grid, scheme::MyScheme, Δt) = ...
-   adjoint_advect!(adj_tracers, vel, grid, scheme::MyScheme, Δt) = ...
-   ```
-   For operator splitting, also implement `advect_x!`, `advect_y!`, `advect_z!`.
+2. **Implement the interface** (see `src/Operators/Advection/Advection.jl` for contract).
+   For operator-split structured grids, wire into `strang_split!` /
+   `strang_split_mt!` via the sweep kernels in `structured_kernels.jl`.
 
-3. **Wire into config** (`src/IO/configuration.jl`):
-   Add a branch in `_build_advection_scheme(config)` to parse your TOML params.
+3. **Export** from `src/Operators/Advection/Advection.jl`.
 
-4. **Export** from `src/Advection/Advection.jl`.
-
-5. **Add tests** in `test/test_advection.jl`:
-   - Uniform field invariance
-   - Mass conservation
+4. **Add tests** in `test/test_advection_kernels.jl` / `test/test_cubed_sphere_advection.jl`:
+   - Uniform field invariance (constant → constant)
+   - Mass conservation (total tracer mass preserved to machine precision F64 / ULP F32)
    - Adjoint identity (dot-product test)
+   - CPU/GPU agreement to ≤4 ULP (1-step), ≤16 ULP (4-step)
 
 ## Workflow: Adding a new met driver
 
-1. **Subtype `AbstractMetDriver{FT}`** in `src/IO/`:
+1. **Subtype `AbstractMetDriver`** in `src/MetDrivers/`:
    ```julia
-   struct MyDriver{FT} <: AbstractMetDriver{FT}
+   struct MyDriver{FT} <: AbstractMetDriver
        ...
    end
    ```
 
-2. **Implement required methods** (see `src/IO/abstract_met_driver.jl`):
+2. **Implement required methods** (see `src/MetDrivers/AbstractMetDriver.jl`):
    - `total_windows(driver)` → Int
    - `window_dt(driver)` → seconds per window
    - `steps_per_window(driver)` → sub-steps per window
-   - `load_met_window!(cpu_buf, driver, grid, win_index)` → fill buffer with am, bm, cm, delp
+   - `load_transport_window(driver, win_idx)` → transport window with am, bm, cm, air_mass
+   - `current_time(driver)` → seconds since run start, for `update_field!` of `StepwiseField` / `DerivedKzField` (plan 16b stub, threaded through in plan 17)
 
 3. **Add TOML variable mapping** in `config/met_sources/your_source.toml`.
 
-4. **Register** in `src/IO/configuration.jl` driver construction.
+4. **Register** in scripts/config that construct drivers (e.g. `scripts/run_transport_binary.jl`).
 
 ## Workflow: Adding a new physics operator
 
-Follow the pattern used by existing operators (convection, diffusion, chemistry):
+Pattern validated across chemistry (plan 15), diffusion (plan 16b), and surface
+emissions (plan 17). All operators conform to a stable `apply!` signature:
 
-1. **Define abstract + concrete types** with keyword constructor and validation
-2. **Implement forward + adjoint** methods dispatching on your type
-3. **Add GPU kernels** using `@kernel`/`@index` from KernelAbstractions
-4. **Wire into `OperatorSplittingTimeStepper`** if needed
-5. **Add tests** for mass conservation and adjoint identity
+```julia
+apply!(state::CellState, meteo, grid::AtmosGrid, op, dt::Real; workspace) -> state
+```
 
-See `src/Diffusion/Diffusion.jl` for a clean example with 4 implementations.
+Steps:
+
+1. **Define abstract + concrete types** in `src/Operators/<YourOperator>/`:
+   ```julia
+   abstract type AbstractYourOperator end
+   struct NoYourOperator <: AbstractYourOperator end
+   struct YourOperator{FT, F} <: AbstractYourOperator
+       field::F     # e.g. an AbstractTimeVaryingField or a parametric input
+   end
+   ```
+
+2. **Ship a `No<Operator>` dead branch** as the default. Dispatch should compile
+   away to zero floating-point work so the default path preserves pre-refactor
+   behaviour bit-exact:
+   ```julia
+   apply!(state, meteo, grid, ::NoYourOperator, dt; workspace) = state
+   ```
+   If the operator is called from inside the palindrome (plan 16b/17 style),
+   ship an **array-level entry point** too — the palindrome operates on
+   whichever ping-pong buffer currently holds the tracer state, not always
+   `state.tracers_raw`:
+   ```julia
+   apply_your_operator!(q_raw::AbstractArray{FT, 4}, ::NoYourOperator, ws, dt) = nothing
+   ```
+
+3. **Preserve coefficient structures for future adjoints**. If the operator's
+   solver has identifiable coefficients (e.g. tridiagonal `(a, b, c)` for
+   backward-Euler diffusion), keep them as named locals per index — do NOT
+   fuse into prefactored forms like `w[k]` / `inv_denom[k]`. The transposition
+   rule (e.g. `a_T[k] = c[k-1]; b_T[k] = b[k]; c_T[k] = a[k+1]`) becomes a
+   mechanical adjoint port. Post-hoc un-fusing is not mechanical.
+
+4. **GPU kernels via KernelAbstractions**. Use `@kernel` / `@index`; launch
+   with `get_backend(state.tracers_raw)`; `synchronize(backend)` once at the
+   end. Fields backing device arrays need `Adapt.adapt_structure` methods so
+   `samples::Vector → CuArray{FT, 1}` transparently (see `ProfileKzField` / 
+   `StepwiseField`).
+
+5. **Wire through TransportModel**. Add a field to `TransportModel`, ship a
+   `with_<operator>(model, op)` helper, and thread the operator into the
+   appropriate block of `step!(model, dt)`.
+
+6. **Add tests** in `test/test_<your_operator>*.jl`:
+   - `No<Operator>` default path is **bit-exact** `==` to the explicit-no-op
+     path (not just `≈`; any FP work means callers without the kwarg see
+     subtly different numerics)
+   - Mass conservation (if applicable)
+   - CPU/GPU consistency
+   - Tests observe post-operator state via `get_tracer(state, name)` or
+     `state.tracers.name` — NEVER through input arrays passed at construction
+     (plan 14's 4D tracers_raw separated storage; cached input arrays go stale)
+
+See `src/Operators/Diffusion/` (clean plan-16b example) or
+`src/Operators/Chemistry/` (simplest plan-15 example).
 
 ## Workflow: Running an ERA5 vs GEOS comparison
 
@@ -611,18 +665,320 @@ See `src/Diffusion/Diffusion.jl` for a clean example with 4 implementations.
   directly with CUDA events or nsys rather than inferring from subtraction.
   Full write-up: [artifacts/plan13/perf/sync_thesis_report.md](artifacts/plan13/perf/sync_thesis_report.md).
 
+---
+
+## Plan execution rhythm
+
+Accumulated pattern across plans 13-17. Every plan follows the same commit-0-plus-sequence shape.
+
+### Commit 0: NOTES + baseline, no source changes
+
+Every plan's Commit 0 does the following, with **no source changes**:
+
+1. Create `docs/plans/<PLAN>/NOTES.md` with baseline section (parent commit,
+   branch name, pre-existing failure count).
+2. Run precondition verification (§4.1 of the plan doc: grep survey for
+   existing infrastructure in the plan's problem domain, test suite sanity).
+3. Capture baseline test summary to `artifacts/<plan>/baseline_test_summary.log`
+   covering the test files plan work will touch.
+4. Record baseline git hash to `artifacts/<plan>/baseline_commit.txt`.
+5. Run existing-infrastructure survey; log results to
+   `artifacts/<plan>/existing_*_survey.txt`. Flag scope revisions in NOTES if
+   the survey reveals the greenfield assumption is wrong.
+6. Memory compaction: update `MEMORY.md` "Current State" with the previous
+   plan's completion note; add a `planNN_start.md` memo for this plan.
+
+This is the **last clean commit** for rollback.
+
+### Commit sequence is draft, not contract
+
+Plan docs list expected commit sequences. Reality compresses, splits, reorders.
+Plan 15: 8→6. Plan 16b: 8→9 (Commit 1 split into 1a/1b/1c). Plan 17 (2026-04):
+Commit 2 compressed by migrating existing `SurfaceFluxSource` rather than
+greenfield. Every NOTES.md must have a **§"Deviations from plan doc §4.4"**
+section capturing every commit merge, split, or skip with reason. The plan
+doc stays as original design intent; NOTES is the source of truth for what
+shipped.
+
+### Rollback point discipline
+
+Commits must be individually revertable. If Commit N breaks, `git revert N`
+should restore Commit-(N-1) state cleanly with tests passing. Anti-pattern:
+a Commit 4 that depends on a fix in Commit 5 — reverting 4 alone leaves the
+repo broken. Ship the fix in 4 or restructure commits.
+
+### Retrospective sections are cumulative
+
+Fill in NOTES.md's "Decisions beyond the plan", "Surprises", "Interface
+validation findings", "Template usefulness for plans N+1" sections as
+execution proceeds, **not all at once at the final commit**. Future plans
+reading the NOTES want the narrative of discovery, not a polished summary.
+Minor language editing at plan completion is fine.
+
+### Measurement is the decision gate
+
+Every refactor plan since 13 has been wrong about performance predictions in
+one direction or another:
+
+- Plan 13 predicted sync-removal would give a measurable win. Measurement
+  showed sync was 0.02-0.4% of step time — prediction was an order of
+  magnitude too optimistic.
+- Plan 14 v3 predicted 0-10% GPU speedup from multi-tracer fusion. Measurement
+  showed 10-270% at production Nt=30 — prediction was 5-10× too conservative.
+- Plan 16b predicted ≤30% diffusion overhead at large grids. Measurement
+  showed 65-76% at C180 Nt=10 — soft target exceeded, plan shipped anyway
+  after re-framing the value proposition.
+
+**Rule:** Commit 0's baseline measurements are the decision gate for whether
+the plan's motivation is real, not a confirmation of a pre-registered
+prediction. If measurement surprises, re-frame the plan's value proposition
+based on what's actually true. Specifically:
+
+- Launch overhead is <1% of production GPU time. Fusing to reduce launch
+  count is the wrong optimization target.
+- Bandwidth is ~95% of production GPU time. Fusing to reduce memory traffic
+  IS the target. A 2-3× speedup in bandwidth-dominated kernels is plausible
+  when sequential operators read/write the same data.
+
+### Survey before greenfield
+
+Plans 15, 16b, and 17 all assumed significant greenfield work and found
+substantial existing infrastructure:
+
+- Plan 15 expected "minimal ad-hoc decay" and found a 78-line
+  `src/Operators/Chemistry/Chemistry.jl` with `AbstractChemistry`,
+  `RadioactiveDecay`, `CompositeChemistry`, wired into `DrivenSimulation`.
+- Plan 16b inherited `src_legacy/Diffusion/` (four implementations, ~800 lines)
+  as starting point, not reference.
+- Plan 17 found `SurfaceFluxSource` already live in `src/Models/DrivenSimulation.jl`
+  with `_apply_surface_source!` applied inline post-transport — triggered a
+  scope revision from greenfield to migration.
+
+**Rule:** §4.1 of every plan includes a grep survey for existing infrastructure
+in the plan's problem domain. Log results to
+`artifacts/<plan>/existing_<domain>_survey.txt`. Revise scope before Commit 1
+if the survey reveals the greenfield assumption is wrong.
+
+Typical patterns for survey queries:
+
+```bash
+# Adjust keywords per plan domain
+grep -rn "decay\|half_life\|exponential" src/ --include="*.jl"
+grep -rn -i "diffus\|kz\|thomas\|tridiag" src/ --include="*.jl"
+grep -rn -i "emission\|flux\|surface_flux\|deposition" src/ --include="*.jl"
+grep -rn -i "convection\|tiedtke\|mass_flux\|entrainment" src/ --include="*.jl"
+```
+
+---
+
+## Branch hygiene
+
+### Stack plan branches, don't parallel them
+
+Plans 14 → 15 → 16a → 16b → 17 each forked from the previous plan's tip.
+This creates a linear chain:
+
+```
+main ← advection-unification ← slow-chemistry ← time-varying-fields ← vertical-diffusion ← surface-emissions
+```
+
+Each plan branch is self-contained and reviewable as a PR against the prior
+plan's tip. Merge to `main` in order when review catches up.
+
+**Rule:** Don't branch from `main` for a plan N when plans before N haven't
+merged. Chain off the latest plan's tip instead. Keep history linear.
+
+### Merge staging branches to `main` when the abstraction stabilizes
+
+Don't merge every plan to `main` immediately — intermediate states can be
+internally inconsistent. But don't wait for the entire refactor suite either —
+`main` falls behind and misses real production value.
+
+Guideline: merge when a natural grouping of plans reaches a stable API
+boundary. Plans 11-14 (advection refactor) = one logical unit. Plans 15-16b
+(operator abstractions) = another. Plan 17 (emissions) + palindrome updates
++ plan 18 (convection) = another.
+
+---
+
+## Julia / language gotchas
+
+### Default inner constructor already handles `Real` → `FT` coercion
+
+Adding an explicit outer constructor for `Real`-to-`FT` coercion is a common
+mistake. Julia's synthesized inner constructor already handles this via
+`convert`:
+
+```julia
+# UNNECESSARY and causes MethodError ambiguity:
+struct Foo{FT}; x::FT; end
+Foo{FT}(value::Real) where FT = Foo{FT}(FT(value))
+
+# Works out of the box:
+struct Foo{FT}; x::FT; end
+Foo{Float64}(1)    # automatic: new{Float64}(convert(Float64, 1))
+```
+
+Plan 16a hit this on `ConstantField{FT, N}`.
+
+### Type-parameterized defaults in kwargs evaluate at module scope
+
+```julia
+function DerivedKzField(; …,
+                        params = PBLPhysicsParameters{FT}()  # WRONG
+                        ) where FT
+    ...
+end
+```
+
+`PBLPhysicsParameters{FT}()` evaluates at module scope, not method-body scope,
+so `FT` is undefined there. Produces `UndefVarError: FT not defined`.
+Workaround: use `nothing` + `something`:
+
+```julia
+function DerivedKzField(; …, params = nothing) where FT
+    params = something(params, PBLPhysicsParameters{FT}())
+    ...
+end
+```
+
+Plan 16b Commit 1c hit this.
+
+### Parametric type bounds for Adapt compatibility
+
+Concrete field types that hold arrays must be parametric on the array type
+so that `Adapt.adapt_structure` can swap the backing at kernel-launch time:
+
+```julia
+# Good: Adapt can swap to CuArray inside a kernel
+struct ProfileKzField{FT, V <: AbstractVector{FT}} <: AbstractTimeVaryingField{FT, 3}
+    profile::V
+end
+Adapt.adapt_structure(to, f::ProfileKzField) =
+    ProfileKzField(Adapt.adapt(to, f.profile))
+
+# Bad: stuck with Vector{FT}; cannot convert inside kernel
+struct ProfileKzField{FT} <: AbstractTimeVaryingField{FT, 3}
+    profile::Vector{FT}
+end
+```
+
+### `Ref{Int}` is not kernel-safe; use a 1-element array
+
+Mutable scalar caches inside kernel-facing structs must NOT be `Base.RefValue`.
+Inside a KA kernel, `f.ref_field[]` dereferences a host-side pointer and errors
+on GPU. Store the Int in a `Vector{Int}` of length 1 so `Adapt.adapt` converts
+it to a device-visible 1-element array; the kernel reads `f.field[1]`.
+
+```julia
+# StepwiseField pattern (plan 17):
+struct StepwiseField{FT, N, A, B, W <: AbstractVector{Int}} <: ...
+    samples        :: A           # host → CuArray on Adapt
+    boundaries     :: B
+    current_window :: W           # [1-element] host → 1-element CuArray
+end
+```
+
+### `Adapt.adapt_structure` cannot call validating constructors on device arrays
+
+Inner constructors that run `issorted(boundaries)` or other host-only checks
+will error when called on `CuDeviceVector` during a host→device Adapt. Ship a
+`Val(:unchecked)` inner-constructor path:
+
+```julia
+# Validating (user-facing)
+function StepwiseField{FT, N, A, B, W}(samples, boundaries, current_window) ...
+    issorted(boundaries) || throw(ArgumentError("..."))
+    new{...}(samples, boundaries, current_window)
+end
+
+# Unchecked (used by Adapt.adapt_structure)
+function StepwiseField{FT, N, A, B, W}(samples, boundaries, current_window, ::Val{:unchecked})
+    new{...}(samples, boundaries, current_window)
+end
+```
+
+Plan 17 Commit 1 hit this.
+
+### CPU/GPU dispatch: `parent(arr) isa Array`, not `arr isa Array`
+
+Post-plan-14, tracer fields are often `SubArray{FT, 2, Array{FT, 3}}`
+(`selectdim` views over `tracers_raw`), which fail `isa Array` and misroute to
+the GPU path. Dispatch code that branches on backend must use
+`parent(arr) isa Array` or `KernelAbstractions.get_backend(arr)`, not
+`arr isa Array`.
+
+---
+
 ## Testing
 
 ```bash
 julia --project=. -e 'using Pkg; Pkg.test()'
 ```
 
-15 test files, 4570+ tests. Key test categories:
-- Per-module physics tests (advection, diffusion, convection)
-- Mass conservation (total tracer mass preserved)
+20+ test files, 5000+ tests. Key test categories:
+- Per-module physics tests (advection, diffusion, chemistry, surface flux)
+- Mass conservation (total tracer mass preserved to machine precision F64 /
+  ULP F32)
 - Adjoint identity (dot-product test: machine precision for linear operators)
 - TM5 reference validation
-- Integration tests (full run loop)
+- Integration tests (full DrivenSimulation run loop)
+
+### Testing discipline (accumulated across plans 14-17)
+
+**Test contract: observe through the accessor API.** Tests observe
+post-operator state via `get_tracer(state, name)` or `state.tracers.name`,
+never through input arrays passed at construction:
+
+```julia
+# GOOD
+state = CellState(air_mass; CO2 = zeros(FT, Nx, Ny, Nz))
+apply!(state, meteo, grid, op, dt; workspace)
+@test get_tracer(state, :CO2) ≈ expected   # accessor API
+
+# BAD (stale after plan 14's 4D tracers_raw refactor)
+rm_CO2 = zeros(FT, Nx, Ny, Nz)
+state  = CellState(air_mass; CO2 = rm_CO2)
+apply!(state, meteo, grid, op, dt; workspace)
+@test rm_CO2 ≈ expected     # rm_CO2 storage is separate from state.tracers.CO2
+```
+
+**Default kwargs must be bit-exact to the explicit-no-op path.** When adding
+a kwarg with a `No<Something>()` default to a hot-path function (e.g.
+`apply!(...; diffusion_op = NoDiffusion())`, `strang_split_mt!(...; emissions_op = NoSurfaceFlux())`),
+ship an explicit `==` regression test comparing the default path to the
+explicit-no-op path. Not `≈` — `==`. If the default branch does any
+floating-point work, some caller without the kwarg sees subtly different
+numerics. Plan 16b Commit 4's first testset is the pattern.
+
+**Baseline failure count is invariant.** 77 pre-existing test failures across
+three files, stable since plan 12:
+
+- `test_basis_explicit_core.jl`: 2 (metadata-only CubedSphere API)
+- `test_structured_mesh_metadata.jl`: 3 (panel conventions)
+- `test_poisson_balance.jl`: 72 (mirror_sign inflow/outflow)
+
+Every plan preserves this count. New failures → STOP, revert, investigate.
+Plans that would fix any of these need a separate scope commitment. Baseline
+is captured in `artifacts/<plan>/baseline_test_summary.log` at Commit 0 and
+compared against after every subsequent commit.
+
+---
+
+## What NOT to do (accumulated anti-patterns)
+
+- **Do NOT** estimate GPU perf from launch-overhead math. Bandwidth dominates.
+- **Do NOT** add `Real → FT` coercing outer constructors for parametric structs — Julia already handles it.
+- **Do NOT** write `params = SomeParametric{FT}()` as a kwarg default in a `where FT` method — evaluates at module scope.
+- **Do NOT** cache caller arrays in test helpers expecting `===` identity after operator — 4D storage separates input.
+- **Do NOT** dispatch backend on `arr isa Array` when views are possible.
+- **Do NOT** pre-factor tridiagonal coefficients if adjoint port is future work.
+- **Do NOT** assume greenfield — survey the repo first (§4.1).
+- **Do NOT** merge plan branches to `main` before the logical grouping is stable.
+- **Do NOT** skip Commit 0 measurement because the plan seems low-risk.
+- **Do NOT** write retrospective sections only at plan completion — fill in during.
+- **Do NOT** use `Base.RefValue` for mutable scalars in kernel-facing structs — use 1-elem arrays.
+- **Do NOT** call validating inner constructors from `Adapt.adapt_structure` — ship a `Val(:unchecked)` path.
 
 ---
 

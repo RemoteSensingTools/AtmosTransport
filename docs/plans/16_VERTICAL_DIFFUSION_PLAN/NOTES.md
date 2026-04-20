@@ -577,11 +577,155 @@ a dedicated perf-tuning plan once operational needs motivate.
 
 ## Decisions beyond the plan
 
-(To be filled in as they arise.)
+1. **Split Commit 1 into 1a/1b/1c.** The plan doc's original Commit 1
+   bundled all three rank-3 Kz concrete types into one change. Each
+   one fits under its own commit with its own test block, and 1c
+   (Beljaars-Viterbo) is substantive enough to deserve isolation.
+
+2. **Skip Commit 2a (chemistry rates retrofit).** Plan 16a already
+   retrofitted `ExponentialDecay.decay_rates` to
+   `NTuple{N, ConstantField{FT, 0}}` (16a Commit 2), so the plan
+   doc's §4.4 Commit 2a is a no-op. Recorded in "Deviations from
+   plan doc §4.4" at the top of this file.
+
+3. **Drop `ConstantKzField` as a dedicated type.** The plan doc
+   called for `ConstantKzField{FT} <: AbstractTimeVaryingField{FT, 3}`,
+   but that role is already fully covered by
+   `ConstantField{FT, 3}` (shipped in 16a). Tests exercise both
+   ranks (N=0 for chemistry rates, N=3 for diffusion Kz), so the
+   abstraction carries.
+
+4. **Reorder `Operators/Operators.jl` includes for Commit 4.**
+   Original order was Advection → Chemistry → Diffusion. Commit 4's
+   palindrome hook in `StrangSplitting.jl` (inside Advection) needs
+   to import `AbstractDiffusionOperator` / `NoDiffusion` /
+   `apply_vertical_diffusion!` from Diffusion. Verified no
+   cross-dependency before reordering to Diffusion → Advection →
+   Chemistry.
+
+5. **`apply_vertical_diffusion!` as a lower-level entry point.**
+   Commit 3 originally shipped only the state-level
+   `apply!(state, meteo, grid, op, dt; workspace)`. Commit 4's
+   palindrome hook needs to operate on the 4D tracer array
+   currently held in whichever ping-pong buffer — not always
+   `state.tracers_raw`. Introduced `apply_vertical_diffusion!(q_raw, op, ws, dt)`
+   as the array-based entry; the state-level `apply!` delegates.
+   Also makes the `NoDiffusion` dead-branch dispatch trivial
+   (`= nothing` method), which is what makes the Commit 4 bit-exact
+   regression possible.
+
+6. **Single V(dt) call at palindrome center is correct but weaker
+   than the plan claimed.** Plan Decision 8 asserts
+   `V(dt) = V(dt/2) ∘ V(dt/2)` for linear V. That is exactly true
+   for the continuous linear-ODE flow but NOT exactly for Backward
+   Euler: `(I - dt·D)⁻¹ ≠ [(I - dt/2·D)⁻¹]²`. Both are 2nd-order
+   approximations, so the single-call choice is architecturally
+   correct (same truncation order, half the work) but the
+   mathematical claim should read "agrees to leading order," not
+   "exactly equal." A sub-timestep-varying Kz (future DerivedKzField
+   integration) may want revisiting.
+
+7. **`current_time(meteo)` accessor as stub, not threaded.** Plan
+   Decision 10 put the accessor in scope. Commit 5 shipped the
+   stub (`current_time(::AbstractMetDriver) = 0.0`) but didn't
+   thread it through `apply!` — all shipped Kz fields either ignore
+   the time argument or manage their own. Threading lands with the
+   first end-to-end `DerivedKzField` integration test, which
+   requires meteo to flow through TransportModel.
+
+8. **ProfileKzField + PreComputedKzField via Adapt (Option 2).**
+   Plan pitfall 11 listed three options for GPU dispatch of
+   `ProfileKzField` (NTuple, Adapt, 3D cache). Shipped Option 2 for
+   both `ProfileKzField` and `PreComputedKzField`, with the
+   benchmark confirming there is no observable cost difference
+   between `ConstantField` and `ProfileKzField` — validating the
+   choice.
 
 ## Surprises
 
-(To be filled in as they arise.)
+1. **The test-helper type-parameter scoping footgun in Commit 1c.**
+   Wrote `function DerivedKzField(; …, params = PBLPhysicsParameters{FT}()) where FT` —
+   the default-kwarg expression `PBLPhysicsParameters{FT}()`
+   evaluates at module scope, not method-body scope, so `FT` is
+   undefined there. Worked around with `params = nothing` +
+   inside-body resolution. Worth remembering whenever writing
+   generic constructors with type-parameterized defaults.
+
+2. **The taper-zone blend direction.** My initial
+   `_beljaars_viterbo_kz` test assumed Kz decreases monotonically
+   through the h-to-1.2h taper zone. Wrong: when the in-PBL Kz
+   clamps to `Kz_min` (0.01) because `(1-z/h)² → 0` near the
+   PBL top, the blend *increases* Kz from 0.01 at z=h to 0.1 at
+   z=1.2h. The test now verifies the blend formula directly rather
+   than its sign. The physics is correct — the intuition wasn't.
+
+3. **Large-grid overhead exceeds the soft target.** Expected ≤30%
+   on GPU per plan §4.6. Measured 75% at 576×288×72 Nt=10 Upwind
+   on L40S F32. Not a shipping blocker (correctness is solid, plan
+   flags the target as "soft"), but worth recording for a future
+   perf-tuning plan. The bottleneck is column-serial Thomas at
+   Nz=72; field-type choice doesn't move the needle.
+
+4. **The `Vector{FT}` → `CuArray{FT, 1}` jump was transparent via
+   Adapt.** I expected the ProfileKzField GPU path to need
+   NTuple materialization (Option 1), which would have required
+   `Nz` at compile time. Adapt just worked — converting the backing
+   vector once at kernel-launch time, zero runtime cost difference
+   from a scalar `ConstantField`. The parametric
+   `V <: AbstractVector{FT}` struct bound does all the
+   heavy lifting; `Adapt.adapt_structure` is five lines.
+
+## Retrospective summary
+
+Plan 16b shipped across 9 commits (0, 1a, 1b, 1c, 2, 3, 4, 5, 6, 7):
+
+| Commit | Topic | Tests added |
+|--------|-------|-------------|
+| 0 | NOTES + baseline | 0 |
+| 1a | `ProfileKzField` | 26 |
+| 1b | `PreComputedKzField` | 19 |
+| 1c | `DerivedKzField` Beljaars-Viterbo | 79 |
+| 2 | Thomas solve + diffusion kernel | 33 |
+| 3 | `ImplicitVerticalDiffusion` operator + `apply!` | 15 |
+| 4 | Palindrome integration (`X→Y→Z→V→Z→Y→X`) | 27 |
+| 5 | `TransportModel` wiring | 24 |
+| 6 | Benchmarks + `Adapt` GPU dispatch | 8 |
+| 7 | Retrospective + docs | 0 |
+| | **Total new** | **231** |
+
+All regressions clean through to end. 77-failure pre-16b baseline
+preserved. Advection hot-path (`test_advection_kernels.jl` multi-
+tracer fusion) unchanged through all commits, confirming the
+palindrome insert in Commit 4 is bit-exact with `NoDiffusion`.
+
+**Architectural state at end of plan 16b:**
+- `src/Operators/Diffusion/` — implicit vertical diffusion with
+  Backward-Euler column Thomas, adjoint-transposable `(a, b, c)`
+  coefficient structure.
+- `src/State/Fields/` — four concrete `AbstractTimeVaryingField`
+  types, three of them rank-3 for Kz.
+- `TransportModel` carries a `diffusion` operator alongside
+  `advection` and `chemistry`. Defaults to `NoDiffusion()` → pre-16b
+  behavior bit-exact.
+- Palindrome `X Y Z V Z Y X` formalized in `strang_split_mt!`.
+  `V` dispatches to a `NoDiffusion` dead branch when diffusion is
+  disabled (zero fp-op overhead).
+
+**What's next (beyond plan 16b):**
+- Full `current_time(meteo)` threading through `apply!` — triggered
+  by the first end-to-end `DerivedKzField` integration test with
+  real meteorology.
+- `dz_scratch` filler (hydrostatic `delp → dz`) — operational
+  `DrivenSimulation` path.
+- Adjoint kernel port (structure preserved, no new math needed).
+- Non-local (counter-gradient) PBL diffusion as a sibling
+  `AbstractDiffusionOperator` concrete type.
+- Diffusion perf: multi-tracer fusion inside the kernel, shared-
+  memory Thomas, persistent `w_scratch`. All within-kernel; none
+  change the operator interface.
+- Plan 17: surface emissions `S` in the palindrome; resolves the
+  chemistry-ordering workaround from plan 15.
+- Plan 18: convection `C` at palindrome center or similar.
 
 ## Interface validation findings
 

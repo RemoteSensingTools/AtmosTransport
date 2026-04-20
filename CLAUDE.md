@@ -154,9 +154,11 @@ Physics code dispatches on concrete types — no if/else on grid or scheme.
 AbstractArchitecture        → CPU, GPU
 AbstractGrid{FT, Arch}      → LatitudeLongitudeGrid, CubedSphereGrid
 AbstractAdvectionScheme      → UpwindScheme, SlopesScheme{L}, PPMScheme{L}
-AbstractConvection           → NoConvection, TiedtkeConvection, RASConvection
-AbstractDiffusion            → NoDiffusion, BoundaryLayerDiffusion, PBLDiffusion, NonLocalPBLDiffusion
-AbstractChemistry            → NoChemistry, RadioactiveDecay, CompositeChemistry
+AbstractConvection           → NoConvection, TiedtkeConvection, RASConvection  (legacy; src_legacy)
+AbstractDiffusionOperator    → NoDiffusion, ImplicitVerticalDiffusion{FT, KzF}  (plan 16b, src/Operators/Diffusion/)
+AbstractDiffusion            → (src_legacy only: BoundaryLayerDiffusion, PBLDiffusion, NonLocalPBLDiffusion — parked)
+AbstractTimeVaryingField{FT, N} → ConstantField{FT, N}, ProfileKzField{FT, V}, PreComputedKzField{FT, A}, DerivedKzField  (plan 16a/16b, src/State/Fields/)
+AbstractChemistryOperator    → NoChemistry, ExponentialDecay{FT, N, R}, CompositeChemistry  (plan 15)
 AbstractMetDriver{FT}        → ERA5MetDriver, PreprocessedLatLonMetDriver, GEOSFPCubedSphereMetDriver
 AbstractSurfaceFlux          → SurfaceFlux, TimeVaryingSurfaceFlux, EdgarSource, ...
 AbstractBufferingStrategy    → SingleBuffer, DoubleBuffer
@@ -582,6 +584,22 @@ See `src/Diffusion/Diffusion.jl` for a clean example with 4 implementations.
   by reading directly into output panels with a single buffer).
 - **Kernel launch overhead**: fuse small sequential kernels where memory traffic dominates.
 - **Coalesced access**: ensure fastest-varying thread dimension matches innermost array index.
+- **Vertical diffusion cost scales with Nz**, not with Kz-field complexity.
+  Plan 16b Commit 6 benchmarked `ImplicitVerticalDiffusion` at wurst L40S F32,
+  cfl=0.4. `ConstantField`, `ProfileKzField` (`CuArray{FT, 1}` via `Adapt`),
+  and `PreComputedKzField` (`CuArray{FT, 3}`) all cost essentially the same
+  per step — the 2–6% spread between them is memory traffic, not
+  `field_value` dispatch. What moves the needle is the column-serial
+  Thomas solve: ~5% overhead at Nz=4, ~20% at Nz=32, ~75% at Nz=72 for
+  Upwind Nt=10. Slopes advection is more expensive per sweep, so the
+  same ~8 ms large-grid Thomas fraction is a smaller percentage (~40%
+  at Nz=72). The 30% target in the plan is soft; large-grid use can
+  still pay the cost. Future optimizations (documented in
+  [artifacts/plan16/perf/SUMMARY.md](artifacts/plan16/perf/SUMMARY.md)):
+  multi-tracer fusion inside the kernel (build coefficients once,
+  back-substitute Nt times), shared-memory `w[k]`, persistent
+  `w_scratch` reuse when Kz is stationary.
+
 - **Measure, don't subtract (sync cost in particular)**. Plan 13 hypothesized
   that removing `synchronize(backend)` from Strang sweeps would give 20–40%
   GPU speedup. Direct CUDA-event measurement (`CUDA.@elapsed` wrapped inside

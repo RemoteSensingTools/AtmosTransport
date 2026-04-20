@@ -965,6 +965,8 @@ function strang_split!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
                        workspace::AdvectionWorkspace,
                        cfl_limit::Real = one(eltype(state.air_mass)),
                        diffusion_op::AbstractDiffusionOperator = NoDiffusion(),
+                       emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
+                       meteo = nothing,
                        dt::Union{Nothing, Real} = nothing) where {B <: AbstractMassBasis}
     m = state.air_mass
     am, bm, cm = fluxes.am, fluxes.bm, fluxes.cm
@@ -976,6 +978,10 @@ function strang_split!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
     strang_split_mt!(state.tracers_raw, m, am, bm, cm, scheme, workspace;
                      cfl_limit = cfl_limit,
                      diffusion_op = diffusion_op,
+                     emissions_op = emissions_op,
+                     tracer_names = state.tracer_names,
+                     meteo = meteo,
+                     grid = grid,
                      dt = dt)
     return nothing
 end
@@ -1004,10 +1010,14 @@ function apply!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
                 scheme::AbstractAdvectionScheme, dt;
                 workspace::AdvectionWorkspace,
                 cfl_limit::Real = one(eltype(state.air_mass)),
-                diffusion_op::AbstractDiffusionOperator = NoDiffusion()) where {B <: AbstractMassBasis}
+                diffusion_op::AbstractDiffusionOperator = NoDiffusion(),
+                emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
+                meteo = nothing) where {B <: AbstractMassBasis}
     strang_split!(state, fluxes, grid, scheme;
                   workspace = workspace, cfl_limit = cfl_limit,
-                  diffusion_op = diffusion_op, dt = dt)
+                  diffusion_op = diffusion_op,
+                  emissions_op = emissions_op,
+                  meteo = meteo, dt = dt)
     return nothing
 end
 
@@ -1156,6 +1166,10 @@ function strang_split_mt!(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
                           ws::AdvectionWorkspace{FT};
                           cfl_limit::Real = one(FT),
                           diffusion_op::AbstractDiffusionOperator = NoDiffusion(),
+                          emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
+                          tracer_names::Union{Nothing, Tuple} = nothing,
+                          meteo = nothing,
+                          grid = nothing,
                           dt::Union{Nothing, Real} = nothing) where FT
     cfl_ft = convert(FT, cfl_limit)
 
@@ -1187,16 +1201,44 @@ function strang_split_mt!(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
     for _ in 1:n_y; rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_y_mt!, rm_cur, rm_alt, m_cur, m_alt, bm, fs_y); end
     for _ in 1:n_z; rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_z_mt!, rm_cur, rm_alt, m_cur, m_alt, cm, fs_z); end
 
-    # Palindrome center: V(dt) vertical diffusion (plan 16b Commit 4).
-    # `NoDiffusion`'s method is `= nothing`, so Julia's dispatch makes this
-    # a no-op dead branch by default — no floating-point work, hence bit-
-    # exact backward compatibility with pre-16b behavior.
+    # Palindrome center (plan 16b Commit 4 → plan 17 Commit 5).
+    # Two configurations:
     #
-    # Linear-operator caveat: V(dt/2) ∘ V(dt/2) = V(dt) holds because Kz
-    # is state-independent within a timestep. When meteorology-coupled Kz
-    # (`DerivedKzField`) evolves sub-timestep in Commits 5+, this single-
-    # step approximation should be revisited.
-    apply_vertical_diffusion!(rm_cur, diffusion_op, ws, dt)
+    # 1. `emissions_op isa NoSurfaceFlux` (the default, and the only
+    #    path pre-plan-17): single V(dt) at the palindrome center.
+    #    Matches plan 16b exactly — NoDiffusion is a dead branch,
+    #    so with both defaults this whole block collapses to zero
+    #    floating-point work and is bit-exact with pre-16b behavior.
+    #
+    # 2. `emissions_op isa SurfaceFluxOperator`: the OPERATOR_COMPOSITION.md
+    #    §3.2 arrangement, V(dt/2) → S(dt) → V(dt/2). Fresh emissions
+    #    see vertical mixing before the reverse-half horizontal sweeps
+    #    transport them. Emissions enter at the palindrome center with
+    #    the FULL dt (not halved) — sources/sinks don't participate in
+    #    the Strang half-step dance; symmetric operators around them
+    #    provide the 2nd-order accuracy. Plan 17 §4.3 Decision 7 +
+    #    Decision 12 Option A.
+    #
+    # Linear-operator caveat: V(dt) = V(dt/2) ∘ V(dt/2) is exact for
+    # the continuous ODE flow but only O(dt²) for Backward Euler
+    # ((I-dt·D)⁻¹ ≠ [(I-dt/2·D)⁻¹]²). Switching from Path 1 to Path 2
+    # is therefore NOT bit-exact when `diffusion_op` is non-trivial —
+    # the two halves of V differ by O((dt·D)²). Acceptable since Path 2
+    # is only reached when the user opts in to emissions.
+    if emissions_op isa NoSurfaceFlux
+        apply_vertical_diffusion!(rm_cur, diffusion_op, ws, dt, meteo)
+    else
+        tracer_names === nothing && throw(ArgumentError(
+            "strang_split_mt!: `emissions_op` is non-trivial but " *
+            "`tracer_names` was not supplied — the surface-flux " *
+            "kernel needs per-tracer index resolution. Pass " *
+            "`tracer_names = state.tracer_names`."))
+        half_dt = dt === nothing ? nothing : dt / 2
+        apply_vertical_diffusion!(rm_cur, diffusion_op, ws, half_dt, meteo)
+        apply_surface_flux!(rm_cur, emissions_op, ws, dt, meteo, grid;
+                            tracer_names = tracer_names)
+        apply_vertical_diffusion!(rm_cur, diffusion_op, ws, half_dt, meteo)
+    end
 
     # Reverse half: Z → Y → X
     for _ in 1:n_z; rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_z_mt!, rm_cur, rm_alt, m_cur, m_alt, cm, fs_z); end

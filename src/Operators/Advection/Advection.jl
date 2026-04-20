@@ -33,6 +33,12 @@ import ..AbstractOperator, ..apply!
 # `= nothing`, keeping the default path bit-exact with pre-16b behavior.
 using ..Diffusion: AbstractDiffusionOperator, NoDiffusion,
                    apply_vertical_diffusion!
+# SurfaceFlux is loaded before Advection in Operators.jl so the palindrome
+# center can dispatch on `AbstractSurfaceFluxOperator` (plan 17 Commit 5).
+# `NoSurfaceFlux`'s `apply_surface_flux!` method returns `nothing`, keeping
+# the default path bit-exact with pre-17 behavior.
+using ..SurfaceFlux: AbstractSurfaceFluxOperator, NoSurfaceFlux,
+                     apply_surface_flux!
 using ...State: CellState, AbstractStructuredFaceFluxState, AbstractFaceFluxState,
     StructuredFaceFluxState, AbstractUnstructuredFaceFluxState,
     DryMassFluxBasis, DryStructuredFluxState, AbstractMassBasis,

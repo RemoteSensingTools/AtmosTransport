@@ -75,6 +75,7 @@ using .MetDrivers: AbstractDriver, AbstractClosure, AbstractMetDriver,
                    load_cmfmc_window!, load_surface_window!, load_tm5conv_window!,
                    load_temperature_window!,
                    ConvectionForcing, has_convection_forcing,
+                   copy_convection_forcing!, allocate_convection_forcing_like,
                    window_count, has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc,
                    has_surface, has_tm5conv, has_temperature,
                    grid_type, horizontal_topology,
@@ -221,6 +222,7 @@ export interpolate_fluxes!, expected_air_mass!, interpolate_qv!, copy_fluxes!
 export load_cmfmc_window!, load_surface_window!, load_tm5conv_window!
 export load_temperature_window!
 export ConvectionForcing, has_convection_forcing
+export copy_convection_forcing!, allocate_convection_forcing_like
 export window_count, has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc
 export has_surface, has_tm5conv, has_temperature
 export grid_type, horizontal_topology
@@ -243,7 +245,8 @@ export open_streaming_transport_binary, write_streaming_window!, close_streaming
 export TransportModel, Simulation, DrivenSimulation, SurfaceFluxSource
 export step!, run!, run_window!
 export window_index, substep_index, current_qv
-export with_chemistry, with_diffusion
+export with_chemistry, with_diffusion, with_emissions
+export with_convection, with_convection_forcing
 
 # Offline regridding (preprocessing only)
 export build_regridder, save_regridder, load_regridder

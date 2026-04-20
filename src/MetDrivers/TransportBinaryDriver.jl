@@ -30,22 +30,24 @@ struct FaceIndexedFluxDeltas{AH, ACm, AM}
     dm     :: AM
 end
 
-struct StructuredTransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D} <: AbstractTransportWindow{Basis}
+struct StructuredTransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D, C} <: AbstractTransportWindow{Basis}
     air_mass         :: M
     surface_pressure :: PS
     fluxes           :: F
     qv_start         :: Q
     qv_end           :: Q
     deltas           :: D
+    convection       :: C   # ::Union{Nothing, ConvectionForcing} — plan 18 Commit 2
 end
 
-struct FaceIndexedTransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D} <: AbstractTransportWindow{Basis}
+struct FaceIndexedTransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D, C} <: AbstractTransportWindow{Basis}
     air_mass         :: M
     surface_pressure :: PS
     fluxes           :: F
     qv_start         :: Q
     qv_end           :: Q
     deltas           :: D
+    convection       :: C   # ::Union{Nothing, ConvectionForcing} — plan 18 Commit 2
 end
 
 function Adapt.adapt_structure(to, deltas::StructuredFluxDeltas)
@@ -70,8 +72,9 @@ function Adapt.adapt_structure(to, window::StructuredTransportWindow{B}) where {
     qv_start = Adapt.adapt(to, window.qv_start)
     qv_end = Adapt.adapt(to, window.qv_end)
     deltas = Adapt.adapt(to, window.deltas)
-    return StructuredTransportWindow{B, typeof(air_mass), typeof(surface_pressure), typeof(fluxes), typeof(qv_start), typeof(deltas)}(
-        air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas)
+    convection = Adapt.adapt(to, window.convection)
+    return StructuredTransportWindow{B, typeof(air_mass), typeof(surface_pressure), typeof(fluxes), typeof(qv_start), typeof(deltas), typeof(convection)}(
+        air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas, convection)
 end
 
 function Adapt.adapt_structure(to, window::FaceIndexedTransportWindow{B}) where {B <: AbstractMassBasis}
@@ -81,24 +84,32 @@ function Adapt.adapt_structure(to, window::FaceIndexedTransportWindow{B}) where 
     qv_start = Adapt.adapt(to, window.qv_start)
     qv_end = Adapt.adapt(to, window.qv_end)
     deltas = Adapt.adapt(to, window.deltas)
-    return FaceIndexedTransportWindow{B, typeof(air_mass), typeof(surface_pressure), typeof(fluxes), typeof(qv_start), typeof(deltas)}(
-        air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas)
+    convection = Adapt.adapt(to, window.convection)
+    return FaceIndexedTransportWindow{B, typeof(air_mass), typeof(surface_pressure), typeof(fluxes), typeof(qv_start), typeof(deltas), typeof(convection)}(
+        air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas, convection)
 end
 
 mass_basis(::AbstractTransportWindow{B}) where {B} = B()
 has_humidity_endpoints(window::AbstractTransportWindow) = window.qv_start !== nothing && window.qv_end !== nothing
 has_flux_delta(window::AbstractTransportWindow) = window.deltas !== nothing
 
+# Plan 18 Commit 2: window-level convection probe. Extends the
+# `ConvectionForcing` overload from `ConvectionForcing.jl` to the
+# window layer.
+has_convection_forcing(window::AbstractTransportWindow) = window.convection !== nothing
+
 function StructuredTransportWindow(air_mass, surface_pressure, fluxes::StructuredFaceFluxState{B};
-                                   qv_start = nothing, qv_end = nothing, deltas = nothing) where {B <: AbstractMassBasis}
-    return StructuredTransportWindow{B, typeof(air_mass), typeof(surface_pressure), typeof(fluxes), typeof(qv_start), typeof(deltas)}(
-        air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas)
+                                   qv_start = nothing, qv_end = nothing, deltas = nothing,
+                                   convection = nothing) where {B <: AbstractMassBasis}
+    return StructuredTransportWindow{B, typeof(air_mass), typeof(surface_pressure), typeof(fluxes), typeof(qv_start), typeof(deltas), typeof(convection)}(
+        air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas, convection)
 end
 
 function FaceIndexedTransportWindow(air_mass, surface_pressure, fluxes::FaceIndexedFluxState{B};
-                                    qv_start = nothing, qv_end = nothing, deltas = nothing) where {B <: AbstractMassBasis}
-    return FaceIndexedTransportWindow{B, typeof(air_mass), typeof(surface_pressure), typeof(fluxes), typeof(qv_start), typeof(deltas)}(
-        air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas)
+                                    qv_start = nothing, qv_end = nothing, deltas = nothing,
+                                    convection = nothing) where {B <: AbstractMassBasis}
+    return FaceIndexedTransportWindow{B, typeof(air_mass), typeof(surface_pressure), typeof(fluxes), typeof(qv_start), typeof(deltas), typeof(convection)}(
+        air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas, convection)
 end
 
 """

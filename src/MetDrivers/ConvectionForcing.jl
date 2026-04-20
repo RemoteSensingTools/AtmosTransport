@@ -15,12 +15,12 @@
 # `cmfmc`, `dtrain`, `tm5_fields` are non-nothing) is invariant for
 # the lifetime of a run (Decision 27).
 #
-# Commit 1 ships the minimal struct: two-argument default constructor
-# (all-nothing placeholder) and a three-argument positional
-# constructor. Commit 2 extends with: invariant-enforcing validating
-# constructors, `copy_convection_forcing!`, `allocate_convection_forcing_like`,
-# `Adapt.adapt_structure` for GPU transfer, `has_convection_forcing`,
-# and the window-struct extensions.
+# Commit 1 shipped the minimal struct + zero-arg placeholder.
+# Commit 2 adds: validating inner constructor (Decision 22 invariants
+# relaxed per Decision 28 — see note below), `_cap`,
+# `_check_capability_match`, `copy_convection_forcing!`,
+# `allocate_convection_forcing_like`, `Adapt.adapt_structure`, and
+# window-struct integration.
 # ---------------------------------------------------------------------------
 
 """
@@ -40,38 +40,66 @@ forcing. Three optional payload slots:
   four-field entrainment/detrainment arrays at layer centers
   `(Nx, Ny, Nz)`. TM5 / `TM5Convection` consumer.
 
-Invariants (Commit 2 will add validating constructors):
+# Invariants (enforced by the inner constructor)
 
-- `dtrain !== nothing` requires `cmfmc !== nothing`.
-- `tm5_fields !== nothing` and `cmfmc !== nothing` may coexist for
-  dual-capability binaries (plan 18 v5.1 Decision 28 — the sim
-  selects which capability to consume via the installed operator).
-- Capability is INVARIANT for the lifetime of a `DrivenSimulation`
-  (plan 18 v5.1 Decision 27). `copy_convection_forcing!` enforces
-  strict match.
+- **DTRAIN requires CMFMC.** `dtrain !== nothing ⇒ cmfmc !== nothing`.
+  DTRAIN without CMFMC is meaningless (DTRAIN detrains from the
+  updraft mass flux; no mass flux, nothing to detrain).
 
-Default construction: `ConvectionForcing()` produces an all-nothing
-placeholder. This is the initial value of `TransportModel.convection_forcing`;
+- **Dual capability is allowed** (plan 18 v5.1 §2.22 Decision 28).
+  A binary may carry both CMFMC and TM5 payloads simultaneously; the
+  sim selects which capability to consume based on the installed
+  operator. v5.1 §2.4's stricter "no mixing CMFMC with TM5" language
+  is superseded by Decision 28's allowed-combinations table. The
+  invariant here only enforces the load-bearing constraint above.
+
+- **Capability is INVARIANT for the lifetime of a `DrivenSimulation`**
+  (Decision 27). `copy_convection_forcing!` enforces strict tuple
+  match between `dst` and `src` so a mid-run capability toggle
+  raises an error — catches both "stale values" (dst has a field src
+  doesn't) and "missing destination" (src has a field dst doesn't).
+
+# Default construction
+
+`ConvectionForcing()` produces an all-nothing placeholder. This is
+the initial value of `TransportModel.convection_forcing`;
 `DrivenSimulation` allocates real buffers at construction (plan 18
-v5.1 Decision 26) via `allocate_convection_forcing_like` (shipped
-Commit 2).
+v5.1 Decision 26) via `allocate_convection_forcing_like`.
+
+# See also
+
+- [`has_convection_forcing`](@ref) — capability probe.
+- [`copy_convection_forcing!`](@ref) — per-substep refresh copy.
+- [`allocate_convection_forcing_like`](@ref) — sim-construction
+  allocation.
 """
 struct ConvectionForcing{CM, DT, TM}
     cmfmc      :: CM
     dtrain     :: DT
     tm5_fields :: TM
+
+    function ConvectionForcing{CM, DT, TM}(cmfmc::CM, dtrain::DT, tm5_fields::TM) where {CM, DT, TM}
+        if dtrain !== nothing && cmfmc === nothing
+            throw(ArgumentError(
+                "ConvectionForcing: dtrain is populated but cmfmc is nothing. " *
+                "DTRAIN requires CMFMC (DTRAIN detrains from the updraft mass flux). " *
+                "If you meant a Tiedtke-style fallback, set dtrain = nothing too."))
+        end
+        return new{CM, DT, TM}(cmfmc, dtrain, tm5_fields)
+    end
 end
 
-# Julia auto-generates the 3-argument outer constructor
-# `ConvectionForcing(cmfmc, dtrain, tm5_fields)` from the struct
-# definition — re-defining it here would be a method overwrite.
-# Commit 2 will add validating inner constructors (plan 18 v5.1
-# §2.4 invariants) and `Adapt.adapt_structure`.
-
-# Zero-argument default: all-nothing placeholder used as the initial
-# model-side slot before sim construction allocates real buffers
-# (plan 18 v5.1 §2.20 Decision 26).
+# Defining a validating inner constructor suppresses Julia's
+# auto-generated outer constructors, so we provide them explicitly.
+# - 3-arg outer: forwards to the validating inner.
+# - 0-arg default: all-nothing placeholder (plan 18 v5.1 §2.20 Decision 26).
+ConvectionForcing(cmfmc::CM, dtrain::DT, tm5_fields::TM) where {CM, DT, TM} =
+    ConvectionForcing{CM, DT, TM}(cmfmc, dtrain, tm5_fields)
 ConvectionForcing() = ConvectionForcing(nothing, nothing, nothing)
+
+# =========================================================================
+# Capability probes (Decisions 27, 28)
+# =========================================================================
 
 """
     has_convection_forcing(forcing::ConvectionForcing) -> Bool
@@ -80,10 +108,140 @@ Whether `forcing` carries any non-nothing payload. Returns `false`
 for the all-nothing placeholder. Used by `_refresh_forcing!` as a
 gate so the copy path is skipped for models without an active
 convection operator.
+
+The window-level overload `has_convection_forcing(window) =
+window.convection !== nothing` is defined in `TransportBinaryDriver.jl`
+alongside the window struct extensions (plan 18 Commit 2).
 """
 has_convection_forcing(forcing::ConvectionForcing) =
     forcing.cmfmc !== nothing ||
     forcing.dtrain !== nothing ||
     forcing.tm5_fields !== nothing
 
+"""
+    _cap(f::ConvectionForcing) -> NTuple{3, Bool}
+
+Capability tuple `(has_cmfmc, has_dtrain, has_tm5_fields)`. Used by
+`_check_capability_match` to enforce Decision 27 invariance —
+`copy_convection_forcing!` requires exact capability agreement between
+src and dst.
+"""
+@inline _cap(f::ConvectionForcing) =
+    (f.cmfmc !== nothing, f.dtrain !== nothing, f.tm5_fields !== nothing)
+
+function _check_capability_match(dst::ConvectionForcing, src::ConvectionForcing)
+    _cap(dst) == _cap(src) ||
+        throw(ArgumentError(
+            "ConvectionForcing capability mismatch " *
+            "(dst: $(_cap(dst)), src: $(_cap(src))). " *
+            "Per plan 18 v5.1 Decision 27, capability is invariant for the " *
+            "lifetime of a DrivenSimulation. Check the preprocessing pipeline: " *
+            "a binary must write a consistent set of convection blocks (cmfmc, " *
+            "dtrain, tm5_fields) across all windows."))
+    return nothing
+end
+
+# =========================================================================
+# Per-substep copy (Decision 23 — refresh window → model)
+# =========================================================================
+
+"""
+    copy_convection_forcing!(dst::ConvectionForcing, src::ConvectionForcing) -> dst
+
+Copy `src`'s arrays into `dst`'s preallocated buffers in place.
+Preserves `===` identity of the destination's arrays — this is what
+makes the per-substep refresh zero-allocation after the sim-construction
+allocation step (Decision 26).
+
+Enforces strict capability match first (Decision 27): both sides must
+have identical `_cap(...)` tuples. Otherwise throws `ArgumentError`.
+This catches both directions of mismatch (dst has a field src lacks,
+or vice versa) — both are silent correctness hazards.
+
+Used by `DrivenSimulation._refresh_forcing!` (Commit 8) to populate
+`sim.model.convection_forcing` from `sim.window.convection` each substep.
+"""
+function copy_convection_forcing!(dst::ConvectionForcing, src::ConvectionForcing)
+    _check_capability_match(dst, src)
+    if src.cmfmc !== nothing
+        copyto!(dst.cmfmc, src.cmfmc)
+    end
+    if src.dtrain !== nothing
+        copyto!(dst.dtrain, src.dtrain)
+    end
+    if src.tm5_fields !== nothing
+        for name in (:entu, :detu, :entd, :detd)
+            copyto!(getfield(dst.tm5_fields, name),
+                    getfield(src.tm5_fields, name))
+        end
+    end
+    return dst
+end
+
+# =========================================================================
+# Sim-construction allocation (Decision 26)
+# =========================================================================
+
+# Small backend-adapter helper. `DrivenSimulation.jl` has its own
+# `_window_backend_adapter` at `:81-89` but that's in `Models`, which
+# depends on `MetDrivers` — importing it here would invert the load
+# order. Inline the same logic locally instead.
+@inline function _convection_backend_adapter(reference_array)
+    if isdefined(Main, :CUDA)
+        CUDA = getfield(Main, :CUDA)
+        if reference_array isa CUDA.AbstractGPUArray
+            return CUDA.CuArray
+        end
+    end
+    return Array
+end
+
+"""
+    allocate_convection_forcing_like(src::ConvectionForcing, backend_hint) -> ConvectionForcing
+
+Build a destination `ConvectionForcing` whose array fields are
+`similar(src_field)` — same shape, same element type, same backend
+(inferred from `backend_hint`, typically `model.state.air_mass`).
+Capability (which fields are non-nothing) exactly matches `src`.
+
+Used by `DrivenSimulation` construction (plan 18 v5.1 Decision 26) to
+seed `model.convection_forcing` from the first loaded window. After
+this step, `copy_convection_forcing!` reuses the same buffers across
+all subsequent substeps.
+
+The all-nothing placeholder `ConvectionForcing()` produces another
+all-nothing placeholder when run through this helper.
+"""
+function allocate_convection_forcing_like(src::ConvectionForcing, backend_hint)
+    adaptor = _convection_backend_adapter(backend_hint)
+    _like(arr) = adaptor === Array ? similar(arr) : adaptor(similar(arr))
+
+    cmfmc = src.cmfmc === nothing ? nothing : _like(src.cmfmc)
+    dtrain = src.dtrain === nothing ? nothing : _like(src.dtrain)
+    tm5_fields = src.tm5_fields === nothing ? nothing : (
+        entu = _like(src.tm5_fields.entu),
+        detu = _like(src.tm5_fields.detu),
+        entd = _like(src.tm5_fields.entd),
+        detd = _like(src.tm5_fields.detd),
+    )
+    return ConvectionForcing(cmfmc, dtrain, tm5_fields)
+end
+
+# =========================================================================
+# Adapt.adapt_structure — GPU transfer support
+# =========================================================================
+
+function Adapt.adapt_structure(to, f::ConvectionForcing)
+    cmfmc = f.cmfmc === nothing ? nothing : Adapt.adapt(to, f.cmfmc)
+    dtrain = f.dtrain === nothing ? nothing : Adapt.adapt(to, f.dtrain)
+    tm5_fields = f.tm5_fields === nothing ? nothing : (
+        entu = Adapt.adapt(to, f.tm5_fields.entu),
+        detu = Adapt.adapt(to, f.tm5_fields.detu),
+        entd = Adapt.adapt(to, f.tm5_fields.entd),
+        detd = Adapt.adapt(to, f.tm5_fields.detd),
+    )
+    return ConvectionForcing(cmfmc, dtrain, tm5_fields)
+end
+
 export ConvectionForcing, has_convection_forcing
+export copy_convection_forcing!, allocate_convection_forcing_like

@@ -475,6 +475,81 @@ Test totals: `test_transport_model_diffusion.jl` 24/24;
 `test_diffusion_operator.jl`, `test_diffusion_palindrome.jl` all
 unchanged.
 
+### Commit 6 — Benchmarks + ProfileKzField GPU dispatch
+
+Shipped two things: (a) a wurst-runnable benchmark that compares
+`TransportModel.step!` overhead across the four Kz-field choices,
+and (b) the Adapt-based fix for the ProfileKzField GPU dispatch
+question (plan pitfall 11).
+
+- [scripts/benchmarks/bench_diffusion_overhead.jl](../../../scripts/benchmarks/bench_diffusion_overhead.jl):
+  parallels the plan-15 chemistry-overhead bench. Four configs
+  per (FT, scheme, Nt) cell: `NoDiffusion`, `ConstantField`,
+  `ProfileKzField`, `PreComputedKzField`. Median over ~25 steps,
+  warm-up=3. GPU path uses `CUDA.synchronize` around each step for
+  wall-clock-with-sync measurement (matching the chemistry bench).
+- [artifacts/plan16/perf/SUMMARY.md](../../../artifacts/plan16/perf/SUMMARY.md)
+  collects results from small/medium/large on wurst (L40S, F32).
+  Raw logs in `bench_medium_gpu.log`, `bench_large_gpu.log`.
+
+**ProfileKzField GPU dispatch resolved (plan pitfall 11).** The
+struct is now parametric on the vector type: `ProfileKzField{FT, V <: AbstractVector{FT}}`.
+`Adapt.adapt_structure(to, f::ProfileKzField)` converts the backing
+vector to the device at kernel-launch time, so KA's normal Adapt
+walk turns a `Vector{FT}` into a `CuArray{FT, 1}` (or `MtlArray`,
+etc.) transparently. This is **Option 2** from the plan
+("Adapt.jl pattern"). Options 1 (NTuple compile-time bound) and 3
+(3D-cache broadcast) are not needed and were not shipped.
+
+Applied the same Adapt pattern to `PreComputedKzField{FT, A}`.
+Without that, a `CuArray{FT, 3}` backing fails GPU kernel
+compilation with `KernelError: passing non-bitstype argument`
+(the bare `CuArray` is a host-side wrapper; the kernel needs a
+`CuDeviceArray`, which `Adapt.adapt` produces).
+
+`test_fields.jl` gained 8 new tests validating the GPU path
+(`Adapt to GPU backing` subtestset in the ProfileKzField group).
+ProfileKzField total: 34 (was 26). Only runs when CUDA is
+functional, following the chemistry-tests `HAS_GPU_CHEM` pattern.
+
+### Benchmark headline numbers
+
+Full table: [artifacts/plan16/perf/SUMMARY.md](../../../artifacts/plan16/perf/SUMMARY.md).
+GPU F32 on NVIDIA L40S.
+
+- **Small grid** (72×36×4, Nt=10 upwind): baseline 0.235 ms,
+  diffused 0.246–0.251 ms → **5–7% overhead**. Launch-dominated,
+  well below target.
+- **Medium grid** (288×144×32, Nt=10 upwind): baseline 1.32 ms,
+  diffused 1.54–1.60 ms → **11–21% overhead**. Within plan target.
+- **Large grid** (576×288×72, Nt=10 upwind): baseline 11.4 ms,
+  diffused 18.7–20.1 ms → **65–76% overhead**. Exceeds soft target.
+
+**The four Kz-field backings have near-identical cost** at a given
+grid / Nt — `ConstantField` and `ProfileKzField` (`CuArray{FT, 1}`
+via Adapt) are indistinguishable; `PreComputedKzField`
+(`CuArray{FT, 3}`) is 2–6% more expensive, attributable to extra
+memory traffic. So field-type choice does not materially move the
+needle — the per-column Thomas solve is where the cost lives.
+
+**Why large exceeds target.** Overhead scales with Nz (Nz=72 vs
+Nz=32 at medium). Thomas is column-serial — one thread walks k=1..72
+forward then k=72..1 back, ~144 fp ops on the critical path. More
+columns parallelize, but column depth is the bottleneck. The plan's
+30% target is explicitly flagged "soft" (§4.6 "Performance (soft)"),
+and this result is not a shipping blocker. Documented in SUMMARY.md
+with three natural optimization paths for a future plan:
+
+- Multi-tracer fusion inside the kernel (build coefficients once,
+  back-substitute Nt times), saving most arithmetic for Nt > 1.
+- Shared-memory Thomas (`w[k]` in SMEM, less DRAM round-trip).
+- Persistent `w_scratch` reuse across timesteps when Kz is stationary
+  (cache the factorization, re-use).
+
+All three are within-kernel optimizations that don't change the
+operator interface or adjoint structure; they can be layered on in
+a dedicated perf-tuning plan once operational needs motivate.
+
 ### Deferred from Commit 5 (explicit scope trim)
 
 - **Threading `current_time` through `apply!`.** The `current_time`

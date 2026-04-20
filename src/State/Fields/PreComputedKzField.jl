@@ -51,3 +51,10 @@ PreComputedKzField(data::A) where {FT, A <: AbstractArray{FT, 3}} =
     @inbounds f.data[idx[1], idx[2], idx[3]]
 
 update_field!(f::PreComputedKzField, ::Real) = f
+
+# Adapt hook: lets KA kernels receive a device-shaped `PreComputedKzField`.
+# When `data::CuArray{...}` (non-bitstype, holds a host-side pointer
+# wrapper), `Adapt.adapt(to, f.data)` becomes a `CuDeviceArray` usable
+# from inside the kernel. Mirrors the `ProfileKzField` pattern.
+Adapt.adapt_structure(to, f::PreComputedKzField) =
+    PreComputedKzField(Adapt.adapt(to, f.data))

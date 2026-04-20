@@ -20,6 +20,15 @@ using AtmosTransport: AbstractTimeVaryingField, ConstantField, ProfileKzField,
 using AtmosTransport.State.Fields: _beljaars_viterbo_kz, _obukhov_length,
                                     _prandtl_inverse
 using KernelAbstractions: @kernel, @index, get_backend, synchronize
+using Adapt
+
+# GPU support — optional; only run `@testset "... GPU"` blocks if CUDA is up.
+const HAS_GPU_FIELDS = try
+    @eval using CUDA
+    CUDA.functional()
+catch
+    false
+end
 
 @testset "TimeVaryingField — ConstantField" begin
 
@@ -184,6 +193,38 @@ end
         # Every column should match the profile
         for i in 1:3, j in 1:2
             @test out[i, j, :] == profile
+        end
+    end
+
+    if HAS_GPU_FIELDS
+        @testset "Adapt to GPU backing" begin
+            # The struct is parametric on `V <: AbstractVector{FT}` so the
+            # same type handles both `Vector` (CPU) and `CuArray` (GPU)
+            # backings. `Adapt.adapt_structure` swaps the profile storage
+            # at kernel-launch time without losing FT.
+            profile_cpu = Float32[0.5f0, 1.0f0, 1.5f0, 2.0f0]
+            f_cpu = ProfileKzField(profile_cpu)
+            f_gpu = Adapt.adapt(CUDA.CuArray, f_cpu)
+
+            @test f_gpu isa ProfileKzField{Float32}
+            @test f_gpu.profile isa CUDA.CuArray{Float32, 1}
+
+            # Confirm field_value works through the kernel on GPU
+            out = CUDA.zeros(Float32, 3, 2, 4)
+            backend = get_backend(out)
+
+            @kernel function _fill_from_profile_gpu!(out, field)
+                i, j, k = @index(Global, NTuple)
+                @inbounds out[i, j, k] = field_value(field, (i, j, k))
+            end
+
+            _fill_from_profile_gpu!(backend, 64)(out, f_gpu; ndrange = size(out))
+            synchronize(backend)
+
+            out_cpu = Array(out)
+            for i in 1:3, j in 1:2
+                @test out_cpu[i, j, :] == profile_cpu
+            end
         end
     end
 end

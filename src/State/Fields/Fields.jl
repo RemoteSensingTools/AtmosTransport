@@ -26,6 +26,8 @@ Concrete types:
 """
 module Fields
 
+using Adapt
+
 export AbstractTimeVaryingField, ConstantField, ProfileKzField, PreComputedKzField
 export DerivedKzField, PBLPhysicsParameters
 export field_value, update_field!

@@ -1,0 +1,45 @@
+┌ Error: Error during loading of extension AtmosTransportCUDAExt of AtmosTransport, use `Base.retry_load_extensions()` to retry.
+│   exception =
+│    1-element ExceptionStack:
+│    ArgumentError: Package AtmosTransportCUDAExt [75c1e8d0-5789-5489-a6b2-339989990b0e] is required but does not seem to be installed:
+│     - Run `Pkg.instantiate()` to install all recorded dependencies.
+│    
+│    Stacktrace:
+│      [1] __require_prelocked(pkg::Base.PkgId, env::Nothing)
+│        @ Base ./loading.jl:2615
+│      [2] _require_prelocked(uuidkey::Base.PkgId, env::Nothing)
+│        @ Base ./loading.jl:2493
+│      [3] _require_prelocked(uuidkey::Base.PkgId)
+│        @ Base ./loading.jl:2487
+│      [4] run_extension_callbacks(extid::Base.ExtensionId)
+│        @ Base ./loading.jl:1607
+│      [5] run_extension_callbacks(pkgid::Base.PkgId)
+│        @ Base ./loading.jl:1644
+│      [6] run_package_callbacks(modkey::Base.PkgId)
+│        @ Base ./loading.jl:1460
+│      [7] _require_prelocked(uuidkey::Base.PkgId, env::String)
+│        @ Base ./loading.jl:2501
+│      [8] macro expansion
+│        @ ./loading.jl:2421 [inlined]
+│      [9] macro expansion
+│        @ ./lock.jl:376 [inlined]
+│     [10] __require(into::Module, mod::Symbol)
+│        @ Base ./loading.jl:2386
+│     [11] require(into::Module, mod::Symbol)
+│        @ Base ./loading.jl:2362
+│     [12] top-level scope
+│        @ ~/code/gitHub/AtmosTransportModel/scripts/benchmarks/bench_diffusion_overhead.jl:49
+│     [13] include(mod::Module, _path::String)
+│        @ Base ./Base.jl:306
+│     [14] exec_options(opts::Base.JLOptions)
+│        @ Base ./client.jl:317
+│     [15] _start()
+│        @ Base ./client.jl:550
+└ @ Base loading.jl:1617
+Diffusion overhead bench — medium / gpu (grid=288x144x32, steps=25, cfl=0.4)
+dtype    scheme     Nt     baseline    const(ms)  profile(ms)  precomp(ms)     max-Δ%
+------------------------------------------------------------------------------------------
+Float32  upwind      5        0.671        0.715        0.714        0.748     11.41%
+Float32  upwind     10        1.322        1.537        1.536        1.602     21.23%
+Float32  slopes      5        1.277        1.354        1.356        1.391      8.93%
+Float32  slopes     10        2.276        2.506        2.509        2.550     12.03%

@@ -259,6 +259,29 @@ window_index(sim::DrivenSimulation) = sim.current_window_index
 substep_index(sim::DrivenSimulation) = _active_substep(sim.iteration, sim.steps_per_window)
 current_qv(sim::DrivenSimulation) = sim.qv_buffer
 
+"""
+    current_time(sim::DrivenSimulation) -> FT
+
+Simulation time [s] at the start of the next step. Returns
+`sim.time`, which is initialized to `zero(FT)` at sim construction
+and advanced by `sim.time += sim.Δt` at the end of each `step!(sim)`.
+
+Plan 18 A3 threads `sim` through operators via the `meteo` kwarg:
+
+    step!(sim.model, sim.Δt; meteo = sim)   # not sim.driver
+
+so operators that need time (`StepwiseField` emission rates,
+time-varying Kz, future convection DerivedConvMassFluxField) read
+`current_time(meteo)` and get `sim.time`. `meteo.driver` remains
+accessible for operator code that needs driver-level capabilities
+(e.g. `supports_cmfmc(meteo.driver)`).
+
+The legacy `current_time(::AbstractMetDriver) = 0.0` stub is kept
+for backward compatibility — the driver is stateless and cannot
+provide real time information on its own.
+"""
+MetDrivers.current_time(sim::DrivenSimulation) = sim.time
+
 function step!(sim::DrivenSimulation)
     sim.iteration < sim.final_iteration ||
         throw(ArgumentError("DrivenSimulation has already completed all scheduled steps"))
@@ -267,12 +290,13 @@ function step!(sim::DrivenSimulation)
     _maybe_advance_window!(sim, substep)
     _refresh_forcing!(sim, substep)
 
-    # Plan 17 Commit 6: step!(model) now runs the full operator suite
-    # (advection with palindrome-centered V and S, then chemistry) in
-    # one call. `meteo = sim.driver` threads `current_time` so time-
-    # varying fields (e.g., StepwiseField emission rates) refresh from
-    # the driver's simulation time.
-    step!(sim.model, sim.Δt; meteo = sim.driver)
+    # Plan 17 Commit 6 + plan 18 A3: step!(model) runs the full operator
+    # suite (advection with palindrome-centered V and S, then chemistry)
+    # in one call. Plan 18 A3 passes `meteo = sim` (not `sim.driver`) so
+    # operators see `current_time(sim) = sim.time` and can still reach
+    # the driver via `meteo.driver`. The driver is stateless and cannot
+    # provide `current_time` on its own.
+    step!(sim.model, sim.Δt; meteo = sim)
     sim.time += sim.Δt
     sim.iteration += 1
     for callback in values(sim.callbacks)

@@ -58,10 +58,10 @@ met_interval(d::AbstractMetDriver) = window_dt(d)
 start_date(::AbstractMetDriver) = Date(2000, 1, 1)
 
 """
-    current_time(driver::AbstractMetDriver) -> Float64
+    current_time(meteo) -> Float64
 
-Simulation time [s] currently represented by `driver`. Threaded
-through operator `apply!` methods by plan 17 Commit 4:
+Simulation time [s] at the start of the next step. Threaded through
+operator `apply!` methods by plan 17 Commit 4:
 
     apply!(state, meteo, grid, op, dt; workspace)
 
@@ -70,19 +70,22 @@ Every operator that consumes time (`ExponentialDecay` rates,
 `StepwiseField`s, etc.) reads `current_time(meteo)` once per call
 and passes the resulting scalar to each `update_field!(f, t)`.
 
-The base definition returns `0.0` — concrete drivers should override
-if they want operators to see anything other than "step-zero
-placeholder". A real driver typically stores a running-time
-accumulator advanced by `DrivenSimulation.step!`; the stub is a
-safe default for test fixtures and pure-advection configs.
+# Canonical usage (plan 18 A3)
 
-For `meteo === nothing` (the shape used by `TransportModel` when no
-meteorology is threaded through, and by many tests), operator
-`apply!` methods fall back to `zero(FT)` directly; they do NOT
-call `current_time(nothing)`. The `nothing` branch is explicit in
-each operator's `apply!`.
+- **Production**: `meteo = sim::DrivenSimulation`; returns `sim.time`,
+  advanced by `sim.time += sim.Δt` at the end of each `step!(sim)`.
+  See `src/Models/DrivenSimulation.jl`.
+- **Unit tests without a sim**: `meteo = nothing`; returns `0.0`.
+- **Legacy driver stub** (`meteo = ::AbstractMetDriver`): returns
+  `0.0`. Retained for backward compatibility but should not be
+  relied upon — the driver is stateless (struct holds only the
+  reader + grid) and cannot provide real time information. Any code
+  that previously passed `meteo = sim.driver` silently got `0.0`;
+  plan 18 A3 changes `DrivenSimulation.step!` to pass `meteo = sim`
+  so the sim's clock is the canonical source.
 """
 current_time(::AbstractMetDriver) = 0.0
+current_time(::Nothing) = 0.0
 
 # ---------------------------------------------------------------------------
 # Capability traits — what physics the met data supports

@@ -31,11 +31,17 @@ refactor can generalise this; out of scope for plan 17.
 module SurfaceFlux
 
 using Adapt
-using ...State: get_tracer, tracer_index
+using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
+using ...State: CellState, get_tracer, tracer_index
+import ..apply!
 
 export SurfaceFluxSource, PerTracerFluxMap, flux_for
+export AbstractSurfaceFluxOperator, NoSurfaceFlux, SurfaceFluxOperator
+export apply_surface_flux!, emitting_tracer_indices
 
 include("sources.jl")
 include("PerTracerFluxMap.jl")
+include("surface_flux_kernels.jl")
+include("operators.jl")
 
 end # module SurfaceFlux

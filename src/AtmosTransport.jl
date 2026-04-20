@@ -169,9 +169,11 @@ export solve_tridiagonal!, build_diffusion_coefficients
 export AbstractDiffusionOperator, NoDiffusion, ImplicitVerticalDiffusion
 export apply_vertical_diffusion!
 
-# Surface flux data types (plan 17 Commit 2); operator hierarchy in Commit 3.
+# Surface flux data types + operator hierarchy (plan 17 Commits 2-3).
 # SurfaceFluxSource is re-exported above (from Models) for backward compat.
 export PerTracerFluxMap, flux_for
+export AbstractSurfaceFluxOperator, NoSurfaceFlux, SurfaceFluxOperator
+export apply_surface_flux!
 
 # Advection scheme hierarchy
 export AbstractAdvectionScheme

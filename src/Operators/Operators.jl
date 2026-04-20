@@ -63,8 +63,10 @@ export solve_tridiagonal!, build_diffusion_coefficients
 export AbstractDiffusionOperator, NoDiffusion, ImplicitVerticalDiffusion
 export apply_vertical_diffusion!
 
-# SurfaceFlux data types (plan 17 Commit 2); operator hierarchy lands in Commit 3.
+# SurfaceFlux data types + operator hierarchy (plan 17 Commits 2-3)
 export SurfaceFluxSource, PerTracerFluxMap, flux_for
+export AbstractSurfaceFluxOperator, NoSurfaceFlux, SurfaceFluxOperator
+export apply_surface_flux!
 
 # Cubed-sphere advection
 export fill_panel_halos!, copy_corners!, strang_split_cs!, CSAdvectionWorkspace

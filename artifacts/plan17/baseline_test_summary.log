@@ -1,0 +1,138 @@
+=== test/test_basis_explicit_core.jl ===
+   @ ~/code/gitHub/AtmosTransportModel/test/test_basis_explicit_core.jl:213
+ [2] macro expansion
+   @ ~/.julia/juliaup/julia-1.12.5+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1776 [inlined]
+ [3] macro expansion
+   @ ~/code/gitHub/AtmosTransportModel/test/test_basis_explicit_core.jl:215 [inlined]
+Test Summary:                        | Pass  Fail  Total  Time
+Honest metadata-only CubedSphere API |    3     2      5  4.0s
+RNG of the outermost testset: Random.Xoshiro(0x0fbacc3f8edd03a5, 0x1e2207d480b8e108, 0x66b013720960af50, 0xc31e712539a17858, 0xc1665cfbd3555db5)
+ERROR: LoadError: Some tests did not pass: 3 passed, 2 failed, 0 errored, 0 broken.
+in expression starting at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_basis_explicit_core.jl:212
+
+=== test/test_advection_kernels.jl ===
+    MT CPU-GPU F64: m_ulp=0.0
+    MT CPU-GPU F32: m_ulp=0.0
+Test Summary:              | Pass  Total  Time
+Multi-tracer kernel fusion |   84     84  5.0s
+    F64: n_sub = (1, 1, 1)
+    F32: n_sub = (1, 1, 1)
+Test Summary:               | Pass  Total  Time
+Unified CFL pilot (plan 13) |    6      6  0.0s
+
+✓ All advection kernel cross-backend/precision tests completed!
+
+=== test/test_structured_mesh_metadata.jl ===
+   @ ~/.julia/juliaup/julia-1.12.5+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1776 [inlined]
+ [3] macro expansion
+   @ ~/code/gitHub/AtmosTransportModel/test/test_structured_mesh_metadata.jl:45 [inlined]
+ [4] macro expansion
+   @ ~/.julia/juliaup/julia-1.12.5+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:680 [inlined]
+Test Summary:               | Pass  Fail  Total  Time
+CubedSphereMesh conventions |   10     3     13  2.3s
+RNG of the outermost testset: Random.Xoshiro(0x24643e484a50abe9, 0x829b4580e9204860, 0xe7853ce9f294bf23, 0xf6e42aa6762d6a0b, 0xf20d69e9fdd72705)
+ERROR: LoadError: Some tests did not pass: 10 passed, 3 failed, 0 errored, 0 broken.
+in expression starting at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_structured_mesh_metadata.jl:28
+
+=== test/test_reduced_gaussian_mesh.jl ===
+Test Summary:              | Pass  Total  Time
+ReducedGaussianMesh wiring |    4      4  0.1s
+Test Summary:                | Pass  Total  Time
+ReducedGaussianMesh geometry |   22     22  0.7s
+
+=== test/test_driven_simulation.jl ===
+Test Summary:                                                          | Pass  Total  Time
+DrivenSimulation optional no-reset window carry preserves mixing ratio |    3      3  8.8s
+Test Summary:                                         | Pass  Total  Time
+DrivenSimulation applies bottom-layer surface sources |    4      4  1.3s
+Test Summary:                           | Pass  Total  Time
+DrivenSimulation window-forcing runtime |   50     50  2.1s
+
+=== test/test_cubed_sphere_advection.jl ===
+Test Summary:                   | Pass  Total  Time
+CS Strang splitting — PPMScheme |    3      3  1.0s
+Test Summary:      | Pass  Total  Time
+CS halo validation |    2      2  0.5s
+[ Info: Poisson balance: corrected 4/4 levels, max pre-balance residual: 0.0177 kg
+[ Info: Poisson balance: corrected 4/4 levels, max pre-balance residual: 0.0177 kg
+Test Summary:                              | Pass  Total  Time
+LLPoissonWorkspace zero-allocation balance |    1      1  0.8s
+Test Summary:          | Pass  Total  Time
+CS advection — Float32 |    1      1  1.8s
+
+=== test/test_poisson_balance.jl ===
+  Zero fluxes → zero correction                                 |   12           12  1.4s
+  Random fluxes → post-balance residual near machine precision  |    1            1  0.4s
+  All cells have degree 4                                       |    6            6  0.0s
+  cm diagnosis gives zero bottom boundary                       |    6            6  0.3s
+  mirror_sign: inflow positions get +1, outflow get -1          |  216    72    288  1.6s
+  mirror_sign: per-panel div matches global face-table div      |    3            3  0.6s
+  mirror_sign: balance + cm diagnosis conserves mass per column |    1            1  0.8s
+RNG of the outermost testset: Random.Xoshiro(0x00fc2c17b5754285, 0xbb5e99682ea6b912, 0x70beec38388a4f56, 0x0b52799134da1752, 0xb613e861ce139da7)
+ERROR: LoadError: Some tests did not pass: 245 passed, 72 failed, 0 errored, 0 broken.
+in expression starting at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_poisson_balance.jl:116
+
+=== test/test_chemistry.jl ===
+Test Summary:                 | Pass  Total   Time
+Chemistry operators (plan 15) |   37     37  26.1s
+
+=== test/test_fields.jl ===
+Test Summary:                                    | Pass  Total  Time
+TimeVaryingField — PBLPhysicsParameters defaults |   13     13  0.0s
+Test Summary:                           | Pass  Total  Time
+TimeVaryingField — _beljaars_viterbo_kz |   15     15  0.1s
+Test Summary:                      | Pass  Total  Time
+TimeVaryingField — _obukhov_length |    9      9  0.0s
+Test Summary:                       | Pass  Total  Time
+TimeVaryingField — _prandtl_inverse |    7      7  0.0s
+Test Summary:                     | Pass  Total  Time
+TimeVaryingField — DerivedKzField |   35     35  0.4s
+
+=== test/test_diffusion_kernels.jl ===
+Test Summary:                           | Pass  Total  Time
+Adjoint transposition rule verifies L^T |    2      2  0.7s
+Test Summary:                                | Pass  Total  Time
+KA kernel matches pure-Julia reference (CPU) |    1      1  1.2s
+Test Summary:                                        | Pass  Total  Time
+Gaussian broadening (Backward Euler, small K dt/dz²) |    1      1  0.5s
+Test Summary:                                         | Pass  Total  Time
+Neumann BCs conserve column mass to machine precision |    1      1  0.4s
+Test Summary:                          | Pass  Total  Time
+Kernel accepts ConstantField{FT, 3} Kz |    1      1  0.1s
+
+=== test/test_diffusion_operator.jl ===
+Test Summary:                  | Pass  Total  Time
+apply! catches size mismatches |    1      1  0.2s
+Test Summary:                                      | Pass  Total  Time
+apply! with ConstantField Kz matches direct kernel |    2      2  1.2s
+Test Summary:                                           | Pass  Total  Time
+apply! with PreComputedKzField Kz matches direct kernel |    1      1  0.6s
+Test Summary:                                          | Pass  Total  Time
+apply! conserves column mass (uniform dz, Neumann BCs) |    2      2  0.8s
+Test Summary:                    | Pass  Total  Time
+apply! with ProfileKzField (CPU) |    1      1  0.6s
+
+=== test/test_diffusion_palindrome.jl ===
+Test Summary:                             | Pass  Total  Time
+NoDiffusion + zero fluxes is the identity |    2      2  0.0s
+Test Summary:                                                        | Pass  Total  Time
+ImplicitVerticalDiffusion + zero fluxes alters a non-uniform profile |   19     19  0.5s
+Test Summary:                                                       | Pass  Total  Time
+palindrome diffusion matches a standalone apply_vertical_diffusion! |    1      1  0.8s
+Test Summary:                             | Pass  Total  Time
+V(dt) and V(dt/2)∘V(dt/2) agree to O(dt²) |    2      2  0.2s
+Test Summary:                                                      | Pass  Total  Time
+ImplicitVerticalDiffusion with dt = nothing is rejected at runtime |    1      1  0.1s
+
+=== test/test_transport_model_diffusion.jl ===
+Test Summary:                                   | Pass  Total  Time
+TransportModel default diffusion is NoDiffusion |    1      1  1.2s
+Test Summary:                                          | Pass  Total  Time
+with_diffusion shares state/fluxes/workspace/chemistry |    7      7  0.1s
+Test Summary:                                                    | Pass  Total  Time
+step! with default NoDiffusion is bit-exact to no-diffusion path |    1      1  2.5s
+Test Summary:                                                   | Pass  Total  Time
+step! with ImplicitVerticalDiffusion actually mixes the profile |   14     14  0.6s
+Test Summary:                         | Pass  Total  Time
+current_time default stub returns 0.0 |    1      1  0.0s
+

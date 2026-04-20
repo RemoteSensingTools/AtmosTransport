@@ -1,0 +1,16 @@
+# Plan 17 — Existing StepwiseField / Piecewise-constant field Survey
+# Date: 2026-04-19
+
+## Shipped AbstractTimeVaryingField concrete types (src/State/Fields/)
+
+- ConstantField{FT, N}          — Fields.jl, scalar broadcast at any rank, time-independent
+- ProfileKzField{FT, V}         — ProfileKzField.jl, rank-3 vertical profile, horizontally uniform (16b 1a)
+- PreComputedKzField{FT, A}     — PreComputedKzField.jl, rank-3 3D array wrapper (16b 1b)
+- DerivedKzField{FT, ...}       — DerivedKzField.jl, Beljaars-Viterbo from surface fields (16b 1c)
+
+## Grep for stepwise/piecewise/monthly/annual/window_average hints
+
+- src/State/Fields/PreComputedKzField.jl:13 — docstring note: "a more structured stepwise-
+  in-time backing (e.g. a 4D buffer with an internal window index) can be added later."
+
+No other matches. StepwiseField is NEW to plan 17. ✓ Plan assumption confirmed.

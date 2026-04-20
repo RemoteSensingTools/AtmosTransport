@@ -1,0 +1,40 @@
+# Plan 17 — Existing Emissions/Flux Survey
+# Date: 2026-04-19
+# Scope: src/ and test/ only. Ignored src_legacy/, test_legacy/.
+
+## Active infrastructure found (contra plan 17 §4.1 assumption of "minimal")
+
+### Primary path: SurfaceFluxSource (sim-level inline application)
+
+- src/Models/DrivenSimulation.jl:12-15   — SurfaceFluxSource{RateT} struct
+  Fields: tracer_name::Symbol, cell_mass_rate::RateT (kg/s per cell, already area-integrated)
+- src/Models/DrivenSimulation.jl:18-21   — Adapt.adapt_structure for GPU
+- src/Models/DrivenSimulation.jl:115-122 — _check_surface_source_compatibility (shape, tracer name)
+- src/Models/DrivenSimulation.jl:124-128 — _apply_surface_source!(rm::3D, source, dt): rm[:,:,Nz] += rate * dt
+- src/Models/DrivenSimulation.jl:130-134 — _apply_surface_source!(rm::2D, source, dt): rm[:,Nz] += rate * dt
+- src/Models/DrivenSimulation.jl:136-143 — _apply_surface_sources! iterates sim.surface_sources
+- src/Models/DrivenSimulation.jl:283     — invoked from DrivenSimulation.step! (post-transport, pre-chemistry)
+- src/AtmosTransport.jl:228              — SurfaceFluxSource exported
+- src/Models/DrivenSimulation.jl:309     — SurfaceFluxSource exported from Models
+
+Convention: k = Nz = surface (bottom model layer). cell_mass_rate stored as either 3D (Nx,Ny,Nz)
+or 2D (Nx,Nz) depending on grid class, always surface-slice.
+
+### Secondary path: _inject_source_kernel! (dead code in src/)
+
+- src/Kernels/CellKernels.jl:43-49 — @kernel function _inject_source_kernel!
+  Inputs: rm, source_rate::kg/m²/s, areas::Vector{FT} (zonal, 1D), dt
+  Convention: rm[i, j, Nz] += source_rate[i, j] * areas[j] * dt
+- src/Kernels/CellKernels.jl:51   — exported
+- scripts_legacy/runners/run_point_sources_geosfp.jl — only caller, LEGACY
+
+Status: orphaned in src/. Uses per-area flux representation, 1D zonal-only areas. Not called
+from any active code path. Plan 17 can either remove or leave alone — does NOT consume it.
+
+## Implications for plan 17
+
+1. SurfaceFluxSource is the authoritative existing type. Migrate to src/Operators/SurfaceFlux/,
+   re-export for backward compat.
+2. Keep k=Nz=surface convention.
+3. Keep kg/s-per-cell representation (cell_mass_rate) — no area factor in kernel.
+4. Move call site from DrivenSimulation.step! into strang_split_mt! palindrome center.

@@ -1,0 +1,56 @@
+# JET hot-path snapshot — captured 2026-04-21 during plan 21 Phase 6
+
+## Context
+
+`test/test_jet.jl` runs JET.report_package on AtmosTransport filtered
+to hot-path modules (Operators, State, Models, Grids). This file
+captures the report count and the top categories at baseline time.
+
+## Count
+
+Total: 117 reports across hot-path modules
+  - MethodErrorReport: 116
+  - UndefVarErrorReport: 1
+
+Total full-package (with MetDrivers, Preprocessing): ~311 reports
+  - Additional ~194 reports come from JSON3 header-parsing union-
+    split dispatch in MetDrivers (`Int(header_field)` where
+    `header_field` has type `Union{Nothing, Bool, Float64, Int64,
+    String, JSON3.Array, JSON3.Object}`).
+
+## Dominant noise sources
+
+### 1. KernelAbstractions `kwcall` (116 reports)
+
+Example:
+  MethodErrorReport(no matching method found `kwcall(::NamedTuple{
+  (:ndrange,), <:Tuple{Tuple{Any, Any, Any}}},
+  ::KernelAbstractions.Kernel{Backend, ...})` (1/2 union split))
+
+Pattern: `kernel(args...; ndrange=(...))` where `kernel` is a
+`KA.Kernel` parameterized on `Backend <: KA.GPU`. JET union-splits
+`Backend` to CPU/GPU variants and flags dispatch failure on each.
+
+Not a bug: at runtime, the Backend is concrete (CPU() or CUDA() or
+Metal()) and dispatch resolves correctly. Documented widely in the
+JET + KA ecosystem.
+
+### 2. @kwdef parametric zero-arg constructor (1 report)
+
+Example:
+  UndefVarErrorReport(`AtmosTransport.State.Fields.FT` is not
+  defined: AtmosTransport.State.Fields.FT)
+  Frame: src/State/Fields/DerivedKzField.jl:23
+         MethodInstance for PBLPhysicsParameters()
+
+Pattern: `Base.@kwdef struct Foo{FT}; x::FT = FT(1.0); end` auto-
+generates a zero-arg `Foo()` constructor that references `FT` at
+module scope. Users must call `Foo{Float64}()` to supply the type.
+
+Documented in CLAUDE.md §"Julia / language gotchas".
+
+## What IS NOT in the baseline
+
+No real type-instability bugs in the hot path were surfaced. Future
+JET runs that surface reports beyond these two patterns should be
+treated as genuine regressions.

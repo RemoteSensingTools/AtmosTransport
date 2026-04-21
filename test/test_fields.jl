@@ -126,8 +126,19 @@ end
         @test f isa AbstractTimeVaryingField{Float64, 3}
         @test f isa ProfileKzField{Float64}
 
+        f_rg = ProfileKzField(profile; spatial_rank = 2)
+        @test f_rg isa AbstractTimeVaryingField{Float64, 2}
+
         g = ProfileKzField(Float32[0.0, 1.0, 2.0])
         @test g isa AbstractTimeVaryingField{Float32, 3}
+    end
+
+    @testset "rank-2 field_value selects the k coordinate" begin
+        profile = [10.0, 20.0, 30.0, 40.0]
+        f = ProfileKzField(profile; spatial_rank = 2)
+        @test field_value(f, (1, 1)) === 10.0
+        @test field_value(f, (7, 2)) === 20.0
+        @test field_value(f, (99, 4)) === 40.0
     end
 
     @testset "field_value selects the k coordinate" begin
@@ -238,9 +249,25 @@ end
         @test f isa AbstractTimeVaryingField{Float64, 3}
         @test f isa PreComputedKzField{Float64}
 
+        data_rg = rand(Float64, 8, 5)
+        f_rg = PreComputedKzField(data_rg)
+        @test f_rg isa AbstractTimeVaryingField{Float64, 2}
+
         data32 = rand(Float32, 2, 2, 3)
         g = PreComputedKzField(data32)
         @test g isa AbstractTimeVaryingField{Float32, 3}
+    end
+
+    @testset "rank-2 field_value respects (cell, k)" begin
+        data = Array{Float64, 2}(undef, 4, 5)
+        for c in 1:4, k in 1:5
+            data[c, k] = 100 * c + k
+        end
+        f = PreComputedKzField(data)
+
+        @test field_value(f, (1, 1)) === 101.0
+        @test field_value(f, (4, 5)) === 405.0
+        @test field_value(f, (2, 3)) === 203.0
     end
 
     @testset "field_value respects (i, j, k) independently" begin
@@ -295,8 +322,10 @@ end
     end
 
     @testset "rank-mismatched construction rejected" begin
-        # 2D or 4D arrays must not be accepted — rank-3 is the interface contract
-        @test_throws MethodError PreComputedKzField(rand(Float64, 3, 3))
+        # Rank-2 and rank-3 are both valid for topology-specific Kz
+        # fields; other ranks are rejected.
+        @test PreComputedKzField(rand(Float64, 3, 3)) isa AbstractTimeVaryingField{Float64, 2}
+        @test_throws MethodError PreComputedKzField(rand(Float64, 7))
         @test_throws MethodError PreComputedKzField(rand(Float64, 2, 2, 2, 2))
     end
 

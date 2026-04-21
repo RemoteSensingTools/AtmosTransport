@@ -116,3 +116,160 @@ before passing to a Thomas solve. See
         end
     end
 end
+
+"""
+    _vertical_diffusion_face_kernel!(q, kz_field, dz, w_scratch, dt, Nz)
+
+Face-indexed vertical diffusion kernel. One thread per `(cell, tracer)`
+column on a packed `(ncells, Nz, Nt)` tracer array. The arithmetic is
+identical to [`_vertical_diffusion_kernel!`](@ref); only the storage
+layout changes.
+"""
+@kernel function _vertical_diffusion_face_kernel!(q, kz_field,
+                                                  @Const(dz),
+                                                  w_scratch,
+                                                  dt, Nz::Int)
+    c, t = @index(Global, NTuple)
+    FT = eltype(q)
+    @inbounds begin
+        dt_ft = FT(dt)
+
+        Kz_prev = zero(FT)
+        dz_prev = zero(FT)
+        w_prev  = zero(FT)
+        g_prev  = zero(FT)
+
+        Kz_k = field_value(kz_field, (c, 1))
+        dz_k = dz[c, 1]
+
+        for k in 1:Nz
+            D_above = zero(FT)
+            D_below = zero(FT)
+            Kz_next = zero(FT)
+            dz_next = zero(FT)
+
+            if k > 1
+                Kz_above = (Kz_prev + Kz_k) / FT(2)
+                dz_above = (dz_prev + dz_k) / FT(2)
+                D_above  = Kz_above / (dz_k * dz_above)
+            end
+
+            if k < Nz
+                Kz_next  = field_value(kz_field, (c, k + 1))
+                dz_next  = dz[c, k + 1]
+                Kz_below = (Kz_k + Kz_next) / FT(2)
+                dz_below = (dz_k + dz_next) / FT(2)
+                D_below  = Kz_below / (dz_k * dz_below)
+            end
+
+            a_k = (k > 1)  ? -dt_ft * D_above : zero(FT)
+            b_k = one(FT) + dt_ft * (D_above + D_below)
+            c_k = (k < Nz) ? -dt_ft * D_below : zero(FT)
+            d_k = q[c, k, t]
+
+            if k == 1
+                denom = b_k
+                w_k   = c_k / denom
+                g_k   = d_k / denom
+            else
+                denom = b_k - a_k * w_prev
+                w_k   = c_k / denom
+                g_k   = (d_k - a_k * g_prev) / denom
+            end
+
+            w_scratch[c, k] = w_k
+            q[c, k, t]      = g_k
+
+            if k < Nz
+                w_prev  = w_k
+                g_prev  = g_k
+                Kz_prev = Kz_k
+                dz_prev = dz_k
+                Kz_k    = Kz_next
+                dz_k    = dz_next
+            end
+        end
+
+        for k in (Nz - 1):-1:1
+            q[c, k, t] = q[c, k, t] - w_scratch[c, k] * q[c, k + 1, t]
+        end
+    end
+end
+
+"""
+    _vertical_diffusion_face_single_kernel!(q, kz_field, dz, w_scratch, dt, Nz)
+
+Face-indexed single-tracer helper operating on a `(ncells, Nz)` tracer
+slice. Used by the reduced-Gaussian advection palindrome, which keeps a
+per-tracer host loop.
+"""
+@kernel function _vertical_diffusion_face_single_kernel!(q, kz_field,
+                                                         @Const(dz),
+                                                         w_scratch,
+                                                         dt, Nz::Int)
+    c = @index(Global, Linear)
+    FT = eltype(q)
+    @inbounds begin
+        dt_ft = FT(dt)
+
+        Kz_prev = zero(FT)
+        dz_prev = zero(FT)
+        w_prev  = zero(FT)
+        g_prev  = zero(FT)
+
+        Kz_k = field_value(kz_field, (c, 1))
+        dz_k = dz[c, 1]
+
+        for k in 1:Nz
+            D_above = zero(FT)
+            D_below = zero(FT)
+            Kz_next = zero(FT)
+            dz_next = zero(FT)
+
+            if k > 1
+                Kz_above = (Kz_prev + Kz_k) / FT(2)
+                dz_above = (dz_prev + dz_k) / FT(2)
+                D_above  = Kz_above / (dz_k * dz_above)
+            end
+
+            if k < Nz
+                Kz_next  = field_value(kz_field, (c, k + 1))
+                dz_next  = dz[c, k + 1]
+                Kz_below = (Kz_k + Kz_next) / FT(2)
+                dz_below = (dz_k + dz_next) / FT(2)
+                D_below  = Kz_below / (dz_k * dz_below)
+            end
+
+            a_k = (k > 1)  ? -dt_ft * D_above : zero(FT)
+            b_k = one(FT) + dt_ft * (D_above + D_below)
+            c_k = (k < Nz) ? -dt_ft * D_below : zero(FT)
+            d_k = q[c, k]
+
+            if k == 1
+                denom = b_k
+                w_k   = c_k / denom
+                g_k   = d_k / denom
+            else
+                denom = b_k - a_k * w_prev
+                w_k   = c_k / denom
+                g_k   = (d_k - a_k * g_prev) / denom
+            end
+
+            w_scratch[c, k] = w_k
+            q[c, k]         = g_k
+
+            if k < Nz
+                w_prev  = w_k
+                g_prev  = g_k
+                Kz_prev = Kz_k
+                dz_prev = dz_k
+                Kz_k    = Kz_next
+                dz_k    = dz_next
+            end
+        end
+
+        for k in (Nz - 1):-1:1
+            q[c, k] = q[c, k] - w_scratch[c, k] * q[c, k + 1]
+        end
+    end
+end

@@ -17,8 +17,8 @@ Required interface (every concrete type):
 
 Concrete types:
 - `ConstantField{FT, N}` — one scalar presented as a rank-N field (plan 16a).
-- `ProfileKzField{FT}` — rank-3 vertical profile, horizontally uniform (plan 16b).
-- `PreComputedKzField{FT, A}` — rank-3 wrapper over a 3D array (plan 16b).
+- `ProfileKzField{FT}` — rank-2/3 vertical profile, horizontally uniform (plan 16b + 22A).
+- `PreComputedKzField{FT, A}` — rank-2/3 wrapper over a spatial array (plan 16b + 22A).
 - `DerivedKzField{FT, ...}` — Beljaars-Viterbo Kz from surface fields (plan 16b).
 - `StepwiseField{FT, N, A, B, W}` — piecewise-constant in time at any rank (plan 17).
 

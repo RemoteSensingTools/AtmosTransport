@@ -1,8 +1,8 @@
 """
-    PreComputedKzField{FT, A}(data::AbstractArray{FT, 3})
+    PreComputedKzField{FT, N, A}(data::AbstractArray{FT, N})
 
-A rank-3 `AbstractTimeVaryingField{FT, 3}` backed directly by a
-3D array. `field_value(f, (i, j, k))` returns `f.data[i, j, k]`
+A rank-2/3 `AbstractTimeVaryingField{FT, N}` backed directly by a
+spatial array. `field_value(f, idx)` returns `f.data[idx...]`
 — the no-abstraction path for Kz profiles read from a pre-computed
 source (met binary snapshot, GCHP-style 3D diffusivity export, etc.).
 
@@ -16,8 +16,8 @@ transparent.
 
 # Backend
 
-`A <: AbstractArray{FT, 3}` is parametric: `Array{FT, 3}` for CPU,
-`CuArray{FT, 3}` / `MtlArray{FT, 3}` for GPU runs. `field_value`
+`A <: AbstractArray{FT, N}` is parametric: `Array{FT, N}` for CPU,
+`CuArray{FT, N}` / `MtlArray{FT, N}` for GPU runs. `field_value`
 indexes the array element-wise, which is kernel-safe on all three
 backends.
 
@@ -36,19 +36,25 @@ field_value(f, (1, 1, 1))      # 2.0  — same f, updated data
 ```
 """
 struct PreComputedKzField{FT <: AbstractFloat,
-                          A <: AbstractArray} <: AbstractTimeVaryingField{FT, 3}
+                          N,
+                          A <: AbstractArray} <: AbstractTimeVaryingField{FT, N}
     data :: A
 
-    function PreComputedKzField{FT, A}(data::A) where {FT, A <: AbstractArray{FT, 3}}
-        new{FT, A}(data)
+    function PreComputedKzField{FT, N, A}(data::A) where {FT, N, A <: AbstractArray{FT, N}}
+        (N == 2 || N == 3) || throw(ArgumentError(
+            "PreComputedKzField: data rank must be 2 or 3, got $N"))
+        new{FT, N, A}(data)
     end
 end
 
-PreComputedKzField(data::A) where {FT, A <: AbstractArray{FT, 3}} =
-    PreComputedKzField{FT, A}(data)
+PreComputedKzField(data::A) where {FT, A <: AbstractArray{FT, 2}} =
+    PreComputedKzField{FT, 2, A}(data)
 
-@inline field_value(f::PreComputedKzField, idx::NTuple{3, Int}) =
-    @inbounds f.data[idx[1], idx[2], idx[3]]
+PreComputedKzField(data::A) where {FT, A <: AbstractArray{FT, 3}} =
+    PreComputedKzField{FT, 3, A}(data)
+
+@inline field_value(f::PreComputedKzField{FT, N}, idx::NTuple{N, Int}) where {FT, N} =
+    @inbounds f.data[idx...]
 
 update_field!(f::PreComputedKzField, ::Real) = f
 

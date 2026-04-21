@@ -17,12 +17,12 @@ Verifies:
 using Test
 import AtmosTransport
 using AtmosTransport: CellState, StructuredFaceFluxState,
-                      LatLonMesh, HybridSigmaPressure, AtmosGrid, CPU,
+                      LatLonMesh, ReducedGaussianMesh, HybridSigmaPressure, AtmosGrid, CPU,
                       UpwindScheme, AdvectionWorkspace,
                       ConstantField, NoDiffusion, ImplicitVerticalDiffusion,
                       TransportModel, step!, with_chemistry, with_diffusion,
                       NoChemistry, ExponentialDecay, AbstractChemistryOperator,
-                      AbstractMetDriver,
+                      AbstractMetDriver, allocate_face_fluxes, ncells,
                       current_time
 
 # -------------------------------------------------------------------------
@@ -51,6 +51,29 @@ function _make_model(FT; Nx = 4, Ny = 3, Nz = 8,
     bm = zeros(FT, Nx, Ny + 1, Nz)
     cm = zeros(FT, Nx, Ny, Nz + 1)
     fluxes = StructuredFaceFluxState(am, bm, cm)
+
+    return TransportModel(state, fluxes, grid, UpwindScheme();
+                          chemistry = chemistry,
+                          diffusion = diffusion)
+end
+
+function _make_rg_model(FT; Nz = 8,
+                        diffusion = NoDiffusion(),
+                        chemistry::AbstractChemistryOperator = NoChemistry(),
+                        rn_init = FT(1.0))
+    mesh = ReducedGaussianMesh(FT[-45, 45], [4, 4]; FT = FT)
+    A_ifc = zeros(FT, Nz + 1)
+    B_ifc = FT.(collect(range(0, 1, length = Nz + 1)))
+    vc = HybridSigmaPressure(A_ifc, B_ifc)
+    grid = AtmosGrid(mesh, vc, CPU(); FT = FT)
+
+    m = ones(FT, ncells(mesh), Nz)
+    rm_rn = Array{FT}(undef, ncells(mesh), Nz)
+    for c in 1:ncells(mesh), k in 1:Nz
+        rm_rn[c, k] = FT(rn_init) * exp(-((k - (Nz + 1) / 2)^2) / 4)
+    end
+    state = CellState(m; Rn222 = rm_rn)
+    fluxes = allocate_face_fluxes(mesh, Nz; FT = FT)
 
     return TransportModel(state, fluxes, grid, UpwindScheme();
                           chemistry = chemistry,
@@ -147,6 +170,34 @@ end
     for i in 1:Nx, j in 1:Ny
         m_before = sum(@view rn_before[i, j, :])
         m_after  = sum(@view model_diff.state.tracers.Rn222[i, j, :])
+        @test abs(m_after - m_before) / m_before < 1e-12
+    end
+end
+
+@testset "ReducedGaussian step! with ImplicitVerticalDiffusion mixes the profile" begin
+    FT = Float64
+    Nz = 8
+
+    model_ctrl = _make_rg_model(FT; Nz = Nz)
+    rn_before = copy(model_ctrl.state.tracers.Rn222)
+
+    op = ImplicitVerticalDiffusion(; kz_field = ConstantField{FT, 2}(1.0))
+    model_diff = _make_rg_model(FT; Nz = Nz, diffusion = op)
+    fill!(model_diff.workspace.dz_scratch, FT(100.0))
+
+    dt = FT(10)
+    for _ in 1:3
+        step!(model_ctrl, dt)
+        step!(model_diff, dt)
+    end
+
+    @test model_ctrl.state.tracers.Rn222 == rn_before
+
+    k_peak = (Nz + 1) ÷ 2
+    @test model_diff.state.tracers.Rn222[1, k_peak] < rn_before[1, k_peak]
+    for c in 1:size(model_diff.state.tracers.Rn222, 1)
+        m_before = sum(@view rn_before[c, :])
+        m_after  = sum(@view model_diff.state.tracers.Rn222[c, :])
         @test abs(m_after - m_before) / m_before < 1e-12
     end
 end

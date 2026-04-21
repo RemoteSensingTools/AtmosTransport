@@ -55,13 +55,12 @@ stencil's read-before-write assumption and break mass conservation by
 - `rm_4d_A::A4`, `rm_4d_B::A4` — 4D tracer-mass ping-pong pair for the
   multi-tracer fused path (`(Nx, Ny, Nz, Nt)`). Both are allocated to
   size 0×0×0×0 when `n_tracers == 0`.
-- `w_scratch::A` — 3D Thomas-factor scratch (`(Nx, Ny, Nz)`) for
-  implicit vertical diffusion (plan 16b). Face-indexed grids
-  allocate it 0-sized — diffusion dispatches only on structured 3D.
-- `dz_scratch::A` — 3D layer-thickness input (`(Nx, Ny, Nz)`) for
-  implicit vertical diffusion. Caller is expected to fill this with
-  current dz [m] (via hydrostatic from delp) before each diffusion
-  apply!. 0-sized on face-indexed grids.
+- `w_scratch::A` — Thomas-factor scratch matching `air_mass`'s shape:
+  `(Nx, Ny, Nz)` for structured grids, `(ncells, Nz)` for
+  face-indexed grids.
+- `dz_scratch::A` — layer-thickness input matching `air_mass`'s shape.
+  Caller is expected to fill this with current dz [m] (via hydrostatic
+  from delp) before each diffusion `apply!`.
 
 # Constructors
 
@@ -136,7 +135,6 @@ function AdvectionWorkspace(m::AbstractArray{FT,2};
     end
     # Face-indexed path does NOT use strang_split_mt!; it loops over
     # tracer slices via selectdim. 4D ping-pong buffers stay 0-sized.
-    # Diffusion is structured-grid-only for now — w/dz scratch also 0-sized.
     rm_4d_A = similar(m, 0, 0)
     rm_4d_B = similar(m, 0, 0)
     AdvectionWorkspace{FT, typeof(m), typeof(cs_dev), typeof(rm_4d_A)}(
@@ -144,7 +142,7 @@ function AdvectionWorkspace(m::AbstractArray{FT,2};
         similar(m), similar(m),                       # rm_B, m_B
         cs_dev, face_left, face_right,
         rm_4d_A, rm_4d_B,
-        similar(m, 0, 0), similar(m, 0, 0))           # w_scratch, dz_scratch
+        similar(m), similar(m))                       # w_scratch, dz_scratch
 end
 
 """
@@ -1030,27 +1028,13 @@ end
 
 # Face-indexed apply! — shared tracer loop, generated for each topology.
 #
-# Plan 18 A1 extension: accept `diffusion_op`, `emissions_op`, and
-# `meteo` kwargs to match the structured-path signature
-# (`apply!(...; workspace, cfl_limit, diffusion_op, emissions_op, meteo)`).
-# `TransportModel.step!` forwards these unconditionally; before plan 18 A1
-# the face-indexed dispatch threw `MethodError` for any reduced-Gaussian
-# model even in the all-default configuration. The kwargs are accepted
-# here with defaults matching the structured path.
+# Accepts the same kwarg surface as the structured path
+# (`diffusion_op`, `emissions_op`, `meteo`) because `TransportModel.step!`
+# forwards them unconditionally.
 #
-# Face-indexed diffusion and emissions are NOT shipped in plan 18.
-# `ImplicitVerticalDiffusion` and `SurfaceFluxOperator` are 4D-only
-# (structured lat-lon). When the user constructs a face-indexed
-# `TransportModel` with a non-trivial diffusion or emissions operator,
-# we error with a clear message pointing at the follow-up. The default
-# case (both `NoDiffusion()` and `NoSurfaceFlux()`) falls through to
-# the bit-exact H → V → V → H sweep sequence that pre-existed — no
-# behavior change for reduced-Gaussian runs that don't opt in.
-#
-# Follow-up: face-indexed analogs of `apply_vertical_diffusion!` and
-# `apply_surface_flux!` (plan 16b / 17 kernels are 4D-only — see
-# `src/Operators/Diffusion/operators.jl:148-184`). Tracked as "Plan 18b:
-# Face-indexed physics suite" in plan 18 v5.1 Part 6.
+# Reduced-Gaussian now supports the diffusion slot at the H → V → D → V → H
+# center. Surface emissions remain structured-only for now, so
+# `emissions_op` still errors unless it is `NoSurfaceFlux()`.
 for (scheme_type, h_sweep, v_sweep) in (
     (:AbstractConstantScheme,    :sweep_horizontal!, :sweep_vertical!),
 )
@@ -1062,21 +1046,11 @@ for (scheme_type, h_sweep, v_sweep) in (
                           diffusion_op::AbstractDiffusionOperator = NoDiffusion(),
                           emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                           meteo = nothing) where {B <: AbstractMassBasis}
-        # Face-indexed physics operators are out of plan 18 scope.
-        # Accept the defaults (no-op), reject anything else with a
-        # clear pointer to the follow-up plan.
-        diffusion_op isa NoDiffusion || throw(ArgumentError(
-            "Face-indexed vertical diffusion is not shipped in plan 18. " *
-            "`ImplicitVerticalDiffusion` is structured-lat-lon only " *
-            "(plan 16b). Use `NoDiffusion()` on face-indexed grids " *
-            "until a follow-up plan extends the kernel — tracked as " *
-            "Plan 18b in plan 18 v5.1 Part 6."))
         emissions_op isa NoSurfaceFlux || throw(ArgumentError(
-            "Face-indexed surface emissions are not shipped in plan 18. " *
-            "`SurfaceFluxOperator` is structured-lat-lon only (plan 17). " *
-            "Use `NoSurfaceFlux()` on face-indexed grids until a follow-up " *
-            "plan extends the kernel — tracked as Plan 18b in plan 18 " *
-            "v5.1 Part 6."))
+            "Face-indexed surface emissions are not shipped yet. " *
+            "`SurfaceFluxOperator` is still structured-lat-lon only " *
+            "on reduced-Gaussian grids. Use `NoSurfaceFlux()` until " *
+            "the follow-up extends the kernel."))
 
         m = state.air_mass
         hflux, cm = fluxes.horizontal_flux, fluxes.cm
@@ -1106,6 +1080,7 @@ for (scheme_type, h_sweep, v_sweep) in (
 
             _sweep_horizontal_face_subcycled!(rm_tracer, m, hflux, grid.horizontal, scheme, workspace, cfl_limit_ft)
             _sweep_vertical_face_subcycled!(rm_tracer, m, cm, scheme, workspace, cfl_limit_ft)
+            apply_vertical_diffusion!(rm_tracer, diffusion_op, workspace, dt, meteo)
             _sweep_vertical_face_subcycled!(rm_tracer, m, cm, scheme, workspace, cfl_limit_ft)
             _sweep_horizontal_face_subcycled!(rm_tracer, m, hflux, grid.horizontal, scheme, workspace, cfl_limit_ft)
         end

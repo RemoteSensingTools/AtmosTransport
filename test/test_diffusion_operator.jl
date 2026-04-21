@@ -12,7 +12,10 @@ using Test
 using AtmosTransport: CellState, AdvectionWorkspace,
                       ConstantField, PreComputedKzField, ProfileKzField,
                       NoDiffusion, ImplicitVerticalDiffusion,
-                      AbstractDiffusionOperator, apply!, get_tracer
+                      AbstractDiffusionOperator, apply!, get_tracer,
+                      ReducedGaussianMesh, HybridSigmaPressure, AtmosGrid, CPU,
+                      ncells,
+                      field_value
 using AtmosTransport.Operators.Diffusion: _vertical_diffusion_kernel!,
                                            build_diffusion_coefficients,
                                            solve_tridiagonal!
@@ -31,12 +34,45 @@ function _make_diffusion_state(::Type{FT}; Nx = 3, Ny = 2, Nz = 5,
     return CellState(m; CO2 = rm_co2, N2O = rm_n2o)
 end
 
+"Construct a face-indexed CellState on a small reduced-Gaussian mesh."
+function _make_face_diffusion_state(::Type{FT}; Nz = 5,
+                                    co2 = FT(1.0), n2o = FT(2.0)) where FT
+    mesh = ReducedGaussianMesh(FT[-45, 45], [4, 4]; FT = FT)
+    vc = HybridSigmaPressure(zeros(FT, Nz + 1), FT.(collect(range(0, 1, length = Nz + 1))))
+    grid = AtmosGrid(mesh, vc, CPU(); FT = FT)
+
+    ncell = ncells(mesh)
+    m = ones(FT, ncell, Nz)
+    rm_co2 = fill(FT(co2), ncell, Nz)
+    rm_n2o = fill(FT(n2o), ncell, Nz)
+    return CellState(m; CO2 = rm_co2, N2O = rm_n2o), grid
+end
+
 "Pre-fill workspace.dz_scratch with a known 3D profile."
 function _fill_dz!(workspace, dz_arr::AbstractArray)
     size(workspace.dz_scratch) == size(dz_arr) ||
         error("dz profile shape mismatch: workspace $(size(workspace.dz_scratch)) vs $(size(dz_arr))")
     copyto!(workspace.dz_scratch, dz_arr)
     return workspace
+end
+
+function _reference_face_diffusion!(q_raw::AbstractArray{FT, 3},
+                                    kz_field, dz_arr::AbstractArray{FT, 2},
+                                    dt) where FT
+    ncell, Nz, Nt = size(q_raw)
+    for c in 1:ncell
+        Kz_col = FT[field_value(kz_field, (c, k)) for k in 1:Nz]
+        dz_col = collect(@view dz_arr[c, :])
+        a, b, cdiag = build_diffusion_coefficients(Kz_col, dz_col, dt)
+        w = similar(dz_col)
+        for t in 1:Nt
+            d = collect(@view q_raw[c, :, t])
+            x = similar(d)
+            solve_tridiagonal!(x, a, b, cdiag, d, w)
+            q_raw[c, :, t] .= x
+        end
+    end
+    return q_raw
 end
 
 # =========================================================================
@@ -70,12 +106,12 @@ end
 
 @testset "ImplicitVerticalDiffusion constructor validation" begin
     FT = Float64
-    # Rank-2 Kz field rejected — MethodError on the outer keyword
-    # constructor's `::AbstractTimeVaryingField{FT, 3}` assertion.
-    bad = ConstantField{FT, 2}(1.0)
-    @test_throws MethodError ImplicitVerticalDiffusion(kz_field = bad)
+    # Rank-2 and rank-3 Kz fields are both accepted. Structured vs
+    # face-indexed compatibility is enforced at apply-time.
+    good_face = ConstantField{FT, 2}(1.0)
+    op_face = ImplicitVerticalDiffusion(; kz_field = good_face)
+    @test op_face.kz_field === good_face
 
-    # Rank-3 accepted
     good = ConstantField{FT, 3}(1.0)
     op = ImplicitVerticalDiffusion(; kz_field = good)
     @test op.kz_field === good
@@ -94,6 +130,83 @@ end
     # workspace = nothing (default kwarg) → ArgumentError
     @test_throws ArgumentError apply!(state, nothing, nothing, op, 1.0;
                                       workspace = nothing)
+end
+
+@testset "apply! with ConstantField Kz matches face-indexed reference" begin
+    FT = Float64
+    Nz = 5
+    dt = FT(0.5)
+    Kz_val = FT(1.25)
+
+    state_op, grid = _make_face_diffusion_state(FT; Nz = Nz)
+    ncell = size(state_op.air_mass, 1)
+    state_op.tracers_raw .= reshape(FT.(1:(ncell * Nz * 2)), ncell, Nz, 2)
+
+    q_ref = copy(state_op.tracers_raw)
+    dz_arr = fill(FT(100.0), ncell, Nz)
+
+    ws = AdvectionWorkspace(state_op)
+    _fill_dz!(ws, dz_arr)
+    kz_field = ConstantField{FT, 2}(Kz_val)
+    op = ImplicitVerticalDiffusion(; kz_field = kz_field)
+    apply!(state_op, nothing, grid, op, dt; workspace = ws)
+
+    _reference_face_diffusion!(q_ref, kz_field, dz_arr, dt)
+
+    @test get_tracer(state_op, :CO2) ≈ q_ref[:, :, 1] atol=1e-12 rtol=1e-12
+    @test get_tracer(state_op, :N2O) ≈ q_ref[:, :, 2] atol=1e-12 rtol=1e-12
+end
+
+@testset "apply! with PreComputedKzField face-indexed matches reference" begin
+    FT = Float64
+    Nz = 5
+    dt = FT(0.5)
+
+    state_op, grid = _make_face_diffusion_state(FT; Nz = Nz)
+    ncell = size(state_op.air_mass, 1)
+    state_op.tracers_raw[:, :, 1] .= reshape(FT.(1:(ncell * Nz)), ncell, Nz)
+
+    q_ref = copy(state_op.tracers_raw[:, :, 1:1])
+    dz_arr = FT.(80 .+ reshape(1:(ncell * Nz), ncell, Nz))
+    Kz_arr = FT.(0.5 .+ reshape(1:(ncell * Nz), ncell, Nz) ./ 100)
+
+    ws = AdvectionWorkspace(state_op)
+    _fill_dz!(ws, dz_arr)
+    kz_field = PreComputedKzField(copy(Kz_arr))
+    op = ImplicitVerticalDiffusion(; kz_field = kz_field)
+    apply!(state_op, nothing, grid, op, dt; workspace = ws)
+
+    _reference_face_diffusion!(q_ref, kz_field, dz_arr, dt)
+
+    @test get_tracer(state_op, :CO2) ≈ q_ref[:, :, 1] atol=1e-12 rtol=1e-12
+end
+
+@testset "apply! with ProfileKzField{2} matches equivalent precomputed field" begin
+    FT = Float64
+    Nz = 5
+    dt = FT(0.5)
+
+    state, grid = _make_face_diffusion_state(FT; Nz = Nz)
+    ncell = size(state.air_mass, 1)
+    state.tracers_raw[:, :, 1] .= reshape(FT.(1:(ncell * Nz)), ncell, Nz)
+
+    state_ref = CellState(copy(state.air_mass); CO2 = copy(state.tracers_raw[:, :, 1]))
+    profile = FT[0.5, 1.0, 1.5, 1.0, 0.5]
+    Kz_arr = repeat(reshape(profile, 1, Nz), ncell, 1)
+    dz_arr = fill(FT(100.0), ncell, Nz)
+
+    ws = AdvectionWorkspace(state)
+    ws_ref = AdvectionWorkspace(state_ref)
+    _fill_dz!(ws, dz_arr)
+    _fill_dz!(ws_ref, dz_arr)
+
+    op = ImplicitVerticalDiffusion(; kz_field = ProfileKzField(copy(profile); spatial_rank = 2))
+    op_ref = ImplicitVerticalDiffusion(; kz_field = PreComputedKzField(copy(Kz_arr)))
+
+    apply!(state, nothing, grid, op, dt; workspace = ws)
+    apply!(state_ref, nothing, grid, op_ref, dt; workspace = ws_ref)
+
+    @test get_tracer(state, :CO2) ≈ get_tracer(state_ref, :CO2) atol=1e-12 rtol=1e-12
 end
 
 @testset "apply! catches size mismatches" begin

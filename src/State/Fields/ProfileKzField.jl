@@ -1,9 +1,9 @@
 """
-    ProfileKzField{FT, V}(profile::AbstractVector{FT})
+    ProfileKzField{FT, V, N}(profile::AbstractVector{FT})
 
-A rank-3 `AbstractTimeVaryingField{FT, 3}` backed by a vertical
-vector of length `Nz`. `field_value(f, (i, j, k))` returns
-`f.profile[k]` — horizontally uniform, vertically varying. Time-
+A rank-2/3 `AbstractTimeVaryingField{FT, N}` backed by a vertical
+vector of length `Nz`. `field_value(f, idx)` returns
+`f.profile[idx[end]]` — horizontally uniform, vertically varying. Time-
 independent (constant profile); `update_field!` is a no-op.
 
 Useful for idealized test cases: Chapter-style exponential Kz
@@ -38,16 +38,26 @@ field_value(f, (1,   1,  10))   # ≈ 0.135
 ```
 """
 struct ProfileKzField{FT <: AbstractFloat,
-                      V <: AbstractVector{FT}} <: AbstractTimeVaryingField{FT, 3}
+                      V <: AbstractVector{FT},
+                      N} <: AbstractTimeVaryingField{FT, N}
     profile :: V
 end
 
-# Julia's auto-generated outer constructor `ProfileKzField(::V)` infers
-# both type parameters from the vector's `eltype` and concrete type —
-# no explicit outer method needed.
+function ProfileKzField(profile::V; spatial_rank::Integer = 3) where {FT <: AbstractFloat, V <: AbstractVector{FT}}
+    N = Int(spatial_rank)
+    (N == 2 || N == 3) || throw(ArgumentError(
+        "ProfileKzField: spatial_rank must be 2 or 3, got $N"))
+    return ProfileKzField{FT, V, N}(profile)
+end
 
-@inline field_value(f::ProfileKzField, idx::NTuple{3, Int}) =
-    @inbounds f.profile[idx[3]]
+function ProfileKzField(profile::V, ::Val{N}) where {N, FT <: AbstractFloat, V <: AbstractVector{FT}}
+    (N == 2 || N == 3) || throw(ArgumentError(
+        "ProfileKzField: spatial_rank must be 2 or 3, got $N"))
+    return ProfileKzField{FT, V, N}(profile)
+end
+
+@inline field_value(f::ProfileKzField{FT, V, N}, idx::NTuple{N, Int}) where {FT, V, N} =
+    @inbounds f.profile[idx[end]]
 
 update_field!(f::ProfileKzField, ::Real) = f
 
@@ -56,4 +66,6 @@ update_field!(f::ProfileKzField, ::Real) = f
 # they call `Adapt.adapt(to_gpu_array, field)` before capturing it,
 # and `f.profile` becomes a `CuArray` / `MtlArray` / etc.
 Adapt.adapt_structure(to, f::ProfileKzField) =
-    ProfileKzField(Adapt.adapt(to, f.profile))
+    ProfileKzField(Adapt.adapt(to, f.profile); spatial_rank = field_rank(f))
+
+@inline field_rank(::ProfileKzField{FT, V, N}) where {FT, V, N} = N

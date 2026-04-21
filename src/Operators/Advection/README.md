@@ -97,6 +97,8 @@ the model-facing `apply!` entrypoints that the transport block calls.
 
 ## Related Docs And Tests
 
+- Topology coverage:
+  [`../TOPOLOGY_SUPPORT.md`](../TOPOLOGY_SUPPORT.md)
 - Runtime/block ordering:
   [`../../../docs/plans/OPERATOR_COMPOSITION.md`](../../../docs/plans/OPERATOR_COMPOSITION.md)
 - Runtime walkthrough:

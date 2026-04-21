@@ -23,10 +23,13 @@ operators, and the `chemistry_block!` composition step that
 
 ## Current Scope
 
-- `CellState` chemistry is live
+- `CellState` chemistry is live (LatLon and RG)
 - Time-varying scalar rate fields are supported through the
   `AbstractTimeVaryingField{FT, 0}` contract
-- Chemistry is not yet wired for `CubedSphereState`
+- `CubedSphereState` chemistry is the one remaining topology gap —
+  no `apply!(::CubedSphereState, ...)` dispatch exists for any
+  chemistry operator (see
+  [`../TOPOLOGY_SUPPORT.md`](../TOPOLOGY_SUPPORT.md))
 
 ## File Map
 
@@ -65,6 +68,8 @@ operators, and the `chemistry_block!` composition step that
 
 ## Related Docs And Tests
 
+- Topology coverage:
+  [`../TOPOLOGY_SUPPORT.md`](../TOPOLOGY_SUPPORT.md)
 - Tests:
   - [`../../../test/test_chemistry.jl`](../../../test/test_chemistry.jl)
   - [`../../../test/test_current_time.jl`](../../../test/test_current_time.jl)

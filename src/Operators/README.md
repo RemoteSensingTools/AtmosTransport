@@ -34,27 +34,8 @@ example.
 
 ## Topology Coverage
 
-- Advection:
-  - structured LatLon: live
-  - face-indexed reduced Gaussian: live
-  - panel-native cubed sphere: live
-- Diffusion:
-  - structured LatLon: live
-  - face-indexed reduced Gaussian: live
-  - panel-native cubed sphere: live
-- Surface flux:
-  - structured LatLon: live
-  - face-indexed reduced Gaussian: live
-  - panel-native cubed sphere: live
-- Chemistry:
-  - `CellState`: live
-  - `CubedSphereState`: not yet wired
-- Convection:
-  - structured LatLon: live (`CMFMCConvection`)
-  - face-indexed reduced Gaussian: live (`CMFMCConvection`)
-  - panel-native cubed sphere: live (`CMFMCConvection`)
-  - step-level block wiring landed as plan 22D on top of plan
-    22A/B/C topology work
+See [`TOPOLOGY_SUPPORT.md`](TOPOLOGY_SUPPORT.md) for the canonical
+operator × topology matrix. CS chemistry is the one known gap.
 
 ## File Map
 

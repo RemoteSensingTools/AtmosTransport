@@ -72,6 +72,8 @@ the topology-specific kernels that inject mass into the surface layer.
 
 ## Related Docs And Tests
 
+- Topology coverage:
+  [`../TOPOLOGY_SUPPORT.md`](../TOPOLOGY_SUPPORT.md)
 - Runtime/block ordering:
   [`../../../docs/plans/OPERATOR_COMPOSITION.md`](../../../docs/plans/OPERATOR_COMPOSITION.md)
 - Tests:

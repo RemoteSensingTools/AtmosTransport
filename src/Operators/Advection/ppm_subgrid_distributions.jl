@@ -9,7 +9,8 @@
 #
 # Reference: Putman & Lin (2007), "Finite-volume transport on various cubed-sphere grids"
 #
-# Ported from src_legacy/Advection/ppm_subgrid_distributions.jl
+# Line-for-line port of the legacy Advection PPM helpers (git commit
+# ec2d2c0, path src_legacy/Advection/ppm_subgrid_distributions.jl).
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------

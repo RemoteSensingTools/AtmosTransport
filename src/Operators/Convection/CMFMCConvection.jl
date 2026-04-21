@@ -148,8 +148,9 @@ function apply_convection!(q_raw::AbstractArray{FT, 4},
     # the column and diminishes — implies the updraft is shedding
     # mass into the environment at that layer. Without an explicit
     # DTRAIN field, this diagnosed detrainment closes the mass
-    # balance. Matches the legacy lat-lon fallback behavior at
-    # `src_legacy/Convection/ras_convection.jl:365-370` which
+    # balance. Matches the legacy lat-lon fallback behavior of the
+    # earlier Julia port (git commit ec2d2c0,
+    # `src_legacy/Convection/ras_convection.jl:365-370`), which
     # delegated to a single-flux Tiedtke operator that made the same
     # diagnosis implicitly.)
     dtrain_arr = _cmfmc_dtrain_array(cmfmc, forcing.dtrain, air_mass)

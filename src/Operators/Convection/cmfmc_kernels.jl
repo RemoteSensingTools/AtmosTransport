@@ -3,14 +3,17 @@
 #
 # Ports from GEOS-Chem `convection_mod.F90:DO_RAS_CLOUD_CONVECTION`
 # (see docs/plans/18_ConvectionPlan/archived/18_CONVECTION_UPSTREAM_GCHP_NOTES.md).
-# Medium cleanup from src_legacy/Convection/ras_convection.jl per
-# Decision 15. Two deliberate departures from legacy:
+# Medium cleanup from the earlier Julia port per Decision 15. Two
+# deliberate departures from that legacy port:
 #
 #   1. **ADD well-mixed sub-cloud layer** (Decision 17) —
 #      pressure-weighted below-cloud-base treatment from GCHP
-#      convection_mod.F90:742-782. Legacy Julia skipped this.
+#      convection_mod.F90:742-782. The legacy Julia port skipped this;
+#      git commit ec2d2c0 preserves it at
+#      src_legacy/Convection/ras_convection.jl for comparison.
 #   2. **KEEP no positivity clamp** (Decision 11 — adjoint addendum §D).
-#      Legacy already has no clamp (confirmed at :208-214); plan 18
+#      Legacy already has no clamp (git commit ec2d2c0,
+#      src_legacy/Convection/ras_convection.jl:208-214); plan 18
 #      preserves this and adds a docstring pointer to the rationale.
 #
 # Convention (per CLAUDE.md Invariant 2): `k=1=TOA`, `k=Nz=surface`.
@@ -136,7 +139,8 @@ end
 Pressure-weighted well-mixed treatment below cloud base.
 
 Per GCHP `convection_mod.F90:742-782`. Plan 18 ADDS this treatment
-relative to legacy `src_legacy/Convection/ras_convection.jl` (which
+relative to the earlier Julia port of RAS convection (git commit
+ec2d2c0 contains `src_legacy/Convection/ras_convection.jl`, which
 omits it — Decision 17 is a deliberate correction).
 
 In our convention `k=1=TOA, k=Nz=surface`, "below cloud base" means

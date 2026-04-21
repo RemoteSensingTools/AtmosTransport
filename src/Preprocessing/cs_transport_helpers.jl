@@ -1,8 +1,9 @@
 # ---------------------------------------------------------------------------
 # Cubed-sphere transport binary preprocessing helpers.
 #
-# Ported from scripts_legacy/preprocessing/transport_binary_v2_cs_conservative.jl
-# and adapted for the modern streaming pipeline in src/Preprocessing/.
+# Line-for-line port from the legacy preprocessing runner (git commit
+# ec2d2c0, path scripts_legacy/preprocessing/transport_binary_v2_cs_conservative.jl),
+# adapted for the modern streaming pipeline in src/Preprocessing/.
 #
 # Key functions:
 #   - regrid_scalar_to_cs_panels!  — conservative LL→CS for 3D and 2D fields

@@ -1,7 +1,8 @@
 # ---------------------------------------------------------------------------
 # Global multi-panel Poisson mass-flux balance for cubed-sphere grids.
 #
-# Ported from scripts_legacy/preprocessing/cs_global_poisson_balance.jl
+# Line-for-line port from the legacy preprocessing runner (git commit
+# ec2d2c0, path scripts_legacy/preprocessing/cs_global_poisson_balance.jl)
 # into the modern src/Preprocessing/ pipeline.
 #
 # Unlike the per-panel FFT approach (which treats each panel as doubly-

@@ -32,7 +32,9 @@ Base.@kwdef struct PBLPhysicsParameters{FT <: AbstractFloat}
 end
 
 # =========================================================================
-# Pure helper functions — ported from src_legacy/Diffusion/pbl_diffusion.jl
+# Pure helper functions — line-for-line port from the legacy PBL
+# diffusion module. Git archaeology: commit ec2d2c0 contains
+# src_legacy/Diffusion/pbl_diffusion.jl.
 # =========================================================================
 
 """
@@ -43,8 +45,8 @@ scheme (Beljaars & Viterbo 1998). `L_ob` is the Obukhov length,
 `Pr_inv = Kh/Km ≥ 1` the Prandtl-number inverse (unstable convective
 amplification; pass `one(FT)` for stable/neutral).
 
-Line-for-line port of `_pbl_kz` in
-[src_legacy/Diffusion/pbl_diffusion.jl:66](src_legacy/Diffusion/pbl_diffusion.jl).
+Line-for-line port of `_pbl_kz` in the legacy PBL diffusion module
+(git commit ec2d2c0, path `src_legacy/Diffusion/pbl_diffusion.jl:66`).
 Pure: no side effects, no allocation — safe to call inside a kernel.
 """
 @inline function _beljaars_viterbo_kz(z, h_pbl, ustar, L_ob, Pr_inv,
@@ -98,9 +100,10 @@ Obukhov length `L_ob` [m] from surface sensible heat flux `hflux`
 the Prandtl-inverse calculation reuses.
 
 Implements `L_ob = -T_sfc · u*³ / (κ · g · H_kin)` with `H_kin = H_sfc / (ρ · cp)`.
-Matches [src_legacy/Diffusion/pbl_diffusion.jl:161](src_legacy/Diffusion/pbl_diffusion.jl).
-A 1e-10 offset (signed by `H_kin`) prevents a division singularity in the exactly
-neutral case `H_kin = 0`.
+Matches the legacy PBL diffusion module (git commit ec2d2c0, path
+`src_legacy/Diffusion/pbl_diffusion.jl:161`). A 1e-10 offset (signed
+by `H_kin`) prevents a division singularity in the exactly neutral
+case `H_kin = 0`.
 """
 @inline function _obukhov_length(hflux, ustar, t2m,
                                  p::PBLPhysicsParameters{FT}) where FT
@@ -116,8 +119,8 @@ end
 Inverse Prandtl number `Kh/Km ≥ 1` for the unstable convective BL,
 following TM5 (`diffusion.F90:1213-1230`). Returns `one(FT)` whenever
 conditions are not clearly unstable (`L_ob ≥ 0`, `H_kin ≤ 0`, or
-`h_pbl ≤ 10 m`). Port of
-[src_legacy/Diffusion/pbl_diffusion.jl:198-210](src_legacy/Diffusion/pbl_diffusion.jl).
+`h_pbl ≤ 10 m`). Port of the legacy PBL diffusion module (git
+commit ec2d2c0, path `src_legacy/Diffusion/pbl_diffusion.jl:198-210`).
 """
 @inline function _prandtl_inverse(h_pbl, ustar, H_kin, t2m, L_ob,
                                   p::PBLPhysicsParameters{FT}) where FT

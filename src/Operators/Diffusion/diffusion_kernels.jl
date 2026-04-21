@@ -28,8 +28,8 @@ The future adjoint kernel is structurally identical:
 read Kz and dz the same way, build the same `(a_k, b_k, c_k)`
 per level, then apply the transposition rule at the tridiagonal
 interface (`a_T[k] = c[k-1]`, `b_T[k] = b[k]`, `c_T[k] = a[k+1]`)
-before passing to a Thomas solve. See
-[src_legacy/Diffusion/boundary_layer_diffusion_adjoint.jl:74-84](src_legacy/Diffusion/boundary_layer_diffusion_adjoint.jl#L74-L84).
+before passing to a Thomas solve. Archival adjoint template:
+[boundary_layer_diffusion_adjoint.jl:74-84](../../../docs/resources/developer_notes/legacy_adjoint_templates/boundary_layer_diffusion_adjoint.jl#L74-L84).
 """
 @kernel function _vertical_diffusion_kernel!(q, kz_field,
                                               @Const(dz),

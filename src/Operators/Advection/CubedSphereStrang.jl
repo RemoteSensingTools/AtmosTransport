@@ -329,14 +329,20 @@ end
 # =========================================================================
 
 """
-    CSAdvectionWorkspace{FT, A}
+    CSAdvectionWorkspace{FT, A, S}
 
-Pre-allocated double buffers for cubed-sphere panel advection.
-One workspace is shared across all 6 panels (sequential panel loop).
+Pre-allocated cubed-sphere transport workspace.
+
+- `rm_A`, `m_A` are the halo-padded advection ping-pong buffers shared
+  across panels.
+- `w_scratch`, `dz_scratch` are panel-native column-operator workspaces
+  with one structured `(Nc, Nc, Nz)` scratch array per panel.
 """
-struct CSAdvectionWorkspace{FT, A <: AbstractArray{FT, 3}}
-    rm_A :: A
-    m_A  :: A
+struct CSAdvectionWorkspace{FT, A <: AbstractArray{FT, 3}, S <: NTuple{6, <:AbstractArray{FT, 3}}}
+    rm_A       :: A
+    m_A        :: A
+    w_scratch  :: S
+    dz_scratch :: S
 end
 
 function CSAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
@@ -345,7 +351,10 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
     N = mesh.Nc + 2 * mesh.Hp
     rm_A = array_type(zeros(FT, N, N, Nz))
     m_A  = array_type(zeros(FT, N, N, Nz))
-    return CSAdvectionWorkspace{FT, typeof(rm_A)}(rm_A, m_A)
+    w_scratch = ntuple(_ -> array_type(zeros(FT, mesh.Nc, mesh.Nc, Nz)), 6)
+    dz_scratch = ntuple(_ -> array_type(zeros(FT, mesh.Nc, mesh.Nc, Nz)), 6)
+    return CSAdvectionWorkspace{FT, typeof(rm_A), typeof(w_scratch)}(
+        rm_A, m_A, w_scratch, dz_scratch)
 end
 
 function CSAdvectionWorkspace(mesh::CubedSphereMesh,
@@ -354,7 +363,19 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh,
     Nz = size(prototype, 3)
     rm_A = similar(prototype, FT, N, N, Nz)
     m_A = similar(prototype, FT, N, N, Nz)
-    return CSAdvectionWorkspace{FT, typeof(rm_A)}(rm_A, m_A)
+    w_scratch = ntuple(_ -> similar(prototype, FT, mesh.Nc, mesh.Nc, Nz), 6)
+    dz_scratch = ntuple(_ -> similar(prototype, FT, mesh.Nc, mesh.Nc, Nz), 6)
+    return CSAdvectionWorkspace{FT, typeof(rm_A), typeof(w_scratch)}(
+        rm_A, m_A, w_scratch, dz_scratch)
+end
+
+function Adapt.adapt_structure(to, ws::CSAdvectionWorkspace{FT}) where FT
+    rm_A = Adapt.adapt(to, ws.rm_A)
+    m_A = Adapt.adapt(to, ws.m_A)
+    w_scratch = Adapt.adapt(to, ws.w_scratch)
+    dz_scratch = Adapt.adapt(to, ws.dz_scratch)
+    return CSAdvectionWorkspace{FT, typeof(rm_A), typeof(w_scratch)}(
+        rm_A, m_A, w_scratch, dz_scratch)
 end
 
 # =========================================================================
@@ -463,7 +484,8 @@ function strang_split_cs!(panels_rm::NTuple{6},
                           scheme,
                           workspace::CSAdvectionWorkspace;
                           flux_scale = one(eltype(panels_m[1])),
-                          cfl_limit::Real = 0.95)
+                          cfl_limit::Real = 0.95,
+                          midpoint! = nothing)
     Nc, Hp = mesh.Nc, mesh.Hp
     Nz = size(panels_rm[1], 3)
     rm_A, m_A = workspace.rm_A, workspace.m_A
@@ -510,6 +532,9 @@ function strang_split_cs!(panels_rm::NTuple{6},
                              scheme, rm_A, m_A, Nc, Hp, Nz; flux_scale=fs_z)
         end
     end
+
+    midpoint! === nothing || midpoint!()
+
     for _ in 1:n_z
         for p in 1:6
             _sweep_z_panel!(panels_rm[p], panels_m[p], panels_cm[p],

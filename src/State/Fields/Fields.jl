@@ -29,9 +29,10 @@ module Fields
 
 using Adapt
 
-export AbstractTimeVaryingField, ConstantField, ProfileKzField, PreComputedKzField
+export AbstractTimeVaryingField, AbstractCubedSphereField
+export ConstantField, ProfileKzField, PreComputedKzField, CubedSphereField
 export DerivedKzField, PBLPhysicsParameters, StepwiseField
-export field_value, update_field!, integral_between
+export field_value, update_field!, integral_between, panel_field
 
 # =========================================================================
 # Abstract type
@@ -108,6 +109,7 @@ update_field!(f::ConstantField, ::Real) = f
 
 include("ProfileKzField.jl")
 include("PreComputedKzField.jl")
+include("CubedSphereField.jl")
 include("DerivedKzField.jl")
 include("StepwiseField.jl")
 

@@ -10,12 +10,12 @@ lower-level kernel on matched inputs.
 
 using Test
 using AtmosTransport: CellState, AdvectionWorkspace,
-                      ConstantField, PreComputedKzField, ProfileKzField,
-                      NoDiffusion, ImplicitVerticalDiffusion,
-                      AbstractDiffusionOperator, apply!, get_tracer,
-                      ReducedGaussianMesh, HybridSigmaPressure, AtmosGrid, CPU,
-                      ncells,
-                      field_value
+    ConstantField, PreComputedKzField, ProfileKzField,
+    NoDiffusion, ImplicitVerticalDiffusion, CubedSphereField,
+    AbstractDiffusionOperator, apply!, get_tracer,
+    ReducedGaussianMesh, HybridSigmaPressure, AtmosGrid, CPU,
+    ncells,
+    field_value
 using AtmosTransport.Operators.Diffusion: _vertical_diffusion_kernel!,
                                            build_diffusion_coefficients,
                                            solve_tridiagonal!
@@ -116,6 +116,10 @@ end
     op = ImplicitVerticalDiffusion(; kz_field = good)
     @test op.kz_field === good
     @test op isa ImplicitVerticalDiffusion{Float64}
+
+    good_cs = CubedSphereField(ntuple(_ -> ConstantField{FT, 3}(1.0), 6))
+    op_cs = ImplicitVerticalDiffusion(; kz_field = good_cs)
+    @test op_cs.kz_field === good_cs
 end
 
 # =========================================================================

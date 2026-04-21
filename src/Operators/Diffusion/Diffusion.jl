@@ -26,7 +26,9 @@ mechanically (see docstring in [`thomas_solve.jl`](@ref)).
 module Diffusion
 
 using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
-using ...State: CellState, AbstractTimeVaryingField, field_value, update_field!
+using ...State: CellState, CubedSphereState,
+                AbstractTimeVaryingField, AbstractCubedSphereField,
+                field_value, update_field!, panel_field, eachtracer
 using ...MetDrivers: current_time
 import ..apply!
 

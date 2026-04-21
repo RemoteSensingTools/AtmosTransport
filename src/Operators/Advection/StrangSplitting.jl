@@ -1011,10 +1011,9 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
                        emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                        meteo = nothing,
                        dt::Union{Nothing, Real} = nothing) where {B <: AbstractMassBasis}
-    diffusion_op isa NoDiffusion ||
-        throw(ArgumentError("CubedSphere runtime enablement in plan 22B supports advection only; diffusion is deferred to plan 22C"))
-    emissions_op isa NoSurfaceFlux ||
-        throw(ArgumentError("CubedSphere runtime enablement in plan 22B supports advection only; surface flux is deferred to plan 22C"))
+    (!(diffusion_op isa NoDiffusion) || !(emissions_op isa NoSurfaceFlux)) &&
+        dt === nothing && throw(ArgumentError(
+            "cubed-sphere transport with diffusion or surface flux requires the step dt"))
 
     n_tr = ntracers(state)
     n_tr == 0 && return nothing
@@ -1035,9 +1034,26 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
 
         rm_tracer = get_tracer(state, idx)
         fill_panel_halos!(rm_tracer, grid.horizontal; dir=1)
+        tracer_name = tracer_names[idx]
+        midpoint! = if emissions_op isa NoSurfaceFlux
+            () -> apply_vertical_diffusion!(rm_tracer, diffusion_op, workspace, dt, meteo;
+                                            halo_width = state.halo_width)
+        else
+            half_dt = dt / 2
+            () -> begin
+                apply_vertical_diffusion!(rm_tracer, diffusion_op, workspace, half_dt, meteo;
+                                          halo_width = state.halo_width)
+                apply_surface_flux!(rm_tracer, emissions_op, workspace, dt, meteo, grid;
+                                    tracer_names = (tracer_name,),
+                                    halo_width = state.halo_width)
+                apply_vertical_diffusion!(rm_tracer, diffusion_op, workspace, half_dt, meteo;
+                                          halo_width = state.halo_width)
+            end
+        end
         strang_split_cs!(rm_tracer, m, fluxes.am, fluxes.bm, fluxes.cm,
                          grid.horizontal, scheme, workspace;
-                         cfl_limit = cfl_limit)
+                         cfl_limit = cfl_limit,
+                         midpoint! = midpoint!)
     end
 
     return nothing

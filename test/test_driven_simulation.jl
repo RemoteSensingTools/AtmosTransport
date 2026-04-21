@@ -203,6 +203,43 @@ end
     end
 end
 
+@testset "DrivenSimulation ReducedGaussian supports diffusion plus surface sources" begin
+    mktemp() do path, io
+        close(io)
+        write_driven_reduced_binary(path; FT=Float64, window_mass_scales=(1,))
+
+        driver = TransportBinaryDriver(path; FT=Float64, arch=CPU())
+        grid = driver_grid(driver)
+        ncell = ncells(grid.horizontal)
+
+        air_mass = ones(Float64, ncell, 2)
+        tracer = zeros(Float64, ncell, 2)
+        tracer[:, 2] .= 100.0
+        state = CellState(MoistBasis, air_mass; fossil_co2=tracer)
+        fluxes = allocate_face_fluxes(grid.horizontal, 2; FT=Float64, basis=MoistBasis)
+        kz = ConstantField{Float64, 2}(1.0)
+        diffusion = ImplicitVerticalDiffusion(; kz_field=kz)
+        model = TransportModel(state, fluxes, grid, UpwindScheme(); diffusion=diffusion)
+        fill!(model.workspace.dz_scratch, 100.0)
+
+        source = AtmosTransport.SurfaceFluxSource(:fossil_co2, fill(2.0, ncell))
+        sim = DrivenSimulation(model, driver;
+                               start_window=1,
+                               stop_window=1,
+                               surface_sources=(source,))
+
+        m0 = total_mass(sim.model.state, :fossil_co2)
+        run!(sim)
+
+        @test sim.iteration == 2
+        @test sim.time == 3600.0
+        @test all(sim.model.state.tracers.fossil_co2[:, 1] .> 0.0)
+        @test total_mass(sim.model.state, :fossil_co2) ≈ m0 + ncell * 2.0 * 1800.0 * 2 rtol=1e-12
+
+        close(driver)
+    end
+end
+
 @testset "DrivenSimulation window-forcing runtime" begin
     mktemp() do path, io
         close(io)

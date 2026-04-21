@@ -16,9 +16,10 @@ Every concrete subtype implements two entry points:
 - Array-level `apply_surface_flux!(q_raw, op, ws, dt, meteo, grid;
   tracer_names)` → mutates a raw tracer buffer directly. Supported
   layouts are:
-  - structured packed: `(Nx, Ny, Nz, Nt)`
-  - face-indexed packed: `(ncells, Nz, Nt)`
-  - face-indexed single-tracer slice: `(ncells, Nz)`
+- structured packed: `(Nx, Ny, Nz, Nt)`
+- face-indexed packed: `(ncells, Nz, Nt)`
+- face-indexed single-tracer slice: `(ncells, Nz)`
+- cubed-sphere single-tracer panels: `NTuple{6}` of `(Nc + 2Hp, Nc + 2Hp, Nz)`
   Used by the structured multi-tracer palindrome (Commit 5) and the
   reduced-Gaussian face-indexed transport block (plan 22A).
 """
@@ -137,6 +138,8 @@ apply_surface_flux!(::AbstractArray{<:Any, 3}, ::NoSurfaceFlux, ws, dt,
                      meteo, grid; tracer_names) = nothing
 apply_surface_flux!(::AbstractArray{<:Any, 2}, ::NoSurfaceFlux, ws, dt,
                      meteo, grid; tracer_names) = nothing
+apply_surface_flux!(::NTuple{6}, ::NoSurfaceFlux, ws, dt,
+                    meteo, grid; tracer_names, halo_width) = nothing
 
 @inline function _check_surface_flux_rate_shape(src::SurfaceFluxSource,
                                                 expected_shape::Tuple,
@@ -219,6 +222,42 @@ function apply_surface_flux!(q_raw::AbstractArray{FT, 2},
     return nothing
 end
 
+function apply_surface_flux!(q_raw::NTuple{6, A},
+                             op::SurfaceFluxOperator,
+                             workspace,
+                             dt::Real,
+                             meteo,
+                             grid;
+                             tracer_names::Tuple,
+                             halo_width::Integer) where {FT, A <: AbstractArray{FT, 3}}
+    length(tracer_names) == 1 || throw(ArgumentError(
+        "apply_surface_flux!: cubed-sphere single-tracer panels require exactly one tracer name, got $(tracer_names)"))
+
+    tracer_name = tracer_names[1]
+    src = flux_for(op.flux_map, tracer_name)
+    src === nothing && return nothing
+    rates = src.cell_mass_rate
+    rates isa NTuple{6} || throw(ArgumentError(
+        "apply_surface_flux!: cubed-sphere source $(src.tracer_name) must provide NTuple{6} panel rates"))
+
+    Hp = Int(halo_width)
+    dt_FT = FT(dt)
+    @inbounds for p in 1:6
+        panel_q = q_raw[p]
+        Nc = size(panel_q, 1) - 2Hp
+        Ny = size(panel_q, 2) - 2Hp
+        Nz = size(panel_q, 3)
+        size(rates[p]) == (Nc, Ny) || throw(DimensionMismatch(
+            "surface source $(src.tracer_name) panel $p has shape $(size(rates[p])) " *
+            "but cubed-sphere interior panel shape is $((Nc, Ny))"))
+        backend = get_backend(panel_q)
+        kernel = _surface_flux_cs_single_kernel!(backend, (16, 16))
+        kernel(panel_q, rates[p], dt_FT, Nz, Hp; ndrange = (Nc, Ny))
+        synchronize(backend)
+    end
+    return nothing
+end
+
 # =========================================================================
 # State-level entry point
 # =========================================================================
@@ -229,10 +268,25 @@ function apply!(state::CellState, meteo, grid, ::NoSurfaceFlux, dt;
     return state
 end
 
+function apply!(state::CubedSphereState, meteo, grid, ::NoSurfaceFlux, dt;
+                workspace = nothing)
+    return state
+end
+
 function apply!(state::CellState, meteo, grid, op::SurfaceFluxOperator, dt;
                 workspace = nothing)
     apply_surface_flux!(state.tracers_raw, op, workspace, dt, meteo, grid;
                         tracer_names = state.tracer_names)
+    return state
+end
+
+function apply!(state::CubedSphereState, meteo, grid, op::SurfaceFluxOperator, dt;
+                workspace = nothing)
+    for (name, rm_panels) in eachtracer(state)
+        apply_surface_flux!(rm_panels, op, workspace, dt, meteo, grid;
+                            tracer_names = (name,),
+                            halo_width = state.halo_width)
+    end
     return state
 end
 

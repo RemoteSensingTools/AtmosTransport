@@ -26,13 +26,15 @@ include("MetState.jl")
 include("Tracers.jl")
 include("Fields/Fields.jl")
 
-using .Fields: AbstractTimeVaryingField, ConstantField, ProfileKzField,
-                PreComputedKzField, DerivedKzField, PBLPhysicsParameters,
-                StepwiseField,
-                field_value, update_field!, integral_between
-export AbstractTimeVaryingField, ConstantField, ProfileKzField,
-       PreComputedKzField, DerivedKzField, PBLPhysicsParameters,
-       StepwiseField,
-       field_value, update_field!, integral_between
+using .Fields: AbstractTimeVaryingField, AbstractCubedSphereField,
+               ConstantField, ProfileKzField, PreComputedKzField,
+               CubedSphereField, DerivedKzField, PBLPhysicsParameters,
+               StepwiseField, field_value, update_field!,
+               integral_between, panel_field
+export AbstractTimeVaryingField, AbstractCubedSphereField,
+       ConstantField, ProfileKzField, PreComputedKzField,
+       CubedSphereField, DerivedKzField, PBLPhysicsParameters,
+       StepwiseField, field_value, update_field!,
+       integral_between, panel_field
 
 end # module State

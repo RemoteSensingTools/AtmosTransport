@@ -5,8 +5,10 @@ A single-tracer surface source: a `tracer_name` plus a `cell_mass_rate`
 array supplying mass added **per cell per second** to the surface layer.
 
 - `tracer_name :: Symbol` — matches a name in `CellState.tracer_names`.
-- `cell_mass_rate :: RateT` — either a 2D `(Nx, Ny)` array for
-  structured grids or a 1D `(Nc,)` array for face-indexed grids.
+- `cell_mass_rate :: RateT` — one of:
+  - a 2D `(Nx, Ny)` array for structured grids
+  - a 1D `(Nc,)` array for face-indexed grids
+  - an `NTuple{6}` of 2D `(Nc, Nc)` arrays for cubed-sphere panels
   The **units are kg/s per cell** — already area-integrated. The surface
   flux kernel applies `rm_surface += rate × dt` without multiplying by
   cell area.
@@ -79,6 +81,26 @@ function _check_surface_source_compatibility(state, source::SurfaceFluxSource)
     return nothing
 end
 
+function _check_surface_source_compatibility(state::CubedSphereState, source::SurfaceFluxSource)
+    tracer_index(state, source.tracer_name) === nothing &&
+        throw(ArgumentError("surface source tracer $(source.tracer_name) is not present in model state"))
+
+    rates = source.cell_mass_rate
+    rates isa NTuple{6} || throw(ArgumentError(
+        "cubed-sphere surface source $(source.tracer_name) must provide an NTuple{6} " *
+        "of panel rates, got $(typeof(rates))"))
+
+    Hp = state.halo_width
+    @inbounds for p in 1:6
+        panel = state.air_mass[p]
+        expected = (size(panel, 1) - 2Hp, size(panel, 2) - 2Hp)
+        size(rates[p]) == expected || throw(ArgumentError(
+            "cubed-sphere surface source $(source.tracer_name) panel $p has shape $(size(rates[p])) " *
+            "but the interior panel shape is $(expected)"))
+    end
+    return nothing
+end
+
 """
     _apply_surface_source!(rm, source, dt)
 
@@ -108,5 +130,20 @@ function _apply_surface_source!(rm::AbstractArray{FT, 2},
                                 source::SurfaceFluxSource, dt) where FT
     Nz = size(rm, 2)
     @views rm[:, Nz] .+= source.cell_mass_rate .* dt
+    return nothing
+end
+
+function _apply_surface_source!(rm::NTuple{6}, source::SurfaceFluxSource, dt;
+                                halo_width::Integer)
+    Hp = Int(halo_width)
+    rates = source.cell_mass_rate
+    rates isa NTuple{6} || throw(ArgumentError(
+        "cubed-sphere surface source $(source.tracer_name) must provide NTuple{6} panel rates"))
+    @inbounds for p in 1:6
+        panel_rm = rm[p]
+        Nz = size(panel_rm, 3)
+        Nc = size(panel_rm, 1) - 2Hp
+        @views panel_rm[Hp + 1:Hp + Nc, Hp + 1:Hp + Nc, Nz] .+= rates[p] .* dt
+    end
     return nothing
 end

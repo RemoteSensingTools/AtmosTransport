@@ -160,10 +160,10 @@ export mixing_ratio, total_mass, total_air_mass, tracer_names
 export ntracers, tracer_index, tracer_name, get_tracer, eachtracer
 
 # Time-varying field abstraction (plan 16a, extended in 16b/17)
-export AbstractTimeVaryingField, ConstantField, ProfileKzField,
-       PreComputedKzField, DerivedKzField, PBLPhysicsParameters,
-       StepwiseField,
-       field_value, update_field!, integral_between
+export AbstractTimeVaryingField, AbstractCubedSphereField,
+       ConstantField, ProfileKzField, PreComputedKzField, CubedSphereField,
+       DerivedKzField, PBLPhysicsParameters, StepwiseField,
+       field_value, update_field!, integral_between, panel_field
 
 # Operators -- public transport API
 export AdvectionWorkspace, strang_split!, strang_split_mt!, apply!

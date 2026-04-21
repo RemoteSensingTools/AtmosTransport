@@ -209,10 +209,8 @@ function DrivenSimulation(model::TransportModel,
     foreach(source -> _check_surface_source_compatibility(model.state, source), surface_sources_adapted)
 
     if model.grid.horizontal isa CubedSphereMesh
-        isempty(surface_sources_adapted) ||
-            throw(ArgumentError("CubedSphere runtime enablement in plan 22B supports advection only; surface flux sources are deferred to plan 22C"))
         chemistry isa NoChemistry ||
-            throw(ArgumentError("CubedSphere runtime enablement in plan 22B supports advection only; chemistry operators remain unsupported on CubedSphereState"))
+            throw(ArgumentError("CubedSphere runtime currently supports advection, diffusion, and surface flux; chemistry operators remain unsupported on CubedSphereState"))
     end
 
     # Plan 17 Commit 6: move chemistry + emissions from sim-level post-
@@ -313,12 +311,13 @@ function step!(sim::DrivenSimulation)
     _maybe_advance_window!(sim, substep)
     _refresh_forcing!(sim, substep)
 
-    # Plan 17 Commit 6 + plan 18 A3: step!(model) runs the full operator
+    # Plan 17 Commit 6 + plan 18 A3: step!(model) runs the live operator
     # suite (advection with palindrome-centered V and S, then chemistry)
-    # in one call. Plan 18 A3 passes `meteo = sim` (not `sim.driver`) so
-    # operators see `current_time(sim) = sim.time` and can still reach
-    # the driver via `meteo.driver`. The driver is stateless and cannot
-    # provide `current_time` on its own.
+    # in one call. The convection block is still deferred. Plan 18 A3
+    # passes `meteo = sim` (not `sim.driver`) so operators see
+    # `current_time(sim) = sim.time` and can still reach the driver via
+    # `meteo.driver`. The driver is stateless and cannot provide
+    # `current_time` on its own.
     step!(sim.model, sim.Δt; meteo = sim)
     sim.time += sim.Δt
     sim.iteration += 1

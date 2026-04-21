@@ -94,3 +94,49 @@ end
         close(driver)
     end
 end
+
+@testset "CubedSphere runtime supports diffusion plus surface sources" begin
+    mktemp() do path, io
+        close(io)
+        write_driven_cs_binary(path; FT=Float64, window_mass_scales=(1,))
+
+        driver = CubedSphereTransportDriver(path; FT=Float64, arch=CPU(), Hp=1)
+        window = load_transport_window(driver, 1)
+        mesh = driver_grid(driver).horizontal
+
+        tracer_panels = ntuple(6) do p
+            rm = zeros(Float64, size(window.air_mass[p]))
+            @views rm[mesh.Hp + 1:mesh.Hp + mesh.Nc, mesh.Hp + 1:mesh.Hp + mesh.Nc, 2] .= 100.0
+            rm
+        end
+
+        state = CubedSphereState(DryBasis, mesh, window.air_mass; CO2=tracer_panels)
+        fluxes = allocate_face_fluxes(mesh, 2; FT=Float64, basis=DryBasis)
+        kz = CubedSphereField(ntuple(_ -> ConstantField{Float64, 3}(1.0), 6))
+        diffusion = ImplicitVerticalDiffusion(; kz_field=kz)
+        model = TransportModel(state, fluxes, driver_grid(driver), UpwindScheme();
+                               diffusion=diffusion)
+        for p in 1:6
+            fill!(model.workspace.dz_scratch[p], 100.0)
+        end
+
+        source = SurfaceFluxSource(:CO2, ntuple(_ -> fill(2.0, mesh.Nc, mesh.Nc), 6))
+        sim = DrivenSimulation(model, driver;
+                               start_window=1,
+                               stop_window=1,
+                               surface_sources=(source,))
+
+        m0 = total_mass(sim.model.state, :CO2)
+        run!(sim)
+
+        @test sim.iteration == 2
+        @test sim.time == 3600.0
+        for p in 1:6
+            panel = get_tracer(sim.model.state, :CO2)[p]
+            @test all(panel[mesh.Hp + 1:mesh.Hp + mesh.Nc, mesh.Hp + 1:mesh.Hp + mesh.Nc, 1] .> 0.0)
+        end
+        @test total_mass(sim.model.state, :CO2) ≈ m0 + 6 * mesh.Nc * mesh.Nc * 2.0 * 1800.0 * 2 rtol=1e-12
+
+        close(driver)
+    end
+end

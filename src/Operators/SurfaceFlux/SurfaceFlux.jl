@@ -32,7 +32,7 @@ module SurfaceFlux
 
 using Adapt
 using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
-using ...State: CellState, get_tracer, tracer_index
+using ...State: CellState, CubedSphereState, get_tracer, tracer_index, eachtracer
 import ..apply!
 
 export SurfaceFluxSource, PerTracerFluxMap, flux_for

@@ -57,3 +57,15 @@ over tracers one slice at a time.
     c = @index(Global, Linear)
     @inbounds q_raw[c, Nz] += rate[c] * dt
 end
+
+"""
+    _surface_flux_cs_single_kernel!(q_raw, rate, dt, Nz, Hp)
+
+Cubed-sphere single-tracer surface-flux kernel. `q_raw` is one
+halo-padded tracer panel `(Nc + 2Hp, Nc + 2Hp, Nz)` and `rate` is the
+interior `(Nc, Nc)` panel source.
+"""
+@kernel function _surface_flux_cs_single_kernel!(q_raw, @Const(rate), dt, Nz, Hp)
+    ii, jj = @index(Global, NTuple)
+    @inbounds q_raw[ii + Hp, jj + Hp, Nz] += rate[ii, jj] * dt
+end

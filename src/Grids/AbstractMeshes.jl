@@ -171,5 +171,5 @@ export AbstractFluxTopology, StructuredFluxTopology, FaceIndexedFluxTopology
 export StructuredTopology, FaceConnectedTopology
 export flux_topology
 export AbstractVerticalCoordinate
-export AtmosGrid, Grid, floattype, architecture, nlevels
+export AtmosGrid, Grid, floattype, nlevels  # `architecture` re-exported via Architectures
 export planet_parameters, radius, gravity, reference_pressure

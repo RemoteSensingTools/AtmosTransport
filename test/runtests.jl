@@ -24,6 +24,7 @@ core_tests = [
     "test_cubed_sphere_advection.jl",
     "test_cubed_sphere_runtime.jl",
     "test_poisson_balance.jl",
+    "test_aqua.jl",
 ]
 
 for test_file in core_tests

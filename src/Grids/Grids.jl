@@ -14,6 +14,7 @@ Provides:
 module Grids
 
 using ..Architectures: CPU
+import ..Architectures: architecture  # extended with a method on AtmosGrid below
 using ..Parameters: PlanetParameters, earth_parameters
 
 include("AbstractMeshes.jl")

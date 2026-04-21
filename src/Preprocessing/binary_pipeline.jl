@@ -831,13 +831,14 @@ function process_window!(win_idx::Int,
     return nothing
 end
 
-next_day_merged_fields(::Nothing, args...) = nothing
-
 """
     next_day_merged_fields(next_day_hour0, ...)
 
 Process the next day's hour-0 spectral and humidity fields so the current day's
 final window can form forward deltas and carry a consistent mass-fix offset.
+
+Returns `nothing` early when `next_day_hour0 === nothing` (no next-day data
+was loaded, e.g. at the end of the processed range).
 """
 function next_day_merged_fields(next_day_hour0,
                                 date::Date,
@@ -848,6 +849,7 @@ function next_day_merged_fields(next_day_hour0,
                                 merged::MergeWorkspace{FT},
                                 qv::AbstractQVWorkspace{FT},
                                 ps_offsets::Vector{Float64}) where FT
+    next_day_hour0 === nothing && return nothing
     Nx = size(transform.sp, 1)
     Ny = size(transform.sp, 2)
     @info "  Computing next day hour 0 for last-window delta..."

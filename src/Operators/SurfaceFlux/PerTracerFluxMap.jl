@@ -3,7 +3,7 @@
 
 An ordered tuple of `SurfaceFluxSource`s, keyed by the `tracer_name`
 field on each entry. Supplies the surface flux operator (Commit 3)
-with per-tracer 2D flux data and ensures efficient tuple-splatting
+with per-tracer surface-rate data and ensures efficient tuple-splatting
 at kernel-launch time.
 
 The map is **NTuple-backed** rather than Dict-backed. Rationale:

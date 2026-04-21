@@ -5,9 +5,8 @@ A single-tracer surface source: a `tracer_name` plus a `cell_mass_rate`
 array supplying mass added **per cell per second** to the surface layer.
 
 - `tracer_name :: Symbol` — matches a name in `CellState.tracer_names`.
-- `cell_mass_rate :: RateT` — either a 3D `(Nx, Ny, Nz)` array for
-  structured grids (only the `k = Nz` surface slice is read) or a 2D
-  `(Nc, Nz)` array for face-indexed grids (surface slice `[:, Nz]`).
+- `cell_mass_rate :: RateT` — either a 2D `(Nx, Ny)` array for
+  structured grids or a 1D `(Nc,)` array for face-indexed grids.
   The **units are kg/s per cell** — already area-integrated. The surface
   flux kernel applies `rm_surface += rate × dt` without multiplying by
   cell area.

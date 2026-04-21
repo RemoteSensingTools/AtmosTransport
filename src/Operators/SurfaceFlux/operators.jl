@@ -14,9 +14,13 @@ Every concrete subtype implements two entry points:
 - State-level `apply!(state, meteo, grid, op, dt; workspace)` →
   mutates `state.tracers_raw`.
 - Array-level `apply_surface_flux!(q_raw, op, ws, dt, meteo, grid;
-  tracer_names)` → mutates a raw 4D tracer buffer directly. Used by
-  the palindrome integration (Commit 5) on whichever ping-pong
-  buffer currently holds the tracer state.
+  tracer_names)` → mutates a raw tracer buffer directly. Supported
+  layouts are:
+  - structured packed: `(Nx, Ny, Nz, Nt)`
+  - face-indexed packed: `(ncells, Nz, Nt)`
+  - face-indexed single-tracer slice: `(ncells, Nz)`
+  Used by the structured multi-tracer palindrome (Commit 5) and the
+  reduced-Gaussian face-indexed transport block (plan 22A).
 """
 abstract type AbstractSurfaceFluxOperator end
 
@@ -42,9 +46,15 @@ Applies a `PerTracerFluxMap` of surface sources to the `k = Nz` slab
 of the tracer mass array.
 
 For every tracer named in the flux map, the operator launches the
-`_surface_flux_kernel!` kernel over `(Nx, Ny)` and adds
-`rate[i, j] * dt` to `tracers_raw[i, j, Nz, tracer_idx]`, where
-`tracer_idx` is resolved on the host from `state.tracer_names`.
+layout-appropriate surface-flux kernel and adds `rate × dt` to the
+surface layer `k = Nz` of the matching tracer:
+
+- structured packed state `(Nx, Ny, Nz, Nt)` →
+  `_surface_flux_kernel!` over `(Nx, Ny)`
+- face-indexed packed state `(ncells, Nz, Nt)` →
+  `_surface_flux_face_kernel!` over `ncells`
+
+Tracer indices are resolved on the host from `state.tracer_names`.
 Tracers absent from the map are untouched.
 
 Per plan 17 Decision 1, the rate is in kg/s per cell (already area-
@@ -90,13 +100,18 @@ SurfaceFluxOperator(sources::SurfaceFluxSource...) =
 # =========================================================================
 
 """
-    apply_surface_flux!(q_raw, op::AbstractSurfaceFluxOperator, workspace, dt, meteo, grid;
+   apply_surface_flux!(q_raw, op::AbstractSurfaceFluxOperator, workspace, dt, meteo, grid;
                         tracer_names)
 
 Array-level surface-flux application. Writes directly to the supplied
-4D tracer buffer `q_raw` of shape `(Nx, Ny, Nz, Nt)`, adding each
-source's `rate × dt` contribution to the surface slab
-`q_raw[:, :, Nz, tracer_idx]`.
+tracer buffer `q_raw`, adding each source's `rate × dt` contribution
+to the surface slab `k = Nz`.
+
+Supported layouts:
+
+- structured packed: `q_raw :: (Nx, Ny, Nz, Nt)`
+- face-indexed packed: `q_raw :: (ncells, Nz, Nt)`
+- face-indexed single-tracer slice: `q_raw :: (ncells, Nz)`
 
 `tracer_names::NTuple{Nt, Symbol}` is required as a keyword so the
 function can resolve each source's name to a slab index without
@@ -118,6 +133,19 @@ function apply_surface_flux! end
 # NoSurfaceFlux dead branch — dispatched away on the default config
 apply_surface_flux!(::AbstractArray{<:Any, 4}, ::NoSurfaceFlux, ws, dt,
                      meteo, grid; tracer_names) = nothing
+apply_surface_flux!(::AbstractArray{<:Any, 3}, ::NoSurfaceFlux, ws, dt,
+                     meteo, grid; tracer_names) = nothing
+apply_surface_flux!(::AbstractArray{<:Any, 2}, ::NoSurfaceFlux, ws, dt,
+                     meteo, grid; tracer_names) = nothing
+
+@inline function _check_surface_flux_rate_shape(src::SurfaceFluxSource,
+                                                expected_shape::Tuple,
+                                                q_raw_shape::Tuple)
+    size(src.cell_mass_rate) == expected_shape || throw(DimensionMismatch(
+        "surface source $(src.tracer_name) has shape $(size(src.cell_mass_rate)) " *
+        "but q_raw surface shape is $(expected_shape) for buffer $(q_raw_shape)"))
+    return nothing
+end
 
 function apply_surface_flux!(q_raw::AbstractArray{FT, 4},
                              op::SurfaceFluxOperator,
@@ -133,11 +161,60 @@ function apply_surface_flux!(q_raw::AbstractArray{FT, 4},
     for src in op.flux_map.sources
         t_idx = findfirst(==(src.tracer_name), tracer_names)
         t_idx === nothing && continue   # tracer not in this state; skip
+        _check_surface_flux_rate_shape(src, (Nx, Ny), size(q_raw))
         kernel = _surface_flux_kernel!(backend, (16, 16))
         kernel(q_raw, src.cell_mass_rate, dt_FT, t_idx, Nz;
                ndrange = (Nx, Ny))
     end
 
+    synchronize(backend)
+    return nothing
+end
+
+function apply_surface_flux!(q_raw::AbstractArray{FT, 3},
+                             op::SurfaceFluxOperator,
+                             workspace,
+                             dt::Real,
+                             meteo,
+                             grid;
+                             tracer_names::Tuple) where FT
+    ncells, Nz, _ = size(q_raw)
+    backend = get_backend(q_raw)
+    dt_FT   = FT(dt)
+
+    for src in op.flux_map.sources
+        t_idx = findfirst(==(src.tracer_name), tracer_names)
+        t_idx === nothing && continue
+        _check_surface_flux_rate_shape(src, (ncells,), size(q_raw))
+        kernel = _surface_flux_face_kernel!(backend, 256)
+        kernel(q_raw, src.cell_mass_rate, dt_FT, t_idx, Nz;
+               ndrange = ncells)
+    end
+
+    synchronize(backend)
+    return nothing
+end
+
+function apply_surface_flux!(q_raw::AbstractArray{FT, 2},
+                             op::SurfaceFluxOperator,
+                             workspace,
+                             dt::Real,
+                             meteo,
+                             grid;
+                             tracer_names::Tuple) where FT
+    length(tracer_names) == 1 || throw(ArgumentError(
+        "apply_surface_flux!: single-tracer face-indexed buffer requires " *
+        "exactly one tracer name, got $(tracer_names)"))
+
+    ncells, Nz = size(q_raw)
+    tracer_name = tracer_names[1]
+    src = flux_for(op.flux_map, tracer_name)
+    src === nothing && return nothing
+    _check_surface_flux_rate_shape(src, (ncells,), size(q_raw))
+
+    backend = get_backend(q_raw)
+    kernel = _surface_flux_face_single_kernel!(backend, 256)
+    kernel(q_raw, src.cell_mass_rate, FT(dt), Nz; ndrange = ncells)
     synchronize(backend)
     return nothing
 end

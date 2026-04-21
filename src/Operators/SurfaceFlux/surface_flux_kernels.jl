@@ -30,3 +30,30 @@ grid storage convention used everywhere in `src/`. A future
     i, j = @index(Global, NTuple)
     @inbounds q_raw[i, j, Nz, tracer_idx] += rate[i, j] * dt
 end
+
+"""
+    _surface_flux_face_kernel!(q_raw, rate, dt, tracer_idx, Nz)
+
+Face-indexed packed surface-flux kernel. `q_raw` has shape
+`(ncells, Nz, Nt)` and `rate` has shape `(ncells,)`. The kernel is
+launched over `ncells` and updates the surface layer `k = Nz` for the
+target tracer:
+
+    q_raw[c, Nz, tracer_idx] += rate[c] * dt
+"""
+@kernel function _surface_flux_face_kernel!(q_raw, @Const(rate), dt, tracer_idx, Nz)
+    c = @index(Global, Linear)
+    @inbounds q_raw[c, Nz, tracer_idx] += rate[c] * dt
+end
+
+"""
+    _surface_flux_face_single_kernel!(q_raw, rate, dt, Nz)
+
+Face-indexed single-tracer helper for a `(ncells, Nz)` tracer slice.
+Used by the reduced-Gaussian advection palindrome, which still loops
+over tracers one slice at a time.
+"""
+@kernel function _surface_flux_face_single_kernel!(q_raw, @Const(rate), dt, Nz)
+    c = @index(Global, Linear)
+    @inbounds q_raw[c, Nz] += rate[c] * dt
+end

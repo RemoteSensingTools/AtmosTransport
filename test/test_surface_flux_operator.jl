@@ -23,7 +23,9 @@ using AtmosTransport
 using AtmosTransport: CellState, MoistBasis, DryBasis,
                       SurfaceFluxSource, PerTracerFluxMap, flux_for,
                       NoSurfaceFlux, SurfaceFluxOperator, AbstractSurfaceFluxOperator,
-                      apply!, apply_surface_flux!
+                      apply!, apply_surface_flux!,
+                      ReducedGaussianMesh, HybridSigmaPressure, AtmosGrid, CPU,
+                      ncells
 using AtmosTransport.Operators.SurfaceFlux: emitting_tracer_indices
 using Adapt
 
@@ -42,6 +44,19 @@ function _make_state(FT, Nx, Ny, Nz; init = one(FT),
     kwargs = NamedTuple{tracer_names}(ntuple(_ -> fill(FT(init), Nx, Ny, Nz),
                                              length(tracer_names)))
     return CellState(MoistBasis, air; kwargs...)
+end
+
+function _make_face_state(FT, Nz; init = one(FT),
+                          tracer_names = (:CO2, :SF6, :Rn222))
+    mesh = ReducedGaussianMesh(FT[-45, 45], [4, 4]; FT = FT)
+    vertical = HybridSigmaPressure(zeros(FT, Nz + 1),
+                                   FT.(collect(range(0, 1, length = Nz + 1))))
+    grid = AtmosGrid(mesh, vertical, CPU(); FT = FT)
+    ncell = ncells(mesh)
+    air = ones(FT, ncell, Nz)
+    kwargs = NamedTuple{tracer_names}(ntuple(_ -> fill(FT(init), ncell, Nz),
+                                             length(tracer_names)))
+    return CellState(MoistBasis, air; kwargs...), grid
 end
 
 @testset "SurfaceFluxOperator — plan 17 Commit 3" begin
@@ -236,6 +251,105 @@ end
         # Interior untouched
         @test all(q_buf[:, :, 1, 1] .== 0.0)
         @test all(q_buf[:, :, 1, 2] .== 0.0)
+    end
+
+    @testset "Face-indexed apply! writes only to k = Nz surface layer" begin
+        FT = Float64
+        Nz = 4
+        state, grid = _make_face_state(FT, Nz; init = 5.0, tracer_names = (:CO2,))
+        ncell = size(state.air_mass, 1)
+        orig_CO2 = copy(state.tracers.CO2)
+
+        rate = fill(2.0, ncell)
+        dt = 3.0
+        op = SurfaceFluxOperator(SurfaceFluxSource(:CO2, rate))
+
+        apply!(state, nothing, grid, op, dt)
+
+        @test state.tracers.CO2[:, Nz] ≈ orig_CO2[:, Nz] .+ rate .* dt
+        for k in 1:(Nz - 1)
+            @test state.tracers.CO2[:, k] == orig_CO2[:, k]
+        end
+    end
+
+    @testset "Face-indexed apply! handles multiple tracers and skips absent tracers" begin
+        FT = Float64
+        Nz = 2
+        state, grid = _make_face_state(FT, Nz; init = 1.0, tracer_names = (:CO2, :SF6))
+        ncell = size(state.air_mass, 1)
+
+        op = SurfaceFluxOperator(
+            SurfaceFluxSource(:CO2, fill(2.0, ncell)),
+            SurfaceFluxSource(:CH4, fill(9.9, ncell)),
+            SurfaceFluxSource(:SF6, fill(3.0, ncell)),
+        )
+
+        dt = 2.0
+        apply!(state, nothing, grid, op, dt)
+
+        @test all(state.tracers.CO2[:, Nz] .≈ 1.0 + 2.0 * dt)
+        @test all(state.tracers.SF6[:, Nz] .≈ 1.0 + 3.0 * dt)
+        @test all(state.tracers.CO2[:, 1] .== 1.0)
+        @test all(state.tracers.SF6[:, 1] .== 1.0)
+    end
+
+    @testset "Array-level apply_surface_flux! operates on any face-indexed packed buffer" begin
+        FT = Float64
+        ncell, Nz, Nt = 8, 2, 2
+        q_buf = zeros(FT, ncell, Nz, Nt)
+
+        names = (:X, :Y)
+        op = SurfaceFluxOperator(SurfaceFluxSource(:X, fill(2.0, ncell)),
+                                  SurfaceFluxSource(:Y, fill(3.0, ncell)))
+
+        apply_surface_flux!(q_buf, op, nothing, 4.0, nothing, nothing;
+                            tracer_names = names)
+
+        @test all(q_buf[:, Nz, 1] .≈ 8.0)
+        @test all(q_buf[:, Nz, 2] .≈ 12.0)
+        @test all(q_buf[:, 1, 1] .== 0.0)
+        @test all(q_buf[:, 1, 2] .== 0.0)
+    end
+
+    @testset "Single-tracer face-indexed slice resolves source by name" begin
+        FT = Float64
+        ncell, Nz = 8, 3
+        q_buf = zeros(FT, ncell, Nz)
+        op = SurfaceFluxOperator(SurfaceFluxSource(:X, fill(2.0, ncell)),
+                                  SurfaceFluxSource(:Y, fill(3.0, ncell)))
+
+        apply_surface_flux!(q_buf, op, nothing, 4.0, nothing, nothing;
+                            tracer_names = (:Y,))
+
+        @test all(q_buf[:, Nz] .≈ 12.0)
+        @test all(q_buf[:, 1] .== 0.0)
+    end
+
+    @testset "Structured and unrolled face-indexed applications agree" begin
+        FT = Float64
+        Nx, Ny, Nz, Nt = 3, 2, 4, 2
+        q_struct = zeros(FT, Nx, Ny, Nz, Nt)
+        q_face = zeros(FT, Nx * Ny, Nz, Nt)
+
+        rate_x = reshape(FT.(1:(Nx * Ny)), Nx, Ny) ./ 10
+        rate_y = fill(FT(0.5), Nx, Ny)
+        dt = FT(7.0)
+
+        op_struct = SurfaceFluxOperator(
+            SurfaceFluxSource(:X, rate_x),
+            SurfaceFluxSource(:Y, rate_y),
+        )
+        op_face = SurfaceFluxOperator(
+            SurfaceFluxSource(:X, vec(copy(rate_x))),
+            SurfaceFluxSource(:Y, vec(copy(rate_y))),
+        )
+
+        apply_surface_flux!(q_struct, op_struct, nothing, dt, nothing, nothing;
+                            tracer_names = (:X, :Y))
+        apply_surface_flux!(q_face, op_face, nothing, dt, nothing, nothing;
+                            tracer_names = (:X, :Y))
+
+        @test reshape(q_struct, Nx * Ny, Nz, Nt) ≈ q_face
     end
 
     @testset "emitting_tracer_indices helper" begin

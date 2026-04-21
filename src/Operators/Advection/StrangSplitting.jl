@@ -1032,9 +1032,10 @@ end
 # (`diffusion_op`, `emissions_op`, `meteo`) because `TransportModel.step!`
 # forwards them unconditionally.
 #
-# Reduced-Gaussian now supports the diffusion slot at the H → V → D → V → H
-# center. Surface emissions remain structured-only for now, so
-# `emissions_op` still errors unless it is `NoSurfaceFlux()`.
+# Reduced-Gaussian now supports both column-local center operators at the
+# H → V → (D or D/2 → S → D/2) → V → H palindrome center. The advection
+# sweeps remain per-tracer on face-indexed meshes, so the surface-flux
+# hook uses the single-tracer `(ncells, Nz)` array-level entry point.
 for (scheme_type, h_sweep, v_sweep) in (
     (:AbstractConstantScheme,    :sweep_horizontal!, :sweep_vertical!),
 )
@@ -1046,12 +1047,6 @@ for (scheme_type, h_sweep, v_sweep) in (
                           diffusion_op::AbstractDiffusionOperator = NoDiffusion(),
                           emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                           meteo = nothing) where {B <: AbstractMassBasis}
-        emissions_op isa NoSurfaceFlux || throw(ArgumentError(
-            "Face-indexed surface emissions are not shipped yet. " *
-            "`SurfaceFluxOperator` is still structured-lat-lon only " *
-            "on reduced-Gaussian grids. Use `NoSurfaceFlux()` until " *
-            "the follow-up extends the kernel."))
-
         m = state.air_mass
         hflux, cm = fluxes.horizontal_flux, fluxes.cm
         cfl_limit_ft = convert(eltype(m), cfl_limit)
@@ -1071,16 +1066,26 @@ for (scheme_type, h_sweep, v_sweep) in (
         # the data source changed.
         raw = state.tracers_raw
         last_dim = ndims(raw)
+        tracer_names = state.tracer_names
         for idx in 1:n_tr
             if idx > 1
                 copyto!(m, m_save)
             end
 
             rm_tracer = selectdim(raw, last_dim, idx)
+            tracer_name = tracer_names[idx]
 
             _sweep_horizontal_face_subcycled!(rm_tracer, m, hflux, grid.horizontal, scheme, workspace, cfl_limit_ft)
             _sweep_vertical_face_subcycled!(rm_tracer, m, cm, scheme, workspace, cfl_limit_ft)
-            apply_vertical_diffusion!(rm_tracer, diffusion_op, workspace, dt, meteo)
+            if emissions_op isa NoSurfaceFlux
+                apply_vertical_diffusion!(rm_tracer, diffusion_op, workspace, dt, meteo)
+            else
+                half_dt = dt / 2
+                apply_vertical_diffusion!(rm_tracer, diffusion_op, workspace, half_dt, meteo)
+                apply_surface_flux!(rm_tracer, emissions_op, workspace, dt, meteo, grid;
+                                    tracer_names = (tracer_name,))
+                apply_vertical_diffusion!(rm_tracer, diffusion_op, workspace, half_dt, meteo)
+            end
             _sweep_vertical_face_subcycled!(rm_tracer, m, cm, scheme, workspace, cfl_limit_ft)
             _sweep_horizontal_face_subcycled!(rm_tracer, m, hflux, grid.horizontal, scheme, workspace, cfl_limit_ft)
         end

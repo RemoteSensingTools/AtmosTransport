@@ -2,8 +2,8 @@
 
 ## Current State
 
-- `live behavior`: the current investigation status is that the daily ERA5 LL binary/preprocessor path is broadly clean, while the main blockers are runtime stepping and basis-contract issues. See the validated Session 1/2 summary in [`SESSION2_STATUS.md`](SESSION2_STATUS.md).
-- `live behavior`: Session 2 status explicitly records clean binary/grid diagnostics and clean Dec 1-2 binaries at [`SESSION2_STATUS.md`](SESSION2_STATUS.md).
+- `live behavior`: the current investigation status is that the daily ERA5 LL binary/preprocessor path is broadly clean, while the main blockers are runtime stepping and basis-contract issues. See the validated Session 1/2 summary in [`SESSION2_NAN_BLOCKING_2026-04-03.md`](../resources/bug_archive/SESSION2_NAN_BLOCKING_2026-04-03.md).
+- `live behavior`: Session 2 status explicitly records clean binary/grid diagnostics and clean Dec 1-2 binaries at [`SESSION2_NAN_BLOCKING_2026-04-03.md`](../resources/bug_archive/SESSION2_NAN_BLOCKING_2026-04-03.md).
 - `conclusion`: binary/preprocessor payloads are not the leading blocker now; remaining gaps are runtime mass stepping, basis consistency, and selected Float32 donor-mass issues.
 
 ## Pole Handling

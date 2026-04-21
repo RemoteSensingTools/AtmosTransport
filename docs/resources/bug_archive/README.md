@@ -28,3 +28,23 @@ contributor is auditing past decisions.
   Append-only communication channel between CLAUDE and CODEX agents
   (Apr 3 – Apr 12). File-ownership declarations at top reference
   obsolete `src_v2`/`test_v2` paths. Preserved for provenance.
+
+## Historical design memos (migrated from docs/memos/)
+
+- **[DESIGN_MEMO_DRY_MASS_TRANSPORT_HISTORICAL.md](DESIGN_MEMO_DRY_MASS_TRANSPORT_HISTORICAL.md)**
+  Self-declared historical, superseded by
+  `docs/memos/DESIGN_MEMO_BASIS_EXPLICIT_TRANSPORT.md` (still active).
+- **[MEMO_DRY_BINARY_RUNTIME_HANDOFF_2026-04-08.md](MEMO_DRY_BINARY_RUNTIME_HANDOFF_2026-04-08.md)**
+  Handoff memo between restructure stages.
+- **[PLAN_24H_CROSS_GRID_VALIDATION_2026-04-10.md](PLAN_24H_CROSS_GRID_VALIDATION_2026-04-10.md)**
+  Apr-10 operational validation plan; no longer in force.
+- **[MEMO_REDUCED_GAUSSIAN_INSTABILITY_2026-04-10.md](MEMO_REDUCED_GAUSSIAN_INSTABILITY_2026-04-10.md)**
+  Debugging run on Dec 2021 reduced-grid; instability diagnosed
+  (nondeterministic preprocessing). Root cause fixed (see
+  `docs/38_REDUCED_GAUSSIAN_THREADED_PREPROCESS_BUG_2026-04-09.md`).
+- **[CLAUDE_VERTICAL_REMAP_PATH_FORWARD.md](CLAUDE_VERTICAL_REMAP_PATH_FORWARD.md)**
+  Single-session debug workflow for cubed-sphere vertical remap.
+- **[CS_TRANSPORT_TRACE.md](CS_TRANSPORT_TRACE.md)** and
+  **[ERA5_LL_TRANSPORT_TRACE.md](ERA5_LL_TRANSPORT_TRACE.md)**
+  Algorithm traces from early debugging; now codified in
+  `docs/reference/`.

@@ -4,6 +4,20 @@ description: Review of global multi-panel CG Poisson balance for cubed-sphere gr
 type: project
 ---
 
+> **STALE — DO NOT TRUST FILE:LINE CITATIONS**
+>
+> Written before plans 18 and 22 shipped. File and line references may
+> point to code that has been moved to `src_legacy/`, refactored, or
+> renamed. Physics principles and design rationale may still apply.
+> Verify any current-code claim against actual `src/` before acting.
+>
+> For a current trace of the corresponding subsystem, prefer the
+> relevant module README under `src/` over this memory file.
+>
+> Subsystem is still live at `src/Preprocessing/cs_poisson_balance.jl`
+> (~809 lines) but the specific claims below have not been re-verified
+> against the current file.
+
 Reviewed `scripts/preprocessing/cs_global_poisson_balance.jl` (2026-04-12).
 
 **Architecture**: Global face table with 12*Nc^2 faces, CG solver identical to RG path. Cross-panel faces created only from outgoing edges (north, east), mirrors on incoming edges (south, west). Sign convention: mirror = +canonical for all CS cross-panel connections (verified: every outgoing edge pairs with an incoming edge in the GEOS-FP connectivity).

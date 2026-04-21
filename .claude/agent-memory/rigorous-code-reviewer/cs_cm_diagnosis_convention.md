@@ -4,6 +4,26 @@ description: CS preprocessor uses conv_h - dm for cm (mass-budget residual), LL 
 type: project
 ---
 
+> **STALE — DO NOT TRUST FILE:LINE CITATIONS**
+>
+> Written before plans 18 and 22 shipped. File and line references may
+> point to code that has been moved to `src_legacy/`, refactored, or
+> renamed. Physics principles and design rationale may still apply.
+> Verify any current-code claim against actual `src/` before acting.
+>
+> For a current trace of the corresponding subsystem, prefer the
+> relevant module README under `src/` over this memory file.
+>
+> Current paths (line numbers drifted):
+> - `diagnose_cs_cm!` now at `src/Preprocessing/cs_poisson_balance.jl:768`
+>   (memory says 638)
+> - `diagnose_cm_from_continuity!` now at
+>   `src/MetDrivers/ERA5/VerticalClosure.jl:21` (memory says
+>   `VerticalClosure.jl:32`)
+>
+> The conceptual CS-vs-LL convention distinction below is durable; only
+> the citations have drifted.
+
 The CS `diagnose_cs_cm!` (cs_poisson_balance.jl:638) uses:
   `cm[k+1] = cm[k] + conv_h - dm`
 

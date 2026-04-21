@@ -4,6 +4,22 @@ description: Runtime cm recomputation from interpolated am/bm amplifies Z-CFL 3.
 type: project
 ---
 
+> **STALE — DO NOT TRUST FILE:LINE CITATIONS**
+>
+> Written before plans 18 and 22 shipped. File and line references may
+> point to code that has been moved to `src_legacy/`, refactored, or
+> renamed. Physics principles and design rationale may still apply.
+> Verify any current-code claim against actual `src/` before acting.
+>
+> For a current trace of the corresponding subsystem, prefer the
+> relevant module README under `src/` over this memory file.
+>
+> Note: `recompute_cm_from_divergence!` is still live at
+> `src/Preprocessing/binary_pipeline.jl:684,926` and
+> `src/Preprocessing/mass_support.jl:223,228`, but the `physics_phases.jl`
+> runtime referenced below lives in `src_legacy/Models/`. The NaN
+> scenario described may no longer apply after preprocessing refactors.
+
 V4 flux delta interpolation (physics_phases.jl:1603-1626) produces 100% NaN.
 
 **Root cause**: `_compute_cm_from_divergence_gpu!` (line 1441-1482) recomputes cm from

@@ -4,6 +4,20 @@ description: Complete line-by-line trace of TM5 Check_CFL flow and mapping to Ju
 type: reference
 ---
 
+> **PARTIALLY STALE — TM5 Fortran section durable; Julia mapping table
+> is stale**
+>
+> The TM5 Check_CFL Fortran trace at the top (citing `advectm_cfl.F90`
+> and the `dynam0` / `dynamum` / `dynamvm` / `dynamwm` call chain) is
+> durable external reference material and still correct.
+>
+> The "Julia Mapping" table below cites `run_loop.jl`, `physics_phases.jl`,
+> `met_buffers.jl`, and `mass_flux_advection.jl` — all of which now live
+> in `src_legacy/`, not `src/`. Line numbers are therefore stale and the
+> architectural mapping predates plans 14, 18, and 22. Do not trust the
+> mapping table's current-code claims without re-deriving them against
+> `src/Operators/Advection/` and `src/Models/TransportModel.jl`.
+
 ## TM5 Check_CFL Flow (advectm_cfl.F90:154-302)
 
 1. `ndyn = ndyn_max` (typically 3600s for global region)

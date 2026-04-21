@@ -4,6 +4,20 @@ description: Three bugs in run_cs_transport.jl: LinRood 4× undertransport, stal
 type: project
 ---
 
+> **STALE — DO NOT TRUST FILE:LINE CITATIONS; BUG STATUS UNVERIFIED**
+>
+> Written before plans 18 and 22 shipped.
+> [`scripts/run_cs_transport.jl`](../../../scripts/run_cs_transport.jl)
+> still exists, so the named bugs (at lines 335, 244, 209 in the memory
+> below) may or may not still be present — the script has likely been
+> edited since this memory was written and line numbers have drifted.
+> **Do not fix or re-trust these findings without re-reading the current
+> script and re-verifying each bug against its current line.** Whether
+> these bugs were ever fixed is not recorded in this memory.
+>
+> For a current trace of the corresponding subsystem, prefer the
+> relevant module README under `src/` over this memory file.
+
 ## LinRood undertransport bug (CRITICAL)
 
 `run_cs_transport.jl:335`: `fs = 1.0 / total_sub` where `total_sub = steps_per_window * n_lr_sub`.

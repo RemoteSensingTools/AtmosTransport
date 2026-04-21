@@ -4,6 +4,20 @@ description: Comprehensive review of src/Preprocessing/ — 5924 lines across 14
 type: project
 ---
 
+> **STALE — DO NOT TRUST FILE:LINE CITATIONS**
+>
+> Written before plans 18 and 22 shipped. File and line references may
+> point to code that has been moved to `src_legacy/`, refactored, or
+> renamed. Physics principles and design rationale may still apply.
+> Verify any current-code claim against actual `src/` before acting.
+>
+> For a current trace of the corresponding subsystem, prefer the
+> relevant module README under `src/` over this memory file.
+>
+> Scale drift: this review claims "5924 lines across 14 files". Current
+> `src/Preprocessing/` is 14 files, ~6574 lines. Content has drifted
+> correspondingly.
+
 Preprocessing pipeline review completed 2026-04-13. Key findings:
 
 **Architecture**: Three grid-dispatched `process_day` methods (LL, RG, CS). LL is batch (stores all windows, then balances + writes). RG uses streaming 2-slot sliding buffer. CS uses streaming with per-window balance-and-write. The module docstring claims `GriddedFluxSource` and `GriddedWindSource` types exist — they do NOT. Only `SpectralSource` (ERA5 GRIB) is implemented.

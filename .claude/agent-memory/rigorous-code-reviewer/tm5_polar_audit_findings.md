@@ -4,6 +4,19 @@ description: Key divergences between TM5 cy3-4dvar polar advection and our imple
 type: reference
 ---
 
+> **STALE — AtmosTransport claims may be stale; TM5 Fortran citations
+> remain valid**
+>
+> Written before plans 18 and 22 shipped. TM5 Fortran references at
+> `deps/tm5-cy3-4dvar/base/src/*.F90` are durable and still correct.
+> AtmosTransport-side claims (citing `src/Advection/mass_flux_advection.jl`
+> and similar) describe code that now lives in `src_legacy/` or has been
+> refactored. Verify AtmosTransport-side claims against current `src/`
+> before acting on them.
+>
+> For a current trace of the corresponding subsystem, prefer the
+> relevant module README under `src/` over this memory file.
+
 Audit target: explain why `mass_fixer=false` fails at pole-adjacent stratospheric cell (20, 2, 8) in Y direction after 5 halvings.
 
 Source files (all read line-by-line during audit):

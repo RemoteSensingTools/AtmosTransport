@@ -23,13 +23,14 @@ runtime maturity or topology coverage.
 - [`TransportModel.step!`](../Models/TransportModel.jl) currently runs:
   - transport block: advection, with diffusion and surface flux embedded
     at the Strang midpoint
+  - convection block (plan 22D), executed when the model carries a
+    non-`NoConvection` operator
   - chemistry block
-- Convection types and kernels live here, but the model runtime does not
-  yet execute a convection block.
 
 That distinction matters when reading this tree: "operator exists in
-`src/Operators`" and "operator is live through `TransportModel`" are not
-the same thing.
+`src/Operators`" and "operator is live through `TransportModel`" are
+still not the same thing — the chemistry CS gap below is a current
+example.
 
 ## Topology Coverage
 
@@ -49,9 +50,11 @@ the same thing.
   - `CellState`: live
   - `CubedSphereState`: not yet wired
 - Convection:
-  - structured kernels and forcing contracts exist
-  - reduced Gaussian and cubed sphere are deferred
-  - model-level execution is still deferred
+  - structured LatLon: live (`CMFMCConvection`)
+  - face-indexed reduced Gaussian: live (`CMFMCConvection`)
+  - panel-native cubed sphere: live (`CMFMCConvection`)
+  - step-level block wiring landed as plan 22D on top of plan
+    22A/B/C topology work
 
 ## File Map
 

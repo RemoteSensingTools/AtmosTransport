@@ -49,11 +49,13 @@ These are the load-bearing facts the plan must respect:
   array-level entry point in `src/Operators/SurfaceFlux/operators.jl`,
   even though `SurfaceFluxSource` helpers already understand
   face-indexed surface shapes in `src/Operators/SurfaceFlux/sources.jl`.
-- `CMFMCConvection` is currently structured-only and explicitly rejects
-  face-indexed state in `src/Operators/Convection/CMFMCConvection.jl`.
-- `TransportModel.step!` still does **not** execute a convection block.
-  Convection topology work is therefore gated on the remaining plan-18
-  structured runtime wiring landing first.
+- `CMFMCConvection` was structured-only at the time this plan was
+  drafted, but as of plan 22D it ships three-topology dispatches in
+  `src/Operators/Convection/CMFMCConvection.jl`.
+- `TransportModel.step!` executes a convection block as of plan 22D.
+  The "convection topology work is gated on the runtime block wiring"
+  framing in this plan is superseded; see the 22D retrospective in
+  `docs/plans/PLAN_HISTORY.md`.
 - CS advection exists as a panel-oriented path:
   `strang_split_cs!` in `src/Operators/Advection/CubedSphereStrang.jl`
   and the standalone runner in `scripts/run_cs_transport.jl`.
@@ -234,10 +236,10 @@ LatLon already has, using the existing face-indexed runtime.
 - Structured LatLon overhead remains within about `±5%` on the existing
   benchmarks, or any larger change is explained and justified.
 
-**Current repo status:** the RG diffusion and surface-flux path is live
-through `TransportModel` and `DrivenSimulation`. RG convection remains
-explicitly deferred because `TransportModel.step!` still does not
-execute a convection block.
+**Current repo status:** the RG diffusion, surface-flux, AND convection
+paths are live through `TransportModel` and `DrivenSimulation`. RG
+convection landed as part of plan 22D (see
+`docs/plans/PLAN_HISTORY.md` for the retrospective).
 
 ## 5. Plan 22B — CubedSphere runtime enablement
 

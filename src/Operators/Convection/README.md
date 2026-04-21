@@ -3,10 +3,12 @@
 Convective transport operators and workspaces.
 
 This folder owns the convection operator hierarchy and the current
-CMFMC implementation, but it is important to separate "code exists" from
-"runtime is live": the structured convection block is not yet executed
-by `TransportModel.step!`, and reduced-Gaussian / cubed-sphere
-convection are still deferred.
+CMFMC implementation. As of plan 22D, the convection block is live
+in `TransportModel.step!` and `CMFMCConvection` supports all three
+topologies: structured LatLon, face-indexed reduced Gaussian, and
+panel-native cubed sphere. See
+[`../TOPOLOGY_SUPPORT.md`](../TOPOLOGY_SUPPORT.md) for the canonical
+operator × topology matrix.
 
 ## Entry Points
 
@@ -27,15 +29,20 @@ convection are still deferred.
 
 ## Current Status
 
-- Structured CMFMC kernels and workspaces exist
-- `NoConvection` is a no-op everywhere
-- `TransportModel.step!` does not yet execute a convection block
-- Face-indexed reduced-Gaussian convection is deferred
-- Cubed-sphere convection is deferred
+- `CMFMCConvection` runs on all three topologies via dedicated
+  `apply!` methods in [`CMFMCConvection.jl`](CMFMCConvection.jl):
+  - LatLon (rank-4 `tracers_raw`)
+  - reduced Gaussian (rank-3 face-indexed `tracers_raw`)
+  - cubed sphere (`NTuple{6}` panel storage)
+- `TransportModel.step!` executes a convection block when the model
+  carries a non-`NoConvection` operator; wiring landed as plan 22D
+- `NoConvection` is a no-op (compile-time dead branch in `step!`)
+- `DrivenSimulation` refreshes `model.convection_forcing` each substep
+  from `sim.window.convection`
 
-If you are trying to "make convection work," start by checking whether
-the missing piece is runtime block wiring or kernel support. Most recent
-topology work has deliberately not invented a parallel convection runtime.
+If you are extending convection behavior, read the existing topology
+dispatches in [`CMFMCConvection.jl`](CMFMCConvection.jl) first — they
+are genuine fast-path implementations, not generic wrappers.
 
 ## File Map
 
@@ -51,15 +58,16 @@ topology work has deliberately not invented a parallel convection runtime.
 
 ## Common Tasks
 
-- Bringing convection live in the model runtime:
-  start in [`../../Models/TransportModel.jl`](../../Models/TransportModel.jl),
-  not in the kernels
+- Tracing the live block wiring:
+  start in [`../../Models/TransportModel.jl`](../../Models/TransportModel.jl)
+  at the convection block in `step!`, then follow the topology-
+  specific `apply!` in [`CMFMCConvection.jl`](CMFMCConvection.jl)
 - Debugging forcing compatibility:
   inspect `ConvectionForcing` producers in `MetDrivers/` and the
   validation logic in [`CMFMCConvection.jl`](CMFMCConvection.jl)
-- Extending topology coverage:
-  read the existing rejection paths first; reduced Gaussian and cubed
-  sphere are intentionally not "almost supported"
+- Adding a new convection operator:
+  subtype `AbstractConvectionOperator` in [`operators.jl`](operators.jl);
+  provide per-topology `apply!` methods alongside the CMFMC dispatches
 - Debugging numerical behavior:
   start with [`cmfmc_kernels.jl`](cmfmc_kernels.jl) and
   [`convection_workspace.jl`](convection_workspace.jl)
@@ -69,13 +77,14 @@ topology work has deliberately not invented a parallel convection runtime.
 - [`../../MetDrivers/`](../../MetDrivers/) owns `ConvectionForcing` and
   window refresh logic
 - [`../../Models/TransportModel.jl`](../../Models/TransportModel.jl)
-  will eventually own the convection block execution point
+  owns the convection block execution point
 - [`../../Models/DrivenSimulation.jl`](../../Models/DrivenSimulation.jl)
   refreshes model forcing each substep
 - [`../../State/`](../../State/) and [`../../Grids/`](../../Grids/)
-  define the currently supported structured runtime containers
-- [`../../../docs/plans/22_TOPOLOGY_COMPLETION_PLAN_v2.md`](../../../docs/plans/22_TOPOLOGY_COMPLETION_PLAN_v2.md)
-  records why topology convection remains gated
+  define `CellState` (LatLon, RG) and `CubedSphereState` (CS) runtime
+  containers
+- [`../../../docs/plans/PLAN_HISTORY.md`](../../../docs/plans/PLAN_HISTORY.md)
+  carries the plan 22A/B/C/D retrospective
 
 ## Related Docs And Tests
 

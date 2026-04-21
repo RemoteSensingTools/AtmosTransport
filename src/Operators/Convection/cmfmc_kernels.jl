@@ -2,7 +2,7 @@
 # CMFMCConvection kernel + inline helpers — plan 18 Commit 3.
 #
 # Ports from GEOS-Chem `convection_mod.F90:DO_RAS_CLOUD_CONVECTION`
-# (see docs/plans/18_ConvectionPlan/archived/18_CONVECTION_UPSTREAM_GCHP_NOTES.md).
+# (see docs/plans/18_ConvectionPlan/18_CONVECTION_UPSTREAM_GCHP_NOTES.md).
 # Medium cleanup from the earlier Julia port per Decision 15. Two
 # deliberate departures from that legacy port:
 #

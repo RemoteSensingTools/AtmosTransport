@@ -101,8 +101,8 @@ submodules before assuming it is cosmetic.
   start at [`../Models/TransportModel.jl`](../Models/TransportModel.jl),
   then follow the relevant operator `apply!`
 - Understanding what is actually production-live:
-  compare the operator README with tests and with
-  [`../../docs/plans/22_TOPOLOGY_COMPLETION_PLAN_v2.md`](../../docs/plans/22_TOPOLOGY_COMPLETION_PLAN_v2.md)
+  consult [`TOPOLOGY_SUPPORT.md`](TOPOLOGY_SUPPORT.md) (canonical
+  per-operator × per-topology matrix) and submodule-specific tests
 
 ## Cross-Dependencies
 
@@ -123,8 +123,9 @@ submodules before assuming it is cosmetic.
   [`../../docs/plans/OPERATOR_COMPOSITION.md`](../../docs/plans/OPERATOR_COMPOSITION.md)
 - Runtime walkthrough:
   [`../../docs/20_RUNTIME_FLOW.md`](../../docs/20_RUNTIME_FLOW.md)
-- Topology completion and current status:
-  [`../../docs/plans/22_TOPOLOGY_COMPLETION_PLAN_v2.md`](../../docs/plans/22_TOPOLOGY_COMPLETION_PLAN_v2.md)
+- Topology coverage and current status:
+  [`TOPOLOGY_SUPPORT.md`](TOPOLOGY_SUPPORT.md); plan-level history in
+  [`../../docs/plans/PLAN_HISTORY.md`](../../docs/plans/PLAN_HISTORY.md)
 - Test entrypoints:
   - [`../../test/test_basis_explicit_core.jl`](../../test/test_basis_explicit_core.jl)
   - [`../../test/test_driven_simulation.jl`](../../test/test_driven_simulation.jl)

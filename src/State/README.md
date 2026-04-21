@@ -106,7 +106,9 @@ time-varying field contracts consumed by operators.
 - Runtime flow:
   [`../../docs/20_RUNTIME_FLOW.md`](../../docs/20_RUNTIME_FLOW.md)
 - Topology status:
-  [`../../docs/plans/22_TOPOLOGY_COMPLETION_PLAN_v2.md`](../../docs/plans/22_TOPOLOGY_COMPLETION_PLAN_v2.md)
+  [`../Operators/TOPOLOGY_SUPPORT.md`](../Operators/TOPOLOGY_SUPPORT.md)
+  (plan-level history in
+  [`../../docs/plans/PLAN_HISTORY.md`](../../docs/plans/PLAN_HISTORY.md))
 - Tests:
   - [`../../test/test_basis_explicit_core.jl`](../../test/test_basis_explicit_core.jl)
   - [`../../test/test_fields.jl`](../../test/test_fields.jl)

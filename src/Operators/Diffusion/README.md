@@ -79,7 +79,7 @@ run on structured, face-indexed, and panel-native cubed-sphere state.
 - Runtime/block ordering:
   [`../../../docs/plans/OPERATOR_COMPOSITION.md`](../../../docs/plans/OPERATOR_COMPOSITION.md)
 - Topology status:
-  [`../../../docs/plans/22_TOPOLOGY_COMPLETION_PLAN_v2.md`](../../../docs/plans/22_TOPOLOGY_COMPLETION_PLAN_v2.md)
+  [`../TOPOLOGY_SUPPORT.md`](../TOPOLOGY_SUPPORT.md)
 - Tests:
   - [`../../../test/test_diffusion_kernels.jl`](../../../test/test_diffusion_kernels.jl)
   - [`../../../test/test_diffusion_operator.jl`](../../../test/test_diffusion_operator.jl)

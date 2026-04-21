@@ -157,11 +157,10 @@ CS runtime tests in `test/test_cubed_sphere_runtime.jl`.
 
 - `artifacts/plan22/perf/` SUMMARY_RG.md not produced (planned
   in v2 §7.2).
-- CS chemistry is the one remaining topology gap — no
-  `apply!(::CubedSphereState, ...)` dispatch for any chemistry
-  operator (documented in
-  [`../../src/Operators/TOPOLOGY_SUPPORT.md`](../../src/Operators/TOPOLOGY_SUPPORT.md)
-  and [`../../src/Operators/Chemistry/README.md`](../../src/Operators/Chemistry/README.md)).
+- ~~CS chemistry gap~~ — closed 2026-04-21 as a plan 21
+  follow-up. `apply!(::CubedSphereState, ...)` shipped for
+  `NoChemistry`, `ExponentialDecay`, and `CompositeChemistry`
+  with matching `test/test_cs_chemistry.jl` (152 tests, F32 + F64).
 - The plan 22 v2 doc (which was deleted in plan 21 Phase 4b)
   contained stale "convection deferred" lines at merge time;
   those were fixed in plan 21 Phase 1 before deletion.

@@ -4,7 +4,7 @@ Canonical source of truth for which operators support which
 topologies. Module READMEs reference this file rather than
 duplicating coverage claims.
 
-**Last verified:** 2026-04-21 (plan 21 Phase 5)
+**Last verified:** 2026-04-21 (plan 21 Phase 5 + CS chemistry follow-up)
 
 ## Topologies
 
@@ -22,7 +22,7 @@ duplicating coverage claims.
 | `ImplicitVerticalDiffusion` | ✅ | ✅ | ✅ |
 | `SurfaceFluxOperator` | ✅ | ✅ | ✅ |
 | `CMFMCConvection` | ✅ | ✅ | ✅ |
-| `ExponentialDecay` / `CompositeChemistry` | ✅ | ✅ | ❌ (gap) |
+| `ExponentialDecay` / `CompositeChemistry` | ✅ | ✅ | ✅ |
 
 ✅ = dedicated `apply!` or `apply_*!` dispatch exists, tested and live through `TransportModel.step!`.
 ❌ = no dispatch; operator rejects or (for CS chemistry) is not yet wired.
@@ -69,22 +69,21 @@ Three valid `apply!` methods + one rejection in
 
 ### Chemistry
 
-Only `CellState` dispatches in
-[`Chemistry/Chemistry.jl`](Chemistry/Chemistry.jl). No
-`CubedSphereState` method exists for any concrete chemistry
-operator.
+Three valid `apply!` dispatches in
+[`Chemistry/Chemistry.jl`](Chemistry/Chemistry.jl) per state type:
+
+- `apply!(::CellState, ..., ::NoChemistry, dt)`
+- `apply!(::CellState, ..., ::ExponentialDecay, dt)`
+- `apply!(::CellState, ..., ::CompositeChemistry, dt)`
+
+And three corresponding `CubedSphereState` dispatches (plan 21
+follow-up). CS chemistry loops over the six panels and launches
+the same rank-agnostic decay kernel per panel.
 
 ## Known gaps
 
-- **CS chemistry** — the chemistry block executes post-transport via
-  `chemistry_block!(state, meteo, grid, chemistry, dt)` in
-  [`../Models/TransportModel.jl`](../Models/TransportModel.jl). The
-  `CellState` path is live (`ExponentialDecay`, `CompositeChemistry`).
-  No `apply!(::CubedSphereState, ...)` dispatch exists for any
-  chemistry operator. Gated because the CS runtime path (plan 22B)
-  is newer than the chemistry operators (plan 15). Expected to land
-  as a small follow-up — see
-  [`Chemistry/README.md`](Chemistry/README.md).
+None at present. Plan 21's topology completion work has no remaining
+documented operator × topology gaps.
 
 ## How to update this file
 

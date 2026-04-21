@@ -27,7 +27,7 @@ module Chemistry
 
 using KernelAbstractions: get_backend, synchronize
 
-using ...State: CellState
+using ...State: CellState, CubedSphereState
 using ...State: ntracers, tracer_index, tracer_names
 using ...State: AbstractTimeVaryingField, ConstantField, field_value, update_field!
 using ...MetDrivers: current_time
@@ -195,6 +195,94 @@ end
 Apply each sub-operator in order.
 """
 function apply!(state::CellState, meteo, grid,
+                op::CompositeChemistry, dt;
+                workspace = nothing)
+    for sub in op.schemes
+        apply!(state, meteo, grid, sub, dt; workspace = workspace)
+    end
+    return state
+end
+
+# =========================================================================
+# CubedSphereState dispatches (plan 21 follow-up: close CS chemistry gap)
+#
+# CS tracer storage is an NTuple{6, Array{FT, 4}} of panel-native arrays
+# with shape `(Nc + 2Hp, Nc + 2Hp, Nz, Nt)`. Chemistry is pointwise, so
+# each panel can run the same rank-agnostic decay kernel as the CellState
+# path; we just loop over the six panels and launch per-panel.
+#
+# Halo cells are decayed alongside interior cells. This is consistent:
+# halos hold mirror copies of neighbor-panel interior values; applying
+# the same decay uniformly preserves that mirror relationship until the
+# next halo exchange refreshes them anyway.
+# =========================================================================
+
+"""
+    apply!(state::CubedSphereState, meteo, grid, op::ExponentialDecay, dt;
+           workspace=nothing)
+
+Decay every tracer listed in `op.tracer_names` by `exp(-rate * dt)` in
+place across all six CS panels. Halo cells are decayed alongside interior
+cells (see module comment).
+"""
+function apply!(state::CubedSphereState, meteo, grid,
+                op::ExponentialDecay{FT, N}, dt;
+                workspace = nothing) where {FT, N}
+    N == 0 && return state
+
+    indices = ntuple(N) do n
+        idx = tracer_index(state, op.tracer_names[n])
+        if idx === nothing
+            throw(ArgumentError("ExponentialDecay: tracer $(op.tracer_names[n]) " *
+                "not present in state (tracer_names = $(tracer_names(state)))"))
+        end
+        Int32(idx)
+    end
+
+    t = meteo === nothing ? zero(FT) : FT(current_time(meteo))
+    rates = ntuple(N) do n
+        r = op.decay_rates[n]
+        update_field!(r, t)
+        field_value(r, ())
+    end
+
+    # Launch once per panel. One panel's raw has shape (Nx, Ny, Nz, Nt);
+    # ndrange iterates over (Nx, Ny, Nz) and the kernel's inner loop
+    # handles the tracer axis.
+    raws = state.tracers_raw
+    backend = get_backend(raws[1])
+    kernel! = _exp_decay_kernel!(backend, 256)
+
+    dt_FT = FT(dt)
+    N_i32 = Int32(N)
+
+    @inbounds for p in 1:6
+        raw = raws[p]
+        spatial_shape = ntuple(i -> size(raw, i), ndims(raw) - 1)
+        kernel!(raw, indices, rates, dt_FT, N_i32;
+                ndrange = spatial_shape)
+    end
+    synchronize(backend)
+    return state
+end
+
+"""
+    apply!(state::CubedSphereState, meteo, grid, ::NoChemistry, dt; workspace=nothing)
+
+No-op — returns `state` unchanged.
+"""
+function apply!(state::CubedSphereState, meteo, grid, ::NoChemistry, dt;
+                workspace = nothing)
+    return state
+end
+
+"""
+    apply!(state::CubedSphereState, meteo, grid, op::CompositeChemistry, dt;
+           workspace=nothing)
+
+Apply each sub-operator in order.
+"""
+function apply!(state::CubedSphereState, meteo, grid,
                 op::CompositeChemistry, dt;
                 workspace = nothing)
     for sub in op.schemes

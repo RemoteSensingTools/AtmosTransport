@@ -24,12 +24,13 @@ operators, and the `chemistry_block!` composition step that
 ## Current Scope
 
 - `CellState` chemistry is live (LatLon and RG)
+- `CubedSphereState` chemistry is live — per-panel apply over the
+  `NTuple{6, Array{FT, 4}}` storage, using the same rank-agnostic
+  decay kernel as the `CellState` path
 - Time-varying scalar rate fields are supported through the
   `AbstractTimeVaryingField{FT, 0}` contract
-- `CubedSphereState` chemistry is the one remaining topology gap —
-  no `apply!(::CubedSphereState, ...)` dispatch exists for any
-  chemistry operator (see
-  [`../TOPOLOGY_SUPPORT.md`](../TOPOLOGY_SUPPORT.md))
+- See [`../TOPOLOGY_SUPPORT.md`](../TOPOLOGY_SUPPORT.md) for the
+  canonical operator × topology matrix
 
 ## File Map
 

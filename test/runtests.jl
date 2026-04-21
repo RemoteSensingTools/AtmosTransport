@@ -26,6 +26,7 @@ core_tests = [
     "test_poisson_balance.jl",
     "test_aqua.jl",
     "test_jet.jl",
+    "test_readme_current.jl",
 ]
 
 for test_file in core_tests

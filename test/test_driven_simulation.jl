@@ -47,6 +47,43 @@ function write_driven_latlon_binary(path::AbstractString;
     return grid
 end
 
+function write_driven_reduced_binary(path::AbstractString;
+                                     FT::Type{<:AbstractFloat}=Float64,
+                                     source_flux_sampling::Symbol=:window_start_endpoint,
+                                     window_mass_scales::Tuple{Vararg{Real}}=(1, 1))
+    mesh = ReducedGaussianMesh(FT[-45, 45], [4, 4]; FT=FT)
+    vertical = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
+    grid = AtmosGrid(mesh, vertical, CPU(); FT=FT)
+    ncell = ncells(mesh)
+    nface_h = nfaces(mesh)
+    nlevel = nlevels(grid)
+
+    windows = [
+        begin
+            m = fill(FT(window_mass_scales[win]), ncell, nlevel)
+            hflux = zeros(FT, nface_h, nlevel)
+            cm = zeros(FT, ncell, nlevel + 1)
+            ps = fill(FT(90000 + 100win), ncell)
+            qv_start = fill(FT(0.01win), ncell, nlevel)
+            qv_end = fill(FT(0.01win + 0.01), ncell, nlevel)
+            (; m, hflux, cm, ps, qv_start, qv_end)
+        end for win in 1:length(window_mass_scales)
+    ]
+
+    write_transport_binary(path, grid, windows;
+                           FT=FT,
+                           dt_met_seconds=3600.0,
+                           half_dt_seconds=1800.0,
+                           steps_per_window=2,
+                           mass_basis=:moist,
+                           source_flux_sampling=source_flux_sampling,
+                           extra_header=Dict(
+                               "poisson_balance_target_scale" => 0.25,
+                               "poisson_balance_target_semantics" => "forward_window_mass_difference / (2 * steps_per_window)",
+                           ))
+    return grid
+end
+
 @testset "DrivenSimulation optional no-reset window carry preserves mixing ratio" begin
     mktemp() do path, io
         close(io)
@@ -98,6 +135,69 @@ end
         @test all(iszero, sim.model.state.tracers.fossil_co2[:, :, 1])
         @test all(isapprox.(sim.model.state.tracers.fossil_co2[:, :, 2], 3600.0; atol=eps(Float64) * 10))
         @test total_mass(sim.model.state, :fossil_co2) ≈ 4 * 3 * 3600.0 atol=eps(Float64) * 100
+
+        close(driver)
+    end
+end
+
+@testset "DrivenSimulation applies bottom-layer surface sources on ReducedGaussian" begin
+    mktemp() do path, io
+        close(io)
+        write_driven_reduced_binary(path; FT=Float64, window_mass_scales=(1,))
+
+        driver = TransportBinaryDriver(path; FT=Float64, arch=CPU())
+        grid = driver_grid(driver)
+        ncell = ncells(grid.horizontal)
+
+        state = CellState(MoistBasis, ones(Float64, ncell, 2);
+                          natural_co2=fill(400e-6, ncell, 2),
+                          fossil_co2=zeros(Float64, ncell, 2))
+        fluxes = allocate_face_fluxes(grid.horizontal, 2; FT=Float64, basis=MoistBasis)
+        model = TransportModel(state, fluxes, grid, UpwindScheme())
+        source = AtmosTransport.SurfaceFluxSource(:fossil_co2, fill(2.0, ncell))
+        sim = DrivenSimulation(model, driver;
+                               start_window=1,
+                               stop_window=1,
+                               surface_sources=(source,))
+
+        step!(sim)
+
+        @test all(isapprox.(sim.model.state.tracers.natural_co2, 400e-6; atol=eps(Float64) * 10))
+        @test all(iszero, sim.model.state.tracers.fossil_co2[:, 1])
+        @test all(isapprox.(sim.model.state.tracers.fossil_co2[:, 2], 3600.0; atol=eps(Float64) * 10))
+        @test total_mass(sim.model.state, :fossil_co2) ≈ ncell * 3600.0 atol=eps(Float64) * 100
+
+        close(driver)
+    end
+end
+
+@testset "DrivenSimulation ReducedGaussian run! accumulates emissions across windows" begin
+    mktemp() do path, io
+        close(io)
+        write_driven_reduced_binary(path; FT=Float64, window_mass_scales=(1, 1))
+
+        driver = TransportBinaryDriver(path; FT=Float64, arch=CPU())
+        grid = driver_grid(driver)
+        ncell = ncells(grid.horizontal)
+
+        state = CellState(MoistBasis, ones(Float64, ncell, 2);
+                          fossil_co2=zeros(Float64, ncell, 2))
+        fluxes = allocate_face_fluxes(grid.horizontal, 2; FT=Float64, basis=MoistBasis)
+        model = TransportModel(state, fluxes, grid, UpwindScheme())
+        source = AtmosTransport.SurfaceFluxSource(:fossil_co2, fill(2.0, ncell))
+        sim = DrivenSimulation(model, driver;
+                               start_window=1,
+                               stop_window=2,
+                               surface_sources=(source,))
+
+        run!(sim)
+
+        @test sim.iteration == 4
+        @test sim.time == 7200.0
+        @test window_index(sim) == 2
+        @test total_mass(sim.model.state, :fossil_co2) ≈ ncell * 2.0 * 1800.0 * 4 atol=eps(Float64) * 100
+        @test all(iszero, sim.model.state.tracers.fossil_co2[:, 1])
+        @test all(isapprox.(sim.model.state.tracers.fossil_co2[:, 2], 2.0 * 1800.0 * 4; atol=eps(Float64) * 10))
 
         close(driver)
     end

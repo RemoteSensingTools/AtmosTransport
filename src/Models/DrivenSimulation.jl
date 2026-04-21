@@ -73,9 +73,23 @@ end
 
 @inline _active_substep(iteration::Int, steps_per_window::Int) = mod(iteration, steps_per_window) + 1
 
+@inline _allocate_storage_like(reference) = similar(reference)
+@inline _allocate_storage_like(reference::NTuple{6}) = ntuple(p -> similar(reference[p]), 6)
+
+@inline _copy_storage!(dest, src) = copyto!(dest, src)
+@inline function _copy_storage!(dest::NTuple{6}, src::NTuple{6})
+    @inbounds for p in 1:6
+        copyto!(dest[p], src[p])
+    end
+    return dest
+end
+
+@inline _storage_eltype(reference) = eltype(reference)
+@inline _storage_eltype(reference::NTuple{6}) = eltype(reference[1])
+
 @inline function _allocate_qv_buffer(window)
     has_humidity_endpoints(window) || return nothing
-    return similar(window.qv_start)
+    return _allocate_storage_like(window.qv_start)
 end
 
 @inline function _window_backend_adapter(reference_array)
@@ -87,6 +101,8 @@ end
     end
     return Array
 end
+
+@inline _window_backend_adapter(reference_array::NTuple{6}) = _window_backend_adapter(reference_array[1])
 
 @inline function _adapt_window_to_model_backend(window, model_air_mass)
     adaptor = _window_backend_adapter(model_air_mass)
@@ -145,7 +161,7 @@ function _maybe_advance_window!(sim::DrivenSimulation, substep::Int)
             throw(ArgumentError("driver humidity endpoint support changed between windows"))
         end
         if sim.reset_air_mass_each_window
-            copyto!(sim.model.state.air_mass, sim.window.air_mass)
+            _copy_storage!(sim.model.state.air_mass, sim.window.air_mass)
         end
     end
     return nothing
@@ -187,10 +203,17 @@ function DrivenSimulation(model::TransportModel,
     _check_basis_compatibility(model, driver)
 
     window = _adapt_window_to_model_backend(_load_window(driver, start_window), model.state.air_mass)
-    expected_air_mass = similar(model.state.air_mass)
+    expected_air_mass = _allocate_storage_like(model.state.air_mass)
     qv_buffer = _allocate_qv_buffer(window)
     surface_sources_adapted = _adapt_sources_to_model_backend(Tuple(surface_sources), model.state.air_mass)
     foreach(source -> _check_surface_source_compatibility(model.state, source), surface_sources_adapted)
+
+    if model.grid.horizontal isa CubedSphereMesh
+        isempty(surface_sources_adapted) ||
+            throw(ArgumentError("CubedSphere runtime enablement in plan 22B supports advection only; surface flux sources are deferred to plan 22C"))
+        chemistry isa NoChemistry ||
+            throw(ArgumentError("CubedSphere runtime enablement in plan 22B supports advection only; chemistry operators remain unsupported on CubedSphereState"))
+    end
 
     # Plan 17 Commit 6: move chemistry + emissions from sim-level post-
     # step application into the model's transport block. `with_emissions`
@@ -214,7 +237,7 @@ function DrivenSimulation(model::TransportModel,
         emissions_op = SurfaceFluxOperator(PerTracerFluxMap(surface_sources_adapted))
         model = with_emissions(model, emissions_op)
     end
-    FT = promote_type(eltype(model.state.air_mass), typeof(window_dt(driver)))
+    FT = promote_type(_storage_eltype(model.state.air_mass), typeof(window_dt(driver)))
     Δt = FT(window_dt(driver) / steps_per_window(driver))
     nsteps_total = (stop_window - start_window + 1) * steps_per_window(driver)
 
@@ -245,12 +268,12 @@ function DrivenSimulation(model::TransportModel,
     )
 
     if initialize_air_mass
-        copyto!(sim.model.state.air_mass, sim.window.air_mass)
+        _copy_storage!(sim.model.state.air_mass, sim.window.air_mass)
     end
     copy_fluxes!(sim.model.fluxes, sim.window.fluxes)
-    copyto!(sim.expected_air_mass, sim.window.air_mass)
+    _copy_storage!(sim.expected_air_mass, sim.window.air_mass)
     if sim.qv_buffer !== nothing
-        copyto!(sim.qv_buffer, sim.window.qv_start)
+        _copy_storage!(sim.qv_buffer, sim.window.qv_start)
     end
     return sim
 end

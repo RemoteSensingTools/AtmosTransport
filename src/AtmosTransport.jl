@@ -68,6 +68,7 @@ using .MetDrivers: AbstractDriver, AbstractClosure, AbstractMetDriver,
                    TransportBinaryDriver, AbstractTransportWindow,
                    StructuredFluxDeltas, FaceIndexedFluxDeltas,
                    StructuredTransportWindow, FaceIndexedTransportWindow,
+                   CubedSphereTransportWindow, CubedSphereTransportDriver,
                    load_window!, load_qv_window!, load_flux_delta_window!,
                    load_qv_pair_window!, load_grid, load_transport_window,
                    driver_grid, air_mass_basis, has_humidity_endpoints,
@@ -146,10 +147,13 @@ export n_levels, pressure_at_interface, pressure_at_level, level_thickness
 export AbstractMassBasis, MoistBasis, DryBasis, mass_basis
 export AbstractMassFluxBasis, MoistMassFluxBasis, DryMassFluxBasis, flux_basis
 export DryCellState, MoistCellState
+export DryCubedSphereState, MoistCubedSphereState
 export DryStructuredFluxState, MoistStructuredFluxState
+export DryCubedSphereFluxState, MoistCubedSphereFluxState
 export CellState
+export CubedSphereState
 export AbstractFaceFluxState, AbstractStructuredFaceFluxState, AbstractUnstructuredFaceFluxState
-export StructuredFaceFluxState, FaceIndexedFluxState, FluxState
+export StructuredFaceFluxState, FaceIndexedFluxState, CubedSphereFaceFluxState, FluxState
 export face_flux_x, face_flux_y, face_flux_z, face_flux
 export MetState, allocate_face_fluxes, allocate_tracers
 export mixing_ratio, total_mass, total_air_mass, tracer_names
@@ -217,6 +221,7 @@ export TransportBinaryReader, TransportBinaryHeader, write_transport_binary
 export TransportBinaryDriver, AbstractTransportWindow
 export StructuredFluxDeltas, FaceIndexedFluxDeltas
 export StructuredTransportWindow, FaceIndexedTransportWindow
+export CubedSphereTransportWindow, CubedSphereTransportDriver
 export load_window!, load_qv_window!, load_flux_delta_window!
 export load_qv_pair_window!, load_grid, load_transport_window
 export driver_grid, air_mass_basis, has_humidity_endpoints

@@ -348,6 +348,15 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
     return CSAdvectionWorkspace{FT, typeof(rm_A)}(rm_A, m_A)
 end
 
+function CSAdvectionWorkspace(mesh::CubedSphereMesh,
+                              prototype::AbstractArray{FT, 3}) where {FT <: AbstractFloat}
+    N = mesh.Nc + 2 * mesh.Hp
+    Nz = size(prototype, 3)
+    rm_A = similar(prototype, FT, N, N, Nz)
+    m_A = similar(prototype, FT, N, N, Nz)
+    return CSAdvectionWorkspace{FT, typeof(rm_A)}(rm_A, m_A)
+end
+
 # =========================================================================
 # Public API: strang_split_cs!
 # =========================================================================

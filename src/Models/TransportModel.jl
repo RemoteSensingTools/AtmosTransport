@@ -99,7 +99,25 @@ function TransportModel(state::CellState{B},
                         emissions::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                         convection::AbstractConvectionOperator = NoConvection(),
                         convection_forcing::ConvectionForcing = ConvectionForcing()) where {B <: AbstractMassBasis}
-    throw(ArgumentError("CubedSphereMesh is metadata-only in src; structured transport models are only supported on LatLonMesh until cubed-sphere geometry/connectivity are implemented"))
+    throw(ArgumentError("CubedSphere transport now uses CubedSphereState + CubedSphereFaceFluxState; CellState + StructuredFaceFluxState remains unsupported for CubedSphereMesh"))
+end
+
+function TransportModel(state::CubedSphereState{B},
+                        fluxes::CubedSphereFaceFluxState{B},
+                        grid::AtmosGrid{<:CubedSphereMesh},
+                        advection::AbstractAdvectionScheme;
+                        workspace = CSAdvectionWorkspace(grid.horizontal, state.air_mass[1]),
+                        chemistry::AbstractChemistryOperator = NoChemistry(),
+                        diffusion::AbstractDiffusionOperator = NoDiffusion(),
+                        emissions::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
+                        convection::AbstractConvectionOperator = NoConvection(),
+                        convection_forcing::ConvectionForcing = ConvectionForcing()) where {B <: AbstractMassBasis}
+    return TransportModel{typeof(state), typeof(fluxes), typeof(grid),
+                          typeof(advection), typeof(workspace),
+                          typeof(chemistry), typeof(diffusion), typeof(emissions),
+                          typeof(convection), typeof(convection_forcing)}(
+        state, fluxes, grid, advection, workspace,
+        chemistry, diffusion, emissions, convection, convection_forcing)
 end
 
 """

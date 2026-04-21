@@ -991,6 +991,58 @@ function strang_split!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
     throw(ArgumentError("CubedSphereMesh remains metadata-only in src; structured advection is only supported on LatLonMesh until cubed-sphere geometry/connectivity are implemented"))
 end
 
+@inline function _copy_cs_storage!(dest::NTuple{6}, src::NTuple{6})
+    @inbounds for p in 1:6
+        copyto!(dest[p], src[p])
+    end
+    return dest
+end
+
+@inline function _similar_cs_storage(src::NTuple{6})
+    return ntuple(p -> similar(src[p]), 6)
+end
+
+function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxState{B},
+                       grid::AtmosGrid{<:CubedSphereMesh},
+                       scheme::AbstractAdvectionScheme;
+                       workspace::CSAdvectionWorkspace,
+                       cfl_limit::Real = 0.95,
+                       diffusion_op::AbstractDiffusionOperator = NoDiffusion(),
+                       emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
+                       meteo = nothing,
+                       dt::Union{Nothing, Real} = nothing) where {B <: AbstractMassBasis}
+    diffusion_op isa NoDiffusion ||
+        throw(ArgumentError("CubedSphere runtime enablement in plan 22B supports advection only; diffusion is deferred to plan 22C"))
+    emissions_op isa NoSurfaceFlux ||
+        throw(ArgumentError("CubedSphere runtime enablement in plan 22B supports advection only; surface flux is deferred to plan 22C"))
+
+    n_tr = ntracers(state)
+    n_tr == 0 && return nothing
+
+    fill_panel_halos!(state.air_mass, grid.horizontal; dir=1)
+
+    m = state.air_mass
+    m_save = n_tr > 1 ? _similar_cs_storage(m) : m
+    if n_tr > 1
+        _copy_cs_storage!(m_save, m)
+    end
+
+    tracer_names = state.tracer_names
+    for idx in 1:n_tr
+        if idx > 1
+            _copy_cs_storage!(m, m_save)
+        end
+
+        rm_tracer = get_tracer(state, idx)
+        fill_panel_halos!(rm_tracer, grid.horizontal; dir=1)
+        strang_split_cs!(rm_tracer, m, fluxes.am, fluxes.bm, fluxes.cm,
+                         grid.horizontal, scheme, workspace;
+                         cfl_limit = cfl_limit)
+    end
+
+    return nothing
+end
+
 # =========================================================================
 # apply! entry points
 # =========================================================================
@@ -1024,6 +1076,24 @@ function apply!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
                 scheme::AbstractAdvectionScheme, dt;
                 workspace::AdvectionWorkspace) where {B <: AbstractMassBasis}
     throw(ArgumentError("CubedSphereMesh remains metadata-only in src; structured advection is only supported on LatLonMesh until cubed-sphere geometry/connectivity are implemented"))
+end
+
+function apply!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxState{B},
+                grid::AtmosGrid{<:CubedSphereMesh},
+                scheme::AbstractAdvectionScheme, dt;
+                workspace::CSAdvectionWorkspace,
+                cfl_limit::Real = 0.95,
+                diffusion_op::AbstractDiffusionOperator = NoDiffusion(),
+                emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
+                meteo = nothing) where {B <: AbstractMassBasis}
+    strang_split!(state, fluxes, grid, scheme;
+                  workspace = workspace,
+                  cfl_limit = cfl_limit,
+                  diffusion_op = diffusion_op,
+                  emissions_op = emissions_op,
+                  meteo = meteo,
+                  dt = dt)
+    return nothing
 end
 
 # Face-indexed apply! — shared tracer loop, generated for each topology.

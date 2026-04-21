@@ -34,7 +34,7 @@ is the operator-level composer. Both exist and both are supported.
 function chemistry_block! end
 
 # Tuple of operators: iterate
-function chemistry_block!(state::CellState, meteo, grid,
+function chemistry_block!(state, meteo, grid,
                           operators::Tuple, dt; workspace = nothing)
     for op in operators
         apply!(state, meteo, grid, op, dt; workspace = workspace)
@@ -43,7 +43,7 @@ function chemistry_block!(state::CellState, meteo, grid,
 end
 
 # Single operator: wrap into 1-tuple
-function chemistry_block!(state::CellState, meteo, grid,
+function chemistry_block!(state, meteo, grid,
                           op::AbstractChemistryOperator, dt; workspace = nothing)
     apply!(state, meteo, grid, op, dt; workspace = workspace)
     return state

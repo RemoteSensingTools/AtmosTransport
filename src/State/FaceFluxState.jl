@@ -154,6 +154,26 @@ struct FaceIndexedFluxState{Basis <: AbstractMassBasis,
     cm              :: AZ
 end
 
+"""
+    CubedSphereFaceFluxState{Basis, AX, AY, AZ} <: AbstractStructuredFaceFluxState
+
+Panel-native structured-directional flux storage for cubed-sphere transport.
+Each field is an `NTuple{6}` of halo-padded panel arrays matching the
+`strang_split_cs!` contract.
+"""
+struct CubedSphereFaceFluxState{Basis <: AbstractMassBasis,
+                                AX <: AbstractArray,
+                                AY <: AbstractArray,
+                                AZ <: AbstractArray} <: AbstractStructuredFaceFluxState{Basis}
+    am :: NTuple{6, AX}
+    bm :: NTuple{6, AY}
+    cm :: NTuple{6, AZ}
+end
+
+function CubedSphereFaceFluxState{B}(am::NTuple{6}, bm::NTuple{6}, cm::NTuple{6}) where {B <: AbstractMassBasis}
+    return CubedSphereFaceFluxState{B, typeof(am[1]), typeof(bm[1]), typeof(cm[1])}(am, bm, cm)
+end
+
 function FaceIndexedFluxState{B}(hflux::A, cm::AZ) where {B <: AbstractMassBasis,
                                                             A <: AbstractArray,
                                                             AZ <: AbstractArray}
@@ -168,6 +188,13 @@ function Adapt.adapt_structure(to, fluxes::FaceIndexedFluxState{B}) where {B <: 
     return FaceIndexedFluxState{B, typeof(hflux), typeof(cm)}(hflux, cm)
 end
 
+function Adapt.adapt_structure(to, fluxes::CubedSphereFaceFluxState{B}) where {B <: AbstractMassBasis}
+    am = Adapt.adapt(to, fluxes.am)
+    bm = Adapt.adapt(to, fluxes.bm)
+    cm = Adapt.adapt(to, fluxes.cm)
+    return CubedSphereFaceFluxState{B, typeof(am[1]), typeof(bm[1]), typeof(cm[1])}(am, bm, cm)
+end
+
 # ---------------------------------------------------------------------------
 # Basis accessor
 # ---------------------------------------------------------------------------
@@ -179,8 +206,10 @@ Return the mass flux basis tag for the given flux state.
 """
 @inline flux_basis(::StructuredFaceFluxState{B}) where {B} = B()
 @inline flux_basis(::FaceIndexedFluxState{B}) where {B} = B()
+@inline flux_basis(::CubedSphereFaceFluxState{B}) where {B} = B()
 @inline mass_basis(::StructuredFaceFluxState{B}) where {B} = B()
 @inline mass_basis(::FaceIndexedFluxState{B}) where {B} = B()
+@inline mass_basis(::CubedSphereFaceFluxState{B}) where {B} = B()
 
 # ---------------------------------------------------------------------------
 # Type alias for convenience
@@ -188,6 +217,8 @@ Return the mass flux basis tag for the given flux state.
 
 const DryStructuredFluxState = StructuredFaceFluxState{DryMassFluxBasis}
 const MoistStructuredFluxState = StructuredFaceFluxState{MoistMassFluxBasis}
+const DryCubedSphereFluxState = CubedSphereFaceFluxState{DryMassFluxBasis}
+const MoistCubedSphereFluxState = CubedSphereFaceFluxState{MoistMassFluxBasis}
 const FluxState = AbstractFaceFluxState
 
 # ---------------------------------------------------------------------------
@@ -257,6 +288,17 @@ function allocate_face_fluxes(mesh::AbstractStructuredMesh, Nz::Int;
                                 FT=FT, ArrayType=ArrayType, basis=B)
 end
 
+function allocate_face_fluxes(mesh::CubedSphereMesh, Nz::Int;
+                              FT::Type{<:AbstractFloat} = Float64,
+                              ArrayType = Array,
+                              basis::Type{B} = DryMassFluxBasis) where {B <: AbstractMassBasis}
+    N = mesh.Nc + 2 * mesh.Hp
+    am = ntuple(_ -> ArrayType(zeros(FT, N + 1, N, Nz)), 6)
+    bm = ntuple(_ -> ArrayType(zeros(FT, N, N + 1, Nz)), 6)
+    cm = ntuple(_ -> ArrayType(zeros(FT, N, N, Nz + 1)), 6)
+    return CubedSphereFaceFluxState{B}(am, bm, cm)
+end
+
 """
     allocate_face_fluxes(mesh::AbstractHorizontalMesh, Nz; kwargs...)
 
@@ -272,8 +314,9 @@ end
 
 export flux_basis
 export DryStructuredFluxState, MoistStructuredFluxState
+export DryCubedSphereFluxState, MoistCubedSphereFluxState
 export AbstractFaceFluxState, FluxState
 export AbstractStructuredFaceFluxState, AbstractUnstructuredFaceFluxState
-export StructuredFaceFluxState, FaceIndexedFluxState
+export StructuredFaceFluxState, FaceIndexedFluxState, CubedSphereFaceFluxState
 export face_flux_x, face_flux_y, face_flux_z, face_flux
 export allocate_face_fluxes

@@ -22,6 +22,7 @@ include("ConvectionForcing.jl")
 include("TransportBinary.jl")
 include("TransportBinaryDriver.jl")
 include("CubedSphereBinaryReader.jl")
+include("CubedSphereTransportDriver.jl")
 include("ERA5/ERA5.jl")
 using .ERA5
 
@@ -34,6 +35,7 @@ export open_streaming_transport_binary, write_streaming_window!, close_streaming
 export TransportBinaryDriver, AbstractTransportWindow
 export StructuredFluxDeltas, FaceIndexedFluxDeltas
 export StructuredTransportWindow, FaceIndexedTransportWindow
+export CubedSphereTransportWindow, CubedSphereTransportDriver
 export load_window!, load_qv_window!, load_flux_delta_window!
 export load_qv_pair_window!, load_grid, load_transport_window
 export driver_grid, air_mass_basis, has_humidity_endpoints

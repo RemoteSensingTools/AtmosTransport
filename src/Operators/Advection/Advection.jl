@@ -39,10 +39,11 @@ using ..Diffusion: AbstractDiffusionOperator, NoDiffusion,
 # the default path bit-exact with pre-17 behavior.
 using ..SurfaceFlux: AbstractSurfaceFluxOperator, NoSurfaceFlux,
                      apply_surface_flux!
-using ...State: CellState, AbstractStructuredFaceFluxState, AbstractFaceFluxState,
+using ...State: CellState, CubedSphereState,
+    AbstractStructuredFaceFluxState, AbstractFaceFluxState,
     StructuredFaceFluxState, AbstractUnstructuredFaceFluxState,
     DryMassFluxBasis, DryStructuredFluxState, AbstractMassBasis,
-    FaceIndexedFluxState,
+    FaceIndexedFluxState, CubedSphereFaceFluxState,
     ntracers, tracer_index, tracer_name, get_tracer, eachtracer
 using ...Grids: AtmosGrid, AbstractHorizontalMesh, AbstractStructuredMesh,
     LatLonMesh, CubedSphereMesh, face_cells, nfaces,

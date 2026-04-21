@@ -122,7 +122,7 @@ exist throws `KeyError`.
 `state.tracers[:CO2]` is also supported and forwards to
 `get_tracer(state, :CO2)` for code that prefers index syntax.
 """
-struct TracerAccessor{S <: CellState}
+struct TracerAccessor{S}
     state::S
 end
 

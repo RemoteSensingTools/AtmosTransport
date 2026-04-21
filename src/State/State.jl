@@ -14,12 +14,13 @@ Provides:
 module State
 
 using Adapt
-using ..Grids: AbstractHorizontalMesh, AbstractStructuredMesh,
+using ..Grids: AbstractHorizontalMesh, AbstractStructuredMesh, CubedSphereMesh,
     StructuredFluxTopology, FaceIndexedFluxTopology,
     flux_topology, ncells, nfaces, nx, ny
 
 include("Basis.jl")
 include("CellState.jl")
+include("CubedSphereState.jl")
 include("FaceFluxState.jl")
 include("MetState.jl")
 include("Tracers.jl")

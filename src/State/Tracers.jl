@@ -39,6 +39,7 @@ end
 Number of tracers carried by `state`.
 """
 ntracers(state::CellState) = length(state.tracer_names)
+ntracers(state::CubedSphereState) = length(state.tracer_names)
 
 """
     tracer_index(state::CellState, name::Symbol) -> Union{Int, Nothing}
@@ -50,6 +51,10 @@ function tracer_index(state::CellState, name::Symbol)
     return findfirst(==(name), state.tracer_names)
 end
 
+function tracer_index(state::CubedSphereState, name::Symbol)
+    return findfirst(==(name), state.tracer_names)
+end
+
 """
     tracer_name(state::CellState, idx::Integer) -> Symbol
 
@@ -57,6 +62,7 @@ Name of the tracer at index `idx`. Throws `BoundsError` if out of
 range.
 """
 tracer_name(state::CellState, idx::Integer) = state.tracer_names[Int(idx)]
+tracer_name(state::CubedSphereState, idx::Integer) = state.tracer_names[Int(idx)]
 
 """
     get_tracer(state::CellState, name::Symbol)
@@ -77,9 +83,23 @@ function get_tracer(state::CellState, name::Symbol)
     return get_tracer(state, idx)
 end
 
+function get_tracer(state::CubedSphereState, name::Symbol)
+    idx = tracer_index(state, name)
+    idx === nothing && throw(KeyError(name))
+    return get_tracer(state, idx)
+end
+
 function get_tracer(state::CellState, idx::Integer)
     raw = state.tracers_raw
     return selectdim(raw, ndims(raw), Int(idx))
+end
+
+function get_tracer(state::CubedSphereState, idx::Integer)
+    tracer_idx = Int(idx)
+    return ntuple(6) do p
+        raw = state.tracers_raw[p]
+        selectdim(raw, ndims(raw), tracer_idx)
+    end
 end
 
 """
@@ -91,6 +111,10 @@ storage order. The yielded shape matches the previous
 `for (name, rm) in eachtracer(state)` continue to work.
 """
 function eachtracer(state::CellState)
+    return (n => get_tracer(state, i) for (i, n) in enumerate(state.tracer_names))
+end
+
+function eachtracer(state::CubedSphereState)
     return (n => get_tracer(state, i) for (i, n) in enumerate(state.tracer_names))
 end
 
@@ -106,6 +130,14 @@ Set tracer `name` to uniform mixing ratio χ: tracer_mass = χ × air_dry_mass.
 function set_uniform_mixing_ratio!(state::CellState, name::Symbol, χ)
     rm = get_tracer(state, name)
     rm .= χ .* state.air_mass
+    return nothing
+end
+
+function set_uniform_mixing_ratio!(state::CubedSphereState, name::Symbol, χ)
+    rm_panels = get_tracer(state, name)
+    @inbounds for p in 1:6
+        rm_panels[p] .= χ .* state.air_mass[p]
+    end
     return nothing
 end
 

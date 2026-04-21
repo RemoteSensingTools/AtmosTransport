@@ -131,7 +131,7 @@ CompositeChemistry(schemes::AbstractChemistryOperator...) = CompositeChemistry(s
 
 No-op — returns `state` unchanged.
 """
-function apply!(state::CellState, meteo, grid, ::NoChemistry, dt;
+function apply!(state, meteo, grid, ::NoChemistry, dt;
                 workspace = nothing)
     return state
 end

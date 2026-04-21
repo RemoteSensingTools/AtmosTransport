@@ -209,10 +209,10 @@ end
     end
 end
 
-@testset "Honest metadata-only CubedSphere API" begin
+@testset "CubedSphere runtime uses dedicated panel-native types" begin
     mesh = CubedSphereMesh(; FT=Float64, Nc=4)
-    @test_throws ArgumentError cell_area(mesh, 1)
-    @test_throws ArgumentError face_cells(mesh, 1)
+    @test_throws MethodError cell_area(mesh, 1)
+    @test_throws MethodError face_cells(mesh, 1)
 
     vc = HybridSigmaPressure([0.0, 100.0, 300.0], [0.0, 0.0, 1.0])
     grid = AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT=Float64)
@@ -224,6 +224,25 @@ end
     @test_throws ArgumentError TransportModel(state, fluxes, grid, UpwindScheme())
     @test_throws ArgumentError apply!(state, fluxes, grid, UpwindScheme(), 1800.0; workspace=ws)
     @test_throws ArgumentError strang_split!(state, fluxes, grid, UpwindScheme(); workspace=ws)
+
+    FT = Float64
+    Nz = 2
+    N = mesh.Nc + 2 * mesh.Hp
+    panels_m = ntuple(_ -> ones(FT, N, N, Nz), 6)
+    panels_rm = ntuple(_ -> fill(FT(400e-6), N, N, Nz), 6)
+    cs_state = CubedSphereState(DryBasis, mesh, panels_m; CO2=panels_rm)
+    cs_fluxes = allocate_face_fluxes(mesh, Nz; FT=FT, basis=DryBasis)
+
+    m0 = total_air_mass(cs_state)
+    rm0 = total_mass(cs_state, :CO2)
+
+    cs_model = @inferred TransportModel(cs_state, cs_fluxes, grid, UpwindScheme())
+    cs_sim = Simulation(cs_model; Δt=FT(1800), stop_time=FT(3600))
+    run!(cs_sim)
+
+    @test cs_sim.iteration == 2
+    @test total_air_mass(cs_sim.model.state) ≈ m0 atol=eps(FT) * m0 * 10
+    @test total_mass(cs_sim.model.state, :CO2) ≈ rm0 atol=eps(FT) * rm0 * 10
 end
 
 @testset "Face-connected reduced-Gaussian smoke test" begin

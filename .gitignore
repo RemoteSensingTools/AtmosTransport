@@ -40,3 +40,8 @@ catrine_advonly_snapshot.png
 .claude/.nfs*
 .codex
 *.bak
+
+# stdout captures
+nohup.out
+*.nohup
+

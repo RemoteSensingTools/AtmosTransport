@@ -36,26 +36,21 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 
 [weakdeps]
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
-CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
-GeoMakie = "db073c08-6b98-4ee5-b6a4-5efafb3259c6"
 Metal = "dde4c033-4e86-420c-a63e-0dd931031962"
 
 [extensions]
 AtmosTransportCUDAExt = "CUDA"
-AtmosTransportMakieExt = ["CairoMakie", "GeoMakie"]
 AtmosTransportMetalExt = "Metal"
 
 [compat]
 Adapt = "4"
 CUDA = "5"
-CairoMakie = "0.12, 0.13"
 CubedSphere = "0.3.4"
 DocStringExtensions = "0.9.5"
 Downloads = "1.7.0"
 FFTW = "1.10.0"
 FastGaussQuadrature = "1"
 GRIB = "0.4.0"
-GeoMakie = "0.7, 0.8"
 GeoInterface = "1.6.1"
 GeometryOps = "0.1.38"
 GeometryOpsCore = "0.1.10"

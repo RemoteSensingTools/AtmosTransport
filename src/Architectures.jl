@@ -35,13 +35,9 @@ struct GPU <: AbstractArchitecture end
 array_type(::CPU) = Array
 device(::CPU) = KA.CPU()
 
-function array_type(::GPU)
-    throw(ArgumentError("GPU array_type is not wired in src yet"))
-end
-
-function device(::GPU)
-    throw(ArgumentError("GPU device is not wired in src yet"))
-end
+# GPU methods are supplied by the AtmosTransportCUDAExt / AtmosTransportMetalExt
+# extensions. Calling `array_type(GPU())` or `device(GPU())` without either
+# extension loaded throws a MethodError, which is the intended behavior.
 
 function architecture end
 

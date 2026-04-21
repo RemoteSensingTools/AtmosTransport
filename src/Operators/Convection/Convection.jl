@@ -34,8 +34,9 @@ Commit 1 ships only the type hierarchy and no-op. Future commits:
 The operator takes `ConvectionForcing` directly (not a transport
 window or driver). `_refresh_forcing!` populates
 `model.convection_forcing` each substep by copying from
-`sim.window.convection`; `TransportModel.step!` then passes it into
-`apply!`. No `meteo` kwarg — the forcing arrays are the time
+`sim.window.convection`. `TransportModel.step!` does not consume that
+forcing yet, so the end-to-end structured convection runtime remains a
+gated follow-up. No `meteo` kwarg — the forcing arrays are the time
 information; the operator does not call `current_time`.
 
 ## Face-indexed scope

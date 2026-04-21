@@ -4,8 +4,8 @@
 Minimal Oceanigans-style model object for standalone `src` transport runs.
 
 Carries advection, chemistry, vertical diffusion, surface emissions,
-and convection operators. `step!(model, dt)` composes them per
-`OPERATOR_COMPOSITION.md` §3.1 and plan 18 v5.1 §2.2 Decision 1:
+and convection operators. The long-term composition target from
+`OPERATOR_COMPOSITION.md` §3.1 and plan 18 v5.1 §2.2 Decision 1 is:
 
     transport_block(dt)   →   convection_block(dt)   →   chemistry_block(dt)
 
@@ -15,10 +15,15 @@ emissions at the center (plan 16b Commit 4 + plan 17 Commit 5):
     X → Y → Z → V(dt/2) → S(dt) → V(dt/2) → Z → Y → X      (emissions active)
     X → Y → Z → V(dt) → Z → Y → X                          (no emissions; bit-exact pre-17)
 
+Today, `step!(model, dt)` executes the transport block followed by the
+chemistry block. The convection block is carried on the model state but
+is not wired into the runtime yet, so `convection` and
+`convection_forcing` remain stored configuration rather than live
+behavior.
+
 Defaults `chemistry = NoChemistry()`, `diffusion = NoDiffusion()`,
-`emissions = NoSurfaceFlux()`, `convection = NoConvection()` make all
-four blocks no-ops and keep pre-refactor behaviour for callers that
-don't opt in.
+`emissions = NoSurfaceFlux()`, `convection = NoConvection()` keep
+pre-refactor behaviour for callers that don't opt in.
 
 # Plan 18 Commit 2 additions
 
@@ -256,7 +261,7 @@ vertical diffusion at the palindrome center, surface emissions
 wrapped by the two V half-steps when active) → chemistry block.
 
 With defaults `diffusion = NoDiffusion()`, `emissions = NoSurfaceFlux()`,
-`chemistry = NoChemistry()`, `convection = NoConvection()`, every
+`chemistry = NoChemistry()`, `convection = NoConvection()`, every live
 component is a dead branch and the call is bit-exact equivalent to
 pre-refactor advection.
 

@@ -234,6 +234,11 @@ LatLon already has, using the existing face-indexed runtime.
 - Structured LatLon overhead remains within about `±5%` on the existing
   benchmarks, or any larger change is explained and justified.
 
+**Current repo status:** the RG diffusion and surface-flux path is live
+through `TransportModel` and `DrivenSimulation`. RG convection remains
+explicitly deferred because `TransportModel.step!` still does not
+execute a convection block.
+
 ## 5. Plan 22B — CubedSphere runtime enablement
 
 **Goal:** make CS a real runtime path through model + driver without
@@ -362,6 +367,12 @@ CS runtime.
   LatLon, modulo any operator that still does not exist in `src`.
 - The operator boundary remains compatible with panel-oriented CS
   advection.
+
+**Current repo status:** CS diffusion and surface flux are now live on
+top of the 22B panel-native runtime, with panel-native Kz via
+`CubedSphereField` and panel-native `NTuple{6}` surface source rates.
+CS convection remains gated on the same structured-convection runtime
+gap as RG convection.
 
 ## 7. Performance plan
 

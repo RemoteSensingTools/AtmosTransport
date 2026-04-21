@@ -177,10 +177,12 @@ export PerTracerFluxMap, flux_for
 export AbstractSurfaceFluxOperator, NoSurfaceFlux, SurfaceFluxOperator
 export apply_surface_flux!
 
-# Convection operator hierarchy (plan 18 Commit 1). Concrete operators
-# (`CMFMCConvection`, `TM5Convection`) land in plan 18 Commits 3 and 4.
+# Convection operator hierarchy (plan 18 Commits 1, 3, 4).
+# NoConvection — Commit 1. CMFMCConvection — Commit 3. TM5Convection — Commit 4.
 # `ConvectionForcing` lives in MetDrivers and is re-exported below.
 export AbstractConvectionOperator, NoConvection
+export CMFMCConvection                          # plan 18 Commit 3
+export CMFMCWorkspace, invalidate_cmfmc_cache!  # plan 18 Commit 3
 export apply_convection!
 
 # Advection scheme hierarchy

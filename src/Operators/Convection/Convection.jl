@@ -50,14 +50,20 @@ it's a pure dead branch.
 """
 module Convection
 
+using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
 using ...State: CellState
-using ...Grids: AtmosGrid
+using ...Grids: AtmosGrid, LatLonMesh, cell_areas_by_latitude
 using ...MetDrivers: ConvectionForcing
 import ..apply!
 
 export AbstractConvectionOperator, NoConvection
+export CMFMCConvection                          # plan 18 Commit 3
+export CMFMCWorkspace, invalidate_cmfmc_cache!  # plan 18 Commit 3
 export apply_convection!
 
 include("operators.jl")
+include("convection_workspace.jl")   # CMFMCWorkspace (Commit 3)
+include("cmfmc_kernels.jl")          # kernels + inline helpers (Commit 3)
+include("CMFMCConvection.jl")        # struct + apply! methods (Commit 3)
 
 end # module Convection

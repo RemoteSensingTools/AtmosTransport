@@ -65,9 +65,9 @@ end
     if steps_per_window == 1
         return zero(FT)
     elseif use_midpoint
-        return FT((substep - 0.5) / steps_per_window)
+        return (FT(substep) - FT(0.5)) / FT(steps_per_window)
     else
-        return FT((substep - 1) / steps_per_window)
+        return (FT(substep) - one(FT)) / FT(steps_per_window)
     end
 end
 
@@ -132,6 +132,43 @@ function _apply_surface_sources!(sim::DrivenSimulation)
     return nothing
 end
 
+function _validate_convection_runtime(model::TransportModel,
+                                      driver::AbstractMetDriver,
+                                      window::AbstractTransportWindow)
+    op = model.convection
+    op isa NoConvection && return nothing
+
+    window.convection === nothing &&
+        throw(ArgumentError(
+            "DrivenSimulation loaded a transport window without convection forcing, " *
+            "but model.convection = $(typeof(op)) is active. " *
+            "Install a driver/window path that populates `window.convection` " *
+            "for this operator."))
+
+    if op isa CMFMCConvection
+        window.convection.cmfmc === nothing &&
+            throw(ArgumentError(
+                "CMFMCConvection requires `window.convection.cmfmc` to be populated; " *
+                "driver $(typeof(driver)) provided convection forcing without CMFMC."))
+    else
+        throw(ArgumentError(
+            "DrivenSimulation does not support convection operator $(typeof(op)) yet."))
+    end
+
+    return nothing
+end
+
+function _install_convection_forcing(model::TransportModel,
+                                     driver::AbstractMetDriver,
+                                     window::AbstractTransportWindow)
+    _validate_convection_runtime(model, driver, window)
+    model.convection isa NoConvection && return model
+
+    forcing = allocate_convection_forcing_like(window.convection, model.state.air_mass)
+    copy_convection_forcing!(forcing, window.convection)
+    return with_convection_forcing(model, forcing)
+end
+
 function _refresh_forcing!(sim::DrivenSimulation, substep::Int)
     λ = _substep_fraction(substep, sim.steps_per_window, typeof(sim.Δt), sim.use_midpoint_forcing)
     if sim.interpolate_fluxes_within_window
@@ -142,6 +179,9 @@ function _refresh_forcing!(sim::DrivenSimulation, substep::Int)
     expected_air_mass!(sim.expected_air_mass, sim.window, λ)
     if sim.qv_buffer !== nothing
         interpolate_qv!(sim.qv_buffer, sim.window, λ)
+    end
+    if !(sim.model.convection isa NoConvection)
+        copy_convection_forcing!(sim.model.convection_forcing, sim.window.convection)
     end
     return λ
 end
@@ -160,9 +200,11 @@ function _maybe_advance_window!(sim::DrivenSimulation, substep::Int)
         if sim.qv_buffer !== nothing && !has_humidity_endpoints(sim.window)
             throw(ArgumentError("driver humidity endpoint support changed between windows"))
         end
+        _validate_convection_runtime(sim.model, sim.driver, sim.window)
         if sim.reset_air_mass_each_window
             _copy_storage!(sim.model.state.air_mass, sim.window.air_mass)
         end
+        invalidate_cmfmc_cache!(sim.model.workspace.convection_ws)
     end
     return nothing
 end
@@ -235,8 +277,9 @@ function DrivenSimulation(model::TransportModel,
         emissions_op = SurfaceFluxOperator(PerTracerFluxMap(surface_sources_adapted))
         model = with_emissions(model, emissions_op)
     end
-    FT = promote_type(_storage_eltype(model.state.air_mass), typeof(window_dt(driver)))
-    Δt = FT(window_dt(driver) / steps_per_window(driver))
+    model = _install_convection_forcing(model, driver, window)
+    FT = _storage_eltype(model.state.air_mass)
+    Δt = FT(window_dt(driver)) / FT(steps_per_window(driver))
     nsteps_total = (stop_window - start_window + 1) * steps_per_window(driver)
 
     flux_interp = interpolate_fluxes_within_window === nothing ?
@@ -312,9 +355,9 @@ function step!(sim::DrivenSimulation)
     _refresh_forcing!(sim, substep)
 
     # Plan 17 Commit 6 + plan 18 A3: step!(model) runs the live operator
-    # suite (advection with palindrome-centered V and S, then chemistry)
-    # in one call. The convection block is still deferred. Plan 18 A3
-    # passes `meteo = sim` (not `sim.driver`) so operators see
+    # suite (advection with palindrome-centered V and S, then convection,
+    # then chemistry) in one call. Plan 18 A3 passes `meteo = sim`
+    # (not `sim.driver`) so operators see
     # `current_time(sim) = sim.time` and can still reach the driver via
     # `meteo.driver`. The driver is stateless and cannot provide
     # `current_time` on its own.

@@ -62,7 +62,7 @@ B_ifc(reader::CubedSphereBinaryReader) = reader.header.B_ifc
 has_qv(::CubedSphereBinaryReader) = false
 has_qv_endpoints(::CubedSphereBinaryReader) = false
 has_flux_delta(::CubedSphereBinaryReader) = false
-has_cmfmc(::CubedSphereBinaryReader) = false
+has_cmfmc(reader::CubedSphereBinaryReader) = :cmfmc in reader.header.payload_sections
 
 function _cs_header_symbol(reader::CubedSphereBinaryReader, key::AbstractString, default::Symbol)
     value = get(reader.header.raw_header, key, String(default))
@@ -147,16 +147,18 @@ function expected_air_mass!(dest::NTuple{6}, window::CubedSphereTransportWindow,
 end
 
 function load_transport_window(driver::CubedSphereTransportDriver, win::Int)
-    m_raw, ps_raw, am_raw, bm_raw, cm_raw = load_cs_window(driver.reader, win)
+    raw = load_cs_window(driver.reader, win)
     Hp = driver.grid.horizontal.Hp
-    panels_m = ntuple(p -> _pad_horizontal(m_raw[p], Hp), 6)
-    panels_ps = ps_raw
-    panels_am = ntuple(p -> _pad_horizontal(am_raw[p], Hp), 6)
-    panels_bm = ntuple(p -> _pad_horizontal(bm_raw[p], Hp), 6)
-    panels_cm = ntuple(p -> _pad_horizontal(cm_raw[p], Hp), 6)
+    panels_m = ntuple(p -> _pad_horizontal(raw.m[p], Hp), 6)
+    panels_ps = raw.ps
+    panels_am = ntuple(p -> _pad_horizontal(raw.am[p], Hp), 6)
+    panels_bm = ntuple(p -> _pad_horizontal(raw.bm[p], Hp), 6)
+    panels_cm = ntuple(p -> _pad_horizontal(raw.cm[p], Hp), 6)
     basis = _cs_basis_type(driver.reader)
     fluxes = CubedSphereFaceFluxState{basis}(panels_am, panels_bm, panels_cm)
-    return CubedSphereTransportWindow(panels_m, panels_ps, fluxes)
+    convection = raw.cmfmc === nothing ? nothing :
+                 ConvectionForcing(raw.cmfmc, raw.dtrain, nothing)
+    return CubedSphereTransportWindow(panels_m, panels_ps, fluxes; convection = convection)
 end
 
 export CubedSphereTransportWindow, CubedSphereTransportDriver

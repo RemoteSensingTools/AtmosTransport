@@ -206,21 +206,24 @@ end
 # =========================================================================
 
 """
-    _cmfmc_max_cfl(cmfmc, air_mass, cell_areas_y, dt) -> Float64
+    _cmfmc_max_cfl(cmfmc, air_mass, cell_areas_y, dt) -> FT
 
 Scan one window's CMFMC field and return the grid-maximum
 `|cmfmc| · dt / bmass` ratio. `bmass = air_mass[i,j,k] / cell_area_y[j]`
 has units kg/m², and CMFMC has units kg/m²/s, so the ratio is
 dimensionless.
 
-Returns `Float64` (promoted) so the ceiling math that follows is
-reproducible across F32 / F64 states.
+Returns the same floating-point type as the state (`FT`). The
+convection path stays type-stable end to end; if `Float32` needs
+better accumulation behavior, that should be handled explicitly in the
+relevant reduction rather than by promoting the whole CFL scan.
 """
 function _cmfmc_max_cfl(cmfmc::AbstractArray{FT, 3},
                         air_mass::AbstractArray{FT, 3},
                         cell_areas_y::AbstractVector,
                         dt::Real) where FT
-    worst = 0.0
+    dt_ft = FT(dt)
+    worst = zero(FT)
     Nx, Ny, Nz = size(air_mass)
     # cmfmc is (Nx, Ny, Nz+1) at interfaces
     @inbounds for k_iface in 1:Nz + 1, j in 1:Ny, i in 1:Nx
@@ -234,16 +237,77 @@ function _cmfmc_max_cfl(cmfmc::AbstractArray{FT, 3},
         else
             m_cell = min(air_mass[i, j, k_iface - 1], air_mass[i, j, k_iface])
         end
-        bmass = Float64(m_cell) / Float64(cell_areas_y[j])
-        bmass > 0.0 || continue
-        ratio = abs(Float64(cmfmc[i, j, k_iface])) * Float64(dt) / bmass
+        bmass = m_cell / cell_areas_y[j]
+        bmass > zero(FT) || continue
+        ratio = abs(cmfmc[i, j, k_iface]) * dt_ft / bmass
         worst = max(worst, ratio)
     end
     return worst
 end
 
+function _cmfmc_max_cfl(cmfmc::AbstractArray{FT, 2},
+                        air_mass::AbstractMatrix{FT},
+                        cell_areas::AbstractVector,
+                        dt::Real) where FT
+    dt_ft = FT(dt)
+    worst = zero(FT)
+    ncell, Nz = size(air_mass)
+    @inbounds for k_iface in 1:(Nz + 1), c in 1:ncell
+        if k_iface == 1
+            m_cell = air_mass[c, 1]
+        elseif k_iface > Nz
+            m_cell = air_mass[c, Nz]
+        else
+            m_cell = min(air_mass[c, k_iface - 1], air_mass[c, k_iface])
+        end
+        bmass = m_cell / cell_areas[c]
+        bmass > zero(FT) || continue
+        ratio = abs(cmfmc[c, k_iface]) * dt_ft / bmass
+        worst = max(worst, ratio)
+    end
+    return worst
+end
+
+function _cmfmc_max_cfl(cmfmc::NTuple{6, <:AbstractArray{FT, 3}},
+                        air_mass::NTuple{6, <:AbstractArray{FT, 3}},
+                        cell_areas::NTuple{6, <:AbstractMatrix},
+                        dt::Real) where FT
+    dt_ft = FT(dt)
+    worst = zero(FT)
+
+    @inbounds for p in 1:6
+        cmfmc_panel = cmfmc[p]
+        air_panel = air_mass[p]
+        area_panel = cell_areas[p]
+        Nc_x, Nc_y = size(area_panel)
+        Hp_x = div(size(air_panel, 1) - Nc_x, 2)
+        Hp_y = div(size(air_panel, 2) - Nc_y, 2)
+        Hp_x == Hp_y || throw(ArgumentError(
+            "Cubed-sphere CMFMC air-mass halos must be symmetric; got ($(Hp_x), $(Hp_y))"))
+        Nz = size(air_panel, 3)
+
+        for k_iface in 1:(Nz + 1), j in 1:Nc_y, i in 1:Nc_x
+            ii = i + Hp_x
+            jj = j + Hp_y
+            if k_iface == 1
+                m_cell = air_panel[ii, jj, 1]
+            elseif k_iface > Nz
+                m_cell = air_panel[ii, jj, Nz]
+            else
+                m_cell = min(air_panel[ii, jj, k_iface - 1], air_panel[ii, jj, k_iface])
+            end
+            bmass = m_cell / area_panel[i, j]
+            bmass > zero(FT) || continue
+            ratio = abs(cmfmc_panel[i, j, k_iface]) * dt_ft / bmass
+            worst = max(worst, ratio)
+        end
+    end
+
+    return worst
+end
+
 """
-    _get_or_compute_n_sub!(ws, cmfmc, air_mass, cell_areas_y, dt) -> Int
+    _get_or_compute_n_sub!(ws, cmfmc, air_mass, cell_metrics, dt) -> Int
 
 Return the cached CFL sub-step count, recomputing from the CMFMC
 field if the cache is stale (first call after a window advance).
@@ -266,13 +330,13 @@ false so the next call re-scans.
 const _CMFMC_N_SUB_MAX = 1024
 
 function _get_or_compute_n_sub!(ws::CMFMCWorkspace,
-                                 cmfmc::AbstractArray,
-                                 air_mass::AbstractArray,
-                                 cell_areas_y::AbstractVector,
+                                 cmfmc,
+                                 air_mass,
+                                 cell_metrics,
                                  dt::Real)
     if !ws.cache_valid[]
-        cfl_safety = 0.5
-        worst = _cmfmc_max_cfl(cmfmc, air_mass, cell_areas_y, dt)
+        worst = _cmfmc_max_cfl(cmfmc, air_mass, cell_metrics, dt)
+        cfl_safety = typeof(worst)(0.5)
         n_sub = max(1, ceil(Int, worst / cfl_safety))
         if n_sub > _CMFMC_N_SUB_MAX
             throw(ArgumentError(
@@ -289,6 +353,112 @@ function _get_or_compute_n_sub!(ws::CMFMCWorkspace,
         ws.cache_valid[] = true
     end
     return ws.cached_n_sub[]
+end
+
+@kernel function _cmfmc_cs_panel_column_kernel!(
+    tracers_raw,                 # (Nc+2Hp, Nc+2Hp, Nz, Nt), modified in place
+    @Const(air_mass),            # (Nc+2Hp, Nc+2Hp, Nz)
+    @Const(cmfmc),               # (Nc, Nc, Nz+1) at interfaces
+    @Const(dtrain),              # (Nc, Nc, Nz) at centers
+    @Const(cell_areas),          # (Nc, Nc)
+    qc_scratch,                  # (Nc+2Hp, Nc+2Hp, Nz) — workspace
+    Nz::Int,
+    Nt::Int,
+    dt,
+    Hp::Int,
+    ::Val{has_dtrain}
+) where has_dtrain
+    i, j = @index(Global, NTuple)
+
+    FT = eltype(tracers_raw)
+    tiny = FT(1e-30)
+    ii = i + Hp
+    jj = j + Hp
+    cell_area = cell_areas[i, j]
+
+    @inbounds for t_idx in 1:Nt
+        cldbase_k = 0
+        for k in 1:Nz
+            cmfmc_bot_k = cmfmc[i, j, k + 1]
+            if abs(cmfmc_bot_k) > tiny
+                cldbase_k = k
+                break
+            end
+        end
+
+        if cldbase_k == 0
+            continue
+        end
+
+        if cldbase_k < Nz
+            m_cb = air_mass[ii, jj, cldbase_k]
+            q_cldbase = m_cb > tiny ? tracers_raw[ii, jj, cldbase_k, t_idx] / m_cb : zero(FT)
+            cmfmc_at_cldbase = cmfmc[i, j, cldbase_k + 1]
+            if cmfmc_at_cldbase > tiny
+                qb_num = zero(FT)
+                mb = zero(FT)
+                for k in (cldbase_k + 1):Nz
+                    m_k = air_mass[ii, jj, k]
+                    q_k = m_k > tiny ? tracers_raw[ii, jj, k, t_idx] / m_k : zero(FT)
+                    qb_num += q_k * m_k
+                    mb += m_k
+                end
+                if mb > zero(FT)
+                    qb = qb_num / mb
+                    qc_mixed = (mb * qb + cmfmc_at_cldbase * q_cldbase * dt) /
+                               (mb + cmfmc_at_cldbase * dt)
+                    for k in (cldbase_k + 1):Nz
+                        tracers_raw[ii, jj, k, t_idx] = qc_mixed * air_mass[ii, jj, k]
+                    end
+                end
+            end
+        end
+
+        qc_below = zero(FT)
+
+        for k in Nz:-1:1
+            m_k = air_mass[ii, jj, k]
+            q_k = m_k > tiny ? tracers_raw[ii, jj, k, t_idx] / m_k : zero(FT)
+
+            cmfmc_bot = k < Nz ? cmfmc[i, j, k + 1] : zero(FT)
+            cmfmc_top = cmfmc[i, j, k]
+            dtrain_k = has_dtrain ? dtrain[i, j, k] : zero(FT)
+
+            cmout = cmfmc_top + dtrain_k
+            cmfmc_bot_eff = min(cmfmc_bot, cmout)
+            entrn = cmout - cmfmc_bot_eff
+
+            qc, _qc_scav = _cmfmc_updraft_mix(qc_below, q_k,
+                                              cmfmc_bot_eff, entrn, cmout, tiny)
+            qc_scratch[ii, jj, k] = qc
+            qc_below = qc
+        end
+
+        q_env_prev = zero(FT)
+
+        for k in 1:Nz
+            m_k = air_mass[ii, jj, k]
+            q_k = m_k > tiny ? tracers_raw[ii, jj, k, t_idx] / m_k : zero(FT)
+
+            bmass = m_k / cell_area
+            cmfmc_top = cmfmc[i, j, k]
+            dtrain_k = has_dtrain ? dtrain[i, j, k] : zero(FT)
+            qc_post = qc_scratch[ii, jj, k]
+
+            if k > 1 && bmass > tiny
+                q_new = _cmfmc_apply_tendency(q_k, q_env_prev, qc_post,
+                                              cmfmc_top, dtrain_k, bmass, dt)
+            elseif bmass > tiny
+                q_new = _cmfmc_apply_tendency(q_k, q_k, qc_post,
+                                              zero(FT), dtrain_k, bmass, dt)
+            else
+                q_new = q_k
+            end
+
+            q_env_prev = q_k
+            tracers_raw[ii, jj, k, t_idx] = q_new * m_k
+        end
+    end
 end
 
 # =========================================================================
@@ -418,6 +588,109 @@ end
 
             q_env_prev = q_k     # save PRE-update for next level's subsidence
             tracers_raw[i, j, k, t_idx] = q_new * m_k
+        end
+    end
+end
+
+@kernel function _cmfmc_faceindexed_column_kernel!(
+    tracers_raw,                 # (ncells, Nz, Nt), modified in place
+    @Const(air_mass),            # (ncells, Nz)
+    @Const(cmfmc),               # (ncells, Nz+1) at interfaces
+    @Const(dtrain),              # (ncells, Nz) at centers
+    @Const(cell_areas),          # (ncells,)
+    qc_scratch,                  # (ncells, Nz) — workspace
+    Nz::Int,
+    Nt::Int,
+    dt,
+    ::Val{has_dtrain}
+) where has_dtrain
+    c = @index(Global, Linear)
+
+    FT = eltype(tracers_raw)
+    tiny = FT(1e-30)
+    cell_area = cell_areas[c]
+
+    @inbounds for t_idx in 1:Nt
+        cldbase_k = 0
+        for k in 1:Nz
+            cmfmc_bot_k = cmfmc[c, k + 1]
+            if abs(cmfmc_bot_k) > tiny
+                cldbase_k = k
+                break
+            end
+        end
+
+        if cldbase_k == 0
+            continue
+        end
+
+        if cldbase_k < Nz
+            m_cb = air_mass[c, cldbase_k]
+            q_cldbase = m_cb > tiny ? tracers_raw[c, cldbase_k, t_idx] / m_cb : zero(FT)
+            cmfmc_at_cldbase = cmfmc[c, cldbase_k + 1]
+            if cmfmc_at_cldbase > tiny
+                qb_num = zero(FT)
+                mb = zero(FT)
+                for k in (cldbase_k + 1):Nz
+                    m_k = air_mass[c, k]
+                    q_k = m_k > tiny ? tracers_raw[c, k, t_idx] / m_k : zero(FT)
+                    qb_num += q_k * m_k
+                    mb += m_k
+                end
+                if mb > zero(FT)
+                    qb = qb_num / mb
+                    qc_mixed = (mb * qb + cmfmc_at_cldbase * q_cldbase * dt) /
+                               (mb + cmfmc_at_cldbase * dt)
+                    for k in (cldbase_k + 1):Nz
+                        tracers_raw[c, k, t_idx] = qc_mixed * air_mass[c, k]
+                    end
+                end
+            end
+        end
+
+        qc_below = zero(FT)
+
+        for k in Nz:-1:1
+            m_k = air_mass[c, k]
+            q_k = m_k > tiny ? tracers_raw[c, k, t_idx] / m_k : zero(FT)
+
+            cmfmc_bot = k < Nz ? cmfmc[c, k + 1] : zero(FT)
+            cmfmc_top = cmfmc[c, k]
+            dtrain_k = has_dtrain ? dtrain[c, k] : zero(FT)
+
+            cmout = cmfmc_top + dtrain_k
+            cmfmc_bot_eff = min(cmfmc_bot, cmout)
+            entrn = cmout - cmfmc_bot_eff
+
+            qc, _qc_scav = _cmfmc_updraft_mix(qc_below, q_k,
+                                              cmfmc_bot_eff, entrn, cmout, tiny)
+            qc_scratch[c, k] = qc
+            qc_below = qc
+        end
+
+        q_env_prev = zero(FT)
+
+        for k in 1:Nz
+            m_k = air_mass[c, k]
+            q_k = m_k > tiny ? tracers_raw[c, k, t_idx] / m_k : zero(FT)
+
+            bmass = m_k / cell_area
+            cmfmc_top = cmfmc[c, k]
+            dtrain_k = has_dtrain ? dtrain[c, k] : zero(FT)
+            qc_post = qc_scratch[c, k]
+
+            if k > 1 && bmass > tiny
+                q_new = _cmfmc_apply_tendency(q_k, q_env_prev, qc_post,
+                                              cmfmc_top, dtrain_k, bmass, dt)
+            elseif bmass > tiny
+                q_new = _cmfmc_apply_tendency(q_k, q_k, qc_post,
+                                              zero(FT), dtrain_k, bmass, dt)
+            else
+                q_new = q_k
+            end
+
+            q_env_prev = q_k
+            tracers_raw[c, k, t_idx] = q_new * m_k
         end
     end
 end

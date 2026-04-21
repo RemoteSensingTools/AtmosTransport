@@ -263,24 +263,38 @@ end
     @test abs(lhs - rhs) / max(abs(lhs), abs(rhs), FT(1e-30)) < 1e-12
 end
 
-@testset "A6. Face-indexed rejection (Decision 25)" begin
+@testset "A6. Face-indexed ReducedGaussian path" begin
     FT = Float64
-    # Build a minimal face-indexed state using ReducedGaussianMesh.
     mesh = ReducedGaussianMesh(FT[-45, 45], [4, 4]; FT = FT)
-    vc = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
+    vc = HybridSigmaPressure(
+        FT[0, 100, 300, 600, 1000, 2000],
+        FT[0, 0, 0.1, 0.3, 0.7, 1],
+    )
     grid = AtmosGrid(mesh, vc, CPU(); FT = FT)
-    ncell = ncells(mesh); Nz = 2
+    ncell = ncells(mesh)
+    Nz = 5
 
-    air_mass = ones(FT, ncell, Nz)
-    state = CellState(MoistBasis, copy(air_mass); CO2 = copy(air_mass) .* FT(1e-6))
+    air_mass = fill(FT(_REALISTIC_AIR_MASS_KG), ncell, Nz)
+    tracer = zeros(FT, ncell, Nz)
+    tracer[:, Nz] .= FT(1e-6) .* air_mass[:, Nz]
+    state = CellState(MoistBasis, copy(air_mass); CO2 = copy(tracer))
 
-    # Bogus forcing — shape doesn't matter; the rejection fires on state shape.
-    forcing = ConvectionForcing(zeros(FT, ncell, Nz + 1), nothing, nothing)
+    cmfmc = zeros(FT, ncell, Nz + 1)
+    cmfmc[:, 4] .= FT(0.02) * FT(0.5)
+    cmfmc[:, 3] .= FT(0.02)
+    cmfmc[:, 2] .= FT(0.02) * FT(0.5)
+    dtrain = zeros(FT, ncell, Nz)
+    dtrain[:, 1] .= FT(0.01)
+    forcing = ConvectionForcing(cmfmc, dtrain, nothing)
     op = CMFMCConvection()
-    ws = CMFMCWorkspace(zeros(FT, 1, 1, 1))   # shape doesn't matter for this test
+    ws = CMFMCWorkspace(state.air_mass;
+                        cell_metrics = [cell_area(mesh, c) for c in 1:ncell])
+    rm_before = copy(state.tracers_raw)
 
-    @test_throws ArgumentError apply!(state, forcing, grid, op, FT(1800.0);
-                                       workspace = ws)
+    apply!(state, forcing, grid, op, FT(1800.0); workspace = ws)
+
+    @test abs(sum(state.tracers_raw) - sum(rm_before)) / sum(rm_before) < 1e-12
+    @test state.tracers_raw != rm_before
 end
 
 # ---------------------------------------------------------------------------

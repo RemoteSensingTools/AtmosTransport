@@ -29,11 +29,14 @@
 Container for one window (or one substep) of convective mass-flux
 forcing. Three optional payload slots:
 
-- `cmfmc :: Union{Nothing, AbstractArray{FT, 3}}` — cloud updraft mass
-  flux at level interfaces, shape `(Nx, Ny, Nz+1)`. GCHP / CMFMCConvection
-  consumer.
-- `dtrain :: Union{Nothing, AbstractArray{FT, 3}}` — detraining mass
-  flux at layer centers, shape `(Nx, Ny, Nz)`. When `nothing`,
+- `cmfmc` — cloud updraft mass flux at level interfaces. Supported
+  layouts are structured `(Nx, Ny, Nz+1)`, face-indexed
+  `(ncell, Nz+1)`, and cubed-sphere panel tuples
+  `NTuple{6, <:AbstractArray{FT, 3}}` with per-panel shape
+  `(Nc, Nc, Nz+1)`. GCHP / `CMFMCConvection` consumer.
+- `dtrain` — detraining mass flux at layer centers. Supported layouts
+  match `cmfmc`, with layer-center shape `(Nx, Ny, Nz)`,
+  `(ncell, Nz)`, or `NTuple{6}` of `(Nc, Nc, Nz)`. When `nothing`,
   `CMFMCConvection` falls through to Tiedtke-style single-flux
   transport.
 - `tm5_fields :: Union{Nothing, NamedTuple{(:entu, :detu, :entd, :detd)}}` —
@@ -164,10 +167,10 @@ Used by `DrivenSimulation._refresh_forcing!` (Commit 8) to populate
 function copy_convection_forcing!(dst::ConvectionForcing, src::ConvectionForcing)
     _check_capability_match(dst, src)
     if src.cmfmc !== nothing
-        copyto!(dst.cmfmc, src.cmfmc)
+        _copy_convection_payload!(dst.cmfmc, src.cmfmc)
     end
     if src.dtrain !== nothing
-        copyto!(dst.dtrain, src.dtrain)
+        _copy_convection_payload!(dst.dtrain, src.dtrain)
     end
     if src.tm5_fields !== nothing
         for name in (:entu, :detu, :entd, :detd)
@@ -196,6 +199,25 @@ end
     return Array
 end
 
+@inline _convection_backend_adapter(reference_array::NTuple{6}) =
+    _convection_backend_adapter(reference_array[1])
+
+@inline _copy_convection_payload!(dst, src) = copyto!(dst, src)
+@inline function _copy_convection_payload!(dst::NTuple{N}, src::NTuple{N}) where N
+    @inbounds for i in 1:N
+        _copy_convection_payload!(dst[i], src[i])
+    end
+    return dst
+end
+
+@inline function _allocate_convection_payload_like(src, adaptor)
+    return adaptor === Array ? similar(src) : adaptor(similar(src))
+end
+
+@inline function _allocate_convection_payload_like(src::NTuple{N}, adaptor) where N
+    return ntuple(i -> _allocate_convection_payload_like(src[i], adaptor), N)
+end
+
 """
     allocate_convection_forcing_like(src::ConvectionForcing, backend_hint) -> ConvectionForcing
 
@@ -214,15 +236,14 @@ all-nothing placeholder when run through this helper.
 """
 function allocate_convection_forcing_like(src::ConvectionForcing, backend_hint)
     adaptor = _convection_backend_adapter(backend_hint)
-    _like(arr) = adaptor === Array ? similar(arr) : adaptor(similar(arr))
 
-    cmfmc = src.cmfmc === nothing ? nothing : _like(src.cmfmc)
-    dtrain = src.dtrain === nothing ? nothing : _like(src.dtrain)
+    cmfmc = src.cmfmc === nothing ? nothing : _allocate_convection_payload_like(src.cmfmc, adaptor)
+    dtrain = src.dtrain === nothing ? nothing : _allocate_convection_payload_like(src.dtrain, adaptor)
     tm5_fields = src.tm5_fields === nothing ? nothing : (
-        entu = _like(src.tm5_fields.entu),
-        detu = _like(src.tm5_fields.detu),
-        entd = _like(src.tm5_fields.entd),
-        detd = _like(src.tm5_fields.detd),
+        entu = _allocate_convection_payload_like(src.tm5_fields.entu, adaptor),
+        detu = _allocate_convection_payload_like(src.tm5_fields.detu, adaptor),
+        entd = _allocate_convection_payload_like(src.tm5_fields.entd, adaptor),
+        detd = _allocate_convection_payload_like(src.tm5_fields.detd, adaptor),
     )
     return ConvectionForcing(cmfmc, dtrain, tm5_fields)
 end

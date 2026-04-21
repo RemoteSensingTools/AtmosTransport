@@ -8,15 +8,20 @@
 # ---------------------------------------------------------------------------
 
 """
-    CMFMCWorkspace{FT, QC}
+    CMFMCWorkspace{FT, QC, CA}
 
 Per-sim pre-allocated workspace for [`CMFMCConvection`](@ref).
 
 # Fields
 
 - `qc_scratch :: QC` — updraft concentration buffer, one entry per
-  cell, shape `(Nx, Ny, Nz)` for structured grids. Reused across
-  all substeps and all tracers.
+  cell, shape matching `air_mass` (`(Nx, Ny, Nz)` for structured
+  grids, `(ncells, Nz)` for face-indexed grids). Reused across all
+  substeps and all tracers.
+- `cell_metrics :: CA` — pre-adapted cell-area metric vector used by
+  the CFL scan and the kernel:
+  `cell_areas_by_latitude(mesh)` for structured grids,
+  per-cell `cell_area(mesh, c)` for face-indexed grids.
 - `cached_n_sub :: Base.RefValue{Int}` — the CFL-derived sub-step
   count for the current met window. Stays valid as long as
   `cache_valid[] == true`; re-computed from the current CMFMC /
@@ -29,31 +34,72 @@ Per-sim pre-allocated workspace for [`CMFMCConvection`](@ref).
 # Usage
 
 Constructed once at `DrivenSimulation` setup time and reused for the
-whole run. Not Adapt-transferable directly in this commit — plan 18
-structured-only scope (Decision 25) means the kernel only sees CPU
-or KA-backend arrays depending on the state's backend, so the Ref
-fields stay host-side and `qc_scratch` is adapted via
-`Adapt.adapt_structure`. GPU transfer will be extended if / when
-plan 18b brings in face-indexed convection.
+whole run. `Adapt.adapt_structure` preserves the cached scalar state
+on the host while adapting `qc_scratch` to the requested backend.
 """
-struct CMFMCWorkspace{FT, QC <: AbstractArray{FT, 3}}
+struct CMFMCWorkspace{FT, QC, CA}
     qc_scratch   :: QC
+    cell_metrics :: CA
     cached_n_sub :: Base.RefValue{Int}
     cache_valid  :: Base.RefValue{Bool}
 end
 
 """
-    CMFMCWorkspace(air_mass::AbstractArray{FT, 3}) -> CMFMCWorkspace
+    CMFMCWorkspace(air_mass::AbstractArray{FT}; cell_metrics = nothing) -> CMFMCWorkspace
 
-Construct a fresh workspace from a structured-grid air-mass array.
-Shape of `qc_scratch` matches `air_mass`.
+Construct a fresh workspace from an air-mass payload. `air_mass` may
+be a single array (structured / face-indexed) or a cubed-sphere panel
+tuple. Shape of `qc_scratch` matches `air_mass`.
 """
-function CMFMCWorkspace(air_mass::AbstractArray{FT, 3}) where FT
-    qc_scratch = similar(air_mass)
-    return CMFMCWorkspace{FT, typeof(qc_scratch)}(
+@inline _cmfmc_scratch_like(air_mass::AbstractArray{FT}) where FT = similar(air_mass)
+@inline function _cmfmc_scratch_like(air_mass::NTuple{N, <:AbstractArray{FT}}) where {N, FT}
+    return ntuple(i -> similar(air_mass[i]), N)
+end
+
+@inline _cmfmc_metric_buffer(metric, ::Type{FT}) where FT =
+    copyto!(similar(metric, FT), metric)
+@inline function _cmfmc_metric_buffer(metrics::NTuple{N}, ::Type{FT}) where {N, FT}
+    return ntuple(i -> _cmfmc_metric_buffer(metrics[i], FT), N)
+end
+
+function CMFMCWorkspace(air_mass::AbstractArray{FT}; cell_metrics = nothing) where FT
+    qc_scratch = _cmfmc_scratch_like(air_mass)
+    metrics = if cell_metrics === nothing
+        nothing
+    else
+        _cmfmc_metric_buffer(cell_metrics, FT)
+    end
+    return CMFMCWorkspace{FT, typeof(qc_scratch), typeof(metrics)}(
         qc_scratch,
+        metrics,
         Ref{Int}(1),
         Ref{Bool}(false),
+    )
+end
+
+function CMFMCWorkspace(air_mass::NTuple{N, <:AbstractArray{FT}}; cell_metrics = nothing) where {N, FT}
+    qc_scratch = _cmfmc_scratch_like(air_mass)
+    metrics = if cell_metrics === nothing
+        nothing
+    else
+        _cmfmc_metric_buffer(cell_metrics, FT)
+    end
+    return CMFMCWorkspace{FT, typeof(qc_scratch), typeof(metrics)}(
+        qc_scratch,
+        metrics,
+        Ref{Int}(1),
+        Ref{Bool}(false),
+    )
+end
+
+function Adapt.adapt_structure(to, ws::CMFMCWorkspace{FT}) where FT
+    qc_scratch = Adapt.adapt(to, ws.qc_scratch)
+    cell_metrics = ws.cell_metrics === nothing ? nothing : Adapt.adapt(to, ws.cell_metrics)
+    return CMFMCWorkspace{FT, typeof(qc_scratch), typeof(cell_metrics)}(
+        qc_scratch,
+        cell_metrics,
+        Ref{Int}(ws.cached_n_sub[]),
+        Ref{Bool}(ws.cache_valid[]),
     )
 end
 

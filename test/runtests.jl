@@ -20,6 +20,7 @@ core_tests = [
     "test_structured_mesh_metadata.jl",
     "test_reduced_gaussian_mesh.jl",
     "test_driven_simulation.jl",
+    "test_transport_model_convection.jl",
     "test_cubed_sphere_advection.jl",
     "test_cubed_sphere_runtime.jl",
     "test_poisson_balance.jl",

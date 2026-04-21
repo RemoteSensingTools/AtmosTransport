@@ -1088,6 +1088,10 @@ function _cs_section_elements(Nc::Int, npanel::Int, nlevel::Int, section::Symbol
         return npanel * Nc * Nc * (nlevel + 1)
     elseif section === :ps
         return npanel * Nc * Nc
+    elseif section === :cmfmc
+        return npanel * Nc * Nc * (nlevel + 1)
+    elseif section === :dtrain
+        return npanel * Nc * Nc * nlevel
     else
         error("Unsupported CS section: $section")
     end
@@ -1143,11 +1147,17 @@ function open_streaming_cs_transport_binary(
         flux_sampling::Symbol = :window_constant,
         flux_kind::Symbol = :substep_mass_amount,
         mass_basis::Symbol = :moist,
+        include_cmfmc::Bool = false,
+        include_dtrain::Bool = false,
         extra_header::AbstractDict{<:AbstractString,<:Any} = Dict{String,Any}())
+    include_dtrain && !include_cmfmc &&
+        throw(ArgumentError("CS transport binaries cannot include dtrain without cmfmc"))
 
     ncell = npanel * Nc * Nc
     nface_h = npanel * 2 * Nc * (Nc + 1)
     payload_sections = Symbol[:m, :am, :bm, :cm, :ps]
+    include_cmfmc && push!(payload_sections, :cmfmc)
+    include_dtrain && push!(payload_sections, :dtrain)
 
     elems_per_window = sum(_cs_section_elements(Nc, npanel, nlevel, s)
                            for s in payload_sections)
@@ -1176,6 +1186,10 @@ function open_streaming_cs_transport_binary(
         "poisson_balance_method" => "global_cg_graph_laplacian",
         "poisson_balance_target_scale" => 1.0 / (2 * steps_per_window),
         "poisson_balance_target_semantics" => "forward_window_mass_difference / (2 * steps_per_window)",
+        "include_cmfmc" => include_cmfmc,
+        "include_dtrain" => include_dtrain,
+        "n_cmfmc" => include_cmfmc ? _cs_section_elements(Nc, npanel, nlevel, :cmfmc) : 0,
+        "n_dtrain" => include_dtrain ? _cs_section_elements(Nc, npanel, nlevel, :dtrain) : 0,
     ))
     isempty(extra_header) || merge!(header, Dict{String, Any}(extra_header))
 

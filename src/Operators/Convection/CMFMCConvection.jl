@@ -32,6 +32,10 @@ driver is responsible for basis correction upstream (Commit 7).
   Tiedtke-style single-flux transport (DTRAIN-missing fallback per
   plan 18 v5.1 Decision 2).
 
+Face-indexed ReducedGaussian uses `(ncell, Nz+1)` / `(ncell, Nz)`.
+CubedSphere uses `NTuple{6}` of per-panel `(Nc, Nc, Nz+1)` /
+`(Nc, Nc, Nz)` arrays.
+
 # CFL sub-cycling (Decision 21)
 
 The kernel sub-cycles internally based on the CMFMC profile:
@@ -52,9 +56,11 @@ Pass-0 block in `cmfmc_kernels.jl`.
 
 # Scope
 
-Plan 18 is structured-only (Decision 25). Face-indexed state
-(`Raw <: AbstractArray{_, 3}`) raises `ArgumentError` pointing at
-"Plan 18b: Face-indexed convection" as the follow-up.
+`CMFMCConvection` now supports structured LatLon, face-indexed
+ReducedGaussian, and panel-native CubedSphere runtime state. The CS
+path keeps forcing panel-native too: `forcing.cmfmc` and
+`forcing.dtrain` are `NTuple{6}` payloads loaded by the CS transport
+driver and applied column-locally on the halo-free panel interior.
 
 # Adjoint path (not shipped in plan 18)
 
@@ -90,6 +96,32 @@ CFL cache.
 `dt` is the block-level step length; the kernel internally
 sub-cycles `n_sub` times with `sdt = dt / n_sub`.
 """
+function _cmfmc_dtrain_array(cmfmc::AbstractArray{FT, 3},
+                             dtrain::Nothing,
+                             air_mass::AbstractArray{FT, 3}) where FT
+    Nx_c, Ny_c, Nz_c = size(air_mass)
+    darr = Array{FT}(undef, Nx_c, Ny_c, Nz_c)
+    @inbounds for k in 1:Nz_c, j in 1:Ny_c, i in 1:Nx_c
+        darr[i, j, k] = max(zero(FT), cmfmc[i, j, k + 1] - cmfmc[i, j, k])
+    end
+    return darr
+end
+
+_cmfmc_dtrain_array(cmfmc, dtrain, air_mass) = dtrain
+
+function _cmfmc_dtrain_array(cmfmc::NTuple{6, <:AbstractArray{FT, 3}},
+                             dtrain::Nothing,
+                             air_mass::NTuple{6, <:AbstractArray{FT, 3}}) where FT
+    return ntuple(6) do p
+        Nx_c, Ny_c, Nzp1 = size(cmfmc[p])
+        darr = Array{FT}(undef, Nx_c, Ny_c, Nzp1 - 1)
+        @inbounds for k in 1:(Nzp1 - 1), j in 1:Ny_c, i in 1:Nx_c
+            darr[i, j, k] = max(zero(FT), cmfmc[p][i, j, k + 1] - cmfmc[p][i, j, k])
+        end
+        darr
+    end
+end
+
 function apply_convection!(q_raw::AbstractArray{FT, 4},
                             air_mass::AbstractArray{FT, 3},
                             forcing::ConvectionForcing,
@@ -120,22 +152,15 @@ function apply_convection!(q_raw::AbstractArray{FT, 4},
     # `src_legacy/Convection/ras_convection.jl:365-370` which
     # delegated to a single-flux Tiedtke operator that made the same
     # diagnosis implicitly.)
-    Nx_c, Ny_c, Nz_c = size(air_mass)
-    dtrain_arr = if forcing.dtrain === nothing
-        darr = Array{FT}(undef, Nx_c, Ny_c, Nz_c)
-        @inbounds for k in 1:Nz_c, j in 1:Ny_c, i in 1:Nx_c
-            darr[i, j, k] = max(zero(FT), cmfmc[i, j, k + 1] - cmfmc[i, j, k])
-        end
-        darr
-    else
-        forcing.dtrain
-    end
+    dtrain_arr = _cmfmc_dtrain_array(cmfmc, forcing.dtrain, air_mass)
     # Always true at the kernel level once we've closed the mass
     # balance via derived or provided dtrain.
     has_dtrain_val = true
 
     Nx, Ny, Nz, Nt = size(q_raw)
-    cell_areas_y = cell_areas_by_latitude(grid.horizontal)
+    cell_areas_y = workspace.cell_metrics === nothing ?
+                   cell_areas_by_latitude(grid.horizontal) :
+                   workspace.cell_metrics
 
     # Cache the CFL sub-step count per met window (Decision 21).
     n_sub = _get_or_compute_n_sub!(workspace, cmfmc, air_mass,
@@ -155,20 +180,100 @@ function apply_convection!(q_raw::AbstractArray{FT, 4},
     return nothing
 end
 
-# Face-indexed state rejection (plan 18 v5.1 §2.19 Decision 25).
-# Dispatches on `Raw <: AbstractArray{_, 3}` (face-indexed
-# `tracers_raw` is 3D: `(ncells, Nz, Nt)`). Structured lat-lon has
-# 4D `tracers_raw` and goes through the method above.
+function apply_convection!(q_raw::AbstractArray{FT, 3},
+                            air_mass::AbstractArray{FT, 2},
+                            forcing::ConvectionForcing,
+                            op::CMFMCConvection,
+                            dt,
+                            workspace::CMFMCWorkspace,
+                            grid::AtmosGrid{<:ReducedGaussianMesh}) where FT
+    forcing.cmfmc === nothing && throw(ArgumentError(
+        "CMFMCConvection requires `forcing.cmfmc` to be populated; got nothing. " *
+        "Install via `TransportModel.convection_forcing` or " *
+        "`with_convection_forcing(model, ConvectionForcing(cmfmc, dtrain, nothing))`."))
+
+    cell_areas = workspace.cell_metrics
+    cell_areas === nothing && throw(ArgumentError(
+        "Face-indexed CMFMCConvection requires `workspace.cell_metrics` " *
+        "to carry per-cell areas. Build the model with `with_convection` " *
+        "or construct `CMFMCWorkspace(air_mass; cell_metrics=...)`."))
+
+    cmfmc = forcing.cmfmc
+    dtrain_arr = _cmfmc_dtrain_array(cmfmc, forcing.dtrain, air_mass)
+    has_dtrain_val = true
+
+    ncell, Nz, Nt = size(q_raw)
+    n_sub = _get_or_compute_n_sub!(workspace, cmfmc, air_mass,
+                                   cell_areas, dt)
+    sdt = FT(dt) / FT(n_sub)
+
+    backend = get_backend(q_raw)
+    kernel = _cmfmc_faceindexed_column_kernel!(backend, 256)
+
+    for _ in 1:n_sub
+        kernel(q_raw, air_mass, cmfmc, dtrain_arr, cell_areas,
+               workspace.qc_scratch,
+               Nz, Nt, sdt, Val(has_dtrain_val);
+               ndrange = ncell)
+    end
+    synchronize(backend)
+    return nothing
+end
+
 function apply_convection!(q_raw::AbstractArray{FT, 3},
                             air_mass::AbstractArray{FT, 2},
                             ::ConvectionForcing,
                             ::CMFMCConvection,
-                            dt, workspace, grid) where FT
+                            dt, workspace, grid::AtmosGrid) where FT
     throw(ArgumentError(
-        "Face-indexed convection is not in plan 18 scope (Decision 25). " *
-        "`CMFMCConvection` supports structured lat-lon only. " *
-        "Follow-up 'Plan 18b: Face-indexed convection' extends the " *
-        "kernel to `(ncells, Nz)` layout."))
+        "`CMFMCConvection` supports face-indexed state only on " *
+        "`ReducedGaussianMesh`; got $(typeof(grid.horizontal))."))
+end
+
+function apply_convection!(q_raw::NTuple{6, <:AbstractArray{FT, 4}},
+                           air_mass::NTuple{6, <:AbstractArray{FT, 3}},
+                           forcing::ConvectionForcing,
+                           op::CMFMCConvection,
+                           dt,
+                           workspace::CMFMCWorkspace,
+                           grid::AtmosGrid{<:CubedSphereMesh}) where FT
+    forcing.cmfmc === nothing && throw(ArgumentError(
+        "CMFMCConvection requires `forcing.cmfmc` to be populated; got nothing. " *
+        "Install via `TransportModel.convection_forcing` or " *
+        "`with_convection_forcing(model, ConvectionForcing(cmfmc, dtrain, nothing))`."))
+
+    cell_areas = workspace.cell_metrics
+    cell_areas === nothing && throw(ArgumentError(
+        "Cubed-sphere CMFMCConvection requires `workspace.cell_metrics` " *
+        "to carry per-panel cell-area matrices. Build the model with " *
+        "`with_convection` or construct `CMFMCWorkspace(air_mass; cell_metrics=...)`."))
+
+    cmfmc = forcing.cmfmc
+    dtrain_arr = _cmfmc_dtrain_array(cmfmc, forcing.dtrain, air_mass)
+    has_dtrain_val = true
+
+    mesh = grid.horizontal
+    Hp = mesh.Hp
+    Nc = mesh.Nc
+    Nz = size(q_raw[1], 3)
+    Nt = size(q_raw[1], 4)
+    n_sub = _get_or_compute_n_sub!(workspace, cmfmc, air_mass,
+                                   cell_areas, dt)
+    sdt = FT(dt) / FT(n_sub)
+
+    backend = get_backend(q_raw[1])
+    kernel = _cmfmc_cs_panel_column_kernel!(backend, (16, 16))
+
+    for _ in 1:n_sub
+        for p in 1:6
+            kernel(q_raw[p], air_mass[p], cmfmc[p], dtrain_arr[p], cell_areas[p],
+                   workspace.qc_scratch[p],
+                   Nz, Nt, sdt, Hp, Val(has_dtrain_val);
+                   ndrange = (Nc, Nc))
+        end
+    end
+    synchronize(backend)
+    return nothing
 end
 
 # =========================================================================
@@ -184,23 +289,44 @@ State-level delegate. Unpacks `state.tracers_raw` and
 allocated `CMFMCWorkspace` — `DrivenSimulation` construction (plan
 18 Commit 8) allocates this per Decision 26.
 """
-function apply!(state::CellState, forcing::ConvectionForcing,
-                grid::AtmosGrid, op::CMFMCConvection, dt::Real;
-                workspace::CMFMCWorkspace)
+function apply!(state::CellState{B, A, Raw, Names},
+                forcing::ConvectionForcing,
+                grid::AtmosGrid{<:LatLonMesh},
+                op::CMFMCConvection,
+                dt::Real;
+                workspace::CMFMCWorkspace) where {B, A, Raw <: AbstractArray{<:Any, 4}, Names}
     apply_convection!(state.tracers_raw, state.air_mass, forcing, op, dt,
                        workspace, grid)
     return state
 end
 
-# Face-indexed state-level rejection per Decision 25. Dispatch on
-# 3D `tracers_raw` shape.
+function apply!(state::CellState{B, A, Raw, Names},
+                forcing::ConvectionForcing,
+                grid::AtmosGrid{<:ReducedGaussianMesh},
+                op::CMFMCConvection,
+                dt::Real;
+                workspace::CMFMCWorkspace) where {B, A, Raw <: AbstractArray{<:Any, 3}, Names}
+    apply_convection!(state.tracers_raw, state.air_mass, forcing, op, dt,
+                      workspace, grid)
+    return state
+end
+
 function apply!(state::CellState{B, A, Raw, Names},
                 forcing::ConvectionForcing, grid::AtmosGrid,
                 op::CMFMCConvection, dt::Real;
                 workspace = nothing) where {B, A, Raw <: AbstractArray{<:Any, 3}, Names}
     throw(ArgumentError(
-        "Face-indexed convection is not in plan 18 scope (Decision 25). " *
-        "`CMFMCConvection` supports structured lat-lon only. " *
-        "Follow-up 'Plan 18b: Face-indexed convection' extends the " *
-        "kernel to `(ncells, Nz)` layout."))
+        "`CMFMCConvection` supports face-indexed state only on " *
+        "`ReducedGaussianMesh`; got $(typeof(grid.horizontal))."))
+end
+
+function apply!(state::CubedSphereState{B},
+                forcing::ConvectionForcing,
+                grid::AtmosGrid{<:CubedSphereMesh},
+                op::CMFMCConvection,
+                dt::Real;
+                workspace::CMFMCWorkspace) where {B}
+    apply_convection!(state.tracers_raw, state.air_mass, forcing, op, dt,
+                      workspace, grid)
+    return state
 end

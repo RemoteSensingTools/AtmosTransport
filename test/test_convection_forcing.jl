@@ -275,6 +275,24 @@ end
     @test dst.cmfmc === cmfmc_dst
 end
 
+@testset "copy_convection_forcing!: cubed-sphere panel tuples" begin
+    FT = Float32
+    Nc, Nz = 4, 2
+    cmfmc_src = ntuple(_ -> fill(FT(1), Nc, Nc, Nz + 1), 6)
+    dtrain_src = ntuple(_ -> fill(FT(0.5), Nc, Nc, Nz), 6)
+    src = ConvectionForcing(cmfmc_src, dtrain_src, nothing)
+
+    cmfmc_dst = ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), 6)
+    dtrain_dst = ntuple(_ -> zeros(FT, Nc, Nc, Nz), 6)
+    dst = ConvectionForcing(cmfmc_dst, dtrain_dst, nothing)
+
+    copy_convection_forcing!(dst, src)
+    @test dst.cmfmc[2] == cmfmc_src[2]
+    @test dst.dtrain[5] == dtrain_src[5]
+    @test dst.cmfmc[1] === cmfmc_dst[1]
+    @test dst.dtrain[6] === dtrain_dst[6]
+end
+
 @testset "copy_convection_forcing!: TM5 fields copy via NamedTuple loop" begin
     FT = Float64
     src = ConvectionForcing(nothing, nothing,
@@ -368,6 +386,24 @@ end
     @test _cap(dst) == (true, false, false)
     @test dst.dtrain === nothing
     @test size(dst.cmfmc) == size(cmfmc)
+end
+
+@testset "allocate_convection_forcing_like: cubed-sphere panel tuples" begin
+    FT = Float32
+    Nc, Nz = 4, 2
+    cmfmc = ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), 6)
+    dtrain = ntuple(_ -> zeros(FT, Nc, Nc, Nz), 6)
+    src = ConvectionForcing(cmfmc, dtrain, nothing)
+
+    backend_hint = ntuple(_ -> zeros(FT, Nc + 2, Nc + 2, Nz), 6)
+    dst = allocate_convection_forcing_like(src, backend_hint)
+
+    @test _cap(dst) == _cap(src)
+    @test size(dst.cmfmc[1]) == size(cmfmc[1])
+    @test size(dst.dtrain[1]) == size(dtrain[1])
+    @test dst.cmfmc[1] !== src.cmfmc[1]
+    @test dst.dtrain[1] !== src.dtrain[1]
+    @test eltype(dst.cmfmc[1]) === FT
 end
 
 # ---------------------------------------------------------------------------

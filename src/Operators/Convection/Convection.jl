@@ -34,26 +34,28 @@ Commit 1 ships only the type hierarchy and no-op. Future commits:
 The operator takes `ConvectionForcing` directly (not a transport
 window or driver). `_refresh_forcing!` populates
 `model.convection_forcing` each substep by copying from
-`sim.window.convection`. `TransportModel.step!` does not consume that
-forcing yet, so the end-to-end structured convection runtime remains a
-gated follow-up. No `meteo` kwarg — the forcing arrays are the time
-information; the operator does not call `current_time`.
+`sim.window.convection`. `TransportModel.step!` executes the convection
+block between transport and chemistry. No `meteo` kwarg — the forcing
+arrays are the time information; the operator does not call
+`current_time`.
 
 ## Face-indexed scope
 
-Plan 18 is structured-only (v5.1 §2.19 Decision 25). Face-indexed
-state (`Raw <: AbstractArray{_, 3}` tracers) raises `ArgumentError`
-from the concrete operator `apply!` methods shipping in Commits 3
-and 4, pointing at Plan 18b as the follow-up.
+`CMFMCConvection` now supports structured LatLon, face-indexed
+ReducedGaussian, and panel-native CubedSphere state layouts. The CS
+path keeps forcing panel-native too: the driver loads `cmfmc` /
+`dtrain` as per-panel tuples and the operator applies the same
+column-local logic on each panel interior.
 
-The no-op `NoConvection` path in Commit 1 accepts any state shape —
-it's a pure dead branch.
+The no-op `NoConvection` path accepts any state shape — it's a pure
+dead branch.
 """
 module Convection
 
+using Adapt
 using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
-using ...State: CellState
-using ...Grids: AtmosGrid, LatLonMesh, cell_areas_by_latitude
+using ...State: CellState, CubedSphereState
+using ...Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, cell_areas_by_latitude
 using ...MetDrivers: ConvectionForcing
 import ..apply!
 

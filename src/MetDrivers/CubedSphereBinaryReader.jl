@@ -124,6 +124,10 @@ function _cs_section_elements(h::CubedSphereBinaryHeader, section::Symbol)
         return np * Nc * Nc * (Nz + 1)
     elseif section === :ps
         return np * Nc * Nc
+    elseif section === :cmfmc
+        return np * Nc * Nc * (Nz + 1)
+    elseif section === :dtrain
+        return np * Nc * Nc * Nz
     elseif section in (:qv, :qv_start, :qv_end, :dm)
         return np * Nc * Nc * Nz
     elseif section in (:dam,)
@@ -142,10 +146,11 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    load_cs_window(reader, win) -> (panels_m, panels_ps, panels_am, panels_bm, panels_cm)
+    load_cs_window(reader, win) -> NamedTuple
 
 Load window `win` from a cubed-sphere transport binary. Returns NTuples of
-per-panel arrays.
+per-panel arrays plus optional `cmfmc` / `dtrain` payloads when they are
+present in the binary.
 """
 function load_cs_window(reader::CubedSphereBinaryReader{FT}, win::Int) where FT
     h = reader.header
@@ -159,6 +164,8 @@ function load_cs_window(reader::CubedSphereBinaryReader{FT}, win::Int) where FT
     panels_am = ntuple(_ -> Array{FT}(undef, Nc + 1, Nc, Nz), np)
     panels_bm = ntuple(_ -> Array{FT}(undef, Nc, Nc + 1, Nz), np)
     panels_cm = ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz + 1), np)
+    panels_cmfmc = :cmfmc in h.payload_sections ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz + 1), np) : nothing
+    panels_dtrain = :dtrain in h.payload_sections ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np) : nothing
 
     o = win_offset
     for section in h.payload_sections
@@ -192,6 +199,18 @@ function load_cs_window(reader::CubedSphereBinaryReader{FT}, win::Int) where FT
                 copyto!(panels_ps[p], 1, reader.data, o + 1, n)
                 o += n
             end
+        elseif section === :cmfmc
+            for p in 1:np
+                n = Nc * Nc * (Nz + 1)
+                copyto!(panels_cmfmc[p], 1, reader.data, o + 1, n)
+                o += n
+            end
+        elseif section === :dtrain
+            for p in 1:np
+                n = Nc * Nc * Nz
+                copyto!(panels_dtrain[p], 1, reader.data, o + 1, n)
+                o += n
+            end
         else
             # Skip unknown sections
             n = _cs_section_elements(h, section)
@@ -199,7 +218,15 @@ function load_cs_window(reader::CubedSphereBinaryReader{FT}, win::Int) where FT
         end
     end
 
-    return panels_m, panels_ps, panels_am, panels_bm, panels_cm
+    return (
+        m = panels_m,
+        ps = panels_ps,
+        am = panels_am,
+        bm = panels_bm,
+        cm = panels_cm,
+        cmfmc = panels_cmfmc,
+        dtrain = panels_dtrain,
+    )
 end
 
 """

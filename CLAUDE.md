@@ -963,6 +963,66 @@ Plans that would fix any of these need a separate scope commitment. Baseline
 is captured in `artifacts/<plan>/baseline_test_summary.log` at Commit 0 and
 compared against after every subsequent commit.
 
+## CI enforcement (added plan 21 Phase 6)
+
+Three static/semantic gates run as part of the core test suite
+(`julia --project=. test/runtests.jl`). All three are **hard gates** —
+failures block merge.
+
+### 1. `test/test_aqua.jl` — package health
+
+Aqua.jl checks: ambiguities, unbound args, undefined exports,
+project extras, stale deps, deps_compat, type piracies. All seven
+must pass; `persistent_tasks` is disabled because GPU-extension
+async precompile tasks trip false positives.
+
+**When Aqua fails:** investigate. If it surfaces a real bug, fix it.
+If it flags a well-understood false positive for a documented
+reason, narrow the individual check rather than globally disabling.
+Do not silence the test entirely.
+
+### 2. `test/test_jet.jl` — type-inference snapshot
+
+JET.jl runs on hot-path modules (`Operators`, `State`, `Models`,
+`Grids`) with `target_modules` filter. The report count must be
+≤ a documented baseline (`JET_HOT_PATH_BASELINE`, currently 117).
+
+**Two categories of expected reports** — see `test_jet.jl` docstring
+and `artifacts/plan21/jet_baseline.txt`:
+
+- `KernelAbstractions.Kernel` `kwcall` dispatch (~116 reports) — a
+  well-known JET ↔ KA false positive from `kernel(args...; ndrange=...)`.
+- Parametric `@kwdef` zero-arg constructor (1 report).
+
+**When JET fails:** the test prints the new reports. If they're
+genuine bugs, fix. If they're additional KA kwcall noise or other
+documented patterns, update `JET_HOT_PATH_BASELINE` with a comment
+citing the reason. Escape hatch: set `ATMOSTRANSPORT_JET_ADVISORY=1`
+to demote breaches to warnings during local dev on intermediate
+refactors.
+
+### 3. `test/test_readme_current.jl` — README freshness
+
+For each directory listed in `README_DIRS`, every `.jl` file must
+appear as a substring in that directory's `README.md`. Runs in
+~100 ms.
+
+**When a new .jl file is added to a tracked directory:**
+update the corresponding `README.md` File Map section. Or, if the
+file has a documented reason not to appear (compatibility shim,
+generated code), add it to `EXCLUDE_FILES` in
+`test/test_readme_current.jl` with a comment.
+
+### What triggers each gate
+
+| Change | Aqua | JET | README |
+|---|---|---|---|
+| New `.jl` file in tracked dir | possible | possible | **YES** |
+| New method in hot-path module | no | possible | no |
+| New runtime dep | **YES** | no | no |
+| New test-only dep | no (if [extras]) | no | no |
+| New qualified-name export / ambiguous method | **YES** | no | no |
+
 ---
 
 ## What NOT to do (accumulated anti-patterns)

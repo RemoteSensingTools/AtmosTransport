@@ -1,60 +1,66 @@
 # Scope And Status
 
-## What `docs_v2` is
+## What `docs/` is
 
-`docs_v2` is a breadcrumb layer for the new transport architecture in `src`.
-It exists to make the implementation easier to follow while the system is still
-being designed carefully.
-
-The documentation style should stay:
+Technical documentation for `src/`, the basis-explicit transport core.
+The documentation style stays:
 
 - explicit
 - technical
 - reviewable by non-Julia users
 - close to the actual code paths
 
-## What `src` is trying to become
+## What `src/` is
 
-`src` is the future standalone runtime target. It is being designed around a
-generic transport core rather than around TM5-, GEOS-, or GCHP-specific control
-flow.
+Offline atmospheric transport runtime with:
 
-The key architectural direction is:
+- **Multi-topology**: structured LatLon, face-indexed reduced Gaussian,
+  panel-native cubed sphere (all three runtime-live after plan 22A–D)
+- **Multi-backend**: CPU and GPU via KernelAbstractions.jl
+- **Operator suite**: advection, vertical diffusion, surface flux,
+  convection, chemistry — composed via symmetric Strang splitting
+- **Basis-explicit mass-flux advection**: `DryBasis` / `MoistBasis`
+  tags in the type domain; advection kernels do not decide dry vs
+  moist at runtime
+- **Extensible by multiple dispatch**: new operators, grids, and data
+  sources plug in without modifying existing code paths
 
-- explicit cell mass and tracer-mass transport
-- explicit mass-basis tags (`DryBasis`, `MoistBasis`)
-- topology-aware grids and flux states
-- clean met-driver boundaries
-- no closure logic inside advection kernels
+## What ships today
 
-## Current first polished path
+- **Advection**: live on LatLon, RG, CS (see `Operators/Advection/`)
+- **Diffusion**: live on LatLon, RG, CS (see `Operators/Diffusion/`)
+- **Surface flux**: live on LatLon, RG, CS (see `Operators/SurfaceFlux/`)
+- **Convection (CMFMC)**: live on LatLon, RG, CS (plan 22D;
+  `Operators/Convection/CMFMCConvection.jl`)
+- **Chemistry** (`ExponentialDecay`, `CompositeChemistry`): live on
+  `CellState` topologies; `CubedSphereState` dispatch is the one
+  known gap
+- **Met drivers**: ERA5 spectral, GEOS-FP C720, GEOS-IT C180,
+  cubed-sphere binary
+- **Adjoint**: forward operators ported; hand-coded discrete adjoint
+  planned as plan 19. Archival templates under
+  [`resources/developer_notes/legacy_adjoint_templates/`](resources/developer_notes/legacy_adjoint_templates/)
 
-The first polished reference path is:
-
-- grid: ERA5-derived structured lat-lon
-- runtime: `src` only
-- operator: `UpwindAdvection`
-- basis: moist or dry, with moist as the default reference path
-- physics scope: pure advection only
+Canonical operator × topology matrix:
+[`src/Operators/TOPOLOGY_SUPPORT.md`](../src/Operators/TOPOLOGY_SUPPORT.md).
 
 ## What is intentionally deferred
 
-- production-ready higher-order schemes
-- cubed-sphere runtime support
-- observation operators
-- chemistry and physics packages
-- public Documenter site structure
+- CS chemistry (small gap; `CellState` chemistry is live)
+- Plan 19 adjoint operator suite
+- Plan 20 user-facing documentation overhaul (Documenter + Literate)
+- Observation operators for 4D-Var
 
-## Current implementation phase
+## Current phase
 
-At the moment the codebase has:
+The topology completion work (plans 22A–D) landed April 2026. Next
+focus is plan 19 (adjoint) and plan 20 (user-facing docs). Plan 21
+(in progress on branch `convection`) is a stabilization pass
+prerequisite to both.
 
-- basis-explicit state and flux types
-- a generic transport-binary family
-- a typed met-driver interface
-- a standalone driven runtime
-- structured lat-lon and reduced-Gaussian smoke paths
-- explicit binary timing semantics and driver-side validation
+See [`plans/PLAN_HISTORY.md`](plans/PLAN_HISTORY.md) for the canonical
+per-plan status.
 
-The next phases should refine the real-data paths, not expand surface area
-blindly.
+---
+
+*Last verified against `src/` on 2026-04-21 (plan 21 Phase 3a).*

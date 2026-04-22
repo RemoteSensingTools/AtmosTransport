@@ -5,113 +5,55 @@ continuity on latitude-longitude (ERA5) and cubed-sphere (GEOS-FP C720, GEOS-IT 
 grids with mass-conserving advection, Tiedtke/RAS convection, and boundary-layer diffusion.
 Oceananigans-inspired modular architecture; KernelAbstractions.jl for GPU portability.
 
-# Rule 0: TEST EVERY ASSUMPTION WITH A PROBE BEFORE BUILDING ON IT.
-#
-# The recurring failure mode in this project is: correct high-level reasoning
-# followed by sloppy implementation that introduces trivial bugs (wrong index,
-# wrong sign, wrong dimension order, wrong convention). These bugs then cascade
-# into hours of debugging or silently wrong results.
-#
-# BEFORE writing any function that transforms data (spectral synthesis, vertical
-# remap, Poisson balance, IC loading, flux scaling), validate the INPUTS and
-# OUTPUTS with a short MCP probe:
-#
-#   1. Print the shape, dtype, and a few representative values of every array
-#      BEFORE the function processes them.
-#   2. After the function runs, print the output at a known physical location
-#      (e.g. ps at Tibet should be ~55 kPa, ps at equatorial ocean ~101 kPa)
-#      and verify it matches physical reality.
-#   3. Compare against an independent reference (RG vs LL at the same point,
-#      Catrine source vs model-loaded IC, ERA5 GRIB vs spectral-synthesized).
-#
-# Examples of bugs this rule would have caught in < 30 seconds:
-#   - LL 180° longitude shift (spectral_synthesis.jl center_shift=dlon/2
-#     instead of deg2rad(λᶜ[1])): probe `ps[57, 25]` at (1.875°, 31.875°)
-#     would show 101232 Pa instead of expected ~88500 Pa. Caught by the user
-#     pushing back on "LL vs RG IC looks different", not by me.
-#   - RG Poisson balance false convergence: probe `max(|L*psi - rhs|)` after
-#     the CG solve, not just the CG's internal residual metric. Three
-#     iterations of bugs (wrong degree, wrong projection, mean-zero on
-#     non-singular L) before it worked.
-#   - NetCDF dim-order confusion: `var[:, :, 0]` on a `(lon, lat, time)`
-#     file gives `(lon, lat)` at time=0, but on `(time, lat, lon)` gives
-#     `(time, lat)` at lon=0. One `print(var.dimensions, var.shape)` would
-#     have shown the real layout.
-#   - Catrine surface level: `co2[k=0]` could be TOA or surface depending
-#     on the ap/bp convention. One `print(ap[1], bp[1])` reveals p[0]=ps
-#     → surface.
-#
-# The cost of a probe is 5 seconds and 2 lines of code. The cost of NOT
-# probing is hours of debugging, false conclusions written to MEMORY.md,
-# and user trust erosion. When in doubt, probe first, code second.
+## Project discipline (read before editing)
 
-# Rule 1: Never speculate without evidence, check your own intuition, it was often wrong
+**Rule 0 — Probe before building.** Before writing any function that transforms
+data (spectral synthesis, vertical remap, Poisson balance, IC loading, flux
+scaling), print shape/dtype and a representative value at a known physical
+location (e.g. ps at Tibet ≈ 55 kPa; ps at equatorial ocean ≈ 101 kPa) and
+verify it matches reality. Compare against an independent reference when one
+exists (RG vs LL at the same point; Catrine source vs model-loaded IC; ERA5
+GRIB vs spectral-synthesized). Probe cost: 5 seconds. Not-probing cost: hours.
 
-# Rule 1b: Assume bugs first. If a result looks unphysical, it IS a bug until proven
-# otherwise with quantitative evidence. Do NOT rationalize wrong numbers. CO2 does not
-# double at the surface in 6 hours. Wind speeds are 5-10 m/s, not 50. Mass doesn't
-# appear from nowhere. When you see a suspicious result, say "this looks wrong, let me
-# find the bug" — not "this could be explained by X."
+**Rule 1 — Evidence, not speculation.** Never guess. Check your intuition; it
+is often wrong. If a result looks unphysical, it IS a bug until quantitative
+evidence proves otherwise. Don't rationalize wrong numbers — CO₂ doesn't
+double at the surface in 6 hours, wind speeds are 5–10 m/s not 50, mass
+doesn't appear from nowhere. Say "this looks wrong, let me find the bug",
+not "this could be explained by X".
 
-# Rule 1c: NEVER write a hypothesis to MEMORY.md (or any persistent doc) labeled as
-# fact. Persistent memory is read by future agents who treat it as ground truth.
-# If you are pattern-matching, say "consistent with X" or "candidate: X" — never
-# "real X", "confirmed X", or "TM5 would also do X". Especially never claim that
-# an unexplained drift, error, or artifact is "real / physical / expected" without
-# (a) a back-of-envelope number that quantitatively matches, AND (b) a citation
-# (paper, code line, or independent run). Pattern-matching the timing of two spikes
-# to "looks like a 12h cycle" is NOT evidence — it's a guess. If you do not have
-# both (a) and (b), the right entry is "drift -X% over Y, source unknown". Saving
-# a wrong "explanation" is worse than saving "I don't know" because it ends the
-# investigation prematurely.
+**Rule 1c — Never write hypotheses to persistent docs as fact.** MEMORY.md,
+plan docs, and design memos get read by future agents who treat them as
+ground truth. If pattern-matching, say "consistent with X" or "candidate: X";
+never "confirmed X". Claims that an unexplained drift is "real / physical /
+expected" require (a) a quantitative back-of-envelope that matches AND (b) a
+citation. Without both, the entry is "drift −X% over Y, source unknown".
 
-# Rule 2: Debugging protocol for transport and physics issues
+**Rule 2 — Transport-bug debugging protocol.** For any transport bug,
+numerical instability, or physics mismatch:
 
-When investigating ANY transport bug, numerical instability, or physics mismatch:
+1. Read the reference code line-by-line first (TM5 F90 in `deps/tm5/base/src/`,
+   old Julia in git history) before forming any hypothesis.
+2. If something used to work and now doesn't, find the exact semantic change
+   in the diff — not an approximate summary.
+3. Red team / blue team significant changes to advection, preprocessing, or
+   flux scaling: propose, challenge with reference evidence, agree, then
+   implement. Skipping this cost 12+ hours on the ERA5 LL NaN bug (2026-04-03).
+4. One change at a time. Each change needs evidence (code reference, math
+   derivation, or diagnostic output) before implementation.
+5. Never guess scale factors. Derive from first principles with the exact
+   reference formula, verify units, confirm with a diagnostic. The 4× scaling
+   attempt (2026-04-02) wasted hours because the math was done without
+   reading how TM5 actually applies the fluxes.
 
-1. **Read the reference code FIRST.** The TM5 F90 source (`deps/tm5/base/src/`) and
-   the old working Julia code (git history, legacy scripts) are the ground truth.
-   Read them LINE BY LINE before forming any hypothesis.
-
-2. **Diff old vs new.** If something used to work and now doesn't, the answer is in
-   the diff. Find the EXACT semantic change — not an approximate summary.
-
-3. **Red team / blue team for every significant change.** Before implementing any
-   fix to advection, preprocessing, or flux scaling:
-   - Launch a PROPOSE agent to design the change with TM5 F90 evidence
-   - Launch an EVALUATE agent to challenge it, find risks, verify against reference
-   - Only implement after both agents agree (or disagreement is explicitly resolved)
-   - NEVER skip this for "obvious" fixes — the ERA5 LL NaN bug (2026-04-03) was a
-     one-line change (m_dev reset inside vs outside substep loop) that was missed
-     for 12+ hours because this protocol was not followed.
-
-4. **One change at a time.** Make one change, test, verify. Never stack multiple
-   untested hypotheses. Each change must have evidence (code reference, math derivation,
-   or diagnostic output) BEFORE implementation.
-
-5. **Never guess at scale factors.** If a flux needs scaling, derive the factor from
-   first principles with the exact TM5 formula, verify the units, and confirm with
-   a diagnostic. The 4× scaling attempt (2026-04-02) wasted hours because the math
-   was done without reading how TM5 actually applies the fluxes.
-
-# Rule 3: This is a production-level codebase — prefer long-term solutions
-#
-# Every piece of code added here will be maintained, extended, and relied upon
-# for years. Prefer clean, mathematically correct, future-proof implementations
-# over quick hacks that "kind of work" but are neither rigorous nor elegant.
-# Specifically:
-#   - If two approaches exist and one is more accurate / more general / cleaner
-#     but requires more work, choose it. The extra effort pays for itself in
-#     reduced debugging and easier extension later.
-#   - No ad-hoc limiters, clamps, or fudge factors without a first-principles
-#     derivation and a comment explaining WHY the limiter is needed.
-#   - No "temporary" workarounds that silently become permanent. If a shortcut
-#     is truly needed for iteration speed, mark it with `# HACK:` and a TODO
-#     with the clean replacement path.
-#   - Code should be self-documenting with clear docstrings, inline convention
-#     comments, and unit annotations on physical quantities. A newcomer reading
-#     any function should understand the math, the sign conventions, and the
-#     index layout without consulting external docs.
+**Rule 3 — Production-level codebase.** Prefer clean, mathematically correct,
+future-proof implementations over quick hacks. No ad-hoc limiters/clamps
+without a first-principles derivation and a WHY comment. No "temporary"
+workarounds that silently become permanent — mark real shortcuts with
+`# HACK:` + TODO pointing at the clean replacement. Code should be
+self-documenting via clear docstrings, convention comments, and unit
+annotations. A newcomer reading any function should understand the math,
+sign conventions, and index layout without external docs.
 
 ## Quick start
 
@@ -349,142 +291,76 @@ These are hard-won correctness constraints. Violating any causes silent wrong re
     in v4 headers also trigger a stale-binary warning if the source has
     moved on. Disable with `ENV["ATMOSTR_NO_STALE_CHECK"]="1"`.
 
-11. **`mass_fixer = true` is required for the ERA5 LL F64 debug test to
-    run to completion.** Pole-adjacent stratospheric cells
-    (j ∈ {1, 2, Ny-1, Ny}) have |bm|/m ≈ 0.30 per face from the spectral
-    preprocessor. With `mass_fixer = false`, cumulative drainage over a
-    window of 4 substeps × 6 sweeps (X-Y-Z-Z-Y-X) exceeds cell mass at
-    those cells; the local nloop refinement hits its max and the run
-    aborts (regression test:
-    `config/runs/era5_f64_debug_moist_v4_nofix.toml`). This is a LOCAL
-    cell-stability issue and is independent of the global mass drift fix
-    in invariant 12 below — both are needed for ERA5 LL.
+11. **`mass_fixer = true` required for ERA5 LL F64 stability.** Pole-adjacent
+    stratospheric cells (j ∈ {1, 2, Ny-1, Ny}) have |bm|/m ≈ 0.30 per face
+    from the spectral preprocessor. Without the runtime mass fixer, cumulative
+    drainage over one Strang palindrome exceeds cell mass and the local
+    nloop hits its max. Regression test:
+    `config/runs/era5_f64_debug_moist_v4_nofix.toml`. This is local cell
+    stability, independent of the global drift fix (invariant 12). Whether
+    TM5 r1112 needs the same fixer is NOT verified — earlier drafts claimed
+    it did; that was never checked against actual TM5 sources.
 
-    **OPEN: whether this matches TM5 r1112 behavior is NOT verified.**
-    A previous CLAUDE.md draft asserted "TM5 r1112 effectively does
-    mass-fixing via m = (at + bt × ps) × area / g each substep". That
-    was a hypothesis, not a checked claim — do not propagate as fact.
-    Verifying it requires reading TM5 r1112's actual m-evolution path
-    (advect_tools.F90 / dynam0 / Setup_MassFlow) and possibly running
-    TM5 on the same data. Until that's done, the honest position is
-    "we need mass_fixer=true to avoid polar drainage; whether TM5 needs
-    it too is unknown".
+12. **Global mean ps pinned in the v4 spectral preprocessor** (TM5
+    `Match('area-aver')` equivalent). ERA5's 4DVar analysis is not
+    mass-conserving; raw ⟨ps⟩ drifts ~10⁻⁴/day →
+    `Σm = const + (A_Earth/g)·⟨sp⟩_area` drifts in lockstep.
+    `preprocess_spectral_v4_binary.jl` applies a uniform additive shift to
+    `sp` so that `⟨sp⟩_area` tracks a fixed dry-air target
+    (Trenberth & Smith 2005: M_dry = 5.1352e18 kg → ⟨ps_dry⟩ ≈ 98726 Pa).
+    Mirrors TM5 cy3-4dvar `meteo.F90:1361-1374`. Verified 2026-04-07: Σm
+    drift drops from -8.31e-04% to +5.88e-09% (F32 quantization floor).
+    Disable via `[mass_fix] enable=false` for diagnostic runs. Does NOT
+    fix local polar drainage (invariant 11) — uniform shift only changes
+    `m` by `b_k · Δps` ≈ 0.4% at surface.
 
-12. **Global mean ps is pinned in the v4 spectral preprocessor (TM5
-    `Match('area-aver')` equivalent).** ERA5's 4DVar analysis is not
-    mass-conserving; raw ⟨ps⟩ drifts ~10⁻⁴/day, which translates
-    directly into a Σm drift in the binary because
-    `Σm = const + (A_Earth/g)·⟨sp⟩_area` (with `Σ_k b_k = 1`). To
-    eliminate this, `preprocess_spectral_v4_binary.jl` applies a
-    uniform additive shift to the gridded `sp` immediately after
-    `sp = exp(LNSP_grid)` so that `⟨sp⟩_area` corresponds to a fixed
-    dry-air mass target (Trenberth & Smith 2005:
-    `M_dry = 5.1352e18 kg → ⟨ps_dry⟩ ≈ 98726 Pa`, converted to total
-    via `target_total = target_dry / (1 - ⟨qv⟩_global ≈ 0.00247)`).
-    The implementation mirrors TM5 cy3-4dvar `meteo.F90:1361-1374`
-    which calls `Match('area-aver', sp_region0=p_global=98500 Pa)`
-    via `grid_type_ll.F90:1147-1155`.
+13. **Every binary preprocessor that diagnoses `cm` from continuity MUST
+    Poisson-balance horizontal fluxes first.** Raw spectral-synthesis
+    fluxes have divergence residuals ~10¹² kg/cell at ERA5 T47; these
+    integrate through the continuity diagnosis into unphysical `cm` and
+    either trip the face-indexed CFL pilot (`max_n_sub=4096`) or drive
+    silent instability on limiter-equipped schemes. Three implementations:
 
-    **Verified 2026-04-07**: 24h F64 LL test with non-uniform ps drift
-    in raw ERA5 → after fix, Σm drift drops from -8.31e-04% to
-    +5.88e-09% (~140,000× improvement, F32 quantization noise floor).
-    Per-window offsets logged in the binary header
-    (`ps_offsets_pa_per_window`). Disable via `[mass_fix] enable=false`
-    in the preprocessor TOML for diagnostic purposes.
+    - **LL**: [`mass_support.jl`](src/Preprocessing/mass_support.jl)
+      `balance_mass_fluxes!` — 2D FFT on the circulant Laplacian.
+    - **RG**: [`reduced_transport_helpers.jl`](src/Preprocessing/reduced_transport_helpers.jl)
+      `balance_reduced_horizontal_fluxes!` — JPCG on the graph Laplacian
+      with interior-only face degrees; rhs/r/p kept mean-zero because
+      Laplacian is singular (constant null space).
+    - **CS**: [`cs_poisson_balance.jl`](src/Preprocessing/cs_poisson_balance.jl)
+      `balance_cs_global_mass_fluxes!` — JPCG on the global 6-panel
+      Laplacian, 12Nc² faces. Cross-panel faces use canonical/mirror
+      same-sign pairs. Replaces the broken per-panel FFT.
 
-    **What this does NOT fix**: local polar drainage (invariant 11).
-    The shift is uniform globally and only changes local `m` by
-    `b_k · Δps` (~0.4% at the surface, less aloft). It does not
-    change `|bm|/m` enough at the troubled polar cells to remove the
-    need for `mass_fixer = true` at runtime.
+    Validation target: post-balance `max(|cm|/m) ~ 1e-14` (F64 floor).
+    When adding a new grid-type preprocessor, verify this probe before
+    declaring success. Two JPCG gotchas: (a) count only INTERIOR faces
+    in the diagonal — boundary-stub pole faces produce ghost residuals;
+    (b) project `r` to mean-zero only when the Laplacian is singular.
+    Getting (b) wrong gives false-positive L2 convergence with 13-
+    orders-of-magnitude max-residual error.
 
-13. **Every binary preprocessor that diagnoses `cm` from continuity
-    MUST apply a Poisson mass-flux balance to the horizontal fluxes
-    first.** Without balance, the raw spectral-synthesis fluxes have
-    divergence residuals of ~10¹² kg per cell (for ERA5 at T47),
-    which then integrate through the continuity diagnosis into
-    unphysically large vertical mass fluxes `cm`. Symptoms: the
-    face-indexed runtime CFL pilot hits `max_n_sub=4096` in window 1,
-    or (on older schemes with limiters) silently unstable transport
-    that drifts over time.
-
-    **Reference implementations**:
-    * **LL path**: `mass_support.jl:balance_mass_fluxes!` — 2D FFT on
-      the circulant Laplacian (`fac = 2*(cos(2π(i-1)/Nx) + cos(2π(j-1)/Ny) - 2)`),
-      called from `binary_pipeline.jl:apply_poisson_balance!`. Exact
-      to machine precision up to roundoff.
-    * **RG path**: `reduced_transport_helpers.jl:balance_reduced_horizontal_fluxes!`
-      — Jacobi-Preconditioned Conjugate Gradient on the graph Laplacian
-      with **interior-only face degrees** (boundary-stub pole-cap faces
-      NOT counted, because the correction operator only touches interior
-      fluxes). The graph Laplacian is singular (constant null space), so
-      `rhs`, `r`, `p` are kept in range(L) by subtracting their means
-      every CG iteration. Called from
-      `preprocess_era5_reduced_gaussian_transport_binary_v2.jl` via
-      `apply_reduced_poisson_balance!`.
-
-    **Validation** (2026-04-11): at matched 4608 cells,
-    post-balance worst `|cm|/m` should be ~1e-14 (F64 machine
-    precision). LL 96×48 reference: 5.3e-15. Synthetic RG N24:
-    1.3e-14. RG N320 production binaries (pre-fix): 0.77 — these
-    were quietly broken and silently unstable.
-
-    * **CS path**: `cs_global_poisson_balance.jl:balance_cs_global_mass_fluxes!`
-      — JPCG on the global 6-panel graph Laplacian with 12Nc² faces
-      (interior + cross-panel). All cells have degree 4 (no boundary
-      stubs on a closed sphere). Cross-panel faces use canonical/mirror
-      pairs with same-sign convention (outgoing edge ↔ incoming edge).
-      Replaces the per-panel FFT that wrongly treated panels as
-      doubly-periodic. Called from
-      `preprocess_era5_cs_conservative_v2.jl`. Validated: C24×34 in
-      0.13s, 224 CG iterations, projected residual 8.5e-14.
-
-    **When adding a new grid-type preprocessor**:
-    verify that the post-balance `max(|cm|/m)` probe matches the LL
-    reference before declaring the binary working. Never trust
-    "the binary compiles and exit-code-0 runs" without this check.
-
-    Two CG-solver gotchas discovered during the fix:
-    a. `cell_face_degree` must count ONLY interior faces. Counting
-       pole-cap boundary stubs in the diagonal produces a
-       `n_stubs * psi[c]` residual at pole cells that the solver
-       can't see.
-    b. Do NOT project `r` to mean-zero inside CG if the Laplacian is
-       non-singular (e.g., Dirichlet BCs). DO project if it is
-       singular (the range-of-L condition). Getting this wrong gives
-       a false-positive convergence where CG reports tight L2
-       residuals but the actual max|L*psi - rhs| is 13 orders of
-       magnitude larger.
-
-14. **Dry-basis is the default and required contract for all transport
-    binaries (Invariant 14).** Runtime transport never performs moist-to-dry
-    conversion. All carrier-mass conversion and continuity closure are
-    completed during preprocessing. The canonical chain is:
+14. **Dry-basis is the default and required contract for transport
+    binaries.** Runtime never performs moist→dry conversion; all carrier-
+    mass conversion and continuity closure happen in preprocessing:
 
     ```
-    native spectral/gridpoint synthesis (moist)
-      → load native QV from thermo NetCDF
-      → convert m, am, bm to dry basis: field *= (1 - qv)
-      → merge native levels to transport levels
-      → Poisson-balance on dry fluxes
-      → diagnose dry vertical fluxes (cm)
-      → write dry-basis binary (header: mass_basis = :dry)
-      → runtime transport reads dry fields directly
-      → tracer mass initialized as rm = vmr × m_dry
+    spectral/gridpoint synthesis (moist)
+      → load native QV, convert m/am/bm to dry: field *= (1 - qv)
+      → merge to transport levels → Poisson-balance dry fluxes
+      → diagnose dry cm → write binary (header: mass_basis = :dry)
+      → runtime reads dry fields directly; rm₀ = vmr × m_dry
     ```
 
-    All three grid paths (LL, CS, RG) support dry preprocessing:
-    - **LL/CS**: `apply_dry_basis_native!` in `mass_support.jl` on 3D arrays
-    - **RG**: `apply_dry_basis_reduced!` in `reduced_transport_helpers.jl`
-      with bilinear QV interpolation from LL thermo grid to RG cells
+    All three grid paths support dry preprocessing:
+    [`apply_dry_basis_native!`](src/Preprocessing/mass_support.jl) for
+    LL/CS; [`apply_dry_basis_reduced!`](src/Preprocessing/reduced_transport_helpers.jl)
+    for RG (with bilinear QV interpolation from LL thermo grid).
 
-    The `DryFluxBuilder` runtime converter (`src/MetDrivers/ERA5/DryFluxBuilder.jl`)
-    is retained for backward compatibility with old moist-basis binaries only.
-    Binary headers without `mass_basis` default to `:moist` with a warning.
-
-    **Config**: all preprocessing TOMLs must set `mass_basis = "dry"` and
-    `thermo_dir` pointing to ERA5 thermo NetCDF files with hourly `q`.
-    The default in `resolve_mass_basis` is `:dry`.
+    [`DryFluxBuilder`](src/MetDrivers/ERA5/DryFluxBuilder.jl) is the
+    runtime converter retained for moist-basis binaries only; binaries
+    without `mass_basis` default to `:moist` with a warning. Preprocessing
+    TOMLs must set `mass_basis = "dry"` and `thermo_dir`.
 
 ---
 
@@ -803,110 +679,30 @@ boundary. Plans 11-14 (advection refactor) = one logical unit. Plans 15-16b
 
 ## Julia / language gotchas
 
-### Default inner constructor already handles `Real` → `FT` coercion
+Patterns that have cost real debugging time here. Canonical examples live in
+the cited source files.
 
-Adding an explicit outer constructor for `Real`-to-`FT` coercion is a common
-mistake. Julia's synthesized inner constructor already handles this via
-`convert`:
-
-```julia
-# UNNECESSARY and causes MethodError ambiguity:
-struct Foo{FT}; x::FT; end
-Foo{FT}(value::Real) where FT = Foo{FT}(FT(value))
-
-# Works out of the box:
-struct Foo{FT}; x::FT; end
-Foo{Float64}(1)    # automatic: new{Float64}(convert(Float64, 1))
-```
-
-Plan 16a hit this on `ConstantField{FT, N}`.
-
-### Type-parameterized defaults in kwargs evaluate at module scope
-
-```julia
-function DerivedKzField(; …,
-                        params = PBLPhysicsParameters{FT}()  # WRONG
-                        ) where FT
-    ...
-end
-```
-
-`PBLPhysicsParameters{FT}()` evaluates at module scope, not method-body scope,
-so `FT` is undefined there. Produces `UndefVarError: FT not defined`.
-Workaround: use `nothing` + `something`:
-
-```julia
-function DerivedKzField(; …, params = nothing) where FT
-    params = something(params, PBLPhysicsParameters{FT}())
-    ...
-end
-```
-
-Plan 16b Commit 1c hit this.
-
-### Parametric type bounds for Adapt compatibility
-
-Concrete field types that hold arrays must be parametric on the array type
-so that `Adapt.adapt_structure` can swap the backing at kernel-launch time:
-
-```julia
-# Good: Adapt can swap to CuArray inside a kernel
-struct ProfileKzField{FT, V <: AbstractVector{FT}} <: AbstractTimeVaryingField{FT, 3}
-    profile::V
-end
-Adapt.adapt_structure(to, f::ProfileKzField) =
-    ProfileKzField(Adapt.adapt(to, f.profile))
-
-# Bad: stuck with Vector{FT}; cannot convert inside kernel
-struct ProfileKzField{FT} <: AbstractTimeVaryingField{FT, 3}
-    profile::Vector{FT}
-end
-```
-
-### `Ref{Int}` is not kernel-safe; use a 1-element array
-
-Mutable scalar caches inside kernel-facing structs must NOT be `Base.RefValue`.
-Inside a KA kernel, `f.ref_field[]` dereferences a host-side pointer and errors
-on GPU. Store the Int in a `Vector{Int}` of length 1 so `Adapt.adapt` converts
-it to a device-visible 1-element array; the kernel reads `f.field[1]`.
-
-```julia
-# StepwiseField pattern (plan 17):
-struct StepwiseField{FT, N, A, B, W <: AbstractVector{Int}} <: ...
-    samples        :: A           # host → CuArray on Adapt
-    boundaries     :: B
-    current_window :: W           # [1-element] host → 1-element CuArray
-end
-```
-
-### `Adapt.adapt_structure` cannot call validating constructors on device arrays
-
-Inner constructors that run `issorted(boundaries)` or other host-only checks
-will error when called on `CuDeviceVector` during a host→device Adapt. Ship a
-`Val(:unchecked)` inner-constructor path:
-
-```julia
-# Validating (user-facing)
-function StepwiseField{FT, N, A, B, W}(samples, boundaries, current_window) ...
-    issorted(boundaries) || throw(ArgumentError("..."))
-    new{...}(samples, boundaries, current_window)
-end
-
-# Unchecked (used by Adapt.adapt_structure)
-function StepwiseField{FT, N, A, B, W}(samples, boundaries, current_window, ::Val{:unchecked})
-    new{...}(samples, boundaries, current_window)
-end
-```
-
-Plan 17 Commit 1 hit this.
-
-### CPU/GPU dispatch: `parent(arr) isa Array`, not `arr isa Array`
-
-Post-plan-14, tracer fields are often `SubArray{FT, 2, Array{FT, 3}}`
-(`selectdim` views over `tracers_raw`), which fail `isa Array` and misroute to
-the GPU path. Dispatch code that branches on backend must use
-`parent(arr) isa Array` or `KernelAbstractions.get_backend(arr)`, not
-`arr isa Array`.
+- **No `Real → FT` outer constructor.** Julia's synthesized inner constructor
+  already calls `convert(FT, x)`. Adding `Foo{FT}(x::Real) where FT = ...` as
+  an outer only causes ambiguity.
+- **Parametric kwarg defaults evaluate at module scope.**
+  `f(; params = Foo{FT}()) where FT` fails with `UndefVarError: FT`. Use
+  `params = nothing` + `something(params, Foo{FT}())` inside the body — see
+  [`DerivedKzField`](src/State/Fields/DerivedKzField.jl).
+- **Array-holding fields must be parametric on the array type** so
+  `Adapt.adapt_structure` can swap backing at launch. `V <: AbstractVector{FT}`
+  not `::Vector{FT}` — see [`ProfileKzField`](src/State/Fields/ProfileKzField.jl).
+- **`Ref{Int}` breaks GPU kernels.** Host-side pointers error inside a KA
+  kernel. Use a 1-element `Vector{Int}` that `Adapt` converts to a 1-element
+  device array — see
+  [`StepwiseField.current_window`](src/State/Fields/StepwiseField.jl).
+- **`Adapt.adapt_structure` cannot run validating inner constructors on
+  device arrays.** Ship a `Val(:unchecked)` inner-constructor path for the
+  Adapt round-trip — see [`StepwiseField`](src/State/Fields/StepwiseField.jl).
+- **CPU/GPU dispatch on `parent(arr) isa Array`, not `arr isa Array`.**
+  Post-plan-14 tracer views (`selectdim(tracers_raw, 4, i)`) are `SubArray`s
+  that fail `isa Array` and misroute to GPU. Use
+  `parent(arr) isa Array` or `KernelAbstractions.get_backend(arr)`.
 
 ---
 

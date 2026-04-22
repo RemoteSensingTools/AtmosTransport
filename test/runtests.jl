@@ -23,6 +23,7 @@ core_tests = [
     "test_transport_model_convection.jl",
     "test_tm5_convection.jl",
     "test_tm5_preprocessing.jl",
+    "test_tm5_vs_cmfmc_parity.jl",
     "test_cubed_sphere_advection.jl",
     "test_cubed_sphere_runtime.jl",
     "test_cs_chemistry.jl",

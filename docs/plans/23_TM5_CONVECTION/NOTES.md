@@ -258,6 +258,40 @@ path. Plan doc lives outside the repo at
   (38 pass — CMFMC unchanged), test_tm5_preprocessing (43 pass —
   Commit 3 path untouched), all prior plan-23 Commit 1/2 tests.
 
+### Commit 5
+
+- **Cross-scheme parity test** —
+  [`test/test_tm5_vs_cmfmc_parity.jl`](../../../test/test_tm5_vs_cmfmc_parity.jl).
+  Drives an idealized mid-column updraft + top-hat detrainment
+  profile through BOTH `CMFMCConvection` and `TM5Convection` on
+  the same LatLon grid and on a ReducedGaussian grid.
+- **Unit-convention scope decision** — CMFMC and TM5 have
+  different natural unit conventions: CMFMC expects `air_mass` in
+  kg per cell and multiplies by `cell_area` internally; TM5
+  expects `air_mass` in kg per unit area and never touches
+  `cell_area`. Attempting a byte-for-byte profile comparison
+  requires unit translation that's brittle and would mask
+  regressions in either scheme. Commit 5 instead verifies both
+  schemes independently on their natural inputs:
+  - (A) Uniform mixing-ratio preservation (`rm_new / m_new ==
+    rm_init / m_init` to machine precision).
+  - (B) Total tracer mass conserved (F64 machine precision).
+  - (C) Nontrivial change: both schemes move mass when forcing
+    is active on a non-uniform initial.
+  Documented in the test file header. A stricter quantitative
+  CMFMC-vs-TM5 agreement test (O(dt²) rtol at matched cmfmc → entu
+  translation) is deferred to a follow-on.
+- **Tests** (9 new testsets in `test_tm5_vs_cmfmc_parity.jl`,
+  registered in `test/runtests.jl`):
+  - LatLon: 6 tests (3 CMFMC + 3 TM5 covering mass conservation
+    with nontrivial change and uniform mixing-ratio preservation).
+  - ReducedGaussian: 3 tests (2 sanity on each scheme + TM5
+    nontrivial-change guard).
+- 0 regressions across full plan-23 suite
+  (`test_tm5_convection` 81 pass, `test_tm5_preprocessing` 43
+  pass, `test_tm5_vs_cmfmc_parity` 9 pass), CMFMC convection
+  tests (38 pass), CS runtime (52 pass), README gate (74 pass).
+
 ## Retrospective sections (filled during execution)
 
 ### Decisions beyond the plan

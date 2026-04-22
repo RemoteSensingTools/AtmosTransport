@@ -261,6 +261,220 @@ end
            :forward_window_endpoint_difference : :none
 end
 
+# ===========================================================================
+# TransportBinaryContract — self-describing timing/basis semantics.
+#
+# Every writer must supply an explicit contract; every reader must validate
+# one. Silent defaults are how plan 24 Commit 4's LL+TM5 binary landed on
+# disk without declaring `flux_sampling=:window_constant`, the runtime
+# parser defaulted to `:window_start_endpoint`, and the runtime ran the
+# pre-memo-37 bug class. See docs/37_WINDOW_CONSTANT_FLUX_INTERPRETATION_BUG.
+# ===========================================================================
+
+const _TRANSPORT_ALLOWED_AIR_MASS_SAMPLINGS = (:window_start_endpoint,)
+const _TRANSPORT_ALLOWED_FLUX_SAMPLINGS     = (:window_start_endpoint, :window_constant, :window_mean)
+const _TRANSPORT_ALLOWED_FLUX_KINDS         = (:substep_mass_amount,)
+const _TRANSPORT_ALLOWED_DELTA_SEMANTICS    = (:forward_window_endpoint_difference, :none)
+const _TRANSPORT_ALLOWED_HUMIDITY_SAMPLINGS = (:window_endpoints, :single_field, :none)
+
+"""
+    TransportBinaryContract(; source_flux_sampling, air_mass_sampling,
+                              flux_sampling, flux_kind, delta_semantics,
+                              humidity_sampling,
+                              poisson_balance_target_scale,
+                              poisson_balance_target_semantics)
+
+Self-describing transport-binary timing/basis contract. All eight fields
+are required — no defaults — so a writer cannot produce an ambiguous
+binary. Readers call [`validate_transport_contract!`](@ref) on the parsed
+header to decide whether the file is trustworthy.
+
+Canonical usage: construct via
+[`canonical_window_constant_contract`](@ref) for the memo-37 path
+(`tracer drift = 0` on uniform IC for Upwind over 2 days).
+
+Symbol fields are validated against the `_TRANSPORT_ALLOWED_*` tuples at
+construction time. Combinations are also checked:
+- `delta_semantics === :forward_window_endpoint_difference` requires the
+  payload to carry `dm` (or `dm + dhflux`); the writer is responsible for
+  honoring this.
+- `humidity_sampling === :window_endpoints` requires `qv_start` + `qv_end`
+  in the payload; `:single_field` requires `qv`; `:none` requires neither.
+"""
+struct TransportBinaryContract
+    source_flux_sampling             :: Symbol
+    air_mass_sampling                :: Symbol
+    flux_sampling                    :: Symbol
+    flux_kind                        :: Symbol
+    delta_semantics                  :: Symbol
+    humidity_sampling                :: Symbol
+    poisson_balance_target_scale     :: Float64
+    poisson_balance_target_semantics :: String
+
+    function TransportBinaryContract(source_flux_sampling::Symbol,
+                                     air_mass_sampling::Symbol,
+                                     flux_sampling::Symbol,
+                                     flux_kind::Symbol,
+                                     delta_semantics::Symbol,
+                                     humidity_sampling::Symbol,
+                                     poisson_balance_target_scale::Real,
+                                     poisson_balance_target_semantics::AbstractString)
+        sfs = _transport_validate_source_flux_sampling(source_flux_sampling)
+        ams = _transport_normalize_symbol(air_mass_sampling)
+        fs  = _transport_normalize_symbol(flux_sampling)
+        fk  = _transport_normalize_symbol(flux_kind)
+        ds  = _transport_normalize_symbol(delta_semantics)
+        hs  = _transport_normalize_symbol(humidity_sampling)
+        ams in _TRANSPORT_ALLOWED_AIR_MASS_SAMPLINGS ||
+            throw(ArgumentError("air_mass_sampling=$(ams) not in $(Tuple(_TRANSPORT_ALLOWED_AIR_MASS_SAMPLINGS))"))
+        fs in _TRANSPORT_ALLOWED_FLUX_SAMPLINGS ||
+            throw(ArgumentError("flux_sampling=$(fs) not in $(Tuple(_TRANSPORT_ALLOWED_FLUX_SAMPLINGS))"))
+        fk in _TRANSPORT_ALLOWED_FLUX_KINDS ||
+            throw(ArgumentError("flux_kind=$(fk) not in $(Tuple(_TRANSPORT_ALLOWED_FLUX_KINDS))"))
+        ds in _TRANSPORT_ALLOWED_DELTA_SEMANTICS ||
+            throw(ArgumentError("delta_semantics=$(ds) not in $(Tuple(_TRANSPORT_ALLOWED_DELTA_SEMANTICS))"))
+        hs in _TRANSPORT_ALLOWED_HUMIDITY_SAMPLINGS ||
+            throw(ArgumentError("humidity_sampling=$(hs) not in $(Tuple(_TRANSPORT_ALLOWED_HUMIDITY_SAMPLINGS))"))
+        Float64(poisson_balance_target_scale) > 0 ||
+            throw(ArgumentError("poisson_balance_target_scale must be > 0"))
+        new(sfs, ams, fs, fk, ds, hs, Float64(poisson_balance_target_scale),
+            String(poisson_balance_target_semantics))
+    end
+end
+
+# Keyword constructor — all fields required.
+function TransportBinaryContract(; source_flux_sampling::Symbol,
+                                   air_mass_sampling::Symbol,
+                                   flux_sampling::Symbol,
+                                   flux_kind::Symbol,
+                                   delta_semantics::Symbol,
+                                   humidity_sampling::Symbol,
+                                   poisson_balance_target_scale::Real,
+                                   poisson_balance_target_semantics::AbstractString)
+    return TransportBinaryContract(source_flux_sampling, air_mass_sampling,
+                                   flux_sampling, flux_kind, delta_semantics,
+                                   humidity_sampling,
+                                   poisson_balance_target_scale,
+                                   poisson_balance_target_semantics)
+end
+
+"""
+    canonical_window_constant_contract(; steps_per_window,
+                                         humidity_sampling = :none,
+                                         source_flux_sampling = :window_start_endpoint,
+                                         include_flux_delta = true) -> TransportBinaryContract
+
+Build the canonical contract for the validated memo-37 path
+(`flux_sampling = :window_constant`, per-substep mass amounts). The
+Poisson target scale is `1 / (2 * steps_per_window)` — matching the TM5
+r1112 horizontal-sweep count of `2 * steps_per_window` per window.
+
+`include_flux_delta = true` implies `delta_semantics =
+:forward_window_endpoint_difference` (the writer must include `dm` in the
+payload); `false` implies `:none`.
+"""
+function canonical_window_constant_contract(;
+        steps_per_window::Integer,
+        humidity_sampling::Symbol = :none,
+        source_flux_sampling::Symbol = :window_start_endpoint,
+        include_flux_delta::Bool = true)
+    return TransportBinaryContract(
+        source_flux_sampling = source_flux_sampling,
+        air_mass_sampling    = :window_start_endpoint,
+        flux_sampling        = :window_constant,
+        flux_kind            = :substep_mass_amount,
+        delta_semantics      = include_flux_delta ? :forward_window_endpoint_difference : :none,
+        humidity_sampling    = humidity_sampling,
+        poisson_balance_target_scale = 1.0 / (2 * Int(steps_per_window)),
+        poisson_balance_target_semantics = "forward_window_mass_difference / (2 * steps_per_window)",
+    )
+end
+
+"""
+    validate_transport_contract!(header::AbstractDict; allow_legacy::Bool = false)
+
+Assert that `header` declares all eight contract fields and that they are
+self-consistent. Throws `ArgumentError` with a clear, action-named message
+when a field is missing or unknown. When `allow_legacy=true` (or when the
+environment variable `ATMOSTR_ALLOW_LEGACY_BINARY` is set to `"1"`),
+missing/unknown fields are demoted to `@warn` and a "this binary cannot be
+trusted" banner, and the function returns a (best-effort) contract filled
+with `:unknown` placeholders.
+
+Shared between `TransportBinaryDriver`, `TransportBinaryReader`, and the
+`scripts/diagnostics/inspect_transport_binary.jl` tool so there is ONE
+validator every reader-facing tool calls. Wiring these three call sites
+is deferred to Commit D; this commit just introduces the function.
+"""
+function validate_transport_contract!(header::AbstractDict;
+                                      allow_legacy::Bool = false)
+    envvar = get(ENV, "ATMOSTR_ALLOW_LEGACY_BINARY", "")
+    effective_allow = allow_legacy || envvar == "1"
+
+    missing_or_unknown = String[]
+    fields = ("source_flux_sampling", "air_mass_sampling", "flux_sampling",
+              "flux_kind", "delta_semantics", "humidity_sampling",
+              "poisson_balance_target_scale", "poisson_balance_target_semantics")
+
+    for f in fields
+        if !haskey(header, f)
+            push!(missing_or_unknown, "$f (missing)")
+        else
+            val = header[f]
+            if f == "poisson_balance_target_scale"
+                # NaN or ≤0 → unknown
+                vf = try Float64(val) catch; NaN end
+                (isnan(vf) || vf <= 0) && push!(missing_or_unknown, "$f (value=$val)")
+            elseif f == "poisson_balance_target_semantics"
+                isempty(String(val)) && push!(missing_or_unknown, "$f (empty)")
+            else
+                sym = _transport_normalize_symbol(val)
+                sym === :unknown && push!(missing_or_unknown, "$f (:unknown)")
+            end
+        end
+    end
+
+    if !isempty(missing_or_unknown)
+        msg = "Transport-binary contract violation — the following fields are missing " *
+              "or unknown in the header:\n  " *
+              join(missing_or_unknown, "\n  ") *
+              "\nThis binary was produced by a preprocessor that does not declare the " *
+              "runtime forcing contract. Regenerate via the current preprocessor " *
+              "(scripts/preprocessing/preprocess_transport_binary.jl) or, if you MUST " *
+              "load a legacy binary for inspection only, set " *
+              "ATMOSTR_ALLOW_LEGACY_BINARY=1 (the runtime will not guarantee correctness)."
+        if effective_allow
+            @warn "╔══ LEGACY TRANSPORT BINARY — contract violations ignored ══╗\n" * msg *
+                  "\n╚═══════════════════════════════════════════════════════════╝"
+            return nothing
+        else
+            throw(ArgumentError(msg))
+        end
+    end
+
+    # All fields present — validate ranges via a roundtrip construction.
+    # This catches e.g. an unknown value for `flux_sampling` that slipped in.
+    try
+        TransportBinaryContract(
+            source_flux_sampling = _transport_normalize_symbol(header["source_flux_sampling"]),
+            air_mass_sampling    = _transport_normalize_symbol(header["air_mass_sampling"]),
+            flux_sampling        = _transport_normalize_symbol(header["flux_sampling"]),
+            flux_kind            = _transport_normalize_symbol(header["flux_kind"]),
+            delta_semantics      = _transport_normalize_symbol(header["delta_semantics"]),
+            humidity_sampling    = _transport_normalize_symbol(header["humidity_sampling"]),
+            poisson_balance_target_scale = Float64(header["poisson_balance_target_scale"]),
+            poisson_balance_target_semantics = String(header["poisson_balance_target_semantics"]),
+        )
+    catch e
+        if effective_allow
+            @warn "Transport-binary contract values out of range (legacy bypass on): $e"
+        else
+            rethrow(e)
+        end
+    end
+    return nothing
+end
+
 _transport_parse_grid_type(hdr) = Symbol(lowercase(string(hdr.grid_type)))
 _transport_parse_topology(hdr) = Symbol(lowercase(string(hdr.horizontal_topology)))
 

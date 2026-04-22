@@ -30,6 +30,8 @@ using .ERA5
 export PreprocessedERA5Driver
 export ERA5BinaryReader, ERA5BinaryHeader
 export TransportBinaryReader, TransportBinaryHeader, write_transport_binary
+export TransportBinaryContract, canonical_window_constant_contract,
+       validate_transport_contract!
 export StreamingTransportBinaryWriter
 export open_streaming_transport_binary, write_streaming_window!, close_streaming_transport_binary!
 export TransportBinaryDriver, AbstractTransportWindow

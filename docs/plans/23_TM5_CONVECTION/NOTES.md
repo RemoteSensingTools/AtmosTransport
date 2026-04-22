@@ -57,6 +57,42 @@ path. Plan doc lives outside the repo at
 - None so far. Baseline captured, survey complete, auto-memory
   refreshed, stale repo doc claims fixed.
 
+### Commit 1
+
+- Compressed against plan doc: the plan's "Commit 1" step 5
+  ("add tm5_fields slot") was dropped because `ConvectionForcing`
+  already exposed the slot (verified at
+  [`ConvectionForcing.jl:42, :79, :82`](../../../src/MetDrivers/ConvectionForcing.jl#L42);
+  `copy_convection_forcing!` at `:167–182` already copies
+  `tm5_fields`). Commit 1 consumed existing infrastructure.
+- `_validate_convection_runtime` was refactored to the
+  `_validate_convection_window!` dispatch pattern (plan doc Commit 1
+  step 4) without changing the outer signature, so no downstream
+  callers needed touching. The three internal methods are:
+  `NoConvection` (no-op), `CMFMCConvection` (existing check),
+  `TM5Convection` (new: rejects `nothing` `tm5_fields`), and an
+  `AbstractConvectionOperator` fallback that points the developer
+  at this file (principle 10 "error message names the fix").
+- `TM5Workspace` parametric on `{FT, M, P, C}` with NTuple{6}
+  variant for CS — identical pattern to `CMFMCWorkspace`.
+  `Adapt.adapt_structure` implemented.
+- `TM5Convection.jl` stub `apply!` / `apply_convection!` throw
+  `ArgumentError` via a shared `_tm5_stub_throw` helper that
+  validates the workspace type and names Commit 4 as the next
+  landing point.
+- Test file `test/test_tm5_convection.jl` registered in
+  `test/runtests.jl` `core_tests`. 36 passing tests covering:
+  type + workspace construction, LL/RG/CS allocation shapes,
+  `_convection_workspace_for` dispatch, stub error messages,
+  `with_convection(model, TM5Convection())` end-to-end plumbing.
+- Module README `src/Operators/Convection/README.md` updated to
+  document `TM5Convection.jl` + `TM5Workspace` (required by the
+  `test_readme_current.jl` freshness gate).
+- 0 regressions against test_basis_explicit_core,
+  test_driven_simulation, test_transport_model_convection,
+  test_cubed_sphere_runtime, test_cs_chemistry,
+  test_convection_forcing, test_readme_current.
+
 ## Retrospective sections (filled during execution)
 
 ### Decisions beyond the plan

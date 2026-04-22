@@ -77,11 +77,15 @@ export SurfaceFluxSource, PerTracerFluxMap, flux_for
 export AbstractSurfaceFluxOperator, NoSurfaceFlux, SurfaceFluxOperator
 export apply_surface_flux!
 
-# Convection operator hierarchy (plan 18 Commits 1, 3, 4).
-# NoConvection — Commit 1. CMFMCConvection — Commit 3. TM5Convection — Commit 4.
+# Convection operator hierarchy (plan 18 + plan 23).
+# NoConvection, CMFMCConvection live since plan 18; TM5Convection
+# lands via plan 23 (Commit 1: types + dispatch stubs; Commit 4:
+# real kernels on all three topologies).
 export AbstractConvectionOperator, NoConvection
 export CMFMCConvection                          # plan 18 Commit 3
 export CMFMCWorkspace, invalidate_cmfmc_cache!  # plan 18 Commit 3
+export TM5Convection                            # plan 23 Commit 1
+export TM5Workspace                             # plan 23 Commit 1
 export apply_convection!
 
 # Cubed-sphere advection

@@ -12,15 +12,19 @@ This submodule ships the convection-operator hierarchy:
   in `TransportModel.step!` so the presence of the convection block
   has zero cost for users who don't opt in.
 
-Commit 1 ships only the type hierarchy and no-op. Future commits:
+History (plan 18 + plan 23):
 
-- Commit 3: `CMFMCConvection` (GCHP path, CMFMC+DTRAIN kernel with
-  mandatory CFL sub-cycling and well-mixed sub-cloud treatment).
-- Commit 4: `TM5Convection` (TM5 path, four-field matrix scheme with
-  in-kernel LU solve).
-- Commit 2: `ConvectionForcing` already lives in `..MetDrivers` —
-  Commit 2 extends it with validating constructors, `copy_convection_forcing!`,
-  `allocate_convection_forcing_like`, and window-struct integration.
+- Plan 18 Commit 1: type hierarchy + `NoConvection` no-op.
+- Plan 18 Commit 2: `ConvectionForcing` in `..MetDrivers` with
+  `copy_convection_forcing!`, `allocate_convection_forcing_like`,
+  and window-struct integration.
+- Plan 18 Commit 3: `CMFMCConvection` (GCHP path, CMFMC+DTRAIN
+  kernel with mandatory CFL sub-cycling and well-mixed sub-cloud).
+- Plan 22D: `step!`-level runtime block wiring across all
+  three topologies (LL / RG / CS).
+- Plan 23 Commit 1: `TM5Convection` struct + `TM5Workspace` +
+  dispatch stubs. Commit 2 ships the column solver; Commit 4
+  replaces stubs with real KA kernels on all three topologies.
 
 ## `apply!` contract (per plan 18 v5.1 §2.14 Decision 3)
 
@@ -47,6 +51,11 @@ path keeps forcing panel-native too: the driver loads `cmfmc` /
 `dtrain` as per-panel tuples and the operator applies the same
 column-local logic on each panel interior.
 
+`TM5Convection` ships the same three-topology scope from the
+first kernel commit (plan 23 Commit 4); Commit 1 lands the type,
+workspace, and dispatch stubs so downstream wiring compiles
+without any kernel work.
+
 The no-op `NoConvection` path accepts any state shape — it's a pure
 dead branch.
 """
@@ -62,11 +71,14 @@ import ..apply!
 export AbstractConvectionOperator, NoConvection
 export CMFMCConvection                          # plan 18 Commit 3
 export CMFMCWorkspace, invalidate_cmfmc_cache!  # plan 18 Commit 3
+export TM5Convection                            # plan 23 Commit 1
+export TM5Workspace                             # plan 23 Commit 1
 export apply_convection!
 
 include("operators.jl")
-include("convection_workspace.jl")   # CMFMCWorkspace (Commit 3)
+include("convection_workspace.jl")   # CMFMCWorkspace (Commit 3) + TM5Workspace (plan 23)
 include("cmfmc_kernels.jl")          # kernels + inline helpers (Commit 3)
 include("CMFMCConvection.jl")        # struct + apply! methods (Commit 3)
+include("TM5Convection.jl")          # struct + dispatch stubs (plan 23 Commit 1)
 
 end # module Convection

@@ -132,6 +132,55 @@ function _apply_surface_sources!(sim::DrivenSimulation)
     return nothing
 end
 
+"""
+    _validate_convection_window!(op, window, driver) -> nothing
+
+Per-operator validation of a loaded transport window. Operator
+authors add a method for their concrete type; the fallback method
+throws `ArgumentError` naming the operator and pointing at this
+function as the place to add a method (plan 23 principle 10).
+
+Plan 23 Commit 1 refactors the former `if/elseif op isa …` chain
+in `_validate_convection_runtime` into this dispatch pattern so
+adding `TM5Convection` (or any future operator) does not require
+editing the old runtime block, only adding a method here.
+"""
+_validate_convection_window!(::NoConvection, _window, _driver) = nothing
+
+function _validate_convection_window!(::CMFMCConvection,
+                                       window::AbstractTransportWindow,
+                                       driver::AbstractMetDriver)
+    window.convection.cmfmc === nothing &&
+        throw(ArgumentError(
+            "CMFMCConvection requires `window.convection.cmfmc` to be populated; " *
+            "driver $(typeof(driver)) provided convection forcing without CMFMC."))
+    return nothing
+end
+
+function _validate_convection_window!(::TM5Convection,
+                                       window::AbstractTransportWindow,
+                                       driver::AbstractMetDriver)
+    window.convection.tm5_fields === nothing &&
+        throw(ArgumentError(
+            "TM5Convection requires `window.convection.tm5_fields` " *
+            "(NamedTuple with :entu, :detu, :entd, :detd) to be populated; " *
+            "driver $(typeof(driver)) provided convection forcing without TM5 fields. " *
+            "Preprocess the binary with `scripts/preprocessing/preprocess_spectral_v4_binary.jl` " *
+            "and `tm5_convection = true` in the run config, or fall back to " *
+            "`CMFMCConvection()` if you have GEOS-FP CMFMC data instead."))
+    return nothing
+end
+
+function _validate_convection_window!(op::AbstractConvectionOperator,
+                                       ::AbstractTransportWindow,
+                                       ::AbstractMetDriver)
+    throw(ArgumentError(
+        "DrivenSimulation does not support convection operator $(typeof(op)) yet. " *
+        "Add a `_validate_convection_window!(::$(typeof(op)), window, driver)` " *
+        "method in `src/Models/DrivenSimulation.jl` that checks its forcing " *
+        "requirements."))
+end
+
 function _validate_convection_runtime(model::TransportModel,
                                       driver::AbstractMetDriver,
                                       window::AbstractTransportWindow)
@@ -145,16 +194,7 @@ function _validate_convection_runtime(model::TransportModel,
             "Install a driver/window path that populates `window.convection` " *
             "for this operator."))
 
-    if op isa CMFMCConvection
-        window.convection.cmfmc === nothing &&
-            throw(ArgumentError(
-                "CMFMCConvection requires `window.convection.cmfmc` to be populated; " *
-                "driver $(typeof(driver)) provided convection forcing without CMFMC."))
-    else
-        throw(ArgumentError(
-            "DrivenSimulation does not support convection operator $(typeof(op)) yet."))
-    end
-
+    _validate_convection_window!(op, window, driver)
     return nothing
 end
 

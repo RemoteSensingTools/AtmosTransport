@@ -2,11 +2,13 @@
 
 Convective transport operators and workspaces.
 
-This folder owns the convection operator hierarchy and the current
-CMFMC implementation. As of plan 22D, the convection block is live
-in `TransportModel.step!` and `CMFMCConvection` supports all three
-topologies: structured LatLon, face-indexed reduced Gaussian, and
-panel-native cubed sphere. See
+This folder owns the convection operator hierarchy. As of plan 22D,
+the convection block is live in `TransportModel.step!` and
+`CMFMCConvection` supports all three topologies: structured LatLon,
+face-indexed reduced Gaussian, and panel-native cubed sphere.
+`TM5Convection` lands via plan 23 — Commit 1 ships the struct +
+workspace + dispatch stubs; Commit 4 lands the real kernels on all
+three topologies. See
 [`../TOPOLOGY_SUPPORT.md`](../TOPOLOGY_SUPPORT.md) for the canonical
 operator × topology matrix.
 
@@ -19,9 +21,16 @@ operator × topology matrix.
 - Concrete structured operator:
   [`CMFMCConvection.jl`](CMFMCConvection.jl)
   defines `CMFMCConvection` and its `apply!` methods
+- TM5 operator (in progress, plan 23):
+  [`TM5Convection.jl`](TM5Convection.jl)
+  defines `TM5Convection` — four-field Tiedtke 1989 with in-kernel
+  partial-pivot LU solve. Commit 1 ships the struct + dispatch
+  stubs; Commits 2 + 4 ship the column solver and per-topology
+  kernels.
 - Workspace:
   [`convection_workspace.jl`](convection_workspace.jl)
-  defines `CMFMCWorkspace` and `invalidate_cmfmc_cache!`
+  defines `CMFMCWorkspace`, `TM5Workspace`, and
+  `invalidate_cmfmc_cache!`
 - Kernel implementation:
   [`cmfmc_kernels.jl`](cmfmc_kernels.jl)
 - Forcing contract:
@@ -34,11 +43,19 @@ operator × topology matrix.
   - LatLon (rank-4 `tracers_raw`)
   - reduced Gaussian (rank-3 face-indexed `tracers_raw`)
   - cubed sphere (`NTuple{6}` panel storage)
+- `TM5Convection` type + `TM5Workspace` + dispatch stubs are live
+  as of plan 23 Commit 1. The struct is stateless; forcing comes
+  via `ConvectionForcing.tm5_fields`. `apply!` throws a stub
+  `ArgumentError` pointing at Commit 4 — the type, workspace
+  factory, and validator are exercised without fake numerics.
 - `TransportModel.step!` executes a convection block when the model
   carries a non-`NoConvection` operator; wiring landed as plan 22D
 - `NoConvection` is a no-op (compile-time dead branch in `step!`)
 - `DrivenSimulation` refreshes `model.convection_forcing` each substep
-  from `sim.window.convection`
+  from `sim.window.convection`; plan 23 Commit 1 refactored the
+  per-operator validator (`_validate_convection_window!`) into
+  dispatch so adding operators does not re-edit the old if/elseif
+  chain
 
 If you are extending convection behavior, read the existing topology
 dispatches in [`CMFMCConvection.jl`](CMFMCConvection.jl) first — they
@@ -49,12 +66,16 @@ are genuine fast-path implementations, not generic wrappers.
 - [`Convection.jl`](Convection.jl) — submodule assembly and status notes
 - [`operators.jl`](operators.jl) — type hierarchy, public helper surface,
   no-op paths
-- [`convection_workspace.jl`](convection_workspace.jl) — workspace and
-  cache invalidation
+- [`convection_workspace.jl`](convection_workspace.jl) — `CMFMCWorkspace`
+  (CFL cache + scratch) and `TM5Workspace` (`conv1` matrix slab +
+  pivots + cloud-dim indices); cache invalidation helper
 - [`cmfmc_kernels.jl`](cmfmc_kernels.jl) — CMFMC transport kernels and
   inline helpers
 - [`CMFMCConvection.jl`](CMFMCConvection.jl) — concrete CMFMC operator,
   forcing validation, topology restrictions, state-level `apply!`
+- [`TM5Convection.jl`](TM5Convection.jl) — `TM5Convection` struct +
+  dispatch stubs (plan 23 Commit 1). Real kernels land in plan 23
+  Commit 4.
 
 ## Common Tasks
 

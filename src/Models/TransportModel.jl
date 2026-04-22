@@ -69,10 +69,13 @@ function Adapt.adapt_structure(to, workspace::TransportModelWorkspace)
 end
 
 _convection_workspace_for(::NoConvection, state, grid) = nothing
-_convection_workspace_for(::AbstractConvectionOperator, state, grid) = nothing
+
 _cmfmc_cell_metrics(mesh::LatLonMesh) = cell_areas_by_latitude(mesh)
 _cmfmc_cell_metrics(mesh::ReducedGaussianMesh) = [cell_area(mesh, c) for c in 1:ncells(mesh)]
 _cmfmc_cell_metrics(mesh::CubedSphereMesh) = ntuple(_ -> mesh.cell_areas, 6)
+
+# CMFMCConvection — one CMFMCWorkspace per topology with cached
+# cell metrics the CFL scan needs.
 _convection_workspace_for(::CMFMCConvection,
                           state::CellState{B, A, Raw},
                           grid::AtmosGrid{<:LatLonMesh}) where {B, A, Raw <: AbstractArray{<:Any, 4}} =
@@ -85,6 +88,29 @@ _convection_workspace_for(::CMFMCConvection,
                           state::CubedSphereState{B},
                           grid::AtmosGrid{<:CubedSphereMesh}) where {B} =
     CMFMCWorkspace(state.air_mass; cell_metrics = _cmfmc_cell_metrics(grid.horizontal))
+
+# TM5Convection — one TM5Workspace per topology. No cell metrics
+# argument; the TM5 kernel multiplies entrainment/detrainment
+# rates by layer air mass `m(k)` directly, so no area weighting is
+# needed at workspace construction. (Plan 23 Commit 1.)
+_convection_workspace_for(::TM5Convection,
+                          state::CellState{B, A, Raw},
+                          grid::AtmosGrid{<:LatLonMesh}) where {B, A, Raw <: AbstractArray{<:Any, 4}} =
+    TM5Workspace(state.air_mass)
+_convection_workspace_for(::TM5Convection,
+                          state::CellState{B, A, Raw},
+                          grid::AtmosGrid{<:ReducedGaussianMesh}) where {B, A, Raw <: AbstractArray{<:Any, 3}} =
+    TM5Workspace(state.air_mass)
+_convection_workspace_for(::TM5Convection,
+                          state::CubedSphereState{B},
+                          grid::AtmosGrid{<:CubedSphereMesh}) where {B} =
+    TM5Workspace(state.air_mass)
+
+# Fallback for future operators — keep LAST so the specific
+# methods above take precedence. Returns `nothing` so installing an
+# unknown operator on the model compiles; DrivenSimulation's
+# validator catches it at runtime with a clear error.
+_convection_workspace_for(::AbstractConvectionOperator, state, grid) = nothing
 
 function _with_convection_workspace(workspace, convection_ws)
     if workspace isa TransportModelWorkspace

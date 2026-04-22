@@ -171,6 +171,46 @@ Commit 1 cites these line ranges in the Julia port.
 - **0 regressions** on existing plan 23 / plan 24 Commit 1 tests;
   README gate 74 pass.
 
+### Commit 6 (out-of-order early ship)
+
+Shipped BEFORE Commit 5 (download script + docs) because the
+real Dec 2 2021 binary was already produced by the Commit 4
+smoke config, and exercising the full runtime chain against it
+was higher-value than the download-script restore.  Commit 5
+reorders after Commit 6 in the final ship order.
+
+- **`test/test_tm5_catrine_1day.jl`** (new, `--all`-gated):
+  closes the stub in plan 23 Commit 6 /
+  `test_tm5_driven_simulation.jl` (which used a synthetic
+  in-memory window driver because no TM5-preprocessor path
+  shipped at the time).  Registered in `real_data_tests` at
+  `test/runtests.jl`.
+- The test opens the preprocessed binary at
+  `/temp1/tm5_smoke/transport_bin/era5_transport_20211202_merged1000Pa_float32.bin`
+  (output of `config/preprocessing/era5_ll720x361_tm5_dec2021_smoke.toml`),
+  builds a `TransportModel` with `TM5Convection()` + a
+  1 ppm surface-layer CO2 initial condition, and runs one full
+  window's worth of substeps plus one into window 2 so
+  `window_index` advances cleanly.
+- Verifies:
+  1. `TransportBinaryDriver` loads the binary; `has_tm5_convection
+     == true`, `total_windows == 24`.
+  2. Window 1's `convection.tm5_fields` is a NamedTuple of four
+     `(720, 361, 34)` arrays with non-trivial values (`maximum(entu)
+     > 0.01 kg/m²/s`) and all four ≥ 0.
+  3. `DrivenSimulation` built with `TM5Convection()`; 5 substeps
+     execute without error.
+  4. Window advances to 2 (checks `_maybe_advance_window!` fires
+     on the 5th substep).
+  5. **Mass conservation**: total tracer mass drifts -1.5e-5% across
+     5 substeps of transport + TM5 convection — well within F32
+     ULP.  Surface mass drops 0.007% (tracer moved off-surface,
+     as expected from updraft entrainment + LL advection).
+- Full chain validated: ERA5 GRIB + NCs → Commit-2 converter →
+  Commit-4 preprocessor with `[tm5_convection] enable=true` →
+  Commit-6 `TransportBinaryDriver` + `DrivenSimulation` +
+  `TM5Convection()`.
+
 ### Commit 4
 
 - **Scope narrowed** during implementation (2026-04-22) from "LL

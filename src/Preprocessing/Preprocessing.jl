@@ -120,5 +120,7 @@ include("tm5_convection_conversion.jl")
 export build_target_geometry, target_summary
 export process_day, regrid_ll_binary_to_cs
 export ec2tm!
+export ec2tm_from_rates!, TM5CleanupStats
+export dz_hydrostatic_virtual!, dz_hydrostatic_constT!
 
 end # module Preprocessing

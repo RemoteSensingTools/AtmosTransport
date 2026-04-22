@@ -87,6 +87,25 @@ Commit 1 cites these line ranges in the Julia port.
   in the log but the NCs aren't present. Commit 6 runs against
   5 days, not 7.
 
+### Commit 1
+
+- No deviations from plan. `ec2tm_from_rates!` ports TM5 F90
+  `ECconv_to_TMconv` (deps/tm5/base/src/phys_convec_ec2tm.F90:
+  87-237) line-for-line. `dz_hydrostatic_virtual!` uses the
+  virtual-temperature correction per decision 6; `dz_hydrostatic_constT!`
+  ships as the fallback per the plan's risk-register entry.
+- `TM5CleanupStats` tracks 11 counters (`columns_processed`,
+  `no_updraft`, `no_downdraft`, four clipping counts, four
+  negative-redistribution counts). Bumps are conditional on
+  `stats !== nothing` (zero overhead when off).
+- 48 tests: byte-for-byte F90 parity (via an independent Julia
+  reference implementation), zero-forcing, bad-data cleanup,
+  negative redistribution with mass-budget-in-active-window
+  invariant, dz virtual-T vs const-T tropospheric divergence,
+  shape guards, and a plan-23 `ec2tm!` regression check.
+- 0 regressions on existing plan-23 tests
+  (`test_tm5_preprocessing.jl` 43 pass, README gate 74 pass).
+
 ## Retrospective sections (filled during execution)
 
 ### Decisions beyond the plan

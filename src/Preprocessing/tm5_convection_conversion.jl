@@ -189,3 +189,419 @@ end
             "$(expected) (leading dims plus Nz+1 interface layer)"))
     return nothing
 end
+
+# ---------------------------------------------------------------------------
+# Plan 24 Commit 1: full-fidelity port of TM5 `ECconv_to_TMconv`.
+#
+# The minimal `ec2tm!` above takes already-integrated fluxes and does
+# simple clamping. Real ERA5 GRIB data carries
+#   - detrainment RATES (kg/m³/s), not fluxes — needs dz integration.
+#   - "uptop-only" active mass flux profile — no updraft below uptop,
+#     so entrainment/detrainment should be zero there, not computed
+#     from zeros that could produce small negative noise.
+#   - noise-level negatives that accumulate if not cleaned up.
+#
+# `ec2tm_from_rates!` ports TM5's full algorithm (F90 at
+# deps/tm5/base/src/phys_convec_ec2tm.F90:87-237) — small-value
+# clipping, dz integration, uptop/dotop search, mass-budget closure,
+# symmetric negative redistribution. Plus a diagnostic counter so we
+# can see how often each cleanup branch fires on real data.
+# ---------------------------------------------------------------------------
+
+"""
+    TM5CleanupStats() -> NamedTuple of Ref{Int} counters
+
+Diagnostic counters bumped by `ec2tm_from_rates!`. Nothing-overhead
+when the function runs without stats (pass `nothing`); when stats
+are passed, each counter increments once per level/column that hit
+the corresponding cleanup branch.
+
+- `columns_processed` — total columns the function was called on.
+- `no_updraft` — columns with no level satisfying `udmf > 0` (after
+  small-value clipping). entu/detu zeroed out.
+- `no_downdraft` — columns with no level satisfying `ddmf < 0`.
+- `levels_udmf_clipped`, `levels_ddmf_clipped` — levels where
+  half-level mass flux magnitude was below 1e-6 kg/m²/s and got
+  zeroed.
+- `levels_udrf_clipped`, `levels_ddrf_clipped` — full-level
+  detrainment rates zeroed (|rate| < 1e-10 kg/m³/s).
+- `levels_entu_neg`, `levels_detu_neg`, `levels_entd_neg`,
+  `levels_detd_neg` — levels where the indicated output went
+  negative and got fixed via symmetric redistribution with its
+  complementary rate.
+
+# Interpretation
+
+On clean data we expect ~0% clipped levels and ~0 no-updraft
+columns (outside pure stratospheric columns). O(1%) redistribution
+firings are normal TM5 behaviour. O(50%) firings indicate a data
+pathology (wrong param IDs, wrong stream, bad units).
+"""
+function TM5CleanupStats()
+    return (
+        columns_processed   = Ref(0),
+        no_updraft          = Ref(0),
+        no_downdraft        = Ref(0),
+        levels_udmf_clipped = Ref(0),
+        levels_ddmf_clipped = Ref(0),
+        levels_udrf_clipped = Ref(0),
+        levels_ddrf_clipped = Ref(0),
+        levels_entu_neg     = Ref(0),
+        levels_detu_neg     = Ref(0),
+        levels_entd_neg     = Ref(0),
+        levels_detd_neg     = Ref(0),
+    )
+end
+
+"""
+    ec2tm_from_rates!(entu, detu, entd, detd,
+                       udmf, ddmf, udrf_rate, ddrf_rate,
+                       dz, Nz; stats=nothing) -> nothing
+
+Column-level port of TM5's `ECconv_to_TMconv` (see
+[`deps/tm5/base/src/phys_convec_ec2tm.F90:87-237`](../../deps/tm5/base/src/phys_convec_ec2tm.F90)).
+Fills the output arrays `entu, detu, entd, detd` (kg/m²/s at layer
+centers) in place from raw ERA5 physics inputs. All arrays use
+AtmosTransport orientation (k=1=TOA, k=Nz=surface).
+
+# Inputs
+
+- `udmf::AbstractVector{FT}`, length `Nz+1` — updraft mass flux at
+  half levels (kg/m²/s). Half level `k` is the interface at the
+  TOP of layer `k`; `udmf[Nz+1]` is the surface interface. Must be
+  ≥ 0.
+- `ddmf::AbstractVector{FT}`, length `Nz+1` — downdraft mass flux
+  at half levels, ECMWF convention (≤ 0).
+- `udrf_rate::AbstractVector{FT}`, length `Nz` — updraft
+  detrainment RATE at layer centers (kg/m³/s).
+- `ddrf_rate::AbstractVector{FT}`, length `Nz` — downdraft
+  detrainment RATE at layer centers (kg/m³/s).
+- `dz::AbstractVector{FT}`, length `Nz` — layer thickness (m),
+  positive. Compute from `dz_hydrostatic_virtual!`.
+- `Nz::Int` — number of full levels.
+- `stats::Union{Nothing, NamedTuple}` — cleanup-stats counters
+  from `TM5CleanupStats()`. When `nothing`, no counter work.
+
+# Algorithm (line-for-line match to F90 lines 132-236)
+
+1. **Copy-with-clipping** (F90 L132-144). `|udmf| < 1e-6 → 0`,
+   `|ddmf| < 1e-6 → 0` (applied as `ddmf > -1e-6 → 0`),
+   `udrf_rate < 1e-10 → 0`, `ddrf_rate < 1e-10 → 0`.
+2. **dz integration** (F90 L146-151): `detu = udrf × dz` (kg/m³/s
+   → kg/m²/s). Same for detd.
+3. **uptop/dotop search** (F90 L153-173): find the first level
+   from TOA (`k=1..Nz`) with nonzero flux. If none, zero out
+   everything in that direction.
+4. **Mass-budget closure** (F90 L175-212): for each active
+   direction, `entu[k] = udmf[k] - udmf[k+1] + detu[k]` from
+   `uptop` down. Above `uptop-1` stays zero.
+5. **Symmetric negative redistribution** (F90 L214-232): if
+   `entu[k] < 0`, add `-entu[k]` to `detu[k]` and zero `entu[k]`.
+   Same for `detu<0` (adds to entu), and the same two for
+   downdraft.
+
+# Mass conservation
+
+Within the cloud window, the sum
+`entu[k] - detu[k] + (udmf[k] - udmf[k+1])` should be zero per
+layer — equivalent to the mass-budget closure at step 4.
+Negative redistribution (step 5) preserves this sum because it
+only SWAPS between entu↔detu (or entd↔detd) without changing the
+net `entu - detu`.
+"""
+function ec2tm_from_rates!(entu::AbstractVector{FT}, detu::AbstractVector{FT},
+                            entd::AbstractVector{FT}, detd::AbstractVector{FT},
+                            udmf::AbstractVector{FT}, ddmf::AbstractVector{FT},
+                            udrf_rate::AbstractVector{FT},
+                            ddrf_rate::AbstractVector{FT},
+                            dz::AbstractVector{FT},
+                            Nz::Integer;
+                            stats = nothing) where {FT <: AbstractFloat}
+    _ec2tm_rates_check_shapes(entu, detu, entd, detd,
+                               udmf, ddmf, udrf_rate, ddrf_rate, dz, Nz)
+
+    # Initialise outputs to zero (F90 `entu = 0.0`, etc.).
+    @inbounds for k in 1:Nz
+        entu[k] = zero(FT)
+        entd[k] = zero(FT)
+    end
+
+    # Copy rates into local output arrays with small-value clipping.
+    # The F90 code uses local scratch `mflu` / `mfld`; we operate on
+    # `udmf` / `ddmf` directly through the local helper `_mflu(k)` so
+    # callers who want raw inputs preserved should pass copies.
+    #
+    # Note: we mutate `detu` and `detd` in place because they're the
+    # output arrays. This aliasing is intentional — the F90 code does
+    # the same (`detu = detu_ec; where (detu < 1e-10) detu = 0; detu =
+    # detu*dz`).
+    clipped_udrf = 0
+    clipped_ddrf = 0
+    @inbounds for k in 1:Nz
+        r = udrf_rate[k]
+        if r < FT(1e-10)
+            detu[k] = zero(FT)
+            clipped_udrf += 1
+        else
+            detu[k] = r * dz[k]
+        end
+        r = ddrf_rate[k]
+        if r < FT(1e-10)
+            detd[k] = zero(FT)
+            clipped_ddrf += 1
+        else
+            detd[k] = r * dz[k]
+        end
+    end
+
+    # Clip half-level mass fluxes.  We use a *view*-style helper via
+    # inline `_mflu` / `_mfld` so we don't allocate a local copy;
+    # instead we track "effective" half-level values by clipping the
+    # arrays in place.  Caller owns udmf/ddmf; we clip them in place
+    # (ascii of F90 behaviour on local scratch).  Downstream callers
+    # should pass copies if they need the raw values afterwards.
+    clipped_udmf = 0
+    clipped_ddmf = 0
+    @inbounds for k in 1:(Nz + 1)
+        if udmf[k] < FT(1e-6)
+            udmf[k] = zero(FT)
+            clipped_udmf += 1
+        end
+        if ddmf[k] > FT(-1e-6)
+            ddmf[k] = zero(FT)
+            clipped_ddmf += 1
+        end
+    end
+
+    # uptop / dotop search (F90 L153-173).  First level from TOA
+    # with a nonzero flux.
+    uptop = 0
+    @inbounds for k in 1:(Nz + 1)
+        if udmf[k] > zero(FT)
+            uptop = k
+            break
+        end
+    end
+    dotop = 0
+    @inbounds for k in 1:(Nz + 1)
+        if ddmf[k] < zero(FT)
+            dotop = k
+            break
+        end
+    end
+
+    # Updraft mass-budget closure.  F90 uses `mflu(l-1) - mflu(l)` in
+    # 0-based; Julia 1-based shifts the flux indices by +1 so interface
+    # "above layer l" is `udmf[l]` and "below" is `udmf[l+1]`.
+    if uptop > 0 && uptop <= Nz
+        # Above the cloud top, entrainment/detrainment are zero.
+        @inbounds for k in 1:(uptop - 1)
+            entu[k] = zero(FT)
+            detu[k] = zero(FT)
+        end
+        @inbounds for k in uptop:Nz
+            entu[k] = udmf[k] - udmf[k + 1] + detu[k]
+        end
+    else
+        # No updraft anywhere in the column.
+        @inbounds for k in 1:Nz
+            entu[k] = zero(FT)
+            detu[k] = zero(FT)
+        end
+    end
+
+    # Downdraft mass-budget closure.  Same index pattern; ddmf is
+    # negative so `ddmf[k] - ddmf[k+1]` gives the right sign for a
+    # positive entd output.
+    if dotop > 0 && dotop <= Nz
+        @inbounds for k in 1:(dotop - 1)
+            entd[k] = zero(FT)
+            detd[k] = zero(FT)
+        end
+        @inbounds for k in dotop:Nz
+            entd[k] = ddmf[k] - ddmf[k + 1] + detd[k]
+        end
+    else
+        @inbounds for k in 1:Nz
+            entd[k] = zero(FT)
+            detd[k] = zero(FT)
+        end
+    end
+
+    # Symmetric negative redistribution (F90 L214-232).  If a rate
+    # went negative, add its magnitude to the complementary rate and
+    # zero it.  Preserves `entu - detu` (and `entd - detd`).
+    neg_entu = 0
+    neg_detu = 0
+    neg_entd = 0
+    neg_detd = 0
+    @inbounds for k in 1:Nz
+        if entu[k] < zero(FT)
+            detu[k] -= entu[k]
+            entu[k] = zero(FT)
+            neg_entu += 1
+        end
+        if detu[k] < zero(FT)
+            entu[k] -= detu[k]
+            detu[k] = zero(FT)
+            neg_detu += 1
+        end
+        if entd[k] < zero(FT)
+            detd[k] -= entd[k]
+            entd[k] = zero(FT)
+            neg_entd += 1
+        end
+        if detd[k] < zero(FT)
+            entd[k] -= detd[k]
+            detd[k] = zero(FT)
+            neg_detd += 1
+        end
+    end
+
+    # Stats bookkeeping.  No-op when `stats === nothing`.
+    if stats !== nothing
+        stats.columns_processed[] += 1
+        uptop == 0 && (stats.no_updraft[]       += 1)
+        dotop == 0 && (stats.no_downdraft[]     += 1)
+        stats.levels_udmf_clipped[] += clipped_udmf
+        stats.levels_ddmf_clipped[] += clipped_ddmf
+        stats.levels_udrf_clipped[] += clipped_udrf
+        stats.levels_ddrf_clipped[] += clipped_ddrf
+        stats.levels_entu_neg[]     += neg_entu
+        stats.levels_detu_neg[]     += neg_detu
+        stats.levels_entd_neg[]     += neg_entd
+        stats.levels_detd_neg[]     += neg_detd
+    end
+
+    return nothing
+end
+
+@inline function _ec2tm_rates_check_shapes(entu, detu, entd, detd,
+                                            udmf, ddmf, udrf_rate, ddrf_rate,
+                                            dz, Nz)
+    length(entu) == Nz || throw(ArgumentError("entu length $(length(entu)) != Nz=$Nz"))
+    length(detu) == Nz || throw(ArgumentError("detu length $(length(detu)) != Nz=$Nz"))
+    length(entd) == Nz || throw(ArgumentError("entd length $(length(entd)) != Nz=$Nz"))
+    length(detd) == Nz || throw(ArgumentError("detd length $(length(detd)) != Nz=$Nz"))
+    length(udmf) == Nz + 1 || throw(ArgumentError("udmf length $(length(udmf)) != Nz+1=$(Nz+1)"))
+    length(ddmf) == Nz + 1 || throw(ArgumentError("ddmf length $(length(ddmf)) != Nz+1=$(Nz+1)"))
+    length(udrf_rate) == Nz || throw(ArgumentError("udrf_rate length $(length(udrf_rate)) != Nz=$Nz"))
+    length(ddrf_rate) == Nz || throw(ArgumentError("ddrf_rate length $(length(ddrf_rate)) != Nz=$Nz"))
+    length(dz) == Nz || throw(ArgumentError("dz length $(length(dz)) != Nz=$Nz"))
+    return nothing
+end
+
+# ---------------------------------------------------------------------------
+# Plan 24 Commit 1: hydrostatic layer thickness with virtual-T correction.
+#
+# TM5's F90 takes `zh_ec` (geopotential height at half-levels) as input.
+# We don't have geopotential directly from the CDS download, but we have
+# T + Q from the same physics bundle.  Hydrostatic with virtual
+# temperature:
+#
+#     dz = R · T_v / g · dp / p_mid
+#     T_v = T · (1 + 0.608 · Q)
+#
+# This is one step closer to TM5's real-geopotential approach than
+# main's Julia port (which uses `T_ref = 260 K` everywhere — ~10-20%
+# dz bias).  The T_v correction is cheap (one FMA per layer) and
+# fixes tropical moisture bias where Q can reach 0.02.
+# ---------------------------------------------------------------------------
+
+const _R_DRY_AIR    = 287.058  # J / (kg · K)
+const _G_GRAVITY    = 9.80665  # m / s²
+const _EPSILON_MV   = 0.608    # (Mv - Md) / Md
+
+"""
+    dz_hydrostatic_virtual!(dz, T_col, Q_col, ps, ak, bk, Nz) -> dz
+
+Compute layer thickness `dz[1:Nz]` (m) at layer centers from a single
+column's temperature `T_col[1:Nz]` (K) and specific humidity
+`Q_col[1:Nz]` (kg/kg), plus surface pressure `ps` (Pa) and the
+hybrid-sigma coefficients `ak`, `bk` (length `Nz+1`).
+
+Uses the hydrostatic approximation with virtual temperature:
+
+```
+p_top[k] = ak[k]   + bk[k]   * ps        (Pa, higher-altitude side)
+p_bot[k] = ak[k+1] + bk[k+1] * ps        (Pa, lower-altitude side)
+dp[k]    = p_bot[k] - p_top[k]           (> 0 in AtmosTransport orientation)
+p_mid[k] = 0.5 · (p_top[k] + p_bot[k])
+T_v[k]   = T_col[k] · (1 + 0.608 · Q_col[k])
+dz[k]    = R · T_v[k] / g · dp[k] / p_mid[k]
+```
+
+Orientation: AtmosTransport (k=1=TOA, k=Nz=surface). `ak`/`bk` are
+the full (Nz+1)-length ERA5 L137 hybrid coefficients.
+
+For the TOA half-level we fall back to an ordinary scale-height
+estimate (`T_v=T_top`, `p_mid=p_bot`) when `p_top → 0`. In
+practice the top-level dz is never in the convection window so the
+approximation is irrelevant; it's a guard against divide-by-zero.
+"""
+function dz_hydrostatic_virtual!(dz::AbstractVector{FT},
+                                  T_col::AbstractVector{FT},
+                                  Q_col::AbstractVector{FT},
+                                  ps::Real,
+                                  ak::AbstractVector,
+                                  bk::AbstractVector,
+                                  Nz::Integer) where {FT <: AbstractFloat}
+    length(dz) == Nz    || throw(ArgumentError("dz length $(length(dz)) != Nz=$Nz"))
+    length(T_col) == Nz || throw(ArgumentError("T_col length $(length(T_col)) != Nz=$Nz"))
+    length(Q_col) == Nz || throw(ArgumentError("Q_col length $(length(Q_col)) != Nz=$Nz"))
+    length(ak) == Nz + 1 || throw(ArgumentError("ak length $(length(ak)) != Nz+1=$(Nz+1)"))
+    length(bk) == Nz + 1 || throw(ArgumentError("bk length $(length(bk)) != Nz+1=$(Nz+1)"))
+
+    ps_ft = FT(ps)
+    R_over_g = FT(_R_DRY_AIR / _G_GRAVITY)
+    eps_mv   = FT(_EPSILON_MV)
+
+    @inbounds for k in 1:Nz
+        p_top = FT(ak[k])     + FT(bk[k])     * ps_ft
+        p_bot = FT(ak[k + 1]) + FT(bk[k + 1]) * ps_ft
+        dp    = p_bot - p_top
+        p_mid = FT(0.5) * (p_top + p_bot)
+        # Virtual temperature: accounts for moisture making the air
+        # less dense (more scale height per kg of dry air).
+        T_v   = T_col[k] * (one(FT) + eps_mv * Q_col[k])
+        # TOA guard: if p_mid is below the Pa-precision of the
+        # hybrid-coef file, use the bottom-half-level approximation.
+        p_eff = p_mid > FT(1e-3) ? p_mid : p_bot
+        dz[k] = R_over_g * T_v * dp / p_eff
+    end
+    return dz
+end
+
+"""
+    dz_hydrostatic_constT!(dz, ps, ak, bk, Nz; T_ref=260) -> dz
+
+Constant-temperature hydrostatic layer thickness — fallback for use
+when T and Q are unavailable. Matches main's Julia port's shortcut
+(`T_ref = 260 K`). Biases entu/detu magnitudes by ~10-20% vs the
+virtual-temperature version; `dz_hydrostatic_virtual!` is preferred
+when T + Q are downloaded together with the convection fields.
+"""
+function dz_hydrostatic_constT!(dz::AbstractVector{FT},
+                                 ps::Real,
+                                 ak::AbstractVector,
+                                 bk::AbstractVector,
+                                 Nz::Integer;
+                                 T_ref::Real = 260) where {FT <: AbstractFloat}
+    length(dz) == Nz     || throw(ArgumentError("dz length $(length(dz)) != Nz=$Nz"))
+    length(ak) == Nz + 1 || throw(ArgumentError("ak length $(length(ak)) != Nz+1=$(Nz+1)"))
+    length(bk) == Nz + 1 || throw(ArgumentError("bk length $(length(bk)) != Nz+1=$(Nz+1)"))
+
+    ps_ft    = FT(ps)
+    R_over_g = FT(_R_DRY_AIR / _G_GRAVITY)
+    T_ft     = FT(T_ref)
+
+    @inbounds for k in 1:Nz
+        p_top = FT(ak[k])     + FT(bk[k])     * ps_ft
+        p_bot = FT(ak[k + 1]) + FT(bk[k + 1]) * ps_ft
+        dp    = p_bot - p_top
+        p_mid = FT(0.5) * (p_top + p_bot)
+        p_eff = p_mid > FT(1e-3) ? p_mid : p_bot
+        dz[k] = R_over_g * T_ft * dp / p_eff
+    end
+    return dz
+end

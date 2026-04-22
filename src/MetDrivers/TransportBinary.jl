@@ -512,6 +512,12 @@ function _parse_transport_header(raw_bytes::Vector{UInt8})
     haskey(hdr, :format_version) ||
         error("TransportBinaryReader requires the topology-generic binary family header (`format_version` missing)")
 
+    # Plan 39 Commit D: no more silent defaults for missing contract fields.
+    # `validate_transport_contract!` (called by `TransportBinaryReader`
+    # before we get here) has already verified the 8 fields are present —
+    # unless the env-var legacy bypass was set, in which case missing
+    # fields come back as :unknown and downstream code must handle them
+    # (or trip on a later typed check).
     format_version = Int(hdr.format_version)
     header_bytes = Int(get(hdr, :header_bytes, 16384))
     disk_ft, float_bytes = _transport_parse_on_disk_float_type(hdr)
@@ -527,11 +533,11 @@ function _parse_transport_header(raw_bytes::Vector{UInt8})
     include_qv = Bool(get(hdr, :include_qv, false))
     include_qv_endpoints = Bool(get(hdr, :include_qv_endpoints, false))
     source_flux_sampling = _transport_parse_symbol_key(hdr, :source_flux_sampling, :unknown)
-    air_mass_sampling = _transport_parse_symbol_key(hdr, :air_mass_sampling, :window_start_endpoint)
-    flux_sampling = _transport_parse_symbol_key(hdr, :flux_sampling, :window_start_endpoint)
-    flux_kind = _transport_parse_symbol_key(hdr, :flux_kind, :substep_mass_amount)
-    humidity_sampling = _transport_parse_symbol_key(hdr, :humidity_sampling, _transport_default_humidity_sampling(payload_sections))
-    delta_semantics = _transport_parse_symbol_key(hdr, :delta_semantics, _transport_default_delta_semantics(payload_sections))
+    air_mass_sampling    = _transport_parse_symbol_key(hdr, :air_mass_sampling,    :unknown)
+    flux_sampling        = _transport_parse_symbol_key(hdr, :flux_sampling,        :unknown)
+    flux_kind            = _transport_parse_symbol_key(hdr, :flux_kind,            :unknown)
+    humidity_sampling    = _transport_parse_symbol_key(hdr, :humidity_sampling,    :unknown)
+    delta_semantics      = _transport_parse_symbol_key(hdr, :delta_semantics,      :unknown)
     poisson_balance_target_scale = haskey(hdr, :poisson_balance_target_scale) ?
                                    Float64(hdr.poisson_balance_target_scale) : NaN
     poisson_balance_target_semantics = haskey(hdr, :poisson_balance_target_semantics) ?
@@ -608,6 +614,31 @@ function TransportBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = Flo
     io = open(bin_path, "r")
     read_sz = min(262144, filesize(bin_path))
     raw = read(io, read_sz)
+
+    # Plan 39 Commit D: validate the self-describing transport-binary
+    # contract BEFORE mmap'ing the payload. Rejects ambiguous/legacy
+    # headers with a clear error (names the missing field + regeneration
+    # command). Env-var ATMOSTR_ALLOW_LEGACY_BINARY=1 demotes to loud warn
+    # for inspection-only loads — downstream semantics are then :unknown.
+    # This call site is shared with `TransportBinaryDriver` and the
+    # `scripts/diagnostics/inspect_transport_binary.jl` tool, so ONE
+    # validator gates every reader-facing entry point.
+    json_end = something(findfirst(==(0x00), raw), length(raw) + 1) - 1
+    hdr_dict = try
+        hdr_obj = JSON3.read(String(raw[1:json_end]))
+        # Convert JSON3.Object to a plain Dict for the validator.
+        Dict{String, Any}(String(k) => v for (k, v) in pairs(hdr_obj))
+    catch e
+        close(io)
+        rethrow(e)
+    end
+    try
+        validate_transport_contract!(hdr_dict)
+    catch e
+        close(io)
+        rethrow(e)
+    end
+
     header = _parse_transport_header(raw)
 
     DiskFT = _transport_disk_float_type(header.on_disk_float_type)

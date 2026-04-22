@@ -75,6 +75,16 @@ function write_synthetic_binary(path::String;
         "level_top" => 1, "level_bot" => Nz,
         "lons" => lons, "lats" => lats,
         "A_ifc" => A_ifc, "B_ifc" => B_ifc,
+        # Plan 39 Commit D: the 8 self-describing contract fields.
+        # Synthetic fixture follows the canonical window_constant path.
+        "source_flux_sampling" => "window_start_endpoint",
+        "air_mass_sampling"    => "window_start_endpoint",
+        "flux_sampling"        => "window_constant",
+        "flux_kind"            => "substep_mass_amount",
+        "delta_semantics"      => "forward_window_endpoint_difference",
+        "humidity_sampling"    => (include_qv ? "window_endpoints" : "none"),
+        "poisson_balance_target_scale"     => 1.0 / (2 * 4),  # matches steps_per_met_window
+        "poisson_balance_target_semantics" => "forward_window_mass_difference / (2 * steps_per_window)",
     )
 
     ps_val = FT(101325.0)

@@ -1,11 +1,9 @@
 #!/usr/bin/env julia
 
+using ArgParse
+
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
-
-function _usage()
-    println("Usage: julia --project=. scripts/diagnostics/inspect_transport_binary_v2.jl <path/to/file.bin>")
-end
 
 function _print_semantics(reader::TransportBinaryReader)
     println("Semantics:")
@@ -17,14 +15,33 @@ function _print_semantics(reader::TransportBinaryReader)
     println("  delta_semantics      = ", delta_semantics(reader))
 end
 
-function main(args)
-    if length(args) != 1
-        _usage()
-        return 1
+function _argparse_settings()
+    s = ArgParseSettings(
+        description = "Inspect a transport binary — header, grid, semantics, and driver compatibility.",
+        prog = "inspect_transport_binary.jl")
+    @add_arg_table! s begin
+        "--allow-legacy"
+            action = :store_true
+            help = "Demote contract-violation ArgumentError to warning, so " *
+                   "pre-plan-39 binaries without the 8 self-describing fields " *
+                   "can be inspected (runtime behavior NOT trusted)."
+        "path"
+            arg_type = String
+            required = true
+            help = "path to the transport binary .bin file"
     end
+    return s
+end
 
-    path = abspath(args[1])
+function main(args)
+    parsed = parse_args(args, _argparse_settings())
+    path = abspath(parsed["path"])
     isfile(path) || throw(ArgumentError("transport binary not found: $(path)"))
+
+    if parsed["allow-legacy"]
+        ENV["ATMOSTR_ALLOW_LEGACY_BINARY"] = "1"
+        @info "inspect: --allow-legacy set; contract violations demoted to warnings"
+    end
 
     reader = TransportBinaryReader(path; FT=Float64)
     println(reader)

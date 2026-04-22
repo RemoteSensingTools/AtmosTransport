@@ -255,14 +255,19 @@ end
     end
 end
 
-@testset "TransportBinaryDriver accepts legacy delta-bearing headers without poisson metadata" begin
+@testset "Plan 39 Commit D: legacy headers without poisson metadata are rejected" begin
     mktemp() do path, io
         close(io)
         write_test_transport_binary_latlon(path; FT=Float64, include_poisson_metadata=false)
-        driver = TransportBinaryDriver(path; FT=Float64, arch=CPU())
-        @test total_windows(driver) == 2
-        @test window_dt(driver) == 3600.0
-        close(driver)
+        # Strict default: missing contract fields → ArgumentError.
+        @test_throws ArgumentError TransportBinaryDriver(path; FT=Float64, arch=CPU())
+        # Env-var bypass: loads with a loud @warn banner.
+        withenv("ATMOSTR_ALLOW_LEGACY_BINARY" => "1") do
+            driver = TransportBinaryDriver(path; FT=Float64, arch=CPU())
+            @test total_windows(driver) == 2
+            @test window_dt(driver) == 3600.0
+            close(driver)
+        end
     end
 end
 

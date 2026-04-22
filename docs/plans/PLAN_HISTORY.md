@@ -29,7 +29,8 @@ archaeology — both live in commit history.
 
 | Plan | Title | Status | Blocked by |
 |------|-------|--------|------------|
-| 19 | Adjoint operator suite | pending | 21 |
+| 23 | TM5 convection | **in progress — Commit 0 baseline** | 22 |
+| 19 | Adjoint operator suite | pending | 21, 23 |
 | 20 | Documentation overhaul (Documenter + Literate) | pending | 21, 19 |
 
 ## Per-plan retrospective summary
@@ -142,6 +143,36 @@ in `test/test_cubed_sphere_runtime.jl`.
   `apply!(::CubedSphereState, ...)` shipped for `NoChemistry`,
   `ExponentialDecay`, and `CompositeChemistry` with matching
   `test/test_cs_chemistry.jl` (152 tests, F32 + F64).
+
+### Plan 23 — TM5 convection (IN PROGRESS)
+
+Shipping `TM5Convection` as a sibling of `CMFMCConvection` so ERA5
+runs have a first-class four-field Tiedtke 1989 mass-flux scheme.
+Commits 1–7 land on branch `convection` starting 2026-04-21. Plan
+doc lives outside the repo at
+`/home/cfranken/.claude/plans/bring-last-session-into-lively-scroll.md`.
+Key constraints:
+
+- Runtime plumbing generalizes from CMFMC-only to per-operator
+  dispatch in one commit before any kernel ships
+  (`_validate_convection_window!`, `_convection_workspace_for`).
+- Preprocessor + binary read path land in one commit
+  (`_transport_window_field`, `_transport_push_optional_sections!`,
+  `_cs_section_elements`, `CubedSphereTransportDriver:149` hardcoded
+  `nothing` → `raw.tm5_fields`).
+- Three topology kernels (LL, RG, CS) ship in the same commit —
+  no structured-first staging.
+- Matrix solver class is partial-pivot Gaussian elimination on the
+  `lmc × lmc` active sub-block per Commit 0 survey
+  ([`../../artifacts/plan23/matrix_structure.md`](../../artifacts/plan23/matrix_structure.md)).
+- Basis: polymorphic (like CMFMC), per
+  [`../../artifacts/plan23/basis_decision.md`](../../artifacts/plan23/basis_decision.md).
+- Adjoint path preserved: `pivots` vector stored in `TM5Workspace`
+  so plan 19 can reuse the same LU factorization with transposed
+  solve.
+
+Plan 18's original Commits 4–5 folded into plan 23; plan 18 itself
+is marked "paused at Commit 3" permanently in this file.
 
 ### Plan 21 — Post–plan-22 stabilization
 

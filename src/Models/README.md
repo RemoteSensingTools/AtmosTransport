@@ -25,12 +25,11 @@ read.
 ## Runtime Composition Today
 
 - `TransportModel.step!` runs:
-  - transport block
+  - transport block (advection, with diffusion and surface flux at
+    the Strang midpoint)
+  - convection block (`CMFMCConvection` live on LatLon, RG, CS via
+    plan 22D; `TM5Convection` in progress under plan 23)
   - chemistry block
-- The transport block enters operator code through advection `apply!`
-  methods, which embed diffusion and surface flux at the Strang midpoint
-- Convection configuration is stored on the model but is not yet
-  executed as a live runtime block
 
 ## File Map
 

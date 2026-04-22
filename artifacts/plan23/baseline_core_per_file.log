@@ -1,0 +1,84 @@
+=== test_basis_explicit_core ===
+Face-connected reduced-Gaussian GPU matches CPU for Upwind |    4      4  5.2s
+Test Summary:                                                    | Pass  Total  Time
+Face-connected unsupported reconstruction families fail honestly |    2      2  0.0s
+Test Summary:                  | Pass  Total  Time
+Adapt.jl container conversions |    8      8  0.5s
+
+=== test_advection_kernels ===
+    F32: n_sub = (1, 1, 1)
+Test Summary:               | Pass  Total  Time
+Unified CFL pilot (plan 13) |    6      6  0.1s
+
+✓ All advection kernel cross-backend/precision tests completed!
+
+=== test_structured_mesh_metadata ===
+Test Summary:               | Pass  Fail  Total  Time
+CubedSphereMesh conventions |   10     3     13  1.6s
+RNG of the outermost testset: Random.Xoshiro(0x9dbfdc3c7234f68c, 0x8ef20e5d346c5b47, 0x6f84192870b7f6a0, 0xf571601a46a63a63, 0x2e4425d6319d7236)
+ERROR: LoadError: Some tests did not pass: 10 passed, 3 failed, 0 errored, 0 broken.
+in expression starting at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_structured_mesh_metadata.jl:28
+
+=== test_reduced_gaussian_mesh ===
+Test Summary:              | Pass  Total  Time
+ReducedGaussianMesh wiring |    4      4  0.3s
+Test Summary:                | Pass  Total  Time
+ReducedGaussianMesh geometry |   22     22  0.8s
+
+=== test_driven_simulation ===
+DrivenSimulation ReducedGaussian run! accumulates emissions across windows |    6      6  0.6s
+Test Summary:                                                            | Pass  Total  Time
+DrivenSimulation ReducedGaussian supports diffusion plus surface sources |    4      4  0.6s
+Test Summary:                           | Pass  Total  Time
+DrivenSimulation window-forcing runtime |   50     50  1.9s
+
+=== test_transport_model_convection ===
+TransportModel convection runtime |   24     24  5.2s
+Test Summary:                       | Pass  Total  Time
+DrivenSimulation convection runtime |   10     10  0.9s
+Test Summary:                                         | Pass  Total  Time
+DrivenSimulation keeps convection runtime on model FT |    4      4  1.6s
+
+=== test_cubed_sphere_advection ===
+Test Summary:                              | Fail  Total  Time
+LLPoissonWorkspace zero-allocation balance |    1      1  1.7s
+RNG of the outermost testset: Random.Xoshiro(0x3a5e885f30c8c877, 0xa256c01665b6b06c, 0x08cd52366edc90e8, 0x9626444ff7849799, 0x687141e250dbd372)
+ERROR: LoadError: Some tests did not pass: 0 passed, 1 failed, 0 errored, 0 broken.
+in expression starting at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_cubed_sphere_advection.jl:494
+
+=== test_cubed_sphere_runtime ===
+CubedSphere transport driver + DrivenSimulation |   30     30  9.7s
+Test Summary:                                                              | Pass  Total  Time
+CubedSphere runtime supports CMFMC convection without promoting to Float64 |   13     13  8.7s
+Test Summary:                                               | Pass  Total  Time
+CubedSphere runtime supports diffusion plus surface sources |    9      9  1.8s
+
+=== test_cs_chemistry ===
+Test Summary:                                     | Pass  Total  Time
+Chemistry on CubedSphereState (plan 21 follow-up) |  152    152  2.9s
+
+=== test_poisson_balance ===
+  mirror_sign: per-panel div matches global face-table div      |    3            3  0.6s
+  mirror_sign: balance + cm diagnosis conserves mass per column |    1            1  0.8s
+RNG of the outermost testset: Random.Xoshiro(0x0f7ded52f86a57a6, 0x5c37a0ffdd796dea, 0x7c7da39fb798ca3e, 0xef748b6b634eac96, 0x1ec8d260ddf94cb4)
+ERROR: LoadError: Some tests did not pass: 245 passed, 72 failed, 0 errored, 0 broken.
+in expression starting at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_poisson_balance.jl:116
+
+=== test_aqua ===
+ [8] exec_options(opts::Base.JLOptions)
+   @ Base ./client.jl:283
+ [9] _start()
+   @ Base ./client.jl:550
+in expression starting at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_aqua.jl:19
+
+=== test_jet ===
+ [8] exec_options(opts::Base.JLOptions)
+   @ Base ./client.jl:283
+ [9] _start()
+   @ Base ./client.jl:550
+in expression starting at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_jet.jl:43
+
+=== test_readme_current ===
+Test Summary:           | Pass  Total  Time
+Module README freshness |   71     71  0.1s
+

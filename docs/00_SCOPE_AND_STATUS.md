@@ -33,8 +33,8 @@ Offline atmospheric transport runtime with:
 - **Convection (CMFMC)**: live on LatLon, RG, CS (plan 22D;
   `Operators/Convection/CMFMCConvection.jl`)
 - **Chemistry** (`ExponentialDecay`, `CompositeChemistry`): live on
-  `CellState` topologies; `CubedSphereState` dispatch is the one
-  known gap
+  `CellState` (LatLon, RG) and `CubedSphereState` topologies
+  (CS dispatch shipped in commit `bcd4fea`)
 - **Met drivers**: ERA5 spectral, GEOS-FP C720, GEOS-IT C180,
   cubed-sphere binary
 - **Adjoint**: forward operators ported; hand-coded discrete adjoint
@@ -46,17 +46,18 @@ Canonical operator × topology matrix:
 
 ## What is intentionally deferred
 
-- CS chemistry (small gap; `CellState` chemistry is live)
 - Plan 19 adjoint operator suite
 - Plan 20 user-facing documentation overhaul (Documenter + Literate)
 - Observation operators for 4D-Var
 
 ## Current phase
 
-The topology completion work (plans 22A–D) landed April 2026. Next
-focus is plan 19 (adjoint) and plan 20 (user-facing docs). Plan 21
-(in progress on branch `convection`) is a stabilization pass
-prerequisite to both.
+Topology completion (plans 22A–D) and stabilization (plan 21)
+landed April 2026. Plan 23 (TM5 convection, in progress on branch
+`convection`) adds the `TM5Convection` operator for ERA5, to ship
+alongside the existing `CMFMCConvection` for GEOS-FP. After plan
+23, focus shifts to plan 19 (adjoint) and plan 20 (user-facing
+docs).
 
 See [`plans/PLAN_HISTORY.md`](plans/PLAN_HISTORY.md) for the canonical
 per-plan status.

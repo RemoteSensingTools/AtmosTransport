@@ -1,0 +1,58 @@
+src/Models/DrivenSimulation.jl:148:    if op isa CMFMCConvection
+src/Models/DrivenSimulation.jl:151:                "CMFMCConvection requires `window.convection.cmfmc` to be populated; " *
+src/Models/TransportModel.jl:30:  Concrete subtypes (`CMFMCConvection`, `TM5Convection`) land in plan
+src/Models/TransportModel.jl:76:_convection_workspace_for(::CMFMCConvection,
+src/Models/TransportModel.jl:80:_convection_workspace_for(::CMFMCConvection,
+src/Models/TransportModel.jl:84:_convection_workspace_for(::CMFMCConvection,
+src/MetDrivers/ConvectionForcing.jl:36:  `(Nc, Nc, Nz+1)`. GCHP / `CMFMCConvection` consumer.
+src/MetDrivers/ConvectionForcing.jl:40:  `CMFMCConvection` falls through to Tiedtke-style single-flux
+src/Operators/Convection/CMFMCConvection.jl:2:# CMFMCConvection — GCHP RAS / Grell-Freitas convective transport.
+src/Operators/Convection/CMFMCConvection.jl:10:    CMFMCConvection()
+src/Operators/Convection/CMFMCConvection.jl:59:`CMFMCConvection` now supports structured LatLon, face-indexed
+src/Operators/Convection/CMFMCConvection.jl:82:struct CMFMCConvection <: AbstractConvectionOperator end
+src/Operators/Convection/CMFMCConvection.jl:90:                       op::CMFMCConvection, dt, workspace::CMFMCWorkspace,
+src/Operators/Convection/CMFMCConvection.jl:131:                            op::CMFMCConvection,
+src/Operators/Convection/CMFMCConvection.jl:136:        "CMFMCConvection requires `forcing.cmfmc` to be populated; got nothing. " *
+src/Operators/Convection/CMFMCConvection.jl:190:                            op::CMFMCConvection,
+src/Operators/Convection/CMFMCConvection.jl:195:        "CMFMCConvection requires `forcing.cmfmc` to be populated; got nothing. " *
+src/Operators/Convection/CMFMCConvection.jl:201:        "Face-indexed CMFMCConvection requires `workspace.cell_metrics` " *
+src/Operators/Convection/CMFMCConvection.jl:230:                            ::CMFMCConvection,
+src/Operators/Convection/CMFMCConvection.jl:233:        "`CMFMCConvection` supports face-indexed state only on " *
+src/Operators/Convection/CMFMCConvection.jl:240:                           op::CMFMCConvection,
+src/Operators/Convection/CMFMCConvection.jl:245:        "CMFMCConvection requires `forcing.cmfmc` to be populated; got nothing. " *
+src/Operators/Convection/CMFMCConvection.jl:251:        "Cubed-sphere CMFMCConvection requires `workspace.cell_metrics` " *
+src/Operators/Convection/CMFMCConvection.jl:289:           op::CMFMCConvection, dt::Real; workspace) -> state
+src/Operators/Convection/CMFMCConvection.jl:299:                op::CMFMCConvection,
+src/Operators/Convection/CMFMCConvection.jl:310:                op::CMFMCConvection,
+src/Operators/Convection/CMFMCConvection.jl:320:                op::CMFMCConvection, dt::Real;
+src/Operators/Convection/CMFMCConvection.jl:323:        "`CMFMCConvection` supports face-indexed state only on " *
+src/Operators/Convection/CMFMCConvection.jl:330:                op::CMFMCConvection,
+src/Operators/Convection/Convection.jl:17:- Commit 3: `CMFMCConvection` (GCHP path, CMFMC+DTRAIN kernel with
+src/Operators/Convection/Convection.jl:44:`CMFMCConvection` now supports structured LatLon, face-indexed
+src/Operators/Convection/Convection.jl:63:export CMFMCConvection                          # plan 18 Commit 3
+src/Operators/Convection/Convection.jl:70:include("CMFMCConvection.jl")        # struct + apply! methods (Commit 3)
+src/Operators/Convection/cmfmc_kernels.jl:2:# CMFMCConvection kernel + inline helpers — plan 18 Commit 3.
+src/Operators/Convection/cmfmc_kernels.jl:32:# No field type parameter on CMFMCConvection (plan 18 v5.1 §2.3
+src/Operators/Convection/cmfmc_kernels.jl:352:                "CMFMCConvection CFL sub-step count $(n_sub) exceeds " *
+src/Operators/Convection/convection_workspace.jl:5:# Commit 3 ships CMFMCWorkspace for CMFMCConvection. TM5Workspace
+src/Operators/Convection/convection_workspace.jl:13:Per-sim pre-allocated workspace for [`CMFMCConvection`](@ref).
+src/Operators/Convection/operators.jl:5:# operators (`CMFMCConvection`, `TM5Convection`) land in Commits 3 and 4.
+src/Operators/Convection/operators.jl:14:- `CMFMCConvection` — GCHP-style RAS / Grell-Freitas transport with
+src/Operators/Convection/README.md:7:in `TransportModel.step!` and `CMFMCConvection` supports all three
+src/Operators/Convection/README.md:20:  [`CMFMCConvection.jl`](CMFMCConvection.jl)
+src/Operators/Convection/README.md:21:  defines `CMFMCConvection` and its `apply!` methods
+src/Operators/Convection/README.md:32:- `CMFMCConvection` runs on all three topologies via dedicated
+src/Operators/Convection/README.md:33:  `apply!` methods in [`CMFMCConvection.jl`](CMFMCConvection.jl):
+src/Operators/Convection/README.md:44:dispatches in [`CMFMCConvection.jl`](CMFMCConvection.jl) first — they
+src/Operators/Convection/README.md:56:- [`CMFMCConvection.jl`](CMFMCConvection.jl) — concrete CMFMC operator,
+src/Operators/Convection/README.md:64:  specific `apply!` in [`CMFMCConvection.jl`](CMFMCConvection.jl)
+src/Operators/Convection/README.md:67:  validation logic in [`CMFMCConvection.jl`](CMFMCConvection.jl)
+src/Operators/Operators.jl:81:# NoConvection — Commit 1. CMFMCConvection — Commit 3. TM5Convection — Commit 4.
+src/Operators/Operators.jl:83:export CMFMCConvection                          # plan 18 Commit 3
+src/Operators/TOPOLOGY_SUPPORT.md:24:| `CMFMCConvection` | ✅ | ✅ | ✅ |
+src/Operators/TOPOLOGY_SUPPORT.md:62:[`Convection/CMFMCConvection.jl`](Convection/CMFMCConvection.jl):
+src/Operators/TOPOLOGY_SUPPORT.md:64:- `apply!(::CellState, ::ConvectionForcing, ::AtmosGrid{<:LatLonMesh}, ::CMFMCConvection, dt)`
+src/Operators/TOPOLOGY_SUPPORT.md:65:- `apply!(::CellState, ::ConvectionForcing, ::AtmosGrid{<:ReducedGaussianMesh}, ::CMFMCConvection, dt)`
+src/Operators/TOPOLOGY_SUPPORT.md:66:- `apply!(::CubedSphereState, ::ConvectionForcing, ::AtmosGrid{<:CubedSphereMesh}, ::CMFMCConvection, dt)`
+src/AtmosTransport.jl:185:# NoConvection — Commit 1. CMFMCConvection — Commit 3. TM5Convection — Commit 4.
+src/AtmosTransport.jl:188:export CMFMCConvection                          # plan 18 Commit 3

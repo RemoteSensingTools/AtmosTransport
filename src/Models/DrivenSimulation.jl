@@ -33,7 +33,6 @@ mutable struct DrivenSimulation{ModelT, DriverT, WindowT, AT, QT, FT, CB, SS, CT
     chemistry                   :: CT
     initialize_air_mass         :: Bool
     use_midpoint_forcing        :: Bool
-    reset_air_mass_each_window  :: Bool
     interpolate_fluxes_within_window :: Bool
 end
 
@@ -241,9 +240,14 @@ function _maybe_advance_window!(sim::DrivenSimulation, substep::Int)
             throw(ArgumentError("driver humidity endpoint support changed between windows"))
         end
         _validate_convection_runtime(sim.model, sim.driver, sim.window)
-        if sim.reset_air_mass_each_window
-            _copy_storage!(sim.model.state.air_mass, sim.window.air_mass)
-        end
+        # Plan 39 Commit G: the `reset_air_mass_each_window` flag has been
+        # removed. Under the canonical `:window_constant` contract, the
+        # runtime's own flux divergence integrates to `(m_next - m)` over
+        # each window, so `state.air_mass` naturally tracks `window.air_mass`
+        # at window boundaries without an explicit reset. The reset used to
+        # inject the 2nd-order ps-acceleration mismatch that caused the
+        # upwind monotonicity-violating window-edge jump (~0.87% on uniform
+        # IC) diagnosed in plan-24 post-mortem (memo 37 + this plan).
         invalidate_cmfmc_cache!(sim.model.workspace.convection_ws)
     end
     return nothing
@@ -259,11 +263,24 @@ Keyword arguments:
 - `stop_window=total_windows(driver)`
 - `initialize_air_mass=true`
 - `use_midpoint_forcing=true`
-- `reset_air_mass_each_window=true`
 - `interpolate_fluxes_within_window=nothing` (derive from driver)
 - `surface_sources=()`
 - `chemistry=NoChemistry()` — applied after advection + surface sources each step
 - `callbacks=NamedTuple()`
+
+Plan 39 Commit G: the `reset_air_mass_each_window` kwarg has been
+removed. It used to overwrite `state.air_mass` at every window
+boundary with the stored `m_next`, which under the pre-memo-37
+legacy flux-interpolation contract was needed to compensate for a
+runtime flux-sum vs stored-endpoint mismatch. Under the canonical
+`:window_constant` contract (enforced by Commit D and produced by
+Commits B/C), the runtime's own flux divergence integrates to
+`(m_next − m)` over the window, so no reset is needed; keeping it
+would inject a window-edge air_mass discontinuity that breaks
+upwind monotonicity (the plan-24 post-mortem bug). Existing callers
+that passed `reset_air_mass_each_window=false` (all 5 in-repo
+callers per Phase-1 survey) simply drop the kwarg — behavior is now
+the default-and-only one.
 """
 function DrivenSimulation(model::TransportModel,
                           driver::D;
@@ -271,7 +288,6 @@ function DrivenSimulation(model::TransportModel,
                           stop_window::Integer = total_windows(driver),
                           initialize_air_mass::Bool = true,
                           use_midpoint_forcing::Bool = true,
-                          reset_air_mass_each_window::Bool = true,
                           interpolate_fluxes_within_window = nothing,
                           surface_sources = (),
                           chemistry::AbstractChemistryOperator = NoChemistry(),
@@ -344,7 +360,6 @@ function DrivenSimulation(model::TransportModel,
         chemistry,
         initialize_air_mass,
         use_midpoint_forcing,
-        reset_air_mass_each_window,
         flux_interp,
     )
 

@@ -91,8 +91,7 @@ end
         fluxes = allocate_face_fluxes(grid.horizontal, 2; FT = Float64, basis = MoistBasis)
         model = TransportModel(state, fluxes, grid, UpwindScheme())
         sim = DrivenSimulation(model, driver;
-                               start_window = 1, stop_window = 2,
-                               reset_air_mass_each_window = false)
+                               start_window = 1, stop_window = 2)
 
         # At construction
         @test current_time(sim) ≈ 0.0  rtol = 1e-14
@@ -147,7 +146,6 @@ end
         capture_op = _MeteoCaptureChemistry()
         sim = DrivenSimulation(model, driver;
                                start_window = 1, stop_window = 2,
-                               reset_air_mass_each_window = false,
                                chemistry = capture_op)
 
         # Before any step — capture ref is still empty

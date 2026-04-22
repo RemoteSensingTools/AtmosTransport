@@ -1040,7 +1040,11 @@ function run_sequence(binary_paths::Vector{String}, cfg)
     scheme_name = Symbol(lowercase(String(get(run_cfg, "scheme", "upwind"))))
     start_window = Int(get(run_cfg, "start_window", 1))
     stop_window_override = get(run_cfg, "stop_window", nothing)
-    reset_air_mass_each_window = Bool(get(run_cfg, "reset_air_mass_each_window", false))
+    # Plan 39 Commit G: reset_air_mass_each_window removed from DrivenSimulation.
+    # Config flag, if present, is silently ignored with a debug note.
+    if haskey(run_cfg, "reset_air_mass_each_window")
+        @debug "run.reset_air_mass_each_window config key is ignored (plan 39 Commit G removed the flag)"
+    end
     init_cfg = get(cfg, "init", Dict{String, Any}())
     tracer_specs = something(_parse_tracer_specs(cfg),
                              (TransportTracerSpec(Symbol(get(run_cfg, "tracer_name", "CO2")),
@@ -1088,7 +1092,6 @@ function run_sequence(binary_paths::Vector{String}, cfg)
                                start_window=start_window,
                                stop_window=stop_window,
                                initialize_air_mass=initialize_air_mass,
-                               reset_air_mass_each_window=reset_air_mass_each_window,
                                surface_sources=surface_sources)
         if !initialize_air_mass
             boundary_rel = maximum(abs.(model.state.air_mass .- sim.window.air_mass)) / max(maximum(abs.(sim.window.air_mass)), eps(FT))

@@ -96,8 +96,7 @@ end
         model = TransportModel(state, fluxes, grid, UpwindScheme())
         sim = DrivenSimulation(model, driver;
                                start_window=1,
-                               stop_window=2,
-                               reset_air_mass_each_window=false)
+                               stop_window=2)
 
         step!(sim)
         step!(sim)

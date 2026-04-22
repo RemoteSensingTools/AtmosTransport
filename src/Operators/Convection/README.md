@@ -76,6 +76,11 @@ are genuine fast-path implementations, not generic wrappers.
 - [`TM5Convection.jl`](TM5Convection.jl) — `TM5Convection` struct +
   dispatch stubs (plan 23 Commit 1). Real kernels land in plan 23
   Commit 4.
+- [`tm5_column_solve.jl`](tm5_column_solve.jl) — backend-agnostic
+  column solver `_tm5_solve_column!` (plan 23 Commit 2): builds
+  `conv1 = I - dt·D`, partial-pivot LU factorization, back-
+  substitutes each tracer. Per-column entry point the Commit 4
+  KA kernels call per thread.
 
 ## Common Tasks
 

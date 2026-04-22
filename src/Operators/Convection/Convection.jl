@@ -79,6 +79,7 @@ include("operators.jl")
 include("convection_workspace.jl")   # CMFMCWorkspace (Commit 3) + TM5Workspace (plan 23)
 include("cmfmc_kernels.jl")          # kernels + inline helpers (Commit 3)
 include("CMFMCConvection.jl")        # struct + apply! methods (Commit 3)
+include("tm5_column_solve.jl")       # backend-agnostic column solver (plan 23 Commit 2)
 include("TM5Convection.jl")          # struct + dispatch stubs (plan 23 Commit 1)
 
 end # module Convection

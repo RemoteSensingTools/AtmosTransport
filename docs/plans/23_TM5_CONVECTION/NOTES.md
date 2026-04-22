@@ -93,6 +93,45 @@ path. Plan doc lives outside the repo at
   test_cubed_sphere_runtime, test_cs_chemistry,
   test_convection_forcing, test_readme_current.
 
+### Commit 2
+
+- Backend-agnostic column solver in
+  [`tm5_column_solve.jl`](../../../src/Operators/Convection/tm5_column_solve.jl):
+  `_tm5_diagnose_cloud_dims`, `_tm5_build_conv1!`, `_tm5_lu!`,
+  `_tm5_solve!`, and `_tm5_solve_column!` composing them.
+  Transcribed once from
+  [`deps/tm5/base/src/tm5_conv.F90:32–191`](../../../deps/tm5/base/src/tm5_conv.F90)
+  into AtmosTransport orientation (k=1=TOA, k=Nz=surface) per
+  principle 1 — zero runtime flips, all reindexing done at port
+  time. Working arrays `f`, `fu`, `amu`, `amd` use a length-(Nz+1)
+  convention to mirror TM5's `f(0:lmx, 1:lmx)` / `amu(0:lmx)`
+  boundary indexing.
+- **Surprise (principle-driven correction):** initial draft
+  restricted LU to `[icltop, Nz]` under the assumption that rows
+  outside the cloud window were identity. `mcp-julia` probe showed
+  row 1 (TOA) gets populated via the combine+subsidence step.
+  Switched to full `[1, Nz]` LU; identity rows factorize trivially
+  (no perf cost for typical convection).
+- **Conservation invariant clarified:** TM5 `conv1` column sums
+  equal 1 by construction ⟹ backward-Euler preserves TRACER MASS
+  (because `tracers_raw` is tracer mass per plan 14, not mixing
+  ratio). Initial tests asserted row-sum-1 / mixing-ratio
+  preservation on uniform input — rewrote the uniform-mr test to
+  use `rm = const_mr × m` and check `rm_new / m == const_mr`
+  layer-by-layer, which actually validates mixing-ratio
+  preservation via the mass-conservation invariant.
+- Tests: 39 + 1 new testsets exercise zero-forcing identity
+  (bit-exact), tracer-mass conservation (F64 machine precision
+  × 1e4 safety), uniform-mixing-ratio preservation
+  (`rm_new / m` matches input `const_mr`), cloud-dim diagnosis,
+  F32 variant, and a column-major loop-order smoke gate.
+- 0 regressions across test_transport_model_convection,
+  test_convection_forcing, test_readme_current (updated to
+  mention `tm5_column_solve.jl`).
+- `apply!` / `apply_convection!` still throw Commit 1's
+  "not yet implemented — Commit 4" stub error; Commit 4 lifts the
+  stub and wires the kernels.
+
 ## Retrospective sections (filled during execution)
 
 ### Decisions beyond the plan

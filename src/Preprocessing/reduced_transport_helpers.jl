@@ -1242,14 +1242,31 @@ function process_day(date::Date,
     sample_window = (m = buf.m[1], hflux = buf.hflux[1],
                      cm = buf.cm[1], ps = buf.ps[1])
 
+    # Plan 39 Commit C: declare the canonical window_constant contract
+    # explicitly — all 6 semantic fields + Poisson fields. Before this,
+    # the RG writer inherited legacy defaults for flux_sampling/delta_semantics
+    # and omitted Poisson fields entirely, leaving ambiguity the runtime
+    # parser would silently resolve.
+    rg_contract = canonical_window_constant_contract(
+        steps_per_window     = steps_per_met,
+        humidity_sampling    = settings.include_qv ? :window_endpoints : :none,
+        source_flux_sampling = :window_start_endpoint,
+        include_flux_delta   = true,
+    )
+
     writer = open_streaming_transport_binary(
         bin_path, transport_grid, Nt, sample_window;
         FT = FT,
-        dt_met_seconds     = settings.met_interval,
-        half_dt_seconds    = settings.half_dt,
-        steps_per_window   = steps_per_met,
-        source_flux_sampling = :window_start_endpoint,
-        mass_basis = Symbol(settings.mass_basis),
+        dt_met_seconds       = settings.met_interval,
+        half_dt_seconds      = settings.half_dt,
+        steps_per_window     = steps_per_met,
+        source_flux_sampling = rg_contract.source_flux_sampling,
+        air_mass_sampling    = rg_contract.air_mass_sampling,
+        flux_sampling        = rg_contract.flux_sampling,
+        flux_kind            = rg_contract.flux_kind,
+        humidity_sampling    = rg_contract.humidity_sampling,
+        delta_semantics      = rg_contract.delta_semantics,
+        mass_basis           = Symbol(settings.mass_basis),
         extra_header = Dict{String, Any}(
             "preprocessor"     => "preprocess_transport_binary.jl",
             "source_type"      => "era5_spectral",
@@ -1257,6 +1274,11 @@ function process_day(date::Date,
             "gaussian_number"  => grid.gaussian_number,
             "poisson_balanced" => true,
             "mass_fix_enabled" => settings.mass_fix_enable,
+            # Poisson fields via extra_header — _transport_common_header
+            # doesn't accept these yet (fixed in Commit D). Single source
+            # of truth: the contract.
+            "poisson_balance_target_scale"     => rg_contract.poisson_balance_target_scale,
+            "poisson_balance_target_semantics" => rg_contract.poisson_balance_target_semantics,
         ))
 
     bytes_per_window = writer.elems_per_window * sizeof(eltype(writer.pack_buffer))

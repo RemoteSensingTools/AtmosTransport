@@ -202,6 +202,62 @@ path. Plan doc lives outside the repo at
 - `apply!` / `apply_convection!` still throw Commit 1's stub;
   Commit 4 lifts it and wires the three-topology kernels.
 
+### Commit 4
+
+- **KA kernels** —
+  [`src/Operators/Convection/tm5_kernels.jl`](../../../src/Operators/Convection/tm5_kernels.jl):
+  `_tm5_column_kernel!` (LL 4D, ndrange `(Nx, Ny)`),
+  `_tm5_faceindexed_column_kernel!` (RG 3D, ndrange `ncells`),
+  `_tm5_cs_panel_column_kernel!` (CS per-panel, ndrange `(Nc, Nc)`,
+  one launch per panel, halo offset `Hp` threaded through). Each
+  kernel per-thread views into TM5Workspace slabs and calls
+  `_tm5_solve_column!` from Commit 2.
+- **Column solver made allocation-free** — Commit 2's
+  `_tm5_solve_column!` + `_tm5_build_conv1!` signatures extended
+  with optional `f_buf / fu_buf / amu_buf / amd_buf` kwargs. CPU
+  callers that don't pass them allocate internally (Commit 2
+  tests stayed compatible); KA kernels pass per-column views
+  from the workspace so nothing allocates inside the kernel (GPU
+  requirement).
+- **TM5Workspace expanded** with `f_scratch`, `fu_scratch`,
+  `amu_scratch`, `amd_scratch` per-column slabs. Added
+  `_tm5_scratch_f_like` / `_tm5_scratch_am_like` allocators
+  (shape `(Nz+1, Nz, ...)` and `(Nz+1, ...)` per topology).
+  Struct signature widened to `TM5Workspace{FT, M, P, C, F, A}`.
+  `Adapt.adapt_structure` threads all seven slabs through.
+  Memory cost ~63 KB / column (conv1 + pivots + cloud_dims + 2×f
+  + 2×amu) — at N160 ≈ 5.3 GB, at C180 ≈ 12 GB. Acceptable on
+  wurst L40S (48 GB). Commit 7 bench revisits.
+- **Real apply! + apply_convection! dispatch** in
+  [`TM5Convection.jl`](../../../src/Operators/Convection/TM5Convection.jl):
+  three `apply_convection!` methods (LL 4D, RG 3D, CS NTuple{6})
+  launch the matching KA kernel via `get_backend(q_raw)` and
+  `synchronize(backend)` once at the end. Three `apply!` wrappers
+  delegate via `state.tracers_raw` / `state.air_mass`. Commit 1
+  stubs removed entirely.
+- **`_assert_tm5_forcing` guard** kept as a direct-caller
+  safety net — the driver's `_validate_convection_window!`
+  catches the `nothing`-tm5_fields case at window load, but tests
+  and non-driven callers hit this guard too with a clear message.
+- **Tests** (11 new testsets, replacing Commit 1's 2 stub tests):
+  - LL apply!: 4 tests — mass conservation per tracer (2),
+    nontrivial change, zero-forcing bit-exact identity.
+  - RG apply!: 2 tests — mass conservation + nontrivial change.
+  - CS apply!: 1 test — interior-cells-only mass conservation
+    (halos correctly untouched).
+  - `_assert_tm5_forcing` guard: 4 tests — error on empty forcing,
+    message names tm5_fields + NamedTuple, no "not yet implemented"
+    string remains.
+- **Principle 7 audit**:
+  `grep -rnE "# TODO|# HACK|# FIXME|not yet implemented|not supported yet"`
+  across `src/Operators/Convection/`, `src/MetDrivers/ConvectionForcing.jl`,
+  `src/Preprocessing/tm5_convection_conversion.jl` returns zero
+  hits. Commit 1's "not yet implemented" strings are fully retired.
+- 0 regressions across test_readme_current (74 pass, new
+  `tm5_kernels.jl` documented), test_transport_model_convection
+  (38 pass — CMFMC unchanged), test_tm5_preprocessing (43 pass —
+  Commit 3 path untouched), all prior plan-23 Commit 1/2 tests.
+
 ## Retrospective sections (filled during execution)
 
 ### Decisions beyond the plan

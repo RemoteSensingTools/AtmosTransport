@@ -43,11 +43,15 @@ operator × topology matrix.
   - LatLon (rank-4 `tracers_raw`)
   - reduced Gaussian (rank-3 face-indexed `tracers_raw`)
   - cubed sphere (`NTuple{6}` panel storage)
-- `TM5Convection` type + `TM5Workspace` + dispatch stubs are live
-  as of plan 23 Commit 1. The struct is stateless; forcing comes
-  via `ConvectionForcing.tm5_fields`. `apply!` throws a stub
-  `ArgumentError` pointing at Commit 4 — the type, workspace
-  factory, and validator are exercised without fake numerics.
+- `TM5Convection` is live on all three topologies (LatLon,
+  ReducedGaussian, CubedSphere) as of plan 23 Commit 4. The struct
+  is stateless; forcing comes via `ConvectionForcing.tm5_fields`.
+  Implementation: `_tm5_solve_column!` builds and solves the
+  `conv1 = I - dt·D` backward-Euler matrix with partial-pivot LU
+  per column; `tm5_kernels.jl` ships the three topology KA kernels;
+  `TM5Convection.jl` has the `apply!` / `apply_convection!` dispatch
+  that launches them. Mass conservation to F64 machine precision
+  via the TM5 matrix column-sum-is-1 invariant.
 - `TransportModel.step!` executes a convection block when the model
   carries a non-`NoConvection` operator; wiring landed as plan 22D
 - `NoConvection` is a no-op (compile-time dead branch in `step!`)
@@ -81,6 +85,11 @@ are genuine fast-path implementations, not generic wrappers.
   `conv1 = I - dt·D`, partial-pivot LU factorization, back-
   substitutes each tracer. Per-column entry point the Commit 4
   KA kernels call per thread.
+- [`tm5_kernels.jl`](tm5_kernels.jl) — `@kernel` wrappers around
+  `_tm5_solve_column!` for all three topologies
+  (`_tm5_column_kernel!` LL 4D, `_tm5_faceindexed_column_kernel!`
+  RG 3D, `_tm5_cs_panel_column_kernel!` CS per-panel); plan 23
+  Commit 4.
 
 ## Common Tasks
 

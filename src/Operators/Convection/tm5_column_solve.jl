@@ -115,21 +115,22 @@ function _tm5_build_conv1!(conv1::AbstractMatrix{FT},
                            detd_col::AbstractVector{FT},
                            m_col::AbstractVector{FT},
                            icltop::Integer, icllfs::Integer,
-                           dt::FT, Nz::Integer) where {FT}
-    # Working storage: fu and f are (Nz+1, Nz) to mirror TM5's
-    # f(0:lmx, 1:lmx) / fu(0:lmx, 1:lmx). We index `f[k+1, kk]`
-    # for the TM5 `f(k, kk)` (shift the row index by +1).
-    # amu and amd likewise get shape (Nz+1,) with index convention
-    # `amu[k+1]` ↔ TM5 `amu(k)`.
-    #
-    # We allocate here in Commit 2 because the function is
-    # backend-agnostic and used only in CPU tests. Commit 4 will
-    # either thread these through the workspace or use MVector for
-    # compile-time sizes.
-    fu  = zeros(FT, Nz + 1, Nz)
-    f   = zeros(FT, Nz + 1, Nz)
-    amu = zeros(FT, Nz + 1)
-    amd = zeros(FT, Nz + 1)
+                           dt::FT, Nz::Integer;
+                           fu::AbstractMatrix{FT}  = zeros(FT, Nz + 1, Nz),
+                           f::AbstractMatrix{FT}   = zeros(FT, Nz + 1, Nz),
+                           amu::AbstractVector{FT} = zeros(FT, Nz + 1),
+                           amd::AbstractVector{FT} = zeros(FT, Nz + 1),
+                           ) where {FT}
+    # Working storage: `fu` and `f` are (Nz+1, Nz) to mirror TM5's
+    # f(0:lmx, 1:lmx) / fu(0:lmx, 1:lmx). `amu` and `amd` are
+    # length-(Nz+1). Commit 2 default-allocated these inside the
+    # function for CPU tests; Commit 4 passes pre-allocated slices
+    # from TM5Workspace so the function is usable inside KA
+    # kernels (no heap allocation on GPU).
+    fill!(fu,  zero(FT))
+    fill!(f,   zero(FT))
+    fill!(amu, zero(FT))
+    fill!(amd, zero(FT))
 
     # Index convention in AtmosTransport orientation (k=1=TOA,
     # k=Nz=surface):
@@ -369,7 +370,12 @@ function _tm5_solve_column!(rm_col::AbstractMatrix{FT},
                             conv1_buf::AbstractMatrix{FT},
                             pivots_buf::AbstractVector{<:Integer},
                             cloud_dims::AbstractVector{<:Integer},
-                            dt::FT) where {FT}
+                            dt::FT;
+                            fu_buf::AbstractMatrix{FT}  = zeros(FT, length(m_col) + 1, length(m_col)),
+                            f_buf::AbstractMatrix{FT}   = zeros(FT, length(m_col) + 1, length(m_col)),
+                            amu_buf::AbstractVector{FT} = zeros(FT, length(m_col) + 1),
+                            amd_buf::AbstractVector{FT} = zeros(FT, length(m_col) + 1),
+                            ) where {FT}
     Nz = length(m_col)
     Nz == 0 && return nothing
     Nt = size(rm_col, 2)
@@ -386,7 +392,9 @@ function _tm5_solve_column!(rm_col::AbstractMatrix{FT},
 
     _tm5_build_conv1!(conv1_buf,
                       entu_col, detu_col, entd_col, detd_col, m_col,
-                      icltop, icllfs, dt, Nz)
+                      icltop, icllfs, dt, Nz;
+                      fu = fu_buf, f = f_buf,
+                      amu = amu_buf, amd = amd_buf)
     _tm5_lu!(conv1_buf, pivots_buf, Nz)
     _tm5_solve!(rm_col, conv1_buf, pivots_buf, Nz, Nt)
     return nothing

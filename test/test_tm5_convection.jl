@@ -107,41 +107,146 @@ end
     @test size(ws_tm5.conv1) == (4, 4, 4, 3)  # (Nz, Nz, Nx, Ny)
 end
 
-@testset "plan 23 Commit 1: apply! stubs error cleanly" begin
-    mesh = LatLonMesh(; Nx=4, Ny=3, FT=FT)
+@testset "plan 23 Commit 4: TM5Convection apply! LL kernel" begin
+    Nx, Ny, Nz, Nt = 4, 3, 8, 2
+    mesh = LatLonMesh(; Nx=Nx, Ny=Ny, FT=FT)
+    A_ifc = FT[0, 500, 1000, 2000, 5000, 10000, 30000, 50000, 0]
+    B_ifc = FT[0, 0, 0, FT(0.05), FT(0.2), FT(0.4), FT(0.7), FT(0.9), 1]
+    vc = HybridSigmaPressure(A_ifc, B_ifc)
+    grid = AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT=FT)
+
+    m = fill(FT(5e3), Nx, Ny, Nz)
+    tracer1 = zeros(FT, Nx, Ny, Nz); tracer1[:, :, Nz] .= FT(1e-3) .* m[:, :, Nz]
+    tracer2 = zeros(FT, Nx, Ny, Nz); tracer2[:, :, 3] .= FT(2e-3) .* m[:, :, 3]
+    state = CellState(m; CO2 = tracer1, CH4 = tracer2)
+
+    entu = zeros(FT, Nx, Ny, Nz); entu[:, :, 3:6] .= FT(0.03)
+    detu = zeros(FT, Nx, Ny, Nz); detu[:, :, 3:6] .= FT(0.02)
+    entd = zeros(FT, Nx, Ny, Nz); entd[:, :, 4:6] .= FT(0.01)
+    detd = zeros(FT, Nx, Ny, Nz); detd[:, :, 4:6] .= FT(0.005)
+    forcing = ConvectionForcing(nothing, nothing,
+                                 (; entu, detu, entd, detd))
+    ws = TM5Workspace(state.air_mass)
+
+    mass_before = [sum(state.tracers_raw[:, :, :, t]) for t in 1:Nt]
+    state0_copy = copy(state.tracers_raw)
+    apply!(state, forcing, grid, TM5Convection(), FT(600); workspace = ws)
+
+    for t in 1:Nt
+        mass_after = sum(state.tracers_raw[:, :, :, t])
+        @test isapprox(mass_after, mass_before[t];
+                        rtol = 1f4 * eps(FT))
+    end
+    # Nontrivial: tracer profile changed (not silent identity).
+    @test any(state.tracers_raw .!= state0_copy)
+
+    # Zero-forcing → bit-exact identity.
+    state_zero = CellState(m; CO2 = copy(tracer1), CH4 = copy(tracer2))
+    ws_zero = TM5Workspace(state_zero.air_mass)
+    zero_forcing = ConvectionForcing(nothing, nothing,
+        (; entu = zeros(FT, Nx, Ny, Nz), detu = zeros(FT, Nx, Ny, Nz),
+           entd = zeros(FT, Nx, Ny, Nz), detd = zeros(FT, Nx, Ny, Nz)))
+    state0_identity = copy(state_zero.tracers_raw)
+    apply!(state_zero, zero_forcing, grid, TM5Convection(), FT(600);
+            workspace = ws_zero)
+    @test state_zero.tracers_raw == state0_identity
+end
+
+@testset "plan 23 Commit 4: TM5Convection apply! RG kernel" begin
+    mesh = ReducedGaussianMesh(FT[-0.9, 0.0, 0.9], [4, 4, 4]; FT=FT)
+    Nz = 6
+    A_ifc = collect(FT, range(0, 5f4; length=Nz+1))
+    B_ifc = collect(FT, range(1, 0;   length=Nz+1))
+    A_ifc[1] = 0; B_ifc[end] = 0
+    B_ifc[1] = 0; A_ifc[end] = 0
+    vc = HybridSigmaPressure(A_ifc, B_ifc)
+    grid = AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT=FT)
+    ncells = AtmosTransport.Grids.ncells(mesh)
+
+    m = fill(FT(5e3), ncells, Nz)
+    tracer1 = zeros(FT, ncells, Nz); tracer1[:, Nz] .= FT(1e-3) .* m[:, Nz]
+    state = CellState(m; CO2 = tracer1)
+
+    entu = zeros(FT, ncells, Nz); entu[:, 2:4] .= FT(0.03)
+    detu = zeros(FT, ncells, Nz); detu[:, 2:4] .= FT(0.02)
+    entd = zeros(FT, ncells, Nz); entd[:, 3:4] .= FT(0.01)
+    detd = zeros(FT, ncells, Nz); detd[:, 3:4] .= FT(0.005)
+    forcing = ConvectionForcing(nothing, nothing,
+                                 (; entu, detu, entd, detd))
+    ws = TM5Workspace(state.air_mass)
+
+    mass_before = sum(state.tracers_raw)
+    state0_copy = copy(state.tracers_raw)
+    apply!(state, forcing, grid, TM5Convection(), FT(600); workspace = ws)
+    mass_after = sum(state.tracers_raw)
+    @test isapprox(mass_after, mass_before; rtol = 1f4 * eps(FT))
+    @test any(state.tracers_raw .!= state0_copy)
+end
+
+@testset "plan 23 Commit 4: TM5Convection apply! CS kernel" begin
+    Nc = 4
+    Nz = 6
+    mesh = CubedSphereMesh(; Nc = Nc, Hp = 1, FT = FT)
+    A_ifc = collect(FT, range(0, 5f4; length=Nz+1))
+    B_ifc = collect(FT, range(1, 0;   length=Nz+1))
+    A_ifc[1] = 0; B_ifc[end] = 0
+    B_ifc[1] = 0; A_ifc[end] = 0
+    vc = HybridSigmaPressure(A_ifc, B_ifc)
+    grid = AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT = FT)
+    Hp = mesh.Hp
+
+    air_mass = ntuple(_ -> fill(FT(5e3), Nc + 2Hp, Nc + 2Hp, Nz), 6)
+    tracer1  = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz), 6)
+    for p in 1:6
+        tracer1[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, Nz] .= FT(1e-3) * FT(5e3)
+    end
+    state = CubedSphereState(DryBasis, mesh, air_mass; CO2 = tracer1)
+
+    entu = ntuple(_ -> begin e = zeros(FT, Nc, Nc, Nz); e[:, :, 2:4] .= FT(0.03); e end, 6)
+    detu = ntuple(_ -> begin e = zeros(FT, Nc, Nc, Nz); e[:, :, 2:4] .= FT(0.02); e end, 6)
+    entd = ntuple(_ -> begin e = zeros(FT, Nc, Nc, Nz); e[:, :, 3:4] .= FT(0.01); e end, 6)
+    detd = ntuple(_ -> begin e = zeros(FT, Nc, Nc, Nz); e[:, :, 3:4] .= FT(0.005); e end, 6)
+    forcing = ConvectionForcing(nothing, nothing,
+                                 (; entu, detu, entd, detd))
+    ws = TM5Workspace(state.air_mass)
+
+    function interior_mass(tracers_raw)
+        s = zero(FT)
+        for p in 1:6, k in 1:Nz, j in Hp+1:Hp+Nc, i in Hp+1:Hp+Nc
+            s += tracers_raw[p][i, j, k, 1]
+        end
+        return s
+    end
+    mass_before = interior_mass(state.tracers_raw)
+    apply!(state, forcing, grid, TM5Convection(), FT(600); workspace = ws)
+    mass_after = interior_mass(state.tracers_raw)
+    @test isapprox(mass_after, mass_before; rtol = 1f4 * eps(FT))
+end
+
+@testset "plan 23 Commit 4: _assert_tm5_forcing catches missing tm5_fields" begin
+    Nx, Ny, Nz = 4, 3, 4
+    mesh = LatLonMesh(; Nx=Nx, Ny=Ny, FT=FT)
     A_ifc = FT[0, 500, 5000, 30000, 0]
     B_ifc = FT[0, 0, FT(0.1), FT(0.5), 1]
     vc = HybridSigmaPressure(A_ifc, B_ifc)
     grid = AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT=FT)
 
-    state = CellState(zeros(FT, 4, 3, 4); CO2 = zeros(FT, 4, 3, 4))
+    state = CellState(fill(FT(1), Nx, Ny, Nz); CO2 = zeros(FT, Nx, Ny, Nz))
     ws = TM5Workspace(state.air_mass)
-    forcing = ConvectionForcing()
+    empty_forcing = ConvectionForcing()
 
-    # Stub must throw with a message pointing at Commit 4 (not a
-    # silent no-op, not a MethodError from missing dispatch).
     err = try
-        apply!(state, forcing, grid, TM5Convection(), FT(60); workspace=ws)
+        apply!(state, empty_forcing, grid, TM5Convection(), FT(60); workspace=ws)
         nothing
     catch e
         e
     end
     @test err isa ArgumentError
-    @test occursin("Commit 4", err.msg)
-    @test occursin("TM5Convection", err.msg)
-    @test occursin("kernel not yet implemented", err.msg)
+    @test occursin("tm5_fields", err.msg)
+    @test occursin("NamedTuple", err.msg)
 
-    # Array-level entry point has the same contract.
-    rm4 = zeros(FT, 4, 3, 4, 1)
-    err = try
-        apply_convection!(rm4, state.air_mass, forcing,
-                          TM5Convection(), FT(60), ws, grid)
-        nothing
-    catch e
-        e
-    end
-    @test err isa ArgumentError
-    @test occursin("Commit 4", err.msg)
+    # No "not yet implemented" strings remain (principle 7 prep).
+    @test !occursin("not yet implemented", err.msg)
 end
 
 @testset "plan 23 Commit 2: _tm5_solve_column! identity + conservation" begin

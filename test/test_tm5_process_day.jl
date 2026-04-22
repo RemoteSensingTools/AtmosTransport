@@ -146,7 +146,7 @@ end
         B = Float64[(k - 1) / Nz_native for k in 1:(Nz_native + 1)]
         vc = (A = A, B = B)
         vertical = (
-            ab = (a = A, b = B),
+            ab = (a_ifc = A, b_ifc = B),
             level_range = 1:Nz_native,
             vc_native = vc,
             merged_vc = vc,
@@ -329,21 +329,27 @@ end
 
             ps_hour = fill(98000.0f0, Nlon, Nlat)
 
-            compute_tm5_merged_hour_on_source!(
-                ws, reader, 1, ps_hour, ak, bk, Nz_native, merge_map; stats = stats)
-
-            # Zero input → zero output.
-            @test all(ws.entu_merged_src .== 0)
-            @test all(ws.detu_merged_src .== 0)
-            @test all(ws.entd_merged_src .== 0)
-            @test all(ws.detd_merged_src .== 0)
+            # Exercise every valid hour slot (1..24) so an off-by-one
+            # in the BIN index would throw BoundsError.  Real `process_day`
+            # drives this with `win_idx` from `enumerate(spec.hours)`,
+            # not the ERA5 0-indexed `hour`.
+            for h in (1, 12, 24)
+                compute_tm5_merged_hour_on_source!(
+                    ws, reader, h, ps_hour, ak, bk, Nz_native, merge_map; stats = stats)
+                # Zero input → zero output at every slot.
+                @test all(ws.entu_merged_src .== 0)
+                @test all(ws.detu_merged_src .== 0)
+                @test all(ws.entd_merged_src .== 0)
+                @test all(ws.detd_merged_src .== 0)
+            end
             @test size(ws.entu_merged_src) == (Nlon, Nlat, Nz)
 
             # With all UDMF below the 1e-6 clip threshold (all zero),
             # every column registers as "no updraft" / "no downdraft".
-            @test stats.columns_processed[] == Nlon * Nlat
-            @test stats.no_updraft[]         == Nlon * Nlat
-            @test stats.no_downdraft[]       == Nlon * Nlat
+            # 3 hour slots × Nlon*Nlat columns each.
+            @test stats.columns_processed[] == 3 * Nlon * Nlat
+            @test stats.no_updraft[]         == 3 * Nlon * Nlat
+            @test stats.no_downdraft[]       == 3 * Nlon * Nlat
         finally
             close_era5_physics_binary(reader)
         end

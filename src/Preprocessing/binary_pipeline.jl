@@ -852,8 +852,10 @@ function process_window!(win_idx::Int,
     # Plan 24 Commit 4: TM5 convection step — runs only when the
     # caller wired up a physics BIN reader and TM5 workspace.  Uses
     # `transform.sp` for surface pressure (Commit-2 BIN omits PS).
+    # `win_idx` (1..Nt) is the correct physics-BIN hour index;
+    # ERA5 spectral `hour` is 0-indexed so cannot be used directly.
     if settings.tm5_convection_enable && physics_reader !== nothing
-        _store_window_tm5_fields!(storage, win_idx, hour,
+        _store_window_tm5_fields!(storage, win_idx,
                                    physics_reader, tm5_ws,
                                    transform.sp, vertical, tm5_stats, FT)
     end
@@ -869,8 +871,10 @@ end
 # Plan 24 Commit 4 helper — per-window TM5 compute + store.
 # `ps_target` is `transform.sp` at the preprocessor's target grid
 # (== ERA5 native 720×361 for the Commit-4-supported shape).
+# `win_idx` is the 1-indexed physics-BIN hour slot (matches the
+# 24 hourly slices in the Commit-2 daily BIN).
 function _store_window_tm5_fields!(storage::WindowStorage{FT},
-                                    win_idx::Int, hour::Int,
+                                    win_idx::Int,
                                     physics_reader,
                                     tm5_ws::TM5PreprocessingWorkspace{FT},
                                     ps_target::AbstractMatrix,
@@ -878,8 +882,8 @@ function _store_window_tm5_fields!(storage::WindowStorage{FT},
                                     tm5_stats,
                                     ::Type{FT}) where FT
     compute_tm5_merged_hour_on_source!(
-        tm5_ws, physics_reader, hour, ps_target,
-        vertical.ab.a, vertical.ab.b,
+        tm5_ws, physics_reader, win_idx, ps_target,
+        vertical.ab.a_ifc, vertical.ab.b_ifc,
         vertical.Nz_native, vertical.merge_map;
         stats = tm5_stats)
 

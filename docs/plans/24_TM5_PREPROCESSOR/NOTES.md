@@ -171,6 +171,89 @@ Commit 1 cites these line ranges in the Julia port.
 - **0 regressions** on existing plan 23 / plan 24 Commit 1 tests;
   README gate 74 pass.
 
+### Commit 4
+
+- **Scope narrowed** during implementation (2026-04-22) from "LL
+  + RG + CS in one commit" (user-approved earlier) back to
+  **LL target at ERA5-native (720, 361) only**. Trigger:
+  the Commit-2 BIN does not store surface pressure (plan doc
+  line 81 specified it but Commit 2 shipped 6 variables without
+  PS; see also the convection + thermo NCs at
+  `~/data/AtmosTransport/met/era5/0.5x0.5/physics/` — neither
+  carries PS). The only in-memory PS source is the preprocessor's
+  `transform.sp`, which lives at the target grid — matches ERA5
+  native only when target = 720×361. RG and CS require either
+  (a) a schema bump to Commit 2's BIN, (b) per-hour LNSP
+  synthesis to 720×361 alongside the target-grid spectral
+  synthesis, or (c) source→target regrid of the six BIN inputs.
+  All three are follow-on Commits 4b/4c.
+
+- **Writer architecture** — LL `process_day` uses the legacy
+  daily writer `write_day_binary!` → `write_window!`
+  ([`binary_pipeline.jl:1019-1046`](../../../src/Preprocessing/binary_pipeline.jl#L1019-L1046)).
+  Commit 4 extends it to emit the four TM5 sections after the
+  four delta sections (`dam, dbm, dcm, dm`) when
+  `settings.tm5_convection_enable` is true. Section ordering
+  matches the reader's
+  `_transport_push_optional_sections!` at
+  [`TransportBinary.jl:557-578`](../../../src/MetDrivers/TransportBinary.jl#L557-L578)
+  (plan 23 Commit 3). Header slots for TM5 (`include_tm5conv`,
+  `n_entu/.../n_detd`, payload_sections) were already laid down
+  as zeros/false in Commit 2 — Commit 4 populates them.
+
+- **Configuration** — new `[tm5_convection]` TOML section with
+  `enable` (bool, default false) and `physics_bin_dir` (string,
+  required when enable=true). Parsed by
+  `resolve_tm5_convection_settings` at
+  [`configuration.jl`](../../../src/Preprocessing/configuration.jl).
+  Merged into the settings NamedTuple alongside
+  `resolve_mass_fix_settings`. Startup summary gains a "TM5
+  convec:" line showing ON/OFF + bin_dir.
+
+- **Per-day workspace** —
+  [`TM5PreprocessingWorkspace`](../../../src/Preprocessing/tm5_convection_pipeline.jl)
+  (new file) holds the 11 per-column scratch vectors reused
+  across all columns of a day, plus the 4×(Nlon, Nlat, Nz_native)
+  native-vertical buffers and 4×(Nlon, Nlat, Nz) merged-vertical
+  buffers on the source grid. `regridder` field is `nothing` for
+  the Commit-4 identity path; follow-on commits thread a
+  ConservativeRegridding.jl regridder through the same struct.
+
+- **LL `process_day` hook** — opens the day's physics BIN at
+  [`binary_pipeline.jl:1749`](../../../src/Preprocessing/binary_pipeline.jl#L1749)
+  after the existing workspace allocations, shape-checks
+  BIN `(Nlon, Nlat) == (Nx, Ny)` with a clear error when the
+  scope contract is violated, and threads the reader + workspace
+  + TM5CleanupStats through to `process_window!` via three new
+  optional kwargs (default `nothing`, so calls without TM5
+  enabled are bit-exact to pre-Commit-4).
+  `_store_window_tm5_fields!` runs after `store_window_fields!`
+  in the per-window loop, fills `storage.all_entu[win_idx]` et al.
+  via `tm5_copy_or_regrid_ll!` (identity fast-path when regridder
+  is nothing). A `try/finally` ensures the BIN is closed even on
+  errors mid-day.
+
+- **Tests** (3 core testsets in
+  [`test/test_tm5_process_day.jl`](../../../test/test_tm5_process_day.jl),
+  registered in `core_tests`; 1 `--all` testset):
+  - `resolve_tm5_convection_settings` (9 asserts) — defaults,
+    enable + path expansion, error on enable-without-path.
+  - `LL write_day_binary! with TM5 sections` (17 asserts) —
+    synthesizes a tiny LL grid + WindowStorage with TM5 arrays,
+    calls the writer, parses the on-disk header, and verifies
+    byte-exact TM5 sections at the advertised per-window offsets.
+  - `compute_tm5_merged_hour_on_source! zero-forcing` (9 asserts)
+    — builds tiny ERA5-shaped convection + thermo NCs, runs
+    Commit-2 NC→BIN, opens the reader, and verifies zero input
+    → zero output + the TM5CleanupStats no_updraft/no_downdraft
+    counters bump on every column.
+  - `--all`: real `process_day` spot-check for Dec 2 2021 —
+    graceful-skips if the staged BIN or spectral GRIB are absent
+    (Commit 6 owns the full end-to-end sweep).
+
+- **0 regressions**: core suite passes with the pre-Commit-4
+  77-failure baseline intact.
+
 ### Commit 3
 
 - **Grid-level pipeline hook**

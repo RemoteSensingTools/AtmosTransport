@@ -80,6 +80,9 @@ function build_v4_header(date::Date,
     payload_sections = String["m", "am", "bm", "cm", "ps"]
     settings.include_qv && append!(payload_sections, ["qv_start", "qv_end"])
     append!(payload_sections, ["dam", "dbm", "dcm", "dm"])
+    # Plan 24 Commit 4: TM5 sections follow the deltas, matching the
+    # ordering in _transport_push_optional_sections! (plan 23 Commit 3).
+    settings.tm5_convection_enable && append!(payload_sections, ["entu", "detu", "entd", "detd"])
     var_names = copy(payload_sections)
 
     ncell = sizes.Nx * sizes.Ny
@@ -100,14 +103,15 @@ function build_v4_header(date::Date,
         "n_cm" => counts.n_cm, "n_ps" => counts.n_ps, "n_qv" => counts.n_qv,
         "n_qv_start" => counts.n_qv_start, "n_qv_end" => counts.n_qv_end,
         "n_cmfmc" => 0,
-        "n_entu" => 0, "n_detu" => 0, "n_entd" => 0, "n_detd" => 0,
+        "n_entu" => counts.n_entu, "n_detu" => counts.n_detu,
+        "n_entd" => counts.n_entd, "n_detd" => counts.n_detd,
         "n_pblh" => 0, "n_t2m" => 0, "n_ustar" => 0, "n_hflux" => 0,
         "n_temperature" => 0,
         "n_dam" => counts.n_dam, "n_dbm" => counts.n_dbm, "n_dcm" => counts.n_dcm, "n_dm" => counts.n_dm,
         "include_flux_delta" => true,
         "include_qv" => false, "include_qv_endpoints" => settings.include_qv,
         "include_cmfmc" => false,
-        "include_tm5conv" => false, "include_surface" => false,
+        "include_tm5conv" => settings.tm5_convection_enable, "include_surface" => false,
         "include_temperature" => false,
         "dt_met_seconds" => settings.met_interval,
         "dt_seconds" => settings.dt,
@@ -190,7 +194,9 @@ end
 Return the per-window element counts for every payload section in the output
 binary.
 """
-function window_element_counts(grid::LatLonTargetGeometry, Nz::Int; include_qv::Bool=false)
+function window_element_counts(grid::LatLonTargetGeometry, Nz::Int;
+                                include_qv::Bool=false,
+                                tm5_convection::Bool=false)
     Nx = nlon(grid)
     Ny = nlat(grid)
 
@@ -202,6 +208,7 @@ function window_element_counts(grid::LatLonTargetGeometry, Nz::Int; include_qv::
     n_qv = Int64(0)
     n_qv_start = include_qv ? n_m : Int64(0)
     n_qv_end = include_qv ? n_m : Int64(0)
+    n_tm5 = tm5_convection ? n_m : Int64(0)  # each of entu/detu/entd/detd is (Nx, Ny, Nz)
 
     return (
         n_m = n_m,
@@ -216,7 +223,11 @@ function window_element_counts(grid::LatLonTargetGeometry, Nz::Int; include_qv::
         n_dbm = n_bm,
         n_dcm = n_cm,
         n_dm = n_m,
-        elems_per_window = n_m + n_am + n_bm + n_cm + n_ps + n_qv_start + n_qv_end + n_am + n_bm + n_cm + n_m,
+        n_entu = n_tm5,
+        n_detu = n_tm5,
+        n_entd = n_tm5,
+        n_detd = n_tm5,
+        elems_per_window = n_m + n_am + n_bm + n_cm + n_ps + n_qv_start + n_qv_end + n_am + n_bm + n_cm + n_m + 4 * n_tm5,
     )
 end
 
@@ -318,6 +329,13 @@ struct WindowStorage{FT}
     all_ps       :: Vector{Array{FT, 2}}
     all_qv_start :: Vector{Array{FT, 3}}   # empty vector when include_qv=false
     all_qv_end   :: Vector{Array{FT, 3}}   # empty vector when include_qv=false
+    # Plan 24 Commit 4: four TM5 convection sections on the merged
+    # transport grid, one per window.  Empty vectors when
+    # tm5_convection=false.  Shape per window: (Nx, Ny, Nz).
+    all_entu     :: Vector{Array{FT, 3}}
+    all_detu     :: Vector{Array{FT, 3}}
+    all_entd     :: Vector{Array{FT, 3}}
+    all_detd     :: Vector{Array{FT, 3}}
 end
 
 abstract type AbstractQVWorkspace{FT} end
@@ -427,18 +445,23 @@ function allocate_merge_workspace(grid::LatLonTargetGeometry, Nz_native::Int, Nz
 end
 
 """
-    allocate_window_storage(Nt, FT; include_qv=false) -> WindowStorage{FT}
+    allocate_window_storage(Nt, FT; include_qv=false, tm5_convection=false) -> WindowStorage{FT}
 
-Allocate per-window storage for the daily output payloads.
+Allocate per-window storage for the daily output payloads. When
+`tm5_convection=true`, also allocate the four TM5 section vectors.
 """
-function allocate_window_storage(Nt::Int, ::Type{FT}; include_qv::Bool=false) where FT
+function allocate_window_storage(Nt::Int, ::Type{FT};
+                                 include_qv::Bool=false,
+                                 tm5_convection::Bool=false) where FT
+    _qv_vec() = include_qv ? Vector{Array{FT, 3}}(undef, Nt) : Vector{Array{FT, 3}}()
+    _tm5_vec() = tm5_convection ? Vector{Array{FT, 3}}(undef, Nt) : Vector{Array{FT, 3}}()
     return WindowStorage{FT}(Vector{Array{FT, 3}}(undef, Nt),
                              Vector{Array{FT, 3}}(undef, Nt),
                              Vector{Array{FT, 3}}(undef, Nt),
                              Vector{Array{FT, 3}}(undef, Nt),
                              Vector{Array{FT, 2}}(undef, Nt),
-                             include_qv ? Vector{Array{FT, 3}}(undef, Nt) : Vector{Array{FT, 3}}(),
-                             include_qv ? Vector{Array{FT, 3}}(undef, Nt) : Vector{Array{FT, 3}}())
+                             _qv_vec(), _qv_vec(),
+                             _tm5_vec(), _tm5_vec(), _tm5_vec(), _tm5_vec())
 end
 
 """
@@ -802,7 +825,10 @@ function process_window!(win_idx::Int,
                          merged::MergeWorkspace{FT},
                          qv::AbstractQVWorkspace{FT},
                          storage::WindowStorage{FT},
-                         ps_offsets::Vector{Float64}) where FT
+                         ps_offsets::Vector{Float64};
+                         physics_reader = nothing,
+                         tm5_ws = nothing,
+                         tm5_stats = nothing) where FT
     Nx = size(transform.sp, 1)
     Ny = size(transform.sp, 2)
     t0 = time()
@@ -823,11 +849,49 @@ function process_window!(win_idx::Int,
     merge_native_window!(merged, transform, qv, vertical, settings)
     store_window_fields!(storage, merged, transform.sp, qv, win_idx)
 
+    # Plan 24 Commit 4: TM5 convection step — runs only when the
+    # caller wired up a physics BIN reader and TM5 workspace.  Uses
+    # `transform.sp` for surface pressure (Commit-2 BIN omits PS).
+    if settings.tm5_convection_enable && physics_reader !== nothing
+        _store_window_tm5_fields!(storage, win_idx, hour,
+                                   physics_reader, tm5_ws,
+                                   transform.sp, vertical, tm5_stats, FT)
+    end
+
     elapsed = round(time() - t0, digits=2)
     should_log_window(win_idx, length(storage.all_m)) &&
         @info(@sprintf("    Window %d/%d (hour %02d): %.2fs  ps_offset=%+.3f Pa",
                        win_idx, length(storage.all_m), hour, elapsed, ps_offsets[win_idx]))
 
+    return nothing
+end
+
+# Plan 24 Commit 4 helper — per-window TM5 compute + store.
+# `ps_target` is `transform.sp` at the preprocessor's target grid
+# (== ERA5 native 720×361 for the Commit-4-supported shape).
+function _store_window_tm5_fields!(storage::WindowStorage{FT},
+                                    win_idx::Int, hour::Int,
+                                    physics_reader,
+                                    tm5_ws::TM5PreprocessingWorkspace{FT},
+                                    ps_target::AbstractMatrix,
+                                    vertical,
+                                    tm5_stats,
+                                    ::Type{FT}) where FT
+    compute_tm5_merged_hour_on_source!(
+        tm5_ws, physics_reader, hour, ps_target,
+        vertical.ab.a, vertical.ab.b,
+        vertical.Nz_native, vertical.merge_map;
+        stats = tm5_stats)
+
+    Nx_t, Ny_t, Nz = size(tm5_ws.entu_merged_src)
+    storage.all_entu[win_idx] = Array{FT, 3}(undef, Nx_t, Ny_t, Nz)
+    storage.all_detu[win_idx] = Array{FT, 3}(undef, Nx_t, Ny_t, Nz)
+    storage.all_entd[win_idx] = Array{FT, 3}(undef, Nx_t, Ny_t, Nz)
+    storage.all_detd[win_idx] = Array{FT, 3}(undef, Nx_t, Ny_t, Nz)
+    tm5_copy_or_regrid_ll!(storage.all_entu[win_idx], tm5_ws.entu_merged_src, tm5_ws)
+    tm5_copy_or_regrid_ll!(storage.all_detu[win_idx], tm5_ws.detu_merged_src, tm5_ws)
+    tm5_copy_or_regrid_ll!(storage.all_entd[win_idx], tm5_ws.entd_merged_src, tm5_ws)
+    tm5_copy_or_regrid_ll!(storage.all_detd[win_idx], tm5_ws.detd_merged_src, tm5_ws)
     return nothing
 end
 
@@ -1011,6 +1075,15 @@ function write_window!(io::IO,
     bytes_written += write_array!(io, merged.dbm_merged)
     bytes_written += write_array!(io, merged.dcm_merged)
     bytes_written += write_array!(io, merged.dm_merged)
+
+    # Plan 24 Commit 4: TM5 convection sections (order must match
+    # _transport_push_optional_sections! in TransportBinary.jl:557-578).
+    if settings.tm5_convection_enable
+        bytes_written += write_array!(io, storage.all_entu[win_idx])
+        bytes_written += write_array!(io, storage.all_detu[win_idx])
+        bytes_written += write_array!(io, storage.all_entd[win_idx])
+        bytes_written += write_array!(io, storage.all_detd[win_idx])
+    end
 
     return bytes_written
 end
@@ -1633,7 +1706,9 @@ function process_day(date::Date,
                    spec.T, spec.n_times, time() - t_day)
 
     Nt = spec.n_times
-    counts = window_element_counts(grid, Nz; include_qv=settings.include_qv)
+    counts = window_element_counts(grid, Nz;
+                                    include_qv=settings.include_qv,
+                                    tm5_convection=settings.tm5_convection_enable)
     byte_sizes = window_byte_sizes(counts, FT, Nt)
     counts = merge(counts, (bytes_per_window = byte_sizes.bytes_per_window,))
 
@@ -1657,38 +1732,69 @@ function process_day(date::Date,
 
     transform = allocate_transform_workspace(grid, spec.T, Nz_native)
     merged = allocate_merge_workspace(grid, Nz_native, Nz, FT)
-    storage = allocate_window_storage(Nt, FT; include_qv=settings.include_qv)
+    storage = allocate_window_storage(Nt, FT;
+                                       include_qv=settings.include_qv,
+                                       tm5_convection=settings.tm5_convection_enable)
     qv = allocate_qv_workspace(grid, settings, date, Nz_native, Nz, FT)
     ps_offsets = zeros(Float64, Nt + 1)
+
+    # Plan 24 Commit 4: TM5 convection setup (LL target == ERA5 native
+    # 720×361 only — see NOTES.md for the scope narrowing).  When
+    # enabled, open the day's physics BIN, shape-check against the
+    # target, and allocate the per-day workspace + cleanup stats.
+    physics_reader = nothing
+    tm5_ws         = nothing
+    tm5_stats      = nothing
+    if settings.tm5_convection_enable
+        physics_reader = open_era5_physics_binary(settings.tm5_physics_bin_dir, date)
+        Nlon_src = physics_reader.header.Nlon
+        Nlat_src = physics_reader.header.Nlat
+        (Nlon_src == Nx && Nlat_src == Ny) || error(
+            "Plan 24 Commit 4 requires LL target == physics BIN shape. " *
+            "BIN is ($Nlon_src, $Nlat_src), target is ($Nx, $Ny). " *
+            "Either (a) use a 720×361 LL target config, or (b) wait for " *
+            "Commit 4b/4c (regrid + PS sourcing for coarser / non-LL targets).")
+        tm5_ws    = allocate_tm5_workspace(Nlon_src, Nlat_src, Nz_native, Nz, FT)
+        tm5_stats = TM5CleanupStats()
+    end
 
     log_mass_fix_configuration(settings)
     @info "  Computing spectral -> gridpoint -> merged for $Nt windows..."
 
-    for (win_idx, hour) in enumerate(spec.hours)
-        process_window!(win_idx, hour, spec, grid, vertical, settings,
-                        transform, merged, qv, storage, ps_offsets)
+    try
+        for (win_idx, hour) in enumerate(spec.hours)
+            process_window!(win_idx, hour, spec, grid, vertical, settings,
+                            transform, merged, qv, storage, ps_offsets;
+                            physics_reader = physics_reader,
+                            tm5_ws         = tm5_ws,
+                            tm5_stats      = tm5_stats)
+        end
+
+        if settings.mass_fix_enable
+            @info @sprintf("  Mass-fix offsets (Pa) min/max/mean: %+.3f / %+.3f / %+.3f",
+                           minimum(ps_offsets[1:Nt]),
+                           maximum(ps_offsets[1:Nt]),
+                           sum(ps_offsets[1:Nt]) / Nt)
+        end
+
+        tm5_stats === nothing || log_tm5_cleanup_stats(tm5_stats, date_str)
+
+        last_hour_next = next_day_merged_fields(next_day_hour0, date, grid, vertical,
+                                                settings, transform, merged, qv, ps_offsets)
+
+        apply_poisson_balance!(storage, last_hour_next, vertical, sizes.steps_per_met)
+        fill_qv_endpoints!(storage, last_hour_next)
+
+        header["ps_offsets_pa_per_window"] = ps_offsets[1:Nt]
+        header["ps_offsets_next_day_hour0_pa"] = ps_offsets[Nt + 1]
+        header_json = JSON3.write(header)
+        length(header_json) < HEADER_SIZE ||
+            error("Header JSON too large after offsets update: $(length(header_json)) >= $(HEADER_SIZE)")
+
+        write_day_binary!(bin_path, header_json, storage, settings, merged, last_hour_next)
+    finally
+        physics_reader === nothing || close_era5_physics_binary(physics_reader)
     end
-
-    if settings.mass_fix_enable
-        @info @sprintf("  Mass-fix offsets (Pa) min/max/mean: %+.3f / %+.3f / %+.3f",
-                       minimum(ps_offsets[1:Nt]),
-                       maximum(ps_offsets[1:Nt]),
-                       sum(ps_offsets[1:Nt]) / Nt)
-    end
-
-    last_hour_next = next_day_merged_fields(next_day_hour0, date, grid, vertical,
-                                            settings, transform, merged, qv, ps_offsets)
-
-    apply_poisson_balance!(storage, last_hour_next, vertical, sizes.steps_per_met)
-    fill_qv_endpoints!(storage, last_hour_next)
-
-    header["ps_offsets_pa_per_window"] = ps_offsets[1:Nt]
-    header["ps_offsets_next_day_hour0_pa"] = ps_offsets[Nt + 1]
-    header_json = JSON3.write(header)
-    length(header_json) < HEADER_SIZE ||
-        error("Header JSON too large after offsets update: $(length(header_json)) >= $(HEADER_SIZE)")
-
-    write_day_binary!(bin_path, header_json, storage, settings, merged, last_hour_next)
 
     actual = filesize(bin_path)
     @info @sprintf("  Done: %s (%.2f GB, %.1fs)", basename(bin_path), actual / 1e9, time() - t_day)

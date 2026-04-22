@@ -26,6 +26,7 @@ core_tests = [
     "test_tm5_preprocessing_rates.jl",
     "test_era5_physics_binary.jl",
     "test_tm5_vertical_remap.jl",
+    "test_tm5_process_day.jl",
     "test_tm5_vs_cmfmc_parity.jl",
     "test_tm5_driven_simulation.jl",
     "test_cubed_sphere_advection.jl",

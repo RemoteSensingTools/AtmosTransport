@@ -110,14 +110,19 @@ include("cs_transport_helpers.jl")
 # Configuration parsing
 include("configuration.jl")
 
-# Binary pipeline (window storage, header, write)
-include("binary_pipeline.jl")
-
 # TM5 convection ec2tm conversion (plan 23 Commit 3)
+# (Loaded before binary_pipeline so the LL process_day hook can
+# reference TM5PreprocessingWorkspace / TM5CleanupStats by type.)
 include("tm5_convection_conversion.jl")
 
 # ERA5 physics NC → BIN converter + mmap reader (plan 24 Commit 2)
 include("era5_physics_binary.jl")
+
+# TM5 convection preprocessor pipeline wiring (plan 24 Commit 4)
+include("tm5_convection_pipeline.jl")
+
+# Binary pipeline (window storage, header, write)
+include("binary_pipeline.jl")
 
 # Exports for the CLI script and advanced users
 export build_target_geometry, target_summary
@@ -129,5 +134,9 @@ export convert_era5_physics_nc_to_bin
 export ERA5PhysicsBinaryReader, ERA5PhysicsBinaryHeader
 export open_era5_physics_binary, close_era5_physics_binary, get_era5_physics_field
 export tm5_native_fields_for_hour!, merge_tm5_field_3d!
+export TM5PreprocessingWorkspace, allocate_tm5_workspace
+export compute_tm5_merged_hour_on_source!, log_tm5_cleanup_stats
+export tm5_copy_or_regrid_ll!
+export resolve_tm5_convection_settings
 
 end # module Preprocessing

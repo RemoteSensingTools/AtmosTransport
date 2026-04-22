@@ -66,6 +66,37 @@ function resolve_mass_fix_settings(cfg)
 end
 
 """
+    resolve_tm5_convection_settings(cfg) -> NamedTuple
+
+Parse the optional `[tm5_convection]` section.  When `enable=true` the
+preprocessor reads ERA5 physics binaries (built by `convert_era5_physics_nc_to_bin`,
+plan 24 Commit 2), computes TM5 entu/detu/entd/detd per hour via
+`tm5_native_fields_for_hour!` (plan 24 Commit 3), merges to the transport Nz,
+conservatively regrids to the target horizontal grid, and writes the four
+TM5 sections into the transport binary.
+
+Fields:
+- `tm5_convection_enable :: Bool` — master switch.
+- `tm5_physics_bin_dir   :: String` — NVMe directory holding
+  `era5_physics_YYYYMMDD.bin` files produced by Commit 2's converter.
+  Empty when disabled.
+"""
+function resolve_tm5_convection_settings(cfg)
+    tm5_cfg = get(cfg, "tm5_convection", Dict{String, Any}())
+    enable = Bool(get(tm5_cfg, "enable", false))
+    bin_dir = expanduser(String(get(tm5_cfg, "physics_bin_dir", "")))
+    if enable && isempty(bin_dir)
+        error("[tm5_convection] enable=true requires physics_bin_dir " *
+              "pointing at the NVMe directory of ERA5 physics binaries " *
+              "(run scripts/preprocessing/convert_era5_physics_nc_to_bin.jl first)")
+    end
+    return (
+        tm5_convection_enable = enable,
+        tm5_physics_bin_dir = bin_dir,
+    )
+end
+
+"""
     resolve_runtime_settings(cfg) -> NamedTuple
 
 Resolve the script configuration into a compact runtime settings bundle used by
@@ -97,7 +128,7 @@ function resolve_runtime_settings(cfg)
         met_interval = met_interval,
         half_dt = dt / 2,
         output_float_type = resolve_output_float_type(cfg),
-    ), resolve_mass_fix_settings(cfg))
+    ), resolve_mass_fix_settings(cfg), resolve_tm5_convection_settings(cfg))
 end
 
 """
@@ -199,6 +230,9 @@ function log_preprocessor_configuration(settings, grid::AbstractTargetGeometry, 
             "ON  (target_ps_dry=$(settings.target_ps_dry_pa) Pa, qv_global=$(settings.qv_global_climatology))"
         end
 
+    tm5_summary = settings.tm5_convection_enable ?
+        "ON  ($(settings.tm5_physics_bin_dir))" : "OFF"
+
     @info """
     Fused Spectral -> v4 Binary Preprocessor
     ==========================================
@@ -215,5 +249,6 @@ function log_preprocessor_configuration(settings, grid::AbstractTargetGeometry, 
     Mass basis:    $(settings.mass_basis)
     Include qv:    $(settings.include_qv)
     Mass fix:      $(mass_fix_summary)
+    TM5 convec:    $(tm5_summary)
     """
 end

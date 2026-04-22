@@ -116,11 +116,17 @@ include("binary_pipeline.jl")
 # TM5 convection ec2tm conversion (plan 23 Commit 3)
 include("tm5_convection_conversion.jl")
 
+# ERA5 physics NC → BIN converter + mmap reader (plan 24 Commit 2)
+include("era5_physics_binary.jl")
+
 # Exports for the CLI script and advanced users
 export build_target_geometry, target_summary
 export process_day, regrid_ll_binary_to_cs
 export ec2tm!
 export ec2tm_from_rates!, TM5CleanupStats
 export dz_hydrostatic_virtual!, dz_hydrostatic_constT!
+export convert_era5_physics_nc_to_bin
+export ERA5PhysicsBinaryReader, ERA5PhysicsBinaryHeader
+export open_era5_physics_binary, close_era5_physics_binary, get_era5_physics_field
 
 end # module Preprocessing

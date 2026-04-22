@@ -106,6 +106,71 @@ Commit 1 cites these line ranges in the Julia port.
 - 0 regressions on existing plan-23 tests
   (`test_tm5_preprocessing.jl` 43 pass, README gate 74 pass).
 
+### Commit 2
+
+- **NC→BIN converter + mmap reader** in
+  [`src/Preprocessing/era5_physics_binary.jl`](../../../src/Preprocessing/era5_physics_binary.jl)
+  — single file (~530 LOC) containing format constants, header
+  struct, writer (`convert_era5_physics_nc_to_bin`), reader
+  (`ERA5PhysicsBinaryReader` + `open_*` / `get_era5_physics_field`
+  / `close_*`).
+- **Calendar-day splicing** — convection NCs are forecast-based
+  (07:00 day D through 06:00 day D+1) while thermo is calendar-
+  day aligned. The writer builds a calendar-day BIN by pulling
+  hours 00–06 from the PREV-day convection NC and hours 07–23
+  from the target-day convection NC. Documented in the module
+  docstring + `_splice_calendar_day` helper. Tests assert the
+  splice picks the right values.
+- **Binary format** — 4 KB JSON header (magic `"ERA5PHYS"`,
+  format_version=1, per-var offsets + nelems, lat range + convention,
+  provenance: source NC paths, timestamp, git sha) followed by
+  flat Float32 payload. Six variables:
+  `udmf, ddmf, udrf_rate, ddrf_rate, t, q`. Shape
+  `(Nlon, Nlat, Nlev, 24)` per var. Latitude flipped N→S to
+  S→N at write time (AtmosTransport orientation). Hybrid level
+  already matches (k=1=TOA).
+- **CLI wrapper** at
+  [`scripts/preprocessing/convert_era5_physics_nc_to_bin.jl`](../../../scripts/preprocessing/convert_era5_physics_nc_to_bin.jl)
+  — thin arg-parser → delegates to `convert_era5_physics_nc_to_bin`.
+  Used as-is on real ERA5 data during the live smoke below.
+- **Smoke test on real data**: converted Dec 2 2021 from
+  `~/data/AtmosTransport/met/era5/0.5x0.5/physics/` (needing Dec 1
+  + Dec 2 convection NCs + Dec 2 thermo NC) to
+  `/temp1/era5_bin_smoke/2021/era5_physics_20211202.bin`
+  (20.51 GB, ~15 minutes). Reader path end-to-end confirmed:
+  shape (720, 361, 137, 24); UDMF range [0, 0.84] kg/m²/s;
+  T range [174, 316] K; Q range [-3.5e-6, 0.023]; latitude
+  correctly S→N (-90 → 90). Smoke data cleaned up after verification
+  (not part of the commit).
+
+- **Surprise: short-write silent corruption.** Initial smoke run
+  targeted `/tmp` (10 GB tmpfs). `write(io, arr)` returned fewer
+  bytes than requested when `/tmp` filled; my writer ignored the
+  return value and produced a half-full BIN whose header advertised
+  the full layout. Reader then tried to mmap past EOF and triggered
+  a file-grow error on a read-only stream.
+  **Fix**: `_write_payload!` now asserts `written == sizeof(arr)`
+  and errors cleanly with a disk-full hint. Applies to all six
+  variables' writes.
+
+- **Tests** (37 core testsets in
+  [`test/test_era5_physics_binary.jl`](../../../test/test_era5_physics_binary.jl),
+  registered in `core_tests`):
+  - BIN roundtrip on synthetic NCs (20 — header fields, payload
+    byte-exactness, hour-splice correctness).
+  - Latitude flip N→S to S→N (3).
+  - Missing-file errors name the fix (5 — both "missing today
+    NC" and "missing prev-day NC" cases).
+  - `open_era5_physics_binary` on missing BIN errors clearly (3).
+  - Idempotent write (4 — skip-if-exists vs `force_rewrite=true`).
+  - Zero-allocation getter (1 — `@allocated get_era5_physics_field`).
+  - Unknown-var symbol errors cleanly (1).
+  - Plus a `--all`-gated real-data test that reads one day from
+    the archive.
+
+- **0 regressions** on existing plan 23 / plan 24 Commit 1 tests;
+  README gate 74 pass.
+
 ## Retrospective sections (filled during execution)
 
 ### Decisions beyond the plan

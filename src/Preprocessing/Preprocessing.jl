@@ -128,5 +128,6 @@ export dz_hydrostatic_virtual!, dz_hydrostatic_constT!
 export convert_era5_physics_nc_to_bin
 export ERA5PhysicsBinaryReader, ERA5PhysicsBinaryHeader
 export open_era5_physics_binary, close_era5_physics_binary, get_era5_physics_field
+export tm5_native_fields_for_hour!, merge_tm5_field_3d!
 
 end # module Preprocessing

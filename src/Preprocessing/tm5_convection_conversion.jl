@@ -605,3 +605,152 @@ function dz_hydrostatic_constT!(dz::AbstractVector{FT},
     end
     return dz
 end
+
+# ---------------------------------------------------------------------------
+# Plan 24 Commit 3: grid-level pipeline that produces merged (Nz) TM5
+# fields from native-L137 ERA5 physics data.
+#
+# Per-column flow:
+#   dz           ← dz_hydrostatic_virtual! from T, Q, ps, ak, bk
+#   (entu, detu, ← ec2tm_from_rates! from (udmf, ddmf, udrf_rate,
+#    entd, detd)                           ddrf_rate, dz)
+#   merged       ← merge_cell_field!-style accumulate per merge_map
+#
+# The merged-step preserves column-integrated mass budget because
+# TM5 fields are integrated FLUXES (kg/m²/s after the ec2tm `×dz`
+# step), and summing fluxes over native layers that map to a
+# merged layer is the right physical reduction.
+# ---------------------------------------------------------------------------
+
+"""
+    tm5_native_fields_for_hour!(entu, detu, entd, detd,
+                                  udmf_hour, ddmf_hour, udrf_hour, ddrf_hour,
+                                  t_hour, q_hour, ps_hour,
+                                  ak_full, bk_full, Nz_native;
+                                  stats=nothing, scratch=nothing) -> nothing
+
+Grid-level entry point: for each column `(i, j)` in the 2D grid,
+compute `dz` from `(T, Q, ps)` then call `ec2tm_from_rates!`.
+Writes results into the 3D `(Nlon, Nlat, Nz_native)` output arrays.
+
+All input 3D arrays are native-level (137 layers for ERA5);
+2D `ps_hour` is surface pressure in Pa. `stats` counters are
+bumped across all columns. `scratch` is an optional 4-tuple
+of length-Nz_native vectors to avoid per-column allocation;
+when `nothing`, fresh ones are allocated inside.
+"""
+function tm5_native_fields_for_hour!(
+        entu::AbstractArray{FT, 3},
+        detu::AbstractArray{FT, 3},
+        entd::AbstractArray{FT, 3},
+        detd::AbstractArray{FT, 3},
+        udmf_hour::AbstractArray{FT, 3},
+        ddmf_hour::AbstractArray{FT, 3},
+        udrf_hour::AbstractArray{FT, 3},
+        ddrf_hour::AbstractArray{FT, 3},
+        t_hour::AbstractArray{FT, 3},
+        q_hour::AbstractArray{FT, 3},
+        ps_hour::AbstractArray{FT, 2},
+        ak_full::AbstractVector,
+        bk_full::AbstractVector,
+        Nz_native::Integer;
+        stats = nothing,
+        scratch = nothing) where {FT <: AbstractFloat}
+
+    Nlon, Nlat, Nlev = size(entu)
+    Nlev == Nz_native || throw(ArgumentError(
+        "output Nz_native=$Nlev ≠ expected $Nz_native"))
+
+    # Per-column scratch (reused across columns).
+    if scratch === nothing
+        udmf_col = Vector{FT}(undef, Nz_native + 1)
+        ddmf_col = Vector{FT}(undef, Nz_native + 1)
+        udrf_col = Vector{FT}(undef, Nz_native)
+        ddrf_col = Vector{FT}(undef, Nz_native)
+        t_col    = Vector{FT}(undef, Nz_native)
+        q_col    = Vector{FT}(undef, Nz_native)
+        dz_col   = Vector{FT}(undef, Nz_native)
+        entu_col = Vector{FT}(undef, Nz_native)
+        detu_col = Vector{FT}(undef, Nz_native)
+        entd_col = Vector{FT}(undef, Nz_native)
+        detd_col = Vector{FT}(undef, Nz_native)
+    else
+        (udmf_col, ddmf_col, udrf_col, ddrf_col,
+         t_col, q_col, dz_col,
+         entu_col, detu_col, entd_col, detd_col) = scratch
+    end
+
+    @inbounds for j in 1:Nlat, i in 1:Nlon
+        # Half-level mass fluxes: ERA5 provides them on 137 levels;
+        # TM5's formula wants Nz+1 interfaces. Here we treat the
+        # ERA5 native dataset as having the interface at each
+        # level's *top*. The TOA half-level (index 1 in the Nz+1
+        # vector) is always 0 (no mass flux above TOA); the surface
+        # half-level (Nz_native+1) likewise reads 0 because the 137th
+        # layer has its bottom at the surface and the array doesn't
+        # include that boundary. Interfaces between layers 1..Nz_native
+        # come directly from the NC layer-center values — since ERA5
+        # defines these AS half-level fluxes at the layer top, the
+        # `udmf[k]` at layer k IS the interface above layer k. So:
+        #   udmf_col[1]     = 0   (TOA)
+        #   udmf_col[k+1]   = udmf_hour[i, j, k]  for k=1..Nz_native
+        # Shift-by-1 packs ERA5 Nlev half-level values into our
+        # (Nz_native+1)-length interface vector.
+        udmf_col[1] = zero(FT)
+        ddmf_col[1] = zero(FT)
+        for k in 1:Nz_native
+            udmf_col[k + 1] = udmf_hour[i, j, k]
+            ddmf_col[k + 1] = ddmf_hour[i, j, k]
+            udrf_col[k]     = udrf_hour[i, j, k]
+            ddrf_col[k]     = ddrf_hour[i, j, k]
+            t_col[k]        = t_hour[i, j, k]
+            q_col[k]        = q_hour[i, j, k]
+        end
+
+        dz_hydrostatic_virtual!(dz_col, t_col, q_col, ps_hour[i, j],
+                                 ak_full, bk_full, Nz_native)
+
+        ec2tm_from_rates!(entu_col, detu_col, entd_col, detd_col,
+                           udmf_col, ddmf_col, udrf_col, ddrf_col,
+                           dz_col, Nz_native; stats = stats)
+
+        for k in 1:Nz_native
+            entu[i, j, k] = entu_col[k]
+            detu[i, j, k] = detu_col[k]
+            entd[i, j, k] = entd_col[k]
+            detd[i, j, k] = detd_col[k]
+        end
+    end
+    return nothing
+end
+
+"""
+    merge_tm5_field_3d!(merged, native, merge_map)
+
+Accumulate a native-level TM5 field (Nlon, Nlat, Nz_native) onto
+merged output levels (Nlon, Nlat, Nz_merged) using the native-to-
+merged level map. Matches the semantics of `merge_cell_field!` for
+mass/flux fields: sum native layers that map to the same merged
+layer.
+
+For TM5 entrainment/detrainment fluxes (kg/m²/s), summing over a
+consolidated layer preserves the column-integrated mass budget
+exactly.
+"""
+function merge_tm5_field_3d!(merged::AbstractArray{FT, 3},
+                              native::AbstractArray{FT, 3},
+                              merge_map::AbstractVector{<:Integer}) where FT
+    size(native, 1) == size(merged, 1) || throw(ArgumentError(
+        "Nlon mismatch: native $(size(native,1)), merged $(size(merged,1))"))
+    size(native, 2) == size(merged, 2) || throw(ArgumentError(
+        "Nlat mismatch"))
+    size(native, 3) == length(merge_map) || throw(ArgumentError(
+        "Nz_native $(size(native,3)) ≠ merge_map length $(length(merge_map))"))
+
+    fill!(merged, zero(FT))
+    @inbounds for k in eachindex(merge_map)
+        km = merge_map[k]
+        @views merged[:, :, km] .+= native[:, :, k]
+    end
+    return merged
+end

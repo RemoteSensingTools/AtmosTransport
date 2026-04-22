@@ -171,6 +171,45 @@ Commit 1 cites these line ranges in the Julia port.
 - **0 regressions** on existing plan 23 / plan 24 Commit 1 tests;
   README gate 74 pass.
 
+### Commit 3
+
+- **Grid-level pipeline hook**
+  [`tm5_native_fields_for_hour!`](../../../src/Preprocessing/tm5_convection_conversion.jl)
+  — for one hour of the 2D `(Nlon, Nlat)` grid, compute dz from
+  `(T, Q, ps)` per column, call `ec2tm_from_rates!`, fill the 3D
+  `(Nlon, Nlat, Nz_native)` output. Per-column scratch vectors
+  are reused via an optional `scratch` kwarg; `TM5CleanupStats`
+  counters aggregate across all columns.
+- **Native → merged remap**
+  [`merge_tm5_field_3d!`](../../../src/Preprocessing/tm5_convection_conversion.jl)
+  — accumulate native-L137 TM5 fluxes into merged-Nz buckets
+  via the existing `merge_map`. Semantics match
+  `merge_cell_field!` from mass_support.jl for mass-flux
+  fields: sum native layers that map to the same merged layer.
+  Preserves column-integrated flux (mass-budget).
+- **Half-level interface packing** — the writer's binary stores
+  `udmf[i, j, k]` as ERA5's layer-top flux (k=1..137). The
+  Commit 3 column loop repacks into the `(Nz+1)`-length interface
+  vector expected by `ec2tm_from_rates!`: `udmf_col[1]=0` (TOA),
+  `udmf_col[k+1] = udmf[i, j, k]` for `k=1..Nz_native`. Documented
+  in the function body.
+- **Tests** (133 new testsets in
+  [`test/test_tm5_vertical_remap.jl`](../../../test/test_tm5_vertical_remap.jl),
+  registered in `core_tests`):
+  - `merge_tm5_field_3d!` column-sum preservation (62).
+  - Zero-out of unused buckets (5).
+  - Shape guards (2).
+  - `tm5_native_fields_for_hour!` grid loop correctness:
+    all-columns-uniform-in → uniform-out, non-negative outputs,
+    column-processed counter (15).
+  - Output shape guard (1).
+  - **End-to-end native → merged column-sum invariant** (48):
+    nonzero updraft profile + hydrostatic dz → native ec2tm →
+    merge, and the column sum of each TM5 field at merged Nz
+    equals the column sum at native 137L (rtol 1e-12). This
+    is the plan 24 Commit 3 headline invariant.
+- **0 regressions** on plan 23 / plan 24 prior tests; README gate 74.
+
 ## Retrospective sections (filled during execution)
 
 ### Decisions beyond the plan

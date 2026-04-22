@@ -88,6 +88,16 @@ function build_v4_header(date::Date,
     ncell = sizes.Nx * sizes.Ny
     nface_h = (sizes.Nx + 1) * sizes.Ny + sizes.Nx * (sizes.Ny + 1)
 
+    # Plan 39 Commit B: declare the self-describing transport-binary
+    # contract explicitly. LL uses the memo-37 canonical window_constant
+    # path (tracer drift = 0 for Upwind on uniform IC over 2 days).
+    contract = canonical_window_constant_contract(
+        steps_per_window   = sizes.steps_per_met,
+        humidity_sampling  = settings.include_qv ? :window_endpoints : :none,
+        source_flux_sampling = :window_start_endpoint,
+        include_flux_delta = true,
+    )
+
     header = Dict{String, Any}(
         "magic" => "MFLX", "version" => 4, "format_version" => 1, "header_bytes" => HEADER_SIZE,
         "grid_type" => "latlon", "horizontal_topology" => "StructuredDirectional",
@@ -98,6 +108,17 @@ function build_v4_header(date::Date,
         "mass_basis" => String(settings.mass_basis),
         "payload_sections" => payload_sections,
         "elems_per_window" => counts.elems_per_window,
+        # Plan 39 Commit B: the 6 semantic contract fields. Before this,
+        # the LL daily writer emitted only the 2 Poisson fields; the
+        # runtime parser silently defaulted the missing ones to the
+        # pre-memo-37 :window_start_endpoint path, causing the plan-24
+        # Commit-4 blow-up. Now declared explicitly.
+        "source_flux_sampling"            => String(contract.source_flux_sampling),
+        "air_mass_sampling"               => String(contract.air_mass_sampling),
+        "flux_sampling"                   => String(contract.flux_sampling),
+        "flux_kind"                       => String(contract.flux_kind),
+        "delta_semantics"                 => String(contract.delta_semantics),
+        "humidity_sampling"               => String(contract.humidity_sampling),
         "window_bytes" => counts.bytes_per_window,
         "n_m" => counts.n_m, "n_am" => counts.n_am, "n_bm" => counts.n_bm,
         "n_cm" => counts.n_cm, "n_ps" => counts.n_ps, "n_qv" => counts.n_qv,
@@ -124,8 +145,9 @@ function build_v4_header(date::Date,
         "var_names" => var_names,
         "date" => Dates.format(date, "yyyy-mm-dd"),
         "spectral_half_dt_seconds" => settings.half_dt,
-        "poisson_balance_target_scale" => poisson_balance_target_scale(sizes.steps_per_met),
-        "poisson_balance_target_semantics" => "forward_window_mass_difference / (2 * steps_per_window)",
+        # Poisson fields driven by the same TransportBinaryContract above — single source of truth.
+        "poisson_balance_target_scale"     => contract.poisson_balance_target_scale,
+        "poisson_balance_target_semantics" => contract.poisson_balance_target_semantics,
         "script_path" => provenance.script_path,
         "script_mtime_unix" => provenance.script_mtime,
         "git_commit" => provenance.git_commit,

@@ -71,7 +71,8 @@ using ..MetDrivers: TransportBinaryReader, TransportBinaryHeader, write_transpor
                     open_streaming_transport_binary, write_streaming_window!,
                     close_streaming_transport_binary!,
                     open_streaming_cs_transport_binary, write_streaming_cs_window!,
-                    load_window!
+                    load_window!,
+                    TransportBinaryContract, canonical_window_constant_contract
 
 # Physical constants
 include("constants.jl")

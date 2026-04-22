@@ -46,6 +46,7 @@ const README_DIRS = [
     # Models and drivers
     "src/Models",
     "src/MetDrivers",
+    "src/MetDrivers/ERA5",
     # Grids
     "src/Grids",
 ]

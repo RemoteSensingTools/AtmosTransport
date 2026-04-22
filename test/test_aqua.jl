@@ -17,9 +17,16 @@ than globally disabling the check.
 
 using Test
 using Aqua
+using AtmosTransport
 
-include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+# Invocation:
+#   julia --project=test test/test_aqua.jl       (targeted)
+#   julia --project=. -e 'using Pkg; Pkg.test()' (full suite)
+#
+# `using AtmosTransport` here works under both invocations because the
+# root project's [targets.test] and test/Project.toml both carry the
+# package. Avoids the legacy `include("src/AtmosTransport.jl")` pattern
+# which requires every transitive dep to be loadable from Main.
 
 @testset "Aqua: package health" begin
     Aqua.test_all(

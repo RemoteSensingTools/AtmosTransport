@@ -142,12 +142,19 @@ julia --project=. test/runtests.jl
 # Including real-data tests (requires preprocessed binaries)
 julia --project=. test/runtests.jl --all
 
-# Targeted single-file tests
+# Targeted single-file tests (no test-only deps)
 julia --project=. test/test_basis_explicit_core.jl
 julia --project=. test/test_advection_kernels.jl
 julia --project=. test/test_driven_simulation.jl
 julia --project=. test/test_transport_model_convection.jl
 julia --project=. test/test_cubed_sphere_runtime.jl
+
+# Targeted tests that need test-only deps (Aqua / JET):
+# first-time setup instantiates test/Project.toml
+julia --project=test -e 'using Pkg; Pkg.develop(path="."); Pkg.instantiate()'
+julia --project=test test/test_aqua.jl
+julia --project=test test/test_jet.jl
+julia --project=test test/test_readme_current.jl
 
 # Preprocess ERA5 binary (Dec 1, 2021)
 julia -t8 --project=. scripts/preprocessing/preprocess_spectral_v4_binary.jl \

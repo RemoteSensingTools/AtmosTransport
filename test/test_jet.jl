@@ -41,9 +41,11 @@ intermediate refactors temporarily surface new reports.
 
 using Test
 using JET
+using AtmosTransport
 
-include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+# Invocation:
+#   julia --project=test test/test_jet.jl        (targeted)
+#   julia --project=. -e 'using Pkg; Pkg.test()' (full suite)
 
 # Hot-path modules that plan 21 cares about. IO-heavy modules
 # (MetDrivers, Preprocessing) are excluded because they carry
@@ -59,10 +61,13 @@ const HOT_PATH_MODULES = (
 
 # Snapshot baseline captured 2026-04-21 during plan 21 Phase 6.
 # Dominant sources (see the docstring above):
-#   - KernelAbstractions.Kernel kwcall dispatch: ~116 reports
+#   - KernelAbstractions.Kernel kwcall dispatch: ~118 reports
 #   - @kwdef zero-arg PBLPhysicsParameters: 1 report
-# See artifacts/plan21/jet_baseline.txt for the full captured output.
-const JET_HOT_PATH_BASELINE = 117
+# Bumped 117 → 119 on 2026-04-21 when CS chemistry shipped — the
+# per-panel ExponentialDecay launch added two new KA kwcall reports
+# at the same dispatch site as CellState. See
+# artifacts/plan21/jet_baseline.txt for the full captured output.
+const JET_HOT_PATH_BASELINE = 119
 
 const ADVISORY_ONLY = get(ENV, "ATMOSTRANSPORT_JET_ADVISORY", "0") == "1"
 

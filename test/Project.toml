@@ -1,0 +1,29 @@
+# Test environment for targeted single-file invocation:
+#
+#   julia --project=test test/test_aqua.jl
+#   julia --project=test test/test_jet.jl
+#   julia --project=test test/test_readme_current.jl
+#
+# `Pkg.test()` from the root project activates [targets.test] in the
+# top-level Project.toml and works without this file. This file exists
+# so that the single-file dev workflow documented in
+# `docs/AGENT_ONBOARDING.md` works for the plan-21 Phase-6 gates that
+# depend on test-only packages (Aqua, JET) not carried in the runtime
+# [deps].
+#
+# When adding a test-only dependency:
+#   1. Add it to the root Project.toml's [extras] and [targets.test].
+#   2. Add it here so `julia --project=test path/to/test.jl` works.
+#   3. Keep the versions in sync.
+
+[deps]
+AtmosTransport = "fcfdcc98-126e-435e-9a83-ddb11e65593a"
+Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
+JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[compat]
+Aqua = "0.8"
+JET = "0.9, 0.10, 0.11"
+Test = "1"
+julia = "1.10"

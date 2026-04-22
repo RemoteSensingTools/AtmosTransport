@@ -1,10 +1,11 @@
 # ---------------------------------------------------------------------------
 # CMFMCConvection kernel + inline helpers — plan 18 Commit 3.
 #
-# Ports from GEOS-Chem `convection_mod.F90:DO_RAS_CLOUD_CONVECTION`
-# (GCHP upstream: DO_RAS_CLOUD_CONVECTION in the GEOS-Chem
-# convection_mod module — see deps/tm5-cy3-4dvar/ and the GCHP source
-# tree for the F90 originals).
+# Ports from GEOS-Chem `convection_mod.F90:DO_RAS_CLOUD_CONVECTION`.
+# Derivation + four-term-vs-two-term equivalence is captured in the
+# plan-18 upstream notes; those were deleted during plan-21 cleanup,
+# so reach them via git archaeology at commit 27e9d2e, path
+# docs/plans/18_ConvectionPlan/18_CONVECTION_UPSTREAM_GCHP_NOTES.md.
 # Medium cleanup from the earlier Julia port per Decision 15. Two
 # deliberate departures from that legacy port:
 #
@@ -85,9 +86,11 @@ current layer.
 
 # Inert two-term form
 
-The GCHP four-term tendency (see `convection_mod.F90:DO_RAS_CLOUD_CONVECTION`
-in the GCHP source tree) is algebraically equivalent to the two-term form
-below for inert tracers (`QC_PRES = old_QC`):
+The GCHP four-term tendency from `convection_mod.F90:DO_RAS_CLOUD_CONVECTION`
+is algebraically equivalent to the two-term form below for inert tracers
+(`QC_PRES = old_QC`). §5.3 of the plan-18 upstream notes works through
+the simplification — see commit 27e9d2e,
+`docs/plans/18_ConvectionPlan/18_CONVECTION_UPSTREAM_GCHP_NOTES.md`.
 
 ```
 tsum = cmfmc_above * (q_above - q_env) + dtrain * (qc_post_mix - q_env)

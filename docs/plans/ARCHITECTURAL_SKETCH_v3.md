@@ -24,9 +24,9 @@ For detailed rationale on specific design choices, see:
   abstraction for input fields
 - `REFERENCE_MODEL_COMPARISON.md` — how AtmosTransport relates to
   TM5, GEOS-Chem, IFS, FV3, ClimaAtmos, Oceananigans
-- `17_SURFACE_EMISSIONS_PLAN/ordering_study_results.md` — measured
-  V/S palindrome ordering comparison
-- Plan NOTES files for per-plan retrospective findings
+- `../resources/developer_notes/plan17_ordering_study.md` — measured
+  V/S palindrome ordering comparison (24h, F64 CPU)
+- `PLAN_HISTORY.md` — per-plan retrospective summaries
 
 ---
 
@@ -306,7 +306,7 @@ Plan 18: X Y Z V C S C V Z Y X   # convection C wrapped around S
 Plan 17's ordering study recommended arrangement A (symmetric)
 based on 2nd-order Strang accuracy; plan 18 convection C should
 compose cleanly with A. See
-`17_SURFACE_EMISSIONS_PLAN/ordering_study_results.md` §4 for the
+`../resources/developer_notes/plan17_ordering_study.md` §4 for the
 compositional argument.
 
 ---

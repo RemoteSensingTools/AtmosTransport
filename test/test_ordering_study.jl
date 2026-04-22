@@ -27,8 +27,8 @@ Expected ranking of surface mass fraction:
 
 Recorded data (this run, Float64, 4×3×10, Kz = 5 m²/s, rate = 1 kg/s,
 dt = 3600 s, 24 steps) is committed to
-`docs/plans/17_SURFACE_EMISSIONS_PLAN/ordering_study_results.md` by
-Commit 7.
+`docs/resources/developer_notes/plan17_ordering_study.md` (relocated
+there from the deleted plan-17 subdirectory during plan-21 cleanup).
 """
 
 using Test

@@ -23,7 +23,6 @@ docs/
     OPERATOR_COMPOSITION.md    -- Operator block-ordering contract
     TIME_VARYING_FIELD_MODEL.md
     ARCHITECTURAL_SKETCH_v3.md
-    <N>_*_PLAN/NOTES.md        -- Per-plan execution retrospectives
   reference/                 -- Shared reference docs (data layouts, APIs)
   memos/                     -- Design memos and debugging analyses
   resources/                 -- Archival material (bug archive, dev notes)

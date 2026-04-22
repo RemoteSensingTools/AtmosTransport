@@ -637,10 +637,11 @@ These are deliberately left open — future plans will resolve them:
 
 ## 12. Cross-references
 
-- Advection subsystem shape: `ARCHITECTURAL_SKETCH.md`
+- Advection subsystem shape: `ARCHITECTURAL_SKETCH_v3.md`
 - Current performance reality: `CLAUDE.md` § "Performance tips"
-- Plan 14 (advection unification): `14_SINGLE_PIPELINE_PLAN.md` (v2)
-- Plan 11, 12, 13 retrospectives: `docs/plans/11.../NOTES.md` etc.
+- Per-plan retrospectives: `docs/plans/PLAN_HISTORY.md` (canonical
+  manifest; individual plan docs and NOTES.md were deleted during
+  plan 21 cleanup — use git history for originals)
 
 ## 13. Reference models — what TM5 and GEOS-Chem actually do
 

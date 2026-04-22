@@ -2,7 +2,9 @@
 # CMFMCConvection kernel + inline helpers — plan 18 Commit 3.
 #
 # Ports from GEOS-Chem `convection_mod.F90:DO_RAS_CLOUD_CONVECTION`
-# (see docs/plans/18_ConvectionPlan/18_CONVECTION_UPSTREAM_GCHP_NOTES.md).
+# (GCHP upstream: DO_RAS_CLOUD_CONVECTION in the GEOS-Chem
+# convection_mod module — see deps/tm5-cy3-4dvar/ and the GCHP source
+# tree for the F90 originals).
 # Medium cleanup from the earlier Julia port per Decision 15. Two
 # deliberate departures from that legacy port:
 #
@@ -83,9 +85,9 @@ current layer.
 
 # Inert two-term form
 
-Per `18_CONVECTION_UPSTREAM_GCHP_NOTES.md` §5.3, the GCHP four-term
-tendency is algebraically equivalent to the two-term form below for
-inert tracers (`QC_PRES = old_QC`):
+The GCHP four-term tendency (see `convection_mod.F90:DO_RAS_CLOUD_CONVECTION`
+in the GCHP source tree) is algebraically equivalent to the two-term form
+below for inert tracers (`QC_PRES = old_QC`):
 
 ```
 tsum = cmfmc_above * (q_above - q_env) + dtrain * (qc_post_mix - q_env)

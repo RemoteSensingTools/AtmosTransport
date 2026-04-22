@@ -74,7 +74,8 @@ absorbed by the global mass fixer. A future `Plan 19: Adjoint
 operator suite` kernel reverses the two-pass order (tendency first,
 then updraft accumulation) with transposed coefficients; the
 four-term scavenging-restoring form is a wet-deposition follow-up
-(see `18_CONVECTION_UPSTREAM_GCHP_NOTES.md` §5.3).
+(GCHP `convection_mod.F90:DO_RAS_CLOUD_CONVECTION` §5 in the GCHP
+source tree).
 """
 struct CMFMCConvection <: AbstractConvectionOperator end
 

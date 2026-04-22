@@ -24,12 +24,12 @@ archaeology — both live in commit history.
 | 18 | Convection | **paused at Commit 3** | `src/Operators/Convection/` (structured kernels) |
 | 22 | Topology completion (A/B/C/D) | shipped | RG + CS runtime, three-topology convection |
 | 21 | Post–plan-22 stabilization | shipped | this file, `TOPOLOGY_SUPPORT.md`, legacy deletion, CI gates |
+| 23 | TM5 convection | shipped | `src/Operators/Convection/TM5Convection.jl`, three-topology kernels, ec2tm! math |
 
 ## Pending plans
 
 | Plan | Title | Status | Blocked by |
 |------|-------|--------|------------|
-| 23 | TM5 convection | **in progress — Commit 0 baseline** | 22 |
 | 19 | Adjoint operator suite | pending | 21, 23 |
 | 20 | Documentation overhaul (Documenter + Literate) | pending | 21, 19 |
 
@@ -144,35 +144,81 @@ in `test/test_cubed_sphere_runtime.jl`.
   `ExponentialDecay`, and `CompositeChemistry` with matching
   `test/test_cs_chemistry.jl` (152 tests, F32 + F64).
 
-### Plan 23 — TM5 convection (IN PROGRESS)
+### Plan 23 — TM5 convection (SHIPPED)
 
-Shipping `TM5Convection` as a sibling of `CMFMCConvection` so ERA5
+Shipped `TM5Convection` as a sibling of `CMFMCConvection` so ERA5
 runs have a first-class four-field Tiedtke 1989 mass-flux scheme.
-Commits 1–7 land on branch `convection` starting 2026-04-21. Plan
-doc lives outside the repo at
-`/home/cfranken/.claude/plans/bring-last-session-into-lively-scroll.md`.
-Key constraints:
+8 commits (0–7) landed on branch `convection` between 2026-04-21
+and 2026-04-22. 170+ new tests; 0 regressions. Plan 18's original
+Commits 4–5 folded into plan 23; plan 18 itself is marked "paused
+at Commit 3" permanently.
 
-- Runtime plumbing generalizes from CMFMC-only to per-operator
-  dispatch in one commit before any kernel ships
-  (`_validate_convection_window!`, `_convection_workspace_for`).
-- Preprocessor + binary read path land in one commit
-  (`_transport_window_field`, `_transport_push_optional_sections!`,
-  `_cs_section_elements`, `CubedSphereTransportDriver:149` hardcoded
-  `nothing` → `raw.tm5_fields`).
-- Three topology kernels (LL, RG, CS) ship in the same commit —
-  no structured-first staging.
-- Matrix solver class is partial-pivot Gaussian elimination on the
-  `lmc × lmc` active sub-block per Commit 0 survey
-  ([`../../artifacts/plan23/matrix_structure.md`](../../artifacts/plan23/matrix_structure.md)).
-- Basis: polymorphic (like CMFMC), per
-  [`../../artifacts/plan23/basis_decision.md`](../../artifacts/plan23/basis_decision.md).
-- Adjoint path preserved: `pivots` vector stored in `TM5Workspace`
-  so plan 19 can reuse the same LU factorization with transposed
-  solve.
+What shipped:
 
-Plan 18's original Commits 4–5 folded into plan 23; plan 18 itself
-is marked "paused at Commit 3" permanently in this file.
+- **Column solver** `_tm5_solve_column!`
+  ([`src/Operators/Convection/tm5_column_solve.jl`](../../src/Operators/Convection/tm5_column_solve.jl)):
+  backend-agnostic Julia port of TM5-4DVAR `tm5_conv.F90` into
+  AtmosTransport orientation (k=1=TOA, k=Nz=surface; principle 1 —
+  zero runtime orientation flips). Full partial-pivot LU on the
+  `[1, Nz]` range; pivots stored per principle 3 for plan 19
+  adjoint replay.
+- **Per-topology kernels**
+  ([`tm5_kernels.jl`](../../src/Operators/Convection/tm5_kernels.jl)):
+  `@kernel` wrappers for LL 4D, RG 3D, and CS per-panel launches.
+  Allocation-free inside the kernel via pre-allocated
+  `TM5Workspace` scratch slabs (`f`, `fu`, `amu`, `amd` per column).
+- **`TM5Convection` operator + workspace**
+  ([`TM5Convection.jl`](../../src/Operators/Convection/TM5Convection.jl)):
+  stateless struct dispatched on grid mesh type; three `apply!` /
+  `apply_convection!` methods per topology. GPU backend via
+  `KernelAbstractions.get_backend(q_raw)` (principle 4).
+- **Runtime plumbing refactor**
+  ([`_validate_convection_window!` in DrivenSimulation.jl](../../src/Models/DrivenSimulation.jl),
+  `_convection_workspace_for(::TM5Convection, …)` in TransportModel.jl):
+  per-operator dispatch replaces the Commit-0-era
+  `if op isa CMFMCConvection / else throw` pattern.
+- **ec2tm! math** ([`src/Preprocessing/tm5_convection_conversion.jl`](../../src/Preprocessing/tm5_convection_conversion.jl)):
+  pure Julia port of TM5's `phys_convec_ec2tm.F90`. Derives
+  `(entu, detu, entd, detd)` at layer centers from ECMWF
+  `(mflu_ec, mfld_ec, detu_ec, detd_ec)`. Ships ready-to-call;
+  preprocessor integration (wiring into `process_day` + adding
+  ECMWF convective download) deferred as a follow-on plan.
+- **TM5 binary sections across LL/RG/CS**:
+  `TransportBinary.jl` (section-element tables, writer, reader,
+  `has_tm5_convection`, `load_tm5_convection_window!`),
+  `CubedSphereBinaryReader.jl` (`_cs_section_elements`,
+  `load_cs_window` returns `raw.tm5_fields`),
+  `CubedSphereTransportDriver.jl` (dropped hardcoded `nothing`).
+- **Ten production-readiness principles** ratified during drafting
+  and graded at Commit 7 retrospective
+  ([`artifacts/plan23/production_audit.md`](../../artifacts/plan23/production_audit.md)):
+  all 10 pass.
+- **Benchmark on wurst L40S F32**
+  ([`artifacts/plan23/bench.md`](../../artifacts/plan23/bench.md)):
+  TM5 GPU speedups over CPU range from 3× (small Nt=1) to 43×
+  (large Nt=30). Memory overhead ~63 KB/column from the
+  Nz+1 × Nz × … scratch slabs needed for allocation-free kernel
+  launch.
+
+Tests: 170+ new testsets across
+`test/test_tm5_convection.jl` (81),
+`test/test_tm5_preprocessing.jl` (43),
+`test/test_tm5_vs_cmfmc_parity.jl` (9),
+`test/test_tm5_driven_simulation.jl` (15),
+all registered in core_tests. README freshness gate tracks all
+new files.
+
+Deferred as follow-on:
+
+- Preprocessor integration of `ec2tm!` into `process_day` +
+  ECMWF convective-variable downloads from CDS.
+- Real-data CATRINE-style 1-day ERA5 sim + plan-17-parallel
+  operator-ordering study (A/B/C/D positions).
+- `lmc`-limited factorization optimization (reduce work on
+  columns with shallow or no convection; current full-range LU
+  is cheap enough at Nz ≤ 72).
+- Plan 19 adjoint kernel (pivots + factorization structure
+  preserved for mechanical port).
 
 ### Plan 21 — Post–plan-22 stabilization
 

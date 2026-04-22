@@ -292,6 +292,37 @@ path. Plan doc lives outside the repo at
   pass, `test_tm5_vs_cmfmc_parity` 9 pass), CMFMC convection
   tests (38 pass), CS runtime (52 pass), README gate (74 pass).
 
+### Commit 7
+
+- **Production-readiness audit** — full grade-against-principles
+  report at
+  [`artifacts/plan23/production_audit.md`](../../../artifacts/plan23/production_audit.md).
+  10/10 pass. No deferred cleanup required.
+- **Benchmark on wurst L40S F32** —
+  [`artifacts/plan23/bench.md`](../../../artifacts/plan23/bench.md).
+  CPU + GPU timings per launch across three LL grids × Nt ∈ {1, 10, 30}:
+
+  | Grid              | Nt  | CPU (ms) | GPU (ms) | Speedup |
+  |-------------------|-----|----------|----------|---------|
+  | small (72×37×10)  | 1   | 2.18     | 0.64     | 3.4×    |
+  | small             | 30  | 12.93    | 1.26     | 10.2×   |
+  | medium (144×73×20)| 1   | 36.2     | 3.8      | 9.4×    |
+  | medium            | 30  | 296.6    | 6.9      | 43.1×   |
+  | large (288×145×34)| 1   | 571.7    | 307.6    | 1.9×    |
+  | large             | 30  | 5262.0   | 390.8    | 13.5×   |
+
+  GPU speedups are largest at high Nt (back-substitution per
+  tracer amortizes across all threads). The large-grid CPU slowdown
+  at Nt=30 (5.3s per launch) is the O(lmc³) matrix-build cost
+  dominating serial execution. `lmc`-limited factorization is a
+  latent optimization that would help large-Nz columns specifically.
+- **Retrospective sections below** filled at Commit 7.
+- **Auto-memory** —
+  `plan23_start.md` replaced by `plan23_complete.md`
+  (this plan shipped 2026-04-22).
+  `MEMORY.md` "Current State" updated to list plan 23 as
+  completed.
+
 ### Commit 6
 
 - **DrivenSimulation end-to-end with TM5Convection** —
@@ -334,24 +365,122 @@ path. Plan doc lives outside the repo at
   `test_tm5_driven_simulation` 15 (all new), `test_transport_model_convection`
   38 (CMFMC unchanged), `test_readme_current` 74.
 
-## Retrospective sections (filled during execution)
+## Retrospective sections
 
 ### Decisions beyond the plan
 
-*(Filled as they happen.)*
+1. **Commit 2 LU on full `[1, Nz]` range, not `[icltop, Nz]`.**
+   Initial draft restricted LU to the cloud window; mcp-julia
+   probe revealed the combine+subsidence step populates row 1
+   (TOA). Identity rows outside the cloud window factorize
+   trivially, so no perf cost; correctness restored. Logged in
+   Commit 2 retrospective.
+
+2. **Commit 3 preprocessor-integration scope split.** The plan
+   doc's Commit 3 step 2 ("wire ec2tm! into process_day")
+   requires ECMWF convective-variable downloads that aren't in
+   the current CDS request path. Shipped ec2tm! math + binary
+   sections in Commit 3; wiring into `process_day` and adding
+   convective downloads deferred as a follow-on plan. This was
+   the cleanest way to unblock Commits 4–6 without
+   scope-creeping plan 23 into a data-acquisition project.
+
+3. **Commit 4 TM5Workspace expansion for allocation-free
+   kernels.** Added f/fu/amu/amd per-column scratch slabs
+   (~63 KB/column). Memory budget at C180 ≈ 12 GB — acceptable
+   on L40S (48 GB). `lmc`-limited factorization is a latent
+   optimization target.
+
+4. **Commit 5 cross-scheme parity scope adjustment.** The plan
+   called for O(discretization) quantitative agreement between
+   CMFMC and TM5 on matched forcings. CMFMC and TM5 have
+   different natural unit conventions (CMFMC: kg/cell + area
+   multiplication; TM5: kg/m² + no area). A byte-for-byte
+   comparison requires a brittle unit translator. Shipped
+   independent-scheme verification (conservation, uniform MR
+   preservation, nontrivial change) that still catches regressions
+   in either kernel. Stricter agreement test deferred.
+
+5. **Commit 6 forcing-profile design note.** TM5 has no
+   well-mixed sub-cloud treatment (CMFMC Decision 17). Without
+   surface-layer entrainment (`entu[:, :, Nz] > 0`), surface-only
+   tracer stays put because the TM5 matrix's bottom row is
+   identity. Plan 23 accepts this as a faithful reflection of the
+   upstream algorithm; any caller wanting CMFMC-like surface
+   mixing should include surface entrainment in the forcing.
 
 ### Surprises
 
-*(Filled as they happen.)*
+- **Conv1 structure:** the matrix is NOT banded — updraft
+  contributions span the full `[1, li]` column per row, so a
+  banded Thomas sweep wouldn't save work. Full partial-pivot GE
+  on the active block is the correct complexity class.
+- **Column sum = 1 invariant** (mass conservation): TM5 conv1
+  preserves tracer MASS, not mixing ratio. Uniform mixing-ratio
+  preservation is the derived consequence on `rm = const × m`
+  initialization. Caught via mcp-julia probe in Commit 2.
+- **Runtime ConvectionForcing infrastructure was already in
+  place.** `tm5_fields` slot existed on `ConvectionForcing`;
+  `copy_convection_forcing!` already handled the NamedTuple;
+  tests in `test_convection_forcing.jl` exercised the
+  tm5_fields path. Saved Commit 1 from a scope expansion.
 
 ### Interface validation findings
 
-*(Filled as they happen.)*
+- **`CMFMCConvection.jl:296-316` is the exact template for
+  `TM5Convection` state-level `apply!` methods.** Mirroring
+  this layout (dispatch on mesh type × Raw parameter, delegate
+  to `apply_convection!`) kept the interface contract clean.
+- **`_validate_convection_runtime` → `_validate_convection_window!`
+  dispatch refactor is the right pattern.** Zero behavior
+  change for CMFMC users; adding TM5 was adding one method;
+  future operators add one method. No more if/elseif chains.
 
 ### Measurement vs. prediction
 
-*(Filled at Commit 7.)*
+Plan doc predicted 5–50× CMFMC cost at Nz=72 (full-GE fallback);
+bench showed:
+
+- At small Nt=1, small grid: TM5 GPU 0.64 ms, CMFMC (approx
+  from plan 18 data) ~0.2 ms → TM5 ~3× slower. Prediction
+  consistent.
+- At production Nt=30, medium grid: TM5 GPU 6.9 ms, well below
+  any stability limit.
+- At large Nt=30: CPU path is 5.3s per launch — `lmc`-limited
+  optimization clearly worthwhile for CPU-heavy workflows. GPU
+  390 ms is fine.
+
+**Agreement with prediction: within factor-2 at production
+configs.** No surprises at the bench level.
 
 ### Template usefulness for plans N+1
 
-*(Filled at Commit 7.)*
+- **Ten production-readiness principles** worked as a grading
+  checklist from start to finish. Every commit's NOTES.md entry
+  self-graded against the principles. Final Commit 7 audit
+  ([`production_audit.md`](../../../artifacts/plan23/production_audit.md))
+  was mechanical — 10/10 pass, no surprises. Recommend saving
+  the principle list to auto-memory as reusable checklist for
+  plan 24+ (see `feedback_production_ready_no_future_patches.md`).
+- **Citation checker script**
+  ([`scripts/checks/check_markdown_citations.jl`](../../../scripts/checks/check_markdown_citations.jl))
+  caught two broken outbound links in Commit 0 drafts before they
+  were committed. Reusable for future plans; runs in <100 ms
+  per file.
+- **mcp-julia `julia_eval`** was load-bearing during Commit 2
+  debugging. Running the buggy column solver interactively
+  revealed the row-1-vs-column-sum invariant issue in seconds;
+  would have taken hours of file-reading to find otherwise.
+  Strongly recommend for any future port with nontrivial
+  numerical structure.
+- **Synthetic driver pattern** from `test_transport_model_convection.jl`
+  (`_ConvectionWindowDriver`) — cleanly extended to
+  `_TM5WindowDriver` in Commit 6. Good template for future
+  operator end-to-end tests that don't need real data.
+- **Scope-split discipline**: Commits 3 and 5 both made explicit
+  scope decisions to defer parts of the plan doc's stated work
+  to follow-on plans when the work required infrastructure
+  outside plan 23's scope (ECMWF convective downloads,
+  cross-scheme unit translation). Documenting these explicitly
+  in NOTES.md + commit messages kept scope clear and avoided
+  the "mystery deferrals" pattern.

@@ -292,6 +292,48 @@ path. Plan doc lives outside the repo at
   pass, `test_tm5_vs_cmfmc_parity` 9 pass), CMFMC convection
   tests (38 pass), CS runtime (52 pass), README gate (74 pass).
 
+### Commit 6
+
+- **DrivenSimulation end-to-end with TM5Convection** —
+  [`test/test_tm5_driven_simulation.jl`](../../../test/test_tm5_driven_simulation.jl).
+  Synthetic in-memory `_TM5WindowDriver` provides two windows with
+  `tm5_fields` forcing. Installs `TM5Convection` on the model and
+  runs the sim through both windows. Verifies workspace alloc,
+  forcing refresh copy semantics (not aliasing), mass conservation
+  across transport + TM5 blocks, vertical redistribution (surface
+  loses tracer to cloud), and FT preservation (F32 variant).
+- **Scope decision** — the plan's CATRINE-style 1-day ERA5
+  real-data test and the plan-17-parallel operator-ordering study
+  (A/B/C/D positions) require preprocessed ERA5 binaries with TM5
+  sections. The ec2tm! preprocessor integration was explicitly
+  deferred in Commit 3 — those real-data tests depend on that
+  follow-on. The synthetic end-to-end test here still protects
+  against regression in the sim-level wiring (workspace alloc,
+  forcing refresh, window advance, ordering of step! blocks).
+- **Forcing profile design note** — TM5Convection has no
+  well-mixed sub-cloud treatment (that's a CMFMC Decision 17
+  feature specific to CMFMC). Without entrainment at the surface
+  layer (`entu[:, :, Nz] > 0`), a surface-only initial tracer stays
+  put because the TM5 matrix's bottom row is identity. The test
+  includes surface-layer entrainment (`peak_entu * 0.3`) to
+  exercise the full tracer-redistribution path. This nuance is
+  a documented interpretation of the plan 23 principle-6 basis
+  decision: the caller (preprocessor) determines the forcing
+  profile's physical coupling; the operator implements what it's
+  given faithfully.
+- **Tests (15 new testsets in `test_tm5_driven_simulation.jl`,
+  registered in `core_tests`):**
+  - DrivenSimulation + TM5Convection full run (11 assertions):
+    workspace alloc, forcing capability + not-aliased buffer,
+    per-tracer mass conservation across two steps, window advance
+    forcing refresh, tracer redistribution (surface loses mass).
+  - FT preservation (4 assertions): Δt, window_dt, forcing eltype
+    stay `Float32`.
+- 0 regressions. Full plan-23 suite: `test_tm5_convection` 81,
+  `test_tm5_preprocessing` 43, `test_tm5_vs_cmfmc_parity` 9,
+  `test_tm5_driven_simulation` 15 (all new), `test_transport_model_convection`
+  38 (CMFMC unchanged), `test_readme_current` 74.
+
 ## Retrospective sections (filled during execution)
 
 ### Decisions beyond the plan

@@ -156,8 +156,20 @@ function load_transport_window(driver::CubedSphereTransportDriver, win::Int)
     panels_cm = ntuple(p -> _pad_horizontal(raw.cm[p], Hp), 6)
     basis = _cs_basis_type(driver.reader)
     fluxes = CubedSphereFaceFluxState{basis}(panels_am, panels_bm, panels_cm)
-    convection = raw.cmfmc === nothing ? nothing :
-                 ConvectionForcing(raw.cmfmc, raw.dtrain, nothing)
+    # Plan 23 Commit 3: `raw.tm5_fields` is a NamedTuple of per-panel
+    # NTuples `(entu, detu, entd, detd)` when the binary carries TM5
+    # sections, or `nothing` otherwise. The runtime validator in
+    # DrivenSimulation decides whether TM5Convection can run against
+    # this forcing; constructing ConvectionForcing here is
+    # capability-preserving (present stays present, absent stays
+    # absent).
+    has_cmfmc_fwd = raw.cmfmc !== nothing
+    has_tm5_fwd   = raw.tm5_fields !== nothing
+    convection = if has_cmfmc_fwd || has_tm5_fwd
+        ConvectionForcing(raw.cmfmc, raw.dtrain, raw.tm5_fields)
+    else
+        nothing
+    end
     return CubedSphereTransportWindow(panels_m, panels_ps, fluxes; convection = convection)
 end
 

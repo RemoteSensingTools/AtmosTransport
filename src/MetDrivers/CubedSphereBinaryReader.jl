@@ -128,6 +128,9 @@ function _cs_section_elements(h::CubedSphereBinaryHeader, section::Symbol)
         return np * Nc * Nc * (Nz + 1)
     elseif section === :dtrain
         return np * Nc * Nc * Nz
+    # TM5 convection (plan 23 Commit 3) — four layer-center fields.
+    elseif section in (:entu, :detu, :entd, :detd)
+        return np * Nc * Nc * Nz
     elseif section in (:qv, :qv_start, :qv_end, :dm)
         return np * Nc * Nc * Nz
     elseif section in (:dam,)
@@ -166,6 +169,15 @@ function load_cs_window(reader::CubedSphereBinaryReader{FT}, win::Int) where FT
     panels_cm = ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz + 1), np)
     panels_cmfmc = :cmfmc in h.payload_sections ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz + 1), np) : nothing
     panels_dtrain = :dtrain in h.payload_sections ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np) : nothing
+
+    # TM5 convection fields — all four must be present together or
+    # all four absent. The runtime `_validate_convection_window!`
+    # rejects a partial payload, so this block trusts the header.
+    tm5_present = all(s in h.payload_sections for s in (:entu, :detu, :entd, :detd))
+    panels_entu = tm5_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np) : nothing
+    panels_detu = tm5_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np) : nothing
+    panels_entd = tm5_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np) : nothing
+    panels_detd = tm5_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np) : nothing
 
     o = win_offset
     for section in h.payload_sections
@@ -211,12 +223,44 @@ function load_cs_window(reader::CubedSphereBinaryReader{FT}, win::Int) where FT
                 copyto!(panels_dtrain[p], 1, reader.data, o + 1, n)
                 o += n
             end
+        elseif section === :entu
+            for p in 1:np
+                n = Nc * Nc * Nz
+                copyto!(panels_entu[p], 1, reader.data, o + 1, n)
+                o += n
+            end
+        elseif section === :detu
+            for p in 1:np
+                n = Nc * Nc * Nz
+                copyto!(panels_detu[p], 1, reader.data, o + 1, n)
+                o += n
+            end
+        elseif section === :entd
+            for p in 1:np
+                n = Nc * Nc * Nz
+                copyto!(panels_entd[p], 1, reader.data, o + 1, n)
+                o += n
+            end
+        elseif section === :detd
+            for p in 1:np
+                n = Nc * Nc * Nz
+                copyto!(panels_detd[p], 1, reader.data, o + 1, n)
+                o += n
+            end
         else
             # Skip unknown sections
             n = _cs_section_elements(h, section)
             o += n
         end
     end
+
+    # TM5 fields are returned as a NamedTuple when present, to match
+    # the runtime `ConvectionForcing.tm5_fields` contract. Absent
+    # means the binary doesn't carry TM5 convection data.
+    tm5_fields = tm5_present ?
+        (entu = panels_entu, detu = panels_detu,
+         entd = panels_entd, detd = panels_detd) :
+        nothing
 
     return (
         m = panels_m,
@@ -226,6 +270,7 @@ function load_cs_window(reader::CubedSphereBinaryReader{FT}, win::Int) where FT
         cm = panels_cm,
         cmfmc = panels_cmfmc,
         dtrain = panels_dtrain,
+        tm5_fields = tm5_fields,
     )
 end
 

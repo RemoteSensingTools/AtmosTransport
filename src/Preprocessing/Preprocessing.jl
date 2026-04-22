@@ -113,8 +113,12 @@ include("configuration.jl")
 # Binary pipeline (window storage, header, write)
 include("binary_pipeline.jl")
 
+# TM5 convection ec2tm conversion (plan 23 Commit 3)
+include("tm5_convection_conversion.jl")
+
 # Exports for the CLI script and advanced users
 export build_target_geometry, target_summary
 export process_day, regrid_ll_binary_to_cs
+export ec2tm!
 
 end # module Preprocessing

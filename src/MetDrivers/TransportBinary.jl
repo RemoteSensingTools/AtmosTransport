@@ -183,6 +183,18 @@ has_qv(r::TransportBinaryReader) = r.header.include_qv || r.header.include_qv_en
 has_qv_endpoints(r::TransportBinaryReader) = r.header.include_qv_endpoints
 has_flux_delta(r::TransportBinaryReader) = any(section in (:dam, :dbm, :dcm, :dm, :dhflux) for section in r.header.payload_sections)
 
+"""
+    has_tm5_convection(r::TransportBinaryReader) -> Bool
+
+`true` if the binary carries all four TM5 convection sections
+(`entu`, `detu`, `entd`, `detd`) — the contract enforced by the
+preprocessor when `tm5_convection = true`. Used by the
+`TransportBinaryDriver` to decide whether to populate
+`ConvectionForcing.tm5_fields` on loaded windows.
+"""
+has_tm5_convection(r::TransportBinaryReader) =
+    all(s in r.header.payload_sections for s in (:entu, :detu, :entd, :detd))
+
 _transport_is_structured(h::TransportBinaryHeader) =
     h.grid_type === :latlon && h.horizontal_topology === :structureddirectional
 _transport_is_faceindexed(h::TransportBinaryHeader) =
@@ -408,6 +420,10 @@ Base.close(r::TransportBinaryReader) = close(r.io)
         return ncell * (nlevel + 1)
     elseif section === :ps
         return ncell
+    # TM5 convection (plan 23 Commit 3): four layer-center fields.
+    elseif section === :entu || section === :detu ||
+           section === :entd || section === :detd
+        return ncell * nlevel
     else
         error("Unsupported structured payload section: $section")
     end
@@ -422,6 +438,10 @@ end
         return ncell * (nlevel + 1)
     elseif section === :ps
         return ncell
+    # TM5 convection (plan 23 Commit 3): four layer-center fields.
+    elseif section === :entu || section === :detu ||
+           section === :entd || section === :detd
+        return ncell * nlevel
     else
         error("Unsupported face-indexed payload section: $section")
     end
@@ -476,6 +496,21 @@ _transport_window_dhflux(window) = haskey(window, :dhflux) ? window.dhflux : err
 _transport_window_dcm(window) = haskey(window, :dcm) ? window.dcm : error("transport-binary window is missing `dcm`")
 _transport_window_dm(window) = haskey(window, :dm) ? window.dm : error("transport-binary window is missing `dm`")
 
+# TM5 convection payload writers read a NamedTuple of four
+# layer-center fields from the preprocessor window.  The
+# preprocessor supplies `window.tm5_fields.entu`, `.detu`, `.entd`,
+# `.detd`.  Errors loudly if the writer requested a TM5 section
+# but the window didn't include `tm5_fields` (plan 23 Commit 3).
+@inline function _transport_window_tm5_field(window, name::Symbol)
+    haskey(window, :tm5_fields) ||
+        error("transport-binary window is missing `tm5_fields` " *
+              "(required when writing TM5 convection sections)")
+    nt = window.tm5_fields
+    hasproperty(nt, name) ||
+        error("transport-binary window.tm5_fields is missing field `$(name)`")
+    return getproperty(nt, name)
+end
+
 function _transport_window_field(window, section::Symbol)
     if section === :m
         return _transport_window_mass(window)
@@ -505,6 +540,15 @@ function _transport_window_field(window, section::Symbol)
         return window.qv_start
     elseif section === :qv_end
         return window.qv_end
+    # TM5 convection fields (plan 23 Commit 3).
+    elseif section === :entu
+        return _transport_window_tm5_field(window, :entu)
+    elseif section === :detu
+        return _transport_window_tm5_field(window, :detu)
+    elseif section === :entd
+        return _transport_window_tm5_field(window, :entd)
+    elseif section === :detd
+        return _transport_window_tm5_field(window, :detd)
     else
         error("Unsupported transport-binary section: $section")
     end
@@ -519,6 +563,17 @@ function _transport_push_optional_sections!(sections::Vector{Symbol}, window)
     haskey(window, :dhflux) && push!(sections, :dhflux)
     haskey(window, :dcm) && push!(sections, :dcm)
     haskey(window, :dm) && push!(sections, :dm)
+    # Plan 23 Commit 3: TM5 convection adds a NamedTuple of four
+    # layer-center fields.  Writer emits these when the preprocessor
+    # window provides `tm5_fields`; reader populates
+    # `ConvectionForcing.tm5_fields` from the corresponding binary
+    # sections.
+    if haskey(window, :tm5_fields) && window.tm5_fields !== nothing
+        push!(sections, :entu)
+        push!(sections, :detu)
+        push!(sections, :entd)
+        push!(sections, :detd)
+    end
     return sections
 end
 
@@ -1305,6 +1360,13 @@ _transport_allocate_dcm(reader::TransportBinaryReader{FT}) where FT =
         Array{FT}(undef, reader.header.Nx, reader.header.Ny, reader.header.nlevel + 1) :
         Array{FT}(undef, reader.header.ncell, reader.header.nlevel + 1)
 
+# TM5 convection fields — all layer-center, shape matches `m`
+# (plan 23 Commit 3).
+_transport_allocate_tm5_field(reader::TransportBinaryReader{FT}) where FT =
+    _transport_is_structured(reader.header) ?
+        Array{FT}(undef, reader.header.Nx, reader.header.Ny, reader.header.nlevel) :
+        Array{FT}(undef, reader.header.ncell, reader.header.nlevel)
+
 function _transport_make_fluxes(::Val{:dry}, am, bm, cm)
     return StructuredFaceFluxState{DryMassFluxBasis}(am, bm, cm)
 end
@@ -1466,6 +1528,55 @@ function load_flux_delta_window!(reader::TransportBinaryReader{FT}, win::Int;
         result = merge(result, (; dm))
     end
     return result
+end
+
+"""
+    load_tm5_convection_window!(reader, win; entu=..., detu=..., entd=..., detd=...) -> NamedTuple | nothing
+
+Load the four TM5 convection layer-center fields for window `win`.
+Returns `(; entu, detu, entd, detd)` when the binary carries all
+four sections, or `nothing` when no TM5 data is present. Allocates
+only if the caller doesn't provide pre-allocated buffers.
+
+All fields share the same shape as `m`: `(Nx, Ny, Nz)` for
+structured or `(ncells, Nz)` for face-indexed binaries. Orientation
+is as written by the preprocessor (AtmosTransport: k=1=TOA,
+k=Nz=surface); no runtime reorientation happens here — the kernel
+(plan 23 Commit 4) reads them directly.
+
+Invariant: if ANY of the four sections is present in the header,
+ALL four must be present. This mirrors the
+`ConvectionForcing.tm5_fields` NamedTuple contract — partial
+payload is not a valid convection forcing.
+"""
+function load_tm5_convection_window!(reader::TransportBinaryReader{FT}, win::Int;
+                                      entu = nothing,
+                                      detu = nothing,
+                                      entd = nothing,
+                                      detd = nothing) where FT
+    has_tm5_convection(reader) || return nothing
+    h = reader.header
+
+    entu = isnothing(entu) ? _transport_allocate_tm5_field(reader) : entu
+    detu = isnothing(detu) ? _transport_allocate_tm5_field(reader) : detu
+    entd = isnothing(entd) ? _transport_allocate_tm5_field(reader) : entd
+    detd = isnothing(detd) ? _transport_allocate_tm5_field(reader) : detd
+
+    o = _transport_window_offset(reader, win)
+    for section in h.payload_sections
+        n = _transport_section_elements(h, section)
+        if section === :entu
+            copyto!(entu, 1, reader.data, o + 1, n)
+        elseif section === :detu
+            copyto!(detu, 1, reader.data, o + 1, n)
+        elseif section === :entd
+            copyto!(entd, 1, reader.data, o + 1, n)
+        elseif section === :detd
+            copyto!(detd, 1, reader.data, o + 1, n)
+        end
+        o += n
+    end
+    return (; entu, detu, entd, detd)
 end
 
 function load_qv_window!(reader::TransportBinaryReader{FT}, win::Int;

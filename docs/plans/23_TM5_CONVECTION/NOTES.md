@@ -132,6 +132,76 @@ path. Plan doc lives outside the repo at
   "not yet implemented — Commit 4" stub error; Commit 4 lifts the
   stub and wires the kernels.
 
+### Commit 3
+
+- **ec2tm! math** — pure Julia port of
+  `phys_convec_ec2tm.F90` in
+  [`src/Preprocessing/tm5_convection_conversion.jl`](../../../src/Preprocessing/tm5_convection_conversion.jl).
+  Derives `(entu, detu, entd, detd)` from ECMWF
+  `(mflu_ec, mfld_ec, detu_ec, detd_ec)` at layer centers. Sign-
+  flipped downdraft, clips ECMWF-diagnostic-noise negatives in
+  `detu_ec` / `detd_ec`. Backend-agnostic, 2-D/3-D broadcasting
+  via `CartesianIndices`. Exported from `Preprocessing`.
+- **Binary section tables (LL + RG)** —
+  [`TransportBinary.jl`](../../../src/MetDrivers/TransportBinary.jl):
+  `_transport_structured_section_elements` and
+  `_transport_faceindexed_section_elements` accept
+  `:entu / :detu / :entd / :detd` at layer-center shape.
+  `_transport_window_field` and `_transport_push_optional_sections!`
+  pull `entu / detu / entd / detd` from `window.tm5_fields` (a
+  NamedTuple) when the writer is given one. New
+  `has_tm5_convection(reader)` + `load_tm5_convection_window!`
+  mirror `has_cmfmc` / `load_cmfmc_window!`.
+- **LL + RG driver** —
+  [`TransportBinaryDriver.jl`](../../../src/MetDrivers/TransportBinaryDriver.jl):
+  `_make_transport_window` accepts a `convection` kwarg (threaded
+  into `window.convection`). `load_transport_window` loads the
+  TM5 sections when present and wraps them in a `ConvectionForcing`.
+  No runtime cost when the binary lacks TM5 sections (returns
+  `nothing`, compile-time dead branch).
+- **CS binary + driver** —
+  [`CubedSphereBinaryReader.jl`](../../../src/MetDrivers/CubedSphereBinaryReader.jl)
+  `_cs_section_elements` recognizes `:entu / :detu / :entd / :detd`;
+  `load_cs_window` allocates per-panel `NTuple{6}` arrays, copies
+  into them, returns `raw.tm5_fields = (; entu, detu, entd, detd)`.
+  [`CubedSphereTransportDriver.jl`](../../../src/MetDrivers/CubedSphereTransportDriver.jl)
+  dropped the hardcoded `ConvectionForcing(raw.cmfmc, raw.dtrain,
+  nothing)` — now constructs `ConvectionForcing(raw.cmfmc,
+  raw.dtrain, raw.tm5_fields)` and `nothing` only when neither
+  capability is present.
+- **Scope decision (Commit 3b deferred)** — the plan doc's step 2
+  ("extend spectral preprocessor to call `ec2tm!` and write 4 new
+  sections per window") requires ECMWF convective-variable
+  downloads that aren't in the current CDS request path. ec2tm!
+  ships ready to call; wiring it into `process_day` in
+  `Preprocessing/binary_pipeline.jl` and adding the convective
+  downloads to `scripts/download_era5_*.jl` is a follow-on plan
+  explicitly out of scope for plan 23 (documented here and in the
+  `ec2tm!` docstring's "commit point for this conversion" note).
+  Commits 4–6 unblock via the synthetic binary roundtrip path
+  shipped in [`test/test_tm5_preprocessing.jl`](../../../test/test_tm5_preprocessing.jl).
+- **No binary-version bump needed** — TM5 payload is expressed
+  via header `payload_sections`, which is already self-describing.
+  Old binaries without TM5 sections read cleanly as "no TM5 data"
+  via `has_tm5_convection(reader) == false`. The
+  `_validate_convection_window!(::TM5Convection, ...)` runtime
+  check from Commit 1 catches the "user installed TM5Convection
+  but binary has no TM5 data" case with a clear error (principle 10).
+- Tests (43 new): [`test/test_tm5_preprocessing.jl`](../../../test/test_tm5_preprocessing.jl):
+  ec2tm! math (27 tests — zero inputs, updraft mass balance,
+  downdraft sign flip, noise clipping, shape guard, 2-D
+  broadcasting), LL binary TM5 roundtrip (6), LL binary without
+  TM5 (2), TransportBinaryDriver populates
+  `window.convection.tm5_fields` (8). Registered in
+  `core_tests` in [`test/runtests.jl`](../../../test/runtests.jl).
+- 0 regressions across test_readme_current (73 pass — new
+  `tm5_column_solve.jl` and `TM5Convection.jl` remain documented),
+  test_transport_model_convection (38 pass), test_convection_forcing,
+  test_cubed_sphere_runtime, and the complete Commit-1 + Commit-2
+  plan-23 test suite.
+- `apply!` / `apply_convection!` still throw Commit 1's stub;
+  Commit 4 lifts it and wires the three-topology kernels.
+
 ## Retrospective sections (filled during execution)
 
 ### Decisions beyond the plan

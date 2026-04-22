@@ -346,7 +346,9 @@ function interpolate_qv!(dest, window::AbstractTransportWindow, λ::Real)
     return dest
 end
 
-function _make_transport_window(m, ps, fluxes::StructuredFaceFluxState; qv_pair = nothing, deltas = nothing)
+function _make_transport_window(m, ps, fluxes::StructuredFaceFluxState;
+                                qv_pair = nothing, deltas = nothing,
+                                convection = nothing)
     delta_obj = if deltas === nothing
         nothing
     else
@@ -359,10 +361,13 @@ function _make_transport_window(m, ps, fluxes::StructuredFaceFluxState; qv_pair 
     return StructuredTransportWindow(m, ps, fluxes;
                                      qv_start = qv_pair === nothing ? nothing : qv_pair.qv_start,
                                      qv_end = qv_pair === nothing ? nothing : qv_pair.qv_end,
-                                     deltas = delta_obj)
+                                     deltas = delta_obj,
+                                     convection = convection)
 end
 
-function _make_transport_window(m, ps, fluxes::FaceIndexedFluxState; qv_pair = nothing, deltas = nothing)
+function _make_transport_window(m, ps, fluxes::FaceIndexedFluxState;
+                                qv_pair = nothing, deltas = nothing,
+                                convection = nothing)
     delta_obj = if deltas === nothing
         nothing
     else
@@ -374,7 +379,8 @@ function _make_transport_window(m, ps, fluxes::FaceIndexedFluxState; qv_pair = n
     return FaceIndexedTransportWindow(m, ps, fluxes;
                                       qv_start = qv_pair === nothing ? nothing : qv_pair.qv_start,
                                       qv_end = qv_pair === nothing ? nothing : qv_pair.qv_end,
-                                      deltas = delta_obj)
+                                      deltas = delta_obj,
+                                      convection = convection)
 end
 
 """
@@ -387,7 +393,9 @@ function load_transport_window(driver::TransportBinaryDriver{FT, ReaderT, <:Atmo
     fluxes = fluxes_any::StructuredFaceFluxState
     qv_pair = load_qv_pair_window!(driver.reader, win)
     deltas = load_flux_delta_window!(driver.reader, win)
-    return _make_transport_window(m, ps, fluxes; qv_pair=qv_pair, deltas=deltas)
+    convection = _load_transport_binary_convection_forcing(driver.reader, win)
+    return _make_transport_window(m, ps, fluxes; qv_pair=qv_pair, deltas=deltas,
+                                    convection=convection)
 end
 
 function load_transport_window(driver::TransportBinaryDriver{FT, ReaderT, <:AtmosGrid{<:ReducedGaussianMesh}}, win::Int) where {FT, ReaderT}
@@ -395,7 +403,21 @@ function load_transport_window(driver::TransportBinaryDriver{FT, ReaderT, <:Atmo
     fluxes = fluxes_any::FaceIndexedFluxState
     qv_pair = load_qv_pair_window!(driver.reader, win)
     deltas = load_flux_delta_window!(driver.reader, win)
-    return _make_transport_window(m, ps, fluxes; qv_pair=qv_pair, deltas=deltas)
+    convection = _load_transport_binary_convection_forcing(driver.reader, win)
+    return _make_transport_window(m, ps, fluxes; qv_pair=qv_pair, deltas=deltas,
+                                    convection=convection)
+end
+
+# Plan 23 Commit 3 — returns a ConvectionForcing with populated
+# tm5_fields when the LL/RG binary carries TM5 sections; nothing
+# otherwise.  CMFMC isn't yet written to LL/RG transport binaries
+# (only CS), so cmfmc/dtrain stay nothing on this path.  The
+# DrivenSimulation validator enforces the operator-forcing
+# compatibility at runtime.
+function _load_transport_binary_convection_forcing(reader::TransportBinaryReader, win::Int)
+    has_tm5_convection(reader) || return nothing
+    tm5 = load_tm5_convection_window!(reader, win)
+    return ConvectionForcing(nothing, nothing, tm5)
 end
 
 export AbstractTransportWindow

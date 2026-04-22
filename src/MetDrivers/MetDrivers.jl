@@ -37,6 +37,7 @@ export StructuredFluxDeltas, FaceIndexedFluxDeltas
 export StructuredTransportWindow, FaceIndexedTransportWindow
 export CubedSphereTransportWindow, CubedSphereTransportDriver
 export load_window!, load_qv_window!, load_flux_delta_window!
+export load_tm5_convection_window!, has_tm5_convection
 export load_qv_pair_window!, load_grid, load_transport_window
 export driver_grid, air_mass_basis, has_humidity_endpoints
 export interpolate_fluxes!, expected_air_mass!, interpolate_qv!, copy_fluxes!

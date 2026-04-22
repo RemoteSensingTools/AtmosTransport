@@ -30,6 +30,7 @@ archaeology — both live in commit history.
 
 | Plan | Title | Status | Blocked by |
 |------|-------|--------|------------|
+| 24 | TM5 convection preprocessor integration | **in progress — Commit 0 baseline** | 23 |
 | 19 | Adjoint operator suite | pending | 21, 23 |
 | 20 | Documentation overhaul (Documenter + Literate) | pending | 21, 19 |
 
@@ -143,6 +144,43 @@ in `test/test_cubed_sphere_runtime.jl`.
   `apply!(::CubedSphereState, ...)` shipped for `NoChemistry`,
   `ExponentialDecay`, and `CompositeChemistry` with matching
   `test/test_cs_chemistry.jl` (152 tests, F32 + F64).
+
+### Plan 24 — TM5 convection preprocessor integration (IN PROGRESS)
+
+Closing plan 23's explicitly-deferred preprocessor gap. Adds the
+ERA5 → TM5 conversion pipeline so real ERA5 data can produce
+transport binaries with populated `tm5_fields`:
+
+- Port TM5's `ECconv_to_TMconv` (phys_convec_ec2tm.F90:87–237) as
+  `ec2tm_from_rates!` alongside plan 23's existing `ec2tm!` in
+  `src/Preprocessing/tm5_convection_conversion.jl`.
+- NC→BIN conversion layer (`era5_physics_nc_to_bin.jl` +
+  `era5_physics_binary_reader.jl`): archival NCs under
+  `met/era5/<grid>/physics/`; mmap-friendly per-day binary
+  intermediate under `met/era5/<grid>/physics_bin/YYYY/`.
+- `process_day` hook reads the physics BIN, applies ec2tm with
+  hydrostatic virtual-temperature dz, merges to transport Nz via
+  the existing `merge_cell_field!`, and attaches `tm5_fields` to
+  the window before `write_transport_binary` (plan 23 Commit 3
+  writer emits the TM5 sections automatically).
+- Monthly CDS chunked download via restored/updated
+  `download_era5_physics.py`.
+- End-to-end CATRINE-style 1-day test replaces plan 23 Commit 6's
+  synthetic stub.
+
+Commit sequence: 0 (baseline + survey) → 1 (`ec2tm_from_rates!` +
+dz) → 2 (NC→BIN converter + reader) → 3 (vertical remap wiring)
+→ 4 (LL `process_day` integration; RG/CS follow as 4b/4c) → 5
+(download script + docs) → 6 (real-data end-to-end) → 7
+(production audit + retrospective).
+
+Decisions: single code path (drop main's mass-flux-only
+fallback); bad-data handling mirrors TM5 F90 exactly (small-value
+clip + top-search + negative redistribution, with diagnostic
+counter); dz uses virtual-temperature `T_v = T(1 + 0.608·Q)`
+from the same physics download (one step closer to TM5's
+geopotential-height approach); binary intermediate keeps the
+preprocessor NC-free (consistent with its GRIB-direct pattern).
 
 ### Plan 23 — TM5 convection (SHIPPED)
 

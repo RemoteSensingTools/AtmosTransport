@@ -279,9 +279,122 @@ function _validate_replay_consistency_ll(reader::TransportBinaryReader)
     return (worst_window = worst_win, worst_rel = worst_rel, worst_abs = worst_abs)
 end
 
-# Dispatch stub: RG / CS topologies not yet covered by load-time replay.
-# The write-time gate (Commit E) covers them; extend here if needed.
+# Dispatch stub: CS topology not yet covered by load-time replay.
+# The write-time gate (Commit E) covers it; extend here if needed.
 _validate_replay_consistency_ll(::Any) = nothing
+
+@inline function _rg_face_connectivity(mesh)
+    nf = Grids.nfaces(mesh)
+    left  = Vector{Int32}(undef, nf)
+    right = Vector{Int32}(undef, nf)
+    @inbounds for f in 1:nf
+        l, r = Grids.face_cells(mesh, f)
+        left[f]  = Int32(l)
+        right[f] = Int32(r)
+    end
+    return left, right
+end
+
+@inline function _replay_window_pair_rg(m_cur::AbstractMatrix{FT},
+                                         hflux::AbstractMatrix{FT},
+                                         cm::AbstractMatrix{FT},
+                                         m_next::AbstractMatrix{FT},
+                                         face_left::Vector{Int32},
+                                         face_right::Vector{Int32},
+                                         div_scratch::AbstractMatrix{Float64},
+                                         steps_per_window::Integer) where FT
+    nc, Nz = size(m_cur)
+    fill!(div_scratch, 0.0)
+    @inbounds for k in 1:Nz, f in eachindex(face_left)
+        flux = Float64(hflux[f, k])
+        l = Int(face_left[f])
+        r = Int(face_right[f])
+        l > 0 && (div_scratch[l, k] += flux)
+        r > 0 && (div_scratch[r, k] -= flux)
+    end
+    two_steps = Float64(2 * Int(steps_per_window))
+    denom_max = 0.0
+    @inbounds for k in 1:Nz, c in 1:nc
+        denom_max = max(denom_max, abs(Float64(m_next[c, k])))
+    end
+    denom_max = max(denom_max, eps(Float64))
+    max_abs = 0.0
+    max_rel = 0.0
+    worst = (0, 0)
+    @inbounds for k in 1:Nz, c in 1:nc
+        net_div = div_scratch[c, k] + (Float64(cm[c, k + 1]) - Float64(cm[c, k]))
+        m_evolved = Float64(m_cur[c, k]) - two_steps * net_div
+        abs_err = abs(m_evolved - Float64(m_next[c, k]))
+        rel_err = abs_err / denom_max
+        if rel_err > max_rel
+            max_rel = rel_err
+            max_abs = abs_err
+            worst = (c, k)
+        end
+    end
+    return (max_abs_err = max_abs, max_rel_err = max_rel, worst_idx = worst)
+end
+
+"""
+    _validate_replay_consistency_rg(reader::TransportBinaryReader, grid)
+
+Plan 39 Commit F — load-time replay gate for RG (`:faceindexed`) binaries.
+Uses the `ReducedGaussianMesh` from `grid.horizontal` to build face-cell
+connectivity, then walks consecutive window pairs and asserts
+
+    m[k] − 2·steps·(div_face_flux + ∂_k cm) ≈ m[k+1]
+
+to within `tol_rel = 1e-10` (Float64) / `1e-4` (Float32). Bypass with
+`ENV["ATMOSTR_NO_REPLAY_CHECK"]="1"`.
+"""
+function _validate_replay_consistency_rg(reader::TransportBinaryReader, grid)
+    if get(ENV, "ATMOSTR_NO_REPLAY_CHECK", "0") == "1"
+        return nothing
+    end
+    FT = reader.header.float_type
+    tol_rel = FT === Float32 ? 1e-4 : 1e-10
+    steps = reader.header.steps_per_window
+    Nt = window_count(reader)
+    Nt >= 2 || return nothing
+
+    face_left, face_right = _rg_face_connectivity(grid.horizontal)
+
+    m_cur, _, fluxes = load_window!(reader, 1)
+    _, Nz = size(m_cur)
+    div_scratch = zeros(Float64, size(m_cur, 1), Nz)
+    worst_rel = 0.0
+    worst_abs = 0.0
+    worst_win = 0
+    worst_idx = (0, 0)
+    for k in 1:(Nt - 1)
+        m_next, _, _ = load_window!(reader, k + 1)
+        diag = _replay_window_pair_rg(m_cur, fluxes.horizontal_flux, fluxes.cm,
+                                       m_next, face_left, face_right,
+                                       div_scratch, steps)
+        if diag.max_rel_err > worst_rel
+            worst_rel = diag.max_rel_err
+            worst_abs = diag.max_abs_err
+            worst_win = k
+            worst_idx = diag.worst_idx
+        end
+        m_cur = m_next
+        _, _, fluxes = load_window!(reader, k + 1)
+    end
+
+    worst_rel <= tol_rel ||
+        throw(ArgumentError(
+            "TransportBinaryDriver replay-consistency gate FAILED for " *
+            "$(basename(reader.path)): rel=$(worst_rel) > tol=$(tol_rel) at window " *
+            "$worst_win cell $worst_idx (abs=$worst_abs kg). Stored fluxes do not " *
+            "integrate to stored m_next under palindrome continuity. Regenerate the " *
+            "binary with the plan-39 preprocessor fix (explicit-dm cm closure) or " *
+            "bypass with ENV[\"ATMOSTR_NO_REPLAY_CHECK\"]=\"1\" for diagnostic runs."
+        ))
+
+    return (worst_window = worst_win, worst_rel = worst_rel, worst_abs = worst_abs)
+end
+
+_validate_replay_consistency_rg(::Any, ::Any) = nothing
 
 function _validate_runtime_semantics(reader::TransportBinaryReader)
     h = reader.header
@@ -367,6 +480,7 @@ function TransportBinaryDriver(path::AbstractString;
     reader = TransportBinaryReader(String(path); FT=FT)
     _validate_runtime_semantics(reader)
     validate_windows && _validate_window_cm_sanity(reader; max_rel_cm=max_rel_cm)
+    grid = load_grid(reader; FT=FT, arch=arch)
     # Plan 39 Commit F: load-time replay-consistency gate. Opt-in because
     # the write-time Commit E gate already guarantees continuity for
     # binaries we produce; the load-time gate is for suspect binaries
@@ -374,10 +488,14 @@ function TransportBinaryDriver(path::AbstractString;
     # Set `validate_replay=true` or `ENV["ATMOSTR_REPLAY_CHECK"]="1"` to
     # enable; disable the in-flight check with `ATMOSTR_NO_REPLAY_CHECK=1`.
     replay_on = validate_replay || get(ENV, "ATMOSTR_REPLAY_CHECK", "0") == "1"
-    if replay_on && horizontal_topology(reader) === :structureddirectional
-        _validate_replay_consistency_ll(reader)
+    if replay_on
+        topo = horizontal_topology(reader)
+        if topo === :structureddirectional
+            _validate_replay_consistency_ll(reader)
+        elseif topo === :faceindexed
+            _validate_replay_consistency_rg(reader, grid)
+        end
     end
-    grid = load_grid(reader; FT=FT, arch=arch)
     return TransportBinaryDriver{FT, typeof(reader), typeof(grid)}(reader, grid)
 end
 

@@ -333,6 +333,24 @@ reorders after Commit 6 in the final ship order.
     is the plan 24 Commit 3 headline invariant.
 - **0 regressions** on plan 23 / plan 24 prior tests; README gate 74.
 
+## Post-plan-24 update (2026-04-22) — cm closure fix in LL preprocessor
+
+Plan 39 Commit `c3a48dc` replaced the dry-basis LL + RG preprocessor's
+`Δb × pit` cm closure with an explicit-dm closure. Plan 24's Commit 4
+LL `process_day` hook writes its binaries via the same
+`apply_poisson_balance!` path that was fixed, so all plan-24-produced
+LL binaries inherit the correct `cm` going forward.
+
+Any plan-24 LL binaries written before `c3a48dc` (e.g. the Dec 2 2021
+TM5-convection binary produced during Commit 4 smoke tests) encode the
+broken `cm` and should be regenerated. The plan-39 write-time replay
+gate (`verify_storage_continuity_ll!` inside `apply_poisson_balance!`)
+now guarantees every newly-written binary is continuity-consistent to
+F64 ULP.
+
+Details: [`docs/39_DRY_BASIS_CM_CLOSURE_BUG_2026-04-22.md`](../../39_DRY_BASIS_CM_CLOSURE_BUG_2026-04-22.md)
+and [`docs/plans/39_TRANSPORT_CONTRACT/NOTES.md`](../39_TRANSPORT_CONTRACT/NOTES.md).
+
 ## Retrospective sections (filled during execution)
 
 ### Decisions beyond the plan

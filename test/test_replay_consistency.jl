@@ -13,7 +13,9 @@ using Test
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 using .AtmosTransport.Preprocessing: verify_window_continuity_ll,
-                                       verify_window_continuity_rg
+                                       verify_window_continuity_rg,
+                                       verify_storage_continuity_ll!,
+                                       allocate_window_storage
 
 # ----------------------------------------------------------------------------
 # Helper: build a (m, am, bm, cm) tuple that satisfies continuity exactly
@@ -118,6 +120,25 @@ end
         cm = zeros(Float64, 4, 3, 4)
         diag = verify_window_continuity_ll(m_cur, am, bm, cm, m_next, 2)
         @test diag.max_rel_err ≈ 0.5 atol=1e-12   # |m_cur - m_next|/max(m_next) = 0.5
+    end
+
+    @testset "verify_storage_continuity_ll!: final zero-tendency fallback is checked" begin
+        # With `last_hour_next === nothing`, the final LL window should replay
+        # against `m_cur` itself, not be skipped.
+        m = fill(Float64(1e9), 4, 3, 3)
+        am = zeros(Float64, 5, 3, 3)
+        bm = zeros(Float64, 4, 4, 3)
+        cm = zeros(Float64, 4, 3, 4)
+        cm[2, 2, 2] = 1e4  # deliberate inconsistency in the only/final window
+
+        storage = allocate_window_storage(1, Float64)
+        storage.all_m[1] = copy(m)
+        storage.all_am[1] = copy(am)
+        storage.all_bm[1] = copy(bm)
+        storage.all_cm[1] = copy(cm)
+        storage.all_ps[1] = zeros(Float64, 4, 3)
+
+        @test_throws ErrorException verify_storage_continuity_ll!(storage, nothing, 2, Float64)
     end
 
     # -------------------------------------------------------------------

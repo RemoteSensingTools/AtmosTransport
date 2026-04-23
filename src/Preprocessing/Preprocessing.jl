@@ -72,7 +72,11 @@ using ..MetDrivers: TransportBinaryReader, TransportBinaryHeader, write_transpor
                     close_streaming_transport_binary!,
                     open_streaming_cs_transport_binary, write_streaming_cs_window!,
                     load_window!,
-                    TransportBinaryContract, canonical_window_constant_contract
+                    TransportBinaryContract, canonical_window_constant_contract,
+                    recompute_cm_from_dm_target!, recompute_faceindexed_cm_from_dm_target!,
+                    verify_window_continuity, verify_window_continuity_ll, verify_window_continuity_rg,
+                    replay_tolerance, run_replay_gate,
+                    structured_replay_layout, faceindexed_replay_layout
 
 # Physical constants
 include("constants.jl")

@@ -189,36 +189,15 @@ function _validate_window_cm_sanity(reader::TransportBinaryReader; max_rel_cm::R
     return worst_window, worst_ratio
 end
 
-@inline function _replay_window_pair_ll(m_cur::AbstractArray{FT, 3},
-                                         am::AbstractArray{FT, 3},
-                                         bm::AbstractArray{FT, 3},
-                                         cm::AbstractArray{FT, 3},
-                                         m_next::AbstractArray{FT, 3},
-                                         steps_per_window::Integer) where FT
-    Nx, Ny, Nz = size(m_cur)
-    two_steps = Float64(2 * Int(steps_per_window))
-    denom_max = 0.0
-    @inbounds for j in 1:Ny, i in 1:Nx, k in 1:Nz
-        denom_max = max(denom_max, abs(Float64(m_next[i, j, k])))
-    end
-    denom_max = max(denom_max, eps(Float64))
-    max_abs = 0.0
-    max_rel = 0.0
-    worst = (0, 0, 0)
-    @inbounds for j in 1:Ny, i in 1:Nx, k in 1:Nz
-        div_total = (Float64(am[i + 1, j, k]) - Float64(am[i, j, k])) +
-                    (Float64(bm[i, j + 1, k]) - Float64(bm[i, j, k])) +
-                    (Float64(cm[i, j, k + 1]) - Float64(cm[i, j, k]))
-        m_evolved = Float64(m_cur[i, j, k]) - two_steps * div_total
-        abs_err = abs(m_evolved - Float64(m_next[i, j, k]))
-        rel_err = abs_err / denom_max
-        if rel_err > max_rel
-            max_rel = rel_err
-            max_abs = abs_err
-            worst = (i, j, k)
-        end
-    end
-    return (max_abs_err = max_abs, max_rel_err = max_rel, worst_idx = worst)
+@inline function _replay_window_pair(::StructuredDirectionalReplayLayout,
+                                     div_scratch::AbstractArray{Float64, 3},
+                                     m_cur::AbstractArray{FT, 3},
+                                     fluxes::StructuredFaceFluxState,
+                                     m_next::AbstractArray{FT, 3},
+                                     steps_per_window::Integer) where FT
+    return verify_window_continuity(structured_replay_layout(), div_scratch,
+                                    m_cur, fluxes.cm, m_next, steps_per_window,
+                                    fluxes.am, fluxes.bm)
 end
 
 """
@@ -241,20 +220,21 @@ function _validate_replay_consistency_ll(reader::TransportBinaryReader)
         return nothing
     end
     FT = reader.header.float_type
-    tol_rel = FT === Float32 ? 1e-4 : 1e-10
+    tol_rel = replay_tolerance(FT)
     steps = reader.header.steps_per_window
     Nt = window_count(reader)
     Nt >= 2 || return nothing
 
     m_cur, _ps_cur, fluxes = load_window!(reader, 1)
+    div_scratch = Array{Float64}(undef, size(m_cur))
+    layout = structured_replay_layout()
     worst_rel = 0.0
     worst_abs = 0.0
     worst_win = 0
     worst_idx = (0, 0, 0)
     for k in 1:(Nt - 1)
         m_next, _ps_next, _fluxes_next = load_window!(reader, k + 1)
-        diag = _replay_window_pair_ll(m_cur, fluxes.am, fluxes.bm, fluxes.cm,
-                                       m_next, steps)
+        diag = _replay_window_pair(layout, div_scratch, m_cur, fluxes, m_next, steps)
         if diag.max_rel_err > worst_rel
             worst_rel = diag.max_rel_err
             worst_abs = diag.max_abs_err
@@ -295,44 +275,15 @@ _validate_replay_consistency_ll(::Any) = nothing
     return left, right
 end
 
-@inline function _replay_window_pair_rg(m_cur::AbstractMatrix{FT},
-                                         hflux::AbstractMatrix{FT},
-                                         cm::AbstractMatrix{FT},
-                                         m_next::AbstractMatrix{FT},
-                                         face_left::Vector{Int32},
-                                         face_right::Vector{Int32},
-                                         div_scratch::AbstractMatrix{Float64},
-                                         steps_per_window::Integer) where FT
-    nc, Nz = size(m_cur)
-    fill!(div_scratch, 0.0)
-    @inbounds for k in 1:Nz, f in eachindex(face_left)
-        flux = Float64(hflux[f, k])
-        l = Int(face_left[f])
-        r = Int(face_right[f])
-        l > 0 && (div_scratch[l, k] += flux)
-        r > 0 && (div_scratch[r, k] -= flux)
-    end
-    two_steps = Float64(2 * Int(steps_per_window))
-    denom_max = 0.0
-    @inbounds for k in 1:Nz, c in 1:nc
-        denom_max = max(denom_max, abs(Float64(m_next[c, k])))
-    end
-    denom_max = max(denom_max, eps(Float64))
-    max_abs = 0.0
-    max_rel = 0.0
-    worst = (0, 0)
-    @inbounds for k in 1:Nz, c in 1:nc
-        net_div = div_scratch[c, k] + (Float64(cm[c, k + 1]) - Float64(cm[c, k]))
-        m_evolved = Float64(m_cur[c, k]) - two_steps * net_div
-        abs_err = abs(m_evolved - Float64(m_next[c, k]))
-        rel_err = abs_err / denom_max
-        if rel_err > max_rel
-            max_rel = rel_err
-            max_abs = abs_err
-            worst = (c, k)
-        end
-    end
-    return (max_abs_err = max_abs, max_rel_err = max_rel, worst_idx = worst)
+@inline function _replay_window_pair(layout::FaceIndexedReplayLayout,
+                                     div_scratch::AbstractMatrix{Float64},
+                                     m_cur::AbstractMatrix{FT},
+                                     fluxes::FaceIndexedFluxState,
+                                     m_next::AbstractMatrix{FT},
+                                     steps_per_window::Integer) where FT
+    return verify_window_continuity(layout, div_scratch,
+                                    m_cur, fluxes.cm, m_next, steps_per_window,
+                                    fluxes.horizontal_flux)
 end
 
 """
@@ -352,12 +303,13 @@ function _validate_replay_consistency_rg(reader::TransportBinaryReader, grid)
         return nothing
     end
     FT = reader.header.float_type
-    tol_rel = FT === Float32 ? 1e-4 : 1e-10
+    tol_rel = replay_tolerance(FT)
     steps = reader.header.steps_per_window
     Nt = window_count(reader)
     Nt >= 2 || return nothing
 
     face_left, face_right = _rg_face_connectivity(grid.horizontal)
+    layout = faceindexed_replay_layout(face_left, face_right)
 
     m_cur, _, fluxes = load_window!(reader, 1)
     _, Nz = size(m_cur)
@@ -368,9 +320,7 @@ function _validate_replay_consistency_rg(reader::TransportBinaryReader, grid)
     worst_idx = (0, 0)
     for k in 1:(Nt - 1)
         m_next, _, _ = load_window!(reader, k + 1)
-        diag = _replay_window_pair_rg(m_cur, fluxes.horizontal_flux, fluxes.cm,
-                                       m_next, face_left, face_right,
-                                       div_scratch, steps)
+        diag = _replay_window_pair(layout, div_scratch, m_cur, fluxes, m_next, steps)
         if diag.max_rel_err > worst_rel
             worst_rel = diag.max_rel_err
             worst_abs = diag.max_abs_err

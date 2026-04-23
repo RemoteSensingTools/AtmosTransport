@@ -1,6 +1,7 @@
 #!/usr/bin/env julia
 
 using Test
+using Logging
 
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
@@ -503,12 +504,18 @@ end
 
         # Warm up
         Prep.balance_mass_fluxes!(copy(am), copy(bm), copy(dm), ws)
+        prev_logger = global_logger(NullLogger())
+        try
+            Prep.balance_mass_fluxes!(copy(am), copy(bm), copy(dm), ws)
 
-        # Measure allocation
-        am2 = copy(am); bm2 = copy(bm); dm2 = copy(dm)
-        alloc = @allocated Prep.balance_mass_fluxes!(am2, bm2, dm2, ws)
-        # Should be near-zero (only the @info string allocation)
-        @test alloc < 10_000  # < 10 KB
+            # Measure allocation
+            am2 = copy(am); bm2 = copy(bm); dm2 = copy(dm)
+            alloc = @allocated Prep.balance_mass_fluxes!(am2, bm2, dm2, ws)
+            # Should be near-zero once logging allocations are removed.
+            @test alloc < 10_000  # < 10 KB
+        finally
+            global_logger(prev_logger)
+        end
     else
         @test true  # skip if Preprocessing not available
     end

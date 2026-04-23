@@ -12,6 +12,15 @@
 
 const RUN_ALL = "--all" in ARGS
 
+function run_test_file_isolated(test_file::AbstractString)
+    mod_name = Symbol("Test_", replace(basename(test_file), "." => "_"))
+    mod = Module(mod_name)
+    Core.eval(mod, :(include(path::AbstractString) = Base.include($mod, path)))
+    Core.eval(mod, :(include(mapexpr::Function, path::AbstractString) = Base.include(mapexpr, $mod, path)))
+    Core.eval(mod, :(eval(expr) = Core.eval($mod, expr)))
+    return Base.include(mod, joinpath(@__DIR__, test_file))
+end
+
 # ── Core tests (no external data) ──────────────────────────────────
 
 core_tests = [
@@ -41,7 +50,7 @@ core_tests = [
 
 for test_file in core_tests
     @info "Running $test_file"
-    include(test_file)
+    run_test_file_isolated(test_file)
 end
 
 # ── Real-data tests (require preprocessed binaries) ────────────────
@@ -59,7 +68,7 @@ if RUN_ALL
 
     for test_file in real_data_tests
         @info "Running $test_file"
-        include(test_file)
+        run_test_file_isolated(test_file)
     end
 else
     @info "Skipping real-data tests (pass --all to include them)"

@@ -12,6 +12,7 @@ Provides:
 module MetDrivers
 
 using Adapt
+using Printf: @sprintf
 using ..State
 using ..Grids
 
@@ -20,6 +21,7 @@ include("MassClosure.jl")
 include("DryFluxBuilder.jl")
 include("ConvectionForcing.jl")
 include("TransportBinary.jl")
+include("ReplayContinuity.jl")
 include("TransportBinaryDriver.jl")
 include("CubedSphereBinaryReader.jl")
 include("CubedSphereTransportDriver.jl")
@@ -53,6 +55,8 @@ export mass_basis, grid_type, horizontal_topology, A_ifc, B_ifc
 export source_flux_sampling, air_mass_sampling, flux_sampling, flux_kind, humidity_sampling, delta_semantics
 export diagnose_cm_from_continuity!, diagnose_cm_from_continuity_vc!
 export diagnose_cm_from_continuity_ka!
+export recompute_cm_from_dm_target!, recompute_faceindexed_cm_from_dm_target!
+export verify_window_continuity, verify_window_continuity_ll, verify_window_continuity_rg
 export ERA5ReducedGaussianGeometry
 export read_era5_reduced_gaussian_geometry, read_era5_reduced_gaussian_mesh
 

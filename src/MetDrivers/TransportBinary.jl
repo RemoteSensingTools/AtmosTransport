@@ -969,6 +969,16 @@ function _transport_common_header(grid_type::String,
     n_qv_end = (:qv_end in payload_sections) ? ncell * nlevel : 0
     humidity_sampling = humidity_sampling === :auto ? _transport_default_humidity_sampling(payload_sections) : _transport_normalize_symbol(humidity_sampling)
     delta_semantics = delta_semantics === :auto ? _transport_default_delta_semantics(payload_sections) : _transport_normalize_symbol(delta_semantics)
+    contract = TransportBinaryContract(
+        source_flux_sampling = source_flux_sampling,
+        air_mass_sampling = air_mass_sampling,
+        flux_sampling = flux_sampling,
+        flux_kind = flux_kind,
+        delta_semantics = delta_semantics,
+        humidity_sampling = humidity_sampling,
+        poisson_balance_target_scale = 1.0 / (2 * Int(steps_per_window)),
+        poisson_balance_target_semantics = "forward_window_mass_difference / (2 * steps_per_window)",
+    )
 
     return Dict{String, Any}(
         "magic" => "MFLX",
@@ -988,12 +998,14 @@ function _transport_common_header(grid_type::String,
         "dt_met_seconds" => Float64(dt_met_seconds),
         "half_dt_seconds" => Float64(half_dt_seconds),
         "steps_per_window" => Int(steps_per_window),
-        "source_flux_sampling" => String(_transport_validate_source_flux_sampling(source_flux_sampling)),
-        "air_mass_sampling" => String(_transport_normalize_symbol(air_mass_sampling)),
-        "flux_sampling" => String(_transport_normalize_symbol(flux_sampling)),
-        "flux_kind" => String(_transport_normalize_symbol(flux_kind)),
-        "humidity_sampling" => String(humidity_sampling),
-        "delta_semantics" => String(delta_semantics),
+        "source_flux_sampling" => String(contract.source_flux_sampling),
+        "air_mass_sampling" => String(contract.air_mass_sampling),
+        "flux_sampling" => String(contract.flux_sampling),
+        "flux_kind" => String(contract.flux_kind),
+        "humidity_sampling" => String(contract.humidity_sampling),
+        "delta_semantics" => String(contract.delta_semantics),
+        "poisson_balance_target_scale" => contract.poisson_balance_target_scale,
+        "poisson_balance_target_semantics" => contract.poisson_balance_target_semantics,
         "mass_basis" => String(mass_basis),
         "payload_sections" => String.(payload_sections),
         "include_qv" => :qv in payload_sections,

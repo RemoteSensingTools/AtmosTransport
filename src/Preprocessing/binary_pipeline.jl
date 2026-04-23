@@ -1001,7 +1001,8 @@ Plan 39 Commit E — write-time replay gate for structured LL storage.
 Iterates every window k and asserts
 
     m[k] − 2·steps·(∇·am + ∇·bm + ∂_k cm) ≈ m[k+1]    (k < Nt)
-    m[Nt] − 2·steps·(∇·am + ∇·bm + ∂_k cm) ≈ last_hour_next.m   (k == Nt)
+    m[Nt] − 2·steps·(∇·am + ∇·bm + ∂_k cm) ≈ last_hour_next.m   (k == Nt, if available)
+    m[Nt] − 2·steps·(∇·am + ∇·bm + ∂_k cm) ≈ m[Nt]              (otherwise zero-tendency fallback)
 
 to within a Poisson-balance tolerance floor derived from `FT` (roughly
 `1e-10` for `Float64`, `1e-4` for `Float32`). Errors loudly with a per-window
@@ -1019,39 +1020,27 @@ function verify_storage_continuity_ll!(storage::WindowStorage{FT},
         return nothing
     end
     Nt = length(storage.all_m)
-    tol_rel = FT === Float32 ? Float64(1e-4) : Float64(1e-10)
-    worst_rel = 0.0
-    worst_abs = 0.0
-    worst_win = 0
-    worst_idx = (0, 0, 0)
-    for k in 1:Nt
+    Nt == 0 && return nothing
+    tol_rel = replay_tolerance(FT)
+    div_scratch = Array{Float64}(undef, size(storage.all_m[1]))
+    layout = structured_replay_layout()
+    run_replay_gate(Nt; tol_rel=tol_rel,
+                    summary_label="  Write-time replay gate",
+                    failure_prefix="Write-time replay gate") do k
         m_next = if k < Nt
             storage.all_m[k + 1]
         elseif last_hour_next !== nothing
             last_hour_next.m
         else
-            continue
+            storage.all_m[k]
         end
-        diag = verify_window_continuity_ll(storage.all_m[k],
-                                            storage.all_am[k],
-                                            storage.all_bm[k],
-                                            storage.all_cm[k],
-                                            m_next,
-                                            steps_per_window)
-        if diag.max_rel_err > worst_rel
-            worst_rel = diag.max_rel_err
-            worst_abs = diag.max_abs_err
-            worst_win = k
-            worst_idx = diag.worst_idx
-        end
-    end
-    summary_msg = @sprintf("max|m_evolved−m_stored|/max|m| = %.3e  (abs=%.3e kg  win=%d  cell=%s)",
-                            worst_rel, worst_abs, worst_win, worst_idx)
-    @info "  Write-time replay gate: $summary_msg"
-    if worst_rel > tol_rel
-        tol_msg = @sprintf("rel=%.3e > tol=%.3e at window %d cell %s", worst_rel, tol_rel, worst_win, worst_idx)
-        error("Write-time replay gate FAILED: $tol_msg. Stored fluxes do not integrate to stored " *
-              "m_next under palindrome continuity. See plan 39 memo.")
+        verify_window_continuity(layout, div_scratch,
+                                 storage.all_m[k],
+                                 storage.all_cm[k],
+                                 m_next,
+                                 steps_per_window,
+                                 storage.all_am[k],
+                                 storage.all_bm[k])
     end
     return nothing
 end
@@ -1068,7 +1057,9 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
                                 steps_per_window::Int) where FT
     Nx, Ny, Nz = size(storage.all_m[1])
     dm_dt_buf = Array{FT}(undef, Nx, Ny, Nz)
+    div_scratch = Array{Float64}(undef, Nx, Ny, Nz)
     poisson_ws = LLPoissonWorkspace(Nx, Ny)
+    replay_layout = structured_replay_layout()
 
     @info "  Applying Poisson mass flux balance..."
     for win_idx in eachindex(storage.all_m)
@@ -1082,9 +1073,9 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
         # but is violated by ~27% under dry basis because qv[k] varies with
         # level. That mismatch caused the 0.75% day-boundary air_mass jump
         # observed on F64 probe; see plan39_reconnect.md memory entry.
-        recompute_cm_from_dm_target!(storage.all_cm[win_idx], storage.all_am[win_idx],
-                                      storage.all_bm[win_idx], storage.all_m[win_idx],
-                                      dm_dt_buf)
+        recompute_cm_from_dm_target!(replay_layout, div_scratch,
+                                     storage.all_cm[win_idx], storage.all_m[win_idx], dm_dt_buf,
+                                     storage.all_am[win_idx], storage.all_bm[win_idx])
         @views storage.all_cm[win_idx][:, :, 1] .= zero(FT)
         @views storage.all_cm[win_idx][:, :, Nz + 1] .= zero(FT)
     end

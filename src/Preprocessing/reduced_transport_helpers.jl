@@ -762,125 +762,6 @@ function balance_reduced_horizontal_fluxes!(hflux::AbstractMatrix{Float64},
     )
 end
 
-"""
-    recompute_faceindexed_cm_from_dm_target!(cm, hflux, face_left, face_right,
-                                              div_scratch, m, dm_target)
-
-RG analog of [`recompute_cm_from_dm_target!`](@ref) for the face-indexed
-topology. Diagnoses `cm` from balanced horizontal fluxes + explicit
-per-cell, per-level dm target using continuity, then redistributes any
-residual at `cm[:, Nz+1]` proportional to column `m` so `cm[:, Nz+1] = 0`
-exactly.
-
-Basis-agnostic; replaces the legacy Δb×pit closure on the
-correctness-critical post-Poisson-balance path. See the plan-39 F64 probe
-(2026-04-22) for why the Δb×pit closure is wrong under dry basis.
-"""
-function recompute_faceindexed_cm_from_dm_target!(cm::AbstractMatrix{FT},
-                                                   hflux::AbstractMatrix{FT},
-                                                   face_left::Vector{Int32},
-                                                   face_right::Vector{Int32},
-                                                   div_scratch::AbstractMatrix{Float64},
-                                                   m::AbstractMatrix,
-                                                   dm_target::AbstractMatrix{<:Real}) where FT
-    nc = size(cm, 1)
-    Nz = size(cm, 2) - 1
-    size(m)         == (nc, Nz) || error("m shape $(size(m)) must be ($nc, $Nz)")
-    size(dm_target) == (nc, Nz) || error("dm_target shape $(size(dm_target)) must be ($nc, $Nz)")
-    fill!(cm, zero(FT))
-    fill!(div_scratch, 0.0)
-
-    @inbounds for k in 1:Nz, f in eachindex(face_left)
-        flux = Float64(hflux[f, k])
-        left  = Int(face_left[f])
-        right = Int(face_right[f])
-        left  > 0 && (div_scratch[left, k]  += flux)
-        right > 0 && (div_scratch[right, k] -= flux)
-    end
-
-    @inbounds for c in 1:nc
-        acc = 0.0
-        for k in 1:Nz
-            acc = acc - div_scratch[c, k] - Float64(dm_target[c, k])
-            cm[c, k + 1] = FT(acc)
-        end
-        residual = Float64(cm[c, Nz + 1])
-        if residual != 0.0
-            total_m = 0.0
-            for k in 1:Nz
-                total_m += Float64(m[c, k])
-            end
-            if total_m > 0.0
-                cum_fix = 0.0
-                for k in 1:Nz
-                    cum_fix += (Float64(m[c, k]) / total_m) * residual
-                    cm[c, k + 1] = FT(Float64(cm[c, k + 1]) - cum_fix)
-                end
-            end
-        end
-    end
-    return nothing
-end
-
-"""
-    verify_window_continuity_rg(m_cur, hflux, cm, m_next, face_left, face_right,
-                                 div_scratch, steps_per_window) -> (max_abs, max_rel, worst_idx)
-
-RG analog of [`verify_window_continuity_ll`](@ref). Replays one window's
-stored fluxes against stored endpoints:
-
-    m_evolved[c, k] = m_cur[c, k] − 2·steps·(div_face[c,k] + (cm[c,k+1]−cm[c,k]))
-
-where `div_face` aggregates signed `hflux` across each cell's faces
-(`face_left[f]` +flux, `face_right[f]` −flux — per the Poisson closure).
-
-Used by the Plan-39 write-time + load-time replay gates on RG binaries.
-`worst_idx` is `(c, k)` of the cell+level with the largest relative error.
-"""
-function verify_window_continuity_rg(m_cur::AbstractMatrix{FT},
-                                      hflux::AbstractMatrix{FT},
-                                      cm::AbstractMatrix{FT},
-                                      m_next::AbstractMatrix{FT},
-                                      face_left::Vector{Int32},
-                                      face_right::Vector{Int32},
-                                      div_scratch::AbstractMatrix{Float64},
-                                      steps_per_window::Integer) where FT
-    nc, Nz = size(m_cur)
-    size(m_next) == (nc, Nz) ||
-        error("verify_window_continuity_rg: m_next shape $(size(m_next)) != ($nc, $Nz)")
-    size(cm) == (nc, Nz + 1) ||
-        error("verify_window_continuity_rg: cm shape $(size(cm)) != ($nc, $(Nz + 1))")
-    fill!(div_scratch, 0.0)
-    @inbounds for k in 1:Nz, f in eachindex(face_left)
-        flux = Float64(hflux[f, k])
-        left  = Int(face_left[f])
-        right = Int(face_right[f])
-        left  > 0 && (div_scratch[left,  k] += flux)
-        right > 0 && (div_scratch[right, k] -= flux)
-    end
-    two_steps = Float64(2 * Int(steps_per_window))
-    denom_max = 0.0
-    @inbounds for k in 1:Nz, c in 1:nc
-        denom_max = max(denom_max, abs(Float64(m_next[c, k])))
-    end
-    denom_max = max(denom_max, eps(Float64))
-    max_abs = 0.0
-    max_rel = 0.0
-    worst_idx = (0, 0)
-    @inbounds for k in 1:Nz, c in 1:nc
-        net_div = div_scratch[c, k] + (Float64(cm[c, k + 1]) - Float64(cm[c, k]))
-        m_evolved = Float64(m_cur[c, k]) - two_steps * net_div
-        abs_err = abs(m_evolved - Float64(m_next[c, k]))
-        rel_err = abs_err / denom_max
-        if rel_err > max_rel
-            max_rel = rel_err
-            max_abs = abs_err
-            worst_idx = (c, k)
-        end
-    end
-    return (max_abs_err = max_abs, max_rel_err = max_rel, worst_idx = worst_idx)
-end
-
 function recompute_faceindexed_cm_from_divergence!(cm::AbstractMatrix{FT},
                                                    hflux::AbstractMatrix{FT},
                                                    face_left::Vector{Int32},
@@ -944,37 +825,19 @@ function verify_storage_continuity_rg!(storage::ReducedWindowStorage{FT},
     end
     Nt = length(storage.all_m)
     Nt == 0 && return nothing
-    nc, Nz = size(storage.all_m[1])
-    tol_rel = FT === Float32 ? Float64(1e-4) : Float64(1e-10)
-    div_scratch = zeros(Float64, nc, Nz)
-    worst_rel = 0.0
-    worst_abs = 0.0
-    worst_win = 0
-    worst_idx = (0, 0)
-    for win in 1:Nt
+    layout = faceindexed_replay_layout(work.face_left, work.face_right)
+    tol_rel = replay_tolerance(FT)
+    div_scratch = work.div_scratch
+    run_replay_gate(Nt; tol_rel=tol_rel,
+                    summary_label="  Write-time replay gate",
+                    failure_prefix="Write-time replay gate") do win
         m_next = win < Nt ? storage.all_m[win + 1] : storage.all_m[win]
-        diag = verify_window_continuity_rg(storage.all_m[win],
-                                            storage.all_hflux[win],
-                                            storage.all_cm[win],
-                                            m_next,
-                                            work.face_left,
-                                            work.face_right,
-                                            div_scratch,
-                                            steps_per_window)
-        if diag.max_rel_err > worst_rel
-            worst_rel = diag.max_rel_err
-            worst_abs = diag.max_abs_err
-            worst_win = win
-            worst_idx = diag.worst_idx
-        end
-    end
-    summary_msg = @sprintf("max|m_evolved−m_stored|/max|m| = %.3e  (abs=%.3e kg  win=%d  cell=%s)",
-                            worst_rel, worst_abs, worst_win, worst_idx)
-    @info "  Write-time replay gate: $summary_msg"
-    if worst_rel > tol_rel
-        tol_msg = @sprintf("rel=%.3e > tol=%.3e at window %d cell %s", worst_rel, tol_rel, worst_win, worst_idx)
-        error("Write-time replay gate FAILED: $tol_msg. Stored fluxes do not integrate to stored " *
-              "m_next under palindrome continuity. See plan 39 memo.")
+        verify_window_continuity(layout, div_scratch,
+                                 storage.all_m[win],
+                                 storage.all_cm[win],
+                                 m_next,
+                                 steps_per_window,
+                                 storage.all_hflux[win])
     end
     return nothing
 end
@@ -1001,6 +864,7 @@ function apply_reduced_poisson_balance!(storage::ReducedWindowStorage{FT},
     nc, Nz = size(storage.all_m[1])
 
     div_scratch = zeros(Float64, nc, Nz)
+    replay_layout = faceindexed_replay_layout(work.face_left, work.face_right)
     hflux_work = zeros(Float64, size(storage.all_hflux[1]))
     m_cur_work = zeros(Float64, nc, Nz)
     m_next_work = zeros(Float64, nc, Nz)
@@ -1051,10 +915,7 @@ function apply_reduced_poisson_balance!(storage::ReducedWindowStorage{FT},
         dm_target = similar(m_cur_work)
         inv_scale = 1.0 / (2 * max(Int(steps_per_window), 1))
         @. dm_target = (m_next_work - m_cur_work) * inv_scale
-        recompute_faceindexed_cm_from_dm_target!(
-            cm_buf, hflux_work, work.face_left, work.face_right, div_scratch,
-            m_cur_work, dm_target,
-        )
+        recompute_cm_from_dm_target!(replay_layout, div_scratch, cm_buf, m_cur_work, dm_target, hflux_work)
         storage.all_cm[win] = FT.(cm_buf)
     end
 
@@ -1321,6 +1182,7 @@ function balance_window!(hflux_work::Matrix{Float64},
     scratch = (psi = work.balance_psi, rhs = work.balance_rhs,
                r = work.balance_r, p = work.balance_p,
                Ap = work.balance_Ap, z = work.balance_z)
+    replay_layout = faceindexed_replay_layout(work.face_left, work.face_right)
 
     diag = balance_compressed_horizontal_fluxes!(
         hflux_work, m_cur_work, m_next_work,
@@ -1336,10 +1198,7 @@ function balance_window!(hflux_work::Matrix{Float64},
     dm_target = similar(m_cur_work)
     inv_scale = 1.0 / (2 * max(Int(steps_per_window), 1))
     @. dm_target = (m_next_work - m_cur_work) * inv_scale
-    recompute_faceindexed_cm_from_dm_target!(
-        cm_work, hflux_work,
-        work.face_left, work.face_right, div_scratch,
-        m_cur_work, dm_target)
+    recompute_cm_from_dm_target!(replay_layout, div_scratch, cm_work, m_cur_work, dm_target, hflux_work)
     buf.cm[slot] .= FT.(cm_work)
 
     # Plan 39 Commit E: per-window replay gate for the streaming RG path.
@@ -1349,7 +1208,7 @@ function balance_window!(hflux_work::Matrix{Float64},
                                                    m_next_work,
                                                    work.face_left, work.face_right,
                                                    div_scratch, steps_per_window)
-        tol_rel = FT === Float32 ? 1e-4 : 1e-10
+        tol_rel = replay_tolerance(FT)
         if diag_replay.max_rel_err > tol_rel
             tol_msg = @sprintf("rel=%.3e > tol=%.3e at cell %s (abs=%.3e kg)",
                                 diag_replay.max_rel_err, tol_rel, diag_replay.worst_idx,

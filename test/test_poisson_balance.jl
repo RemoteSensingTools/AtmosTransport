@@ -194,16 +194,22 @@ end
                     mq = Int(ft.mirror_panel[f])
                     mq == 0 && continue  # interior face
 
+                    cdir = Int(ft.face_dir[f])
+                    ci   = Int(ft.face_idx_i[f])
+                    cj   = Int(ft.face_idx_j[f])
                     mdir = Int(ft.mirror_dir[f])
                     mi   = Int(ft.mirror_idx_i[f])
                     mj   = Int(ft.mirror_idx_j[f])
                     ms   = Int(ft.mirror_sign[f])
 
-                    # Mirror at outflow position (index Nc+1) → sign must be -1
-                    # Mirror at inflow position (index 1 or interior) → sign must be +1
+                    # `mirror_sign` negates when canonical + mirror land on the
+                    # same position type (both inflow or both outflow), and
+                    # stays positive when they land on opposite types.
+                    can_at_outflow = (cdir == 1 && ci == Nc + 1) ||
+                                     (cdir == 2 && cj == Nc + 1)
                     at_outflow = (mdir == 1 && mi == Nc + 1) ||
                                  (mdir == 2 && mj == Nc + 1)
-                    expected = at_outflow ? -1 : 1
+                    expected = (can_at_outflow == at_outflow) ? -1 : 1
                     @test ms == expected
                 end
             end

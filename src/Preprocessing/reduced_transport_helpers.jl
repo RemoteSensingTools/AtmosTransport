@@ -822,6 +822,65 @@ function recompute_faceindexed_cm_from_dm_target!(cm::AbstractMatrix{FT},
     return nothing
 end
 
+"""
+    verify_window_continuity_rg(m_cur, hflux, cm, m_next, face_left, face_right,
+                                 div_scratch, steps_per_window) -> (max_abs, max_rel, worst_idx)
+
+RG analog of [`verify_window_continuity_ll`](@ref). Replays one window's
+stored fluxes against stored endpoints:
+
+    m_evolved[c, k] = m_cur[c, k] − 2·steps·(div_face[c,k] + (cm[c,k+1]−cm[c,k]))
+
+where `div_face` aggregates signed `hflux` across each cell's faces
+(`face_left[f]` +flux, `face_right[f]` −flux — per the Poisson closure).
+
+Used by the Plan-39 write-time + load-time replay gates on RG binaries.
+`worst_idx` is `(c, k)` of the cell+level with the largest relative error.
+"""
+function verify_window_continuity_rg(m_cur::AbstractMatrix{FT},
+                                      hflux::AbstractMatrix{FT},
+                                      cm::AbstractMatrix{FT},
+                                      m_next::AbstractMatrix{FT},
+                                      face_left::Vector{Int32},
+                                      face_right::Vector{Int32},
+                                      div_scratch::AbstractMatrix{Float64},
+                                      steps_per_window::Integer) where FT
+    nc, Nz = size(m_cur)
+    size(m_next) == (nc, Nz) ||
+        error("verify_window_continuity_rg: m_next shape $(size(m_next)) != ($nc, $Nz)")
+    size(cm) == (nc, Nz + 1) ||
+        error("verify_window_continuity_rg: cm shape $(size(cm)) != ($nc, $(Nz + 1))")
+    fill!(div_scratch, 0.0)
+    @inbounds for k in 1:Nz, f in eachindex(face_left)
+        flux = Float64(hflux[f, k])
+        left  = Int(face_left[f])
+        right = Int(face_right[f])
+        left  > 0 && (div_scratch[left,  k] += flux)
+        right > 0 && (div_scratch[right, k] -= flux)
+    end
+    two_steps = Float64(2 * Int(steps_per_window))
+    denom_max = 0.0
+    @inbounds for k in 1:Nz, c in 1:nc
+        denom_max = max(denom_max, abs(Float64(m_next[c, k])))
+    end
+    denom_max = max(denom_max, eps(Float64))
+    max_abs = 0.0
+    max_rel = 0.0
+    worst_idx = (0, 0)
+    @inbounds for k in 1:Nz, c in 1:nc
+        net_div = div_scratch[c, k] + (Float64(cm[c, k + 1]) - Float64(cm[c, k]))
+        m_evolved = Float64(m_cur[c, k]) - two_steps * net_div
+        abs_err = abs(m_evolved - Float64(m_next[c, k]))
+        rel_err = abs_err / denom_max
+        if rel_err > max_rel
+            max_rel = rel_err
+            max_abs = abs_err
+            worst_idx = (c, k)
+        end
+    end
+    return (max_abs_err = max_abs, max_rel_err = max_rel, worst_idx = worst_idx)
+end
+
 function recompute_faceindexed_cm_from_divergence!(cm::AbstractMatrix{FT},
                                                    hflux::AbstractMatrix{FT},
                                                    face_left::Vector{Int32},
@@ -877,6 +936,60 @@ matching the LL fallback in `fill_window_mass_tendency!`.
 After this pass, `storage.all_cm[win]` should be at machine-zero vs
 `storage.all_m[win]` (matching the LL-path behaviour).
 """
+"""
+    verify_storage_continuity_rg!(storage, work, steps_per_window, ::Type{FT})
+
+Plan 39 Commit E — write-time replay gate for RG storage. See
+[`verify_storage_continuity_ll!`](@ref) for semantics. For the final
+window (which targets zero tendency by construction), compares
+`m_evolved` against `m_cur` itself.
+
+Bypass with env var `ATMOSTR_NO_WRITE_REPLAY_CHECK=1`.
+"""
+function verify_storage_continuity_rg!(storage::ReducedWindowStorage{FT},
+                                        work::ReducedTransformWorkspace,
+                                        steps_per_window::Int,
+                                        ::Type{FT}) where FT
+    if get(ENV, "ATMOSTR_NO_WRITE_REPLAY_CHECK", "0") == "1"
+        @info "  Write-time replay gate SKIPPED (ATMOSTR_NO_WRITE_REPLAY_CHECK=1)"
+        return nothing
+    end
+    Nt = length(storage.all_m)
+    Nt == 0 && return nothing
+    nc, Nz = size(storage.all_m[1])
+    tol_rel = FT === Float32 ? Float64(1e-4) : Float64(1e-10)
+    div_scratch = zeros(Float64, nc, Nz)
+    worst_rel = 0.0
+    worst_abs = 0.0
+    worst_win = 0
+    worst_idx = (0, 0)
+    for win in 1:Nt
+        m_next = win < Nt ? storage.all_m[win + 1] : storage.all_m[win]
+        diag = verify_window_continuity_rg(storage.all_m[win],
+                                            storage.all_hflux[win],
+                                            storage.all_cm[win],
+                                            m_next,
+                                            work.face_left,
+                                            work.face_right,
+                                            div_scratch,
+                                            steps_per_window)
+        if diag.max_rel_err > worst_rel
+            worst_rel = diag.max_rel_err
+            worst_abs = diag.max_abs_err
+            worst_win = win
+            worst_idx = diag.worst_idx
+        end
+    end
+    @info @sprintf("  Write-time replay gate: max|m_evolved−m_stored|/max|m| = %.3e  (abs=%.3e kg  win=%d  cell=%s)",
+                   worst_rel, worst_abs, worst_win, worst_idx)
+    worst_rel <= tol_rel ||
+        error(@sprintf("Write-time replay gate FAILED: rel=%.3e > tol=%.3e at window %d cell %s. " *
+                       "Stored fluxes do not integrate to stored m_next under palindrome continuity. " *
+                       "See plan 39 memo.",
+                       worst_rel, tol_rel, worst_win, worst_idx))
+    return nothing
+end
+
 function apply_reduced_poisson_balance!(storage::ReducedWindowStorage{FT},
                                         work::ReducedTransformWorkspace,
                                         steps_per_window::Int;
@@ -943,6 +1056,9 @@ function apply_reduced_poisson_balance!(storage::ReducedWindowStorage{FT},
         )
         storage.all_cm[win] = FT.(cm_buf)
     end
+
+    # Plan 39 Commit E: write-time replay gate for RG storage.
+    verify_storage_continuity_rg!(storage, work, steps_per_window, FT)
 
     @info @sprintf("  Poisson balance complete for %d windows.", Nt)
     @info @sprintf("    pre_raw=%.3e  pre_proj=%.3e  post_proj=%.3e  post_raw=%.3e kg",
@@ -1224,6 +1340,22 @@ function balance_window!(hflux_work::Matrix{Float64},
         work.face_left, work.face_right, div_scratch,
         m_cur_work, dm_target)
     buf.cm[slot] .= FT.(cm_work)
+
+    # Plan 39 Commit E: per-window replay gate for the streaming RG path.
+    # Skips the Float64→FT round-trip to keep the check at full precision.
+    if get(ENV, "ATMOSTR_NO_WRITE_REPLAY_CHECK", "0") != "1"
+        diag_replay = verify_window_continuity_rg(m_cur_work, hflux_work, cm_work,
+                                                   m_next_work,
+                                                   work.face_left, work.face_right,
+                                                   div_scratch, steps_per_window)
+        tol_rel = FT === Float32 ? 1e-4 : 1e-10
+        diag_replay.max_rel_err <= tol_rel ||
+            error(@sprintf("Streaming RG write-time replay gate FAILED: rel=%.3e > tol=%.3e at cell %s " *
+                           "(abs=%.3e kg). Stored fluxes do not integrate to stored m_next under " *
+                           "palindrome continuity. See plan 39 memo.",
+                           diag_replay.max_rel_err, tol_rel, diag_replay.worst_idx,
+                           diag_replay.max_abs_err))
+    end
 
     return diag
 end

@@ -286,6 +286,59 @@ function recompute_cm_from_dm_target!(cm::Array{FT, 3}, am::Array{FT, 3},
 end
 
 """
+    verify_window_continuity_ll(m_cur, am, bm, cm, m_next, steps_per_window)
+        -> (max_abs_err, max_rel_err, worst_idx)
+
+Replay one window's stored mass fluxes against stored endpoints:
+
+    m_evolved[i,j,k] = m_cur[i,j,k]
+                     − 2·steps·((am[i+1]−am[i]) + (bm[j+1]−bm[j]) + (cm[k+1]−cm[k]))
+
+and report `max|m_evolved − m_next|` both absolute (kg) and relative to
+`max|m_next|`. Used by the Plan-39 write-time + load-time replay gates
+([`apply_poisson_balance!`](binary_pipeline.jl),
+[`TransportBinaryDriver`](../../MetDrivers/TransportBinary.jl)) to
+guarantee the `:window_constant` contract: runtime palindrome continuity
+produces `m_next` to within the Poisson-balance tolerance floor (F64 ULP
+accumulation on modern 720×361×34 grids is ~1e-13).
+
+`worst_idx` is `(i, j, k)` of the cell with the largest relative error.
+"""
+function verify_window_continuity_ll(m_cur::AbstractArray{FT, 3},
+                                      am::AbstractArray{FT, 3},
+                                      bm::AbstractArray{FT, 3},
+                                      cm::AbstractArray{FT, 3},
+                                      m_next::AbstractArray{FT, 3},
+                                      steps_per_window::Integer) where FT
+    Nx, Ny, Nz = size(m_cur)
+    size(m_next) == (Nx, Ny, Nz) ||
+        error("verify_window_continuity_ll: m_next shape $(size(m_next)) != m_cur shape ($Nx, $Ny, $Nz)")
+    two_steps = Float64(2 * Int(steps_per_window))
+    max_abs = 0.0
+    max_rel = 0.0
+    worst_idx = (0, 0, 0)
+    denom_max = 0.0
+    @inbounds for j in 1:Ny, i in 1:Nx, k in 1:Nz
+        denom_max = max(denom_max, abs(Float64(m_next[i, j, k])))
+    end
+    denom_max = max(denom_max, eps(Float64))
+    @inbounds for j in 1:Ny, i in 1:Nx, k in 1:Nz
+        div_total = (Float64(am[i + 1, j, k]) - Float64(am[i, j, k])) +
+                    (Float64(bm[i, j + 1, k]) - Float64(bm[i, j, k])) +
+                    (Float64(cm[i, j, k + 1]) - Float64(cm[i, j, k]))
+        m_evolved = Float64(m_cur[i, j, k]) - two_steps * div_total
+        abs_err = abs(m_evolved - Float64(m_next[i, j, k]))
+        rel_err = abs_err / denom_max
+        if rel_err > max_rel
+            max_rel = rel_err
+            max_abs = abs_err
+            worst_idx = (i, j, k)
+        end
+    end
+    return (max_abs_err = max_abs, max_rel_err = max_rel, worst_idx = worst_idx)
+end
+
+"""
     recompute_cm_from_divergence!(cm, am, bm, m; B_ifc=Float64[])
 
 Recompute merged-level vertical mass flux from merged horizontal divergence.

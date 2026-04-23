@@ -995,6 +995,67 @@ function fill_window_mass_tendency!(dm_dt_buf::Array{FT, 3},
 end
 
 """
+    verify_storage_continuity_ll!(storage, last_hour_next, steps_per_window, ::Type{FT})
+
+Plan 39 Commit E — write-time replay gate for structured LL storage.
+Iterates every window k and asserts
+
+    m[k] − 2·steps·(∇·am + ∇·bm + ∂_k cm) ≈ m[k+1]    (k < Nt)
+    m[Nt] − 2·steps·(∇·am + ∇·bm + ∂_k cm) ≈ last_hour_next.m   (k == Nt)
+
+to within a Poisson-balance tolerance floor derived from `FT` (roughly
+`1e-10` for `Float64`, `1e-4` for `Float32`). Errors loudly with a per-window
+diagnostic if the contract is violated — this was the gate that would have
+caught the dry-basis Δb×pit closure bug before it reached the runtime.
+
+Bypass with env var `ATMOSTR_NO_WRITE_REPLAY_CHECK=1` for diagnostic runs.
+"""
+function verify_storage_continuity_ll!(storage::WindowStorage{FT},
+                                        last_hour_next,
+                                        steps_per_window::Int,
+                                        ::Type{FT}) where FT
+    if get(ENV, "ATMOSTR_NO_WRITE_REPLAY_CHECK", "0") == "1"
+        @info "  Write-time replay gate SKIPPED (ATMOSTR_NO_WRITE_REPLAY_CHECK=1)"
+        return nothing
+    end
+    Nt = length(storage.all_m)
+    tol_rel = FT === Float32 ? Float64(1e-4) : Float64(1e-10)
+    worst_rel = 0.0
+    worst_abs = 0.0
+    worst_win = 0
+    worst_idx = (0, 0, 0)
+    for k in 1:Nt
+        m_next = if k < Nt
+            storage.all_m[k + 1]
+        elseif last_hour_next !== nothing
+            last_hour_next.m
+        else
+            continue
+        end
+        diag = verify_window_continuity_ll(storage.all_m[k],
+                                            storage.all_am[k],
+                                            storage.all_bm[k],
+                                            storage.all_cm[k],
+                                            m_next,
+                                            steps_per_window)
+        if diag.max_rel_err > worst_rel
+            worst_rel = diag.max_rel_err
+            worst_abs = diag.max_abs_err
+            worst_win = k
+            worst_idx = diag.worst_idx
+        end
+    end
+    @info @sprintf("  Write-time replay gate: max|m_evolved−m_stored|/max|m| = %.3e  (abs=%.3e kg  win=%d  cell=%s)",
+                   worst_rel, worst_abs, worst_win, worst_idx)
+    worst_rel <= tol_rel ||
+        error(@sprintf("Write-time replay gate FAILED: rel=%.3e > tol=%.3e at window %d cell %s. " *
+                       "Stored fluxes do not integrate to stored m_next under palindrome continuity. " *
+                       "See plan 39 memo.",
+                       worst_rel, tol_rel, worst_win, worst_idx))
+    return nothing
+end
+
+"""
     apply_poisson_balance!(storage, last_hour_next, steps_per_window)
 
 Apply the TM5-style Poisson horizontal-flux correction to every stored window
@@ -1026,6 +1087,14 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
         @views storage.all_cm[win_idx][:, :, 1] .= zero(FT)
         @views storage.all_cm[win_idx][:, :, Nz + 1] .= zero(FT)
     end
+
+    # Plan 39 Commit E: write-time replay gate. Under the `:window_constant`
+    # contract, starting from `storage.all_m[k]` and integrating the stored
+    # fluxes (am, bm, cm) over one window via palindrome continuity must
+    # reproduce `storage.all_m[k+1]` (or `last_hour_next.m` for k=Nt) to
+    # within the Poisson-balance tolerance floor. Fails loudly if the fix
+    # regresses or a new preprocessor path breaks the contract.
+    verify_storage_continuity_ll!(storage, last_hour_next, steps_per_window, FT)
     @info "  Poisson balance complete for $(length(storage.all_m)) windows"
 
     return nothing

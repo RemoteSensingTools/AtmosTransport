@@ -104,8 +104,7 @@ end
 
 """Validate that the halo width Hp is sufficient for the advection scheme's stencil."""
 @inline function _validate_halo_for_scheme(scheme::AbstractAdvectionScheme, Hp::Int)
-    order = reconstruction_order(scheme)
-    min_hp = order == 0 ? 1 : order == 1 ? 2 : 3   # upwind=1, slopes=2, PPM=3
+    min_hp = required_halo_width(scheme)
     Hp >= min_hp || error("CS panel sweep with $(typeof(scheme)) requires Hp ≥ $min_hp, got Hp=$Hp. " *
                           "Construct CubedSphereMesh with Hp=$min_hp.")
     return nothing

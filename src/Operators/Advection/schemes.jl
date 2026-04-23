@@ -45,6 +45,8 @@ This hierarchy enables orthogonal dispatch:
 - **Reconstruction order** selects the face-flux `@inline` function
 - **Limiter type** (carried as a type parameter) selects the slope/moment limiter
 - **Grid topology** is handled by the kernel shell (structured vs face-indexed)
+- **CS execution style** is handled separately (`strang_split_cs!` sweep shell vs
+  Lin-Rood / FV3 horizontal update)
 - **Backend** (CPU/GPU) is handled by KernelAbstractions.jl
 
 # Implementing a new scheme
@@ -260,6 +262,60 @@ struct PPMScheme{L <: AbstractLimiter} <: AbstractQuadraticScheme
 end
 PPMScheme() = PPMScheme(MonotoneLimiter())
 
+"""
+    LinRoodPPMScheme{ORD} <: AbstractAdvectionScheme
+
+Cubed-sphere Lin-Rood / FV3-style cross-term PPM advection with compile-time
+PPM order `ORD`.
+
+This is distinct from [`PPMScheme`](@ref): `PPMScheme` participates in the
+standard Strang split implemented by `strang_split_cs!`, while
+`LinRoodPPMScheme` selects the FV3-style horizontal Lin-Rood update
+(`fv_tp_2d_cs!`) paired with the existing vertical upwind sweep.
+
+Supported orders currently match the implemented PPM edge-value families in
+`ppm_subgrid_distributions.jl`:
+
+- `ORD = 5` — Huynh-constrained PPM
+- `ORD = 7` — order-5 interior with special cubed-sphere face treatment
+
+# Examples
+```julia
+LinRoodPPMScheme()    # default ORD=5
+LinRoodPPMScheme(7)   # ORD=7 cubed-sphere boundary treatment
+```
+"""
+struct LinRoodPPMScheme{ORD} <: AbstractAdvectionScheme end
+
+function LinRoodPPMScheme(order::Integer = 5)
+    order in (5, 7) || throw(ArgumentError(
+        "LinRoodPPMScheme supports ORD=5 or ORD=7, got ORD=$(order)"))
+    return LinRoodPPMScheme{Int(order)}()
+end
+
+# ---- Cubed-sphere execution style + capability traits -------------------
+
+abstract type AbstractCSAdvectionStyle end
+
+struct CSSplitSweepStyle <: AbstractCSAdvectionStyle end
+struct CSLinRoodStyle    <: AbstractCSAdvectionStyle end
+
+@inline cs_advection_style(::AbstractAdvectionScheme) = CSSplitSweepStyle()
+@inline cs_advection_style(::LinRoodPPMScheme)        = CSLinRoodStyle()
+
+"""
+    required_halo_width(scheme) -> Int
+
+Return the minimum cubed-sphere halo width needed by `scheme`'s horizontal
+stencil. This is a capability query, not a reconstruction-order query: several
+schemes can share the same polynomial family while using different CS execution
+paths.
+"""
+@inline required_halo_width(::AbstractConstantScheme)  = 1
+@inline required_halo_width(::AbstractLinearScheme)    = 2
+@inline required_halo_width(::AbstractQuadraticScheme) = 3
+@inline required_halo_width(::LinRoodPPMScheme)        = 3
+
 # ---- Reconstruction order query -----------------------------------------
 
 """
@@ -276,9 +332,10 @@ multi-tracer kernel fusion.
 @inline reconstruction_order(::AbstractConstantScheme)  = 0
 @inline reconstruction_order(::AbstractLinearScheme)    = 1
 @inline reconstruction_order(::AbstractQuadraticScheme) = 2
+@inline reconstruction_order(::LinRoodPPMScheme)        = 2
 
 export AbstractAdvectionScheme
 export AbstractConstantScheme, AbstractLinearScheme, AbstractQuadraticScheme
 export AbstractLimiter, NoLimiter, MonotoneLimiter, PositivityLimiter
-export UpwindScheme, SlopesScheme, PPMScheme
-export reconstruction_order
+export UpwindScheme, SlopesScheme, PPMScheme, LinRoodPPMScheme
+export reconstruction_order, required_halo_width

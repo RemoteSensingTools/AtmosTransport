@@ -51,6 +51,56 @@ function _pad(a::AbstractArray{T,3}, Hp) where T
     return p
 end
 
+@inline _scheme_label(scheme::AbstractAdvectionScheme) = nameof(typeof(scheme))
+@inline _linrood_order(::LinRoodPPMScheme{ORD}) where ORD = ORD
+
+function _make_cs_advection_workspaces(::AbstractAdvectionScheme, mesh, Nz; FT, array_type)
+    return CSAdvectionWorkspace(mesh, Nz; FT, array_type = array_type), nothing
+end
+
+function _make_cs_advection_workspaces(::LinRoodPPMScheme, mesh, Nz; FT, array_type)
+    return CSAdvectionWorkspace(mesh, Nz; FT, array_type = array_type),
+           LinRoodWorkspace(mesh; FT, Nz)
+end
+
+function _prepare_cs_flux_panels(::AbstractAdvectionScheme,
+                                 pam_w, pbm_w, pcm_w, _pm_w,
+                                 Hp, AT, FT, _steps_per_window, _win)
+    return 1,
+           ntuple(p -> AT(_pad(pam_w[p], Hp)), 6),
+           ntuple(p -> AT(_pad(pbm_w[p], Hp)), 6),
+           ntuple(p -> AT(_pad(pcm_w[p], Hp)), 6)
+end
+
+function _prepare_cs_flux_panels(::LinRoodPPMScheme,
+                                 pam_w, pbm_w, pcm_w, pm_w,
+                                 Hp, AT, FT, steps_per_window, win)
+    max_cfl = _linrood_max_cfl(pam_w, pbm_w, pm_w, steps_per_window)
+    n_lr = max(1, ceil(Int, max_cfl / 0.85))
+    fs = FT(1) / (steps_per_window * n_lr)
+    @printf("  Win %d: CFL %.1f → %d LR sub-passes\n", win, max_cfl, n_lr)
+    return n_lr,
+           ntuple(p -> AT(_pad(pam_w[p] .* fs, Hp)), 6),
+           ntuple(p -> AT(_pad(pbm_w[p] .* fs, Hp)), 6),
+           ntuple(p -> AT(_pad(pcm_w[p] .* fs, Hp)), 6)
+end
+
+function _apply_cs_transport!(scheme::AbstractAdvectionScheme,
+                              rm, pm, pam_p, pbm_p, pcm_p,
+                              mesh, ws, _ws_lr)
+    strang_split_cs!(rm, pm, pam_p, pbm_p, pcm_p, mesh, scheme, ws;
+                     cfl_limit = 0.95)
+    return nothing
+end
+
+function _apply_cs_transport!(scheme::LinRoodPPMScheme,
+                              rm, pm, pam_p, pbm_p, pcm_p,
+                              mesh, ws, ws_lr)
+    strang_split_linrood_ppm!(rm, pm, pam_p, pbm_p, pcm_p,
+                              mesh, Val(_linrood_order(scheme)), ws, ws_lr)
+    return nothing
+end
+
 # ---------------------------------------------------------------------------
 # Snapshot export — GCHP/MAPL-compatible NetCDF
 # ---------------------------------------------------------------------------
@@ -121,10 +171,8 @@ function run_cs(cfg)
     binary_paths = [expanduser(String(p)) for p in input_cfg["binary_paths"]]
 
     run_cfg = get(cfg, "run", Dict{String,Any}())
-    scheme_name = Symbol(lowercase(get(run_cfg, "scheme", "upwind")))
-    Hp = Int(get(run_cfg, "halo_padding",
-                 scheme_name in (:ppm, :linrood) ? 3 : scheme_name == :slopes ? 2 : 1))
-    ppm_order = Int(get(run_cfg, "ppm_order", 5))
+    scheme = build_cs_advection(cfg)
+    Hp = configured_halo_width(cfg, scheme)
     start_window = Int(get(run_cfg, "start_window", 1))
     stop_window_override = get(run_cfg, "stop_window", nothing)
 
@@ -149,12 +197,9 @@ function run_cs(cfg)
     window_hours = h.dt_met_seconds / 3600.0
     mesh = CubedSphereMesh(; Nc, Hp, convention=mesh_convention(reader1))
 
-    scheme = scheme_name == :slopes ? SlopesScheme() :
-             scheme_name == :ppm    ? PPMScheme()    : UpwindScheme()
-
     println("="^60)
     @printf("CS transport  C%d × %d levels  Hp=%d  %s  %s\n",
-            Nc, Nz, Hp, scheme_name, backend_label(cfg))
+            Nc, Nz, Hp, _scheme_label(scheme), backend_label(cfg))
     @printf("Tracers: %s   Binaries: %d   Output: %s\n",
             join(String.(keys(tracer_defs)), ", "), length(binary_paths), snap_file)
     println("="^60)
@@ -172,8 +217,7 @@ function run_cs(cfg)
         fill_panel_halos!(tracers[name], mesh; dir=1)
     end
 
-    ws    = CSAdvectionWorkspace(mesh, Nz; FT, array_type=AT)
-    ws_lr = scheme_name == :linrood ? LinRoodWorkspace(mesh; FT, Nz) : nothing
+    ws, ws_lr = _make_cs_advection_workspaces(scheme, mesh, Nz; FT, array_type = AT)
 
     # --- Snapshot storage (always CPU for I/O) ---
     interior(a) = Array(a[Hp+1:Hp+Nc, Hp+1:Hp+Nc, :])
@@ -205,32 +249,16 @@ function run_cs(cfg)
             for p in 1:6; pm[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, :] .= AT(pm_w[p]); end
             fill_panel_halos!(pm, mesh; dir=1)
 
-            if scheme_name == :linrood
-                max_cfl = _linrood_max_cfl(pam_w, pbm_w, pm_w, steps_per_window)
-                n_lr = max(1, ceil(Int, max_cfl / 0.85))
-                fs = FT(1) / (steps_per_window * n_lr)
-                @printf("  Win %d: CFL %.1f → %d LR sub-passes\n", win, max_cfl, n_lr)
-                pam_p = ntuple(p -> AT(_pad(pam_w[p] .* fs, Hp)), 6)
-                pbm_p = ntuple(p -> AT(_pad(pbm_w[p] .* fs, Hp)), 6)
-                pcm_p = ntuple(p -> AT(_pad(pcm_w[p] .* fs, Hp)), 6)
-            else
-                n_lr = 1
-                pam_p = ntuple(p -> AT(_pad(pam_w[p], Hp)), 6)
-                pbm_p = ntuple(p -> AT(_pad(pbm_w[p], Hp)), 6)
-                pcm_p = ntuple(p -> AT(_pad(pcm_w[p], Hp)), 6)
-            end
+            n_lr, pam_p, pbm_p, pcm_p =
+                _prepare_cs_flux_panels(scheme, pam_w, pbm_w, pcm_w, pm_w,
+                                        Hp, AT, FT, steps_per_window, win)
 
             for _ in 1:steps_per_window, _ in 1:n_lr
                 pm_snap = ntuple(p -> copy(pm[p]), 6)
                 for (name, rm) in tracers
                     for p in 1:6; pm[p] .= pm_snap[p]; end
-                    if scheme_name == :linrood
-                        strang_split_linrood_ppm!(rm, pm, pam_p, pbm_p, pcm_p,
-                                                   mesh, Val(ppm_order), ws, ws_lr)
-                    else
-                        strang_split_cs!(rm, pm, pam_p, pbm_p, pcm_p,
-                                          mesh, scheme, ws; cfl_limit=0.95)
-                    end
+                    _apply_cs_transport!(scheme, rm, pm, pam_p, pbm_p, pcm_p,
+                                         mesh, ws, ws_lr)
                 end
             end
 

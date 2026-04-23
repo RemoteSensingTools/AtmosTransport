@@ -70,6 +70,16 @@ end
 
 _convection_workspace_for(::NoConvection, state, grid) = nothing
 
+_cs_advection_workspace_for(::AbstractAdvectionScheme,
+                            state::CubedSphereState,
+                            grid::AtmosGrid{<:CubedSphereMesh}) =
+    CSAdvectionWorkspace(grid.horizontal, state.air_mass[1])
+
+_cs_advection_workspace_for(::LinRoodPPMScheme,
+                            state::CubedSphereState,
+                            grid::AtmosGrid{<:CubedSphereMesh}) =
+    CSLinRoodAdvectionWorkspace(grid.horizontal, state.air_mass[1])
+
 _cmfmc_cell_metrics(mesh::LatLonMesh) = cell_areas_by_latitude(mesh)
 _cmfmc_cell_metrics(mesh::ReducedGaussianMesh) = [cell_area(mesh, c) for c in 1:ncells(mesh)]
 _cmfmc_cell_metrics(mesh::CubedSphereMesh) = ntuple(_ -> mesh.cell_areas, 6)
@@ -192,7 +202,7 @@ function TransportModel(state::CubedSphereState{B},
                         fluxes::CubedSphereFaceFluxState{B},
                         grid::AtmosGrid{<:CubedSphereMesh},
                         advection::AbstractAdvectionScheme;
-                        workspace = CSAdvectionWorkspace(grid.horizontal, state.air_mass[1]),
+                        workspace = _cs_advection_workspace_for(advection, state, grid),
                         chemistry::AbstractChemistryOperator = NoChemistry(),
                         diffusion::AbstractDiffusionOperator = NoDiffusion(),
                         emissions::AbstractSurfaceFluxOperator = NoSurfaceFlux(),

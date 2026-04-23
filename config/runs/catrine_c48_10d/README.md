@@ -49,15 +49,16 @@ currently carry the TM5 sections across. Options:
   with native CMFMC+DTRAIN sections. No C48 GEOS-IT binary exists today;
   would need either a C180→C48 coarsen or C48 preprocessing from source.
 
-With a TM5-less plain C48 binary, `kind = "tm5"` will fail loudly at
-the first window load (missing sections detected by the operator).
+With a TM5-less plain C48 binary, `kind = "tm5"` now fails at recipe
+validation before the run starts.
 
 ## How run_cs_driven.jl wires physics
 
 The TOML → operator mapping is:
 
 ```toml
-[advection]  scheme = "upwind" | "slopes" | "ppm"  (+ ppm_order for ppm)
+[advection]  scheme = "upwind" | "slopes" | "ppm" | "linrood"
+             ppm_order = 5 | 7   # only with scheme = "linrood"
 [diffusion]  kind   = "none" | "constant"          (+ value: m²/s for constant)
 [convection] kind   = "none" | "tm5" | "cmfmc"
 ```
@@ -65,7 +66,7 @@ The TOML → operator mapping is:
 Under the hood:
 
 ```julia
-scheme     = UpwindScheme() | SlopesScheme() | PPMScheme(order=...)
+scheme     = UpwindScheme() | SlopesScheme() | PPMScheme() | LinRoodPPMScheme(order)
 diffusion  = NoDiffusion()
               | ImplicitVerticalDiffusion(kz_field = CubedSphereField(
                     ntuple(_ -> ConstantField{FT,3}(value), 6)))

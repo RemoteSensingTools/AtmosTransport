@@ -12,6 +12,7 @@ using ..Operators
 using ..MetDrivers
 
 include("TransportModel.jl")
+include("CSPhysicsRecipe.jl")
 include("Simulation.jl")
 include("DrivenSimulation.jl")
 

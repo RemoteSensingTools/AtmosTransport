@@ -95,20 +95,87 @@ struct LinRoodWorkspace{FT, A3h <: AbstractArray{FT,3},
 end
 
 function LinRoodWorkspace(mesh::CubedSphereMesh; FT::Type{<:AbstractFloat}=Float64,
-                           Nz::Int)
-        Nc = mesh.Nc; Hp = mesh.Hp
+                           Nz::Int,
+                           array_type::Type{<:AbstractArray} = Array)
+    Nc = mesh.Nc
+    Hp = mesh.Hp
     N  = Nc + 2Hp
-    
 
-    q_buf  = ntuple(_ -> zeros(FT, N, N, Nz), 6)
-    fx_in  = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz), 6)
-    fx_out = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz), 6)
-    fy_in  = ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz), 6)
-    fy_out = ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz), 6)
-    q_out  = ntuple(_ -> zeros(FT, N, N, Nz), 6)
-    dp_out = ntuple(_ -> zeros(FT, N, N, Nz), 6)
+    q_buf  = ntuple(_ -> array_type(zeros(FT, N, N, Nz)), 6)
+    fx_in  = ntuple(_ -> array_type(zeros(FT, Nc + 1, Nc, Nz)), 6)
+    fx_out = ntuple(_ -> array_type(zeros(FT, Nc + 1, Nc, Nz)), 6)
+    fy_in  = ntuple(_ -> array_type(zeros(FT, Nc, Nc + 1, Nz)), 6)
+    fy_out = ntuple(_ -> array_type(zeros(FT, Nc, Nc + 1, Nz)), 6)
+    q_out  = ntuple(_ -> array_type(zeros(FT, N, N, Nz)), 6)
+    dp_out = ntuple(_ -> array_type(zeros(FT, N, N, Nz)), 6)
 
     return LinRoodWorkspace(q_buf, fx_in, fx_out, fy_in, fy_out, q_out, dp_out)
+end
+
+function LinRoodWorkspace(mesh::CubedSphereMesh,
+                          prototype::AbstractArray{FT, 3}) where {FT <: AbstractFloat}
+    Nc = mesh.Nc
+    Hp = mesh.Hp
+    Nz = size(prototype, 3)
+    N  = Nc + 2Hp
+
+    q_buf  = ntuple(_ -> similar(prototype, FT, N, N, Nz), 6)
+    fx_in  = ntuple(_ -> similar(prototype, FT, Nc + 1, Nc, Nz), 6)
+    fx_out = ntuple(_ -> similar(prototype, FT, Nc + 1, Nc, Nz), 6)
+    fy_in  = ntuple(_ -> similar(prototype, FT, Nc, Nc + 1, Nz), 6)
+    fy_out = ntuple(_ -> similar(prototype, FT, Nc, Nc + 1, Nz), 6)
+    q_out  = ntuple(_ -> similar(prototype, FT, N, N, Nz), 6)
+    dp_out = ntuple(_ -> similar(prototype, FT, N, N, Nz), 6)
+
+    return LinRoodWorkspace(q_buf, fx_in, fx_out, fy_in, fy_out, q_out, dp_out)
+end
+
+function Adapt.adapt_structure(to, ws::LinRoodWorkspace{FT}) where FT
+    q_buf = Adapt.adapt(to, ws.q_buf)
+    fx_in = Adapt.adapt(to, ws.fx_in)
+    fx_out = Adapt.adapt(to, ws.fx_out)
+    fy_in = Adapt.adapt(to, ws.fy_in)
+    fy_out = Adapt.adapt(to, ws.fy_out)
+    q_out = Adapt.adapt(to, ws.q_out)
+    dp_out = Adapt.adapt(to, ws.dp_out)
+    return LinRoodWorkspace(q_buf, fx_in, fx_out, fy_in, fy_out, q_out, dp_out)
+end
+
+struct CSLinRoodAdvectionWorkspace{CSW, LRW}
+    cs      :: CSW
+    linrood :: LRW
+end
+
+function CSLinRoodAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
+                                     FT::Type{<:AbstractFloat} = Float64,
+                                     array_type::Type{<:AbstractArray} = Array)
+    cs = CSAdvectionWorkspace(mesh, Nz; FT = FT, array_type = array_type)
+    lr = LinRoodWorkspace(mesh; FT = FT, Nz = Nz, array_type = array_type)
+    return CSLinRoodAdvectionWorkspace{typeof(cs), typeof(lr)}(cs, lr)
+end
+
+function CSLinRoodAdvectionWorkspace(mesh::CubedSphereMesh,
+                                     prototype::AbstractArray{FT, 3}) where {FT <: AbstractFloat}
+    cs = CSAdvectionWorkspace(mesh, prototype)
+    lr = LinRoodWorkspace(mesh, prototype)
+    return CSLinRoodAdvectionWorkspace{typeof(cs), typeof(lr)}(cs, lr)
+end
+
+function Base.getproperty(workspace::CSLinRoodAdvectionWorkspace, name::Symbol)
+    if name === :cs || name === :linrood
+        return getfield(workspace, name)
+    end
+    return getproperty(getfield(workspace, :cs), name)
+end
+
+function Base.propertynames(workspace::CSLinRoodAdvectionWorkspace, private::Bool = false)
+    return (:cs, :linrood, propertynames(getfield(workspace, :cs), private)...)
+end
+
+function Adapt.adapt_structure(to, workspace::CSLinRoodAdvectionWorkspace)
+    cs = Adapt.adapt(to, workspace.cs)
+    linrood = Adapt.adapt(to, workspace.linrood)
+    return CSLinRoodAdvectionWorkspace{typeof(cs), typeof(linrood)}(cs, linrood)
 end
 
 # ---------------------------------------------------------------------------
@@ -851,5 +918,22 @@ function strang_split_linrood_ppm!(rm_panels, m_panels, am_panels, bm_panels, cm
     return nothing
 end
 
+function _strang_split_linrood_ppm_cs!(rm_panels, m_panels, am_panels, bm_panels, cm_panels,
+                                       mesh::CubedSphereMesh, ::Val{ORD},
+                                       ws::CSLinRoodAdvectionWorkspace;
+                                       cfl_limit=0.95, midpoint! = nothing,
+                                       damp_coeff=0.0) where ORD
+    _ = cfl_limit
+    fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
+                 mesh, Val(ORD), ws.cs, ws.linrood; damp_coeff)
+    _sweep_z!(rm_panels, m_panels, cm_panels, mesh, true, ws.cs)
+    midpoint! === nothing || midpoint!()
+    _sweep_z!(rm_panels, m_panels, cm_panels, mesh, true, ws.cs)
+    fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
+                 mesh, Val(ORD), ws.cs, ws.linrood; damp_coeff = 0.0)
+    return nothing
+end
+
 export LinRoodWorkspace, fv_tp_2d_cs!, fv_tp_2d_cs_q!, strang_split_linrood_ppm!
+export CSLinRoodAdvectionWorkspace
 export fillz_q!, apply_divergence_damping_cs!

@@ -11,13 +11,17 @@ function write_driven_cs_binary(path::AbstractString;
                                 Nz::Int = 2,
                                 window_mass_scales::Tuple{Vararg{Real}} = (1, 1),
                                 convection_windows = nothing,
-                                dtrain_windows = nothing)
+                                dtrain_windows = nothing,
+                                tm5_windows = nothing)
     convection_windows !== nothing &&
         length(convection_windows) == length(window_mass_scales) ||
         convection_windows === nothing || throw(ArgumentError("convection_windows length must match window_mass_scales"))
     dtrain_windows !== nothing &&
         length(dtrain_windows) == length(window_mass_scales) ||
         dtrain_windows === nothing || throw(ArgumentError("dtrain_windows length must match window_mass_scales"))
+    tm5_windows !== nothing &&
+        length(tm5_windows) == length(window_mass_scales) ||
+        tm5_windows === nothing || throw(ArgumentError("tm5_windows length must match window_mass_scales"))
     vc = if Nz == 2
         HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
     elseif Nz == 5
@@ -35,6 +39,7 @@ function write_driven_cs_binary(path::AbstractString;
         mass_basis = :dry,
         include_cmfmc = convection_windows !== nothing,
         include_dtrain = dtrain_windows !== nothing,
+        include_tm5conv = tm5_windows !== nothing,
     )
 
     for (win, scale) in enumerate(window_mass_scales)
@@ -50,6 +55,9 @@ function write_driven_cs_binary(path::AbstractString;
         end
         if dtrain_windows !== nothing
             window = merge(window, (dtrain = dtrain_windows[win],))
+        end
+        if tm5_windows !== nothing
+            window = merge(window, (tm5_fields = tm5_windows[win],))
         end
         AtmosTransport.MetDrivers.write_streaming_cs_window!(writer, window, Nc, 6)
     end
@@ -78,6 +86,30 @@ function make_cs_cmfmc_panels(FT::Type{<:AbstractFloat}, Nc::Int, Nz::Int;
         arr
     end
     return cmfmc, dtrain
+end
+
+function make_cs_tm5_panels(FT::Type{<:AbstractFloat}, Nc::Int, Nz::Int;
+                            peak_entu = FT(0.02),
+                            peak_detu = FT(0.01))
+    entu = ntuple(6) do _
+        arr = zeros(FT, Nc, Nc, Nz)
+        arr[:, :, Nz] .= peak_entu * FT(0.3)
+        if Nz >= 5
+            arr[:, :, 4] .= peak_entu * FT(0.5)
+            arr[:, :, 3] .= peak_entu
+        else
+            arr[:, :, max(1, Nz - 1)] .= peak_entu
+        end
+        arr
+    end
+    detu = ntuple(6) do _
+        arr = zeros(FT, Nc, Nc, Nz)
+        arr[:, :, max(1, Nz - 3)] .= peak_detu
+        arr
+    end
+    entd = ntuple(_ -> zeros(FT, Nc, Nc, Nz), 6)
+    detd = ntuple(_ -> zeros(FT, Nc, Nc, Nz), 6)
+    return (entu = entu, detu = detu, entd = entd, detd = detd)
 end
 
 @testset "CubedSphere transport driver + DrivenSimulation" begin
@@ -239,6 +271,73 @@ end
             @test all(panel[mesh.Hp + 1:mesh.Hp + mesh.Nc, mesh.Hp + 1:mesh.Hp + mesh.Nc, 1] .> 0.0)
         end
         @test total_mass(sim.model.state, :CO2) ≈ m0 + 6 * mesh.Nc * mesh.Nc * 2.0 * 1800.0 * 2 rtol=1e-12
+
+        close(driver)
+    end
+end
+
+@testset "CubedSphere runtime supports Lin-Rood advection plus diffusion plus TM5 convection" begin
+    FT = Float64
+    Nc, Nz = 4, 5
+    tm5 = make_cs_tm5_panels(FT, Nc, Nz)
+
+    mktemp() do path, io
+        close(io)
+        write_driven_cs_binary(path;
+                               FT = FT,
+                               Nc = Nc,
+                               Nz = Nz,
+                               window_mass_scales = (FT(1e16),),
+                               tm5_windows = (tm5,))
+
+        reader = CubedSphereBinaryReader(path; FT = FT)
+        @test has_tm5conv(reader)
+        close(reader)
+
+        driver = CubedSphereTransportDriver(path; FT = FT, arch = CPU(), Hp = 3)
+        window = load_transport_window(driver, 1)
+        mesh = driver_grid(driver).horizontal
+        @test window.convection !== nothing
+        @test window.convection.tm5_fields !== nothing
+        @test eltype(window.convection.tm5_fields.entu[1]) === FT
+
+        tracer_panels = ntuple(6) do p
+            rm = zeros(FT, size(window.air_mass[p]))
+            @views rm[mesh.Hp + 1:mesh.Hp + mesh.Nc,
+                      mesh.Hp + 1:mesh.Hp + mesh.Nc,
+                      Nz] .= FT(1e-6) .* window.air_mass[p][mesh.Hp + 1:mesh.Hp + mesh.Nc,
+                                                           mesh.Hp + 1:mesh.Hp + mesh.Nc,
+                                                           Nz]
+            rm
+        end
+
+        state = CubedSphereState(DryBasis, mesh, window.air_mass; CO2 = tracer_panels)
+        fluxes = allocate_face_fluxes(mesh, Nz; FT = FT, basis = DryBasis)
+        kz = CubedSphereField(ntuple(_ -> ConstantField{FT, 3}(FT(1.0)), 6))
+        diffusion = ImplicitVerticalDiffusion(; kz_field = kz)
+        model = TransportModel(state, fluxes, driver_grid(driver), LinRoodPPMScheme(7);
+                               diffusion = diffusion,
+                               convection = TM5Convection())
+        @test model.workspace.advection_ws isa CSLinRoodAdvectionWorkspace
+        for p in 1:6
+            fill!(model.workspace.dz_scratch[p], FT(100.0))
+        end
+
+        sim = DrivenSimulation(model, driver; start_window = 1, stop_window = 1)
+        @test sim.model.workspace.convection_ws isa TM5Workspace{FT}
+        @test sim.model.convection_forcing.tm5_fields !== nothing
+
+        rm0 = total_mass(sim.model.state, :CO2)
+        run!(sim)
+
+        @test sim.iteration == 2
+        @test total_mass(sim.model.state, :CO2) ≈ rm0 rtol = 1e-10
+        for p in 1:6
+            panel = get_tracer(sim.model.state, :CO2)[p]
+            @test any(panel[mesh.Hp + 1:mesh.Hp + mesh.Nc,
+                            mesh.Hp + 1:mesh.Hp + mesh.Nc,
+                            1] .> 0)
+        end
 
         close(driver)
     end

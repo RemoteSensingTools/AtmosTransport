@@ -174,8 +174,8 @@ function copy_convection_forcing!(dst::ConvectionForcing, src::ConvectionForcing
     end
     if src.tm5_fields !== nothing
         for name in (:entu, :detu, :entd, :detd)
-            copyto!(getfield(dst.tm5_fields, name),
-                    getfield(src.tm5_fields, name))
+            _copy_convection_payload!(getfield(dst.tm5_fields, name),
+                                      getfield(src.tm5_fields, name))
         end
     end
     return dst

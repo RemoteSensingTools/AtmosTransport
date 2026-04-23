@@ -63,6 +63,9 @@ has_qv(::CubedSphereBinaryReader) = false
 has_qv_endpoints(::CubedSphereBinaryReader) = false
 has_flux_delta(::CubedSphereBinaryReader) = false
 has_cmfmc(reader::CubedSphereBinaryReader) = :cmfmc in reader.header.payload_sections
+has_tm5conv(reader::CubedSphereBinaryReader) =
+    all(s in reader.header.payload_sections for s in (:entu, :detu, :entd, :detd))
+has_tm5_convection(reader::CubedSphereBinaryReader) = has_tm5conv(reader)
 
 function _cs_header_symbol(reader::CubedSphereBinaryReader, key::AbstractString, default::Symbol)
     value = get(reader.header.raw_header, key, String(default))
@@ -108,6 +111,8 @@ steps_per_window(driver::CubedSphereTransportDriver) = driver.reader.header.step
 air_mass_basis(driver::CubedSphereTransportDriver) = mass_basis(driver.reader)
 supports_native_vertical_flux(::CubedSphereTransportDriver) = true
 supports_moisture(::CubedSphereTransportDriver) = false
+supports_convection(driver::CubedSphereTransportDriver) =
+    has_cmfmc(driver.reader) || has_tm5conv(driver.reader)
 driver_grid(driver::CubedSphereTransportDriver) = driver.grid
 flux_interpolation_mode(::CubedSphereTransportDriver) = :constant
 

@@ -457,6 +457,8 @@ steps_per_window(driver::TransportBinaryDriver) = driver.reader.header.steps_per
 air_mass_basis(driver::TransportBinaryDriver) = mass_basis(driver.reader)
 supports_moisture(driver::TransportBinaryDriver) = has_qv(driver.reader)
 supports_native_vertical_flux(::TransportBinaryDriver) = true
+supports_convection(driver::TransportBinaryDriver) =
+    has_tm5conv(driver.reader) || has_cmfmc(driver.reader)
 driver_grid(driver::TransportBinaryDriver) = driver.grid
 flux_interpolation_mode(driver::TransportBinaryDriver) =
     has_flux_delta(driver.reader) && driver.reader.header.flux_sampling !== :window_constant ? :interpolate : :constant

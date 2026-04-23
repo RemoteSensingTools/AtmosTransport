@@ -194,6 +194,8 @@ preprocessor when `tm5_convection = true`. Used by the
 """
 has_tm5_convection(r::TransportBinaryReader) =
     all(s in r.header.payload_sections for s in (:entu, :detu, :entd, :detd))
+has_tm5conv(r::TransportBinaryReader) = has_tm5_convection(r)
+has_cmfmc(::TransportBinaryReader) = false
 
 _transport_is_structured(h::TransportBinaryHeader) =
     h.grid_type === :latlon && h.horizontal_topology === :structureddirectional
@@ -1404,6 +1406,9 @@ function _cs_section_elements(Nc::Int, npanel::Int, nlevel::Int, section::Symbol
         return npanel * Nc * Nc * (nlevel + 1)
     elseif section === :dtrain
         return npanel * Nc * Nc * nlevel
+    elseif section === :entu || section === :detu ||
+           section === :entd || section === :detd
+        return npanel * Nc * Nc * nlevel
     else
         error("Unsupported CS section: $section")
     end
@@ -1415,12 +1420,22 @@ end
 Pack a CS window (with NTuple-of-panels fields) into a flat buffer.
 Each section's panels are stored sequentially: [P1][P2]...[P6].
 """
+@inline function _cs_window_section(window, section::Symbol)
+    if section === :entu || section === :detu ||
+       section === :entd || section === :detd
+        haskey(window, :tm5_fields) && window.tm5_fields !== nothing ||
+            error("CS streaming window is missing `tm5_fields` required by section $(section)")
+        return getfield(window.tm5_fields, section)
+    end
+    return getfield(window, section)
+end
+
 function _pack_cs_window!(dest::Vector{FT}, offset::Int,
                            window, payload_sections::Vector{Symbol},
                            Nc::Int, npanel::Int) where FT
     o = offset
     for section in payload_sections
-        panels = getfield(window, section)
+        panels = _cs_window_section(window, section)
         for p in 1:npanel
             panel_data = panels[p]
             n = length(panel_data)
@@ -1461,6 +1476,7 @@ function open_streaming_cs_transport_binary(
         mass_basis::Symbol = :moist,
         include_cmfmc::Bool = false,
         include_dtrain::Bool = false,
+        include_tm5conv::Bool = false,
         extra_header::AbstractDict{<:AbstractString,<:Any} = Dict{String,Any}())
     include_dtrain && !include_cmfmc &&
         throw(ArgumentError("CS transport binaries cannot include dtrain without cmfmc"))
@@ -1470,6 +1486,9 @@ function open_streaming_cs_transport_binary(
     payload_sections = Symbol[:m, :am, :bm, :cm, :ps]
     include_cmfmc && push!(payload_sections, :cmfmc)
     include_dtrain && push!(payload_sections, :dtrain)
+    if include_tm5conv
+        append!(payload_sections, (:entu, :detu, :entd, :detd))
+    end
 
     elems_per_window = sum(_cs_section_elements(Nc, npanel, nlevel, s)
                            for s in payload_sections)
@@ -1500,8 +1519,13 @@ function open_streaming_cs_transport_binary(
         "poisson_balance_target_semantics" => "forward_window_mass_difference / (2 * steps_per_window)",
         "include_cmfmc" => include_cmfmc,
         "include_dtrain" => include_dtrain,
+        "include_tm5conv" => include_tm5conv,
         "n_cmfmc" => include_cmfmc ? _cs_section_elements(Nc, npanel, nlevel, :cmfmc) : 0,
         "n_dtrain" => include_dtrain ? _cs_section_elements(Nc, npanel, nlevel, :dtrain) : 0,
+        "n_entu" => include_tm5conv ? _cs_section_elements(Nc, npanel, nlevel, :entu) : 0,
+        "n_detu" => include_tm5conv ? _cs_section_elements(Nc, npanel, nlevel, :detu) : 0,
+        "n_entd" => include_tm5conv ? _cs_section_elements(Nc, npanel, nlevel, :entd) : 0,
+        "n_detd" => include_tm5conv ? _cs_section_elements(Nc, npanel, nlevel, :detd) : 0,
     ))
     isempty(extra_header) || merge!(header, Dict{String, Any}(extra_header))
 

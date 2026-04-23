@@ -9,6 +9,7 @@ Provides:
 - `UpwindScheme <: AbstractConstantScheme` — first-order upwind via generic kernels
 - `SlopesScheme <: AbstractLinearScheme`   — van Leer slopes (limiter-dispatched)
 - `PPMScheme <: AbstractQuadraticScheme`   — structured-grid PPM (not yet an official real-data reference path)
+- `LinRoodPPMScheme <: AbstractAdvectionScheme` — cubed-sphere FV3/Lin-Rood PPM path
 - `AbstractLimiter` subtypes: `NoLimiter`, `MonotoneLimiter`, `PositivityLimiter`
 
 **Multi-tracer optimization**:

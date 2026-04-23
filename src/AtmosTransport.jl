@@ -197,8 +197,8 @@ export apply_convection!
 export AbstractAdvectionScheme
 export AbstractConstantScheme, AbstractLinearScheme, AbstractQuadraticScheme
 export AbstractLimiter, NoLimiter, MonotoneLimiter, PositivityLimiter
-export UpwindScheme, SlopesScheme, PPMScheme
-export reconstruction_order
+export UpwindScheme, SlopesScheme, PPMScheme, LinRoodPPMScheme
+export reconstruction_order, required_halo_width
 
 # Chemistry
 export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemistry
@@ -208,7 +208,8 @@ export chemistry_block!
 export fill_panel_halos!, copy_corners!, strang_split_cs!, CSAdvectionWorkspace
 
 # Lin-Rood cross-term advection (FV3 fv_tp_2d)
-export LinRoodWorkspace, fv_tp_2d_cs!, fv_tp_2d_cs_q!, strang_split_linrood_ppm!
+export LinRoodWorkspace, CSLinRoodAdvectionWorkspace
+export fv_tp_2d_cs!, fv_tp_2d_cs_q!, strang_split_linrood_ppm!
 export fillz_q!, apply_divergence_damping_cs!
 
 # NOTE: sweep_x!, sweep_y!, sweep_z!, max_cfl_*
@@ -258,6 +259,13 @@ export step!, run!, run_window!
 export window_index, substep_index, current_qv
 export with_chemistry, with_diffusion, with_emissions
 export with_convection, with_convection_forcing
+export RuntimePhysicsRecipe, CSPhysicsRecipe
+export build_runtime_advection, build_runtime_diffusion, build_runtime_convection
+export build_runtime_physics_recipe, validate_runtime_physics_recipe
+export configured_halo_width
+export build_cs_advection, build_cs_diffusion, build_cs_convection
+export build_cs_physics_recipe, validate_cs_physics_recipe
+export configured_cs_halo_width, build_cs_tracer_panels
 
 # Offline regridding (preprocessing only)
 export build_regridder, save_regridder, load_regridder

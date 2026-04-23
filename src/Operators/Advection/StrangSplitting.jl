@@ -1002,10 +1002,64 @@ end
     return ntuple(p -> similar(src[p]), 6)
 end
 
+function _cs_transport_step!(::CSSplitSweepStyle,
+                             rm_tracer, m,
+                             fluxes::CubedSphereFaceFluxState,
+                             mesh::CubedSphereMesh,
+                             scheme::AbstractAdvectionScheme,
+                             workspace::CSAdvectionWorkspace;
+                             cfl_limit::Real = 0.95,
+                             midpoint! = nothing)
+    strang_split_cs!(rm_tracer, m, fluxes.am, fluxes.bm, fluxes.cm,
+                     mesh, scheme, workspace;
+                     cfl_limit = cfl_limit,
+                     midpoint! = midpoint!)
+    return nothing
+end
+
+function _cs_transport_step!(::CSSplitSweepStyle,
+                             _rm_tracer, _m,
+                             _fluxes::CubedSphereFaceFluxState,
+                             _mesh::CubedSphereMesh,
+                             scheme::AbstractAdvectionScheme,
+                             workspace;
+                             kwargs...)
+    throw(ArgumentError(
+        "Cubed-sphere split-sweep advection with $(typeof(scheme)) requires " *
+        "`CSAdvectionWorkspace`; got $(typeof(workspace))."))
+end
+
+function _cs_transport_step!(::CSLinRoodStyle,
+                             rm_tracer, m,
+                             fluxes::CubedSphereFaceFluxState,
+                             mesh::CubedSphereMesh,
+                             scheme::LinRoodPPMScheme{ORD},
+                             workspace::CSLinRoodAdvectionWorkspace;
+                             cfl_limit::Real = 0.95,
+                             midpoint! = nothing) where ORD
+    _strang_split_linrood_ppm_cs!(rm_tracer, m, fluxes.am, fluxes.bm, fluxes.cm,
+                                  mesh, Val(ORD), workspace;
+                                  cfl_limit = cfl_limit,
+                                  midpoint! = midpoint!)
+    return nothing
+end
+
+function _cs_transport_step!(::CSLinRoodStyle,
+                             _rm_tracer, _m,
+                             _fluxes::CubedSphereFaceFluxState,
+                             _mesh::CubedSphereMesh,
+                             scheme::LinRoodPPMScheme,
+                             workspace;
+                             kwargs...)
+    throw(ArgumentError(
+        "Cubed-sphere Lin-Rood advection with $(typeof(scheme)) requires " *
+        "`CSLinRoodAdvectionWorkspace`; got $(typeof(workspace))."))
+end
+
 function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxState{B},
                        grid::AtmosGrid{<:CubedSphereMesh},
                        scheme::AbstractAdvectionScheme;
-                       workspace::CSAdvectionWorkspace,
+                       workspace,
                        cfl_limit::Real = 0.95,
                        diffusion_op::AbstractDiffusionOperator = NoDiffusion(),
                        emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
@@ -1050,10 +1104,10 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
                                           halo_width = state.halo_width)
             end
         end
-        strang_split_cs!(rm_tracer, m, fluxes.am, fluxes.bm, fluxes.cm,
-                         grid.horizontal, scheme, workspace;
-                         cfl_limit = cfl_limit,
-                         midpoint! = midpoint!)
+        _cs_transport_step!(cs_advection_style(scheme),
+                            rm_tracer, m, fluxes, grid.horizontal, scheme, workspace;
+                            cfl_limit = cfl_limit,
+                            midpoint! = midpoint!)
     end
 
     return nothing
@@ -1097,7 +1151,7 @@ end
 function apply!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxState{B},
                 grid::AtmosGrid{<:CubedSphereMesh},
                 scheme::AbstractAdvectionScheme, dt;
-                workspace::CSAdvectionWorkspace,
+                workspace,
                 cfl_limit::Real = 0.95,
                 diffusion_op::AbstractDiffusionOperator = NoDiffusion(),
                 emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),

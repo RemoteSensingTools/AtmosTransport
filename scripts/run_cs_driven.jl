@@ -7,7 +7,7 @@
 # `TransportModel` + `DrivenSimulation`, exposing operator composition via
 # TOML:
 #
-#   [advection]  ← scheme  (upwind | slopes | ppm + ppm_order)
+#   [advection]  ← scheme  (upwind | slopes | ppm | linrood + ppm_order)
 #   [diffusion]  ← kind = none|constant  (extendable to profile/precomputed)
 #   [convection] ← kind = none|tm5|cmfmc
 #
@@ -48,119 +48,6 @@ cfg_float_type(cfg) = let s = get(get(cfg, "numerics", Dict()), "float_type", "F
 end
 
 cfg_architecture(cfg) = _use_gpu(cfg) ? (ensure_gpu!(cfg); GPU()) : CPU()
-
-# ---------------------------------------------------------------------------
-# Operator construction from TOML
-# ---------------------------------------------------------------------------
-
-"""
-Build an advection scheme from the `[advection]` (or legacy `[run]`) section.
-"""
-function build_scheme(cfg)
-    adv = get(cfg, "advection", get(cfg, "run", Dict{String,Any}()))
-    name = Symbol(lowercase(String(get(adv, "scheme", "upwind"))))
-    if name === :slopes
-        return SlopesScheme()
-    elseif name === :ppm
-        # PPMScheme in the current src path uses a MonotoneLimiter by default.
-        # The `ppm_order` knob applies only to the Lin-Rood cross-term PPM
-        # variant (`strang_split_linrood_ppm!` in run_cs_transport.jl); it is
-        # not relevant to DrivenSimulation's standard strang_split path.
-        haskey(adv, "ppm_order") && @warn(
-            "ppm_order is ignored by run_cs_driven.jl (Lin-Rood only); " *
-            "using default monotone-limited PPMScheme")
-        return PPMScheme()
-    elseif name === :upwind
-        return UpwindScheme()
-    else
-        error("Unknown advection scheme: $name (supported: upwind | slopes | ppm)")
-    end
-end
-
-"""
-Build a diffusion operator from the `[diffusion]` section. Supported kinds:
-- `none`       → `NoDiffusion()` (default when section absent)
-- `constant`   → `ImplicitVerticalDiffusion` with a uniform `value` [m²/s]
-                  Kz wrapped as `CubedSphereField(ntuple(_ -> ConstantField, 6))`.
-
-Profile/precomputed/derived Kz fields are a straightforward extension but
-require per-column or per-cell data that doesn't live in a simple scalar
-TOML entry; add dispatch here when that schema settles.
-"""
-function build_diffusion(cfg, ::Type{FT}) where FT
-    section = get(cfg, "diffusion", nothing)
-    section === nothing && return NoDiffusion()
-    kind = Symbol(lowercase(String(get(section, "kind", "none"))))
-    if kind === :none
-        return NoDiffusion()
-    elseif kind === :constant
-        value = FT(get(section, "value", 1.0))
-        kz = CubedSphereField(ntuple(_ -> ConstantField{FT, 3}(value), 6))
-        return ImplicitVerticalDiffusion(; kz_field=kz)
-    else
-        error("Unknown diffusion kind: $kind (supported: none | constant). " *
-              "Profile/precomputed/derived Kz need their own TOML schema.")
-    end
-end
-
-"""
-Build a convection operator from the `[convection]` section. Supported kinds:
-- `none`  → `NoConvection()` (default when section absent)
-- `tm5`   → `TM5Convection()` — reads entu/detu/entd/detd from the binary
-           (binary must be preprocessed with `[tm5_convection] enable=true`)
-- `cmfmc` → `CMFMCConvection()` — reads CMFMC + DTRAIN (GEOS-style binaries)
-
-Both operator types are parameterless singletons; the per-window mass-flux
-data is supplied by the driver via the transport window payload.
-"""
-function build_convection(cfg, reader)
-    section = get(cfg, "convection", nothing)
-    section === nothing && return NoConvection()
-    kind = Symbol(lowercase(String(get(section, "kind", "none"))))
-    if kind === :none
-        return NoConvection()
-    elseif kind === :tm5
-        # Header flag check would live here once we expose `has_tm5_convection`
-        # on the CS reader (plan 24 Commit 4 emitted sections but the reader
-        # boolean accessor is grouped with has_cmfmc). For now: allow and let
-        # the first window load fail loudly if sections are missing.
-        return TM5Convection()
-    elseif kind === :cmfmc
-        has_cmfmc(reader) ||
-            error("[convection] kind = \"cmfmc\" requires a binary with CMFMC section " *
-                  "(this one lacks it). Use a GEOS-style preprocessed binary or switch " *
-                  "to kind = \"tm5\" / \"none\".")
-        return CMFMCConvection()
-    else
-        error("Unknown convection kind: $kind (supported: none | tm5 | cmfmc)")
-    end
-end
-
-# ---------------------------------------------------------------------------
-# Tracer initial conditions
-# ---------------------------------------------------------------------------
-
-const CATRINE_BACKGROUND = 4.11e-4
-
-"""
-Build a per-tracer initial-condition panel tuple matching `air_mass` shape.
-
-Supported kinds (minimal): `uniform` (with `background` scalar), `catrine_co2`
-(flat 411 ppm placeholder — a file-based loader mirroring the LL path lives
-in `run_transport_binary.jl:build_initial_mixing_ratio` but hasn't been
-ported to CS panels yet). Extend here when needed.
-"""
-function build_tracer_panels(init_cfg, air_mass, ::Type{FT}) where FT
-    kind = Symbol(lowercase(String(get(init_cfg, "kind", "uniform"))))
-    bg = if kind === :catrine_co2
-        FT(CATRINE_BACKGROUND)
-    elseif kind === :uniform
-        FT(get(init_cfg, "background", 0.0))
-    else
-        error("Unsupported tracer init kind for CS runner: $kind (supported: uniform | catrine_co2)")
-    end
-    return ntuple(p -> air_mass[p] .* bg, 6)
-end
 
 # ---------------------------------------------------------------------------
 # NetCDF snapshot export (reuses the run_cs_transport.jl convention)
@@ -216,7 +103,8 @@ function run_cs_driven(cfg)
     isempty(binary_paths) && error("[input].binary_paths is empty")
 
     run_cfg = get(cfg, "run", Dict{String,Any}())
-    Hp = Int(get(run_cfg, "Hp", 1))
+    advection = build_cs_advection(cfg)
+    Hp = configured_halo_width(cfg, advection)
     stop_window_override = get(run_cfg, "stop_window", nothing)
 
     output_cfg = get(cfg, "output", Dict{String,Any}())
@@ -228,10 +116,9 @@ function run_cs_driven(cfg)
     tracer_init = Dict(Symbol(n) => get(c, "init", Dict("kind"=>"uniform","background"=>0.0))
                        for (n, c) in tracers_cfg)
 
-    scheme = build_scheme(cfg)
-
     # --- First driver + model setup (reuses air_mass from window 1) --------
     driver1 = CubedSphereTransportDriver(first(binary_paths); FT=FT, arch=arch, Hp=Hp)
+    recipe = build_runtime_physics_recipe(cfg, driver1, FT; halo_width = Hp)
     grid    = driver_grid(driver1)
     mesh    = grid.horizontal
     window1 = load_transport_window(driver1, 1)
@@ -240,26 +127,23 @@ function run_cs_driven(cfg)
 
     tracer_kwargs = Dict{Symbol, NTuple{6, typeof(air_mass[1])}}()
     for (name, init_cfg) in tracer_init
-        tracer_kwargs[name] = build_tracer_panels(init_cfg, air_mass, FT)
+        tracer_kwargs[name] = build_cs_tracer_panels(init_cfg, air_mass, FT)
     end
 
     state   = CubedSphereState(DryBasis, mesh, air_mass; tracer_kwargs...)
     fluxes  = allocate_face_fluxes(mesh, Nz; FT=FT, basis=DryBasis)
 
-    diffusion  = build_diffusion(cfg, FT)
-    convection = build_convection(cfg, driver1.reader)
-
-    model = TransportModel(state, fluxes, grid, scheme;
-                           diffusion  = diffusion,
-                           convection = convection)
+    model = TransportModel(state, fluxes, grid, recipe.advection;
+                           diffusion  = recipe.diffusion,
+                           convection = recipe.convection)
 
     println("="^60)
     @printf("CS driven runner  C%d × %d levels  Hp=%d  %s  FT=%s  %s\n",
-            mesh.Nc, Nz, Hp, typeof(scheme).name.name, FT,
+            mesh.Nc, Nz, Hp, typeof(recipe.advection).name.name, FT,
             _use_gpu(cfg) ? "GPU" : "CPU")
     @printf("Physics: advection=%s  diffusion=%s  convection=%s\n",
-            typeof(scheme).name.name, typeof(diffusion).name.name,
-            typeof(convection).name.name)
+            typeof(recipe.advection).name.name, typeof(recipe.diffusion).name.name,
+            typeof(recipe.convection).name.name)
     @printf("Tracers: %s   Binaries: %d → %s\n",
             join(String.(keys(tracer_init)), ", "), length(binary_paths), snapshot_file)
     println("="^60)
@@ -290,6 +174,7 @@ function run_cs_driven(cfg)
                          for p in binary_paths[2:end]]]
 
     for driver in drivers
+        validate_runtime_physics_recipe(recipe, driver; halo_width = Hp)
         stop_window = stop_window_override === nothing ?
                        total_windows(driver) : min(Int(stop_window_override), total_windows(driver))
         window_hours = window_dt(driver) / 3600.0
@@ -299,9 +184,9 @@ function run_cs_driven(cfg)
         # cross-day handoff is continuity-consistent.
         if driver !== driver1
             fluxes_d = allocate_face_fluxes(mesh, Nz; FT=FT, basis=DryBasis)
-            model = TransportModel(state, fluxes_d, grid, scheme;
-                                    diffusion  = diffusion,
-                                    convection = convection)
+            model = TransportModel(state, fluxes_d, grid, recipe.advection;
+                                    diffusion  = recipe.diffusion,
+                                    convection = recipe.convection)
         end
         sim = DrivenSimulation(model, driver; start_window=1, stop_window=stop_window)
 

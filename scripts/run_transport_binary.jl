@@ -10,6 +10,19 @@ include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 using .AtmosTransport.Regridding: build_regridder, apply_regridder!
 
+# ---------------------------------------------------------------------------
+# Structured / reduced-Gaussian transport-binary runner.
+#
+# Physics composition uses the shared runtime-recipe schema:
+#
+#   [advection]  scheme = upwind | slopes | ppm
+#   [diffusion]  kind   = none | constant
+#   [convection] kind   = none | tm5 | cmfmc
+#
+# Legacy `[run].scheme` remains accepted as a fallback for advection.
+# Convection choices are validated against the binary payload before the run.
+# ---------------------------------------------------------------------------
+
 # Wrap longitude to [0, 360) for periodic bilinear interpolation.
 # NOTE: the source arrays (Catrine, GridFED) may be in [-180, 180)
 # convention; this wraps both to a common [0, 360) before looking up.
@@ -817,7 +830,7 @@ end
 
 function make_model(driver::AtmosTransport.TransportBinaryDriver;
                     FT::Type{<:AbstractFloat},
-                    scheme_name::Symbol,
+                    recipe::AtmosTransport.RuntimePhysicsRecipe,
                     tracer_name::Union{Symbol, Nothing}=nothing,
                     init_cfg=nothing,
                     tracer_specs=nothing,
@@ -843,20 +856,11 @@ function make_model(driver::AtmosTransport.TransportBinaryDriver;
 
     basis_type = AtmosTransport.air_mass_basis(driver) == :dry ? AtmosTransport.DryBasis : AtmosTransport.MoistBasis
     tracer_tuple = NamedTuple{tracer_names}(Tuple(rm_arrays))
-    state = if basis_type === AtmosTransport.DryBasis
-        AtmosTransport.CellState{AtmosTransport.DryBasis, typeof(air_mass), typeof(tracer_tuple)}(air_mass, tracer_tuple)
-    else
-        AtmosTransport.CellState{AtmosTransport.MoistBasis, typeof(air_mass), typeof(tracer_tuple)}(air_mass, tracer_tuple)
-    end
+    state = AtmosTransport.CellState(basis_type, air_mass; tracer_tuple...)
     fluxes = AtmosTransport.allocate_face_fluxes(grid.horizontal, AtmosTransport.nlevels(grid); FT=FT, basis=basis_type)
-    scheme = if scheme_name == :slopes
-        AtmosTransport.SlopesScheme()
-    elseif scheme_name == :ppm
-        AtmosTransport.PPMScheme()
-    else
-        AtmosTransport.UpwindScheme()
-    end
-    model = AtmosTransport.TransportModel(state, fluxes, grid, scheme)
+    model = AtmosTransport.TransportModel(state, fluxes, grid, recipe.advection;
+                                          diffusion = recipe.diffusion,
+                                          convection = recipe.convection)
     adaptor = backend_array_adapter(cfg)
     return adaptor === Array ? model : Adapt.adapt(adaptor, model)
 end
@@ -1037,7 +1041,6 @@ end
 function run_sequence(binary_paths::Vector{String}, cfg)
     FT = Symbol(get(get(cfg, "numerics", Dict{String, Any}()), "float_type", "Float64")) == :Float32 ? Float32 : Float64
     run_cfg = get(cfg, "run", Dict{String, Any}())
-    scheme_name = Symbol(lowercase(String(get(run_cfg, "scheme", "upwind"))))
     start_window = Int(get(run_cfg, "start_window", 1))
     stop_window_override = get(run_cfg, "stop_window", nothing)
     # Plan 39 Commit G: reset_air_mass_each_window removed from DrivenSimulation.
@@ -1061,12 +1064,14 @@ function run_sequence(binary_paths::Vector{String}, cfg)
     ensure_gpu_runtime!(cfg)
 
     first_driver = AtmosTransport.TransportBinaryDriver(first(binary_paths); FT=FT, arch=AtmosTransport.CPU())
-    model = make_model(first_driver; FT=FT, scheme_name=scheme_name, tracer_specs=tracer_specs, cfg=cfg)
+    recipe = AtmosTransport.build_runtime_physics_recipe(cfg, first_driver, FT)
+    model = make_model(first_driver; FT=FT, recipe=recipe, tracer_specs=tracer_specs, cfg=cfg)
     surface_sources = build_surface_flux_sources(AtmosTransport.driver_grid(first_driver), tracer_specs, FT)
     m0 = AtmosTransport.total_air_mass(model.state)
     tracer_masses0 = Dict(name => AtmosTransport.total_mass(model.state, name) for name in AtmosTransport.tracer_names(model.state))
     source_tracers = Set(source.tracer_name for source in surface_sources)
     @info "Backend: $(backend_label(cfg))"
+    @info "Physics: advection=$(nameof(typeof(recipe.advection))) diffusion=$(nameof(typeof(recipe.diffusion))) convection=$(nameof(typeof(recipe.convection)))"
     for source in surface_sources
         @info @sprintf("Surface source %s total mass rate: %.12e kg/s",
                        String(source.tracer_name), Float64(sum(source.cell_mass_rate)))
@@ -1086,6 +1091,7 @@ function run_sequence(binary_paths::Vector{String}, cfg)
 
     for (idx, path) in enumerate(binary_paths)
         driver = idx == 1 ? first_driver : AtmosTransport.TransportBinaryDriver(path; FT=FT, arch=AtmosTransport.CPU())
+        AtmosTransport.validate_runtime_physics_recipe(recipe, driver)
         stop_window = stop_window_override === nothing ? AtmosTransport.total_windows(driver) : Int(stop_window_override)
         initialize_air_mass = idx == 1
         sim = AtmosTransport.DrivenSimulation(model, driver;
@@ -1093,13 +1099,18 @@ function run_sequence(binary_paths::Vector{String}, cfg)
                                stop_window=stop_window,
                                initialize_air_mass=initialize_air_mass,
                                surface_sources=surface_sources)
+        model = sim.model
         if !initialize_air_mass
             boundary_rel = maximum(abs.(model.state.air_mass .- sim.window.air_mass)) / max(maximum(abs.(sim.window.air_mass)), eps(FT))
             @info @sprintf("Boundary air-mass mismatch before %s: %.3e", basename(path), boundary_rel)
         end
         window_hours = Float64(AtmosTransport.window_dt(driver)) / 3600.0
         n_windows = stop_window - start_window + 1
-        @info @sprintf("Running %s with %s on %s (%d windows)", basename(path), scheme_name, summary(AtmosTransport.driver_grid(driver).horizontal), n_windows)
+        @info @sprintf("Running %s with %s on %s (%d windows)",
+                       basename(path),
+                       nameof(typeof(recipe.advection)),
+                       summary(AtmosTransport.driver_grid(driver).horizontal),
+                       n_windows)
         synchronize_backend!(cfg)
         t0 = time()
 
@@ -1152,7 +1163,7 @@ function main()
     base_logger = ConsoleLogger(stderr, Logging.Info; show_limited=false)
     global_logger(base_logger)
 
-    isempty(ARGS) && error("Usage: julia --project=. scripts/run_transport_binary_v2.jl config.toml")
+    isempty(ARGS) && error("Usage: julia --project=. scripts/run_transport_binary.jl config.toml")
     cfg = TOML.parsefile(expanduser(ARGS[1]))
     binary_paths = [expanduser(String(p)) for p in get(get(cfg, "input", Dict{String, Any}()), "binary_paths", String[])]
     run_sequence(binary_paths, cfg)

@@ -60,8 +60,8 @@ export diagnose_cm!
 export AbstractAdvectionScheme
 export AbstractConstantScheme, AbstractLinearScheme, AbstractQuadraticScheme
 export AbstractLimiter, NoLimiter, MonotoneLimiter, PositivityLimiter
-export UpwindScheme, SlopesScheme, PPMScheme
-export reconstruction_order
+export UpwindScheme, SlopesScheme, PPMScheme, LinRoodPPMScheme
+export reconstruction_order, required_halo_width
 
 # Chemistry
 export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemistry
@@ -92,7 +92,8 @@ export apply_convection!
 export fill_panel_halos!, copy_corners!, strang_split_cs!, CSAdvectionWorkspace
 
 # Lin-Rood cross-term advection (FV3 fv_tp_2d)
-export LinRoodWorkspace, fv_tp_2d_cs!, fv_tp_2d_cs_q!, strang_split_linrood_ppm!
+export LinRoodWorkspace, CSLinRoodAdvectionWorkspace
+export fv_tp_2d_cs!, fv_tp_2d_cs_q!, strang_split_linrood_ppm!
 export fillz_q!, apply_divergence_damping_cs!
 
 end # module Operators

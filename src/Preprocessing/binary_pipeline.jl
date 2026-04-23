@@ -995,7 +995,7 @@ function fill_window_mass_tendency!(dm_dt_buf::Array{FT, 3},
 end
 
 """
-    apply_poisson_balance!(storage, last_hour_next, vertical, steps_per_window)
+    apply_poisson_balance!(storage, last_hour_next, steps_per_window)
 
 Apply the TM5-style Poisson horizontal-flux correction to every stored window
 so horizontal convergence matches the per-half-sweep mass target implied by the
@@ -1003,7 +1003,6 @@ forward window endpoints.
 """
 function apply_poisson_balance!(storage::WindowStorage{FT},
                                 last_hour_next,
-                                vertical,
                                 steps_per_window::Int) where FT
     Nx, Ny, Nz = size(storage.all_m[1])
     dm_dt_buf = Array{FT}(undef, Nx, Ny, Nz)
@@ -1015,9 +1014,15 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
         balance_mass_fluxes!(storage.all_am[win_idx], storage.all_bm[win_idx], dm_dt_buf, poisson_ws)
         @views storage.all_bm[win_idx][:, 1, :] .= zero(FT)
         @views storage.all_bm[win_idx][:, Ny + 1, :] .= zero(FT)
-        recompute_cm_from_divergence!(storage.all_cm[win_idx], storage.all_am[win_idx],
-                                      storage.all_bm[win_idx], storage.all_m[win_idx];
-                                      B_ifc=vertical.merged_vc.B)
+        # Plan 39 dry-basis fix (2026-04-22): use explicit-dm closure, not
+        # the hybrid Δb×pit one. The Δb×pit closure assumes
+        # dm[k] = dB[k] × Σ_k dm[k], which holds under moist hybrid coords
+        # but is violated by ~27% under dry basis because qv[k] varies with
+        # level. That mismatch caused the 0.75% day-boundary air_mass jump
+        # observed on F64 probe; see plan39_reconnect.md memory entry.
+        recompute_cm_from_dm_target!(storage.all_cm[win_idx], storage.all_am[win_idx],
+                                      storage.all_bm[win_idx], storage.all_m[win_idx],
+                                      dm_dt_buf)
         @views storage.all_cm[win_idx][:, :, 1] .= zero(FT)
         @views storage.all_cm[win_idx][:, :, Nz + 1] .= zero(FT)
     end
@@ -1808,7 +1813,7 @@ function process_day(date::Date,
         last_hour_next = next_day_merged_fields(next_day_hour0, date, grid, vertical,
                                                 settings, transform, merged, qv, ps_offsets)
 
-        apply_poisson_balance!(storage, last_hour_next, vertical, sizes.steps_per_met)
+        apply_poisson_balance!(storage, last_hour_next, sizes.steps_per_met)
         fill_qv_endpoints!(storage, last_hour_next)
 
         header["ps_offsets_pa_per_window"] = ps_offsets[1:Nt]

@@ -220,10 +220,83 @@ function apply_dry_basis_native!(m::Array{Float64, 3},
 end
 
 """
+    recompute_cm_from_dm_target!(cm, am, bm, m, dm_target)
+
+Diagnose merged-level vertical mass flux `cm` from balanced horizontal
+fluxes `am, bm` and the **explicit** per-application mass-tendency target
+`dm_target` using continuity:
+
+    cm[k+1] = cm[k] - div_h[k] - dm_target[k]        (LL sign convention)
+
+Any residual at `cm[Nz+1]` (from finite Poisson-balance tolerance or
+null-space components) is redistributed back proportional to column
+mass `m` so that `cm[1] = cm[Nz+1] = 0` exactly at every column —
+mirrors the CS explicit-dm closure in
+[`balance_vertical_mass_fluxes_cs!`](cs_poisson_balance.jl).
+
+Basis-agnostic: valid for both moist and dry binaries, unlike the legacy
+`Δb × pit` closure which assumed the hybrid-coordinate identity
+`dm[k] = dB[k] × Σ_k dm[k]`. That identity holds under moist hybrid
+coordinates but is violated under dry-basis mass by up to ~27% relative
+because `qv[k]` varies with level, so applying it to dry-basis fluxes
+encoded a stored-endpoint inconsistency of ~0.75% per day at the cell
+level (plan 39 F64 probe, 2026-04-22). See [mass_support.jl docstring
+of `apply_dry_basis_native!`](mass_support.jl) for the upstream dry
+conversion.
+"""
+function recompute_cm_from_dm_target!(cm::Array{FT, 3}, am::Array{FT, 3},
+                                       bm::Array{FT, 3}, m::Array{FT, 3},
+                                       dm_target::AbstractArray{<:Real, 3}) where FT
+    Nx = size(m, 1)
+    Ny = size(m, 2)
+    Nz = size(m, 3)
+    size(dm_target) == (Nx, Ny, Nz) ||
+        error("recompute_cm_from_dm_target!: dm_target shape $(size(dm_target)) " *
+              "does not match m shape ($Nx, $Ny, $Nz)")
+    fill!(cm, zero(FT))
+
+    @inbounds for j in 1:Ny, i in 1:Nx
+        acc = 0.0
+        for k in 1:Nz
+            div_h = (Float64(am[i + 1, j, k]) - Float64(am[i, j, k])) +
+                    (Float64(bm[i, j + 1, k]) - Float64(bm[i, j, k]))
+            acc = acc - div_h - Float64(dm_target[i, j, k])
+            cm[i, j, k + 1] = FT(acc)
+        end
+
+        # Redistribute any non-zero cm[Nz+1] proportional to m so cm[Nz+1]
+        # lands exactly at zero and cumulative mass from the vertical flux
+        # matches the stored dm target at every level.
+        residual = Float64(cm[i, j, Nz + 1])
+        if residual != 0.0
+            total_m = 0.0
+            for k in 1:Nz
+                total_m += Float64(m[i, j, k])
+            end
+            if total_m > 0.0
+                cum_fix = 0.0
+                for k in 1:Nz
+                    cum_fix += (Float64(m[i, j, k]) / total_m) * residual
+                    cm[i, j, k + 1] = FT(Float64(cm[i, j, k + 1]) - cum_fix)
+                end
+            end
+        end
+    end
+    return nothing
+end
+
+"""
     recompute_cm_from_divergence!(cm, am, bm, m; B_ifc=Float64[])
 
 Recompute merged-level vertical mass flux from merged horizontal divergence.
-When `B_ifc` is supplied, the TM5/ERA5 hybrid-coordinate correction is used.
+When `B_ifc` is supplied, the TM5/ERA5 hybrid-coordinate `Δb × pit` closure
+is used; otherwise pure incompressibility (cm from `-cumsum(div_h)`).
+
+For the post-Poisson-balance correctness-critical path, prefer
+[`recompute_cm_from_dm_target!`](@ref) which uses an explicit dm target
+and is basis-agnostic. This legacy function is retained for the pre-Poisson
+staging / on-the-fly synthesis code paths that only seed `merged.cm_merged`
+for the unused `:window_constant` delta payload.
 """
 function recompute_cm_from_divergence!(cm::Array{FT, 3}, am::Array{FT, 3},
                                        bm::Array{FT, 3}, m::Array{FT, 3};

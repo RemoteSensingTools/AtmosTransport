@@ -762,6 +762,66 @@ function balance_reduced_horizontal_fluxes!(hflux::AbstractMatrix{Float64},
     )
 end
 
+"""
+    recompute_faceindexed_cm_from_dm_target!(cm, hflux, face_left, face_right,
+                                              div_scratch, m, dm_target)
+
+RG analog of [`recompute_cm_from_dm_target!`](@ref) for the face-indexed
+topology. Diagnoses `cm` from balanced horizontal fluxes + explicit
+per-cell, per-level dm target using continuity, then redistributes any
+residual at `cm[:, Nz+1]` proportional to column `m` so `cm[:, Nz+1] = 0`
+exactly.
+
+Basis-agnostic; replaces the legacy Δb×pit closure on the
+correctness-critical post-Poisson-balance path. See the plan-39 F64 probe
+(2026-04-22) for why the Δb×pit closure is wrong under dry basis.
+"""
+function recompute_faceindexed_cm_from_dm_target!(cm::AbstractMatrix{FT},
+                                                   hflux::AbstractMatrix{FT},
+                                                   face_left::Vector{Int32},
+                                                   face_right::Vector{Int32},
+                                                   div_scratch::AbstractMatrix{Float64},
+                                                   m::AbstractMatrix,
+                                                   dm_target::AbstractMatrix{<:Real}) where FT
+    nc = size(cm, 1)
+    Nz = size(cm, 2) - 1
+    size(m)         == (nc, Nz) || error("m shape $(size(m)) must be ($nc, $Nz)")
+    size(dm_target) == (nc, Nz) || error("dm_target shape $(size(dm_target)) must be ($nc, $Nz)")
+    fill!(cm, zero(FT))
+    fill!(div_scratch, 0.0)
+
+    @inbounds for k in 1:Nz, f in eachindex(face_left)
+        flux = Float64(hflux[f, k])
+        left  = Int(face_left[f])
+        right = Int(face_right[f])
+        left  > 0 && (div_scratch[left, k]  += flux)
+        right > 0 && (div_scratch[right, k] -= flux)
+    end
+
+    @inbounds for c in 1:nc
+        acc = 0.0
+        for k in 1:Nz
+            acc = acc - div_scratch[c, k] - Float64(dm_target[c, k])
+            cm[c, k + 1] = FT(acc)
+        end
+        residual = Float64(cm[c, Nz + 1])
+        if residual != 0.0
+            total_m = 0.0
+            for k in 1:Nz
+                total_m += Float64(m[c, k])
+            end
+            if total_m > 0.0
+                cum_fix = 0.0
+                for k in 1:Nz
+                    cum_fix += (Float64(m[c, k]) / total_m) * residual
+                    cm[c, k + 1] = FT(Float64(cm[c, k + 1]) - cum_fix)
+                end
+            end
+        end
+    end
+    return nothing
+end
+
 function recompute_faceindexed_cm_from_divergence!(cm::AbstractMatrix{FT},
                                                    hflux::AbstractMatrix{FT},
                                                    face_left::Vector{Int32},
@@ -806,7 +866,7 @@ function recompute_faceindexed_cm_from_divergence!(cm::AbstractMatrix{FT},
 end
 
 """
-    apply_reduced_poisson_balance!(storage, work, vertical, steps_per_window)
+    apply_reduced_poisson_balance!(storage, work, steps_per_window)
 
 Post-process all stored windows by applying TM5-style Poisson balance to
 the merged horizontal flux, then recomputing the merged vertical flux
@@ -819,7 +879,6 @@ After this pass, `storage.all_cm[win]` should be at machine-zero vs
 """
 function apply_reduced_poisson_balance!(storage::ReducedWindowStorage{FT},
                                         work::ReducedTransformWorkspace,
-                                        vertical,
                                         steps_per_window::Int;
                                         tol::Float64=1e-14,
                                         max_iter::Int=20000) where FT
@@ -868,11 +927,19 @@ function apply_reduced_poisson_balance!(storage::ReducedWindowStorage{FT},
         # Store balanced hflux back as FT.
         storage.all_hflux[win] = FT.(hflux_work)
 
-        # Recompute cm from balanced hflux.
+        # Recompute cm from balanced hflux using the explicit-dm closure
+        # (plan 39 dry-basis fix, 2026-04-22). The legacy Δb×pit closure
+        # is wrong under dry basis because dm[k] = dB[k] × Σ dm[k] only
+        # holds under moist hybrid coordinates; qv[k] variation breaks it
+        # by ~27%, producing the 0.75% day-boundary air_mass jump seen in
+        # the F64 probe.
         cm_buf = zeros(Float64, nc, Nz + 1)
-        recompute_faceindexed_cm_from_divergence!(
-            cm_buf, hflux_work, work.face_left, work.face_right, div_scratch;
-            B_ifc=vertical.merged_vc.B,
+        dm_target = similar(m_cur_work)
+        inv_scale = 1.0 / (2 * max(Int(steps_per_window), 1))
+        @. dm_target = (m_next_work - m_cur_work) * inv_scale
+        recompute_faceindexed_cm_from_dm_target!(
+            cm_buf, hflux_work, work.face_left, work.face_right, div_scratch,
+            m_cur_work, dm_target,
         )
         storage.all_cm[win] = FT.(cm_buf)
     end
@@ -1105,7 +1172,7 @@ end
 
 """
     balance_window!(hflux_work, m_cur_work, m_next_work, cm_work, div_scratch,
-                    buf, slot, m_next, work, cL, vertical, steps_per_window;
+                    buf, slot, m_next, work, cL, steps_per_window;
                     tol, max_iter)
 
 Poisson-balance the horizontal fluxes in buffer `slot` using the
@@ -1126,7 +1193,6 @@ function balance_window!(hflux_work::Matrix{Float64},
                          m_next::AbstractMatrix{FT},
                          work::ReducedTransformWorkspace,
                          cL::CompressedLaplacian,
-                         vertical,
                          steps_per_window::Int;
                          tol::Float64 = 1e-14,
                          max_iter::Int = 20000) where FT
@@ -1147,11 +1213,16 @@ function balance_window!(hflux_work::Matrix{Float64},
     # Store balanced hflux back as FT.
     buf.hflux[slot] .= FT.(hflux_work)
 
-    # Recompute cm from balanced hflux (in Float64, then convert to FT).
-    recompute_faceindexed_cm_from_divergence!(
+    # Recompute cm from balanced hflux using the explicit-dm closure
+    # (plan 39 dry-basis fix, 2026-04-22). See apply_reduced_poisson_balance!
+    # comment for rationale.
+    dm_target = similar(m_cur_work)
+    inv_scale = 1.0 / (2 * max(Int(steps_per_window), 1))
+    @. dm_target = (m_next_work - m_cur_work) * inv_scale
+    recompute_faceindexed_cm_from_dm_target!(
         cm_work, hflux_work,
-        work.face_left, work.face_right, div_scratch;
-        B_ifc = vertical.merged_vc.B)
+        work.face_left, work.face_right, div_scratch,
+        m_cur_work, dm_target)
     buf.cm[slot] .= FT.(cm_work)
 
     return diag
@@ -1323,7 +1394,7 @@ function process_day(date::Date,
         diag = balance_window!(hflux_work, m_cur_work, m_next_work,
                                cm_work, div_scratch_b,
                                buf, cur, buf.m[nxt],
-                               work, cL, vertical, steps_per_met)
+                               work, cL, steps_per_met)
         t_bal = time() - t_bal
 
         worst_pre_raw   = max(worst_pre_raw,   diag.max_pre_raw_residual)
@@ -1350,7 +1421,7 @@ function process_day(date::Date,
     diag = balance_window!(hflux_work, m_cur_work, m_next_work,
                            cm_work, div_scratch_b,
                            buf, cur, buf.m[cur],   # m_next = m_cur → zero tendency
-                           work, cL, vertical, steps_per_met)
+                           work, cL, steps_per_met)
     t_bal = time() - t_bal
 
     worst_pre_raw   = max(worst_pre_raw,   diag.max_pre_raw_residual)

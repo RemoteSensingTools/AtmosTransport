@@ -217,6 +217,8 @@ These are hard-won correctness constraints. Violating any causes silent wrong re
 | Tracer mass drifts ~10⁻⁴/day with uniform IC (ERA5 LL) | Mass fix disabled in preprocessor; raw ERA5 ⟨ps⟩ drift not absorbed | Invariant 12 |
 | CS Poisson balance absorbs moisture signal | Moist-basis preprocessing: Poisson on moist fluxes | Invariant 14 |
 | `mass_basis field missing` warning at startup | Old binary without mass_basis in header — regenerate on dry basis | Invariant 14 |
+| Uniform-IC tracer deviates ±1-5 ppm at day boundary, clean within a day | Dry-basis binary written with legacy Δb×pit cm closure — regenerate | Invariant 10 |
+| `Write-time replay gate FAILED: rel=… > tol=…` during preprocessing | Preprocessor path bypassing the explicit-dm closure | Invariant 10 |
 
 ### Invariant details
 
@@ -276,17 +278,46 @@ These are hard-won correctness constraints. Violating any causes silent wrong re
 
    **Non-GCHP paths**: Transport and diffusion run on DRY basis; convection on MOIST basis.
 
-10. **ERA5 LL binaries MUST be made by `preprocess_spectral_v4_binary.jl` or
-    `preprocess_era5_daily.jl`** — both call `recompute_cm_from_divergence!`
-    to rebuild cm from continuity using the merged am/bm. The OBSOLETE
-    `convert_merged_massflux_to_binary.jl` PICKS native cm at merged
-    interfaces and smears the residual via `correct_cm_residual!`, producing
-    a cm that does NOT satisfy local continuity (89.7% of cells violated
-    in the broken Dec 2021 binary). Symptoms: polar Y nloop hits max_nloop,
-    polar cells go negative, cumulative drainage. **Foolproof check (added
-    2026-04-06)**: `MassFluxBinaryReader` runs a `_verify_cm_continuity` pass
-    on window 1 at driver construction time. Errors LOUDLY if the binary's
-    cm is inconsistent. Disable with `ENV["ATMOSTR_NO_CM_CHECK"]="1"`.
+10. **Transport binaries MUST satisfy the explicit-dm cm closure contract
+    at write time, not the hybrid Δb×pit closure.** The unified v2
+    preprocessor (`scripts/preprocessing/preprocess_transport_binary.jl`)
+    builds per-window `(am, bm, cm)` so that
+
+        m[k] − 2·steps·((am[i+1]−am[i]) + (bm[j+1]−bm[j]) + (cm[k+1]−cm[k])) = m[k+1]
+
+    holds per cell to Poisson-balance tolerance (~F64 ULP). The legacy
+    Δb×pit closure (LL: `recompute_cm_from_divergence!`, RG:
+    `recompute_faceindexed_cm_from_divergence!`) only satisfies this
+    under moist hybrid coordinates where `dm[k] = dB[k] × Σ_k dm[k]`. On
+    dry-basis binaries `qv[k]` varies with level, breaking the identity
+    by up to 27%, which produced the 0.75% day-boundary air_mass jump
+    found in the plan-39 F64 probe (2026-04-22). Fixed by using the
+    explicit-dm closure (`recompute_cm_from_dm_target!`,
+    `recompute_faceindexed_cm_from_dm_target!`) with CS-style residual
+    redistribution at `cm[Nz+1]`.
+
+    **Three gates enforce this invariant:**
+    - **Write-time gate (Commit E)**: `verify_storage_continuity_ll!` +
+      `verify_storage_continuity_rg!` run inside `apply_poisson_balance!`
+      / `apply_reduced_poisson_balance!` / `balance_window!`. Errors
+      loudly if per-cell rel err > `1e-10` (F64) / `1e-4` (F32). Bypass
+      with `ENV["ATMOSTR_NO_WRITE_REPLAY_CHECK"]="1"`.
+    - **Load-time gate (Commit F)**: LL-only, opt-in via
+      `TransportBinaryDriver(path; validate_replay=true)` or
+      `ENV["ATMOSTR_REPLAY_CHECK"]="1"`. For suspect binaries (manual
+      imports, older preprocessor versions). Bypass an enabled gate with
+      `ENV["ATMOSTR_NO_REPLAY_CHECK"]="1"`.
+    - **Regression tests**: `test/test_replay_consistency.jl` (18 tests).
+
+    Symptoms of a binary produced with the legacy Δb×pit closure on dry
+    basis: ~0.75% day-boundary `max|m_runtime_end − m_stored_next|/max|m|`
+    jump; Day N+1 t=0 tracer VMR deviates ±1% from Day N end; mass drift
+    itself remains ~0% because total mass is conserved (just redistributed
+    across the level-qv-weighted mismatch).
+
+    Also applies to legacy `MassFluxBinaryReader` binaries: it runs a
+    `_verify_cm_continuity` pass on window 1 at driver construction
+    (added 2026-04-06). Disable with `ENV["ATMOSTR_NO_CM_CHECK"]="1"`.
     Provenance fields (script_path, script_mtime, git_commit, git_dirty)
     in v4 headers also trigger a stale-binary warning if the source has
     moved on. Disable with `ENV["ATMOSTR_NO_STALE_CHECK"]="1"`.

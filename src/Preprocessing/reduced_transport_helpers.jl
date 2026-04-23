@@ -925,18 +925,6 @@ function recompute_faceindexed_cm_from_divergence!(cm::AbstractMatrix{FT},
 end
 
 """
-    apply_reduced_poisson_balance!(storage, work, steps_per_window)
-
-Post-process all stored windows by applying TM5-style Poisson balance to
-the merged horizontal flux, then recomputing the merged vertical flux
-`cm` from continuity on the balanced hflux. For the final window of a
-day (where `m[win+1]` is unavailable) we target zero mass tendency,
-matching the LL fallback in `fill_window_mass_tendency!`.
-
-After this pass, `storage.all_cm[win]` should be at machine-zero vs
-`storage.all_m[win]` (matching the LL-path behaviour).
-"""
-"""
     verify_storage_continuity_rg!(storage, work, steps_per_window, ::Type{FT})
 
 Plan 39 Commit E — write-time replay gate for RG storage. See
@@ -980,16 +968,29 @@ function verify_storage_continuity_rg!(storage::ReducedWindowStorage{FT},
             worst_idx = diag.worst_idx
         end
     end
-    @info @sprintf("  Write-time replay gate: max|m_evolved−m_stored|/max|m| = %.3e  (abs=%.3e kg  win=%d  cell=%s)",
-                   worst_rel, worst_abs, worst_win, worst_idx)
-    worst_rel <= tol_rel ||
-        error(@sprintf("Write-time replay gate FAILED: rel=%.3e > tol=%.3e at window %d cell %s. " *
-                       "Stored fluxes do not integrate to stored m_next under palindrome continuity. " *
-                       "See plan 39 memo.",
-                       worst_rel, tol_rel, worst_win, worst_idx))
+    summary_msg = @sprintf("max|m_evolved−m_stored|/max|m| = %.3e  (abs=%.3e kg  win=%d  cell=%s)",
+                            worst_rel, worst_abs, worst_win, worst_idx)
+    @info "  Write-time replay gate: $summary_msg"
+    if worst_rel > tol_rel
+        tol_msg = @sprintf("rel=%.3e > tol=%.3e at window %d cell %s", worst_rel, tol_rel, worst_win, worst_idx)
+        error("Write-time replay gate FAILED: $tol_msg. Stored fluxes do not integrate to stored " *
+              "m_next under palindrome continuity. See plan 39 memo.")
+    end
     return nothing
 end
 
+"""
+    apply_reduced_poisson_balance!(storage, work, steps_per_window)
+
+Post-process all stored windows by applying TM5-style Poisson balance to
+the merged horizontal flux, then recomputing the merged vertical flux
+`cm` from continuity on the balanced hflux. For the final window of a
+day (where `m[win+1]` is unavailable) we target zero mass tendency,
+matching the LL fallback in `fill_window_mass_tendency!`.
+
+After this pass, `storage.all_cm[win]` should be at machine-zero vs
+`storage.all_m[win]` (matching the LL-path behaviour).
+"""
 function apply_reduced_poisson_balance!(storage::ReducedWindowStorage{FT},
                                         work::ReducedTransformWorkspace,
                                         steps_per_window::Int;
@@ -1349,12 +1350,13 @@ function balance_window!(hflux_work::Matrix{Float64},
                                                    work.face_left, work.face_right,
                                                    div_scratch, steps_per_window)
         tol_rel = FT === Float32 ? 1e-4 : 1e-10
-        diag_replay.max_rel_err <= tol_rel ||
-            error(@sprintf("Streaming RG write-time replay gate FAILED: rel=%.3e > tol=%.3e at cell %s " *
-                           "(abs=%.3e kg). Stored fluxes do not integrate to stored m_next under " *
-                           "palindrome continuity. See plan 39 memo.",
-                           diag_replay.max_rel_err, tol_rel, diag_replay.worst_idx,
-                           diag_replay.max_abs_err))
+        if diag_replay.max_rel_err > tol_rel
+            tol_msg = @sprintf("rel=%.3e > tol=%.3e at cell %s (abs=%.3e kg)",
+                                diag_replay.max_rel_err, tol_rel, diag_replay.worst_idx,
+                                diag_replay.max_abs_err)
+            error("Streaming RG write-time replay gate FAILED: $tol_msg. Stored fluxes do not " *
+                  "integrate to stored m_next under palindrome continuity. See plan 39 memo.")
+        end
     end
 
     return diag

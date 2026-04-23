@@ -1045,13 +1045,14 @@ function verify_storage_continuity_ll!(storage::WindowStorage{FT},
             worst_idx = diag.worst_idx
         end
     end
-    @info @sprintf("  Write-time replay gate: max|m_evolved−m_stored|/max|m| = %.3e  (abs=%.3e kg  win=%d  cell=%s)",
-                   worst_rel, worst_abs, worst_win, worst_idx)
-    worst_rel <= tol_rel ||
-        error(@sprintf("Write-time replay gate FAILED: rel=%.3e > tol=%.3e at window %d cell %s. " *
-                       "Stored fluxes do not integrate to stored m_next under palindrome continuity. " *
-                       "See plan 39 memo.",
-                       worst_rel, tol_rel, worst_win, worst_idx))
+    summary_msg = @sprintf("max|m_evolved−m_stored|/max|m| = %.3e  (abs=%.3e kg  win=%d  cell=%s)",
+                            worst_rel, worst_abs, worst_win, worst_idx)
+    @info "  Write-time replay gate: $summary_msg"
+    if worst_rel > tol_rel
+        tol_msg = @sprintf("rel=%.3e > tol=%.3e at window %d cell %s", worst_rel, tol_rel, worst_win, worst_idx)
+        error("Write-time replay gate FAILED: $tol_msg. Stored fluxes do not integrate to stored " *
+              "m_next under palindrome continuity. See plan 39 memo.")
+    end
     return nothing
 end
 

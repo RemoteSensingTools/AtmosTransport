@@ -1,0 +1,58 @@
+# Catrine C48 10-day test — ADVECTION ONLY (works today)
+#
+# Runner:   julia -t8 --project=. scripts/run_cs_driven.jl \
+#               config/runs/catrine_c48_10d/advonly.toml
+#
+# Prereq:   10 days of ERA5→C48 transport binaries (Dec 1-10 2021).
+#           Generate via:
+#             for d in 01 02 03 04 05 06 07 08 09 10; do
+#               julia -t16 --project=. \
+#                 scripts/preprocessing/regrid_latlon_to_cs_binary_v2.jl \
+#                 --input  ~/data/AtmosTransport/met/era5/ll720x361_v4/transport_binary_v2_tropo34_dec2021_f64/era5_transport_202112${d}_merged1000Pa_float64.bin \
+#                 --output ~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_202112${d}_merged1000Pa_float64.bin \
+#                 --Nc 48
+#             done
+#           (Runtime ≈ 2-4 min per day at Nc=48 from 720×361 source.)
+
+[input]
+binary_paths = [
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211201_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211202_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211203_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211204_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211205_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211206_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211207_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211208_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211209_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211210_merged1000Pa_float64.bin",
+]
+
+[architecture]
+use_gpu = false         # C48 is tiny; CPU is fine. Set true on wurst/curry for speed.
+
+[numerics]
+float_type = "Float32"
+
+[run]
+scheme = "slopes"       # "upwind" | "slopes" | "ppm" (MonotoneLimiter by default)
+
+# Catrine natural-state CO2 from LSCE inversion at 2021-12-01 00:00.
+[tracers.co2_natural]
+[tracers.co2_natural.init]
+kind = "catrine_co2"
+
+# Fossil CO2 starts at zero. NOTE: run_cs_driven.jl does NOT yet read
+# [tracers.*.surface_flux] for CS — fossil stays at zero in this run.
+# See README.md for the emissions gap; surface sources are supported by
+# the underlying `DrivenSimulation` (via `surface_sources=(...)` kwarg)
+# but not yet threaded through the TOML parser here.
+[tracers.co2_fossil]
+[tracers.co2_fossil.init]
+kind = "uniform"
+background = 0.0
+
+[output]
+# 0, 24, 48, ..., 240 h (11 snapshots over 10 days).
+snapshot_hours = [0, 24, 48, 72, 96, 120, 144, 168, 192, 216, 240]
+snapshot_file = "~/data/AtmosTransport/output/catrine_c48_10d/advonly.nc"

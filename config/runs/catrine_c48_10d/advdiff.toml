@@ -1,0 +1,56 @@
+# Catrine C48 10-day test — ADVECTION + DIFFUSION
+#
+# Uses `ImplicitVerticalDiffusion` (plan 16a/16b) with a uniform Kz field.
+# The operator is wired into `DrivenSimulation` via `TransportModel(...;
+# diffusion = ImplicitVerticalDiffusion(; kz_field = ...))`; the CS Kz
+# field is `CubedSphereField(ntuple(_ -> ConstantField{FT, 3}(value), 6))`
+# when [diffusion] kind = "constant" (see scripts/run_cs_driven.jl).
+#
+# Runner:   julia -t8 --project=. scripts/run_cs_driven.jl \
+#               config/runs/catrine_c48_10d/advdiff.toml
+# Prereq:   Same C48 binaries as advonly.toml.
+
+[input]
+binary_paths = [
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211201_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211202_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211203_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211204_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211205_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211206_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211207_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211208_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211209_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211210_merged1000Pa_float64.bin",
+]
+
+[architecture]
+use_gpu = false
+
+[numerics]
+float_type = "Float32"
+
+[run]
+scheme = "slopes"
+
+[tracers.co2_natural]
+[tracers.co2_natural.init]
+kind = "catrine_co2"
+
+[tracers.co2_fossil]
+[tracers.co2_fossil.init]
+kind = "uniform"
+background = 0.0
+
+# Kz schema supported by run_cs_driven.jl today:
+#   kind = "constant" | "none"
+# Future kinds (ProfileKzField / PreComputedKzField / DerivedKzField /
+# StepwiseField) will need their own per-kind TOML blocks — see
+# src/State/Fields/ for the field hierarchy.
+[diffusion]
+kind  = "constant"
+value = 1.0             # m² s⁻¹ — uniform background Kz
+
+[output]
+snapshot_hours = [0, 24, 48, 72, 96, 120, 144, 168, 192, 216, 240]
+snapshot_file = "~/data/AtmosTransport/output/catrine_c48_10d/advdiff.nc"

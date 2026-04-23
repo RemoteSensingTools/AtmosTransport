@@ -1,0 +1,67 @@
+# Catrine C48 10-day test — ADVECTION + DIFFUSION + CONVECTION
+#
+# Operator wiring:
+#   diffusion  = ImplicitVerticalDiffusion (constant Kz, plan 16b)
+#   convection = TM5Convection (plan 23) OR CMFMCConvection (GEOS-style)
+#
+# TM5 route requires the binary to contain entu/detu/entd/detd sections,
+# emitted by the ERA5 preprocessor when `[tm5_convection] enable = true`.
+# The current LL→C48 regridder (`regrid_latlon_to_cs_binary_v2.jl`) does
+# NOT yet carry those sections across the regrid. Two options:
+#   (a) regenerate the C48 binaries from TM5-enabled LL sources AFTER
+#       extending the regridder (small work)
+#   (b) switch kind = "cmfmc" and use a GEOS-style C48 binary with
+#       native CMFMC+DTRAIN (currently no C48 GEOS-IT binary exists —
+#       would need to regrid C180 or preprocess a source)
+#
+# With a TM5-less regular C48 binary, setting kind = "tm5" will fail
+# loudly at the first window load (missing sections).
+#
+# Runner:   julia -t8 --project=. scripts/run_cs_driven.jl \
+#               config/runs/catrine_c48_10d/advdiffconv.toml
+
+[input]
+binary_paths = [
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211201_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211202_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211203_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211204_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211205_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211206_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211207_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211208_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211209_merged1000Pa_float64.bin",
+    "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211210_merged1000Pa_float64.bin",
+]
+
+[architecture]
+use_gpu = false
+
+[numerics]
+float_type = "Float32"
+
+[run]
+scheme = "slopes"
+
+[tracers.co2_natural]
+[tracers.co2_natural.init]
+kind = "catrine_co2"
+
+[tracers.co2_fossil]
+[tracers.co2_fossil.init]
+kind = "uniform"
+background = 0.0
+
+[diffusion]
+kind  = "constant"
+value = 1.0
+
+# TM5Convection has no tuning knobs — the operator reads entu/detu/entd/detd
+# directly from the transport window each step. Switch to `kind = "cmfmc"`
+# if the binary has CMFMC+DTRAIN instead (GEOS-style).
+[convection]
+kind = "tm5"
+
+[output]
+snapshot_hours = [0, 24, 48, 72, 96, 120, 144, 168, 192, 216, 240]
+snapshot_file = "~/data/AtmosTransport/output/catrine_c48_10d/advdiffconv.nc"

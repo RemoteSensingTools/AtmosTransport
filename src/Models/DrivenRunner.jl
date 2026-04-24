@@ -217,7 +217,8 @@ function _make_structured_model(driver::TransportBinaryDriver;
     basis_type = air_mass_basis(driver) == :dry ? DryBasis : MoistBasis
     tracer_names_tup = Tuple(spec.name for spec in tracer_specs_tuple)
     rm_arrays = map(tracer_specs_tuple) do spec
-        vmr = build_initial_mixing_ratio(air_mass, grid, spec.init_cfg)
+        vmr = build_initial_mixing_ratio(air_mass, grid, spec.init_cfg;
+                                         surface_pressure = window.surface_pressure)
         # MoistBasis LL/RG runs would need qv threaded from window.qv —
         # none in-tree today; the packer errors with a precise message.
         return pack_initial_tracer_mass(grid, air_mass, vmr;
@@ -721,7 +722,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
 
     tracer_kwargs = Dict{Symbol, NTuple{6, typeof(air_mass[1])}}()
     for (name, init_cfg) in tracer_init
-        vmr = build_initial_mixing_ratio(air_mass, grid, init_cfg)
+        vmr = build_initial_mixing_ratio(air_mass, grid, init_cfg;
+                                         surface_pressure = window1.surface_pressure)
         tracer_kwargs[name] = pack_initial_tracer_mass(grid, air_mass, vmr;
                                                        mass_basis = BasisT())
     end

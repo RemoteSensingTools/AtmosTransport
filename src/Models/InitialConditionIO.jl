@@ -322,7 +322,7 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    _interpolate_log_pressure_profile!(dest, src_q, air_mass_col, ap, bp, ps_src, area, g)
+    _interpolate_log_pressure_profile!(dest, src_q, ap, bp, ps_src, A_tgt, B_tgt, ps_tgt)
 
 Vertically interpolate a source profile `src_q[1:Nsrc]` onto target model
 levels `dest[1:Nz]` using log-pressure linear interpolation.
@@ -340,10 +340,10 @@ surface to TOA (k=1 is surface, k=Nsrc is TOA).
 
 ## Target pressure levels
 
-Target half-level pressures from the model's air mass column:
+Target half-level pressures from the transport binary's hybrid coordinates and
+stored surface pressure:
 
-    tgt_p_half[1] = 0          (TOA, model convention k=1 = top)
-    tgt_p_half[k+1] = tgt_p_half[k] + air_mass[k] × g / area
+    tgt_p_half[k] = A_tgt[k] + B_tgt[k] × ps_tgt
 
 So `tgt_p_mid` is **increasing** from TOA to surface (k=1 small, k=Nz large).
 
@@ -367,14 +367,18 @@ monotonically **decreasing**.
 """
 function _interpolate_log_pressure_profile!(dest::AbstractVector{FT},
                                             src_q::AbstractVector{FT},
-                                            air_mass_col,
                                             ap::Vector{Float64},
                                             bp::Vector{Float64},
                                             ps_src::Float64,
-                                            area::Float64,
-                                            g::Float64) where FT
+                                            A_tgt::AbstractVector{<:Real},
+                                            B_tgt::AbstractVector{<:Real},
+                                            ps_tgt::Real) where FT
     Nsrc = length(src_q)
     Nz = length(dest)
+    length(A_tgt) == Nz + 1 || throw(DimensionMismatch(
+        "A_tgt has length $(length(A_tgt)), expected Nz+1 = $(Nz + 1)"))
+    length(B_tgt) == Nz + 1 || throw(DimensionMismatch(
+        "B_tgt has length $(length(B_tgt)), expected Nz+1 = $(Nz + 1)"))
 
     # Source half-level pressures: src_p_half[1] = ps (surface), src_p_half[end] = 0 (TOA)
     src_p_half = Vector{Float64}(undef, Nsrc + 1)
@@ -387,13 +391,18 @@ function _interpolate_log_pressure_profile!(dest::AbstractVector{FT},
         src_p_mid[k] = 0.5 * (src_p_half[k] + src_p_half[k + 1])
     end
 
-    # Target half-level pressures: tgt_p_half[1] = 0 (TOA), cumulating to ps (surface)
-    # (model convention: k=1 is TOA, k=Nz is surface-adjacent)
+    # Target half-level pressures from the binary's own hybrid coefficients
+    # and surface pressure: `p_half[k] = A[k] + B[k] * ps_tgt`. This is
+    # *exact* and decouples vertical remap from `air_mass × g / area`,
+    # which previously drifted by 9-22% on gnomonic CS because
+    # `mesh.cell_areas[i, j]` was inconsistent with the area used by the
+    # preprocessor when writing `m`. Visible symptom (2026-04-24): cube
+    # panel-outline structure in C48 column-mean IC, dissolved by transport
+    # within ~30 h.
+    ps_tgt_f = Float64(ps_tgt)
     tgt_p_half = Vector{Float64}(undef, Nz + 1)
-    tgt_p_half[1] = 0.0   # TOA boundary
-    @inbounds for k in 1:Nz
-        dp = Float64(air_mass_col[k]) * g / area   # pressure thickness [Pa]
-        tgt_p_half[k + 1] = tgt_p_half[k] + dp
+    @inbounds for k in 1:(Nz + 1)
+        tgt_p_half[k] = Float64(A_tgt[k]) + Float64(B_tgt[k]) * ps_tgt_f
     end
 
     # Persistent bracket index (advances forward as p_tgt increases with k)
@@ -494,7 +503,8 @@ end
 
 function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
                                     grid::AtmosGrid{<:LatLonMesh},
-                                    cfg) where FT
+                                    cfg;
+                                    surface_pressure::Union{Nothing, AbstractMatrix} = nothing) where FT
     kind = _init_kind(cfg)
     _is_file_init_kind(kind) || return build_initial_mixing_ratio(air_mass, grid.horizontal, cfg)
 
@@ -502,18 +512,30 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
     mesh = grid.horizontal
     q = Array{FT}(undef, size(air_mass))
     src_q = Vector{FT}(undef, size(source.raw, 3))
-    g = Float64(gravity(grid))
+    A_tgt = grid.vertical.A
+    B_tgt = grid.vertical.B
+    surface_pressure === nothing && throw(ArgumentError(
+        "build_initial_mixing_ratio(::AtmosGrid{<:LatLonMesh}, ...) with " *
+        "vertical-interp init kind=$(kind) requires `surface_pressure` (the " *
+        "binary's stored ps) so target half-level pressures can be computed " *
+        "exactly from the grid's hybrid coefficients. Pass " *
+        "`window.surface_pressure` from `load_transport_window` to avoid " *
+        "the area-mismatch artifact (2026-04-24)."))
+    size(surface_pressure) == size(air_mass)[1:2] || throw(DimensionMismatch(
+        "surface_pressure size $(size(surface_pressure)) must match air_mass " *
+        "horizontal extent $(size(air_mass)[1:2])"))
 
     for j in axes(q, 2)
-        area = Float64(cell_area(mesh, 1, j))
         lat = mesh.φᶜ[j]
         for i in axes(q, 1)
             lon = mesh.λᶜ[i]
             _sample_bilinear_profile!(src_q, source.raw, source.lon, source.lat, lon, lat)
             if source.needs_vinterp
                 ps_src = _sample_bilinear_scalar(source.psurf, source.lon, source.lat, lon, lat)
-                _interpolate_log_pressure_profile!(@view(q[i, j, :]), src_q, @view(air_mass[i, j, :]),
-                                                  source.ap, source.bp, ps_src, area, g)
+                ps_tgt = Float64(surface_pressure[i, j])
+                _interpolate_log_pressure_profile!(@view(q[i, j, :]), src_q,
+                                                   source.ap, source.bp, ps_src,
+                                                   A_tgt, B_tgt, ps_tgt)
             else
                 _copy_profile!(@view(q[i, j, :]), src_q)
             end
@@ -525,7 +547,8 @@ end
 
 function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
                                     grid::AtmosGrid{<:ReducedGaussianMesh},
-                                    cfg) where FT
+                                    cfg;
+                                    surface_pressure::Union{Nothing, AbstractVector} = nothing) where FT
     kind = _init_kind(cfg)
     _is_file_init_kind(kind) || return build_initial_mixing_ratio(air_mass, grid.horizontal, cfg)
 
@@ -533,7 +556,16 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
     mesh = grid.horizontal
     q = Array{FT}(undef, size(air_mass))
     src_q = Vector{FT}(undef, size(source.raw, 3))
-    g = Float64(gravity(grid))
+    A_tgt = grid.vertical.A
+    B_tgt = grid.vertical.B
+    surface_pressure === nothing && throw(ArgumentError(
+        "build_initial_mixing_ratio(::AtmosGrid{<:ReducedGaussianMesh}, ...) " *
+        "with vertical-interp init kind=$(kind) requires `surface_pressure` " *
+        "(the binary's stored ps, length = ncells). Pass " *
+        "`window.surface_pressure` from `load_transport_window`."))
+    length(surface_pressure) == size(air_mass, 1) || throw(DimensionMismatch(
+        "surface_pressure length $(length(surface_pressure)) must match " *
+        "air_mass cells $(size(air_mass, 1))"))
 
     for j in 1:nrings(mesh)
         lat = mesh.latitudes[j]
@@ -544,9 +576,10 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
             _sample_bilinear_profile!(src_q, source.raw, source.lon, source.lat, lon, lat)
             if source.needs_vinterp
                 ps_src = _sample_bilinear_scalar(source.psurf, source.lon, source.lat, lon, lat)
-                area = Float64(cell_area(mesh, c))
-                _interpolate_log_pressure_profile!(@view(q[c, :]), src_q, @view(air_mass[c, :]),
-                                                  source.ap, source.bp, ps_src, area, g)
+                ps_tgt = Float64(surface_pressure[c])
+                _interpolate_log_pressure_profile!(@view(q[c, :]), src_q,
+                                                   source.ap, source.bp, ps_src,
+                                                   A_tgt, B_tgt, ps_tgt)
             else
                 _copy_profile!(@view(q[c, :]), src_q)
             end
@@ -671,7 +704,8 @@ end
 
 function build_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 3}},
                                     grid::AtmosGrid{<:CubedSphereMesh},
-                                    cfg) where FT
+                                    cfg;
+                                    surface_pressure::Union{Nothing, NTuple{6, <:AbstractMatrix}} = nothing) where FT
     kind = _init_kind(cfg)
     mesh = grid.horizontal
     Nc = mesh.Nc
@@ -681,7 +715,20 @@ function build_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 3}},
         background = FT(get(cfg, "background", 4.0e-4))
         return ntuple(_ -> fill(background, Nc, Nc, Nz), CS_PANEL_COUNT)
     elseif _is_file_init_kind(kind)
-        return _build_cs_file_ic(grid, air_mass, cfg, FT)
+        surface_pressure === nothing && throw(ArgumentError(
+            "build_initial_mixing_ratio(::AtmosGrid{<:CubedSphereMesh}, ...) " *
+            "with vertical-interp init kind=$(kind) requires `surface_pressure` " *
+            "(the binary's stored ps as `NTuple{6, Matrix}`). Pass " *
+            "`window.surface_pressure` from `load_transport_window` so target " *
+            "half-level pressures use the binary's hybrid coefficients exactly. " *
+            "Without this, the gnomonic `mesh.cell_areas[i,j]` mismatch with " *
+            "the preprocessor's area produces a 9-22% pressure drift and " *
+            "visible cube-panel artifacts (2026-04-24)."))
+        for p in 1:CS_PANEL_COUNT
+            size(surface_pressure[p]) == (Nc, Nc) || throw(DimensionMismatch(
+                "surface_pressure[$p] size $(size(surface_pressure[p])) must be ($Nc, $Nc)"))
+        end
+        return _build_cs_file_ic(grid, air_mass, cfg, FT, surface_pressure)
     else
         throw(ArgumentError(
             "unsupported init.kind=$(kind) for CubedSphereMesh; " *
@@ -691,11 +738,13 @@ end
 
 function _build_cs_file_ic(grid::AtmosGrid{<:CubedSphereMesh},
                            air_mass::NTuple{6, <:AbstractArray{FT, 3}},
-                           cfg, ::Type{FT}) where FT
+                           cfg, ::Type{FT},
+                           ps_tgt_panels::NTuple{6, <:AbstractMatrix}) where FT
     mesh = grid.horizontal
     Nc   = mesh.Nc
-    Hp   = mesh.Hp
     Nz   = size(air_mass[1], 3)
+    A_tgt = grid.vertical.A
+    B_tgt = grid.vertical.B
 
     source = _load_file_initial_condition_source(cfg, FT, Nz)
     src_mesh = _build_source_latlon_mesh(source.lon, source.lat, FT)
@@ -712,8 +761,12 @@ function _build_cs_file_ic(grid::AtmosGrid{<:CubedSphereMesh},
     vmr_src_levels = ntuple(_ -> Array{FT}(undef, Nc, Nc, Nlev_src), CS_PANEL_COUNT)
     unpack_flat_to_panels_3d!(vmr_src_levels, dst_flat, Nc, Nlev_src)
 
-    # 2D surface pressure (only if source levels differ from target)
-    ps_panels = if source.needs_vinterp
+    # 2D source surface pressure (only if source levels differ from target).
+    # NOTE: this is the SOURCE psurf (Catrine), used to build source p-half
+    # levels. The TARGET ps comes from `ps_tgt_panels` passed in by the caller
+    # — the binary's own ps. Mixing the two cleanly is what fixes the
+    # area-mismatch artifact.
+    src_ps_panels = if source.needs_vinterp
         src_ps_flat = Vector{Float64}(undef, n_src)
         dst_ps_flat = Vector{Float64}(undef, n_dst)
         copyto!(src_ps_flat, reshape(source.psurf, n_src))
@@ -728,20 +781,17 @@ function _build_cs_file_ic(grid::AtmosGrid{<:CubedSphereMesh},
     # Vertical remap column-by-column into interior `(Nc, Nc, Nz)` tuple.
     vmr = ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), CS_PANEL_COUNT)
     src_q = Vector{FT}(undef, Nlev_src)
-    g = Float64(gravity(grid))
 
     for p in 1:CS_PANEL_COUNT
-        interior_am = @view air_mass[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, :]
         for j in 1:Nc, i in 1:Nc
             @views copyto!(src_q, vmr_src_levels[p][i, j, :])
-            area = Float64(cell_area(mesh, i, j))
             if source.needs_vinterp
-                ps_src = Float64(ps_panels[p][i, j])
+                ps_src = Float64(src_ps_panels[p][i, j])
+                ps_tgt = Float64(ps_tgt_panels[p][i, j])
                 _interpolate_log_pressure_profile!(@view(vmr[p][i, j, :]),
                                                    src_q,
-                                                   @view(interior_am[i, j, :]),
-                                                   source.ap, source.bp,
-                                                   ps_src, area, g)
+                                                   source.ap, source.bp, ps_src,
+                                                   A_tgt, B_tgt, ps_tgt)
             else
                 _copy_profile!(@view(vmr[p][i, j, :]), src_q)
             end

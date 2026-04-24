@@ -229,8 +229,11 @@ const FT = Float64
             vertical = HybridSigmaPressure(FT[0, 50000, 0], FT[1, 0.5, 0])
             grid_ll = AtmosGrid(mesh_ll, vertical, CPU(); FT = FT)
             air_mass_ll = fill(FT(1e10), 36, 18, 2)
-            q_catrine_ll = build_initial_mixing_ratio(air_mass_ll, grid_ll, cfg_catrine)
-            q_file_ll    = build_initial_mixing_ratio(air_mass_ll, grid_ll, cfg_file)
+            ps_ll = fill(FT(101325), 36, 18)
+            q_catrine_ll = build_initial_mixing_ratio(air_mass_ll, grid_ll, cfg_catrine;
+                                                       surface_pressure = ps_ll)
+            q_file_ll    = build_initial_mixing_ratio(air_mass_ll, grid_ll, cfg_file;
+                                                       surface_pressure = ps_ll)
             @test q_catrine_ll == q_file_ll
 
             # RG
@@ -239,8 +242,11 @@ const FT = Float64
             mesh_rg = ReducedGaussianMesh(latitudes, nlon_per_ring; FT = FT)
             grid_rg = AtmosGrid(mesh_rg, vertical, CPU(); FT = FT)
             air_mass_rg = fill(FT(1e10), ncells(mesh_rg), 2)
-            q_catrine_rg = build_initial_mixing_ratio(air_mass_rg, grid_rg, cfg_catrine)
-            q_file_rg    = build_initial_mixing_ratio(air_mass_rg, grid_rg, cfg_file)
+            ps_rg = fill(FT(101325), ncells(mesh_rg))
+            q_catrine_rg = build_initial_mixing_ratio(air_mass_rg, grid_rg, cfg_catrine;
+                                                       surface_pressure = ps_rg)
+            q_file_rg    = build_initial_mixing_ratio(air_mass_rg, grid_rg, cfg_file;
+                                                       surface_pressure = ps_rg)
             @test q_catrine_rg == q_file_rg
 
             # CS — build_initial_mixing_ratio output is interior NTuple{6}
@@ -250,8 +256,11 @@ const FT = Float64
             mesh_cs = CubedSphereMesh(; FT = FT, Nc = Nc, Hp = Hp)
             grid_cs = AtmosGrid(mesh_cs, vertical, CPU(); FT = FT)
             air_mass_cs = ntuple(_ -> fill(FT(1e10), Nc + 2Hp, Nc + 2Hp, Nz), 6)
-            q_catrine_cs = build_initial_mixing_ratio(air_mass_cs, grid_cs, cfg_catrine)
-            q_file_cs    = build_initial_mixing_ratio(air_mass_cs, grid_cs, cfg_file)
+            ps_cs = ntuple(_ -> fill(FT(101325), Nc, Nc), 6)
+            q_catrine_cs = build_initial_mixing_ratio(air_mass_cs, grid_cs, cfg_catrine;
+                                                       surface_pressure = ps_cs)
+            q_file_cs    = build_initial_mixing_ratio(air_mass_cs, grid_cs, cfg_file;
+                                                       surface_pressure = ps_cs)
             for p in 1:6
                 @test q_catrine_cs[p] == q_file_cs[p]
             end

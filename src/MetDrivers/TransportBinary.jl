@@ -1539,6 +1539,8 @@ Panels are stored sequentially within each section.
 function _cs_section_elements(Nc::Int, npanel::Int, nlevel::Int, section::Symbol)
     if section === :m
         return npanel * Nc * Nc * nlevel
+    elseif section === :dm
+        return npanel * Nc * Nc * nlevel
     elseif section === :am
         return npanel * (Nc + 1) * Nc * nlevel
     elseif section === :bm
@@ -1618,6 +1620,7 @@ function open_streaming_cs_transport_binary(
         air_mass_sampling::Symbol = :window_start_endpoint,
         flux_sampling::Symbol = :window_constant,
         flux_kind::Symbol = :substep_mass_amount,
+        include_flux_delta::Bool = false,
         mass_basis::Symbol = :moist,
         include_cmfmc::Bool = false,
         include_dtrain::Bool = false,
@@ -1629,6 +1632,7 @@ function open_streaming_cs_transport_binary(
     ncell = npanel * Nc * Nc
     nface_h = npanel * 2 * Nc * (Nc + 1)
     payload_sections = Symbol[:m, :am, :bm, :cm, :ps]
+    include_flux_delta && push!(payload_sections, :dm)
     include_cmfmc && push!(payload_sections, :cmfmc)
     include_dtrain && push!(payload_sections, :dtrain)
     if include_tm5conv
@@ -1652,7 +1656,8 @@ function open_streaming_cs_transport_binary(
                                       flux_sampling=flux_sampling,
                                       flux_kind=flux_kind,
                                       humidity_sampling=:none,
-                                      delta_semantics=:none)
+                                      delta_semantics=include_flux_delta ?
+                                          :forward_window_endpoint_difference : :none)
 
     merge!(header, Dict{String, Any}(
         "Nc" => Nc,
@@ -1662,6 +1667,7 @@ function open_streaming_cs_transport_binary(
         "poisson_balance_method" => "global_cg_graph_laplacian",
         "poisson_balance_target_scale" => 1.0 / (2 * steps_per_window),
         "poisson_balance_target_semantics" => "forward_window_mass_difference / (2 * steps_per_window)",
+        "n_dm" => include_flux_delta ? _cs_section_elements(Nc, npanel, nlevel, :dm) : 0,
         "include_cmfmc" => include_cmfmc,
         "include_dtrain" => include_dtrain,
         "include_tm5conv" => include_tm5conv,

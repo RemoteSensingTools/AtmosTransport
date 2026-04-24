@@ -57,7 +57,8 @@ export source_flux_sampling, air_mass_sampling, flux_sampling, flux_kind, humidi
 export diagnose_cm_from_continuity!, diagnose_cm_from_continuity_vc!
 export diagnose_cm_from_continuity_ka!
 export recompute_cm_from_dm_target!, recompute_faceindexed_cm_from_dm_target!
-export verify_window_continuity, verify_window_continuity_ll, verify_window_continuity_rg
+export verify_window_continuity, verify_window_continuity_ll, verify_window_continuity_rg,
+       verify_window_continuity_cs
 export ERA5ReducedGaussianGeometry
 export read_era5_reduced_gaussian_geometry, read_era5_reduced_gaussian_mesh
 

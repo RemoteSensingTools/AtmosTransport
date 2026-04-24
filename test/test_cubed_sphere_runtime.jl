@@ -10,9 +10,13 @@ function write_driven_cs_binary(path::AbstractString;
                                 Nc::Int = 4,
                                 Nz::Int = 2,
                                 window_mass_scales::Tuple{Vararg{Real}} = (1, 1),
+                                window_dm_panels = nothing,
                                 convection_windows = nothing,
                                 dtrain_windows = nothing,
                                 tm5_windows = nothing)
+    window_dm_panels !== nothing &&
+        length(window_dm_panels) == length(window_mass_scales) ||
+        window_dm_panels === nothing || throw(ArgumentError("window_dm_panels length must match window_mass_scales"))
     convection_windows !== nothing &&
         length(convection_windows) == length(window_mass_scales) ||
         convection_windows === nothing || throw(ArgumentError("convection_windows length must match window_mass_scales"))
@@ -36,6 +40,7 @@ function write_driven_cs_binary(path::AbstractString;
         FT = FT,
         dt_met_seconds = 3600.0,
         steps_per_window = 2,
+        include_flux_delta = window_dm_panels !== nothing,
         mass_basis = :dry,
         include_cmfmc = convection_windows !== nothing,
         include_dtrain = dtrain_windows !== nothing,
@@ -59,11 +64,18 @@ function write_driven_cs_binary(path::AbstractString;
         if tm5_windows !== nothing
             window = merge(window, (tm5_fields = tm5_windows[win],))
         end
+        if window_dm_panels !== nothing
+            window = merge(window, (dm = window_dm_panels[win],))
+        end
         AtmosTransport.MetDrivers.write_streaming_cs_window!(writer, window, Nc, 6)
     end
 
     AtmosTransport.MetDrivers.close_streaming_transport_binary!(writer)
     return nothing
+end
+
+function zero_cs_dm_panels(FT::Type{<:AbstractFloat}, Nc::Int, Nz::Int)
+    return ntuple(_ -> zeros(FT, Nc, Nc, Nz), 6)
 end
 
 function make_cs_cmfmc_panels(FT::Type{<:AbstractFloat}, Nc::Int, Nz::Int;
@@ -172,6 +184,37 @@ end
         @test total_mass(sim.model.state, :CO2) ≈ rm0 atol=eps(Float64) * rm0 * 10
 
         close(driver)
+    end
+end
+
+@testset "CubedSphere transport replay gate validates dm-bearing binaries" begin
+    mktemp() do path, io
+        close(io)
+        dm_zero = zero_cs_dm_panels(Float64, 4, 2)
+        write_driven_cs_binary(path; FT=Float64, Nc=4, Nz=2,
+                               window_mass_scales=(1,),
+                               window_dm_panels=(dm_zero,))
+
+        reader = CubedSphereBinaryReader(path; FT=Float64)
+        @test has_flux_delta(reader)
+        close(reader)
+
+        driver = CubedSphereTransportDriver(path; FT=Float64, arch=CPU(), Hp=1,
+                                            validate_replay=true)
+        close(driver)
+    end
+end
+
+@testset "CubedSphere transport replay gate catches final-window target mismatch" begin
+    mktemp() do path, io
+        close(io)
+        dm_bad = ntuple(_ -> fill(1.0e4, 4, 4, 2), 6)
+        write_driven_cs_binary(path; FT=Float64, Nc=4, Nz=2,
+                               window_mass_scales=(1,),
+                               window_dm_panels=(dm_bad,))
+
+        @test_throws ArgumentError CubedSphereTransportDriver(
+            path; FT=Float64, arch=CPU(), Hp=1, validate_replay=true)
     end
 end
 

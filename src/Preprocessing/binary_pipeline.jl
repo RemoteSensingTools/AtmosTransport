@@ -1211,6 +1211,46 @@ function write_day_binary!(bin_path::String,
     return bytes_written
 end
 
+@inline function fill_cs_window_mass_tendency!(dm_panels::NTuple{NP, <:AbstractArray{FT, 3}},
+                                               m_cur::NTuple{NP, <:AbstractArray{FT, 3}},
+                                               m_next::NTuple{NP, <:AbstractArray{FT, 3}},
+                                               steps_per_window::Int) where {FT, NP}
+    inv_two_steps = one(FT) / FT(2 * steps_per_window)
+    for p in 1:NP
+        @inbounds for idx in eachindex(dm_panels[p])
+            dm_panels[p][idx] = (m_next[p][idx] - m_cur[p][idx]) * inv_two_steps
+        end
+    end
+    return nothing
+end
+
+@inline function convert_cs_mass_target_to_delta!(m_target::NTuple{NP, <:AbstractArray{FT, 3}},
+                                                  m_cur::NTuple{NP, <:AbstractArray{FT, 3}}) where {FT, NP}
+    for p in 1:NP
+        @inbounds for idx in eachindex(m_target[p])
+            m_target[p][idx] -= m_cur[p][idx]
+        end
+    end
+    return nothing
+end
+
+function verify_write_replay_cs!(m_cur::NTuple{NP, <:AbstractArray{FT, 3}},
+                                 am::NTuple{NP, <:AbstractArray},
+                                 bm::NTuple{NP, <:AbstractArray},
+                                 cm::NTuple{NP, <:AbstractArray},
+                                 m_next::NTuple{NP, <:AbstractArray},
+                                 steps_per_window::Int,
+                                 tol_rel::Real,
+                                 win_idx::Int) where {FT, NP}
+    diag = verify_window_continuity_cs(m_cur, am, bm, cm, m_next, steps_per_window)
+    diag.max_rel_err <= tol_rel ||
+        error("Write-time replay gate FAILED for CS window $(win_idx): " *
+              "rel=$(diag.max_rel_err) > tol=$(tol_rel) at cell $(diag.worst_idx) " *
+              "(abs=$(diag.max_abs_err) kg). Stored CS fluxes do not integrate to " *
+              "the target mass endpoint under palindrome continuity.")
+    return diag
+end
+
 """
     process_day(date, grid, settings, vertical; next_day_hour0=nothing)
 
@@ -1288,7 +1328,7 @@ function process_day(date::Date,
     transform = allocate_transform_workspace(staging_grid, spec.T, Nz_native)
     merged = allocate_merge_workspace(staging_grid, Nz_native, Nz, FT)
     qv = allocate_qv_workspace(staging_grid, settings, date, Nz_native, Nz, FT)
-    ps_offsets = zeros(Float64, Nt)
+    ps_offsets = zeros(Float64, Nt + 1)
 
     # CS workspaces
     cs_ws = allocate_cs_preprocess_workspace(Nc, Nx_stg, Ny_stg, Nz, n_src, n_dst, FT)
@@ -1309,6 +1349,7 @@ function process_day(date::Date,
         dt_met_seconds=settings.met_interval,
         half_dt_seconds=settings.half_dt,
         steps_per_window=steps_per_met,
+        include_flux_delta=true,
         mass_basis=Symbol(settings.mass_basis),
         extra_header=Dict{String, Any}(
             "preprocessor"     => "preprocess_transport_binary.jl",
@@ -1328,6 +1369,9 @@ function process_day(date::Date,
 
     log_mass_fix_configuration(settings)
     @info "  Streaming: spectral → LL staging → CS regrid → balance → write..."
+    write_replay_on = get(ENV, "ATMOSTR_NO_WRITE_REPLAY_CHECK", "0") != "1"
+    write_replay_on || @info "  Write-time CS replay gate SKIPPED (ATMOSTR_NO_WRITE_REPLAY_CHECK=1)"
+    replay_tol = replay_tolerance(FT)
 
     # --- Helper: synthesize one window to staging LL, merge, then regrid to CS ---
     function _synth_and_regrid_to_cs!(win_idx, hour, m_out, ps_out, am_out, bm_out)
@@ -1404,6 +1448,10 @@ function process_day(date::Date,
     worst_pre = 0.0
     worst_post = 0.0
     worst_iter = 0
+    worst_replay_rel = 0.0
+    worst_replay_abs = 0.0
+    worst_replay_win = 0
+    worst_replay_idx = (0, 0, 0, 0)
 
     # --- Process first window ---
     t0 = time()
@@ -1446,17 +1494,25 @@ function process_day(date::Date,
         sync_all_cs_boundary_mirrors!(cur_am, cur_bm, grid.mesh.connectivity, Nc, Nz)
 
         # Diagnose cm from balanced am/bm and raw mass tendency.
-        for p in 1:CS_PANEL_COUNT
-            @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
-                cs_ws.dm_panels[p][i, j, k] =
-                    (cs_ws.m_next_panels[p][i, j, k] - cur_m[p][i, j, k]) / (2 * steps_per_met)
-            end
-        end
+        fill_cs_window_mass_tendency!(cs_ws.dm_panels, cur_m, cs_ws.m_next_panels, steps_per_met)
         for p in 1:CS_PANEL_COUNT; fill!(cur_cm[p], zero(FT)); end
         diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz)
+        if write_replay_on
+            diag_replay = verify_write_replay_cs!(cur_m, cur_am, cur_bm, cur_cm,
+                                                  cs_ws.m_next_panels,
+                                                  steps_per_met, replay_tol, win - 1)
+            if worst_replay_win == 0 || diag_replay.max_rel_err > worst_replay_rel
+                worst_replay_rel = diag_replay.max_rel_err
+                worst_replay_abs = diag_replay.max_abs_err
+                worst_replay_win = win - 1
+                worst_replay_idx = diag_replay.worst_idx
+            end
+        end
+        convert_cs_mass_target_to_delta!(cs_ws.m_next_panels, cur_m)
 
         # Write balanced previous window
-        window_nt = (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps)
+        window_nt = (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps,
+                     dm=cs_ws.m_next_panels)
         write_streaming_cs_window!(writer, window_nt, Nc, CS_PANEL_COUNT)
 
         should_log_window(win - 1, Nt) &&
@@ -1471,10 +1527,18 @@ function process_day(date::Date,
         _copy_panels!(cur_bm, cs_ws.bm_panels)
     end
 
-    # --- Balance & write LAST window (zero-tendency fallback) ---
+    # --- Balance & write LAST window (next-day closure when available) ---
+    last_hour_next = next_day_merged_fields(next_day_hour0, date, staging_grid, vertical,
+                                            settings, transform, merged, qv, ps_offsets)
+    if last_hour_next !== nothing
+        regrid_3d_to_cs_panels!(cs_ws.m_next_panels, regridder, last_hour_next.m, cs_ws, Nc)
+        _enforce_perlevel_mass_consistency!(cs_ws.m_next_panels, last_hour_next.m, Nc, Nz)
+    else
+        _copy_panels!(cs_ws.m_next_panels, cur_m)
+    end
     t_bal = time()
     bal_diag = balance_cs_global_mass_fluxes!(
-        cur_am, cur_bm, cur_m, cur_m,  # m_next = m_cur → zero tendency
+        cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
         grid.face_table, grid.cell_degree, steps_per_met,
         grid.poisson_scratch; tol=1e-14, max_iter=5000)
     t_bal = time() - t_bal
@@ -1486,13 +1550,24 @@ function process_day(date::Date,
     # Sync ALL boundary mirrors (including de-duplicated faces) — same as main loop.
     sync_all_cs_boundary_mirrors!(cur_am, cur_bm, grid.mesh.connectivity, Nc, Nz)
 
-    for p in 1:CS_PANEL_COUNT
-        fill!(cs_ws.dm_panels[p], zero(FT))
-        fill!(cur_cm[p], zero(FT))
-    end
+    fill_cs_window_mass_tendency!(cs_ws.dm_panels, cur_m, cs_ws.m_next_panels, steps_per_met)
+    for p in 1:CS_PANEL_COUNT; fill!(cur_cm[p], zero(FT)); end
     diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz)
+    if write_replay_on
+        diag_replay = verify_write_replay_cs!(cur_m, cur_am, cur_bm, cur_cm,
+                                              cs_ws.m_next_panels,
+                                              steps_per_met, replay_tol, Nt)
+        if worst_replay_win == 0 || diag_replay.max_rel_err > worst_replay_rel
+            worst_replay_rel = diag_replay.max_rel_err
+            worst_replay_abs = diag_replay.max_abs_err
+            worst_replay_win = Nt
+            worst_replay_idx = diag_replay.worst_idx
+        end
+    end
+    convert_cs_mass_target_to_delta!(cs_ws.m_next_panels, cur_m)
 
-    window_nt = (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps)
+    window_nt = (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps,
+                 dm=cs_ws.m_next_panels)
     write_streaming_cs_window!(writer, window_nt, Nc, CS_PANEL_COUNT)
 
     @info @sprintf("    Window %2d/%d (last): bal %.2fs  pre=%.2e post=%.2e iter=%d",
@@ -1503,12 +1578,20 @@ function process_day(date::Date,
     close_streaming_transport_binary!(writer)
 
     if settings.mass_fix_enable
+        ps_offsets_day = @view ps_offsets[1:Nt]
         @info @sprintf("  Mass-fix offsets (Pa) min/max/mean: %+.3f / %+.3f / %+.3f",
-                       minimum(ps_offsets), maximum(ps_offsets), sum(ps_offsets) / Nt)
+                       minimum(ps_offsets_day), maximum(ps_offsets_day), sum(ps_offsets_day) / Nt)
     end
 
     @info @sprintf("  Poisson balance summary: pre=%.3e  post=%.3e  max_iter=%d",
                    worst_pre, worst_post, worst_iter)
+    if write_replay_on
+        replay_msg = worst_replay_win > 0 ?
+            @sprintf("max rel=%.3e abs=%.3e kg win=%d cell=%s",
+                     worst_replay_rel, worst_replay_abs, worst_replay_win, worst_replay_idx) :
+            "no windows checked"
+        @info "  Write-time replay gate: $replay_msg"
+    end
 
     actual = filesize(bin_path)
     @info @sprintf("  Done: %s (%.2f GB, %.1fs)", basename(bin_path),
@@ -1545,12 +1628,17 @@ the per-substep flux semantics survive the regrid without rescaling.
   dry↔moist conversion requires loading the source's `qv` and applying
   `apply_dry_basis_native!`, which this function does not do. Invariant
   14 mandates `:dry` end-to-end; use a dry source.
+- `allow_terminal_zero_tendency::Bool = false` — diagnostic-only escape hatch
+  for legacy LL sources that do not carry `dm`. Production-safe regrids should
+  leave this at `false` so the final CS window is closed against an explicit
+  endpoint target instead of an inferred zero-tendency fallback.
 """
 function regrid_ll_binary_to_cs(ll_binary_path::String,
                                 cs_grid::CubedSphereTargetGeometry,
                                 out_path::String;
                                 FT::Type{<:AbstractFloat} = Float64,
-                                mass_basis::Union{Nothing, Symbol} = nothing)
+                                mass_basis::Union{Nothing, Symbol} = nothing,
+                                allow_terminal_zero_tendency::Bool = false)
     t_start = time()
     Nc = cs_grid.Nc
 
@@ -1576,6 +1664,19 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         "to load `qv` from the source and apply `apply_dry_basis_native!` " *
         "to m/am/bm). Regenerate the source on the desired basis, or omit " *
         "the `mass_basis` kwarg to match the source."))
+    source_has_dm = :dm in h.payload_sections
+    source_has_dm || allow_terminal_zero_tendency || throw(ArgumentError(
+        "regrid_ll_binary_to_cs requires source `dm` payloads to close the final " *
+        "CS window safely. Source $(basename(ll_binary_path)) lacks `dm`; " *
+        "regenerate the LL binary with flux deltas or pass " *
+        "`allow_terminal_zero_tendency=true` for diagnostic-only regrids."
+    ))
+    source_has_dm && delta_semantics(reader) === :forward_window_endpoint_difference ||
+        !source_has_dm || throw(ArgumentError(
+            "regrid_ll_binary_to_cs requires source delta_semantics = " *
+            ":forward_window_endpoint_difference when `dm` is present, got " *
+            "$(delta_semantics(reader))."
+        ))
 
     # Timestep metadata comes from the source header. The stored `am/bm`
     # are per-substep mass (flux_kind = :substep_mass_amount) with the
@@ -1622,6 +1723,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     bm_ll = Array{FT}(undef, Nx_ll, Ny_ll + 1, Nz)
     cm_ll = Array{FT}(undef, Nx_ll, Ny_ll, Nz + 1)
     ps_ll = Array{FT}(undef, Nx_ll, Ny_ll)
+    dm_ll = source_has_dm ? Array{FT}(undef, Nx_ll, Ny_ll, Nz) : nothing
 
     # --- Build vertical coordinate from binary header ---
     vc_merged = HybridSigmaPressure(A_ifc, B_ifc)
@@ -1634,6 +1736,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         dt_met_seconds=met_interval,
         half_dt_seconds=met_interval / 2,
         steps_per_window=steps_per_met,
+        include_flux_delta=true,
         mass_basis=output_basis,
         extra_header=Dict{String, Any}(
             "preprocessor"      => "regrid_ll_binary_to_cs",
@@ -1649,6 +1752,9 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     @info @sprintf("  Output: %s (%.2f GB, %d windows)", basename(out_path),
                    expected_total / 1e9, Nt)
     @info "  Streaming: LL binary → CS regrid → balance → write..."
+    write_replay_on = get(ENV, "ATMOSTR_NO_WRITE_REPLAY_CHECK", "0") != "1"
+    write_replay_on || @info "  Write-time CS replay gate SKIPPED (ATMOSTR_NO_WRITE_REPLAY_CHECK=1)"
+    replay_tol = replay_tolerance(FT)
 
     # --- Helper: read one LL window and regrid to CS ---
     function _read_and_regrid_to_cs!(win_idx, m_out, ps_out, am_out, bm_out)
@@ -1690,6 +1796,10 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     end
 
     worst_pre = 0.0; worst_post = 0.0; worst_iter = 0
+    worst_replay_rel = 0.0
+    worst_replay_abs = 0.0
+    worst_replay_win = 0
+    worst_replay_idx = (0, 0, 0, 0)
 
     # --- Process first window ---
     t0 = time()
@@ -1720,16 +1830,26 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         worst_post = max(worst_post, bal_diag.max_post_residual)
         worst_iter = max(worst_iter, bal_diag.max_cg_iter)
 
-        for p in 1:CS_PANEL_COUNT
-            @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
-                cs_ws.dm_panels[p][i, j, k] =
-                    (cs_ws.m_next_panels[p][i, j, k] - cur_m[p][i, j, k]) / (2 * steps_per_met)
-            end
-        end
+        sync_all_cs_boundary_mirrors!(cur_am, cur_bm, cs_grid.mesh.connectivity, Nc, Nz)
+
+        fill_cs_window_mass_tendency!(cs_ws.dm_panels, cur_m, cs_ws.m_next_panels, steps_per_met)
         for p in 1:CS_PANEL_COUNT; fill!(cur_cm[p], zero(FT)); end
         diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz)
+        if write_replay_on
+            diag_replay = verify_write_replay_cs!(cur_m, cur_am, cur_bm, cur_cm,
+                                                  cs_ws.m_next_panels,
+                                                  steps_per_met, replay_tol, win - 1)
+            if worst_replay_win == 0 || diag_replay.max_rel_err > worst_replay_rel
+                worst_replay_rel = diag_replay.max_rel_err
+                worst_replay_abs = diag_replay.max_abs_err
+                worst_replay_win = win - 1
+                worst_replay_idx = diag_replay.worst_idx
+            end
+        end
+        convert_cs_mass_target_to_delta!(cs_ws.m_next_panels, cur_m)
 
-        window_nt = (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps)
+        window_nt = (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps,
+                     dm=cs_ws.m_next_panels)
         write_streaming_cs_window!(writer, window_nt, Nc, CS_PANEL_COUNT)
 
         should_log_window(win - 1, Nt) &&
@@ -1743,10 +1863,23 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         _copy_panels_regrid!(cur_bm, cs_ws.bm_panels)
     end
 
-    # --- Balance & write LAST window (zero-tendency fallback) ---
+    # --- Balance & write LAST window ---
+    if source_has_dm
+        deltas = load_flux_delta_window!(reader, Nt; dm=dm_ll)
+        (deltas !== nothing && haskey(deltas, :dm)) || throw(ArgumentError(
+            "regrid_ll_binary_to_cs: source header for $(basename(ll_binary_path)) " *
+            "declares `dm`, but window $(Nt) could not be loaded."
+        ))
+        @. cs_ws.u_cc = m_ll + dm_ll
+        regrid_3d_to_cs_panels!(cs_ws.m_next_panels, regridder, cs_ws.u_cc, cs_ws, Nc)
+        _enforce_perlevel_mass_consistency!(cs_ws.m_next_panels, cs_ws.u_cc, Nc, Nz)
+    else
+        @warn "regrid_ll_binary_to_cs: using zero-tendency fallback for the final CS window because source `dm` is unavailable."
+        _copy_panels_regrid!(cs_ws.m_next_panels, cur_m)
+    end
     t_bal = time()
     bal_diag = balance_cs_global_mass_fluxes!(
-        cur_am, cur_bm, cur_m, cur_m,
+        cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
         cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
         cs_grid.poisson_scratch; tol=1e-14, max_iter=5000)
     t_bal = time() - t_bal
@@ -1755,13 +1888,26 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     worst_post = max(worst_post, bal_diag.max_post_residual)
     worst_iter = max(worst_iter, bal_diag.max_cg_iter)
 
-    for p in 1:CS_PANEL_COUNT
-        fill!(cs_ws.dm_panels[p], zero(FT))
-        fill!(cur_cm[p], zero(FT))
-    end
-    diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz)
+    sync_all_cs_boundary_mirrors!(cur_am, cur_bm, cs_grid.mesh.connectivity, Nc, Nz)
 
-    window_nt = (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps)
+    fill_cs_window_mass_tendency!(cs_ws.dm_panels, cur_m, cs_ws.m_next_panels, steps_per_met)
+    for p in 1:CS_PANEL_COUNT; fill!(cur_cm[p], zero(FT)); end
+    diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz)
+    if write_replay_on
+        diag_replay = verify_write_replay_cs!(cur_m, cur_am, cur_bm, cur_cm,
+                                              cs_ws.m_next_panels,
+                                              steps_per_met, replay_tol, Nt)
+        if worst_replay_win == 0 || diag_replay.max_rel_err > worst_replay_rel
+            worst_replay_rel = diag_replay.max_rel_err
+            worst_replay_abs = diag_replay.max_abs_err
+            worst_replay_win = Nt
+            worst_replay_idx = diag_replay.worst_idx
+        end
+    end
+    convert_cs_mass_target_to_delta!(cs_ws.m_next_panels, cur_m)
+
+    window_nt = (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps,
+                 dm=cs_ws.m_next_panels)
     write_streaming_cs_window!(writer, window_nt, Nc, CS_PANEL_COUNT)
 
     @info @sprintf("    Window %2d/%d (last): bal %.2fs  pre=%.2e post=%.2e iter=%d",
@@ -1773,6 +1919,13 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
 
     @info @sprintf("  Poisson balance summary: pre=%.3e  post=%.3e  max_iter=%d",
                    worst_pre, worst_post, worst_iter)
+    if write_replay_on
+        replay_msg = worst_replay_win > 0 ?
+            @sprintf("max rel=%.3e abs=%.3e kg win=%d cell=%s",
+                     worst_replay_rel, worst_replay_abs, worst_replay_win, worst_replay_idx) :
+            "no windows checked"
+        @info "  Write-time replay gate: $replay_msg"
+    end
 
     actual = filesize(out_path)
     @info @sprintf("  Done: %s (%.2f GB, %.1fs)", basename(out_path),

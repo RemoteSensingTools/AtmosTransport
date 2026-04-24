@@ -14,6 +14,7 @@ include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 using .AtmosTransport.Preprocessing: verify_window_continuity_ll,
                                        verify_window_continuity_rg,
+                                       verify_window_continuity_cs,
                                        verify_storage_continuity_ll!,
                                        allocate_window_storage
 
@@ -53,6 +54,25 @@ function build_continuity_consistent_window_ll(FT::Type; Nx::Int=4, Ny::Int=3, N
     two_steps = FT(2 * steps)
     @. m_next = m_cur + two_steps * dm_target
     return (; m_cur, am, bm, cm, m_next, dm_target, steps)
+end
+
+function build_continuity_consistent_window_cs(FT::Type; Nc::Int=4, Nz::Int=3,
+                                               steps::Int=2,
+                                               m_base::Real=1e9,
+                                               dm_scale::Real=1e5)
+    panels = ntuple(6) do p
+        build_continuity_consistent_window_ll(
+            FT; Nx=Nc, Ny=Nc, Nz=Nz, steps=steps,
+            m_base=m_base, dm_scale=dm_scale * (1 + 0.05 * p))
+    end
+    return (
+        m_cur = ntuple(p -> panels[p].m_cur, 6),
+        am = ntuple(p -> panels[p].am, 6),
+        bm = ntuple(p -> panels[p].bm, 6),
+        cm = ntuple(p -> panels[p].cm, 6),
+        m_next = ntuple(p -> panels[p].m_next, 6),
+        steps = steps,
+    )
 end
 
 @testset "Plan 39 Commit H — replay-consistency gate regressions" begin
@@ -192,5 +212,27 @@ end
                                             face_left, face_right,
                                             div_scratch, steps)
         @test diag.max_rel_err ≈ 0.5 atol=1e-12
+    end
+
+    @testset "verify_window_continuity_cs: continuity-consistent data passes" begin
+        for FT in (Float32, Float64)
+            w = build_continuity_consistent_window_cs(FT)
+            diag = verify_window_continuity_cs(w.m_cur, w.am, w.bm, w.cm, w.m_next, w.steps)
+            tol_rel = FT === Float32 ? 1e-6 : 1e-12
+            @test diag.max_rel_err <= tol_rel
+            @test diag.worst_idx isa NTuple{4, Int}
+        end
+    end
+
+    @testset "verify_window_continuity_cs: deliberately broken cm fires" begin
+        w = build_continuity_consistent_window_cs(Float64)
+        cm_broken = ntuple(6) do p
+            cm = copy(w.cm[p])
+            p == 4 && (cm[2, 2, 2] += 1e4)
+            cm
+        end
+        diag = verify_window_continuity_cs(w.m_cur, w.am, w.bm, cm_broken, w.m_next, w.steps)
+        @test diag.max_rel_err > 1e-10
+        @test diag.worst_idx[1] == 4
     end
 end

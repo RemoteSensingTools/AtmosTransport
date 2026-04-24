@@ -30,7 +30,8 @@ using .AtmosTransport.Preprocessing: regrid_ll_binary_to_cs, build_target_geomet
 function _ll_fixture_binary(path::AbstractString;
                             FT::Type{<:AbstractFloat} = Float64,
                             Nx::Int = 24, Ny::Int = 13, Nz::Int = 4,
-                            nwindow::Int = 2)
+                            nwindow::Int = 2,
+                            final_dm_fraction::Real = 0)
     mesh = LatLonMesh(; FT = FT, Nx = Nx, Ny = Ny)
     A_ifc = FT[0, 2500, 5000, 7500, 10000]
     B_ifc = FT[0, 0.1, 0.3, 0.6, 1.0]
@@ -66,7 +67,32 @@ function _ll_fixture_binary(path::AbstractString;
     bm = zeros(FT, Nx, Ny + 1, Nz)
     cm = zeros(FT, Nx, Ny, Nz + 1)
 
-    windows = [ (m = m, am = am, bm = bm, cm = cm, ps = ps) for _ in 1:nwindow ]
+    dm_final = zeros(FT, Nx, Ny, Nz)
+    if final_dm_fraction != 0
+        for k in 1:Nz, j in 1:Ny, i in 1:Nx
+            dm_final[i, j, k] =
+                FT(final_dm_fraction) * m[i, j, k] *
+                sin(2π * FT(i - 1) / FT(Nx)) *
+                cospi(FT(j - 1) / FT(max(Ny - 1, 1))) *
+                FT(k / Nz)
+        end
+        for k in 1:Nz
+            level_mean = sum(@view dm_final[:, :, k]) / (Nx * Ny)
+            @views dm_final[:, :, k] .-= level_mean
+        end
+    end
+
+    windows = Vector{NamedTuple}(undef, nwindow)
+    for win in 1:nwindow
+        windows[win] = (
+            m = copy(m),
+            am = am,
+            bm = bm,
+            cm = cm,
+            ps = ps,
+            dm = win < nwindow ? zeros(FT, Nx, Ny, Nz) : copy(dm_final),
+        )
+    end
 
     write_transport_binary(path, grid, windows;
                            FT = FT,
@@ -75,8 +101,9 @@ function _ll_fixture_binary(path::AbstractString;
                            steps_per_window = 2,
                            mass_basis = :dry,
                            source_flux_sampling = :window_start_endpoint,
-                           flux_sampling = :window_constant)
-    return (; Nx, Ny, Nz, nwindow, m_total = sum(m) * nwindow)
+                           flux_sampling = :window_constant,
+                           delta_semantics = :forward_window_endpoint_difference)
+    return (; Nx, Ny, Nz, nwindow, window_totals = fill(sum(m), nwindow))
 end
 
 @testset "plan 40 Commit 3 — regrid_ll_binary_to_cs end-to-end" begin
@@ -87,7 +114,8 @@ end
             cs_path = joinpath(dir, "cs_fixture.bin")
 
             meta = _ll_fixture_binary(ll_path; FT = Float64,
-                                       Nx = 24, Ny = 13, Nz = 4, nwindow = 2)
+                                       Nx = 24, Ny = 13, Nz = 4, nwindow = 2,
+                                       final_dm_fraction = 1e-3)
 
             # Build a C4 CS target geometry with a tempdir regridder cache
             # so the test is hermetic and does not pollute the user's cache.
@@ -112,7 +140,7 @@ end
             @test caps.advection === true
             @test caps.surface_pressure === true
             @test caps.tm5_convection === false
-            @test caps.replay_gate === false     # CS writer does not emit deltas
+            @test caps.replay_gate === true
 
             # Numerical invariants: load via the CS reader and check the
             # total air mass and post-balance cm/m.
@@ -121,6 +149,8 @@ end
             @test reader.header.npanel == 6
             @test reader.header.nwindow == meta.nwindow
             @test reader.header.nlevel == meta.Nz
+            @test has_flux_delta(reader)
+            @test delta_semantics(reader) == :forward_window_endpoint_difference
 
             # For each window, probe cm/m on the interior panel and confirm
             # global mass agrees with the LL total within conservative-regrid
@@ -144,7 +174,7 @@ end
 
                 # Conservative LL→CS regrid preserves total mass to the
                 # weight-map resolution. Tolerance: 1e-6 relative.
-                @test isapprox(m_total_cs, meta.m_total / reader.header.nwindow;
+                @test isapprox(m_total_cs, meta.window_totals[win];
                                rtol = 1e-6)
 
                 # `cm` section sits after m + am + bm.
@@ -163,6 +193,10 @@ end
             end
 
             close(reader)
+
+            driver = CubedSphereTransportDriver(cs_path; FT = Float64, arch = CPU(),
+                                                Hp = 1, validate_replay = true)
+            close(driver)
         end
     end
 

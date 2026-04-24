@@ -242,6 +242,39 @@ function verify_window_continuity_rg(m_cur::AbstractMatrix{FT},
                                     steps_per_window, hflux)
 end
 
+"""
+    verify_window_continuity_cs(m_cur, am, bm, cm, m_next, steps_per_window)
+
+Cubed-sphere convenience wrapper for the shared replay kernel. The caller must
+provide panel-local arrays with synchronized boundary mirrors so each panel's
+structured divergence matches the closed-sphere flux field.
+"""
+function verify_window_continuity_cs(m_cur::NTuple{NP, <:AbstractArray{FT, 3}},
+                                     am::NTuple{NP, <:AbstractArray},
+                                     bm::NTuple{NP, <:AbstractArray},
+                                     cm::NTuple{NP, <:AbstractArray},
+                                     m_next::NTuple{NP, <:AbstractArray},
+                                     steps_per_window::Integer) where {FT, NP}
+    NP >= 1 || error("verify_window_continuity_cs requires at least one panel")
+    layout = structured_replay_layout()
+    div_h = Array{Float64}(undef, size(m_cur[1]))
+    worst_rel = 0.0
+    worst_abs = 0.0
+    worst_idx = (0, 0, 0, 0)
+
+    for p in 1:NP
+        diag = verify_window_continuity(layout, div_h, m_cur[p], cm[p], m_next[p],
+                                        steps_per_window, am[p], bm[p])
+        if diag.max_rel_err > worst_rel
+            worst_rel = diag.max_rel_err
+            worst_abs = diag.max_abs_err
+            worst_idx = (p, diag.worst_idx...)
+        end
+    end
+
+    return (max_abs_err = worst_abs, max_rel_err = worst_rel, worst_idx = worst_idx)
+end
+
 @inline function replay_summary_message(worst_rel::Real,
                                         worst_abs::Real,
                                         worst_win::Integer,

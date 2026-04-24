@@ -280,6 +280,29 @@ function load_cs_window(reader::CubedSphereBinaryReader{FT}, win::Int) where FT
     )
 end
 
+function load_flux_delta_window!(reader::CubedSphereBinaryReader{FT}, win::Int;
+                                 dm = nothing) where FT
+    h = reader.header
+    :dm in h.payload_sections || return nothing
+
+    dm = isnothing(dm) ? ntuple(_ -> Array{FT}(undef, h.Nc, h.Nc, h.nlevel), h.npanel) : dm
+    o = (win - 1) * h.elems_per_window
+
+    for section in h.payload_sections
+        if section === :dm
+            for p in 1:h.npanel
+                n = h.Nc * h.Nc * h.nlevel
+                copyto!(dm[p], 1, reader.data, o + 1, n)
+                o += n
+            end
+            return (; dm)
+        end
+        o += _cs_section_elements(h, section)
+    end
+
+    return nothing
+end
+
 """
     cs_window_count(reader) -> Int
 

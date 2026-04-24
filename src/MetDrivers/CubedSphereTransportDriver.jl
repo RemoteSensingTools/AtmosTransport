@@ -61,7 +61,8 @@ A_ifc(reader::CubedSphereBinaryReader) = reader.header.A_ifc
 B_ifc(reader::CubedSphereBinaryReader) = reader.header.B_ifc
 has_qv(::CubedSphereBinaryReader) = false
 has_qv_endpoints(::CubedSphereBinaryReader) = false
-has_flux_delta(::CubedSphereBinaryReader) = false
+has_flux_delta(reader::CubedSphereBinaryReader) =
+    any(section in (:dam, :dbm, :dcm, :dm, :dhflux) for section in reader.header.payload_sections)
 has_cmfmc(reader::CubedSphereBinaryReader) = :cmfmc in reader.header.payload_sections
 has_tm5conv(reader::CubedSphereBinaryReader) =
     all(s in reader.header.payload_sections for s in (:entu, :detu, :entd, :detd))
@@ -109,6 +110,56 @@ function load_grid(reader::CubedSphereBinaryReader;
     return AtmosGrid(mesh, vc, arch; FT=FT)
 end
 
+function _validate_replay_consistency_cs(reader::CubedSphereBinaryReader{FT}) where {FT}
+    if get(ENV, "ATMOSTR_NO_REPLAY_CHECK", "0") == "1"
+        return nothing
+    end
+    tol_rel = replay_tolerance(FT)
+    steps = reader.header.steps_per_window
+    Nt = window_count(reader)
+    Nt >= 1 || return nothing
+
+    worst_rel = 0.0
+    worst_abs = 0.0
+    worst_win = 0
+    worst_idx = (0, 0, 0, 0)
+
+    for k in 1:Nt
+        cur = load_cs_window(reader, k)
+        m_target = if k < Nt
+            load_cs_window(reader, k + 1).m
+        elseif has_flux_delta(reader)
+            deltas = load_flux_delta_window!(reader, k)
+            if deltas === nothing || !haskey(deltas, :dm)
+                cur.m
+            else
+                ntuple(p -> cur.m[p] .+ deltas.dm[p], length(cur.m))
+            end
+        else
+            cur.m
+        end
+        diag = verify_window_continuity_cs(cur.m, cur.am, cur.bm, cur.cm, m_target, steps)
+        if diag.max_rel_err > worst_rel
+            worst_rel = diag.max_rel_err
+            worst_abs = diag.max_abs_err
+            worst_win = k
+            worst_idx = diag.worst_idx
+        end
+    end
+
+    worst_rel <= tol_rel ||
+        throw(ArgumentError(
+            "CubedSphereTransportDriver replay-consistency gate FAILED for " *
+            "$(basename(reader.path)): rel=$(worst_rel) > tol=$(tol_rel) at window " *
+            "$worst_win cell $worst_idx (abs=$worst_abs kg). Stored CS fluxes do not " *
+            "integrate to the stored mass target under palindrome continuity. " *
+            "Regenerate the binary with the CS replay-safe preprocessor or bypass " *
+            "with ENV[\"ATMOSTR_NO_REPLAY_CHECK\"]=\"1\" for diagnostic runs."
+        ))
+
+    return (worst_window = worst_win, worst_rel = worst_rel, worst_abs = worst_abs)
+end
+
 function CubedSphereTransportDriver(reader::CubedSphereBinaryReader{FT};
                                     arch = CPU(),
                                     Hp::Int = 1) where {FT}
@@ -119,8 +170,11 @@ end
 function CubedSphereTransportDriver(path::AbstractString;
                                     FT::Type{<:AbstractFloat} = Float64,
                                     arch = CPU(),
-                                    Hp::Int = 1)
+                                    Hp::Int = 1,
+                                    validate_replay::Bool = false)
     reader = CubedSphereBinaryReader(String(path); FT=FT)
+    replay_on = validate_replay || get(ENV, "ATMOSTR_REPLAY_CHECK", "0") == "1"
+    replay_on && _validate_replay_consistency_cs(reader)
     return CubedSphereTransportDriver(reader; arch=arch, Hp=Hp)
 end
 

@@ -671,20 +671,36 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
     air_mass = window1.air_mass
     Nz = size(air_mass[1], 3)
 
+    # Honor the binary's mass_basis — `DrivenSimulation._check_basis_compatibility`
+    # compares `mass_basis(model.state/fluxes)` against `air_mass_basis(driver)`
+    # and throws if they diverge. Hardcoding `DryBasis` would trip a
+    # runtime ArgumentError on any moist-basis CS binary.
+    basis_sym = air_mass_basis(driver1)
+    BasisT    = basis_sym === :dry   ? DryBasis   :
+                basis_sym === :moist ? MoistBasis :
+                error("CS binary has unsupported mass_basis $(basis_sym); expected :dry or :moist")
+
     # Plan 40 Commit 2 + 1c: CS tracers flow through the unified IC
-    # pipeline. DryBasis is the default per invariant 14. MoistBasis CS
-    # runs need qv from window1; feedback_vmr_to_mass_basis_aware errors
-    # loudly if the config selects moist without threading qv — caller
-    # fixes by requesting a dry binary or extending the packer call.
+    # pipeline. DryBasis is the default per invariant 14; MoistBasis
+    # requires qv from window1 (feedback_vmr_to_mass_basis_aware), which
+    # CS windows do not carry today — so moist binaries error explicitly
+    # here rather than producing silently wrong tracer mass.
+    basis_sym === :moist &&
+        error("CS driven runner does not yet support moist-basis binaries: " *
+              "`pack_initial_tracer_mass` needs qv, which `CubedSphereTransportWindow` " *
+              "does not expose. Regenerate the binary on dry basis " *
+              "(`regrid_ll_transport_binary_to_cs.jl --mass-basis dry`), " *
+              "or extend the CS window + this runner to thread qv.")
+
     tracer_kwargs = Dict{Symbol, NTuple{6, typeof(air_mass[1])}}()
     for (name, init_cfg) in tracer_init
         vmr = build_initial_mixing_ratio(air_mass, grid, init_cfg)
         tracer_kwargs[name] = pack_initial_tracer_mass(grid, air_mass, vmr;
-                                                       mass_basis = DryBasis())
+                                                       mass_basis = BasisT())
     end
 
-    state  = CubedSphereState(DryBasis, mesh, air_mass; tracer_kwargs...)
-    fluxes = allocate_face_fluxes(mesh, Nz; FT = FT, basis = DryBasis)
+    state  = CubedSphereState(BasisT, mesh, air_mass; tracer_kwargs...)
+    fluxes = allocate_face_fluxes(mesh, Nz; FT = FT, basis = BasisT)
 
     model = TransportModel(state, fluxes, grid, recipe.advection;
                             diffusion  = recipe.diffusion,
@@ -742,7 +758,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
         # the cross-day handoff is continuity-consistent. We rebuild the
         # sim around each day's driver; state + physics carry over.
         if driver !== driver1
-            fluxes_d = allocate_face_fluxes(mesh, Nz; FT = FT, basis = DryBasis)
+            fluxes_d = allocate_face_fluxes(mesh, Nz; FT = FT, basis = BasisT)
             model = TransportModel(state, fluxes_d, grid, recipe.advection;
                                     diffusion  = recipe.diffusion,
                                     convection = recipe.convection)

@@ -67,6 +67,25 @@ has_tm5conv(reader::CubedSphereBinaryReader) =
     all(s in reader.header.payload_sections for s in (:entu, :detu, :entd, :detd))
 has_tm5_convection(reader::CubedSphereBinaryReader) = has_tm5conv(reader)
 
+# `CubedSphereBinaryHeader` has no `grid_type` field; the reader type
+# encodes the topology. Mirror the LL/RG NamedTuple shape so callers
+# (DrivenRunner, inspect_binary, capability-intersection logic) are
+# reader-type-polymorphic.
+function binary_capabilities(reader::CubedSphereBinaryReader)
+    hdr = reader.header
+    return (
+        advection        = all(s in hdr.payload_sections for s in (:m, :am, :bm, :cm)),
+        replay_gate      = has_flux_delta(reader),
+        tm5_convection   = has_tm5_convection(reader),
+        cmfmc_convection = has_cmfmc(reader),
+        surface_pressure = :ps in hdr.payload_sections,
+        humidity         = has_qv(reader),
+        mass_basis       = hdr.mass_basis,
+        grid_type        = :cubed_sphere,
+        payload_sections = hdr.payload_sections,
+    )
+end
+
 function _cs_header_symbol(reader::CubedSphereBinaryReader, key::AbstractString, default::Symbol)
     value = get(reader.header.raw_header, key, String(default))
     return Symbol(replace(lowercase(String(value)), '-' => '_', ' ' => '_'))

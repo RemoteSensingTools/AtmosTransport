@@ -231,7 +231,7 @@ the existing `has_flux_delta`, `has_tm5_convection`, `has_cmfmc`, and
 - `grid_type :: Symbol` — `:latlon` / `:reduced_gaussian` / `:cubed_sphere`.
 - `payload_sections :: Vector{Symbol}` — raw set for debugging.
 """
-function binary_capabilities(reader)
+function binary_capabilities(reader::TransportBinaryReader)
     hdr = reader.header
     return (
         advection        = all(s in hdr.payload_sections for s in (:m, :am, :bm, :cm)),
@@ -283,17 +283,21 @@ function _open_binary_for_inspection(path::AbstractString)
     return TransportBinaryReader(path; FT = Float64)
 end
 
-# Peek at bytes 8..(header_bytes) without fully constructing a reader.
-# The header is a JSON object at a fixed offset; we only need
-# `grid_type`. On parse failure we default to `:latlon` so the
-# TransportBinaryReader constructor can produce its own richer error.
+# Peek the JSON header to decide LL/RG vs CS without constructing a
+# full reader. Both LL/RG and CS writers start the file with a
+# null-terminated JSON blob at byte 0 (see
+# `_parse_transport_header` and `CubedSphereBinaryReader` — both find
+# the first `0x00` and parse the preceding bytes). We only need
+# `grid_type`; on any parse failure we fall back to `:latlon` so the
+# `TransportBinaryReader` constructor can emit its own richer error.
 function _peek_grid_type(path::AbstractString)
     try
         open(path, "r") do io
-            header_bytes = read(io, Int64)   # first 8 bytes: header length
-            header_bytes > 0 || return :latlon
-            json_bytes = read(io, Int(header_bytes))
-            hdr = _peek_parse_header(json_bytes)
+            chunk = read(io, min(filesize(path), 262144))
+            null_idx = findfirst(==(0x00), chunk)
+            json_end = null_idx === nothing ? length(chunk) : null_idx - 1
+            json_end < 1 && return :latlon
+            hdr = _peek_parse_header(@view chunk[1:json_end])
             raw = get(hdr, :grid_type, get(hdr, "grid_type", "latlon"))
             return Symbol(lowercase(String(raw)))
         end
@@ -305,7 +309,7 @@ end
 # Lightweight JSON parse that doesn't pull in the reader's full stack.
 # Falls back gracefully if the header format differs (e.g. legacy
 # binaries that don't use JSON).
-function _peek_parse_header(bytes::AbstractVector{UInt8})
+function _peek_parse_header(bytes)
     try
         return JSON3.read(String(bytes))
     catch

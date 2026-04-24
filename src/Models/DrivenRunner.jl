@@ -48,6 +48,7 @@ using ..State: AbstractMassBasis, DryBasis, MoistBasis, CellState,
                 CubedSphereState, total_air_mass, total_mass, tracer_names,
                 tracer_index, get_tracer
 using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
+                GnomonicPanelConvention, GEOSNativePanelConvention,
                 nx, ny, nrings, ring_longitudes, cell_index, ncells,
                 nlevels
 using ..Architectures: CPU, GPU
@@ -285,7 +286,8 @@ end
 # NetCDF snapshot output (hoisted from run_transport_binary.jl:243-363)
 # ===========================================================================
 
-function _write_snapshot_netcdf(path, snapshots, snapshot_hours, grid)
+function _write_snapshot_netcdf(path, snapshots, snapshot_hours, grid;
+                                mass_basis::Symbol = :dry)
     isempty(snapshots) && return
     mkpath(dirname(path))
     mesh = grid.horizontal
@@ -294,6 +296,11 @@ function _write_snapshot_netcdf(path, snapshots, snapshot_hours, grid)
     NCDataset(path, "c") do ds
         ds.attrib["Conventions"] = "CF-1.8"
         ds.attrib["grid"] = summary(mesh)
+        # Record the basis on which `air_mass` (and therefore the
+        # air-mass-weighted column-mean VMR stored as `{tracer}_column_mean`)
+        # is defined. `compare_cs_vs_ll.jl` and any downstream tool that
+        # wants dry-air-mass-weighted VMRs checks this attribute.
+        ds.attrib["mass_basis"] = String(mass_basis)
         if mesh isa LatLonMesh
             _write_snapshot_ll!(ds, snapshots, snapshot_hours, mesh, ntime)
         elseif mesh isa ReducedGaussianMesh
@@ -302,7 +309,7 @@ function _write_snapshot_netcdf(path, snapshots, snapshot_hours, grid)
             error("Unsupported mesh type for snapshot output: $(typeof(mesh))")
         end
     end
-    @info "Saved snapshots: $path ($(length(snapshots)) times)"
+    @info "Saved snapshots: $path ($(length(snapshots)) times, mass_basis=$(mass_basis))"
 end
 
 function _write_snapshot_ll!(ds, snapshots, snapshot_hours, mesh, ntime)
@@ -563,8 +570,12 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
     end
 
     if do_snapshots && !isempty(snapshots)
+        # `air_mass_basis(driver)` already returns the Symbol and has been
+        # validated to match `model.state`'s basis by
+        # `_check_basis_compatibility` before any step!.
         _write_snapshot_netcdf(snapshot_file, snapshots, snapshot_hours,
-                               driver_grid(first_driver))
+                               driver_grid(first_driver);
+                               mass_basis = air_mass_basis(first_driver))
     end
 
     m1 = total_air_mass(model.state)
@@ -605,17 +616,29 @@ function _cfg_architecture(cfg)
     return CPU()
 end
 
-function _write_snapshot_cs!(nc_path, snap_data, snap_m, snapshot_hours, mesh, Nz)
+function _write_snapshot_cs!(nc_path, snap_data, snap_m, snapshot_hours, mesh, Nz;
+                             mass_basis::Symbol = :dry)
     Nc = mesh.Nc
     ntime = length(snap_data)
     isfile(nc_path) && rm(nc_path)
     mkpath(dirname(nc_path))
+    # Derive a string tag for the panel convention so downstream tools
+    # (compare_cs_vs_ll.jl) can verify they are reading a gnomonic
+    # snapshot before building a gnomonic destination mesh.
+    conv_tag = mesh.convention isa GnomonicPanelConvention ? "gnomonic" :
+               mesh.convention isa GEOSNativePanelConvention ? "geos_native" :
+               "unknown"
     NCDataset(nc_path, "c") do ds
         defDim(ds, "Xdim", Nc); defDim(ds, "Ydim", Nc); defDim(ds, "nf", 6)
         defDim(ds, "lev", Nz); defDim(ds, "time", ntime)
         ds.attrib["Conventions"] = "CF"
         ds.attrib["Source"] = "AtmosTransport.jl run_driven_simulation (CS)"
         ds.attrib["Nc"] = Nc
+        ds.attrib["panel_convention"] = conv_tag
+        # Basis on which `air_mass` is stored. Column-mean VMRs derived
+        # from this file must be weighted by dry air-mass — see
+        # `compare_cs_vs_ll.jl::_cs_column_mean_dry_vmr`.
+        ds.attrib["mass_basis"] = String(mass_basis)
 
         defVar(ds, "time", Float64, ("time",),
                attrib = Dict("units" => "hours since t0"))[:] = Float64.(snapshot_hours[1:ntime])
@@ -789,7 +812,11 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
         @info @sprintf("  %s total mass: %.6e kg", name, total_mass(state, name))
     end
 
-    _write_snapshot_cs!(snapshot_file, snap_data, snap_m, snap_taken, mesh, Nz)
+    # BasisT was bound at model construction (dry by default on CS per
+    # invariant 14); reuse it so the NetCDF records the same basis the
+    # `air_mass` arrays were stored under.
+    _write_snapshot_cs!(snapshot_file, snap_data, snap_m, snap_taken, mesh, Nz;
+                        mass_basis = BasisT === DryBasis ? :dry : :moist)
     return model
 end
 

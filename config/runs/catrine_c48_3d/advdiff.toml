@@ -1,0 +1,45 @@
+# Catrine C48 3-day test — ADVECTION + DIFFUSION
+#
+# + `ImplicitVerticalDiffusion` (plan 16a/16b) with a uniform Kz field.
+# Wired into `DrivenSimulation` via `TransportModel(...; diffusion=...)`;
+# CS Kz is `CubedSphereField(ntuple(_ -> ConstantField{FT,3}(value), 6))`
+# when `[diffusion] kind = "constant"` (see `run_driven_simulation`).
+#
+# Runner:   julia -t8 --project=. scripts/run_transport.jl \
+#               config/runs/catrine_c48_3d/advdiff.toml
+
+[input]
+folder     = "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/"
+start_date = "2021-12-01"
+end_date   = "2021-12-03"
+
+[architecture]
+use_gpu = true
+
+[numerics]
+float_type = "Float32"
+
+[run]
+scheme = "slopes"
+
+[tracers.co2_natural]
+[tracers.co2_natural.init]
+kind = "catrine_co2"
+
+[tracers.co2_fossil]
+[tracers.co2_fossil.init]
+kind = "uniform"
+background = 0.0
+
+# Kz schema supported by the runner today:
+#   kind = "constant" | "none"
+# ProfileKzField / PreComputedKzField / DerivedKzField / StepwiseField
+# need per-kind TOML blocks that aren't yet wired — `constant` is the
+# only path for now.
+[diffusion]
+kind  = "constant"
+value = 1.0             # m² s⁻¹ — uniform background Kz
+
+[output]
+snapshot_hours = [0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72]
+snapshot_file = "~/data/AtmosTransport/output/catrine_c48_3d/advdiff.nc"

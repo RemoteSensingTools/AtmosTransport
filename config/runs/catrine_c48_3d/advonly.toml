@@ -1,0 +1,52 @@
+# Catrine C48 3-day test — ADVECTION ONLY
+#
+# Runner:   julia -t8 --project=. scripts/run_transport.jl \
+#               config/runs/catrine_c48_3d/advonly.toml
+#
+# Part of plan 40 Commit 7 (CS48+CS180 F32 GPU Catrine validation).
+# Scope note: the original plan envisioned 10 days; only Dec 1-3 of the
+# LL720×361 source existed on disk at session start (2026-04-24), so
+# the validation window was scoped to 3 days. When days 04-10 are
+# (re)preprocessed from the spectral source, duplicate this TOML to
+# `catrine_c48_10d/` and bump `end_date`.
+#
+# Prereqs: C48 transport binaries for Dec 1-3 2021 at
+#   ~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/
+# generated via plan 40 Commit 3's CLI:
+#   for d in 01 02 03; do
+#     julia -t16 --project=. \
+#       scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl \
+#       --input  ~/data/AtmosTransport/met/era5/ll720x361_v4/transport_binary_v2_tropo34_dec2021_f64/era5_transport_202112${d}_merged1000Pa_float64.bin \
+#       --output ~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_202112${d}_merged1000Pa_float64.bin \
+#       --Nc 48
+#   done
+
+[input]
+# Shape B from plan 40 Commit 4 (`BinaryPathExpander`): folder + date
+# range, expanded to a sorted file list with a continuity check.
+folder     = "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/"
+start_date = "2021-12-01"
+end_date   = "2021-12-03"
+
+[architecture]
+use_gpu = true          # wurst L40S F32. Set false for local CPU dev.
+
+[numerics]
+float_type = "Float32"
+
+[run]
+scheme = "slopes"       # "upwind" | "slopes" | "ppm" (MonotoneLimiter default)
+
+[tracers.co2_natural]
+[tracers.co2_natural.init]
+kind = "catrine_co2"    # File-based on all topologies since plan 40 Commit 2.
+
+[tracers.co2_fossil]
+[tracers.co2_fossil.init]
+kind = "uniform"
+background = 0.0
+
+[output]
+# Every 6 h → 13 snapshots over 3 days.
+snapshot_hours = [0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72]
+snapshot_file = "~/data/AtmosTransport/output/catrine_c48_3d/advonly.nc"

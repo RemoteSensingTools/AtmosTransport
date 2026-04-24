@@ -27,6 +27,9 @@ using .InitialConditionIO: FileInitialConditionSource,
                            build_surface_flux_sources
 export FileInitialConditionSource, build_initial_mixing_ratio, pack_initial_tracer_mass
 export FileSurfaceFluxField, build_surface_flux_source, build_surface_flux_sources
+include("BinaryPathExpander.jl")  # plan 40 Commit 4: `[input]` folder+date-range
+using .BinaryPathExpander: expand_binary_paths
+export expand_binary_paths
 include("Simulation.jl")
 include("DrivenSimulation.jl")
 

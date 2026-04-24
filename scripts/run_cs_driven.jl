@@ -99,8 +99,11 @@ function run_cs_driven(cfg)
     FT   = cfg_float_type(cfg)
     arch = cfg_architecture(cfg)
 
-    binary_paths = [expanduser(String(p)) for p in cfg["input"]["binary_paths"]]
-    isempty(binary_paths) && error("[input].binary_paths is empty")
+    # Plan 40 Commit 4: `[input]` accepts either an explicit `binary_paths`
+    # list (existing) or a `folder + start_date + end_date (+ file_pattern)`
+    # shape. `expand_binary_paths` resolves both to a sorted file list.
+    binary_paths = expand_binary_paths(cfg["input"])
+    isempty(binary_paths) && error("[input] resolved to an empty binary list")
 
     run_cfg = get(cfg, "run", Dict{String,Any}())
     advection = build_cs_advection(cfg)

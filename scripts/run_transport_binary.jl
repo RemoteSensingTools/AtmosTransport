@@ -487,7 +487,9 @@ function main()
 
     isempty(ARGS) && error("Usage: julia --project=. scripts/run_transport_binary.jl config.toml")
     cfg = TOML.parsefile(expanduser(ARGS[1]))
-    binary_paths = [expanduser(String(p)) for p in get(get(cfg, "input", Dict{String, Any}()), "binary_paths", String[])]
+    # Plan 40 Commit 4: accept either explicit `binary_paths` list or
+    # folder + date-range (Shape B). `expand_binary_paths` resolves both.
+    binary_paths = expand_binary_paths(get(cfg, "input", Dict{String, Any}()))
     run_sequence(binary_paths, cfg)
 end
 

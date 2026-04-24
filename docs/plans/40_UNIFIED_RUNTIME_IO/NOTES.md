@@ -233,6 +233,41 @@ every topology.
   No external callers in-tree, and JET baseline is unaffected (the
   export removal only narrows the public surface).
 
+### Commit 4 — folder + date-range config expansion
+
+Shipped 2026-04-24. New `src/Models/BinaryPathExpander.jl` with one
+public function `expand_binary_paths(input_cfg) -> Vector{String}`.
+Both runners rewired; existing explicit `binary_paths = [...]`
+configs keep working verbatim, and new configs can use
+`folder + start_date + end_date (+ file_pattern)`.
+
+- **Shape A** (existing): `[input].binary_paths = [...]` →
+  tilde-expanded verbatim.
+- **Shape B** (new): `[input].folder + start_date + end_date (+
+  file_pattern)`. Scans the folder, matches filenames against
+  `(\d{8})` (or the user-supplied `{YYYYMMDD}` placeholder
+  template), filters to the closed date interval, and verifies
+  continuity — precise error on missing days. Multiple files for
+  the same date also error.
+- Mutual exclusion enforced: supplying both `binary_paths` and
+  `folder` errors. Empty `[input]` also errors.
+
+Updates:
+- `src/Models/Models.jl` includes the new module and re-exports
+  `expand_binary_paths`; `src/AtmosTransport.jl` re-exports at the
+  top level.
+- `scripts/run_cs_driven.jl:102` and
+  `scripts/run_transport_binary.jl:1168` both now call
+  `expand_binary_paths(cfg["input"])`.
+- `src/Models/README.md` File Map gains the
+  `BinaryPathExpander.jl` row (keeps the pre-existing plan-21
+  freshness gate happy).
+- New `test/test_binary_path_expander.jl` (19 tests): shape A
+  round-trip, tilde expansion, type errors; shape B complete
+  folder, subrange, missing-day listing, invalid date order,
+  missing folder, file_pattern validation, mutex with shape A,
+  empty-input error.
+
 ## Correctness rules pinned (read before Commit 1)
 
 ### GPU runs must be verified, not declared

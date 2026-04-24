@@ -41,11 +41,17 @@ read.
 - [`DrivenSimulation.jl`](DrivenSimulation.jl) — met-window-driven loop,
   forcing interpolation, air-mass refresh, and runtime compatibility checks
 - [`InitialConditionIO.jl`](InitialConditionIO.jl) — topology-dispatched
-  VMR builder (`build_initial_mixing_ratio` on LL/RG; CS added in plan 40
-  Commit 1c), basis-aware VMR → tracer-mass packer
-  (`pack_initial_tracer_mass`), `FileInitialConditionSource` container,
-  and the hoisted IC file I/O + log-pressure vertical remap helpers
-  (plan 40 Commit 1b)
+  VMR builder (`build_initial_mixing_ratio` on LL/RG/CS),
+  basis-aware VMR → tracer-mass packer (`pack_initial_tracer_mass`),
+  surface-flux loader + LL/RG/CS `build_surface_flux_source` builders
+  with conservative regrid + cell-area integration,
+  `FileInitialConditionSource` / `FileSurfaceFluxField` containers
+  (plan 40 Commits 1b–1d + 2)
+- [`BinaryPathExpander.jl`](BinaryPathExpander.jl) —
+  `expand_binary_paths(input_cfg)` resolves either an explicit
+  `binary_paths = [...]` list or a `folder + start_date + end_date
+  (+ file_pattern)` shape to a sorted `Vector{String}`; continuity
+  check on the closed date range (plan 40 Commit 4)
 
 ## Common Tasks
 

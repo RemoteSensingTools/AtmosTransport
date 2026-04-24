@@ -272,6 +272,7 @@ export build_cs_physics_recipe, validate_cs_physics_recipe
 export configured_cs_halo_width
 export FileInitialConditionSource, build_initial_mixing_ratio, pack_initial_tracer_mass
 export FileSurfaceFluxField, build_surface_flux_source, build_surface_flux_sources
+export expand_binary_paths
 
 # Offline regridding (preprocessing only)
 export build_regridder, save_regridder, load_regridder

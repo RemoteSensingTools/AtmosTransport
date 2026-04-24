@@ -1,0 +1,140 @@
+=== §4.1 Plan 40 existing-infrastructure survey ===
+
+--- IC builders (current state) ---
+src/Models/CSPhysicsRecipe.jl:34:const _CATRINE_BACKGROUND = 4.11e-4
+src/Models/CSPhysicsRecipe.jl:314:function build_cs_tracer_panels(init_cfg, air_mass, ::Type{FT}) where FT
+src/Models/CSPhysicsRecipe.jl:317:        FT(_CATRINE_BACKGROUND)
+scripts/run_transport_binary.jl:570:function build_initial_mixing_ratio(air_mass::AbstractArray{FT}, mesh::AtmosTransport.LatLonMesh{FT}, cfg) where FT
+scripts/run_transport_binary.jl:593:function build_initial_mixing_ratio(air_mass::AbstractArray{FT}, mesh::AtmosTransport.ReducedGaussianMesh{FT}, cfg) where FT
+scripts/run_transport_binary.jl:622:function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
+scripts/run_transport_binary.jl:653:function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
+
+--- File-based IC loader + vertical remap ---
+scripts/run_transport_binary.jl:170:function _sample_bilinear_profile!(dest::AbstractVector{FT},
+scripts/run_transport_binary.jl:186:function _sample_bilinear_scalar(raw::AbstractMatrix{T},
+scripts/run_transport_binary.jl:353:function _load_file_initial_condition_source(cfg, ::Type{FT}, Nz_target::Integer) where FT
+scripts/run_transport_binary.jl:466:function _interpolate_log_pressure_profile!(dest::AbstractVector{FT},
+
+--- Surface flux builders ---
+scripts/run_transport_binary.jl:237:function _load_file_surface_flux_field(cfg, ::Type{FT}) where FT
+scripts/run_transport_binary.jl:758:function build_surface_flux_source(grid::AtmosTransport.AtmosGrid{<:AtmosTransport.LatLonMesh},
+scripts/run_transport_binary.jl:791:function build_surface_flux_source(grid::AtmosTransport.AtmosGrid{<:AtmosTransport.ReducedGaussianMesh},
+scripts/run_transport_binary.jl:822:function build_surface_flux_sources(grid, tracer_specs, ::Type{FT}) where FT
+
+--- SurfaceFluxSource contract ---
+2:    SurfaceFluxSource{RateT}
+12:  The **units are kg/s per cell** — already area-integrated. The surface
+16:# Why kg/s per cell (not kg/m²/s)
+21:that shipped before plan 17. A per-area (kg/m²/s) variant that multiplies
+38:struct SurfaceFluxSource{RateT}
+45:function Adapt.adapt_structure(to, source::SurfaceFluxSource)
+47:    return SurfaceFluxSource{typeof(cell_mass_rate)}(source.tracer_name,
+75:function _check_surface_source_compatibility(state, source::SurfaceFluxSource)
+84:function _check_surface_source_compatibility(state::CubedSphereState, source::SurfaceFluxSource)
+123:                                source::SurfaceFluxSource, dt) where FT
+130:                                source::SurfaceFluxSource, dt) where FT
+136:function _apply_surface_source!(rm::NTuple{6}, source::SurfaceFluxSource, dt;
+
+--- CS helpers (target of reuse) ---
+88:function unpack_flat_to_panels_3d!(panels::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+107:function unpack_flat_to_panels_2d!(panels::NTuple{CS_PANEL_COUNT, Matrix{FT}},
+125:function pack_panels_3d_to_flat!(flat::AbstractMatrix{FT},
+150:function regrid_3d_to_cs_panels!(panels::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+166:function regrid_2d_to_cs_panels!(panels::NTuple{CS_PANEL_COUNT, Matrix{FT}},
+249:function reconstruct_cs_fluxes!(am_panels::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+360:function rotate_winds_to_panel_local!(u_panel::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+
+--- Existing inspector stack ---
+scripts/diagnostics/inspect_transport_binary.jl
+src/MetDrivers/CubedSphereTransportDriver.jl:48:function Base.show(io::IO, driver::CubedSphereTransportDriver)
+src/MetDrivers/TransportBinaryDriver.jl:411:function Base.show(io::IO, driver::TransportBinaryDriver)
+src/MetDrivers/TransportBinary.jl:133:function Base.show(io::IO, h::TransportBinaryHeader)
+src/MetDrivers/TransportBinary.jl:154:function Base.show(io::IO, r::TransportBinaryReader)
+
+--- Existing folder/date parsing ---
+src/MetDrivers/AbstractMetDriver.jl:58:start_date(::AbstractMetDriver) = Date(2000, 1, 1)
+
+--- Runtime recipe dispatch entry ---
+13:  (`validate_runtime_physics_recipe`)
+43:@inline _runtime_recipe_style(style::AbstractRuntimeRecipeStyle) = style
+44:@inline _runtime_recipe_style(::AtmosGrid{<:LatLonMesh}) = LatLonRuntimeRecipeStyle()
+45:@inline _runtime_recipe_style(::AtmosGrid{<:ReducedGaussianMesh}) = ReducedGaussianRuntimeRecipeStyle()
+46:@inline _runtime_recipe_style(::AtmosGrid{<:CubedSphereMesh}) = CubedSphereRuntimeRecipeStyle()
+47:@inline _runtime_recipe_style(driver::AbstractMetDriver) = _runtime_recipe_style(driver_grid(driver))
+48:@inline _runtime_recipe_style(::CubedSphereBinaryReader) = CubedSphereRuntimeRecipeStyle()
+50:@inline function _runtime_recipe_style(reader::TransportBinaryReader)
+61:function _runtime_recipe_style(context)
+67:    return build_runtime_advection(cfg, _runtime_recipe_style(context))
+125:    return build_runtime_diffusion(cfg, _runtime_recipe_style(context), FT)
+163:    return build_runtime_convection(cfg, _runtime_recipe_style(context))
+252:function validate_runtime_physics_recipe(recipe::RuntimePhysicsRecipe,
+255:    style = _runtime_recipe_style(context)
+268:function build_runtime_physics_recipe(cfg,
+277:    return validate_runtime_physics_recipe(recipe, context; halo_width = halo_width)
+300:    validate_runtime_physics_recipe(recipe, context; halo_width = halo_width)
+302:    build_runtime_physics_recipe(cfg, context, FT; halo_width = halo_width)
+329:export build_runtime_physics_recipe, validate_runtime_physics_recipe
+
+--- AtmosGrid / grid dispatch points ---
+
+--- Conservative regridder entry ---
+src/Regridding/Regridding.jl:28:apply_regridder!(dst_field, r, src_field)
+src/Regridding/weights_io.jl:78:function build_regridder(src, dst;
+src/Regridding/weights_io.jl:111:function build_regridder(src::LatLonMesh, dst::ReducedGaussianMesh;
+src/Regridding/weights_io.jl:367:function apply_regridder!(dst::AbstractVector, r::Regridder, src::AbstractVector)
+src/Regridding/weights_io.jl:371:function apply_regridder!(dst::AbstractArray, r::Regridder, src::AbstractArray)
+
+--- Regrid helpers already used for CS ---
+84:    unpack_flat_to_panels_3d!(panels, flat, Nc, Nz)
+88:function unpack_flat_to_panels_3d!(panels::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+123:Inverse of `unpack_flat_to_panels_3d!`.
+145:    regrid_3d_to_cs_panels!(panels, regridder, src_3d, ws, Nc)
+150:function regrid_3d_to_cs_panels!(panels::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+158:    return unpack_flat_to_panels_3d!(panels, ws.dst_flat_3d, Nc, Nz)
+162:    regrid_2d_to_cs_panels!(panels, regridder, src_2d, ws, Nc)
+166:function regrid_2d_to_cs_panels!(panels::NTuple{CS_PANEL_COUNT, Matrix{FT}},
+
+--- Catrine NetCDF IC file ---
+total 70103
+drwxr-xr-x. 2 cfranken cfranken        6 Mar  5 09:55 .
+drwxr-xr-x. 7 cfranken cfranken       10 Mar  5 15:48 ..
+-rw-r--r--. 1 cfranken cfranken 82966053 Jan 27  2025 startCO2_202112010000.nc
+-rw-r--r--. 1 cfranken cfranken 26375411 Sep  4  2024 startSF6_202112010000.nc
+-rw-r--r--. 1 cfranken cfranken    94285 Mar  5 09:56 wget-log
+-rw-r--r--. 1 cfranken cfranken     8426 Mar  5 09:55 wget-log.1
+
+--- Current CS Catrine configs (schema snapshot) ---
+advdiffconv.toml
+advdiff.toml
+advonly.toml
+README.md
+config/runs/catrine_c48_10d/advdiffconv.toml:23:[input]
+config/runs/catrine_c48_10d/advdiffconv.toml:43:[run]
+config/runs/catrine_c48_10d/advdiffconv.toml:46:[tracers.co2_natural]
+config/runs/catrine_c48_10d/advdiffconv.toml:47:[tracers.co2_natural.init]
+config/runs/catrine_c48_10d/advdiffconv.toml:50:[tracers.co2_fossil]
+config/runs/catrine_c48_10d/advdiffconv.toml:51:[tracers.co2_fossil.init]
+config/runs/catrine_c48_10d/advdiff.toml:13:[input]
+config/runs/catrine_c48_10d/advdiff.toml:33:[run]
+config/runs/catrine_c48_10d/advdiff.toml:36:[tracers.co2_natural]
+config/runs/catrine_c48_10d/advdiff.toml:37:[tracers.co2_natural.init]
+config/runs/catrine_c48_10d/advdiff.toml:40:[tracers.co2_fossil]
+config/runs/catrine_c48_10d/advdiff.toml:41:[tracers.co2_fossil.init]
+config/runs/catrine_c48_10d/advonly.toml:17:[input]
+config/runs/catrine_c48_10d/advonly.toml:37:[run]
+config/runs/catrine_c48_10d/advonly.toml:41:[tracers.co2_natural]
+config/runs/catrine_c48_10d/advonly.toml:42:[tracers.co2_natural.init]
+config/runs/catrine_c48_10d/advonly.toml:46:# [tracers.*.surface_flux] for CS — fossil stays at zero in this run.
+config/runs/catrine_c48_10d/advonly.toml:50:[tracers.co2_fossil]
+config/runs/catrine_c48_10d/advonly.toml:51:[tracers.co2_fossil.init]
+
+--- Stale reference sweep targets ---
+config/runs/completed_experiments/era5_cs_c90_v2_catrine_2day_f64.toml:8:#   julia --project=. scripts/preprocessing/regrid_latlon_to_cs_binary_v2.jl \
+config/runs/catrine_c48_10d/advonly.toml:10:#                 scripts/preprocessing/regrid_latlon_to_cs_binary_v2.jl \
+config/runs/catrine_c48_10d/advdiffconv.toml:9:# The current LL→C48 regridder (`regrid_latlon_to_cs_binary_v2.jl`) does
+config/runs/catrine_c48_10d/README.md:27:  julia -t16 --project=. scripts/preprocessing/regrid_latlon_to_cs_binary_v2.jl \
+config/runs/catrine_c48_10d/README.md:42:The LL→C48 regridder (`regrid_latlon_to_cs_binary_v2.jl`) does **not**
+docs/reference/CONSERVATIVE_REGRIDDING.md:186:`regrid_latlon_to_cs_binary_v2.jl`. It replaces every bilinear
+docs/reference/CONSERVATIVE_REGRIDDING.md:206:`scripts/preprocessing/regrid_latlon_to_cs_binary_v2.jl` now route through the
+docs/reference/PREPROCESSING_GUIDE.md:14:│   │                                  then regrid_latlon_to_cs_binary_v2.jl
+docs/reference/PREPROCESSING_GUIDE.md:68:julia --project=. scripts/preprocessing/regrid_latlon_to_cs_binary_v2.jl \

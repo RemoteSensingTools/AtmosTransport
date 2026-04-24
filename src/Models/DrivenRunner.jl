@@ -251,7 +251,11 @@ function _capture_snapshot(model)
     m = Array(model.state.air_mass)
     result = Dict{Symbol, Vector{Float64}}()
     for name in names
-        rm = Array(getfield(model.state.tracers, name))
+        # Plan-14 TracerAccessor: the tracers field exposes a `.state` handle
+        # and is NOT a NamedTuple, so `getfield(model.state.tracers, name)`
+        # errors with `no field co2_fossil` on any multi-tracer run. Use the
+        # accessor API that the CS path already uses.
+        rm = Array(get_tracer(model.state, name))
         if ndims(rm) == 3
             Nx, Ny, Nz = size(rm)
             col_mean = zeros(Float64, Nx * Ny)
@@ -728,6 +732,15 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
     model = TransportModel(state, fluxes, grid, recipe.advection;
                             diffusion  = recipe.diffusion,
                             convection = recipe.convection)
+    # Adapt state + fluxes to the selected backend. `invokelatest` is required
+    # because CUDA.jl may be loaded dynamically and its Adapt methods can arrive
+    # in a newer world age than this function's compiled body.
+    adaptor = _backend_array_adapter(cfg)
+    if adaptor !== Array
+        model  = Base.invokelatest(Adapt.adapt, adaptor, model)
+        state  = model.state                           # rebind post-adapt
+        fluxes = model.fluxes
+    end
     _assert_gpu_residency!(model.state, cfg)
 
     @info @sprintf("CS driven runner  C%d × %d levels  Hp=%d  %s  FT=%s  %s",
@@ -782,6 +795,12 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
         # sim around each day's driver; state + physics carry over.
         if driver !== driver1
             fluxes_d = allocate_face_fluxes(mesh, Nz; FT = FT, basis = BasisT)
+            # Match the device of the already-adapted `state`: on GPU runs
+            # the freshly-allocated fluxes start as CPU Arrays and would
+            # mix types with GPU tracers otherwise. `invokelatest` guards
+            # the same dynamic-load world-age issue as the initial adapt.
+            adaptor !== Array &&
+                (fluxes_d = Base.invokelatest(Adapt.adapt, adaptor, fluxes_d))
             model = TransportModel(state, fluxes_d, grid, recipe.advection;
                                     diffusion  = recipe.diffusion,
                                     convection = recipe.convection)

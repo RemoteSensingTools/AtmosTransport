@@ -27,6 +27,33 @@
 using Logging
 using TOML
 
+# Preload the GPU backend BEFORE `AtmosTransport` gets included so the
+# whole stack compiles in a single world age. Doing the load dynamically
+# later (from `_ensure_gpu_runtime!`) means every CuArray method
+# (`size`, `getindex`, `Adapt.adapt_storage(CuArray, …)`) arrives in a
+# newer world than the function bodies that call it, and Julia refuses
+# to dispatch — `method too new to be called from this world context`.
+# Inspecting the config here is ~1 ms and avoids the whole problem.
+if !isempty(ARGS)
+    _cfg_path = expanduser(ARGS[1])
+    if isfile(_cfg_path)
+        _cfg = try TOML.parsefile(_cfg_path) catch; nothing end
+        if _cfg !== nothing
+            _use_gpu = Bool(get(get(_cfg, "architecture", Dict{String, Any}()),
+                                "use_gpu", false))
+            if _use_gpu
+                if Sys.isapple()
+                    @info "Preloading Metal (use_gpu = true on macOS)"
+                    using Metal
+                else
+                    @info "Preloading CUDA (use_gpu = true)"
+                    using CUDA
+                end
+            end
+        end
+    end
+end
+
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 

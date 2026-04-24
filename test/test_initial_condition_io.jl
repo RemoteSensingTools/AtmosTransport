@@ -155,4 +155,80 @@ const FT = Float64
         @test rm_moist == vmr .* air_mass .* (1 .- qv)
     end
 
+    # --------- plan 40 Commit 1c: CubedSphere IC + packer ---------------
+    @testset "build_initial_mixing_ratio — CubedSphereMesh uniform" begin
+        Nc = 4
+        Hp = 1
+        Nz = 3
+        mesh = CubedSphereMesh(; FT = FT, Nc = Nc, Hp = Hp)
+        vertical = HybridSigmaPressure(FT[0, 50000, 0], FT[1, 0.5, 0])
+        grid = AtmosGrid(mesh, vertical, CPU(); FT = FT)
+        # Halo-padded 6-panel air_mass tuple (matches CubedSphereTransportDriver layout).
+        air_mass = ntuple(_ -> fill(FT(1e10), Nc + 2 * Hp, Nc + 2 * Hp, Nz), 6)
+
+        vmr = build_initial_mixing_ratio(air_mass, grid,
+                                         Dict("kind" => "uniform",
+                                              "background" => 4.11e-4))
+        @test vmr isa NTuple{6, Array{FT, 3}}
+        @test all(size(vmr[p]) == (Nc, Nc, Nz) for p in 1:6)   # interior only
+        @test all(all(vmr[p] .== FT(4.11e-4)) for p in 1:6)
+
+        # Unsupported kind errors with a helpful message
+        @test_throws ArgumentError build_initial_mixing_ratio(air_mass, grid,
+                                                              Dict("kind" => "gaussian_blob"))
+    end
+
+    @testset "pack_initial_tracer_mass — CubedSphereMesh (DryBasis)" begin
+        Nc = 4
+        Hp = 1
+        Nz = 3
+        mesh = CubedSphereMesh(; FT = FT, Nc = Nc, Hp = Hp)
+        vertical = HybridSigmaPressure(FT[0, 50000, 0], FT[1, 0.5, 0])
+        grid = AtmosGrid(mesh, vertical, CPU(); FT = FT)
+        air_mass = ntuple(_ -> fill(FT(1.2e10), Nc + 2 * Hp, Nc + 2 * Hp, Nz), 6)
+        vmr_interior = ntuple(_ -> fill(FT(4.11e-4), Nc, Nc, Nz), 6)
+
+        rm = pack_initial_tracer_mass(grid, air_mass, vmr_interior;
+                                      mass_basis = DryBasis())
+        @test rm isa NTuple{6, Array{FT, 3}}
+        for p in 1:6
+            @test size(rm[p]) == (Nc + 2 * Hp, Nc + 2 * Hp, Nz)
+            interior = @view rm[p][Hp + 1 : Hp + Nc, Hp + 1 : Hp + Nc, :]
+            expected = vmr_interior[p] .* FT(1.2e10)   # air_mass × vmr (interior)
+            @test interior == expected
+            # Halo ring is zero — halo exchanges at runtime populate it.
+            @test rm[p][1, 1, 1] == zero(FT)
+            @test rm[p][end, end, end] == zero(FT)
+        end
+    end
+
+    @testset "pack_initial_tracer_mass — CubedSphereMesh (MoistBasis)" begin
+        Nc = 4
+        Hp = 1
+        Nz = 3
+        mesh = CubedSphereMesh(; FT = FT, Nc = Nc, Hp = Hp)
+        vertical = HybridSigmaPressure(FT[0, 50000, 0], FT[1, 0.5, 0])
+        grid = AtmosGrid(mesh, vertical, CPU(); FT = FT)
+        air_mass = ntuple(_ -> fill(FT(1.2e10), Nc + 2 * Hp, Nc + 2 * Hp, Nz), 6)
+        vmr_interior = ntuple(_ -> fill(FT(4.11e-4), Nc, Nc, Nz), 6)
+        qv = ntuple(_ -> fill(FT(0.02), Nc + 2 * Hp, Nc + 2 * Hp, Nz), 6)
+
+        rm = pack_initial_tracer_mass(grid, air_mass, vmr_interior;
+                                      mass_basis = MoistBasis(), qv = qv)
+        for p in 1:6
+            interior = @view rm[p][Hp + 1 : Hp + Nc, Hp + 1 : Hp + Nc, :]
+            expected = vmr_interior[p] .* FT(1.2e10) .* (1 - FT(0.02))
+            @test interior == expected
+        end
+
+        # MoistBasis without qv errors
+        @test_throws ArgumentError pack_initial_tracer_mass(grid, air_mass, vmr_interior;
+                                                            mass_basis = MoistBasis())
+        # MoistBasis with wrong qv type errors
+        qv_flat = fill(FT(0.02), Nc + 2 * Hp, Nc + 2 * Hp, Nz)   # not an NTuple{6}
+        @test_throws ArgumentError pack_initial_tracer_mass(grid, air_mass, vmr_interior;
+                                                            mass_basis = MoistBasis(),
+                                                            qv = qv_flat)
+    end
+
 end

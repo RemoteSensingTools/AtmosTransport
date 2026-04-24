@@ -10,6 +10,11 @@ using ..State
 using ..Grids
 using ..Operators
 using ..MetDrivers
+# plan 40 Commit 1c — bring Regridding + Preprocessing into Models' namespace
+# so the nested `InitialConditionIO` submodule can `using ..Regridding` etc.
+# Regridding + Preprocessing are loaded before Models in AtmosTransport.jl.
+using ..Regridding
+using ..Preprocessing
 
 include("TransportModel.jl")
 include("CSPhysicsRecipe.jl")

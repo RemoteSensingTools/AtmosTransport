@@ -103,17 +103,21 @@ using .Operators
 include("Kernels/Kernels.jl")
 using .Kernels
 
-# ---- Minimal runtime/model layer ----
-include("Models/Models.jl")
-using .Models
-
-# ---- Offline regridding glue (preprocessing only; hard deps on CR.jl + JLD2) ----
+# ---- Offline regridding glue (CR.jl + JLD2) ----
+# Loaded before Models so `Models.InitialConditionIO` (plan 40 Commit 1c) can
+# directly `using ..Regridding` and `using ..Preprocessing.CSHelpers` for the
+# CS file-based IC path. Regridding and Preprocessing have no back-references
+# to Models (verified by grep), so reordering is safe.
 include("Regridding/Regridding.jl")
 using .Regridding
 
 # ---- Preprocessing pipeline (spectral/gridded → transport binary) ----
 include("Preprocessing/Preprocessing.jl")
 using .Preprocessing
+
+# ---- Minimal runtime/model layer ----
+include("Models/Models.jl")
+using .Models
 
 # ---- Download pipeline (TOML-driven met/emissions data download) ----
 include("Downloads/Downloads.jl")

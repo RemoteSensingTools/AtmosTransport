@@ -21,10 +21,16 @@ topology-dispatched VMR builders for the unified runtime.
 ## Plan 40 commit provenance
 
 - 1a (2026-04-24, commit `1450204`) — module scaffold.
-- 1b (this file) — LL/RG hoist from
-  `scripts/run_transport_binary.jl` (verbatim, bit-exact) +
-  `pack_initial_tracer_mass`.
-- 1c (next commit) — CS file-based IC + CS surface-flux builder.
+- 1b (2026-04-24, commit `29fcca5`) — LL/RG hoist (verbatim, bit-exact)
+  + basis-aware `pack_initial_tracer_mass` (LL/RG).
+- 1c (this file) — CS `build_initial_mixing_ratio` for
+  `uniform | file | catrine_co2 | netcdf | file_field`; CS
+  `pack_initial_tracer_mass` (DryBasis + MoistBasis, halo-padded
+  output with halo zeroed); `_build_source_latlon_mesh` helper for
+  LL→CS conservative regridding.
+- 1d (next commit) — CS `build_surface_flux_source` with
+  cell-area integration (kg/m²/s → kg/s), plus hoist of the
+  surface-flux NetCDF loader and LL/RG surface-flux methods.
 
 Private helpers (underscore-prefixed) stay unexported and are
 accessed by callers (including `scripts/run_transport_binary.jl`)
@@ -35,9 +41,15 @@ module InitialConditionIO
 using NCDatasets
 
 using ..State: AbstractMassBasis, DryBasis, MoistBasis
-using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh,
+using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                 nrings, ring_longitudes, cell_index, cell_area,
                 gravity
+# Regridding + Preprocessing are loaded before Models (AtmosTransport.jl,
+# plan 40 Commit 1c reorder) so we can pull in the LL→CS conservative
+# regridder + panel unpacking helpers for the CS file-based IC path.
+using ..Regridding: build_regridder, apply_regridder!
+using ..Preprocessing: unpack_flat_to_panels_3d!, unpack_flat_to_panels_2d!,
+                       CS_PANEL_COUNT
 
 # ---------------------------------------------------------------------------
 # Longitude-wrap helpers (hoisted from run_transport_binary.jl:29,30)
@@ -603,6 +615,187 @@ function _pack_tracer_mass(::AtmosGrid{<:ReducedGaussianMesh}, air_mass, vmr_dry
     size(qv) == size(air_mass) || throw(DimensionMismatch(
         "qv shape $(size(qv)) must match air_mass shape $(size(air_mass))"))
     return vmr_dry .* air_mass .* (1 .- qv)
+end
+
+# ---------------------------------------------------------------------------
+# CS file-based IC source mesh construction (plan 40 Commit 1c)
+#
+# Build a LatLonMesh matching the source NetCDF's lon/lat grid so the
+# conservative regridder in `src/Regridding/` can LL→CS the 3D VMR field
+# (and the 2D surface-pressure field, when vertical interpolation is
+# needed).
+#
+# The source arrays (after `_load_file_initial_condition_source`) are
+# guaranteed to be in [0, 360) longitude + ascending latitude because the
+# loader already rolls/reverses them. We infer face boundaries from cell
+# centres, assuming uniform spacing (standard for all ERA5 / Catrine /
+# GridFED products).
+# ---------------------------------------------------------------------------
+
+function _build_source_latlon_mesh(lon_src::Vector{Float64}, lat_src::Vector{Float64}, ::Type{FT}) where FT
+    Nx_src = length(lon_src)
+    Ny_src = length(lat_src)
+    dlon = lon_src[2] - lon_src[1]
+    dlat = lat_src[2] - lat_src[1]
+    lon_west  = lon_src[1]   - dlon / 2
+    lon_east  = lon_src[end] + dlon / 2
+    lat_south = lat_src[1]   - dlat / 2
+    lat_north = lat_src[end] + dlat / 2
+    lat_south = max(lat_south, -90.0)
+    lat_north = min(lat_north, 90.0)
+    if lon_east - lon_west > 360.0
+        lon_east = lon_west + 360.0
+    end
+    return LatLonMesh(; FT = FT, Nx = Nx_src, Ny = Ny_src,
+                      longitude = (lon_west, lon_east),
+                      latitude  = (lat_south, lat_north))
+end
+
+# ---------------------------------------------------------------------------
+# CS build_initial_mixing_ratio (plan 40 Commit 1c)
+#
+# Returns a 6-tuple of interior `(Nc, Nc, Nz)` VMR arrays. The tuple is
+# topology-shaped but halo-free; the halo ring is added later by
+# `pack_initial_tracer_mass` so that different halo widths can share the
+# same IC builder.
+# ---------------------------------------------------------------------------
+
+function build_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 3}},
+                                    grid::AtmosGrid{<:CubedSphereMesh},
+                                    cfg) where FT
+    kind = _init_kind(cfg)
+    mesh = grid.horizontal
+    Nc = mesh.Nc
+    Nz = size(air_mass[1], 3)
+
+    if kind === :uniform
+        background = FT(get(cfg, "background", 4.0e-4))
+        return ntuple(_ -> fill(background, Nc, Nc, Nz), CS_PANEL_COUNT)
+    elseif _is_file_init_kind(kind)
+        return _build_cs_file_ic(grid, air_mass, cfg, FT)
+    else
+        throw(ArgumentError(
+            "unsupported init.kind=$(kind) for CubedSphereMesh; " *
+            "supported: uniform | file | netcdf | file_field | catrine_co2"))
+    end
+end
+
+function _build_cs_file_ic(grid::AtmosGrid{<:CubedSphereMesh},
+                           air_mass::NTuple{6, <:AbstractArray{FT, 3}},
+                           cfg, ::Type{FT}) where FT
+    mesh = grid.horizontal
+    Nc   = mesh.Nc
+    Hp   = mesh.Hp
+    Nz   = size(air_mass[1], 3)
+
+    source = _load_file_initial_condition_source(cfg, FT, Nz)
+    src_mesh = _build_source_latlon_mesh(source.lon, source.lat, FT)
+    regridder = build_regridder(src_mesh, mesh)
+
+    # 3D VMR: (Nx_src, Ny_src, Nlev_src) → 6 × (Nc, Nc, Nlev_src)
+    Nlev_src = size(source.raw, 3)
+    n_src    = length(source.lon) * length(source.lat)
+    n_dst    = CS_PANEL_COUNT * Nc * Nc
+    src_flat = Matrix{FT}(undef, n_src, Nlev_src)
+    dst_flat = Matrix{FT}(undef, n_dst, Nlev_src)
+    copyto!(src_flat, reshape(source.raw, n_src, Nlev_src))
+    apply_regridder!(dst_flat, regridder, src_flat)
+    vmr_src_levels = ntuple(_ -> Array{FT}(undef, Nc, Nc, Nlev_src), CS_PANEL_COUNT)
+    unpack_flat_to_panels_3d!(vmr_src_levels, dst_flat, Nc, Nlev_src)
+
+    # 2D surface pressure (only if source levels differ from target)
+    ps_panels = if source.needs_vinterp
+        src_ps_flat = Vector{Float64}(undef, n_src)
+        dst_ps_flat = Vector{Float64}(undef, n_dst)
+        copyto!(src_ps_flat, reshape(source.psurf, n_src))
+        apply_regridder!(dst_ps_flat, regridder, src_ps_flat)
+        panels_ps = ntuple(_ -> Matrix{Float64}(undef, Nc, Nc), CS_PANEL_COUNT)
+        unpack_flat_to_panels_2d!(panels_ps, dst_ps_flat, Nc)
+        panels_ps
+    else
+        nothing
+    end
+
+    # Vertical remap column-by-column into interior `(Nc, Nc, Nz)` tuple.
+    vmr = ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), CS_PANEL_COUNT)
+    src_q = Vector{FT}(undef, Nlev_src)
+    g = Float64(gravity(grid))
+
+    for p in 1:CS_PANEL_COUNT
+        interior_am = @view air_mass[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, :]
+        for j in 1:Nc, i in 1:Nc
+            @views copyto!(src_q, vmr_src_levels[p][i, j, :])
+            area = Float64(cell_area(mesh, i, j))
+            if source.needs_vinterp
+                ps_src = Float64(ps_panels[p][i, j])
+                _interpolate_log_pressure_profile!(@view(vmr[p][i, j, :]),
+                                                   src_q,
+                                                   @view(interior_am[i, j, :]),
+                                                   source.ap, source.bp,
+                                                   ps_src, area, g)
+            else
+                _copy_profile!(@view(vmr[p][i, j, :]), src_q)
+            end
+        end
+    end
+
+    return vmr
+end
+
+# ---------------------------------------------------------------------------
+# CS pack_initial_tracer_mass (plan 40 Commit 1c)
+#
+# Takes interior `NTuple{6, (Nc, Nc, Nz)}` VMR + halo-padded
+# `NTuple{6, (Nc+2Hp, Nc+2Hp, Nz)}` air_mass. Returns halo-padded tracer
+# mass with the halo ring zeroed; halo exchanges during the run populate
+# those cells.
+# ---------------------------------------------------------------------------
+
+function _pack_tracer_mass(grid::AtmosGrid{<:CubedSphereMesh},
+                           air_mass::NTuple{6, <:AbstractArray},
+                           vmr_dry::NTuple{6, <:AbstractArray},
+                           ::DryBasis,
+                           qv)
+    return _cs_pack_interior_into_halo(grid, air_mass, vmr_dry, nothing)
+end
+
+function _pack_tracer_mass(grid::AtmosGrid{<:CubedSphereMesh},
+                           air_mass::NTuple{6, <:AbstractArray},
+                           vmr_dry::NTuple{6, <:AbstractArray},
+                           ::MoistBasis,
+                           qv)
+    qv === nothing && throw(ArgumentError(
+        "pack_initial_tracer_mass on MoistBasis requires qv (specific humidity) " *
+        "from the first transport window; got qv=nothing. See CLAUDE.md invariant 9."))
+    qv isa NTuple{6} || throw(ArgumentError(
+        "CS pack_initial_tracer_mass on MoistBasis requires qv::NTuple{6}; " *
+        "got $(typeof(qv))"))
+    return _cs_pack_interior_into_halo(grid, air_mass, vmr_dry, qv)
+end
+
+function _cs_pack_interior_into_halo(grid::AtmosGrid{<:CubedSphereMesh},
+                                     air_mass::NTuple{6, <:AbstractArray{FT, 3}},
+                                     vmr::NTuple{6, <:AbstractArray{FT, 3}},
+                                     qv::Union{Nothing, NTuple{6}}) where FT
+    mesh = grid.horizontal
+    Nc = mesh.Nc
+    Hp = mesh.Hp
+    out = ntuple(p -> zeros(FT, size(air_mass[p])...), CS_PANEL_COUNT)
+    for p in 1:CS_PANEL_COUNT
+        size(vmr[p]) == (Nc, Nc, size(air_mass[p], 3)) || throw(DimensionMismatch(
+            "CS panel $p: vmr has shape $(size(vmr[p])), expected $((Nc, Nc, size(air_mass[p], 3)))"))
+        interior_am = @view air_mass[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, :]
+        interior_out = @view out[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, :]
+        if qv === nothing
+            interior_out .= vmr[p] .* interior_am
+        else
+            size(qv[p]) == size(air_mass[p]) || throw(DimensionMismatch(
+                "CS panel $p: qv has shape $(size(qv[p])), expected $(size(air_mass[p]))"))
+            interior_qv = @view qv[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, :]
+            interior_out .= vmr[p] .* interior_am .* (1 .- interior_qv)
+        end
+    end
+    return out
 end
 
 # ---------------------------------------------------------------------------

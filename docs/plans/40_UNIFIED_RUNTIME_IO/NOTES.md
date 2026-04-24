@@ -168,8 +168,24 @@ larger than can land in that window. Split:
   `using .AtmosTransport.Models.InitialConditionIO: …`; public
   names re-exported through `Models` → `AtmosTransport`. New test
   file `test/test_initial_condition_io.jl` (17 tests, all pass).
-- **1c (next session)** — CS file-based IC path + CS surface-flux
-  builder with cell-area integration. Tests for CS.
+- **1c (shipped this commit)** — CS `build_initial_mixing_ratio` for
+  `uniform | file | catrine_co2 | netcdf | file_field` (CS file
+  path: `_load_file_initial_condition_source` → LL source mesh via
+  `_build_source_latlon_mesh` → conservative regrid via
+  `build_regridder` / `apply_regridder!` / `unpack_flat_to_panels_3d!`
+  → per-column `_interpolate_log_pressure_profile!` with a regridded
+  `ps_src` panel). CS `pack_initial_tracer_mass` (DryBasis +
+  MoistBasis, halo-padded output with halo zeroed). Also: reordered
+  module loads in `src/AtmosTransport.jl` so Regridding +
+  Preprocessing load **before** Models (required by
+  InitialConditionIO's `using ..Regridding`/`using ..Preprocessing`;
+  verified no back-references via grep).
+- **1d (next)** — CS `build_surface_flux_source` with cell-area
+  integration (kg/m²/s → kg/s to match `SurfaceFluxSource`'s per-cell
+  kg/s contract at `src/Operators/SurfaceFlux/sources.jl:12`);
+  hoist `FileSurfaceFluxField`, `_load_file_surface_flux_field`,
+  `_resolve_surface_flux_file`, LL/RG `build_surface_flux_source`
+  methods + `build_surface_flux_sources`.
 
 All three remain individually revertable. The plan doc still
 captures the full Commit 1 design; NOTES is the source of truth for

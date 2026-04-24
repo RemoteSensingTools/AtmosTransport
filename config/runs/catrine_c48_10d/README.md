@@ -1,13 +1,17 @@
 # Catrine C48 10-day test configs
 
-Three physics-ladder configs for `scripts/run_cs_driven.jl` at C48, 10 days
+Three physics-ladder configs for `scripts/run_transport.jl` at C48, 10 days
 (Dec 1–10 2021), ERA5 source met.
 
-`run_cs_driven.jl` is a new driven-simulation CS runner that uses
-`CubedSphereTransportDriver` + `CubedSphereState` + `TransportModel` +
-`DrivenSimulation`, exposing diffusion and convection via TOML. The
-pre-existing `run_cs_transport.jl` (low-level panel-native, advection-only)
-is untouched and remains the fast path for pure-advection work.
+`scripts/run_transport.jl` is the unified driven-simulation runner
+(plan 40 Commit 6c). It dispatches on `grid_type` from the binary
+header, so the same CLI handles LL, RG, and CS binaries. Physics,
+diffusion, and convection are composed from TOML. The pre-existing
+`run_cs_transport.jl` (low-level panel-native, advection-only) is
+untouched and remains the fast path for pure-advection work.
+
+`run_cs_driven.jl` is kept as a deprecation shim for one migration
+cycle; it forwards to `run_driven_simulation(cfg)` with a `@warn`.
 
 | Config | Physics | Runs today? |
 |---|---|---|
@@ -52,7 +56,7 @@ currently carry the TM5 sections across. Options:
 With a TM5-less plain C48 binary, `kind = "tm5"` now fails at recipe
 validation before the run starts.
 
-## How run_cs_driven.jl wires physics
+## How `run_transport.jl` wires CS physics
 
 The TOML → operator mapping is:
 
@@ -89,7 +93,7 @@ from the binary into the operator each window.
 | Gap | Notes |
 |---|---|
 | Profile/precomputed/derived Kz from TOML | `ImplicitVerticalDiffusion` supports them; need per-kind TOML schema + builder dispatch. Constant Kz covers today's needs. |
-| `[tracers.*.surface_flux]` (emissions) for CS | `build_surface_flux_source` now dispatches on CS grids (plan 40 Commit 1d) and `run_cs_driven.jl` can pick it up from TOML in a follow-up. For now fossil stays at zero when `[tracers.co2_fossil.surface_flux]` is absent. |
+| `[tracers.*.surface_flux]` (emissions) for CS | `build_surface_flux_source` now dispatches on CS grids (plan 40 Commit 1d) and `run_driven_simulation` picks it up from TOML (plan 40 Commit 6a via `build_surface_flux_sources`). Fossil tracer gets kg/s-per-cell emissions when `[tracers.co2_fossil.surface_flux]` is present. |
 | TM5 section carry-through in LL→CS regrid | Blocker for `advdiffconv.toml` specifically; see Prerequisite #2 above. |
 
 **Resolved (plan 40 Commit 1c / 2, 2026-04-24):** file-based CS initial

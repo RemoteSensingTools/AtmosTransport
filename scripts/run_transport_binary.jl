@@ -1,24 +1,16 @@
 #!/usr/bin/env julia
 # ---------------------------------------------------------------------------
-# LL / RG driven transport runner — CLI wrapper.
+# DEPRECATION SHIM (plan 40 Commit 6c).
 #
-# Plan 40 Commit 6a hoisted the implementation into
-# `src/Models/DrivenRunner.jl`. This script stays as the canonical LL/RG
-# entry point until Commit 6c introduces the unified
-# `scripts/run_transport.jl` and turns this into a deprecation shim.
+# `scripts/run_transport_binary.jl` is the old LL/RG-specific CLI name.
+# The canonical entry point is now `scripts/run_transport.jl`, which
+# dispatches on `inspect_binary(first_path).grid_type` and handles every
+# topology. This shim forwards to the unified script for one migration
+# cycle; please update your invocations:
 #
-# Usage:
-#   julia --project=. scripts/run_transport_binary.jl <config.toml>
+#   julia --project=. scripts/run_transport.jl <config.toml>
 #
-# The TOML `[input]` block accepts either shape:
-#   [input]
-#   binary_paths = [ "a.bin", "b.bin" ]        # explicit list
-# OR
-#   [input]
-#   folder       = "~/data/.../"
-#   start_date   = "YYYY-MM-DD"
-#   end_date     = "YYYY-MM-DD"
-#   file_pattern = "<prefix>{YYYYMMDD}<suffix>"   # optional
+# The shim will be removed in a follow-up plan.
 # ---------------------------------------------------------------------------
 
 using Logging
@@ -29,6 +21,8 @@ using .AtmosTransport
 
 function main()
     global_logger(ConsoleLogger(stderr, Logging.Info; show_limited = false))
+    @warn "scripts/run_transport_binary.jl is a deprecation shim; use " *
+          "scripts/run_transport.jl (plan 40 Commit 6c). Forwarding."
     isempty(ARGS) &&
         error("Usage: julia --project=. scripts/run_transport_binary.jl <config.toml>")
     cfg = TOML.parsefile(expanduser(ARGS[1]))

@@ -378,6 +378,34 @@ Tests (`test_cs_driven_builders.jl` 60 passes, unchanged).
 
 Baseline invariant: 5 pre-existing failures unchanged.
 
+### Commit 6c — unified CLI + deprecation shims
+
+Shipped 2026-04-24. The canonical runner is now
+**`scripts/run_transport.jl`** (~35 L). Reads TOML → calls
+`run_driven_simulation(cfg)` → library dispatches on
+`inspect_binary(first_path).grid_type`. Works for every topology.
+
+`scripts/run_transport_binary.jl` and `scripts/run_cs_driven.jl`
+are kept as deprecation shims for one migration cycle. Both print
+a `@warn "… is a deprecation shim; use scripts/run_transport.jl"`
+before forwarding to `run_driven_simulation(cfg)`. They'll be
+removed once users' in-tree configs and external invocation sites
+have migrated.
+
+Migrated the Catrine C48 10d configs + README to reference
+`scripts/run_transport.jl`:
+- `config/runs/catrine_c48_10d/advonly.toml` header comment.
+- `config/runs/catrine_c48_10d/advdiff.toml` header comment
+  (two references: runner + docstring).
+- `config/runs/catrine_c48_10d/advdiffconv.toml` header comment.
+- `config/runs/catrine_c48_10d/README.md`: pitch paragraph,
+  section heading ("How run_transport.jl wires CS physics"),
+  remaining-gaps row about CS emissions (now resolved — plan 40
+  Commit 6a's `build_surface_flux_sources` is the wire-up, CS
+  method is from Commit 1d).
+
+Baseline invariant preserved: 5 pre-existing failures unchanged.
+
 ## Correctness rules pinned (read before Commit 1)
 
 ### GPU runs must be verified, not declared

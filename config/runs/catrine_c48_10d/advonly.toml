@@ -1,6 +1,6 @@
 # Catrine C48 10-day test — ADVECTION ONLY (works today)
 #
-# Runner:   julia -t8 --project=. scripts/run_cs_driven.jl \
+# Runner:   julia -t8 --project=. scripts/run_transport.jl \
 #               config/runs/catrine_c48_10d/advonly.toml
 #
 # Prereq:   10 days of ERA5→C48 transport binaries (Dec 1-10 2021).

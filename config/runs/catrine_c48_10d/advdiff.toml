@@ -4,9 +4,9 @@
 # The operator is wired into `DrivenSimulation` via `TransportModel(...;
 # diffusion = ImplicitVerticalDiffusion(; kz_field = ...))`; the CS Kz
 # field is `CubedSphereField(ntuple(_ -> ConstantField{FT, 3}(value), 6))`
-# when [diffusion] kind = "constant" (see scripts/run_cs_driven.jl).
+# when [diffusion] kind = "constant" (see scripts/run_transport.jl).
 #
-# Runner:   julia -t8 --project=. scripts/run_cs_driven.jl \
+# Runner:   julia -t8 --project=. scripts/run_transport.jl \
 #               config/runs/catrine_c48_10d/advdiff.toml
 # Prereq:   Same C48 binaries as advonly.toml.
 

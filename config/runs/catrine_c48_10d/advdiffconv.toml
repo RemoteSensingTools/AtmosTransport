@@ -17,7 +17,7 @@
 # With a TM5-less regular C48 binary, setting kind = "tm5" will fail
 # loudly at the first window load (missing sections).
 #
-# Runner:   julia -t8 --project=. scripts/run_cs_driven.jl \
+# Runner:   julia -t8 --project=. scripts/run_transport.jl \
 #               config/runs/catrine_c48_10d/advdiffconv.toml
 
 [input]

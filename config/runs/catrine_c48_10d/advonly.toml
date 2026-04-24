@@ -4,10 +4,11 @@
 #               config/runs/catrine_c48_10d/advonly.toml
 #
 # Prereq:   10 days of ERA5→C48 transport binaries (Dec 1-10 2021).
-#           Generate via:
+#           Generate via (plan 40 Commit 3, thin CLI over
+#           `Preprocessing.regrid_ll_binary_to_cs`):
 #             for d in 01 02 03 04 05 06 07 08 09 10; do
 #               julia -t16 --project=. \
-#                 scripts/preprocessing/regrid_latlon_to_cs_binary_v2.jl \
+#                 scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl \
 #                 --input  ~/data/AtmosTransport/met/era5/ll720x361_v4/transport_binary_v2_tropo34_dec2021_f64/era5_transport_202112${d}_merged1000Pa_float64.bin \
 #                 --output ~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_202112${d}_merged1000Pa_float64.bin \
 #                 --Nc 48

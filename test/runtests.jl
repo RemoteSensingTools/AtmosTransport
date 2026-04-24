@@ -48,6 +48,7 @@ core_tests = [
     "test_binary_path_expander.jl",
     "test_binary_inspector.jl",
     "test_cs_driven_builders.jl",
+    "test_ll_to_cs_regrid_script.jl",
     "test_aqua.jl",
     "test_jet.jl",
     "test_readme_current.jl",

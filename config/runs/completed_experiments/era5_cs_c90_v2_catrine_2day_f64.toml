@@ -5,7 +5,7 @@
 #       config/runs/era5_cs_c90_v2_catrine_2day_f64.toml
 #
 # Prerequisites: generate C90 binaries using:
-#   julia --project=. scripts/preprocessing/regrid_latlon_to_cs_binary_v2.jl \
+#   julia --project=. scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl \
 #       --input <latlon_binary> --output <cs_binary> --Nc 90
 
 [input]

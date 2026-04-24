@@ -11,7 +11,7 @@ What met data source?
 │   │   ├── LatLon (0.5° or custom) → preprocess_transport_binary.jl
 │   │   ├── Reduced Gaussian (N24-N320) → preprocess_era5_reduced_gaussian_transport_binary_v2.jl
 │   │   └── Cubed Sphere (C24-C720) → preprocess_transport_binary.jl (LL first)
-│   │                                  then regrid_latlon_to_cs_binary_v2.jl
+│   │                                  then regrid_ll_transport_binary_to_cs.jl
 │   └── What input type?
 │       ├── Spectral (VO, D, LNSP) → recommended (exact mass conservation)
 │       └── Gridpoint (u, v, sp) → legacy only (~0.9% mass drift)
@@ -65,7 +65,7 @@ Two-step process:
 2. Conservative regridding to cubed-sphere:
 
 ```bash
-julia --project=. scripts/preprocessing/regrid_latlon_to_cs_binary_v2.jl \
+julia --project=. scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl \
     --input ~/data/.../era5_transport_v2_20211201_float64.bin \
     --output ~/data/.../era5_transport_v2_cs90_20211201_float64.bin \
     --Nc 90

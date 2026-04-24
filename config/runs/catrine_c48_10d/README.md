@@ -28,7 +28,7 @@ LL 720×361 v4 F64 binaries via:
 
 ```bash
 for d in 01 02 03 04 05 06 07 08 09 10; do
-  julia -t16 --project=. scripts/preprocessing/regrid_latlon_to_cs_binary_v2.jl \
+  julia -t16 --project=. scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl \
     --input  ~/data/AtmosTransport/met/era5/ll720x361_v4/transport_binary_v2_tropo34_dec2021_f64/era5_transport_202112${d}_merged1000Pa_float64.bin \
     --output ~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f64/era5_transport_202112${d}_merged1000Pa_float64.bin \
     --Nc 48
@@ -43,8 +43,9 @@ Runtime ≈ 2–4 min per day at Nc=48. Total ≈ 30 min for 10 days.
 These are emitted by the ERA5 LL preprocessor when
 `[tm5_convection] enable = true` is set (plan 24 Commit 4).
 
-The LL→C48 regridder (`regrid_latlon_to_cs_binary_v2.jl`) does **not**
-currently carry the TM5 sections across. Options:
+The LL→C48 regridder (`regrid_ll_transport_binary_to_cs.jl`, plan 40
+Commit 3 — a thin CLI over `Preprocessing.regrid_ll_binary_to_cs`)
+does **not** currently carry the TM5 sections across. Options:
 
 - **(a) Extend the regridder** to pass-through TM5 sections from the LL
   source when they exist. Small work; once done, regenerate the C48

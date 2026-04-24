@@ -831,6 +831,15 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
         sim = DrivenSimulation(model, driver;
                                start_window = 1, stop_window = stop_window,
                                surface_sources = surface_sources)
+        # `DrivenSimulation` wraps `model` via `with_emissions(model, op)`
+        # to install the surface-flux operator. The simulation steps use
+        # `sim.model` but the `capture_cs!` closure and the function's
+        # return value reference the local `model` binding. Rebind here so
+        # snapshots and the returned model reflect the installed source —
+        # otherwise both report `emissions = NoSurfaceFlux` even when a
+        # `[tracers.*.surface_flux]` block is active. Mirrors the LL/RG
+        # runner's `model = sim.model` in `_run_driven_simulation_structured`.
+        model = sim.model
 
         while sim.iteration < sim.final_iteration
             step!(sim)

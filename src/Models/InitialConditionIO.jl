@@ -28,9 +28,13 @@ topology-dispatched VMR builders for the unified runtime.
   `pack_initial_tracer_mass` (DryBasis + MoistBasis, halo-padded
   output with halo zeroed); `_build_source_latlon_mesh` helper for
   LL→CS conservative regridding.
-- 1d (next commit) — CS `build_surface_flux_source` with
-  cell-area integration (kg/m²/s → kg/s), plus hoist of the
-  surface-flux NetCDF loader and LL/RG surface-flux methods.
+- 1d (this file) — Hoist of surface-flux NetCDF loader (13 helpers
+  + `FileSurfaceFluxField` struct) and LL/RG `build_surface_flux_source`
+  methods; new CS `build_surface_flux_source` that conservatively
+  LL→CS-regrids the flux (the regridder's `dst_areas` × regridded
+  density already yields kg/s per cell) and unpacks to
+  `NTuple{6, Matrix{FT}}` — satisfying the per-cell kg/s contract
+  at `src/Operators/SurfaceFlux/sources.jl:12`.
 
 Private helpers (underscore-prefixed) stay unexported and are
 accessed by callers (including `scripts/run_transport_binary.jl`)
@@ -50,6 +54,11 @@ using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
 using ..Regridding: build_regridder, apply_regridder!
 using ..Preprocessing: unpack_flat_to_panels_3d!, unpack_flat_to_panels_2d!,
                        CS_PANEL_COUNT
+using ..Operators.SurfaceFlux: SurfaceFluxSource
+# Grid accessors used by both LL/RG and CS surface-flux builders
+using ..Grids: AbstractHorizontalMesh, nx, ny, ncells
+
+using Printf: @sprintf
 
 # ---------------------------------------------------------------------------
 # Longitude-wrap helpers (hoisted from run_transport_binary.jl:29,30)
@@ -798,6 +807,307 @@ function _cs_pack_interior_into_halo(grid::AtmosGrid{<:CubedSphereMesh},
     return out
 end
 
+# ===========================================================================
+# Surface-flux loader + builders (plan 40 Commit 1d)
+#
+# Owns the file-based surface-flux path: NetCDF load + LL→{LL,RG,CS}
+# conservative regrid + area integration. Every builder returns
+# `SurfaceFluxSource` with cell_mass_rate in **kg/s per cell** (not
+# kg/m²/s) — the contract required by
+# `src/Operators/SurfaceFlux/sources.jl:12`.
+#
+# Hoisted verbatim (modulo renames for dependency consolidation) from
+# scripts/run_transport_binary.jl:
+#   FileSurfaceFluxField, SECONDS_PER_MONTH, _surface_flux_kind,
+#   _resolve_surface_flux_file, _normalize_units_string,
+#   _load_file_surface_flux_field, _renormalize_surface_flux_rate!,
+#   _REGRID_CACHE_DIR, _conservative_surface_flux_rate,
+#   _regridding_method, build_surface_flux_source (LL + RG),
+#   build_surface_flux_sources.
+#
+# `_build_emission_source_mesh` is dropped in favour of the shared
+# `_build_source_latlon_mesh` introduced for the IC path.
+# ===========================================================================
+
+const SECONDS_PER_MONTH = 365.25 * 86400 / 12
+
+const _REGRID_CACHE_DIR = expanduser("~/.cache/AtmosTransport/cr_regridding")
+
+"""
+    FileSurfaceFluxField{FT}
+
+2-D flux density `(Nx_src, Ny_src)` loaded from a NetCDF emission file.
+Units are kg/m²/s after `_load_file_surface_flux_field` has normalised
+the native units. `native_total_mass_rate` is the pre-regrid global
+integral, preserved for the bilinear path's renormalisation (the
+conservative path does not need it).
+"""
+struct FileSurfaceFluxField{FT}
+    raw                    :: Array{FT, 2}
+    lon                    :: Vector{Float64}
+    lat                    :: Vector{Float64}
+    native_total_mass_rate :: Float64
+end
+
+@inline _surface_flux_kind(cfg) = Symbol(lowercase(String(get(cfg, "kind", "none"))))
+
+function _resolve_surface_flux_file(cfg, kind::Symbol)
+    default_file, default_variable = if kind === :gridfed_fossil_co2
+        ("~/data/AtmosTransport/catrine/Emissions/gridfed/GCP-GridFEDv2024.0_2021.short.nc", "TOTAL")
+    else
+        ("", "")
+    end
+    file = expanduser(String(get(cfg, "file", default_file)))
+    variable = String(get(cfg, "variable", default_variable))
+    isempty(file) && throw(ArgumentError("surface_flux.kind=$(kind) requires surface_flux.file"))
+    isempty(variable) && throw(ArgumentError("surface_flux.kind=$(kind) requires surface_flux.variable"))
+
+    default_time_index = kind === :gridfed_fossil_co2 ? Int(get(cfg, "month", 0)) : 1
+    time_index = Int(get(cfg, "time_index", default_time_index))
+    if kind === :gridfed_fossil_co2 && time_index < 1
+        throw(ArgumentError("surface_flux.kind=gridfed_fossil_co2 requires surface_flux.time_index or surface_flux.month"))
+    end
+    time_index < 1 && throw(ArgumentError("surface_flux.time_index must be >= 1"))
+    return file, variable, time_index
+end
+
+function _normalize_units_string(units)
+    units_str = String(units)
+    return lowercase(replace(strip(units_str), " " => "", "^" => "", "²" => "2"))
+end
+
+function _load_file_surface_flux_field(cfg, ::Type{FT}) where FT
+    kind = _surface_flux_kind(cfg)
+    kind === :none && return nothing
+    file, variable, time_index = _resolve_surface_flux_file(cfg, kind)
+    isfile(file) || throw(ArgumentError("surface-flux file not found: $file"))
+
+    ds = NCDataset(file)
+    try
+        lon_var = _ic_find_coord(ds, ["lon", "longitude", "x"])
+        lat_var = _ic_find_coord(ds, ["lat", "latitude", "y"])
+        isnothing(lon_var) && throw(ArgumentError("could not find longitude coordinate in $file"))
+        isnothing(lat_var) && throw(ArgumentError("could not find latitude coordinate in $file"))
+        haskey(ds, variable) || throw(ArgumentError("variable '$variable' not found in $file"))
+
+        lon_src = Float64.(ds[lon_var][:])
+        lat_src = Float64.(ds[lat_var][:])
+
+        raw_var = ds[variable]
+        raw = if ndims(raw_var) == 3
+            FT.(nomissing(raw_var[:, :, time_index], zero(FT)))
+        elseif ndims(raw_var) == 2
+            FT.(nomissing(raw_var[:, :], zero(FT)))
+        else
+            throw(ArgumentError("surface-flux variable '$variable' must be 2D or 3D, got ndims=$(ndims(raw_var))"))
+        end
+
+        cell_area_src = if haskey(ds, "cell_area")
+            Float64.(nomissing(ds["cell_area"][:, :], 0.0))
+        else
+            nothing
+        end
+
+        if length(lat_src) > 1 && lat_src[1] > lat_src[end]
+            raw = raw[:, end:-1:1]
+            lat_src = reverse(lat_src)
+            cell_area_src === nothing || (cell_area_src = cell_area_src[:, end:-1:1])
+        end
+
+        if minimum(lon_src) < 0
+            split = findfirst(>=(0), lon_src)
+            if split !== nothing
+                idx = vcat(split:length(lon_src), 1:split-1)
+                lon_src = mod.(lon_src[idx], 360.0)
+                raw = raw[idx, :]
+                cell_area_src === nothing || (cell_area_src = cell_area_src[idx, :])
+            end
+        end
+
+        units_norm = _normalize_units_string(get(raw_var.attrib, "units", ""))
+        if kind === :gridfed_fossil_co2 || units_norm == "kgco2/month/m2"
+            raw ./= FT(SECONDS_PER_MONTH)
+        elseif !(isempty(units_norm) || occursin("/s", units_norm) || occursin("s-1", units_norm))
+            throw(ArgumentError("unsupported surface-flux units '$units_norm' in $file; expected kgCO2/month/m2 or per-second flux units"))
+        end
+
+        raw .*= FT(get(cfg, "scale", 1.0))
+        native_total_mass_rate = cell_area_src === nothing ? NaN : sum(Float64.(raw) .* cell_area_src)
+        return FileSurfaceFluxField{FT}(raw, lon_src, lat_src, native_total_mass_rate)
+    finally
+        close(ds)
+    end
+end
+
+function _renormalize_surface_flux_rate!(rate::AbstractArray{FT}, source::FileSurfaceFluxField) where FT
+    isfinite(source.native_total_mass_rate) || return rate
+    sampled_total = Float64(sum(rate))
+    sampled_total > 0 || return rate
+    scale = source.native_total_mass_rate / sampled_total
+    rate .*= FT(scale)
+    return rate
+end
+
+"""Parse regridding method from config: "conservative" or "bilinear" (default)."""
+_regridding_method(cfg) = Symbol(lowercase(String(get(cfg, "regridding", "bilinear"))))
+
+"""
+    _conservative_surface_flux_rate(source, dst_mesh, FT) -> Vector{FT}
+
+Conservatively regrid flux density [kg/m²/s] onto `dst_mesh`; return a
+flat vector of per-cell mass rates [kg/s] (already area-integrated).
+Callers reshape/wrap per topology.
+"""
+function _conservative_surface_flux_rate(source::FileSurfaceFluxField,
+                                         dst_mesh::AbstractHorizontalMesh,
+                                         ::Type{FT}) where FT
+    src_mesh = _build_source_latlon_mesh(source.lon, source.lat, FT)
+    regridder = build_regridder(src_mesh, dst_mesh; cache_dir = _REGRID_CACHE_DIR)
+
+    # Flatten source flux density to 1D (column-major: i + (j-1)*Nx)
+    src_flat = vec(Float64.(source.raw))
+    n_dst = length(regridder.dst_areas)
+    dst_flat = zeros(Float64, n_dst)
+    apply_regridder!(dst_flat, regridder, src_flat)
+
+    # Convert flux density [kg/m²/s] → mass rate [kg/s] using regridder areas
+    rate = Array{FT}(undef, n_dst)
+    for c in 1:n_dst
+        rate[c] = FT(dst_flat[c] * regridder.dst_areas[c])
+    end
+
+    # Report global mass conservation (warn only; conservative regrid is exact to ~FP ulps)
+    src_total = sum(src_flat .* regridder.src_areas)
+    dst_total = sum(Float64.(rate))
+    rel_err = abs(dst_total - src_total) / max(abs(src_total), 1e-30)
+    @info @sprintf("  Conservative regrid: src_total=%.6e  dst_total=%.6e  rel_err=%.2e kg/s",
+                   src_total, dst_total, rel_err)
+    rel_err > 1e-6 && @warn @sprintf("  Conservative regrid mass conservation warning: rel_err=%.2e", rel_err)
+
+    return rate
+end
+
+# ---------------------------------------------------------------------------
+# build_surface_flux_source — LL / RG / CS
+# ---------------------------------------------------------------------------
+
+function build_surface_flux_source(grid::AtmosGrid{<:LatLonMesh},
+                                   tracer_name::Symbol, cfg, ::Type{FT}) where FT
+    kind = _surface_flux_kind(cfg)
+    kind === :none && return nothing
+
+    source = _load_file_surface_flux_field(cfg, FT)
+    method = _regridding_method(cfg)
+    mesh = grid.horizontal
+
+    if method === :conservative
+        rate_flat = _conservative_surface_flux_rate(source, mesh, FT)
+        rate = reshape(rate_flat, nx(mesh), ny(mesh))
+    else
+        # Legacy bilinear sampling
+        rate = Array{FT}(undef, nx(mesh), ny(mesh))
+        for j in axes(rate, 2)
+            area = Float64(cell_area(mesh, 1, j))
+            lat = mesh.φᶜ[j]
+            for i in axes(rate, 1)
+                lon = mesh.λᶜ[i]
+                flux_density = _sample_bilinear_scalar(source.raw, source.lon, source.lat, lon, lat)
+                rate[i, j] = FT(flux_density * area)
+            end
+        end
+        _renormalize_surface_flux_rate!(rate, source)
+    end
+
+    return SurfaceFluxSource(tracer_name, rate)
+end
+
+function build_surface_flux_source(grid::AtmosGrid{<:ReducedGaussianMesh},
+                                   tracer_name::Symbol, cfg, ::Type{FT}) where FT
+    kind = _surface_flux_kind(cfg)
+    kind === :none && return nothing
+
+    source = _load_file_surface_flux_field(cfg, FT)
+    method = _regridding_method(cfg)
+    mesh = grid.horizontal
+
+    if method === :conservative
+        rate = _conservative_surface_flux_rate(source, mesh, FT)
+    else
+        # Legacy bilinear sampling
+        rate = Array{FT}(undef, ncells(mesh))
+        for j in 1:nrings(mesh)
+            lat = mesh.latitudes[j]
+            lons = ring_longitudes(mesh, j)
+            for i in eachindex(lons)
+                c = cell_index(mesh, i, j)
+                flux_density = _sample_bilinear_scalar(source.raw, source.lon, source.lat, lons[i], lat)
+                rate[c] = FT(flux_density * Float64(cell_area(mesh, c)))
+            end
+        end
+        _renormalize_surface_flux_rate!(rate, source)
+    end
+
+    return SurfaceFluxSource(tracer_name, rate)
+end
+
+"""
+    build_surface_flux_source(grid::AtmosGrid{<:CubedSphereMesh},
+                              tracer_name, cfg, ::Type{FT})
+
+Plan 40 Commit 1d: CS surface-flux builder. Conservatively LL→CS
+regrids the 2-D flux density (kg/m²/s) onto the 6 CS panel cell
+centres, then multiplies by each panel's cell area to yield per-cell
+kg/s — the contract `SurfaceFluxSource` expects
+(`src/Operators/SurfaceFlux/sources.jl:12`). Returns a
+`SurfaceFluxSource` whose `cell_mass_rate` is an `NTuple{6, Matrix{FT}}`
+of interior-only `(Nc, Nc)` panels.
+
+`cfg` must set `kind` (non-`none`); any of the file-based surface-flux
+kinds `_load_file_surface_flux_field` understands work
+(`gridfed_fossil_co2` or user-supplied `file` + `variable`).
+Conservative regridding is enforced — CS bilinear is not supported.
+"""
+function build_surface_flux_source(grid::AtmosGrid{<:CubedSphereMesh},
+                                   tracer_name::Symbol, cfg, ::Type{FT}) where FT
+    kind = _surface_flux_kind(cfg)
+    kind === :none && return nothing
+
+    method = _regridding_method(cfg)
+    method === :conservative || @warn "CS surface-flux: `regridding = \"$(method)\"` requested; CS supports conservative only — forcing conservative."
+
+    source = _load_file_surface_flux_field(cfg, FT)
+    mesh = grid.horizontal
+    Nc = mesh.Nc
+
+    # _conservative_surface_flux_rate already returns kg/s per cell
+    # (regridder.dst_areas × regridded flux density), so the panel unpack
+    # only needs to reshape the flat `6*Nc^2` vector into 6 × (Nc, Nc).
+    rate_flat = _conservative_surface_flux_rate(source, mesh, FT)
+    length(rate_flat) == CS_PANEL_COUNT * Nc * Nc || throw(DimensionMismatch(
+        "CS surface-flux conservative regrid returned $(length(rate_flat)) cells; expected $(CS_PANEL_COUNT * Nc * Nc)"))
+
+    panels = ntuple(_ -> Matrix{FT}(undef, Nc, Nc), CS_PANEL_COUNT)
+    unpack_flat_to_panels_2d!(panels, rate_flat, Nc)
+
+    return SurfaceFluxSource(tracer_name, panels)
+end
+
+"""
+    build_surface_flux_sources(grid, tracer_specs, ::Type{FT})
+
+Build `SurfaceFluxSource` instances for every tracer spec that requests
+one. Returns a tuple (possibly empty) suitable for the
+`surface_sources = (…,)` kwarg on `DrivenSimulation`.
+"""
+function build_surface_flux_sources(grid, tracer_specs, ::Type{FT}) where FT
+    sources = Any[]
+    for spec in tracer_specs
+        source = build_surface_flux_source(grid, spec.name, spec.surface_flux_cfg, FT)
+        source === nothing || push!(sources, source)
+    end
+    return Tuple(sources)
+end
+
 # ---------------------------------------------------------------------------
 # Exports
 # ---------------------------------------------------------------------------
@@ -805,5 +1115,7 @@ end
 export FileInitialConditionSource
 export build_initial_mixing_ratio
 export pack_initial_tracer_mass
+export FileSurfaceFluxField
+export build_surface_flux_source, build_surface_flux_sources
 
 end # module InitialConditionIO

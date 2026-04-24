@@ -180,12 +180,28 @@ larger than can land in that window. Split:
   Preprocessing load **before** Models (required by
   InitialConditionIO's `using ..Regridding`/`using ..Preprocessing`;
   verified no back-references via grep).
-- **1d (next)** — CS `build_surface_flux_source` with cell-area
-  integration (kg/m²/s → kg/s to match `SurfaceFluxSource`'s per-cell
-  kg/s contract at `src/Operators/SurfaceFlux/sources.jl:12`);
-  hoist `FileSurfaceFluxField`, `_load_file_surface_flux_field`,
-  `_resolve_surface_flux_file`, LL/RG `build_surface_flux_source`
-  methods + `build_surface_flux_sources`.
+- **1d (shipped this commit)** — Surface-flux builders now own
+  themselves. Hoisted to `src/Models/InitialConditionIO.jl`:
+  `FileSurfaceFluxField`, `SECONDS_PER_MONTH`, `_surface_flux_kind`,
+  `_resolve_surface_flux_file`, `_normalize_units_string`,
+  `_load_file_surface_flux_field`,
+  `_renormalize_surface_flux_rate!`, `_REGRID_CACHE_DIR`,
+  `_conservative_surface_flux_rate`, `_regridding_method`,
+  `build_surface_flux_source` (LL + RG), and
+  `build_surface_flux_sources`. `_build_emission_source_mesh` is
+  dropped in favour of the shared `_build_source_latlon_mesh`. New:
+  `build_surface_flux_source(grid::AtmosGrid{<:CubedSphereMesh}, …)`
+  — conservative LL→CS regrid (which already integrates by
+  `dst_areas`, yielding kg/s per cell) + panel unpack to
+  `NTuple{6, Matrix{FT}}`. Matches the kg/s-per-cell contract at
+  `src/Operators/SurfaceFlux/sources.jl:12` and the CS NTuple{6}
+  expectation at `sources.jl:88-101`. CS path enforces
+  `regridding = "conservative"` (warns if caller asks for
+  bilinear). Tests: global mass conservation
+  (rel_err ~ 1.2e-16 under CR.jl), shape contract
+  `NTuple{6, Matrix{FT}}` with `(Nc, Nc)` per panel, `kind=none`
+  shortcut across LL/RG/CS, empty-specs dispatcher returns `()`.
+  68 tests in `test_initial_condition_io.jl` (from 54).
 
 All three remain individually revertable. The plan doc still
 captures the full Commit 1 design; NOTES is the source of truth for

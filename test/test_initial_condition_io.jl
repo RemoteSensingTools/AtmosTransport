@@ -202,6 +202,75 @@ const FT = Float64
         end
     end
 
+    # --------- plan 40 Commit 1d: surface-flux builders --------------
+    @testset "build_surface_flux_source — `kind = none` returns nothing" begin
+        mesh = LatLonMesh(; Nx = 4, Ny = 3,
+                          longitude = (0.0, 360.0),
+                          latitude  = (-90.0, 90.0))
+        vertical = HybridSigmaPressure(FT[0, 50000, 0], FT[1, 0.5, 0])
+        grid = AtmosGrid(mesh, vertical, CPU(); FT = FT)
+        @test build_surface_flux_source(grid, :co2, Dict("kind" => "none"), FT) === nothing
+
+        rg_mesh = ReducedGaussianMesh([-75.0, -25.0, 25.0, 75.0],
+                                      [4, 8, 8, 4]; FT = FT)
+        rg_grid = AtmosGrid(rg_mesh, vertical, CPU(); FT = FT)
+        @test build_surface_flux_source(rg_grid, :co2, Dict("kind" => "none"), FT) === nothing
+
+        cs_mesh = CubedSphereMesh(; FT = FT, Nc = 4, Hp = 1)
+        cs_grid = AtmosGrid(cs_mesh, vertical, CPU(); FT = FT)
+        @test build_surface_flux_source(cs_grid, :co2, Dict("kind" => "none"), FT) === nothing
+
+        # build_surface_flux_sources with no tracer specs returns empty tuple
+        @test build_surface_flux_sources(grid, (), FT) === ()
+    end
+
+    @testset "build_surface_flux_source — CS panel shape contract" begin
+        # Writes a tiny synthetic LL NetCDF emission file; conservative
+        # LL→CS regrid should produce 6 × (Nc, Nc) panels of kg/s per cell.
+        # Acceptance: shape is NTuple{6, Matrix{FT}}, each (Nc, Nc);
+        # global mass rate is preserved within conservative-regrid tolerance.
+        import NCDatasets: NCDataset, defVar, defDim
+        Nx_src = 16
+        Ny_src = 8
+        path = joinpath(mktempdir(), "flux.nc")
+        ds = NCDataset(path, "c")
+        defDim(ds, "lon", Nx_src)
+        defDim(ds, "lat", Ny_src)
+        defDim(ds, "time", 1)
+        lon_v  = defVar(ds, "lon",  Float64, ("lon",))
+        lat_v  = defVar(ds, "lat",  Float64, ("lat",))
+        flux_v = defVar(ds, "FLUX", Float32, ("lon", "lat", "time"),
+                        attrib = Dict("units" => "kg/m2/s"))
+        lon_v[:] = [(i - 0.5) * 360.0 / Nx_src for i in 1:Nx_src]
+        lat_v[:] = [-90.0 + (j - 0.5) * 180.0 / Ny_src for j in 1:Ny_src]
+        # Uniform 1.0 flux density → dst_total = area of full sphere
+        flux_v[:, :, 1] .= 1.0
+        close(ds)
+
+        Nc = 6
+        Hp = 1
+        cs_mesh = CubedSphereMesh(; FT = FT, Nc = Nc, Hp = Hp)
+        vertical = HybridSigmaPressure(FT[0, 50000, 0], FT[1, 0.5, 0])
+        cs_grid  = AtmosGrid(cs_mesh, vertical, CPU(); FT = FT)
+
+        cfg = Dict("kind" => "file", "file" => path, "variable" => "FLUX",
+                   "regridding" => "conservative", "time_index" => 1)
+        src = build_surface_flux_source(cs_grid, :co2, cfg, FT)
+        @test src !== nothing
+        @test src.tracer_name === :co2
+        @test src.cell_mass_rate isa NTuple{6, Matrix{FT}}
+        for p in 1:6
+            @test size(src.cell_mass_rate[p]) == (Nc, Nc)
+        end
+
+        # Global integral check: uniform 1 kg/m²/s over the full sphere
+        # → total kg/s ≈ 4π R² (R = Earth radius in mesh).
+        R = Float64(cs_mesh.radius)
+        expected_total = 4π * R^2
+        actual_total = sum(sum(panel) for panel in src.cell_mass_rate)
+        @test isapprox(Float64(actual_total), expected_total; rtol = 1e-3)
+    end
+
     @testset "pack_initial_tracer_mass — CubedSphereMesh (MoistBasis)" begin
         Nc = 4
         Hp = 1

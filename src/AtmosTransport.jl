@@ -271,6 +271,7 @@ export build_cs_advection, build_cs_diffusion, build_cs_convection
 export build_cs_physics_recipe, validate_cs_physics_recipe
 export configured_cs_halo_width, build_cs_tracer_panels
 export FileInitialConditionSource, build_initial_mixing_ratio, pack_initial_tracer_mass
+export FileSurfaceFluxField, build_surface_flux_source, build_surface_flux_sources
 
 # Offline regridding (preprocessing only)
 export build_regridder, save_regridder, load_regridder

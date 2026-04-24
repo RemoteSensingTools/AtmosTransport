@@ -307,6 +307,50 @@ Plan-40 Commit 6's `run_driven_simulation` will use
 capabilities before the loop (e.g. reject
 `[convection] kind = "tm5"` on a binary lacking entu/detu/entd/detd).
 
+### Commit 6a — LL/RG runner library extraction
+
+Shipped 2026-04-24. Created `src/Models/DrivenRunner.jl`. The
+library now owns the entire LL/RG driven flow that used to live in
+`scripts/run_transport_binary.jl`:
+
+- TOML tracer-spec parsing (`TransportTracerSpec`,
+  `_tracer_init_cfg`, `_tracer_surface_flux_cfg`,
+  `_parse_tracer_specs`, `_copy_cfg_dict`).
+- GPU runtime helpers (`_ensure_gpu_runtime!`,
+  `_backend_array_adapter`, `_backend_label`,
+  `_synchronize_backend!`) + a new
+  `_assert_gpu_residency!(state, cfg)` that enforces
+  `feedback_verify_gpu_runs_on_gpu` (aborts on silent CPU fallback,
+  prints `[gpu verified] …`).
+- `_make_structured_model(driver; …)` replaces the old
+  `make_model`. Uses `pack_initial_tracer_mass` (C1b) not raw
+  `.* air_mass` — bit-exact on DryBasis, errors precisely on
+  MoistBasis without qv. No in-tree LL/RG config uses MoistBasis
+  (verified by grep), so no behaviour change for shipped configs.
+- Snapshot capture + NetCDF output (`_capture_snapshot`,
+  `_write_snapshot_netcdf`, `_write_snapshot_ll!`,
+  `_write_snapshot_rg!`).
+- `_validate_capability_match(driver, recipe, cfg)` — pre-loop
+  check that `[convection] kind = "tm5"` or `"cmfmc"` matches the
+  binary's `payload_sections` (via `binary_capabilities`). Precise
+  ArgumentError with the actual payload listed.
+- `_run_driven_simulation_structured(binary_paths, cfg)` — the
+  per-file loop hoisted verbatim from the old `run_sequence`.
+- Public entry `run_driven_simulation(cfg)` resolves `[input]` via
+  `expand_binary_paths` and dispatches to the structured runner.
+  CS dispatch is a follow-up (Commit 6b).
+
+`scripts/run_transport_binary.jl` is now a 38-line wrapper: parse
+TOML, call `run_driven_simulation(cfg)`. `make_model` /
+`run_sequence` / local helpers are gone — external callers use the
+library entry point.
+
+`test/test_run_transport_binary_recipe.jl` rewired to call
+`run_driven_simulation(cfg)` directly (previously called the
+now-private `make_model` + `run_sequence`). 8 tests still pass.
+
+Baseline: 5 pre-existing failures unchanged.
+
 ## Correctness rules pinned (read before Commit 1)
 
 ### GPU runs must be verified, not declared

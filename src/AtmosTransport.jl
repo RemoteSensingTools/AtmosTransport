@@ -275,6 +275,7 @@ export FileInitialConditionSource, build_initial_mixing_ratio, pack_initial_trac
 export FileSurfaceFluxField, build_surface_flux_source, build_surface_flux_sources
 export expand_binary_paths
 export binary_capabilities, inspect_binary   # plan 40 Commit 5
+export run_driven_simulation, TransportTracerSpec   # plan 40 Commit 6a
 
 # Offline regridding (preprocessing only)
 export build_regridder, save_regridder, load_regridder

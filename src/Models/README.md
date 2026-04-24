@@ -52,6 +52,15 @@ read.
   `binary_paths = [...]` list or a `folder + start_date + end_date
   (+ file_pattern)` shape to a sorted `Vector{String}`; continuity
   check on the closed date range (plan 40 Commit 4)
+- [`DrivenRunner.jl`](DrivenRunner.jl) — library-level
+  `run_driven_simulation(cfg)` entry point for LL/RG driven runs
+  (CS dispatch added in plan 40 Commit 6b). Owns the runtime flow
+  hoisted from `scripts/run_transport_binary.jl`: first-driver
+  construction, capability validation against TOML physics,
+  tracer init via `build_initial_mixing_ratio` + basis-aware
+  `pack_initial_tracer_mass`, surface-source wiring, GPU-residency
+  assertion (`feedback_verify_gpu_runs_on_gpu`), per-window loop,
+  snapshot NetCDF output (plan 40 Commit 6a)
 
 ## Common Tasks
 

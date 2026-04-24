@@ -1,0 +1,572 @@
+"""
+    DrivenRunner
+
+Library-level entry point for the driven transport runtime.
+
+Plan 40 Commit 6a hoists the LL/RG runner here from
+`scripts/run_transport_binary.jl` so both the old script (now a thin
+shim) and the forthcoming unified `scripts/run_transport.jl` share
+one implementation. Commit 6b will fold the CS-specific flow from
+`scripts/run_cs_driven.jl` into the same top-level
+`run_driven_simulation(cfg)` with dispatch driven by the first
+binary's header (`inspect_binary(first_path).grid_type`).
+
+## Ownership boundary
+
+- **Binary header** (`grid_type`, `mass_basis`, `payload_sections`,
+  panel convention) — authoritative for topology and capability.
+  Accessed here via `binary_capabilities(driver.reader)` and
+  `air_mass_basis(driver)`.
+- **TOML `[input]`** — either an explicit `binary_paths = [...]`
+  list (Shape A) or a `folder + start_date + end_date
+  (+ file_pattern)` block (Shape B). Both are resolved to a sorted
+  `Vector{String}` by `expand_binary_paths`.
+- **TOML physics** (`[advection]` / `[diffusion]` / `[convection]`)
+  — validated against binary capabilities by
+  `validate_runtime_physics_recipe` / `build_runtime_physics_recipe`
+  before the loop.
+- **TOML `[tracers.*]`** — tracer specs consumed via
+  `build_initial_mixing_ratio` + `pack_initial_tracer_mass`
+  (basis-aware per `feedback_vmr_to_mass_basis_aware`) and
+  `build_surface_flux_sources`.
+
+## GPU residency (feedback_verify_gpu_runs_on_gpu)
+
+When `[architecture].use_gpu = true`, the runner asserts that
+`parent(state.air_mass) isa CuArray` after model construction and
+prints a `[gpu verified] …` line. A silent CPU fallback aborts the
+run with a precise error message.
+"""
+module DrivenRunner
+
+using Adapt
+using Printf: @sprintf, @printf
+using NCDatasets
+using Logging
+
+using ..State: AbstractMassBasis, DryBasis, MoistBasis, CellState,
+                total_air_mass, total_mass, tracer_names, tracer_index,
+                get_tracer
+using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
+                nx, ny, nrings, ring_longitudes, cell_index, ncells,
+                nlevels
+using ..MetDrivers: TransportBinaryDriver, CubedSphereTransportDriver,
+                     load_transport_window, driver_grid, air_mass_basis,
+                     total_windows, window_dt, binary_capabilities
+using ..InitialConditionIO: build_initial_mixing_ratio,
+                             pack_initial_tracer_mass,
+                             build_surface_flux_sources
+using ..BinaryPathExpander: expand_binary_paths
+# TransportModel + DrivenSimulation live alongside us in the Models module;
+# reach up to the parent and pull them in.
+using ..Models: TransportModel
+import ..Models: DrivenSimulation, run_window!, run!, allocate_face_fluxes
+
+export run_driven_simulation, TransportTracerSpec
+
+# ===========================================================================
+# TOML parsing — tracer specs (hoisted from run_transport_binary.jl:57-100)
+# ===========================================================================
+
+struct TransportTracerSpec
+    name             :: Symbol
+    init_cfg         :: Dict{String, Any}
+    surface_flux_cfg :: Dict{String, Any}
+end
+
+_copy_cfg_dict(cfg) = Dict{String, Any}(String(k) => v for (k, v) in pairs(cfg))
+
+function _tracer_init_cfg(tracer_cfg)
+    if haskey(tracer_cfg, "init")
+        return _copy_cfg_dict(tracer_cfg["init"])
+    end
+    cfg = Dict{String, Any}()
+    for key in ("kind", "background", "lon0_deg", "lat0_deg", "sigma_lon_deg",
+                "sigma_lat_deg", "amplitude", "file", "variable", "time_index")
+        haskey(tracer_cfg, key) && (cfg[key] = tracer_cfg[key])
+    end
+    isempty(cfg) && return Dict{String, Any}("kind" => "uniform", "background" => 0.0)
+    return cfg
+end
+
+function _tracer_surface_flux_cfg(tracer_cfg)
+    if haskey(tracer_cfg, "surface_flux")
+        return _copy_cfg_dict(tracer_cfg["surface_flux"])
+    end
+    cfg = Dict{String, Any}()
+    for (src_key, dst_key) in (("surface_flux_kind", "kind"),
+                               ("surface_flux_file", "file"),
+                               ("surface_flux_variable", "variable"),
+                               ("surface_flux_time_index", "time_index"),
+                               ("surface_flux_month", "month"),
+                               ("surface_flux_scale", "scale"))
+        haskey(tracer_cfg, src_key) && (cfg[dst_key] = tracer_cfg[src_key])
+    end
+    return cfg
+end
+
+function _parse_tracer_specs(cfg)
+    tracers_cfg = get(cfg, "tracers", nothing)
+    tracers_cfg isa AbstractDict || return nothing
+    names = sort!(collect(keys(tracers_cfg)))
+    isempty(names) && throw(ArgumentError("config has [tracers] but no tracer sections"))
+    return Tuple(TransportTracerSpec(Symbol(name),
+                                     _tracer_init_cfg(tracers_cfg[name]),
+                                     _tracer_surface_flux_cfg(tracers_cfg[name])) for name in names)
+end
+
+# ===========================================================================
+# GPU runtime helpers (hoisted from run_transport_binary.jl:101-138)
+# ===========================================================================
+
+@inline _cfg_use_gpu(cfg) = Bool(get(get(cfg, "architecture", Dict{String, Any}()), "use_gpu", false))
+
+function _ensure_gpu_runtime!(cfg)
+    _cfg_use_gpu(cfg) || return false
+    Sys.isapple() && throw(ArgumentError("driven runner GPU path is only wired for CUDA hosts"))
+    if !isdefined(Main, :CUDA)
+        Core.eval(Main, :(using CUDA))
+    end
+    CUDA = Core.eval(Main, :CUDA)
+    Base.invokelatest(getproperty(CUDA, :functional)) ||
+        throw(ArgumentError("CUDA runtime is not functional on this host"))
+    Base.invokelatest(getproperty(CUDA, :allowscalar), false)
+    return true
+end
+
+function _backend_array_adapter(cfg)
+    if _cfg_use_gpu(cfg)
+        _ensure_gpu_runtime!(cfg)
+        return getproperty(Core.eval(Main, :CUDA), :CuArray)
+    end
+    return Array
+end
+
+function _backend_label(cfg)
+    if _cfg_use_gpu(cfg)
+        _ensure_gpu_runtime!(cfg)
+        CUDA = Core.eval(Main, :CUDA)
+        device_name = Base.invokelatest(getproperty(CUDA, :name),
+                                        Base.invokelatest(getproperty(CUDA, :device)))
+        return "GPU (CUDA, $(device_name))"
+    end
+    return "CPU"
+end
+
+function _synchronize_backend!(cfg)
+    if _cfg_use_gpu(cfg)
+        _ensure_gpu_runtime!(cfg)
+        Base.invokelatest(getproperty(Core.eval(Main, :CUDA), :synchronize))
+    end
+    return nothing
+end
+
+"""
+    _assert_gpu_residency!(state, cfg)
+
+Plan 40 Commit 6a / `feedback_verify_gpu_runs_on_gpu`. When
+`use_gpu = true`, assert that `state.air_mass` lives on the GPU. A
+silent CPU fallback aborts with a precise error. Called once after
+model construction, before the run loop.
+"""
+function _assert_gpu_residency!(state, cfg)
+    _cfg_use_gpu(cfg) || return nothing
+    backing = state.air_mass isa Tuple ? parent(state.air_mass[1]) : parent(state.air_mass)
+    CUDA = Core.eval(Main, :CUDA)
+    CuArrayType = getproperty(CUDA, :CuArray)
+    backing isa CuArrayType || throw(ErrorException(
+        "[gpu residency check] use_gpu = true but state.air_mass is $(typeof(backing)); " *
+        "CPU fallback aborted. Verify CUDA extension loaded and `adapt(CuArray, model)` " *
+        "completed without error."))
+    device_name = Base.invokelatest(getproperty(CUDA, :name),
+                                    Base.invokelatest(getproperty(CUDA, :device)))
+    @info @sprintf("[gpu verified] backing=%s device=%s", nameof(typeof(backing).name.wrapper), device_name)
+    return nothing
+end
+
+# ===========================================================================
+# Model construction (hoisted from run_transport_binary.jl:153-188)
+#
+# Uses `pack_initial_tracer_mass` (C1b) rather than raw `.* air_mass`:
+# bit-exact on DryBasis, errors loudly on MoistBasis without qv
+# (correctness rule feedback_vmr_to_mass_basis_aware). No LL/RG config
+# in-tree uses MoistBasis, so no behaviour change for shipped configs.
+# ===========================================================================
+
+function _make_structured_model(driver::TransportBinaryDriver;
+                                FT::Type{<:AbstractFloat},
+                                recipe,
+                                tracer_specs,
+                                cfg)
+    grid = driver_grid(driver)
+    window = load_transport_window(driver, 1)
+    air_mass = copy(window.air_mass)
+
+    tracer_specs_tuple = Tuple(tracer_specs)
+    isempty(tracer_specs_tuple) && throw(ArgumentError("at least one tracer must be configured"))
+
+    basis_type = air_mass_basis(driver) == :dry ? DryBasis : MoistBasis
+    tracer_names_tup = Tuple(spec.name for spec in tracer_specs_tuple)
+    rm_arrays = map(tracer_specs_tuple) do spec
+        vmr = build_initial_mixing_ratio(air_mass, grid, spec.init_cfg)
+        # MoistBasis LL/RG runs would need qv threaded from window.qv —
+        # none in-tree today; the packer errors with a precise message.
+        return pack_initial_tracer_mass(grid, air_mass, vmr;
+                                        mass_basis = basis_type())
+    end
+
+    tracer_tuple = NamedTuple{tracer_names_tup}(Tuple(rm_arrays))
+    state = CellState(basis_type, air_mass; tracer_tuple...)
+    fluxes = allocate_face_fluxes(grid.horizontal, nlevels(grid);
+                                  FT = FT, basis = basis_type)
+    model = TransportModel(state, fluxes, grid, recipe.advection;
+                           diffusion = recipe.diffusion,
+                           convection = recipe.convection)
+    adaptor = _backend_array_adapter(cfg)
+    return adaptor === Array ? model : Adapt.adapt(adaptor, model)
+end
+
+# ===========================================================================
+# Snapshot capture (hoisted from run_transport_binary.jl:195-232)
+# ===========================================================================
+
+"""
+    _capture_snapshot(model) -> Dict{Symbol, Vector{Float64}}
+
+Column-mean mixing ratio per tracer. Handles structured grids
+(`(Nx, Ny, Nz)` 3D arrays → flattened `(Nx * Ny,)`) and face-indexed
+grids like reduced Gaussian (`(ncells, Nz)` 2D → `(ncells,)`).
+"""
+function _capture_snapshot(model)
+    names = tracer_names(model.state)
+    m = Array(model.state.air_mass)
+    result = Dict{Symbol, Vector{Float64}}()
+    for name in names
+        rm = Array(getfield(model.state.tracers, name))
+        if ndims(rm) == 3
+            Nx, Ny, Nz = size(rm)
+            col_mean = zeros(Float64, Nx * Ny)
+            for j in 1:Ny, i in 1:Nx
+                sum_rm = 0.0; sum_m = 0.0
+                for k in 1:Nz
+                    sum_rm += Float64(rm[i, j, k])
+                    sum_m  += Float64(m[i, j, k])
+                end
+                col_mean[(j - 1) * Nx + i] = sum_m > 0 ? sum_rm / sum_m : 0.0
+            end
+        elseif ndims(rm) == 2
+            Nc, Nz = size(rm)
+            col_mean = zeros(Float64, Nc)
+            for c in 1:Nc
+                sum_rm = 0.0; sum_m = 0.0
+                for k in 1:Nz
+                    sum_rm += Float64(rm[c, k])
+                    sum_m  += Float64(m[c, k])
+                end
+                col_mean[c] = sum_m > 0 ? sum_rm / sum_m : 0.0
+            end
+        else
+            error("_capture_snapshot: unsupported tracer array ndims=$(ndims(rm))")
+        end
+        result[name] = col_mean
+    end
+    return result
+end
+
+# ===========================================================================
+# NetCDF snapshot output (hoisted from run_transport_binary.jl:243-363)
+# ===========================================================================
+
+function _write_snapshot_netcdf(path, snapshots, snapshot_hours, grid)
+    isempty(snapshots) && return
+    mkpath(dirname(path))
+    mesh = grid.horizontal
+    ntime = length(snapshots)
+
+    NCDataset(path, "c") do ds
+        ds.attrib["Conventions"] = "CF-1.8"
+        ds.attrib["grid"] = summary(mesh)
+        if mesh isa LatLonMesh
+            _write_snapshot_ll!(ds, snapshots, snapshot_hours, mesh, ntime)
+        elseif mesh isa ReducedGaussianMesh
+            _write_snapshot_rg!(ds, snapshots, snapshot_hours, mesh, ntime)
+        else
+            error("Unsupported mesh type for snapshot output: $(typeof(mesh))")
+        end
+    end
+    @info "Saved snapshots: $path ($(length(snapshots)) times)"
+end
+
+function _write_snapshot_ll!(ds, snapshots, snapshot_hours, mesh, ntime)
+    Nx_, Ny_ = nx(mesh), ny(mesh)
+    defDim(ds, "lon", Nx_); defDim(ds, "lat", Ny_); defDim(ds, "time", ntime)
+
+    v_lon = defVar(ds, "lon", Float64, ("lon",),
+                   attrib = Dict("units" => "degrees_east", "long_name" => "longitude",
+                                 "standard_name" => "longitude"))
+    v_lat = defVar(ds, "lat", Float64, ("lat",),
+                   attrib = Dict("units" => "degrees_north", "long_name" => "latitude",
+                                 "standard_name" => "latitude"))
+    v_time = defVar(ds, "time", Float64, ("time",),
+                    attrib = Dict("units" => "hours since start", "long_name" => "time"))
+
+    v_lon[:] = Float64.(mesh.λᶜ)
+    v_lat[:] = Float64.(mesh.φᶜ)
+    v_time[:] = snapshot_hours[1:ntime]
+
+    for name in keys(first(snapshots))
+        v = defVar(ds, "$(name)_column_mean", Float64, ("lon", "lat", "time"),
+                   attrib = Dict("units" => "mol mol-1",
+                                 "long_name" => "Column-mean $name VMR"))
+        for t in 1:ntime
+            v[:, :, t] = reshape(snapshots[t][name], Nx_, Ny_)
+        end
+    end
+end
+
+function _write_snapshot_rg!(ds, snapshots, snapshot_hours, mesh, ntime)
+    nr = nrings(mesh)
+    Nlon = maximum(mesh.nlon_per_ring)
+    Nlat = nr
+    dlon = 360.0 / Nlon
+    out_lons = [(i - 0.5) * dlon for i in 1:Nlon]
+    out_lats = Float64.(mesh.latitudes)
+
+    nn_map = zeros(Int, Nlon, Nlat)
+    for j in 1:Nlat
+        nlon_ring = mesh.nlon_per_ring[j]
+        dlon_ring = 360.0 / nlon_ring
+        for i in 1:Nlon
+            i_ring = clamp(round(Int, out_lons[i] / dlon_ring + 0.5), 1, nlon_ring)
+            nn_map[i, j] = cell_index(mesh, i_ring, j)
+        end
+    end
+
+    defDim(ds, "lon", Nlon); defDim(ds, "lat", Nlat); defDim(ds, "time", ntime)
+    ds.attrib["grid_type"] = "reduced_gaussian_regridded"
+    ds.attrib["nrings"] = nr
+    ds.attrib["regridding"] = "nearest-neighbor from reduced Gaussian"
+
+    v_lon = defVar(ds, "lon", Float64, ("lon",),
+                   attrib = Dict("units" => "degrees_east", "long_name" => "longitude",
+                                 "standard_name" => "longitude"))
+    v_lat = defVar(ds, "lat", Float64, ("lat",),
+                   attrib = Dict("units" => "degrees_north", "long_name" => "latitude",
+                                 "standard_name" => "latitude"))
+    v_time = defVar(ds, "time", Float64, ("time",),
+                    attrib = Dict("units" => "hours since start", "long_name" => "time"))
+
+    v_lon[:] = out_lons
+    v_lat[:] = out_lats
+    v_time[:] = snapshot_hours[1:ntime]
+
+    for name in keys(first(snapshots))
+        v = defVar(ds, "$(name)_column_mean", Float64, ("lon", "lat", "time"),
+                   attrib = Dict("units" => "mol mol-1",
+                                 "long_name" => "Column-mean $name VMR"))
+        for t in 1:ntime
+            flat = snapshots[t][name]
+            regridded = zeros(Float64, Nlon, Nlat)
+            for j in 1:Nlat, i in 1:Nlon
+                regridded[i, j] = flat[nn_map[i, j]]
+            end
+            v[:, :, t] = regridded
+        end
+    end
+end
+
+# ===========================================================================
+# Capability validation (plan 40 Commit 6a)
+#
+# Validate TOML physics against binary capabilities BEFORE constructing the
+# model, so users get a precise error up front instead of silently failing
+# partway through. Runs after `build_runtime_physics_recipe` (which already
+# validates kind strings against recipe types) but before model construction
+# (which discovers problems at the first load).
+# ===========================================================================
+
+function _validate_capability_match(driver, recipe, cfg)
+    caps = binary_capabilities(driver.reader)
+
+    # Convection kind vs binary sections
+    conv_kind = Symbol(lowercase(String(get(get(cfg, "convection", Dict()), "kind", "none"))))
+    if conv_kind === :tm5 && !caps.tm5_convection
+        throw(ArgumentError(
+            "[convection] kind = \"tm5\" requires the binary to carry " *
+            "entu, detu, entd, detd; this binary's payload_sections are " *
+            "$(caps.payload_sections). Regenerate with a TM5-enabled " *
+            "preprocessor or set convection.kind = \"none\"."))
+    end
+    if conv_kind === :cmfmc && !caps.cmfmc_convection
+        throw(ArgumentError(
+            "[convection] kind = \"cmfmc\" requires the binary to carry " *
+            "the cmfmc section; this binary's payload_sections are " *
+            "$(caps.payload_sections)."))
+    end
+    return nothing
+end
+
+# ===========================================================================
+# run_driven_simulation — top-level entry
+# ===========================================================================
+
+"""
+    run_driven_simulation(cfg::AbstractDict) -> TransportModel
+
+Run a driven transport simulation from a TOML config. Resolves
+`[input]` to a sorted binary list via `expand_binary_paths`, picks
+the right driver based on the binary's `grid_type` header field,
+validates physics-vs-capability, verifies GPU residency when
+requested, runs the loop, optionally captures column-mean snapshots
+to NetCDF, and returns the terminal `TransportModel`.
+
+Plan 40 Commit 6a supports LL/RG only (structured and
+reduced-Gaussian). CS dispatch is added in Commit 6b.
+"""
+function run_driven_simulation(cfg::AbstractDict)
+    input_cfg = get(cfg, "input", Dict{String, Any}())
+    binary_paths = expand_binary_paths(input_cfg)
+    isempty(binary_paths) &&
+        throw(ArgumentError("[input] resolved to an empty binary list"))
+    return _run_driven_simulation_structured(binary_paths, cfg)
+end
+
+function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
+    FT = Symbol(get(get(cfg, "numerics", Dict{String, Any}()), "float_type", "Float64")) == :Float32 ?
+         Float32 : Float64
+    run_cfg = get(cfg, "run", Dict{String, Any}())
+    start_window = Int(get(run_cfg, "start_window", 1))
+    stop_window_override = get(run_cfg, "stop_window", nothing)
+    haskey(run_cfg, "reset_air_mass_each_window") &&
+        @debug "run.reset_air_mass_each_window is ignored (plan 39 Commit G removed the flag)"
+
+    init_cfg = get(cfg, "init", Dict{String, Any}())
+    tracer_specs = something(_parse_tracer_specs(cfg),
+                             (TransportTracerSpec(Symbol(get(run_cfg, "tracer_name", "CO2")),
+                                                  _copy_cfg_dict(init_cfg),
+                                                  Dict{String, Any}()),))
+
+    output_cfg = get(cfg, "output", Dict{String, Any}())
+    snapshot_hours = Float64.(get(output_cfg, "snapshot_hours", Float64[]))
+    snapshot_file = expanduser(String(get(output_cfg, "snapshot_file", "")))
+    do_snapshots = !isempty(snapshot_hours) && !isempty(snapshot_file)
+
+    _ensure_gpu_runtime!(cfg)
+
+    # Open first driver, build recipe, validate capability, build model
+    first_driver = TransportBinaryDriver(first(binary_paths);
+                                          FT = FT,
+                                          arch = (@isdefined(CPU) ? CPU() : Main.AtmosTransport.CPU()))
+    recipe = Main.AtmosTransport.build_runtime_physics_recipe(cfg, first_driver, FT)
+    _validate_capability_match(first_driver, recipe, cfg)
+
+    model = _make_structured_model(first_driver;
+                                    FT = FT, recipe = recipe,
+                                    tracer_specs = tracer_specs, cfg = cfg)
+    _assert_gpu_residency!(model.state, cfg)
+
+    grid_of_first = driver_grid(first_driver)
+    surface_sources = build_surface_flux_sources(grid_of_first, tracer_specs, FT)
+    m0 = total_air_mass(model.state)
+    tracer_masses0 = Dict(name => total_mass(model.state, name)
+                          for name in tracer_names(model.state))
+    source_tracers = Set(source.tracer_name for source in surface_sources)
+
+    @info "Backend: $(_backend_label(cfg))"
+    @info "Physics: advection=$(nameof(typeof(recipe.advection))) " *
+          "diffusion=$(nameof(typeof(recipe.diffusion))) " *
+          "convection=$(nameof(typeof(recipe.convection)))"
+    for source in surface_sources
+        @info @sprintf("Surface source %s total mass rate: %.12e kg/s",
+                       String(source.tracer_name),
+                       Float64(sum(source.cell_mass_rate)))
+    end
+
+    snapshots = Dict{Symbol, Vector{Float64}}[]
+    snap_idx = 1
+    total_elapsed_hours = 0.0
+
+    if do_snapshots && snap_idx <= length(snapshot_hours) &&
+       abs(snapshot_hours[snap_idx]) < 0.5
+        push!(snapshots, _capture_snapshot(model))
+        @info @sprintf("Snapshot %d at t=%.0fh", snap_idx, 0.0)
+        snap_idx += 1
+    end
+
+    for (idx, path) in enumerate(binary_paths)
+        driver = idx == 1 ? first_driver :
+                 TransportBinaryDriver(path; FT = FT,
+                                       arch = (@isdefined(CPU) ? CPU() : Main.AtmosTransport.CPU()))
+        Main.AtmosTransport.validate_runtime_physics_recipe(recipe, driver)
+        stop_window = stop_window_override === nothing ?
+                      total_windows(driver) : Int(stop_window_override)
+        initialize_air_mass = idx == 1
+        sim = DrivenSimulation(model, driver;
+                               start_window = start_window,
+                               stop_window = stop_window,
+                               initialize_air_mass = initialize_air_mass,
+                               surface_sources = surface_sources)
+        model = sim.model
+        if !initialize_air_mass
+            boundary_rel = maximum(abs.(model.state.air_mass .- sim.window.air_mass)) /
+                           max(maximum(abs.(sim.window.air_mass)), eps(FT))
+            @info @sprintf("Boundary air-mass mismatch before %s: %.3e",
+                           basename(path), boundary_rel)
+        end
+        window_hours = Float64(window_dt(driver)) / 3600.0
+        n_windows = stop_window - start_window + 1
+        @info @sprintf("Running %s with %s on %s (%d windows)",
+                       basename(path),
+                       nameof(typeof(recipe.advection)),
+                       summary(driver_grid(driver).horizontal),
+                       n_windows)
+        _synchronize_backend!(cfg)
+        t0 = time()
+
+        if do_snapshots
+            for _ in 1:n_windows
+                run_window!(sim)
+                total_elapsed_hours += window_hours
+                while snap_idx <= length(snapshot_hours) &&
+                      abs(total_elapsed_hours - snapshot_hours[snap_idx]) < 0.5
+                    push!(snapshots, _capture_snapshot(model))
+                    @info @sprintf("Snapshot %d at t=%.0fh",
+                                   snap_idx, total_elapsed_hours)
+                    snap_idx += 1
+                end
+            end
+        else
+            run!(sim)
+            total_elapsed_hours += n_windows * window_hours
+        end
+
+        _synchronize_backend!(cfg)
+        @info @sprintf("Finished %s in %.2f s", basename(path), time() - t0)
+        close(driver)
+    end
+
+    if do_snapshots && !isempty(snapshots)
+        _write_snapshot_netcdf(snapshot_file, snapshots, snapshot_hours,
+                               driver_grid(first_driver))
+    end
+
+    m1 = total_air_mass(model.state)
+    @info @sprintf("Final air-mass change vs initial state:  %.3e", (m1 - m0) / m0)
+    for name in tracer_names(model.state)
+        rm0 = Float64(tracer_masses0[name])
+        rm1 = Float64(total_mass(model.state, name))
+        if name in source_tracers
+            @info @sprintf("Final tracer mass for %s (with source): %.12e kg",
+                           String(name), rm1)
+        elseif abs(rm0) > eps(Float64)
+            @info @sprintf("Final tracer-mass drift for %s:         %.3e",
+                           String(name), (rm1 - rm0) / rm0)
+        else
+            @info @sprintf("Final tracer mass for %s:               %.12e kg",
+                           String(name), rm1)
+        end
+    end
+    return model
+end
+
+end # module DrivenRunner

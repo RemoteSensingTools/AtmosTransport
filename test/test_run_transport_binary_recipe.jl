@@ -65,19 +65,15 @@ end
             "init" => Dict("kind" => "uniform", "background" => 4.0e-4),
         )
 
-        driver = TransportBinaryDriver(path; FT = Float64, arch = CPU())
-        recipe = build_runtime_physics_recipe(cfg, driver, Float64)
-        tracer_specs = (TransportTracerSpec(:CO2,
-                                            Dict{String, Any}("kind" => "uniform",
-                                                              "background" => 4.0e-4),
-                                            Dict{String, Any}()),)
-        model = make_model(driver; FT = Float64, recipe = recipe, tracer_specs = tracer_specs, cfg = cfg)
+        # Plan 40 Commit 6a: `make_model` is gone; run through the
+        # unified library entry point. The model is returned at the end of
+        # the loop, so for a 1-window input we can inspect it directly.
+        model = run_driven_simulation(cfg)
 
         @test model.advection isa PPMScheme
         @test model.diffusion isa ImplicitVerticalDiffusion
         @test model.convection isa TM5Convection
         @test model.workspace.convection_ws isa TM5Workspace{Float64}
-        close(driver)
     end
 end
 
@@ -95,7 +91,7 @@ end
             "init" => Dict("kind" => "uniform", "background" => 4.0e-4),
         )
 
-        model = run_sequence([path], cfg)
+        model = run_driven_simulation(cfg)
 
         @test model.convection_forcing.tm5_fields !== nothing
         @test total_air_mass(model.state) ≈ 60 * _RUNTIME_RECIPE_AIR_MASS rtol = 1e-12
@@ -116,6 +112,6 @@ end
             "init" => Dict("kind" => "uniform", "background" => 4.0e-4),
         )
 
-        @test_throws ArgumentError run_sequence([path], cfg)
+        @test_throws ArgumentError run_driven_simulation(cfg)
     end
 end

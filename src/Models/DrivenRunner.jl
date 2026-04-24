@@ -45,14 +45,16 @@ using NCDatasets
 using Logging
 
 using ..State: AbstractMassBasis, DryBasis, MoistBasis, CellState,
-                total_air_mass, total_mass, tracer_names, tracer_index,
-                get_tracer
+                CubedSphereState, total_air_mass, total_mass, tracer_names,
+                tracer_index, get_tracer
 using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                 nx, ny, nrings, ring_longitudes, cell_index, ncells,
                 nlevels
+using ..Architectures: CPU, GPU
 using ..MetDrivers: TransportBinaryDriver, CubedSphereTransportDriver,
                      load_transport_window, driver_grid, air_mass_basis,
-                     total_windows, window_dt, binary_capabilities
+                     total_windows, window_dt, binary_capabilities,
+                     inspect_binary
 using ..InitialConditionIO: build_initial_mixing_ratio,
                              pack_initial_tracer_mass,
                              build_surface_flux_sources
@@ -60,7 +62,13 @@ using ..BinaryPathExpander: expand_binary_paths
 # TransportModel + DrivenSimulation live alongside us in the Models module;
 # reach up to the parent and pull them in.
 using ..Models: TransportModel
-import ..Models: DrivenSimulation, run_window!, run!, allocate_face_fluxes
+import ..Models: DrivenSimulation, run_window!, run!, step!, allocate_face_fluxes
+# Physics-recipe helpers: `build_runtime_physics_recipe` /
+# `validate_runtime_physics_recipe` are defined in `CSPhysicsRecipe.jl`
+# (loaded before us in Models). Pull them in so we don't have to stutter
+# through `Main.AtmosTransport.*`.
+using ..Models: build_runtime_physics_recipe, validate_runtime_physics_recipe,
+                 configured_halo_width, build_cs_advection
 
 export run_driven_simulation, TransportTracerSpec
 
@@ -428,7 +436,17 @@ function run_driven_simulation(cfg::AbstractDict)
     binary_paths = expand_binary_paths(input_cfg)
     isempty(binary_paths) &&
         throw(ArgumentError("[input] resolved to an empty binary list"))
-    return _run_driven_simulation_structured(binary_paths, cfg)
+    # Plan 40 Commit 6b: dispatch on the first binary's grid_type —
+    # the ownership boundary (binary header owns topology, TOML owns
+    # physics kinds). The capability probe also runs the load-time
+    # gates (stale-binary, cm-continuity) as a side effect of opening
+    # the reader in `inspect_binary`.
+    caps = inspect_binary(first(binary_paths); io = devnull)
+    if caps.grid_type === :cubed_sphere
+        return _run_driven_simulation_cs(binary_paths, cfg)
+    else
+        return _run_driven_simulation_structured(binary_paths, cfg)
+    end
 end
 
 function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
@@ -456,8 +474,8 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
     # Open first driver, build recipe, validate capability, build model
     first_driver = TransportBinaryDriver(first(binary_paths);
                                           FT = FT,
-                                          arch = (@isdefined(CPU) ? CPU() : Main.AtmosTransport.CPU()))
-    recipe = Main.AtmosTransport.build_runtime_physics_recipe(cfg, first_driver, FT)
+                                          arch = CPU())
+    recipe = build_runtime_physics_recipe(cfg, first_driver, FT)
     _validate_capability_match(first_driver, recipe, cfg)
 
     model = _make_structured_model(first_driver;
@@ -495,9 +513,8 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
 
     for (idx, path) in enumerate(binary_paths)
         driver = idx == 1 ? first_driver :
-                 TransportBinaryDriver(path; FT = FT,
-                                       arch = (@isdefined(CPU) ? CPU() : Main.AtmosTransport.CPU()))
-        Main.AtmosTransport.validate_runtime_physics_recipe(recipe, driver)
+                 TransportBinaryDriver(path; FT = FT, arch = CPU())
+        validate_runtime_physics_recipe(recipe, driver)
         stop_window = stop_window_override === nothing ?
                       total_windows(driver) : Int(stop_window_override)
         initialize_air_mass = idx == 1
@@ -566,6 +583,197 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
                            String(name), rm1)
         end
     end
+    return model
+end
+
+# ===========================================================================
+# CS runner (plan 40 Commit 6b, hoisted from scripts/run_cs_driven.jl)
+# ===========================================================================
+
+"""Strip halo padding and return the interior `(Nc, Nc, Nz)` view as a CPU Array."""
+_cs_interior(panel, Hp, Nc) = Array(panel[Hp + 1 : Hp + Nc, Hp + 1 : Hp + Nc, :])
+
+_cfg_float_type(cfg) = let s = get(get(cfg, "numerics", Dict()), "float_type", "Float64")
+    s == "Float32" ? Float32 : Float64
+end
+
+function _cfg_architecture(cfg)
+    if _cfg_use_gpu(cfg)
+        _ensure_gpu_runtime!(cfg)
+        return GPU()
+    end
+    return CPU()
+end
+
+function _write_snapshot_cs!(nc_path, snap_data, snap_m, snapshot_hours, mesh, Nz)
+    Nc = mesh.Nc
+    ntime = length(snap_data)
+    isfile(nc_path) && rm(nc_path)
+    mkpath(dirname(nc_path))
+    NCDataset(nc_path, "c") do ds
+        defDim(ds, "Xdim", Nc); defDim(ds, "Ydim", Nc); defDim(ds, "nf", 6)
+        defDim(ds, "lev", Nz); defDim(ds, "time", ntime)
+        ds.attrib["Conventions"] = "CF"
+        ds.attrib["Source"] = "AtmosTransport.jl run_driven_simulation (CS)"
+        ds.attrib["Nc"] = Nc
+
+        defVar(ds, "time", Float64, ("time",),
+               attrib = Dict("units" => "hours since t0"))[:] = Float64.(snapshot_hours[1:ntime])
+        defVar(ds, "nf", Int32, ("nf",))[:] = Int32.(1:6)
+
+        m_v = defVar(ds, "air_mass", Float64, ("Xdim", "Ydim", "nf", "lev", "time"))
+        for t in 1:ntime, p in 1:6
+            m_v[:, :, p, :, t] = snap_m[t][p]
+        end
+        for name in keys(snap_data[1])
+            v = defVar(ds, String(name), Float64,
+                       ("Xdim", "Ydim", "nf", "lev", "time"))
+            for t in 1:ntime, p in 1:6
+                rm_p = snap_data[t][name][p]
+                m_p  = snap_m[t][p]
+                # Column-diagnostic VMR = rm / m; clamp tiny denominators
+                v[:, :, p, :, t] = rm_p ./ max.(m_p, eps(Float64))
+            end
+        end
+    end
+    @info "Saved snapshots: $nc_path (C$Nc × 6 panels × $Nz levels × $ntime times)"
+end
+
+function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
+    FT   = _cfg_float_type(cfg)
+    arch = _cfg_architecture(cfg)
+
+    run_cfg = get(cfg, "run", Dict{String, Any}())
+    advection = build_cs_advection(cfg)
+    Hp = configured_halo_width(cfg, advection)
+    stop_window_override = get(run_cfg, "stop_window", nothing)
+
+    output_cfg = get(cfg, "output", Dict{String, Any}())
+    snapshot_hours = Float64.(get(output_cfg, "snapshot_hours", Float64[0, 24, 48]))
+    snapshot_file  = expanduser(String(get(output_cfg, "snapshot_file",
+                                           "cs_driven_snapshot.nc")))
+
+    tracers_cfg = get(cfg, "tracers", Dict{String, Any}())
+    isempty(tracers_cfg) && error("[tracers] must define at least one tracer")
+    tracer_init = Dict(Symbol(n) => get(c, "init",
+                                        Dict("kind" => "uniform", "background" => 0.0))
+                       for (n, c) in tracers_cfg)
+
+    # First driver + model (reuses air_mass from window 1)
+    driver1 = CubedSphereTransportDriver(first(binary_paths);
+                                          FT = FT, arch = arch, Hp = Hp)
+    recipe  = build_runtime_physics_recipe(cfg, driver1, FT; halo_width = Hp)
+    _validate_capability_match(driver1, recipe, cfg)
+
+    grid    = driver_grid(driver1)
+    mesh    = grid.horizontal
+    window1 = load_transport_window(driver1, 1)
+    air_mass = window1.air_mass
+    Nz = size(air_mass[1], 3)
+
+    # Plan 40 Commit 2 + 1c: CS tracers flow through the unified IC
+    # pipeline. DryBasis is the default per invariant 14. MoistBasis CS
+    # runs need qv from window1; feedback_vmr_to_mass_basis_aware errors
+    # loudly if the config selects moist without threading qv — caller
+    # fixes by requesting a dry binary or extending the packer call.
+    tracer_kwargs = Dict{Symbol, NTuple{6, typeof(air_mass[1])}}()
+    for (name, init_cfg) in tracer_init
+        vmr = build_initial_mixing_ratio(air_mass, grid, init_cfg)
+        tracer_kwargs[name] = pack_initial_tracer_mass(grid, air_mass, vmr;
+                                                       mass_basis = DryBasis())
+    end
+
+    state  = CubedSphereState(DryBasis, mesh, air_mass; tracer_kwargs...)
+    fluxes = allocate_face_fluxes(mesh, Nz; FT = FT, basis = DryBasis)
+
+    model = TransportModel(state, fluxes, grid, recipe.advection;
+                            diffusion  = recipe.diffusion,
+                            convection = recipe.convection)
+    _assert_gpu_residency!(model.state, cfg)
+
+    @info @sprintf("CS driven runner  C%d × %d levels  Hp=%d  %s  FT=%s  %s",
+                   mesh.Nc, Nz, Hp, typeof(recipe.advection).name.name, FT,
+                   _cfg_use_gpu(cfg) ? "GPU" : "CPU")
+    @info @sprintf("Physics: advection=%s  diffusion=%s  convection=%s",
+                   typeof(recipe.advection).name.name,
+                   typeof(recipe.diffusion).name.name,
+                   typeof(recipe.convection).name.name)
+    @info @sprintf("Tracers: %s   Binaries: %d → %s",
+                   join(String.(keys(tracer_init)), ", "),
+                   length(binary_paths), snapshot_file)
+
+    # Snapshot storage
+    snap_data = Dict{Symbol, NTuple{6, Array{FT, 3}}}[]
+    snap_m    = NTuple{6, Array{FT, 3}}[]
+    snap_taken = Float64[]
+
+    function capture_cs!(hour_total)
+        cur_m = ntuple(p -> _cs_interior(state.air_mass[p], Hp, mesh.Nc), 6)
+        cur_tracers = Dict(n => ntuple(p -> _cs_interior(get_tracer(state, n)[p],
+                                                          Hp, mesh.Nc), 6)
+                           for n in keys(tracer_init))
+        push!(snap_m, cur_m)
+        push!(snap_data, cur_tracers)
+        push!(snap_taken, hour_total)
+    end
+
+    snap_idx = 1
+    total_hour = 0.0
+    if snap_idx <= length(snapshot_hours) && abs(snapshot_hours[snap_idx]) < 0.5
+        capture_cs!(0.0)
+        @info @sprintf("  Snapshot %d at t=%.1fh", snap_idx, 0.0)
+        snap_idx += 1
+    end
+
+    t0 = time()
+    drivers = [driver1;
+               [CubedSphereTransportDriver(expanduser(p); FT = FT,
+                                           arch = arch, Hp = Hp)
+                for p in binary_paths[2:end]]]
+
+    for driver in drivers
+        validate_runtime_physics_recipe(recipe, driver; halo_width = Hp)
+        stop_window = stop_window_override === nothing ?
+                      total_windows(driver) :
+                      min(Int(stop_window_override), total_windows(driver))
+        window_hours = window_dt(driver) / 3600.0
+
+        # Plan-39 Commit G removed the window-boundary air_mass reset, so
+        # the cross-day handoff is continuity-consistent. We rebuild the
+        # sim around each day's driver; state + physics carry over.
+        if driver !== driver1
+            fluxes_d = allocate_face_fluxes(mesh, Nz; FT = FT, basis = DryBasis)
+            model = TransportModel(state, fluxes_d, grid, recipe.advection;
+                                    diffusion  = recipe.diffusion,
+                                    convection = recipe.convection)
+        end
+        sim = DrivenSimulation(model, driver;
+                               start_window = 1, stop_window = stop_window)
+
+        while sim.iteration < sim.final_iteration
+            step!(sim)
+            if sim.iteration % sim.steps_per_window == 0
+                total_hour += window_hours
+                while snap_idx <= length(snapshot_hours) &&
+                      abs(total_hour - snapshot_hours[snap_idx]) < 0.5
+                    capture_cs!(total_hour)
+                    @info @sprintf("  Snapshot %d at t=%.1fh",
+                                   snap_idx, total_hour)
+                    snap_idx += 1
+                end
+            end
+        end
+        close(driver)
+    end
+
+    @info @sprintf("Done: %.1fs  (%d snapshots, final t=%.1fh)",
+                   time() - t0, length(snap_data), total_hour)
+
+    for name in keys(tracer_init)
+        @info @sprintf("  %s total mass: %.6e kg", name, total_mass(state, name))
+    end
+
+    _write_snapshot_cs!(snapshot_file, snap_data, snap_m, snap_taken, mesh, Nz)
     return model
 end
 

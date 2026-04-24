@@ -6,6 +6,7 @@ Minimal standalone runtime layer for `src`.
 module Models
 
 using Adapt
+using ..Architectures
 using ..State
 using ..Grids
 using ..Operators

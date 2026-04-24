@@ -1,0 +1,487 @@
+=== runtests.jl ===
+[ Info: Running test_basis_explicit_core.jl
+[ Info: Running test_advection_kernels.jl
+[ Info: Running test_structured_mesh_metadata.jl
+[ Info: Running test_reduced_gaussian_mesh.jl
+[ Info: Running test_driven_simulation.jl
+[ Info: Running test_transport_model_convection.jl
+[ Info: Running test_tm5_convection.jl
+[ Info: Running test_tm5_preprocessing.jl
+[ Info: Running test_tm5_preprocessing_rates.jl
+[ Info: Running test_era5_physics_binary.jl
+[ Info: Running test_tm5_vertical_remap.jl
+[ Info: Running test_tm5_process_day.jl
+[ Info:   Writing binary...
+[ Info: Running test_tm5_vs_cmfmc_parity.jl
+[ Info: Running test_tm5_driven_simulation.jl
+[ Info: Running test_cubed_sphere_advection.jl
+[ Info: Poisson balance: corrected 4/4 levels, max pre-balance residual: 0.0168 kg
+[ Info: Running test_cubed_sphere_runtime.jl
+[ Info: Running test_cs_chemistry.jl
+[ Info: Running test_poisson_balance.jl
+[ Info: Poisson balance: corrected 0/2 levels, max pre-balance residual: 0.0 kg
+[ Info: Poisson balance: corrected 4/4 levels, max pre-balance residual: 0.00516 kg
+[ Info: Poisson balance: corrected 2/2 levels, max pre-balance residual: 0.001 kg
+[ Info: Poisson balance: corrected 8/8 levels, max pre-balance residual: 0.0176 kg
+[ Info: Poisson balance: corrected 8/8 levels, max pre-balance residual: 0.0176 kg
+[ Info: Running test_replay_consistency.jl
+[ Info:   Write-time replay gate: max|m_evolved−m_stored|/max|m| = 4.000e-05  (abs=4.000e+04 kg  win=1  cell=(2, 2, 1))
+[ Info: Running test_run_transport_binary_recipe.jl
+[ Info: Backend: CPU
+[ Info: Physics: advection=PPMScheme diffusion=ImplicitVerticalDiffusion convection=TM5Convection
+[ Info: Running tm5_runtime.bin with PPMScheme on 4×3 LatLonMesh{Float64} (1 windows)
+[ Info: Finished tm5_runtime.bin in 2.06 s
+[ Info: Final air-mass change vs initial state:  0.000e+00
+[ Info: Final tracer-mass drift for CO2:         NaN
+[ Info: Backend: CPU
+[ Info: Physics: advection=PPMScheme diffusion=NoDiffusion convection=TM5Convection
+[ Info: Running tm5_runtime.bin with PPMScheme on 4×3 LatLonMesh{Float64} (1 windows)
+[ Info: Finished tm5_runtime.bin in 0.08 s
+[ Info: Final air-mass change vs initial state:  0.000e+00
+[ Info: Final tracer-mass drift for CO2:         0.000e+00
+[ Info: Running test_initial_condition_io.jl
+┌ Info: Loading cached regridder
+└   path = "/home/cfranken/.cache/AtmosTransport/cr_regridding/regridder_0f84d18c92ccc51d52077c16931b1f1b1e3fdee0.jld2"
+[ Info:   Conservative regrid: src_total=5.100645e+14  dst_total=5.100645e+14  rel_err=1.23e-16 kg/s
+[ Info: Running test_binary_path_expander.jl
+[ Info: Running test_binary_inspector.jl
+[ Info: Running test_cs_driven_builders.jl
+[ Info: Running test_aqua.jl
+ERROR: LoadError: ArgumentError: Package Aqua not found in current path.
+- Run `import Pkg; Pkg.add("Aqua")` to install the Aqua package.
+Stacktrace:
+  [1] macro expansion
+    @ ./loading.jl:2403 [inlined]
+  [2] macro expansion
+    @ ./lock.jl:376 [inlined]
+  [3] __require(into::Module, mod::Symbol)
+    @ Base ./loading.jl:2386
+  [4] require(into::Module, mod::Symbol)
+    @ Base ./loading.jl:2362
+  [5] include(mod::Module, _path::String)
+    @ Base ./Base.jl:306
+  [6] run_test_file_isolated(test_file::String)
+    @ Main ~/code/gitHub/AtmosTransportModel/test/runtests.jl:21
+  [7] top-level scope
+    @ ~/code/gitHub/AtmosTransportModel/test/runtests.jl:58
+  [8] include(mod::Module, _path::String)
+    @ Base ./Base.jl:306
+  [9] exec_options(opts::Base.JLOptions)
+    @ Base ./client.jl:317
+ [10] _start()
+    @ Base ./client.jl:550
+in expression starting at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_aqua.jl:19
+in expression starting at /home/cfranken/code/gitHub/AtmosTransportModel/test/runtests.jl:56
+Test Summary:                  | Pass  Total  Time
+PlanetParameters and AtmosGrid |    6      6  0.8s
+Test Summary:             | Pass  Total  Time
+Basis-explicit core types |    8      8  1.0s
+Test Summary:                 | Pass  Total  Time
+Standalone runtime smoke test |    6      6  2.7s
+Test Summary:                           | Pass  Total  Time
+Structured x-direction static CFL pilot |    6      6  2.6s
+Test Summary:                                 | Pass  Total  Time
+Clustered x-sweeps accept Int32 cluster_sizes |    8      8  0.3s
+Test Summary:                                           | Pass  Total  Time
+RussellLerner y-sweep stays finite with zero-mass donor |    4      4  0.7s
+Test Summary:                                           | Pass  Total  Time
+Face-indexed horizontal subcycling preserves positivity |    4      4  1.2s
+Test Summary:                     | Pass  Total   Time
+GPU static CFL enforces max_n_sub |    1      1  14.6s
+Test Summary:                                         | Pass  Total  Time
+CubedSphere runtime uses dedicated panel-native types |    8      8  2.3s
+Test Summary:                              | Pass  Total  Time
+Face-connected reduced-Gaussian smoke test |    5      5  1.5s
+Test Summary:                                              | Pass  Total  Time
+Face-connected reduced-Gaussian GPU matches CPU for Upwind |    4      4  4.8s
+Test Summary:                                                    | Pass  Total  Time
+Face-connected unsupported reconstruction families fail honestly |    2      2  0.0s
+Test Summary:                  | Pass  Total  Time
+Adapt.jl container conversions |    8      8  0.3s
+    CPU-GPU F64 1-step: rm_ulp=0.25 m_ulp=0.0
+    CPU-GPU F64 4-step: rm_ulp=0.25 m_ulp=0.0
+    CPU-GPU F32 1-step: rm_ulp=0.0078125 m_ulp=0.0
+    CPU-GPU F32 4-step: rm_ulp=0.0234375 m_ulp=0.0
+  F32 vs F64 max relative difference (4 steps): 1.4142303e-6
+  F32 vs F64 global mass bias (4 steps):        3.158391710913603e-8
+Test Summary:                            | Pass  Total   Time
+Advection kernels: {CPU,GPU} × {F32,F64} |   28     28  13.4s
+    CPU-GPU Slopes F64 4-step: rm_ulp=0.00390625 m_ulp=0.0
+    CPU-GPU Slopes F32 4-step: rm_ulp=0.0 m_ulp=0.0
+  Slopes F32 vs F64 max relative difference (4 steps): 1.3356629e-6
+  Slopes F32 vs F64 global mass bias (4 steps):        7.121686260708159e-9
+Test Summary:                               | Pass  Total  Time
+SlopesScheme kernels: {CPU,GPU} × {F32,F64} |   20     20  3.5s
+    CPU-GPU PPM F64 4-step: rm_ulp=0.25 m_ulp=0.0
+    CPU-GPU PPM F32 4-step: rm_ulp=0.25 m_ulp=0.0
+  PPM F32 vs F64 max relative difference (4 steps): 1.257094e-6
+  PPM F32 vs F64 global mass bias (4 steps):        -2.1969321594608833e-8
+Test Summary:                            | Pass  Total  Time
+PPMScheme kernels: {CPU,GPU} × {F32,F64} |   20     20  3.7s
+    MT CPU-GPU F64: m_ulp=0.0
+    MT CPU-GPU F32: m_ulp=0.0
+Test Summary:              | Pass  Total  Time
+Multi-tracer kernel fusion |   84     84  5.0s
+    F64: n_sub = (1, 1, 1)
+    F32: n_sub = (1, 1, 1)
+Test Summary:               | Pass  Total  Time
+Unified CFL pilot (plan 13) |    6      6  0.1s
+
+✓ All advection kernel cross-backend/precision tests completed!
+Test Summary:                   | Pass  Total  Time
+LatLonMesh style and validation |   12     12  0.3s
+Test Summary:               | Pass  Total  Time
+CubedSphereMesh conventions |   15     15  0.5s
+Test Summary:              | Pass  Total  Time
+ReducedGaussianMesh wiring |    4      4  0.0s
+Test Summary:                | Pass  Total  Time
+ReducedGaussianMesh geometry |   22     22  0.5s
+Test Summary:                                                          | Pass  Total  Time
+DrivenSimulation optional no-reset window carry preserves mixing ratio |    3      3  5.9s
+Test Summary:                                         | Pass  Total  Time
+DrivenSimulation applies bottom-layer surface sources |    4      4  1.2s
+Test Summary:                                                            | Pass  Total  Time
+DrivenSimulation applies bottom-layer surface sources on ReducedGaussian |    4      4  2.3s
+Test Summary:                                                              | Pass  Total  Time
+DrivenSimulation ReducedGaussian run! accumulates emissions across windows |    6      6  0.6s
+Test Summary:                                                            | Pass  Total  Time
+DrivenSimulation ReducedGaussian supports diffusion plus surface sources |    4      4  0.7s
+Test Summary:                           | Pass  Total  Time
+DrivenSimulation window-forcing runtime |   50     50  1.7s
+Test Summary:                     | Pass  Total  Time
+TransportModel convection runtime |   24     24  3.7s
+Test Summary:                       | Pass  Total  Time
+DrivenSimulation convection runtime |   10     10  0.6s
+Test Summary:                                         | Pass  Total  Time
+DrivenSimulation keeps convection runtime on model FT |    4      4  0.9s
+Test Summary:                                            | Pass  Total  Time
+plan 23 Commit 1: TM5Convection type + workspace factory |    5      5  0.0s
+Test Summary:                                   | Pass  Total  Time
+plan 23 Commit 1: TM5Workspace allocation shape |   16     16  0.5s
+Test Summary:                                        | Pass  Total  Time
+plan 23 Commit 1: _convection_workspace_for dispatch |    4      4  0.3s
+Test Summary:                                    | Pass  Total  Time
+plan 23 Commit 4: TM5Convection apply! LL kernel |    4      4  1.1s
+Test Summary:                                    | Pass  Total  Time
+plan 23 Commit 4: TM5Convection apply! RG kernel |    2      2  1.2s
+Test Summary:                                    | Pass  Total  Time
+plan 23 Commit 4: TM5Convection apply! CS kernel |    1      1  1.9s
+Test Summary:                                                    | Pass  Total  Time
+plan 23 Commit 4: _assert_tm5_forcing catches missing tm5_fields |    4      4  0.1s
+Test Summary:                                                | Pass  Total  Time
+plan 23 Commit 2: _tm5_solve_column! identity + conservation |   39     39  0.7s
+Test Summary:                                   | Pass  Total  Time
+plan 23 Commit 2: column-major loop-order audit |    1      1  0.2s
+Test Summary:                                             | Pass  Total  Time
+plan 23 Commit 1: with_convection(model, TM5Convection()) |    5      5  0.2s
+Test Summary:                        | Pass  Total  Time
+plan 23 Commit 3: ec2tm! column math |   27     27  0.4s
+Test Summary:                                       | Pass  Total  Time
+plan 23 Commit 3: LL transport binary TM5 roundtrip |    6      6  1.9s
+Test Summary:                                                      | Pass  Total  Time
+plan 23 Commit 3: LL binary without TM5 → has_tm5_convection=false |    2      2  0.3s
+Test Summary:                                                                  | Pass  Total  Time
+plan 23 Commit 3: TransportBinaryDriver populates window.convection.tm5_fields |    8      8  0.8s
+Test Summary:                                  | Pass  Total  Time
+plan 24 Commit 1: ec2tm_from_rates! F90 parity |   11     11  0.4s
+Test Summary:                                    | Pass  Total  Time
+plan 24 Commit 1: ec2tm_from_rates! zero forcing |    4      4  0.0s
+Test Summary:                                        | Pass  Total  Time
+plan 24 Commit 1: ec2tm_from_rates! bad-data cleanup |    9      9  0.2s
+Test Summary:                                               | Pass  Total  Time
+plan 24 Commit 1: ec2tm_from_rates! negative redistribution |    8      8  0.0s
+Test Summary:                                    | Pass  Total  Time
+plan 24 Commit 1: dz_hydrostatic_virtual! sanity |    8      8  0.1s
+Test Summary:                                          | Pass  Total  Time
+plan 24 Commit 1: dz_hydrostatic_virtual! shape guards |    4      4  0.0s
+Test Summary:                                        | Pass  Total  Time
+plan 24 Commit 1: ec2tm! (plan-23 minimal) unchanged |    2      2  0.0s
+Test Summary:                                    | Pass  Total  Time
+plan 24 Commit 1: ec2tm_from_rates! shape guards |    2      2  0.0s
+Test Summary:                                    | Pass  Total  Time
+plan 24 Commit 2: BIN roundtrip on synthetic NCs |   20     20  9.9s
+Test Summary:                              | Pass  Total  Time
+plan 24 Commit 2: latitude flip N→S to S→N |    3      3  0.1s
+Test Summary:                                      | Pass  Total  Time
+plan 24 Commit 2: missing-file errors name the fix |    5      5  0.1s
+Test Summary:                                        | Pass  Total  Time
+plan 24 Commit 2: open on missing BIN errors clearly |    3      3  0.0s
+Test Summary:                                       | Pass  Total  Time
+plan 24 Commit 2: idempotent write (skip if exists) |    4      4  0.1s
+Test Summary:                                                     | Pass  Total  Time
+plan 24 Commit 2: get_era5_physics_field returns views (no alloc) |    1      1  0.1s
+Test Summary:                                       | Pass  Total  Time
+plan 24 Commit 2: unknown var symbol errors cleanly |    1      1  0.1s
+Test Summary:                                              | Pass  Total  Time
+plan 24 Commit 3: merge_tm5_field_3d! preserves column sum |   62     62  0.3s
+Test Summary:                                              | Pass  Total  Time
+plan 24 Commit 3: merge_tm5_field_3d! zeros unused buckets |    5      5  0.3s
+Test Summary:                                      | Pass  Total  Time
+plan 24 Commit 3: merge_tm5_field_3d! shape guards |    2      2  0.0s
+Test Summary:                                           | Pass  Total  Time
+plan 24 Commit 3: tm5_native_fields_for_hour! grid loop |   15     15  0.5s
+Test Summary:                                                    | Pass  Total  Time
+plan 24 Commit 3: tm5_native_fields_for_hour! output-shape guard |    1      1  0.3s
+Test Summary:                                                     | Pass  Total  Time
+plan 24 Commit 3: end-to-end native → merged column sum preserved |   48     48  0.3s
+Test Summary:                   | Pass  Total  Time
+resolve_tm5_convection_settings |    9      9  0.3s
+Test Summary:                          | Pass  Total  Time
+LL write_day_binary! with TM5 sections |   17     17  1.5s
+Test Summary:                                   | Pass  Total  Time
+compute_tm5_merged_hour_on_source! zero-forcing |   17     17  2.0s
+Test Summary:                                   | Pass  Total  Time
+plan 23 Commit 5: CMFMC vs TM5 parity on LatLon |    6      6  1.8s
+Test Summary:                                            | Pass  Total  Time
+plan 23 Commit 5: CMFMC vs TM5 parity on ReducedGaussian |    3      3  1.2s
+Test Summary:                                         | Pass  Total  Time
+plan 23 Commit 6: DrivenSimulation with TM5Convection |   11     11  2.8s
+Test Summary:                                           | Pass  Total  Time
+plan 23 Commit 6: DrivenSimulation preserves FT for TM5 |    4      4  0.8s
+Test Summary:            | Pass  Total  Time
+CubedSphereMesh geometry |   36     36  0.3s
+Test Summary: | Pass  Total  Time
+Halo exchange |  496    496  0.6s
+Test Summary:                      | Pass  Total  Time
+CS Strang splitting — UpwindScheme |    2      2  1.0s
+Test Summary:                                       | Pass  Total  Time
+CS Strang splitting — SlopesScheme{MonotoneLimiter} |    9      9  1.8s
+Test Summary:                   | Pass  Total  Time
+CS Strang splitting — PPMScheme |    3      3  0.9s
+Test Summary:      | Pass  Total  Time
+CS halo validation |    2      2  0.4s
+Test Summary:                              | Pass  Total  Time
+LLPoissonWorkspace zero-allocation balance |    1      1  0.3s
+Test Summary:          | Pass  Total  Time
+CS advection — Float32 |    1      1  1.7s
+Test Summary:                                   | Pass  Total   Time
+CubedSphere transport driver + DrivenSimulation |   30     30  10.2s
+Test Summary:                                                              | Pass  Total   Time
+CubedSphere runtime supports CMFMC convection without promoting to Float64 |   13     13  10.6s
+Test Summary:                                               | Pass  Total  Time
+CubedSphere runtime supports diffusion plus surface sources |    9      9  1.8s
+Test Summary:                                                                      | Pass  Total  Time
+CubedSphere runtime supports Lin-Rood advection plus diffusion plus TM5 convection |   15     15  5.8s
+Test Summary:                                     | Pass  Total  Time
+Chemistry on CubedSphereState (plan 21 follow-up) |  152    152  1.9s
+Test Summary:          | Pass  Total  Time
+LL FFT Poisson balance |    6      6  0.2s
+Test Summary:             | Pass  Total  Time
+CS global Poisson balance |  317    317  2.9s
+Test Summary:                                          | Pass  Total  Time
+Plan 39 Commit H — replay-consistency gate regressions |   19     19  1.0s
+Test Summary:                                          | Pass  Total   Time
+run_transport_binary builds structured runtime recipes |    4      4  11.8s
+Test Summary:                              | Pass  Total  Time
+run_transport_binary runtime recipe wiring |    3      3  0.5s
+Test Summary:                                                | Pass  Total  Time
+run_transport_binary rejects unsupported recipe capabilities |    1      1  0.1s
+Test Summary:                                | Pass  Total   Time
+plan 40 Commit 1b — InitialConditionIO hoist |   78     78  13.0s
+Test Summary:                          | Pass  Total  Time
+plan 40 Commit 4 — expand_binary_paths |   19     19  1.0s
+Test Summary:                                           | Pass  Total  Time
+plan 40 Commit 5 — binary_capabilities + inspect_binary |   24     24  2.0s
+Test Summary:          | Pass  Total  Time
+run_cs_driven builders |   60     60  2.6s
+core_exit=1
+
+=== test_aqua ===
+Precompiling packages...
+   6614.2 ms  ✓ AtmosTransport
+  1 dependency successfully precompiled in 8 seconds. 167 already precompiled.
+1 ambiguities found. To get a list, set `broken = false`.
+Ambiguity #1
+_validate_convection_window!(::AtmosTransport.Operators.Convection.NoConvection, _window, _driver) @ AtmosTransport.Models ~/code/gitHub/AtmosTransportModel/src/Models/DrivenSimulation.jl:147
+_validate_convection_window!(op::AtmosTransport.Operators.Convection.AbstractConvectionOperator, ::AtmosTransport.MetDrivers.AbstractTransportWindow, ::AtmosTransport.MetDrivers.AbstractMetDriver) @ AtmosTransport.Models ~/code/gitHub/AtmosTransportModel/src/Models/DrivenSimulation.jl:173
+
+Possible fix, define
+  _validate_convection_window!(::AtmosTransport.Operators.Convection.NoConvection, ::AtmosTransport.MetDrivers.AbstractTransportWindow, ::AtmosTransport.MetDrivers.AbstractMetDriver)
+
+ERROR: LoadError: Some tests did not pass: 8 passed, 2 failed, 0 errored, 0 broken.
+in expression starting at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_aqua.jl:31
+Method ambiguity: Test Failed at /home/cfranken/.julia/packages/Aqua/MCcFg/src/ambiguities.jl:78
+  Expression: iszero(num_ambiguities)
+
+Stacktrace:
+ [1] macro expansion
+   @ ~/.julia/juliaup/julia-1.12.5+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:680 [inlined]
+ [2] _test_ambiguities(packages::Vector{Base.PkgId}; broken::Bool, kwargs::@Kwargs{})
+   @ Aqua ~/.julia/packages/Aqua/MCcFg/src/ambiguities.jl:78
+ [3] _test_ambiguities
+   @ ~/.julia/packages/Aqua/MCcFg/src/ambiguities.jl:68 [inlined]
+ [4] test_ambiguities
+   @ ~/.julia/packages/Aqua/MCcFg/src/ambiguities.jl:28 [inlined]
+ [5] macro expansion
+   @ ~/.julia/packages/Aqua/MCcFg/src/Aqua.jl:73 [inlined]
+ [6] macro expansion
+   @ ~/.julia/juliaup/julia-1.12.5+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1776 [inlined]
+ [7] test_all(testtarget::Module; ambiguities::Bool, unbound_args::Bool, undefined_exports::Bool, project_extras::Bool, stale_deps::Bool, deps_compat::Bool, piracies::Bool, persistent_tasks::Bool, undocumented_names::Bool)
+   @ Aqua ~/.julia/packages/Aqua/MCcFg/src/Aqua.jl:73
+Stale dependencies: Test Failed at /home/cfranken/.julia/packages/Aqua/MCcFg/src/stale_deps.jl:31
+  Expression: isempty(stale_deps)
+   Evaluated: isempty(Base.PkgId[Base.PkgId(Base.UUID("c7e460c6-2fb9-53a9-8c5b-16f535851c63"), "ArgParse")])
+
+Stacktrace:
+ [1] macro expansion
+   @ ~/.julia/juliaup/julia-1.12.5+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:680 [inlined]
+ [2] test_stale_deps(pkg::Base.PkgId; kwargs::@Kwargs{})
+   @ Aqua ~/.julia/packages/Aqua/MCcFg/src/stale_deps.jl:31
+ [3] test_stale_deps
+   @ ~/.julia/packages/Aqua/MCcFg/src/stale_deps.jl:29 [inlined]
+ [4] #test_stale_deps#26
+   @ ~/.julia/packages/Aqua/MCcFg/src/stale_deps.jl:35 [inlined]
+ [5] test_stale_deps
+   @ ~/.julia/packages/Aqua/MCcFg/src/stale_deps.jl:34 [inlined]
+ [6] macro expansion
+   @ ~/.julia/packages/Aqua/MCcFg/src/Aqua.jl:94 [inlined]
+ [7] macro expansion
+   @ ~/.julia/juliaup/julia-1.12.5+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1776 [inlined]
+ [8] test_all(testtarget::Module; ambiguities::Bool, unbound_args::Bool, undefined_exports::Bool, project_extras::Bool, stale_deps::Bool, deps_compat::Bool, piracies::Bool, persistent_tasks::Bool, undocumented_names::Bool)
+   @ Aqua ~/.julia/packages/Aqua/MCcFg/src/Aqua.jl:94
+Test Summary:                                | Pass  Fail  Total   Time
+Aqua: package health                         |    8     2     10  11.8s
+  Method ambiguity                           |          1      1   3.8s
+  Unbound type parameters                    |    1            1   0.0s
+  Undefined exports                          |    1            1   0.0s
+  Compare Project.toml and test/Project.toml |    1            1   0.1s
+  Stale dependencies                         |          1      1   2.3s
+  Compat bounds                              |    4            4   0.1s
+  Piracy                                     |    1            1   0.0s
+RNG of the outermost testset: Random.Xoshiro(0x157d5937e9c28c4b, 0x6e9b8431938fd2ab, 0xca464bee1f754dff, 0x5d66de5c67e2f73a, 0xe27f75fa18f14cdd)
+aqua_exit=1
+
+=== test_jet ===
+[ Info: JET hot-path modules: 130 reports (baseline 119)
+ERROR: LoadError: Some tests did not pass: 0 passed, 1 failed, 0 errored, 0 broken.
+in expression starting at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_jet.jl:74
+
+⚠  JET report count rose above the baseline.
+   Baseline: 119
+   Current:  130
+   Delta:    +11
+
+   First 20 reports:
+   [1] MethodErrorReport(no matching method found `kwcall(::NamedTuple{(:ndrange,), <:Tuple{Any}}, ::KernelAbstractions.Kernel{Backend, KernelAbstractions.NDIteration.StaticSize{(256,)}, KernelAbstractions.NDIteration.DynamicSize, typeof(AtmosTransport.Operators.Advection.gpu__xsweep_kernel!)} where Backend<:KernelAbstractions.GPU, ::AbstractArray{FT, 3} where FT, ::AbstractArray{FT, 3} where FT, ::AbstractArray{FT, 3} where FT, ::AbstractArray{FT, 3} where FT, ::AbstractArray{FT, 3} where FT, ::AbstractAdvectionScheme, ::Any, ::Any)` (1/2 union split): Core.kwcall(NamedTuple{(:ndrange,)}(tuple(AtmosTransport.Operators.Advection.size(m_in::AbstractArray{FT, 3} where FT)::Any)::Tuple{Any})::NamedTuple{(:ndrange,), <:Tuple{Any}}, kernel!, rm_out::AbstractArray{FT, 3} where FT, rm_in::AbstractArray{FT, 3} where FT, m_out::AbstractArray{FT, 3} where FT, m_in::AbstractArray{FT, 3} where FT, flux::AbstractArray{FT, 3} where FT, scheme::AbstractAdvectionScheme, AtmosTransport.Operators.Advection.Int32(AtmosTransport.Operators.Advection.size(m_in::AbstractArray{FT, 3} where FT, 1)::Any)::Any, AtmosTransport.Operators.Advection.one(FT::Any)::Any))
+   [2] MethodErrorReport(no matching method found `kwcall(::NamedTuple{(:ndrange,), <:Tuple{Tuple{Any, Any, Any}}}, ::KernelAbstractions.Kernel{Backend, KernelAbstractions.NDIteration.StaticSize{(256,)}, KernelAbstractions.NDIteration.DynamicSize, typeof(AtmosTransport.Operators.Advection.gpu__m_from_dp_kernel!)} where Backend<:KernelAbstractions.GPU, ::Any, ::Any, ::Any, ::Any, ::Any)` (1/2 union split): Core.kwcall(NamedTuple{(:ndrange,)}(tuple(tuple(Nc::Any, Nc::Any, Nz::Any)::Tuple{Any, Any, Any})::Tuple{Tuple{Any, Any, Any}})::NamedTuple{(:ndrange,), <:Tuple{Tuple{Any, Any, Any}}}, k!::Union{KernelAbstractions.Kernel{…}, KernelAbstractions.Kernel{…} where Backend<:KernelAbstractions.GPU}, (m_panels::NTuple{6, T} where T)[p]::Any, (dp_panels::NTuple{6, T} where T)[p]::Any, (area_panels::Any)[p]::Any, gravity::Any, Hp::Any))
+   [3] MethodErrorReport(no matching method found `kwcall(::NamedTuple{(:ndrange,), <:Tuple{Tuple{Any, Any, Any}}}, ::KernelAbstractions.Kernel{Backend, KernelAbstractions.NDIteration.StaticSize{(256,)}, KernelAbstractions.NDIteration.DynamicSize, typeof(AtmosTransport.Operators.Advection.gpu__m_from_dp_kernel!)} where Backend<:KernelAbstractions.GPU, ::Any, ::Any, ::Any, ::Any, ::Any)` (1/2 union split): Core.kwcall(NamedTuple{(:ndrange,)}(tuple(tuple(Nc::Any, Nc::Any, Nz::Any)::Tuple{Any, Any, Any})::Tuple{Tuple{Any, Any, Any}})::NamedTuple{(:ndrange,), <:Tuple{Tuple{Any, Any, Any}}}, k!::Union{KernelAbstractions.Kernel{…}, KernelAbstractions.Kernel{…} where Backend<:KernelAbstractions.GPU}, (m_panels::NTuple{6, T} where T)[p::Int64]::Any, (dp_panels::NTuple{6, T} where T)[p::Int64]::Any, (area_panels::Any)[p::Int64]::Any, gravity::Any, Hp::Any)::Any)
+   [4] MethodErrorReport(no matching method found `getindex(::Nothing, ::Int64)` (1/2 union split): (ps_panels::Union{Nothing, NTuple{6, Matrix{Float64}}})[p::Int64])
+   [5] MethodErrorReport(no matching method found `getindex(::Nothing, ::Int64)` (1/2 union split): (ps_panels::Union{Nothing, NTuple{6, Matrix{Float64}}})[p::Int64]::Matrix{Float64})
+   [6] MethodErrorReport(no matching method found `kwcall(::NamedTuple{(:ndrange,), <:Tuple{Any}}, ::KernelAbstractions.Kernel{Backend, KernelAbstractions.NDIteration.StaticSize{(256,)}, KernelAbstractions.NDIteration.DynamicSize, typeof(AtmosTransport.Operators.Advection.gpu__ysweep_kernel!)} where Backend<:KernelAbstractions.GPU, ::AbstractArray{FT, 3} where FT, ::AbstractArray{FT, 3} where FT, ::AbstractArray{FT, 3} where FT, ::AbstractArray{FT, 3} where FT, ::AbstractArray{FT, 3} where FT, ::AbstractAdvectionScheme, ::Any, ::Any)` (1/2 union split): Core.kwcall(NamedTuple{(:ndrange,)}(tuple(AtmosTransport.Operators.Advection.size(m_in::AbstractArray{FT, 3} where FT)::Any)::Tuple{Any})::NamedTuple{(:ndrange,), <:Tuple{Any}}, kernel!, rm_out::AbstractArray{FT, 3} where FT, rm_in::AbstractArray{FT, 3} where FT, m_out::AbstractArray{FT, 3} where FT, m_in::AbstractArray{FT, 3} where FT, flux::AbstractArray{FT, 3} where FT, scheme::AbstractAdvectionScheme, AtmosTransport.Operators.Advection.Int32(AtmosTransport.Operators.Advection.size(m_in::AbstractArray{FT, 3} where FT, 2)::Any)::Any, AtmosTransport.Operators.Advection.one(FT::Any)::Any))
+   [7] MethodErrorReport(no matching method found `kwcall(::@NamedTuple{ndrange::Tuple{Int64, Int64}}, ::KernelAbstractions.Kernel{Backend, KernelAbstractions.NDIteration.StaticSize{(256,)}, KernelAbstractions.NDIteration.DynamicSize, typeof(AtmosTransport.Operators.Advection.gpu__pe_hybrid_from_evolved_ps_kernel!)} where Backend<:KernelAbstractions.GPU, ::AbstractArray{FT, 3} where FT, ::AbstractArray{FT, 3} where FT, ::AbstractMatrix, ::AbstractArray{FT, 3} where FT, ::AbstractMatrix, ::AbstractVector, ::AbstractVector, ::Int64, ::Int64)` (1/2 union split): Core.kwcall(NamedTuple{(:ndrange,)}(tuple(tuple(Nc::Int64, Nc::Int64)::Tuple{Int64, Int64})::Tuple{Tuple{Int64, Int64}})::@NamedTuple{ndrange::Tuple{Int64, Int64}}, AtmosTransport.Operators.Advection._pe_hybrid_from_evolved_ps_kernel!(be, 256)::Union{KernelAbstractions.Kernel{…}, KernelAbstractions.Kernel{…} where Backend<:KernelAbstractions.GPU}, ((ws_vr::AtmosTransport.Operators.Advection.VerticalRemapWorkspace).pe_tgt::NTuple{6, A3} where {FT, A3<:AbstractArray{FT, 3}})[p]::AbstractArray{FT, 3} where FT, ((ws_vr::AtmosTransport.Operators.Advection.VerticalRemapWorkspace).dp_tgt::NTuple{6, A3} where {FT, A3<:AbstractArray{FT, 3}})[p]::AbstractArray{FT, 3} where FT, ((ws_vr::AtmosTransport.Operators.Advection.VerticalRemapWorkspace).ps_tgt::NTuple{6, A2} where {FT, A2<:AbstractMatrix{FT}})[p]::AbstractMatrix, ((ws_vr::AtmosTransport.Operators.Advection.VerticalRemapWorkspace).pe_src::NTuple{6, A3} where {FT, A3<:AbstractArray{FT, 3}})[p]::AbstractArray{FT, 3} where FT, ((ws_vr::AtmosTransport.Operators.Advection.VerticalRemapWorkspace).ps_src::NTuple{6, A2} where {FT, A2<:AbstractMatrix{FT}})[p]::AbstractMatrix, (ws_vr::AtmosTransport.Operators.Advection.VerticalRemapWorkspace).ak_dev::AbstractVector, (ws_vr::AtmosTransport.Operators.Advection.VerticalRemapWorkspace).bk_dev::AbstractVector, Nc::Int64, Nz::Int64))
+   [8] MethodErrorReport(no matching method found `kwcall(::@NamedTuple{ndrange::Tuple{Int64, Int64}}, ::KernelAbstractions.Kernel{Backend, KernelAbstractions.NDIteration.StaticSize{(256,)}, KernelAbstractions.NDIteration.DynamicSize, typeof(AtmosTransport.Operators.Advection.gpu__pe_hybrid_from_evolved_ps_kernel!)} where Backend<:KernelAbstractions.GPU, ::AbstractArray{FT, 3} where FT, ::AbstractArray{FT, 3} where FT, ::AbstractMatrix, ::AbstractArray{FT, 3} where FT, ::AbstractMatrix, ::AbstractVector, ::AbstractVector, ::Int64, ::Int64)` (1/2 union split): Core.kwcall(NamedTuple{(:ndrange,)}(tuple(tuple(Nc::Int64, Nc::Int64)::Tuple{Int64, Int64})::Tuple{Tuple{Int64, Int64}})::@NamedTuple{ndrange::Tuple{Int64, Int64}}, AtmosTransport.Operators.Advection._pe_hybrid_from_evolved_ps_kernel!(be::Any, 256)::Union{KernelAbstractions.Kernel{…}, KernelAbstractions.Kernel{…} where Backend<:KernelAbstractions.GPU}, ((ws_vr::AtmosTransport.Operators.Advection.VerticalRemapWorkspace).pe_tgt::NTuple{6, A3} where {FT, A3<:AbstractArray{FT, 3}})[p::Int64]::AbstractArray{FT, 3} where FT, ((ws_vr::AtmosTransport.Operators.Advection.VerticalRemapWorkspace).dp_tgt::NTuple{6, A3} where {FT, A3<:AbstractArray{FT, 3}})[p::Int64]::AbstractArray{FT, 3} where FT, ((ws_vr::AtmosTransport.Operators.Advection.VerticalRemapWorkspace).ps_tgt::NTuple{6, A2} where {FT, A2<:AbstractMatrix{FT}})[p::Int64]::AbstractMatrix, ((ws_vr::AtmosTransport.Operators.Advection.VerticalRemapWorkspace).pe_src::NTuple{6, A3} where {FT, A3<:AbstractArray{FT, 3}})[p::Int64]::AbstractArray{FT, 3} where FT, ((ws_vr::AtmosTransport.Operators.Advection.VerticalRemapWorkspace).ps_src::NTuple{6, A2} where {FT, A2<:AbstractMatrix{FT}})[p::Int64]::AbstractMatrix, (ws_vr::AtmosTransport.Operators.Advection.VerticalRemapWorkspace).ak_dev::AbstractVector, (ws_vr::AtmosTransport.Operators.Advection.VerticalRemapWorkspace).bk_dev::AbstractVector, Nc::Int64, Nz::Int64)::Any)
+   [9] MethodErrorReport(no matching method found `kwcall(::@NamedTuple{ndrange::Tuple{Int64, Int64}}, ::KernelAbstractions.Kernel{Backend, KernelAbstractions.NDIteration.StaticSize{(256,)}, KernelAbstractions.NDIteration.DynamicSize, typeof(AtmosTransport.Operators.Advection.gpu__pe_from_evolved_mass_kernel!)} where Backend<:KernelAbstractions.GPU, ::AbstractArray{FT, 3} where FT, ::AbstractMatrix, ::Any, ::Any, ::Any, ::Any, ::Int64, ::Int64, ::Int64)` (1/2 union split): Core.kwcall(NamedTuple{(:ndrange,)}(tuple(tuple(Nc::Int64, Nc::Int64)::Tuple{Int64, Int64})::Tuple{Tuple{Int64, Int64}})::@NamedTuple{ndrange::Tuple{Int64, Int64}}, AtmosTransport.Operators.Advection._pe_from_evolved_mass_kernel!(be, 256)::Union{KernelAbstractions.Kernel{…}, KernelAbstractions.Kernel{…} where Backend<:KernelAbstractions.GPU}, ((ws_vr::AtmosTransport.Operators.Advection.VerticalRemapWorkspace).pe_src::NTuple{6, A3} where {FT, A3<:AbstractArray{FT, 3}})[p]::AbstractArray{FT, 3} where FT, ((ws_vr::AtmosTransport.Operators.Advection.VerticalRemapWorkspace).ps_src::NTuple{6, A2} where {FT, A2<:AbstractMatrix{FT}})[p]::AbstractMatrix, (m_evolved::Any)[p]::Any, cell_areas::Any, gravity::Any, ptop::Any, Hp::Int64, Nc::Int64, Nz::Int64))
+   [10] MethodErrorReport(no matching method found `kwcall(::@NamedTuple{ndrange::Tuple{Int64, Int64}}, ::KernelAbstractions.Kernel{Backend, KernelAbstractions.NDIteration.StaticSize{(256,)}, KernelAbstractions.NDIteration.DynamicSize, typeof(AtmosTransport.Operators.Advection.gpu__pe_from_evolved_mass_kernel!)} where Backend<:KernelAbstractions.GPU, ::AbstractArray{FT, 3} where FT, ::AbstractMatrix, ::Any, ::Any, ::Any, ::Any, ::Int64, ::Int64, ::Int64)` (1/2 union split): Core.kwcall(NamedTuple{(:ndrange,)}(tuple(tuple(Nc::Int64, Nc::Int64)::Tuple{Int64, Int64})::Tuple{Tuple{Int64, Int64}})::@NamedTuple{ndrange::Tuple{Int64, Int64}}, AtmosTransport.Operators.Advection._pe_from_evolved_mass_kernel!(be::Any, 256)::Union{KernelAbstractions.Kernel{…}, KernelAbstractions.Kernel{…} where Backend<:KernelAbstractions.GPU}, ((ws_vr::AtmosTransport.Operators.Advection.VerticalRemapWorkspace).pe_src::NTuple{6, A3} where {FT, A3<:AbstractArray{FT, 3}})[p::Int64]::AbstractArray{FT, 3} where FT, ((ws_vr::AtmosTransport.Operators.Advection.VerticalRemapWorkspace).ps_src::NTuple{6, A2} where {FT, A2<:AbstractMatrix{FT}})[p::Int64]::AbstractMatrix, (m_evolved::Any)[p::Int64]::Any, cell_areas::Any, gravity::Any, ptop::Any, Hp::Int64, Nc::Int64, Nz::Int64)::Any)
+   [11] MethodErrorReport(no matching method found `kwcall(::NamedTuple{(:ndrange,), <:Tuple{Any}}, ::KernelAbstractions.Kernel{Backend, KernelAbstractions.NDIteration.StaticSize{(256,)}, KernelAbstractions.NDIteration.DynamicSize, typeof(AtmosTransport.Operators.Advection.gpu__zsweep_kernel!)} where Backend<:KernelAbstractions.GPU, ::AbstractArray{FT, 3} where FT, ::AbstractArray{FT, 3} where FT, ::AbstractArray{FT, 3} where FT, ::AbstractArray{FT, 3} where FT, ::AbstractArray{FT, 3} where FT, ::AbstractAdvectionScheme, ::Any, ::Any)` (1/2 union split): Core.kwcall(NamedTuple{(:ndrange,)}(tuple(AtmosTransport.Operators.Advection.size(m_in::AbstractArray{FT, 3} where FT)::Any)::Tuple{Any})::NamedTuple{(:ndrange,), <:Tuple{Any}}, kernel!, rm_out::AbstractArray{FT, 3} where FT, rm_in::AbstractArray{FT, 3} where FT, m_out::AbstractArray{FT, 3} where FT, m_in::AbstractArray{FT, 3} where FT, flux::AbstractArray{FT, 3} where FT, scheme::AbstractAdvectionScheme, AtmosTransport.Operators.Advection.Int32(AtmosTransport.Operators.Advection.size(m_in::AbstractArray{FT, 3} where FT, 3)::Any)::Any, AtmosTransport.Operators.Advection.one(FT::Any)::Any))
+   [12] MethodErrorReport(no matching method found `kwcall(::@NamedTuple{ndrange::Tuple{Int64, Int64}}, ::KernelAbstractions.Kernel{Backend, KernelAbstractions.NDIteration.StaticSize{(16, 16)}, KernelAbstractions.NDIteration.DynamicSize, typeof(AtmosTransport.Operators.Convection.gpu__cmfmc_cs_panel_column_kernel!)} where Backend<:KernelAbstractions.GPU, ::AbstractArray{FT, 4} where FT, ::AbstractArray{FT, 3} where FT, ::Any, ::Any, ::Any, ::Any, ::Any, ::Any, ::Any, ::Int64, ::Val{true})` (1/2 union split): Core.kwcall(NamedTuple{(:ndrange,)}(tuple(tuple(Nc::Int64, Nc::Int64)::Tuple{Int64, Int64})::Tuple{Tuple{Int64, Int64}})::@NamedTuple{ndrange::Tuple{Int64, Int64}}, kernel::Union{KernelAbstractions.Kernel{…}, KernelAbstractions.Kernel{…} where Backend<:KernelAbstractions.GPU}, (q_raw::NTuple{6, var"#s120"} where {FT, var"#s120"<:AbstractArray{FT, 4}})[p]::AbstractArray{FT, 4} where FT, (air_mass::NTuple{6, var"#s119"} where {FT, var"#s119"<:AbstractArray{FT, 3}})[p]::AbstractArray{FT, 3} where FT, (cmfmc::Any)[p]::Any, (dtrain_arr::Any)[p]::Any, (cell_areas::Any)[p]::Any, ((workspace::CMFMCWorkspace).qc_scratch::Any)[p]::Any, Nz::Any, Nt::Any, sdt::Any, Hp::Int64, AtmosTransport.Operators.Convection.Val(has_dtrain_val::Bool)::Val{true}))
+   [13] MethodErrorReport(no matching method found `kwcall(::@NamedTuple{ndrange::Tuple{Int64, Int64}}, ::KernelAbstractions.Kernel{Backend, KernelAbstractions.NDIteration.StaticSize{(16, 16)}, KernelAbstractions.NDIteration.DynamicSize, typeof(AtmosTransport.Operators.Convection.gpu__cmfmc_cs_panel_column_kernel!)} where Backend<:KernelAbstractions.GPU, ::AbstractArray{FT, 4} where FT, ::AbstractArray{FT, 3} where FT, ::Any, ::Any, ::Any, ::Any, ::Any, ::Any, ::Any, ::Int64, ::Val{true})` (1/2 union split): Core.kwcall(NamedTuple{(:ndrange,)}(tuple(tuple(Nc::Int64, Nc::Int64)::Tuple{Int64, Int64})::Tuple{Tuple{Int64, Int64}})::@NamedTuple{ndrange::Tuple{Int64, Int64}}, kernel::Union{KernelAbstractions.Kernel{…}, KernelAbstractions.Kernel{…} where Backend<:KernelAbstractions.GPU}, (q_raw::NTuple{6, var"#s120"} where {FT, var"#s120"<:AbstractArray{FT, 4}})[p::Int64]::AbstractArray{FT, 4} where FT, (air_mass::NTuple{6, var"#s119"} where {FT, var"#s119"<:AbstractArray{FT, 3}})[p::Int64]::AbstractArray{FT, 3} where FT, (cmfmc::Any)[p::Int64]::Any, (dtrain_arr::Any)[p::Int64]::Any, (cell_areas::Any)[p::Int64]::Any, ((workspace::CMFMCWorkspace).qc_scratch::Any)[p::Int64]::Any, Nz::Any, Nt::Any, sdt::Any, Hp::Int64, AtmosTransport.Operators.Convection.Val(has_dtrain_val::Bool)::Val{true})::Any)
+   [14] MethodErrorReport(no matching method found `kwcall(::NamedTuple{(:ndrange,), <:Tuple{Tuple{Int64, Int64, Any}}}, ::KernelAbstractions.Kernel{Backend, KernelAbstractions.NDIteration.StaticSize{(256,)}, KernelAbstractions.NDIteration.DynamicSize, typeof(AtmosTransport.Operators.Advection.gpu__divergence_damping_cs_kernel!)} where Backend<:KernelAbstractions.GPU, ::Any, ::AbstractArray, ::AbstractArray, ::Any, ::Int64)` (1/2 union split): Core.kwcall(NamedTuple{(:ndrange,)}(tuple(tuple(Nc::Int64, Nc::Int64, Nz::Any)::Tuple{Int64, Int64, Any})::Tuple{Tuple{Int64, Int64, Any}})::NamedTuple{(:ndrange,), <:Tuple{Tuple{Int64, Int64, Any}}}, k!, (ws::Any).rm_A::Any, (rm_panels::NTuple{6, A} where A<:AbstractArray)[p]::AbstractArray, (m_panels::NTuple{6, A} where A<:AbstractArray)[p]::AbstractArray, FT::Any(damp_coeff::Any)::Any, Hp::Int64))
+   [15] MethodErrorReport(no matching method found `kwcall(::NamedTuple{(:ndrange,), <:Tuple{Tuple{Int64, Int64, Any}}}, ::KernelAbstractions.Kernel{Backend, KernelAbstractions.NDIteration.StaticSize{(256,)}, KernelAbstractions.NDIteration.DynamicSize, typeof(AtmosTransport.Operators.Advection.gpu__divergence_damping_cs_kernel!)} where Backend<:KernelAbstractions.GPU, ::Any, ::AbstractArray, ::AbstractArray, ::Any, ::Int64)` (1/2 union split): Core.kwcall(NamedTuple{(:ndrange,)}(tuple(tuple(Nc::Int64, Nc::Int64, Nz::Any)::Tuple{Int64, Int64, Any})::Tuple{Tuple{Int64, Int64, Any}})::NamedTuple{(:ndrange,), <:Tuple{Tuple{Int64, Int64, Any}}}, k!::Union{KernelAbstractions.Kernel{…}, KernelAbstractions.Kernel{…} where Backend<:KernelAbstractions.GPU}, (ws::Any).rm_A::Any, (rm_panels::NTuple{6, A} where A<:AbstractArray)[p::Int64]::AbstractArray, (m_panels::NTuple{6, A} where A<:AbstractArray)[p::Int64]::AbstractArray, FT::Any(damp_coeff::Any)::Any, Hp::Int64)::Any)
+   [16] MethodErrorReport(no matching method found `kwcall(::NamedTuple{(:ndrange,), <:Tuple{Any}}, ::KernelAbstractions.Kernel{Backend, KernelAbstractions.NDIteration.StaticSize{(256,)}, KernelAbstractions.NDIteration.DynamicSize, typeof(AtmosTransport.Operators.Convection.gpu__cmfmc_faceindexed_column_kernel!)} where Backend<:KernelAbstractions.GPU, ::AbstractArray{FT, 3} where FT, ::AbstractMatrix, ::Any, ::Any, ::Any, ::Any, ::Any, ::Any, ::Any, ::Val{true})` (1/2 union split): Core.kwcall(NamedTuple{(:ndrange,)}(tuple(ncell::Any)::Tuple{Any})::NamedTuple{(:ndrange,), <:Tuple{Any}}, kernel::Union{KernelAbstractions.Kernel{…}, KernelAbstractions.Kernel{…} where Backend<:KernelAbstractions.GPU}, q_raw::AbstractArray{FT, 3} where FT, air_mass::AbstractMatrix, cmfmc::Any, dtrain_arr::Any, cell_areas::Any, (workspace::CMFMCWorkspace).qc_scratch::Any, Nz::Any, Nt::Any, sdt::Any, AtmosTransport.Operators.Convection.Val(has_dtrain_val::Bool)::Val{true}))
+   [17] MethodErrorReport(no matching method found `kwcall(::NamedTuple{(:ndrange,), <:Tuple{Any}}, ::KernelAbstractions.Kernel{Backend, KernelAbstractions.NDIteration.StaticSize{(256,)}, KernelAbstractions.NDIteration.DynamicSize, typeof(AtmosTransport.Operators.Diffusion.gpu__vertical_diffusion_face_single_kernel!)} where Backend<:KernelAbstractions.GPU, ::AbstractMatrix, ::AbstractTimeVaryingField{FT, 2} where FT, ::Any, ::Any, ::Any, ::Any)` (1/2 union split): Core.kwcall(NamedTuple{(:ndrange,)}(tuple(ncells)::Tuple{Any})::NamedTuple{(:ndrange,), <:Tuple{Any}}, kernel, q_raw::AbstractMatrix, (op::ImplicitVerticalDiffusion{FT, KzF} where {FT, KzF<:AbstractTimeVaryingField{FT, 2}}).kz_field::AbstractTimeVaryingField{FT, 2} where FT, dz_scratch, w_scratch, FT::Any(dt::Any)::Any, Nz))
+   [18] MethodErrorReport(no matching method found `kwcall(::NamedTuple{(:ndrange,), <:Tuple{Tuple{Any, Any, Any}}}, ::KernelAbstractions.Kernel{Backend, KernelAbstractions.NDIteration.StaticSize{(256,)}, KernelAbstractions.NDIteration.DynamicSize, typeof(AtmosTransport.Operators.Advection.gpu__cs_ysweep_kernel!)} where Backend<:KernelAbstractions.GPU, ::Any, ::Any, ::Any, ::Any, ::Any, ::AbstractAdvectionScheme, ::Any, ::Int32, ::Any)` (1/2 union split): Core.kwcall(NamedTuple{(:ndrange,)}(tuple(tuple(Nc::Any, Nc::Any, Nz::Any)::Tuple{Any, Any, Any})::Tuple{Tuple{Any, Any, Any}})::NamedTuple{(:ndrange,), <:Tuple{Tuple{Any, Any, Any}}}, kernel!, rm_A::Any, rm::Any, m_A::Any, m::Any, bm::Any, scheme::AbstractAdvectionScheme, AtmosTransport.Operators.Advection.Int32(Nc::Any)::Any, AtmosTransport.Operators.Advection.Int32(Hp::Any)::Int32, FT(flux_scale::Any)::Any))
+   [19] MethodErrorReport(no matching method found `kwcall(::NamedTuple{(:ndrange,), <:Tuple{Any}}, ::KernelAbstractions.Kernel{Backend, KernelAbstractions.NDIteration.StaticSize{(256,)}, KernelAbstractions.NDIteration.DynamicSize, typeof(AtmosTransport.Operators.Advection.gpu__ysweep_mt_kernel!)} where Backend<:KernelAbstractions.GPU, ::AbstractArray{FT, 4} where FT, ::AbstractArray{FT, 4} where FT, ::AbstractArray{FT, 3} where FT, ::AbstractArray{FT, 3} where FT, ::AbstractArray{FT, 3} where FT, ::AbstractAdvectionScheme, ::Any, ::Any, ::Any)` (1/2 union split): Core.kwcall(NamedTuple{(:ndrange,)}(tuple(AtmosTransport.Operators.Advection.size(m_in::AbstractArray{FT, 3} where FT)::Any)::Tuple{Any})::NamedTuple{(:ndrange,), <:Tuple{Any}}, kernel!, rm4d_out::AbstractArray{FT, 4} where FT, rm4d_in::AbstractArray{FT, 4} where FT, m_out::AbstractArray{FT, 3} where FT, m_in::AbstractArray{FT, 3} where FT, flux::AbstractArray{FT, 3} where FT, scheme::AbstractAdvectionScheme, AtmosTransport.Operators.Advection.Int32(AtmosTransport.Operators.Advection.size(m_in::AbstractArray{FT, 3} where FT, 2)::Any)::Any, Nt, flux_scale::Any))
+   [20] MethodErrorReport(no matching method found `kwcall(::NamedTuple{(:ndrange,), <:Tuple{Any}}, ::KernelAbstractions.Kernel{Backend, KernelAbstractions.NDIteration.StaticSize{(256,)}, KernelAbstractions.NDIteration.DynamicSize, typeof(AtmosTransport.Operators.Chemistry.gpu__exp_decay_kernel!)} where Backend<:KernelAbstractions.GPU, ::AbstractArray, ::Any, ::Any, ::Any, ::Any)` (1/2 union split): Core.kwcall(NamedTuple{(:ndrange,)}(tuple(spatial_shape)::Tuple{Any})::NamedTuple{(:ndrange,), <:Tuple{Any}}, kernel!, raw, indices::Any, rates, FT::Any(dt::Any)::Any, AtmosTransport.Operators.Chemistry.Int32(N::Any)::Any))
+
+   If the new reports are genuine bugs: fix them.
+   If they're known-tolerated patterns (see docstring):
+     1. Update JET_HOT_PATH_BASELINE in this file.
+     2. Document the pattern in the 'Known-tolerated
+        noise sources' section of the docstring.
+
+JET: hot-path inference snapshot: Test Failed at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_jet.jl:107
+  Expression: n <= JET_HOT_PATH_BASELINE
+   Evaluated: 130 <= 119
+
+Stacktrace:
+ [1] macro expansion
+   @ ~/.julia/juliaup/julia-1.12.5+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:680 [inlined]
+ [2] macro expansion
+   @ ~/code/gitHub/AtmosTransportModel/test/test_jet.jl:107 [inlined]
+ [3] macro expansion
+   @ ~/.julia/juliaup/julia-1.12.5+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1776 [inlined]
+ [4] top-level scope
+   @ ~/code/gitHub/AtmosTransportModel/test/test_jet.jl:75
+Test Summary:                    | Fail  Total   Time
+JET: hot-path inference snapshot |    1      1  15.7s
+RNG of the outermost testset: Random.Xoshiro(0x01be97bf9438bc4b, 0xf2feb261f9e34c15, 0xf9086d835f399191, 0x6ca69362d1958996, 0xb072da2a19193b79)
+jet_exit=1
+
+=== test_readme_current ===
+┌ Error: src/Models/README.md does not mention CSPhysicsRecipe.jl.
+│ Update the File Map section of /home/cfranken/code/gitHub/AtmosTransportModel/test/../src/Models/README.md,
+│ or add CSPhysicsRecipe.jl to EXCLUDE_FILES in test/test_readme_current.jl
+│ with a comment explaining why.
+└ @ Main ~/code/gitHub/AtmosTransportModel/test/test_readme_current.jl:79
+┌ Error: src/MetDrivers/README.md does not mention ReplayContinuity.jl.
+│ Update the File Map section of /home/cfranken/code/gitHub/AtmosTransportModel/test/../src/MetDrivers/README.md,
+│ or add ReplayContinuity.jl to EXCLUDE_FILES in test/test_readme_current.jl
+│ with a comment explaining why.
+└ @ Main ~/code/gitHub/AtmosTransportModel/test/test_readme_current.jl:79
+ERROR: LoadError: Some tests did not pass: 77 passed, 2 failed, 0 errored, 0 broken.
+in expression starting at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_readme_current.jl:93
+src/Models: Test Failed at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_readme_current.jl:78
+  Expression: begin
+    #= /home/cfranken/code/gitHub/AtmosTransportModel/test/test_readme_current.jl:79 =#
+    #= /home/cfranken/code/gitHub/AtmosTransportModel/test/test_readme_current.jl:79 =# @error "$(dir)/README.md does not mention $(file).\nUpdate the File Map section of $(readme_path),\nor add $(file) to EXCLUDE_FILES in test/test_readme_current.jl\nwith a comment explaining why.\n"
+    #= /home/cfranken/code/gitHub/AtmosTransportModel/test/test_readme_current.jl:85 =#
+    false
+end
+
+Stacktrace:
+ [1] macro expansion
+   @ ~/.julia/juliaup/julia-1.12.5+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:680 [inlined]
+ [2] _check_readme(dir::String)
+   @ Main ~/code/gitHub/AtmosTransportModel/test/test_readme_current.jl:78
+ [3] macro expansion
+   @ ~/code/gitHub/AtmosTransportModel/test/test_readme_current.jl:96 [inlined]
+ [4] macro expansion
+   @ ~/.julia/juliaup/julia-1.12.5+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1776 [inlined]
+ [5] macro expansion
+   @ ~/code/gitHub/AtmosTransportModel/test/test_readme_current.jl:96 [inlined]
+ [6] macro expansion
+   @ ~/.julia/juliaup/julia-1.12.5+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1776 [inlined]
+ [7] top-level scope
+   @ ~/code/gitHub/AtmosTransportModel/test/test_readme_current.jl:94
+src/MetDrivers: Test Failed at /home/cfranken/code/gitHub/AtmosTransportModel/test/test_readme_current.jl:78
+  Expression: begin
+    #= /home/cfranken/code/gitHub/AtmosTransportModel/test/test_readme_current.jl:79 =#
+    #= /home/cfranken/code/gitHub/AtmosTransportModel/test/test_readme_current.jl:79 =# @error "$(dir)/README.md does not mention $(file).\nUpdate the File Map section of $(readme_path),\nor add $(file) to EXCLUDE_FILES in test/test_readme_current.jl\nwith a comment explaining why.\n"
+    #= /home/cfranken/code/gitHub/AtmosTransportModel/test/test_readme_current.jl:85 =#
+    false
+end
+
+Stacktrace:
+ [1] macro expansion
+   @ ~/.julia/juliaup/julia-1.12.5+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:680 [inlined]
+ [2] _check_readme(dir::String)
+   @ Main ~/code/gitHub/AtmosTransportModel/test/test_readme_current.jl:78
+ [3] macro expansion
+   @ ~/code/gitHub/AtmosTransportModel/test/test_readme_current.jl:96 [inlined]
+ [4] macro expansion
+   @ ~/.julia/juliaup/julia-1.12.5+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1776 [inlined]
+ [5] macro expansion
+   @ ~/code/gitHub/AtmosTransportModel/test/test_readme_current.jl:96 [inlined]
+ [6] macro expansion
+   @ ~/.julia/juliaup/julia-1.12.5+0.x64.linux.gnu/share/julia/stdlib/v1.12/Test/src/Test.jl:1776 [inlined]
+ [7] top-level scope
+   @ ~/code/gitHub/AtmosTransportModel/test/test_readme_current.jl:94
+Test Summary:               | Pass  Fail  Total  Time
+Module README freshness     |   77     2     79  1.2s
+  src/Operators             |    2            2  0.1s
+  src/Operators/Advection   |   13           13  0.0s
+  src/Operators/Diffusion   |    4            4  0.0s
+  src/Operators/SurfaceFlux |    5            5  0.0s
+  src/Operators/Convection  |    8            8  0.0s
+  src/Operators/Chemistry   |    3            3  0.0s
+  src/State                 |    7            7  0.0s
+  src/State/Fields          |    6            6  0.0s
+  src/Models                |    7     1      8  1.2s
+  src/MetDrivers            |    9     1     10  0.0s
+  src/MetDrivers/ERA5       |    5            5  0.0s
+  src/Grids                 |    8            8  0.0s
+RNG of the outermost testset: Random.Xoshiro(0x9e11232d8190bfa1, 0x55a89dcb43a0a9cd, 0x1301ae06994f098b, 0xfea60446aca3ec34, 0xf49d809f0379622b)
+readme_exit=1
+
+=== SUMMARY ===
+core=1 aqua=1 jet=1 readme=1

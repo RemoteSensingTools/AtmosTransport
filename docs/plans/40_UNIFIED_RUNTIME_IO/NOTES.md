@@ -351,6 +351,33 @@ now-private `make_model` + `run_sequence`). 8 tests still pass.
 
 Baseline: 5 pre-existing failures unchanged.
 
+### Commit 6b — CS runner library extraction
+
+Shipped 2026-04-24. CS flow is now also owned by
+`src/Models/DrivenRunner.jl`:
+
+- `_cs_interior`, `_write_snapshot_cs!`, `_run_driven_simulation_cs`,
+  `_cfg_float_type`, `_cfg_architecture` hoisted from
+  `scripts/run_cs_driven.jl`.
+- Top-level `run_driven_simulation(cfg)` dispatches on
+  `inspect_binary(first_path).grid_type`:
+  - `:cubed_sphere` → `_run_driven_simulation_cs`
+  - otherwise (`:latlon`, `:reduced_gaussian`) →
+    `_run_driven_simulation_structured`
+- `_validate_capability_match` runs on CS too (rejects
+  `kind = "tm5"` / `"cmfmc"` against the CS binary's payload).
+- `_assert_gpu_residency!` runs on CS after model construction.
+
+`scripts/run_cs_driven.jl` is now a 40-line shim that calls
+`run_driven_simulation(cfg)`.
+
+`src/Models/Models.jl` gained `using ..Architectures` so Models
+submodules can `using ..Architectures: CPU, GPU`.
+
+Tests (`test_cs_driven_builders.jl` 60 passes, unchanged).
+
+Baseline invariant: 5 pre-existing failures unchanged.
+
 ## Correctness rules pinned (read before Commit 1)
 
 ### GPU runs must be verified, not declared

@@ -116,6 +116,10 @@ using .Regridding
 include("Preprocessing/Preprocessing.jl")
 using .Preprocessing
 
+# ---- Topology-aware snapshot visualization data layer ----
+include("Visualization/Visualization.jl")
+using .Visualization
+
 # ---- Minimal runtime/model layer ----
 include("Models/Models.jl")
 using .Models
@@ -281,5 +285,12 @@ export run_driven_simulation, TransportTracerSpec   # plan 40 Commit 6a
 export build_regridder, save_regridder, load_regridder
 export save_esmf_weights, apply_regridder!
 export cubed_sphere_face_corners
+
+# Visualization data layer. Makie plotting methods load from the optional
+# AtmosTransportMakieExt extension when a Makie backend is available.
+export SnapshotDataset, HorizontalField, RasterField, SnapshotRegridCache, PlotSpec
+export open_snapshot, available_variables, snapshot_times, snapshot_topology
+export fieldview, frame_indices, as_raster, robust_colorrange
+export mapplot, mapplot!, snapshot_grid, movie, movie_grid
 
 end # module AtmosTransport

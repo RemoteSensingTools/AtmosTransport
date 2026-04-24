@@ -58,6 +58,7 @@ For a new contributor or agent:
 | Quick-start guide | [`reference/QUICKSTART.md`](reference/QUICKSTART.md) |
 | Architecture overview | [`reference/ARCHITECTURE.md`](reference/ARCHITECTURE.md) |
 | Preprocessing pipeline | [`reference/PREPROCESSING_PHILOSOPHY.md`](reference/PREPROCESSING_PHILOSOPHY.md) |
+| Snapshot visualization | [`reference/VISUALIZATION.md`](reference/VISUALIZATION.md) |
 | Conservative regridding | [`reference/CONSERVATIVE_REGRIDDING.md`](reference/CONSERVATIVE_REGRIDDING.md) |
 | Transport comparison (TM5/GCHP) | [`reference/TRANSPORT_COMPARISON.md`](reference/TRANSPORT_COMPARISON.md) |
 

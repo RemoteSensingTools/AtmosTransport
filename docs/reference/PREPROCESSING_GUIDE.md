@@ -88,6 +88,29 @@ julia -t8 --project=. scripts/preprocessing/preprocess_transport_binary.jl \
 6. **Pin global ps** to fixed dry-air mass target (TM5 `Match('area-aver')` equivalent)
 7. **Write** binary with v4/v5 header (provenance, checksums, ps offsets)
 
+## Implementation layout
+
+The transport-binary preprocessor is organized by contract first, then by
+topology:
+
+| File | Responsibility |
+|------|----------------|
+| `src/Preprocessing/binary_pipeline.jl` | Include index and topology contract overview |
+| `src/Preprocessing/transport_binary/core.jl` | Shared payload sizing, headers, provenance, raw writes |
+| `src/Preprocessing/transport_binary/latlon_workspaces.jl` | LL spectral staging, humidity, dry-basis, mass-fix, vertical merge state |
+| `src/Preprocessing/transport_binary/latlon_contracts.jl` | LL replay checks, Poisson closure, v4 window writer |
+| `src/Preprocessing/transport_binary/latlon_spectral.jl` | ERA5 spectral → structured LL daily workflow |
+| `src/Preprocessing/transport_binary/cubed_sphere_contracts.jl` | CS endpoint-delta and write-time replay helpers |
+| `src/Preprocessing/transport_binary/cubed_sphere_spectral.jl` | ERA5 spectral → CS daily workflow |
+| `src/Preprocessing/transport_binary/cubed_sphere_regrid.jl` | LL binary → CS binary regrid workflow |
+| `src/Preprocessing/reduced_transport_helpers.jl` | ERA5 spectral → reduced-Gaussian daily workflow |
+
+New topologies should add a new `AbstractTargetGeometry` subtype and a
+dedicated `process_day(date, grid::NewTopology, settings, vertical; ...)`
+method. The new method must use explicit forward endpoint mass targets, declare
+payload semantics, run write-time replay validation, and provide load-time
+replay coverage in the matching driver.
+
 ## Validation
 
 After preprocessing, check:

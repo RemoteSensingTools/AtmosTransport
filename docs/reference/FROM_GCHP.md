@@ -98,7 +98,7 @@ mesh = CubedSphereMesh(Nc=90, Hp=3)  # for PPM
 | Panel connectivity | `CubedSphereGridComp` | `src/Grids/PanelConnectivity.jl` |
 | CS mesh geometry | FV3 grid generation | `src/Grids/CubedSphereMesh.jl` |
 | Met driver | `HEMCO` / `ExtData` | `src/MetDrivers/` |
-| CS preprocessing | `offline_tracer_advection` | `src/Preprocessing/binary_pipeline.jl` |
+| CS preprocessing | `offline_tracer_advection` | `src/Preprocessing/transport_binary/cubed_sphere_spectral.jl` |
 
 ## Quick start
 

@@ -83,7 +83,7 @@ GPU. No separate GPU code to maintain.
 | Spectral synthesis | `spectral.F90` | `src/Preprocessing/spectral_synthesis.jl` |
 | Poisson balance | `grid_type_ll.F90:2536-2653` | `src/Preprocessing/mass_support.jl` |
 | Level merging | `echlev.F90` | `src/Preprocessing/vertical_coordinates.jl` |
-| Transport binary | `mk_massflux.F90` | `src/Preprocessing/binary_pipeline.jl` |
+| Transport binary | `mk_massflux.F90` | `src/Preprocessing/binary_pipeline.jl` + `src/Preprocessing/transport_binary/` |
 | Convection | `tiedtke.F90` | `src/Operators/Convection/` |
 | Diffusion | `diffusion.F90` | `src/Operators/Diffusion/` |
 | Main run loop | `mainloop.F90` | `src/Models/run_loop.jl` |

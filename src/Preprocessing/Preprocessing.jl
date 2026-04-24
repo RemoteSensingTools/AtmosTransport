@@ -26,13 +26,18 @@ Each target geometry has a dedicated `process_day` method:
 1. Read ERA5 spectral GRIB (VO, D, LNSP) — `spectral_io.jl`
 2. Spectral synthesis (Legendre + FFT → gridpoint) — `spectral_synthesis.jl`
 3. Merge native 137L → transport levels — `vertical_coordinates.jl`
-4. Pin global mean ps (mass fix) — `binary_pipeline.jl`
-5. Poisson mass-flux balance:
+4. Pin global mean ps (mass fix) — `transport_binary/latlon_workspaces.jl`
+5. Topology-specific transport-binary workflow:
    - LL: FFT on circulant Laplacian — `mass_support.jl`
    - RG: compressed-Laplacian CG — `ring_poisson_balance.jl`
    - CS: global 6-panel graph-Laplacian CG — `cs_poisson_balance.jl`
-6. Diagnose cm from balanced divergence — continuity equation
-7. Write transport binary (batch LL, streaming RG/CS)
+6. Diagnose `cm` from explicit endpoint mass targets — replay continuity
+7. Write transport binary with declared payload semantics and replay checks
+
+The high-level transport-binary workflows are split under
+`transport_binary/`. Each topology owns a small `process_day` method while
+shared binary metadata, endpoint-delta, and replay helpers stay in common
+files.
 
 ## Usage
 
@@ -128,7 +133,7 @@ include("era5_physics_binary.jl")
 # TM5 convection preprocessor pipeline wiring (plan 24 Commit 4)
 include("tm5_convection_pipeline.jl")
 
-# Binary pipeline (window storage, header, write)
+# Transport-binary workflows and shared preprocessing contracts.
 include("binary_pipeline.jl")
 
 # Exports for the CLI script and advanced users

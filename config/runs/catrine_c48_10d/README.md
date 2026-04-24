@@ -89,6 +89,13 @@ from the binary into the operator each window.
 | Gap | Notes |
 |---|---|
 | Profile/precomputed/derived Kz from TOML | `ImplicitVerticalDiffusion` supports them; need per-kind TOML schema + builder dispatch. Constant Kz covers today's needs. |
-| `[tracers.*.surface_flux]` (emissions) for CS | `DrivenSimulation` supports `surface_sources=(SurfaceFluxSource(...), ...)` kwarg, but `run_cs_driven.jl` doesn't yet build those from TOML — fossil tracer stays at zero. |
-| File-based CS initial conditions (`kind = "file"`) | The LL runner has `build_initial_mixing_ratio` with bilinear remap; a CS analog would need cube-sphere regridding of the IC. Plain `uniform` + `catrine_co2` (flat 411 ppm) work today. |
+| `[tracers.*.surface_flux]` (emissions) for CS | `build_surface_flux_source` now dispatches on CS grids (plan 40 Commit 1d) and `run_cs_driven.jl` can pick it up from TOML in a follow-up. For now fossil stays at zero when `[tracers.co2_fossil.surface_flux]` is absent. |
 | TM5 section carry-through in LL→CS regrid | Blocker for `advdiffconv.toml` specifically; see Prerequisite #2 above. |
+
+**Resolved (plan 40 Commit 1c / 2, 2026-04-24):** file-based CS initial
+conditions now work via the unified
+`build_initial_mixing_ratio` + `pack_initial_tracer_mass` pipeline
+(`src/Models/InitialConditionIO.jl`). The C48 configs use
+`kind = "catrine_co2"`, which conservatively LL→CS-regrids the Catrine
+NetCDF (`~/data/AtmosTransport/catrine/InitialConditions/startCO2_202112010000.nc`)
+and log-pressure-remaps column-by-column — no longer a flat-411 stub.

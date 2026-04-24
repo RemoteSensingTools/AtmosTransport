@@ -269,7 +269,7 @@ export build_runtime_physics_recipe, validate_runtime_physics_recipe
 export configured_halo_width
 export build_cs_advection, build_cs_diffusion, build_cs_convection
 export build_cs_physics_recipe, validate_cs_physics_recipe
-export configured_cs_halo_width, build_cs_tracer_panels
+export configured_cs_halo_width
 export FileInitialConditionSource, build_initial_mixing_ratio, pack_initial_tracer_mass
 export FileSurfaceFluxField, build_surface_flux_source, build_surface_flux_sources
 

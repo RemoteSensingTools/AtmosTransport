@@ -38,15 +38,16 @@ float_type = "Float32"
 scheme = "slopes"       # "upwind" | "slopes" | "ppm" (MonotoneLimiter by default)
 
 # Catrine natural-state CO2 from LSCE inversion at 2021-12-01 00:00.
+# Plan 40 Commit 2: `catrine_co2` is file-based on all three topologies
+# (LL/RG/CS). The unified pipeline conservatively LL→CS-regrids the
+# source NetCDF and log-pressure-remaps column-by-column.
 [tracers.co2_natural]
 [tracers.co2_natural.init]
 kind = "catrine_co2"
 
-# Fossil CO2 starts at zero. NOTE: run_cs_driven.jl does NOT yet read
-# [tracers.*.surface_flux] for CS — fossil stays at zero in this run.
-# See README.md for the emissions gap; surface sources are supported by
-# the underlying `DrivenSimulation` (via `surface_sources=(...)` kwarg)
-# but not yet threaded through the TOML parser here.
+# Fossil CO2 starts at zero. `build_surface_flux_source` now supports
+# CS (plan 40 Commit 1d); threading [tracers.*.surface_flux] through
+# run_cs_driven.jl is the last piece (tracked in the README gap list).
 [tracers.co2_fossil]
 [tracers.co2_fossil.init]
 kind = "uniform"

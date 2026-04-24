@@ -202,6 +202,66 @@ const FT = Float64
         end
     end
 
+    # --------- plan 40 Commit 2: catrine_co2 semantic unification -----
+    #
+    # After Commit 2, `kind = "catrine_co2"` on every topology is a
+    # convenience alias for `kind = "file"` with the default Catrine
+    # NetCDF path. The flat-411 stub branch in `build_cs_tracer_panels`
+    # was deleted. Verify the equivalence on all three topologies.
+    #
+    # Requires the real Catrine NetCDF file — skipped when missing
+    # (CI or fresh checkouts without `~/data/AtmosTransport/`).
+    @testset "`catrine_co2` ≡ `file` with default Catrine path" begin
+        catrine_ic_path =
+            expanduser("~/data/AtmosTransport/catrine/InitialConditions/startCO2_202112010000.nc")
+        if !isfile(catrine_ic_path)
+            @info "Skipping Catrine equivalence tests; file not present at $catrine_ic_path"
+        else
+            cfg_catrine = Dict("kind" => "catrine_co2")
+            cfg_file    = Dict("kind" => "file",
+                                "file" => catrine_ic_path,
+                                "variable" => "CO2")
+
+            # LL
+            mesh_ll = LatLonMesh(; Nx = 36, Ny = 18,
+                                longitude = (0.0, 360.0),
+                                latitude  = (-90.0, 90.0))
+            vertical = HybridSigmaPressure(FT[0, 50000, 0], FT[1, 0.5, 0])
+            grid_ll = AtmosGrid(mesh_ll, vertical, CPU(); FT = FT)
+            air_mass_ll = fill(FT(1e10), 36, 18, 2)
+            q_catrine_ll = build_initial_mixing_ratio(air_mass_ll, grid_ll, cfg_catrine)
+            q_file_ll    = build_initial_mixing_ratio(air_mass_ll, grid_ll, cfg_file)
+            @test q_catrine_ll == q_file_ll
+
+            # RG
+            latitudes = [-75.0, -25.0, 25.0, 75.0]
+            nlon_per_ring = [4, 8, 8, 4]
+            mesh_rg = ReducedGaussianMesh(latitudes, nlon_per_ring; FT = FT)
+            grid_rg = AtmosGrid(mesh_rg, vertical, CPU(); FT = FT)
+            air_mass_rg = fill(FT(1e10), ncells(mesh_rg), 2)
+            q_catrine_rg = build_initial_mixing_ratio(air_mass_rg, grid_rg, cfg_catrine)
+            q_file_rg    = build_initial_mixing_ratio(air_mass_rg, grid_rg, cfg_file)
+            @test q_catrine_rg == q_file_rg
+
+            # CS — build_initial_mixing_ratio output is interior NTuple{6}
+            Nc = 4
+            Hp = 1
+            Nz = 2
+            mesh_cs = CubedSphereMesh(; FT = FT, Nc = Nc, Hp = Hp)
+            grid_cs = AtmosGrid(mesh_cs, vertical, CPU(); FT = FT)
+            air_mass_cs = ntuple(_ -> fill(FT(1e10), Nc + 2Hp, Nc + 2Hp, Nz), 6)
+            q_catrine_cs = build_initial_mixing_ratio(air_mass_cs, grid_cs, cfg_catrine)
+            q_file_cs    = build_initial_mixing_ratio(air_mass_cs, grid_cs, cfg_file)
+            for p in 1:6
+                @test q_catrine_cs[p] == q_file_cs[p]
+            end
+            # Sanity: CS CO2 values are in a plausible atmospheric range.
+            all_vals = vcat((vec(q_catrine_cs[p]) for p in 1:6)...)
+            @test minimum(all_vals) > 1e-4    # > 100 ppm
+            @test maximum(all_vals) < 1e-3    # < 1000 ppm
+        end
+    end
+
     # --------- plan 40 Commit 1d: surface-flux builders --------------
     @testset "build_surface_flux_source — `kind = none` returns nothing" begin
         mesh = LatLonMesh(; Nx = 4, Ny = 3,

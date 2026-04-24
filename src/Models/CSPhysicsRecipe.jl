@@ -31,7 +31,12 @@ end
 
 const CSPhysicsRecipe = RuntimePhysicsRecipe
 
-const _CATRINE_BACKGROUND = 4.11e-4
+# Plan 40 Commit 2: the flat-411 `catrine_co2` stub is gone. CS tracers
+# now flow through the same `build_initial_mixing_ratio` +
+# `pack_initial_tracer_mass` pipeline as LL/RG; `kind = "catrine_co2"`
+# loads the Catrine NetCDF and regrids + remaps it conservatively onto
+# the CS grid. Historical flat-411 behaviour is now expressed as
+# `kind = "uniform" background = 4.11e-4`.
 
 @inline _config_symbol(section, key::AbstractString, default::AbstractString) =
     Symbol(lowercase(String(get(section, key, default))))
@@ -302,27 +307,14 @@ build_cs_physics_recipe(cfg, context, ::Type{FT}; halo_width::Union{Nothing, Int
     build_runtime_physics_recipe(cfg, context, FT; halo_width = halo_width)
 configured_cs_halo_width(cfg, scheme::AbstractAdvectionScheme) = configured_halo_width(cfg, scheme)
 
-"""
-    build_cs_tracer_panels(init_cfg, air_mass, FT)
-
-Build a per-tracer initial-condition panel tuple matching `air_mass`.
-
-Supported kinds:
-- `uniform` with `background`
-- `catrine_co2` with a fixed 411 ppm background
-"""
-function build_cs_tracer_panels(init_cfg, air_mass, ::Type{FT}) where FT
-    kind = _config_symbol(init_cfg, "kind", "uniform")
-    background = if kind === :catrine_co2
-        FT(_CATRINE_BACKGROUND)
-    elseif kind === :uniform
-        FT(get(init_cfg, "background", 0.0))
-    else
-        throw(ArgumentError(
-            "Unsupported CS tracer init kind: $(kind). Supported: uniform | catrine_co2"))
-    end
-    return ntuple(p -> air_mass[p] .* background, 6)
-end
+# `build_cs_tracer_panels` was a flat-411 stub (plan 23 era). Plan 40
+# Commit 2 removed it in favour of the unified pipeline:
+#
+#     vmr = build_initial_mixing_ratio(air_mass, grid, init_cfg)
+#     rm  = pack_initial_tracer_mass(grid, air_mass, vmr;
+#                                    mass_basis = DryBasis())
+#
+# See `src/Models/InitialConditionIO.jl`.
 
 export RuntimePhysicsRecipe, CSPhysicsRecipe
 export build_runtime_advection, build_runtime_diffusion, build_runtime_convection
@@ -331,4 +323,3 @@ export configured_halo_width
 export build_cs_advection, build_cs_diffusion, build_cs_convection
 export build_cs_physics_recipe, validate_cs_physics_recipe
 export configured_cs_halo_width
-export build_cs_tracer_panels

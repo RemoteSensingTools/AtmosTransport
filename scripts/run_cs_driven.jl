@@ -125,9 +125,17 @@ function run_cs_driven(cfg)
     air_mass = window1.air_mass
     Nz = size(air_mass[1], 3)
 
+    # Plan 40 Commit 2: CS tracers flow through the unified IC pipeline.
+    # `build_initial_mixing_ratio(air_mass, grid, init_cfg)` returns interior
+    # VMR NTuple{6}; `pack_initial_tracer_mass` packs it into halo-padded
+    # tracer mass respecting the binary's mass_basis. DryBasis is the
+    # default per invariant 14; any MoistBasis CS run would need to thread
+    # `qv` from window1 — not supported here since Catrine is dry-basis.
     tracer_kwargs = Dict{Symbol, NTuple{6, typeof(air_mass[1])}}()
     for (name, init_cfg) in tracer_init
-        tracer_kwargs[name] = build_cs_tracer_panels(init_cfg, air_mass, FT)
+        vmr = build_initial_mixing_ratio(air_mass, grid, init_cfg)
+        tracer_kwargs[name] = pack_initial_tracer_mass(grid, air_mass, vmr;
+                                                      mass_basis = DryBasis())
     end
 
     state   = CubedSphereState(DryBasis, mesh, air_mass; tracer_kwargs...)

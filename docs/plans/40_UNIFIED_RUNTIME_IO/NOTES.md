@@ -207,6 +207,32 @@ All three remain individually revertable. The plan doc still
 captures the full Commit 1 design; NOTES is the source of truth for
 what actually shipped per session.
 
+### Commit 2 — `catrine_co2` semantic unified
+
+Shipped 2026-04-24. `build_cs_tracer_panels` and `_CATRINE_BACKGROUND`
+are **deleted** from `src/Models/CSPhysicsRecipe.jl`; the flat-411 stub
+is gone. CS tracers now flow through the unified
+`build_initial_mixing_ratio` → `pack_initial_tracer_mass` pipeline, same
+as LL and RG. `kind = "catrine_co2"` is a convenience alias for
+`kind = "file" file = "<default-catrine-path>" variable = "CO2"` on
+every topology.
+
+- `scripts/run_cs_driven.jl:130` rewired to call the unified pipeline
+  directly (no more `build_cs_tracer_panels` wrapper).
+- `test/test_cs_driven_builders.jl` testset "build_cs_tracer_panels
+  produces matching-shape initial fields" replaced with a testset
+  exercising the unified pipeline on CS.
+- `test/test_initial_condition_io.jl` gains a cross-topology
+  equivalence testset: `kind = "catrine_co2"` ≡ `kind = "file"` with
+  the default path, for LL, RG, and CS. Guarded by `isfile` so fresh
+  checkouts without `~/data/AtmosTransport/catrine/…` skip cleanly.
+- `config/runs/catrine_c48_10d/README.md` + `advonly.toml` comment
+  updated to reflect file-based behaviour; README's "remaining gaps"
+  table drops the file-based IC row.
+- Export `build_cs_tracer_panels` removed from `AtmosTransport`.
+  No external callers in-tree, and JET baseline is unaffected (the
+  export removal only narrows the public surface).
+
 ## Correctness rules pinned (read before Commit 1)
 
 ### GPU runs must be verified, not declared

@@ -168,23 +168,49 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
             Dict("advection" => Dict("scheme" => "linrood")), reader, Float64; halo_width = 2)
     end
 
-    @testset "build_cs_tracer_panels produces matching-shape initial fields" begin
+    # Plan 40 Commit 2 removed `build_cs_tracer_panels` (it was a flat-411
+    # stub). CS tracers now flow through the unified pipeline:
+    # `build_initial_mixing_ratio` + `pack_initial_tracer_mass`. Those are
+    # tested in detail in `test/test_initial_condition_io.jl` (plan 40
+    # Commits 1b–1d). The CS runner `scripts/run_cs_driven.jl` wires
+    # exactly that pipeline through from TOML at line 130.
+    @testset "CS tracer IC flows through unified pipeline" begin
         FT = Float64
-        air_mass = ntuple(_ -> fill(FT(1e9), 4, 4, 3), 6)
+        Nc = 4
+        Hp = 1
+        Nz = 3
+        mesh = CubedSphereMesh(; FT = FT, Nc = Nc, Hp = Hp)
+        vertical = HybridSigmaPressure(FT[0, 50000, 0], FT[1, 0.5, 0])
+        grid = AtmosGrid(mesh, vertical, CPU(); FT = FT)
+        air_mass = ntuple(_ -> fill(FT(1e9), Nc + 2Hp, Nc + 2Hp, Nz), 6)
 
-        uni = build_cs_tracer_panels(Dict("kind" => "uniform", "background" => 1e-6), air_mass, FT)
-        @test length(uni) == 6
-        @test size(uni[1]) == size(air_mass[1])
-        @test all(uni[p] ≈ air_mass[p] .* 1e-6 for p in 1:6)
-
-        cat = build_cs_tracer_panels(Dict("kind" => "catrine_co2"), air_mass, FT)
-        @test all(cat[p] ≈ air_mass[p] .* 4.11e-4 for p in 1:6)
+        # uniform IC path
+        vmr = build_initial_mixing_ratio(air_mass,
+                                         grid,
+                                         Dict("kind" => "uniform",
+                                              "background" => 1e-6))
+        rm  = pack_initial_tracer_mass(grid, air_mass, vmr;
+                                       mass_basis = DryBasis())
+        @test length(rm) == 6
+        @test size(rm[1]) == size(air_mass[1])
+        # Interior should be vmr * air_mass = 1e-6 * 1e9 = 1e3
+        for p in 1:6
+            interior = @view rm[p][Hp + 1 : Hp + Nc, Hp + 1 : Hp + Nc, :]
+            @test all(interior .≈ 1e3)
+            # Halo stays zero (populated at runtime by halo exchanges)
+            @test rm[p][1, 1, 1] == zero(FT)
+        end
 
         # zero-filled fossil placeholder
-        zero_init = build_cs_tracer_panels(Dict("kind" => "uniform", "background" => 0.0), air_mass, FT)
-        @test all(iszero, zero_init[1])
+        vmr_zero = build_initial_mixing_ratio(air_mass, grid,
+                                              Dict("kind" => "uniform",
+                                                   "background" => 0.0))
+        rm_zero  = pack_initial_tracer_mass(grid, air_mass, vmr_zero;
+                                            mass_basis = DryBasis())
+        @test all(iszero, rm_zero[1])
 
-        @test_throws ArgumentError build_cs_tracer_panels(
-            Dict("kind" => "file", "file" => "x.nc"), air_mass, FT)
+        # Unsupported kind errors
+        @test_throws ArgumentError build_initial_mixing_ratio(
+            air_mass, grid, Dict("kind" => "gaussian_blob"))
     end
 end

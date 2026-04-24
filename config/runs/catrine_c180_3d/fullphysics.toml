@@ -1,13 +1,10 @@
-# Catrine C180 3-day test — FULL PHYSICS (advection + diffusion + convection)
+# Catrine C180 3-day test — FULL PHYSICS (advection + diffusion + convection
+# + GridFED fossil-CO2 surface flux)
 #
-# STATUS — DOES NOT RUN TODAY (TM5 gap; see advdiffconv.toml).
-#
-# NOTE — CS runner does NOT apply surface fluxes today. See
-# `config/runs/catrine_c48_3d/fullphysics.toml` for the full explanation.
-# Until `_run_driven_simulation_cs` threads `surface_sources` through
-# to `DrivenSimulation`, this config leaves fossil emissions off on CS
-# and relies on `catrine_ll720_3d/fullphysics.toml` for the LL
-# emissions reference.
+# STATUS — convection requires TM5 sections in the CS binary
+# (`advdiffconv.toml` notes). Drop `[convection]` to run the rest
+# (surface flux + diffusion + advection) until the CS regridder is
+# extended to carry TM5 sections through.
 #
 # Runner:   julia -t8 --project=. scripts/run_transport.jl \
 #               config/runs/catrine_c180_3d/fullphysics.toml
@@ -35,7 +32,14 @@ kind = "catrine_co2"
 kind = "uniform"
 background = 0.0
 
-# [tracers.co2_fossil.surface_flux] omitted on CS — see STATUS note above.
+# GridFED monthly-mean fossil-CO2 emissions in kg/m²/s. The CS builder
+# (plan 40 Commit 1d) conservatively LL→CS-regrids per panel, then
+# multiplies by panel cell area to yield per-cell kg/s for the
+# `SurfaceFluxSource`. December 2021 → time_index = 12.
+[tracers.co2_fossil.surface_flux]
+kind       = "gridfed_fossil_co2"
+file       = "~/data/AtmosTransport/catrine/Emissions/gridfed/GCP-GridFEDv2024.0_2021.short.nc"
+time_index = 12
 
 [diffusion]
 kind  = "constant"

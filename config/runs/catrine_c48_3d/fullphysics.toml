@@ -1,20 +1,13 @@
-# Catrine C48 3-day test — FULL PHYSICS (advection + diffusion + convection)
+# Catrine C48 3-day test — FULL PHYSICS (advection + diffusion + convection
+# + GridFED fossil-CO2 surface flux)
 #
 # Operator stack: slopes advection + constant-Kz ImplicitVerticalDiffusion
-# + TM5Convection.
+# + TM5Convection + per-cell kg/s surface emissions on the fossil tracer.
 #
-# STATUS — DOES NOT RUN TODAY (TM5 gap; see advdiffconv.toml notes).
-#
-# NOTE — CS runner does NOT apply surface fluxes today. The structured
-# (LL/RG) `run_driven_simulation` path builds `surface_sources` via
-# `build_surface_flux_sources` and threads them into `DrivenSimulation`
-# (see src/Models/DrivenRunner.jl:487), but `_run_driven_simulation_cs`
-# never calls that builder. Until that wiring lands, a
-# `[tracers.co2_fossil.surface_flux]` block on a CS config would silently
-# have no effect — so this config omits the block and `co2_fossil` stays
-# at its uniform background. The LL counterpart
-# `catrine_ll720_3d/fullphysics.toml` keeps surface emissions active
-# (LL runner handles them).
+# STATUS — convection requires TM5 sections in the CS binary
+# (`advdiffconv.toml` notes). The CS regridder does not pass them through
+# yet, so this config errors at recipe validation until that gap closes.
+# Drop `[convection]` to run the rest (surface flux + diffusion + advection).
 #
 # Runner:   julia -t8 --project=. scripts/run_transport.jl \
 #               config/runs/catrine_c48_3d/fullphysics.toml
@@ -42,7 +35,14 @@ kind = "catrine_co2"
 kind = "uniform"
 background = 0.0
 
-# [tracers.co2_fossil.surface_flux] omitted on CS — see STATUS note above.
+# GridFED monthly-mean fossil-CO2 emissions in kg/m²/s. The CS builder
+# (plan 40 Commit 1d) conservatively LL→CS-regrids per panel, then
+# multiplies by panel cell area to yield per-cell kg/s for the
+# `SurfaceFluxSource`. December 2021 → time_index = 12.
+[tracers.co2_fossil.surface_flux]
+kind       = "gridfed_fossil_co2"
+file       = "~/data/AtmosTransport/catrine/Emissions/gridfed/GCP-GridFEDv2024.0_2021.short.nc"
+time_index = 12
 
 [diffusion]
 kind  = "constant"

@@ -315,9 +315,9 @@ cs_window_count(reader::CubedSphereBinaryReader) = reader.header.nwindow
 
 Return the panel-numbering convention declared in the binary header.
 
-Returns `GnomonicPanelConvention()` for all ERA5-CS binaries (the default) and
-`GEOSNativePanelConvention()` for legacy GEOS-IT/FP binaries that predate the
-panel convention field. Callers should pass the result directly to
+Returns `GnomonicPanelConvention()` for ERA5-CS binaries and
+`GEOSNativePanelConvention()` for GEOS-FP/IT binaries tagged with
+`panel_convention="geos_native"`. Callers should pass the result directly to
 `CubedSphereMesh(; convention=mesh_convention(reader))` to guarantee that the
 halo exchange uses the correct edge-to-edge connectivity table.
 """

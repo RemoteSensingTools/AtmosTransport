@@ -269,19 +269,76 @@ end
     return lon, lat
 end
 
+@inline function _rotate_z_lon_offset(x::FT, y::FT, z::FT, offset_deg::Real) where FT
+    θ = FT(deg2rad(offset_deg))
+    c = cos(θ)
+    s = sin(θ)
+    return (c * x - s * y, s * x + c * y, z)
+end
+
+@inline function _panel_xyz(::GnomonicPanelConvention, ξ::FT, η::FT, panel::Int) where FT
+    return _gnomonic_xyz(ξ, η, panel)
+end
+
+"""
+    _panel_xyz(::GEOSNativePanelConvention, ξ, η, panel)
+
+GEOS-FP/GEOS-IT native cubed-sphere coordinates for arrays exposed by
+NCDatasets as `(Xdim, Ydim, nf, ...)`.
+
+GEOS native files use panel order `1, 2, north, 4, 5, south` and a global
+longitude offset of `-10°` relative to the classical gnomonic cube. Panels 4
+and 5 are stored with their `Ydim` direction reversed relative to the
+corresponding gnomonic equatorial panels. Panel 3 (north pole) is stored with a
+quarter-turn so its lower-left corner starts at ~35°E, matching the
+`corner_lons/corner_lats` arrays in GEOS C180/C720 grid files.
+"""
+@inline function _panel_xyz(::GEOSNativePanelConvention, ξ::FT, η::FT, panel::Int) where FT
+    ξg, ηg, gpanel = if panel == 1
+        (ξ, η, 1)
+    elseif panel == 2
+        (ξ, η, 2)
+    elseif panel == 3
+        (-η, ξ, 5)
+    elseif panel == 4
+        (ξ, -η, 3)
+    elseif panel == 5
+        (ξ, -η, 4)
+    elseif panel == 6
+        (ξ, η, 6)
+    else
+        throw(ArgumentError("invalid GEOS native panel id $panel"))
+    end
+    x, y, z = _gnomonic_xyz(ξg, ηg, gpanel)
+    return _rotate_z_lon_offset(x, y, z, -10)
+end
+
 """
     panel_cell_center_lonlat(Nc, panel, FT) -> (lons, lats)
+    panel_cell_center_lonlat(mesh::CubedSphereMesh, panel) -> (lons, lats)
 
 Return `(Nc, Nc)` arrays of cell-center longitudes and latitudes in degrees
-for the given `panel` of a C`Nc` gnomonic cubed sphere.
+for the given `panel`.
+
+The `Nc` method is the classical gnomonic convention. The mesh method honors
+`panel_convention(mesh)`, including GEOS-native panel ordering and orientation.
 """
 function panel_cell_center_lonlat(Nc::Int, panel::Int, FT::Type{<:AbstractFloat})
+    return _panel_cell_center_lonlat(Nc, panel, FT, GnomonicPanelConvention())
+end
+
+function panel_cell_center_lonlat(mesh::CubedSphereMesh{FT}, panel::Int) where FT
+    return _panel_cell_center_lonlat(mesh.Nc, panel, FT, mesh.convention)
+end
+
+function _panel_cell_center_lonlat(Nc::Int, panel::Int, FT::Type{<:AbstractFloat},
+                                   convention::AbstractCubedSpherePanelConvention)
     dα = FT(π) / (2 * Nc)
     α_centers = [FT(-π/4) + (i - FT(0.5)) * dα for i in 1:Nc]
     lons = zeros(FT, Nc, Nc)
     lats = zeros(FT, Nc, Nc)
     for j in 1:Nc, i in 1:Nc
-        x, y, z = _gnomonic_xyz(tan(α_centers[i]), tan(α_centers[j]), panel)
+        x, y, z = _panel_xyz(convention, tan(α_centers[i]), tan(α_centers[j]), panel)
         lons[i, j], lats[i, j] = _xyz_to_lonlat(x, y, z)
     end
     return lons, lats
@@ -289,16 +346,27 @@ end
 
 """
     panel_cell_corner_lonlat(Nc, panel, FT) -> (lons, lats)
+    panel_cell_corner_lonlat(mesh::CubedSphereMesh, panel) -> (lons, lats)
 
-Return `(Nc+1, Nc+1)` arrays of cell-corner longitudes and latitudes in degrees.
+Return `(Nc+1, Nc+1)` arrays of cell-corner longitudes and latitudes in
+degrees. The mesh method honors `panel_convention(mesh)`.
 """
 function panel_cell_corner_lonlat(Nc::Int, panel::Int, FT::Type{<:AbstractFloat})
+    return _panel_cell_corner_lonlat(Nc, panel, FT, GnomonicPanelConvention())
+end
+
+function panel_cell_corner_lonlat(mesh::CubedSphereMesh{FT}, panel::Int) where FT
+    return _panel_cell_corner_lonlat(mesh.Nc, panel, FT, mesh.convention)
+end
+
+function _panel_cell_corner_lonlat(Nc::Int, panel::Int, FT::Type{<:AbstractFloat},
+                                   convention::AbstractCubedSpherePanelConvention)
     dα = FT(π) / (2 * Nc)
     α_faces = [FT(-π/4) + (i - 1) * dα for i in 1:(Nc + 1)]
     lons = zeros(FT, Nc + 1, Nc + 1)
     lats = zeros(FT, Nc + 1, Nc + 1)
     for j in 1:(Nc + 1), i in 1:(Nc + 1)
-        x, y, z = _gnomonic_xyz(tan(α_faces[i]), tan(α_faces[j]), panel)
+        x, y, z = _panel_xyz(convention, tan(α_faces[i]), tan(α_faces[j]), panel)
         lons[i, j], lats[i, j] = _xyz_to_lonlat(x, y, z)
     end
     return lons, lats

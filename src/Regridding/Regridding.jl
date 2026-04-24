@@ -37,7 +37,7 @@ save_esmf_weights("weights_esmf.nc", r)
 | Source/Destination | Tree strategy | Spatial acceleration |
 |--------------------|---------------|----------------------|
 | `LatLonMesh`       | `CellBasedGrid` from `(Nx+1)×(Ny+1)` face corners → `TopDownQuadtreeCursor` | O(log(Nx·Ny)) |
-| `CubedSphereMesh`  | 6 per-panel `CellBasedGrid` from gnomonic corners → `CubedSphereToplevelTree` | O(log Nc²) per panel |
+| `CubedSphereMesh`  | 6 per-panel convention-aware grids from CS corners → `CubedSphereToplevelTree` | O(log Nc²) per panel |
 | `ReducedGaussianMesh` | Per-ring `CellBasedGrid(nlon+1, 2)` → `MultiTreeWrapper` | O(nrings · log nlon) |
 
 All three produce `SphericalCap` extents at every tree level, which is
@@ -45,11 +45,11 @@ required by CR.jl's spherical dual-DFS intersection search.
 
 ## Known limitations
 
-- `CubedSphereMesh` uses the **analytical gnomonic** projection from
-  `src/Grids/CubedSphereMesh.jl`. Real GEOS-FP native cubed-sphere data
-  has panel-4/5 axis rotations and small (~1–2°) corner offsets relative to
-  the gnomonic projection; GMAO coordinate loading must be ported for
-  bit-exact parity with production GEOS-FP binaries.
+- `CubedSphereMesh` uses analytical coordinates from
+  `src/Grids/CubedSphereMesh.jl`. `GEOSNativePanelConvention` includes the
+  GEOS-FP/GEOS-IT panel order, native orientation, and global `-10°`
+  longitude offset used by GEOS grid files. Left-handed GEOS panels are
+  wound correctly for tree traversal while preserving file-order indices.
 - `ReducedGaussianMesh` clamps polar face latitudes by 0.001° to avoid
   degenerate polygons at the poles. The omitted cap area is ~8e-11 of the
   full sphere — negligible, but means `frac_a`/`frac_b` at poles are
@@ -67,7 +67,7 @@ using ..Grids: AbstractHorizontalMesh, AbstractStructuredMesh,
                AbstractCubedSpherePanelConvention,
                GnomonicPanelConvention, GEOSNativePanelConvention,
                nrings, nboundaries, ring_cell_count, cell_index,
-               nx, ny, ncells
+               nx, ny, ncells, panel_cell_corner_lonlat
 
 using ConservativeRegridding
 using ConservativeRegridding: Regridder

@@ -111,10 +111,12 @@ julia --project=. scripts/visualization/atmos_viz.jl \
 The debug path is intentionally fast:
 
 - LL snapshots plot directly on their lon-lat grid.
-- RG snapshots plot the ring-aware diagnostic lon-lat output currently written
-  by the runner.
+- RG snapshots carry native cell-indexed fields plus the ring-aware diagnostic
+  lon-lat raster written for quick plots.
 - CS snapshots are conservatively regridded to a regular lon-lat raster and
-  cache the CS→LL geometry across frames.
+  cache the CS-to-LL geometry across frames. Both `gnomonic` and
+  `geos_native` panel conventions use the same convention-aware mesh/treeify
+  path as runtime output.
 
 The extension point for future stretched-CS or zoom meshes is the same as the
 transport stack: add a topology type, implement `fieldview`/`as_raster` or a

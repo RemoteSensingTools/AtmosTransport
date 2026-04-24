@@ -22,12 +22,11 @@
 #     Reads optional `--cs-log` / `--ll-log` flags; `false` if unset or
 #     missing from the file.
 #
-# Only gnomonic CS snapshots are supported. GEOS-native panel ordering
-# would need the per-panel (i, j) rotation documented in
-# `src/Regridding/treeify_meshes.jl:154-160`, which is not yet
-# implemented; exposing it here would silently misorient panels 4/5.
-# Our runner (`run_driven_simulation`) only writes gnomonic snapshots,
-# so this is not a practical limitation today.
+# CS snapshots may be either `panel_convention=gnomonic` or
+# `panel_convention=geos_native`. The validation path uses the same
+# convention-aware `CubedSphereMesh` and `Trees.treeify` implementation as
+# runtime output and visualization, so GEOS-native panels are not remapped or
+# special-cased here.
 #
 # Usage:
 #   julia --project=. scripts/validation/compare_cs_vs_ll.jl \
@@ -44,7 +43,8 @@ using NCDatasets
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
-using .AtmosTransport.Grids: LatLonMesh, CubedSphereMesh, GnomonicPanelConvention
+using .AtmosTransport.Grids: LatLonMesh, CubedSphereMesh,
+                             GnomonicPanelConvention, GEOSNativePanelConvention
 using .AtmosTransport.Regridding: build_regridder, apply_regridder!
 
 # Earth radius [m] (ECMWF/TM5 convention; matches preprocessing constants).
@@ -156,25 +156,37 @@ function _require_dry_mass_basis(ds, path::AbstractString)
     end
 end
 
-# Refuse CS snapshots on a non-gnomonic panel convention. Regridding into
-# a `GnomonicPanelConvention()` destination mesh from geos_native data
-# would silently compare the LL reference against the wrong panel
-# orientation (panels 4/5 have a 90° CW rotation that the regridding
-# layer does not yet apply — see src/Regridding/treeify_meshes.jl:154-160).
-function _require_gnomonic_panels(ds, path::AbstractString)
+function _cs_panel_convention(ds, path::AbstractString)
     if haskey(ds.attrib, "panel_convention")
-        conv = String(ds.attrib["panel_convention"])
-        conv == "gnomonic" || error(
-            "$(path): panel_convention=$(conv) — compare_cs_vs_ll.jl " *
-            "builds a gnomonic destination mesh for the LL→CS regrid. " *
-            "GEOS-native CS snapshots would be mis-oriented on panels " *
-            "4/5. Regenerate on gnomonic, or extend the regridding " *
-            "layer to apply the per-panel (i, j) rotation.")
+        conv = lowercase(String(ds.attrib["panel_convention"]))
+        conv in ("gnomonic", "gnomic") && return GnomonicPanelConvention()
+        conv in ("geos_native", "geosnative", "geos-native") && return GEOSNativePanelConvention()
+        error("$(path): unsupported panel_convention=$(conv); expected gnomonic or geos_native")
     else
         @warn "$(path) has no `panel_convention` attribute — assuming " *
               "gnomonic (the preprocessor default). Regenerate with a " *
               "current runner to pin this."
+        return GnomonicPanelConvention()
     end
+end
+
+const CS_NON_TRACER_VARS = Set([
+    "time", "nf", "air_mass", "air_mass_per_area", "column_air_mass_per_area",
+    "Xdim", "Ydim", "Xcorner", "Ycorner", "lev",
+    "lons", "lats", "corner_lons", "corner_lats", "cell_area",
+    "cubed_sphere",
+])
+
+function _cs_tracer_names(ds)
+    names = Symbol[]
+    for n in keys(ds)
+        s = String(n)
+        s in CS_NON_TRACER_VARS && continue
+        endswith(s, "_column_mean") && continue
+        endswith(s, "_column_mass_per_area") && continue
+        ndims(ds[s]) == 5 && push!(names, Symbol(s))
+    end
+    return sort!(unique(names))
 end
 
 # CS column-mean **dry** VMR per cell, air-mass-weighted:
@@ -214,9 +226,9 @@ function _cs_column_mean_dry_vmr(vmr::Array{T, 5}, m::Array{T, 5}) where T
     return out
 end
 
-# Global area-weighted mean of a CS panel field (Nc, Nc, nf). By gnomonic
-# symmetry every panel has the same `(Nc, Nc)` cell-area matrix, so we
-# pass that and reuse it across the 6 panels.
+# Global area-weighted mean of a CS panel field (Nc, Nc, nf). Supported panel
+# conventions share the same per-panel `(Nc, Nc)` cell-area matrix, so we pass
+# that and reuse it across the 6 panels.
 function _cs_area_mean(field::AbstractArray{<:Real, 3}, areas_2d::AbstractMatrix)
     num = 0.0; den = 0.0
     Nc1, Nc2, nf = size(field)
@@ -233,12 +245,11 @@ function main()
     @info "Loading CS snapshot: $(opts.cs)"
     ds_cs = NCDataset(opts.cs, "r")
     _require_dry_mass_basis(ds_cs, opts.cs)
-    _require_gnomonic_panels(ds_cs, opts.cs)
+    cs_convention = _cs_panel_convention(ds_cs, opts.cs)
     Nc    = Int(ds_cs.attrib["Nc"])
     time  = Float64.(collect(ds_cs["time"][:]))
     air   = Array{Float64}(ds_cs["air_mass"][:, :, :, :, :])   # (Nc,Nc,nf,Nz,ntime)
-    tracer_names = [Symbol(n) for n in keys(ds_cs)
-                    if !(n in ("time", "nf", "air_mass", "Xdim", "Ydim", "lev"))]
+    tracer_names = _cs_tracer_names(ds_cs)
     cs_vmr_full = Dict{Symbol, Array{Float64, 5}}()
     for name in tracer_names
         cs_vmr_full[name] = Array{Float64}(ds_cs[String(name)][:, :, :, :, :])
@@ -298,10 +309,9 @@ function main()
     ll_mesh = LatLonMesh(; FT = Float64, Nx = Nx_ll, Ny = Ny_ll,
                           longitude = lon_interval, latitude = lat_interval,
                           radius = R_EARTH_M)
-    # Gnomonic only — see file header for the GEOS-native (i, j) rotation gap.
     cs_mesh = CubedSphereMesh(; FT = Float64, Nc = Nc,
                                radius = R_EARTH_M,
-                               convention = GnomonicPanelConvention())
+                               convention = cs_convention)
     regridder = build_regridder(ll_mesh, cs_mesh; normalize = false)
     n_src = length(regridder.src_areas); n_dst = length(regridder.dst_areas)
     @info @sprintf("Regridder: %d → %d", n_src, n_dst)

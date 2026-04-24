@@ -21,7 +21,7 @@ function write_ll_snapshot(path)
     return path
 end
 
-function write_cs_snapshot(path)
+function write_cs_snapshot(path; panel_convention="gnomonic")
     NCDataset(path, "c") do ds
         defDim(ds, "Xdim", 2)
         defDim(ds, "Ydim", 2)
@@ -29,7 +29,7 @@ function write_cs_snapshot(path)
         defDim(ds, "lev", 2)
         defDim(ds, "time", 2)
         ds.attrib["Nc"] = 2
-        ds.attrib["panel_convention"] = "gnomonic"
+        ds.attrib["panel_convention"] = panel_convention
         defVar(ds, "time", Float64, ("time",))[:] = [0.0, 6.0]
         air = defVar(ds, "air_mass", Float64, ("Xdim", "Ydim", "nf", "lev", "time"))
         co2 = defVar(ds, "co2", Float64, ("Xdim", "Ydim", "nf", "lev", "time"))
@@ -69,5 +69,13 @@ end
         level_field = fieldview(cs, :co2; transform=:level_slice, level=2, time=2, unit=:ppm)
         @test all(isapprox.(level_field.values, 660.0; atol=1e-12))
         @test robust_colorrange([ll_raster]) == (401.0, 401.0 + max(401.0, 1.0) * eps(Float64))
+
+        geos_path = write_cs_snapshot(joinpath(dir, "cs_geos.nc"); panel_convention="geos_native")
+        geos = open_snapshot(geos_path)
+        @test snapshot_topology(geos).panel_convention === :geos_native
+        geos_field = fieldview(geos, :co2; transform=:column_mean, time=1, unit=:ppm)
+        geos_raster = as_raster(geos_field; resolution=(24, 12))
+        @test size(geos_raster.values) == (24, 12)
+        @test maximum(abs.(geos_raster.values .- 400.0)) < 1e-10
     end
 end

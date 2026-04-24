@@ -78,24 +78,27 @@ Gnomonic equidistant cubed-sphere with 6 panels of `Nc x Nc` cells.
 
 **Tree construction:**
 For each panel, an `(Nc+1) x (Nc+1)` corner-point matrix is generated from
-the analytical gnomonic projection (`_gnomonic_xyz`). Each panel is wrapped
-in `CellBasedGrid{Spherical}` and `IndexOffsetQuadtreeCursor` with offset
-`(p-1) * Nc^2`, so global cell indices span `1 : 6*Nc^2`. All 6 panels are
-assembled into a `CubedSphereToplevelTree`.
+the convention-aware `panel_cell_corner_lonlat(mesh, p)` helper. Each panel is
+wrapped in a quadtree grid and `IndexOffsetQuadtreeCursor` with offset
+`(p-1) * Nc^2`, so global cell indices span `1 : 6*Nc^2`. Left-handed native
+panels are flipped internally for polygon winding while preserving file-order
+linear indices. All 6 panels are assembled into a `CubedSphereToplevelTree`.
 
 **Panel conventions:**
 - `GnomonicPanelConvention`: panels 1-6 = X+, Y+, X-, Y-, N pole, S pole
 - `GEOSNativePanelConvention`: panels 1-6 = equatorial 1, equatorial 2,
-  north pole, equatorial 4, equatorial 5, south pole. Remapped internally
-  via `_gnomonic_panel_id`.
+  north pole, equatorial 4, equatorial 5, south pole. Coordinates include the
+  GEOS-FP/GEOS-IT native panel orientations and global `-10°` longitude offset.
 
 **Cell indexing:** Global flat index = `(panel-1) * Nc^2 + i + (j-1) * Nc`,
 where `i` = xi-index, `j` = eta-index (column-major within each panel).
 
-**Known limitation:** Uses analytical gnomonic coordinates. Real GEOS-FP
-data has ~1-2 degree corner offsets and a 90-degree CW local-axis rotation
-on panels 4 and 5. For bit-exact parity with production GEOS-FP binaries,
-GMAO coordinate loading needs to be ported to v2.
+**GEOS-native support:** Regridding, diagnostic output, and visualization all
+consume the same `CubedSphereMesh(convention=GEOSNativePanelConvention())`
+geometry. The implementation analytically matches the GEOS NetCDF-exposed
+`(Xdim, Ydim, nf, ...)` panel order/orientation used by our binary reader. If a
+future source ships nonstandard or stretched CS coordinates, add a new panel or
+mesh convention instead of patching treeify call sites.
 
 ### ReducedGaussianMesh
 
@@ -198,9 +201,11 @@ julia --project=. scripts/preprocessing/preprocess_era5_cs_conservative_v2.jl \
     --Nc 90 [--cache-dir <path>]
 ```
 
-The output binary is drop-in compatible with `CubedSphereBinaryReader` and
-uses the gnomonic panel convention. The header tags
-`regrid_method="conservative_crjl"` for provenance.
+The output binary is drop-in compatible with `CubedSphereBinaryReader`. ERA5
+LL-to-CS preprocessing writes the default gnomonic panel convention; native
+GEOS-FP/IT products use `panel_convention="geos_native"` and the same
+convention-aware tree construction. The header tags
+`regrid_method="conservative_crjl"` for provenance where applicable.
 
 Both this conservative wrapper and the legacy bilinear wrapper
 `scripts/preprocessing/regrid_latlon_to_cs_binary_v2.jl` now route through the
@@ -244,6 +249,14 @@ centers at the correct physical locations on the unit sphere (verified to
 1e-12 absolute tolerance against the known Cartesian coordinates of each
 cube face pole).
 
+### GEOS-native treeify
+
+`GEOSNativePanelConvention` builds conservative trees in both directions:
+LL -> GEOS-native CS and GEOS-native CS -> LL preserve a constant field and
+global area to roundoff. Panels 4/5 are left-handed in native file space; the
+tree path corrects winding without changing the linear index order expected by
+GEOS-style `(Xdim, Ydim, nf, ...)` arrays.
+
 ## File inventory
 
 | File | Purpose |
@@ -252,7 +265,7 @@ cube face pole).
 | `src/Regridding/treeify_meshes.jl` | `Trees.treeify` for all 3 mesh types + `cubed_sphere_face_corners` |
 | `src/Regridding/weights_io.jl` | `build_regridder`, JLD2 save/load, ESMF export, `apply_regridder!` |
 | `scripts/preprocessing/preprocess_era5_cs_conservative_v2.jl` | ERA5 LL -> CS binary producer |
-| `test/regridding/runtests.jl` | Test suite entry point (564 tests) |
+| `test/regridding/runtests.jl` | Test suite entry point (620 tests) |
 | `test/regridding/test_conservation.jl` | Mass conservation across grid pairs |
 | `test/regridding/test_cubed_sphere_corners.jl` | Panel geometry golden tests |
 | `test/regridding/test_transpose.jl` | Forward + reverse direction round-trip |

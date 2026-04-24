@@ -74,4 +74,28 @@ using LinearAlgebra
                            sum(dst_const .* rt.dst_areas); rtol = 1e-12)
         end
     end
+
+    @testset "GEOS-native CubedSphere treeify" begin
+        Nx, Ny, Nc = 36, 18, 4
+        ll = LatLonMesh(Nx = Nx, Ny = Ny)
+        geos = CubedSphereMesh(Nc = Nc, convention = GEOSNativePanelConvention())
+
+        @testset "LL → GEOS-native C$Nc" begin
+            r = build_regridder(ll, geos; normalize = false)
+            src = ones(length(r.src_areas))
+            dst = zeros(length(r.dst_areas))
+            apply_regridder!(dst, r, src)
+            @test maximum(abs.(dst .- 1.0)) < 1e-12
+            @test isapprox(sum(src .* r.src_areas), sum(dst .* r.dst_areas); rtol = 1e-12)
+        end
+
+        @testset "GEOS-native C$Nc → LL" begin
+            r = build_regridder(geos, ll; normalize = false)
+            src = ones(length(r.src_areas))
+            dst = zeros(length(r.dst_areas))
+            apply_regridder!(dst, r, src)
+            @test maximum(abs.(dst .- 1.0)) < 1e-12
+            @test isapprox(sum(src .* r.src_areas), sum(dst .* r.dst_areas); rtol = 1e-12)
+        end
+    end
 end

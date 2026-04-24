@@ -16,6 +16,10 @@ using ..MetDrivers
 # Regridding + Preprocessing are loaded before Models in AtmosTransport.jl.
 using ..Regridding
 using ..Preprocessing
+# Output writers (SnapshotFrame / capture_snapshot / write_snapshot_netcdf)
+# loaded by AtmosTransport.jl before Models — pull into Models' namespace
+# so the nested DrivenRunner submodule can `using ..Output: …`.
+using ..Output
 
 include("TransportModel.jl")
 include("CSPhysicsRecipe.jl")

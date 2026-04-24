@@ -78,9 +78,13 @@ exchange and sign flips automatically.
 fix use the old (incorrect) boundary fluxes. Either re-preprocess or use
 `netcdf_dir` to read raw NetCDF files at runtime.
 
-**Impact on output regridding:** The regridding code auto-loads file
-coordinates from the met driver via `_get_cs_file_coords()`. Cell areas are
-identical across panels (gnomonic symmetry), so air mass computation is
+**Impact on output/regridding:** Runtime output, visualization, and
+ConservativeRegridding tree construction now use the explicit
+`panel_convention` carried by `CubedSphereMesh` / binary headers. Native
+GEOS-FP/IT files must select `GEOSNativePanelConvention()` (or
+`panel_convention="geos_native"` in metadata); ERA5-derived CS binaries use
+the default `GnomonicPanelConvention()`. Cell areas are identical across
+panels for these two unstretched conventions, so air-mass computation is
 unaffected by the reordering.
 
 ### ERA5: Spectral vs. Gridpoint Mass Fluxes

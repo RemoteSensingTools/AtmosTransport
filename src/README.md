@@ -17,6 +17,8 @@ At a high level, the live path is:
    and operators into a runnable model/simulation
 4. [`Operators/README.md`](Operators/README.md) applies transport and
    post-transport physics
+5. [`Output/`](Output/) captures topology-native snapshots and writes
+   diagnostic NetCDF products
 
 Geometry and topology decisions come from
 [`Grids/README.md`](Grids/README.md).
@@ -33,6 +35,8 @@ Geometry and topology decisions come from
   flux, convection, chemistry
 - [`Models/`](Models/README.md) — `TransportModel`, fixed-step runtime,
   window-driven runtime
+- `Output/` — topology-dispatched snapshot capture, NetCDF schema, and
+  derived diagnostics for LL, RG, and CS runs
 - `Parameters/` — physical constants and planetary parameters
 - `Architectures.jl` — CPU/GPU adaptation helpers and backend utilities
 - `Kernels/` — lower-level kernel helpers shared outside the operator tree
@@ -50,6 +54,8 @@ Geometry and topology decisions come from
   [`State/README.md`](State/README.md), then the relevant operator README
 - "I need to trace data from disk to runtime":
   start with [`MetDrivers/README.md`](MetDrivers/README.md)
+- "I need to understand runtime NetCDF output":
+  start with [`../docs/reference/OUTPUT.md`](../docs/reference/OUTPUT.md)
 - "I need to add a new operator input field":
   start with [`State/Fields/README.md`](State/Fields/README.md)
 

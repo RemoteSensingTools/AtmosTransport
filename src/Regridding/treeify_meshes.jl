@@ -110,69 +110,12 @@ Trees.treeify(mesh::LatLonMesh) = Trees.treeify(GOCore.best_manifold(mesh), mesh
 # CubedSphereMesh → CubedSphereToplevelTree of 6 CellBasedGrids
 #
 # CubedSphereMesh does not store face-corner coordinates; we regenerate
-# them from the analytical gnomonic projection. Panel index remapping between
-# conventions is handled by _gnomonic_panel_id.
+# them via the convention-aware coordinate helpers in Grids. Panels whose
+# native file axes are left-handed are flipped internally for polygon winding
+# while retaining file-order linear indices. This keeps regridding aligned
+# with diagnostic NetCDF output for both gnomonic and GEOS-native panel
+# conventions.
 # ---------------------------------------------------------------------------
-
-"""
-    _gnomonic_xyz(ξ, η, panel) -> NTuple{3, Float64}
-
-Local copy of the gnomonic projection helper in
-`src/Grids/CubedSphereMesh.jl`. Panel ids are the gnomonic convention:
-1=X+, 2=Y+, 3=X−, 4=Y−, 5=Z+ (north), 6=Z− (south).
-
-Reproduced here so this module does not depend on a non-exported name from
-`Grids`.
-"""
-@inline function _gnomonic_xyz(ξ::Float64, η::Float64, panel::Int)
-    d = 1.0 / sqrt(1.0 + ξ^2 + η^2)
-    if     panel == 1; return ( d,    ξ*d,  η*d)
-    elseif panel == 2; return (-ξ*d,  d,    η*d)
-    elseif panel == 3; return (-d,   -ξ*d,  η*d)
-    elseif panel == 4; return ( ξ*d, -d,    η*d)
-    elseif panel == 5; return (-η*d,  ξ*d,  d  )
-    else               return ( η*d,  ξ*d, -d  )
-    end
-end
-
-"""
-    _gnomonic_panel_id(conv, p) -> Int
-
-Map a user-visible panel index `p` (1..6) under convention `conv` to the
-gnomonic panel id consumed by `_gnomonic_xyz`.
-
-- `GnomonicPanelConvention` → identity
-- `GEOSNativePanelConvention` → (1→1, 2→2, 3→5, 4→3, 5→4, 6→6)
-
-Based on the label interpretation in `CubedSphereMesh.jl`:
-```
-GnomonicPanelConvention:   (:x_plus, :y_plus, :x_minus, :y_minus, :north_pole, :south_pole)
-GEOSNativePanelConvention: (:equatorial_1, :equatorial_2, :north_pole,
-                            :equatorial_4, :equatorial_5, :south_pole)
-```
-
-**Caveat:** GEOS panels 4 and 5 have local (X=south, Y=east) axes — a 90° CW
-rotation relative to the gnomonic `(ξ, η)` parameterization. The current
-mapping places polygons at the right physical location but assumes gnomonic
-(i, j) ordering within each panel. Real GEOS-FP binary data uses the rotated
-(i, j) ordering, and for bit-exact parity with production binaries this
-function must be paired with a per-panel (i, j) rotation. TODO when GMAO
-coordinate loading is ported .
-"""
-@inline function _gnomonic_panel_id(::GnomonicPanelConvention, p::Int)
-    return p
-end
-
-@inline function _gnomonic_panel_id(::GEOSNativePanelConvention, p::Int)
-    if     p == 1; return 1
-    elseif p == 2; return 2
-    elseif p == 3; return 5   # north pole
-    elseif p == 4; return 3
-    elseif p == 5; return 4
-    elseif p == 6; return 6   # south pole
-    else error("invalid GEOS native panel id $p")
-    end
-end
 
 """
     cubed_sphere_face_corners(mesh::CubedSphereMesh)
@@ -180,9 +123,8 @@ end
 
 Return a 6-tuple of `(Nc+1) × (Nc+1)` corner-point matrices, one per panel,
 with corners on the unit sphere. Panel ordering follows `mesh.convention`;
-for each user-visible panel `p`, corner `(i, j)` corresponds to the cell
-corner at angular coordinates `(α_faces[i], α_faces[j])` on the gnomonic
-panel identified by `_gnomonic_panel_id(mesh.convention, p)`.
+for each user-visible panel `p`, corner `(i, j)` matches
+`panel_cell_corner_lonlat(mesh, p)`.
 
 Used by `Trees.treeify(::Spherical, ::CubedSphereMesh)` to assemble a
 `CubedSphereToplevelTree`. Cached externally (the regridder cache includes
@@ -191,23 +133,100 @@ the mesh hash) so this is only called once per `(Nc, convention)`.
 function cubed_sphere_face_corners(mesh::CubedSphereMesh)
     Nc  = mesh.Nc
     Np  = Nc + 1
-    dα  = π / (2 * Nc)
-    α_faces = Vector{Float64}(undef, Np)
-    @inbounds for i in 1:Np
-        α_faces[i] = -π/4 + (i - 1) * dα
-    end
-    ξ_faces = tan.(α_faces)
-    # Cache one corner matrix per panel
+    to_sphere = GO.UnitSphereFromGeographic()
     panels = ntuple(6) do user_panel
-        g = _gnomonic_panel_id(mesh.convention, user_panel)
+        lons, lats = panel_cell_corner_lonlat(mesh, user_panel)
         m = Matrix{UnitSphericalPoint{Float64}}(undef, Np, Np)
         @inbounds for j in 1:Np, i in 1:Np
-            xyz = _gnomonic_xyz(ξ_faces[i], ξ_faces[j], g)
-            m[i, j] = UnitSphericalPoint(xyz[1], xyz[2], xyz[3])
+            m[i, j] = to_sphere((Float64(lons[i, j]), Float64(lats[i, j])))
         end
         m
     end
     return panels
+end
+
+"""
+    YReversedCellBasedGrid(manifold, points)
+
+`CellBasedGrid` variant for cubed-sphere panels whose file-space `(i, j)`
+indices are left-handed. The stored `points` matrix is flipped in the tree's
+Y direction so each cell polygon has the winding expected by
+ConservativeRegridding, while `cartesian_to_linear_idx` and
+`linear_to_cartesian_idx` preserve the original file-order linear index
+`i + (j - 1) * Nc`.
+
+This keeps GEOS-native panels 4/5 conservative without materializing one
+polygon per cell or reordering tracer arrays.
+"""
+struct YReversedCellBasedGrid{M <: GOCore.Manifold, PointMatrixType <: AbstractMatrix} <: Trees.AbstractCurvilinearGrid
+    manifold::M
+    points::PointMatrixType
+end
+
+GOCore.manifold(grid::YReversedCellBasedGrid) = grid.manifold
+Trees.ncells(grid::YReversedCellBasedGrid, dim::Int) = size(grid.points, dim) - 1
+
+Base.@propagate_inbounds function Trees.getcell(grid::YReversedCellBasedGrid, i::Int, j::Int)
+    @boundscheck begin
+        if i < 1 || i >= size(grid.points, 1) || j < 1 || j >= size(grid.points, 2)
+            error("Invalid index for YReversedCellBasedGrid; got ($i, $j), but the matrix has $(size(grid.points) .- 1) polygons.")
+        end
+    end
+    return GI.Polygon(SA[GI.LinearRing(SA[
+        grid.points[i, j],
+        grid.points[i + 1, j],
+        grid.points[i + 1, j + 1],
+        grid.points[i, j + 1],
+        grid.points[i, j],
+    ])])
+end
+
+function Trees.cartesian_to_linear_idx(grid::YReversedCellBasedGrid, idx::CartesianIndex{2})
+    nx = Trees.ncells(grid, 1)
+    ny = Trees.ncells(grid, 2)
+    i, j_tree = idx.I
+    j_data = ny - j_tree + 1
+    return i + (j_data - 1) * nx
+end
+
+function Trees.linear_to_cartesian_idx(grid::YReversedCellBasedGrid, idx::Integer)
+    nx = Trees.ncells(grid, 1)
+    ny = Trees.ncells(grid, 2)
+    i = mod(Int(idx) - 1, nx) + 1
+    j_data = div(Int(idx) - 1, nx) + 1
+    return CartesianIndex(i, ny - j_data + 1)
+end
+
+function Trees.cell_range_extent(grid::YReversedCellBasedGrid{<:GO.Spherical},
+                                 irange::UnitRange{Int}, jrange::UnitRange{Int})
+    return Trees.cell_range_extent(Trees.CellBasedGrid(grid.manifold, grid.points),
+                                   irange, jrange)
+end
+
+function _corner_winding_sign(corners::AbstractMatrix, i::Int=1, j::Int=1)
+    verts = (corners[i, j],
+             corners[i + 1, j],
+             corners[i + 1, j + 1],
+             corners[i, j + 1])
+    normal = zeros(Float64, 3)
+    centroid = zeros(Float64, 3)
+    for n in 1:4
+        a = verts[n]
+        b = verts[mod1(n + 1, 4)]
+        av = SA[Float64(a[1]), Float64(a[2]), Float64(a[3])]
+        bv = SA[Float64(b[1]), Float64(b[2]), Float64(b[3])]
+        normal .+= cross(av, bv)
+        centroid .+= av
+    end
+    return dot(normal, centroid)
+end
+
+function _cs_panel_grid(manifold::GOCore.Spherical, corners::AbstractMatrix)
+    if _corner_winding_sign(corners) > 0
+        return Trees.CellBasedGrid(manifold, corners)
+    else
+        return YReversedCellBasedGrid(manifold, reverse(corners; dims=2))
+    end
 end
 
 """
@@ -220,11 +239,12 @@ Build a spatial tree for a `CubedSphereMesh` on the sphere.
 1. Call [`cubed_sphere_face_corners`](@ref) to produce 6 matrices of
    `(Nc+1) × (Nc+1)` `UnitSphericalPoint` corner coordinates, one per
    panel. The panel ordering follows `mesh.convention` (gnomonic or
-   GEOS-native), with panel-index remapping via `_gnomonic_panel_id`.
+   GEOS-native).
 
-2. For each panel `p`, build a `CellBasedGrid{Spherical}` from the
-   corner matrix, and wrap it in an `IndexOffsetQuadtreeCursor` with
-   offset `(p-1) × Nc²`. This ensures the global cell index is:
+2. For each panel `p`, build a quadtree grid from the corner matrix, correcting
+   left-handed panel winding where needed, and wrap it in an
+   `IndexOffsetQuadtreeCursor` with offset `(p-1) × Nc²`. This ensures the
+   global cell index is:
 
        global_idx = (panel - 1) × Nc² + local_linear_idx
 
@@ -241,14 +261,14 @@ The global flat index space is `1 : 6·Nc²`. Panel `p` occupies indices
 `(i, j)` gnomonic indices: `i` varies fastest (ξ direction), `j` second
 (η direction). This layout matches `vec(panel_data[:, :])` in Julia.
 
-## Known limitation
+## GEOS-native support
 
-Uses analytical gnomonic coordinates only. GEOS panels 4/5 have a 90° CW
-local-axis rotation relative to the gnomonic `(ξ, η)` parameterization.
-The current implementation places polygons at the correct physical
-location but uses gnomonic `(i, j)` ordering within each panel. For
-bit-exact parity with production GEOS-FP panel data, GMAO coordinate
-loading must be ported and the per-panel `(i, j)` rotation applied.
+`GEOSNativePanelConvention` uses the GEOS-FP/GEOS-IT panel order and
+orientation exposed by NCDatasets as `(Xdim, Ydim, nf, ...)`, including the
+global `-10°` longitude offset and rotated north-pole/equatorial panels.
+Panels 4 and 5 are left-handed in file index space; treeify flips their
+corner matrices only inside the quadtree grid and maps tree indices back to
+the original GEOS file-order linear indices.
 """
 function Trees.treeify(manifold::GOCore.Spherical, mesh::CubedSphereMesh)
     corners = cubed_sphere_face_corners(mesh)
@@ -256,7 +276,7 @@ function Trees.treeify(manifold::GOCore.Spherical, mesh::CubedSphereMesh)
     N_per_panel = Nc * Nc
     quadtrees = [
         Trees.IndexOffsetQuadtreeCursor(
-            Trees.CellBasedGrid(manifold, corners[p]),
+            _cs_panel_grid(manifold, corners[p]),
             (p - 1) * N_per_panel,
         )
         for p in 1:6

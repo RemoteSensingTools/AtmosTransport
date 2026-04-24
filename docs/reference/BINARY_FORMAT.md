@@ -223,7 +223,7 @@ fast offset computation):
 | `Nc` | int | Cells per panel edge |
 | `npanel` | int | 6 |
 | `Hp` | int | Halo width for panel arrays |
-| `panel_convention` | string | `"GEOSFP_file"` or `"gnomonic"` |
+| `panel_convention` | string | `"gnomonic"` or `"geos_native"` |
 
 Consistency: `ncell = 6 × Nc × Nc`.
 

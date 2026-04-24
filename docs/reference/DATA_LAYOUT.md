@@ -45,7 +45,7 @@ Each dataset root should include a small `manifest.json` with at least:
 - `grid_name` (canonical, e.g. `C180`, `N320`, `0.5x0.5`)
 - `grid_type` (`latlon`, `reduced_gaussian`, `cubed_sphere`)
 - `horizontal_topology` (`StructuredDirectional` or `FaceIndexed`)
-- `panel_convention` (for cubed-sphere datasets: `GEOSNative` or `Gnomonic`)
+- `panel_convention` (for cubed-sphere datasets: `geos_native` or `gnomonic`)
 - `mass_basis` (`moist` or `dry`)
 - `vertical_coordinate_type`
 - `format_version`

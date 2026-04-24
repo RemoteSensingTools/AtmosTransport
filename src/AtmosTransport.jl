@@ -59,6 +59,10 @@ using .Grids
 include("State/State.jl")
 using .State
 
+# ---- Diagnostic NetCDF output ----
+include("Output/Output.jl")
+using .Output
+
 # ---- Met-data adapters ----
 include("MetDrivers/MetDrivers.jl")
 using .MetDrivers: AbstractDriver, AbstractClosure, AbstractMetDriver,
@@ -167,6 +171,11 @@ export face_flux_x, face_flux_y, face_flux_z, face_flux
 export MetState, allocate_face_fluxes, allocate_tracers
 export mixing_ratio, total_mass, total_air_mass, tracer_names
 export ntracers, tracer_index, tracer_name, get_tracer, eachtracer
+
+# Output diagnostics
+export SnapshotFrame, SnapshotWriteOptions
+export capture_snapshot, write_snapshot_netcdf
+export column_mean_mixing_ratio, layer_mass_per_area, column_mass_per_area
 
 # Time-varying field abstraction (plan 16a, extended in 16b/17)
 export AbstractTimeVaryingField, AbstractCubedSphereField,

@@ -41,16 +41,12 @@ module DrivenRunner
 
 using Adapt
 using Printf: @sprintf, @printf
-using NCDatasets
 using Logging
 
 using ..State: AbstractMassBasis, DryBasis, MoistBasis, CellState,
                 CubedSphereState, total_air_mass, total_mass, tracer_names,
                 tracer_index, get_tracer
-using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
-                GnomonicPanelConvention, GEOSNativePanelConvention,
-                nx, ny, nrings, ring_longitudes, cell_index, ncells,
-                nlevels
+using ..Grids: nlevels
 using ..Architectures: CPU, GPU
 using ..MetDrivers: TransportBinaryDriver, CubedSphereTransportDriver,
                      load_transport_window, driver_grid, air_mass_basis,
@@ -60,6 +56,8 @@ using ..InitialConditionIO: build_initial_mixing_ratio,
                              pack_initial_tracer_mass,
                              build_surface_flux_sources
 using ..BinaryPathExpander: expand_binary_paths
+using ..Output: SnapshotFrame, SnapshotWriteOptions,
+                capture_snapshot, write_snapshot_netcdf
 # TransportModel + DrivenSimulation live alongside us in the Models module;
 # reach up to the parent and pull them in.
 using ..Models: TransportModel
@@ -162,6 +160,13 @@ function _backend_label(cfg)
     return "CPU"
 end
 
+function _snapshot_write_options(cfg, ::Type{FT}) where FT <: AbstractFloat
+    output_cfg = get(cfg, "output", Dict{String, Any}())
+    return SnapshotWriteOptions(float_type = FT,
+                                deflate_level = Int(get(output_cfg, "deflate_level", 0)),
+                                shuffle = Bool(get(output_cfg, "shuffle", true)))
+end
+
 function _synchronize_backend!(cfg)
     if _cfg_use_gpu(cfg)
         _ensure_gpu_runtime!(cfg)
@@ -236,164 +241,9 @@ function _make_structured_model(driver::TransportBinaryDriver;
     return adaptor === Array ? model : Adapt.adapt(adaptor, model)
 end
 
-# ===========================================================================
-# Snapshot capture (hoisted from run_transport_binary.jl:195-232)
-# ===========================================================================
-
-"""
-    _capture_snapshot(model) -> Dict{Symbol, Vector{Float64}}
-
-Column-mean mixing ratio per tracer. Handles structured grids
-(`(Nx, Ny, Nz)` 3D arrays → flattened `(Nx * Ny,)`) and face-indexed
-grids like reduced Gaussian (`(ncells, Nz)` 2D → `(ncells,)`).
-"""
-function _capture_snapshot(model)
-    names = tracer_names(model.state)
-    m = Array(model.state.air_mass)
-    result = Dict{Symbol, Vector{Float64}}()
-    for name in names
-        # Plan-14 TracerAccessor: the tracers field exposes a `.state` handle
-        # and is NOT a NamedTuple, so `getfield(model.state.tracers, name)`
-        # errors with `no field co2_fossil` on any multi-tracer run. Use the
-        # accessor API that the CS path already uses.
-        rm = Array(get_tracer(model.state, name))
-        if ndims(rm) == 3
-            Nx, Ny, Nz = size(rm)
-            col_mean = zeros(Float64, Nx * Ny)
-            for j in 1:Ny, i in 1:Nx
-                sum_rm = 0.0; sum_m = 0.0
-                for k in 1:Nz
-                    sum_rm += Float64(rm[i, j, k])
-                    sum_m  += Float64(m[i, j, k])
-                end
-                col_mean[(j - 1) * Nx + i] = sum_m > 0 ? sum_rm / sum_m : 0.0
-            end
-        elseif ndims(rm) == 2
-            Nc, Nz = size(rm)
-            col_mean = zeros(Float64, Nc)
-            for c in 1:Nc
-                sum_rm = 0.0; sum_m = 0.0
-                for k in 1:Nz
-                    sum_rm += Float64(rm[c, k])
-                    sum_m  += Float64(m[c, k])
-                end
-                col_mean[c] = sum_m > 0 ? sum_rm / sum_m : 0.0
-            end
-        else
-            error("_capture_snapshot: unsupported tracer array ndims=$(ndims(rm))")
-        end
-        result[name] = col_mean
-    end
-    return result
-end
-
-# ===========================================================================
-# NetCDF snapshot output (hoisted from run_transport_binary.jl:243-363)
-# ===========================================================================
-
-function _write_snapshot_netcdf(path, snapshots, snapshot_hours, grid;
-                                mass_basis::Symbol = :dry)
-    isempty(snapshots) && return
-    mkpath(dirname(path))
-    mesh = grid.horizontal
-    ntime = length(snapshots)
-
-    NCDataset(path, "c") do ds
-        ds.attrib["Conventions"] = "CF-1.8"
-        ds.attrib["grid"] = summary(mesh)
-        # Record the basis on which `air_mass` (and therefore the
-        # air-mass-weighted column-mean VMR stored as `{tracer}_column_mean`)
-        # is defined. `compare_cs_vs_ll.jl` and any downstream tool that
-        # wants dry-air-mass-weighted VMRs checks this attribute.
-        ds.attrib["mass_basis"] = String(mass_basis)
-        if mesh isa LatLonMesh
-            _write_snapshot_ll!(ds, snapshots, snapshot_hours, mesh, ntime)
-        elseif mesh isa ReducedGaussianMesh
-            _write_snapshot_rg!(ds, snapshots, snapshot_hours, mesh, ntime)
-        else
-            error("Unsupported mesh type for snapshot output: $(typeof(mesh))")
-        end
-    end
-    @info "Saved snapshots: $path ($(length(snapshots)) times, mass_basis=$(mass_basis))"
-end
-
-function _write_snapshot_ll!(ds, snapshots, snapshot_hours, mesh, ntime)
-    Nx_, Ny_ = nx(mesh), ny(mesh)
-    defDim(ds, "lon", Nx_); defDim(ds, "lat", Ny_); defDim(ds, "time", ntime)
-
-    v_lon = defVar(ds, "lon", Float64, ("lon",),
-                   attrib = Dict("units" => "degrees_east", "long_name" => "longitude",
-                                 "standard_name" => "longitude"))
-    v_lat = defVar(ds, "lat", Float64, ("lat",),
-                   attrib = Dict("units" => "degrees_north", "long_name" => "latitude",
-                                 "standard_name" => "latitude"))
-    v_time = defVar(ds, "time", Float64, ("time",),
-                    attrib = Dict("units" => "hours since start", "long_name" => "time"))
-
-    v_lon[:] = Float64.(mesh.λᶜ)
-    v_lat[:] = Float64.(mesh.φᶜ)
-    v_time[:] = snapshot_hours[1:ntime]
-
-    for name in keys(first(snapshots))
-        v = defVar(ds, "$(name)_column_mean", Float64, ("lon", "lat", "time"),
-                   attrib = Dict("units" => "mol mol-1",
-                                 "long_name" => "Column-mean $name VMR"))
-        for t in 1:ntime
-            v[:, :, t] = reshape(snapshots[t][name], Nx_, Ny_)
-        end
-    end
-end
-
-function _write_snapshot_rg!(ds, snapshots, snapshot_hours, mesh, ntime)
-    nr = nrings(mesh)
-    Nlon = maximum(mesh.nlon_per_ring)
-    Nlat = nr
-    dlon = 360.0 / Nlon
-    out_lons = [(i - 0.5) * dlon for i in 1:Nlon]
-    out_lats = Float64.(mesh.latitudes)
-
-    nn_map = zeros(Int, Nlon, Nlat)
-    for j in 1:Nlat
-        nlon_ring = mesh.nlon_per_ring[j]
-        dlon_ring = 360.0 / nlon_ring
-        for i in 1:Nlon
-            i_ring = clamp(round(Int, out_lons[i] / dlon_ring + 0.5), 1, nlon_ring)
-            nn_map[i, j] = cell_index(mesh, i_ring, j)
-        end
-    end
-
-    defDim(ds, "lon", Nlon); defDim(ds, "lat", Nlat); defDim(ds, "time", ntime)
-    ds.attrib["grid_type"] = "reduced_gaussian_regridded"
-    ds.attrib["nrings"] = nr
-    ds.attrib["regridding"] = "nearest-neighbor from reduced Gaussian"
-
-    v_lon = defVar(ds, "lon", Float64, ("lon",),
-                   attrib = Dict("units" => "degrees_east", "long_name" => "longitude",
-                                 "standard_name" => "longitude"))
-    v_lat = defVar(ds, "lat", Float64, ("lat",),
-                   attrib = Dict("units" => "degrees_north", "long_name" => "latitude",
-                                 "standard_name" => "latitude"))
-    v_time = defVar(ds, "time", Float64, ("time",),
-                    attrib = Dict("units" => "hours since start", "long_name" => "time"))
-
-    v_lon[:] = out_lons
-    v_lat[:] = out_lats
-    v_time[:] = snapshot_hours[1:ntime]
-
-    for name in keys(first(snapshots))
-        v = defVar(ds, "$(name)_column_mean", Float64, ("lon", "lat", "time"),
-                   attrib = Dict("units" => "mol mol-1",
-                                 "long_name" => "Column-mean $name VMR"))
-        for t in 1:ntime
-            flat = snapshots[t][name]
-            regridded = zeros(Float64, Nlon, Nlat)
-            for j in 1:Nlat, i in 1:Nlon
-                regridded[i, j] = flat[nn_map[i, j]]
-            end
-            v[:, :, t] = regridded
-        end
-    end
-end
+# Snapshot capture and NetCDF writing live in `AtmosTransport.Output`. The
+# runner only decides when to sample; the output module owns topology-specific
+# diagnostics and file layout.
 
 # ===========================================================================
 # Capability validation (plan 40 Commit 6a)
@@ -437,7 +287,7 @@ Run a driven transport simulation from a TOML config. Resolves
 `[input]` to a sorted binary list via `expand_binary_paths`, picks
 the right driver based on the binary's `grid_type` header field,
 validates physics-vs-capability, verifies GPU residency when
-requested, runs the loop, optionally captures column-mean snapshots
+requested, runs the loop, optionally captures topology-native diagnostic snapshots
 to NetCDF, and returns the terminal `TransportModel`.
 
 Plan 40 Commit 6a supports LL/RG only (structured and
@@ -512,13 +362,13 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
                        Float64(sum(source.cell_mass_rate)))
     end
 
-    snapshots = Dict{Symbol, Vector{Float64}}[]
+    snapshots = SnapshotFrame[]
     snap_idx = 1
     total_elapsed_hours = 0.0
 
     if do_snapshots && snap_idx <= length(snapshot_hours) &&
        abs(snapshot_hours[snap_idx]) < 0.5
-        push!(snapshots, _capture_snapshot(model))
+        push!(snapshots, capture_snapshot(model; time_hours = 0.0))
         @info @sprintf("Snapshot %d at t=%.0fh", snap_idx, 0.0)
         snap_idx += 1
     end
@@ -558,7 +408,8 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
                 total_elapsed_hours += window_hours
                 while snap_idx <= length(snapshot_hours) &&
                       abs(total_elapsed_hours - snapshot_hours[snap_idx]) < 0.5
-                    push!(snapshots, _capture_snapshot(model))
+                    push!(snapshots, capture_snapshot(model;
+                                                      time_hours = total_elapsed_hours))
                     @info @sprintf("Snapshot %d at t=%.0fh",
                                    snap_idx, total_elapsed_hours)
                     snap_idx += 1
@@ -578,9 +429,9 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
         # `air_mass_basis(driver)` already returns the Symbol and has been
         # validated to match `model.state`'s basis by
         # `_check_basis_compatibility` before any step!.
-        _write_snapshot_netcdf(snapshot_file, snapshots, snapshot_hours,
-                               driver_grid(first_driver);
-                               mass_basis = air_mass_basis(first_driver))
+        write_snapshot_netcdf(snapshot_file, snapshots, driver_grid(first_driver);
+                              mass_basis = air_mass_basis(first_driver),
+                              options = _snapshot_write_options(cfg, FT))
     end
 
     m1 = total_air_mass(model.state)
@@ -606,9 +457,6 @@ end
 # CS runner (plan 40 Commit 6b, hoisted from scripts/run_cs_driven.jl)
 # ===========================================================================
 
-"""Strip halo padding and return the interior `(Nc, Nc, Nz)` view as a CPU Array."""
-_cs_interior(panel, Hp, Nc) = Array(panel[Hp + 1 : Hp + Nc, Hp + 1 : Hp + Nc, :])
-
 _cfg_float_type(cfg) = let s = get(get(cfg, "numerics", Dict()), "float_type", "Float64")
     s == "Float32" ? Float32 : Float64
 end
@@ -619,52 +467,6 @@ function _cfg_architecture(cfg)
         return GPU()
     end
     return CPU()
-end
-
-function _write_snapshot_cs!(nc_path, snap_data, snap_m, snapshot_hours, mesh, Nz;
-                             mass_basis::Symbol = :dry)
-    Nc = mesh.Nc
-    ntime = length(snap_data)
-    isfile(nc_path) && rm(nc_path)
-    mkpath(dirname(nc_path))
-    # Derive a string tag for the panel convention so downstream tools
-    # (compare_cs_vs_ll.jl) can verify they are reading a gnomonic
-    # snapshot before building a gnomonic destination mesh.
-    conv_tag = mesh.convention isa GnomonicPanelConvention ? "gnomonic" :
-               mesh.convention isa GEOSNativePanelConvention ? "geos_native" :
-               "unknown"
-    NCDataset(nc_path, "c") do ds
-        defDim(ds, "Xdim", Nc); defDim(ds, "Ydim", Nc); defDim(ds, "nf", 6)
-        defDim(ds, "lev", Nz); defDim(ds, "time", ntime)
-        ds.attrib["Conventions"] = "CF"
-        ds.attrib["Source"] = "AtmosTransport.jl run_driven_simulation (CS)"
-        ds.attrib["Nc"] = Nc
-        ds.attrib["panel_convention"] = conv_tag
-        # Basis on which `air_mass` is stored. Column-mean VMRs derived
-        # from this file must be weighted by dry air-mass — see
-        # `compare_cs_vs_ll.jl::_cs_column_mean_dry_vmr`.
-        ds.attrib["mass_basis"] = String(mass_basis)
-
-        defVar(ds, "time", Float64, ("time",),
-               attrib = Dict("units" => "hours since t0"))[:] = Float64.(snapshot_hours[1:ntime])
-        defVar(ds, "nf", Int32, ("nf",))[:] = Int32.(1:6)
-
-        m_v = defVar(ds, "air_mass", Float64, ("Xdim", "Ydim", "nf", "lev", "time"))
-        for t in 1:ntime, p in 1:6
-            m_v[:, :, p, :, t] = snap_m[t][p]
-        end
-        for name in keys(snap_data[1])
-            v = defVar(ds, String(name), Float64,
-                       ("Xdim", "Ydim", "nf", "lev", "time"))
-            for t in 1:ntime, p in 1:6
-                rm_p = snap_data[t][name][p]
-                m_p  = snap_m[t][p]
-                # Column-diagnostic VMR = rm / m; clamp tiny denominators
-                v[:, :, p, :, t] = rm_p ./ max.(m_p, eps(Float64))
-            end
-        end
-    end
-    @info "Saved snapshots: $nc_path (C$Nc × 6 panels × $Nz levels × $ntime times)"
 end
 
 function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
@@ -777,19 +579,13 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
                    join(String.(keys(tracer_init)), ", "),
                    length(binary_paths), snapshot_file)
 
-    # Snapshot storage
-    snap_data = Dict{Symbol, NTuple{6, Array{FT, 3}}}[]
-    snap_m    = NTuple{6, Array{FT, 3}}[]
-    snap_taken = Float64[]
+    # Snapshot storage is full-state and topology-native; Output handles halo
+    # stripping and NetCDF diagnostics.
+    snapshots = SnapshotFrame[]
 
     function capture_cs!(hour_total)
-        cur_m = ntuple(p -> _cs_interior(state.air_mass[p], Hp, mesh.Nc), 6)
-        cur_tracers = Dict(n => ntuple(p -> _cs_interior(get_tracer(state, n)[p],
-                                                          Hp, mesh.Nc), 6)
-                           for n in keys(tracer_init))
-        push!(snap_m, cur_m)
-        push!(snap_data, cur_tracers)
-        push!(snap_taken, hour_total)
+        push!(snapshots, capture_snapshot(model; time_hours = hour_total,
+                                          halo_width = Hp))
     end
 
     snap_idx = 1
@@ -831,14 +627,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
         sim = DrivenSimulation(model, driver;
                                start_window = 1, stop_window = stop_window,
                                surface_sources = surface_sources)
-        # `DrivenSimulation` wraps `model` via `with_emissions(model, op)`
-        # to install the surface-flux operator. The simulation steps use
-        # `sim.model` but the `capture_cs!` closure and the function's
-        # return value reference the local `model` binding. Rebind here so
-        # snapshots and the returned model reflect the installed source —
-        # otherwise both report `emissions = NoSurfaceFlux` even when a
-        # `[tracers.*.surface_flux]` block is active. Mirrors the LL/RG
-        # runner's `model = sim.model` in `_run_driven_simulation_structured`.
+        # `DrivenSimulation` may wrap `model` with a surface-flux operator;
+        # keep snapshots and the return value aligned with the stepped model.
         model = sim.model
 
         while sim.iteration < sim.final_iteration
@@ -858,7 +648,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
     end
 
     @info @sprintf("Done: %.1fs  (%d snapshots, final t=%.1fh)",
-                   time() - t0, length(snap_data), total_hour)
+                   time() - t0, length(snapshots), total_hour)
 
     for name in keys(tracer_init)
         rm1 = Float64(total_mass(state, name))
@@ -869,11 +659,14 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
         end
     end
 
-    # BasisT was bound at model construction (dry by default on CS per
-    # invariant 14); reuse it so the NetCDF records the same basis the
-    # `air_mass` arrays were stored under.
-    _write_snapshot_cs!(snapshot_file, snap_data, snap_m, snap_taken, mesh, Nz;
-                        mass_basis = BasisT === DryBasis ? :dry : :moist)
+    if !isempty(snapshots)
+        # BasisT was bound at model construction (dry by default on CS per
+        # invariant 14); reuse it so the NetCDF records the same basis the
+        # `air_mass` arrays were stored under.
+        write_snapshot_netcdf(snapshot_file, snapshots, grid;
+                              mass_basis = BasisT === DryBasis ? :dry : :moist,
+                              options = _snapshot_write_options(cfg, FT))
+    end
     return model
 end
 

@@ -5,14 +5,23 @@
 # - Returns an NTuple of 6 matrices of shape (Nc+1, Nc+1)
 # - All vertices are unit-length (within roundoff)
 # - Panel centers land at the expected physical locations on the sphere
-# - GnomonicPanelConvention and GEOSNativePanelConvention agree on panel
-#   count and shape; GEOS remap swaps panels 3/4/5 so panel 3 of GEOS is
-#   the north pole (not X−).
+# - GEOSNativePanelConvention matches the GEOS-FP/GEOS-IT panel ordering,
+#   global -10° longitude offset, and native panel orientations.
 # ---------------------------------------------------------------------------
 
 using LinearAlgebra: norm
 import GeometryOps as GO
 using .AtmosTransport.Regridding: cubed_sphere_face_corners
+
+function _lonlat(pt)
+    x, y, z = pt[1], pt[2], pt[3]
+    lon = rad2deg(atan(y, x))
+    lon < 0 && (lon += 360)
+    lat = rad2deg(asin(z / norm((x, y, z))))
+    return lon, lat
+end
+
+_lon_close(a, b; atol=1e-10) = abs(mod(a - b + 180, 360) - 180) <= atol
 
 @testset "cubed_sphere_face_corners" begin
     @testset "shape + unit norm (Gnomonic)" begin
@@ -49,25 +58,50 @@ using .AtmosTransport.Regridding: cubed_sphere_face_corners
         @test isapprox(panel_center(6), [ 0.0,  0.0, -1.0]; atol = 1e-12)  # S pole
     end
 
-    @testset "panel centers (GEOS native remap)" begin
+    @testset "panel centers (GEOS native)" begin
         Nc = 4
         mesh = CubedSphereMesh(Nc = Nc, convention = GEOSNativePanelConvention())
         corners = cubed_sphere_face_corners(mesh)
         mid = Nc ÷ 2 + 1
-        pc(p) = let pt = corners[p][mid, mid]; [pt[1], pt[2], pt[3]] end
+        pc(p) = _lonlat(corners[p][mid, mid])
 
-        # GEOS ordering per _gnomonic_panel_id:
-        #   user 1 → gnomonic 1 (X+)
-        #   user 2 → gnomonic 2 (Y+)
-        #   user 3 → gnomonic 5 (north pole)
-        #   user 4 → gnomonic 3 (X−)
-        #   user 5 → gnomonic 4 (Y−)
-        #   user 6 → gnomonic 6 (south pole)
-        @test isapprox(pc(1), [ 1.0,  0.0,  0.0]; atol = 1e-12)
-        @test isapprox(pc(2), [ 0.0,  1.0,  0.0]; atol = 1e-12)
-        @test isapprox(pc(3), [ 0.0,  0.0,  1.0]; atol = 1e-12)
-        @test isapprox(pc(4), [-1.0,  0.0,  0.0]; atol = 1e-12)
-        @test isapprox(pc(5), [ 0.0, -1.0,  0.0]; atol = 1e-12)
-        @test isapprox(pc(6), [ 0.0,  0.0, -1.0]; atol = 1e-12)
+        # GEOS native equatorial panel centers are offset by -10° from the
+        # classical cube. Polar panel center corners are the poles.
+        @test _lon_close(pc(1)[1], 350.0)
+        @test isapprox(pc(1)[2], 0.0; atol = 1e-12)
+        @test _lon_close(pc(2)[1], 80.0)
+        @test isapprox(pc(2)[2], 0.0; atol = 1e-12)
+        @test isapprox(pc(3)[2], 90.0; atol = 1e-12)
+        @test _lon_close(pc(4)[1], 170.0)
+        @test isapprox(pc(4)[2], 0.0; atol = 1e-12)
+        @test _lon_close(pc(5)[1], 260.0)
+        @test isapprox(pc(5)[2], 0.0; atol = 1e-12)
+        @test isapprox(pc(6)[2], -90.0; atol = 1e-12)
+    end
+
+    @testset "outer corners (GEOS native NetCDF orientation)" begin
+        Nc = 4
+        mesh = CubedSphereMesh(Nc = Nc, convention = GEOSNativePanelConvention())
+        corners = cubed_sphere_face_corners(mesh)
+        edge_lat = rad2deg(asin(1 / sqrt(3)))
+
+        expected = Dict(
+            1 => ((305.0, -edge_lat), (35.0, -edge_lat), (35.0, edge_lat), (305.0, edge_lat)),
+            2 => ((35.0, -edge_lat), (125.0, -edge_lat), (125.0, edge_lat), (35.0, edge_lat)),
+            3 => ((35.0, edge_lat), (125.0, edge_lat), (215.0, edge_lat), (305.0, edge_lat)),
+            4 => ((125.0, edge_lat), (215.0, edge_lat), (215.0, -edge_lat), (125.0, -edge_lat)),
+            5 => ((215.0, edge_lat), (305.0, edge_lat), (305.0, -edge_lat), (215.0, -edge_lat)),
+            6 => ((215.0, -edge_lat), (125.0, -edge_lat), (35.0, -edge_lat), (305.0, -edge_lat)),
+        )
+        for p in 1:6
+            actual = (_lonlat(corners[p][1, 1]),
+                      _lonlat(corners[p][end, 1]),
+                      _lonlat(corners[p][end, end]),
+                      _lonlat(corners[p][1, end]))
+            for q in 1:4
+                @test _lon_close(actual[q][1], expected[p][q][1])
+                @test isapprox(actual[q][2], expected[p][q][2]; atol = 1e-10)
+            end
+        end
     end
 end

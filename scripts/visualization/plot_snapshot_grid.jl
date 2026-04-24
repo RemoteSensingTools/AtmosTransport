@@ -3,9 +3,9 @@
 # plot_snapshot_grid.jl — plot all snapshots in a single multi-panel PNG
 #
 # Works on both LL (lon, lat, time) snapshots and CS (Xdim, Ydim, nf, lev,
-# time) snapshots. CS input is air-mass-weighted column-mean dry-VMR and
-# is conservatively regridded to LL for plotting (ConservativeRegridding,
-# same path as compare_cs_vs_ll.jl). LL input is plotted directly.
+# time) snapshots. CS input is air-mass-weighted column-mean dry-VMR and is
+# conservatively regridded to LL using the snapshot's panel convention
+# (`gnomonic` or `geos_native`). LL input is plotted directly.
 #
 # Usage:
 #   julia --project=. scripts/visualization/plot_snapshot_grid.jl \
@@ -23,7 +23,8 @@ using CairoMakie
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
-using .AtmosTransport.Grids: LatLonMesh, CubedSphereMesh, GnomonicPanelConvention
+using .AtmosTransport.Grids: LatLonMesh, CubedSphereMesh,
+                             GnomonicPanelConvention, GEOSNativePanelConvention
 using .AtmosTransport.Regridding: build_regridder, apply_regridder!
 
 const R_EARTH_M = 6.371229e6
@@ -83,6 +84,13 @@ end
 _is_cs_snapshot(ds) = haskey(ds.dim, "Xdim") && haskey(ds.dim, "nf")
 _is_ll_snapshot(ds) = haskey(ds.dim, "lon") && haskey(ds.dim, "lat")
 
+function _cs_panel_convention(ds, path::AbstractString)
+    conv = lowercase(String(get(ds.attrib, "panel_convention", "gnomonic")))
+    conv in ("gnomonic", "gnomic") && return GnomonicPanelConvention()
+    conv in ("geos_native", "geosnative", "geos-native") && return GEOSNativePanelConvention()
+    error("$(path): unsupported panel_convention=$(conv); expected gnomonic or geos_native")
+end
+
 # Load column-mean VMR on a lat-lon grid, plus the time axis in hours.
 # Returns (lons, lats, times_h, data[lon, lat, ntime]).
 function _load_as_latlon(path::AbstractString, tracer::AbstractString)
@@ -103,15 +111,7 @@ function _load_as_latlon(path::AbstractString, tracer::AbstractString)
             vmr_full = Array{Float64}(ds[tracer][:, :, :, :, :])
             air = Array{Float64}(ds["air_mass"][:, :, :, :, :])
             cs_cm = _cs_column_mean_dry_vmr(vmr_full, air)     # (Nc, Nc, nf, ntime)
-            # Assert gnomonic source. The CS writer now records
-            # `panel_convention` (plan 40 Commit 7); a GEOS-native file would
-            # be silently mis-oriented by a gnomonic source mesh, so refuse
-            # explicitly (same contract as `compare_cs_vs_ll.jl`).
-            conv = String(get(ds.attrib, "panel_convention", "gnomonic"))
-            conv == "gnomonic" || error(
-                "$(path): panel_convention=$(conv); plot_snapshot_grid.jl " *
-                "builds a gnomonic source mesh for the CS→LL regrid. " *
-                "Regenerate the run on gnomonic or extend this script.")
+            convention = _cs_panel_convention(ds, path)
 
             # Target LL grid for visualization: ~1° × 1° cell-centered so
             # mesh.φᶜ lines up with the Makie heatmap axis. `Ny=180` with
@@ -128,7 +128,7 @@ function _load_as_latlon(path::AbstractString, tracer::AbstractString)
             ll_lats = Float64.(ll_mesh.φᶜ)
             cs_mesh = CubedSphereMesh(; FT = Float64, Nc = Nc,
                                        radius = R_EARTH_M,
-                                       convention = GnomonicPanelConvention())
+                                       convention = convention)
             # Reverse direction: CS → LL. CR.jl's `build_regridder` accepts
             # either order; we pass CS as src, LL as dst.
             reg = build_regridder(cs_mesh, ll_mesh; normalize = false)

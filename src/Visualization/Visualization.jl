@@ -164,7 +164,7 @@ function _snapshot_variables(ds, topology::AbstractSnapshotTopology)
     names = Symbol[]
     if topology isa CubedSphereSnapshotTopology
         for key in keys(ds)
-            key in ("time", "nf", "air_mass") && continue
+            key in ("time", "nf", "air_mass", "air_mass_per_area") && continue
             v = ds[key]
             ndims(v) == 5 && push!(names, Symbol(key))
         end
@@ -380,18 +380,23 @@ function _target_lonlat_mesh(resolution::Tuple{Int, Int})
     return mesh, Float64.(mesh.λᶜ), Float64.(mesh.φᶜ)
 end
 
+function _cs_panel_convention(sym::Symbol)
+    sym === :gnomonic && return GnomonicPanelConvention()
+    sym === :geos_native && return GEOSNativePanelConvention()
+    throw(ArgumentError("unsupported CS panel_convention=$(sym); expected :gnomonic or :geos_native"))
+end
+
 function _cs_to_ll_cache!(cache::SnapshotRegridCache,
                           topology::CubedSphereSnapshotTopology,
                           resolution::Tuple{Int, Int})
-    topology.panel_convention === :gnomonic ||
-        throw(ArgumentError("CS visualization regrid currently requires panel_convention=gnomonic, got $(topology.panel_convention)"))
     key = (:cs_to_ll, topology.Nc, resolution, topology.panel_convention)
     if !haskey(cache.entries, key)
         ll_mesh, lons, lats = _target_lonlat_mesh(resolution)
+        convention = _cs_panel_convention(topology.panel_convention)
         cs_mesh = CubedSphereMesh(; FT=Float64,
                                   Nc=topology.Nc,
                                   radius=R_EARTH_M,
-                                  convention=GnomonicPanelConvention())
+                                  convention=convention)
         regridder = build_regridder(cs_mesh, ll_mesh; normalize=false)
         cache.entries[key] = (; regridder, lons, lats)
     end

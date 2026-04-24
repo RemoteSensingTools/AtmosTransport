@@ -68,7 +68,10 @@ More explicitly:
 | 6 | South pole | South pole |
 
 `src/Grids/CubedSphereMesh.jl` now carries this distinction explicitly via
-`GnomonicPanelConvention` and `GEOSNativePanelConvention`.
+`GnomonicPanelConvention` and `GEOSNativePanelConvention`. Coordinate helpers
+such as `panel_cell_corner_lonlat(mesh, panel)` honor the convention, so
+regridding, diagnostic NetCDF output, and visualization all consume the same
+panel geometry.
 
 ## Sources
 
@@ -77,6 +80,6 @@ More explicitly:
 - ECMWF relationship between spectral truncation and Gaussian grids:
   https://confluence.ecmwf.int/display/UDOC/What%2Bis%2Bthe%2Bconnection%2Bbetween%2Bthe%2Bspectral%2Btruncation%2Band%2Bthe%2BGaussian%2Bgrids%2B-%2BMetview%2BFAQ
 - Existing project cubed-sphere notes:
-  `docs/CAVEATS.md`
-  `docs/METEO_PREPROCESSING.md`
-  `src/Grids/cubed_sphere_grid.jl`
+  `docs/reference/CAVEATS.md`
+  `docs/reference/METEO_PREPROCESSING.md`
+  `src/Grids/CubedSphereMesh.jl`

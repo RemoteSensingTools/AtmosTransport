@@ -93,7 +93,8 @@ using .MetDrivers: AbstractDriver, AbstractClosure, AbstractMetDriver,
                    load_cs_window, cs_window_count, mesh_convention,
                    StreamingTransportBinaryWriter,
                    open_streaming_transport_binary, write_streaming_window!,
-                   close_streaming_transport_binary!
+                   close_streaming_transport_binary!,
+                   binary_capabilities, inspect_binary   # plan 40 Commit 5
 
 # ---- Physics operators ----
 include("Operators/Operators.jl")
@@ -273,6 +274,7 @@ export configured_cs_halo_width
 export FileInitialConditionSource, build_initial_mixing_ratio, pack_initial_tracer_mass
 export FileSurfaceFluxField, build_surface_flux_source, build_surface_flux_sources
 export expand_binary_paths
+export binary_capabilities, inspect_binary   # plan 40 Commit 5
 
 # Offline regridding (preprocessing only)
 export build_regridder, save_regridder, load_regridder

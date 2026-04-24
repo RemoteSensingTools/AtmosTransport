@@ -268,6 +268,45 @@ Updates:
   missing folder, file_pattern validation, mutex with shape A,
   empty-input error.
 
+### Commit 5 — capability summary + `inspect_binary`
+
+Shipped 2026-04-24. Extends the existing `Base.show` infrastructure
+rather than creating a parallel inspector stack. Two new library
+functions in `src/MetDrivers/TransportBinary.jl`:
+
+- `binary_capabilities(reader) -> NamedTuple` with
+  `advection`, `replay_gate` (plan-39 dam/dbm/dcm/dm),
+  `tm5_convection`, `cmfmc_convection`, `surface_pressure`,
+  `humidity`, `mass_basis`, `grid_type`, `payload_sections`. Duck-
+  typed across `TransportBinaryReader` and `CubedSphereBinaryReader`
+  via the already-dispatched `has_flux_delta` /
+  `has_tm5_convection` / `has_cmfmc` / `has_qv` predicates.
+- `inspect_binary(path; io = stdout) -> NamedTuple` — auto-detects
+  LL/RG vs CS format by peeking at the JSON header's `grid_type`
+  field, opens the correct reader, prints the rich `Base.show`
+  report plus a `✓ / ✗` capability-rows block, and returns the
+  capability NamedTuple.
+
+`scripts/diagnostics/inspect_transport_binary.jl` rewired to a thin
+CLI over `inspect_binary` (+ a driver-compatibility probe that picks
+`TransportBinaryDriver` vs `CubedSphereTransportDriver` using the
+capability grid type). `--allow-legacy` preserved.
+
+New test `test/test_binary_inspector.jl` (24 tests) exercises:
+- LL fixture without TM5: `tm5_convection === false`;
+  `advection === true`; `:m`, `:am` in `payload_sections`;
+  `mass_basis === :dry`; `grid_type === :latlon`.
+- LL fixture with TM5 sections: `tm5_convection === true`; all
+  four sections present.
+- `inspect_binary` returns the NamedTuple, report text contains
+  expected ✓ rows.
+- Missing-file path throws `ArgumentError`.
+
+Plan-40 Commit 6's `run_driven_simulation` will use
+`binary_capabilities` to validate TOML physics against binary
+capabilities before the loop (e.g. reject
+`[convection] kind = "tm5"` on a binary lacking entu/detu/entd/detd).
+
 ## Correctness rules pinned (read before Commit 1)
 
 ### GPU runs must be verified, not declared

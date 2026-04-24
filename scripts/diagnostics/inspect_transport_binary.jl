@@ -1,23 +1,17 @@
 #!/usr/bin/env julia
+#
+# Thin CLI over `AtmosTransport.inspect_binary` (plan 40 Commit 5).
+# Auto-detects LL/RG vs CS binaries, runs load-time gates, prints a
+# capability-augmented report, and returns the capability NamedTuple.
 
 using ArgParse
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 
-function _print_semantics(reader::TransportBinaryReader)
-    println("Semantics:")
-    println("  source_flux_sampling = ", source_flux_sampling(reader))
-    println("  air_mass_sampling    = ", air_mass_sampling(reader))
-    println("  flux_sampling        = ", flux_sampling(reader))
-    println("  flux_kind            = ", flux_kind(reader))
-    println("  humidity_sampling    = ", humidity_sampling(reader))
-    println("  delta_semantics      = ", delta_semantics(reader))
-end
-
 function _argparse_settings()
     s = ArgParseSettings(
-        description = "Inspect a transport binary — header, grid, semantics, and driver compatibility.",
+        description = "Inspect a transport binary — header, grid, capability summary, and driver compatibility.",
         prog = "inspect_transport_binary.jl")
     @add_arg_table! s begin
         "--allow-legacy"
@@ -28,7 +22,7 @@ function _argparse_settings()
         "path"
             arg_type = String
             required = true
-            help = "path to the transport binary .bin file"
+            help = "path to the transport binary .bin file (LL/RG or CS)"
     end
     return s
 end
@@ -36,42 +30,38 @@ end
 function main(args)
     parsed = parse_args(args, _argparse_settings())
     path = abspath(parsed["path"])
-    isfile(path) || throw(ArgumentError("transport binary not found: $(path)"))
 
     if parsed["allow-legacy"]
         ENV["ATMOSTR_ALLOW_LEGACY_BINARY"] = "1"
         @info "inspect: --allow-legacy set; contract violations demoted to warnings"
     end
 
-    reader = TransportBinaryReader(path; FT=Float64)
-    println(reader)
-    println()
-    println("Header:")
-    println(reader.header)
-    println()
-    println("Grid:")
-    println(load_grid(reader; FT=Float64, arch=CPU()).horizontal)
-    println()
-    _print_semantics(reader)
-    println()
-    println("Sections:")
-    println("  payload_sections = ", join(String.(reader.header.payload_sections), ", "))
-    println("  has_qv           = ", has_qv(reader))
-    println("  has_qv_endpoints = ", has_qv_endpoints(reader))
-    println("  has_flux_delta   = ", has_flux_delta(reader))
-    println()
+    # `inspect_binary` prints a rich report (header, geometry, semantics,
+    # payload sections, capability rows with ✓/✗) and returns a
+    # `binary_capabilities` NamedTuple we could use for scripting.
+    inspect_binary(path)
 
+    # Driver-compatibility probe: does the binary produce a working
+    # runtime driver? Useful for catching semantic mismatches beyond
+    # payload-section presence (e.g. contract-field validation).
+    println()
     try
-        driver = TransportBinaryDriver(path; FT=Float64, arch=CPU())
-        println("Driver: OK")
-        println(driver)
-        close(driver)
+        if inspect_binary(path; io = devnull).grid_type === :cubed_sphere
+            driver = CubedSphereTransportDriver(path; FT = Float64, arch = CPU())
+            println("Driver: OK (CubedSphereTransportDriver)")
+            println(driver)
+            close(driver)
+        else
+            driver = TransportBinaryDriver(path; FT = Float64, arch = CPU())
+            println("Driver: OK (TransportBinaryDriver)")
+            println(driver)
+            close(driver)
+        end
     catch err
         println("Driver: incompatible with current src runtime")
         println("  ", sprint(showerror, err))
     end
 
-    close(reader)
     return 0
 end
 

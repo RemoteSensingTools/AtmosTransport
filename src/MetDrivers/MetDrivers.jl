@@ -50,6 +50,7 @@ export load_temperature_window!
 export ConvectionForcing, has_convection_forcing
 export copy_convection_forcing!, allocate_convection_forcing_like
 export window_count, has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc
+export binary_capabilities, inspect_binary   # plan 40 Commit 5
 export has_surface, has_tm5conv, has_temperature
 export mass_basis, grid_type, horizontal_topology, A_ifc, B_ifc
 export source_flux_sampling, air_mass_sampling, flux_sampling, flux_kind, humidity_sampling, delta_semantics

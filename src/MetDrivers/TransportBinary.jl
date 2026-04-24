@@ -1,5 +1,6 @@
 using Mmap
 using JSON3
+using Printf: @printf
 using Base.Threads
 using ..Architectures: CPU
 import ..State: mass_basis
@@ -196,6 +197,146 @@ has_tm5_convection(r::TransportBinaryReader) =
     all(s in r.header.payload_sections for s in (:entu, :detu, :entd, :detd))
 has_tm5conv(r::TransportBinaryReader) = has_tm5_convection(r)
 has_cmfmc(::TransportBinaryReader) = false
+
+# ---------------------------------------------------------------------------
+# Capability summary + `inspect_binary` (plan 40 Commit 5)
+#
+# `binary_capabilities(reader)` returns a NamedTuple describing what
+# operators this binary can drive, so the CLI + physics-recipe validator
+# can give precise errors ("config requested `tm5` but binary lacks
+# entu/detu/entd/detd") instead of silently failing at the first step.
+#
+# `inspect_binary(path)` is the library-level entry point that opens
+# either a `TransportBinaryReader` (LL/RG) or a `CubedSphereBinaryReader`
+# (CS), runs all load-time gates, prints a rich report, and returns the
+# capability summary. `scripts/diagnostics/inspect_transport_binary.jl`
+# is a thin CLI over this function.
+# ---------------------------------------------------------------------------
+
+"""
+    binary_capabilities(reader) -> NamedTuple
+
+Summarise what operators this binary can drive. Works on either
+`TransportBinaryReader` (LL/RG) or `CubedSphereBinaryReader` (CS) via
+the existing `has_flux_delta`, `has_tm5_convection`, `has_cmfmc`, and
+`has_qv` predicates. Fields:
+
+- `advection :: Bool` — always `true` (m, am, bm, cm are required).
+- `replay_gate :: Bool` — plan-39 dam/dbm/dcm/dm present.
+- `tm5_convection :: Bool` — entu/detu/entd/detd all present.
+- `cmfmc_convection :: Bool` — cmfmc present (CS only; LL/RG returns false).
+- `surface_pressure :: Bool` — ps present.
+- `humidity :: Bool` — qv or qv_start/qv_end present.
+- `mass_basis :: Symbol` — `:dry` or `:moist`.
+- `grid_type :: Symbol` — `:latlon` / `:reduced_gaussian` / `:cubed_sphere`.
+- `payload_sections :: Vector{Symbol}` — raw set for debugging.
+"""
+function binary_capabilities(reader)
+    hdr = reader.header
+    return (
+        advection        = all(s in hdr.payload_sections for s in (:m, :am, :bm, :cm)),
+        replay_gate      = has_flux_delta(reader),
+        tm5_convection   = has_tm5_convection(reader),
+        cmfmc_convection = has_cmfmc(reader),
+        surface_pressure = :ps in hdr.payload_sections,
+        humidity         = has_qv(reader),
+        mass_basis       = hdr.mass_basis,
+        grid_type        = Symbol(hdr.grid_type),
+        payload_sections = hdr.payload_sections,
+    )
+end
+
+"""
+    inspect_binary(path; io = stdout) -> NamedTuple
+
+Open the binary at `path` (auto-detecting LL/RG vs CS format), print
+a capability-augmented report to `io`, and return the
+`binary_capabilities` NamedTuple for programmatic consumption (tests,
+CLI capability-intersection, folder-level validation).
+
+Set `ENV["ATMOSTR_ALLOW_LEGACY_BINARY"] = "1"` before calling to
+demote plan-39 contract violations to warnings (for inspection of
+pre-plan-39 binaries; runtime behaviour NOT trusted).
+"""
+function inspect_binary(path::AbstractString; io::IO = stdout)
+    isfile(path) || throw(ArgumentError("binary not found: $(path)"))
+    reader = _open_binary_for_inspection(path)
+    try
+        println(io, reader)
+        println(io)
+        _print_capability_rows(io, reader)
+        return binary_capabilities(reader)
+    finally
+        close(reader)
+    end
+end
+
+# Internal: open either LL/RG or CS reader. Peek at the JSON header
+# `grid_type` field to pick; a CS binary opened as `TransportBinaryReader`
+# errors during semantics validation, which is an unhelpful failure
+# mode for a diagnostic tool.
+function _open_binary_for_inspection(path::AbstractString)
+    grid_type_hint = _peek_grid_type(path)
+    if grid_type_hint === :cubed_sphere
+        return _open_cubed_sphere_binary_reader(path)
+    end
+    return TransportBinaryReader(path; FT = Float64)
+end
+
+# Peek at bytes 8..(header_bytes) without fully constructing a reader.
+# The header is a JSON object at a fixed offset; we only need
+# `grid_type`. On parse failure we default to `:latlon` so the
+# TransportBinaryReader constructor can produce its own richer error.
+function _peek_grid_type(path::AbstractString)
+    try
+        open(path, "r") do io
+            header_bytes = read(io, Int64)   # first 8 bytes: header length
+            header_bytes > 0 || return :latlon
+            json_bytes = read(io, Int(header_bytes))
+            hdr = _peek_parse_header(json_bytes)
+            raw = get(hdr, :grid_type, get(hdr, "grid_type", "latlon"))
+            return Symbol(lowercase(String(raw)))
+        end
+    catch
+        return :latlon
+    end
+end
+
+# Lightweight JSON parse that doesn't pull in the reader's full stack.
+# Falls back gracefully if the header format differs (e.g. legacy
+# binaries that don't use JSON).
+function _peek_parse_header(bytes::AbstractVector{UInt8})
+    try
+        return JSON3.read(String(bytes))
+    catch
+        return Dict{String, Any}()
+    end
+end
+
+# Forward declaration; the CS reader lives in CubedSphereBinaryReader.jl
+# and is not a subtype of anything common. The MetDrivers module's
+# load order (TransportBinary.jl first, CubedSphereBinaryReader.jl
+# second) means we must stub this here and let the CS file's include
+# define the method.
+function _open_cubed_sphere_binary_reader end
+
+function _print_capability_rows(io::IO, reader)
+    caps = binary_capabilities(reader)
+    println(io, "Capabilities:")
+    _print_cap(io, caps.advection,        "advection",        "(m, am, bm, cm)")
+    _print_cap(io, caps.replay_gate,      "plan-39 replay",   "(dam, dbm, dcm, dm)")
+    _print_cap(io, caps.tm5_convection,   "TM5 convection",   "(entu, detu, entd, detd)")
+    _print_cap(io, caps.cmfmc_convection, "CMFMC convection", "(cmfmc)")
+    _print_cap(io, caps.surface_pressure, "surface pressure", "(ps)")
+    _print_cap(io, caps.humidity,         "humidity",         "(qv or qv_start/qv_end)")
+    println(io, "  mass_basis       = ", caps.mass_basis)
+    println(io, "  grid_type        = ", caps.grid_type)
+end
+
+@inline function _print_cap(io::IO, present::Bool, label::AbstractString, ingredients::AbstractString)
+    mark = present ? "✓" : "✗"
+    @printf(io, "  %s %-16s %s\n", mark, label, ingredients)
+end
 
 _transport_is_structured(h::TransportBinaryHeader) =
     h.grid_type === :latlon && h.horizontal_topology === :structureddirectional

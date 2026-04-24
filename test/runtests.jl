@@ -46,6 +46,7 @@ core_tests = [
     "test_run_transport_binary_recipe.jl",
     "test_initial_condition_io.jl",
     "test_binary_path_expander.jl",
+    "test_binary_inspector.jl",
     "test_cs_driven_builders.jl",
     "test_aqua.jl",
     "test_jet.jl",

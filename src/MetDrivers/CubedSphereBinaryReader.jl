@@ -51,6 +51,12 @@ struct CubedSphereBinaryReader{FT}
     path    :: String
 end
 
+# Plan 40 Commit 5: bridge for `inspect_binary` in TransportBinary.jl.
+# Lives here because the CS reader type is defined in this file but the
+# inspector lives in TransportBinary.jl (which is loaded first).
+_open_cubed_sphere_binary_reader(path::AbstractString) =
+    CubedSphereBinaryReader(String(path); FT = Float64)
+
 function CubedSphereBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = Float64)
     io = open(bin_path, "r")
 

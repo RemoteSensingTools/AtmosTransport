@@ -16,6 +16,11 @@ provides CPU/GPU portability.
   design memos get reused as ground truth.
 - For transport bugs: read the reference implementation first, find the exact
   semantic diff, and make one evidence-backed change at a time.
+- Before committing, check whether the diff changes public behavior, scripts,
+  file maps, workflows, or setup; if so, update the relevant `README.md` or
+  reference docs.
+- Before committing any non-trivial change, review the diff critically and get
+  a Codex review.
 - Prefer production fixes. If a shortcut is unavoidable, mark it `# HACK:` with
   a TODO and the intended clean replacement.
 

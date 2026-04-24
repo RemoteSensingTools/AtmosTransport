@@ -683,9 +683,14 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
 
     tracers_cfg = get(cfg, "tracers", Dict{String, Any}())
     isempty(tracers_cfg) && error("[tracers] must define at least one tracer")
-    tracer_init = Dict(Symbol(n) => get(c, "init",
-                                        Dict("kind" => "uniform", "background" => 0.0))
-                       for (n, c) in tracers_cfg)
+    # Use the same tracer-spec parser as the LL/RG runner so
+    # `[tracers.*.surface_flux]` blocks are picked up. Plain inline-Dict
+    # parsing (the previous implementation) silently dropped surface_flux
+    # configs and produced zero fossil emissions on CS.
+    tracer_specs = _parse_tracer_specs(cfg)
+    tracer_specs === nothing &&
+        error("[tracers] section is malformed; expected per-tracer subsections")
+    tracer_init = Dict(spec.name => spec.init_cfg for spec in tracer_specs)
 
     # First driver + model (reuses air_mass from window 1)
     driver1 = CubedSphereTransportDriver(first(binary_paths);
@@ -744,6 +749,22 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
         fluxes = model.fluxes
     end
     _assert_gpu_residency!(model.state, cfg)
+
+    # Build surface-flux sources from the parsed tracer specs and log per-source
+    # mass rates. Matches the LL/RG path; `DrivenSimulation`'s constructor
+    # adapts these to the model backend (CPU Array or CUDA CuArray) via
+    # `_adapt_sources_to_model_backend`, so no manual adapt step here.
+    surface_sources = build_surface_flux_sources(grid, tracer_specs, FT)
+    source_tracers = Set(source.tracer_name for source in surface_sources)
+    for source in surface_sources
+        # `cell_mass_rate` is topology-shaped: 2D Array on LL/RG, 6-tuple of
+        # Matrices on CS. Reduce to a scalar for the log either way.
+        total_rate = source.cell_mass_rate isa Tuple ?
+                     Float64(sum(sum, source.cell_mass_rate)) :
+                     Float64(sum(source.cell_mass_rate))
+        @info @sprintf("Surface source %s total mass rate: %.12e kg/s",
+                       String(source.tracer_name), total_rate)
+    end
 
     @info @sprintf("CS driven runner  C%d × %d levels  Hp=%d  %s  FT=%s  %s",
                    mesh.Nc, Nz, Hp, typeof(recipe.advection).name.name, FT,
@@ -808,7 +829,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
                                     convection = recipe.convection)
         end
         sim = DrivenSimulation(model, driver;
-                               start_window = 1, stop_window = stop_window)
+                               start_window = 1, stop_window = stop_window,
+                               surface_sources = surface_sources)
 
         while sim.iteration < sim.final_iteration
             step!(sim)
@@ -830,7 +852,12 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
                    time() - t0, length(snap_data), total_hour)
 
     for name in keys(tracer_init)
-        @info @sprintf("  %s total mass: %.6e kg", name, total_mass(state, name))
+        rm1 = Float64(total_mass(state, name))
+        if name in source_tracers
+            @info @sprintf("  %s total mass (with source): %.6e kg", name, rm1)
+        else
+            @info @sprintf("  %s total mass:               %.6e kg", name, rm1)
+        end
     end
 
     # BasisT was bound at model construction (dry by default on CS per

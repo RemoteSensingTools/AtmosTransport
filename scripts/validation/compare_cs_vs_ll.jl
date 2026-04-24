@@ -129,9 +129,14 @@ function _infer_ll_interval(lons::AbstractVector{<:Real}, lats::AbstractVector{<
     lat_south = Float64(lats[1])   - dlat / 2
     lat_north = Float64(lats[end]) + dlat / 2
     # Pole drift fix: if the array actually spans pole-to-pole the edges
-    # should be exact ±90°. Conservative tolerance matches LatLonMesh.
-    abs(lat_south + 90.0) < 1e-6 && (lat_south = -90.0)
-    abs(lat_north - 90.0) < 1e-6 && (lat_north =  90.0)
+    # should be exact ±90°. Tolerance 1e-4 covers Float32 roundoff in
+    # the NetCDF (the writer casts to the run's `float_type`, which is
+    # often Float32; e.g. LL720×361 snapshot has lats[1]≈-89.7506943
+    # giving a drift of ~4e-6° after the edge shift). Far below the
+    # grid's own Δφ≈0.5°, so no risk of misclassifying an endpoint-
+    # inclusive raw GRIB as cell-centered.
+    abs(lat_south + 90.0) < 1e-4 && (lat_south = -90.0)
+    abs(lat_north - 90.0) < 1e-4 && (lat_north =  90.0)
     return (lon_west, lon_east), (lat_south, lat_north)
 end
 

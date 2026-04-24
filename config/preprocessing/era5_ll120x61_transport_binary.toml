@@ -1,0 +1,36 @@
+# ~3 degree lat-lon (120 x 61) ERA5 spectral → daily transport binary.
+# Coarse-resolution LL reference for the CS C48 validation matrix —
+# deliberately coarse so polar-cell drainage (invariant 11) stays
+# small enough that LL advection is stable without `mass_fixer`.
+#
+# Usage:
+#   julia -t8 --project=. scripts/preprocessing/preprocess_transport_binary.jl \
+#       config/preprocessing/era5_ll120x61_transport_binary.toml --day 2021-12-01
+
+[input]
+spectral_dir = "~/data/AtmosTransport/met/era5/0.5x0.5/spectral_hourly"
+thermo_dir = "~/data/AtmosTransport/met/era5/0.5x0.5/physics"
+coefficients = "config/era5_L137_coefficients.toml"
+
+[output]
+directory = "~/data/AtmosTransport/met/era5/ll120x61/transport_binary_v2_tropo34_dec2021_f64"
+mass_basis = "dry"
+
+[grid]
+type = "latlon"
+nlon = 120
+nlat = 61
+level_top = 1
+level_bot = 137
+echlevs = "ml137_tropo34"
+merge_min_thickness_Pa = 1000.0
+
+[numerics]
+float_type = "Float64"
+dt = 900.0
+met_interval = 3600.0
+
+[mass_fix]
+enable = true
+target_ps_dry_pa = 98726.0
+qv_global_climatology = 0.00247

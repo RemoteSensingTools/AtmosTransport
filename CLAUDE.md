@@ -58,8 +58,24 @@ sign conventions, and index layout without external docs.
 ## Quick start
 
 ```bash
-julia --project=. scripts/run.jl config/runs/<config>.toml
+julia --project=. scripts/run_transport.jl config/runs/<config>.toml
 ```
+
+`scripts/run_transport.jl` is the unified driven-transport runner
+(plan 40 Commit 6c). It reads the TOML config, opens the first input
+binary, dispatches on `grid_type` from the binary header
+(`:latlon` / `:reduced_gaussian` / `:cubed_sphere`), and calls
+`run_driven_simulation(cfg)` in `src/Models/DrivenRunner.jl`.
+
+Inspect any transport binary without running a simulation:
+
+```bash
+julia --project=. scripts/diagnostics/inspect_transport_binary.jl <path.bin>
+```
+
+Prints a capability summary (which operators the binary can drive —
+advection, plan-39 replay, TM5 / CMFMC convection, surface pressure,
+humidity) plus topology, mass basis, and load-time gate results.
 
 All simulation parameters live in TOML configs under `config/runs/`. Preprocessing
 configs are in `config/preprocessing/`. See `docs/reference/QUICKSTART.md` for full reference.
@@ -120,7 +136,7 @@ Legacy src_legacy/ hierarchies (parked, not loaded): `AbstractConvection` (NoCon
   met source TOMLs map native variable names to these canonicals
 - **GPU via extension**: `using CUDA` or `using Metal` before `using AtmosTransport` loads
   the appropriate extension (`AtmosTransportCUDAExt` or `AtmosTransportMetalExt`).
-  `scripts/run.jl` auto-detects: Metal on macOS, CUDA on Linux/Windows.
+  `scripts/run_transport.jl` auto-detects: Metal on macOS, CUDA on Linux/Windows.
 - **KernelAbstractions**: all GPU kernels use `@kernel`/`@index` for CUDA/Metal/CPU portability
 - **Mass conservation first**: advection via mass fluxes (not winds); vertical flux from
   continuity equation; Strang splitting X→Y→Z→Z→Y→X
@@ -184,21 +200,72 @@ The vertical remap path is designed to match GCHP's `offline_tracer_advection`:
 
 ## Run loop architecture
 
-Unified `_run_loop!` via multiple dispatch (replaced 4 duplicated methods, ~1940 lines).
-Files in `src/Models/`:
-- `run_loop.jl` — single entry point `run!(model)` + `_run_loop!`
-- `physics_phases.jl` — grid-dispatched phase functions (IO, compute, advection, output)
-- `simulation_state.jl` — allocation factories for tracers, air mass, workspaces
-- `io_scheduler.jl` — `IOScheduler{B}` abstracts single/double buffering
-- `mass_diagnostics.jl` — `MassDiagnostics` + global mass fixer
-- `run_helpers.jl` — physics helpers, advection dispatch, emission wrappers
-- `transport_policy.jl` — `TransportPolicy` type for transport configuration
+Post-plan-40 layout in `src/Models/`:
+
+- `TransportModel.jl` — main model struct, operator installers, runtime
+  block order.
+- `Simulation.jl` — simple fixed-step loop for direct model runs.
+- `DrivenSimulation.jl` — met-window-driven loop, forcing interpolation,
+  air-mass refresh, surface-source application, runtime compatibility
+  checks.
+- `DrivenRunner.jl` — **library-level entry point** (plan 40 Commit
+  6a/6b). `run_driven_simulation(cfg)` reads the TOML, opens the first
+  binary, dispatches on `grid_type`, validates TOML physics against
+  binary capabilities, builds the model via the unified IC pipeline,
+  asserts GPU residency, runs the loop, writes snapshots.
+- `InitialConditionIO.jl` — topology-dispatched
+  `build_initial_mixing_ratio`, basis-aware
+  `pack_initial_tracer_mass`, and LL/RG/CS
+  `build_surface_flux_source` builders (plan 40 Commits 1b–1d + 2).
+- `CSPhysicsRecipe.jl` — TOML → physics-recipe builders
+  (`build_runtime_physics_recipe`, advection/diffusion/convection
+  kinds, halo-width inference).
+- `BinaryPathExpander.jl` — `expand_binary_paths(input_cfg)` resolves
+  either explicit `binary_paths = [...]` or `folder + start_date +
+  end_date (+ file_pattern)` with continuity check (plan 40 Commit 4).
+
+### Initial conditions
+
+File-based ICs on every topology:
+
+```
+build_initial_mixing_ratio(air_mass, grid, cfg)   # → dry VMR (interior)
+pack_initial_tracer_mass(grid, air_mass, vmr;
+                         mass_basis, qv = nothing)  # → storage-shaped rm
+```
+
+`kind = "catrine_co2"` is a convenience alias for `kind = "file"` with
+the default Catrine NetCDF path (plan 40 Commit 2). CS uses the same
+unified pipeline — the flat-411 stub is gone.
+
+**Basis-aware**: on `DryBasis`, `rm = vmr × air_mass`. On `MoistBasis`,
+`rm = vmr × air_mass × (1 − qv)` per invariant 9; missing `qv` errors
+loudly (`feedback_vmr_to_mass_basis_aware`).
+
+### GPU residency (`feedback_verify_gpu_runs_on_gpu`)
+
+`run_driven_simulation(cfg)` asserts
+`parent(state.air_mass) isa CuArray` when `use_gpu = true` and prints
+`[gpu verified] …`. Silent CPU fallback aborts with a precise error.
 
 ---
 
 ## Critical invariants
 
 These are hard-won correctness constraints. Violating any causes silent wrong results.
+
+**Diagnose first.** Before chasing a symptom, open the binary:
+
+```bash
+julia --project=. scripts/diagnostics/inspect_transport_binary.jl <path.bin>
+```
+
+The inspector (plan 40 Commit 5) prints the binary header, runs all
+load-time gates (stale-binary, cm-continuity, replay-consistency),
+and shows a capability-summary block so you can tell at a glance
+whether the binary supports the operators your TOML config asks for
+(plan-39 replay, TM5 convection, CMFMC, surface pressure, humidity).
+Many symptoms below are caught immediately by this diagnostic.
 
 ### If you see... check this
 
@@ -434,7 +501,12 @@ These are hard-won correctness constraints. Violating any causes silent wrong re
 
 3. **Add TOML variable mapping** in `config/met_sources/your_source.toml`.
 
-4. **Register** in scripts/config that construct drivers (e.g. `scripts/run_transport_binary.jl`).
+4. **Register** in scripts/config that construct drivers. The unified
+   CLI `scripts/run_transport.jl` calls `run_driven_simulation(cfg)`
+   which opens drivers via `TransportBinaryDriver` (LL/RG) or
+   `CubedSphereTransportDriver` (CS) based on the binary header's
+   `grid_type`. `run_transport_binary.jl` and `run_cs_driven.jl`
+   remain as deprecation shims for one cycle (plan 40 Commit 6c).
 
 ## Workflow: Adding a new physics operator
 
@@ -504,7 +576,7 @@ See `src/Operators/Diffusion/` (clean plan-16b example) or
 
 1. Create matched configs with identical physics settings
 2. Use `TransportPolicy` to ensure same transport configuration
-3. Run both: `julia --project=. scripts/run.jl config/runs/comparison/<era5>.toml`
+3. Run both: `julia --project=. scripts/run_transport.jl config/runs/comparison/<era5>.toml`
 4. Convert output: `julia --project=. scripts/postprocessing/convert_output_to_netcdf.jl`
 5. Compare: use `scripts/visualization/animate_comparison.jl` or custom analysis
 

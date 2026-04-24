@@ -406,6 +406,46 @@ Migrated the Catrine C48 10d configs + README to reference
 
 Baseline invariant preserved: 5 pre-existing failures unchanged.
 
+### Commit 8 — CLAUDE.md localized trim
+
+Shipped 2026-04-24. Touched only statements that became wrong as a
+consequence of Commits 1–6; the full `src_v2`/`_legacy`/etc. sweep
+and the <500-line target trim remain plan 41's scope.
+
+Changes:
+- Quick-start: `scripts/run.jl` → `scripts/run_transport.jl`;
+  added an `inspect_transport_binary.jl` one-liner.
+- "GPU vs CPU" bullet: the `scripts/run.jl` reference updated to
+  `scripts/run_transport.jl`.
+- "Workflow: Adding a new met driver": step 4 now documents the
+  `run_driven_simulation` → driver dispatch path; `run_transport_binary.jl`
+  and `run_cs_driven.jl` called out as shims.
+- "Workflow: Running an ERA5 vs GEOS comparison": updated the run
+  command from `scripts/run.jl` to `scripts/run_transport.jl`.
+- **Rewrote "Run loop architecture"** — the prior listing named
+  `run_loop.jl`, `physics_phases.jl`, `simulation_state.jl`,
+  `io_scheduler.jl`, `mass_diagnostics.jl`, `run_helpers.jl`,
+  `transport_policy.jl`, which are all **src_legacy files that no
+  longer exist**. Replaced with the actual post-plan-40 layout
+  (`TransportModel.jl`, `Simulation.jl`, `DrivenSimulation.jl`,
+  `DrivenRunner.jl`, `InitialConditionIO.jl`, `CSPhysicsRecipe.jl`,
+  `BinaryPathExpander.jl`) plus an "Initial conditions" subsection
+  describing the topology-dispatched IC + basis-aware packer, and
+  a "GPU residency" subsection for the
+  `feedback_verify_gpu_runs_on_gpu` rule.
+- "Critical invariants" opening: added a "Diagnose first" paragraph
+  pointing at `scripts/diagnostics/inspect_transport_binary.jl`
+  (plan 40 Commit 5), explaining that the inspector runs load-time
+  gates and shows a capability summary — many invariant-table
+  symptoms are caught immediately by this diagnostic.
+
+CLAUDE.md is now 951 lines (from 879). The net grew because the
+replaced "Run loop architecture" section had accumulated stale
+content that had to be replaced with accurate descriptions of what
+actually exists. Plan 41 will do the trim down to <500 lines by
+removing plan-specific anecdotes and consolidating the invariant
+prose.
+
 ## Correctness rules pinned (read before Commit 1)
 
 ### GPU runs must be verified, not declared

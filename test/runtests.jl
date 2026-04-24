@@ -44,6 +44,7 @@ core_tests = [
     "test_poisson_balance.jl",
     "test_replay_consistency.jl",
     "test_run_transport_binary_recipe.jl",
+    "test_initial_condition_io.jl",
     "test_cs_driven_builders.jl",
     "test_aqua.jl",
     "test_jet.jl",

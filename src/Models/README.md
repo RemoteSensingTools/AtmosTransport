@@ -40,6 +40,12 @@ read.
   model runs
 - [`DrivenSimulation.jl`](DrivenSimulation.jl) — met-window-driven loop,
   forcing interpolation, air-mass refresh, and runtime compatibility checks
+- [`InitialConditionIO.jl`](InitialConditionIO.jl) — topology-dispatched
+  VMR builder (`build_initial_mixing_ratio` on LL/RG; CS added in plan 40
+  Commit 1c), basis-aware VMR → tracer-mass packer
+  (`pack_initial_tracer_mass`), `FileInitialConditionSource` container,
+  and the hoisted IC file I/O + log-pressure vertical remap helpers
+  (plan 40 Commit 1b)
 
 ## Common Tasks
 

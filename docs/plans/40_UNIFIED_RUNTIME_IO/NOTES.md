@@ -150,16 +150,24 @@ budget on 2026-04-24, the dependency web of the LL/RG helpers
 `SECONDS_PER_MONTH`, `nomissing`) makes a clean bit-exact hoist
 larger than can land in that window. Split:
 
-- **1a (shipped this session)** — pure-add module scaffold at
-  `src/Models/InitialConditionIO.jl`, wired into
-  `src/Models/Models.jl`. Module loads; no code moved. Establishes
-  the architectural decision that topology-dispatched IC builders +
-  file loaders + psurf remap + surface-flux builders live in this
-  module. Zero risk of regression because nothing is called from
-  here yet.
-- **1b (next session)** — LL/RG hoist (bit-exact) + `pack_initial_tracer_mass`
-  basis-aware packer + bit-exact regression test. Replaces local
-  copies in `scripts/run_transport_binary.jl`.
+- **1a (shipped, `1450204`)** — pure-add module scaffold.
+- **1b (shipped this commit)** — LL/RG IC hoist: 14 private helpers
+  (`_horizontal_interp_weights`, `_bilinear_bracket`,
+  `_periodic_bilinear_bracket`, `_sample_bilinear_profile!`,
+  `_sample_bilinear_scalar`, `_ic_find_coord`, `_resolve_file_init`,
+  `_load_file_initial_condition_source`,
+  `_interpolate_log_pressure_profile!`, `_copy_profile!`,
+  `wrapped_longitude_distance`, `wrapped_longitude_360`,
+  `_init_kind`, `_is_file_init_kind`), the `FileInitialConditionSource`
+  struct, and all 4 `build_initial_mixing_ratio` methods moved
+  verbatim from `scripts/run_transport_binary.jl:{29-196,198-210,353-420,466-529,570-684}`.
+  New `pack_initial_tracer_mass(grid, air_mass, vmr_dry;
+  mass_basis::AbstractMassBasis, qv=nothing)` — 4 methods
+  (LL/RG × DryBasis/MoistBasis); MoistBasis errors loudly without
+  `qv` per feedback memory. Script now imports the helpers via
+  `using .AtmosTransport.Models.InitialConditionIO: …`; public
+  names re-exported through `Models` → `AtmosTransport`. New test
+  file `test/test_initial_condition_io.jl` (17 tests, all pass).
 - **1c (next session)** — CS file-based IC path + CS surface-flux
   builder with cell-area integration. Tests for CS.
 

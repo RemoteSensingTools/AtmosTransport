@@ -140,9 +140,32 @@ Highlights that shape the commit sequence:
 
 ## Deviations from plan doc §4.4
 
-None yet (Commit 0 only). Tracker will be populated per commit as
-reality compresses / splits / reorders the plan's draft commit
-sequence.
+### Commit 1 split into 1a / 1b / 1c (time budget)
+
+Plan 40 drafted Commit 1 as a single unit (LL/RG hoist + CS file IC
++ CS surface flux + tests). Working against a 20-minute wall-clock
+budget on 2026-04-24, the dependency web of the LL/RG helpers
+(`_horizontal_interp_weights`, `_ic_find_coord`,
+`FileInitialConditionSource` struct, kind/config resolvers,
+`SECONDS_PER_MONTH`, `nomissing`) makes a clean bit-exact hoist
+larger than can land in that window. Split:
+
+- **1a (shipped this session)** — pure-add module scaffold at
+  `src/Models/InitialConditionIO.jl`, wired into
+  `src/Models/Models.jl`. Module loads; no code moved. Establishes
+  the architectural decision that topology-dispatched IC builders +
+  file loaders + psurf remap + surface-flux builders live in this
+  module. Zero risk of regression because nothing is called from
+  here yet.
+- **1b (next session)** — LL/RG hoist (bit-exact) + `pack_initial_tracer_mass`
+  basis-aware packer + bit-exact regression test. Replaces local
+  copies in `scripts/run_transport_binary.jl`.
+- **1c (next session)** — CS file-based IC path + CS surface-flux
+  builder with cell-area integration. Tests for CS.
+
+All three remain individually revertable. The plan doc still
+captures the full Commit 1 design; NOTES is the source of truth for
+what actually shipped per session.
 
 ## Correctness rules pinned (read before Commit 1)
 

@@ -8,6 +8,11 @@
 # balance, cm diagnosis, streaming v4 write — lives in
 # `src/Preprocessing/binary_pipeline.jl:1545`.
 #
+# Timestep metadata (`dt_met_seconds`, `steps_per_window`) is read from the
+# source binary header — there is no `--met-interval` or `--dt` flag,
+# because resampling to a different substep count is not a safe binary-to-
+# binary operation (flux_kind = :substep_mass_amount).
+#
 # Usage:
 #   julia -t16 --project=. \
 #       scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl \
@@ -15,9 +20,7 @@
 #       --output <path/to/cs.bin> \
 #       --Nc 48
 #       [--float-type Float32|Float64]   # default Float64 (matches LL source)
-#       [--met-interval 3600.0]          # seconds per met window
-#       [--dt 900.0]                     # transport timestep
-#       [--mass-basis dry|moist]         # invariant 14: default dry
+#       [--mass-basis dry|moist]         # default: match source header
 #       [--cache-dir ~/.cache/AtmosTransport/cr_regridding]
 # ===========================================================================
 
@@ -31,8 +34,7 @@ using .AtmosTransport.Preprocessing: regrid_ll_binary_to_cs, build_target_geomet
 const USAGE = """
 Usage: julia --project=. scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl \\
            --input <ll.bin> --output <cs.bin> --Nc <int>
-           [--float-type Float32|Float64] [--met-interval 3600.0] [--dt 900.0]
-           [--mass-basis dry|moist] [--cache-dir <path>]
+           [--float-type Float32|Float64] [--mass-basis dry|moist] [--cache-dir <path>]
 """
 
 function _parse_args(argv)
@@ -40,9 +42,7 @@ function _parse_args(argv)
     output = nothing
     Nc = 0
     float_type = "Float64"
-    met_interval = 3600.0
-    dt = 900.0
-    mass_basis = "dry"
+    mass_basis = nothing     # nothing = match source header
     cache_dir = ""
 
     i = 1
@@ -56,10 +56,6 @@ function _parse_args(argv)
             Nc = parse(Int, argv[i + 1]); i += 2
         elseif arg == "--float-type" && i + 1 <= length(argv)
             float_type = argv[i + 1]; i += 2
-        elseif arg == "--met-interval" && i + 1 <= length(argv)
-            met_interval = parse(Float64, argv[i + 1]); i += 2
-        elseif arg == "--dt" && i + 1 <= length(argv)
-            dt = parse(Float64, argv[i + 1]); i += 2
         elseif arg == "--mass-basis" && i + 1 <= length(argv)
             mass_basis = argv[i + 1]; i += 2
         elseif arg == "--cache-dir" && i + 1 <= length(argv)
@@ -77,10 +73,10 @@ function _parse_args(argv)
     isfile(input) ||        error("Input binary not found: $(input)")
     float_type in ("Float32", "Float64") ||
         error("--float-type must be Float32 or Float64, got $(float_type)")
-    mass_basis in ("dry", "moist") ||
+    mass_basis === nothing || mass_basis in ("dry", "moist") ||
         error("--mass-basis must be dry or moist, got $(mass_basis)")
 
-    return (; input, output, Nc, float_type, met_interval, dt, mass_basis, cache_dir)
+    return (; input, output, Nc, float_type, mass_basis, cache_dir)
 end
 
 function main()
@@ -93,20 +89,18 @@ function main()
     isempty(opts.cache_dir) || (cfg_grid["regridder_cache_dir"] = opts.cache_dir)
     cs_grid = build_target_geometry(Val(:cubed_sphere), cfg_grid, FT)
 
+    basis_sym = opts.mass_basis === nothing ? nothing : Symbol(opts.mass_basis)
+
     @info "LL → CS transport-binary regrid"
-    @info "  input:        $(opts.input)"
-    @info "  output:       $(opts.output)"
-    @info "  target:       C$(opts.Nc) gnomonic CS"
-    @info "  float type:   $(opts.float_type)"
-    @info "  met_interval: $(opts.met_interval) s"
-    @info "  dt:           $(opts.dt) s"
-    @info "  mass_basis:   $(opts.mass_basis)"
+    @info "  input:      $(opts.input)"
+    @info "  output:     $(opts.output)"
+    @info "  target:     C$(opts.Nc) gnomonic CS"
+    @info "  float type: $(opts.float_type)"
+    @info "  mass_basis: $(basis_sym === nothing ? "(match source)" : basis_sym)"
 
     regrid_ll_binary_to_cs(opts.input, cs_grid, opts.output;
-                           FT           = FT,
-                           met_interval = opts.met_interval,
-                           dt           = opts.dt,
-                           mass_basis   = Symbol(opts.mass_basis))
+                           FT         = FT,
+                           mass_basis = basis_sym)
 
     return opts.output
 end

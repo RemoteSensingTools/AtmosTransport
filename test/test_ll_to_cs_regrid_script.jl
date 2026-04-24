@@ -97,11 +97,9 @@ end
             )
             cs_grid = build_target_geometry(Val(:cubed_sphere), cfg_grid, Float64)
 
-            regrid_ll_binary_to_cs(ll_path, cs_grid, cs_path;
-                                    FT           = Float64,
-                                    met_interval = 3600.0,
-                                    dt           = 900.0,
-                                    mass_basis   = :dry)
+            # Timestep metadata now comes from the source header; mass_basis
+            # defaults to "match source" (no silent relabeling).
+            regrid_ll_binary_to_cs(ll_path, cs_grid, cs_path; FT = Float64)
 
             @test isfile(cs_path)
 
@@ -165,6 +163,62 @@ end
             end
 
             close(reader)
+        end
+    end
+
+    # Regression: requesting an output mass_basis that differs from the
+    # source must error. Without this guard the function silently relabels
+    # dry bytes as moist (invariant-14 violation).
+    @testset "basis-mismatch raises ArgumentError" begin
+        mktempdir() do dir
+            ll_path = joinpath(dir, "ll_fixture.bin")
+            cs_path = joinpath(dir, "cs_fixture.bin")
+            _ll_fixture_binary(ll_path; FT = Float64,
+                                Nx = 24, Ny = 13, Nz = 4, nwindow = 2)
+
+            cfg_grid = Dict{String, Any}(
+                "Nc" => 4,
+                "regridder_cache_dir" => joinpath(dir, "cr_cache"),
+            )
+            cs_grid = build_target_geometry(Val(:cubed_sphere), cfg_grid, Float64)
+
+            # Source fixture is `:dry`; request `:moist` on the same data.
+            @test_throws ArgumentError regrid_ll_binary_to_cs(
+                ll_path, cs_grid, cs_path;
+                FT = Float64, mass_basis = :moist)
+        end
+    end
+
+    # CLI integration: invoke the script through a fresh Julia process so
+    # arg-parse, default handling, and the main() path are actually
+    # exercised. Keeps the cost down by only running for the tiny fixture
+    # and setting --cache-dir to the tempdir (hermetic).
+    @testset "CLI wrapper dispatches to library" begin
+        mktempdir() do dir
+            ll_path = joinpath(dir, "ll_fixture.bin")
+            cs_path = joinpath(dir, "cs_fixture.bin")
+            _ll_fixture_binary(ll_path; FT = Float64,
+                                Nx = 24, Ny = 13, Nz = 4, nwindow = 2)
+
+            script = joinpath(@__DIR__, "..", "scripts", "preprocessing",
+                              "regrid_ll_transport_binary_to_cs.jl")
+            project = joinpath(@__DIR__, "..")
+
+            # Run synchronously, capture stdout+stderr for debugging on
+            # failure. The process should exit 0 and produce the output.
+            cmd = `$(Base.julia_cmd()) --project=$(project) $(script)
+                   --input $(ll_path) --output $(cs_path) --Nc 4
+                   --cache-dir $(joinpath(dir, "cr_cache"))`
+            buf = IOBuffer()
+            proc = run(pipeline(cmd; stdout = buf, stderr = buf);
+                       wait = true)
+            @test proc.exitcode == 0
+            @test isfile(cs_path)
+
+            # Sanity: the CLI-produced binary matches source basis.
+            caps = inspect_binary(cs_path; io = devnull)
+            @test caps.grid_type === :cubed_sphere
+            @test caps.mass_basis === :dry
         end
     end
 

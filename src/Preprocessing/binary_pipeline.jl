@@ -1520,7 +1520,7 @@ function process_day(date::Date,
 end
 
 """
-    regrid_ll_binary_to_cs(ll_binary_path, cs_grid, out_path; FT=Float64, kwargs...)
+    regrid_ll_binary_to_cs(ll_binary_path, cs_grid, out_path; FT=Float64, mass_basis=nothing)
 
 Regrid an existing LL transport binary to a cubed-sphere binary.
 
@@ -1533,22 +1533,24 @@ This reuses the entire CS regrid/balance/write infrastructure from the
 spectral→CS path — the only difference is the data source (binary reader
 instead of spectral synthesis).
 
-## Required keyword arguments
-- `steps_per_window::Int` — substeps per window (must match LL binary)
-- `met_interval::Float64` — met data interval in seconds (e.g. 3600.0)
-- `dt::Float64` — transport timestep in seconds (e.g. 900.0)
+Timestep metadata (`dt_met_seconds`, `steps_per_window`) is read directly
+from the source header. The output CS binary carries the same values, so
+the per-substep flux semantics survive the regrid without rescaling.
 
-## Optional keyword arguments
-- `FT::Type = Float64` — output float type
-- `mass_basis::Symbol = :dry` — mass basis for output binary (Invariant 14: dry default)
+## Keyword arguments
+- `FT::Type = Float64` — on-disk float type for the output CS binary.
+- `mass_basis::Union{Nothing, Symbol} = nothing` — output mass-basis label.
+  `nothing` (default) = match the source. Setting this to a value that
+  differs from the source's `mass_basis` currently errors: actual
+  dry↔moist conversion requires loading the source's `qv` and applying
+  `apply_dry_basis_native!`, which this function does not do. Invariant
+  14 mandates `:dry` end-to-end; use a dry source.
 """
 function regrid_ll_binary_to_cs(ll_binary_path::String,
                                 cs_grid::CubedSphereTargetGeometry,
                                 out_path::String;
                                 FT::Type{<:AbstractFloat} = Float64,
-                                met_interval::Float64 = 3600.0,
-                                dt::Float64 = 900.0,
-                                mass_basis::Symbol = :dry)
+                                mass_basis::Union{Nothing, Symbol} = nothing)
     t_start = time()
     Nc = cs_grid.Nc
 
@@ -1562,7 +1564,25 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     A_ifc = Float64.(h.A_ifc)
     B_ifc = Float64.(h.B_ifc)
 
-    steps_per_met = exact_steps_per_window(met_interval, dt)
+    # Refuse silent basis relabeling. The function reads raw `m/am/bm/ps`
+    # from the source and never touches `qv`, so mismatched basis produces
+    # a mislabeled binary (invariant 14 violation). Matching or unset is OK.
+    source_basis = Symbol(h.mass_basis)
+    output_basis = mass_basis === nothing ? source_basis : Symbol(mass_basis)
+    output_basis === source_basis || throw(ArgumentError(
+        "regrid_ll_binary_to_cs: requested mass_basis=$(output_basis) " *
+        "differs from source header mass_basis=$(source_basis). This " *
+        "function does not perform dry↔moist conversion (it would need " *
+        "to load `qv` from the source and apply `apply_dry_basis_native!` " *
+        "to m/am/bm). Regenerate the source on the desired basis, or omit " *
+        "the `mass_basis` kwarg to match the source."))
+
+    # Timestep metadata comes from the source header. The stored `am/bm`
+    # are per-substep mass (flux_kind = :substep_mass_amount) with the
+    # source's own `steps_per_window`, and the CS writer reuses the same
+    # substep count — so the per-substep semantics match end-to-end.
+    met_interval = Float64(h.dt_met_seconds)
+    steps_per_met = Int(h.steps_per_window)
     dt_factor = FT(met_interval / (2 * steps_per_met))
     gravity = FT(GRAV)
 
@@ -1614,7 +1634,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         dt_met_seconds=met_interval,
         half_dt_seconds=met_interval / 2,
         steps_per_window=steps_per_met,
-        mass_basis=mass_basis,
+        mass_basis=output_basis,
         extra_header=Dict{String, Any}(
             "preprocessor"      => "regrid_ll_binary_to_cs",
             "source_type"       => "ll_transport_binary",

@@ -30,6 +30,7 @@ core_tests = [
     "test_met_source_loader.jl",
     "test_geos_cs_passthrough.jl",
     "test_geos_convection.jl",
+    "test_cs_panel_geographic_roundtrip.jl",
     "test_basis_explicit_core.jl",
     "test_advection_kernels.jl",
     "test_structured_mesh_metadata.jl",

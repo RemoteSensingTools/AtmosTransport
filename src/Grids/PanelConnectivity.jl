@@ -10,10 +10,13 @@
 #   Panel 6: south polar cap              (lat < 35°S)
 #
 # Panels 1 & 2 have local axes X=east, Y=north (standard orientation).
-# Panels 4 & 5 have local axes X=south, Y=east (rotated 90° CW).
+# Panels 4 & 5 have local axes X=east, Y=south (GEOS native Ydim is reversed).
 # Panels 3 & 6 are polar caps with curvilinear local axes.
 #
-# Each panel has 4 edges: north (1), south (2), east (3), west (4).
+# Each panel has 4 local-index edges: +Y (1), -Y (2), +X (3), -X (4).
+# Historical names use north/south/east/west constants, but for rotated or
+# Y-reversed panels these names are local-index directions, not necessarily
+# geographic directions.
 # `orientation` encodes the along-edge direction when transferring halo data:
 #   0 = aligned (s on dst maps to s on src)
 #   2 = reversed (s on dst maps to Nc+1-s on src)
@@ -46,29 +49,34 @@ end
 Complete edge-to-edge connectivity for a 6-panel cubed sphere.
 
 `neighbors[p][e]` gives the `PanelEdge` for panel `p`, edge `e`,
-where edges are numbered: 1=north, 2=south, 3=east, 4=west.
+where edges are numbered by local index side:
+1=+Y, 2=-Y, 3=+X, 4=-X.
 """
 struct PanelConnectivity
     neighbors :: NTuple{6, NTuple{4, PanelEdge}}
 end
 
-const EDGE_NORTH = 1
-const EDGE_SOUTH = 2
-const EDGE_EAST  = 3
-const EDGE_WEST  = 4
+const EDGE_NORTH = 1  # local +Y edge (j = Nc)
+const EDGE_SOUTH = 2  # local -Y edge (j = 1)
+const EDGE_EAST  = 3  # local +X edge (i = Nc)
+const EDGE_WEST  = 4  # local -X edge (i = 1)
 
 """
     default_panel_connectivity() -> PanelConnectivity
 
 Return the GEOS-FP native cubed-sphere panel connectivity.
 
-Edge-to-edge connections (Panel p edge → Panel q edge):
-  P1 north→P3 west(rev)   P1 south→P6 north(aln)   P1 east→P2 west(aln)   P1 west→P5 north(rev)
-  P2 north→P3 south(aln)  P2 south→P6 east(rev)    P2 east→P4 south(rev)  P2 west→P1 east(aln)
-  P3 north→P5 west(rev)   P3 south→P2 north(aln)   P3 east→P4 west(aln)   P3 west→P1 north(rev)
-  P4 north→P5 south(aln)  P4 south→P2 east(rev)    P4 east→P6 south(rev)  P4 west→P3 east(aln)
-  P5 north→P1 west(rev)   P5 south→P4 north(aln)   P5 east→P6 west(aln)   P5 west→P3 north(rev)
-  P6 north→P1 south(aln)  P6 south→P4 east(rev)    P6 east→P2 south(rev)  P6 west→P5 east(aln)
+Edge-to-edge connections (Panel p local edge → Panel q local edge):
+  P1 +Y→P3 -X(rev)   P1 -Y→P6 +Y(aln)   P1 +X→P2 -X(aln)   P1 -X→P5 +X(rev)
+  P2 +Y→P3 -Y(aln)   P2 -Y→P6 +X(rev)   P2 +X→P4 -X(rev)   P2 -X→P1 +X(aln)
+  P3 +Y→P5 -Y(rev)   P3 -Y→P2 +Y(aln)   P3 +X→P4 -Y(aln)   P3 -X→P1 +Y(rev)
+  P4 +Y→P6 -Y(rev)   P4 -Y→P3 +X(aln)   P4 +X→P5 -X(aln)   P4 -X→P2 +X(rev)
+  P5 +Y→P6 -X(aln)   P5 -Y→P3 +Y(rev)   P5 +X→P1 -X(rev)   P5 -X→P4 +X(aln)
+  P6 +Y→P1 -Y(aln)   P6 -Y→P4 +Y(rev)   P6 +X→P2 -Y(rev)   P6 -X→P5 +Y(aln)
+
+The table is generated from the same GEOS-native corner geometry as
+`panel_cell_corner_lonlat(mesh, p)`, so balance, treeify, and NetCDF output
+share one convention contract.
 """
 function default_panel_connectivity()
     return PanelConnectivity((
@@ -78,10 +86,10 @@ function default_panel_connectivity()
         (PanelEdge(3, 0), PanelEdge(6, 2), PanelEdge(4, 2), PanelEdge(1, 0)),
         # Panel 3 (north polar cap)
         (PanelEdge(5, 2), PanelEdge(2, 0), PanelEdge(4, 0), PanelEdge(1, 2)),
-        # Panel 4 (equatorial ~170°E, rotated)
-        (PanelEdge(5, 0), PanelEdge(2, 2), PanelEdge(6, 2), PanelEdge(3, 0)),
-        # Panel 5 (equatorial ~260°E, rotated)
-        (PanelEdge(1, 2), PanelEdge(4, 0), PanelEdge(6, 0), PanelEdge(3, 2)),
+        # Panel 4 (equatorial ~170°E, GEOS Ydim reversed)
+        (PanelEdge(6, 2), PanelEdge(3, 0), PanelEdge(5, 0), PanelEdge(2, 2)),
+        # Panel 5 (equatorial ~260°E, GEOS Ydim reversed)
+        (PanelEdge(6, 0), PanelEdge(3, 2), PanelEdge(1, 2), PanelEdge(4, 0)),
         # Panel 6 (south polar cap)
         (PanelEdge(1, 0), PanelEdge(4, 2), PanelEdge(2, 2), PanelEdge(5, 0)),
     ))

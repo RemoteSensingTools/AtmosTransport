@@ -73,11 +73,11 @@ AbstractTimeVaryingField{FT, N}
 
 ### Preprocessing pipelines
 
-All three grid topologies have dedicated preprocessors under `scripts/preprocessing/`:
+All active ERA5 topology paths are dispatched through the unified preprocessor:
 
-- **LatLon**: ERA5 spectral (VO/D/LNSP) → `preprocess_spectral_v4_binary.jl` → transport binary
-- **Reduced Gaussian**: ERA5 spectral → `preprocess_era5_reduced_gaussian_transport_binary_v2.jl`
-- **Cubed Sphere**: LL ERA5 fluxes → `preprocess_era5_cs_conservative_v2.jl` (regrid to panels)
+- **LatLon**: ERA5 spectral (VO/D/LNSP) → `preprocess_transport_binary.jl` → transport binary
+- **Reduced Gaussian**: ERA5 spectral → `preprocess_transport_binary.jl`
+- **Cubed Sphere**: ERA5 spectral → `preprocess_transport_binary.jl`, or LL binary → `regrid_ll_transport_binary_to_cs.jl`
 
 All three apply a Poisson mass-flux balance before diagnosing `cm` from continuity (Invariant 13). All three default to dry-basis output (Invariant 14).
 
@@ -157,8 +157,8 @@ julia --project=test test/test_jet.jl
 julia --project=test test/test_readme_current.jl
 
 # Preprocess ERA5 binary (Dec 1, 2021)
-julia -t8 --project=. scripts/preprocessing/preprocess_spectral_v4_binary.jl \
-    config/preprocessing/era5_spectral_v4_tropo34_dec2021.toml --day 2021-12-01
+julia -t8 --project=. scripts/preprocessing/preprocess_transport_binary.jl \
+    config/preprocessing/era5_latlon_transport_binary_v2.toml --day 2021-12-01
 
 # Run 24h F64 stress test
 ATMOSTRANSPORT_DEBUG_SWEEPS=1 julia --threads=2 --project=. \

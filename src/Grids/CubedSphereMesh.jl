@@ -372,7 +372,90 @@ function _panel_cell_corner_lonlat(Nc::Int, panel::Int, FT::Type{<:AbstractFloat
     return lons, lats
 end
 
+@inline _dot3(ax, ay, az, bx, by, bz) = ax * bx + ay * by + az * bz
+
+@inline function _normalize3(x, y, z)
+    n = sqrt(x^2 + y^2 + z^2)
+    invn = inv(max(n, eps(typeof(n))))
+    return (x * invn, y * invn, z * invn)
+end
+
+@inline function _panel_unit_xyz(convention::AbstractCubedSpherePanelConvention,
+                                α::Float64, β::Float64, panel::Int)
+    x, y, z = _panel_xyz(convention, tan(α), tan(β), panel)
+    return _normalize3(x, y, z)
+end
+
+@inline function _east_north_basis(x::Float64, y::Float64, z::Float64)
+    rxy = hypot(x, y)
+    if rxy > 1e-14
+        east = (-y / rxy, x / rxy, 0.0)
+    else
+        # Longitude is singular at the pole. Pick a stable tangent basis; no
+        # production C-grid has a cell center exactly at the pole, but odd Nc
+        # synthetic tests can.
+        east = (0.0, 1.0, 0.0)
+    end
+    north = (-z * east[2], z * east[1], x * east[2] - y * east[1])
+    north = _normalize3(north...)
+    return east, north
+end
+
+"""
+    panel_cell_local_tangent_basis(mesh, panel)
+        -> (x_east, x_north, y_east, y_north)
+
+Return four `(Nc, Nc)` matrices describing the local panel-coordinate unit
+vectors at cell centers in geographic `(east, north)` components.
+
+For each cell, `(x_east[i,j], x_north[i,j])` is the unit vector for increasing
+local X (`i`) and `(y_east[i,j], y_north[i,j])` is the unit vector for
+increasing local Y (`j`). The helper honors `panel_convention(mesh)`, including
+GEOS-native Y-reversed panels, and is the geometry contract used by
+preprocessing wind rotation.
+"""
+function panel_cell_local_tangent_basis(mesh::CubedSphereMesh{FT}, panel::Int) where FT
+    Nc = mesh.Nc
+    dα = π / (2 * Nc)
+    h = min(1.0e-6, 0.01 * dα)
+
+    x_east  = zeros(FT, Nc, Nc)
+    x_north = zeros(FT, Nc, Nc)
+    y_east  = zeros(FT, Nc, Nc)
+    y_north = zeros(FT, Nc, Nc)
+
+    for j in 1:Nc, i in 1:Nc
+        α = -π / 4 + (i - 0.5) * dα
+        β = -π / 4 + (j - 0.5) * dα
+
+        x0, y0, z0 = _panel_unit_xyz(mesh.convention, α, β, panel)
+        xp, yp, zp = _panel_unit_xyz(mesh.convention, α + h, β, panel)
+        xm, ym, zm = _panel_unit_xyz(mesh.convention, α - h, β, panel)
+        xq, yq, zq = _panel_unit_xyz(mesh.convention, α, β + h, panel)
+        xr, yr, zr = _panel_unit_xyz(mesh.convention, α, β - h, panel)
+
+        dx = ((xp - xm) / (2h), (yp - ym) / (2h), (zp - zm) / (2h))
+        dy = ((xq - xr) / (2h), (yq - yr) / (2h), (zq - zr) / (2h))
+
+        # Remove radial roundoff before normalizing to tangent unit vectors.
+        rx = _dot3(dx[1], dx[2], dx[3], x0, y0, z0)
+        ry = _dot3(dy[1], dy[2], dy[3], x0, y0, z0)
+        ex = _normalize3(dx[1] - rx * x0, dx[2] - rx * y0, dx[3] - rx * z0)
+        ey = _normalize3(dy[1] - ry * x0, dy[2] - ry * y0, dy[3] - ry * z0)
+
+        east, north = _east_north_basis(x0, y0, z0)
+
+        x_east[i, j]  = FT(_dot3(ex[1], ex[2], ex[3], east[1], east[2], east[3]))
+        x_north[i, j] = FT(_dot3(ex[1], ex[2], ex[3], north[1], north[2], north[3]))
+        y_east[i, j]  = FT(_dot3(ey[1], ey[2], ey[3], east[1], east[2], east[3]))
+        y_north[i, j] = FT(_dot3(ey[1], ey[2], ey[3], north[1], north[2], north[3]))
+    end
+
+    return (x_east, x_north, y_east, y_north)
+end
+
 export AbstractCubedSpherePanelConvention
 export GnomonicPanelConvention, GEOSNativePanelConvention, panel_connectivity_for
 export CubedSphereMesh, panel_count, panel_convention, panel_labels
 export panel_cell_center_lonlat, panel_cell_corner_lonlat
+export panel_cell_local_tangent_basis

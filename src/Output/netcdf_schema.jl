@@ -104,16 +104,25 @@ function _rg_native_coordinates(mesh::ReducedGaussianMesh)
     lons = Array{Float64}(undef, ncells(mesh))
     lats = Array{Float64}(undef, ncells(mesh))
     areas = Array{Float64}(undef, ncells(mesh))
+    lon_bounds = Array{Float64}(undef, ncells(mesh), 4)
+    lat_bounds = Array{Float64}(undef, ncells(mesh), 4)
     @inbounds for j in 1:nrings(mesh)
         ring_lons = ring_longitudes(mesh, j)
+        dlon = 360.0 / mesh.nlon_per_ring[j]
+        lat_s = Float64(mesh.lat_faces[j])
+        lat_n = Float64(mesh.lat_faces[j + 1])
         for i in eachindex(ring_lons)
             c = cell_index(mesh, i, j)
             lons[c] = Float64(ring_lons[i])
             lats[c] = Float64(mesh.latitudes[j])
             areas[c] = Float64(cell_area(mesh, c))
+            lon_w = (i - 1) * dlon
+            lon_e = i * dlon
+            lon_bounds[c, :] .= (lon_w, lon_e, lon_e, lon_w)
+            lat_bounds[c, :] .= (lat_s, lat_s, lat_n, lat_n)
         end
     end
-    return lons, lats, areas
+    return lons, lats, areas, lon_bounds, lat_bounds
 end
 
 function _rg_legacy_raster_map(mesh::ReducedGaussianMesh)
@@ -136,25 +145,37 @@ end
 
 function _define_rg_geometry!(ds, mesh::ReducedGaussianMesh, Nz::Integer, times)
     defDim(ds, "cell", ncells(mesh))
+    defDim(ds, "nv", 4)
     _define_lev!(ds, Nz)
     _define_time!(ds, times)
 
-    lons, lats, areas = _rg_native_coordinates(mesh)
+    lons, lats, areas, lon_bounds, lat_bounds = _rg_native_coordinates(mesh)
     defVar(ds, "cell", Int32, ("cell",),
            attrib = Dict("long_name" => "native reduced-Gaussian cell index"))[:] =
         Int32.(1:ncells(mesh))
     defVar(ds, "cell_lon", Float64, ("cell",),
            attrib = Dict("units" => "degrees_east",
                          "long_name" => "native cell longitude",
-                         "standard_name" => "longitude"))[:] = lons
+                         "standard_name" => "longitude",
+                         "bounds" => "cell_lon_bounds"))[:] = lons
     defVar(ds, "cell_lat", Float64, ("cell",),
            attrib = Dict("units" => "degrees_north",
                          "long_name" => "native cell latitude",
-                         "standard_name" => "latitude"))[:] = lats
+                         "standard_name" => "latitude",
+                         "bounds" => "cell_lat_bounds"))[:] = lats
+    defVar(ds, "cell_lon_bounds", Float64, ("cell", "nv"),
+           attrib = Dict("units" => "degrees_east",
+                         "long_name" => "native cell corner longitudes",
+                         "comment" => "Corners are ordered SW, SE, NE, NW."))[:, :] = lon_bounds
+    defVar(ds, "cell_lat_bounds", Float64, ("cell", "nv"),
+           attrib = Dict("units" => "degrees_north",
+                         "long_name" => "native cell corner latitudes",
+                         "comment" => "Corners are ordered SW, SE, NE, NW."))[:, :] = lat_bounds
     defVar(ds, "cell_area", Float64, ("cell",),
            attrib = Dict("units" => "m2",
                          "long_name" => "horizontal cell area",
-                         "standard_name" => "cell_area"))[:] = areas
+                         "standard_name" => "cell_area",
+                         "coordinates" => "cell_lon cell_lat"))[:] = areas
 
     out_lons, out_lats, nn_map = _rg_legacy_raster_map(mesh)
     defDim(ds, "lon", length(out_lons))

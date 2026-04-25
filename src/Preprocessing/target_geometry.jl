@@ -247,8 +247,9 @@ end
     CubedSphereTargetGeometry
 
 Target geometry for spectral→CS transport binary preprocessing. The CS mesh
-stores gnomonic cell areas and metric terms; the face table and Poisson scratch
-are pre-built at construction time for efficient per-window balance.
+stores cell areas, metric terms, panel convention, and connectivity; the face
+table and Poisson scratch are pre-built at construction time for efficient
+per-window balance.
 
 The `staging_nlon × staging_nlat` fields define an internal LL grid used for
 spectral synthesis before conservative regridding to CS panels.
@@ -259,6 +260,7 @@ struct CubedSphereTargetGeometry{FT, M <: CubedSphereMesh{FT}} <: AbstractTarget
     face_table       :: CSGlobalFaceTable
     cell_degree      :: Vector{Int}
     poisson_scratch  :: CSPoissonScratch
+    tangent_basis    :: NTuple{6, NTuple{4, Matrix{FT}}}
     cache_dir        :: String
     staging_nlon     :: Int
     staging_nlat     :: Int
@@ -266,6 +268,25 @@ end
 
 grid_kind(::CubedSphereTargetGeometry) = :cubed_sphere
 supports_spectral_massflux_preprocessing(::CubedSphereTargetGeometry) = true
+
+_cs_panel_convention_tag(::GnomonicPanelConvention) = "gnomonic"
+_cs_panel_convention_tag(::GEOSNativePanelConvention) = "geos_native"
+_cs_panel_convention_tag(grid::CubedSphereTargetGeometry) =
+    _cs_panel_convention_tag(panel_convention(grid.mesh))
+
+function _parse_cs_panel_convention(raw)
+    raw isa GnomonicPanelConvention && return raw
+    raw isa GEOSNativePanelConvention && return raw
+
+    norm = lowercase(replace(String(raw), '-' => '_', ' ' => '_'))
+    if norm in ("gnomonic", "gnomic")
+        return GnomonicPanelConvention()
+    elseif norm in ("geos_native", "geosnative", "geos_fp", "geosfp", "geos_it", "geosit")
+        return GEOSNativePanelConvention()
+    end
+    error("cubed_sphere: unsupported panel_convention=$(raw); " *
+          "expected \"gnomonic\" or \"geos_native\"")
+end
 
 function target_spectral_truncation(grid::CubedSphereTargetGeometry)
     # Nyquist on the staging LL grid
@@ -278,12 +299,14 @@ function target_header_metadata(grid::CubedSphereTargetGeometry)
         "grid_type" => "cubed_sphere",
         "Nc" => grid.Nc,
         "npanel" => 6,
+        "panel_convention" => _cs_panel_convention_tag(grid),
     )
 end
 
 function target_summary(grid::CubedSphereTargetGeometry)
     nc = 6 * grid.Nc^2
-    return "C$(grid.Nc) cubed sphere ($(nc) cells, staging $(grid.staging_nlon)×$(grid.staging_nlat))"
+    conv = _cs_panel_convention_tag(grid)
+    return "C$(grid.Nc) cubed sphere ($(nc) cells, $(conv), staging $(grid.staging_nlon)×$(grid.staging_nlat))"
 end
 
 """
@@ -295,6 +318,7 @@ Required keys:
 - `Nc :: Int` — cells per panel edge
 
 Optional keys:
+- `panel_convention` or `convention` — `"gnomonic"` (default) or `"geos_native"`
 - `regridder_cache_dir` — directory for CR.jl weight cache (default `~/.cache/AtmosTransport/cr_regridding`)
 - `staging_nlon`, `staging_nlat` — override the internal LL staging grid size
   (defaults: `max(4Nc, 360)` × `max(2Nc+1, 181)`)
@@ -309,16 +333,19 @@ function build_target_geometry(::Val{:cubed_sphere}, cfg_grid, ::Type{FT}) where
     staging_nlon = Int(get(cfg_grid, "staging_nlon", max(4 * Nc, 360)))
     staging_nlat = Int(get(cfg_grid, "staging_nlat", max(2 * Nc + 1, 181)))
 
+    convention = _parse_cs_panel_convention(
+        get(cfg_grid, "panel_convention", get(cfg_grid, "convention", "gnomonic")))
     mesh = CubedSphereMesh(; Nc=Nc, FT=FT, radius=FT(R_EARTH),
-                            convention=GnomonicPanelConvention())
+                            convention=convention)
 
-    conn = gnomonic_panel_connectivity()
+    conn = mesh.connectivity
     ft = build_cs_global_face_table(Nc, conn)
     degree = cs_cell_face_degree(ft)
     scratch = CSPoissonScratch(ft.nc)
+    tangent_basis = ntuple(p -> panel_cell_local_tangent_basis(mesh, p), 6)
 
     return CubedSphereTargetGeometry{FT, typeof(mesh)}(
-        mesh, Nc, ft, degree, scratch, cache_dir,
+        mesh, Nc, ft, degree, scratch, tangent_basis, cache_dir,
         staging_nlon, staging_nlat,
     )
 end

@@ -13,7 +13,7 @@ The pipeline dispatches on `AbstractTargetGeometry` subtypes:
     AbstractTargetGeometry
     ├── LatLonTargetGeometry              — regular lat-lon (any Nx × Ny)
     ├── ReducedGaussianTargetGeometry     — native ERA5 RG (O90, O160, N320, …)
-    └── CubedSphereTargetGeometry         — gnomonic CS (C24, C90, C180, …)
+    └── CubedSphereTargetGeometry         — convention-aware CS (C24, C90, C180, …)
 
 Each target geometry has a dedicated `process_day` method:
 
@@ -54,10 +54,12 @@ using Logging
 using FFTW
 using Printf
 using JSON3
+using JLD2
 using TOML
 using LinearAlgebra: mul!, dot
 using NCDatasets
 using GRIB
+using SHA
 using FastGaussQuadrature: gausslegendre
 
 # Re-export parent module types we need
@@ -67,6 +69,8 @@ using ..Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                AtmosGrid, ncells, nfaces, nrings, nlevels, face_cells, cell_area,
                ring_longitudes, ring_cell_count, cell_areas_by_latitude,
                n_levels, pressure_at_interface, level_thickness, floattype,
+               panel_convention, panel_connectivity_for,
+               panel_cell_local_tangent_basis,
                default_panel_connectivity, gnomonic_panel_connectivity, reciprocal_edge,
                GnomonicPanelConvention, GEOSNativePanelConvention,
                EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST

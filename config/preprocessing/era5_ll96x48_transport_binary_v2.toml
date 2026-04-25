@@ -4,7 +4,7 @@
 # so LL vs RG runs on the same resolution are directly comparable.
 #
 # Usage (preprocess a single day):
-#   julia --project=. scripts/preprocessing/preprocess_spectral_v4_binary.jl \
+#   julia --project=. scripts/preprocessing/preprocess_transport_binary.jl \
 #       config/preprocessing/era5_ll96x48_transport_binary_v2.toml --day 2021-12-01
 
 [input]

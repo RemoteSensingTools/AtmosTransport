@@ -184,34 +184,33 @@ machine precision.
 
 ## Preprocessing script
 
-`scripts/preprocessing/preprocess_era5_cs_conservative_v2.jl` is a
-drop-in counterpart to the existing bilinear
-`regrid_latlon_to_cs_binary_v2.jl`. It replaces every bilinear
-cell-center interpolation with CR.jl's conservative regridding for
-cell-center fields (air mass `m`, surface pressure `ps`, recovered
-winds `u`, `v`). The face-flux reconstruction, Poisson balancing, and
-vertical-flux diagnosis from continuity are identical to the bilinear
-script.
+`scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl` converts an
+existing lat-lon transport binary to a cubed-sphere transport binary. It uses
+CR.jl conservative regridding for cell-center fields (air mass `m`, surface
+pressure `ps`, recovered winds `u`, `v`). The face-flux reconstruction,
+Poisson balancing, and vertical-flux diagnosis from continuity use the same
+convention-aware `CubedSphereMesh` connectivity and local tangent basis as
+treeify and output.
 
 Usage:
 
 ```bash
-julia --project=. scripts/preprocessing/preprocess_era5_cs_conservative_v2.jl \
+julia --project=. scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl \
     --input <latlon_binary.bin> --output <cs_binary.bin> \
-    --Nc 90 [--cache-dir <path>]
+    --Nc 90 [--convention gnomonic|geos_native] [--cache-dir <path>]
 ```
 
-The output binary is drop-in compatible with `CubedSphereBinaryReader`. ERA5
-LL-to-CS preprocessing writes the default gnomonic panel convention; native
-GEOS-FP/IT products use `panel_convention="geos_native"` and the same
-convention-aware tree construction. The header tags
-`regrid_method="conservative_crjl"` for provenance where applicable.
+The output binary is drop-in compatible with `CubedSphereBinaryReader`.
+`--convention gnomonic` is the default ERA5-derived CS layout.
+`--convention geos_native` writes GEOS-FP/IT panel order/orientation and records
+`panel_convention="geos_native"` in the binary header. Regridding, wind
+rotation, CS Poisson balance, write-time replay checks, NetCDF output, and
+visualization all consume that same convention tag.
 
-Both this conservative wrapper and the legacy bilinear wrapper
-`scripts/preprocessing/regrid_latlon_to_cs_binary_v2.jl` now route through the
-same stable transport-binary target interface documented in
-[`PREPROCESSING_PHILOSOPHY.md`](PREPROCESSING_PHILOSOPHY.md). The difference is
-the target kind and the regridding method recorded in the output header.
+This path routes through the same stable transport-binary target interface
+documented in [`PREPROCESSING_PHILOSOPHY.md`](PREPROCESSING_PHILOSOPHY.md);
+the target mesh convention determines treeify, balance, writer metadata, and
+downstream diagnostics.
 
 ## Verification results
 

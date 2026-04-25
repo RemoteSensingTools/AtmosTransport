@@ -80,8 +80,18 @@ using .AtmosTransport
                 @test ds.attrib["grid_type"] == "reduced_gaussian"
                 @test haskey(ds, "cell_lon")
                 @test haskey(ds, "cell_lat")
+                @test haskey(ds, "cell_lon_bounds")
+                @test haskey(ds, "cell_lat_bounds")
+                @test ds["cell_lon"].attrib["bounds"] == "cell_lon_bounds"
+                @test ds["cell_lat"].attrib["bounds"] == "cell_lat_bounds"
                 @test haskey(ds, "co2_column_mean_native")
                 @test haskey(ds, "co2_column_mean")
+                @test size(ds["cell_lon_bounds"]) == (ncells(mesh), 4)
+                @test size(ds["cell_lat_bounds"]) == (ncells(mesh), 4)
+                @test ds["cell_lon_bounds"][1, :] ≈ [0.0, 90.0, 90.0, 0.0]
+                @test ds["cell_lat_bounds"][1, :] ≈ [-90.0, -90.0, 0.0, 0.0]
+                @test ds["cell_lon_bounds"][5, :] ≈ [0.0, 45.0, 45.0, 0.0]
+                @test ds["cell_lat_bounds"][5, :] ≈ [0.0, 0.0, 90.0, 90.0]
                 @test size(ds["co2_column_mean_native"]) == (ncells(mesh), 1)
                 @test size(ds["co2_column_mean"]) == (maximum(mesh.nlon_per_ring), nrings(mesh), 1)
                 @test all(isapprox.(ds["co2_column_mean_native"][:, 1], 400e-6; atol=0))

@@ -48,8 +48,8 @@ dataset.
 
 ## Cubed-sphere panel-order conventions
 
-The refactor should distinguish the geometric cubed-sphere panel order from
-the native GEOS file order.
+AtmosTransport distinguishes the geometric cubed-sphere panel order from the
+native GEOS file order.
 
 In words:
 
@@ -70,8 +70,15 @@ More explicitly:
 `src/Grids/CubedSphereMesh.jl` now carries this distinction explicitly via
 `GnomonicPanelConvention` and `GEOSNativePanelConvention`. Coordinate helpers
 such as `panel_cell_corner_lonlat(mesh, panel)` honor the convention, so
-regridding, diagnostic NetCDF output, and visualization all consume the same
-panel geometry.
+regridding, local wind rotation, CS face connectivity, Poisson balance,
+diagnostic NetCDF output, and visualization all consume the same panel
+geometry.
+
+GEOS-native panels 4 and 5 keep GEOS file-order `Xdim` eastward and `Ydim`
+southward. Internal edge constants (`EDGE_NORTH`, `EDGE_SOUTH`, etc.) therefore
+refer to local index boundaries (`+Y`, `-Y`, `+X`, `-X`), not always geographic
+directions. This is intentional: closure, mirror signs, and replay validation
+must follow file indices.
 
 ## Sources
 

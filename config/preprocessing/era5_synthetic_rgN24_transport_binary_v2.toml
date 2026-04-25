@@ -1,6 +1,5 @@
 # Synthetic reduced-Gaussian N24 (regular: 48 rings × 96 lon = 4608 cells).
-# Uses the :synthetic_reduced_gaussian dispatch in
-# scripts/preprocessing/preprocess_spectral_v4_binary/target_geometry.jl
+# Uses the :synthetic_reduced_gaussian dispatch in src/Preprocessing.
 # so no GRIB file is needed to define the target geometry — latitudes
 # come from FastGaussQuadrature.gausslegendre(2N).
 #
@@ -8,7 +7,7 @@
 # so LL vs RG runs at ~3.75 deg resolution are directly comparable.
 #
 # Usage (preprocess a single day):
-#   julia --project=. scripts/preprocessing/preprocess_era5_reduced_gaussian_transport_binary_v2.jl \
+#   julia --project=. scripts/preprocessing/preprocess_transport_binary.jl \
 #       config/preprocessing/era5_synthetic_rgN24_transport_binary_v2.toml --day 2021-12-01
 
 [input]

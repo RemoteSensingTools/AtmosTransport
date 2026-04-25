@@ -93,7 +93,8 @@ When the thermo grid resolution differs from the target grid (e.g. thermo is
 720×361 but target is 96×48), `qv_thermo` holds the raw read and
 `_interpolate_qv_to_target!` bilinear-interpolates into `qv_native`.
 When resolutions match, `qv_thermo` is empty and the read goes directly
-into `qv_native`.
+into `qv_native`. `qv_daily` is an optional in-memory daily preload in
+thermo-grid coordinates; it avoids repeated NetCDF chunk decompression.
 """
 struct NativeQVWorkspace{FT} <: AbstractQVWorkspace{FT}
     thermo_path   :: String
@@ -103,6 +104,7 @@ struct NativeQVWorkspace{FT} <: AbstractQVWorkspace{FT}
     include_qv    :: Bool
     qv_thermo     :: Array{Float64, 3}   # (Nx_thermo, Ny_thermo, Nz_native) or empty
     needs_interp  :: Bool
+    qv_daily      :: Array{Float64, 4}   # (Nx_thermo, Ny_thermo, Nz_native, Nt) or empty
 end
 
 Base.summary(ws::SpectralTransformWorkspace) =
@@ -229,13 +231,17 @@ function allocate_qv_workspace(grid::LatLonTargetGeometry,
                        Nx_thermo, Ny_thermo, Nx, Ny)
     end
 
+    qv_daily = maybe_preload_qv_day(setup.thermo_path, Nx_thermo, Ny_thermo,
+                                    Nz_native, settings)
+
     return NativeQVWorkspace{FT}(setup.thermo_path,
                                  Array{Float64}(undef, Nx, Ny, Nz_native),
                                  Array{FT}(undef, Nx, Ny, Nz_native),
                                  Array{FT}(undef, Nx, Ny, Nz),
                                  settings.include_qv,
                                  qv_thermo,
-                                 needs_interp)
+                                 needs_interp,
+                                 qv_daily)
 end
 
 """
@@ -255,6 +261,8 @@ function _detect_thermo_grid_size(thermo_path::String)
     end
 end
 
+@inline has_daily_qv(qv::NativeQVWorkspace) = size(qv.qv_daily, 4) > 0
+
 read_window_qv!(::NoQVWorkspace, args...) = nothing
 
 """
@@ -272,10 +280,18 @@ function read_window_qv!(qv::NativeQVWorkspace,
     if qv.needs_interp
         Nx_t = size(qv.qv_thermo, 1)
         Ny_t = size(qv.qv_thermo, 2)
-        qv.qv_thermo .= read_qv_from_thermo(qv.thermo_path, win_idx, Nx_t, Ny_t, Nz_native; FT=Float64)
+        if has_daily_qv(qv)
+            @views qv.qv_thermo .= qv.qv_daily[:, :, :, win_idx]
+        else
+            qv.qv_thermo .= read_qv_from_thermo(qv.thermo_path, win_idx, Nx_t, Ny_t, Nz_native; FT=Float64)
+        end
         _interpolate_ll_qv!(qv.qv_native, qv.qv_thermo, Nx, Ny, Nx_t, Ny_t, Nz_native)
     else
-        qv.qv_native .= read_qv_from_thermo(qv.thermo_path, win_idx, Nx, Ny, Nz_native; FT=Float64)
+        if has_daily_qv(qv)
+            @views qv.qv_native .= qv.qv_daily[:, :, :, win_idx]
+        else
+            qv.qv_native .= read_qv_from_thermo(qv.thermo_path, win_idx, Nx, Ny, Nz_native; FT=Float64)
+        end
     end
     return nothing
 end

@@ -36,7 +36,8 @@ function process_day(cfg::Dict{String, Any};
 
     for (idx, date) in enumerate(dates)
         @info @sprintf("[%d/%d] %s", idx, length(dates), date)
-        next_day_h0 = next_day_hour0(date, dates, settings.spectral_dir, settings.T_target)
+        next_day_h0 = next_day_hour0(date, dates, settings.spectral_dir, settings.T_target;
+                                     cache_dir=settings.spectral_cache_dir)
         next_day_h0 !== nothing && @info("  Next day hour 0 available for last-window delta")
         process_day(date, grid, settings, vertical; next_day_hour0=next_day_h0)
     end

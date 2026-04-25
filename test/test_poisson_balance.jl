@@ -115,58 +115,68 @@ end
 
 @testset "CS global Poisson balance" begin
     if isdefined(Prep, :balance_cs_global_mass_fluxes!)
-        using .AtmosTransport.Grids: CubedSphereMesh, GnomonicPanelConvention,
-            default_panel_connectivity
+        using .AtmosTransport.Grids: GnomonicPanelConvention,
+            GEOSNativePanelConvention, panel_connectivity_for
+
+        cs_conventions = (GnomonicPanelConvention(), GEOSNativePanelConvention())
 
         @testset "Zero fluxes → zero correction" begin
-            Nc = 8; Nz = 2
-            mesh = CubedSphereMesh(; Nc=Nc, FT=Float64, convention=GnomonicPanelConvention())
-            conn = default_panel_connectivity()
-            ft = Prep.build_cs_global_face_table(Nc, conn)
-            degree = Prep.cs_cell_face_degree(ft)
-            scratch = Prep.CSPoissonScratch(ft.nc)
+            for convention in cs_conventions
+                @testset "$(nameof(typeof(convention)))" begin
+                    Nc = 8; Nz = 2
+                    conn = panel_connectivity_for(convention)
+                    ft = Prep.build_cs_global_face_table(Nc, conn)
+                    degree = Prep.cs_cell_face_degree(ft)
+                    scratch = Prep.CSPoissonScratch(ft.nc)
 
-            m = ntuple(_ -> ones(Float64, Nc, Nc, Nz), 6)
-            m_next = ntuple(_ -> ones(Float64, Nc, Nc, Nz), 6)
-            am = ntuple(_ -> zeros(Float64, Nc+1, Nc, Nz), 6)
-            bm = ntuple(_ -> zeros(Float64, Nc, Nc+1, Nz), 6)
+                    m = ntuple(_ -> ones(Float64, Nc, Nc, Nz), 6)
+                    m_next = ntuple(_ -> ones(Float64, Nc, Nc, Nz), 6)
+                    am = ntuple(_ -> zeros(Float64, Nc+1, Nc, Nz), 6)
+                    bm = ntuple(_ -> zeros(Float64, Nc, Nc+1, Nz), 6)
 
-            diag = Prep.balance_cs_global_mass_fluxes!(am, bm, m, m_next, ft, degree, 4, scratch)
+                    Prep.balance_cs_global_mass_fluxes!(am, bm, m, m_next, ft, degree, 4, scratch)
 
-            for p in 1:6
-                @test maximum(abs, am[p]) < 1e-14
-                @test maximum(abs, bm[p]) < 1e-14
+                    for p in 1:6
+                        @test maximum(abs, am[p]) < 1e-14
+                        @test maximum(abs, bm[p]) < 1e-14
+                    end
+                end
             end
         end
 
         @testset "Random fluxes → post-balance residual near machine precision" begin
-            Nc = 12; Nz = 2; steps = 4
-            mesh = CubedSphereMesh(; Nc=Nc, FT=Float64, convention=GnomonicPanelConvention())
-            conn = default_panel_connectivity()
-            ft = Prep.build_cs_global_face_table(Nc, conn)
-            degree = Prep.cs_cell_face_degree(ft)
-            scratch = Prep.CSPoissonScratch(ft.nc)
+            for convention in cs_conventions
+                @testset "$(nameof(typeof(convention)))" begin
+                    Nc = 12; Nz = 2; steps = 4
+                    conn = panel_connectivity_for(convention)
+                    ft = Prep.build_cs_global_face_table(Nc, conn)
+                    degree = Prep.cs_cell_face_degree(ft)
+                    scratch = Prep.CSPoissonScratch(ft.nc)
 
-            # Same mass at both endpoints (zero target) with random initial fluxes
-            m = ntuple(_ -> ones(Float64, Nc, Nc, Nz), 6)
-            am = ntuple(_ -> rand(Float64, Nc+1, Nc, Nz) .* 0.01, 6)
-            bm = ntuple(_ -> rand(Float64, Nc, Nc+1, Nz) .* 0.01, 6)
+                    # Same mass at both endpoints (zero target) with random initial fluxes
+                    m = ntuple(_ -> ones(Float64, Nc, Nc, Nz), 6)
+                    am = ntuple(_ -> rand(Float64, Nc+1, Nc, Nz) .* 0.01, 6)
+                    bm = ntuple(_ -> rand(Float64, Nc, Nc+1, Nz) .* 0.01, 6)
 
-            diag = Prep.balance_cs_global_mass_fluxes!(am, bm, m, m,
-                                                        ft, degree, steps, scratch;
-                                                        tol=1e-14, max_iter=10000)
+                    diag = Prep.balance_cs_global_mass_fluxes!(am, bm, m, m,
+                                                                ft, degree, steps, scratch;
+                                                                tol=1e-14, max_iter=10000)
 
-            # Post-balance: convergence matches zero target to machine precision
-            @test diag.max_post_residual < 1e-10
+                    # Post-balance: convergence matches zero target to machine precision
+                    @test diag.max_post_residual < 1e-10
+                end
+            end
         end
 
         @testset "All cells have degree 4" begin
-            for Nc in [4, 8, 16]
-                conn = default_panel_connectivity()
-                ft = Prep.build_cs_global_face_table(Nc, conn)
-                degree = Prep.cs_cell_face_degree(ft)
-                @test all(degree .== 4)
-                @test length(degree) == 6 * Nc^2
+            for convention in cs_conventions, Nc in [4, 8, 16]
+                @testset "$(nameof(typeof(convention))) C$(Nc)" begin
+                    conn = panel_connectivity_for(convention)
+                    ft = Prep.build_cs_global_face_table(Nc, conn)
+                    degree = Prep.cs_cell_face_degree(ft)
+                    @test all(degree .== 4)
+                    @test length(degree) == 6 * Nc^2
+                end
             end
         end
 
@@ -186,123 +196,133 @@ end
             end
         end
         @testset "mirror_sign: inflow positions get +1, outflow get -1" begin
-            for Nc in [4, 8, 12]
-                conn = default_panel_connectivity()
-                ft = Prep.build_cs_global_face_table(Nc, conn)
+            for convention in cs_conventions, Nc in [4, 8, 12]
+                @testset "$(nameof(typeof(convention))) C$(Nc)" begin
+                    conn = panel_connectivity_for(convention)
+                    ft = Prep.build_cs_global_face_table(Nc, conn)
 
-                for f in 1:ft.nf
-                    mq = Int(ft.mirror_panel[f])
-                    mq == 0 && continue  # interior face
+                    for f in 1:ft.nf
+                        mq = Int(ft.mirror_panel[f])
+                        mq == 0 && continue  # interior face
 
-                    cdir = Int(ft.face_dir[f])
-                    ci   = Int(ft.face_idx_i[f])
-                    cj   = Int(ft.face_idx_j[f])
-                    mdir = Int(ft.mirror_dir[f])
-                    mi   = Int(ft.mirror_idx_i[f])
-                    mj   = Int(ft.mirror_idx_j[f])
-                    ms   = Int(ft.mirror_sign[f])
+                        cdir = Int(ft.face_dir[f])
+                        ci   = Int(ft.face_idx_i[f])
+                        cj   = Int(ft.face_idx_j[f])
+                        mdir = Int(ft.mirror_dir[f])
+                        mi   = Int(ft.mirror_idx_i[f])
+                        mj   = Int(ft.mirror_idx_j[f])
+                        ms   = Int(ft.mirror_sign[f])
 
-                    # `mirror_sign` negates when canonical + mirror land on the
-                    # same position type (both inflow or both outflow), and
-                    # stays positive when they land on opposite types.
-                    can_at_outflow = (cdir == 1 && ci == Nc + 1) ||
-                                     (cdir == 2 && cj == Nc + 1)
-                    at_outflow = (mdir == 1 && mi == Nc + 1) ||
-                                 (mdir == 2 && mj == Nc + 1)
-                    expected = (can_at_outflow == at_outflow) ? -1 : 1
-                    @test ms == expected
+                        # `mirror_sign` negates when canonical + mirror land on the
+                        # same position type (both inflow or both outflow), and
+                        # stays positive when they land on opposite types.
+                        can_at_outflow = (cdir == 1 && ci == Nc + 1) ||
+                                         (cdir == 2 && cj == Nc + 1)
+                        at_outflow = (mdir == 1 && mi == Nc + 1) ||
+                                     (mdir == 2 && mj == Nc + 1)
+                        expected = (can_at_outflow == at_outflow) ? -1 : 1
+                        @test ms == expected
+                    end
                 end
             end
         end
 
         @testset "mirror_sign: per-panel div matches global face-table div" begin
-            Nc = 8; Nz = 3; steps = 4
-            conn = default_panel_connectivity()
-            ft = Prep.build_cs_global_face_table(Nc, conn)
-            degree = Prep.cs_cell_face_degree(ft)
-            scratch = Prep.CSPoissonScratch(ft.nc)
-            nc = 6 * Nc^2
+            for convention in cs_conventions
+                @testset "$(nameof(typeof(convention)))" begin
+                    Nc = 8; Nz = 3; steps = 4
+                    conn = panel_connectivity_for(convention)
+                    ft = Prep.build_cs_global_face_table(Nc, conn)
+                    degree = Prep.cs_cell_face_degree(ft)
+                    scratch = Prep.CSPoissonScratch(ft.nc)
+                    nc = 6 * Nc^2
 
-            # Non-trivial mass fields to create a real balance problem
-            m      = ntuple(p -> 1.0 .+ 0.1 .* rand(Float64, Nc, Nc, Nz), 6)
-            m_next = ntuple(p -> 1.0 .+ 0.1 .* rand(Float64, Nc, Nc, Nz), 6)
-            am = ntuple(_ -> rand(Float64, Nc+1, Nc, Nz) .* 0.01, 6)
-            bm = ntuple(_ -> rand(Float64, Nc, Nc+1, Nz) .* 0.01, 6)
+                    # Non-trivial mass fields to create a real balance problem
+                    m      = ntuple(p -> 1.0 .+ 0.1 .* rand(Float64, Nc, Nc, Nz), 6)
+                    m_next = ntuple(p -> 1.0 .+ 0.1 .* rand(Float64, Nc, Nc, Nz), 6)
+                    am = ntuple(_ -> rand(Float64, Nc+1, Nc, Nz) .* 0.01, 6)
+                    bm = ntuple(_ -> rand(Float64, Nc, Nc+1, Nz) .* 0.01, 6)
 
-            Prep.balance_cs_global_mass_fluxes!(am, bm, m, m_next,
-                ft, degree, steps, scratch; tol=1e-14, max_iter=20000)
+                    Prep.balance_cs_global_mass_fluxes!(am, bm, m, m_next,
+                        ft, degree, steps, scratch; tol=1e-14, max_iter=20000)
 
-            # After balance (which calls _sync_cs_mirrors!), compare divergences.
-            for k in 1:Nz
-                # Global face-table divergence
-                div_global = zeros(Float64, nc)
-                @inbounds for f in 1:ft.nf
-                    p   = Int(ft.face_panel[f])
-                    dir = Int(ft.face_dir[f])
-                    i   = Int(ft.face_idx_i[f])
-                    j   = Int(ft.face_idx_j[f])
-                    flux = dir == 1 ? am[p][i, j, k] : bm[p][i, j, k]
+                    # After balance (which calls _sync_cs_mirrors!), compare divergences.
+                    for k in 1:Nz
+                        # Global face-table divergence
+                        div_global = zeros(Float64, nc)
+                        @inbounds for f in 1:ft.nf
+                            p   = Int(ft.face_panel[f])
+                            dir = Int(ft.face_dir[f])
+                            i   = Int(ft.face_idx_i[f])
+                            j   = Int(ft.face_idx_j[f])
+                            flux = dir == 1 ? am[p][i, j, k] : bm[p][i, j, k]
 
-                    left  = Int(ft.face_left[f])
-                    right = Int(ft.face_right[f])
-                    div_global[left]  += flux
-                    div_global[right] -= flux
+                            left  = Int(ft.face_left[f])
+                            right = Int(ft.face_right[f])
+                            div_global[left]  += flux
+                            div_global[right] -= flux
+                        end
+
+                        # Per-panel divergence (outflow convention) from am/bm arrays.
+                        # div = (am[i+1] - am[i]) + (bm[j+1] - bm[j]) = net outflow.
+                        # Boundary faces use mirror entries — this is what mirror_sign
+                        # must get right.
+                        div_panel = zeros(Float64, nc)
+                        @inbounds for p in 1:6, j in 1:Nc, i in 1:Nc
+                            c = (p - 1) * Nc^2 + (j - 1) * Nc + i
+                            div_panel[c] = (am[p][i+1, j, k] - am[p][i, j, k]) +
+                                           (bm[p][i, j+1, k] - bm[p][i, j, k])
+                        end
+
+                        # They must match at every cell — this fails without mirror_sign
+                        max_diff = maximum(abs, div_global .- div_panel)
+                        @test max_diff < 1e-13
+                    end
                 end
-
-                # Per-panel divergence (outflow convention) from am/bm arrays.
-                # div = (am[i+1] - am[i]) + (bm[j+1] - bm[j]) = net outflow.
-                # Boundary faces use mirror entries — this is what mirror_sign
-                # must get right.
-                div_panel = zeros(Float64, nc)
-                @inbounds for p in 1:6, j in 1:Nc, i in 1:Nc
-                    c = (p - 1) * Nc^2 + (j - 1) * Nc + i
-                    div_panel[c] = (am[p][i+1, j, k] - am[p][i, j, k]) +
-                                   (bm[p][i, j+1, k] - bm[p][i, j, k])
-                end
-
-                # They must match at every cell — this fails without mirror_sign
-                max_diff = maximum(abs, div_global .- div_panel)
-                @test max_diff < 1e-13
             end
         end
 
         @testset "mirror_sign: balance + cm diagnosis conserves mass per column" begin
-            Nc = 8; Nz = 4; steps = 4
-            conn = default_panel_connectivity()
-            ft = Prep.build_cs_global_face_table(Nc, conn)
-            degree = Prep.cs_cell_face_degree(ft)
-            scratch = Prep.CSPoissonScratch(ft.nc)
+            for convention in cs_conventions
+                @testset "$(nameof(typeof(convention)))" begin
+                    Nc = 8; Nz = 4; steps = 4
+                    conn = panel_connectivity_for(convention)
+                    ft = Prep.build_cs_global_face_table(Nc, conn)
+                    degree = Prep.cs_cell_face_degree(ft)
+                    scratch = Prep.CSPoissonScratch(ft.nc)
 
-            m      = ntuple(p -> 1.0 .+ 0.1 .* rand(Float64, Nc, Nc, Nz), 6)
-            m_next = ntuple(p -> 1.0 .+ 0.1 .* rand(Float64, Nc, Nc, Nz), 6)
+                    m      = ntuple(p -> 1.0 .+ 0.1 .* rand(Float64, Nc, Nc, Nz), 6)
+                    m_next = ntuple(p -> 1.0 .+ 0.1 .* rand(Float64, Nc, Nc, Nz), 6)
 
-            # Make per-level global mass match (Poisson requires Σ target = 0 per level)
-            for k in 1:Nz
-                total_cur  = sum(p -> sum(m[p][:,:,k]), 1:6)
-                total_next = sum(p -> sum(m_next[p][:,:,k]), 1:6)
-                offset = (total_cur - total_next) / (6 * Nc^2)
-                for p in 1:6; m_next[p][:,:,k] .+= offset; end
+                    # Make per-level global mass match (Poisson requires Σ target = 0 per level)
+                    for k in 1:Nz
+                        total_cur  = sum(p -> sum(m[p][:,:,k]), 1:6)
+                        total_next = sum(p -> sum(m_next[p][:,:,k]), 1:6)
+                        offset = (total_cur - total_next) / (6 * Nc^2)
+                        for p in 1:6; m_next[p][:,:,k] .+= offset; end
+                    end
+
+                    am = ntuple(_ -> rand(Float64, Nc+1, Nc, Nz) .* 0.01, 6)
+                    bm = ntuple(_ -> rand(Float64, Nc, Nc+1, Nz) .* 0.01, 6)
+
+                    Prep.balance_cs_global_mass_fluxes!(am, bm, m, m_next,
+                        ft, degree, steps, scratch; tol=1e-14, max_iter=20000)
+
+                    # Compute dm and diagnose cm
+                    dm = ntuple(_ -> zeros(Float64, Nc, Nc, Nz), 6)
+                    cm = ntuple(_ -> zeros(Float64, Nc, Nc, Nz+1), 6)
+                    inv_scale = 1.0 / (2 * steps)
+                    for p in 1:6, k in 1:Nz, j in 1:Nc, i in 1:Nc
+                        dm[p][i, j, k] = (m_next[p][i, j, k] - m[p][i, j, k]) * inv_scale
+                    end
+                    Prep.diagnose_cs_cm!(cm, am, bm, dm, m, Nc, Nz)
+
+                    # cm[k=1] = 0 by construction, cm[k=Nz+1] should be near zero
+                    # after residual redistribution
+                    max_bottom = maximum(p -> maximum(abs, cm[p][:,:,Nz+1]), 1:6)
+                    @test max_bottom < 1e-12
+                end
             end
-
-            am = ntuple(_ -> rand(Float64, Nc+1, Nc, Nz) .* 0.01, 6)
-            bm = ntuple(_ -> rand(Float64, Nc, Nc+1, Nz) .* 0.01, 6)
-
-            Prep.balance_cs_global_mass_fluxes!(am, bm, m, m_next,
-                ft, degree, steps, scratch; tol=1e-14, max_iter=20000)
-
-            # Compute dm and diagnose cm
-            dm = ntuple(_ -> zeros(Float64, Nc, Nc, Nz), 6)
-            cm = ntuple(_ -> zeros(Float64, Nc, Nc, Nz+1), 6)
-            inv_scale = 1.0 / (2 * steps)
-            for p in 1:6, k in 1:Nz, j in 1:Nc, i in 1:Nc
-                dm[p][i, j, k] = (m_next[p][i, j, k] - m[p][i, j, k]) * inv_scale
-            end
-            Prep.diagnose_cs_cm!(cm, am, bm, dm, m, Nc, Nz)
-
-            # cm[k=1] = 0 by construction, cm[k=Nz+1] should be near zero
-            # after residual redistribution
-            max_bottom = maximum(p -> maximum(abs, cm[p][:,:,Nz+1]), 1:6)
-            @test max_bottom < 1e-12
         end
 
     else

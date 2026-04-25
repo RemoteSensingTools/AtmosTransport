@@ -49,6 +49,7 @@ core_tests = [
     "test_binary_inspector.jl",
     "test_cs_driven_builders.jl",
     "test_ll_to_cs_regrid_script.jl",
+    "test_preprocessing_cache_io.jl",
     "test_output_snapshots.jl",
     "test_visualization_snapshots.jl",
     "test_aqua.jl",
@@ -67,8 +68,6 @@ if RUN_ALL
     real_data_tests = [
         "test_dry_flux_interface.jl",
         "test_transport_binary_reader.jl",
-        "test_transport_binary_v2_dispatch.jl",
-        "test_preprocess_transport_binary_v2.jl",
         "test_era5_latlon_e2e.jl",
         "test_run_transport_binary_v2.jl",
         "test_tm5_catrine_1day.jl",

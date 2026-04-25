@@ -152,7 +152,10 @@ export planet_parameters, radius, gravity, reference_pressure
 export ring_cell_count, ring_longitudes, cell_index
 export boundary_face_count, boundary_face_offset, boundary_face_range
 export panel_count, panel_convention, panel_labels
-export PanelEdge, PanelConnectivity, default_panel_connectivity, reciprocal_edge
+export PanelEdge, PanelConnectivity
+export default_panel_connectivity, gnomonic_panel_connectivity, panel_connectivity_for
+export panel_cell_center_lonlat, panel_cell_corner_lonlat, panel_cell_local_tangent_basis
+export reciprocal_edge
 export EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST
 export n_levels, pressure_at_interface, pressure_at_level, level_thickness
 

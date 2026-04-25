@@ -1,0 +1,34 @@
+# 2.5° (144×73) advection-only, BL-enhanced IC.
+# Part of the advection-vs-resolution experiment (5° / 2.5° / 1°).
+# Single tracer: 400 ppm uniform background + 100 ppm enhancement in
+# the lowest 3 model levels at t=0. Pure dynamics — no diffusion, no
+# convection, no surface flux. We watch how resolved advection
+# redistributes the BL excess vertically and horizontally over 3 days.
+#
+# Runner:   julia -t8 --project=. scripts/run_transport.jl \
+#               config/runs/advresln/ll144x73_advonly.toml
+
+[input]
+folder     = "~/data/AtmosTransport/met/era5/ll144x73_advresln/transport_binary_v2_tropo34_dec2021_f64/"
+start_date = "2021-12-01"
+end_date   = "2021-12-03"
+
+[architecture]
+use_gpu = true
+
+[numerics]
+float_type = "Float32"
+
+[run]
+scheme = "slopes"
+
+[tracers.co2_bl]
+[tracers.co2_bl.init]
+kind        = "bl_enhanced"
+background  = 4.0e-4
+enhancement = 1.0e-4
+n_layers    = 3
+
+[output]
+snapshot_hours = [0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72]
+snapshot_file  = "~/data/AtmosTransport/output/advresln/ll144x73_advonly.nc"

@@ -136,6 +136,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         steps_per_window=steps_per_met,
         include_flux_delta=true,
         mass_basis=output_basis,
+        panel_convention=_cs_panel_convention_tag(cs_grid),
         extra_header=Dict{String, Any}(
             "preprocessor"      => "regrid_ll_binary_to_cs",
             "source_type"       => "ll_transport_binary",
@@ -174,7 +175,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         regrid_3d_to_cs_panels!(cs_ws.v_cs_panels, regridder, cs_ws.v_cc, cs_ws, Nc)
         rotate_winds_to_panel_local!(cs_ws.u_cs_panels, cs_ws.v_cs_panels,
                                       cs_ws.u_cs_panels, cs_ws.v_cs_panels,
-                                      Nc, Nz)
+                                      cs_grid.tangent_basis, Nc, Nz)
 
         # Reconstruct CS face fluxes
         reconstruct_cs_fluxes!(am_out, bm_out, cs_ws.u_cs_panels, cs_ws.v_cs_panels,

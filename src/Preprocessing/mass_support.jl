@@ -183,6 +183,82 @@ function read_qv_from_thermo(thermo_path::String, hour_idx::Int, Nx::Int, Ny::In
 end
 
 """
+    read_daily_qv_from_thermo(thermo_path, Nx, Ny, Nz; FT=Float64, time_block=3)
+
+Read a complete daily ERA5 thermo NetCDF `q` field into
+`(longitude, south_to_north_latitude, level, time)`.
+
+ERA5 thermo files are usually deflated and chunked across multiple times. The
+reader therefore pulls chunk-aligned time blocks instead of 24 independent hour
+slices, avoiding repeated decompression of the same HDF5 chunks while keeping
+the result in the exact orientation expected by the dry-basis preprocessing
+paths.
+"""
+function read_daily_qv_from_thermo(thermo_path::String,
+                                   Nx::Int,
+                                   Ny::Int,
+                                   Nz::Int;
+                                   FT::Type{<:AbstractFloat}=Float64,
+                                   time_block::Int=3)
+    NCDataset(thermo_path) do ds
+        q_var = ds["q"]
+        dims = dimnames(q_var)
+        Nt = _qv_time_count(q_var, dims)
+        out = Array{FT}(undef, Nx, Ny, Nz, Nt)
+        lat_descending = ds["latitude"][1] > ds["latitude"][end]
+        block = max(time_block, 1)
+
+        for t0 in 1:block:Nt
+            t1 = min(t0 + block - 1, Nt)
+            tr = t0:t1
+            if dims[1] == "longitude"
+                q_raw = FT.(q_var[:, :, :, tr])
+                q = lat_descending ? @view(q_raw[:, end:-1:1, :, :]) : q_raw
+            else
+                q_raw = FT.(q_var[tr, :, :, :])
+                q_perm = permutedims(q_raw, (4, 3, 2, 1))
+                q = lat_descending ? @view(q_perm[:, end:-1:1, :, :]) : q_perm
+            end
+            @views out[:, :, :, tr] .= q
+        end
+        return out
+    end
+end
+
+function _qv_time_count(q_var, dims)
+    tidx = findfirst(==("time"), dims)
+    tidx === nothing && error("Thermo NetCDF q variable has no time dimension")
+    return size(q_var, tidx)
+end
+
+"""
+    maybe_preload_qv_day(thermo_path, Nx, Ny, Nz, settings)
+
+Return a daily in-memory QV cache when enabled and within the configured memory
+cap. The empty `0×0×0×0` array means the caller should use the historical
+hourly NetCDF read path.
+"""
+function maybe_preload_qv_day(thermo_path::String,
+                              Nx::Int,
+                              Ny::Int,
+                              Nz::Int,
+                              settings)
+    settings.qv_preload || return zeros(Float64, 0, 0, 0, 0)
+    bytes = Int64(Nx) * Int64(Ny) * Int64(Nz) * Int64(24) * Int64(sizeof(Float64))
+    if bytes > settings.qv_preload_max_bytes
+        @info @sprintf("  QV daily preload skipped: %.1f GiB exceeds cap %.1f GiB",
+                       bytes / 1024.0^3, settings.qv_preload_max_bytes / 1024.0^3)
+        return zeros(Float64, 0, 0, 0, 0)
+    end
+    t0 = time()
+    qv_daily = read_daily_qv_from_thermo(thermo_path, Nx, Ny, Nz; FT=Float64)
+    @info @sprintf("  QV daily preload: %.1f GiB from %s (%.1fs)",
+                   Base.summarysize(qv_daily) / 1024.0^3,
+                   basename(thermo_path), time() - t0)
+    return qv_daily
+end
+
+"""
     apply_dry_basis_native!(m, am, bm, qv)
 
 Convert native-level moist mass and horizontal fluxes to dry basis before level

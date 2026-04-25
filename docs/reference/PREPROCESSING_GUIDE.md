@@ -9,15 +9,15 @@ What met data source?
 ├── ERA5
 │   ├── What target grid?
 │   │   ├── LatLon (0.5° or custom) → preprocess_transport_binary.jl
-│   │   ├── Reduced Gaussian (N24-N320) → preprocess_era5_reduced_gaussian_transport_binary_v2.jl
-│   │   └── Cubed Sphere (C24-C720) → preprocess_transport_binary.jl (LL first)
-│   │                                  then regrid_ll_transport_binary_to_cs.jl
+│   │   ├── Reduced Gaussian (N24-N320) → preprocess_transport_binary.jl
+│   │   └── Cubed Sphere (C24-C720) → preprocess_transport_binary.jl
+│   │                                  or regrid_ll_transport_binary_to_cs.jl from LL
 │   └── What input type?
 │       ├── Spectral (VO, D, LNSP) → recommended (exact mass conservation)
 │       └── Gridpoint (u, v, sp) → legacy only (~0.9% mass drift)
 │
-├── GEOS-FP C720 → preprocess_geosfp_cs.jl (optional binary staging)
-├── GEOS-IT C180 → preprocess_geosit_cs.jl (optional binary staging)
+├── GEOS-FP C720 → likely_legacy for now; unified path pending
+├── GEOS-IT C180 → likely_legacy for now; unified path pending
 └── MERRA-2 → not yet implemented
 ```
 
@@ -33,26 +33,53 @@ julia -t8 --project=. scripts/preprocessing/preprocess_transport_binary.jl \
 Key config options:
 ```toml
 [grid]
-Nx = 720          # longitude cells (0.5° at 720)
-Ny = 361          # latitude cells
-
-[vertical]
-n_target = 34     # number of output levels (34 = tropospheric subset)
-merge_above = 1000  # merge levels above this pressure [Pa]
+nlon = 720        # longitude cells (0.5° at 720)
+nlat = 361        # latitude cells
+echlevs = "ml137_tropo34"
+merge_min_thickness_Pa = 1000.0  # fallback when echlevs is unset
 
 [mass_fix]
 enable = true     # pin global mean ps (eliminates ERA5 mass drift)
+
+[cache]
+# Optional: reuse decoded spectral coefficients across LL/RG/CS target runs.
+# Leave unset for no persistent cache, or set ATMOSTR_SPECTRAL_CACHE_DIR.
+spectral_coefficients_dir = "~/.cache/AtmosTransport/spectral_coefficients"
+
+# Enabled by default. Reads daily thermo q in chunk-aligned blocks instead of
+# repeatedly decompressing hourly NetCDF slices. Disable or lower the cap on
+# memory-constrained machines.
+qv_preload = true
+qv_preload_max_gb = 8.0
 ```
 
 **Output**: `era5_transport_v2_YYYYMMDD_merged1000Pa_float64.bin`
-containing 12 windows × (am, bm, cm, m, qv) per day.
+containing 24 hourly windows × (am, bm, cm, m, qv) per day.
+
+## Performance Notes
+
+The ERA5 spectral path uses `GRIB.jl` for message iteration and ecCodes
+`codes_get_double_array("values")` for coefficient reads. That call materializes
+the full spectral message before the preprocessor truncates to the target
+resolution, so repeated C24/O90/LL72 runs can spend most wall time decoding the
+same GRIB day.
+
+Use `[cache].spectral_coefficients_dir` when generating multiple target grids,
+retrying failed days, or sweeping resolutions. The cache is explicit,
+versioned, keyed by input path/mtime/size and `T_target`, and stores compact
+decoded coefficient arrays rather than raw GRIB files. It is not enabled unless
+the config or `ATMOSTR_SPECTRAL_CACHE_DIR` requests it.
+
+Dry-basis preprocessing also reads ERA5 thermo `q`. The default
+`qv_preload=true` keeps this as an in-memory daily preload, bounded by
+`qv_preload_max_gb`; it does not create persistent files.
 
 ## ERA5 Reduced Gaussian
 
 For ERA5-native resolution without interpolation artifacts:
 
 ```bash
-julia -t8 --project=. scripts/preprocessing/preprocess_era5_reduced_gaussian_transport_binary_v2.jl \
+julia -t8 --project=. scripts/preprocessing/preprocess_transport_binary.jl \
     config/preprocessing/era5_reduced_gaussian_transport_binary_v2.toml --day 2021-12-01
 ```
 

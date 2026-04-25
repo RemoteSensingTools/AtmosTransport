@@ -97,6 +97,31 @@ function resolve_tm5_convection_settings(cfg)
 end
 
 """
+    resolve_preprocessing_cache_settings(cfg) -> NamedTuple
+
+Parse optional cache and preload controls.
+
+Persistent spectral caching is disabled unless `[cache]` provides
+`spectral_coefficients_dir` or `ATMOSTR_SPECTRAL_CACHE_DIR` is set. Daily QV
+preload is an in-memory optimization and is enabled by default, bounded by
+`qv_preload_max_gb`.
+"""
+function resolve_preprocessing_cache_settings(cfg)
+    cache_cfg = get(cfg, "cache", Dict{String, Any}())
+    spectral_dir_default = get(ENV, "ATMOSTR_SPECTRAL_CACHE_DIR", "")
+    spectral_cache_dir = expanduser(String(get(cache_cfg, "spectral_coefficients_dir",
+                                               spectral_dir_default)))
+    qv_preload = Bool(get(cache_cfg, "qv_preload", true))
+    qv_preload_max_gb = Float64(get(cache_cfg, "qv_preload_max_gb", 8.0))
+    qv_preload_max_bytes = Int64(floor(qv_preload_max_gb * 1024.0^3))
+    return (
+        spectral_cache_dir = spectral_cache_dir,
+        qv_preload = qv_preload,
+        qv_preload_max_bytes = qv_preload_max_bytes,
+    )
+end
+
+"""
     resolve_runtime_settings(cfg) -> NamedTuple
 
 Resolve the script configuration into a compact runtime settings bundle used by
@@ -128,7 +153,9 @@ function resolve_runtime_settings(cfg)
         met_interval = met_interval,
         half_dt = dt / 2,
         output_float_type = resolve_output_float_type(cfg),
-    ), resolve_mass_fix_settings(cfg), resolve_tm5_convection_settings(cfg))
+    ), resolve_mass_fix_settings(cfg),
+       resolve_tm5_convection_settings(cfg),
+       resolve_preprocessing_cache_settings(cfg))
 end
 
 """
@@ -206,11 +233,12 @@ Load the next day's hour-0 spectral fields when available so the final window of
 the current day can form forward differences for `dam`, `dbm`, and `dm`.
 Returns `nothing` when no next-day file is available.
 """
-function next_day_hour0(date::Date, dates, spectral_dir::String, T_target::Int)
+function next_day_hour0(date::Date, dates, spectral_dir::String, T_target::Int;
+                        cache_dir::AbstractString="")
     next_day = date + Day(1)
     next_path = joinpath(spectral_dir, "era5_spectral_$(Dates.format(next_day, "yyyymmdd"))_lnsp.gb")
     if next_day in dates || isfile(next_path)
-        return read_hour0_spectral(spectral_dir, next_day; T_target)
+        return read_hour0_spectral(spectral_dir, next_day; T_target, cache_dir)
     end
     return nothing
 end
@@ -232,6 +260,10 @@ function log_preprocessor_configuration(settings, grid::AbstractTargetGeometry, 
 
     tm5_summary = settings.tm5_convection_enable ?
         "ON  ($(settings.tm5_physics_bin_dir))" : "OFF"
+    spectral_cache_summary = isempty(settings.spectral_cache_dir) ?
+        "OFF" : settings.spectral_cache_dir
+    qv_preload_summary = settings.qv_preload ?
+        @sprintf("ON  (max %.1f GiB)", settings.qv_preload_max_bytes / 1024.0^3) : "OFF"
 
     @info """
     Fused Spectral -> v4 Binary Preprocessor
@@ -250,5 +282,7 @@ function log_preprocessor_configuration(settings, grid::AbstractTargetGeometry, 
     Include qv:    $(settings.include_qv)
     Mass fix:      $(mass_fix_summary)
     TM5 convec:    $(tm5_summary)
+    Spectral cache: $(spectral_cache_summary)
+    QV preload:    $(qv_preload_summary)
     """
 end

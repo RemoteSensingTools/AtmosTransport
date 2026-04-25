@@ -1,8 +1,8 @@
 # ~1 degree lat-lon (360 x 181) ERA5 spectral -> daily binary.
 #
 # Usage:
-#   julia -t8 --project=. scripts/preprocessing/preprocess_spectral_v4_binary.jl \
-#       config/preprocessing/era5_ll720x361_v4_transport_binary_v2.toml --day 2021-12-01
+#   julia -t8 --project=. scripts/preprocessing/preprocess_transport_binary.jl \
+#       config/preprocessing/era5_ll720x361_v4_transport_binary.toml --day 2021-12-01
 
 [input]
 spectral_dir = "~/data/AtmosTransport/met/era5/0.5x0.5/spectral_hourly"

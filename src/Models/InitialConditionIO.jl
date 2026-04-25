@@ -454,6 +454,18 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT}, mesh::LatLonMes
     background = FT(get(cfg, "background", 4.0e-4))
     if kind === :uniform
         return fill(background, size(air_mass))
+    elseif kind === :bl_enhanced
+        # Flat background + enhancement in the lowest `n_layers` model levels
+        # (k = Nz-n_layers+1:Nz, since k=1=TOA, k=Nz=surface). Layer-based
+        # threshold follows terrain naturally.
+        n_layers = Int(get(cfg, "n_layers", 3))
+        enhancement = FT(get(cfg, "enhancement", 1.0e-4))
+        Nz = size(air_mass, 3)
+        n_layers >= 1 && n_layers <= Nz ||
+            throw(ArgumentError("init.kind=bl_enhanced: n_layers=$(n_layers) must satisfy 1 ≤ n_layers ≤ Nz=$(Nz)"))
+        q = fill(background, size(air_mass))
+        @views q[:, :, (Nz - n_layers + 1):Nz] .+= enhancement
+        return q
     elseif kind === :gaussian_blob
         lon0 = FT(get(cfg, "lon0_deg", 0.0))
         lat0 = FT(get(cfg, "lat0_deg", 0.0))

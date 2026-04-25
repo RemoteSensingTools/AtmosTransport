@@ -2,7 +2,7 @@
 # 640 rings, 421K cells, 0.28° at equator, no polar CFL problem
 #
 # Usage:
-#   julia -t8 --project=. scripts/preprocessing/preprocess_spectral_v4_binary.jl \
+#   julia -t8 --project=. scripts/preprocessing/preprocess_transport_binary.jl \
 #       config/preprocessing/era5_o320_transport_binary_v2.toml --day 2021-12-01
 
 [input]

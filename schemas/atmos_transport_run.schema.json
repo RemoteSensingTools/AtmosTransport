@@ -1,0 +1,234 @@
+{
+  "$schema": "http://json-schema.org/draft-04/schema#",
+  "title": "AtmosTransport Run TOML",
+  "description": "Prototype schema for AtmosTransport runtime TOML files. This is intentionally scoped to config/examples while the complete config registry is still being designed.",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "input": {
+      "type": "object",
+      "description": "Transport-binary input source. Use either an explicit binary_paths list or a folder plus start/end date range.",
+      "additionalProperties": true,
+      "properties": {
+        "binary_paths": {
+          "type": "array",
+          "description": "Explicit list of transport binary files to replay, in chronological order.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "folder": {
+          "type": "string",
+          "description": "Folder containing daily transport binaries. Paths may use ~ for the user home directory."
+        },
+        "start_date": {
+          "type": "string",
+          "description": "First date to include when expanding input.folder, formatted as YYYY-MM-DD.",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "end_date": {
+          "type": "string",
+          "description": "Last date to include when expanding input.folder, formatted as YYYY-MM-DD.",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        }
+      }
+    },
+    "architecture": {
+      "type": "object",
+      "description": "Runtime backend selection.",
+      "additionalProperties": true,
+      "properties": {
+        "use_gpu": {
+          "type": "boolean",
+          "description": "Run on CUDA GPU when true. Use false for local CPU debugging."
+        }
+      }
+    },
+    "numerics": {
+      "type": "object",
+      "description": "Precision and numerical configuration.",
+      "additionalProperties": true,
+      "properties": {
+        "float_type": {
+          "type": "string",
+          "description": "Floating point type used by runtime state and heavy NetCDF output payloads.",
+          "enum": ["Float32", "Float64"],
+          "default": "Float64",
+          "x-taplo": {
+            "docs": {
+              "enumValues": [
+                "Use for GPU production runs and smaller NetCDF output.",
+                "Use for CPU reference runs and stricter validation."
+              ]
+            }
+          }
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "description": "Advection/runtime recipe selection.",
+      "additionalProperties": true,
+      "properties": {
+        "scheme": {
+          "type": "string",
+          "description": "Horizontal advection scheme.",
+          "enum": ["upwind", "slopes", "ppm", "linrood"],
+          "default": "slopes",
+          "x-taplo": {
+            "docs": {
+              "enumValues": [
+                "Most diffusive but robust first-order upwind scheme.",
+                "Second-order slope-limited scheme used by current validation configs.",
+                "Piecewise parabolic method. Requires wider CS halos.",
+                "Lin-Rood style CS advection path where supported."
+              ]
+            }
+          }
+        }
+      }
+    },
+    "diffusion": {
+      "type": "object",
+      "description": "Vertical diffusion operator. Omit this table for no diffusion.",
+      "additionalProperties": true,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "Diffusion source/type.",
+          "enum": ["constant", "profile", "precomputed"],
+          "default": "constant"
+        },
+        "value": {
+          "type": "number",
+          "description": "Constant Kz value in m^2/s when kind = constant."
+        }
+      }
+    },
+    "convection": {
+      "type": "object",
+      "description": "Convection operator. Omit this table for no convection.",
+      "additionalProperties": true,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "Convection parameterization.",
+          "enum": ["tm5", "cmfmc", "ras"],
+          "default": "tm5"
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "description": "Diagnostic NetCDF snapshot output. Current runtime supports single-file snapshot output; mode/path_template show the intended OutputPlan direction.",
+      "additionalProperties": true,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "description": "Prototype OutputPlan mode. single_file matches current runtime behavior; daily_files/per_snapshot are planned scheduling policies.",
+          "enum": ["single_file", "daily_files", "per_snapshot"],
+          "default": "single_file",
+          "x-taplo": {
+            "docs": {
+              "enumValues": [
+                "Write all requested snapshot times into one NetCDF file.",
+                "Planned: split output into one NetCDF file per simulation day.",
+                "Planned: write one NetCDF file per captured snapshot."
+              ]
+            }
+          }
+        },
+        "snapshot_file": {
+          "type": "string",
+          "description": "NetCDF output path for current single-file runtime snapshot output."
+        },
+        "path_template": {
+          "type": "string",
+          "description": "Prototype path template for planned split output, e.g. ~/.../{date}/snapshot_{date}.nc."
+        },
+        "snapshot_hours": {
+          "type": "array",
+          "description": "Simulation-relative output times in hours. Current runtime captures exactly these times.",
+          "items": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "frequency": {
+          "type": "string",
+          "description": "Prototype cadence shorthand for future OutputPlan scheduling, e.g. 6h, 1d, every_step.",
+          "examples": ["6h", "1d", "every_step"]
+        },
+        "deflate_level": {
+          "type": "integer",
+          "description": "NetCDF deflate compression level for heavy payload variables. 0 disables compression; 1 is a good production default.",
+          "minimum": 0,
+          "maximum": 9,
+          "default": 0
+        },
+        "shuffle": {
+          "type": "boolean",
+          "description": "Enable the NetCDF shuffle filter when deflate_level > 0.",
+          "default": true
+        },
+        "provenance": {
+          "type": "boolean",
+          "description": "Prototype switch for planned reproducibility metadata: command line, Julia/package versions, git status, normalized config, and input hashes.",
+          "default": true
+        }
+      }
+    },
+    "tracers": {
+      "type": "object",
+      "description": "Tracer definitions keyed by tracer name. Each tracer can define an initial condition and optional surface flux.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "init": {
+            "type": "object",
+            "description": "Initial condition for this tracer.",
+            "additionalProperties": true,
+            "properties": {
+              "kind": {
+                "type": "string",
+                "description": "Initial condition type.",
+                "enum": ["uniform", "catrine_co2", "file"],
+                "default": "uniform"
+              },
+              "background": {
+                "type": "number",
+                "description": "Uniform background mixing ratio in mol/mol when kind = uniform."
+              },
+              "file": {
+                "type": "string",
+                "description": "Input NetCDF or binary file when kind = file."
+              }
+            }
+          },
+          "surface_flux": {
+            "type": "object",
+            "description": "Optional live surface flux source for this tracer.",
+            "additionalProperties": true,
+            "properties": {
+              "kind": {
+                "type": "string",
+                "description": "Surface flux source type.",
+                "enum": ["gridfed_fossil_co2", "file"]
+              },
+              "file": {
+                "type": "string",
+                "description": "Surface flux source file."
+              },
+              "time_index": {
+                "type": "integer",
+                "description": "Time index to read from the source file.",
+                "minimum": 1
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

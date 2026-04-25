@@ -1603,7 +1603,19 @@ Open a CS transport binary for streaming per-window writes.
 
 `vc` is a `HybridSigmaPressure` vertical coordinate. The CS binary uses
 per-panel structured arrays with `StructuredDirectional` topology.
+`panel_convention` must be `"gnomonic"` or `"geos_native"` and is written to
+the header so runtime readers and output tools reconstruct the same mesh.
 """
+function _normalize_cs_panel_convention(raw)
+    norm = lowercase(replace(String(raw), '-' => '_', ' ' => '_'))
+    if norm in ("gnomonic", "gnomic")
+        return "gnomonic"
+    elseif norm in ("geos_native", "geosnative", "geos_fp", "geosfp", "geos_it", "geosit")
+        return "geos_native"
+    end
+    throw(ArgumentError("unsupported panel_convention=$(raw); expected gnomonic or geos_native"))
+end
+
 function open_streaming_cs_transport_binary(
         path::AbstractString,
         Nc::Int,
@@ -1625,6 +1637,7 @@ function open_streaming_cs_transport_binary(
         include_cmfmc::Bool = false,
         include_dtrain::Bool = false,
         include_tm5conv::Bool = false,
+        panel_convention = "gnomonic",
         extra_header::AbstractDict{<:AbstractString,<:Any} = Dict{String,Any}())
     include_dtrain && !include_cmfmc &&
         throw(ArgumentError("CS transport binaries cannot include dtrain without cmfmc"))
@@ -1662,7 +1675,7 @@ function open_streaming_cs_transport_binary(
     merge!(header, Dict{String, Any}(
         "Nc" => Nc,
         "npanel" => npanel,
-        "panel_convention" => "gnomonic",
+        "panel_convention" => _normalize_cs_panel_convention(panel_convention),
         "Hp" => 0,
         "poisson_balance_method" => "global_cg_graph_laplacian",
         "poisson_balance_target_scale" => 1.0 / (2 * steps_per_window),
@@ -1679,6 +1692,7 @@ function open_streaming_cs_transport_binary(
         "n_detd" => include_tm5conv ? _cs_section_elements(Nc, npanel, nlevel, :detd) : 0,
     ))
     isempty(extra_header) || merge!(header, Dict{String, Any}(extra_header))
+    header["panel_convention"] = _normalize_cs_panel_convention(header["panel_convention"])
 
     header_json = JSON3.write(header)
     pad = header_bytes - ncodeunits(header_json)

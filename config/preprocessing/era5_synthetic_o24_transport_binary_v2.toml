@@ -13,7 +13,7 @@
 # count comparison with `era5_ll96x48_transport_binary_v2.toml`.
 #
 # Usage (preprocess a single day):
-#   julia --project=. scripts/preprocessing/preprocess_era5_reduced_gaussian_transport_binary_v2.jl \
+#   julia --project=. scripts/preprocessing/preprocess_transport_binary.jl \
 #       config/preprocessing/era5_synthetic_o24_transport_binary_v2.toml --day 2021-12-01
 
 [input]

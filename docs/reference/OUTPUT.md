@@ -16,12 +16,18 @@ should only decide when to sample; they should call `capture_snapshot` and
 | Topology | Native layout | Panoply/debug support |
 |----------|---------------|-----------------------|
 | LL | `(lon, lat, lev, time)` | CF lon/lat coordinates, bounds, cell area |
-| RG | `(cell, lev, time)` plus native `cell_lon/cell_lat` | Legacy `*_column_mean(lon,lat,time)` raster for quick maps |
+| RG | `(cell, lev, time)` plus native `cell_lon/cell_lat` and `cell_lon_bounds/cell_lat_bounds` | Legacy `*_column_mean(lon,lat,time)` raster for quick maps |
 | CS | `(Xdim, Ydim, nf, lev, time)` | `lons`, `lats`, `corner_lons`, `corner_lats`, `cell_area`, `cubed_sphere` mapping |
 
 CS coordinates use the same `CubedSphereMesh` panel convention as regridding.
 `GEOSNativePanelConvention` includes the GEOS-FP/GEOS-IT panel order, native
 orientation, and global `-10°` longitude offset.
+
+RG bounds are written as flattened native-cell quadrilaterals with vertex
+order SW, SE, NE, NW. They expose the same per-ring longitude partition and
+latitude-face contract used by `ReducedGaussianMesh`. This is CF-style bounds
+metadata, not a full UGRID topology; UGRID export would add a `mesh_topology`
+variable, node coordinate arrays, and face-node connectivity.
 
 ## API
 

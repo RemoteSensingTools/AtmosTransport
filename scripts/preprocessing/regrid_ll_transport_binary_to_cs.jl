@@ -21,6 +21,7 @@
 #       --Nc 48
 #       [--float-type Float32|Float64]   # default Float64 (matches LL source)
 #       [--mass-basis dry|moist]         # default: match source header
+#       [--convention gnomonic|geos_native]
 #       [--cache-dir ~/.cache/AtmosTransport/cr_regridding]
 # ===========================================================================
 
@@ -34,7 +35,8 @@ using .AtmosTransport.Preprocessing: regrid_ll_binary_to_cs, build_target_geomet
 const USAGE = """
 Usage: julia --project=. scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl \\
            --input <ll.bin> --output <cs.bin> --Nc <int>
-           [--float-type Float32|Float64] [--mass-basis dry|moist] [--cache-dir <path>]
+           [--float-type Float32|Float64] [--mass-basis dry|moist]
+           [--convention gnomonic|geos_native] [--cache-dir <path>]
 """
 
 function _parse_args(argv)
@@ -43,6 +45,7 @@ function _parse_args(argv)
     Nc = 0
     float_type = "Float64"
     mass_basis = nothing     # nothing = match source header
+    convention = "gnomonic"
     cache_dir = ""
 
     i = 1
@@ -58,6 +61,8 @@ function _parse_args(argv)
             float_type = argv[i + 1]; i += 2
         elseif arg == "--mass-basis" && i + 1 <= length(argv)
             mass_basis = argv[i + 1]; i += 2
+        elseif arg == "--convention" && i + 1 <= length(argv)
+            convention = argv[i + 1]; i += 2
         elseif arg == "--cache-dir" && i + 1 <= length(argv)
             cache_dir = expanduser(argv[i + 1]); i += 2
         elseif arg in ("-h", "--help")
@@ -75,8 +80,12 @@ function _parse_args(argv)
         error("--float-type must be Float32 or Float64, got $(float_type)")
     mass_basis === nothing || mass_basis in ("dry", "moist") ||
         error("--mass-basis must be dry or moist, got $(mass_basis)")
+    norm_convention = lowercase(replace(convention, '-' => '_', ' ' => '_'))
+    norm_convention in ("gnomonic", "gnomic", "geos_native", "geosnative") ||
+        error("--convention must be gnomonic or geos_native, got $(convention)")
+    convention = norm_convention in ("geos_native", "geosnative") ? "geos_native" : "gnomonic"
 
-    return (; input, output, Nc, float_type, mass_basis, cache_dir)
+    return (; input, output, Nc, float_type, mass_basis, convention, cache_dir)
 end
 
 function main()
@@ -85,7 +94,10 @@ function main()
 
     FT = opts.float_type == "Float32" ? Float32 : Float64
 
-    cfg_grid = Dict{String, Any}("Nc" => opts.Nc)
+    cfg_grid = Dict{String, Any}(
+        "Nc" => opts.Nc,
+        "panel_convention" => opts.convention,
+    )
     isempty(opts.cache_dir) || (cfg_grid["regridder_cache_dir"] = opts.cache_dir)
     cs_grid = build_target_geometry(Val(:cubed_sphere), cfg_grid, FT)
 
@@ -94,7 +106,7 @@ function main()
     @info "LL → CS transport-binary regrid"
     @info "  input:      $(opts.input)"
     @info "  output:     $(opts.output)"
-    @info "  target:     C$(opts.Nc) gnomonic CS"
+    @info "  target:     C$(opts.Nc) $(opts.convention) CS"
     @info "  float type: $(opts.float_type)"
     @info "  mass_basis: $(basis_sym === nothing ? "(match source)" : basis_sym)"
 

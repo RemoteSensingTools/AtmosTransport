@@ -242,6 +242,7 @@ end
             # failure. The process should exit 0 and produce the output.
             cmd = `$(Base.julia_cmd()) --project=$(project) $(script)
                    --input $(ll_path) --output $(cs_path) --Nc 4
+                   --convention geos_native
                    --cache-dir $(joinpath(dir, "cr_cache"))`
             buf = IOBuffer()
             proc = run(pipeline(cmd; stdout = buf, stderr = buf);
@@ -253,6 +254,9 @@ end
             caps = inspect_binary(cs_path; io = devnull)
             @test caps.grid_type === :cubed_sphere
             @test caps.mass_basis === :dry
+            reader = CubedSphereBinaryReader(cs_path; FT = Float64)
+            @test reader.header.panel_convention === :geos_native
+            close(reader)
         end
     end
 

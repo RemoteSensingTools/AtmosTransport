@@ -5,6 +5,32 @@ using Test
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 
+_lonlat_to_xyz(lon, lat) = (
+    cosd(lat) * cosd(lon),
+    cosd(lat) * sind(lon),
+    sind(lat),
+)
+
+function _edge_segment_midpoint(lons, lats, edge::Int, s::Int)
+    Nc = size(lons, 1) - 1
+    a, b = if edge == EDGE_NORTH
+        ((s, Nc + 1), (s + 1, Nc + 1))
+    elseif edge == EDGE_SOUTH
+        ((s, 1), (s + 1, 1))
+    elseif edge == EDGE_EAST
+        ((Nc + 1, s), (Nc + 1, s + 1))
+    else
+        ((1, s), (1, s + 1))
+    end
+    ax, ay, az = _lonlat_to_xyz(lons[a...], lats[a...])
+    bx, by, bz = _lonlat_to_xyz(lons[b...], lats[b...])
+    mx, my, mz = ax + bx, ay + by, az + bz
+    n = sqrt(mx^2 + my^2 + mz^2)
+    return (mx / n, my / n, mz / n)
+end
+
+_dist3(a, b) = sqrt((a[1] - b[1])^2 + (a[2] - b[2])^2 + (a[3] - b[3])^2)
+
 @testset "LatLonMesh style and validation" begin
     mesh = LatLonMesh(; FT=Float64, size=(720, 360), longitude=(-180, 180), latitude=(-90, 90))
 
@@ -49,4 +75,44 @@ end
     @test occursin("north_pole", shown)
 
     @test_throws ArgumentError CubedSphereMesh(; FT=Float64, Nc=0)
+end
+
+@testset "CubedSphereMesh connectivity matches corner geometry" begin
+    for convention in (GnomonicPanelConvention(), GEOSNativePanelConvention())
+        @testset "$(nameof(typeof(convention)))" begin
+            Nc = 6
+            mesh = CubedSphereMesh(; FT=Float64, Nc=Nc, convention=convention)
+            corners = [panel_cell_corner_lonlat(mesh, p) for p in 1:6]
+
+            for p in 1:6
+                for edge in (EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST)
+                    neighbor = mesh.connectivity.neighbors[p][edge]
+                    q = neighbor.panel
+                    reciprocal = reciprocal_edge(mesh.connectivity, p, edge)
+                    for s in 1:Nc
+                        t = neighbor.orientation == 0 ? s : Nc + 1 - s
+                        p_mid = _edge_segment_midpoint(corners[p]..., edge, s)
+                        q_mid = _edge_segment_midpoint(corners[q]..., reciprocal, t)
+                        @test _dist3(p_mid, q_mid) < 1e-12
+                    end
+                end
+            end
+        end
+    end
+end
+
+@testset "CubedSphereMesh local tangent basis" begin
+    mesh = CubedSphereMesh(; FT=Float64, Nc=8, convention=GEOSNativePanelConvention())
+    for p in 1:6
+        x_east, x_north, y_east, y_north = panel_cell_local_tangent_basis(mesh, p)
+        @test maximum(abs, x_east.^2 .+ x_north.^2 .- 1) < 1e-10
+        @test maximum(abs, y_east.^2 .+ y_north.^2 .- 1) < 1e-10
+    end
+
+    # GEOS-native panels 4/5 keep file-order Xdim eastward but Ydim points
+    # southward. This is the convention the CS wind rotation must honor.
+    for p in (4, 5)
+        _, _, _, y_north = panel_cell_local_tangent_basis(mesh, p)
+        @test sum(y_north) / length(y_north) < -0.5
+    end
 end

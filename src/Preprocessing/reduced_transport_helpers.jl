@@ -54,6 +54,7 @@ to RG cell centers. The interpolation mapping is precomputed at allocation time.
 struct ReducedQVWorkspace
     qv_cell    :: Matrix{Float64}   # (nc, Nz_native) — QV at RG cell centers
     qv_ll      :: Array{Float64, 3} # (Nx_ll, Ny_ll, Nz_native) — LL buffer
+    qv_daily_ll:: Array{Float64, 4} # optional daily LL preload or empty
     i0         :: Vector{Int32}     # bilinear: left lon index per cell
     j0         :: Vector{Int32}     # bilinear: bottom lat index per cell
     wi         :: Vector{Float64}   # bilinear: lon fractional weight
@@ -71,7 +72,8 @@ available thermo file.
 """
 function allocate_reduced_qv_workspace(grid::ReducedGaussianTargetGeometry,
                                        Nz_native::Int,
-                                       thermo_path::String)
+                                       thermo_path::String;
+                                       settings=nothing)
     # Discover LL grid dimensions from thermo file
     Nx_ll, Ny_ll = NCDataset(thermo_path) do ds
         q_var = ds["q"]
@@ -119,9 +121,14 @@ function allocate_reduced_qv_workspace(grid::ReducedGaussianTargetGeometry,
         end
     end
 
+    qv_daily = settings === nothing ?
+        zeros(Float64, 0, 0, 0, 0) :
+        maybe_preload_qv_day(thermo_path, Nx_ll, Ny_ll, Nz_native, settings)
+
     return ReducedQVWorkspace(
         zeros(Float64, nc, Nz_native),
         zeros(Float64, Nx_ll, Ny_ll, Nz_native),
+        qv_daily,
         i0, j0, wi, wj, Nx_ll, Ny_ll)
 end
 
@@ -135,9 +142,13 @@ function load_rg_qv!(qv_ws::ReducedQVWorkspace,
                      thermo_path::String,
                      hour_idx::Int,
                      Nz_native::Int)
-    qv_ws.qv_ll .= read_qv_from_thermo(thermo_path, hour_idx,
-                                         qv_ws.Nx_ll, qv_ws.Ny_ll, Nz_native;
-                                         FT=Float64)
+    if size(qv_ws.qv_daily_ll, 4) > 0
+        @views qv_ws.qv_ll .= qv_ws.qv_daily_ll[:, :, :, hour_idx]
+    else
+        qv_ws.qv_ll .= read_qv_from_thermo(thermo_path, hour_idx,
+                                             qv_ws.Nx_ll, qv_ws.Ny_ll, Nz_native;
+                                             FT=Float64)
+    end
     _interpolate_ll_to_rg!(qv_ws)
     return nothing
 end
@@ -1260,7 +1271,9 @@ function process_day(date::Date,
 
     t_day = time()
     @info "  Reading spectral data for $date_str..."
-    spec = read_day_spectral_streaming(vo_d_path, lnsp_path; T_target=settings.T_target)
+    spec = read_day_spectral(vo_d_path, lnsp_path;
+                             T_target=settings.T_target,
+                             cache_dir=settings.spectral_cache_dir)
     @info @sprintf("  Spectral data read: T=%d, %d hours (%.1fs)",
                    spec.T, spec.n_times, time() - t_day)
 
@@ -1281,7 +1294,8 @@ function process_day(date::Date,
         thermo_path = joinpath(settings.thermo_dir,
                                "era5_thermo_ml_$(date_str).nc")
         isfile(thermo_path) || error("Thermo file not found for dry-basis conversion: $thermo_path")
-        qv_ws = allocate_reduced_qv_workspace(grid, Nz_native, thermo_path)
+        qv_ws = allocate_reduced_qv_workspace(grid, Nz_native, thermo_path;
+                                              settings=settings)
         @info "  Dry-basis: QV from $thermo_path → $(qv_ws.Nx_ll)×$(qv_ws.Ny_ll) LL → $(nc) RG cells"
     end
 

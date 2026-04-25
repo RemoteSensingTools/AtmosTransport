@@ -1,0 +1,6 @@
+[[rule]]
+include = ["config/examples/*.toml"]
+
+[rule.schema]
+path = "./schemas/atmos_transport_run.schema.json"
+enabled = true

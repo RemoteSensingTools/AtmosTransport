@@ -30,7 +30,9 @@ function process_day(date::Date,
 
     t_day = time()
     @info "  Reading spectral data for $date_str..."
-    spec = read_day_spectral_streaming(vo_d_path, lnsp_path; T_target=settings.T_target)
+    spec = read_day_spectral(vo_d_path, lnsp_path;
+                             T_target=settings.T_target,
+                             cache_dir=settings.spectral_cache_dir)
     @info @sprintf("  Spectral data read: T=%d, %d hours (%.1fs)",
                    spec.T, spec.n_times, time() - t_day)
 

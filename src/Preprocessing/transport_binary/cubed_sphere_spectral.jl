@@ -29,7 +29,9 @@ function process_day(date::Date,
 
     t_day = time()
     @info "  Reading spectral data for $date_str..."
-    spec = read_day_spectral_streaming(vo_d_path, lnsp_path; T_target=settings.T_target)
+    spec = read_day_spectral(vo_d_path, lnsp_path;
+                             T_target=settings.T_target,
+                             cache_dir=settings.spectral_cache_dir)
     @info @sprintf("  Spectral data read: T=%d, %d hours (%.1fs)",
                    spec.T, spec.n_times, time() - t_day)
     Nt = spec.n_times
@@ -85,6 +87,7 @@ function process_day(date::Date,
         steps_per_window=steps_per_met,
         include_flux_delta=true,
         mass_basis=Symbol(settings.mass_basis),
+        panel_convention=_cs_panel_convention_tag(grid),
         extra_header=Dict{String, Any}(
             "preprocessor"     => "preprocess_transport_binary.jl",
             "source_type"      => "era5_spectral",
@@ -158,7 +161,7 @@ function process_day(date::Date,
         regrid_3d_to_cs_panels!(cs_ws.v_cs_panels, regridder, cs_ws.v_cc, cs_ws, Nc)
         rotate_winds_to_panel_local!(cs_ws.u_cs_panels, cs_ws.v_cs_panels,
                                       cs_ws.u_cs_panels, cs_ws.v_cs_panels,
-                                      Nc, Nz)
+                                      grid.tangent_basis, Nc, Nz)
 
         # Reconstruct CS face fluxes from regridded winds
         reconstruct_cs_fluxes!(am_out, bm_out, cs_ws.u_cs_panels, cs_ws.v_cs_panels,

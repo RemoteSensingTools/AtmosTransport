@@ -24,6 +24,7 @@ end
 # ── Core tests (no external data) ──────────────────────────────────
 
 core_tests = [
+    "test_met_sources_trait.jl",
     "test_basis_explicit_core.jl",
     "test_advection_kernels.jl",
     "test_structured_mesh_metadata.jl",

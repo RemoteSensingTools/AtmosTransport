@@ -89,6 +89,9 @@ using ..MetDrivers: TransportBinaryReader, TransportBinaryHeader, write_transpor
                     replay_tolerance, run_replay_gate,
                     structured_replay_layout, faceindexed_replay_layout
 
+# Met source abstraction (AbstractMetSettings + RawWindow)
+include("met_sources.jl")
+
 # Physical constants
 include("constants.jl")
 
@@ -139,6 +142,10 @@ include("tm5_convection_pipeline.jl")
 
 # Transport-binary workflows and shared preprocessing contracts.
 include("binary_pipeline.jl")
+
+# Met source abstraction (Commit 1 of plan indexed-baking-valiant)
+export AbstractMetSettings, RawWindow
+export read_window!, source_grid, windows_per_day, has_convection
 
 # Exports for the CLI script and advanced users
 export build_target_geometry, target_summary

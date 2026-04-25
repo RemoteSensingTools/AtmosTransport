@@ -149,6 +149,9 @@ include("binary_pipeline.jl")
 # Native GEOS NetCDF reader (Commit 3 of plan indexed-baking-valiant)
 include("sources/geos.jl")
 
+# TOML-driven met-source factory (Commit 4)
+include("sources/loader.jl")
+
 # Met source abstraction (Commit 1 of plan indexed-baking-valiant)
 export AbstractMetSettings, RawWindow
 export read_window!, source_grid, windows_per_day, has_convection
@@ -158,6 +161,9 @@ export AbstractGEOSSettings, GEOSSettings, GEOSITSettings, GEOSFPSettings
 export GEOSDayHandles, open_geos_day, close_geos_day!
 export geos_collection_path, detect_level_orientation
 export endpoint_dry_mass, endpoint_dry_mass!
+
+# Met-source TOML factory (Commit 4)
+export load_met_settings
 
 # Exports for the CLI script and advanced users
 export build_target_geometry, target_summary

@@ -185,18 +185,11 @@ end
 # Sim-construction allocation (Decision 26)
 # =========================================================================
 
-# Small backend-adapter helper. `DrivenSimulation.jl` has its own
-# `_window_backend_adapter` at `:81-89` but that's in `Models`, which
-# depends on `MetDrivers` — importing it here would invert the load
-# order. Inline the same logic locally instead.
+# Small backend-adapter helper. The implementation delegates to
+# Architectures so convection forcing follows the same CPU/CUDA/Metal
+# residency rule as transport windows and surface sources.
 @inline function _convection_backend_adapter(reference_array)
-    if isdefined(Main, :CUDA)
-        CUDA = getfield(Main, :CUDA)
-        if reference_array isa CUDA.AbstractGPUArray
-            return CUDA.CuArray
-        end
-    end
-    return Array
+    return array_adapter_for(reference_array)
 end
 
 @inline _convection_backend_adapter(reference_array::NTuple{6}) =
@@ -211,7 +204,7 @@ end
 end
 
 @inline function _allocate_convection_payload_like(src, adaptor)
-    return adaptor === Array ? similar(src) : adaptor(similar(src))
+    return adaptor === Array ? similar(src) : Base.invokelatest(adaptor, similar(src))
 end
 
 @inline function _allocate_convection_payload_like(src::NTuple{N}, adaptor) where N

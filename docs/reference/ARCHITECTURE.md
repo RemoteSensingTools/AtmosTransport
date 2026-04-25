@@ -150,7 +150,10 @@ kernel!(output, input, param; ndrange=(Nx, Ny))
 ```
 
 GPU extensions are loaded via weak dependencies (`ext/AtmosTransportCUDAExt.jl`,
-`ext/AtmosTransportMetalExt.jl`). The core package never imports CUDA or Metal directly.
+`ext/AtmosTransportMetalExt.jl`). The driven runtime selects the concrete
+backend from `[architecture].backend = "cpu" | "auto" | "cuda" | "metal"`;
+`"auto"` probes for a usable local GPU. Metal requires
+`[numerics] float_type = "Float32"`.
 
 ## TransportPolicy
 

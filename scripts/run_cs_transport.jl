@@ -7,38 +7,59 @@
 
 using Printf, TOML, NCDatasets, Adapt
 
+if !isempty(ARGS)
+    _cfg_path = expanduser(ARGS[1])
+    if isfile(_cfg_path)
+        _cfg = try TOML.parsefile(_cfg_path) catch; nothing end
+        if _cfg !== nothing
+            _arch = get(_cfg, "architecture", Dict{String, Any}())
+            _use_gpu = Bool(get(_arch, "use_gpu", false))
+            _backend = lowercase(String(get(_arch, "backend",
+                                            _use_gpu ? "auto" : "cpu")))
+            _backend = replace(_backend, '-' => '_', ' ' => '_')
+            _gpu_requested = _use_gpu ||
+                             _backend in ("auto", "gpu", "cuda", "nvidia",
+                                          "metal", "apple", "apple_metal")
+            if _gpu_requested
+                if _backend in ("metal", "apple", "apple_metal") ||
+                   (_backend in ("auto", "gpu") && Sys.isapple())
+                    @info "Preloading Metal (GPU backend)"
+                    using Metal
+                elseif _backend in ("cuda", "nvidia") ||
+                       _backend in ("auto", "gpu")
+                    @info "Preloading CUDA (GPU backend)"
+                    using CUDA
+                end
+            end
+        end
+    end
+end
+
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
+using .AtmosTransport.Architectures: runtime_backend_from_config, is_gpu_backend,
+    ensure_backend_runtime!, backend_array_adapter, backend_label,
+    assert_backend_float_type!
 using .AtmosTransport.Operators.Advection: fill_panel_halos!,
     strang_split_cs!, CSAdvectionWorkspace,
     LinRoodWorkspace, strang_split_linrood_ppm!,
     UpwindScheme, SlopesScheme, PPMScheme
 
 # ---------------------------------------------------------------------------
-# Architecture helpers (same pattern as run_transport_binary.jl)
+# Architecture helpers
 # ---------------------------------------------------------------------------
 
-_use_gpu(cfg) = Bool(get(get(cfg, "architecture", Dict{String,Any}()), "use_gpu", false))
+_runtime_backend(cfg) =
+    runtime_backend_from_config(get(cfg, "architecture", Dict{String,Any}()))
 
 function ensure_gpu!(cfg)
-    _use_gpu(cfg) || return false
-    isdefined(Main, :CUDA) || Core.eval(Main, :(using CUDA))
-    CUDA = Core.eval(Main, :CUDA)
-    Base.invokelatest(getproperty(CUDA, :functional)) ||
-        error("CUDA runtime not functional")
-    Base.invokelatest(getproperty(CUDA, :allowscalar), false)
+    backend = _runtime_backend(cfg)
+    is_gpu_backend(backend) || return false
+    ensure_backend_runtime!(backend)
     return true
 end
 
-array_type(cfg) = _use_gpu(cfg) ? (ensure_gpu!(cfg); getproperty(Core.eval(Main, :CUDA), :CuArray)) : Array
-
-function backend_label(cfg)
-    _use_gpu(cfg) || return "CPU"
-    ensure_gpu!(cfg)
-    CUDA = Core.eval(Main, :CUDA)
-    name = Base.invokelatest(getproperty(CUDA, :name), Base.invokelatest(getproperty(CUDA, :device)))
-    return "GPU ($name)"
-end
+array_type(cfg) = (ensure_gpu!(cfg); backend_array_adapter(_runtime_backend(cfg)))
 
 # ---------------------------------------------------------------------------
 # Panel padding (zero-fill halo around raw binary arrays)
@@ -164,8 +185,9 @@ end
 # ---------------------------------------------------------------------------
 
 function run_cs(cfg)
-    AT = array_type(cfg)
     FT = cfg_float_type(cfg)
+    assert_backend_float_type!(_runtime_backend(cfg), FT)
+    AT = array_type(cfg)
 
     input_cfg = get(cfg, "input", Dict{String,Any}())
     binary_paths = [expanduser(String(p)) for p in input_cfg["binary_paths"]]

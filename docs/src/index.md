@@ -22,10 +22,9 @@ with a clean separation between offline preprocessing and runtime stepping.
 - **Multi-source**: ERA5 spectral (vorticity / divergence / log-PS GRIB)
   and GEOS-IT C180 native NetCDF. (GEOS-FP native is a planned follow-up;
   the source-axis abstraction is in place.)
-- **GPU-portable**: single codebase for CPU and NVIDIA CUDA via
-  [KernelAbstractions.jl](https://github.com/JuliaGPU/KernelAbstractions.jl).
-  An Apple Silicon (Metal) backend hook exists as a weakdep extension but
-  is not yet end-to-end through the runtime driver.
+- **GPU-portable**: single codebase for CPU, NVIDIA CUDA, and Apple Silicon
+  Metal via [KernelAbstractions.jl](https://github.com/JuliaGPU/KernelAbstractions.jl).
+  Metal is restricted to `Float32` runtime numerics.
 - **Mass-conserving**: dry-basis air-mass bookkeeping, with **write-time
   replay gates** in the preprocessor and **opt-in load-time replay
   validation** at runtime.

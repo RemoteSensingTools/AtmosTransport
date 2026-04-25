@@ -50,6 +50,7 @@ core_tests = [
     "test_cs_chemistry.jl",
     "test_poisson_balance.jl",
     "test_replay_consistency.jl",
+    "test_runtime_backends.jl",
     "test_run_transport_binary_recipe.jl",
     "test_initial_condition_io.jl",
     "test_binary_path_expander.jl",

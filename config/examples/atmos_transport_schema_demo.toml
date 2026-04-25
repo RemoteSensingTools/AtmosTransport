@@ -19,6 +19,7 @@ end_date = "2021-12-03"
 
 [architecture]
 use_gpu = false
+backend = "cpu"
 
 [numerics]
 float_type = "Float32"

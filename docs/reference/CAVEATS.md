@@ -289,10 +289,12 @@ end
 
 ### GPU Extension Loading Order
 
-`using CUDA` must appear **before** `using AtmosTransport` in run scripts to
-trigger the `AtmosTransportCUDAExt` extension. The universal runner
-(`scripts/run.jl`) handles this automatically based on the `use_gpu` config
-flag.
+`using CUDA` or `using Metal` must appear **before** `using AtmosTransport` in
+custom run scripts to trigger the weakdep extension and avoid Julia world-age
+issues around GPU array methods. The canonical runner
+(`scripts/run_transport.jl`) handles this automatically based on
+`[architecture] use_gpu` and `backend`. Metal runs require
+`[numerics] float_type = "Float32"`.
 
 ### Cubed-Sphere Tracer Storage
 

@@ -104,7 +104,8 @@ that were previously set via environment variables are now in the config file.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `use_gpu` | bool | `false` | Enable GPU via CUDA.jl |
+| `use_gpu` | bool | `false` | Legacy GPU switch; when true and `backend` is absent, the runtime auto-detects CUDA or Metal |
+| `backend` | string | `"cpu"` | `"cpu"`, `"auto"`, `"cuda"`, or `"metal"`; `"auto"` probes for a GPU, and Metal requires `float_type = "Float32"` |
 | `float_type` | string | `"Float64"` | `"Float32"` for GPU, `"Float64"` for CPU |
 
 ### `[grid]`

@@ -16,6 +16,34 @@
 using Logging
 using TOML
 
+if !isempty(ARGS)
+    _cfg_path = expanduser(ARGS[1])
+    if isfile(_cfg_path)
+        _cfg = try TOML.parsefile(_cfg_path) catch; nothing end
+        if _cfg !== nothing
+            _arch = get(_cfg, "architecture", Dict{String, Any}())
+            _use_gpu = Bool(get(_arch, "use_gpu", false))
+            _backend = lowercase(String(get(_arch, "backend",
+                                            _use_gpu ? "auto" : "cpu")))
+            _backend = replace(_backend, '-' => '_', ' ' => '_')
+            _gpu_requested = _use_gpu ||
+                             _backend in ("auto", "gpu", "cuda", "nvidia",
+                                          "metal", "apple", "apple_metal")
+            if _gpu_requested
+                if _backend in ("metal", "apple", "apple_metal") ||
+                   (_backend in ("auto", "gpu") && Sys.isapple())
+                    @info "Preloading Metal (GPU backend)"
+                    using Metal
+                elseif _backend in ("cuda", "nvidia") ||
+                       _backend in ("auto", "gpu")
+                    @info "Preloading CUDA (GPU backend)"
+                    using CUDA
+                end
+            end
+        end
+    end
+end
+
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 

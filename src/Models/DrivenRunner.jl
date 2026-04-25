@@ -32,10 +32,10 @@ binary's header (`inspect_binary(first_path).grid_type`).
 
 ## GPU residency (feedback_verify_gpu_runs_on_gpu)
 
-When `[architecture].use_gpu = true`, the runner asserts that
-`parent(state.air_mass) isa CuArray` after model construction and
-prints a `[gpu verified] …` line. A silent CPU fallback aborts the
-run with a precise error message.
+When `[architecture].use_gpu = true` or `backend` selects a GPU, the runner
+asserts that `state.air_mass` lives on the selected backend after model
+construction and prints a `[gpu verified] …` line. A silent CPU fallback
+aborts the run with a precise error message.
 """
 module DrivenRunner
 
@@ -47,7 +47,12 @@ using ..State: AbstractMassBasis, DryBasis, MoistBasis, CellState,
                 CubedSphereState, total_air_mass, total_mass, tracer_names,
                 tracer_index, get_tracer
 using ..Grids: nlevels
-using ..Architectures: CPU, GPU
+using ..Architectures: CPU, GPU,
+                       runtime_backend_from_config, is_gpu_backend,
+                       ensure_backend_runtime!, backend_array_adapter,
+                       backend_label, backend_device_name, backend_name,
+                       synchronize_backend!, assert_backend_residency!,
+                       assert_backend_float_type!
 using ..MetDrivers: TransportBinaryDriver, CubedSphereTransportDriver,
                      load_transport_window, driver_grid, air_mass_basis,
                      total_windows, window_dt, binary_capabilities,
@@ -126,38 +131,26 @@ end
 # GPU runtime helpers (hoisted from run_transport_binary.jl:101-138)
 # ===========================================================================
 
-@inline _cfg_use_gpu(cfg) = Bool(get(get(cfg, "architecture", Dict{String, Any}()), "use_gpu", false))
+@inline _cfg_architecture_section(cfg) = get(cfg, "architecture", Dict{String, Any}())
+@inline _cfg_runtime_backend(cfg) = runtime_backend_from_config(_cfg_architecture_section(cfg))
+@inline _cfg_use_gpu(cfg) = is_gpu_backend(_cfg_runtime_backend(cfg))
 
 function _ensure_gpu_runtime!(cfg)
-    _cfg_use_gpu(cfg) || return false
-    Sys.isapple() && throw(ArgumentError("driven runner GPU path is only wired for CUDA hosts"))
-    if !isdefined(Main, :CUDA)
-        Core.eval(Main, :(using CUDA))
-    end
-    CUDA = Core.eval(Main, :CUDA)
-    Base.invokelatest(getproperty(CUDA, :functional)) ||
-        throw(ArgumentError("CUDA runtime is not functional on this host"))
-    Base.invokelatest(getproperty(CUDA, :allowscalar), false)
+    backend = _cfg_runtime_backend(cfg)
+    is_gpu_backend(backend) || return false
+    ensure_backend_runtime!(backend)
     return true
 end
 
 function _backend_array_adapter(cfg)
-    if _cfg_use_gpu(cfg)
-        _ensure_gpu_runtime!(cfg)
-        return getproperty(Core.eval(Main, :CUDA), :CuArray)
-    end
-    return Array
+    backend = _cfg_runtime_backend(cfg)
+    is_gpu_backend(backend) && _ensure_gpu_runtime!(cfg)
+    return backend_array_adapter(backend)
 end
 
 function _backend_label(cfg)
-    if _cfg_use_gpu(cfg)
-        _ensure_gpu_runtime!(cfg)
-        CUDA = Core.eval(Main, :CUDA)
-        device_name = Base.invokelatest(getproperty(CUDA, :name),
-                                        Base.invokelatest(getproperty(CUDA, :device)))
-        return "GPU (CUDA, $(device_name))"
-    end
-    return "CPU"
+    backend = _cfg_runtime_backend(cfg)
+    return backend_label(backend)
 end
 
 function _snapshot_write_options(cfg, ::Type{FT}) where FT <: AbstractFloat
@@ -168,33 +161,27 @@ function _snapshot_write_options(cfg, ::Type{FT}) where FT <: AbstractFloat
 end
 
 function _synchronize_backend!(cfg)
-    if _cfg_use_gpu(cfg)
-        _ensure_gpu_runtime!(cfg)
-        Base.invokelatest(getproperty(Core.eval(Main, :CUDA), :synchronize))
-    end
+    synchronize_backend!(_cfg_runtime_backend(cfg))
     return nothing
 end
 
 """
     _assert_gpu_residency!(state, cfg)
 
-Plan 40 Commit 6a / `feedback_verify_gpu_runs_on_gpu`. When
-`use_gpu = true`, assert that `state.air_mass` lives on the GPU. A
-silent CPU fallback aborts with a precise error. Called once after
-model construction, before the run loop.
+Plan 40 Commit 6a / `feedback_verify_gpu_runs_on_gpu`. When a GPU backend is
+selected, assert that `state.air_mass` lives on that backend. A silent CPU
+fallback aborts with a precise error. Called once after model construction,
+before the run loop.
 """
 function _assert_gpu_residency!(state, cfg)
-    _cfg_use_gpu(cfg) || return nothing
-    backing = state.air_mass isa Tuple ? parent(state.air_mass[1]) : parent(state.air_mass)
-    CUDA = Core.eval(Main, :CUDA)
-    CuArrayType = getproperty(CUDA, :CuArray)
-    backing isa CuArrayType || throw(ErrorException(
-        "[gpu residency check] use_gpu = true but state.air_mass is $(typeof(backing)); " *
-        "CPU fallback aborted. Verify CUDA extension loaded and `adapt(CuArray, model)` " *
-        "completed without error."))
-    device_name = Base.invokelatest(getproperty(CUDA, :name),
-                                    Base.invokelatest(getproperty(CUDA, :device)))
-    @info @sprintf("[gpu verified] backing=%s device=%s", nameof(typeof(backing).name.wrapper), device_name)
+    backend = _cfg_runtime_backend(cfg)
+    is_gpu_backend(backend) || return nothing
+    backing = assert_backend_residency!(state.air_mass, backend; label = "state.air_mass")
+    wrapper = Base.typename(typeof(backing)).wrapper
+    @info @sprintf("[gpu verified] backend=%s backing=%s device=%s",
+                   String(backend_name(backend)),
+                   String(nameof(wrapper)),
+                   backend_device_name(backend))
     return nothing
 end
 
@@ -238,7 +225,7 @@ function _make_structured_model(driver::TransportBinaryDriver;
                            diffusion = recipe.diffusion,
                            convection = recipe.convection)
     adaptor = _backend_array_adapter(cfg)
-    return adaptor === Array ? model : Adapt.adapt(adaptor, model)
+    return adaptor === Array ? model : Base.invokelatest(Adapt.adapt, adaptor, model)
 end
 
 # Snapshot capture and NetCDF writing live in `AtmosTransport.Output`. The
@@ -314,6 +301,7 @@ end
 function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
     FT = Symbol(get(get(cfg, "numerics", Dict{String, Any}()), "float_type", "Float64")) == :Float32 ?
          Float32 : Float64
+    assert_backend_float_type!(_cfg_runtime_backend(cfg), FT)
     run_cfg = get(cfg, "run", Dict{String, Any}())
     start_window = Int(get(run_cfg, "start_window", 1))
     stop_window_override = get(run_cfg, "stop_window", nothing)
@@ -471,6 +459,7 @@ end
 
 function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
     FT   = _cfg_float_type(cfg)
+    assert_backend_float_type!(_cfg_runtime_backend(cfg), FT)
     arch = _cfg_architecture(cfg)
 
     run_cfg = get(cfg, "run", Dict{String, Any}())
@@ -542,8 +531,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
                             diffusion  = recipe.diffusion,
                             convection = recipe.convection)
     # Adapt state + fluxes to the selected backend. `invokelatest` is required
-    # because CUDA.jl may be loaded dynamically and its Adapt methods can arrive
-    # in a newer world age than this function's compiled body.
+    # because GPU packages may be loaded dynamically and their Adapt methods can
+    # arrive in a newer world age than this function's compiled body.
     adaptor = _backend_array_adapter(cfg)
     if adaptor !== Array
         model  = Base.invokelatest(Adapt.adapt, adaptor, model)
@@ -554,7 +543,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
 
     # Build surface-flux sources from the parsed tracer specs and log per-source
     # mass rates. Matches the LL/RG path; `DrivenSimulation`'s constructor
-    # adapts these to the model backend (CPU Array or CUDA CuArray) via
+    # adapts these to the model backend (CPU Array or GPU array) via
     # `_adapt_sources_to_model_backend`, so no manual adapt step here.
     surface_sources = build_surface_flux_sources(grid, tracer_specs, FT)
     source_tracers = Set(source.tracer_name for source in surface_sources)

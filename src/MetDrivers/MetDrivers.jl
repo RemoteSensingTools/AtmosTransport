@@ -13,6 +13,7 @@ module MetDrivers
 
 using Adapt
 using Printf: @sprintf
+using ..Architectures: array_adapter_for
 using ..State
 using ..Grids
 

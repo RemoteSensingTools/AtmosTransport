@@ -95,5 +95,5 @@ Or use Julia with CairoMakie (see `scripts/visualization/` for examples).
 - **Change the advection scheme**: set `scheme = "slopes"` or `"ppm"` in your TOML
 - **Try a different grid**: see [GRID_TYPES.md](GRID_TYPES.md) for LL vs RG vs CS
 - **Add emissions**: see the `[tracers.fossil_co2.surface_flux]` sections in Catrine configs
-- **Run on GPU**: set `use_gpu = true` in `[architecture]` (requires CUDA.jl)
+- **Run on GPU**: set `use_gpu = true` and `backend = "auto"` in `[architecture]` (CUDA or Metal; Metal requires `float_type = "Float32"`)
 - **Multi-day runs**: add multiple binary_paths (one per day)

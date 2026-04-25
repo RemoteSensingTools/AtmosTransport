@@ -92,25 +92,20 @@ end
 end
 
 @inline function _window_backend_adapter(reference_array)
-    if isdefined(Main, :CUDA)
-        CUDA = getfield(Main, :CUDA)
-        if reference_array isa CUDA.AbstractGPUArray
-            return CUDA.CuArray
-        end
-    end
-    return Array
+    return array_adapter_for(reference_array)
 end
 
 @inline _window_backend_adapter(reference_array::NTuple{6}) = _window_backend_adapter(reference_array[1])
 
 @inline function _adapt_window_to_model_backend(window, model_air_mass)
     adaptor = _window_backend_adapter(model_air_mass)
-    return adaptor === Array ? window : Adapt.adapt(adaptor, window)
+    return adaptor === Array ? window : Base.invokelatest(Adapt.adapt, adaptor, window)
 end
 
 @inline function _adapt_sources_to_model_backend(surface_sources, model_air_mass)
     adaptor = _window_backend_adapter(model_air_mass)
-    return adaptor === Array ? surface_sources : map(source -> Adapt.adapt(adaptor, source), surface_sources)
+    return adaptor === Array ? surface_sources :
+           map(source -> Base.invokelatest(Adapt.adapt, adaptor, source), surface_sources)
 end
 
 # Surface-source helpers (`_surface_shape`, `_check_surface_source_compatibility`,

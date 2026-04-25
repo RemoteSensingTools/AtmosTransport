@@ -40,7 +40,23 @@
       "properties": {
         "use_gpu": {
           "type": "boolean",
-          "description": "Run on CUDA GPU when true. Use false for local CPU debugging."
+          "description": "Legacy GPU switch. When true and architecture.backend is absent or auto, the runtime auto-detects CUDA or Metal. Use false for local CPU debugging."
+        },
+        "backend": {
+          "type": "string",
+          "description": "Runtime compute backend. \"auto\" selects a usable GPU backend; \"metal\" requires Float32 numerics.",
+          "enum": ["cpu", "auto", "cuda", "metal"],
+          "default": "cpu",
+          "x-taplo": {
+            "docs": {
+              "enumValues": [
+                "Run on CPU arrays.",
+                "Auto-detect CUDA or Metal.",
+                "Run on NVIDIA CUDA via CUDA.jl.",
+                "Run on Apple Silicon Metal via Metal.jl; requires numerics.float_type = \"Float32\"."
+              ]
+            }
+          }
         }
       }
     },

@@ -34,20 +34,22 @@ benchmark — without depending on a multi-TB ERA5 archive.
 
 ## 1. Download the bundle
 
-!!! note "Bundle URL"
-    The bundle is hosted on Dropbox.
-    **TODO: paste the public Dropbox link and SHA-256 checksum here once
-    the upload is in place.** The convenience script
-    `scripts/download_quickstart_data.sh` will be updated to pull from
-    that URL by default.
+!!! note "Bundle hosting"
+    The bundle is **`atmos_transport_quickstart_v1.tar.gz`**
+    (≈ **1.0 GB** compressed — the LL 144×73 binaries dominate;
+    the LL 72×37-only subset is just ~80 MB raw if you only want the
+    smaller one).
+    SHA-256: `42c63d300c5da7e776de9b25cc00884c28e3c37abf9d421df9151793a4c85f88`.
+    **TODO: paste the public Dropbox download URL into
+    `scripts/download_quickstart_data.sh` once the upload is in place
+    (or set `ATMOSTR_QUICKSTART_URL` in your environment).**
 
 ```bash
 bash scripts/download_quickstart_data.sh
 ```
 
-The script downloads the tarball (~250 MB compressed), verifies its
-SHA-256, and extracts it under
-`~/data/AtmosTransport_quickstart/met/`. After extraction:
+The script downloads the tarball, verifies its SHA-256, and extracts
+it under `~/data/AtmosTransport_quickstart/met/`. After extraction:
 
 ```
 ~/data/AtmosTransport_quickstart/

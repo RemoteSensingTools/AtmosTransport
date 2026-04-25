@@ -19,7 +19,7 @@ set -euo pipefail
 
 # ── Bundle metadata (fill these in once the upload is in place) ────────────
 BUNDLE_URL="${ATMOSTR_QUICKSTART_URL:-TODO_PASTE_DROPBOX_DIRECT_DOWNLOAD_URL}"
-BUNDLE_SHA256="${ATMOSTR_QUICKSTART_SHA256:-TODO_PASTE_SHA256SUM}"
+BUNDLE_SHA256="${ATMOSTR_QUICKSTART_SHA256:-42c63d300c5da7e776de9b25cc00884c28e3c37abf9d421df9151793a4c85f88}"
 BUNDLE_NAME="atmos_transport_quickstart_v1.tar.gz"
 
 # ── Destination ────────────────────────────────────────────────────────────

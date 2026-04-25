@@ -49,8 +49,9 @@ each legacy file into this tree or archive it.
 | Phase | Scope | State |
 |------:|-------|-------|
 | 1 | Documenter + Literate scaffolding, CI green | shipped |
-| 2 | Getting-Started onramp (install, first run, inspecting output) | **in progress** |
-| 3 | Concepts (grids, state, operators, binary) | pending |
+| 2 | Getting-Started onramp (install, quickstart, first run, inspecting output) | shipped |
+| 3A | Concepts: grids, state & basis (Mermaid hierarchies + grid schematics) | **in progress** |
+| 3B | Concepts: operators, binary format | pending |
 | 4 | Tutorials (Literate.jl per topology) | pending |
 | 5 | Preprocessing guide (spectral, GEOS native, regridding) | pending |
 | 6 | Theory & Verification (mass conservation, schemes, validation) | pending |

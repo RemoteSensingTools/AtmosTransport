@@ -12,6 +12,8 @@
 *.png
 data/
 !test/data/
+!docs/src/assets/**/*.png
+!docs/src/assets/**/*.gif
 
 # Third-party / TM5 source (clone or zip extract; do not commit)
 deps/

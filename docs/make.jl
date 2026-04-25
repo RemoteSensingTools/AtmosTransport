@@ -1,4 +1,5 @@
 using Documenter
+using DocumenterMermaid     # Mermaid block rendering in Documenter HTML
 using AtmosTransport
 
 # ---------------------------------------------------------------------------
@@ -20,6 +21,10 @@ const PAGES = [
         "getting_started/quickstart.md",
         "getting_started/first_run.md",
         "getting_started/inspecting_output.md",
+    ],
+    "Concepts" => [
+        "concepts/grids.md",
+        "concepts/state_and_basis.md",
     ],
     "About these docs" => "about.md",
 ]

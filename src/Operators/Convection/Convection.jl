@@ -69,7 +69,7 @@ using ...MetDrivers: ConvectionForcing
 import ..apply!
 import ..AbstractConvection             # global root from src/Operators/AbstractOperators.jl
 
-export NoConvection
+export AbstractConvection, NoConvection
 export CMFMCConvection                          # plan 18 Commit 3
 export CMFMCWorkspace, invalidate_cmfmc_cache!  # plan 18 Commit 3
 export TM5Convection                            # plan 23 Commit 1

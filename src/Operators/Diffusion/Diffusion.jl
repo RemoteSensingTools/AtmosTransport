@@ -34,7 +34,7 @@ import ..AbstractDiffusion                # global root from src/Operators/Abstr
 
 export solve_tridiagonal!, build_diffusion_coefficients
 export _vertical_diffusion_kernel!
-export NoDiffusion, ImplicitVerticalDiffusion
+export AbstractDiffusion, NoDiffusion, ImplicitVerticalDiffusion
 export apply_vertical_diffusion!
 
 include("thomas_solve.jl")

@@ -98,6 +98,18 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
         # Unknown kind → error
         @test_throws ArgumentError build_cs_diffusion(
             Dict("diffusion" => Dict("kind" => "magic")), Float64)
+
+        # Section B (codex) P0: legacy `type = "..."` schema must NOT
+        # silently fall through to NoDiffusion. It must error with a
+        # migration hint so old configs that expected diffusion are caught.
+        @test_throws ArgumentError build_cs_diffusion(
+            Dict("diffusion" => Dict("type" => "pbl")), Float64)
+        @test_throws ArgumentError build_cs_diffusion(
+            Dict("diffusion" => Dict("type" => "nonlocal_pbl")), Float64)
+
+        # `[diffusion]` present but neither `type` nor `kind` → error.
+        @test_throws ArgumentError build_cs_diffusion(
+            Dict("diffusion" => Dict("value" => 1.0)), Float64)
     end
 
     @testset "build_runtime_diffusion chooses layout-aware field rank" begin

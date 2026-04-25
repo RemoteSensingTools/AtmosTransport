@@ -132,6 +132,25 @@ end
 
 function build_runtime_diffusion(cfg, style::AbstractRuntimeRecipeStyle, ::Type{FT}) where FT
     section = _diffusion_section(cfg)
+    # Empty / absent section is explicit "no diffusion".
+    isempty(section) && return NoDiffusion()
+    # Reject the legacy `type = "..."` schema rather than silently mapping
+    # it to NoDiffusion. Configs that said `type = "pbl"` / `"nonlocal_pbl"`
+    # etc. expected diffusion to run; the silent fall-through hid that for
+    # months. Migrate to `kind` — supported kinds today are "none" and
+    # "constant". (Codex Section B P0 fix.)
+    haskey(section, "type") && !haskey(section, "kind") &&
+        throw(ArgumentError(
+            "[diffusion] uses legacy `type = \"$(section["type"])\"`; rename to " *
+            "`kind = \"...\"`. Supported kinds: \"none\", \"constant\". Until a " *
+            "PBL diffusion operator is wired through the runtime contract, set " *
+            "`kind = \"none\"` for no diffusion, or `kind = \"constant\"` with " *
+            "a `value = <Kz>` for a uniform Kz."))
+    haskey(section, "kind") ||
+        throw(ArgumentError(
+            "[diffusion] section is present but has no `kind` key. " *
+            "Set `kind = \"none\"` for no diffusion, or `kind = \"constant\"` " *
+            "with `value = <Kz>` for uniform-Kz diffusion."))
     return build_runtime_diffusion(style,
                                    Val(_config_symbol(section, "kind", "none")),
                                    section,

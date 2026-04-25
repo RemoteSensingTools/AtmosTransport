@@ -4,11 +4,37 @@ The documentation is being overhauled. This page tracks where we are.
 
 ## Status (2026-04-25)
 
-**Phase 1 — Infrastructure (current).** The Documenter + Literate.jl
-scaffolding lands in this commit. The site is intentionally minimal —
-landing page, this status page, and not much else — so reviewers can
-verify the build, deploy, and CI workflow are wired correctly before
-content lands.
+**Phase 1 — Infrastructure** (shipped). Documenter + Literate.jl scaffolding;
+CI workflow wired green; landing page + this status page in place.
+
+**Phase 2 — Getting Started onramp (current).** Four pages cover
+installation, a downloadable-bundle **quickstart**, the general
+"first run" walkthrough, and inspecting output. All four are
+written against the current `scripts/run_transport.jl` invocation,
+the current TOML schema (`[input]` + `[architecture]` + `[numerics]`
++ `[run]` + `[tracers.<name>.init]` + `[output]`), and the current
+NetCDF output schema (`<tracer>_column_mean`,
+`<tracer>_column_mass_per_area`, `air_mass_column`).
+
+The quickstart bundle ships 3 days of preprocessed ERA5 transport
+binaries at four grid configurations (LL 72×37, LL 144×73, CS C24,
+CS C90, all F32) with matching ready-to-run configs in
+`config/runs/quickstart/`. After upload, the convenience script
+`scripts/download_quickstart_data.sh` fetches the tarball, verifies
+its SHA-256, and extracts it under `~/data/AtmosTransport_quickstart/`.
+
+**Caveats:**
+
+- The `[gpu verified]` runtime line and the per-day output figures in
+  these pages were captured from a real LL 72×37 F32 GPU run on this
+  machine; CPU and other hardware will print equivalent but differently
+  formatted lines.
+- The two repository Python diagnostic scripts
+  (`scripts/diagnostics/verify_snapshot_netcdf.py` and `quick_viz.py`)
+  were written against an older snapshot variable schema; this is
+  flagged in `inspecting_output.md` and tracked as a Phase-2 follow-up.
+- The Dropbox URL and SHA-256 in `download_quickstart_data.sh` are
+  TODO placeholders until the bundle is uploaded.
 
 The scattered legacy docs at `docs/reference/`, `docs/memos/`, and the
 top-level numbered files (`docs/00_*.md`, `docs/30_*.md`, etc.) are
@@ -22,8 +48,8 @@ each legacy file into this tree or archive it.
 
 | Phase | Scope | State |
 |------:|-------|-------|
-| 1 | Documenter + Literate scaffolding, CI green | **in progress** |
-| 2 | Getting-Started onramp (install, first run, inspecting output) | pending |
+| 1 | Documenter + Literate scaffolding, CI green | shipped |
+| 2 | Getting-Started onramp (install, first run, inspecting output) | **in progress** |
 | 3 | Concepts (grids, state, operators, binary) | pending |
 | 4 | Tutorials (Literate.jl per topology) | pending |
 | 5 | Preprocessing guide (spectral, GEOS native, regridding) | pending |

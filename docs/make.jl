@@ -15,6 +15,12 @@ DocMeta.setdocmeta!(AtmosTransport, :DocTestSetup, :(using AtmosTransport);
 
 const PAGES = [
     "Home" => "index.md",
+    "Getting Started" => [
+        "getting_started/installation.md",
+        "getting_started/quickstart.md",
+        "getting_started/first_run.md",
+        "getting_started/inspecting_output.md",
+    ],
     "About these docs" => "about.md",
 ]
 

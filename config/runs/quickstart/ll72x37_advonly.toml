@@ -1,0 +1,34 @@
+# Quickstart: 5° (72x37) lat-lon, 3-day advection-only, F32, BL-enhanced IC.
+#
+# Pairs with the downloadable example bundle (see
+# docs/src/getting_started/quickstart.md). Pure advection — no
+# diffusion, no convection, no emissions.
+#
+# Run:
+#   julia --project=. scripts/run_transport.jl \
+#       config/runs/quickstart/ll72x37_advonly.toml
+
+[input]
+folder     = "~/data/AtmosTransport_quickstart/met/era5_ll72x37_dec2021_f32/"
+start_date = "2021-12-01"
+end_date   = "2021-12-03"
+
+[architecture]
+use_gpu = true                  # set false for CPU-only
+
+[numerics]
+float_type = "Float32"
+
+[run]
+scheme = "slopes"               # Russell-Lerner; try "ppm" for higher order
+
+[tracers.co2_bl]
+[tracers.co2_bl.init]
+kind        = "bl_enhanced"     # uniform background + lowest-N-layer enhancement
+background  = 4.0e-4            # ~400 ppm dry VMR
+enhancement = 1.0e-4            # +100 ppm in BL
+n_layers    = 3                 # bottom 3 model layers
+
+[output]
+snapshot_hours = [0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72]
+snapshot_file  = "~/data/AtmosTransport_quickstart/output/ll72x37_advonly.nc"

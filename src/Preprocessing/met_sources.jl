@@ -43,25 +43,33 @@ merging.
 `cmfmc`/`dtrain` are filled only when the source supports convection and
 the user has enabled it via `settings.include_convection`.
 """
-struct RawWindow{FT <: AbstractFloat, A2 <: AbstractArray{FT, 2}, A3 <: AbstractArray{FT, 3}}
+struct RawWindow{FT <: AbstractFloat, P, V}
     # left endpoint (t_n)
-    m       :: A3
-    ps      :: A2
-    qv      :: Union{Nothing, A3}
+    m       :: V
+    ps      :: P
+    qv      :: Union{Nothing, V}
     # right endpoint (t_{n+1})
-    m_next  :: A3
-    ps_next :: A2
-    qv_next :: Union{Nothing, A3}
-    # window-integrated horizontal mass flux on the source grid (kg / Δt_window)
-    am      :: A3
-    bm      :: A3
+    m_next  :: V
+    ps_next :: P
+    qv_next :: Union{Nothing, V}
+    # window-mean horizontal mass flux on the source grid (units source-defined:
+    # for GEOS, Pa·m²/s = MFXC / mass_flux_dt; the orchestrator handles any
+    # unit conversion at write time).
+    am      :: V
+    bm      :: V
     # cell-center winds (geographic frame); set only when regrid happens downstream
-    u       :: Union{Nothing, A3}
-    v       :: Union{Nothing, A3}
+    u       :: Union{Nothing, V}
+    v       :: Union{Nothing, V}
     # optional convection sources
-    cmfmc   :: Union{Nothing, A3}   # at interfaces
-    dtrain  :: Union{Nothing, A3}   # at centers
+    cmfmc   :: Union{Nothing, V}   # at interfaces
+    dtrain  :: Union{Nothing, V}   # at centers
 end
+
+# `P` is the per-window 2D field type (PS-shaped); `V` is the per-window 3D
+# field type (DELP / mass-flux shaped). For structured (LL/RG) sources these
+# are `Matrix{FT}` and `Array{FT, 3}`. For CS native sources they are
+# `NTuple{6, Matrix{FT}}` and `NTuple{6, Array{FT, 3}}` so that downstream
+# code can dispatch panel-aware operations naturally.
 
 # ---------------------------------------------------------------------------
 # Interface methods (concrete subtypes implement these)

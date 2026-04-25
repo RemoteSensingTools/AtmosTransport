@@ -26,6 +26,7 @@ end
 core_tests = [
     "test_met_sources_trait.jl",
     "test_identity_regrid.jl",
+    "test_geos_reader.jl",
     "test_basis_explicit_core.jl",
     "test_advection_kernels.jl",
     "test_structured_mesh_metadata.jl",

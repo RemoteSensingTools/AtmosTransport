@@ -95,6 +95,9 @@ include("met_sources.jl")
 # Physical constants
 include("constants.jl")
 
+# Statistics dependency for GEOS reader (level-orientation auto-detect)
+using Statistics: mean
+
 # Logging utilities
 include("logging.jl")
 
@@ -143,9 +146,18 @@ include("tm5_convection_pipeline.jl")
 # Transport-binary workflows and shared preprocessing contracts.
 include("binary_pipeline.jl")
 
+# Native GEOS NetCDF reader (Commit 3 of plan indexed-baking-valiant)
+include("sources/geos.jl")
+
 # Met source abstraction (Commit 1 of plan indexed-baking-valiant)
 export AbstractMetSettings, RawWindow
 export read_window!, source_grid, windows_per_day, has_convection
+
+# GEOS native NetCDF reader (Commit 3)
+export AbstractGEOSSettings, GEOSSettings, GEOSITSettings, GEOSFPSettings
+export GEOSDayHandles, open_geos_day, close_geos_day!
+export geos_collection_path, detect_level_orientation
+export endpoint_dry_mass, endpoint_dry_mass!
 
 # Exports for the CLI script and advanced users
 export build_target_geometry, target_summary

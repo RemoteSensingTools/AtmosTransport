@@ -121,6 +121,21 @@ function load_era5_vertical_coordinate(coeff_path::String, level_top::Int, level
     return HybridSigmaPressure(a_all[level_top:level_bot+1], b_all[level_top:level_bot+1])
 end
 
+"""
+    load_hybrid_coefficients(coeff_path::String) -> HybridSigmaPressure
+
+Load all hybrid sigma-pressure interface coefficients from a TOML file.
+Unlike `load_era5_vertical_coordinate`, this does not slice — useful for
+sources whose level count comes from the file rather than a config knob
+(e.g. GEOS-72, MERRA-2, native ERA5 L137 without sub-tropo selection).
+"""
+function load_hybrid_coefficients(coeff_path::String)
+    isfile(coeff_path) || error("Coefficients not found: $coeff_path")
+    cfg = TOML.parsefile(coeff_path)
+    return HybridSigmaPressure(Float64.(cfg["coefficients"]["a"]),
+                               Float64.(cfg["coefficients"]["b"]))
+end
+
 function load_ab_coefficients(coeff_path::String, level_range)
     isfile(coeff_path) || error("Coefficients not found: $coeff_path")
     cfg = TOML.parsefile(coeff_path)

@@ -5,20 +5,32 @@ NetCDF output file, and a plot. We host a small bundle of preprocessed
 ERA5 transport binaries (3 days, December 2021) so you can skip the
 preprocessor and jump straight to running.
 
-The bundle covers two grid topologies at two resolutions each:
+The bundle covers regular lat-lon at two resolutions:
 
 | Bundle entry | Grid | Resolution | Points |
 |---|---|---|---|
 | `era5_ll72x37_dec2021_f32` | regular lat-lon | 5° | 72 × 37 |
 | `era5_ll144x73_dec2021_f32` | regular lat-lon | 2.5° | 144 × 73 |
-| `era5_cs_c24_dec2021_f32` | cubed-sphere | C24 | 6 × 24² |
-| `era5_cs_c90_dec2021_f32` | cubed-sphere | C90 (~1°) | 6 × 90² |
 
-All four are **F32**, dry-basis, level-merged to ~34 tropospheric
-layers, written by the canonical
+Both are **F32**, dry-basis, level-merged to ~34 tropospheric layers,
+written by the canonical
 `scripts/preprocessing/preprocess_transport_binary.jl` from raw ERA5
 spectral GRIB. They give you something concrete to run, modify, and
 benchmark — without depending on a multi-TB ERA5 archive.
+
+!!! note "Cubed-sphere bundles deferred"
+    Cubed-sphere quickstart bundles (e.g. C24, C90) are planned but
+    blocked on a **known F32 spectral-CS preprocessing path bug** —
+    several `Float64`-pinned function signatures in
+    `src/Preprocessing/spectral_synthesis.jl` currently prevent
+    spectral synthesis on the F32 LL staging grid required for F32 CS
+    output. The fix is straightforward (broadening signatures to
+    `Real`) but cascades through several call sites and is tracked as
+    a follow-up. F64 CS preprocessing works today; if you want CS
+    output ahead of the F32 fix, run
+    `config/preprocessing/era5_cs_c24_transport_binary.toml` (F64) or
+    `era5_cs_c90_transport_binary.toml` (F64) directly against your
+    own ERA5 spectral input.
 
 ## 1. Download the bundle
 
@@ -44,9 +56,7 @@ SHA-256, and extracts it under
     │   ├── era5_transport_20211201_merged1000Pa_float32.bin
     │   ├── era5_transport_20211202_merged1000Pa_float32.bin
     │   └── era5_transport_20211203_merged1000Pa_float32.bin
-    ├── era5_ll144x73_dec2021_f32/   (3 binaries)
-    ├── era5_cs_c24_dec2021_f32/     (3 binaries)
-    └── era5_cs_c90_dec2021_f32/     (3 binaries)
+    └── era5_ll144x73_dec2021_f32/   (3 binaries)
 ```
 
 ## 2. Run the simulation
@@ -60,31 +70,22 @@ julia --project=. scripts/run_transport.jl config/runs/quickstart/ll72x37_advonl
 
 # Lat-lon, 2.5° (still fast, more spatial detail)
 julia --project=. scripts/run_transport.jl config/runs/quickstart/ll144x73_advonly.toml
-
-# Cubed-sphere C24 (smallest CS — see panel-edge behavior on a small grid)
-julia --project=. scripts/run_transport.jl config/runs/quickstart/cs_c24_advonly.toml
-
-# Cubed-sphere C90 (~1°, the highest-resolution entry — best for demos)
-julia --project=. scripts/run_transport.jl config/runs/quickstart/cs_c90_advonly.toml
 ```
 
-Each config is a 3-day advection-only run (no diffusion, no convection,
-no chemistry) with a single passive tracer named `co2_bl`. Output is
-13 frames every 6 hours (t=0…72h), written as a single NetCDF per run
-under `~/data/AtmosTransport_quickstart/output/`. The output variables
-are `<tracer>_column_mean(…)`, `<tracer>_column_mass_per_area(…)`, and
-`air_mass_column(…)` — see [Inspecting output](@ref) for the precise
-dimensions per topology.
-
-The two LL configs use a `bl_enhanced` initial condition (uniform 400
-ppm plus +100 ppm in the lowest 3 model layers — boundary-layer
-injection at `t = 0`). The two CS configs use a uniform 400 ppm IC
-because `bl_enhanced` is currently LL-only. Both are designed so the
-3-day output shows clear transport signatures.
+Both configs run a 3-day advection-only simulation (no diffusion, no
+convection, no chemistry) with a single passive tracer named `co2_bl`
+initialized as a `bl_enhanced` field — uniform 400 ppm background
+plus +100 ppm in the lowest 3 model layers (boundary-layer injection
+at `t = 0`). Output is 13 frames every 6 hours (t=0…72h), written as
+a single NetCDF per run under
+`~/data/AtmosTransport_quickstart/output/`. Output variables are
+`<tracer>_column_mean(…)`, `<tracer>_column_mass_per_area(…)`, and
+`column_air_mass_per_area(…)` — see [Inspecting output](@ref) for the
+full schema.
 
 The configs default to `use_gpu = true`. For CPU execution edit
-`[architecture] use_gpu = false` in the chosen config — every example
-in the bundle runs comfortably on a recent CPU at these resolutions.
+`[architecture] use_gpu = false` in the chosen config — both examples
+in the bundle run comfortably on a recent CPU at these resolutions.
 
 ## 3. Inspect the output
 

@@ -3,12 +3,14 @@
 # Download and verify the AtmosTransport quickstart bundle.
 #
 # The bundle contains 3 days of preprocessed ERA5 transport binaries
-# (Dec 1-3, 2021) at four grid configurations:
+# (Dec 1-3, 2021) at two regular lat-lon resolutions:
 #
 #   - era5_ll72x37_dec2021_f32   (5° lat-lon, F32)
 #   - era5_ll144x73_dec2021_f32  (2.5° lat-lon, F32)
-#   - era5_cs_c24_dec2021_f32    (cubed-sphere C24, F32)
-#   - era5_cs_c90_dec2021_f32    (cubed-sphere C90, F32)
+#
+# Cubed-sphere bundles are deferred until the F32 spectral-CS
+# preprocessing path is fixed — see docs/src/getting_started/quickstart.md
+# for context.
 #
 # Pairs with config/runs/quickstart/*.toml — see
 # docs/src/getting_started/quickstart.md for the runnable walkthrough.
@@ -81,8 +83,6 @@ tar --extract --gzip --file="$TARBALL_PATH" --directory="$DEST_DIR"
 expected_subdirs=(
     "met/era5_ll72x37_dec2021_f32"
     "met/era5_ll144x73_dec2021_f32"
-    "met/era5_cs_c24_dec2021_f32"
-    "met/era5_cs_c90_dec2021_f32"
 )
 for sub in "${expected_subdirs[@]}"; do
     [[ -d "$DEST_DIR/$sub" ]] || err "Expected directory missing after extraction: $DEST_DIR/$sub"
@@ -93,5 +93,3 @@ note ""
 note "Next: run one of"
 note "  julia --project=. scripts/run_transport.jl config/runs/quickstart/ll72x37_advonly.toml"
 note "  julia --project=. scripts/run_transport.jl config/runs/quickstart/ll144x73_advonly.toml"
-note "  julia --project=. scripts/run_transport.jl config/runs/quickstart/cs_c24_advonly.toml"
-note "  julia --project=. scripts/run_transport.jl config/runs/quickstart/cs_c90_advonly.toml"

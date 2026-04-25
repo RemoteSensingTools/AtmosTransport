@@ -205,7 +205,9 @@ function process_day(date::Date,
         steps_per_window = steps_per_met,
         mass_basis = mass_basis,
         include_flux_delta = true,
-        panel_convention = panel_convention,
+        include_cmfmc      = settings.include_convection,
+        include_dtrain     = settings.include_convection,
+        panel_convention   = panel_convention,
     )
 
     try
@@ -284,9 +286,21 @@ function process_day(date::Date,
             m_target = ntuple(p -> copy(m_next_pf[p]), npanel)
             convert_cs_mass_target_to_delta!(m_target, m_cur)
 
-            window_nt = (m  = m_cur,    am = am_v4, bm = bm_v4,
-                         cm = cm_v4,    ps = ps_cur,
-                         dm = m_target)
+            # Convection forcing flows through the same window NamedTuple the
+            # writer already understands (`:cmfmc` / `:dtrain` keys); the
+            # writer no-ops them when the corresponding `include_*` flag is
+            # off. Source-side units stay as GMAO archived them (kg / m² / s).
+            window_nt = if settings.include_convection
+                (m   = m_cur,     am = am_v4, bm = bm_v4,
+                 cm  = cm_v4,     ps = ps_cur,
+                 dm  = m_target,
+                 cmfmc  = raw.cmfmc,
+                 dtrain = raw.dtrain)
+            else
+                (m  = m_cur,    am = am_v4, bm = bm_v4,
+                 cm = cm_v4,    ps = ps_cur,
+                 dm = m_target)
+            end
             write_streaming_cs_window!(writer, window_nt, Nc, npanel)
 
             # 8. Chain: next window's m_cur is this window's m_next_pf, and

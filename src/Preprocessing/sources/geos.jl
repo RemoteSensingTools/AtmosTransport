@@ -317,13 +317,14 @@ windows_per_day(::GEOSSettings, ::Date) = 24
 _native_output_filename(::AbstractGEOSSettings, date::Date, FT::Type) =
     "geos_transport_$(Dates.format(date, "yyyymmdd"))_$(FT === Float32 ? "float32" : "float64").bin"
 
-# `has_convection` reports the capability that downstream code can rely on,
-# not the user's intent. Until Commit 8 populates `cmfmc` / `dtrain` in
-# `read_window!`, this returns `false` regardless of `include_convection` so
-# capability-driven dispatch (e.g. CMFMC operator wiring) does not silently
-# expect data the reader does not provide. The `include_convection` settings
-# field is preserved as a forward-looking flag for the Commit-8 wiring.
-has_convection(::GEOSSettings) = false
+# `has_convection` reports the capability that downstream code can rely on.
+# When `settings.include_convection` is `true`, the reader populates
+# `RawWindow.cmfmc` (from A3mstE) and `RawWindow.dtrain` (from A3dyn) per
+# the 3-hourly hold-constant binding (window 1–3 → t=1, 4–6 → t=2, …);
+# the orchestrator threads them into the v4 binary's `:cmfmc` / `:dtrain`
+# payload sections, and the runtime `CMFMCConvection` operator consumes
+# them via `ConvectionForcing` (GCHP RAS / Grell-Freitas, dry-basis).
+has_convection(s::GEOSSettings) = s.include_convection
 
 # ---------------------------------------------------------------------------
 # Canonical AbstractMetSettings interface implementations.
@@ -359,23 +360,30 @@ end
 
 Pre-allocate a per-window workspace for the GEOS reader: 6 zero-filled
 panel arrays each for `m`, `m_next`, `qv`, `qv_next`, `am`, `bm` (shape
-`(Nc, Nc, Nz)`) and `ps`, `ps_next` (shape `(Nc, Nc)`). `u`, `v`,
-`cmfmc`, `dtrain` stay `nothing` until they are wired in by Section C
-(convection) and Section D (cross-topology).
+`(Nc, Nc, Nz)`) and `ps`, `ps_next` (shape `(Nc, Nc)`).
+
+When `settings.include_convection`, also allocates `cmfmc` (interfaces,
+shape `(Nc, Nc, Nz + 1)` per panel) and `dtrain` (centers, shape
+`(Nc, Nc, Nz)` per panel). Cross-topology winds (`u`, `v`) stay
+`nothing` here — they are produced by the orchestrator only when the
+target grid differs from the source.
 """
 function allocate_raw_window(settings::GEOSSettings; FT::Type{<:AbstractFloat}, Nz::Int)
     Nc = settings.Nc
-    panels_3d() = ntuple(_ -> zeros(FT, Nc, Nc, Nz),    6)
-    panels_2d() = ntuple(_ -> zeros(FT, Nc, Nc),        6)
+    panels_3d() = ntuple(_ -> zeros(FT, Nc, Nc, Nz),     6)
+    panels_3d_iface() = ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), 6)
+    panels_2d() = ntuple(_ -> zeros(FT, Nc, Nc),         6)
     m       = panels_3d(); ps      = panels_2d(); qv      = panels_3d()
     m_next  = panels_3d(); ps_next = panels_2d(); qv_next = panels_3d()
     am      = panels_3d(); bm      = panels_3d()
+    cmfmc   = settings.include_convection ? panels_3d_iface() : nothing
+    dtrain  = settings.include_convection ? panels_3d()       : nothing
     return RawWindow{FT, typeof(ps), typeof(m)}(
         m,       ps,      qv,
         m_next,  ps_next, qv_next,
         am,      bm,
         nothing, nothing,
-        nothing, nothing,
+        cmfmc,   dtrain,
     )
 end
 
@@ -433,7 +441,103 @@ function read_window!(raw::RawWindow{FT}, settings::GEOSSettings,
         _scale_flux!(raw.bm[p], mfyc_raw[p], inv_dt)
     end
 
+    # ---- Optional convection forcing (GCHP RAS / Grell-Freitas inputs) ----
+    if settings.include_convection
+        _read_geos_convection_window!(raw, handles, win_idx, or)
+    end
+
     return raw
+end
+
+# ---------------------------------------------------------------------------
+# Convection: 3-hourly hold-constant binding from the per-day A3 datasets.
+#
+# A3 collections are time-averaged 3-hourly (8 time records per day,
+# centered at 01:30, 04:30, …, 22:30). We bind every hourly preprocessing
+# window to the A3 record that covers it: windows 1–3 → A3 idx 1, windows
+# 4–6 → idx 2, …, windows 22–24 → idx 8. Result: cmfmc / dtrain are the
+# same across the 3-hour block; the dry-basis correction applied below
+# uses the per-window window-mean qv (average of t_n and t_{n+1}), so
+# the dry forcing varies hourly even though the underlying moist flux
+# is held constant across the 3-hour block.
+#
+# Why dry-basis correction matters: GMAO archives CMFMC and DTRAIN as
+# moist-air mass fluxes (kg moist air / m² / s), but the v4 binary
+# carries `mass_basis = :dry` and the runtime tracer state's
+# `air_mass` is dry. The convection operator transports
+# tracers proportional to `f / m × dt`, so f must be on the same basis
+# as m. We multiply by `(1 − qv_face)` here so the consumer sees a
+# dry-air mass flux throughout the chain.
+# ---------------------------------------------------------------------------
+
+@inline _a3_index_for_window(win::Int) = (win - 1) ÷ 3 + 1
+
+function _read_geos_convection_window!(raw::RawWindow{FT},
+                                       handles::GEOSDayHandles,
+                                       win_idx::Int,
+                                       orientation::Symbol) where {FT}
+    handles.a3mste === nothing &&
+        error("settings.include_convection=true but A3mstE handle is missing; " *
+              "did you call `open_day(...; next_day_handle=true)` on a settings " *
+              "with `include_convection=true`?")
+    handles.a3dyn === nothing &&
+        error("settings.include_convection=true but A3dyn handle is missing; " *
+              "ensure the A3dyn collection is on disk for this date")
+    @assert raw.cmfmc  !== nothing "RawWindow.cmfmc must be allocated when convection is enabled"
+    @assert raw.dtrain !== nothing "RawWindow.dtrain must be allocated when convection is enabled"
+
+    a3_idx = _a3_index_for_window(win_idx)
+    cmfmc_raw  = _read_panels_3d(handles.a3mste, "CMFMC",  a3_idx, orientation; FT=FT)
+    dtrain_raw = _read_panels_3d(handles.a3dyn,  "DTRAIN", a3_idx, orientation; FT=FT)
+    for p in 1:6
+        copyto!(raw.cmfmc[p],  cmfmc_raw[p])
+        copyto!(raw.dtrain[p], dtrain_raw[p])
+    end
+    _moist_to_dry_dtrain!(raw.dtrain, raw.qv, raw.qv_next)
+    _moist_to_dry_cmfmc!(raw.cmfmc,  raw.qv, raw.qv_next)
+    return raw
+end
+
+# DTRAIN at centers: face index k → center k. Dry factor is the
+# window-mean of (1 − qv) at the same cell.
+function _moist_to_dry_dtrain!(dtrain::NTuple{6, Array{FT,3}},
+                               qv::NTuple{6, Array{FT,3}},
+                               qv_next::NTuple{6, Array{FT,3}}) where {FT}
+    @inbounds for p in 1:6
+        d = dtrain[p]; q1 = qv[p]; q2 = qv_next[p]
+        Nc1, Nc2, Nz = size(d)
+        for k in 1:Nz, j in 1:Nc2, i in 1:Nc1
+            qv_avg = (q1[i, j, k] + q2[i, j, k]) * FT(0.5)
+            d[i, j, k] *= (one(FT) - qv_avg)
+        end
+    end
+    return dtrain
+end
+
+# CMFMC at interfaces (Nz+1): face k sits between centers k−1 (above)
+# and k (below) under TOA-first orientation. Use the four-corner mean
+# (two centers × two endpoints) for interior faces; collapse to the
+# single adjacent center at the model top (k=1) and surface (k=Nz+1).
+function _moist_to_dry_cmfmc!(cmfmc::NTuple{6, Array{FT,3}},
+                              qv::NTuple{6, Array{FT,3}},
+                              qv_next::NTuple{6, Array{FT,3}}) where {FT}
+    @inbounds for p in 1:6
+        c = cmfmc[p]; q1 = qv[p]; q2 = qv_next[p]
+        Nc1, Nc2, Nz1 = size(c)
+        Nz = Nz1 - 1
+        for k in 1:Nz1, j in 1:Nc2, i in 1:Nc1
+            qv_face = if k == 1
+                (q1[i, j, 1] + q2[i, j, 1]) * FT(0.5)
+            elseif k == Nz1
+                (q1[i, j, Nz] + q2[i, j, Nz]) * FT(0.5)
+            else
+                (q1[i, j, k-1] + q1[i, j, k] +
+                 q2[i, j, k-1] + q2[i, j, k]) * FT(0.25)
+            end
+            c[i, j, k] *= (one(FT) - qv_face)
+        end
+    end
+    return cmfmc
 end
 
 # Per-window 2D variable handle by name (NCDataset[name]).

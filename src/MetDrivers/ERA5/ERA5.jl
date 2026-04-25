@@ -15,6 +15,7 @@ using ...State: MetState,
     MoistStructuredFluxState, DryStructuredFluxState
 using ...Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, HybridSigmaPressure,
     n_levels, pressure_at_interface, level_thickness, b_diff, cell_areas_by_latitude
+using ...Architectures: _kahan_add
 
 include("BinaryReader.jl")
 include("NativeGRIBGeometry.jl")

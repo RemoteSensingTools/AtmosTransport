@@ -29,6 +29,21 @@ end
     @test_throws ArgumentError Arch.assert_backend_float_type!(metal, Float64)
 end
 
+@testset "runtime kernels avoid hard Float64 accumulation" begin
+    repo = normpath(joinpath(@__DIR__, ".."))
+    files = [
+        "src/Operators/Advection/VerticalRemap.jl",
+        "src/Kernels/ColumnKernels.jl",
+        "src/MetDrivers/ERA5/VerticalClosure.jl",
+        "src/Operators/Convection/cmfmc_kernels.jl",
+    ]
+    forbidden = r"Float64\(|zero\(Float64\)|::Float64"
+    for file in files
+        src = read(joinpath(repo, file), String)
+        @test !occursin(forbidden, src)
+    end
+end
+
 @testset "DrivenRunner CPU backend helpers" begin
     cfg = Dict("architecture" => Dict("backend" => "cpu"),
                "numerics" => Dict("float_type" => "Float64"))

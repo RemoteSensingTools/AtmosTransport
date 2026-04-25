@@ -20,14 +20,17 @@ independently as a column kernel pattern.
     FT = eltype(cm)
     @inbounds begin
         pit = zero(FT)
+        pit_comp = zero(FT)
         for k in 1:Nz
-            pit += am[i, j, k] - am[i+1, j, k] + bm[i, j, k] - bm[i, j+1, k]
+            conv_k = am[i, j, k] - am[i+1, j, k] + bm[i, j, k] - bm[i, j+1, k]
+            pit, pit_comp = _kahan_add(pit, pit_comp, conv_k)
         end
         acc = zero(FT)
+        acc_comp = zero(FT)
         cm[i, j, 1] = acc
         for k in 1:Nz
             conv_k = am[i, j, k] - am[i+1, j, k] + bm[i, j, k] - bm[i, j+1, k]
-            acc += conv_k - bt[k] * pit
+            acc, acc_comp = _kahan_add(acc, acc_comp, conv_k - bt[k] * pit)
             cm[i, j, k+1] = acc
         end
     end

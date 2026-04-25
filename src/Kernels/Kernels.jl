@@ -13,6 +13,8 @@ naturally to both structured and unstructured grid execution patterns.
 """
 module Kernels
 
+using ..Architectures: _kahan_add
+
 include("CellKernels.jl")
 include("FaceKernels.jl")
 include("ColumnKernels.jl")

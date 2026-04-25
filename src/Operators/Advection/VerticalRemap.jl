@@ -164,8 +164,8 @@ Phase ordering matches FV3 exactly:
         ii = Hp + i
         jj = Hp + j
         FT = eltype(q_al)
-        a = area[i, j]
-        g = g_val
+        a = FT(area[i, j])
+        g = FT(g_val)
         zft = zero(FT)
 
         # ================================================================
@@ -472,8 +472,8 @@ where pl, pr are normalized coordinates within the source layer.
         ii = Hp + i
         jj = Hp + j
         FT = eltype(rm)
-        a = area[i, j]
-        g = g_val
+        a = FT(area[i, j])
+        g = FT(g_val)
 
         # Bottom source layer mixing ratio for extrapolation when target
         # extends below source (PS_tgt > PS_src between windows).
@@ -482,16 +482,15 @@ where pl, pr are normalized coordinates within the source layer.
             rm_src[ii, jj, Nz] / m_bot : zero(FT)
 
         # Source state: track current source layer index and running PE edges.
-        # Use Float64 for PE accumulation to avoid precision loss on thin layers.
-        # With Float32, eps(~100000 Pa) ≈ 0.004 Pa, but TOA layers can be < 0.01 Pa.
+        # Keep arithmetic in FT so GPU backends without Float64 stay portable;
+        # compensated sums reduce column-wise Float32 roundoff.
         ks = 1
-        pe_s_lo = Float64(pe_tgt[i, j, 1])  # TOA = ptop
-        dp_s_k64 = Float64(m_src[ii, jj, 1]) * Float64(g) / Float64(a)
-        pe_s_hi = pe_s_lo + dp_s_k64
+        pe_s_lo = FT(pe_tgt[i, j, 1])  # TOA = ptop
+        pe_s_comp = zero(FT)
 
         for kt in 1:Nz
-            pe_t_lo = Float64(pe_tgt[i, j, kt])
-            pe_t_hi = Float64(pe_tgt[i, j, kt + 1])
+            pe_t_lo = FT(pe_tgt[i, j, kt])
+            pe_t_hi = FT(pe_tgt[i, j, kt + 1])
             dp_t = dp_tgt[i, j, kt]
 
             if dp_t <= zero(FT)
@@ -500,11 +499,11 @@ where pl, pr are normalized coordinates within the source layer.
             end
 
             rm_accum = zero(FT)
+            rm_comp = zero(FT)
 
             while pe_s_lo < pe_t_hi && ks <= Nz
-                dp_s_k64 = Float64(m_src[ii, jj, ks]) * Float64(g) / Float64(a)
-                dp_s_k = FT(dp_s_k64)
-                pe_s_hi = pe_s_lo + dp_s_k64
+                dp_s_k = m_src[ii, jj, ks] * g / a
+                pe_s_hi, pe_s_hi_comp = _kahan_add(pe_s_lo, pe_s_comp, dp_s_k)
                 q_k = dp_s_k > FT(100) * eps(FT) ?
                     rm_src[ii, jj, ks] / m_src[ii, jj, ks] : zero(FT)
 
@@ -517,7 +516,7 @@ where pl, pr are normalized coordinates within the source layer.
                     # Check if this source layer is entirely contained in target
                     if pe_s_lo >= pe_t_lo && pe_s_hi <= pe_t_hi
                         # Whole source layer → use cell mean directly (avoids rounding)
-                        rm_accum += q_k * dp_s_k
+                        rm_accum, rm_comp = _kahan_add(rm_accum, rm_comp, q_k * dp_s_k)
                     else
                         # Partial overlap → PPM integral
                         al = q_al[i, j, ks]
@@ -525,18 +524,19 @@ where pl, pr are normalized coordinates within the source layer.
                         a6 = q_a6[i, j, ks]
 
                         # Normalized coordinates within source layer [0,1]
-                        pl = FT((p_lo - pe_s_lo) / dp_s_k64)
-                        pr = FT((p_hi - pe_s_lo) / dp_s_k64)
+                        pl = (p_lo - pe_s_lo) / dp_s_k
+                        pr = (p_hi - pe_s_lo) / dp_s_k
 
                         # PPM integral average: map1_q2 general formula
                         q_avg = al + FT(0.5) * (pl + pr) * (ar - al + a6) -
                                 a6 / FT(3) * (pr * pr + pr * pl + pl * pl)
-                        rm_accum += q_avg * dp_overlap
+                        rm_accum, rm_comp = _kahan_add(rm_accum, rm_comp, q_avg * dp_overlap)
                     end
                 end
 
                 if pe_s_hi <= pe_t_hi
                     pe_s_lo = pe_s_hi
+                    pe_s_comp = pe_s_hi_comp
                     ks += 1
                 else
                     break
@@ -546,9 +546,9 @@ where pl, pr are normalized coordinates within the source layer.
             # Extrapolate when target extends below source column
             # (PS_tgt > PS_src between windows). Fill with bottom q.
             if ks > Nz && pe_s_lo < pe_t_hi
-                dp_extra = FT(pe_t_hi - max(pe_t_lo, pe_s_lo))
+                dp_extra = pe_t_hi - max(pe_t_lo, pe_s_lo)
                 if dp_extra > zero(FT)
-                    rm_accum += q_bot * dp_extra
+                    rm_accum, rm_comp = _kahan_add(rm_accum, rm_comp, q_bot * dp_extra)
                 end
             end
 
@@ -583,8 +583,8 @@ q = rm/m still uses actual mass (correct mixing ratio).
         ii = Hp + i
         jj = Hp + j
         FT = eltype(rm)
-        a = area[i, j]
-        g = g_val
+        a = FT(area[i, j])
+        g = FT(g_val)
 
         # Bottom source layer mixing ratio for extrapolation when target
         # extends below source (PS_tgt > PS_src between windows).
@@ -595,11 +595,11 @@ q = rm/m still uses actual mass (correct mixing ratio).
             rm_src[ii, jj, Nz] / m_bot : zero(FT)
 
         ks = 1
-        pe_s_lo = Float64(pe_src[i, j, 1])
+        pe_s_lo = FT(pe_src[i, j, 1])
 
         for kt in 1:Nz
-            pe_t_lo = Float64(pe_tgt[i, j, kt])
-            pe_t_hi = Float64(pe_tgt[i, j, kt + 1])
+            pe_t_lo = FT(pe_tgt[i, j, kt])
+            pe_t_hi = FT(pe_tgt[i, j, kt + 1])
             dp_t = dp_tgt[i, j, kt]
 
             if dp_t <= zero(FT)
@@ -608,11 +608,11 @@ q = rm/m still uses actual mass (correct mixing ratio).
             end
 
             rm_accum = zero(FT)
+            rm_comp = zero(FT)
 
             while pe_s_lo < pe_t_hi && ks <= Nz
-                pe_s_hi = Float64(pe_src[i, j, ks + 1])
-                dp_s_k64 = pe_s_hi - Float64(pe_src[i, j, ks])
-                dp_s_k = FT(dp_s_k64)
+                pe_s_hi = FT(pe_src[i, j, ks + 1])
+                dp_s_k = pe_s_hi - pe_s_lo
                 mk = m_src[ii, jj, ks]
                 q_k = mk > FT(100) * eps(FT) ?
                     rm_src[ii, jj, ks] / mk : zero(FT)
@@ -621,21 +621,21 @@ q = rm/m still uses actual mass (correct mixing ratio).
                 p_hi = min(pe_t_hi, pe_s_hi)
 
                 if p_hi > p_lo && dp_s_k > FT(100) * eps(FT)
-                    dp_overlap = FT(p_hi - p_lo)
+                    dp_overlap = p_hi - p_lo
 
                     if pe_s_lo >= pe_t_lo && pe_s_hi <= pe_t_hi
-                        rm_accum += q_k * dp_s_k
+                        rm_accum, rm_comp = _kahan_add(rm_accum, rm_comp, q_k * dp_s_k)
                     else
                         al = q_al[i, j, ks]
                         ar = q_ar[i, j, ks]
                         a6 = q_a6[i, j, ks]
 
-                        pl = FT((p_lo - pe_s_lo) / dp_s_k64)
-                        pr = FT((p_hi - pe_s_lo) / dp_s_k64)
+                        pl = (p_lo - pe_s_lo) / dp_s_k
+                        pr = (p_hi - pe_s_lo) / dp_s_k
 
                         q_avg = al + FT(0.5) * (pl + pr) * (ar - al + a6) -
                                 a6 / FT(3) * (pr * pr + pr * pl + pl * pl)
-                        rm_accum += q_avg * dp_overlap
+                        rm_accum, rm_comp = _kahan_add(rm_accum, rm_comp, q_avg * dp_overlap)
                     end
                 end
 
@@ -650,9 +650,9 @@ q = rm/m still uses actual mass (correct mixing ratio).
             # Extrapolate when target extends below source column
             # (PS_tgt > PS_src). Fill with bottom source layer's q.
             if ks > Nz && pe_s_lo < pe_t_hi
-                dp_extra = FT(pe_t_hi - max(pe_t_lo, pe_s_lo))
+                dp_extra = pe_t_hi - max(pe_t_lo, pe_s_lo)
                 if dp_extra > zero(FT)
-                    rm_accum += q_bot * dp_extra
+                    rm_accum, rm_comp = _kahan_add(rm_accum, rm_comp, q_bot * dp_extra)
                 end
             end
 
@@ -805,11 +805,12 @@ end
         ii = Hp + i
         jj = Hp + j
         FT = eltype(ps_tgt)
-        s = zero(FT)
+        s = FT(ptop)
+        c = zero(FT)
         for k in 1:Nz
-            s += delp[ii, jj, k]
+            s, c = _kahan_add(s, c, delp[ii, jj, k])
         end
-        ps_tgt[i, j] = s + ptop
+        ps_tgt[i, j] = s
     end
 end
 
@@ -820,13 +821,14 @@ end
         ii = Hp + i
         jj = Hp + j
         FT = eltype(ps_tgt)
-        a = area[i, j]
-        g = g_val
-        s = zero(FT)
+        a = FT(area[i, j])
+        g = FT(g_val)
+        s = FT(ptop)
+        c = zero(FT)
         for k in 1:Nz
-            s += m[ii, jj, k] * g / a
+            s, c = _kahan_add(s, c, m[ii, jj, k] * g / a)
         end
-        ps_tgt[i, j] = s + ptop
+        ps_tgt[i, j] = s
     end
 end
 
@@ -849,7 +851,8 @@ end
     @inbounds begin
         ii = Hp + i
         jj = Hp + j
-        m[ii, jj, k] = dp_tgt[i, j, k] * area[i, j] / g_val
+        FT = eltype(m)
+        m[ii, jj, k] = dp_tgt[i, j, k] * FT(area[i, j]) / FT(g_val)
     end
 end
 
@@ -1045,9 +1048,11 @@ end
         # Step 1: Compute dry surface pressure
         # PS_dry = ptop + sum(delp * (1 - qv))
         # sum(delp*(1-qv)) is column thickness; add ptop for full surface pressure
-        ps_dry = ptop
+        ps_dry = FT(ptop)
+        comp = zero(FT)
         for k in 1:Nz
-            ps_dry += delp[ii, jj, k] * (FT(1) - qv[ii, jj, k])
+            ps_dry, comp = _kahan_add(ps_dry, comp,
+                                       delp[ii, jj, k] * (one(FT) - qv[ii, jj, k]))
         end
 
         # Step 2: Rebuild PE from hybrid coordinates: PE[k] = ak[k] + bk[k] * PS_dry
@@ -1075,8 +1080,9 @@ Compute pressure edges using the pure GCHP algorithm:
 3. PS_dry = ptop + sum(DELP_hybrid[k] × (1 - QV[k]))  (dry surface pressure)
 4. PE[k] = ak[k] + bk[k] × PS_dry  (smooth hybrid PE)
 
-All intermediate computation in Float64 for precision. This ensures PE is
-exactly on the hybrid grid with no per-level Float32 noise from DELP accumulation.
+Intermediate column sums use compensated FT arithmetic so GPU backends that
+do not support Float64 kernels stay portable while limiting Float32 roundoff.
+This keeps PE on the hybrid grid with no avoidable per-level accumulation noise.
 Pure-pressure levels (bk=0) get PE=ak exactly.
 
 Reference: GCHP `GCHPctmEnv_GridCompMod.F90:calculate_ple` with SPHU argument.
@@ -1191,7 +1197,7 @@ end
         ii = Hp + i; jj = Hp + j
         FT = eltype(pe_src)
         g = FT(g_val)
-        a = area[i, j]
+        a = FT(area[i, j])
 
         pe_acc = FT(ptop)
         comp = zero(FT)
@@ -1297,7 +1303,7 @@ end
         ii = Hp + i
         jj = Hp + j
         FT = eltype(pe_tgt)
-        a = area[i, j]
+        a = FT(area[i, j])
         g = FT(g_val)
         pe_acc = FT(ptop)
         comp = zero(FT)
@@ -1403,7 +1409,7 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    calc_scaling_factor(rm_panels, m_save_panels, ws_vr, cell_areas, gravity, Nc, Hp, Nz) → Float64
+    calc_scaling_factor(rm_panels, m_save_panels, ws_vr, cell_areas, gravity, Nc, Hp, Nz)
 
 Compute the GCHP-style global scaling factor for post-remap mass correction.
 
@@ -1415,7 +1421,8 @@ Applied after `vertical_remap_cs!` when using hybrid PE target computation.
 """
 function calc_scaling_factor(rm_panels::NTuple{6}, m_save_panels::NTuple{6},
                               ws_vr::VerticalRemapWorkspace, cell_areas, gravity, Nc::Int, Hp::Int, Nz::Int)
-    g = Float64(gravity)
+    FT = eltype(rm_panels[1])
+    g = FT(gravity)
 
     # Numerator: total tracer mass on source pressure grid (pre-remap DELP basis)
     # = Σ q × dp_source × area / g = Σ rm  (since rm = q × m = q × dp × area / g)
@@ -1430,27 +1437,29 @@ function calc_scaling_factor(rm_panels::NTuple{6}, m_save_panels::NTuple{6},
     #
     # So: scaling = Σ rm / Σ (rm/m_save × dp_tgt × area / g)
 
-    sum_num = 0.0   # Σ rm  (total tracer mass)
-    sum_den = 0.0   # Σ (rm / m_save) × (dp_tgt × area / g)
+    sum_num = zero(FT)  # Σ rm  (total tracer mass)
+    sum_den = zero(FT)  # Σ (rm / m_save) × (dp_tgt × area / g)
+    comp_num = zero(FT)
+    comp_den = zero(FT)
 
     for p in 1:6
         area = cell_areas
         for k in 1:Nz, j in 1:Nc, i in 1:Nc
             ii, jj = Hp + i, Hp + j
-            rm_val = Float64(rm_panels[p][ii, jj, k])
-            m_val = Float64(m_save_panels[p][ii, jj, k])
-            dp_tgt = Float64(ws_vr.dp_tgt[p][i, j, k])
-            a = Float64(area[i, j])
+            rm_val = FT(rm_panels[p][ii, jj, k])
+            m_val = FT(m_save_panels[p][ii, jj, k])
+            dp_tgt = FT(ws_vr.dp_tgt[p][i, j, k])
+            a = FT(area[i, j])
 
-            sum_num += rm_val
-            if m_val > 0
+            sum_num, comp_num = _kahan_add(sum_num, comp_num, rm_val)
+            if m_val > zero(FT)
                 q = rm_val / m_val
-                sum_den += q * dp_tgt * a / g
+                sum_den, comp_den = _kahan_add(sum_den, comp_den, q * dp_tgt * a / g)
             end
         end
     end
 
-    return sum_den > 0 ? sum_num / sum_den : 1.0
+    return sum_den > zero(FT) ? sum_num / sum_den : one(FT)
 end
 
 """
@@ -1458,7 +1467,7 @@ end
 
 Apply global scaling factor to remapped tracer mass: `rm *= scaling`.
 """
-function apply_scaling_factor!(rm_panels::NTuple{6}, scaling::Float64)
+function apply_scaling_factor!(rm_panels::NTuple{6}, scaling::Real)
     FT = eltype(rm_panels[1])
     s = FT(scaling)
     for p in 1:6
@@ -1581,16 +1590,18 @@ function _fillz_panel!(rm::Array{FT,3}, dp::Array{FT2,3},
 
         # 4. Non-local fix: scale all positive values to conserve column mass
         if zfix
-            sum0 = zero(Float64)   # total mass (can be + or -)
-            sum1 = zero(Float64)   # sum of positive mass only
+            sum0 = zero(FT)   # total mass (can be + or -)
+            sum1 = zero(FT)   # sum of positive mass only
+            comp0 = zero(FT)
+            comp1 = zero(FT)
             for k in 2:Nz
-                dm_k = Float64(rm[ii, jj, k])
-                sum0 += dm_k
-                if dm_k > 0
-                    sum1 += dm_k
+                dm_k = rm[ii, jj, k]
+                sum0, comp0 = _kahan_add(sum0, comp0, dm_k)
+                if dm_k > zero(FT)
+                    sum1, comp1 = _kahan_add(sum1, comp1, dm_k)
                 end
             end
-            if sum0 > 0 && sum1 > 0
+            if sum0 > zero(FT) && sum1 > zero(FT)
                 fac = FT(sum0 / sum1)
                 for k in 2:Nz
                     rm[ii, jj, k] = max(zero(FT), fac * rm[ii, jj, k])
@@ -1604,7 +1615,7 @@ function _fillz_panel!(rm::Array{FT,3}, dp::Array{FT2,3},
 end
 
 """
-    gchp_calc_scaling_factor(rm_panels, dp_tgt, delp_next, cell_areas, gravity, Nc, Hp, Nz) → Float64
+    gchp_calc_scaling_factor(rm_panels, dp_tgt, delp_next, cell_areas, gravity, Nc, Hp, Nz)
 
 GCHP's calcScalingFactor (fv_tracer2d.F90:1142-1186).
 Computes the ratio of tracer mass on the hybrid remap grid to tracer mass
@@ -1631,8 +1642,11 @@ function gchp_calc_scaling_factor(rm_panels::NTuple{6}, dp_tgt_panels,
     # If qv_panels provided: dp_met = delp_next × (1-qv) (dry comparison).
     # If qv_panels=nothing: dp_met = delp_next as-is (moist comparison).
 
-    sum_num = 0.0   # Σ rm
-    sum_den = 0.0   # Σ (rm × dp_met_dry / dp_tgt)
+    FT = eltype(rm_panels[1])
+    sum_num = zero(FT)  # Σ rm
+    sum_den = zero(FT)  # Σ (rm × dp_met_dry / dp_tgt)
+    comp_num = zero(FT)
+    comp_den = zero(FT)
 
     for p in 1:6
         rm_cpu    = Array(rm_panels[p])
@@ -1642,21 +1656,21 @@ function gchp_calc_scaling_factor(rm_panels::NTuple{6}, dp_tgt_panels,
 
         @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
             ii, jj = Hp + i, Hp + j
-            rm_val  = Float64(rm_cpu[ii, jj, k])
-            dp_t    = Float64(dp_t_cpu[i, j, k])
-            dp_met  = Float64(delp_cpu[ii, jj, k])
+            rm_val  = FT(rm_cpu[ii, jj, k])
+            dp_t    = FT(dp_t_cpu[i, j, k])
+            dp_met  = FT(delp_cpu[ii, jj, k])
             if qv_cpu !== nothing
-                dp_met *= (1.0 - Float64(qv_cpu[ii, jj, k]))
+                dp_met *= (one(FT) - FT(qv_cpu[ii, jj, k]))
             end
 
-            sum_num += rm_val
-            if abs(dp_t) > 1e-30
-                sum_den += rm_val * dp_met / dp_t
+            sum_num, comp_num = _kahan_add(sum_num, comp_num, rm_val)
+            if abs(dp_t) > FT(1e-30)
+                sum_den, comp_den = _kahan_add(sum_den, comp_den, rm_val * dp_met / dp_t)
             end
         end
     end
 
-    return sum_den > 0 ? sum_num / sum_den : 1.0
+    return sum_den > zero(FT) ? sum_num / sum_den : one(FT)
 end
 
 # ---------------------------------------------------------------------------
@@ -1695,8 +1709,8 @@ end
         ii = Hp + i
         jj = Hp + j
         FT = eltype(pe_tgt)
-        a = Float64(area[i, j])
-        g = Float64(g_val)
+        a = FT(area[i, j])
+        g = FT(g_val)
 
         # Find last pure-pressure level: bk[k] ≈ 0 && bk[k+1] ≈ 0.
         # Use threshold to handle near-zero bk (e.g. 8e-9 at GEOS-IT k=42).
@@ -1713,44 +1727,48 @@ end
         end
 
         # Source total dry pressure and pure-pressure subtotal
-        ps_src64 = Float64(ptop)
-        pe_fixed_src = Float64(ptop)
+        ps_src = FT(ptop)
+        ps_src_comp = zero(FT)
+        pe_fixed_src = FT(ptop)
+        pe_fixed_comp = zero(FT)
         for k in 1:Nz
-            dp_src_k = Float64(m_src[ii, jj, k]) * g / a
-            ps_src64 += dp_src_k
+            dp_src_k = m_src[ii, jj, k] * g / a
+            ps_src, ps_src_comp = _kahan_add(ps_src, ps_src_comp, dp_src_k)
             if k <= n_fixed
-                pe_fixed_src += dp_src_k
+                pe_fixed_src, pe_fixed_comp = _kahan_add(pe_fixed_src, pe_fixed_comp, dp_src_k)
             end
         end
 
         # Target hybrid subtotal (before fix)
-        pe_hybrid_raw = 0.0
+        pe_hybrid_raw = zero(FT)
+        pe_hybrid_comp = zero(FT)
         for k in n_fixed + 1:Nz
-            pe_hybrid_raw += Float64(dp_tgt[i, j, k])
+            pe_hybrid_raw, pe_hybrid_comp = _kahan_add(pe_hybrid_raw, pe_hybrid_comp, dp_tgt[i, j, k])
         end
 
         # Scale factor for hybrid levels only:
         # hybrid dp must sum to (ps_src - pe_fixed_src)
-        ps_hybrid_target = ps_src64 - pe_fixed_src
-        scale64 = if pe_hybrid_raw > 100.0 * Float64(eps(FT))
+        ps_hybrid_target = ps_src - pe_fixed_src
+        scale = if pe_hybrid_raw > FT(100) * eps(FT)
             ps_hybrid_target / pe_hybrid_raw
         else
-            1.0
+            one(FT)
         end
 
         # Rebuild dp_tgt and pe_tgt:
         #  - pure-pressure levels: dp from m_src (identity remap)
         #  - hybrid levels: original dp_tgt × scale
-        pe_acc = Float64(ptop)
-        pe_tgt[i, j, 1] = FT(pe_acc)
+        pe_acc = FT(ptop)
+        pe_comp = zero(FT)
+        pe_tgt[i, j, 1] = pe_acc
         for k in 1:Nz
             if k <= n_fixed
-                dp_tgt[i, j, k] = FT(Float64(m_src[ii, jj, k]) * g / a)
+                dp_tgt[i, j, k] = m_src[ii, jj, k] * g / a
             else
-                dp_tgt[i, j, k] = FT(Float64(dp_tgt[i, j, k]) * scale64)
+                dp_tgt[i, j, k] *= scale
             end
-            pe_acc += Float64(dp_tgt[i, j, k])
-            pe_tgt[i, j, k + 1] = FT(pe_acc)
+            pe_acc, pe_comp = _kahan_add(pe_acc, pe_comp, dp_tgt[i, j, k])
+            pe_tgt[i, j, k + 1] = pe_acc
         end
     end
 end

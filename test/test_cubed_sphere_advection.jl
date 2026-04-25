@@ -6,7 +6,8 @@ using Logging
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 using .AtmosTransport.Operators.Advection: fill_panel_halos!, strang_split_cs!,
-    CSAdvectionWorkspace
+    CSAdvectionWorkspace, VerticalRemapWorkspace,
+    compute_target_pressure_from_mass_direct!, vertical_remap_cs!
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -545,4 +546,43 @@ end
 
     dev = max_vmr_deviation(panels_rm, panels_m, Nc, Hp, Nz, 411.0)
     @test dev < 1f-4  # F32 has ~7 digits
+end
+
+@testset "CS vertical remap identity — Float32" begin
+    FT = Float32
+    Nc, Hp, Nz = 4, 1, 5
+    mesh = CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
+    N = Nc + 2Hp
+    gravity = FT(9.80665)
+    q = FT(3e-6)
+
+    panels_m = ntuple(_ -> zeros(FT, N, N, Nz), 6)
+    panels_rm = ntuple(_ -> zeros(FT, N, N, Nz), 6)
+    for p in 1:6, k in 1:Nz, j in 1:Nc, i in 1:Nc
+        ii, jj = Hp + i, Hp + j
+        dp = FT(1000 + 25k + i + 2j)
+        panels_m[p][ii, jj, k] = dp * mesh.cell_areas[i, j] / gravity
+        panels_rm[p][ii, jj, k] = q * panels_m[p][ii, jj, k]
+    end
+    fill_panel_halos!(panels_m, mesh; dir=0)
+    fill_panel_halos!(panels_rm, mesh; dir=0)
+
+    panels_rm0 = deepcopy(panels_rm)
+    ak = fill(FT(1), Nz + 1)
+    bk = collect(range(zero(FT), one(FT); length=Nz + 1))
+    ws = VerticalRemapWorkspace(mesh, Nz, ak, bk; FT=FT)
+
+    compute_target_pressure_from_mass_direct!(ws, panels_m, mesh.cell_areas,
+                                              gravity, Nc, Hp, Nz)
+    vertical_remap_cs!(panels_rm, panels_m, ws, similar(panels_rm[1]),
+                       mesh.cell_areas, gravity, Nc, Hp, Nz)
+
+    max_rel = zero(FT)
+    for p in 1:6, k in 1:Nz, j in 1:Nc, i in 1:Nc
+        ii, jj = Hp + i, Hp + j
+        denom = max(abs(panels_rm0[p][ii, jj, k]), eps(FT))
+        max_rel = max(max_rel, abs(panels_rm[p][ii, jj, k] -
+                                   panels_rm0[p][ii, jj, k]) / denom)
+    end
+    @test max_rel < FT(2e-5)
 end

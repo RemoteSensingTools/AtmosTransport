@@ -36,14 +36,17 @@ function diagnose_cm_from_continuity!(cm::AbstractArray{FT, 3},
                                      Nx::Int, Ny::Int, Nz::Int) where FT
     @inbounds for j in 1:Ny, i in 1:Nx
         pit = zero(FT)
+        pit_comp = zero(FT)
         for k in 1:Nz
-            pit += am[i, j, k] - am[i+1, j, k] + bm[i, j, k] - bm[i, j+1, k]
+            conv_k = am[i, j, k] - am[i+1, j, k] + bm[i, j, k] - bm[i, j+1, k]
+            pit, pit_comp = _kahan_add(pit, pit_comp, conv_k)
         end
         acc = zero(FT)
+        acc_comp = zero(FT)
         cm[i, j, 1] = acc
         for k in 1:Nz
             conv_k = am[i, j, k] - am[i+1, j, k] + bm[i, j, k] - bm[i, j+1, k]
-            acc += conv_k - Δb[k] * pit
+            acc, acc_comp = _kahan_add(acc, acc_comp, conv_k - Δb[k] * pit)
             cm[i, j, k+1] = acc
         end
     end
@@ -75,15 +78,18 @@ end
     FT = eltype(cm)
 
     pit = zero(FT)
+    pit_comp = zero(FT)
     @inbounds for k in 1:Nz_val
-        pit += am[i, j, k] - am[i+1, j, k] + bm[i, j, k] - bm[i, j+1, k]
+        conv_k = am[i, j, k] - am[i+1, j, k] + bm[i, j, k] - bm[i, j+1, k]
+        pit, pit_comp = _kahan_add(pit, pit_comp, conv_k)
     end
 
     acc = zero(FT)
+    acc_comp = zero(FT)
     @inbounds cm[i, j, 1] = acc
     @inbounds for k in 1:Nz_val
         conv_k = am[i, j, k] - am[i+1, j, k] + bm[i, j, k] - bm[i, j+1, k]
-        acc += conv_k - Δb[k] * pit
+        acc, acc_comp = _kahan_add(acc, acc_comp, conv_k - Δb[k] * pit)
         cm[i, j, k+1] = acc
     end
 end

@@ -246,7 +246,7 @@ function _cmfmc_max_cfl(cmfmc::AbstractArray{FT, 3},
         else
             m_cell = min(air_mass[i, j, k_iface - 1], air_mass[i, j, k_iface])
         end
-        bmass = m_cell / cell_areas_y[j]
+        bmass = m_cell / FT(cell_areas_y[j])
         bmass > zero(FT) || continue
         ratio = abs(cmfmc[i, j, k_iface]) * dt_ft / bmass
         worst = max(worst, ratio)
@@ -269,7 +269,7 @@ function _cmfmc_max_cfl(cmfmc::AbstractArray{FT, 2},
         else
             m_cell = min(air_mass[c, k_iface - 1], air_mass[c, k_iface])
         end
-        bmass = m_cell / cell_areas[c]
+        bmass = m_cell / FT(cell_areas[c])
         bmass > zero(FT) || continue
         ratio = abs(cmfmc[c, k_iface]) * dt_ft / bmass
         worst = max(worst, ratio)
@@ -305,7 +305,7 @@ function _cmfmc_max_cfl(cmfmc::NTuple{6, <:AbstractArray{FT, 3}},
             else
                 m_cell = min(air_panel[ii, jj, k_iface - 1], air_panel[ii, jj, k_iface])
             end
-            bmass = m_cell / area_panel[i, j]
+            bmass = m_cell / FT(area_panel[i, j])
             bmass > zero(FT) || continue
             ratio = abs(cmfmc_panel[i, j, k_iface]) * dt_ft / bmass
             worst = max(worst, ratio)
@@ -383,7 +383,7 @@ end
     tiny = FT(1e-30)
     ii = i + Hp
     jj = j + Hp
-    cell_area = cell_areas[i, j]
+    cell_area = FT(cell_areas[i, j])
 
     @inbounds for t_idx in 1:Nt
         cldbase_k = 0
@@ -405,12 +405,14 @@ end
             cmfmc_at_cldbase = cmfmc[i, j, cldbase_k + 1]
             if cmfmc_at_cldbase > tiny
                 qb_num = zero(FT)
+                qb_comp = zero(FT)
                 mb = zero(FT)
+                mb_comp = zero(FT)
                 for k in (cldbase_k + 1):Nz
                     m_k = air_mass[ii, jj, k]
                     q_k = m_k > tiny ? tracers_raw[ii, jj, k, t_idx] / m_k : zero(FT)
-                    qb_num += q_k * m_k
-                    mb += m_k
+                    qb_num, qb_comp = _kahan_add(qb_num, qb_comp, q_k * m_k)
+                    mb, mb_comp = _kahan_add(mb, mb_comp, m_k)
                 end
                 if mb > zero(FT)
                     qb = qb_num / mb
@@ -490,7 +492,7 @@ end
 
     FT = eltype(tracers_raw)
     tiny = FT(1e-30)
-    cell_area_j = cell_areas_y[j]
+    cell_area_j = FT(cell_areas_y[j])
 
     @inbounds for t_idx in 1:Nt
 
@@ -522,12 +524,13 @@ end
             if cmfmc_at_cldbase > tiny
                 # Mirror of _cmfmc_wellmix_subcloud! inlined here because
                 # we can't take views inside a KA @kernel body cleanly.
-                qb_num = zero(FT); mb = zero(FT)
+                qb_num = zero(FT); qb_comp = zero(FT)
+                mb = zero(FT); mb_comp = zero(FT)
                 for k in (cldbase_k + 1):Nz
                     m_k = air_mass[i, j, k]
                     q_k = m_k > tiny ? tracers_raw[i, j, k, t_idx] / m_k : zero(FT)
-                    qb_num += q_k * m_k
-                    mb     += m_k
+                    qb_num, qb_comp = _kahan_add(qb_num, qb_comp, q_k * m_k)
+                    mb, mb_comp = _kahan_add(mb, mb_comp, m_k)
                 end
                 if mb > zero(FT)
                     qb = qb_num / mb
@@ -617,7 +620,7 @@ end
 
     FT = eltype(tracers_raw)
     tiny = FT(1e-30)
-    cell_area = cell_areas[c]
+    cell_area = FT(cell_areas[c])
 
     @inbounds for t_idx in 1:Nt
         cldbase_k = 0
@@ -639,12 +642,14 @@ end
             cmfmc_at_cldbase = cmfmc[c, cldbase_k + 1]
             if cmfmc_at_cldbase > tiny
                 qb_num = zero(FT)
+                qb_comp = zero(FT)
                 mb = zero(FT)
+                mb_comp = zero(FT)
                 for k in (cldbase_k + 1):Nz
                     m_k = air_mass[c, k]
                     q_k = m_k > tiny ? tracers_raw[c, k, t_idx] / m_k : zero(FT)
-                    qb_num += q_k * m_k
-                    mb += m_k
+                    qb_num, qb_comp = _kahan_add(qb_num, qb_comp, q_k * m_k)
+                    mb, mb_comp = _kahan_add(mb, mb_comp, m_k)
                 end
                 if mb > zero(FT)
                     qb = qb_num / mb

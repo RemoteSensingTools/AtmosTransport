@@ -149,7 +149,7 @@ Uses `ws.src_flat_3d` and `ws.dst_flat_3d` as scratch buffers.
 """
 function regrid_3d_to_cs_panels!(panels::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
                                   regridder,
-                                  src_3d::AbstractArray{FT, 3},
+                                  src_3d::AbstractArray{<:Real, 3},
                                   ws::CubedSpherePreprocessWorkspace{FT},
                                   Nc::Int) where FT
     Nz = size(src_3d, 3)
@@ -165,7 +165,7 @@ Conservatively regrid a 2D LL field `(Nx, Ny)` to 6 CS panels `(Nc, Nc)`.
 """
 function regrid_2d_to_cs_panels!(panels::NTuple{CS_PANEL_COUNT, Matrix{FT}},
                                   regridder,
-                                  src_2d::AbstractArray{FT, 2},
+                                  src_2d::AbstractArray{<:Real, 2},
                                   ws::CubedSpherePreprocessWorkspace{FT},
                                   Nc::Int) where FT
     copyto!(ws.src_flat_2d, reshape(src_2d, size(ws.src_flat_2d)...))
@@ -192,7 +192,7 @@ function recover_ll_cell_center_winds!(u_cc::Array{FT, 3},
                                         v_cc::Array{FT, 3},
                                         am_ll::AbstractArray{FT, 3},
                                         bm_ll::AbstractArray{FT, 3},
-                                        ps_ll::AbstractArray{FT, 2},
+                                        ps_ll::AbstractArray{<:Real, 2},
                                         A_ifc::AbstractVector, B_ifc::AbstractVector,
                                         lats_deg::AbstractVector,
                                         Δy_ll::FT, Δlon_ll::FT,
@@ -316,7 +316,7 @@ The correction is applied to the regridded m BEFORE it's stored, so the
 binary's m and the balance target are consistent (no hidden projection).
 """
 function _enforce_perlevel_mass_consistency!(m_cs::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
-                                              m_ll::AbstractArray{FT, 3},
+                                              m_ll::AbstractArray{<:Real, 3},
                                               Nc::Int, Nz::Int) where FT
     nc_cs = CS_PANEL_COUNT * Nc * Nc
     for k in 1:Nz

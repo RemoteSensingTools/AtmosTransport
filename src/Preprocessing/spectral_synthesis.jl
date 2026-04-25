@@ -30,7 +30,7 @@ convention used by ECMWF spectral fields (IFS Doc Part III, Eq. 2.3).
 
 Output: `P` is `(T+1) × (T+1)`, 1-indexed, with `P[n+1, m+1] = P̃_n^m(sin φ)`.
 """
-function compute_legendre_column!(P::Matrix{Float64}, T::Int, sin_lat::Float64)
+function compute_legendre_column!(P::AbstractMatrix{<:Real}, T::Int, sin_lat::Real)
     # cos(φ) from sin(φ) avoids the tan(φ) pole singularity
     cos_lat = sqrt(1.0 - sin_lat^2)
 
@@ -157,16 +157,16 @@ shift, `field[1, j]` is at lon=0°. With `lon_shift_rad = deg2rad(-178.125)`,
 **Truncation**: only wavenumbers `m ∈ [0, min(T, Nlon/2)]` are retained to
 avoid aliasing above the Nyquist frequency.
 """
-function spectral_to_grid!(field::Matrix{Float64},
+function spectral_to_grid!(field::AbstractMatrix{<:Real},
                            spec::AbstractMatrix{ComplexF64},
                            T::Int,
-                           lats::Vector{Float64},
+                           lats::AbstractVector{<:Real},
                            Nlon::Int,
-                           P_buf::Matrix{Float64},
-                           fft_buf::Vector{ComplexF64};
-                           fft_out::Union{Nothing, Vector{ComplexF64}}=nothing,
+                           P_buf::AbstractMatrix{<:Real},
+                           fft_buf::AbstractVector{ComplexF64};
+                           fft_out::Union{Nothing, AbstractVector{ComplexF64}}=nothing,
                            bfft_plan=nothing,
-                           lon_shift_rad::Float64=0.0)
+                           lon_shift_rad::Real=0.0)
     Nfft = Nlon  # FFT length = number of longitude grid points
 
     for j in eachindex(lats)
@@ -409,17 +409,17 @@ humidity-aware mass fix are applied later once the matching hourly `q` field is
 available.
 """
 function spectral_to_native_fields!(
-    m_arr::Array{Float64, 3}, am::Array{Float64, 3}, bm::Array{Float64, 3},
-    cm::Array{Float64, 3}, sp::Matrix{Float64},
-    u_cc::Array{Float64, 3}, v_cc::Array{Float64, 3},
-    u_stag::Array{Float64, 3}, v_stag::Array{Float64, 3},
-    dp::Array{Float64, 3},
-    lnsp_spec::Matrix{ComplexF64},
-    vo_hour::Array{ComplexF64, 3}, d_hour::Array{ComplexF64, 3},
+    m_arr::AbstractArray{<:Real, 3}, am::AbstractArray{<:Real, 3}, bm::AbstractArray{<:Real, 3},
+    cm::AbstractArray{<:Real, 3}, sp::AbstractMatrix{<:Real},
+    u_cc::AbstractArray{<:Real, 3}, v_cc::AbstractArray{<:Real, 3},
+    u_stag::AbstractArray{<:Real, 3}, v_stag::AbstractArray{<:Real, 3},
+    dp::AbstractArray{<:Real, 3},
+    lnsp_spec::AbstractMatrix{ComplexF64},
+    vo_hour::AbstractArray{ComplexF64, 3}, d_hour::AbstractArray{ComplexF64, 3},
     T::Int, level_range::UnitRange{Int}, ab,
-    grid::LatLonTargetGeometry, half_dt::Float64,
-    P_buf::Matrix{Float64}, fft_buf::Vector{ComplexF64},
-    field_2d::Matrix{Float64},
+    grid::LatLonTargetGeometry, half_dt::Real,
+    P_buf::AbstractMatrix{<:Real}, fft_buf::AbstractVector{ComplexF64},
+    field_2d::AbstractMatrix{<:Real},
     P_buf_t, fft_buf_t, fft_out_t, u_spec_t, v_spec_t, field_2d_t,
     bfft_plans)
 
@@ -493,7 +493,7 @@ surface-pressure adjustment has been applied to `transform.sp`.
 function recompute_native_mass_fields!(transform,
                                        ab,
                                        grid::LatLonTargetGeometry,
-                                       half_dt::Float64)
+                                       half_dt::Real)
     Nlon = nlon(grid)
     Nlat = nlat(grid)
     Nz = size(transform.m_arr, 3)

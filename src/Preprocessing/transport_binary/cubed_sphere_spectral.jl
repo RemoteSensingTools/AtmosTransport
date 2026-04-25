@@ -40,10 +40,13 @@ function process_day(date::Date,
     bin_path = output_binary_path(date, settings.out_dir, settings.min_dp, FT)
 
     # --- Build the internal LL staging grid ---
+    # ConservativeRegridding requires source and destination manifolds to
+    # share an element type; output storage precision remains controlled by FT.
+    mesh_FT = eltype(grid.mesh)
     staging_grid = build_target_geometry(Val(:latlon),
         Dict{String,Any}("type" => "latlon",
                           "nlon" => grid.staging_nlon,
-                          "nlat" => grid.staging_nlat), FT)
+                          "nlat" => grid.staging_nlat), mesh_FT)
     Nx_stg = nlon(staging_grid)
     Ny_stg = nlat(staging_grid)
     @info @sprintf("  Staging grid: %d×%d LL → C%d CS (%d panels)",

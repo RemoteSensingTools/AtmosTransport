@@ -8,7 +8,7 @@ function next_day_merged_fields(next_day_hour0,
                                 transform::SpectralTransformWorkspace,
                                 merged::MergeWorkspace{FT},
                                 qv::AbstractQVWorkspace{FT},
-                                ps_offsets::Vector{Float64}) where FT
+                                ps_offsets::AbstractVector{<:Real}) where FT
     next_day_hour0 === nothing && return nothing
     Nx = size(transform.sp, 1)
     Ny = size(transform.sp, 2)

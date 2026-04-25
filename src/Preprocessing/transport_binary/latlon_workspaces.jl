@@ -302,7 +302,7 @@ end
 Bilinear-interpolate QV from a regular LL source grid to a regular LL target grid.
 Both grids are assumed to span [-180,180) × [-90,90] with uniform spacing.
 """
-function _interpolate_ll_qv!(dst::Array{Float64, 3}, src::Array{Float64, 3},
+function _interpolate_ll_qv!(dst::AbstractArray{<:Real, 3}, src::AbstractArray{<:Real, 3},
                               Nx_dst::Int, Ny_dst::Int,
                               Nx_src::Int, Ny_src::Int,
                               Nz::Int)
@@ -534,7 +534,7 @@ function apply_mass_fix_if_needed!(qv::NoQVWorkspace,
                                    grid::LatLonTargetGeometry,
                                    vertical,
                                    settings,
-                                   ps_offsets::Vector{Float64},
+                                   ps_offsets::AbstractVector{<:Real},
                                    ps_offset_slot::Int)
     settings.mass_fix_enable || return nothing
     ps_offset = pin_global_mean_ps!(transform.sp, grid.area;
@@ -550,7 +550,7 @@ function apply_mass_fix_if_needed!(qv::NativeQVWorkspace,
                                    grid::LatLonTargetGeometry,
                                    vertical,
                                    settings,
-                                   ps_offsets::Vector{Float64},
+                                   ps_offsets::AbstractVector{<:Real},
                                    ps_offset_slot::Int)
     settings.mass_fix_enable || return nothing
     ps_offset = pin_global_mean_ps_using_qv!(transform.sp, grid.area,
@@ -578,7 +578,7 @@ function process_window!(win_idx::Int,
                          merged::MergeWorkspace{FT},
                          qv::AbstractQVWorkspace{FT},
                          storage::WindowStorage{FT},
-                         ps_offsets::Vector{Float64};
+                         ps_offsets::AbstractVector{<:Real};
                          physics_reader = nothing,
                          tm5_ws = nothing,
                          tm5_stats = nothing) where FT

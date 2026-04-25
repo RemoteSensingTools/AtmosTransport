@@ -88,12 +88,12 @@ julia> am = zeros(11, 8, 4); bm = zeros(10, 9, 4); cm = zeros(10, 8, 5);
 julia> dry = StructuredFaceFluxState{DryMassFluxBasis}(am, bm, cm);
 
 julia> flux_basis(dry)
-DryMassFluxBasis()
+DryBasis()
 
 julia> moist = StructuredFaceFluxState{MoistMassFluxBasis}(am, bm, cm);
 
 julia> flux_basis(moist)
-MoistMassFluxBasis()
+MoistBasis()
 ```
 """
 struct StructuredFaceFluxState{Basis <: AbstractMassBasis,

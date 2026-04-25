@@ -8,9 +8,9 @@
 #   - era5_ll72x37_dec2021_f32   (5° lat-lon, F32)
 #   - era5_ll144x73_dec2021_f32  (2.5° lat-lon, F32)
 #
-# Cubed-sphere bundles are deferred until the F32 spectral-CS
-# preprocessing path is fixed — see docs/src/getting_started/quickstart.md
-# for context.
+# Cubed-sphere binaries are omitted from this first quickstart bundle to
+# keep download size predictable; generate them from the F32 CS preprocessing
+# configs when needed.
 #
 # Pairs with config/runs/quickstart/*.toml — see
 # docs/src/getting_started/quickstart.md for the runnable walkthrough.

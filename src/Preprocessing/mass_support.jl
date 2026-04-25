@@ -264,10 +264,10 @@ end
 Convert native-level moist mass and horizontal fluxes to dry basis before level
 merging. Face humidity is reconstructed by simple two-point averaging.
 """
-function apply_dry_basis_native!(m::Array{Float64, 3},
-                                 am::Array{Float64, 3},
-                                 bm::Array{Float64, 3},
-                                 qv::Array{Float64, 3})
+function apply_dry_basis_native!(m::AbstractArray{<:Real, 3},
+                                 am::AbstractArray{<:Real, 3},
+                                 bm::AbstractArray{<:Real, 3},
+                                 qv::AbstractArray{<:Real, 3})
     Nx, Ny, Nz = size(m)
 
     @inbounds for k in 1:Nz, j in 1:Ny, i in 1:Nx
@@ -350,10 +350,10 @@ end
 Apply a uniform additive offset to `sp` so that ⟨sp⟩_area corresponds to a
 prescribed dry-air mass target inferred from a global humidity climatology.
 """
-function pin_global_mean_ps!(sp::AbstractMatrix{Float64},
-                             area::AbstractMatrix{Float64};
-                             target_ps_dry_pa::Float64 = 98726.0,
-                             qv_global::Float64 = 0.00247)
+function pin_global_mean_ps!(sp::AbstractMatrix{<:Real},
+                             area::AbstractMatrix{<:Real};
+                             target_ps_dry_pa::Real = 98726.0,
+                             qv_global::Real = 0.00247)
     target_ps_total = target_ps_dry_pa / (1.0 - qv_global)
     sum_ps_area = 0.0
     sum_area = 0.0
@@ -378,12 +378,12 @@ the prescribed target.
 The correction is still spatially uniform in `ps`; only the global dry-mass
 targeting uses the instantaneous humidity pattern.
 """
-function pin_global_mean_ps_using_qv!(sp::AbstractMatrix{Float64},
-                                      area::AbstractMatrix{Float64},
+function pin_global_mean_ps_using_qv!(sp::AbstractMatrix{<:Real},
+                                      area::AbstractMatrix{<:Real},
                                       dA::AbstractVector,
                                       dB::AbstractVector,
-                                      qv::Array{Float64, 3};
-                                      target_ps_dry_pa::Float64 = 98726.0)
+                                      qv::AbstractArray{<:Real, 3};
+                                      target_ps_dry_pa::Real = 98726.0)
     Nx, Ny, Nz = size(qv)
     length(dA) == Nz || error("length(dA)=$(length(dA)) does not match qv levels $Nz")
     length(dB) == Nz || error("length(dB)=$(length(dB)) does not match qv levels $Nz")

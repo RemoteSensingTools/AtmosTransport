@@ -5,6 +5,7 @@
 /docs/site/
 /docs/build/
 /docs/Manifest.toml
+/docs/src/tutorials/_generated/
 
 # Data and outputs (keep scripts; ignore large NetCDF)
 *.nc

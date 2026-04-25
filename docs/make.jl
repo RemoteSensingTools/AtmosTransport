@@ -1,6 +1,29 @@
 using Documenter
 using DocumenterMermaid     # Mermaid block rendering in Documenter HTML
+using Literate               # .jl tutorial source → .md (with executed output)
 using AtmosTransport
+
+# ---------------------------------------------------------------------------
+# Literate.jl preprocessing — every .jl file under docs/literate/ becomes a
+# Markdown page under docs/src/tutorials/. Source is the canonical file;
+# the generated .md files are rebuilt from scratch each Documenter run, so
+# they live under docs/src/tutorials/_generated/ which is git-ignored.
+# ---------------------------------------------------------------------------
+
+const LITERATE_SRC = joinpath(@__DIR__, "literate")
+const LITERATE_OUT = joinpath(@__DIR__, "src", "tutorials", "_generated")
+
+if isdir(LITERATE_SRC)
+    rm(LITERATE_OUT; force = true, recursive = true)
+    mkpath(LITERATE_OUT)
+    for jl in readdir(LITERATE_SRC; join = true)
+        endswith(jl, ".jl") || continue
+        Literate.markdown(jl, LITERATE_OUT;
+                          flavor  = Literate.DocumenterFlavor(),
+                          execute = true,
+                          credit  = false)
+    end
+end
 
 # ---------------------------------------------------------------------------
 # Phase 1 (infrastructure) — Documenter wiring with a minimal page tree.
@@ -27,6 +50,9 @@ const PAGES = [
         "concepts/state_and_basis.md",
         "concepts/operators.md",
         "concepts/binary_format.md",
+    ],
+    "Tutorials" => [
+        "tutorials/_generated/synthetic_latlon.md",
     ],
     "About these docs" => "about.md",
 ]

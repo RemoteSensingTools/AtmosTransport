@@ -28,12 +28,27 @@ hierarchy diagrams + three CairoMakie-rendered grid schematics
 (LatLon, ReducedGaussian, CubedSphere with both panel conventions
 side by side).
 
-**Phase 3B — Concepts: operators + binary format (current).** Two
+**Phase 3B — Concepts: operators + binary format** (shipped). Two
 pages: the four operator families (advection schemes, diffusion,
 convection, surface flux) with the `apply!` contract and the Strang
 palindrome; and the v4 transport-binary header schema, payload
 sections, capability surface, mass-basis contract, streaming-writer
 entry points, and replay-gate contract.
+
+**Phase 4 — Tutorials (current).** Literate.jl wired into the docs
+build (`docs/literate/*.jl` → `docs/src/tutorials/_generated/*.md`,
+executed at build time so the rendered output matches what the
+reader will actually see locally). First tutorial:
+`synthetic_latlon.jl` — builds a tiny synthetic transport binary in
+memory using only public API and steps it forward, demonstrating the
+binary → driver → state → simulation data flow without any external
+data dependency. CI-safe; runs anywhere with the package installed.
+
+Real-data topology tutorials (lat-lon ERA5, cubed-sphere GEOS-IT,
+reduced Gaussian) will land once the LL+CS quickstart bundle is
+distributable as a Julia LazyArtifact (currently blocked on the F32
+spectral-CS preprocessing fix that adds the CS binaries to the
+bundle).
 
 **Caveats carried forward:**
 
@@ -60,8 +75,8 @@ each legacy file into this tree or archive it.
 | 1 | Documenter + Literate scaffolding, CI green | shipped |
 | 2 | Getting-Started onramp (install, quickstart, first run, inspecting output) | shipped |
 | 3A | Concepts: grids, state & basis (Mermaid hierarchies + grid schematics) | shipped |
-| 3B | Concepts: operators, binary format | **in progress** |
-| 4 | Tutorials (Literate.jl per topology) | pending |
+| 3B | Concepts: operators, binary format | shipped |
+| 4 | Tutorials (Literate.jl) — synthetic LL shipped; real-data topology tutorials pending bundle artifact | **in progress** |
 | 5 | Preprocessing guide (spectral, GEOS native, regridding) | pending |
 | 6 | Theory & Verification (mass conservation, schemes, validation) | pending |
 | 7 | Configuration & Runtime (TOML, sample data, output) | pending |

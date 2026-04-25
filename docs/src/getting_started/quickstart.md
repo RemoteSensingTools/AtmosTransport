@@ -18,19 +18,15 @@ written by the canonical
 spectral GRIB. They give you something concrete to run, modify, and
 benchmark — without depending on a multi-TB ERA5 archive.
 
-!!! note "Cubed-sphere bundles deferred"
-    Cubed-sphere quickstart bundles (e.g. C24, C90) are planned but
-    blocked on a **known F32 spectral-CS preprocessing path bug** —
-    several `Float64`-pinned function signatures in
-    `src/Preprocessing/spectral_synthesis.jl` currently prevent
-    spectral synthesis on the F32 LL staging grid required for F32 CS
-    output. The fix is straightforward (broadening signatures to
-    `Real`) but cascades through several call sites and is tracked as
-    a follow-up. F64 CS preprocessing works today; if you want CS
-    output ahead of the F32 fix, run
-    `config/preprocessing/era5_cs_c24_transport_binary.toml` (F64) or
-    `era5_cs_c90_transport_binary.toml` (F64) directly against your
-    own ERA5 spectral input.
+!!! note "Cubed-sphere binaries"
+    Cubed-sphere quickstart binaries (e.g. C24, C90) are not included
+    in this first bundle so the download stays focused on the smallest
+    runnable examples. F32 CS preprocessing is available through
+    `config/preprocessing/era5_cs_c24_transport_binary_f32.toml` and
+    `config/preprocessing/era5_cs_c90_transport_binary_f32.toml` when
+    you have the ERA5 spectral input locally. F64 CS siblings are also
+    available as `era5_cs_c24_transport_binary.toml` and
+    `era5_cs_c90_transport_binary.toml`.
 
 ## 1. Download the bundle
 
@@ -63,8 +59,8 @@ it under `~/data/AtmosTransport_quickstart/met/`. After extraction:
 
 ## 2. Run the simulation
 
-Four ready-to-run example configs ship in `config/runs/quickstart/`,
-one per topology / resolution combination:
+Two ready-to-run example configs ship in `config/runs/quickstart/`,
+one per LL resolution:
 
 ```bash
 # Lat-lon, 5° (smallest, fastest)
@@ -119,7 +115,7 @@ print(cm.shape, "min", cm.min(), "max", cm.max(), "mean", cm.mean())
 
 ## 4. Modify and re-run
 
-The four bundled configs are deliberately minimal so you can use them
+The two bundled configs are deliberately minimal so you can use them
 as starting points:
 
 | To try… | Edit |

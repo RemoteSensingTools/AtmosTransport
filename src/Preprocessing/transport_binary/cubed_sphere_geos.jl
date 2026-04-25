@@ -159,7 +159,6 @@ function process_day(date::Date,
                      FT::Type{<:AbstractFloat} = Float64,
                      mass_basis::Symbol = :dry,
                      replay_tol::Real = replay_tolerance(FT),
-                     panel_convention::AbstractString = "geos_native",
                      seed_m::Union{Nothing, NTuple{6, <:AbstractArray}} = nothing,
                      next_day_hour0 = nothing)
     # Reject configurations the path cannot honor:
@@ -169,6 +168,9 @@ function process_day(date::Date,
     grid.mesh.convention isa GEOSNativePanelConvention ||
         error("GEOS-CS passthrough requires panel_convention=`geos_native` on " *
               "the target geometry; got $(typeof(grid.mesh.convention)).")
+    # Single source of truth: the binary's panel-convention attrib comes from
+    # the target mesh's convention, not from a duplicated config key.
+    panel_convention = "geos_native"
 
     Nc     = grid.Nc
     npanel = CS_PANEL_COUNT
@@ -191,7 +193,7 @@ function process_day(date::Date,
     @info "GEOS → CS: $(date), source=$(settings) → $(out_path)"
     @info "  Nc=$Nc  Nz=$Nz  windows=$nw  steps_per_met=$steps_per_met  flux_scale=$flux_scale"
 
-    handles = open_geos_day(settings, date)
+    handles = open_day(settings, date)
     @info "  Level orientation: $(handles.orientation)  (next-day endpoint: $(handles.next_ctm_i1 !== nothing))"
 
     mkpath(dirname(out_path))
@@ -217,6 +219,8 @@ function process_day(date::Date,
         m_cur     = ntuple(_ -> zeros(FT, Nc, Nc, Nz),     npanel)
         m_next_pf = ntuple(_ -> zeros(FT, Nc, Nc, Nz),     npanel)
         ps_cur    = ntuple(_ -> zeros(FT, Nc, Nc),         npanel)
+        # Source-grid raw window: filled in place by `read_window!` once per window.
+        raw = allocate_raw_window(settings; FT = FT, Nz = Nz)
 
         worst_replay_rel = 0.0
         worst_replay_abs = 0.0
@@ -225,7 +229,7 @@ function process_day(date::Date,
         t_start = time()
 
         @inbounds for win in 1:nw
-            raw = read_window!(settings, handles, date, win; FT = FT)
+            read_window!(raw, settings, handles, date, win)
 
             # 1. Native MFXC/MFYC (Pa·m²/s on cell-centered indexing) → v4
             #    face-staggered (kg per substep) with panel-halo one-way prop.
@@ -312,6 +316,6 @@ function process_day(date::Date,
         )
     finally
         close_streaming_transport_binary!(writer)
-        close_geos_day!(handles)
+        close_day!(handles)
     end
 end

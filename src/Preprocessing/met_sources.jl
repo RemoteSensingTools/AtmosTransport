@@ -72,25 +72,60 @@ end
 # code can dispatch panel-aware operations naturally.
 
 # ---------------------------------------------------------------------------
-# Interface methods (concrete subtypes implement these)
+# Source contract (concrete subtypes implement these). All preprocessing
+# orchestrators consume this surface — no source-specific side doors.
 # ---------------------------------------------------------------------------
 
 """
-    read_window!(raw::RawWindow, settings::AbstractMetSettings, date::Date, win_idx::Int) -> raw
+    open_day(settings::AbstractMetSettings, date::Date; ...) -> ctx
 
-Fill `raw` in place with one window of source data on the source's native
-grid. Subtypes of `AbstractMetSettings` must implement this method.
-Implementations should not allocate per call (`raw` is a pre-allocated
-workspace owned by the orchestrator) and should be idempotent in
-`(date, win_idx)`.
+Open per-day source-specific context (file handles, caches, vertical
+coefficients, …). The orchestrator calls this once per day at the start
+of `process_day`, threads `ctx` through every `read_window!` call, and
+calls `close_day!(ctx)` in a `finally` block.
+
+`ctx` is opaque to the orchestrator — only the source knows its layout.
+"""
+function open_day end
+
+"""
+    close_day!(ctx)
+
+Close all resources held by a day context. Must be idempotent; safe to
+call from a `finally` block.
+"""
+function close_day! end
+
+"""
+    allocate_raw_window(settings::AbstractMetSettings;
+                        FT::Type, Nc=nothing, Nz=nothing) -> RawWindow
+
+Allocate a pre-zeroed `RawWindow` sized for one window of `settings`'s
+source data. The orchestrator calls this once before the per-window
+loop and reuses the same buffer across all windows in a day. The shape
+parameters (`Nc`, `Nz`, …) are source-specific — concrete subtypes pick
+the keys they need.
+"""
+function allocate_raw_window end
+
+"""
+    read_window!(raw::RawWindow, settings::AbstractMetSettings, ctx,
+                 date::Date, win_idx::Int) -> raw
+
+Fill `raw` in place with one window of source data on the source's
+native grid. `ctx` is the day context returned by `open_day`.
+Implementations must NOT allocate per call beyond bounded scratch —
+`raw` is a pre-allocated workspace owned by the orchestrator — and
+should be idempotent in `(date, win_idx)`.
 """
 function read_window! end
 
 """
     source_grid(settings::AbstractMetSettings)
 
-Return the source grid mesh that `read_window!` produces data on. Used by
-the orchestrator to build the appropriate regridder for the target grid.
+Return the source grid mesh that `read_window!` produces data on. Used
+by the orchestrator to build the appropriate regridder for the target
+grid (or to detect the source==target passthrough case).
 """
 function source_grid end
 

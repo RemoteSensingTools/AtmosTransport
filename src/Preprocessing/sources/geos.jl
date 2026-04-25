@@ -313,6 +313,10 @@ end
 
 windows_per_day(::GEOSSettings, ::Date) = 24
 
+# Per-source output-filename override: GEOS gets a clearer prefix.
+_native_output_filename(::AbstractGEOSSettings, date::Date, FT::Type) =
+    "geos_transport_$(Dates.format(date, "yyyymmdd"))_$(FT === Float32 ? "float32" : "float64").bin"
+
 # `has_convection` reports the capability that downstream code can rely on,
 # not the user's intent. Until Commit 8 populates `cmfmc` / `dtrain` in
 # `read_window!`, this returns `false` regardless of `include_convection` so
@@ -321,18 +325,73 @@ windows_per_day(::GEOSSettings, ::Date) = 24
 # field is preserved as a forward-looking flag for the Commit-8 wiring.
 has_convection(::GEOSSettings) = false
 
-"""
-    read_window!(settings, handles, date, win_idx; FT=Float64) -> RawWindow
+# ---------------------------------------------------------------------------
+# Canonical AbstractMetSettings interface implementations.
+# ---------------------------------------------------------------------------
 
-Build a `RawWindow` for window `win_idx` of `date` from open `handles`.
-Both endpoints (t_n, t_{n+1}) carry dry DELP + dry PS reconstructed from
-PS_total via the hybrid coordinate, plus the original QV (used downstream
-for tracer mass-basis conversion). Window-integrated `am`/`bm` are MFXC and
-MFYC, converted to dry mass-equivalent and divided by `mass_flux_dt`.
 """
-function read_window!(settings::GEOSSettings, handles::GEOSDayHandles,
-                      date::Date, win_idx::Int;
-                      FT::Type = Float64)
+    open_day(settings::GEOSSettings, date::Date; next_day_handle=true) -> GEOSDayHandles
+
+Canonical-contract alias for `open_geos_day`. The orchestrator calls this
+once per day and threads the returned handles through every per-window
+`read_window!`.
+"""
+open_day(settings::GEOSSettings, date::Date; next_day_handle::Bool=true) =
+    open_geos_day(settings, date; next_day_handle=next_day_handle)
+
+"""Canonical-contract alias for `close_geos_day!`."""
+close_day!(handles::GEOSDayHandles) = close_geos_day!(handles)
+
+"""
+    source_grid(settings::GEOSSettings) -> CubedSphereMesh
+
+The native source mesh GEOS data is archived on (`Nc × Nc` per panel,
+GEOS-native panel convention).
+"""
+function source_grid(settings::GEOSSettings; FT::Type{<:AbstractFloat}=Float64)
+    return CubedSphereMesh(; Nc = settings.Nc, FT = FT,
+                            convention = GEOSNativePanelConvention(),
+                            radius = FT(R_EARTH))
+end
+
+"""
+    allocate_raw_window(settings::GEOSSettings; FT, Nz) -> RawWindow
+
+Pre-allocate a per-window workspace for the GEOS reader: 6 zero-filled
+panel arrays each for `m`, `m_next`, `qv`, `qv_next`, `am`, `bm` (shape
+`(Nc, Nc, Nz)`) and `ps`, `ps_next` (shape `(Nc, Nc)`). `u`, `v`,
+`cmfmc`, `dtrain` stay `nothing` until they are wired in by Section C
+(convection) and Section D (cross-topology).
+"""
+function allocate_raw_window(settings::GEOSSettings; FT::Type{<:AbstractFloat}, Nz::Int)
+    Nc = settings.Nc
+    panels_3d() = ntuple(_ -> zeros(FT, Nc, Nc, Nz),    6)
+    panels_2d() = ntuple(_ -> zeros(FT, Nc, Nc),        6)
+    m       = panels_3d(); ps      = panels_2d(); qv      = panels_3d()
+    m_next  = panels_3d(); ps_next = panels_2d(); qv_next = panels_3d()
+    am      = panels_3d(); bm      = panels_3d()
+    return RawWindow{FT, typeof(ps), typeof(m)}(
+        m,       ps,      qv,
+        m_next,  ps_next, qv_next,
+        am,      bm,
+        nothing, nothing,
+        nothing, nothing,
+    )
+end
+
+"""
+    read_window!(raw, settings, handles, date, win_idx) -> raw
+
+Fill `raw` in place with one window of GEOS data on the source CS grid.
+Both endpoints (t_n, t_{n+1}) carry dry DELP + dry PS reconstructed from
+PS_total via the hybrid coordinate, plus the original QV. Window-
+integrated `am`/`bm` are MFXC/MFYC scaled by `1/mass_flux_dt`.
+
+The signature matches the canonical `AbstractMetSettings` contract
+declared in `met_sources.jl::read_window!`.
+"""
+function read_window!(raw::RawWindow{FT}, settings::GEOSSettings,
+                      handles::GEOSDayHandles, date::Date, win_idx::Int) where {FT}
     nw = windows_per_day(settings, date)
     1 <= win_idx <= nw || error("window $win_idx out of range 1..$nw")
 
@@ -342,49 +401,39 @@ function read_window!(settings::GEOSSettings, handles::GEOSDayHandles,
     # ---- Endpoints: PS (units-aware → Pa), QV ----
     ps_factor_today = _ps_pa_factor(handles.ctm_i1["PS"]; FT=FT)
     ps_n_total = ntuple(p -> _read_panels_2d(handles.ctm_i1, "PS", win_idx; FT=FT)[p] .* ps_factor_today, 6)
-    qv_n       = _read_panels_3d(handles.ctm_i1, "QV", win_idx, or; FT=FT)
+    qv_n_panels = _read_panels_3d(handles.ctm_i1, "QV", win_idx, or; FT=FT)
 
     if win_idx < nw
         ps_np1_total = ntuple(p -> _read_panels_2d(handles.ctm_i1, "PS", win_idx + 1; FT=FT)[p] .* ps_factor_today, 6)
-        qv_np1       = _read_panels_3d(handles.ctm_i1, "QV", win_idx + 1, or; FT=FT)
+        qv_np1_panels = _read_panels_3d(handles.ctm_i1, "QV", win_idx + 1, or; FT=FT)
     elseif handles.next_ctm_i1 !== nothing
         ps_factor_next = _ps_pa_factor(handles.next_ctm_i1["PS"]; FT=FT)
         ps_np1_total = ntuple(p -> _read_panels_2d(handles.next_ctm_i1, "PS", 1; FT=FT)[p] .* ps_factor_next, 6)
-        qv_np1       = _read_panels_3d(handles.next_ctm_i1, "QV", 1, or; FT=FT)
+        qv_np1_panels = _read_panels_3d(handles.next_ctm_i1, "QV", 1, or; FT=FT)
     else
         error("last window ($win_idx of $nw) has no next-day CTM_I1 endpoint; " *
               "open the day with `next_day_handle=true` and ensure the next-day file is on disk")
     end
-
-    # ---- Endpoint dry mass (Σ DELP_dry = PS_dry guaranteed) ----
-    m_n_panels       = ntuple(p -> begin
-                                   d, _   = endpoint_dry_mass(ps_n_total[p], qv_n[p], vc); d
-                               end, 6)
-    ps_n_dry_panels  = ntuple(p -> begin
-                                   _, ps  = endpoint_dry_mass(ps_n_total[p], qv_n[p], vc); ps
-                               end, 6)
-    m_np1_panels     = ntuple(p -> begin
-                                   d, _   = endpoint_dry_mass(ps_np1_total[p], qv_np1[p], vc); d
-                               end, 6)
-    ps_np1_dry_panels = ntuple(p -> begin
-                                   _, ps  = endpoint_dry_mass(ps_np1_total[p], qv_np1[p], vc); ps
-                               end, 6)
 
     # ---- Window-integrated horizontal mass flux (dry, /mass_flux_dt) ----
     inv_dt = inv(FT(settings.mass_flux_dt))
     mfxc_raw = _read_panels_3d(handles.ctm_a1, "MFXC", win_idx, or; FT=FT)
     mfyc_raw = _read_panels_3d(handles.ctm_a1, "MFYC", win_idx, or; FT=FT)
 
-    am_panels = ntuple(p -> _scale_flux!(similar(mfxc_raw[p]), mfxc_raw[p], inv_dt), 6)
-    bm_panels = ntuple(p -> _scale_flux!(similar(mfyc_raw[p]), mfyc_raw[p], inv_dt), 6)
+    # ---- Fill `raw` in place. Endpoint dry-mass derivation lives in
+    #      `endpoint_dry_mass!` and writes into the raw buffer directly. ----
+    @assert raw.qv      !== nothing "GEOS RawWindow must carry qv"
+    @assert raw.qv_next !== nothing "GEOS RawWindow must carry qv_next"
+    for p in 1:6
+        copyto!(raw.qv[p],      qv_n_panels[p])
+        copyto!(raw.qv_next[p], qv_np1_panels[p])
+        endpoint_dry_mass!(raw.m[p],      raw.ps[p],      ps_n_total[p],   raw.qv[p],      vc)
+        endpoint_dry_mass!(raw.m_next[p], raw.ps_next[p], ps_np1_total[p], raw.qv_next[p], vc)
+        _scale_flux!(raw.am[p], mfxc_raw[p], inv_dt)
+        _scale_flux!(raw.bm[p], mfyc_raw[p], inv_dt)
+    end
 
-    return RawWindow{FT, typeof(ps_n_dry_panels), typeof(m_n_panels)}(
-        m_n_panels,    ps_n_dry_panels,    qv_n,
-        m_np1_panels,  ps_np1_dry_panels,  qv_np1,
-        am_panels,     bm_panels,
-        nothing, nothing,
-        nothing, nothing,
-    )
+    return raw
 end
 
 # Per-window 2D variable handle by name (NCDataset[name]).

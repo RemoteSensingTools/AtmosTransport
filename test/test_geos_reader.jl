@@ -21,8 +21,10 @@ using Random
 using Statistics: mean
 
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport.Preprocessing: GEOSITSettings, open_geos_day, close_geos_day!,
-                                      read_window!, detect_level_orientation,
+using .AtmosTransport.Preprocessing: GEOSITSettings, open_day, close_day!,
+                                      open_geos_day, close_geos_day!,
+                                      read_window!, allocate_raw_window,
+                                      detect_level_orientation,
                                       endpoint_dry_mass, endpoint_dry_mass!,
                                       windows_per_day, has_convection
 
@@ -192,11 +194,11 @@ end
     # since our fixture only covers 2 windows. The reader still expects the
     # NCDataset "time" dim ≥ win_idx + 1 for the right endpoint.
 
-    @testset "open_geos_day auto-detects bottom-up orientation" begin
-        handles = open_geos_day(settings, Date(2021,12,1))
+    @testset "open_day auto-detects bottom-up orientation" begin
+        handles = open_day(settings, Date(2021,12,1))
         @test handles.orientation === :bottom_up
         @test handles.next_ctm_i1 !== nothing
-        close_geos_day!(handles)
+        close_day!(handles)
     end
 
     @testset "detect_level_orientation: bottom-up surface dominates" begin
@@ -206,9 +208,10 @@ end
     end
 
     @testset "read_window! produces both endpoints, top-down" begin
-        handles = open_geos_day(settings, Date(2021,12,1))
+        handles = open_day(settings, Date(2021,12,1))
         try
-            raw = read_window!(settings, handles, Date(2021,12,1), 1; FT=FT_TEST)
+            raw = allocate_raw_window(settings; FT=FT_TEST, Nz=NZ)
+            read_window!(raw, settings, handles, Date(2021,12,1), 1)
             @test length(raw.m)       == 6
             @test length(raw.m_next)  == 6
             @test length(raw.ps)      == 6
@@ -225,7 +228,7 @@ end
             @test all(isapprox.(raw.qv[1],      0.005))
             @test all(isapprox.(raw.qv_next[1], 0.005))
         finally
-            close_geos_day!(handles)
+            close_day!(handles)
         end
     end
 
@@ -234,20 +237,22 @@ end
         # reader only scales by `1 / mass_flux_dt` and does NOT multiply by
         # (1 - qv). Multiplying by (1-qv) would double-dry, biasing transport
         # low (codex P2 finding 2026-04-24).
-        handles = open_geos_day(settings, Date(2021,12,1))
+        handles = open_day(settings, Date(2021,12,1))
         try
-            raw = read_window!(settings, handles, Date(2021,12,1), 1; FT=FT_TEST)
+            raw = allocate_raw_window(settings; FT=FT_TEST, Nz=NZ)
+            read_window!(raw, settings, handles, Date(2021,12,1), 1)
             @test all(isapprox.(raw.am[1], 50.0 / 450.0; rtol = 1e-12))
             @test all(isapprox.(raw.bm[1], 30.0 / 450.0; rtol = 1e-12))
         finally
-            close_geos_day!(handles)
+            close_day!(handles)
         end
     end
 
     @testset "endpoint dry-mass closure: Σ DELP_dry[k] == PS_dry" begin
-        handles = open_geos_day(settings, Date(2021,12,1))
+        handles = open_day(settings, Date(2021,12,1))
         try
-            raw = read_window!(settings, handles, Date(2021,12,1), 1; FT=FT_TEST)
+            raw = allocate_raw_window(settings; FT=FT_TEST, Nz=NZ)
+            read_window!(raw, settings, handles, Date(2021,12,1), 1)
             for p in 1:6
                 Σ_delp_dry = sum(raw.m[p], dims=3)[:, :, 1]      # (NC, NC)
                 @test isapprox(Σ_delp_dry, raw.ps[p]; rtol = 1e-13)
@@ -256,7 +261,7 @@ end
                 @test isapprox(Σ_delp_dry_next, raw.ps_next[p]; rtol = 1e-13)
             end
         finally
-            close_geos_day!(handles)
+            close_day!(handles)
         end
     end
 
@@ -273,17 +278,21 @@ end
     end
 
     @testset "right endpoint of window 1 == left endpoint of window 2" begin
-        handles = open_geos_day(settings, Date(2021,12,1))
+        # Use two separate raw buffers so the in-place reader doesn't clobber
+        # window 1's data on the window 2 call.
+        handles = open_day(settings, Date(2021,12,1))
         try
-            raw1 = read_window!(settings, handles, Date(2021,12,1), 1; FT=FT_TEST)
-            raw2 = read_window!(settings, handles, Date(2021,12,1), 2; FT=FT_TEST)
+            raw1 = allocate_raw_window(settings; FT=FT_TEST, Nz=NZ)
+            raw2 = allocate_raw_window(settings; FT=FT_TEST, Nz=NZ)
+            read_window!(raw1, settings, handles, Date(2021,12,1), 1)
+            read_window!(raw2, settings, handles, Date(2021,12,1), 2)
             for p in 1:6
                 @test isapprox(raw1.m_next[p],  raw2.m[p];  rtol = 1e-13)
                 @test isapprox(raw1.ps_next[p], raw2.ps[p]; rtol = 1e-13)
                 @test isapprox(raw1.qv_next[p], raw2.qv[p]; rtol = 1e-13)
             end
         finally
-            close_geos_day!(handles)
+            close_day!(handles)
         end
     end
 end

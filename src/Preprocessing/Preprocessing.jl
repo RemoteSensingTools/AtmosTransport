@@ -158,6 +158,7 @@ include("transport_binary/cubed_sphere_geos.jl")
 # Met source abstraction (Commit 1 of plan indexed-baking-valiant)
 export AbstractMetSettings, RawWindow
 export read_window!, source_grid, windows_per_day, has_convection
+export open_day, close_day!, allocate_raw_window
 
 # GEOS native NetCDF reader (Commit 3)
 export AbstractGEOSSettings, GEOSSettings, GEOSITSettings, GEOSFPSettings

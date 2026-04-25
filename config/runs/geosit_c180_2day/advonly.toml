@@ -1,0 +1,49 @@
+# GEOS-IT C180 → CS C180 — ADVECTION ONLY validation (Dec 1-2 2021)
+#
+# Single passive tracer (uniform 400 ppm CO2) advected over 48 hours on the
+# new GEOS-native CS C180 transport binary produced by
+# `scripts/preprocessing/preprocess_geos_transport_binary.jl`. The point of
+# this run is to validate the GEOS preprocessor end-to-end:
+#
+#   - the v4 binary loads cleanly and the runtime constructs a
+#     `GEOSNativePanelConvention` mesh from the header;
+#   - load-time replay (`verify_window_continuity_cs`) closes; and
+#   - global tracer mass is conserved to F32 tolerance over 48 h.
+#
+# Runner:
+#   julia -t8 --project=. scripts/run_transport.jl \
+#       config/runs/geosit_c180_2day/advonly.toml
+#
+# Prereqs (already on disk):
+#   ~/data/AtmosTransport/met/geosit/C180/preprocessed/v4_dec2021/
+#       geos_transport_2021120{1,2}_float64.bin
+# generated via:
+#   julia -t8 --project=. scripts/preprocessing/preprocess_geos_transport_binary.jl \
+#       config/preprocessing/geosit_c180_to_cs180.toml \
+#       --start 2021-12-01 --end 2021-12-02
+
+[input]
+folder     = "~/data/AtmosTransport/met/geosit/C180/preprocessed/v4_dec2021/"
+start_date = "2021-12-01"
+end_date   = "2021-12-02"
+
+[architecture]
+use_gpu = false                        # Pre-existing GPU CFL-check scalar-indexing bug in
+                                        # `_cs_static_subcycle_count` (CubedSphereStrang.jl:396)
+                                        # affects any CS GPU advonly; tracked separately. Run on
+                                        # CPU for now to validate the GEOS binary content.
+
+[numerics]
+float_type = "Float64"
+
+[run]
+scheme = "slopes"
+
+[tracers.co2_uniform]
+[tracers.co2_uniform.init]
+kind        = "uniform"
+background  = 4.0e-4
+
+[output]
+snapshot_hours = [0, 6, 12, 18, 24, 30, 36, 42, 48]
+snapshot_file  = "~/data/AtmosTransport/output/geosit_c180_2day/advonly.nc"

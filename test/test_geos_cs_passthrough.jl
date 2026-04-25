@@ -202,7 +202,6 @@ end
                              dt_met_seconds = 3600.0,
                              FT = FT_TEST,
                              mass_basis = :dry,
-                             panel_convention = "geos_native",
                              replay_tol = 1e-12)
         @test isfile(out_path)
         @test result.elapsed > 0

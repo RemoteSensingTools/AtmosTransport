@@ -1,13 +1,13 @@
 # ===========================================================================
 # GEOS-IT C180 native → AtmosTransport v4 CS C180 transport binary.
 #
-# Passthrough preprocessing: source mesh == target mesh (gnomonic-vs-native
-# panel convention is preserved by `panel_convention = "geos_native"`).
-# No horizontal regrid, no Poisson balance — FV3's archived MFXC/MFYC are
-# already discretely conservative.
+# Passthrough preprocessing: source mesh == target mesh, no horizontal
+# regrid, no Poisson balance. Stored mass uses FV3's pressure-fixer chained
+# evolution (see src/Preprocessing/transport_binary/cubed_sphere_geos.jl
+# module header for rationale).
 #
 # Usage:
-#   julia -t8 --project=. scripts/preprocessing/preprocess_geos_transport_binary.jl \
+#   julia -t8 --project=. scripts/preprocessing/preprocess_transport_binary.jl \
 #       config/preprocessing/geosit_c180_to_cs180.toml \
 #       --start 2021-12-01 --end 2021-12-03
 # ===========================================================================
@@ -17,14 +17,13 @@ toml     = "config/met_sources/geosit.toml"
 root_dir = "~/data/AtmosTransport/met/geosit/C180/raw_catrine"
 
 [output]
-directory        = "~/data/AtmosTransport/met/geosit/C180/preprocessed/v4_dec2021"
-mass_basis       = "dry"
-panel_convention = "geos_native"
+directory  = "~/data/AtmosTransport/met/geosit/C180/preprocessed/v4_dec2021"
+mass_basis = "dry"
 
 [grid]
-type             = "cubed_sphere"
-Nc               = 180
-panel_convention = "geos_native"
+type                = "cubed_sphere"
+Nc                  = 180
+panel_convention    = "geos_native"
 regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
 
 [vertical]

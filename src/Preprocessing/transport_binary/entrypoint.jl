@@ -83,7 +83,7 @@ _resolve_mass_basis(cfg::AbstractDict) =
 # carry (e.g. GEOS pressure-fixer chained mass).
 # ---------------------------------------------------------------------------
 
-function _process_day_native(cfg::AbstractDict, grid::AbstractTargetGeometry;
+function _process_day_native(cfg::AbstractDict;
                              day_override = nothing,
                              start_date   = nothing,
                              end_date     = nothing)
@@ -91,16 +91,32 @@ function _process_day_native(cfg::AbstractDict, grid::AbstractTargetGeometry;
     toml_relpath = String(src_cfg["toml"])
     toml_path = isabspath(toml_relpath) ? toml_relpath :
                 joinpath(@__DIR__, "..", "..", "..", toml_relpath)
-    settings = load_met_settings(toml_path; root_dir = expanduser(String(src_cfg["root_dir"])))
 
-    # Vertical: native sources carry their own hybrid coefficients on settings.
-    coeff_path = expanduser(get(get(cfg, "vertical", Dict()), "coefficients",
-                                settings.coefficients_file))
-    vc = load_hybrid_coefficients(coeff_path)
+    # Single source of truth for the float type: build the grid AND the
+    # source settings against the same `FT` so cell areas and the reader's
+    # mass buffers share an element type. (Codex 2026-04-25: P2 fix —
+    # without this, Float32 configs trip a `MethodError` in
+    # `_delp_pa_to_air_mass_kg!` because cell_areas was Matrix{Float64}.)
+    FT   = _resolve_float_type(cfg)
+    grid = build_target_geometry(cfg["grid"], FT)
+    ensure_supported_target(grid)
+
+    # Single source of truth for hybrid coefficients: the source descriptor
+    # owns it. Overrides flow back into `settings.coefficients_file` so the
+    # reader (`open_day` → `endpoint_dry_mass!`) and the writer's vertical
+    # setup never desync. (Codex 2026-04-25: P2 fix.)
+    settings_kwargs = (root_dir = expanduser(String(src_cfg["root_dir"])),)
+    cfg_vertical = get(cfg, "vertical", Dict())
+    if haskey(cfg_vertical, "coefficients")
+        settings_kwargs = (settings_kwargs..., coefficients_file =
+                           expanduser(String(cfg_vertical["coefficients"])))
+    end
+    settings = load_met_settings(toml_path; settings_kwargs...)
+
+    vc = load_hybrid_coefficients(expanduser(settings.coefficients_file))
     Nz = length(vc.A) - 1
     vertical = (merged_vc = vc, Nz = Nz, Nz_native = Nz)
 
-    FT             = _resolve_float_type(cfg)
     mass_basis     = _resolve_mass_basis(cfg)
     dt_met_seconds = _resolve_dt_met(cfg)
 
@@ -189,10 +205,15 @@ function process_day(cfg::Dict{String, Any};
                      day_override::Union{String, Nothing} = nothing,
                      start_date::Union{String, Date, Nothing} = nothing,
                      end_date::Union{String, Date, Nothing} = nothing)
-    grid = build_target_geometry(cfg["grid"], Float64)
-    ensure_supported_target(grid)
-
-    return _is_native_source_cfg(cfg) ?
-        _process_day_native(cfg, grid; day_override, start_date, end_date) :
-        _process_day_spectral(cfg, grid; day_override)
+    if _is_native_source_cfg(cfg)
+        # Native path resolves FT first, then builds grid internally so
+        # mesh element type matches reader/state buffers.
+        return _process_day_native(cfg; day_override, start_date, end_date)
+    else
+        # Spectral path: keep the historical Float64 mesh build at the entry
+        # (the spectral preprocessor casts to settings.output_float_type later).
+        grid = build_target_geometry(cfg["grid"], Float64)
+        ensure_supported_target(grid)
+        return _process_day_spectral(cfg, grid; day_override)
+    end
 end

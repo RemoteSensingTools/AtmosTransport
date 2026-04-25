@@ -21,16 +21,20 @@
 #     top-to-bottom convention. Auto-detection compares DELP[k=1] vs
 #     DELP[k=Nz]; the surface side has the larger pressure thickness.
 #
-#   * DELP, MFXC, MFYC, CMFMC and DTRAIN in the GEOS archive are MOIST. PS is
-#     also moist (total surface pressure). The reader converts to DRY here
-#     so the rest of the pipeline (which is dry-basis by contract) consumes
-#     consistent fields. MFXC and MFYC are converted layer-by-layer using the
-#     window-averaged QV.
+#   * DELP and PS in the GEOS archive are MOIST (total atmosphere). MFXC and
+#     MFYC are ALREADY DRY mass fluxes per GMAO and the in-tree diagnostic
+#     `compare_era5_geosit_met.jl` (`am_moist = MFXC / (g·dt_dyn) / (1−qv)`).
+#     The reader converts DELP and PS to dry via the hybrid coordinate plus
+#     QV; MFXC and MFYC pass through unchanged (only divided by `mass_flux_dt`).
 #
 #   * `m` and `m_next` in the produced `RawWindow` are DELP_dry at the two
-#     window endpoints, reconstructed from PS_dry via the hybrid coordinate.
-#     This guarantees Σm_k = ps at every endpoint, which is what the v4
-#     binary write-time replay gate needs.
+#     window endpoints, reconstructed from PS_total via the hybrid coordinate.
+#     `Σ m_k = ps_dry` at every endpoint to roundoff. The orchestrator does
+#     NOT use these directly as the v4 binary's stored mass — for native
+#     GEOS sources the stored mass is the FV3 pressure-fixer's chained
+#     evolution from the first hour's DELP_dry, governed by the stored
+#     fluxes (see `cubed_sphere_geos.jl`). The raw endpoint values remain
+#     useful for diagnostics and for the first-window initialization.
 # ===========================================================================
 
 abstract type AbstractGEOSSettings <: AbstractMetSettings end

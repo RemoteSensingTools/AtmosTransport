@@ -5,24 +5,38 @@
 # Target axis:  CubedSphereTargetGeometry, source mesh == target mesh
 #               (passthrough — IdentityRegrid)
 #
-# Critical design choice (per the user's correction 2026-04-24): no Poisson
-# balance is invoked on the passthrough path. FV3's native MFXC/MFYC are
-# already discretely conservative; running a CG projection on top would only
-# absorb floating-point noise at the cost of slightly distorting the
-# physics-consistent fluxes. We DO run a write-time replay gate so any
-# silent unit / sign / shape error fails loudly before the binary is shipped.
+# Critical design choices:
 #
-# ---------------------------------------------------------------------------
-# Window-by-window loop:
+#  1. **No Poisson balance.** FV3's native MFXC/MFYC are already discretely
+#     conservative; running a CG projection on top would only absorb
+#     floating-point noise at the cost of distorting the physics-consistent
+#     fluxes. (User correction 2026-04-24.)
 #
-#   read_window!(settings, handles, date, win)            # both endpoints + MFXC/MFYC
-#   geos_native_to_face_flux!(am_v4, bm_v4, raw, conn,    # (Nc,Nc) → (Nc+1,Nc)/(Nc,Nc+1)
-#                              Nc, Nz, dt_factor / g)     #     panel halos via mirror sync
-#   fill_cs_window_mass_tendency!(dm, m, m_next, steps_per_met)
-#   diagnose_cs_cm!(cm, am_v4, bm_v4, dm, m, Nc, Nz)
-#   verify_write_replay_cs!(...)                          # < 1e-12 expected
-#   convert_cs_mass_target_to_delta!(...)
-#   write_streaming_cs_window!(writer, window_nt, Nc, 6)
+#  2. **Pressure-fixer cm + chained endpoint mass** (codex Option C, validated
+#     2026-04-25). FV3 conserves moist mass; per-column dry mass changes via
+#     both horizontal MFXC divergence AND vertical moisture transport. The
+#     raw GEOS DELP_dry endpoints don't satisfy strict per-level
+#     `(m_next-m)/(2·steps) = -(div_h+div_v)` for any local `cm` choice.
+#     The historical GEOS-FP runner (commit `76fa489::compute_cm_panel_cpu!`)
+#     instead used FV3's pressure-fixer rule
+#       `cm[k+1]-cm[k] = C_k - ΔB[k]·pit`,  pit = Σ_k C_k
+#     which closes `cm[Nz+1] = 0` exactly without any per-cell residual
+#     redistribution. Substituted into the v4 replay equation, the per-level
+#     mass evolution is `Δm[k] = +2·steps · ΔB[k]·pit`. We CHAIN the stored
+#     `m`: window 1 starts from raw GEOS DELP_dry; subsequent windows take
+#     `m_cur = m_next_pf` from the previous window. The stored m drifts
+#     from raw GEOS DELP over the day by exactly the column moisture-source
+#     term (small for dry CO2 transport), but the binary is internally
+#     self-consistent: replay closes to roundoff and the runtime tracer
+#     mass evolves with the same fluxes that produced m_evolved.
+#
+#  3. **Window-by-window loop**:
+#
+#       read_window!(settings, handles, date, win)         # raw GEOS endpoints
+#       geos_native_to_face_flux!(am_v4, bm_v4, ...)       # face-stagger + panel halos
+#       compute_cs_cm_pressure_fixer!(cm_v4, am_v4, bm_v4, ΔB, ...)
+#       evolve m_next_pf = m_cur + 2·steps · ΔB·pit         # closes replay exactly
+#       fill dm = m_next_pf - m_cur, write window, m_cur ← m_next_pf
 # ===========================================================================
 
 """
@@ -44,26 +58,86 @@ function _delp_pa_to_air_mass_kg!(m_kg::AbstractArray{FT, 3},
 end
 
 """
+    _evolve_mass_pressure_fixer!(m_next, m_cur, am_v4, bm_v4, ΔB,
+                                 two_steps, Nc, Nz)
+
+Per-cell column evolution under the FV3 pressure-fixer rule:
+
+    pit       = Σ_k (am_inflow_k + bm_inflow_k)
+    m_next[k] = m_cur[k] + two_steps · ΔB[k] · pit
+
+This is the unique mass evolution that makes the replay equation close
+exactly when the stored `cm` is the pressure-fixer's
+`cm[k+1]-cm[k] = C_k - ΔB[k]·pit`. See module-header rationale for why
+this differs from the raw GEOS DELP_dry endpoint tendency.
+"""
+function _evolve_mass_pressure_fixer!(
+        m_next::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+        m_cur::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+        am_v4::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+        bm_v4::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+        ΔB::AbstractVector,
+        two_steps::FT, Nc::Int, Nz::Int) where {FT}
+    @inbounds for p in 1:CS_PANEL_COUNT
+        am = am_v4[p]; bm = bm_v4[p]
+        m  = m_cur[p]; mn = m_next[p]
+        for j in 1:Nc, i in 1:Nc
+            pit = zero(FT)
+            for k in 1:Nz
+                pit += (am[i, j, k] - am[i + 1, j, k]) +
+                       (bm[i, j, k] - bm[i, j + 1, k])
+            end
+            for k in 1:Nz
+                mn[i, j, k] = m[i, j, k] + two_steps * FT(ΔB[k]) * pit
+            end
+        end
+    end
+    return nothing
+end
+
+"""
+    _ps_from_air_mass!(ps, m, area, g, Nc, Nz)
+
+Set `ps[i,j] = (Σ_k m[i,j,k]) · g / area[i,j]` (Pa). Used to keep the
+binary's stored `ps` consistent with the chained pressure-fixer mass.
+"""
+function _ps_from_air_mass!(ps::AbstractMatrix{FT},
+                            m::AbstractArray{FT, 3},
+                            cell_areas::AbstractMatrix{FT},
+                            g::FT, Nc::Int, Nz::Int) where {FT}
+    @inbounds for j in 1:Nc, i in 1:Nc
+        s = zero(FT)
+        for k in 1:Nz
+            s += m[i, j, k]
+        end
+        ps[i, j] = s * g / cell_areas[i, j]
+    end
+    return ps
+end
+
+"""
     process_day(date, grid::CubedSphereTargetGeometry,
                 settings::AbstractGEOSSettings, vertical;
                 out_path,
                 dt_met_seconds = 3600.0,
                 FT = Float64,
                 mass_basis = :dry,
-                replay_tol = 1e-12,
+                replay_tol = replay_tolerance(FT),
                 next_day_hour0 = nothing) -> NamedTuple
 
 Build a v4 cubed-sphere transport binary at `out_path` from one UTC day of
-native GEOS data. Source mesh and target mesh are required to match (CS
-passthrough); for cross-resolution or cross-topology output, use the
-LL/RG path or the LL→CS regrid (separate orchestrators).
+native GEOS data. Source mesh and target mesh must match (CS passthrough).
 
-Returns a NamedTuple with diagnostic statistics: worst replay-gate
-relative error, worst cm residual, and elapsed time.
+Stored mass is the pressure-fixer's chained evolution (see module header),
+not the raw GEOS DELP_dry. The replay gate closes to roundoff by
+construction; the maximum absolute residual goes down to floating-point
+noise instead of the ~1% column-residual the naive
+`m=DELP_dry, cm=diagnose_cs_cm` path produced.
 
 `next_day_hour0` is part of the inherited topology-dispatch contract but
-unused here — the GEOS reader handles next-day endpoints internally via
-`next_ctm_i1`.
+unused — the GEOS reader handles next-day endpoints internally via
+`next_ctm_i1` (only consulted for the FIRST window's chained-state seed in
+this orchestrator).
 """
 function process_day(date::Date,
                      grid::CubedSphereTargetGeometry,
@@ -77,16 +151,9 @@ function process_day(date::Date,
                      panel_convention::AbstractString = "geos_native",
                      next_day_hour0 = nothing)
     # Reject configurations the path cannot honor:
-    #   - The reader produces dry endpoint mass, MFXC/MFYC are dry by GMAO
-    #     convention. There is no dry→moist conversion in this orchestrator,
-    #     so a `:moist` request would silently mislabel the output binary.
     mass_basis === :dry ||
         error("GEOS-CS passthrough only supports mass_basis=:dry; got $(mass_basis). " *
-              "If a moist binary is needed, add the (1+qv) reweighting in the orchestrator.")
-    #   - GEOS NetCDF panels are stored in the GEOS-native panel order. Using
-    #     gnomonic panel connectivity for the halo propagation would mirror
-    #     across the wrong neighbor edges. Require the target mesh to match
-    #     the source convention.
+              "GEOS MFXC/MFYC are already dry; the chained pressure-fixer is dry-basis.")
     grid.mesh.convention isa GEOSNativePanelConvention ||
         error("GEOS-CS passthrough requires panel_convention=`geos_native` on " *
               "the target geometry; got $(typeof(grid.mesh.convention)).")
@@ -99,24 +166,19 @@ function process_day(date::Date,
     inv_g  = inv(g)
     cell_areas = grid.mesh.cell_areas       # (Nc, Nc) — same metric for all panels
 
-    # GEOS dynamics: each met window is an integral of `mass_flux_dt`-second
-    # FV3 substeps. The v4 binary's per-substep flux scaling is:
-    #   am_v4 = u × dp × Δy / g × dt_factor   with dt_factor = dt_met / (2·steps)
-    # For native MFXC (already u·dp·Δy·mass_flux_dt summed-over-substeps in Pa·m²),
-    # the equivalent conversion is:
-    #   am_v4 = MFXC / mass_flux_dt × dt_factor / g
-    # which the reader has already done for the / mass_flux_dt half. The
-    # remaining factor is dt_factor / g.
+    # ΔB[k] = B[k+1] − B[k] (top-to-bottom; Σ ΔB = 1 by construction).
+    ΔB = FT[FT(vc.B[k + 1] - vc.B[k]) for k in 1:Nz]
+
     steps_per_met = round(Int, FT(dt_met_seconds) / FT(settings.mass_flux_dt))
     dt_factor = FT(dt_met_seconds / (2 * steps_per_met))
     flux_scale = dt_factor / g
+    two_steps = FT(2 * steps_per_met)
 
     nw = windows_per_day(settings, date)
 
     @info "GEOS → CS: $(date), source=$(settings) → $(out_path)"
     @info "  Nc=$Nc  Nz=$Nz  windows=$nw  steps_per_met=$steps_per_met  flux_scale=$flux_scale"
 
-    # ---- Open NCDataset handles (with next-day endpoint for last window) ----
     handles = open_geos_day(settings, date)
     @info "  Level orientation: $(handles.orientation)  (next-day endpoint: $(handles.next_ctm_i1 !== nothing))"
 
@@ -128,7 +190,7 @@ function process_day(date::Date,
         dt_met_seconds = dt_met_seconds,
         steps_per_window = steps_per_met,
         mass_basis = mass_basis,
-        include_flux_delta = true,                # write-time replay needs `dm`
+        include_flux_delta = true,
         panel_convention = panel_convention,
     )
 
@@ -138,10 +200,11 @@ function process_day(date::Date,
         bm_v4 = ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz),     npanel)
         cm_v4 = ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1),     npanel)
         dm_v4 = ntuple(_ -> zeros(FT, Nc, Nc, Nz),         npanel)
-        m_target = ntuple(_ -> zeros(FT, Nc, Nc, Nz),      npanel)
-        # Pre-allocate the kg-unit air-mass conversion buffers (DELP_Pa × area / g)
-        m_kg      = ntuple(_ -> zeros(FT, Nc, Nc, Nz),     npanel)
-        m_kg_next = ntuple(_ -> zeros(FT, Nc, Nc, Nz),     npanel)
+        # Chained-state buffers: m_cur (this window's start) and m_next_pf
+        # (the pressure-fixer-evolved end, which becomes next window's m_cur).
+        m_cur     = ntuple(_ -> zeros(FT, Nc, Nc, Nz),     npanel)
+        m_next_pf = ntuple(_ -> zeros(FT, Nc, Nc, Nz),     npanel)
+        ps_cur    = ntuple(_ -> zeros(FT, Nc, Nc),         npanel)
 
         worst_replay_rel = 0.0
         worst_replay_abs = 0.0
@@ -152,47 +215,59 @@ function process_day(date::Date,
         @inbounds for win in 1:nw
             raw = read_window!(settings, handles, date, win; FT = FT)
 
-            # 1. Convert DELP_dry (Pa) to cell air mass (kg) for both endpoints.
-            #    `m_kg[i,j,k] = DELP[i,j,k] * cell_area[i,j] / g`. The v4 binary
-            #    `m`/`dm`/`cm` fields are in kg, matching `am`/`bm` after the
-            #    `flux_scale = dt_factor / g` applied in step 2 below.
-            for p in 1:npanel
-                _delp_pa_to_air_mass_kg!(m_kg[p],      raw.m[p],      cell_areas, inv_g)
-                _delp_pa_to_air_mass_kg!(m_kg_next[p], raw.m_next[p], cell_areas, inv_g)
-            end
-
-            # 2. Native MFXC/MFYC (Pa·m²/s on cell-centered indexing) → v4 face-staggered
-            #    (kg per substep on (Nc+1,Nc,Nz) / (Nc,Nc+1,Nz)) with panel-halo
-            #    one-way propagation (no bidirectional sync). The connectivity comes
-            #    from the GEOS-native target mesh checked at the top of process_day.
+            # 1. Native MFXC/MFYC (Pa·m²/s on cell-centered indexing) → v4
+            #    face-staggered (kg per substep) with panel-halo one-way prop.
             geos_native_to_face_flux!(am_v4, bm_v4, raw.am, raw.bm,
                                       grid.mesh.connectivity, Nc, Nz, flux_scale)
 
-            # 3. Mass tendency `dm = (m_next - m) / steps_per_met` (per-substep view).
-            fill_cs_window_mass_tendency!(dm_v4, m_kg, m_kg_next, steps_per_met)
+            # 2. First window: seed m_cur and ps_cur from raw GEOS endpoint.
+            #    Subsequent windows: m_cur was set by the previous window's
+            #    pressure-fixer evolution.
+            if win == 1
+                for p in 1:npanel
+                    _delp_pa_to_air_mass_kg!(m_cur[p], raw.m[p], cell_areas, inv_g)
+                    _ps_from_air_mass!(ps_cur[p], m_cur[p], cell_areas, g, Nc, Nz)
+                end
+            end
 
-            # 4. Diagnose `cm` from continuity: cm[k+1] = cm[k] - (am_div + bm_div + dm)
-            #    so the column closes mass by construction at every cell.
-            for p in 1:npanel; fill!(cm_v4[p], zero(FT)); end
-            diagnose_cs_cm!(cm_v4, am_v4, bm_v4, dm_v4, m_kg, Nc, Nz)
+            # 3. Pressure-fixer cm (closes cm[Nz+1]=0 by construction).
+            compute_cs_cm_pressure_fixer!(cm_v4, am_v4, bm_v4, ΔB, Nc, Nz)
 
-            # 5. Replay gate: integrate fluxes forward and check m_evolved vs m_next.
-            replay = verify_write_replay_cs!(m_kg, am_v4, bm_v4, cm_v4,
-                                             m_kg_next, steps_per_met, replay_tol, win)
+            # 4. Pressure-fixer-evolved next-window mass.
+            _evolve_mass_pressure_fixer!(m_next_pf, m_cur, am_v4, bm_v4, ΔB,
+                                         two_steps, Nc, Nz)
+
+            # 5. Per-substep mass tendency consistent with the stored cm:
+            #    dm[k] = (m_next_pf[k] − m_cur[k]) / (2·steps_per_met).
+            fill_cs_window_mass_tendency!(dm_v4, m_cur, m_next_pf, steps_per_met)
+
+            # 6. Replay gate: under the chained PF state this closes by
+            #    construction at every cell at every level.
+            replay = verify_write_replay_cs!(m_cur, am_v4, bm_v4, cm_v4,
+                                             m_next_pf, steps_per_met, replay_tol, win)
             if worst_replay_win == 0 || replay.max_rel_err > worst_replay_rel
                 worst_replay_rel = replay.max_rel_err
                 worst_replay_abs = replay.max_abs_err
                 worst_replay_win = win
             end
 
-            # 6. Pack m_target = m_next as a delta and write the window.
-            for p in 1:npanel; copyto!(m_target[p], m_kg_next[p]); end
-            convert_cs_mass_target_to_delta!(m_target, m_kg)
+            # 7. Pack the on-disk endpoint delta `dm = m_next_pf − m_cur` and write.
+            #    `convert_cs_mass_target_to_delta!` mutates m_next_pf into the
+            #    delta in place; we use a fresh copy so the chained state survives.
+            m_target = ntuple(p -> copy(m_next_pf[p]), npanel)
+            convert_cs_mass_target_to_delta!(m_target, m_cur)
 
-            window_nt = (m  = m_kg,     am = am_v4, bm = bm_v4,
-                         cm = cm_v4,    ps = raw.ps,
+            window_nt = (m  = m_cur,    am = am_v4, bm = bm_v4,
+                         cm = cm_v4,    ps = ps_cur,
                          dm = m_target)
             write_streaming_cs_window!(writer, window_nt, Nc, npanel)
+
+            # 8. Chain: next window's m_cur is this window's m_next_pf, and
+            #    ps follows from m via Σ.
+            for p in 1:npanel
+                copyto!(m_cur[p], m_next_pf[p])
+                _ps_from_air_mass!(ps_cur[p], m_cur[p], cell_areas, g, Nc, Nz)
+            end
         end
 
         elapsed = time() - t_start

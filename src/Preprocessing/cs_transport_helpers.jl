@@ -508,6 +508,60 @@ function _propagate_cs_outflow_to_halo!(
 end
 
 # ---------------------------------------------------------------------------
+# FV3-style pressure-fixer cm for native GEOS sources.
+# ---------------------------------------------------------------------------
+
+"""
+    compute_cs_cm_pressure_fixer!(cm_panels, am_v4, bm_v4, ΔB, Nc, Nz)
+
+Diagnose the vertical mass flux `cm` from the column horizontal flux
+convergence using FV3's pressure-fixer rule:
+
+    pit[i,j]      = Σ_k (am[i,j,k] − am[i+1,j,k] + bm[i,j,k] − bm[i,j+1,k])
+    cm[i,j,1]     = 0
+    cm[i,j,k+1]   = cm[i,j,k] + (am[i,j,k] − am[i+1,j,k] + bm[i,j,k] − bm[i,j+1,k])
+                              − ΔB[k] · pit[i,j]
+
+Σ ΔB[k] = 1 by construction of a hybrid sigma-pressure coordinate, so
+`cm[Nz+1] = 0` exactly: the surface no-flux boundary condition is enforced
+without any per-cell residual redistribution. This is the same formulation
+used by the historical GEOS-FP CS forward runner (commit `76fa489`,
+`compute_cm_panel_cpu!`) and matches GFDL FV3's discrete continuity.
+
+Use this on native-source paths (GEOS-IT, GEOS-FP) where dry-mass
+horizontal flux divergence is NOT closed by `m_next − m_cur` per cell
+(vertical moisture transport contributes). For sources where the closure
+DOES hold by construction (Poisson-balanced spectral → CS), use
+`diagnose_cs_cm!` instead — it derives `cm` from `(am, bm, dm)` directly.
+"""
+function compute_cs_cm_pressure_fixer!(cm_panels::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                       am_v4::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                       bm_v4::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                       ΔB::AbstractVector,
+                                       Nc::Int, Nz::Int) where {FT}
+    @assert length(ΔB) == Nz "ΔB must have one entry per layer (length=$(Nz))"
+    @inbounds for p in 1:CS_PANEL_COUNT
+        am = am_v4[p]; bm = bm_v4[p]; cm = cm_panels[p]
+        for j in 1:Nc, i in 1:Nc
+            pit = zero(FT)
+            for k in 1:Nz
+                pit += (am[i, j, k] - am[i + 1, j, k]) +
+                       (bm[i, j, k] - bm[i, j + 1, k])
+            end
+            cm[i, j, 1] = zero(FT)
+            acc = zero(FT)
+            for k in 1:Nz
+                conv_k = (am[i, j, k] - am[i + 1, j, k]) +
+                         (bm[i, j, k] - bm[i, j + 1, k])
+                acc += conv_k - FT(ΔB[k]) * pit
+                cm[i, j, k + 1] = acc
+            end
+        end
+    end
+    return nothing
+end
+
+# ---------------------------------------------------------------------------
 # Utility: copy panel tuple (for snapshot storage)
 # ---------------------------------------------------------------------------
 

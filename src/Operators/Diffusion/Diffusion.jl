@@ -1,27 +1,26 @@
 """
     Diffusion
 
-Vertical diffusion operators (plan 16b).
+Vertical-diffusion operator hierarchy and solver infrastructure.
 
-This submodule ships the solver infrastructure for implicit
-(Backward-Euler) vertical diffusion. It does **not** yet include
-the `ImplicitVerticalDiffusion` operator type — that lands in
-Commit 3 — nor integration into `strang_split_mt!` (Commit 4) or
-`TransportModel` (Commit 5).
+Public surface:
 
-Commit 2 exports:
+- [`NoDiffusion`](@ref) — identity no-op; the default when no
+  `[diffusion]` config section is present.
+- [`ImplicitVerticalDiffusion`](@ref) — Backward-Euler implicit
+  diffusion driven by an `AbstractTimeVaryingField` Kz. Wired into
+  the Strang palindrome via [`apply_vertical_diffusion!`](@ref) and
+  installed into `TransportModel.diffusion` by the runtime recipe
+  when `[diffusion] kind = "constant"`.
 
-- [`solve_tridiagonal!`](@ref) — generic per-column Thomas solve.
-- [`build_diffusion_coefficients`](@ref) — reference Backward-Euler
-  coefficient builder (pure, tested against closed-form corner cases).
-- [`_vertical_diffusion_kernel!`](@ref) — the KA kernel the
-  `ImplicitVerticalDiffusion.apply!` will launch. Inlines the
-  same coefficient formulas as the reference.
-
-The coefficient arithmetic is deliberately **not fused** into a
-pre-factored `(w, inv_denom)` form: `(a, b, c)` are named locals
+Both subtype the global `AbstractDiffusion` declared in
+`src/Operators/AbstractOperators.jl`; concrete operator structs live in
+`operators.jl`. The KA kernel (`_vertical_diffusion_kernel!`) and the
+column-level Thomas solve (`solve_tridiagonal!`) are exposed for tests
+and downstream variants. The coefficient arithmetic is deliberately
+**not fused** into a pre-factored form: `(a, b, c)` are named locals
 at every level k so a future adjoint kernel can transpose them
-mechanically (see docstring in [`thomas_solve.jl`](@ref)).
+mechanically — see `thomas_solve.jl`.
 """
 module Diffusion
 

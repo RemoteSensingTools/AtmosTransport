@@ -79,6 +79,8 @@ function build_regridder(src, dst;
                          normalize::Bool = false,
                          cache_dir::Union{Nothing, AbstractString} = nothing,
                          kwargs...)
+    ir = identity_regrid_or_nothing(src, dst)
+    ir === nothing || return ir
     if cache_dir !== nothing
         mkpath(cache_dir)
         key = _regridder_cache_key(src, dst; normalize)

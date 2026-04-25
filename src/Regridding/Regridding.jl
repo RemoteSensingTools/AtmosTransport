@@ -90,8 +90,10 @@ using StaticArrays: SA
 export build_regridder, save_regridder, load_regridder
 export save_esmf_weights, apply_regridder!
 export cubed_sphere_face_corners
+export IdentityRegrid, meshes_equivalent
 
 include("treeify_meshes.jl")
+include("identity_regrid.jl")
 include("weights_io.jl")
 
 end # module Regridding

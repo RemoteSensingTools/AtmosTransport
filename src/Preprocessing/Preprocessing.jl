@@ -152,6 +152,9 @@ include("sources/geos.jl")
 # TOML-driven met-source factory (Commit 4)
 include("sources/loader.jl")
 
+# GEOS → CS passthrough orchestrator (Commit 5)
+include("transport_binary/cubed_sphere_geos.jl")
+
 # Met source abstraction (Commit 1 of plan indexed-baking-valiant)
 export AbstractMetSettings, RawWindow
 export read_window!, source_grid, windows_per_day, has_convection

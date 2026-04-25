@@ -123,6 +123,7 @@ end
                 FT = Float64,
                 mass_basis = :dry,
                 replay_tol = replay_tolerance(FT),
+                seed_m = nothing,
                 next_day_hour0 = nothing) -> NamedTuple
 
 Build a v4 cubed-sphere transport binary at `out_path` from one UTC day of
@@ -134,10 +135,20 @@ construction; the maximum absolute residual goes down to floating-point
 noise instead of the ~1% column-residual the naive
 `m=DELP_dry, cm=diagnose_cs_cm` path produced.
 
+For multi-day preprocessing, `seed_m` carries the pressure-fixer endpoint
+from the previous day so adjacent daily binaries share a boundary mass:
+pass `nothing` (default) on day 1 to seed from raw GEOS DELP_dry, and on
+day N+1 pass the `final_m` returned by day N's `process_day`. Without
+this threading, each day reinitializes from raw GEOS and the chained
+mass discontinuously jumps at every daily boundary.
+
+The returned NamedTuple includes `final_m::NTuple{6, Array{FT, 3}}`, the
+pressure-fixer state at the END of the last window — i.e., the seed for
+the next day's `process_day`.
+
 `next_day_hour0` is part of the inherited topology-dispatch contract but
 unused — the GEOS reader handles next-day endpoints internally via
-`next_ctm_i1` (only consulted for the FIRST window's chained-state seed in
-this orchestrator).
+`next_ctm_i1`.
 """
 function process_day(date::Date,
                      grid::CubedSphereTargetGeometry,
@@ -149,6 +160,7 @@ function process_day(date::Date,
                      mass_basis::Symbol = :dry,
                      replay_tol::Real = replay_tolerance(FT),
                      panel_convention::AbstractString = "geos_native",
+                     seed_m::Union{Nothing, NTuple{6, <:AbstractArray}} = nothing,
                      next_day_hour0 = nothing)
     # Reject configurations the path cannot honor:
     mass_basis === :dry ||
@@ -220,12 +232,23 @@ function process_day(date::Date,
             geos_native_to_face_flux!(am_v4, bm_v4, raw.am, raw.bm,
                                       grid.mesh.connectivity, Nc, Nz, flux_scale)
 
-            # 2. First window: seed m_cur and ps_cur from raw GEOS endpoint.
+            # 2. First window: seed m_cur from `seed_m` (previous day's PF
+            #    endpoint) when supplied, otherwise from raw GEOS DELP_dry.
             #    Subsequent windows: m_cur was set by the previous window's
             #    pressure-fixer evolution.
             if win == 1
+                if seed_m === nothing
+                    for p in 1:npanel
+                        _delp_pa_to_air_mass_kg!(m_cur[p], raw.m[p], cell_areas, inv_g)
+                    end
+                else
+                    for p in 1:npanel
+                        size(seed_m[p]) == (Nc, Nc, Nz) ||
+                            error("seed_m[$p] shape $(size(seed_m[p])) ≠ ($Nc, $Nc, $Nz)")
+                        copyto!(m_cur[p], seed_m[p])
+                    end
+                end
                 for p in 1:npanel
-                    _delp_pa_to_air_mass_kg!(m_cur[p], raw.m[p], cell_areas, inv_g)
                     _ps_from_air_mass!(ps_cur[p], m_cur[p], cell_areas, g, Nc, Nz)
                 end
             end
@@ -274,12 +297,18 @@ function process_day(date::Date,
         @info @sprintf("  Done in %.1fs (%.2fs/window). Worst replay: rel=%.2e abs=%.2e at win=%d",
                        elapsed, elapsed / nw, worst_replay_rel, worst_replay_abs, worst_replay_win)
 
+        # Capture the pressure-fixer endpoint from the last window so the
+        # caller can seed the next day's `process_day` and preserve cross-day
+        # continuity (codex 2026-04-25 P2).
+        final_m = ntuple(p -> copy(m_cur[p]), npanel)
+
         return (
             elapsed = elapsed,
             worst_replay_rel = worst_replay_rel,
             worst_replay_abs = worst_replay_abs,
             worst_replay_win = worst_replay_win,
             out_path = out_path,
+            final_m = final_m,
         )
     finally
         close_streaming_transport_binary!(writer)

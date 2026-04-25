@@ -107,16 +107,19 @@ function main()
 
     t_total = time()
     n = 0
+    seed_m = nothing                                     # day 1 seeds from raw GEOS DELP_dry
     for d in start_date:Day(1):end_date
         n += 1
         out_path = _output_path(cfg, d, FT)
         @info "[$n] $(d) → $(out_path)"
-        process_day(d, grid, settings, vertical;
-                    out_path = out_path,
-                    dt_met_seconds = dt_met_seconds,
-                    FT = FT,
-                    mass_basis = mass_basis,
-                    panel_convention = panel_convention)
+        result = process_day(d, grid, settings, vertical;
+                             out_path = out_path,
+                             dt_met_seconds = dt_met_seconds,
+                             FT = FT,
+                             mass_basis = mass_basis,
+                             panel_convention = panel_convention,
+                             seed_m = seed_m)
+        seed_m = result.final_m                          # chain into next day
     end
     elapsed = time() - t_total
     @info @sprintf("All done! %d days in %.1fs (%.1fs/day)",

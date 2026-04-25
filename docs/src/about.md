@@ -35,20 +35,25 @@ palindrome; and the v4 transport-binary header schema, payload
 sections, capability surface, mass-basis contract, streaming-writer
 entry points, and replay-gate contract.
 
-**Phase 4 — Tutorials (current).** Literate.jl wired into the docs
-build (`docs/literate/*.jl` → `docs/src/tutorials/_generated/*.md`,
+**Phase 4 — Tutorials** (shipped, partial). Literate.jl wired into
+the docs build (`docs/literate/*.jl` → `docs/src/tutorials/_generated/*.md`,
 executed at build time so the rendered output matches what the
 reader will actually see locally). First tutorial:
 `synthetic_latlon.jl` — builds a tiny synthetic transport binary in
-memory using only public API and steps it forward, demonstrating the
-binary → driver → state → simulation data flow without any external
-data dependency. CI-safe; runs anywhere with the package installed.
+memory using only public API and steps it forward. CI-safe.
+Real-data topology tutorials will land once the LL+CS quickstart
+bundle is distributable as a Julia LazyArtifact (currently blocked
+on the F32 spectral-CS preprocessing fix).
 
-Real-data topology tutorials (lat-lon ERA5, cubed-sphere GEOS-IT,
-reduced Gaussian) will land once the LL+CS quickstart bundle is
-distributable as a Julia LazyArtifact (currently blocked on the F32
-spectral-CS preprocessing fix that adds the CS binaries to the
-bundle).
+**Phase 5 — Preprocessing guide (current).** Five pages: a unified
+overview with the source × target dispatch model and a prominent
+warning that preprocessing is time-intensive (but the resulting
+binaries enable optimized I/O at runtime); per-source deep-dives for
+ERA5 spectral and GEOS native CS (FV3 pressure-fixer cm,
+mass_flux_dt = 450, GCHP convection wiring); a regridding chapter
+covering conservative weights, IdentityRegrid, and the JLD2 cache;
+and a one-page conventions cheat sheet (units, replay tolerances,
+level orientation, panel conventions).
 
 **Caveats carried forward:**
 
@@ -76,8 +81,8 @@ each legacy file into this tree or archive it.
 | 2 | Getting-Started onramp (install, quickstart, first run, inspecting output) | shipped |
 | 3A | Concepts: grids, state & basis (Mermaid hierarchies + grid schematics) | shipped |
 | 3B | Concepts: operators, binary format | shipped |
-| 4 | Tutorials (Literate.jl) — synthetic LL shipped; real-data topology tutorials pending bundle artifact | **in progress** |
-| 5 | Preprocessing guide (spectral, GEOS native, regridding) | pending |
+| 4 | Tutorials (Literate.jl) — synthetic LL shipped; real-data topology tutorials pending bundle artifact | shipped |
+| 5 | Preprocessing guide (overview, spectral_era5, geos_native_cs, regridding, conventions) | **in progress** |
 | 6 | Theory & Verification (mass conservation, schemes, validation) | pending |
 | 7 | Configuration & Runtime (TOML, sample data, output) | pending |
 | 8 | API Reference (`@autodocs` per module) | pending |

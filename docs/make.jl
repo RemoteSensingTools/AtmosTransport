@@ -54,6 +54,13 @@ const PAGES = [
     "Tutorials" => [
         "tutorials/_generated/synthetic_latlon.md",
     ],
+    "Preprocessing" => [
+        "preprocessing/overview.md",
+        "preprocessing/spectral_era5.md",
+        "preprocessing/geos_native_cs.md",
+        "preprocessing/regridding.md",
+        "preprocessing/conventions.md",
+    ],
     "About these docs" => "about.md",
 ]
 

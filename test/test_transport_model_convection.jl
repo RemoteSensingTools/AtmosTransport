@@ -17,7 +17,7 @@ function _make_convection_grid(; FT = Float64, Nx = 4, Ny = 3, Nz = 5)
 end
 
 function _make_convection_model(; FT = Float64, Nx = 4, Ny = 3, Nz = 5,
-                                 convection::AbstractConvectionOperator = NoConvection(),
+                                 convection::AbstractConvection = NoConvection(),
                                  convection_forcing::ConvectionForcing = ConvectionForcing())
     grid = _make_convection_grid(FT = FT, Nx = Nx, Ny = Ny, Nz = Nz)
     air_mass = fill(FT(_REALISTIC_AIR_MASS_KG), Nx, Ny, Nz)
@@ -53,7 +53,7 @@ function _make_rg_cmfmc_forcing(FT, ncell, Nz; peak = FT(0.02), top_detrain = FT
 end
 
 function _make_rg_convection_model(; FT = Float64, Nz = 5,
-                                    convection::AbstractConvectionOperator = NoConvection(),
+                                    convection::AbstractConvection = NoConvection(),
                                     convection_forcing::ConvectionForcing = ConvectionForcing())
     mesh = ReducedGaussianMesh(FT[-45, 45], [4, 4]; FT = FT)
     vertical = HybridSigmaPressure(

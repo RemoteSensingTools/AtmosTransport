@@ -120,7 +120,7 @@ _convection_workspace_for(::TM5Convection,
 # methods above take precedence. Returns `nothing` so installing an
 # unknown operator on the model compiles; DrivenSimulation's
 # validator catches it at runtime with a clear error.
-_convection_workspace_for(::AbstractConvectionOperator, state, grid) = nothing
+_convection_workspace_for(::AbstractConvection, state, grid) = nothing
 
 function _with_convection_workspace(workspace, convection_ws)
     if workspace isa TransportModelWorkspace
@@ -151,9 +151,9 @@ function TransportModel(state::CellState{B},
                         advection::AbstractAdvectionScheme;
                         workspace = AdvectionWorkspace(state),
                         chemistry::AbstractChemistryOperator = NoChemistry(),
-                        diffusion::AbstractDiffusionOperator = NoDiffusion(),
+                        diffusion::AbstractDiffusion = NoDiffusion(),
                         emissions::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
-                        convection::AbstractConvectionOperator = NoConvection(),
+                        convection::AbstractConvection = NoConvection(),
                         convection_forcing::ConvectionForcing = ConvectionForcing()) where {B <: AbstractMassBasis}
     workspace_model = _with_convection_workspace(
         workspace, _convection_workspace_for(convection, state, grid))
@@ -171,9 +171,9 @@ function TransportModel(state::CellState{B},
                         advection::AbstractAdvectionScheme;
                         workspace = AdvectionWorkspace(state; mesh=grid.horizontal),
                         chemistry::AbstractChemistryOperator = NoChemistry(),
-                        diffusion::AbstractDiffusionOperator = NoDiffusion(),
+                        diffusion::AbstractDiffusion = NoDiffusion(),
                         emissions::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
-                        convection::AbstractConvectionOperator = NoConvection(),
+                        convection::AbstractConvection = NoConvection(),
                         convection_forcing::ConvectionForcing = ConvectionForcing()) where {B <: AbstractMassBasis}
     workspace_model = _with_convection_workspace(
         workspace, _convection_workspace_for(convection, state, grid))
@@ -191,9 +191,9 @@ function TransportModel(state::CellState{B},
                         advection::AbstractAdvectionScheme;
                         workspace = AdvectionWorkspace(state),
                         chemistry::AbstractChemistryOperator = NoChemistry(),
-                        diffusion::AbstractDiffusionOperator = NoDiffusion(),
+                        diffusion::AbstractDiffusion = NoDiffusion(),
                         emissions::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
-                        convection::AbstractConvectionOperator = NoConvection(),
+                        convection::AbstractConvection = NoConvection(),
                         convection_forcing::ConvectionForcing = ConvectionForcing()) where {B <: AbstractMassBasis}
     throw(ArgumentError("CubedSphere transport now uses CubedSphereState + CubedSphereFaceFluxState; CellState + StructuredFaceFluxState remains unsupported for CubedSphereMesh"))
 end
@@ -204,9 +204,9 @@ function TransportModel(state::CubedSphereState{B},
                         advection::AbstractAdvectionScheme;
                         workspace = _cs_advection_workspace_for(advection, state, grid),
                         chemistry::AbstractChemistryOperator = NoChemistry(),
-                        diffusion::AbstractDiffusionOperator = NoDiffusion(),
+                        diffusion::AbstractDiffusion = NoDiffusion(),
                         emissions::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
-                        convection::AbstractConvectionOperator = NoConvection(),
+                        convection::AbstractConvection = NoConvection(),
                         convection_forcing::ConvectionForcing = ConvectionForcing()) where {B <: AbstractMassBasis}
     workspace_model = _with_convection_workspace(
         workspace, _convection_workspace_for(convection, state, grid))
@@ -247,7 +247,7 @@ fields share storage with the original. Parallel to [`with_chemistry`](@ref);
 useful for installing a diffusion operator into a model that was
 constructed with the default `NoDiffusion()`.
 """
-function with_diffusion(model::TransportModel, diffusion::AbstractDiffusionOperator)
+function with_diffusion(model::TransportModel, diffusion::AbstractDiffusion)
     return TransportModel{typeof(model.state), typeof(model.fluxes),
                           typeof(model.grid), typeof(model.advection),
                           typeof(model.workspace), typeof(model.chemistry),
@@ -298,7 +298,7 @@ allocated buffers directly. The model workspace is re-wrapped as
 needed so concrete operators can carry their own scratch storage
 without disturbing the advection workspace.
 """
-function with_convection(model::TransportModel, convection::AbstractConvectionOperator)
+function with_convection(model::TransportModel, convection::AbstractConvection)
     workspace = _with_convection_workspace(
         model.workspace, _convection_workspace_for(convection, model.state, model.grid))
     return TransportModel{typeof(model.state), typeof(model.fluxes),

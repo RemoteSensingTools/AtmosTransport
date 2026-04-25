@@ -5,7 +5,7 @@ Convective transport operators (plan 18).
 
 This submodule ships the convection-operator hierarchy:
 
-- [`AbstractConvectionOperator`](@ref) — supertype for all convective
+- [`AbstractConvection`](@ref) — supertype for all convective
   transport operators.
 - [`NoConvection`](@ref) — identity no-op; default for configurations
   without active convection. Dispatch is a compile-time dead branch
@@ -31,7 +31,7 @@ History (plan 18 + plan 23):
     apply!(state::CellState{B},
            forcing::ConvectionForcing,
            grid::AtmosGrid,
-           op::AbstractConvectionOperator,
+           op::AbstractConvection,
            dt::Real;
            workspace) where {B <: AbstractMassBasis}
 
@@ -67,8 +67,9 @@ using ...State: CellState, CubedSphereState
 using ...Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, cell_areas_by_latitude
 using ...MetDrivers: ConvectionForcing
 import ..apply!
+import ..AbstractConvection             # global root from src/Operators/AbstractOperators.jl
 
-export AbstractConvectionOperator, NoConvection
+export NoConvection
 export CMFMCConvection                          # plan 18 Commit 3
 export CMFMCWorkspace, invalidate_cmfmc_cache!  # plan 18 Commit 3
 export TM5Convection                            # plan 23 Commit 1

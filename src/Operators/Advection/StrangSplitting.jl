@@ -962,7 +962,7 @@ function strang_split!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
                        scheme::AbstractAdvectionScheme;
                        workspace::AdvectionWorkspace,
                        cfl_limit::Real = one(eltype(state.air_mass)),
-                       diffusion_op::AbstractDiffusionOperator = NoDiffusion(),
+                       diffusion_op::AbstractDiffusion = NoDiffusion(),
                        emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                        meteo = nothing,
                        dt::Union{Nothing, Real} = nothing) where {B <: AbstractMassBasis}
@@ -1061,7 +1061,7 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
                        scheme::AbstractAdvectionScheme;
                        workspace,
                        cfl_limit::Real = 0.95,
-                       diffusion_op::AbstractDiffusionOperator = NoDiffusion(),
+                       diffusion_op::AbstractDiffusion = NoDiffusion(),
                        emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                        meteo = nothing,
                        dt::Union{Nothing, Real} = nothing) where {B <: AbstractMassBasis}
@@ -1130,7 +1130,7 @@ function apply!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
                 scheme::AbstractAdvectionScheme, dt;
                 workspace::AdvectionWorkspace,
                 cfl_limit::Real = one(eltype(state.air_mass)),
-                diffusion_op::AbstractDiffusionOperator = NoDiffusion(),
+                diffusion_op::AbstractDiffusion = NoDiffusion(),
                 emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                 meteo = nothing) where {B <: AbstractMassBasis}
     strang_split!(state, fluxes, grid, scheme;
@@ -1153,7 +1153,7 @@ function apply!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxState{B},
                 scheme::AbstractAdvectionScheme, dt;
                 workspace,
                 cfl_limit::Real = 0.95,
-                diffusion_op::AbstractDiffusionOperator = NoDiffusion(),
+                diffusion_op::AbstractDiffusion = NoDiffusion(),
                 emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                 meteo = nothing) where {B <: AbstractMassBasis}
     strang_split!(state, fluxes, grid, scheme;
@@ -1184,7 +1184,7 @@ for (scheme_type, h_sweep, v_sweep) in (
                           scheme::$scheme_type, dt;
                           workspace::AdvectionWorkspace,
                           cfl_limit::Real = one(eltype(state.air_mass)),
-                          diffusion_op::AbstractDiffusionOperator = NoDiffusion(),
+                          diffusion_op::AbstractDiffusion = NoDiffusion(),
                           emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                           meteo = nothing) where {B <: AbstractMassBasis}
         m = state.air_mass
@@ -1329,7 +1329,7 @@ function strang_split_mt!(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
                           scheme::AbstractAdvectionScheme,
                           ws::AdvectionWorkspace{FT};
                           cfl_limit::Real = one(FT),
-                          diffusion_op::AbstractDiffusionOperator = NoDiffusion(),
+                          diffusion_op::AbstractDiffusion = NoDiffusion(),
                           emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                           tracer_names::Union{Nothing, Tuple} = nothing,
                           meteo = nothing,

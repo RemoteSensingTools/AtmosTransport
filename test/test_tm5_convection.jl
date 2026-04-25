@@ -23,7 +23,7 @@ using .AtmosTransport.State: DryBasis, MoistBasis, CellState, CubedSphereState,
                               allocate_face_fluxes
 using .AtmosTransport.Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh,
                              CubedSphereMesh, HybridSigmaPressure
-using .AtmosTransport.Operators: AbstractConvectionOperator, NoConvection,
+using .AtmosTransport.Operators: AbstractConvection, NoConvection,
                                  CMFMCConvection, TM5Convection,
                                  CMFMCWorkspace, TM5Workspace,
                                  UpwindScheme
@@ -37,7 +37,7 @@ const FT = Float32
 @testset "plan 23 Commit 1: TM5Convection type + workspace factory" begin
     @testset "construct TM5Convection() without fields" begin
         op = TM5Convection()
-        @test op isa AbstractConvectionOperator
+        @test op isa AbstractConvection
         @test op isa TM5Convection
         # Stateless — no fields.
         @test fieldcount(TM5Convection) == 0
@@ -46,8 +46,8 @@ const FT = Float32
     @testset "NoConvection and CMFMCConvection unchanged" begin
         # Plan 23's validator refactor must not change what these
         # return or how they dispatch. Bit-exact regression.
-        @test NoConvection() isa AbstractConvectionOperator
-        @test CMFMCConvection() isa AbstractConvectionOperator
+        @test NoConvection() isa AbstractConvection
+        @test CMFMCConvection() isa AbstractConvection
     end
 end
 

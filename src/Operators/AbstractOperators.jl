@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Abstract operator hierarchy for the basis-explicit transport architecture
+# Abstract operator hierarchy for the basis-explicit transport architecture.
 #
 # All physics operators dispatch on these abstract types. The universal
 # interface is:
@@ -15,6 +15,11 @@
 #
 #   structured mesh  → AbstractStructuredFaceFluxState  → cell-loop kernels
 #   unstructured mesh → AbstractUnstructuredFaceFluxState → face-loop kernels
+#
+# Per-physics roots are declared here; concrete subtypes live in
+# `src/Operators/<Physics>/operators.jl` and inherit from the matching root.
+# Each per-physics root exists exactly once — no parallel "operator"
+# vocabularies (e.g. there is no separate `AbstractDiffusionOperator`).
 # ---------------------------------------------------------------------------
 
 """
@@ -27,26 +32,20 @@ abstract type AbstractOperator end
 """
     AbstractDiffusion <: AbstractOperator
 
-Vertical diffusion operators (implicit Thomas solver, PBL schemes).
-Phase 2+ — stub.
+Root type for vertical diffusion operators. Concrete subtypes live in
+`src/Operators/Diffusion/operators.jl` (`NoDiffusion`,
+`ImplicitVerticalDiffusion`, …).
 """
 abstract type AbstractDiffusion <: AbstractOperator end
 
 """
     AbstractConvection <: AbstractOperator
 
-Convective transport operators (Tiedtke, RAS, host-driven).
-Phase 2+ — stub.
+Root type for convective-transport operators. Concrete subtypes live in
+`src/Operators/Convection/` (`NoConvection`, `CMFMCConvection`,
+`TM5Convection`).
 """
 abstract type AbstractConvection <: AbstractOperator end
-
-"""
-    AbstractSourceSink <: AbstractOperator
-
-Source/sink operators (emissions, deposition, chemistry).
-Phase 2+ — stub.
-"""
-abstract type AbstractSourceSink <: AbstractOperator end
 
 # ---------------------------------------------------------------------------
 # Default error stubs
@@ -55,6 +54,5 @@ abstract type AbstractSourceSink <: AbstractOperator end
 function apply! end
 
 export AbstractOperator
-export AbstractDiffusion
-export AbstractConvection, AbstractSourceSink
+export AbstractDiffusion, AbstractConvection
 export apply!

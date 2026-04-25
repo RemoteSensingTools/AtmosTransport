@@ -12,7 +12,7 @@ using Test
 using AtmosTransport: CellState, AdvectionWorkspace,
     ConstantField, PreComputedKzField, ProfileKzField,
     NoDiffusion, ImplicitVerticalDiffusion, CubedSphereField,
-    AbstractDiffusionOperator, apply!, get_tracer,
+    AbstractDiffusion, apply!, get_tracer,
     ReducedGaussianMesh, HybridSigmaPressure, AtmosGrid, CPU,
     ncells,
     field_value
@@ -80,8 +80,8 @@ end
 # =========================================================================
 
 @testset "Diffusion type hierarchy" begin
-    @test NoDiffusion() isa AbstractDiffusionOperator
-    @test ImplicitVerticalDiffusion(kz_field = ConstantField{Float64, 3}(1.0)) isa AbstractDiffusionOperator
+    @test NoDiffusion() isa AbstractDiffusion
+    @test ImplicitVerticalDiffusion(kz_field = ConstantField{Float64, 3}(1.0)) isa AbstractDiffusion
 end
 
 # =========================================================================

@@ -152,7 +152,7 @@ with palindrome center accepting optional diffusion V call
 ### 4.2 Diffusion
 
 ```
-AbstractDiffusionOperator
+AbstractDiffusion
 ├── NoDiffusion                        # no-op (default)
 └── ImplicitVerticalDiffusion{FT, KzF} # backward Euler, Thomas solve
 ```

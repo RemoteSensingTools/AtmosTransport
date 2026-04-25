@@ -55,13 +55,13 @@ AbstractFaceFluxState{Basis}
   FaceIndexedFluxState{Basis}          -- ReducedGaussian (hflux, cm)
   CubedSphereFaceFluxState{Basis}      -- CubedSphere (panel-native)
 
-AbstractDiffusionOperator
+AbstractDiffusion
   NoDiffusion | ImplicitVerticalDiffusion{FT, KzF}
 
 AbstractSurfaceFluxOperator
   NoSurfaceFlux | SurfaceFluxOperator{FT, M}
 
-AbstractConvectionOperator
+AbstractConvection
   NoConvection | CMFMCConvection{...}
 
 AbstractChemistryOperator

@@ -16,7 +16,7 @@ operator × topology matrix.
 
 - Type hierarchy:
   [`operators.jl`](operators.jl)
-  defines `AbstractConvectionOperator`, `NoConvection`, and
+  defines `AbstractConvection`, `NoConvection`, and
   `apply_convection!`
 - Concrete structured operator:
   [`CMFMCConvection.jl`](CMFMCConvection.jl)
@@ -101,7 +101,7 @@ are genuine fast-path implementations, not generic wrappers.
   inspect `ConvectionForcing` producers in `MetDrivers/` and the
   validation logic in [`CMFMCConvection.jl`](CMFMCConvection.jl)
 - Adding a new convection operator:
-  subtype `AbstractConvectionOperator` in [`operators.jl`](operators.jl);
+  subtype `AbstractConvection` in [`operators.jl`](operators.jl);
   provide per-topology `apply!` methods alongside the CMFMC dispatches
 - Debugging numerical behavior:
   start with [`cmfmc_kernels.jl`](cmfmc_kernels.jl) and

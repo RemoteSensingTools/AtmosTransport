@@ -5,38 +5,32 @@
 # operators (`CMFMCConvection`, `TM5Convection`) land in Commits 3 and 4.
 # ---------------------------------------------------------------------------
 
-"""
-    AbstractConvectionOperator
-
-Top of the convection operator hierarchy. Concrete subtypes land in
-plan 18 Commits 3 and 4:
-
-- `CMFMCConvection` — GCHP-style RAS / Grell-Freitas transport with
-  CMFMC + optional DTRAIN, mandatory CFL sub-cycling, well-mixed
-  sub-cloud layer. See plan 18 v5.1 §2.1-§2.8.
-- `TM5Convection` — TM5-style four-field matrix transport with
-  in-kernel LU solve. See plan 18 v5.1 §2.13.
-
-Every concrete subtype implements
-
-    apply!(state::CellState{B},
-           forcing::ConvectionForcing,
-           grid::AtmosGrid,
-           op,
-           dt::Real;
-           workspace) where {B <: AbstractMassBasis}
-
-mutating `state.tracers_raw` in place and returning `state`. The
-forcing arrives via `TransportModel.convection_forcing`, populated
-each substep by `DrivenSimulation._refresh_forcing!` (plan 18 v5.1
-§2.17 Decision 23).
-
-No `meteo` kwarg — unlike `ImplicitVerticalDiffusion` (which needs
-time to refresh Kz) or `SurfaceFluxOperator` (which needs time to
-sample `StepwiseField` emission rates), convection forcing is the
-time information; the operator doesn't call `current_time`.
-"""
-abstract type AbstractConvectionOperator end
+# `AbstractConvection` is the global root declared in
+# `src/Operators/AbstractOperators.jl`. Concrete subtypes here:
+#
+# - `NoConvection` — identity, default.
+# - `CMFMCConvection` — GCHP-style RAS / Grell-Freitas transport with
+#   CMFMC + optional DTRAIN, mandatory CFL sub-cycling, well-mixed
+#   sub-cloud layer. See plan 18 v5.1 §2.1-§2.8.
+# - `TM5Convection` — TM5-style four-field matrix transport with
+#   in-kernel LU solve. See plan 18 v5.1 §2.13.
+#
+# Every concrete subtype implements
+#
+#     apply!(state::CellState{B},
+#            forcing::ConvectionForcing,
+#            grid::AtmosGrid,
+#            op,
+#            dt::Real;
+#            workspace) where {B <: AbstractMassBasis}
+#
+# mutating `state.tracers_raw` in place and returning `state`. The forcing
+# arrives via `TransportModel.convection_forcing`, populated each substep
+# by `DrivenSimulation._refresh_forcing!`. No `meteo` kwarg — unlike
+# `ImplicitVerticalDiffusion` (which needs time to refresh Kz) or
+# `SurfaceFluxOperator` (which needs time to sample `StepwiseField`
+# emission rates), convection forcing IS the time information; the
+# operator does not call `current_time`.
 
 """
     NoConvection()
@@ -47,7 +41,7 @@ without active convection. Dispatch is a compile-time dead branch in
 floating-point work when no operator is installed (bit-exact backward-
 compatible with pre-plan-18 behavior).
 """
-struct NoConvection <: AbstractConvectionOperator end
+struct NoConvection <: AbstractConvection end
 
 # =========================================================================
 # apply!  (state-level, delegates to apply_convection! in Commits 3/4)

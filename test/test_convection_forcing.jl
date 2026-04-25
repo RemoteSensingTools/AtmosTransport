@@ -18,12 +18,12 @@ using Adapt
 
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
-using .AtmosTransport: AbstractConvectionOperator
+using .AtmosTransport: AbstractConvection
 using .AtmosTransport.MetDrivers: _cap, _check_capability_match
 
 # Custom dummy convection operator for test 20 (CMFMCConvection lands
 # in Commit 3).
-struct _DummyConvOp <: AbstractConvectionOperator end
+struct _DummyConvOp <: AbstractConvection end
 
 # ---------------------------------------------------------------------------
 # Struct / capability basics

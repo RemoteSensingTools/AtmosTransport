@@ -1,18 +1,12 @@
-"""
-    AbstractDiffusionOperator
-
-Top of the diffusion operator hierarchy. Concrete subtypes in this
-commit: [`NoDiffusion`](@ref), [`ImplicitVerticalDiffusion`](@ref).
-Plan 16b+ can add non-local / counter-gradient variants as sibling
-concrete types.
-
-Every concrete subtype implements
-
-    apply!(state::CellState, meteo, grid, op, dt; workspace)
-
-mutating `state.tracers_raw` in place and returning `state`.
-"""
-abstract type AbstractDiffusionOperator end
+# `AbstractDiffusion` is the global root declared in
+# `src/Operators/AbstractOperators.jl`. Concrete subtypes here:
+# [`NoDiffusion`](@ref), [`ImplicitVerticalDiffusion`](@ref). Plan 16b+
+# can add non-local / counter-gradient variants as sibling concrete types.
+# Every concrete subtype implements
+#
+#     apply!(state::CellState, meteo, grid, op, dt; workspace)
+#
+# mutating `state.tracers_raw` in place and returning `state`.
 
 """
     NoDiffusion()
@@ -21,7 +15,7 @@ Identity operator — `apply!` is a no-op. Default for configurations
 without active vertical mixing, and the value `strang_split_mt!` sees
 when the palindrome's V position is unoccupied (Commit 4).
 """
-struct NoDiffusion <: AbstractDiffusionOperator end
+struct NoDiffusion <: AbstractDiffusion end
 
 """
     ImplicitVerticalDiffusion(; kz_field)
@@ -68,7 +62,7 @@ palindrome integration.
   `AbstractTimeVaryingField{FT, 3}` providing cell-centered Kz values
   [m²/s geometric].
 """
-struct ImplicitVerticalDiffusion{FT, KzF} <: AbstractDiffusionOperator
+struct ImplicitVerticalDiffusion{FT, KzF} <: AbstractDiffusion
     kz_field :: KzF
 
     function ImplicitVerticalDiffusion{FT, KzF}(kz_field::KzF) where {FT, KzF}

@@ -33,7 +33,7 @@ using .AtmosTransport.State: CellState, DryBasis, allocate_face_fluxes
 using .AtmosTransport.Grids: AtmosGrid, LatLonMesh, HybridSigmaPressure,
                               CPU as GridsCPU
 using .AtmosTransport.Operators: TM5Convection, TM5Workspace,
-                                 UpwindScheme, AbstractConvectionOperator
+                                 UpwindScheme, AbstractConvection
 using .AtmosTransport.MetDrivers: ConvectionForcing, StructuredTransportWindow,
                                    AbstractMetDriver
 using .AtmosTransport.Models: TransportModel, DrivenSimulation,

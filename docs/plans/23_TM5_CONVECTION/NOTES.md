@@ -71,7 +71,7 @@ path. Plan doc lives outside the repo at
   callers needed touching. The three internal methods are:
   `NoConvection` (no-op), `CMFMCConvection` (existing check),
   `TM5Convection` (new: rejects `nothing` `tm5_fields`), and an
-  `AbstractConvectionOperator` fallback that points the developer
+  `AbstractConvection` fallback that points the developer
   at this file (principle 10 "error message names the fix").
 - `TM5Workspace` parametric on `{FT, M, P, C}` with NTuple{6}
   variant for CS — identical pattern to `CMFMCWorkspace`.

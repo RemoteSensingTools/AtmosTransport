@@ -193,7 +193,7 @@ export diagnose_cm!
 
 # Diffusion solver infrastructure + operator types (plan 16b Commits 2-4)
 export solve_tridiagonal!, build_diffusion_coefficients
-export AbstractDiffusionOperator, NoDiffusion, ImplicitVerticalDiffusion
+export AbstractDiffusion, NoDiffusion, ImplicitVerticalDiffusion
 export apply_vertical_diffusion!
 
 # Surface flux data types + operator hierarchy (plan 17 Commits 2-3).
@@ -207,7 +207,7 @@ export apply_surface_flux!
 # lands via plan 23 (Commit 1: types + dispatch stubs; Commit 4:
 # real kernels on all three topologies).
 # `ConvectionForcing` lives in MetDrivers and is re-exported below.
-export AbstractConvectionOperator, NoConvection
+export AbstractConvection, NoConvection
 export CMFMCConvection                          # plan 18 Commit 3
 export CMFMCWorkspace, invalidate_cmfmc_cache!  # plan 18 Commit 3
 export TM5Convection                            # plan 23 Commit 1

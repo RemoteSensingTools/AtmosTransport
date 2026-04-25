@@ -170,7 +170,7 @@ function _validate_convection_window!(::TM5Convection,
     return nothing
 end
 
-function _validate_convection_window!(op::AbstractConvectionOperator,
+function _validate_convection_window!(op::AbstractConvection,
                                        ::AbstractTransportWindow,
                                        ::AbstractMetDriver)
     throw(ArgumentError(

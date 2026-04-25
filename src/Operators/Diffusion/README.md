@@ -10,7 +10,7 @@ run on structured, face-indexed, and panel-native cubed-sphere state.
 
 - Operator types:
   [`operators.jl`](operators.jl)
-  defines `AbstractDiffusionOperator`, `NoDiffusion`, and
+  defines `AbstractDiffusion`, `NoDiffusion`, and
   `ImplicitVerticalDiffusion`
 - Model-facing runtime entrypoint:
   [`operators.jl`](operators.jl)

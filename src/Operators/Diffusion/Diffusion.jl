@@ -31,10 +31,11 @@ using ...State: CellState, CubedSphereState,
                 field_value, update_field!, panel_field, eachtracer
 using ...MetDrivers: current_time
 import ..apply!
+import ..AbstractDiffusion                # global root from src/Operators/AbstractOperators.jl
 
 export solve_tridiagonal!, build_diffusion_coefficients
 export _vertical_diffusion_kernel!
-export AbstractDiffusionOperator, NoDiffusion, ImplicitVerticalDiffusion
+export NoDiffusion, ImplicitVerticalDiffusion
 export apply_vertical_diffusion!
 
 include("thomas_solve.jl")

@@ -79,7 +79,7 @@ Derivation archived at git commit 27e9d2e, path
 §5.3 (plan-18 upstream notes — deleted during plan-21 cleanup; reach
 via git archaeology).
 """
-struct CMFMCConvection <: AbstractConvectionOperator end
+struct CMFMCConvection <: AbstractConvection end
 
 # =========================================================================
 # Array-level entry: apply_convection!

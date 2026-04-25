@@ -98,7 +98,7 @@ bit-exact plan 16b path when not. Ordering study: operator A
 
 ### Plan 18 — Convection (PAUSED at Commit 3)
 
-Shipped Commits 0–3 (prerequisites A1/A2/A3 + `AbstractConvectionOperator`
+Shipped Commits 0–3 (prerequisites A1/A2/A3 + `AbstractConvection`
 + `ConvectionForcing` scaffolding + `CMFMCConvection` kernel with CFL
 sub-cycling + well-mixed sub-cloud). Commits 4–11 (TM5Convection,
 cross-scheme, `step!` wiring, driver integration, sim allocation,

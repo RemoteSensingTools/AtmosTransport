@@ -22,7 +22,7 @@ include("AbstractOperators.jl")
 
 # Diffusion is included BEFORE Advection so `strang_split_mt!`
 # (plan 16b Commit 4 palindrome integration) can import
-# `NoDiffusion`, `AbstractDiffusionOperator`, and
+# `NoDiffusion`, `AbstractDiffusion`, and
 # `apply_vertical_diffusion!`. Diffusion has no dependency on
 # Advection; reordering preserves correctness.
 include("Diffusion/Diffusion.jl")
@@ -69,7 +69,7 @@ export chemistry_block!
 
 # Diffusion solver infrastructure + operator types (plan 16b Commits 2-4)
 export solve_tridiagonal!, build_diffusion_coefficients
-export AbstractDiffusionOperator, NoDiffusion, ImplicitVerticalDiffusion
+export AbstractDiffusion, NoDiffusion, ImplicitVerticalDiffusion
 export apply_vertical_diffusion!
 
 # SurfaceFlux data types + operator hierarchy (plan 17 Commits 2-3)
@@ -81,7 +81,7 @@ export apply_surface_flux!
 # NoConvection, CMFMCConvection live since plan 18; TM5Convection
 # lands via plan 23 (Commit 1: types + dispatch stubs; Commit 4:
 # real kernels on all three topologies).
-export AbstractConvectionOperator, NoConvection
+export AbstractConvection, NoConvection
 export CMFMCConvection                          # plan 18 Commit 3
 export CMFMCWorkspace, invalidate_cmfmc_cache!  # plan 18 Commit 3
 export TM5Convection                            # plan 23 Commit 1

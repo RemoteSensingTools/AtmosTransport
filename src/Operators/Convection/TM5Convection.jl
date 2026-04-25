@@ -74,7 +74,7 @@ update which requires sub-cycling when the CMFMC profile is
 strong. The kernel launches once and calls `synchronize(backend)`
 once per `apply!`.
 """
-struct TM5Convection <: AbstractConvectionOperator end
+struct TM5Convection <: AbstractConvection end
 
 # =========================================================================
 # Array-level entry: apply_convection!

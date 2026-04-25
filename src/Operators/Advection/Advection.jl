@@ -29,10 +29,10 @@ using DocStringExtensions
 
 import ..AbstractOperator, ..apply!
 # Diffusion is loaded before Advection in Operators.jl so the palindrome
-# center of `strang_split_mt!` can dispatch on `AbstractDiffusionOperator`
+# center of `strang_split_mt!` can dispatch on `AbstractDiffusion`
 # concretions. `NoDiffusion`'s `apply_vertical_diffusion!` method is
 # `= nothing`, keeping the default path bit-exact with pre-16b behavior.
-using ..Diffusion: AbstractDiffusionOperator, NoDiffusion,
+using ..Diffusion: AbstractDiffusion, NoDiffusion,
                    apply_vertical_diffusion!
 # SurfaceFlux is loaded before Advection in Operators.jl so the palindrome
 # center can dispatch on `AbstractSurfaceFluxOperator` (plan 17 Commit 5).

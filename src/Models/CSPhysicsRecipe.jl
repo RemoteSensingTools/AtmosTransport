@@ -188,7 +188,7 @@ end
                                    ::AbstractAdvectionScheme,
                                    _context) = nothing
 @inline validate_runtime_diffusion(::AbstractRuntimeRecipeStyle,
-                                   ::AbstractDiffusionOperator,
+                                   ::AbstractDiffusion,
                                    _context) = nothing
 @inline validate_runtime_convection(::AbstractRuntimeRecipeStyle,
                                     ::NoConvection,
@@ -233,7 +233,7 @@ function validate_runtime_convection(::AbstractRuntimeRecipeStyle,
 end
 
 function validate_runtime_convection(::AbstractRuntimeRecipeStyle,
-                                     op::AbstractConvectionOperator,
+                                     op::AbstractConvection,
                                      _context)
     throw(ArgumentError(
         "Runtime recipe validation does not support convection operator $(typeof(op)) yet."))
@@ -250,8 +250,8 @@ end
 
 @inline validate_runtime_combination(::AbstractRuntimeRecipeStyle,
                                      ::AbstractAdvectionScheme,
-                                     ::AbstractDiffusionOperator,
-                                     ::AbstractConvectionOperator,
+                                     ::AbstractDiffusion,
+                                     ::AbstractConvection,
                                      _context) = nothing
 
 function validate_runtime_physics_recipe(recipe::RuntimePhysicsRecipe,

@@ -1,11 +1,11 @@
 #!/usr/bin/env julia
 # ---------------------------------------------------------------------------
-# Plan 18 Commit 1 — AbstractConvectionOperator + NoConvection
+# Plan 18 Commit 1 — AbstractConvection + NoConvection
 #
 # Minimal: type hierarchy and no-op operator. No kernels yet. Tests cover
 # what's shipped in this commit:
 #
-# 1. Type hierarchy: `NoConvection() isa AbstractConvectionOperator`.
+# 1. Type hierarchy: `NoConvection() isa AbstractConvection`.
 # 2. State-level identity: `apply!(state, ConvectionForcing(), grid,
 #    NoConvection(), dt; workspace=nothing)` returns state bit-exact.
 # 3. Array-level identity: `apply_convection!(q_raw, air_mass,
@@ -24,11 +24,11 @@ using Test
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 
-@testset "Type hierarchy: NoConvection <: AbstractConvectionOperator" begin
-    @test NoConvection <: AbstractConvectionOperator
-    @test NoConvection() isa AbstractConvectionOperator
-    @test AbstractConvectionOperator isa DataType || AbstractConvectionOperator isa UnionAll ||
-          AbstractConvectionOperator === AbstractConvectionOperator  # just verify the type exists
+@testset "Type hierarchy: NoConvection <: AbstractConvection" begin
+    @test NoConvection <: AbstractConvection
+    @test NoConvection() isa AbstractConvection
+    @test AbstractConvection isa DataType || AbstractConvection isa UnionAll ||
+          AbstractConvection === AbstractConvection  # just verify the type exists
     # `NoConvection` is a singleton — no fields.
     @test fieldnames(NoConvection) === ()
 end
@@ -120,7 +120,7 @@ end
     # operator is installed. Here we confirm that `op isa NoConvection`
     # works on the singleton.
     @test NoConvection() isa NoConvection
-    @test !(NoConvection() isa AbstractConvectionOperator) == false  # double-negation clarity
+    @test !(NoConvection() isa AbstractConvection) == false  # double-negation clarity
 
     # Type-stability check — no allocations for the no-op on a fresh
     # state. `@allocated` on the repeated call should be 0 after warmup.
@@ -143,7 +143,7 @@ end
 @testset "Exported symbols visible at AtmosTransport" begin
     # All new plan-18-Commit-1 symbols are reachable as plain names from
     # `using .AtmosTransport` callers.
-    @test isdefined(AtmosTransport, :AbstractConvectionOperator)
+    @test isdefined(AtmosTransport, :AbstractConvection)
     @test isdefined(AtmosTransport, :NoConvection)
     @test isdefined(AtmosTransport, :apply_convection!)
     @test isdefined(AtmosTransport, :ConvectionForcing)

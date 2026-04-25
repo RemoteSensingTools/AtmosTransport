@@ -165,8 +165,8 @@ export GEOSDayHandles, open_geos_day, close_geos_day!
 export geos_collection_path, detect_level_orientation
 export endpoint_dry_mass, endpoint_dry_mass!
 
-# Met-source TOML factory (Commit 4)
-export load_met_settings
+# Met-source TOML factory (Commit 4) + vertical-coordinate helper used by GEOS CLI
+export load_met_settings, load_hybrid_coefficients
 
 # Exports for the CLI script and advanced users
 export build_target_geometry, target_summary

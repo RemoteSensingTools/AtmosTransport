@@ -2,15 +2,16 @@
 
 Once the [Grids](@ref) are set, prognostic state lives in a
 **state object** that carries air mass and one or more tracers. There
-are two state types — one for structured grids (`LatLon`,
-`ReducedGaussian`) and one for the cubed-sphere — but they share the
-same accessor API and the same dry-basis contract.
+are two state types — one for `LatLon` (structured) and `Reduced
+Gaussian` (face-indexed / unstructured) sharing the same `CellState`
+layout, and one for the panel-native cubed-sphere — but they share
+the same accessor API and the same dry-basis contract.
 
 ## State types
 
 | State | Topology | Storage shape per tracer |
 |---|---|---|
-| `CellState{Basis, A, Raw, Names}` | LatLon, ReducedGaussian | `(Nx, Ny, Nz)` (LL) or `(ncells, Nz)` (RG) |
+| `CellState{Basis, A, Raw, Names}` | LatLon (structured), ReducedGaussian (face-indexed) | `(Nx, Ny, Nz)` (LL) or `(ncells, Nz)` (RG) |
 | `CubedSphereState{Basis, A3, Raw4, Names}` | CubedSphere | `NTuple{6, (Nc + 2Hp, Nc + 2Hp, Nz)}` per panel (halo-padded) |
 
 Both types are **GPU-aware**: their array fields are parametric, so
@@ -73,21 +74,41 @@ User-facing surface mirrors `CellState`. The halo padding is exposed in
 ## The dry-basis contract
 
 By default, `state.air_mass` carries **dry-air mass** and every tracer
-is a **dry volume mixing ratio** (dry VMR). This is the single most
+is interpreted on a **dry-VMR contract**. This is the single most
 important runtime invariant in the project, encoded in
 [CLAUDE.md](https://github.com/RemoteSensingTools/AtmosTransport/blob/main/CLAUDE.md):
 
 > Dry basis is the default runtime contract. Trace-gas VMRs are always
 > dry VMRs, including column averages.
 
-What this means in practice:
+A subtle point: **what's stored in `state.tracers_raw` is tracer mass,
+not VMR.** The "dry-VMR contract" describes the user-facing semantics
+(initial conditions, snapshot output, column means) — the storage
+representation is mass for numerical reasons (it composes naturally
+with mass-conserving advection). The conversion happens at the
+boundaries:
+
+- **Initial conditions.** A TOML entry `co2.uniform_value = 4.0e-4`
+  is read as a *dry VMR* and converted to mass via
+  `χ × air_mass` at construction time
+  (`set_uniform_mixing_ratio!`).
+- **In the loop.** Operators consume `state.tracers_raw` as mass; the
+  mass-conservation contract holds because both `air_mass` and the
+  tracer-mass slices are pinged through the same flux divergence.
+- **Snapshot output.** `<tracer>_column_mean` is `column-integrated
+  tracer mass / column-integrated air mass` — a dry VMR by
+  construction.
+- **Programmatic readout.** `mixing_ratio(state, :CO2)` (in
+  `CellState.jl`) gives you the dry VMR directly:
+  `get_tracer(state, :CO2) ./ state.air_mass`.
+
+What this means for the binary side:
 
 - The transport binary's `mass_basis = :dry` header says the
   preprocessor already converted `DELP_moist → DELP_dry × (1 − qv)`.
 - `state.air_mass` comes from that dry mass.
-- Every tracer in `state.tracers` is a dry VMR — multiplying by
-  `state.air_mass` gives **mass per cell** in the same dry units.
-- Snapshot output writes `<tracer>_column_mean` etc. on the dry basis.
+- Snapshot output writes `<tracer>_column_mean` etc. consistently on
+  that dry basis.
 
 Operators dispatch on the basis tag so a `MoistBasis` state would
 automatically take a different code path; in practice the runtime is
@@ -119,13 +140,17 @@ arrays cached before construction** (per the project's testing rules).
 ### Reading a tracer
 
 ```julia
-co2 = get_tracer(state, :CO2)         # SelectionView, no allocation
-ch4 = state.tracers.CH4               # property access; same view
+co2_mass = get_tracer(state, :CO2)        # SubArray view of tracer MASS
+ch4_mass = state.tracers.CH4              # property access; same view
+
+co2_vmr  = mixing_ratio(state, :CO2)      # CO2 mass / air mass — dry VMR
 ```
 
-`get_tracer` returns a view into the last dimension of `tracers_raw`.
-On `CellState` this is a 3-D / 2-D view of the right shape; on
-`CubedSphereState` it returns one slice per panel.
+`get_tracer` returns a view into the last dimension of `tracers_raw`
+— **tracer mass**, not VMR. On `CellState` this is a 3-D / 2-D view of
+the right shape; on `CubedSphereState` it returns one slice per panel.
+For dry VMR use `mixing_ratio(state, name)` (or compute the ratio
+yourself if you need a backend-specialized variant).
 
 ### Iterating
 
@@ -172,20 +197,27 @@ the simulation loop; that defeats the GPU.
 
 For physics blocks that need a time-varying input (e.g. Kz for
 diffusion, surface fields for convection), the runtime exposes
-`AbstractTimeVaryingField` subtypes. The ones a user actually touches
-through TOML configs:
+`AbstractTimeVaryingField` subtypes. They share a small interface:
+`field_value(f, idx)` (kernel-safe) and `update_field!(f, t)`
+(host-side cache refresh, called once per met window). Concrete
+types currently in the tree:
 
 | Type | Use |
 |---|---|
 | `ConstantField{FT, N}` | Scalar broadcast to a fixed value. |
-| `ProfileKzField{FT}` | Fixed vertical profile, uniform horizontally. |
-| `PreComputedKzField{FT, A}` | Wrap a precomputed spatial field. |
-| `DerivedKzField{FT, …}` | Beljaars-Viterbo Kz from surface fields. |
+| `ProfileKzField{FT, V, N}` | Fixed vertical profile, uniform horizontally. |
+| `PreComputedKzField{FT, N, A}` | Wrap a precomputed spatial field. |
+| `DerivedKzField{FT, SF, DELP, A, P}` | Beljaars-Viterbo Kz derived from surface fields (u\*, T\*). |
 | `StepwiseField{FT, N, A, B, W}` | Piecewise-constant in time (read from binary). |
 
-The interface is small: `field_value(f, idx)` (kernel-safe) and
-`update_field!(f, t)` (host-side cache refresh, called once per met
-window). New field types only need to implement those two.
+!!! note "TOML wiring is partial today"
+    The runtime recipe currently auto-builds only
+    `[diffusion] kind = "none"` and `kind = "constant"`. The other
+    field types above exist as building blocks but are not yet
+    selectable from a TOML config — wire them in code if you need
+    them now, and watch the [Configuration & Runtime](#) chapter
+    (Phase 7) for the full TOML schema as more kinds become user-
+    selectable.
 
 ## What's next
 

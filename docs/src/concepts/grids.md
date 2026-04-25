@@ -18,7 +18,8 @@ the grid in a run config — only in a preprocessing config.
 All three subtype `AbstractHorizontalMesh` and are wrapped in
 `AtmosGrid{H, V, Arch, P, FT}` together with a vertical coordinate
 (`HybridSigmaPressure{FT}`), an architecture (`CPU` / `GPU`), and a
-planet (Earth-radius and gravity by default).
+planet (`PlanetParameters{FT}`, defaulting to `earth_parameters()` —
+Earth radius, gravity, reference pressure).
 
 ```mermaid
 classDiagram
@@ -31,7 +32,7 @@ classDiagram
       +horizontal :: AbstractHorizontalMesh
       +vertical   :: HybridSigmaPressure
       +arch       :: CPU | GPU
-      +planet     :: PlanetEarth
+      +planet     :: PlanetParameters
     }
     AbstractHorizontalMesh <|-- AbstractStructuredMesh
     AbstractStructuredMesh <|-- LatLonMesh
@@ -59,6 +60,13 @@ The runtime calls `inspect_binary` on the first file, reads the
 `grid_type` field (`:latlon | :reduced_gaussian | :cubed_sphere`), and
 constructs the correct mesh + driver.
 
+!!! note "Legacy run configs"
+    Some older `config/runs/*.toml` files still carry a `[grid]` block.
+    The current runner ignores it for grid construction (the binary
+    header wins), but be aware when reading examples — newer configs
+    in `config/runs/quickstart/` and `config/runs/advresln/` follow the
+    no-`[grid]` pattern.
+
 A **preprocessing** config is where you declare the target grid, since
 that's the act of choosing one:
 
@@ -82,8 +90,9 @@ echlevs = "ml137_tropo34"
 ```toml
 # config/preprocessing/era5_o090_transport_binary.toml
 [grid]
-type = "reduced_gaussian"
-gaussian_number = 90    # → O90
+type            = "synthetic_reduced_gaussian"
+gaussian_number = 90              # ring count per hemisphere → O90
+nlon_mode       = "octahedral"    # ECMWF O-grid (octahedral) ring distribution
 ```
 
 ## `LatLonMesh{FT}`
@@ -121,10 +130,15 @@ don't trip on it.
 A reduced-Gaussian grid is a sphere of latitude **rings** with a
 variable number of cells per ring (more cells near the equator, fewer
 near the poles). Cells are flattened ring-by-ring, south to north.
-Constructor (preprocessor-side, from a GRIB descriptor):
+
+Two construction paths:
 
 ```julia
-mesh = ReducedGaussianMesh(geometry_source_grib_path; FT = Float32)
+# Direct: known ring latitudes + per-ring longitude counts.
+mesh = ReducedGaussianMesh(latitudes, nlon_per_ring; FT = Float32)
+
+# From an ECMWF GRIB descriptor (the preprocessor's usual entry point).
+mesh = read_era5_reduced_gaussian_mesh(path_to_grib; FT = Float32)
 ```
 
 User-touched fields: `latitudes` (ring centers), `nlon_per_ring`,
@@ -208,25 +222,28 @@ AtmosGrid
 ├── horizontal :: AbstractHorizontalMesh   # one of the three above
 ├── vertical   :: HybridSigmaPressure{FT}  # ΔA / ΔB at interfaces
 ├── arch       :: CPU | GPU
-└── planet     :: PlanetEarth (default)
+└── planet     :: PlanetParameters{FT}      # earth_parameters() default
 ```
 
 The user rarely constructs `AtmosGrid` directly; it is built by the
 runtime from the binary header in `BinaryPathExpander.jl` /
 `DrivenRunner.jl`.
 
-## Geometry helpers (cross-topology)
+## Geometry helpers
 
-These work on any `AbstractHorizontalMesh`:
+The most useful per-topology helpers are:
 
-| Helper | Returns |
-|---|---|
-| `cell_area(mesh, c)` (face-indexed) or `cell_area(mesh, i, j)` (LL) | Area of cell `c` in m². |
-| `face_length(mesh, f)` | Length of face `f` in m. |
+| Mesh | Helper | Returns |
+|---|---|---|
+| `LatLonMesh` | `cell_area(mesh, i, j)` | Area of cell `(i, j)` in m². |
+| `LatLonMesh` | `cell_areas_by_latitude(mesh)` | Per-latitude-band area distribution. |
+| `ReducedGaussianMesh` | `cell_area(mesh, c)` | Area of flat-indexed cell `c` in m². |
+| `ReducedGaussianMesh` | `face_length(mesh, f)` | Length of face `f` in m. |
+| `CubedSphereMesh` | `mesh.cell_areas`, `mesh.Δx`, `mesh.Δy` | Per-panel area and edge-length matrices. |
 
-Use these instead of writing topology-specific area / length code in
-operators or diagnostics — adding a new topology then automatically
-plugs into anything written against the abstract API.
+A unified cross-topology API for area / face length is on the roadmap but
+not yet implemented. Today, geometry-aware code dispatches on the mesh
+type and reaches into the appropriate per-topology helper.
 
 ## What's next
 

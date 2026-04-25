@@ -229,15 +229,16 @@ end
         end
     end
 
-    @testset "mass_flux_dt scaling: am = MFXC / mass_flux_dt × (1 - qv)" begin
+    @testset "mass_flux_dt scaling: am = MFXC / mass_flux_dt (no humidity correction)" begin
+        # GEOS-IT MFXC and MFYC are already DRY mass fluxes per GMAO; the
+        # reader only scales by `1 / mass_flux_dt` and does NOT multiply by
+        # (1 - qv). Multiplying by (1-qv) would double-dry, biasing transport
+        # low (codex P2 finding 2026-04-24).
         handles = open_geos_day(settings, Date(2021,12,1))
         try
             raw = read_window!(settings, handles, Date(2021,12,1), 1; FT=FT_TEST)
-            # Synthetic: MFXC = 50 Pa·m², mass_flux_dt = 450 s, qv = 0.005
-            # ⇒ am = 50/450 × (1 - 0.005) ≈ 0.11055
-            expected = 50.0 / 450.0 * (1 - 0.005)
-            @test all(isapprox.(raw.am[1], expected; rtol = 1e-12))
-            @test all(isapprox.(raw.bm[1], 30.0 / 450.0 * (1 - 0.005); rtol = 1e-12))
+            @test all(isapprox.(raw.am[1], 50.0 / 450.0; rtol = 1e-12))
+            @test all(isapprox.(raw.bm[1], 30.0 / 450.0; rtol = 1e-12))
         finally
             close_geos_day!(handles)
         end

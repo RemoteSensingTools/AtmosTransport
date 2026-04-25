@@ -61,25 +61,38 @@ const GEOSFPSettings = GEOSSettings{:geosfp}
 
 # ---------------------------------------------------------------------------
 # File-naming dispatch on flavor.
+#
+# GEOS-IT C180 archive uses *daily* files: `GEOSIT.YYYYMMDD.<collection>.C180.nc`.
+# GEOS-FP C720 native archive uses *hourly* files (one file per UTC hour):
+# `GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.YYYYMMDD_HHMM.V01.nc4`. Wiring the
+# GEOS-FP hourly file pattern into the day-handle abstraction is non-trivial
+# (each window references a different physical file, so opening "the day" is
+# really opening 24 files) and is deferred to a follow-up commit. The
+# GEOSFPSettings dispatch below errors loudly so a misconfigured caller fails
+# before silently producing wrong data.
 # ---------------------------------------------------------------------------
 
-_geos_prefix(::GEOSSettings{:geosit}) = "GEOSIT"
-_geos_prefix(::GEOSSettings{:geosfp}) = "GEOSFP"
-
 """
-    geos_collection_path(settings, date::Date, collection::AbstractString) -> String
+    geos_collection_path(settings::GEOSITSettings, date::Date, collection) -> String
 
-Resolve the on-disk path of one collection for `date`. Searches a flat
-`root_dir` and the per-day `root_dir/YYYYMMDD/` layout.
+Resolve the on-disk path of one GEOS-IT collection for `date`. Searches a
+flat `root_dir` and the per-day `root_dir/YYYYMMDD/` layout.
 """
-function geos_collection_path(settings::GEOSSettings, date::Date, collection::AbstractString)
+function geos_collection_path(settings::GEOSSettings{:geosit}, date::Date,
+                              collection::AbstractString)
     datestr = Dates.format(date, "yyyymmdd")
-    fname   = "$(_geos_prefix(settings)).$(datestr).$(collection).C$(settings.Nc).nc"
+    fname   = "GEOSIT.$(datestr).$(collection).C$(settings.Nc).nc"
     flat    = joinpath(settings.root_dir, fname)
     daily   = joinpath(settings.root_dir, datestr, fname)
     isfile(flat)  && return flat
     isfile(daily) && return daily
-    error("GEOS file not found: tried $flat and $daily")
+    error("GEOS-IT file not found: tried $flat and $daily")
+end
+
+function geos_collection_path(::GEOSSettings{:geosfp}, ::Date, ::AbstractString)
+    error("GEOS-FP native file pattern (hourly `GEOS.fp.asm.tavg_1hr_ctm_*.nc4`) " *
+          "is not yet implemented. Only GEOS-IT (daily files) is supported in this " *
+          "commit; see plan indexed-baking-valiant for the GEOS-FP follow-up.")
 end
 
 # ---------------------------------------------------------------------------
@@ -191,6 +204,26 @@ function _read_panels_2d(var, win_idx::Int; FT::Type)
     return ntuple(p -> Array(raw[:, :, p]), 6)
 end
 
+"""
+    _ps_pa_factor(var) -> FT scaling
+
+GEOS-IT CTM_I1 stores PS in hPa; GEOS-FP native CTM stores PS in Pa. Read
+the `units` attribute (case-insensitive) and return the multiplier needed
+to land in Pa. Errors loudly on unrecognized units to prevent silent
+100x errors.
+"""
+function _ps_pa_factor(var; FT::Type)
+    units = lowercase(strip(get(var.attrib, "units", "")))
+    if units == "pa"
+        return FT(1)
+    elseif units == "hpa" || units == "mbar" || units == "millibars"
+        return FT(100)
+    else
+        error("Unrecognized PS units `$(units)` on GEOS NetCDF variable; expected " *
+              "Pa or hPa/mbar")
+    end
+end
+
 # ---------------------------------------------------------------------------
 # Endpoint dry-basis reconstruction.
 # Given PS_total (Pa) and QV (kg/kg) at one hour, plus the hybrid
@@ -250,20 +283,22 @@ function endpoint_dry_mass(ps_total::AbstractMatrix{FT}, qv::AbstractArray{FT,3}
 end
 
 # ---------------------------------------------------------------------------
-# Window-mean dry conversion of horizontal mass flux.
-# MFXC and MFYC are moist (Pa·m² accumulated); convert per layer using the
-# window-mean QV and divide by mass_flux_dt to get kg-equivalent /s.
+# Mass-flux scaling.
 #
-# We use `(QV_left + QV_right)/2` as the window-mean approximation. The
-# orchestrator could refine later.
+# MFXC and MFYC in GEOS-IT and GEOS-FP CTM files are ALREADY dry mass fluxes
+# (per the in-tree diagnostic `compare_era5_geosit_met.jl` and GMAO docs:
+# "GEOS am_moist = MFXC / (g × dt_dyn) / (1 − qv)"; getting MOIST from
+# native MFXC requires *dividing* by `(1 − qv)`, so multiplying by it would
+# double-dry). The reader therefore only divides by `mass_flux_dt` to convert
+# the dynamics-step accumulated quantity to a window-mean rate; no humidity
+# correction is applied here.
 # ---------------------------------------------------------------------------
 
-function _scale_and_dry!(am::AbstractArray{FT,3},
-                         qv_window_mean::AbstractArray{FT,3},
-                         mfxc_raw::AbstractArray{FT,3},
-                         inv_dt::FT) where {FT}
+function _scale_flux!(am::AbstractArray{FT,3},
+                      mfxc_raw::AbstractArray{FT,3},
+                      inv_dt::FT) where {FT}
     @inbounds @simd for i in eachindex(am)
-        am[i] = mfxc_raw[i] * (1 - qv_window_mean[i]) * inv_dt
+        am[i] = mfxc_raw[i] * inv_dt
     end
     return am
 end
@@ -273,7 +308,14 @@ end
 # ---------------------------------------------------------------------------
 
 windows_per_day(::GEOSSettings, ::Date) = 24
-has_convection(s::GEOSSettings) = s.include_convection
+
+# `has_convection` reports the capability that downstream code can rely on,
+# not the user's intent. Until Commit 8 populates `cmfmc` / `dtrain` in
+# `read_window!`, this returns `false` regardless of `include_convection` so
+# capability-driven dispatch (e.g. CMFMC operator wiring) does not silently
+# expect data the reader does not provide. The `include_convection` settings
+# field is preserved as a forward-looking flag for the Commit-8 wiring.
+has_convection(::GEOSSettings) = false
 
 """
     read_window!(settings, handles, date, win_idx; FT=Float64) -> RawWindow
@@ -293,18 +335,17 @@ function read_window!(settings::GEOSSettings, handles::GEOSDayHandles,
     or = handles.orientation
     vc = handles.vc
 
-    # ---- Endpoints: PS (hPa→Pa), QV ----
-    ps_n_total = _read_panels_2d(handles.ctm_i1, "PS", win_idx; FT=FT) |>
-                 t -> ntuple(p -> t[p] .* FT(100), 6)
+    # ---- Endpoints: PS (units-aware → Pa), QV ----
+    ps_factor_today = _ps_pa_factor(handles.ctm_i1["PS"]; FT=FT)
+    ps_n_total = ntuple(p -> _read_panels_2d(handles.ctm_i1, "PS", win_idx; FT=FT)[p] .* ps_factor_today, 6)
     qv_n       = _read_panels_3d(handles.ctm_i1, "QV", win_idx, or; FT=FT)
 
     if win_idx < nw
-        ps_np1_total = _read_panels_2d(handles.ctm_i1, "PS", win_idx + 1; FT=FT) |>
-                       t -> ntuple(p -> t[p] .* FT(100), 6)
+        ps_np1_total = ntuple(p -> _read_panels_2d(handles.ctm_i1, "PS", win_idx + 1; FT=FT)[p] .* ps_factor_today, 6)
         qv_np1       = _read_panels_3d(handles.ctm_i1, "QV", win_idx + 1, or; FT=FT)
     elseif handles.next_ctm_i1 !== nothing
-        ps_np1_total = _read_panels_2d(handles.next_ctm_i1, "PS", 1; FT=FT) |>
-                       t -> ntuple(p -> t[p] .* FT(100), 6)
+        ps_factor_next = _ps_pa_factor(handles.next_ctm_i1["PS"]; FT=FT)
+        ps_np1_total = ntuple(p -> _read_panels_2d(handles.next_ctm_i1, "PS", 1; FT=FT)[p] .* ps_factor_next, 6)
         qv_np1       = _read_panels_3d(handles.next_ctm_i1, "QV", 1, or; FT=FT)
     else
         error("last window ($win_idx of $nw) has no next-day CTM_I1 endpoint; " *
@@ -330,16 +371,8 @@ function read_window!(settings::GEOSSettings, handles::GEOSDayHandles,
     mfxc_raw = _read_panels_3d(handles.ctm_a1, "MFXC", win_idx, or; FT=FT)
     mfyc_raw = _read_panels_3d(handles.ctm_a1, "MFYC", win_idx, or; FT=FT)
 
-    am_panels = ntuple(p -> begin
-                            am = similar(mfxc_raw[p])
-                            qv_avg = (qv_n[p] .+ qv_np1[p]) .* FT(0.5)
-                            _scale_and_dry!(am, qv_avg, mfxc_raw[p], inv_dt)
-                        end, 6)
-    bm_panels = ntuple(p -> begin
-                            bm = similar(mfyc_raw[p])
-                            qv_avg = (qv_n[p] .+ qv_np1[p]) .* FT(0.5)
-                            _scale_and_dry!(bm, qv_avg, mfyc_raw[p], inv_dt)
-                        end, 6)
+    am_panels = ntuple(p -> _scale_flux!(similar(mfxc_raw[p]), mfxc_raw[p], inv_dt), 6)
+    bm_panels = ntuple(p -> _scale_flux!(similar(mfyc_raw[p]), mfyc_raw[p], inv_dt), 6)
 
     return RawWindow{FT, typeof(ps_n_dry_panels), typeof(m_n_panels)}(
         m_n_panels,    ps_n_dry_panels,    qv_n,

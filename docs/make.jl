@@ -25,6 +25,8 @@ const PAGES = [
     "Concepts" => [
         "concepts/grids.md",
         "concepts/state_and_basis.md",
+        "concepts/operators.md",
+        "concepts/binary_format.md",
     ],
     "About these docs" => "about.md",
 ]

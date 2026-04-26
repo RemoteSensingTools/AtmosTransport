@@ -52,18 +52,22 @@ binaries enable optimized I/O at runtime); per-source deep-dives for
 ERA5 spectral and GEOS native CS; a regridding chapter; a
 conventions cheat sheet.
 
-**Phase 6 — Theory & Verification (current).** Five pages aimed at
+**Phase 6 — Theory & Verification** (shipped). Five pages aimed at
 atmospheric-transport practitioners: the discrete mass-conservation
-contract derived from telescoping divergence; per-scheme advection
-properties (order, monotonicity, CFL, panel-edge halo, RG LCM
-segmentation); the explicit `@test` assertions that anchor each
-conservation property; an honest validation-status report
-(synthetic verification is comprehensive, multi-month observational
-validation is not yet done); and an adjoint status page that
-corrects the README's overclaim — the discrete adjoint is not
-shipped today; the forward operators are designed adjoint-ready
-(Thomas-coefficient layout, ConvectionForcing time-pure dispatch)
-but the kernels themselves are roadmap.
+contract; per-scheme advection properties; the explicit `@test`
+assertions that anchor each conservation property; an honest
+validation-status report; and an adjoint-status page that corrects
+the README's overclaim (the discrete adjoint is roadmap, not
+shipped). Five codex review rounds caught dozens of citation /
+tolerance / scope-overclaim issues across the five pages; all
+folded in.
+
+**Phase 7 — Configuration & Runtime (current).** Three pages
+covering the TOML schema (run + preprocessing configs, per-block
+per-key reference), the snapshot NetCDF output schema (per-topology
+variable layout + dimensions), and the data-source story (ERA5
+CDS credentials, GEOS-IT AWS S3, recommended local layout,
+quickstart-bundle pointer).
 
 **Caveats carried forward:**
 
@@ -93,8 +97,8 @@ each legacy file into this tree or archive it.
 | 3B | Concepts: operators, binary format | shipped |
 | 4 | Tutorials (Literate.jl) — synthetic LL shipped; real-data topology tutorials pending bundle artifact | shipped |
 | 5 | Preprocessing guide (overview, spectral_era5, geos_native_cs, regridding, conventions) | shipped |
-| 6 | Theory & Verification (mass conservation, advection schemes, conservation budgets, validation status, adjoint status) | **in progress** |
-| 7 | Configuration & Runtime (TOML, sample data, output) | pending |
+| 6 | Theory & Verification (mass conservation, advection schemes, conservation budgets, validation status, adjoint status) | shipped |
+| 7 | Configuration & Runtime (toml_schema, output_schema, data_sources) | **in progress** |
 | 8 | API Reference (`@autodocs` per module) | pending |
 | 9 | Developer internals + final README polish | pending |
 

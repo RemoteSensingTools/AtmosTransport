@@ -68,6 +68,22 @@ const PAGES = [
         "theory/validation_status.md",
         "theory/adjoint_status.md",
     ],
+    "Configuration & Runtime" => [
+        "config/toml_schema.md",
+        "config/output_schema.md",
+        "config/data_sources.md",
+    ],
+    "API Reference" => [
+        "api/index.md",
+        "api/architectures.md",
+        "api/parameters.md",
+        "api/grids.md",
+        "api/state.md",
+        "api/met_drivers.md",
+        "api/operators.md",
+        "api/models.md",
+        "api/preprocessing.md",
+    ],
     "About these docs" => "about.md",
 ]
 

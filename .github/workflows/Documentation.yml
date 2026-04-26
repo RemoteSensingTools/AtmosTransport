@@ -2,7 +2,7 @@ name: Documentation
 
 on:
   push:
-    branches: [main, convection]
+    branches: [main]
     tags: '*'
   pull_request:
 

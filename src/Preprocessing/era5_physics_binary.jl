@@ -107,10 +107,10 @@ function _era5_detect_var(ds, candidates)
 end
 
 const _CANDIDATES = Dict(
-    :udmf => ("udmf", "mumf", "mu", "var235009", "p235009", "p71.162", "var71"),
-    :ddmf => ("ddmf", "mdmf", "md", "var235010", "p235010", "p72.162", "var72"),
-    :udrf => ("udrf", "var235011", "p235011", "p214.162", "var214"),
-    :ddrf => ("ddrf", "var235012", "p235012", "p215.162", "var215"),
+    :udmf => ("udmf", "avg_umf", "mumf", "mu", "var235009", "p235009", "p71.162", "var71"),
+    :ddmf => ("ddmf", "avg_dmf", "mdmf", "md", "var235010", "p235010", "p72.162", "var72"),
+    :udrf => ("udrf", "avg_udr", "var235011", "p235011", "p214.162", "var214"),
+    :ddrf => ("ddrf", "avg_ddr", "var235012", "p235012", "p215.162", "var215"),
     :t    => ("t", "var130", "p130"),
     :q    => ("q", "var133", "p133"),
 )

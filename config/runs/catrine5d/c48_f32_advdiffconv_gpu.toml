@@ -1,0 +1,45 @@
+# 5-day Catrine campaign — c48 Float32 advdiffconv GPU
+#
+# Runner:
+#   julia -t8 --project=. scripts/run_transport.jl \
+#         config/runs/catrine5d/c48_f32_advdiffconv_gpu.toml
+
+[input]
+folder     = "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_f32_tm5"
+start_date = "2021-12-01"
+end_date   = "2021-12-05"
+
+[architecture]
+use_gpu = true
+
+[numerics]
+float_type = "Float32"
+
+[run]
+scheme = "slopes"
+
+[tracers.co2_natural]
+[tracers.co2_natural.init]
+kind = "catrine_co2"
+
+[tracers.co2_fossil]
+[tracers.co2_fossil.init]
+kind = "uniform"
+background = 0.0
+
+# GridFED monthly-mean fossil-CO2 emissions in kg/m²/s. December 2021 → time_index = 12.
+[tracers.co2_fossil.surface_flux]
+kind       = "gridfed_fossil_co2"
+file       = "~/data/AtmosTransport/catrine/Emissions/gridfed/GCP-GridFEDv2024.0_2021.short.nc"
+time_index = 12
+
+[diffusion]
+kind  = "constant"
+value = 1.0
+
+[convection]
+kind = "tm5"
+
+[output]
+snapshot_hours = [0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72, 78, 84, 90, 96, 102, 108, 114, 120]
+snapshot_file = "~/data/AtmosTransport/output/catrine5d/c48/c48_f32_advdiffconv_gpu.nc"

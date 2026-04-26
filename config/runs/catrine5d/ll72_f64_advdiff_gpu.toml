@@ -5,7 +5,7 @@
 #         config/runs/catrine5d/ll72_f64_advdiff_gpu.toml
 
 [input]
-folder     = "~/data/AtmosTransport/met/era5/ll72x37_advresln/transport_binary_v2_tropo34_dec2021_f64_tm5"
+folder     = "~/data/AtmosTransport/met/era5/ll72x37_advresln/transport_binary_v2_tropo34_dec2021_f64"
 start_date = "2021-12-01"
 end_date   = "2021-12-05"
 

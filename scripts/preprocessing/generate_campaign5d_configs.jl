@@ -28,22 +28,36 @@ mkpath(RUNS_DIR)
 
 # ----------- LL spectral preprocessing configs --------------------------------
 
+# Two LL preprocessing flavors:
+#   * `ll720_dec2021_<ft>_tm5.toml`  — TM5 convection enabled.  Native
+#     720×361 only; output is the source for the CS regrid.
+#   * `<grid>_dec2021_<ft>.toml`     — LL 72/144 with TM5 disabled
+#     (no `[tm5_convection]` block).  Used directly by the LL runs;
+#     advdiffconv configs aren't emitted for LL targets.
 const LL_GRIDS = [
-    (name = "ll72",  Nx = 72,  Ny = 37,  out = "ll72x37_advresln"),
-    (name = "ll144", Nx = 144, Ny = 73,  out = "ll144x73_advresln"),
-    (name = "ll720", Nx = 720, Ny = 361, out = "ll720x361_v4"),
+    (name = "ll72",  Nx = 72,  Ny = 37,  out = "ll72x37_advresln",  with_tm5 = false),
+    (name = "ll144", Nx = 144, Ny = 73,  out = "ll144x73_advresln", with_tm5 = false),
+    (name = "ll720", Nx = 720, Ny = 361, out = "ll720x361_v4",      with_tm5 = true),
 ]
 
 function ll_prep_toml(g, ft_str::String)
     ft_tag = ft_str == "Float32" ? "f32" : "f64"
+    out_suffix = g.with_tm5 ? "$(ft_tag)_tm5" : "$ft_tag"
+    cfg_suffix = g.with_tm5 ? "$(ft_tag)_tm5" : "$ft_tag"
+    tm5_block = g.with_tm5 ? """
+
+[tm5_convection]
+enable          = true
+physics_bin_dir = "$(PHYSICS_BIN_DIR)"
+""" : ""
     return """
     # 5-day Catrine campaign — $(g.name) ERA5 spectral → daily transport binary
-    # ($(ft_str), TM5 convection enabled).
+    # ($(ft_str)$(g.with_tm5 ? ", TM5 convection enabled" : ", advection-only")).
     #
     # Usage:
     #   for d in 01 02 03 04 05; do
     #     julia -t8 --project=. scripts/preprocessing/preprocess_transport_binary.jl \\
-    #         config/preprocessing/catrine5d/$(g.name)_dec2021_$(ft_tag)_tm5.toml \\
+    #         config/preprocessing/catrine5d/$(g.name)_dec2021_$(cfg_suffix).toml \\
     #         --day 2021-12-\$d
     #   done
 
@@ -53,7 +67,7 @@ function ll_prep_toml(g, ft_str::String)
     coefficients = "config/era5_L137_coefficients.toml"
 
     [output]
-    directory  = "~/data/AtmosTransport/met/era5/$(g.out)/transport_binary_v2_tropo34_dec2021_$(ft_tag)_tm5"
+    directory  = "~/data/AtmosTransport/met/era5/$(g.out)/transport_binary_v2_tropo34_dec2021_$(out_suffix)"
     mass_basis = "dry"
     include_qv = false
 
@@ -75,38 +89,40 @@ function ll_prep_toml(g, ft_str::String)
     enable                = true
     target_ps_dry_pa      = 98726.0
     qv_global_climatology = 0.00247
+$(tm5_block)"""
+end
 
-    [tm5_convection]
-    enable          = true
-    physics_bin_dir = "$(PHYSICS_BIN_DIR)"
-    """
+# Wipe stale LL preprocessing configs from the earlier path-2 generation so
+# the directory matches the path-1 scope.
+for stale in readdir(PREP_DIR; join = true)
+    occursin("ll", basename(stale)) && rm(stale)
 end
 
 for g in LL_GRIDS, ft_str in ("Float32", "Float64")
     ft_tag = ft_str == "Float32" ? "f32" : "f64"
-    path = joinpath(PREP_DIR, "$(g.name)_dec2021_$(ft_tag)_tm5.toml")
+    cfg_suffix = g.with_tm5 ? "$(ft_tag)_tm5" : "$ft_tag"
+    path = joinpath(PREP_DIR, "$(g.name)_dec2021_$(cfg_suffix).toml")
     write(path, ll_prep_toml(g, ft_str))
     println("wrote $path")
 end
 
 # ----------- Run configs ------------------------------------------------------
 
-# Each grid, each precision -> binary directory naming convention.
-# All campaign binaries carry TM5 sections — advonly/advdiff runs read
-# the same binary as advdiffconv, the runtime just ignores the extra
-# sections when convection.kind = "none". This halves the preprocessing
-# footprint and guarantees adv/diff truly identical across the op-stack
-# axis (no risk of subtle preprocessing drift between two binary builds).
+# LL 72/144 binaries are built WITHOUT TM5 sections — the spectral
+# preprocessor's TM5 path is hard-coded to native physics-BIN shape
+# (720×361) and porting LL→LL regrid would require a new
+# `reconstruct_ll_fluxes!` helper. CS C48/C180 binaries DO carry TM5
+# (regridded LL 720 → CS via the existing path).  Consequence:
+# advdiffconv configs are emitted only for CS targets.
 function binary_folder(grid::Symbol, ft_tag::String)
-    suffix = "$(ft_tag)_tm5"
     if grid === :ll72
-        "~/data/AtmosTransport/met/era5/ll72x37_advresln/transport_binary_v2_tropo34_dec2021_$suffix"
+        "~/data/AtmosTransport/met/era5/ll72x37_advresln/transport_binary_v2_tropo34_dec2021_$ft_tag"
     elseif grid === :ll144
-        "~/data/AtmosTransport/met/era5/ll144x73_advresln/transport_binary_v2_tropo34_dec2021_$suffix"
+        "~/data/AtmosTransport/met/era5/ll144x73_advresln/transport_binary_v2_tropo34_dec2021_$ft_tag"
     elseif grid === :c48
-        "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_$suffix"
+        "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_$(ft_tag)_tm5"
     elseif grid === :c180
-        "~/data/AtmosTransport/met/era5/cs_c180/transport_binary_v2_tropo34_dec2021_$suffix"
+        "~/data/AtmosTransport/met/era5/cs_c180/transport_binary_v2_tropo34_dec2021_$(ft_tag)_tm5"
     else
         error("unknown grid $grid")
     end
@@ -205,7 +221,11 @@ const PRECS  = ("Float32", "Float64")
 const OPS    = (:advonly, :advdiff, :advdiffconv)
 
 count_runs = 0
+const LL_GRIDS_RUNTIME = (:ll72, :ll144)  # no TM5 carry-through → no advdiffconv
 for grid in (COARSE..., FINE...), ft_str in PRECS, op in OPS
+    # Skip advdiffconv on LL grids — their binaries don't carry TM5
+    # sections (path-1 scope decision; would need an LL→LL regrid path).
+    op === :advdiffconv && grid in LL_GRIDS_RUNTIME && continue
     hws = grid in COARSE ? (:cpu, :gpu) : (:gpu,)
     for hw in hws
         ft_tag = ft_str == "Float32" ? "f32" : "f64"

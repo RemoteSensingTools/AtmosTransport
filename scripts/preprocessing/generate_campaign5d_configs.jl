@@ -18,10 +18,10 @@ const PREP_DIR   = joinpath(REPO_ROOT, "config", "preprocessing", "catrine5d")
 const RUNS_DIR   = joinpath(REPO_ROOT, "config", "runs", "catrine5d")
 const PHYSICS_BIN_DIR = "~/data/AtmosTransport/met/era5/0.5x0.5/physics_bin"
 const GRIDFED_FILE    = "~/data/AtmosTransport/catrine/Emissions/gridfed/GCP-GridFEDv2024.0_2021.short.nc"
-const START_DATE      = "2021-12-01"
+const START_DATE      = "2021-12-02"
 const END_DATE        = "2021-12-05"
-# Snapshot every 6 h over 5 days -> 21 snapshots (0..120).
-const SNAPSHOT_HOURS  = collect(0:6:120)
+# Snapshot every 6 h over 4 days -> 17 snapshots (0..96).
+const SNAPSHOT_HOURS  = collect(0:6:96)
 
 mkpath(PREP_DIR)
 mkpath(RUNS_DIR)

@@ -1,11 +1,17 @@
 # AtmosTransport.jl
 
-> **Work in Progress.** This project is under rapid active development. We regularly break things and fix them afterwards. The code is not yet intended for external users — APIs, file formats, and physics implementations may change without notice. If you are interested in contributing or following along, feel free to open an issue.
+> **Work in Progress.** This project is under rapid active development. We
+> regularly break things and fix them afterwards. APIs, file formats, and
+> physics implementations may change without notice. If you are interested
+> in contributing or following along, feel free to open an issue.
 
 [![Documentation](https://img.shields.io/badge/docs-dev-blue.svg)](https://RemoteSensingTools.github.io/AtmosTransport/dev/)
 
-A Julia-based atmospheric transport model for GPU and CPU, inspired by TM5 and designed with
-[Oceananigans.jl](https://github.com/CliMA/Oceananigans.jl)-style multiple dispatch patterns.
+A Julia-based, GPU-portable atmospheric tracer transport model for offline
+chemistry / chemical-transport applications. Designed for **mass-conserving**
+advection, convection, and boundary-layer diffusion on **lat-lon, reduced
+Gaussian, and cubed-sphere** grids, driven by **ERA5** or **GEOS** met data,
+with a clean separation between offline preprocessing and runtime stepping.
 
 ### Column-Mean CO₂ Transport (ERA5 + EDGAR, GPU)
 
@@ -17,129 +23,180 @@ A Julia-based atmospheric transport model for GPU and CPU, inspired by TM5 and d
 shows the column-averaged mixing ratio enhancement (ppm, delta-pressure weighted)
 in Robinson projection.*
 
-**Simulation details.** Mass fluxes are pre-computed from ERA5 hybrid-level u/v/omega
-fields following TM5's continuity-consistent approach: horizontal mass fluxes are
-derived from the winds, and vertical fluxes are diagnosed from horizontal convergence
-to guarantee column mass conservation. Transport uses TM5-faithful mass-flux advection
-(Russell--Lerner slopes scheme with Strang splitting) and boundary-layer diffusion
-(implicit Thomas solver). The entire simulation loop --- advection, diffusion, source
-injection, air-mass bookkeeping, and column-mean diagnostics --- runs on a single
-NVIDIA L40S GPU via [KernelAbstractions.jl](https://github.com/JuliaGPU/KernelAbstractions.jl)
-in Float32 arithmetic. Key GPU optimizations include a parallelized tridiagonal
-(Thomas) solver for vertical diffusion, device-to-device air-mass resets eliminating
-per-substep host transfers, GPU-side column-mean and surface diagnostics, and
-memory-mapped flat-binary I/O for mass-flux ingestion (~15× faster than NetCDF).
+**Simulation details.** Mass fluxes are pre-computed from ERA5 hybrid-level
+vorticity / divergence / log-PS spectral fields following TM5's continuity-
+consistent approach (Holton synthesis): horizontal mass fluxes are derived
+from the spectral fields, and vertical fluxes are diagnosed from horizontal
+convergence to guarantee column mass conservation. Transport uses TM5-faithful
+mass-flux advection (Russell-Lerner slopes scheme with Strang splitting) and
+boundary-layer diffusion (implicit Thomas solver). The entire simulation loop
+— advection, diffusion, source injection, air-mass bookkeeping, and
+column-mean diagnostics — runs on a single NVIDIA L40S GPU via
+[KernelAbstractions.jl](https://github.com/JuliaGPU/KernelAbstractions.jl)
+in Float32 arithmetic.
 
 ## Features
 
-- **Multi-grid:** Latitude-longitude and cubed-sphere grids with hybrid sigma-pressure vertical coordinates
-- **Multi-backend:** Single codebase for CPU and GPU via [KernelAbstractions.jl](https://github.com/JuliaGPU/KernelAbstractions.jl). Full simulation loop on GPU: advection (all directions), diffusion, convection, source injection, diagnostics, and output regridding
-- **Multi-met-data:** Readers for ECMWF ERA5, NASA GEOS-FP C720, and GEOS-IT C180 with automatic regridding
-- **Multiple advection schemes:** Russell-Lerner slopes (2nd order) and Putman & Lin PPM (orders 4-7) for both lat-lon and cubed-sphere grids
-- **Hand-coded discrete adjoint:** TM5-4DVar-style adjoint with Revolve checkpointing for bounded memory
-- **Extensible:** Every physics operator is behind an abstract type; new schemes, grids, and data sources plug in via multiple dispatch without modifying core code
-- **Operator splitting:** Symmetric Strang splitting (advection, convection, diffusion, sources) with paired forward/adjoint operators
+- **Multi-grid:** Regular lat-lon, reduced Gaussian, and cubed-sphere
+  (gnomonic and GEOS-native panel conventions). Hybrid σ-pressure vertical
+  coordinate.
+- **Multi-source:** ERA5 spectral preprocessor (LL / RG / CS targets) and
+  GEOS-IT C180 native cubed-sphere preprocessor. GEOS-FP and MERRA-2 are
+  declared but not yet implemented (the source-axis abstraction is in place).
+- **Multi-backend:** Single codebase for CPU and GPU via
+  [KernelAbstractions.jl](https://github.com/JuliaGPU/KernelAbstractions.jl).
+  CUDA path is end-to-end through the runtime driver; an Apple Silicon /
+  Metal weakdep extension exists.
+- **Mass-conserving:** Dry-basis air-mass bookkeeping, with **write-time
+  replay gates** in the preprocessor (always on) and **opt-in load-time
+  replay validation** at runtime. Tolerances `1e-10` (F64) / `1e-4` (F32).
+- **Operator-modular:** Every physics operator is behind an abstract type
+  with a `No<Operator>` no-op default; swap schemes via type dispatch
+  without modifying core code.
+- **Advection schemes:** `UpwindScheme` (1st order), `SlopesScheme`
+  (Russell-Lerner, 2nd order in smooth regions), `PPMScheme` (Putman-Lin,
+  3rd order in smooth regions), `LinRoodPPMScheme{ORD}` for cubed-sphere
+  with FV3 cross-term advection (`ORD ∈ {5, 7}` selects the boundary
+  stencil).
+- **Convection:** `CMFMCConvection` (GCHP-style RAS / Grell-Freitas, for
+  GEOS sources) and `TM5Convection` (TM5 four-field entrainment /
+  detrainment, for ERA5 sources) — different physics, identical
+  `ConvectionForcing` plumbing.
 
-## Architecture Overview
+> **Note on adjoint maturity.** A discrete adjoint is on the roadmap but
+> **not yet shipped**. The forward operators are designed adjoint-ready
+> (Thomas-solver coefficient layout, time-pure `ConvectionForcing`
+> dispatch, Strang palindrome time symmetry) but the adjoint kernels
+> themselves are pending. See
+> [Adjoint status](https://RemoteSensingTools.github.io/AtmosTransport/dev/theory/adjoint_status/)
+> for details.
+
+## Architecture
 
 ```mermaid
 flowchart TD
-    subgraph inputLayer["Input Layer"]
-        ERA5["ERA5"]
-        GEOSFP["GEOS-FP C720"]
-        GEOSIT["GEOS-IT C180"]
-        TOMLConfigs["TOML Configs"]
-        ERA5 --> TOMLConfigs
-        GEOSFP --> TOMLConfigs
-        GEOSIT --> TOMLConfigs
+    subgraph IN["Input"]
+        ERA5["ERA5 spectral GRIB"]
+        GEOS["GEOS-IT C180 NetCDF"]
+        TOML["TOML configs"]
     end
-    
-    subgraph coreModel["Core Model"]
-        gridTypes["Grid Types<br/>Lat-Lon, Cubed-Sphere"]
-        physicsOps["Physics Operators<br/>Advection, Diffusion, Convection"]
-        discreteAdjoint["Discrete Adjoint"]
-        TOMLConfigs --> gridTypes
-        gridTypes --> physicsOps
-        physicsOps --> discreteAdjoint
+    subgraph PRE["Preprocessing"]
+        SRC["AbstractMetSettings<br/>+ RawWindow"]
+        TGT["AbstractTargetGeometry<br/>(LL / RG / CS)"]
+        BIN["v4 transport binary<br/>(self-describing header)"]
     end
-    
-    subgraph backend["Backend"]
-        kernelAbstractions["KernelAbstractions.jl"]
+    subgraph RT["Runtime"]
+        STATE["CellState / CubedSphereState<br/>(dry basis)"]
+        OPS["Operators (apply!)<br/>Advection / Convection / Diffusion / SurfaceFlux"]
+        STEP["DrivenSimulation::step!<br/>(Strang palindrome)"]
+        SNAP["NetCDF snapshots"]
+    end
+    subgraph BACK["Backend"]
+        KA["KernelAbstractions.jl"]
         CPU["CPU"]
-        GPU["GPU"]
-        kernelAbstractions --> CPU
-        kernelAbstractions --> GPU
+        CUDA["NVIDIA CUDA"]
     end
-    
-    output["Simulation Results"]
-    
-    discreteAdjoint --> kernelAbstractions
-    kernelAbstractions --> output
+    ERA5 --> SRC
+    GEOS --> SRC
+    TOML --> SRC
+    TOML --> RT
+    SRC --> TGT
+    TGT --> BIN
+    BIN --> STATE
+    STEP --> OPS
+    OPS --> STATE
+    STEP --> SNAP
+    OPS --> KA
+    KA --> CPU
+    KA --> CUDA
 ```
 
 ## Quick start
 
-```julia
-using AtmosTransport
-using AtmosTransport.Grids
-using AtmosTransport.IO: default_met_config, build_vertical_coordinate
+The fastest way to get a real simulation running:
 
-# Build vertical coordinate from TOML config (ERA5 137 levels, GEOS-FP 72, etc.)
-config = default_met_config("era5")
-vert = build_vertical_coordinate(config; FT=Float64)
+```bash
+# 1. Clone + install
+git clone https://github.com/RemoteSensingTools/AtmosTransport.git
+cd AtmosTransport
+julia --project=. -e 'using Pkg; Pkg.instantiate()'
 
-grid = LatitudeLongitudeGrid(CPU();
-    FT   = Float64,
-    size = (360, 180, n_levels(vert)),
-    longitude = (-180, 180),
-    latitude  = (-90, 90),
-    vertical  = vert)
+# 2. Verify the install (synthetic-fixture suite, no external data)
+julia --project=. -e 'using Pkg; Pkg.test()'
 
-model = TransportModel(;
-    grid       = grid,
-    tracers    = (:CO2, :CH4),
-    advection  = SlopesAdvection(),       # or PPMAdvection(order=7)
-    diffusion  = BoundaryLayerDiffusion(),
-    convection = TiedtkeConvection())
+# 3. Download the quickstart bundle (preprocessed ERA5 binaries)
+bash scripts/download_quickstart_data.sh ll       # newcomer path; just LL (~1 GB)
+# or `bash scripts/download_quickstart_data.sh`   # both LL and CS bundles (~2.7 GB)
+
+# 4. Run a 3-day advection-only simulation (defaults to GPU; set
+#    [architecture] use_gpu = false in the TOML for CPU)
+julia --project=. scripts/run_transport.jl config/runs/quickstart/ll72x37_advonly.toml
 ```
 
-## Design principles
-
-- **Julian:** Multiple dispatch, parametric types, no OOP inheritance chains
-- **TM5-aligned:** Slopes advection, Tiedtke convection, operator splitting, discrete adjoint
-- **Grid-agnostic:** Physics code dispatches on grid type; never assumes lat-lon layout
-- **Adjoint-paired:** Every forward operator has a hand-coded adjoint counterpart
-- **Extension-friendly:** Abstract types + interface contracts; adding a new scheme never requires editing core
-
-## Validation
-
-- **Tests:** 381 unit and integration tests (mass-flux advection, cubed-sphere transport, convection, diffusion, adjoint gradient checks). See `docs/VALIDATION.md`.
-- **Mass-flux advection:** TM5-faithful co-advection of tracer mass and air mass with machine-precision conservation. See `docs/MASS_FLUX_EVOLUTION.md`.
-- **Spectral mass fluxes:** ERA5 spectral preprocessing (`preprocess_spectral_massflux.jl`) computes mass-conserving fluxes from vorticity/divergence, matching TM5's approach.
-- **GEOS-FP/IT validation:** Cubed-sphere transport validated on GEOS-FP C720 and GEOS-IT C180 with corrected `mass_flux_dt = 450` (dynamics timestep). See `docs/CAVEATS.md`.
-- **Reproducible run:** `julia --project=. scripts/run.jl config/runs/era5_spectral_june2023.toml` (see `docs/REFERENCE_RUN.md`).
-- **GPU:** The full simulation loop (advection, diffusion, convection, source injection, diagnostics, output regridding) runs on GPU for both lat-lon and cubed-sphere grids via KernelAbstractions.jl.
+The bundle is hosted as assets on the
+[`data-quickstart-v1` GitHub Release](https://github.com/RemoteSensingTools/AtmosTransport/releases/tag/data-quickstart-v1)
+and contains preprocessed transport binaries at four grid configurations
+(LL 72×37, LL 144×73, CS C24, CS C90, all F32, Dec 1-3 2021). See the
+[Quickstart with example data](https://RemoteSensingTools.github.io/AtmosTransport/dev/getting_started/quickstart/)
+docs page for the full walkthrough.
 
 ## Documentation
 
-[![Documentation](https://img.shields.io/badge/docs-dev-blue.svg)](https://RemoteSensingTools.github.io/AtmosTransport/dev/)
+Full documentation lives at
+[RemoteSensingTools.github.io/AtmosTransport](https://RemoteSensingTools.github.io/AtmosTransport/dev/).
+The reading order:
 
-Full documentation is available at [RemoteSensingTools.github.io/AtmosTransport](https://RemoteSensingTools.github.io/AtmosTransport/dev/), including:
+1. **[Getting Started](https://RemoteSensingTools.github.io/AtmosTransport/dev/getting_started/installation/)** — install, quickstart, first run, inspecting output.
+2. **[Concepts](https://RemoteSensingTools.github.io/AtmosTransport/dev/concepts/grids/)** — grids, state & basis, operators, binary format.
+3. **[Tutorials](https://RemoteSensingTools.github.io/AtmosTransport/dev/tutorials/_generated/synthetic_latlon/)** — Literate-driven, runnable end-to-end examples.
+4. **[Preprocessing](https://RemoteSensingTools.github.io/AtmosTransport/dev/preprocessing/overview/)** — ERA5 spectral, GEOS native CS, regridding, conventions cheat sheet.
+5. **[Theory & Verification](https://RemoteSensingTools.github.io/AtmosTransport/dev/theory/mass_conservation/)** — mass-conservation derivation, advection schemes, conservation budgets, validation status, adjoint status.
+6. **[Configuration & Runtime](https://RemoteSensingTools.github.io/AtmosTransport/dev/config/toml_schema/)** — TOML schema, output schema, data sources.
+7. **[API Reference](https://RemoteSensingTools.github.io/AtmosTransport/dev/api/)** — auto-generated per submodule.
 
-- **Theory:** Mathematical framework for mass-flux advection and TM5 comparison
-- **Tutorials:** Step-by-step guides for running forward simulations with ERA5 and GEOS-FP
-- **Developer Guide:** Validation results, TM5 code alignment, design history
-- **API Reference:** Auto-generated docstrings for all exported types and functions
+A high-signal in-repo summary of invariants and "fast failure triage" lives
+at [`CLAUDE.md`](CLAUDE.md) in the repo root.
 
-Source files for the documentation are in `docs/literate/` (Literate.jl scripts) and `docs/` (markdown reference docs).
+## Design principles
+
+- **Julian:** Multiple dispatch, parametric types, no OOP inheritance chains.
+- **TM5-faithful where it matters:** Russell-Lerner slopes (`SlopesScheme`)
+  and TM5 four-field convection (`TM5Convection`) implement the same
+  numerics as the corresponding TM5 routines (`advectx__slopes` /
+  `advecty__slopes` for slopes; `entu / detu / entd / detd` for
+  convection), verified by parity tests in `test/test_tm5_*.jl`.
+- **GCHP-style for GEOS sources:** CMFMC convection
+  (`CMFMCConvection`) for the GEOS native CS path matches GCHP's RAS /
+  Grell-Freitas physics.
+- **Grid-agnostic operators:** Physics code dispatches on grid type via
+  multiple dispatch; never assumes lat-lon layout.
+- **Extension-friendly:** Abstract types + interface contracts; adding a
+  new scheme never requires editing core code.
+
+## Validation
+
+- **Verification (synthetic-fixture suite):** ~39 core test files run on
+  every push and PR — uniform-tracer invariance, mass-budget conservation,
+  cross-window replay closure, conservative-regrid mass closure, CPU/GPU
+  agreement bounded by 4-16 ULP.
+- **Cross-day continuity (real GEOS-IT data):** preprocessor closes
+  write-time replay gate at machine epsilon (`5.94e-16` F64,
+  `~3.5e-7` F32 measured).
+- **Multi-month + observational closure:** *not yet done*; the forward
+  operators have the fidelity, the cross-model intercomparison reports
+  haven't been written yet. See
+  [Validation status](https://RemoteSensingTools.github.io/AtmosTransport/dev/theory/validation_status/)
+  for the honest current-state report.
 
 ## References
 
-- Krol et al. (2005): TM5 two-way nested zoom algorithm
-- Huijnen et al. (2010): TM5 tropospheric chemistry v3.0
-- Russell & Lerner (1981): Slopes advection scheme
-- Putman & Lin (2007): Finite-volume on cubed-sphere grids
+- Krol et al. (2005): TM5 two-way nested zoom algorithm.
+- Huijnen et al. (2010): TM5 tropospheric chemistry v3.0.
+- Russell & Lerner (1981): Slopes advection scheme.
+- Putman & Lin (2007): Finite-volume on cubed-sphere grids.
+- Tiedtke (1989): Mass flux scheme for cumulus parameterization.
+- Colella & Woodward (1984): Piecewise Parabolic Method (PPM).
 
 ## License
 
-MIT
+MIT.

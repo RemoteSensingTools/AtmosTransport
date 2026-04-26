@@ -62,12 +62,32 @@ shipped). Five codex review rounds caught dozens of citation /
 tolerance / scope-overclaim issues across the five pages; all
 folded in.
 
-**Phase 7 — Configuration & Runtime (current).** Three pages
+**Phase 7 — Configuration & Runtime** (shipped). Three pages
 covering the TOML schema (run + preprocessing configs, per-block
 per-key reference), the snapshot NetCDF output schema (per-topology
 variable layout + dimensions), and the data-source story (ERA5
 CDS credentials, GEOS-IT AWS S3, recommended local layout,
-quickstart-bundle pointer).
+quickstart-bundle pointer). Four codex review rounds caught
+schema / units / dim-order issues; all folded in.
+
+**Phase 8 — API Reference** (shipped). Nine `@autodocs` pages —
+one per submodule — public-first via `Private = false`. Pages
+cover Architectures, Parameters, Grids, State, MetDrivers,
+Operators (top-level + Advection + Convection + Diffusion +
+SurfaceFlux), Models, Preprocessing. The pages surface every
+public docstring; the docstring-audit pass to fix stubs and
+stale references is intentionally deferred to a follow-up commit.
+
+**Phase 9 — README + final polish (current).** Top-level
+`README.md` rewritten to align with the new doc tree: false
+adjoint claim replaced with an honest "Note on adjoint maturity"
+callout; broken Quick Start code (LatitudeLongitudeGrid /
+default_met_config / TiedtkeConvection — none exist) replaced
+with the bash invocation that downloads the quickstart bundle and
+runs the LL 72×37 example; references to nonexistent legacy doc
+files removed; per-section links point at the new doc tree. The
+architecture diagram updated to reflect the actual module flow
+(STEP → OPS → STATE).
 
 **Caveats carried forward:**
 
@@ -98,9 +118,9 @@ each legacy file into this tree or archive it.
 | 4 | Tutorials (Literate.jl) — synthetic LL shipped; real-data topology tutorials pending bundle artifact | shipped |
 | 5 | Preprocessing guide (overview, spectral_era5, geos_native_cs, regridding, conventions) | shipped |
 | 6 | Theory & Verification (mass conservation, advection schemes, conservation budgets, validation status, adjoint status) | shipped |
-| 7 | Configuration & Runtime (toml_schema, output_schema, data_sources) | **in progress** |
-| 8 | API Reference (`@autodocs` per module) | pending |
-| 9 | Developer internals + final README polish | pending |
+| 7 | Configuration & Runtime (toml_schema, output_schema, data_sources) | shipped |
+| 8 | API Reference (`@autodocs` per module) | shipped |
+| 9 | README rewrite + final polish | **in progress** |
 
 ## Content owners
 

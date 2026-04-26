@@ -78,7 +78,7 @@ SurfaceFlux), Models, Preprocessing. The pages surface every
 public docstring; the docstring-audit pass to fix stubs and
 stale references is intentionally deferred to a follow-up commit.
 
-**Phase 9 — README + final polish (current).** Top-level
+**Phase 9 — README + final polish** (shipped). Top-level
 `README.md` rewritten to align with the new doc tree: false
 adjoint claim replaced with an honest "Note on adjoint maturity"
 callout; broken Quick Start code (LatitudeLongitudeGrid /
@@ -88,6 +88,11 @@ runs the LL 72×37 example; references to nonexistent legacy doc
 files removed; per-section links point at the new doc tree. The
 architecture diagram updated to reflect the actual module flow
 (STEP → OPS → STATE).
+
+**The documentation overhaul is complete.** The remaining
+follow-on work (docstring audit to clear the stub-warnings,
+migration / archival of the legacy `docs/reference/` content) is
+tracked as separate maintenance and is not blocking.
 
 **Caveats carried forward:**
 
@@ -120,7 +125,7 @@ each legacy file into this tree or archive it.
 | 6 | Theory & Verification (mass conservation, advection schemes, conservation budgets, validation status, adjoint status) | shipped |
 | 7 | Configuration & Runtime (toml_schema, output_schema, data_sources) | shipped |
 | 8 | API Reference (`@autodocs` per module) | shipped |
-| 9 | README rewrite + final polish | **in progress** |
+| 9 | README rewrite + final polish | shipped |
 
 ## Content owners
 

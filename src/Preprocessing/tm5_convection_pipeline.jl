@@ -23,7 +23,7 @@
 # ---------------------------------------------------------------------------
 
 """
-    TM5PreprocessingWorkspace{FT, R}
+    TM5PreprocessingWorkspace{FT, R, B}
 
 Per-day scratch for the TM5 convection preprocessor.  Holds the
 per-column vectors reused across all columns of an hour, plus the
@@ -32,8 +32,17 @@ per-column vectors reused across all columns of an hour, plus the
 source grid.  `regridder` is the conservative regridder from the
 ERA5 LL source mesh to the target mesh, or `nothing` when source
 and target are the same LL grid (identity fast-path).
+
+`physics_bufs::B` holds optional FT-typed conversion buffers for
+the six physics inputs (`udmf, ddmf, udrf, ddrf, t, q`).  When the
+workspace FT matches the physics BIN eltype (Float32 today), `B ===
+Nothing` and the kernel reads the BIN views directly with zero
+copy.  When FT differs (e.g. the F64 path), `B === NTuple{6,
+Array{FT, 3}}` and `compute_tm5_merged_hour_on_source!` upcasts
+hour views into them in-place — alloc once per workspace, reused
+across all 24 hours per day.
 """
-struct TM5PreprocessingWorkspace{FT, R}
+struct TM5PreprocessingWorkspace{FT, R, B}
     col_scratch     :: NTuple{11, Vector{FT}}
     entu_native     :: Array{FT, 3}
     detu_native     :: Array{FT, 3}
@@ -43,6 +52,7 @@ struct TM5PreprocessingWorkspace{FT, R}
     detu_merged_src :: Array{FT, 3}
     entd_merged_src :: Array{FT, 3}
     detd_merged_src :: Array{FT, 3}
+    physics_bufs    :: B
     regridder       :: R
 end
 
@@ -59,7 +69,9 @@ for identity (source and target grids match).  Otherwise pass a
 function allocate_tm5_workspace(Nlon_src::Integer, Nlat_src::Integer,
                                 Nz_native::Integer, Nz::Integer,
                                 ::Type{FT};
-                                regridder = nothing) where {FT <: AbstractFloat}
+                                regridder = nothing,
+                                physics_eltype::Type{<:AbstractFloat} = Float32,
+                                ) where {FT <: AbstractFloat}
     col_scratch = (
         Vector{FT}(undef, Nz_native + 1),    # udmf_col
         Vector{FT}(undef, Nz_native + 1),    # ddmf_col
@@ -73,7 +85,13 @@ function allocate_tm5_workspace(Nlon_src::Integer, Nlat_src::Integer,
         Vector{FT}(undef, Nz_native),        # entd_col
         Vector{FT}(undef, Nz_native),        # detd_col
     )
-    return TM5PreprocessingWorkspace{FT, typeof(regridder)}(
+    physics_bufs = if physics_eltype === FT
+        nothing
+    else
+        # Allocate once, reuse across all 24 hours per day.
+        ntuple(_ -> Array{FT, 3}(undef, Nlon_src, Nlat_src, Nz_native), 6)
+    end
+    return TM5PreprocessingWorkspace{FT, typeof(regridder), typeof(physics_bufs)}(
         col_scratch,
         Array{FT, 3}(undef, Nlon_src, Nlat_src, Nz_native),
         Array{FT, 3}(undef, Nlon_src, Nlat_src, Nz_native),
@@ -83,6 +101,7 @@ function allocate_tm5_workspace(Nlon_src::Integer, Nlat_src::Integer,
         Array{FT, 3}(undef, Nlon_src, Nlat_src, Nz),
         Array{FT, 3}(undef, Nlon_src, Nlat_src, Nz),
         Array{FT, 3}(undef, Nlon_src, Nlat_src, Nz),
+        physics_bufs,
         regridder,
     )
 end
@@ -148,10 +167,30 @@ function compute_tm5_merged_hour_on_source!(
     size(ps_hour)   == (size(udmf_h, 1), size(udmf_h, 2)) || error(
         "ps_hour shape $(size(ps_hour)) ≠ expected $(size(udmf_h,1)), $(size(udmf_h,2)))")
 
+    # Match workspace FT (Float32 or Float64) against physics BIN eltype
+    # (Float32 today). When they differ, upcast hour views into the
+    # workspace's pre-allocated `physics_bufs` (allocated once at
+    # workspace construction). When they match, pass views through with
+    # zero copy.
     FT_reader = eltype(udmf_h)
-    FT_reader === FT || error(
-        "TM5 workspace FT=$FT does not match physics BIN eltype=$(FT_reader); " *
-        "match FT to Float32 (current production) or add conversion at call site")
+    udmf_in, ddmf_in, udrf_in, ddrf_in, t_in, q_in =
+        if FT_reader === FT
+            ws.physics_bufs === nothing || error(
+                "Workspace FT=$FT matches physics BIN eltype $FT_reader but " *
+                "conversion buffers were allocated; rebuild the workspace " *
+                "with `physics_eltype=$FT_reader`.")
+            (udmf_h, ddmf_h, udrf_h, ddrf_h, t_h, q_h)
+        else
+            ws.physics_bufs === nothing && error(
+                "Workspace FT=$FT differs from physics BIN eltype $FT_reader " *
+                "but no conversion buffers were allocated; rebuild the " *
+                "workspace with `physics_eltype=$FT_reader`.")
+            bufs = ws.physics_bufs
+            for (dst, src) in zip(bufs, (udmf_h, ddmf_h, udrf_h, ddrf_h, t_h, q_h))
+                @. dst = FT(src)
+            end
+            bufs
+        end
 
     # The Commit-3 grid helper expects FT-typed ps_hour; accept any
     # real and convert here so callers can pass Float64 transform.sp.
@@ -159,7 +198,7 @@ function compute_tm5_merged_hour_on_source!(
 
     tm5_native_fields_for_hour!(
         ws.entu_native, ws.detu_native, ws.entd_native, ws.detd_native,
-        udmf_h, ddmf_h, udrf_h, ddrf_h, t_h, q_h, ps_h_ft,
+        udmf_in, ddmf_in, udrf_in, ddrf_in, t_in, q_in, ps_h_ft,
         ak_full, bk_full, Nz_native;
         stats = stats, scratch = ws.col_scratch,
     )

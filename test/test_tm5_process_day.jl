@@ -353,6 +353,38 @@ end
         finally
             close_era5_physics_binary(reader)
         end
+
+        # Re-open and re-exercise with FT = Float64 — the workspace must
+        # allocate the F32→F64 conversion buffers and produce the same
+        # zero result (i.e. zero physics input cannot get corrupted by
+        # the upcast).
+        reader = open_era5_physics_binary(bin_dir, target_date)
+        try
+            FT = Float64
+            Nz_native = Nlev
+            Nz = 3
+            merge_map = [1, 1, 2, 2, 3]
+
+            ws = allocate_tm5_workspace(Nlon, Nlat, Nz_native, Nz, FT;
+                                         physics_eltype = Float32)
+            @test ws.physics_bufs !== nothing
+            @test eltype(ws.physics_bufs[1]) === Float64
+
+            stats = TM5CleanupStats()
+            ak = Float64[100000.0 * (Nz_native + 1 - k) / Nz_native for k in 1:(Nz_native + 1)]
+            bk = zeros(Float64, Nz_native + 1)
+            ps_hour = fill(98000.0, Nlon, Nlat)
+
+            compute_tm5_merged_hour_on_source!(
+                ws, reader, 1, ps_hour, ak, bk, Nz_native, merge_map; stats = stats)
+            @test eltype(ws.entu_merged_src) === Float64
+            @test all(ws.entu_merged_src .== 0)
+            @test all(ws.detu_merged_src .== 0)
+            @test all(ws.entd_merged_src .== 0)
+            @test all(ws.detd_merged_src .== 0)
+        finally
+            close_era5_physics_binary(reader)
+        end
     end
 end
 

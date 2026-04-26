@@ -85,7 +85,8 @@ function process_day(date::Date,
             "BIN is ($Nlon_src, $Nlat_src), target is ($Nx, $Ny). " *
             "Either (a) use a 720×361 LL target config, or (b) wait for " *
             "Commit 4b/4c (regrid + PS sourcing for coarser / non-LL targets).")
-        tm5_ws    = allocate_tm5_workspace(Nlon_src, Nlat_src, Nz_native, Nz, FT)
+        tm5_ws    = allocate_tm5_workspace(Nlon_src, Nlat_src, Nz_native, Nz, FT;
+                                            physics_eltype = Float32)
         tm5_stats = TM5CleanupStats()
     end
 

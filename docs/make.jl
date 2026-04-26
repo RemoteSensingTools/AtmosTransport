@@ -61,6 +61,13 @@ const PAGES = [
         "preprocessing/regridding.md",
         "preprocessing/conventions.md",
     ],
+    "Theory & Verification" => [
+        "theory/mass_conservation.md",
+        "theory/advection_schemes.md",
+        "theory/conservation_budgets.md",
+        "theory/validation_status.md",
+        "theory/adjoint_status.md",
+    ],
     "About these docs" => "about.md",
 ]
 

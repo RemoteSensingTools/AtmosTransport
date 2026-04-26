@@ -45,15 +45,25 @@ Real-data topology tutorials will land once the LL+CS quickstart
 bundle is distributable as a Julia LazyArtifact (currently blocked
 on the F32 spectral-CS preprocessing fix).
 
-**Phase 5 — Preprocessing guide (current).** Five pages: a unified
+**Phase 5 — Preprocessing guide** (shipped). Five pages: a unified
 overview with the source × target dispatch model and a prominent
 warning that preprocessing is time-intensive (but the resulting
 binaries enable optimized I/O at runtime); per-source deep-dives for
-ERA5 spectral and GEOS native CS (FV3 pressure-fixer cm,
-mass_flux_dt = 450, GCHP convection wiring); a regridding chapter
-covering conservative weights, IdentityRegrid, and the JLD2 cache;
-and a one-page conventions cheat sheet (units, replay tolerances,
-level orientation, panel conventions).
+ERA5 spectral and GEOS native CS; a regridding chapter; a
+conventions cheat sheet.
+
+**Phase 6 — Theory & Verification (current).** Five pages aimed at
+atmospheric-transport practitioners: the discrete mass-conservation
+contract derived from telescoping divergence; per-scheme advection
+properties (order, monotonicity, CFL, panel-edge halo, RG LCM
+segmentation); the explicit `@test` assertions that anchor each
+conservation property; an honest validation-status report
+(synthetic verification is comprehensive, multi-month observational
+validation is not yet done); and an adjoint status page that
+corrects the README's overclaim — the discrete adjoint is not
+shipped today; the forward operators are designed adjoint-ready
+(Thomas-coefficient layout, ConvectionForcing time-pure dispatch)
+but the kernels themselves are roadmap.
 
 **Caveats carried forward:**
 
@@ -82,8 +92,8 @@ each legacy file into this tree or archive it.
 | 3A | Concepts: grids, state & basis (Mermaid hierarchies + grid schematics) | shipped |
 | 3B | Concepts: operators, binary format | shipped |
 | 4 | Tutorials (Literate.jl) — synthetic LL shipped; real-data topology tutorials pending bundle artifact | shipped |
-| 5 | Preprocessing guide (overview, spectral_era5, geos_native_cs, regridding, conventions) | **in progress** |
-| 6 | Theory & Verification (mass conservation, schemes, validation) | pending |
+| 5 | Preprocessing guide (overview, spectral_era5, geos_native_cs, regridding, conventions) | shipped |
+| 6 | Theory & Verification (mass conservation, advection schemes, conservation budgets, validation status, adjoint status) | **in progress** |
 | 7 | Configuration & Runtime (TOML, sample data, output) | pending |
 | 8 | API Reference (`@autodocs` per module) | pending |
 | 9 | Developer internals + final README polish | pending |

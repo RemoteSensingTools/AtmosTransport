@@ -2,8 +2,8 @@
 
 
 For narrative coverage of the operator hierarchy, the `apply!`
-contract, and the Strang palindrome, see [Concepts: Operators](@ref).
-For per-scheme advection properties, [Theory: Advection schemes](@ref).
+contract, and the Strang palindrome, see [Operators](@ref).
+For per-scheme advection properties, [Advection schemes](@ref).
 
 ## `Operators` (top-level)
 

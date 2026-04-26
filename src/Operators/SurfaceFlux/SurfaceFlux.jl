@@ -6,11 +6,11 @@ Surface emission operators (plan 17).
 Ships the data types and helpers needed to apply per-tracer surface
 sources to a `CellState`:
 
-- [`SurfaceFluxSource{RateT}`](@ref) — single-tracer source + rate
+- `SurfaceFluxSource{RateT}` — single-tracer source + rate
   array (kg/s per cell). Migrated from `src/Models/DrivenSimulation.jl`
   in plan 17 Commit 2. The name remains re-exported from the top-level
   `AtmosTransport` module for backward compat.
-- [`PerTracerFluxMap{S}`](@ref) — NTuple-backed map of
+- `PerTracerFluxMap{S}` — NTuple-backed map of
   `SurfaceFluxSource`s, keyed by `tracer_name`. Ships with the
   `flux_for(map, :name)` lookup helper. Storage-bits-stable on GPU.
 

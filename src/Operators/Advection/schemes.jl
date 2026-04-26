@@ -87,7 +87,7 @@ Piecewise-linear (order 1) reconstruction family (van Leer 1977, MUSCL).
 The subcell profile in each cell is ``q(x) = \\bar{q} + s_x (x - x_c)``
 where ``s_x`` is a limited slope.  The face flux is the Courant-fraction
 weighted integral of this profile over the swept volume (see
-[`_slopes_face_flux`](@ref) in `reconstruction.jl`).
+`_slopes_face_flux` in `reconstruction.jl`).
 
 Concrete subtypes: [`SlopesScheme`](@ref)
 """
@@ -216,8 +216,8 @@ where ``\\alpha = F / m_L`` is the Courant fraction, ``r_{m,L}`` is the
 donor cell tracer mass, and ``s_{x,L}`` is the limited first moment
 ``s_x = m \\cdot \\text{slope}(c_{i-1}, c_i, c_{i+1})``.
 
-See [`_slopes_face_flux`](@ref) in `reconstruction.jl` for the full
-derivation and [`_limited_slope`](@ref) in `limiters.jl` for the
+See `_slopes_face_flux` in `reconstruction.jl` for the full
+derivation and `_limited_slope` in `limiters.jl` for the
 limiter implementations.
 
 # Fields

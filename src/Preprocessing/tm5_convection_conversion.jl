@@ -259,7 +259,7 @@ end
                        dz, Nz; stats=nothing) -> nothing
 
 Column-level port of TM5's `ECconv_to_TMconv` (see
-[`deps/tm5/base/src/phys_convec_ec2tm.F90:87-237`](../../deps/tm5/base/src/phys_convec_ec2tm.F90)).
+`deps/tm5/base/src/phys_convec_ec2tm.F90:87-237`).
 Fills the output arrays `entu, detu, entd, detd` (kg/m²/s at layer
 centers) in place from raw ERA5 physics inputs. All arrays use
 AtmosTransport orientation (k=1=TOA, k=Nz=surface).

@@ -66,7 +66,7 @@ historical practice is per-user `cdsapi` calls); see
 ```
 
 The `spectral_dir` and `thermo_dir` keys in
-[Preprocessing TOML](@ref toml_schema) point at these.
+[TOML schema](@ref) point at these.
 
 ## GEOS-IT (NASA GMAO Integrated Tropospheric)
 

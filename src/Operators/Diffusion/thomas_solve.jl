@@ -28,7 +28,7 @@ and super-diagonals:
 A future adjoint kernel calls this same `solve_tridiagonal!` after
 building `(a_T, b_T, c_T)`. No structural change required. Archival
 adjoint template:
-[boundary_layer_diffusion_adjoint.jl:74-84](../../../docs/resources/developer_notes/legacy_adjoint_templates/boundary_layer_diffusion_adjoint.jl#L74-L84).
+`docs/resources/developer_notes/legacy_adjoint_templates/boundary_layer_diffusion_adjoint.jl:74-84`.
 """
 function solve_tridiagonal!(x::AbstractVector{FT},
                             a::AbstractVector{FT},
@@ -92,7 +92,7 @@ At the boundaries: `D_above = 0` at `k = 1`, `D_below = 0` at `k = Nz`.
 # Role: reference vs. production
 
 This function is the **reference** used in tests. The production
-kernel [`_vertical_diffusion_kernel!`](@ref) inlines the same
+kernel `_vertical_diffusion_kernel!` inlines the same
 formulas at each level (to avoid allocation and to read Kz through
 `field_value`). Tests verify the kernel's output matches the output
 of this reference on matched inputs.

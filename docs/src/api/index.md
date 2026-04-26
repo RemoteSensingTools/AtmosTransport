@@ -33,6 +33,7 @@ the latter case, an issue / PR is welcome.
 The API reference does NOT yet have curated narrative for every
 symbol — that's the natural follow-on to a full docstring audit
 across the codebase. The pages below are the canonical entry
-points; the [Concepts](@ref) and [Theory & Verification](@ref)
-chapters are where you'll find narrative descriptions of what each
-type does and how it fits.
+points; the **Concepts** chapter (start at [Grids](@ref)) and the
+**Theory & Verification** chapter (start at [Mass conservation](@ref))
+are where you'll find narrative descriptions of what each type
+does and how it fits.

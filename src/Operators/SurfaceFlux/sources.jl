@@ -33,7 +33,7 @@ callers that imported it by fully-qualified name.
 - `tracer_name :: Symbol`
 - `cell_mass_rate :: RateT` — backend-agnostic; `Adapt.adapt` converts
   the array between host and device transparently via
-  [`Adapt.adapt_structure`](@ref).
+  `Adapt.adapt_structure`.
 """
 struct SurfaceFluxSource{RateT}
     tracer_name    :: Symbol

@@ -29,7 +29,7 @@ read Kz and dz the same way, build the same `(a_k, b_k, c_k)`
 per level, then apply the transposition rule at the tridiagonal
 interface (`a_T[k] = c[k-1]`, `b_T[k] = b[k]`, `c_T[k] = a[k+1]`)
 before passing to a Thomas solve. Archival adjoint template:
-[boundary_layer_diffusion_adjoint.jl:74-84](../../../docs/resources/developer_notes/legacy_adjoint_templates/boundary_layer_diffusion_adjoint.jl#L74-L84).
+`docs/resources/developer_notes/legacy_adjoint_templates/boundary_layer_diffusion_adjoint.jl:74-84`.
 """
 @kernel function _vertical_diffusion_kernel!(q, kz_field,
                                               @Const(dz),
@@ -204,7 +204,7 @@ end
 
 Face-indexed vertical diffusion kernel. One thread per `(cell, tracer)`
 column on a packed `(ncells, Nz, Nt)` tracer array. The arithmetic is
-identical to [`_vertical_diffusion_kernel!`](@ref); only the storage
+identical to `_vertical_diffusion_kernel!`; only the storage
 layout changes.
 """
 @kernel function _vertical_diffusion_face_kernel!(q, kz_field,

@@ -27,13 +27,13 @@ Two spatial layouts are supported:
 - face-indexed: `AbstractTimeVaryingField{FT, 2}` over `(ncells, Nz)`
 
 Concrete examples:
-- [`ConstantField{FT, 3}`](@ref) / [`ConstantField{FT, 2}`](@ref)
-- [`ProfileKzField{FT}`](@ref) with default rank 3 or
+- `ConstantField{FT, 3}` / `ConstantField{FT, 2}`
+- `ProfileKzField{FT}` with default rank 3 or
   `ProfileKzField(profile; spatial_rank = 2)`
-- [`PreComputedKzField{FT, A}`](@ref) wrapping 3D or 2D storage
-- [`DerivedKzField`](@ref) for meteorology-driven Beljaars-Viterbo on
+- `PreComputedKzField{FT, A}` wrapping 3D or 2D storage
+- `DerivedKzField` for meteorology-driven Beljaars-Viterbo on
   structured grids
-- [`CubedSphereField`](@ref) wrapping one structured rank-3 field per panel
+- `CubedSphereField` wrapping one structured rank-3 field per panel
 
 # `apply!` contract
 
@@ -49,7 +49,7 @@ Concrete examples:
   `delp` and surface temperature.
 - Uses `workspace.w_scratch` as Thomas-forward-elimination storage.
 - Launches a layout-specific diffusion kernel:
-  - structured: [`_vertical_diffusion_kernel!`](@ref) over `(Nx, Ny, Nt)`
+  - structured: `_vertical_diffusion_kernel!` over `(Nx, Ny, Nt)`
   - face-indexed: `_vertical_diffusion_face_kernel!` over `(ncells, Nt)`
 
 The operator is linear (Kz does not depend on tracer values), so

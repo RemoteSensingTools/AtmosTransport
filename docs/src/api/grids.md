@@ -2,7 +2,7 @@
 
 
 For narrative coverage of how the three mesh types fit together,
-see [Concepts: Grids](@ref Grids).
+see the narrative [Grids](@ref) page under Concepts.
 
 ```@autodocs
 Modules = [AtmosTransport.Grids]

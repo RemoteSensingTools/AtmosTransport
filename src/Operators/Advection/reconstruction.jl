@@ -291,7 +291,7 @@ All indices wrapped via `mod1(·, Nx)` for periodic boundaries.
 2. Compute limited slopes for left donor (iL) and right donor (iR)
 3. Convert slopes to first moments: ``s_x = m \\cdot s``
 4. Apply moment limiter
-5. Evaluate Courant-fraction flux via [`_slopes_face_flux`](@ref)
+5. Evaluate Courant-fraction flux via `_slopes_face_flux`
 """
 @inline function _xface_tracer_flux(face_i, j, k, rm, m, F, scheme::SlopesScheme, Nx)
     FT = eltype(rm)
@@ -607,7 +607,7 @@ Tracer mass flux through x-face `face_i` for PPM advection.
 2. Compute 3 CW84 4th-order edge values
 3. Apply monotone profile limiting to each donor cell
 4. Compute edge-offset moments (PPM analogue of slopes `sx`)
-5. Evaluate Courant-fraction flux via [`_slopes_face_flux`](@ref)
+5. Evaluate Courant-fraction flux via `_slopes_face_flux`
 """
 @inline function _xface_tracer_flux(face_i, j, k, rm, m, F, scheme::PPMScheme, Nx)
     FT = eltype(rm)

@@ -34,7 +34,7 @@ identical to [`CMFMCConvection`](@ref). The four forcing fields
 must be on the same basis as `state.air_mass` (moist by upstream
 Fortran convention and by the ec2tm preprocessor default; dry
 requires a sibling preprocessor path, out of plan 23 scope).
-See [`artifacts/plan23/basis_decision.md`](../../../artifacts/plan23/basis_decision.md).
+See `artifacts/plan23/basis_decision.md`.
 
 # Fields required on `ConvectionForcing`
 
@@ -48,14 +48,14 @@ See [`artifacts/plan23/basis_decision.md`](../../../artifacts/plan23/basis_decis
     per field, with per-panel shape `(Nc, Nc, Nz)`.
 
 Orientation conversion + sign flip on `entd` happen in the
-preprocessor ([`src/Preprocessing/tm5_convection_conversion.jl`](../../Preprocessing/tm5_convection_conversion.jl),
+preprocessor (`src/Preprocessing/tm5_convection_conversion.jl`,
 plan 23 Commit 3). The operator performs zero runtime orientation
 gymnastics (plan 23 principle 1).
 
 # Solver class
 
 Partial-pivot Gaussian elimination on the full `[1, Nz]` range per
-column (see [`artifacts/plan23/matrix_structure.md`](../../../artifacts/plan23/matrix_structure.md)
+column (see `artifacts/plan23/matrix_structure.md`
 for the structure survey). Identity rows above the cloud window
 factorize trivially; `lmc`-limited factorization is a Commit 7
 optimization target.
@@ -86,9 +86,9 @@ struct TM5Convection <: AbstractConvection end
                        grid::AtmosGrid) -> nothing
 
 Array-level entry point — parallels the CMFMC contract at
-[`operators.jl:70–89`](operators.jl#L70-L89). Dispatches on grid
+`operators.jl:70-89`. Dispatches on grid
 mesh type and launches the matching KA kernel from
-[`tm5_kernels.jl`](tm5_kernels.jl). Single `synchronize(backend)`
+`tm5_kernels.jl`. Single `synchronize(backend)`
 at the end (TM5 matrix solve is unconditionally stable; no
 sub-cycling).
 """
@@ -191,7 +191,7 @@ end
            op::TM5Convection, dt::Real; workspace) -> state
 
 State-level delegate — matches the CMFMC contract at
-[`CMFMCConvection.jl:296–316`](CMFMCConvection.jl#L296-L316).
+`CMFMCConvection.jl:296-316`.
 Dispatches on grid mesh type plus the `Raw` parameter of
 `CellState{B, A, Raw}`.
 """

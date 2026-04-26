@@ -40,7 +40,7 @@ preprocessor needs the **next day's hour-0** for the last window's
 forward-flux endpoint, mirroring the spectral path; the trailing
 peek at `<end+1>.nc` is unavoidable.
 
-## TOML schema
+## GEOS preprocessing TOML
 
 A working GEOS-IT C180 → CS C180 preprocessing config has two TOML
 files: a small **preprocessing TOML** (per-run knobs) and a separate

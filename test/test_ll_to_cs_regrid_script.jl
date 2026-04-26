@@ -23,6 +23,7 @@ using Test
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 using .AtmosTransport.Preprocessing: regrid_ll_binary_to_cs, build_target_geometry
+using .AtmosTransport.MetDrivers: load_cs_window
 
 # LL fixture: small but non-trivial. Pressure varies with latitude so
 # `recover_ll_cell_center_winds!` sees a genuine ∇p field, and air mass
@@ -31,7 +32,8 @@ function _ll_fixture_binary(path::AbstractString;
                             FT::Type{<:AbstractFloat} = Float64,
                             Nx::Int = 24, Ny::Int = 13, Nz::Int = 4,
                             nwindow::Int = 2,
-                            final_dm_fraction::Real = 0)
+                            final_dm_fraction::Real = 0,
+                            tm5_uniform::Real = 0)
     mesh = LatLonMesh(; FT = FT, Nx = Nx, Ny = Ny)
     A_ifc = FT[0, 2500, 5000, 7500, 10000]
     B_ifc = FT[0, 0.1, 0.3, 0.6, 1.0]
@@ -82,9 +84,19 @@ function _ll_fixture_binary(path::AbstractString;
         end
     end
 
+    # Optional TM5 sections (uniform per-window) so the regrid can be
+    # validated as a near-identity on a uniform field — conservative
+    # regrid + LL→CS → CS uniformity at machine precision.
+    tm5_block = if tm5_uniform != 0
+        u = fill(FT(tm5_uniform), Nx, Ny, Nz)
+        (entu = u, detu = u, entd = u, detd = u)
+    else
+        nothing
+    end
+
     windows = Vector{NamedTuple}(undef, nwindow)
     for win in 1:nwindow
-        windows[win] = (
+        base = (
             m = copy(m),
             am = am,
             bm = bm,
@@ -92,6 +104,7 @@ function _ll_fixture_binary(path::AbstractString;
             ps = ps,
             dm = win < nwindow ? zeros(FT, Nx, Ny, Nz) : copy(dm_final),
         )
+        windows[win] = tm5_block === nothing ? base : merge(base, (tm5_fields = tm5_block,))
     end
 
     write_transport_binary(path, grid, windows;
@@ -197,6 +210,51 @@ end
             driver = CubedSphereTransportDriver(cs_path; FT = Float64, arch = CPU(),
                                                 Hp = 1, validate_replay = true)
             close(driver)
+        end
+    end
+
+    # TM5 carry-through: when the source binary has the four convection
+    # sections, the regridder must pass them through to the CS output.
+    # A uniform input field round-trips to a near-uniform output through
+    # conservative regrid; any drop to zero would mean the writer didn't
+    # see the regridded panels.
+    @testset "TM5 sections carried LL→CS" begin
+        mktempdir() do dir
+            ll_path = joinpath(dir, "ll_fixture.bin")
+            cs_path = joinpath(dir, "cs_fixture.bin")
+            tm5_val = 0.05  # kg/m²/s, plausible mid-tropo updraft entrainment
+
+            _ll_fixture_binary(ll_path; FT = Float64,
+                                Nx = 24, Ny = 13, Nz = 4, nwindow = 2,
+                                tm5_uniform = tm5_val)
+
+            cfg_grid = Dict{String, Any}(
+                "Nc" => 4,
+                "regridder_cache_dir" => joinpath(dir, "cr_cache"),
+            )
+            cs_grid = build_target_geometry(Val(:cubed_sphere), cfg_grid, Float64)
+
+            regrid_ll_binary_to_cs(ll_path, cs_grid, cs_path; FT = Float64)
+
+            caps = inspect_binary(cs_path; io = devnull)
+            @test caps.tm5_convection === true
+
+            # Load window 1 via the CS reader's `load_cs_window` (which
+            # surfaces TM5 fields as panel-tuples). A uniform LL input
+            # round-trips to near-uniform CS output through conservative
+            # regrid, so each panel cell should be close to `tm5_val`.
+            reader = CubedSphereBinaryReader(cs_path; FT = Float64)
+            win = load_cs_window(reader, 1)
+            @test haskey(win, :tm5_fields) && win.tm5_fields !== nothing
+            for fld in (:entu, :detu, :entd, :detd)
+                panels = getfield(win.tm5_fields, fld)
+                @test length(panels) == reader.header.npanel
+                @test all(size(p) == (4, 4, 4) for p in panels)
+                vals = vcat(map(vec, panels)...)
+                @test isapprox(maximum(vals), tm5_val; atol = 5e-3)
+                @test isapprox(minimum(vals), tm5_val; atol = 5e-3)
+            end
+            close(reader)
         end
     end
 

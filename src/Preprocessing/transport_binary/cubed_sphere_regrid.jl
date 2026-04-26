@@ -62,6 +62,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         "to load `qv` from the source and apply `apply_dry_basis_native!` " *
         "to m/am/bm). Regenerate the source on the desired basis, or omit " *
         "the `mass_basis` kwarg to match the source."))
+    source_has_tm5 = has_tm5_convection(reader)
     source_has_dm = :dm in h.payload_sections
     source_has_dm || allow_terminal_zero_tendency || throw(ArgumentError(
         "regrid_ll_binary_to_cs requires source `dm` payloads to close the final " *
@@ -123,6 +124,16 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     ps_ll = Array{FT}(undef, Nx_ll, Ny_ll)
     dm_ll = source_has_dm ? Array{FT}(undef, Nx_ll, Ny_ll, Nz) : nothing
 
+    # TM5 convection sections are layer-center kg/m²/s.  Conservative
+    # LL→CS regrid is the right path (per
+    # `feedback_conservative_regrid_for_mass_fluxes.md`); no rotation,
+    # no Poisson balance — they're purely vertical-flux carriers, the
+    # horizontal advection sees zero divergence from them.
+    entu_ll = source_has_tm5 ? Array{FT}(undef, Nx_ll, Ny_ll, Nz) : nothing
+    detu_ll = source_has_tm5 ? Array{FT}(undef, Nx_ll, Ny_ll, Nz) : nothing
+    entd_ll = source_has_tm5 ? Array{FT}(undef, Nx_ll, Ny_ll, Nz) : nothing
+    detd_ll = source_has_tm5 ? Array{FT}(undef, Nx_ll, Ny_ll, Nz) : nothing
+
     # --- Build vertical coordinate from binary header ---
     vc_merged = HybridSigmaPressure(A_ifc, B_ifc)
 
@@ -135,6 +146,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         half_dt_seconds=met_interval / 2,
         steps_per_window=steps_per_met,
         include_flux_delta=true,
+        include_tm5conv=source_has_tm5,
         mass_basis=output_basis,
         panel_convention=_cs_panel_convention_tag(cs_grid),
         extra_header=Dict{String, Any}(
@@ -156,7 +168,9 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     replay_tol = replay_tolerance(FT)
 
     # --- Helper: read one LL window and regrid to CS ---
-    function _read_and_regrid_to_cs!(win_idx, m_out, ps_out, am_out, bm_out)
+    function _read_and_regrid_to_cs!(win_idx, m_out, ps_out, am_out, bm_out;
+                                     entu_out = nothing, detu_out = nothing,
+                                     entd_out = nothing, detd_out = nothing)
         load_window!(reader, win_idx; m=m_ll, ps=ps_ll, am=am_ll, bm=bm_ll, cm=cm_ll)
 
         # Conservative regrid scalars: m, ps → CS panels
@@ -181,6 +195,19 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         reconstruct_cs_fluxes!(am_out, bm_out, cs_ws.u_cs_panels, cs_ws.v_cs_panels,
                                cs_ws.dp_panels, ps_out,
                                A_ifc, B_ifc, Δx, Δy, gravity, dt_factor, Nc, Nz)
+
+        # TM5 sections (layer-center kg/m²/s): conservative regrid to
+        # CS panels.  No rotation — entu/detu/entd/detd are scalar
+        # vertical-flux carriers, not horizontal vectors.
+        if source_has_tm5
+            load_tm5_convection_window!(reader, win_idx;
+                                         entu = entu_ll, detu = detu_ll,
+                                         entd = entd_ll, detd = detd_ll)
+            regrid_3d_to_cs_panels!(entu_out, regridder, entu_ll, cs_ws, Nc)
+            regrid_3d_to_cs_panels!(detu_out, regridder, detu_ll, cs_ws, Nc)
+            regrid_3d_to_cs_panels!(entd_out, regridder, entd_ll, cs_ws, Nc)
+            regrid_3d_to_cs_panels!(detd_out, regridder, detd_ll, cs_ws, Nc)
+        end
     end
 
     # --- Pre-allocate sliding buffer ---
@@ -189,6 +216,18 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     cur_am = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz), CS_PANEL_COUNT)
     cur_bm = ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz), CS_PANEL_COUNT)
     cur_cm = ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), CS_PANEL_COUNT)
+    # TM5 sliding buffers: 2 sets — `cur_*` holds the window we're
+    # writing, `nxt_*` holds the next window's read so we can swap
+    # without re-allocating.  Both sets only allocate when the source
+    # actually carries TM5 sections.
+    cur_entu = source_has_tm5 ? ntuple(_ -> zeros(FT, Nc, Nc, Nz), CS_PANEL_COUNT) : nothing
+    cur_detu = source_has_tm5 ? ntuple(_ -> zeros(FT, Nc, Nc, Nz), CS_PANEL_COUNT) : nothing
+    cur_entd = source_has_tm5 ? ntuple(_ -> zeros(FT, Nc, Nc, Nz), CS_PANEL_COUNT) : nothing
+    cur_detd = source_has_tm5 ? ntuple(_ -> zeros(FT, Nc, Nc, Nz), CS_PANEL_COUNT) : nothing
+    nxt_entu = source_has_tm5 ? ntuple(_ -> zeros(FT, Nc, Nc, Nz), CS_PANEL_COUNT) : nothing
+    nxt_detu = source_has_tm5 ? ntuple(_ -> zeros(FT, Nc, Nc, Nz), CS_PANEL_COUNT) : nothing
+    nxt_entd = source_has_tm5 ? ntuple(_ -> zeros(FT, Nc, Nc, Nz), CS_PANEL_COUNT) : nothing
+    nxt_detd = source_has_tm5 ? ntuple(_ -> zeros(FT, Nc, Nc, Nz), CS_PANEL_COUNT) : nothing
 
     @inline function _copy_panels_regrid!(dst, src)
         for p in 1:CS_PANEL_COUNT; copyto!(dst[p], src[p]); end
@@ -202,18 +241,24 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
 
     # --- Process first window ---
     t0 = time()
-    _read_and_regrid_to_cs!(1, cs_ws.m_panels, cs_ws.ps_panels, cs_ws.am_panels, cs_ws.bm_panels)
+    _read_and_regrid_to_cs!(1, cs_ws.m_panels, cs_ws.ps_panels, cs_ws.am_panels, cs_ws.bm_panels;
+                             entu_out = cur_entu, detu_out = cur_detu,
+                             entd_out = cur_entd, detd_out = cur_detd)
     @info @sprintf("    Window  1/%d: read+regrid %.2fs", Nt, time() - t0)
 
     _copy_panels_regrid!(cur_m,  cs_ws.m_panels)
     _copy_panels_regrid!(cur_ps, cs_ws.ps_panels)
     _copy_panels_regrid!(cur_am, cs_ws.am_panels)
     _copy_panels_regrid!(cur_bm, cs_ws.bm_panels)
+    # cur_entu/detu/entd/detd were filled directly by `_read_and_regrid_to_cs!`
+    # (TM5 sections need no rebalancing — they're vertical-flux carriers).
 
     # --- Sliding-window loop: windows 2..Nt ---
     for win in 2:Nt
         t0 = time()
-        _read_and_regrid_to_cs!(win, cs_ws.m_panels, cs_ws.ps_panels, cs_ws.am_panels, cs_ws.bm_panels)
+        _read_and_regrid_to_cs!(win, cs_ws.m_panels, cs_ws.ps_panels, cs_ws.am_panels, cs_ws.bm_panels;
+                                 entu_out = nxt_entu, detu_out = nxt_detu,
+                                 entd_out = nxt_entd, detd_out = nxt_detd)
         t_read = time() - t0
 
         _copy_panels_regrid!(cs_ws.m_next_panels, cs_ws.m_panels)
@@ -247,8 +292,13 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         end
         convert_cs_mass_target_to_delta!(cs_ws.m_next_panels, cur_m)
 
-        window_nt = (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps,
-                     dm=cs_ws.m_next_panels)
+        window_nt = source_has_tm5 ?
+            (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps,
+             dm=cs_ws.m_next_panels,
+             tm5_fields=(entu=cur_entu, detu=cur_detu,
+                         entd=cur_entd, detd=cur_detd)) :
+            (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps,
+             dm=cs_ws.m_next_panels)
         write_streaming_cs_window!(writer, window_nt, Nc, CS_PANEL_COUNT)
 
         should_log_window(win - 1, Nt) &&
@@ -260,6 +310,12 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         _copy_panels_regrid!(cur_ps, cs_ws.ps_panels)
         _copy_panels_regrid!(cur_am, cs_ws.am_panels)
         _copy_panels_regrid!(cur_bm, cs_ws.bm_panels)
+        if source_has_tm5
+            _copy_panels_regrid!(cur_entu, nxt_entu)
+            _copy_panels_regrid!(cur_detu, nxt_detu)
+            _copy_panels_regrid!(cur_entd, nxt_entd)
+            _copy_panels_regrid!(cur_detd, nxt_detd)
+        end
     end
 
     # --- Balance & write LAST window ---
@@ -305,8 +361,13 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     end
     convert_cs_mass_target_to_delta!(cs_ws.m_next_panels, cur_m)
 
-    window_nt = (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps,
-                 dm=cs_ws.m_next_panels)
+    window_nt = source_has_tm5 ?
+        (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps,
+         dm=cs_ws.m_next_panels,
+         tm5_fields=(entu=cur_entu, detu=cur_detu,
+                     entd=cur_entd, detd=cur_detd)) :
+        (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps,
+         dm=cs_ws.m_next_panels)
     write_streaming_cs_window!(writer, window_nt, Nc, CS_PANEL_COUNT)
 
     @info @sprintf("    Window %2d/%d (last): bal %.2fs  pre=%.2e post=%.2e iter=%d",

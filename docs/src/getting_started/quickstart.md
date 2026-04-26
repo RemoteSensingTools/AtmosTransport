@@ -5,62 +5,63 @@ NetCDF output file, and a plot. We host a small bundle of preprocessed
 ERA5 transport binaries (3 days, December 2021) so you can skip the
 preprocessor and jump straight to running.
 
-The bundle covers regular lat-lon at two resolutions:
+The bundle covers two grid topologies at two resolutions each, split
+into a small **lat-lon tarball** and a larger **cubed-sphere tarball**
+so newcomers can grab just LL on a slow connection:
 
-| Bundle entry | Grid | Resolution | Points |
-|---|---|---|---|
-| `era5_ll72x37_dec2021_f32` | regular lat-lon | 5° | 72 × 37 |
-| `era5_ll144x73_dec2021_f32` | regular lat-lon | 2.5° | 144 × 73 |
+| Bundle | Grid | Resolution | Points | Approx raw size |
+|---|---|---|---|---|
+| `quickstart_ll_dec2021_v1.tar.gz` | regular lat-lon | 5°    | 72 × 37   | ~260 MB |
+| `quickstart_ll_dec2021_v1.tar.gz` | regular lat-lon | 2.5°  | 144 × 73  | ~1.0 GB |
+| `quickstart_cs_dec2021_v1.tar.gz` | cubed-sphere    | C24   | 6 × 24²   | ~175 MB |
+| `quickstart_cs_dec2021_v1.tar.gz` | cubed-sphere    | C90 (~1°) | 6 × 90² | ~2.4 GB |
 
-Both are **F32**, dry-basis, level-merged to ~34 tropospheric layers,
-written by the canonical
+All four are **F32**, dry-basis, level-merged to ~34 tropospheric
+layers, written by the canonical
 `scripts/preprocessing/preprocess_transport_binary.jl` from raw ERA5
 spectral GRIB. They give you something concrete to run, modify, and
 benchmark — without depending on a multi-TB ERA5 archive.
 
-!!! note "Cubed-sphere binaries"
-    Cubed-sphere quickstart binaries (e.g. C24, C90) are not included
-    in this first bundle so the download stays focused on the smallest
-    runnable examples. F32 CS preprocessing is available through
-    `config/preprocessing/era5_cs_c24_transport_binary_f32.toml` and
-    `config/preprocessing/era5_cs_c90_transport_binary_f32.toml` when
-    you have the ERA5 spectral input locally. F64 CS siblings are also
-    available as `era5_cs_c24_transport_binary.toml` and
-    `era5_cs_c90_transport_binary.toml`.
-
 ## 1. Download the bundle
 
-!!! note "Bundle hosting"
-    The bundle is **`atmos_transport_quickstart_v1.tar.gz`**
-    (≈ **1.0 GB** compressed — the LL 144×73 binaries dominate;
-    the LL 72×37-only subset is just ~80 MB raw if you only want the
-    smaller one).
-    SHA-256: `42c63d300c5da7e776de9b25cc00884c28e3c37abf9d421df9151793a4c85f88`.
-    **TODO: paste the public Dropbox download URL into
-    `scripts/download_quickstart_data.sh` once the upload is in place
-    (or set `ATMOSTR_QUICKSTART_URL` in your environment).**
+Both tarballs are hosted as assets on the
+[`data-quickstart-v1`](https://github.com/RemoteSensingTools/AtmosTransport/releases/tag/data-quickstart-v1)
+GitHub Release.
+
+| Tarball | SHA-256 | Approx compressed |
+|---|---|---|
+| `quickstart_ll_dec2021_v1.tar.gz` | `1d9928c3f43084f8397af14399f8c438a6c4bfeadabe37f0000fad3fa1ef76d7` | ~1.0 GB |
+| `quickstart_cs_dec2021_v1.tar.gz` | `ada76e875cf2852d23f544f9aeb41456e6f13c502d4d6227fac676dcca554b94` | ~1.6 GB |
 
 ```bash
+# Just LL (newcomer path; small download)
+bash scripts/download_quickstart_data.sh ll
+
+# Just CS
+bash scripts/download_quickstart_data.sh cs
+
+# Both (default; everything ready for the four example configs)
 bash scripts/download_quickstart_data.sh
 ```
 
-The script downloads the tarball, verifies its SHA-256, and extracts
-it under `~/data/AtmosTransport_quickstart/met/`. After extraction:
+The script downloads, verifies SHA-256, validates the tar contents
+against absolute / parent-traversing paths, and extracts under
+`~/data/AtmosTransport_quickstart/met/`. After extraction (with
+`all`):
 
 ```
 ~/data/AtmosTransport_quickstart/
 └── met/
-    ├── era5_ll72x37_dec2021_f32/
-    │   ├── era5_transport_20211201_merged1000Pa_float32.bin
-    │   ├── era5_transport_20211202_merged1000Pa_float32.bin
-    │   └── era5_transport_20211203_merged1000Pa_float32.bin
-    └── era5_ll144x73_dec2021_f32/   (3 binaries)
+    ├── era5_ll72x37_dec2021_f32/      (3 binaries, ~88 MB each)
+    ├── era5_ll144x73_dec2021_f32/     (3 binaries, ~352 MB each)
+    ├── era5_cs_c24_dec2021_f32/       (3 binaries, ~58 MB each)
+    └── era5_cs_c90_dec2021_f32/       (3 binaries, ~806 MB each)
 ```
 
 ## 2. Run the simulation
 
-Two ready-to-run example configs ship in `config/runs/quickstart/`,
-one per LL resolution:
+Four ready-to-run example configs ship in `config/runs/quickstart/`,
+one per topology / resolution combination:
 
 ```bash
 # Lat-lon, 5° (smallest, fastest)
@@ -68,22 +69,32 @@ julia --project=. scripts/run_transport.jl config/runs/quickstart/ll72x37_advonl
 
 # Lat-lon, 2.5° (still fast, more spatial detail)
 julia --project=. scripts/run_transport.jl config/runs/quickstart/ll144x73_advonly.toml
+
+# Cubed-sphere C24 (smallest CS — see panel-edge transport on a coarse grid)
+julia --project=. scripts/run_transport.jl config/runs/quickstart/cs_c24_advonly.toml
+
+# Cubed-sphere C90 (~1°, the highest-resolution entry — best demo)
+julia --project=. scripts/run_transport.jl config/runs/quickstart/cs_c90_advonly.toml
 ```
 
-Both configs run a 3-day advection-only simulation (no diffusion, no
-convection, no chemistry) with a single passive tracer named `co2_bl`
-initialized as a `bl_enhanced` field — uniform 400 ppm background
-plus +100 ppm in the lowest 3 model layers (boundary-layer injection
-at `t = 0`). Output is 13 frames every 6 hours (t=0…72h), written as
-a single NetCDF per run under
-`~/data/AtmosTransport_quickstart/output/`. Output variables are
-`<tracer>_column_mean(…)`, `<tracer>_column_mass_per_area(…)`, and
-`column_air_mass_per_area(…)` — see [Inspecting output](@ref) for the
-full schema.
+The four configs all run a **3-day advection-only** simulation (no
+diffusion, no convection, no chemistry) with a single passive tracer
+named `co2_bl`. The two **lat-lon** configs use a `bl_enhanced` IC
+(uniform 400 ppm + 100 ppm in the lowest 3 model layers — a BL
+injection at `t = 0`); the two **cubed-sphere** configs use a
+`uniform` 400 ppm IC (`bl_enhanced` is currently LL-only). Output is
+13 frames every 6 hours (t=0…72h), written as a single NetCDF per
+run under `~/data/AtmosTransport_quickstart/output/`. Output
+variables are `<tracer>_column_mean(…)`,
+`<tracer>_column_mass_per_area(…)`, and
+`column_air_mass_per_area(…)` — see [Inspecting output](@ref) for
+the full per-topology schema.
 
 The configs default to `use_gpu = true`. For CPU execution edit
-`[architecture] use_gpu = false` in the chosen config — both examples
-in the bundle run comfortably on a recent CPU at these resolutions.
+`[architecture] use_gpu = false` in the chosen config — every
+example in the bundle runs comfortably on a recent CPU at these
+resolutions, with the C90 run being the slowest at a few minutes
+per day.
 
 ## 3. Inspect the output
 
@@ -115,8 +126,8 @@ print(cm.shape, "min", cm.min(), "max", cm.max(), "mean", cm.mean())
 
 ## 4. Modify and re-run
 
-The two bundled configs are deliberately minimal so you can use them
-as starting points:
+The four bundled configs are deliberately minimal so you can use
+them as starting points:
 
 | To try… | Edit |
 |---|---|
@@ -124,7 +135,7 @@ as starting points:
 | A second tracer | Add `[tracers.<name>]` and `[tracers.<name>.init]` blocks; the runtime advects all tracers in lockstep. |
 | Different snapshot times | Edit `[output] snapshot_hours = […]`. |
 | F64 instead of F32 | Re-preprocess from raw ERA5 to F64; use `config/preprocessing/era5_ll72x37_advresln_dec2021.toml` (the F64 sibling) as the template. |
-| A different advection scheme | `[run] scheme = "ppm"`. PPM also accepts `ppm_order = 4..7`. |
+| A different advection scheme | `[run] scheme = "ppm"` for Putman-Lin PPM, or `scheme = "linrood"` (CS only) which also accepts `ppm_order = 5` or `7`. The plain `ppm` path has no `order` parameter. |
 | Different grid topology | Pick the matching bundle config; the runtime auto-dispatches on the binary's `grid_type` header. |
 
 ## What this quickstart does *not* cover

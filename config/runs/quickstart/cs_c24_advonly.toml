@@ -1,0 +1,34 @@
+# Quickstart: cubed-sphere C24, 3-day advection-only, F32, uniform IC.
+#
+# C24 is the smallest cubed-sphere grid in the bundle. Useful for
+# inspecting panel-edge transport behaviour on a coarse grid.
+#
+# Run:
+#   julia --project=. scripts/run_transport.jl \
+#       config/runs/quickstart/cs_c24_advonly.toml
+
+[input]
+folder     = "~/data/AtmosTransport_quickstart/met/era5_cs_c24_dec2021_f32/"
+start_date = "2021-12-01"
+end_date   = "2021-12-03"
+
+[architecture]
+use_gpu = true                  # set false for CPU-only
+
+[numerics]
+float_type = "Float32"
+
+[run]
+scheme = "slopes"
+
+[tracers.co2_bl]
+[tracers.co2_bl.init]
+# CS supports `uniform | file | netcdf | file_field | catrine_co2`.
+# `bl_enhanced` (used by the LL quickstart configs) is LL-only — start
+# from a uniform 400 ppm background here.
+kind       = "uniform"
+background = 4.0e-4
+
+[output]
+snapshot_hours = [0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72]
+snapshot_file  = "~/data/AtmosTransport_quickstart/output/cs_c24_advonly.nc"

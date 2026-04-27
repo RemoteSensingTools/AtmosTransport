@@ -387,35 +387,48 @@ end
 
 """Static CFL subcycle count from initial mass (no evolving-mass pilot).
 
-Panels may be `CuArray` on GPU runs; the per-cell scalar loop triggers
-`Scalar indexing is disallowed`. We materialize the per-panel arrays on
-host once per call (one full-state H→D round-trip per `step!`, ≪ kernel
-cost) and walk them with the existing CPU loop. A GPU-resident reduction
-kernel is the eventual right answer.
+The per-cell CFL is `max(|F[i, …]|, |F[i+1, …]|) / m[i, …]` over the
+interior cells of each panel, then reduced across all six panels. This
+runs every `step!`, so we use a backend-portable broadcast +
+`mapreduce(max, …)` formulation rather than a scalar Julia loop:
+
+- on `Array` it lowers to vectorized SIMD reductions (no allocation),
+- on `CuArray` it dispatches to CUDA's parallel reduction (no host
+  round-trip).
+
+The `m <= 0` guard from the original scalar loop becomes an `ifelse` so
+the broadcast stays elementwise; in practice `m > 0` always holds and
+the guard is defensive.
 """
 function _cs_static_subcycle_count(panels_flux::NTuple{6}, panels_m::NTuple{6},
                                     Nc::Int, Hp::Int, Nz::Int, cfl_limit::Real,
                                     direction::Symbol)
-    panels_m_cpu    = map(Array, panels_m)
-    panels_flux_cpu = map(Array, panels_flux)
-    FT = eltype(panels_m_cpu[1])
+    FT = eltype(panels_m[1])
+    iL = Hp + 1
+    iH = Hp + Nc
     max_cfl = zero(FT)
     @inbounds for p in 1:6
-        for k in 1:Nz, j in 1:Nc, i in 1:Nc
-            mi = panels_m_cpu[p][Hp+i, Hp+j, k]
-            mi <= zero(FT) && continue
-            c = if direction === :x
-                max(abs(panels_flux_cpu[p][Hp+i, Hp+j, k]),
-                    abs(panels_flux_cpu[p][Hp+i+1, Hp+j, k])) / mi
-            elseif direction === :y
-                max(abs(panels_flux_cpu[p][Hp+i, Hp+j, k]),
-                    abs(panels_flux_cpu[p][Hp+i, Hp+j+1, k])) / mi
-            else
-                max(abs(panels_flux_cpu[p][Hp+i, Hp+j, k]),
-                    abs(panels_flux_cpu[p][Hp+i, Hp+j, k+1])) / mi
-            end
-            max_cfl = max(max_cfl, c)
+        m_p = panels_m[p]
+        F_p = panels_flux[p]
+        m_int = view(m_p, iL:iH, iL:iH, 1:Nz)
+        F_lo, F_hi = if direction === :x
+            (view(F_p, iL    :iH,     iL:iH,     1:Nz),
+             view(F_p, iL + 1:iH + 1, iL:iH,     1:Nz))
+        elseif direction === :y
+            (view(F_p, iL:iH,     iL    :iH,     1:Nz),
+             view(F_p, iL:iH,     iL + 1:iH + 1, 1:Nz))
+        else  # :z
+            (view(F_p, iL:iH, iL:iH, 1    :Nz),
+             view(F_p, iL:iH, iL:iH, 2:Nz + 1))
         end
+        # `ifelse` keeps the broadcast eltype-stable on GPU; the
+        # `mapreduce` reduces in-place without materializing the cell
+        # array.
+        zero_FT = zero(FT)
+        cfl_panel = mapreduce(max, m_int, F_lo, F_hi; init = zero_FT) do mi, fl, fh
+            ifelse(mi > zero_FT, max(abs(fl), abs(fh)) / mi, zero_FT)
+        end
+        max_cfl = max(max_cfl, cfl_panel)
     end
     max_cfl <= cfl_limit && return 1
     return ceil(Int, max_cfl / cfl_limit)

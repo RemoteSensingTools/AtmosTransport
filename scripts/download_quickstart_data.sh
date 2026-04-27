@@ -14,13 +14,21 @@
 #       - era5_cs_c90_dec2021_f32    (cubed-sphere C90 ~1°, F32)
 #
 # Usage:
-#   bash scripts/download_quickstart_data.sh         # both bundles (default)
-#   bash scripts/download_quickstart_data.sh ll      # LL only — newcomer path
-#   bash scripts/download_quickstart_data.sh cs      # CS only
-#   bash scripts/download_quickstart_data.sh all     # both (alias for default)
+#   bash scripts/download_quickstart_data.sh                            # both bundles (default)
+#   bash scripts/download_quickstart_data.sh ll                         # LL only — newcomer path
+#   bash scripts/download_quickstart_data.sh cs                         # CS only
+#   bash scripts/download_quickstart_data.sh all                        # both (alias for default)
+#   bash scripts/download_quickstart_data.sh --dest /scratch/me/atmos   # explicit destination
+#   bash scripts/download_quickstart_data.sh ll -d /scratch/me/atmos    # selector + dest
 #
-# Env overrides:
-#   ATMOSTR_QUICKSTART_DIR      — destination root (default ~/data/AtmosTransport_quickstart)
+# Destination (highest precedence first):
+#   1. --dest / -d <path>       — explicit CLI flag
+#   2. ATMOSTRANSPORT_DATA_ROOT — env var, also honored by the runtime
+#                                 (config TOMLs reference $ATMOSTRANSPORT_DATA_ROOT)
+#   3. ATMOSTR_QUICKSTART_DIR   — legacy quickstart-only env (kept for backward compat)
+#   4. ~/data/AtmosTransport    — fallback (matches the runtime fallback)
+#
+# Env overrides for tarball URLs / SHAs (rarely needed):
 #   ATMOSTR_QUICKSTART_LL_URL   — override the LL tarball URL
 #   ATMOSTR_QUICKSTART_LL_SHA   — override the LL tarball SHA-256
 #   ATMOSTR_QUICKSTART_CS_URL   — override the CS tarball URL
@@ -43,15 +51,31 @@ CS_NAME="quickstart_cs_dec2021_v1.tar.gz"
 CS_URL_DEFAULT="${RELEASE_BASE}/${CS_NAME}"
 CS_SHA_DEFAULT="ada76e875cf2852d23f544f9aeb41456e6f13c502d4d6227fac676dcca554b94"
 
-# ── Selection ──────────────────────────────────────────────────────────────
-SELECT="${1:-all}"
-case "$SELECT" in
-    ll|cs|all) ;;
-    *) echo "Usage: $0 [ll|cs|all]" >&2; exit 2;;
-esac
+# ── CLI parsing: positional selector + optional --dest/-d <path> ────────────
+SELECT="all"
+DEST_OVERRIDE=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        ll|cs|all)
+            SELECT="$1"; shift ;;
+        --dest|-d)
+            [[ $# -ge 2 ]] || { echo "ERROR: $1 requires a path argument" >&2; exit 2; }
+            DEST_OVERRIDE="$2"; shift 2 ;;
+        --dest=*)
+            DEST_OVERRIDE="${1#--dest=}"; shift ;;
+        -h|--help)
+            sed -n '1,40p' "$0"; exit 0 ;;
+        *)
+            echo "Usage: $0 [ll|cs|all] [--dest <path>]" >&2; exit 2 ;;
+    esac
+done
 
-DEST_DIR="${ATMOSTR_QUICKSTART_DIR:-$HOME/data/AtmosTransport_quickstart}"
+# Destination resolution: CLI flag > ATMOSTRANSPORT_DATA_ROOT >
+# ATMOSTR_QUICKSTART_DIR (legacy) > ~/data/AtmosTransport (runtime fallback).
+DEST_DIR="${DEST_OVERRIDE:-${ATMOSTRANSPORT_DATA_ROOT:-${ATMOSTR_QUICKSTART_DIR:-$HOME/data/AtmosTransport}}}"
+DEST_DIR="${DEST_DIR%/}"   # strip trailing slash for tidy paths
 mkdir -p "$DEST_DIR"
+echo "[quickstart] destination: $DEST_DIR"
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 err()  { echo "ERROR: $*" >&2; exit 1; }
@@ -130,6 +154,10 @@ if [[ "$SELECT" == "cs" || "$SELECT" == "all" ]]; then
 fi
 
 note "Quickstart bundle ready at $DEST_DIR"
+note ""
+note "If this destination is non-default, point the runtime at it via:"
+note "  export ATMOSTRANSPORT_DATA_ROOT=$DEST_DIR"
+note "(Run-config TOMLs use \$ATMOSTRANSPORT_DATA_ROOT in input/output paths.)"
 note ""
 note "Next: run one of the bundled configs"
 [[ "$SELECT" == "ll" || "$SELECT" == "all" ]] && {

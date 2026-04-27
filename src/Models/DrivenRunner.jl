@@ -43,6 +43,7 @@ using Adapt
 using Printf: @sprintf, @printf
 using Logging
 
+import ...expand_data_path
 using ..State: AbstractMassBasis, DryBasis, MoistBasis, CellState,
                 CubedSphereState, total_air_mass, total_mass, tracer_names,
                 tracer_index, get_tracer
@@ -316,7 +317,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
 
     output_cfg = get(cfg, "output", Dict{String, Any}())
     snapshot_hours = Float64.(get(output_cfg, "snapshot_hours", Float64[]))
-    snapshot_file = expanduser(String(get(output_cfg, "snapshot_file", "")))
+    snapshot_file = expand_data_path(String(get(output_cfg, "snapshot_file", "")))
     do_snapshots = !isempty(snapshot_hours) && !isempty(snapshot_file)
 
     _ensure_gpu_runtime!(cfg)

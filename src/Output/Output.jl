@@ -26,6 +26,7 @@ module Output
 using NCDatasets
 using Printf
 
+import ..expand_data_path
 using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                GnomonicPanelConvention, GEOSNativePanelConvention,
                nx, ny, nrings, ring_longitudes, cell_index, ncells,

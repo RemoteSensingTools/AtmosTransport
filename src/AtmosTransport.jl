@@ -41,6 +41,41 @@ module AtmosTransport
 
 using KernelAbstractions
 
+# ---------------------------------------------------------------------------
+# Free-choice data root.
+#
+# Configs and CLI scripts express paths as either `~/...` or
+# `$ATMOSTRANSPORT_DATA_ROOT/...`.  `expand_data_path` resolves both forms,
+# letting a user point every read/write site at a custom data root via a
+# single env var without touching the TOMLs:
+#
+#     export ATMOSTRANSPORT_DATA_ROOT=/scratch/$USER/atmostransport
+#
+# When the env var is unset, the fallback is `~/data/AtmosTransport`, which
+# matches the historical default used throughout the legacy configs.
+# Trailing `/` on the env var is tolerated.
+# ---------------------------------------------------------------------------
+const _DATA_ROOT_ENV       = "ATMOSTRANSPORT_DATA_ROOT"
+const _DATA_ROOT_FALLBACK  = "~/data/AtmosTransport"
+
+"""
+    expand_data_path(p::AbstractString) -> String
+
+Resolve a TOML/CLI path string by substituting `\$ATMOSTRANSPORT_DATA_ROOT`
+(or `\${ATMOSTRANSPORT_DATA_ROOT}`) and then running `expanduser` for any
+leading `~`.  Returns a plain `String`.
+"""
+function expand_data_path(p::AbstractString)
+    root = rstrip(get(ENV, _DATA_ROOT_ENV, _DATA_ROOT_FALLBACK), '/')
+    s = String(p)
+    s = replace(s, "\${$_DATA_ROOT_ENV}" => root)
+    s = replace(s, "\$$_DATA_ROOT_ENV"   => root)
+    return expanduser(s)
+end
+expand_data_path(p) = expand_data_path(String(p))
+
+export expand_data_path
+
 # ---- Architecture and planetary constants ----
 include("Architectures.jl")
 using .Architectures

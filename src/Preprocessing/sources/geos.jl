@@ -153,7 +153,7 @@ function open_geos_day(settings::GEOSSettings, date::Date;
                   detect_level_orientation(ctm_a1) :
                   settings.level_orientation
 
-    vc = load_hybrid_coefficients(expanduser(settings.coefficients_file))
+    vc = load_hybrid_coefficients(expand_data_path(settings.coefficients_file))
 
     return GEOSDayHandles(ctm_a1, ctm_i1, next_ctm_i1, a3dyn, a3mste, orientation, vc)
 end

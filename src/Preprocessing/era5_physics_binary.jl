@@ -194,8 +194,8 @@ function convert_era5_physics_nc_to_bin(nc_dir::AbstractString,
                                          date::Date;
                                          force_rewrite::Bool = false,
                                          verbose::Bool = true)
-    nc_dir   = expanduser(nc_dir)
-    bin_dir  = expanduser(bin_dir)
+    nc_dir   = expand_data_path(nc_dir)
+    bin_dir  = expand_data_path(bin_dir)
     year_dir = joinpath(bin_dir, string(year(date)))
     mkpath(year_dir)
     date_str = Dates.format(date, "yyyymmdd")
@@ -477,7 +477,7 @@ the payload, parse the header. Caller must `close_era5_physics_binary`
 when done (or wrap in a try/finally).
 """
 function open_era5_physics_binary(bin_dir::AbstractString, date::Date)
-    year_dir = joinpath(expanduser(bin_dir), string(year(date)))
+    year_dir = joinpath(expand_data_path(bin_dir), string(year(date)))
     date_str = Dates.format(date, "yyyymmdd")
     bin_path = joinpath(year_dir, "era5_physics_$(date_str).bin")
     isfile(bin_path) || error(

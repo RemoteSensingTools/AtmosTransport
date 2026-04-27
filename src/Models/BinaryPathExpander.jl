@@ -49,6 +49,7 @@ parsed date.
 module BinaryPathExpander
 
 using Dates
+import ...expand_data_path
 
 export expand_binary_paths
 
@@ -90,7 +91,7 @@ end
 
 function _expand_folder_range(input_cfg::AbstractDict)
     folder_raw = input_cfg["folder"]
-    folder     = expanduser(String(folder_raw))
+    folder     = expand_data_path(String(folder_raw))
     isdir(folder) ||
         throw(ArgumentError("[input].folder does not exist: $folder"))
 

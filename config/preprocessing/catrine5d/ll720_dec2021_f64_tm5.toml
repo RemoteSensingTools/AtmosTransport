@@ -9,12 +9,12 @@
     #   done
 
     [input]
-    spectral_dir = "~/data/AtmosTransport/met/era5/0.5x0.5/spectral_hourly"
-    thermo_dir   = "~/data/AtmosTransport/met/era5/0.5x0.5/physics"
+    spectral_dir = "$ATMOSTRANSPORT_DATA_ROOT/met/era5/0.5x0.5/spectral_hourly"
+    thermo_dir   = "$ATMOSTRANSPORT_DATA_ROOT/met/era5/0.5x0.5/physics"
     coefficients = "config/era5_L137_coefficients.toml"
 
     [output]
-    directory  = "~/data/AtmosTransport/met/era5/ll720x361_v4/transport_binary_v2_tropo34_dec2021_f64_tm5"
+    directory  = "$ATMOSTRANSPORT_DATA_ROOT/met/era5/ll720x361_v4/transport_binary_v2_tropo34_dec2021_f64_tm5"
     mass_basis = "dry"
     include_qv = false
 
@@ -39,4 +39,4 @@
 
 [tm5_convection]
 enable          = true
-physics_bin_dir = "~/data/AtmosTransport/met/era5/0.5x0.5/physics_bin"
+physics_bin_dir = "$ATMOSTRANSPORT_DATA_ROOT/met/era5/0.5x0.5/physics_bin"

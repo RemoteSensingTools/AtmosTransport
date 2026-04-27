@@ -10,7 +10,7 @@
 #       config/runs/quickstart/cs_c90_advonly.toml
 
 [input]
-folder     = "~/data/AtmosTransport_quickstart/met/era5_cs_c90_dec2021_f32/"
+folder     = "$ATMOSTRANSPORT_DATA_ROOT_quickstart/met/era5_cs_c90_dec2021_f32/"
 start_date = "2021-12-01"
 end_date   = "2021-12-03"
 
@@ -33,4 +33,4 @@ background = 4.0e-4
 
 [output]
 snapshot_hours = [0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72]
-snapshot_file  = "~/data/AtmosTransport_quickstart/output/cs_c90_advonly.nc"
+snapshot_file  = "$ATMOSTRANSPORT_DATA_ROOT_quickstart/output/cs_c90_advonly.nc"

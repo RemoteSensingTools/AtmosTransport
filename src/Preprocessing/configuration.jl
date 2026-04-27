@@ -28,7 +28,7 @@ is available as an explicit opt-out for diagnostic purposes only.
 Dry-basis preprocessing requires a humidity source (`input.thermo_dir`).
 """
 function resolve_mass_basis(cfg)
-    thermo_dir = expanduser(get(get(cfg, "input", Dict()), "thermo_dir", ""))
+    thermo_dir = expand_data_path(get(get(cfg, "input", Dict()), "thermo_dir", ""))
     include_qv = Bool(get(get(cfg, "output", Dict{String, Any}()), "include_qv", !isempty(thermo_dir)))
     basis_str = lowercase(String(get(get(cfg, "output", Dict{String, Any}()), "mass_basis", "dry")))
     mass_basis = basis_str == "dry" ? :dry : :moist
@@ -128,9 +128,9 @@ Resolve the script configuration into a compact runtime settings bundle used by
 the day-processing pipeline.
 """
 function resolve_runtime_settings(cfg)
-    spectral_dir = expanduser(cfg["input"]["spectral_dir"])
-    coeff_path = expanduser(cfg["input"]["coefficients"])
-    out_dir = expanduser(cfg["output"]["directory"])
+    spectral_dir = expand_data_path(cfg["input"]["spectral_dir"])
+    coeff_path = expand_data_path(cfg["input"]["coefficients"])
+    out_dir = expand_data_path(cfg["output"]["directory"])
     thermo_dir, include_qv, mass_basis = resolve_mass_basis(cfg)
 
     level_top = Int(get(cfg["grid"], "level_top", 1))

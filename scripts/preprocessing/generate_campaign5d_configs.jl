@@ -16,8 +16,8 @@
 const REPO_ROOT  = normpath(joinpath(@__DIR__, "..", ".."))
 const PREP_DIR   = joinpath(REPO_ROOT, "config", "preprocessing", "catrine5d")
 const RUNS_DIR   = joinpath(REPO_ROOT, "config", "runs", "catrine5d")
-const PHYSICS_BIN_DIR = "~/data/AtmosTransport/met/era5/0.5x0.5/physics_bin"
-const GRIDFED_FILE    = "~/data/AtmosTransport/catrine/Emissions/gridfed/GCP-GridFEDv2024.0_2021.short.nc"
+const PHYSICS_BIN_DIR = "\$ATMOSTRANSPORT_DATA_ROOT/met/era5/0.5x0.5/physics_bin"
+const GRIDFED_FILE    = "\$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/gridfed/GCP-GridFEDv2024.0_2021.short.nc"
 const START_DATE      = "2021-12-02"
 const END_DATE        = "2021-12-05"
 # Snapshot every 6 h over 4 days -> 17 snapshots (0..96).
@@ -62,12 +62,12 @@ physics_bin_dir = "$(PHYSICS_BIN_DIR)"
     #   done
 
     [input]
-    spectral_dir = "~/data/AtmosTransport/met/era5/0.5x0.5/spectral_hourly"
-    thermo_dir   = "~/data/AtmosTransport/met/era5/0.5x0.5/physics"
+    spectral_dir = "\$ATMOSTRANSPORT_DATA_ROOT/met/era5/0.5x0.5/spectral_hourly"
+    thermo_dir   = "\$ATMOSTRANSPORT_DATA_ROOT/met/era5/0.5x0.5/physics"
     coefficients = "config/era5_L137_coefficients.toml"
 
     [output]
-    directory  = "~/data/AtmosTransport/met/era5/$(g.out)/transport_binary_v2_tropo34_dec2021_$(out_suffix)"
+    directory  = "\$ATMOSTRANSPORT_DATA_ROOT/met/era5/$(g.out)/transport_binary_v2_tropo34_dec2021_$(out_suffix)"
     mass_basis = "dry"
     include_qv = false
 
@@ -116,13 +116,13 @@ end
 # advdiffconv configs are emitted only for CS targets.
 function binary_folder(grid::Symbol, ft_tag::String)
     if grid === :ll72
-        "~/data/AtmosTransport/met/era5/ll72x37_advresln/transport_binary_v2_tropo34_dec2021_$ft_tag"
+        "\$ATMOSTRANSPORT_DATA_ROOT/met/era5/ll72x37_advresln/transport_binary_v2_tropo34_dec2021_$ft_tag"
     elseif grid === :ll144
-        "~/data/AtmosTransport/met/era5/ll144x73_advresln/transport_binary_v2_tropo34_dec2021_$ft_tag"
+        "\$ATMOSTRANSPORT_DATA_ROOT/met/era5/ll144x73_advresln/transport_binary_v2_tropo34_dec2021_$ft_tag"
     elseif grid === :c48
-        "~/data/AtmosTransport/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_$(ft_tag)_tm5"
+        "\$ATMOSTRANSPORT_DATA_ROOT/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_$(ft_tag)_tm5"
     elseif grid === :c180
-        "~/data/AtmosTransport/met/era5/cs_c180/transport_binary_v2_tropo34_dec2021_$(ft_tag)_tm5"
+        "\$ATMOSTRANSPORT_DATA_ROOT/met/era5/cs_c180/transport_binary_v2_tropo34_dec2021_$(ft_tag)_tm5"
     else
         error("unknown grid $grid")
     end
@@ -182,7 +182,7 @@ function run_toml(grid::Symbol, ft_str::String, op::Symbol, hw::Symbol)
     ft_tag = ft_str == "Float32" ? "f32" : "f64"
     use_gpu = hw === :gpu
     folder = binary_folder(grid, ft_tag)
-    out_root = "~/data/AtmosTransport/output/catrine5d"
+    out_root = "\$ATMOSTRANSPORT_DATA_ROOT/output/catrine5d"
     snapshot_basename = "$(grid)_$(ft_tag)_$(op)_$(hw).nc"
     snapshot_path = joinpath(out_root, String(grid), snapshot_basename)
     return """

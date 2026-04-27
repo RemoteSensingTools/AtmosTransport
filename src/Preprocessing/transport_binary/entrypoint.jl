@@ -58,7 +58,7 @@ _native_output_filename(::AbstractMetSettings, date::Date, FT::Type) =
 
 function _native_output_path(cfg::AbstractDict, settings::AbstractMetSettings,
                              date::Date, FT::Type)
-    out_dir = expanduser(String(cfg["output"]["directory"]))
+    out_dir = expand_data_path(String(cfg["output"]["directory"]))
     mkpath(out_dir)
     return joinpath(out_dir, _native_output_filename(settings, date, FT))
 end
@@ -105,15 +105,15 @@ function _process_day_native(cfg::AbstractDict;
     # owns it. Overrides flow back into `settings.coefficients_file` so the
     # reader (`open_day` → `endpoint_dry_mass!`) and the writer's vertical
     # setup never desync. (Codex 2026-04-25: P2 fix.)
-    settings_kwargs = (root_dir = expanduser(String(src_cfg["root_dir"])),)
+    settings_kwargs = (root_dir = expand_data_path(String(src_cfg["root_dir"])),)
     cfg_vertical = get(cfg, "vertical", Dict())
     if haskey(cfg_vertical, "coefficients")
         settings_kwargs = (settings_kwargs..., coefficients_file =
-                           expanduser(String(cfg_vertical["coefficients"])))
+                           expand_data_path(String(cfg_vertical["coefficients"])))
     end
     settings = load_met_settings(toml_path; settings_kwargs...)
 
-    vc = load_hybrid_coefficients(expanduser(settings.coefficients_file))
+    vc = load_hybrid_coefficients(expand_data_path(settings.coefficients_file))
     Nz = length(vc.A) - 1
     vertical = (merged_vc = vc, Nz = Nz, Nz_native = Nz)
 

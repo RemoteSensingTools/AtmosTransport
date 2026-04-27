@@ -83,7 +83,7 @@ function write_snapshot_netcdf(path::AbstractString,
                                grid::AtmosGrid;
                                mass_basis::Symbol=:dry,
                                options::SnapshotWriteOptions=SnapshotWriteOptions())
-    expanded = expanduser(String(path))
+    expanded = expand_data_path(String(path))
     _ensure_parent_dir(expanded)
     isfile(expanded) && rm(expanded)
     mesh = grid.horizontal

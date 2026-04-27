@@ -63,6 +63,7 @@ using SHA
 using FastGaussQuadrature: gausslegendre
 
 # Re-export parent module types we need
+import ..expand_data_path
 using ..Architectures: CPU
 using ..Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                HybridSigmaPressure, PanelConnectivity,

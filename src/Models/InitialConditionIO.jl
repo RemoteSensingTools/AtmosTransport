@@ -44,6 +44,7 @@ module InitialConditionIO
 
 using NCDatasets
 
+import ...expand_data_path
 using ..State: AbstractMassBasis, DryBasis, MoistBasis
 using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                 nrings, ring_longitudes, cell_index, cell_area,
@@ -240,7 +241,7 @@ function _resolve_file_init(cfg, kind::Symbol)
     else
         ("", "")
     end
-    file = expanduser(String(get(cfg, "file", default_file)))
+    file = expand_data_path(String(get(cfg, "file", default_file)))
     variable = String(get(cfg, "variable", default_variable))
     isempty(file) && throw(ArgumentError("file-based init.kind=$(kind) requires init.file"))
     isempty(variable) && throw(ArgumentError("file-based init.kind=$(kind) requires init.variable"))
@@ -919,7 +920,7 @@ function _resolve_surface_flux_file(cfg, kind::Symbol)
     else
         ("", "")
     end
-    file = expanduser(String(get(cfg, "file", default_file)))
+    file = expand_data_path(String(get(cfg, "file", default_file)))
     variable = String(get(cfg, "variable", default_variable))
     isempty(file) && throw(ArgumentError("surface_flux.kind=$(kind) requires surface_flux.file"))
     isempty(variable) && throw(ArgumentError("surface_flux.kind=$(kind) requires surface_flux.variable"))

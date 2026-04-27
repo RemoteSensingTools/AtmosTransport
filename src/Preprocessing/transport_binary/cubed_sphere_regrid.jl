@@ -1,6 +1,61 @@
 # Lat-lon transport-binary to cubed-sphere transport-binary regrid path.
 
 """
+    _check_cs_substep_positivity(cur_m, cur_am, cur_bm, cur_cm, Nc, Hp, Nz;
+                                  cfl_limit::Real = 0.95)
+
+Verify the per-substep horizontal positivity contract that
+`_cs_static_subcycle_count` uses at runtime: for every interior cell
+on every panel and direction, the outgoing-mass-per-substep must not
+exceed the cell's mass.  Returns `(direction, ratio, location)` for
+the worst offender; `(nothing, 0.0, ())` when the binary is safe.
+
+The replay gate (`verify_write_replay_cs!`) only checks endpoint
+continuity (`m_n + Σ flux·dt = m_{n+1}`) and silently passes any
+binary that nukes a cell mid-sweep before the negative tracer
+re-fills from inflow.  This gate fires *before* the binary is
+considered shippable.
+"""
+function _check_cs_substep_positivity(cur_m, cur_am, cur_bm, cur_cm,
+                                       Nc::Int, Hp::Int, Nz::Int;
+                                       cfl_limit::Real = 0.95)
+    FT = eltype(cur_m[1])
+    iL = Hp + 1
+    iH = Hp + Nc
+    worst_dir = nothing
+    worst_ratio = 0.0
+    worst_loc = (0, 0, 0, 0)
+    for p in 1:6
+        m_p = cur_m[p]
+        for (dir, F_lo_view, F_hi_view) in (
+            (:x, view(cur_am[p], iL    :iH,     iL:iH,     1:Nz),
+                 view(cur_am[p], iL + 1:iH + 1, iL:iH,     1:Nz)),
+            (:y, view(cur_bm[p], iL:iH,     iL    :iH,     1:Nz),
+                 view(cur_bm[p], iL:iH,     iL + 1:iH + 1, 1:Nz)),
+            (:z, view(cur_cm[p], iL:iH, iL:iH, 1    :Nz),
+                 view(cur_cm[p], iL:iH, iL:iH, 2:Nz + 1)),
+        )
+            m_int = view(m_p, iL:iH, iL:iH, 1:Nz)
+            for k in 1:Nz, j in 1:Nc, i in 1:Nc
+                mi = m_int[i, j, k]
+                mi > zero(FT) || continue
+                fl = F_lo_view[i, j, k]
+                fh = F_hi_view[i, j, k]
+                outgoing = max(zero(FT), -fl) + max(zero(FT), fh)
+                ratio = outgoing / mi
+                if ratio > worst_ratio
+                    worst_ratio = ratio
+                    worst_dir = dir
+                    worst_loc = (p, i, j, k)
+                end
+            end
+        end
+    end
+    return (direction = worst_dir, ratio = Float64(worst_ratio),
+            location = worst_loc, ok = worst_ratio <= cfl_limit)
+end
+
+"""
     regrid_ll_binary_to_cs(ll_binary_path, cs_grid, out_path; FT=Float64, mass_basis=nothing)
 
 Regrid an existing LL transport binary to a cubed-sphere binary.
@@ -36,7 +91,9 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                                 out_path::String;
                                 FT::Type{<:AbstractFloat} = Float64,
                                 mass_basis::Union{Nothing, Symbol} = nothing,
-                                allow_terminal_zero_tendency::Bool = false)
+                                allow_terminal_zero_tendency::Bool = false,
+                                positivity_cfl_limit::Real = 0.95,
+                                require_substep_positivity::Bool = true)
     t_start = time()
     Nc = cs_grid.Nc
 
@@ -238,6 +295,10 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     worst_replay_abs = 0.0
     worst_replay_win = 0
     worst_replay_idx = (0, 0, 0, 0)
+    worst_pos_ratio = 0.0
+    worst_pos_dir   = :none
+    worst_pos_win   = 0
+    worst_pos_loc   = (0, 0, 0, 0)
 
     # --- Process first window ---
     t0 = time()
@@ -289,6 +350,21 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                 worst_replay_win = win - 1
                 worst_replay_idx = diag_replay.worst_idx
             end
+        end
+        # Per-substep positivity gate. The replay test above only proves
+        # endpoint continuity (m_n + Σ flux·dt = m_{n+1}); a binary that
+        # nukes a cell mid-sweep can still pass replay because the cell
+        # re-fills from inflow before the window ends. This gate is the
+        # actual contract the runtime's `_cs_static_subcycle_count`
+        # depends on.
+        pos_diag = _check_cs_substep_positivity(cur_m, cur_am, cur_bm, cur_cm,
+                                                 Nc, 0, Nz;
+                                                 cfl_limit = positivity_cfl_limit)
+        if pos_diag.ratio > worst_pos_ratio
+            worst_pos_ratio = pos_diag.ratio
+            worst_pos_dir   = pos_diag.direction === nothing ? :none : pos_diag.direction
+            worst_pos_win   = win - 1
+            worst_pos_loc   = pos_diag.location
         end
         convert_cs_mass_target_to_delta!(cs_ws.m_next_panels, cur_m)
 
@@ -359,6 +435,15 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
             worst_replay_idx = diag_replay.worst_idx
         end
     end
+    pos_diag = _check_cs_substep_positivity(cur_m, cur_am, cur_bm, cur_cm,
+                                             Nc, 0, Nz;
+                                             cfl_limit = positivity_cfl_limit)
+    if pos_diag.ratio > worst_pos_ratio
+        worst_pos_ratio = pos_diag.ratio
+        worst_pos_dir   = pos_diag.direction === nothing ? :none : pos_diag.direction
+        worst_pos_win   = Nt
+        worst_pos_loc   = pos_diag.location
+    end
     convert_cs_mass_target_to_delta!(cs_ws.m_next_panels, cur_m)
 
     window_nt = source_has_tm5 ?
@@ -385,6 +470,31 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                      worst_replay_rel, worst_replay_abs, worst_replay_win, worst_replay_idx) :
             "no windows checked"
         @info "  Write-time replay gate: $replay_msg"
+    end
+
+    pos_msg = @sprintf("max outgoing/m=%.3f dir=%s win=%d cell=%s (limit=%.2f)",
+                       worst_pos_ratio, worst_pos_dir, worst_pos_win,
+                       worst_pos_loc, positivity_cfl_limit)
+    if worst_pos_ratio > positivity_cfl_limit
+        recommended = max(steps_per_met,
+                          ceil(Int, worst_pos_ratio / positivity_cfl_limit) * steps_per_met)
+        msg = "Per-substep positivity contract violated: $pos_msg. " *
+              "The runtime's `_cs_static_subcycle_count` would still subcycle " *
+              "(post `mapreduce(max, ...)` patch), but the binary itself stores " *
+              "fluxes that violate positivity at the recorded `steps_per_window=$(steps_per_met)`. " *
+              "Suggest re-running with `steps_per_window=$recommended` (set " *
+              "via the `[numerics].steps_per_met` knob on the source LL " *
+              "preprocessing config), or re-invoke `regrid_ll_binary_to_cs` " *
+              "with `require_substep_positivity=false` to suppress."
+        if require_substep_positivity
+            close_streaming_transport_binary!(writer)
+            close(reader)
+            error(msg)
+        else
+            @warn msg
+        end
+    else
+        @info "  Per-substep positivity gate: $pos_msg"
     end
 
     actual = filesize(out_path)

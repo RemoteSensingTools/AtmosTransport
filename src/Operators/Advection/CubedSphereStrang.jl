@@ -387,18 +387,35 @@ end
 
 """Static CFL subcycle count from initial mass (no evolving-mass pilot).
 
-The per-cell CFL is `max(|F[i, …]|, |F[i+1, …]|) / m[i, …]` over the
-interior cells of each panel, then reduced across all six panels. This
-runs every `step!`, so we use a backend-portable broadcast +
-`mapreduce(max, …)` formulation rather than a scalar Julia loop:
+The per-cell positivity bound for one Strang half-sweep is
 
-- on `Array` it lowers to vectorized SIMD reductions (no allocation),
+    outgoing_mass_per_substep = max(0, −F_lo) + max(0, F_hi)
+    cfl                       = outgoing_mass_per_substep / m
+
+Both faces can carry mass *out of* the cell simultaneously at a
+divergent stagnation point; the previous formulation
+`max(|F_lo|, |F_hi|) / m` only measured the larger of the two and
+under-estimated by up to 2× exactly where positivity matters most.
+The new formula matches the Lin–Rood 1996 positivity criterion and
+the analytic bound proved by `codex` against C180 day-1 binaries
+(min(m + am_left − am_right) was negative under the old criterion).
+
+Sign convention for each face `F_lo` (lower-index face) and `F_hi`
+(higher-index face): positive flux means mass flows in the +index
+direction, so the cell loses mass when `F_lo < 0` (out the low side)
+or `F_hi > 0` (out the high side). The same convention holds for
+all three directions in this code path.
+
+Implementation runs every `step!`, so we use a backend-portable
+broadcast + `mapreduce(max, …)` formulation:
+
+- on `Array` it lowers to vectorised SIMD reductions (no allocation),
 - on `CuArray` it dispatches to CUDA's parallel reduction (no host
   round-trip).
 
-The `m <= 0` guard from the original scalar loop becomes an `ifelse` so
-the broadcast stays elementwise; in practice `m > 0` always holds and
-the guard is defensive.
+The `m <= 0` guard from the original scalar loop is preserved via
+`ifelse`; in practice `m > 0` always holds and the guard is
+defensive.
 """
 function _cs_static_subcycle_count(panels_flux::NTuple{6}, panels_m::NTuple{6},
                                     Nc::Int, Hp::Int, Nz::Int, cfl_limit::Real,
@@ -421,12 +438,10 @@ function _cs_static_subcycle_count(panels_flux::NTuple{6}, panels_m::NTuple{6},
             (view(F_p, iL:iH, iL:iH, 1    :Nz),
              view(F_p, iL:iH, iL:iH, 2:Nz + 1))
         end
-        # `ifelse` keeps the broadcast eltype-stable on GPU; the
-        # `mapreduce` reduces in-place without materializing the cell
-        # array.
         zero_FT = zero(FT)
         cfl_panel = mapreduce(max, m_int, F_lo, F_hi; init = zero_FT) do mi, fl, fh
-            ifelse(mi > zero_FT, max(abs(fl), abs(fh)) / mi, zero_FT)
+            outgoing = max(zero_FT, -fl) + max(zero_FT, fh)
+            ifelse(mi > zero_FT, outgoing / mi, zero_FT)
         end
         max_cfl = max(max_cfl, cfl_panel)
     end

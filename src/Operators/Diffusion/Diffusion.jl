@@ -36,9 +36,11 @@ export solve_tridiagonal!, build_diffusion_coefficients
 export _vertical_diffusion_kernel!
 export AbstractDiffusion, NoDiffusion, ImplicitVerticalDiffusion
 export apply_vertical_diffusion!
+export fill_dz_hydrostatic_constT!
 
 include("thomas_solve.jl")
 include("diffusion_kernels.jl")
+include("dz_helpers.jl")
 include("operators.jl")
 
 end # module Diffusion

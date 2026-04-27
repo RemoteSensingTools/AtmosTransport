@@ -116,6 +116,31 @@ end
 using ..Operators.SurfaceFlux: _surface_shape,
                                 _check_surface_source_compatibility,
                                 _apply_surface_source!
+using ..Operators.Diffusion: NoDiffusion, fill_dz_hydrostatic_constT!
+
+# ---------------------------------------------------------------------------
+# Diffusion `dz_scratch` populator.
+#
+# `apply_vertical_diffusion!` divides by `dz` per cell — if the workspace's
+# `dz_scratch` array is left at its default zeros (the allocator initializes
+# it that way), every diffusion step nukes the tracer field to NaN starting
+# from frame 2.  We refresh `dz_scratch` from the just-loaded window's
+# surface pressure + the grid's hybrid-σp coefficients each time the
+# simulation advances to a new met window.
+#
+# `dz` only depends on (ps, ak, bk) (constant-T_ref hydrostatic); within a
+# window ps is fixed, so one fill per window is correct and cheap.
+# ---------------------------------------------------------------------------
+@inline function _refresh_dz_for_window!(sim::DrivenSimulation)
+    sim.model.diffusion isa NoDiffusion && return nothing
+    workspace = sim.model.workspace
+    hasproperty(workspace, :dz_scratch) || return nothing
+    dz_scratch = workspace.dz_scratch
+    vertical = sim.model.grid.vertical
+    ps = sim.window.surface_pressure
+    fill_dz_hydrostatic_constT!(dz_scratch, ps, vertical.A, vertical.B)
+    return nothing
+end
 
 function _apply_surface_sources!(sim::DrivenSimulation)
     isempty(sim.surface_sources) && return nothing
@@ -235,6 +260,7 @@ function _maybe_advance_window!(sim::DrivenSimulation, substep::Int)
             throw(ArgumentError("driver humidity endpoint support changed between windows"))
         end
         _validate_convection_runtime(sim.model, sim.driver, sim.window)
+        _refresh_dz_for_window!(sim)
         # Plan 39 Commit G: the `reset_air_mass_each_window` flag has been
         # removed. Under the canonical `:window_constant` contract, the
         # runtime's own flux divergence integrates to `(m_next - m)` over
@@ -366,6 +392,7 @@ function DrivenSimulation(model::TransportModel,
     if sim.qv_buffer !== nothing
         _copy_storage!(sim.qv_buffer, sim.window.qv_start)
     end
+    _refresh_dz_for_window!(sim)
     return sim
 end
 

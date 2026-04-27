@@ -395,10 +395,14 @@ The per-cell positivity bound for one Strang half-sweep is
 Both faces can carry mass *out of* the cell simultaneously at a
 divergent stagnation point; the previous formulation
 `max(|F_lo|, |F_hi|) / m` only measured the larger of the two and
-under-estimated by up to 2× exactly where positivity matters most.
-The new formula matches the Lin–Rood 1996 positivity criterion and
-the analytic bound proved by `codex` against C180 day-1 binaries
-(min(m + am_left − am_right) was negative under the old criterion).
+under-estimated by up to 2× at exactly the cells where positivity
+fails (both faces outgoing).  The new formula is a *correctness
+refinement* — Lin-Rood 1996's positivity criterion — and is what the
+runtime actually needs to subcycle on; it is not a strict tightening
+in every direction (e.g. a pure-inflow cell with `F_lo > 0, F_hi < 0`
+gets `outgoing = 0` here vs. `max(|F_lo|, |F_hi|)` under the old
+formula — but that's exactly right: a cell receiving on both faces
+loses no mass and needs no subcycling).
 
 Sign convention for each face `F_lo` (lower-index face) and `F_hi`
 (higher-index face): positive flux means mass flows in the +index

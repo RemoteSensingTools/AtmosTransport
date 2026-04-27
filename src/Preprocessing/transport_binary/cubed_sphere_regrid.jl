@@ -195,9 +195,14 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     vc_merged = HybridSigmaPressure(A_ifc, B_ifc)
 
     # --- Open streaming CS binary writer ---
+    # Stage to `out_path.tmp` so the positivity gate (final step) can
+    # error without leaving a bad binary at `out_path`. Renamed to the
+    # final name on success.
     mkpath(dirname(out_path))
+    tmp_path = out_path * ".tmp"
+    isfile(tmp_path) && rm(tmp_path)
     writer = open_streaming_cs_transport_binary(
-        out_path, Nc, CS_PANEL_COUNT, Nz, Nt, vc_merged;
+        tmp_path, Nc, CS_PANEL_COUNT, Nz, Nt, vc_merged;
         FT=FT,
         dt_met_seconds=met_interval,
         half_dt_seconds=met_interval / 2,
@@ -487,14 +492,20 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
               "preprocessing config), or re-invoke `regrid_ll_binary_to_cs` " *
               "with `require_substep_positivity=false` to suppress."
         if require_substep_positivity
-            close_streaming_transport_binary!(writer)
-            close(reader)
+            # Quarantine the bad binary so a downstream consumer can't
+            # accidentally pick it up — the gate is the contract, the
+            # `.tmp` path is the staging area.
+            isfile(tmp_path) && rm(tmp_path; force = true)
             error(msg)
         else
             @warn msg
+            # Promote the tmp file even on warn-only so the caller gets
+            # a binary at `out_path` for diagnostic inspection.
+            mv(tmp_path, out_path; force = true)
         end
     else
         @info "  Per-substep positivity gate: $pos_msg"
+        mv(tmp_path, out_path; force = true)
     end
 
     actual = filesize(out_path)

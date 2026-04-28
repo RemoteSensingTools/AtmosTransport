@@ -23,6 +23,10 @@
 #       [--mass-basis dry|moist]         # default: match source header
 #       [--convention gnomonic|geos_native]
 #       [--cache-dir ~/.cache/AtmosTransport/cr_regridding]
+#       [--steps-per-window 12]          # override source's substep count
+#                                         # (smaller per-substep flux; needed
+#                                         # for high-res CS output that
+#                                         # otherwise fails the positivity gate)
 # ===========================================================================
 
 using Logging
@@ -37,6 +41,7 @@ Usage: julia --project=. scripts/preprocessing/regrid_ll_transport_binary_to_cs.
            --input <ll.bin> --output <cs.bin> --Nc <int>
            [--float-type Float32|Float64] [--mass-basis dry|moist]
            [--convention gnomonic|geos_native] [--cache-dir <path>]
+           [--steps-per-window <int>]
 """
 
 function _parse_args(argv)
@@ -47,6 +52,7 @@ function _parse_args(argv)
     mass_basis = nothing     # nothing = match source header
     convention = "gnomonic"
     cache_dir = ""
+    steps_per_window = nothing  # nothing = match source header
 
     i = 1
     while i <= length(argv)
@@ -65,6 +71,8 @@ function _parse_args(argv)
             convention = argv[i + 1]; i += 2
         elseif arg == "--cache-dir" && i + 1 <= length(argv)
             cache_dir = expanduser(argv[i + 1]); i += 2
+        elseif arg == "--steps-per-window" && i + 1 <= length(argv)
+            steps_per_window = parse(Int, argv[i + 1]); i += 2
         elseif arg in ("-h", "--help")
             println(USAGE); exit(0)
         else
@@ -85,7 +93,11 @@ function _parse_args(argv)
         error("--convention must be gnomonic or geos_native, got $(convention)")
     convention = norm_convention in ("geos_native", "geosnative") ? "geos_native" : "gnomonic"
 
-    return (; input, output, Nc, float_type, mass_basis, convention, cache_dir)
+    steps_per_window === nothing || steps_per_window >= 1 ||
+        error("--steps-per-window must be ≥ 1, got $(steps_per_window)")
+
+    return (; input, output, Nc, float_type, mass_basis, convention, cache_dir,
+              steps_per_window)
 end
 
 function main()
@@ -110,9 +122,13 @@ function main()
     @info "  float type: $(opts.float_type)"
     @info "  mass_basis: $(basis_sym === nothing ? "(match source)" : basis_sym)"
 
+    opts.steps_per_window === nothing ||
+        @info "  steps_per_window override: $(opts.steps_per_window)"
+
     regrid_ll_binary_to_cs(opts.input, cs_grid, opts.output;
                            FT         = FT,
-                           mass_basis = basis_sym)
+                           mass_basis = basis_sym,
+                           steps_per_window = opts.steps_per_window)
 
     return opts.output
 end

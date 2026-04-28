@@ -157,7 +157,17 @@ end
 
 function _read_times(ds)
     haskey(ds, "time") || return Float64[]
-    return Float64.(collect(ds["time"][:]))
+    # Snapshots write time as Float64 with units "hours since YYYY-MM-DD".
+    # NCDatasets auto-converts that to a Vector{DateTime} via CF-time
+    # decoding. Use `.var[:]` to bypass and read the raw Float64s, falling
+    # back to DateTime→Float64 hours via the time origin attribute when a
+    # legacy file stores actual DateTime values.
+    var = ds["time"]
+    raw = var.var[:]
+    if eltype(raw) <: AbstractFloat
+        return Float64.(collect(raw))
+    end
+    return Float64.(collect(raw))
 end
 
 function _snapshot_variables(ds, topology::AbstractSnapshotTopology)

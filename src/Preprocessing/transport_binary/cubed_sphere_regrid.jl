@@ -93,7 +93,8 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                                 mass_basis::Union{Nothing, Symbol} = nothing,
                                 allow_terminal_zero_tendency::Bool = false,
                                 positivity_cfl_limit::Real = 0.95,
-                                require_substep_positivity::Bool = true)
+                                require_substep_positivity::Bool = true,
+                                steps_per_window::Union{Nothing, Integer} = nothing)
     t_start = time()
     Nc = cs_grid.Nc
 
@@ -138,8 +139,25 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     # are per-substep mass (flux_kind = :substep_mass_amount) with the
     # source's own `steps_per_window`, and the CS writer reuses the same
     # substep count — so the per-substep semantics match end-to-end.
+    #
+    # `steps_per_window` keyword overrides the substep count for the CS
+    # output. The reconstructed face fluxes (am/bm) and forward delta
+    # (dm) both rescale with `1/steps_per_window` (via `dt_factor` and
+    # `fill_cs_window_mass_tendency!` respectively), so a larger value
+    # produces *smaller* per-substep flux without changing the
+    # window-integrated transport. Used to refine binaries that fail
+    # the `_check_cs_substep_positivity` gate at high horizontal
+    # resolution (e.g. C180 from a `steps_per_window=4` LL source
+    # needs ~12 to keep `outgoing/m < 0.95`).
     met_interval = Float64(h.dt_met_seconds)
-    steps_per_met = Int(h.steps_per_window)
+    src_steps_per_met = Int(h.steps_per_window)
+    steps_per_met = steps_per_window === nothing ? src_steps_per_met : Int(steps_per_window)
+    steps_per_met >= 1 || throw(ArgumentError(
+        "steps_per_window must be ≥ 1, got $(steps_per_met)"))
+    if steps_per_met != src_steps_per_met
+        @info @sprintf("  steps_per_window override: source=%d → output=%d (%.3fx flux per substep)",
+                       src_steps_per_met, steps_per_met, src_steps_per_met / steps_per_met)
+    end
     dt_factor = FT(met_interval / (2 * steps_per_met))
     gravity = FT(GRAV)
 

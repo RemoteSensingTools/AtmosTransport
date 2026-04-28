@@ -41,7 +41,7 @@ Usage: julia --project=. scripts/preprocessing/regrid_ll_transport_binary_to_cs.
            --input <ll.bin> --output <cs.bin> --Nc <int>
            [--float-type Float32|Float64] [--mass-basis dry|moist]
            [--convention gnomonic|geos_native] [--cache-dir <path>]
-           [--steps-per-window <int>]
+           [--steps-per-window <int>] [--allow-positivity-violation]
 """
 
 function _parse_args(argv)
@@ -53,6 +53,7 @@ function _parse_args(argv)
     convention = "gnomonic"
     cache_dir = ""
     steps_per_window = nothing  # nothing = match source header
+    require_substep_positivity = true
 
     i = 1
     while i <= length(argv)
@@ -73,6 +74,8 @@ function _parse_args(argv)
             cache_dir = expanduser(argv[i + 1]); i += 2
         elseif arg == "--steps-per-window" && i + 1 <= length(argv)
             steps_per_window = parse(Int, argv[i + 1]); i += 2
+        elseif arg == "--allow-positivity-violation"
+            require_substep_positivity = false; i += 1
         elseif arg in ("-h", "--help")
             println(USAGE); exit(0)
         else
@@ -97,7 +100,7 @@ function _parse_args(argv)
         error("--steps-per-window must be ≥ 1, got $(steps_per_window)")
 
     return (; input, output, Nc, float_type, mass_basis, convention, cache_dir,
-              steps_per_window)
+              steps_per_window, require_substep_positivity)
 end
 
 function main()
@@ -128,7 +131,8 @@ function main()
     regrid_ll_binary_to_cs(opts.input, cs_grid, opts.output;
                            FT         = FT,
                            mass_basis = basis_sym,
-                           steps_per_window = opts.steps_per_window)
+                           steps_per_window = opts.steps_per_window,
+                           require_substep_positivity = opts.require_substep_positivity)
 
     return opts.output
 end

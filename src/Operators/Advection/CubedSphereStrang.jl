@@ -178,34 +178,51 @@ function _sweep_x_panel!(rm, m, am, scheme::AbstractAdvectionScheme, rm_A, m_A, 
     return nothing
 end
 
+"""Gamma-clamped upwind X-sweep kernel (positivity-safe at CFL > 1).
+
+Donor for the left face at `i` is `i-1` when the face flux is positive
+(eastward) and `i` otherwise. The right face at `i+1` is symmetric.
+`_gamma_clamped_x_flux` returns 0 when `m_donor ≤ 0`, so the sweep
+degrades gracefully on cells the upstream binary already drained
+negative — no NaN, just no transport in that subcycle.
+"""
+@kernel function _cs_xsweep_upwind_kernel!(rm_new, @Const(rm), m_new, @Const(m),
+                                            @Const(am), Nc, Hp, flux_scale)
+    ii, jj, k = @index(Global, NTuple)
+    @inbounds begin
+        i = ii + Hp
+        j = jj + Hp
+        am_l = flux_scale * am[i,     j, k]
+        am_r = flux_scale * am[i + 1, j, k]
+
+        mi   = m[i,     j, k]
+        mim1 = m[i - 1, j, k]
+        rim1 = rm[i - 1, j, k]
+        ri   = rm[i,    j, k]
+        fl = ifelse(am_l >= zero(am_l),
+                    _gamma_clamped_x_flux(am_l, mim1, rim1),
+                    _gamma_clamped_x_flux(am_l, mi,   ri))
+
+        mip1 = m[i + 1, j, k]
+        rip1 = rm[i + 1, j, k]
+        fr = ifelse(am_r >= zero(am_r),
+                    _gamma_clamped_x_flux(am_r, mi,   ri),
+                    _gamma_clamped_x_flux(am_r, mip1, rip1))
+
+        rm_new[i, j, k] = ri + fl - fr
+        m_new[i, j, k]  = mi + am_l - am_r
+    end
+end
+
 """Gamma-clamped upwind X-sweep: positivity-safe even at CFL > 1."""
 function _sweep_x_panel!(rm, m, am, scheme::UpwindScheme, rm_A, m_A, Nc, Hp, Nz;
                          flux_scale = one(eltype(m)))
     FT = eltype(m)
-    @inbounds for k in 1:Nz, jj in 1:Nc, ii in 1:Nc
-        i = ii + Hp; j = jj + Hp
-        am_l = flux_scale * am[i, j, k]
-        am_r = flux_scale * am[i + 1, j, k]
-
-        # Left face flux: donor is i-1 if am_l > 0, else i
-        mi   = m[i, j, k]
-        mim1 = m[i - 1, j, k]
-        rim1 = rm[i - 1, j, k]
-        ri   = rm[i, j, k]
-        fl = am_l >= zero(FT) ?
-            _gamma_clamped_x_flux(am_l, mim1, rim1) :
-            _gamma_clamped_x_flux(am_l, mi, ri)
-
-        # Right face flux: donor is i if am_r > 0, else i+1
-        mip1 = m[i + 1, j, k]
-        rip1 = rm[i + 1, j, k]
-        fr = am_r >= zero(FT) ?
-            _gamma_clamped_x_flux(am_r, mi, ri) :
-            _gamma_clamped_x_flux(am_r, mip1, rip1)
-
-        rm_A[i, j, k] = ri + fl - fr
-        m_A[i, j, k]  = mi + am_l - am_r
-    end
+    backend = get_backend(rm)
+    kernel! = _cs_xsweep_upwind_kernel!(backend, 256)
+    kernel!(rm_A, rm, m_A, m, am, Int32(Nc), Int32(Hp), FT(flux_scale);
+            ndrange=(Nc, Nc, Nz))
+    synchronize(backend)
     _copy_interior!(rm, rm_A, Nc, Hp, Nz)
     _copy_interior!(m, m_A, Nc, Hp, Nz)
     return nothing
@@ -226,31 +243,43 @@ function _sweep_y_panel!(rm, m, bm, scheme::AbstractAdvectionScheme, rm_A, m_A, 
     return nothing
 end
 
-function _sweep_y_panel!(rm, m, bm, scheme::UpwindScheme, rm_A, m_A, Nc, Hp, Nz;
-                         flux_scale = one(eltype(m)))
-    FT = eltype(m)
-    @inbounds for k in 1:Nz, jj in 1:Nc, ii in 1:Nc
-        i = ii + Hp; j = jj + Hp
-        bm_s = flux_scale * bm[i, j, k]
+"""Gamma-clamped upwind Y-sweep kernel."""
+@kernel function _cs_ysweep_upwind_kernel!(rm_new, @Const(rm), m_new, @Const(m),
+                                            @Const(bm), Nc, Hp, flux_scale)
+    ii, jj, k = @index(Global, NTuple)
+    @inbounds begin
+        i = ii + Hp
+        j = jj + Hp
+        bm_s = flux_scale * bm[i, j,     k]
         bm_n = flux_scale * bm[i, j + 1, k]
 
-        mi   = m[i, j, k]
+        mi   = m[i, j,     k]
         mjm1 = m[i, j - 1, k]
         rjm1 = rm[i, j - 1, k]
-        ri   = rm[i, j, k]
-        fs = bm_s >= zero(FT) ?
-            _gamma_clamped_x_flux(bm_s, mjm1, rjm1) :
-            _gamma_clamped_x_flux(bm_s, mi, ri)
+        ri   = rm[i, j,    k]
+        fs = ifelse(bm_s >= zero(bm_s),
+                    _gamma_clamped_x_flux(bm_s, mjm1, rjm1),
+                    _gamma_clamped_x_flux(bm_s, mi,   ri))
 
         mjp1 = m[i, j + 1, k]
         rjp1 = rm[i, j + 1, k]
-        fn = bm_n >= zero(FT) ?
-            _gamma_clamped_x_flux(bm_n, mi, ri) :
-            _gamma_clamped_x_flux(bm_n, mjp1, rjp1)
+        fn = ifelse(bm_n >= zero(bm_n),
+                    _gamma_clamped_x_flux(bm_n, mi,   ri),
+                    _gamma_clamped_x_flux(bm_n, mjp1, rjp1))
 
-        rm_A[i, j, k] = ri + fs - fn
-        m_A[i, j, k]  = mi + bm_s - bm_n
+        rm_new[i, j, k] = ri + fs - fn
+        m_new[i, j, k]  = mi + bm_s - bm_n
     end
+end
+
+function _sweep_y_panel!(rm, m, bm, scheme::UpwindScheme, rm_A, m_A, Nc, Hp, Nz;
+                         flux_scale = one(eltype(m)))
+    FT = eltype(m)
+    backend = get_backend(rm)
+    kernel! = _cs_ysweep_upwind_kernel!(backend, 256)
+    kernel!(rm_A, rm, m_A, m, bm, Int32(Nc), Int32(Hp), FT(flux_scale);
+            ndrange=(Nc, Nc, Nz))
+    synchronize(backend)
     _copy_interior!(rm, rm_A, Nc, Hp, Nz)
     _copy_interior!(m, m_A, Nc, Hp, Nz)
     return nothing
@@ -275,42 +304,57 @@ function _sweep_z_panel!(rm, m, cm, scheme::AbstractAdvectionScheme, rm_A, m_A, 
     return nothing
 end
 
-function _sweep_z_panel!(rm, m, cm, scheme::UpwindScheme, rm_A, m_A, Nc, Hp, Nz;
-                         flux_scale = one(eltype(m)))
-    FT = eltype(m)
-    @inbounds for k in 1:Nz, jj in 1:Nc, ii in 1:Nc
-        i = ii + Hp; j = jj + Hp
+"""Gamma-clamped upwind Z-sweep kernel.
+
+Closed boundary at k=1 (TOA) and k=Nz+1 (surface): both face fluxes
+zero out at the domain edges via `ifelse(at_boundary, ...)`.
+"""
+@kernel function _cs_zsweep_upwind_kernel!(rm_new, @Const(rm), m_new, @Const(m),
+                                            @Const(cm), Nz, Hp, flux_scale)
+    ii, jj, k = @index(Global, NTuple)
+    @inbounds begin
+        i = ii + Hp
+        j = jj + Hp
         cm_t = flux_scale * cm[i, j, k]
         cm_b = flux_scale * cm[i, j, k + 1]
 
         mi = m[i, j, k]
         ri = rm[i, j, k]
+        zero_FT = zero(cm_t)
 
-        # Top interface (k): donor is k-1 if cm_t > 0 (downward), else k
-        ft = if k > 1
-            if cm_t >= zero(FT)
-                _gamma_clamped_x_flux(cm_t, m[i, j, k - 1], rm[i, j, k - 1])
-            else
-                _gamma_clamped_x_flux(cm_t, mi, ri)
-            end
-        else
-            zero(FT)
-        end
+        # Top face (k): donor is k-1 if cm_t > 0 (downward), else k.
+        # k=1 → no top face (closed TOA).
+        kt   = max(k - Int32(1), Int32(1))
+        m_kt = m[i, j, kt]
+        r_kt = rm[i, j, kt]
+        ft_in = ifelse(cm_t >= zero_FT,
+                       _gamma_clamped_x_flux(cm_t, m_kt, r_kt),
+                       _gamma_clamped_x_flux(cm_t, mi,   ri))
+        ft = ifelse(k > Int32(1), ft_in, zero_FT)
 
-        # Bottom interface (k+1): donor is k if cm_b > 0, else k+1
-        fb = if k < Nz
-            if cm_b >= zero(FT)
-                _gamma_clamped_x_flux(cm_b, mi, ri)
-            else
-                _gamma_clamped_x_flux(cm_b, m[i, j, k + 1], rm[i, j, k + 1])
-            end
-        else
-            zero(FT)
-        end
+        # Bottom face (k+1): donor is k if cm_b > 0 (downward), else k+1.
+        # k=Nz → no bottom face (closed surface).
+        kb   = min(k + Int32(1), Nz)
+        m_kb = m[i, j, kb]
+        r_kb = rm[i, j, kb]
+        fb_in = ifelse(cm_b >= zero_FT,
+                       _gamma_clamped_x_flux(cm_b, mi,   ri),
+                       _gamma_clamped_x_flux(cm_b, m_kb, r_kb))
+        fb = ifelse(k < Nz, fb_in, zero_FT)
 
-        rm_A[i, j, k] = ri + ft - fb
-        m_A[i, j, k]  = mi + cm_t - cm_b
+        rm_new[i, j, k] = ri + ft - fb
+        m_new[i, j, k]  = mi + cm_t - cm_b
     end
+end
+
+function _sweep_z_panel!(rm, m, cm, scheme::UpwindScheme, rm_A, m_A, Nc, Hp, Nz;
+                         flux_scale = one(eltype(m)))
+    FT = eltype(m)
+    backend = get_backend(rm)
+    kernel! = _cs_zsweep_upwind_kernel!(backend, 256)
+    kernel!(rm_A, rm, m_A, m, cm, Int32(Nz), Int32(Hp), FT(flux_scale);
+            ndrange=(Nc, Nc, Nz))
+    synchronize(backend)
     _copy_interior!(rm, rm_A, Nc, Hp, Nz)
     _copy_interior!(m, m_A, Nc, Hp, Nz)
     return nothing

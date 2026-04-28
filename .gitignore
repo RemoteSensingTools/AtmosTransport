@@ -40,6 +40,7 @@ test/Manifest.toml
 .vscode/mcp.json
 catrine_advonly_snapshot.png
 .claude/.nfs*
+.claude/scheduled_tasks.lock
 .codex
 *.bak
 

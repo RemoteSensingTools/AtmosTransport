@@ -65,6 +65,11 @@ end
     @test panel_convention(default_mesh) isa GnomonicPanelConvention
     @test panel_convention(geos_mesh) isa GEOSNativePanelConvention
     @test panel_convention(gnomonic_mesh) isa GnomonicPanelConvention
+    @test cs_definition_tag(cs_definition(default_mesh)) === :equiangular_gnomonic
+    @test cs_definition_tag(cs_definition(geos_mesh)) === :gmao_equal_distance
+    @test coordinate_law_tag(coordinate_law(geos_mesh)) == "gmao_equal_distance_gnomonic"
+    @test center_law_tag(center_law(geos_mesh)) == "four_corner_normalized"
+    @test longitude_offset_deg(cs_definition(geos_mesh)) == -10.0
     @test panel_labels(default_mesh) == (:x_plus, :y_plus, :x_minus, :y_minus, :north_pole, :south_pole)
     @test panel_labels(geos_mesh) == (:equatorial_1, :equatorial_2, :north_pole, :equatorial_4, :equatorial_5, :south_pole)
     @test panel_labels(gnomonic_mesh) == (:x_plus, :y_plus, :x_minus, :y_minus, :north_pole, :south_pole)
@@ -73,6 +78,14 @@ end
     shown = sprint(show, geos_mesh)
     @test occursin("equatorial_1", shown)
     @test occursin("north_pole", shown)
+    @test occursin("gmao_equal_distance_gnomonic", shown)
+    @test occursin("four_corner_normalized", shown)
+
+    lons, lats = panel_cell_center_lonlat(geos_mesh, 1)
+    @test isapprox(lons[90, 140], 349.7229398200612; atol=1e-12)
+    @test isapprox(lats[90, 140], 26.46802143378195; atol=1e-12)
+    @test isapprox(lats[90, 2] - lats[90, 1], 0.41761077556816417; atol=1e-12)
+    @test isapprox(lats[90, 91] - lats[90, 90], 0.5541113082381415; atol=1e-12)
 
     @test_throws ArgumentError CubedSphereMesh(; FT=Float64, Nc=0)
 end
@@ -109,10 +122,13 @@ end
         @test maximum(abs, y_east.^2 .+ y_north.^2 .- 1) < 1e-10
     end
 
-    # GEOS-native panels 4/5 keep file-order Xdim eastward but Ydim points
-    # southward. This is the convention the CS wind rotation must honor.
+    # GEOS-native panels 4/5 match file order: local Xdim runs mostly
+    # southward and local Ydim runs eastward.
     for p in (4, 5)
-        _, _, _, y_north = panel_cell_local_tangent_basis(mesh, p)
-        @test sum(y_north) / length(y_north) < -0.5
+        x_east, x_north, y_east, y_north = panel_cell_local_tangent_basis(mesh, p)
+        @test abs(sum(x_east) / length(x_east)) < 1e-10
+        @test sum(x_north) / length(x_north) < -0.5
+        @test sum(y_east) / length(y_east) > 0.5
+        @test abs(sum(y_north) / length(y_north)) < 1e-10
     end
 end

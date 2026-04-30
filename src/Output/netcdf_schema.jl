@@ -201,8 +201,7 @@ function _cs_convention_tag(mesh::CubedSphereMesh)
 end
 
 function _cs_central_meridian(mesh::CubedSphereMesh)
-    mesh.convention isa GEOSNativePanelConvention && return -10.0
-    return 0.0
+    return longitude_offset_deg(cs_definition(mesh))
 end
 
 function _cs_panel_center_arrays(mesh::CubedSphereMesh)
@@ -241,7 +240,13 @@ function _define_cs_geometry!(ds, mesh::CubedSphereMesh, Nz::Integer, times)
 
     convention_tag = _cs_convention_tag(mesh)
     central_meridian = _cs_central_meridian(mesh)
+    coordinate_tag = coordinate_law_tag(coordinate_law(mesh))
+    center_tag = center_law_tag(center_law(mesh))
+    definition_tag = String(cs_definition_tag(cs_definition(mesh)))
     ds.attrib["Nc"] = Nc
+    ds.attrib["cs_definition"] = definition_tag
+    ds.attrib["cs_coordinate_law"] = coordinate_tag
+    ds.attrib["cs_center_law"] = center_tag
     ds.attrib["panel_convention"] = convention_tag
     ds.attrib["grid_mapping_name"] = "gnomonic cubed-sphere"
     ds.attrib["longitude_of_central_meridian"] = central_meridian
@@ -287,6 +292,9 @@ function _define_cs_geometry!(ds, mesh::CubedSphereMesh, Nz::Integer, times)
 
     gm = defVar(ds, "cubed_sphere", Int32, (),
                 attrib = Dict("grid_mapping_name" => "gnomonic cubed-sphere",
+                              "cs_definition" => definition_tag,
+                              "cs_coordinate_law" => coordinate_tag,
+                              "cs_center_law" => center_tag,
                               "panel_convention" => convention_tag,
                               "longitude_of_central_meridian" => central_meridian,
                               "semi_major_axis" => Float64(mesh.radius),

@@ -67,15 +67,21 @@ import ..expand_data_path
 using ..Architectures: CPU
 using ..Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                HybridSigmaPressure, PanelConnectivity,
+               AbstractCubedSpherePanelConvention,
                AtmosGrid, ncells, nfaces, nrings, nlevels, face_cells, cell_area,
                ring_longitudes, ring_cell_count, cell_areas_by_latitude,
                n_levels, pressure_at_interface, level_thickness, floattype,
                panel_convention, panel_connectivity_for,
                panel_cell_local_tangent_basis,
+               cs_definition, coordinate_law, center_law, longitude_offset_deg,
+               cs_definition_tag, coordinate_law_tag, center_law_tag,
+               EquiangularCubedSphereDefinition, GMAOCubedSphereDefinition,
                default_panel_connectivity, gnomonic_panel_connectivity, reciprocal_edge,
                GnomonicPanelConvention, GEOSNativePanelConvention,
                EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST
 using ..Regridding: build_regridder, apply_regridder!
+using ..Quantities: QuantityKind, IntensiveCellField, ExtensiveCellField,
+                    HorizontalVectorField, HorizontalFluxField
 using ..MetDrivers: TransportBinaryReader, TransportBinaryHeader, write_transport_binary,
                     StreamingTransportBinaryWriter,
                     open_streaming_transport_binary, write_streaming_window!,

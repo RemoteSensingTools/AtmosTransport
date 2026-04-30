@@ -50,6 +50,8 @@ struct MergeWorkspace{FT}
     m_next_merged  :: Array{FT, 3}
     am_next_merged :: Array{FT, 3}
     bm_next_merged :: Array{FT, 3}
+    ps_xface       :: Matrix{Float64}
+    ps_yface       :: Matrix{Float64}
 end
 
 """
@@ -180,7 +182,9 @@ function allocate_merge_workspace(grid::LatLonTargetGeometry, Nz_native::Int, Nz
                               Array{FT}(undef, Nx, Ny, Nz),
                               Array{FT}(undef, Nx, Ny, Nz),
                               Array{FT}(undef, Nx + 1, Ny, Nz),
-                              Array{FT}(undef, Nx, Ny + 1, Nz))
+                              Array{FT}(undef, Nx, Ny + 1, Nz),
+                              Array{Float64}(undef, Nx + 1, Ny),
+                              Array{Float64}(undef, Nx, Ny + 1))
 end
 
 """
@@ -299,24 +303,47 @@ end
 """
     _interpolate_ll_qv!(dst, src, Nx_dst, Ny_dst, Nx_src, Ny_src, Nz)
 
-Bilinear-interpolate QV from a regular LL source grid to a regular LL target grid.
-Both grids are assumed to span [-180,180) × [-90,90] with uniform spacing.
+Bilinear-interpolate QV from a regular LL source grid (ERA5 reanalysis,
+pole-inclusive: lats include both `-90` and `+90`) to the staging mesh
+target grid (cell-centered: lats span `-90 + Δ/2` to `90 - Δ/2` where
+`Δ = 180/Ny_dst`).
+
+Both source and target use cell-centered longitudes in `[-180, 180)` —
+caller is responsible for normalizing the source longitude convention
+upstream (see [`_normalize_lon_to_centered`](@ref) in `mass_support.jl`).
+
+The target latitude convention here matches `LatLonMesh.φᶜ`, so the
+interpolated QV lands at the same physical points as `transform.sp`,
+`merged.m_merged`, and the rest of the staging fields.
+
+Source grid layout (ERA5):
+- Longitudes: cell-centered, `Nx_src` points spanning a full `360°`
+  with spacing `Δλ = 360/Nx_src`. After [`_normalize_lon_to_centered`](@ref)
+  the array is in `[-180, 180)` convention.
+- Latitudes: pole-inclusive, `Ny_src` points spanning the full `180°`
+  with spacing `Δφ = 180/(Ny_src - 1)`, including both poles.
+
+Target grid layout (staging `LatLonMesh`):
+- Longitudes: cell-centered, `Nx_dst` points, spacing `Δλ = 360/Nx_dst`.
+- Latitudes: cell-centered, `Ny_dst` points, spacing `Δφ = 180/Ny_dst`,
+  starting at `-90 + Δφ/2` (south pole face is *not* a cell center).
 """
 function _interpolate_ll_qv!(dst::AbstractArray{<:Real, 3}, src::AbstractArray{<:Real, 3},
                               Nx_dst::Int, Ny_dst::Int,
                               Nx_src::Int, Ny_src::Int,
                               Nz::Int)
     Δlon_src = 360.0 / Nx_src
-    Δlat_src = 180.0 / (Ny_src - 1)
+    Δlat_src = 180.0 / (Ny_src - 1)   # source pole-inclusive
     Δlon_dst = 360.0 / Nx_dst
-    Δlat_dst = 180.0 / (Ny_dst - 1)
+    Δlat_dst = 180.0 / Ny_dst         # target cell-centered (no -1)
 
     @inbounds for k in 1:Nz, j in 1:Ny_dst, i in 1:Nx_dst
         # Target cell center in degrees
         lon = -180.0 + (i - 0.5) * Δlon_dst
-        lat = -90.0 + (j - 1) * Δlat_dst
+        lat = -90.0 + (j - 0.5) * Δlat_dst
 
-        # Source fractional indices
+        # Source fractional indices — source is pole-inclusive so
+        # j_src = 1 corresponds to lat = -90, j_src = Ny_src to lat = +90.
         if_val = (lon + 180.0) / Δlon_src + 0.5
         jf_val = (lat + 90.0) / Δlat_src + 1.0
 
@@ -388,7 +415,7 @@ moist to dry basis.
 apply_dry_basis_if_needed!(basis::Symbol, native, qv) =
     apply_dry_basis_if_needed!(Val(basis), native, qv)
 
-merge_qv_output!(::NoQVWorkspace, merged, vertical, settings) = nothing
+merge_qv_output!(::NoQVWorkspace, merged, vertical, settings, ps_cell=nothing) = nothing
 
 """
     merge_qv_output!(qv, merged, vertical, settings)
@@ -399,10 +426,18 @@ binary payload.
 function merge_qv_output!(qv::NativeQVWorkspace{FT},
                           merged::MergeWorkspace{FT},
                           vertical,
-                          settings) where FT
+                          settings,
+                          ps_cell=nothing) where FT
     settings.include_qv || return nothing
     @. qv.qv_native_ft = FT(qv.qv_native)
-    merge_qv!(qv.qv_merged, qv.qv_native_ft, merged.m_native, vertical.merge_map)
+    if vertical_mapping_method(vertical) === :pressure_overlap
+        ps_cell === nothing &&
+            error("pressure-overlap qv remap requires the cell surface-pressure field")
+        remap_qv_pressure_overlap!(qv.qv_merged, qv.qv_native_ft, merged.m_native,
+                                   ps_cell, vertical.vc_native, vertical.merged_vc)
+    else
+        merge_qv!(qv.qv_merged, qv.qv_native_ft, merged.m_native, vertical.merge_map)
+    end
     return nothing
 end
 
@@ -451,9 +486,29 @@ function merge_native_window!(merged::MergeWorkspace{FT},
     @. merged.am_native = FT(native.am_arr)
     @. merged.bm_native = FT(native.bm_arr)
 
-    merge_cell_field!(merged.m_merged, merged.m_native, vertical.merge_map)
-    merge_cell_field!(merged.am_merged, merged.am_native, vertical.merge_map)
-    merge_cell_field!(merged.bm_merged, merged.bm_native, vertical.merge_map)
+    if vertical_mapping_method(vertical) === :pressure_overlap
+        remap_extensive_field_pressure_overlap!(merged.m_merged,
+                                                merged.m_native,
+                                                native.sp,
+                                                vertical.vc_native,
+                                                vertical.merged_vc)
+        fill_xface_surface_pressure!(merged.ps_xface, native.sp)
+        fill_yface_surface_pressure!(merged.ps_yface, native.sp)
+        remap_extensive_field_pressure_overlap!(merged.am_merged,
+                                                merged.am_native,
+                                                merged.ps_xface,
+                                                vertical.vc_native,
+                                                vertical.merged_vc)
+        remap_extensive_field_pressure_overlap!(merged.bm_merged,
+                                                merged.bm_native,
+                                                merged.ps_yface,
+                                                vertical.vc_native,
+                                                vertical.merged_vc)
+    else
+        merge_cell_field!(merged.m_merged, merged.m_native, vertical.merge_map)
+        merge_cell_field!(merged.am_merged, merged.am_native, vertical.merge_map)
+        merge_cell_field!(merged.bm_merged, merged.bm_native, vertical.merge_map)
+    end
 
     apply_structured_pole_constraints!(merged.am_merged, merged.bm_merged)
 
@@ -462,7 +517,7 @@ function merge_native_window!(merged::MergeWorkspace{FT},
     @views merged.cm_merged[:, :, 1] .= zero(FT)
     @views merged.cm_merged[:, :, size(merged.cm_merged, 3)] .= zero(FT)
 
-    merge_qv_output!(qv, merged, vertical, settings)
+    merge_qv_output!(qv, merged, vertical, settings, native.sp)
 
     return nothing
 end

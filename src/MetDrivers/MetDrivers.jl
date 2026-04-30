@@ -65,6 +65,6 @@ export read_era5_reduced_gaussian_geometry, read_era5_reduced_gaussian_mesh
 
 # Cubed-sphere binary reader
 export CubedSphereBinaryReader, CubedSphereBinaryHeader
-export load_cs_window, cs_window_count
+export load_cs_window, cs_window_count, mesh_convention, mesh_definition
 
 end # module MetDrivers

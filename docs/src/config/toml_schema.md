@@ -246,6 +246,7 @@ merge_min_thickness_Pa = 1000.0
 type                = "cubed_sphere"
 Nc                  = 180
 panel_convention    = "geos_native"             # or "gnomonic"
+definition          = "gmao"                    # optional; inferred from convention if omitted
 regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
 
 # Reduced Gaussian (synthetic — picks a standard ECMWF reduced-Gaussian grid)
@@ -276,6 +277,8 @@ paths:
 float_type   = "Float32"     # "Float32" or "Float64"
 dt           = 900.0         # advection sub-step (s)
 met_interval = 3600.0        # window cadence (s); 1 hour for ERA5
+cs_balance_tol = 1e-14       # CS Poisson balance tolerance
+cs_balance_project_every = 50 # CS PCG mean-zero projection cadence; 1 = legacy
 ```
 
 ```toml

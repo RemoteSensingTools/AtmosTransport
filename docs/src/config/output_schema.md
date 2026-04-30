@@ -127,9 +127,9 @@ Per-topology fields:
 | `<tracer>_column_mass_per_area` | `(Xdim, Ydim, nf, time)` | `kg m-2` |
 
 A `grid_mapping = "cubed_sphere"` attribute is set on the
-horizontally-resolved variables; the active panel convention
-(`gnomonic` / `geos_native`) is in the global header so consumers
-can reconstruct the panel layout if needed (see
+horizontally-resolved variables; the active CS definition, coordinate law,
+center law, panel convention (`gnomonic` / `geos_native`), and longitude offset
+are in the global header so consumers can reconstruct the panel layout if needed (see
 [Cubed-sphere](@ref Grids)).
 
 ## Reading the snapshot

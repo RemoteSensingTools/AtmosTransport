@@ -17,6 +17,8 @@ function process_day(date::Date,
     Nz_native = vertical.Nz_native
     Nz = vertical.Nz
     steps_per_met = exact_steps_per_window(settings.met_interval, settings.dt)
+    cs_balance_tol = Float64(get(settings, :cs_balance_tol, 1e-14))
+    cs_balance_project_every = Int(get(settings, :cs_balance_project_every, 50))
     date_str = Dates.format(date, "yyyymmdd")
 
     vo_d_path = joinpath(settings.spectral_dir, "era5_spectral_$(date_str)_vo_d.gb")
@@ -32,8 +34,9 @@ function process_day(date::Date,
     spec = read_day_spectral(vo_d_path, lnsp_path;
                              T_target=settings.T_target,
                              cache_dir=settings.spectral_cache_dir)
+    t_spectral_read = time() - t_day
     @info @sprintf("  Spectral data read: T=%d, %d hours (%.1fs)",
-                   spec.T, spec.n_times, time() - t_day)
+                   spec.T, spec.n_times, t_spectral_read)
     Nt = spec.n_times
 
     mkpath(settings.out_dir)
@@ -57,16 +60,19 @@ function process_day(date::Date,
     regridder = build_regridder(staging_grid.mesh, grid.mesh;
                                 normalize=false,
                                 cache_dir=grid.cache_dir)
+    t_regridder = time() - t_reg
     n_src = length(regridder.src_areas)
     n_dst = length(regridder.dst_areas)
     @info @sprintf("  Regridder: %d×%d  nnz=%d (%.1fs)",
-                   n_src, n_dst, length(regridder.intersections.nzval), time() - t_reg)
+                   n_src, n_dst, length(regridder.intersections.nzval), t_regridder)
 
     # --- Allocate workspaces ---
     # LL staging workspaces (reuse existing LL infrastructure)
     transform = allocate_transform_workspace(staging_grid, spec.T, Nz_native)
     merged = allocate_merge_workspace(staging_grid, Nz_native, Nz, FT)
+    t_qv = time()
     qv = allocate_qv_workspace(staging_grid, settings, date, Nz_native, Nz, FT)
+    t_qv = time() - t_qv
     ps_offsets = zeros(Float64, Nt + 1)
 
     # CS workspaces
@@ -91,6 +97,10 @@ function process_day(date::Date,
         include_flux_delta=true,
         mass_basis=Symbol(settings.mass_basis),
         panel_convention=_cs_panel_convention_tag(grid),
+        cs_definition=_cs_definition_tag(grid),
+        cs_coordinate_law=_cs_coordinate_law_tag(grid),
+        cs_center_law=_cs_center_law_tag(grid),
+        longitude_offset_deg=longitude_offset_deg(cs_definition(grid.mesh)),
         extra_header=Dict{String, Any}(
             "preprocessor"     => "preprocess_transport_binary.jl",
             "source_type"      => "era5_spectral",
@@ -98,6 +108,12 @@ function process_day(date::Date,
             "staging_nlon"     => Nx_stg,
             "staging_nlat"     => Ny_stg,
             "regrid_method"    => "conservative",
+            "vertical_mapping_method" => String(vertical_mapping_method(vertical)),
+            "target_vertical_name" => hasproperty(vertical, :target_vertical_name) ?
+                vertical.target_vertical_name : "",
+            "target_coefficients" => hasproperty(vertical, :target_coefficients) ?
+                vertical.target_coefficients : "",
+            "merge_map" => vertical.merge_map,
             "poisson_balanced" => true,
             "mass_fix_enabled" => settings.mass_fix_enable,
         ))
@@ -132,19 +148,15 @@ function process_day(date::Date,
         apply_dry_basis_if_needed!(settings.mass_basis, transform, qv)
         merge_native_window!(merged, transform, qv, vertical, settings)
 
-        # Conservative regrid scalars: m, ps → CS panels
-        regrid_3d_to_cs_panels!(m_out, regridder, merged.m_merged, cs_ws, Nc)
-        regrid_2d_to_cs_panels!(ps_out, regridder, transform.sp, cs_ws, Nc)
-
-        # Per-level mean correction on regridded m.
-        # On a closed sphere, Σ div_h = 0 (topological). For the Poisson
-        # system to be fully solvable, we need Σ(m_next - m_cur) = 0 at each
-        # level. Conservative regridding preserves global mass but shifts the
-        # per-level distribution by O(10⁻⁶) relative. We absorb this by
-        # adjusting regridded m so each level's global sum matches the staging
-        # LL grid's sum. The correction is applied HERE (not in a hidden
-        # projection) so the stored m and the balance target are consistent.
-        _enforce_perlevel_mass_consistency!(m_out, merged.m_merged, Nc, Nz)
+        # Conservative regrid:
+        #   `m` (kg/cell, extensive) → density convert → regrid → ×dst_area
+        #   `ps` (Pa, intensive) → straight area-averaged regrid
+        # The `ExtensiveCellField()` tag is required for `m`; without it,
+        # the LL polar cells (230× smaller area than equator) drag the CS
+        # polar mass to ~8% of physical, inflating runtime CFL ~12× and
+        # triggering polar-mesospheric NaN cascades. See `Quantities.jl`.
+        regrid_3d_to_cs_panels!(m_out, regridder, merged.m_merged, cs_ws, Nc, ExtensiveCellField())
+        regrid_2d_to_cs_panels!(ps_out, regridder, transform.sp, cs_ws, Nc, IntensiveCellField())
 
         # Recover LL cell-center winds from merged fluxes
         stg_lats = staging_grid.lats
@@ -192,13 +204,20 @@ function process_day(date::Date,
     worst_replay_abs = 0.0
     worst_replay_win = 0
     worst_replay_idx = (0, 0, 0, 0)
+    total_synth_regrid = 0.0
+    total_balance = 0.0
+    total_replay = 0.0
+    total_write = 0.0
+    total_last_endpoint = 0.0
 
     # --- Process first window ---
     t0 = time()
     _synth_and_regrid_to_cs!(1, spec.hours[1],
         cs_ws.m_panels, cs_ws.ps_panels, cs_ws.am_panels, cs_ws.bm_panels)
+    t_first_synth = time() - t0
+    total_synth_regrid += t_first_synth
     @info @sprintf("    Window  1/%d (hour %02d): synth+regrid %.2fs  offset=%+.3f Pa",
-                   Nt, spec.hours[1], time() - t0, ps_offsets[1])
+                   Nt, spec.hours[1], t_first_synth, ps_offsets[1])
 
     _copy_panels!(cur_m,  cs_ws.m_panels)
     _copy_panels!(cur_ps, cs_ws.ps_panels)
@@ -211,6 +230,7 @@ function process_day(date::Date,
         _synth_and_regrid_to_cs!(win, spec.hours[win],
             cs_ws.m_panels, cs_ws.ps_panels, cs_ws.am_panels, cs_ws.bm_panels)
         t_synth = time() - t0
+        total_synth_regrid += t_synth
 
         # Copy m_next for balance (unmodified — the Poisson CG internally
         # projects the RHS to mean-zero, handling the topological constraint
@@ -222,8 +242,10 @@ function process_day(date::Date,
         bal_diag = balance_cs_global_mass_fluxes!(
             cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
             grid.face_table, grid.cell_degree, steps_per_met,
-            grid.poisson_scratch; tol=1e-14, max_iter=20000)
+            grid.poisson_scratch; tol=cs_balance_tol, max_iter=20000,
+            project_every=cs_balance_project_every)
         t_bal = time() - t_bal
+        total_balance += t_bal
 
         worst_pre  = max(worst_pre,  bal_diag.max_pre_residual)
         worst_post = max(worst_post, bal_diag.max_post_residual)
@@ -238,9 +260,11 @@ function process_day(date::Date,
         for p in 1:CS_PANEL_COUNT; fill!(cur_cm[p], zero(FT)); end
         diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz)
         if write_replay_on
+            t_replay = time()
             diag_replay = verify_write_replay_cs!(cur_m, cur_am, cur_bm, cur_cm,
                                                   cs_ws.m_next_panels,
                                                   steps_per_met, replay_tol, win - 1)
+            total_replay += time() - t_replay
             if worst_replay_win == 0 || diag_replay.max_rel_err > worst_replay_rel
                 worst_replay_rel = diag_replay.max_rel_err
                 worst_replay_abs = diag_replay.max_abs_err
@@ -253,7 +277,9 @@ function process_day(date::Date,
         # Write balanced previous window
         window_nt = (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps,
                      dm=cs_ws.m_next_panels)
+        t_write = time()
         write_streaming_cs_window!(writer, window_nt, Nc, CS_PANEL_COUNT)
+        total_write += time() - t_write
 
         should_log_window(win - 1, Nt) &&
             @info @sprintf("    Window %2d/%d: wrote (bal %.2fs pre=%.2e post=%.2e iter=%d) | synth %2d (%.2fs)",
@@ -268,11 +294,14 @@ function process_day(date::Date,
     end
 
     # --- Balance & write LAST window (next-day closure when available) ---
+    t_last_endpoint = time()
     last_hour_next = next_day_merged_fields(next_day_hour0, date, staging_grid, vertical,
                                             settings, transform, merged, qv, ps_offsets)
+    total_last_endpoint = time() - t_last_endpoint
     if last_hour_next !== nothing
-        regrid_3d_to_cs_panels!(cs_ws.m_next_panels, regridder, last_hour_next.m, cs_ws, Nc)
-        _enforce_perlevel_mass_consistency!(cs_ws.m_next_panels, last_hour_next.m, Nc, Nz)
+        # `m` is extensive (kg/cell): density-convert via the dispatcher.
+        regrid_3d_to_cs_panels!(cs_ws.m_next_panels, regridder, last_hour_next.m,
+                                cs_ws, Nc, ExtensiveCellField())
     else
         _copy_panels!(cs_ws.m_next_panels, cur_m)
     end
@@ -280,8 +309,10 @@ function process_day(date::Date,
     bal_diag = balance_cs_global_mass_fluxes!(
         cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
         grid.face_table, grid.cell_degree, steps_per_met,
-        grid.poisson_scratch; tol=1e-14, max_iter=5000)
+        grid.poisson_scratch; tol=cs_balance_tol, max_iter=5000,
+        project_every=cs_balance_project_every)
     t_bal = time() - t_bal
+    total_balance += t_bal
 
     worst_pre  = max(worst_pre,  bal_diag.max_pre_residual)
     worst_post = max(worst_post, bal_diag.max_post_residual)
@@ -294,9 +325,11 @@ function process_day(date::Date,
     for p in 1:CS_PANEL_COUNT; fill!(cur_cm[p], zero(FT)); end
     diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz)
     if write_replay_on
+        t_replay = time()
         diag_replay = verify_write_replay_cs!(cur_m, cur_am, cur_bm, cur_cm,
                                               cs_ws.m_next_panels,
                                               steps_per_met, replay_tol, Nt)
+        total_replay += time() - t_replay
         if worst_replay_win == 0 || diag_replay.max_rel_err > worst_replay_rel
             worst_replay_rel = diag_replay.max_rel_err
             worst_replay_abs = diag_replay.max_abs_err
@@ -308,7 +341,9 @@ function process_day(date::Date,
 
     window_nt = (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps,
                  dm=cs_ws.m_next_panels)
+    t_write = time()
     write_streaming_cs_window!(writer, window_nt, Nc, CS_PANEL_COUNT)
+    total_write += time() - t_write
 
     @info @sprintf("    Window %2d/%d (last): bal %.2fs  pre=%.2e post=%.2e iter=%d",
                    Nt, Nt, t_bal, bal_diag.max_pre_residual,
@@ -332,6 +367,16 @@ function process_day(date::Date,
             "no windows checked"
         @info "  Write-time replay gate: $replay_msg"
     end
+
+    total_timed = t_spectral_read + t_regridder + t_qv + total_synth_regrid +
+                  total_balance + total_replay + total_write + total_last_endpoint
+    @info @sprintf("  Timing summary (s): spectral_read=%.1f  regridder=%.1f  qv=%.1f  synth+regrid=%.1f  balance=%.1f  replay=%.1f  write=%.1f  last_endpoint=%.1f",
+                   t_spectral_read, t_regridder, t_qv, total_synth_regrid,
+                   total_balance, total_replay, total_write, total_last_endpoint)
+    @info @sprintf("  Timing fractions: balance=%.1f%%  synth+regrid=%.1f%%  spectral_read=%.1f%%",
+                   100 * total_balance / max(total_timed, eps()),
+                   100 * total_synth_regrid / max(total_timed, eps()),
+                   100 * t_spectral_read / max(total_timed, eps()))
 
     actual = filesize(bin_path)
     @info @sprintf("  Done: %s (%.2f GB, %.1fs)", basename(bin_path),

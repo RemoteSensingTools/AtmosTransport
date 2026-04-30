@@ -217,7 +217,7 @@ function run_cs(cfg)
     Nc, Nz = h.Nc, h.nlevel
     steps_per_window = h.steps_per_window
     window_hours = h.dt_met_seconds / 3600.0
-    mesh = CubedSphereMesh(; Nc, Hp, convention=mesh_convention(reader1))
+    mesh = CubedSphereMesh(; Nc, Hp, definition=mesh_definition(reader1))
 
     println("="^60)
     @printf("CS transport  C%d × %d levels  Hp=%d  %s  %s\n",

@@ -83,6 +83,14 @@ const AbstractArchitecture = Architectures.AbstractArchitecture
 const CPU = Architectures.CPU
 const GPU = Architectures.GPU
 
+# ---- Quantity-kind dispatch traits ----
+# Tiny trait module loaded early so any downstream module (Preprocessing,
+# Operators, Output) can dispatch on extensive vs intensive vs vector vs flux
+# field semantics without circular dependencies. See Quantities.jl for the
+# four-type taxonomy and their regrid-handling contracts.
+include("Quantities/Quantities.jl")
+using .Quantities
+
 include("Parameters/Parameters.jl")
 using .Parameters
 
@@ -129,7 +137,7 @@ using .MetDrivers: AbstractDriver, AbstractClosure, AbstractMetDriver,
                    total_windows, window_dt, steps_per_window, supports_diffusion, supports_convection,
                    DiagnoseVerticalFromHorizontal, PressureTendencyClosure,
                    CubedSphereBinaryReader, CubedSphereBinaryHeader,
-                   load_cs_window, cs_window_count, mesh_convention,
+                   load_cs_window, cs_window_count, mesh_convention, mesh_definition,
                    StreamingTransportBinaryWriter,
                    open_streaming_transport_binary, write_streaming_window!,
                    close_streaming_transport_binary!,
@@ -174,9 +182,18 @@ export AbstractArchitecture, CPU, GPU
 export array_type, device, architecture
 export PlanetParameters, earth_parameters
 
+# Quantity-kind dispatch traits
+export QuantityKind, IntensiveCellField, ExtensiveCellField,
+       HorizontalVectorField, HorizontalFluxField
+
 # Grids
 export AtmosGrid, LatLonMesh, CubedSphereMesh, ReducedGaussianMesh
-export AbstractCubedSpherePanelConvention
+export AbstractCubedSphereCoordinateLaw, AbstractCubedSphereCenterLaw
+export AbstractCubedSpherePanelConvention, AbstractCubedSphereDefinition
+export EquiangularGnomonic, GMAOEqualDistanceGnomonic
+export AngularMidpointCenter, FourCornerNormalizedCenter
+export CubedSphereDefinition, EquiangularCubedSphereDefinition, GMAOCubedSphereDefinition
+export GEOSIT_C180, GEOSFP_C720
 export GnomonicPanelConvention, GEOSNativePanelConvention
 export HybridSigmaPressure
 export AbstractFluxTopology, StructuredFluxTopology, FaceIndexedFluxTopology, flux_topology
@@ -189,6 +206,8 @@ export boundary_face_count, boundary_face_offset, boundary_face_range
 export panel_count, panel_convention, panel_labels
 export PanelEdge, PanelConnectivity
 export default_panel_connectivity, gnomonic_panel_connectivity, panel_connectivity_for
+export cs_definition, coordinate_law, center_law, longitude_offset_deg
+export cs_definition_tag, coordinate_law_tag, center_law_tag
 export panel_cell_center_lonlat, panel_cell_corner_lonlat, panel_cell_local_tangent_basis
 export reciprocal_edge
 export EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST
@@ -305,7 +324,7 @@ export read_era5_reduced_gaussian_geometry, read_era5_reduced_gaussian_mesh
 export DiagnoseVerticalFromHorizontal, PressureTendencyClosure
 export supports_diffusion, supports_convection
 export CubedSphereBinaryReader, CubedSphereBinaryHeader
-export load_cs_window, cs_window_count, mesh_convention
+export load_cs_window, cs_window_count, mesh_convention, mesh_definition
 export StreamingTransportBinaryWriter
 export open_streaming_transport_binary, write_streaming_window!, close_streaming_transport_binary!
 

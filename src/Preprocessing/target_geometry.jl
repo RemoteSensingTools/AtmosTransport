@@ -274,6 +274,13 @@ _cs_panel_convention_tag(::GEOSNativePanelConvention) = "geos_native"
 _cs_panel_convention_tag(grid::CubedSphereTargetGeometry) =
     _cs_panel_convention_tag(panel_convention(grid.mesh))
 
+_cs_definition_tag(grid::CubedSphereTargetGeometry) =
+    String(cs_definition_tag(cs_definition(grid.mesh)))
+_cs_coordinate_law_tag(grid::CubedSphereTargetGeometry) =
+    coordinate_law_tag(coordinate_law(grid.mesh))
+_cs_center_law_tag(grid::CubedSphereTargetGeometry) =
+    center_law_tag(center_law(grid.mesh))
+
 function _parse_cs_panel_convention(raw)
     raw isa GnomonicPanelConvention && return raw
     raw isa GEOSNativePanelConvention && return raw
@@ -288,6 +295,18 @@ function _parse_cs_panel_convention(raw)
           "expected \"gnomonic\" or \"geos_native\"")
 end
 
+function _parse_cs_definition(raw, convention::AbstractCubedSpherePanelConvention)
+    norm = lowercase(replace(String(raw), '-' => '_', ' ' => '_'))
+    if norm in ("gmao", "geos", "geos_it", "geosit", "geos_fp", "geosfp",
+                "gmao_equal_distance", "gmao_equal_distance_gnomonic")
+        return GMAOCubedSphereDefinition(; convention)
+    elseif norm in ("equiangular", "equiangular_gnomonic", "legacy")
+        return EquiangularCubedSphereDefinition(; convention)
+    end
+    error("cubed_sphere: unsupported definition=$(raw); expected \"gmao\" " *
+          "or \"equiangular_gnomonic\"")
+end
+
 function target_spectral_truncation(grid::CubedSphereTargetGeometry)
     # Nyquist on the staging LL grid
     return div(grid.staging_nlon, 2) - 1
@@ -299,6 +318,10 @@ function target_header_metadata(grid::CubedSphereTargetGeometry)
         "grid_type" => "cubed_sphere",
         "Nc" => grid.Nc,
         "npanel" => 6,
+        "cs_definition" => _cs_definition_tag(grid),
+        "cs_coordinate_law" => _cs_coordinate_law_tag(grid),
+        "cs_center_law" => _cs_center_law_tag(grid),
+        "longitude_offset_deg" => longitude_offset_deg(cs_definition(grid.mesh)),
         "panel_convention" => _cs_panel_convention_tag(grid),
     )
 end
@@ -306,7 +329,8 @@ end
 function target_summary(grid::CubedSphereTargetGeometry)
     nc = 6 * grid.Nc^2
     conv = _cs_panel_convention_tag(grid)
-    return "C$(grid.Nc) cubed sphere ($(nc) cells, $(conv), staging $(grid.staging_nlon)×$(grid.staging_nlat))"
+    def = _cs_definition_tag(grid)
+    return "C$(grid.Nc) cubed sphere ($(nc) cells, $(def), $(conv), staging $(grid.staging_nlon)×$(grid.staging_nlat))"
 end
 
 """
@@ -318,7 +342,11 @@ Required keys:
 - `Nc :: Int` — cells per panel edge
 
 Optional keys:
-- `panel_convention` or `convention` — `"gnomonic"` (default) or `"geos_native"`
+- `definition` — `"equiangular_gnomonic"` (legacy synthetic) or `"gmao"`
+  (GEOS-IT/GEOS-FP equal-distance gnomonic)
+- `panel_convention` or `convention` — `"gnomonic"` (default) or `"geos_native"`.
+  If `definition` is omitted, `"geos_native"` selects `"gmao"` and
+  `"gnomonic"` selects `"equiangular_gnomonic"`.
 - `regridder_cache_dir` — directory for CR.jl weight cache (default `~/.cache/AtmosTransport/cr_regridding`)
 - `staging_nlon`, `staging_nlat` — override the internal LL staging grid size
   (defaults: `max(4Nc, 360)` × `max(2Nc+1, 181)`)
@@ -335,8 +363,11 @@ function build_target_geometry(::Val{:cubed_sphere}, cfg_grid, ::Type{FT}) where
 
     convention = _parse_cs_panel_convention(
         get(cfg_grid, "panel_convention", get(cfg_grid, "convention", "gnomonic")))
+    definition = haskey(cfg_grid, "definition") ?
+        _parse_cs_definition(cfg_grid["definition"], convention) :
+        nothing
     mesh = CubedSphereMesh(; Nc=Nc, FT=FT, radius=FT(R_EARTH),
-                            convention=convention)
+                            convention=convention, definition=definition)
 
     conn = mesh.connectivity
     ft = build_cs_global_face_table(Nc, conn)

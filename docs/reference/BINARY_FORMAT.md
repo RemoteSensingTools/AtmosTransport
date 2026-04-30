@@ -224,6 +224,10 @@ fast offset computation):
 | `npanel` | int | 6 |
 | `Hp` | int | Halo width for panel arrays |
 | `panel_convention` | string | `"gnomonic"` or `"geos_native"` |
+| `cs_definition` | string | `"equiangular_gnomonic"` or `"gmao_equal_distance"` |
+| `cs_coordinate_law` | string | `"equiangular_gnomonic"` or `"gmao_equal_distance_gnomonic"` |
+| `cs_center_law` | string | `"angular_midpoint"` or `"four_corner_normalized"` |
+| `longitude_offset_deg` | float | Final z-axis longitude rotation; `-10.0` for GEOS native |
 
 Consistency: `ncell = 6 × Nc × Nc`.
 

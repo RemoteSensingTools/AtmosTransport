@@ -20,7 +20,7 @@ flowchart LR
     PAY[Payload<br/>fixed-stride per window]
     JSON --> PAY
     subgraph Header
-        H1[grid_type, mass_basis, panel_convention]
+        H1[grid_type, mass_basis, cs_definition]
         H2[nlevel, A_ifc, B_ifc]
         H3[dt_met_seconds, steps_per_window, flux_kind]
         H4[payload_sections]
@@ -54,6 +54,10 @@ the runtime actually dispatches on:
 | `A_ifc`, `B_ifc` | `Vector{Float64}` | hybrid-σ-pressure coefficients at `nlevel + 1` interfaces, in Pa and dimensionless |
 | `mass_basis` | `Symbol` | `:dry` or `:moist` (see [Mass basis contract](#Mass-basis-contract) below) |
 | `panel_convention` | `Symbol` | CS only — `:gnomonic` or `:geos_native` |
+| `cs_definition` | `Symbol` | CS only — `:equiangular_gnomonic` or `:gmao_equal_distance` |
+| `cs_coordinate_law` | `Symbol` | CS only — e.g. `:equiangular_gnomonic` or `:gmao_equal_distance_gnomonic` |
+| `cs_center_law` | `Symbol` | CS only — `:angular_midpoint` or `:four_corner_normalized` |
+| `longitude_offset_deg` | `Float64` | CS only — final longitude rotation, `-10.0` for GEOS native |
 | `dt_met_seconds` | `Float64` | met-window cadence (typically 3600 s for hourly ERA5) |
 | `steps_per_window` | `Int` | preprocessor sub-steps per window (used by the replay gate) |
 | `flux_sampling` | `Symbol` | currently `:window_constant` (same flux at every substep) |
@@ -184,6 +188,10 @@ writer = open_streaming_cs_transport_binary(
     include_cmfmc = false,         # writes :cmfmc when true
     include_dtrain = false,        # writes :dtrain when true
     panel_convention = :gnomonic,  # or :geos_native
+    cs_definition = :equiangular_gnomonic,
+    cs_coordinate_law = :equiangular_gnomonic,
+    cs_center_law = :angular_midpoint,
+    longitude_offset_deg = 0.0,
     extra_header = Dict(),
 )
 ```

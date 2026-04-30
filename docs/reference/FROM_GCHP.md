@@ -12,19 +12,20 @@ Quick reference for GEOS-Chem/GCHP users switching to AtmosTransport.jl.
 | `MFXC`, `MFYC` (dry mass flux) | `am_panels`, `bm_panels` | Same physical quantity |
 | `DELP` (moist) | `m_panels` (mass) | We use mass = dp * area / g |
 | `ak`, `bk` (hybrid coord) | `HybridSigmaPressure` | Same A+B*ps formula |
-| C180/C720 panels | `CubedSphereMesh(Nc=180)` | Same gnomonic projection |
-| Panel ordering 1-6 | `GnomonicPanelConvention()` | Matches GCHP/FV3 default |
+| C180/C720 panels | `CubedSphereMesh(Nc=180, definition=GMAOCubedSphereDefinition())` | GMAO equal-distance gnomonic + `cell_center2` centers |
+| Panel ordering 1-6 | `GEOSNativePanelConvention()` for NetCDF files; `GnomonicPanelConvention()` for synthetic/FV-style tests | File order and algorithmic panel order are separate choices |
 | `calcScalingFactor` | Not needed — direct cumsum PE | See CLAUDE.md on hybrid PE bug |
 
 ## Key differences
 
 ### Panel convention
 AtmosTransport supports two CS conventions:
-- `GnomonicPanelConvention()` — standard mathematical (+X, +Y, +Z, -X, -Y, -Z)
+- `GnomonicPanelConvention()` — standard mathematical (+X, +Y, -X, -Y, +Z, -Z)
 - `GEOSNativePanelConvention()` — GEOS-FP/IT file ordering
 
-GCHP uses the FV3 convention. Set `convention=GnomonicPanelConvention()` for
-compatibility with FV3/GCHP algorithms.
+For native GEOS-FP/IT NetCDF files, use the GEOS-native convention together
+with `GMAOCubedSphereDefinition()`; this reproduces the GMAO grid coordinates
+written in C180/C720 products.
 
 ### Moist vs dry basis
 GCHP runs on MOIST basis (`Use_Total_Air_Pressure > 0`). AtmosTransport

@@ -22,7 +22,7 @@ make that decision possible.
   [`LatLonMesh.jl`](LatLonMesh.jl)
 - Reduced-Gaussian face-connected mesh:
   [`ReducedGaussianMesh.jl`](ReducedGaussianMesh.jl)
-- Cubed-sphere mesh and panel conventions:
+- Cubed-sphere mesh definitions and panel conventions:
   [`CubedSphereMesh.jl`](CubedSphereMesh.jl)
 - Cubed-sphere panel connectivity:
   [`PanelConnectivity.jl`](PanelConnectivity.jl)
@@ -36,7 +36,8 @@ make that decision possible.
 - The `AtmosGrid` composite used across drivers, models, and operators
 - Mesh-native geometry helpers like cell counts, face connectivity,
   normals, and lengths
-- Cubed-sphere panel convention and edge-connectivity metadata
+- Cubed-sphere coordinate law, center law, panel convention, and
+  edge-connectivity metadata
 
 ## File Map
 
@@ -52,7 +53,7 @@ make that decision possible.
 - [`PanelConnectivity.jl`](PanelConnectivity.jl) — cubed-sphere edge
   graph and reciprocal-edge helpers
 - [`CubedSphereMesh.jl`](CubedSphereMesh.jl) — cubed-sphere mesh,
-  panel conventions, cell/corner lon-lat helpers
+  GMAO/equiangular definitions, panel conventions, cell/corner lon-lat helpers
 
 ## Common Tasks
 

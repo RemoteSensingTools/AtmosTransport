@@ -43,7 +43,11 @@ meshes_equivalent(a::LatLonMesh, b::LatLonMesh) =
 
 meshes_equivalent(a::CubedSphereMesh, b::CubedSphereMesh) =
     a.Nc == b.Nc &&
+    cs_definition_tag(cs_definition(a)) === cs_definition_tag(cs_definition(b)) &&
+    typeof(coordinate_law(a)) === typeof(coordinate_law(b)) &&
+    typeof(center_law(a)) === typeof(center_law(b)) &&
     typeof(a.convention) === typeof(b.convention) &&
+    longitude_offset_deg(cs_definition(a)) == longitude_offset_deg(cs_definition(b)) &&
     a.radius == b.radius
 
 meshes_equivalent(a::ReducedGaussianMesh, b::ReducedGaussianMesh) =

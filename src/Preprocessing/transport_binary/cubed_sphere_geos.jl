@@ -208,6 +208,10 @@ function process_day(date::Date,
         include_cmfmc      = settings.include_convection,
         include_dtrain     = settings.include_convection,
         panel_convention   = panel_convention,
+        cs_definition      = _cs_definition_tag(grid),
+        cs_coordinate_law  = _cs_coordinate_law_tag(grid),
+        cs_center_law      = _cs_center_law_tag(grid),
+        longitude_offset_deg = longitude_offset_deg(cs_definition(grid.mesh)),
     )
 
     try

@@ -144,6 +144,11 @@ function build_v4_header(date::Date,
         "level_top" => first(vertical.level_range), "level_bot" => last(vertical.level_range),
         "A_ifc" => Float64.(vertical.merged_vc.A), "B_ifc" => Float64.(vertical.merged_vc.B),
         "merge_map" => vertical.merge_map, "merge_min_thickness_Pa" => settings.min_dp,
+        "vertical_mapping_method" => String(vertical_mapping_method(vertical)),
+        "target_vertical_name" => hasproperty(vertical, :target_vertical_name) ?
+            vertical.target_vertical_name : "",
+        "target_coefficients" => hasproperty(vertical, :target_coefficients) ?
+            vertical.target_coefficients : "",
         "var_names" => var_names,
         "date" => Dates.format(date, "yyyy-mm-dd"),
         "spectral_half_dt_seconds" => settings.half_dt,

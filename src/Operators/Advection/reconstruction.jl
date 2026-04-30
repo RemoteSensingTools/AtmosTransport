@@ -237,7 +237,9 @@ end
     _slopes_face_flux(F, m_l, rm_l, sx_l, m_r, rm_r, sx_r) → FT
 
 Courant-fraction weighted tracer flux through a face with linear
-reconstruction (Russell & Lerner 1981, eqs. 8–12).
+reconstruction (Russell & Lerner 1981, eqs. 8–12). Shared by
+`SlopesScheme` and `PPMScheme` (PPM precomputes `sx` from its limited
+edge profile and reuses this kernel).
 
 # Arguments
 - `F`:    mass flux through the face [kg] (positive = left-to-right)
@@ -262,11 +264,49 @@ F_q = \\alpha \\bigl(r_{m,R} - (1 + \\alpha)\\, s_{x,R}\\bigr)
 
 Both branches are always evaluated (branchless `ifelse` for GPU safety);
 the unused branch's result is discarded.
+
+# Courant-fraction clamping
+
+`α_pos` is clamped to ``[0, 1]`` and `α_neg` to ``[-1, 0]`` before the
+multiplication. For well-behaved cells (CFL ≤ 1) the clamp is a no-op
+and the formula reduces exactly to Russell-Lerner. When the upstream
+mass goes very small or negative — `m → eps(FT)` via the `m_floor` guard
+in the calling reconstruction — the unclamped `α = F/eps` blows up and
+overflows through the `α·(rm + (1−α)·sx)` polynomial, producing NaN.
+The clamp saturates `α` at ±1, giving `f = ±rm_donor`, i.e. pure upwind
+transport of the donor's full tracer content. This is the same
+positivity safety net `_gamma_clamped_x_flux` provides for
+`UpwindScheme`. Mass conservation is preserved because both adjacent
+cells see the same clamped α (computed from the shared face's m_donor
+and the shared F).
+
+The cost is locally upwind-degraded accuracy in cells where the runtime
+CFL exceeds 1; for the well-behaved interior the slopes / PPM physics
+is bit-identical to the pre-clamp behavior.
 """
 @inline function _slopes_face_flux(F, m_l, rm_l, sx_l, m_r, rm_r, sx_r)
     FT = eltype(F)
-    α_pos = F / m_l
-    α_neg = F / m_r
+    # Defensive α clamp. With the LL→CS mass-regrid bug fixed (extensive `m`
+    # converted via density), the clamp is bit-exactly a no-op on the C180
+    # ERA5 Dec-2 path: empirical test (commit landing this fix) shows
+    # max|Δ| = 0 between clamp-on and clamp-off PPM runs. The clamp is kept
+    # as defensive in depth for two cases that can still produce |α| > 1:
+    #   (1) Panel-edge cells where the Poisson balance solver corrects
+    #       continuity by setting individual face fluxes that exceed cell
+    #       mass over the window (e.g. C180 panel-4 south edge cell at
+    #       lat 44°N has window-CFL ≈ 1.6 after balance).
+    #   (2) Future coarser grids or different met sources where per-substep
+    #       CFL exceeds 1 before the runtime's `_cs_static_subcycle_count`
+    #       can subdivide.
+    # Without the clamp, `α = F/eps` blows up and the polynomial overflows.
+    # With the clamp, α saturates at ±1 → degrades to upwind locally,
+    # mass-conservation preserved (both adjacent cells see the same α).
+    # TODO: replace with adaptive per-Strang sub-stepping that scales fluxes
+    # by 1/n_palindrome and runs n_palindrome inner Strang calls, matching
+    # the FV3 (`fv_tracer2d.F90:133-191`) / TM5 (Krol et al. 2005 §2.3)
+    # convention. At that point the clamp becomes dead code and can drop.
+    α_pos = clamp(F / m_l, zero(FT), one(FT))
+    α_neg = clamp(F / m_r, -one(FT), zero(FT))
     f_pos = α_pos * (rm_l + (one(FT) - α_pos) * sx_l)
     f_neg = α_neg * (rm_r - (one(FT) + α_neg) * sx_r)
     return ifelse(F >= zero(FT), f_pos, f_neg)

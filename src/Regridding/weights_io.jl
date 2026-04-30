@@ -29,7 +29,11 @@ end
 function _hash_mesh!(io::IO, m::CubedSphereMesh)
     write(io, "CubedSphereMesh\0")
     write(io, Int64(m.Nc))
+    write(io, String(cs_definition_tag(cs_definition(m))) * "\0")
+    write(io, coordinate_law_tag(coordinate_law(m)) * "\0")
+    write(io, center_law_tag(center_law(m)) * "\0")
     write(io, String(nameof(typeof(m.convention))) * "\0")
+    write(io, Float64(longitude_offset_deg(cs_definition(m))))
     write(io, Float64(m.radius))
     return io
 end

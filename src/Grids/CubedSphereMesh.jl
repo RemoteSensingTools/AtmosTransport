@@ -1,9 +1,11 @@
 # ---------------------------------------------------------------------------
 # CubedSphereMesh — structured cubed-sphere grid for src
 #
-# Equidistant gnomonic cubed-sphere with computed geometry (cell areas,
-# edge lengths) and panel connectivity. All panels share identical
-# metrics by symmetry; connectivity follows the GEOS-FP convention.
+# Multiple-dispatch cubed-sphere geometry with computed cell areas, edge
+# lengths, and panel connectivity. The coordinate law, center law, panel
+# ordering, and longitude offset are explicit because "cubed sphere" is not a
+# single geometry: GEOS-IT/GEOS-FP use the GMAO equal-distance gnomonic grid,
+# while older synthetic targets used an equiangular gnomonic construction.
 #
 # Geometry is computed at construction time from the gnomonic projection
 # using CubedSphere.SphericalGeometry for exact spherical area/distance.
@@ -15,7 +17,138 @@
 
 using CubedSphere.SphericalGeometry: spherical_area_quadrilateral, spherical_distance
 
+abstract type AbstractCubedSphereCoordinateLaw end
+abstract type AbstractCubedSphereCenterLaw end
 abstract type AbstractCubedSpherePanelConvention end
+abstract type AbstractCubedSphereDefinition end
+
+"""
+    EquiangularGnomonic <: AbstractCubedSphereCoordinateLaw
+
+Classical equiangular gnomonic face coordinate law.
+
+For edge index `s = 1, ..., Nc + 1`, the local angle is
+
+```math
+α_s = -π/4 + (s - 1) π / (2Nc),
+```
+
+and the tangent-plane coordinate used by the gnomonic projection is
+
+```math
+ξ_s = tan(α_s).
+```
+
+This law is useful for controlled synthetic targets and legacy binaries. It is
+not the native GEOS-IT/GEOS-FP cubed-sphere coordinate law.
+"""
+struct EquiangularGnomonic <: AbstractCubedSphereCoordinateLaw end
+
+raw"""
+    GMAOEqualDistanceGnomonic <: AbstractCubedSphereCoordinateLaw
+
+GMAO/GEOS equal-distance gnomonic edge coordinate law used by GEOS-IT C180 and
+GEOS-FP C720 cubed-sphere products.
+
+This is `grid_type = 0` in the GEOS/FV and ESMF cubed-sphere code path. Let
+
+```math
+r = 1 / \sqrt{3}, \qquad α_0 = \sin^{-1}(r).
+```
+
+For edge index `s = 1, ..., Nc + 1`, GEOS computes
+
+```math
+β_s = -\frac{α_0}{Nc}(Nc + 2 - 2s),
+\qquad
+b_s = \tan(β_s)\cos(α_0).
+```
+
+The unrotated panel-1 cube point is proportional to
+
+```math
+(r, b_i, b_j).
+```
+
+Equivalently, the tangent-plane coordinates passed to the common gnomonic
+panel map are `ξ_i = b_i / r`, `η_j = b_j / r`. This non-uniform edge law is
+what produces the GEOS C180 panel-1 meridional center spacing of roughly
+0.42° at the panel edges and 0.55° near the panel center.
+"""
+struct GMAOEqualDistanceGnomonic <: AbstractCubedSphereCoordinateLaw end
+
+"""
+    AngularMidpointCenter <: AbstractCubedSphereCenterLaw
+
+Cell-center law that evaluates the continuous face coordinate map at the
+midpoint of the logical cell:
+
+```math
+x_c(i,j) = x(i + 1/2, j + 1/2).
+```
+
+This matches the historical synthetic/equiangular `CubedSphereMesh` behavior.
+It is not how GEOS writes native C180/C720 center coordinates.
+"""
+struct AngularMidpointCenter <: AbstractCubedSphereCenterLaw end
+
+raw"""
+    FourCornerNormalizedCenter <: AbstractCubedSphereCenterLaw
+
+GEOS/FV/ESMF `cell_center2` center law.
+
+Given the four unit corner vectors of cell `(i,j)`,
+`v₁ = v(i,j)`, `v₂ = v(i+1,j)`, `v₃ = v(i+1,j+1)`,
+`v₄ = v(i,j+1)`, the center is
+
+```math
+v_c = \frac{v_1 + v_2 + v_3 + v_4}
+           {\|v_1 + v_2 + v_3 + v_4\|}.
+```
+
+GEOS-IT/GEOS-FP `lons`/`lats` arrays are written from this normalized
+four-corner sum after the GEOS cubed-sphere corners have been generated.
+"""
+struct FourCornerNormalizedCenter <: AbstractCubedSphereCenterLaw end
+
+"""
+    CubedSphereDefinition(coordinate_law, center_law, panel_convention;
+                          longitude_offset_deg=0, tag=:custom)
+
+Complete horizontal cubed-sphere definition.
+
+The definition is the geometry contract consumed by `CubedSphereMesh` and all
+derived helpers. It deliberately separates:
+
+- `coordinate_law`: how logical face edges are placed on the gnomonic cube,
+- `center_law`: how cell centers are derived from the face geometry,
+- `panel_convention`: how the six physical faces are ordered/oriented in file
+  arrays and halo connectivity,
+- `longitude_offset_deg`: a final rigid z-axis rotation applied to all panels.
+
+For native GMAO files use [`GMAOCubedSphereDefinition`](@ref), which combines
+`GMAOEqualDistanceGnomonic`, `FourCornerNormalizedCenter`,
+`GEOSNativePanelConvention`, and the GEOS `-10°` longitude shift.
+"""
+struct CubedSphereDefinition{L <: AbstractCubedSphereCoordinateLaw,
+                             C <: AbstractCubedSphereCenterLaw,
+                             P <: AbstractCubedSpherePanelConvention} <: AbstractCubedSphereDefinition
+    coordinate_law       :: L
+    center_law           :: C
+    panel_convention     :: P
+    longitude_offset_deg :: Float64
+    tag                  :: Symbol
+end
+
+function CubedSphereDefinition(law::L, center::C, convention::P;
+                               longitude_offset_deg::Real = 0,
+                               tag::Symbol = :custom) where {
+                               L <: AbstractCubedSphereCoordinateLaw,
+                               C <: AbstractCubedSphereCenterLaw,
+                               P <: AbstractCubedSpherePanelConvention}
+    return CubedSphereDefinition{L, C, P}(
+        law, center, convention, Float64(longitude_offset_deg), tag)
+end
 
 """
     GnomonicPanelConvention <: AbstractCubedSpherePanelConvention
@@ -28,10 +161,79 @@ struct GnomonicPanelConvention <: AbstractCubedSpherePanelConvention end
 """
     GEOSNativePanelConvention <: AbstractCubedSpherePanelConvention
 
-Panel numbering used by native GEOS-FP / GEOS-IT cubed-sphere files:
-panels 1-2 are equatorial, 3 is north-pole, 4-5 are equatorial, 6 is south-pole.
+Panel numbering and orientation used by native GEOS-FP / GEOS-IT cubed-sphere
+files: panels 1-2 are equatorial, 3 is north-pole, 4-5 are equatorial, and 6
+is south-pole.
+
+This type describes panel storage/order only. The GEOS `-10°` longitude shift
+and GMAO equal-distance coordinate law live in `GMAOCubedSphereDefinition`.
 """
 struct GEOSNativePanelConvention <: AbstractCubedSpherePanelConvention end
+
+"""
+    EquiangularCubedSphereDefinition(; convention=GnomonicPanelConvention(),
+                                      longitude_offset_deg=0)
+
+Legacy synthetic/equiangular cubed-sphere definition:
+`EquiangularGnomonic` corners plus `AngularMidpointCenter` centers.
+"""
+EquiangularCubedSphereDefinition(;
+    convention::AbstractCubedSpherePanelConvention = GnomonicPanelConvention(),
+    longitude_offset_deg::Real = 0,
+) = CubedSphereDefinition(EquiangularGnomonic(), AngularMidpointCenter(),
+                           convention;
+                           longitude_offset_deg = longitude_offset_deg,
+                           tag = :equiangular_gnomonic)
+
+"""
+    GMAOCubedSphereDefinition(; convention=GEOSNativePanelConvention(),
+                               longitude_offset_deg=-10)
+
+Native GMAO/GEOS cubed-sphere definition used by GEOS-IT C180 and GEOS-FP
+C720 files:
+
+- `GMAOEqualDistanceGnomonic` edge/corner law,
+- `FourCornerNormalizedCenter` (`cell_center2`) center law,
+- `GEOSNativePanelConvention` by default,
+- final `-10°` longitude shift away from the Japan corner.
+"""
+GMAOCubedSphereDefinition(;
+    convention::AbstractCubedSpherePanelConvention = GEOSNativePanelConvention(),
+    longitude_offset_deg::Real = -10,
+) = CubedSphereDefinition(GMAOEqualDistanceGnomonic(),
+                           FourCornerNormalizedCenter(),
+                           convention;
+                           longitude_offset_deg = longitude_offset_deg,
+                           tag = :gmao_equal_distance)
+
+"""
+    GEOSIT_C180(; FT=Float64, Hp=1, radius=6.371e6)
+    GEOSFP_C720(; FT=Float64, Hp=1, radius=6.371e6)
+
+Convenience constructors for the two native GMAO cubed-sphere targets used for
+GEOS-IT and GEOS-FP comparisons.
+"""
+GEOSIT_C180(; kwargs...) = CubedSphereMesh(; Nc = 180, definition = GMAOCubedSphereDefinition(), kwargs...)
+GEOSFP_C720(; kwargs...) = CubedSphereMesh(; Nc = 720, definition = GMAOCubedSphereDefinition(), kwargs...)
+
+coordinate_law(def::CubedSphereDefinition) = def.coordinate_law
+center_law(def::CubedSphereDefinition) = def.center_law
+panel_convention(def::CubedSphereDefinition) = def.panel_convention
+longitude_offset_deg(def::CubedSphereDefinition) = def.longitude_offset_deg
+cs_definition_tag(def::CubedSphereDefinition) = def.tag
+
+coordinate_law_tag(::EquiangularGnomonic) = "equiangular_gnomonic"
+coordinate_law_tag(::GMAOEqualDistanceGnomonic) = "gmao_equal_distance_gnomonic"
+center_law_tag(::AngularMidpointCenter) = "angular_midpoint"
+center_law_tag(::FourCornerNormalizedCenter) = "four_corner_normalized"
+
+function _default_cs_definition(convention::GnomonicPanelConvention)
+    return EquiangularCubedSphereDefinition(; convention)
+end
+
+function _default_cs_definition(convention::GEOSNativePanelConvention)
+    return GMAOCubedSphereDefinition(; convention)
+end
 
 """
     panel_connectivity_for(convention) -> PanelConnectivity
@@ -91,18 +293,19 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    CubedSphereMesh{FT, C} <: AbstractStructuredMesh
+    CubedSphereMesh{FT, C, D} <: AbstractStructuredMesh
 
-Equidistant gnomonic cubed-sphere with `Nc` cells per panel edge and 6 panels.
+Structured cubed-sphere mesh with `Nc` cells per panel edge and 6 panels.
 
 Cell areas and edge lengths are computed once at construction time from the
-gnomonic projection. All 6 panels share identical metrics by symmetry, so
-only one set is stored.
+definition's corner geometry. All 6 panels share identical metrics by symmetry,
+so only one set is stored.
 
 # Fields
 - `Nc :: Int` — cells per panel edge
 - `Hp :: Int` — halo padding width (1 for slopes, 3 for PPM)
 - `radius :: FT` — planet radius [m]
+- `definition :: D` — coordinate law + center law + panel convention contract
 - `convention :: C` — panel numbering convention
 - `connectivity :: PanelConnectivity` — edge-to-edge panel connectivity
 - `cell_areas :: Matrix{FT}` — `(Nc, Nc)` cell areas [m²] (one panel, all identical)
@@ -110,10 +313,12 @@ only one set is stored.
 - `Δy :: Matrix{FT}` — `(Nc, Nc)` y-direction cell widths [m]
 """
 struct CubedSphereMesh{FT <: AbstractFloat,
-                       C <: AbstractCubedSpherePanelConvention} <: AbstractStructuredMesh
+                       C <: AbstractCubedSpherePanelConvention,
+                       D <: AbstractCubedSphereDefinition} <: AbstractStructuredMesh
     Nc           :: Int
     Hp           :: Int
     radius       :: FT
+    definition   :: D
     convention   :: C
     connectivity :: PanelConnectivity
     cell_areas   :: Matrix{FT}
@@ -129,6 +334,15 @@ Base.eltype(::Type{<:CubedSphereMesh{FT}}) where FT = FT
 
 """Return the panel-numbering convention struct (Gnomonic or GEOSNative)."""
 @inline panel_convention(m::CubedSphereMesh) = m.convention
+
+"""Return the full cubed-sphere geometry definition carried by `mesh`."""
+@inline cs_definition(m::CubedSphereMesh) = m.definition
+
+"""Return the coordinate law carried by `mesh.definition`."""
+@inline coordinate_law(m::CubedSphereMesh) = coordinate_law(cs_definition(m))
+
+"""Return the center law carried by `mesh.definition`."""
+@inline center_law(m::CubedSphereMesh) = center_law(cs_definition(m))
 
 """
     panel_labels(convention) -> NTuple{6, Symbol}
@@ -171,38 +385,54 @@ end
 
 """
     CubedSphereMesh(; Nc, FT=Float64, Hp=1, radius=6.371e6,
-                      convention=GnomonicPanelConvention())
+                      convention=nothing, definition=nothing)
 
-Construct an equidistant gnomonic cubed-sphere mesh with `Nc` cells per panel
-edge. Cell areas and metric terms are computed from the gnomonic projection.
+Construct a cubed-sphere mesh with `Nc` cells per panel edge.
 
-The default convention is `GnomonicPanelConvention()` (panels 1-4 equatorial,
-5=north pole, 6=south pole), which matches all ERA5-CS binaries written by
-the preprocessing pipeline. Pass `convention=GEOSNativePanelConvention()` only
-when reading legacy GEOS-IT/FP binaries that use GEOS panel ordering.
+`definition` is the authoritative geometry contract. If omitted, the
+constructor chooses a definition from `convention`:
+
+- `GnomonicPanelConvention()` -> `EquiangularCubedSphereDefinition()`
+- `GEOSNativePanelConvention()` -> `GMAOCubedSphereDefinition()`
+
+This preserves legacy synthetic CS behavior for default meshes while making
+GEOS-IT/GEOS-FP targets use the actual GMAO equal-distance geometry whenever
+the GEOS-native panel convention is requested.
 
 # Keyword arguments
 - `Nc :: Int` — cells per panel edge (e.g. 48, 90, 180, 720)
 - `FT :: Type` — floating-point type (default `Float64`)
 - `Hp :: Int` — halo padding width (default 1 for slopes; use 3 for PPM)
 - `radius` — planet radius [m] (default Earth)
-- `convention` — panel numbering convention (default gnomonic)
+- `convention` — panel numbering convention used when `definition` is omitted
+- `definition` — full [`CubedSphereDefinition`](@ref); overrides `convention`
 """
 function CubedSphereMesh(; FT::Type{<:AbstractFloat} = Float64,
                            Nc::Int,
                            Hp::Int = 1,
                            radius = FT(6.371e6),
-                           convention::AbstractCubedSpherePanelConvention = GnomonicPanelConvention())
+                           convention = nothing,
+                           definition = nothing)
     Nc = _validate_cubed_sphere_size(Nc)
     Hp >= 0 || throw(ArgumentError("Hp must be non-negative, got $Hp"))
 
     R = FT(radius)
-    conn = panel_connectivity_for(convention)
+    conv = convention === nothing ? GnomonicPanelConvention() : convention
+    conv isa AbstractCubedSpherePanelConvention ||
+        throw(ArgumentError("convention must be an AbstractCubedSpherePanelConvention, got $(typeof(conv))"))
 
-    # Angular grid: uniform spacing in α ∈ [-π/4, π/4]
-    dα = FT(π) / (2 * Nc)
-    α_faces   = [FT(-π/4) + (i - 1) * dα for i in 1:(Nc + 1)]
-    α_centers = [(α_faces[i] + α_faces[i + 1]) / 2 for i in 1:Nc]
+    def = definition === nothing ? _default_cs_definition(conv) : definition
+    def isa AbstractCubedSphereDefinition ||
+        throw(ArgumentError("definition must be an AbstractCubedSphereDefinition, got $(typeof(def))"))
+    if definition !== nothing && convention !== nothing &&
+       typeof(panel_convention(def)) !== typeof(conv)
+        throw(ArgumentError("definition panel convention $(typeof(panel_convention(def))) " *
+                            "does not match convention $(typeof(conv)); pass only definition " *
+                            "or build a matching CubedSphereDefinition"))
+    end
+
+    conv = panel_convention(def)
+    conn = panel_connectivity_for(conv)
 
     areas = zeros(FT, Nc, Nc)
     dx    = zeros(FT, Nc, Nc)
@@ -211,30 +441,29 @@ function CubedSphereMesh(; FT::Type{<:AbstractFloat} = Float64,
     # Compute geometry for panel 1 — all panels are identical by symmetry
     p = 1
     for j in 1:Nc, i in 1:Nc
-        ξ1, ξ2 = tan(α_faces[i]), tan(α_faces[i + 1])
-        η1, η2 = tan(α_faces[j]), tan(α_faces[j + 1])
+        v1 = _corner_xyz(def, Nc, i,     j,     p, FT)
+        v2 = _corner_xyz(def, Nc, i + 1, j,     p, FT)
+        v3 = _corner_xyz(def, Nc, i + 1, j + 1, p, FT)
+        v4 = _corner_xyz(def, Nc, i,     j + 1, p, FT)
 
-        # Cell area: exact spherical quadrilateral area via Girard's theorem
-        v1 = _gnomonic_xyz(FT(ξ1), FT(η1), p)
-        v2 = _gnomonic_xyz(FT(ξ2), FT(η1), p)
-        v3 = _gnomonic_xyz(FT(ξ2), FT(η2), p)
-        v4 = _gnomonic_xyz(FT(ξ1), FT(η2), p)
+        # Cell area: exact spherical quadrilateral area via Girard's theorem.
         Ω = spherical_area_quadrilateral(v1, v2, v3, v4)
         areas[i, j] = R^2 * FT(Ω)
 
-        # Δx: great-circle distance between midpoints of west and east edges
-        mid_w = _gnomonic_xyz(FT(ξ1), FT(tan(α_centers[j])), p)
-        mid_e = _gnomonic_xyz(FT(ξ2), FT(tan(α_centers[j])), p)
+        # Δx/Δy are centerline great-circle distances between opposing edge
+        # midpoints. They are used as per-cell metric lengths by the flux
+        # reconstruction code.
+        mid_w = _normalize3(v1[1] + v4[1], v1[2] + v4[2], v1[3] + v4[3])
+        mid_e = _normalize3(v2[1] + v3[1], v2[2] + v3[2], v2[3] + v3[3])
         dx[i, j] = R * FT(spherical_distance(mid_w, mid_e))
 
-        # Δy: great-circle distance between midpoints of south and north edges
-        mid_s = _gnomonic_xyz(FT(tan(α_centers[i])), FT(η1), p)
-        mid_n = _gnomonic_xyz(FT(tan(α_centers[i])), FT(η2), p)
+        mid_s = _normalize3(v1[1] + v2[1], v1[2] + v2[2], v1[3] + v2[3])
+        mid_n = _normalize3(v4[1] + v3[1], v4[2] + v3[2], v4[3] + v3[3])
         dy[i, j] = R * FT(spherical_distance(mid_s, mid_n))
     end
 
-    return CubedSphereMesh{FT, typeof(convention)}(
-        Nc, Hp, R, convention, conn, areas, dx, dy)
+    return CubedSphereMesh{FT, typeof(conv), typeof(def)}(
+        Nc, Hp, R, def, conv, conn, areas, dx, dy)
 end
 
 # ---------------------------------------------------------------------------
@@ -244,7 +473,8 @@ end
 function Base.summary(m::CubedSphereMesh)
     FT = eltype(m)
     conv = nameof(typeof(panel_convention(m)))
-    return string("C", m.Nc, " CubedSphereMesh{", FT, ", ", conv, "}")
+    def = cs_definition_tag(cs_definition(m))
+    return string("C", m.Nc, " CubedSphereMesh{", FT, ", ", conv, ", ", def, "}")
 end
 
 function Base.show(io::IO, m::CubedSphereMesh)
@@ -252,6 +482,8 @@ function Base.show(io::IO, m::CubedSphereMesh)
           "├── panels:    ", panel_count(m), " with ", m.Nc, "×", m.Nc, " cells each\n",
           "├── halo:      ", m.Hp, " cells\n",
           "├── ordering:  ", join(string.(panel_labels(m)), ", "), "\n",
+          "├── coord law: ", coordinate_law_tag(coordinate_law(m)), "\n",
+          "├── center:    ", center_law_tag(center_law(m)), "\n",
           "├── Δx range:  ", round(minimum(m.Δx)/1e3, digits=2), "–",
                              round(maximum(m.Δx)/1e3, digits=2), " km\n",
           "└── radius:    ", m.radius, " m")
@@ -269,11 +501,36 @@ end
     return lon, lat
 end
 
+@inline _dot3(ax, ay, az, bx, by, bz) = ax * bx + ay * by + az * bz
+
+@inline function _normalize3(x, y, z)
+    n = sqrt(x^2 + y^2 + z^2)
+    invn = inv(max(n, eps(typeof(n))))
+    return (x * invn, y * invn, z * invn)
+end
+
 @inline function _rotate_z_lon_offset(x::FT, y::FT, z::FT, offset_deg::Real) where FT
     θ = FT(deg2rad(offset_deg))
     c = cos(θ)
     s = sin(θ)
     return (c * x - s * y, s * x + c * y, z)
+end
+
+@inline function _edge_tangent_coordinate(::EquiangularGnomonic,
+                                          s::Real, Nc::Int,
+                                          ::Type{FT}) where FT
+    α = -FT(π) / 4 + (FT(s) - one(FT)) * (FT(π) / (2 * FT(Nc)))
+    return tan(α)
+end
+
+@inline function _edge_tangent_coordinate(::GMAOEqualDistanceGnomonic,
+                                          s::Real, Nc::Int,
+                                          ::Type{FT}) where FT
+    r = inv(sqrt(FT(3)))
+    α0 = asin(r)
+    β = -(α0 / FT(Nc)) * (FT(Nc) + FT(2) - FT(2) * FT(s))
+    b = tan(β) * cos(α0)
+    return b / r
 end
 
 @inline function _panel_xyz(::GnomonicPanelConvention, ξ::FT, η::FT, panel::Int) where FT
@@ -286,14 +543,22 @@ end
 GEOS-FP/GEOS-IT native cubed-sphere coordinates for arrays exposed by
 NCDatasets as `(Xdim, Ydim, nf, ...)`.
 
-GEOS native files use panel order `1, 2, north, 4, 5, south` and a global
-longitude offset of `-10°` relative to the classical gnomonic cube. Panels 4
-and 5 are stored with their `Ydim` direction reversed relative to the
-corresponding gnomonic equatorial panels. Panel 3 (north pole) is stored with a
-quarter-turn so its lower-left corner starts at ~35°E, matching the
-`corner_lons/corner_lats` arrays in GEOS C180/C720 grid files.
+GEOS native files use panel order `1, 2, north, 4, 5, south`. Panels 4 and 5
+are stored with a quarter-turn relative to the mathematical gnomonic panel
+order. Panel 3 (north pole) is stored with a quarter-turn so its lower-left
+corner starts at ~35°E after the GMAO `-10°` longitude shift.
+
+This method applies panel orientation only. The longitude shift is applied by
+`_panel_xyz(definition, ξ, η, panel)`.
 """
 @inline function _panel_xyz(::GEOSNativePanelConvention, ξ::FT, η::FT, panel::Int) where FT
+    # Panels 4 and 5 are 90° CW rotated relative to gnomonic (the file-axis
+    # `i` is the *latitude* index, `j` is the longitude index — opposite of
+    # the gnomonic convention). The earlier `(ξ, -η)` Y-flip produced
+    # ~89° lon disagreement at off-diagonal corners against the actual
+    # `lons`, `lats` arrays inside GEOS-IT C180 NetCDFs (validated against
+    # GEOSIT.20211202.A3dyn.C180.nc on 2026-04-29). The 90° CW rotation
+    # `(η, -ξ)` reproduces those arrays at every off-diagonal cell.
     ξg, ηg, gpanel = if panel == 1
         (ξ, η, 1)
     elseif panel == 2
@@ -301,16 +566,64 @@ quarter-turn so its lower-left corner starts at ~35°E, matching the
     elseif panel == 3
         (-η, ξ, 5)
     elseif panel == 4
-        (ξ, -η, 3)
+        (η, -ξ, 3)
     elseif panel == 5
-        (ξ, -η, 4)
+        (η, -ξ, 4)
     elseif panel == 6
         (ξ, η, 6)
     else
         throw(ArgumentError("invalid GEOS native panel id $panel"))
     end
-    x, y, z = _gnomonic_xyz(ξg, ηg, gpanel)
-    return _rotate_z_lon_offset(x, y, z, -10)
+    return _gnomonic_xyz(ξg, ηg, gpanel)
+end
+
+@inline function _panel_xyz(def::CubedSphereDefinition, ξ::FT, η::FT,
+                           panel::Int) where FT
+    x, y, z = _panel_xyz(panel_convention(def), ξ, η, panel)
+    offset = longitude_offset_deg(def)
+    return iszero(offset) ? (x, y, z) : _rotate_z_lon_offset(x, y, z, offset)
+end
+
+@inline function _continuous_panel_xyz(def::CubedSphereDefinition, Nc::Int,
+                                       s::Real, t::Real, panel::Int,
+                                       ::Type{FT}) where FT
+    law = coordinate_law(def)
+    ξ = _edge_tangent_coordinate(law, s, Nc, FT)
+    η = _edge_tangent_coordinate(law, t, Nc, FT)
+    return _panel_xyz(def, ξ, η, panel)
+end
+
+@inline function _corner_xyz(def::CubedSphereDefinition, Nc::Int,
+                             i::Integer, j::Integer, panel::Int,
+                             ::Type{FT}) where FT
+    return _continuous_panel_xyz(def, Nc, i, j, panel, FT)
+end
+
+@inline function _cell_center_xyz(def::CubedSphereDefinition,
+                                  ::AngularMidpointCenter,
+                                  Nc::Int, i::Integer, j::Integer,
+                                  panel::Int, ::Type{FT}) where FT
+    return _continuous_panel_xyz(def, Nc, FT(i) + FT(0.5), FT(j) + FT(0.5),
+                                 panel, FT)
+end
+
+@inline function _cell_center_xyz(def::CubedSphereDefinition,
+                                  ::FourCornerNormalizedCenter,
+                                  Nc::Int, i::Integer, j::Integer,
+                                  panel::Int, ::Type{FT}) where FT
+    v1 = _corner_xyz(def, Nc, i,     j,     panel, FT)
+    v2 = _corner_xyz(def, Nc, i + 1, j,     panel, FT)
+    v3 = _corner_xyz(def, Nc, i + 1, j + 1, panel, FT)
+    v4 = _corner_xyz(def, Nc, i,     j + 1, panel, FT)
+    return _normalize3(v1[1] + v2[1] + v3[1] + v4[1],
+                       v1[2] + v2[2] + v3[2] + v4[2],
+                       v1[3] + v2[3] + v3[3] + v4[3])
+end
+
+@inline function _cell_center_xyz(def::CubedSphereDefinition, Nc::Int,
+                                  i::Integer, j::Integer, panel::Int,
+                                  ::Type{FT}) where FT
+    return _cell_center_xyz(def, center_law(def), Nc, i, j, panel, FT)
 end
 
 """
@@ -324,21 +637,24 @@ The `Nc` method is the classical gnomonic convention. The mesh method honors
 `panel_convention(mesh)`, including GEOS-native panel ordering and orientation.
 """
 function panel_cell_center_lonlat(Nc::Int, panel::Int, FT::Type{<:AbstractFloat})
-    return _panel_cell_center_lonlat(Nc, panel, FT, GnomonicPanelConvention())
+    return _panel_cell_center_lonlat(Nc, panel, FT, EquiangularCubedSphereDefinition())
 end
 
 function panel_cell_center_lonlat(mesh::CubedSphereMesh{FT}, panel::Int) where FT
-    return _panel_cell_center_lonlat(mesh.Nc, panel, FT, mesh.convention)
+    return _panel_cell_center_lonlat(mesh.Nc, panel, FT, cs_definition(mesh))
 end
 
 function _panel_cell_center_lonlat(Nc::Int, panel::Int, FT::Type{<:AbstractFloat},
                                    convention::AbstractCubedSpherePanelConvention)
-    dα = FT(π) / (2 * Nc)
-    α_centers = [FT(-π/4) + (i - FT(0.5)) * dα for i in 1:Nc]
+    return _panel_cell_center_lonlat(Nc, panel, FT, _default_cs_definition(convention))
+end
+
+function _panel_cell_center_lonlat(Nc::Int, panel::Int, FT::Type{<:AbstractFloat},
+                                   def::CubedSphereDefinition)
     lons = zeros(FT, Nc, Nc)
     lats = zeros(FT, Nc, Nc)
     for j in 1:Nc, i in 1:Nc
-        x, y, z = _panel_xyz(convention, tan(α_centers[i]), tan(α_centers[j]), panel)
+        x, y, z = _cell_center_xyz(def, Nc, i, j, panel, FT)
         lons[i, j], lats[i, j] = _xyz_to_lonlat(x, y, z)
     end
     return lons, lats
@@ -352,37 +668,32 @@ Return `(Nc+1, Nc+1)` arrays of cell-corner longitudes and latitudes in
 degrees. The mesh method honors `panel_convention(mesh)`.
 """
 function panel_cell_corner_lonlat(Nc::Int, panel::Int, FT::Type{<:AbstractFloat})
-    return _panel_cell_corner_lonlat(Nc, panel, FT, GnomonicPanelConvention())
+    return _panel_cell_corner_lonlat(Nc, panel, FT, EquiangularCubedSphereDefinition())
 end
 
 function panel_cell_corner_lonlat(mesh::CubedSphereMesh{FT}, panel::Int) where FT
-    return _panel_cell_corner_lonlat(mesh.Nc, panel, FT, mesh.convention)
+    return _panel_cell_corner_lonlat(mesh.Nc, panel, FT, cs_definition(mesh))
 end
 
 function _panel_cell_corner_lonlat(Nc::Int, panel::Int, FT::Type{<:AbstractFloat},
                                    convention::AbstractCubedSpherePanelConvention)
-    dα = FT(π) / (2 * Nc)
-    α_faces = [FT(-π/4) + (i - 1) * dα for i in 1:(Nc + 1)]
+    return _panel_cell_corner_lonlat(Nc, panel, FT, _default_cs_definition(convention))
+end
+
+function _panel_cell_corner_lonlat(Nc::Int, panel::Int, FT::Type{<:AbstractFloat},
+                                   def::CubedSphereDefinition)
     lons = zeros(FT, Nc + 1, Nc + 1)
     lats = zeros(FT, Nc + 1, Nc + 1)
     for j in 1:(Nc + 1), i in 1:(Nc + 1)
-        x, y, z = _panel_xyz(convention, tan(α_faces[i]), tan(α_faces[j]), panel)
+        x, y, z = _corner_xyz(def, Nc, i, j, panel, FT)
         lons[i, j], lats[i, j] = _xyz_to_lonlat(x, y, z)
     end
     return lons, lats
 end
 
-@inline _dot3(ax, ay, az, bx, by, bz) = ax * bx + ay * by + az * bz
-
-@inline function _normalize3(x, y, z)
-    n = sqrt(x^2 + y^2 + z^2)
-    invn = inv(max(n, eps(typeof(n))))
-    return (x * invn, y * invn, z * invn)
-end
-
-@inline function _panel_unit_xyz(convention::AbstractCubedSpherePanelConvention,
-                                α::Float64, β::Float64, panel::Int)
-    x, y, z = _panel_xyz(convention, tan(α), tan(β), panel)
+@inline function _panel_unit_xyz(def::CubedSphereDefinition, Nc::Int,
+                                s::Float64, t::Float64, panel::Int)
+    x, y, z = _continuous_panel_xyz(def, Nc, s, t, panel, Float64)
     return _normalize3(x, y, z)
 end
 
@@ -416,8 +727,8 @@ preprocessing wind rotation.
 """
 function panel_cell_local_tangent_basis(mesh::CubedSphereMesh{FT}, panel::Int) where FT
     Nc = mesh.Nc
-    dα = π / (2 * Nc)
-    h = min(1.0e-6, 0.01 * dα)
+    def = cs_definition(mesh)
+    h = 1.0e-6
 
     x_east  = zeros(FT, Nc, Nc)
     x_north = zeros(FT, Nc, Nc)
@@ -425,14 +736,14 @@ function panel_cell_local_tangent_basis(mesh::CubedSphereMesh{FT}, panel::Int) w
     y_north = zeros(FT, Nc, Nc)
 
     for j in 1:Nc, i in 1:Nc
-        α = -π / 4 + (i - 0.5) * dα
-        β = -π / 4 + (j - 0.5) * dα
+        s = i + 0.5
+        t = j + 0.5
 
-        x0, y0, z0 = _panel_unit_xyz(mesh.convention, α, β, panel)
-        xp, yp, zp = _panel_unit_xyz(mesh.convention, α + h, β, panel)
-        xm, ym, zm = _panel_unit_xyz(mesh.convention, α - h, β, panel)
-        xq, yq, zq = _panel_unit_xyz(mesh.convention, α, β + h, panel)
-        xr, yr, zr = _panel_unit_xyz(mesh.convention, α, β - h, panel)
+        x0, y0, z0 = _cell_center_xyz(def, Nc, i, j, panel, Float64)
+        xp, yp, zp = _panel_unit_xyz(def, Nc, s + h, t, panel)
+        xm, ym, zm = _panel_unit_xyz(def, Nc, s - h, t, panel)
+        xq, yq, zq = _panel_unit_xyz(def, Nc, s, t + h, panel)
+        xr, yr, zr = _panel_unit_xyz(def, Nc, s, t - h, panel)
 
         dx = ((xp - xm) / (2h), (yp - ym) / (2h), (zp - zm) / (2h))
         dy = ((xq - xr) / (2h), (yq - yr) / (2h), (zq - zr) / (2h))
@@ -454,8 +765,15 @@ function panel_cell_local_tangent_basis(mesh::CubedSphereMesh{FT}, panel::Int) w
     return (x_east, x_north, y_east, y_north)
 end
 
-export AbstractCubedSpherePanelConvention
+export AbstractCubedSphereCoordinateLaw, AbstractCubedSphereCenterLaw
+export AbstractCubedSpherePanelConvention, AbstractCubedSphereDefinition
+export EquiangularGnomonic, GMAOEqualDistanceGnomonic
+export AngularMidpointCenter, FourCornerNormalizedCenter
+export CubedSphereDefinition, EquiangularCubedSphereDefinition, GMAOCubedSphereDefinition
+export GEOSIT_C180, GEOSFP_C720
 export GnomonicPanelConvention, GEOSNativePanelConvention, panel_connectivity_for
-export CubedSphereMesh, panel_count, panel_convention, panel_labels
+export CubedSphereMesh, panel_count, panel_convention, panel_labels, cs_definition
+export coordinate_law, center_law, longitude_offset_deg, cs_definition_tag
+export coordinate_law_tag, center_law_tag
 export panel_cell_center_lonlat, panel_cell_corner_lonlat
 export panel_cell_local_tangent_basis

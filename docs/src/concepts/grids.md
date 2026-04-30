@@ -13,7 +13,7 @@ the grid in a run config — only in a preprocessing config.
 |---|---|---|---|
 | Regular lat-lon | `LatLonMesh{FT}` | `(i, j)` ∈ `(1..Nx, 1..Ny)` | ERA5 spectral preprocess; coarse / mid-resolution comparison runs. |
 | Reduced Gaussian | `ReducedGaussianMesh{FT}` | `(c)` ∈ `(1..ncells)`, with `nlon_per_ring[j]` cells in latitude ring `j` | ERA5 native grid (e.g. `O90`, `O160`, `N320`); finer at the equator without polar over-sampling. |
-| Cubed-sphere | `CubedSphereMesh{FT, C}` | `(p, i, j)` per panel `p ∈ 1..6`, cell `(i, j) ∈ (1..Nc, 1..Nc)` | GEOS native (FV3); equiangular gnomonic / GEOS-native panel conventions. |
+| Cubed-sphere | `CubedSphereMesh{FT, C, D}` | `(p, i, j)` per panel `p ∈ 1..6`, cell `(i, j) ∈ (1..Nc, 1..Nc)` | Synthetic equiangular CS, GEOS-IT C180, GEOS-FP C720. |
 
 All three subtype `AbstractHorizontalMesh` and are wrapped in
 `AtmosGrid{H, V, Arch, P, FT}` together with a vertical coordinate
@@ -158,20 +158,65 @@ Per-ring meridional faces use a least-common-multiple segmentation
 between adjacent rings — necessary so flux conservation holds across
 ring boundaries with different `nlon`.
 
-## `CubedSphereMesh{FT, C}`
+## `CubedSphereMesh{FT, C, D}`
 
-A six-panel equiangular cubed-sphere mesh of resolution `Nc × Nc` per
-panel. Constructor:
+A six-panel cubed-sphere mesh of resolution `Nc × Nc` per panel. The mesh
+stores a full cubed-sphere **definition** rather than assuming that all CS
+grids are the same geometry. Constructor:
 
 ```julia
 mesh = CubedSphereMesh(; Nc,
                         FT         = Float64,
                         radius     = R_EARTH,
-                        convention = GnomonicPanelConvention())
+                        convention = GnomonicPanelConvention(),
+                        definition = nothing)
+
+geos_it = GEOSIT_C180()
+geos_fp = GEOSFP_C720()
 ```
 
 User-touched fields: `Nc` (cells per panel edge), `Hp` (halo width),
-`radius`, `convention`, `connectivity`, `cell_areas`, `Δx`, `Δy`.
+`radius`, `definition`, `convention`, `connectivity`, `cell_areas`, `Δx`,
+`Δy`.
+
+### Cubed-sphere definitions
+
+The definition is the geometry contract:
+
+| Component | Meaning | Main implementations |
+|---|---|---|
+| Coordinate law | Places logical face edges on the cube/gnomonic plane. | `EquiangularGnomonic`, `GMAOEqualDistanceGnomonic` |
+| Center law | Computes `(lon, lat)` cell centers from the face geometry. | `AngularMidpointCenter`, `FourCornerNormalizedCenter` |
+| Panel convention | Orders/orients the six panels in file/index space. | `GnomonicPanelConvention`, `GEOSNativePanelConvention` |
+| Longitude offset | Final rigid rotation about the polar axis. | `0°` for synthetic, `-10°` for GEOS |
+
+`EquiangularCubedSphereDefinition()` is the legacy synthetic target. It uses
+
+```math
+\xi_s = \tan\left(-\frac{\pi}{4} + (s-1)\frac{\pi}{2N_c}\right)
+```
+
+and evaluates centers at the logical midpoint `(i+1/2, j+1/2)`.
+
+`GMAOCubedSphereDefinition()` is the native GEOS target used by GEOS-IT C180
+and GEOS-FP C720. It uses the GMAO equal-distance gnomonic edge law
+
+```math
+r = 1/\sqrt{3}, \quad \alpha_0 = \sin^{-1}(r), \quad
+\beta_s = -\frac{\alpha_0}{N_c}(N_c + 2 - 2s),
+\quad \xi_s = \frac{\tan(\beta_s)\cos(\alpha_0)}{r}.
+```
+
+Cell centers use the GEOS/FV `cell_center2` rule:
+
+```math
+v_c = \frac{v_1 + v_2 + v_3 + v_4}
+           {\lVert v_1 + v_2 + v_3 + v_4\rVert},
+```
+
+where `v₁..v₄` are the unit corner vectors of the cell. This is the rule that
+reproduces GEOS-IT C180, panel 1, cell `(i=90, j=140)` at
+`lat = 26.468021°` and the native 0.42°/0.55° meridional spacing pattern.
 
 ### Panel conventions
 
@@ -181,6 +226,11 @@ Two panel orderings ship today:
 |---|---|
 | `GnomonicPanelConvention()` | Panels 1–4 around the equator; panel 5 north pole; panel 6 south pole. |
 | `GEOSNativePanelConvention()` | GEOS-FP / GEOS-IT native ordering: panels 1–2 + 4–5 around the equator; panel 3 north; panel 6 south. |
+
+The convention is only the panel file order/orientation. Native GEOS geometry
+also requires `GMAOEqualDistanceGnomonic`, `FourCornerNormalizedCenter`, and
+the `-10°` longitude offset; use `GMAOCubedSphereDefinition()` or the
+`GEOSIT_C180()` / `GEOSFP_C720()` constructors for those targets.
 
 ```@raw html
 <figure>

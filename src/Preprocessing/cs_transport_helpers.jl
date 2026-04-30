@@ -141,35 +141,90 @@ end
 # Conservative LL → CS regridding
 # ---------------------------------------------------------------------------
 
+# Per-kind density correction. `Intensive` is a no-op so the hot loop
+# elides entirely under @inline. `Extensive` applies the supplied `op`
+# (`/` before regrid, `*` after) elementwise across the spatial axis.
+# `Vector` / `Flux` kinds throw immediately — those paths don't go through
+# scalar regridding.
+@inline _density_correct!(buf, ::Any, ::Any, ::IntensiveCellField) = buf
+
+@inline function _density_correct!(buf::AbstractMatrix, areas, op::F,
+                                    ::ExtensiveCellField) where F
+    @inbounds for k in axes(buf, 2), i in eachindex(areas)
+        buf[i, k] = op(buf[i, k], areas[i])
+    end
+    return buf
+end
+
+@inline function _density_correct!(buf::AbstractVector, areas, op::F,
+                                    ::ExtensiveCellField) where F
+    @inbounds for i in eachindex(areas)
+        buf[i] = op(buf[i], areas[i])
+    end
+    return buf
+end
+
+_density_correct!(::Any, ::Any, ::Any, ::HorizontalVectorField) =
+    throw(ArgumentError("HorizontalVectorField is not a scalar regrid; \
+use component-wise IntensiveCellField regrid + rotate_winds_to_panel_local!"))
+
+_density_correct!(::Any, ::Any, ::Any, ::HorizontalFluxField) =
+    throw(ArgumentError("HorizontalFluxField is not a scalar regrid; \
+fluxes are reconstructed from regridded winds via reconstruct_cs_fluxes!"))
+
 """
-    regrid_3d_to_cs_panels!(panels, regridder, src_3d, ws, Nc)
+    regrid_3d_to_cs_panels!(panels, regridder, src_3d, ws, Nc,
+                             kind::QuantityKind = IntensiveCellField())
 
 Conservatively regrid a 3D LL field `(Nx, Ny, Nz)` to 6 CS panels `(Nc, Nc, Nz)`.
+
+`kind` declares the field's regrid semantics; dispatch goes through
+[`_density_correct!`](@ref):
+
+- [`IntensiveCellField`](@ref) (default): pass-through to `apply_regridder!`.
+  Use for `ps`, `qv`, `T`, cell-center wind components, mixing ratios.
+- [`ExtensiveCellField`](@ref): density-convert with
+  `regridder.src_areas` / `regridder.dst_areas`. Required for `m` (kg/cell)
+  and any per-cell integral; without it the LL polar cells (230× smaller
+  area than equator) drag CS polar mass to ~8% of physical and trigger
+  runtime CFL inflation.
+- [`HorizontalVectorField`](@ref) / [`HorizontalFluxField`](@ref): not
+  handled here. Winds need component-wise intensive regrid plus rotation
+  (`rotate_winds_to_panel_local!`); face fluxes are reconstructed from
+  regridded winds. Calling those kinds errors out.
+
 Uses `ws.src_flat_3d` and `ws.dst_flat_3d` as scratch buffers.
 """
 function regrid_3d_to_cs_panels!(panels::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
                                   regridder,
                                   src_3d::AbstractArray{<:Real, 3},
                                   ws::CubedSpherePreprocessWorkspace{FT},
-                                  Nc::Int) where FT
+                                  Nc::Int,
+                                  kind::QuantityKind = IntensiveCellField()) where FT
     Nz = size(src_3d, 3)
     copyto!(ws.src_flat_3d, reshape(src_3d, size(ws.src_flat_3d)...))
+    _density_correct!(ws.src_flat_3d, regridder.src_areas, /, kind)
     apply_regridder!(ws.dst_flat_3d, regridder, ws.src_flat_3d)
+    _density_correct!(ws.dst_flat_3d, regridder.dst_areas, *, kind)
     return unpack_flat_to_panels_3d!(panels, ws.dst_flat_3d, Nc, Nz)
 end
 
 """
-    regrid_2d_to_cs_panels!(panels, regridder, src_2d, ws, Nc)
+    regrid_2d_to_cs_panels!(panels, regridder, src_2d, ws, Nc,
+                             kind::QuantityKind = IntensiveCellField())
 
-Conservatively regrid a 2D LL field `(Nx, Ny)` to 6 CS panels `(Nc, Nc)`.
+2D analogue of [`regrid_3d_to_cs_panels!`](@ref); same dispatch contract.
 """
 function regrid_2d_to_cs_panels!(panels::NTuple{CS_PANEL_COUNT, Matrix{FT}},
                                   regridder,
                                   src_2d::AbstractArray{<:Real, 2},
                                   ws::CubedSpherePreprocessWorkspace{FT},
-                                  Nc::Int) where FT
+                                  Nc::Int,
+                                  kind::QuantityKind = IntensiveCellField()) where FT
     copyto!(ws.src_flat_2d, reshape(src_2d, size(ws.src_flat_2d)...))
+    _density_correct!(ws.src_flat_2d, regridder.src_areas, /, kind)
     apply_regridder!(ws.dst_flat_2d, regridder, ws.src_flat_2d)
+    _density_correct!(ws.dst_flat_2d, regridder.dst_areas, *, kind)
     return unpack_flat_to_panels_2d!(panels, ws.dst_flat_2d, Nc)
 end
 
@@ -300,43 +355,21 @@ function reconstruct_cs_fluxes!(am_panels::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
 end
 
 # ---------------------------------------------------------------------------
-# Per-level mass consistency correction
+# (REMOVED) Per-level mass consistency correction
+#
+# The old `_enforce_perlevel_mass_consistency!` applied a uniform additive
+# offset per level after regridding `m` directly through `apply_regridder!`.
+# It made the per-level *sum* match the source but did not fix the spatial
+# distortion introduced by treating an extensive field (`m` in kg/cell) as
+# intensive (kg/m²). On the LL→C180 path that distortion produced ~12×
+# polar mass deficits.
+#
+# The fix is now upstream: callers regrid `m` via
+# `regrid_3d_to_cs_panels!(..., ExtensiveCellField())`, which converts
+# through density on both sides and preserves the spatial distribution by
+# construction. With that path in place the band-aid is unnecessary and
+# was removed (see commit history for the previous implementation).
 # ---------------------------------------------------------------------------
-
-"""
-    _enforce_perlevel_mass_consistency!(m_cs, m_ll, Nc, Nz)
-
-Adjust regridded CS mass panels so that the global sum at each level matches
-the source LL grid's sum. Conservative regridding preserves total mass but can
-shift the per-level distribution by O(10⁻⁶) relative. This small uniform
-correction ensures Σ(m_next - m_cur) = 0 per level, which is required for the
-Poisson balance on a closed sphere (where Σ div_h = 0 topologically).
-
-The correction is applied to the regridded m BEFORE it's stored, so the
-binary's m and the balance target are consistent (no hidden projection).
-"""
-function _enforce_perlevel_mass_consistency!(m_cs::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
-                                              m_ll::AbstractArray{<:Real, 3},
-                                              Nc::Int, Nz::Int) where FT
-    nc_cs = CS_PANEL_COUNT * Nc * Nc
-    for k in 1:Nz
-        # Target: sum of LL mass at this level
-        ll_sum = sum(view(m_ll, :, :, k))
-
-        # Current: sum of CS mass at this level
-        cs_sum = zero(FT)
-        for p in 1:CS_PANEL_COUNT, j in 1:Nc, i in 1:Nc
-            cs_sum += m_cs[p][i, j, k]
-        end
-
-        # Uniform additive correction per CS cell
-        offset = (ll_sum - cs_sum) / nc_cs
-        for p in 1:CS_PANEL_COUNT, j in 1:Nc, i in 1:Nc
-            m_cs[p][i, j, k] += offset
-        end
-    end
-    return nothing
-end
 
 # ---------------------------------------------------------------------------
 # East/north → panel-local wind rotation

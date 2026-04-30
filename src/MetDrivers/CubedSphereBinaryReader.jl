@@ -31,6 +31,10 @@ struct CubedSphereBinaryHeader
     steps_per_window :: Int
     mass_basis       :: Symbol
     panel_convention :: Symbol   # :gnomonic or :geos_native
+    cs_definition    :: Symbol
+    coordinate_law   :: Symbol
+    center_law       :: Symbol
+    longitude_offset_deg :: Float64
     A_ifc            :: Vector{Float64}
     B_ifc            :: Vector{Float64}
     payload_sections :: Vector{Symbol}
@@ -87,6 +91,23 @@ function CubedSphereBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = F
         @warn "Unknown panel_convention '$panel_convention_str' in binary header, defaulting to gnomonic"
         :gnomonic
     end
+    default_geometry = panel_convention === :geos_native ?
+        (; cs_definition = :gmao_equal_distance,
+           coordinate_law = :gmao_equal_distance_gnomonic,
+           center_law = :four_corner_normalized,
+           longitude_offset_deg = -10.0) :
+        (; cs_definition = :equiangular_gnomonic,
+           coordinate_law = :equiangular_gnomonic,
+           center_law = :angular_midpoint,
+           longitude_offset_deg = 0.0)
+    cs_definition = Symbol(replace(lowercase(String(get(hdr, :cs_definition,
+        String(default_geometry.cs_definition)))), '-' => '_', ' ' => '_'))
+    coordinate_law = Symbol(replace(lowercase(String(get(hdr, :cs_coordinate_law,
+        get(hdr, :coordinate_law, String(default_geometry.coordinate_law))))), '-' => '_', ' ' => '_'))
+    center_law = Symbol(replace(lowercase(String(get(hdr, :cs_center_law,
+        get(hdr, :center_law, String(default_geometry.center_law))))), '-' => '_', ' ' => '_'))
+    longitude_offset_deg = Float64(get(hdr, :longitude_offset_deg,
+                                       default_geometry.longitude_offset_deg))
     A_ifc = Float64.(collect(hdr.A_ifc))
     B_ifc = Float64.(collect(hdr.B_ifc))
 
@@ -96,7 +117,9 @@ function CubedSphereBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = F
 
     cs_header = CubedSphereBinaryHeader(
         Nc, npanel, nlevel, nwindow, header_bytes, float_bytes,
-        dt_met, steps_per_window, mass_basis, panel_convention, A_ifc, B_ifc,
+        dt_met, steps_per_window, mass_basis, panel_convention,
+        cs_definition, coordinate_law, center_law, longitude_offset_deg,
+        A_ifc, B_ifc,
         payload_sections, elems_per_window,
         Dict{String, Any}(String(k) => v for (k, v) in pairs(hdr))
     )
@@ -112,6 +135,25 @@ function CubedSphereBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = F
     data = FT === DiskFT ? raw_data : FT.(raw_data)
 
     return CubedSphereBinaryReader{FT}(data, io, cs_header, bin_path)
+end
+
+function _cs_coordinate_law_from_symbol(sym::Symbol)
+    sym in (:equiangular, :equiangular_gnomonic, :legacy) &&
+        return EquiangularGnomonic()
+    sym in (:gmao, :geos, :gmao_equal_distance,
+            :gmao_equal_distance_gnomonic, :geos_equal_distance_gnomonic) &&
+        return GMAOEqualDistanceGnomonic()
+    @warn "Unrecognised CS coordinate law :$sym, defaulting to equiangular"
+    return EquiangularGnomonic()
+end
+
+function _cs_center_law_from_symbol(sym::Symbol)
+    sym in (:angular_midpoint, :midpoint, :legacy) &&
+        return AngularMidpointCenter()
+    sym in (:four_corner_normalized, :cell_center2, :geos_cell_center2) &&
+        return FourCornerNormalizedCenter()
+    @warn "Unrecognised CS center law :$sym, defaulting to angular_midpoint"
+    return AngularMidpointCenter()
 end
 
 # ---------------------------------------------------------------------------
@@ -333,5 +375,23 @@ function mesh_convention(reader::CubedSphereBinaryReader)
     end
 end
 
+"""
+    mesh_definition(reader::CubedSphereBinaryReader) -> CubedSphereDefinition
+
+Return the full cubed-sphere geometry definition declared in the binary
+header. New binaries record `cs_coordinate_law`, `cs_center_law`,
+`panel_convention`, and `longitude_offset_deg`; older binaries are upgraded by
+convention (`geos_native` -> GMAO equal-distance, `gnomonic` -> legacy
+equiangular).
+"""
+function mesh_definition(reader::CubedSphereBinaryReader)
+    h = reader.header
+    return CubedSphereDefinition(_cs_coordinate_law_from_symbol(h.coordinate_law),
+                                 _cs_center_law_from_symbol(h.center_law),
+                                 mesh_convention(reader);
+                                 longitude_offset_deg = h.longitude_offset_deg,
+                                 tag = h.cs_definition)
+end
+
 export CubedSphereBinaryReader, CubedSphereBinaryHeader
-export load_cs_window, cs_window_count, mesh_convention
+export load_cs_window, cs_window_count, mesh_convention, mesh_definition

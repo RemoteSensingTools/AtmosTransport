@@ -250,24 +250,21 @@ end
 @testset "TransportBinaryDriver timing semantics validation" begin
     mktemp() do path, io
         close(io)
-        write_test_transport_binary_latlon(path; FT=Float64, flux_kind=:mass_rate)
-        @test_throws ArgumentError TransportBinaryDriver(path; FT=Float64, arch=CPU())
+        @test_throws ArgumentError write_test_transport_binary_latlon(path; FT=Float64, flux_kind=:mass_rate)
     end
 end
 
-@testset "Plan 39 Commit D: legacy headers without poisson metadata are rejected" begin
+@testset "Plan 39 Commit D: writer fills poisson metadata by default" begin
     mktemp() do path, io
         close(io)
         write_test_transport_binary_latlon(path; FT=Float64, include_poisson_metadata=false)
-        # Strict default: missing contract fields → ArgumentError.
-        @test_throws ArgumentError TransportBinaryDriver(path; FT=Float64, arch=CPU())
-        # Env-var bypass: loads with a loud @warn banner.
-        withenv("ATMOSTR_ALLOW_LEGACY_BINARY" => "1") do
-            driver = TransportBinaryDriver(path; FT=Float64, arch=CPU())
-            @test total_windows(driver) == 2
-            @test window_dt(driver) == 3600.0
-            close(driver)
-        end
+        driver = TransportBinaryDriver(path; FT=Float64, arch=CPU())
+        @test total_windows(driver) == 2
+        @test window_dt(driver) == 3600.0
+        @test driver.reader.header.poisson_balance_target_scale == 0.25
+        @test driver.reader.header.poisson_balance_target_semantics ==
+              "forward_window_mass_difference / (2 * steps_per_window)"
+        close(driver)
     end
 end
 

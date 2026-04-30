@@ -48,8 +48,37 @@ dataset.
 
 ## Cubed-sphere panel-order conventions
 
-AtmosTransport distinguishes the geometric cubed-sphere panel order from the
-native GEOS file order.
+AtmosTransport distinguishes the cubed-sphere **definition** from the native
+GEOS file order. A definition is the combination of coordinate law, center law,
+panel convention, and longitude offset.
+
+Two coordinate/center pairs are available:
+
+| Definition | Coordinate law | Center law | Main use |
+|------------|----------------|------------|----------|
+| `EquiangularCubedSphereDefinition()` | `EquiangularGnomonic` | `AngularMidpointCenter` | Synthetic/legacy CS targets |
+| `GMAOCubedSphereDefinition()` | `GMAOEqualDistanceGnomonic` | `FourCornerNormalizedCenter` | GEOS-IT C180 and GEOS-FP C720 |
+
+The GMAO edge coordinate law is
+
+```math
+r = 1/\sqrt{3}, \quad \alpha_0 = \sin^{-1}(r), \quad
+\beta_s = -\frac{\alpha_0}{N_c}(N_c + 2 - 2s),
+\quad \xi_s = \frac{\tan(\beta_s)\cos(\alpha_0)}{r}.
+```
+
+The GMAO center law is GEOS/FV `cell_center2`:
+
+```math
+v_c = \frac{v_1 + v_2 + v_3 + v_4}
+           {\lVert v_1 + v_2 + v_3 + v_4\rVert}.
+```
+
+This is why native GEOS C180 meridional spacing on panel 1 is about `0.42°`
+near panel edges and `0.55°` near the panel center, rather than the uniform
+`0.50°` spacing of a simple equiangular midpoint construction.
+
+Panel conventions then describe only file order and panel orientation.
 
 In words:
 
@@ -67,18 +96,20 @@ More explicitly:
 | 5 | North pole | Equatorial |
 | 6 | South pole | South pole |
 
-`src/Grids/CubedSphereMesh.jl` now carries this distinction explicitly via
-`GnomonicPanelConvention` and `GEOSNativePanelConvention`. Coordinate helpers
-such as `panel_cell_corner_lonlat(mesh, panel)` honor the convention, so
-regridding, local wind rotation, CS face connectivity, Poisson balance,
-diagnostic NetCDF output, and visualization all consume the same panel
-geometry.
+`src/Grids/CubedSphereMesh.jl` carries this distinction explicitly via
+`CubedSphereDefinition`, `GnomonicPanelConvention`, and
+`GEOSNativePanelConvention`. Coordinate helpers such as
+`panel_cell_center_lonlat(mesh, panel)` and `panel_cell_corner_lonlat(mesh,
+panel)` honor the full definition, so regridding, local wind rotation, CS face
+connectivity, Poisson balance, diagnostic NetCDF output, and visualization all
+consume the same geometry.
 
-GEOS-native panels 4 and 5 keep GEOS file-order `Xdim` eastward and `Ydim`
-southward. Internal edge constants (`EDGE_NORTH`, `EDGE_SOUTH`, etc.) therefore
-refer to local index boundaries (`+Y`, `-Y`, `+X`, `-X`), not always geographic
-directions. This is intentional: closure, mirror signs, and replay validation
-must follow file indices.
+GEOS-native panels 4 and 5 keep GEOS file order: local `Xdim` runs mostly
+southward and local `Ydim` runs eastward. Internal edge constants
+(`EDGE_NORTH`, `EDGE_SOUTH`, etc.) therefore refer to local index boundaries
+(`+Y`, `-Y`, `+X`, `-X`), not always geographic directions. This is
+intentional: closure, mirror signs, and replay validation must follow file
+indices.
 
 ## Sources
 

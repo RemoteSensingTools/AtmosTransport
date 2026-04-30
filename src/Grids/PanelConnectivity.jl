@@ -10,7 +10,7 @@
 #   Panel 6: south polar cap              (lat < 35°S)
 #
 # Panels 1 & 2 have local axes X=east, Y=north (standard orientation).
-# Panels 4 & 5 have local axes X=east, Y=south (GEOS native Ydim is reversed).
+# Panels 4 & 5 have local axes X=south, Y=east in native GEOS arrays.
 # Panels 3 & 6 are polar caps with curvilinear local axes.
 #
 # Each panel has 4 local-index edges: +Y (1), -Y (2), +X (3), -X (4).
@@ -67,12 +67,12 @@ const EDGE_WEST  = 4  # local -X edge (i = 1)
 Return the GEOS-FP native cubed-sphere panel connectivity.
 
 Edge-to-edge connections (Panel p local edge → Panel q local edge):
-  P1 +Y→P3 -X(rev)   P1 -Y→P6 +Y(aln)   P1 +X→P2 -X(aln)   P1 -X→P5 +X(rev)
-  P2 +Y→P3 -Y(aln)   P2 -Y→P6 +X(rev)   P2 +X→P4 -X(rev)   P2 -X→P1 +X(aln)
-  P3 +Y→P5 -Y(rev)   P3 -Y→P2 +Y(aln)   P3 +X→P4 -Y(aln)   P3 -X→P1 +Y(rev)
-  P4 +Y→P6 -Y(rev)   P4 -Y→P3 +X(aln)   P4 +X→P5 -X(aln)   P4 -X→P2 +X(rev)
-  P5 +Y→P6 -X(aln)   P5 -Y→P3 +Y(rev)   P5 +X→P1 -X(rev)   P5 -X→P4 +X(aln)
-  P6 +Y→P1 -Y(aln)   P6 -Y→P4 +Y(rev)   P6 +X→P2 -Y(rev)   P6 -X→P5 +Y(aln)
+  P1 +Y→P3 -X(rev)   P1 -Y→P6 +Y(aln)   P1 +X→P2 -X(aln)   P1 -X→P5 +Y(rev)
+  P2 +Y→P3 -Y(aln)   P2 -Y→P6 +X(rev)   P2 +X→P4 -Y(rev)   P2 -X→P1 +X(aln)
+  P3 +Y→P5 -X(rev)   P3 -Y→P2 +Y(aln)   P3 +X→P4 -X(aln)   P3 -X→P1 +Y(rev)
+  P4 +Y→P5 -Y(aln)   P4 -Y→P2 +X(rev)   P4 +X→P6 -Y(rev)   P4 -X→P3 +X(aln)
+  P5 +Y→P1 -X(rev)   P5 -Y→P4 +Y(aln)   P5 +X→P6 -X(aln)   P5 -X→P3 +Y(rev)
+  P6 +Y→P1 -Y(aln)   P6 -Y→P4 +X(rev)   P6 +X→P2 -Y(rev)   P6 -X→P5 +X(aln)
 
 The table is generated from the same GEOS-native corner geometry as
 `panel_cell_corner_lonlat(mesh, p)`, so balance, treeify, and NetCDF output
@@ -87,9 +87,9 @@ function default_panel_connectivity()
         # Panel 3 (north polar cap)
         (PanelEdge(5, 2), PanelEdge(2, 0), PanelEdge(4, 0), PanelEdge(1, 2)),
         # Panel 4 (equatorial ~170°E, GEOS Ydim reversed)
-        (PanelEdge(6, 2), PanelEdge(3, 0), PanelEdge(5, 0), PanelEdge(2, 2)),
+        (PanelEdge(5, 0), PanelEdge(2, 2), PanelEdge(6, 2), PanelEdge(3, 0)),
         # Panel 5 (equatorial ~260°E, GEOS Ydim reversed)
-        (PanelEdge(6, 0), PanelEdge(3, 2), PanelEdge(1, 2), PanelEdge(4, 0)),
+        (PanelEdge(1, 2), PanelEdge(4, 0), PanelEdge(6, 0), PanelEdge(3, 2)),
         # Panel 6 (south polar cap)
         (PanelEdge(1, 0), PanelEdge(4, 2), PanelEdge(2, 2), PanelEdge(5, 0)),
     ))

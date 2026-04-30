@@ -74,7 +74,9 @@ the longitude index and `j` is the latitude index. Matches
 
 ### CubedSphereMesh
 
-Gnomonic equidistant cubed-sphere with 6 panels of `Nc x Nc` cells.
+Six-panel cubed sphere with `Nc x Nc` cells per panel. The target mesh carries
+an explicit `CubedSphereDefinition`, so conservative weights distinguish
+synthetic equiangular grids from native GEOS/GMAO grids.
 
 **Tree construction:**
 For each panel, an `(Nc+1) x (Nc+1)` corner-point matrix is generated from
@@ -90,6 +92,13 @@ linear indices. All 6 panels are assembled into a `CubedSphereToplevelTree`.
   north pole, equatorial 4, equatorial 5, south pole. Coordinates include the
   GEOS-FP/GEOS-IT native panel orientations and global `-10°` longitude offset.
 
+**Coordinate and center laws:**
+- `EquiangularCubedSphereDefinition`: equiangular gnomonic edges and logical
+  midpoint centers.
+- `GMAOCubedSphereDefinition`: GMAO equal-distance gnomonic edges and
+  normalized four-corner (`cell_center2`) centers, matching GEOS-IT C180 and
+  GEOS-FP C720.
+
 **Cell indexing:** Global flat index = `(panel-1) * Nc^2 + i + (j-1) * Nc`,
 where `i` = xi-index, `j` = eta-index (column-major within each panel).
 
@@ -97,8 +106,8 @@ where `i` = xi-index, `j` = eta-index (column-major within each panel).
 consume the same `CubedSphereMesh(convention=GEOSNativePanelConvention())`
 geometry. The implementation analytically matches the GEOS NetCDF-exposed
 `(Xdim, Ydim, nf, ...)` panel order/orientation used by our binary reader. If a
-future source ships nonstandard or stretched CS coordinates, add a new panel or
-mesh convention instead of patching treeify call sites.
+future source ships nonstandard or stretched CS coordinates, add a new
+`CubedSphereDefinition` component instead of patching treeify call sites.
 
 ### ReducedGaussianMesh
 
@@ -155,7 +164,8 @@ computation) is a candidate for an upstream PR to JuliaGeo/ConservativeRegriddin
 
 `build_regridder(src, dst; cache_dir="/path")` generates a SHA-1 cache key
 from the source and destination mesh parameters (grid dimensions, face
-coordinates, radius, panel convention). On first call, the regridder is
+coordinates, radius, panel convention, coordinate law, center law, and
+longitude offset). On first call, the regridder is
 built and saved to `cache_dir/regridder_<sha1>.jld2`. Subsequent calls with
 identical meshes reload the cached weights in milliseconds.
 

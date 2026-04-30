@@ -329,13 +329,85 @@ end
     return v
 end
 
+@inline function _cs_dot(a::AbstractVector{Float64}, b::AbstractVector{Float64})
+    s = 0.0
+    @inbounds @simd for i in eachindex(a, b)
+        s += a[i] * b[i]
+    end
+    return s
+end
+
+@inline function _cs_linf(a::AbstractVector{Float64})
+    m = 0.0
+    @inbounds @simd for i in eachindex(a)
+        v = abs(a[i])
+        m = ifelse(v > m, v, m)
+    end
+    return m
+end
+
+@inline function _cs_project_mean_zero_linf!(v::AbstractVector{Float64})
+    s = 0.0
+    @inbounds @simd for i in eachindex(v)
+        s += v[i]
+    end
+    μ = s / length(v)
+    m = 0.0
+    @inbounds @simd for i in eachindex(v)
+        vi = v[i] - μ
+        v[i] = vi
+        av = abs(vi)
+        m = ifelse(av > m, av, m)
+    end
+    return m
+end
+
+@inline function _cs_update_psi_r_linf!(psi::AbstractVector{Float64},
+                                        r::AbstractVector{Float64},
+                                        p::AbstractVector{Float64},
+                                        Ap::AbstractVector{Float64},
+                                        alpha::Float64)
+    m = 0.0
+    @inbounds @simd for i in eachindex(r)
+        psi[i] += alpha * p[i]
+        ri = r[i] - alpha * Ap[i]
+        r[i] = ri
+        ar = abs(ri)
+        m = ifelse(ar > m, ar, m)
+    end
+    return m
+end
+
+@inline function _cs_precondition!(z::AbstractVector{Float64},
+                                  r::AbstractVector{Float64},
+                                  degree::Vector{Int})
+    @inbounds @simd for c in eachindex(r)
+        z[c] = degree[c] > 0 ? r[c] / degree[c] : r[c]
+    end
+    return z
+end
+
+@inline function _cs_update_direction!(p::AbstractVector{Float64},
+                                      z::AbstractVector{Float64},
+                                      beta::Float64)
+    @inbounds @simd for c in eachindex(p)
+        p[c] = z[c] + beta * p[c]
+    end
+    return p
+end
+
 """
-    solve_cs_poisson_pcg!(psi, rhs, ft, degree, scratch; tol=1e-14, max_iter=20000)
+    solve_cs_poisson_pcg!(psi, rhs, ft, degree, scratch; tol=1e-14, max_iter=20000,
+                           project_every=50)
 
 Jacobi-Preconditioned CG for the global CS graph Laplacian `L · psi = rhs`.
 
 L has a 1-D constant null space (closed surface), so we project `rhs`
-and iterates to mean-zero. Returns `(residual_linfty, iterations)`.
+and iterates to mean-zero. The graph Laplacian preserves the mean-zero
+subspace, so the residual/preconditioned residual projection is applied
+periodically rather than every iteration by default; set `project_every=1`
+to recover the fully projected legacy path. Returns
+`(residual_linfty, iterations)`.
 """
 function solve_cs_poisson_pcg!(psi::AbstractVector{Float64},
                                 rhs::AbstractVector{Float64},
@@ -343,7 +415,8 @@ function solve_cs_poisson_pcg!(psi::AbstractVector{Float64},
                                 degree::Vector{Int},
                                 scratch;
                                 tol::Float64=1e-14,
-                                max_iter::Int=20000)
+                                max_iter::Int=20000,
+                                project_every::Int=50)
     r  = scratch.r
     p  = scratch.p
     Ap = scratch.Ap
@@ -354,37 +427,32 @@ function solve_cs_poisson_pcg!(psi::AbstractVector{Float64},
     copyto!(r, rhs)
 
     # Jacobi preconditioner: z = M⁻¹ r, M = diag(degree)
-    @inbounds for c in eachindex(r)
-        z[c] = degree[c] > 0 ? r[c] / degree[c] : r[c]
-    end
+    _cs_precondition!(z, r, degree)
     copyto!(p, z)
 
-    rz_old = dot(r, z)
-    rhs_linf = maximum(abs, rhs) + eps()
+    rz_old = _cs_dot(r, z)
+    rhs_linf = _cs_linf(rhs) + eps()
 
     iter = 0
     r_linf = rhs_linf
     while iter < max_iter
         _cs_graph_laplacian_mul!(Ap, p, ft, degree)
-        pAp = dot(p, Ap)
+        pAp = _cs_dot(p, Ap)
         pAp <= 0 && break
         alpha = rz_old / pAp
-        @. psi += alpha * p
-        @. r   -= alpha * Ap
+        r_linf = _cs_update_psi_r_linf!(psi, r, p, Ap, alpha)
 
-        _cs_project_mean_zero!(r)
-
-        r_linf = maximum(abs, r)
+        do_project = project_every <= 1 ||
+                     (project_every > 1 && (iter + 1) % project_every == 0)
+        do_project && (r_linf = _cs_project_mean_zero_linf!(r))
         r_linf / rhs_linf < tol && break
 
-        @inbounds for c in eachindex(r)
-            z[c] = degree[c] > 0 ? r[c] / degree[c] : r[c]
-        end
-        _cs_project_mean_zero!(z)
-        rz_new = dot(r, z)
+        _cs_precondition!(z, r, degree)
+        do_project && _cs_project_mean_zero!(z)
+        rz_new = _cs_dot(r, z)
         rz_old == 0.0 && break
         beta = rz_new / rz_old
-        @. p = z + beta * p
+        _cs_update_direction!(p, z, beta)
         rz_old = rz_new
         iter += 1
     end
@@ -576,6 +644,138 @@ end
 # High-level balance entry point
 # ---------------------------------------------------------------------------
 
+function _balance_cs_level!(
+    k::Int,
+    panels_am::NTuple{6, Array{FT, 3}},
+    panels_bm::NTuple{6, Array{FT, 3}},
+    panels_m::NTuple{6, Array{FT, 3}},
+    panels_m_next::NTuple{6, Array{FT, 3}},
+    ft::CSGlobalFaceTable,
+    degree::Vector{Int},
+    scratch::CSPoissonScratch,
+    inv_scale::Float64;
+    tol::Float64,
+    max_iter::Int,
+    project_every::Int,
+) where FT
+    Nc = ft.Nc
+    nc = ft.nc
+    div = scratch.div
+    rhs = scratch.rhs
+    psi = scratch.psi
+    cg_scratch = (r = scratch.r, p = scratch.p, Ap = scratch.Ap, z = scratch.z)
+
+    # 1. Compute current horizontal divergence.
+    fill!(div, 0.0)
+    @inbounds for f in 1:ft.nf
+        panel = Int(ft.face_panel[f])
+        dir = Int(ft.face_dir[f])
+        i = Int(ft.face_idx_i[f])
+        j = Int(ft.face_idx_j[f])
+        flux = dir == 1 ? Float64(panels_am[panel][i, j, k]) :
+                          Float64(panels_bm[panel][i, j, k])
+        left = Int(ft.face_left[f])
+        right = Int(ft.face_right[f])
+        div[left] += flux
+        div[right] -= flux
+    end
+
+    # 2. RHS = divergence - target mass tendency.
+    rhs_sum = 0.0
+    @inbounds for c in 1:nc
+        p_idx = (c - 1) ÷ (Nc * Nc) + 1
+        local_idx = (c - 1) % (Nc * Nc)
+        j_local = local_idx ÷ Nc + 1
+        i_local = local_idx % Nc + 1
+        target = (Float64(panels_m[p_idx][i_local, j_local, k]) -
+                  Float64(panels_m_next[p_idx][i_local, j_local, k])) * inv_scale
+        rc = div[c] - target
+        rhs[c] = rc
+        rhs_sum += rc
+    end
+
+    rhs_raw_linf = _cs_linf(rhs)
+    rhs_mean = rhs_sum / nc
+    pre_proj = 0.0
+    @inbounds @simd for c in 1:nc
+        a = abs(rhs[c] - rhs_mean)
+        pre_proj = ifelse(a > pre_proj, a, pre_proj)
+    end
+
+    if pre_proj < tol
+        return (pre = rhs_raw_linf, post = 0.0, iter = 0,
+                rhs_mean = abs(rhs_mean), pre_proj = pre_proj, post_proj = 0.0)
+    end
+
+    # 3. Solve L * psi = rhs.
+    _, it = solve_cs_poisson_pcg!(psi, rhs, ft, degree, cg_scratch;
+                                  tol=tol, max_iter=max_iter,
+                                  project_every=project_every)
+
+    # Diagnostic: post-solve projected residual.
+    Lpsi = scratch.Ap
+    _cs_graph_laplacian_mul!(Lpsi, psi, ft, degree)
+    fill!(div, 0.0)
+    @inbounds for f in 1:ft.nf
+        panel = Int(ft.face_panel[f])
+        dir = Int(ft.face_dir[f])
+        i = Int(ft.face_idx_i[f])
+        j = Int(ft.face_idx_j[f])
+        flux = dir == 1 ? Float64(panels_am[panel][i, j, k]) :
+                          Float64(panels_bm[panel][i, j, k])
+        left = Int(ft.face_left[f])
+        right = Int(ft.face_right[f])
+        div[left] += flux
+        div[right] -= flux
+    end
+    @inbounds for c in 1:nc
+        p_idx = (c - 1) ÷ (Nc * Nc) + 1
+        local_idx = (c - 1) % (Nc * Nc)
+        j_local = local_idx ÷ Nc + 1
+        i_local = local_idx % Nc + 1
+        target = (Float64(panels_m[p_idx][i_local, j_local, k]) -
+                  Float64(panels_m_next[p_idx][i_local, j_local, k])) * inv_scale
+        rhs[c] = (div[c] - target) - rhs_mean
+    end
+    post_proj = 0.0
+    @inbounds @simd for c in 1:nc
+        a = abs(Lpsi[c] - rhs[c])
+        post_proj = ifelse(a > post_proj, a, post_proj)
+    end
+
+    # 4. Apply correction to all faces at this level.
+    apply_cs_flux_correction!(panels_am, panels_bm, psi, ft, k)
+
+    # 5. Post-balance raw residual.
+    fill!(div, 0.0)
+    @inbounds for f in 1:ft.nf
+        panel = Int(ft.face_panel[f])
+        dir = Int(ft.face_dir[f])
+        i = Int(ft.face_idx_i[f])
+        j = Int(ft.face_idx_j[f])
+        flux = dir == 1 ? Float64(panels_am[panel][i, j, k]) :
+                          Float64(panels_bm[panel][i, j, k])
+        left = Int(ft.face_left[f])
+        right = Int(ft.face_right[f])
+        div[left] += flux
+        div[right] -= flux
+    end
+    post_raw = 0.0
+    @inbounds for c in 1:nc
+        p_idx = (c - 1) ÷ (Nc * Nc) + 1
+        local_idx = (c - 1) % (Nc * Nc)
+        j_local = local_idx ÷ Nc + 1
+        i_local = local_idx % Nc + 1
+        target = (Float64(panels_m[p_idx][i_local, j_local, k]) -
+                  Float64(panels_m_next[p_idx][i_local, j_local, k])) * inv_scale
+        r = abs(div[c] - target)
+        post_raw = ifelse(r > post_raw, r, post_raw)
+    end
+
+    return (pre = rhs_raw_linf, post = post_raw, iter = it,
+            rhs_mean = abs(rhs_mean), pre_proj = pre_proj, post_proj = post_proj)
+end
+
 """
     balance_cs_global_mass_fluxes!(panels_am, panels_bm, panels_m, panels_m_next,
                                     ft, degree, steps_per_window, scratch;
@@ -601,6 +801,7 @@ function balance_cs_global_mass_fluxes!(
     scratch::CSPoissonScratch;
     tol::Float64=1e-14,
     max_iter::Int=20000,
+    project_every::Int=50,
 ) where FT
 
     Nc = ft.Nc
@@ -608,151 +809,43 @@ function balance_cs_global_mass_fluxes!(
     nc = ft.nc
     inv_scale = 1.0 / (2.0 * steps_per_window)
 
-    max_pre = 0.0
-    max_post = 0.0
-    max_it = 0
-    max_rhs_mean = 0.0
-    max_pre_proj = 0.0
-    max_post_proj = 0.0
+    nthread = Threads.maxthreadid()
+    scratches = Vector{CSPoissonScratch}(undef, nthread)
+    scratches[1] = scratch
+    for t in 2:nthread
+        scratches[t] = CSPoissonScratch(nc)
+    end
 
-    cg_scratch = (r = scratch.r, p = scratch.p, Ap = scratch.Ap, z = scratch.z)
+    pre_by_level = zeros(Float64, Nz)
+    post_by_level = zeros(Float64, Nz)
+    rhs_mean_by_level = zeros(Float64, Nz)
+    pre_proj_by_level = zeros(Float64, Nz)
+    post_proj_by_level = zeros(Float64, Nz)
+    iter_by_level = zeros(Int, Nz)
 
-    for k in 1:Nz
-        # 1. Compute current horizontal divergence
-        div = scratch.div
-        fill!(div, 0.0)
-
-        @inbounds for f in 1:ft.nf
-            p   = Int(ft.face_panel[f])
-            dir = Int(ft.face_dir[f])
-            i   = Int(ft.face_idx_i[f])
-            j   = Int(ft.face_idx_j[f])
-
-            flux = if dir == 1
-                Float64(panels_am[p][i, j, k])
-            else
-                Float64(panels_bm[p][i, j, k])
-            end
-
-            left  = Int(ft.face_left[f])
-            right = Int(ft.face_right[f])
-            div[left]  += flux
-            div[right] -= flux
-        end
-
-        # 2. RHS = divergence - target mass tendency
-        #    div[c] = net outflow (positive = mass leaves cell), so the
-        #    balance target must be NEGATIVE dm: when mass increases
-        #    (m_next > m_cur), net outflow should decrease (inflow > outflow).
-        #    target = -(m_next - m_cur) / (2*steps) = (m_cur - m_next) * inv_scale
-        rhs = scratch.rhs
-        @inbounds for c in 1:nc
-            p_idx = (c - 1) ÷ (Nc * Nc) + 1
-            local_idx = (c - 1) % (Nc * Nc)
-            j_local = local_idx ÷ Nc + 1
-            i_local = local_idx % Nc + 1
-
-            target = (Float64(panels_m[p_idx][i_local, j_local, k]) -
-                      Float64(panels_m_next[p_idx][i_local, j_local, k])) * inv_scale
-            rhs[c] = div[c] - target
-        end
-
-        rhs_raw_linf = maximum(abs, rhs)
-        rhs_raw_linf > max_pre && (max_pre = rhs_raw_linf)
-
-        rhs_mean = sum(rhs) / nc
-        abs(rhs_mean) > max_rhs_mean && (max_rhs_mean = abs(rhs_mean))
-
-        pre_proj = 0.0
-        @inbounds for c in 1:nc
-            a = abs(rhs[c] - rhs_mean)
-            a > pre_proj && (pre_proj = a)
-        end
-        pre_proj > max_pre_proj && (max_pre_proj = pre_proj)
-
-        if pre_proj < tol
-            continue  # already balanced on range(L)
-        end
-
-        # 3. Solve L · ψ = rhs
-        psi = scratch.psi
-        _, it = solve_cs_poisson_pcg!(psi, rhs, ft, degree, cg_scratch;
-                                       tol=tol, max_iter=max_iter)
-        it > max_it && (max_it = it)
-
-        # Diagnostic: post-solve projected residual
-        Lpsi = scratch.Ap
-        _cs_graph_laplacian_mul!(Lpsi, psi, ft, degree)
-        fill!(div, 0.0)
-        @inbounds for f in 1:ft.nf
-            p   = Int(ft.face_panel[f])
-            dir = Int(ft.face_dir[f])
-            i   = Int(ft.face_idx_i[f])
-            j   = Int(ft.face_idx_j[f])
-            flux = dir == 1 ? Float64(panels_am[p][i, j, k]) :
-                              Float64(panels_bm[p][i, j, k])
-            left  = Int(ft.face_left[f])
-            right = Int(ft.face_right[f])
-            div[left]  += flux
-            div[right] -= flux
-        end
-        @inbounds for c in 1:nc
-            p_idx = (c - 1) ÷ (Nc * Nc) + 1
-            local_idx = (c - 1) % (Nc * Nc)
-            j_local = local_idx ÷ Nc + 1
-            i_local = local_idx % Nc + 1
-            target = (Float64(panels_m[p_idx][i_local, j_local, k]) -
-                      Float64(panels_m_next[p_idx][i_local, j_local, k])) * inv_scale
-            rhs[c] = (div[c] - target) - rhs_mean
-        end
-        post_proj = 0.0
-        @inbounds for c in 1:nc
-            a = abs(Lpsi[c] - rhs[c])
-            a > post_proj && (post_proj = a)
-        end
-        post_proj > max_post_proj && (max_post_proj = post_proj)
-
-        # 4. Apply correction to all faces
-        apply_cs_flux_correction!(panels_am, panels_bm, psi, ft, k)
-
-        # 5. Post-balance raw residual
-        fill!(div, 0.0)
-        @inbounds for f in 1:ft.nf
-            p   = Int(ft.face_panel[f])
-            dir = Int(ft.face_dir[f])
-            i   = Int(ft.face_idx_i[f])
-            j   = Int(ft.face_idx_j[f])
-            flux = dir == 1 ? Float64(panels_am[p][i, j, k]) :
-                              Float64(panels_bm[p][i, j, k])
-            left  = Int(ft.face_left[f])
-            right = Int(ft.face_right[f])
-            div[left]  += flux
-            div[right] -= flux
-        end
-        post_raw = 0.0
-        @inbounds for c in 1:nc
-            p_idx = (c - 1) ÷ (Nc * Nc) + 1
-            local_idx = (c - 1) % (Nc * Nc)
-            j_local = local_idx ÷ Nc + 1
-            i_local = local_idx % Nc + 1
-            target = (Float64(panels_m[p_idx][i_local, j_local, k]) -
-                      Float64(panels_m_next[p_idx][i_local, j_local, k])) * inv_scale
-            r = abs(div[c] - target)
-            r > post_raw && (post_raw = r)
-        end
-        post_raw > max_post && (max_post = post_raw)
+    Threads.@threads :static for k in 1:Nz
+        diag = _balance_cs_level!(
+            k, panels_am, panels_bm, panels_m, panels_m_next,
+            ft, degree, scratches[Threads.threadid()], inv_scale;
+            tol=tol, max_iter=max_iter, project_every=project_every)
+        pre_by_level[k] = diag.pre
+        post_by_level[k] = diag.post
+        rhs_mean_by_level[k] = diag.rhs_mean
+        pre_proj_by_level[k] = diag.pre_proj
+        post_proj_by_level[k] = diag.post_proj
+        iter_by_level[k] = diag.iter
     end
 
     # 6. Synchronize ALL cross-panel mirror entries at ALL levels.
     _sync_cs_mirrors!(panels_am, panels_bm, ft, Nz)
 
     return (;
-        max_pre_residual = max_pre,
-        max_post_residual = max_post,
-        max_rhs_mean = max_rhs_mean,
-        max_pre_projected = max_pre_proj,
-        max_post_projected = max_post_proj,
-        max_cg_iter = max_it,
+        max_pre_residual = maximum(pre_by_level),
+        max_post_residual = maximum(post_by_level),
+        max_rhs_mean = maximum(rhs_mean_by_level),
+        max_pre_projected = maximum(pre_proj_by_level),
+        max_post_projected = maximum(post_proj_by_level),
+        max_cg_iter = maximum(iter_by_level),
     )
 end
 

@@ -89,8 +89,8 @@ _lon_close(a, b; atol=1e-10) = abs(mod(a - b + 180, 360) - 180) <= atol
             1 => ((305.0, -edge_lat), (35.0, -edge_lat), (35.0, edge_lat), (305.0, edge_lat)),
             2 => ((35.0, -edge_lat), (125.0, -edge_lat), (125.0, edge_lat), (35.0, edge_lat)),
             3 => ((35.0, edge_lat), (125.0, edge_lat), (215.0, edge_lat), (305.0, edge_lat)),
-            4 => ((125.0, edge_lat), (215.0, edge_lat), (215.0, -edge_lat), (125.0, -edge_lat)),
-            5 => ((215.0, edge_lat), (305.0, edge_lat), (305.0, -edge_lat), (215.0, -edge_lat)),
+            4 => ((125.0, edge_lat), (125.0, -edge_lat), (215.0, -edge_lat), (215.0, edge_lat)),
+            5 => ((215.0, edge_lat), (215.0, -edge_lat), (305.0, -edge_lat), (305.0, edge_lat)),
             6 => ((215.0, -edge_lat), (125.0, -edge_lat), (35.0, -edge_lat), (305.0, -edge_lat)),
         )
         for p in 1:6

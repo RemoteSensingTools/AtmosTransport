@@ -24,6 +24,7 @@ mass_basis = "dry"
 type                = "cubed_sphere"
 Nc                  = 180
 panel_convention    = "geos_native"
+definition          = "gmao"
 regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
 
 [vertical]

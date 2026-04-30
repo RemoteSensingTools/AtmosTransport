@@ -13,6 +13,229 @@ function merge_cell_field!(merged::Array{FT, 3}, native::Array{FT, 3}, mm::Vecto
     end
 end
 
+@inline vertical_mapping_method(vertical) =
+    hasproperty(vertical, :vertical_mapping_method) ? vertical.vertical_mapping_method : :merge_map
+
+"""
+    remap_extensive_field_pressure_overlap!(dst, src, ps, src_vc, dst_vc)
+
+Conservatively remap a layer-integrated field from one hybrid coordinate to
+another using pressure-thickness overlap in each column.
+
+For a source layer `s` and target layer `k`, interface pressures are evaluated
+with the column surface pressure,
+
+```math
+p^s_r = A^s_r + B^s_r p_s,\\qquad
+p^t_r = A^t_r + B^t_r p_s,
+```
+
+and the target layer integral is
+
+```math
+X^t_k =
+\\sum_s X^s_s
+\\frac{\\max(0, \\min(p^s_{s+1}, p^t_{k+1})
+              - \\max(p^s_s, p^t_k))}
+     {p^s_{s+1} - p^s_s}.
+```
+
+`src` and `dst` are extensive in the vertical direction: air mass and
+half-step horizontal mass fluxes are both valid inputs. For horizontal fluxes,
+pass the face surface pressure field used to construct the flux thickness.
+"""
+function remap_extensive_field_pressure_overlap!(dst::Array{FT, 3},
+                                                 src::Array{FT, 3},
+                                                 ps::AbstractMatrix{<:Real},
+                                                 src_vc::HybridSigmaPressure,
+                                                 dst_vc::HybridSigmaPressure) where FT
+    Nx, Ny, Ns = size(src)
+    size(dst, 1) == Nx && size(dst, 2) == Ny ||
+        throw(DimensionMismatch("dst horizontal shape $(size(dst)[1:2]) != src shape ($Nx, $Ny)"))
+    size(ps) == (Nx, Ny) ||
+        throw(DimensionMismatch("ps shape $(size(ps)) != field shape ($Nx, $Ny)"))
+    Ns == n_levels(src_vc) ||
+        throw(DimensionMismatch("src levels $Ns != source coordinate levels $(n_levels(src_vc))"))
+    Nt = size(dst, 3)
+    Nt == n_levels(dst_vc) ||
+        throw(DimensionMismatch("dst levels $Nt != target coordinate levels $(n_levels(dst_vc))"))
+
+    Threads.@threads for j in 1:Ny
+        @inbounds for i in 1:Nx
+            psij = Float64(ps[i, j])
+            for kt in 1:Nt
+                dst[i, j, kt] = zero(FT)
+            end
+
+            ks0 = 1
+            for kt in 1:Nt
+                t0 = Float64(dst_vc.A[kt]) + Float64(dst_vc.B[kt]) * psij
+                t1 = Float64(dst_vc.A[kt + 1]) + Float64(dst_vc.B[kt + 1]) * psij
+                tlo = min(t0, t1)
+                thi = max(t0, t1)
+                acc = 0.0
+
+                while ks0 <= Ns
+                    s0 = Float64(src_vc.A[ks0]) + Float64(src_vc.B[ks0]) * psij
+                    s1 = Float64(src_vc.A[ks0 + 1]) + Float64(src_vc.B[ks0 + 1]) * psij
+                    max(s0, s1) <= tlo && (ks0 += 1; continue)
+                    break
+                end
+
+                ks = ks0
+                while ks <= Ns
+                    s0 = Float64(src_vc.A[ks]) + Float64(src_vc.B[ks]) * psij
+                    s1 = Float64(src_vc.A[ks + 1]) + Float64(src_vc.B[ks + 1]) * psij
+                    slo = min(s0, s1)
+                    shi = max(s0, s1)
+                    slo >= thi && break
+                    overlap = min(shi, thi) - max(slo, tlo)
+                    if overlap > 0
+                        thick = shi - slo
+                        thick > 0 && (acc += Float64(src[i, j, ks]) * overlap / thick)
+                    end
+                    shi >= thi && break
+                    ks += 1
+                end
+                dst[i, j, kt] = FT(acc)
+            end
+        end
+    end
+    return dst
+end
+
+@inline function _geometric_mean_ps(a::Real, b::Real)
+    aa = max(Float64(a), eps(Float64))
+    bb = max(Float64(b), eps(Float64))
+    return exp((log(aa) + log(bb)) / 2)
+end
+
+"""
+    fill_xface_surface_pressure!(ps_xface, ps_cell)
+
+Fill west/east face surface pressures with the same Jensen/geometric mean used
+by `compute_mass_fluxes!` for the native zonal mass flux thickness.
+"""
+function fill_xface_surface_pressure!(ps_xface::AbstractMatrix{<:Real},
+                                      ps_cell::AbstractMatrix{<:Real})
+    Nx, Ny = size(ps_cell)
+    size(ps_xface) == (Nx + 1, Ny) ||
+        throw(DimensionMismatch("x-face ps shape $(size(ps_xface)) != ($Nx+1, $Ny)"))
+    @inbounds for j in 1:Ny, i in 1:(Nx + 1)
+        il = i == 1 ? Nx : i - 1
+        ir = i <= Nx ? i : 1
+        ps_xface[i, j] = _geometric_mean_ps(ps_cell[il, j], ps_cell[ir, j])
+    end
+    return ps_xface
+end
+
+"""
+    fill_yface_surface_pressure!(ps_yface, ps_cell)
+
+Fill south/north face surface pressures with the same Jensen/geometric mean
+used by `compute_mass_fluxes!` for native meridional mass flux thickness.
+Polar boundary values are copied from the adjacent pole row; the corresponding
+mass fluxes are zeroed separately by `apply_structured_pole_constraints!`.
+"""
+function fill_yface_surface_pressure!(ps_yface::AbstractMatrix{<:Real},
+                                      ps_cell::AbstractMatrix{<:Real})
+    Nx, Ny = size(ps_cell)
+    size(ps_yface) == (Nx, Ny + 1) ||
+        throw(DimensionMismatch("y-face ps shape $(size(ps_yface)) != ($Nx, $Ny+1)"))
+    @inbounds for i in 1:Nx
+        ps_yface[i, 1] = Float64(ps_cell[i, 1])
+        ps_yface[i, Ny + 1] = Float64(ps_cell[i, Ny])
+    end
+    @inbounds for j in 2:Ny, i in 1:Nx
+        ps_yface[i, j] = _geometric_mean_ps(ps_cell[i, j - 1], ps_cell[i, j])
+    end
+    return ps_yface
+end
+
+"""
+    remap_qv_pressure_overlap!(qv_dst, qv_src, m_src, ps, src_vc, dst_vc)
+
+Mass-weighted vertical remap of specific humidity onto an independent target
+hybrid coordinate. The same pressure-overlap fractions used for extensive mass
+fields are applied to the source dry-air mass, then `qv` is averaged over each
+target layer:
+
+```math
+q^t_k =
+\\frac{\\sum_s q^s_s m^s_s f_{s,k}}
+     {\\sum_s m^s_s f_{s,k}}.
+```
+
+This is only for optional diagnostic humidity output. Transport masses and
+fluxes are remapped by `remap_extensive_field_pressure_overlap!`.
+"""
+function remap_qv_pressure_overlap!(qv_dst::Array{FT, 3},
+                                    qv_src::Array{FT, 3},
+                                    m_src::Array{FT, 3},
+                                    ps::AbstractMatrix{<:Real},
+                                    src_vc::HybridSigmaPressure,
+                                    dst_vc::HybridSigmaPressure) where FT
+    Nx, Ny, Ns = size(qv_src)
+    size(m_src) == (Nx, Ny, Ns) ||
+        throw(DimensionMismatch("m_src shape $(size(m_src)) != qv_src shape ($Nx, $Ny, $Ns)"))
+    size(ps) == (Nx, Ny) ||
+        throw(DimensionMismatch("ps shape $(size(ps)) != qv horizontal shape ($Nx, $Ny)"))
+    Nt = size(qv_dst, 3)
+    size(qv_dst, 1) == Nx && size(qv_dst, 2) == Ny ||
+        throw(DimensionMismatch("qv_dst horizontal shape $(size(qv_dst)[1:2]) != ($Nx, $Ny)"))
+    Ns == n_levels(src_vc) && Nt == n_levels(dst_vc) ||
+        throw(DimensionMismatch("vertical coordinate levels do not match qv arrays"))
+
+    Threads.@threads for j in 1:Ny
+        mass_acc = zeros(Float64, Nt)
+        q_acc = zeros(Float64, Nt)
+        @inbounds for i in 1:Nx
+            fill!(mass_acc, 0.0)
+            fill!(q_acc, 0.0)
+            psij = Float64(ps[i, j])
+            ks0 = 1
+            for kt in 1:Nt
+                t0 = Float64(dst_vc.A[kt]) + Float64(dst_vc.B[kt]) * psij
+                t1 = Float64(dst_vc.A[kt + 1]) + Float64(dst_vc.B[kt + 1]) * psij
+                tlo = min(t0, t1)
+                thi = max(t0, t1)
+
+                while ks0 <= Ns
+                    s0 = Float64(src_vc.A[ks0]) + Float64(src_vc.B[ks0]) * psij
+                    s1 = Float64(src_vc.A[ks0 + 1]) + Float64(src_vc.B[ks0 + 1]) * psij
+                    max(s0, s1) <= tlo && (ks0 += 1; continue)
+                    break
+                end
+
+                ks = ks0
+                while ks <= Ns
+                    s0 = Float64(src_vc.A[ks]) + Float64(src_vc.B[ks]) * psij
+                    s1 = Float64(src_vc.A[ks + 1]) + Float64(src_vc.B[ks + 1]) * psij
+                    slo = min(s0, s1)
+                    shi = max(s0, s1)
+                    slo >= thi && break
+                    overlap = min(shi, thi) - max(slo, tlo)
+                    if overlap > 0
+                        thick = shi - slo
+                        if thick > 0
+                            frac = overlap / thick
+                            mass = Float64(m_src[i, j, ks]) * frac
+                            mass_acc[kt] += mass
+                            q_acc[kt] += Float64(qv_src[i, j, ks]) * mass
+                        end
+                    end
+                    shi >= thi && break
+                    ks += 1
+                end
+            end
+            for kt in 1:Nt
+                qv_dst[i, j, kt] = mass_acc[kt] > 0 ? FT(q_acc[kt] / mass_acc[kt]) : zero(FT)
+            end
+        end
+    end
+    return qv_dst
+end
+
 """
     LLPoissonWorkspace
 
@@ -161,8 +384,24 @@ end
 """
     read_qv_from_thermo(thermo_path, hour_idx, Nx, Ny, Nz; FT=Float32)
 
-Read hourly ERA5 model-level specific humidity from the thermo NetCDF sidecar.
-The returned field is always oriented `(longitude, south_to_north_latitude, level)`.
+Read hourly ERA5 model-level specific humidity from the thermo NetCDF
+sidecar. The returned field is in the canonical staging layout:
+`(longitude_cell_center_in_-180..180, south_to_north_latitude, level)`.
+
+Two normalizations relative to raw NetCDF data:
+
+1. **Latitude orientation.** ERA5 native latitudes run north-to-south
+   (`latitude[1] = +90`). When detected, the array is reversed along the
+   latitude axis so `j=1` is the south pole.
+2. **Longitude convention.** ERA5 longitudes are cell-centered at
+   `0, Δ, 2Δ, …, 360-Δ`. The downstream staging mesh uses cell-centered
+   `-180+Δ/2, …, 180-Δ/2`. When the NetCDF longitudes start at or near 0°,
+   the array is rolled by `Nx ÷ 2` columns so the midpoint of the array
+   lands at the meridian. After the roll, index `i=1` corresponds to the
+   westernmost staging-grid cell (the one centered closest to -180°).
+
+The roll uses NetCDF metadata (`longitude` variable) — not implicit array
+ordering — so files in either convention are handled correctly.
 """
 function read_qv_from_thermo(thermo_path::String, hour_idx::Int, Nx::Int, Ny::Int, Nz::Int;
                              FT::Type{<:AbstractFloat}=Float32)
@@ -178,8 +417,41 @@ function read_qv_from_thermo(thermo_path::String, hour_idx::Int, Nx::Int, Ny::In
         if size(q, 2) == Ny && ds["latitude"][1] > ds["latitude"][end]
             q = q[:, end:-1:1, :]
         end
+        q = _normalize_lon_to_centered(q, ds["longitude"][:])
         return q
     end
+end
+
+"""
+    _normalize_lon_to_centered(field, lons) -> field
+
+Roll a 3D `(Nx, Ny, Nz)` field along the longitude axis so the array
+lands in cell-centered `[-180, 180)` convention. Detects the source
+longitude convention from the NetCDF `longitude` variable: when source
+longitudes start at or near 0° (i.e. `0..360-Δ` convention), rolls by
+`Nx ÷ 2` columns; when source already starts near -180°, no-op.
+
+Returns `field` unchanged when `length(lons) ≠ size(field, 1)` (mismatch
+that the caller will catch downstream) or when the source is already in
+the staging convention.
+"""
+function _normalize_lon_to_centered(field::AbstractArray{<:Real, 3},
+                                     lons::AbstractVector{<:Real})
+    Nx = size(field, 1)
+    length(lons) == Nx || return field
+    # Source convention check: if first longitude ≥ 0 and last > 180, the
+    # array is in 0..360 layout. If first < 0, it's already centered.
+    if lons[1] >= 0 && lons[end] > 180
+        return circshift(field, (Nx ÷ 2, 0, 0))
+    end
+    return field
+end
+
+function _normalize_lon_to_centered(field::AbstractArray{<:Real, 3},
+                                     lons::AbstractVector)
+    any(ismissing, lons) &&
+        throw(ArgumentError("longitude coordinate contains missing values; cannot normalize QV longitude order"))
+    return _normalize_lon_to_centered(field, Float64.(lons))
 end
 
 """
@@ -206,6 +478,11 @@ function read_daily_qv_from_thermo(thermo_path::String,
         Nt = _qv_time_count(q_var, dims)
         out = Array{FT}(undef, Nx, Ny, Nz, Nt)
         lat_descending = ds["latitude"][1] > ds["latitude"][end]
+        lons = ds["longitude"][:]
+        # Same convention as read_qv_from_thermo: roll longitude axis from
+        # 0..360 to staging-mesh -180..180 cell-centered convention. Detected
+        # from NetCDF metadata so files in either layout are handled.
+        roll_lon = (length(lons) == Nx && lons[1] >= 0 && lons[end] > 180)
         block = max(time_block, 1)
 
         for t0 in 1:block:Nt
@@ -219,7 +496,11 @@ function read_daily_qv_from_thermo(thermo_path::String,
                 q_perm = permutedims(q_raw, (4, 3, 2, 1))
                 q = lat_descending ? @view(q_perm[:, end:-1:1, :, :]) : q_perm
             end
-            @views out[:, :, :, tr] .= q
+            if roll_lon
+                @views out[:, :, :, tr] .= circshift(q, (Nx ÷ 2, 0, 0, 0))
+            else
+                @views out[:, :, :, tr] .= q
+            end
         end
         return out
     end

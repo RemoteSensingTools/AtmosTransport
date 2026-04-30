@@ -30,7 +30,9 @@ import ..expand_data_path
 using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                GnomonicPanelConvention, GEOSNativePanelConvention,
                nx, ny, nrings, ring_longitudes, cell_index, ncells,
-               cell_area, panel_cell_center_lonlat, panel_cell_corner_lonlat
+               cell_area, panel_cell_center_lonlat, panel_cell_corner_lonlat,
+               cs_definition, coordinate_law, center_law, longitude_offset_deg,
+               cs_definition_tag, coordinate_law_tag, center_law_tag
 using ..State: DryBasis, MoistBasis, mass_basis, tracer_names, get_tracer
 
 export SnapshotFrame, SnapshotWriteOptions

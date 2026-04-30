@@ -94,7 +94,9 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                                 allow_terminal_zero_tendency::Bool = false,
                                 positivity_cfl_limit::Real = 0.95,
                                 require_substep_positivity::Bool = true,
-                                steps_per_window::Union{Nothing, Integer} = nothing)
+                                steps_per_window::Union{Nothing, Integer} = nothing,
+                                cs_balance_tol::Real = 1e-14,
+                                cs_balance_project_every::Integer = 50)
     t_start = time()
     Nc = cs_grid.Nc
 
@@ -229,6 +231,10 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         include_tm5conv=source_has_tm5,
         mass_basis=output_basis,
         panel_convention=_cs_panel_convention_tag(cs_grid),
+        cs_definition=_cs_definition_tag(cs_grid),
+        cs_coordinate_law=_cs_coordinate_law_tag(cs_grid),
+        cs_center_law=_cs_center_law_tag(cs_grid),
+        longitude_offset_deg=longitude_offset_deg(cs_definition(cs_grid.mesh)),
         extra_header=Dict{String, Any}(
             "preprocessor"      => "regrid_ll_binary_to_cs",
             "source_type"       => "ll_transport_binary",
@@ -253,10 +259,14 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                                      entd_out = nothing, detd_out = nothing)
         load_window!(reader, win_idx; m=m_ll, ps=ps_ll, am=am_ll, bm=bm_ll, cm=cm_ll)
 
-        # Conservative regrid scalars: m, ps → CS panels
-        regrid_3d_to_cs_panels!(m_out, regridder, m_ll, cs_ws, Nc)
-        regrid_2d_to_cs_panels!(ps_out, regridder, ps_ll, cs_ws, Nc)
-        _enforce_perlevel_mass_consistency!(m_out, m_ll, Nc, Nz)
+        # Conservative regrid:
+        #   `m` (kg/cell, extensive) → density convert → regrid → ×dst_area
+        #   `ps` (Pa, intensive) → straight area-averaged regrid
+        # Without the `ExtensiveCellField()` tag, `m` would be treated as
+        # intensive and the LL pole-row's small cells would distort the CS
+        # polar mass by ~12×. See `Quantities.jl` for the full taxonomy.
+        regrid_3d_to_cs_panels!(m_out, regridder, m_ll, cs_ws, Nc, ExtensiveCellField())
+        regrid_2d_to_cs_panels!(ps_out, regridder, ps_ll, cs_ws, Nc, IntensiveCellField())
 
         # Recover LL cell-center winds from binary's am/bm
         recover_ll_cell_center_winds!(cs_ws.u_cc, cs_ws.v_cc,
@@ -351,7 +361,8 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         bal_diag = balance_cs_global_mass_fluxes!(
             cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
             cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
-            cs_grid.poisson_scratch; tol=1e-14, max_iter=20000)
+            cs_grid.poisson_scratch; tol=Float64(cs_balance_tol),
+            max_iter=20000, project_every=Int(cs_balance_project_every))
         t_bal = time() - t_bal
 
         worst_pre  = max(worst_pre,  bal_diag.max_pre_residual)
@@ -425,8 +436,9 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
             "declares `dm`, but window $(Nt) could not be loaded."
         ))
         @. cs_ws.u_cc = m_ll + dm_ll
-        regrid_3d_to_cs_panels!(cs_ws.m_next_panels, regridder, cs_ws.u_cc, cs_ws, Nc)
-        _enforce_perlevel_mass_consistency!(cs_ws.m_next_panels, cs_ws.u_cc, Nc, Nz)
+        # `m + dm` is extensive (kg/cell): density-convert via the dispatcher.
+        regrid_3d_to_cs_panels!(cs_ws.m_next_panels, regridder, cs_ws.u_cc,
+                                cs_ws, Nc, ExtensiveCellField())
     else
         @warn "regrid_ll_binary_to_cs: using zero-tendency fallback for the final CS window because source `dm` is unavailable."
         _copy_panels_regrid!(cs_ws.m_next_panels, cur_m)
@@ -435,7 +447,8 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     bal_diag = balance_cs_global_mass_fluxes!(
         cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
         cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
-        cs_grid.poisson_scratch; tol=1e-14, max_iter=5000)
+        cs_grid.poisson_scratch; tol=Float64(cs_balance_tol),
+        max_iter=5000, project_every=Int(cs_balance_project_every))
     t_bal = time() - t_bal
 
     worst_pre  = max(worst_pre,  bal_diag.max_pre_residual)

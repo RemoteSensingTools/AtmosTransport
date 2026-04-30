@@ -1616,6 +1616,25 @@ function _normalize_cs_panel_convention(raw)
     throw(ArgumentError("unsupported panel_convention=$(raw); expected gnomonic or geos_native"))
 end
 
+function _cs_default_geometry_tags(panel_convention)
+    conv = _normalize_cs_panel_convention(panel_convention)
+    if conv == "geos_native"
+        return (
+            cs_definition = "gmao_equal_distance",
+            cs_coordinate_law = "gmao_equal_distance_gnomonic",
+            cs_center_law = "four_corner_normalized",
+            longitude_offset_deg = -10.0,
+        )
+    else
+        return (
+            cs_definition = "equiangular_gnomonic",
+            cs_coordinate_law = "equiangular_gnomonic",
+            cs_center_law = "angular_midpoint",
+            longitude_offset_deg = 0.0,
+        )
+    end
+end
+
 function open_streaming_cs_transport_binary(
         path::AbstractString,
         Nc::Int,
@@ -1638,6 +1657,10 @@ function open_streaming_cs_transport_binary(
         include_dtrain::Bool = false,
         include_tm5conv::Bool = false,
         panel_convention = "gnomonic",
+        cs_definition = nothing,
+        cs_coordinate_law = nothing,
+        cs_center_law = nothing,
+        longitude_offset_deg = nothing,
         extra_header::AbstractDict{<:AbstractString,<:Any} = Dict{String,Any}())
     include_dtrain && !include_cmfmc &&
         throw(ArgumentError("CS transport binaries cannot include dtrain without cmfmc"))
@@ -1672,10 +1695,17 @@ function open_streaming_cs_transport_binary(
                                       delta_semantics=include_flux_delta ?
                                           :forward_window_endpoint_difference : :none)
 
+    panel_convention_norm = _normalize_cs_panel_convention(panel_convention)
+    default_geometry = _cs_default_geometry_tags(panel_convention_norm)
+
     merge!(header, Dict{String, Any}(
         "Nc" => Nc,
         "npanel" => npanel,
-        "panel_convention" => _normalize_cs_panel_convention(panel_convention),
+        "panel_convention" => panel_convention_norm,
+        "cs_definition" => something(cs_definition, default_geometry.cs_definition),
+        "cs_coordinate_law" => something(cs_coordinate_law, default_geometry.cs_coordinate_law),
+        "cs_center_law" => something(cs_center_law, default_geometry.cs_center_law),
+        "longitude_offset_deg" => something(longitude_offset_deg, default_geometry.longitude_offset_deg),
         "Hp" => 0,
         "poisson_balance_method" => "global_cg_graph_laplacian",
         "poisson_balance_target_scale" => 1.0 / (2 * steps_per_window),
@@ -1693,6 +1723,14 @@ function open_streaming_cs_transport_binary(
     ))
     isempty(extra_header) || merge!(header, Dict{String, Any}(extra_header))
     header["panel_convention"] = _normalize_cs_panel_convention(header["panel_convention"])
+    if !haskey(header, "cs_definition") || !haskey(header, "cs_coordinate_law") ||
+       !haskey(header, "cs_center_law") || !haskey(header, "longitude_offset_deg")
+        default_geometry = _cs_default_geometry_tags(header["panel_convention"])
+        header["cs_definition"] = get(header, "cs_definition", default_geometry.cs_definition)
+        header["cs_coordinate_law"] = get(header, "cs_coordinate_law", default_geometry.cs_coordinate_law)
+        header["cs_center_law"] = get(header, "cs_center_law", default_geometry.cs_center_law)
+        header["longitude_offset_deg"] = get(header, "longitude_offset_deg", default_geometry.longitude_offset_deg)
+    end
 
     header_json = JSON3.write(header)
     pad = header_bytes - ncodeunits(header_json)

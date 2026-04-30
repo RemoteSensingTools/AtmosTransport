@@ -106,7 +106,8 @@ function load_grid(reader::CubedSphereBinaryReader;
                    arch = CPU(),
                    Hp::Int = 1)
     vc = HybridSigmaPressure(FT.(A_ifc(reader)), FT.(B_ifc(reader)))
-    mesh = CubedSphereMesh(; FT=FT, Nc=reader.header.Nc, Hp=Hp, convention=mesh_convention(reader))
+    mesh = CubedSphereMesh(; FT=FT, Nc=reader.header.Nc, Hp=Hp,
+                            definition=mesh_definition(reader))
     return AtmosGrid(mesh, vc, arch; FT=FT)
 end
 

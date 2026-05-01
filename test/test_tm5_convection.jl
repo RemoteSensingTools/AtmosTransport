@@ -35,12 +35,17 @@ using .AtmosTransport.Models: TransportModel, with_convection,
 const FT = Float32
 
 @testset "plan 23 Commit 1: TM5Convection type + workspace factory" begin
-    @testset "construct TM5Convection() without fields" begin
+    @testset "construct TM5Convection() and tile_workspace_gib field" begin
         op = TM5Convection()
         @test op isa AbstractConvection
         @test op isa TM5Convection
-        # Stateless — no fields.
-        @test fieldcount(TM5Convection) == 0
+        # Storage plan Commit 4: tile_workspace_gib field carries
+        # the per-topology TM5 column-tile budget. Default 1.0 GiB.
+        @test fieldcount(typeof(op)) == 1
+        @test op.tile_workspace_gib == 1.0
+
+        op_tuned = TM5Convection(tile_workspace_gib = 2.5)
+        @test op_tuned.tile_workspace_gib == 2.5
     end
 
     @testset "NoConvection and CMFMCConvection unchanged" begin
@@ -51,22 +56,29 @@ const FT = Float32
     end
 end
 
-@testset "plan 23 Commit 1: TM5Workspace allocation shape" begin
+@testset "plan 23 Commit 1 / storage Commit 4: TM5Workspace tile shape" begin
     Nx, Ny, Nz = 4, 3, 5
 
-    @testset "structured LatLon air_mass (Nx, Ny, Nz)" begin
+    @testset "structured LatLon air_mass (Nx, Ny, Nz) — default tile" begin
         air_mass = zeros(FT, Nx, Ny, Nz)
         ws = TM5Workspace(air_mass)
+        # Default tile size = total cells per launch; the workspace
+        # is bit-equal to the pre-Commit-4 per-cell allocator in
+        # capacity, but the shape is now flat (Nz, Nz, B).
+        B = Nx * Ny
         @test ws isa TM5Workspace{FT}
-        @test size(ws.conv1)      == (Nz, Nz, Nx, Ny)
-        @test size(ws.pivots)     == (Nz, Nx, Ny)
-        @test size(ws.cloud_dims) == (3, Nx, Ny)
+        @test size(ws.conv1)       == (Nz, Nz, B)
+        @test size(ws.pivots)      == (Nz, B)
+        @test size(ws.cloud_dims)  == (3, B)
+        @test size(ws.amu_scratch) == (Nz + 1, B)
+        @test size(ws.amd_scratch) == (Nz + 1, B)
+        @test ws.f_scratch === ws.conv1                         # alias
         @test eltype(ws.conv1)      == FT
         @test eltype(ws.pivots)     == Int
         @test eltype(ws.cloud_dims) == Int
     end
 
-    @testset "face-indexed RG air_mass (ncells, Nz)" begin
+    @testset "face-indexed RG air_mass (ncells, Nz) — default tile" begin
         ncells = 24
         air_mass = zeros(FT, ncells, Nz)
         ws = TM5Workspace(air_mass)
@@ -74,17 +86,42 @@ end
         @test size(ws.conv1)      == (Nz, Nz, ncells)
         @test size(ws.pivots)     == (Nz, ncells)
         @test size(ws.cloud_dims) == (3, ncells)
+        @test ws.f_scratch === ws.conv1
     end
 
-    @testset "CS panel NTuple{6, (Nc, Nc, Nz)}" begin
+    @testset "CS panel NTuple{6, (Nc, Nc, Nz)} — default tile (per-panel)" begin
         Nc = 6
         air_mass = ntuple(_ -> zeros(FT, Nc, Nc, Nz), 6)
         ws = TM5Workspace(air_mass)
+        # Storage plan Commit 4: workspace is shared across panels
+        # (kernel launches sequentially), so the slab is sized for
+        # one panel's ndrange (Nc²), not all six.
+        B = Nc * Nc
         @test ws isa TM5Workspace{FT}
-        @test ws.conv1 isa NTuple{6, <:AbstractArray}
-        @test size(ws.conv1[1])      == (Nz, Nz, Nc, Nc)
-        @test size(ws.pivots[3])     == (Nz, Nc, Nc)
-        @test size(ws.cloud_dims[6]) == (3, Nc, Nc)
+        @test ws.conv1 isa AbstractArray{FT, 3}
+        @test size(ws.conv1)      == (Nz, Nz, B)
+        @test size(ws.pivots)     == (Nz, B)
+        @test size(ws.cloud_dims) == (3, B)
+        @test ws.f_scratch === ws.conv1
+    end
+
+    @testset "explicit tile_columns shrinks the slab" begin
+        air_mass = zeros(FT, 32, 8, Nz)
+        ws_full  = TM5Workspace(air_mass)                       # B = 256
+        ws_tile  = TM5Workspace(air_mass; tile_columns = 64)
+        @test size(ws_full.conv1, 3) == 256
+        @test size(ws_tile.conv1, 3) == 64
+        @test size(ws_tile.amu_scratch, 2) == 64
+    end
+
+    @testset "tile_workspace_gib budget derives B" begin
+        # Big topology, small budget → derive_tile_columns clamps to 256.
+        air_mass = zeros(FT, 720, 720, Nz)
+        ws = TM5Workspace(air_mass; tile_workspace_gib = 1e-6)
+        @test size(ws.conv1, 3) >= 256                          # floor
+        # Big budget → clamps at total cells.
+        ws_big = TM5Workspace(air_mass; tile_workspace_gib = 1024.0)
+        @test size(ws_big.conv1, 3) == 720 * 720
     end
 end
 
@@ -104,7 +141,9 @@ end
 
     ws_tm5 = _convection_workspace_for(TM5Convection(), state, grid)
     @test ws_tm5 isa TM5Workspace{FT}
-    @test size(ws_tm5.conv1) == (4, 4, 4, 3)  # (Nz, Nz, Nx, Ny)
+    # Storage plan Commit 4: flat tile slab (Nz, Nz, B). Default
+    # B = Nx*Ny when budget covers all cells (it does at this size).
+    @test size(ws_tm5.conv1) == (4, 4, 12)
 end
 
 @testset "plan 23 Commit 4: TM5Convection apply! LL kernel" begin
@@ -469,7 +508,9 @@ end
     model_tm5 = with_convection(model, TM5Convection())
     @test model_tm5.convection isa TM5Convection
     @test model_tm5.workspace.convection_ws isa TM5Workspace{FT}
-    @test size(model_tm5.workspace.convection_ws.conv1) == (4, 4, 4, 3)
+    # Storage plan Commit 4: workspace is a flat tile slab. Default
+    # 1.0 GiB budget covers all 12 cells of this fixture, so B = 12.
+    @test size(model_tm5.workspace.convection_ws.conv1) == (4, 4, 12)
 
     # Swapping back to NoConvection drops the workspace.
     model_none = with_convection(model_tm5, NoConvection())

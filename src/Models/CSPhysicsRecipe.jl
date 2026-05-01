@@ -195,7 +195,14 @@ function build_runtime_convection(cfg, style::AbstractRuntimeRecipeStyle)
 end
 
 build_runtime_convection(::AbstractRuntimeRecipeStyle, ::Val{:none}, _section) = NoConvection()
-build_runtime_convection(::AbstractRuntimeRecipeStyle, ::Val{:tm5}, _section) = TM5Convection()
+function build_runtime_convection(::AbstractRuntimeRecipeStyle, ::Val{:tm5}, section)
+    # `tile_workspace_gib` is the per-topology TM5 column-tile budget
+    # in binary GiB. Default 1.0 — fits all production resolutions
+    # through C720/L137 with slack on H100. Set lower on memory-tight
+    # GPUs (e.g. L40S 48 GiB) or higher to amortize launch overhead.
+    budget = Float64(get(section, "tile_workspace_gib", 1.0))
+    return TM5Convection(; tile_workspace_gib = budget)
+end
 build_runtime_convection(::AbstractRuntimeRecipeStyle, ::Val{:cmfmc}, _section) = CMFMCConvection()
 
 function build_runtime_convection(::AbstractRuntimeRecipeStyle, ::Val{name}, _section) where name

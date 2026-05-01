@@ -12,7 +12,7 @@
 # ---------------------------------------------------------------------------
 
 """
-    TM5Convection()
+    TM5Convection(; tile_workspace_gib = 1.0)
 
 TM5-style convective transport operator. Four-field mass-flux scheme
 following Tiedtke (1989) as implemented in TM5-4DVAR: two entrainment
@@ -22,10 +22,25 @@ and identity above; the solver factorizes the full `[1, Nz]` range
 with partial-pivot Gaussian elimination and stores the pivot vector
 for adjoint replay in plan 19.
 
-No struct fields — the forcing arrays `(entu, detu, entd, detd)`
-arrive via `TransportModel.convection_forcing.tm5_fields`, populated
-each substep by `DrivenSimulation._refresh_forcing!` from
+The forcing arrays `(entu, detu, entd, detd)` arrive via
+`TransportModel.convection_forcing.tm5_fields`, populated each
+substep by `DrivenSimulation._refresh_forcing!` from
 `sim.window.convection`.
+
+# Memory budget
+
+`tile_workspace_gib` (binary GiB) is the per-topology target for
+the TM5 column-tile workspace.
+`_convection_workspace_for(::TM5Convection, ...)` reads this field
+and derives a tile size `B` via [`derive_tile_columns`](@ref); the
+[`TM5Workspace`](@ref) then allocates a single `(Nz, Nz, B)`
+matrix slab plus matching pivot / cloud-dim / `amu` / `amd`
+slabs. A larger budget means fewer kernel launches per substep at
+the cost of larger GPU working set; the default 1.0 GiB fits all
+production resolutions through C720/L137 with slack on H100. The
+tile machinery is the load-bearing change in the storage redesign
+plan's Commit 4 — the workspace no longer scales with
+`N_cells × Nz²`.
 
 # Basis convention
 
@@ -57,8 +72,8 @@ gymnastics (plan 23 principle 1).
 Partial-pivot Gaussian elimination on the full `[1, Nz]` range per
 column (see `artifacts/plan23/matrix_structure.md`
 for the structure survey). Identity rows above the cloud window
-factorize trivially; `lmc`-limited factorization is a Commit 7
-optimization target.
+factorize trivially; `lmc`-limited factorization is a deferred
+optimization (storage plan Commit 7).
 
 Pivoting is kept even though the matrix is diagonally dominant by
 construction (upstream Fortran comment says pivoting "not needed").
@@ -71,10 +86,15 @@ factorization with `trans='T'`.
 None. The backward-Euler matrix solve is unconditionally stable
 for any `dt`, unlike `CMFMCConvection`'s forward-Euler two-pass
 update which requires sub-cycling when the CMFMC profile is
-strong. The kernel launches once and calls `synchronize(backend)`
-once per `apply!`.
+strong. The kernel launches once per tile and calls
+`synchronize(backend)` once per `apply!`.
 """
-struct TM5Convection <: AbstractConvection end
+struct TM5Convection{FT} <: AbstractConvection
+    tile_workspace_gib :: FT
+end
+
+TM5Convection(; tile_workspace_gib::Real = 1.0) =
+    TM5Convection{typeof(tile_workspace_gib)}(tile_workspace_gib)
 
 # =========================================================================
 # Array-level entry: apply_convection!
@@ -102,15 +122,24 @@ function apply_convection!(q_raw::AbstractArray{FT, 4},
     _assert_tm5_forcing(forcing)
     tm5 = forcing.tm5_fields
     Nx, Ny, _, _ = size(q_raw)
+    N_total = Nx * Ny
+    B       = size(workspace.conv1, 3)
     backend = get_backend(q_raw)
-    kernel = _tm5_column_kernel!(backend)
-    kernel(q_raw, air_mass,
-           tm5.entu, tm5.detu, tm5.entd, tm5.detd,
-           workspace.conv1, workspace.pivots, workspace.cloud_dims,
-           workspace.f_scratch, workspace.fu_scratch,
-           workspace.amu_scratch, workspace.amd_scratch,
-           FT(dt);
-           ndrange = (Nx, Ny))
+    kernel  = _tm5_column_kernel!(backend)
+    dt_ft   = FT(dt)
+    # Tile loop — KA stream ordering serializes panels safely
+    # because the workspace is shared. `synchronize(backend)`
+    # after the loop, not per launch.
+    for tile_off in 0:B:(N_total - 1)
+        n = min(B, N_total - tile_off)
+        kernel(q_raw, air_mass,
+               tm5.entu, tm5.detu, tm5.entd, tm5.detd,
+               workspace.conv1, workspace.pivots, workspace.cloud_dims,
+               workspace.f_scratch,
+               workspace.amu_scratch, workspace.amd_scratch,
+               Int(tile_off), Int(Nx), dt_ft;
+               ndrange = n)
+    end
     synchronize(backend)
     return nothing
 end
@@ -123,17 +152,22 @@ function apply_convection!(q_raw::AbstractArray{FT, 3},
                             workspace::TM5Workspace,
                             grid::AtmosGrid{<:ReducedGaussianMesh}) where {FT}
     _assert_tm5_forcing(forcing)
-    tm5 = forcing.tm5_fields
-    ncells = size(q_raw, 1)
+    tm5     = forcing.tm5_fields
+    N_total = size(q_raw, 1)
+    B       = size(workspace.conv1, 3)
     backend = get_backend(q_raw)
-    kernel = _tm5_faceindexed_column_kernel!(backend)
-    kernel(q_raw, air_mass,
-           tm5.entu, tm5.detu, tm5.entd, tm5.detd,
-           workspace.conv1, workspace.pivots, workspace.cloud_dims,
-           workspace.f_scratch, workspace.fu_scratch,
-           workspace.amu_scratch, workspace.amd_scratch,
-           FT(dt);
-           ndrange = ncells)
+    kernel  = _tm5_faceindexed_column_kernel!(backend)
+    dt_ft   = FT(dt)
+    for tile_off in 0:B:(N_total - 1)
+        n = min(B, N_total - tile_off)
+        kernel(q_raw, air_mass,
+               tm5.entu, tm5.detu, tm5.entd, tm5.detd,
+               workspace.conv1, workspace.pivots, workspace.cloud_dims,
+               workspace.f_scratch,
+               workspace.amu_scratch, workspace.amd_scratch,
+               Int(tile_off), dt_ft;
+               ndrange = n)
+    end
     synchronize(backend)
     return nothing
 end
@@ -146,22 +180,32 @@ function apply_convection!(q_raw::NTuple{6, <:AbstractArray{FT, 4}},
                             workspace::TM5Workspace,
                             grid::AtmosGrid{<:CubedSphereMesh}) where {FT}
     _assert_tm5_forcing(forcing)
-    tm5 = forcing.tm5_fields
-    mesh = grid.horizontal
-    Nc = mesh.Nc
-    Hp = mesh.Hp
+    tm5     = forcing.tm5_fields
+    mesh    = grid.horizontal
+    Nc      = mesh.Nc
+    Hp      = mesh.Hp
+    N_total = Nc * Nc
+    B       = size(workspace.conv1, 3)
     backend = get_backend(q_raw[1])
-    kernel = _tm5_cs_panel_column_kernel!(backend)
-    dt_ft = FT(dt)
+    kernel  = _tm5_cs_panel_column_kernel!(backend)
+    dt_ft   = FT(dt)
+    # The workspace is shared across panels; KA stream ordering
+    # makes that safe (panel n+1 can't start until panel n's
+    # writes are visible). The `for p` loop sits *outside* the
+    # tile loop so the workspace is reused per panel rather than
+    # cloned six times.
     for p in 1:6
-        kernel(q_raw[p], air_mass[p],
-               tm5.entu[p], tm5.detu[p], tm5.entd[p], tm5.detd[p],
-               workspace.conv1[p], workspace.pivots[p],
-               workspace.cloud_dims[p],
-               workspace.f_scratch[p], workspace.fu_scratch[p],
-               workspace.amu_scratch[p], workspace.amd_scratch[p],
-               Hp, dt_ft;
-               ndrange = (Nc, Nc))
+        for tile_off in 0:B:(N_total - 1)
+            n = min(B, N_total - tile_off)
+            kernel(q_raw[p], air_mass[p],
+                   tm5.entu[p], tm5.detu[p], tm5.entd[p], tm5.detd[p],
+                   workspace.conv1, workspace.pivots,
+                   workspace.cloud_dims,
+                   workspace.f_scratch,
+                   workspace.amu_scratch, workspace.amd_scratch,
+                   Int(Hp), Int(tile_off), Int(Nc), dt_ft;
+                   ndrange = n)
+        end
     end
     synchronize(backend)
     return nothing

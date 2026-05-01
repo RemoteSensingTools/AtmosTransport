@@ -148,6 +148,12 @@ value = 1.0                    # m²/s — broadcast Kz when kind="constant"
 
 [convection]
 kind = "cmfmc"                 # "none" | "cmfmc" | "tm5"
+
+# TM5-only — per-topology budget for the column-tile workspace,
+# in binary GiB. Default 1.0 (fits production through C720/L137 on
+# H100). Set lower on memory-tight GPUs; setting it higher beyond
+# the topology's total cells is a no-op.
+tile_workspace_gib = 1.0
 ```
 
 The runtime **rejects** at load time any operator selection that

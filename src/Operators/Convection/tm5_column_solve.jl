@@ -11,25 +11,23 @@
 # Algorithm overview (matches the Fortran line-by-line):
 #
 #   1. Diagnose cloud dims (icltop, iclbas, icllfs) from `detu` / `entd`.
-#   2. Compute active range [icltop, Nz] (active sub-block of conv1).
-#      If icltop > Nz (no convection in this column), identity-solve.
-#   3. Build the flux-divergence matrix `conv1 = I - dt·D` within the
-#      active range. Outside the active range, conv1 is identity
-#      (by construction).
-#   4. Factorize conv1[icltop:Nz, icltop:Nz] with partial pivoting.
-#      Store the permutation vector in `pivots[icltop:Nz]` (plan 23
-#      principle 3 — plan 19's adjoint replays this factorization
-#      with trans='T'; do NOT fuse the permutation into the solved
-#      coefficients).
-#   5. Back-substitute each tracer's vertical profile within the
-#      active range. Levels above icltop are untouched (identity
-#      action).
+#   2. If icltop > Nz (no detu-positive layer), return immediately:
+#      this column has identity convection.
+#   3. Build the full flux-divergence matrix `conv1 = I - dt·D`.
+#      Rows outside the active cloud window are often identity, but
+#      cloud-top interface fluxes can touch adjacent rows, so the current
+#      production solver keeps the full matrix for exact TM5 parity.
+#   4. Factorize conv1[1:Nz, 1:Nz] with partial pivoting. Store the
+#      permutation vector in `pivots[1:Nz]` (plan 23 principle 3 —
+#      plan 19's adjoint replays this factorization with trans='T';
+#      do NOT fuse the permutation into the solved coefficients).
+#   5. Back-substitute each tracer's full vertical profile.
 #
-# The matrix is dense lower + upper triangular within the active
-# window (no banded structure to exploit; see
-# artifacts/plan23/matrix_structure.md). Factorization cost is
-# O(lmc³) where lmc = Nz - icltop + 1 is the active sub-block size.
-# Solve cost is O(lmc² · Nt) per column.
+# The matrix is dense lower + upper triangular within the cloud-coupled
+# window (no simple banded structure to exploit; see
+# artifacts/plan23/matrix_structure.md). The current implementation pays
+# O(Nz³) factorization once a column is active. A future active-window
+# solver should be validated against the full-matrix path column-by-column.
 # ---------------------------------------------------------------------------
 
 """
@@ -116,18 +114,25 @@ function _tm5_build_conv1!(conv1::AbstractMatrix{FT},
                            m_col::AbstractVector{FT},
                            icltop::Integer, icllfs::Integer,
                            dt::FT, Nz::Integer;
-                           fu::AbstractMatrix{FT}  = zeros(FT, Nz + 1, Nz),
                            f::AbstractMatrix{FT}   = zeros(FT, Nz + 1, Nz),
                            amu::AbstractVector{FT} = zeros(FT, Nz + 1),
                            amd::AbstractVector{FT} = zeros(FT, Nz + 1),
                            ) where {FT}
-    # Working storage: `fu` and `f` are (Nz+1, Nz) to mirror TM5's
-    # f(0:lmx, 1:lmx) / fu(0:lmx, 1:lmx). `amu` and `amd` are
-    # length-(Nz+1). Commit 2 default-allocated these inside the
-    # function for CPU tests; Commit 4 passes pre-allocated slices
-    # from TM5Workspace so the function is usable inside KA
-    # kernels (no heap allocation on GPU).
-    fill!(fu,  zero(FT))
+    # Working storage: `f` holds the merged updraft + downdraft
+    # contribution. The plan-23 first cut carried a separate `fu`
+    # buffer to mirror TM5's two-array Fortran layout; the storage
+    # plan's Commit 3 folds the updraft directly into `f` because
+    # the two passes write disjoint index ranges (updraft at
+    # `kk_atm ≥ k_atm`, downdraft at `kk_atm < k_atm`). `amu`/`amd`
+    # are length-(Nz+1).
+    #
+    # Shape contract: callers pass either `(Nz+1, Nz)` (default
+    # standalone path) or `(Nz, Nz)` aliased to `conv1`. Production
+    # uses the alias — see `convection_workspace.jl`'s
+    # `f_scratch === conv1` aliasing. Both shapes are valid because
+    # the loop body never reads `f[Nz+1, ...]` (the surface row is
+    # supplied as a literal zero in the propagation step at
+    # `k_atm == Nz`, and the final assembly uses the same guard).
     fill!(f,   zero(FT))
     fill!(amu, zero(FT))
     fill!(amd, zero(FT))
@@ -138,13 +143,18 @@ function _tm5_build_conv1!(conv1::AbstractMatrix{FT},
     # - Interface-valued quantities (amu, amd) use a length-(Nz+1)
     #   vector where amu[k_atm] is the mass flux at the top of layer
     #   k_atm, and amu[Nz+1] is the bottom boundary (TM5 amu(0) = 0).
-    # - f and fu use (Nz+1, Nz); f[k_atm, kk_atm] is TM5 f(k, kk)
-    #   with k_atm = Nz+1-k_tm5 (layer index shifted). The extra
-    #   row at index Nz+1 represents TM5's f(0, kk) / fu(0, kk).
+    # - `f[k_atm, kk_atm]` is TM5 `f(k, kk)` (or `fu(k, kk)` for
+    #   updraft entries) with `k_atm = Nz+1-k_tm5`. The implicit
+    #   "TM5 row 0" / surface row at index Nz+1 is treated as zero;
+    #   no shape needs to materialize it.
 
     # --- Updraft pass (AtmosTransport surface → cloud top) ------
     # For each layer k_atm iterated surface-up, compute amu[k_atm],
-    # zxi, and propagate fu rows.
+    # zxi, and propagate the updraft contribution. Writes go
+    # directly into `f` at column indices `kk_atm ≥ k_atm` (upper
+    # triangle plus diagonal); the downdraft pass below writes
+    # disjointly at `kk_atm < k_atm`, so the combine pass no longer
+    # needs `f += fu`.
     @inbounds for k_atm in Nz:-1:icltop
         # TM5:  amu(k)   = amu(k-1) + entu(k) - detu(k)
         # Atm:  amu[k_atm] = amu[k_atm+1] + entu[k_atm] - detu[k_atm]
@@ -156,18 +166,15 @@ function _tm5_build_conv1!(conv1::AbstractMatrix{FT},
             amu[k_atm] = zero(FT)
             zxi = zero(FT)
         end
-        # TM5:  fu(k, kk) = fu(k-1, kk) * zxi   for kk = 1..k-1
-        # Atm:  fu[k_atm, kk_atm] = fu[k_atm+1, kk_atm] * zxi for
-        #       kk_atm iterating "TM5 1..k-1" in AtmosTransport order.
-        # TM5 kk = 1..k-1 is "layers strictly below the current one
-        # in TM5" = "layers strictly surface-ward of current" in
-        # AtmosTransport = "kk_atm in (k_atm+1):Nz".
+        # Propagate updraft row k_atm from row k_atm+1; the surface
+        # boundary (TM5 fu(0, kk) ≡ 0) is a literal zero so the
+        # `(Nz, Nz)`-aliased shape never touches a phantom row.
         for kk_atm in (k_atm + 1):Nz
-            fu[k_atm, kk_atm] = fu[k_atm + 1, kk_atm] * zxi
+            f_below = k_atm == Nz ? zero(FT) : f[k_atm + 1, kk_atm]
+            f[k_atm, kk_atm] = f_below * zxi
         end
         # TM5:  fu(k, k)   = entu(k) / m(k) * zxi   (diagonal)
-        # Atm:  fu[k_atm, k_atm] = entu[k_atm] / m[k_atm] * zxi
-        fu[k_atm, k_atm] = entu_col[k_atm] / m_col[k_atm] * zxi
+        f[k_atm, k_atm] = entu_col[k_atm] / m_col[k_atm] * zxi
     end
 
     # --- Downdraft pass (AtmosTransport icllfs → Nz-1) ----------
@@ -202,17 +209,15 @@ function _tm5_build_conv1!(conv1::AbstractMatrix{FT},
         end
     end
 
-    # --- Combine updraft + downdraft + subsidence --------------
-    # TM5: do k=1, lmx-1 → Atm: for k_atm = Nz:-1:2
-    #      f(k, kk) += fu(k, kk) for all kk
-    #      f(k, k+1) -= amu(k) / m(k+1)        [subsidence, updraft]
-    #      f(k, k)   -= amd(k) / m(k)          [subsidence, downdraft]
-    # TM5 kk in 1..lmx → Atm: kk_atm in 1..Nz (any layer).
-    # TM5 k+1 = layer above current in TM5 = k_atm-1 in Atm.
+    # --- Subsidence subtraction --------------------------------
+    # TM5's combine pass was `f(k, kk) += fu(k, kk)` followed by
+    # subsidence at f(k, k+1) and f(k, k). The += step is gone:
+    # the updraft pass above writes its contribution directly into
+    # `f`, and the disjoint index ranges (updraft at
+    # `kk_atm ≥ k_atm`, downdraft at `kk_atm < k_atm`) mean no
+    # position is written by both passes. Only the subsidence
+    # corrections remain.
     @inbounds for k_atm in Nz:-1:2
-        for kk_atm in 1:Nz
-            f[k_atm, kk_atm] += fu[k_atm, kk_atm]
-        end
         f[k_atm, k_atm - 1] -= amu[k_atm] / m_col[k_atm - 1]
         f[k_atm, k_atm]     -= amd[k_atm] / m_col[k_atm]
     end
@@ -220,12 +225,18 @@ function _tm5_build_conv1!(conv1::AbstractMatrix{FT},
     # --- Final assembly: conv1(k, kk) = -dt · (f(k-1, kk) - f(k, kk)) + I
     # TM5: do k=1, lmx → Atm: for k_atm = 1:Nz (any order).
     # TM5 "f(k-1, kk)" = "row below current in TM5" = f[k_atm+1, kk_atm].
-    fill!(conv1, zero(FT))
+    #
+    # `f` is allowed to alias `conv1` in the production workspace. Iterate
+    # from top to bottom so overwriting row k never destroys row k+1 before it
+    # is read by a later iteration. The implicit bottom row f[Nz+1, :] is zero.
     @inbounds for k_atm in 1:Nz
         for kk_atm in 1:Nz
-            fdiff = f[k_atm + 1, kk_atm] - f[k_atm, kk_atm]
+            f_below = k_atm == Nz ? zero(FT) : f[k_atm + 1, kk_atm]
+            fdiff = f_below - f[k_atm, kk_atm]
             if fdiff != zero(FT)
                 conv1[k_atm, kk_atm] = -dt * fdiff
+            else
+                conv1[k_atm, kk_atm] = zero(FT)
             end
         end
         conv1[k_atm, k_atm] += one(FT)
@@ -371,7 +382,6 @@ function _tm5_solve_column!(rm_col::AbstractMatrix{FT},
                             pivots_buf::AbstractVector{<:Integer},
                             cloud_dims::AbstractVector{<:Integer},
                             dt::FT;
-                            fu_buf::AbstractMatrix{FT}  = zeros(FT, length(m_col) + 1, length(m_col)),
                             f_buf::AbstractMatrix{FT}   = zeros(FT, length(m_col) + 1, length(m_col)),
                             amu_buf::AbstractVector{FT} = zeros(FT, length(m_col) + 1),
                             amd_buf::AbstractVector{FT} = zeros(FT, length(m_col) + 1),
@@ -393,7 +403,7 @@ function _tm5_solve_column!(rm_col::AbstractMatrix{FT},
     _tm5_build_conv1!(conv1_buf,
                       entu_col, detu_col, entd_col, detd_col, m_col,
                       icltop, icllfs, dt, Nz;
-                      fu = fu_buf, f = f_buf,
+                      f = f_buf,
                       amu = amu_buf, amd = amd_buf)
     _tm5_lu!(conv1_buf, pivots_buf, Nz)
     _tm5_solve!(rm_col, conv1_buf, pivots_buf, Nz, Nt)

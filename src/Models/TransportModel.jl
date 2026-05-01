@@ -102,19 +102,23 @@ _convection_workspace_for(::CMFMCConvection,
 # TM5Convection — one TM5Workspace per topology. No cell metrics
 # argument; the TM5 kernel multiplies entrainment/detrainment
 # rates by layer air mass `m(k)` directly, so no area weighting is
-# needed at workspace construction. (Plan 23 Commit 1.)
-_convection_workspace_for(::TM5Convection,
+# needed at workspace construction. The operator carries a
+# `tile_workspace_gib::FT` budget (storage plan Commit 4); the
+# `TM5Workspace` constructor turns that into a tile column count
+# via `derive_tile_columns`, so the same code path covers all
+# three topologies.
+_convection_workspace_for(op::TM5Convection,
                           state::CellState{B, A, Raw},
                           grid::AtmosGrid{<:LatLonMesh}) where {B, A, Raw <: AbstractArray{<:Any, 4}} =
-    TM5Workspace(state.air_mass)
-_convection_workspace_for(::TM5Convection,
+    TM5Workspace(state.air_mass; tile_workspace_gib = op.tile_workspace_gib)
+_convection_workspace_for(op::TM5Convection,
                           state::CellState{B, A, Raw},
                           grid::AtmosGrid{<:ReducedGaussianMesh}) where {B, A, Raw <: AbstractArray{<:Any, 3}} =
-    TM5Workspace(state.air_mass)
-_convection_workspace_for(::TM5Convection,
+    TM5Workspace(state.air_mass; tile_workspace_gib = op.tile_workspace_gib)
+_convection_workspace_for(op::TM5Convection,
                           state::CubedSphereState{B},
                           grid::AtmosGrid{<:CubedSphereMesh}) where {B} =
-    TM5Workspace(state.air_mass)
+    TM5Workspace(state.air_mass; tile_workspace_gib = op.tile_workspace_gib)
 
 # Fallback for future operators — keep LAST so the specific
 # methods above take precedence. Returns `nothing` so installing an

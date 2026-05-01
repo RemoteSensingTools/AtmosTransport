@@ -155,11 +155,18 @@ Per-sim pre-allocated workspace for [`TM5Convection`](@ref).
   preprocessor delivers forcings in this orientation so the solver
   has zero orientation logic). Shape `(3, Nx, Ny)` /
   `(3, ncells)` / `NTuple{6, (3, Nc, Nc)}`.
-- `f_scratch :: F`, `fu_scratch :: F` — `(Nz+1, Nz)` per-column
-  intermediate matrices for the matrix build (TM5 `f(0:lmx, 1:lmx)`
-  and `fu(0:lmx, 1:lmx)`). Plan 23 Commit 4 pre-allocates these
-  so `_tm5_build_conv1!` runs without heap allocation inside KA
-  kernels (mandatory on GPU; same contract on CPU for parity).
+- `f_scratch :: F` — per-column intermediate matrix for the
+  matrix build (TM5 `f(0:lmx, 1:lmx)` after the storage plan's
+  Commit 3 merged the updraft into `f`). Plan 23 Commit 4
+  pre-allocates this so `_tm5_build_conv1!` runs without heap
+  allocation inside KA kernels (mandatory on GPU; same contract on
+  CPU for parity). `f_scratch` aliases `conv1` in the production
+  workspace because `conv1` is only needed after `f` has been
+  converted into `I - dt*D`; this saves one dense `(Nz, Nz)` slab
+  per column. The standalone `fu_scratch` field that previously
+  carried the updraft contribution was dropped in Commit 3 — the
+  updraft and downdraft passes write disjoint index ranges, so the
+  builder writes directly into `f`.
 - `amu_scratch :: A`, `amd_scratch :: A` — length-`(Nz+1)`
   per-column boundary-aware mass-flux vectors (TM5 `amu(0:lmx)` /
   `amd(0:lmx)`). Same allocation policy as the scratch matrices.
@@ -176,152 +183,141 @@ struct TM5Workspace{FT, M, P, C, F, A}
     pivots      :: P
     cloud_dims  :: C
     f_scratch   :: F
-    fu_scratch  :: F
     amu_scratch :: A
     amd_scratch :: A
 end
 
-# Allocation helpers — single-array (structured / face-indexed) vs
-# NTuple (CS panel) dispatch, mirroring the CMFMC pattern.
+# Topology-shape introspection helpers used by the tile workspace
+# constructor. Single dispatch on the air-mass payload picks Nz,
+# the per-launch cell count, and a "template" array (used by
+# `similar` to inherit backend / element type) — the workspace
+# itself is topology-agnostic after Commit 4 of the storage plan.
 
-@inline function _tm5_conv1_like(air_mass::AbstractArray{FT, 3}) where FT
-    # Structured LatLon: air_mass is (Nx, Ny, Nz) → conv1 (Nz, Nz, Nx, Ny).
-    Nx, Ny, Nz = size(air_mass)
-    return similar(air_mass, FT, Nz, Nz, Nx, Ny)
-end
-@inline function _tm5_conv1_like(air_mass::AbstractArray{FT, 2}) where FT
-    # Face-indexed RG: air_mass is (ncells, Nz) → conv1 (Nz, Nz, ncells).
-    ncells, Nz = size(air_mass)
-    return similar(air_mass, FT, Nz, Nz, ncells)
-end
-@inline function _tm5_conv1_like(air_mass::NTuple{N, <:AbstractArray{FT, 3}}) where {N, FT}
-    # CS panel NTuple: per-panel air_mass (Nc, Nc, Nz) → per-panel
-    # conv1 (Nz, Nz, Nc, Nc).
-    return ntuple(i -> begin
-        Nc1, Nc2, Nz = size(air_mass[i])
-        similar(air_mass[i], FT, Nz, Nz, Nc1, Nc2)
-    end, N)
-end
+@inline _tm5_template(air_mass::AbstractArray) = air_mass
+@inline _tm5_template(air_mass::NTuple)        = air_mass[1]
 
-@inline function _tm5_pivots_like(air_mass::AbstractArray{FT, 3}) where FT
-    Nx, Ny, Nz = size(air_mass)
-    return similar(air_mass, Int, Nz, Nx, Ny)
-end
-@inline function _tm5_pivots_like(air_mass::AbstractArray{FT, 2}) where FT
-    ncells, Nz = size(air_mass)
-    return similar(air_mass, Int, Nz, ncells)
-end
-@inline function _tm5_pivots_like(air_mass::NTuple{N, <:AbstractArray{FT, 3}}) where {N, FT}
-    return ntuple(i -> begin
-        Nc1, Nc2, Nz = size(air_mass[i])
-        similar(air_mass[i], Int, Nz, Nc1, Nc2)
-    end, N)
-end
+# Number of vertical layers — the leading two `(Nz, Nz)` dims of
+# the matrix slab.
+@inline _tm5_extract_Nz(air_mass::AbstractArray{<:Any, 3}) = size(air_mass, 3)
+@inline _tm5_extract_Nz(air_mass::AbstractArray{<:Any, 2}) = size(air_mass, 2)
+@inline _tm5_extract_Nz(air_mass::NTuple{N, <:AbstractArray{<:Any, 3}}) where N =
+    size(air_mass[1], 3)
 
-@inline function _tm5_cloud_dims_like(air_mass::AbstractArray{FT, 3}) where FT
-    Nx, Ny, _ = size(air_mass)
-    return similar(air_mass, Int, 3, Nx, Ny)
-end
-@inline function _tm5_cloud_dims_like(air_mass::AbstractArray{FT, 2}) where FT
-    ncells, _ = size(air_mass)
-    return similar(air_mass, Int, 3, ncells)
-end
-@inline function _tm5_cloud_dims_like(air_mass::NTuple{N, <:AbstractArray{FT, 3}}) where {N, FT}
-    return ntuple(i -> begin
-        Nc1, Nc2, _ = size(air_mass[i])
-        similar(air_mass[i], Int, 3, Nc1, Nc2)
-    end, N)
-end
+# Per-launch cell count — the largest single kernel ndrange the
+# workspace has to cover. CS panels are launched one at a time,
+# so the workspace is sized for one panel (`Nc²`), not all six.
+@inline _tm5_total_cells_per_launch(air_mass::AbstractArray{<:Any, 3}) =
+    size(air_mass, 1) * size(air_mass, 2)
+@inline _tm5_total_cells_per_launch(air_mass::AbstractArray{<:Any, 2}) =
+    size(air_mass, 1)
+@inline _tm5_total_cells_per_launch(air_mass::NTuple{N, <:AbstractArray{<:Any, 3}}) where N =
+    size(air_mass[1], 1) * size(air_mass[1], 2)
 
-# Per-column (Nz+1, Nz) scratch for `f` / `fu` — same leading-dim
-# layout as conv1 but with an extra row for the TM5 boundary
-# convention (row Nz+1 = "below surface").
-@inline function _tm5_scratch_f_like(air_mass::AbstractArray{FT, 3}) where FT
-    Nx, Ny, Nz = size(air_mass)
-    return similar(air_mass, FT, Nz + 1, Nz, Nx, Ny)
-end
-@inline function _tm5_scratch_f_like(air_mass::AbstractArray{FT, 2}) where FT
-    ncells, Nz = size(air_mass)
-    return similar(air_mass, FT, Nz + 1, Nz, ncells)
-end
-@inline function _tm5_scratch_f_like(air_mass::NTuple{N, <:AbstractArray{FT, 3}}) where {N, FT}
-    return ntuple(i -> begin
-        Nc1, Nc2, Nz = size(air_mass[i])
-        similar(air_mass[i], FT, Nz + 1, Nz, Nc1, Nc2)
-    end, N)
-end
+"""
+    derive_tile_columns(::Type{FT}, Nz, budget_gib, total_cells) -> Int
 
-# Per-column length-(Nz+1) scratch for `amu` / `amd`.
-@inline function _tm5_scratch_am_like(air_mass::AbstractArray{FT, 3}) where FT
-    Nx, Ny, Nz = size(air_mass)
-    return similar(air_mass, FT, Nz + 1, Nx, Ny)
-end
-@inline function _tm5_scratch_am_like(air_mass::AbstractArray{FT, 2}) where FT
-    ncells, Nz = size(air_mass)
-    return similar(air_mass, FT, Nz + 1, ncells)
-end
-@inline function _tm5_scratch_am_like(air_mass::NTuple{N, <:AbstractArray{FT, 3}}) where {N, FT}
-    return ntuple(i -> begin
-        Nc1, Nc2, Nz = size(air_mass[i])
-        similar(air_mass[i], FT, Nz + 1, Nc1, Nc2)
-    end, N)
+Pick a tile size `B` from a per-cell memory cost and a target
+budget. The cost model accounts for every per-cell field that
+[`TM5Workspace`](@ref) tiles:
+
+- `conv1` : `Nz²` × `sizeof(FT)`
+- `amu_scratch` + `amd_scratch` : `2(Nz+1)` × `sizeof(FT)`
+- `pivots` : `Nz` × `sizeof(Int)`
+- `cloud_dims` : `3` × `sizeof(Int)`
+
+`f_scratch` is a structural alias for `conv1` (saves one matrix
+slab per cell). `B` is clamped between 256 (avoid pathological
+launches) and `total_cells` (one tile covers the whole topology
+when the budget allows it).
+"""
+function derive_tile_columns(::Type{FT}, Nz::Integer,
+                             budget_gib::Real, total_cells::Integer) where FT
+    Nz > 0 || throw(ArgumentError("derive_tile_columns: Nz must be > 0"))
+    total_cells > 0 ||
+        throw(ArgumentError("derive_tile_columns: total_cells must be > 0"))
+    budget_gib > 0 ||
+        throw(ArgumentError("derive_tile_columns: budget_gib must be > 0"))
+    per_cell_bytes = sizeof(FT) * (Nz * Nz + 2 * (Nz + 1)) +
+                     sizeof(Int) * (Nz + 3)
+    budget_bytes = round(Int, budget_gib * (1 << 30))
+    raw = fld(budget_bytes, per_cell_bytes)
+    # Floor of 256 avoids pathologically tiny launches; the
+    # `min(total_cells, …)` cap keeps small topologies from
+    # over-allocating beyond what they need.
+    return Int(min(Int(total_cells), max(256, Int(raw))))
 end
 
 """
-    TM5Workspace(air_mass) -> TM5Workspace
+    TM5Workspace(air_mass; tile_columns = …,
+                            tile_workspace_gib = nothing) -> TM5Workspace
 
 Construct a fresh workspace from an air-mass payload. `air_mass`
 may be a single array (structured `(Nx, Ny, Nz)` or face-indexed
-`(ncells, Nz)`) or a cubed-sphere panel tuple. The per-column
-element type of `conv1` matches `eltype(air_mass)`.
-"""
-function TM5Workspace(air_mass::AbstractArray{FT}) where FT
-    conv1       = _tm5_conv1_like(air_mass)
-    pivots      = _tm5_pivots_like(air_mass)
-    cloud_dims  = _tm5_cloud_dims_like(air_mass)
-    f_scratch   = _tm5_scratch_f_like(air_mass)
-    fu_scratch  = _tm5_scratch_f_like(air_mass)
-    amu_scratch = _tm5_scratch_am_like(air_mass)
-    amd_scratch = _tm5_scratch_am_like(air_mass)
-    return TM5Workspace{FT,
-                        typeof(conv1), typeof(pivots), typeof(cloud_dims),
-                        typeof(f_scratch), typeof(amu_scratch)}(
-        conv1, pivots, cloud_dims,
-        f_scratch, fu_scratch, amu_scratch, amd_scratch,
-    )
-end
+`(ncells, Nz)`) or a cubed-sphere panel tuple — the workspace
+itself is topology-agnostic. The per-column element type of
+`conv1` matches `eltype(air_mass)`.
 
-function TM5Workspace(air_mass::NTuple{N, <:AbstractArray{FT, 3}}) where {N, FT}
-    conv1       = _tm5_conv1_like(air_mass)
-    pivots      = _tm5_pivots_like(air_mass)
-    cloud_dims  = _tm5_cloud_dims_like(air_mass)
-    f_scratch   = _tm5_scratch_f_like(air_mass)
-    fu_scratch  = _tm5_scratch_f_like(air_mass)
-    amu_scratch = _tm5_scratch_am_like(air_mass)
-    amd_scratch = _tm5_scratch_am_like(air_mass)
+The per-launch column count `B` is set by exactly one of:
+
+- `tile_columns::Integer` (explicit). Default
+  `_tm5_total_cells_per_launch(air_mass)` — one tile covers the
+  whole launch and the workspace is bit-equal to the pre-Commit-4
+  per-cell allocator. Production paths use this branch when they
+  already know `B`.
+- `tile_workspace_gib::Real` (budget). Picks `B` via
+  [`derive_tile_columns`](@ref) from
+  [`TM5Convection`](@ref)'s `tile_workspace_gib` field. Bypassed
+  if `tile_columns` is also passed (explicit wins).
+
+Specifying both is an error.
+"""
+function TM5Workspace(air_mass;
+                      tile_columns::Union{Integer, Nothing} = nothing,
+                      tile_workspace_gib::Union{Real, Nothing} = nothing)
+    Nz          = _tm5_extract_Nz(air_mass)
+    template    = _tm5_template(air_mass)
+    FT          = eltype(template)
+    total_cells = _tm5_total_cells_per_launch(air_mass)
+    B = if tile_columns !== nothing && tile_workspace_gib !== nothing
+        throw(ArgumentError(
+            "TM5Workspace: pass either `tile_columns` or `tile_workspace_gib`, not both"))
+    elseif tile_columns !== nothing
+        Int(tile_columns)
+    elseif tile_workspace_gib !== nothing
+        derive_tile_columns(FT, Nz, Float64(tile_workspace_gib), total_cells)
+    else
+        total_cells
+    end
+    B > 0 || throw(ArgumentError("TM5Workspace: tile size must be > 0"))
+    conv1       = similar(template, FT,  Nz, Nz, B)
+    pivots      = similar(template, Int, Nz,     B)
+    cloud_dims  = similar(template, Int, 3,      B)
+    f_scratch   = conv1                     # alias — see docstring
+    amu_scratch = similar(template, FT,  Nz + 1, B)
+    amd_scratch = similar(template, FT,  Nz + 1, B)
     return TM5Workspace{FT,
                         typeof(conv1), typeof(pivots), typeof(cloud_dims),
                         typeof(f_scratch), typeof(amu_scratch)}(
         conv1, pivots, cloud_dims,
-        f_scratch, fu_scratch, amu_scratch, amd_scratch,
+        f_scratch, amu_scratch, amd_scratch,
     )
 end
 
 function Adapt.adapt_structure(to, ws::TM5Workspace{FT}) where FT
+    f_aliases_conv1 = ws.conv1 === ws.f_scratch
     conv1       = Adapt.adapt(to, ws.conv1)
     pivots      = Adapt.adapt(to, ws.pivots)
     cloud_dims  = Adapt.adapt(to, ws.cloud_dims)
-    f_scratch   = Adapt.adapt(to, ws.f_scratch)
-    fu_scratch  = Adapt.adapt(to, ws.fu_scratch)
+    f_scratch   = f_aliases_conv1 ? conv1 : Adapt.adapt(to, ws.f_scratch)
     amu_scratch = Adapt.adapt(to, ws.amu_scratch)
     amd_scratch = Adapt.adapt(to, ws.amd_scratch)
     return TM5Workspace{FT,
                         typeof(conv1), typeof(pivots), typeof(cloud_dims),
                         typeof(f_scratch), typeof(amu_scratch)}(
         conv1, pivots, cloud_dims,
-        f_scratch, fu_scratch, amu_scratch, amd_scratch,
+        f_scratch, amu_scratch, amd_scratch,
     )
 end
 
 export CMFMCWorkspace, invalidate_cmfmc_cache!
-export TM5Workspace
+export TM5Workspace, derive_tile_columns

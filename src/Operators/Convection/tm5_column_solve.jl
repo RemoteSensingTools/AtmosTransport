@@ -267,10 +267,21 @@ swaps in practice.
 """
 function _tm5_lu!(conv1::AbstractMatrix{FT},
                   pivots::AbstractVector{<:Integer},
-                  Nz::Integer) where {FT}
+                  Nz::Integer;
+                  icltop_eff::Integer = 1) where {FT}
     Nz == 0 && return nothing
+    # Storage Commit 7 active-window LU: rows above `icltop_eff` are
+    # pure identity by `_tm5_build_conv1!`'s structure (proven by
+    # `test/test_tm5_sparsity_above_icltop.jl`), and the lower-left
+    # quadrant `(k ≥ icltop_eff, j < icltop_eff)` is zero. So the LU
+    # factorization is block-diagonal — only the lower-right
+    # `(Nz - icltop_eff + 1)`-by-`(Nz - icltop_eff + 1)` block needs
+    # work. Inner loops below already iterate from `k+1` (or `1:k-1`
+    # in the solve), so `k_lo := max(icltop_eff, 1)` is the only
+    # change vs the bit-exact full-Nz path.
+    k_lo = max(Int(icltop_eff), 1)
 
-    @inbounds for k in 1:Nz
+    @inbounds for k in k_lo:Nz
         # Find the pivot row within column k, range [k, Nz].
         piv = k
         pivmag = abs(conv1[k, k])
@@ -283,7 +294,9 @@ function _tm5_lu!(conv1::AbstractMatrix{FT},
         end
         pivots[k] = piv
         if piv != k
-            for c in 1:Nz
+            # Both rows share zeros in columns [1, k_lo-1]; swap only
+            # the active columns to skip the dead-zero work.
+            for c in k_lo:Nz
                 tmp = conv1[k, c]
                 conv1[k, c] = conv1[piv, c]
                 conv1[piv, c] = tmp
@@ -322,11 +335,20 @@ function _tm5_solve!(rm_col::AbstractMatrix{FT},
                      conv1::AbstractMatrix{FT},
                      pivots::AbstractVector{<:Integer},
                      Nz::Integer,
-                     Nt::Integer) where {FT}
+                     Nt::Integer;
+                     icltop_eff::Integer = 1) where {FT}
     Nz == 0 && return nothing
+    # Storage Commit 7: rows [1, icltop_eff-1] are identity, so
+    # rm_col[1:icltop_eff-1, :] passes through unchanged. Lower-left
+    # quadrant `conv1[k ≥ icltop_eff, j < icltop_eff] == 0`, so the
+    # forward solve's `j` loop can start at icltop_eff. Pivots are
+    # only written by `_tm5_lu!` for `k ≥ icltop_eff`; entries below
+    # are unchanged from the previous column's run, so we must skip
+    # them here too.
+    k_lo = max(Int(icltop_eff), 1)
     @inbounds for t in 1:Nt
-        # Apply permutation.
-        for k in 1:Nz
+        # Apply permutation (active rows only).
+        for k in k_lo:Nz
             piv = pivots[k]
             if piv != k
                 tmp = rm_col[k, t]
@@ -335,15 +357,15 @@ function _tm5_solve!(rm_col::AbstractMatrix{FT},
             end
         end
         # Forward solve L y = b (unit-diagonal L).
-        for k in 1:Nz
+        for k in k_lo:Nz
             s = rm_col[k, t]
-            for j in 1:(k - 1)
+            for j in k_lo:(k - 1)
                 s -= conv1[k, j] * rm_col[j, t]
             end
             rm_col[k, t] = s
         end
         # Back solve U x = y.
-        for k in Nz:-1:1
+        for k in Nz:-1:k_lo
             s = rm_col[k, t]
             for j in (k + 1):Nz
                 s -= conv1[k, j] * rm_col[j, t]
@@ -400,12 +422,19 @@ function _tm5_solve_column!(rm_col::AbstractMatrix{FT},
         return nothing
     end
 
+    # Storage Commit 7 active-window LU. `icltop_eff` is the smallest
+    # row index with any non-identity entry, derived from the builder
+    # in `_tm5_build_conv1!`. Proven correct by
+    # `test/test_tm5_sparsity_above_icltop.jl`. The `max(icltop, 2)`
+    # guard keeps the formula well-defined at icltop = 1 (no skip).
+    icltop_eff = min(Int(icllfs), max(Int(icltop), 2) - 1)
+
     _tm5_build_conv1!(conv1_buf,
                       entu_col, detu_col, entd_col, detd_col, m_col,
                       icltop, icllfs, dt, Nz;
                       f = f_buf,
                       amu = amu_buf, amd = amd_buf)
-    _tm5_lu!(conv1_buf, pivots_buf, Nz)
-    _tm5_solve!(rm_col, conv1_buf, pivots_buf, Nz, Nt)
+    _tm5_lu!(conv1_buf, pivots_buf, Nz; icltop_eff = icltop_eff)
+    _tm5_solve!(rm_col, conv1_buf, pivots_buf, Nz, Nt; icltop_eff = icltop_eff)
     return nothing
 end

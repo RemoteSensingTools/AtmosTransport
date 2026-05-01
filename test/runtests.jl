@@ -12,6 +12,14 @@
 
 const RUN_ALL = "--all" in ARGS
 
+# Each test file is included into a fresh anonymous module so that
+# multiple files in one Julia session don't reuse Main's `using
+# .AtmosTransport.X: Y` bindings from a prior file. Running the same
+# files as `for f in (...); include(f); end` at the Main top level on
+# Julia 1.12 silently keeps stale bindings (e.g. `op isa
+# AbstractConvection` returns false because the LHS is from
+# include #2 but the RHS is the include #1 abstract type). Always
+# route through this helper.
 function run_test_file_isolated(test_file::AbstractString)
     mod_name = Symbol("Test_", replace(basename(test_file), "." => "_"))
     mod = Module(mod_name)

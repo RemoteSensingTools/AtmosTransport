@@ -23,11 +23,15 @@
 #       [--mass-basis dry|moist]         # default: match source header
 #       [--convention gnomonic|geos_native]
 #       [--definition equiangular_gnomonic|gmao]
-#       [--cache-dir ~/.cache/AtmosTransport/cr_regridding]
 #       [--steps-per-window 12]          # override source's substep count
 #                                         # (smaller per-substep flux; needed
 #                                         # for high-res CS output that
 #                                         # otherwise fails the positivity gate)
+#
+# Regridder weights are auto-cached by ConservativeRegridding.jl at
+# `~/.cache/AtmosTransport/cr_regridding/regridder_<hash>.jld2` keyed
+# on source/target grids. No CLI flag needed — first run builds and
+# persists; subsequent runs hit the cache (~6s vs the rebuild time).
 # ===========================================================================
 
 using Logging
@@ -42,7 +46,7 @@ Usage: julia --project=. scripts/preprocessing/regrid_ll_transport_binary_to_cs.
            --input <ll.bin> --output <cs.bin> --Nc <int>
            [--float-type Float32|Float64] [--mass-basis dry|moist]
            [--convention gnomonic|geos_native]
-           [--definition equiangular_gnomonic|gmao] [--cache-dir <path>]
+           [--definition equiangular_gnomonic|gmao]
            [--steps-per-window <int>] [--allow-positivity-violation]
 """
 
@@ -54,7 +58,6 @@ function _parse_args(argv)
     mass_basis = nothing     # nothing = match source header
     convention = "gnomonic"
     definition = nothing
-    cache_dir = ""
     steps_per_window = nothing  # nothing = match source header
     require_substep_positivity = true
 
@@ -75,8 +78,6 @@ function _parse_args(argv)
             convention = argv[i + 1]; i += 2
         elseif arg == "--definition" && i + 1 <= length(argv)
             definition = argv[i + 1]; i += 2
-        elseif arg == "--cache-dir" && i + 1 <= length(argv)
-            cache_dir = expanduser(argv[i + 1]); i += 2
         elseif arg == "--steps-per-window" && i + 1 <= length(argv)
             steps_per_window = parse(Int, argv[i + 1]); i += 2
         elseif arg == "--allow-positivity-violation"
@@ -113,7 +114,7 @@ function _parse_args(argv)
     steps_per_window === nothing || steps_per_window >= 1 ||
         error("--steps-per-window must be ≥ 1, got $(steps_per_window)")
 
-    return (; input, output, Nc, float_type, mass_basis, convention, definition, cache_dir,
+    return (; input, output, Nc, float_type, mass_basis, convention, definition,
               steps_per_window, require_substep_positivity)
 end
 
@@ -128,7 +129,6 @@ function main()
         "panel_convention" => opts.convention,
     )
     opts.definition === nothing || (cfg_grid["definition"] = opts.definition)
-    isempty(opts.cache_dir) || (cfg_grid["regridder_cache_dir"] = opts.cache_dir)
     cs_grid = build_target_geometry(Val(:cubed_sphere), cfg_grid, FT)
 
     basis_sym = opts.mass_basis === nothing ? nothing : Symbol(opts.mass_basis)

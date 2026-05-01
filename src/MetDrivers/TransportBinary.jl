@@ -2192,9 +2192,18 @@ function load_surface_window!(reader::TransportBinaryReader{FT}, win::Int;
     surface_present = has_surface(reader)
     surface_partial = any(s in reader.header.payload_sections
                           for s in _PBL_SURFACE_PAYLOAD_SECTIONS) && !surface_present
-    surface_partial && throw(ArgumentError(
-        "transport binary has a partial PBL surface payload; expected all " *
-        "of pblh, ustar, pbl_hflux, t2m"))
+    if surface_partial
+        legacy_hflux = :hflux in reader.header.payload_sections &&
+                       !(:pbl_hflux in reader.header.payload_sections)
+        msg = "transport binary has a partial PBL surface payload; expected all " *
+              "of pblh, ustar, pbl_hflux, t2m"
+        legacy_hflux && (msg *= "\n  This binary appears to be pre-2026-05-01 " *
+                                "(commit 66bbce3): the on-disk PBL sensible-heat " *
+                                "section is `:hflux` rather than the renamed " *
+                                "`:pbl_hflux`. Regenerate via " *
+                                "scripts/preprocessing/preprocess_transport_binary.jl.")
+        throw(ArgumentError(msg))
+    end
     surface_present || return nothing
 
     pblh = isnothing(pblh) ? _transport_allocate_surface_field(reader) : pblh

@@ -70,8 +70,16 @@ function main(args)
             close(driver)
         end
     catch err
-        println("Driver: incompatible with current src runtime")
-        println("  ", sprint(showerror, err))
+        bar = repeat("=", 72)
+        println(bar)
+        println("!! BINARY INCOMPATIBLE WITH CURRENT RUNTIME !!")
+        println(bar)
+        println("Driver construction failed; this binary cannot drive a simulation.")
+        println("All capability rows above are advisory only — none can be exercised.")
+        println()
+        println(sprint(showerror, err))
+        println(bar)
+        return 2
     end
 
     return 0

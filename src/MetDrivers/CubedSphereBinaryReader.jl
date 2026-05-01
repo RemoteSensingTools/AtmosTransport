@@ -255,8 +255,12 @@ function load_cs_window(reader::CubedSphereBinaryReader{FT}, win::Int) where FT
     panels_cm = ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz + 1), np)
     surface_present = all(s in h.payload_sections for s in _PBL_SURFACE_PAYLOAD_SECTIONS)
     surface_partial = any(s in h.payload_sections for s in _PBL_SURFACE_PAYLOAD_SECTIONS) && !surface_present
-    surface_partial &&
-        throw(ArgumentError("CS binary has a partial PBL surface payload; expected all of pblh, ustar, pbl_hflux, t2m"))
+    if surface_partial
+        legacy_hflux = :hflux in h.payload_sections && !(:pbl_hflux in h.payload_sections)
+        msg = "CS binary has a partial PBL surface payload; expected all of pblh, ustar, pbl_hflux, t2m"
+        legacy_hflux && (msg *= "\n  This binary appears to be pre-2026-05-01 (commit 66bbce3): the on-disk PBL sensible-heat section is `:hflux` rather than the renamed `:pbl_hflux`. Regenerate via scripts/preprocessing/preprocess_transport_binary.jl + regrid_ll_transport_binary_to_cs.jl.")
+        throw(ArgumentError(msg))
+    end
     panels_pblh  = surface_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc), np) : nothing
     panels_ustar = surface_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc), np) : nothing
     panels_hflux = surface_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc), np) : nothing

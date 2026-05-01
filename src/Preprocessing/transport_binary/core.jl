@@ -72,6 +72,24 @@ function script_provenance(; caller_file::Union{String, Nothing}=nothing)
 end
 
 """
+    expected_payload_sections(settings) -> Vector{String}
+
+Canonical v4 LL payload-section list for the writer-side schema. Used
+by both `build_v4_header` and the SKIP-vs-regen gate in `process_day`,
+so the on-disk header and the existence check stay in lockstep.
+"""
+function expected_payload_sections(settings)
+    sections = String["m", "am", "bm", "cm", "ps"]
+    settings.include_qv && append!(sections, ["qv_start", "qv_end"])
+    append!(sections, ["dam", "dbm", "dcm", "dm"])
+    # Plan 24 Commit 4: TM5 sections follow the deltas, matching the
+    # ordering in _transport_push_optional_sections! (plan 23 Commit 3).
+    settings.tm5_convection_enable && append!(sections, ["entu", "detu", "entd", "detd"])
+    _settings_include_surface(settings) && append!(sections, ["pblh", "t2m", "ustar", "pbl_hflux"])
+    return sections
+end
+
+"""
     build_v4_header(date, grid, vertical, settings, FT, counts, sizes, provenance)
 
 Construct the fixed-size JSON header for one v4 output file, including payload
@@ -85,14 +103,7 @@ function build_v4_header(date::Date,
                          counts,
                          sizes,
                          provenance)
-    payload_sections = String["m", "am", "bm", "cm", "ps"]
-    settings.include_qv && append!(payload_sections, ["qv_start", "qv_end"])
-    append!(payload_sections, ["dam", "dbm", "dcm", "dm"])
-    # Plan 24 Commit 4: TM5 sections follow the deltas, matching the
-    # ordering in _transport_push_optional_sections! (plan 23 Commit 3).
-    settings.tm5_convection_enable && append!(payload_sections, ["entu", "detu", "entd", "detd"])
-    include_surface = _settings_include_surface(settings)
-    include_surface && append!(payload_sections, ["pblh", "t2m", "ustar", "pbl_hflux"])
+    payload_sections = expected_payload_sections(settings)
     var_names = copy(payload_sections)
 
     ncell = sizes.Nx * sizes.Ny
@@ -304,10 +315,54 @@ function output_binary_path(date::Date, out_dir::String, min_dp::Float64, ::Type
     return joinpath(out_dir, "era5_transport_$(date_str)_$(dp_tag)_$(ft_tag).bin")
 end
 
-"""
-    existing_complete_output(bin_path, total_bytes) -> Bool
+# Peek the JSON header at byte 0 (null-terminated; matches both
+# `_parse_transport_header` and `CubedSphereBinaryReader`). Returns
+# `nothing` on any failure so callers can fall back gracefully.
+function _peek_payload_sections(bin_path::AbstractString)
+    isfile(bin_path) || return nothing
+    raw = open(bin_path, "r") do io
+        read(io, min(filesize(bin_path), HEADER_SIZE))
+    end
+    json_end = findfirst(==(0x00), raw)
+    json_end === nothing && return nothing
+    hdr = try
+        JSON3.read(String(raw[1:json_end - 1]))
+    catch
+        return nothing
+    end
+    haskey(hdr, :payload_sections) || return nothing
+    return Set(String.(hdr.payload_sections))
+end
 
-Return `true` when a file already exists and matches the expected final size.
 """
-existing_complete_output(bin_path::String, total_bytes::Integer) =
-    isfile(bin_path) && filesize(bin_path) == total_bytes
+    existing_output_schema_matches(bin_path, total_bytes, expected_sections) -> (skip, reason)
+
+SKIP-or-regen decision used by `process_day` writers. Returns
+`(true, "")` when the file exists, byte size matches, AND the on-disk
+`payload_sections` set matches the caller's `expected_sections`.
+Returns `(false, reason)` otherwise; `reason` is a human-readable diff
+(`"size 41g vs 23g"` or `"schema added :pbl_hflux removed :hflux"`)
+the caller should `@info` so the user knows *why* the binary is being
+rebuilt rather than skipped.
+"""
+function existing_output_schema_matches(bin_path::AbstractString,
+                                        total_bytes::Integer,
+                                        expected_sections)
+    isfile(bin_path) || return (false, "no existing file")
+    fs = filesize(bin_path)
+    fs == total_bytes ||
+        return (false, @sprintf("size %.2f GB vs expected %.2f GB", fs / 1e9, total_bytes / 1e9))
+
+    on_disk = _peek_payload_sections(bin_path)
+    on_disk === nothing && return (false, "header unparseable (likely pre-v4)")
+    expected = Set(String.(expected_sections))
+    if on_disk == expected
+        return (true, "")
+    end
+    added   = sort!(collect(setdiff(expected, on_disk)))
+    removed = sort!(collect(setdiff(on_disk, expected)))
+    parts = String[]
+    isempty(added)   || push!(parts, "added " * join(added, ","))
+    isempty(removed) || push!(parts, "removed " * join(removed, ","))
+    return (false, "schema mismatch: " * join(parts, "; "))
+end

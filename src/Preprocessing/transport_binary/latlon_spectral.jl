@@ -47,9 +47,13 @@ function process_day(date::Date,
     mkpath(settings.out_dir)
     bin_path = output_binary_path(date, settings.out_dir, settings.min_dp, FT)
 
-    if existing_complete_output(bin_path, byte_sizes.total_bytes)
-        @info "  SKIP (exists, correct size): $(basename(bin_path))"
+    expected_sections = expected_payload_sections(settings)
+    skip, reason = existing_output_schema_matches(bin_path, byte_sizes.total_bytes, expected_sections)
+    if skip
+        @info "  SKIP (exists, size + schema match): $(basename(bin_path))"
         return bin_path
+    elseif isfile(bin_path) && filesize(bin_path) == byte_sizes.total_bytes
+        @info "  REGEN (size match, $(reason)): $(basename(bin_path))"
     end
 
     @info @sprintf("  Output: %s (%.2f GB, %d windows)", basename(bin_path), byte_sizes.total_bytes / 1e9, Nt)

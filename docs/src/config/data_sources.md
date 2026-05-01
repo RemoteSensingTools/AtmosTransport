@@ -71,9 +71,10 @@ The `spectral_dir` and `thermo_dir` keys in
 ## GEOS-IT (NASA GMAO Integrated Tropospheric)
 
 GEOS-IT is the primary native cubed-sphere source. C180 (~50 km) is
-the production resolution; C720 (GEOS-FP) plumbing is declared but
-the file resolver is not yet implemented (see
-[GEOS native cubed-sphere](@ref) for status).
+the production/debug resolution. GEOS-FP native C720 hourly CTM files
+are wired through the same source contract, with optional 0.25°
+surface/convection fallback files attached into the preprocessed
+binary.
 
 ### Per-day file set
 
@@ -83,6 +84,7 @@ For each `YYYYMMDD`:
 |---|---|---|
 | `GEOSIT.YYYYMMDD.CTM_A1.C180.nc` | hourly (window-averaged) | `MFXC`, `MFYC`, `DELP` |
 | `GEOSIT.YYYYMMDD.CTM_I1.C180.nc` | hourly (instantaneous) | `PS`, `QV` |
+| `GEOSIT.YYYYMMDD.A1.C180.nc` | hourly | `PBLH`, `USTAR`, `HFLUX`, `T2M` *(only with `include_surface`)* |
 | `GEOSIT.YYYYMMDD.A3mstE.C180.nc` | 3-hourly | `CMFMC` *(only with `include_convection`)* |
 | `GEOSIT.YYYYMMDD.A3dyn.C180.nc` | 3-hourly | `DTRAIN` *(only with `include_convection`)* |
 
@@ -126,21 +128,23 @@ the project's own configs use historically.
 
 ## GEOS-FP, MERRA-2 (status)
 
-**GEOS-FP (C720).** Two descriptors exist with different scopes:
+**GEOS-FP (C720).** The active descriptor is native cubed-sphere:
 
-- `config/met_sources/geosfp.toml` — the **lat-lon downscaled**
-  GEOS-FP product (the one most users mean by "GEOS-FP").
+- `config/met_sources/geosfp.toml` — the **native C720 hourly CTM**
+  product (`GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.*.nc4`).
 - `config/downloads/geosfp_c720.toml` — the **native C720**
   cubed-sphere download descriptor; the **`src/Downloads/sources/geosfp.jl`**
   downloader pulls from the WashU HTTP archive (NOT the
   GEOS-IT-style AWS S3 path) into a local directory.
 
-Preprocessing settings type `GEOSSettings{:geosfp}` exists but
-its file resolver currently errors as not-implemented
-(`src/Preprocessing/sources/geos.jl:96`), so a **native preprocessing
-run on GEOS-FP is not possible today**. The C720 raw download
-descriptor lets you stage the data locally for the day the file
-resolver lands.
+`GEOSSettings{:geosfp}` opens 24 hourly native CTM files plus the
+next-day 00Z endpoint. The WashU archive names the hourly averaged
+files with `HH30` timestamps; the resolver also accepts legacy `HH00`
+fixtures. When `[source] include_surface = true` or
+`include_convection = true`, set `[source] physics_dir` to a directory
+containing `GEOSFP.YYYYMMDD.{A1,A3mstE,A3dyn}.025x03125.nc` files (or
+pre-regridded CS equivalents) and the preprocessor embeds `PBLH`,
+`USTAR`, `HFLUX`, `T2M`, `CMFMC`, and `DTRAIN` in the transport binary.
 
 **MERRA-2.** Descriptor stub at `config/met_sources/merra2.toml`,
 but MERRA-2 is **not** an `AbstractGEOSSettings` preprocessing

@@ -246,6 +246,76 @@ end
     end
 end
 
+@testset "Reduced-Gaussian hflux does not imply PBL surface payload" begin
+    mktemp() do path, io
+        close(io)
+        write_test_transport_binary_reduced(path; FT=Float64)
+
+        reader = TransportBinaryReader(path; FT=Float64)
+        try
+            @test :hflux in reader.header.payload_sections
+            @test !(:pbl_hflux in reader.header.payload_sections)
+            @test !has_surface(reader)
+            @test load_surface_window!(reader, 1) === nothing
+        finally
+            close(reader)
+        end
+    end
+end
+
+@testset "Reduced-Gaussian PBL surface heat flux uses pbl_hflux" begin
+    FT = Float64
+    mesh = ReducedGaussianMesh(FT[-45, 45], [4, 4]; FT=FT)
+    vertical = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
+    grid = AtmosGrid(mesh, vertical, CPU(); FT=FT)
+    ncell = ncells(mesh)
+    nface_h = nfaces(mesh)
+    nlevel = nlevels(grid)
+
+    horizontal_hflux = reshape(FT.(1:(nface_h * nlevel)), nface_h, nlevel)
+    surface_hflux = fill(FT(80), ncell)
+    surface = PBLSurfaceForcing(
+        fill(FT(900), ncell),
+        fill(FT(0.3), ncell),
+        surface_hflux,
+        fill(FT(290), ncell),
+    )
+    window = (
+        m = ones(FT, ncell, nlevel),
+        hflux = horizontal_hflux,
+        cm = zeros(FT, ncell, nlevel + 1),
+        ps = fill(FT(90_000), ncell),
+        surface = surface,
+    )
+
+    mktemp() do path, io
+        close(io)
+        write_transport_binary(path, grid, [window];
+                               FT=FT,
+                               dt_met_seconds=3600.0,
+                               half_dt_seconds=1800.0,
+                               steps_per_window=2,
+                               mass_basis=:dry,
+                               source_flux_sampling=:window_start_endpoint)
+
+        reader = TransportBinaryReader(path; FT=FT)
+        try
+            sections = reader.header.payload_sections
+            @test count(==(:hflux), sections) == 1
+            @test count(==(:pbl_hflux), sections) == 1
+            @test has_surface(reader)
+
+            _, _, fluxes = load_window!(reader, 1)
+            @test fluxes.horizontal_flux == horizontal_hflux
+
+            loaded_surface = load_surface_window!(reader, 1)
+            @test loaded_surface !== nothing
+            @test loaded_surface.hflux == surface_hflux
+        finally
+            close(reader)
+        end
+    end
+end
 
 @testset "TransportBinaryDriver timing semantics validation" begin
     mktemp() do path, io

@@ -39,7 +39,8 @@ function process_day(date::Date,
     Nt = spec.n_times
     counts = window_element_counts(grid, Nz;
                                     include_qv=settings.include_qv,
-                                    tm5_convection=settings.tm5_convection_enable)
+                                    tm5_convection=settings.tm5_convection_enable,
+                                    include_surface=settings.include_surface)
     byte_sizes = window_byte_sizes(counts, FT, Nt)
     counts = merge(counts, (bytes_per_window = byte_sizes.bytes_per_window,))
 
@@ -65,7 +66,8 @@ function process_day(date::Date,
     merged = allocate_merge_workspace(grid, Nz_native, Nz, FT)
     storage = allocate_window_storage(Nt, FT;
                                        include_qv=settings.include_qv,
-                                       tm5_convection=settings.tm5_convection_enable)
+                                       tm5_convection=settings.tm5_convection_enable,
+                                       include_surface=settings.include_surface)
     qv = allocate_qv_workspace(grid, settings, date, Nz_native, Nz, FT)
     ps_offsets = zeros(Float64, Nt + 1)
 
@@ -90,6 +92,9 @@ function process_day(date::Date,
         tm5_stats = TM5CleanupStats()
     end
 
+    surface_reader = settings.include_surface ?
+        open_era5_surface_reader(settings.surface_dir, date, Nx, Ny) : nothing
+
     log_mass_fix_configuration(settings)
     @info "  Computing spectral -> gridpoint -> merged for $Nt windows..."
 
@@ -99,7 +104,8 @@ function process_day(date::Date,
                             transform, merged, qv, storage, ps_offsets;
                             physics_reader = physics_reader,
                             tm5_ws         = tm5_ws,
-                            tm5_stats      = tm5_stats)
+                            tm5_stats      = tm5_stats,
+                            surface_reader = surface_reader)
         end
 
         if settings.mass_fix_enable
@@ -126,6 +132,7 @@ function process_day(date::Date,
         write_day_binary!(bin_path, header_json, storage, settings, merged, last_hour_next)
     finally
         physics_reader === nothing || close_era5_physics_binary(physics_reader)
+        surface_reader === nothing || close_era5_surface_reader(surface_reader)
     end
 
     actual = filesize(bin_path)

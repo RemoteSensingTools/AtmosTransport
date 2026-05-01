@@ -212,12 +212,10 @@ types currently in the tree:
 
 !!! note "TOML wiring is partial today"
     The runtime recipe currently auto-builds only
-    `[diffusion] kind = "none"` and `kind = "constant"`. The other
-    field types above exist as building blocks but are not yet
-    selectable from a TOML config — wire them in code if you need
-    them now, and watch the [Configuration & Runtime](#) chapter
-    (Phase 7) for the full TOML schema as more kinds become user-
-    selectable.
+    `[diffusion] kind = "none"`, `kind = "constant"`, and
+    cubed-sphere `kind = "pbl"` when the binary carries raw
+    `pblh/ustar/hflux/t2m` surface sections. Other field types above
+    remain building blocks unless a runtime recipe wires them.
 
 ## What's next
 

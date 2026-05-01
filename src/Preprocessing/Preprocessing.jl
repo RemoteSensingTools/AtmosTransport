@@ -72,6 +72,7 @@ using ..Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                ring_longitudes, ring_cell_count, cell_areas_by_latitude,
                n_levels, pressure_at_interface, level_thickness, floattype,
                panel_convention, panel_connectivity_for,
+               panel_cell_center_lonlat,
                panel_cell_local_tangent_basis,
                cs_definition, coordinate_law, center_law, longitude_offset_deg,
                cs_definition_tag, coordinate_law_tag, center_law_tag,
@@ -89,6 +90,7 @@ using ..MetDrivers: TransportBinaryReader, TransportBinaryHeader, write_transpor
                     open_streaming_cs_transport_binary, write_streaming_cs_window!,
                     load_window!, load_flux_delta_window!,
                     has_tm5_convection, load_tm5_convection_window!,
+                    load_surface_window!,
                     TransportBinaryContract, canonical_window_constant_contract,
                     recompute_cm_from_dm_target!, recompute_faceindexed_cm_from_dm_target!,
                     verify_window_continuity, verify_window_continuity_ll,
@@ -148,6 +150,9 @@ include("tm5_convection_conversion.jl")
 # ERA5 physics NC → BIN converter + mmap reader (plan 24 Commit 2)
 include("era5_physics_binary.jl")
 
+# ERA5 single-level surface reader for raw PBL diffusion fields.
+include("era5_surface_reader.jl")
+
 # TM5 convection preprocessor pipeline wiring (plan 24 Commit 4)
 include("tm5_convection_pipeline.jl")
 
@@ -171,6 +176,7 @@ export open_day, close_day!, allocate_raw_window
 # GEOS native NetCDF reader (Commit 3)
 export AbstractGEOSSettings, GEOSSettings, GEOSITSettings, GEOSFPSettings
 export GEOSDayHandles, open_geos_day, close_geos_day!
+export GEOSFPNativeDayHandles, geosfp_native_hourly_ctm_path
 export geos_collection_path, detect_level_orientation
 export endpoint_dry_mass, endpoint_dry_mass!
 

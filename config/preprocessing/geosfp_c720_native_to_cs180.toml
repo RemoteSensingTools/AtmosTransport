@@ -1,0 +1,33 @@
+# GEOS-FP native C720 hourly CTM -> AtmosTransport GEOS-native CS C180.
+#
+# This is the primary debug target for GEOS-FP structural parity with
+# GEOS-IT C180. Dynamics are read from native C720 hourly CTM files, block
+# coarsened to C180, and closed with the same pressure-fixer replay path as
+# other GEOS CS binaries. PBL and convection physics are attached from the
+# typed GEOS-FP 0.25 degree fallback files.
+
+[source]
+toml     = "config/met_sources/geosfp.toml"
+root_dir = "~/data/AtmosTransport/met/geosfp/C720/raw"
+include_surface = true
+include_convection = true
+physics_dir = "~/data/AtmosTransport/met/geosfp/0.25x0.3125/raw"
+physics_layout = "latlon_025"
+
+[output]
+directory  = "~/data/AtmosTransport/met/geosfp/C180/preprocessed/native_c720_to_c180_v4"
+mass_basis = "dry"
+
+[grid]
+type                = "cubed_sphere"
+Nc                  = 180
+panel_convention    = "geos_native"
+definition          = "gmao"
+regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
+
+[vertical]
+coefficients = "config/geos_L72_coefficients.toml"
+
+[numerics]
+float_type     = "Float32"
+dt_met_seconds = 3600.0

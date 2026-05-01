@@ -18,6 +18,15 @@ AtmosTransport.Models._runtime_recipe_style(::StubReader) =
     AtmosTransport.Models.CubedSphereRuntimeRecipeStyle()
 AtmosTransport.Models._runtime_has_tm5conv(r::StubReader) = r.has_tm5
 AtmosTransport.Models._runtime_has_cmfmc(r::StubReader) = r.has_cmfmc
+AtmosTransport.Models._runtime_has_surface(::StubReader) = false
+
+struct StubPBLReader end
+AtmosTransport.Models._runtime_recipe_style(::StubPBLReader) =
+    AtmosTransport.Models.CubedSphereRuntimeRecipeStyle()
+AtmosTransport.Models._runtime_has_tm5conv(::StubPBLReader) = false
+AtmosTransport.Models._runtime_has_cmfmc(::StubPBLReader) = false
+AtmosTransport.Models._runtime_has_surface(::StubPBLReader) = true
+AtmosTransport.Models._pbl_cache_shape(::StubPBLReader) = (4, 4, 2)
 
 struct StubStructuredReader
     has_tm5 :: Bool
@@ -98,6 +107,17 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
         # Unknown kind → error
         @test_throws ArgumentError build_cs_diffusion(
             Dict("diffusion" => Dict("kind" => "magic")), Float64)
+
+        # kind = "pbl" needs a reader/driver context with raw surface sections.
+        pbl_recipe = build_cs_physics_recipe(
+            Dict("diffusion" => Dict("kind" => "pbl")),
+            StubPBLReader(),
+            Float64,
+        )
+        @test pbl_recipe.diffusion isa ImplicitVerticalDiffusion
+        @test pbl_recipe.diffusion.kz_field isa WindowPBLKzField
+        @test_throws ArgumentError build_cs_physics_recipe(
+            Dict("diffusion" => Dict("kind" => "pbl")), StubReader(false, false), Float64)
 
         # Section B (codex) P0: legacy `type = "..."` schema must NOT
         # silently fall through to NoDiffusion. It must error with a

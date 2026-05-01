@@ -55,11 +55,23 @@ struct CubedSphereBinaryReader{FT}
     path    :: String
 end
 
+function _cs_on_disk_float_type(path::AbstractString)
+    open(path, "r") do io
+        raw = read(io, min(filesize(path), 262144))
+        json_end = something(findfirst(==(0x00), raw), length(raw) + 1) - 1
+        hdr = JSON3.read(String(raw[1:json_end]))
+        float_bytes = Int(get(hdr, :float_bytes, 4))
+        return float_bytes == 8 ? Float64 : Float32
+    end
+end
+
 # Plan 40 Commit 5: bridge for `inspect_binary` in TransportBinary.jl.
 # Lives here because the CS reader type is defined in this file but the
-# inspector lives in TransportBinary.jl (which is loaded first).
+# inspector lives in TransportBinary.jl (which is loaded first).  Use the
+# on-disk float type; otherwise inspecting a large Float32 CS binary eagerly
+# converts the entire mmap to Float64.
 _open_cubed_sphere_binary_reader(path::AbstractString) =
-    CubedSphereBinaryReader(String(path); FT = Float64)
+    CubedSphereBinaryReader(String(path); FT = _cs_on_disk_float_type(path))
 
 function CubedSphereBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = Float64)
     io = open(bin_path, "r")
@@ -137,6 +149,30 @@ function CubedSphereBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = F
     return CubedSphereBinaryReader{FT}(data, io, cs_header, bin_path)
 end
 
+function Base.summary(r::CubedSphereBinaryReader{FT}) where FT
+    h = r.header
+    disk_ft = h.float_bytes == 8 ? Float64 : Float32
+    return string(
+        "CubedSphereBinaryReader{", FT, "<-", disk_ft, "}(",
+        basename(r.path), ", C", h.Nc, " x ", h.nlevel, ", ",
+        h.nwindow, " windows)"
+    )
+end
+
+function Base.show(io::IO, r::CubedSphereBinaryReader)
+    h = r.header
+    disk_ft = h.float_bytes == 8 ? Float64 : Float32
+    print(io, summary(r), "\n",
+          "├── path:          ", r.path, "\n",
+          "├── geometry:      C", h.Nc, ", panels=", h.npanel,
+          ", convention=", h.panel_convention, ", definition=", h.cs_definition, "\n",
+          "├── storage:       ", disk_ft, " on disk, load as ", eltype(r.data), "\n",
+          "├── basis:         ", h.mass_basis, "\n",
+          "├── timing:        dt=", h.dt_met_seconds, " s, steps/window=", h.steps_per_window, "\n",
+          "├── payload:       ", join(String.(h.payload_sections), ", "), "\n",
+          "└── windows:       ", h.nwindow)
+end
+
 function _cs_coordinate_law_from_symbol(sym::Symbol)
     sym in (:equiangular, :equiangular_gnomonic, :legacy) &&
         return EquiangularGnomonic()
@@ -171,6 +207,8 @@ function _cs_section_elements(h::CubedSphereBinaryHeader, section::Symbol)
     elseif section === :cm
         return np * Nc * Nc * (Nz + 1)
     elseif section === :ps
+        return np * Nc * Nc
+    elseif _is_pbl_surface_payload_section(section)
         return np * Nc * Nc
     elseif section === :cmfmc
         return np * Nc * Nc * (Nz + 1)
@@ -215,6 +253,14 @@ function load_cs_window(reader::CubedSphereBinaryReader{FT}, win::Int) where FT
     panels_am = ntuple(_ -> Array{FT}(undef, Nc + 1, Nc, Nz), np)
     panels_bm = ntuple(_ -> Array{FT}(undef, Nc, Nc + 1, Nz), np)
     panels_cm = ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz + 1), np)
+    surface_present = all(s in h.payload_sections for s in _PBL_SURFACE_PAYLOAD_SECTIONS)
+    surface_partial = any(s in h.payload_sections for s in _PBL_SURFACE_PAYLOAD_SECTIONS) && !surface_present
+    surface_partial &&
+        throw(ArgumentError("CS binary has a partial PBL surface payload; expected all of pblh, ustar, pbl_hflux, t2m"))
+    panels_pblh  = surface_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc), np) : nothing
+    panels_ustar = surface_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc), np) : nothing
+    panels_hflux = surface_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc), np) : nothing
+    panels_t2m   = surface_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc), np) : nothing
     panels_cmfmc = :cmfmc in h.payload_sections ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz + 1), np) : nothing
     panels_dtrain = :dtrain in h.payload_sections ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np) : nothing
 
@@ -257,6 +303,30 @@ function load_cs_window(reader::CubedSphereBinaryReader{FT}, win::Int) where FT
             for p in 1:np
                 n = Nc * Nc
                 copyto!(panels_ps[p], 1, reader.data, o + 1, n)
+                o += n
+            end
+        elseif section === :pblh
+            for p in 1:np
+                n = Nc * Nc
+                copyto!(panels_pblh[p], 1, reader.data, o + 1, n)
+                o += n
+            end
+        elseif section === :ustar
+            for p in 1:np
+                n = Nc * Nc
+                copyto!(panels_ustar[p], 1, reader.data, o + 1, n)
+                o += n
+            end
+        elseif section === :pbl_hflux
+            for p in 1:np
+                n = Nc * Nc
+                copyto!(panels_hflux[p], 1, reader.data, o + 1, n)
+                o += n
+            end
+        elseif section === :t2m
+            for p in 1:np
+                n = Nc * Nc
+                copyto!(panels_t2m[p], 1, reader.data, o + 1, n)
                 o += n
             end
         elseif section === :cmfmc
@@ -309,6 +379,9 @@ function load_cs_window(reader::CubedSphereBinaryReader{FT}, win::Int) where FT
         (entu = panels_entu, detu = panels_detu,
          entd = panels_entd, detd = panels_detd) :
         nothing
+    surface = surface_present ?
+        PBLSurfaceForcing(panels_pblh, panels_ustar, panels_hflux, panels_t2m) :
+        nothing
 
     return (
         m = panels_m,
@@ -316,6 +389,7 @@ function load_cs_window(reader::CubedSphereBinaryReader{FT}, win::Int) where FT
         am = panels_am,
         bm = panels_bm,
         cm = panels_cm,
+        surface = surface,
         cmfmc = panels_cmfmc,
         dtrain = panels_dtrain,
         tm5_fields = tm5_fields,
@@ -344,6 +418,16 @@ function load_flux_delta_window!(reader::CubedSphereBinaryReader{FT}, win::Int;
 
     return nothing
 end
+
+"""
+    load_surface_window!(reader::CubedSphereBinaryReader, win) -> PBLSurfaceForcing | nothing
+
+Load the raw PBL surface payload for one CS window. This is a convenience
+wrapper over `load_cs_window`; callers that already need the advection fields
+should use `load_cs_window(reader, win).surface` to avoid a second payload read.
+"""
+load_surface_window!(reader::CubedSphereBinaryReader, win::Int; kwargs...) =
+    load_cs_window(reader, win).surface
 
 """
     cs_window_count(reader) -> Int
@@ -394,4 +478,4 @@ function mesh_definition(reader::CubedSphereBinaryReader)
 end
 
 export CubedSphereBinaryReader, CubedSphereBinaryHeader
-export load_cs_window, cs_window_count, mesh_convention, mesh_definition
+export load_cs_window, load_surface_window!, cs_window_count, mesh_convention, mesh_definition

@@ -70,8 +70,9 @@ spectral→CS path — the only difference is the data source (binary reader
 instead of spectral synthesis).
 
 Timestep metadata (`dt_met_seconds`, `steps_per_window`) is read directly
-from the source header. The output CS binary carries the same values, so
-the per-substep flux semantics survive the regrid without rescaling.
+from the source header by default. Passing `steps_per_window` overrides the
+output substep count: LL winds are recovered with the source scaling, then CS
+face fluxes are reconstructed with the output scaling.
 
 ## Keyword arguments
 - `FT::Type = Float64` — on-disk float type for the output CS binary.
@@ -81,6 +82,9 @@ the per-substep flux semantics survive the regrid without rescaling.
   dry↔moist conversion requires loading the source's `qv` and applying
   `apply_dry_basis_native!`, which this function does not do. Invariant
   14 mandates `:dry` end-to-end; use a dry source.
+- `steps_per_window::Union{Nothing, Integer} = nothing` — output substep
+  count. `nothing` = match the source; larger values reduce stored
+  per-substep fluxes while preserving the window-integrated transport.
 - `allow_terminal_zero_tendency::Bool = false` — diagnostic-only escape hatch
   for legacy LL sources that do not carry `dm`. Production-safe regrids should
   leave this at `false` so the final CS window is closed against an explicit
@@ -123,6 +127,12 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         "to m/am/bm). Regenerate the source on the desired basis, or omit " *
         "the `mass_basis` kwarg to match the source."))
     source_has_tm5 = has_tm5_convection(reader)
+    source_has_surface = all(s in h.payload_sections for s in (:pblh, :ustar, :pbl_hflux, :t2m))
+    source_surface_partial = any(s in h.payload_sections for s in (:pblh, :ustar, :pbl_hflux, :t2m)) &&
+                             !source_has_surface
+    source_surface_partial && throw(ArgumentError(
+        "regrid_ll_binary_to_cs: source has a partial PBL surface payload; " *
+        "expected all of pblh, ustar, pbl_hflux, t2m."))
     source_has_dm = :dm in h.payload_sections
     source_has_dm || allow_terminal_zero_tendency || throw(ArgumentError(
         "regrid_ll_binary_to_cs requires source `dm` payloads to close the final " *
@@ -143,14 +153,11 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     # substep count — so the per-substep semantics match end-to-end.
     #
     # `steps_per_window` keyword overrides the substep count for the CS
-    # output. The reconstructed face fluxes (am/bm) and forward delta
-    # (dm) both rescale with `1/steps_per_window` (via `dt_factor` and
-    # `fill_cs_window_mass_tendency!` respectively), so a larger value
-    # produces *smaller* per-substep flux without changing the
-    # window-integrated transport. Used to refine binaries that fail
-    # the `_check_cs_substep_positivity` gate at high horizontal
-    # resolution (e.g. C180 from a `steps_per_window=4` LL source
-    # needs ~12 to keep `outgoing/m < 0.95`).
+    # output. Recover winds with the source scaling, then reconstruct CS
+    # face fluxes with the output scaling; using one factor for both would
+    # cancel the override. The forward delta (dm) is rescaled by
+    # `fill_cs_window_mass_tendency!`, so a larger value produces smaller
+    # per-substep flux without changing the window-integrated transport.
     met_interval = Float64(h.dt_met_seconds)
     src_steps_per_met = Int(h.steps_per_window)
     steps_per_met = steps_per_window === nothing ? src_steps_per_met : Int(steps_per_window)
@@ -160,7 +167,8 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         @info @sprintf("  steps_per_window override: source=%d → output=%d (%.3fx flux per substep)",
                        src_steps_per_met, steps_per_met, src_steps_per_met / steps_per_met)
     end
-    dt_factor = FT(met_interval / (2 * steps_per_met))
+    src_dt_factor = FT(met_interval / (2 * src_steps_per_met))
+    out_dt_factor = FT(met_interval / (2 * steps_per_met))
     gravity = FT(GRAV)
 
     @info @sprintf("  LL source: %s (%d×%d×%d, %d windows)",
@@ -201,6 +209,14 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     ps_ll = Array{FT}(undef, Nx_ll, Ny_ll)
     dm_ll = source_has_dm ? Array{FT}(undef, Nx_ll, Ny_ll, Nz) : nothing
 
+    # Raw PBL surface fields are per-area/intensive diagnostics. They are
+    # area-averaged to CS cell centers and carried verbatim in the output
+    # binary; runtime derives Kz from them for the active met window.
+    pblh_ll  = source_has_surface ? Array{FT}(undef, Nx_ll, Ny_ll) : nothing
+    ustar_ll = source_has_surface ? Array{FT}(undef, Nx_ll, Ny_ll) : nothing
+    hflux_ll = source_has_surface ? Array{FT}(undef, Nx_ll, Ny_ll) : nothing
+    t2m_ll   = source_has_surface ? Array{FT}(undef, Nx_ll, Ny_ll) : nothing
+
     # TM5 convection sections are layer-center kg/m²/s.  Conservative
     # LL→CS regrid is the right path (per
     # `feedback_conservative_regrid_for_mass_fluxes.md`); no rotation,
@@ -228,6 +244,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         half_dt_seconds=met_interval / 2,
         steps_per_window=steps_per_met,
         include_flux_delta=true,
+        include_surface=source_has_surface,
         include_tm5conv=source_has_tm5,
         mass_basis=output_basis,
         panel_convention=_cs_panel_convention_tag(cs_grid),
@@ -255,6 +272,8 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
 
     # --- Helper: read one LL window and regrid to CS ---
     function _read_and_regrid_to_cs!(win_idx, m_out, ps_out, am_out, bm_out;
+                                     pblh_out = nothing, ustar_out = nothing,
+                                     hflux_out = nothing, t2m_out = nothing,
                                      entu_out = nothing, detu_out = nothing,
                                      entd_out = nothing, detd_out = nothing)
         load_window!(reader, win_idx; m=m_ll, ps=ps_ll, am=am_ll, bm=bm_ll, cm=cm_ll)
@@ -272,7 +291,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         recover_ll_cell_center_winds!(cs_ws.u_cc, cs_ws.v_cc,
             am_ll, bm_ll, ps_ll,
             A_ifc, B_ifc, ll_lats, Δy_ll, Δlon_ll,
-            FT(ll_mesh.radius), gravity, dt_factor)
+            FT(ll_mesh.radius), gravity, src_dt_factor)
 
         # Regrid geographic winds to CS + rotate to panel-local
         regrid_3d_to_cs_panels!(cs_ws.u_cs_panels, regridder, cs_ws.u_cc, cs_ws, Nc)
@@ -284,7 +303,17 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         # Reconstruct CS face fluxes
         reconstruct_cs_fluxes!(am_out, bm_out, cs_ws.u_cs_panels, cs_ws.v_cs_panels,
                                cs_ws.dp_panels, ps_out,
-                               A_ifc, B_ifc, Δx, Δy, gravity, dt_factor, Nc, Nz)
+                               A_ifc, B_ifc, Δx, Δy, gravity, out_dt_factor, Nc, Nz)
+
+        if source_has_surface
+            load_surface_window!(reader, win_idx;
+                                 pblh = pblh_ll, ustar = ustar_ll,
+                                 hflux = hflux_ll, t2m = t2m_ll)
+            regrid_2d_to_cs_panels!(pblh_out, regridder, pblh_ll, cs_ws, Nc, IntensiveCellField())
+            regrid_2d_to_cs_panels!(ustar_out, regridder, ustar_ll, cs_ws, Nc, IntensiveCellField())
+            regrid_2d_to_cs_panels!(hflux_out, regridder, hflux_ll, cs_ws, Nc, IntensiveCellField())
+            regrid_2d_to_cs_panels!(t2m_out, regridder, t2m_ll, cs_ws, Nc, IntensiveCellField())
+        end
 
         # TM5 sections (layer-center kg/m²/s): conservative regrid to
         # CS panels.  No rotation — entu/detu/entd/detd are scalar
@@ -306,6 +335,14 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     cur_am = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz), CS_PANEL_COUNT)
     cur_bm = ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz), CS_PANEL_COUNT)
     cur_cm = ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), CS_PANEL_COUNT)
+    cur_pblh  = source_has_surface ? ntuple(_ -> zeros(FT, Nc, Nc), CS_PANEL_COUNT) : nothing
+    cur_ustar = source_has_surface ? ntuple(_ -> zeros(FT, Nc, Nc), CS_PANEL_COUNT) : nothing
+    cur_hflux = source_has_surface ? ntuple(_ -> zeros(FT, Nc, Nc), CS_PANEL_COUNT) : nothing
+    cur_t2m   = source_has_surface ? ntuple(_ -> zeros(FT, Nc, Nc), CS_PANEL_COUNT) : nothing
+    nxt_pblh  = source_has_surface ? ntuple(_ -> zeros(FT, Nc, Nc), CS_PANEL_COUNT) : nothing
+    nxt_ustar = source_has_surface ? ntuple(_ -> zeros(FT, Nc, Nc), CS_PANEL_COUNT) : nothing
+    nxt_hflux = source_has_surface ? ntuple(_ -> zeros(FT, Nc, Nc), CS_PANEL_COUNT) : nothing
+    nxt_t2m   = source_has_surface ? ntuple(_ -> zeros(FT, Nc, Nc), CS_PANEL_COUNT) : nothing
     # TM5 sliding buffers: 2 sets — `cur_*` holds the window we're
     # writing, `nxt_*` holds the next window's read so we can swap
     # without re-allocating.  Both sets only allocate when the source
@@ -336,6 +373,8 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     # --- Process first window ---
     t0 = time()
     _read_and_regrid_to_cs!(1, cs_ws.m_panels, cs_ws.ps_panels, cs_ws.am_panels, cs_ws.bm_panels;
+                             pblh_out = cur_pblh, ustar_out = cur_ustar,
+                             hflux_out = cur_hflux, t2m_out = cur_t2m,
                              entu_out = cur_entu, detu_out = cur_detu,
                              entd_out = cur_entd, detd_out = cur_detd)
     @info @sprintf("    Window  1/%d: read+regrid %.2fs", Nt, time() - t0)
@@ -351,6 +390,8 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     for win in 2:Nt
         t0 = time()
         _read_and_regrid_to_cs!(win, cs_ws.m_panels, cs_ws.ps_panels, cs_ws.am_panels, cs_ws.bm_panels;
+                                 pblh_out = nxt_pblh, ustar_out = nxt_ustar,
+                                 hflux_out = nxt_hflux, t2m_out = nxt_t2m,
                                  entu_out = nxt_entu, detu_out = nxt_detu,
                                  entd_out = nxt_entd, detd_out = nxt_detd)
         t_read = time() - t0
@@ -402,13 +443,18 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         end
         convert_cs_mass_target_to_delta!(cs_ws.m_next_panels, cur_m)
 
-        window_nt = source_has_tm5 ?
-            (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps,
-             dm=cs_ws.m_next_panels,
-             tm5_fields=(entu=cur_entu, detu=cur_detu,
-                         entd=cur_entd, detd=cur_detd)) :
-            (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps,
-             dm=cs_ws.m_next_panels)
+        window_nt = (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps,
+                     dm=cs_ws.m_next_panels)
+        if source_has_surface
+            window_nt = merge(window_nt,
+                              (surface=(pblh=cur_pblh, ustar=cur_ustar,
+                                        hflux=cur_hflux, t2m=cur_t2m),))
+        end
+        if source_has_tm5
+            window_nt = merge(window_nt,
+                              (tm5_fields=(entu=cur_entu, detu=cur_detu,
+                                           entd=cur_entd, detd=cur_detd),))
+        end
         write_streaming_cs_window!(writer, window_nt, Nc, CS_PANEL_COUNT)
 
         should_log_window(win - 1, Nt) &&
@@ -420,6 +466,12 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         _copy_panels_regrid!(cur_ps, cs_ws.ps_panels)
         _copy_panels_regrid!(cur_am, cs_ws.am_panels)
         _copy_panels_regrid!(cur_bm, cs_ws.bm_panels)
+        if source_has_surface
+            _copy_panels_regrid!(cur_pblh, nxt_pblh)
+            _copy_panels_regrid!(cur_ustar, nxt_ustar)
+            _copy_panels_regrid!(cur_hflux, nxt_hflux)
+            _copy_panels_regrid!(cur_t2m, nxt_t2m)
+        end
         if source_has_tm5
             _copy_panels_regrid!(cur_entu, nxt_entu)
             _copy_panels_regrid!(cur_detu, nxt_detu)
@@ -482,13 +534,18 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     end
     convert_cs_mass_target_to_delta!(cs_ws.m_next_panels, cur_m)
 
-    window_nt = source_has_tm5 ?
-        (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps,
-         dm=cs_ws.m_next_panels,
-         tm5_fields=(entu=cur_entu, detu=cur_detu,
-                     entd=cur_entd, detd=cur_detd)) :
-        (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps,
-         dm=cs_ws.m_next_panels)
+    window_nt = (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps,
+                 dm=cs_ws.m_next_panels)
+    if source_has_surface
+        window_nt = merge(window_nt,
+                          (surface=(pblh=cur_pblh, ustar=cur_ustar,
+                                    hflux=cur_hflux, t2m=cur_t2m),))
+    end
+    if source_has_tm5
+        window_nt = merge(window_nt,
+                          (tm5_fields=(entu=cur_entu, detu=cur_detu,
+                                       entd=cur_entd, detd=cur_detd),))
+    end
     write_streaming_cs_window!(writer, window_nt, Nc, CS_PANEL_COUNT)
 
     @info @sprintf("    Window %2d/%d (last): bal %.2fs  pre=%.2e post=%.2e iter=%d",

@@ -214,6 +214,9 @@ end
 # CFL sub-cycling
 # =========================================================================
 
+@inline _cmfmc_host_scan_array(a::Array) = a
+@inline _cmfmc_host_scan_array(a) = Array(a)
+
 """
     _cmfmc_max_cfl(cmfmc, air_mass, cell_areas_y, dt) -> FT
 
@@ -231,6 +234,12 @@ function _cmfmc_max_cfl(cmfmc::AbstractArray{FT, 3},
                         air_mass::AbstractArray{FT, 3},
                         cell_areas_y::AbstractVector,
                         dt::Real) where FT
+    if !(cmfmc isa Array) || !(air_mass isa Array) || !(cell_areas_y isa Array)
+        return _cmfmc_max_cfl(_cmfmc_host_scan_array(cmfmc),
+                              _cmfmc_host_scan_array(air_mass),
+                              _cmfmc_host_scan_array(cell_areas_y),
+                              dt)
+    end
     dt_ft = FT(dt)
     worst = zero(FT)
     Nx, Ny, Nz = size(air_mass)
@@ -258,6 +267,12 @@ function _cmfmc_max_cfl(cmfmc::AbstractArray{FT, 2},
                         air_mass::AbstractMatrix{FT},
                         cell_areas::AbstractVector,
                         dt::Real) where FT
+    if !(cmfmc isa Array) || !(air_mass isa Array) || !(cell_areas isa Array)
+        return _cmfmc_max_cfl(_cmfmc_host_scan_array(cmfmc),
+                              _cmfmc_host_scan_array(air_mass),
+                              _cmfmc_host_scan_array(cell_areas),
+                              dt)
+    end
     dt_ft = FT(dt)
     worst = zero(FT)
     ncell, Nz = size(air_mass)
@@ -281,6 +296,14 @@ function _cmfmc_max_cfl(cmfmc::NTuple{6, <:AbstractArray{FT, 3}},
                         air_mass::NTuple{6, <:AbstractArray{FT, 3}},
                         cell_areas::NTuple{6, <:AbstractMatrix},
                         dt::Real) where FT
+    if any(p -> !(cmfmc[p] isa Array), 1:6) ||
+       any(p -> !(air_mass[p] isa Array), 1:6) ||
+       any(p -> !(cell_areas[p] isa Array), 1:6)
+        return _cmfmc_max_cfl(map(_cmfmc_host_scan_array, cmfmc),
+                              map(_cmfmc_host_scan_array, air_mass),
+                              map(_cmfmc_host_scan_array, cell_areas),
+                              dt)
+    end
     dt_ft = FT(dt)
     worst = zero(FT)
 

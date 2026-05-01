@@ -15,7 +15,13 @@ function write_array!(io::IO, arr::Array{FT}) where FT
     return written
 end
 
-const HEADER_SIZE = 16384
+# Full L137 payloads with TM5 + surface metadata exceed the original 16 KiB
+# budget. Readers use the serialized `header_bytes` field, so enlarging this
+# only affects newly written files.
+const HEADER_SIZE = 32768
+
+_settings_include_surface(settings) =
+    hasproperty(settings, :include_surface) && Bool(settings.include_surface)
 
 @inline function exact_steps_per_window(dt_met::Real, dt::Real)
     ratio = Float64(dt_met) / Float64(dt)
@@ -85,6 +91,8 @@ function build_v4_header(date::Date,
     # Plan 24 Commit 4: TM5 sections follow the deltas, matching the
     # ordering in _transport_push_optional_sections! (plan 23 Commit 3).
     settings.tm5_convection_enable && append!(payload_sections, ["entu", "detu", "entd", "detd"])
+    include_surface = _settings_include_surface(settings)
+    include_surface && append!(payload_sections, ["pblh", "t2m", "ustar", "pbl_hflux"])
     var_names = copy(payload_sections)
 
     ncell = sizes.Nx * sizes.Ny
@@ -128,13 +136,16 @@ function build_v4_header(date::Date,
         "n_cmfmc" => 0,
         "n_entu" => counts.n_entu, "n_detu" => counts.n_detu,
         "n_entd" => counts.n_entd, "n_detd" => counts.n_detd,
-        "n_pblh" => 0, "n_t2m" => 0, "n_ustar" => 0, "n_hflux" => 0,
+        "n_pblh" => counts.n_pblh, "n_t2m" => counts.n_t2m,
+        "n_ustar" => counts.n_ustar, "n_pbl_hflux" => counts.n_hflux,
         "n_temperature" => 0,
         "n_dam" => counts.n_dam, "n_dbm" => counts.n_dbm, "n_dcm" => counts.n_dcm, "n_dm" => counts.n_dm,
         "include_flux_delta" => true,
         "include_qv" => false, "include_qv_endpoints" => settings.include_qv,
         "include_cmfmc" => false,
-        "include_tm5conv" => settings.tm5_convection_enable, "include_surface" => false,
+        "include_tm5conv" => settings.tm5_convection_enable,
+        "include_surface" => include_surface,
+        "surface_payload" => include_surface ? "pbl_raw_v2" : "none",
         "include_temperature" => false,
         "dt_met_seconds" => settings.met_interval,
         "dt_seconds" => settings.dt,
@@ -225,7 +236,8 @@ binary.
 """
 function window_element_counts(grid::LatLonTargetGeometry, Nz::Int;
                                 include_qv::Bool=false,
-                                tm5_convection::Bool=false)
+                                tm5_convection::Bool=false,
+                                include_surface::Bool=false)
     Nx = nlon(grid)
     Ny = nlat(grid)
 
@@ -238,6 +250,7 @@ function window_element_counts(grid::LatLonTargetGeometry, Nz::Int;
     n_qv_start = include_qv ? n_m : Int64(0)
     n_qv_end = include_qv ? n_m : Int64(0)
     n_tm5 = tm5_convection ? n_m : Int64(0)  # each of entu/detu/entd/detd is (Nx, Ny, Nz)
+    n_sfc = include_surface ? n_ps : Int64(0)
 
     return (
         n_m = n_m,
@@ -256,7 +269,14 @@ function window_element_counts(grid::LatLonTargetGeometry, Nz::Int;
         n_detu = n_tm5,
         n_entd = n_tm5,
         n_detd = n_tm5,
-        elems_per_window = n_m + n_am + n_bm + n_cm + n_ps + n_qv_start + n_qv_end + n_am + n_bm + n_cm + n_m + 4 * n_tm5,
+        n_pblh = n_sfc,
+        n_t2m = n_sfc,
+        n_ustar = n_sfc,
+        n_hflux = n_sfc,
+        elems_per_window = n_m + n_am + n_bm + n_cm + n_ps +
+                           n_qv_start + n_qv_end +
+                           n_am + n_bm + n_cm + n_m +
+                           4 * n_tm5 + 4 * n_sfc,
     )
 end
 

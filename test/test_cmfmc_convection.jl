@@ -534,6 +534,35 @@ end
                                        FT(1800.0); workspace = ws)
 end
 
+const _HAS_CUDA_CMFMC_TEST = try
+    @eval using CUDA
+    CUDA.functional()
+catch
+    false
+end
+
+@testset "B6. GPU CMFMC CFL scan avoids scalar indexing" begin
+    if !_HAS_CUDA_CMFMC_TEST
+        @test_skip "CUDA not available"
+    else
+        FT = Float32
+        Nc, Hp, Nz = 2, 1, 3
+        cmfmc = ntuple(_ -> fill(FT(0.01), Nc, Nc, Nz + 1), 6)
+        air_mass = ntuple(_ -> fill(FT(1.0e7), Nc + 2Hp, Nc + 2Hp, Nz), 6)
+        areas = ntuple(_ -> fill(FT(1.0e5), Nc, Nc), 6)
+        expected = AtmosTransport.Operators.Convection._cmfmc_max_cfl(
+            cmfmc, air_mass, areas, FT(450.0))
+
+        cmfmc_gpu = map(CUDA.CuArray, cmfmc)
+        air_gpu = map(CUDA.CuArray, air_mass)
+        area_gpu = map(CUDA.CuArray, areas)
+        actual = AtmosTransport.Operators.Convection._cmfmc_max_cfl(
+            cmfmc_gpu, air_gpu, area_gpu, FT(450.0))
+
+        @test actual ≈ expected
+    end
+end
+
 # ---------------------------------------------------------------------------
 # TIER C — opt-in via ENV["ATMOSTR_TIER_C_REFS"]
 # ---------------------------------------------------------------------------

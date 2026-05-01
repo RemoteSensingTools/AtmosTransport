@@ -43,7 +43,7 @@ merging.
 `cmfmc`/`dtrain` are filled only when the source supports convection and
 the user has enabled it via `settings.include_convection`.
 """
-struct RawWindow{FT <: AbstractFloat, P, V}
+struct RawWindow{FT <: AbstractFloat, P, V, S}
     # left endpoint (t_n)
     m       :: V
     ps      :: P
@@ -60,9 +60,40 @@ struct RawWindow{FT <: AbstractFloat, P, V}
     # cell-center winds (geographic frame); set only when regrid happens downstream
     u       :: Union{Nothing, V}
     v       :: Union{Nothing, V}
+    # optional raw PBL surface fields `(pblh, ustar, hflux, t2m)`
+    surface :: S
     # optional convection sources
     cmfmc   :: Union{Nothing, V}   # at interfaces
     dtrain  :: Union{Nothing, V}   # at centers
+end
+
+function RawWindow{FT, P, V}(m, ps, qv,
+                             m_next, ps_next, qv_next,
+                             am, bm,
+                             u, v,
+                             cmfmc, dtrain) where {FT <: AbstractFloat, P, V}
+    return RawWindow{FT, P, V, Nothing}(
+        m, ps, qv,
+        m_next, ps_next, qv_next,
+        am, bm,
+        u, v,
+        nothing,
+        cmfmc, dtrain)
+end
+
+function RawWindow{FT, P, V}(m, ps, qv,
+                             m_next, ps_next, qv_next,
+                             am, bm,
+                             u, v,
+                             surface,
+                             cmfmc, dtrain) where {FT <: AbstractFloat, P, V}
+    return RawWindow{FT, P, V, typeof(surface)}(
+        m, ps, qv,
+        m_next, ps_next, qv_next,
+        am, bm,
+        u, v,
+        surface,
+        cmfmc, dtrain)
 end
 
 # `P` is the per-window 2D field type (PS-shaped); `V` is the per-window 3D
@@ -146,3 +177,11 @@ Defaults to `false`; sources that support convection override and gate
 the actual output behind a user flag (e.g. `settings.include_convection`).
 """
 has_convection(::AbstractMetSettings) = false
+
+"""
+    has_surface(settings::AbstractMetSettings) -> Bool
+
+Whether this source can populate raw PBL surface fields in `RawWindow.surface`.
+Sources gate actual reads behind their settings flags.
+"""
+has_surface(::AbstractMetSettings) = false

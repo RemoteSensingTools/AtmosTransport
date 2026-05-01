@@ -246,6 +246,12 @@ function write_window!(io::IO,
         bytes_written += write_array!(io, storage.all_entd[win_idx])
         bytes_written += write_array!(io, storage.all_detd[win_idx])
     end
+    if _settings_include_surface(settings)
+        bytes_written += write_array!(io, storage.all_pblh[win_idx])
+        bytes_written += write_array!(io, storage.all_t2m[win_idx])
+        bytes_written += write_array!(io, storage.all_ustar[win_idx])
+        bytes_written += write_array!(io, storage.all_hflux[win_idx])
+    end
 
     return bytes_written
 end

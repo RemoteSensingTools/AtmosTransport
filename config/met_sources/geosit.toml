@@ -42,7 +42,7 @@ format               = "netcdf_native"
 level_orientation    = "auto"        # auto-detect; explicit "bottom_up" for GEOS-IT
 mass_flux_dt_seconds = 450.0         # FV3 dynamics timestep — NOT the 1-hour cadence
 collections_required = ["CTM_A1", "CTM_I1"]
-collections_optional = ["A3mstE", "A3dyn"]   # convection (gated OFF by default)
+collections_optional = ["A1", "A3mstE", "A3dyn"]   # surface + convection gated by preprocessing config
 
 # ---------------------------------------------------------------------------
 # Data access configuration
@@ -159,4 +159,8 @@ collection  = "A1"
 
 [variables.sensible_heat_flux]
 native_name = "HFLUX"
+collection  = "A1"
+
+[variables.two_meter_temperature]
+native_name = "T2M"
 collection  = "A1"

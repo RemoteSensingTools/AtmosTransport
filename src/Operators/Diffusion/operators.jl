@@ -17,6 +17,8 @@ when the palindrome's V position is unoccupied (Commit 4).
 """
 struct NoDiffusion <: AbstractDiffusion end
 
+Adapt.adapt_structure(_to, op::NoDiffusion) = op
+
 """
     ImplicitVerticalDiffusion(; kz_field)
 
@@ -93,6 +95,9 @@ function ImplicitVerticalDiffusion(; kz_field)
     FT = _diffusion_field_eltype(kz_field)
     return ImplicitVerticalDiffusion{FT, typeof(kz_field)}(kz_field)
 end
+
+Adapt.adapt_structure(to, op::ImplicitVerticalDiffusion) =
+    ImplicitVerticalDiffusion(; kz_field = Adapt.adapt(to, op.kz_field))
 
 # =========================================================================
 # apply!

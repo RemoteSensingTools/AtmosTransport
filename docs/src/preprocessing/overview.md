@@ -45,7 +45,7 @@ under `src/Preprocessing/transport_binary/`:
 |---|---|---|---|
 | **Spectral ERA5** | `latlon_spectral.jl` | `reduced_transport_helpers.jl` (RG path lives here, not in a `_spectral.jl` peer) | `cubed_sphere_spectral.jl` |
 | **GEOS-IT** native | (planned, deferred) | (planned, deferred) | `cubed_sphere_geos.jl` |
-| **GEOS-FP** native | declared but not implemented (`GEOSSettings{:geosfp}` errors at file resolution today) | — | — |
+| **GEOS-FP** native | (planned, deferred) | (planned, deferred) | hourly C720 CTM reader; identity or nested C720→C180 block coarsening with optional physics fallback |
 | **MERRA-2** (future) | (planned) | (planned) | (planned) |
 
 ```mermaid

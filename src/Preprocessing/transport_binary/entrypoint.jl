@@ -106,6 +106,21 @@ function _process_day_native(cfg::AbstractDict;
     # reader (`open_day` → `endpoint_dry_mass!`) and the writer's vertical
     # setup never desync. (Codex 2026-04-25: P2 fix.)
     settings_kwargs = (root_dir = expand_data_path(String(src_cfg["root_dir"])),)
+    if haskey(src_cfg, "include_surface")
+        settings_kwargs = (settings_kwargs..., include_surface = Bool(src_cfg["include_surface"]))
+    end
+    if haskey(src_cfg, "include_convection")
+        settings_kwargs = (settings_kwargs..., include_convection = Bool(src_cfg["include_convection"]))
+    end
+    for key in ("physics_dir", "surface_dir")
+        if haskey(src_cfg, key)
+            settings_kwargs = (settings_kwargs..., physics_dir = expand_data_path(String(src_cfg[key])))
+            break
+        end
+    end
+    if haskey(src_cfg, "physics_layout")
+        settings_kwargs = (settings_kwargs..., physics_layout = Symbol(src_cfg["physics_layout"]))
+    end
     cfg_vertical = get(cfg, "vertical", Dict())
     if haskey(cfg_vertical, "coefficients")
         settings_kwargs = (settings_kwargs..., coefficients_file =

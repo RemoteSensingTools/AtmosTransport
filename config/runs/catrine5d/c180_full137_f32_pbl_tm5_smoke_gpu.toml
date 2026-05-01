@@ -1,0 +1,44 @@
+# Full-L137 C180 smoke test — Float32 GPU, PBL diffusion + TM5 convection.
+#
+# Runner:
+#   julia -t8 --project=. scripts/run_transport.jl \
+#         config/runs/catrine5d/c180_full137_f32_pbl_tm5_smoke_gpu.toml
+
+[input]
+binary_paths = [
+  "/home/cfranken/data/AtmosTransport/met/era5/cs_c180/transport_binary_v2_full137_dec2021_f32_tm5_surface_steps24/era5_transport_20211202_merged1000Pa_float32.bin",
+]
+
+[architecture]
+use_gpu = true
+
+[numerics]
+float_type = "Float32"
+
+[run]
+scheme = "slopes"
+stop_window = 1
+
+[tracers.co2_natural]
+[tracers.co2_natural.init]
+kind = "catrine_co2"
+
+[tracers.co2_fossil]
+[tracers.co2_fossil.init]
+kind = "uniform"
+background = 0.0
+
+[tracers.co2_fossil.surface_flux]
+kind       = "gridfed_fossil_co2"
+file       = "/home/cfranken/data/AtmosTransport/catrine/Emissions/gridfed/GCP-GridFEDv2024.0_2021.short.nc"
+time_index = 12
+
+[diffusion]
+kind = "pbl"
+
+[convection]
+kind = "tm5"
+
+[output]
+snapshot_hours = [0, 1]
+snapshot_file = "/temp1/c180_full137/fullphysics_smoke_steps24_1h.nc"

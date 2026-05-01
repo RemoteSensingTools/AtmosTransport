@@ -5,6 +5,7 @@
 # capability-augmented report, and returns the capability NamedTuple.
 
 using ArgParse
+using JSON3
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
@@ -27,6 +28,16 @@ function _argparse_settings()
     return s
 end
 
+function _on_disk_float_type(path::AbstractString)
+    open(path, "r") do io
+        raw = read(io, min(filesize(path), 262144))
+        json_end = something(findfirst(==(0x00), raw), length(raw) + 1) - 1
+        hdr = JSON3.read(String(raw[1:json_end]))
+        float_bytes = Int(get(hdr, :float_bytes, 4))
+        return float_bytes == 8 ? Float64 : Float32
+    end
+end
+
 function main(args)
     parsed = parse_args(args, _argparse_settings())
     path = abspath(parsed["path"])
@@ -39,20 +50,21 @@ function main(args)
     # `inspect_binary` prints a rich report (header, geometry, semantics,
     # payload sections, capability rows with ✓/✗) and returns a
     # `binary_capabilities` NamedTuple we could use for scripting.
-    inspect_binary(path)
+    caps = inspect_binary(path)
 
     # Driver-compatibility probe: does the binary produce a working
     # runtime driver? Useful for catching semantic mismatches beyond
     # payload-section presence (e.g. contract-field validation).
     println()
     try
-        if inspect_binary(path; io = devnull).grid_type === :cubed_sphere
-            driver = CubedSphereTransportDriver(path; FT = Float64, arch = CPU())
+        FT = _on_disk_float_type(path)
+        if caps.grid_type === :cubed_sphere
+            driver = CubedSphereTransportDriver(path; FT = FT, arch = CPU())
             println("Driver: OK (CubedSphereTransportDriver)")
             println(driver)
             close(driver)
         else
-            driver = TransportBinaryDriver(path; FT = Float64, arch = CPU())
+            driver = TransportBinaryDriver(path; FT = FT, arch = CPU())
             println("Driver: OK (TransportBinaryDriver)")
             println(driver)
             close(driver)

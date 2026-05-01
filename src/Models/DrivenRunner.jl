@@ -487,6 +487,15 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
     # First driver + model (reuses air_mass from window 1)
     driver1 = CubedSphereTransportDriver(first(binary_paths);
                                           FT = FT, arch = arch, Hp = Hp)
+    if stop_window_override !== nothing && length(binary_paths) > 1 &&
+       Int(stop_window_override) < total_windows(driver1)
+        close(driver1)
+        throw(ArgumentError(
+            "[run] stop_window=$(stop_window_override) with multiple cubed-sphere " *
+            "daily binaries would carry state from a partial day into the next " *
+            "day's 00Z forcing. Use one binary for partial-window debugging, or " *
+            "omit stop_window for a continuous multi-day run."))
+    end
     recipe  = build_runtime_physics_recipe(cfg, driver1, FT; halo_width = Hp)
     _validate_capability_match(driver1, recipe, cfg)
 
@@ -587,12 +596,10 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
     end
 
     t0 = time()
-    drivers = [driver1;
-               [CubedSphereTransportDriver(expanduser(p); FT = FT,
-                                           arch = arch, Hp = Hp)
-                for p in binary_paths[2:end]]]
-
-    for driver in drivers
+    for (driver_idx, path) in enumerate(binary_paths)
+        driver = driver_idx == 1 ? driver1 :
+                 CubedSphereTransportDriver(expanduser(path);
+                                             FT = FT, arch = arch, Hp = Hp)
         validate_runtime_physics_recipe(recipe, driver; halo_width = Hp)
         stop_window = stop_window_override === nothing ?
                       total_windows(driver) :
@@ -602,7 +609,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
         # Plan-39 Commit G removed the window-boundary air_mass reset, so
         # the cross-day handoff is continuity-consistent. We rebuild the
         # sim around each day's driver; state + physics carry over.
-        if driver !== driver1
+        if driver_idx != 1
             fluxes_d = allocate_face_fluxes(mesh, Nz; FT = FT, basis = BasisT)
             # Match the device of the already-adapted `state`: on GPU runs
             # the freshly-allocated fluxes start as CPU Arrays and would
@@ -613,14 +620,21 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
             model = TransportModel(state, fluxes_d, grid, recipe.advection;
                                     diffusion  = recipe.diffusion,
                                     convection = recipe.convection)
+            adaptor !== Array &&
+                (model = Base.invokelatest(Adapt.adapt, adaptor, model))
         end
+        initialize_air_mass = driver_idx == 1
         sim = DrivenSimulation(model, driver;
                                start_window = 1, stop_window = stop_window,
+                               initialize_air_mass = initialize_air_mass,
                                surface_sources = surface_sources)
         # `DrivenSimulation` may wrap `model` with a surface-flux operator;
         # keep snapshots and the return value aligned with the stepped model.
         model = sim.model
 
+        day_t0 = time()
+        @info @sprintf("Running %s (%d windows)",
+                       basename(path), stop_window)
         while sim.iteration < sim.final_iteration
             step!(sim)
             if sim.iteration % sim.steps_per_window == 0
@@ -634,6 +648,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
                 end
             end
         end
+        @info @sprintf("Finished %s in %.1fs",
+                       basename(path), time() - day_t0)
         close(driver)
     end
 

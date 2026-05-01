@@ -23,7 +23,7 @@ using Test
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 using .AtmosTransport.Preprocessing: regrid_ll_binary_to_cs, build_target_geometry
-using .AtmosTransport.MetDrivers: load_cs_window
+using .AtmosTransport.MetDrivers: load_cs_window, has_surface
 
 # LL fixture: small but non-trivial. Pressure varies with latitude so
 # `recover_ll_cell_center_winds!` sees a genuine ∇p field, and air mass
@@ -33,7 +33,10 @@ function _ll_fixture_binary(path::AbstractString;
                             Nx::Int = 24, Ny::Int = 13, Nz::Int = 4,
                             nwindow::Int = 2,
                             final_dm_fraction::Real = 0,
-                            tm5_uniform::Real = 0)
+                            surface_uniform = nothing,
+                            tm5_uniform::Real = 0,
+                            am_uniform::Real = 0,
+                            bm_uniform::Real = 0)
     mesh = LatLonMesh(; FT = FT, Nx = Nx, Ny = Ny)
     A_ifc = FT[0, 2500, 5000, 7500, 10000]
     B_ifc = FT[0, 0.1, 0.3, 0.6, 1.0]
@@ -65,8 +68,8 @@ function _ll_fixture_binary(path::AbstractString;
     # path without committing to a particular wind field. Post-balance
     # `max(|cm|/m)` should be at solver tolerance, `dm` between windows is
     # zero, `cm` stays zero.
-    am = zeros(FT, Nx + 1, Ny, Nz)
-    bm = zeros(FT, Nx, Ny + 1, Nz)
+    am = fill(FT(am_uniform), Nx + 1, Ny, Nz)
+    bm = fill(FT(bm_uniform), Nx, Ny + 1, Nz)
     cm = zeros(FT, Nx, Ny, Nz + 1)
 
     dm_final = zeros(FT, Nx, Ny, Nz)
@@ -93,6 +96,15 @@ function _ll_fixture_binary(path::AbstractString;
     else
         nothing
     end
+    surface_block = if surface_uniform !== nothing
+        vals = surface_uniform
+        (pblh = fill(FT(vals.pblh), Nx, Ny),
+         ustar = fill(FT(vals.ustar), Nx, Ny),
+         hflux = fill(FT(vals.hflux), Nx, Ny),
+         t2m = fill(FT(vals.t2m), Nx, Ny))
+    else
+        nothing
+    end
 
     windows = Vector{NamedTuple}(undef, nwindow)
     for win in 1:nwindow
@@ -104,7 +116,10 @@ function _ll_fixture_binary(path::AbstractString;
             ps = ps,
             dm = win < nwindow ? zeros(FT, Nx, Ny, Nz) : copy(dm_final),
         )
-        windows[win] = tm5_block === nothing ? base : merge(base, (tm5_fields = tm5_block,))
+        win_nt = base
+        surface_block !== nothing && (win_nt = merge(win_nt, (surface = surface_block,)))
+        tm5_block !== nothing && (win_nt = merge(win_nt, (tm5_fields = tm5_block,)))
+        windows[win] = win_nt
     end
 
     write_transport_binary(path, grid, windows;
@@ -255,6 +270,85 @@ end
                 @test isapprox(minimum(vals), tm5_val; atol = 5e-3)
             end
             close(reader)
+        end
+    end
+
+    @testset "PBL surface sections carried LL→CS" begin
+        mktempdir() do dir
+            ll_path = joinpath(dir, "ll_fixture.bin")
+            cs_path = joinpath(dir, "cs_fixture.bin")
+            sfc = (pblh = 900.0, ustar = 0.4, hflux = 80.0, t2m = 289.0)
+
+            _ll_fixture_binary(ll_path; FT = Float64,
+                                Nx = 24, Ny = 13, Nz = 4, nwindow = 2,
+                                surface_uniform = sfc)
+
+            cfg_grid = Dict{String, Any}(
+                "Nc" => 4,
+                "regridder_cache_dir" => joinpath(dir, "cr_cache"),
+            )
+            cs_grid = build_target_geometry(Val(:cubed_sphere), cfg_grid, Float64)
+
+            regrid_ll_binary_to_cs(ll_path, cs_grid, cs_path; FT = Float64)
+
+            caps = inspect_binary(cs_path; io = devnull)
+            @test caps.pbl_diffusion === true
+
+            reader = CubedSphereBinaryReader(cs_path; FT = Float64)
+            @test has_surface(reader)
+            @test :pbl_hflux in reader.header.payload_sections
+            @test !(:hflux in reader.header.payload_sections)
+            win = load_cs_window(reader, 1)
+            @test haskey(win, :surface) && win.surface !== nothing
+            for (fld, expected) in pairs(sfc)
+                panels = getfield(win.surface, fld)
+                @test length(panels) == reader.header.npanel
+                @test all(size(p) == (4, 4) for p in panels)
+                vals = vcat(map(vec, panels)...)
+                @test isapprox(maximum(vals), expected; atol = 1e-8)
+                @test isapprox(minimum(vals), expected; atol = 1e-8)
+            end
+            close(reader)
+        end
+    end
+
+    @testset "steps_per_window override rescales reconstructed CS fluxes" begin
+        mktempdir() do dir
+            ll_path = joinpath(dir, "ll_fixture.bin")
+            cs_default_path = joinpath(dir, "cs_default.bin")
+            cs_override_path = joinpath(dir, "cs_override.bin")
+
+            _ll_fixture_binary(ll_path; FT = Float64,
+                                Nx = 24, Ny = 13, Nz = 4, nwindow = 2,
+                                am_uniform = 100.0)
+
+            cfg_grid = Dict{String, Any}(
+                "Nc" => 4,
+                "regridder_cache_dir" => joinpath(dir, "cr_cache"),
+            )
+            cs_grid = build_target_geometry(Val(:cubed_sphere), cfg_grid, Float64)
+
+            regrid_ll_binary_to_cs(ll_path, cs_grid, cs_default_path; FT = Float64)
+            regrid_ll_binary_to_cs(ll_path, cs_grid, cs_override_path;
+                                   FT = Float64, steps_per_window = 4)
+
+            function _horizontal_flux_l1(path)
+                reader = CubedSphereBinaryReader(path; FT = Float64)
+                win = load_cs_window(reader, 1)
+                steps = reader.header.steps_per_window
+                total = sum(map(p -> sum(abs, p), win.am)) +
+                        sum(map(p -> sum(abs, p), win.bm))
+                close(reader)
+                return steps, total
+            end
+
+            steps_default, flux_default = _horizontal_flux_l1(cs_default_path)
+            steps_override, flux_override = _horizontal_flux_l1(cs_override_path)
+
+            @test steps_default == 2
+            @test steps_override == 4
+            @test flux_default > 0
+            @test isapprox(flux_override / flux_default, 0.5; rtol = 1e-6)
         end
     end
 

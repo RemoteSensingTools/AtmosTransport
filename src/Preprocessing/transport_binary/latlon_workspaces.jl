@@ -75,6 +75,10 @@ struct WindowStorage{FT}
     all_detu     :: Vector{Array{FT, 3}}
     all_entd     :: Vector{Array{FT, 3}}
     all_detd     :: Vector{Array{FT, 3}}
+    all_pblh     :: Vector{Array{FT, 2}}
+    all_t2m      :: Vector{Array{FT, 2}}
+    all_ustar    :: Vector{Array{FT, 2}}
+    all_hflux    :: Vector{Array{FT, 2}}
 end
 
 abstract type AbstractQVWorkspace{FT} end
@@ -188,23 +192,27 @@ function allocate_merge_workspace(grid::LatLonTargetGeometry, Nz_native::Int, Nz
 end
 
 """
-    allocate_window_storage(Nt, FT; include_qv=false, tm5_convection=false) -> WindowStorage{FT}
+    allocate_window_storage(Nt, FT; include_qv=false, tm5_convection=false,
+                            include_surface=false) -> WindowStorage{FT}
 
 Allocate per-window storage for the daily output payloads. When
 `tm5_convection=true`, also allocate the four TM5 section vectors.
 """
 function allocate_window_storage(Nt::Int, ::Type{FT};
                                  include_qv::Bool=false,
-                                 tm5_convection::Bool=false) where FT
+                                 tm5_convection::Bool=false,
+                                 include_surface::Bool=false) where FT
     _qv_vec() = include_qv ? Vector{Array{FT, 3}}(undef, Nt) : Vector{Array{FT, 3}}()
     _tm5_vec() = tm5_convection ? Vector{Array{FT, 3}}(undef, Nt) : Vector{Array{FT, 3}}()
+    _sfc_vec() = include_surface ? Vector{Array{FT, 2}}(undef, Nt) : Vector{Array{FT, 2}}()
     return WindowStorage{FT}(Vector{Array{FT, 3}}(undef, Nt),
                              Vector{Array{FT, 3}}(undef, Nt),
                              Vector{Array{FT, 3}}(undef, Nt),
                              Vector{Array{FT, 3}}(undef, Nt),
                              Vector{Array{FT, 2}}(undef, Nt),
                              _qv_vec(), _qv_vec(),
-                             _tm5_vec(), _tm5_vec(), _tm5_vec(), _tm5_vec())
+                             _tm5_vec(), _tm5_vec(), _tm5_vec(), _tm5_vec(),
+                             _sfc_vec(), _sfc_vec(), _sfc_vec(), _sfc_vec())
 end
 
 """
@@ -636,7 +644,8 @@ function process_window!(win_idx::Int,
                          ps_offsets::AbstractVector{<:Real};
                          physics_reader = nothing,
                          tm5_ws = nothing,
-                         tm5_stats = nothing) where FT
+                         tm5_stats = nothing,
+                         surface_reader = nothing) where FT
     Nx = size(transform.sp, 1)
     Ny = size(transform.sp, 2)
     t0 = time()
@@ -667,12 +676,27 @@ function process_window!(win_idx::Int,
                                    physics_reader, tm5_ws,
                                    transform.sp, vertical, tm5_stats, FT)
     end
+    if _settings_include_surface(settings) && surface_reader !== nothing
+        _store_window_surface_fields!(storage, win_idx, surface_reader, FT)
+    end
 
     elapsed = round(time() - t0, digits=2)
     should_log_window(win_idx, length(storage.all_m)) &&
         @info(@sprintf("    Window %d/%d (hour %02d): %.2fs  ps_offset=%+.3f Pa",
                        win_idx, length(storage.all_m), hour, elapsed, ps_offsets[win_idx]))
 
+    return nothing
+end
+
+function _store_window_surface_fields!(storage::WindowStorage{FT},
+                                       win_idx::Int,
+                                       surface_reader::ERA5SurfaceReader,
+                                       ::Type{FT}) where FT
+    surface = load_era5_surface_window(surface_reader, win_idx, FT)
+    storage.all_pblh[win_idx] = surface.pblh
+    storage.all_t2m[win_idx] = surface.t2m
+    storage.all_ustar[win_idx] = surface.ustar
+    storage.all_hflux[win_idx] = surface.hflux
     return nothing
 end
 

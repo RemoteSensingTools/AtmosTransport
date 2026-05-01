@@ -142,6 +142,24 @@ using ..Operators.Diffusion: NoDiffusion, fill_dz_hydrostatic_constT!
     return nothing
 end
 
+@inline _refresh_pbl_kz_for_window!(_field, _sim::DrivenSimulation) = nothing
+
+function _refresh_pbl_kz_for_window!(field::WindowPBLKzField,
+                                     sim::DrivenSimulation)
+    mesh = sim.model.grid.horizontal
+    refresh_pbl_kz_cache!(field, sim.window.surface, sim.window.air_mass,
+                           mesh.cell_areas; halo_width = mesh.Hp)
+    return nothing
+end
+
+@inline _refresh_pbl_kz_for_window!(::NoDiffusion, _sim::DrivenSimulation) = nothing
+
+function _refresh_pbl_kz_for_window!(op::ImplicitVerticalDiffusion,
+                                     sim::DrivenSimulation)
+    _refresh_pbl_kz_for_window!(op.kz_field, sim)
+    return nothing
+end
+
 function _apply_surface_sources!(sim::DrivenSimulation)
     isempty(sim.surface_sources) && return nothing
     for source in sim.surface_sources
@@ -261,6 +279,7 @@ function _maybe_advance_window!(sim::DrivenSimulation, substep::Int)
         end
         _validate_convection_runtime(sim.model, sim.driver, sim.window)
         _refresh_dz_for_window!(sim)
+        _refresh_pbl_kz_for_window!(sim.model.diffusion, sim)
         # Plan 39 Commit G: the `reset_air_mass_each_window` flag has been
         # removed. Under the canonical `:window_constant` contract, the
         # runtime's own flux divergence integrates to `(m_next - m)` over
@@ -393,6 +412,7 @@ function DrivenSimulation(model::TransportModel,
         _copy_storage!(sim.qv_buffer, sim.window.qv_start)
     end
     _refresh_dz_for_window!(sim)
+    _refresh_pbl_kz_for_window!(sim.model.diffusion, sim)
     return sim
 end
 

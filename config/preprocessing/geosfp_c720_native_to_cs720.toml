@@ -1,0 +1,32 @@
+# GEOS-FP native C720 hourly CTM -> AtmosTransport CS C720 transport binary.
+#
+# This path is the native passthrough/debug target for GEOS-FP C720 CTM
+# advection fields. Surface/convection physics can be attached from the typed
+# GEOS-FP 0.25 degree fallback files (A1/A3mstE/A3dyn) by enabling the
+# switches below and pointing `physics_dir` at the fallback directory.
+
+[source]
+toml     = "config/met_sources/geosfp.toml"
+root_dir = "~/data/AtmosTransport/met/geosfp/C720/raw"
+include_surface = true
+include_convection = true
+physics_dir = "~/data/AtmosTransport/met/geosfp/0.25x0.3125/raw"
+physics_layout = "latlon_025"
+
+[output]
+directory  = "~/data/AtmosTransport/met/geosfp/C720/preprocessed/native_v4"
+mass_basis = "dry"
+
+[grid]
+type                = "cubed_sphere"
+Nc                  = 720
+panel_convention    = "geos_native"
+definition          = "gmao"
+regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
+
+[vertical]
+coefficients = "config/geos_L72_coefficients.toml"
+
+[numerics]
+float_type     = "Float32"
+dt_met_seconds = 3600.0

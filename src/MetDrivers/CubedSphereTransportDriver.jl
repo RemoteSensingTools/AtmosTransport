@@ -5,7 +5,7 @@
 # through the flat structured transport-binary contract.
 # ---------------------------------------------------------------------------
 
-struct CubedSphereTransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D, C} <: AbstractTransportWindow{Basis}
+struct CubedSphereTransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D, C, S} <: AbstractTransportWindow{Basis}
     air_mass         :: M
     surface_pressure :: PS
     fluxes           :: F
@@ -13,15 +13,17 @@ struct CubedSphereTransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D, C}
     qv_end           :: Q
     deltas           :: D
     convection       :: C
+    surface          :: S
 end
 
 function CubedSphereTransportWindow(air_mass, surface_pressure,
                                     fluxes::CubedSphereFaceFluxState{B};
                                     qv_start = nothing, qv_end = nothing,
-                                    deltas = nothing, convection = nothing) where {B <: AbstractMassBasis}
+                                    deltas = nothing, convection = nothing,
+                                    surface = nothing) where {B <: AbstractMassBasis}
     return CubedSphereTransportWindow{B, typeof(air_mass), typeof(surface_pressure), typeof(fluxes),
-                                      typeof(qv_start), typeof(deltas), typeof(convection)}(
-        air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas, convection)
+                                      typeof(qv_start), typeof(deltas), typeof(convection), typeof(surface)}(
+        air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas, convection, surface)
 end
 
 function Adapt.adapt_structure(to, window::CubedSphereTransportWindow{B}) where {B <: AbstractMassBasis}
@@ -32,9 +34,10 @@ function Adapt.adapt_structure(to, window::CubedSphereTransportWindow{B}) where 
     qv_end = Adapt.adapt(to, window.qv_end)
     deltas = Adapt.adapt(to, window.deltas)
     convection = Adapt.adapt(to, window.convection)
+    surface = Adapt.adapt(to, window.surface)
     return CubedSphereTransportWindow{B, typeof(air_mass), typeof(surface_pressure), typeof(fluxes),
-                                      typeof(qv_start), typeof(deltas), typeof(convection)}(
-        air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas, convection)
+                                      typeof(qv_start), typeof(deltas), typeof(convection), typeof(surface)}(
+        air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas, convection, surface)
 end
 
 struct CubedSphereTransportDriver{FT, ReaderT, GridT} <: AbstractMassFluxMetDriver
@@ -64,6 +67,8 @@ has_qv_endpoints(::CubedSphereBinaryReader) = false
 has_flux_delta(reader::CubedSphereBinaryReader) =
     any(section in (:dam, :dbm, :dcm, :dm, :dhflux) for section in reader.header.payload_sections)
 has_cmfmc(reader::CubedSphereBinaryReader) = :cmfmc in reader.header.payload_sections
+has_surface(reader::CubedSphereBinaryReader) =
+    all(s in reader.header.payload_sections for s in _PBL_SURFACE_PAYLOAD_SECTIONS)
 has_tm5conv(reader::CubedSphereBinaryReader) =
     all(s in reader.header.payload_sections for s in (:entu, :detu, :entd, :detd))
 has_tm5_convection(reader::CubedSphereBinaryReader) = has_tm5conv(reader)
@@ -79,6 +84,7 @@ function binary_capabilities(reader::CubedSphereBinaryReader)
         replay_gate      = has_flux_delta(reader),
         tm5_convection   = has_tm5_convection(reader),
         cmfmc_convection = has_cmfmc(reader),
+        pbl_diffusion    = has_surface(reader),
         surface_pressure = :ps in hdr.payload_sections,
         humidity         = has_qv(reader),
         mass_basis       = hdr.mass_basis,
@@ -187,6 +193,7 @@ supports_native_vertical_flux(::CubedSphereTransportDriver) = true
 supports_moisture(::CubedSphereTransportDriver) = false
 supports_convection(driver::CubedSphereTransportDriver) =
     has_cmfmc(driver.reader) || has_tm5conv(driver.reader)
+supports_diffusion(driver::CubedSphereTransportDriver) = has_surface(driver.reader)
 driver_grid(driver::CubedSphereTransportDriver) = driver.grid
 flux_interpolation_mode(::CubedSphereTransportDriver) = :constant
 
@@ -249,7 +256,9 @@ function load_transport_window(driver::CubedSphereTransportDriver, win::Int)
     else
         nothing
     end
-    return CubedSphereTransportWindow(panels_m, panels_ps, fluxes; convection = convection)
+    return CubedSphereTransportWindow(panels_m, panels_ps, fluxes;
+                                      convection = convection,
+                                      surface = raw.surface)
 end
 
 export CubedSphereTransportWindow, CubedSphereTransportDriver

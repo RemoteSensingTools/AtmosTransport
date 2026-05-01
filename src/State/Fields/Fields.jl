@@ -31,8 +31,9 @@ using Adapt
 
 export AbstractTimeVaryingField, AbstractCubedSphereField
 export ConstantField, ProfileKzField, PreComputedKzField, CubedSphereField
-export DerivedKzField, PBLPhysicsParameters, StepwiseField
+export DerivedKzField, WindowPBLKzField, PBLPhysicsParameters, StepwiseField
 export field_value, update_field!, integral_between, panel_field
+export refresh_pbl_kz_cache!
 
 # =========================================================================
 # Abstract type
@@ -111,6 +112,7 @@ include("ProfileKzField.jl")
 include("PreComputedKzField.jl")
 include("CubedSphereField.jl")
 include("DerivedKzField.jl")
+include("WindowPBLKzField.jl")
 include("StepwiseField.jl")
 
 end # module Fields

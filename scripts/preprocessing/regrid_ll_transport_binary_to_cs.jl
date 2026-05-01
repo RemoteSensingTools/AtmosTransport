@@ -8,10 +8,10 @@
 # balance, cm diagnosis, streaming v4 write — lives in
 # `src/Preprocessing/binary_pipeline.jl:1545`.
 #
-# Timestep metadata (`dt_met_seconds`, `steps_per_window`) is read from the
-# source binary header — there is no `--met-interval` or `--dt` flag,
-# because resampling to a different substep count is not a safe binary-to-
-# binary operation (flux_kind = :substep_mass_amount).
+# Timestep metadata is read from the source binary header. `--steps-per-window`
+# can override only the output substep count: winds are recovered with source
+# scaling and CS face fluxes are reconstructed with output scaling. There is no
+# `--met-interval` or `--dt` flag.
 #
 # Usage:
 #   julia -t16 --project=. \

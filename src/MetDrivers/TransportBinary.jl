@@ -5,6 +5,14 @@ using Base.Threads
 using ..Architectures: CPU
 import ..State: mass_basis
 
+const _PBL_SURFACE_PAYLOAD_SECTIONS = (:pblh, :ustar, :pbl_hflux, :t2m)
+const _PBL_SURFACE_FIELD_NAMES = (:pblh, :ustar, :hflux, :t2m)
+
+@inline _is_pbl_surface_payload_section(section::Symbol) =
+    section in _PBL_SURFACE_PAYLOAD_SECTIONS
+@inline _pbl_surface_field_name(section::Symbol) =
+    section === :pbl_hflux ? :hflux : section
+
 """
     TransportBinaryHeader
 
@@ -197,6 +205,8 @@ has_tm5_convection(r::TransportBinaryReader) =
     all(s in r.header.payload_sections for s in (:entu, :detu, :entd, :detd))
 has_tm5conv(r::TransportBinaryReader) = has_tm5_convection(r)
 has_cmfmc(::TransportBinaryReader) = false
+has_surface(r::TransportBinaryReader) =
+    all(s in r.header.payload_sections for s in _PBL_SURFACE_PAYLOAD_SECTIONS)
 
 # ---------------------------------------------------------------------------
 # Capability summary + `inspect_binary` (plan 40 Commit 5)
@@ -238,6 +248,7 @@ function binary_capabilities(reader::TransportBinaryReader)
         replay_gate      = has_flux_delta(reader),
         tm5_convection   = has_tm5_convection(reader),
         cmfmc_convection = has_cmfmc(reader),
+        pbl_diffusion    = has_surface(reader),
         surface_pressure = :ps in hdr.payload_sections,
         humidity         = has_qv(reader),
         mass_basis       = hdr.mass_basis,
@@ -331,6 +342,7 @@ function _print_capability_rows(io::IO, reader)
     _print_cap(io, caps.replay_gate,      "plan-39 replay",   "(dam, dbm, dcm, dm)")
     _print_cap(io, caps.tm5_convection,   "TM5 convection",   "(entu, detu, entd, detd)")
     _print_cap(io, caps.cmfmc_convection, "CMFMC convection", "(cmfmc)")
+    _print_cap(io, caps.pbl_diffusion,    "PBL diffusion",    "(pblh, ustar, pbl_hflux, t2m)")
     _print_cap(io, caps.surface_pressure, "surface pressure", "(ps)")
     _print_cap(io, caps.humidity,         "humidity",         "(qv or qv_start/qv_end)")
     println(io, "  mass_basis       = ", caps.mass_basis)
@@ -812,6 +824,8 @@ Base.close(r::TransportBinaryReader) = close(r.io)
         return ncell * (nlevel + 1)
     elseif section === :ps
         return ncell
+    elseif _is_pbl_surface_payload_section(section)
+        return ncell
     # TM5 convection (plan 23 Commit 3): four layer-center fields.
     elseif section === :entu || section === :detu ||
            section === :entd || section === :detd
@@ -829,6 +843,8 @@ end
     elseif section === :cm || section === :dcm
         return ncell * (nlevel + 1)
     elseif section === :ps
+        return ncell
+    elseif _is_pbl_surface_payload_section(section)
         return ncell
     # TM5 convection (plan 23 Commit 3): four layer-center fields.
     elseif section === :entu || section === :detu ||
@@ -888,6 +904,36 @@ _transport_window_dhflux(window) = haskey(window, :dhflux) ? window.dhflux : err
 _transport_window_dcm(window) = haskey(window, :dcm) ? window.dcm : error("transport-binary window is missing `dcm`")
 _transport_window_dm(window) = haskey(window, :dm) ? window.dm : error("transport-binary window is missing `dm`")
 
+@inline function _transport_window_has_surface(window)
+    if haskey(window, :surface)
+        return window.surface !== nothing
+    end
+    pblh_present = haskey(window, :pblh)
+    ustar_present = haskey(window, :ustar)
+    hflux_present = haskey(window, :pbl_hflux) || haskey(window, :hflux)
+    t2m_present = haskey(window, :t2m)
+    pbl_marker_present = pblh_present || ustar_present ||
+                         haskey(window, :pbl_hflux) || t2m_present
+    if pbl_marker_present && !(pblh_present && ustar_present && hflux_present && t2m_present)
+        throw(ArgumentError(
+            "transport-binary surface payload is partial; provide all of " *
+            "`pblh`, `ustar`, `pbl_hflux`, and `t2m`, or none of them."))
+    end
+    return pbl_marker_present
+end
+
+@inline function _transport_window_surface_field(window, name::Symbol)
+    if haskey(window, :surface) && window.surface !== nothing
+        return getfield(window.surface, name)
+    elseif name === :hflux && haskey(window, :pbl_hflux)
+        return getfield(window, :pbl_hflux)
+    elseif haskey(window, name)
+        return getfield(window, name)
+    else
+        error("transport-binary window is missing PBL surface field `$(name)`")
+    end
+end
+
 # TM5 convection payload writers read a NamedTuple of four
 # layer-center fields from the preprocessor window.  The
 # preprocessor supplies `window.tm5_fields.entu`, `.detu`, `.entd`,
@@ -932,6 +978,14 @@ function _transport_window_field(window, section::Symbol)
         return window.qv_start
     elseif section === :qv_end
         return window.qv_end
+    elseif section === :pblh
+        return _transport_window_surface_field(window, :pblh)
+    elseif section === :ustar
+        return _transport_window_surface_field(window, :ustar)
+    elseif section === :pbl_hflux
+        return _transport_window_surface_field(window, :hflux)
+    elseif section === :t2m
+        return _transport_window_surface_field(window, :t2m)
     # TM5 convection fields (plan 23 Commit 3).
     elseif section === :entu
         return _transport_window_tm5_field(window, :entu)
@@ -955,6 +1009,12 @@ function _transport_push_optional_sections!(sections::Vector{Symbol}, window)
     haskey(window, :dhflux) && push!(sections, :dhflux)
     haskey(window, :dcm) && push!(sections, :dcm)
     haskey(window, :dm) && push!(sections, :dm)
+    if _transport_window_has_surface(window)
+        push!(sections, :pblh)
+        push!(sections, :ustar)
+        push!(sections, :pbl_hflux)
+        push!(sections, :t2m)
+    end
     # Plan 23 Commit 3: TM5 convection adds a NamedTuple of four
     # layer-center fields.  Writer emits these when the preprocessor
     # window provides `tm5_fields`; reader populates
@@ -1001,6 +1061,16 @@ function _transport_validate_optional_qv(window, expected)
     if haskey(window, :qv_end)
         size(window.qv_end) == expected ||
             throw(DimensionMismatch("window qv_end has size $(size(window.qv_end)), expected $(expected)"))
+    end
+    return nothing
+end
+
+function _transport_validate_optional_surface(window, expected)
+    _transport_window_has_surface(window) || return nothing
+    for name in _PBL_SURFACE_FIELD_NAMES
+        field = _transport_window_surface_field(window, name)
+        size(field) == expected ||
+            throw(DimensionMismatch("window $(name) has size $(size(field)), expected $(expected)"))
     end
     return nothing
 end
@@ -1063,6 +1133,7 @@ function _transport_validate_structured_window(window,
 
     _transport_validate_optional_qv(window, (Nx, Ny, nlevel))
     _transport_validate_optional_structured_deltas(window, Nx, Ny, nlevel)
+    _transport_validate_optional_surface(window, (Nx, Ny))
     _transport_validate_basis(window, basis_sym)
     return nothing
 end
@@ -1086,6 +1157,7 @@ function _transport_validate_reduced_window(window,
 
     _transport_validate_optional_qv(window, (ncell, nlevel))
     _transport_validate_optional_faceindexed_deltas(window, ncell, nface_h, nlevel)
+    _transport_validate_optional_surface(window, (ncell,))
     _transport_validate_basis(window, basis_sym)
     return nothing
 end
@@ -1114,6 +1186,8 @@ function _transport_common_header(grid_type::String,
     n_qv = (:qv in payload_sections) ? ncell * nlevel : 0
     n_qv_start = (:qv_start in payload_sections) ? ncell * nlevel : 0
     n_qv_end = (:qv_end in payload_sections) ? ncell * nlevel : 0
+    n_surface = (:pblh in payload_sections) ? ncell : 0
+    n_tm5 = (:entu in payload_sections) ? ncell * nlevel : 0
     humidity_sampling = humidity_sampling === :auto ? _transport_default_humidity_sampling(payload_sections) : _transport_normalize_symbol(humidity_sampling)
     delta_semantics = delta_semantics === :auto ? _transport_default_delta_semantics(payload_sections) : _transport_normalize_symbol(delta_semantics)
     contract = TransportBinaryContract(
@@ -1158,9 +1232,20 @@ function _transport_common_header(grid_type::String,
         "include_qv" => :qv in payload_sections,
         "include_qv_endpoints" => (:qv_start in payload_sections) || (:qv_end in payload_sections),
         "include_flux_delta" => any(section in (:dam, :dbm, :dcm, :dm, :dhflux) for section in payload_sections),
+        "include_surface" => n_surface > 0,
+        "surface_payload" => n_surface > 0 ? "pbl_raw_v2" : "none",
+        "include_tm5conv" => n_tm5 > 0,
         "n_qv" => n_qv,
         "n_qv_start" => n_qv_start,
         "n_qv_end" => n_qv_end,
+        "n_pblh" => n_surface,
+        "n_ustar" => n_surface,
+        "n_pbl_hflux" => n_surface,
+        "n_t2m" => n_surface,
+        "n_entu" => n_tm5,
+        "n_detu" => n_tm5,
+        "n_entd" => n_tm5,
+        "n_detd" => n_tm5,
         "n_geometry_elems" => 0,
         "elems_per_window" => elems_per_window,
     )
@@ -1549,6 +1634,8 @@ function _cs_section_elements(Nc::Int, npanel::Int, nlevel::Int, section::Symbol
         return npanel * Nc * Nc * (nlevel + 1)
     elseif section === :ps
         return npanel * Nc * Nc
+    elseif _is_pbl_surface_payload_section(section)
+        return npanel * Nc * Nc
     elseif section === :cmfmc
         return npanel * Nc * Nc * (nlevel + 1)
     elseif section === :dtrain
@@ -1568,6 +1655,16 @@ Pack a CS window (with NTuple-of-panels fields) into a flat buffer.
 Each section's panels are stored sequentially: [P1][P2]...[P6].
 """
 @inline function _cs_window_section(window, section::Symbol)
+    if _is_pbl_surface_payload_section(section)
+        if haskey(window, :surface) && window.surface !== nothing
+            return getfield(window.surface, _pbl_surface_field_name(section))
+        end
+        field_name = _pbl_surface_field_name(section)
+        if field_name === :hflux && haskey(window, :pbl_hflux)
+            return getfield(window, :pbl_hflux)
+        end
+        return getfield(window, field_name)
+    end
     if section === :entu || section === :detu ||
        section === :entd || section === :detd
         haskey(window, :tm5_fields) && window.tm5_fields !== nothing ||
@@ -1655,6 +1752,7 @@ function open_streaming_cs_transport_binary(
         mass_basis::Symbol = :moist,
         include_cmfmc::Bool = false,
         include_dtrain::Bool = false,
+        include_surface::Bool = false,
         include_tm5conv::Bool = false,
         panel_convention = "gnomonic",
         cs_definition = nothing,
@@ -1669,6 +1767,9 @@ function open_streaming_cs_transport_binary(
     nface_h = npanel * 2 * Nc * (Nc + 1)
     payload_sections = Symbol[:m, :am, :bm, :cm, :ps]
     include_flux_delta && push!(payload_sections, :dm)
+    if include_surface
+        append!(payload_sections, _PBL_SURFACE_PAYLOAD_SECTIONS)
+    end
     include_cmfmc && push!(payload_sections, :cmfmc)
     include_dtrain && push!(payload_sections, :dtrain)
     if include_tm5conv
@@ -1713,7 +1814,13 @@ function open_streaming_cs_transport_binary(
         "n_dm" => include_flux_delta ? _cs_section_elements(Nc, npanel, nlevel, :dm) : 0,
         "include_cmfmc" => include_cmfmc,
         "include_dtrain" => include_dtrain,
+        "include_surface" => include_surface,
+        "surface_payload" => include_surface ? "pbl_raw_v2" : "none",
         "include_tm5conv" => include_tm5conv,
+        "n_pblh" => include_surface ? _cs_section_elements(Nc, npanel, nlevel, :pblh) : 0,
+        "n_ustar" => include_surface ? _cs_section_elements(Nc, npanel, nlevel, :ustar) : 0,
+        "n_pbl_hflux" => include_surface ? _cs_section_elements(Nc, npanel, nlevel, :pbl_hflux) : 0,
+        "n_t2m" => include_surface ? _cs_section_elements(Nc, npanel, nlevel, :t2m) : 0,
         "n_cmfmc" => include_cmfmc ? _cs_section_elements(Nc, npanel, nlevel, :cmfmc) : 0,
         "n_dtrain" => include_dtrain ? _cs_section_elements(Nc, npanel, nlevel, :dtrain) : 0,
         "n_entu" => include_tm5conv ? _cs_section_elements(Nc, npanel, nlevel, :entu) : 0,
@@ -1843,6 +1950,11 @@ _transport_allocate_dcm(reader::TransportBinaryReader{FT}) where FT =
     _transport_is_structured(reader.header) ?
         Array{FT}(undef, reader.header.Nx, reader.header.Ny, reader.header.nlevel + 1) :
         Array{FT}(undef, reader.header.ncell, reader.header.nlevel + 1)
+
+_transport_allocate_surface_field(reader::TransportBinaryReader{FT}) where FT =
+    _transport_is_structured(reader.header) ?
+        Array{FT}(undef, reader.header.Nx, reader.header.Ny) :
+        Array{FT}(undef, reader.header.ncell)
 
 # TM5 convection fields — all layer-center, shape matches `m`
 # (plan 23 Commit 3).
@@ -2063,6 +2175,59 @@ function load_tm5_convection_window!(reader::TransportBinaryReader{FT}, win::Int
     return (; entu, detu, entd, detd)
 end
 
+"""
+    load_surface_window!(reader, win; pblh=..., ustar=..., hflux=..., t2m=...) -> PBLSurfaceForcing | nothing
+
+Load raw PBL surface fields for window `win`. Returns `nothing` when
+the binary lacks surface sections. A binary carrying only a subset of
+`pblh`, `ustar`, `pbl_hflux`, and `t2m` is rejected because the runtime
+PBL closure needs the complete raw surface payload. The on-disk heat-flux
+section is `pbl_hflux`; callers still receive it as `PBLSurfaceForcing.hflux`.
+"""
+function load_surface_window!(reader::TransportBinaryReader{FT}, win::Int;
+                              pblh = nothing,
+                              ustar = nothing,
+                              hflux = nothing,
+                              t2m = nothing) where FT
+    surface_present = has_surface(reader)
+    surface_partial = any(s in reader.header.payload_sections
+                          for s in _PBL_SURFACE_PAYLOAD_SECTIONS) && !surface_present
+    surface_partial && throw(ArgumentError(
+        "transport binary has a partial PBL surface payload; expected all " *
+        "of pblh, ustar, pbl_hflux, t2m"))
+    surface_present || return nothing
+
+    pblh = isnothing(pblh) ? _transport_allocate_surface_field(reader) : pblh
+    ustar = isnothing(ustar) ? _transport_allocate_surface_field(reader) : ustar
+    hflux = isnothing(hflux) ? _transport_allocate_surface_field(reader) : hflux
+    t2m = isnothing(t2m) ? _transport_allocate_surface_field(reader) : t2m
+
+    o = _transport_window_offset(reader, win)
+    found_pblh = found_ustar = found_hflux = found_t2m = false
+    for section in reader.header.payload_sections
+        n = _transport_section_elements(reader.header, section)
+        if section === :pblh
+            copyto!(pblh, 1, reader.data, o + 1, n)
+            found_pblh = true
+        elseif section === :ustar
+            copyto!(ustar, 1, reader.data, o + 1, n)
+            found_ustar = true
+        elseif section === :pbl_hflux
+            copyto!(hflux, 1, reader.data, o + 1, n)
+            found_hflux = true
+        elseif section === :t2m
+            copyto!(t2m, 1, reader.data, o + 1, n)
+            found_t2m = true
+        end
+        o += n
+    end
+
+    (found_pblh && found_ustar && found_hflux && found_t2m) ||
+        throw(ArgumentError(
+            "transport binary has an incomplete PBL surface payload in window $(win)"))
+    return PBLSurfaceForcing(pblh, ustar, hflux, t2m)
+end
+
 function load_qv_window!(reader::TransportBinaryReader{FT}, win::Int;
                          qv = nothing) where FT
     h = reader.header
@@ -2110,5 +2275,5 @@ end
 
 export TransportBinaryHeader, TransportBinaryReader
 export grid_type, horizontal_topology, load_grid, load_qv_window!, load_qv_pair_window!, load_flux_delta_window!
-export has_qv, has_qv_endpoints, has_flux_delta, write_transport_binary
+export has_qv, has_qv_endpoints, has_flux_delta, has_surface, write_transport_binary
 export source_flux_sampling, air_mass_sampling, flux_sampling, flux_kind, humidity_sampling, delta_semantics

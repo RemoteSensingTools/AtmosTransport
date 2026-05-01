@@ -28,13 +28,15 @@ include("Fields/Fields.jl")
 
 using .Fields: AbstractTimeVaryingField, AbstractCubedSphereField,
                ConstantField, ProfileKzField, PreComputedKzField,
-               CubedSphereField, DerivedKzField, PBLPhysicsParameters,
-               StepwiseField, field_value, update_field!,
+               CubedSphereField, DerivedKzField, WindowPBLKzField,
+               PBLPhysicsParameters, StepwiseField,
+               field_value, update_field!, refresh_pbl_kz_cache!,
                integral_between, panel_field
 export AbstractTimeVaryingField, AbstractCubedSphereField,
        ConstantField, ProfileKzField, PreComputedKzField,
-       CubedSphereField, DerivedKzField, PBLPhysicsParameters,
-       StepwiseField, field_value, update_field!,
+       CubedSphereField, DerivedKzField, WindowPBLKzField,
+       PBLPhysicsParameters, StepwiseField,
+       field_value, update_field!, refresh_pbl_kz_cache!,
        integral_between, panel_field
 
 end # module State

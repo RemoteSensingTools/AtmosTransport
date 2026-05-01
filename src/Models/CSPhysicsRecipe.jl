@@ -127,10 +127,11 @@ function build_runtime_advection(::AbstractRuntimeRecipeStyle, ::Val{name}, _sec
 end
 
 function build_runtime_diffusion(cfg, context, ::Type{FT}) where FT
-    return build_runtime_diffusion(cfg, _runtime_recipe_style(context), FT)
+    return build_runtime_diffusion(cfg, _runtime_recipe_style(context), FT, context)
 end
 
-function build_runtime_diffusion(cfg, style::AbstractRuntimeRecipeStyle, ::Type{FT}) where FT
+function build_runtime_diffusion(cfg, style::AbstractRuntimeRecipeStyle, ::Type{FT},
+                                 context = nothing) where FT
     section = _diffusion_section(cfg)
     # Empty / absent section is explicit "no diffusion".
     isempty(section) && return NoDiffusion()
@@ -142,23 +143,23 @@ function build_runtime_diffusion(cfg, style::AbstractRuntimeRecipeStyle, ::Type{
     haskey(section, "type") && !haskey(section, "kind") &&
         throw(ArgumentError(
             "[diffusion] uses legacy `type = \"$(section["type"])\"`; rename to " *
-            "`kind = \"...\"`. Supported kinds: \"none\", \"constant\". Until a " *
-            "PBL diffusion operator is wired through the runtime contract, set " *
-            "`kind = \"none\"` for no diffusion, or `kind = \"constant\"` with " *
-            "a `value = <Kz>` for a uniform Kz."))
+            "`kind = \"...\"`. Supported kinds: \"none\", \"constant\", \"pbl\"."))
     haskey(section, "kind") ||
         throw(ArgumentError(
             "[diffusion] section is present but has no `kind` key. " *
-            "Set `kind = \"none\"` for no diffusion, or `kind = \"constant\"` " *
-            "with `value = <Kz>` for uniform-Kz diffusion."))
+            "Set `kind = \"none\"`, `kind = \"constant\"`, or `kind = \"pbl\"`."))
     return build_runtime_diffusion(style,
                                    Val(_config_symbol(section, "kind", "none")),
                                    section,
-                                   FT)
+                                   FT,
+                                   context)
 end
 
 build_runtime_diffusion(::AbstractRuntimeRecipeStyle, ::Val{:none}, _section, ::Type{FT}) where FT =
     NoDiffusion()
+build_runtime_diffusion(style::AbstractRuntimeRecipeStyle, ::Val{:none}, section,
+                        ::Type{FT}, _context) where FT =
+    build_runtime_diffusion(style, Val(:none), section, FT)
 
 @inline _constant_runtime_kz_field(::LatLonRuntimeRecipeStyle, value::FT) where FT =
     ConstantField{FT, 3}(value)
@@ -174,14 +175,63 @@ function build_runtime_diffusion(style::AbstractRuntimeRecipeStyle,
     value = FT(get(section, "value", 1.0))
     return ImplicitVerticalDiffusion(; kz_field = _constant_runtime_kz_field(style, value))
 end
+build_runtime_diffusion(style::AbstractRuntimeRecipeStyle, ::Val{:constant}, section,
+                        ::Type{FT}, _context) where FT =
+    build_runtime_diffusion(style, Val(:constant), section, FT)
+
+function _pbl_cache_shape(context)
+    throw(ArgumentError(
+        "[diffusion] kind = \"pbl\" requires a cubed-sphere reader or driver " *
+        "context so the Kz cache can be sized."))
+end
+_pbl_cache_shape(reader::CubedSphereBinaryReader) =
+    (reader.header.Nc, reader.header.Nc, reader.header.nlevel)
+_pbl_cache_shape(driver::CubedSphereTransportDriver) =
+    (driver.reader.header.Nc, driver.reader.header.Nc, driver.reader.header.nlevel)
+
+function _runtime_has_surface(_context)
+    return false
+end
+_runtime_has_surface(reader::TransportBinaryReader) = has_surface(reader)
+_runtime_has_surface(reader::CubedSphereBinaryReader) = has_surface(reader)
+_runtime_has_surface(driver::TransportBinaryDriver) = has_surface(driver.reader)
+_runtime_has_surface(driver::CubedSphereTransportDriver) = has_surface(driver.reader)
+
+function build_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
+                                 ::Val{:pbl},
+                                 _section,
+                                 ::Type{FT},
+                                 context) where FT
+    _runtime_has_surface(context) ||
+        throw(ArgumentError(
+            "[diffusion] kind = \"pbl\" requires pblh/ustar/pbl_hflux/t2m sections " *
+            "in the cubed-sphere transport binary. Regenerate the binary with " *
+            "include_surface=true."))
+    Nc1, Nc2, Nz = _pbl_cache_shape(context)
+    host_cache = ntuple(_ -> zeros(FT, Nc1, Nc2, Nz), 6)
+    return ImplicitVerticalDiffusion(; kz_field = WindowPBLKzField(host_cache))
+end
+
+function build_runtime_diffusion(::AbstractRuntimeRecipeStyle,
+                                 ::Val{:pbl},
+                                 _section,
+                                 ::Type{FT},
+                                 _context) where FT
+    throw(ArgumentError(
+        "[diffusion] kind = \"pbl\" is currently implemented for cubed-sphere " *
+        "runtime binaries with pblh/ustar/pbl_hflux/t2m sections."))
+end
 
 function build_runtime_diffusion(::AbstractRuntimeRecipeStyle,
                                  ::Val{name},
                                  _section,
                                  ::Type{FT}) where {name, FT}
     throw(ArgumentError(
-        "Unknown [diffusion] kind: $(name). Supported: none | constant"))
+        "Unknown [diffusion] kind: $(name). Supported: none | constant | pbl"))
 end
+build_runtime_diffusion(style::AbstractRuntimeRecipeStyle, ::Val{name}, section,
+                        ::Type{FT}, _context) where {name, FT} =
+    build_runtime_diffusion(style, Val(name), section, FT)
 
 function build_runtime_convection(cfg, context)
     return build_runtime_convection(cfg, _runtime_recipe_style(context))
@@ -245,6 +295,16 @@ function validate_runtime_convection(::AbstractRuntimeRecipeStyle,
         throw(ArgumentError(
             "[convection] kind = \"tm5\" requires TM5 convection sections " *
             "(`entu`, `detu`, `entd`, `detd`) in the runtime forcing source."))
+    return nothing
+end
+
+function validate_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
+                                    ::ImplicitVerticalDiffusion{FT, <:WindowPBLKzField},
+                                    context) where FT
+    _runtime_has_surface(context) ||
+        throw(ArgumentError(
+            "[diffusion] kind = \"pbl\" requires pblh/ustar/pbl_hflux/t2m sections " *
+            "in every cubed-sphere transport binary."))
     return nothing
 end
 

@@ -21,6 +21,7 @@ include("AbstractMetDriver.jl")
 include("MassClosure.jl")
 include("DryFluxBuilder.jl")
 include("ConvectionForcing.jl")
+include("SurfaceForcing.jl")
 include("TransportBinary.jl")
 include("ReplayContinuity.jl")
 include("TransportBinaryDriver.jl")
@@ -28,6 +29,28 @@ include("CubedSphereBinaryReader.jl")
 include("CubedSphereTransportDriver.jl")
 include("ERA5/ERA5.jl")
 using .ERA5
+
+# ERA5.BinaryReader lives in a nested module. Names that already exist in
+# MetDrivers (for CS/generic transport readers) are not imported by `using
+# .ERA5`, so add forwarding methods on the public MetDrivers generics.
+window_count(r::ERA5BinaryReader) = ERA5.window_count(r)
+has_qv(r::ERA5BinaryReader) = ERA5.has_qv(r)
+has_flux_delta(r::ERA5BinaryReader) = ERA5.has_flux_delta(r)
+has_cmfmc(r::ERA5BinaryReader) = ERA5.has_cmfmc(r)
+has_surface(r::ERA5BinaryReader) = ERA5.has_surface(r)
+has_tm5conv(r::ERA5BinaryReader) = ERA5.has_tm5conv(r)
+has_temperature(r::ERA5BinaryReader) = ERA5.has_temperature(r)
+mass_basis(r::ERA5BinaryReader) = ERA5.mass_basis(r)
+A_ifc(r::ERA5BinaryReader) = ERA5.A_ifc(r)
+B_ifc(r::ERA5BinaryReader) = ERA5.B_ifc(r)
+load_window!(r::ERA5BinaryReader, win::Int; kwargs...) =
+    ERA5.load_window!(r, win; kwargs...)
+load_qv_window!(r::ERA5BinaryReader, win::Int; kwargs...) =
+    ERA5.load_qv_window!(r, win; kwargs...)
+load_flux_delta_window!(r::ERA5BinaryReader, win::Int; kwargs...) =
+    ERA5.load_flux_delta_window!(r, win; kwargs...)
+load_surface_window!(r::ERA5BinaryReader, win::Int; kwargs...) =
+    ERA5.load_surface_window!(r, win; kwargs...)
 
 # Re-export reader and adapter types
 export PreprocessedERA5Driver
@@ -50,6 +73,7 @@ export load_cmfmc_window!, load_surface_window!, load_tm5conv_window!
 export load_temperature_window!
 export ConvectionForcing, has_convection_forcing
 export copy_convection_forcing!, allocate_convection_forcing_like
+export PBLSurfaceForcing, has_pbl_surface_forcing
 export window_count, has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc
 export binary_capabilities, inspect_binary   # plan 40 Commit 5
 export has_surface, has_tm5conv, has_temperature

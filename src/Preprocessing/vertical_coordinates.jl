@@ -113,6 +113,21 @@ const ECHLEVS_ML137_66L = [
      16,  15,  14,  13,  12,  11,  10,   9,   8,   7,
       6,   5,   4,   3,   2,   1,   0]
 
+# CFL-oriented ERA5 L137 presets from the cubed-sphere subcycling analysis.
+# Native ERA5 groups, top down:
+#   ml137_cfl94: 1:24 x12, 25:53 x4, 54:71 x1, 72:137 x1
+#   ml137_cfl85: 1:24 x12, 25:53 x4, 54:71 x2, 72:137 x1
+const ECHLEVS_ML137_CFL94 = vcat(
+    [137, 125, 113, 109, 105, 101, 97, 93, 89, 85],
+    collect(84:-1:0),
+)
+
+const ECHLEVS_ML137_CFL85 = vcat(
+    [137, 125, 113, 109, 105, 101, 97, 93, 89, 85,
+      84,  82,  80,  78,  76,  74, 72, 70, 68, 66],
+    collect(65:-1:0),
+)
+
 function load_era5_vertical_coordinate(coeff_path::String, level_top::Int, level_bot::Int)
     isfile(coeff_path) || error("Coefficients not found: $coeff_path")
     cfg = TOML.parsefile(coeff_path)

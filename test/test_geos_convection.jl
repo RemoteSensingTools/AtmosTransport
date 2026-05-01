@@ -109,6 +109,17 @@ function _write_synthetic_geosit_day_with_a3!(dir::String, datestr::String;
         defVar(ds, "lev", collect(1:NZ), ("lev",); attrib = ["positive" => "down"])
     end
 
+    # A1 — hourly surface PBL fields for diffusion.
+    a1surf = joinpath(dir, "GEOSIT.$(datestr).A1.C$(NC).nc")
+    NCDataset(a1surf, "c") do ds
+        ds.dim["Xdim"] = NC; ds.dim["Ydim"] = NC; ds.dim["nf"] = NPANEL
+        ds.dim["time"] = ntimes_a1
+        _defvar2d_xyz_t!(ds, "PBLH",  fill(1000.0, NC, NC, NPANEL, ntimes_a1); units = "m")
+        _defvar2d_xyz_t!(ds, "USTAR", fill(0.30,   NC, NC, NPANEL, ntimes_a1); units = "m s-1")
+        _defvar2d_xyz_t!(ds, "HFLUX", fill(120.0,  NC, NC, NPANEL, ntimes_a1); units = "W m-2")
+        _defvar2d_xyz_t!(ds, "T2M",   fill(295.0,  NC, NC, NPANEL, ntimes_a1); units = "K")
+    end
+
     # A3mstE — CMFMC at interfaces (NZ+1 lev), 8 timesteps
     a3mste = joinpath(dir, "GEOSIT.$(datestr).A3mstE.C$(NC).nc")
     NCDataset(a3mste, "c") do ds
@@ -135,7 +146,7 @@ function _write_synthetic_geosit_day_with_a3!(dir::String, datestr::String;
         defVar(ds, "lev", collect(1:NZ), ("lev",); attrib = ["positive" => "down"])
     end
 
-    return a1, i1, a3mste, a3dyn
+    return a1, i1, a1surf, a3mste, a3dyn
 end
 
 function _write_synthetic_coefs_toml!(path::String)
@@ -176,6 +187,12 @@ end
         coefficients_file = coef_path,
         include_convection = true,
     )
+    settings_full = GEOSITSettings(
+        root_dir = tmpdir, Nc = NC,
+        coefficients_file = coef_path,
+        include_surface = true,
+        include_convection = true,
+    )
 
     grid = build_target_geometry(
         Dict{String,Any}("type" => "cubed_sphere", "Nc" => NC,
@@ -200,6 +217,10 @@ end
         @test raw_on.dtrain isa NTuple{6, Array{FT_TEST, 3}}
         @test size(raw_on.cmfmc[1])  == (NC, NC, NZ + 1)        # interfaces
         @test size(raw_on.dtrain[1]) == (NC, NC, NZ)            # centers
+
+        raw_full = allocate_raw_window(settings_full; FT = FT_TEST, Nz = NZ)
+        @test raw_full.surface !== nothing
+        @test size(raw_full.surface.pblh[1]) == (NC, NC)
     end
 
     @testset "3-hourly hold-constant binding + dry-basis correction" begin
@@ -226,6 +247,38 @@ end
             end
         finally
             close_day!(handles)
+        end
+    end
+
+    @testset "surface PBL fields are read and written" begin
+        handles = open_day(settings_full, Date(2021, 12, 1))
+        try
+            raw = allocate_raw_window(settings_full; FT = FT_TEST, Nz = NZ)
+            read_window!(raw, settings_full, handles, Date(2021, 12, 1), 1)
+            @test all(raw.surface.pblh[1]  .== 1000.0)
+            @test all(raw.surface.ustar[1] .== 0.30)
+            @test all(raw.surface.hflux[1] .== 120.0)
+            @test all(raw.surface.t2m[1]   .== 295.0)
+        finally
+            close_day!(handles)
+        end
+
+        out_full = joinpath(tmpdir, "with_surface_and_conv.bin")
+        process_day(Date(2021, 12, 1), grid, settings_full, vertical;
+                    out_path = out_full,
+                    dt_met_seconds = 3600.0, FT = FT_TEST,
+                    mass_basis = :dry, replay_tol = 1e-12)
+        reader = CubedSphereBinaryReader(out_full; FT = FT_TEST)
+        try
+            @test :pblh  in reader.header.payload_sections
+            @test :ustar in reader.header.payload_sections
+            @test :pbl_hflux in reader.header.payload_sections
+            @test :t2m   in reader.header.payload_sections
+            win = AtmosTransport.MetDrivers.load_cs_window(reader, 1)
+            @test win.surface.pblh[1][1, 1] == 1000.0
+            @test win.surface.t2m[1][1, 1] == 295.0
+        finally
+            close(reader)
         end
     end
 

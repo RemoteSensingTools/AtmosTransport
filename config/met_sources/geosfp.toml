@@ -19,14 +19,10 @@ reference   = "https://gmao.gsfc.nasa.gov/GMAO_products/NRT_products.php"
 # Native grid specification
 # ---------------------------------------------------------------------------
 [grid]
-type      = "LatitudeLongitude"
-Nx        = 1152          # number of longitude points
-Ny        = 721           # number of latitude points
+type      = "CubedSphere"
+Nc        = 720           # native GEOS-FP C720 cubed-sphere face size
 Nz        = 72            # number of native model levels
-dlon      = 0.3125        # longitude spacing (degrees)
-dlat      = 0.25          # latitude spacing (degrees)
-lon_start = -180.0        # first longitude (degrees east)
-lat_start = -90.0         # first latitude (degrees north)
+resolution_km = 12.5
 # ---------------------------------------------------------------------------
 # Vertical coordinate: 72 hybrid sigma-pressure levels
 #
@@ -42,59 +38,34 @@ n_levels          = 72
 n_interfaces      = 73
 surface_pressure_var = "surface_pressure"
 
+[preprocessing]
+format               = "netcdf_native_hourly"
+level_orientation    = "auto"
+mass_flux_dt_seconds = 450.0
+include_surface      = false  # surface physics comes from the typed 0.25° fallback path
+include_convection   = false  # convection physics comes from the typed 0.25° fallback path
+physics_dir          = ""     # set by preprocessing TOML when include_surface/convection=true
+physics_layout       = "auto" # auto | latlon_025 | cubed_sphere
+collections_required = ["tavg_1hr_ctm_c0720_v72"]
+
 # ---------------------------------------------------------------------------
 # Data access configuration
 # ---------------------------------------------------------------------------
 [access]
-protocol      = "opendap"
-base_url      = "https://opendap.nccs.nasa.gov/dods/GEOS-5/fp/0.25_deg/assim"
+protocol      = "http"
+base_url      = "http://geoschemdata.wustl.edu/ExtData/GEOS_C720/GEOS_FP_Native"
 auth_required = false
-time_interval = 10800.0   # 3-hourly for 3D fields (seconds)
+time_interval = 3600.0
 
 # ---------------------------------------------------------------------------
 # Collections — groups of variables in the same OPeNDAP dataset / file
 # ---------------------------------------------------------------------------
-[collections.asm_Nv_inst]
-dataset     = "inst3_3d_asm_Nv"
-frequency   = "inst3"
-vertical    = "Nv"
+[collections.tavg_1hr_ctm_c0720_v72]
+dataset     = "tavg_1hr_ctm_c0720_v72"
+frequency   = "hourly"
+vertical    = "v72"
 levels      = 72
-description = "3-hourly instantaneous 3D assimilated state on native levels"
-
-[collections.asm_Nv_tavg]
-dataset     = "tavg3_3d_asm_Nv"
-frequency   = "tavg3"
-vertical    = "Nv"
-levels      = 72
-description = "3-hourly time-averaged 3D assimilated state on native levels"
-
-[collections.trb_Ne]
-dataset     = "tavg3_3d_trb_Ne"
-frequency   = "tavg3"
-vertical    = "Ne"
-levels      = 73
-description = "3-hourly time-averaged turbulence diagnostics at layer edges"
-
-[collections.mst_Ne]
-dataset     = "tavg3_3d_mst_Ne"
-frequency   = "tavg3"
-vertical    = "Ne"
-levels      = 73
-description = "3-hourly time-averaged moist process diagnostics at layer edges"
-
-[collections.flx_Nx]
-dataset     = "tavg1_2d_flx_Nx"
-frequency   = "tavg1"
-vertical    = "Nx"
-levels      = 1
-description = "Hourly time-averaged surface flux diagnostics"
-
-[collections.slv_Nx]
-dataset     = "tavg1_2d_slv_Nx"
-frequency   = "tavg1"
-vertical    = "Nx"
-levels      = 1
-description = "Hourly time-averaged single-level diagnostics"
+description = "Hourly native C720 CTM DELP, PS, QV, MFXC, MFYC"
 
 # ---------------------------------------------------------------------------
 # Variable mapping: canonical_name → native name + collection
@@ -104,12 +75,12 @@ description = "Hourly time-averaged single-level diagnostics"
 # ---------------------------------------------------------------------------
 
 [variables.u_wind]
-native_name     = "u"
-collection      = "asm_Nv_inst"
+native_name     = "U"
+collection      = "tavg_1hr_ctm_c0720_v72"
 
 [variables.v_wind]
-native_name     = "v"
-collection      = "asm_Nv_inst"
+native_name     = "V"
+collection      = "tavg_1hr_ctm_c0720_v72"
 
 [variables.w_wind]
 native_name     = "omega"
@@ -120,16 +91,24 @@ native_name     = "t"
 collection      = "asm_Nv_inst"
 
 [variables.specific_humidity]
-native_name     = "qv"
-collection      = "asm_Nv_inst"
+native_name     = "QV"
+collection      = "tavg_1hr_ctm_c0720_v72"
 
 [variables.surface_pressure]
-native_name     = "ps"
-collection      = "asm_Nv_inst"
+native_name     = "PS"
+collection      = "tavg_1hr_ctm_c0720_v72"
 
 [variables.pressure_thickness]
-native_name     = "delp"
-collection      = "asm_Nv_inst"
+native_name     = "DELP"
+collection      = "tavg_1hr_ctm_c0720_v72"
+
+[variables.horizontal_mass_flux_x]
+native_name     = "MFXC"
+collection      = "tavg_1hr_ctm_c0720_v72"
+
+[variables.horizontal_mass_flux_y]
+native_name     = "MFYC"
+collection      = "tavg_1hr_ctm_c0720_v72"
 
 [variables.mid_level_pressure]
 native_name     = "pl"

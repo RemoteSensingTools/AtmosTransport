@@ -97,6 +97,27 @@ function resolve_tm5_convection_settings(cfg)
 end
 
 """
+    resolve_surface_settings(cfg) -> NamedTuple
+
+Parse optional ERA5 single-level surface input for raw PBL diffusion fields.
+The daily LL writer stores the raw `pblh/t2m/ustar/pbl_hflux` payload; CS
+regridding preserves it and runtime `[diffusion] kind="pbl"` derives Kz.
+"""
+function resolve_surface_settings(cfg)
+    surface_cfg = get(cfg, "surface", Dict{String, Any}())
+    input_cfg = get(cfg, "input", Dict{String, Any}())
+    surface_dir = expand_data_path(get(input_cfg, "surface_dir", ""))
+    include_surface = Bool(get(surface_cfg, "enable", false))
+    if include_surface && isempty(surface_dir)
+        error("[surface] enable=true requires input.surface_dir with ERA5 single-level PBL fields")
+    end
+    return (
+        include_surface = include_surface,
+        surface_dir = surface_dir,
+    )
+end
+
+"""
     resolve_preprocessing_cache_settings(cfg) -> NamedTuple
 
 Parse optional cache and preload controls.
@@ -174,6 +195,7 @@ function resolve_runtime_settings(cfg)
         output_float_type = resolve_output_float_type(cfg),
     ), resolve_mass_fix_settings(cfg),
        resolve_tm5_convection_settings(cfg),
+       resolve_surface_settings(cfg),
        resolve_preprocessing_cache_settings(cfg),
        resolve_balance_settings(cfg))
 end
@@ -254,6 +276,10 @@ function build_vertical_setup(coeff_path::String, level_range, min_dp::Float64, 
             echlevs_map = Dict(
                 "ml137_tropo34" => ECHLEVS_ML137_TROPO34,
                 "ml137_66L" => ECHLEVS_ML137_66L,
+                "ml137_cfl94" => ECHLEVS_ML137_CFL94,
+                "ml137_cfl85" => ECHLEVS_ML137_CFL85,
+                "ml137_94L" => ECHLEVS_ML137_CFL94,
+                "ml137_85L" => ECHLEVS_ML137_CFL85,
                 "ml137_full" => collect(137:-1:0),
             )
             haskey(echlevs_map, echlevs_name) ||

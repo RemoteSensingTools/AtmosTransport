@@ -14,7 +14,9 @@
 
 [source]
 toml     = "config/met_sources/geosit.toml"
-root_dir = "~/data/AtmosTransport/met/geosit/C180/raw_catrine"
+root_dir = "~/data/AtmosTransport/met/geosit_c180/raw_catrine"
+include_surface = true
+include_convection = true
 
 [output]
 directory  = "~/data/AtmosTransport/met/geosit/C180/preprocessed/v4_dec2021"

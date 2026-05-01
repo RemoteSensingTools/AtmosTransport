@@ -56,7 +56,10 @@ Base.@kwdef struct GEOSSettings{flavor} <: AbstractGEOSSettings
     Nc                  :: Int
     mass_flux_dt        :: Float64 = 450.0
     level_orientation   :: Symbol  = :auto    # :auto, :bottom_up, :top_down
+    include_surface     :: Bool    = false
     include_convection  :: Bool    = false
+    physics_dir         :: String  = ""       # GEOS-FP 0.25°/CS fallback for surface + convection
+    physics_layout      :: Symbol  = :auto    # :auto, :latlon_025, :cubed_sphere
     coefficients_file   :: String  = "config/geos_L72_coefficients.toml"
 end
 
@@ -68,12 +71,7 @@ const GEOSFPSettings = GEOSSettings{:geosfp}
 #
 # GEOS-IT C180 archive uses *daily* files: `GEOSIT.YYYYMMDD.<collection>.C180.nc`.
 # GEOS-FP C720 native archive uses *hourly* files (one file per UTC hour):
-# `GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.YYYYMMDD_HHMM.V01.nc4`. Wiring the
-# GEOS-FP hourly file pattern into the day-handle abstraction is non-trivial
-# (each window references a different physical file, so opening "the day" is
-# really opening 24 files) and is deferred to a follow-up commit. The
-# GEOSFPSettings dispatch below errors loudly so a misconfigured caller fails
-# before silently producing wrong data.
+# `GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.YYYYMMDD_HHMM.V01.nc4`.
 # ---------------------------------------------------------------------------
 
 """
@@ -93,10 +91,174 @@ function geos_collection_path(settings::GEOSSettings{:geosit}, date::Date,
     error("GEOS-IT file not found: tried $flat and $daily")
 end
 
-function geos_collection_path(::GEOSSettings{:geosfp}, ::Date, ::AbstractString)
-    error("GEOS-FP native file pattern (hourly `GEOS.fp.asm.tavg_1hr_ctm_*.nc4`) " *
-          "is not yet implemented. Only GEOS-IT (daily files) is supported in this " *
-          "commit; see plan indexed-baking-valiant for the GEOS-FP follow-up.")
+function geosfp_native_hourly_ctm_path(settings::GEOSSettings{:geosfp},
+                                       date::Date,
+                                       hour::Integer)
+    0 <= hour <= 23 || throw(ArgumentError("GEOS-FP hour must be 0..23, got $hour"))
+    datestr = Dates.format(date, "yyyymmdd")
+    hh = lpad(string(hour), 2, '0')
+    stem = "GEOS.fp.asm.tavg_1hr_ctm_c$(lpad(settings.Nc, 4, '0'))_v72.$(datestr)_"
+    # WashU's tavg_1hr archive is normally stamped at the window centre
+    # (HH30). Some local fixtures and older mirrors used HH00, so keep it as
+    # a compatibility fallback.
+    candidates = String[]
+    for minute in ("30", "00")
+        fname = "$(stem)$(hh)$(minute).V01.nc4"
+        push!(candidates, joinpath(settings.root_dir, fname))
+        push!(candidates, joinpath(settings.root_dir, datestr, fname))
+    end
+    for path in candidates
+        isfile(path) && return path
+    end
+    error("GEOS-FP native hourly CTM file not found: tried " * join(candidates, ", "))
+end
+
+function geos_collection_path(settings::GEOSSettings{:geosfp}, date::Date,
+                              collection::AbstractString)
+    collection in ("CTM_A1", "CTM_I1", "tavg_1hr_ctm_c0720_v72", "ctm") ||
+        throw(ArgumentError("GEOS-FP native path resolver only supports hourly CTM collections; got $(collection)"))
+    return geosfp_native_hourly_ctm_path(settings, date, 0)
+end
+
+abstract type AbstractGEOSFPPhysicsFallback end
+struct GEOSFPNoPhysics <: AbstractGEOSFPPhysicsFallback end
+
+mutable struct GEOSFPCSPhysicsFallback <: AbstractGEOSFPPhysicsFallback
+    a1          :: Union{Nothing, NCDataset}
+    a3mste      :: Union{Nothing, NCDataset}
+    a3dyn       :: Union{Nothing, NCDataset}
+    a1_path     :: Union{Nothing, String}
+    a3mste_path :: Union{Nothing, String}
+    a3dyn_path  :: Union{Nothing, String}
+end
+
+mutable struct GEOSFPLatLonPhysicsFallback <: AbstractGEOSFPPhysicsFallback
+    a1          :: Union{Nothing, NCDataset}
+    a3mste      :: Union{Nothing, NCDataset}
+    a3dyn       :: Union{Nothing, NCDataset}
+    a1_path     :: Union{Nothing, String}
+    a3mste_path :: Union{Nothing, String}
+    a3dyn_path  :: Union{Nothing, String}
+    lons        :: Vector{Float64}
+    lats        :: Vector{Float64}
+    target_lons :: NTuple{CS_PANEL_COUNT, Matrix{Float64}}
+    target_lats :: NTuple{CS_PANEL_COUNT, Matrix{Float64}}
+end
+
+function _geosfp_physics_collection_candidates(root::String, date::Date,
+                                               collection::AbstractString,
+                                               Nc::Int,
+                                               layout::Symbol)
+    datestr = Dates.format(date, "yyyymmdd")
+    dirs = (root, joinpath(root, datestr))
+    names = if layout === :cubed_sphere
+        (
+            "GEOSFP.$(datestr).$(collection).C$(Nc).nc",
+            "GEOSFP.$(datestr).$(collection).C$(lpad(Nc, 4, '0')).nc",
+            "GEOSFP_CS$(Nc).$(datestr).$(collection).nc",
+            "GEOSFP_CS$(lpad(Nc, 4, '0')).$(datestr).$(collection).nc",
+        )
+    elseif layout === :latlon_025
+        ("GEOSFP.$(datestr).$(collection).025x03125.nc",)
+    else
+        throw(ArgumentError("unsupported GEOS-FP physics layout $(layout)"))
+    end
+    return [joinpath(dir, name) for dir in dirs for name in names]
+end
+
+function _resolve_geosfp_physics_path(root::String, date::Date,
+                                      collection::AbstractString,
+                                      Nc::Int, layout::Symbol)
+    for path in _geosfp_physics_collection_candidates(root, date, collection, Nc, layout)
+        isfile(path) && return path
+    end
+    return nothing
+end
+
+function _select_geosfp_physics_layout(settings::GEOSSettings{:geosfp},
+                                       date::Date,
+                                       required_collection::AbstractString)
+    layout = settings.physics_layout
+    if layout === :auto
+        root = expand_data_path(settings.physics_dir)
+        _resolve_geosfp_physics_path(root, date, required_collection,
+                                     settings.Nc, :cubed_sphere) !== nothing &&
+            return :cubed_sphere
+        _resolve_geosfp_physics_path(root, date, required_collection,
+                                     settings.Nc, :latlon_025) !== nothing &&
+            return :latlon_025
+        return :auto
+    elseif layout in (:cubed_sphere, :latlon_025)
+        return layout
+    end
+    throw(ArgumentError("GEOS-FP physics_layout must be auto, cubed_sphere, or latlon_025; got $(layout)"))
+end
+
+function _required_geosfp_physics_collection(settings::GEOSSettings{:geosfp})
+    settings.include_surface && return "A1"
+    settings.include_convection && return "A3mstE"
+    return ""
+end
+
+function _open_required_geosfp_physics(root::String, date::Date,
+                                       collection::AbstractString,
+                                       Nc::Int, layout::Symbol)
+    path = _resolve_geosfp_physics_path(root, date, collection, Nc, layout)
+    path === nothing && error("GEOS-FP physics fallback file not found for $(date) collection $(collection) " *
+                              "layout=$(layout). Tried " *
+                              join(_geosfp_physics_collection_candidates(root, date, collection, Nc, layout), ", "))
+    return NCDataset(path, "r"), path
+end
+
+function _open_geosfp_physics_fallback(settings::GEOSSettings{:geosfp},
+                                       date::Date)
+    (settings.include_surface || settings.include_convection) || return GEOSFPNoPhysics()
+    isempty(settings.physics_dir) &&
+        throw(ArgumentError(
+            "GEOS-FP include_surface/include_convection requires [source].physics_dir " *
+            "pointing at GEOSFP.YYYYMMDD.{A1,A3mstE,A3dyn}.025x03125.nc or " *
+            "pre-regridded GEOSFP.YYYYMMDD.<collection>.C$(settings.Nc).nc files."))
+
+    root = expand_data_path(settings.physics_dir)
+    required = _required_geosfp_physics_collection(settings)
+    layout = _select_geosfp_physics_layout(settings, date, required)
+    layout === :auto &&
+        error("Could not auto-detect GEOS-FP physics fallback layout in $(root) for $(date) $(required)")
+
+    a1 = nothing; a1_path = nothing
+    if settings.include_surface
+        a1, a1_path = _open_required_geosfp_physics(root, date, "A1", settings.Nc, layout)
+    end
+
+    a3mste = nothing; a3mste_path = nothing
+    a3dyn = nothing; a3dyn_path = nothing
+    if settings.include_convection
+        a3mste, a3mste_path = _open_required_geosfp_physics(root, date, "A3mstE", settings.Nc, layout)
+        a3dyn, a3dyn_path = _open_required_geosfp_physics(root, date, "A3dyn", settings.Nc, layout)
+    end
+
+    if layout === :cubed_sphere
+        return GEOSFPCSPhysicsFallback(a1, a3mste, a3dyn,
+                                       a1_path, a3mste_path, a3dyn_path)
+    end
+
+    mesh = source_grid(settings; FT = Float64)
+    target_lons = ntuple(p -> panel_cell_center_lonlat(mesh, p)[1], CS_PANEL_COUNT)
+    target_lats = ntuple(p -> panel_cell_center_lonlat(mesh, p)[2], CS_PANEL_COUNT)
+    coord_ds = settings.include_surface ? a1 : a3mste
+    lons, lats = _geosfp_latlon_axes(coord_ds)
+    return GEOSFPLatLonPhysicsFallback(a1, a3mste, a3dyn,
+                                       a1_path, a3mste_path, a3dyn_path,
+                                       lons, lats, target_lons, target_lats)
+end
+
+close_geosfp_physics!(::GEOSFPNoPhysics) = nothing
+
+function close_geosfp_physics!(physics::Union{GEOSFPCSPhysicsFallback, GEOSFPLatLonPhysicsFallback})
+    physics.a1     === nothing || close(physics.a1)
+    physics.a3mste === nothing || close(physics.a3mste)
+    physics.a3dyn  === nothing || close(physics.a3dyn)
+    return nothing
 end
 
 # ---------------------------------------------------------------------------
@@ -115,10 +277,19 @@ mutable struct GEOSDayHandles{V <: HybridSigmaPressure}
     ctm_a1      :: NCDataset
     ctm_i1      :: NCDataset
     next_ctm_i1 :: Union{Nothing, NCDataset}
+    a1          :: Union{Nothing, NCDataset}
     a3dyn       :: Union{Nothing, NCDataset}
     a3mste      :: Union{Nothing, NCDataset}
     orientation :: Symbol                          # :bottom_up or :top_down
     vc          :: V                               # hybrid sigma-pressure (top-down)
+end
+
+mutable struct GEOSFPNativeDayHandles{V <: HybridSigmaPressure, P <: AbstractGEOSFPPhysicsFallback, C <: NCDataset}
+    ctm         :: Vector{C}
+    next_ctm    :: Union{Nothing, C}
+    physics     :: P
+    orientation :: Symbol
+    vc          :: V
 end
 
 """
@@ -142,6 +313,7 @@ function open_geos_day(settings::GEOSSettings, date::Date;
         end
     end
 
+    a1     = settings.include_surface ? NCDataset(geos_collection_path(settings, date, "A1"), "r") : nothing
     a3dyn  = nothing
     a3mste = nothing
     if settings.include_convection
@@ -155,7 +327,27 @@ function open_geos_day(settings::GEOSSettings, date::Date;
 
     vc = load_hybrid_coefficients(expand_data_path(settings.coefficients_file))
 
-    return GEOSDayHandles(ctm_a1, ctm_i1, next_ctm_i1, a3dyn, a3mste, orientation, vc)
+    return GEOSDayHandles(ctm_a1, ctm_i1, next_ctm_i1, a1, a3dyn, a3mste, orientation, vc)
+end
+
+function open_geosfp_native_day(settings::GEOSSettings{:geosfp}, date::Date;
+                                next_day_handle::Bool = true)
+    ctm = [NCDataset(geosfp_native_hourly_ctm_path(settings, date, h), "r")
+           for h in 0:23]
+    next_ctm = nothing
+    if next_day_handle
+        try
+            next_ctm = NCDataset(geosfp_native_hourly_ctm_path(settings, date + Day(1), 0), "r")
+        catch
+            # Last day of available archive.
+        end
+    end
+    orientation = settings.level_orientation === :auto ?
+                  detect_level_orientation(first(ctm)) :
+                  settings.level_orientation
+    vc = load_hybrid_coefficients(expand_data_path(settings.coefficients_file))
+    physics = _open_geosfp_physics_fallback(settings, date)
+    return GEOSFPNativeDayHandles(ctm, next_ctm, physics, orientation, vc)
 end
 
 """Close all handles. Idempotent."""
@@ -163,8 +355,18 @@ function close_geos_day!(handles::GEOSDayHandles)
     close(handles.ctm_a1)
     close(handles.ctm_i1)
     handles.next_ctm_i1 === nothing || close(handles.next_ctm_i1)
+    handles.a1          === nothing || close(handles.a1)
     handles.a3dyn       === nothing || close(handles.a3dyn)
     handles.a3mste      === nothing || close(handles.a3mste)
+    return nothing
+end
+
+function close_geosfp_native_day!(handles::GEOSFPNativeDayHandles)
+    for ds in handles.ctm
+        close(ds)
+    end
+    handles.next_ctm === nothing || close(handles.next_ctm)
+    close_geosfp_physics!(handles.physics)
     return nothing
 end
 
@@ -206,6 +408,236 @@ end
 function _read_panels_2d(var, win_idx::Int; FT::Type)
     raw = Array{FT}(var[:, :, :, win_idx])        # (Nc, Nc, 6)
     return ntuple(p -> Array(raw[:, :, p]), 6)
+end
+
+const GEOS_SURFACE_VAR_CANDIDATES = Dict(
+    :pblh  => ("PBLH", "pblh", "ZPBL", "zpbl"),
+    :ustar => ("USTAR", "ustar", "UST", "ust"),
+    :hflux => ("HFLUX", "hflux", "SH", "sshf", "surface_sensible_heat_flux"),
+    :t2m   => ("T2M", "t2m", "T2MDEW", "2t", "2m_temperature"),
+)
+
+const GEOS_CONVECTION_VAR_CANDIDATES = Dict(
+    :cmfmc  => ("CMFMC", "cmfmc", "conv_mass_flux"),
+    :dtrain => ("DTRAIN", "dtrain"),
+)
+
+_dim_norm(x) = replace(lowercase(String(x)), "_" => "", "-" => "")
+
+function _find_dim(dims, candidates)
+    wanted = Set(_dim_norm.(candidates))
+    return findfirst(d -> _dim_norm(d) in wanted, dims)
+end
+
+function _find_var_name(ds::NCDataset, candidates)
+    wanted = Set(lowercase.(String.(candidates)))
+    for name in keys(ds)
+        lowercase(String(name)) in wanted && return String(name)
+    end
+    throw(ArgumentError("NetCDF file is missing required variable; tried " *
+                        join(String.(candidates), ", ")))
+end
+
+function _geosfp_axis(ds::NCDataset, candidates)
+    for name in candidates
+        haskey(ds, name) && return Float64.(ds[name][:])
+    end
+    throw(ArgumentError("GEOS-FP lat-lon physics file is missing coordinate axis; tried " *
+                        join(candidates, ", ")))
+end
+
+function _centered_lons(lons::AbstractVector{<:Real})
+    out = [mod(Float64(lon) + 180.0, 360.0) - 180.0 for lon in lons]
+    # Keep the field roll in sync with `_normalize_lon_to_centered`: when the
+    # source was 0..360, the roll by Nx/2 produces sorted centered longitudes.
+    if !issorted(out)
+        out = circshift(out, length(out) ÷ 2)
+    end
+    return out
+end
+
+function _geosfp_latlon_axes(ds::NCDataset)
+    lons = _geosfp_axis(ds, ("lon", "longitude", "Xdim", "x"))
+    lats = _geosfp_axis(ds, ("lat", "latitude", "Ydim", "y"))
+    lons = _centered_lons(lons)
+    lats = lats[1] > lats[end] ? reverse(lats) : lats
+    return lons, lats
+end
+
+function _geos_dim_length(ds::NCDataset, candidates)
+    dim_name = nothing
+    wanted = Set(_dim_norm.(candidates))
+    for name in keys(ds.dim)
+        if _dim_norm(name) in wanted
+            dim_name = String(name)
+            break
+        end
+    end
+    dim_name === nothing && return nothing
+    dim = ds.dim[dim_name]
+    return dim isa Integer ? Int(dim) : length(dim)
+end
+
+function _time_index_for_geosfp_physics(ds::NCDataset, win_idx::Int)
+    ntime = _geos_dim_length(ds, ("time",))
+    ntime === nothing && return 1
+    ntime <= 1 && return 1
+    if ntime == 24
+        return win_idx
+    elseif ntime == 8
+        return _a3_index_for_window(win_idx)
+    end
+    idx = min(win_idx, ntime)
+    return idx
+end
+
+function _read_latlon_slice(ds::NCDataset, var_name::String,
+                            win_idx::Int, ::Val{Rank},
+                            ::Type{FT}) where {Rank, FT}
+    v = ds[var_name]
+    dims = dimnames(v)
+    lon_dim = _find_dim(dims, ("lon", "longitude", "xdim", "x"))
+    lat_dim = _find_dim(dims, ("lat", "latitude", "ydim", "y"))
+    lev_dim = Rank == 3 ? _find_dim(dims, ("lev", "level", "ilev", "edge", "interface")) : nothing
+    time_dim = _find_dim(dims, ("time",))
+    lon_dim === nothing && throw(ArgumentError("$(var_name) lacks longitude dimension"))
+    lat_dim === nothing && throw(ArgumentError("$(var_name) lacks latitude dimension"))
+    Rank == 3 && lev_dim === nothing && throw(ArgumentError("$(var_name) lacks level dimension"))
+
+    time_idx = _time_index_for_geosfp_physics(ds, win_idx)
+    idx = ntuple(d -> d == lon_dim || d == lat_dim || d == lev_dim ? Colon() :
+                      d == time_dim ? time_idx : 1,
+                 length(dims))
+    raw = Array(v[idx...])
+    kept = [dims[d] for d in eachindex(dims)
+            if d == lon_dim || d == lat_dim || d == lev_dim]
+    perm = if Rank == 2
+        [findfirst(==(dims[lon_dim]), kept), findfirst(==(dims[lat_dim]), kept)]
+    else
+        [findfirst(==(dims[lon_dim]), kept),
+         findfirst(==(dims[lat_dim]), kept),
+         findfirst(==(dims[lev_dim]), kept)]
+    end
+    field = perm == collect(1:Rank) ? raw : permutedims(raw, Tuple(perm))
+
+    if haskey(ds, "lat")
+        lats_raw = ds["lat"][:]
+    elseif haskey(ds, "latitude")
+        lats_raw = ds["latitude"][:]
+    else
+        lats_raw = Float64[]
+    end
+    if !isempty(lats_raw) && length(lats_raw) == size(field, 2) && lats_raw[1] > lats_raw[end]
+        field = Rank == 2 ? field[:, end:-1:1] : field[:, end:-1:1, :]
+    end
+
+    if haskey(ds, "lon")
+        lons_raw = ds["lon"][:]
+    elseif haskey(ds, "longitude")
+        lons_raw = ds["longitude"][:]
+    else
+        lons_raw = Float64[]
+    end
+    if !isempty(lons_raw)
+        if Rank == 2
+            tmp = reshape(field, size(field, 1), size(field, 2), 1)
+            field = @view _normalize_lon_to_centered(tmp, lons_raw)[:, :, 1]
+        else
+            field = _normalize_lon_to_centered(field, lons_raw)
+        end
+    end
+    return Array{FT}(field)
+end
+
+@inline _wrap_lon180(lon::Real) = mod(Float64(lon) + 180.0, 360.0) - 180.0
+
+function _interp_regular_ll(src::AbstractMatrix{FT}, lons, lats,
+                            lon::Real, lat::Real) where FT
+    Nx, Ny = size(src)
+    λ = _wrap_lon180(lon)
+    Δλ = length(lons) > 1 ? lons[2] - lons[1] : 360.0
+    Δφ = length(lats) > 1 ? lats[2] - lats[1] : 180.0
+    x = (λ - lons[1]) / Δλ + 1.0
+    x < 1.0 && (x += Nx)
+    x >= Nx + 1 && (x -= Nx)
+    y = clamp((Float64(lat) - lats[1]) / Δφ + 1.0, 1.0, Ny)
+    i0 = clamp(floor(Int, x), 1, Nx)
+    j0 = clamp(floor(Int, y), 1, Ny - 1)
+    i1 = i0 == Nx ? 1 : i0 + 1
+    j1 = min(j0 + 1, Ny)
+    wi = x - floor(x)
+    wj = y - j0
+    return (1 - wi) * (1 - wj) * src[i0, j0] +
+           wi       * (1 - wj) * src[i1, j0] +
+           (1 - wi) * wj       * src[i0, j1] +
+           wi       * wj       * src[i1, j1]
+end
+
+function _interp_regular_ll(src::AbstractArray{FT, 3}, lons, lats,
+                            lon::Real, lat::Real, k::Int) where FT
+    return _interp_regular_ll(@view(src[:, :, k]), lons, lats, lon, lat)
+end
+
+function _interpolate_ll_to_panels!(dst::NTuple{CS_PANEL_COUNT, Matrix{FT}},
+                                    src::AbstractMatrix{FT},
+                                    physics::GEOSFPLatLonPhysicsFallback) where FT
+    @inbounds for p in 1:CS_PANEL_COUNT
+        out = dst[p]
+        tlon = physics.target_lons[p]
+        tlat = physics.target_lats[p]
+        for j in axes(out, 2), i in axes(out, 1)
+            out[i, j] = _interp_regular_ll(src, physics.lons, physics.lats,
+                                           tlon[i, j], tlat[i, j])
+        end
+    end
+    return dst
+end
+
+function _interpolate_ll_to_panels!(dst::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                    src::AbstractArray{FT, 3},
+                                    physics::GEOSFPLatLonPhysicsFallback) where FT
+    @inbounds for p in 1:CS_PANEL_COUNT
+        out = dst[p]
+        tlon = physics.target_lons[p]
+        tlat = physics.target_lats[p]
+        for k in axes(out, 3), j in axes(out, 2), i in axes(out, 1)
+            out[i, j, k] = _interp_regular_ll(src, physics.lons, physics.lats,
+                                              tlon[i, j], tlat[i, j], k)
+        end
+    end
+    return dst
+end
+
+function _hflux_to_upward_wm2(raw, ds::NCDataset, var_name::String, ::Type{FT}) where FT
+    units = lowercase(String(get(ds[var_name].attrib, "units", "")))
+    lname = lowercase(var_name)
+    if occursin("j", units) || lname in ("sshf", "surface_sensible_heat_flux")
+        return FT.(-raw ./ 3600)
+    end
+    return FT.(raw)
+end
+
+function _validate_geos_surface_panels!(surface, path::String, win_idx::Int)
+    for field in (surface.pblh, surface.ustar, surface.hflux, surface.t2m)
+        all(p -> all(isfinite, p), field) ||
+            error("GEOS surface fallback contains non-finite values in $(path) window $(win_idx)")
+    end
+    minimum(minimum, surface.pblh) > 0 ||
+        error("GEOS surface PBLH must be positive in $(path) window $(win_idx)")
+    minimum(minimum, surface.ustar) >= 0 ||
+        error("GEOS surface USTAR must be nonnegative in $(path) window $(win_idx)")
+    minimum(minimum, surface.t2m) > 150 && maximum(maximum, surface.t2m) < 350 ||
+        error("GEOS surface T2M is out of range in $(path) window $(win_idx)")
+    maximum(p -> maximum(abs, p), surface.hflux) < 5000 ||
+        error("GEOS surface HFLUX magnitude is out of range in $(path) window $(win_idx)")
+    return nothing
+end
+
+function _validate_geos_convection_panels!(field, name::String, path::String, win_idx::Int)
+    field === nothing && return nothing
+    all(p -> all(isfinite, p), field) ||
+        error("GEOS convection $(name) contains non-finite values in $(path) window $(win_idx)")
+    return nothing
 end
 
 """
@@ -325,6 +757,7 @@ _native_output_filename(::AbstractGEOSSettings, date::Date, FT::Type) =
 # payload sections, and the runtime `CMFMCConvection` operator consumes
 # them via `ConvectionForcing` (GCHP RAS / Grell-Freitas, dry-basis).
 has_convection(s::GEOSSettings) = s.include_convection
+has_surface(s::GEOSSettings) = s.include_surface
 
 # ---------------------------------------------------------------------------
 # Canonical AbstractMetSettings interface implementations.
@@ -337,11 +770,14 @@ Canonical-contract alias for `open_geos_day`. The orchestrator calls this
 once per day and threads the returned handles through every per-window
 `read_window!`.
 """
-open_day(settings::GEOSSettings, date::Date; next_day_handle::Bool=true) =
+open_day(settings::GEOSSettings{:geosit}, date::Date; next_day_handle::Bool=true) =
     open_geos_day(settings, date; next_day_handle=next_day_handle)
+open_day(settings::GEOSSettings{:geosfp}, date::Date; next_day_handle::Bool=true) =
+    open_geosfp_native_day(settings, date; next_day_handle=next_day_handle)
 
 """Canonical-contract alias for `close_geos_day!`."""
 close_day!(handles::GEOSDayHandles) = close_geos_day!(handles)
+close_day!(handles::GEOSFPNativeDayHandles) = close_geosfp_native_day!(handles)
 
 """
     source_grid(settings::GEOSSettings) -> CubedSphereMesh
@@ -376,6 +812,12 @@ function allocate_raw_window(settings::GEOSSettings; FT::Type{<:AbstractFloat}, 
     m       = panels_3d(); ps      = panels_2d(); qv      = panels_3d()
     m_next  = panels_3d(); ps_next = panels_2d(); qv_next = panels_3d()
     am      = panels_3d(); bm      = panels_3d()
+    surface = settings.include_surface ? (
+        pblh  = panels_2d(),
+        ustar = panels_2d(),
+        hflux = panels_2d(),
+        t2m   = panels_2d(),
+    ) : nothing
     cmfmc   = settings.include_convection ? panels_3d_iface() : nothing
     dtrain  = settings.include_convection ? panels_3d()       : nothing
     return RawWindow{FT, typeof(ps), typeof(m)}(
@@ -383,6 +825,7 @@ function allocate_raw_window(settings::GEOSSettings; FT::Type{<:AbstractFloat}, 
         m_next,  ps_next, qv_next,
         am,      bm,
         nothing, nothing,
+        surface,
         cmfmc,   dtrain,
     )
 end
@@ -441,11 +884,212 @@ function read_window!(raw::RawWindow{FT}, settings::GEOSSettings,
         _scale_flux!(raw.bm[p], mfyc_raw[p], inv_dt)
     end
 
+    if settings.include_surface
+        _read_geos_surface_window!(raw, handles, win_idx)
+    end
+
     # ---- Optional convection forcing (GCHP RAS / Grell-Freitas inputs) ----
     if settings.include_convection
         _read_geos_convection_window!(raw, handles, win_idx, or)
     end
 
+    return raw
+end
+
+function read_window!(raw::RawWindow{FT}, settings::GEOSSettings{:geosfp},
+                      handles::GEOSFPNativeDayHandles, date::Date,
+                      win_idx::Int) where {FT}
+    nw = windows_per_day(settings, date)
+    1 <= win_idx <= nw || error("window $win_idx out of range 1..$nw")
+
+    ds_n = handles.ctm[win_idx]
+    ds_np1 = if win_idx < nw
+        handles.ctm[win_idx + 1]
+    elseif handles.next_ctm !== nothing
+        handles.next_ctm
+    else
+        error("last GEOS-FP window ($win_idx of $nw) has no next-day hourly CTM endpoint")
+    end
+
+    or = handles.orientation
+    vc = handles.vc
+
+    ps_factor_n = _ps_pa_factor(ds_n["PS"]; FT=FT)
+    ps_factor_np1 = _ps_pa_factor(ds_np1["PS"]; FT=FT)
+    ps_n_total = ntuple(p -> _read_panels_2d(ds_n, "PS", 1; FT=FT)[p] .* ps_factor_n, 6)
+    ps_np1_total = ntuple(p -> _read_panels_2d(ds_np1, "PS", 1; FT=FT)[p] .* ps_factor_np1, 6)
+    qv_n_panels = _read_panels_3d(ds_n, "QV", 1, or; FT=FT)
+    qv_np1_panels = _read_panels_3d(ds_np1, "QV", 1, or; FT=FT)
+
+    inv_dt = inv(FT(settings.mass_flux_dt))
+    mfxc_raw = _read_panels_3d(ds_n, "MFXC", 1, or; FT=FT)
+    mfyc_raw = _read_panels_3d(ds_n, "MFYC", 1, or; FT=FT)
+
+    @assert raw.qv      !== nothing "GEOS-FP RawWindow must carry qv"
+    @assert raw.qv_next !== nothing "GEOS-FP RawWindow must carry qv_next"
+    for p in 1:6
+        copyto!(raw.qv[p],      qv_n_panels[p])
+        copyto!(raw.qv_next[p], qv_np1_panels[p])
+        endpoint_dry_mass!(raw.m[p],      raw.ps[p],      ps_n_total[p],   raw.qv[p],      vc)
+        endpoint_dry_mass!(raw.m_next[p], raw.ps_next[p], ps_np1_total[p], raw.qv_next[p], vc)
+        _scale_flux!(raw.am[p], mfxc_raw[p], inv_dt)
+        _scale_flux!(raw.bm[p], mfyc_raw[p], inv_dt)
+    end
+    if settings.include_surface
+        _read_geosfp_surface_window!(raw, handles.physics, win_idx)
+    end
+    if settings.include_convection
+        _read_geosfp_convection_window!(raw, handles.physics, win_idx, or)
+    end
+    return raw
+end
+
+function _read_geos_surface_window!(raw::RawWindow{FT},
+                                    handles::GEOSDayHandles,
+                                    win_idx::Int) where {FT}
+    handles.a1 === nothing &&
+        error("settings.include_surface=true but A1 handle is missing; ensure the A1 collection is on disk")
+    raw.surface === nothing &&
+        error("RawWindow.surface must be allocated when surface output is enabled")
+
+    pblh  = _read_panels_2d(handles.a1, "PBLH",  win_idx; FT=FT)
+    ustar = _read_panels_2d(handles.a1, "USTAR", win_idx; FT=FT)
+    hflux = _read_panels_2d(handles.a1, "HFLUX", win_idx; FT=FT)
+    t2m   = _read_panels_2d(handles.a1, "T2M",   win_idx; FT=FT)
+
+    for p in 1:6
+        copyto!(raw.surface.pblh[p],  pblh[p])
+        copyto!(raw.surface.ustar[p], ustar[p])
+        copyto!(raw.surface.hflux[p], hflux[p])
+        copyto!(raw.surface.t2m[p],   t2m[p])
+    end
+    return raw
+end
+
+function _read_geosfp_surface_window!(raw::RawWindow{FT},
+                                      ::GEOSFPNoPhysics,
+                                      win_idx::Int) where {FT}
+    error("GEOS-FP include_surface=true but no physics fallback reader was opened for window $(win_idx)")
+end
+
+function _read_geosfp_surface_window!(raw::RawWindow{FT},
+                                      physics::GEOSFPCSPhysicsFallback,
+                                      win_idx::Int) where {FT}
+    physics.a1 === nothing &&
+        error("GEOS-FP surface fallback requires A1 but no A1 handle is open")
+    raw.surface === nothing &&
+        error("RawWindow.surface must be allocated when GEOS-FP surface output is enabled")
+
+    pblh_name  = _find_var_name(physics.a1, GEOS_SURFACE_VAR_CANDIDATES[:pblh])
+    ustar_name = _find_var_name(physics.a1, GEOS_SURFACE_VAR_CANDIDATES[:ustar])
+    hflux_name = _find_var_name(physics.a1, GEOS_SURFACE_VAR_CANDIDATES[:hflux])
+    t2m_name   = _find_var_name(physics.a1, GEOS_SURFACE_VAR_CANDIDATES[:t2m])
+
+    pblh  = _read_panels_2d(physics.a1, pblh_name,  win_idx; FT=FT)
+    ustar = _read_panels_2d(physics.a1, ustar_name, win_idx; FT=FT)
+    hflux = _read_panels_2d(physics.a1, hflux_name, win_idx; FT=FT)
+    t2m   = _read_panels_2d(physics.a1, t2m_name,   win_idx; FT=FT)
+
+    for p in 1:CS_PANEL_COUNT
+        copyto!(raw.surface.pblh[p],  pblh[p])
+        copyto!(raw.surface.ustar[p], ustar[p])
+        copyto!(raw.surface.hflux[p], hflux[p])
+        copyto!(raw.surface.t2m[p],   t2m[p])
+    end
+    _validate_geos_surface_panels!(raw.surface, something(physics.a1_path, "<GEOS-FP A1>"), win_idx)
+    return raw
+end
+
+function _read_geosfp_surface_window!(raw::RawWindow{FT},
+                                      physics::GEOSFPLatLonPhysicsFallback,
+                                      win_idx::Int) where {FT}
+    physics.a1 === nothing &&
+        error("GEOS-FP lat-lon surface fallback requires A1 but no A1 handle is open")
+    raw.surface === nothing &&
+        error("RawWindow.surface must be allocated when GEOS-FP surface output is enabled")
+
+    pblh_name  = _find_var_name(physics.a1, GEOS_SURFACE_VAR_CANDIDATES[:pblh])
+    ustar_name = _find_var_name(physics.a1, GEOS_SURFACE_VAR_CANDIDATES[:ustar])
+    hflux_name = _find_var_name(physics.a1, GEOS_SURFACE_VAR_CANDIDATES[:hflux])
+    t2m_name   = _find_var_name(physics.a1, GEOS_SURFACE_VAR_CANDIDATES[:t2m])
+
+    pblh_ll  = _read_latlon_slice(physics.a1, pblh_name,  win_idx, Val(2), FT)
+    ustar_ll = _read_latlon_slice(physics.a1, ustar_name, win_idx, Val(2), FT)
+    hflux_raw = _read_latlon_slice(physics.a1, hflux_name, win_idx, Val(2), FT)
+    hflux_ll = _hflux_to_upward_wm2(hflux_raw, physics.a1, hflux_name, FT)
+    t2m_ll   = _read_latlon_slice(physics.a1, t2m_name,   win_idx, Val(2), FT)
+
+    _interpolate_ll_to_panels!(raw.surface.pblh,  pblh_ll,  physics)
+    _interpolate_ll_to_panels!(raw.surface.ustar, ustar_ll, physics)
+    _interpolate_ll_to_panels!(raw.surface.hflux, hflux_ll, physics)
+    _interpolate_ll_to_panels!(raw.surface.t2m,   t2m_ll,   physics)
+    _validate_geos_surface_panels!(raw.surface, something(physics.a1_path, "<GEOS-FP A1>"), win_idx)
+    return raw
+end
+
+function _read_geosfp_convection_window!(raw::RawWindow{FT},
+                                         ::GEOSFPNoPhysics,
+                                         win_idx::Int,
+                                         orientation::Symbol) where {FT}
+    error("GEOS-FP include_convection=true but no physics fallback reader was opened for window $(win_idx)")
+end
+
+function _read_geosfp_convection_window!(raw::RawWindow{FT},
+                                         physics::GEOSFPCSPhysicsFallback,
+                                         win_idx::Int,
+                                         orientation::Symbol) where {FT}
+    physics.a3mste === nothing &&
+        error("GEOS-FP convection fallback requires A3mstE but no handle is open")
+    physics.a3dyn === nothing &&
+        error("GEOS-FP convection fallback requires A3dyn but no handle is open")
+    @assert raw.cmfmc  !== nothing "RawWindow.cmfmc must be allocated when convection is enabled"
+    @assert raw.dtrain !== nothing "RawWindow.dtrain must be allocated when convection is enabled"
+
+    a3_idx = _a3_index_for_window(win_idx)
+    cmfmc_name = _find_var_name(physics.a3mste, GEOS_CONVECTION_VAR_CANDIDATES[:cmfmc])
+    dtrain_name = _find_var_name(physics.a3dyn, GEOS_CONVECTION_VAR_CANDIDATES[:dtrain])
+    cmfmc_raw  = _read_panels_3d(physics.a3mste, cmfmc_name,  a3_idx, orientation; FT=FT)
+    dtrain_raw = _read_panels_3d(physics.a3dyn,  dtrain_name, a3_idx, orientation; FT=FT)
+    for p in 1:CS_PANEL_COUNT
+        copyto!(raw.cmfmc[p],  cmfmc_raw[p])
+        copyto!(raw.dtrain[p], dtrain_raw[p])
+    end
+    _moist_to_dry_dtrain!(raw.dtrain, raw.qv, raw.qv_next)
+    _moist_to_dry_cmfmc!(raw.cmfmc,  raw.qv, raw.qv_next)
+    _validate_geos_convection_panels!(raw.cmfmc, "CMFMC", something(physics.a3mste_path, "<GEOS-FP A3mstE>"), win_idx)
+    _validate_geos_convection_panels!(raw.dtrain, "DTRAIN", something(physics.a3dyn_path, "<GEOS-FP A3dyn>"), win_idx)
+    return raw
+end
+
+function _read_geosfp_convection_window!(raw::RawWindow{FT},
+                                         physics::GEOSFPLatLonPhysicsFallback,
+                                         win_idx::Int,
+                                         orientation::Symbol) where {FT}
+    physics.a3mste === nothing &&
+        error("GEOS-FP lat-lon convection fallback requires A3mstE but no handle is open")
+    physics.a3dyn === nothing &&
+        error("GEOS-FP lat-lon convection fallback requires A3dyn but no handle is open")
+    @assert raw.cmfmc  !== nothing "RawWindow.cmfmc must be allocated when convection is enabled"
+    @assert raw.dtrain !== nothing "RawWindow.dtrain must be allocated when convection is enabled"
+
+    cmfmc_name = _find_var_name(physics.a3mste, GEOS_CONVECTION_VAR_CANDIDATES[:cmfmc])
+    dtrain_name = _find_var_name(physics.a3dyn, GEOS_CONVECTION_VAR_CANDIDATES[:dtrain])
+    cmfmc_ll  = _read_latlon_slice(physics.a3mste, cmfmc_name,  win_idx, Val(3), FT)
+    dtrain_ll = _read_latlon_slice(physics.a3dyn,  dtrain_name, win_idx, Val(3), FT)
+    if orientation === :bottom_up
+        cmfmc_ll = reverse(cmfmc_ll; dims = 3)
+        dtrain_ll = reverse(dtrain_ll; dims = 3)
+    end
+    size(cmfmc_ll, 3) == size(raw.cmfmc[1], 3) ||
+        throw(DimensionMismatch("GEOS-FP CMFMC fallback has $(size(cmfmc_ll, 3)) levels; expected $(size(raw.cmfmc[1], 3))"))
+    size(dtrain_ll, 3) == size(raw.dtrain[1], 3) ||
+        throw(DimensionMismatch("GEOS-FP DTRAIN fallback has $(size(dtrain_ll, 3)) levels; expected $(size(raw.dtrain[1], 3))"))
+    _interpolate_ll_to_panels!(raw.cmfmc,  cmfmc_ll,  physics)
+    _interpolate_ll_to_panels!(raw.dtrain, dtrain_ll, physics)
+    _moist_to_dry_dtrain!(raw.dtrain, raw.qv, raw.qv_next)
+    _moist_to_dry_cmfmc!(raw.cmfmc,  raw.qv, raw.qv_next)
+    _validate_geos_convection_panels!(raw.cmfmc, "CMFMC", something(physics.a3mste_path, "<GEOS-FP A3mstE>"), win_idx)
+    _validate_geos_convection_panels!(raw.dtrain, "DTRAIN", something(physics.a3dyn_path, "<GEOS-FP A3dyn>"), win_idx)
     return raw
 end
 

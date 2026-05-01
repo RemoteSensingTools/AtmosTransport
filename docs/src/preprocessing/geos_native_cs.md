@@ -2,15 +2,19 @@
 
 The GEOS path takes **GEOS-IT C180** native NetCDF — the FV3
 dynamical core's own cubed-sphere output — and writes a v4 transport
-binary on the same cubed-sphere grid (no horizontal regrid). It
+binary on the same cubed-sphere grid (no horizontal regrid). GEOS-FP
+native C720 hourly CTM files use the same source contract, with one
+file per UTC hour. It
 uses the FV3 mass fluxes and pressure-fixer formula directly; this
 is the highest-fidelity path for any GEOS-driven simulation.
 
-GEOS-FP (C720) support is **declared but not yet implemented** —
-`GEOSSettings{:geosfp}` exists as a type but the file-resolver
-errors with a "not implemented" message; the orchestration plumbing
-is shared with GEOS-IT and will light up once the FP file-naming /
-collection layout is wired in.
+GEOS-FP C720 support covers the native hourly CTM layout
+(`GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.YYYYMMDD_HH30.V01.nc4`, with
+`HH00` accepted for legacy fixtures). Surface/convection physics from
+the 0.25° GEOS-FP products can be attached by setting
+`[source] physics_dir`, `include_surface = true`, and
+`include_convection = true`; the day handle validates and embeds those
+payloads into the same transport binary.
 
 ## Why no Poisson balance?
 
@@ -32,13 +36,16 @@ flux divergence and the surface-tendency closure.
 |---|---|---|
 | `CTM_A1` | hourly (window-averaged) | `MFXC`, `MFYC`, `DELP` |
 | `CTM_I1` | hourly (instantaneous) | `PS`, `QV` |
+| `A1` | hourly | `PBLH`, `USTAR`, `HFLUX`, `T2M` *(GEOS-IT native or GEOS-FP physics fallback, only if surface is enabled)* |
 | `A3mstE` | 3-hourly (window-averaged) | `CMFMC` *(only if convection is enabled)* |
 | `A3dyn` | 3-hourly (window-averaged) | `DTRAIN` *(only if convection is enabled)* |
 
-File-naming convention: `GEOSIT.YYYYMMDD.<COLLECTION>.C180.nc`. The
+GEOS-IT file-naming convention: `GEOSIT.YYYYMMDD.<COLLECTION>.C180.nc`.
+GEOS-FP native CTM file-naming convention:
+`GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.YYYYMMDD_HH30.V01.nc4`. The
 preprocessor needs the **next day's hour-0** for the last window's
-forward-flux endpoint, mirroring the spectral path; the trailing
-peek at `<end+1>.nc` is unavoidable.
+forward-flux endpoint, mirroring the spectral path; the trailing peek
+at `<end+1>` is unavoidable.
 
 ## GEOS preprocessing TOML
 
@@ -51,7 +58,9 @@ source's invariants):
 # config/preprocessing/geosit_c180_to_cs180.toml
 [source]
 toml     = "config/met_sources/geosit.toml"   # source descriptor (below)
-root_dir = "~/data/AtmosTransport/met/geosit/C180/raw_catrine"
+root_dir = "~/data/AtmosTransport/met/geosit_c180/raw_catrine"
+include_surface = true
+include_convection = true
 
 [output]
 directory  = "~/data/AtmosTransport/met/geosit/C180/preprocessed/v4_dec2021"
@@ -87,13 +96,11 @@ collections_required  = ["CTM_A1", "CTM_I1"]
 collections_optional  = ["A3mstE", "A3dyn"]   # used when convection is on
 ```
 
-The opt-in convection switch lives **inside the source descriptor**
-(or as an explicit `include_convection = true` kwarg passed to the
-factory in code) — not in the preprocessing TOML's `[source]` block,
-which the entrypoint only reads for `toml`, `root_dir`, and an
-optional `coefficients` override. When the descriptor enables
-convection, the orchestrator opens the optional `A3mstE` and `A3dyn`
-collections (described below).
+The preprocessing TOML's `[source]` block can override
+`include_surface`, `include_convection`, and, for GEOS-FP,
+`physics_dir` / `physics_layout`. GEOS-IT reads native A1/A3 files next
+to CTM_A1/CTM_I1. GEOS-FP reads native C720 CTM files from `root_dir`
+and physics fallback files from `physics_dir`.
 
 ## Per-window pipeline
 

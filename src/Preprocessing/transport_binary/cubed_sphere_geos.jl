@@ -115,6 +115,229 @@ function _ps_from_air_mass!(ps::AbstractMatrix{FT},
     return ps
 end
 
+_validate_geos_native_panel_convention(::GEOSNativePanelConvention) = nothing
+function _validate_geos_native_panel_convention(conv)
+    error("GEOS-CS passthrough requires panel_convention=`geos_native` on " *
+          "the target geometry; got $(typeof(conv)).")
+end
+
+_geos_next_endpoint_available(handles::GEOSDayHandles) =
+    handles.next_ctm_i1 !== nothing
+_geos_next_endpoint_available(handles::GEOSFPNativeDayHandles) =
+    handles.next_ctm !== nothing
+
+abstract type AbstractGEOSCSResolutionStrategy end
+struct GEOSCSIdentityStrategy <: AbstractGEOSCSResolutionStrategy end
+struct GEOSCSBlockCoarsenStrategy{R} <: AbstractGEOSCSResolutionStrategy end
+
+_geos_cs_resolution_strategy(settings::AbstractGEOSSettings, grid::CubedSphereTargetGeometry) =
+    _geos_cs_resolution_strategy(Val(settings.Nc), Val(grid.Nc))
+
+_geos_cs_resolution_strategy(::Val{N}, ::Val{N}) where {N} =
+    GEOSCSIdentityStrategy()
+
+function _geos_cs_resolution_strategy(::Val{Nsrc}, ::Val{Ndst}) where {Nsrc, Ndst}
+    (Nsrc > Ndst && Nsrc % Ndst == 0) ||
+        throw(ArgumentError(
+            "GEOS-CS conversion supports native passthrough or nested block coarsening only; " *
+            "source Nc=$(Nsrc), target Nc=$(Ndst)."))
+    return GEOSCSBlockCoarsenStrategy{Nsrc ÷ Ndst}()
+end
+
+_geos_cs_strategy_name(::GEOSCSIdentityStrategy) = "identity"
+_geos_cs_strategy_name(::GEOSCSBlockCoarsenStrategy{R}) where {R} =
+    "nested_block_coarsen_$(R)x$(R)"
+
+function _coarsen_sum3!(dst::AbstractArray{FT, 3},
+                        src::AbstractArray{FT, 3},
+                        ::Val{R}) where {FT, R}
+    Nc = size(dst, 1)
+    Nz = size(dst, 3)
+    @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
+        s = zero(FT)
+        for jj in ((j - 1) * R + 1):(j * R), ii in ((i - 1) * R + 1):(i * R)
+            s += src[ii, jj, k]
+        end
+        dst[i, j, k] = s
+    end
+    return dst
+end
+
+function _coarsen_area_weighted2!(dst::AbstractMatrix{FT},
+                                  src::AbstractMatrix{FT},
+                                  src_area::AbstractMatrix{FT},
+                                  ::Val{R}) where {FT, R}
+    Nc = size(dst, 1)
+    @inbounds for j in 1:Nc, i in 1:Nc
+        num = zero(FT)
+        den = zero(FT)
+        for jj in ((j - 1) * R + 1):(j * R), ii in ((i - 1) * R + 1):(i * R)
+            a = src_area[ii, jj]
+            num += src[ii, jj] * a
+            den += a
+        end
+        dst[i, j] = num / den
+    end
+    return dst
+end
+
+function _coarsen_area_weighted3!(dst::AbstractArray{FT, 3},
+                                  src::AbstractArray{FT, 3},
+                                  src_area::AbstractMatrix{FT},
+                                  ::Val{R}) where {FT, R}
+    Nc = size(dst, 1)
+    Nz = size(dst, 3)
+    @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
+        num = zero(FT)
+        den = zero(FT)
+        for jj in ((j - 1) * R + 1):(j * R), ii in ((i - 1) * R + 1):(i * R)
+            a = src_area[ii, jj]
+            num += src[ii, jj, k] * a
+            den += a
+        end
+        dst[i, j, k] = num / den
+    end
+    return dst
+end
+
+function _coarsen_xface_sum!(dst::AbstractArray{FT, 3},
+                             src::AbstractArray{FT, 3},
+                             ::Val{R}) where {FT, R}
+    Nc = size(dst, 2)
+    Nz = size(dst, 3)
+    @inbounds for k in 1:Nz, j in 1:Nc, i in 1:(Nc + 1)
+        fi = (i - 1) * R + 1
+        s = zero(FT)
+        for fj in ((j - 1) * R + 1):(j * R)
+            s += src[fi, fj, k]
+        end
+        dst[i, j, k] = s
+    end
+    return dst
+end
+
+function _coarsen_yface_sum!(dst::AbstractArray{FT, 3},
+                             src::AbstractArray{FT, 3},
+                             ::Val{R}) where {FT, R}
+    Nc = size(dst, 1)
+    Nz = size(dst, 3)
+    @inbounds for k in 1:Nz, j in 1:(Nc + 1), i in 1:Nc
+        fj = (j - 1) * R + 1
+        s = zero(FT)
+        for fi in ((i - 1) * R + 1):(i * R)
+            s += src[fi, fj, k]
+        end
+        dst[i, j, k] = s
+    end
+    return dst
+end
+
+function _geos_strategy_workspace(::GEOSCSIdentityStrategy,
+                                  settings::AbstractGEOSSettings,
+                                  grid::CubedSphereTargetGeometry,
+                                  ::Type{FT}, Nz::Int) where FT
+    return nothing
+end
+
+function _geos_strategy_workspace(::GEOSCSBlockCoarsenStrategy{R},
+                                  settings::AbstractGEOSSettings,
+                                  grid::CubedSphereTargetGeometry,
+                                  ::Type{FT}, Nz::Int) where {FT, R}
+    source_mesh = source_grid(settings; FT = FT)
+    Nsrc = settings.Nc
+    Nc = grid.Nc
+    panels_3d_src() = ntuple(_ -> zeros(FT, Nsrc, Nsrc, Nz), CS_PANEL_COUNT)
+    panels_xface_src() = ntuple(_ -> zeros(FT, Nsrc + 1, Nsrc, Nz), CS_PANEL_COUNT)
+    panels_yface_src() = ntuple(_ -> zeros(FT, Nsrc, Nsrc + 1, Nz), CS_PANEL_COUNT)
+    panels_2d_dst() = ntuple(_ -> zeros(FT, Nc, Nc), CS_PANEL_COUNT)
+    panels_3d_dst(nlev) = ntuple(_ -> zeros(FT, Nc, Nc, nlev), CS_PANEL_COUNT)
+    return (
+        source_mesh = source_mesh,
+        source_cell_areas = source_mesh.cell_areas,
+        fine_m_kg = panels_3d_src(),
+        fine_am_v4 = panels_xface_src(),
+        fine_bm_v4 = panels_yface_src(),
+        surface = settings.include_surface ? (
+            pblh = panels_2d_dst(),
+            ustar = panels_2d_dst(),
+            hflux = panels_2d_dst(),
+            t2m = panels_2d_dst(),
+        ) : nothing,
+        cmfmc = settings.include_convection ? panels_3d_dst(Nz + 1) : nothing,
+        dtrain = settings.include_convection ? panels_3d_dst(Nz) : nothing,
+    )
+end
+
+function _geos_fluxes_to_target!(::GEOSCSIdentityStrategy, _ws,
+                                 am_v4, bm_v4, raw, grid,
+                                 Nc::Int, Nz::Int, flux_scale)
+    geos_native_to_face_flux!(am_v4, bm_v4, raw.am, raw.bm,
+                              grid.mesh.connectivity, Nc, Nz, flux_scale)
+    return nothing
+end
+
+function _geos_fluxes_to_target!(::GEOSCSBlockCoarsenStrategy{R}, ws,
+                                 am_v4, bm_v4, raw, _grid,
+                                 Nc::Int, Nz::Int, flux_scale) where R
+    Nsrc = Nc * R
+    geos_native_to_face_flux!(ws.fine_am_v4, ws.fine_bm_v4, raw.am, raw.bm,
+                              ws.source_mesh.connectivity, Nsrc, Nz, flux_scale)
+    for p in 1:CS_PANEL_COUNT
+        _coarsen_xface_sum!(am_v4[p], ws.fine_am_v4[p], Val(R))
+        _coarsen_yface_sum!(bm_v4[p], ws.fine_bm_v4[p], Val(R))
+    end
+    return nothing
+end
+
+function _geos_seed_mass!(::GEOSCSIdentityStrategy, _ws, m_cur, raw,
+                          cell_areas, inv_g, Nc::Int, Nz::Int)
+    for p in 1:CS_PANEL_COUNT
+        _delp_pa_to_air_mass_kg!(m_cur[p], raw.m[p], cell_areas, inv_g)
+    end
+    return nothing
+end
+
+function _geos_seed_mass!(::GEOSCSBlockCoarsenStrategy{R}, ws, m_cur, raw,
+                          _cell_areas, inv_g, _Nc::Int, _Nz::Int) where R
+    for p in 1:CS_PANEL_COUNT
+        _delp_pa_to_air_mass_kg!(ws.fine_m_kg[p], raw.m[p], ws.source_cell_areas, inv_g)
+        _coarsen_sum3!(m_cur[p], ws.fine_m_kg[p], Val(R))
+    end
+    return nothing
+end
+
+_geos_surface_payload!(::GEOSCSIdentityStrategy, _ws, raw) = raw.surface
+
+function _geos_surface_payload!(::GEOSCSBlockCoarsenStrategy{R}, ws, raw) where R
+    raw.surface === nothing && return nothing
+    for p in 1:CS_PANEL_COUNT
+        _coarsen_area_weighted2!(ws.surface.pblh[p], raw.surface.pblh[p], ws.source_cell_areas, Val(R))
+        _coarsen_area_weighted2!(ws.surface.ustar[p], raw.surface.ustar[p], ws.source_cell_areas, Val(R))
+        _coarsen_area_weighted2!(ws.surface.hflux[p], raw.surface.hflux[p], ws.source_cell_areas, Val(R))
+        _coarsen_area_weighted2!(ws.surface.t2m[p], raw.surface.t2m[p], ws.source_cell_areas, Val(R))
+    end
+    return ws.surface
+end
+
+_geos_cmfmc_payload!(::GEOSCSIdentityStrategy, _ws, raw) = raw.cmfmc
+_geos_dtrain_payload!(::GEOSCSIdentityStrategy, _ws, raw) = raw.dtrain
+
+function _geos_cmfmc_payload!(::GEOSCSBlockCoarsenStrategy{R}, ws, raw) where R
+    raw.cmfmc === nothing && return nothing
+    for p in 1:CS_PANEL_COUNT
+        _coarsen_area_weighted3!(ws.cmfmc[p], raw.cmfmc[p], ws.source_cell_areas, Val(R))
+    end
+    return ws.cmfmc
+end
+
+function _geos_dtrain_payload!(::GEOSCSBlockCoarsenStrategy{R}, ws, raw) where R
+    raw.dtrain === nothing && return nothing
+    for p in 1:CS_PANEL_COUNT
+        _coarsen_area_weighted3!(ws.dtrain[p], raw.dtrain[p], ws.source_cell_areas, Val(R))
+    end
+    return ws.dtrain
+end
+
 """
     process_day(date, grid::CubedSphereTargetGeometry,
                 settings::AbstractGEOSSettings, vertical;
@@ -165,14 +388,14 @@ function process_day(date::Date,
     mass_basis === :dry ||
         error("GEOS-CS passthrough only supports mass_basis=:dry; got $(mass_basis). " *
               "GEOS MFXC/MFYC are already dry; the chained pressure-fixer is dry-basis.")
-    grid.mesh.convention isa GEOSNativePanelConvention ||
-        error("GEOS-CS passthrough requires panel_convention=`geos_native` on " *
-              "the target geometry; got $(typeof(grid.mesh.convention)).")
+    _validate_geos_native_panel_convention(grid.mesh.convention)
     # Single source of truth: the binary's panel-convention attrib comes from
     # the target mesh's convention, not from a duplicated config key.
     panel_convention = "geos_native"
 
     Nc     = grid.Nc
+    strategy = _geos_cs_resolution_strategy(settings, grid)
+    strategy_ws = _geos_strategy_workspace(strategy, settings, grid, FT, vertical.Nz)
     npanel = CS_PANEL_COUNT
     Nz     = vertical.Nz
     vc     = vertical.merged_vc
@@ -191,10 +414,11 @@ function process_day(date::Date,
     nw = windows_per_day(settings, date)
 
     @info "GEOS → CS: $(date), source=$(settings) → $(out_path)"
-    @info "  Nc=$Nc  Nz=$Nz  windows=$nw  steps_per_met=$steps_per_met  flux_scale=$flux_scale"
+    @info "  source_C=$(settings.Nc) target_C=$Nc  strategy=$(_geos_cs_strategy_name(strategy))"
+    @info "  Nz=$Nz  windows=$nw  steps_per_met=$steps_per_met  flux_scale=$flux_scale"
 
     handles = open_day(settings, date)
-    @info "  Level orientation: $(handles.orientation)  (next-day endpoint: $(handles.next_ctm_i1 !== nothing))"
+    @info "  Level orientation: $(handles.orientation)  (next-day endpoint: $(_geos_next_endpoint_available(handles)))"
 
     mkpath(dirname(out_path))
 
@@ -205,6 +429,7 @@ function process_day(date::Date,
         steps_per_window = steps_per_met,
         mass_basis = mass_basis,
         include_flux_delta = true,
+        include_surface    = settings.include_surface,
         include_cmfmc      = settings.include_convection,
         include_dtrain     = settings.include_convection,
         panel_convention   = panel_convention,
@@ -212,6 +437,10 @@ function process_day(date::Date,
         cs_coordinate_law  = _cs_coordinate_law_tag(grid),
         cs_center_law      = _cs_center_law_tag(grid),
         longitude_offset_deg = longitude_offset_deg(cs_definition(grid.mesh)),
+        extra_header = Dict{String, Any}(
+            "source_Nc" => settings.Nc,
+            "geos_cs_resolution_strategy" => _geos_cs_strategy_name(strategy),
+        ),
     )
 
     try
@@ -239,8 +468,8 @@ function process_day(date::Date,
 
             # 1. Native MFXC/MFYC (Pa·m²/s on cell-centered indexing) → v4
             #    face-staggered (kg per substep) with panel-halo one-way prop.
-            geos_native_to_face_flux!(am_v4, bm_v4, raw.am, raw.bm,
-                                      grid.mesh.connectivity, Nc, Nz, flux_scale)
+            _geos_fluxes_to_target!(strategy, strategy_ws, am_v4, bm_v4,
+                                    raw, grid, Nc, Nz, flux_scale)
 
             # 2. First window: seed m_cur from `seed_m` (previous day's PF
             #    endpoint) when supplied, otherwise from raw GEOS DELP_dry.
@@ -248,9 +477,8 @@ function process_day(date::Date,
             #    pressure-fixer evolution.
             if win == 1
                 if seed_m === nothing
-                    for p in 1:npanel
-                        _delp_pa_to_air_mass_kg!(m_cur[p], raw.m[p], cell_areas, inv_g)
-                    end
+                    _geos_seed_mass!(strategy, strategy_ws, m_cur, raw,
+                                     cell_areas, inv_g, Nc, Nz)
                 else
                     for p in 1:npanel
                         size(seed_m[p]) == (Nc, Nc, Nz) ||
@@ -294,16 +522,17 @@ function process_day(date::Date,
             # writer already understands (`:cmfmc` / `:dtrain` keys); the
             # writer no-ops them when the corresponding `include_*` flag is
             # off. Source-side units stay as GMAO archived them (kg / m² / s).
-            window_nt = if settings.include_convection
-                (m   = m_cur,     am = am_v4, bm = bm_v4,
-                 cm  = cm_v4,     ps = ps_cur,
-                 dm  = m_target,
-                 cmfmc  = raw.cmfmc,
-                 dtrain = raw.dtrain)
-            else
-                (m  = m_cur,    am = am_v4, bm = bm_v4,
-                 cm = cm_v4,    ps = ps_cur,
-                 dm = m_target)
+            window_nt = (m  = m_cur,    am = am_v4, bm = bm_v4,
+                         cm = cm_v4,    ps = ps_cur,
+                         dm = m_target)
+            if settings.include_surface
+                window_nt = merge(window_nt,
+                                  (surface = _geos_surface_payload!(strategy, strategy_ws, raw),))
+            end
+            if settings.include_convection
+                window_nt = merge(window_nt,
+                                  (cmfmc = _geos_cmfmc_payload!(strategy, strategy_ws, raw),
+                                   dtrain = _geos_dtrain_payload!(strategy, strategy_ws, raw)))
             end
             write_streaming_cs_window!(writer, window_nt, Nc, npanel)
 

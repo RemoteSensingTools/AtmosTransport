@@ -24,6 +24,7 @@ mechanically — see `thomas_solve.jl`.
 """
 module Diffusion
 
+using Adapt
 using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
 using ...State: CellState, CubedSphereState,
                 AbstractTimeVaryingField, AbstractCubedSphereField,

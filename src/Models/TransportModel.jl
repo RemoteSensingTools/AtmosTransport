@@ -342,15 +342,16 @@ function Adapt.adapt_structure(to, model::TransportModel)
     state              = Adapt.adapt(to, model.state)
     fluxes             = Adapt.adapt(to, model.fluxes)
     workspace          = Adapt.adapt(to, model.workspace)
+    diffusion          = Adapt.adapt(to, model.diffusion)
     emissions          = Adapt.adapt(to, model.emissions)
     convection_forcing = Adapt.adapt(to, model.convection_forcing)
     return TransportModel{typeof(state), typeof(fluxes), typeof(model.grid),
                           typeof(model.advection), typeof(workspace),
-                          typeof(model.chemistry), typeof(model.diffusion),
+                          typeof(model.chemistry), typeof(diffusion),
                           typeof(emissions), typeof(model.convection),
                           typeof(convection_forcing)}(
         state, fluxes, model.grid, model.advection, workspace,
-        model.chemistry, model.diffusion, emissions,
+        model.chemistry, diffusion, emissions,
         model.convection, convection_forcing)
 end
 

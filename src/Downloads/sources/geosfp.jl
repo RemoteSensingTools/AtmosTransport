@@ -51,7 +51,7 @@ function _default_collections(source::GEOSFPSource)
     if source.product == "geosfp_c720"
         return ["tavg_1hr_ctm_c0720_v72"]
     elseif source.product == "geosfp_025"
-        return ["A1", "A3mstE"]
+        return ["A1", "A3mstE", "A3dyn"]
     else
         return String[]
     end
@@ -87,7 +87,8 @@ function _geosfp_file_urls(source::GEOSFPSource, protocol::HTTPProtocol,
         for coll in collections
             fname = "GEOSFP.$(datestr).$(coll).025x03125.nc"
             url = "$(protocol.base_url)/$fname"
-            est = coll == "A3mstE" ? 1400.0 : 200.0
+            est = coll == "A3mstE" ? 1400.0 :
+                  coll == "A3dyn"  ? 2500.0 : 200.0
             push!(results, (url, fname, est))
         end
     end

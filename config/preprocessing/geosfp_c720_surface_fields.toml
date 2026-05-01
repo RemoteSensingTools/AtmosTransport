@@ -1,8 +1,9 @@
 # ===========================================================================
 # Preprocessing config: regrid GEOS-FP 0.25° surface fields → C720 CS
 #
-# Reads 0.25° A1 (PBLH, USTAR, HFLUX, T2M) and A3mstE (CMFMC) files,
-# bilinearly interpolates to C720 panel coordinates, writes per-day NetCDF.
+# Reads 0.25° A1 (PBLH, USTAR, HFLUX, T2M), A3mstE (CMFMC), and A3dyn
+# (DTRAIN) files, bilinearly interpolates to C720 panel coordinates, and
+# writes per-day NetCDF.
 #
 # Download source data first:
 #   julia scripts/download_geosfp_surface_fields.jl

@@ -28,6 +28,7 @@ using Adapt
 using DocStringExtensions
 
 import ..AbstractOperator, ..apply!
+using ...SectionTimer
 # Diffusion is loaded before Advection in Operators.jl so the palindrome
 # center of `strang_split_mt!` can dispatch on `AbstractDiffusion`
 # concretions. `NoDiffusion`'s `apply_vertical_diffusion!` method is

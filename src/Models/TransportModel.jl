@@ -374,17 +374,17 @@ meteorology object (`AbstractMetDriver`) or a `DrivenSimulation`
 that consume time-varying fields.
 """
 function step!(model::TransportModel, dt; meteo = nothing)
-    apply!(model.state, model.fluxes, model.grid, model.advection, dt;
+    SectionTimer.@section :advection apply!(model.state, model.fluxes, model.grid, model.advection, dt;
            workspace = model.workspace.advection_ws,
            diffusion_op = model.diffusion,
            emissions_op = model.emissions,
            meteo = meteo)
     if !(model.convection isa NoConvection)
-        apply!(model.state, model.convection_forcing, model.grid,
+        SectionTimer.@section :convection apply!(model.state, model.convection_forcing, model.grid,
                model.convection, dt;
                workspace = model.workspace.convection_ws)
     end
-    chemistry_block!(model.state, meteo, model.grid, model.chemistry, dt)
+    SectionTimer.@section :chemistry chemistry_block!(model.state, meteo, model.grid, model.chemistry, dt)
     return nothing
 end
 

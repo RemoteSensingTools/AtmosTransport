@@ -14,6 +14,7 @@ Provides:
 module Operators
 
 # Re-export State and Grids into Operators scope for sub-submodules
+using ..SectionTimer
 using ..State
 using ..Grids
 using ..MetDrivers

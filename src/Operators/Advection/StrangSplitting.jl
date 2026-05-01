@@ -1090,18 +1090,21 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
         fill_panel_halos!(rm_tracer, grid.horizontal; dir=1)
         tracer_name = tracer_names[idx]
         midpoint! = if emissions_op isa NoSurfaceFlux
-            () -> apply_vertical_diffusion!(rm_tracer, diffusion_op, workspace, dt, meteo;
-                                            halo_width = state.halo_width)
+            () -> SectionTimer.@section :diffusion apply_vertical_diffusion!(
+                rm_tracer, diffusion_op, workspace, dt, meteo;
+                halo_width = state.halo_width)
         else
             half_dt = dt / 2
             () -> begin
-                apply_vertical_diffusion!(rm_tracer, diffusion_op, workspace, half_dt, meteo;
-                                          halo_width = state.halo_width)
+                SectionTimer.@section :diffusion apply_vertical_diffusion!(
+                    rm_tracer, diffusion_op, workspace, half_dt, meteo;
+                    halo_width = state.halo_width)
                 apply_surface_flux!(rm_tracer, emissions_op, workspace, dt, meteo, grid;
                                     tracer_names = (tracer_name,),
                                     halo_width = state.halo_width)
-                apply_vertical_diffusion!(rm_tracer, diffusion_op, workspace, half_dt, meteo;
-                                          halo_width = state.halo_width)
+                SectionTimer.@section :diffusion apply_vertical_diffusion!(
+                    rm_tracer, diffusion_op, workspace, half_dt, meteo;
+                    halo_width = state.halo_width)
             end
         end
         _cs_transport_step!(cs_advection_style(scheme),
@@ -1218,13 +1221,13 @@ for (scheme_type, h_sweep, v_sweep) in (
             _sweep_horizontal_face_subcycled!(rm_tracer, m, hflux, grid.horizontal, scheme, workspace, cfl_limit_ft)
             _sweep_vertical_face_subcycled!(rm_tracer, m, cm, scheme, workspace, cfl_limit_ft)
             if emissions_op isa NoSurfaceFlux
-                apply_vertical_diffusion!(rm_tracer, diffusion_op, workspace, dt, meteo)
+                SectionTimer.@section :diffusion apply_vertical_diffusion!(rm_tracer, diffusion_op, workspace, dt, meteo)
             else
                 half_dt = dt / 2
-                apply_vertical_diffusion!(rm_tracer, diffusion_op, workspace, half_dt, meteo)
+                SectionTimer.@section :diffusion apply_vertical_diffusion!(rm_tracer, diffusion_op, workspace, half_dt, meteo)
                 apply_surface_flux!(rm_tracer, emissions_op, workspace, dt, meteo, grid;
                                     tracer_names = (tracer_name,))
-                apply_vertical_diffusion!(rm_tracer, diffusion_op, workspace, half_dt, meteo)
+                SectionTimer.@section :diffusion apply_vertical_diffusion!(rm_tracer, diffusion_op, workspace, half_dt, meteo)
             end
             _sweep_vertical_face_subcycled!(rm_tracer, m, cm, scheme, workspace, cfl_limit_ft)
             _sweep_horizontal_face_subcycled!(rm_tracer, m, hflux, grid.horizontal, scheme, workspace, cfl_limit_ft)

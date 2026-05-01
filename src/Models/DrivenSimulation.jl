@@ -448,8 +448,8 @@ function step!(sim::DrivenSimulation)
         throw(ArgumentError("DrivenSimulation has already completed all scheduled steps"))
 
     substep = _active_substep(sim.iteration, sim.steps_per_window)
-    _maybe_advance_window!(sim, substep)
-    _refresh_forcing!(sim, substep)
+    SectionTimer.@section :window_advance _maybe_advance_window!(sim, substep)
+    SectionTimer.@section :forcing_refresh _refresh_forcing!(sim, substep)
 
     # Plan 17 Commit 6 + plan 18 A3: step!(model) runs the live operator
     # suite (advection with palindrome-centered V and S, then convection,

@@ -44,6 +44,7 @@ using Printf: @sprintf, @printf
 using Logging
 
 import ...expand_data_path
+using ...SectionTimer
 using ..State: AbstractMassBasis, DryBasis, MoistBasis, CellState,
                 CubedSphereState, total_air_mass, total_mass, tracer_names,
                 tracer_index, get_tracer
@@ -286,17 +287,33 @@ function run_driven_simulation(cfg::AbstractDict)
     binary_paths = expand_binary_paths(input_cfg)
     isempty(binary_paths) &&
         throw(ArgumentError("[input] resolved to an empty binary list"))
+    # TM5-storage Commit 1: section timing instrumentation, off unless
+    # ATMOSTR_TIMERS=1. Enabled here so every section accumulator covers
+    # the whole driven loop including snapshot capture / write.
+    timers_on = SectionTimer.maybe_enable_from_env!()
     # Plan 40 Commit 6b: dispatch on the first binary's grid_type —
     # the ownership boundary (binary header owns topology, TOML owns
     # physics kinds). The capability probe also runs the load-time
     # gates (stale-binary, cm-continuity) as a side effect of opening
     # the reader in `inspect_binary`.
     caps = inspect_binary(first(binary_paths); io = devnull)
-    if caps.grid_type === :cubed_sphere
-        return _run_driven_simulation_cs(binary_paths, cfg)
+    result = if caps.grid_type === :cubed_sphere
+        _run_driven_simulation_cs(binary_paths, cfg)
     else
-        return _run_driven_simulation_structured(binary_paths, cfg)
+        _run_driven_simulation_structured(binary_paths, cfg)
     end
+    if timers_on
+        SectionTimer.disable!()
+        SectionTimer.report(stderr)
+        output_cfg = get(cfg, "output", Dict{String, Any}())
+        snapshot_file = expand_data_path(String(get(output_cfg, "snapshot_file", "")))
+        if !isempty(snapshot_file)
+            csv_path = replace(snapshot_file, r"\.nc$" => "") * ".timings.csv"
+            written = SectionTimer.write_csv(csv_path)
+            written !== nothing && @info "Section timings → $(written)"
+        end
+    end
+    return result
 end
 
 function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
@@ -357,7 +374,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
 
     if do_snapshots && snap_idx <= length(snapshot_hours) &&
        abs(snapshot_hours[snap_idx]) < 0.5
-        push!(snapshots, capture_snapshot(model; time_hours = 0.0))
+        SectionTimer.@section :snapshot_capture push!(snapshots, capture_snapshot(model; time_hours = 0.0))
         @info @sprintf("Snapshot %d at t=%.0fh", snap_idx, 0.0)
         snap_idx += 1
     end
@@ -397,7 +414,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
                 total_elapsed_hours += window_hours
                 while snap_idx <= length(snapshot_hours) &&
                       abs(total_elapsed_hours - snapshot_hours[snap_idx]) < 0.5
-                    push!(snapshots, capture_snapshot(model;
+                    SectionTimer.@section :snapshot_capture push!(snapshots, capture_snapshot(model;
                                                       time_hours = total_elapsed_hours))
                     @info @sprintf("Snapshot %d at t=%.0fh",
                                    snap_idx, total_elapsed_hours)
@@ -418,9 +435,10 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
         # `air_mass_basis(driver)` already returns the Symbol and has been
         # validated to match `model.state`'s basis by
         # `_check_basis_compatibility` before any step!.
-        write_snapshot_netcdf(snapshot_file, snapshots, driver_grid(first_driver);
-                              mass_basis = air_mass_basis(first_driver),
-                              options = _snapshot_write_options(cfg, FT))
+        SectionTimer.@section :snapshot_write write_snapshot_netcdf(
+            snapshot_file, snapshots, driver_grid(first_driver);
+            mass_basis = air_mass_basis(first_driver),
+            options = _snapshot_write_options(cfg, FT))
     end
 
     m1 = total_air_mass(model.state)
@@ -583,7 +601,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
     snapshots = SnapshotFrame[]
 
     function capture_cs!(hour_total)
-        push!(snapshots, capture_snapshot(model; time_hours = hour_total,
+        SectionTimer.@section :snapshot_capture push!(snapshots, capture_snapshot(model; time_hours = hour_total,
                                           halo_width = Hp))
     end
 
@@ -669,9 +687,10 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
         # BasisT was bound at model construction (dry by default on CS per
         # invariant 14); reuse it so the NetCDF records the same basis the
         # `air_mass` arrays were stored under.
-        write_snapshot_netcdf(snapshot_file, snapshots, grid;
-                              mass_basis = BasisT === DryBasis ? :dry : :moist,
-                              options = _snapshot_write_options(cfg, FT))
+        SectionTimer.@section :snapshot_write write_snapshot_netcdf(
+            snapshot_file, snapshots, grid;
+            mass_basis = BasisT === DryBasis ? :dry : :moist,
+            options = _snapshot_write_options(cfg, FT))
     end
     return model
 end

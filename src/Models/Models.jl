@@ -7,6 +7,7 @@ module Models
 
 using Adapt
 using ..Architectures
+using ..SectionTimer
 using ..State
 using ..Grids
 using ..Operators

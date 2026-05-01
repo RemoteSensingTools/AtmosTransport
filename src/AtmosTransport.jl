@@ -83,6 +83,10 @@ const AbstractArchitecture = Architectures.AbstractArchitecture
 const CPU = Architectures.CPU
 const GPU = Architectures.GPU
 
+# ---- Section timer (host-side wall-clock; off unless ATMOSTR_TIMERS=1) ----
+include("Diagnostics/SectionTimer.jl")
+using .SectionTimer
+
 # ---- Quantity-kind dispatch traits ----
 # Tiny trait module loaded early so any downstream module (Preprocessing,
 # Operators, Output) can dispatch on extensive vs intensive vs vector vs flux

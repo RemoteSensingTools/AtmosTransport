@@ -105,6 +105,7 @@ function build_v4_header(date::Date,
                          provenance)
     payload_sections = expected_payload_sections(settings)
     var_names = copy(payload_sections)
+    include_surface = _settings_include_surface(settings)
 
     ncell = sizes.Nx * sizes.Ny
     nface_h = (sizes.Nx + 1) * sizes.Ny + sizes.Nx * (sizes.Ny + 1)

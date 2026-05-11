@@ -41,6 +41,8 @@ core_tests = [
     "test_cs_panel_geographic_roundtrip.jl",
     "test_basis_explicit_core.jl",
     "test_advection_kernels.jl",
+    "test_cs_ppm_adjoint_footprint.jl",
+    "test_linrood_kernel_adjoints.jl",
     "test_structured_mesh_metadata.jl",
     "test_reduced_gaussian_mesh.jl",
     "test_driven_simulation.jl",

@@ -944,4 +944,6 @@ export apply_linrood_update_adjoint!,
        apply_pre_advect_x_adjoint!,
        apply_pre_advect_y_adjoint!,
        apply_ppm_x_face_from_q_adjoint!,
-       apply_ppm_y_face_from_q_adjoint!
+       apply_ppm_y_face_from_q_adjoint!,
+       apply_ppm_x_face_adjoint!,
+       apply_ppm_y_face_adjoint!

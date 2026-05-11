@@ -561,3 +561,107 @@ end
             lambda_q, lambda_fx_face, q, am, m, mesh, Val(7))
     end
 end
+
+# ===========================================================================
+# Commit 3b — rm-input `_ppm_x/y_face_kernel!` adjoints (ORD=5)
+#
+# Like the `_from_q` variants, but fold `_safe_mixing_ratio` into the
+# d6-AD chain and add the donor-cell α-denominator contribution. Tests
+# verify the JVP/VJP identity against centered finite differences with
+# perturbations on BOTH rm and m.
+# ===========================================================================
+
+function _ppm_x_face_fd_jvp(rm, m, am, drm, dm, mesh::AT.CubedSphereMesh{FT};
+                             eps_fd) where {FT}
+    Nc = mesh.Nc; Hp = mesh.Hp
+    Nz = size(rm, 3)
+    fx_plus  = zeros(FT, Nc + 1, Nc, Nz)
+    fx_minus = zeros(FT, Nc + 1, Nc, Nz)
+    backend = get_backend(rm)
+    k! = Adv._ppm_x_face_kernel!(backend, 256)
+    rm_plus  = rm .+ FT(eps_fd) .* drm
+    rm_minus = rm .- FT(eps_fd) .* drm
+    m_plus   = m  .+ FT(eps_fd) .* dm
+    m_minus  = m  .- FT(eps_fd) .* dm
+    k!(fx_plus,  rm_plus,  m_plus,  am, Hp, Nc, Val(5); ndrange=(Nc + 1, Nc, Nz))
+    k!(fx_minus, rm_minus, m_minus, am, Hp, Nc, Val(5); ndrange=(Nc + 1, Nc, Nz))
+    synchronize(backend)
+    return (fx_plus .- fx_minus) ./ (FT(2) * FT(eps_fd))
+end
+
+function _ppm_y_face_fd_jvp(rm, m, bm, drm, dm, mesh::AT.CubedSphereMesh{FT};
+                             eps_fd) where {FT}
+    Nc = mesh.Nc; Hp = mesh.Hp
+    Nz = size(rm, 3)
+    fy_plus  = zeros(FT, Nc, Nc + 1, Nz)
+    fy_minus = zeros(FT, Nc, Nc + 1, Nz)
+    backend = get_backend(rm)
+    k! = Adv._ppm_y_face_kernel!(backend, 256)
+    rm_plus  = rm .+ FT(eps_fd) .* drm
+    rm_minus = rm .- FT(eps_fd) .* drm
+    m_plus   = m  .+ FT(eps_fd) .* dm
+    m_minus  = m  .- FT(eps_fd) .* dm
+    k!(fy_plus,  rm_plus,  m_plus,  bm, Hp, Nc, Val(5); ndrange=(Nc, Nc + 1, Nz))
+    k!(fy_minus, rm_minus, m_minus, bm, Hp, Nc, Val(5); ndrange=(Nc, Nc + 1, Nz))
+    synchronize(backend)
+    return (fy_plus .- fy_minus) ./ (FT(2) * FT(eps_fd))
+end
+
+@testset "Plan 25 Commit 3b — PPM rm-input face kernel adjoints (ORD=5)" begin
+    @testset "X face (rm-input) VJP vs FD JVP" begin
+        FT = Float64
+        Nc = 4; Hp = 3; Nz = 2
+        mesh = AT.CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
+        N = Nc + 2Hp
+
+        rng = MersenneTwister(301)
+        # Smooth fields, positive m well above threshold.
+        rm = FT.([sin(0.13i + 0.21j + 0.07k) for i in 1:N, j in 1:N, k in 1:Nz])
+        m  = FT(3) .+ rand(rng, FT, N, N, Nz)
+        am = FT(0.02) .* randn(rng, FT, Nc + 1, Nc, Nz)
+
+        lambda_fx_face = randn(rng, FT, Nc + 1, Nc, Nz)
+        lambda_rm = zeros(FT, N, N, Nz)
+        lambda_m  = zeros(FT, N, N, Nz)
+        Adv.apply_ppm_x_face_adjoint!(
+            lambda_rm, lambda_m, lambda_fx_face, rm, m, am, mesh, Val(5),
+        )
+
+        drm = randn(rng, FT, N, N, Nz)
+        dm  = randn(rng, FT, N, N, Nz)
+        fd_jvp = _ppm_x_face_fd_jvp(rm, m, am, drm, dm, mesh; eps_fd=1e-6)
+
+        lhs = _inner_full(lambda_fx_face, fd_jvp)
+        rhs = sum(lambda_rm .* drm) + sum(lambda_m .* dm)
+
+        @test isapprox(lhs, rhs; atol=1e-7, rtol=1e-6)
+    end
+
+    @testset "Y face (rm-input) VJP vs FD JVP" begin
+        FT = Float64
+        Nc = 4; Hp = 3; Nz = 2
+        mesh = AT.CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
+        N = Nc + 2Hp
+
+        rng = MersenneTwister(401)
+        rm = FT.([sin(0.11i - 0.17j + 0.05k) for i in 1:N, j in 1:N, k in 1:Nz])
+        m  = FT(3) .+ rand(rng, FT, N, N, Nz)
+        bm = FT(0.02) .* randn(rng, FT, Nc, Nc + 1, Nz)
+
+        lambda_fy_face = randn(rng, FT, Nc, Nc + 1, Nz)
+        lambda_rm = zeros(FT, N, N, Nz)
+        lambda_m  = zeros(FT, N, N, Nz)
+        Adv.apply_ppm_y_face_adjoint!(
+            lambda_rm, lambda_m, lambda_fy_face, rm, m, bm, mesh, Val(5),
+        )
+
+        drm = randn(rng, FT, N, N, Nz)
+        dm  = randn(rng, FT, N, N, Nz)
+        fd_jvp = _ppm_y_face_fd_jvp(rm, m, bm, drm, dm, mesh; eps_fd=1e-6)
+
+        lhs = _inner_full(lambda_fy_face, fd_jvp)
+        rhs = sum(lambda_rm .* drm) + sum(lambda_m .* dm)
+
+        @test isapprox(lhs, rhs; atol=1e-7, rtol=1e-6)
+    end
+end

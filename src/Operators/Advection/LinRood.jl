@@ -940,4 +940,6 @@ export fillz_q!, apply_divergence_damping_cs!
 # Adjoint kernels (Plan 25). The forward kernels above are paired with
 # reverse-mode kernels defined in `linrood_adjoint_kernels.jl`, included
 # alongside this file from `Advection.jl`. Re-export below for `Adjoints`.
-export apply_linrood_update_adjoint!
+export apply_linrood_update_adjoint!,
+       apply_pre_advect_x_adjoint!,
+       apply_pre_advect_y_adjoint!

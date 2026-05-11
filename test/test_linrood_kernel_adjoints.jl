@@ -161,7 +161,7 @@ end
         @test isapprox(lhs, rhs; atol=tol, rtol=tol)
     end
 
-    @testset "adjoint zeros on zero seed" begin
+    @testset "adjoint zeros on zero seed (update kernel)" begin
         # Sanity check: if the seed is zero, no adjoint accumulators
         # should be touched.
         FT = Float64
@@ -194,5 +194,242 @@ end
         @test all(iszero, lambda_fx_out)
         @test all(iszero, lambda_fy_in)
         @test all(iszero, lambda_fy_out)
+    end
+end
+
+# ---------------------------------------------------------------------------
+# Commit 2 — pre-advect kernel adjoints
+#
+# The pre-advect kernels have a different shape from the update kernel:
+# they compute `q = _safe_mixing_ratio(rm + bm·fy_face_div, m + bm_div)`,
+# which is smooth in `(rm, m, fy_face)` above the `100·eps` threshold
+# and exactly zero below. Treat the operator as the LINEAR-ABOVE-
+# THRESHOLD map; the transposition identity holds for the linear part.
+# ---------------------------------------------------------------------------
+
+# Run one panel of the forward `_pre_advect_y_kernel!` and return the
+# q_i array as written into a haloed buffer.
+function _run_pre_advect_y_forward(rm, m, bm, fy_face, mesh::AT.CubedSphereMesh{FT}) where {FT}
+    Nc = mesh.Nc; Hp = mesh.Hp
+    Nz = size(rm, 3)
+    N = Nc + 2Hp
+    q_i = zeros(FT, N, N, Nz)
+    backend = get_backend(q_i)
+    k! = Adv._pre_advect_y_kernel!(backend, 256)
+    k!(q_i, rm, m, bm, fy_face, Hp; ndrange=(Nc, Nc, Nz))
+    synchronize(backend)
+    return q_i
+end
+
+function _run_pre_advect_x_forward(rm, m, am, fx_face, mesh::AT.CubedSphereMesh{FT}) where {FT}
+    Nc = mesh.Nc; Hp = mesh.Hp
+    Nz = size(rm, 3)
+    N = Nc + 2Hp
+    q_j = zeros(FT, N, N, Nz)
+    backend = get_backend(q_j)
+    k! = Adv._pre_advect_x_kernel!(backend, 256)
+    k!(q_j, rm, m, am, fx_face, Hp; ndrange=(Nc, Nc, Nz))
+    synchronize(backend)
+    return q_j
+end
+
+# Build typical pre-advect inputs: rm of arbitrary sign, m strictly
+# positive and well above the safe-mixing-ratio threshold, small mass
+# fluxes so that m_new = m + (bm_s - bm_n) stays positive.
+function _pre_advect_y_inputs(; Nc=4, Hp=3, Nz=3, FT=Float64, seed=11)
+    rng = MersenneTwister(seed)
+    N = Nc + 2Hp
+    rm = randn(rng, FT, N, N, Nz)
+    m  = FT(2) .+ rand(rng, FT, N, N, Nz)
+    bm = FT(0.01) .* randn(rng, FT, Nc, Nc + 1, Nz)
+    fy_face = randn(rng, FT, Nc, Nc + 1, Nz)
+    return (; rm, m, bm, fy_face)
+end
+
+function _pre_advect_x_inputs(; Nc=4, Hp=3, Nz=3, FT=Float64, seed=12)
+    rng = MersenneTwister(seed)
+    N = Nc + 2Hp
+    rm = randn(rng, FT, N, N, Nz)
+    m  = FT(2) .+ rand(rng, FT, N, N, Nz)
+    am = FT(0.01) .* randn(rng, FT, Nc + 1, Nc, Nz)
+    fx_face = randn(rng, FT, Nc + 1, Nc, Nz)
+    return (; rm, m, am, fx_face)
+end
+
+# Compute the analytical Jacobian-vector product dq = (∂F/∂x)·dx for
+# `_pre_advect_y_kernel!` at state `(rm, m, bm, fy_face)` and perturbation
+# `(drm, dm, dfy)`. Used to test the adjoint via the linearization
+# identity ⟨lambda_q, dq⟩ = ⟨(∂F/∂x)ᵀ·lambda_q, dx⟩.
+function _pre_advect_y_jvp(rm, m, bm, fy_face, drm, dm, dfy,
+                            mesh::AT.CubedSphereMesh{FT}) where {FT}
+    Nc = mesh.Nc; Hp = mesh.Hp
+    Nz = size(rm, 3)
+    N = Nc + 2Hp
+    dq = zeros(FT, N, N, Nz)
+    thresh = FT(100) * eps(FT)
+    @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
+        ii = Hp + i; jj = Hp + j
+        bm_s = bm[i, j,     k]
+        bm_n = bm[i, j + 1, k]
+        m_new = m[ii, jj, k] + bm_s - bm_n
+        if m_new > thresh
+            rm_new = rm[ii, jj, k] +
+                     bm_s * fy_face[i, j, k] - bm_n * fy_face[i, j + 1, k]
+            inv_m_new = one(FT) / m_new
+            q = rm_new * inv_m_new
+            drm_new = drm[ii, jj, k] +
+                      bm_s * dfy[i, j, k] - bm_n * dfy[i, j + 1, k]
+            dm_new = dm[ii, jj, k]   # bm is fixed
+            dq[ii, jj, k] = (drm_new - q * dm_new) * inv_m_new
+        end
+    end
+    return dq
+end
+
+function _pre_advect_x_jvp(rm, m, am, fx_face, drm, dm, dfx,
+                            mesh::AT.CubedSphereMesh{FT}) where {FT}
+    Nc = mesh.Nc; Hp = mesh.Hp
+    Nz = size(rm, 3)
+    N = Nc + 2Hp
+    dq = zeros(FT, N, N, Nz)
+    thresh = FT(100) * eps(FT)
+    @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
+        ii = Hp + i; jj = Hp + j
+        am_w = am[i,     j, k]
+        am_e = am[i + 1, j, k]
+        m_new = m[ii, jj, k] + am_w - am_e
+        if m_new > thresh
+            rm_new = rm[ii, jj, k] +
+                     am_w * fx_face[i, j, k] - am_e * fx_face[i + 1, j, k]
+            inv_m_new = one(FT) / m_new
+            q = rm_new * inv_m_new
+            drm_new = drm[ii, jj, k] +
+                      am_w * dfx[i, j, k] - am_e * dfx[i + 1, j, k]
+            dm_new = dm[ii, jj, k]
+            dq[ii, jj, k] = (drm_new - q * dm_new) * inv_m_new
+        end
+    end
+    return dq
+end
+
+@testset "Plan 25 Commit 2 — pre-advect kernel adjoints" begin
+    # The forward `_pre_advect_y_kernel!` is rational in `m` (via the
+    # 1/m_new factor inside `_safe_mixing_ratio`), so the strict-linear
+    # transposition identity ⟨y, F·x⟩ = ⟨Fᵀ·y, x⟩ does NOT apply to
+    # absolute states. The adjoint must instead transpose the
+    # Frechet derivative dF/dx at the current state. We verify
+    #     ⟨lambda_q, dF/dx · dx⟩ = ⟨(dF/dx)ᵀ · lambda_q, dx⟩
+    # for any random perturbation `dx`, with the analytical JVP
+    # computed by `_pre_advect_{x,y}_jvp` above.
+
+    @testset "pre_advect_y JVP/VJP identity ($(FT))" for FT in (Float64, Float32)
+        Nc = 4; Hp = 3; Nz = 3
+        mesh = AT.CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
+        N = Nc + 2Hp
+
+        in_ = _pre_advect_y_inputs(; Nc, Hp, Nz, FT, seed=21)
+
+        # VJP from the adjoint kernel.
+        rng = MersenneTwister(22)
+        lambda_q = zeros(FT, N, N, Nz)
+        for k in 1:Nz, j in (Hp + 1):(Hp + Nc), i in (Hp + 1):(Hp + Nc)
+            lambda_q[i, j, k] = randn(rng, FT)
+        end
+
+        lambda_rm = zeros(FT, N, N, Nz)
+        lambda_m  = zeros(FT, N, N, Nz)
+        lambda_fy_face = zeros(FT, Nc, Nc + 1, Nz)
+
+        Adv.apply_pre_advect_y_adjoint!(
+            lambda_rm, lambda_m, lambda_fy_face,
+            lambda_q, in_.rm, in_.m, in_.bm, in_.fy_face, mesh,
+        )
+
+        # JVP from the analytical Frechet derivative against a random
+        # perturbation `dx = (drm, dm, dfy)`.
+        drm = randn(rng, FT, N, N, Nz)
+        dm  = randn(rng, FT, N, N, Nz)
+        dfy = randn(rng, FT, Nc, Nc + 1, Nz)
+        dq  = _pre_advect_y_jvp(in_.rm, in_.m, in_.bm, in_.fy_face,
+                                 drm, dm, dfy, mesh)
+
+        lhs = _inner_interior(lambda_q, dq, Nc, Hp)
+        rhs = _inner_interior(lambda_rm, drm, Nc, Hp) +
+              _inner_interior(lambda_m,  dm,  Nc, Hp) +
+              _inner_full(lambda_fy_face, dfy)
+
+        tol = FT === Float64 ? 1e-12 : 1f-5
+        @test isapprox(lhs, rhs; atol=tol, rtol=tol)
+    end
+
+    @testset "pre_advect_x JVP/VJP identity ($(FT))" for FT in (Float64, Float32)
+        Nc = 4; Hp = 3; Nz = 3
+        mesh = AT.CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
+        N = Nc + 2Hp
+
+        in_ = _pre_advect_x_inputs(; Nc, Hp, Nz, FT, seed=31)
+
+        rng = MersenneTwister(32)
+        lambda_q = zeros(FT, N, N, Nz)
+        for k in 1:Nz, j in (Hp + 1):(Hp + Nc), i in (Hp + 1):(Hp + Nc)
+            lambda_q[i, j, k] = randn(rng, FT)
+        end
+
+        lambda_rm = zeros(FT, N, N, Nz)
+        lambda_m  = zeros(FT, N, N, Nz)
+        lambda_fx_face = zeros(FT, Nc + 1, Nc, Nz)
+
+        Adv.apply_pre_advect_x_adjoint!(
+            lambda_rm, lambda_m, lambda_fx_face,
+            lambda_q, in_.rm, in_.m, in_.am, in_.fx_face, mesh,
+        )
+
+        drm = randn(rng, FT, N, N, Nz)
+        dm  = randn(rng, FT, N, N, Nz)
+        dfx = randn(rng, FT, Nc + 1, Nc, Nz)
+        dq  = _pre_advect_x_jvp(in_.rm, in_.m, in_.am, in_.fx_face,
+                                 drm, dm, dfx, mesh)
+
+        lhs = _inner_interior(lambda_q, dq, Nc, Hp)
+        rhs = _inner_interior(lambda_rm, drm, Nc, Hp) +
+              _inner_interior(lambda_m,  dm,  Nc, Hp) +
+              _inner_full(lambda_fx_face, dfx)
+
+        tol = FT === Float64 ? 1e-12 : 1f-5
+        @test isapprox(lhs, rhs; atol=tol, rtol=tol)
+    end
+
+    @testset "small-mass column zeroes the gradient" begin
+        # Confirm the `m_new <= 100·eps(FT)` branch returns zero
+        # gradient (matching the forward `_safe_mixing_ratio` zero
+        # output). Construct a column with m below threshold and bm
+        # such that m_new stays below threshold; the adjoint must NOT
+        # write into any of (lambda_rm, lambda_m, lambda_fy_face) for
+        # that cell.
+        FT = Float64
+        Nc = 2; Hp = 3; Nz = 1
+        mesh = AT.CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
+        N = Nc + 2Hp
+
+        rm = zeros(FT, N, N, Nz)
+        m  = zeros(FT, N, N, Nz)  # zero air mass everywhere
+        bm = zeros(FT, Nc, Nc + 1, Nz)
+        fy_face = randn(MersenneTwister(99), FT, Nc, Nc + 1, Nz)
+
+        # Seed adjoint with non-zero values to be sure we'd notice a
+        # spurious write.
+        lambda_q_i = ones(FT, N, N, Nz)
+        lambda_rm = zeros(FT, N, N, Nz)
+        lambda_m  = zeros(FT, N, N, Nz)
+        lambda_fy_face = zeros(FT, Nc, Nc + 1, Nz)
+
+        Adv.apply_pre_advect_y_adjoint!(
+            lambda_rm, lambda_m, lambda_fy_face,
+            lambda_q_i, rm, m, bm, fy_face, mesh,
+        )
+
+        @test all(iszero, lambda_rm)
+        @test all(iszero, lambda_m)
+        @test all(iszero, lambda_fy_face)
     end
 end

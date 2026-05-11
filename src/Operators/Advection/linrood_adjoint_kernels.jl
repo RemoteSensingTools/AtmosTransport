@@ -1033,11 +1033,12 @@ function apply_linrood_horizontal_adjoint_single_panel!(
     N = Nc + 2Hp
     FT = eltype(lambda_rm)
 
-    lambda_fx_in  = zeros(FT, Nc + 1, Nc, Nz)
-    lambda_fx_out = zeros(FT, Nc + 1, Nc, Nz)
-    lambda_fy_in  = zeros(FT, Nc, Nc + 1, Nz)
-    lambda_fy_out = zeros(FT, Nc, Nc + 1, Nz)
-    lambda_q_buf  = zeros(FT, N, N, Nz)
+    # Backend-aware allocations on the same backend as `lambda_rm`.
+    lambda_fx_in  = similar(lambda_rm, FT, (Nc + 1, Nc, Nz)); fill!(lambda_fx_in,  zero(FT))
+    lambda_fx_out = similar(lambda_rm, FT, (Nc + 1, Nc, Nz)); fill!(lambda_fx_out, zero(FT))
+    lambda_fy_in  = similar(lambda_rm, FT, (Nc, Nc + 1, Nz)); fill!(lambda_fy_in,  zero(FT))
+    lambda_fy_out = similar(lambda_rm, FT, (Nc, Nc + 1, Nz)); fill!(lambda_fy_out, zero(FT))
+    lambda_q_buf  = similar(lambda_rm, FT, (N, N, Nz));       fill!(lambda_q_buf,  zero(FT))
 
     # ── Reverse Phase 3 ────────────────────────────────────────────
     # update_adjoint: lambda_rm_new, lambda_m_new → lambda_rm, lambda_m,
@@ -1104,5 +1105,187 @@ function apply_linrood_horizontal_adjoint_single_panel!(
         lambda_rm, lambda_m, lambda_fy_in, rm, m, bm, mesh, Val(ORD),
     )
 
+    return nothing
+end
+
+# ===========================================================================
+# Plan 25 Commit 5 — single-panel, multi-substep LinRood horizontal adjoint
+# with ZERO cross-panel halos.
+#
+# Builds on the single-panel composition from Commit 4 to support a
+# sequence of forward substeps (each with its own `am`/`bm` tape),
+# replayed in reverse order. Six-panel orchestration and cross-panel
+# halo adjoint integration into `cs_surface_emission_footprint` are
+# deferred to Commit 6 — this commit ships a parallel API
+# `apply_linrood_multi_substep_adjoint!` that takes a single-panel
+# meteo tape and produces gradients of an objective over the substep
+# sequence.
+# ===========================================================================
+
+# Per-substep tape entry produced by the forward pass: holds the
+# state at the START of the substep plus the intermediate q_buf
+# snapshots needed by the reverse pass.
+struct LinRoodHorizontalTapeEntry{FT, A3, A3x, A3y}
+    rm     :: A3   # rm at substep start (haloed)
+    m      :: A3   # m  at substep start (haloed)
+    q_buf_phase2 :: A3   # q_buf state B (end of phase 1)
+    q_buf_phase3 :: A3   # q_buf state C (end of phase 2)
+    fx_in  :: A3x  # fx_in face (computed in phase 2)
+    fx_out :: A3x  # fx_out face (computed in phase 2)
+    fy_in  :: A3y  # fy_in face (computed in phase 1)
+end
+
+"""
+    record_linrood_substep!(rm, m, am, bm, mesh) -> (tape_entry, rm_new, m_new)
+
+Run one forward LinRood horizontal substep ON ONE PANEL with halos
+held at their input values (no cross-panel transfer) and return a
+`LinRoodHorizontalTapeEntry` plus the updated `(rm_new, m_new)`. The
+input `rm`, `m` are NOT mutated.
+"""
+function record_linrood_substep!(rm, m, am, bm,
+                                  mesh::CubedSphereMesh{FT}) where {FT}
+    Nc = mesh.Nc; Hp = mesh.Hp
+    Nz = size(rm, 3)
+    N = Nc + 2Hp
+    backend = get_backend(rm)
+
+    init_k!    = _init_q_buf_kernel!(backend, 256)
+    y_face_k!  = _ppm_y_face_kernel!(backend, 256)
+    x_face_k!  = _ppm_x_face_kernel!(backend, 256)
+    xq_face_k! = _ppm_x_face_from_q_kernel!(backend, 256)
+    yq_face_k! = _ppm_y_face_from_q_kernel!(backend, 256)
+    pre_y_k!   = _pre_advect_y_kernel!(backend, 256)
+    pre_x_k!   = _pre_advect_x_kernel!(backend, 256)
+    update_k!  = _linrood_update_kernel!(backend, 256)
+
+    # Backend-aware allocations (`similar` honors the input array's
+    # storage type so device inputs stay on-device).
+    fy_in  = similar(rm, FT, (Nc, Nc + 1, Nz));  fill!(fy_in,  zero(FT))
+    fy_out = similar(rm, FT, (Nc, Nc + 1, Nz));  fill!(fy_out, zero(FT))
+    fx_in  = similar(rm, FT, (Nc + 1, Nc, Nz));  fill!(fx_in,  zero(FT))
+    fx_out = similar(rm, FT, (Nc + 1, Nc, Nz));  fill!(fx_out, zero(FT))
+    q_buf  = similar(rm, FT, (N, N, Nz));        fill!(q_buf,  zero(FT))
+
+    # Phase 1
+    init_k!(q_buf, rm, m; ndrange=(N, N, Nz))
+    synchronize(backend)
+    y_face_k!(fy_in, rm, m, bm, Hp, Nc, Val(5);
+              ndrange=(Nc, Nc + 1, Nz))
+    pre_y_k!(q_buf, rm, m, bm, fy_in, Hp; ndrange=(Nc, Nc, Nz))
+    synchronize(backend)
+    q_buf_phase2 = copy(q_buf)
+
+    # Phase 2
+    xq_face_k!(fx_out, q_buf_phase2, am, m, Hp, Nc, Val(5);
+               ndrange=(Nc + 1, Nc, Nz))
+    x_face_k!(fx_in, rm, m, am, Hp, Nc, Val(5);
+              ndrange=(Nc + 1, Nc, Nz))
+    synchronize(backend)
+    init_k!(q_buf, rm, m; ndrange=(N, N, Nz))
+    synchronize(backend)
+    pre_x_k!(q_buf, rm, m, am, fx_in, Hp; ndrange=(Nc, Nc, Nz))
+    synchronize(backend)
+    q_buf_phase3 = copy(q_buf)
+
+    # Phase 3
+    yq_face_k!(fy_out, q_buf_phase3, bm, m, Hp, Nc, Val(5);
+               ndrange=(Nc, Nc + 1, Nz))
+    rm_new = copy(rm)
+    m_new  = copy(m)
+    update_buf_rm = similar(rm, FT, (N, N, Nz));  fill!(update_buf_rm, zero(FT))
+    update_buf_m  = similar(rm, FT, (N, N, Nz));  fill!(update_buf_m,  zero(FT))
+    update_k!(update_buf_rm, update_buf_m, rm, m, am, bm,
+              fx_in, fx_out, fy_in, fy_out, Hp;
+              ndrange=(Nc, Nc, Nz))
+    synchronize(backend)
+    @inbounds for k in 1:Nz, j in (Hp + 1):(Hp + Nc), i in (Hp + 1):(Hp + Nc)
+        rm_new[i, j, k] = update_buf_rm[i, j, k]
+        m_new[i, j, k]  = update_buf_m[i, j, k]
+    end
+
+    entry = LinRoodHorizontalTapeEntry{FT, typeof(rm), typeof(fx_in), typeof(fy_in)}(
+        copy(rm), copy(m), q_buf_phase2, q_buf_phase3, fx_in, fx_out, fy_in)
+    return (entry, rm_new, m_new)
+end
+
+"""
+    apply_linrood_multi_substep_adjoint!(
+        lambda_rm0, lambda_m0,
+        lambda_rm_final, lambda_m_final,
+        tape, am_steps, bm_steps,
+        mesh)
+
+Reverse over `length(tape)` substeps. `tape[t]` is the
+`LinRoodHorizontalTapeEntry` produced by `record_linrood_substep!`
+for substep `t` on one panel. `am_steps[t]` / `bm_steps[t]` are the
+matching velocity tapes.
+
+Accumulates the gradient of the final-state objective
+`⟨lambda_rm_final, rm_final⟩ + ⟨lambda_m_final, m_final⟩` w.r.t. the
+substep-0 state into `(lambda_rm0, lambda_m0)`. Pure single-panel
+zero-cross-panel-halo path — same scope as Commit 4 extended over
+substeps.
+"""
+function apply_linrood_multi_substep_adjoint!(
+    lambda_rm0, lambda_m0,
+    lambda_rm_final, lambda_m_final,
+    tape::AbstractVector{<:LinRoodHorizontalTapeEntry},
+    am_steps, bm_steps,
+    mesh::CubedSphereMesh,
+)
+    nsteps = length(tape)
+    @assert length(am_steps) == nsteps
+    @assert length(bm_steps) == nsteps
+    FT = eltype(lambda_rm0)
+
+    # Working lambda for the running state; starts at the final-time
+    # seed, ends at substep-0 (which we copy into lambda_rm0,
+    # lambda_m0). Each substep's reverse READS lambda_rm/m (the
+    # adjoint of the substep output) and WRITES into the substep-input
+    # adjoint accumulators.
+    lambda_rm = copy(lambda_rm_final)
+    lambda_m  = copy(lambda_m_final)
+
+    for t in nsteps:-1:1
+        entry = tape[t]
+        # Allocate fresh accumulators for the substep-input adjoint
+        # on the same backend as `lambda_rm` / `lambda_m`.
+        sub_lambda_rm = similar(lambda_rm); fill!(sub_lambda_rm, zero(FT))
+        sub_lambda_m  = similar(lambda_m);  fill!(sub_lambda_m,  zero(FT))
+        apply_linrood_horizontal_adjoint_single_panel!(
+            sub_lambda_rm, sub_lambda_m,
+            lambda_rm, lambda_m,
+            entry.rm, entry.m, am_steps[t], bm_steps[t],
+            entry.q_buf_phase2, entry.q_buf_phase3,
+            entry.fx_in, entry.fx_out, entry.fy_in,
+            mesh, Val(5),
+        )
+        # The substep output's adjoint outside the interior is the
+        # ``carry-over'' adjoint from the previous reverse step. Inside
+        # the interior, the substep overwrites the state, so the carry
+        # interior is zero. We pass the interior-only lambda_rm/m into
+        # the substep adjoint, and add the halo carry to the substep-
+        # input adjoint at the end.
+        Nc = mesh.Nc; Hp = mesh.Hp
+        @inbounds for k in axes(lambda_rm, 3), j in 1:size(lambda_rm, 2), i in 1:size(lambda_rm, 1)
+            is_interior = (Hp + 1 <= i <= Hp + Nc) && (Hp + 1 <= j <= Hp + Nc)
+            if !is_interior
+                sub_lambda_rm[i, j, k] += lambda_rm[i, j, k]
+                sub_lambda_m[i, j, k]  += lambda_m[i, j, k]
+            end
+        end
+        # The substep adjoint's output IS the substep-input adjoint;
+        # shift it into the running lambda for the next (earlier)
+        # substep.
+        copyto!(lambda_rm, sub_lambda_rm)
+        copyto!(lambda_m,  sub_lambda_m)
+    end
+
+    # Final running lambda IS the gradient at substep-0.
+    @inbounds for I in eachindex(lambda_rm0)
+        lambda_rm0[I] += lambda_rm[I]
+        lambda_m0[I]  += lambda_m[I]
+    end
     return nothing
 end

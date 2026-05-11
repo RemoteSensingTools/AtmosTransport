@@ -804,3 +804,78 @@ end
 
     @test isapprox(lhs, rhs; atol=1e-7, rtol=1e-5)
 end
+
+# ===========================================================================
+# Commit 5 — multi-substep replay test
+# ===========================================================================
+
+@testset "Plan 25 Commit 5 — multi-substep LinRood horizontal adjoint" begin
+    FT = Float64
+    Nc = 4; Hp = 3; Nz = 2
+    mesh = AT.CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
+    N = Nc + 2Hp
+    nsteps = 3
+
+    rng = MersenneTwister(601)
+    rm0 = zeros(FT, N, N, Nz)
+    m0  = zeros(FT, N, N, Nz)
+    @inbounds for k in 1:Nz, j in (Hp + 1):(Hp + Nc), i in (Hp + 1):(Hp + Nc)
+        rm0[i, j, k] = FT(0.5) * sin(0.13i + 0.21j + 0.07k)
+        m0[i, j, k]  = FT(3) + FT(0.1) * sin(0.09i - 0.11j)
+    end
+    am_steps = [FT(0.005) .* randn(rng, FT, Nc + 1, Nc, Nz) for _ in 1:nsteps]
+    bm_steps = [FT(0.005) .* randn(rng, FT, Nc, Nc + 1, Nz) for _ in 1:nsteps]
+
+    # Forward sequence
+    function _forward_sequence(rm0, m0)
+        rm = copy(rm0); m = copy(m0)
+        tape = Vector{Any}(undef, nsteps)
+        for t in 1:nsteps
+            entry, rm_next, m_next = Adv.record_linrood_substep!(
+                rm, m, am_steps[t], bm_steps[t], mesh)
+            tape[t] = entry
+            rm = rm_next
+            m  = m_next
+        end
+        return (tape=tape, rm_final=rm, m_final=m)
+    end
+
+    out = _forward_sequence(rm0, m0)
+    tape_vec = Vector{typeof(out.tape[1])}(out.tape)
+
+    # Adjoint seeds on the final state (interior only).
+    lambda_rm_final = zeros(FT, N, N, Nz)
+    lambda_m_final  = zeros(FT, N, N, Nz)
+    @inbounds for k in 1:Nz, j in (Hp + 1):(Hp + Nc), i in (Hp + 1):(Hp + Nc)
+        lambda_rm_final[i, j, k] = randn(rng, FT)
+        lambda_m_final[i, j, k]  = randn(rng, FT)
+    end
+
+    lambda_rm0 = zeros(FT, N, N, Nz)
+    lambda_m0  = zeros(FT, N, N, Nz)
+    Adv.apply_linrood_multi_substep_adjoint!(
+        lambda_rm0, lambda_m0,
+        lambda_rm_final, lambda_m_final,
+        tape_vec, am_steps, bm_steps, mesh,
+    )
+
+    # FD JVP over the full nsteps sequence. Interior perturbations
+    # only (same reason as Commit 4).
+    drm = zeros(FT, N, N, Nz)
+    dm  = zeros(FT, N, N, Nz)
+    @inbounds for k in 1:Nz, j in (Hp + 1):(Hp + Nc), i in (Hp + 1):(Hp + Nc)
+        drm[i, j, k] = randn(rng, FT)
+        dm[i, j, k]  = randn(rng, FT)
+    end
+    eps_fd = 1e-6
+    out_plus  = _forward_sequence(rm0 .+ eps_fd .* drm, m0 .+ eps_fd .* dm)
+    out_minus = _forward_sequence(rm0 .- eps_fd .* drm, m0 .- eps_fd .* dm)
+    fd_drm_final = (out_plus.rm_final .- out_minus.rm_final) ./ (2eps_fd)
+    fd_dm_final  = (out_plus.m_final  .- out_minus.m_final)  ./ (2eps_fd)
+
+    lhs = sum(lambda_rm_final .* fd_drm_final) +
+          sum(lambda_m_final  .* fd_dm_final)
+    rhs = sum(lambda_rm0 .* drm) + sum(lambda_m0 .* dm)
+
+    @test isapprox(lhs, rhs; atol=1e-7, rtol=1e-4)
+end

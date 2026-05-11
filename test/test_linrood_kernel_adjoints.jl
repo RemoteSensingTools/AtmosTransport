@@ -665,3 +665,142 @@ end
         @test isapprox(lhs, rhs; atol=1e-7, rtol=1e-6)
     end
 end
+
+# ===========================================================================
+# Commit 4 — single-panel, zero-halo LinRood horizontal adjoint composition
+# ===========================================================================
+
+# Run one panel of the forward `fv_tp_2d_cs!` chain by hand, with all
+# cross-panel halo / corner copies skipped (halos held at the user-
+# supplied values for the duration). Captures the intermediate q_buf
+# states needed by the reverse pass. Mirrors LinRood.jl:715-779.
+function _linrood_single_panel_forward(rm0, m0, am, bm,
+                                        mesh::AT.CubedSphereMesh{FT}) where {FT}
+    Nc = mesh.Nc; Hp = mesh.Hp
+    Nz = size(rm0, 3)
+    N = Nc + 2Hp
+
+    rm = copy(rm0)
+    m  = copy(m0)
+    backend = get_backend(rm)
+
+    init_k!    = Adv._init_q_buf_kernel!(backend, 256)
+    y_face_k!  = Adv._ppm_y_face_kernel!(backend, 256)
+    x_face_k!  = Adv._ppm_x_face_kernel!(backend, 256)
+    xq_face_k! = Adv._ppm_x_face_from_q_kernel!(backend, 256)
+    yq_face_k! = Adv._ppm_y_face_from_q_kernel!(backend, 256)
+    pre_y_k!   = Adv._pre_advect_y_kernel!(backend, 256)
+    pre_x_k!   = Adv._pre_advect_x_kernel!(backend, 256)
+    update_k!  = Adv._linrood_update_kernel!(backend, 256)
+
+    fy_in  = zeros(FT, Nc, Nc + 1, Nz)
+    fy_out = zeros(FT, Nc, Nc + 1, Nz)
+    fx_in  = zeros(FT, Nc + 1, Nc, Nz)
+    fx_out = zeros(FT, Nc + 1, Nc, Nz)
+    q_buf  = zeros(FT, N, N, Nz)
+
+    # Phase 1
+    init_k!(q_buf, rm, m; ndrange=(N, N, Nz))
+    synchronize(backend)
+    y_face_k!(fy_in, rm, m, bm, Hp, Nc, Val(5);
+              ndrange=(Nc, Nc + 1, Nz))
+    pre_y_k!(q_buf, rm, m, bm, fy_in, Hp; ndrange=(Nc, Nc, Nz))
+    synchronize(backend)
+    q_buf_phase2 = copy(q_buf)
+
+    # Phase 2
+    xq_face_k!(fx_out, q_buf_phase2, am, m, Hp, Nc, Val(5);
+               ndrange=(Nc + 1, Nc, Nz))
+    x_face_k!(fx_in, rm, m, am, Hp, Nc, Val(5);
+              ndrange=(Nc + 1, Nc, Nz))
+    synchronize(backend)
+    init_k!(q_buf, rm, m; ndrange=(N, N, Nz))
+    synchronize(backend)
+    pre_x_k!(q_buf, rm, m, am, fx_in, Hp; ndrange=(Nc, Nc, Nz))
+    synchronize(backend)
+    q_buf_phase3 = copy(q_buf)
+
+    # Phase 3
+    yq_face_k!(fy_out, q_buf_phase3, bm, m, Hp, Nc, Val(5);
+               ndrange=(Nc, Nc + 1, Nz))
+    rm_new_buf = zeros(FT, N, N, Nz)
+    m_new_buf  = zeros(FT, N, N, Nz)
+    update_k!(rm_new_buf, m_new_buf, rm, m, am, bm,
+              fx_in, fx_out, fy_in, fy_out, Hp;
+              ndrange=(Nc, Nc, Nz))
+    synchronize(backend)
+
+    return (rm_new=rm_new_buf, m_new=m_new_buf,
+            q_buf_phase2=q_buf_phase2, q_buf_phase3=q_buf_phase3,
+            fx_in=fx_in, fx_out=fx_out, fy_in=fy_in, fy_out=fy_out)
+end
+
+@testset "Plan 25 Commit 4 — single-panel horizontal adjoint composition" begin
+    FT = Float64
+    Nc = 4; Hp = 3; Nz = 2
+    mesh = AT.CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
+    N = Nc + 2Hp
+
+    # Single panel with zero halos so cross-panel halo / corner
+    # adjoints don't contribute. Interior fields are smooth.
+    rng = MersenneTwister(501)
+    rm0 = zeros(FT, N, N, Nz)
+    m0  = zeros(FT, N, N, Nz)
+    @inbounds for k in 1:Nz, j in (Hp + 1):(Hp + Nc), i in (Hp + 1):(Hp + Nc)
+        rm0[i, j, k] = FT(0.5) * sin(0.13i + 0.21j + 0.07k)
+        m0[i, j, k]  = FT(3) + FT(0.1) * sin(0.09i - 0.11j)
+    end
+    am = FT(0.005) .* randn(rng, FT, Nc + 1, Nc, Nz)
+    bm = FT(0.005) .* randn(rng, FT, Nc, Nc + 1, Nz)
+
+    # Forward
+    out = _linrood_single_panel_forward(rm0, m0, am, bm, mesh)
+
+    # Adjoint seeds: random on interior only.
+    lambda_rm_new = zeros(FT, N, N, Nz)
+    lambda_m_new  = zeros(FT, N, N, Nz)
+    @inbounds for k in 1:Nz, j in (Hp + 1):(Hp + Nc), i in (Hp + 1):(Hp + Nc)
+        lambda_rm_new[i, j, k] = randn(rng, FT)
+        lambda_m_new[i, j, k]  = randn(rng, FT)
+    end
+
+    # Adjoint
+    lambda_rm = zeros(FT, N, N, Nz)
+    lambda_m  = zeros(FT, N, N, Nz)
+    Adv.apply_linrood_horizontal_adjoint_single_panel!(
+        lambda_rm, lambda_m,
+        lambda_rm_new, lambda_m_new,
+        rm0, m0, am, bm,
+        out.q_buf_phase2, out.q_buf_phase3,
+        out.fx_in, out.fx_out, out.fy_in,
+        mesh, Val(5),
+    )
+
+    # FD JVP through the full forward. Restrict perturbations to the
+    # INTERIOR cells — perturbing halo cells (where m0 = 0) would
+    # push m_perturbed slightly above the `_safe_mixing_ratio` zero
+    # threshold and produce explosive 1/m values in the FD numerator.
+    # The adjoint also writes zero to halo lambda cells in this
+    # zero-halo configuration, so the transposition identity is
+    # restricted to the interior.
+    drm = zeros(FT, N, N, Nz)
+    dm  = zeros(FT, N, N, Nz)
+    @inbounds for k in 1:Nz, j in (Hp + 1):(Hp + Nc), i in (Hp + 1):(Hp + Nc)
+        drm[i, j, k] = randn(rng, FT)
+        dm[i, j, k]  = randn(rng, FT)
+    end
+    eps_fd = 1e-6
+    out_plus  = _linrood_single_panel_forward(rm0 .+ eps_fd .* drm,
+                                               m0  .+ eps_fd .* dm,
+                                               am, bm, mesh)
+    out_minus = _linrood_single_panel_forward(rm0 .- eps_fd .* drm,
+                                               m0  .- eps_fd .* dm,
+                                               am, bm, mesh)
+    fd_drm_new = (out_plus.rm_new .- out_minus.rm_new) ./ (2eps_fd)
+    fd_dm_new  = (out_plus.m_new  .- out_minus.m_new)  ./ (2eps_fd)
+
+    lhs = sum(lambda_rm_new .* fd_drm_new) + sum(lambda_m_new .* fd_dm_new)
+    rhs = sum(lambda_rm .* drm) + sum(lambda_m .* dm)
+
+    @test isapprox(lhs, rhs; atol=1e-7, rtol=1e-5)
+end

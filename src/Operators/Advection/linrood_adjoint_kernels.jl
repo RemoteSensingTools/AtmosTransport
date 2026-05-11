@@ -929,3 +929,180 @@ function apply_ppm_y_face_adjoint!(lambda_rm, lambda_m, lambda_fy_face,
     synchronize(backend)
     return nothing
 end
+
+# ===========================================================================
+# Plan 25 Commit 4 — Single-panel, zero-halo LinRood horizontal adjoint.
+#
+# Composes the six kernel adjoints from Commits 1–3b into a single-step
+# reverse pass that mirrors the forward `fv_tp_2d_cs!` (LinRood.jl:695)
+# for ONE panel with all halos held at zero. Cross-panel halo / corner
+# adjoint (`_adjoint_fill_panel_halos!`, `copy_corners` reverse) is
+# deferred to Commit 5 alongside the full tape integration.
+#
+# The forward path captured in this composition:
+#   Phase 1: q_buf = safe_mixing_ratio(rm, m)         (init A: state = c)
+#            fy_in = ppm_y_face(rm, m, bm)
+#            q_buf[interior] = pre_advect_y(rm, m, bm, fy_in)  (state B: int=q*, halo=c)
+#   Phase 2: fx_out = ppm_x_face_from_q(q_buf_B, am, m)
+#            fx_in  = ppm_x_face(rm, m, am)
+#            q_buf = safe_mixing_ratio(rm, m)         (re-init A')
+#            q_buf[interior] = pre_advect_x(rm, m, am, fx_in)  (state C: int=q', halo=c)
+#   Phase 3: fy_out = ppm_y_face_from_q(q_buf_C, bm, m)
+#            (rm_new, m_new) = linrood_update(rm, m, am, bm, fx_*, fy_*)
+# ===========================================================================
+
+# Reverse of `safe_mixing_ratio(rm[h], m[h])` restricted to the halo
+# region (i.e., the union of {i in 1..N, j in 1..N, k} with at least
+# one of i ∉ Hp+1..Hp+Nc OR j ∉ Hp+1..Hp+Nc). Adds the chain-rule
+# contribution
+#     lambda_rm[h] += lambda_q[h] / m[h]
+#     lambda_m [h] += lambda_q[h] * (-rm[h]/m[h]²)
+# with the same `100·eps` threshold guard.
+function _accumulate_safe_mixing_ratio_halo_adjoint!(
+    lambda_rm, lambda_m, lambda_q, rm, m, mesh::CubedSphereMesh{FT},
+) where {FT}
+    Nc = mesh.Nc; Hp = mesh.Hp
+    Nz = size(lambda_rm, 3)
+    N = Nc + 2Hp
+    thresh = FT(100) * eps(FT)
+    @inbounds for k in 1:Nz, j in 1:N, i in 1:N
+        is_interior = (Hp + 1 <= i <= Hp + Nc) && (Hp + 1 <= j <= Hp + Nc)
+        is_interior && continue
+        m_h = m[i, j, k]
+        if m_h > thresh
+            inv_m = one(FT) / m_h
+            bar = lambda_q[i, j, k]
+            lambda_rm[i, j, k] += bar * inv_m
+            lambda_m[i, j, k]  += bar * (-rm[i, j, k] * inv_m * inv_m)
+        end
+    end
+    return nothing
+end
+
+# Helper to zero the interior of an array in [Hp+1..Hp+Nc] × [Hp+1..Hp+Nc].
+function _zero_interior!(arr, mesh::CubedSphereMesh)
+    Nc = mesh.Nc; Hp = mesh.Hp
+    @inbounds for k in axes(arr, 3),
+                  j in (Hp + 1):(Hp + Nc),
+                  i in (Hp + 1):(Hp + Nc)
+        arr[i, j, k] = zero(eltype(arr))
+    end
+    return nothing
+end
+
+"""
+    apply_linrood_horizontal_adjoint_single_panel!(
+        lambda_rm, lambda_m,
+        lambda_rm_new, lambda_m_new,
+        rm, m, am, bm,
+        q_buf_phase2, q_buf_phase3,
+        fx_in, fx_out, fy_in,
+        mesh, ::Val{ORD})
+
+Discrete transpose of `fv_tp_2d_cs!` for ONE panel with all halos held
+at zero. Reads the forward tape inputs `(rm, m, am, bm, q_buf_phase2,
+q_buf_phase3, fx_in, fx_out, fy_in)` and the adjoint seed
+`(lambda_rm_new, lambda_m_new)`, then accumulates into the input
+adjoints `(lambda_rm, lambda_m)`. Internally allocates the
+intermediate face / q_buf adjoints.
+
+Tape inputs:
+- `q_buf_phase2` — state B of q_buf (interior = q*, halo = c=rm/m from
+  init A); produced by phase 1's pre_advect_y.
+- `q_buf_phase3` — state C of q_buf (interior = q', halo = c=rm/m from
+  re-init A'); produced by phase 2's pre_advect_x.
+- `fx_in`, `fx_out`, `fy_in` — face mixing ratios captured at the end
+  of phase 2 / phase 3.
+
+`fy_out` is recomputed inside the kernel; it isn't a tape input. The
+kernel uses `Val(5)` only — ORD=7 boundary handling is future work.
+"""
+function apply_linrood_horizontal_adjoint_single_panel!(
+    lambda_rm, lambda_m,
+    lambda_rm_new, lambda_m_new,
+    rm, m, am, bm,
+    q_buf_phase2, q_buf_phase3,
+    fx_in, fx_out, fy_in,
+    mesh::CubedSphereMesh,
+    ::Val{ORD}=Val(5),
+) where {ORD}
+    ORD == 5 || throw(ArgumentError(
+        "Plan-25 Commit 4 implements ORD=5 only; ORD=$ORD is future work"))
+    Nc = mesh.Nc; Hp = mesh.Hp
+    Nz = size(lambda_rm, 3)
+    N = Nc + 2Hp
+    FT = eltype(lambda_rm)
+
+    lambda_fx_in  = zeros(FT, Nc + 1, Nc, Nz)
+    lambda_fx_out = zeros(FT, Nc + 1, Nc, Nz)
+    lambda_fy_in  = zeros(FT, Nc, Nc + 1, Nz)
+    lambda_fy_out = zeros(FT, Nc, Nc + 1, Nz)
+    lambda_q_buf  = zeros(FT, N, N, Nz)
+
+    # ── Reverse Phase 3 ────────────────────────────────────────────
+    # update_adjoint: lambda_rm_new, lambda_m_new → lambda_rm, lambda_m,
+    #                                              lambda_fx_in, lambda_fx_out,
+    #                                              lambda_fy_in, lambda_fy_out
+    apply_linrood_update_adjoint!(
+        lambda_rm, lambda_m,
+        lambda_fx_in, lambda_fx_out, lambda_fy_in, lambda_fy_out,
+        lambda_rm_new, lambda_m_new, am, bm, mesh,
+    )
+
+    # yq_face_adjoint: lambda_fy_out → lambda_q_buf (q_buf at phase 3 state C)
+    apply_ppm_y_face_from_q_adjoint!(
+        lambda_q_buf, lambda_fy_out, q_buf_phase3, bm, m, mesh, Val(ORD),
+    )
+
+    # ── Reverse Phase 2 ────────────────────────────────────────────
+    # `q_buf` interior at end of phase 2 was overwritten by pre_advect_x
+    # from rm, m, am, fx_in. Adjoint: lambda_q_buf[interior] feeds the
+    # pre_advect_x reverse, then is zeroed because the forward
+    # overwrote it.
+    apply_pre_advect_x_adjoint!(
+        lambda_rm, lambda_m, lambda_fx_in,
+        lambda_q_buf, rm, m, am, fx_in, mesh,
+    )
+    _zero_interior!(lambda_q_buf, mesh)
+
+    # `q_buf` halo at end of phase 2 was set by the re-init A'
+    # (init_q_buf over the entire haloed N×N from c=rm/m). Adjoint:
+    # the halo portion of lambda_q_buf goes back into lambda_rm,
+    # lambda_m via the safe_mixing_ratio chain rule.
+    _accumulate_safe_mixing_ratio_halo_adjoint!(
+        lambda_rm, lambda_m, lambda_q_buf, rm, m, mesh,
+    )
+    # `lambda_q_buf` is now fully consumed; clear it for the next phase.
+    fill!(lambda_q_buf, zero(FT))
+
+    # x_face_adjoint: lambda_fx_in → lambda_rm, lambda_m
+    apply_ppm_x_face_adjoint!(
+        lambda_rm, lambda_m, lambda_fx_in, rm, m, am, mesh, Val(ORD),
+    )
+
+    # xq_face_adjoint: lambda_fx_out → lambda_q_buf (q_buf at phase 2 state B)
+    apply_ppm_x_face_from_q_adjoint!(
+        lambda_q_buf, lambda_fx_out, q_buf_phase2, am, m, mesh, Val(ORD),
+    )
+
+    # ── Reverse Phase 1 ────────────────────────────────────────────
+    # `q_buf` interior at end of phase 1 was overwritten by pre_advect_y.
+    apply_pre_advect_y_adjoint!(
+        lambda_rm, lambda_m, lambda_fy_in,
+        lambda_q_buf, rm, m, bm, fy_in, mesh,
+    )
+    _zero_interior!(lambda_q_buf, mesh)
+
+    # `q_buf` halo at end of phase 1 was set by the init A.
+    _accumulate_safe_mixing_ratio_halo_adjoint!(
+        lambda_rm, lambda_m, lambda_q_buf, rm, m, mesh,
+    )
+    fill!(lambda_q_buf, zero(FT))
+
+    # y_face_adjoint: lambda_fy_in → lambda_rm, lambda_m
+    apply_ppm_y_face_adjoint!(
+        lambda_rm, lambda_m, lambda_fy_in, rm, m, bm, mesh, Val(ORD),
+    )
+
+    return nothing
+end

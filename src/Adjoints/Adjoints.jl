@@ -19,8 +19,15 @@ using ..Grids: CubedSphereMesh, reciprocal_edge,
     EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST
 using ..Operators.Advection: CSAdvectionWorkspace, NoLimiter,
     MonotoneLimiter, PPMScheme, SlopesScheme, UpwindScheme,
-    fill_panel_halos!, strang_split_cs!,
-    _cs_static_subcycle_count, _sweep_x_panel!, _sweep_y_panel!, _sweep_z_panel!
+    LinRoodPPMScheme,
+    fill_panel_halos!, strang_split_cs!, copy_corners!,
+    _cs_static_subcycle_count, _sweep_x_panel!, _sweep_y_panel!, _sweep_z_panel!,
+    apply_linrood_horizontal_adjoint_single_panel!,
+    _init_q_buf_kernel!, _ppm_y_face_kernel!, _ppm_x_face_kernel!,
+    _ppm_y_face_from_q_kernel!, _ppm_x_face_from_q_kernel!,
+    _pre_advect_y_kernel!, _pre_advect_x_kernel!, _linrood_update_kernel!,
+    strang_split_linrood_ppm!, CSLinRoodAdvectionWorkspace, LinRoodWorkspace,
+    fv_tp_2d_cs!, _sweep_z!
 using ..Operators.Diffusion: NoDiffusion, ImplicitVerticalDiffusion,
     apply_vertical_diffusion_vmr!
 using ..Operators.Convection: CMFMCConvection, CMFMCWorkspace,
@@ -32,7 +39,17 @@ using ..MetDrivers: ConvectionForcing, current_time
 
 const CSAdjointLinearScheme = Union{UpwindScheme, SlopesScheme{NoLimiter}, PPMScheme{NoLimiter}}
 const CSAdjointNonlinearScheme = Union{PPMScheme{MonotoneLimiter}}
-const CSAdjointSupportedScheme = Union{CSAdjointLinearScheme, CSAdjointNonlinearScheme}
+# Plan 25 Commit 6: LinRoodPPMScheme is supported via its own
+# horizontal tape record (`_CSLinRoodHorizRecord`) and the kernel
+# adjoints shipped in `src/Operators/Advection/linrood_adjoint_kernels.jl`.
+# The reverse-loop dispatch arm in `_collect_surface_footprints`
+# handles the new record type alongside the existing
+# `_CSSweepRecord`, `_CSHaloRecord`, `_CSDiffusionRecord`,
+# `_CSConvectionRecord`, and `_CSMidpointRecord` cases. ORD=5 only.
+const CSAdjointLinRoodScheme = LinRoodPPMScheme
+const CSAdjointSupportedScheme = Union{CSAdjointLinearScheme,
+                                        CSAdjointNonlinearScheme,
+                                        CSAdjointLinRoodScheme}
 
 abstract type AbstractCSFootprintObjective end
 
@@ -2586,6 +2603,11 @@ const _CSTapeOp = Union{
     _CSConvectionRecord,
 }
 
+# Plan 25 Commit 6 — LinRoodPPMScheme tape record + forward/reverse
+# integration. Defines `_CSLinRoodHorizRecord`,
+# `_record_cs_linrood_tape`, `_apply_cs_linrood_horizontal_adjoint!`.
+include("LinRoodTape.jl")
+
 function _record_sweep!(ops, direction::Symbol, scheme::CSAdjointLinearScheme,
                         panels_m, panels_flux, flux_scale, tape_storage)
     push!(ops, _CSSweepRecord(direction, scheme,
@@ -2905,6 +2927,15 @@ end
 function _record_cs_adjoint_tape(panels_rm0, panels_m0,
                                  panels_am_steps, panels_bm_steps, panels_cm_steps,
                                  mesh::CubedSphereMesh,
+                                 scheme::CSAdjointLinRoodScheme; kwargs...)
+    return _record_cs_linrood_tape(panels_rm0, panels_m0,
+                                    panels_am_steps, panels_bm_steps,
+                                    panels_cm_steps, mesh, scheme; kwargs...)
+end
+
+function _record_cs_adjoint_tape(panels_rm0, panels_m0,
+                                 panels_am_steps, panels_bm_steps, panels_cm_steps,
+                                 mesh::CubedSphereMesh,
                                  scheme::CSAdjointNonlinearScheme; kwargs...)
     return _record_cs_tracer_tape(panels_rm0, panels_m0,
                                   panels_am_steps, panels_bm_steps, panels_cm_steps,
@@ -2950,6 +2981,26 @@ function _collect_surface_footprints(lambda_panels, ops, panels_m0,
             _apply_cs_convection_adjoint!(lambda_panels, _tape_panels(op.panels_m),
                                           op.forcing, op.op, op.dt,
                                           convection_workspace, mesh)
+        elseif op isa _CSLinRoodHorizRecord
+            # Plan 25 Commit 6: LinRood horizontal substep reverse.
+            # `lambda_panels` holds the tracer-rm adjoint propagated
+            # through the tape. The substep produces an internal
+            # `lambda_m_panels` (via the `c = rm / m` chain rule and
+            # the donor-cell α denominator), but the
+            # cs_surface_emission_footprint design — like the existing
+            # `_record_cs_mass_tape` / `_record_cs_tracer_tape` paths —
+            # treats meteorology (air mass evolution) as a FIXED
+            # tape input. Mass-flux Jacobians are read off the per-
+            # record `panels_m` / `panels_am` / `panels_bm` snapshots
+            # rather than propagated via dynamic `lambda_m`, so we seed
+            # `lambda_m_new = 0` for each substep and discard its
+            # output. This matches the existing PPM reverse-loop
+            # contract where there is no `lambda_panels_m` at all.
+            lambda_m_panels = ntuple(p -> begin
+                a = similar(lambda_panels[p]); fill!(a, zero(eltype(a))); a
+            end, Val(6))
+            _apply_cs_linrood_horizontal_adjoint!(lambda_panels,
+                                                  lambda_m_panels, op, mesh)
         else
             throw(ArgumentError("unknown CS adjoint tape operation $(typeof(op))"))
         end
@@ -3023,12 +3074,21 @@ function _run_cs_footprint_forward(panels_rm0, panels_m0,
                 nothing
             end
         end
-        strang_split_cs!(panels_rm, panels_m,
-                         panels_am_steps[step], panels_bm_steps[step], panels_cm_steps[step],
-                         mesh, scheme, ws;
-                         flux_scale = one(eltype(panels_m[1])),
-                         cfl_limit = cfl_limit,
-                         midpoint! = midpoint!)
+        if scheme isa LinRoodPPMScheme
+            # LinRood uses a 3-phase unsplit horizontal + Z sweep
+            # composition; the standard split-sweep `strang_split_cs!`
+            # doesn't have face kernels for LinRoodPPMScheme.
+            _linrood_run_forward_step!(panels_rm, panels_m,
+                panels_am_steps[step], panels_bm_steps[step],
+                panels_cm_steps[step], mesh, scheme, ws, midpoint!)
+        else
+            strang_split_cs!(panels_rm, panels_m,
+                             panels_am_steps[step], panels_bm_steps[step], panels_cm_steps[step],
+                             mesh, scheme, ws;
+                             flux_scale = one(eltype(panels_m[1])),
+                             cfl_limit = cfl_limit,
+                             midpoint! = midpoint!)
+        end
         if !(convection_op isa NoConvection)
             forcing_step = _convection_forcing_at(convection_forcing, step, nsteps)
             forcing_step === nothing && throw(ArgumentError(
@@ -3111,12 +3171,21 @@ function _run_cs_observations_forward(panels_rm0, panels_m0,
                 nothing
             end
         end
-        strang_split_cs!(panels_rm, panels_m,
-                         panels_am_steps[step], panels_bm_steps[step], panels_cm_steps[step],
-                         mesh, scheme, ws;
-                         flux_scale = one(eltype(panels_m[1])),
-                         cfl_limit = cfl_limit,
-                         midpoint! = midpoint!)
+        if scheme isa LinRoodPPMScheme
+            # LinRood uses a 3-phase unsplit horizontal + Z sweep
+            # composition; the standard split-sweep `strang_split_cs!`
+            # doesn't have face kernels for LinRoodPPMScheme.
+            _linrood_run_forward_step!(panels_rm, panels_m,
+                panels_am_steps[step], panels_bm_steps[step],
+                panels_cm_steps[step], mesh, scheme, ws, midpoint!)
+        else
+            strang_split_cs!(panels_rm, panels_m,
+                             panels_am_steps[step], panels_bm_steps[step], panels_cm_steps[step],
+                             mesh, scheme, ws;
+                             flux_scale = one(eltype(panels_m[1])),
+                             cfl_limit = cfl_limit,
+                             midpoint! = midpoint!)
+        end
         if !(convection_op isa NoConvection)
             forcing_step = _convection_forcing_at(convection_forcing, step, nsteps)
             forcing_step === nothing && throw(ArgumentError(

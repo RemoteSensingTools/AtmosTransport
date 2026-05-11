@@ -424,3 +424,41 @@ halo/corner refreshes — it does not map onto the existing per-direction
   resolution C24, `rtol ≤ 1e-4`.
 - Adjoint status doc reflects LinRood support.
 - No regression in existing scheme adjoint tests.
+
+## Progress ledger (this branch)
+
+| Commit | SHA | Scope | Tests |
+|---|---|---|---|
+| 0  | d83897b | Plan NOTES | — |
+| 1  | c0e5afa | `_linrood_update_kernel!` adjoint | 8 |
+| 2  | a474f13 | `_pre_advect_{x,y}_kernel!` adjoints | 7 |
+| 3  | 70763f4 | `_ppm_{x,y}_face_from_q_kernel!` (ORD=5) | 4 |
+| 3b | 0493912 | `_ppm_{x,y}_face_kernel!` rm-input (ORD=5) | 2 |
+| 4  | 4d7e68c | Single-panel zero-halo composition + FD | 1 |
+| 7a | 7548765 | adjoint_status.md checkpoint | — |
+| 5  | ffa4443 | Single-panel multi-substep replay + FD | 1 |
+
+Total kernel-level tests passing: 23.
+`test_cs_ppm_adjoint_footprint.jl` (71 tests) still green throughout.
+
+### Remaining (deferred to future sessions / PRs):
+
+- **Commit 6** — end-to-end FD test integrating LinRood + diffusion +
+  convection through `cs_surface_flux_4dvar`. Requires adding
+  `_CSLinRoodHorizRecord` to `src/Adjoints/Adjoints.jl`, dispatching
+  `_record_cs_adjoint_tape` on `LinRoodPPMScheme`, wiring cross-panel
+  halo adjoint via existing `_adjoint_fill_panel_halos!`, and removing
+  the explicit error stub.
+- **Commit 7b** — final docs once Commit 6 lands.
+- **ORD=7 boundary** — `_apply_ord7_boundary_d6` for the gnomonic CS
+  face discontinuity treatment (LinRood.jl:186-197).
+
+The kernel-level adjoint API shipped through Commit 5 is sufficient
+for an integration agent (human or codex) to land Commit 6 without
+re-deriving any of the per-kernel math. The required entry points are
+exported from `Operators.Advection`:
+`apply_linrood_update_adjoint!`, `apply_pre_advect_{x,y}_adjoint!`,
+`apply_ppm_{x,y}_face_from_q_adjoint!`,
+`apply_ppm_{x,y}_face_adjoint!`,
+`apply_linrood_horizontal_adjoint_single_panel!`,
+`record_linrood_substep!`, `apply_linrood_multi_substep_adjoint!`.

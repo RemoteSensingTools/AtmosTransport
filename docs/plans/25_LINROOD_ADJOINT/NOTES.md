@@ -199,7 +199,17 @@ Implementation:
   `rtol ≤ 100·eps(FT)`, plus one fixture with deliberately small `m_new`
   to confirm the zero-gradient guard.
 
-### Commit 3 — adjoints of all four LinRood PPM face kernels (new derivation)
+### Commit 3 — adjoints of the two `_from_q` PPM face kernels (ORD=5)
+### Commit 3b — adjoints of the two rm-input PPM face kernels + ORD=7
+
+Splitting the originally-planned Commit 3 into two commits keeps each
+diff small enough for focused codex review. Commit 3 covers the
+phase-2 cross-flux path (the `_from_q` variants at ORD=5, which is the
+`LinRoodPPMScheme()` default). Commit 3b adds the phase-3 direct-flux
+rm-input variants (which fold the safe-mixing-ratio division into the
+d6-AD chain) and ORD=7 boundary handling. The downstream composition
+in Commit 4 can land without 3b if needed (defaulting to LinRood
+ORD=5 for the FD test).
 
 Forward kernels (LinRood.jl:241-348):
 - `_ppm_y_face_kernel!`, `_ppm_x_face_kernel!` — read `(rm, m)`,

@@ -399,7 +399,7 @@ end
         @test isapprox(lhs, rhs; atol=tol, rtol=tol)
     end
 
-    @testset "small-mass column zeroes the gradient" begin
+    @testset "small-mass column zeroes the gradient (pre-advect-y)" begin
         # Confirm the `m_new <= 100·eps(FT)` branch returns zero
         # gradient (matching the forward `_safe_mixing_ratio` zero
         # output). Construct a column with m below threshold and bm
@@ -431,5 +431,133 @@ end
         @test all(iszero, lambda_rm)
         @test all(iszero, lambda_m)
         @test all(iszero, lambda_fy_face)
+    end
+end
+
+# ===========================================================================
+# Commit 3 — `_ppm_x/y_face_from_q_kernel!` adjoints (ORD=5)
+#
+# The forward face kernels are piecewise-smooth, branch-rich
+# compositions (Huynh constraint clamp; apply_monotonicity flatten;
+# parabolic ppm_face_value with α-form donor mass denominator). We
+# verify the kernel-level adjoint via the JVP/VJP identity, with the
+# Jacobian-vector product approximated by CENTERED FINITE DIFFERENCES.
+# This is the standard adjoint verification protocol for branchy
+# rational maps: pick a state, pick a random perturbation, run the
+# adjoint, and check ⟨lambda, FD-JVP⟩ ≈ ⟨adjoint, perturbation⟩.
+# ===========================================================================
+
+# Centered FD JVP for the X-direction `_ppm_x_face_from_q_kernel!`.
+# Returns a (Nc+1, Nc, Nz) face array of dF·δq.
+function _ppm_x_face_from_q_fd_jvp(q, am, m, dq, mesh::AT.CubedSphereMesh{FT};
+                                    eps_fd) where {FT}
+    Nc = mesh.Nc; Hp = mesh.Hp
+    Nz = size(q, 3)
+    fx_plus  = zeros(FT, Nc + 1, Nc, Nz)
+    fx_minus = zeros(FT, Nc + 1, Nc, Nz)
+    backend = get_backend(q)
+    k! = Adv._ppm_x_face_from_q_kernel!(backend, 256)
+    q_plus  = q .+ FT(eps_fd) .* dq
+    q_minus = q .- FT(eps_fd) .* dq
+    k!(fx_plus,  q_plus,  am, m, Hp, Nc, Val(5); ndrange=(Nc + 1, Nc, Nz))
+    k!(fx_minus, q_minus, am, m, Hp, Nc, Val(5); ndrange=(Nc + 1, Nc, Nz))
+    synchronize(backend)
+    return (fx_plus .- fx_minus) ./ (FT(2) * FT(eps_fd))
+end
+
+function _ppm_y_face_from_q_fd_jvp(q, bm, m, dq, mesh::AT.CubedSphereMesh{FT};
+                                    eps_fd) where {FT}
+    Nc = mesh.Nc; Hp = mesh.Hp
+    Nz = size(q, 3)
+    fy_plus  = zeros(FT, Nc, Nc + 1, Nz)
+    fy_minus = zeros(FT, Nc, Nc + 1, Nz)
+    backend = get_backend(q)
+    k! = Adv._ppm_y_face_from_q_kernel!(backend, 256)
+    q_plus  = q .+ FT(eps_fd) .* dq
+    q_minus = q .- FT(eps_fd) .* dq
+    k!(fy_plus,  q_plus,  bm, m, Hp, Nc, Val(5); ndrange=(Nc, Nc + 1, Nz))
+    k!(fy_minus, q_minus, bm, m, Hp, Nc, Val(5); ndrange=(Nc, Nc + 1, Nz))
+    synchronize(backend)
+    return (fy_plus .- fy_minus) ./ (FT(2) * FT(eps_fd))
+end
+
+@testset "Plan 25 Commit 3 — PPM `_from_q` face kernel adjoints (ORD=5)" begin
+    @testset "X face_from_q VJP vs FD JVP" begin
+        FT = Float64
+        Nc = 4; Hp = 3; Nz = 2
+        mesh = AT.CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
+        N = Nc + 2Hp
+
+        rng = MersenneTwister(101)
+        # Smooth field so the limiter/monotonicity branches are
+        # mostly inactive — keeps the FD JVP a clean linearization.
+        q = FT.([sin(0.13i + 0.21j + 0.07k) for i in 1:N, j in 1:N, k in 1:Nz])
+        am = FT(0.02) .* randn(rng, FT, Nc + 1, Nc, Nz)
+        m  = FT(2) .+ rand(rng, FT, N, N, Nz)
+
+        # Adjoint seed on the face array.
+        lambda_fx_face = randn(rng, FT, Nc + 1, Nc, Nz)
+        lambda_q = zeros(FT, N, N, Nz)
+        Adv.apply_ppm_x_face_from_q_adjoint!(
+            lambda_q, lambda_fx_face, q, am, m, mesh, Val(5),
+        )
+
+        # Random q-perturbation; only stencil-reachable interior + halo
+        # cells participate so we exercise both interior face writes
+        # and halo cell contributions.
+        dq = randn(rng, FT, N, N, Nz)
+        fd_jvp = _ppm_x_face_from_q_fd_jvp(q, am, m, dq, mesh; eps_fd=1e-6)
+
+        lhs = _inner_full(lambda_fx_face, fd_jvp)
+        # Sum lambda_q against dq over the FULL haloed array (the
+        # adjoint may write into halo cells via the stencil; the
+        # FD JVP also reads halo cells of q).
+        rhs = sum(lambda_q .* dq)
+
+        @test isapprox(lhs, rhs; atol=1e-7, rtol=1e-6)
+    end
+
+    @testset "Y face_from_q VJP vs FD JVP" begin
+        FT = Float64
+        Nc = 4; Hp = 3; Nz = 2
+        mesh = AT.CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
+        N = Nc + 2Hp
+
+        rng = MersenneTwister(202)
+        q = FT.([sin(0.11i - 0.17j + 0.05k) for i in 1:N, j in 1:N, k in 1:Nz])
+        bm = FT(0.02) .* randn(rng, FT, Nc, Nc + 1, Nz)
+        m  = FT(2) .+ rand(rng, FT, N, N, Nz)
+
+        lambda_fy_face = randn(rng, FT, Nc, Nc + 1, Nz)
+        lambda_q = zeros(FT, N, N, Nz)
+        Adv.apply_ppm_y_face_from_q_adjoint!(
+            lambda_q, lambda_fy_face, q, bm, m, mesh, Val(5),
+        )
+
+        dq = randn(rng, FT, N, N, Nz)
+        fd_jvp = _ppm_y_face_from_q_fd_jvp(q, bm, m, dq, mesh; eps_fd=1e-6)
+
+        lhs = _inner_full(lambda_fy_face, fd_jvp)
+        rhs = sum(lambda_q .* dq)
+
+        @test isapprox(lhs, rhs; atol=1e-7, rtol=1e-6)
+    end
+
+    @testset "rejects non-ORD-5 dispatch (Commit 3b territory)" begin
+        FT = Float64
+        Nc = 2; Hp = 3; Nz = 1
+        mesh = AT.CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
+        N = Nc + 2Hp
+
+        q  = zeros(FT, N, N, Nz)
+        am = zeros(FT, Nc + 1, Nc, Nz)
+        m  = ones(FT, N, N, Nz)
+        lambda_fx_face = zeros(FT, Nc + 1, Nc, Nz)
+        lambda_q = zeros(FT, N, N, Nz)
+
+        @test_throws ArgumentError Adv.apply_ppm_x_face_from_q_adjoint!(
+            lambda_q, lambda_fx_face, q, am, m, mesh, Val(7))
+        @test_throws ArgumentError Adv.apply_ppm_y_face_from_q_adjoint!(
+            lambda_q, lambda_fx_face, q, am, m, mesh, Val(7))
     end
 end

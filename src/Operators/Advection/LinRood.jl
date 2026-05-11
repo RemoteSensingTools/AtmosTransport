@@ -942,4 +942,6 @@ export fillz_q!, apply_divergence_damping_cs!
 # alongside this file from `Advection.jl`. Re-export below for `Adjoints`.
 export apply_linrood_update_adjoint!,
        apply_pre_advect_x_adjoint!,
-       apply_pre_advect_y_adjoint!
+       apply_pre_advect_y_adjoint!,
+       apply_ppm_x_face_from_q_adjoint!,
+       apply_ppm_y_face_from_q_adjoint!

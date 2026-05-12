@@ -66,14 +66,21 @@ struct _CSLinRoodHorizRecord{FT, A3, A3x, A3y, P}
 end
 
 # Run one LinRood horizontal substep across all six panels, replicating
-# the forward `fv_tp_2d_cs!` (LinRood.jl:695-779) but with per-panel
-# snapshots captured at each phase boundary. Updates `panels_rm`,
-# `panels_m` in place; returns the tape record.
+# the forward `fv_tp_2d_cs!` (LinRood.jl:695-779). Updates `panels_rm`,
+# `panels_m` in place. With `record_ops = true` (default) captures
+# per-phase snapshots and returns a `_CSLinRoodHorizRecord` for the
+# reverse pass; with `record_ops = false` (used by the strided
+# checkpoint propagation pass — Plan 26 A.3c) skips every state
+# snapshot and returns `nothing`, leaving only the face / q_buf
+# scratch buffers that are required to run the kernels themselves
+# (they go out of scope at function exit, so peak memory is bounded
+# by one substep's worth of scratch rather than the full tape).
 function _record_linrood_horizontal_substep!(
     panels_rm, panels_m,
     panels_am, panels_bm,
     mesh::CubedSphereMesh{FT},
-    flux_scale,
+    flux_scale;
+    record_ops::Bool = true,
 ) where {FT}
     Nc = mesh.Nc; Hp = mesh.Hp
     Nz = size(panels_rm[1], 3)
@@ -96,8 +103,10 @@ function _record_linrood_horizontal_substep!(
     copy_corners!(panels_m,  mesh, 2)
 
     # Capture rm/m state at the start of the substep (post halo + corner).
-    panels_rm_tape = ntuple(p -> copy(panels_rm[p]), Val(6))
-    panels_m_tape  = ntuple(p -> copy(panels_m[p]),  Val(6))
+    # Only allocated in recording mode — propagation mode (`record_ops =
+    # false`) skips these snapshots since the reverse pass doesn't run.
+    panels_rm_tape = record_ops ? ntuple(p -> copy(panels_rm[p]), Val(6)) : nothing
+    panels_m_tape  = record_ops ? ntuple(p -> copy(panels_m[p]),  Val(6)) : nothing
 
     # Allocate per-panel face / q_buf buffers.
     panels_fy_in  = ntuple(p -> begin
@@ -130,8 +139,9 @@ function _record_linrood_horizontal_substep!(
     end
     synchronize(backend)
 
-    # Snapshot q_buf state B (post-phase-1).
-    panels_q_buf_phase2 = ntuple(p -> copy(panels_q_buf[p]), Val(6))
+    # Snapshot q_buf state B (post-phase-1). Skipped in propagation mode.
+    panels_q_buf_phase2 = record_ops ?
+        ntuple(p -> copy(panels_q_buf[p]), Val(6)) : nothing
 
     # ── Phase 2: x-corners, xq_face / x_face, re-init, pre_x ─────────
     copy_corners!(panels_q_buf, mesh, 1)
@@ -157,8 +167,9 @@ function _record_linrood_horizontal_substep!(
     end
     synchronize(backend)
 
-    # Snapshot q_buf state C (post-phase-2).
-    panels_q_buf_phase3 = ntuple(p -> copy(panels_q_buf[p]), Val(6))
+    # Snapshot q_buf state C (post-phase-2). Skipped in propagation mode.
+    panels_q_buf_phase3 = record_ops ?
+        ntuple(p -> copy(panels_q_buf[p]), Val(6)) : nothing
 
     # ── Phase 3: y-corners, yq_face, update ──────────────────────────
     copy_corners!(panels_q_buf, mesh, 2)
@@ -184,6 +195,8 @@ function _record_linrood_horizontal_substep!(
             panels_m[p][i, j, k]  = m_buf[i, j, k]
         end
     end
+
+    record_ops || return nothing
 
     A3  = typeof(panels_rm_tape[1])
     A3x = typeof(panels_fx_in[1])
@@ -264,7 +277,7 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
                                   panels_am_steps, panels_bm_steps,
                                   panels_cm_steps,
                                   mesh::CubedSphereMesh{FT},
-                                  scheme::LinRoodPPMScheme;
+                                  scheme::LinRoodPPMScheme{ORD};
                                   flux_scale = one(FT),
                                   dt = one(FT),
                                   cfl_limit = 0.95,
@@ -275,8 +288,34 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
                                   convection_op = NoConvection(),
                                   convection_forcing = nothing,
                                   convection_workspace = nothing,
-                                  tape_storage = :device) where {FT}
+                                  tape_storage = :device,
+                                  step_offset::Int = 0,
+                                  record_ops::Bool = true) where {FT, ORD}
     _ = cfl_limit  # LinRood doesn't subcycle horizontally — single substep per step
+
+    # `step_offset` and `record_ops` are Plan 26 A.3c additions for
+    # strided checkpointing — `step_offset` shifts `_CSMidpointRecord`
+    # indices into absolute step numbers for window invocations;
+    # `record_ops = false` is the propagation pass that runs every
+    # forward kernel (horizontal substep, Z half-sweeps, diffusion,
+    # emissions, convection) but elides each `_stage_panels_strict` /
+    # `push!(ops, ...)` site. Default 0 / true keeps the FullCheckpoint
+    # path bit-exact.
+
+    # LinRood reverse-pass kernels (`_record_linrood_horizontal_substep!`
+    # / `apply_linrood_horizontal_adjoint_single_panel!`) hardcode
+    # `Val(5)` boundary stencils — they are NOT yet wired through
+    # `Val(ORD)` like the forward FD-reference path
+    # (`_linrood_run_forward_step!`). Silently running the ORD=5 adjoint
+    # against an ORD=7 forward tape would produce a wrong gradient
+    # (tape vs FD inconsistency); reject up front instead. Extending
+    # the adjoint kernels to honour `Val(ORD)` is a follow-up.
+    ORD == 5 || throw(ArgumentError(
+        "LinRoodPPMScheme adjoint tape currently only supports ORD=5; " *
+        "got ORD=$(ORD). The reverse-pass face-kernel adjoints are " *
+        "hardcoded to Val(5) and would silently produce a wrong " *
+        "gradient against an ORD=$(ORD) forward path. Use " *
+        "LinRoodPPMScheme() (ORD=5 default) for adjoint runs."))
 
     # LinRoodPPMScheme stages its forward state through
     # `_stage_panels_strict` (which hardcodes `DeviceCSTapeStorage()`)
@@ -287,8 +326,8 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
     # ignored, leaving the mmap tape with `cursor=0, records=0` and
     # the LinRood tape entirely device-resident — a latent OOM trap
     # for large LinRood footprints. Reject explicitly so the failure
-    # mode is loud.
-    _linrood_validate_tape_storage(tape_storage)
+    # mode is loud. Skipped in propagation mode (no tape needed).
+    record_ops && _linrood_validate_tape_storage(tape_storage)
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps, panels_cm_steps)
     dt_ft = FT(dt)
 
@@ -318,10 +357,13 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
         # in `_linrood_run_forward_step!` and the recorded forward are
         # the same operator (up to numerical rounding).
 
+        absolute_step = step + step_offset
+
         # LinRood horizontal substep (first half of the palindrome).
         record_a = _record_linrood_horizontal_substep!(
-            panels_rm, panels_m, panels_am, panels_bm, mesh, FT(flux_scale))
-        push!(ops, record_a)
+            panels_rm, panels_m, panels_am, panels_bm, mesh, FT(flux_scale);
+            record_ops = record_ops)
+        record_ops && push!(ops, record_a)
 
         # Z half-sweep.
         for p in 1:6
@@ -329,34 +371,40 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
                             z_scheme, ws.rm_A, ws.m_A, Nc, Hp, Nz;
                             flux_scale = FT(flux_scale))
         end
-        push!(ops, _CSSweepRecord(:z, z_scheme,
-                                  _stage_panels_strict(panels_m),
-                                  _stage_panels_strict(panels_rm),
-                                  panels_cm, FT(flux_scale)))
+        if record_ops
+            push!(ops, _CSSweepRecord(:z, z_scheme,
+                                      _stage_panels_strict(panels_m),
+                                      _stage_panels_strict(panels_rm),
+                                      panels_cm, FT(flux_scale)))
+        end
 
         # Diffusion + midpoint + emissions (between the two Z halves).
         diffusion_op_step = _diffusion_sequence_at(diffusion_op, step, nsteps,
                                                     "diffusion_op")
         if diffusion_op_step isa NoDiffusion
-            push!(ops, _CSMidpointRecord(step))
+            record_ops && push!(ops, _CSMidpointRecord(absolute_step))
             base_emission_rates !== nothing &&
                 _add_surface_rates!(panels_rm, base_emission_rates[step], dt_ft, mesh)
         else
             diffusion_ws_step = _diffusion_sequence_at(diffusion_workspace, step,
                                                        nsteps,
                                                        "diffusion_workspace")
-            panels_m_midpoint = _stage_panels_strict(panels_m)
             half_dt = dt_ft / FT(2)
-            push!(ops, _CSDiffusionRecord(diffusion_op_step, diffusion_ws_step,
-                                          panels_m_midpoint, half_dt))
+            if record_ops
+                panels_m_midpoint = _stage_panels_strict(panels_m)
+                push!(ops, _CSDiffusionRecord(diffusion_op_step, diffusion_ws_step,
+                                              panels_m_midpoint, half_dt))
+            end
             apply_vertical_diffusion_vmr!(
                 panels_rm, panels_m, diffusion_op_step, diffusion_ws_step,
                 half_dt, diffusion_meteo; halo_width = mesh.Hp)
-            push!(ops, _CSMidpointRecord(step))
+            record_ops && push!(ops, _CSMidpointRecord(absolute_step))
             base_emission_rates !== nothing &&
                 _add_surface_rates!(panels_rm, base_emission_rates[step], dt_ft, mesh)
-            push!(ops, _CSDiffusionRecord(diffusion_op_step, diffusion_ws_step,
-                                          panels_m_midpoint, half_dt))
+            if record_ops
+                push!(ops, _CSDiffusionRecord(diffusion_op_step, diffusion_ws_step,
+                                              panels_m_midpoint, half_dt))
+            end
             apply_vertical_diffusion_vmr!(
                 panels_rm, panels_m, diffusion_op_step, diffusion_ws_step,
                 half_dt, diffusion_meteo; halo_width = mesh.Hp)
@@ -368,31 +416,36 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
                             z_scheme, ws.rm_A, ws.m_A, Nc, Hp, Nz;
                             flux_scale = FT(flux_scale))
         end
-        push!(ops, _CSSweepRecord(:z, z_scheme,
-                                  _stage_panels_strict(panels_m),
-                                  _stage_panels_strict(panels_rm),
-                                  panels_cm, FT(flux_scale)))
+        if record_ops
+            push!(ops, _CSSweepRecord(:z, z_scheme,
+                                      _stage_panels_strict(panels_m),
+                                      _stage_panels_strict(panels_rm),
+                                      panels_cm, FT(flux_scale)))
+        end
 
         # LinRood horizontal substep (second half of the palindrome).
         record_b = _record_linrood_horizontal_substep!(
-            panels_rm, panels_m, panels_am, panels_bm, mesh, FT(flux_scale))
-        push!(ops, record_b)
+            panels_rm, panels_m, panels_am, panels_bm, mesh, FT(flux_scale);
+            record_ops = record_ops)
+        record_ops && push!(ops, record_b)
 
         # Convection (optional, post-transport).
         if !(convection_op isa NoConvection)
             forcing_step = _convection_forcing_at(convection_forcing, step, nsteps)
             forcing_step === nothing && throw(ArgumentError(
                 "convection_op=$(typeof(convection_op)) requires `convection_forcing`"))
-            push!(ops, _CSConvectionRecord(convection_op, forcing_step,
-                                           _stage_panels_strict(panels_m),
-                                           dt_ft))
+            if record_ops
+                push!(ops, _CSConvectionRecord(convection_op, forcing_step,
+                                               _stage_panels_strict(panels_m),
+                                               dt_ft))
+            end
             _apply_cs_convection_forward!(panels_rm, panels_m, forcing_step,
                                           convection_op, dt_ft,
                                           convection_workspace, mesh)
         end
     end
 
-    return ops, panels_m
+    return ops, panels_rm, panels_m
 end
 
 # Internal helper: build a DeviceCSTapeStorage-staged version of

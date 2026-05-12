@@ -411,6 +411,140 @@ end
     end
 end
 
+@testset "StrideCheckpoint vs FullCheckpoint — LinRoodPPMScheme" begin
+    mesh, panels_m, panels_rm, am_steps, bm_steps, cm_steps = _stride_problem(
+        ; Nc = 4, Nz = 4, nsteps = 6, FT = Float64)
+    # Non-trivial initial tracer — LinRood's reverse pass is driven
+    # by the `_CSLinRoodHorizRecord` substep adjoints; with all-zero
+    # rm the parity test wouldn't exercise the rm chain.
+    FT = eltype(panels_m[1])
+    N = mesh.Nc + 2mesh.Hp
+    Nz = size(panels_m[1], 3)
+    for p in 1:6
+        @inbounds for k in 1:Nz, j in 1:N, i in 1:N
+            panels_rm[p][i, j, k] = panels_m[p][i, j, k] *
+                (FT(0.06) + FT(0.011) * sin(FT(0.27i + 0.13j + 0.19k + 0.07p)))
+        end
+    end
+    Adv.fill_panel_halos!(panels_rm, mesh; dir = 0)
+
+    objective = _column_mean_objective(mesh)
+    scheme = AT.LinRoodPPMScheme()
+
+    ref = AT.cs_surface_emission_footprint(
+        panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
+        scheme = scheme, dt = 1.0)
+
+    for K in (1, 2, 3, 6, 12)
+        stride = AT.cs_surface_emission_footprint(
+            panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
+            scheme = scheme, dt = 1.0,
+            checkpoint = AT.StrideCheckpoint(K))
+        @test _footprints_equal(ref, stride)
+    end
+end
+
+@testset "StrideCheckpoint LinRood + base_emission_rates + implicit diffusion" begin
+    mesh, panels_m, panels_rm, am_steps, bm_steps, cm_steps = _stride_problem(
+        ; Nc = 4, Nz = 5, nsteps = 6, FT = Float64)
+    FT = eltype(panels_m[1])
+    N = mesh.Nc + 2mesh.Hp
+    Nz = size(panels_m[1], 3)
+    for p in 1:6
+        @inbounds for k in 1:Nz, j in 1:N, i in 1:N
+            panels_rm[p][i, j, k] = panels_m[p][i, j, k] *
+                (FT(0.04) + FT(0.013) * sin(FT(0.31i + 0.19j + 0.23k + 0.11p)))
+        end
+    end
+    Adv.fill_panel_halos!(panels_rm, mesh; dir = 0)
+
+    base_emission_rates = [ntuple(p -> begin
+        e = zeros(FT, mesh.Nc, mesh.Nc)
+        if p == 1
+            for j in 1:mesh.Nc, i in 1:mesh.Nc
+                e[i, j] = FT(0.0006) * sin(FT(0.2step + 0.3i + 0.1j))
+            end
+        end
+        e
+    end, 6) for step in 1:length(am_steps)]
+
+    ws_diff = AT.CSAdvectionWorkspace(mesh, panels_m[1])
+    for p in 1:6
+        fill!(ws_diff.dz_scratch[p], FT(50.0))
+    end
+    kz_field = AT.CubedSphereField(ntuple(_ -> AT.ConstantField{FT, 3}(FT(2.0)), 6))
+    op_diff = AT.ImplicitVerticalDiffusion(; kz_field)
+
+    objective = _column_mean_objective(mesh)
+    scheme = AT.LinRoodPPMScheme()
+
+    ref = AT.cs_surface_emission_footprint(
+        panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
+        scheme = scheme, dt = 1.0,
+        base_emission_rates = base_emission_rates,
+        diffusion_op = op_diff, diffusion_workspace = ws_diff)
+
+    for K in (2, 3, 6)
+        stride = AT.cs_surface_emission_footprint(
+            panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
+            scheme = scheme, dt = 1.0,
+            base_emission_rates = base_emission_rates,
+            diffusion_op = op_diff, diffusion_workspace = ws_diff,
+            checkpoint = AT.StrideCheckpoint(K))
+        @test _footprints_equal(ref, stride)
+    end
+end
+
+@testset "StrideCheckpoint LinRood rejects :mmap tape_storage" begin
+    # LinRood's `_CSLinRoodHorizRecord` holds device-resident panel
+    # tuples directly; mmap eviction is not yet wired through. The
+    # stride driver surfaces this with a stride-aware diagnostic
+    # rather than letting the recorder throw inside the first
+    # window's first substep.
+    mesh, panels_m, panels_rm, am_steps, bm_steps, cm_steps = _stride_problem(
+        ; Nc = 4, Nz = 3, nsteps = 4, FT = Float64)
+    objective = _column_mean_objective(mesh)
+    @test_throws ArgumentError AT.cs_surface_emission_footprint(
+        panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
+        scheme = AT.LinRoodPPMScheme(), dt = 1.0,
+        tape_storage = :mmap,
+        checkpoint = AT.StrideCheckpoint(2))
+    @test_throws ArgumentError AT.cs_surface_emission_footprint(
+        panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
+        scheme = AT.LinRoodPPMScheme(), dt = 1.0,
+        tape_storage = :pinned_host,
+        checkpoint = AT.StrideCheckpoint(2))
+
+    # Pre-constructed AbstractCSTapeStorage instances are also rejected
+    # (even when the underlying type is `DeviceCSTapeStorage`, which
+    # LinRood would otherwise accept) — see the
+    # "stride rejects pre-constructed tape_storage" guard in the
+    # stride driver. Window 1 finalize_tape!s the storage; window 2
+    # would then throw deep in the recorder.
+    @test_throws ArgumentError AT.cs_surface_emission_footprint(
+        panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
+        scheme = AT.LinRoodPPMScheme(), dt = 1.0,
+        tape_storage = AT.DeviceCSTapeStorage(),
+        checkpoint = AT.StrideCheckpoint(2))
+end
+
+@testset "StrideCheckpoint LinRood ORD=7 rejected (adjoint hardcoded Val(5))" begin
+    # GPT-review M1: `_record_cs_linrood_tape` rejects ORD≠5 because
+    # the reverse-pass kernels are still hardcoded to Val(5).
+    # Silently running ORD=7 forward + ORD=5 adjoint would produce
+    # a wrong gradient; the guard fires before any tape is built.
+    mesh, panels_m, panels_rm, am_steps, bm_steps, cm_steps = _stride_problem(
+        ; Nc = 4, Nz = 3, nsteps = 4, FT = Float64)
+    objective = _column_mean_objective(mesh)
+    @test_throws ArgumentError AT.cs_surface_emission_footprint(
+        panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
+        scheme = AT.LinRoodPPMScheme(7), dt = 1.0)
+    @test_throws ArgumentError AT.cs_surface_emission_footprint(
+        panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
+        scheme = AT.LinRoodPPMScheme(7), dt = 1.0,
+        checkpoint = AT.StrideCheckpoint(2))
+end
+
 @testset "stride rejects pre-constructed tape_storage" begin
     # GPT F2: an already-constructed AbstractCSTapeStorage passed via
     # tape_storage would be reused (identity in `_tape_storage`) across
@@ -435,16 +569,7 @@ end
 @testset "argument validation" begin
     mesh, panels_m, panels_rm, am_steps, bm_steps, cm_steps = _stride_problem(
         ; Nc = 4, Nz = 3, nsteps = 4, FT = Float64)
-    objective = _column_mean_objective(mesh)
-    linrood = AT.LinRoodPPMScheme()
     schedule = AT.StrideCheckpoint(2)
-
-    # LinRood with stride — still rejected (different tape record shape,
-    # reserved for a follow-up commit).
-    @test_throws ArgumentError AT.cs_surface_emission_footprint(
-        panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
-        scheme = linrood, dt = 1.0,
-        checkpoint = schedule)
 
     # cs_surface_emission_footprint_from_seed with stride — still
     # rejected; the from-seed stride driver lands separately.

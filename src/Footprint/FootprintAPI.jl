@@ -124,9 +124,13 @@ function cs_surface_emission_footprint(panels_rm0, panels_m0,
                 convection_workspace = convection_workspace,
                 tape_storage = tape_storage)
         else
-            # CSAdjointNonlinearScheme — tracer tape stride. Takes
-            # `panels_rm0` and `base_emission_rates` (both meaningless
-            # to the linear-mass stride driver).
+            # CSAdjointNonlinearScheme or CSAdjointLinRoodScheme —
+            # both stride drivers take `panels_rm0` and
+            # `base_emission_rates` (meaningless to the linear-mass
+            # driver) and dispatch on the scheme type at the stride-
+            # driver method level. LinRood additionally requires
+            # `tape_storage = :device`; the LinRood method validates
+            # that up front.
             return _collect_surface_footprints_stride(
                 panels_rm0, panels_m0,
                 panels_am_steps, panels_bm_steps, panels_cm_steps,

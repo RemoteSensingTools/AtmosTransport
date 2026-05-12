@@ -560,9 +560,14 @@ function _record_cs_adjoint_tape(panels_rm0, panels_m0,
                                  panels_am_steps, panels_bm_steps, panels_cm_steps,
                                  mesh::CubedSphereMesh,
                                  scheme::CSAdjointLinRoodScheme; kwargs...)
-    return _record_cs_linrood_tape(panels_rm0, panels_m0,
-                                    panels_am_steps, panels_bm_steps,
-                                    panels_cm_steps, mesh, scheme; kwargs...)
+    # `_record_cs_linrood_tape` returns `(ops, panels_rm, panels_m)` —
+    # the third value lets the stride driver chain rm across windows.
+    # The public dispatcher contract is `(ops, final_m)`; drop the
+    # intermediate rm tuple here.
+    ops, _, final_m = _record_cs_linrood_tape(panels_rm0, panels_m0,
+                                               panels_am_steps, panels_bm_steps,
+                                               panels_cm_steps, mesh, scheme; kwargs...)
+    return ops, final_m
 end
 
 function _record_cs_adjoint_tape(panels_rm0, panels_m0,

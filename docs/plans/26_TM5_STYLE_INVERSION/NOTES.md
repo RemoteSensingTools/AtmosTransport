@@ -161,9 +161,39 @@ tape/
     linear PPM + transport flow + ImplicitVerticalDiffusion +
     CMFMCConvection. 36 new test assertions in
     `test/test_cs_stride_checkpoint.jl`.
-  * **A.3b — TODO.** Tracer-tape stride (nonlinear PPM); LinRood
-    stride; from-seed variant.
-  * **A.3c — TODO.** `RevolveCheckpoint(snapshots)` (binomial
+  * **A.3b SHIPPED.** Tracer-tape stride for nonlinear PPM
+    (monotone-limited). `_record_cs_tracer_tape` gains `record_ops`
+    + `step_offset` and returns `(ops, panels_rm, panels_m)`. New
+    `_propagate_tracer_checkpoints` saves per-window `(rm, m)` pairs
+    via `_record_cs_tracer_tape(record_ops=false)`. New
+    `_collect_surface_footprints_stride(::CSAdjointNonlinearScheme)`
+    method dispatches the tracer path. Tolerance loosened from
+    `atol=1e-14` to `atol=1e-12` to absorb O(1e-13) drift from
+    per-window `fill_panel_halos!(...; dir=0)` corner recomputation.
+    15 new test assertions covering K ∈ {1, 2, 3, 6, 12} ×
+    (`:device`, `:mmap`) × {monotone PPM bare, +base_emission_rates,
+    +diffusion+CMFMC convection}.
+  * **A.3c SHIPPED.** LinRood horizontal-tape stride.
+    `_record_linrood_horizontal_substep!` gains `record_ops::Bool`
+    kwarg (skips snapshot captures, returns `nothing` instead of
+    a `_CSLinRoodHorizRecord`). `_record_cs_linrood_tape` gains
+    `record_ops` + `step_offset` and returns `(ops, panels_rm,
+    panels_m)`. New `_propagate_linrood_checkpoints` and
+    `_collect_surface_footprints_stride(::CSAdjointLinRoodScheme)`
+    method. LinRood remains `:device`-only (per the existing
+    `_linrood_validate_tape_storage`); the stride driver surfaces
+    that as a stride-aware `ArgumentError` rather than letting the
+    recorder throw inside the first window's substep. ORD=5
+    requirement is now enforced explicitly — `_record_cs_linrood_tape`
+    rejects `LinRoodPPMScheme(7)` because the reverse-pass face
+    kernels are still hardcoded to `Val(5)` and ORD=7 would silently
+    produce a wrong gradient (reviewer pre-existing gap, M1).
+    10 new test assertions covering K ∈ {1, 2, 3, 6, 12} parity +
+    base_emission_rates + ImplicitVerticalDiffusion + `:mmap` /
+    `:pinned_host` / pre-constructed-storage rejection + ORD=7
+    rejection.
+  * **A.3d — TODO.** From-seed stride variant.
+  * **A.3e — TODO.** `RevolveCheckpoint(snapshots)` (binomial
     Griewank-Walther schedule).
 - **A3** — public-API kwargs (`tape_storage=:mmap, tape_path,
   checkpoint`) on `cs_surface_emission_footprint`. C48 14-day stretch

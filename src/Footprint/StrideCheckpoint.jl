@@ -26,6 +26,15 @@
 _slice_step_kwarg(v::AbstractVector, range::AbstractUnitRange) = view(v, range)
 _slice_step_kwarg(v, ::AbstractUnitRange) = v
 
+# Per-window / per-base-case subdirectory under a user-supplied
+# `tape_path`. Five zero-padded digits keep alphabetical sort agreeing
+# with numeric order through nsteps = 99999, which dominates any
+# physically-motivated CS run length. The leading tag distinguishes
+# Stride (`window_*`) from Revolve (`step_*`) subdirs so a single
+# `tape_path` tree can host both schedules without collisions.
+_stride_window_subdir(w::Integer) = "window_" * lpad(w, 5, '0')
+_revolve_step_subdir(step::Integer) = "step_" * lpad(step, 5, '0')
+
 # Lambda construction at the start of the reverse pass.
 # - `final_adjoint_seed = nothing` (default): zero-allocate panels
 #   shaped like `final_m` and seed via the objective. Used by
@@ -163,6 +172,7 @@ function _collect_surface_footprints_stride(panels_m0,
                                             convection_forcing = nothing,
                                             convection_workspace = nothing,
                                             tape_storage = :device,
+                                            tape_path::Union{Nothing, AbstractString} = nothing,
                                             final_adjoint_seed = nothing)
     FT = eltype(panels_m0[1])
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps,
@@ -191,6 +201,9 @@ function _collect_surface_footprints_stride(panels_m0,
         "$(typeof(tape_storage)); the stride driver builds and " *
         "finalize_tape!s one storage instance per window. Pass " *
         "`tape_storage = :mmap` (or similar) instead."))
+    tape_path !== nothing && tape_storage !== :mmap && throw(ArgumentError(
+        "tape_path requires tape_storage = :mmap; got " *
+        "tape_storage = $(repr(tape_storage))"))
 
     checkpoints = _propagate_mass_checkpoints(
         panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps,
@@ -218,8 +231,13 @@ function _collect_surface_footprints_stride(panels_m0,
         # temp dir + `records.bin`, and leaning on GC could leave
         # multiple per-window dirs live simultaneously on tmpfs.
         # `finalize_tape!` is a generic no-op for `:device` /
-        # `:pinned_host` so the call site is uniform.
-        storage_w = _tape_storage(tape_storage)
+        # `:pinned_host` so the call site is uniform. When `tape_path`
+        # is supplied, `_build_window_storage` roots each window's
+        # `records.bin` under `joinpath(tape_path, "window_NNNNN")`
+        # and leaves the directory in place past `finalize_tape!`
+        # (user-owned).
+        storage_w = _build_window_storage(tape_storage, tape_path,
+                                          _stride_window_subdir(w))
         ops_window, _ = _record_cs_mass_tape(
             checkpoints[w],
             _slice_step_kwarg(panels_am_steps, window_range),
@@ -244,7 +262,8 @@ function _collect_surface_footprints_stride(panels_m0,
             # temp-dir cleanup for `MmapCSTapeStorage`; no-op for
             # `:device` / `:pinned_host` whose state is plain arrays
             # released by GC).
-            finalize_tape!(storage_w; quiet = true)
+            finalize_tape!(storage_w; quiet = true,
+                           strict = tape_path !== nothing)
         end
     end
 
@@ -267,6 +286,24 @@ function _require_checkpoint_supported(scheme, schedule::AbstractCheckpointSched
     throw(ArgumentError(
         "checkpoint=$(schedule) is not yet supported for scheme " *
         "$(nameof(typeof(scheme)))."))
+end
+
+# Per-scheme `tape_path` compatibility. LinRood is pinned to
+# `:device` storage (`_linrood_validate_tape_storage` inside
+# `_record_cs_linrood_tape`), so a non-nothing `tape_path` is
+# meaningless and would only produce empty `records.bin` /
+# `manifest.toml` side effects under the user's tree before the
+# recorder throws. Reject here, BEFORE `_resolve_tape_path` runs
+# `mkpath`, so an invalid request leaves the filesystem untouched.
+function _require_tape_path_supported(scheme,
+                                       tape_path::Union{Nothing, AbstractString})
+    tape_path === nothing && return nothing
+    scheme isa CSAdjointLinRoodScheme && throw(ArgumentError(
+        "tape_path is not supported with LinRoodPPMScheme; the LinRood " *
+        "reverse tape is :device-only. Omit tape_path or pick a non-" *
+        "LinRood scheme. (Mmap eviction for LinRood is reserved for a " *
+        "Plan 26 follow-up that refactors the LinRood tape.)"))
+    return nothing
 end
 
 # ---------------------------------------------------------------------------
@@ -388,6 +425,7 @@ function _collect_surface_footprints_stride(panels_rm0, panels_m0,
                                             convection_forcing = nothing,
                                             convection_workspace = nothing,
                                             tape_storage = :device,
+                                            tape_path::Union{Nothing, AbstractString} = nothing,
                                             final_adjoint_seed = nothing)
     FT = eltype(panels_m0[1])
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps,
@@ -402,6 +440,9 @@ function _collect_surface_footprints_stride(panels_rm0, panels_m0,
         "(:device, :pinned_host, or :mmap), not a pre-constructed " *
         "$(typeof(tape_storage)); the stride driver builds and " *
         "finalize_tape!s one storage instance per window."))
+    tape_path !== nothing && tape_storage !== :mmap && throw(ArgumentError(
+        "tape_path requires tape_storage = :mmap; got " *
+        "tape_storage = $(repr(tape_storage))"))
 
     rm_checkpoints, m_checkpoints = _propagate_tracer_checkpoints(
         panels_rm0, panels_m0,
@@ -427,7 +468,8 @@ function _collect_surface_footprints_stride(panels_rm0, panels_m0,
 
     @inbounds for w in nw:-1:1
         window_range = checkpoint_window_range(schedule, w, nsteps)
-        storage_w = _tape_storage(tape_storage)
+        storage_w = _build_window_storage(tape_storage, tape_path,
+                                          _stride_window_subdir(w))
         ops_window, _, _ = _record_cs_tracer_tape(
             rm_checkpoints[w], m_checkpoints[w],
             _slice_step_kwarg(panels_am_steps, window_range),
@@ -451,7 +493,8 @@ function _collect_surface_footprints_stride(panels_rm0, panels_m0,
                                   diffusion_meteo = diffusion_meteo,
                                   convection_workspace = convection_workspace)
         finally
-            finalize_tape!(storage_w; quiet = true)
+            finalize_tape!(storage_w; quiet = true,
+                           strict = tape_path !== nothing)
         end
     end
 
@@ -577,6 +620,7 @@ function _collect_surface_footprints_stride(panels_rm0, panels_m0,
                                             convection_forcing = nothing,
                                             convection_workspace = nothing,
                                             tape_storage = :device,
+                                            tape_path::Union{Nothing, AbstractString} = nothing,
                                             final_adjoint_seed = nothing)
     FT = eltype(panels_m0[1])
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps,
@@ -599,6 +643,14 @@ function _collect_surface_footprints_stride(panels_rm0, panels_m0,
         "(got $(repr(tape_storage))). The `_CSLinRoodHorizRecord` struct " *
         "holds device-resident panel tuples directly; mmap eviction is " *
         "reserved for a Plan 26 follow-up that refactors the LinRood tape."))
+    # `tape_path` only makes sense for `:mmap` storage. LinRood is
+    # already pinned to `:device` above, so any non-nothing path is
+    # incompatible — reject loudly here instead of silently ignoring
+    # the kwarg.
+    tape_path === nothing || throw(ArgumentError(
+        "LinRoodPPMScheme does not support tape_path: storage is fixed " *
+        "to :device. Use StrideCheckpoint with the nonlinear PPM scheme " *
+        "(tape_storage = :mmap) if disk-backed tapes are required."))
 
     rm_checkpoints, m_checkpoints = _propagate_linrood_checkpoints(
         panels_rm0, panels_m0,
@@ -648,7 +700,8 @@ function _collect_surface_footprints_stride(panels_rm0, panels_m0,
                                   diffusion_meteo = diffusion_meteo,
                                   convection_workspace = convection_workspace)
         finally
-            finalize_tape!(storage_w; quiet = true)
+            finalize_tape!(storage_w; quiet = true,
+                           strict = tape_path !== nothing)
         end
     end
 
@@ -703,6 +756,7 @@ function _collect_surface_footprints_revolve(panels_m0,
                                              convection_forcing = nothing,
                                              convection_workspace = nothing,
                                              tape_storage = :device,
+                                             tape_path::Union{Nothing, AbstractString} = nothing,
                                              final_adjoint_seed = nothing)
     FT = eltype(panels_m0[1])
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps,
@@ -716,6 +770,9 @@ function _collect_surface_footprints_revolve(panels_m0,
         "(:device, :pinned_host, or :mmap), not a pre-constructed " *
         "$(typeof(tape_storage)); the driver builds and " *
         "finalize_tape!s one storage instance per base-case step."))
+    tape_path !== nothing && tape_storage !== :mmap && throw(ArgumentError(
+        "tape_path requires tape_storage = :mmap; got " *
+        "tape_storage = $(repr(tape_storage))"))
 
     # Initial state (halo-filled copy of input).
     initial_m = _copy_panel_tuple(panels_m0)
@@ -751,7 +808,8 @@ function _collect_surface_footprints_revolve(panels_m0,
         if hi == lo
             return nothing
         elseif hi - lo == 1
-            storage_w = _tape_storage(tape_storage)
+            storage_w = _build_window_storage(tape_storage, tape_path,
+                                              _revolve_step_subdir(hi))
             ops_window, _ = _record_cs_mass_tape(
                 state_m,
                 _slice_step_kwarg(panels_am_steps, hi:hi),
@@ -772,7 +830,8 @@ function _collect_surface_footprints_revolve(panels_m0,
                                       diffusion_meteo = diffusion_meteo,
                                       convection_workspace = convection_workspace)
             finally
-                finalize_tape!(storage_w; quiet = true)
+                finalize_tape!(storage_w; quiet = true,
+                           strict = tape_path !== nothing)
             end
         else
             mid = (lo + hi) ÷ 2
@@ -829,6 +888,7 @@ function _collect_surface_footprints_revolve(panels_rm0, panels_m0,
                                              convection_forcing = nothing,
                                              convection_workspace = nothing,
                                              tape_storage = :device,
+                                             tape_path::Union{Nothing, AbstractString} = nothing,
                                              final_adjoint_seed = nothing)
     FT = eltype(panels_m0[1])
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps,
@@ -843,6 +903,9 @@ function _collect_surface_footprints_revolve(panels_rm0, panels_m0,
         "(:device, :pinned_host, or :mmap), not a pre-constructed " *
         "$(typeof(tape_storage)); the driver builds and " *
         "finalize_tape!s one storage instance per base-case step."))
+    tape_path !== nothing && tape_storage !== :mmap && throw(ArgumentError(
+        "tape_path requires tape_storage = :mmap; got " *
+        "tape_storage = $(repr(tape_storage))"))
 
     initial_rm = _copy_panel_tuple(panels_rm0)
     initial_m  = _copy_panel_tuple(panels_m0)
@@ -876,7 +939,8 @@ function _collect_surface_footprints_revolve(panels_rm0, panels_m0,
         if hi == lo
             return nothing
         elseif hi - lo == 1
-            storage_w = _tape_storage(tape_storage)
+            storage_w = _build_window_storage(tape_storage, tape_path,
+                                              _revolve_step_subdir(hi))
             ops_window, _, _ = _record_cs_tracer_tape(
                 state_rm, state_m,
                 _slice_step_kwarg(panels_am_steps, hi:hi),
@@ -900,7 +964,8 @@ function _collect_surface_footprints_revolve(panels_rm0, panels_m0,
                                       diffusion_meteo = diffusion_meteo,
                                       convection_workspace = convection_workspace)
             finally
-                finalize_tape!(storage_w; quiet = true)
+                finalize_tape!(storage_w; quiet = true,
+                           strict = tape_path !== nothing)
             end
         else
             mid = (lo + hi) ÷ 2
@@ -956,6 +1021,7 @@ function _collect_surface_footprints_revolve(panels_rm0, panels_m0,
                                              convection_forcing = nothing,
                                              convection_workspace = nothing,
                                              tape_storage = :device,
+                                             tape_path::Union{Nothing, AbstractString} = nothing,
                                              final_adjoint_seed = nothing)
     FT = eltype(panels_m0[1])
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps,
@@ -975,6 +1041,10 @@ function _collect_surface_footprints_revolve(panels_rm0, panels_m0,
         "(got $(repr(tape_storage))). The `_CSLinRoodHorizRecord` struct " *
         "holds device-resident panel tuples directly; mmap eviction is " *
         "reserved for a Plan 26 follow-up that refactors the LinRood tape."))
+    tape_path === nothing || throw(ArgumentError(
+        "LinRoodPPMScheme does not support tape_path: storage is fixed " *
+        "to :device. Use RevolveCheckpoint with the nonlinear PPM scheme " *
+        "(tape_storage = :mmap) if disk-backed tapes are required."))
 
     initial_rm = _copy_panel_tuple(panels_rm0)
     initial_m  = _copy_panel_tuple(panels_m0)
@@ -1031,7 +1101,8 @@ function _collect_surface_footprints_revolve(panels_rm0, panels_m0,
                                       diffusion_meteo = diffusion_meteo,
                                       convection_workspace = convection_workspace)
             finally
-                finalize_tape!(storage_w; quiet = true)
+                finalize_tape!(storage_w; quiet = true,
+                           strict = tape_path !== nothing)
             end
         else
             mid = (lo + hi) ÷ 2

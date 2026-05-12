@@ -66,6 +66,41 @@ _tape_storage(storage) = throw(ArgumentError(
     "unsupported CS adjoint tape storage $(storage); " *
     "supported: :device, :pinned_host, :mmap"))
 
+"""
+    _resolve_tape_path(tape_storage, tape_path) -> Union{Nothing, String}
+
+Validate that `tape_path` is compatible with `tape_storage`. Returns
+`nothing` when `tape_path === nothing` (use a temp dir / no disk
+backing). Returns the path string (after `mkpath`) when `tape_storage`
+is `:mmap` and a path is supplied. Throws an `ArgumentError` if a path
+is supplied with non-`:mmap` storage (since `:device` and
+`:pinned_host` keep tape state in memory, a path has no meaning), or
+if `tape_storage` is a pre-constructed `AbstractCSTapeStorage` (the
+storage's own configuration already determines where the tape lives).
+"""
+function _resolve_tape_path(tape_storage::Symbol,
+                            tape_path::Union{Nothing, AbstractString})
+    tape_path === nothing && return nothing
+    tape_storage === :mmap || throw(ArgumentError(
+        "tape_path requires tape_storage = :mmap; got tape_storage = " *
+        "$(repr(tape_storage)). The :device and :pinned_host policies " *
+        "keep tape state in memory and have no on-disk path."))
+    isempty(tape_path) && throw(ArgumentError(
+        "tape_path is empty; pass a non-empty directory path or omit the kwarg"))
+    isdir(tape_path) || mkpath(tape_path)
+    return String(tape_path)
+end
+
+function _resolve_tape_path(::AbstractCSTapeStorage,
+                            tape_path::Union{Nothing, AbstractString})
+    tape_path === nothing && return nothing
+    throw(ArgumentError(
+        "tape_path is not compatible with a pre-constructed " *
+        "AbstractCSTapeStorage; the storage's own configuration already " *
+        "determines where the tape lives. Pass a Symbol (:mmap) plus " *
+        "tape_path, or pass the storage instance alone."))
+end
+
 # Generic no-op fallback so the strided checkpoint driver can call
 # `finalize_tape!(storage)` once per window without dispatching on
 # storage type. `MmapCSTapeStorage` overrides this in
@@ -73,7 +108,8 @@ _tape_storage(storage) = throw(ArgumentError(
 # `DeviceCSTapeStorage` and `PinnedHostCSTapeStorage` hold their state
 # in plain Julia arrays and do not need an explicit teardown — GC
 # handles release once the storage drops out of scope.
-finalize_tape!(::AbstractCSTapeStorage; quiet::Bool = false) = nothing
+finalize_tape!(::AbstractCSTapeStorage; quiet::Bool = false,
+                strict::Bool = false) = nothing
 
 # ---------------------------------------------------------------------------
 # Slot read / staging hooks

@@ -76,6 +76,18 @@ surface-flux runtime transport. Optional `CMFMCConvection` support transposes
 the well-mixed sub-cloud, updraft, and tendency passes; optional
 `TM5Convection` support replays the same column matrix and applies the
 transposed LU solve after each reverse transport step.
+
+`tape_storage` selects the per-tape-slot storage policy (`:device`,
+`:pinned_host`, or `:mmap`). When `tape_storage = :mmap`, the optional
+`tape_path` kwarg points the on-disk tape at a user-owned directory
+instead of a temporary one — required for tapes that must persist past
+the call (manual inspection, partial-run debug, multi-session
+campaigns). `tape_path` is created on demand and preserved past
+`finalize_tape!`; it is rejected for non-`:mmap` storage. Under
+`StrideCheckpoint` each window writes a `window_NNNNN/` subdirectory;
+under `RevolveCheckpoint` each base-case step writes a `step_NNNNN/`
+subdirectory. The LinRood scheme is pinned to `:device` and rejects
+`tape_path` unconditionally.
 """
 function cs_surface_emission_footprint(panels_rm0, panels_m0,
                                        panels_am_steps,
@@ -96,6 +108,7 @@ function cs_surface_emission_footprint(panels_rm0, panels_m0,
                                        convection_forcing = nothing,
                                        convection_workspace = nothing,
                                        tape_storage = :device,
+                                       tape_path::Union{Nothing, AbstractString} = nothing,
                                        checkpoint::AbstractCheckpointSchedule = FullCheckpoint())
     FT = eltype(panels_rm0[1])
     dt_ft = FT(dt)
@@ -107,6 +120,11 @@ function cs_surface_emission_footprint(panels_rm0, panels_m0,
     _validate_cs_diffusion_inputs(diffusion_op, diffusion_workspace, nsteps)
     _require_cs_convection_workspace(convection_op, convection_workspace)
     _require_checkpoint_supported(scheme, checkpoint)
+    # `_require_tape_path_supported` runs BEFORE `_resolve_tape_path`
+    # so an invalid `(scheme, tape_path)` combination leaves no
+    # `mkpath`'d directory or empty `records.bin` behind.
+    _require_tape_path_supported(scheme, tape_path)
+    resolved_tape_path = _resolve_tape_path(tape_storage, tape_path)
 
     if checkpoint isa StrideCheckpoint
         if scheme isa CSAdjointLinearScheme
@@ -122,7 +140,8 @@ function cs_surface_emission_footprint(panels_rm0, panels_m0,
                 convection_op = convection_op,
                 convection_forcing = convection_forcing,
                 convection_workspace = convection_workspace,
-                tape_storage = tape_storage)
+                tape_storage = tape_storage,
+                tape_path = resolved_tape_path)
         else
             # CSAdjointNonlinearScheme or CSAdjointLinRoodScheme —
             # both stride drivers take `panels_rm0` and
@@ -144,7 +163,8 @@ function cs_surface_emission_footprint(panels_rm0, panels_m0,
                 convection_op = convection_op,
                 convection_forcing = convection_forcing,
                 convection_workspace = convection_workspace,
-                tape_storage = tape_storage)
+                tape_storage = tape_storage,
+                tape_path = resolved_tape_path)
         end
     end
 
@@ -162,7 +182,8 @@ function cs_surface_emission_footprint(panels_rm0, panels_m0,
                 convection_op = convection_op,
                 convection_forcing = convection_forcing,
                 convection_workspace = convection_workspace,
-                tape_storage = tape_storage)
+                tape_storage = tape_storage,
+                tape_path = resolved_tape_path)
         else
             return _collect_surface_footprints_revolve(
                 panels_rm0, panels_m0,
@@ -177,35 +198,57 @@ function cs_surface_emission_footprint(panels_rm0, panels_m0,
                 convection_op = convection_op,
                 convection_forcing = convection_forcing,
                 convection_workspace = convection_workspace,
-                tape_storage = tape_storage)
+                tape_storage = tape_storage,
+                tape_path = resolved_tape_path)
         end
     end
 
-    ops, final_m = _record_cs_adjoint_tape(panels_rm0, panels_m0,
-                                           panels_am_steps, panels_bm_steps,
-                                           panels_cm_steps, mesh, scheme;
-                                           cfl_limit = cfl_limit,
-                                           flux_scale = FT(flux_scale),
-                                           dt = dt_ft,
-                                           base_emission_rates = base_emission_rates,
-                                           diffusion_op = diffusion_op,
+    # FullCheckpoint path: construct the tape storage here so we can
+    # finalize it deterministically after the reverse walk. With
+    # `tape_path !== nothing` this is load-bearing — the user's
+    # directory keeps `records.bin` + `manifest.toml` after the call
+    # returns rather than relying on GC to flush the manifest. When
+    # the caller passes a pre-constructed `AbstractCSTapeStorage`,
+    # `_build_window_storage` returns it unchanged and we skip our own
+    # `finalize_tape!` so the caller's manual lifecycle (existing
+    # mmap-roundtrip test pattern) is preserved.
+    storage = _build_window_storage(tape_storage, resolved_tape_path)
+    owns_storage = !(tape_storage isa AbstractCSTapeStorage)
+    # When the caller supplied `tape_path`, manifest/close failures
+    # must propagate — a saved tape without a valid manifest defeats
+    # the entire purpose of `tape_path`. For temp-dir usage (no path)
+    # keep the existing warn-and-continue behaviour: the directory
+    # gets nuked by `cleanup_on_finalize` anyway.
+    strict_finalize = resolved_tape_path !== nothing
+    try
+        ops, final_m = _record_cs_adjoint_tape(panels_rm0, panels_m0,
+                                               panels_am_steps, panels_bm_steps,
+                                               panels_cm_steps, mesh, scheme;
+                                               cfl_limit = cfl_limit,
+                                               flux_scale = FT(flux_scale),
+                                               dt = dt_ft,
+                                               base_emission_rates = base_emission_rates,
+                                               diffusion_op = diffusion_op,
+                                               diffusion_workspace = diffusion_workspace,
+                                               diffusion_meteo = diffusion_meteo,
+                                               convection_op = convection_op,
+                                               convection_forcing = convection_forcing,
+                                               convection_workspace = convection_workspace,
+                                               tape_storage = storage)
+        lambda_panels = ntuple(p -> begin
+            a = similar(final_m[p])
+            fill!(a, zero(FT))
+            a
+        end, 6)
+        _seed_objective!(lambda_panels, objective, final_m, mesh)
+        return _collect_surface_footprints(lambda_panels, ops, panels_m0, mesh, objective, dt_ft;
                                            diffusion_workspace = diffusion_workspace,
                                            diffusion_meteo = diffusion_meteo,
-                                           convection_op = convection_op,
-                                           convection_forcing = convection_forcing,
-                                           convection_workspace = convection_workspace,
-                                           tape_storage = tape_storage)
-    lambda_panels = ntuple(p -> begin
-        a = similar(final_m[p])
-        fill!(a, zero(FT))
-        a
-    end, 6)
-    _seed_objective!(lambda_panels, objective, final_m, mesh)
-
-    return _collect_surface_footprints(lambda_panels, ops, panels_m0, mesh, objective, dt_ft;
-                                       diffusion_workspace = diffusion_workspace,
-                                       diffusion_meteo = diffusion_meteo,
-                                       convection_workspace = convection_workspace)
+                                           convection_workspace = convection_workspace)
+    finally
+        owns_storage && finalize_tape!(storage; quiet = true,
+                                       strict = strict_finalize)
+    end
 end
 
 """
@@ -238,6 +281,7 @@ function cs_surface_emission_footprint_from_seed(final_adjoint_rm::NTuple{6},
                                                  convection_forcing = nothing,
                                                  convection_workspace = nothing,
                                                  tape_storage = :device,
+                                                 tape_path::Union{Nothing, AbstractString} = nothing,
                                                  checkpoint::AbstractCheckpointSchedule = FullCheckpoint())
     # Plan 26 P0.A.3d: from-seed stride. The objective-driven stride
     # drivers (A.3a/b/c) accept a `final_adjoint_seed` kwarg that
@@ -254,6 +298,8 @@ function cs_surface_emission_footprint_from_seed(final_adjoint_rm::NTuple{6},
                              "base_emission_rates")
     _validate_cs_diffusion_inputs(diffusion_op, diffusion_workspace, nsteps)
     _require_cs_convection_workspace(convection_op, convection_workspace)
+    _require_tape_path_supported(scheme, tape_path)
+    resolved_tape_path = _resolve_tape_path(tape_storage, tape_path)
 
     if checkpoint isa StrideCheckpoint
         if scheme isa CSAdjointLinearScheme
@@ -270,6 +316,7 @@ function cs_surface_emission_footprint_from_seed(final_adjoint_rm::NTuple{6},
                 convection_forcing = convection_forcing,
                 convection_workspace = convection_workspace,
                 tape_storage = tape_storage,
+                tape_path = resolved_tape_path,
                 final_adjoint_seed = final_adjoint_rm)
         else
             # Nonlinear PPM or LinRood — both accept `panels_rm0` and
@@ -295,6 +342,7 @@ function cs_surface_emission_footprint_from_seed(final_adjoint_rm::NTuple{6},
                 convection_forcing = convection_forcing,
                 convection_workspace = convection_workspace,
                 tape_storage = tape_storage,
+                tape_path = resolved_tape_path,
                 final_adjoint_seed = final_adjoint_rm)
         end
     end
@@ -314,6 +362,7 @@ function cs_surface_emission_footprint_from_seed(final_adjoint_rm::NTuple{6},
                 convection_forcing = convection_forcing,
                 convection_workspace = convection_workspace,
                 tape_storage = tape_storage,
+                tape_path = resolved_tape_path,
                 final_adjoint_seed = final_adjoint_rm)
         else
             tape_rm0 = base_panels_rm0 === nothing ?
@@ -333,6 +382,7 @@ function cs_surface_emission_footprint_from_seed(final_adjoint_rm::NTuple{6},
                 convection_forcing = convection_forcing,
                 convection_workspace = convection_workspace,
                 tape_storage = tape_storage,
+                tape_path = resolved_tape_path,
                 final_adjoint_seed = final_adjoint_rm)
         end
     end
@@ -340,24 +390,32 @@ function cs_surface_emission_footprint_from_seed(final_adjoint_rm::NTuple{6},
     tape_rm0 = base_panels_rm0 === nothing ?
         _zero_panel_tuple_like(panels_m0) :
         base_panels_rm0
-    ops, _ = _record_cs_adjoint_tape(tape_rm0, panels_m0,
-                                     panels_am_steps, panels_bm_steps,
-                                     panels_cm_steps, mesh, scheme;
-                                     cfl_limit = cfl_limit,
-                                     flux_scale = FT(flux_scale),
-                                     dt = FT(dt),
-                                     base_emission_rates = base_emission_rates,
-                                     diffusion_op = diffusion_op,
-                                     diffusion_workspace = diffusion_workspace,
-                                     diffusion_meteo = diffusion_meteo,
-                                     convection_op = convection_op,
-                                     convection_forcing = convection_forcing,
-                                     convection_workspace = convection_workspace,
-                                     tape_storage = tape_storage)
-    lambda_panels = _copy_panel_tuple(final_adjoint_rm)
-    return _collect_surface_footprints(lambda_panels, ops, panels_m0, mesh,
-                                       CSSeedObjective(), FT(dt);
-                                       diffusion_workspace = diffusion_workspace,
-                                       diffusion_meteo = diffusion_meteo,
-                                       convection_workspace = convection_workspace)
+    storage = _build_window_storage(tape_storage, resolved_tape_path)
+    owns_storage = !(tape_storage isa AbstractCSTapeStorage)
+    strict_finalize = resolved_tape_path !== nothing
+    try
+        ops, _ = _record_cs_adjoint_tape(tape_rm0, panels_m0,
+                                         panels_am_steps, panels_bm_steps,
+                                         panels_cm_steps, mesh, scheme;
+                                         cfl_limit = cfl_limit,
+                                         flux_scale = FT(flux_scale),
+                                         dt = FT(dt),
+                                         base_emission_rates = base_emission_rates,
+                                         diffusion_op = diffusion_op,
+                                         diffusion_workspace = diffusion_workspace,
+                                         diffusion_meteo = diffusion_meteo,
+                                         convection_op = convection_op,
+                                         convection_forcing = convection_forcing,
+                                         convection_workspace = convection_workspace,
+                                         tape_storage = storage)
+        lambda_panels = _copy_panel_tuple(final_adjoint_rm)
+        return _collect_surface_footprints(lambda_panels, ops, panels_m0, mesh,
+                                           CSSeedObjective(), FT(dt);
+                                           diffusion_workspace = diffusion_workspace,
+                                           diffusion_meteo = diffusion_meteo,
+                                           convection_workspace = convection_workspace)
+    finally
+        owns_storage && finalize_tape!(storage; quiet = true,
+                                       strict = strict_finalize)
+    end
 end

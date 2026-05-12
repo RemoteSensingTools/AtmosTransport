@@ -231,9 +231,44 @@ tape/
     `StrideCheckpoint(K)` instead. 49 new test assertions.
     Optimal binomial Griewank-Walther splits (Algorithm 799) are a
     future promotion behind the same `RevolveCheckpoint` API.
-- **A3** — public-API kwargs (`tape_storage=:mmap, tape_path,
-  checkpoint`) on `cs_surface_emission_footprint`. C48 14-day stretch
-  run; goal: peak RSS < 50 GB, tape disk < 1.5 TB.
+- **A3 — public-API kwargs.** **`tape_path` SHIPPED** (the
+  remaining missing kwarg; `tape_storage` and `checkpoint` were
+  already exposed by A.1 / A.3a-e). `cs_surface_emission_footprint`
+  and `cs_surface_emission_footprint_from_seed` accept
+  `tape_path::Union{Nothing, AbstractString} = nothing`. When set
+  alongside `tape_storage = :mmap`, the FullCheckpoint path roots
+  the tape directly at `tape_path`; `StrideCheckpoint` writes per-
+  window `window_NNNNN/` subdirs; `RevolveCheckpoint` writes per-
+  base-case `step_NNNNN/` subdirs. `cleanup_on_finalize = false`
+  by default for caller-supplied paths so manifests persist past
+  the call. Validation rejects: non-`:mmap` storage with a path,
+  empty paths, pre-constructed `AbstractCSTapeStorage` with a path,
+  and LinRood (which is `:device`-only) with a path. New helpers
+  `Tape._resolve_tape_path` / `Tape._build_window_storage` keep
+  storage construction in one place. **Reviewer P1+P2 follow-up
+  folded in:** (P2) the LinRood-vs-`tape_path` guard now runs in a
+  new `_require_tape_path_supported(scheme, tape_path)` helper that
+  fires BEFORE `_resolve_tape_path` calls `mkpath`, so an invalid
+  request leaves no `records.bin` / `manifest.toml` side effects
+  under the user's tree. (P1) `finalize_tape!(::MmapCSTapeStorage)`
+  gained a `strict::Bool = false` kwarg that rethrows
+  manifest-emission / IO-close failures instead of `@warn`ing;
+  every public API path that owns a `tape_path`-rooted storage
+  threads `strict = tape_path !== nothing` so a broken manifest
+  surfaces an exception (the silent-failure scenario the reviewer
+  reproduced now throws). Temp-dir usage keeps the warn-and-
+  continue default since the directory gets cleaned up anyway.
+  55 test assertions in `test/test_cs_tape_path.jl` covering
+  Full / Stride / Revolve / from-seed parity, auto-`mkpath` on
+  missing leaf, `load_mmap_tape` resume against caller-owned dirs,
+  all validation rejections, the P2 no-mkpath-on-LinRood-reject
+  invariant across all three checkpoint schedules + from-seed, and
+  the P1 strict-rethrow behaviour for both FullCheckpoint and per-
+  window Stride manifest failures. Baselines green: 130/130
+  stride+revolve, 75/75 CS PPM, 241/241 mmap roundtrip, 76/76
+  LinRood integration.
+- **A3 stretch — C48 14-day run.** Pending. Goal: peak RSS < 50 GB,
+  tape disk < 1.5 TB on a real C48 met sequence end-to-end.
 - **A4** — bench compress/decompress throughput on real C180 tape;
   if NVMe seq-write or scratch-quota is the bottleneck, add
   `NetCDFCSTapeStorage` (DEFLATE-1 fallback) or `ZarrCSTapeStorage`

@@ -41,6 +41,7 @@ test/Manifest.toml
 catrine_advonly_snapshot.png
 .claude/.nfs*
 .claude/scheduled_tasks.lock
+.claude/*.pdf
 .codex
 *.bak
 

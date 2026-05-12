@@ -145,6 +145,44 @@ end
 
 _tape_storage(::Val{:mmap}) = MmapCSTapeStorage()
 
+"""
+    _build_window_storage(tape_storage, tape_path, subdir) -> AbstractCSTapeStorage
+
+Construct a fresh tape storage instance for one window (Stride) or one
+base-case step (Revolve). When `tape_path === nothing` this falls
+through to `_tape_storage(tape_storage)` and inherits its temp-dir /
+cleanup behaviour. When `tape_path !== nothing`, `tape_storage` must
+be `:mmap`; the function builds an [`MmapCSTapeStorage`](@ref) rooted
+at `joinpath(tape_path, subdir)` with `cleanup_on_finalize = false` so
+the caller-owned directory is preserved past `finalize_tape!`.
+
+An empty `subdir` (the default) is used by the single-tape
+`FullCheckpoint` path: the storage is rooted directly at `tape_path`
+with no extra nesting. The checkpoint drivers pass per-window /
+per-step subdirectory names (e.g. `"window_00007"`, `"step_00042"`) so
+multiple windows can coexist under the same user-supplied tree.
+"""
+function _build_window_storage(tape_storage::Symbol,
+                                tape_path::Union{Nothing, AbstractString},
+                                subdir::AbstractString = "")
+    tape_path === nothing && return _tape_storage(tape_storage)
+    tape_storage === :mmap || throw(ArgumentError(
+        "tape_path requires tape_storage = :mmap; got " *
+        "$(repr(tape_storage))"))
+    dir = isempty(subdir) ? String(tape_path) : joinpath(tape_path, subdir)
+    return MmapCSTapeStorage(; dir = dir, cleanup_on_finalize = false)
+end
+
+# Pre-constructed storage: identity pass-through. The user owns the
+# storage's lifecycle, so the caller (`cs_surface_emission_footprint`)
+# must skip its own `finalize_tape!` for this branch. Stride / Revolve
+# already reject pre-constructed storage up front (they build a fresh
+# one per window), so this method only fires through the
+# `FullCheckpoint` path.
+_build_window_storage(storage::AbstractCSTapeStorage,
+                       ::Nothing,
+                       ::AbstractString = "") = storage
+
 # ---------------------------------------------------------------------------
 # Slot type — minimal descriptor; all data lives on disk.
 # ---------------------------------------------------------------------------
@@ -381,29 +419,49 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    finalize_tape!(storage::MmapCSTapeStorage)
+    finalize_tape!(storage::MmapCSTapeStorage; quiet = false, strict = false)
 
 Sync any pending mmap state, write the TOML manifest, and close the
 underlying `records.bin` handle. Safe to call more than once; subsequent
 calls are no-ops. If the storage owns its temp directory and
 `cleanup_on_finalize` is true, the directory is also removed after
 manifest emission.
+
+By default (`strict = false`), failures during manifest emission, IO
+close, or temp-dir cleanup are caught and surfaced via `@warn` (or
+suppressed if `quiet = true`). This matches the temp-dir use case
+where leaving a partially-finalised storage behind is benign — the
+directory gets cleaned up by GC or by the caller's `mktempdir do`
+block anyway.
+
+With `strict = true`, manifest- and close-failures are still caught
+into local error slots (so the IO handle and device cache are released
+before throwing), but the first such error is rethrown at the end of
+the function. This is the right setting whenever the storage is rooted
+at a caller-supplied `tape_path` and a missing/corrupt `manifest.toml`
+would defeat the purpose of persisting the tape.
 """
-function finalize_tape!(storage::MmapCSTapeStorage; quiet::Bool = false)
+function finalize_tape!(storage::MmapCSTapeStorage; quiet::Bool = false,
+                        strict::Bool = false)
     storage.closed && return storage
+    manifest_err = nothing
     if !storage.finalised && isdir(storage.dir)
         try
             _write_manifest(storage)
             storage.finalised = true
         catch err
-            quiet ||
+            manifest_err = err
+            !quiet && !strict &&
                 @warn "MmapCSTapeStorage: manifest emission failed" exception = err
         end
     end
+    close_err = nothing
     try
         close(storage.bin_io)
     catch err
-        quiet || @warn "MmapCSTapeStorage: bin close failed" exception = err
+        close_err = err
+        !quiet && !strict &&
+            @warn "MmapCSTapeStorage: bin close failed" exception = err
     end
     # Drop the per-shape device cache so any device-resident buffers
     # are released promptly. This matters for long-running 4D-Var
@@ -414,9 +472,13 @@ function finalize_tape!(storage::MmapCSTapeStorage; quiet::Bool = false)
         try
             rm(storage.dir; recursive = true, force = true)
         catch err
-            quiet ||
+            !quiet && !strict &&
                 @warn "MmapCSTapeStorage: temp dir cleanup failed" exception = err
         end
+    end
+    if strict
+        manifest_err !== nothing && throw(manifest_err)
+        close_err !== nothing && throw(close_err)
     end
     return storage
 end

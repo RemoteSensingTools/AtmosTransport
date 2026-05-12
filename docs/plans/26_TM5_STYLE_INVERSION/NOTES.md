@@ -130,6 +130,41 @@ tape/
 - **A3 (was A2 in original numbering)** — `CSCheckpointSchedule`
   (`:full`, `:stride`, `:revolve`) + per-window replay driver +
   FD-identity tests parametrised over `(tape_storage, checkpoint)`.
+  * **A.3a SHIPPED.** `AbstractCheckpointSchedule`, `FullCheckpoint`,
+    `StrideCheckpoint(K)` types in `src/Tape/CheckpointSchedule.jl`.
+    Strided-window driver `_collect_surface_footprints_stride` in
+    `src/Footprint/StrideCheckpoint.jl` propagates `panels_m`
+    checkpoints forward (kernels only, no staging), then re-records
+    each window from its left-edge checkpoint and walks it
+    backwards. Public kwarg `checkpoint::AbstractCheckpointSchedule
+    = FullCheckpoint()` on `cs_surface_emission_footprint`. Linear
+    scheme paths only — nonlinear PPM, LinRood, and the from-seed
+    variant raise `ArgumentError` for non-Full schedules pending
+    A.3b. `_record_cs_mass_tape` gained:
+    * `step_offset::Int = 0` — window invocations report absolute
+      step indices in `_CSMidpointRecord`.
+    * `record_ops::Bool = true` — when false (propagation mode), all
+      `_record_sweep!` / `_stage_panels` / `push!(ops, ...)` sites
+      short-circuit so peak forward propagation memory is one
+      `panels_m` tuple, independent of `nsteps`. Required for
+      stride to actually save memory at scale.
+    Per-window mmap tapes are explicitly `finalize_tape!`d inside a
+    `try / finally` after each reverse walk so per-window
+    `records.bin` temp dirs don't accumulate. A generic
+    `finalize_tape!(::AbstractCSTapeStorage)` no-op fallback lives
+    in `src/Tape/TapeStorage.jl` so the call site is uniform across
+    storage types. `_collect_surface_footprints` was refactored to
+    dispatch the per-record walk through a shared
+    `_walk_window_reverse!` helper. FD-identity bit-exact between
+    `FullCheckpoint()` and `StrideCheckpoint(K)` for K ∈
+    {1, 2, 3, 5, 6, 12} across `(:device, :mmap)` tape storage on
+    linear PPM + transport flow + ImplicitVerticalDiffusion +
+    CMFMCConvection. 36 new test assertions in
+    `test/test_cs_stride_checkpoint.jl`.
+  * **A.3b — TODO.** Tracer-tape stride (nonlinear PPM); LinRood
+    stride; from-seed variant.
+  * **A.3c — TODO.** `RevolveCheckpoint(snapshots)` (binomial
+    Griewank-Walther schedule).
 - **A3** — public-API kwargs (`tape_storage=:mmap, tape_path,
   checkpoint`) on `cs_surface_emission_footprint`. C48 14-day stretch
   run; goal: peak RSS < 50 GB, tape disk < 1.5 TB.

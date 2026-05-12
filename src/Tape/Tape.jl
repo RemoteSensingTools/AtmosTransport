@@ -39,10 +39,13 @@ export AbstractCSTapeStorage,
        load_mmap_tape, get_record,
        _CSSweepRecord, _CSHaloRecord, _CSMidpointRecord,
        _CSDiffusionRecord, _CSConvectionRecord,
-       _CSTapeOp
+       _CSTapeOp,
+       AbstractCheckpointSchedule, FullCheckpoint, StrideCheckpoint,
+       checkpoint_window_count, checkpoint_window_range
 
 include("TapeStorage.jl")
 include("TapeRecords.jl")
 include("MmapTapeStorage.jl")
+include("CheckpointSchedule.jl")
 
 end # module Tape

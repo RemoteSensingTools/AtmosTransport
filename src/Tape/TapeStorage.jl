@@ -66,6 +66,15 @@ _tape_storage(storage) = throw(ArgumentError(
     "unsupported CS adjoint tape storage $(storage); " *
     "supported: :device, :pinned_host, :mmap"))
 
+# Generic no-op fallback so the strided checkpoint driver can call
+# `finalize_tape!(storage)` once per window without dispatching on
+# storage type. `MmapCSTapeStorage` overrides this in
+# `MmapTapeStorage.jl` to sync + emit manifest + close the bin handle.
+# `DeviceCSTapeStorage` and `PinnedHostCSTapeStorage` hold their state
+# in plain Julia arrays and do not need an explicit teardown — GC
+# handles release once the storage drops out of scope.
+finalize_tape!(::AbstractCSTapeStorage; quiet::Bool = false) = nothing
+
 # ---------------------------------------------------------------------------
 # Slot read / staging hooks
 # ---------------------------------------------------------------------------

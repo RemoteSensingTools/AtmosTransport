@@ -95,7 +95,8 @@ function cs_surface_emission_footprint(panels_rm0, panels_m0,
                                        convection_op = NoConvection(),
                                        convection_forcing = nothing,
                                        convection_workspace = nothing,
-                                       tape_storage = :device)
+                                       tape_storage = :device,
+                                       checkpoint::AbstractCheckpointSchedule = FullCheckpoint())
     FT = eltype(panels_rm0[1])
     dt_ft = FT(dt)
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps, panels_cm_steps)
@@ -105,6 +106,23 @@ function cs_surface_emission_footprint(panels_rm0, panels_m0,
                              "base_emission_rates")
     _validate_cs_diffusion_inputs(diffusion_op, diffusion_workspace, nsteps)
     _require_cs_convection_workspace(convection_op, convection_workspace)
+    _require_checkpoint_supported(scheme, checkpoint)
+
+    if checkpoint isa StrideCheckpoint
+        return _collect_surface_footprints_stride(
+            panels_m0,
+            panels_am_steps, panels_bm_steps, panels_cm_steps,
+            mesh, scheme, checkpoint, objective, dt_ft;
+            cfl_limit = cfl_limit,
+            flux_scale = FT(flux_scale),
+            diffusion_op = diffusion_op,
+            diffusion_workspace = diffusion_workspace,
+            diffusion_meteo = diffusion_meteo,
+            convection_op = convection_op,
+            convection_forcing = convection_forcing,
+            convection_workspace = convection_workspace,
+            tape_storage = tape_storage)
+    end
 
     ops, final_m = _record_cs_adjoint_tape(panels_rm0, panels_m0,
                                            panels_am_steps, panels_bm_steps,
@@ -162,7 +180,20 @@ function cs_surface_emission_footprint_from_seed(final_adjoint_rm::NTuple{6},
                                                  convection_op = NoConvection(),
                                                  convection_forcing = nothing,
                                                  convection_workspace = nothing,
-                                                 tape_storage = :device)
+                                                 tape_storage = :device,
+                                                 checkpoint::AbstractCheckpointSchedule = FullCheckpoint())
+    # Strided checkpointing for the from-seed entry needs a separate
+    # driver: it skips the objective-driven seeding and takes the
+    # lambda directly. That driver is not in this commit; refuse
+    # non-FullCheckpoint until it lands. When that driver lands, also
+    # route through `_require_checkpoint_supported` (see
+    # `cs_surface_emission_footprint` above) so the scheme-vs-schedule
+    # gate stays in one place.
+    checkpoint isa FullCheckpoint || throw(ArgumentError(
+        "cs_surface_emission_footprint_from_seed does not yet support " *
+        "checkpoint=$(checkpoint); the from-seed stride driver is " *
+        "deferred to a follow-up commit. Pass checkpoint=FullCheckpoint() " *
+        "or use cs_surface_emission_footprint with an objective."))
     FT = eltype(panels_m0[1])
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps,
                                       panels_cm_steps)

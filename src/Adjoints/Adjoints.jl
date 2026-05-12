@@ -53,7 +53,9 @@ using ..Tape: AbstractCSTapeStorage,
               _bytes_per_panel_tuple, finalize_tape!,
               load_mmap_tape, get_record,
               _CSSweepRecord, _CSHaloRecord, _CSMidpointRecord,
-              _CSDiffusionRecord, _CSConvectionRecord, _CSTapeOp
+              _CSDiffusionRecord, _CSConvectionRecord, _CSTapeOp,
+              AbstractCheckpointSchedule, FullCheckpoint, StrideCheckpoint,
+              checkpoint_window_count, checkpoint_window_range
 
 const CSAdjointLinearScheme = Union{UpwindScheme, SlopesScheme{NoLimiter}, PPMScheme{NoLimiter}}
 const CSAdjointNonlinearScheme = Union{PPMScheme{MonotoneLimiter}}
@@ -249,6 +251,14 @@ include("../Footprint/TapeRecording.jl")
 include("../Footprint/ReverseLoop.jl")
 
 
+# Plan 26 P0.A.3 — strided checkpoint driver. Depends on the linear-scheme
+# `_record_cs_mass_tape` + `_walk_window_reverse!` defined above; the
+# FootprintAPI below dispatches on the `checkpoint` kwarg to choose between
+# the existing `_collect_surface_footprints` path (FullCheckpoint, no
+# behaviour change) and `_collect_surface_footprints_stride`.
+include("../Footprint/StrideCheckpoint.jl")
+
+
 # Plan 26 P0.3c — user-facing footprint API relocated to a focused file.
 include("../Footprint/FootprintAPI.jl")
 
@@ -275,6 +285,7 @@ export MmapCSTapeStorage, MmapCSTapeSlot
 export PinnedHostCSTapeSlot, CSTapeByteEstimate
 export finalize_tape!
 export load_mmap_tape, get_record
+export AbstractCheckpointSchedule, FullCheckpoint, StrideCheckpoint
 export evaluate_objective, run_cs_footprint_forward
 export cs_surface_emission_footprint, cs_surface_emission_footprint_from_seed
 export cs_tape_byte_estimate

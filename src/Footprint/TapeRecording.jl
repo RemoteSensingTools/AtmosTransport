@@ -218,9 +218,25 @@ function _record_cs_mass_tape(panels_m0,
                               diffusion_workspace = nothing,
                               convection_op = NoConvection(),
                               convection_forcing = nothing,
-                              tape_storage = :device)
+                              tape_storage = :device,
+                              step_offset::Int = 0,
+                              record_ops::Bool = true)
+    # `step_offset` shifts `_CSMidpointRecord(step)` indices when the
+    # caller is recording one window of a strided checkpoint
+    # schedule rather than the whole run. Default 0 keeps the
+    # single-tape `FullCheckpoint` path bit-exact.
+    #
+    # `record_ops = false` is the propagation-only mode used by the
+    # forward checkpoint pass in `_propagate_mass_checkpoints`: every
+    # `_record_sweep!` / `_stage_panels` / `push!(ops, ...)` site is
+    # short-circuited so the kernel calls (`_sweep_x/y/z_panel!`,
+    # `fill_panel_halos!`) still propagate `panels_m` forward but no
+    # tape storage is allocated. Diffusion and convection branches
+    # never mutate `panels_m` in the mass-tape recorder (they only
+    # exist to schedule the reverse-pass adjoint), so eliding their
+    # record pushes preserves the forward trajectory bit-for-bit.
     FT = eltype(panels_m0[1])
-    storage = _tape_storage(tape_storage)
+    storage = record_ops ? _tape_storage(tape_storage) : nothing
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps, panels_cm_steps)
     panels_m = _copy_panel_tuple(panels_m0)
     fill_panel_halos!(panels_m, mesh; dir=0)
@@ -247,52 +263,60 @@ function _record_cs_mass_tape(panels_m0,
         fs_z = fs / FT(n_z)
 
         for _ in 1:n_x
-            _record_sweep!(ops, :x, scheme, panels_m, panels_am, fs_x, storage)
+            record_ops && _record_sweep!(ops, :x, scheme, panels_m, panels_am, fs_x, storage)
             for p in 1:6
                 _sweep_x_panel!(dummy_rm[p], panels_m[p], panels_am[p], scheme,
                                 ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_x)
             end
             fill_panel_halos!(panels_m, mesh; dir=1)
-            push!(ops, _CSHaloRecord(1))
+            record_ops && push!(ops, _CSHaloRecord(1))
         end
 
         for _ in 1:n_y
-            _record_sweep!(ops, :y, scheme, panels_m, panels_bm, fs_y, storage)
+            record_ops && _record_sweep!(ops, :y, scheme, panels_m, panels_bm, fs_y, storage)
             for p in 1:6
                 _sweep_y_panel!(dummy_rm[p], panels_m[p], panels_bm[p], scheme,
                                 ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_y)
             end
             fill_panel_halos!(panels_m, mesh; dir=2)
-            push!(ops, _CSHaloRecord(2))
+            record_ops && push!(ops, _CSHaloRecord(2))
         end
 
         for _ in 1:n_z
-            _record_sweep!(ops, :z, scheme, panels_m, panels_cm, fs_z, storage)
+            record_ops && _record_sweep!(ops, :z, scheme, panels_m, panels_cm, fs_z, storage)
             for p in 1:6
                 _sweep_z_panel!(dummy_rm[p], panels_m[p], panels_cm[p], scheme,
                                 ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_z)
             end
         end
 
-        diffusion_op_step = _diffusion_sequence_at(diffusion_op, step, nsteps,
-                                                   "diffusion_op")
-        if diffusion_op_step isa NoDiffusion
-            push!(ops, _CSMidpointRecord(step))
-        else
-            diffusion_ws_step = _diffusion_sequence_at(diffusion_workspace, step,
-                                                       nsteps,
-                                                       "diffusion_workspace")
-            panels_m_midpoint = _stage_panels(storage, panels_m)
-            half_dt = FT(dt) / FT(2)
-            push!(ops, _CSDiffusionRecord(diffusion_op_step, diffusion_ws_step,
-                                          panels_m_midpoint, half_dt))
-            push!(ops, _CSMidpointRecord(step))
-            push!(ops, _CSDiffusionRecord(diffusion_op_step, diffusion_ws_step,
-                                          panels_m_midpoint, half_dt))
+        # Diffusion + midpoint records are pure scheduling metadata for
+        # the reverse pass — the mass-tape recorder never applies
+        # diffusion to `panels_m` itself. Skip the entire block (and
+        # the `_stage_panels` allocation it would have triggered) when
+        # `record_ops = false`.
+        if record_ops
+            diffusion_op_step = _diffusion_sequence_at(diffusion_op, step, nsteps,
+                                                       "diffusion_op")
+            absolute_step = step + step_offset
+            if diffusion_op_step isa NoDiffusion
+                push!(ops, _CSMidpointRecord(absolute_step))
+            else
+                diffusion_ws_step = _diffusion_sequence_at(diffusion_workspace, step,
+                                                           nsteps,
+                                                           "diffusion_workspace")
+                panels_m_midpoint = _stage_panels(storage, panels_m)
+                half_dt = FT(dt) / FT(2)
+                push!(ops, _CSDiffusionRecord(diffusion_op_step, diffusion_ws_step,
+                                              panels_m_midpoint, half_dt))
+                push!(ops, _CSMidpointRecord(absolute_step))
+                push!(ops, _CSDiffusionRecord(diffusion_op_step, diffusion_ws_step,
+                                              panels_m_midpoint, half_dt))
+            end
         end
 
         for _ in 1:n_z
-            _record_sweep!(ops, :z, scheme, panels_m, panels_cm, fs_z, storage)
+            record_ops && _record_sweep!(ops, :z, scheme, panels_m, panels_cm, fs_z, storage)
             for p in 1:6
                 _sweep_z_panel!(dummy_rm[p], panels_m[p], panels_cm[p], scheme,
                                 ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_z)
@@ -300,30 +324,34 @@ function _record_cs_mass_tape(panels_m0,
         end
 
         fill_panel_halos!(panels_m, mesh; dir=2)
-        push!(ops, _CSHaloRecord(2))
+        record_ops && push!(ops, _CSHaloRecord(2))
         for _ in 1:n_y
-            _record_sweep!(ops, :y, scheme, panels_m, panels_bm, fs_y, storage)
+            record_ops && _record_sweep!(ops, :y, scheme, panels_m, panels_bm, fs_y, storage)
             for p in 1:6
                 _sweep_y_panel!(dummy_rm[p], panels_m[p], panels_bm[p], scheme,
                                 ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_y)
             end
             fill_panel_halos!(panels_m, mesh; dir=2)
-            push!(ops, _CSHaloRecord(2))
+            record_ops && push!(ops, _CSHaloRecord(2))
         end
 
         fill_panel_halos!(panels_m, mesh; dir=1)
-        push!(ops, _CSHaloRecord(1))
+        record_ops && push!(ops, _CSHaloRecord(1))
         for _ in 1:n_x
-            _record_sweep!(ops, :x, scheme, panels_m, panels_am, fs_x, storage)
+            record_ops && _record_sweep!(ops, :x, scheme, panels_m, panels_am, fs_x, storage)
             for p in 1:6
                 _sweep_x_panel!(dummy_rm[p], panels_m[p], panels_am[p], scheme,
                                 ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_x)
             end
             fill_panel_halos!(panels_m, mesh; dir=1)
-            push!(ops, _CSHaloRecord(1))
+            record_ops && push!(ops, _CSHaloRecord(1))
         end
 
-        if !(convection_op isa NoConvection)
+        # Convection record is also pure reverse-pass metadata in the
+        # mass-tape recorder (forward propagation of `panels_m`
+        # through convection happens in `_record_cs_tracer_tape`, not
+        # here). Skip entirely under propagation-only mode.
+        if record_ops && !(convection_op isa NoConvection)
             forcing_step = _convection_forcing_at(convection_forcing, step, nsteps)
             forcing_step === nothing && throw(ArgumentError(
                 "convection_op=$(typeof(convection_op)) requires `convection_forcing`"))

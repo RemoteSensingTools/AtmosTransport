@@ -31,6 +31,31 @@ function _collect_surface_footprints(lambda_panels, ops, panels_m0,
     end
 
     ws = CSAdjointWorkspace(mesh, lambda_panels[1])
+    _walk_window_reverse!(footprints, lambda_panels, ops, mesh, ws, dt;
+                          diffusion_meteo = diffusion_meteo,
+                          convection_workspace = convection_workspace)
+
+    lag_steps = [nsteps - step for step in 1:nsteps]
+    A2 = typeof(footprints[1][1])
+    return CSFootprintResult{FT, typeof(objective), A2}(
+        objective, footprints, lag_steps, FT(dt), zero(FT), FT(NaN))
+end
+
+# Plan 26 P0.A.3 — extracted from the original `_collect_surface_footprints`
+# body so that the stride / revolve checkpoint drivers can call it once per
+# window without re-allocating `footprints` or seeding `lambda_panels` from
+# scratch. Behaviour for the `FullCheckpoint` path is unchanged: one call
+# over the whole `ops` list does the same work as before.
+#
+# Caller responsibilities:
+#   * `footprints[step]` must be pre-allocated for every `step` index that
+#     appears as `op.step` in a `_CSMidpointRecord` inside `ops`.
+#   * `lambda_panels` is mutated in place — chain calls in window-reverse
+#     order so the adjoint state flows from final to initial across windows.
+function _walk_window_reverse!(footprints, lambda_panels, ops,
+                               mesh::CubedSphereMesh, ws, dt;
+                               diffusion_meteo = nothing,
+                               convection_workspace = nothing)
     for op in Iterators.reverse(ops)
         if op isa _CSSweepRecord
             if op.panels_rm === nothing
@@ -79,11 +104,7 @@ function _collect_surface_footprints(lambda_panels, ops, panels_m0,
             throw(ArgumentError("unknown CS adjoint tape operation $(typeof(op))"))
         end
     end
-
-    lag_steps = [nsteps - step for step in 1:nsteps]
-    A2 = typeof(footprints[1][1])
-    return CSFootprintResult{FT, typeof(objective), A2}(
-        objective, footprints, lag_steps, FT(dt), zero(FT), FT(NaN))
+    return nothing
 end
 
 function _run_cs_footprint_forward(panels_rm0, panels_m0,

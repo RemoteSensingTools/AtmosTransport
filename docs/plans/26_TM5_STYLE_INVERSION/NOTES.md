@@ -11,7 +11,7 @@ Parent plan: `/home/cfranken/.claude/plans/how-does-tm5-handle-joyful-marble.md`
 Extend the existing AtmosTransport.jl footprint + 4D-Var prototype toward
 TM5-cy3-4DVar architectural parity. Concretely close three gaps:
 
-1. **In-memory tape** → add a NetCDF-backed tape storage policy + sliding
+1. **In-memory tape** → add an on-disk tape storage policy + sliding
    window checkpoint scheduler so 2-week C180 inversions become feasible
    (peak RAM bounded by one replay window, not the full tape).
 2. **Diagonal-only background** → replace with B = (per-cell σ) ×
@@ -67,13 +67,45 @@ Each commit gets `codex review --uncommitted` before landing.
 
 ### Phase A — on-disk tape (lands in `src/Tape/`)
 
-- **A1** — `NetCDFCSTapeStorage <: AbstractCSTapeStorage` +
-  `test_cs_tape_netcdf_roundtrip.jl`.
-- **A2** — `CSCheckpointSchedule` + per-window replay driver +
-  FD-identity tests parametrised over `(tape_storage, checkpoint)`.
-- **A3** — public-API kwargs (`tape_storage=:netcdf, tape_path,
+Storage-format decision (2026-05-11, after Zarr/NetCDF/mmap pros-cons):
+**raw binary + mmap is the production default**, NetCDF stays as an
+optional archival format, Zarr deferred. Rationale: tape access is
+sequential-append on forward + LIFO sequential on reverse — exactly
+the workload mmap was designed for. Hot-path serialization + compression
+CPU in NetCDF/Zarr competes with the GPU forward step, and we already
+have precedent for custom binary files in this repo (the transport
+binaries used as preprocessor output). The
+`AbstractCSTapeStorage` abstraction (P0.1) means a future
+`NetCDFCSTapeStorage` or `ZarrCSTapeStorage` is a drop-in swap if
+storage budget or cloud deployment ever forces it.
+
+Concrete layout:
+
+```
+tape/
+├── manifest.toml      # record table: [step, op, offset, shape, dtype, panel_idx]
+├── records.bin        # raw appended record data (preallocated, sparse-OK)
+└── (optional) checksums.bin
+```
+
+- **A1** — `MmapCSTapeStorage <: AbstractCSTapeStorage` with manifest
+  + preallocated `records.bin`; `_allocate_tape_slot` reserves a
+  manifest entry + bumps cursor, `stage_panels!` pwrites 6 panels at
+  the slot's offset, `_tape_panels` mmap-views the slot and copies
+  into a device-side LRU cache. New test
+  `test_cs_tape_mmap_roundtrip.jl` (stage → mmap-evict → read-back →
+  bit-exact equality).
+- **A2** — `CSCheckpointSchedule` (`:full`, `:stride`, `:revolve`) +
+  per-window replay driver + FD-identity tests parametrised over
+  `(tape_storage, checkpoint)`.
+- **A3** — public-API kwargs (`tape_storage=:mmap, tape_path,
   checkpoint`) on `cs_surface_emission_footprint`. C48 14-day stretch
-  run.
+  run; goal: peak RSS < 50 GB, tape disk < 1.5 TB.
+- **A4** — bench compress/decompress throughput on real C180 tape;
+  if NVMe seq-write or scratch-quota is the bottleneck, add
+  `NetCDFCSTapeStorage` (DEFLATE-1 fallback) or `ZarrCSTapeStorage`
+  (zstd-3, cloud-ready) as a parallel option behind the same
+  `AbstractCSTapeStorage` interface — not a replacement.
 
 ### Phase D — observation IO (lands in `src/Inversion/`)
 
@@ -125,13 +157,22 @@ Single file. Dim `obs` (unlimited). Vars per the parent plan:
   P0.* commit" hard gate, codex review for "no semantic change" on
   each move commit.
 - **Phase A — disk-IO bandwidth at C180**: tape stage/replay throughput
-  is the bottleneck. Mitigation: chunk + compression benchmarking before
-  locking in defaults.
-- **Phase A — reverse-replay locality**: a correct NetCDF schema can
-  still perform poorly if each reverse step triggers scattered reads.
-  Mitigation: chunk records along the time axis so a single chunk holds
-  one full substep's tape entries (panels + face arrays); LRU cache
-  pre-fetches the upcoming window's chunks.
+  is the bottleneck. Mitigation: mmap + raw binary (A1) avoids
+  serialization CPU on the hot path; A4 benches it against a
+  NetCDF/Zarr fallback before locking the default.
+- **Phase A — reverse-replay locality**: for mmap the kernel's
+  readahead handles LIFO sequential access. `posix_fadvise(POSIX_FADV_
+  SEQUENTIAL)` on the tape file at open; `posix_fadvise(POSIX_FADV_
+  DONTNEED)` after reverse pass to release page-cache.
+- **Phase A — mmap on networked FS**: mmap is unreliable on NFS and
+  has caveats on Lustre (mmap+O_DIRECT, page coherence). Local NVMe
+  scratch is fine. If a user points `tape_path` at NFS, A1 should
+  detect and refuse with a clear error pointing to the
+  NetCDF fallback (A4).
+- **Phase A — manifest crash safety**: if a forward run crashes
+  mid-record, the manifest TOML may not reflect the partial write.
+  Mitigation: write manifest entries atomically (rename-on-close)
+  and skip the trailing torn record on resume.
 - **Phase B — cross-panel correlation**: v1 ships panel-local FFT only;
   edge artefacts may need a Schur complement or small eigendecomp in v2.
 - **Phase B/C — preconditioner masks optimizer comparison**: L-BFGS-vs-GD
@@ -155,3 +196,10 @@ Single file. Dim `obs` (unlimited). Vars per the parent plan:
 
 - Plan 25 NOTES at `docs/plans/25_LINROOD_ADJOINT/NOTES.md` — same
   commit-cadence template and FD-identity testing strategy.
+
+- Existing custom-binary precedent in this repo: the transport binary
+  format (`src/Preprocessing/transport_binary/`,
+  `docs/reference/BINARY_FORMAT_V5.md`) — preprocessor output uses a
+  documented offset + manifest layout we should mirror for tape
+  records (versioned magic header, host endianness check, sidecar
+  manifest).

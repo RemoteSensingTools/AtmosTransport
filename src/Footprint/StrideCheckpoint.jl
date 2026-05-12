@@ -143,6 +143,21 @@ function _collect_surface_footprints_stride(panels_m0,
     _validate_objective(objective, mesh, Nz)
     _validate_cs_diffusion_inputs(diffusion_op, diffusion_workspace, nsteps)
     _require_cs_convection_workspace(convection_op, convection_workspace)
+    # The stride driver constructs a fresh tape storage per window
+    # via `_tape_storage(tape_storage)` and finalize_tape!s it after
+    # each window's reverse walk. If the caller passes an
+    # *already-constructed* `AbstractCSTapeStorage`, `_tape_storage`
+    # is identity — every window would share the same storage, and
+    # the second window would throw "MmapCSTapeStorage ... is
+    # finalised; cannot allocate new slot" because we finalize after
+    # the first reverse walk. Reject the misuse up front with a
+    # tape-aware diagnostic.
+    tape_storage isa AbstractCSTapeStorage && throw(ArgumentError(
+        "StrideCheckpoint requires `tape_storage` to be a Symbol " *
+        "(:device, :pinned_host, or :mmap), not a pre-constructed " *
+        "$(typeof(tape_storage)); the stride driver builds and " *
+        "finalize_tape!s one storage instance per window. Pass " *
+        "`tape_storage = :mmap` (or similar) instead."))
 
     checkpoints = _propagate_mass_checkpoints(
         panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps,

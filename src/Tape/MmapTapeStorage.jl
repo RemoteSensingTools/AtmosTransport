@@ -283,6 +283,10 @@ function stage_panels!(slot::MmapCSTapeSlot, src::NTuple{6})
     storage = slot.storage
     storage.readonly && throw(ArgumentError(
         "MmapCSTapeStorage at $(storage.dir) is readonly; cannot stage panels"))
+    storage.finalised && throw(ArgumentError(
+        "MmapCSTapeStorage at $(storage.dir) is finalised; cannot stage panels. " *
+        "A reopened tape (`load_mmap_tape`) is for inspection only; slot " *
+        "reuse / overwrite semantics are reserved for Phase B."))
     storage.closed && throw(ArgumentError(
         "MmapCSTapeStorage at $(storage.dir) is closed; cannot stage panels"))
     @inbounds for p in 1:6

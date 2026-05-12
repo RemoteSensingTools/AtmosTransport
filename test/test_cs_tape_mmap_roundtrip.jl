@@ -614,6 +614,43 @@ end
         end
     end
 
+    @testset "readonly=false reload still blocks overwrite of finalised tape" begin
+        # GPT F3: `load_mmap_tape(dir; readonly=false)` returns a
+        # storage with `finalised = true` and `readonly = false`.
+        # `_allocate_tape_slot` is blocked by `finalised`; the previous
+        # version of `stage_panels!` only checked `readonly` and
+        # `closed`, so a caller that obtained a slot via `get_record`
+        # could silently overwrite the on-disk bytes. Phase B will own
+        # slot-reuse semantics; for v1, `stage_panels!` rejects on
+        # `finalised` too.
+        mktempdir() do dir
+            storage = TapeMod.MmapCSTapeStorage(; dir = dir,
+                                                cleanup_on_finalize = false)
+            src = _build_panels(:m; Nc = 3, Hp = 3, Nz = 4, FT = Float32, seed = 11)
+            TapeMod._stage_panels(storage, src)
+            TapeMod.finalize_tape!(storage)
+
+            rw = TapeMod.load_mmap_tape(dir; readonly = false)
+            @test rw.readonly === false
+            @test rw.finalised === true
+
+            slot = TapeMod.get_record(rw, 1)
+            overwrite = _build_panels(:m; Nc = 3, Hp = 3, Nz = 4, FT = Float32, seed = 99)
+            @test_throws ArgumentError TapeMod.stage_panels!(slot, overwrite)
+
+            # Verify the on-disk bytes are still the original src, not
+            # the would-be overwrite. Round-trip through a fresh
+            # readonly reopen to confirm.
+            TapeMod.finalize_tape!(rw)
+            ro = TapeMod.load_mmap_tape(dir)
+            got = TapeMod._tape_panels(TapeMod.get_record(ro, 1))
+            for p in 1:6
+                @test got[p] == src[p]
+            end
+            TapeMod.finalize_tape!(ro)
+        end
+    end
+
     @testset "validation: missing files, corrupted meta, version mismatch" begin
         @test_throws ArgumentError TapeMod.load_mmap_tape(
             joinpath(tempdir(), "atmostransport-mmap-load-nope-$(rand(UInt32))"))

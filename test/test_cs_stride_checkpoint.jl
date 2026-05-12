@@ -77,11 +77,21 @@ end
 _column_mean_objective(mesh::AT.CubedSphereMesh) =
     AT.CSColumnMeanObjective(1, max(2, mesh.Nc ÷ 2), max(2, mesh.Nc ÷ 2))
 
+# Tight isapprox rather than `==`. Stride and Full call the same
+# forward / reverse kernels in the same order on the same inputs,
+# but a reduction-order or SIMD-grouping difference at the LLVM
+# level can introduce sub-epsilon drift (~1e-22 relative on
+# Float64) across machines / Julia patch versions even though the
+# kernels are deterministic for a fixed environment. `atol = 1e-14`
+# is ~50 × Float64 epsilon — well below anything that would mask a
+# real adjoint discrepancy (FD-identity errors on these schemes
+# are typically ≥ 1e-8).
 function _footprints_equal(a, b)
     length(a.footprints) == length(b.footprints) || return false
     for step in eachindex(a.footprints)
         for p in 1:6
-            a.footprints[step][p] == b.footprints[step][p] || return false
+            isapprox(a.footprints[step][p], b.footprints[step][p];
+                     atol = 1e-14, rtol = 1e-12) || return false
         end
     end
     return true
@@ -230,6 +240,27 @@ end
             checkpoint = AT.StrideCheckpoint(K))
         @test _footprints_equal(ref, stride)
     end
+end
+
+@testset "stride rejects pre-constructed tape_storage" begin
+    # GPT F2: an already-constructed AbstractCSTapeStorage passed via
+    # tape_storage would be reused (identity in `_tape_storage`) across
+    # windows, then finalize_tape!d after window 1 — window 2 would
+    # throw a confusing "finalised" error deep in the recorder. The
+    # stride driver rejects this up front with a tape-aware
+    # diagnostic.
+    mesh, panels_m, panels_rm, am_steps, bm_steps, cm_steps = _stride_problem(
+        ; Nc = 4, Nz = 3, nsteps = 4, FT = Float64)
+    objective = _column_mean_objective(mesh)
+    scheme = AT.PPMScheme(AT.NoLimiter())
+    storage = AT.MmapCSTapeStorage(; cleanup_on_finalize = true)
+    @test_throws ArgumentError AT.cs_surface_emission_footprint(
+        panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
+        scheme = scheme, dt = 1.0,
+        tape_storage = storage,
+        checkpoint = AT.StrideCheckpoint(2))
+    # Clean up the never-used storage.
+    AT.finalize_tape!(storage; quiet = true)
 end
 
 @testset "argument validation" begin

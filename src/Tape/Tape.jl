@@ -36,6 +36,7 @@ export AbstractCSTapeStorage,
        _ensure_tape_read_cache!,
        _bytes_per_panel_tuple,
        finalize_tape!,
+       load_mmap_tape, get_record,
        _CSSweepRecord, _CSHaloRecord, _CSMidpointRecord,
        _CSDiffusionRecord, _CSConvectionRecord,
        _CSTapeOp

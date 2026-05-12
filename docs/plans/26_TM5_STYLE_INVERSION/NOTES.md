@@ -103,9 +103,33 @@ tape/
   fires on explicit call — GC finalizer just closes the IOStream).
   Single `device_cache` per storage, reallocated on shape switch;
   keyed LRU deferred to A2.
-- **A2** — `CSCheckpointSchedule` (`:full`, `:stride`, `:revolve`) +
-  per-window replay driver + FD-identity tests parametrised over
-  `(tape_storage, checkpoint)`.
+- **A2** — mmap follow-ups before checkpointing lands. **A.2a / A.2b /
+  codex-fixes / A.2c SHIPPED.**
+  * **A.2a (commit `c168653`).** Shape-keyed device cache
+    (`device_caches::Dict`) so heterogeneous-shape reads reuse one
+    per-shape cache; addresses A.1 reviewer Finding 3.
+  * **A.2b (commit `0570514`).** `cs_tape_byte_estimate` docs +
+    realised-size cross-check tests.
+  * **Codex-review pass (commit `ecc15a2`, message mislabels it
+    "P0.A.2c").** LinRood non-`:device` rejection, CSSurfaceFluxControl
+    panel-shape validation, `total_records` op-count correctness,
+    DiffusionAdjoint trailing-blank.
+  * **A.2c — manifest-driven resume API.** `load_mmap_tape(dir;
+    readonly=true)` reopens a finalised tape directory, parses
+    `manifest.toml`, validates version + endianness + finalised +
+    `records.bin` size, and rebuilds the slot table.
+    `get_record(storage, record_id)` materialises a
+    `MmapCSTapeSlot` for `_tape_panels` to mmap-view. Readonly mode
+    blocks `_bump_cursor!` / `_allocate_tape_slot` / `stage_panels!`
+    with `ArgumentError`. 57 new test assertions in
+    `test_cs_tape_mmap_roundtrip.jl` (bit-exact reload, multi-slot
+    heterogeneous-shape, readonly enforcement, manifest validation
+    errors, `get_record` bounds + closed-storage). Manifest schema is
+    unchanged from A.1; restart-for-append (richer manifest with op
+    semantics) remains Phase B work.
+- **A3 (was A2 in original numbering)** — `CSCheckpointSchedule`
+  (`:full`, `:stride`, `:revolve`) + per-window replay driver +
+  FD-identity tests parametrised over `(tape_storage, checkpoint)`.
 - **A3** — public-API kwargs (`tape_storage=:mmap, tape_path,
   checkpoint`) on `cs_surface_emission_footprint`. C48 14-day stretch
   run; goal: peak RSS < 50 GB, tape disk < 1.5 TB.

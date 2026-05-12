@@ -76,7 +76,14 @@ mutable struct MmapCSTapeStorage <: AbstractCSTapeStorage
     finalised::Bool
     closed::Bool
     cleanup_on_finalize::Bool
+    # Read-only tapes block `_allocate_tape_slot` / `_bump_cursor!`.
+    # `load_mmap_tape` opens an existing tape with `readonly = true`;
+    # the forward-recording constructor leaves this false.
+    readonly::Bool
 
+    # Forward-recording constructor: opens a fresh records.bin in
+    # read+write mode. `cleanup_on_finalize` defaults to true when
+    # `dir` is empty (temp dir) and false when the user supplies one.
     function MmapCSTapeStorage(; dir::AbstractString = "",
                                cleanup_on_finalize::Union{Nothing,Bool} = nothing)
         if isempty(dir)
@@ -95,7 +102,38 @@ mutable struct MmapCSTapeStorage <: AbstractCSTapeStorage
                           MmapTapeRecordEntry[],
                           Dict{NTuple{6, NTuple{3, Int}}, Any}(),
                           nothing,
-                          false, false, cleanup)
+                          false, false, cleanup, false)
+            finalizer(_mmap_storage_gc_close!, storage)
+        catch
+            close(bin_io)
+            rethrow()
+        end
+        return storage
+    end
+
+    # Read-only constructor used by `load_mmap_tape` (the actual
+    # parser lives in a free function below so it can throw clean
+    # errors before any IOStream is opened). All slot bookkeeping
+    # is restored from a finalised manifest; `cursor` reflects the
+    # total bytes written by the original forward pass.
+    function MmapCSTapeStorage(dir::AbstractString, records::Vector{MmapTapeRecordEntry},
+                               cursor::Int64; mode::AbstractString = "r")
+        mode in ("r", "r+") || throw(ArgumentError(
+            "MmapCSTapeStorage reopen mode $(repr(mode)) is not supported; " *
+            "use \"r\" (default, readonly) or \"r+\" (forward-compat for Phase B)"))
+        isdir(dir) || throw(ArgumentError("tape directory $(repr(dir)) does not exist"))
+        bin_path = joinpath(dir, "records.bin")
+        manifest_path = joinpath(dir, "manifest.toml")
+        isfile(bin_path) || throw(ArgumentError(
+            "tape directory $(repr(dir)) is missing records.bin"))
+        bin_io = open(bin_path, mode)
+        local storage
+        try
+            storage = new(bin_path, manifest_path, String(dir), bin_io, cursor,
+                          records,
+                          Dict{NTuple{6, NTuple{3, Int}}, Any}(),
+                          nothing,
+                          true, false, false, mode == "r")
             finalizer(_mmap_storage_gc_close!, storage)
         catch
             close(bin_io)
@@ -138,6 +176,10 @@ Returns the base offset of the reserved region.
 # well-defined on Linux/macOS (existing pages stay valid; the kernel
 # refcounts the file). Windows is not supported.
 function _bump_cursor!(storage::MmapCSTapeStorage, nbytes::Int64)
+    storage.readonly && throw(ArgumentError(
+        "MmapCSTapeStorage at $(storage.dir) is readonly; cannot extend records.bin"))
+    storage.closed && throw(ArgumentError(
+        "MmapCSTapeStorage at $(storage.dir) is closed; cannot extend records.bin"))
     base = storage.cursor
     storage.cursor += nbytes
     if storage.cursor > _mmap_file_size(storage.bin_io)
@@ -213,6 +255,8 @@ allocation, synchronisation hooks) happens in
 """
 function _allocate_tape_slot(storage::MmapCSTapeStorage,
                              panels::NTuple{6})
+    storage.readonly && throw(ArgumentError(
+        "MmapCSTapeStorage at $(storage.dir) is readonly; cannot allocate new slot"))
     storage.finalised && throw(ArgumentError(
         "MmapCSTapeStorage at $(storage.dir) is finalised; cannot allocate new slot"))
     storage.closed && throw(ArgumentError(
@@ -237,6 +281,10 @@ device→host transfer.
 """
 function stage_panels!(slot::MmapCSTapeSlot, src::NTuple{6})
     storage = slot.storage
+    storage.readonly && throw(ArgumentError(
+        "MmapCSTapeStorage at $(storage.dir) is readonly; cannot stage panels"))
+    storage.closed && throw(ArgumentError(
+        "MmapCSTapeStorage at $(storage.dir) is closed; cannot stage panels"))
     @inbounds for p in 1:6
         view = _mmap_view(storage.bin_io, slot.eltype, slot.shapes[p],
                           slot.offsets[p])
@@ -420,6 +468,174 @@ end
 _machine_endianness() =
     ENDIAN_BOM == 0x04030201 ? "little" :
     ENDIAN_BOM == 0x01020304 ? "big" : "unknown"
+
+# ---------------------------------------------------------------------------
+# Resume / inspection API (Plan 26 P0.A.2c)
+# ---------------------------------------------------------------------------
+
+# Manifest stores `eltype` as a string for human-readability + portability.
+# The loader maps that string back to a Julia type via this whitelist
+# rather than `eval(Meta.parse(...))`, since the manifest is data, not
+# code, and tape files may have come from another machine.
+function _parse_mmap_eltype(s::AbstractString)
+    s == "Float32" && return Float32
+    s == "Float64" && return Float64
+    s == "Float16" && return Float16
+    throw(ArgumentError("unsupported tape eltype $(repr(s)); " *
+                        "expected Float32, Float64, or Float16"))
+end
+
+function _parse_mmap_record(d::AbstractDict, cursor::Int64)
+    haskey(d, "id") && haskey(d, "eltype") && haskey(d, "offsets") &&
+        haskey(d, "nbytes") && haskey(d, "shapes") ||
+        throw(ArgumentError(
+            "mmap tape manifest record is missing one of " *
+            "id/eltype/offsets/nbytes/shapes; got keys $(collect(keys(d)))"))
+    raw_offsets = d["offsets"]
+    raw_nbytes = d["nbytes"]
+    raw_shapes = d["shapes"]
+    length(raw_offsets) == 6 || throw(ArgumentError(
+        "mmap tape record id=$(d["id"]) has $(length(raw_offsets)) offsets; expected 6"))
+    length(raw_nbytes) == 6 || throw(ArgumentError(
+        "mmap tape record id=$(d["id"]) has $(length(raw_nbytes)) nbytes entries; expected 6"))
+    length(raw_shapes) == 6 || throw(ArgumentError(
+        "mmap tape record id=$(d["id"]) has $(length(raw_shapes)) shape entries; expected 6"))
+    offsets = ntuple(p -> Int64(raw_offsets[p]), 6)
+    nbytes = ntuple(p -> Int64(raw_nbytes[p]), 6)
+    shapes = ntuple(6) do p
+        s = raw_shapes[p]
+        length(s) == 3 || throw(ArgumentError(
+            "mmap tape record id=$(d["id"]) panel $(p) shape has $(length(s)) entries; expected 3"))
+        (Int(s[1]), Int(s[2]), Int(s[3]))
+    end
+    et = _parse_mmap_eltype(d["eltype"])
+
+    # Per-panel sanity: offsets and lengths must fit inside records.bin
+    # (cursor is meta.total_bytes), nbytes must agree with shape × sizeof(et),
+    # and no field may be negative. Caught here at load time so the user
+    # gets a tape-aware diagnostic rather than an opaque `Mmap.mmap` error
+    # at first read.
+    bytes_per_elt = Int64(sizeof(et))
+    @inbounds for p in 1:6
+        offsets[p] >= 0 || throw(ArgumentError(
+            "mmap tape record id=$(d["id"]) panel $(p) has negative offset $(offsets[p])"))
+        nbytes[p] >= 0 || throw(ArgumentError(
+            "mmap tape record id=$(d["id"]) panel $(p) has negative nbytes $(nbytes[p])"))
+        all(>=(0), shapes[p]) || throw(ArgumentError(
+            "mmap tape record id=$(d["id"]) panel $(p) has negative-shape entry $(shapes[p])"))
+        offsets[p] + nbytes[p] <= cursor || throw(ArgumentError(
+            "mmap tape record id=$(d["id"]) panel $(p) extends past records.bin: " *
+            "offset=$(offsets[p]) + nbytes=$(nbytes[p]) > total_bytes=$(cursor)"))
+        expected = bytes_per_elt * Int64(prod(shapes[p]))
+        nbytes[p] == expected || throw(ArgumentError(
+            "mmap tape record id=$(d["id"]) panel $(p) nbytes=$(nbytes[p]) " *
+            "disagrees with shape $(shapes[p]) × sizeof($(et))=$(expected)"))
+    end
+    return MmapTapeRecordEntry(Int(d["id"]), et, offsets, nbytes, shapes)
+end
+
+"""
+    load_mmap_tape(dir; readonly = true) -> MmapCSTapeStorage
+
+Reopen a finalised `MmapCSTapeStorage` directory written by an earlier
+session. The loader parses `manifest.toml`, validates the format
+version and machine endianness, and rebuilds the in-memory record
+table so callers can fetch slots via [`get_record`](@ref) and read
+them through `_tape_panels`.
+
+The returned storage has `finalised = true` and `cleanup_on_finalize
+= false`; it never touches the on-disk files except through mmap reads
+on the existing slots. With `readonly = true` (the default)
+`_bump_cursor!`, `_allocate_tape_slot`, and `stage_panels!` throw on
+mutation; `readonly = false` opens the binary in `r+` mode but is
+intended for future Phase B work (slot reuse), not for forward
+appends — appends are blocked by the `finalised` flag.
+
+Validation:
+
+* `manifest.toml` and `records.bin` must both exist under `dir`.
+* Format version must equal `$(_MMAP_TAPE_FORMAT_VERSION)`.
+* Endianness must match the loading machine.
+* `meta.finalised` must be `true`; a torn tape from an interrupted
+  run is rejected here (Phase B is responsible for repairing it).
+* `records.bin` must be at least `meta.total_bytes` long; the cursor
+  is restored from `meta.total_bytes`.
+"""
+function load_mmap_tape(dir::AbstractString; readonly::Bool = true)
+    isdir(dir) || throw(ArgumentError(
+        "tape directory $(repr(dir)) does not exist"))
+    manifest_path = joinpath(dir, "manifest.toml")
+    bin_path = joinpath(dir, "records.bin")
+    isfile(manifest_path) || throw(ArgumentError(
+        "tape directory $(repr(dir)) is missing manifest.toml"))
+    isfile(bin_path) || throw(ArgumentError(
+        "tape directory $(repr(dir)) is missing records.bin"))
+
+    manifest = TOML.parsefile(manifest_path)
+    haskey(manifest, "meta") || throw(ArgumentError(
+        "mmap tape manifest at $(manifest_path) is missing the [meta] section"))
+    meta = manifest["meta"]
+
+    version = get(meta, "version", nothing)
+    version === _MMAP_TAPE_FORMAT_VERSION || throw(ArgumentError(
+        "mmap tape manifest version $(repr(version)) does not match " *
+        "supported version $(repr(_MMAP_TAPE_FORMAT_VERSION))"))
+
+    endian = get(meta, "endianness", nothing)
+    local_endian = _machine_endianness()
+    endian === local_endian || throw(ArgumentError(
+        "mmap tape endianness $(repr(endian)) does not match host endianness " *
+        "$(repr(local_endian)); cross-endian replay is not supported"))
+
+    finalised = get(meta, "finalised", false)
+    finalised === true || throw(ArgumentError(
+        "mmap tape at $(dir) is not marked finalised; refusing to load. " *
+        "Run finalize_tape!(storage) on the writer before reloading."))
+
+    total_bytes = get(meta, "total_bytes", nothing)
+    total_bytes isa Integer || throw(ArgumentError(
+        "mmap tape manifest missing integer meta.total_bytes; got $(repr(total_bytes))"))
+    cursor = Int64(total_bytes)
+    file_size = filesize(bin_path)
+    file_size >= cursor || throw(ArgumentError(
+        "mmap tape records.bin is $(file_size) bytes but manifest reports " *
+        "total_bytes = $(cursor); tape is truncated"))
+
+    raw_records = get(manifest, "record", Any[])
+    raw_records isa AbstractVector || throw(ArgumentError(
+        "mmap tape manifest [[record]] section is not a list; got $(typeof(raw_records))"))
+    record_count = get(meta, "record_count", length(raw_records))
+    length(raw_records) == record_count || throw(ArgumentError(
+        "mmap tape manifest reports record_count = $(record_count) but " *
+        "contains $(length(raw_records)) [[record]] entries"))
+
+    records = MmapTapeRecordEntry[_parse_mmap_record(r, cursor) for r in raw_records]
+    for (i, r) in enumerate(records)
+        r.record_id == i || throw(ArgumentError(
+            "mmap tape manifest record at position $(i) has id $(r.record_id); " *
+            "ids must be 1-indexed and contiguous"))
+    end
+
+    mode = readonly ? "r" : "r+"
+    return MmapCSTapeStorage(dir, records, cursor; mode = mode)
+end
+
+"""
+    get_record(storage::MmapCSTapeStorage, record_id::Integer) -> MmapCSTapeSlot
+
+Return a slot descriptor for an existing record in `storage`. The slot
+exposes the same `offsets`/`shapes`/`eltype` fields as one produced by
+`_allocate_tape_slot`, so `_tape_panels(slot)` returns mmap views over
+the recorded panels.
+"""
+function get_record(storage::MmapCSTapeStorage, record_id::Integer)
+    storage.closed && throw(ArgumentError(
+        "MmapCSTapeStorage at $(storage.dir) is closed; cannot fetch records"))
+    1 <= record_id <= length(storage.records) ||
+        throw(BoundsError(storage.records, record_id))
+    r = storage.records[record_id]
+    return MmapCSTapeSlot(storage, r.record_id, r.eltype, r.offsets, r.shapes)
+end
 
 # ---------------------------------------------------------------------------
 # Display

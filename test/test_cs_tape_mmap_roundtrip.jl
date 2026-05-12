@@ -514,3 +514,318 @@ end
         ntuple(_ -> zeros(Float32, mesh.Nc, mesh.Nc), 6);
         sigma = bad_sigma)
 end
+
+# ---------------------------------------------------------------------------
+# Plan 26 P0.A.2c — manifest-driven resume API.
+#
+# load_mmap_tape(dir) parses manifest.toml + records.bin from a previously
+# finalised MmapCSTapeStorage and rebuilds the slot table. get_record(...)
+# reconstructs MmapCSTapeSlot descriptors so _tape_panels can mmap-view
+# the stored bytes. The reopened storage defaults to readonly: any further
+# allocation / stage attempt must throw rather than silently corrupt the
+# tape.
+# ---------------------------------------------------------------------------
+
+@testset "load_mmap_tape resume" begin
+    @testset "bit-exact reload of single-slot tape" begin
+        mktempdir() do dir
+            storage = TapeMod.MmapCSTapeStorage(; dir = dir,
+                                                cleanup_on_finalize = false)
+            src = _build_panels(:m; Nc = 4, Hp = 3, Nz = 5, FT = Float32, seed = 7)
+            slot = TapeMod._stage_panels(storage, src)
+            written_cursor = storage.cursor
+            TapeMod.finalize_tape!(storage)
+
+            reopened = TapeMod.load_mmap_tape(dir)
+            @test reopened isa TapeMod.MmapCSTapeStorage
+            @test reopened.dir == dir
+            @test reopened.cursor == written_cursor
+            @test length(reopened.records) == 1
+            @test reopened.finalised === true
+            @test reopened.readonly === true
+
+            got_slot = TapeMod.get_record(reopened, 1)
+            @test got_slot.record_id == slot.record_id
+            @test got_slot.eltype === slot.eltype
+            @test got_slot.offsets == slot.offsets
+            @test got_slot.shapes == slot.shapes
+
+            got = TapeMod._tape_panels(got_slot)
+            for p in 1:6
+                @test got[p] == src[p]
+                @test eltype(got[p]) === Float32
+            end
+
+            TapeMod.finalize_tape!(reopened)
+        end
+    end
+
+    @testset "multi-slot heterogeneous-shape reload" begin
+        mktempdir() do dir
+            storage = TapeMod.MmapCSTapeStorage(; dir = dir,
+                                                cleanup_on_finalize = false)
+            src_m = _build_panels(:m; Nc = 3, Hp = 3, Nz = 4, FT = Float32, seed = 1)
+            src_am = _build_panels(:am; Nc = 3, Hp = 3, Nz = 4, FT = Float32, seed = 2)
+            src_cm = _build_panels(:cm; Nc = 3, Hp = 3, Nz = 4, FT = Float32, seed = 3)
+            TapeMod._stage_panels(storage, src_m)
+            TapeMod._stage_panels(storage, src_am)
+            TapeMod._stage_panels(storage, src_cm)
+            TapeMod.finalize_tape!(storage)
+
+            reopened = TapeMod.load_mmap_tape(dir)
+            @test length(reopened.records) == 3
+
+            # Read in reverse (LIFO mirrors the reverse-pass walk).
+            for (id, expected) in ((3, src_cm), (2, src_am), (1, src_m))
+                slot = TapeMod.get_record(reopened, id)
+                @test slot.record_id == id
+                got = TapeMod._tape_panels(slot)
+                for p in 1:6
+                    @test got[p] == expected[p]
+                end
+            end
+
+            TapeMod.finalize_tape!(reopened)
+        end
+    end
+
+    @testset "readonly default blocks mutation" begin
+        mktempdir() do dir
+            storage = TapeMod.MmapCSTapeStorage(; dir = dir,
+                                                cleanup_on_finalize = false)
+            src = _build_panels(:m; Nc = 3, Hp = 3, Nz = 4, FT = Float32)
+            TapeMod._stage_panels(storage, src)
+            TapeMod.finalize_tape!(storage)
+
+            ro = TapeMod.load_mmap_tape(dir)
+            @test ro.readonly === true
+
+            extra = _build_panels(:m; Nc = 3, Hp = 3, Nz = 4, FT = Float32, seed = 9)
+            @test_throws ArgumentError TapeMod._allocate_tape_slot(ro, extra)
+            @test_throws ArgumentError TapeMod._bump_cursor!(ro, Int64(1024))
+
+            # stage_panels! goes through an existing slot, but the slot
+            # must come from get_record (no new allocation) — the
+            # in-place stage path also enforces readonly.
+            slot = TapeMod.get_record(ro, 1)
+            @test_throws ArgumentError TapeMod.stage_panels!(slot, extra)
+
+            TapeMod.finalize_tape!(ro)
+        end
+    end
+
+    @testset "validation: missing files, corrupted meta, version mismatch" begin
+        @test_throws ArgumentError TapeMod.load_mmap_tape(
+            joinpath(tempdir(), "atmostransport-mmap-load-nope-$(rand(UInt32))"))
+
+        # Directory exists, manifest missing.
+        mktempdir() do dir
+            @test_throws ArgumentError TapeMod.load_mmap_tape(dir)
+        end
+
+        # records.bin missing.
+        mktempdir() do dir
+            open(joinpath(dir, "manifest.toml"), "w") do io
+                println(io, "[meta]")
+            end
+            @test_throws ArgumentError TapeMod.load_mmap_tape(dir)
+        end
+
+        # Version mismatch.
+        mktempdir() do dir
+            storage = TapeMod.MmapCSTapeStorage(; dir = dir,
+                                                cleanup_on_finalize = false)
+            TapeMod._stage_panels(storage,
+                _build_panels(:m; Nc = 3, Hp = 3, Nz = 4, FT = Float32))
+            TapeMod.finalize_tape!(storage)
+            mpath = joinpath(dir, "manifest.toml")
+            txt = read(mpath, String)
+            write(mpath, replace(txt, "version = \"v1\"" => "version = \"v0\""))
+            @test_throws ArgumentError TapeMod.load_mmap_tape(dir)
+        end
+
+        # finalised = false (interrupted run).
+        mktempdir() do dir
+            storage = TapeMod.MmapCSTapeStorage(; dir = dir,
+                                                cleanup_on_finalize = false)
+            TapeMod._stage_panels(storage,
+                _build_panels(:m; Nc = 3, Hp = 3, Nz = 4, FT = Float32))
+            TapeMod.finalize_tape!(storage)
+            mpath = joinpath(dir, "manifest.toml")
+            txt = read(mpath, String)
+            write(mpath, replace(txt, "finalised = true" => "finalised = false"))
+            @test_throws ArgumentError TapeMod.load_mmap_tape(dir)
+        end
+
+        # records.bin truncated below total_bytes.
+        mktempdir() do dir
+            storage = TapeMod.MmapCSTapeStorage(; dir = dir,
+                                                cleanup_on_finalize = false)
+            TapeMod._stage_panels(storage,
+                _build_panels(:m; Nc = 3, Hp = 3, Nz = 4, FT = Float32))
+            TapeMod.finalize_tape!(storage)
+            bin_path = joinpath(dir, "records.bin")
+            open(bin_path, "r+") do io
+                Base.truncate(io, max(filesize(bin_path) - 16, 0))
+            end
+            @test_throws ArgumentError TapeMod.load_mmap_tape(dir)
+        end
+    end
+
+    @testset "get_record argument validation" begin
+        mktempdir() do dir
+            storage = TapeMod.MmapCSTapeStorage(; dir = dir,
+                                                cleanup_on_finalize = false)
+            TapeMod._stage_panels(storage,
+                _build_panels(:m; Nc = 3, Hp = 3, Nz = 4, FT = Float32))
+            TapeMod._stage_panels(storage,
+                _build_panels(:m; Nc = 3, Hp = 3, Nz = 4, FT = Float32, seed = 2))
+            TapeMod.finalize_tape!(storage)
+
+            ro = TapeMod.load_mmap_tape(dir)
+            @test_throws BoundsError TapeMod.get_record(ro, 0)
+            @test_throws BoundsError TapeMod.get_record(ro, 3)
+            TapeMod.finalize_tape!(ro)
+            @test_throws ArgumentError TapeMod.get_record(ro, 1)
+        end
+    end
+
+    @testset "eltype whitelist rejects non-float types" begin
+        @test_throws ArgumentError TapeMod._parse_mmap_eltype("Int64")
+        @test_throws ArgumentError TapeMod._parse_mmap_eltype("Bool")
+        @test_throws ArgumentError TapeMod._parse_mmap_eltype("Module")
+        @test TapeMod._parse_mmap_eltype("Float32") === Float32
+        @test TapeMod._parse_mmap_eltype("Float64") === Float64
+        @test TapeMod._parse_mmap_eltype("Float16") === Float16
+    end
+
+    @testset "per-record validation: offsets, nbytes, shapes" begin
+        good_dir = mktempdir(; cleanup = false)
+        try
+            storage = TapeMod.MmapCSTapeStorage(; dir = good_dir,
+                                                cleanup_on_finalize = false)
+            TapeMod._stage_panels(storage,
+                _build_panels(:m; Nc = 3, Hp = 3, Nz = 4, FT = Float32))
+            TapeMod.finalize_tape!(storage)
+            mpath = joinpath(good_dir, "manifest.toml")
+
+            # Negative offset.
+            mktempdir() do dir
+                cp(joinpath(good_dir, "records.bin"), joinpath(dir, "records.bin"))
+                m = TOML.parsefile(mpath)
+                m["record"][1]["offsets"][1] = -8
+                open(joinpath(dir, "manifest.toml"), "w") do io
+                    TOML.print(io, m)
+                end
+                @test_throws ArgumentError TapeMod.load_mmap_tape(dir)
+            end
+
+            # offset + nbytes past total_bytes.
+            mktempdir() do dir
+                cp(joinpath(good_dir, "records.bin"), joinpath(dir, "records.bin"))
+                m = TOML.parsefile(mpath)
+                m["record"][1]["offsets"][6] = Int(m["meta"]["total_bytes"]) - 1
+                open(joinpath(dir, "manifest.toml"), "w") do io
+                    TOML.print(io, m)
+                end
+                @test_throws ArgumentError TapeMod.load_mmap_tape(dir)
+            end
+
+            # nbytes disagrees with shape × sizeof(eltype).
+            mktempdir() do dir
+                cp(joinpath(good_dir, "records.bin"), joinpath(dir, "records.bin"))
+                m = TOML.parsefile(mpath)
+                m["record"][1]["nbytes"][1] += 4
+                open(joinpath(dir, "manifest.toml"), "w") do io
+                    TOML.print(io, m)
+                end
+                @test_throws ArgumentError TapeMod.load_mmap_tape(dir)
+            end
+
+            # Shape vector with wrong length.
+            mktempdir() do dir
+                cp(joinpath(good_dir, "records.bin"), joinpath(dir, "records.bin"))
+                m = TOML.parsefile(mpath)
+                m["record"][1]["shapes"][1] = [9, 9]  # length 2 instead of 3
+                open(joinpath(dir, "manifest.toml"), "w") do io
+                    TOML.print(io, m)
+                end
+                @test_throws ArgumentError TapeMod.load_mmap_tape(dir)
+            end
+
+            # offsets vector with wrong length.
+            mktempdir() do dir
+                cp(joinpath(good_dir, "records.bin"), joinpath(dir, "records.bin"))
+                m = TOML.parsefile(mpath)
+                m["record"][1]["offsets"] = m["record"][1]["offsets"][1:5]
+                open(joinpath(dir, "manifest.toml"), "w") do io
+                    TOML.print(io, m)
+                end
+                @test_throws ArgumentError TapeMod.load_mmap_tape(dir)
+            end
+
+            # Missing required field.
+            mktempdir() do dir
+                cp(joinpath(good_dir, "records.bin"), joinpath(dir, "records.bin"))
+                m = TOML.parsefile(mpath)
+                delete!(m["record"][1], "eltype")
+                open(joinpath(dir, "manifest.toml"), "w") do io
+                    TOML.print(io, m)
+                end
+                @test_throws ArgumentError TapeMod.load_mmap_tape(dir)
+            end
+        finally
+            rm(good_dir; recursive = true, force = true)
+        end
+    end
+
+    @testset "reload survives writer GC" begin
+        # Resumed storage must be fully self-contained: nothing about
+        # _tape_panels should reach back into the original writer
+        # object. Force the writer out of scope, GC it, then read.
+        dir = mktempdir(; cleanup = false)
+        try
+            let src = _build_panels(:m; Nc = 3, Hp = 3, Nz = 4, FT = Float32, seed = 5)
+                storage = TapeMod.MmapCSTapeStorage(; dir = dir,
+                                                   cleanup_on_finalize = false)
+                TapeMod._stage_panels(storage, src)
+                TapeMod.finalize_tape!(storage)
+                # Hold src for the post-reload comparison below.
+                global _tape_src_for_gc_test = src
+            end
+            GC.gc(true)
+            GC.gc(true)
+
+            ro = TapeMod.load_mmap_tape(dir)
+            slot = TapeMod.get_record(ro, 1)
+            got = TapeMod._tape_panels(slot)
+            for p in 1:6
+                @test got[p] == _tape_src_for_gc_test[p]
+            end
+            TapeMod.finalize_tape!(ro)
+        finally
+            rm(dir; recursive = true, force = true)
+        end
+    end
+
+    @testset "reopen mode validation" begin
+        mktempdir() do dir
+            storage = TapeMod.MmapCSTapeStorage(; dir = dir,
+                                                cleanup_on_finalize = false)
+            TapeMod._stage_panels(storage,
+                _build_panels(:m; Nc = 3, Hp = 3, Nz = 4, FT = Float32))
+            TapeMod.finalize_tape!(storage)
+
+            # Internal reopen constructor must reject destructive modes.
+            @test_throws ArgumentError TapeMod.MmapCSTapeStorage(
+                dir, TapeMod.MmapTapeRecordEntry[], Int64(0); mode = "w+")
+            @test_throws ArgumentError TapeMod.MmapCSTapeStorage(
+                dir, TapeMod.MmapTapeRecordEntry[], Int64(0); mode = "wb")
+
+            # readonly = false → "r+" mode is allowed.
+            rw = TapeMod.load_mmap_tape(dir; readonly = false)
+            @test rw.readonly === false
+            TapeMod.finalize_tape!(rw)
+        end
+    end
+end

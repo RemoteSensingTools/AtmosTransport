@@ -51,6 +51,7 @@ using ..Tape: AbstractCSTapeStorage,
               _mmap_prepare_for_panels!,
               _ensure_tape_read_cache!,
               _bytes_per_panel_tuple, finalize_tape!,
+              load_mmap_tape, get_record,
               _CSSweepRecord, _CSHaloRecord, _CSMidpointRecord,
               _CSDiffusionRecord, _CSConvectionRecord, _CSTapeOp
 
@@ -273,6 +274,7 @@ export CSAdjointWorkspace, CSTapeSlot, DeviceCSTapeStorage, PinnedHostCSTapeStor
 export MmapCSTapeStorage, MmapCSTapeSlot
 export PinnedHostCSTapeSlot, CSTapeByteEstimate
 export finalize_tape!
+export load_mmap_tape, get_record
 export evaluate_objective, run_cs_footprint_forward
 export cs_surface_emission_footprint, cs_surface_emission_footprint_from_seed
 export cs_tape_byte_estimate

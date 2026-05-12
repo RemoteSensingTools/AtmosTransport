@@ -1,0 +1,156 @@
+# ---------------------------------------------------------------------------
+# Tape storage policies for the CS adjoint pipeline.
+#
+# A "tape" is the sequence of per-step state snapshots the forward pass
+# records so the reverse pass can re-read them. This file defines:
+#
+#   * `AbstractCSTapeStorage` — policy abstract.
+#   * `DeviceCSTapeStorage` — original in-memory/backend-resident policy.
+#   * `PinnedHostCSTapeStorage` — GPU runs stage to pinned host memory
+#     with a shared device-side read cache during reverse.
+#   * `CSTapeSlot` / `PinnedHostCSTapeSlot` — per-state slot containers.
+#   * `_stage_panels`, `stage_panels!`, `_tape_panels`,
+#     `_allocate_tape_slot` — public-ish staging API.
+#
+# Phase A (Plan 26) will add `NetCDFCSTapeStorage` here for on-disk
+# checkpointed tapes.
+#
+# Code relocated from `src/Adjoints/Adjoints.jl` (lines 111-166, 2366-2447)
+# unchanged in Plan 26 P0.1; no semantic change.
+# ---------------------------------------------------------------------------
+
+abstract type AbstractCSTapeStorage end
+
+"""
+    DeviceCSTapeStorage()
+
+Tape storage policy that keeps staged adjoint mass states on the same backend
+as the source panels. This preserves the original in-memory/device-resident
+tape behavior while making the storage policy explicit.
+"""
+struct DeviceCSTapeStorage <: AbstractCSTapeStorage end
+
+"""
+    PinnedHostCSTapeStorage()
+
+Tape storage policy that stages GPU tape states in pinned host memory and
+uses a shared device-side read cache during the reverse pass. This policy
+requires the CUDA extension and CuArray panel states.
+"""
+mutable struct PinnedHostCSTapeStorage <: AbstractCSTapeStorage
+    device_cache::Any
+    synchronize::Any
+
+    PinnedHostCSTapeStorage() = new(nothing, nothing)
+end
+
+struct CSTapeSlot{S <: AbstractCSTapeStorage, P}
+    storage::S
+    panels::P
+end
+
+struct PinnedHostCSTapeSlot{S <: PinnedHostCSTapeStorage, H}
+    storage::S
+    host_panels::H
+end
+
+# ---------------------------------------------------------------------------
+# Policy resolution
+# ---------------------------------------------------------------------------
+
+_tape_storage(storage::AbstractCSTapeStorage) = storage
+_tape_storage(::Val{:device}) = DeviceCSTapeStorage()
+_tape_storage(::Val{:pinned_host}) = PinnedHostCSTapeStorage()
+_tape_storage(storage::Symbol) = _tape_storage(Val(storage))
+_tape_storage(storage) = throw(ArgumentError(
+    "unsupported CS adjoint tape storage $(storage); supported: :device, :pinned_host"))
+
+# ---------------------------------------------------------------------------
+# Slot read / staging hooks
+# ---------------------------------------------------------------------------
+
+_tape_panels(slot::CSTapeSlot) = slot.panels
+
+function _sync_pinned_tape_storage!(storage::PinnedHostCSTapeStorage)
+    storage.synchronize === nothing || storage.synchronize()
+    return nothing
+end
+
+_after_tape_stage!(storage::PinnedHostCSTapeStorage) =
+    _sync_pinned_tape_storage!(storage)
+_after_tape_read!(storage::PinnedHostCSTapeStorage) =
+    _sync_pinned_tape_storage!(storage)
+
+_host_tape_panel(a::AbstractArray{T,N}) where {T,N} =
+    Array{T,N}(undef, size(a))
+
+function _cache_matches(cache, panels::NTuple{6})
+    cache isa NTuple{6} || return false
+    @inbounds for p in 1:6
+        if eltype(cache[p]) !== eltype(panels[p]) ||
+           size(cache[p]) != size(panels[p])
+            return false
+        end
+    end
+    return true
+end
+
+function _ensure_tape_read_cache!(storage::PinnedHostCSTapeStorage,
+                                  panels::NTuple{6})
+    if !_cache_matches(storage.device_cache, panels)
+        storage.device_cache = ntuple(p -> similar(panels[p]), 6)
+    end
+    return storage.device_cache
+end
+
+# ---------------------------------------------------------------------------
+# Per-policy slot allocators + stagers
+# ---------------------------------------------------------------------------
+
+function _allocate_tape_slot(storage::DeviceCSTapeStorage, panels::NTuple{6})
+    slot_panels = ntuple(p -> similar(panels[p]), 6)
+    return CSTapeSlot(storage, slot_panels)
+end
+
+function stage_panels!(slot::CSTapeSlot{DeviceCSTapeStorage}, src::NTuple{6})
+    @inbounds for p in 1:6
+        copyto!(slot.panels[p], src[p])
+    end
+    return slot
+end
+
+function _allocate_tape_slot(storage::PinnedHostCSTapeStorage,
+                             panels::NTuple{6})
+    _ensure_tape_read_cache!(storage, panels)
+    host_panels = ntuple(p -> _host_tape_panel(panels[p]), 6)
+    return PinnedHostCSTapeSlot(storage, host_panels)
+end
+
+function stage_panels!(slot::PinnedHostCSTapeSlot, src::NTuple{6})
+    @inbounds for p in 1:6
+        copyto!(slot.host_panels[p], src[p])
+    end
+    _after_tape_stage!(slot.storage)
+    return slot
+end
+
+function _tape_panels(slot::PinnedHostCSTapeSlot)
+    cache = _ensure_tape_read_cache!(slot.storage, slot.host_panels)
+    @inbounds for p in 1:6
+        copyto!(cache[p], slot.host_panels[p])
+    end
+    _after_tape_read!(slot.storage)
+    return cache
+end
+
+function _stage_panels(storage::AbstractCSTapeStorage, panels::NTuple{6})
+    slot = _allocate_tape_slot(storage, panels)
+    return stage_panels!(slot, panels)
+end
+
+# ---------------------------------------------------------------------------
+# Byte estimation helper
+# ---------------------------------------------------------------------------
+
+_bytes_per_panel_tuple(panels::NTuple{6}) =
+    sum(sizeof(eltype(panels[p])) * length(panels[p]) for p in 1:6)

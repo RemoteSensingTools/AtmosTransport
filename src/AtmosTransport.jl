@@ -152,6 +152,18 @@ using .MetDrivers: AbstractDriver, AbstractClosure, AbstractMetDriver,
 include("Operators/Operators.jl")
 using .Operators
 
+# ---- Adjoint tape storage + records (Plan 26 P0.1) ----
+# Loaded BEFORE `Adjoints/` so the kernels module can `using ..Tape: ...`
+# for the relocated storage policies and record types. The reverse-loop
+# driver that DISPATCHES on these record types still lives in Adjoints
+# pending Plan 26 P0.3 (moves to `Footprint/`).
+include("Tape/Tape.jl")
+using .Tape
+
+# ---- Prototype adjoint / footprint utilities ----
+include("Adjoints/Adjoints.jl")
+using .Adjoints
+
 # ---- Kernel patterns ----
 include("Kernels/Kernels.jl")
 using .Kernels
@@ -254,7 +266,7 @@ export diagnose_cm!
 # Diffusion solver infrastructure + operator types (plan 16b Commits 2-4)
 export solve_tridiagonal!, build_diffusion_coefficients
 export AbstractDiffusion, NoDiffusion, ImplicitVerticalDiffusion
-export apply_vertical_diffusion!
+export apply_vertical_diffusion!, apply_vertical_diffusion_vmr!
 
 # Surface flux data types + operator hierarchy (plan 17 Commits 2-3).
 # SurfaceFluxSource is re-exported above (from Models) for backward compat.
@@ -287,6 +299,19 @@ export chemistry_block!
 
 # Cubed-sphere advection
 export fill_panel_halos!, copy_corners!, strang_split_cs!, CSAdvectionWorkspace
+
+# Prototype adjoint / footprint utilities
+export AbstractCSFootprintObjective
+export CSLayerMeanObjective, CSColumnMeanObjective, CSSeedObjective, CSFootprintResult
+export CSSurfaceFluxWindow, CSSurfaceFluxJacobianResult
+export CSObservation, CSSurfaceFluxControl, CS4DVarResult, CS4DVarSolveResult
+export CSAdjointWorkspace, CSTapeSlot, DeviceCSTapeStorage, PinnedHostCSTapeStorage
+export PinnedHostCSTapeSlot, CSTapeByteEstimate
+export evaluate_objective, run_cs_footprint_forward
+export cs_surface_emission_footprint, cs_surface_emission_footprint_from_seed
+export cs_tape_byte_estimate
+export cs_surface_flux_jacobian
+export cs_surface_flux_4dvar, cs_surface_flux_4dvar_optimize
 
 # Lin-Rood cross-term advection (FV3 fv_tp_2d)
 export LinRoodWorkspace, CSLinRoodAdvectionWorkspace

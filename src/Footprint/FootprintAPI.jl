@@ -109,19 +109,39 @@ function cs_surface_emission_footprint(panels_rm0, panels_m0,
     _require_checkpoint_supported(scheme, checkpoint)
 
     if checkpoint isa StrideCheckpoint
-        return _collect_surface_footprints_stride(
-            panels_m0,
-            panels_am_steps, panels_bm_steps, panels_cm_steps,
-            mesh, scheme, checkpoint, objective, dt_ft;
-            cfl_limit = cfl_limit,
-            flux_scale = FT(flux_scale),
-            diffusion_op = diffusion_op,
-            diffusion_workspace = diffusion_workspace,
-            diffusion_meteo = diffusion_meteo,
-            convection_op = convection_op,
-            convection_forcing = convection_forcing,
-            convection_workspace = convection_workspace,
-            tape_storage = tape_storage)
+        if scheme isa CSAdjointLinearScheme
+            return _collect_surface_footprints_stride(
+                panels_m0,
+                panels_am_steps, panels_bm_steps, panels_cm_steps,
+                mesh, scheme, checkpoint, objective, dt_ft;
+                cfl_limit = cfl_limit,
+                flux_scale = FT(flux_scale),
+                diffusion_op = diffusion_op,
+                diffusion_workspace = diffusion_workspace,
+                diffusion_meteo = diffusion_meteo,
+                convection_op = convection_op,
+                convection_forcing = convection_forcing,
+                convection_workspace = convection_workspace,
+                tape_storage = tape_storage)
+        else
+            # CSAdjointNonlinearScheme — tracer tape stride. Takes
+            # `panels_rm0` and `base_emission_rates` (both meaningless
+            # to the linear-mass stride driver).
+            return _collect_surface_footprints_stride(
+                panels_rm0, panels_m0,
+                panels_am_steps, panels_bm_steps, panels_cm_steps,
+                mesh, scheme, checkpoint, objective, dt_ft;
+                cfl_limit = cfl_limit,
+                flux_scale = FT(flux_scale),
+                base_emission_rates = base_emission_rates,
+                diffusion_op = diffusion_op,
+                diffusion_workspace = diffusion_workspace,
+                diffusion_meteo = diffusion_meteo,
+                convection_op = convection_op,
+                convection_forcing = convection_forcing,
+                convection_workspace = convection_workspace,
+                tape_storage = tape_storage)
+        end
     end
 
     ops, final_m = _record_cs_adjoint_tape(panels_rm0, panels_m0,

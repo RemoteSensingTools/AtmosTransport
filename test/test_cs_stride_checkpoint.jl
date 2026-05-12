@@ -77,21 +77,30 @@ end
 _column_mean_objective(mesh::AT.CubedSphereMesh) =
     AT.CSColumnMeanObjective(1, max(2, mesh.Nc ÷ 2), max(2, mesh.Nc ÷ 2))
 
-# Tight isapprox rather than `==`. Stride and Full call the same
-# forward / reverse kernels in the same order on the same inputs,
-# but a reduction-order or SIMD-grouping difference at the LLVM
-# level can introduce sub-epsilon drift (~1e-22 relative on
-# Float64) across machines / Julia patch versions even though the
-# kernels are deterministic for a fixed environment. `atol = 1e-14`
-# is ~50 × Float64 epsilon — well below anything that would mask a
-# real adjoint discrepancy (FD-identity errors on these schemes
-# are typically ≥ 1e-8).
+# Stride and Full call the same forward / reverse kernels in the
+# same order on the same inputs, but two effects introduce tiny
+# (well-below-physics) drift:
+#   * Reduction-order / SIMD-grouping differences at the LLVM level
+#     across machines or Julia patch versions (~Float64 epsilon).
+#   * Each stride-window recorder call begins with
+#     `fill_panel_halos!(panels_m, mesh; dir=0)` which freshly
+#     recomputes panel-corner halos from the interior. In the
+#     FullCheckpoint path the corners at the start of step k+1 are
+#     whatever step k's `dir=1` X-halo fill happened to leave them —
+#     consistent with the interior but written by a different code
+#     path. The interior-cell adjoint is unchanged, but cross-panel
+#     halo entries that feed PPM stencils at panel edges can drift
+#     by O(1e-13) absolute when a window boundary falls between two
+#     steps.
+# `atol = 1e-12` (~10⁴ × Float64 epsilon) is well below the
+# FD-identity threshold the suite cares about (≥ 1e-8 for these
+# schemes), and lets stride parity tests be robust to both effects.
 function _footprints_equal(a, b)
     length(a.footprints) == length(b.footprints) || return false
     for step in eachindex(a.footprints)
         for p in 1:6
             isapprox(a.footprints[step][p], b.footprints[step][p];
-                     atol = 1e-14, rtol = 1e-12) || return false
+                     atol = 1e-12, rtol = 1e-10) || return false
         end
     end
     return true
@@ -242,6 +251,166 @@ end
     end
 end
 
+@testset "StrideCheckpoint vs FullCheckpoint — monotone PPM (tracer tape)" begin
+    mesh, panels_m, panels_rm, am_steps, bm_steps, cm_steps = _stride_problem(
+        ; Nc = 4, Nz = 4, nsteps = 6, FT = Float64)
+    # Non-trivial initial tracer so the tracer tape actually has rm
+    # state to propagate. Without this the limited-PPM path collapses
+    # toward the linear-scheme behaviour and the test loses signal.
+    FT = eltype(panels_m[1])
+    N = mesh.Nc + 2mesh.Hp
+    Nz = size(panels_m[1], 3)
+    for p in 1:6
+        @inbounds for k in 1:Nz, j in 1:N, i in 1:N
+            c = FT(0.08) + FT(0.013) * sin(FT(0.27i + 0.13j + 0.19k + 0.07p))
+            panels_rm[p][i, j, k] = panels_m[p][i, j, k] * c
+        end
+    end
+    Adv.fill_panel_halos!(panels_rm, mesh; dir = 0)
+
+    objective = _column_mean_objective(mesh)
+    scheme = AT.PPMScheme(AT.MonotoneLimiter())
+
+    ref = AT.cs_surface_emission_footprint(
+        panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
+        scheme = scheme, dt = 1.0)
+
+    for K in (1, 2, 3, 6, 12)
+        @testset "StrideCheckpoint(K=$K), :device" begin
+            stride = AT.cs_surface_emission_footprint(
+                panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
+                scheme = scheme, dt = 1.0,
+                checkpoint = AT.StrideCheckpoint(K))
+            @test _footprints_equal(ref, stride)
+        end
+
+        @testset "StrideCheckpoint(K=$K), :mmap" begin
+            stride = AT.cs_surface_emission_footprint(
+                panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
+                scheme = scheme, dt = 1.0,
+                tape_storage = :mmap,
+                checkpoint = AT.StrideCheckpoint(K))
+            @test _footprints_equal(ref, stride)
+        end
+    end
+end
+
+@testset "StrideCheckpoint nonlinear PPM + base_emission_rates" begin
+    mesh, panels_m, panels_rm, am_steps, bm_steps, cm_steps = _stride_problem(
+        ; Nc = 4, Nz = 4, nsteps = 6, FT = Float64)
+    FT = eltype(panels_m[1])
+    N = mesh.Nc + 2mesh.Hp
+    Nz = size(panels_m[1], 3)
+    for p in 1:6
+        @inbounds for k in 1:Nz, j in 1:N, i in 1:N
+            panels_rm[p][i, j, k] = panels_m[p][i, j, k] *
+                (FT(0.07) + FT(0.011) * sin(FT(0.31i + 0.17j + 0.23k + 0.05p)))
+        end
+    end
+    Adv.fill_panel_halos!(panels_rm, mesh; dir = 0)
+
+    # Per-step surface emission rate (one panel-tuple of (Nc, Nc) arrays
+    # per step). Nonzero only on panel 1 to mirror the LimitedPPM tests
+    # in test_cs_ppm_adjoint_footprint.jl.
+    base_emission_rates = [ntuple(p -> begin
+        e = zeros(FT, mesh.Nc, mesh.Nc)
+        if p == 1
+            for j in 1:mesh.Nc, i in 1:mesh.Nc
+                e[i, j] = FT(0.0007) * sin(FT(0.2step + 0.3i + 0.1j))
+            end
+        end
+        e
+    end, 6) for step in 1:length(am_steps)]
+
+    objective = _column_mean_objective(mesh)
+    scheme = AT.PPMScheme(AT.MonotoneLimiter())
+
+    ref = AT.cs_surface_emission_footprint(
+        panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
+        scheme = scheme, dt = 1.0,
+        base_emission_rates = base_emission_rates)
+
+    for K in (2, 3, 6)
+        stride = AT.cs_surface_emission_footprint(
+            panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
+            scheme = scheme, dt = 1.0,
+            base_emission_rates = base_emission_rates,
+            checkpoint = AT.StrideCheckpoint(K))
+        @test _footprints_equal(ref, stride)
+    end
+end
+
+@testset "StrideCheckpoint nonlinear PPM + implicit diffusion + CMFMC convection" begin
+    mesh, panels_m, panels_rm, am_steps, bm_steps, cm_steps = _stride_problem(
+        ; Nc = 4, Nz = 5, nsteps = 6, FT = Float64)
+    FT = eltype(panels_m[1])
+    N = mesh.Nc + 2mesh.Hp
+    Nz = size(panels_m[1], 3)
+    for p in 1:6
+        @inbounds for k in 1:Nz, j in 1:N, i in 1:N
+            panels_rm[p][i, j, k] = panels_m[p][i, j, k] *
+                (FT(0.05) + FT(0.009) * sin(FT(0.29i + 0.19j + 0.31k + 0.13p)))
+        end
+    end
+    Adv.fill_panel_halos!(panels_rm, mesh; dir = 0)
+
+    # Diffusion context.
+    ws_diff = AT.CSAdvectionWorkspace(mesh, panels_m[1])
+    for p in 1:6
+        fill!(ws_diff.dz_scratch[p], FT(50.0))
+    end
+    kz_field = AT.CubedSphereField(ntuple(_ -> AT.ConstantField{FT, 3}(FT(2.0)), 6))
+    op_diff = AT.ImplicitVerticalDiffusion(; kz_field)
+
+    # CMFMC convection context.
+    cmfmc = ntuple(_ -> begin
+        c = similar(panels_m[1], FT, mesh.Nc, mesh.Nc, Nz + 1)
+        fill!(c, zero(FT))
+        Nz >= 2 && (c[:, :, 2] .= FT(0.012))
+        Nz >= 3 && (c[:, :, 3] .= FT(0.020))
+        Nz >= 4 && (c[:, :, 4] .= FT(0.015))
+        c
+    end, 6)
+    dtrain = ntuple(_ -> begin
+        d = similar(panels_m[1], FT, mesh.Nc, mesh.Nc, Nz)
+        fill!(d, zero(FT))
+        Nz >= 2 && (d[:, :, 2] .= FT(0.006))
+        Nz >= 3 && (d[:, :, 3] .= FT(0.005))
+        d
+    end, 6)
+    forcing = AT.ConvectionForcing(cmfmc, dtrain, nothing)
+    metrics = ntuple(_ -> begin
+        a = similar(panels_m[1], FT, mesh.Nc, mesh.Nc)
+        fill!(a, one(FT))
+        a
+    end, 6)
+    ws_conv = AT.CMFMCWorkspace(panels_m; cell_metrics = metrics)
+    conv_op = AT.CMFMCConvection()
+
+    objective = _column_mean_objective(mesh)
+    scheme = AT.PPMScheme(AT.MonotoneLimiter())
+
+    ref = AT.cs_surface_emission_footprint(
+        panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
+        scheme = scheme, dt = 1.0,
+        diffusion_op = op_diff, diffusion_workspace = ws_diff,
+        convection_op = conv_op,
+        convection_forcing = forcing,
+        convection_workspace = ws_conv)
+
+    for K in (2, 3, 6)
+        stride = AT.cs_surface_emission_footprint(
+            panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
+            scheme = scheme, dt = 1.0,
+            diffusion_op = op_diff, diffusion_workspace = ws_diff,
+            convection_op = conv_op,
+            convection_forcing = forcing,
+            convection_workspace = ws_conv,
+            checkpoint = AT.StrideCheckpoint(K))
+        @test _footprints_equal(ref, stride)
+    end
+end
+
 @testset "stride rejects pre-constructed tape_storage" begin
     # GPT F2: an already-constructed AbstractCSTapeStorage passed via
     # tape_storage would be reused (identity in `_tape_storage`) across
@@ -267,23 +436,18 @@ end
     mesh, panels_m, panels_rm, am_steps, bm_steps, cm_steps = _stride_problem(
         ; Nc = 4, Nz = 3, nsteps = 4, FT = Float64)
     objective = _column_mean_objective(mesh)
-    nonlinear = AT.PPMScheme(AT.MonotoneLimiter())
     linrood = AT.LinRoodPPMScheme()
     schedule = AT.StrideCheckpoint(2)
 
-    # Nonlinear PPM with stride.
-    @test_throws ArgumentError AT.cs_surface_emission_footprint(
-        panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
-        scheme = nonlinear, dt = 1.0,
-        checkpoint = schedule)
-
-    # LinRood with stride.
+    # LinRood with stride — still rejected (different tape record shape,
+    # reserved for a follow-up commit).
     @test_throws ArgumentError AT.cs_surface_emission_footprint(
         panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
         scheme = linrood, dt = 1.0,
         checkpoint = schedule)
 
-    # cs_surface_emission_footprint_from_seed with stride.
+    # cs_surface_emission_footprint_from_seed with stride — still
+    # rejected; the from-seed stride driver lands separately.
     FT = eltype(panels_m[1])
     seed = ntuple(p -> begin
         a = similar(panels_rm[p])

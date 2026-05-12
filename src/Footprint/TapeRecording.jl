@@ -381,8 +381,26 @@ function _record_cs_tracer_tape(panels_rm0,
                                 convection_op = NoConvection(),
                                 convection_forcing = nothing,
                                 convection_workspace = nothing,
-                                tape_storage = :device)
-    storage = _tape_storage(tape_storage)
+                                tape_storage = :device,
+                                step_offset::Int = 0,
+                                record_ops::Bool = true)
+    # `step_offset` and `record_ops` behave as in `_record_cs_mass_tape`:
+    # step_offset shifts `_CSMidpointRecord` indices into absolute step
+    # numbers for windowed invocations; record_ops = false short-circuits
+    # every `_record_sweep!` / `_stage_panels` / `push!(ops, ...)` site.
+    #
+    # Unlike the mass tape, the tracer tape **applies diffusion and
+    # convection forward** (they mutate `panels_rm` and, for convection,
+    # `panels_m`). The propagation pass keeps those `apply_vertical_diffusion_vmr!`
+    # / `_add_surface_rates!` / `_apply_cs_convection_forward!` calls so
+    # the rm trajectory at each checkpoint matches the FullCheckpoint
+    # forward path; only the staging + record-push sites are elided.
+    #
+    # Returns `(ops, panels_rm, panels_m)` — the third value lets a
+    # strided-checkpoint driver chain the post-window rm state into the
+    # next window's recording call. The dispatcher `_record_cs_adjoint_tape`
+    # discards `panels_rm` to preserve the public 2-tuple contract.
+    storage = record_ops ? _tape_storage(tape_storage) : nothing
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps, panels_cm_steps)
     _validate_emission_rates(base_emission_rates, nsteps, mesh, "base_emission_rates")
     panels_rm = _copy_panel_tuple(panels_rm0)
@@ -410,29 +428,29 @@ function _record_cs_tracer_tape(panels_rm0,
         fs_z = fs / FT(n_z)
 
         for _ in 1:n_x
-            _record_sweep!(ops, :x, scheme, panels_m, panels_rm, panels_am, fs_x, storage)
+            record_ops && _record_sweep!(ops, :x, scheme, panels_m, panels_rm, panels_am, fs_x, storage)
             for p in 1:6
                 _sweep_x_panel!(panels_rm[p], panels_m[p], panels_am[p],
                                 scheme, ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_x)
             end
             fill_panel_halos!(panels_rm, mesh; dir=1)
             fill_panel_halos!(panels_m, mesh; dir=1)
-            push!(ops, _CSHaloRecord(1))
+            record_ops && push!(ops, _CSHaloRecord(1))
         end
 
         for _ in 1:n_y
-            _record_sweep!(ops, :y, scheme, panels_m, panels_rm, panels_bm, fs_y, storage)
+            record_ops && _record_sweep!(ops, :y, scheme, panels_m, panels_rm, panels_bm, fs_y, storage)
             for p in 1:6
                 _sweep_y_panel!(panels_rm[p], panels_m[p], panels_bm[p],
                                 scheme, ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_y)
             end
             fill_panel_halos!(panels_rm, mesh; dir=2)
             fill_panel_halos!(panels_m, mesh; dir=2)
-            push!(ops, _CSHaloRecord(2))
+            record_ops && push!(ops, _CSHaloRecord(2))
         end
 
         for _ in 1:n_z
-            _record_sweep!(ops, :z, scheme, panels_m, panels_rm, panels_cm, fs_z, storage)
+            record_ops && _record_sweep!(ops, :z, scheme, panels_m, panels_rm, panels_cm, fs_z, storage)
             for p in 1:6
                 _sweep_z_panel!(panels_rm[p], panels_m[p], panels_cm[p],
                                 scheme, ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_z)
@@ -441,33 +459,38 @@ function _record_cs_tracer_tape(panels_rm0,
 
         diffusion_op_step = _diffusion_sequence_at(diffusion_op, step, nsteps,
                                                    "diffusion_op")
+        absolute_step = step + step_offset
         if diffusion_op_step isa NoDiffusion
-            push!(ops, _CSMidpointRecord(step))
+            record_ops && push!(ops, _CSMidpointRecord(absolute_step))
             base_emission_rates !== nothing &&
                 _add_surface_rates!(panels_rm, base_emission_rates[step], dt_ft, mesh)
         else
             diffusion_ws_step = _diffusion_sequence_at(diffusion_workspace, step,
                                                        nsteps,
                                                        "diffusion_workspace")
-            panels_m_midpoint = _stage_panels(storage, panels_m)
             half_dt = dt_ft / FT(2)
-            push!(ops, _CSDiffusionRecord(diffusion_op_step, diffusion_ws_step,
-                                          panels_m_midpoint, half_dt))
+            if record_ops
+                panels_m_midpoint = _stage_panels(storage, panels_m)
+                push!(ops, _CSDiffusionRecord(diffusion_op_step, diffusion_ws_step,
+                                              panels_m_midpoint, half_dt))
+            end
             apply_vertical_diffusion_vmr!(
                 panels_rm, panels_m, diffusion_op_step, diffusion_ws_step,
                 half_dt, diffusion_meteo; halo_width = mesh.Hp)
-            push!(ops, _CSMidpointRecord(step))
+            record_ops && push!(ops, _CSMidpointRecord(absolute_step))
             base_emission_rates !== nothing &&
                 _add_surface_rates!(panels_rm, base_emission_rates[step], dt_ft, mesh)
-            push!(ops, _CSDiffusionRecord(diffusion_op_step, diffusion_ws_step,
-                                          panels_m_midpoint, half_dt))
+            if record_ops
+                push!(ops, _CSDiffusionRecord(diffusion_op_step, diffusion_ws_step,
+                                              panels_m_midpoint, half_dt))
+            end
             apply_vertical_diffusion_vmr!(
                 panels_rm, panels_m, diffusion_op_step, diffusion_ws_step,
                 half_dt, diffusion_meteo; halo_width = mesh.Hp)
         end
 
         for _ in 1:n_z
-            _record_sweep!(ops, :z, scheme, panels_m, panels_rm, panels_cm, fs_z, storage)
+            record_ops && _record_sweep!(ops, :z, scheme, panels_m, panels_rm, panels_cm, fs_z, storage)
             for p in 1:6
                 _sweep_z_panel!(panels_rm[p], panels_m[p], panels_cm[p],
                                 scheme, ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_z)
@@ -476,46 +499,48 @@ function _record_cs_tracer_tape(panels_rm0,
 
         fill_panel_halos!(panels_rm, mesh; dir=2)
         fill_panel_halos!(panels_m, mesh; dir=2)
-        push!(ops, _CSHaloRecord(2))
+        record_ops && push!(ops, _CSHaloRecord(2))
         for _ in 1:n_y
-            _record_sweep!(ops, :y, scheme, panels_m, panels_rm, panels_bm, fs_y, storage)
+            record_ops && _record_sweep!(ops, :y, scheme, panels_m, panels_rm, panels_bm, fs_y, storage)
             for p in 1:6
                 _sweep_y_panel!(panels_rm[p], panels_m[p], panels_bm[p],
                                 scheme, ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_y)
             end
             fill_panel_halos!(panels_rm, mesh; dir=2)
             fill_panel_halos!(panels_m, mesh; dir=2)
-            push!(ops, _CSHaloRecord(2))
+            record_ops && push!(ops, _CSHaloRecord(2))
         end
 
         fill_panel_halos!(panels_rm, mesh; dir=1)
         fill_panel_halos!(panels_m, mesh; dir=1)
-        push!(ops, _CSHaloRecord(1))
+        record_ops && push!(ops, _CSHaloRecord(1))
         for _ in 1:n_x
-            _record_sweep!(ops, :x, scheme, panels_m, panels_rm, panels_am, fs_x, storage)
+            record_ops && _record_sweep!(ops, :x, scheme, panels_m, panels_rm, panels_am, fs_x, storage)
             for p in 1:6
                 _sweep_x_panel!(panels_rm[p], panels_m[p], panels_am[p],
                                 scheme, ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_x)
             end
             fill_panel_halos!(panels_rm, mesh; dir=1)
             fill_panel_halos!(panels_m, mesh; dir=1)
-            push!(ops, _CSHaloRecord(1))
+            record_ops && push!(ops, _CSHaloRecord(1))
         end
 
         if !(convection_op isa NoConvection)
             forcing_step = _convection_forcing_at(convection_forcing, step, nsteps)
             forcing_step === nothing && throw(ArgumentError(
                 "convection_op=$(typeof(convection_op)) requires `convection_forcing`"))
-            push!(ops, _CSConvectionRecord(convection_op, forcing_step,
-                                           _stage_panels(storage, panels_m),
-                                           dt_ft))
+            if record_ops
+                push!(ops, _CSConvectionRecord(convection_op, forcing_step,
+                                               _stage_panels(storage, panels_m),
+                                               dt_ft))
+            end
             _apply_cs_convection_forward!(panels_rm, panels_m, forcing_step,
                                           convection_op, dt_ft,
                                           convection_workspace, mesh)
         end
     end
 
-    return ops, panels_m
+    return ops, panels_rm, panels_m
 end
 
 function _record_cs_adjoint_tape(panels_rm0, panels_m0,
@@ -544,7 +569,12 @@ function _record_cs_adjoint_tape(panels_rm0, panels_m0,
                                  panels_am_steps, panels_bm_steps, panels_cm_steps,
                                  mesh::CubedSphereMesh,
                                  scheme::CSAdjointNonlinearScheme; kwargs...)
-    return _record_cs_tracer_tape(panels_rm0, panels_m0,
-                                  panels_am_steps, panels_bm_steps, panels_cm_steps,
-                                  mesh, scheme; kwargs...)
+    # `_record_cs_tracer_tape` returns `(ops, panels_rm, panels_m)` —
+    # the third value lets the stride driver chain rm across windows.
+    # The public dispatcher contract is `(ops, final_m)`; drop the
+    # intermediate rm tuple here.
+    ops, _, final_m = _record_cs_tracer_tape(panels_rm0, panels_m0,
+                                              panels_am_steps, panels_bm_steps,
+                                              panels_cm_steps, mesh, scheme; kwargs...)
+    return ops, final_m
 end

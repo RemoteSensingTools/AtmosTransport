@@ -94,7 +94,15 @@ tape/
   the slot's offset, `_tape_panels` mmap-views the slot and copies
   into a device-side LRU cache. New test
   `test_cs_tape_mmap_roundtrip.jl` (stage → mmap-evict → read-back →
-  bit-exact equality).
+  bit-exact equality). **SHIPPED 2026-05-11 (commits `ba18260` src +
+  CUDA-ext, `2aca9e3` tests).** CPU `:device`/`:mmap` and GPU
+  `:pinned_host`/`:mmap` parity bit-exact across upwind, linear PPM,
+  monotone PPM, and ImplicitVerticalDiffusion. 111 dedicated tests +
+  4 new GPU parity assertions in `test_cs_ppm_adjoint_footprint.jl`.
+  Public verb is `finalize_tape!(storage)` (manifest emission only
+  fires on explicit call — GC finalizer just closes the IOStream).
+  Single `device_cache` per storage, reallocated on shape switch;
+  keyed LRU deferred to A2.
 - **A2** — `CSCheckpointSchedule` (`:full`, `:stride`, `:revolve`) +
   per-window replay driver + FD-identity tests parametrised over
   `(tape_storage, checkpoint)`.

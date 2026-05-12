@@ -35,6 +35,42 @@ function _validate_control_windows(controls, nsteps::Int)
     return nothing
 end
 
+# Cross-check that every panel array carried by a control block matches
+# the mesh's `(Nc, Nc)` surface grid before any rate-assembly / gradient
+# kernel runs. The kernels (`_add_weighted_footprint_kernel!`,
+# `_add_background_gradient_*_kernel!`) read `arr[i, j]` under
+# `@inbounds` with `i, j ∈ 1..Nc`, so a wrong-sized panel either
+# silently ignores cells (too big) or reads OOB (too small). The
+# `CSSurfaceFluxControl` constructor cross-validates `value` vs
+# `background`/`sigma` shapes but does not see the mesh — this is
+# the mesh-aware gate.
+function _validate_control_shapes(controls, mesh::CubedSphereMesh,
+                                  name::AbstractString)
+    expected = (mesh.Nc, mesh.Nc)
+    @inbounds for control in controls
+        for p in 1:6
+            size(control.value[p]) == expected || throw(DimensionMismatch(
+                "$name $(control.window.name) value panel $p has shape " *
+                "$(size(control.value[p])); expected $expected for mesh.Nc=$(mesh.Nc)"))
+        end
+        if control.background !== nothing
+            for p in 1:6
+                size(control.background[p]) == expected || throw(DimensionMismatch(
+                    "$name $(control.window.name) background panel $p has shape " *
+                    "$(size(control.background[p])); expected $expected for mesh.Nc=$(mesh.Nc)"))
+            end
+        end
+        if control.sigma isa NTuple{6}
+            for p in 1:6
+                size(control.sigma[p]) == expected || throw(DimensionMismatch(
+                    "$name $(control.window.name) sigma panel $p has shape " *
+                    "$(size(control.sigma[p])); expected $expected for mesh.Nc=$(mesh.Nc)"))
+            end
+        end
+    end
+    return nothing
+end
+
 function _surface_rates_from_controls(controls, nsteps::Int,
                                       mesh::CubedSphereMesh, prototype)
     rates = [_zero_surface_rates(mesh, prototype) for _ in 1:nsteps]
@@ -261,6 +297,7 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
     isempty(observation_vec) && throw(ArgumentError("at least one CSObservation is required"))
     isempty(control_vec) && throw(ArgumentError("at least one CSSurfaceFluxControl is required"))
     _validate_control_windows(control_vec, nsteps)
+    _validate_control_shapes(control_vec, mesh, "surface-flux control")
     _validate_cs_diffusion_inputs(diffusion_op, diffusion_workspace, nsteps)
     _require_cs_convection_workspace(convection_op, convection_workspace)
 

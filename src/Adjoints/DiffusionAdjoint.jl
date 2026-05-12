@@ -179,4 +179,3 @@ function _apply_cs_diffusion_adjoint!(lambda_panels, panels_m,
         "CS adjoint diffusion requires `ImplicitVerticalDiffusion` with a " *
         "`CubedSphereField` Kz field; got $(typeof(op.kz_field))"))
 end
-

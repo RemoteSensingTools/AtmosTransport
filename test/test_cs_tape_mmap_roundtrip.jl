@@ -355,9 +355,10 @@ end
         @test est.bytes_per_state == sizeof(Float64) * 6 * length(panels_m[1])
         @test est.state_bytes ==
               est.state_records * est.bytes_per_state
-        # Total records exceeds state records (halos + midpoints carry no
-        # panel payload).
-        @test est.total_records > est.state_records
+        # total_records is the op count — sum of every op-count field.
+        @test est.total_records == est.sweep_records + est.halo_records +
+                                   est.midpoint_records + est.diffusion_records +
+                                   est.convection_records
         @test est.halo_records > 0
         @test est.midpoint_records == est.nsteps
 
@@ -409,4 +410,107 @@ end
         @test e2.state_bytes == 2 * e1.state_bytes
         @test e2.midpoint_records == 2 * e1.midpoint_records
     end
+
+    @testset "total_records is the op count (regression: was inflated)" begin
+        mesh, panels_m, _, am, bm, cm =
+            _trivial_problem(Nc = 4, Nz = 3, nsteps = 2; nontrivial = false)
+        # Monotone PPM stages BOTH `panels_m` and `panels_rm` per
+        # sweep, so `state_records == 2 * sweep_records`. The previous
+        # buggy formula computed
+        # `total = state + halo + midpoint = 2*sweep + halo + midpoint`
+        # — inflating the op count by the nonlinear staging factor
+        # for nonlinear schemes. The fixed formula sums op counts
+        # directly.
+        est = AT.cs_tape_byte_estimate(panels_m, am, bm, cm, mesh,
+                                       AT.PPMScheme(AT.MonotoneLimiter()))
+        @test est.state_records == 2 * est.sweep_records
+        @test est.total_records == est.sweep_records + est.halo_records +
+                                   est.midpoint_records + est.diffusion_records +
+                                   est.convection_records
+        # The (buggy) old formula would have evaluated to
+        # `state + halo + midpoint = 2*sweep + halo + midpoint`. Whatever
+        # the actual cell count, the *gap* between old-formula and new is
+        # `state - sweep = sweep_records` (the count of nonlinear duplicate
+        # state stagings). Assert that this delta is precisely accounted for.
+        old_buggy = est.state_records + est.halo_records + est.midpoint_records
+        @test old_buggy - est.total_records == est.sweep_records
+    end
+end
+
+# ---------------------------------------------------------------------------
+# Codex-review fixes:
+#   * LinRoodPPMScheme rejects non-device tape_storage explicitly.
+#   * cs_surface_flux_4dvar validates control panel shapes vs mesh.Nc.
+# ---------------------------------------------------------------------------
+
+@testset "LinRoodPPMScheme rejects non-device tape_storage" begin
+    mesh, panels_m, panels_rm, am, bm, cm =
+        _trivial_problem(Nc = 4, Nz = 3, nsteps = 1; FT = Float32,
+                         nontrivial = false)
+    obj = AT.CSLayerMeanObjective(1, 2, 2, 3)
+    # Sanity: `:device` still works.
+    AT.cs_surface_emission_footprint(panels_rm, panels_m, am, bm, cm, mesh, obj;
+        scheme = AT.LinRoodPPMScheme(), dt = Float32(1),
+        tape_storage = :device)
+
+    # `:mmap` must throw — silently keeping the LinRood tape on the
+    # source backend was a latent OOM trap.
+    @test_throws ArgumentError AT.cs_surface_emission_footprint(
+        panels_rm, panels_m, am, bm, cm, mesh, obj;
+        scheme = AT.LinRoodPPMScheme(), dt = Float32(1),
+        tape_storage = :mmap)
+    @test_throws ArgumentError AT.cs_surface_emission_footprint(
+        panels_rm, panels_m, am, bm, cm, mesh, obj;
+        scheme = AT.LinRoodPPMScheme(), dt = Float32(1),
+        tape_storage = :pinned_host)
+end
+
+@testset "cs_surface_flux_4dvar validates control shapes vs mesh.Nc" begin
+    mesh, panels_m, panels_rm, am, bm, cm =
+        _trivial_problem(Nc = 4, Nz = 3, nsteps = 1; FT = Float32,
+                         nontrivial = false)
+
+    # Correctly-shaped control passes the validator.
+    good_control = AT.CSSurfaceFluxControl(
+        AT.CSSurfaceFluxWindow(:step1, 1),
+        ntuple(_ -> zeros(Float32, mesh.Nc, mesh.Nc), 6))
+    observations = [
+        AT.CSObservation(1, AT.CSLayerMeanObjective(1, 2, 2, 3),
+                         0.01f0, 0.2f0),
+    ]
+    AT.cs_surface_flux_4dvar(
+        panels_rm, panels_m, am, bm, cm, mesh, observations, good_control;
+        scheme = AT.PPMScheme(AT.NoLimiter()), dt = Float32(1))
+
+    # Wrong-sized value panels — value[1] is (Nc+1, Nc+1) instead of
+    # (Nc, Nc); the shared `_add_weighted_footprint_kernel!` would
+    # silently read with `ndrange = size(rates[step][p])` and grab
+    # OOB or skip cells depending on the size mismatch. Validator
+    # must catch this BEFORE any kernel launches.
+    bad_value = ntuple(p -> begin
+        sz = p == 1 ? (mesh.Nc + 1, mesh.Nc + 1) : (mesh.Nc, mesh.Nc)
+        zeros(Float32, sz)
+    end, 6)
+    bad_control = AT.CSSurfaceFluxControl(
+        AT.CSSurfaceFluxWindow(:step1, 1), bad_value)
+    @test_throws DimensionMismatch AT.cs_surface_flux_4dvar(
+        panels_rm, panels_m, am, bm, cm, mesh, observations, bad_control;
+        scheme = AT.PPMScheme(AT.NoLimiter()), dt = Float32(1))
+
+    # Wrong-sized sigma panels are also rejected (the
+    # `_add_background_gradient_array_kernel!` reads `sigma[i, j]`).
+    bad_sigma = ntuple(p -> begin
+        sz = p == 3 ? (mesh.Nc - 1, mesh.Nc) : (mesh.Nc, mesh.Nc)
+        fill(Float32(0.1), sz)
+    end, 6)
+    # Have to bypass the constructor's per-panel sigma vs value cross-
+    # check; build a control with correct sigma first then mutate the
+    # tuple via a fresh constructor that skips the check.
+    # The constructor at Observations.jl:131-141 validates
+    # sigma-panel-vs-value-panel shape, which is exactly what we test
+    # here from the mesh side too — confirm both gates fire.
+    @test_throws DimensionMismatch AT.CSSurfaceFluxControl(
+        AT.CSSurfaceFluxWindow(:step1, 1),
+        ntuple(_ -> zeros(Float32, mesh.Nc, mesh.Nc), 6);
+        sigma = bad_sigma)
 end

@@ -28,6 +28,28 @@
 # Forward kernels + adjoint wrappers from Operators.Advection. Imported at
 # Adjoints.jl module scope; this file is `include`d inside that module.
 
+# LinRood records hold raw panel tuples rather than per-policy tape
+# slots, so any non-`:device` storage request is currently a footgun:
+# the forward pass would silently keep the tape on the source backend
+# while the user thought they had opted into mmap eviction. Reject
+# explicitly until storage plumbing reaches `_CSLinRoodHorizRecord`.
+_linrood_validate_tape_storage(::DeviceCSTapeStorage) = nothing
+function _linrood_validate_tape_storage(storage::Symbol)
+    storage === :device || _linrood_storage_unsupported(storage)
+    return nothing
+end
+_linrood_validate_tape_storage(storage) = _linrood_storage_unsupported(storage)
+
+function _linrood_storage_unsupported(storage)
+    throw(ArgumentError(
+        "LinRoodPPMScheme reverse tape currently only supports " *
+        "tape_storage = :device / DeviceCSTapeStorage(); got " *
+        repr(storage) * ". The LinRood per-substep record stores " *
+        "panel tuples directly rather than per-policy slots, so " *
+        "mmap / pinned-host eviction is not yet wired through " *
+        "(Plan 26 follow-up)."))
+end
+
 # Per-substep LinRood horizontal tape record. The forward state is
 # stored ONCE per substep for all six panels.
 struct _CSLinRoodHorizRecord{FT, A3, A3x, A3y, P}
@@ -255,7 +277,18 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
                                   convection_workspace = nothing,
                                   tape_storage = :device) where {FT}
     _ = cfl_limit  # LinRood doesn't subcycle horizontally — single substep per step
-    _ = tape_storage
+
+    # LinRoodPPMScheme stages its forward state through
+    # `_stage_panels_strict` (which hardcodes `DeviceCSTapeStorage()`)
+    # — the `_CSLinRoodHorizRecord` struct holds raw `NTuple{6, P}`
+    # references rather than per-policy slots. Until the LinRood tape
+    # is refactored to plumb the storage policy through (Plan 26
+    # follow-up), any non-`:device` storage request would be silently
+    # ignored, leaving the mmap tape with `cursor=0, records=0` and
+    # the LinRood tape entirely device-resident — a latent OOM trap
+    # for large LinRood footprints. Reject explicitly so the failure
+    # mode is loud.
+    _linrood_validate_tape_storage(tape_storage)
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps, panels_cm_steps)
     dt_ft = FT(dt)
 

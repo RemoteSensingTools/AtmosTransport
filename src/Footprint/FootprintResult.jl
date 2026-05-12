@@ -36,11 +36,24 @@ end
 """
     CSTapeByteEstimate
 
-Counts and byte estimate for the CS adjoint tape. `state_bytes` counts full
-stored panel states: air-mass states for linear schemes, plus tracer branch
-states for nonlinear limited schemes. Halo and midpoint records are scalar
-metadata and are counted in `total_records` but not included in
+Counts and byte estimate for the CS adjoint tape. Each `*_records` field
+is an **op count** — the number of records of that type the forward
+pass will push onto the tape — except `state_records` which is a
+**payload-staging count** (full panel tuples written, doubled for
+nonlinear schemes that stage both `panels_m` and `panels_rm` per
+sweep).
+
+`state_bytes = state_records * bytes_per_state` is the raw panel-data
+cost of the tape; halo, midpoint, and the diffusion-palindrome's two
+op records contribute scalar metadata only and are not counted in
 `state_bytes`.
+
+`total_records` is the **op count**:
+`sweep + halo + midpoint + diffusion + convection`. It is not in
+general equal to `state_records + halo + midpoint`, because (a)
+nonlinear schemes have `state_records = 2 * sweep_records` and (b)
+the diffusion palindrome contributes two op records per step but
+stages only one panel tuple.
 """
 struct CSTapeByteEstimate
     nsteps::Int

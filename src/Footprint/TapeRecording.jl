@@ -122,9 +122,24 @@ function _tape_byte_estimate(panels_m0,
         end
     end
 
+    # `sweep_state_records` counts panel STAGINGS (m for linear,
+    # m + rm for nonlinear). `state_records` is the total number of
+    # staged panel tuples on the tape — i.e. how many full panel
+    # snapshots get written. Diffusion stores ONE staged m-panel
+    # tuple per step but contributes TWO `_CSDiffusionRecord` ops
+    # (the palindrome's `V(dt/2) → emissions → V(dt/2)`); see
+    # `_record_cs_mass_tape` for the staging path.
     sweep_state_records = scheme isa CSAdjointNonlinearScheme ? 2sweep_records : sweep_records
     state_records = sweep_state_records + diffusion_state_records + convection_records
-    total_records = state_records + halo_records + midpoint_records
+
+    # `total_records` is the total number of OPS the tape will hold
+    # (every op the reverse loop dispatches on). Sum of all op
+    # counts — sweep + halo + midpoint + diffusion + convection —
+    # NOT `state_records + halo + midpoint`, since `state_records`
+    # double-counts nonlinear staging vs op count and under-counts
+    # the diffusion palindrome's two ops sharing one staged state.
+    total_records = sweep_records + halo_records + midpoint_records +
+                    diffusion_records + convection_records
     bytes_per_state = _bytes_per_panel_tuple(panels_m0)
     return CSTapeByteEstimate(nsteps, sweep_records, halo_records,
                               midpoint_records, diffusion_records,

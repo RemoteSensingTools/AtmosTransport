@@ -332,3 +332,81 @@ end
         @test _max_footprint_diff(dev, mmap) == 0
     end
 end
+
+# ---------------------------------------------------------------------------
+# `cs_tape_byte_estimate` capacity-planning helper. Exported but previously
+# untested. Verifies that the per-record-class counts and `state_bytes`
+# total are consistent with the runtime tape that
+# `cs_surface_emission_footprint` actually builds.
+# ---------------------------------------------------------------------------
+
+@testset "cs_tape_byte_estimate matches realised tape size" begin
+    @testset "linear PPM (m-only state tape)" begin
+        mesh, panels_m, panels_rm, am, bm, cm =
+            _trivial_problem(Nc = 4, Nz = 3, nsteps = 2; nontrivial = false)
+        scheme = AT.PPMScheme(AT.NoLimiter())
+
+        est = AT.cs_tape_byte_estimate(panels_m, am, bm, cm, mesh, scheme)
+        @test est isa AT.CSTapeByteEstimate
+        @test est.nsteps == 2
+        # Linear schemes stage one panel set per sweep, no tracer branch.
+        @test est.sweep_records > 0
+        @test est.state_records == est.sweep_records
+        @test est.bytes_per_state == sizeof(Float64) * 6 * length(panels_m[1])
+        @test est.state_bytes ==
+              est.state_records * est.bytes_per_state
+        # Total records exceeds state records (halos + midpoints carry no
+        # panel payload).
+        @test est.total_records > est.state_records
+        @test est.halo_records > 0
+        @test est.midpoint_records == est.nsteps
+
+        # Sanity-check the estimate against a realised mmap tape — the
+        # written `records.bin` size must be within rounding distance
+        # of `state_bytes` once we run the footprint.
+        mktempdir() do dir
+            storage = TapeMod.MmapCSTapeStorage(; dir = dir,
+                                                cleanup_on_finalize = false)
+            AT.cs_surface_emission_footprint(panels_rm, panels_m, am, bm, cm,
+                mesh, AT.CSLayerMeanObjective(1, 2, 2, 3);
+                scheme = scheme, dt = 1.0, tape_storage = storage)
+            @test storage.cursor == est.state_bytes
+            TapeMod.finalize_tape!(storage)
+        end
+    end
+
+    @testset "monotone PPM (m + rm tracer branch tape)" begin
+        mesh, panels_m, panels_rm, am, bm, cm =
+            _trivial_problem(Nc = 4, Nz = 3, nsteps = 2; nontrivial = false)
+        scheme = AT.PPMScheme(AT.MonotoneLimiter())
+
+        est = AT.cs_tape_byte_estimate(panels_m, am, bm, cm, mesh, scheme)
+        # Nonlinear schemes stage BOTH m and rm panels per sweep.
+        @test est.state_records == 2 * est.sweep_records
+        @test est.state_bytes ==
+              est.state_records * est.bytes_per_state
+
+        mktempdir() do dir
+            storage = TapeMod.MmapCSTapeStorage(; dir = dir,
+                                                cleanup_on_finalize = false)
+            AT.cs_surface_emission_footprint(panels_rm, panels_m, am, bm, cm,
+                mesh, AT.CSLayerMeanObjective(1, 2, 2, 3);
+                scheme = scheme, dt = 1.0, tape_storage = storage)
+            @test storage.cursor == est.state_bytes
+            TapeMod.finalize_tape!(storage)
+        end
+    end
+
+    @testset "estimate scales with nsteps" begin
+        mesh, panels_m, _, am1, bm1, cm1 =
+            _trivial_problem(Nc = 4, Nz = 3, nsteps = 1; nontrivial = false)
+        _,    _,        _, am2, bm2, cm2 =
+            _trivial_problem(Nc = 4, Nz = 3, nsteps = 2; nontrivial = false)
+        scheme = AT.PPMScheme(AT.NoLimiter())
+        e1 = AT.cs_tape_byte_estimate(panels_m, am1, bm1, cm1, mesh, scheme)
+        e2 = AT.cs_tape_byte_estimate(panels_m, am2, bm2, cm2, mesh, scheme)
+        @test e2.nsteps == 2 * e1.nsteps
+        @test e2.state_bytes == 2 * e1.state_bytes
+        @test e2.midpoint_records == 2 * e1.midpoint_records
+    end
+end

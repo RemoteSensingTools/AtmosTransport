@@ -133,6 +133,38 @@ function _tape_byte_estimate(panels_m0,
                               state_records * bytes_per_state)
 end
 
+"""
+    cs_tape_byte_estimate(panels_m0, panels_am_steps, panels_bm_steps,
+                          panels_cm_steps, mesh, scheme;
+                          cfl_limit = 0.95,
+                          diffusion_op = NoDiffusion(),
+                          convection_op = NoConvection())
+        -> CSTapeByteEstimate
+
+Statically size the tape that `cs_surface_emission_footprint` will produce
+for the given problem. Reports per-record-class counts and the total
+`state_bytes` — the raw panel-data cost of the tape, independent of
+storage policy.
+
+The same `state_bytes` figure applies to all three storage policies
+because none of them compress the payload:
+
+  * `tape_storage = :device` — `state_bytes` is the device-resident
+    RAM cost; the reverse loop holds the full tape on the backend.
+  * `tape_storage = :pinned_host` — `state_bytes` is the pinned host
+    RAM cost; only one staged panel set is mirrored on the device at
+    a time via the shared read cache.
+  * `tape_storage = :mmap` — `state_bytes` is the on-disk footprint
+    of `records.bin`. The shape-keyed device cache holds at most one
+    `NTuple{6, T}` per distinct shape signature on top of that.
+
+`bytes_per_state` is the per-record panel-data size; multiply by
+`state_records` to recover `state_bytes` and divide by the storage
+policy's per-record overhead (typically 0 for in-memory, ~hundreds of
+bytes per record of TOML manifest for `:mmap`) to plan filesystem
+capacity. Halo / midpoint records carry only scalar metadata and are
+counted in `total_records` but NOT in `state_bytes`.
+"""
 cs_tape_byte_estimate(args...; kwargs...) =
     _tape_byte_estimate(args...; kwargs...)
 

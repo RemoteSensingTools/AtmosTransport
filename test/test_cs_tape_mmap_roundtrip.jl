@@ -171,6 +171,68 @@ end
                 _build_panels(:m; Nc = 2, Hp = 2, Nz = 2, FT = Float32))
         end
     end
+
+    @testset "shape-keyed device cache amortises heterogeneous reads" begin
+        # Stand-in for a "GPU-ish" backend that picks up the device-cache
+        # path: wrap Array{T,N} in a thin subtype so the
+        # `_mmap_prepare_for_panels!(::NTuple{6, <:Array})` no-op
+        # specialisation does NOT fire and we exercise the default
+        # method that populates `storage.device_caches`. Same arithmetic
+        # behaviour as Array, so copyto! / similar / eltype work
+        # unchanged.
+        struct _PseudoDevArray{T, N} <: AbstractArray{T, N}
+            data::Array{T, N}
+        end
+        Base.size(a::_PseudoDevArray) = size(a.data)
+        Base.@propagate_inbounds Base.getindex(a::_PseudoDevArray, i::Int...) =
+            a.data[i...]
+        Base.@propagate_inbounds Base.setindex!(a::_PseudoDevArray, v, i::Int...) =
+            (a.data[i...] = v)
+        Base.IndexStyle(::Type{<:_PseudoDevArray}) = IndexLinear()
+        Base.similar(a::_PseudoDevArray, ::Type{S}, dims::Dims) where {S} =
+            _PseudoDevArray(Array{S}(undef, dims))
+        Base.copyto!(dst::_PseudoDevArray, src::AbstractArray) =
+            (copyto!(dst.data, src); dst)
+        Base.copyto!(dst::AbstractArray, src::_PseudoDevArray) =
+            (copyto!(dst, src.data); dst)
+        Base.copyto!(dst::_PseudoDevArray, src::_PseudoDevArray) =
+            (copyto!(dst.data, src.data); dst)
+        Base.:(==)(a::_PseudoDevArray, b::_PseudoDevArray) = a.data == b.data
+        Base.:(==)(a::_PseudoDevArray, b::AbstractArray) = a.data == b
+        Base.:(==)(a::AbstractArray, b::_PseudoDevArray) = a == b.data
+
+        wrap6(panels) = ntuple(p -> _PseudoDevArray(panels[p]), 6)
+
+        mktempdir() do dir
+            storage = TapeMod.MmapCSTapeStorage(; dir = dir,
+                                                cleanup_on_finalize = false)
+            # Three heterogeneous shapes interleaved across six slots;
+            # the keyed cache must serve repeats without reallocating.
+            shapes = [:m, :am, :bm, :cm, :m, :am]
+            sources = [wrap6(_build_panels(s; Nc = 3, Hp = 3, Nz = 2,
+                                           FT = Float32, seed = i))
+                       for (i, s) in enumerate(shapes)]
+            slots = [TapeMod._stage_panels(storage, src) for src in sources]
+
+            # Allocation must populate one cache per *distinct* shape.
+            # The four shape kinds are m=(9,9,2), am=(10,9,2),
+            # bm=(9,10,2), cm=(9,9,3) — see `_shape_panel`.
+            @test length(storage.device_caches) == 4
+
+            for (slot, src) in zip(slots, sources)
+                got = TapeMod._tape_panels(slot)
+                @test got isa NTuple{6}
+                @test all(got[p] == src[p] for p in 1:6)
+                # Same cache buffer is returned for repeat shape reads.
+                @test got === storage.device_caches[ntuple(p -> size(src[p]), 6)]
+            end
+
+            # Reads of repeat-shape slots must NOT have grown the cache
+            # dict further.
+            @test length(storage.device_caches) == 4
+            TapeMod.finalize_tape!(storage)
+        end
+    end
 end
 
 # ---------------------------------------------------------------------------

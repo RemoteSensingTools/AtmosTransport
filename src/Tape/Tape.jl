@@ -23,19 +23,25 @@ module Tape
 export AbstractCSTapeStorage,
        DeviceCSTapeStorage,
        PinnedHostCSTapeStorage,
+       MmapCSTapeStorage,
        CSTapeSlot,
        PinnedHostCSTapeSlot,
+       MmapCSTapeSlot,
        _tape_storage, _tape_panels,
        _allocate_tape_slot, stage_panels!, _stage_panels,
        _after_tape_stage!, _after_tape_read!,
        _sync_pinned_tape_storage!,
+       _sync_mmap_tape_storage!,
+       _mmap_prepare_for_panels!,
        _ensure_tape_read_cache!,
        _bytes_per_panel_tuple,
+       finalize_tape!,
        _CSSweepRecord, _CSHaloRecord, _CSMidpointRecord,
        _CSDiffusionRecord, _CSConvectionRecord,
        _CSTapeOp
 
 include("TapeStorage.jl")
 include("TapeRecords.jl")
+include("MmapTapeStorage.jl")
 
 end # module Tape

@@ -306,6 +306,7 @@ export CSLayerMeanObjective, CSColumnMeanObjective, CSSeedObjective, CSFootprint
 export CSSurfaceFluxWindow, CSSurfaceFluxJacobianResult
 export CSObservation, CSSurfaceFluxControl, CS4DVarResult, CS4DVarSolveResult
 export CSAdjointWorkspace, CSTapeSlot, DeviceCSTapeStorage, PinnedHostCSTapeStorage
+export MmapCSTapeStorage, MmapCSTapeSlot
 export PinnedHostCSTapeSlot, CSTapeByteEstimate
 export evaluate_objective, run_cs_footprint_forward
 export cs_surface_emission_footprint, cs_surface_emission_footprint_from_seed

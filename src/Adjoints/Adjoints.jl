@@ -42,13 +42,15 @@ using ..MetDrivers: ConvectionForcing, current_time
 # call sites continue to use the unqualified names. No semantic change
 # from the previous monolithic definitions in this file.
 using ..Tape: AbstractCSTapeStorage,
-              DeviceCSTapeStorage, PinnedHostCSTapeStorage,
-              CSTapeSlot, PinnedHostCSTapeSlot,
+              DeviceCSTapeStorage, PinnedHostCSTapeStorage, MmapCSTapeStorage,
+              CSTapeSlot, PinnedHostCSTapeSlot, MmapCSTapeSlot,
               _tape_storage, _tape_panels,
               _allocate_tape_slot, stage_panels!, _stage_panels,
               _after_tape_stage!, _after_tape_read!,
-              _sync_pinned_tape_storage!, _ensure_tape_read_cache!,
-              _bytes_per_panel_tuple,
+              _sync_pinned_tape_storage!, _sync_mmap_tape_storage!,
+              _mmap_prepare_for_panels!,
+              _ensure_tape_read_cache!,
+              _bytes_per_panel_tuple, finalize_tape!,
               _CSSweepRecord, _CSHaloRecord, _CSMidpointRecord,
               _CSDiffusionRecord, _CSConvectionRecord, _CSTapeOp
 
@@ -268,7 +270,9 @@ export CSLayerMeanObjective, CSColumnMeanObjective, CSSeedObjective, CSFootprint
 export CSSurfaceFluxWindow, CSSurfaceFluxJacobianResult
 export CSObservation, CSSurfaceFluxControl, CS4DVarResult, CS4DVarSolveResult
 export CSAdjointWorkspace, CSTapeSlot, DeviceCSTapeStorage, PinnedHostCSTapeStorage
+export MmapCSTapeStorage, MmapCSTapeSlot
 export PinnedHostCSTapeSlot, CSTapeByteEstimate
+export finalize_tape!
 export evaluate_objective, run_cs_footprint_forward
 export cs_surface_emission_footprint, cs_surface_emission_footprint_from_seed
 export cs_tape_byte_estimate

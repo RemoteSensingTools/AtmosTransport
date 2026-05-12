@@ -63,7 +63,8 @@ _tape_storage(::Val{:device}) = DeviceCSTapeStorage()
 _tape_storage(::Val{:pinned_host}) = PinnedHostCSTapeStorage()
 _tape_storage(storage::Symbol) = _tape_storage(Val(storage))
 _tape_storage(storage) = throw(ArgumentError(
-    "unsupported CS adjoint tape storage $(storage); supported: :device, :pinned_host"))
+    "unsupported CS adjoint tape storage $(storage); " *
+    "supported: :device, :pinned_host, :mmap"))
 
 # ---------------------------------------------------------------------------
 # Slot read / staging hooks

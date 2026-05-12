@@ -749,6 +749,19 @@ end
             @test pinned_result.footprints[1][1] isa CUDA.CuArray
             @test Array(pinned_result.footprints[1][1]) ≈ fp rtol=1f-6
 
+            # Plan 26 Phase A.1 — mmap tape on GPU should reach the same
+            # device-side result. We compare against the pinned-host result
+            # (the closest sibling) for bit-exact parity, since both paths
+            # round-trip through a host snapshot of the recorded panels.
+            mmap_result = AT.cs_surface_emission_footprint(
+                panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
+                mesh, AT.CSLayerMeanObjective(1, 2, 2, 3);
+                scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(1),
+                tape_storage=:mmap)
+            @test mmap_result.footprints[1][1] isa CUDA.CuArray
+            @test Array(mmap_result.footprints[1][1]) ==
+                  Array(pinned_result.footprints[1][1])
+
             diffusion_op, diffusion_ws = _cs_diffusion_context(
                 mesh, panels_rm_g[1]; kz=2.0f0, dz=50.0f0)
             diff_result = AT.cs_surface_emission_footprint(
@@ -769,6 +782,17 @@ end
             @test pinned_diff_result.footprints[1][1] isa CUDA.CuArray
             @test Array(pinned_diff_result.footprints[1][1]) ≈
                   Array(diff_result.footprints[1][1]) rtol=1f-6
+
+            mmap_diff_result = AT.cs_surface_emission_footprint(
+                panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
+                mesh, AT.CSLayerMeanObjective(1, 2, 2, 2);
+                scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(300),
+                diffusion_op=diffusion_op,
+                diffusion_workspace=diffusion_ws,
+                tape_storage=:mmap)
+            @test mmap_diff_result.footprints[1][1] isa CUDA.CuArray
+            @test Array(mmap_diff_result.footprints[1][1]) ==
+                  Array(pinned_diff_result.footprints[1][1])
 
             convection_op, convection_forcing, convection_ws =
                 _cs_tm5_convection_context(mesh, panels_m_g)

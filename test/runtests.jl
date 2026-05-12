@@ -42,6 +42,7 @@ core_tests = [
     "test_basis_explicit_core.jl",
     "test_advection_kernels.jl",
     "test_cs_ppm_adjoint_footprint.jl",
+    "test_cs_tape_mmap_roundtrip.jl",
     "test_linrood_kernel_adjoints.jl",
     "test_structured_mesh_metadata.jl",
     "test_reduced_gaussian_mesh.jl",

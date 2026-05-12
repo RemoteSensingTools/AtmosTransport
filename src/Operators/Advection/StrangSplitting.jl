@@ -1090,20 +1090,20 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
         fill_panel_halos!(rm_tracer, grid.horizontal; dir=1)
         tracer_name = tracer_names[idx]
         midpoint! = if emissions_op isa NoSurfaceFlux
-            () -> SectionTimer.@section :diffusion apply_vertical_diffusion!(
-                rm_tracer, diffusion_op, workspace, dt, meteo;
+            () -> SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
+                rm_tracer, m, diffusion_op, workspace, dt, meteo;
                 halo_width = state.halo_width)
         else
             half_dt = dt / 2
             () -> begin
-                SectionTimer.@section :diffusion apply_vertical_diffusion!(
-                    rm_tracer, diffusion_op, workspace, half_dt, meteo;
+                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
+                    rm_tracer, m, diffusion_op, workspace, half_dt, meteo;
                     halo_width = state.halo_width)
                 apply_surface_flux!(rm_tracer, emissions_op, workspace, dt, meteo, grid;
                                     tracer_names = (tracer_name,),
                                     halo_width = state.halo_width)
-                SectionTimer.@section :diffusion apply_vertical_diffusion!(
-                    rm_tracer, diffusion_op, workspace, half_dt, meteo;
+                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
+                    rm_tracer, m, diffusion_op, workspace, half_dt, meteo;
                     halo_width = state.halo_width)
             end
         end

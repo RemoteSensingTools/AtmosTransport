@@ -4,6 +4,12 @@ using AtmosTransport
 
 const PP = AtmosTransport.Preprocessing
 
+struct FakeSpectralMessage
+    keys::Dict{String, Any}
+end
+
+Base.getindex(msg::FakeSpectralMessage, key::String) = msg.keys[key]
+
 function write_time_first_qv(path)
     NCDataset(path, "c") do ds
         defDim(ds, "time", 4)
@@ -79,4 +85,37 @@ end
         @test loaded.vo_by_hour[0] == spec.vo_by_hour[0]
         @test loaded.d_by_hour[1] == spec.d_by_hour[1]
     end
+end
+
+@testset "spectral GRIB header guard" begin
+    good = FakeSpectralMessage(Dict{String, Any}(
+        "gridType" => "sh",
+        "J" => 2,
+        "K" => 2,
+        "M" => 2,
+        "JS" => 1,
+        "KS" => 1,
+        "MS" => 1,
+        "laplacianOperator" => 0.5,
+    ))
+    spec = zeros(ComplexF64, 3, 3)
+    @test PP._validate_spectral_header(good, 12, spec) == 2
+
+    bad_grid = FakeSpectralMessage(merge(good.keys, Dict("gridType" => "regular_ll")))
+    @test_throws ErrorException PP._validate_spectral_header(bad_grid, 12, spec)
+
+    bad_trunc = FakeSpectralMessage(merge(good.keys, Dict("K" => 3)))
+    @test_throws ErrorException PP._validate_spectral_header(bad_trunc, 12, spec)
+
+    bad_count = FakeSpectralMessage(good.keys)
+    @test_throws ErrorException PP._validate_spectral_header(bad_count, 10, spec)
+
+    small_spec = zeros(ComplexF64, 2, 3)
+    @test_throws ErrorException PP._validate_spectral_header(good, 12, small_spec)
+
+    bad_subset = FakeSpectralMessage(merge(good.keys, Dict("MS" => 2)))
+    @test_throws ErrorException PP._validate_spectral_header(bad_subset, 12, spec)
+
+    partial_subset = FakeSpectralMessage(delete!(copy(good.keys), "MS"))
+    @test_throws ErrorException PP._validate_spectral_header(partial_subset, 12, spec)
 end

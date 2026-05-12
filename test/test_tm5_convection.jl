@@ -144,6 +144,8 @@ end
     # Storage plan Commit 4: flat tile slab (Nz, Nz, B). Default
     # B = Nx*Ny when budget covers all cells (it does at this size).
     @test size(ws_tm5.conv1) == (4, 4, 12)
+    @test ws_tm5.cell_metrics !== nothing
+    @test size(ws_tm5.cell_metrics) == (3,)
 end
 
 @testset "plan 23 Commit 4: TM5Convection apply! LL kernel" begin
@@ -165,7 +167,7 @@ end
     detd = zeros(FT, Nx, Ny, Nz); detd[:, :, 4:6] .= FT(0.005)
     forcing = ConvectionForcing(nothing, nothing,
                                  (; entu, detu, entd, detd))
-    ws = TM5Workspace(state.air_mass)
+    ws = TM5Workspace(state.air_mass; cell_metrics = ones(FT, Ny))
 
     mass_before = [sum(state.tracers_raw[:, :, :, t]) for t in 1:Nt]
     state0_copy = copy(state.tracers_raw)
@@ -181,7 +183,7 @@ end
 
     # Zero-forcing → bit-exact identity.
     state_zero = CellState(m; CO2 = copy(tracer1), CH4 = copy(tracer2))
-    ws_zero = TM5Workspace(state_zero.air_mass)
+    ws_zero = TM5Workspace(state_zero.air_mass; cell_metrics = ones(FT, Ny))
     zero_forcing = ConvectionForcing(nothing, nothing,
         (; entu = zeros(FT, Nx, Ny, Nz), detu = zeros(FT, Nx, Ny, Nz),
            entd = zeros(FT, Nx, Ny, Nz), detd = zeros(FT, Nx, Ny, Nz)))
@@ -212,7 +214,7 @@ end
     detd = zeros(FT, ncells, Nz); detd[:, 3:4] .= FT(0.005)
     forcing = ConvectionForcing(nothing, nothing,
                                  (; entu, detu, entd, detd))
-    ws = TM5Workspace(state.air_mass)
+    ws = TM5Workspace(state.air_mass; cell_metrics = ones(FT, ncells))
 
     mass_before = sum(state.tracers_raw)
     state0_copy = copy(state.tracers_raw)
@@ -247,7 +249,7 @@ end
     detd = ntuple(_ -> begin e = zeros(FT, Nc, Nc, Nz); e[:, :, 3:4] .= FT(0.005); e end, 6)
     forcing = ConvectionForcing(nothing, nothing,
                                  (; entu, detu, entd, detd))
-    ws = TM5Workspace(state.air_mass)
+    ws = TM5Workspace(state.air_mass; cell_metrics = ntuple(_ -> ones(FT, Nc, Nc), 6))
 
     function interior_mass(tracers_raw)
         s = zero(FT)
@@ -271,7 +273,7 @@ end
     grid = AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT=FT)
 
     state = CellState(fill(FT(1), Nx, Ny, Nz); CO2 = zeros(FT, Nx, Ny, Nz))
-    ws = TM5Workspace(state.air_mass)
+    ws = TM5Workspace(state.air_mass; cell_metrics = ones(FT, Ny))
     empty_forcing = ConvectionForcing()
 
     err = try

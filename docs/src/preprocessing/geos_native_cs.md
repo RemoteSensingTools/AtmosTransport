@@ -107,15 +107,14 @@ and physics fallback files from `physics_dir`.
 For each of the 24 hourly windows:
 
 1. **Read** (`src/Preprocessing/sources/geos.jl::read_window!`):
-    - Open `CTM_A1` for hourly `MFXC`, `MFYC`, `DELP` (window-averaged).
+    - Open `CTM_A1` for hourly `MFXC`, `MFYC`, `DELP` (window-constant).
     - Open `CTM_I1` for instantaneous `PS`, `QV` at hour `n` and `n+1`.
-    - Apply `mass_flux_dt = 450 s` scaling: `MFXC` is accumulated
-      over 450 s of FV3 dynamics, not the 3600 s window. Dividing
-      `MFXC` by `mass_flux_dt` gives a per-second mass-flux rate
-      (in raw GEOS units of Pa·m²/s); the GEOS-CS orchestrator
-      then converts that to the binary's
-      `flux_kind = :substep_mass_amount` units (kg per substep)
-      before write.
+    - Expose `MFXC` / `MFYC` as a rate-like diagnostic by dividing by
+      `mass_flux_dt = 450 s`. CTM_A1 stores a dry pressure-area transport
+      amount for one 450 s dynamics step, so the GEOS-CS writer stores each
+      Strang half-sweep face flux as `MFXC / (2g)` and reuses that amount for
+      the 8 substeps in the hourly window. The logged `flux_scale` is
+      `450 / (2g) = 22.94361479`.
     - Auto-detect level orientation
       (`detect_level_orientation`): GEOS-IT files are **bottom-up**
       (k=1 surface), the runtime expects **top-down** (k=1 TOA).
@@ -146,20 +145,25 @@ For each of the 24 hourly windows:
       `cm[Nz+1] = 0` (surface boundary) holds **exactly** by
       construction — no residual to redistribute.
 
-5. **Chained mass evolution**
+5. **Pressure-fixer mass evolution**
    (`_evolve_mass_pressure_fixer!`):
-    - The pressure-fixer rule implies a per-level mass increment of
-      `Δm[k] = +2 · steps · ΔB[k] · pit`. The orchestrator carries the
-      evolved `m_next_pf` forward as the **next window's `m_cur`**, so
-      every window's mass endpoints close to floating-point.
+    - The pressure-fixer rule implies a per-level mass increment from
+      the horizontal flux divergence. The v4 binary stores
+      `dm = (m_next_pf - m_cur) / (2 * steps_per_met)` so runtime replay
+      closes against the same pressure-fixer endpoint.
+    - By default this endpoint is chained into the next window. For
+      GEOS-native diagnostic campaigns that must stay pinned to the raw
+      archived GEOS mass at every hour, set `[numerics] chain_mass = false`.
+      In that mode every window seeds `m_cur` from the raw GEOS endpoint
+      and still writes a self-consistent pressure-fixer `dm` for replay.
 
 6. **Write-time replay gate** — same contract as the spectral path
    (`verify_write_replay_cs!`); failures abort.
 
-7. **Cross-day chain** — the day's `final_m` is threaded as `seed_m`
-   for the next day's `process_day` invocation. Cross-day continuity
-   is bit-identical when both days were produced with the same
-   pressure-fixer chain.
+7. **Cross-day chain** — when `chain_mass = true`, the day's `final_m`
+   is threaded as `seed_m` for the next day's `process_day` invocation.
+   When `chain_mass = false`, no cross-day pressure-fixer seed is
+   returned; each day/window is re-seeded from raw GEOS mass.
 
 ## GCHP-style convection wiring (Section C, recently shipped)
 
@@ -205,9 +209,10 @@ runtime convection is automatically gated off).
 - The pressure-fixer / chained-mass approach has **zero global Poisson
   iteration** — every step is a per-column scan, embarrassingly
   parallel. There's no diminishing return from adding cores.
-- Real GEOS-IT data closes write-time replay at machine epsilon
-  (`5.94e-16` F64, `3.5e-7` F32) thanks to the chained pressure-fixer
-  state — no residual redistribution needed.
+- Real GEOS-IT data closes write-time replay at machine precision for
+  each written window. The 2021-12 C180/L72 F32 campaign with
+  `chain_mass = false` reported worst replay relative errors of
+  `4.93e-08`, `5.73e-08`, and `5.38e-08` for Dec 2-4.
 
 ## What's next
 

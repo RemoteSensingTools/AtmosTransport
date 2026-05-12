@@ -299,7 +299,8 @@ pressure thickness, then multiplying by the face length and scaling:
     bm[i,j,k] = v̄ × d̄p × Δx[i,j] / g × dt_factor
 
 Boundary faces (i=1, i=Nc+1, j=1, j=Nc+1) use the adjacent cell center
-value without averaging — these are corrected by the Poisson balance.
+value without averaging; CS edge mirrors are synchronized before the binary is
+written.
 """
 function reconstruct_cs_fluxes!(am_panels::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
                                  bm_panels::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
@@ -379,13 +380,15 @@ end
     rotate_winds_to_panel_local!(u_panel, v_panel, u_east, v_north,
                                   mesh, Nz)
 
-Rotate geographic (east, north) wind components to panel-local (x, y)
-components for all 6 CS panels.
+Rotate geographic `(east, north)` wind components to cubed-sphere face-normal
+components for all 6 panels.
 
-The local tangent basis is convention-aware, so this routine honors the same
-panel convention as regridding, face-table construction, runtime readers, and
-diagnostic output. GEOS-native panels 4/5 therefore use their Y-reversed file
-axes without gnomonic special cases.
+`u_panel` is the wind normal to local-x faces, scaled with `Δy` when
+reconstructing `am`; `v_panel` is the wind normal to local-y faces, scaled with
+`Δx` when reconstructing `bm`.  The panel tangent directions on the gnomonic
+cubed sphere are not generally orthogonal, so these are not simple dot products
+onto the local x/y tangents.  The routine derives the two face normals from the
+convention-aware tangent basis and projects onto those normals.
 """
 function rotate_winds_to_panel_local!(u_panel::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
                                        v_panel::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
@@ -396,11 +399,21 @@ function rotate_winds_to_panel_local!(u_panel::NTuple{CS_PANEL_COUNT, Array{FT, 
     for p in 1:CS_PANEL_COUNT
         x_east, x_north, y_east, y_north = tangent_basis[p]
         for j in 1:Nc, i in 1:Nc
+            xe = x_east[i, j]
+            xn = x_north[i, j]
+            ye = y_east[i, j]
+            yn = y_north[i, j]
+            c = clamp(xe * ye + xn * yn, -one(FT), one(FT))
+            s = sqrt(max(one(FT) - c * c, FT(eps(Float64))))
+            nx_east = (xe - c * ye) / s
+            nx_north = (xn - c * yn) / s
+            ny_east = (ye - c * xe) / s
+            ny_north = (yn - c * xn) / s
             @inbounds for k in 1:Nz
                 ue = u_east[p][i, j, k]
                 vn = v_north[p][i, j, k]
-                u_panel[p][i, j, k] = ue * x_east[i, j] + vn * x_north[i, j]
-                v_panel[p][i, j, k] = ue * y_east[i, j] + vn * y_north[i, j]
+                u_panel[p][i, j, k] = ue * nx_east + vn * nx_north
+                v_panel[p][i, j, k] = ue * ny_east + vn * ny_north
             end
         end
     end
@@ -441,19 +454,14 @@ end
     rotate_panel_to_geographic!(u_east, v_north, u_panel, v_panel,
                                  tangent_basis, Nc, Nz)
 
-Inverse of [`rotate_winds_to_panel_local!`](@ref): rotate panel-local
-`(x, y)` wind components back to geographic `(east, north)` for all 6
-CS panels. Used by the cross-topology preprocessor (CS source → LL/RG
-target) where MFXC/MFYC come in panel-local and the conservative
-regridder needs them on the geographic frame.
+Inverse of [`rotate_winds_to_panel_local!`](@ref): rotate cubed-sphere
+face-normal wind components back to geographic `(east, north)` for all panels.
 
-The forward rotation treats the cell-local tangent basis `(ex, ey)` as
-orthonormal (it is unit-normalized but not exactly perpendicular off
-the panel center; deviation is O(few %) at panel corners and is
-absorbed by the LL/RG Poisson balance downstream). This inverse uses
-the same orthonormal-basis convention, i.e. inverse = transpose, so
-the forward∘reverse round-trip is identity to within
-basis-non-orthogonality and Poisson-balance correction.
+`u_panel` and `v_panel` are interpreted as normal velocities through local-x
+and local-y faces, matching the `am`/`bm` reconstruction convention.  Because
+the two face normals are non-orthogonal whenever the panel coordinate tangents
+are non-orthogonal, the inverse solves the local two-vector Gram system rather
+than applying a transpose.
 """
 function rotate_panel_to_geographic!(u_east::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
                                       v_north::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
@@ -464,11 +472,24 @@ function rotate_panel_to_geographic!(u_east::NTuple{CS_PANEL_COUNT, Array{FT, 3}
     for p in 1:CS_PANEL_COUNT
         x_east, x_north, y_east, y_north = tangent_basis[p]
         for j in 1:Nc, i in 1:Nc
+            xe = x_east[i, j]
+            xn = x_north[i, j]
+            ye = y_east[i, j]
+            yn = y_north[i, j]
+            c = clamp(xe * ye + xn * yn, -one(FT), one(FT))
+            denom = max(one(FT) - c * c, FT(eps(Float64)))
+            s = sqrt(denom)
+            nx_east = (xe - c * ye) / s
+            nx_north = (xn - c * yn) / s
+            ny_east = (ye - c * xe) / s
+            ny_north = (yn - c * xn) / s
             @inbounds for k in 1:Nz
                 up = u_panel[p][i, j, k]
                 vp = v_panel[p][i, j, k]
-                u_east[p][i, j, k]  = up * x_east[i, j]  + vp * y_east[i, j]
-                v_north[p][i, j, k] = up * x_north[i, j] + vp * y_north[i, j]
+                ax = (up + c * vp) / denom
+                ay = (vp + c * up) / denom
+                u_east[p][i, j, k] = ax * nx_east + ay * ny_east
+                v_north[p][i, j, k] = ax * nx_north + ay * ny_north
             end
         end
     end

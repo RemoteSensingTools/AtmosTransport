@@ -36,7 +36,7 @@ import ..AbstractDiffusion                # global root from src/Operators/Abstr
 export solve_tridiagonal!, build_diffusion_coefficients
 export _vertical_diffusion_kernel!
 export AbstractDiffusion, NoDiffusion, ImplicitVerticalDiffusion
-export apply_vertical_diffusion!
+export apply_vertical_diffusion!, apply_vertical_diffusion_vmr!
 export fill_dz_hydrostatic_constT!
 
 include("thomas_solve.jl")

@@ -118,9 +118,15 @@ end
 """
     apply_poisson_balance!(storage, last_hour_next, steps_per_window)
 
-Apply the TM5-style Poisson horizontal-flux correction to every stored window
-so horizontal convergence matches the per-half-sweep mass target implied by the
-forward window endpoints.
+Close each stored window against its forward mass endpoint.
+
+By default this applies only a column-integrated horizontal correction, then
+diagnoses the vertical mass flux from the explicit endpoint mass tendency. This
+keeps the ERA layer winds anchored to the spectral U/V fields while satisfying
+the zero top/bottom `cm` replay contract.
+
+Set `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE=1` to restore the older
+horizontal Poisson correction mode for controlled comparisons.
 """
 function apply_poisson_balance!(storage::WindowStorage{FT},
                                 last_hour_next,
@@ -128,15 +134,34 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
     Nx, Ny, Nz = size(storage.all_m[1])
     dm_dt_buf = Array{FT}(undef, Nx, Ny, Nz)
     div_scratch = Array{Float64}(undef, Nx, Ny, Nz)
-    poisson_ws = LLPoissonWorkspace(Nx, Ny)
     replay_layout = structured_replay_layout()
 
-    @info "  Applying Poisson mass flux balance..."
+    apply_horizontal_balance = horizontal_poisson_balance_enabled()
+    poisson_ws = LLPoissonWorkspace(Nx, Ny)
+    if apply_horizontal_balance
+        @info "  Applying horizontal Poisson mass-flux balance (legacy opt-in)..."
+    else
+        @info "  Applying column mass-balance correction; diagnosing cm from endpoint mass tendency..."
+    end
+
+    worst_column_pre = 0.0
+    worst_column_post = 0.0
+    worst_column_delta = 0.0
     for win_idx in eachindex(storage.all_m)
         fill_window_mass_tendency!(dm_dt_buf, storage, last_hour_next, win_idx, steps_per_window)
-        balance_mass_fluxes!(storage.all_am[win_idx], storage.all_bm[win_idx], dm_dt_buf, poisson_ws)
-        @views storage.all_bm[win_idx][:, 1, :] .= zero(FT)
-        @views storage.all_bm[win_idx][:, Ny + 1, :] .= zero(FT)
+        if apply_horizontal_balance
+            balance_mass_fluxes!(storage.all_am[win_idx], storage.all_bm[win_idx], dm_dt_buf, poisson_ws)
+            @views storage.all_bm[win_idx][:, 1, :] .= zero(FT)
+            @views storage.all_bm[win_idx][:, Ny + 1, :] .= zero(FT)
+        else
+            col_diag = balance_column_mass_fluxes!(storage.all_am[win_idx],
+                                                   storage.all_bm[win_idx],
+                                                   storage.all_m[win_idx],
+                                                   dm_dt_buf, poisson_ws)
+            worst_column_pre = max(worst_column_pre, col_diag.max_pre_residual)
+            worst_column_post = max(worst_column_post, col_diag.max_post_residual)
+            worst_column_delta = max(worst_column_delta, col_diag.max_face_delta)
+        end
         # Plan 39 dry-basis fix (2026-04-22): use explicit-dm closure, not
         # the hybrid Δb×pit one. The Δb×pit closure assumes
         # dm[k] = dB[k] × Σ_k dm[k], which holds under moist hybrid coords
@@ -150,6 +175,11 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
         @views storage.all_cm[win_idx][:, :, Nz + 1] .= zero(FT)
     end
 
+    if !apply_horizontal_balance
+        @info @sprintf("  Column balance summary: pre=%.3e post=%.3e max_face_delta=%.3e kg",
+                       worst_column_pre, worst_column_post, worst_column_delta)
+    end
+
     # Plan 39 Commit E: write-time replay gate. Under the `:window_constant`
     # contract, starting from `storage.all_m[k]` and integrating the stored
     # fluxes (am, bm, cm) over one window via palindrome continuity must
@@ -157,7 +187,7 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
     # within the Poisson-balance tolerance floor. Fails loudly if the fix
     # regresses or a new preprocessor path breaks the contract.
     verify_storage_continuity_ll!(storage, last_hour_next, steps_per_window, FT)
-    @info "  Poisson balance complete for $(length(storage.all_m)) windows"
+    @info "  Continuity closure complete for $(length(storage.all_m)) windows"
 
     return nothing
 end

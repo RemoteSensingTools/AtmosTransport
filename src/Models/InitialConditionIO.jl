@@ -351,8 +351,8 @@ So `tgt_p_mid` is **increasing** from TOA to surface (k=1 small, k=Nz large).
 ## Interpolation
 
 For each target level `k`, find the bracket in `src_p_mid` where
-`src_p_mid[ks] > p_tgt ≥ src_p_mid[ks+1]` (decreasing source → advance
-`ks` forward for larger p_tgt). Then linear interpolation in log-pressure:
+`src_p_mid[ks] > p_tgt ≥ src_p_mid[ks+1]`. Then linear interpolation in
+log-pressure:
 
     w = (log p_tgt − log p_src[ks]) / (log p_src[ks+1] − log p_src[ks])
     dest[k] = src_q[ks] + w × (src_q[ks+1] − src_q[ks])
@@ -360,11 +360,10 @@ For each target level `k`, find the bracket in `src_p_mid` where
 Clamps: if `p_tgt > src_p_mid[1]` (below source surface), use `src_q[1]`.
 If `p_tgt < src_p_mid[end]` (above source TOA), use `src_q[end]`.
 
-**NOTE**: the `ks` index is persistent across the `k` loop (not reset)
-because `p_tgt` is monotonically **increasing** with `k` (target goes
-TOA → surface), so `ks` only needs to advance forward (toward lower src
-pressures) — never backward. This relies on the source `src_p_mid` being
-monotonically **decreasing**.
+**NOTE**: source pressure decreases with level index while target pressure
+increases with level index. The source bracket must therefore be found
+independently for each target level; a persistent monotone source index would
+move in the wrong direction after the first interior target level.
 """
 function _interpolate_log_pressure_profile!(dest::AbstractVector{FT},
                                             src_q::AbstractVector{FT},
@@ -380,6 +379,10 @@ function _interpolate_log_pressure_profile!(dest::AbstractVector{FT},
         "A_tgt has length $(length(A_tgt)), expected Nz+1 = $(Nz + 1)"))
     length(B_tgt) == Nz + 1 || throw(DimensionMismatch(
         "B_tgt has length $(length(B_tgt)), expected Nz+1 = $(Nz + 1)"))
+    length(ap) == Nsrc + 1 || throw(DimensionMismatch(
+        "ap has length $(length(ap)), expected Nsrc+1 = $(Nsrc + 1)"))
+    length(bp) == Nsrc + 1 || throw(DimensionMismatch(
+        "bp has length $(length(bp)), expected Nsrc+1 = $(Nsrc + 1)"))
 
     # Source half-level pressures: src_p_half[1] = ps (surface), src_p_half[end] = 0 (TOA)
     src_p_half = Vector{Float64}(undef, Nsrc + 1)
@@ -406,8 +409,6 @@ function _interpolate_log_pressure_profile!(dest::AbstractVector{FT},
         tgt_p_half[k] = Float64(A_tgt[k]) + Float64(B_tgt[k]) * ps_tgt_f
     end
 
-    # Persistent bracket index (advances forward as p_tgt increases with k)
-    ks = 1
     @inbounds for k in 1:Nz
         p_tgt = 0.5 * (tgt_p_half[k] + tgt_p_half[k + 1])  # target mid-level [Pa]
         if p_tgt >= src_p_mid[1]
@@ -418,10 +419,22 @@ function _interpolate_log_pressure_profile!(dest::AbstractVector{FT},
             dest[k] = src_q[end]
         else
             # Find bracket: src_p_mid[ks] > p_tgt ≥ src_p_mid[ks+1]
-            # (src is decreasing, so advance ks until src_p_mid[ks+1] ≤ p_tgt)
-            while ks < Nsrc && src_p_mid[ks + 1] > p_tgt
-                ks += 1
+            # Source levels are ordered surface → TOA (decreasing pressure),
+            # while target levels are ordered TOA → surface (increasing
+            # pressure). Search independently per target level; carrying a
+            # monotone source index across the loop would move in the wrong
+            # direction after the first interior level.
+            lo = 1
+            hi = Nsrc
+            while hi - lo > 1
+                mid = (lo + hi) >>> 1
+                if src_p_mid[mid] >= p_tgt
+                    lo = mid
+                else
+                    hi = mid
+                end
             end
+            ks = lo
             # Log-pressure linear interpolation
             lp1 = log(max(src_p_mid[ks], floatmin(Float64)))
             lp2 = log(max(src_p_mid[ks + 1], floatmin(Float64)))

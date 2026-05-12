@@ -62,10 +62,10 @@ Regrid an existing LL transport binary to a cubed-sphere binary.
 
 Reads each window from the LL binary, recovers cell-center winds from am/bm,
 conservatively regrids m/ps/winds to CS panels, rotates winds to panel-local
-coordinates, reconstructs CS face fluxes, applies global Poisson balance,
-diagnoses cm from continuity, and stream-writes the CS binary.
+coordinates, reconstructs CS face fluxes, closes continuity against forward
+mass endpoints, and stream-writes the CS binary.
 
-This reuses the entire CS regrid/balance/write infrastructure from the
+This reuses the entire CS regrid/continuity/write infrastructure from the
 spectral→CS path — the only difference is the data source (binary reader
 instead of spectral synthesis).
 
@@ -369,6 +369,12 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     worst_pos_dir   = :none
     worst_pos_win   = 0
     worst_pos_loc   = (0, 0, 0, 0)
+    apply_horizontal_balance = horizontal_poisson_balance_enabled()
+    if apply_horizontal_balance
+        @info "  Applying per-layer CS Poisson mass-flux balance (legacy opt-in)..."
+    else
+        @info "  Applying column CS mass-balance correction; diagnosing cm from endpoint mass tendency..."
+    end
 
     # --- Process first window ---
     t0 = time()
@@ -399,11 +405,19 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         _copy_panels_regrid!(cs_ws.m_next_panels, cs_ws.m_panels)
 
         t_bal = time()
-        bal_diag = balance_cs_global_mass_fluxes!(
-            cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
-            cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
-            cs_grid.poisson_scratch; tol=Float64(cs_balance_tol),
-            max_iter=20000, project_every=Int(cs_balance_project_every))
+        bal_diag = if apply_horizontal_balance
+            balance_cs_global_mass_fluxes!(
+                cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
+                cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
+                cs_grid.poisson_scratch; tol=Float64(cs_balance_tol),
+                max_iter=20000, project_every=Int(cs_balance_project_every))
+        else
+            balance_cs_column_mass_fluxes!(
+                cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
+                cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
+                cs_grid.poisson_scratch; tol=Float64(cs_balance_tol),
+                max_iter=20000, project_every=Int(cs_balance_project_every))
+        end
         t_bal = time() - t_bal
 
         worst_pre  = max(worst_pre,  bal_diag.max_pre_residual)
@@ -457,10 +471,17 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         end
         write_streaming_cs_window!(writer, window_nt, Nc, CS_PANEL_COUNT)
 
-        should_log_window(win - 1, Nt) &&
-            @info @sprintf("    Window %2d/%d: wrote (bal %.2fs pre=%.2e post=%.2e iter=%d) | read %2d (%.2fs)",
-                           win - 1, Nt, t_bal, bal_diag.max_pre_residual,
-                           bal_diag.max_post_residual, bal_diag.max_cg_iter, win, t_read)
+        if should_log_window(win - 1, Nt)
+            if apply_horizontal_balance
+                @info @sprintf("    Window %2d/%d: wrote (bal %.2fs pre=%.2e post=%.2e iter=%d) | read %2d (%.2fs)",
+                               win - 1, Nt, t_bal, bal_diag.max_pre_residual,
+                               bal_diag.max_post_residual, bal_diag.max_cg_iter, win, t_read)
+            else
+                @info @sprintf("    Window %2d/%d: wrote (colbal %.2fs pre=%.2e post=%.2e iter=%d) | read %2d (%.2fs)",
+                               win - 1, Nt, t_bal, bal_diag.max_pre_residual,
+                               bal_diag.max_post_residual, bal_diag.max_cg_iter, win, t_read)
+            end
+        end
 
         _copy_panels_regrid!(cur_m,  cs_ws.m_panels)
         _copy_panels_regrid!(cur_ps, cs_ws.ps_panels)
@@ -496,11 +517,19 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         _copy_panels_regrid!(cs_ws.m_next_panels, cur_m)
     end
     t_bal = time()
-    bal_diag = balance_cs_global_mass_fluxes!(
-        cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
-        cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
-        cs_grid.poisson_scratch; tol=Float64(cs_balance_tol),
-        max_iter=5000, project_every=Int(cs_balance_project_every))
+    bal_diag = if apply_horizontal_balance
+        balance_cs_global_mass_fluxes!(
+            cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
+            cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
+            cs_grid.poisson_scratch; tol=Float64(cs_balance_tol),
+            max_iter=5000, project_every=Int(cs_balance_project_every))
+    else
+        balance_cs_column_mass_fluxes!(
+            cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
+            cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
+            cs_grid.poisson_scratch; tol=Float64(cs_balance_tol),
+            max_iter=5000, project_every=Int(cs_balance_project_every))
+    end
     t_bal = time() - t_bal
 
     worst_pre  = max(worst_pre,  bal_diag.max_pre_residual)
@@ -548,15 +577,26 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     end
     write_streaming_cs_window!(writer, window_nt, Nc, CS_PANEL_COUNT)
 
-    @info @sprintf("    Window %2d/%d (last): bal %.2fs  pre=%.2e post=%.2e iter=%d",
-                   Nt, Nt, t_bal, bal_diag.max_pre_residual,
-                   bal_diag.max_post_residual, bal_diag.max_cg_iter)
+    if apply_horizontal_balance
+        @info @sprintf("    Window %2d/%d (last): bal %.2fs  pre=%.2e post=%.2e iter=%d",
+                       Nt, Nt, t_bal, bal_diag.max_pre_residual,
+                       bal_diag.max_post_residual, bal_diag.max_cg_iter)
+    else
+        @info @sprintf("    Window %2d/%d (last): colbal %.2fs  pre=%.2e post=%.2e iter=%d",
+                       Nt, Nt, t_bal, bal_diag.max_pre_residual,
+                       bal_diag.max_post_residual, bal_diag.max_cg_iter)
+    end
 
     close_streaming_transport_binary!(writer)
     close(reader)
 
-    @info @sprintf("  Poisson balance summary: pre=%.3e  post=%.3e  max_iter=%d",
-                   worst_pre, worst_post, worst_iter)
+    if apply_horizontal_balance
+        @info @sprintf("  Poisson balance summary: pre=%.3e  post=%.3e  max_iter=%d",
+                       worst_pre, worst_post, worst_iter)
+    else
+        @info @sprintf("  Column balance summary: pre=%.3e  post=%.3e  max_iter=%d",
+                       worst_pre, worst_post, worst_iter)
+    end
     if write_replay_on
         replay_msg = worst_replay_win > 0 ?
             @sprintf("max rel=%.3e abs=%.3e kg win=%d cell=%s",

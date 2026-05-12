@@ -40,6 +40,7 @@
 @kernel function _tm5_column_kernel!(
     q_raw, @Const(air_mass),
     @Const(entu), @Const(detu), @Const(entd), @Const(detd),
+    @Const(cell_areas_y),
     conv1_ws, pivots_ws, cloud_dims_ws,
     f_ws, amu_ws, amd_ws,
     tile_offset::Int, Nx::Int, dt,
@@ -65,9 +66,11 @@
     f_col      = @view f_ws[:, :, t]
     amu_col    = @view amu_ws[:, t]
     amd_col    = @view amd_ws[:, t]
+    cell_area  = cell_areas_y[j]
     _tm5_solve_column!(rm_col, m_col,
                         entu_col, detu_col, entd_col, detd_col,
                         conv1_col, pivots_col, cloud_col, dt;
+                        cell_area = cell_area,
                         f_buf = f_col,
                         amu_buf = amu_col, amd_buf = amd_col)
 end
@@ -77,6 +80,7 @@ end
 @kernel function _tm5_faceindexed_column_kernel!(
     q_raw, @Const(air_mass),
     @Const(entu), @Const(detu), @Const(entd), @Const(detd),
+    @Const(cell_areas),
     conv1_ws, pivots_ws, cloud_dims_ws,
     f_ws, amu_ws, amd_ws,
     tile_offset::Int, dt,
@@ -95,9 +99,11 @@ end
     f_col      = @view f_ws[:, :, t]
     amu_col    = @view amu_ws[:, t]
     amd_col    = @view amd_ws[:, t]
+    cell_area  = cell_areas[c_global]
     _tm5_solve_column!(rm_col, m_col,
                         entu_col, detu_col, entd_col, detd_col,
                         conv1_col, pivots_col, cloud_col, dt;
+                        cell_area = cell_area,
                         f_buf = f_col,
                         amu_buf = amu_col, amd_buf = amd_col)
 end
@@ -112,6 +118,7 @@ end
     q_raw_panel, @Const(air_mass_panel),
     @Const(entu_panel), @Const(detu_panel),
     @Const(entd_panel), @Const(detd_panel),
+    @Const(cell_areas_panel),
     conv1_panel, pivots_panel, cloud_panel,
     f_panel, amu_panel, amd_panel,
     Hp::Int, tile_offset::Int, Nc::Int, dt,
@@ -136,9 +143,11 @@ end
     f_col      = @view f_panel[:, :, t]
     amu_col    = @view amu_panel[:, t]
     amd_col    = @view amd_panel[:, t]
+    cell_area  = cell_areas_panel[c1, c2]
     _tm5_solve_column!(rm_col, m_col,
                         entu_col, detu_col, entd_col, detd_col,
                         conv1_col, pivots_col, cloud_col, dt;
+                        cell_area = cell_area,
                         f_buf = f_col,
                         amu_buf = amu_col, amd_buf = amd_col)
 end

@@ -82,7 +82,7 @@ end
 function bench_cpu(label, Nx, Ny, Nz, Nt; FT = Float32, dt = 600, nrep = 5)
     grid, state, forcing = _make_ll_problem(FT = FT, Nx = Nx, Ny = Ny,
                                               Nz = Nz, Nt = Nt)
-    ws = TM5Workspace(state.air_mass)
+    ws = TM5Workspace(state.air_mass; cell_metrics = ones(FT, Ny))
 
     # Warm-up launch.
     AtmosTransport.Operators.apply!(state, forcing, grid,
@@ -105,7 +105,7 @@ function bench_gpu(label, Nx, Ny, Nz, Nt; FT = Float32, dt = 600, nrep = 5)
     grid, state, forcing = _make_ll_problem(FT = FT, Nx = Nx, Ny = Ny,
                                               Nz = Nz, Nt = Nt)
     # Move to GPU via Adapt.
-    ws_cpu = TM5Workspace(state.air_mass)
+    ws_cpu = TM5Workspace(state.air_mass; cell_metrics = ones(FT, Ny))
 
     state_gpu   = Adapt.adapt(CUDA.CuArray, state)
     forcing_gpu = Adapt.adapt(CUDA.CuArray, forcing)

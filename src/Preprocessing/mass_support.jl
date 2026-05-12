@@ -285,7 +285,8 @@ See CLAUDE.md invariant #13 for details on the balance requirement.
 """
 function balance_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
                               dm_dt::Array{FT, 3},
-                              ws::LLPoissonWorkspace) where FT
+                              ws::LLPoissonWorkspace;
+                              log_summary::Bool=true) where FT
     Nx = size(am, 1) - 1
     Ny = size(bm, 2) - 1
     Nz = size(am, 3)
@@ -341,8 +342,9 @@ function balance_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
         n_balanced += 1
     end
 
-    @info "Poisson balance: corrected $n_balanced/$Nz levels, " *
-          "max pre-balance residual: $(round(max_residual, sigdigits=3)) kg"
+    log_summary &&
+        @info "Poisson balance: corrected $n_balanced/$Nz levels, " *
+              "max pre-balance residual: $(round(max_residual, sigdigits=3)) kg"
 end
 
 """
@@ -357,6 +359,141 @@ function balance_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
     Ny = size(bm, 2) - 1
     ws = LLPoissonWorkspace(Nx, Ny)
     balance_mass_fluxes!(am, bm, dm_dt, ws)
+end
+
+"""
+    balance_column_mass_fluxes!(am, bm, m, dm_dt, ws::LLPoissonWorkspace)
+
+Apply the minimal horizontal correction needed by the column-integrated mass
+budget, then distribute the corrected face flux over vertical layers using
+local air-mass weights.
+
+This is the ERA default. It enforces the zero top/bottom `cm` replay contract
+without the old per-layer Poisson solve, which can overwrite real wind shear
+when no independent physical vertical mass flux is available.
+"""
+function balance_column_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
+                                     m::Array{FT, 3}, dm_dt::Array{FT, 3},
+                                     ws::LLPoissonWorkspace) where FT
+    Nx = size(am, 1) - 1
+    Ny = size(bm, 2) - 1
+    Nz = size(am, 3)
+    size(bm, 1) == Nx && size(bm, 2) == Ny + 1 && size(bm, 3) == Nz ||
+        error("balance_column_mass_fluxes!: bm shape $(size(bm)) incompatible with am $(size(am))")
+    size(m) == (Nx, Ny, Nz) ||
+        error("balance_column_mass_fluxes!: m shape $(size(m)) incompatible with am $(size(am))")
+    size(dm_dt) == size(m) ||
+        error("balance_column_mass_fluxes!: dm_dt shape $(size(dm_dt)) incompatible with m $(size(m))")
+
+    col_am = zeros(FT, Nx + 1, Ny, 1)
+    col_bm = zeros(FT, Nx, Ny + 1, 1)
+    col_dm = zeros(FT, Nx, Ny, 1)
+
+    @inbounds for k in 1:Nz
+        for j in 1:Ny, i in 1:Nx + 1
+            col_am[i, j, 1] += am[i, j, k]
+        end
+        for j in 1:Ny + 1, i in 1:Nx
+            col_bm[i, j, 1] += bm[i, j, k]
+        end
+        for j in 1:Ny, i in 1:Nx
+            col_dm[i, j, 1] += dm_dt[i, j, k]
+        end
+    end
+
+    pre_residual = 0.0
+    @inbounds for j in 1:Ny, i in 1:Nx
+        conv = (Float64(col_am[i, j, 1]) - Float64(col_am[i + 1, j, 1])) +
+               (Float64(col_bm[i, j, 1]) - Float64(col_bm[i, j + 1, 1]))
+        pre_residual = max(pre_residual, abs(conv - Float64(col_dm[i, j, 1])))
+    end
+
+    col_am_before = copy(col_am)
+    col_bm_before = copy(col_bm)
+    balance_mass_fluxes!(col_am, col_bm, col_dm, ws; log_summary=false)
+
+    max_face_delta = 0.0
+    @inbounds for j in 1:Ny, i in 1:Nx + 1
+        delta = Float64(col_am[i, j, 1] - col_am_before[i, j, 1])
+        max_face_delta = max(max_face_delta, abs(delta))
+        delta == 0.0 && continue
+
+        i_w = i == 1 ? Nx : i - 1
+        i_e = i == Nx + 1 ? 1 : i
+        denom = 0.0
+        for k in 1:Nz
+            denom += max(0.0, Float64(m[i_w, j, k])) +
+                     max(0.0, Float64(m[i_e, j, k]))
+        end
+        if denom > 0.0
+            applied = 0.0
+            for k in 1:Nz-1
+                w = (max(0.0, Float64(m[i_w, j, k])) +
+                     max(0.0, Float64(m[i_e, j, k]))) / denom
+                inc = FT(delta * w)
+                am[i, j, k] += inc
+                applied += Float64(inc)
+            end
+            am[i, j, Nz] += FT(delta - applied)
+        else
+            applied = 0.0
+            even = delta / Nz
+            for k in 1:Nz-1
+                inc = FT(even)
+                am[i, j, k] += inc
+                applied += Float64(inc)
+            end
+            am[i, j, Nz] += FT(delta - applied)
+        end
+    end
+
+    @inbounds for j in 1:Ny + 1, i in 1:Nx
+        delta = Float64(col_bm[i, j, 1] - col_bm_before[i, j, 1])
+        max_face_delta = max(max_face_delta, abs(delta))
+        delta == 0.0 && continue
+
+        j_s = max(j - 1, 1)
+        j_n = min(j, Ny)
+        denom = 0.0
+        for k in 1:Nz
+            denom += max(0.0, Float64(m[i, j_s, k])) +
+                     max(0.0, Float64(m[i, j_n, k]))
+        end
+        if denom > 0.0
+            applied = 0.0
+            for k in 1:Nz-1
+                w = (max(0.0, Float64(m[i, j_s, k])) +
+                     max(0.0, Float64(m[i, j_n, k]))) / denom
+                inc = FT(delta * w)
+                bm[i, j, k] += inc
+                applied += Float64(inc)
+            end
+            bm[i, j, Nz] += FT(delta - applied)
+        else
+            applied = 0.0
+            even = delta / Nz
+            for k in 1:Nz-1
+                inc = FT(even)
+                bm[i, j, k] += inc
+                applied += Float64(inc)
+            end
+            bm[i, j, Nz] += FT(delta - applied)
+        end
+    end
+
+    post_residual = 0.0
+    @inbounds for j in 1:Ny, i in 1:Nx
+        conv = 0.0
+        for k in 1:Nz
+            conv += (Float64(am[i, j, k]) - Float64(am[i + 1, j, k])) +
+                    (Float64(bm[i, j, k]) - Float64(bm[i, j + 1, k]))
+        end
+        post_residual = max(post_residual, abs(conv - Float64(col_dm[i, j, 1])))
+    end
+
+    return (max_pre_residual = pre_residual,
+            max_post_residual = post_residual,
+            max_face_delta = max_face_delta)
 end
 
 """

@@ -6,8 +6,8 @@
 # regrids it to a C4 cubed-sphere binary, and verifies
 #   1. the output file exists and its header is readable by
 #      `CubedSphereBinaryReader` / `inspect_binary`,
-#   2. the Poisson-balanced CS output satisfies invariant 13
-#      (`max(|cm|/m) < 1e-7` on F32 / `< 1e-12` on F64),
+#   2. unchanged windows retain negligible `cm`, while explicit endpoint
+#      mass tendencies diagnose bounded vertical `cm`,
 #   3. the total CS air mass matches the LL source to within conservative-
 #      regrid tolerance.
 #
@@ -64,10 +64,10 @@ function _ll_fixture_binary(path::AbstractString;
         end
     end
 
-    # Start with zero fluxes — tests the core regrid + Poisson + cm-diagnose
-    # path without committing to a particular wind field. Post-balance
-    # `max(|cm|/m)` should be at solver tolerance, `dm` between windows is
-    # zero, `cm` stays zero.
+    # Start with zero fluxes — tests the core regrid + balance + cm-diagnose
+    # path without committing to a particular wind field. Windows with no
+    # endpoint mass change keep `cm` at solver tolerance; the final optional
+    # `dm` perturbation should diagnose a bounded nonzero vertical `cm`.
     am = fill(FT(am_uniform), Nx + 1, Ny, Nz)
     bm = fill(FT(bm_uniform), Nx, Ny + 1, Nz)
     cm = zeros(FT, Nx, Ny, Nz + 1)
@@ -131,7 +131,9 @@ function _ll_fixture_binary(path::AbstractString;
                            source_flux_sampling = :window_start_endpoint,
                            flux_sampling = :window_constant,
                            delta_semantics = :forward_window_endpoint_difference)
-    return (; Nx, Ny, Nz, nwindow, window_totals = fill(sum(m), nwindow))
+    return (; Nx, Ny, Nz, nwindow,
+            final_dm_fraction = Float64(final_dm_fraction),
+            window_totals = fill(sum(m), nwindow))
 end
 
 @testset "plan 40 Commit 3 — regrid_ll_binary_to_cs end-to-end" begin
@@ -213,11 +215,20 @@ end
                 cm_slice = @view reader.data[cm_offset + 1 : cm_offset + n_cm]
                 max_abs_cm = maximum(abs, cm_slice)
 
-                # With zero input fluxes the reconstructed am/bm, the
-                # diagnosed cm, and hence cm/m should all be at
-                # Poisson-solver tolerance (far below invariant-13's 1e-7).
                 m_ref = Float64(maximum(m_slice))
-                @test max_abs_cm / m_ref < 1e-10
+                cm_ratio = max_abs_cm / m_ref
+                if win < reader.header.nwindow
+                    # No endpoint mass change: zero input fluxes should leave
+                    # vertical flux at solver tolerance.
+                    @test cm_ratio < 1e-10
+                else
+                    # The final source window carries an explicit layer mass
+                    # endpoint perturbation. Column balance closes the column
+                    # budget horizontally and `diagnose_cs_cm!` carries the
+                    # remaining layer redistribution vertically.
+                    @test cm_ratio > 0
+                    @test cm_ratio < meta.final_dm_fraction
+                end
             end
 
             close(reader)

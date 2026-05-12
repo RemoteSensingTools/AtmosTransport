@@ -29,12 +29,14 @@ using .AtmosTransport.Preprocessing: GEOSITSettings, process_day,
                                       sync_all_cs_boundary_mirrors!,
                                       load_hybrid_coefficients,
                                       CS_PANEL_COUNT
-using .AtmosTransport.MetDrivers: CubedSphereBinaryReader
+using .AtmosTransport.MetDrivers: CubedSphereBinaryReader, load_cs_window
 
 const FT_TEST = Float64
 const NC = 8
 const NPANEL = 6
 const NZ = 4
+const MFXC_C5 = 80.0
+const MFYC_C5 = -40.0
 
 # Inline the synthetic fixture writers (same shape as test_geos_reader.jl;
 # duplicating ~50 lines is cleaner than cross-test importing).
@@ -139,8 +141,10 @@ end
     tmpdir   = mktempdir()
     daydir   = joinpath(tmpdir, "20211201")
     nextdir  = joinpath(tmpdir, "20211202")
-    _write_synthetic_geosit_day_c5!(daydir,  "20211201")
-    _write_synthetic_geosit_day_c5!(nextdir, "20211202")
+    _write_synthetic_geosit_day_c5!(daydir,  "20211201";
+                                    mfxc_const = MFXC_C5, mfyc_const = MFYC_C5)
+    _write_synthetic_geosit_day_c5!(nextdir, "20211202";
+                                    mfxc_const = MFXC_C5, mfyc_const = MFYC_C5)
     coef_path = joinpath(tmpdir, "synthetic_coefs.toml")
     _write_synthetic_coefs_toml_c5!(coef_path)
 
@@ -245,9 +249,18 @@ end
             @test reader.header.npanel == 6
             @test reader.header.nlevel == NZ
             @test reader.header.nwindow == 24                        # GEOS hourly
+            @test reader.header.steps_per_window == 8
             @test reader.header.mass_basis === :dry
             @test reader.header.panel_convention === :geos_native
             @test :dm in reader.header.payload_sections              # delta enabled
+
+            window = load_cs_window(reader, 1)
+            expected_am = MFXC_C5 / (2 * 9.80665)
+            expected_bm = MFYC_C5 / (2 * 9.80665)
+            for p in 1:6
+                @test all(window.am[p][2:end, :, :] .≈ expected_am)
+                @test all(window.bm[p][:, 2:end, :] .≈ expected_bm)
+            end
         finally
             close(reader)
         end

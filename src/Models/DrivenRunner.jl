@@ -323,8 +323,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
     run_cfg = get(cfg, "run", Dict{String, Any}())
     start_window = Int(get(run_cfg, "start_window", 1))
     stop_window_override = get(run_cfg, "stop_window", nothing)
-    haskey(run_cfg, "reset_air_mass_each_window") &&
-        @debug "run.reset_air_mass_each_window is ignored (plan 39 Commit G removed the flag)"
+    reset_air_mass_each_window = Bool(get(run_cfg, "reset_air_mass_each_window", false))
 
     init_cfg = get(cfg, "init", Dict{String, Any}())
     tracer_specs = something(_parse_tracer_specs(cfg),
@@ -390,6 +389,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
                                start_window = start_window,
                                stop_window = stop_window,
                                initialize_air_mass = initialize_air_mass,
+                               reset_air_mass_each_window = reset_air_mass_each_window,
                                surface_sources = surface_sources)
         model = sim.model
         if !initialize_air_mass
@@ -485,6 +485,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
     advection = build_cs_advection(cfg)
     Hp = configured_halo_width(cfg, advection)
     stop_window_override = get(run_cfg, "stop_window", nothing)
+    reset_air_mass_each_window = Bool(get(run_cfg, "reset_air_mass_each_window", false))
 
     output_cfg = get(cfg, "output", Dict{String, Any}())
     snapshot_hours = Float64.(get(output_cfg, "snapshot_hours", Float64[0, 24, 48]))
@@ -645,6 +646,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
         sim = DrivenSimulation(model, driver;
                                start_window = 1, stop_window = stop_window,
                                initialize_air_mass = initialize_air_mass,
+                               reset_air_mass_each_window = reset_air_mass_each_window,
                                surface_sources = surface_sources)
         # `DrivenSimulation` may wrap `model` with a surface-flux operator;
         # keep snapshots and the return value aligned with the stepped model.

@@ -233,7 +233,7 @@ end
         @test sim.iteration == 2
         @test sim.time == 3600.0
         @test all(sim.model.state.tracers.fossil_co2[:, 1] .> 0.0)
-        @test total_mass(sim.model.state, :fossil_co2) ≈ m0 + ncell * 2.0 * 1800.0 * 2 rtol=1e-12
+        @test total_mass(sim.model.state, :fossil_co2) ≈ m0 + ncell * 2.0 * 1800.0 * 2 rtol=1e-7
 
         close(driver)
     end

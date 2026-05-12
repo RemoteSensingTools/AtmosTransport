@@ -567,8 +567,8 @@ Sign convention: when canonical and mirror are both at inflow positions (i=1 or
 j=1) or both at outflow positions (i=Nc+1 or j=Nc+1), negate so that per-panel
 flux telescoping conserves mass.
 
-Must be called AFTER Poisson balance to propagate balanced canonical values
-to all mirror positions.
+Must be called after horizontal flux balancing to propagate balanced canonical
+values to all mirror positions.
 """
 function sync_all_cs_boundary_mirrors!(panels_am::NTuple{6, Array{FT, 3}},
                                         panels_bm::NTuple{6, Array{FT, 3}},
@@ -849,6 +849,143 @@ function balance_cs_global_mass_fluxes!(
     )
 end
 
+"""
+    balance_cs_column_mass_fluxes!(panels_am, panels_bm, panels_m, panels_m_next,
+                                   ft, degree, steps_per_window, scratch; ...)
+
+Apply a single vertically integrated CS Poisson correction, then distribute the
+face correction over levels with local air-mass weights.
+
+This is the ERA CS default. It enforces the column mass budget required by zero
+top/bottom `cm` while avoiding the legacy per-layer correction that can rewrite
+real vertical wind shear.
+"""
+function balance_cs_column_mass_fluxes!(
+    panels_am::NTuple{6, Array{FT, 3}},
+    panels_bm::NTuple{6, Array{FT, 3}},
+    panels_m::NTuple{6, Array{FT, 3}},
+    panels_m_next::NTuple{6, Array{FT, 3}},
+    ft::CSGlobalFaceTable,
+    degree::Vector{Int},
+    steps_per_window::Int,
+    scratch::CSPoissonScratch;
+    tol::Float64=1e-14,
+    max_iter::Int=20000,
+    project_every::Int=50,
+) where FT
+    Nc = ft.Nc
+    Nz = size(panels_am[1], 3)
+
+    col_am = ntuple(_ -> zeros(FT, Nc + 1, Nc, 1), 6)
+    col_bm = ntuple(_ -> zeros(FT, Nc, Nc + 1, 1), 6)
+    col_m = ntuple(_ -> zeros(FT, Nc, Nc, 1), 6)
+    col_m_next = ntuple(_ -> zeros(FT, Nc, Nc, 1), 6)
+
+    for p in 1:6
+        @inbounds for k in 1:Nz
+            for j in 1:Nc, i in 1:Nc + 1
+                col_am[p][i, j, 1] += panels_am[p][i, j, k]
+            end
+            for j in 1:Nc + 1, i in 1:Nc
+                col_bm[p][i, j, 1] += panels_bm[p][i, j, k]
+            end
+            for j in 1:Nc, i in 1:Nc
+                col_m[p][i, j, 1] += panels_m[p][i, j, k]
+                col_m_next[p][i, j, 1] += panels_m_next[p][i, j, k]
+            end
+        end
+    end
+
+    col_am_before = ntuple(p -> copy(col_am[p]), 6)
+    col_bm_before = ntuple(p -> copy(col_bm[p]), 6)
+    diag = balance_cs_global_mass_fluxes!(
+        col_am, col_bm, col_m, col_m_next, ft, degree, steps_per_window, scratch;
+        tol, max_iter, project_every)
+
+    max_face_delta = 0.0
+    for p in 1:6
+        @inbounds for j in 1:Nc, i in 1:Nc + 1
+            delta = Float64(col_am[p][i, j, 1] - col_am_before[p][i, j, 1])
+            max_face_delta = max(max_face_delta, abs(delta))
+            delta == 0.0 && continue
+
+            i_l = max(i - 1, 1)
+            i_r = min(i, Nc)
+            denom = 0.0
+            for k in 1:Nz
+                denom += max(0.0, Float64(panels_m[p][i_l, j, k])) +
+                         max(0.0, Float64(panels_m[p][i_r, j, k]))
+            end
+            if denom > 0.0
+                applied = 0.0
+                for k in 1:Nz-1
+                    w = (max(0.0, Float64(panels_m[p][i_l, j, k])) +
+                         max(0.0, Float64(panels_m[p][i_r, j, k]))) / denom
+                    inc = FT(delta * w)
+                    panels_am[p][i, j, k] += inc
+                    applied += Float64(inc)
+                end
+                panels_am[p][i, j, Nz] += FT(delta - applied)
+            else
+                applied = 0.0
+                even = delta / Nz
+                for k in 1:Nz-1
+                    inc = FT(even)
+                    panels_am[p][i, j, k] += inc
+                    applied += Float64(inc)
+                end
+                panels_am[p][i, j, Nz] += FT(delta - applied)
+            end
+        end
+
+        @inbounds for j in 1:Nc + 1, i in 1:Nc
+            delta = Float64(col_bm[p][i, j, 1] - col_bm_before[p][i, j, 1])
+            max_face_delta = max(max_face_delta, abs(delta))
+            delta == 0.0 && continue
+
+            j_s = max(j - 1, 1)
+            j_n = min(j, Nc)
+            denom = 0.0
+            for k in 1:Nz
+                denom += max(0.0, Float64(panels_m[p][i, j_s, k])) +
+                         max(0.0, Float64(panels_m[p][i, j_n, k]))
+            end
+            if denom > 0.0
+                applied = 0.0
+                for k in 1:Nz-1
+                    w = (max(0.0, Float64(panels_m[p][i, j_s, k])) +
+                         max(0.0, Float64(panels_m[p][i, j_n, k]))) / denom
+                    inc = FT(delta * w)
+                    panels_bm[p][i, j, k] += inc
+                    applied += Float64(inc)
+                end
+                panels_bm[p][i, j, Nz] += FT(delta - applied)
+            else
+                applied = 0.0
+                even = delta / Nz
+                for k in 1:Nz-1
+                    inc = FT(even)
+                    panels_bm[p][i, j, k] += inc
+                    applied += Float64(inc)
+                end
+                panels_bm[p][i, j, Nz] += FT(delta - applied)
+            end
+        end
+    end
+
+    _sync_cs_mirrors!(panels_am, panels_bm, ft, Nz)
+
+    return (;
+        max_pre_residual = diag.max_pre_residual,
+        max_post_residual = diag.max_post_residual,
+        max_rhs_mean = diag.max_rhs_mean,
+        max_pre_projected = diag.max_pre_projected,
+        max_post_projected = diag.max_post_projected,
+        max_cg_iter = diag.max_cg_iter,
+        max_face_delta = max_face_delta,
+    )
+end
+
 # ---------------------------------------------------------------------------
 # Vertical mass flux diagnosis
 # ---------------------------------------------------------------------------
@@ -856,8 +993,8 @@ end
 """
     diagnose_cs_cm!(panels_cm, panels_am, panels_bm, panels_dm, panels_m, Nc, Nz)
 
-Diagnose vertical mass flux `cm` from balanced horizontal flux divergence and
-mass tendency for all 6 panels. Call AFTER `balance_cs_global_mass_fluxes!`.
+Diagnose vertical mass flux `cm` from column-balanced horizontal flux divergence
+and mass tendency for all 6 panels.
 """
 function diagnose_cs_cm!(panels_cm::NTuple{6, Array{FT, 3}},
                           panels_am::NTuple{6, Array{FT, 3}},

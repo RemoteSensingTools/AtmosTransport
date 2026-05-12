@@ -571,6 +571,51 @@ end
     end
 end
 
+@testset "CubedSphere diffusion preserves flat mixing ratio on nonuniform air mass" begin
+    mktemp() do path, io
+        close(io)
+        write_driven_cs_binary(path; FT=Float64, Nc=4, Nz=5, window_mass_scales=(1,))
+
+        driver = CubedSphereTransportDriver(path; FT=Float64, arch=CPU(), Hp=1)
+        window = load_transport_window(driver, 1)
+        grid = driver_grid(driver)
+        mesh = grid.horizontal
+        Nz = 5
+
+        air_mass = ntuple(6) do p
+            m = copy(window.air_mass[p])
+            for k in 1:Nz
+                @views m[:, :, k] .= 1.0e12 * (1 + k)
+            end
+            m
+        end
+        tracer_panels = ntuple(p -> 4.0e-4 .* air_mass[p], 6)
+
+        state = CubedSphereState(DryBasis, mesh, air_mass; CO2=tracer_panels)
+        fluxes = allocate_face_fluxes(mesh, Nz; FT=Float64, basis=DryBasis)
+        kz = CubedSphereField(ntuple(_ -> ConstantField{Float64, 3}(10.0), 6))
+        diffusion = ImplicitVerticalDiffusion(; kz_field=kz)
+        model = TransportModel(state, fluxes, grid, UpwindScheme(); diffusion=diffusion)
+        for p in 1:6
+            fill!(model.workspace.dz_scratch[p], 100.0)
+        end
+
+        step!(model, 600.0)
+
+        for p in 1:6
+            rm = get_tracer(model.state, :CO2)[p]
+            m = model.state.air_mass[p]
+            @views vmr = rm[mesh.Hp + 1:mesh.Hp + mesh.Nc,
+                            mesh.Hp + 1:mesh.Hp + mesh.Nc, :] ./
+                         m[mesh.Hp + 1:mesh.Hp + mesh.Nc,
+                           mesh.Hp + 1:mesh.Hp + mesh.Nc, :]
+            @test maximum(abs.(vmr .- 4.0e-4)) < 1e-12
+        end
+
+        close(driver)
+    end
+end
+
 @testset "CubedSphere runtime supports Lin-Rood advection plus diffusion plus TM5 convection" begin
     FT = Float64
     Nc, Nz = 4, 5

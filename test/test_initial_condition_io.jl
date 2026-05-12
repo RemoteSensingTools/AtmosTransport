@@ -23,6 +23,7 @@ include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 
 const FT = Float64
+const ICIO = AtmosTransport.Models.InitialConditionIO
 
 @testset "plan 40 Commit 1b — InitialConditionIO hoist" begin
 
@@ -200,6 +201,33 @@ const FT = Float64
             @test rm[p][1, 1, 1] == zero(FT)
             @test rm[p][end, end, end] == zero(FT)
         end
+    end
+
+    @testset "file IC log-pressure interpolation handles TOA-to-surface targets" begin
+        f = ICIO._interpolate_log_pressure_profile!
+        src_half = Float64[100000.0, 50000.0, 10000.0, 1000.0]
+        src_mid = 0.5 .* (src_half[1:end-1] .+ src_half[2:end])
+        # Deliberately non-log-linear in pressure: this catches regressions
+        # where the source bracket index is carried in the wrong direction
+        # while targets are visited TOA -> surface.
+        src_q = (src_mid ./ 1000.0) .^ 2  # source levels are surface -> TOA
+        A_tgt = Float64[1000.0, 8000.0, 40000.0, 100000.0]
+        B_tgt = zeros(Float64, length(A_tgt))
+        dest = zeros(Float64, 3)
+
+        f(dest, src_q, src_half, zeros(Float64, 4), 0.0, A_tgt, B_tgt, 0.0)
+
+        logp_interp(q1, q2, p1, p2, p) =
+            q1 + (log(p) - log(p1)) / (log(p2) - log(p1)) * (q2 - q1)
+        expected = Float64[
+            src_q[3],  # target midpoint above source TOA clamps to TOA value
+            logp_interp(src_q[2], src_q[3], src_mid[2], src_mid[3], 24000.0),
+            logp_interp(src_q[1], src_q[2], src_mid[1], src_mid[2], 70000.0),
+        ]
+        @test dest ≈ expected rtol=1e-12 atol=1e-12
+        @test_throws DimensionMismatch f(zeros(Float64, 3), src_q,
+                                         src_half[1:3], zeros(Float64, 3),
+                                         0.0, A_tgt, B_tgt, 0.0)
     end
 
     # --------- plan 40 Commit 2: catrine_co2 semantic unification -----

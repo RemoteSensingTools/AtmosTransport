@@ -72,7 +72,7 @@ backend_name(::CPUBackend) = :cpu
 backend_name(::CUDAGPUBackend) = :cuda
 backend_name(::MetalGPUBackend) = :metal
 
-_runtime_module(name::Symbol) = getfield(Main, name)
+_runtime_module(name::Symbol) = Base.invokelatest(getfield, Main, name)
 
 function _load_runtime_package!(name::Symbol)
     if !isdefined(Main, name)

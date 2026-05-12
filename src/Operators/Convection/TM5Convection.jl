@@ -121,6 +121,7 @@ function apply_convection!(q_raw::AbstractArray{FT, 4},
                             grid::AtmosGrid{<:LatLonMesh}) where {FT}
     _assert_tm5_forcing(forcing)
     tm5 = forcing.tm5_fields
+    cell_areas_y = _tm5_require_cell_metrics(workspace, "LatLon")
     Nx, Ny, _, _ = size(q_raw)
     N_total = Nx * Ny
     B       = size(workspace.conv1, 3)
@@ -134,6 +135,7 @@ function apply_convection!(q_raw::AbstractArray{FT, 4},
         n = min(B, N_total - tile_off)
         kernel(q_raw, air_mass,
                tm5.entu, tm5.detu, tm5.entd, tm5.detd,
+               cell_areas_y,
                workspace.conv1, workspace.pivots, workspace.cloud_dims,
                workspace.f_scratch,
                workspace.amu_scratch, workspace.amd_scratch,
@@ -153,6 +155,7 @@ function apply_convection!(q_raw::AbstractArray{FT, 3},
                             grid::AtmosGrid{<:ReducedGaussianMesh}) where {FT}
     _assert_tm5_forcing(forcing)
     tm5     = forcing.tm5_fields
+    cell_areas = _tm5_require_cell_metrics(workspace, "face-indexed TM5Convection")
     N_total = size(q_raw, 1)
     B       = size(workspace.conv1, 3)
     backend = get_backend(q_raw)
@@ -162,6 +165,7 @@ function apply_convection!(q_raw::AbstractArray{FT, 3},
         n = min(B, N_total - tile_off)
         kernel(q_raw, air_mass,
                tm5.entu, tm5.detu, tm5.entd, tm5.detd,
+               cell_areas,
                workspace.conv1, workspace.pivots, workspace.cloud_dims,
                workspace.f_scratch,
                workspace.amu_scratch, workspace.amd_scratch,
@@ -181,6 +185,7 @@ function apply_convection!(q_raw::NTuple{6, <:AbstractArray{FT, 4}},
                             grid::AtmosGrid{<:CubedSphereMesh}) where {FT}
     _assert_tm5_forcing(forcing)
     tm5     = forcing.tm5_fields
+    cell_areas = _tm5_require_cell_metrics(workspace, "cubed-sphere TM5Convection")
     mesh    = grid.horizontal
     Nc      = mesh.Nc
     Hp      = mesh.Hp
@@ -199,6 +204,7 @@ function apply_convection!(q_raw::NTuple{6, <:AbstractArray{FT, 4}},
             n = min(B, N_total - tile_off)
             kernel(q_raw[p], air_mass[p],
                    tm5.entu[p], tm5.detu[p], tm5.entd[p], tm5.detd[p],
+                   cell_areas[p],
                    workspace.conv1, workspace.pivots,
                    workspace.cloud_dims,
                    workspace.f_scratch,
@@ -224,6 +230,16 @@ function _assert_tm5_forcing(forcing::ConvectionForcing)
             "Use `with_convection_forcing(model, ConvectionForcing(nothing, nothing, tm5_fields))` " *
             "or ensure the driver populates `window.convection.tm5_fields`."))
     return nothing
+end
+
+function _tm5_require_cell_metrics(workspace::TM5Workspace, context::AbstractString)
+    metrics = workspace.cell_metrics
+    metrics === nothing && throw(ArgumentError(
+        "$context requires `workspace.cell_metrics` to carry cell areas " *
+        "so TM5 can convert state air mass from kg/cell to kg/m². " *
+        "Build the model with `with_convection` or construct " *
+        "`TM5Workspace(air_mass; cell_metrics=...)`."))
+    return metrics
 end
 
 # =========================================================================

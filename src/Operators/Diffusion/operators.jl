@@ -149,8 +149,8 @@ function apply!(state::CubedSphereState, meteo, grid,
         "ImplicitVerticalDiffusion.apply!: workspace is required " *
         "(cubed-sphere diffusion needs panel-native w_scratch and dz_scratch)"))
     for (_, rm_panels) in eachtracer(state)
-        apply_vertical_diffusion!(rm_panels, op, workspace, dt, meteo;
-                                  halo_width = state.halo_width)
+        apply_vertical_diffusion_vmr!(rm_panels, state.air_mass, op, workspace,
+                                      dt, meteo; halo_width = state.halo_width)
     end
     return state
 end
@@ -194,6 +194,7 @@ dispatch reduces the call site to a dead branch when
 palindrome integration bit-exact backward-compatible.
 """
 function apply_vertical_diffusion! end
+function apply_vertical_diffusion_vmr! end
 
 apply_vertical_diffusion!(q_raw::AbstractArray{<:Any, 4},
                           ::NoDiffusion, workspace, dt,
@@ -206,6 +207,9 @@ apply_vertical_diffusion!(q_raw::AbstractArray{<:Any, 2},
                           meteo = nothing) = nothing
 apply_vertical_diffusion!(q_raw::NTuple{6}, ::NoDiffusion, workspace, dt,
                           meteo = nothing; halo_width = 0) = nothing
+apply_vertical_diffusion_vmr!(q_raw::NTuple{6}, air_mass::NTuple{6},
+                              ::NoDiffusion, workspace, dt,
+                              meteo = nothing; halo_width = 0) = nothing
 
 @inline function _diffusion_time(::Type{FT}, meteo) where FT
     return meteo === nothing ? zero(FT) : FT(current_time(meteo))
@@ -326,6 +330,76 @@ function apply_vertical_diffusion!(q_raw::NTuple{6, A},
                ndrange = (Nc, Ny))
         synchronize(backend)
     end
+    return nothing
+end
+
+function _cs_scale_tracer_mass_to_vmr!(q_raw::NTuple{6, A},
+                                       air_mass::NTuple{6},
+                                       halo_width::Integer) where {A <: AbstractArray}
+    Hp = Int(halo_width)
+    @inbounds for p in 1:6
+        panel_q = q_raw[p]
+        panel_m = air_mass[p]
+        size(panel_q) == size(panel_m) || throw(DimensionMismatch(
+            "cubed-sphere tracer panel $p shape $(size(panel_q)) does not match " *
+            "air_mass shape $(size(panel_m))"))
+        Nc = size(panel_q, 1) - 2 * Hp
+        Ny = size(panel_q, 2) - 2 * Hp
+        Nz = size(panel_q, 3)
+        Nc > 0 && Ny > 0 || throw(DimensionMismatch(
+            "cubed-sphere panel $p shape $(size(panel_q)) cannot provide an " *
+            "interior with halo_width=$Hp"))
+        backend = get_backend(panel_q)
+        kernel = _cs_tracer_mass_to_vmr_kernel!(backend, (8, 8, 1))
+        kernel(panel_q, panel_m, Hp; ndrange = (Nc, Ny, Nz))
+        synchronize(backend)
+    end
+    return q_raw
+end
+
+function _cs_scale_vmr_to_tracer_mass!(q_raw::NTuple{6, A},
+                                       air_mass::NTuple{6},
+                                       halo_width::Integer) where {A <: AbstractArray}
+    Hp = Int(halo_width)
+    @inbounds for p in 1:6
+        panel_q = q_raw[p]
+        panel_m = air_mass[p]
+        size(panel_q) == size(panel_m) || throw(DimensionMismatch(
+            "cubed-sphere tracer panel $p shape $(size(panel_q)) does not match " *
+            "air_mass shape $(size(panel_m))"))
+        Nc = size(panel_q, 1) - 2 * Hp
+        Ny = size(panel_q, 2) - 2 * Hp
+        Nz = size(panel_q, 3)
+        Nc > 0 && Ny > 0 || throw(DimensionMismatch(
+            "cubed-sphere panel $p shape $(size(panel_q)) cannot provide an " *
+            "interior with halo_width=$Hp"))
+        backend = get_backend(panel_q)
+        kernel = _cs_vmr_to_tracer_mass_kernel!(backend, (8, 8, 1))
+        kernel(panel_q, panel_m, Hp; ndrange = (Nc, Ny, Nz))
+        synchronize(backend)
+    end
+    return q_raw
+end
+
+"""
+    apply_vertical_diffusion_vmr!(rm, air_mass, op, workspace, dt, meteo; halo_width)
+
+Cubed-sphere helper for state variables stored as tracer mass. The implicit
+vertical solver acts on mixing ratio; this wrapper converts tracer mass to VMR
+using the current dry air mass, applies the existing column solve, then restores
+tracer mass before advection resumes.
+"""
+function apply_vertical_diffusion_vmr!(q_raw::NTuple{6, A},
+                                       air_mass::NTuple{6},
+                                       op::ImplicitVerticalDiffusion{FT, KzF},
+                                       workspace, dt,
+                                       meteo = nothing;
+                                       halo_width::Integer) where {FT, A <: AbstractArray{FT, 3},
+                                                                    KzF <: AbstractCubedSphereField{FT}}
+    _cs_scale_tracer_mass_to_vmr!(q_raw, air_mass, halo_width)
+    apply_vertical_diffusion!(q_raw, op, workspace, dt, meteo;
+                              halo_width = halo_width)
+    _cs_scale_vmr_to_tracer_mass!(q_raw, air_mass, halo_width)
     return nothing
 end
 

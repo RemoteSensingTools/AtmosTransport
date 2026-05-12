@@ -22,6 +22,7 @@ using Test
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 using .AtmosTransport: Operators, Grids
+using .AtmosTransport.Operators.Advection: _xface_tracer_flux
 
 # Try to load CUDA; tests gracefully skip if unavailable
 const HAS_GPU = try
@@ -136,6 +137,25 @@ end
 # =========================================================================
 # Test suite
 # =========================================================================
+
+@testset "SlopesScheme face flux uses half-slope moment" begin
+    m0 = 10.0
+    q = collect(1.0:6.0)
+    m = fill(m0, 6, 1, 1)
+    rm = reshape(m0 .* q, 6, 1, 1)
+    scheme = SlopesScheme(MonotoneLimiter())
+
+    # Face 4 lies between q=3 and q=4. For this linear stencil the limited
+    # slope is 1, so the donor edge offset is 0.5.
+    α = 0.2
+    flux_pos = _xface_tracer_flux(Int32(4), 1, 1, rm, m, 2.0, scheme, Int32(6))
+    expected_pos = α * (m0 * 3.0 + (1 - α) * (m0 * 0.5))
+    @test flux_pos ≈ expected_pos
+
+    flux_neg = _xface_tracer_flux(Int32(4), 1, 1, rm, m, -2.0, scheme, Int32(6))
+    expected_neg = -α * (m0 * 4.0 - (1 - α) * (m0 * 0.5))
+    @test flux_neg ≈ expected_neg
+end
 
 @testset "Advection kernels: {CPU,GPU} × {F32,F64}" begin
 

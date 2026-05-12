@@ -31,7 +31,7 @@ using .AtmosTransport
 
 using .AtmosTransport.State: CellState, DryBasis, allocate_face_fluxes
 using .AtmosTransport.Grids: AtmosGrid, LatLonMesh, HybridSigmaPressure,
-                              CPU as GridsCPU
+                              cell_areas_by_latitude, CPU as GridsCPU
 using .AtmosTransport.Operators: TM5Convection, TM5Workspace,
                                  UpwindScheme, AbstractConvection
 using .AtmosTransport.MetDrivers: ConvectionForcing, StructuredTransportWindow,
@@ -39,7 +39,7 @@ using .AtmosTransport.MetDrivers: ConvectionForcing, StructuredTransportWindow,
 using .AtmosTransport.Models: TransportModel, DrivenSimulation,
                                with_convection, step!, window_index
 
-const _REALISTIC_AIR_MASS_KG = 1e16
+const _BMASS_PER_LAYER = 5e3
 const FT = Float64
 
 # -------------------------------------------------------------------------
@@ -71,12 +71,20 @@ function _make_grid(; FT = Float64, Nx = 4, Ny = 3, Nz = 5)
     return AtmosGrid(mesh, vertical, GridsCPU(); FT = FT)
 end
 
+function _make_air_mass(grid, FT, Nx, Ny, Nz)
+    areas = cell_areas_by_latitude(grid.horizontal)
+    air_mass = zeros(FT, Nx, Ny, Nz)
+    @inbounds for k in 1:Nz, j in 1:Ny, i in 1:Nx
+        air_mass[i, j, k] = FT(_BMASS_PER_LAYER) * FT(areas[j])
+    end
+    return air_mass
+end
+
 function _make_tm5_forcing(FT, Nx, Ny, Nz;
-                            peak_entu = FT(0.02 * _REALISTIC_AIR_MASS_KG),
-                            peak_detu = FT(0.01 * _REALISTIC_AIR_MASS_KG))
-    # Forcings in the SAME basis as air_mass (kg/cell/s when air_mass
-    # is in kg/cell — TM5Convection is basis-polymorphic per the
-    # Commit 0 basis decision).
+                            peak_entu = FT(0.02),
+                            peak_detu = FT(0.01))
+    # TM5 forcings are kg/m²/s. The runtime workspace carries cell
+    # areas so the matrix can divide by air_mass / cell_area.
     # Entrainment profile spans surface (k=Nz) through mid-cloud so
     # the updraft actually picks up surface-layer air. TM5 has no
     # well-mixed sub-cloud treatment — without surface entrainment
@@ -97,14 +105,14 @@ end
 function _make_tm5_window_driver(; FT = Float64)
     grid = _make_grid(FT = FT)
     Nx, Ny, Nz = 4, 3, 5
-    air_mass = fill(FT(_REALISTIC_AIR_MASS_KG), Nx, Ny, Nz)
+    air_mass = _make_air_mass(grid, FT, Nx, Ny, Nz)
     ps = fill(FT(95_000), Nx, Ny)
     fluxes = allocate_face_fluxes(grid.horizontal, Nz; FT = FT, basis = DryBasis)
 
     forcing_a = _make_tm5_forcing(FT, Nx, Ny, Nz;
-                                   peak_entu = FT(0.01 * _REALISTIC_AIR_MASS_KG))
+                                   peak_entu = FT(0.01))
     forcing_b = _make_tm5_forcing(FT, Nx, Ny, Nz;
-                                   peak_entu = FT(0.02 * _REALISTIC_AIR_MASS_KG))
+                                   peak_entu = FT(0.02))
 
     window_a = StructuredTransportWindow(air_mass, ps, fluxes; convection = forcing_a)
     window_b = StructuredTransportWindow(air_mass, ps, fluxes; convection = forcing_b)
@@ -117,7 +125,7 @@ end
     driver, forcing_a, forcing_b = _make_tm5_window_driver(FT = FT)
 
     Nx, Ny, Nz = 4, 3, 5
-    air_mass = fill(FT(_REALISTIC_AIR_MASS_KG), Nx, Ny, Nz)
+    air_mass = _make_air_mass(driver.grid, FT, Nx, Ny, Nz)
     tracer = zeros(FT, Nx, Ny, Nz)
     tracer[:, :, Nz] .= FT(1e-6) .* air_mass[:, :, Nz]
     state = CellState(air_mass; CO2 = tracer)
@@ -169,8 +177,8 @@ end
     driver, forcing_a, _ = _make_tm5_window_driver(FT = FT32)
 
     Nx, Ny, Nz = 4, 3, 5
-    air_mass = fill(FT32(_REALISTIC_AIR_MASS_KG), Nx, Ny, Nz)
-    tracer   = fill(FT32(1e-6 * _REALISTIC_AIR_MASS_KG), Nx, Ny, Nz)
+    air_mass = _make_air_mass(driver.grid, FT32, Nx, Ny, Nz)
+    tracer   = FT32(1e-6) .* air_mass
     state = CellState(air_mass; CO2 = tracer)
     fluxes = allocate_face_fluxes(driver.grid.horizontal, Nz;
                                     FT = FT32, basis = DryBasis)

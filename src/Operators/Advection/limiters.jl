@@ -94,9 +94,9 @@ end
 #
 #   q(x) = c_center + slope · (x - x_center) / Δx
 #
-# In mass-flux advection, this slope is multiplied by the cell mass to form
-# the "first moment" sx = m · slope, which is then used in the Courant-fraction
-# flux formula (see reconstruction.jl).
+# In mass-flux advection, this slope is converted to an edge-offset moment
+# sx = m · slope / 2, which is then used in the Courant-fraction flux formula
+# (see reconstruction.jl).
 
 """
     _limited_slope(c_left, c_center, c_right, ::MonotoneLimiter)
@@ -164,10 +164,10 @@ end
 
 # ---- Moment limiters (operating on tracer mass) --------------------------
 #
-# After computing the slope in mixing-ratio space, we convert to the "first
-# moment" sx = m · slope.  This moment must also be limited to prevent the
-# Courant-fraction flux formula from producing negative tracer mass in the
-# donor cell.
+# After computing the slope in mixing-ratio space, we convert to the edge-offset
+# moment sx = m · slope / 2. This moment must also be limited to prevent the
+# Courant-fraction flux formula from producing negative tracer mass in the donor
+# cell.
 #
 # The moment limiter clamps:  -rm ≤ sx ≤ rm
 #

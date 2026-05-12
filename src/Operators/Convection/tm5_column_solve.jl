@@ -114,6 +114,7 @@ function _tm5_build_conv1!(conv1::AbstractMatrix{FT},
                            m_col::AbstractVector{FT},
                            icltop::Integer, icllfs::Integer,
                            dt::FT, Nz::Integer;
+                           cell_area::FT = one(FT),
                            f::AbstractMatrix{FT}   = zeros(FT, Nz + 1, Nz),
                            amu::AbstractVector{FT} = zeros(FT, Nz + 1),
                            amd::AbstractVector{FT} = zeros(FT, Nz + 1),
@@ -173,8 +174,12 @@ function _tm5_build_conv1!(conv1::AbstractMatrix{FT},
             f_below = k_atm == Nz ? zero(FT) : f[k_atm + 1, kk_atm]
             f[k_atm, kk_atm] = f_below * zxi
         end
-        # TM5:  fu(k, k)   = entu(k) / m(k) * zxi   (diagonal)
-        f[k_atm, k_atm] = entu_col[k_atm] / m_col[k_atm] * zxi
+        # TM5's `m(k)` is layer mass per unit horizontal area
+        # (kg/m²). Runtime state stores total layer mass per cell
+        # (kg), so topology kernels pass `cell_area` to recover the
+        # original TM5 units before dividing the kg/m²/s fluxes.
+        bmass_k = m_col[k_atm] / cell_area
+        f[k_atm, k_atm] = entu_col[k_atm] / bmass_k * zxi
     end
 
     # --- Downdraft pass (AtmosTransport icllfs → Nz-1) ----------
@@ -204,8 +209,9 @@ function _tm5_build_conv1!(conv1::AbstractMatrix{FT},
                 f[k_atm + 1, kk_atm] = f[k_atm, kk_atm] * zxi
             end
             # TM5:  f(k-1, k) = -entd(k) / m(k) * zxi
-            # Atm:  f[k_atm+1, k_atm] = -entd[k_atm] / m[k_atm] * zxi
-            f[k_atm + 1, k_atm] = -entd_col[k_atm] / m_col[k_atm] * zxi
+            # Atm:  f[k_atm+1, k_atm] = -entd[k_atm] / bmass[k_atm] * zxi
+            bmass_k = m_col[k_atm] / cell_area
+            f[k_atm + 1, k_atm] = -entd_col[k_atm] / bmass_k * zxi
         end
     end
 
@@ -218,8 +224,10 @@ function _tm5_build_conv1!(conv1::AbstractMatrix{FT},
     # position is written by both passes. Only the subsidence
     # corrections remain.
     @inbounds for k_atm in Nz:-1:2
-        f[k_atm, k_atm - 1] -= amu[k_atm] / m_col[k_atm - 1]
-        f[k_atm, k_atm]     -= amd[k_atm] / m_col[k_atm]
+        bmass_above = m_col[k_atm - 1] / cell_area
+        bmass_k     = m_col[k_atm]     / cell_area
+        f[k_atm, k_atm - 1] -= amu[k_atm] / bmass_above
+        f[k_atm, k_atm]     -= amd[k_atm] / bmass_k
     end
 
     # --- Final assembly: conv1(k, kk) = -dt · (f(k-1, kk) - f(k, kk)) + I
@@ -382,14 +390,17 @@ end
 
 Backend-agnostic full column solver. Shapes:
 
-- `rm_col      :: AbstractMatrix{FT}`  (Nz, Nt) — tracer mixing ratios; updated in place.
-- `m_col       :: AbstractVector{FT}`  (Nz,)    — layer air mass per unit area (kg/m²).
+- `rm_col      :: AbstractMatrix{FT}`  (Nz, Nt) — tracer masses; updated in place.
+- `m_col       :: AbstractVector{FT}`  (Nz,)    — layer air mass per cell (kg); interpreted
+                                                  as kg/m² when `cell_area = 1`.
 - `entu_col, detu_col, entd_col, detd_col :: AbstractVector{FT}` (Nz,) — forcings.
 - `conv1_buf   :: AbstractMatrix{FT}`  (Nz, Nz) — scratch matrix.
 - `pivots_buf  :: AbstractVector{Int}` (Nz,)    — scratch permutation.
 - `cloud_dims  :: AbstractVector{Int}` (3,)     — output (icltop, iclbas, icllfs)
                                                   in AtmosTransport orientation.
 - `dt          :: FT`                            — step length in seconds.
+- `cell_area   :: FT`                            — grid-cell area (m²) used to convert
+                                                  `m_col` to kg/m².
 
 Zero-forcing (`entu = detu = entd = detd = 0`) short-circuits to
 identity. Zero-size columns (`Nz = 0`) are a no-op.
@@ -404,6 +415,7 @@ function _tm5_solve_column!(rm_col::AbstractMatrix{FT},
                             pivots_buf::AbstractVector{<:Integer},
                             cloud_dims::AbstractVector{<:Integer},
                             dt::FT;
+                            cell_area::FT = one(FT),
                             f_buf::AbstractMatrix{FT}   = zeros(FT, length(m_col) + 1, length(m_col)),
                             amu_buf::AbstractVector{FT} = zeros(FT, length(m_col) + 1),
                             amd_buf::AbstractVector{FT} = zeros(FT, length(m_col) + 1),
@@ -432,6 +444,7 @@ function _tm5_solve_column!(rm_col::AbstractMatrix{FT},
     _tm5_build_conv1!(conv1_buf,
                       entu_col, detu_col, entd_col, detd_col, m_col,
                       icltop, icllfs, dt, Nz;
+                      cell_area = cell_area,
                       f = f_buf,
                       amu = amu_buf, amd = amd_buf)
     _tm5_lu!(conv1_buf, pivots_buf, Nz; icltop_eff = icltop_eff)

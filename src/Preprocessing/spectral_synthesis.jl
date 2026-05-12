@@ -302,11 +302,20 @@ Zonal mass flux through the west face of cell `(i, j)`:
 
     am[i, j, k] = (u / cos φ) × Δp_face × (R / g) × Δφ × Δt/2   [kg]
 
-where `u / cos φ` converts spectral pseudo-wind to physical wind, `Δp_face`
+where `u` is the spectral pseudo-wind `U·cos(φ)`, so `u / cos φ` recovers the
+physical zonal wind. `Δp_face`
 is the Jensen-corrected face-level pressure thickness
 `|dA + dB × exp((ln(ps_L) + ln(ps_R)) / 2)|`, and `Δt/2 = half_dt` is the
 v4 binary's per-substep flux convention (Strang splitting applies fluxes
 twice per full step: forward + reverse).
+
+Meridional mass flux through the south face of cell `(i, j)`:
+
+    bm[i, j, k] = v × Δp_face × (R / g) × Δλ × Δt/2   [kg]
+
+where `v` is the spectral pseudo-wind `V·cos(φ)`. The east-west face length's
+`cos(φ)` factor is therefore already present in `v`, so there is no additional
+explicit latitude-cosine multiplier in the `bm` formula.
 
 Sign convention: positive `am` = eastward mass flux; positive `bm` = northward.
 
@@ -322,10 +331,12 @@ with a B-coefficient redistribution term for the hybrid coordinate:
 where `div_h = (am[i] − am[i+1]) + (bm[j] − bm[j+1])` is the horizontal
 convergence. `cm[1] = 0` (TOA) and `cm[Nz+1] = 0` (surface) by construction.
 
-**IMPORTANT**: these raw `cm` values have large spectral-truncation residuals
-(~10¹² kg per cell at T47). They MUST be Poisson-balanced before writing to
-the binary — see `apply_poisson_balance!` in `binary_pipeline.jl`. Without
-balance, the runtime face-indexed CFL pilot will reject the binary.
+These raw `cm` values are only a staging estimate. Before writing a transport
+binary, the preprocessing path applies a column-integrated mass correction to
+the horizontal fluxes and diagnoses the stored `cm` from the explicit forward
+mass endpoint. The legacy per-layer horizontal Poisson correction is available
+only as an opt-in diagnostic mode because it can distort physical horizontal
+winds when no independent vertical mass flux is supplied.
 """
 function compute_mass_fluxes!(am, bm, cm, u_stag, v_stag, dp, ps,
                               dA, dB, grid::LatLonTargetGeometry, half_dt, Nz)
@@ -363,8 +374,9 @@ function compute_mass_fluxes!(am, bm, cm, u_stag, v_stag, dp, ps,
             j_n = j        # cell north of this face
             ps_face = exp((log(ps[i, j_s]) + log(ps[i, j_n])) / 2)
             dp_face = abs(dA[k] + dB[k] * ps_face)
-            # v_stag is already the physical meridional wind (no cos scaling).
-            # bm = v × R/g × Δp × Δλ × Δt/2   [kg per half-step]
+            # v_stag is V·cos(φ) from spectral synthesis. That cos factor is
+            # the east-west face-width metric, so no extra cos appears here.
+            # bm = v_cos × R/g × Δp × Δλ × Δt/2   [kg per half-step]
             bm[i, j, k] = v_stag[i, j, k] * dp_face * R_g * dlon * half_dt
         end
     end
@@ -385,7 +397,7 @@ function compute_mass_fluxes!(am, bm, cm, u_stag, v_stag, dp, ps,
         # where dB[k] = B[k+1] − B[k] redistributes the total-column
         # divergence into the hybrid coordinate's ps-dependent component.
         # This ensures cm[1] = 0 (TOA) and cm[Nz+1] ≈ 0 (surface) when
-        # the horizontal fluxes are balanced (see Poisson balance).
+        # the column-integrated horizontal fluxes are balanced.
         acc = 0.0
         for k in 1:Nz
             div_h = (Float64(am[i + 1, j, k]) - Float64(am[i, j, k])) +

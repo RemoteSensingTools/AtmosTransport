@@ -1,0 +1,48 @@
+# ===========================================================================
+# GEOS-IT C180 native NetCDF -> current AtmosTransport v4 CS C180 binary.
+#
+# Source of truth:
+#   /home/cfranken/data/AtmosTransport/met/geosit/C180/raw_catrine/YYYYMMDD/
+#     GEOSIT.YYYYMMDD.{CTM_A1,CTM_I1,A1,A3dyn,A3mstE}.C180.nc
+#
+# This path uses the canonical new preprocessor:
+#   scripts/preprocessing/preprocess_transport_binary.jl
+#
+# GEOS-IT CTM_A1 provides native dry horizontal mass fluxes MFXC/MFYC.
+# The preprocessor passes them through without humidity correction, stores
+# MFXC/(2g) per Strang half-sweep, writes dry-basis mass, and embeds PBL +
+# CMFMC/DTRAIN physics sections for runtime adv+diff and full-physics runs.
+#
+# Usage:
+#   julia -t8 --project=. scripts/preprocessing/preprocess_transport_binary.jl \
+#       config/preprocessing/geosit_c180_native_dec2021_f32.toml \
+#       --start 2021-12-02 --end 2021-12-04
+# ===========================================================================
+
+[source]
+toml     = "config/met_sources/geosit.toml"
+root_dir = "/home/cfranken/data/AtmosTransport/met/geosit/C180/raw_catrine"
+include_surface = true
+include_convection = true
+
+[output]
+directory  = "/temp1/c180_geosit_native_v4_dec2021_f32"
+mass_basis = "dry"
+
+[grid]
+type                = "cubed_sphere"
+Nc                  = 180
+panel_convention    = "geos_native"
+definition          = "gmao"
+regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
+
+[vertical]
+coefficients = "config/geos_L72_coefficients.toml"
+
+[numerics]
+float_type     = "Float32"
+dt_met_seconds = 3600.0
+# GEOS-native runs reset air mass at each archived window while preserving
+# tracer VMR, so each binary window should start from the raw GEOS endpoint
+# instead of a multi-day pressure-fixer chain.
+chain_mass     = false

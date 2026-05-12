@@ -1,0 +1,63 @@
+# ===========================================================================
+# ERA5 convection-only download for JJA active-depth seasonality scan
+#
+# One-off variant of era5_native_monthly.toml that drops the 815 GB core
+# analysis (T/Q/VO/LNSP/D) since the active-depth scan only needs the four
+# convective mass flux fields (UDMF, DDMF, UDRF, DDRF). Surface kept for
+# future Kz inversion follow-up (cheap at ~7 GB/month).
+#
+# Usage:
+#   julia --project=. scripts/downloads/download_data.jl \
+#       config/downloads/era5_convection_jja_scan.toml
+# ===========================================================================
+
+[source]
+met_source = "config/met_sources/era5.toml"
+
+[download]
+protocol = "cds"
+
+[[download.requests]]
+name = "convection"
+description = "Convective mass flux and detrainment (forecast, params 235009-235012)"
+dataset = "reanalysis-era5-complete"
+params = "235009/235010/235011/235012"
+field_type = "fc"
+levels = "1/to/137"
+times = "06:00:00/18:00:00"
+steps = "1/2/3/4/5/6/7/8/9/10/11/12"
+format = "grib"
+
+[[download.requests]]
+name = "surface"
+description = "Surface pressure, BLH, heat fluxes, 10m winds, geopotential"
+dataset = "reanalysis-era5-single-levels"
+variables = [
+    "surface_pressure", "geopotential", "land_sea_mask",
+    "boundary_layer_height", "friction_velocity",
+    "10m_u_component_of_wind", "10m_v_component_of_wind",
+    "2m_temperature", "2m_dewpoint_temperature",
+    "surface_sensible_heat_flux", "surface_latent_heat_flux",
+]
+field_type = "an"
+times = "hourly"
+format = "grib"
+
+[output]
+data_root = "~/data/AtmosTransport"
+met_source = "era5"
+grid_name = "N320"
+cadence = "hourly"
+payload_type = "raw"
+subdirectory_by_request = true
+filename_template = "era5_{request_name}_{year_month}.grib"
+
+[schedule]
+start_date = "2022-07-01"
+end_date = "2022-07-31"
+chunk = "monthly"
+
+[options]
+max_retries = 5
+retry_wait_seconds = 120
+skip_existing = true

@@ -34,6 +34,7 @@ mutable struct DrivenSimulation{ModelT, DriverT, WindowT, AT, QT, FT, CB, SS, CT
     initialize_air_mass         :: Bool
     use_midpoint_forcing        :: Bool
     interpolate_fluxes_within_window :: Bool
+    reset_air_mass_each_window  :: Bool
 end
 
 @inline _basis_symbol(::DryBasis) = :dry
@@ -85,6 +86,50 @@ end
 
 @inline _storage_eltype(reference) = eltype(reference)
 @inline _storage_eltype(reference::NTuple{6}) = eltype(reference[1])
+
+_refresh_state_halos!(state, _mesh) = state
+
+function _refresh_state_halos!(state::CubedSphereState, mesh::CubedSphereMesh)
+    fill_panel_halos!(state.air_mass, mesh; dir = 1)
+    for idx in 1:length(tracer_names(state))
+        fill_panel_halos!(get_tracer(state, idx), mesh; dir = 1)
+    end
+    return state
+end
+
+function _reset_air_mass_preserve_vmr!(state::CellState, new_air_mass, _mesh)
+    old_air_mass = state.air_mass
+    FT = eltype(old_air_mass)
+    floor_m = eps(FT)
+    for (_name, rm) in eachtracer(state)
+        @. rm = ifelse(old_air_mass > floor_m,
+                       rm / old_air_mass * new_air_mass,
+                       zero(FT))
+    end
+    copyto!(old_air_mass, new_air_mass)
+    return state
+end
+
+function _reset_air_mass_preserve_vmr!(state::CubedSphereState,
+                                       new_air_mass::NTuple{6},
+                                       mesh::CubedSphereMesh)
+    fill_panel_halos!(new_air_mass, mesh; dir = 1)
+    FT = eltype(state.air_mass[1])
+    floor_m = eps(FT)
+    for p in 1:6
+        old_p = state.air_mass[p]
+        new_p = new_air_mass[p]
+        raw_p = state.tracers_raw[p]
+        for idx in 1:length(tracer_names(state))
+            rm = selectdim(raw_p, ndims(raw_p), idx)
+            @. rm = ifelse(old_p > floor_m,
+                           rm / old_p * new_p,
+                           zero(FT))
+        end
+        copyto!(old_p, new_p)
+    end
+    return _refresh_state_halos!(state, mesh)
+end
 
 @inline function _allocate_qv_buffer(window)
     has_humidity_endpoints(window) || return nothing
@@ -274,6 +319,10 @@ function _maybe_advance_window!(sim::DrivenSimulation, substep::Int)
             throw(ArgumentError("DrivenSimulation attempted to step past stop_window=$(sim.stop_window)"))
         sim.window = _adapt_window_to_model_backend(_load_window(sim.driver, next_window), sim.model.state.air_mass)
         sim.current_window_index = next_window
+        if sim.reset_air_mass_each_window
+            _reset_air_mass_preserve_vmr!(sim.model.state, sim.window.air_mass,
+                                          sim.model.grid.horizontal)
+        end
         if sim.qv_buffer !== nothing && !has_humidity_endpoints(sim.window)
             throw(ArgumentError("driver humidity endpoint support changed between windows"))
         end
@@ -304,6 +353,8 @@ Keyword arguments:
 - `initialize_air_mass=true`
 - `use_midpoint_forcing=true`
 - `interpolate_fluxes_within_window=nothing` (derive from driver)
+- `reset_air_mass_each_window=false` — when true, each newly loaded
+  window replaces prognostic air mass while preserving tracer VMR
 - `surface_sources=()`
 - `chemistry=NoChemistry()` — applied after advection + surface sources each step
 - `callbacks=NamedTuple()`
@@ -329,6 +380,7 @@ function DrivenSimulation(model::TransportModel,
                           initialize_air_mass::Bool = true,
                           use_midpoint_forcing::Bool = true,
                           interpolate_fluxes_within_window = nothing,
+                          reset_air_mass_each_window::Bool = false,
                           surface_sources = (),
                           chemistry::AbstractChemistryOperator = NoChemistry(),
                           callbacks = NamedTuple()) where {D <: AbstractMetDriver}
@@ -401,10 +453,17 @@ function DrivenSimulation(model::TransportModel,
         initialize_air_mass,
         use_midpoint_forcing,
         flux_interp,
+        Bool(reset_air_mass_each_window),
     )
 
     if initialize_air_mass
         _copy_storage!(sim.model.state.air_mass, sim.window.air_mass)
+        _refresh_state_halos!(sim.model.state, sim.model.grid.horizontal)
+    elseif sim.reset_air_mass_each_window
+        _reset_air_mass_preserve_vmr!(sim.model.state, sim.window.air_mass,
+                                      sim.model.grid.horizontal)
+    else
+        _refresh_state_halos!(sim.model.state, sim.model.grid.horizontal)
     end
     copy_fluxes!(sim.model.fluxes, sim.window.fluxes)
     _copy_storage!(sim.expected_air_mass, sim.window.air_mass)

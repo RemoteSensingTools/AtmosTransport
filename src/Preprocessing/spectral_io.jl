@@ -6,18 +6,81 @@ function read_spectral_coeffs!(spec::Matrix{ComplexF64}, msg)
     return read_spectral_coeffs!(spec, msg, Float64[])
 end
 
+function _check_eccodes_status(err::Integer, op::AbstractString)
+    err == 0 && return nothing
+    error("ecCodes $op failed with status code $err")
+end
+
+function _required_grib_key(msg, key::AbstractString)
+    try
+        return msg[key]
+    catch err
+        error("spectral GRIB message is missing required key '$key': $err")
+    end
+end
+
+function _optional_grib_key(msg, key::AbstractString)
+    try
+        return msg[key]
+    catch
+        return nothing
+    end
+end
+
+function _validate_spectral_header(msg, nvalues::Integer, spec::AbstractMatrix)
+    grid_type = String(_required_grib_key(msg, "gridType"))
+    grid_type == "sh" ||
+        error("unsupported spectral GRIB gridType '$grid_type'; expected 'sh'")
+
+    J = Int(_required_grib_key(msg, "J"))
+    K = Int(_required_grib_key(msg, "K"))
+    M = Int(_required_grib_key(msg, "M"))
+    J >= 0 || error("invalid spectral truncation J=$J")
+    (J == K == M) ||
+        error("unsupported non-triangular spectral truncation J/K/M = $J/$K/$M")
+
+    expected = (J + 1) * (J + 2)
+    nvalues == expected ||
+        error("spectral GRIB value count mismatch: got $nvalues, expected $expected for T$J")
+    size(spec, 1) >= J + 1 && size(spec, 2) >= J + 1 ||
+        error("spectral coefficient buffer $(size(spec)) too small for T$J")
+
+    subset_keys = ("JS", "KS", "MS")
+    subset = map(key -> _optional_grib_key(msg, key), subset_keys)
+    if any(!isnothing, subset)
+        all(!isnothing, subset) ||
+            error("incomplete spectral sub-truncation metadata JS/KS/MS = $(subset)")
+        JS, KS, MS = Int.(subset)
+        (0 <= JS <= J && 0 <= KS <= J && 0 <= MS <= J) ||
+            error("invalid spectral sub-truncation JS/KS/MS = $JS/$KS/$MS for T$J")
+        (JS == KS == MS) ||
+            error("unsupported non-triangular spectral sub-truncation JS/KS/MS = $JS/$KS/$MS")
+    end
+
+    laplacian = _optional_grib_key(msg, "laplacianOperator")
+    if laplacian !== nothing
+        isfinite(Float64(laplacian)) ||
+            error("invalid spectral laplacianOperator=$laplacian")
+    end
+
+    return J
+end
+
 function read_spectral_coeffs!(spec::Matrix{ComplexF64}, msg, vals::Vector{Float64})
     handle = msg.ptr
     sz = Ref{Csize_t}(0)
-    ccall((:codes_get_size, GRIB.eccodes), Cint,
-          (Ptr{Cvoid}, Cstring, Ref{Csize_t}), handle, "values", sz)
+    err = ccall((:codes_get_size, GRIB.eccodes), Cint,
+                (Ptr{Cvoid}, Cstring, Ref{Csize_t}), handle, "values", sz)
+    _check_eccodes_status(err, "codes_get_size(values)")
+
+    T = _validate_spectral_header(msg, Int(sz[]), spec)
 
     resize!(vals, sz[])
-    ccall((:codes_get_double_array, GRIB.eccodes), Cint,
-          (Ptr{Cvoid}, Cstring, Ptr{Float64}, Ref{Csize_t}),
-          handle, "values", vals, sz)
+    err = ccall((:codes_get_double_array, GRIB.eccodes), Cint,
+                (Ptr{Cvoid}, Cstring, Ptr{Float64}, Ref{Csize_t}),
+                handle, "values", vals, sz)
+    _check_eccodes_status(err, "codes_get_double_array(values)")
 
-    T = msg["J"]
     fill!(spec, zero(ComplexF64))
 
     idx = 1

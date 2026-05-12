@@ -12,8 +12,8 @@
 #     floating-point noise at the cost of distorting the physics-consistent
 #     fluxes. (User correction 2026-04-24.)
 #
-#  2. **Pressure-fixer cm + chained endpoint mass** (codex Option C, validated
-#     2026-04-25). FV3 conserves moist mass; per-column dry mass changes via
+#  2. **Pressure-fixer cm + optional endpoint-mass chaining** (codex Option C,
+#     validated 2026-04-25). FV3 conserves moist mass; per-column dry mass changes via
 #     both horizontal MFXC divergence AND vertical moisture transport. The
 #     raw GEOS DELP_dry endpoints don't satisfy strict per-level
 #     `(m_next-m)/(2·steps) = -(div_h+div_v)` for any local `cm` choice.
@@ -22,13 +22,13 @@
 #       `cm[k+1]-cm[k] = C_k - ΔB[k]·pit`,  pit = Σ_k C_k
 #     which closes `cm[Nz+1] = 0` exactly without any per-cell residual
 #     redistribution. Substituted into the v4 replay equation, the per-level
-#     mass evolution is `Δm[k] = +2·steps · ΔB[k]·pit`. We CHAIN the stored
-#     `m`: window 1 starts from raw GEOS DELP_dry; subsequent windows take
-#     `m_cur = m_next_pf` from the previous window. The stored m drifts
-#     from raw GEOS DELP over the day by exactly the column moisture-source
-#     term (small for dry CO2 transport), but the binary is internally
-#     self-consistent: replay closes to roundoff and the runtime tracer
-#     mass evolves with the same fluxes that produced m_evolved.
+#     mass evolution is `Δm[k] = +2·steps · ΔB[k]·pit`. With
+#     `chain_mass = true`, window 1 starts from raw GEOS DELP_dry and
+#     subsequent windows take `m_cur = m_next_pf` from the previous window.
+#     With `chain_mass = false`, every window starts from raw GEOS DELP_dry
+#     and writes a local pressure-fixer tendency. Both modes are internally
+#     self-consistent: replay closes to roundoff and the runtime tracer mass
+#     evolves with the same fluxes that produced that window's `m_next_pf`.
 #
 #  3. **Window-by-window loop**:
 #
@@ -347,27 +347,28 @@ end
                 mass_basis = :dry,
                 replay_tol = replay_tolerance(FT),
                 seed_m = nothing,
-                next_day_hour0 = nothing) -> NamedTuple
+                next_day_hour0 = nothing,
+                chain_mass = true) -> NamedTuple
 
 Build a v4 cubed-sphere transport binary at `out_path` from one UTC day of
 native GEOS data. Source mesh and target mesh must match (CS passthrough).
 
-Stored mass is the pressure-fixer's chained evolution (see module header),
-not the raw GEOS DELP_dry. The replay gate closes to roundoff by
-construction; the maximum absolute residual goes down to floating-point
-noise instead of the ~1% column-residual the naive
-`m=DELP_dry, cm=diagnose_cs_cm` path produced.
+Stored mass is the pressure-fixer evolution from the current window's
+initial mass (see module header), not a naive raw-endpoint tendency. The
+replay gate closes to roundoff by construction; the maximum absolute
+residual goes down to floating-point noise instead of the ~1% column-residual
+the naive `m=DELP_dry, cm=diagnose_cs_cm` path produced.
 
-For multi-day preprocessing, `seed_m` carries the pressure-fixer endpoint
-from the previous day so adjacent daily binaries share a boundary mass:
-pass `nothing` (default) on day 1 to seed from raw GEOS DELP_dry, and on
-day N+1 pass the `final_m` returned by day N's `process_day`. Without
-this threading, each day reinitializes from raw GEOS and the chained
-mass discontinuously jumps at every daily boundary.
+For multi-day preprocessing with `chain_mass = true`, `seed_m` carries the
+pressure-fixer endpoint from the previous day so adjacent daily binaries share
+a boundary mass: pass `nothing` (default) on day 1 to seed from raw GEOS
+DELP_dry, and on day N+1 pass the `final_m` returned by day N's
+`process_day`. With `chain_mass = false`, `seed_m` is ignored and every
+window reinitializes from raw GEOS mass.
 
-The returned NamedTuple includes `final_m::NTuple{6, Array{FT, 3}}`, the
-pressure-fixer state at the END of the last window — i.e., the seed for
-the next day's `process_day`.
+When `chain_mass = true`, the returned NamedTuple includes
+`final_m::NTuple{6, Array{FT, 3}}`, the pressure-fixer state at the END of the
+last window. With `chain_mass = false`, `final_m` is `nothing`.
 
 `next_day_hour0` is part of the inherited topology-dispatch contract but
 unused — the GEOS reader handles next-day endpoints internally via
@@ -382,6 +383,7 @@ function process_day(date::Date,
                      FT::Type{<:AbstractFloat} = Float64,
                      mass_basis::Symbol = :dry,
                      replay_tol::Real = replay_tolerance(FT),
+                     chain_mass::Bool = true,
                      seed_m::Union{Nothing, NTuple{6, <:AbstractArray}} = nothing,
                      next_day_hour0 = nothing)
     # Reject configurations the path cannot honor:
@@ -407,7 +409,15 @@ function process_day(date::Date,
     ΔB = FT[FT(vc.B[k + 1] - vc.B[k]) for k in 1:Nz]
 
     steps_per_met = round(Int, FT(dt_met_seconds) / FT(settings.mass_flux_dt))
-    dt_factor = FT(dt_met_seconds / (2 * steps_per_met))
+    # `read_window!` exposes GEOS MFXC/MFYC as a rate-like diagnostic
+    # (`raw.am = MFXC / mass_flux_dt`). CTM_A1's MFXC/MFYC values are one
+    # dynamics-step pressure-area transport amount, not an hourly accumulated
+    # total. The v4 CS runtime uses the same window-constant transport for each
+    # 450 s substep inside the hour, with two horizontal Strang half-sweeps per
+    # substep, so each stored half-sweep face flux is `MFXC / (2g)`.
+    # Because `raw.am` has already divided by `mass_flux_dt`, multiply by
+    # `mass_flux_dt / (2g)` here.
+    dt_factor = FT(settings.mass_flux_dt / 2)
     flux_scale = dt_factor / g
     two_steps = FT(2 * steps_per_met)
 
@@ -449,8 +459,12 @@ function process_day(date::Date,
         bm_v4 = ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz),     npanel)
         cm_v4 = ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1),     npanel)
         dm_v4 = ntuple(_ -> zeros(FT, Nc, Nc, Nz),         npanel)
-        # Chained-state buffers: m_cur (this window's start) and m_next_pf
-        # (the pressure-fixer-evolved end, which becomes next window's m_cur).
+        # State buffers: m_cur (this window's start) and m_next_pf
+        # (the pressure-fixer-evolved end). When `chain_mass=true`,
+        # m_next_pf becomes the next window's m_cur. GEOS campaign
+        # debugging can set `chain_mass=false` to seed every window from
+        # the raw GEOS endpoint and let the runtime reset air mass while
+        # preserving VMR.
         m_cur     = ntuple(_ -> zeros(FT, Nc, Nc, Nz),     npanel)
         m_next_pf = ntuple(_ -> zeros(FT, Nc, Nc, Nz),     npanel)
         ps_cur    = ntuple(_ -> zeros(FT, Nc, Nc),         npanel)
@@ -471,20 +485,19 @@ function process_day(date::Date,
             _geos_fluxes_to_target!(strategy, strategy_ws, am_v4, bm_v4,
                                     raw, grid, Nc, Nz, flux_scale)
 
-            # 2. First window: seed m_cur from `seed_m` (previous day's PF
-            #    endpoint) when supplied, otherwise from raw GEOS DELP_dry.
-            #    Subsequent windows: m_cur was set by the previous window's
-            #    pressure-fixer evolution.
-            if win == 1
-                if seed_m === nothing
-                    _geos_seed_mass!(strategy, strategy_ws, m_cur, raw,
-                                     cell_areas, inv_g, Nc, Nz)
-                else
+            # 2. Seed m_cur. The historical pressure-fixer chain carries
+            #    mass across windows/days. For raw-GEOS window-reset runs,
+            #    every window starts from the archive endpoint instead.
+            if win == 1 || !chain_mass
+                if chain_mass && win == 1 && seed_m !== nothing
                     for p in 1:npanel
                         size(seed_m[p]) == (Nc, Nc, Nz) ||
                             error("seed_m[$p] shape $(size(seed_m[p])) ≠ ($Nc, $Nc, $Nz)")
                         copyto!(m_cur[p], seed_m[p])
                     end
+                else
+                    _geos_seed_mass!(strategy, strategy_ws, m_cur, raw,
+                                     cell_areas, inv_g, Nc, Nz)
                 end
                 for p in 1:npanel
                     _ps_from_air_mass!(ps_cur[p], m_cur[p], cell_areas, g, Nc, Nz)
@@ -536,11 +549,13 @@ function process_day(date::Date,
             end
             write_streaming_cs_window!(writer, window_nt, Nc, npanel)
 
-            # 8. Chain: next window's m_cur is this window's m_next_pf, and
-            #    ps follows from m via Σ.
-            for p in 1:npanel
-                copyto!(m_cur[p], m_next_pf[p])
-                _ps_from_air_mass!(ps_cur[p], m_cur[p], cell_areas, g, Nc, Nz)
+            # 8. Optional chain: next window's m_cur is this window's
+            #    m_next_pf, and ps follows from m via Σ.
+            if chain_mass
+                for p in 1:npanel
+                    copyto!(m_cur[p], m_next_pf[p])
+                    _ps_from_air_mass!(ps_cur[p], m_cur[p], cell_areas, g, Nc, Nz)
+                end
             end
         end
 
@@ -551,7 +566,7 @@ function process_day(date::Date,
         # Capture the pressure-fixer endpoint from the last window so the
         # caller can seed the next day's `process_day` and preserve cross-day
         # continuity (codex 2026-04-25 P2).
-        final_m = ntuple(p -> copy(m_cur[p]), npanel)
+        final_m = chain_mass ? ntuple(p -> copy(m_cur[p]), npanel) : nothing
 
         return (
             elapsed = elapsed,

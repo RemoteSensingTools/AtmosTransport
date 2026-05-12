@@ -1,0 +1,34 @@
+# ===========================================================================
+# GEOS-IT C180 native NetCDF -> replay-safe AtmosTransport v4 CS C180 binary.
+#
+# This variant is a replay-safety experiment. It keeps the GEOS native flux
+# treatment, but chains the pressure-fixer endpoint from each window into the
+# next window's stored air mass so runtime/adjoint replay has one continuous
+# mass trajectory. Check positivity before using it for adjoints: GEOS-native
+# pressure-fixer endpoints can overshoot and produce nonpositive air mass.
+# ===========================================================================
+
+[source]
+toml     = "config/met_sources/geosit.toml"
+root_dir = "/home/cfranken/data/AtmosTransport/met/geosit/C180/raw_catrine"
+include_surface = true
+include_convection = true
+
+[output]
+directory  = "/temp1/c180_geosit_native_v4_dec2021_f32_chain"
+mass_basis = "dry"
+
+[grid]
+type                = "cubed_sphere"
+Nc                  = 180
+panel_convention    = "geos_native"
+definition          = "gmao"
+regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
+
+[vertical]
+coefficients = "config/geos_L72_coefficients.toml"
+
+[numerics]
+float_type     = "Float32"
+dt_met_seconds = 3600.0
+chain_mass     = true

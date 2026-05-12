@@ -199,6 +199,26 @@ column solve is unchanged; only the panel halo offset differs.
     end
 end
 
+@kernel function _cs_tracer_mass_to_vmr_kernel!(q, @Const(air_mass), Hp::Int)
+    ii, jj, k = @index(Global, NTuple)
+    FT = eltype(q)
+    @inbounds begin
+        i = ii + Hp
+        j = jj + Hp
+        m = air_mass[i, j, k]
+        q[i, j, k] = m > zero(FT) ? q[i, j, k] / m : zero(FT)
+    end
+end
+
+@kernel function _cs_vmr_to_tracer_mass_kernel!(q, @Const(air_mass), Hp::Int)
+    ii, jj, k = @index(Global, NTuple)
+    @inbounds begin
+        i = ii + Hp
+        j = jj + Hp
+        q[i, j, k] *= air_mass[i, j, k]
+    end
+end
+
 """
     _vertical_diffusion_face_kernel!(q, kz_field, dz, w_scratch, dt, Nz)
 

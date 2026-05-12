@@ -4,8 +4,8 @@
     process_day(date, grid::CubedSphereTargetGeometry, settings, vertical; ...)
 
 Spectral→CS transport binary: spectral synthesis to an internal LL staging grid,
-conservative regridding to CS panels, global Poisson balance, cm diagnosis,
-and streaming binary write. No on-disk LL intermediate.
+conservative regridding to CS panels, endpoint continuity closure, and streaming
+binary write. No on-disk LL intermediate.
 """
 function process_day(date::Date,
                      grid::CubedSphereTargetGeometry,
@@ -209,6 +209,12 @@ function process_day(date::Date,
     total_replay = 0.0
     total_write = 0.0
     total_last_endpoint = 0.0
+    apply_horizontal_balance = horizontal_poisson_balance_enabled()
+    if apply_horizontal_balance
+        @info "  Applying per-layer CS Poisson mass-flux balance (legacy opt-in)..."
+    else
+        @info "  Applying column CS mass-balance correction; diagnosing cm from endpoint mass tendency..."
+    end
 
     # --- Process first window ---
     t0 = time()
@@ -237,13 +243,21 @@ function process_day(date::Date,
         # Σ div_h = 0 on a closed sphere without modifying the stored m)
         _copy_panels!(cs_ws.m_next_panels, cs_ws.m_panels)
 
-        # Balance the PREVIOUS window using (m_cur, m_next)
+        # Close the PREVIOUS window using (m_cur, m_next)
         t_bal = time()
-        bal_diag = balance_cs_global_mass_fluxes!(
-            cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
-            grid.face_table, grid.cell_degree, steps_per_met,
-            grid.poisson_scratch; tol=cs_balance_tol, max_iter=20000,
-            project_every=cs_balance_project_every)
+        bal_diag = if apply_horizontal_balance
+            balance_cs_global_mass_fluxes!(
+                cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
+                grid.face_table, grid.cell_degree, steps_per_met,
+                grid.poisson_scratch; tol=cs_balance_tol, max_iter=20000,
+                project_every=cs_balance_project_every)
+        else
+            balance_cs_column_mass_fluxes!(
+                cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
+                grid.face_table, grid.cell_degree, steps_per_met,
+                grid.poisson_scratch; tol=cs_balance_tol, max_iter=20000,
+                project_every=cs_balance_project_every)
+        end
         t_bal = time() - t_bal
         total_balance += t_bal
 
@@ -281,10 +295,17 @@ function process_day(date::Date,
         write_streaming_cs_window!(writer, window_nt, Nc, CS_PANEL_COUNT)
         total_write += time() - t_write
 
-        should_log_window(win - 1, Nt) &&
-            @info @sprintf("    Window %2d/%d: wrote (bal %.2fs pre=%.2e post=%.2e iter=%d) | synth %2d (%.2fs)",
-                           win - 1, Nt, t_bal, bal_diag.max_pre_residual,
-                           bal_diag.max_post_residual, bal_diag.max_cg_iter, win, t_synth)
+        if should_log_window(win - 1, Nt)
+            if apply_horizontal_balance
+                @info @sprintf("    Window %2d/%d: wrote (bal %.2fs pre=%.2e post=%.2e iter=%d) | synth %2d (%.2fs)",
+                               win - 1, Nt, t_bal, bal_diag.max_pre_residual,
+                               bal_diag.max_post_residual, bal_diag.max_cg_iter, win, t_synth)
+            else
+                @info @sprintf("    Window %2d/%d: wrote (colbal %.2fs pre=%.2e post=%.2e iter=%d) | synth %2d (%.2fs)",
+                               win - 1, Nt, t_bal, bal_diag.max_pre_residual,
+                               bal_diag.max_post_residual, bal_diag.max_cg_iter, win, t_synth)
+            end
+        end
 
         # Swap: copy just-synthesized panels into cur (no allocation)
         _copy_panels!(cur_m,  cs_ws.m_panels)
@@ -306,11 +327,19 @@ function process_day(date::Date,
         _copy_panels!(cs_ws.m_next_panels, cur_m)
     end
     t_bal = time()
-    bal_diag = balance_cs_global_mass_fluxes!(
-        cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
-        grid.face_table, grid.cell_degree, steps_per_met,
-        grid.poisson_scratch; tol=cs_balance_tol, max_iter=5000,
-        project_every=cs_balance_project_every)
+    bal_diag = if apply_horizontal_balance
+        balance_cs_global_mass_fluxes!(
+            cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
+            grid.face_table, grid.cell_degree, steps_per_met,
+            grid.poisson_scratch; tol=cs_balance_tol, max_iter=5000,
+            project_every=cs_balance_project_every)
+    else
+        balance_cs_column_mass_fluxes!(
+            cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
+            grid.face_table, grid.cell_degree, steps_per_met,
+            grid.poisson_scratch; tol=cs_balance_tol, max_iter=5000,
+            project_every=cs_balance_project_every)
+    end
     t_bal = time() - t_bal
     total_balance += t_bal
 
@@ -345,9 +374,15 @@ function process_day(date::Date,
     write_streaming_cs_window!(writer, window_nt, Nc, CS_PANEL_COUNT)
     total_write += time() - t_write
 
-    @info @sprintf("    Window %2d/%d (last): bal %.2fs  pre=%.2e post=%.2e iter=%d",
-                   Nt, Nt, t_bal, bal_diag.max_pre_residual,
-                   bal_diag.max_post_residual, bal_diag.max_cg_iter)
+    if apply_horizontal_balance
+        @info @sprintf("    Window %2d/%d (last): bal %.2fs  pre=%.2e post=%.2e iter=%d",
+                       Nt, Nt, t_bal, bal_diag.max_pre_residual,
+                       bal_diag.max_post_residual, bal_diag.max_cg_iter)
+    else
+        @info @sprintf("    Window %2d/%d (last): colbal %.2fs  pre=%.2e post=%.2e iter=%d",
+                       Nt, Nt, t_bal, bal_diag.max_pre_residual,
+                       bal_diag.max_post_residual, bal_diag.max_cg_iter)
+    end
 
     # --- Finalize ---
     close_streaming_transport_binary!(writer)
@@ -358,8 +393,13 @@ function process_day(date::Date,
                        minimum(ps_offsets_day), maximum(ps_offsets_day), sum(ps_offsets_day) / Nt)
     end
 
-    @info @sprintf("  Poisson balance summary: pre=%.3e  post=%.3e  max_iter=%d",
-                   worst_pre, worst_post, worst_iter)
+    if apply_horizontal_balance
+        @info @sprintf("  Poisson balance summary: pre=%.3e  post=%.3e  max_iter=%d",
+                       worst_pre, worst_post, worst_iter)
+    else
+        @info @sprintf("  Column balance summary: pre=%.3e  post=%.3e  max_iter=%d",
+                       worst_pre, worst_post, worst_iter)
+    end
     if write_replay_on
         replay_msg = worst_replay_win > 0 ?
             @sprintf("max rel=%.3e abs=%.3e kg win=%d cell=%s",

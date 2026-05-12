@@ -4,17 +4,20 @@
 # GEOS data lives on a cubed-sphere grid (C180 for GEOS-IT, C720 for GEOS-FP),
 # 72 hybrid sigma-pressure levels, daily files split by collection:
 #
-#   CTM_A1   hourly  MFXC, MFYC, DELP   (window-averaged horizontal mass flux,
-#                                       window-averaged DELP)
+#   CTM_A1   hourly  MFXC, MFYC, DELP   (window-constant dynamics-step
+#                                       horizontal mass transport, DELP)
 #   CTM_I1   hourly  PS, QV             (instantaneous endpoints)
 #   A3dyn    3-hr    DTRAIN, U, V       (held constant in 3-hr blocks; convection)
 #   A3mstE   3-hr    CMFMC              (convection, edge-based)
 #
 # Critical conventions baked into this reader:
 #
-#   * `mass_flux_dt = 450 s` is the FV3 dynamics timestep over which MFXC and
-#     MFYC are accumulated — NOT the 1-hour archive cadence. Forgetting this
-#     scaling produces an 8x slowdown of transport.
+#   * CTM_A1 MFXC/MFYC are dry dynamics-step face masses in pressure-area
+#     units (`MFXC ≈ CX * DELP * cell_area`). `mass_flux_dt = 450 s` is still
+#     used because `read_window!` exposes a rate-like RawWindow
+#     (`MFXC / mass_flux_dt`) for diagnostics and legacy contracts. The v4
+#     writer converts each raw amount to one Strang half-sweep amount and
+#     reuses it for the 8 GEOS substeps inside the hourly CTM window.
 #
 #   * GEOS-IT stores levels bottom-to-top (k=1 = surface). GEOS-FP stores them
 #     top-to-bottom. Both are flipped (where needed) to AtmosTransport's
@@ -25,16 +28,17 @@
 #     MFYC are ALREADY DRY mass fluxes per GMAO and the in-tree diagnostic
 #     `compare_era5_geosit_met.jl` (`am_moist = MFXC / (g·dt_dyn) / (1−qv)`).
 #     The reader converts DELP and PS to dry via the hybrid coordinate plus
-#     QV; MFXC and MFYC pass through unchanged (only divided by `mass_flux_dt`).
+#     QV; MFXC and MFYC pass through unchanged apart from the RawWindow
+#     rate normalization described above.
 #
 #   * `m` and `m_next` in the produced `RawWindow` are DELP_dry at the two
 #     window endpoints, reconstructed from PS_total via the hybrid coordinate.
-#     `Σ m_k = ps_dry` at every endpoint to roundoff. The orchestrator does
-#     NOT use these directly as the v4 binary's stored mass — for native
-#     GEOS sources the stored mass is the FV3 pressure-fixer's chained
-#     evolution from the first hour's DELP_dry, governed by the stored
-#     fluxes (see `cubed_sphere_geos.jl`). The raw endpoint values remain
-#     useful for diagnostics and for the first-window initialization.
+#     `Σ m_k = ps_dry` at every endpoint to roundoff. The orchestrator can
+#     either chain the FV3 pressure-fixer endpoint mass across windows
+#     (`chain_mass = true`, historical default) or seed every window from
+#     these raw GEOS endpoints (`chain_mass = false`, used by the GEOS-IT
+#     native diagnostic campaign). In both modes, each written window stores
+#     a self-consistent pressure-fixer tendency for v4 replay.
 # ===========================================================================
 
 abstract type AbstractGEOSSettings <: AbstractMetSettings end
@@ -726,7 +730,7 @@ end
 # "GEOS am_moist = MFXC / (g × dt_dyn) / (1 − qv)"; getting MOIST from
 # native MFXC requires *dividing* by `(1 − qv)`, so multiplying by it would
 # double-dry). The reader therefore only divides by `mass_flux_dt` to convert
-# the dynamics-step accumulated quantity to a window-mean rate; no humidity
+# the dynamics-step accumulated quantity to a rate-like quantity; no humidity
 # correction is applied here.
 # ---------------------------------------------------------------------------
 
@@ -833,10 +837,10 @@ end
 """
     read_window!(raw, settings, handles, date, win_idx) -> raw
 
-Fill `raw` in place with one window of GEOS data on the source CS grid.
-Both endpoints (t_n, t_{n+1}) carry dry DELP + dry PS reconstructed from
-PS_total via the hybrid coordinate, plus the original QV. Window-
-integrated `am`/`bm` are MFXC/MFYC scaled by `1/mass_flux_dt`.
+    Fill `raw` in place with one window of GEOS data on the source CS grid.
+    Both endpoints (t_n, t_{n+1}) carry dry DELP + dry PS reconstructed from
+    PS_total via the hybrid coordinate, plus the original QV. Dynamics-step
+    `am`/`bm` are MFXC/MFYC scaled by `1/mass_flux_dt`.
 
 The signature matches the canonical `AbstractMetSettings` contract
 declared in `met_sources.jl::read_window!`.
@@ -866,7 +870,7 @@ function read_window!(raw::RawWindow{FT}, settings::GEOSSettings,
               "open the day with `next_day_handle=true` and ensure the next-day file is on disk")
     end
 
-    # ---- Window-integrated horizontal mass flux (dry, /mass_flux_dt) ----
+    # ---- Dynamics-step horizontal mass transport (dry, /mass_flux_dt) ----
     inv_dt = inv(FT(settings.mass_flux_dt))
     mfxc_raw = _read_panels_3d(handles.ctm_a1, "MFXC", win_idx, or; FT=FT)
     mfyc_raw = _read_panels_3d(handles.ctm_a1, "MFYC", win_idx, or; FT=FT)

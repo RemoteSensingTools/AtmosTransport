@@ -129,7 +129,7 @@ invalidate_cmfmc_cache!(::Any) = nothing
 # ===========================================================================
 
 """
-    TM5Workspace{FT, M, P, C, F, A}
+    TM5Workspace{FT, M, P, C, F, A, CA}
 
 Per-sim pre-allocated workspace for [`TM5Convection`](@ref).
 
@@ -170,6 +170,11 @@ Per-sim pre-allocated workspace for [`TM5Convection`](@ref).
 - `amu_scratch :: A`, `amd_scratch :: A` — length-`(Nz+1)`
   per-column boundary-aware mass-flux vectors (TM5 `amu(0:lmx)` /
   `amd(0:lmx)`). Same allocation policy as the scratch matrices.
+- `cell_metrics :: CA` — pre-adapted cell-area metrics used to
+  convert runtime `air_mass` from kg per grid cell to the kg/m²
+  column mass expected by the TM5 matrix. `nothing` is allowed only
+  for standalone unit-area column tests; topology-level `apply!`
+  requires this field to be populated.
 
 # Usage
 
@@ -178,13 +183,14 @@ Constructed once at `DrivenSimulation` setup time via
 `Adapt.adapt_structure` adapts each array to the requested backend
 without reallocating on the host.
 """
-struct TM5Workspace{FT, M, P, C, F, A}
+struct TM5Workspace{FT, M, P, C, F, A, CA}
     conv1       :: M
     pivots      :: P
     cloud_dims  :: C
     f_scratch   :: F
     amu_scratch :: A
     amd_scratch :: A
+    cell_metrics :: CA
 end
 
 # Topology-shape introspection helpers used by the tile workspace
@@ -249,7 +255,8 @@ end
 
 """
     TM5Workspace(air_mass; tile_columns = …,
-                            tile_workspace_gib = nothing) -> TM5Workspace
+                            tile_workspace_gib = nothing,
+                            cell_metrics = nothing) -> TM5Workspace
 
 Construct a fresh workspace from an air-mass payload. `air_mass`
 may be a single array (structured `(Nx, Ny, Nz)` or face-indexed
@@ -268,12 +275,16 @@ The per-launch column count `B` is set by exactly one of:
   [`derive_tile_columns`](@ref) from
   [`TM5Convection`](@ref)'s `tile_workspace_gib` field. Bypassed
   if `tile_columns` is also passed (explicit wins).
+- `cell_metrics` carries topology cell areas. Production
+  `_convection_workspace_for(::TM5Convection, ...)` supplies this;
+  leaving it `nothing` is only for unit-area solver tests.
 
 Specifying both is an error.
 """
 function TM5Workspace(air_mass;
                       tile_columns::Union{Integer, Nothing} = nothing,
-                      tile_workspace_gib::Union{Real, Nothing} = nothing)
+                      tile_workspace_gib::Union{Real, Nothing} = nothing,
+                      cell_metrics = nothing)
     Nz          = _tm5_extract_Nz(air_mass)
     template    = _tm5_template(air_mass)
     FT          = eltype(template)
@@ -295,11 +306,13 @@ function TM5Workspace(air_mass;
     f_scratch   = conv1                     # alias — see docstring
     amu_scratch = similar(template, FT,  Nz + 1, B)
     amd_scratch = similar(template, FT,  Nz + 1, B)
+    metrics = cell_metrics === nothing ? nothing : _cmfmc_metric_buffer(cell_metrics, FT)
     return TM5Workspace{FT,
                         typeof(conv1), typeof(pivots), typeof(cloud_dims),
-                        typeof(f_scratch), typeof(amu_scratch)}(
+                        typeof(f_scratch), typeof(amu_scratch),
+                        typeof(metrics)}(
         conv1, pivots, cloud_dims,
-        f_scratch, amu_scratch, amd_scratch,
+        f_scratch, amu_scratch, amd_scratch, metrics,
     )
 end
 
@@ -311,11 +324,13 @@ function Adapt.adapt_structure(to, ws::TM5Workspace{FT}) where FT
     f_scratch   = f_aliases_conv1 ? conv1 : Adapt.adapt(to, ws.f_scratch)
     amu_scratch = Adapt.adapt(to, ws.amu_scratch)
     amd_scratch = Adapt.adapt(to, ws.amd_scratch)
+    cell_metrics = ws.cell_metrics === nothing ? nothing : Adapt.adapt(to, ws.cell_metrics)
     return TM5Workspace{FT,
                         typeof(conv1), typeof(pivots), typeof(cloud_dims),
-                        typeof(f_scratch), typeof(amu_scratch)}(
+                        typeof(f_scratch), typeof(amu_scratch),
+                        typeof(cell_metrics)}(
         conv1, pivots, cloud_dims,
-        f_scratch, amu_scratch, amd_scratch,
+        f_scratch, amu_scratch, amd_scratch, cell_metrics,
     )
 end
 

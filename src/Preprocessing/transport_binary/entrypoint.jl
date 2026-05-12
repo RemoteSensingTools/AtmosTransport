@@ -78,6 +78,9 @@ _resolve_dt_met(cfg::AbstractDict) =
 _resolve_mass_basis(cfg::AbstractDict) =
     Symbol(get(get(cfg, "output", Dict()), "mass_basis", "dry"))
 
+_resolve_chain_mass(cfg::AbstractDict) =
+    Bool(get(get(cfg, "numerics", Dict()), "chain_mass", true))
+
 # ---------------------------------------------------------------------------
 # Native-source preprocessor: typed `AbstractMetSettings` + cross-day state
 # carry (e.g. GEOS pressure-fixer chained mass).
@@ -134,6 +137,7 @@ function _process_day_native(cfg::AbstractDict;
 
     mass_basis     = _resolve_mass_basis(cfg)
     dt_met_seconds = _resolve_dt_met(cfg)
+    chain_mass     = _resolve_chain_mass(cfg)
 
     dates = _resolve_dates_native(cfg; day_override, start_date, end_date)
 
@@ -151,6 +155,7 @@ function _process_day_native(cfg::AbstractDict;
                              dt_met_seconds  = dt_met_seconds,
                              FT              = FT,
                              mass_basis      = mass_basis,
+                             chain_mass      = chain_mass,
                              seed_m          = seed_m)
         seed_m = get(result, :final_m, nothing)
     end

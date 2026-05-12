@@ -202,7 +202,8 @@ end
 #
 #         = m_L [ c_L · α + s_L · (α - α²/2 - α/2 + α/2) ]
 #
-# Working in terms of tracer mass rm = m·c and first moment sx = m·s:
+# Working in terms of tracer mass rm = m·c and the edge-offset moment
+# sx = m·s/2:
 #
 #     F_q = α · (rm_L + (1 - α) · sx_L)                       (3)
 #
@@ -245,7 +246,7 @@ edge profile and reuses this kernel).
 - `F`:    mass flux through the face [kg] (positive = left-to-right)
 - `m_l`:  air mass in the left cell [kg]
 - `rm_l`: tracer mass in the left cell [kg]
-- `sx_l`: limited first moment of the left cell [kg]
+- `sx_l`: limited edge-offset first moment of the left cell [kg]
 - `m_r`, `rm_r`, `sx_r`: same for the right cell
 
 # Equations
@@ -329,7 +330,7 @@ All indices wrapped via `mod1(·, Nx)` for periodic boundaries.
 # Algorithm
 1. Load 4 mixing ratios: ``c = r_m / m`` at iLL, iL, iR, iRR
 2. Compute limited slopes for left donor (iL) and right donor (iR)
-3. Convert slopes to first moments: ``s_x = m \\cdot s``
+3. Convert slopes to edge-offset moments: ``s_x = m \\cdot s / 2``
 4. Apply moment limiter
 5. Evaluate Courant-fraction flux via `_slopes_face_flux`
 """
@@ -350,10 +351,10 @@ All indices wrapped via `mod1(·, Nx)` for periodic boundaries.
     c_rr = rm[i_rr, j, k] / max(m[i_rr, j, k], m_floor)
 
     sc_l = _limited_slope(c_ll, c_l, c_r, limiter)
-    sx_l = _limited_moment(max(m[i_l, j, k], m_floor) * sc_l, rm[i_l, j, k], limiter)
+    sx_l = _limited_moment(max(m[i_l, j, k], m_floor) * (sc_l / FT(2)), rm[i_l, j, k], limiter)
 
     sc_r = _limited_slope(c_l, c_r, c_rr, limiter)
-    sx_r = _limited_moment(max(m[i_r, j, k], m_floor) * sc_r, rm[i_r, j, k], limiter)
+    sx_r = _limited_moment(max(m[i_r, j, k], m_floor) * (sc_r / FT(2)), rm[i_r, j, k], limiter)
 
     return _slopes_face_flux(F, max(m[i_l, j, k], m_floor), rm[i_l, j, k], sx_l,
                                 max(m[i_r, j, k], m_floor), rm[i_r, j, k], sx_r)
@@ -397,12 +398,12 @@ Indices clamped: `jLL = max(face_j-2, 1)`, `jRR = min(face_j+1, Ny)`.
 
     interior_l = (jl > Int32(1)) & (jl < Ny)
     sc_l = _limited_slope(c_ll, c_l, c_r, limiter)
-    sx_l = _limited_moment(max(m[i, jl, k], m_floor) * sc_l, rm[i, jl, k], limiter)
+    sx_l = _limited_moment(max(m[i, jl, k], m_floor) * (sc_l / FT(2)), rm[i, jl, k], limiter)
     sx_l = ifelse(interior_l, sx_l, zero(FT))
 
     interior_r = (jr > Int32(1)) & (jr < Ny)
     sc_r = _limited_slope(c_l, c_r, c_rr, limiter)
-    sx_r = _limited_moment(max(m[i, jr, k], m_floor) * sc_r, rm[i, jr, k], limiter)
+    sx_r = _limited_moment(max(m[i, jr, k], m_floor) * (sc_r / FT(2)), rm[i, jr, k], limiter)
     sx_r = ifelse(interior_r, sx_r, zero(FT))
 
     flux = _slopes_face_flux(F, max(m[i, jl, k], m_floor), rm[i, jl, k], sx_l,
@@ -446,12 +447,12 @@ Matches the convention in the legacy `_rl_z_kernel!` (RussellLerner.jl).
 
     interior_l = (kl > Int32(1)) & (kl < Nz)
     sc_l = _limited_slope(c_ll, c_l, c_r, limiter)
-    sx_l = _limited_moment(max(m[i, j, kl], m_floor) * sc_l, rm[i, j, kl], limiter)
+    sx_l = _limited_moment(max(m[i, j, kl], m_floor) * (sc_l / FT(2)), rm[i, j, kl], limiter)
     sx_l = ifelse(interior_l, sx_l, zero(FT))
 
     interior_r = (kr > Int32(1)) & (kr < Nz)
     sc_r = _limited_slope(c_l, c_r, c_rr, limiter)
-    sx_r = _limited_moment(max(m[i, j, kr], m_floor) * sc_r, rm[i, j, kr], limiter)
+    sx_r = _limited_moment(max(m[i, j, kr], m_floor) * (sc_r / FT(2)), rm[i, j, kr], limiter)
     sx_r = ifelse(interior_r, sx_r, zero(FT))
 
     flux = _slopes_face_flux(F, max(m[i, j, kl], m_floor), rm[i, j, kl], sx_l,

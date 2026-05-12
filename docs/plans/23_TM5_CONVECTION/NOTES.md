@@ -223,7 +223,8 @@ path. Plan doc lives outside the repo at
   `amu_scratch`, `amd_scratch` per-column slabs. Added
   `_tm5_scratch_f_like` / `_tm5_scratch_am_like` allocators
   (shape `(Nz+1, Nz, ...)` and `(Nz+1, ...)` per topology).
-  Struct signature widened to `TM5Workspace{FT, M, P, C, F, A}`.
+  Current struct signature is `TM5Workspace{FT, M, P, C, F, A, CA}`;
+  `CA` carries cell-area metrics for production kg/cell state.
   `Adapt.adapt_structure` threads all seven slabs through.
   Memory cost ~63 KB / column (conv1 + pivots + cloud_dims + 2×f
   + 2×amu) — at N160 ≈ 5.3 GB, at C180 ≈ 12 GB. Acceptable on
@@ -265,14 +266,14 @@ path. Plan doc lives outside the repo at
   Drives an idealized mid-column updraft + top-hat detrainment
   profile through BOTH `CMFMCConvection` and `TM5Convection` on
   the same LatLon grid and on a ReducedGaussian grid.
-- **Unit-convention scope decision** — CMFMC and TM5 have
-  different natural unit conventions: CMFMC expects `air_mass` in
-  kg per cell and multiplies by `cell_area` internally; TM5
-  expects `air_mass` in kg per unit area and never touches
-  `cell_area`. Attempting a byte-for-byte profile comparison
-  requires unit translation that's brittle and would mask
-  regressions in either scheme. Commit 5 instead verifies both
-  schemes independently on their natural inputs:
+- **Unit-convention scope decision** — CMFMC and TM5 both consume
+  kg/m²/s convective fluxes. The original TM5 matrix expects
+  `m(k)` in kg/m²; production AtmosTransport state stores
+  `air_mass` in kg per cell, so the runtime TM5 workspace now
+  carries `cell_area` and converts `air_mass / cell_area` before
+  building the matrix. The idealized parity tests pass unit-area
+  metrics so their synthetic columns still exercise the same
+  Fortran algebra:
   - (A) Uniform mixing-ratio preservation (`rm_new / m_new ==
     rm_init / m_init` to machine precision).
   - (B) Total tracer mass conserved (F64 machine precision).

@@ -41,6 +41,9 @@ end
 @inline poisson_balance_target_scale(steps_per_window::Integer, ::Type{FT}=Float64) where FT =
     FT(inv(2 * max(Int(steps_per_window), 1)))
 
+@inline horizontal_poisson_balance_enabled() =
+    get(ENV, "ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE", "0") == "1"
+
 """
     script_provenance(; caller_file=nothing) -> NamedTuple
 

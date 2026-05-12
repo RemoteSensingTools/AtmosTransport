@@ -10,8 +10,10 @@ different implementations and unit conventions:
   CFL-subcycled, well-mixed sub-cloud treatment. `air_mass` in
   kg per cell (kernel multiplies forcings by `cell_area`).
 - TM5Convection: implicit backward-Euler matrix solve,
-  unconditionally stable. `air_mass` in kg per unit area
-  (kernel divides forcings by `m` directly; no cell_area).
+  unconditionally stable. Production `air_mass` is kg per cell,
+  and the kernel uses `cell_metrics` to divide by kg/m²; these
+  idealized parity checks pass unit-area metrics so their synthetic
+  `m = 5e3` columns still represent kg/m².
 
 Because the natural unit conventions differ, this test does NOT
 attempt a profile-by-profile numerical agreement between the two
@@ -150,7 +152,7 @@ end
         tm5_fields = (entu = entu_3d, detu = detu_3d,
                        entd = entd_3d, detd = detd_3d)
         forcing = ConvectionForcing(nothing, nothing, tm5_fields)
-        ws = TM5Workspace(state.air_mass)
+        ws = TM5Workspace(state.air_mass; cell_metrics = ones(FT, Ny))
         total_before = sum(state.tracers_raw)
         AtmosTransport.Operators.apply!(state, forcing, grid,
                                          TM5Convection(), dt;
@@ -167,7 +169,7 @@ end
         tm5_fields = (entu = entu_3d, detu = detu_3d,
                        entd = entd_3d, detd = detd_3d)
         forcing = ConvectionForcing(nothing, nothing, tm5_fields)
-        ws = TM5Workspace(state.air_mass)
+        ws = TM5Workspace(state.air_mass; cell_metrics = ones(FT, Ny))
         AtmosTransport.Operators.apply!(state, forcing, grid,
                                          TM5Convection(), dt;
                                          workspace = ws)
@@ -228,7 +230,7 @@ end
     tm5_fields = (entu = entu_2d, detu = detu_2d,
                    entd = entd_2d, detd = detd_2d)
     forcing_t = ConvectionForcing(nothing, nothing, tm5_fields)
-    ws_t = TM5Workspace(state_t.air_mass)
+    ws_t = TM5Workspace(state_t.air_mass; cell_metrics = ones(FT, ncell))
     total_t_before = sum(state_t.tracers_raw)
     AtmosTransport.Operators.apply!(state_t, forcing_t, grid,
                                      TM5Convection(), dt; workspace = ws_t)

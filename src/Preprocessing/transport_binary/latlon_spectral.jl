@@ -4,8 +4,8 @@
     process_day(date, grid::LatLonTargetGeometry, settings, vertical; next_day_hour0=nothing)
 
 Run the full one-day preprocessing workflow for the structured lat-lon target:
-read spectral input, process all windows, apply Poisson balance, and write the
-final binary.
+read spectral input, process all windows, close continuity against forward mass
+endpoints, and write the final binary.
 """
 function process_day(date::Date,
                      grid::LatLonTargetGeometry,

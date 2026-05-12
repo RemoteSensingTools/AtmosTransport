@@ -120,17 +120,20 @@ end
         vc = HybridSigmaPressure(A_ifc, B_ifc)
         grid = AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT = FT)
         forcing = _ll_forcing(Nx, Ny, Nz, FT)
+        metrics = ones(FT, Ny)
 
         # Path A: single tile covering all cells (Nx*Ny = 40).
         state_A = _make_ll_state(Nx, Ny, Nz, Nt)
-        ws_A    = TM5Workspace(state_A.air_mass; tile_columns = Nx * Ny)
+        ws_A    = TM5Workspace(state_A.air_mass; tile_columns = Nx * Ny,
+                                cell_metrics = metrics)
         apply!(state_A, forcing, grid, TM5Convection(), FT(600); workspace = ws_A)
 
         # Path B: small tile (7) so the launch is broken into 6 tiles
         # with a trailing remainder of 5. Stress-tests the bias logic
         # on uneven splits.
         state_B = _make_ll_state(Nx, Ny, Nz, Nt)
-        ws_B    = TM5Workspace(state_B.air_mass; tile_columns = 7)
+        ws_B    = TM5Workspace(state_B.air_mass; tile_columns = 7,
+                                cell_metrics = metrics)
         apply!(state_B, forcing, grid, TM5Convection(), FT(600); workspace = ws_B)
 
         @test state_A.tracers_raw == state_B.tracers_raw
@@ -150,13 +153,16 @@ end
         grid = AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT = FT)
         ncells = AtmosTransport.Grids.ncells(mesh)
         forcing = _rg_forcing(ncells, Nz, FT)
+        metrics = ones(FT, ncells)
 
         state_A = _make_rg_state(ncells, Nz)
-        ws_A    = TM5Workspace(state_A.air_mass; tile_columns = ncells)
+        ws_A    = TM5Workspace(state_A.air_mass; tile_columns = ncells,
+                                cell_metrics = metrics)
         apply!(state_A, forcing, grid, TM5Convection(), FT(600); workspace = ws_A)
 
         state_B = _make_rg_state(ncells, Nz)
-        ws_B    = TM5Workspace(state_B.air_mass; tile_columns = 5)
+        ws_B    = TM5Workspace(state_B.air_mass; tile_columns = 5,
+                                cell_metrics = metrics)
         apply!(state_B, forcing, grid, TM5Convection(), FT(600); workspace = ws_B)
 
         @test state_A.tracers_raw == state_B.tracers_raw
@@ -177,15 +183,18 @@ end
         vc = HybridSigmaPressure(A_ifc, B_ifc)
         grid = AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT = FT)
         forcing = _cs_forcing(Nc, Nz, FT)
+        metrics = ntuple(_ -> ones(FT, Nc, Nc), 6)
 
         # Path A: single tile per panel (Nc*Nc = 36).
         state_A = _make_cs_state(mesh, Nz)
-        ws_A    = TM5Workspace(state_A.air_mass; tile_columns = Nc * Nc)
+        ws_A    = TM5Workspace(state_A.air_mass; tile_columns = Nc * Nc,
+                                cell_metrics = metrics)
         apply!(state_A, forcing, grid, TM5Convection(), FT(600); workspace = ws_A)
 
         # Path B: small tile, leaves an uneven remainder per panel.
         state_B = _make_cs_state(mesh, Nz)
-        ws_B    = TM5Workspace(state_B.air_mass; tile_columns = 11)
+        ws_B    = TM5Workspace(state_B.air_mass; tile_columns = 11,
+                                cell_metrics = metrics)
         apply!(state_B, forcing, grid, TM5Convection(), FT(600); workspace = ws_B)
 
         for p in 1:6

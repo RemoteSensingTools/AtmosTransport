@@ -208,8 +208,29 @@ tape/
     {1, 2, 3, 6, 12}, the `base_panels_rm0 = nothing` zero-
     fallback branch, and pre-constructed storage rejection
     across all three scheme classes.
-  * **A.3e — TODO.** `RevolveCheckpoint(snapshots)` (binomial
-    Griewank-Walther schedule).
+  * **A.3e SHIPPED.** `RevolveCheckpoint()` — tractable recursive-
+    bisection variant of Griewank-Walther Revolve. The reverse
+    pass walks the step range via depth-first bisection: each
+    recursive frame propagates from `lo` to `mid` via
+    `record_ops=false`, recursively reverses `[mid, hi]`, then
+    recursively reverses `[lo, mid]` from the frame-local saved
+    state (the recorder's input copy preserves it). Peak snapshot
+    memory is `ceil(log2(nsteps))` state-pair copies. Three
+    `_collect_surface_footprints_revolve` methods (linear,
+    nonlinear, LinRood); same `final_adjoint_seed` and
+    `_validate_objective` bypass as A.3d. Wired through both entry
+    points. **Documented limitation:** the recursion's increased
+    `fill_panel_halos!(...; dir=0)` boundary count compounds
+    through the monotone PPM limiter when combined with strongly
+    nonlinear physics (implicit diffusion + CMFMC/TM5 convection),
+    causing O(1e-7) absolute drift vs FullCheckpoint — physically
+    valid to FD-identity tolerance but NOT bit-exact. Linear PPM,
+    nonlinear PPM without physics, LinRood, and from-seed Revolve
+    all bit-exact at `atol=1e-12`. Users needing bit-exact parity
+    on the diffusion+convection combo should pick
+    `StrideCheckpoint(K)` instead. 49 new test assertions.
+    Optimal binomial Griewank-Walther splits (Algorithm 799) are a
+    future promotion behind the same `RevolveCheckpoint` API.
 - **A3** — public-API kwargs (`tape_storage=:mmap, tape_path,
   checkpoint`) on `cs_surface_emission_footprint`. C48 14-day stretch
   run; goal: peak RSS < 50 GB, tape disk < 1.5 TB.

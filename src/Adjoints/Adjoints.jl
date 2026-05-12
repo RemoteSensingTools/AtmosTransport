@@ -55,6 +55,7 @@ using ..Tape: AbstractCSTapeStorage,
               _CSSweepRecord, _CSHaloRecord, _CSMidpointRecord,
               _CSDiffusionRecord, _CSConvectionRecord, _CSTapeOp,
               AbstractCheckpointSchedule, FullCheckpoint, StrideCheckpoint,
+              RevolveCheckpoint,
               checkpoint_window_count, checkpoint_window_range
 
 const CSAdjointLinearScheme = Union{UpwindScheme, SlopesScheme{NoLimiter}, PPMScheme{NoLimiter}}
@@ -285,7 +286,7 @@ export MmapCSTapeStorage, MmapCSTapeSlot
 export PinnedHostCSTapeSlot, CSTapeByteEstimate
 export finalize_tape!
 export load_mmap_tape, get_record
-export AbstractCheckpointSchedule, FullCheckpoint, StrideCheckpoint
+export AbstractCheckpointSchedule, FullCheckpoint, StrideCheckpoint, RevolveCheckpoint
 export evaluate_objective, run_cs_footprint_forward
 export cs_surface_emission_footprint, cs_surface_emission_footprint_from_seed
 export cs_tape_byte_estimate

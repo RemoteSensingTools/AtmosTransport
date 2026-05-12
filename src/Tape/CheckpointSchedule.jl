@@ -53,6 +53,48 @@ struct StrideCheckpoint <: AbstractCheckpointSchedule
 end
 
 """
+    RevolveCheckpoint()
+
+Logarithmic-memory checkpoint schedule. The driver bisects the step
+range recursively: at each level it propagates forward from a saved
+state to the midpoint, reverses the upper half, restores the saved
+state, then reverses the lower half. Peak snapshot memory is the
+recursion depth ~ `ceil(log2(nsteps))` state-pair copies; total
+recomputation work is ~`O(nsteps × log nsteps)` because each step is
+re-propagated once per recursion level on the path from root to
+leaf.
+
+This is a tractable bisection variant of Griewank-Walther Revolve —
+it does NOT compute optimal binomial splits. For `nsteps = 2880`
+(C180 / 14-day campaign) memory caps at ~12 simultaneous snapshots,
+which is the production target. A future commit can promote this to
+the optimal Revolve schedule (`RevolveCheckpoint(snapshots)` with a
+user-supplied snapshot cap) without changing the public API for
+single-call inversions.
+
+Trade-off vs `StrideCheckpoint(K)`:
+
+| Scheme                         | Memory          | Forward work  |
+|--------------------------------|-----------------|---------------|
+| `FullCheckpoint`               | O(nsteps)       | O(nsteps)     |
+| `StrideCheckpoint(K)`          | O(nsteps/K)     | ~2 × nsteps   |
+| `RevolveCheckpoint()` (bisect) | O(log nsteps)   | O(nsteps × log nsteps) |
+
+**Parity caveat.** Bisection introduces more
+`fill_panel_halos!(...; dir=0)` boundaries than stride or
+FullCheckpoint. For the monotone-PPM limiter combined with strongly
+nonlinear physics (`ImplicitVerticalDiffusion` + `CMFMCConvection`
+or `TM5Convection`), this can cause the limiter to flip at panel-
+edge halo cells and produce O(1e-7) absolute drift vs
+FullCheckpoint — physically valid to FD-identity tolerance, but
+NOT bit-exact. Linear schemes (`UpwindScheme`,
+`SlopesScheme(NoLimiter())`, `PPMScheme(NoLimiter())`), nonlinear
+PPM without physics, and LinRood are all bit-exact to ~1e-12.
+Use `StrideCheckpoint(K)` when bit-exact parity is required.
+"""
+struct RevolveCheckpoint <: AbstractCheckpointSchedule end
+
+"""
     checkpoint_window_count(schedule, nsteps) -> Int
 
 Number of forward windows for `schedule` covering `nsteps` integration

@@ -148,6 +148,39 @@ function cs_surface_emission_footprint(panels_rm0, panels_m0,
         end
     end
 
+    if checkpoint isa RevolveCheckpoint
+        if scheme isa CSAdjointLinearScheme
+            return _collect_surface_footprints_revolve(
+                panels_m0,
+                panels_am_steps, panels_bm_steps, panels_cm_steps,
+                mesh, scheme, checkpoint, objective, dt_ft;
+                cfl_limit = cfl_limit,
+                flux_scale = FT(flux_scale),
+                diffusion_op = diffusion_op,
+                diffusion_workspace = diffusion_workspace,
+                diffusion_meteo = diffusion_meteo,
+                convection_op = convection_op,
+                convection_forcing = convection_forcing,
+                convection_workspace = convection_workspace,
+                tape_storage = tape_storage)
+        else
+            return _collect_surface_footprints_revolve(
+                panels_rm0, panels_m0,
+                panels_am_steps, panels_bm_steps, panels_cm_steps,
+                mesh, scheme, checkpoint, objective, dt_ft;
+                cfl_limit = cfl_limit,
+                flux_scale = FT(flux_scale),
+                base_emission_rates = base_emission_rates,
+                diffusion_op = diffusion_op,
+                diffusion_workspace = diffusion_workspace,
+                diffusion_meteo = diffusion_meteo,
+                convection_op = convection_op,
+                convection_forcing = convection_forcing,
+                convection_workspace = convection_workspace,
+                tape_storage = tape_storage)
+        end
+    end
+
     ops, final_m = _record_cs_adjoint_tape(panels_rm0, panels_m0,
                                            panels_am_steps, panels_bm_steps,
                                            panels_cm_steps, mesh, scheme;
@@ -249,6 +282,44 @@ function cs_surface_emission_footprint_from_seed(final_adjoint_rm::NTuple{6},
                 _zero_panel_tuple_like(panels_m0) :
                 base_panels_rm0
             return _collect_surface_footprints_stride(
+                tape_rm0, panels_m0,
+                panels_am_steps, panels_bm_steps, panels_cm_steps,
+                mesh, scheme, checkpoint, CSSeedObjective(), FT(dt);
+                cfl_limit = cfl_limit,
+                flux_scale = FT(flux_scale),
+                base_emission_rates = base_emission_rates,
+                diffusion_op = diffusion_op,
+                diffusion_workspace = diffusion_workspace,
+                diffusion_meteo = diffusion_meteo,
+                convection_op = convection_op,
+                convection_forcing = convection_forcing,
+                convection_workspace = convection_workspace,
+                tape_storage = tape_storage,
+                final_adjoint_seed = final_adjoint_rm)
+        end
+    end
+
+    if checkpoint isa RevolveCheckpoint
+        if scheme isa CSAdjointLinearScheme
+            return _collect_surface_footprints_revolve(
+                panels_m0,
+                panels_am_steps, panels_bm_steps, panels_cm_steps,
+                mesh, scheme, checkpoint, CSSeedObjective(), FT(dt);
+                cfl_limit = cfl_limit,
+                flux_scale = FT(flux_scale),
+                diffusion_op = diffusion_op,
+                diffusion_workspace = diffusion_workspace,
+                diffusion_meteo = diffusion_meteo,
+                convection_op = convection_op,
+                convection_forcing = convection_forcing,
+                convection_workspace = convection_workspace,
+                tape_storage = tape_storage,
+                final_adjoint_seed = final_adjoint_rm)
+        else
+            tape_rm0 = base_panels_rm0 === nothing ?
+                _zero_panel_tuple_like(panels_m0) :
+                base_panels_rm0
+            return _collect_surface_footprints_revolve(
                 tape_rm0, panels_m0,
                 panels_am_steps, panels_bm_steps, panels_cm_steps,
                 mesh, scheme, checkpoint, CSSeedObjective(), FT(dt);

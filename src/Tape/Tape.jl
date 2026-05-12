@@ -41,6 +41,7 @@ export AbstractCSTapeStorage,
        _CSDiffusionRecord, _CSConvectionRecord,
        _CSTapeOp,
        AbstractCheckpointSchedule, FullCheckpoint, StrideCheckpoint,
+       RevolveCheckpoint,
        checkpoint_window_count, checkpoint_window_range
 
 include("TapeStorage.jl")

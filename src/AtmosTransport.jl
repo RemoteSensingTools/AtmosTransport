@@ -308,7 +308,7 @@ export CSObservation, CSSurfaceFluxControl, CS4DVarResult, CS4DVarSolveResult
 export CSAdjointWorkspace, CSTapeSlot, DeviceCSTapeStorage, PinnedHostCSTapeStorage
 export MmapCSTapeStorage, MmapCSTapeSlot
 export load_mmap_tape, get_record
-export AbstractCheckpointSchedule, FullCheckpoint, StrideCheckpoint
+export AbstractCheckpointSchedule, FullCheckpoint, StrideCheckpoint, RevolveCheckpoint
 export PinnedHostCSTapeSlot, CSTapeByteEstimate
 export evaluate_objective, run_cs_footprint_forward
 export cs_surface_emission_footprint, cs_surface_emission_footprint_from_seed

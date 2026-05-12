@@ -566,21 +566,189 @@ end
     AT.finalize_tape!(storage; quiet = true)
 end
 
-@testset "argument validation" begin
+@testset "from-seed stride parity — linear PPM" begin
+    mesh, panels_m, panels_rm, am_steps, bm_steps, cm_steps = _stride_problem(
+        ; Nc = 4, Nz = 3, nsteps = 6, FT = Float64)
+    FT = eltype(panels_m[1])
+    scheme = AT.PPMScheme(AT.NoLimiter())
+
+    # Build a non-trivial final-time adjoint seed. The linear-mass
+    # tape's reverse only cares about the seed's interior cells —
+    # halos are recomputed by `_adjoint_fill_panel_halos!` — so a
+    # smooth interior pattern exercises every record type.
+    final_adj = ntuple(p -> begin
+        a = similar(panels_rm[p])
+        @inbounds for k in axes(a, 3), j in axes(a, 2), i in axes(a, 1)
+            a[i, j, k] = FT(1e-3) * sin(FT(0.21i + 0.13j + 0.07k + 0.3p))
+        end
+        a
+    end, 6)
+
+    ref = AT.cs_surface_emission_footprint_from_seed(
+        final_adj, panels_m, am_steps, bm_steps, cm_steps, mesh;
+        scheme = scheme, dt = 1.0)
+
+    for K in (1, 2, 3, 6, 12)
+        stride = AT.cs_surface_emission_footprint_from_seed(
+            final_adj, panels_m, am_steps, bm_steps, cm_steps, mesh;
+            scheme = scheme, dt = 1.0,
+            checkpoint = AT.StrideCheckpoint(K))
+        @test _footprints_equal(ref, stride)
+    end
+end
+
+@testset "from-seed stride parity — nonlinear PPM with base_panels_rm0" begin
+    mesh, panels_m, panels_rm, am_steps, bm_steps, cm_steps = _stride_problem(
+        ; Nc = 4, Nz = 3, nsteps = 6, FT = Float64)
+    FT = eltype(panels_m[1])
+    N = mesh.Nc + 2mesh.Hp
+    Nz = size(panels_m[1], 3)
+    # Non-trivial base trajectory rm — nonlinear PPM's reverse pass
+    # depends on this since the monotone limiter branches on rm/m.
+    base_rm = ntuple(p -> begin
+        a = zeros(FT, N, N, Nz)
+        @inbounds for k in 1:Nz, j in 1:N, i in 1:N
+            a[i, j, k] = panels_m[p][i, j, k] *
+                (FT(0.05) + FT(0.009) * sin(FT(0.29i + 0.19j + 0.31k + 0.13p)))
+        end
+        a
+    end, 6)
+    Adv.fill_panel_halos!(base_rm, mesh; dir = 0)
+
+    final_adj = ntuple(p -> begin
+        a = similar(panels_rm[p])
+        @inbounds for k in axes(a, 3), j in axes(a, 2), i in axes(a, 1)
+            a[i, j, k] = FT(8e-4) * cos(FT(0.17i + 0.23j + 0.11k + 0.2p))
+        end
+        a
+    end, 6)
+    scheme = AT.PPMScheme(AT.MonotoneLimiter())
+
+    ref = AT.cs_surface_emission_footprint_from_seed(
+        final_adj, panels_m, am_steps, bm_steps, cm_steps, mesh;
+        scheme = scheme, dt = 1.0,
+        base_panels_rm0 = base_rm)
+
+    for K in (2, 3, 6)
+        stride = AT.cs_surface_emission_footprint_from_seed(
+            final_adj, panels_m, am_steps, bm_steps, cm_steps, mesh;
+            scheme = scheme, dt = 1.0,
+            base_panels_rm0 = base_rm,
+            checkpoint = AT.StrideCheckpoint(K))
+        @test _footprints_equal(ref, stride)
+    end
+end
+
+@testset "from-seed stride parity — LinRoodPPMScheme with base_panels_rm0" begin
+    mesh, panels_m, panels_rm, am_steps, bm_steps, cm_steps = _stride_problem(
+        ; Nc = 4, Nz = 4, nsteps = 6, FT = Float64)
+    FT = eltype(panels_m[1])
+    N = mesh.Nc + 2mesh.Hp
+    Nz = size(panels_m[1], 3)
+    base_rm = ntuple(p -> begin
+        a = zeros(FT, N, N, Nz)
+        @inbounds for k in 1:Nz, j in 1:N, i in 1:N
+            a[i, j, k] = panels_m[p][i, j, k] *
+                (FT(0.06) + FT(0.011) * sin(FT(0.27i + 0.13j + 0.19k + 0.07p)))
+        end
+        a
+    end, 6)
+    Adv.fill_panel_halos!(base_rm, mesh; dir = 0)
+
+    final_adj = ntuple(p -> begin
+        a = similar(panels_rm[p])
+        @inbounds for k in axes(a, 3), j in axes(a, 2), i in axes(a, 1)
+            a[i, j, k] = FT(7e-4) * sin(FT(0.31i + 0.17j + 0.13k + 0.25p))
+        end
+        a
+    end, 6)
+    scheme = AT.LinRoodPPMScheme()
+
+    ref = AT.cs_surface_emission_footprint_from_seed(
+        final_adj, panels_m, am_steps, bm_steps, cm_steps, mesh;
+        scheme = scheme, dt = 1.0,
+        base_panels_rm0 = base_rm)
+
+    for K in (1, 2, 3, 6)
+        stride = AT.cs_surface_emission_footprint_from_seed(
+            final_adj, panels_m, am_steps, bm_steps, cm_steps, mesh;
+            scheme = scheme, dt = 1.0,
+            base_panels_rm0 = base_rm,
+            checkpoint = AT.StrideCheckpoint(K))
+        @test _footprints_equal(ref, stride)
+    end
+end
+
+@testset "from-seed stride nonlinear PPM with base_panels_rm0 = nothing (zero fallback)" begin
+    # Reviewer M1: cover the `base_panels_rm0 === nothing ?
+    # _zero_panel_tuple_like(panels_m0) : base_panels_rm0` branch in
+    # FootprintAPI.jl. Both FullCheckpoint and stride paths take that
+    # fallback; a future refactor that swapped the branches would
+    # silently preserve stride==full parity but give the wrong
+    # adjoint vs the documented contract.
+    mesh, panels_m, panels_rm, am_steps, bm_steps, cm_steps = _stride_problem(
+        ; Nc = 4, Nz = 3, nsteps = 6, FT = Float64)
+    FT = eltype(panels_m[1])
+    final_adj = ntuple(p -> begin
+        a = similar(panels_rm[p])
+        @inbounds for k in axes(a, 3), j in axes(a, 2), i in axes(a, 1)
+            a[i, j, k] = FT(5e-4) * sin(FT(0.19i + 0.23j + 0.13k + 0.27p))
+        end
+        a
+    end, 6)
+    scheme = AT.PPMScheme(AT.MonotoneLimiter())
+
+    # base_panels_rm0 omitted → entry defaults to zeros.
+    ref = AT.cs_surface_emission_footprint_from_seed(
+        final_adj, panels_m, am_steps, bm_steps, cm_steps, mesh;
+        scheme = scheme, dt = 1.0)
+
+    for K in (2, 3, 6)
+        stride = AT.cs_surface_emission_footprint_from_seed(
+            final_adj, panels_m, am_steps, bm_steps, cm_steps, mesh;
+            scheme = scheme, dt = 1.0,
+            checkpoint = AT.StrideCheckpoint(K))
+        @test _footprints_equal(ref, stride)
+    end
+end
+
+@testset "from-seed stride rejects unsupported scheme/storage combos" begin
     mesh, panels_m, panels_rm, am_steps, bm_steps, cm_steps = _stride_problem(
         ; Nc = 4, Nz = 3, nsteps = 4, FT = Float64)
     schedule = AT.StrideCheckpoint(2)
-
-    # cs_surface_emission_footprint_from_seed with stride — still
-    # rejected; the from-seed stride driver lands separately.
     FT = eltype(panels_m[1])
     seed = ntuple(p -> begin
         a = similar(panels_rm[p])
         fill!(a, zero(FT))
         a
     end, 6)
+
+    # LinRood + :mmap is still rejected for from-seed too.
+    @test_throws ArgumentError AT.cs_surface_emission_footprint_from_seed(
+        seed, panels_m, am_steps, bm_steps, cm_steps, mesh;
+        scheme = AT.LinRoodPPMScheme(), dt = 1.0,
+        tape_storage = :mmap,
+        checkpoint = schedule)
+
+    # Pre-constructed storage rejected on every scheme path (reviewer
+    # L2). Linear / nonlinear / LinRood each guard separately in
+    # `_collect_surface_footprints_stride`; cover all three so a
+    # future refactor that drops one guard fails loudly.
+    pre_built = AT.DeviceCSTapeStorage()
     @test_throws ArgumentError AT.cs_surface_emission_footprint_from_seed(
         seed, panels_m, am_steps, bm_steps, cm_steps, mesh;
         scheme = AT.PPMScheme(AT.NoLimiter()), dt = 1.0,
+        tape_storage = pre_built,
+        checkpoint = schedule)
+    @test_throws ArgumentError AT.cs_surface_emission_footprint_from_seed(
+        seed, panels_m, am_steps, bm_steps, cm_steps, mesh;
+        scheme = AT.PPMScheme(AT.MonotoneLimiter()), dt = 1.0,
+        tape_storage = pre_built,
+        checkpoint = schedule)
+    @test_throws ArgumentError AT.cs_surface_emission_footprint_from_seed(
+        seed, panels_m, am_steps, bm_steps, cm_steps, mesh;
+        scheme = AT.LinRoodPPMScheme(), dt = 1.0,
+        tape_storage = pre_built,
         checkpoint = schedule)
 end
+

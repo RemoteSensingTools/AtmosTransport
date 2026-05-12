@@ -192,7 +192,22 @@ tape/
     base_emission_rates + ImplicitVerticalDiffusion + `:mmap` /
     `:pinned_host` / pre-constructed-storage rejection + ORD=7
     rejection.
-  * **A.3d — TODO.** From-seed stride variant.
+  * **A.3d SHIPPED.** From-seed stride. New helper
+    `_build_stride_lambda_panels(final_m, final_adjoint_seed,
+    objective, mesh, FT)` with two methods discriminating on
+    `::Nothing` vs `::NTuple{6}`. All three stride drivers gain a
+    `final_adjoint_seed::Union{Nothing, NTuple{6}} = nothing`
+    kwarg; when non-nothing, `_validate_objective` is bypassed
+    (since `_validate_objective(::CSSeedObjective)` throws
+    unconditionally) and the lambda comes from
+    `_copy_panel_tuple(final_adjoint_seed)` instead of zero +
+    `_seed_objective!`. `cs_surface_emission_footprint_from_seed`
+    now dispatches stride via the same scheme branching as the
+    objective-driven entry. 14 new test assertions covering
+    linear / nonlinear / LinRood from-seed parity with K ∈
+    {1, 2, 3, 6, 12}, the `base_panels_rm0 = nothing` zero-
+    fallback branch, and pre-constructed storage rejection
+    across all three scheme classes.
   * **A.3e — TODO.** `RevolveCheckpoint(snapshots)` (binomial
     Griewank-Walther schedule).
 - **A3** — public-API kwargs (`tape_storage=:mmap, tape_path,

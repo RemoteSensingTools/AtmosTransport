@@ -26,6 +26,33 @@
 _slice_step_kwarg(v::AbstractVector, range::AbstractUnitRange) = view(v, range)
 _slice_step_kwarg(v, ::AbstractUnitRange) = v
 
+# Lambda construction at the start of the reverse pass.
+# - `final_adjoint_seed = nothing` (default): zero-allocate panels
+#   shaped like `final_m` and seed via the objective. Used by
+#   `cs_surface_emission_footprint` (objective-driven path).
+# - `final_adjoint_seed::NTuple{6}` (A.3d from-seed stride): caller
+#   supplies the final-time adjoint directly; the stride driver
+#   copies it instead of running `_seed_objective!`. The objective
+#   field is still threaded through for `CSFootprintResult` metadata,
+#   but `_seed_objective!` / `_validate_objective` are bypassed so
+#   `CSSeedObjective()` works without tripping its own validation
+#   reject (`ObjectiveSeeding.jl:75-79`).
+function _build_stride_lambda_panels(final_m, ::Nothing,
+                                     objective, mesh, ::Type{FT}) where {FT}
+    lambda_panels = ntuple(p -> begin
+        a = similar(final_m[p])
+        fill!(a, zero(FT))
+        a
+    end, 6)
+    _seed_objective!(lambda_panels, objective, final_m, mesh)
+    return lambda_panels
+end
+
+function _build_stride_lambda_panels(_final_m, final_adjoint_seed::NTuple{6},
+                                     _objective, _mesh, ::Type{FT}) where {FT}
+    return _copy_panel_tuple(final_adjoint_seed)
+end
+
 """
     _propagate_mass_checkpoints(panels_m0, panels_am_steps, panels_bm_steps,
                                 panels_cm_steps, mesh, scheme, schedule;
@@ -135,12 +162,18 @@ function _collect_surface_footprints_stride(panels_m0,
                                             convection_op = NoConvection(),
                                             convection_forcing = nothing,
                                             convection_workspace = nothing,
-                                            tape_storage = :device)
+                                            tape_storage = :device,
+                                            final_adjoint_seed = nothing)
     FT = eltype(panels_m0[1])
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps,
                                        panels_cm_steps)
     Nz = size(panels_m0[1], 3)
-    _validate_objective(objective, mesh, Nz)
+    # Objective validation is bypassed in the from-seed path because
+    # `_validate_objective(::CSSeedObjective)` throws unconditionally
+    # (`ObjectiveSeeding.jl:75`); from-seed callers supply the lambda
+    # directly and only need the objective field for `CSFootprintResult`
+    # metadata.
+    final_adjoint_seed === nothing && _validate_objective(objective, mesh, Nz)
     _validate_cs_diffusion_inputs(diffusion_op, diffusion_workspace, nsteps)
     _require_cs_convection_workspace(convection_op, convection_workspace)
     # The stride driver constructs a fresh tape storage per window
@@ -171,12 +204,8 @@ function _collect_surface_footprints_stride(panels_m0,
     nw = checkpoint_window_count(schedule, nsteps)
     final_m = checkpoints[nw + 1]
 
-    lambda_panels = ntuple(p -> begin
-        a = similar(final_m[p])
-        fill!(a, zero(FT))
-        a
-    end, 6)
-    _seed_objective!(lambda_panels, objective, final_m, mesh)
+    lambda_panels = _build_stride_lambda_panels(final_m, final_adjoint_seed,
+                                                objective, mesh, FT)
 
     footprints = [_zero_surface_rates(mesh, panels_m0[1]) for _ in 1:nsteps]
     ws = CSAdjointWorkspace(mesh, lambda_panels[1])
@@ -358,12 +387,13 @@ function _collect_surface_footprints_stride(panels_rm0, panels_m0,
                                             convection_op = NoConvection(),
                                             convection_forcing = nothing,
                                             convection_workspace = nothing,
-                                            tape_storage = :device)
+                                            tape_storage = :device,
+                                            final_adjoint_seed = nothing)
     FT = eltype(panels_m0[1])
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps,
                                        panels_cm_steps)
     Nz = size(panels_m0[1], 3)
-    _validate_objective(objective, mesh, Nz)
+    final_adjoint_seed === nothing && _validate_objective(objective, mesh, Nz)
     _validate_emission_rates(base_emission_rates, nsteps, mesh, "base_emission_rates")
     _validate_cs_diffusion_inputs(diffusion_op, diffusion_workspace, nsteps)
     _require_cs_convection_workspace(convection_op, convection_workspace)
@@ -389,12 +419,8 @@ function _collect_surface_footprints_stride(panels_rm0, panels_m0,
     nw = checkpoint_window_count(schedule, nsteps)
     final_m = m_checkpoints[nw + 1]
 
-    lambda_panels = ntuple(p -> begin
-        a = similar(final_m[p])
-        fill!(a, zero(FT))
-        a
-    end, 6)
-    _seed_objective!(lambda_panels, objective, final_m, mesh)
+    lambda_panels = _build_stride_lambda_panels(final_m, final_adjoint_seed,
+                                                objective, mesh, FT)
 
     footprints = [_zero_surface_rates(mesh, panels_m0[1]) for _ in 1:nsteps]
     ws = CSAdjointWorkspace(mesh, lambda_panels[1])
@@ -550,12 +576,13 @@ function _collect_surface_footprints_stride(panels_rm0, panels_m0,
                                             convection_op = NoConvection(),
                                             convection_forcing = nothing,
                                             convection_workspace = nothing,
-                                            tape_storage = :device)
+                                            tape_storage = :device,
+                                            final_adjoint_seed = nothing)
     FT = eltype(panels_m0[1])
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps,
                                        panels_cm_steps)
     Nz = size(panels_m0[1], 3)
-    _validate_objective(objective, mesh, Nz)
+    final_adjoint_seed === nothing && _validate_objective(objective, mesh, Nz)
     _validate_emission_rates(base_emission_rates, nsteps, mesh, "base_emission_rates")
     _validate_cs_diffusion_inputs(diffusion_op, diffusion_workspace, nsteps)
     _require_cs_convection_workspace(convection_op, convection_workspace)
@@ -589,12 +616,8 @@ function _collect_surface_footprints_stride(panels_rm0, panels_m0,
     nw = checkpoint_window_count(schedule, nsteps)
     final_m = m_checkpoints[nw + 1]
 
-    lambda_panels = ntuple(p -> begin
-        a = similar(final_m[p])
-        fill!(a, zero(FT))
-        a
-    end, 6)
-    _seed_objective!(lambda_panels, objective, final_m, mesh)
+    lambda_panels = _build_stride_lambda_panels(final_m, final_adjoint_seed,
+                                                objective, mesh, FT)
 
     footprints = [_zero_surface_rates(mesh, panels_m0[1]) for _ in 1:nsteps]
     ws = CSAdjointWorkspace(mesh, lambda_panels[1])

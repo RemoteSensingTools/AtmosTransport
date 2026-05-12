@@ -206,18 +206,14 @@ function cs_surface_emission_footprint_from_seed(final_adjoint_rm::NTuple{6},
                                                  convection_workspace = nothing,
                                                  tape_storage = :device,
                                                  checkpoint::AbstractCheckpointSchedule = FullCheckpoint())
-    # Strided checkpointing for the from-seed entry needs a separate
-    # driver: it skips the objective-driven seeding and takes the
-    # lambda directly. That driver is not in this commit; refuse
-    # non-FullCheckpoint until it lands. When that driver lands, also
-    # route through `_require_checkpoint_supported` (see
-    # `cs_surface_emission_footprint` above) so the scheme-vs-schedule
-    # gate stays in one place.
-    checkpoint isa FullCheckpoint || throw(ArgumentError(
-        "cs_surface_emission_footprint_from_seed does not yet support " *
-        "checkpoint=$(checkpoint); the from-seed stride driver is " *
-        "deferred to a follow-up commit. Pass checkpoint=FullCheckpoint() " *
-        "or use cs_surface_emission_footprint with an objective."))
+    # Plan 26 P0.A.3d: from-seed stride. The objective-driven stride
+    # drivers (A.3a/b/c) accept a `final_adjoint_seed` kwarg that
+    # bypasses `_seed_objective!` and `_validate_objective` (since
+    # `CSSeedObjective` would throw); reuse them by threading
+    # `final_adjoint_seed = final_adjoint_rm` through. The objective
+    # field on the returned `CSFootprintResult` is `CSSeedObjective()`
+    # for metadata parity with the FullCheckpoint from-seed path.
+    _require_checkpoint_supported(scheme, checkpoint)
     FT = eltype(panels_m0[1])
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps,
                                       panels_cm_steps)
@@ -225,6 +221,51 @@ function cs_surface_emission_footprint_from_seed(final_adjoint_rm::NTuple{6},
                              "base_emission_rates")
     _validate_cs_diffusion_inputs(diffusion_op, diffusion_workspace, nsteps)
     _require_cs_convection_workspace(convection_op, convection_workspace)
+
+    if checkpoint isa StrideCheckpoint
+        if scheme isa CSAdjointLinearScheme
+            return _collect_surface_footprints_stride(
+                panels_m0,
+                panels_am_steps, panels_bm_steps, panels_cm_steps,
+                mesh, scheme, checkpoint, CSSeedObjective(), FT(dt);
+                cfl_limit = cfl_limit,
+                flux_scale = FT(flux_scale),
+                diffusion_op = diffusion_op,
+                diffusion_workspace = diffusion_workspace,
+                diffusion_meteo = diffusion_meteo,
+                convection_op = convection_op,
+                convection_forcing = convection_forcing,
+                convection_workspace = convection_workspace,
+                tape_storage = tape_storage,
+                final_adjoint_seed = final_adjoint_rm)
+        else
+            # Nonlinear PPM or LinRood — both accept `panels_rm0` and
+            # `base_emission_rates`. The nonlinear/LinRood propagation
+            # pass needs an initial rm state; the from-seed flow uses
+            # `base_panels_rm0` for the base trajectory, falling back
+            # to zero when unspecified (matching the FullCheckpoint
+            # from-seed contract above).
+            tape_rm0 = base_panels_rm0 === nothing ?
+                _zero_panel_tuple_like(panels_m0) :
+                base_panels_rm0
+            return _collect_surface_footprints_stride(
+                tape_rm0, panels_m0,
+                panels_am_steps, panels_bm_steps, panels_cm_steps,
+                mesh, scheme, checkpoint, CSSeedObjective(), FT(dt);
+                cfl_limit = cfl_limit,
+                flux_scale = FT(flux_scale),
+                base_emission_rates = base_emission_rates,
+                diffusion_op = diffusion_op,
+                diffusion_workspace = diffusion_workspace,
+                diffusion_meteo = diffusion_meteo,
+                convection_op = convection_op,
+                convection_forcing = convection_forcing,
+                convection_workspace = convection_workspace,
+                tape_storage = tape_storage,
+                final_adjoint_seed = final_adjoint_rm)
+        end
+    end
+
     tape_rm0 = base_panels_rm0 === nothing ?
         _zero_panel_tuple_like(panels_m0) :
         base_panels_rm0

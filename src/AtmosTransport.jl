@@ -311,7 +311,11 @@ export CSDepartureRecord, CSDepartureSet, build_departure_set
 export read_departures, write_departures
 export AbstractCSSurfaceFluxCovariance
 export DiagonalCSCovariance, IsotropicGaussianCSCovariance
-export apply_B_half!, apply_B_half_adjoint!
+export apply_B_half!, apply_B_half_adjoint!, apply_B_half_inverse!
+export AbstractCSOptimType, LinearOptimType, LogNormalOptimType
+export CSSurfaceFluxPreconditioner
+export apply_preconditioner!, apply_preconditioner_inverse!
+export apply_preconditioner_tangent!, apply_preconditioner_adjoint!
 export CSAdjointWorkspace, CSTapeSlot, DeviceCSTapeStorage, PinnedHostCSTapeStorage
 export MmapCSTapeStorage, MmapCSTapeSlot
 export load_mmap_tape, get_record

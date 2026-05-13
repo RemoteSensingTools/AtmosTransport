@@ -311,6 +311,93 @@ function apply_B_half_adjoint!(g_chi::NTuple{6, A},
 end
 
 # ---------------------------------------------------------------------------
+# Inverse — `B^(-1/2)`. Needed by the preconditioner (B2) to map a
+# physical-space initial guess back into χ-space and for the
+# LogNormal bijection. `apply_B_half_inverse!` is `D^(-1) · L^(-1)`:
+# elementwise divide by σ, then deconvolve via spectral `1/sqrt(C̃)`.
+#
+# For `DiagonalCSCovariance` the inverse is exact and self-adjoint.
+# For `IsotropicGaussianCSCovariance`, the symmetric `L` is its own
+# inverse in spectral space (multiplication by `1/sqrt(C̃)`); the
+# composition `L · L^(-1) = I` is exact up to FFT roundoff, but
+# applying `L^(-1)` to a noisy input amplifies any signal that lies
+# in the high-frequency tail where `transfer_sqrt` is tiny. Callers
+# are responsible for keeping input clean.
+# ---------------------------------------------------------------------------
+
+"""
+    apply_B_half_inverse!(y::NTuple{6, AbstractMatrix},
+                          cov::AbstractCSSurfaceFluxCovariance,
+                          x::NTuple{6, AbstractMatrix}) -> y
+
+Apply `B^(-1/2)` to `x` and write the result into `y`. With the
+factorization `B^(1/2) = D · L` (`D` diagonal, `L` symmetric),
+`B^(-1/2) = L^(-1) · D^(-1)`. Used by the preconditioner to invert
+the change of variables `x = x_b + B^(1/2) χ` (Linear) or
+`x = x_b ⊙ exp(B^(1/2) χ)` (LogNormal).
+
+The Gaussian inverse is unstable for inputs with significant
+energy in the high-frequency tail of the spectrum (where the
+correlation transfer function is tiny); use on round-trip clean
+inputs, not arbitrary user data.
+"""
+function apply_B_half_inverse! end
+
+function apply_B_half_inverse!(y::NTuple{6, A},
+                                cov::DiagonalCSCovariance{FT, A},
+                                x::NTuple{6, A}) where {FT, A}
+    _validate_panel_shapes(y, cov.Nc, "y")
+    _validate_panel_shapes(x, cov.Nc, "x")
+    @inbounds for p in 1:6
+        @. y[p] = x[p] / cov.sigma[p]
+    end
+    return y
+end
+
+# Apply `L^(-1)` to a single panel in-place via 2D FFT. Real input,
+# real output. Mirror of `_apply_L_panel!` but divides by
+# `transfer_sqrt` instead of multiplying.
+function _apply_L_inverse_panel!(buf::Matrix{Complex{FT}},
+                                 input::AbstractMatrix{FT},
+                                 output::AbstractMatrix{FT},
+                                 transfer_sqrt::Matrix{FT}) where FT
+    Nc = size(transfer_sqrt, 1)
+    @inbounds for j in 1:Nc, i in 1:Nc
+        buf[i, j] = Complex{FT}(input[i, j])
+    end
+    FFTW.fft!(buf)
+    @inbounds for j in 1:Nc, i in 1:Nc
+        # `transfer_sqrt` is non-negative; zeros would be division by
+        # zero. The wrapped Gaussian's spectrum is strictly positive
+        # for L > 0, so this is safe by construction, but small
+        # entries amplify high-frequency noise (documented).
+        buf[i, j] /= transfer_sqrt[i, j]
+    end
+    FFTW.ifft!(buf)
+    @inbounds for j in 1:Nc, i in 1:Nc
+        output[i, j] = real(buf[i, j])
+    end
+    return output
+end
+
+function apply_B_half_inverse!(y::NTuple{6, A},
+                                cov::IsotropicGaussianCSCovariance{FT, A},
+                                x::NTuple{6, A}) where {FT, A}
+    _validate_panel_shapes(y, cov.Nc, "y")
+    _validate_panel_shapes(x, cov.Nc, "x")
+    Nc = cov.Nc
+    buf = Matrix{Complex{FT}}(undef, Nc, Nc)
+    scaled = Matrix{FT}(undef, Nc, Nc)
+    @inbounds for p in 1:6
+        # B^(-1/2) = L^(-1) · D^(-1). Divide by σ first, then
+        # deconvolve via `1/sqrt(C̃)` in spectral space.
+        @. scaled = x[p] / cov.sigma[p]
+        _apply_L_inverse_panel!(buf, scaled, y[p], cov.L_transfer_sqrt)
+    end
+    return y
+end
+
+# ---------------------------------------------------------------------------
 # Internal validation helpers
 # ---------------------------------------------------------------------------
 

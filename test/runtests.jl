@@ -49,6 +49,7 @@ core_tests = [
     "test_cs_observation_binding.jl",
     "test_cs_departures_io.jl",
     "test_cs_covariance.jl",
+    "test_cs_preconditioning.jl",
     "test_linrood_kernel_adjoints.jl",
     "test_structured_mesh_metadata.jl",
     "test_reduced_gaussian_mesh.jl",

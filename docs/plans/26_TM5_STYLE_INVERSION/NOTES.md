@@ -277,8 +277,28 @@ tape/
 
 ### Phase D — observation IO (lands in `src/Inversion/`)
 
-- **D1** — `ObservationsIO.jl` + `schemas/cs_observations_v1.toml` +
-  round-trip test.
+- **D1 SHIPPED.** `src/Inversion/ObservationsIO.jl` +
+  `schemas/cs_observations_v1.toml` + round-trip test. Strict v1
+  schema: single-file NetCDF with `obs` (unlimited) and
+  `date_component=6` dims; required vars `id` (i64),
+  `date_components` (i16[6, obs]), `lat`/`lon`/`alt` (f32),
+  `value`/`value_sigma` (f64), `instrument_type`/`tracer` (string);
+  root attrs `cs_observations_schema = "v1"` and `time_origin`
+  (ISO-8601). In-memory types `CSObservationRecord` (per-row,
+  keyword constructor coerces dtypes + rejects non-positive sigma)
+  and `CSObservationSet` (vector + time_origin). Public verbs
+  `read_observations(path)` and `write_observations(path, set)`
+  exported through `Adjoints` + re-exported at the
+  `AtmosTransport` top level. Loader fails fast on missing /
+  wrong-version `cs_observations_schema`, missing `time_origin`,
+  missing required variables, or wrong `date_component` dim length.
+  63 new test assertions in `test/test_cs_observations_io.jl`
+  covering bit-exact NetCDF round-trip (every field at every dtype
+  precision), on-disk layout (dim names, var dtypes, root attrs)
+  against the schema, four schema-violation rejection paths
+  (wrong-version, missing-schema-attr, missing-time-origin,
+  missing-file), constructor coercion / sigma validation, and the
+  empty-time-origin writer guard.
 - **D2** — `bind_to_mesh` + 4D-Var equivalence test (literal vector vs
   `CSObservationSet`).
 - **D3** — `write_departures` / `read_departures`.

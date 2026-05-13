@@ -45,6 +45,7 @@ core_tests = [
     "test_cs_tape_mmap_roundtrip.jl",
     "test_cs_stride_checkpoint.jl",
     "test_cs_tape_path.jl",
+    "test_cs_observations_io.jl",
     "test_linrood_kernel_adjoints.jl",
     "test_structured_mesh_metadata.jl",
     "test_reduced_gaussian_mesh.jl",

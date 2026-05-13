@@ -305,6 +305,7 @@ export AbstractCSFootprintObjective
 export CSLayerMeanObjective, CSColumnMeanObjective, CSSeedObjective, CSFootprintResult
 export CSSurfaceFluxWindow, CSSurfaceFluxJacobianResult
 export CSObservation, CSSurfaceFluxControl, CS4DVarResult, CS4DVarSolveResult
+export CSObservationRecord, CSObservationSet, read_observations, write_observations
 export CSAdjointWorkspace, CSTapeSlot, DeviceCSTapeStorage, PinnedHostCSTapeStorage
 export MmapCSTapeStorage, MmapCSTapeSlot
 export load_mmap_tape, get_record

@@ -14,6 +14,10 @@ The optional convection slot transposes the CS `CMFMCConvection` and
 module Adjoints
 
 using KernelAbstractions: @Const, @atomic, @index, @kernel, get_backend, synchronize
+# NCDatasets is loaded here (not inside ObservationsIO.jl) so the
+# Plan 26 P0.D1 observation IO can share the dependency with any
+# future read/write helpers under `src/Inversion/`.
+import NCDatasets
 
 using ..Grids: CubedSphereMesh, reciprocal_edge,
     EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST
@@ -83,6 +87,13 @@ include("../Footprint/FootprintResult.jl")
 
 # Plan 26 P0.4a — control / observation / 4D-Var result types relocated to Inversion/.
 include("../Inversion/Observations.jl")
+
+# Plan 26 P0.D1 — on-disk observation IO (CSObservationRecord /
+# CSObservationSet, read/write to the v1 NetCDF schema documented in
+# `schemas/cs_observations_v1.toml`). Loaded after Observations.jl so
+# the in-memory 4D-Var types and the raw observation-record types
+# coexist in the Adjoints namespace.
+include("../Inversion/ObservationsIO.jl")
 
 
 """
@@ -282,6 +293,7 @@ export AbstractCSFootprintObjective
 export CSLayerMeanObjective, CSColumnMeanObjective, CSSeedObjective, CSFootprintResult
 export CSSurfaceFluxWindow, CSSurfaceFluxJacobianResult
 export CSObservation, CSSurfaceFluxControl, CS4DVarResult, CS4DVarSolveResult
+export CSObservationRecord, CSObservationSet, read_observations, write_observations
 export CSAdjointWorkspace, CSTapeSlot, DeviceCSTapeStorage, PinnedHostCSTapeStorage
 export MmapCSTapeStorage, MmapCSTapeSlot
 export PinnedHostCSTapeSlot, CSTapeByteEstimate

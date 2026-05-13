@@ -170,6 +170,127 @@ end
 end
 
 # ---------------------------------------------------------------------------
+# Inner-ctor coverage — positional construction must NOT bypass the
+# arithmetic invariant. The default-positional ctor that Julia
+# auto-generates for any struct skips keyword-only validation; we put
+# the checks inside an inner ctor so both routes are gated.
+# ---------------------------------------------------------------------------
+
+@testset "CSDepartureRecord — positional ctor goes through validation" begin
+    # Reference good record via positional ctor.
+    @test AT.CSDepartureRecord(
+        Int64(1), "CO2", "TCCON",
+        (Int16(2024), Int16(1), Int16(1), Int16(0), Int16(0), Int16(0)),
+        Float32(0.0), Float32(0.0), Float32(0.0),
+        Int64(1), Int8(1), Int32(1), Int32(1),
+        10.0, 11.0, 1.0, 2.0, 0.5) isa AT.CSDepartureRecord
+
+    # Sign-flipped departure via positional ctor — must be rejected
+    # by the inner ctor's arithmetic check (the exact case the review
+    # flagged: a positional CSDepartureRecord with observed=10,
+    # simulated=11, departure=-1 used to slip through).
+    @test_throws ArgumentError AT.CSDepartureRecord(
+        Int64(1), "CO2", "TCCON",
+        (Int16(2024), Int16(1), Int16(1), Int16(0), Int16(0), Int16(0)),
+        Float32(0.0), Float32(0.0), Float32(0.0),
+        Int64(1), Int8(1), Int32(1), Int32(1),
+        10.0, 11.0, -1.0, 2.0, -0.5)
+
+    # Non-finite simulated via positional ctor.
+    @test_throws ArgumentError AT.CSDepartureRecord(
+        Int64(1), "CO2", "TCCON",
+        (Int16(2024), Int16(1), Int16(1), Int16(0), Int16(0), Int16(0)),
+        Float32(0.0), Float32(0.0), Float32(0.0),
+        Int64(1), Int8(1), Int32(1), Int32(1),
+        10.0, NaN, NaN, 2.0, NaN)
+
+    # Out-of-range panel via positional ctor.
+    @test_throws ArgumentError AT.CSDepartureRecord(
+        Int64(1), "CO2", "TCCON",
+        (Int16(2024), Int16(1), Int16(1), Int16(0), Int16(0), Int16(0)),
+        Float32(0.0), Float32(0.0), Float32(0.0),
+        Int64(1), Int8(7), Int32(1), Int32(1),  # panel = 7
+        10.0, 11.0, 1.0, 2.0, 0.5)
+end
+
+@testset "CSObservationRecord — positional ctor goes through validation" begin
+    # Good positional construction.
+    @test AT.CSObservationRecord(
+        Int64(1),
+        (Int16(2024), Int16(1), Int16(1), Int16(0), Int16(0), Int16(0)),
+        Float32(0.0), Float32(0.0), Float32(0.0),
+        420.0, 1.0, "TCCON", "CO2") isa AT.CSObservationRecord
+
+    # NaN lat via positional ctor — same vulnerability class as
+    # CSDepartureRecord. Inner-ctor catch.
+    @test_throws ArgumentError AT.CSObservationRecord(
+        Int64(1),
+        (Int16(2024), Int16(1), Int16(1), Int16(0), Int16(0), Int16(0)),
+        Float32(NaN), Float32(0.0), Float32(0.0),
+        420.0, 1.0, "TCCON", "CO2")
+
+    # Inf value_sigma via positional ctor — catches the case the D2
+    # review surfaced (`sigma > 0` alone passes Inf).
+    @test_throws ArgumentError AT.CSObservationRecord(
+        Int64(1),
+        (Int16(2024), Int16(1), Int16(1), Int16(0), Int16(0), Int16(0)),
+        Float32(0.0), Float32(0.0), Float32(0.0),
+        420.0, Inf, "TCCON", "CO2")
+
+    # Lat out of range via positional ctor.
+    @test_throws ArgumentError AT.CSObservationRecord(
+        Int64(1),
+        (Int16(2024), Int16(1), Int16(1), Int16(0), Int16(0), Int16(0)),
+        Float32(91.0), Float32(0.0), Float32(0.0),
+        420.0, 1.0, "TCCON", "CO2")
+end
+
+# ---------------------------------------------------------------------------
+# Stable row-identity alignment — re-derivation by (step, panel, i, j)
+# catches misalignment even when value / sigma happen to match across
+# rows. The exact case flagged by the review: two records with
+# identical `value` + `value_sigma` but different `date_components` /
+# `lat` / `lon` — reversing the observations vector now fails the
+# spatio-temporal check.
+# ---------------------------------------------------------------------------
+
+@testset "build_departure_set — identical value/sigma but reversed obs rejected" begin
+    # Two records with the same `value` + `value_sigma` (which is what
+    # the old check missed) but distinct dates AND distinct lat/lon
+    # (so the bound (step, panel, i, j) differs).
+    mesh = _mesh()
+    inputs = _aligned_inputs([
+        (id = 1, panel = 1, i = 2, j = 3, observed = 420.0, sigma = 0.5,
+         hour_offset = 0),
+        (id = 2, panel = 4, i = 5, j = 1, observed = 420.0, sigma = 0.5,
+         hour_offset = 3),
+    ])
+    @test length(inputs.observations) == 2
+    @test inputs.set.records[1].value == inputs.set.records[2].value
+    @test inputs.set.records[1].value_sigma == inputs.set.records[2].value_sigma
+
+    # Aligned -> accepted.
+    @test AT.build_departure_set(inputs.set, inputs.observations,
+                                  inputs.simulated, inputs.mesh,
+                                  T0_TEST_STR, DT_TEST, 24) isa AT.CSDepartureSet
+
+    # Reversed observations -> rejected on spatio-temporal grounds.
+    @test_throws ArgumentError AT.build_departure_set(
+        inputs.set, reverse(inputs.observations),
+        inputs.simulated, inputs.mesh,
+        T0_TEST_STR, DT_TEST, 24)
+end
+
+@testset "build_departure_set — rejects unparseable t_start" begin
+    inputs = _aligned_inputs([
+        (id = 1, panel = 1, i = 1, j = 1, observed = 410.0, sigma = 0.5,
+         hour_offset = 0)])
+    @test_throws ArgumentError AT.build_departure_set(
+        inputs.set, inputs.observations, inputs.simulated, inputs.mesh,
+        "not a date", DT_TEST, 24)
+end
+
+# ---------------------------------------------------------------------------
 # build_departure_set: alignment + finite gatekeeper + sign convention
 # ---------------------------------------------------------------------------
 

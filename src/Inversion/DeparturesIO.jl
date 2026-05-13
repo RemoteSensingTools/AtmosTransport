@@ -74,8 +74,82 @@ struct CSDepartureRecord
     departure::Float64
     value_sigma::Float64
     normalized_departure::Float64
+
+    # Inner constructor — all validation goes through here so that
+    # both keyword and positional invocations are caught. Without an
+    # inner ctor, Julia auto-generates a positional one that bypasses
+    # every check (review finding 2026-05-13 "Medium").
+    function CSDepartureRecord(id::Int64,
+                                tracer::String,
+                                instrument_type::String,
+                                date_components::_CSObservationDate,
+                                lat::Float32, lon::Float32, alt::Float32,
+                                step::Int64,
+                                panel::Int8, i::Int32, j::Int32,
+                                observed_value::Float64,
+                                simulated_value::Float64,
+                                departure::Float64,
+                                value_sigma::Float64,
+                                normalized_departure::Float64)
+        isfinite(lat) || throw(ArgumentError(
+            "CSDepartureRecord lat must be finite, got $lat"))
+        -90 <= lat <= 90 || throw(ArgumentError(
+            "CSDepartureRecord lat must be in [-90, 90], got $lat"))
+        isfinite(lon) || throw(ArgumentError(
+            "CSDepartureRecord lon must be finite, got $lon"))
+        step > 0 || throw(ArgumentError(
+            "CSDepartureRecord step must be positive, got $step"))
+        1 <= panel <= 6 || throw(ArgumentError(
+            "CSDepartureRecord panel must be in 1:6, got $panel"))
+        i > 0 || throw(ArgumentError(
+            "CSDepartureRecord i must be positive, got $i"))
+        j > 0 || throw(ArgumentError(
+            "CSDepartureRecord j must be positive, got $j"))
+        isfinite(observed_value) || throw(ArgumentError(
+            "CSDepartureRecord observed_value must be finite, got " *
+            "$observed_value"))
+        isfinite(simulated_value) || throw(ArgumentError(
+            "CSDepartureRecord simulated_value must be finite, got " *
+            "$simulated_value"))
+        isfinite(departure) || throw(ArgumentError(
+            "CSDepartureRecord departure must be finite, got $departure"))
+        isfinite(normalized_departure) || throw(ArgumentError(
+            "CSDepartureRecord normalized_departure must be finite, got " *
+            "$normalized_departure"))
+        isfinite(value_sigma) || throw(ArgumentError(
+            "CSDepartureRecord value_sigma must be finite, got $value_sigma"))
+        value_sigma > 0 || throw(ArgumentError(
+            "CSDepartureRecord value_sigma must be positive, got $value_sigma"))
+        # Arithmetic invariants pinned by the v1 schema's sign convention
+        # `departure = simulated_value - observed_value` and the derived
+        # `normalized_departure = departure / value_sigma`. Enforced
+        # inside the inner ctor so neither keyword nor positional
+        # construction can bypass it; `read_departures` constructs one
+        # record per row and therefore inherits the check.
+        expected_departure = simulated_value - observed_value
+        isapprox(departure, expected_departure; atol = 1e-12, rtol = 1e-9) ||
+            throw(ArgumentError(
+                "CSDepartureRecord arithmetic invariant violated: " *
+                "stored departure = $departure but simulated_value - " *
+                "observed_value = $expected_departure (the v1 sign " *
+                "convention is `simulated_minus_observed`)"))
+        expected_normalized = departure / value_sigma
+        isapprox(normalized_departure, expected_normalized;
+                 atol = 1e-12, rtol = 1e-9) ||
+            throw(ArgumentError(
+                "CSDepartureRecord arithmetic invariant violated: " *
+                "stored normalized_departure = $normalized_departure " *
+                "but departure / value_sigma = $expected_normalized"))
+        return new(id, tracer, instrument_type, date_components,
+                   lat, lon, alt, step, panel, i, j,
+                   observed_value, simulated_value, departure,
+                   value_sigma, normalized_departure)
+    end
 end
 
+# Keyword constructor — thin type-coercion wrapper that forwards to the
+# inner positional constructor above. The actual validation lives in
+# the inner ctor so a positional call cannot bypass it.
 function CSDepartureRecord(; id::Integer,
                             tracer::AbstractString,
                             instrument_type::AbstractString,
@@ -89,60 +163,6 @@ function CSDepartureRecord(; id::Integer,
                             value_sigma::Real,
                             normalized_departure::Real)
     dc = _coerce_date_components(date_components)
-    isfinite(lat) || throw(ArgumentError(
-        "CSDepartureRecord lat must be finite, got $lat"))
-    -90 <= lat <= 90 || throw(ArgumentError(
-        "CSDepartureRecord lat must be in [-90, 90], got $lat"))
-    isfinite(lon) || throw(ArgumentError(
-        "CSDepartureRecord lon must be finite, got $lon"))
-    step > 0 || throw(ArgumentError(
-        "CSDepartureRecord step must be positive, got $step"))
-    1 <= panel <= 6 || throw(ArgumentError(
-        "CSDepartureRecord panel must be in 1:6, got $panel"))
-    i > 0 || throw(ArgumentError(
-        "CSDepartureRecord i must be positive, got $i"))
-    j > 0 || throw(ArgumentError(
-        "CSDepartureRecord j must be positive, got $j"))
-    isfinite(observed_value) || throw(ArgumentError(
-        "CSDepartureRecord observed_value must be finite, got $observed_value"))
-    isfinite(simulated_value) || throw(ArgumentError(
-        "CSDepartureRecord simulated_value must be finite, got $simulated_value"))
-    isfinite(departure) || throw(ArgumentError(
-        "CSDepartureRecord departure must be finite, got $departure"))
-    isfinite(normalized_departure) || throw(ArgumentError(
-        "CSDepartureRecord normalized_departure must be finite, got " *
-        "$normalized_departure"))
-    isfinite(value_sigma) || throw(ArgumentError(
-        "CSDepartureRecord value_sigma must be finite, got $value_sigma"))
-    value_sigma > 0 || throw(ArgumentError(
-        "CSDepartureRecord value_sigma must be positive, got $value_sigma"))
-    # Arithmetic invariants pinned by the v1 schema's sign convention
-    # `departure = simulated_value - observed_value` and the derived
-    # `normalized_departure = departure / value_sigma`. Enforced at
-    # construction so both direct construction and `read_departures`
-    # (which calls the ctor per row) fail fast on a file whose stored
-    # values contradict the sign-convention root attribute. Tolerance
-    # is generous enough for any Float64 rounding incurred during
-    # `build_departure_set` / NetCDF round-trip; tight enough to catch
-    # a sign flip or off-by-one factor.
-    sim_f = Float64(simulated_value)
-    obs_f = Float64(observed_value)
-    dep_f = Float64(departure)
-    sigma_f = Float64(value_sigma)
-    expected_departure = sim_f - obs_f
-    isapprox(dep_f, expected_departure; atol = 1e-12, rtol = 1e-9) ||
-        throw(ArgumentError(
-            "CSDepartureRecord arithmetic invariant violated: " *
-            "stored departure = $dep_f but simulated_value - " *
-            "observed_value = $expected_departure (the v1 sign " *
-            "convention is `simulated_minus_observed`)"))
-    expected_normalized = dep_f / sigma_f
-    norm_f = Float64(normalized_departure)
-    isapprox(norm_f, expected_normalized; atol = 1e-12, rtol = 1e-9) ||
-        throw(ArgumentError(
-            "CSDepartureRecord arithmetic invariant violated: " *
-            "stored normalized_departure = $norm_f but " *
-            "departure / value_sigma = $expected_normalized"))
     return CSDepartureRecord(Int64(id),
                              String(tracer),
                              String(instrument_type),
@@ -235,6 +255,23 @@ Base.getindex(set::CSDepartureSet, i::Integer) = set.records[i]
 # Builder — alignment + finite-value gatekeeper
 # ---------------------------------------------------------------------------
 
+# Parse an ISO-8601 datetime in either `T`-separated (strict) or
+# space-separated (common variant used by D1 / D3 test fixtures) form.
+# Used by `build_departure_set` to re-derive the expected step index
+# from each observation record's `date_components`.
+function _parse_iso_datetime(s::AbstractString)
+    for fmt in (Dates.DateFormat("yyyy-mm-ddTHH:MM:SS"),
+                Dates.DateFormat("yyyy-mm-dd HH:MM:SS"))
+        try
+            return Dates.DateTime(s, fmt)
+        catch
+        end
+    end
+    throw(ArgumentError(
+        "could not parse t_start = $(repr(s)) as an ISO-8601 datetime " *
+        "(accepted formats: 'yyyy-mm-ddTHH:MM:SS' or 'yyyy-mm-dd HH:MM:SS')"))
+end
+
 """
     build_departure_set(set::CSObservationSet,
                         observations::AbstractVector{<:CSObservation{CSColumnMeanObjective}},
@@ -286,6 +323,20 @@ function build_departure_set(set::CSObservationSet,
     nsteps > 0 || throw(ArgumentError(
         "build_departure_set nsteps must be positive, got $nsteps"))
 
+    # Spatio-temporal alignment check: re-derive the expected
+    # `(step, panel, i, j)` that `bind_to_mesh` would have produced
+    # for each `set.records[k]` and compare to `observations[k]`. This
+    # uses the record's `date_components` + `lat`/`lon` as the stable
+    # row identity, so a swap that happens to preserve `value` /
+    # `value_sigma` (e.g. two distinct records that share a sigma) is
+    # still caught. The check is stricter than the bind_to_mesh
+    # default — if you used `out_of_range_policy = :clamp` /
+    # `:skip` / `tracer_filter`, you must pre-filter `set` to match
+    # the kept observations before calling `build_departure_set`.
+    t_start_dt = _parse_iso_datetime(t_start)
+    dt_f = float(dt)
+    cell_cache = _build_cs_cell_center_cache(mesh)
+
     records = Vector{CSDepartureRecord}(undef, n)
     @inbounds for k in 1:n
         sim = simulated[k]
@@ -295,26 +346,48 @@ function build_departure_set(set::CSObservationSet,
 
         rec = set.records[k]
         obs = observations[k]
-        # Provenance check: `observations[k]` must have been bound from
-        # `set.records[k]` — not a different row. `bind_to_mesh` copies
-        # the record's `value` and `value_sigma` straight through, so
-        # equality here is bit-exact whenever the two vectors are
-        # genuinely aligned. Mismatch typically means the caller
-        # filtered / reordered one without the other (e.g. used
-        # `bind_to_mesh`'s `tracer_filter` or `:skip` policy without
-        # also filtering `set`).
+
+        # Re-derive expected step from the record's date and the run grid.
+        expected_step = _step_index_from_date(rec.date_components,
+                                              t_start_dt, dt_f)
+        obs.step == expected_step || throw(ArgumentError(
+            "build_departure_set alignment check failed at row $k: " *
+            "observations[$k].step = $(obs.step) but the record's " *
+            "date_components map to step $expected_step under " *
+            "t_start = $(repr(t_start)), dt = $dt. The records and " *
+            "observations vectors must align by row — did you filter / " *
+            "reorder one without the other, or use `:clamp` / `:skip` / " *
+            "`tracer_filter` in `bind_to_mesh` without re-filtering set?"))
+
+        # Re-derive expected (panel, i, j) from the record's lat/lon.
+        expected_p, expected_i, expected_j = _locate_cs_cell(
+            Float64(rec.lat), Float64(rec.lon), cell_cache)
+        obs.objective.panel == expected_p || throw(ArgumentError(
+            "build_departure_set alignment check failed at row $k: " *
+            "observations[$k].objective.panel = $(obs.objective.panel) " *
+            "but the record's (lat, lon) = ($(rec.lat), $(rec.lon)) " *
+            "maps to panel $expected_p"))
+        obs.objective.i == expected_i || throw(ArgumentError(
+            "build_departure_set alignment check failed at row $k: " *
+            "observations[$k].objective.i = $(obs.objective.i) " *
+            "but the record's (lat, lon) maps to i $expected_i"))
+        obs.objective.j == expected_j || throw(ArgumentError(
+            "build_departure_set alignment check failed at row $k: " *
+            "observations[$k].objective.j = $(obs.objective.j) " *
+            "but the record's (lat, lon) maps to j $expected_j"))
+
+        # Defense in depth: value/sigma should also match the record.
+        # `bind_to_mesh` copies these fields through verbatim, so any
+        # difference here points at a hand-built observation.
         Float64(obs.value) == Float64(rec.value) || throw(ArgumentError(
             "build_departure_set provenance check failed at row $k: " *
             "observations[$k].value = $(obs.value) but " *
-            "set.records[$k].value = $(rec.value). The observations " *
-            "vector must align with set.records — did you filter or " *
-            "reorder one without the other?"))
+            "set.records[$k].value = $(rec.value)"))
         Float64(obs.sigma) == Float64(rec.value_sigma) || throw(ArgumentError(
             "build_departure_set provenance check failed at row $k: " *
             "observations[$k].sigma = $(obs.sigma) but " *
-            "set.records[$k].value_sigma = $(rec.value_sigma). The " *
-            "observations vector must align with set.records — did " *
-            "you filter or reorder one without the other?"))
+            "set.records[$k].value_sigma = $(rec.value_sigma)"))
+
         observed = Float64(rec.value)
         sigma = Float64(rec.value_sigma)
         departure = Float64(sim) - observed

@@ -47,6 +47,31 @@ struct CSObservationRecord
     value_sigma::Float64
     instrument_type::String
     tracer::String
+
+    # Inner constructor so positional invocations are validated. The
+    # keyword constructor below is a type-coercion wrapper that
+    # forwards here.
+    function CSObservationRecord(id::Int64,
+                                  date_components::_CSObservationDate,
+                                  lat::Float32, lon::Float32, alt::Float32,
+                                  value::Float64, value_sigma::Float64,
+                                  instrument_type::String,
+                                  tracer::String)
+        isfinite(lat) || throw(ArgumentError(
+            "CSObservationRecord lat must be finite, got $lat"))
+        -90 <= lat <= 90 || throw(ArgumentError(
+            "CSObservationRecord lat must be in [-90, 90], got $lat"))
+        isfinite(lon) || throw(ArgumentError(
+            "CSObservationRecord lon must be finite, got $lon"))
+        isfinite(value) || throw(ArgumentError(
+            "CSObservationRecord value must be finite, got $value"))
+        isfinite(value_sigma) || throw(ArgumentError(
+            "CSObservationRecord value_sigma must be finite, got $value_sigma"))
+        value_sigma > 0 || throw(ArgumentError(
+            "CSObservationRecord value_sigma must be positive, got $value_sigma"))
+        return new(id, date_components, lat, lon, alt,
+                   value, value_sigma, instrument_type, tracer)
+    end
 end
 
 function CSObservationRecord(; id::Integer,
@@ -56,18 +81,6 @@ function CSObservationRecord(; id::Integer,
                               instrument_type::AbstractString,
                               tracer::AbstractString)
     dc = _coerce_date_components(date_components)
-    isfinite(lat) || throw(ArgumentError(
-        "CSObservationRecord lat must be finite, got $lat"))
-    -90 <= lat <= 90 || throw(ArgumentError(
-        "CSObservationRecord lat must be in [-90, 90], got $lat"))
-    isfinite(lon) || throw(ArgumentError(
-        "CSObservationRecord lon must be finite, got $lon"))
-    isfinite(value) || throw(ArgumentError(
-        "CSObservationRecord value must be finite, got $value"))
-    isfinite(value_sigma) || throw(ArgumentError(
-        "CSObservationRecord value_sigma must be finite, got $value_sigma"))
-    value_sigma > 0 || throw(ArgumentError(
-        "CSObservationRecord value_sigma must be positive, got $value_sigma"))
     return CSObservationRecord(Int64(id), dc,
                                Float32(lat), Float32(lon), Float32(alt),
                                Float64(value), Float64(value_sigma),

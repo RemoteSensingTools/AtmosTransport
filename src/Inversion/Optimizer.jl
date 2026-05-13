@@ -1,73 +1,140 @@
 # ---------------------------------------------------------------------------
-# Prototype gradient-descent optimizer shim.
+# Plan 26 P0.C1 — polymorphic optimizer dispatch for CS 4D-Var.
 #
-# `cs_surface_flux_4dvar_optimize` is the simple dependency-free
-# gradient-descent loop around `cs_surface_flux_4dvar`. Plan 26 Phase C
-# will replace this with an `Optim.jl` L-BFGS path; this shim is the
-# fallback / baseline.
+# Layout (designed so future backends — L-BFGS via Optim.jl in C2,
+# hand-rolled L-BFGS-B, etc. — plug in as new concrete subtypes
+# without touching the public entrypoint):
 #
-# Relocated from `src/Adjoints/Adjoints.jl` lines 675-750 unchanged
-# in Plan 26 P0.4b; no semantic change.
+#   AbstractCSOptimizer
+#       │
+#       └── CSGradientDescent          (the shim shipped in P0.4b,
+#                                       now wrapped as a concrete
+#                                       subtype)
+#
+# Backends implement `cs_surface_flux_4dvar_solve(opt, cost_fn,
+# controls)` where `cost_fn(controls) -> CS4DVarResult` is the
+# closure built by `cs_surface_flux_4dvar_optimize`. The public
+# entrypoint keeps its existing keyword surface for backward
+# compatibility — when no explicit `optimizer` is passed, it
+# constructs a `CSGradientDescent` from the legacy descent-policy
+# kwargs.
 # ---------------------------------------------------------------------------
 
 """
-    cs_surface_flux_4dvar_optimize(..., observations, controls; kwargs...)
-        -> CS4DVarSolveResult
+    AbstractCSOptimizer
 
-Run a small dependency-free gradient-descent solve around
-[`cs_surface_flux_4dvar`](@ref). The control arrays keep their existing
-CPU/GPU backend; each trial control update is applied by a
-KernelAbstractions kernel. Use `iterations`, `initial_step`, `min_step`,
-`step_shrink`, `gradient_tolerance`, and `line_search` for the descent
-policy. All remaining keyword arguments are passed to
-`cs_surface_flux_4dvar`.
+Supertype for CS 4D-Var optimization backends. Concrete subtypes
+implement `cs_surface_flux_4dvar_solve(opt, cost_fn, controls)`
+where `cost_fn(controls) -> CS4DVarResult` evaluates one
+cost-and-gradient pass through the 4D-Var driver.
+
+Shipped backends:
+
+- [`CSGradientDescent`](@ref) — the dependency-free
+  backtracking-line-search descent loop.
+
+Planned (Phase C continuation):
+
+- `CSLBFGS` — `Optim.jl` L-BFGS wrapper (Plan 26 commit C2).
 """
-function cs_surface_flux_4dvar_optimize(panels_rm0, panels_m0,
-                                        panels_am_steps,
-                                        panels_bm_steps,
-                                        panels_cm_steps,
-                                        mesh::CubedSphereMesh,
-                                        observations,
-                                        controls;
-                                        iterations::Integer = 10,
-                                        initial_step = one(eltype(panels_rm0[1])),
-                                        min_step = sqrt(eps(eltype(panels_rm0[1]))),
-                                        step_shrink = 0.5,
-                                        gradient_tolerance = zero(eltype(panels_rm0[1])),
-                                        line_search::Bool = true,
-                                        kwargs...)
-    iterations >= 0 || throw(ArgumentError("iterations must be non-negative"))
-    initial_step > 0 || throw(ArgumentError("initial_step must be positive"))
-    min_step > 0 || throw(ArgumentError("min_step must be positive"))
-    0 < step_shrink < 1 || throw(ArgumentError("step_shrink must be in (0, 1)"))
+abstract type AbstractCSOptimizer end
 
-    FT = eltype(panels_rm0[1])
-    current = cs_surface_flux_4dvar(
-        panels_rm0, panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps,
-        mesh, observations, controls; kwargs...)
-    cost_history = FT[current.cost]
+"""
+    CSGradientDescent(; iterations, initial_step, min_step,
+                        step_shrink, gradient_tolerance, line_search)
+
+Plain backtracking-line-search gradient descent. `iterations` is the
+maximum count of accepted descent steps; the loop terminates early
+when the gradient norm falls below `gradient_tolerance` or the
+line search shrinks `step` below `min_step`. With
+`line_search = false` every candidate step is accepted (constant
+step size unless the loop exits on tolerance).
+"""
+struct CSGradientDescent{FT <: AbstractFloat} <: AbstractCSOptimizer
+    iterations::Int
+    initial_step::FT
+    min_step::FT
+    step_shrink::FT
+    gradient_tolerance::FT
+    line_search::Bool
+
+    function CSGradientDescent(iterations::Integer,
+                                initial_step::FT,
+                                min_step::FT,
+                                step_shrink::FT,
+                                gradient_tolerance::FT,
+                                line_search::Bool) where FT <: AbstractFloat
+        iterations >= 0 || throw(ArgumentError(
+            "CSGradientDescent iterations must be non-negative, got $iterations"))
+        initial_step > 0 || throw(ArgumentError(
+            "CSGradientDescent initial_step must be positive, got $initial_step"))
+        min_step > 0 || throw(ArgumentError(
+            "CSGradientDescent min_step must be positive, got $min_step"))
+        0 < step_shrink < 1 || throw(ArgumentError(
+            "CSGradientDescent step_shrink must be in (0, 1), got $step_shrink"))
+        gradient_tolerance >= 0 || throw(ArgumentError(
+            "CSGradientDescent gradient_tolerance must be non-negative, got " *
+            "$gradient_tolerance"))
+        return new{FT}(Int(iterations), initial_step, min_step, step_shrink,
+                       gradient_tolerance, line_search)
+    end
+end
+
+function CSGradientDescent(; iterations::Integer = 10,
+                            initial_step::Real = 1.0,
+                            min_step::Real = sqrt(eps(Float64)),
+                            step_shrink::Real = 0.5,
+                            gradient_tolerance::Real = 0.0,
+                            line_search::Bool = true)
+    FT = promote_type(typeof(float(initial_step)),
+                      typeof(float(min_step)),
+                      typeof(float(step_shrink)),
+                      typeof(float(gradient_tolerance)))
+    return CSGradientDescent(Int(iterations),
+                             FT(initial_step), FT(min_step),
+                             FT(step_shrink), FT(gradient_tolerance),
+                             line_search)
+end
+
+# ---------------------------------------------------------------------------
+# Polymorphic backend dispatch
+# ---------------------------------------------------------------------------
+
+"""
+    cs_surface_flux_4dvar_solve(optimizer::AbstractCSOptimizer,
+                                 cost_fn,
+                                 controls) -> CS4DVarSolveResult
+
+Run `optimizer` against the cost closure `cost_fn(controls) ->
+CS4DVarResult` starting from `controls`. Dispatches on the
+optimizer's concrete type — additional backends are added by
+defining a new method here, not by branching inside an existing one.
+"""
+function cs_surface_flux_4dvar_solve end
+
+function cs_surface_flux_4dvar_solve(optimizer::CSGradientDescent{FT},
+                                      cost_fn, controls) where FT
+    current = cost_fn(controls)
+    cost_history = FT[FT(current.cost)]
     grad_norm = FT(_control_gradient_norm(current.gradients))
     gradient_norm_history = FT[grad_norm]
     step_history = FT[]
 
-    for _ in 1:iterations
-        grad_norm <= FT(gradient_tolerance) && break
-        step = FT(initial_step)
+    for _ in 1:optimizer.iterations
+        grad_norm <= optimizer.gradient_tolerance && break
+        step = optimizer.initial_step
         accepted = false
         candidate = nothing
         candidate_controls = nothing
-        while step >= FT(min_step)
+        while step >= optimizer.min_step
             candidate_controls = _gradient_step_controls(
                 current.controls, current.gradients, step)
-            candidate = cs_surface_flux_4dvar(
-                panels_rm0, panels_m0,
-                panels_am_steps, panels_bm_steps, panels_cm_steps,
-                mesh, observations, candidate_controls; kwargs...)
-            if !line_search || candidate.cost <= current.cost
+            candidate = cost_fn(candidate_controls)
+            if !optimizer.line_search || candidate.cost <= current.cost
                 accepted = true
                 break
             end
-            step *= FT(step_shrink)
+            step *= optimizer.step_shrink
         end
         accepted || break
         current = candidate
@@ -85,4 +152,58 @@ function cs_surface_flux_4dvar_optimize(panels_rm0, panels_m0,
         gradient_norm_history,
         step_history,
         length(step_history))
+end
+
+# ---------------------------------------------------------------------------
+# Public entrypoint
+# ---------------------------------------------------------------------------
+
+"""
+    cs_surface_flux_4dvar_optimize(..., observations, controls;
+                                    optimizer = nothing, kwargs...)
+        -> CS4DVarSolveResult
+
+Run an optimization loop around [`cs_surface_flux_4dvar`](@ref).
+
+`optimizer::AbstractCSOptimizer` (kwarg) selects the backend. When
+omitted, a [`CSGradientDescent`](@ref) is constructed from the
+legacy descent-policy keyword arguments (`iterations`,
+`initial_step`, `min_step`, `step_shrink`, `gradient_tolerance`,
+`line_search`) so existing call sites keep working unchanged.
+
+Remaining keyword arguments are forwarded to `cs_surface_flux_4dvar`
+on every cost evaluation — including `preconditioner = ...` for the
+P0.B3 preconditioned-cost path.
+"""
+function cs_surface_flux_4dvar_optimize(panels_rm0, panels_m0,
+                                        panels_am_steps,
+                                        panels_bm_steps,
+                                        panels_cm_steps,
+                                        mesh::CubedSphereMesh,
+                                        observations,
+                                        controls;
+                                        optimizer::Union{Nothing,
+                                                          AbstractCSOptimizer} = nothing,
+                                        iterations::Integer = 10,
+                                        initial_step = one(eltype(panels_rm0[1])),
+                                        min_step = sqrt(eps(eltype(panels_rm0[1]))),
+                                        step_shrink = 0.5,
+                                        gradient_tolerance = zero(eltype(panels_rm0[1])),
+                                        line_search::Bool = true,
+                                        kwargs...)
+    opt = if optimizer === nothing
+        FT = eltype(panels_rm0[1])
+        CSGradientDescent(Int(iterations), FT(initial_step), FT(min_step),
+                          FT(step_shrink), FT(gradient_tolerance), line_search)
+    else
+        optimizer
+    end
+
+    cost_fn = function (active_controls)
+        return cs_surface_flux_4dvar(
+            panels_rm0, panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps,
+            mesh, observations, active_controls; kwargs...)
+    end
+
+    return cs_surface_flux_4dvar_solve(opt, cost_fn, controls)
 end

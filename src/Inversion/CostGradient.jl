@@ -241,13 +241,35 @@ function _control_vector(controls)
     return CSSurfaceFluxControl[controls...]
 end
 
-# Preconditioner-list normalization (mirrors `_control_vector`). Accepts
-# either a single `CSSurfaceFluxPreconditioner` (broadcast to all
-# controls) or a `Vector` of them aligned with the control vector.
+# Preconditioner-list normalization (mirrors `_control_vector`).
+# Accepts either a single `CSSurfaceFluxPreconditioner` (returned as a
+# length-1 vector, later broadcast to every control by
+# `_align_preconditioners_to_controls`) or a `Vector` of them aligned
+# 1-to-1 with the control vector.
 _preconditioner_vector(prec::CSSurfaceFluxPreconditioner) =
     CSSurfaceFluxPreconditioner[prec]
 _preconditioner_vector(precs::AbstractVector{<:CSSurfaceFluxPreconditioner}) =
     CSSurfaceFluxPreconditioner[precs...]
+
+# Broadcast a scalar (length-1) preconditioner vector across every
+# control, or pass through an already-aligned vector. The two cases
+# the caller wants are:
+#   * 1 preconditioner, N controls → use that preconditioner for all.
+#   * N preconditioners, N controls → use as-is.
+# Any other combination is an alignment error.
+function _align_preconditioners_to_controls(preconditioner_vec, n_controls::Int)
+    n_prec = length(preconditioner_vec)
+    if n_prec == n_controls
+        return preconditioner_vec
+    elseif n_prec == 1
+        return fill(preconditioner_vec[1], n_controls)
+    else
+        throw(ArgumentError(
+            "preconditioner length $n_prec does not match controls " *
+            "length $n_controls (only a single preconditioner or one " *
+            "preconditioner per control is accepted)"))
+    end
+end
 
 # Build a fresh `CSSurfaceFluxControl` whose `.value` is `T(χ)` —
 # the physical-space image of the χ-space `chi_control.value`. The
@@ -347,9 +369,10 @@ Two modes:
   and the background `x_b` is carried by the preconditioner itself.
 
 `preconditioner` accepts either a single `CSSurfaceFluxPreconditioner`
-(broadcast to all controls if length(controls) == 1) or a
-`Vector{<:CSSurfaceFluxPreconditioner}` aligned 1-to-1 with the
-control vector.
+(broadcast to every control — the same preconditioner is used for
+each of them) or a `Vector{<:CSSurfaceFluxPreconditioner}` aligned
+1-to-1 with the control vector. Any other length mismatch throws
+`ArgumentError`.
 """
 function cs_surface_flux_4dvar(panels_rm0, panels_m0,
                                panels_am_steps,
@@ -395,10 +418,8 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
     preconditioner_vec = preconditioner === nothing ?
         nothing : _preconditioner_vector(preconditioner)
     if preconditioner_vec !== nothing
-        length(preconditioner_vec) == length(control_vec) ||
-            throw(ArgumentError(
-                "preconditioner length $(length(preconditioner_vec)) does not " *
-                "match controls length $(length(control_vec))"))
+        preconditioner_vec = _align_preconditioners_to_controls(
+            preconditioner_vec, length(control_vec))
         physical_controls = [
             _preconditioned_physical_control(control_vec[idx],
                                              preconditioner_vec[idx])

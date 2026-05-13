@@ -112,21 +112,36 @@ defining a new method here, not by branching inside an existing one.
 """
 function cs_surface_flux_4dvar_solve end
 
-function cs_surface_flux_4dvar_solve(optimizer::CSGradientDescent{FT},
-                                      cost_fn, controls) where FT
+function cs_surface_flux_4dvar_solve(optimizer::CSGradientDescent,
+                                      cost_fn, controls)
     current = cost_fn(controls)
+    # Derive history / step `FT` from the cost result, not from the
+    # optimizer's parametric `FT`. A user passing `optimizer =
+    # CSGradientDescent(initial_step = 0.25)` (defaults to Float64)
+    # against a Float32 model would otherwise hit the
+    # `CS4DVarSolveResult{FT, A2 <: AbstractArray{FT, 2}}` type bound
+    # because A2's eltype is Float32 but the optimizer-FT-tagged
+    # `CS4DVarSolveResult` would claim Float64. Policy scalars
+    # (`initial_step`, `min_step`, `step_shrink`,
+    # `gradient_tolerance`) are coerced once here.
+    FT = eltype(current.gradients[1][1])
+    initial_step = FT(optimizer.initial_step)
+    min_step = FT(optimizer.min_step)
+    step_shrink = FT(optimizer.step_shrink)
+    gradient_tolerance = FT(optimizer.gradient_tolerance)
+
     cost_history = FT[FT(current.cost)]
     grad_norm = FT(_control_gradient_norm(current.gradients))
     gradient_norm_history = FT[grad_norm]
     step_history = FT[]
 
     for _ in 1:optimizer.iterations
-        grad_norm <= optimizer.gradient_tolerance && break
-        step = optimizer.initial_step
+        grad_norm <= gradient_tolerance && break
+        step = initial_step
         accepted = false
         candidate = nothing
         candidate_controls = nothing
-        while step >= optimizer.min_step
+        while step >= min_step
             candidate_controls = _gradient_step_controls(
                 current.controls, current.gradients, step)
             candidate = cost_fn(candidate_controls)
@@ -134,7 +149,7 @@ function cs_surface_flux_4dvar_solve(optimizer::CSGradientDescent{FT},
                 accepted = true
                 break
             end
-            step *= optimizer.step_shrink
+            step *= step_shrink
         end
         accepted || break
         current = candidate

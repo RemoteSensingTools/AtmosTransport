@@ -259,10 +259,16 @@ end
 @testset "preconditioned 4D-Var — preconditioner / control length mismatch" begin
     s = _preconditioned_scenario(; optim_type = AT.LinearOptimType(),
                                  cov_kind = :diagonal, Nc = 3)
+    # Mismatched lengths that are neither 1 nor `length(controls)` are
+    # rejected. `[prec_a]` (length 1 with 2 controls) is now the
+    # documented broadcast case — see the optimizer-dispatch suite —
+    # so the failing case here is a length-3 vector against 2 controls.
     @test_throws ArgumentError AT.cs_surface_flux_4dvar(
         s.panels_rm, s.panels_m,
         s.panels_am, s.panels_bm, s.panels_cm,
         s.mesh, s.observations, s.controls;
         scheme = AT.PPMScheme(AT.NoLimiter()), dt = s.dt,
-        preconditioner = [s.preconditioners[1]])
+        preconditioner = [s.preconditioners[1],
+                           s.preconditioners[1],
+                           s.preconditioners[1]])
 end

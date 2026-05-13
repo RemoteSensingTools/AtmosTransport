@@ -109,6 +109,37 @@ end
     @test [o.step for o in obs_clamp] == [1, 1, 5]
 end
 
+# Explicit terminal-boundary case: an observation at exactly
+# `t_start + nsteps*dt` maps to step `nsteps + 1` and must be treated as
+# out-of-range under each policy. The previous policy testset only
+# exercised `5*DT + 1` (off by 1 second past the boundary); this pins
+# the bit-exact boundary the ship note claims.
+@testset "bind_to_mesh — terminal boundary t_start + nsteps*dt" begin
+    mesh = _mesh()
+    lons, lats = AT.panel_cell_center_lonlat(mesh, 1)
+    lat0, lon0 = lats[2, 2], lons[2, 2]
+    nsteps = 5
+    terminal = nsteps * DT_TEST       # exactly one step past the last valid
+
+    records = [ _record(id = 21, dc = _dc_at(terminal),
+                        lat = lat0, lon = lon0) ]
+    set = AT.CSObservationSet(records; time_origin = "2024-06-15 00:00:00")
+
+    @test_throws ArgumentError AT.bind_to_mesh(set, mesh, T0_TEST, DT_TEST;
+                                               nsteps = nsteps)
+
+    obs_skip = AT.bind_to_mesh(set, mesh, T0_TEST, DT_TEST;
+                               nsteps = nsteps,
+                               out_of_range_policy = :skip)
+    @test isempty(obs_skip)
+
+    obs_clamp = AT.bind_to_mesh(set, mesh, T0_TEST, DT_TEST;
+                                nsteps = nsteps,
+                                out_of_range_policy = :clamp)
+    @test length(obs_clamp) == 1
+    @test obs_clamp[1].step == nsteps
+end
+
 @testset "bind_to_mesh — argument validation" begin
     mesh = _mesh()
     set = AT.CSObservationSet([_record(id = 1, dc = _dc_at(0),
@@ -121,6 +152,50 @@ end
                                                nsteps = 0)
     @test_throws ArgumentError AT.bind_to_mesh(set, mesh, T0_TEST, DT_TEST;
                                                out_of_range_policy = :bogus)
+end
+
+# ---------------------------------------------------------------------------
+# Fail-fast on non-finite / out-of-range coordinates and payloads.
+#
+# `CSObservationRecord`'s keyword constructor (and therefore every
+# record loaded from disk) is already finite-checked. These tests
+# bypass the keyword validator by going through the positional inner
+# constructor, simulating a record built by hand without going through
+# the public surface. `bind_to_mesh` must still refuse to bind them.
+# ---------------------------------------------------------------------------
+
+_dc_const() = (Int16(2024), Int16(6), Int16(15),
+                Int16(0),    Int16(0), Int16(0))
+
+_bad_record(; lat = 0.0, lon = 0.0, alt = 0.0,
+            value = 420.0, sigma = 0.5) =
+    AT.CSObservationRecord(Int64(1), _dc_const(),
+                            Float32(lat), Float32(lon), Float32(alt),
+                            Float64(value), Float64(sigma),
+                            "TCCON", "CO2")
+
+@testset "bind_to_mesh — rejects non-finite / out-of-range fields" begin
+    mesh = _mesh()
+    function _bind(record)
+        set = AT.CSObservationSet([record];
+                                  time_origin = "2024-06-15 00:00:00")
+        return AT.bind_to_mesh(set, mesh, T0_TEST, DT_TEST; nsteps = 24)
+    end
+
+    @test_throws ArgumentError _bind(_bad_record(lat = NaN))
+    @test_throws ArgumentError _bind(_bad_record(lat = Inf))
+    @test_throws ArgumentError _bind(_bad_record(lat = 90.5))     # > 90
+    @test_throws ArgumentError _bind(_bad_record(lat = -91.0))    # < -90
+    @test_throws ArgumentError _bind(_bad_record(lon = NaN))
+    @test_throws ArgumentError _bind(_bad_record(lon = Inf))
+    @test_throws ArgumentError _bind(_bad_record(value = NaN))
+    @test_throws ArgumentError _bind(_bad_record(value = Inf))
+    @test_throws ArgumentError _bind(_bad_record(sigma = NaN))
+    @test_throws ArgumentError _bind(_bad_record(sigma = Inf))    # not finite
+
+    # Sanity: a record with all-finite fields still binds successfully.
+    obs = _bind(_bad_record())
+    @test length(obs) == 1
 end
 
 # ---------------------------------------------------------------------------

@@ -92,6 +92,8 @@ end
 function CSObservation(step::Integer, objective::AbstractCSFootprintObjective,
                        value::Real, sigma::Real)
     step > 0 || throw(ArgumentError("CSObservation step must be positive, got $step"))
+    isfinite(value) || throw(ArgumentError("CSObservation value must be finite, got $value"))
+    isfinite(sigma) || throw(ArgumentError("CSObservation sigma must be finite, got $sigma"))
     sigma > 0 || throw(ArgumentError("CSObservation sigma must be positive, got $sigma"))
     FT = promote_type(typeof(float(value)), typeof(float(sigma)))
     return CSObservation{typeof(objective), FT}(Int(step), objective, FT(value), FT(sigma))

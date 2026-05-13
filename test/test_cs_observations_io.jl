@@ -76,6 +76,24 @@ end
         lat = 0, lon = 0, alt = 0,
         value = 0, value_sigma = -1.0,   # non-positive sigma
         instrument_type = "I", tracer = "T")
+
+    # Non-finite / out-of-range coordinate and payload rejections.
+    _ctor(; lat = 0.0, lon = 0.0, value = 0.0, sigma = 1.0) =
+        AT.CSObservationRecord(id = 1,
+                               date_components = (2024, 1, 1, 0, 0, 0),
+                               lat = lat, lon = lon, alt = 0.0,
+                               value = value, value_sigma = sigma,
+                               instrument_type = "I", tracer = "T")
+    @test_throws ArgumentError _ctor(lat = NaN)
+    @test_throws ArgumentError _ctor(lat = Inf)
+    @test_throws ArgumentError _ctor(lat = 90.5)
+    @test_throws ArgumentError _ctor(lat = -91.0)
+    @test_throws ArgumentError _ctor(lon = NaN)
+    @test_throws ArgumentError _ctor(lon = Inf)
+    @test_throws ArgumentError _ctor(value = NaN)
+    @test_throws ArgumentError _ctor(value = Inf)
+    @test_throws ArgumentError _ctor(sigma = NaN)
+    @test_throws ArgumentError _ctor(sigma = Inf)
 end
 
 @testset "CSObservationSet bit-exact NetCDF round-trip" begin

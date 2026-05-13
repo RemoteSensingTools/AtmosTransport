@@ -83,6 +83,7 @@ function bind_to_mesh(set::CSObservationSet,
 
     @inbounds for record in set.records
         tracer_match === nothing || record.tracer == tracer_match || continue
+        _validate_bind_record(record)
 
         k = _step_index_from_date(record.date_components, t_start, dt_f)
         in_range = 1 <= k <= nsteps_max
@@ -108,6 +109,33 @@ function bind_to_mesh(set::CSObservationSet,
                                  record.value, record.value_sigma))
     end
     return out
+end
+
+# ---------------------------------------------------------------------------
+# Per-record fail-fast validation
+#
+# `CSObservationRecord` built via the keyword constructor (and therefore
+# every record loaded by `read_observations`) is already finite-checked.
+# We re-validate here so a record constructed directly via the positional
+# inner constructor — which bypasses the keyword guard — cannot slip a
+# NaN/Inf coordinate or payload into the 4D-Var pipeline. The
+# per-record error message names the offending `record.id`, which is
+# more useful at debug time than the constructor's generic message.
+# ---------------------------------------------------------------------------
+
+@inline function _validate_bind_record(record::CSObservationRecord)
+    isfinite(record.lat) || throw(ArgumentError(
+        "observation id $(record.id) has non-finite lat = $(record.lat)"))
+    -90 <= record.lat <= 90 || throw(ArgumentError(
+        "observation id $(record.id) has lat = $(record.lat) outside [-90, 90]"))
+    isfinite(record.lon) || throw(ArgumentError(
+        "observation id $(record.id) has non-finite lon = $(record.lon)"))
+    isfinite(record.value) || throw(ArgumentError(
+        "observation id $(record.id) has non-finite value = $(record.value)"))
+    isfinite(record.value_sigma) || throw(ArgumentError(
+        "observation id $(record.id) has non-finite value_sigma = " *
+        "$(record.value_sigma)"))
+    return nothing
 end
 
 # ---------------------------------------------------------------------------

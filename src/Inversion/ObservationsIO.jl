@@ -56,6 +56,16 @@ function CSObservationRecord(; id::Integer,
                               instrument_type::AbstractString,
                               tracer::AbstractString)
     dc = _coerce_date_components(date_components)
+    isfinite(lat) || throw(ArgumentError(
+        "CSObservationRecord lat must be finite, got $lat"))
+    -90 <= lat <= 90 || throw(ArgumentError(
+        "CSObservationRecord lat must be in [-90, 90], got $lat"))
+    isfinite(lon) || throw(ArgumentError(
+        "CSObservationRecord lon must be finite, got $lon"))
+    isfinite(value) || throw(ArgumentError(
+        "CSObservationRecord value must be finite, got $value"))
+    isfinite(value_sigma) || throw(ArgumentError(
+        "CSObservationRecord value_sigma must be finite, got $value_sigma"))
     value_sigma > 0 || throw(ArgumentError(
         "CSObservationRecord value_sigma must be positive, got $value_sigma"))
     return CSObservationRecord(Int64(id), dc,

@@ -116,6 +116,33 @@ function CSDepartureRecord(; id::Integer,
         "CSDepartureRecord value_sigma must be finite, got $value_sigma"))
     value_sigma > 0 || throw(ArgumentError(
         "CSDepartureRecord value_sigma must be positive, got $value_sigma"))
+    # Arithmetic invariants pinned by the v1 schema's sign convention
+    # `departure = simulated_value - observed_value` and the derived
+    # `normalized_departure = departure / value_sigma`. Enforced at
+    # construction so both direct construction and `read_departures`
+    # (which calls the ctor per row) fail fast on a file whose stored
+    # values contradict the sign-convention root attribute. Tolerance
+    # is generous enough for any Float64 rounding incurred during
+    # `build_departure_set` / NetCDF round-trip; tight enough to catch
+    # a sign flip or off-by-one factor.
+    sim_f = Float64(simulated_value)
+    obs_f = Float64(observed_value)
+    dep_f = Float64(departure)
+    sigma_f = Float64(value_sigma)
+    expected_departure = sim_f - obs_f
+    isapprox(dep_f, expected_departure; atol = 1e-12, rtol = 1e-9) ||
+        throw(ArgumentError(
+            "CSDepartureRecord arithmetic invariant violated: " *
+            "stored departure = $dep_f but simulated_value - " *
+            "observed_value = $expected_departure (the v1 sign " *
+            "convention is `simulated_minus_observed`)"))
+    expected_normalized = dep_f / sigma_f
+    norm_f = Float64(normalized_departure)
+    isapprox(norm_f, expected_normalized; atol = 1e-12, rtol = 1e-9) ||
+        throw(ArgumentError(
+            "CSDepartureRecord arithmetic invariant violated: " *
+            "stored normalized_departure = $norm_f but " *
+            "departure / value_sigma = $expected_normalized"))
     return CSDepartureRecord(Int64(id),
                              String(tracer),
                              String(instrument_type),
@@ -173,6 +200,21 @@ function CSDepartureSet(records::AbstractVector{CSDepartureRecord};
         "CSDepartureSet dt_seconds must be positive, got $dt_seconds"))
     nsteps > 0 || throw(ArgumentError(
         "CSDepartureSet nsteps must be positive, got $nsteps"))
+    # Bounds check every record against the run-level metadata so a
+    # file (or hand-built set) with `step > nsteps` or `i > mesh_Nc`
+    # cannot slip past either direct construction or `read_departures`.
+    # `panel ∈ 1:6` is already enforced by the `CSDepartureRecord` ctor.
+    @inbounds for (k, r) in enumerate(records)
+        1 <= r.step <= nsteps || throw(ArgumentError(
+            "CSDepartureSet record $k has step $(r.step) outside " *
+            "[1, $nsteps] (run nsteps)"))
+        1 <= r.i <= mesh_Nc || throw(ArgumentError(
+            "CSDepartureSet record $k has i $(r.i) outside [1, $mesh_Nc] " *
+            "(mesh.Nc)"))
+        1 <= r.j <= mesh_Nc || throw(ArgumentError(
+            "CSDepartureSet record $k has j $(r.j) outside [1, $mesh_Nc] " *
+            "(mesh.Nc)"))
+    end
     return CSDepartureSet(collect(records),
                           Int(mesh_Nc),
                           String(mesh_panel_convention),
@@ -253,6 +295,26 @@ function build_departure_set(set::CSObservationSet,
 
         rec = set.records[k]
         obs = observations[k]
+        # Provenance check: `observations[k]` must have been bound from
+        # `set.records[k]` — not a different row. `bind_to_mesh` copies
+        # the record's `value` and `value_sigma` straight through, so
+        # equality here is bit-exact whenever the two vectors are
+        # genuinely aligned. Mismatch typically means the caller
+        # filtered / reordered one without the other (e.g. used
+        # `bind_to_mesh`'s `tracer_filter` or `:skip` policy without
+        # also filtering `set`).
+        Float64(obs.value) == Float64(rec.value) || throw(ArgumentError(
+            "build_departure_set provenance check failed at row $k: " *
+            "observations[$k].value = $(obs.value) but " *
+            "set.records[$k].value = $(rec.value). The observations " *
+            "vector must align with set.records — did you filter or " *
+            "reorder one without the other?"))
+        Float64(obs.sigma) == Float64(rec.value_sigma) || throw(ArgumentError(
+            "build_departure_set provenance check failed at row $k: " *
+            "observations[$k].sigma = $(obs.sigma) but " *
+            "set.records[$k].value_sigma = $(rec.value_sigma). The " *
+            "observations vector must align with set.records — did " *
+            "you filter or reorder one without the other?"))
         observed = Float64(rec.value)
         sigma = Float64(rec.value_sigma)
         departure = Float64(sim) - observed

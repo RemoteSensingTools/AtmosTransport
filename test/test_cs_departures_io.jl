@@ -29,7 +29,7 @@
 
 using Test
 using Dates: DateTime
-using NCDatasets: NCDataset
+using NCDatasets: NCDataset, defDim, defVar
 
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 const AT = AtmosTransport
@@ -129,6 +129,47 @@ end
 end
 
 # ---------------------------------------------------------------------------
+# Arithmetic invariant — pinned by the v1 sign convention. A record
+# that contradicts `departure = simulated - observed` or
+# `normalized_departure = departure / sigma` must be rejected at
+# construction, which also covers `read_departures` (the reader
+# constructs one record per row).
+# ---------------------------------------------------------------------------
+
+@testset "CSDepartureRecord — sign-convention arithmetic invariant" begin
+    _ctor(; departure, normalized_departure,
+            observed_value = 10.0, simulated_value = 11.0,
+            value_sigma = 2.0) = AT.CSDepartureRecord(
+        id = 1, tracer = "T", instrument_type = "I",
+        date_components = (2024, 1, 1, 0, 0, 0),
+        lat = 0.0, lon = 0.0, alt = 0.0,
+        step = 1, panel = 1, i = 1, j = 1,
+        observed_value = observed_value, simulated_value = simulated_value,
+        departure = departure, value_sigma = value_sigma,
+        normalized_departure = normalized_departure)
+
+    # Reference values: sim - obs = 1.0, normalized = 0.5.
+    @test _ctor(departure = 1.0, normalized_departure = 0.5) isa
+          AT.CSDepartureRecord
+
+    # Sign flip on `departure` — the exact case flagged by the review.
+    @test_throws ArgumentError _ctor(departure = -1.0,
+                                      normalized_departure = -0.5)
+
+    # `normalized_departure` inconsistent with `departure / sigma`.
+    @test_throws ArgumentError _ctor(departure = 1.0,
+                                      normalized_departure = 0.3)
+
+    # Magnitude off by a factor of 2.
+    @test_throws ArgumentError _ctor(departure = 2.0,
+                                      normalized_departure = 1.0)
+
+    # Within rounding tolerance — must still accept.
+    @test _ctor(departure = 1.0 + 1e-13,
+                normalized_departure = 0.5 + 5e-14) isa AT.CSDepartureRecord
+end
+
+# ---------------------------------------------------------------------------
 # build_departure_set: alignment + finite gatekeeper + sign convention
 # ---------------------------------------------------------------------------
 
@@ -192,6 +233,112 @@ end
     @test_throws ArgumentError AT.build_departure_set(
         inputs.set, inputs.observations, inputs.simulated, inputs.mesh,
         T0_TEST_STR, DT_TEST, 0)
+end
+
+# ---------------------------------------------------------------------------
+# Alignment provenance — observations must come from the same records,
+# in the same order. Reversing the observations vector produces row 1
+# with id/value from `set.records[1]` but step/panel/cell from a
+# different observation. `build_departure_set` must catch this.
+# ---------------------------------------------------------------------------
+
+@testset "build_departure_set — alignment provenance check" begin
+    # Targets crafted so each record has a DIFFERENT observed value
+    # and sigma — otherwise reversing would coincidentally satisfy
+    # `obs.value == rec.value`.
+    inputs = _aligned_inputs([
+        (id = 1, panel = 1, i = 2, j = 3, observed = 410.0, sigma = 0.5,
+         hour_offset = 0),
+        (id = 2, panel = 4, i = 5, j = 1, observed = 411.0, sigma = 0.7,
+         hour_offset = 1),
+        (id = 3, panel = 6, i = 1, j = 6, observed = 412.0, sigma = 1.0,
+         hour_offset = 2),
+    ])
+
+    # Reversed observations vector — values no longer match rows.
+    reversed_obs = reverse(inputs.observations)
+    @test_throws ArgumentError AT.build_departure_set(
+        inputs.set, reversed_obs, inputs.simulated,
+        inputs.mesh, T0_TEST_STR, DT_TEST, 24)
+
+    # Reversed simulated stays aligned to records (sim/observed not
+    # constrained to match record's value pre-departure), but the
+    # observations-vs-records check still triggers when observations
+    # are scrambled.
+    scrambled_obs = inputs.observations[[2, 1, 3]]
+    @test_throws ArgumentError AT.build_departure_set(
+        inputs.set, scrambled_obs, inputs.simulated,
+        inputs.mesh, T0_TEST_STR, DT_TEST, 24)
+
+    # An obs hand-built with a deliberately wrong value (right step,
+    # wrong value) is also caught — provenance is about the value /
+    # sigma fields, not the index.
+    wrong_value_obs = copy(inputs.observations)
+    wrong_value_obs[2] = AT.CSObservation(
+        inputs.observations[2].step,
+        inputs.observations[2].objective,
+        999.0,                                 # value differs from record
+        Float64(inputs.set.records[2].value_sigma))
+    @test_throws ArgumentError AT.build_departure_set(
+        inputs.set, wrong_value_obs, inputs.simulated,
+        inputs.mesh, T0_TEST_STR, DT_TEST, 24)
+
+    # Wrong sigma (record sigma = 0.7, obs sigma = 99) — also caught.
+    wrong_sigma_obs = copy(inputs.observations)
+    wrong_sigma_obs[2] = AT.CSObservation(
+        inputs.observations[2].step,
+        inputs.observations[2].objective,
+        Float64(inputs.set.records[2].value),
+        99.0)
+    @test_throws ArgumentError AT.build_departure_set(
+        inputs.set, wrong_sigma_obs, inputs.simulated,
+        inputs.mesh, T0_TEST_STR, DT_TEST, 24)
+end
+
+# ---------------------------------------------------------------------------
+# Per-record bounds against run metadata. The CSDepartureSet ctor
+# rejects records whose step > nsteps or i/j > mesh_Nc, which also
+# covers `read_departures` (the reader builds a CSDepartureSet from
+# the parsed records).
+# ---------------------------------------------------------------------------
+
+@testset "CSDepartureSet — per-record bounds vs run metadata" begin
+    _dep_rec(; step = 1, i = 1, j = 1, panel = 1) =
+        AT.CSDepartureRecord(
+            id = 1, tracer = "T", instrument_type = "I",
+            date_components = (2024, 1, 1, 0, 0, 0),
+            lat = 0.0, lon = 0.0, alt = 0.0,
+            step = step, panel = panel, i = i, j = j,
+            observed_value = 10.0, simulated_value = 11.0,
+            departure = 1.0, value_sigma = 2.0,
+            normalized_departure = 0.5)
+
+    function _set(rec; mesh_Nc = NC_TEST, nsteps = 24)
+        return AT.CSDepartureSet([rec];
+            mesh_Nc = mesh_Nc,
+            mesh_panel_convention = "GnomonicPanelConvention",
+            mesh_cs_definition_tag = "equiangular_gnomonic",
+            t_start = T0_TEST_STR,
+            dt_seconds = DT_TEST,
+            nsteps = nsteps)
+    end
+
+    # In bounds — accepted.
+    @test _set(_dep_rec()) isa AT.CSDepartureSet
+    @test _set(_dep_rec(step = 24, i = NC_TEST, j = NC_TEST)) isa
+          AT.CSDepartureSet
+
+    # step > nsteps -> reject.
+    @test_throws ArgumentError _set(_dep_rec(step = 999))
+    @test_throws ArgumentError _set(_dep_rec(step = 25); nsteps = 24)
+
+    # i / j out of mesh.Nc bounds -> reject.
+    @test_throws ArgumentError _set(_dep_rec(i = 999))
+    @test_throws ArgumentError _set(_dep_rec(j = NC_TEST + 1))
+
+    # Negative / zero step is already caught by the CSDepartureRecord
+    # ctor — sanity-check it's still caught (defense in depth).
+    @test_throws ArgumentError _dep_rec(step = 0)
 end
 
 # ---------------------------------------------------------------------------
@@ -418,5 +565,103 @@ end
 
         # Non-existent file.
         @test_throws ArgumentError AT.read_departures(joinpath(dir, "missing.nc"))
+
+        # Each required variable missing -> reject. We can't really
+        # delete a variable from a NetCDF in place via NCDatasets, so
+        # build each scenario by writing a fresh file that omits the
+        # target variable. The simplest path: write the good file,
+        # copy the byte stream, then prove that the reader requires
+        # the variable by rewriting the file with that variable
+        # absent. We do this by hand-constructing minimal NetCDFs.
+        function _write_missing_var(path, omitted_var)
+            isfile(path) && rm(path)
+            NCDataset(path, "c") do ds
+                defDim(ds, "obs", 1)
+                defDim(ds, "date_component", 6)
+                ds.attrib["cs_departures_schema"] = "v1"
+                ds.attrib["mesh_Nc"] = Int64(NC_TEST)
+                ds.attrib["mesh_panel_convention"] = "GnomonicPanelConvention"
+                ds.attrib["mesh_cs_definition_tag"] = "equiangular_gnomonic"
+                ds.attrib["t_start"] = T0_TEST_STR
+                ds.attrib["dt_seconds"] = DT_TEST
+                ds.attrib["nsteps"] = Int64(24)
+                ds.attrib["departure_sign_convention"] = "simulated_minus_observed"
+                spec = (
+                    ("id", Int64, ("obs",), [Int64(1)]),
+                    ("tracer", String, ("obs",), ["CO2"]),
+                    ("instrument_type", String, ("obs",), ["TCCON"]),
+                    ("date_components", Int16, ("date_component", "obs"),
+                     reshape(Int16[2024, 1, 1, 0, 0, 0], 6, 1)),
+                    ("lat", Float32, ("obs",), Float32[0.0]),
+                    ("lon", Float32, ("obs",), Float32[0.0]),
+                    ("alt", Float32, ("obs",), Float32[0.0]),
+                    ("step", Int64, ("obs",), [Int64(1)]),
+                    ("panel", Int8, ("obs",), Int8[1]),
+                    ("i", Int32, ("obs",), Int32[1]),
+                    ("j", Int32, ("obs",), Int32[1]),
+                    ("observed_value", Float64, ("obs",), [10.0]),
+                    ("simulated_value", Float64, ("obs",), [11.0]),
+                    ("departure", Float64, ("obs",), [1.0]),
+                    ("value_sigma", Float64, ("obs",), [2.0]),
+                    ("normalized_departure", Float64, ("obs",), [0.5]),
+                )
+                for (name, T, dims, data) in spec
+                    name == omitted_var && continue
+                    v = defVar(ds, name, T, dims)
+                    v[:] = data
+                end
+            end
+            return path
+        end
+
+        required_vars = ("id", "tracer", "instrument_type", "date_components",
+                         "lat", "lon", "alt",
+                         "step", "panel", "i", "j",
+                         "observed_value", "simulated_value", "departure",
+                         "value_sigma", "normalized_departure")
+        for v in required_vars
+            tmp = joinpath(dir, "no_var_" * v * ".nc")
+            _write_missing_var(tmp, v)
+            @test_throws ArgumentError AT.read_departures(tmp)
+        end
+
+        # Wrong date_component dim length -> reject.
+        wrong_dc = joinpath(dir, "wrong_dc.nc")
+        NCDataset(wrong_dc, "c") do ds
+            defDim(ds, "obs", 1)
+            defDim(ds, "date_component", 5)  # wrong; must be 6
+            ds.attrib["cs_departures_schema"] = "v1"
+            ds.attrib["mesh_Nc"] = Int64(NC_TEST)
+            ds.attrib["mesh_panel_convention"] = "GnomonicPanelConvention"
+            ds.attrib["mesh_cs_definition_tag"] = "equiangular_gnomonic"
+            ds.attrib["t_start"] = T0_TEST_STR
+            ds.attrib["dt_seconds"] = DT_TEST
+            ds.attrib["nsteps"] = Int64(24)
+            ds.attrib["departure_sign_convention"] = "simulated_minus_observed"
+            spec = (
+                ("id", Int64, ("obs",), [Int64(1)]),
+                ("tracer", String, ("obs",), ["CO2"]),
+                ("instrument_type", String, ("obs",), ["TCCON"]),
+                ("date_components", Int16, ("date_component", "obs"),
+                 reshape(Int16[2024, 1, 1, 0, 0], 5, 1)),
+                ("lat", Float32, ("obs",), Float32[0.0]),
+                ("lon", Float32, ("obs",), Float32[0.0]),
+                ("alt", Float32, ("obs",), Float32[0.0]),
+                ("step", Int64, ("obs",), [Int64(1)]),
+                ("panel", Int8, ("obs",), Int8[1]),
+                ("i", Int32, ("obs",), Int32[1]),
+                ("j", Int32, ("obs",), Int32[1]),
+                ("observed_value", Float64, ("obs",), [10.0]),
+                ("simulated_value", Float64, ("obs",), [11.0]),
+                ("departure", Float64, ("obs",), [1.0]),
+                ("value_sigma", Float64, ("obs",), [2.0]),
+                ("normalized_departure", Float64, ("obs",), [0.5]),
+            )
+            for (name, T, dims, data) in spec
+                v = defVar(ds, name, T, dims)
+                v[:] = data
+            end
+        end
+        @test_throws ArgumentError AT.read_departures(wrong_dc)
     end
 end

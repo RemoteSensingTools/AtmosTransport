@@ -21,7 +21,8 @@ import NCDatasets
 
 using ..Grids: CubedSphereMesh, reciprocal_edge,
     EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST,
-    panel_cell_center_lonlat
+    panel_cell_center_lonlat,
+    panel_convention, cs_definition, cs_definition_tag
 using ..Operators.Advection: CSAdvectionWorkspace, NoLimiter,
     MonotoneLimiter, PPMScheme, SlopesScheme, UpwindScheme,
     LinRoodPPMScheme,
@@ -102,6 +103,12 @@ include("../Inversion/ObservationsIO.jl")
 # `CSObservation` and `CSObservationRecord` directly; uses
 # `CSColumnMeanObjective` defined in ObjectiveSeeding.jl above.
 include("../Inversion/ObservationBinding.jl")
+
+# Plan 26 P0.D3 — on-disk departures (forward-pass simulated values
+# paired with their originating observations). Loaded after
+# ObservationBinding.jl because the `build_departure_set` helper
+# consumes both `CSObservationSet` and `Vector{CSObservation}`.
+include("../Inversion/DeparturesIO.jl")
 
 
 """
@@ -303,6 +310,8 @@ export CSSurfaceFluxWindow, CSSurfaceFluxJacobianResult
 export CSObservation, CSSurfaceFluxControl, CS4DVarResult, CS4DVarSolveResult
 export CSObservationRecord, CSObservationSet, read_observations, write_observations
 export bind_to_mesh
+export CSDepartureRecord, CSDepartureSet, build_departure_set
+export read_departures, write_departures
 export CSAdjointWorkspace, CSTapeSlot, DeviceCSTapeStorage, PinnedHostCSTapeStorage
 export MmapCSTapeStorage, MmapCSTapeSlot
 export PinnedHostCSTapeSlot, CSTapeByteEstimate

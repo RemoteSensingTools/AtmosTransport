@@ -307,6 +307,8 @@ export CSSurfaceFluxWindow, CSSurfaceFluxJacobianResult
 export CSObservation, CSSurfaceFluxControl, CS4DVarResult, CS4DVarSolveResult
 export CSObservationRecord, CSObservationSet, read_observations, write_observations
 export bind_to_mesh
+export CSDepartureRecord, CSDepartureSet, build_departure_set
+export read_departures, write_departures
 export CSAdjointWorkspace, CSTapeSlot, DeviceCSTapeStorage, PinnedHostCSTapeStorage
 export MmapCSTapeStorage, MmapCSTapeSlot
 export load_mmap_tape, get_record

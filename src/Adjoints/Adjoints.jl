@@ -20,7 +20,8 @@ using KernelAbstractions: @Const, @atomic, @index, @kernel, get_backend, synchro
 import NCDatasets
 
 using ..Grids: CubedSphereMesh, reciprocal_edge,
-    EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST
+    EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST,
+    panel_cell_center_lonlat
 using ..Operators.Advection: CSAdvectionWorkspace, NoLimiter,
     MonotoneLimiter, PPMScheme, SlopesScheme, UpwindScheme,
     LinRoodPPMScheme,
@@ -94,6 +95,13 @@ include("../Inversion/Observations.jl")
 # the in-memory 4D-Var types and the raw observation-record types
 # coexist in the Adjoints namespace.
 include("../Inversion/ObservationsIO.jl")
+
+# Plan 26 P0.D2 — `bind_to_mesh` bridge from the on-disk
+# `CSObservationSet` to a 4D-Var-ready `Vector{CSObservation}`. Loaded
+# after Observations.jl + ObservationsIO.jl because it references
+# `CSObservation` and `CSObservationRecord` directly; uses
+# `CSColumnMeanObjective` defined in ObjectiveSeeding.jl above.
+include("../Inversion/ObservationBinding.jl")
 
 
 """
@@ -294,6 +302,7 @@ export CSLayerMeanObjective, CSColumnMeanObjective, CSSeedObjective, CSFootprint
 export CSSurfaceFluxWindow, CSSurfaceFluxJacobianResult
 export CSObservation, CSSurfaceFluxControl, CS4DVarResult, CS4DVarSolveResult
 export CSObservationRecord, CSObservationSet, read_observations, write_observations
+export bind_to_mesh
 export CSAdjointWorkspace, CSTapeSlot, DeviceCSTapeStorage, PinnedHostCSTapeStorage
 export MmapCSTapeStorage, MmapCSTapeSlot
 export PinnedHostCSTapeSlot, CSTapeByteEstimate

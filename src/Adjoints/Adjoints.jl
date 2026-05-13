@@ -110,6 +110,13 @@ include("../Inversion/ObservationBinding.jl")
 # consumes both `CSObservationSet` and `Vector{CSObservation}`.
 include("../Inversion/DeparturesIO.jl")
 
+# Plan 26 P0.B1 — surface-flux background-error covariance B and its
+# spectral square root B^(1/2) for the preconditioned 4D-Var path.
+# Self-contained (depends only on FFTW + base) so include order is not
+# load-bearing; placed here so the export block below can re-export
+# the public surface.
+include("../Inversion/Covariance.jl")
+
 
 """
     CSAdjointWorkspace(mesh, prototype)
@@ -312,6 +319,9 @@ export CSObservationRecord, CSObservationSet, read_observations, write_observati
 export bind_to_mesh
 export CSDepartureRecord, CSDepartureSet, build_departure_set
 export read_departures, write_departures
+export AbstractCSSurfaceFluxCovariance
+export DiagonalCSCovariance, IsotropicGaussianCSCovariance
+export apply_B_half!, apply_B_half_adjoint!
 export CSAdjointWorkspace, CSTapeSlot, DeviceCSTapeStorage, PinnedHostCSTapeStorage
 export MmapCSTapeStorage, MmapCSTapeSlot
 export PinnedHostCSTapeSlot, CSTapeByteEstimate

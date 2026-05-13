@@ -309,6 +309,9 @@ export CSObservationRecord, CSObservationSet, read_observations, write_observati
 export bind_to_mesh
 export CSDepartureRecord, CSDepartureSet, build_departure_set
 export read_departures, write_departures
+export AbstractCSSurfaceFluxCovariance
+export DiagonalCSCovariance, IsotropicGaussianCSCovariance
+export apply_B_half!, apply_B_half_adjoint!
 export CSAdjointWorkspace, CSTapeSlot, DeviceCSTapeStorage, PinnedHostCSTapeStorage
 export MmapCSTapeStorage, MmapCSTapeSlot
 export load_mmap_tape, get_record

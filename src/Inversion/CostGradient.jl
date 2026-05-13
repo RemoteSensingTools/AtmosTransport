@@ -241,6 +241,61 @@ function _control_vector(controls)
     return CSSurfaceFluxControl[controls...]
 end
 
+# Preconditioner-list normalization (mirrors `_control_vector`). Accepts
+# either a single `CSSurfaceFluxPreconditioner` (broadcast to all
+# controls) or a `Vector` of them aligned with the control vector.
+_preconditioner_vector(prec::CSSurfaceFluxPreconditioner) =
+    CSSurfaceFluxPreconditioner[prec]
+_preconditioner_vector(precs::AbstractVector{<:CSSurfaceFluxPreconditioner}) =
+    CSSurfaceFluxPreconditioner[precs...]
+
+# Build a fresh `CSSurfaceFluxControl` whose `.value` is `T(χ)` —
+# the physical-space image of the χ-space `chi_control.value`. The
+# downstream forward run + observation-gradient kernels are agnostic
+# to whether their input came from the user directly (unconditioned
+# mode) or from a preconditioner forward (preconditioned mode); this
+# helper produces input of the right shape for the existing rate-
+# assembly path. `.background` and `.sigma` are not carried through
+# because the preconditioned background term comes from `0.5 ‖χ‖²`
+# instead of the per-control diagonal kernel.
+function _preconditioned_physical_control(chi_control::CSSurfaceFluxControl,
+                                          prec::CSSurfaceFluxPreconditioner)
+    chi_value = chi_control.value
+    x_value = ntuple(p -> similar(chi_value[p]), 6)
+    apply_preconditioner!(x_value, prec, chi_value)
+    return CSSurfaceFluxControl(chi_control.window, x_value)
+end
+
+# 0.5 · ‖χ‖² in panel-tuple form. The χ-space regularization term
+# replaces the per-control diagonal background when running
+# preconditioned.
+function _half_chi_squared_norm(chi_controls)
+    isempty(chi_controls) && return 0.0
+    FT = eltype(chi_controls[1].value[1])
+    total = zero(FT)
+    @inbounds for control in chi_controls, p in 1:6
+        total += sum(abs2, control.value[p])
+    end
+    return FT(0.5) * total
+end
+
+# Convert a physical-space gradient `∂J_obs/∂x` to a χ-space gradient
+# `∂J/∂χ = T'(χ)^T ∂J_obs/∂x + χ`, in-place on `chi_gradient`. The
+# `+ χ` term comes from differentiating the `0.5 ‖χ‖²` regularization.
+function _physical_gradient_to_chi!(chi_gradient,
+                                    prec::CSSurfaceFluxPreconditioner,
+                                    chi_control::CSSurfaceFluxControl,
+                                    physical_control::CSSurfaceFluxControl,
+                                    physical_gradient)
+    apply_preconditioner_adjoint!(chi_gradient, prec,
+                                  physical_control.value, physical_gradient)
+    chi_value = chi_control.value
+    @inbounds for p in 1:6
+        @. chi_gradient[p] += chi_value[p]
+    end
+    return chi_gradient
+end
+
 # ---------------------------------------------------------------------------
 # Step-sequence truncation helpers + 4D-Var entry
 # ---------------------------------------------------------------------------
@@ -268,8 +323,33 @@ Evaluate the prototype CS surface-flux 4D-Var cost and gradient. Controls are
 named `CSSurfaceFluxControl`s over `CSSurfaceFluxWindow`s. Observations are
 scalar `CSObservation`s sampled after model steps. The observation-gradient
 term is assembled from the same reverse-mode footprints used by
-`cs_surface_emission_footprint`; optional diagonal background terms are added
-per control.
+`cs_surface_emission_footprint`.
+
+Two modes:
+
+- **Unconditioned** (default, `preconditioner = nothing`). Each control's
+  `.value` is the physical-space control directly. Optional diagonal
+  background terms come from `.background` + `.sigma` and are added per
+  control via `_background_cost_and_gradient!`.
+
+- **Preconditioned** (`preconditioner` non-`nothing`). Each control's
+  `.value` is the preconditioned-space variable `χ`. The function:
+  (1) computes `x_k = T(χ_k)` per control via the preconditioner;
+  (2) runs the forward simulation with `x`;
+  (3) reverses through the existing observation-gradient path to get
+      `∂J_obs/∂x_k` per control;
+  (4) applies `T'(χ_k)^T` to get `∂J_obs/∂χ_k` and adds `χ_k` (the
+      derivative of the `0.5 ‖χ‖²` regularization).
+  The reported cost is `0.5 ‖χ‖² + observation_cost`, the reported
+  gradient is `∂J/∂χ`, and the reported controls are the original
+  `χ`-space inputs. Per-control `.background` and `.sigma` are
+  ignored in this mode — the background term comes from `0.5 ‖χ‖²`,
+  and the background `x_b` is carried by the preconditioner itself.
+
+`preconditioner` accepts either a single `CSSurfaceFluxPreconditioner`
+(broadcast to all controls if length(controls) == 1) or a
+`Vector{<:CSSurfaceFluxPreconditioner}` aligned 1-to-1 with the
+control vector.
 """
 function cs_surface_flux_4dvar(panels_rm0, panels_m0,
                                panels_am_steps,
@@ -288,7 +368,8 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
                                convection_op = NoConvection(),
                                convection_forcing = nothing,
                                convection_workspace = nothing,
-                               tape_storage = :device)
+                               tape_storage = :device,
+                               preconditioner = nothing)
     FT = eltype(panels_rm0[1])
     dt_ft = FT(dt)
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps, panels_cm_steps)
@@ -308,7 +389,28 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
         push!(seen, name)
     end
 
-    emission_rates = _surface_rates_from_controls(control_vec, nsteps, mesh, panels_rm0[1])
+    # Preconditioned mode normalization. `chi_controls` holds the user's
+    # χ-space inputs (returned in the result); `physical_controls` is
+    # what feeds the rate-assembly + observation-gradient path.
+    preconditioner_vec = preconditioner === nothing ?
+        nothing : _preconditioner_vector(preconditioner)
+    if preconditioner_vec !== nothing
+        length(preconditioner_vec) == length(control_vec) ||
+            throw(ArgumentError(
+                "preconditioner length $(length(preconditioner_vec)) does not " *
+                "match controls length $(length(control_vec))"))
+        physical_controls = [
+            _preconditioned_physical_control(control_vec[idx],
+                                             preconditioner_vec[idx])
+            for idx in eachindex(control_vec)
+        ]
+        _validate_control_shapes(physical_controls, mesh,
+                                 "preconditioned physical control")
+    else
+        physical_controls = control_vec
+    end
+
+    emission_rates = _surface_rates_from_controls(physical_controls, nsteps, mesh, panels_rm0[1])
     simulated = _run_cs_observations_forward(
         panels_rm0, panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps,
         mesh, observation_vec;
@@ -324,7 +426,10 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
         convection_workspace = convection_workspace)
 
     residuals = Vector{FT}(undef, length(observation_vec))
-    gradients = [_zero_surface_like(control.value) for control in control_vec]
+    # Physical-space gradient. In preconditioned mode this is
+    # `∂J_obs/∂x` per control; in unconditioned mode it doubles as the
+    # final reported gradient `∂J/∂x`.
+    physical_gradients = [_zero_surface_like(control.value) for control in physical_controls]
     observation_cost = zero(FT)
 
     @inbounds for obs_idx in eachindex(observation_vec)
@@ -358,21 +463,40 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
             convection_forcing = convection_forcing_obs,
             convection_workspace = convection_workspace,
             tape_storage = tape_storage)
-        for control_idx in eachindex(control_vec)
-            _add_window_gradient!(gradients[control_idx], footprint,
-                                  control_vec[control_idx].window, scale;
+        for control_idx in eachindex(physical_controls)
+            _add_window_gradient!(physical_gradients[control_idx], footprint,
+                                  physical_controls[control_idx].window, scale;
                                   ignore_future = true)
         end
     end
 
-    background_cost = zero(FT)
-    @inbounds for idx in eachindex(control_vec)
-        background_cost += FT(_background_cost_and_gradient!(gradients[idx], control_vec[idx]))
+    # Either: (a) apply T'^T to physical gradient and add χ for the
+    # preconditioned background term, or (b) use the existing
+    # per-control diagonal background.
+    if preconditioner_vec === nothing
+        gradients = physical_gradients
+        background_cost = zero(FT)
+        @inbounds for idx in eachindex(control_vec)
+            background_cost += FT(_background_cost_and_gradient!(gradients[idx],
+                                                                  control_vec[idx]))
+        end
+        reported_controls = control_vec
+    else
+        gradients = [_zero_surface_like(control.value) for control in control_vec]
+        @inbounds for idx in eachindex(control_vec)
+            _physical_gradient_to_chi!(gradients[idx],
+                                       preconditioner_vec[idx],
+                                       control_vec[idx],
+                                       physical_controls[idx],
+                                       physical_gradients[idx])
+        end
+        background_cost = FT(_half_chi_squared_norm(control_vec))
+        reported_controls = control_vec
     end
 
     gradient_by_name = Dict{Symbol, typeof(gradients[1])}()
-    @inbounds for idx in eachindex(control_vec)
-        gradient_by_name[control_vec[idx].window.name] = gradients[idx]
+    @inbounds for idx in eachindex(reported_controls)
+        gradient_by_name[reported_controls[idx].window.name] = gradients[idx]
     end
     A2 = typeof(gradients[1][1])
     return CS4DVarResult{FT, A2}(
@@ -383,6 +507,6 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
         residuals,
         gradients,
         gradient_by_name,
-        control_vec,
+        reported_controls,
         observation_vec)
 end

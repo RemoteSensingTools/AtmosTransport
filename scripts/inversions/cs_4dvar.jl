@@ -222,9 +222,17 @@ function _build_initial_control(cfg, mesh, prec, FT)
     value = if initial == "zeros"
         ntuple(_ -> zeros(FT, mesh.Nc, mesh.Nc), 6)
     elseif initial == "background"
+        # "Start at background" means the PHYSICAL starting point
+        # should be `x_b`. In unconditioned mode that's literally
+        # `control.value = x_b`. In preconditioned mode the control
+        # value is `χ`, and `χ = 0` maps to `x = x_b` via
+        # `T(0) = x_b` for Linear and `x_b ⊙ exp(0) = x_b` for
+        # LogNormal — so we set χ = 0, NOT χ = x_b (which would
+        # start at `T(x_b)` and leak a nonzero 0.5‖χ‖² prior cost).
         prec === nothing && throw(ArgumentError(
-            "control.initial = \"background\" requires preconditioner.enabled = true"))
-        ntuple(p -> copy(prec.background[p]), 6)
+            "control.initial = \"background\" requires preconditioner.enabled = true " *
+            "(unconditioned mode uses `initial = \"zeros\"` to start at 0)"))
+        ntuple(_ -> zeros(FT, mesh.Nc, mesh.Nc), 6)
     else
         throw(ArgumentError("unknown control.initial $(repr(initial)); " *
                             "expected 'zeros' or 'background'"))
@@ -264,10 +272,17 @@ function run_inversion(config_path::AbstractString)
     # accepts an already-built covariance rather than re-parsing the
     # TOML.
     prec_cfg = get(cfg, "preconditioner", Dict("enabled" => false))
+    prec_enabled = get(prec_cfg, "enabled", false)
+    if prec_enabled && !haskey(cfg, "covariance")
+        throw(ArgumentError(
+            "[preconditioner].enabled = true requires a [covariance] section " *
+            "in the TOML; otherwise the run silently degrades to unconditioned " *
+            "mode. Either add [covariance] or set [preconditioner].enabled = false."))
+    end
     covariance = haskey(cfg, "covariance") ?
         _build_covariance(cfg["covariance"], mesh, FT) : nothing
-    prec = covariance === nothing ? nothing :
-        _build_preconditioner(prec_cfg, covariance, mesh, FT)
+    prec = prec_enabled ?
+        _build_preconditioner(prec_cfg, covariance, mesh, FT) : nothing
     control = _build_initial_control(cfg, mesh, prec, FT)
     optimizer = _build_optimizer(cfg["optimizer"], FT)
 

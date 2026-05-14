@@ -89,6 +89,90 @@ end
     @test result_uncond isa AT.CS4DVarSolveResult
 end
 
+# ---------------------------------------------------------------------------
+# Regression: control.initial = "background" in preconditioned mode must
+# set χ = 0 (so the physical starting point is x_b). The previous build
+# copied prec.background into the χ slot, which seeded χ = x_b and
+# leaked a nonzero 0.5‖χ‖² prior cost on iteration 0.
+# ---------------------------------------------------------------------------
+
+@testset "cs_4dvar.jl driver — initial='background' in preconditioned mode → χ=0" begin
+    base = read(CONFIG, String)
+    # Force a non-zero `preconditioner.background_value` so seeding
+    # χ from `prec.background` (the buggy behavior) would produce a
+    # detectably nonzero initial 0.5‖χ‖² cost.
+    cfg = replace(base,
+        "background_value = 0.0" => "background_value = 0.7",
+        "initial = \"zeros\""    => "initial = \"background\"")
+    mktempdir() do dir
+        path = joinpath(dir, "bg.toml")
+        write(path, cfg)
+        result = run_inversion(path)
+        # χ = 0 at iteration 0 ⇒ background term 0.5‖χ‖² = 0. The
+        # pre-fix copy of `x_b = 0.7` into the χ slot would have
+        # produced 0.5 · 6 · (Nc²) · 0.7² > 0 as the initial bg
+        # cost.
+        @test result.log isa AT.CSIterationLog
+        @test result.log[1].iteration == 0
+        @test result.log[1].background_cost == 0.0
+        # And the iteration-0 total cost equals the observation
+        # cost since the background term is exactly zero.
+        @test result.log[1].cost ≈ result.log[1].observation_cost atol = 1e-12
+    end
+end
+
+# ---------------------------------------------------------------------------
+# Regression: [preconditioner].enabled = true with no [covariance]
+# section used to silently degrade to unconditioned mode (prec became
+# nothing). Now throws a clear ArgumentError.
+# ---------------------------------------------------------------------------
+
+@testset "cs_4dvar.jl driver — preconditioner.enabled w/o covariance rejected" begin
+    cfg = """
+    [mesh]
+    Nc = 3
+    Hp = 3
+    float_type = "Float64"
+
+    [time]
+    nsteps = 2
+    dt_seconds = 2.0
+
+    [meteo]
+    source = "synthetic_constant"
+
+    [[observations.entries]]
+    step = 2
+    objective = "layer_mean"
+    panel = 1
+    i = 2
+    j = 2
+    level = 3
+    value = 0.05
+    sigma = 0.2
+
+    [control]
+    name = "both_steps"
+    steps = [1, 2]
+    normalize = true
+    initial = "zeros"
+
+    [preconditioner]
+    enabled = true
+    optim_type = "linear"
+    background_value = 0.0
+
+    [optimizer]
+    kind = "lbfgs"
+    iterations = 2
+    """
+    mktempdir() do dir
+        path = joinpath(dir, "no_cov.toml")
+        write(path, cfg)
+        @test_throws ArgumentError run_inversion(path)
+    end
+end
+
 @testset "cs_4dvar.jl driver — rejects bad TOML" begin
     # Missing required fields, unknown enum values, etc.
     base = read(CONFIG, String)

@@ -377,9 +377,16 @@ function cs_surface_flux_4dvar_solve(optimizer::CSLBFGS, cost_fn, controls)
         # names from the `OptimizationTrace` entry returned by
         # `opt_result.trace[k]`. We project to the same shape as
         # CSGradientDescent's log entries.
+        #
+        # `g_norm` is the L2 norm to match the
+        # `CSIterationLogEntry` docstring ("gradient L2 norm")
+        # and the initial iteration-0 row (which uses
+        # `_control_gradient_norm`, also L2). Optim's own
+        # `state.g_norm` would be L∞ for L-BFGS; we compute L2 by
+        # hand from the flat gradient vector.
         r = last_result[]
         iter_count = state.pseudo_iteration
-        g_norm = FT(maximum(abs, state.g_x))
+        g_norm = FT(sqrt(sum(abs2, state.g_x)))
         push!(log.entries, CSIterationLogEntry{FT}(
             iter_count, FT(r.cost),
             FT(r.observation_cost), FT(r.background_cost),
@@ -445,7 +452,13 @@ Run an optimization loop around [`cs_surface_flux_4dvar`](@ref).
 omitted, a [`CSGradientDescent`](@ref) is constructed from the
 legacy descent-policy keyword arguments (`iterations`,
 `initial_step`, `min_step`, `step_shrink`, `gradient_tolerance`,
-`line_search`) so existing call sites keep working unchanged.
+`line_search`, `log`) so existing call sites keep working unchanged.
+
+`log::Bool = false` is consumed by the entrypoint, not forwarded to
+`cs_surface_flux_4dvar`. It only takes effect on the default
+`CSGradientDescent` path; an explicit `optimizer = CSLBFGS(..., log
+= true)` (or `optimizer = CSGradientDescent(..., log = true)`)
+carries its own setting and overrides the entrypoint kwarg.
 
 Remaining keyword arguments are forwarded to `cs_surface_flux_4dvar`
 on every cost evaluation — including `preconditioner = ...` for the
@@ -466,12 +479,17 @@ function cs_surface_flux_4dvar_optimize(panels_rm0, panels_m0,
                                         step_shrink = 0.5,
                                         gradient_tolerance = zero(eltype(panels_rm0[1])),
                                         line_search::Bool = true,
+                                        log::Bool = false,
                                         kwargs...)
+    # `log` is consumed here (NOT forwarded into `cs_surface_flux_4dvar`
+    # via `kwargs...`). It only takes effect when the entrypoint
+    # constructs the default `CSGradientDescent` itself; an explicit
+    # `optimizer = ...` already carries its own `log` field.
     opt = if optimizer === nothing
         FT = eltype(panels_rm0[1])
         CSGradientDescent(Int(iterations), FT(initial_step), FT(min_step),
                           FT(step_shrink), FT(gradient_tolerance),
-                          line_search, false)
+                          line_search, log)
     else
         optimizer
     end

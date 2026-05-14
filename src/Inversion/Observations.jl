@@ -158,6 +158,56 @@ struct CS4DVarResult{FT, A2 <: AbstractArray{FT, 2}}
     observations::Vector{<:CSObservation}
 end
 
+"""
+    CSIterationLogEntry(iteration, cost, observation_cost, background_cost,
+                        gradient_norm, step_size, elapsed_seconds)
+
+One row of per-iteration solver diagnostics. Captures the
+cost-decomposition (observation vs background terms), the L2
+gradient norm, the line-search step accepted on this iteration
+(`0` for optimizers that don't expose a step — e.g. L-BFGS), and the
+wall-clock time since the solve started.
+
+The convention is that an iteration is logged AFTER the descent
+direction has been accepted; the `iteration = 0` row records the
+initial probe before any descent step.
+"""
+struct CSIterationLogEntry{FT}
+    iteration::Int
+    cost::FT
+    observation_cost::FT
+    background_cost::FT
+    gradient_norm::FT
+    step_size::FT
+    elapsed_seconds::Float64
+end
+
+"""
+    CSIterationLog(entries)
+
+Per-iteration diagnostic log for a CS 4D-Var solve. Populated by
+optimizers when their `log::Bool` field is set to `true`; otherwise
+the `CS4DVarSolveResult.log` field is `nothing`.
+
+The log carries enough information for after-the-fact convergence
+diagnostics: a monotone cost trajectory check, gradient-norm decay
+curve, observation-vs-background cost decomposition, and a
+wall-clock time series.
+"""
+struct CSIterationLog{FT}
+    entries::Vector{CSIterationLogEntry{FT}}
+end
+
+CSIterationLog{FT}() where FT = CSIterationLog{FT}(CSIterationLogEntry{FT}[])
+
+Base.length(log::CSIterationLog) = length(log.entries)
+Base.isempty(log::CSIterationLog) = isempty(log.entries)
+Base.iterate(log::CSIterationLog, args...) = iterate(log.entries, args...)
+Base.getindex(log::CSIterationLog, i::Integer) = log.entries[i]
+Base.firstindex(log::CSIterationLog) = firstindex(log.entries)
+Base.lastindex(log::CSIterationLog) = lastindex(log.entries)
+Base.eachindex(log::CSIterationLog) = eachindex(log.entries)
+
 struct CS4DVarSolveResult{FT, A2 <: AbstractArray{FT, 2}}
     controls::Vector{<:CSSurfaceFluxControl}
     last::CS4DVarResult{FT, A2}
@@ -165,4 +215,15 @@ struct CS4DVarSolveResult{FT, A2 <: AbstractArray{FT, 2}}
     gradient_norm_history::Vector{FT}
     step_history::Vector{FT}
     iterations::Int
+    log::Union{Nothing, CSIterationLog{FT}}
+end
+
+# Backward-compat constructor — pre-C3 call sites that don't pass a
+# log argument default to `nothing` (matching the pre-C3 behavior).
+function CS4DVarSolveResult{FT, A2}(controls, last, cost_history,
+                                     gradient_norm_history, step_history,
+                                     iterations) where {FT, A2}
+    return CS4DVarSolveResult{FT, A2}(controls, last, cost_history,
+                                       gradient_norm_history, step_history,
+                                       iterations, nothing)
 end

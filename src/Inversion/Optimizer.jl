@@ -44,7 +44,8 @@ abstract type AbstractCSOptimizer end
 
 """
     CSGradientDescent(; iterations, initial_step, min_step,
-                        step_shrink, gradient_tolerance, line_search)
+                        step_shrink, gradient_tolerance, line_search,
+                        log)
 
 Plain backtracking-line-search gradient descent. `iterations` is the
 maximum count of accepted descent steps; the loop terminates early
@@ -52,6 +53,12 @@ when the gradient norm falls below `gradient_tolerance` or the
 line search shrinks `step` below `min_step`. With
 `line_search = false` every candidate step is accepted (constant
 step size unless the loop exits on tolerance).
+
+`log = true` captures per-iteration diagnostics into
+`CS4DVarSolveResult.log` (see [`CSIterationLog`](@ref)): cost
+decomposition (observation vs background), gradient L2 norm,
+accepted step size, and wall-clock elapsed seconds since the solve
+started. Default `false` matches the pre-C3 behavior.
 """
 struct CSGradientDescent{FT <: AbstractFloat} <: AbstractCSOptimizer
     iterations::Int
@@ -60,13 +67,15 @@ struct CSGradientDescent{FT <: AbstractFloat} <: AbstractCSOptimizer
     step_shrink::FT
     gradient_tolerance::FT
     line_search::Bool
+    log::Bool
 
     function CSGradientDescent(iterations::Integer,
                                 initial_step::FT,
                                 min_step::FT,
                                 step_shrink::FT,
                                 gradient_tolerance::FT,
-                                line_search::Bool) where FT <: AbstractFloat
+                                line_search::Bool,
+                                log::Bool) where FT <: AbstractFloat
         iterations >= 0 || throw(ArgumentError(
             "CSGradientDescent iterations must be non-negative, got $iterations"))
         initial_step > 0 || throw(ArgumentError(
@@ -79,7 +88,7 @@ struct CSGradientDescent{FT <: AbstractFloat} <: AbstractCSOptimizer
             "CSGradientDescent gradient_tolerance must be non-negative, got " *
             "$gradient_tolerance"))
         return new{FT}(Int(iterations), initial_step, min_step, step_shrink,
-                       gradient_tolerance, line_search)
+                       gradient_tolerance, line_search, log)
     end
 end
 
@@ -88,7 +97,8 @@ function CSGradientDescent(; iterations::Integer = 10,
                             min_step::Real = sqrt(eps(Float64)),
                             step_shrink::Real = 0.5,
                             gradient_tolerance::Real = 0.0,
-                            line_search::Bool = true)
+                            line_search::Bool = true,
+                            log::Bool = false)
     FT = promote_type(typeof(float(initial_step)),
                       typeof(float(min_step)),
                       typeof(float(step_shrink)),
@@ -96,7 +106,7 @@ function CSGradientDescent(; iterations::Integer = 10,
     return CSGradientDescent(Int(iterations),
                              FT(initial_step), FT(min_step),
                              FT(step_shrink), FT(gradient_tolerance),
-                             line_search)
+                             line_search, log)
 end
 
 # ---------------------------------------------------------------------------
@@ -118,23 +128,9 @@ function cs_surface_flux_4dvar_solve end
 function cs_surface_flux_4dvar_solve(optimizer::CSGradientDescent,
                                       cost_fn, controls)
     current = cost_fn(controls)
-    # `cs_surface_flux_4dvar` rejects empty controls upstream, so
-    # `current.gradients` is always non-empty in normal use. The guard
-    # here makes the assumption explicit so a direct
-    # `cs_surface_flux_4dvar_solve(opt, cost_fn, [])` call from a
-    # future backend cannot panic on `gradients[1][1]` below.
     isempty(current.gradients) && throw(ArgumentError(
         "cost_fn returned a CS4DVarResult with no gradients; " *
         "cannot derive optimizer element type"))
-    # Derive history / step `FT` from the cost result, not from the
-    # optimizer's parametric `FT`. A user passing `optimizer =
-    # CSGradientDescent(initial_step = 0.25)` (defaults to Float64)
-    # against a Float32 model would otherwise hit the
-    # `CS4DVarSolveResult{FT, A2 <: AbstractArray{FT, 2}}` type bound
-    # because A2's eltype is Float32 but the optimizer-FT-tagged
-    # `CS4DVarSolveResult` would claim Float64. Policy scalars
-    # (`initial_step`, `min_step`, `step_shrink`,
-    # `gradient_tolerance`) are coerced once here.
     FT = eltype(current.gradients[1][1])
     initial_step = FT(optimizer.initial_step)
     min_step = FT(optimizer.min_step)
@@ -146,7 +142,18 @@ function cs_surface_flux_4dvar_solve(optimizer::CSGradientDescent,
     gradient_norm_history = FT[grad_norm]
     step_history = FT[]
 
-    for _ in 1:optimizer.iterations
+    # Optional per-iteration diagnostic log. `iteration = 0` records
+    # the initial probe before any descent step.
+    log = optimizer.log ? CSIterationLog{FT}() : nothing
+    t0 = time()
+    if log !== nothing
+        push!(log.entries, CSIterationLogEntry{FT}(
+            0, FT(current.cost), FT(current.observation_cost),
+            FT(current.background_cost), grad_norm, zero(FT),
+            time() - t0))
+    end
+
+    for iter in 1:optimizer.iterations
         grad_norm <= gradient_tolerance && break
         step = initial_step
         accepted = false
@@ -168,6 +175,12 @@ function cs_surface_flux_4dvar_solve(optimizer::CSGradientDescent,
         push!(cost_history, FT(current.cost))
         push!(gradient_norm_history, grad_norm)
         push!(step_history, step)
+        if log !== nothing
+            push!(log.entries, CSIterationLogEntry{FT}(
+                iter, FT(current.cost), FT(current.observation_cost),
+                FT(current.background_cost), grad_norm, step,
+                time() - t0))
+        end
     end
 
     A2 = typeof(current.gradients[1][1])
@@ -177,7 +190,8 @@ function cs_surface_flux_4dvar_solve(optimizer::CSGradientDescent,
         cost_history,
         gradient_norm_history,
         step_history,
-        length(step_history))
+        length(step_history),
+        log)
 end
 
 # ---------------------------------------------------------------------------
@@ -208,9 +222,11 @@ struct CSLBFGS{FT <: AbstractFloat} <: AbstractCSOptimizer
     gradient_tolerance::FT
     m::Int
     show_trace::Bool
+    log::Bool
 
     function CSLBFGS(iterations::Integer, gradient_tolerance::FT,
-                      m::Integer, show_trace::Bool) where FT <: AbstractFloat
+                      m::Integer, show_trace::Bool,
+                      log::Bool) where FT <: AbstractFloat
         iterations >= 0 || throw(ArgumentError(
             "CSLBFGS iterations must be non-negative, got $iterations"))
         gradient_tolerance >= 0 || throw(ArgumentError(
@@ -218,16 +234,19 @@ struct CSLBFGS{FT <: AbstractFloat} <: AbstractCSOptimizer
             "$gradient_tolerance"))
         m > 0 || throw(ArgumentError(
             "CSLBFGS m (L-BFGS history length) must be positive, got $m"))
-        return new{FT}(Int(iterations), gradient_tolerance, Int(m), show_trace)
+        return new{FT}(Int(iterations), gradient_tolerance, Int(m),
+                       show_trace, log)
     end
 end
 
 function CSLBFGS(; iterations::Integer = 100,
                   gradient_tolerance::Real = 1e-8,
                   m::Integer = 10,
-                  show_trace::Bool = false)
+                  show_trace::Bool = false,
+                  log::Bool = false)
     FT = typeof(float(gradient_tolerance))
-    return CSLBFGS(Int(iterations), FT(gradient_tolerance), Int(m), show_trace)
+    return CSLBFGS(Int(iterations), FT(gradient_tolerance), Int(m),
+                   show_trace, log)
 end
 
 # ---------- flatten / unflatten helpers --------------------------------------
@@ -319,29 +338,71 @@ function cs_surface_flux_4dvar_solve(optimizer::CSLBFGS, cost_fn, controls)
     x0 = Vector{FT}(undef, n_total)
     _flatten_controls_into!(x0, initial_controls)
 
-    # Optim's `(f, g!)` callbacks. The cost / gradient histories come
-    # from Optim's own trace (`store_trace = true` below) rather than
-    # from these callbacks, so they stay minimal.
+    # Optim's `(f, g!)` callbacks. We cache the most recent
+    # `CS4DVarResult` in `last_result` so the optional per-iteration
+    # log can recover the cost decomposition (observation vs
+    # background) without an extra cost_fn call. Optim re-runs `g!`
+    # at every accepted iterate before firing its iteration
+    # callback, so `last_result[]` is the accepted-iterate result
+    # at callback time.
+    last_result = Ref(probe)
+
     f = function (x::AbstractVector)
         _unflatten_into_controls!(working_controls, x)
-        return FT(cost_fn(working_controls).cost)
+        result = cost_fn(working_controls)
+        last_result[] = result
+        return FT(result.cost)
     end
 
     g! = function (G::AbstractVector, x::AbstractVector)
         _unflatten_into_controls!(working_controls, x)
         result = cost_fn(working_controls)
+        last_result[] = result
         _flatten_gradients_into!(G, result.gradients)
         return G
     end
 
+    # Optional per-iteration log populated via Optim's callback hook.
+    log = optimizer.log ? CSIterationLog{FT}() : nothing
+    t0 = time()
+    if log !== nothing
+        push!(log.entries, CSIterationLogEntry{FT}(
+            0, FT(probe.cost), FT(probe.observation_cost),
+            FT(probe.background_cost),
+            FT(_control_gradient_norm(probe.gradients)),
+            zero(FT), time() - t0))
+    end
+    callback = log === nothing ? nothing : function (state)
+        # Optim's `OptimizationState` for L-BFGS exposes
+        # `pseudo_iteration`, `f_x`, `g_x` etc. — different field
+        # names from the `OptimizationTrace` entry returned by
+        # `opt_result.trace[k]`. We project to the same shape as
+        # CSGradientDescent's log entries.
+        r = last_result[]
+        iter_count = state.pseudo_iteration
+        g_norm = FT(maximum(abs, state.g_x))
+        push!(log.entries, CSIterationLogEntry{FT}(
+            iter_count, FT(r.cost),
+            FT(r.observation_cost), FT(r.background_cost),
+            g_norm, zero(FT), time() - t0))
+        return false
+    end
+
     # `Optim.LBFGS(m = ...)` selects the L-BFGS algorithm with `m`
-    # history terms. The default line search is Hager–Zhang.
-    options = Optim.Options(
-        iterations = optimizer.iterations,
-        g_abstol = optimizer.gradient_tolerance,
-        show_trace = optimizer.show_trace,
-        store_trace = true,
-    )
+    # history terms. The default line search is Hager–Zhang. The
+    # iteration `callback` (when log is enabled) appends one
+    # `CSIterationLogEntry` per accepted iterate; `store_trace`
+    # still powers `cost_history` / `gradient_norm_history`.
+    options = callback === nothing ?
+        Optim.Options(iterations = optimizer.iterations,
+                       g_abstol = optimizer.gradient_tolerance,
+                       show_trace = optimizer.show_trace,
+                       store_trace = true) :
+        Optim.Options(iterations = optimizer.iterations,
+                       g_abstol = optimizer.gradient_tolerance,
+                       show_trace = optimizer.show_trace,
+                       store_trace = true,
+                       callback = callback)
     opt_result = Optim.optimize(f, g!, x0,
                                  Optim.LBFGS(m = optimizer.m),
                                  options)
@@ -366,7 +427,8 @@ function cs_surface_flux_4dvar_solve(optimizer::CSLBFGS, cost_fn, controls)
         trace_costs,
         trace_gnorms,
         FT[],
-        Optim.iterations(opt_result))
+        Optim.iterations(opt_result),
+        log)
 end
 
 # ---------------------------------------------------------------------------
@@ -409,7 +471,8 @@ function cs_surface_flux_4dvar_optimize(panels_rm0, panels_m0,
     opt = if optimizer === nothing
         FT = eltype(panels_rm0[1])
         CSGradientDescent(Int(iterations), FT(initial_step), FT(min_step),
-                          FT(step_shrink), FT(gradient_tolerance), line_search)
+                          FT(step_shrink), FT(gradient_tolerance),
+                          line_search, false)
     else
         optimizer
     end

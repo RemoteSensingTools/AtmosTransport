@@ -136,14 +136,12 @@ _optim_type(name) = name == "linear"     ? AT.LinearOptimType() :
                     throw(ArgumentError("unknown optim_type $(repr(name)); " *
                                          "expected 'linear' or 'log_normal'"))
 
-function _build_preconditioner(cfg, mesh, FT)
-    prec_cfg = get(cfg, "preconditioner", Dict("enabled" => false))
+function _build_preconditioner(prec_cfg, covariance, mesh, FT)
     get(prec_cfg, "enabled", false) || return nothing
     optim_type = _optim_type(prec_cfg["optim_type"])
     bg_value = FT(prec_cfg["background_value"])
     background = ntuple(_ -> fill(bg_value, mesh.Nc, mesh.Nc), 6)
-    cov = _build_covariance(cfg["covariance"], mesh, FT)
-    return AT.CSSurfaceFluxPreconditioner(cov, background, optim_type)
+    return AT.CSSurfaceFluxPreconditioner(covariance, background, optim_type)
 end
 
 function _build_optimizer(opt_cfg, FT)
@@ -260,7 +258,16 @@ function run_inversion(config_path::AbstractString)
 
     meteo = _build_meteo(cfg, mesh, nsteps, FT)
     observations = _build_observations(cfg, FT)
-    prec = _build_preconditioner(cfg, mesh, FT)
+    # Build the covariance once and share it with the preconditioner so
+    # the FFTW plan in `IsotropicGaussianCSCovariance` is constructed
+    # exactly once per `run_inversion` call. The preconditioner builder
+    # accepts an already-built covariance rather than re-parsing the
+    # TOML.
+    prec_cfg = get(cfg, "preconditioner", Dict("enabled" => false))
+    covariance = haskey(cfg, "covariance") ?
+        _build_covariance(cfg["covariance"], mesh, FT) : nothing
+    prec = covariance === nothing ? nothing :
+        _build_preconditioner(prec_cfg, covariance, mesh, FT)
     control = _build_initial_control(cfg, mesh, prec, FT)
     optimizer = _build_optimizer(cfg["optimizer"], FT)
 

@@ -281,8 +281,7 @@ end
 # Inverse of `_flatten_controls_into!`. Mutates the underlying panel
 # matrices, so `controls` here is treated as a scratch vector whose
 # `.value` matrices are reused across Optim cost evaluations.
-function _unflatten_into_controls!(controls,
-                                    flat::AbstractVector) where {}
+function _unflatten_into_controls!(controls, flat::AbstractVector)
     idx = 1
     @inbounds for c in controls
         for p in 1:6

@@ -481,8 +481,7 @@ function write_departures(path::AbstractString, set::CSDepartureSet)
         departures = Vector{Float64}(undef, n)
         sigmas = Vector{Float64}(undef, n)
         normalized = Vector{Float64}(undef, n)
-        @inbounds for k in 1:n
-            r = set.records[k]
+        @inbounds for (k, r) in enumerate(set.records)
             isfinite(r.simulated_value) || throw(ArgumentError(
                 "write_departures row $k simulated_value = $(r.simulated_value) is not finite"))
             isfinite(r.departure) || throw(ArgumentError(

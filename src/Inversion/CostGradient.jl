@@ -213,8 +213,12 @@ end
 function _gradient_step_controls(controls, gradients, step)
     length(controls) == length(gradients) || throw(DimensionMismatch(
         "controls length $(length(controls)) does not match gradients length $(length(gradients))"))
-    return Any[_gradient_step_control(controls[i], gradients[i], step)
-               for i in eachindex(controls)]
+    # Untyped comprehension so the result element type is inferred from
+    # `_gradient_step_control`'s concrete return — previously
+    # `Any[...]`, which forced runtime dispatch on every `cost_fn(...)`
+    # call inside the optimizer's line-search loop.
+    return [_gradient_step_control(controls[i], gradients[i], step)
+            for i in eachindex(controls)]
 end
 
 function _control_gradient_norm(gradients)

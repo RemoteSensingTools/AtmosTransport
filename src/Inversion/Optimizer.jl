@@ -115,6 +115,14 @@ function cs_surface_flux_4dvar_solve end
 function cs_surface_flux_4dvar_solve(optimizer::CSGradientDescent,
                                       cost_fn, controls)
     current = cost_fn(controls)
+    # `cs_surface_flux_4dvar` rejects empty controls upstream, so
+    # `current.gradients` is always non-empty in normal use. The guard
+    # here makes the assumption explicit so a direct
+    # `cs_surface_flux_4dvar_solve(opt, cost_fn, [])` call from a
+    # future backend cannot panic on `gradients[1][1]` below.
+    isempty(current.gradients) && throw(ArgumentError(
+        "cost_fn returned a CS4DVarResult with no gradients; " *
+        "cannot derive optimizer element type"))
     # Derive history / step `FT` from the cost result, not from the
     # optimizer's parametric `FT`. A user passing `optimizer =
     # CSGradientDescent(initial_step = 0.25)` (defaults to Float64)

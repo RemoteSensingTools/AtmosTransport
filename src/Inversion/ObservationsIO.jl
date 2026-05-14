@@ -158,8 +158,7 @@ function write_observations(path::AbstractString, set::CSObservationSet)
         sigs = Vector{Float64}(undef, n)
         instr = Vector{String}(undef, n)
         tracs = Vector{String}(undef, n)
-        @inbounds for i in 1:n
-            r = set.records[i]
+        @inbounds for (i, r) in enumerate(set.records)
             ids[i] = r.id
             for c in 1:6
                 dates[c, i] = r.date_components[c]

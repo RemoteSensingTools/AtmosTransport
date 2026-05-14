@@ -81,6 +81,17 @@ _resolve_mass_basis(cfg::AbstractDict) =
 _resolve_chain_mass(cfg::AbstractDict) =
     Bool(get(get(cfg, "numerics", Dict()), "chain_mass", true))
 
+# Canonical CS substep-positivity contract knobs. Defaults match the gate the
+# regrid path has enforced since plan 39 — every CS-producing preprocessor
+# (spectral, regrid, GEOS-native) reads them from the same `[numerics]` block
+# so a config can't silently bypass the contract on one path while honoring it
+# on another.
+_resolve_positivity_cfl_limit(cfg::AbstractDict) =
+    Float64(get(get(cfg, "numerics", Dict()), "positivity_cfl_limit", 0.95))
+
+_resolve_require_substep_positivity(cfg::AbstractDict) =
+    Bool(get(get(cfg, "numerics", Dict()), "require_substep_positivity", true))
+
 # ---------------------------------------------------------------------------
 # Native-source preprocessor: typed `AbstractMetSettings` + cross-day state
 # carry (e.g. GEOS pressure-fixer chained mass).
@@ -138,6 +149,8 @@ function _process_day_native(cfg::AbstractDict;
     mass_basis     = _resolve_mass_basis(cfg)
     dt_met_seconds = _resolve_dt_met(cfg)
     chain_mass     = _resolve_chain_mass(cfg)
+    positivity_cfl_limit       = _resolve_positivity_cfl_limit(cfg)
+    require_substep_positivity = _resolve_require_substep_positivity(cfg)
 
     dates = _resolve_dates_native(cfg; day_override, start_date, end_date)
 
@@ -156,6 +169,8 @@ function _process_day_native(cfg::AbstractDict;
                              FT              = FT,
                              mass_basis      = mass_basis,
                              chain_mass      = chain_mass,
+                             positivity_cfl_limit       = positivity_cfl_limit,
+                             require_substep_positivity = require_substep_positivity,
                              seed_m          = seed_m)
         seed_m = get(result, :final_m, nothing)
     end
@@ -187,6 +202,9 @@ function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
         select_processing_dates(available_spectral_dates(settings.spectral_dir), day_filter)
     end
 
+    positivity_cfl_limit       = _resolve_positivity_cfl_limit(cfg)
+    require_substep_positivity = _resolve_require_substep_positivity(cfg)
+
     @info @sprintf("Processing %d days: %s to %s", length(dates), first(dates), last(dates))
     t_total = time()
     for (idx, date) in enumerate(dates)
@@ -194,7 +212,10 @@ function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
         next_day_h0 = next_day_hour0(date, dates, settings.spectral_dir, settings.T_target;
                                      cache_dir = settings.spectral_cache_dir)
         next_day_h0 !== nothing && @info("  Next day hour 0 available for last-window delta")
-        process_day(date, grid, settings, vertical; next_day_hour0 = next_day_h0)
+        process_day(date, grid, settings, vertical;
+                    positivity_cfl_limit       = positivity_cfl_limit,
+                    require_substep_positivity = require_substep_positivity,
+                    next_day_hour0             = next_day_h0)
     end
     elapsed = time() - t_total
     @info @sprintf("All done! %d days in %.1fs (%.1fs/day)",

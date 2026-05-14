@@ -66,3 +66,171 @@ function verify_write_replay_cs!(m_cur::NTuple{NP, <:AbstractArray{FT, 3}},
               "the target mass endpoint under palindrome continuity.")
     return diag
 end
+
+"""
+    verify_substep_positivity_cs(m, am, bm, cm; cfl_limit = 0.95, halo_width = 0)
+
+Verify the per-substep horizontal+vertical positivity contract that the runtime's
+`_cs_static_subcycle_count` depends on: for every interior cell on every panel,
+the per-direction outgoing mass per substep must not exceed `cfl_limit * m`.
+
+Returns a NamedTuple `(direction, ratio, location, ok)`:
+* `direction :: Union{Symbol, Nothing}` — `:x`, `:y`, `:z`, or `nothing` when nothing
+  exceeded zero.
+* `ratio :: Float64` — worst observed `outgoing / m` over the window.
+* `location :: NTuple{4, Int}` — `(panel, i, j, k)` of the worst cell.
+* `ok :: Bool` — `true` iff `ratio <= cfl_limit`.
+
+The replay gate (`verify_write_replay_cs!`) only checks endpoint continuity. A
+binary that drives a cell mass negative mid-sweep can still pass replay because
+the cell re-fills from inflow before the window ends — but the runtime cannot
+recover. This gate is the actual contract the runtime depends on.
+
+`halo_width` defaults to `0` (panel arrays are stored unhaloed at preprocess
+time); pass `> 0` to scan only the interior of a haloed buffer.
+"""
+function verify_substep_positivity_cs(m::NTuple{NP, <:AbstractArray{FT, 3}},
+                                      am::NTuple{NP, <:AbstractArray},
+                                      bm::NTuple{NP, <:AbstractArray},
+                                      cm::NTuple{NP, <:AbstractArray};
+                                      cfl_limit::Real = 0.95,
+                                      halo_width::Integer = 0) where {FT, NP}
+    Hp = Int(halo_width)
+    # All buffers share the same interior extent `(Nc, Nc, Nz)`; derive from m.
+    Nc = size(m[1], 1) - 2Hp
+    Nz = size(m[1], 3)
+    iL = Hp + 1
+    iH = Hp + Nc
+    worst_dir = nothing
+    worst_ratio = 0.0
+    worst_loc = (0, 0, 0, 0)
+    for p in 1:NP
+        m_p = m[p]
+        for (dir, F_lo_view, F_hi_view) in (
+            (:x, view(am[p], iL    :iH,     iL:iH,     1:Nz),
+                 view(am[p], iL + 1:iH + 1, iL:iH,     1:Nz)),
+            (:y, view(bm[p], iL:iH,     iL    :iH,     1:Nz),
+                 view(bm[p], iL:iH,     iL + 1:iH + 1, 1:Nz)),
+            (:z, view(cm[p], iL:iH, iL:iH, 1    :Nz),
+                 view(cm[p], iL:iH, iL:iH, 2:Nz + 1)),
+        )
+            m_int = view(m_p, iL:iH, iL:iH, 1:Nz)
+            for k in 1:Nz, j in 1:Nc, i in 1:Nc
+                mi = m_int[i, j, k]
+                mi > zero(FT) || continue
+                fl = F_lo_view[i, j, k]
+                fh = F_hi_view[i, j, k]
+                outgoing = max(zero(FT), -fl) + max(zero(FT), fh)
+                ratio = outgoing / mi
+                if ratio > worst_ratio
+                    worst_ratio = ratio
+                    worst_dir = dir
+                    worst_loc = (p, i, j, k)
+                end
+            end
+        end
+    end
+    return (direction = worst_dir, ratio = Float64(worst_ratio),
+            location = worst_loc, ok = worst_ratio <= cfl_limit)
+end
+
+"""
+    verify_cs_window_contract!(m_cur, am, bm, cm, m_next, steps_per_window, win_idx;
+                               replay_tol, positivity_cfl_limit = 0.95, halo_width = 0)
+
+Single canonical per-window CS binary contract check. Runs the replay gate
+(`verify_write_replay_cs!`, errors on failure) followed by the per-substep
+positivity scan (`verify_substep_positivity_cs`, returns a diagnostic). Every
+CS-producing preprocessor (spectral, regrid, GEOS-native) should call this so
+no path can silently skip a gate.
+
+Returns `(; replay, positivity)` with both diagnostics. Positivity is non-fatal
+here — callers aggregate the worst window and pass it to
+`summarize_cs_positivity_status` after the loop, where the run-level
+`require_substep_positivity` policy decides whether to error or warn.
+"""
+function verify_cs_window_contract!(m_cur::NTuple{NP, <:AbstractArray{FT, 3}},
+                                    am::NTuple{NP, <:AbstractArray},
+                                    bm::NTuple{NP, <:AbstractArray},
+                                    cm::NTuple{NP, <:AbstractArray},
+                                    m_next::NTuple{NP, <:AbstractArray},
+                                    steps_per_window::Int,
+                                    win_idx::Int;
+                                    replay_tol::Real,
+                                    positivity_cfl_limit::Real = 0.95,
+                                    halo_width::Integer = 0) where {FT, NP}
+    replay = verify_write_replay_cs!(m_cur, am, bm, cm, m_next,
+                                     steps_per_window, replay_tol, win_idx)
+    positivity = verify_substep_positivity_cs(m_cur, am, bm, cm;
+                                              cfl_limit = positivity_cfl_limit,
+                                              halo_width = halo_width)
+    return (replay = replay, positivity = positivity)
+end
+
+"""
+    init_cs_positivity_accumulator() -> NamedTuple
+
+Zero-valued state for accumulating the worst per-window positivity diagnostic
+across a preprocessing loop. Pair with `update_cs_positivity_accumulator!`.
+"""
+init_cs_positivity_accumulator() = (ratio = 0.0,
+                                    direction = :none,
+                                    win = 0,
+                                    location = (0, 0, 0, 0))
+
+"""
+    update_cs_positivity_accumulator(worst, diag, win_idx) -> NamedTuple
+
+Return an updated accumulator from a fresh per-window diagnostic.
+"""
+function update_cs_positivity_accumulator(worst::NamedTuple, diag::NamedTuple, win_idx::Int)
+    diag.ratio > worst.ratio || return worst
+    return (ratio = diag.ratio,
+            direction = diag.direction === nothing ? :none : diag.direction,
+            win = win_idx,
+            location = diag.location)
+end
+
+"""
+    summarize_cs_positivity_status(worst; cfl_limit, steps_per_window,
+                                   require_substep_positivity = true,
+                                   quarantine_path = nothing)
+
+Post-loop summary helper. Logs the worst-window outcome, and if it exceeds
+`cfl_limit`:
+* deletes `quarantine_path` (if given) so a downstream consumer cannot pick up
+  the half-written binary;
+* errors when `require_substep_positivity = true`, otherwise warns.
+
+The error message includes a recommended `steps_per_window` value that would
+satisfy the gate, computed from the observed worst ratio.
+"""
+function summarize_cs_positivity_status(worst::NamedTuple;
+                                        cfl_limit::Real,
+                                        steps_per_window::Int,
+                                        require_substep_positivity::Bool = true,
+                                        quarantine_path::Union{Nothing, AbstractString} = nothing)
+    msg = @sprintf("max outgoing/m=%.3f dir=%s win=%d cell=%s (limit=%.2f)",
+                   worst.ratio, worst.direction, worst.win,
+                   worst.location, cfl_limit)
+    if worst.ratio <= cfl_limit
+        @info "  Per-substep positivity gate: $msg"
+        return nothing
+    end
+
+    recommended = max(steps_per_window,
+                      ceil(Int, worst.ratio / cfl_limit) * steps_per_window)
+    detail = "Per-substep positivity contract violated: $msg. " *
+             "The binary stores fluxes that violate positivity at the recorded " *
+             "`steps_per_window=$(steps_per_window)`. Re-run with " *
+             "`steps_per_window=$(recommended)` (or higher) on the source " *
+             "preprocessing config, or set `[numerics].require_substep_positivity = false` " *
+             "to suppress."
+    if require_substep_positivity
+        quarantine_path === nothing || (isfile(quarantine_path) && rm(quarantine_path; force = true))
+        error(detail)
+    else
+        @warn detail
+    end
+    return nothing
+end

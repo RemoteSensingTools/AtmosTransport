@@ -383,6 +383,8 @@ function process_day(date::Date,
                      FT::Type{<:AbstractFloat} = Float64,
                      mass_basis::Symbol = :dry,
                      replay_tol::Real = replay_tolerance(FT),
+                     positivity_cfl_limit::Real = 0.95,
+                     require_substep_positivity::Bool = true,
                      chain_mass::Bool = true,
                      seed_m::Union{Nothing, NTuple{6, <:AbstractArray}} = nothing,
                      next_day_hour0 = nothing)
@@ -453,6 +455,7 @@ function process_day(date::Date,
         ),
     )
 
+    writer_closed = false
     try
         # ---- v4-shape buffers (reused across windows) ----
         am_v4 = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz),     npanel)
@@ -474,6 +477,7 @@ function process_day(date::Date,
         worst_replay_rel = 0.0
         worst_replay_abs = 0.0
         worst_replay_win = 0
+        worst_positivity = init_cs_positivity_accumulator()
 
         t_start = time()
 
@@ -515,15 +519,22 @@ function process_day(date::Date,
             #    dm[k] = (m_next_pf[k] − m_cur[k]) / (2·steps_per_met).
             fill_cs_window_mass_tendency!(dm_v4, m_cur, m_next_pf, steps_per_met)
 
-            # 6. Replay gate: under the chained PF state this closes by
-            #    construction at every cell at every level.
-            replay = verify_write_replay_cs!(m_cur, am_v4, bm_v4, cm_v4,
-                                             m_next_pf, steps_per_met, replay_tol, win)
-            if worst_replay_win == 0 || replay.max_rel_err > worst_replay_rel
-                worst_replay_rel = replay.max_rel_err
-                worst_replay_abs = replay.max_abs_err
+            # 6. Canonical per-window contract: replay (closes by construction
+            #    under chained PF) + per-substep positivity (the runtime's
+            #    `_cs_static_subcycle_count` depends on this — without it,
+            #    locally-CFL>1 cells drive air mass slightly negative and the
+            #    runtime spirals into n_sub blowup at integration time).
+            contract = verify_cs_window_contract!(m_cur, am_v4, bm_v4, cm_v4,
+                                                  m_next_pf, steps_per_met, win;
+                                                  replay_tol = replay_tol,
+                                                  positivity_cfl_limit = positivity_cfl_limit)
+            if worst_replay_win == 0 || contract.replay.max_rel_err > worst_replay_rel
+                worst_replay_rel = contract.replay.max_rel_err
+                worst_replay_abs = contract.replay.max_abs_err
                 worst_replay_win = win
             end
+            worst_positivity = update_cs_positivity_accumulator(worst_positivity,
+                                                                 contract.positivity, win)
 
             # 7. Pack the on-disk endpoint delta `dm = m_next_pf − m_cur` and write.
             #    `convert_cs_mass_target_to_delta!` mutates m_next_pf into the
@@ -563,6 +574,17 @@ function process_day(date::Date,
         @info @sprintf("  Done in %.1fs (%.2fs/window). Worst replay: rel=%.2e abs=%.2e at win=%d",
                        elapsed, elapsed / nw, worst_replay_rel, worst_replay_abs, worst_replay_win)
 
+        # Close the writer before the positivity summary so a quarantine
+        # delete (require_substep_positivity=true + violation) can remove the
+        # binary cleanly without an open file handle on it.
+        close_streaming_transport_binary!(writer)
+        writer_closed = true
+        summarize_cs_positivity_status(worst_positivity;
+                                       cfl_limit = positivity_cfl_limit,
+                                       steps_per_window = steps_per_met,
+                                       require_substep_positivity = require_substep_positivity,
+                                       quarantine_path = out_path)
+
         # Capture the pressure-fixer endpoint from the last window so the
         # caller can seed the next day's `process_day` and preserve cross-day
         # continuity (codex 2026-04-25 P2).
@@ -577,7 +599,7 @@ function process_day(date::Date,
             final_m = final_m,
         )
     finally
-        close_streaming_transport_binary!(writer)
+        writer_closed || close_streaming_transport_binary!(writer)
         close_day!(handles)
     end
 end

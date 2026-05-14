@@ -11,6 +11,8 @@ function process_day(date::Date,
                      grid::CubedSphereTargetGeometry,
                      settings,
                      vertical;
+                     positivity_cfl_limit::Real = 0.95,
+                     require_substep_positivity::Bool = true,
                      next_day_hour0=nothing)
     FT = settings.output_float_type
     Nc = grid.Nc
@@ -204,6 +206,7 @@ function process_day(date::Date,
     worst_replay_abs = 0.0
     worst_replay_win = 0
     worst_replay_idx = (0, 0, 0, 0)
+    worst_positivity = init_cs_positivity_accumulator()
     total_synth_regrid = 0.0
     total_balance = 0.0
     total_replay = 0.0
@@ -273,19 +276,26 @@ function process_day(date::Date,
         fill_cs_window_mass_tendency!(cs_ws.dm_panels, cur_m, cs_ws.m_next_panels, steps_per_met)
         for p in 1:CS_PANEL_COUNT; fill!(cur_cm[p], zero(FT)); end
         diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz)
-        if write_replay_on
+        pos_diag = if write_replay_on
             t_replay = time()
-            diag_replay = verify_write_replay_cs!(cur_m, cur_am, cur_bm, cur_cm,
+            contract = verify_cs_window_contract!(cur_m, cur_am, cur_bm, cur_cm,
                                                   cs_ws.m_next_panels,
-                                                  steps_per_met, replay_tol, win - 1)
+                                                  steps_per_met, win - 1;
+                                                  replay_tol = replay_tol,
+                                                  positivity_cfl_limit = positivity_cfl_limit)
             total_replay += time() - t_replay
-            if worst_replay_win == 0 || diag_replay.max_rel_err > worst_replay_rel
-                worst_replay_rel = diag_replay.max_rel_err
-                worst_replay_abs = diag_replay.max_abs_err
+            if worst_replay_win == 0 || contract.replay.max_rel_err > worst_replay_rel
+                worst_replay_rel = contract.replay.max_rel_err
+                worst_replay_abs = contract.replay.max_abs_err
                 worst_replay_win = win - 1
-                worst_replay_idx = diag_replay.worst_idx
+                worst_replay_idx = contract.replay.worst_idx
             end
+            contract.positivity
+        else
+            verify_substep_positivity_cs(cur_m, cur_am, cur_bm, cur_cm;
+                                         cfl_limit = positivity_cfl_limit)
         end
+        worst_positivity = update_cs_positivity_accumulator(worst_positivity, pos_diag, win - 1)
         convert_cs_mass_target_to_delta!(cs_ws.m_next_panels, cur_m)
 
         # Write balanced previous window
@@ -353,19 +363,26 @@ function process_day(date::Date,
     fill_cs_window_mass_tendency!(cs_ws.dm_panels, cur_m, cs_ws.m_next_panels, steps_per_met)
     for p in 1:CS_PANEL_COUNT; fill!(cur_cm[p], zero(FT)); end
     diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz)
-    if write_replay_on
+    pos_diag = if write_replay_on
         t_replay = time()
-        diag_replay = verify_write_replay_cs!(cur_m, cur_am, cur_bm, cur_cm,
+        contract = verify_cs_window_contract!(cur_m, cur_am, cur_bm, cur_cm,
                                               cs_ws.m_next_panels,
-                                              steps_per_met, replay_tol, Nt)
+                                              steps_per_met, Nt;
+                                              replay_tol = replay_tol,
+                                              positivity_cfl_limit = positivity_cfl_limit)
         total_replay += time() - t_replay
-        if worst_replay_win == 0 || diag_replay.max_rel_err > worst_replay_rel
-            worst_replay_rel = diag_replay.max_rel_err
-            worst_replay_abs = diag_replay.max_abs_err
+        if worst_replay_win == 0 || contract.replay.max_rel_err > worst_replay_rel
+            worst_replay_rel = contract.replay.max_rel_err
+            worst_replay_abs = contract.replay.max_abs_err
             worst_replay_win = Nt
-            worst_replay_idx = diag_replay.worst_idx
+            worst_replay_idx = contract.replay.worst_idx
         end
+        contract.positivity
+    else
+        verify_substep_positivity_cs(cur_m, cur_am, cur_bm, cur_cm;
+                                     cfl_limit = positivity_cfl_limit)
     end
+    worst_positivity = update_cs_positivity_accumulator(worst_positivity, pos_diag, Nt)
     convert_cs_mass_target_to_delta!(cs_ws.m_next_panels, cur_m)
 
     window_nt = (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps,
@@ -386,6 +403,15 @@ function process_day(date::Date,
 
     # --- Finalize ---
     close_streaming_transport_binary!(writer)
+
+    # Per-substep positivity gate. Close the writer first so a quarantine
+    # delete (require_substep_positivity=true + violation) can remove the
+    # binary cleanly without an open file handle on it.
+    summarize_cs_positivity_status(worst_positivity;
+                                   cfl_limit = positivity_cfl_limit,
+                                   steps_per_window = steps_per_met,
+                                   require_substep_positivity = require_substep_positivity,
+                                   quarantine_path = bin_path)
 
     if settings.mass_fix_enable
         ps_offsets_day = @view ps_offsets[1:Nt]

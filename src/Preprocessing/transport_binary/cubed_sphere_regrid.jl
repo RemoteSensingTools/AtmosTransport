@@ -1,59 +1,8 @@
 # Lat-lon transport-binary to cubed-sphere transport-binary regrid path.
 
-"""
-    _check_cs_substep_positivity(cur_m, cur_am, cur_bm, cur_cm, Nc, Hp, Nz;
-                                  cfl_limit::Real = 0.95)
-
-Verify the per-substep horizontal positivity contract that
-`_cs_static_subcycle_count` uses at runtime: for every interior cell
-on every panel and direction, the outgoing-mass-per-substep must not
-exceed the cell's mass.  Returns `(direction, ratio, location)` for
-the worst offender; `(nothing, 0.0, ())` when the binary is safe.
-
-The replay gate (`verify_write_replay_cs!`) only checks endpoint
-continuity (`m_n + Σ flux·dt = m_{n+1}`) and silently passes any
-binary that nukes a cell mid-sweep before the negative tracer
-re-fills from inflow.  This gate fires *before* the binary is
-considered shippable.
-"""
-function _check_cs_substep_positivity(cur_m, cur_am, cur_bm, cur_cm,
-                                       Nc::Int, Hp::Int, Nz::Int;
-                                       cfl_limit::Real = 0.95)
-    FT = eltype(cur_m[1])
-    iL = Hp + 1
-    iH = Hp + Nc
-    worst_dir = nothing
-    worst_ratio = 0.0
-    worst_loc = (0, 0, 0, 0)
-    for p in 1:6
-        m_p = cur_m[p]
-        for (dir, F_lo_view, F_hi_view) in (
-            (:x, view(cur_am[p], iL    :iH,     iL:iH,     1:Nz),
-                 view(cur_am[p], iL + 1:iH + 1, iL:iH,     1:Nz)),
-            (:y, view(cur_bm[p], iL:iH,     iL    :iH,     1:Nz),
-                 view(cur_bm[p], iL:iH,     iL + 1:iH + 1, 1:Nz)),
-            (:z, view(cur_cm[p], iL:iH, iL:iH, 1    :Nz),
-                 view(cur_cm[p], iL:iH, iL:iH, 2:Nz + 1)),
-        )
-            m_int = view(m_p, iL:iH, iL:iH, 1:Nz)
-            for k in 1:Nz, j in 1:Nc, i in 1:Nc
-                mi = m_int[i, j, k]
-                mi > zero(FT) || continue
-                fl = F_lo_view[i, j, k]
-                fh = F_hi_view[i, j, k]
-                outgoing = max(zero(FT), -fl) + max(zero(FT), fh)
-                ratio = outgoing / mi
-                if ratio > worst_ratio
-                    worst_ratio = ratio
-                    worst_dir = dir
-                    worst_loc = (p, i, j, k)
-                end
-            end
-        end
-    end
-    return (direction = worst_dir, ratio = Float64(worst_ratio),
-            location = worst_loc, ok = worst_ratio <= cfl_limit)
-end
+# Per-window contract gates (replay + per-substep positivity) live in
+# `cubed_sphere_contracts.jl` — all three CS-producing preprocessors call the
+# same `verify_cs_window_contract!` so no path can silently skip a check.
 
 """
     regrid_ll_binary_to_cs(ll_binary_path, cs_grid, out_path; FT=Float64, mass_basis=nothing)
@@ -365,10 +314,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     worst_replay_abs = 0.0
     worst_replay_win = 0
     worst_replay_idx = (0, 0, 0, 0)
-    worst_pos_ratio = 0.0
-    worst_pos_dir   = :none
-    worst_pos_win   = 0
-    worst_pos_loc   = (0, 0, 0, 0)
+    worst_positivity = init_cs_positivity_accumulator()
     apply_horizontal_balance = horizontal_poisson_balance_enabled()
     if apply_horizontal_balance
         @info "  Applying per-layer CS Poisson mass-flux balance (legacy opt-in)..."
@@ -429,32 +375,24 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         fill_cs_window_mass_tendency!(cs_ws.dm_panels, cur_m, cs_ws.m_next_panels, steps_per_met)
         for p in 1:CS_PANEL_COUNT; fill!(cur_cm[p], zero(FT)); end
         diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz)
-        if write_replay_on
-            diag_replay = verify_write_replay_cs!(cur_m, cur_am, cur_bm, cur_cm,
+        pos_diag = if write_replay_on
+            contract = verify_cs_window_contract!(cur_m, cur_am, cur_bm, cur_cm,
                                                   cs_ws.m_next_panels,
-                                                  steps_per_met, replay_tol, win - 1)
-            if worst_replay_win == 0 || diag_replay.max_rel_err > worst_replay_rel
-                worst_replay_rel = diag_replay.max_rel_err
-                worst_replay_abs = diag_replay.max_abs_err
+                                                  steps_per_met, win - 1;
+                                                  replay_tol = replay_tol,
+                                                  positivity_cfl_limit = positivity_cfl_limit)
+            if worst_replay_win == 0 || contract.replay.max_rel_err > worst_replay_rel
+                worst_replay_rel = contract.replay.max_rel_err
+                worst_replay_abs = contract.replay.max_abs_err
                 worst_replay_win = win - 1
-                worst_replay_idx = diag_replay.worst_idx
+                worst_replay_idx = contract.replay.worst_idx
             end
+            contract.positivity
+        else
+            verify_substep_positivity_cs(cur_m, cur_am, cur_bm, cur_cm;
+                                         cfl_limit = positivity_cfl_limit)
         end
-        # Per-substep positivity gate. The replay test above only proves
-        # endpoint continuity (m_n + Σ flux·dt = m_{n+1}); a binary that
-        # nukes a cell mid-sweep can still pass replay because the cell
-        # re-fills from inflow before the window ends. This gate is the
-        # actual contract the runtime's `_cs_static_subcycle_count`
-        # depends on.
-        pos_diag = _check_cs_substep_positivity(cur_m, cur_am, cur_bm, cur_cm,
-                                                 Nc, 0, Nz;
-                                                 cfl_limit = positivity_cfl_limit)
-        if pos_diag.ratio > worst_pos_ratio
-            worst_pos_ratio = pos_diag.ratio
-            worst_pos_dir   = pos_diag.direction === nothing ? :none : pos_diag.direction
-            worst_pos_win   = win - 1
-            worst_pos_loc   = pos_diag.location
-        end
+        worst_positivity = update_cs_positivity_accumulator(worst_positivity, pos_diag, win - 1)
         convert_cs_mass_target_to_delta!(cs_ws.m_next_panels, cur_m)
 
         window_nt = (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps,
@@ -541,26 +479,24 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     fill_cs_window_mass_tendency!(cs_ws.dm_panels, cur_m, cs_ws.m_next_panels, steps_per_met)
     for p in 1:CS_PANEL_COUNT; fill!(cur_cm[p], zero(FT)); end
     diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz)
-    if write_replay_on
-        diag_replay = verify_write_replay_cs!(cur_m, cur_am, cur_bm, cur_cm,
+    pos_diag = if write_replay_on
+        contract = verify_cs_window_contract!(cur_m, cur_am, cur_bm, cur_cm,
                                               cs_ws.m_next_panels,
-                                              steps_per_met, replay_tol, Nt)
-        if worst_replay_win == 0 || diag_replay.max_rel_err > worst_replay_rel
-            worst_replay_rel = diag_replay.max_rel_err
-            worst_replay_abs = diag_replay.max_abs_err
+                                              steps_per_met, Nt;
+                                              replay_tol = replay_tol,
+                                              positivity_cfl_limit = positivity_cfl_limit)
+        if worst_replay_win == 0 || contract.replay.max_rel_err > worst_replay_rel
+            worst_replay_rel = contract.replay.max_rel_err
+            worst_replay_abs = contract.replay.max_abs_err
             worst_replay_win = Nt
-            worst_replay_idx = diag_replay.worst_idx
+            worst_replay_idx = contract.replay.worst_idx
         end
+        contract.positivity
+    else
+        verify_substep_positivity_cs(cur_m, cur_am, cur_bm, cur_cm;
+                                     cfl_limit = positivity_cfl_limit)
     end
-    pos_diag = _check_cs_substep_positivity(cur_m, cur_am, cur_bm, cur_cm,
-                                             Nc, 0, Nz;
-                                             cfl_limit = positivity_cfl_limit)
-    if pos_diag.ratio > worst_pos_ratio
-        worst_pos_ratio = pos_diag.ratio
-        worst_pos_dir   = pos_diag.direction === nothing ? :none : pos_diag.direction
-        worst_pos_win   = Nt
-        worst_pos_loc   = pos_diag.location
-    end
+    worst_positivity = update_cs_positivity_accumulator(worst_positivity, pos_diag, Nt)
     convert_cs_mass_target_to_delta!(cs_ws.m_next_panels, cur_m)
 
     window_nt = (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps,
@@ -605,36 +541,16 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         @info "  Write-time replay gate: $replay_msg"
     end
 
-    pos_msg = @sprintf("max outgoing/m=%.3f dir=%s win=%d cell=%s (limit=%.2f)",
-                       worst_pos_ratio, worst_pos_dir, worst_pos_win,
-                       worst_pos_loc, positivity_cfl_limit)
-    if worst_pos_ratio > positivity_cfl_limit
-        recommended = max(steps_per_met,
-                          ceil(Int, worst_pos_ratio / positivity_cfl_limit) * steps_per_met)
-        msg = "Per-substep positivity contract violated: $pos_msg. " *
-              "The runtime's `_cs_static_subcycle_count` would still subcycle " *
-              "(post `mapreduce(max, ...)` patch), but the binary itself stores " *
-              "fluxes that violate positivity at the recorded `steps_per_window=$(steps_per_met)`. " *
-              "Suggest re-running with `steps_per_window=$recommended` (set " *
-              "via the `[numerics].steps_per_met` knob on the source LL " *
-              "preprocessing config), or re-invoke `regrid_ll_binary_to_cs` " *
-              "with `require_substep_positivity=false` to suppress."
-        if require_substep_positivity
-            # Quarantine the bad binary so a downstream consumer can't
-            # accidentally pick it up — the gate is the contract, the
-            # `.tmp` path is the staging area.
-            isfile(tmp_path) && rm(tmp_path; force = true)
-            error(msg)
-        else
-            @warn msg
-            # Promote the tmp file even on warn-only so the caller gets
-            # a binary at `out_path` for diagnostic inspection.
-            mv(tmp_path, out_path; force = true)
-        end
-    else
-        @info "  Per-substep positivity gate: $pos_msg"
-        mv(tmp_path, out_path; force = true)
-    end
+    # Single contract summary — errors (and deletes the staged .tmp) on
+    # require_substep_positivity=true if the gate failed, otherwise warns.
+    summarize_cs_positivity_status(worst_positivity;
+                                   cfl_limit = positivity_cfl_limit,
+                                   steps_per_window = steps_per_met,
+                                   require_substep_positivity = require_substep_positivity,
+                                   quarantine_path = tmp_path)
+    # Reached only when positivity passed, or when require_substep_positivity=false
+    # turned a violation into a warning. Promote the staged file either way.
+    mv(tmp_path, out_path; force = true)
 
     actual = filesize(out_path)
     @info @sprintf("  Done: %s (%.2f GB, %.1fs)", basename(out_path),

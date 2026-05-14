@@ -326,7 +326,7 @@ export cs_surface_emission_footprint, cs_surface_emission_footprint_from_seed
 export cs_tape_byte_estimate
 export cs_surface_flux_jacobian
 export cs_surface_flux_4dvar, cs_surface_flux_4dvar_optimize
-export AbstractCSOptimizer, CSGradientDescent, cs_surface_flux_4dvar_solve
+export AbstractCSOptimizer, CSGradientDescent, CSLBFGS, cs_surface_flux_4dvar_solve
 
 # Lin-Rood cross-term advection (FV3 fv_tp_2d)
 export LinRoodWorkspace, CSLinRoodAdvectionWorkspace

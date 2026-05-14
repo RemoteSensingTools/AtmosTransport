@@ -343,6 +343,6 @@ export cs_surface_emission_footprint, cs_surface_emission_footprint_from_seed
 export cs_tape_byte_estimate
 export cs_surface_flux_jacobian
 export cs_surface_flux_4dvar, cs_surface_flux_4dvar_optimize
-export AbstractCSOptimizer, CSGradientDescent, cs_surface_flux_4dvar_solve
+export AbstractCSOptimizer, CSGradientDescent, CSLBFGS, cs_surface_flux_4dvar_solve
 
 end # module Adjoints

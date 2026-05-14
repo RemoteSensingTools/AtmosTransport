@@ -1,15 +1,16 @@
 # ---------------------------------------------------------------------------
-# Plan 26 P0.C1 — polymorphic optimizer dispatch for CS 4D-Var.
+# Plan 26 P0.C1+C2 — polymorphic optimizer dispatch for CS 4D-Var.
 #
-# Layout (designed so future backends — L-BFGS via Optim.jl in C2,
-# hand-rolled L-BFGS-B, etc. — plug in as new concrete subtypes
-# without touching the public entrypoint):
+# Layout (new backends — hand-rolled L-BFGS-B, etc. — plug in as new
+# concrete subtypes without touching the public entrypoint):
 #
 #   AbstractCSOptimizer
 #       │
-#       └── CSGradientDescent          (the shim shipped in P0.4b,
-#                                       now wrapped as a concrete
-#                                       subtype)
+#       ├── CSGradientDescent          (the shim shipped in P0.4b,
+#       │                               now wrapped as a concrete
+#       │                               subtype)
+#       └── CSLBFGS                    (limited-memory BFGS via
+#                                       `Optim.jl` — C2)
 #
 # Backends implement `cs_surface_flux_4dvar_solve(opt, cost_fn,
 # controls)` where `cost_fn(controls) -> CS4DVarResult` is the
@@ -19,6 +20,8 @@
 # constructs a `CSGradientDescent` from the legacy descent-policy
 # kwargs.
 # ---------------------------------------------------------------------------
+
+import Optim
 
 """
     AbstractCSOptimizer
@@ -175,6 +178,195 @@ function cs_surface_flux_4dvar_solve(optimizer::CSGradientDescent,
         gradient_norm_history,
         step_history,
         length(step_history))
+end
+
+# ---------------------------------------------------------------------------
+# CSLBFGS — limited-memory BFGS via `Optim.jl`.
+# ---------------------------------------------------------------------------
+
+"""
+    CSLBFGS(; iterations, gradient_tolerance, m, line_search,
+              show_trace)
+
+Limited-memory BFGS (L-BFGS) optimizer backed by
+[`Optim.jl`](https://github.com/JuliaNLSolvers/Optim.jl). `m` is the
+history length; the line-search default (`Optim.HagerZhang()` /
+`Optim.BackTracking()` via `Optim.LBFGS`) is provided by Optim
+itself. `iterations` is the max outer iteration count;
+`gradient_tolerance` is the L∞ stopping threshold on the
+χ-space / x-space gradient. `show_trace = true` forwards verbose
+progress to Optim's logger.
+
+Used by the polymorphic dispatch surface
+[`cs_surface_flux_4dvar_solve`](@ref). The cost closure
+`cost_fn(controls) -> CS4DVarResult` is converted to Optim's
+`(f, g!)` API by flattening each control's `NTuple{6, Matrix}`
+to a `Vector{FT}` and back.
+"""
+struct CSLBFGS{FT <: AbstractFloat} <: AbstractCSOptimizer
+    iterations::Int
+    gradient_tolerance::FT
+    m::Int
+    show_trace::Bool
+
+    function CSLBFGS(iterations::Integer, gradient_tolerance::FT,
+                      m::Integer, show_trace::Bool) where FT <: AbstractFloat
+        iterations >= 0 || throw(ArgumentError(
+            "CSLBFGS iterations must be non-negative, got $iterations"))
+        gradient_tolerance >= 0 || throw(ArgumentError(
+            "CSLBFGS gradient_tolerance must be non-negative, got " *
+            "$gradient_tolerance"))
+        m > 0 || throw(ArgumentError(
+            "CSLBFGS m (L-BFGS history length) must be positive, got $m"))
+        return new{FT}(Int(iterations), gradient_tolerance, Int(m), show_trace)
+    end
+end
+
+function CSLBFGS(; iterations::Integer = 100,
+                  gradient_tolerance::Real = 1e-8,
+                  m::Integer = 10,
+                  show_trace::Bool = false)
+    FT = typeof(float(gradient_tolerance))
+    return CSLBFGS(Int(iterations), FT(gradient_tolerance), Int(m), show_trace)
+end
+
+# ---------- flatten / unflatten helpers --------------------------------------
+
+# Flatten a `Vector{<:CSSurfaceFluxControl}` to a `Vector{FT}` for
+# Optim's vector-based optimization API. Pre-allocated buffer is
+# overwritten in place.
+function _flatten_controls_into!(flat::AbstractVector{FT},
+                                  controls) where FT
+    idx = 1
+    @inbounds for c in controls
+        for p in 1:6
+            v = c.value[p]
+            n = length(v)
+            @views flat[idx:idx + n - 1] .= vec(v)
+            idx += n
+        end
+    end
+    return flat
+end
+
+function _control_flat_length(controls)
+    total = 0
+    @inbounds for c in controls
+        for p in 1:6
+            total += length(c.value[p])
+        end
+    end
+    return total
+end
+
+# Inverse of `_flatten_controls_into!`. Mutates the underlying panel
+# matrices, so `controls` here is treated as a scratch vector whose
+# `.value` matrices are reused across Optim cost evaluations.
+function _unflatten_into_controls!(controls,
+                                    flat::AbstractVector) where {}
+    idx = 1
+    @inbounds for c in controls
+        for p in 1:6
+            v = c.value[p]
+            n = length(v)
+            @views copyto!(vec(v), flat[idx:idx + n - 1])
+            idx += n
+        end
+    end
+    return controls
+end
+
+# Mirror of `_flatten_controls_into!` for `Vector{NTuple{6, Matrix}}`
+# (the shape of `CS4DVarResult.gradients`).
+function _flatten_gradients_into!(flat::AbstractVector{FT},
+                                   gradients) where FT
+    idx = 1
+    @inbounds for grad in gradients
+        for p in 1:6
+            g = grad[p]
+            n = length(g)
+            @views flat[idx:idx + n - 1] .= vec(g)
+            idx += n
+        end
+    end
+    return flat
+end
+
+# ---------- backend method ----------------------------------------------------
+
+function cs_surface_flux_4dvar_solve(optimizer::CSLBFGS, cost_fn, controls)
+    initial_controls = _control_vector(controls)
+    isempty(initial_controls) && throw(ArgumentError(
+        "cs_surface_flux_4dvar_solve(CSLBFGS, ...) requires at least one control"))
+
+    # Working scratch — copy the user's input so Optim's inner
+    # iterations don't mutate the original control matrices.
+    working_controls = [
+        CSSurfaceFluxControl(c.window, ntuple(p -> copy(c.value[p]), 6);
+                              background = c.background,
+                              sigma = c.sigma)
+        for c in initial_controls
+    ]
+
+    # Derive numerical type from the cost result, not the optimizer.
+    probe = cost_fn(working_controls)
+    isempty(probe.gradients) && throw(ArgumentError(
+        "cost_fn returned a CS4DVarResult with no gradients; " *
+        "cannot derive optimizer element type"))
+    FT = eltype(probe.gradients[1][1])
+
+    n_total = _control_flat_length(working_controls)
+    x0 = Vector{FT}(undef, n_total)
+    _flatten_controls_into!(x0, initial_controls)
+
+    # Optim's `(f, g!)` callbacks. The cost / gradient histories come
+    # from Optim's own trace (`store_trace = true` below) rather than
+    # from these callbacks, so they stay minimal.
+    f = function (x::AbstractVector)
+        _unflatten_into_controls!(working_controls, x)
+        return FT(cost_fn(working_controls).cost)
+    end
+
+    g! = function (G::AbstractVector, x::AbstractVector)
+        _unflatten_into_controls!(working_controls, x)
+        result = cost_fn(working_controls)
+        _flatten_gradients_into!(G, result.gradients)
+        return G
+    end
+
+    # `Optim.LBFGS(m = ...)` selects the L-BFGS algorithm with `m`
+    # history terms. The default line search is Hager–Zhang.
+    options = Optim.Options(
+        iterations = optimizer.iterations,
+        g_abstol = optimizer.gradient_tolerance,
+        show_trace = optimizer.show_trace,
+        store_trace = true,
+    )
+    opt_result = Optim.optimize(f, g!, x0,
+                                 Optim.LBFGS(m = optimizer.m),
+                                 options)
+
+    # Re-evaluate at the minimizer so the returned `last` result is
+    # consistent with the final controls (Optim may have left
+    # `working_controls` at an intermediate iterate after the
+    # last callback).
+    _unflatten_into_controls!(working_controls, Optim.minimizer(opt_result))
+    final = cost_fn(working_controls)
+
+    # Pull per-iteration cost + gradient-norm history out of the Optim
+    # trace. Optim doesn't separately track step size for L-BFGS, so
+    # `step_history` stays empty.
+    trace_costs = FT[FT(state.value) for state in opt_result.trace]
+    trace_gnorms = FT[FT(state.g_norm) for state in opt_result.trace]
+
+    A2 = typeof(final.gradients[1][1])
+    return CS4DVarSolveResult{FT, A2}(
+        working_controls,
+        final,
+        trace_costs,
+        trace_gnorms,
+        FT[],
+        Optim.iterations(opt_result))
 end
 
 # ---------------------------------------------------------------------------

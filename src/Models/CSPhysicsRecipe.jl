@@ -23,11 +23,15 @@ struct LatLonRuntimeRecipeStyle <: AbstractStructuredRuntimeRecipeStyle end
 struct ReducedGaussianRuntimeRecipeStyle <: AbstractStructuredRuntimeRecipeStyle end
 struct CubedSphereRuntimeRecipeStyle <: AbstractRuntimeRecipeStyle end
 
-struct RuntimePhysicsRecipe{AdvT, DiffT, ConvT}
+struct RuntimePhysicsRecipe{AdvT, DiffT, ConvT, ChemT}
     advection  :: AdvT
     diffusion  :: DiffT
     convection :: ConvT
+    chemistry  :: ChemT
 end
+
+# Backward-compat: 3-arg constructor defaults chemistry to `NoChemistry`.
+RuntimePhysicsRecipe(adv, diff, conv) = RuntimePhysicsRecipe(adv, diff, conv, NoChemistry())
 
 const CSPhysicsRecipe = RuntimePhysicsRecipe
 
@@ -364,8 +368,52 @@ function build_runtime_physics_recipe(cfg,
         build_runtime_advection(cfg, context),
         build_runtime_diffusion(cfg, context, FT),
         build_runtime_convection(cfg, context),
+        build_runtime_chemistry(cfg, FT),
     )
     return validate_runtime_physics_recipe(recipe, context; halo_width = halo_width)
+end
+
+"""
+    build_runtime_chemistry(cfg, ::Type{FT}) -> AbstractChemistryOperator
+
+Read the optional `[chemistry]` TOML section and produce the
+corresponding chemistry operator.
+
+Supported `kind` values:
+
+- `"none"` (default) — `NoChemistry()`.
+- `"decay"` — `ExponentialDecay(FT; ...)`. Half-lives are read from
+  the `half_lives_seconds` table:
+
+      [chemistry]
+      kind = "decay"
+      [chemistry.half_lives_seconds]
+      rn222 = 330350.4   # 3.8235 days
+
+  The keyword name must match the corresponding `[tracers.<name>]`
+  symbol that the run is carrying (case-insensitive — the builder
+  symbolizes the key as-is and `ExponentialDecay.apply!` resolves
+  it against `state.tracer_names` at call time).
+"""
+function build_runtime_chemistry(cfg, ::Type{FT}) where FT
+    section = get(cfg, "chemistry", Dict{String, Any}())
+    kind = _config_symbol(section, "kind", "none")
+    if kind === :none
+        return NoChemistry()
+    elseif kind === :decay
+        hl = get(section, "half_lives_seconds", Dict{String, Any}())
+        isempty(hl) && return NoChemistry()
+        # Splat the (name → half-life) map as keyword arguments to
+        # `ExponentialDecay`'s outer constructor, which internally
+        # converts half-life → first-order decay rate `log(2)/T`.
+        sym_keys = Tuple(Symbol(k) for k in keys(hl))
+        vals = Tuple(FT(v) for v in values(hl))
+        nt = NamedTuple{sym_keys}(vals)
+        return ExponentialDecay(FT; nt...)
+    else
+        throw(ArgumentError(
+            "Unknown [chemistry] kind: $(kind). Supported: none | decay"))
+    end
 end
 
 function configured_halo_width(cfg, scheme::AbstractAdvectionScheme)
@@ -404,6 +452,7 @@ configured_cs_halo_width(cfg, scheme::AbstractAdvectionScheme) = configured_halo
 
 export RuntimePhysicsRecipe, CSPhysicsRecipe
 export build_runtime_advection, build_runtime_diffusion, build_runtime_convection
+export build_runtime_chemistry
 export build_runtime_physics_recipe, validate_runtime_physics_recipe
 export configured_halo_width
 export build_cs_advection, build_cs_diffusion, build_cs_convection

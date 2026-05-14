@@ -282,7 +282,8 @@ function _make_structured_model(driver::TransportBinaryDriver;
                                   FT = FT, basis = basis_type)
     model = TransportModel(state, fluxes, grid, recipe.advection;
                            diffusion = recipe.diffusion,
-                           convection = recipe.convection)
+                           convection = recipe.convection,
+                           chemistry = recipe.chemistry)
     adaptor = _backend_array_adapter(cfg)
     return adaptor === Array ? model : Base.invokelatest(Adapt.adapt, adaptor, model)
 end
@@ -458,7 +459,8 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
                                     stop_window = stop_window,
                                     initialize_air_mass = initialize_air_mass,
                                     reset_air_mass_each_window = reset_air_mass_each_window,
-                                    surface_sources = surface_sources))
+                                    surface_sources = surface_sources,
+                                    chemistry = recipe.chemistry))
         model = sim.model
         if !initialize_air_mass
             boundary_rel = maximum(abs.(model.state.air_mass .- sim.window.air_mass)) /
@@ -727,7 +729,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
                 (fluxes_d = Base.invokelatest(Adapt.adapt, adaptor, fluxes_d))
             model = TransportModel(state, fluxes_d, grid, recipe.advection;
                                     diffusion  = recipe.diffusion,
-                                    convection = recipe.convection)
+                                    convection = recipe.convection,
+                                    chemistry  = recipe.chemistry)
             adaptor !== Array &&
                 (model = Base.invokelatest(Adapt.adapt, adaptor, model))
         end
@@ -737,7 +740,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
                                     start_window = 1, stop_window = stop_window,
                                     initialize_air_mass = initialize_air_mass,
                                     reset_air_mass_each_window = reset_air_mass_each_window,
-                                    surface_sources = surface_sources))
+                                    surface_sources = surface_sources,
+                                    chemistry = recipe.chemistry))
         # `DrivenSimulation` may wrap `model` with a surface-flux operator;
         # keep snapshots and the return value aligned with the stepped model.
         model = sim.model

@@ -89,13 +89,23 @@ sigma shape and a single `CSSurfaceFluxControl.value`).
 Constructor validates `background` shapes against the covariance
 and — for `LogNormalOptimType` — requires every `background` entry
 to be strictly positive (else `log(x ./ x_b)` is undefined and the
-log-normal transform is meaningless).
+log-normal transform is meaningless). It also pre-allocates a
+panel-tuple scratch buffer reused by
+`apply_preconditioner_inverse!` and the LogNormal variant of
+`apply_preconditioner_adjoint!`. **The preconditioner is therefore
+not thread-safe** — build one instance per worker thread if you
+intend to call these methods concurrently.
 """
 struct CSSurfaceFluxPreconditioner{FT, A, O <: AbstractCSOptimType,
                                    C <: AbstractCSSurfaceFluxCovariance{FT, A}}
     covariance::C
     background::NTuple{6, A}
     optim_type::O
+    # Pre-allocated panel-tuple scratch reused by `apply_preconditioner_inverse!`
+    # (both optim types) and `apply_preconditioner_adjoint!` (LogNormal).
+    # Avoids the per-call `ntuple(p -> ..., 6)` allocation that dominated
+    # the χ-space gradient evaluation cost.
+    panel_scratch::NTuple{6, A}
 end
 
 function CSSurfaceFluxPreconditioner(
@@ -120,9 +130,10 @@ function CSSurfaceFluxPreconditioner(
                 "has a non-positive entry"))
         end
     end
+    panel_scratch = ntuple(p -> similar(background[p]), 6)
     return CSSurfaceFluxPreconditioner{FT, A, typeof(optim_type),
                                        typeof(covariance)}(
-        covariance, background, optim_type)
+        covariance, background, optim_type, panel_scratch)
 end
 
 # ---------------------------------------------------------------------------
@@ -179,8 +190,10 @@ inputs.
 function apply_preconditioner_inverse!(chi::NTuple{6, A},
                                         prec::CSSurfaceFluxPreconditioner{FT, A, LinearOptimType},
                                         x::NTuple{6, A}) where {FT, A}
-    diff = ntuple(p -> x[p] .- prec.background[p], 6)
-    apply_B_half_inverse!(chi, prec.covariance, diff)
+    @inbounds for p in 1:6
+        @. prec.panel_scratch[p] = x[p] - prec.background[p]
+    end
+    apply_B_half_inverse!(chi, prec.covariance, prec.panel_scratch)
     return chi
 end
 
@@ -192,9 +205,9 @@ function apply_preconditioner_inverse!(chi::NTuple{6, A},
             "apply_preconditioner_inverse! with LogNormalOptimType " *
             "requires strictly positive x; panel $p has a non-positive " *
             "entry"))
+        @. prec.panel_scratch[p] = log(x[p] / prec.background[p])
     end
-    logratio = ntuple(p -> log.(x[p] ./ prec.background[p]), 6)
-    apply_B_half_inverse!(chi, prec.covariance, logratio)
+    apply_B_half_inverse!(chi, prec.covariance, prec.panel_scratch)
     return chi
 end
 
@@ -254,7 +267,9 @@ function apply_preconditioner_adjoint!(g_chi::NTuple{6, A},
                                        prec::CSSurfaceFluxPreconditioner{FT, A, LogNormalOptimType},
                                        x::NTuple{6, A},
                                        g_phys::NTuple{6, A}) where {FT, A}
-    scaled = ntuple(p -> x[p] .* g_phys[p], 6)
-    apply_B_half_adjoint!(g_chi, prec.covariance, scaled)
+    @inbounds for p in 1:6
+        @. prec.panel_scratch[p] = x[p] * g_phys[p]
+    end
+    apply_B_half_adjoint!(g_chi, prec.covariance, prec.panel_scratch)
     return g_chi
 end

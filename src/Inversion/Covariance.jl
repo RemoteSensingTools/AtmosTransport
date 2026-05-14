@@ -118,14 +118,30 @@ under "Phase B — cross-panel correlation"):
   isolation; the implicit wrap-around at panel boundaries leaves
   edge artefacts that v2 will address.
 - The FFT path is CPU-only.
+- The struct carries mutable `fft_buf` / `fft_scratch` scratch
+  buffers reused by every `apply_B_half!` / `_adjoint!` /
+  `_inverse!` call. As a consequence the covariance is **not
+  thread-safe** — concurrent calls on the same instance race on
+  the scratch. Build one instance per worker thread if needed.
 """
-struct IsotropicGaussianCSCovariance{FT, A} <: AbstractCSSurfaceFluxCovariance{FT, A}
+struct IsotropicGaussianCSCovariance{FT, A, P, IP} <: AbstractCSSurfaceFluxCovariance{FT, A}
     sigma::NTuple{6, A}
     correlation_length_cells::FT
     Nc::Int
     # Spectral square root of the panel-local 2D Gaussian correlation
     # eigenvalues. Real, non-negative, length `Nc × Nc` per panel.
     L_transfer_sqrt::Matrix{FT}
+    # Pre-allocated scratch buffers + pre-built FFTW plans reused by
+    # every `apply_B_half!` / `_adjoint!` / `_inverse!` call.
+    # Eliminates both the per-call matrix allocations (~50 KB at C48)
+    # and the per-call FFTW-plan construction (the dominant cost
+    # before this commit — `fft!` / `ifft!` rebuild a plan on every
+    # invocation). Mirrors the `LLPoissonWorkspace` pattern in
+    # `src/Preprocessing/mass_support.jl`.
+    fft_buf::Matrix{Complex{FT}}
+    fft_scratch::Matrix{FT}
+    fft_plan::P
+    ifft_plan::IP
 end
 
 function IsotropicGaussianCSCovariance(sigma::NTuple{6, A},
@@ -151,7 +167,15 @@ function IsotropicGaussianCSCovariance(sigma::NTuple{6, A},
     end
     L_cells = FT(correlation_length_cells)
     transfer_sqrt = _gaussian_transfer_sqrt_2d(Nc, L_cells)
-    return IsotropicGaussianCSCovariance{FT, A}(sigma, L_cells, Nc, transfer_sqrt)
+    fft_buf = Matrix{Complex{FT}}(undef, Nc, Nc)
+    fft_scratch = Matrix{FT}(undef, Nc, Nc)
+    fft_plan = FFTW.plan_fft!(fft_buf)
+    ifft_plan = FFTW.plan_ifft!(fft_buf)
+    return IsotropicGaussianCSCovariance{FT, A,
+                                          typeof(fft_plan),
+                                          typeof(ifft_plan)}(
+        sigma, L_cells, Nc, transfer_sqrt,
+        fft_buf, fft_scratch, fft_plan, ifft_plan)
 end
 
 # ---------------------------------------------------------------------------
@@ -259,18 +283,21 @@ end
 
 # Apply the symmetric correlation square root `L` to a single panel
 # in-place via 2D FFT. Real input, real output (within float noise).
+# Uses pre-built `fft_plan` / `ifft_plan` so the per-call cost is the
+# actual FFT work, not plan construction.
 function _apply_L_panel!(buf::Matrix{Complex{FT}}, input::AbstractMatrix{FT},
                         output::AbstractMatrix{FT},
-                        transfer_sqrt::Matrix{FT}) where FT
+                        transfer_sqrt::Matrix{FT},
+                        fft_plan, ifft_plan) where FT
     Nc = size(transfer_sqrt, 1)
     @inbounds for j in 1:Nc, i in 1:Nc
         buf[i, j] = Complex{FT}(input[i, j])
     end
-    FFTW.fft!(buf)
+    fft_plan * buf
     @inbounds for j in 1:Nc, i in 1:Nc
         buf[i, j] *= transfer_sqrt[i, j]
     end
-    FFTW.ifft!(buf)
+    ifft_plan * buf
     @inbounds for j in 1:Nc, i in 1:Nc
         output[i, j] = real(buf[i, j])
     end
@@ -282,14 +309,12 @@ function apply_B_half!(y::NTuple{6, A},
                       chi::NTuple{6, A}) where {FT, A}
     _validate_panel_shapes(y, cov.Nc, "y")
     _validate_panel_shapes(chi, cov.Nc, "chi")
-    Nc = cov.Nc
-    buf = Matrix{Complex{FT}}(undef, Nc, Nc)
-    smooth = Matrix{FT}(undef, Nc, Nc)
     @inbounds for p in 1:6
         # B^(1/2) = D · L. Apply L first (smooth chi), then multiply
-        # by D (per-cell sigma). `smooth` holds `L · chi[p]`.
-        _apply_L_panel!(buf, chi[p], smooth, cov.L_transfer_sqrt)
-        @. y[p] = cov.sigma[p] * smooth
+        # by D (per-cell sigma). `cov.fft_scratch` holds `L · chi[p]`.
+        _apply_L_panel!(cov.fft_buf, chi[p], cov.fft_scratch,
+                        cov.L_transfer_sqrt, cov.fft_plan, cov.ifft_plan)
+        @. y[p] = cov.sigma[p] * cov.fft_scratch
     end
     return y
 end
@@ -299,13 +324,11 @@ function apply_B_half_adjoint!(g_chi::NTuple{6, A},
                                g_phys::NTuple{6, A}) where {FT, A}
     _validate_panel_shapes(g_chi, cov.Nc, "g_chi")
     _validate_panel_shapes(g_phys, cov.Nc, "g_phys")
-    Nc = cov.Nc
-    buf = Matrix{Complex{FT}}(undef, Nc, Nc)
-    scaled = Matrix{FT}(undef, Nc, Nc)
     @inbounds for p in 1:6
         # (B^(1/2))^T = L · D. Apply D first (per-cell sigma), then L.
-        @. scaled = cov.sigma[p] * g_phys[p]
-        _apply_L_panel!(buf, scaled, g_chi[p], cov.L_transfer_sqrt)
+        @. cov.fft_scratch = cov.sigma[p] * g_phys[p]
+        _apply_L_panel!(cov.fft_buf, cov.fft_scratch, g_chi[p],
+                        cov.L_transfer_sqrt, cov.fft_plan, cov.ifft_plan)
     end
     return g_chi
 end
@@ -360,12 +383,13 @@ end
 function _apply_L_inverse_panel!(buf::Matrix{Complex{FT}},
                                  input::AbstractMatrix{FT},
                                  output::AbstractMatrix{FT},
-                                 transfer_sqrt::Matrix{FT}) where FT
+                                 transfer_sqrt::Matrix{FT},
+                                 fft_plan, ifft_plan) where FT
     Nc = size(transfer_sqrt, 1)
     @inbounds for j in 1:Nc, i in 1:Nc
         buf[i, j] = Complex{FT}(input[i, j])
     end
-    FFTW.fft!(buf)
+    fft_plan * buf
     @inbounds for j in 1:Nc, i in 1:Nc
         # `transfer_sqrt` is non-negative; zeros would be division by
         # zero. The wrapped Gaussian's spectrum is strictly positive
@@ -373,7 +397,7 @@ function _apply_L_inverse_panel!(buf::Matrix{Complex{FT}},
         # entries amplify high-frequency noise (documented).
         buf[i, j] /= transfer_sqrt[i, j]
     end
-    FFTW.ifft!(buf)
+    ifft_plan * buf
     @inbounds for j in 1:Nc, i in 1:Nc
         output[i, j] = real(buf[i, j])
     end
@@ -385,14 +409,13 @@ function apply_B_half_inverse!(y::NTuple{6, A},
                                 x::NTuple{6, A}) where {FT, A}
     _validate_panel_shapes(y, cov.Nc, "y")
     _validate_panel_shapes(x, cov.Nc, "x")
-    Nc = cov.Nc
-    buf = Matrix{Complex{FT}}(undef, Nc, Nc)
-    scaled = Matrix{FT}(undef, Nc, Nc)
     @inbounds for p in 1:6
         # B^(-1/2) = L^(-1) · D^(-1). Divide by σ first, then
         # deconvolve via `1/sqrt(C̃)` in spectral space.
-        @. scaled = x[p] / cov.sigma[p]
-        _apply_L_inverse_panel!(buf, scaled, y[p], cov.L_transfer_sqrt)
+        @. cov.fft_scratch = x[p] / cov.sigma[p]
+        _apply_L_inverse_panel!(cov.fft_buf, cov.fft_scratch, y[p],
+                                cov.L_transfer_sqrt,
+                                cov.fft_plan, cov.ifft_plan)
     end
     return y
 end

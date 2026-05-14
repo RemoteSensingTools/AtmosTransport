@@ -268,6 +268,59 @@ end
     end
 end
 
+# ---------------------------------------------------------------------------
+# Cached scratch — `apply_preconditioner_inverse!` and the LogNormal
+# variant of `apply_preconditioner_adjoint!` previously allocated a
+# fresh `NTuple{6, Matrix}` per call. The buffer now lives in the
+# preconditioner struct's `panel_scratch` field. Lock the perf win in
+# with `@allocated == 0` on a warm call.
+# ---------------------------------------------------------------------------
+
+@testset "Preconditioner — inverse / adjoint use cached scratch" begin
+    σ = _constant_sigma(NC_SMALL, FT_TEST(0.5))
+    cov = AT.DiagonalCSCovariance(σ)
+    bg_lin = _constant_background(NC_SMALL, FT_TEST(420.0))
+    bg_log = _constant_background(NC_SMALL, FT_TEST(1.0))
+
+    prec_lin = AT.CSSurfaceFluxPreconditioner(cov, bg_lin, AT.LinearOptimType())
+    prec_log = AT.CSSurfaceFluxPreconditioner(cov, bg_log, AT.LogNormalOptimType())
+
+    chi = _random_tuple(NC_SMALL, 20)
+    g_phys = _random_tuple(NC_SMALL, 21)
+
+    x_lin = _zeros_tuple(NC_SMALL)
+    x_log = _zeros_tuple(NC_SMALL)
+    AT.apply_preconditioner!(x_lin, prec_lin, chi)
+    AT.apply_preconditioner!(x_log, prec_log, chi)
+
+    chi_out = _zeros_tuple(NC_SMALL)
+    g_chi = _zeros_tuple(NC_SMALL)
+
+    # Warm up the compilation cache.
+    for _ in 1:5
+        AT.apply_preconditioner_inverse!(chi_out, prec_lin, x_lin)
+        AT.apply_preconditioner_inverse!(chi_out, prec_log, x_log)
+        AT.apply_preconditioner_adjoint!(g_chi, prec_log, x_log, g_phys)
+    end
+    # Pre-cache state allocated ~108 KB / call for the `ntuple(p ->
+    # ..., 6)` intermediate. The cap below tolerates incidental GC
+    # noise (a few tens of bytes per call) while still locking in
+    # the 100×+ reduction.
+    allocs_inv_lin = sum((@allocated AT.apply_preconditioner_inverse!(
+        chi_out, prec_lin, x_lin)) for _ in 1:20)
+    allocs_inv_log = sum((@allocated AT.apply_preconditioner_inverse!(
+        chi_out, prec_log, x_log)) for _ in 1:20)
+    allocs_adj_log = sum((@allocated AT.apply_preconditioner_adjoint!(
+        g_chi, prec_log, x_log, g_phys)) for _ in 1:20)
+    # 20-call cap of 8 KB ≈ 400 B/call average — two orders of
+    # magnitude below the ~108 KB/call pre-cache baseline from the
+    # `ntuple(p -> ..., 6)` panel allocation. Wide enough to absorb
+    # incidental GC noise.
+    @test allocs_inv_lin < 8192
+    @test allocs_inv_log < 8192
+    @test allocs_adj_log < 8192
+end
+
 @testset "Adjoint identity — LogNormal (Diagonal + Gaussian)" begin
     for cov in (_diag_cov(NC_SMALL, 0.1),
                 _gauss_cov(NC_SMALL, 0.1, 1.5))

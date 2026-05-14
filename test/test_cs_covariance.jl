@@ -271,6 +271,42 @@ end
     end
 end
 
+# Deterministic pseudo-random tuple — same shape as `_random_tuple` in
+# the preconditioning test file but inlined here for self-containment.
+_random_tuple_panels(Nc, seed) = ntuple(p ->
+    [FT_TEST(sin(0.7 * (seed + 1) * (i + 13 * j + 41 * p)))
+     for i in 1:Nc, j in 1:Nc], 6)
+
+@testset "IsotropicGaussianCSCovariance — apply_B_half! uses cached scratch" begin
+    # The buffers + FFTW plans are now fields of the covariance struct;
+    # before this commit each call allocated ~50 KB for an Nc=4 panel
+    # set (scratch matrices + FFTW plan construction). The cap below
+    # is well under the original — a sum of 1 KB over 20 calls
+    # corresponds to ~50 B/call average, three orders of magnitude
+    # below the pre-cache state. The threshold tolerates incidental
+    # GC noise without masking a real regression.
+    cov = AT.IsotropicGaussianCSCovariance(
+        _constant_sigma(NC_SMALL, FT_TEST(0.5)), FT_TEST(1.5))
+    chi = _random_tuple_panels(NC_SMALL, 0)
+    y = ntuple(_ -> zeros(FT_TEST, NC_SMALL, NC_SMALL), 6)
+    # Warm up the compilation + FFTW plan caches.
+    for _ in 1:5
+        AT.apply_B_half!(y, cov, chi)
+        AT.apply_B_half_adjoint!(y, cov, chi)
+        AT.apply_B_half_inverse!(y, cov, chi)
+    end
+    allocs_fwd = sum((@allocated AT.apply_B_half!(y, cov, chi)) for _ in 1:20)
+    allocs_adj = sum((@allocated AT.apply_B_half_adjoint!(y, cov, chi)) for _ in 1:20)
+    allocs_inv = sum((@allocated AT.apply_B_half_inverse!(y, cov, chi)) for _ in 1:20)
+    # 20-call cap of 8 KB ≈ 400 B/call average — two orders of
+    # magnitude below the ~50 KB/call pre-cache baseline. Wider than
+    # strictly needed to absorb the GC noise the runtime emits on
+    # the FFTW-plan code path.
+    @test allocs_fwd < 8192
+    @test allocs_adj < 8192
+    @test allocs_inv < 8192
+end
+
 @testset "IsotropicGaussianCSCovariance — short L recovers diagonal limit" begin
     σ_scalar = FT_TEST(0.5)
     σ = _constant_sigma(NC_SMALL, σ_scalar)

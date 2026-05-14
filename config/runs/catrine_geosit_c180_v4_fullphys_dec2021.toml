@@ -1,0 +1,82 @@
+# ===========================================================================
+# Catrine 4-tracer pure-forward run on GEOS-IT C180 v4 binaries.
+#
+# Dec 2021 (31 days) on the new
+# `~/data/AtmosTransport/met/geosit/C180/transport_binary_v4_f32/` daily
+# binaries produced 2026-05-13. Full physics: PPM advection +
+# nonlocal-PBL diffusion + CMFMC convection + Rn-222 radioactive decay.
+# Snapshot output is 3-hourly to align directly with the GeosChem
+# Catrine reference in `~/data/AtmosTransport/catrine-geoschem-runs/`.
+#
+# Comparison entrypoint: `scripts/diagnostics/compare_at_vs_geoschem_c180.jl`
+# (shipped alongside this config).
+#
+# Runner:
+#   julia --project=. scripts/run_transport.jl \
+#       config/runs/catrine_geosit_c180_v4_fullphys_dec2021.toml
+# ===========================================================================
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_v4_f32"
+start_date   = "2021-12-01"
+end_date     = "2021-12-31"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+
+[run]
+scheme = "ppm"   # GCHP-style PPM split path (PPMScheme).
+
+# Per-tracer initial conditions + surface fluxes. Tracer symbols match
+# the GeosChem `SpeciesConcVV_*` naming so the comparison script can
+# map AT → GC by a hard-coded table.
+
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"   # ~/data/AtmosTransport/catrine/InitialConditions/startCO2_202112010000.nc
+  [tracers.co2_natural.surface_flux]
+  kind = "lmdz_co2"      # CAMS/LSCE flux_apos, monthly mean of 248 3-hourly slices
+
+[tracers.co2_fossil]
+  [tracers.co2_fossil.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.co2_fossil.surface_flux]
+  kind = "gridfed_fossil_co2"
+  time_index = 12        # December 2021 → time slice 12
+
+[tracers.sf6]
+  [tracers.sf6.init]
+  kind = "file"
+  file = "~/data/AtmosTransport/catrine/InitialConditions/startSF6_202112010000.nc"
+  variable = "SF6"
+  [tracers.sf6.surface_flux]
+  kind = "edgar_sf6"     # EDGAR v8 Tonnes/cell/year → kg/m²/s
+
+[tracers.rn222]
+  [tracers.rn222.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.rn222.surface_flux]
+  kind = "zhang_rn222"
+  time_index = 12        # December soil-emission climatology
+
+[diffusion]
+kind = "pbl"             # uses PBLH + USTAR + HFLUX + T2M from v4 binary
+
+[convection]
+kind = "cmfmc"           # uses CMFMC + DTRAIN from v4 binary
+
+[chemistry]
+kind = "decay"
+  [chemistry.half_lives_seconds]
+  rn222 = 330350.4       # 3.8235 days
+
+[output]
+snapshot_interval_hours = 3
+snapshot_file = "~/data/AtmosTransport/output/catrine_geosit_c180_v4_fullphys_dec2021.nc"

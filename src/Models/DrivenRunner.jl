@@ -80,6 +80,39 @@ using ..Models: build_runtime_physics_recipe, validate_runtime_physics_recipe,
 export run_driven_simulation, TransportTracerSpec
 
 # ===========================================================================
+# Snapshot-hours resolution helper. Supports two TOML shapes:
+#
+#   [output]
+#   snapshot_hours = [0, 3, 6, ...]          # explicit list
+#
+# or
+#
+#   [output]
+#   snapshot_interval_hours = 3              # snapshots every 3 h, covering
+#                                            # the full run
+#
+# The capture loop only emits snapshots that fall within
+# `total_elapsed_hours`, so a generous over-shoot at the upper bound is
+# safe — the helper writes `0, interval, 2*interval, …` up to
+# `default_cap_hours` (one year by default) when only the interval is
+# provided.
+# ===========================================================================
+function _resolve_snapshot_hours(output_cfg::AbstractDict;
+                                  default_cap_hours::Real = 8760.0,
+                                  fallback::AbstractVector{<:Real} = Float64[])
+    if haskey(output_cfg, "snapshot_hours")
+        return Float64.(output_cfg["snapshot_hours"])
+    elseif haskey(output_cfg, "snapshot_interval_hours")
+        interval = Float64(output_cfg["snapshot_interval_hours"])
+        interval > 0 || throw(ArgumentError(
+            "[output].snapshot_interval_hours must be positive, got $interval"))
+        return Float64.(0:interval:Float64(default_cap_hours))
+    else
+        return Float64.(fallback)
+    end
+end
+
+# ===========================================================================
 # Forward-run progress timer — Transport vs IO wall-clock breakdown.
 #
 # Mirrors the `main:src/Models/run_loop.jl:105-150` pattern at coarser
@@ -390,7 +423,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
                                                   Dict{String, Any}()),))
 
     output_cfg = get(cfg, "output", Dict{String, Any}())
-    snapshot_hours = Float64.(get(output_cfg, "snapshot_hours", Float64[]))
+    snapshot_hours = _resolve_snapshot_hours(output_cfg)
     snapshot_file = expand_data_path(String(get(output_cfg, "snapshot_file", "")))
     do_snapshots = !isempty(snapshot_hours) && !isempty(snapshot_file)
 
@@ -569,7 +602,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
     reset_air_mass_each_window = Bool(get(run_cfg, "reset_air_mass_each_window", false))
 
     output_cfg = get(cfg, "output", Dict{String, Any}())
-    snapshot_hours = Float64.(get(output_cfg, "snapshot_hours", Float64[0, 24, 48]))
+    snapshot_hours = _resolve_snapshot_hours(output_cfg;
+                                             fallback = Float64[0, 24, 48])
     snapshot_file  = expanduser(String(get(output_cfg, "snapshot_file",
                                            "cs_driven_snapshot.nc")))
 

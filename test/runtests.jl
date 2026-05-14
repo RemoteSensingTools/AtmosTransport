@@ -54,6 +54,7 @@ core_tests = [
     "test_cs_optimizer_dispatch.jl",
     "test_cs_lbfgs.jl",
     "test_cs_iteration_log.jl",
+    "test_cs_inversion_driver.jl",
     "test_linrood_kernel_adjoints.jl",
     "test_structured_mesh_metadata.jl",
     "test_reduced_gaussian_mesh.jl",

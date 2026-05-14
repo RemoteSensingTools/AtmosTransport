@@ -1,0 +1,54 @@
+# Plan 26 P0.C4 — synthetic-met CS 4D-Var smoke example.
+#
+# Tiny end-to-end inversion that runs in a few seconds and exercises
+# every Phase B + C component: preconditioned cost with an
+# IsotropicGaussianCSCovariance, L-BFGS optimizer, per-iteration log.
+#
+# Run with:
+#     julia --project=. scripts/inversions/cs_4dvar.jl \
+#         config/inversions/example_synthetic.toml
+
+[mesh]
+Nc = 3
+Hp = 3
+float_type = "Float64"
+
+[time]
+nsteps = 2
+dt_seconds = 2.0
+
+[meteo]
+source = "synthetic_constant"
+
+[[observations.entries]]
+step = 2
+objective = "layer_mean"
+panel = 1
+i = 2
+j = 2
+level = 3
+value = 0.05
+sigma = 0.2
+
+[control]
+name = "both_steps"
+steps = [1, 2]
+normalize = true
+initial = "zeros"
+
+[covariance]
+kind = "isotropic_gaussian"
+sigma_value = 1.0
+correlation_length_cells = 1.0
+
+[preconditioner]
+enabled = true
+optim_type = "linear"
+background_value = 0.0
+
+[optimizer]
+kind = "lbfgs"
+iterations = 8
+gradient_tolerance = 1.0e-10
+m = 5
+log = true

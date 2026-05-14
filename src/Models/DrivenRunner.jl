@@ -42,6 +42,7 @@ module DrivenRunner
 using Adapt
 using Printf: @sprintf, @printf
 using Logging
+using ProgressMeter: Progress, next!, finish!, update!
 
 import ...expand_data_path
 using ...SectionTimer
@@ -77,6 +78,62 @@ using ..Models: build_runtime_physics_recipe, validate_runtime_physics_recipe,
                  configured_halo_width, build_cs_advection
 
 export run_driven_simulation, TransportTracerSpec
+
+# ===========================================================================
+# Forward-run progress timer — Transport vs IO wall-clock breakdown.
+#
+# Mirrors the `main:src/Models/run_loop.jl:105-150` pattern at coarser
+# granularity: three accumulators (driver-open / transport / snapshot
+# capture+write) plus a `ProgressMeter.Progress` bar over windows. Always
+# on — no env var gating, no SectionTimer dep. End-of-run summary lands
+# via `@info` so it surfaces alongside the existing run-completion logs.
+# ===========================================================================
+
+mutable struct RunProgressTimer
+    prog            :: Progress
+    t_start         :: Float64
+    t_io_read       :: Float64   # TransportBinaryDriver open + window loads
+    t_transport     :: Float64   # advection + diffusion + convection + emissions
+    t_io_write      :: Float64   # snapshot capture + final NetCDF write
+    windows_total   :: Int
+end
+
+RunProgressTimer(total_windows::Integer; label::AbstractString = "Forward run ") =
+    RunProgressTimer(
+        Progress(max(Int(total_windows), 1);
+                  desc = label, showspeed = true, barlen = 40),
+        time(), 0.0, 0.0, 0.0, Int(total_windows))
+
+@inline function _timed!(field::Symbol, timer::RunProgressTimer, f)
+    t0 = time()
+    val = f()
+    delta = time() - t0
+    setproperty!(timer, field, getproperty(timer, field) + delta)
+    return val
+end
+
+# Mark IO read (e.g. opening a daily binary driver).
+@inline timed_io_read!(timer, f) = _timed!(:t_io_read, timer, f)
+
+# Mark transport (a single `run_window!` / `step!` block).
+@inline timed_transport!(timer, f) = _timed!(:t_transport, timer, f)
+
+# Mark IO write (snapshot capture + final NetCDF write).
+@inline timed_io_write!(timer, f) = _timed!(:t_io_write, timer, f)
+
+# Tick the progress bar after one window has advanced.
+@inline tick_window!(timer::RunProgressTimer) = next!(timer.prog)
+
+function summarize_progress!(timer::RunProgressTimer)
+    finish!(timer.prog)
+    wall = time() - timer.t_start
+    accounted = timer.t_io_read + timer.t_transport + timer.t_io_write
+    other = max(wall - accounted, 0.0)
+    w = max(wall, eps())
+    msg = @sprintf("Forward run wall %.1fs   transport %.1fs (%.1f%%)   io_read %.1fs (%.1f%%)   io_write %.1fs (%.1f%%)   other %.1fs (%.1f%%)", wall, timer.t_transport, 100*timer.t_transport/w, timer.t_io_read, 100*timer.t_io_read/w, timer.t_io_write, 100*timer.t_io_write/w, other, 100*other/w)
+    @info msg
+    return timer
+end
 
 # ===========================================================================
 # TOML parsing — tracer specs (hoisted from run_transport_binary.jl:57-100)
@@ -371,26 +428,37 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
     snap_idx = 1
     total_elapsed_hours = 0.0
 
+    # Estimate total windows for the progress bar. Each daily binary has
+    # the same window count for a homogeneous run; multiplying gives a
+    # close-enough total. Use min(stop_window_override, ...) when set.
+    per_binary = stop_window_override === nothing ?
+                 total_windows(first_driver) - start_window + 1 :
+                 Int(stop_window_override) - start_window + 1
+    timer = RunProgressTimer(per_binary * length(binary_paths))
+
     if do_snapshots && snap_idx <= length(snapshot_hours) &&
        abs(snapshot_hours[snap_idx]) < 0.5
-        SectionTimer.@section :snapshot_capture push!(snapshots, capture_snapshot(model; time_hours = 0.0))
+        timed_io_write!(timer,
+            () -> push!(snapshots, capture_snapshot(model; time_hours = 0.0)))
         @info @sprintf("Snapshot %d at t=%.0fh", snap_idx, 0.0)
         snap_idx += 1
     end
 
     for (idx, path) in enumerate(binary_paths)
         driver = idx == 1 ? first_driver :
-                 TransportBinaryDriver(path; FT = FT, arch = CPU())
+                 timed_io_read!(timer,
+                     () -> TransportBinaryDriver(path; FT = FT, arch = CPU()))
         validate_runtime_physics_recipe(recipe, driver)
         stop_window = stop_window_override === nothing ?
                       total_windows(driver) : Int(stop_window_override)
         initialize_air_mass = idx == 1
-        sim = DrivenSimulation(model, driver;
-                               start_window = start_window,
-                               stop_window = stop_window,
-                               initialize_air_mass = initialize_air_mass,
-                               reset_air_mass_each_window = reset_air_mass_each_window,
-                               surface_sources = surface_sources)
+        sim = timed_io_read!(timer,
+            () -> DrivenSimulation(model, driver;
+                                    start_window = start_window,
+                                    stop_window = stop_window,
+                                    initialize_air_mass = initialize_air_mass,
+                                    reset_air_mass_each_window = reset_air_mass_each_window,
+                                    surface_sources = surface_sources))
         model = sim.model
         if !initialize_air_mass
             boundary_rel = maximum(abs.(model.state.air_mass .- sim.window.air_mass)) /
@@ -410,20 +478,28 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
 
         if do_snapshots
             for _ in 1:n_windows
-                run_window!(sim)
+                timed_transport!(timer, () -> run_window!(sim))
+                tick_window!(timer)
                 total_elapsed_hours += window_hours
                 while snap_idx <= length(snapshot_hours) &&
                       abs(total_elapsed_hours - snapshot_hours[snap_idx]) < 0.5
-                    SectionTimer.@section :snapshot_capture push!(snapshots, capture_snapshot(model;
-                                                      time_hours = total_elapsed_hours))
+                    timed_io_write!(timer,
+                        () -> push!(snapshots,
+                                    capture_snapshot(model;
+                                                     time_hours = total_elapsed_hours)))
                     @info @sprintf("Snapshot %d at t=%.0fh",
                                    snap_idx, total_elapsed_hours)
                     snap_idx += 1
                 end
             end
         else
-            run!(sim)
+            timed_transport!(timer, () -> run!(sim))
             total_elapsed_hours += n_windows * window_hours
+            # `run!` doesn't tick per window; advance the bar to the
+            # binary's window count in one shot.
+            for _ in 1:n_windows
+                tick_window!(timer)
+            end
         end
 
         _synchronize_backend!(cfg)
@@ -435,11 +511,14 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
         # `air_mass_basis(driver)` already returns the Symbol and has been
         # validated to match `model.state`'s basis by
         # `_check_basis_compatibility` before any step!.
-        SectionTimer.@section :snapshot_write write_snapshot_netcdf(
-            snapshot_file, snapshots, driver_grid(first_driver);
-            mass_basis = air_mass_basis(first_driver),
-            options = _snapshot_write_options(cfg, FT))
+        timed_io_write!(timer,
+            () -> write_snapshot_netcdf(
+                snapshot_file, snapshots, driver_grid(first_driver);
+                mass_basis = air_mass_basis(first_driver),
+                options = _snapshot_write_options(cfg, FT)))
     end
+
+    summarize_progress!(timer)
 
     m1 = total_air_mass(model.state)
     @info @sprintf("Final air-mass change vs initial state:  %.3e", (m1 - m0) / m0)
@@ -601,9 +680,18 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
     # stripping and NetCDF diagnostics.
     snapshots = SnapshotFrame[]
 
+    # Progress + IO/Transport timer. Estimate total windows from the
+    # first driver; closes to the truth on homogeneous daily runs.
+    per_binary_estimate = stop_window_override === nothing ?
+                          total_windows(driver1) :
+                          min(Int(stop_window_override), total_windows(driver1))
+    timer = RunProgressTimer(per_binary_estimate * length(binary_paths))
+
     function capture_cs!(hour_total)
-        SectionTimer.@section :snapshot_capture push!(snapshots, capture_snapshot(model; time_hours = hour_total,
-                                          halo_width = Hp))
+        timed_io_write!(timer,
+            () -> push!(snapshots,
+                        capture_snapshot(model; time_hours = hour_total,
+                                         halo_width = Hp)))
     end
 
     snap_idx = 1
@@ -617,8 +705,9 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
     t0 = time()
     for (driver_idx, path) in enumerate(binary_paths)
         driver = driver_idx == 1 ? driver1 :
-                 CubedSphereTransportDriver(expanduser(path);
-                                             FT = FT, arch = arch, Hp = Hp)
+                 timed_io_read!(timer,
+                     () -> CubedSphereTransportDriver(expanduser(path);
+                                                       FT = FT, arch = arch, Hp = Hp))
         validate_runtime_physics_recipe(recipe, driver; halo_width = Hp)
         stop_window = stop_window_override === nothing ?
                       total_windows(driver) :
@@ -643,11 +732,12 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
                 (model = Base.invokelatest(Adapt.adapt, adaptor, model))
         end
         initialize_air_mass = driver_idx == 1
-        sim = DrivenSimulation(model, driver;
-                               start_window = 1, stop_window = stop_window,
-                               initialize_air_mass = initialize_air_mass,
-                               reset_air_mass_each_window = reset_air_mass_each_window,
-                               surface_sources = surface_sources)
+        sim = timed_io_read!(timer,
+            () -> DrivenSimulation(model, driver;
+                                    start_window = 1, stop_window = stop_window,
+                                    initialize_air_mass = initialize_air_mass,
+                                    reset_air_mass_each_window = reset_air_mass_each_window,
+                                    surface_sources = surface_sources))
         # `DrivenSimulation` may wrap `model` with a surface-flux operator;
         # keep snapshots and the return value aligned with the stepped model.
         model = sim.model
@@ -656,8 +746,9 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
         @info @sprintf("Running %s (%d windows)",
                        basename(path), stop_window)
         while sim.iteration < sim.final_iteration
-            step!(sim)
+            timed_transport!(timer, () -> step!(sim))
             if sim.iteration % sim.steps_per_window == 0
+                tick_window!(timer)
                 total_hour += window_hours
                 while snap_idx <= length(snapshot_hours) &&
                       abs(total_hour - snapshot_hours[snap_idx]) < 0.5
@@ -689,11 +780,13 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
         # BasisT was bound at model construction (dry by default on CS per
         # invariant 14); reuse it so the NetCDF records the same basis the
         # `air_mass` arrays were stored under.
-        SectionTimer.@section :snapshot_write write_snapshot_netcdf(
-            snapshot_file, snapshots, grid;
-            mass_basis = BasisT === DryBasis ? :dry : :moist,
-            options = _snapshot_write_options(cfg, FT))
+        timed_io_write!(timer,
+            () -> write_snapshot_netcdf(
+                snapshot_file, snapshots, grid;
+                mass_basis = BasisT === DryBasis ? :dry : :moist,
+                options = _snapshot_write_options(cfg, FT)))
     end
+    summarize_progress!(timer)
     return model
 end
 

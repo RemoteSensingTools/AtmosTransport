@@ -44,6 +44,15 @@ function process_day(date::Date,
     mkpath(settings.out_dir)
     bin_path = output_binary_path(date, settings.out_dir, settings.min_dp, FT)
 
+    # Stage to `.tmp` so any mid-loop exception (replay failure, IO error,
+    # quarantined positivity violation) never leaves a partial binary at
+    # `bin_path`. Promote `tmp_path -> bin_path` only after every contract
+    # gate passes (or after a warning-only positivity summary returns).
+    tmp_path = bin_path * ".tmp"
+    isfile(tmp_path) && rm(tmp_path; force = true)
+    writer_closed = false
+    mv_done       = false
+
     # --- Build the internal LL staging grid ---
     # ConservativeRegridding requires source and destination manifolds to
     # share an element type; output storage precision remains controlled by FT.
@@ -90,8 +99,11 @@ function process_day(date::Date,
     Δy = grid.mesh.Δy  # (Nc, Nc) matrix
 
     # --- Open streaming CS binary writer ---
+    # Wrap everything that touches `tmp_path` (writer open, sliding-window
+    # loop, contract summary, file-size check) in a try/finally so any
+    # mid-flight exception still cleans up the staged file.
     writer = open_streaming_cs_transport_binary(
-        bin_path, Nc, CS_PANEL_COUNT, Nz, Nt, vc_merged;
+        tmp_path, Nc, CS_PANEL_COUNT, Nz, Nt, vc_merged;
         FT=FT,
         dt_met_seconds=settings.met_interval,
         half_dt_seconds=settings.half_dt,
@@ -199,6 +211,13 @@ function process_day(date::Date,
         end
     end
 
+    # Wrap the work loop + contract summary + mv promotion in try/finally
+    # so any exception (replay failure, IO error, quarantined positivity)
+    # still cleans up the staged `.tmp` file. The two inner function
+    # definitions above are intentionally kept outside the try block —
+    # closure-in-try parsing is brittle in Julia and offers no benefit here
+    # (those defs cannot leave a `.tmp` behind).
+    try
     worst_pre = 0.0
     worst_post = 0.0
     worst_iter = 0
@@ -292,7 +311,7 @@ function process_day(date::Date,
             end
             contract.positivity
         else
-            verify_substep_positivity_cs(cur_m, cur_am, cur_bm, cur_cm;
+            verify_substep_positivity_cs!(cur_m, cur_am, cur_bm, cur_cm;
                                          cfl_limit = positivity_cfl_limit)
         end
         worst_positivity = update_cs_positivity_accumulator(worst_positivity, pos_diag, win - 1)
@@ -379,7 +398,7 @@ function process_day(date::Date,
         end
         contract.positivity
     else
-        verify_substep_positivity_cs(cur_m, cur_am, cur_bm, cur_cm;
+        verify_substep_positivity_cs!(cur_m, cur_am, cur_bm, cur_cm;
                                      cfl_limit = positivity_cfl_limit)
     end
     worst_positivity = update_cs_positivity_accumulator(worst_positivity, pos_diag, Nt)
@@ -403,6 +422,7 @@ function process_day(date::Date,
 
     # --- Finalize ---
     close_streaming_transport_binary!(writer)
+    writer_closed = true
 
     # Per-substep positivity gate. Close the writer first so a quarantine
     # delete (require_substep_positivity=true + violation) can remove the
@@ -411,7 +431,12 @@ function process_day(date::Date,
                                    cfl_limit = positivity_cfl_limit,
                                    steps_per_window = steps_per_met,
                                    require_substep_positivity = require_substep_positivity,
-                                   quarantine_path = bin_path)
+                                   quarantine_path = tmp_path)
+
+    # Reached only when positivity passed, or when require_substep_positivity=false
+    # turned a violation into a warning. Promote the staged file either way.
+    mv(tmp_path, bin_path; force = true)
+    mv_done = true
 
     if settings.mass_fix_enable
         ps_offsets_day = @view ps_offsets[1:Nt]
@@ -451,4 +476,15 @@ function process_day(date::Date,
         @warn @sprintf("File size mismatch: expected %d bytes, got %d", expected_total, actual)
 
     return bin_path
+    finally
+        writer_closed || close_streaming_transport_binary!(writer)
+        # On any non-clean exit (loop exception, replay error, quarantined
+        # positivity violation), remove the staged file so it cannot be
+        # mistaken for a finished binary on retry. `summarize_…` already
+        # deleted it in the explicit quarantine case; this guard catches the
+        # other failure modes.
+        if !mv_done && isfile(tmp_path)
+            rm(tmp_path; force = true)
+        end
+    end
 end

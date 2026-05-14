@@ -434,8 +434,15 @@ function process_day(date::Date,
 
     mkpath(dirname(out_path))
 
+    # Stage to `.tmp` so a mid-loop replay failure or post-loop positivity
+    # quarantine never leaves a partial binary at `out_path`. Promote
+    # `tmp_path -> out_path` only after all contract gates pass (or after the
+    # summary warns under `require_substep_positivity = false`).
+    tmp_path = out_path * ".tmp"
+    isfile(tmp_path) && rm(tmp_path; force = true)
+
     writer = open_streaming_cs_transport_binary(
-        out_path, Nc, npanel, Nz, nw, vc;
+        tmp_path, Nc, npanel, Nz, nw, vc;
         FT = FT,
         dt_met_seconds = dt_met_seconds,
         steps_per_window = steps_per_met,
@@ -456,6 +463,7 @@ function process_day(date::Date,
     )
 
     writer_closed = false
+    mv_done       = false
     try
         # ---- v4-shape buffers (reused across windows) ----
         am_v4 = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz),     npanel)
@@ -583,7 +591,12 @@ function process_day(date::Date,
                                        cfl_limit = positivity_cfl_limit,
                                        steps_per_window = steps_per_met,
                                        require_substep_positivity = require_substep_positivity,
-                                       quarantine_path = out_path)
+                                       quarantine_path = tmp_path)
+
+        # Reached only when positivity passed, or when require_substep_positivity=false
+        # turned a violation into a warning. Promote the staged file either way.
+        mv(tmp_path, out_path; force = true)
+        mv_done = true
 
         # Capture the pressure-fixer endpoint from the last window so the
         # caller can seed the next day's `process_day` and preserve cross-day
@@ -600,6 +613,14 @@ function process_day(date::Date,
         )
     finally
         writer_closed || close_streaming_transport_binary!(writer)
+        # On any non-clean exit (loop exception, replay error, quarantined
+        # positivity violation), remove the staged file so it cannot be
+        # mistaken for a finished binary on retry. `summarize_…` already
+        # deleted it in the explicit quarantine case; this guard catches the
+        # other failure modes.
+        if !mv_done && isfile(tmp_path)
+            rm(tmp_path; force = true)
+        end
         close_day!(handles)
     end
 end

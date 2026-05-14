@@ -68,16 +68,22 @@ function verify_write_replay_cs!(m_cur::NTuple{NP, <:AbstractArray{FT, 3}},
 end
 
 """
-    verify_substep_positivity_cs(m, am, bm, cm; cfl_limit = 0.95, halo_width = 0)
+    verify_substep_positivity_cs!(m, am, bm, cm; cfl_limit = 0.95, halo_width = 0)
 
 Verify the per-substep horizontal+vertical positivity contract that the runtime's
-`_cs_static_subcycle_count` depends on: for every interior cell on every panel,
-the per-direction outgoing mass per substep must not exceed `cfl_limit * m`.
+`_cs_static_subcycle_count` depends on. For every interior cell on every panel:
+
+  1. The cell air mass itself must be positive (`m > 0`). A non-positive cell
+     mass is an immediate contract violation — the runtime divides by `m` and
+     would produce `Inf` or `NaN` in the CFL scan. Such a cell is reported with
+     `ratio = Inf` regardless of flux magnitude.
+  2. The per-direction outgoing mass per substep must not exceed `cfl_limit * m`.
 
 Returns a NamedTuple `(direction, ratio, location, ok)`:
-* `direction :: Union{Symbol, Nothing}` — `:x`, `:y`, `:z`, or `nothing` when nothing
-  exceeded zero.
-* `ratio :: Float64` — worst observed `outgoing / m` over the window.
+* `direction :: Union{Symbol, Nothing}` — `:x`, `:y`, `:z`, or `nothing` when no
+  cell was inspected.
+* `ratio :: Float64` — worst observed `outgoing / m` over the window, or `Inf`
+  if any cell had `m <= 0`.
 * `location :: NTuple{4, Int}` — `(panel, i, j, k)` of the worst cell.
 * `ok :: Bool` — `true` iff `ratio <= cfl_limit`.
 
@@ -89,12 +95,12 @@ recover. This gate is the actual contract the runtime depends on.
 `halo_width` defaults to `0` (panel arrays are stored unhaloed at preprocess
 time); pass `> 0` to scan only the interior of a haloed buffer.
 """
-function verify_substep_positivity_cs(m::NTuple{NP, <:AbstractArray{FT, 3}},
-                                      am::NTuple{NP, <:AbstractArray},
-                                      bm::NTuple{NP, <:AbstractArray},
-                                      cm::NTuple{NP, <:AbstractArray};
-                                      cfl_limit::Real = 0.95,
-                                      halo_width::Integer = 0) where {FT, NP}
+function verify_substep_positivity_cs!(m::NTuple{NP, <:AbstractArray{FT, 3}},
+                                       am::NTuple{NP, <:AbstractArray},
+                                       bm::NTuple{NP, <:AbstractArray},
+                                       cm::NTuple{NP, <:AbstractArray};
+                                       cfl_limit::Real = 0.95,
+                                       halo_width::Integer = 0) where {FT, NP}
     Hp = Int(halo_width)
     # All buffers share the same interior extent `(Nc, Nc, Nz)`; derive from m.
     Nc = size(m[1], 1) - 2Hp
@@ -117,7 +123,18 @@ function verify_substep_positivity_cs(m::NTuple{NP, <:AbstractArray{FT, 3}},
             m_int = view(m_p, iL:iH, iL:iH, 1:Nz)
             for k in 1:Nz, j in 1:Nc, i in 1:Nc
                 mi = m_int[i, j, k]
-                mi > zero(FT) || continue
+                if mi <= zero(FT)
+                    # Non-positive cell mass is an immediate contract
+                    # violation regardless of flux. Pin the report to
+                    # the first such cell encountered; subsequent ones
+                    # cannot make `Inf` worse.
+                    if !isinf(worst_ratio)
+                        worst_ratio = Inf
+                        worst_dir = dir
+                        worst_loc = (p, i, j, k)
+                    end
+                    continue
+                end
                 fl = F_lo_view[i, j, k]
                 fh = F_hi_view[i, j, k]
                 outgoing = max(zero(FT), -fl) + max(zero(FT), fh)
@@ -161,9 +178,9 @@ function verify_cs_window_contract!(m_cur::NTuple{NP, <:AbstractArray{FT, 3}},
                                     halo_width::Integer = 0) where {FT, NP}
     replay = verify_write_replay_cs!(m_cur, am, bm, cm, m_next,
                                      steps_per_window, replay_tol, win_idx)
-    positivity = verify_substep_positivity_cs(m_cur, am, bm, cm;
-                                              cfl_limit = positivity_cfl_limit,
-                                              halo_width = halo_width)
+    positivity = verify_substep_positivity_cs!(m_cur, am, bm, cm;
+                                               cfl_limit = positivity_cfl_limit,
+                                               halo_width = halo_width)
     return (replay = replay, positivity = positivity)
 end
 

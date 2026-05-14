@@ -99,6 +99,19 @@ using ..MetDrivers: TransportBinaryReader, TransportBinaryHeader, write_transpor
                     replay_tolerance, run_replay_gate,
                     structured_replay_layout, faceindexed_replay_layout
 
+# Re-export the CS preprocessor contract surface. `cubed_sphere_contracts.jl`
+# is the single source of truth for the per-window write-time gates that every
+# CS-producing preprocessor (spectral, regrid, GEOS-native) must call; making
+# these public lets external auditors (the binary inspector, focused tests,
+# `scripts/diagnostics/*`) gate a binary against the same contract without
+# duplicating logic.
+export verify_write_replay_cs!,
+       verify_substep_positivity_cs!,
+       verify_cs_window_contract!,
+       init_cs_positivity_accumulator,
+       update_cs_positivity_accumulator,
+       summarize_cs_positivity_status
+
 # Met source abstraction (AbstractMetSettings + RawWindow)
 include("met_sources.jl")
 

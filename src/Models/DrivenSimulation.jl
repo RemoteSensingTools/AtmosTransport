@@ -398,11 +398,6 @@ function DrivenSimulation(model::TransportModel,
     surface_sources_adapted = _adapt_sources_to_model_backend(Tuple(surface_sources), model.state.air_mass)
     foreach(source -> _check_surface_source_compatibility(model.state, source), surface_sources_adapted)
 
-    if model.grid.horizontal isa CubedSphereMesh
-        chemistry isa NoChemistry ||
-            throw(ArgumentError("CubedSphere runtime currently supports advection, diffusion, and surface flux; chemistry operators remain unsupported on CubedSphereState"))
-    end
-
     # Plan 17 Commit 6: move chemistry + emissions from sim-level post-
     # step application into the model's transport block. `with_emissions`
     # installs the user-supplied surface sources as a `SurfaceFluxOperator`

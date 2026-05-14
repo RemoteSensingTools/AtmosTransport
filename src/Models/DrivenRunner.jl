@@ -154,8 +154,19 @@ end
 # Mark IO write (snapshot capture + final NetCDF write).
 @inline timed_io_write!(timer, f) = _timed!(:t_io_write, timer, f)
 
-# Tick the progress bar after one window has advanced.
-@inline tick_window!(timer::RunProgressTimer) = next!(timer.prog)
+# Tick the progress bar after one window has advanced. Surface the running
+# Transport vs IO split so the user can read it live while the bar advances.
+@inline function tick_window!(timer::RunProgressTimer)
+    wall = max(time() - timer.t_start, eps())
+    next!(timer.prog; showvalues = [
+        (:transport, @sprintf("%6.1fs (%4.1f%%)", timer.t_transport,
+                               100 * timer.t_transport / wall)),
+        (:io_read,   @sprintf("%6.1fs (%4.1f%%)", timer.t_io_read,
+                               100 * timer.t_io_read   / wall)),
+        (:io_write,  @sprintf("%6.1fs (%4.1f%%)", timer.t_io_write,
+                               100 * timer.t_io_write  / wall)),
+    ])
+end
 
 function summarize_progress!(timer::RunProgressTimer)
     finish!(timer.prog)

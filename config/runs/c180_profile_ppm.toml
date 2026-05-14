@@ -1,0 +1,31 @@
+# Short profiling smoke: 6 windows (6 hours) of pure-advection 1-tracer
+# C180 PPM Strang on the GEOS-IT v4 binary. Use with ATMOSTR_TIMERS=1 to
+# get a per-section breakdown of the CS hot path.
+#
+#   ATMOSTR_TIMERS=1 julia --project=. scripts/run_transport.jl \
+#       config/runs/c180_profile_ppm.toml
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_v4_f32"
+start_date   = "2021-12-01"
+end_date     = "2021-12-01"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+
+[run]
+scheme = "ppm"
+stop_window = 6
+
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"
+
+[output]
+snapshot_hours = []
+snapshot_file = "/tmp/atm_c180_profile_ppm.nc"

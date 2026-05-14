@@ -1,0 +1,34 @@
+# Short profiling smoke: 6 windows (6 hours) of pure-advection 1-tracer
+# C180 Upwind Strang on the GEOS-IT v4 binary. Use with ATMOSTR_TIMERS=1
+# to compare PPM vs Upwind cost while sharing the same halo/CFL machinery.
+# If Upwind is much faster, the regression is in the PPM reconstruction
+# kernels; if Upwind is similarly slow, it is in the shell (halos / sync /
+# CFL reductions).
+#
+#   ATMOSTR_TIMERS=1 julia --project=. scripts/run_transport.jl \
+#       config/runs/c180_profile_upwind.toml
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_v4_f32"
+start_date   = "2021-12-01"
+end_date     = "2021-12-01"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+
+[run]
+scheme = "upwind"
+stop_window = 6
+
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"
+
+[output]
+snapshot_hours = []
+snapshot_file = "/tmp/atm_c180_profile_upwind.nc"

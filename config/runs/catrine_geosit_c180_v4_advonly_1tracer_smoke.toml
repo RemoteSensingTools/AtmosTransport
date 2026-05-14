@@ -1,0 +1,35 @@
+# ===========================================================================
+# Diagnostic: pure-advection, single tracer, 2-day smoke on the GEOS-IT C180
+# v4 binary. Mirror of `catrine_geosit_c180_v4_fullphys_dec2021_smoke.toml`
+# but with diffusion/convection/chemistry disabled and only one tracer.
+# Used to isolate the per-window advection cost vs. the historical
+# C180 GCHP advection-only baseline (~4.67 s/win, 2026-03-26).
+#
+# Runner:
+#   julia --project=. scripts/run_transport.jl \
+#       config/runs/catrine_geosit_c180_v4_advonly_1tracer_smoke.toml
+# ===========================================================================
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_v4_f32"
+start_date   = "2021-12-01"
+end_date     = "2021-12-03"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+
+[run]
+scheme = "ppm"
+
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"
+
+[output]
+snapshot_interval_hours = 3
+snapshot_file = "~/data/AtmosTransport/output/catrine_geosit_c180_v4_advonly_1tracer_smoke.nc"

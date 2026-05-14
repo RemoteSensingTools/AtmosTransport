@@ -1,0 +1,35 @@
+# Counterpart to c180_profile_ppm.toml that targets the May-3 ERA5
+# C180/85L binary instead of the GEOS-IT v4 binary. Used to isolate
+# whether the n_sub explosion observed on the GEOS-IT binary is a
+# binary-side (preprocessor positivity gate missing) or code-side issue.
+# Pure advection, 1 tracer, 6 windows; ATMOSTR_TIMERS=1 reports the same
+# :cs_cfl_*/:cs_sweep_*/:cs_halo_* sections as the GEOS-IT profile.
+#
+#   ATMOSTR_TIMERS=1 julia --project=. scripts/run_transport.jl \
+#       config/runs/c180_profile_ppm_era5.toml
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder       = "/temp1/c180_era5_geosgrid_cfl85_tm5_surface_f32_steps8"
+start_date   = "2021-12-02"
+end_date     = "2021-12-02"
+file_pattern = "era5_transport_{YYYYMMDD}_merged1000Pa_float32.bin"
+
+[run]
+scheme = "ppm"
+stop_window = 6
+
+[tracers.co2]
+  [tracers.co2.init]
+  kind = "uniform"
+  background = 400.0e-6
+
+[output]
+snapshot_hours = []
+snapshot_file = "/tmp/atm_c180_profile_ppm_era5.nc"

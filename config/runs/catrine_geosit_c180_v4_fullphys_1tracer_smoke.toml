@@ -1,0 +1,48 @@
+# ===========================================================================
+# Diagnostic: full-physics, single tracer, 2-day smoke on the GEOS-IT C180
+# v4 binary. Mirror of `catrine_geosit_c180_v4_fullphys_dec2021_smoke.toml`
+# but with only one tracer. Used to isolate the per-window physics cost
+# (PBL + CMFMC + decay) on a single tracer, so the 4-tracer full-phys cost
+# can be decomposed into per-tracer advection vs. shared-physics overhead.
+#
+# Runner:
+#   julia --project=. scripts/run_transport.jl \
+#       config/runs/catrine_geosit_c180_v4_fullphys_1tracer_smoke.toml
+# ===========================================================================
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_v4_f32"
+start_date   = "2021-12-01"
+end_date     = "2021-12-03"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+
+[run]
+scheme = "ppm"
+
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"
+  [tracers.co2_natural.surface_flux]
+  kind = "lmdz_co2"
+
+[diffusion]
+kind = "pbl"
+
+[convection]
+kind = "cmfmc"
+
+[chemistry]
+kind = "decay"
+  [chemistry.half_lives_seconds]
+  rn222 = 330350.4
+
+[output]
+snapshot_interval_hours = 3
+snapshot_file = "~/data/AtmosTransport/output/catrine_geosit_c180_v4_fullphys_1tracer_smoke.nc"

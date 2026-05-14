@@ -26,6 +26,10 @@
 
 using KernelAbstractions: @kernel, @index, @Const, synchronize, get_backend
 
+# Track max (n_x, n_y, n_z) across the run; emit one @info line each time
+# any component grows. Quiet on stable flows, surfaces CFL hotspots early.
+const _STRANG_CS_MAX_SUB = Ref((0, 0, 0))
+
 # =========================================================================
 # CS panel sweep kernels
 #
@@ -581,36 +585,43 @@ function strang_split_cs!(panels_rm::NTuple{6},
     # per-cell CFL > 1 correctly (tracer flux saturates at donor mass, mass
     # update is exact). Subcycling reduces the average CFL but isn't required
     # for stability — it's for accuracy (second-order advection needs CFL < 1).
-    n_x = _cs_static_subcycle_count(panels_am, panels_m, Nc, Hp, Nz, cfl_ft, :x)
-    n_y = _cs_static_subcycle_count(panels_bm, panels_m, Nc, Hp, Nz, cfl_ft, :y)
-    n_z = _cs_static_subcycle_count(panels_cm, panels_m, Nc, Hp, Nz, cfl_ft, :z)
+    n_x = SectionTimer.@section :cs_cfl_x _cs_static_subcycle_count(panels_am, panels_m, Nc, Hp, Nz, cfl_ft, :x)
+    n_y = SectionTimer.@section :cs_cfl_y _cs_static_subcycle_count(panels_bm, panels_m, Nc, Hp, Nz, cfl_ft, :y)
+    n_z = SectionTimer.@section :cs_cfl_z _cs_static_subcycle_count(panels_cm, panels_m, Nc, Hp, Nz, cfl_ft, :z)
+
+    let (mx, my, mz) = _STRANG_CS_MAX_SUB[]
+        if n_x > mx || n_y > my || n_z > mz
+            _STRANG_CS_MAX_SUB[] = (max(mx, n_x), max(my, n_y), max(mz, n_z))
+            @info "strang_split_cs! subcycle count grew" n_x n_y n_z
+        end
+    end
 
     fs_x = fs / FT(n_x)
     fs_y = fs / FT(n_y)
     fs_z = fs / FT(n_z)
 
     # ---- X sweep (subcycled) ----
-    for _ in 1:n_x
+    SectionTimer.@section :cs_sweep_x for _ in 1:n_x
         for p in 1:6
             _sweep_x_panel!(panels_rm[p], panels_m[p], panels_am[p],
                              scheme, rm_A, m_A, Nc, Hp, Nz; flux_scale=fs_x)
         end
-        fill_panel_halos!(panels_rm, mesh; dir=1)
-        fill_panel_halos!(panels_m, mesh; dir=1)
+        SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm, mesh; dir=1)
+        SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,  mesh; dir=1)
     end
 
     # ---- Y sweep (subcycled) ----
-    for _ in 1:n_y
+    SectionTimer.@section :cs_sweep_y for _ in 1:n_y
         for p in 1:6
             _sweep_y_panel!(panels_rm[p], panels_m[p], panels_bm[p],
                              scheme, rm_A, m_A, Nc, Hp, Nz; flux_scale=fs_y)
         end
-        fill_panel_halos!(panels_rm, mesh; dir=2)
-        fill_panel_halos!(panels_m, mesh; dir=2)
+        SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(panels_rm, mesh; dir=2)
+        SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(panels_m,  mesh; dir=2)
     end
 
     # ---- Z sweep × 2 (subcycled) ----
-    for _ in 1:n_z
+    SectionTimer.@section :cs_sweep_z for _ in 1:n_z
         for p in 1:6
             _sweep_z_panel!(panels_rm[p], panels_m[p], panels_cm[p],
                              scheme, rm_A, m_A, Nc, Hp, Nz; flux_scale=fs_z)
@@ -619,7 +630,7 @@ function strang_split_cs!(panels_rm::NTuple{6},
 
     midpoint! === nothing || midpoint!()
 
-    for _ in 1:n_z
+    SectionTimer.@section :cs_sweep_z for _ in 1:n_z
         for p in 1:6
             _sweep_z_panel!(panels_rm[p], panels_m[p], panels_cm[p],
                              scheme, rm_A, m_A, Nc, Hp, Nz; flux_scale=fs_z)
@@ -627,27 +638,27 @@ function strang_split_cs!(panels_rm::NTuple{6},
     end
 
     # ---- Reverse: Y sweep (subcycled) ----
-    fill_panel_halos!(panels_rm, mesh; dir=2)
-    fill_panel_halos!(panels_m, mesh; dir=2)
-    for _ in 1:n_y
+    SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(panels_rm, mesh; dir=2)
+    SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(panels_m,  mesh; dir=2)
+    SectionTimer.@section :cs_sweep_y for _ in 1:n_y
         for p in 1:6
             _sweep_y_panel!(panels_rm[p], panels_m[p], panels_bm[p],
                              scheme, rm_A, m_A, Nc, Hp, Nz; flux_scale=fs_y)
         end
-        fill_panel_halos!(panels_rm, mesh; dir=2)
-        fill_panel_halos!(panels_m, mesh; dir=2)
+        SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(panels_rm, mesh; dir=2)
+        SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(panels_m,  mesh; dir=2)
     end
 
     # ---- Reverse: X sweep (subcycled) ----
-    fill_panel_halos!(panels_rm, mesh; dir=1)
-    fill_panel_halos!(panels_m, mesh; dir=1)
-    for _ in 1:n_x
+    SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm, mesh; dir=1)
+    SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,  mesh; dir=1)
+    SectionTimer.@section :cs_sweep_x for _ in 1:n_x
         for p in 1:6
             _sweep_x_panel!(panels_rm[p], panels_m[p], panels_am[p],
                              scheme, rm_A, m_A, Nc, Hp, Nz; flux_scale=fs_x)
         end
-        fill_panel_halos!(panels_rm, mesh; dir=1)
-        fill_panel_halos!(panels_m, mesh; dir=1)
+        SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm, mesh; dir=1)
+        SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,  mesh; dir=1)
     end
 
     return nothing

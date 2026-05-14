@@ -123,11 +123,18 @@ function verify_substep_positivity_cs!(m::NTuple{NP, <:AbstractArray{FT, 3}},
             m_int = view(m_p, iL:iH, iL:iH, 1:Nz)
             for k in 1:Nz, j in 1:Nc, i in 1:Nc
                 mi = m_int[i, j, k]
-                if mi <= zero(FT)
-                    # Non-positive cell mass is an immediate contract
-                    # violation regardless of flux. Pin the report to
-                    # the first such cell encountered; subsequent ones
-                    # cannot make `Inf` worse.
+                fl = F_lo_view[i, j, k]
+                fh = F_hi_view[i, j, k]
+                # Any non-finite cell mass, non-finite face flux, or
+                # non-positive cell mass is an immediate contract violation
+                # regardless of how the CFL ratio would round. NaN comparisons
+                # all return `false` in Julia, so `mi <= 0` alone would let
+                # `NaN`-mass cells slip through; `!isfinite` handles `NaN` and
+                # `±Inf` consistently. Pin the report to the first such cell
+                # encountered (subsequent ones cannot make `Inf` worse, and
+                # `NaN > Inf` is false so the diagnostic stays stable).
+                if !isfinite(mi) || mi <= zero(FT) ||
+                   !isfinite(fl) || !isfinite(fh)
                     if !isinf(worst_ratio)
                         worst_ratio = Inf
                         worst_dir = dir
@@ -135,8 +142,6 @@ function verify_substep_positivity_cs!(m::NTuple{NP, <:AbstractArray{FT, 3}},
                     end
                     continue
                 end
-                fl = F_lo_view[i, j, k]
-                fh = F_hi_view[i, j, k]
                 outgoing = max(zero(FT), -fl) + max(zero(FT), fh)
                 ratio = outgoing / mi
                 if ratio > worst_ratio
@@ -235,14 +240,30 @@ function summarize_cs_positivity_status(worst::NamedTuple;
         return nothing
     end
 
-    recommended = max(steps_per_window,
-                      ceil(Int, worst.ratio / cfl_limit) * steps_per_window)
-    detail = "Per-substep positivity contract violated: $msg. " *
-             "The binary stores fluxes that violate positivity at the recorded " *
-             "`steps_per_window=$(steps_per_window)`. Re-run with " *
-             "`steps_per_window=$(recommended)` (or higher) on the source " *
-             "preprocessing config, or set `[numerics].require_substep_positivity = false` " *
-             "to suppress."
+    # Branch on finiteness BEFORE computing the recommended steps count.
+    # Non-finite ratios (Inf from m<=0 or m/flux NaN-tagging in
+    # `verify_substep_positivity_cs!`) cannot be turned into an integer step
+    # recommendation — `ceil(Int, Inf)` throws `InexactError`. Report the
+    # structural failure instead and skip the rescue suggestion.
+    detail = if isfinite(worst.ratio)
+        recommended = max(steps_per_window,
+                          ceil(Int, worst.ratio / cfl_limit) * steps_per_window)
+        "Per-substep positivity contract violated: $msg. " *
+        "The binary stores fluxes that violate positivity at the recorded " *
+        "`steps_per_window=$(steps_per_window)`. Re-run with " *
+        "`steps_per_window=$(recommended)` (or higher) on the source " *
+        "preprocessing config, or set `[numerics].require_substep_positivity = false` " *
+        "to suppress."
+    else
+        "Per-substep positivity contract violated by non-finite air mass or flux: $msg. " *
+        "A cell carried `m <= 0`, `NaN`, or `Inf` — either the source data " *
+        "has been corrupted upstream of preprocessing, or the pressure-fixer / " *
+        "endpoint-balance pass drove a cell negative. Increasing " *
+        "`steps_per_window` cannot rescue a non-finite ratio; investigate the " *
+        "source field at the reported cell location, or set " *
+        "`[numerics].require_substep_positivity = false` to record the " *
+        "violation as a warning and keep the binary for diagnostic inspection."
+    end
     if require_substep_positivity
         quarantine_path === nothing || (isfile(quarantine_path) && rm(quarantine_path; force = true))
         error(detail)

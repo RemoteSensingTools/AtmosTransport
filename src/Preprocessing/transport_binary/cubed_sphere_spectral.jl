@@ -50,8 +50,6 @@ function process_day(date::Date,
     # gate passes (or after a warning-only positivity summary returns).
     tmp_path = bin_path * ".tmp"
     isfile(tmp_path) && rm(tmp_path; force = true)
-    writer_closed = false
-    mv_done       = false
 
     # --- Build the internal LL staging grid ---
     # ConservativeRegridding requires source and destination manifolds to
@@ -97,45 +95,6 @@ function process_day(date::Date,
     dt_factor = FT(settings.met_interval / (2 * steps_per_met))
     Δx = grid.mesh.Δx  # (Nc, Nc) matrix
     Δy = grid.mesh.Δy  # (Nc, Nc) matrix
-
-    # --- Open streaming CS binary writer ---
-    # Wrap everything that touches `tmp_path` (writer open, sliding-window
-    # loop, contract summary, file-size check) in a try/finally so any
-    # mid-flight exception still cleans up the staged file.
-    writer = open_streaming_cs_transport_binary(
-        tmp_path, Nc, CS_PANEL_COUNT, Nz, Nt, vc_merged;
-        FT=FT,
-        dt_met_seconds=settings.met_interval,
-        half_dt_seconds=settings.half_dt,
-        steps_per_window=steps_per_met,
-        include_flux_delta=true,
-        mass_basis=Symbol(settings.mass_basis),
-        panel_convention=_cs_panel_convention_tag(grid),
-        cs_definition=_cs_definition_tag(grid),
-        cs_coordinate_law=_cs_coordinate_law_tag(grid),
-        cs_center_law=_cs_center_law_tag(grid),
-        longitude_offset_deg=longitude_offset_deg(cs_definition(grid.mesh)),
-        extra_header=Dict{String, Any}(
-            "preprocessor"     => "preprocess_transport_binary.jl",
-            "source_type"      => "era5_spectral",
-            "target_type"      => "cubed_sphere",
-            "staging_nlon"     => Nx_stg,
-            "staging_nlat"     => Ny_stg,
-            "regrid_method"    => "conservative",
-            "vertical_mapping_method" => String(vertical_mapping_method(vertical)),
-            "target_vertical_name" => hasproperty(vertical, :target_vertical_name) ?
-                vertical.target_vertical_name : "",
-            "target_coefficients" => hasproperty(vertical, :target_coefficients) ?
-                vertical.target_coefficients : "",
-            "merge_map" => vertical.merge_map,
-            "poisson_balanced" => true,
-            "mass_fix_enabled" => settings.mass_fix_enable,
-        ))
-
-    bytes_per_window = writer.elems_per_window * sizeof(FT)
-    expected_total = writer.header_bytes + Nt * bytes_per_window
-    @info @sprintf("  Output: %s (%.2f GB, %d windows)", basename(bin_path),
-                   expected_total / 1e9, Nt)
 
     log_mass_fix_configuration(settings)
     @info "  Streaming: spectral → LL staging → CS regrid → balance → write..."
@@ -211,13 +170,53 @@ function process_day(date::Date,
         end
     end
 
-    # Wrap the work loop + contract summary + mv promotion in try/finally
-    # so any exception (replay failure, IO error, quarantined positivity)
-    # still cleans up the staged `.tmp` file. The two inner function
+    # Wrap the writer open, work loop, contract summary, file-size check
+    # and `tmp -> bin` promotion in try/finally. The two inner function
     # definitions above are intentionally kept outside the try block —
-    # closure-in-try parsing is brittle in Julia and offers no benefit here
-    # (those defs cannot leave a `.tmp` behind).
+    # closure-in-try parsing is brittle in Julia and offers no benefit
+    # here (those defs cannot leave a `.tmp` behind on their own). The
+    # writer open is moved INSIDE the try so a header-write failure (or
+    # any other exception before the loop) still hits the cleanup path.
+    writer        = nothing
+    writer_closed = false
+    mv_done       = false
     try
+    # --- Open streaming CS binary writer ---
+    writer = open_streaming_cs_transport_binary(
+        tmp_path, Nc, CS_PANEL_COUNT, Nz, Nt, vc_merged;
+        FT=FT,
+        dt_met_seconds=settings.met_interval,
+        half_dt_seconds=settings.half_dt,
+        steps_per_window=steps_per_met,
+        include_flux_delta=true,
+        mass_basis=Symbol(settings.mass_basis),
+        panel_convention=_cs_panel_convention_tag(grid),
+        cs_definition=_cs_definition_tag(grid),
+        cs_coordinate_law=_cs_coordinate_law_tag(grid),
+        cs_center_law=_cs_center_law_tag(grid),
+        longitude_offset_deg=longitude_offset_deg(cs_definition(grid.mesh)),
+        extra_header=Dict{String, Any}(
+            "preprocessor"     => "preprocess_transport_binary.jl",
+            "source_type"      => "era5_spectral",
+            "target_type"      => "cubed_sphere",
+            "staging_nlon"     => Nx_stg,
+            "staging_nlat"     => Ny_stg,
+            "regrid_method"    => "conservative",
+            "vertical_mapping_method" => String(vertical_mapping_method(vertical)),
+            "target_vertical_name" => hasproperty(vertical, :target_vertical_name) ?
+                vertical.target_vertical_name : "",
+            "target_coefficients" => hasproperty(vertical, :target_coefficients) ?
+                vertical.target_coefficients : "",
+            "merge_map" => vertical.merge_map,
+            "poisson_balanced" => true,
+            "mass_fix_enabled" => settings.mass_fix_enable,
+        ))
+
+    bytes_per_window = writer.elems_per_window * sizeof(FT)
+    expected_total = writer.header_bytes + Nt * bytes_per_window
+    @info @sprintf("  Output: %s (%.2f GB, %d windows)", basename(bin_path),
+                   expected_total / 1e9, Nt)
+
     worst_pre = 0.0
     worst_post = 0.0
     worst_iter = 0
@@ -477,7 +476,11 @@ function process_day(date::Date,
 
     return bin_path
     finally
-        writer_closed || close_streaming_transport_binary!(writer)
+        # Guard on `writer !== nothing` so a failure in `open_…` itself
+        # (before assignment) does not try to close a `nothing`.
+        if writer !== nothing && !writer_closed
+            close_streaming_transport_binary!(writer)
+        end
         # On any non-clean exit (loop exception, replay error, quarantined
         # positivity violation), remove the staged file so it cannot be
         # mistaken for a finished binary on retry. `summarize_…` already

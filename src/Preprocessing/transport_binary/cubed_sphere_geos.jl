@@ -441,30 +441,35 @@ function process_day(date::Date,
     tmp_path = out_path * ".tmp"
     isfile(tmp_path) && rm(tmp_path; force = true)
 
-    writer = open_streaming_cs_transport_binary(
-        tmp_path, Nc, npanel, Nz, nw, vc;
-        FT = FT,
-        dt_met_seconds = dt_met_seconds,
-        steps_per_window = steps_per_met,
-        mass_basis = mass_basis,
-        include_flux_delta = true,
-        include_surface    = settings.include_surface,
-        include_cmfmc      = settings.include_convection,
-        include_dtrain     = settings.include_convection,
-        panel_convention   = panel_convention,
-        cs_definition      = _cs_definition_tag(grid),
-        cs_coordinate_law  = _cs_coordinate_law_tag(grid),
-        cs_center_law      = _cs_center_law_tag(grid),
-        longitude_offset_deg = longitude_offset_deg(cs_definition(grid.mesh)),
-        extra_header = Dict{String, Any}(
-            "source_Nc" => settings.Nc,
-            "geos_cs_resolution_strategy" => _geos_cs_strategy_name(strategy),
-        ),
-    )
-
+    # Writer-open is inside the protected region: if `open_…!` writes a header
+    # then errors (e.g. truncated payload negotiation), the `finally` block
+    # still removes the partial `tmp_path`. `writer = nothing` lets the
+    # finally close-guard distinguish "never opened" from "opened but not yet
+    # explicitly closed".
+    writer        = nothing
     writer_closed = false
     mv_done       = false
     try
+        writer = open_streaming_cs_transport_binary(
+            tmp_path, Nc, npanel, Nz, nw, vc;
+            FT = FT,
+            dt_met_seconds = dt_met_seconds,
+            steps_per_window = steps_per_met,
+            mass_basis = mass_basis,
+            include_flux_delta = true,
+            include_surface    = settings.include_surface,
+            include_cmfmc      = settings.include_convection,
+            include_dtrain     = settings.include_convection,
+            panel_convention   = panel_convention,
+            cs_definition      = _cs_definition_tag(grid),
+            cs_coordinate_law  = _cs_coordinate_law_tag(grid),
+            cs_center_law      = _cs_center_law_tag(grid),
+            longitude_offset_deg = longitude_offset_deg(cs_definition(grid.mesh)),
+            extra_header = Dict{String, Any}(
+                "source_Nc" => settings.Nc,
+                "geos_cs_resolution_strategy" => _geos_cs_strategy_name(strategy),
+            ),
+        )
         # ---- v4-shape buffers (reused across windows) ----
         am_v4 = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz),     npanel)
         bm_v4 = ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz),     npanel)
@@ -612,7 +617,11 @@ function process_day(date::Date,
             final_m = final_m,
         )
     finally
-        writer_closed || close_streaming_transport_binary!(writer)
+        # Guard on `writer !== nothing` so a failure in `open_…` itself
+        # (before assignment) does not try to close a `nothing`.
+        if writer !== nothing && !writer_closed
+            close_streaming_transport_binary!(writer)
+        end
         # On any non-clean exit (loop exception, replay error, quarantined
         # positivity violation), remove the staged file so it cannot be
         # mistaken for a finished binary on retry. `summarize_…` already

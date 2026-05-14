@@ -1,0 +1,96 @@
+# ===========================================================================
+# ERA5 native GRIB download — DAILY chunks, model-level streams.
+#
+# Successor to `era5_native_monthly.toml`, which hit MARS's 150 GB
+# per-request ceiling on the monthly `core` (T/Q/VO/LNSP/D, 137 ml ×
+# 5 fields × 720 hours × N320) batches in May 2026. Splitting to
+# daily chunks keeps each request well under the limit at the cost
+# of 31× more API calls per month per stream — still tractable
+# (typical MARS queue gives ~one daily request every few minutes).
+#
+# Filenames embed `{date}` (yyyymmdd) instead of `{year_month}`, so
+# daily output files coexist with the legacy monthly ones from the
+# prior run. `skip_existing = true` resumes cleanly.
+#
+# Streams:
+#   - `core`       (model-level T, Q, VO, LNSP, D — the limit-hitter)
+#   - `convection` (forecast UDMF, DDMF, UDRF, DDRF — fc, twice-daily)
+#   - `surface`    (surface analysis variables — bundled here for a
+#                  single config; daily surface files are small and
+#                  the per-request overhead is dominated by other
+#                  streams)
+#
+# Usage (foreground smoke):
+#   julia --project=. scripts/downloads/download_data.jl \
+#       config/downloads/era5_native_daily.toml \
+#       --start 2021-12-01 --end 2021-12-01
+#
+# Usage (detached full run):
+#   setsid nohup julia --project=. \
+#       scripts/downloads/download_data.jl \
+#       config/downloads/era5_native_daily.toml \
+#     > ~/atmostransport_logs/era5_daily_download_YYYYMMDD_HHMMSS.log 2>&1 &
+# ===========================================================================
+
+[source]
+met_source = "config/met_sources/era5.toml"
+
+[download]
+protocol = "cds"
+
+[[download.requests]]
+name = "core"
+description = "Model-level analyses: T, Q, VO, LNSP, D (native spectral/N320)"
+dataset = "reanalysis-era5-complete"
+params = "130/133/138/152/155"
+field_type = "an"
+levels = "1/to/137"
+times = "hourly"
+format = "grib"
+
+[[download.requests]]
+name = "convection"
+description = "Convective mass flux + detrainment (forecast, params 235009-235012)"
+dataset = "reanalysis-era5-complete"
+params = "235009/235010/235011/235012"
+field_type = "fc"
+levels = "1/to/137"
+times = "06:00:00/18:00:00"
+steps = "1/2/3/4/5/6/7/8/9/10/11/12"
+format = "grib"
+
+[[download.requests]]
+name = "surface"
+description = "Surface pressure, BLH, heat fluxes, 10m winds, geopotential"
+dataset = "reanalysis-era5-single-levels"
+variables = [
+    "surface_pressure", "geopotential", "land_sea_mask",
+    "boundary_layer_height", "friction_velocity",
+    "10m_u_component_of_wind", "10m_v_component_of_wind",
+    "2m_temperature", "2m_dewpoint_temperature",
+    "surface_sensible_heat_flux", "surface_latent_heat_flux",
+]
+field_type = "an"
+times = "hourly"
+format = "grib"
+
+[output]
+data_root = "~/data/AtmosTransport"
+met_source = "era5"
+grid_name = "N320"
+cadence = "hourly"
+payload_type = "raw"
+subdirectory_by_request = true
+# `{date}` template — daily filenames coexist with the legacy
+# `era5_*_YYYYMM.grib` files from the prior monthly run.
+filename_template = "era5_{request_name}_{date}.grib"
+
+[schedule]
+start_date = "2021-12-01"
+end_date = "2022-12-31"
+chunk = "daily"
+
+[options]
+max_retries = 8
+retry_wait_seconds = 180
+skip_existing = true

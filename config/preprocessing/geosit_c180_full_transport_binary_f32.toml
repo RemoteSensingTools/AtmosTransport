@@ -1,0 +1,58 @@
+# ===========================================================================
+# GEOS-IT C180 native NetCDF -> AtmosTransport v4 CS C180 transport
+# binaries with PBL + convection physics enabled, Dec 2021 - Dec 2023.
+#
+# Sourced from `~/data/AtmosTransport/met/geosit/C180/raw_catrine/` —
+# the complete daily dataset (761 days, 6 files per day:
+# CTM_A1 + CTM_I1 + A1 + A3dyn + A3mstE + I3).
+#
+# Output goes to NAS (`~/data/AtmosTransport/met/geosit/C180/...`) NOT
+# NVMe scratch, so the binaries are stable beyond reboot and visible
+# to any kiwi-mounted machine.
+#
+# Differs from `geosit_c180_native_dec2021_f32.toml` only in (a)
+# output location (NAS), (b) intended date range (full archive),
+# and (c) the canonical CLI invocation uses `--start/--end` to drive
+# the per-day loop.
+#
+# Usage (foreground smoke):
+#   julia -t8 --project=. \
+#       scripts/preprocessing/preprocess_transport_binary.jl \
+#       config/preprocessing/geosit_c180_full_transport_binary_f32.toml \
+#       --day 2021-12-01
+#
+# Usage (detached full run):
+#   setsid nohup julia -t8 --project=. \
+#       scripts/preprocessing/preprocess_transport_binary.jl \
+#       config/preprocessing/geosit_c180_full_transport_binary_f32.toml \
+#       --start 2021-12-01 --end 2023-12-31 \
+#     > ~/atmostransport_logs/geosit_c180_preprocess_YYYYMMDD_HHMMSS.log 2>&1 &
+# ===========================================================================
+
+[source]
+toml               = "config/met_sources/geosit.toml"
+root_dir           = "/home/cfranken/data/AtmosTransport/met/geosit/C180/raw_catrine"
+include_surface    = true     # writes the PBL section for runtime diffusion
+include_convection = true     # writes CMFMC + DTRAIN for runtime convection
+
+[output]
+directory  = "/home/cfranken/data/AtmosTransport/met/geosit/C180/transport_binary_v4_f32"
+mass_basis = "dry"
+
+[grid]
+type                = "cubed_sphere"
+Nc                  = 180
+panel_convention    = "geos_native"
+definition          = "gmao"
+regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
+
+[vertical]
+coefficients = "config/geos_L72_coefficients.toml"
+
+[numerics]
+float_type     = "Float32"
+dt_met_seconds = 3600.0
+# GEOS-native runs reset air mass at each archived window while preserving
+# tracer VMR, so each binary window starts from the raw GEOS endpoint
+# rather than a multi-day pressure-fixer chain.
+chain_mass     = false

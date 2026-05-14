@@ -927,9 +927,43 @@ end
 
 @inline _surface_flux_kind(cfg) = Symbol(lowercase(String(get(cfg, "kind", "none"))))
 
+# Derive per-cell area `(Nx, Ny)` on a regular lat/lon grid from the
+# coordinate vectors. Uses the spherical-cap formula
+# `R² · Δlon · |sin(φ + Δlat/2) - sin(φ - Δlat/2)|` with R = 6.371e6 m.
+# Used by the EDGAR-Tonnes branch when the source file does not carry
+# a `cell_area` or `area` variable.
+function _lonlat_cell_areas_m2(lon::AbstractVector, lat::AbstractVector)
+    Nx, Ny = length(lon), length(lat)
+    R = 6.371e6
+    # Cell width in radians (assume uniform spacing; first-differences
+    # the coordinate vectors). For periodic lon at the wrap, use the
+    # mean spacing as a stand-in.
+    dlon = Nx > 1 ? deg2rad(abs(lon[2] - lon[1])) : deg2rad(360.0 / Nx)
+    dlat_half = Ny > 1 ? deg2rad(abs(lat[2] - lat[1])) / 2 : deg2rad(180.0 / Ny) / 2
+    out = Array{Float64, 2}(undef, Nx, Ny)
+    @inbounds for j in 1:Ny
+        ϕ = deg2rad(lat[j])
+        band = R * R * dlon * abs(sin(ϕ + dlat_half) - sin(ϕ - dlat_half))
+        for i in 1:Nx
+            out[i, j] = band
+        end
+    end
+    return out
+end
+
 function _resolve_surface_flux_file(cfg, kind::Symbol)
     default_file, default_variable = if kind === :gridfed_fossil_co2
         ("~/data/AtmosTransport/catrine/Emissions/gridfed/GCP-GridFEDv2024.0_2021.short.nc", "TOTAL")
+    elseif kind === :edgar_sf6
+        ("~/data/AtmosTransport/catrine/Emissions/edgar_v8/v8.0_FT2022_GHG_SF6_2022_TOTALS_emi.nc", "emissions")
+    elseif kind === :zhang_rn222
+        ("~/data/AtmosTransport/catrine/Emissions/ZHANG_Rn222/Rn222_Emis_Zhang_Liu_et_al_05x05_mass.nc", "rnemis")
+    elseif kind === :lmdz_co2
+        # Default points at the Dec 2021 CAMS monthly file. Set
+        # `surface_flux.file` in TOML for other months; multi-month
+        # auto-resolution from a directory is a follow-up.
+        ("~/data/AtmosTransport/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202112_FT24r2_ra_sfc_3h_co2_flux.nc",
+         "flux_apos")
     else
         ("", "")
     end
@@ -938,7 +972,9 @@ function _resolve_surface_flux_file(cfg, kind::Symbol)
     isempty(file) && throw(ArgumentError("surface_flux.kind=$(kind) requires surface_flux.file"))
     isempty(variable) && throw(ArgumentError("surface_flux.kind=$(kind) requires surface_flux.variable"))
 
-    default_time_index = kind === :gridfed_fossil_co2 ? Int(get(cfg, "month", 0)) : 1
+    default_time_index = kind === :gridfed_fossil_co2 ? Int(get(cfg, "month", 0)) :
+                          kind === :zhang_rn222       ? Int(get(cfg, "month", 1)) :
+                          1
     time_index = Int(get(cfg, "time_index", default_time_index))
     if kind === :gridfed_fossil_co2 && time_index < 1
         throw(ArgumentError("surface_flux.kind=gridfed_fossil_co2 requires surface_flux.time_index or surface_flux.month"))
@@ -971,7 +1007,23 @@ function _load_file_surface_flux_field(cfg, ::Type{FT}) where FT
 
         raw_var = ds[variable]
         raw = if ndims(raw_var) == 3
-            FT.(nomissing(raw_var[:, :, time_index], zero(FT)))
+            if kind === :lmdz_co2
+                # CAMS LMDZ files store 3-hourly fluxes (`time = 248`
+                # for a 31-day month). For a one-month forward run we
+                # use the monthly mean: average over the time axis so
+                # the surface-flux pipeline (which carries a single
+                # 2D field) sees a representative constant rate.
+                # Sub-monthly variability is a follow-up.
+                ntime = size(raw_var, 3)
+                acc = zeros(Float64, size(raw_var, 1), size(raw_var, 2))
+                @inbounds for t in 1:ntime
+                    acc .+= Float64.(nomissing(raw_var[:, :, t], 0.0))
+                end
+                acc ./= ntime
+                FT.(acc)
+            else
+                FT.(nomissing(raw_var[:, :, time_index], zero(FT)))
+            end
         elseif ndims(raw_var) == 2
             FT.(nomissing(raw_var[:, :], zero(FT)))
         else
@@ -980,6 +1032,8 @@ function _load_file_surface_flux_field(cfg, ::Type{FT}) where FT
 
         cell_area_src = if haskey(ds, "cell_area")
             Float64.(nomissing(ds["cell_area"][:, :], 0.0))
+        elseif haskey(ds, "area")
+            Float64.(nomissing(ds["area"][:, :], 0.0))
         else
             nothing
         end
@@ -1003,8 +1057,27 @@ function _load_file_surface_flux_field(cfg, ::Type{FT}) where FT
         units_norm = _normalize_units_string(get(raw_var.attrib, "units", ""))
         if kind === :gridfed_fossil_co2 || units_norm == "kgco2/month/m2"
             raw ./= FT(SECONDS_PER_MONTH)
+        elseif kind === :edgar_sf6 || units_norm == "tonnes"
+            # EDGAR v8 stores per-cell annual mass (tonnes). Convert to
+            # per-area per-second flux: kg/m²/s = (1000 · tonnes) /
+            # (cell_area · seconds_per_year). cell_area must be present
+            # in the file OR derivable from the lat/lon grid.
+            cell_area_for_norm = cell_area_src
+            if cell_area_for_norm === nothing
+                cell_area_for_norm = _lonlat_cell_areas_m2(lon_src, lat_src)
+            end
+            seconds_per_year = 365.25 * 86400
+            @inbounds for j in 1:size(raw, 2), i in 1:size(raw, 1)
+                a = cell_area_for_norm[i, j]
+                raw[i, j] = a > 0 ? FT(1000 * Float64(raw[i, j]) /
+                                       (a * seconds_per_year)) : zero(FT)
+            end
+        elseif kind === :lmdz_co2 || units_norm in ("kgcm-2s-1", "kgc/m2/s", "kgcm2s-1")
+            # CAMS / LMDZ flux is reported in kg of CARBON per m² per s.
+            # Multiply by 44/12 = M(CO2)/M(C) to convert to kg of CO2.
+            raw .*= FT(44.0 / 12.0)
         elseif !(isempty(units_norm) || occursin("/s", units_norm) || occursin("s-1", units_norm))
-            throw(ArgumentError("unsupported surface-flux units '$units_norm' in $file; expected kgCO2/month/m2 or per-second flux units"))
+            throw(ArgumentError("unsupported surface-flux units '$units_norm' in $file; expected kgCO2/month/m2, Tonnes, kgC/m2/s, or per-second flux units"))
         end
 
         raw .*= FT(get(cfg, "scale", 1.0))

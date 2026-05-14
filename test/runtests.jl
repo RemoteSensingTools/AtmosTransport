@@ -106,6 +106,7 @@ if RUN_ALL
         "test_era5_latlon_e2e.jl",
         "test_run_transport_binary_v2.jl",
         "test_tm5_catrine_1day.jl",
+        "test_catrine_emissions.jl",
     ]
 
     for test_file in real_data_tests

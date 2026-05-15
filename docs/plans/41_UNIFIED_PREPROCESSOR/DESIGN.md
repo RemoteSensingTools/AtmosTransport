@@ -167,16 +167,44 @@ close_day!(reader) → nothing
 
 **This is the new axis** that closes the layer-merging gap (B) and
 the "GEOS-IT can't merge mesospheric layers" foot-gun the user
-flagged. Today's `build_vertical_setup` already implements three
-strategies for the spectral path — they become first-class types:
+flagged. "Merge levels" is not one policy; it is a family of explicit
+loss-of-resolution choices. In the GEOS-IT C180 L72 case we do not
+need mesospheric layer detail for a surface-footprint transport
+binary: the upper mesosphere is a tiny fraction of the column mass, but
+its ~14 Pa layers dominate per-substep CFL/positivity. That should be a
+declared vertical-transform policy, not a hidden side effect.
+
+Today's `build_vertical_setup` already implements several strategies
+for the spectral path. Plan 41 makes those and the GEOS-IT upper-layer
+policies first-class types:
 
 ```julia
 abstract type AbstractVerticalTransform end
 
 struct IdentityVertical <: AbstractVerticalTransform end
 
-struct ThinLevelMerge <: AbstractVerticalTransform
-    min_thickness_Pa :: Float64  # default 1000.0 for spectral, 50.0 for GEOS-IT mesosphere
+# Explicit native center-level grouping. This is the most auditable
+# option for production reruns: "merge exactly levels 57:58, 59:61, …".
+struct MergeByIndex <: AbstractVerticalTransform
+    groups :: Vector{UnitRange{Int}}  # native center-level indices, top-to-bottom
+end
+
+# Automatic local coarsening: greedily merge adjacent layers until every
+# output layer is at least `min_thickness_Pa` at the reference surface
+# pressure. This is the typed form of today's `merge_thin_levels`.
+struct MergeLayersThinnerThan <: AbstractVerticalTransform
+    min_thickness_Pa :: Float64
+    reference_surface_pressure_Pa :: Float64  # default 101325.0
+end
+
+# Upper-atmosphere cap/coarsening: leave the troposphere/stratosphere
+# untouched and merge native layers whose midpoint pressure is lower
+# than `pressure_Pa` (physically above that isobar). Useful when the
+# top-of-model levels are operationally irrelevant but numerically
+# expensive.
+struct MergeAbovePressure <: AbstractVerticalTransform
+    pressure_Pa :: Float64
+    target_min_thickness_Pa :: Float64  # use Inf to merge into one top cap
 end
 
 struct LevelSelection <: AbstractVerticalTransform
@@ -194,8 +222,9 @@ Required methods:
 # Plan once per day (or per run if reader.native_vertical is invariant).
 plan_vertical(transform::AbstractVerticalTransform,
               native_vc::HybridSigmaPressure{FT}) where FT
-    → VerticalPlan{FT}  # holds merged_vc, mapping (merge_map | overlap_coefs | nothing),
-                        #            Nz_output, transform_kind ∈ {:identity, :merge_map, :pressure_overlap}
+    → VerticalPlan{FT, typeof(transform)}  # holds merged_vc, mapping
+                                           # (merge_map | overlap_coefs | groups | nothing),
+                                           # and Nz_output
 
 # Apply to one window in-place. Source-shape `buf_in` (Nz_native
 # levels) → target-shape `buf_out` (Nz_output levels).
@@ -203,19 +232,39 @@ apply_vertical!(buf_out, buf_in, plan::VerticalPlan, ::FieldKind)
     → nothing
 ```
 
-`FieldKind` is a singleton-type tag (`MassField`, `MassFluxField`,
-`PressureFluxField`) that selects the right interpolation rule (sum
-vs face-averaging vs surface-pinning). Each topology MAY add its own
-`FieldKind` overloads but the default ones close 90% of cases.
+`FieldKind` is a singleton-type tag that selects the right vertical
+rule. The mandatory baseline:
+
+```julia
+MassField                 # center-level extensive mass: sum native layers
+TracerMassField           # center-level extensive tracer mass: sum
+MassFluxField             # horizontal face flux over layer thickness: sum
+PressureFluxField         # vertical interface mass flux / cm: remap interfaces conservatively
+ConvectionInterfaceFlux   # CMFMC-like interface flux: remap interfaces, preserve top/bottom zeros
+ConvectionTendencyField   # DTRAIN-like center tendency: mass-weighted aggregate
+IntensiveCenterField      # T/Q/etc. diagnostics: mass- or pressure-thickness-weighted mean
+SurfaceField              # 2D PBL/surface payload: identity through vertical plan
+```
+
+Each topology MAY add its own `FieldKind` overloads, but the GEOS-IT
+path is not allowed to claim `MergeAbovePressure` support until
+`cmfmc` and `dtrain` have explicit `ConvectionInterfaceFlux` /
+`ConvectionTendencyField` implementations. Otherwise the transport
+state would be merged while the physics payload remained on the native
+L72 grid.
 
 **What this closes:**
 - (B) → `vertical` is no longer a duck-typed NamedTuple; it's a
-  typed `VerticalPlan{FT}` whose `transform_kind` is statically
-  known.
-- The "GEOS-IT can't merge thin levels" gap becomes a config choice:
-  set `[vertical].transform = "thin_level_merge"` with
-  `min_thickness_Pa = 50` and the L72 mesospheric layers merge into
-  ~50 Pa output layers automatically.
+  typed `VerticalPlan{FT,T}` whose transform policy is statically
+  known from `T <: AbstractVerticalTransform`.
+- The "GEOS-IT can't merge thin levels" gap becomes a config choice.
+  Examples:
+  - `[vertical].transform = "merge_by_index"` for exact audited groups.
+  - `[vertical].transform = "merge_layers_thinner_than"` with
+    `min_thickness_Pa = 50` for automatic local coarsening.
+  - `[vertical].transform = "merge_above_pressure"` with
+    `pressure_Pa = 100` and `target_min_thickness_Pa = 50` when the
+    upper atmosphere can be coarsened while preserving the rest of L72.
 - The thin-layer regen issue from 2026-05-14 becomes a different
   decision (which transform + what min_thickness) rather than a
   "we'd need to refactor first" blocker.
@@ -237,12 +286,27 @@ allocate_window_workspace(grid::AbstractTargetGeometry,
                            reader::AbstractMetReader)
     → AbstractWindowWorkspace
 
-# Regrid one window from source-shape to target-shape after vertical
-# transform has been applied.
-regrid_window!(workspace::AbstractWindowWorkspace{G, FT},
-                reader::AbstractMetReader, w::Int,
-                vertical::VerticalPlan) where {G, FT}
+# Ingest one source window after `read_window!` filled workspace.source.
+# The workspace owns the topology-specific scheduling policy:
+#   * GEOS-native CS can make the current window ready immediately.
+#   * CS/RG spectral paths keep a two-window lookahead so window w-1 can
+#     be balanced against endpoint mass from window w.
+#   * LL may retain the full day until final endpoint/balance work is done.
+ingest_window!(workspace::AbstractWindowWorkspace{G, FT},
+               reader::AbstractMetReader, w::Int,
+               vertical::VerticalPlan) where {G, FT}
     → nothing
+
+# Return and clear complete target-shaped windows that are ready for
+# contract verification and writing.
+drain_ready_windows!(workspace::AbstractWindowWorkspace{G, FT}) where {G, FT}
+    → iterator of ReadyWindow{G, FT}
+
+# Finish any windows that need end-of-day data or a zero-tendency fallback.
+flush_final_windows!(workspace::AbstractWindowWorkspace{G, FT},
+                     reader::AbstractMetReader,
+                     vertical::VerticalPlan) where {G, FT}
+    → iterator of ReadyWindow{G, FT}
 
 # Per-topology window contract. CS today has both replay AND
 # positivity; LL/RG today have replay only. The plan REQUIRES each
@@ -250,7 +314,7 @@ regrid_window!(workspace::AbstractWindowWorkspace{G, FT},
 # implementation, or no-with-documentation).
 abstract type AbstractWindowContract{G <: AbstractTargetGeometry, FT} end
 
-verify_window!(workspace::AbstractWindowWorkspace{G, FT},
+verify_window!(window::ReadyWindow{G, FT},
                 contract::AbstractWindowContract{G, FT},
                 w::Int) where {G, FT}
     → (replay::ReplayDiag, positivity::PositivityDiag)
@@ -272,12 +336,14 @@ open_streaming_binary(grid, out_path::AbstractString, header,
     → AbstractBinaryWriter{G, FT, Basis}
 
 write_window!(writer::AbstractBinaryWriter{G, FT, Basis},
-                workspace::AbstractWindowWorkspace{G, FT}, w::Int)
+                window::ReadyWindow{G, FT})
     → bytes::Int
 
-close_streaming_binary!(writer; commit::Bool)
-    # commit=true: atomic rename .tmp → final
-    # commit=false: leave .tmp for quarantine inspection
+close_streaming_binary!(writer)
+    # closes the staged .tmp file handle
+
+promote_streaming_binary!(writer)
+    # atomic rename .tmp → final; called only after contract summary passes
 ```
 
 Where:
@@ -314,25 +380,34 @@ function process_day(reader::AbstractMetReader{FT, S, CP},
     try
         for w in 1:nw
             read_window!(workspace.source, reader, w)
-            apply_vertical!(workspace.source_remapped, workspace.source,
-                             vertical, MassField())
-            regrid_window!(workspace, reader, w, vertical)
-            diag = verify_window!(workspace, contract, w)
-            update_accumulator!(contract, diag.positivity, w)
-            write_window!(writer, workspace, w)
+            ingest_window!(workspace, reader, w, vertical)
+            for window in drain_ready_windows!(workspace)
+                diag = verify_window!(window, contract, window.index)
+                update_accumulator!(contract, diag.positivity, window.index)
+                write_window!(writer, window)
+            end
         end
-        close_streaming_binary!(writer; commit = true); writer_closed = true
+        for window in flush_final_windows!(workspace, reader, vertical)
+            diag = verify_window!(window, contract, window.index)
+            update_accumulator!(contract, diag.positivity, window.index)
+            write_window!(writer, window)
+        end
+        close_streaming_binary!(writer); writer_closed = true
+        summarize_status!(contract; quarantine_path = out_path * ".tmp")
+        promote_streaming_binary!(writer)
     finally
         if !writer_closed
-            close_streaming_binary!(writer; commit = false)
+            close_streaming_binary!(writer)
         end
     end
-    summarize_status!(contract; quarantine_path = out_path * ".tmp")
     return end_of_day_seed(reader)
 end
 ```
 
-Every type used in the signature is dispatched on. Adding ORD=8
+Every type used in the signature is dispatched on. The one-window path is
+just the degenerate case where `ingest_window!` immediately queues one
+ready window. Existing lookahead paths stay correct because readiness is
+topology-specific state, not a driver branch. Adding ORD=8
 (hypothetically), GEOS-FP, a new vertical merge strategy, or
 Reduced-Gaussian positivity: none of them require editing the driver.
 
@@ -341,14 +416,14 @@ Reduced-Gaussian positivity: none of them require editing the driver.
 | Foot-gun | Today | Closed by |
 |---|---|---|
 | (A) kwarg drift | LL spectral has no `positivity_cfl_limit` kwarg; can't gate substep positivity even if user wants | `AbstractWindowContract{G, FT}` struct owns its kwargs; constructed once from cfg per topology |
-| (B) `vertical::NamedTuple` duck typing | `entrypoint.jl:161-163` fakes `merged_vc = vc` for GEOS-IT path | `VerticalPlan{FT}` typed nominal; `transform_kind` statically known; `IdentityVertical` is its own type |
-| (B') GEOS-IT can't merge thin levels | thin-layer mesospheric `outgoing/m=1.356` blocks the v4 regen | config selects `ThinLevelMerge(min_thickness_Pa=50)`; the L72 path merges layers like the ERA5 spectral path already does |
+| (B) `vertical::NamedTuple` duck typing | `entrypoint.jl:161-163` fakes `merged_vc = vc` for GEOS-IT path | `VerticalPlan{FT,T}` typed nominal; transform policy is statically known; `IdentityVertical` is its own type |
+| (B') GEOS-IT can't merge thin levels | thin-layer mesospheric `outgoing/m=1.356` blocks the v4 regen | config selects `MergeLayersThinnerThan(min_thickness_Pa=50)`, `MergeAbovePressure(pressure_Pa=100, target_min_thickness_Pa=50)`, or audited `MergeByIndex` groups |
 | (C) `mass_basis::Symbol` is a runtime header check | dry/moist mismatch detectable only post-hoc | `AbstractBinaryWriter{G, FT, Basis<:AbstractMassBasis}`; pairing is a compile-time `MethodError` |
 | (D) cross-day seed plumbing | `seed_m::Union{Nothing, NamedTuple}` threaded by name lookup | `ChainPolicy` type parameter on `AbstractMetReader`; `end_of_day_seed` return type is statically known per reader |
 | (E) 4-way fan-out for new gate | adding `require_substep_positivity` had to land in 3 files | one driver loop; per-topology contract owns its own policy |
 | (F) `cubed_sphere_regrid.jl` is a fifth pathway | distinct entry point, same contract module | out of scope (Plan 42); design admits it as a `Sourceless` reader that reads from an LL `AbstractBinaryWriter`-produced binary |
 
-## State-flow for one window
+## State-flow for one ready window
 
 ```
                                          ┌──────────────────────────────┐
@@ -363,9 +438,14 @@ Reduced-Gaussian positivity: none of them require editing the driver.
                                                       ▼                     ─────
                                          ┌──────────────────────────────┐
                                          │ AbstractWindowWorkspace{G}   │
-                                         │  regrid_window!(ws, …)       │   target
-                                         └────────────┬─────────────────┘   shape
+                                         │  ingest_window!(ws, …)       │   target
+                                         │  drain_ready_windows!(ws)    │   shape
+                                         └────────────┬─────────────────┘
                                                       ▼                     ─────
+                                         ┌──────────────────────────────┐
+                                         │ ReadyWindow{G, FT}           │
+                                         └────────────┬─────────────────┘
+                                                      ▼
                           ┌─────────────────────────────────────────┐
                           │ AbstractWindowContract{G, FT}           │
                           │  verify_window! → (replay, positivity)  │
@@ -374,13 +454,14 @@ Reduced-Gaussian positivity: none of them require editing the driver.
                                        ▼
                           ┌─────────────────────────────────────────┐
                           │ AbstractBinaryWriter{G, FT, Basis}      │
-                          │  write_window!(writer, ws, w)           │
+                          │  write_window!(writer, ready)           │
                           └────────────┬────────────────────────────┘
                                        ▼
                        ┌────────────────────────────────────────────┐
                        │ end-of-day:                                │
-                       │   close_streaming_binary!(writer; commit)  │
-                       │   summarize_status!(contract)              │
+                       │   close_streaming_binary!(writer)           │
+                       │   summarize_status!(contract)               │
+                       │   promote_streaming_binary!(writer)         │
                        │   end_of_day_seed(reader) → next day       │
                        └────────────────────────────────────────────┘
 ```
@@ -393,9 +474,9 @@ isomorphic to the driver function above.
 These are facts the type system makes IMPOSSIBLE to violate. Each
 one corresponds to a class of bug the current path admits.
 
-1. **A mass-flux writer for grid type G is only constructable from a
-   workspace of grid type G.** `write_window!(writer::AbstractBinaryWriter{G,…}, workspace::AbstractWindowWorkspace{G,…}, …)` —
-   if G doesn't match, no method matches.
+1. **A mass-flux writer for grid type G can only write a ready window
+   for grid type G.** `write_window!(writer::AbstractBinaryWriter{G,…},
+   window::ReadyWindow{G,…})` — if G doesn't match, no method matches.
 
 2. **Cross-day mass seed flows only between readers that opted into
    `ChainedMass{T}`.** A `NoChain` reader returns `nothing`;
@@ -403,10 +484,11 @@ one corresponds to a class of bug the current path admits.
    reader_t fails dispatch because `seed::Nothing` is the only
    admissible signature.
 
-3. **Vertical transform output shape is statically known.** The
-   `VerticalPlan{FT}` carries `Nz_output` as a value but its type is
-   stable. The downstream `regrid_window!` allocates against
-   `plan.Nz_output` from a single typed accessor.
+3. **Vertical transform policy is statically known.** The
+   `VerticalPlan{FT,T}` type carries the transform kind in `T`; the
+   output level count remains a construction-validated value exposed by
+   a single accessor. This avoids a `transform_kind::Symbol` branch
+   without pretending `Nz_output` is a type parameter.
 
 4. **A contract's policy fields are construction-time validated.**
    E.g. `CubedSphereContract(; positivity_cfl_limit = 0.0)` errors
@@ -435,7 +517,7 @@ in-scope axis. Concretely:
   question to be answered explicitly (yes-with-implementation or
   no-with-justification).
 
-- **P2 (was: "workspace + regrid trait")** → integration: the
+- **P2 (was: "workspace + readiness trait")** → integration: the
   per-method driving loops in `latlon_spectral.jl`,
   `cubed_sphere_spectral.jl`, `cubed_sphere_geos.jl`,
   `reduced_transport_helpers.jl` now delegate to the trait calls.
@@ -443,7 +525,7 @@ in-scope axis. Concretely:
 - **P3 (was: "unified driver")** → the ~80-line driver above lives
   behind a `[preprocessor].unified = true` opt-in flag. Side-by-side
   smokes verify bit-exact binaries against the legacy paths for ERA5
-  spectral × LL, ERA5 spectral × CS, GEOS native × CS.
+  spectral × LL, ERA5 spectral × CS, ERA5 spectral × RG, GEOS native × CS.
 
 - **P4 (was: "cut over")** → the legacy `process_day(date, grid,
   settings, vertical)` methods move to `src_legacy/Preprocessing/`.
@@ -502,12 +584,19 @@ in-scope axis. Concretely:
    for GPU runs where allocation pressure is real. Likely: per-run
    with `reset_workspace!(ws)` between days.
 
-4. **What about Recipe-level metadata** (e.g., `mass_flux_dt = 450`
+4. **Run-level invariant caches** — the CS spectral path builds the
+   LL→CS conservative regridder per day, and the RG path builds the
+   compressed Laplacian per day. Both are grid/source invariant for a
+   multi-day run. P2 should introduce an optional `PreprocessorRunCache`
+   that workspace constructors can reuse, and P3 should prove with a
+   multi-day smoke that these objects are built once per run.
+
+5. **What about Recipe-level metadata** (e.g., `mass_flux_dt = 450`
    for GEOS, `T_target` for spectral)? These are reader-specific.
    Probably: stored as reader fields, accessed via `window_metadata`
    only when needed by the writer's header.
 
-5. **Should the unified driver also subsume the existing
+6. **Should the unified driver also subsume the existing
    `_process_day_spectral` legacy NamedTuple-settings path?** The
    answer is yes — `ERA5SpectralReader` wraps the old
    `resolve_runtime_settings` and exposes the same per-window

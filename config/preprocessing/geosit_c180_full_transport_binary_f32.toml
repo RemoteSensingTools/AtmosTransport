@@ -56,3 +56,30 @@ dt_met_seconds = 3600.0
 # tracer VMR, so each binary window starts from the raw GEOS endpoint
 # rather than a multi-day pressure-fixer chain.
 chain_mass     = false
+
+# Per-substep positivity gate (commits d1f50b6 / ae82b6d / 45b87f3 / 9b1ceda).
+# The L72 vertical grid puts the upper half-dozen layers at ~14 Pa thickness,
+# which produces legitimate `outgoing/m > 1` from CMFMC at panel-4 mesosphere
+# cells (smoke 2021-12-02 surfaced ratio = 1.356 at cell (4, 47, 31, 61)).
+# This is a thin-layer physical signal in the source data, not a
+# preprocessing bug. Plan 41 (`docs/plans/41_UNIFIED_PREPROCESSOR/`) makes
+# layer merging a first-class option (`[vertical].transform = "thin_level_merge"`)
+# for all preprocessor pathways; until that lands, set
+# `require_substep_positivity = false` so the gate becomes log-only for this
+# v4 regen.
+#
+# What the log will record (Codex review M2 2026-05-15): the preprocessor
+# tracks ONLY the WORST violating window per day via
+# `update_cs_positivity_accumulator` / `summarize_cs_positivity_status` in
+# `src/Preprocessing/transport_binary/cubed_sphere_contracts.jl`. The summary
+# names `(panel, i, j, k)` of the single worst cell plus its ratio — not
+# every violating window. If audit needs per-window coverage, either grep
+# the log for the per-window `[idx/N] YYYY-MM-DD` headers (each day's
+# block ends with one summary line) or add per-window logging upstream.
+#
+# If the log shows a ratio at any cell that approaches the original
+# n_sub = 99,428 spiral, treat that day as a hard fail and investigate
+# before shipping the binary. The runtime's `_cs_static_subcycle_count`
+# absorbs moderate ratios at no measured cost.
+positivity_cfl_limit       = 0.95
+require_substep_positivity = false

@@ -20,8 +20,8 @@ Triggered by user observations:
 
 Layer merging is **in scope** (Axis 2: `AbstractVerticalTransform`),
 not "future fix". The 2026-05-14 thin-mesospheric-layer regen issue
-becomes a config choice (`[vertical].transform = "thin_level_merge"`)
-once Axis-2 lands.
+becomes a config choice (`merge_layers_thinner_than`,
+`merge_above_pressure`, or audited `merge_by_index`) once Axis-2 lands.
 
 ## Problem statement
 
@@ -93,7 +93,7 @@ still copy-pasted four times.
 
 ## End-state architecture
 
-Two orthogonal axes, both registered through multi-dispatch:
+Three orthogonal axes, all registered through multi-dispatch:
 
 ### Axis A — Source (where the per-window state comes from)
 
@@ -113,9 +113,8 @@ open_day(settings::MetSettings, date::Date,
 # windows). Per-source so a 3-hourly source would say 8.
 windows_per_day(reader)::Int
 
-# Read window `w` into preallocated buffers `dst` (NamedTuple of
-# topology-shaped arrays). `dst` is allocated once per day by the
-# driver and reused across windows.
+# Read window `w` into preallocated source-shape buffers `dst`. `dst`
+# is owned by the target workspace and reused across windows.
 read_window!(dst, reader, w::Int) → nothing
 
 # Cross-day carry (e.g., GEOS pressure-fixer endpoint) returned from
@@ -132,7 +131,15 @@ Concrete readers:
   chaining (replaces the inner half of `cubed_sphere_geos.jl::process_day`).
 - (future) `MERRANativeReader`, `GEOSFPSpectralReader`, etc.
 
-### Axis B — Target topology (how the window is shaped + contract)
+### Axis B — Vertical transform (source levels → output levels)
+
+`AbstractVerticalTransform` is the in-scope layer-merging axis. P0b
+defines `IdentityVertical`, `MergeByIndex`, `MergeLayersThinnerThan`,
+`MergeAbovePressure`, `LevelSelection`, and `PressureOverlap`; the
+target workspace receives a `VerticalPlan{FT,T}` rather than a
+duck-typed `NamedTuple`.
+
+### Axis C — Target topology (how the window is shaped + contract)
 
 Already-typed `AbstractTargetGeometry` is the dispatch key. We tighten
 the surface so EVERY method below MUST exist for a new topology:
@@ -140,23 +147,32 @@ the surface so EVERY method below MUST exist for a new topology:
 ```julia
 # Allocate per-day workspace buffers (haloed panel tuples for CS,
 # face-indexed arrays for RG, structured arrays for LL).
-allocate_window_workspace(grid::AbstractTargetGeometry, vertical, FT)
+allocate_window_workspace(grid::AbstractTargetGeometry, vertical, reader, FT;
+                          cache = nothing)
     → NamedTuple
 
-# Regrid one read window from source-native shape to target shape.
-# Source-/target-pairwise specialization may stack on top.
-regrid_window!(target_dst, source_dst, grid, reader, win_idx, vertical)
+# Ingest one read window into the target workspace. This may queue the
+# current window immediately (GEOS-native CS), queue the previous window
+# after a one-window lookahead (CS/RG spectral), or defer until final
+# endpoint/balance work is available (LL full-day path).
+ingest_window!(workspace, reader, win_idx, vertical)
+
+# Drain completed target windows ready for contract verification/write,
+# then finish any last-window endpoint/fallback work at end of day.
+drain_ready_windows!(workspace) → iterator of ReadyWindow
+flush_final_windows!(workspace, reader, vertical) → iterator of ReadyWindow
 
 # Single-window contract: replay + positivity (where applicable). Each
 # topology has its own contract module and accumulator type.
-verify_window_contract!(target_dst, grid, contract_state, win_idx;
+verify_window_contract!(ready_window, grid, contract_state;
                         replay_tol, positivity_cfl_limit, halo_width=0)
     → (replay, positivity)  # positivity = (direction, ratio, ok)
 
 # Streaming writer for the topology's binary format.
 open_streaming_binary(grid, out_path, header) → writer
-write_window!(writer, target_dst, win_idx) → bytes
+write_window!(writer, ready_window) → bytes
 close_streaming_binary!(writer)
+promote_streaming_binary!(writer)
 
 # Initialize, update, and summarize the per-day contract accumulator.
 init_contract_accumulator(grid)
@@ -182,7 +198,7 @@ function process_day(cfg::AbstractDict;
     dates    = _resolve_dates(cfg, settings; day_override, start_date, end_date)
 
     contract_kwargs = _resolve_contract_kwargs(cfg)
-    workspace = allocate_window_workspace(grid, vertical, FT)
+    run_cache = init_preprocessor_run_cache(grid, settings, vertical, FT)
     seed = nothing
 
     for (idx, d) in enumerate(dates)
@@ -192,6 +208,8 @@ function process_day(cfg::AbstractDict;
                                             _has_next_day(settings, d),
                           seed = seed)
         try
+            workspace = allocate_window_workspace(grid, vertical, reader, FT;
+                                                  cache = run_cache)
             worst = init_contract_accumulator(grid)
             writer = open_streaming_binary(grid, out_path * ".tmp",
                                             header_from(reader, grid, vertical))
@@ -199,14 +217,23 @@ function process_day(cfg::AbstractDict;
             try
                 for w in 1:windows_per_day(reader)
                     read_window!(workspace.source, reader, w)
-                    regrid_window!(workspace.target, workspace.source,
-                                    grid, reader, w, vertical)
+                    ingest_window!(workspace, reader, w, vertical)
+                    for ready in drain_ready_windows!(workspace)
+                        diag = verify_window_contract!(
+                            ready, grid, workspace.contract; contract_kwargs...)
+                        worst = update_contract_accumulator(grid, worst,
+                                                             diag.positivity,
+                                                             ready.index)
+                        write_window!(writer, ready)
+                    end
+                end
+                for ready in flush_final_windows!(workspace, reader, vertical)
                     diag = verify_window_contract!(
-                        workspace.target, grid, workspace.contract, w;
-                        contract_kwargs...)
+                        ready, grid, workspace.contract; contract_kwargs...)
                     worst = update_contract_accumulator(grid, worst,
-                                                         diag.positivity, w)
-                    write_window!(writer, workspace.target, w)
+                                                         diag.positivity,
+                                                         ready.index)
+                    write_window!(writer, ready)
                 end
                 close_streaming_binary!(writer); writer_closed = true
             finally
@@ -215,7 +242,7 @@ function process_day(cfg::AbstractDict;
             summarize_contract_status(grid, worst;
                                        quarantine_path = out_path * ".tmp",
                                        contract_kwargs...)
-            mv(out_path * ".tmp", out_path; force = true)
+            promote_streaming_binary!(writer)
             seed = end_of_day_seed(reader)
         finally
             close_day!(reader)
@@ -246,14 +273,28 @@ and `GEOSNativeReader` wrap the *existing* `open_geos_day` / spectral
 machinery — no rewrites, just a thin typed façade. `ChainPolicy` is
 either `NoChain` or `ChainedMass{T}` (`T` is the seed array type).
 
-**P0b** — Define `AbstractVerticalTransform` + `VerticalPlan{FT}` +
-the four concrete types (`IdentityVertical`, `ThinLevelMerge`,
-`LevelSelection`, `PressureOverlap`) in
-`src/Preprocessing/vertical_transforms.jl`. `plan_vertical` and
-`apply_vertical!(_, _, plan, ::FieldKind)` are the trait surface.
-The existing `merge_thin_levels` (vertical_coordinates.jl:11) and
-`select_levels_echlevs` become `ThinLevelMerge` and `LevelSelection`
-implementations.
+**P0b** — Define `AbstractVerticalTransform` + `VerticalPlan{FT}` in
+`src/Preprocessing/vertical_transforms.jl`. The concrete transform
+surface is:
+
+- `IdentityVertical`
+- `MergeByIndex` — explicit native-level groups (`57:58`, `59:61`, …)
+  for audited production reruns.
+- `MergeLayersThinnerThan` — typed form of today's
+  `merge_thin_levels`, greedily coarsening adjacent layers until each
+  output layer exceeds `min_thickness_Pa`.
+- `MergeAbovePressure` — upper-atmosphere coarsening: merge layers
+  whose midpoint pressure is lower than a configured pressure cutoff
+  (e.g. mesosphere above 100 Pa), with a target minimum output
+  thickness. This is the GEOS-IT L72 regen escape hatch when we do not
+  need to resolve the mesosphere.
+- `LevelSelection`
+- `PressureOverlap`
+
+`plan_vertical` and `apply_vertical!(_, _, plan, ::FieldKind)` are the
+trait surface. The existing `merge_thin_levels`
+(`vertical_coordinates.jl:11`) and `select_levels_echlevs` become
+`MergeLayersThinnerThan` and `LevelSelection` implementations.
 
 Definition of done:
 - (P0a) A 1-day GEOS smoke `julia --project=. -e 'reader =
@@ -265,9 +306,11 @@ Definition of done:
   output, construct the equivalent `AbstractVerticalTransform` from
   config, plan it, and verify `merged_vc` / `merge_map` /
   `Nz_output` agree to bit-exactness. Add focused test
-  `test_vertical_transforms.jl` covering all four transforms +
-  the `MassField` / `MassFluxField` / `PressureFluxField` field-kind
-  rules.
+  `test_vertical_transforms.jl` covering all transforms plus the
+  mandatory field-kind rules: `MassField`, `TracerMassField`,
+  `MassFluxField`, `PressureFluxField`, `ConvectionInterfaceFlux`
+  (`cmfmc`), `ConvectionTendencyField` (`dtrain`),
+  `IntensiveCenterField`, and `SurfaceField`.
 
 ### P1 — Target dispatch tightening
 
@@ -291,18 +334,24 @@ All existing tests stay green. Add focused
 `test_ll_preprocessor_contract.jl` and `test_rg_preprocessor_contract.jl`
 mirroring `test_cs_preprocessor_contract.jl`.
 
-### P2 — Workspace + regrid trait
+### P2 — Workspace + readiness trait
 
 Pull every method's "allocate per-day arrays" block into
-`allocate_window_workspace(grid, vertical, FT)` per topology. Pull the
-"regrid one window" inner block (the part that consumes
-`reader.read_window` output and produces topology-shaped output) into
-`regrid_window!(target, source, grid, reader, w, vertical)` per
-topology.
+`allocate_window_workspace(grid, vertical, reader, FT; cache)` per
+topology. Pull the "consume one source window and maybe make one or
+more target windows ready" logic into `ingest_window!`,
+`drain_ready_windows!`, and `flush_final_windows!` per topology.
+
+Also add a `PreprocessorRunCache` hook for expensive run-invariant
+objects. At minimum, the CS spectral LL→CS conservative regridder and
+the RG compressed Laplacian should be build-once-per-run when source
+geometry and target geometry are unchanged across days.
 
 This is mechanical surgery; the math doesn't change. Definition of
 done: each existing `process_day` method drops to <50 lines and calls
-the new trait surface for everything except its own driving loop.
+the new trait surface for everything except its own driving loop. A
+multi-day CS spectral smoke logs one regridder build, and a multi-day RG
+smoke logs one compressed-Laplacian build.
 
 ### P3 — Unified driver
 
@@ -313,9 +362,9 @@ through `_process_day_native` / `_process_day_spectral`.
 Add a new opt-in code path: if `cfg["preprocessor"]["unified"] = true`,
 call the new driver; otherwise route through legacy. Run side-by-side
 on 1-day smoke configs for ERA5 spectral × LL, ERA5 spectral × CS,
-GEOS native × CS, and compare binaries byte-for-byte.
+ERA5 spectral × RG, GEOS native × CS, and compare binaries byte-for-byte.
 
-Definition of done: the 3 side-by-side smokes produce bit-identical
+Definition of done: the 4 side-by-side smokes produce bit-identical
 binaries (or document any FP-rounding-tier difference). Adds
 `scripts/diagnostics/compare_preprocessors.jl`.
 
@@ -389,5 +438,6 @@ no new `process_day` method, no driver edits. If this commit is
 **No longer out of scope (was, until 2026-05-15 afternoon):**
 - Layer merging for GEOS-IT is **in scope** as Axis-2 of the typed
   design (see DESIGN.md). The 2026-05-14 thin-mesospheric-layer regen
-  issue becomes a `[vertical].transform = "thin_level_merge"` config
-  choice once P0b ships.
+  issue becomes a `[vertical].transform = "merge_layers_thinner_than"`,
+  `"merge_above_pressure"`, or `"merge_by_index"` config choice once
+  P0b ships.

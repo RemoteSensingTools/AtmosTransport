@@ -564,6 +564,11 @@ mutable struct LatLonContract{FT} <:
     require_substep_positivity  :: Bool
     steps_per_window            :: Int
     worst                       :: NamedTuple
+    # Lazy scratch (codex round-2): allocated on first `verify_window!`
+    # call from the window's mass shape and reused thereafter.
+    # Eliminates the per-window `Array{Float64}(undef, size(m_cur))`
+    # allocation that the wrapper would otherwise produce.
+    _div_scratch                :: Union{Nothing, Array{Float64, 3}}
 
     function LatLonContract{FT}(;
                                  replay_tol::Real,
@@ -584,7 +589,8 @@ mutable struct LatLonContract{FT} <:
                    Float64(positivity_cfl_limit),
                    require_substep_positivity,
                    Int(steps_per_window),
-                   init_ll_positivity_accumulator())
+                   init_ll_positivity_accumulator(),
+                   nothing)
     end
 end
 
@@ -593,11 +599,18 @@ end
 @inline contract_require_positivity(c::LatLonContract) = c.require_substep_positivity
 
 function verify_window!(window, contract::LatLonContract, win_idx::Integer)
+    # Lazy-allocate `_div_scratch` on first call (or reallocate on a
+    # shape change). Subsequent calls reuse the buffer.
+    m_shape = size(window.m_cur)
+    if contract._div_scratch === nothing || size(contract._div_scratch) != m_shape
+        contract._div_scratch = Array{Float64}(undef, m_shape)
+    end
     return verify_ll_window_contract!(window.m_cur, window.am, window.bm,
                                        window.cm, window.m_next,
                                        contract.steps_per_window, Int(win_idx);
                                        replay_tol           = contract.replay_tol,
-                                       positivity_cfl_limit = contract.positivity_cfl_limit)
+                                       positivity_cfl_limit = contract.positivity_cfl_limit,
+                                       div_scratch          = contract._div_scratch)
 end
 
 function update_accumulator!(contract::LatLonContract, positivity_diag,

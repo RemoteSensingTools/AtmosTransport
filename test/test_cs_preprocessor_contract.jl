@@ -548,4 +548,26 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
         @test c.halo_width == 0
         @test c.worst.ratio == 0.0
     end
+
+    @testset "CubedSphereContract: scratch is lazily allocated once and reused (codex round-2)" begin
+        # P2 watchpoint closed: the trait `verify_window!` allocates
+        # the panel-shared `_div_scratch` on the first call and reuses
+        # it thereafter. Eliminates the per-window `Array{Float64}`
+        # allocation the original `verify_window_continuity_cs` would
+        # produce inside the legacy convenience wrapper.
+        w = build_clean_cs_window(Float64)
+        contract = CubedSphereContract{Float64}(replay_tol = 1e-12,
+                                                 positivity_cfl_limit = 0.95,
+                                                 steps_per_window = w.steps)
+        @test contract._div_scratch === nothing
+        # Build a window NamedTuple matching the typed-concrete surface.
+        window = (m_cur = w.m_cur, am = w.am, bm = w.bm,
+                  cm = w.cm, m_next = w.m_next)
+        AtmosTransport.Preprocessing.verify_window!(window, contract, 1)
+        @test contract._div_scratch isa Array{Float64, 3}
+        @test size(contract._div_scratch) == size(w.m_cur[1])
+        ds = contract._div_scratch
+        AtmosTransport.Preprocessing.verify_window!(window, contract, 2)
+        @test contract._div_scratch === ds
+    end
 end

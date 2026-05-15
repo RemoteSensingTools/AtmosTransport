@@ -458,6 +458,22 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
         @test result.positivity.ok
     end
 
+    @testset "LatLonContract: scratch is lazily allocated once and reused (codex round-2)" begin
+        w = build_clean_ll_window(Float64)
+        contract = LatLonContract{Float64}(replay_tol = 1e-12,
+                                            positivity_cfl_limit = 0.95,
+                                            steps_per_window = w.steps)
+        @test contract._div_scratch === nothing
+        verify_window!((m_cur = w.m_cur, am = w.am, bm = w.bm,
+                        cm = w.cm, m_next = w.m_next), contract, 1)
+        @test contract._div_scratch isa Array{Float64, 3}
+        @test size(contract._div_scratch) == size(w.m_cur)
+        ds = contract._div_scratch
+        verify_window!((m_cur = w.m_cur, am = w.am, bm = w.bm,
+                        cm = w.cm, m_next = w.m_next), contract, 2)
+        @test contract._div_scratch === ds
+    end
+
     @testset "LatLonContract: update_accumulator!/summarize_status! lifecycle" begin
         contract = LatLonContract{Float64}(replay_tol = 1e-12,
                                             positivity_cfl_limit = 0.95,

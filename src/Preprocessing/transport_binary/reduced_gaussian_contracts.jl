@@ -245,6 +245,16 @@ function verify_boundary_stub_flux_rg(hflux::AbstractMatrix,
                                         face_left::AbstractVector{<:Integer},
                                         face_right::AbstractVector{<:Integer};
                                         tol::Real = 0.0)
+    # Codex round-2: validate `tol` directly here too. The struct-level
+    # constructor checks `boundary_stub_tol` on `ReducedGaussianContract`,
+    # but this helper is exported and can be called bypassing the
+    # contract. An `Inf` or `NaN` `tol` would silently disable the gate
+    # (`abs(h) > NaN` is always `false`, so no face ever crosses the
+    # threshold); validating here closes the bypass.
+    isfinite(tol) && tol ≥ 0 ||
+        error("verify_boundary_stub_flux_rg: tol = $(tol); " *
+              "must be finite and ≥ 0 (Inf/NaN would silently disable " *
+              "the gate; negative tol is meaningless).")
     nf = size(hflux, 1)
     length(face_left)  == nf ||
         error("verify_boundary_stub_flux_rg: face_left length " *
@@ -325,6 +335,13 @@ function verify_rg_window_contract!(m_cur::AbstractMatrix{FT},
                                      outgoing_h::Union{Nothing, AbstractMatrix{Float64}} = nothing,
                                      bad_h::Union{Nothing, AbstractMatrix{Bool}} = nothing,
                                      boundary_stub_tol::Real = 0.0) where FT
+    # Codex round-2: validate the wrapper kwarg before delegating. The
+    # helper `verify_boundary_stub_flux_rg` also validates, so this is
+    # belt-and-suspenders for callers that go through the wrapper
+    # bypassing the `ReducedGaussianContract` constructor.
+    isfinite(boundary_stub_tol) && boundary_stub_tol ≥ 0 ||
+        error("verify_rg_window_contract!: boundary_stub_tol = " *
+              "$(boundary_stub_tol); must be finite and ≥ 0.")
     stub = verify_boundary_stub_flux_rg(hflux, face_left, face_right;
                                           tol = boundary_stub_tol)
     stub.violated &&
@@ -479,6 +496,14 @@ mutable struct ReducedGaussianContract{FT} <:
     face_left                   :: Vector{Int32}
     face_right                  :: Vector{Int32}
     worst                       :: NamedTuple
+    # Lazy scratch (codex round-2): allocated on first `verify_window!`
+    # call from the window's `(nc, Nz)` shape and reused thereafter.
+    # Eliminates per-window `Array{Float64}(undef, nc, Nz)` allocations
+    # for the replay divergence, the positivity horizontal-outflow
+    # accumulator, and the NaN/Inf flag mask.
+    _div_scratch                :: Union{Nothing, Matrix{Float64}}
+    _outgoing_h                 :: Union{Nothing, Matrix{Float64}}
+    _bad_h                      :: Union{Nothing, Matrix{Bool}}
 
     function ReducedGaussianContract{FT}(;
                                           replay_tol::Real,
@@ -512,7 +537,8 @@ mutable struct ReducedGaussianContract{FT} <:
                    Float64(boundary_stub_tol),
                    Vector{Int32}(face_left),
                    Vector{Int32}(face_right),
-                   init_rg_positivity_accumulator())
+                   init_rg_positivity_accumulator(),
+                   nothing, nothing, nothing)
     end
 end
 
@@ -521,13 +547,24 @@ end
 @inline contract_require_positivity(c::ReducedGaussianContract) = c.require_substep_positivity
 
 function verify_window!(window, contract::ReducedGaussianContract, win_idx::Integer)
+    # Lazy-allocate the three scratch buffers on first call (or
+    # reallocate on a shape change). Subsequent calls reuse them.
+    m_shape = size(window.m_cur)
+    if contract._div_scratch === nothing || size(contract._div_scratch) != m_shape
+        contract._div_scratch = Array{Float64}(undef, m_shape)
+        contract._outgoing_h  = Array{Float64}(undef, m_shape)
+        contract._bad_h       = Array{Bool}(undef, m_shape)
+    end
     return verify_rg_window_contract!(window.m_cur, window.hflux,
                                        window.cm, window.m_next,
                                        contract.face_left, contract.face_right,
                                        contract.steps_per_window, Int(win_idx);
                                        replay_tol           = contract.replay_tol,
                                        positivity_cfl_limit = contract.positivity_cfl_limit,
-                                       boundary_stub_tol    = contract.boundary_stub_tol)
+                                       boundary_stub_tol    = contract.boundary_stub_tol,
+                                       div_scratch          = contract._div_scratch,
+                                       outgoing_h           = contract._outgoing_h,
+                                       bad_h                = contract._bad_h)
 end
 
 function update_accumulator!(contract::ReducedGaussianContract, positivity_diag,

@@ -287,6 +287,41 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
         @test isnan(diag.worst_flux) || isinf(diag.worst_flux)
     end
 
+    @testset "boundary-stub: invalid tol is rejected at helper (codex round-2)" begin
+        # `verify_boundary_stub_flux_rg` is exported and can be called
+        # without going through the `ReducedGaussianContract`
+        # constructor. The original P1 code accepted `tol = NaN` /
+        # `Inf` / `negative` and silently disabled the gate (`abs(h) > NaN`
+        # is always `false`). Helper-level validation closes the
+        # bypass.
+        w = build_clean_rg_window(Float64)
+        face_left = copy(w.face_left)
+        face_left[1] = 0
+        for bad_tol in (NaN, Inf, -Inf, -1.0)
+            @test_throws ErrorException verify_boundary_stub_flux_rg(
+                w.hflux, face_left, w.face_right; tol = bad_tol)
+        end
+    end
+
+    @testset "boundary-stub: invalid boundary_stub_tol is rejected at wrapper (codex round-2)" begin
+        w = build_clean_rg_window(Float64)
+        for bad_tol in (NaN, Inf, -Inf, -1.0)
+            err = try
+                verify_rg_window_contract!(w.m_cur, w.hflux, w.cm, w.m_next,
+                                            w.face_left, w.face_right,
+                                            w.steps, 1;
+                                            replay_tol = 1e-12,
+                                            positivity_cfl_limit = 0.95,
+                                            boundary_stub_tol = bad_tol)
+                nothing
+            catch e
+                e
+            end
+            @test err isa ErrorException
+            @test occursin("boundary_stub_tol", err.msg)
+        end
+    end
+
     @testset "wrapper: boundary-stub failure errors BEFORE the replay gate (no escape hatch)" begin
         w = build_clean_rg_window(Float64)
         face_left = copy(w.face_left)
@@ -688,6 +723,37 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
                                  m_next = w.m_next), contract, 1)
         @test result.replay.max_rel_err <= 1e-12
         @test result.positivity.ok
+    end
+
+    @testset "ReducedGaussianContract: scratch is lazily allocated once and reused (codex round-2)" begin
+        # P2 watchpoint closed: the trait `verify_window!` allocates
+        # scratch on the first call (when the window shape becomes
+        # known) and stores it on the contract; subsequent calls reuse
+        # the same buffers. We verify by capturing the reference after
+        # call 1 and asserting identity after call 2.
+        w = build_clean_rg_window(Float64)
+        contract = ReducedGaussianContract{Float64}(replay_tol = 1e-12,
+                                                     positivity_cfl_limit = 0.95,
+                                                     steps_per_window = w.steps,
+                                                     face_left = w.face_left,
+                                                     face_right = w.face_right)
+        @test contract._div_scratch === nothing
+        @test contract._outgoing_h  === nothing
+        @test contract._bad_h       === nothing
+        verify_window!((m_cur = w.m_cur, hflux = w.hflux, cm = w.cm,
+                        m_next = w.m_next), contract, 1)
+        @test contract._div_scratch isa Matrix{Float64}
+        @test contract._outgoing_h  isa Matrix{Float64}
+        @test contract._bad_h       isa Matrix{Bool}
+        @test size(contract._div_scratch) == size(w.m_cur)
+        ds = contract._div_scratch
+        oh = contract._outgoing_h
+        bh = contract._bad_h
+        verify_window!((m_cur = w.m_cur, hflux = w.hflux, cm = w.cm,
+                        m_next = w.m_next), contract, 2)
+        @test contract._div_scratch === ds
+        @test contract._outgoing_h  === oh
+        @test contract._bad_h       === bh
     end
 
     @testset "ReducedGaussianContract: update_accumulator!/summarize_status! lifecycle" begin

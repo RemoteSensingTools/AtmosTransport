@@ -41,7 +41,8 @@ balance and replay checks that still need the absolute target endpoint.
 end
 
 """
-    verify_write_replay_cs!(m_cur, am, bm, cm, m_next, steps_per_window, tol_rel, win_idx)
+    verify_write_replay_cs!(m_cur, am, bm, cm, m_next, steps_per_window, tol_rel, win_idx;
+                            div_scratch = nothing)
 
 Run the CS write-time replay gate for one window and return its diagnostic.
 
@@ -49,6 +50,11 @@ The check integrates the stored panel-local fluxes from `m_cur` under the
 runtime palindrome-continuity contract and verifies that the result matches the
 explicit endpoint `m_next`. A failure here means the binary would produce a
 runtime day-boundary or window-boundary mass inconsistency.
+
+`div_scratch` may be pre-allocated by the caller (workspace-owned
+scratch from P2 / contract-owned lazy scratch from P1) so the gate
+doesn't allocate the panel-shared `div_h` per call. Default
+`nothing` → allocate locally. Shape must match `size(m_cur[1])`.
 """
 function verify_write_replay_cs!(m_cur::NTuple{NP, <:AbstractArray{FT, 3}},
                                  am::NTuple{NP, <:AbstractArray},
@@ -57,8 +63,33 @@ function verify_write_replay_cs!(m_cur::NTuple{NP, <:AbstractArray{FT, 3}},
                                  m_next::NTuple{NP, <:AbstractArray},
                                  steps_per_window::Int,
                                  tol_rel::Real,
-                                 win_idx::Int) where {FT, NP}
-    diag = verify_window_continuity_cs(m_cur, am, bm, cm, m_next, steps_per_window)
+                                 win_idx::Int;
+                                 div_scratch::Union{Nothing, AbstractArray{Float64, 3}} = nothing) where {FT, NP}
+    NP >= 1 ||
+        error("verify_write_replay_cs!: requires at least one panel.")
+    panel_shape = size(m_cur[1])
+    if div_scratch === nothing
+        div_scratch = Array{Float64}(undef, panel_shape)
+    else
+        size(div_scratch) == panel_shape ||
+            error("verify_write_replay_cs!: div_scratch shape " *
+                  "$(size(div_scratch)) != panel shape $(panel_shape).")
+    end
+    layout = structured_replay_layout()
+    worst_rel = 0.0
+    worst_abs = 0.0
+    worst_idx = (0, 0, 0, 0)
+    for p in 1:NP
+        diag_p = verify_window_continuity(layout, div_scratch,
+                                           m_cur[p], cm[p], m_next[p],
+                                           steps_per_window, am[p], bm[p])
+        if diag_p.max_rel_err > worst_rel
+            worst_rel = diag_p.max_rel_err
+            worst_abs = diag_p.max_abs_err
+            worst_idx = (p, diag_p.worst_idx...)
+        end
+    end
+    diag = (max_abs_err = worst_abs, max_rel_err = worst_rel, worst_idx = worst_idx)
     diag.max_rel_err <= tol_rel ||
         error("Write-time replay gate FAILED for CS window $(win_idx): " *
               "rel=$(diag.max_rel_err) > tol=$(tol_rel) at cell $(diag.worst_idx) " *
@@ -180,9 +211,11 @@ function verify_cs_window_contract!(m_cur::NTuple{NP, <:AbstractArray{FT, 3}},
                                     win_idx::Int;
                                     replay_tol::Real,
                                     positivity_cfl_limit::Real = 0.95,
-                                    halo_width::Integer = 0) where {FT, NP}
+                                    halo_width::Integer = 0,
+                                    div_scratch::Union{Nothing, AbstractArray{Float64, 3}} = nothing) where {FT, NP}
     replay = verify_write_replay_cs!(m_cur, am, bm, cm, m_next,
-                                     steps_per_window, replay_tol, win_idx)
+                                     steps_per_window, replay_tol, win_idx;
+                                     div_scratch = div_scratch)
     positivity = verify_substep_positivity_cs!(m_cur, am, bm, cm;
                                                cfl_limit = positivity_cfl_limit,
                                                halo_width = halo_width)
@@ -331,6 +364,11 @@ mutable struct CubedSphereContract{FT} <:
     steps_per_window            :: Int
     halo_width                  :: Int
     worst                       :: NamedTuple
+    # Lazy scratch (codex round-2): allocated on first `verify_window!`
+    # call from the window's panel shape and reused thereafter. Eliminates
+    # the `Array{Float64}(undef, panel_shape)` per-window allocation the
+    # original P1 path produced inside `verify_window_continuity_cs`.
+    _div_scratch                :: Union{Nothing, Array{Float64, 3}}
 
     function CubedSphereContract{FT}(;
                                       replay_tol::Real,
@@ -356,7 +394,8 @@ mutable struct CubedSphereContract{FT} <:
                    require_substep_positivity,
                    Int(steps_per_window),
                    Int(halo_width),
-                   init_cs_positivity_accumulator())
+                   init_cs_positivity_accumulator(),
+                   nothing)
     end
 end
 
@@ -375,12 +414,21 @@ Delegates to `verify_cs_window_contract!`; the replay gate throws on
 violation, the positivity gate is non-fatal here.
 """
 function verify_window!(window, contract::CubedSphereContract, win_idx::Integer)
+    # Lazy-allocate `_div_scratch` on first call (or reallocate on a
+    # shape change — should never happen in production but keeps the
+    # invariant local). Subsequent calls reuse the buffer; the contract
+    # owns the scratch for the lifetime of the run.
+    panel_shape = size(window.m_cur[1])
+    if contract._div_scratch === nothing || size(contract._div_scratch) != panel_shape
+        contract._div_scratch = Array{Float64}(undef, panel_shape)
+    end
     return verify_cs_window_contract!(window.m_cur, window.am, window.bm,
                                        window.cm, window.m_next,
                                        contract.steps_per_window, Int(win_idx);
                                        replay_tol           = contract.replay_tol,
                                        positivity_cfl_limit = contract.positivity_cfl_limit,
-                                       halo_width           = contract.halo_width)
+                                       halo_width           = contract.halo_width,
+                                       div_scratch          = contract._div_scratch)
 end
 
 """

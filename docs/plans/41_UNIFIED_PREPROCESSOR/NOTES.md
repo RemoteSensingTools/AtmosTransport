@@ -22,6 +22,10 @@ Executor state, 2026-05-15:
   GEOS-native CS window workspaces. Spectral entrypoint now owns a
   run-level `PreprocessorRunCache`; RG reuses compressed Laplacians
   across days and CS spectral reuses LL→CS regridders across days.
+- P3a shipped in the current Codex working tree: LL, RG, and CS binary
+  writer adapters now implement the typed `AbstractBinaryWriter{G, FT, Basis}`
+  surface plus close/promote/quarantine hooks. Production call sites are
+  unchanged; focused tests pin topology-dispatch mismatches as `MethodError`.
 - Next phase is P3: collapse the still-long legacy `process_day`
   driver bodies into the unified driver behind an opt-in flag.
 
@@ -418,6 +422,11 @@ driver opt-in and writer abstraction rather than just workspace
 extraction.
 
 ### P3 — Unified driver
+
+P3a adds concrete writer adapters first. They wrap the current LL v4
+full-day writer and the existing RG/CS `StreamingTransportBinaryWriter`
+without changing byte layout or production call sites. This gives the
+unified driver a typed writer surface before any driver code is moved.
 
 Add `transport_binary/driver.jl` with the ~80-line driver above.
 **Don't** wire it in yet — `entrypoint.jl::process_day` still routes

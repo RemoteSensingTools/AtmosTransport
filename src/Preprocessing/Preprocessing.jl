@@ -131,6 +131,9 @@ export verify_window!, update_accumulator!, summarize_status!
 export contract_replay_tolerance, contract_cfl_limit, contract_require_positivity
 export allocate_window_workspace, reset_workspace!,
        ingest_window!, drain_ready_windows!, flush_final_windows!
+export LatLonBinaryWriter, ReducedGaussianBinaryWriter, CubedSphereBinaryWriter
+export write_window!, close_streaming_binary!, promote_streaming_binary!,
+       quarantine_streaming_binary!, writer_staging_path, writer_final_path
 export CubedSphereContract, LatLonContract, ReducedGaussianContract
 export verify_substep_positivity_ll!, verify_ll_window_contract!,
        init_ll_positivity_accumulator, update_ll_positivity_accumulator,

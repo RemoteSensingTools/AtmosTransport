@@ -305,6 +305,39 @@ exhausted.
 """
 function flush_final_windows! end
 
+"""
+    write_window!(writer, ready)
+
+Write one validated ready window through a topology-specific binary writer.
+Concrete methods are topology-indexed by `AbstractBinaryWriter` and
+`ReadyWindow` so writer/window mismatches fail by dispatch.
+"""
+function write_window! end
+
+"""
+    close_streaming_binary!(writer)
+
+Close a streaming binary writer. Implementations should be idempotent.
+"""
+function close_streaming_binary! end
+
+"""
+    promote_streaming_binary!(writer)
+
+Close and promote a staged binary file into its final path.
+"""
+function promote_streaming_binary! end
+
+"""
+    quarantine_streaming_binary!(writer)
+
+Close and remove a staged binary file after a failed validation pass.
+"""
+function quarantine_streaming_binary! end
+
+writer_staging_path(writer::AbstractBinaryWriter) = writer.path
+writer_final_path(writer::AbstractBinaryWriter) = writer.final_path
+
 # ---------------------------------------------------------------------------
 # Shared parameter-validation helpers used at the entry of every exported
 # replay / positivity / window-contract wrapper.

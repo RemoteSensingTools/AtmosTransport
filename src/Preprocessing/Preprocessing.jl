@@ -178,6 +178,13 @@ include("sources/geos.jl")
 # TOML-driven met-source factory (Commit 4)
 include("sources/loader.jl")
 
+# Plan 41 P0a — typed met-reader surface (Source axis of the unified
+# preprocessor; additive façade over `AbstractMetSettings` machinery
+# above). Includes here so the abstract types are visible to
+# `transport_binary/cubed_sphere_geos.jl` even though the existing
+# `process_day` orchestrators are not yet ported.
+include("met_readers.jl")
+
 # GEOS → CS passthrough orchestrator (Commit 5)
 include("transport_binary/cubed_sphere_geos.jl")
 
@@ -195,6 +202,15 @@ export endpoint_dry_mass, endpoint_dry_mass!
 
 # Met-source TOML factory (Commit 4) + vertical-coordinate helper used by GEOS CLI
 export load_met_settings, load_hybrid_coefficients
+
+# Plan 41 P0a — typed met-reader surface (Source axis)
+export AbstractMetReader, AbstractChainPolicy, NoChain, ChainedMass
+export GEOSNativeReader, ERA5SpectralReader, ERA5SpectralSettings
+export open_reader, close_reader!, end_of_day_seed, set_end_of_day_seed!
+export native_vertical, window_metadata
+# Note: `windows_per_day` and `read_window!` are already exported above
+# (the existing `AbstractMetSettings` trait surface). P0a adds reader-
+# typed methods on the same generic functions.
 
 # Exports for the CLI script and advanced users
 export build_target_geometry, target_summary

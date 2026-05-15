@@ -33,6 +33,7 @@ end
 
 core_tests = [
     "test_met_sources_trait.jl",
+    "test_met_readers.jl",
     "test_identity_regrid.jl",
     "test_geos_reader.jl",
     "test_met_source_loader.jl",

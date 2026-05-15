@@ -445,6 +445,74 @@ end
 end
 
 # ---------------------------------------------------------------------------
+# ORD=7 discontinuous-edge boundary correction (Plan-25 Commit 3b).
+#
+# At gnomonic CS face boundaries (`face_idx == 1` or `face_idx == Nc + 1`)
+# the forward `_apply_ord7_boundary` (LinRood.jl:186) overrides `q_R_m`
+# and `q_L_0` with the same discontinuous edge value `q_bdy`. The forward
+# formula (`_ppm_face_edge_value_ord7_discontinuous` at
+# `ppm_subgrid_distributions.jl:168`) is LINEAR in the four stencil
+# cells (c_m1, c_m2, c_0, c_p1):
+#
+#     extrap_left  = (3/2) c_m1 - (1/2) c_m2
+#     extrap_right = (3/2) c_0  - (1/2) c_p1
+#     q_bdy        = (extrap_left + extrap_right) / 2
+#                  = (3/4) c_m1 - (1/4) c_m2 + (3/4) c_0 - (1/4) c_p1
+#
+# So `∂q_bdy/∂c_m2 = -1/4`, `∂q_bdy/∂c_m1 = +3/4`, `∂q_bdy/∂c_0 = +3/4`,
+# `∂q_bdy/∂c_p1 = -1/4`, and `c_m3`/`c_p2` do not contribute. The d6
+# wrapper handles this automatically because the D6 algebra is closed
+# under linear combinations.
+#
+# Returns the (possibly overridden) edge tuple `(q_L_m, q_R_m, q_L_0,
+# q_R_0)` in d6 form. For `face_idx` in the interior, this returns its
+# arguments unchanged — same compile-time elimination pattern as the
+# forward `_apply_ord7_boundary` for `ORD != 7`.
+@inline function _apply_ord7_boundary_d6(
+    q_L_m::D6{FT}, q_R_m::D6{FT}, q_L_0::D6{FT}, q_R_0::D6{FT},
+    c_m1::D6{FT}, c_m2::D6{FT}, c_0::D6{FT}, c_p1::D6{FT},
+    face_idx::Integer, Nc::Integer,
+) where {FT}
+    if face_idx == 1 || face_idx == Nc + 1
+        half = one(FT) / FT(2)
+        three_halves = FT(3) / FT(2)
+        extrap_left  = three_halves * c_m1 - c_m2 * half
+        extrap_right = three_halves * c_0  - c_p1 * half
+        q_bdy = (extrap_left + extrap_right) * half
+        return (q_L_m, q_bdy, q_bdy, q_R_0)
+    end
+    return (q_L_m, q_R_m, q_L_0, q_R_0)
+end
+
+# ORD=7 from-q grad. Same chain as ORD=5 with the discontinuous boundary
+# correction inserted between `_ppm_edge_values_ord5_d6` and
+# `_apply_monotonicity_d6`. Identical to `_linrood_ppm_face_from_q_grad_ord5`
+# at interior faces (since `_apply_ord7_boundary_d6` is the identity there).
+@inline function _linrood_ppm_face_from_q_grad_ord7(
+    F::FT, m_l::FT, m_r::FT,
+    q_m3::FT, q_m2::FT, q_m1::FT, q_0::FT, q_p1::FT, q_p2::FT,
+    face_idx::Integer, Nc::Integer,
+) where {FT}
+    c_m3 = _d6_var(q_m3, Val(1))
+    c_m2 = _d6_var(q_m2, Val(2))
+    c_m1 = _d6_var(q_m1, Val(3))
+    c_0  = _d6_var(q_0,  Val(4))
+    c_p1 = _d6_var(q_p1, Val(5))
+    c_p2 = _d6_var(q_p2, Val(6))
+
+    q_L_m, q_R_m = _ppm_edge_values_ord5_d6(c_m3, c_m2, c_m1, c_0, c_p1)
+    q_L_0, q_R_0 = _ppm_edge_values_ord5_d6(c_m2, c_m1, c_0, c_p1, c_p2)
+    q_L_m, q_R_m, q_L_0, q_R_0 = _apply_ord7_boundary_d6(
+        q_L_m, q_R_m, q_L_0, q_R_0, c_m1, c_m2, c_0, c_p1, face_idx, Nc)
+    q_L_m, q_R_m = _apply_monotonicity_d6(q_L_m, q_R_m, c_m1)
+    q_L_0, q_R_0 = _apply_monotonicity_d6(q_L_0, q_R_0, c_0)
+
+    face = _ppm_face_value_d6(F, m_l, m_r, c_m1, c_0,
+                              q_L_m, q_R_m, q_L_0, q_R_0)
+    return face.g
+end
+
+# ---------------------------------------------------------------------------
 # Adjoint of `_ppm_x_face_from_q_kernel!` (LinRood.jl:299) for ORD=5.
 #
 # Forward: `fx_face[iif, j, k] = _ppm_face_value(am[iif, j, k], …,
@@ -490,28 +558,76 @@ end
     end
 end
 
+# ORD=7 from-q x-face adjoint kernel. Identical to the ORD=5 kernel
+# except the per-thread grad function takes `face_idx (= iif)` and `Nc`
+# so it can apply the discontinuous boundary correction at panel edges
+# (`iif == 1` or `iif == Nc + 1`). Compile-time eliminates to the ORD=5
+# computation at interior faces.
+@kernel function _ppm_x_face_from_q_kernel_adjoint_ord7!(
+    lambda_q,
+    @Const(lambda_fx_face), @Const(q), @Const(am), @Const(m),
+    Hp, Nc,
+)
+    iif, j, k = @index(Global, NTuple)
+    @inbounds begin
+        jj   = Hp + j
+        ii_l = Hp + iif - 1
+        ii_r = Hp + iif
+
+        q_m3 = q[ii_l - 2, jj, k]
+        q_m2 = q[ii_l - 1, jj, k]
+        q_m1 = q[ii_l,     jj, k]
+        q_0  = q[ii_r,     jj, k]
+        q_p1 = q[ii_r + 1, jj, k]
+        q_p2 = q[ii_r + 2, jj, k]
+
+        F   = am[iif, j, k]
+        m_l = m[ii_l, jj, k]
+        m_r = m[ii_r, jj, k]
+
+        grad = _linrood_ppm_face_from_q_grad_ord7(F, m_l, m_r,
+                                                  q_m3, q_m2, q_m1, q_0, q_p1, q_p2,
+                                                  iif, Nc)
+        bar = lambda_fx_face[iif, j, k]
+
+        @atomic lambda_q[ii_l - 2, jj, k] += bar * grad[1]
+        @atomic lambda_q[ii_l - 1, jj, k] += bar * grad[2]
+        @atomic lambda_q[ii_l,     jj, k] += bar * grad[3]
+        @atomic lambda_q[ii_r,     jj, k] += bar * grad[4]
+        @atomic lambda_q[ii_r + 1, jj, k] += bar * grad[5]
+        @atomic lambda_q[ii_r + 2, jj, k] += bar * grad[6]
+    end
+end
+
 """
     apply_ppm_x_face_from_q_adjoint!(lambda_q, lambda_fx_face, q, am, m,
                                        mesh, ::Val{ORD})
 
-Discrete transpose of `_ppm_x_face_from_q_kernel!` for one panel at
-ORD=5 (LinRoodPPMScheme default). The donor-mass denominator
-`m_l`/`m_r` in `_ppm_face_value` and the velocity `am` are treated as
-fixed parameters from the tape — the adjoint propagates only the
-q-stencil sensitivity. Atomic writes on `lambda_q` because multiple
+Discrete transpose of `_ppm_x_face_from_q_kernel!` (LinRood.jl:299) for
+one panel at ORD=5 or ORD=7 (LinRoodPPMScheme). The donor-mass
+denominator `m_l`/`m_r` in `_ppm_face_value` and the velocity `am` are
+treated as fixed parameters from the tape — the adjoint propagates only
+the q-stencil sensitivity. Atomic writes on `lambda_q` because multiple
 faces share each cell.
+
+`ORD=7` dispatches to a kernel that applies the linear discontinuous
+boundary correction (`_apply_ord7_boundary_d6`) at panel-edge faces
+(`face_idx ∈ {1, Nc+1}`) before the monotonicity step; interior faces
+are bit-equal to ORD=5.
 """
 function apply_ppm_x_face_from_q_adjoint!(lambda_q, lambda_fx_face,
                                           q, am, m,
                                           mesh::CubedSphereMesh,
                                           ::Val{ORD}=Val(5)) where {ORD}
-    ORD == 5 || throw(ArgumentError(
-        "Plan-25 Commit 3 implements ORD=5 only; ORD=$ORD lands in Commit 3b"))
+    (ORD == 5 || ORD == 7) || throw(ArgumentError(
+        "LinRoodPPMScheme adjoint supports ORD ∈ {5, 7}; got ORD=$ORD."))
     Nc = mesh.Nc
     Hp = mesh.Hp
     Nz = size(q, 3)
     backend = get_backend(lambda_q)
-    k! = _ppm_x_face_from_q_kernel_adjoint_ord5!(backend, 256)
+    k! = ORD == 5 ?
+        _ppm_x_face_from_q_kernel_adjoint_ord5!(backend, 256) :
+        _ppm_x_face_from_q_kernel_adjoint_ord7!(backend, 256)
     k!(lambda_q, lambda_fx_face, q, am, m, Hp, Nc;
        ndrange=(Nc + 1, Nc, Nz))
     synchronize(backend)
@@ -561,24 +677,66 @@ end
     end
 end
 
+# ORD=7 from-q y-face adjoint kernel. Mirrors the ORD=5 kernel with
+# `face_idx = jf` driving the discontinuous boundary correction at
+# panel-edge faces.
+@kernel function _ppm_y_face_from_q_kernel_adjoint_ord7!(
+    lambda_q,
+    @Const(lambda_fy_face), @Const(q), @Const(bm), @Const(m),
+    Hp, Nc,
+)
+    i, jf, k = @index(Global, NTuple)
+    @inbounds begin
+        ii   = Hp + i
+        jj_b = Hp + jf - 1
+        jj_a = Hp + jf
+
+        q_m3 = q[ii, jj_b - 2, k]
+        q_m2 = q[ii, jj_b - 1, k]
+        q_m1 = q[ii, jj_b,     k]
+        q_0  = q[ii, jj_a,     k]
+        q_p1 = q[ii, jj_a + 1, k]
+        q_p2 = q[ii, jj_a + 2, k]
+
+        F   = bm[i, jf, k]
+        m_l = m[ii, jj_b, k]
+        m_r = m[ii, jj_a, k]
+
+        grad = _linrood_ppm_face_from_q_grad_ord7(F, m_l, m_r,
+                                                  q_m3, q_m2, q_m1, q_0, q_p1, q_p2,
+                                                  jf, Nc)
+        bar = lambda_fy_face[i, jf, k]
+
+        @atomic lambda_q[ii, jj_b - 2, k] += bar * grad[1]
+        @atomic lambda_q[ii, jj_b - 1, k] += bar * grad[2]
+        @atomic lambda_q[ii, jj_b,     k] += bar * grad[3]
+        @atomic lambda_q[ii, jj_a,     k] += bar * grad[4]
+        @atomic lambda_q[ii, jj_a + 1, k] += bar * grad[5]
+        @atomic lambda_q[ii, jj_a + 2, k] += bar * grad[6]
+    end
+end
+
 """
     apply_ppm_y_face_from_q_adjoint!(lambda_q, lambda_fy_face, q, bm, m,
                                        mesh, ::Val{ORD})
 
-Discrete transpose of `_ppm_y_face_from_q_kernel!` for one panel at
-ORD=5. See `apply_ppm_x_face_from_q_adjoint!` for the contract.
+Discrete transpose of `_ppm_y_face_from_q_kernel!` (LinRood.jl:325) for
+one panel at ORD=5 or ORD=7. See `apply_ppm_x_face_from_q_adjoint!` for
+the contract.
 """
 function apply_ppm_y_face_from_q_adjoint!(lambda_q, lambda_fy_face,
                                           q, bm, m,
                                           mesh::CubedSphereMesh,
                                           ::Val{ORD}=Val(5)) where {ORD}
-    ORD == 5 || throw(ArgumentError(
-        "Plan-25 Commit 3 implements ORD=5 only; ORD=$ORD lands in Commit 3b"))
+    (ORD == 5 || ORD == 7) || throw(ArgumentError(
+        "LinRoodPPMScheme adjoint supports ORD ∈ {5, 7}; got ORD=$ORD."))
     Nc = mesh.Nc
     Hp = mesh.Hp
     Nz = size(q, 3)
     backend = get_backend(lambda_q)
-    k! = _ppm_y_face_from_q_kernel_adjoint_ord5!(backend, 256)
+    k! = ORD == 5 ?
+        _ppm_y_face_from_q_kernel_adjoint_ord5!(backend, 256) :
+        _ppm_y_face_from_q_kernel_adjoint_ord7!(backend, 256)
     k!(lambda_q, lambda_fy_face, q, bm, m, Hp, Nc;
        ndrange=(Nc, Nc + 1, Nz))
     synchronize(backend)
@@ -793,6 +951,191 @@ end
     return (bl, br, b0, c_0v)
 end
 
+# ORD=7 donor-state helpers. At panel-edge faces (`face_idx ∈ {1, Nc+1}`)
+# the forward `_apply_ord7_boundary` rewrites `q_R_m` and `q_L_0` with
+# the same discontinuous value `q_bdy` before monotonicity. The donor
+# cell's limited `(q_L, q_R)` therefore differs from ORD=5 at the
+# boundary, and we need to recompute `(bl, br, b0)` against the
+# corrected edges. At interior faces these helpers return the same
+# `(bl, br, b0, c)` as the ORD=5 versions (compile-time eliminated).
+@inline function _ppm_face_value_donor_state_lo_ord7(
+    F::FT,
+    rm_m3::FT, rm_m2::FT, rm_m1::FT, rm_0::FT, rm_p1::FT, rm_p2::FT,
+    m_m3::FT,  m_m2::FT,  m_m1::FT,  m_0::FT,  m_p1::FT,  m_p2::FT,
+    face_idx::Integer, Nc::Integer,
+) where {FT}
+    _ = F
+    _ = (rm_p2, m_p2)
+    floor_thresh = FT(100) * eps(FT)
+    c_m3v = m_m3 > floor_thresh ? rm_m3 / m_m3 : zero(FT)
+    c_m2v = m_m2 > floor_thresh ? rm_m2 / m_m2 : zero(FT)
+    c_m1v = m_m1 > floor_thresh ? rm_m1 / m_m1 : zero(FT)
+    c_0v  = m_0  > floor_thresh ? rm_0  / m_0  : zero(FT)
+    c_p1v = m_p1 > floor_thresh ? rm_p1 / m_p1 : zero(FT)
+    q_L_m_v, q_R_m_v = _ppm_edge_values(c_m3v, c_m2v, c_m1v, c_0v, c_p1v, Val(5))
+    # Reuse a small helper for the boundary correction at the value level
+    # — mirrors `_apply_ord7_boundary` exactly (LinRood.jl:186).
+    if face_idx == 1 || face_idx == Nc + 1
+        # q_R_m is rewritten with q_bdy at boundary (q_L_m unchanged).
+        # Use the donor-state stencil's own (c_m2, c_m1, c_0, c_p1).
+        q_bdy = _ppm_face_edge_value_ord7_discontinuous(c_m1v, c_m2v, c_0v, c_p1v)
+        q_R_m_v = q_bdy
+    end
+    q_L_m_v, q_R_m_v = _apply_monotonicity(q_L_m_v, q_R_m_v, c_m1v)
+    bl = q_L_m_v - c_m1v
+    br = q_R_m_v - c_m1v
+    b0 = bl + br
+    return (bl, br, b0, c_m1v)
+end
+
+@inline function _ppm_face_value_donor_state_hi_ord7(
+    F::FT,
+    rm_m3::FT, rm_m2::FT, rm_m1::FT, rm_0::FT, rm_p1::FT, rm_p2::FT,
+    m_m3::FT,  m_m2::FT,  m_m1::FT,  m_0::FT,  m_p1::FT,  m_p2::FT,
+    face_idx::Integer, Nc::Integer,
+) where {FT}
+    _ = F
+    _ = (rm_m3, m_m3)
+    floor_thresh = FT(100) * eps(FT)
+    c_m2v = m_m2 > floor_thresh ? rm_m2 / m_m2 : zero(FT)
+    c_m1v = m_m1 > floor_thresh ? rm_m1 / m_m1 : zero(FT)
+    c_0v  = m_0  > floor_thresh ? rm_0  / m_0  : zero(FT)
+    c_p1v = m_p1 > floor_thresh ? rm_p1 / m_p1 : zero(FT)
+    c_p2v = m_p2 > floor_thresh ? rm_p2 / m_p2 : zero(FT)
+    q_L_0_v, q_R_0_v = _ppm_edge_values(c_m2v, c_m1v, c_0v, c_p1v, c_p2v, Val(5))
+    if face_idx == 1 || face_idx == Nc + 1
+        # q_L_0 is rewritten with q_bdy at boundary (q_R_0 unchanged).
+        q_bdy = _ppm_face_edge_value_ord7_discontinuous(c_m1v, c_m2v, c_0v, c_p1v)
+        q_L_0_v = q_bdy
+    end
+    q_L_0_v, q_R_0_v = _apply_monotonicity(q_L_0_v, q_R_0_v, c_0v)
+    bl = q_L_0_v - c_0v
+    br = q_R_0_v - c_0v
+    b0 = bl + br
+    return (bl, br, b0, c_0v)
+end
+
+# ORD=7 from-rm chain: same structure as ORD=5 with the d6 boundary
+# correction inserted between `_ppm_edge_values_ord5_d6` and
+# `_apply_monotonicity_d6`. Returns the 6-tuple `∂face/∂(c-tangent)` for
+# one cell-attribute pass (rm OR m), driven by `tangents`.
+@inline function _linrood_ppm_face_chain_rm_ord7(
+    F::FT, m_l::FT, m_r::FT,
+    rm_m3::FT, rm_m2::FT, rm_m1::FT, rm_0::FT, rm_p1::FT, rm_p2::FT,
+    m_m3::FT,  m_m2::FT,  m_m1::FT,  m_0::FT,  m_p1::FT,  m_p2::FT,
+    tan_m3::NTuple{6, FT}, tan_m2::NTuple{6, FT}, tan_m1::NTuple{6, FT},
+    tan_0::NTuple{6, FT},  tan_p1::NTuple{6, FT}, tan_p2::NTuple{6, FT},
+    face_idx::Integer, Nc::Integer,
+) where {FT}
+    c_m3 = _safe_mixing_ratio_d6(rm_m3, m_m3, tan_m3)
+    c_m2 = _safe_mixing_ratio_d6(rm_m2, m_m2, tan_m2)
+    c_m1 = _safe_mixing_ratio_d6(rm_m1, m_m1, tan_m1)
+    c_0  = _safe_mixing_ratio_d6(rm_0,  m_0,  tan_0)
+    c_p1 = _safe_mixing_ratio_d6(rm_p1, m_p1, tan_p1)
+    c_p2 = _safe_mixing_ratio_d6(rm_p2, m_p2, tan_p2)
+
+    q_L_m, q_R_m = _ppm_edge_values_ord5_d6(c_m3, c_m2, c_m1, c_0, c_p1)
+    q_L_0, q_R_0 = _ppm_edge_values_ord5_d6(c_m2, c_m1, c_0, c_p1, c_p2)
+    q_L_m, q_R_m, q_L_0, q_R_0 = _apply_ord7_boundary_d6(
+        q_L_m, q_R_m, q_L_0, q_R_0, c_m1, c_m2, c_0, c_p1, face_idx, Nc)
+    q_L_m, q_R_m = _apply_monotonicity_d6(q_L_m, q_R_m, c_m1)
+    q_L_0, q_R_0 = _apply_monotonicity_d6(q_L_0, q_R_0, c_0)
+    face = _ppm_face_value_d6(F, m_l, m_r, c_m1, c_0,
+                              q_L_m, q_R_m, q_L_0, q_R_0)
+    return face.g
+end
+
+# Full from-rm face Jacobian at ORD=7: returns
+# `(∂f/∂rm_-3..p2, ∂f/∂m_-3..p2)` for the six stencil cells. Mirrors
+# `_linrood_ppm_face_from_rm_grad_ord5` with the boundary-aware chain
+# and donor-state helpers.
+@inline function _linrood_ppm_face_from_rm_grad_ord7(
+    F::FT, m_l::FT, m_r::FT,
+    rm_m3::FT, rm_m2::FT, rm_m1::FT, rm_0::FT, rm_p1::FT, rm_p2::FT,
+    m_m3::FT,  m_m2::FT,  m_m1::FT,  m_0::FT,  m_p1::FT,  m_p2::FT,
+    face_idx::Integer, Nc::Integer,
+) where {FT}
+    floor_thresh = FT(100) * eps(FT)
+    # rm pass: dc_n = (1/m_n) · e_n
+    inv_m_m3 = m_m3 > floor_thresh ? one(FT) / m_m3 : zero(FT)
+    inv_m_m2 = m_m2 > floor_thresh ? one(FT) / m_m2 : zero(FT)
+    inv_m_m1 = m_m1 > floor_thresh ? one(FT) / m_m1 : zero(FT)
+    inv_m_0  = m_0  > floor_thresh ? one(FT) / m_0  : zero(FT)
+    inv_m_p1 = m_p1 > floor_thresh ? one(FT) / m_p1 : zero(FT)
+    inv_m_p2 = m_p2 > floor_thresh ? one(FT) / m_p2 : zero(FT)
+
+    tan_rm_m3 = ntuple(i -> i == 1 ? inv_m_m3 : zero(FT), Val(6))
+    tan_rm_m2 = ntuple(i -> i == 2 ? inv_m_m2 : zero(FT), Val(6))
+    tan_rm_m1 = ntuple(i -> i == 3 ? inv_m_m1 : zero(FT), Val(6))
+    tan_rm_0  = ntuple(i -> i == 4 ? inv_m_0  : zero(FT), Val(6))
+    tan_rm_p1 = ntuple(i -> i == 5 ? inv_m_p1 : zero(FT), Val(6))
+    tan_rm_p2 = ntuple(i -> i == 6 ? inv_m_p2 : zero(FT), Val(6))
+
+    grad_rm = _linrood_ppm_face_chain_rm_ord7(
+        F, m_l, m_r,
+        rm_m3, rm_m2, rm_m1, rm_0, rm_p1, rm_p2,
+        m_m3, m_m2, m_m1, m_0, m_p1, m_p2,
+        tan_rm_m3, tan_rm_m2, tan_rm_m1, tan_rm_0, tan_rm_p1, tan_rm_p2,
+        face_idx, Nc)
+
+    # m pass: dc_n = (-rm_n / m_n²) · e_n
+    neg_rm_over_m2_m3 = m_m3 > floor_thresh ? -rm_m3 / (m_m3 * m_m3) : zero(FT)
+    neg_rm_over_m2_m2 = m_m2 > floor_thresh ? -rm_m2 / (m_m2 * m_m2) : zero(FT)
+    neg_rm_over_m2_m1 = m_m1 > floor_thresh ? -rm_m1 / (m_m1 * m_m1) : zero(FT)
+    neg_rm_over_m2_0  = m_0  > floor_thresh ? -rm_0  / (m_0  * m_0)  : zero(FT)
+    neg_rm_over_m2_p1 = m_p1 > floor_thresh ? -rm_p1 / (m_p1 * m_p1) : zero(FT)
+    neg_rm_over_m2_p2 = m_p2 > floor_thresh ? -rm_p2 / (m_p2 * m_p2) : zero(FT)
+
+    tan_m_m3 = ntuple(i -> i == 1 ? neg_rm_over_m2_m3 : zero(FT), Val(6))
+    tan_m_m2 = ntuple(i -> i == 2 ? neg_rm_over_m2_m2 : zero(FT), Val(6))
+    tan_m_m1 = ntuple(i -> i == 3 ? neg_rm_over_m2_m1 : zero(FT), Val(6))
+    tan_m_0  = ntuple(i -> i == 4 ? neg_rm_over_m2_0  : zero(FT), Val(6))
+    tan_m_p1 = ntuple(i -> i == 5 ? neg_rm_over_m2_p1 : zero(FT), Val(6))
+    tan_m_p2 = ntuple(i -> i == 6 ? neg_rm_over_m2_p2 : zero(FT), Val(6))
+
+    grad_m_chain = _linrood_ppm_face_chain_rm_ord7(
+        F, m_l, m_r,
+        rm_m3, rm_m2, rm_m1, rm_0, rm_p1, rm_p2,
+        m_m3, m_m2, m_m1, m_0, m_p1, m_p2,
+        tan_m_m3, tan_m_m2, tan_m_m1, tan_m_0, tan_m_p1, tan_m_p2,
+        face_idx, Nc)
+
+    # Donor-mass α contribution. Use the ORD=7 donor-state helpers so
+    # `(bl, br, b0)` reflects the boundary-corrected (q_L, q_R) at
+    # panel-edge donor cells.
+    extra_m_m1 = zero(FT)
+    extra_m_0  = zero(FT)
+    if F >= zero(FT)
+        if m_m1 > floor_thresh
+            bl_lo, br_lo, b0_lo, _ = _ppm_face_value_donor_state_lo_ord7(
+                F, rm_m3, rm_m2, rm_m1, rm_0, rm_p1, rm_p2,
+                m_m3, m_m2, m_m1, m_0, m_p1, m_p2, face_idx, Nc)
+            _ = bl_lo
+            alpha = F / m_m1
+            dface_dalpha = -br_lo + (FT(2) * alpha - one(FT)) * b0_lo
+            dalpha_dm   = -F / (m_m1 * m_m1)
+            extra_m_m1 = dface_dalpha * dalpha_dm
+        end
+    else
+        if m_0 > floor_thresh
+            bl_hi, _, b0_hi, _ = _ppm_face_value_donor_state_hi_ord7(
+                F, rm_m3, rm_m2, rm_m1, rm_0, rm_p1, rm_p2,
+                m_m3, m_m2, m_m1, m_0, m_p1, m_p2, face_idx, Nc)
+            alpha = F / m_0
+            dface_dalpha = bl_hi + b0_hi + FT(2) * alpha * b0_hi
+            dalpha_dm   = -F / (m_0 * m_0)
+            extra_m_0 = dface_dalpha * dalpha_dm
+        end
+    end
+
+    grad_m = (grad_m_chain[1], grad_m_chain[2],
+              grad_m_chain[3] + extra_m_m1,
+              grad_m_chain[4] + extra_m_0,
+              grad_m_chain[5], grad_m_chain[6])
+
+    return (grad_rm, grad_m)
+end
+
 # ---------------------------------------------------------------------------
 # rm-input face kernels (X and Y, ORD=5).
 # ---------------------------------------------------------------------------
@@ -839,26 +1182,80 @@ end
     end
 end
 
+# ORD=7 from-rm x-face adjoint kernel. Mirrors the ORD=5 kernel with
+# `face_idx = iif` driving the discontinuous boundary correction at
+# panel-edge faces. The donor-state helpers also dispatch on (iif, Nc)
+# so the α-contribution `(bl, br, b0)` reflects the boundary-corrected
+# limited edges at panel-edge donor cells.
+@kernel function _ppm_x_face_kernel_adjoint_ord7!(
+    lambda_rm, lambda_m,
+    @Const(lambda_fx_face), @Const(rm), @Const(m), @Const(am),
+    Hp, Nc,
+)
+    iif, j, k = @index(Global, NTuple)
+    @inbounds begin
+        jj   = Hp + j
+        ii_l = Hp + iif - 1
+        ii_r = Hp + iif
+
+        rm_m3 = rm[ii_l - 2, jj, k]; m_m3 = m[ii_l - 2, jj, k]
+        rm_m2 = rm[ii_l - 1, jj, k]; m_m2 = m[ii_l - 1, jj, k]
+        rm_m1 = rm[ii_l,     jj, k]; m_m1 = m[ii_l,     jj, k]
+        rm_0  = rm[ii_r,     jj, k]; m_0  = m[ii_r,     jj, k]
+        rm_p1 = rm[ii_r + 1, jj, k]; m_p1 = m[ii_r + 1, jj, k]
+        rm_p2 = rm[ii_r + 2, jj, k]; m_p2 = m[ii_r + 2, jj, k]
+
+        F = am[iif, j, k]
+        grad_rm, grad_m = _linrood_ppm_face_from_rm_grad_ord7(
+            F, m_m1, m_0,
+            rm_m3, rm_m2, rm_m1, rm_0, rm_p1, rm_p2,
+            m_m3,  m_m2,  m_m1,  m_0,  m_p1,  m_p2,
+            iif, Nc,
+        )
+
+        bar = lambda_fx_face[iif, j, k]
+        @atomic lambda_rm[ii_l - 2, jj, k] += bar * grad_rm[1]
+        @atomic lambda_rm[ii_l - 1, jj, k] += bar * grad_rm[2]
+        @atomic lambda_rm[ii_l,     jj, k] += bar * grad_rm[3]
+        @atomic lambda_rm[ii_r,     jj, k] += bar * grad_rm[4]
+        @atomic lambda_rm[ii_r + 1, jj, k] += bar * grad_rm[5]
+        @atomic lambda_rm[ii_r + 2, jj, k] += bar * grad_rm[6]
+        @atomic lambda_m[ii_l - 2, jj, k]  += bar * grad_m[1]
+        @atomic lambda_m[ii_l - 1, jj, k]  += bar * grad_m[2]
+        @atomic lambda_m[ii_l,     jj, k]  += bar * grad_m[3]
+        @atomic lambda_m[ii_r,     jj, k]  += bar * grad_m[4]
+        @atomic lambda_m[ii_r + 1, jj, k]  += bar * grad_m[5]
+        @atomic lambda_m[ii_r + 2, jj, k]  += bar * grad_m[6]
+    end
+end
+
 """
     apply_ppm_x_face_adjoint!(lambda_rm, lambda_m, lambda_fx_face, rm, m, am,
                                 mesh, ::Val{ORD})
 
-Discrete transpose of `_ppm_x_face_kernel!` (LinRood.jl:270) at ORD=5.
-Folds `_safe_mixing_ratio` into the d6-AD chain and includes the
-donor-mass `α = F / m_donor` contribution. Atomic accumulation on
+Discrete transpose of `_ppm_x_face_kernel!` (LinRood.jl:270) at ORD=5
+or ORD=7. Folds `_safe_mixing_ratio` into the d6-AD chain and includes
+the donor-mass `α = F / m_donor` contribution. Atomic accumulation on
 shared cells.
+
+`ORD=7` applies the linear discontinuous-edge boundary correction at
+panel-edge faces (`face_idx ∈ {1, Nc+1}`) and recomputes the donor
+α-contribution against the corrected limited `(q_L, q_R)`. Interior
+faces are bit-equal to ORD=5.
 """
 function apply_ppm_x_face_adjoint!(lambda_rm, lambda_m, lambda_fx_face,
                                    rm, m, am,
                                    mesh::CubedSphereMesh,
                                    ::Val{ORD}=Val(5)) where {ORD}
-    ORD == 5 || throw(ArgumentError(
-        "Plan-25 Commit 3b implements ORD=5 only; ORD=$ORD is future work"))
+    (ORD == 5 || ORD == 7) || throw(ArgumentError(
+        "LinRoodPPMScheme adjoint supports ORD ∈ {5, 7}; got ORD=$ORD."))
     Nc = mesh.Nc
     Hp = mesh.Hp
     Nz = size(rm, 3)
     backend = get_backend(lambda_rm)
-    k! = _ppm_x_face_kernel_adjoint_ord5!(backend, 256)
+    k! = ORD == 5 ?
+        _ppm_x_face_kernel_adjoint_ord5!(backend, 256) :
+        _ppm_x_face_kernel_adjoint_ord7!(backend, 256)
     k!(lambda_rm, lambda_m, lambda_fx_face, rm, m, am, Hp, Nc;
        ndrange=(Nc + 1, Nc, Nz))
     synchronize(backend)
@@ -907,23 +1304,69 @@ end
     end
 end
 
+# ORD=7 from-rm y-face adjoint kernel.
+@kernel function _ppm_y_face_kernel_adjoint_ord7!(
+    lambda_rm, lambda_m,
+    @Const(lambda_fy_face), @Const(rm), @Const(m), @Const(bm),
+    Hp, Nc,
+)
+    i, jf, k = @index(Global, NTuple)
+    @inbounds begin
+        ii   = Hp + i
+        jj_b = Hp + jf - 1
+        jj_a = Hp + jf
+
+        rm_m3 = rm[ii, jj_b - 2, k]; m_m3 = m[ii, jj_b - 2, k]
+        rm_m2 = rm[ii, jj_b - 1, k]; m_m2 = m[ii, jj_b - 1, k]
+        rm_m1 = rm[ii, jj_b,     k]; m_m1 = m[ii, jj_b,     k]
+        rm_0  = rm[ii, jj_a,     k]; m_0  = m[ii, jj_a,     k]
+        rm_p1 = rm[ii, jj_a + 1, k]; m_p1 = m[ii, jj_a + 1, k]
+        rm_p2 = rm[ii, jj_a + 2, k]; m_p2 = m[ii, jj_a + 2, k]
+
+        F = bm[i, jf, k]
+        grad_rm, grad_m = _linrood_ppm_face_from_rm_grad_ord7(
+            F, m_m1, m_0,
+            rm_m3, rm_m2, rm_m1, rm_0, rm_p1, rm_p2,
+            m_m3,  m_m2,  m_m1,  m_0,  m_p1,  m_p2,
+            jf, Nc,
+        )
+
+        bar = lambda_fy_face[i, jf, k]
+        @atomic lambda_rm[ii, jj_b - 2, k] += bar * grad_rm[1]
+        @atomic lambda_rm[ii, jj_b - 1, k] += bar * grad_rm[2]
+        @atomic lambda_rm[ii, jj_b,     k] += bar * grad_rm[3]
+        @atomic lambda_rm[ii, jj_a,     k] += bar * grad_rm[4]
+        @atomic lambda_rm[ii, jj_a + 1, k] += bar * grad_rm[5]
+        @atomic lambda_rm[ii, jj_a + 2, k] += bar * grad_rm[6]
+        @atomic lambda_m[ii, jj_b - 2, k]  += bar * grad_m[1]
+        @atomic lambda_m[ii, jj_b - 1, k]  += bar * grad_m[2]
+        @atomic lambda_m[ii, jj_b,     k]  += bar * grad_m[3]
+        @atomic lambda_m[ii, jj_a,     k]  += bar * grad_m[4]
+        @atomic lambda_m[ii, jj_a + 1, k]  += bar * grad_m[5]
+        @atomic lambda_m[ii, jj_a + 2, k]  += bar * grad_m[6]
+    end
+end
+
 """
     apply_ppm_y_face_adjoint!(lambda_rm, lambda_m, lambda_fy_face, rm, m, bm,
                                 mesh, ::Val{ORD})
 
-Discrete transpose of `_ppm_y_face_kernel!` (LinRood.jl:241) at ORD=5.
+Discrete transpose of `_ppm_y_face_kernel!` (LinRood.jl:241) at ORD=5
+or ORD=7. See `apply_ppm_x_face_adjoint!` for the contract.
 """
 function apply_ppm_y_face_adjoint!(lambda_rm, lambda_m, lambda_fy_face,
                                    rm, m, bm,
                                    mesh::CubedSphereMesh,
                                    ::Val{ORD}=Val(5)) where {ORD}
-    ORD == 5 || throw(ArgumentError(
-        "Plan-25 Commit 3b implements ORD=5 only; ORD=$ORD is future work"))
+    (ORD == 5 || ORD == 7) || throw(ArgumentError(
+        "LinRoodPPMScheme adjoint supports ORD ∈ {5, 7}; got ORD=$ORD."))
     Nc = mesh.Nc
     Hp = mesh.Hp
     Nz = size(rm, 3)
     backend = get_backend(lambda_rm)
-    k! = _ppm_y_face_kernel_adjoint_ord5!(backend, 256)
+    k! = ORD == 5 ?
+        _ppm_y_face_kernel_adjoint_ord5!(backend, 256) :
+        _ppm_y_face_kernel_adjoint_ord7!(backend, 256)
     k!(lambda_rm, lambda_m, lambda_fy_face, rm, m, bm, Hp, Nc;
        ndrange=(Nc, Nc + 1, Nz))
     synchronize(backend)
@@ -1014,8 +1457,10 @@ Tape inputs:
 - `fx_in`, `fx_out`, `fy_in` — face mixing ratios captured at the end
   of phase 2 / phase 3.
 
-`fy_out` is recomputed inside the kernel; it isn't a tape input. The
-kernel uses `Val(5)` only — ORD=7 boundary handling is future work.
+`fy_out` is recomputed inside the kernel; it isn't a tape input.
+Supports `Val(5)` (default) and `Val(7)`. Each per-direction face
+adjoint dispatches on `Val(ORD)` so the ORD=7 panel-edge boundary
+correction propagates through to `(lambda_rm, lambda_m)`.
 """
 function apply_linrood_horizontal_adjoint_single_panel!(
     lambda_rm, lambda_m,
@@ -1026,8 +1471,8 @@ function apply_linrood_horizontal_adjoint_single_panel!(
     mesh::CubedSphereMesh,
     ::Val{ORD}=Val(5),
 ) where {ORD}
-    ORD == 5 || throw(ArgumentError(
-        "Plan-25 Commit 4 implements ORD=5 only; ORD=$ORD is future work"))
+    (ORD == 5 || ORD == 7) || throw(ArgumentError(
+        "LinRoodPPMScheme adjoint supports ORD ∈ {5, 7}; got ORD=$ORD."))
     Nc = mesh.Nc; Hp = mesh.Hp
     Nz = size(lambda_rm, 3)
     N = Nc + 2Hp
@@ -1136,15 +1581,20 @@ struct LinRoodHorizontalTapeEntry{FT, A3, A3x, A3y}
 end
 
 """
-    record_linrood_substep!(rm, m, am, bm, mesh) -> (tape_entry, rm_new, m_new)
+    record_linrood_substep!(rm, m, am, bm, mesh; ord=Val(5)) -> (tape_entry, rm_new, m_new)
 
 Run one forward LinRood horizontal substep ON ONE PANEL with halos
 held at their input values (no cross-panel transfer) and return a
 `LinRoodHorizontalTapeEntry` plus the updated `(rm_new, m_new)`. The
 input `rm`, `m` are NOT mutated.
+
+`ord` selects the PPM order (Val(5) or Val(7)) that the face kernels
+use. ORD=7 forwards through the discontinuous-edge boundary correction
+at panel-edge faces.
 """
 function record_linrood_substep!(rm, m, am, bm,
-                                  mesh::CubedSphereMesh{FT}) where {FT}
+                                  mesh::CubedSphereMesh{FT};
+                                  ord::Val{ORD}=Val(5)) where {FT, ORD}
     Nc = mesh.Nc; Hp = mesh.Hp
     Nz = size(rm, 3)
     N = Nc + 2Hp
@@ -1170,16 +1620,16 @@ function record_linrood_substep!(rm, m, am, bm,
     # Phase 1
     init_k!(q_buf, rm, m; ndrange=(N, N, Nz))
     synchronize(backend)
-    y_face_k!(fy_in, rm, m, bm, Hp, Nc, Val(5);
+    y_face_k!(fy_in, rm, m, bm, Hp, Nc, Val(ORD);
               ndrange=(Nc, Nc + 1, Nz))
     pre_y_k!(q_buf, rm, m, bm, fy_in, Hp; ndrange=(Nc, Nc, Nz))
     synchronize(backend)
     q_buf_phase2 = copy(q_buf)
 
     # Phase 2
-    xq_face_k!(fx_out, q_buf_phase2, am, m, Hp, Nc, Val(5);
+    xq_face_k!(fx_out, q_buf_phase2, am, m, Hp, Nc, Val(ORD);
                ndrange=(Nc + 1, Nc, Nz))
-    x_face_k!(fx_in, rm, m, am, Hp, Nc, Val(5);
+    x_face_k!(fx_in, rm, m, am, Hp, Nc, Val(ORD);
               ndrange=(Nc + 1, Nc, Nz))
     synchronize(backend)
     init_k!(q_buf, rm, m; ndrange=(N, N, Nz))
@@ -1189,7 +1639,7 @@ function record_linrood_substep!(rm, m, am, bm,
     q_buf_phase3 = copy(q_buf)
 
     # Phase 3
-    yq_face_k!(fy_out, q_buf_phase3, bm, m, Hp, Nc, Val(5);
+    yq_face_k!(fy_out, q_buf_phase3, bm, m, Hp, Nc, Val(ORD);
                ndrange=(Nc, Nc + 1, Nz))
     rm_new = copy(rm)
     m_new  = copy(m)
@@ -1233,7 +1683,8 @@ function apply_linrood_multi_substep_adjoint!(
     tape::AbstractVector{<:LinRoodHorizontalTapeEntry},
     am_steps, bm_steps,
     mesh::CubedSphereMesh,
-)
+    ::Val{ORD}=Val(5),
+) where {ORD}
     nsteps = length(tape)
     @assert length(am_steps) == nsteps
     @assert length(bm_steps) == nsteps
@@ -1259,7 +1710,7 @@ function apply_linrood_multi_substep_adjoint!(
             entry.rm, entry.m, am_steps[t], bm_steps[t],
             entry.q_buf_phase2, entry.q_buf_phase3,
             entry.fx_in, entry.fx_out, entry.fy_in,
-            mesh, Val(5),
+            mesh, Val(ORD),
         )
         # The substep output's adjoint outside the interior is the
         # ``carry-over'' adjoint from the previous reverse step. Inside

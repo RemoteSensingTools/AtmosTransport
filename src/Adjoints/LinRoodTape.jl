@@ -51,8 +51,13 @@ function _linrood_storage_unsupported(storage)
 end
 
 # Per-substep LinRood horizontal tape record. The forward state is
-# stored ONCE per substep for all six panels.
-struct _CSLinRoodHorizRecord{FT, A3, A3x, A3y, P}
+# stored ONCE per substep for all six panels. `ORD` (5 or 7) binds the
+# record to the LinRood scheme order that built it; the reverse pass
+# (`_apply_cs_linrood_horizontal_adjoint!`) reads it from the type and
+# dispatches the face-kernel adjoints to the matching ORD=5 or ORD=7
+# kernel — guaranteeing the adjoint matches the forward path at the
+# panel-edge boundary correction.
+struct _CSLinRoodHorizRecord{FT, A3, A3x, A3y, P, ORD}
     panels_rm    :: NTuple{6, P}     # rm at substep start, post-halo-fill
     panels_m     :: NTuple{6, P}     # m  at substep start, post-halo-fill
     panels_q_buf_phase2 :: NTuple{6, P}   # state B (post-phase-1 pre_advect_y)
@@ -81,7 +86,8 @@ function _record_linrood_horizontal_substep!(
     mesh::CubedSphereMesh{FT},
     flux_scale;
     record_ops::Bool = true,
-) where {FT}
+    ord::Val{ORD} = Val(5),
+) where {FT, ORD}
     Nc = mesh.Nc; Hp = mesh.Hp
     Nz = size(panels_rm[1], 3)
     N = Nc + 2 * Hp
@@ -133,7 +139,7 @@ function _record_linrood_horizontal_substep!(
     synchronize(backend)
     for p in 1:6
         y_face_k!(panels_fy_in[p], panels_rm[p], panels_m[p], panels_bm[p],
-                  Hp, Nc, Val(5); ndrange=(Nc, Nc + 1, Nz))
+                  Hp, Nc, Val(ORD); ndrange=(Nc, Nc + 1, Nz))
         pre_y_k!(panels_q_buf[p], panels_rm[p], panels_m[p], panels_bm[p],
                  panels_fy_in[p], Hp; ndrange=(Nc, Nc, Nz))
     end
@@ -150,9 +156,9 @@ function _record_linrood_horizontal_substep!(
 
     for p in 1:6
         xq_face_k!(panels_fx_out[p], panels_q_buf[p], panels_am[p], panels_m[p],
-                   Hp, Nc, Val(5); ndrange=(Nc + 1, Nc, Nz))
+                   Hp, Nc, Val(ORD); ndrange=(Nc + 1, Nc, Nz))
         x_face_k!(panels_fx_in[p], panels_rm[p], panels_m[p], panels_am[p],
-                  Hp, Nc, Val(5); ndrange=(Nc + 1, Nc, Nz))
+                  Hp, Nc, Val(ORD); ndrange=(Nc + 1, Nc, Nz))
     end
     synchronize(backend)
 
@@ -176,7 +182,7 @@ function _record_linrood_horizontal_substep!(
 
     for p in 1:6
         yq_face_k!(panels_fy_out[p], panels_q_buf[p], panels_bm[p], panels_m[p],
-                   Hp, Nc, Val(5); ndrange=(Nc, Nc + 1, Nz))
+                   Hp, Nc, Val(ORD); ndrange=(Nc, Nc + 1, Nz))
     end
     synchronize(backend)
 
@@ -202,7 +208,7 @@ function _record_linrood_horizontal_substep!(
     A3x = typeof(panels_fx_in[1])
     A3y = typeof(panels_fy_in[1])
     P   = A3
-    return _CSLinRoodHorizRecord{FT, A3, A3x, A3y, P}(
+    return _CSLinRoodHorizRecord{FT, A3, A3x, A3y, P, ORD}(
         panels_rm_tape, panels_m_tape,
         panels_q_buf_phase2, panels_q_buf_phase3,
         panels_fx_in, panels_fx_out, panels_fy_in,
@@ -212,12 +218,15 @@ function _record_linrood_horizontal_substep!(
 end
 
 # Reverse of one LinRood horizontal substep. Mutates the `lambda_panels_rm`,
-# `lambda_panels_m` adjoint accumulators IN PLACE.
+# `lambda_panels_m` adjoint accumulators IN PLACE. The record's `ORD` type
+# parameter selects the face-kernel adjoint variant (Val(5) or Val(7))
+# so the reverse pass matches the forward path's panel-edge boundary
+# behaviour.
 function _apply_cs_linrood_horizontal_adjoint!(
     lambda_panels_rm, lambda_panels_m,
-    record::_CSLinRoodHorizRecord,
+    record::_CSLinRoodHorizRecord{FT, A3, A3x, A3y, P, ORD},
     mesh::CubedSphereMesh{FT},
-) where {FT}
+) where {FT, A3, A3x, A3y, P, ORD}
     # Step 1: per-panel single-panel composition (Plan 25 Commit 4).
     # Each panel's lambda_rm / lambda_m accumulate contributions to
     # their own interior + halo from the panel's own kernel adjoints.
@@ -238,7 +247,7 @@ function _apply_cs_linrood_horizontal_adjoint!(
             record.panels_q_buf_phase2[p], record.panels_q_buf_phase3[p],
             record.panels_fx_in[p], record.panels_fx_out[p],
             record.panels_fy_in[p],
-            mesh, Val(5),
+            mesh, Val(ORD),
         )
         # Carry-over: substep output's halo lambda is NOT overwritten
         # by the substep update (which only touches interior cells).
@@ -302,20 +311,14 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
     # `push!(ops, ...)` site. Default 0 / true keeps the FullCheckpoint
     # path bit-exact.
 
-    # LinRood reverse-pass kernels (`_record_linrood_horizontal_substep!`
-    # / `apply_linrood_horizontal_adjoint_single_panel!`) hardcode
-    # `Val(5)` boundary stencils — they are NOT yet wired through
-    # `Val(ORD)` like the forward FD-reference path
-    # (`_linrood_run_forward_step!`). Silently running the ORD=5 adjoint
-    # against an ORD=7 forward tape would produce a wrong gradient
-    # (tape vs FD inconsistency); reject up front instead. Extending
-    # the adjoint kernels to honour `Val(ORD)` is a follow-up.
-    ORD == 5 || throw(ArgumentError(
-        "LinRoodPPMScheme adjoint tape currently only supports ORD=5; " *
-        "got ORD=$(ORD). The reverse-pass face-kernel adjoints are " *
-        "hardcoded to Val(5) and would silently produce a wrong " *
-        "gradient against an ORD=$(ORD) forward path. Use " *
-        "LinRoodPPMScheme() (ORD=5 default) for adjoint runs."))
+    # ORD ∈ {5, 7}: the adjoint kernels carry `Val(ORD)` end-to-end
+    # (record type binds it; `_apply_cs_linrood_horizontal_adjoint!`
+    # reads it from the record). The ORD=7 reverse-pass applies the
+    # discontinuous-edge boundary correction at panel-edge faces
+    # (`face_idx ∈ {1, Nc+1}`) so the tape and the FD reference match.
+    (ORD == 5 || ORD == 7) || throw(ArgumentError(
+        "LinRoodPPMScheme adjoint tape supports ORD ∈ {5, 7}; got " *
+        "ORD=$(ORD)."))
 
     # LinRoodPPMScheme stages its forward state through
     # `_stage_panels_strict` (which hardcodes `DeviceCSTapeStorage()`)
@@ -362,7 +365,7 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
         # LinRood horizontal substep (first half of the palindrome).
         record_a = _record_linrood_horizontal_substep!(
             panels_rm, panels_m, panels_am, panels_bm, mesh, FT(flux_scale);
-            record_ops = record_ops)
+            record_ops = record_ops, ord = Val(ORD))
         record_ops && push!(ops, record_a)
 
         # Z half-sweep.
@@ -426,7 +429,7 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
         # LinRood horizontal substep (second half of the palindrome).
         record_b = _record_linrood_horizontal_substep!(
             panels_rm, panels_m, panels_am, panels_bm, mesh, FT(flux_scale);
-            record_ops = record_ops)
+            record_ops = record_ops, ord = Val(ORD))
         record_ops && push!(ops, record_b)
 
         # Convection (optional, post-transport).

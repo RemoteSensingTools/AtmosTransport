@@ -450,7 +450,7 @@ end
 # Centered FD JVP for the X-direction `_ppm_x_face_from_q_kernel!`.
 # Returns a (Nc+1, Nc, Nz) face array of dF·δq.
 function _ppm_x_face_from_q_fd_jvp(q, am, m, dq, mesh::AT.CubedSphereMesh{FT};
-                                    eps_fd) where {FT}
+                                    eps_fd, ord::Val{ORD}=Val(5)) where {FT, ORD}
     Nc = mesh.Nc; Hp = mesh.Hp
     Nz = size(q, 3)
     fx_plus  = zeros(FT, Nc + 1, Nc, Nz)
@@ -459,14 +459,14 @@ function _ppm_x_face_from_q_fd_jvp(q, am, m, dq, mesh::AT.CubedSphereMesh{FT};
     k! = Adv._ppm_x_face_from_q_kernel!(backend, 256)
     q_plus  = q .+ FT(eps_fd) .* dq
     q_minus = q .- FT(eps_fd) .* dq
-    k!(fx_plus,  q_plus,  am, m, Hp, Nc, Val(5); ndrange=(Nc + 1, Nc, Nz))
-    k!(fx_minus, q_minus, am, m, Hp, Nc, Val(5); ndrange=(Nc + 1, Nc, Nz))
+    k!(fx_plus,  q_plus,  am, m, Hp, Nc, Val(ORD); ndrange=(Nc + 1, Nc, Nz))
+    k!(fx_minus, q_minus, am, m, Hp, Nc, Val(ORD); ndrange=(Nc + 1, Nc, Nz))
     synchronize(backend)
     return (fx_plus .- fx_minus) ./ (FT(2) * FT(eps_fd))
 end
 
 function _ppm_y_face_from_q_fd_jvp(q, bm, m, dq, mesh::AT.CubedSphereMesh{FT};
-                                    eps_fd) where {FT}
+                                    eps_fd, ord::Val{ORD}=Val(5)) where {FT, ORD}
     Nc = mesh.Nc; Hp = mesh.Hp
     Nz = size(q, 3)
     fy_plus  = zeros(FT, Nc, Nc + 1, Nz)
@@ -475,8 +475,8 @@ function _ppm_y_face_from_q_fd_jvp(q, bm, m, dq, mesh::AT.CubedSphereMesh{FT};
     k! = Adv._ppm_y_face_from_q_kernel!(backend, 256)
     q_plus  = q .+ FT(eps_fd) .* dq
     q_minus = q .- FT(eps_fd) .* dq
-    k!(fy_plus,  q_plus,  bm, m, Hp, Nc, Val(5); ndrange=(Nc, Nc + 1, Nz))
-    k!(fy_minus, q_minus, bm, m, Hp, Nc, Val(5); ndrange=(Nc, Nc + 1, Nz))
+    k!(fy_plus,  q_plus,  bm, m, Hp, Nc, Val(ORD); ndrange=(Nc, Nc + 1, Nz))
+    k!(fy_minus, q_minus, bm, m, Hp, Nc, Val(ORD); ndrange=(Nc, Nc + 1, Nz))
     synchronize(backend)
     return (fy_plus .- fy_minus) ./ (FT(2) * FT(eps_fd))
 end
@@ -543,22 +543,102 @@ end
         @test isapprox(lhs, rhs; atol=1e-7, rtol=1e-6)
     end
 
-    @testset "rejects non-ORD-5 dispatch (Commit 3b territory)" begin
+    @testset "X face_from_q ORD=7 VJP vs FD JVP (panel-edge boundary correction)" begin
+        # ORD=7 differs from ORD=5 only at panel-edge faces
+        # (`face_idx ∈ {1, Nc+1}`) where the forward path overrides the
+        # PPM edges with the linear discontinuous extrapolation. The
+        # interior is bit-equal to ORD=5; this test exercises BOTH
+        # interior and panel-edge faces simultaneously through the same
+        # JVP-vs-VJP identity used for ORD=5.
+        FT = Float64
+        Nc = 4; Hp = 3; Nz = 2
+        mesh = AT.CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
+        N = Nc + 2Hp
+
+        rng = MersenneTwister(7101)
+        q = FT.([sin(0.13i + 0.21j + 0.07k) for i in 1:N, j in 1:N, k in 1:Nz])
+        am = FT(0.02) .* randn(rng, FT, Nc + 1, Nc, Nz)
+        m  = FT(2) .+ rand(rng, FT, N, N, Nz)
+
+        lambda_fx_face = randn(rng, FT, Nc + 1, Nc, Nz)
+        lambda_q = zeros(FT, N, N, Nz)
+        Adv.apply_ppm_x_face_from_q_adjoint!(
+            lambda_q, lambda_fx_face, q, am, m, mesh, Val(7),
+        )
+
+        dq = randn(rng, FT, N, N, Nz)
+        fd_jvp = _ppm_x_face_from_q_fd_jvp(q, am, m, dq, mesh; eps_fd=1e-6, ord=Val(7))
+
+        lhs = _inner_full(lambda_fx_face, fd_jvp)
+        rhs = sum(lambda_q .* dq)
+        @test isapprox(lhs, rhs; atol=1e-7, rtol=1e-6)
+    end
+
+    @testset "Y face_from_q ORD=7 VJP vs FD JVP (panel-edge boundary correction)" begin
+        FT = Float64
+        Nc = 4; Hp = 3; Nz = 2
+        mesh = AT.CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
+        N = Nc + 2Hp
+
+        rng = MersenneTwister(7202)
+        q = FT.([sin(0.11i - 0.17j + 0.05k) for i in 1:N, j in 1:N, k in 1:Nz])
+        bm = FT(0.02) .* randn(rng, FT, Nc, Nc + 1, Nz)
+        m  = FT(2) .+ rand(rng, FT, N, N, Nz)
+
+        lambda_fy_face = randn(rng, FT, Nc, Nc + 1, Nz)
+        lambda_q = zeros(FT, N, N, Nz)
+        Adv.apply_ppm_y_face_from_q_adjoint!(
+            lambda_q, lambda_fy_face, q, bm, m, mesh, Val(7),
+        )
+
+        dq = randn(rng, FT, N, N, Nz)
+        fd_jvp = _ppm_y_face_from_q_fd_jvp(q, bm, m, dq, mesh; eps_fd=1e-6, ord=Val(7))
+
+        lhs = _inner_full(lambda_fy_face, fd_jvp)
+        rhs = sum(lambda_q .* dq)
+        @test isapprox(lhs, rhs; atol=1e-7, rtol=1e-6)
+    end
+
+    @testset "ORD=7 interior is bit-equal to ORD=5 (no panel-edge cells in scope)" begin
+        # Build a config where the stencil never touches face_idx ∈ {1, Nc+1}.
+        # We do this by zeroing lambda_fx_face/lambda_fy_face at those
+        # columns / rows: ∂L/∂q is then a pure sum over interior faces,
+        # which the ORD=7 adjoint must produce bit-equal to ORD=5.
+        FT = Float64
+        Nc = 4; Hp = 3; Nz = 2
+        mesh = AT.CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
+        N = Nc + 2Hp
+        rng = MersenneTwister(7303)
+        q = FT.([sin(0.13i + 0.21j + 0.07k) for i in 1:N, j in 1:N, k in 1:Nz])
+        am = FT(0.02) .* randn(rng, FT, Nc + 1, Nc, Nz)
+        m  = FT(2) .+ rand(rng, FT, N, N, Nz)
+        lambda_fx_face = randn(rng, FT, Nc + 1, Nc, Nz)
+        # Zero the two panel-edge face columns.
+        lambda_fx_face[1, :, :] .= 0
+        lambda_fx_face[Nc + 1, :, :] .= 0
+        lambda_q_ord5 = zeros(FT, N, N, Nz)
+        lambda_q_ord7 = zeros(FT, N, N, Nz)
+        Adv.apply_ppm_x_face_from_q_adjoint!(
+            lambda_q_ord5, lambda_fx_face, q, am, m, mesh, Val(5))
+        Adv.apply_ppm_x_face_from_q_adjoint!(
+            lambda_q_ord7, lambda_fx_face, q, am, m, mesh, Val(7))
+        @test lambda_q_ord5 == lambda_q_ord7
+    end
+
+    @testset "rejects unsupported ORD" begin
         FT = Float64
         Nc = 2; Hp = 3; Nz = 1
         mesh = AT.CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
         N = Nc + 2Hp
-
         q  = zeros(FT, N, N, Nz)
         am = zeros(FT, Nc + 1, Nc, Nz)
         m  = ones(FT, N, N, Nz)
         lambda_fx_face = zeros(FT, Nc + 1, Nc, Nz)
         lambda_q = zeros(FT, N, N, Nz)
-
         @test_throws ArgumentError Adv.apply_ppm_x_face_from_q_adjoint!(
-            lambda_q, lambda_fx_face, q, am, m, mesh, Val(7))
+            lambda_q, lambda_fx_face, q, am, m, mesh, Val(4))
         @test_throws ArgumentError Adv.apply_ppm_y_face_from_q_adjoint!(
-            lambda_q, lambda_fx_face, q, am, m, mesh, Val(7))
+            lambda_q, lambda_fx_face, q, am, m, mesh, Val(6))
     end
 end
 
@@ -572,7 +652,7 @@ end
 # ===========================================================================
 
 function _ppm_x_face_fd_jvp(rm, m, am, drm, dm, mesh::AT.CubedSphereMesh{FT};
-                             eps_fd) where {FT}
+                             eps_fd, ord::Val{ORD}=Val(5)) where {FT, ORD}
     Nc = mesh.Nc; Hp = mesh.Hp
     Nz = size(rm, 3)
     fx_plus  = zeros(FT, Nc + 1, Nc, Nz)
@@ -583,14 +663,14 @@ function _ppm_x_face_fd_jvp(rm, m, am, drm, dm, mesh::AT.CubedSphereMesh{FT};
     rm_minus = rm .- FT(eps_fd) .* drm
     m_plus   = m  .+ FT(eps_fd) .* dm
     m_minus  = m  .- FT(eps_fd) .* dm
-    k!(fx_plus,  rm_plus,  m_plus,  am, Hp, Nc, Val(5); ndrange=(Nc + 1, Nc, Nz))
-    k!(fx_minus, rm_minus, m_minus, am, Hp, Nc, Val(5); ndrange=(Nc + 1, Nc, Nz))
+    k!(fx_plus,  rm_plus,  m_plus,  am, Hp, Nc, Val(ORD); ndrange=(Nc + 1, Nc, Nz))
+    k!(fx_minus, rm_minus, m_minus, am, Hp, Nc, Val(ORD); ndrange=(Nc + 1, Nc, Nz))
     synchronize(backend)
     return (fx_plus .- fx_minus) ./ (FT(2) * FT(eps_fd))
 end
 
 function _ppm_y_face_fd_jvp(rm, m, bm, drm, dm, mesh::AT.CubedSphereMesh{FT};
-                             eps_fd) where {FT}
+                             eps_fd, ord::Val{ORD}=Val(5)) where {FT, ORD}
     Nc = mesh.Nc; Hp = mesh.Hp
     Nz = size(rm, 3)
     fy_plus  = zeros(FT, Nc, Nc + 1, Nz)
@@ -601,8 +681,8 @@ function _ppm_y_face_fd_jvp(rm, m, bm, drm, dm, mesh::AT.CubedSphereMesh{FT};
     rm_minus = rm .- FT(eps_fd) .* drm
     m_plus   = m  .+ FT(eps_fd) .* dm
     m_minus  = m  .- FT(eps_fd) .* dm
-    k!(fy_plus,  rm_plus,  m_plus,  bm, Hp, Nc, Val(5); ndrange=(Nc, Nc + 1, Nz))
-    k!(fy_minus, rm_minus, m_minus, bm, Hp, Nc, Val(5); ndrange=(Nc, Nc + 1, Nz))
+    k!(fy_plus,  rm_plus,  m_plus,  bm, Hp, Nc, Val(ORD); ndrange=(Nc, Nc + 1, Nz))
+    k!(fy_minus, rm_minus, m_minus, bm, Hp, Nc, Val(ORD); ndrange=(Nc, Nc + 1, Nz))
     synchronize(backend)
     return (fy_plus .- fy_minus) ./ (FT(2) * FT(eps_fd))
 end
@@ -663,6 +743,88 @@ end
         rhs = sum(lambda_rm .* drm) + sum(lambda_m .* dm)
 
         @test isapprox(lhs, rhs; atol=1e-7, rtol=1e-6)
+    end
+
+    @testset "X face (rm-input) ORD=7 VJP vs FD JVP" begin
+        # ORD=7 adds the linear discontinuous-edge correction at panel-
+        # edge faces. The donor-state lo/hi helpers carry the corrected
+        # `(bl, br, b0)` into the α-contribution so the FD JVP and the
+        # adjoint VJP agree at both interior and panel-edge faces.
+        FT = Float64
+        Nc = 4; Hp = 3; Nz = 2
+        mesh = AT.CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
+        N = Nc + 2Hp
+
+        rng = MersenneTwister(7301)
+        rm = FT.([sin(0.13i + 0.21j + 0.07k) for i in 1:N, j in 1:N, k in 1:Nz])
+        m  = FT(3) .+ rand(rng, FT, N, N, Nz)
+        am = FT(0.02) .* randn(rng, FT, Nc + 1, Nc, Nz)
+
+        lambda_fx_face = randn(rng, FT, Nc + 1, Nc, Nz)
+        lambda_rm = zeros(FT, N, N, Nz)
+        lambda_m  = zeros(FT, N, N, Nz)
+        Adv.apply_ppm_x_face_adjoint!(
+            lambda_rm, lambda_m, lambda_fx_face, rm, m, am, mesh, Val(7),
+        )
+
+        drm = randn(rng, FT, N, N, Nz)
+        dm  = randn(rng, FT, N, N, Nz)
+        fd_jvp = _ppm_x_face_fd_jvp(rm, m, am, drm, dm, mesh;
+                                      eps_fd=1e-6, ord=Val(7))
+
+        lhs = _inner_full(lambda_fx_face, fd_jvp)
+        rhs = sum(lambda_rm .* drm) + sum(lambda_m .* dm)
+        @test isapprox(lhs, rhs; atol=1e-7, rtol=1e-6)
+    end
+
+    @testset "Y face (rm-input) ORD=7 VJP vs FD JVP" begin
+        FT = Float64
+        Nc = 4; Hp = 3; Nz = 2
+        mesh = AT.CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
+        N = Nc + 2Hp
+
+        rng = MersenneTwister(7401)
+        rm = FT.([sin(0.11i - 0.17j + 0.05k) for i in 1:N, j in 1:N, k in 1:Nz])
+        m  = FT(3) .+ rand(rng, FT, N, N, Nz)
+        bm = FT(0.02) .* randn(rng, FT, Nc, Nc + 1, Nz)
+
+        lambda_fy_face = randn(rng, FT, Nc, Nc + 1, Nz)
+        lambda_rm = zeros(FT, N, N, Nz)
+        lambda_m  = zeros(FT, N, N, Nz)
+        Adv.apply_ppm_y_face_adjoint!(
+            lambda_rm, lambda_m, lambda_fy_face, rm, m, bm, mesh, Val(7),
+        )
+
+        drm = randn(rng, FT, N, N, Nz)
+        dm  = randn(rng, FT, N, N, Nz)
+        fd_jvp = _ppm_y_face_fd_jvp(rm, m, bm, drm, dm, mesh;
+                                      eps_fd=1e-6, ord=Val(7))
+
+        lhs = _inner_full(lambda_fy_face, fd_jvp)
+        rhs = sum(lambda_rm .* drm) + sum(lambda_m .* dm)
+        @test isapprox(lhs, rhs; atol=1e-7, rtol=1e-6)
+    end
+
+    @testset "rm-input ORD=7 interior bit-equals ORD=5" begin
+        FT = Float64
+        Nc = 4; Hp = 3; Nz = 2
+        mesh = AT.CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
+        N = Nc + 2Hp
+        rng = MersenneTwister(7501)
+        rm = FT.([sin(0.13i + 0.21j + 0.07k) for i in 1:N, j in 1:N, k in 1:Nz])
+        m  = FT(3) .+ rand(rng, FT, N, N, Nz)
+        am = FT(0.02) .* randn(rng, FT, Nc + 1, Nc, Nz)
+        lambda_fx_face = randn(rng, FT, Nc + 1, Nc, Nz)
+        lambda_fx_face[1, :, :] .= 0
+        lambda_fx_face[Nc + 1, :, :] .= 0
+        lambda_rm_5 = zeros(FT, N, N, Nz); lambda_m_5 = zeros(FT, N, N, Nz)
+        lambda_rm_7 = zeros(FT, N, N, Nz); lambda_m_7 = zeros(FT, N, N, Nz)
+        Adv.apply_ppm_x_face_adjoint!(
+            lambda_rm_5, lambda_m_5, lambda_fx_face, rm, m, am, mesh, Val(5))
+        Adv.apply_ppm_x_face_adjoint!(
+            lambda_rm_7, lambda_m_7, lambda_fx_face, rm, m, am, mesh, Val(7))
+        @test lambda_rm_5 == lambda_rm_7
+        @test lambda_m_5  == lambda_m_7
     end
 end
 

@@ -528,21 +528,40 @@ end
         checkpoint = AT.StrideCheckpoint(2))
 end
 
-@testset "StrideCheckpoint LinRood ORD=7 rejected (adjoint hardcoded Val(5))" begin
-    # GPT-review M1: `_record_cs_linrood_tape` rejects ORD≠5 because
-    # the reverse-pass kernels are still hardcoded to Val(5).
-    # Silently running ORD=7 forward + ORD=5 adjoint would produce
-    # a wrong gradient; the guard fires before any tape is built.
+@testset "StrideCheckpoint vs FullCheckpoint — LinRoodPPMScheme ORD=7" begin
+    # Plan-25 Commit 3b: with the ORD=7 face-kernel adjoints in place
+    # (`_apply_ord7_boundary_d6` + ORD=7 grad/chain helpers in
+    # `linrood_adjoint_kernels.jl`), `LinRoodPPMScheme(7)` runs through
+    # the tape end-to-end. This testset mirrors the ORD=5
+    # "StrideCheckpoint vs FullCheckpoint — LinRoodPPMScheme" testset
+    # above, using the same `_footprints_equal` parity helper.
     mesh, panels_m, panels_rm, am_steps, bm_steps, cm_steps = _stride_problem(
-        ; Nc = 4, Nz = 3, nsteps = 4, FT = Float64)
+        ; Nc = 4, Nz = 4, nsteps = 6, FT = Float64)
+    FT = eltype(panels_m[1])
+    N = mesh.Nc + 2mesh.Hp
+    Nz = size(panels_m[1], 3)
+    for p in 1:6
+        @inbounds for k in 1:Nz, j in 1:N, i in 1:N
+            panels_rm[p][i, j, k] = panels_m[p][i, j, k] *
+                (FT(0.06) + FT(0.011) * sin(FT(0.27i + 0.13j + 0.19k + 0.07p)))
+        end
+    end
+    Adv.fill_panel_halos!(panels_rm, mesh; dir = 0)
+
     objective = _column_mean_objective(mesh)
-    @test_throws ArgumentError AT.cs_surface_emission_footprint(
+    scheme = AT.LinRoodPPMScheme(7)
+
+    ref = AT.cs_surface_emission_footprint(
         panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
-        scheme = AT.LinRoodPPMScheme(7), dt = 1.0)
-    @test_throws ArgumentError AT.cs_surface_emission_footprint(
-        panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
-        scheme = AT.LinRoodPPMScheme(7), dt = 1.0,
-        checkpoint = AT.StrideCheckpoint(2))
+        scheme = scheme, dt = 1.0)
+
+    for K in (1, 2, 3, 6, 12)
+        stride = AT.cs_surface_emission_footprint(
+            panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
+            scheme = scheme, dt = 1.0,
+            checkpoint = AT.StrideCheckpoint(K))
+        @test _footprints_equal(ref, stride)
+    end
 end
 
 @testset "stride rejects pre-constructed tape_storage" begin

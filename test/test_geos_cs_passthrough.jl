@@ -264,5 +264,23 @@ end
         finally
             close(reader)
         end
+
+        unified_path = joinpath(tmpdir, "out_cs_unified.bin")
+        unified = process_day(Date(2021, 12, 1), grid, settings, vertical;
+                              out_path = unified_path,
+                              dt_met_seconds = 3600.0,
+                              FT = FT_TEST,
+                              mass_basis = :dry,
+                              replay_tol = 1e-12,
+                              unified_driver = true)
+        @test isfile(unified_path)
+        @test unified.out_path == unified_path
+        @test unified.worst_replay_rel ≈ result.worst_replay_rel
+        @test unified.worst_replay_abs ≈ result.worst_replay_abs
+        @test unified.worst_replay_win == result.worst_replay_win
+        @test read(unified_path) == read(out_path)
+        for p in 1:6
+            @test unified.final_m[p] == result.final_m[p]
+        end
     end
 end

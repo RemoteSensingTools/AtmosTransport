@@ -492,6 +492,165 @@ function advance_window!(workspace::GEOSCubedSphereWindowWorkspace,
     return nothing
 end
 
+mutable struct GEOSCSUnifiedDriverContext{G, S, V}
+    grid             :: G
+    settings         :: S
+    vertical         :: V
+    steps_per_met    :: Int
+    worst_replay_rel :: Float64
+    worst_replay_abs :: Float64
+    worst_replay_win :: Int
+end
+
+function driver_ingest_window!(workspace::GEOSCubedSphereWindowWorkspace{FT},
+                               reader::GEOSNativeReader{FT},
+                               win::Int,
+                               ctx::GEOSCSUnifiedDriverContext) where FT
+    return ingest_window!(workspace, reader, win, ctx.grid, ctx.settings, ctx.vertical)
+end
+
+function driver_drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{FT},
+                                     contract::CubedSphereContract{FT},
+                                     win::Int,
+                                     ctx::GEOSCSUnifiedDriverContext) where FT
+    ready_diag = drain_ready_windows!(workspace, contract, win, ctx.grid,
+                                      ctx.settings, ctx.steps_per_met)
+    replay = ready_diag.contract.replay
+    if ctx.worst_replay_win == 0 || replay.max_rel_err > ctx.worst_replay_rel
+        ctx.worst_replay_rel = replay.max_rel_err
+        ctx.worst_replay_abs = replay.max_abs_err
+        ctx.worst_replay_win = win
+    end
+    return ready_diag
+end
+
+function driver_flush_final_windows!(::GEOSCubedSphereWindowWorkspace,
+                                     ::GEOSNativeReader,
+                                     ::CubedSphereContract,
+                                     ::GEOSCSUnifiedDriverContext)
+    return ()
+end
+
+function driver_after_write_window!(workspace::GEOSCubedSphereWindowWorkspace,
+                                    _reader::GEOSNativeReader,
+                                    _ready::ReadyWindow,
+                                    ctx::GEOSCSUnifiedDriverContext)
+    return advance_window!(workspace, ctx.grid)
+end
+
+function _process_day_geos_cs_unified(date::Date,
+                                      grid::CubedSphereTargetGeometry,
+                                      settings::AbstractGEOSSettings,
+                                      vertical;
+                                      out_path::AbstractString,
+                                      dt_met_seconds::Real,
+                                      FT::Type{<:AbstractFloat},
+                                      mass_basis::Symbol,
+                                      replay_tol::Real,
+                                      positivity_cfl_limit::Real,
+                                      require_substep_positivity::Bool,
+                                      chain_mass::Bool,
+                                      seed_m::Union{Nothing, NTuple{6, <:AbstractArray}})
+    Nc     = grid.Nc
+    npanel = CS_PANEL_COUNT
+    Nz     = vertical.Nz
+    vc     = vertical.merged_vc
+    panel_convention = "geos_native"
+
+    steps_per_met = round(Int, FT(dt_met_seconds) / FT(settings.mass_flux_dt))
+    reader_seed = seed_m === nothing ? nothing :
+        ntuple(p -> Array{FT, 3}(seed_m[p]), CS_PANEL_COUNT)
+    reader = open_reader(settings, date, FT;
+                         seed = reader_seed,
+                         chain_mass = chain_mass,
+                         next_day_handle = true)
+    driver_started = false
+    inner_writer = nothing
+    tmp_path = out_path * ".tmp"
+
+    try
+        nw = windows_per_day(reader)
+        workspace = allocate_window_workspace(grid, settings, vertical, FT;
+                                              dt_met_seconds = dt_met_seconds,
+                                              chain_mass = chain_mass)
+
+        @info "GEOS → CS: $(date), source=$(settings) → $(out_path) [unified]"
+        @info "  source_C=$(settings.Nc) target_C=$Nc  strategy=$(_geos_cs_strategy_name(workspace.strategy))"
+        @info "  Nz=$Nz  windows=$nw  steps_per_met=$steps_per_met  flux_scale=$(workspace.flux_scale)"
+        @info "  Level orientation: $(reader.handles.orientation)  (next-day endpoint: $(_geos_next_endpoint_available(reader.handles)))"
+
+        mkpath(dirname(out_path))
+        isfile(tmp_path) && rm(tmp_path; force = true)
+
+        inner_writer = open_streaming_cs_transport_binary(
+            tmp_path, Nc, npanel, Nz, nw, vc;
+            FT = FT,
+            dt_met_seconds = dt_met_seconds,
+            steps_per_window = steps_per_met,
+            mass_basis = mass_basis,
+            include_flux_delta = true,
+            include_surface    = settings.include_surface,
+            include_cmfmc      = settings.include_convection,
+            include_dtrain     = settings.include_convection,
+            panel_convention   = panel_convention,
+            cs_definition      = _cs_definition_tag(grid),
+            cs_coordinate_law  = _cs_coordinate_law_tag(grid),
+            cs_center_law      = _cs_center_law_tag(grid),
+            longitude_offset_deg = longitude_offset_deg(cs_definition(grid.mesh)),
+            extra_header = Dict{String, Any}(
+                "source_Nc" => settings.Nc,
+                "geos_cs_resolution_strategy" => _geos_cs_strategy_name(workspace.strategy),
+            ),
+        )
+        writer = CubedSphereBinaryWriter(inner_writer, DryBasis();
+                                         Nc = Nc, npanel = npanel,
+                                         final_path = out_path)
+        window_contract = CubedSphereContract{FT}(
+            replay_tol = replay_tol,
+            positivity_cfl_limit = positivity_cfl_limit,
+            require_substep_positivity = require_substep_positivity,
+            steps_per_window = steps_per_met,
+        )
+        ctx = GEOSCSUnifiedDriverContext(grid, settings, vertical, steps_per_met,
+                                         0.0, 0.0, 0)
+
+        t_start = time()
+        driver_started = true
+        driver_result = run_unified_preprocessor_day!(
+            UnifiedPreprocessorDay(reader, workspace, window_contract, writer;
+                                   context = ctx))
+        elapsed = time() - t_start
+        @info @sprintf("  Done in %.1fs (%.2fs/window). Worst replay: rel=%.2e abs=%.2e at win=%d",
+                       elapsed, elapsed / nw, ctx.worst_replay_rel,
+                       ctx.worst_replay_abs, ctx.worst_replay_win)
+
+        final_m = chain_mass ? ntuple(p -> copy(workspace.m_cur[p]), npanel) : nothing
+        set_end_of_day_seed!(reader, final_m)
+
+        return (
+            elapsed = elapsed,
+            worst_replay_rel = ctx.worst_replay_rel,
+            worst_replay_abs = ctx.worst_replay_abs,
+            worst_replay_win = ctx.worst_replay_win,
+            out_path = driver_result.out_path,
+            final_m = final_m,
+        )
+    finally
+        if !driver_started
+            if inner_writer !== nothing
+                try
+                    close_streaming_transport_binary!(inner_writer)
+                catch err
+                    @warn("Unified GEOS-CS: failed to close writer during cleanup",
+                          exception = (err, catch_backtrace()))
+                end
+            end
+            close_reader!(reader)
+            isfile(tmp_path) && rm(tmp_path; force = true)
+        end
+    end
+end
+
 """
     process_day(date, grid::CubedSphereTargetGeometry,
                 settings::AbstractGEOSSettings, vertical;
@@ -502,7 +661,8 @@ end
                 replay_tol = replay_tolerance(FT),
                 seed_m = nothing,
                 next_day_hour0 = nothing,
-                chain_mass = true) -> NamedTuple
+                chain_mass = true,
+                unified_driver = false) -> NamedTuple
 
 Build a v4 cubed-sphere transport binary at `out_path` from one UTC day of
 native GEOS data. Source mesh and target mesh must match (CS passthrough).
@@ -527,6 +687,10 @@ last window. With `chain_mass = false`, `final_m` is `nothing`.
 `next_day_hour0` is part of the inherited topology-dispatch contract but
 unused — the GEOS reader handles next-day endpoints internally via
 `next_ctm_i1`.
+
+Set `unified_driver = true` to run the additive Plan 41 P3 driver shell for
+this topology. Default remains the legacy loop until all topologies have an
+opt-in parity path.
 """
 function process_day(date::Date,
                      grid::CubedSphereTargetGeometry,
@@ -541,7 +705,8 @@ function process_day(date::Date,
                      require_substep_positivity::Bool = true,
                      chain_mass::Bool = true,
                      seed_m::Union{Nothing, NTuple{6, <:AbstractArray}} = nothing,
-                     next_day_hour0 = nothing)
+                     next_day_hour0 = nothing,
+                     unified_driver::Bool = false)
     # Reject configurations the path cannot honor:
     mass_basis === :dry ||
         error("GEOS-CS passthrough only supports mass_basis=:dry; got $(mass_basis). " *
@@ -550,6 +715,21 @@ function process_day(date::Date,
     # Single source of truth: the binary's panel-convention attrib comes from
     # the target mesh's convention, not from a duplicated config key.
     panel_convention = "geos_native"
+
+    if unified_driver
+        return _process_day_geos_cs_unified(
+            date, grid, settings, vertical;
+            out_path = out_path,
+            dt_met_seconds = dt_met_seconds,
+            FT = FT,
+            mass_basis = mass_basis,
+            replay_tol = replay_tol,
+            positivity_cfl_limit = positivity_cfl_limit,
+            require_substep_positivity = require_substep_positivity,
+            chain_mass = chain_mass,
+            seed_m = seed_m,
+        )
+    end
 
     Nc     = grid.Nc
     npanel = CS_PANEL_COUNT

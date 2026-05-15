@@ -31,6 +31,10 @@ Executor state, 2026-05-15:
   with migration hooks for window count, ingest, drain, flush, and post-write
   advancement. It normalizes both future raw `ReadyWindow`s and current
   preverified `(ready, contract)` events.
+- P3c shipped in the current Codex working tree: GEOS-native CS has the first
+  real production opt-in (`unified_driver = true`). The default legacy loop is
+  unchanged, and the synthetic GEOS passthrough test now byte-compares legacy
+  vs unified outputs.
 - Next phase is P3: collapse the still-long legacy `process_day`
   driver bodies into the unified driver behind an opt-in flag.
 
@@ -438,6 +442,11 @@ common lifecycle (ingest -> drain -> verify/update -> write -> close ->
 summarize -> promote; close/quarantine on failure) and exposes small
 migration hooks so existing workspace methods can be adapted one topology
 at a time.
+
+P3c wires the first production opt-in: GEOS-native CS gets
+`process_day(...; unified_driver=true)`. The legacy path stays default.
+The parity gate is byte equality between the legacy and unified binaries
+on the synthetic GEOS passthrough fixture.
 
 Add `transport_binary/driver.jl` with the ~80-line driver above.
 **Don't** wire it in yet — `entrypoint.jl::process_day` still routes

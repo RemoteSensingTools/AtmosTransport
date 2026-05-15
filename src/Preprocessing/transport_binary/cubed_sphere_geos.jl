@@ -338,6 +338,160 @@ function _geos_dtrain_payload!(::GEOSCSBlockCoarsenStrategy{R}, ws, raw) where R
     return ws.dtrain
 end
 
+mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA} <:
+               AbstractWindowWorkspace{CubedSphereTargetGeometry, FT}
+    strategy    :: ST
+    strategy_ws :: SW
+    raw         :: RAW
+    am_v4       :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
+    bm_v4       :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
+    cm_v4       :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
+    dm_v4       :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
+    m_cur       :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
+    m_next_pf   :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
+    ps_cur      :: NTuple{CS_PANEL_COUNT, Array{FT, 2}}
+    ΔB          :: Vector{FT}
+    g           :: FT
+    inv_g       :: FT
+    cell_areas  :: CA
+    flux_scale  :: FT
+    two_steps   :: FT
+    chain_mass  :: Bool
+end
+
+function allocate_window_workspace(grid::CubedSphereTargetGeometry,
+                                   settings::AbstractGEOSSettings,
+                                   vertical,
+                                   ::Type{FT};
+                                   dt_met_seconds::Real,
+                                   chain_mass::Bool = true,
+                                   cache = nothing) where FT
+    Nc = grid.Nc
+    Nz = vertical.Nz
+    strategy = _geos_cs_resolution_strategy(settings, grid)
+    strategy_ws = _geos_strategy_workspace(strategy, settings, grid, FT, Nz)
+    npanel = CS_PANEL_COUNT
+
+    vc = vertical.merged_vc
+    g = FT(GRAV)
+    inv_g = inv(g)
+    cell_areas = grid.mesh.cell_areas
+    ΔB = FT[FT(vc.B[k + 1] - vc.B[k]) for k in 1:Nz]
+    steps_per_met = round(Int, FT(dt_met_seconds) / FT(settings.mass_flux_dt))
+    dt_factor = FT(settings.mass_flux_dt / 2)
+    flux_scale = dt_factor / g
+    two_steps = FT(2 * steps_per_met)
+
+    am_v4 = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz), npanel)
+    bm_v4 = ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz), npanel)
+    cm_v4 = ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), npanel)
+    dm_v4 = ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel)
+    m_cur = ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel)
+    m_next_pf = ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel)
+    ps_cur = ntuple(_ -> zeros(FT, Nc, Nc), npanel)
+    raw = allocate_raw_window(settings; FT = FT, Nz = Nz)
+
+    return GEOSCubedSphereWindowWorkspace{
+        FT, typeof(strategy), typeof(strategy_ws), typeof(raw), typeof(cell_areas)}(
+            strategy, strategy_ws, raw, am_v4, bm_v4, cm_v4, dm_v4,
+            m_cur, m_next_pf, ps_cur, ΔB, g, inv_g, cell_areas,
+            flux_scale, two_steps, chain_mass)
+end
+
+function ingest_window!(workspace::GEOSCubedSphereWindowWorkspace{FT},
+                        reader::GEOSNativeReader{FT},
+                        win::Int,
+                        grid::CubedSphereTargetGeometry,
+                        settings::AbstractGEOSSettings,
+                        vertical) where FT
+    Nc = grid.Nc
+    Nz = vertical.Nz
+    read_window!(workspace.raw, reader, win)
+
+    _geos_fluxes_to_target!(workspace.strategy, workspace.strategy_ws,
+                            workspace.am_v4, workspace.bm_v4,
+                            workspace.raw, grid, Nc, Nz,
+                            workspace.flux_scale)
+
+    if win == 1 || !workspace.chain_mass
+        if workspace.chain_mass && win == 1 && reader.seed !== nothing
+            for p in 1:CS_PANEL_COUNT
+                size(reader.seed[p]) == (Nc, Nc, Nz) ||
+                    error("seed_m[$p] shape $(size(reader.seed[p])) ≠ ($Nc, $Nc, $Nz)")
+                copyto!(workspace.m_cur[p], reader.seed[p])
+            end
+        else
+            _geos_seed_mass!(workspace.strategy, workspace.strategy_ws,
+                             workspace.m_cur, workspace.raw,
+                             workspace.cell_areas, workspace.inv_g, Nc, Nz)
+        end
+        for p in 1:CS_PANEL_COUNT
+            _ps_from_air_mass!(workspace.ps_cur[p], workspace.m_cur[p],
+                               workspace.cell_areas, workspace.g, Nc, Nz)
+        end
+    end
+
+    compute_cs_cm_pressure_fixer!(workspace.cm_v4, workspace.am_v4,
+                                  workspace.bm_v4, workspace.ΔB, Nc, Nz)
+    _evolve_mass_pressure_fixer!(workspace.m_next_pf, workspace.m_cur,
+                                 workspace.am_v4, workspace.bm_v4,
+                                 workspace.ΔB, workspace.two_steps, Nc, Nz)
+    return nothing
+end
+
+function drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{FT},
+                              contract::CubedSphereContract{FT},
+                              win::Int,
+                              grid::CubedSphereTargetGeometry,
+                              settings::AbstractGEOSSettings,
+                              steps_per_met::Int) where FT
+    fill_cs_window_mass_tendency!(workspace.dm_v4, workspace.m_cur,
+                                  workspace.m_next_pf, steps_per_met)
+    contract_diag = verify_window!((m_cur = workspace.m_cur,
+                                     am = workspace.am_v4,
+                                     bm = workspace.bm_v4,
+                                     cm = workspace.cm_v4,
+                                     m_next = workspace.m_next_pf),
+                                    contract, win)
+
+    m_target = ntuple(p -> copy(workspace.m_next_pf[p]), CS_PANEL_COUNT)
+    convert_cs_mass_target_to_delta!(m_target, workspace.m_cur)
+
+    window_nt = (m = workspace.m_cur, am = workspace.am_v4,
+                 bm = workspace.bm_v4, cm = workspace.cm_v4,
+                 ps = workspace.ps_cur, dm = m_target)
+    if settings.include_surface
+        window_nt = merge(window_nt,
+                          (surface = _geos_surface_payload!(
+                               workspace.strategy, workspace.strategy_ws,
+                               workspace.raw),))
+    end
+    if settings.include_convection
+        window_nt = merge(window_nt,
+                          (cmfmc = _geos_cmfmc_payload!(
+                               workspace.strategy, workspace.strategy_ws,
+                               workspace.raw),
+                           dtrain = _geos_dtrain_payload!(
+                               workspace.strategy, workspace.strategy_ws,
+                               workspace.raw)))
+    end
+    ready = ReadyWindow{CubedSphereTargetGeometry, FT}(win, window_nt)
+    return (ready = ready, contract = contract_diag)
+end
+
+function advance_window!(workspace::GEOSCubedSphereWindowWorkspace,
+                         grid::CubedSphereTargetGeometry)
+    workspace.chain_mass || return nothing
+    Nc = grid.Nc
+    Nz = size(workspace.m_cur[1], 3)
+    for p in 1:CS_PANEL_COUNT
+        copyto!(workspace.m_cur[p], workspace.m_next_pf[p])
+        _ps_from_air_mass!(workspace.ps_cur[p], workspace.m_cur[p],
+                           workspace.cell_areas, workspace.g, Nc, Nz)
+    end
+    return nothing
+end
+
 """
     process_day(date, grid::CubedSphereTargetGeometry,
                 settings::AbstractGEOSSettings, vertical;
@@ -398,17 +552,9 @@ function process_day(date::Date,
     panel_convention = "geos_native"
 
     Nc     = grid.Nc
-    strategy = _geos_cs_resolution_strategy(settings, grid)
-    strategy_ws = _geos_strategy_workspace(strategy, settings, grid, FT, vertical.Nz)
     npanel = CS_PANEL_COUNT
     Nz     = vertical.Nz
     vc     = vertical.merged_vc
-    g      = FT(GRAV)
-    inv_g  = inv(g)
-    cell_areas = grid.mesh.cell_areas       # (Nc, Nc) — same metric for all panels
-
-    # ΔB[k] = B[k+1] − B[k] (top-to-bottom; Σ ΔB = 1 by construction).
-    ΔB = FT[FT(vc.B[k + 1] - vc.B[k]) for k in 1:Nz]
 
     steps_per_met = round(Int, FT(dt_met_seconds) / FT(settings.mass_flux_dt))
     # `read_window!` exposes GEOS MFXC/MFYC as a rate-like diagnostic
@@ -419,18 +565,21 @@ function process_day(date::Date,
     # substep, so each stored half-sweep face flux is `MFXC / (2g)`.
     # Because `raw.am` has already divided by `mass_flux_dt`, multiply by
     # `mass_flux_dt / (2g)` here.
-    dt_factor = FT(settings.mass_flux_dt / 2)
-    flux_scale = dt_factor / g
-    two_steps = FT(2 * steps_per_met)
-
-    nw = windows_per_day(settings, date)
+    reader_seed = seed_m === nothing ? nothing :
+        ntuple(p -> Array{FT, 3}(seed_m[p]), CS_PANEL_COUNT)
+    reader = open_reader(settings, date, FT;
+                         seed = reader_seed,
+                         chain_mass = chain_mass,
+                         next_day_handle = true)
+    nw = windows_per_day(reader)
+    workspace = allocate_window_workspace(grid, settings, vertical, FT;
+                                          dt_met_seconds = dt_met_seconds,
+                                          chain_mass = chain_mass)
 
     @info "GEOS → CS: $(date), source=$(settings) → $(out_path)"
-    @info "  source_C=$(settings.Nc) target_C=$Nc  strategy=$(_geos_cs_strategy_name(strategy))"
-    @info "  Nz=$Nz  windows=$nw  steps_per_met=$steps_per_met  flux_scale=$flux_scale"
-
-    handles = open_day(settings, date)
-    @info "  Level orientation: $(handles.orientation)  (next-day endpoint: $(_geos_next_endpoint_available(handles)))"
+    @info "  source_C=$(settings.Nc) target_C=$Nc  strategy=$(_geos_cs_strategy_name(workspace.strategy))"
+    @info "  Nz=$Nz  windows=$nw  steps_per_met=$steps_per_met  flux_scale=$(workspace.flux_scale)"
+    @info "  Level orientation: $(reader.handles.orientation)  (next-day endpoint: $(_geos_next_endpoint_available(reader.handles)))"
 
     mkpath(dirname(out_path))
 
@@ -467,25 +616,9 @@ function process_day(date::Date,
             longitude_offset_deg = longitude_offset_deg(cs_definition(grid.mesh)),
             extra_header = Dict{String, Any}(
                 "source_Nc" => settings.Nc,
-                "geos_cs_resolution_strategy" => _geos_cs_strategy_name(strategy),
+                "geos_cs_resolution_strategy" => _geos_cs_strategy_name(workspace.strategy),
             ),
         )
-        # ---- v4-shape buffers (reused across windows) ----
-        am_v4 = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz),     npanel)
-        bm_v4 = ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz),     npanel)
-        cm_v4 = ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1),     npanel)
-        dm_v4 = ntuple(_ -> zeros(FT, Nc, Nc, Nz),         npanel)
-        # State buffers: m_cur (this window's start) and m_next_pf
-        # (the pressure-fixer-evolved end). When `chain_mass=true`,
-        # m_next_pf becomes the next window's m_cur. GEOS campaign
-        # debugging can set `chain_mass=false` to seed every window from
-        # the raw GEOS endpoint and let the runtime reset air mass while
-        # preserving VMR.
-        m_cur     = ntuple(_ -> zeros(FT, Nc, Nc, Nz),     npanel)
-        m_next_pf = ntuple(_ -> zeros(FT, Nc, Nc, Nz),     npanel)
-        ps_cur    = ntuple(_ -> zeros(FT, Nc, Nc),         npanel)
-        # Source-grid raw window: filled in place by `read_window!` once per window.
-        raw = allocate_raw_window(settings; FT = FT, Nz = Nz)
 
         worst_replay_rel = 0.0
         worst_replay_abs = 0.0
@@ -500,93 +633,18 @@ function process_day(date::Date,
         t_start = time()
 
         @inbounds for win in 1:nw
-            read_window!(raw, settings, handles, date, win)
-
-            # 1. Native MFXC/MFYC (Pa·m²/s on cell-centered indexing) → v4
-            #    face-staggered (kg per substep) with panel-halo one-way prop.
-            _geos_fluxes_to_target!(strategy, strategy_ws, am_v4, bm_v4,
-                                    raw, grid, Nc, Nz, flux_scale)
-
-            # 2. Seed m_cur. The historical pressure-fixer chain carries
-            #    mass across windows/days. For raw-GEOS window-reset runs,
-            #    every window starts from the archive endpoint instead.
-            if win == 1 || !chain_mass
-                if chain_mass && win == 1 && seed_m !== nothing
-                    for p in 1:npanel
-                        size(seed_m[p]) == (Nc, Nc, Nz) ||
-                            error("seed_m[$p] shape $(size(seed_m[p])) ≠ ($Nc, $Nc, $Nz)")
-                        copyto!(m_cur[p], seed_m[p])
-                    end
-                else
-                    _geos_seed_mass!(strategy, strategy_ws, m_cur, raw,
-                                     cell_areas, inv_g, Nc, Nz)
-                end
-                for p in 1:npanel
-                    _ps_from_air_mass!(ps_cur[p], m_cur[p], cell_areas, g, Nc, Nz)
-                end
-            end
-
-            # 3. Pressure-fixer cm (closes cm[Nz+1]=0 by construction).
-            compute_cs_cm_pressure_fixer!(cm_v4, am_v4, bm_v4, ΔB, Nc, Nz)
-
-            # 4. Pressure-fixer-evolved next-window mass.
-            _evolve_mass_pressure_fixer!(m_next_pf, m_cur, am_v4, bm_v4, ΔB,
-                                         two_steps, Nc, Nz)
-
-            # 5. Per-substep mass tendency consistent with the stored cm:
-            #    dm[k] = (m_next_pf[k] − m_cur[k]) / (2·steps_per_met).
-            fill_cs_window_mass_tendency!(dm_v4, m_cur, m_next_pf, steps_per_met)
-
-            # 6. Canonical per-window contract: replay (closes by construction
-            #    under chained PF) + per-substep positivity (the runtime's
-            #    `_cs_static_subcycle_count` depends on this — without it,
-            #    locally-CFL>1 cells drive air mass slightly negative and the
-            #    runtime spirals into n_sub blowup at integration time).
-            contract_diag = verify_window!((m_cur = m_cur,
-                                             am = am_v4,
-                                             bm = bm_v4,
-                                             cm = cm_v4,
-                                             m_next = m_next_pf),
-                                            window_contract, win)
+            ingest_window!(workspace, reader, win, grid, settings, vertical)
+            ready_diag = drain_ready_windows!(workspace, window_contract,
+                                              win, grid, settings, steps_per_met)
+            contract_diag = ready_diag.contract
             if worst_replay_win == 0 || contract_diag.replay.max_rel_err > worst_replay_rel
                 worst_replay_rel = contract_diag.replay.max_rel_err
                 worst_replay_abs = contract_diag.replay.max_abs_err
                 worst_replay_win = win
             end
             update_accumulator!(window_contract, contract_diag.positivity, win)
-
-            # 7. Pack the on-disk endpoint delta `dm = m_next_pf − m_cur` and write.
-            #    `convert_cs_mass_target_to_delta!` mutates m_next_pf into the
-            #    delta in place; we use a fresh copy so the chained state survives.
-            m_target = ntuple(p -> copy(m_next_pf[p]), npanel)
-            convert_cs_mass_target_to_delta!(m_target, m_cur)
-
-            # Convection forcing flows through the same window NamedTuple the
-            # writer already understands (`:cmfmc` / `:dtrain` keys); the
-            # writer no-ops them when the corresponding `include_*` flag is
-            # off. Source-side units stay as GMAO archived them (kg / m² / s).
-            window_nt = (m  = m_cur,    am = am_v4, bm = bm_v4,
-                         cm = cm_v4,    ps = ps_cur,
-                         dm = m_target)
-            if settings.include_surface
-                window_nt = merge(window_nt,
-                                  (surface = _geos_surface_payload!(strategy, strategy_ws, raw),))
-            end
-            if settings.include_convection
-                window_nt = merge(window_nt,
-                                  (cmfmc = _geos_cmfmc_payload!(strategy, strategy_ws, raw),
-                                   dtrain = _geos_dtrain_payload!(strategy, strategy_ws, raw)))
-            end
-            write_streaming_cs_window!(writer, window_nt, Nc, npanel)
-
-            # 8. Optional chain: next window's m_cur is this window's
-            #    m_next_pf, and ps follows from m via Σ.
-            if chain_mass
-                for p in 1:npanel
-                    copyto!(m_cur[p], m_next_pf[p])
-                    _ps_from_air_mass!(ps_cur[p], m_cur[p], cell_areas, g, Nc, Nz)
-                end
-            end
+            write_streaming_cs_window!(writer, ready_diag.ready.payload, Nc, npanel)
+            advance_window!(workspace, grid)
         end
 
         elapsed = time() - t_start
@@ -608,7 +666,8 @@ function process_day(date::Date,
         # Capture the pressure-fixer endpoint from the last window so the
         # caller can seed the next day's `process_day` and preserve cross-day
         # continuity (codex 2026-04-25 P2).
-        final_m = chain_mass ? ntuple(p -> copy(m_cur[p]), npanel) : nothing
+        final_m = chain_mass ? ntuple(p -> copy(workspace.m_cur[p]), npanel) : nothing
+        set_end_of_day_seed!(reader, final_m)
 
         return (
             elapsed = elapsed,
@@ -632,6 +691,6 @@ function process_day(date::Date,
         if !mv_done && isfile(tmp_path)
             rm(tmp_path; force = true)
         end
-        close_day!(handles)
+        close_reader!(reader)
     end
 end

@@ -434,16 +434,38 @@ function _merge_vc_from_merge_map(native_vc::HybridSigmaPressure{FT},
 end
 
 # Build groups (one UnitRange per output level) from a merge_map.
+# Julia-style review round-1: walk `mm` once (O(Nz_native)) and track
+# group boundaries, instead of the original two-loop / `findall(==(l))`
+# version which was O(Nz_native × Nz_out). plan_vertical is called once
+# per day at most, so the hot-path impact is small — but the single-
+# pass form is also easier to read and validates contiguity in-line
+# rather than as a length cross-check.
 function _groups_from_merge_map(mm::Vector{Int}, Nz_out::Int)
+    Nz_native = length(mm)
     groups = Vector{UnitRange{Int}}(undef, Nz_out)
-    for l in 1:Nz_out
-        idxs = findall(==(l), mm)
-        isempty(idxs) && error("merge_map has no native level for output level $l")
-        groups[l] = idxs[1]:idxs[end]
-        # Validate contiguity (no gaps inside a group).
-        length(groups[l]) == length(idxs) ||
-            error("merge_map produced non-contiguous group for output level $l: $idxs")
+    start = 0
+    current_l = 0
+    @inbounds for k in 1:Nz_native
+        l = mm[k]
+        1 ≤ l ≤ Nz_out ||
+            error("merge_map[$(k)] = $(l) is out of bounds [1, $(Nz_out)].")
+        if l != current_l
+            # Boundary: close out previous group (if any) and validate
+            # that the new group is the next contiguous one.
+            if current_l != 0
+                groups[current_l] = start:k - 1
+            end
+            l == current_l + 1 ||
+                error("merge_map is non-contiguous at native level $(k): " *
+                      "expected output level $(current_l + 1), got $(l).")
+            current_l = l
+            start = k
+        end
     end
+    current_l == Nz_out ||
+        error("merge_map terminates at output level $(current_l) but " *
+              "Nz_out = $(Nz_out); levels $(current_l + 1):$(Nz_out) are empty.")
+    groups[current_l] = start:Nz_native
     return groups
 end
 
@@ -519,14 +541,18 @@ function apply_vertical!(buf_out::AbstractArray{T, 3},
     # of each group except the last (which becomes that group's top),
     # then the TOA (Nz_native + 1).
     Nz_out = plan.Nz_output
+    # Julia-style review round-1: hoist the per-level
+    # `plan.groups[l].stop` lookup out of the inner `(i, j)` loop. The
+    # native-interface index for output interface `l+1` is invariant
+    # across the horizontal — only its value `buf_in[i, j, …]` varies.
+    # We pre-fetch the top-of-group index for each output level once
+    # (Nz_out reads instead of Nx*Ny*Nz_out), then iterate `(l, j, i)`.
     @inbounds for j in axes(buf_in, 2), i in axes(buf_in, 1)
-        # Output interface 1 = native interface 1 (always the boundary
-        # at the bottom of group 1 → top of nothing; preserve as-is).
         buf_out[i, j, 1] = T(buf_in[i, j, 1])
-        # Output interface l+1 = native interface at the top of group l
-        # (= bottom of group l+1).
-        for l in 1:Nz_out
-            top_native_of_l = plan.groups[l].stop  # native center index at the bottom of group l
+    end
+    @inbounds for l in 1:Nz_out
+        top_native_of_l = plan.groups[l].stop
+        for j in axes(buf_in, 2), i in axes(buf_in, 1)
             buf_out[i, j, l + 1] = T(buf_in[i, j, top_native_of_l + 1])
         end
     end
@@ -556,7 +582,12 @@ function apply_vertical!(buf_out::AbstractArray{T, 3},
             accum_w[i, j, l_out] += weights[i, j, k_native]
         end
     end
-    floor_w = W === Float32 ? W(1e-30) : W(1e-200)
+    # Julia-style review round-1: use `floatmin(W)` rather than hardcoded
+    # magic numbers. Any subnormal `w` is treated as essentially zero and
+    # the division is skipped — physically correct, since `w` is a mass-
+    # weight accumulator and a layer with zero accumulated mass must
+    # contribute zero to the merged intensive value.
+    floor_w = floatmin(W)
     @inbounds for l in 1:Nz_out, j in axes(buf_in, 2), i in axes(buf_in, 1)
         w = accum_w[i, j, l]
         if w > floor_w

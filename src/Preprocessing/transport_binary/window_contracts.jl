@@ -191,3 +191,36 @@ Whether `summarize_status!` errors (`true`) or warns (`false`) on a
 positivity violation. Closes-the-escape-hatch toggle from CS round-2.
 """
 function contract_require_positivity end
+
+# ---------------------------------------------------------------------------
+# Shared parameter-validation helpers used at the entry of every exported
+# replay / positivity / window-contract wrapper.
+#
+# Codex review round 3 of `f5224a6` flagged that the `verify_*_window_contract!`
+# direct surfaces accepted `replay_tol = Inf` / `NaN` and
+# `positivity_cfl_limit = 0.0` / `>1` without the constructor guards —
+# `Inf` would silently disable replay and `NaN` would fail every window
+# late. The earlier round-2 fix for `boundary_stub_tol` followed the
+# same pattern. These helpers route every exported wrapper through one
+# place so a future contract knob inherits the validation automatically.
+#
+# Caller passes its own name string so the error attributes the
+# violation to the surface the user actually called (helper vs wrapper
+# vs constructor). The helpers are `@inline` so the validation is free
+# in the compiled code.
+# ---------------------------------------------------------------------------
+
+@inline function _validate_replay_tol(replay_tol::Real, caller::AbstractString)
+    isfinite(replay_tol) && replay_tol > 0 ||
+        error("$(caller): replay_tol = $(replay_tol); must be finite and " *
+              "> 0 (Inf silently disables replay; NaN would fail every " *
+              "window late).")
+    return nothing
+end
+
+@inline function _validate_cfl_limit(cfl_limit::Real, caller::AbstractString)
+    isfinite(cfl_limit) && 0 < cfl_limit ≤ 1 ||
+        error("$(caller): cfl_limit = $(cfl_limit); must be finite and " *
+              "in (0, 1] (Inf/NaN silently disable the gate).")
+    return nothing
+end

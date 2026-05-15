@@ -725,6 +725,63 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
         @test result.positivity.ok
     end
 
+    # ------------------------------------------------------------------
+    # Direct-wrapper policy validation (codex review round 3 of f5224a6).
+    # Same bypass pattern as CS / LL.
+    # ------------------------------------------------------------------
+
+    @testset "direct wrapper: invalid replay_tol is rejected at verify_rg_window_contract!" begin
+        w = build_clean_rg_window(Float64)
+        for bad in (Inf, NaN, 0.0, -1e-12, -Inf)
+            err = try
+                verify_rg_window_contract!(w.m_cur, w.hflux, w.cm, w.m_next,
+                                            w.face_left, w.face_right,
+                                            w.steps, 1;
+                                            replay_tol = bad,
+                                            positivity_cfl_limit = 0.95)
+                nothing
+            catch e
+                e
+            end
+            @test err isa ErrorException
+            @test occursin("replay_tol", err.msg)
+        end
+    end
+
+    @testset "direct wrapper: invalid positivity_cfl_limit is rejected at verify_rg_window_contract!" begin
+        w = build_clean_rg_window(Float64)
+        for bad in (Inf, NaN, 0.0, -0.1, 1.5)
+            err = try
+                verify_rg_window_contract!(w.m_cur, w.hflux, w.cm, w.m_next,
+                                            w.face_left, w.face_right,
+                                            w.steps, 1;
+                                            replay_tol = 1e-12,
+                                            positivity_cfl_limit = bad)
+                nothing
+            catch e
+                e
+            end
+            @test err isa ErrorException
+            @test occursin("cfl_limit", err.msg)
+        end
+    end
+
+    @testset "direct wrapper: invalid cfl_limit is rejected at verify_substep_positivity_rg!" begin
+        w = build_clean_rg_window(Float64)
+        for bad in (Inf, NaN, 0.0, -0.1, 1.5)
+            err = try
+                verify_substep_positivity_rg!(w.m_cur, w.hflux, w.cm,
+                                                w.face_left, w.face_right;
+                                                cfl_limit = bad)
+                nothing
+            catch e
+                e
+            end
+            @test err isa ErrorException
+            @test occursin("cfl_limit", err.msg)
+        end
+    end
+
     @testset "ReducedGaussianContract: scratch is lazily allocated once and reused (codex round-2)" begin
         # P2 watchpoint closed: the trait `verify_window!` allocates
         # scratch on the first call (when the window shape becomes

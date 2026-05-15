@@ -1,5 +1,16 @@
 # Shared structured lat-lon replay, Poisson-balance, and v4 writer helpers.
 
+"""
+    LLWorst
+
+Type-stable shape of the LL positivity accumulator. Same role as `CSWorst`
+but with `(i, j, k)` cell coordinates (no panel axis). The
+`LatLonContract.worst` field is typed against this alias so accessor
+calls inside the accumulator/summarizer chain stay statically typed.
+"""
+const LLWorst = @NamedTuple{ratio::Float64, direction::Symbol, win::Int,
+                              location::NTuple{3, Int}}
+
 function next_day_merged_fields(next_day_hour0,
                                 date::Date,
                                 grid::LatLonTargetGeometry,
@@ -350,6 +361,7 @@ function verify_substep_positivity_ll!(m::AbstractArray{FT, 3},
                                         bm::AbstractArray,
                                         cm::AbstractArray;
                                         cfl_limit::Real = 0.95) where FT
+    _validate_cfl_limit(cfl_limit, "verify_substep_positivity_ll!")
     Nx, Ny, Nz = size(m)
     size(am) == (Nx + 1, Ny, Nz) ||
         error("verify_substep_positivity_ll!: am shape $(size(am)) " *
@@ -431,6 +443,8 @@ function verify_ll_window_contract!(m_cur::AbstractArray{FT, 3},
                                      replay_tol::Real,
                                      positivity_cfl_limit::Real = 0.95,
                                      div_scratch::Union{Nothing, AbstractArray{Float64, 3}} = nothing) where FT
+    _validate_replay_tol(replay_tol, "verify_ll_window_contract!")
+    _validate_cfl_limit(positivity_cfl_limit, "verify_ll_window_contract!")
     if div_scratch === nothing
         div_scratch = Array{Float64}(undef, size(m_cur))
     else
@@ -459,23 +473,20 @@ Zero-valued state for accumulating the worst per-window LL positivity
 diagnostic across a preprocessing loop. Pair with
 `update_ll_positivity_accumulator`.
 """
-init_ll_positivity_accumulator() = (ratio = 0.0,
-                                     direction = :none,
-                                     win = 0,
-                                     location = (0, 0, 0))
+init_ll_positivity_accumulator() = LLWorst((0.0, :none, 0, (0, 0, 0)))
 
 """
     update_ll_positivity_accumulator(worst, diag, win_idx) -> NamedTuple
 
 Return an updated LL accumulator from a fresh per-window diagnostic.
 """
-function update_ll_positivity_accumulator(worst::NamedTuple, diag::NamedTuple,
+function update_ll_positivity_accumulator(worst::LLWorst, diag::NamedTuple,
                                             win_idx::Integer)
     diag.ratio > worst.ratio || return worst
-    return (ratio = diag.ratio,
-            direction = diag.direction === nothing ? :none : diag.direction,
-            win = Int(win_idx),
-            location = diag.location)
+    return LLWorst((Float64(diag.ratio),
+                    diag.direction === nothing ? :none : Symbol(diag.direction),
+                    Int(win_idx),
+                    NTuple{3, Int}(diag.location)))
 end
 
 """
@@ -493,7 +504,7 @@ The error/warn message includes a recommended `steps_per_window` value
 that would satisfy the gate, computed from the observed worst ratio.
 The "no representable rescue" branch from CS round-3 is mirrored here.
 """
-function summarize_ll_positivity_status(worst::NamedTuple;
+function summarize_ll_positivity_status(worst::LLWorst;
                                           cfl_limit::Real,
                                           steps_per_window::Integer,
                                           require_substep_positivity::Bool = true,
@@ -563,7 +574,7 @@ mutable struct LatLonContract{FT} <:
     positivity_cfl_limit        :: Float64
     require_substep_positivity  :: Bool
     steps_per_window            :: Int
-    worst                       :: NamedTuple
+    worst                       :: LLWorst
     # Lazy scratch (codex round-2): allocated on first `verify_window!`
     # call from the window's mass shape and reused thereafter.
     # Eliminates the per-window `Array{Float64}(undef, size(m_cur))`

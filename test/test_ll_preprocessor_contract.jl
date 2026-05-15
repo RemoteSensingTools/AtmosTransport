@@ -458,6 +458,62 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
         @test result.positivity.ok
     end
 
+    # ------------------------------------------------------------------
+    # Direct-wrapper policy validation (codex review round 3 of f5224a6).
+    # Same bypass pattern as CS — `verify_ll_window_contract!` /
+    # `verify_substep_positivity_ll!` must validate even when callers
+    # bypass `LatLonContract`.
+    # ------------------------------------------------------------------
+
+    @testset "direct wrapper: invalid replay_tol is rejected at verify_ll_window_contract!" begin
+        w = build_clean_ll_window(Float64)
+        for bad in (Inf, NaN, 0.0, -1e-12, -Inf)
+            err = try
+                verify_ll_window_contract!(w.m_cur, w.am, w.bm, w.cm, w.m_next,
+                                            w.steps, 1;
+                                            replay_tol = bad,
+                                            positivity_cfl_limit = 0.95)
+                nothing
+            catch e
+                e
+            end
+            @test err isa ErrorException
+            @test occursin("replay_tol", err.msg)
+        end
+    end
+
+    @testset "direct wrapper: invalid positivity_cfl_limit is rejected at verify_ll_window_contract!" begin
+        w = build_clean_ll_window(Float64)
+        for bad in (Inf, NaN, 0.0, -0.1, 1.5)
+            err = try
+                verify_ll_window_contract!(w.m_cur, w.am, w.bm, w.cm, w.m_next,
+                                            w.steps, 1;
+                                            replay_tol = 1e-12,
+                                            positivity_cfl_limit = bad)
+                nothing
+            catch e
+                e
+            end
+            @test err isa ErrorException
+            @test occursin("cfl_limit", err.msg)
+        end
+    end
+
+    @testset "direct wrapper: invalid cfl_limit is rejected at verify_substep_positivity_ll!" begin
+        w = build_clean_ll_window(Float64)
+        for bad in (Inf, NaN, 0.0, -0.1, 1.5)
+            err = try
+                verify_substep_positivity_ll!(w.m_cur, w.am, w.bm, w.cm;
+                                                cfl_limit = bad)
+                nothing
+            catch e
+                e
+            end
+            @test err isa ErrorException
+            @test occursin("cfl_limit", err.msg)
+        end
+    end
+
     @testset "LatLonContract: scratch is lazily allocated once and reused (codex round-2)" begin
         w = build_clean_ll_window(Float64)
         contract = LatLonContract{Float64}(replay_tol = 1e-12,

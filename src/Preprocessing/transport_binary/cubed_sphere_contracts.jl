@@ -1,6 +1,18 @@
 # Cubed-sphere replay helpers shared by spectral and regrid CS preprocessors.
 
 """
+    CSWorst
+
+Type-stable shape of the CS positivity accumulator. Pin the field
+types here so accesses inside `update_cs_positivity_accumulator` /
+`summarize_cs_positivity_status` and the `CubedSphereContract.worst`
+field are statically typed (the Julia-style reviewer flagged the
+`worst :: NamedTuple` field as dynamically dispatched).
+"""
+const CSWorst = @NamedTuple{ratio::Float64, direction::Symbol, win::Int,
+                              location::NTuple{4, Int}}
+
+"""
     fill_cs_window_mass_tendency!(dm_panels, m_cur, m_next, steps_per_window)
 
 Fill the CS Poisson-balance target for one window.
@@ -65,6 +77,7 @@ function verify_write_replay_cs!(m_cur::NTuple{NP, <:AbstractArray{FT, 3}},
                                  tol_rel::Real,
                                  win_idx::Int;
                                  div_scratch::Union{Nothing, AbstractArray{Float64, 3}} = nothing) where {FT, NP}
+    _validate_replay_tol(tol_rel, "verify_write_replay_cs!")
     NP >= 1 ||
         error("verify_write_replay_cs!: requires at least one panel.")
     panel_shape = size(m_cur[1])
@@ -132,6 +145,7 @@ function verify_substep_positivity_cs!(m::NTuple{NP, <:AbstractArray{FT, 3}},
                                        cm::NTuple{NP, <:AbstractArray};
                                        cfl_limit::Real = 0.95,
                                        halo_width::Integer = 0) where {FT, NP}
+    _validate_cfl_limit(cfl_limit, "verify_substep_positivity_cs!")
     Hp = Int(halo_width)
     # All buffers share the same interior extent `(Nc, Nc, Nz)`; derive from m.
     Nc = size(m[1], 1) - 2Hp
@@ -213,6 +227,8 @@ function verify_cs_window_contract!(m_cur::NTuple{NP, <:AbstractArray{FT, 3}},
                                     positivity_cfl_limit::Real = 0.95,
                                     halo_width::Integer = 0,
                                     div_scratch::Union{Nothing, AbstractArray{Float64, 3}} = nothing) where {FT, NP}
+    _validate_replay_tol(replay_tol, "verify_cs_window_contract!")
+    _validate_cfl_limit(positivity_cfl_limit, "verify_cs_window_contract!")
     replay = verify_write_replay_cs!(m_cur, am, bm, cm, m_next,
                                      steps_per_window, replay_tol, win_idx;
                                      div_scratch = div_scratch)
@@ -228,22 +244,20 @@ end
 Zero-valued state for accumulating the worst per-window positivity diagnostic
 across a preprocessing loop. Pair with `update_cs_positivity_accumulator!`.
 """
-init_cs_positivity_accumulator() = (ratio = 0.0,
-                                    direction = :none,
-                                    win = 0,
-                                    location = (0, 0, 0, 0))
+init_cs_positivity_accumulator() = CSWorst((0.0, :none, 0, (0, 0, 0, 0)))
 
 """
     update_cs_positivity_accumulator(worst, diag, win_idx) -> NamedTuple
 
 Return an updated accumulator from a fresh per-window diagnostic.
 """
-function update_cs_positivity_accumulator(worst::NamedTuple, diag::NamedTuple, win_idx::Int)
+function update_cs_positivity_accumulator(worst::CSWorst, diag::NamedTuple,
+                                            win_idx::Int)
     diag.ratio > worst.ratio || return worst
-    return (ratio = diag.ratio,
-            direction = diag.direction === nothing ? :none : diag.direction,
-            win = win_idx,
-            location = diag.location)
+    return CSWorst((Float64(diag.ratio),
+                    diag.direction === nothing ? :none : Symbol(diag.direction),
+                    Int(win_idx),
+                    NTuple{4, Int}(diag.location)))
 end
 
 """
@@ -260,7 +274,7 @@ Post-loop summary helper. Logs the worst-window outcome, and if it exceeds
 The error message includes a recommended `steps_per_window` value that would
 satisfy the gate, computed from the observed worst ratio.
 """
-function summarize_cs_positivity_status(worst::NamedTuple;
+function summarize_cs_positivity_status(worst::CSWorst;
                                         cfl_limit::Real,
                                         steps_per_window::Int,
                                         require_substep_positivity::Bool = true,
@@ -363,7 +377,7 @@ mutable struct CubedSphereContract{FT} <:
     require_substep_positivity  :: Bool
     steps_per_window            :: Int
     halo_width                  :: Int
-    worst                       :: NamedTuple
+    worst                       :: CSWorst
     # Lazy scratch (codex round-2): allocated on first `verify_window!`
     # call from the window's panel shape and reused thereafter. Eliminates
     # the `Array{Float64}(undef, panel_shape)` per-window allocation the

@@ -68,17 +68,17 @@ end
         # is a subtype (`AbstractMetReader` has 3 params, the readers
         # have 4–5).
         @test Pre.GEOSNativeReader{Float64, Pre.GEOSITSettings,
-                                    Pre.NoChain, Nothing} <:
+                                    Pre.NoChain, Nothing, Nothing} <:
               Pre.AbstractMetReader{Float64, Pre.GEOSITSettings, Pre.NoChain}
         @test Pre.ERA5SpectralReader{Float64, Pre.ERA5SpectralSettings} <:
               Pre.AbstractMetReader{Float64, Pre.ERA5SpectralSettings, Pre.NoChain}
         @test _MockReader{Float64, Pre.NoChain, Nothing} <:
               Pre.AbstractMetReader{Float64, _MockMetSettings, Pre.NoChain}
         # Supertype invariant: each concrete reader's `supertype(...)`
-        # is `AbstractMetReader{FT, S, CP}` — the V parameter is stripped
-        # at the abstract level.
+        # is `AbstractMetReader{FT, S, CP}` — the V and H parameters are
+        # stripped at the abstract level.
         @test supertype(Pre.GEOSNativeReader{Float64, Pre.GEOSITSettings,
-                                              Pre.NoChain, Nothing}) ===
+                                              Pre.NoChain, Nothing, Nothing}) ===
               Pre.AbstractMetReader{Float64, Pre.GEOSITSettings, Pre.NoChain}
     end
 
@@ -194,9 +194,12 @@ end
             coefficients_file = "config/geos_L72_coefficients.toml",
         )
         date = Date(2021, 12, 1)
-        # NoChain construction (chain_mass = false)
+        # NoChain construction (chain_mass = false). Synthetic
+        # construction uses `H = Nothing` since we pass `nothing` as
+        # the handles — Julia-style review round-1 promoted the field
+        # type to a fifth `H` type parameter for static dispatch.
         reader_nc = Pre.GEOSNativeReader{Float64, typeof(settings),
-                                          Pre.NoChain, Nothing}(
+                                          Pre.NoChain, Nothing, Nothing}(
             settings, nothing, date, nothing, Ref{Nothing}(nothing))
         @test reader_nc isa Pre.AbstractMetReader{Float64, typeof(settings), Pre.NoChain}
         @test Pre.end_of_day_seed(reader_nc) === nothing
@@ -207,7 +210,7 @@ end
         SeedT = NTuple{6, Array{Float64, 3}}
         FieldT = Union{Nothing, SeedT}
         reader_ch = Pre.GEOSNativeReader{Float64, typeof(settings),
-                                          Pre.ChainedMass{SeedT}, FieldT}(
+                                          Pre.ChainedMass{SeedT}, FieldT, Nothing}(
             settings, nothing, date, nothing, Ref{FieldT}(nothing))
         @test reader_ch isa Pre.AbstractMetReader{Float64, typeof(settings),
                                                    Pre.ChainedMass{SeedT}}

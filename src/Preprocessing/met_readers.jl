@@ -184,23 +184,38 @@ function window_metadata end
 # ---------------------------------------------------------------------------
 
 """
-    GEOSNativeReader{FT, S, CP, V} <: AbstractMetReader{FT, S, CP}
+    GEOSNativeReader{FT, S, CP, V, H} <: AbstractMetReader{FT, S, CP}
 
-Typed reader wrapping `(GEOSSettings, GEOSDayHandles)` for one day, plus
-optional chained-mass state. The `V` type parameter is the seed-array
-type (used only when `CP = ChainedMass{V}`); for `NoChain` readers `V`
-is `Nothing`.
+Typed reader wrapping `(GEOSSettings, handles)` for one day, plus
+optional chained-mass state. Type parameters:
+
+  - `FT` — preprocessing float type.
+  - `S <: AbstractGEOSSettings` — concrete settings (GEOSITSettings /
+    GEOSFPSettings / …).
+  - `CP <: AbstractChainPolicy` — `NoChain` or `ChainedMass{T}`.
+  - `V` — seed-field slot type. `Nothing` for `NoChain`;
+    `Union{Nothing, NTuple{6, Array{FT, 3}}}` for `ChainedMass`. The V
+    parameter is fixed at construction (Julia-style review round-1:
+    value-dependent V was the type-instability foot-gun; we pin V
+    to the unconditional Union on the chained path so the inner
+    constructor specializes once).
+  - `H` — concrete handles type. Pinned to `typeof(open_day(...))` at
+    construction so `reader.handles` access is type-stable (replaces
+    the previous `:: Any` field). Different GEOS flavors produce
+    different handle structs (`GEOSDayHandles` for GEOS-IT,
+    `GEOSFPNativeDayHandles` for GEOS-FP); each becomes its own
+    concrete reader type via this parameter.
 
 Constructor: `open_reader(settings::AbstractGEOSSettings, date, FT;
 seed, next_day_handle)`. See the function docstring.
 """
 mutable struct GEOSNativeReader{FT, S <: AbstractGEOSSettings,
-                                  CP <: AbstractChainPolicy, V} <:
+                                  CP <: AbstractChainPolicy, V, H} <:
                 AbstractMetReader{FT, S, CP}
     settings :: S
-    handles  :: Any         # GEOSDayHandles or GEOSFPNativeDayHandles (depends on flavor)
+    handles  :: H           # concrete handle struct, typed via the H parameter
     date     :: Date
-    seed     :: V           # Union{Nothing, NTuple{6, Array{FT,3}}} typically
+    seed     :: V           # Nothing (NoChain) or Union{Nothing, NTuple{6,Array{FT,3}}}
     final_m  :: Base.RefValue{V}  # populated when the orchestrator finishes the last window
 end
 
@@ -209,26 +224,26 @@ function open_reader(settings::AbstractGEOSSettings, date::Date, ::Type{FT};
                      next_day_handle::Bool = true,
                      chain_mass::Bool = true) where {FT <: AbstractFloat}
     handles = open_day(settings, date; next_day_handle = next_day_handle)
+    H = typeof(handles)
     # `chain_mass = false` opts out of cross-day carry entirely (NoChain).
-    # Otherwise the policy is `ChainedMass{typeof(seed_template)}` where
-    # the seed template is the panel-tuple shape derived from the source.
+    # Otherwise the policy is `ChainedMass{NTuple{6, Array{FT,3}}}`.
     if !chain_mass
-        return GEOSNativeReader{FT, typeof(settings), NoChain, Nothing}(
+        return GEOSNativeReader{FT, typeof(settings), NoChain, Nothing, H}(
             settings, handles, date, nothing, Ref{Nothing}(nothing))
     end
-    # ChainedMass with NTuple{6, Array{FT,3}} seed shape. Even on day 1
-    # (seed = nothing) the policy parameter is fixed; the seed field can
-    # hold `nothing` until the first carry arrives because we union the
-    # field type via the V type parameter.
-    seed_value = seed
-    V = if seed_value === nothing
-        Union{Nothing, NTuple{6, Array{FT, 3}}}
-    else
-        typeof(seed_value)
-    end
+    # ChainedMass with NTuple{6, Array{FT,3}} seed shape. Julia-style
+    # review round-1: V was previously value-dependent
+    # (`V = typeof(seed_value)` vs `Union{Nothing, NTuple{...}}` when
+    # `seed === nothing`), which made the compiler unable to specialize
+    # the constructor. Pin V unconditionally to the Union so the
+    # specialization happens once per (FT, S) pair.
+    V = Union{Nothing, NTuple{6, Array{FT, 3}}}
+    seed isa V ||
+        throw(ArgumentError("GEOSNativeReader: seed must be `nothing` or " *
+                             "`NTuple{6, Array{$FT, 3}}`; got $(typeof(seed))."))
     CP = ChainedMass{NTuple{6, Array{FT, 3}}}
-    return GEOSNativeReader{FT, typeof(settings), CP, V}(
-        settings, handles, date, seed_value, Ref{V}(nothing))
+    return GEOSNativeReader{FT, typeof(settings), CP, V, H}(
+        settings, handles, date, seed, Ref{V}(nothing))
 end
 
 @inline windows_per_day(reader::GEOSNativeReader) =
@@ -256,7 +271,7 @@ end
 # threads this into the next day's `open_reader(... ; seed = ...)`. The
 # `final_m` slot is populated by the orchestrator's last-window write
 # path (e.g. `_set_final_m!(reader, panels_m)`).
-@inline function end_of_day_seed(reader::GEOSNativeReader{FT, S, ChainedMass{T}, V}) where {FT, S, T, V}
+@inline function end_of_day_seed(reader::GEOSNativeReader{FT, S, ChainedMass{T}, V, H}) where {FT, S, T, V, H}
     seed = reader.final_m[]
     seed === nothing && return nothing
     return seed::T
@@ -269,11 +284,11 @@ Set the end-of-day mass seed produced by the orchestrator's last
 window. Called once per day at the end of `process_day`. For
 `NoChain` readers this is a no-op.
 """
-@inline set_end_of_day_seed!(::GEOSNativeReader{FT, S, NoChain, V},
-                              _seed) where {FT, S, V} = nothing
+@inline set_end_of_day_seed!(::GEOSNativeReader{FT, S, NoChain, V, H},
+                              _seed) where {FT, S, V, H} = nothing
 @inline function set_end_of_day_seed!(
-    reader::GEOSNativeReader{FT, S, ChainedMass{T}, V}, seed::T,
-) where {FT, S, T, V}
+    reader::GEOSNativeReader{FT, S, ChainedMass{T}, V, H}, seed::T,
+) where {FT, S, T, V, H}
     reader.final_m[] = seed
     return reader
 end
@@ -330,7 +345,13 @@ mutable struct ERA5SpectralReader{FT, S <: AbstractMetSettings} <:
                 AbstractMetReader{FT, S, NoChain}
     settings   :: S
     date       :: Date
-    spec       :: Any   # SpectralDayData; opaque at this layer
+    # P0a placeholder: the spectral pipeline's `process_window!` fuses
+    # synthesis + regrid + merge, so this field stays empty (`::Nothing`)
+    # until the P2 split lands. Pinned to `Nothing` rather than `Any`
+    # so reader.spec access is type-stable now and a P2 introduction of
+    # a typed payload (`SpectralDayData`) becomes a struct extension,
+    # not a silent retype.
+    spec       :: Nothing
     closed     :: Bool
 end
 

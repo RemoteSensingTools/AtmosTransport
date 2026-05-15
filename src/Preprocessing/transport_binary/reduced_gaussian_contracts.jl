@@ -62,6 +62,16 @@
 # ===========================================================================
 
 """
+    RGWorst
+
+Type-stable shape of the RG positivity accumulator. Same role as
+`CSWorst`/`LLWorst` but with `(cell, level)` coordinates (no panel or
+explicit x/y axis).
+"""
+const RGWorst = @NamedTuple{ratio::Float64, direction::Symbol, win::Int,
+                              location::NTuple{2, Int}}
+
+"""
     verify_substep_positivity_rg!(m, hflux, cm, face_left, face_right;
                                   cfl_limit = 0.95,
                                   outgoing_h = nothing, bad_h = nothing)
@@ -102,6 +112,7 @@ function verify_substep_positivity_rg!(m::AbstractMatrix{FT},
                                         cfl_limit::Real = 0.95,
                                         outgoing_h::Union{Nothing, AbstractMatrix{Float64}} = nothing,
                                         bad_h::Union{Nothing, AbstractMatrix{Bool}} = nothing) where FT
+    _validate_cfl_limit(cfl_limit, "verify_substep_positivity_rg!")
     nc, Nz = size(m)
     size(hflux, 2) == Nz ||
         error("verify_substep_positivity_rg!: hflux level count " *
@@ -277,7 +288,7 @@ function verify_boundary_stub_flux_rg(hflux::AbstractMatrix,
             ah = isfinite(h) ? abs(Float64(h)) : Inf
             if ah > worst_abs
                 worst_abs   = ah
-                worst_flux  = isfinite(h) ? Float64(h) : Float64(h)  # preserves NaN/Inf
+                worst_flux  = Float64(h)   # `Float64(NaN)` / `Float64(Inf)` propagate naturally
                 worst_face  = f
                 worst_level = k
             end
@@ -335,10 +346,13 @@ function verify_rg_window_contract!(m_cur::AbstractMatrix{FT},
                                      outgoing_h::Union{Nothing, AbstractMatrix{Float64}} = nothing,
                                      bad_h::Union{Nothing, AbstractMatrix{Bool}} = nothing,
                                      boundary_stub_tol::Real = 0.0) where FT
-    # Codex round-2: validate the wrapper kwarg before delegating. The
-    # helper `verify_boundary_stub_flux_rg` also validates, so this is
-    # belt-and-suspenders for callers that go through the wrapper
-    # bypassing the `ReducedGaussianContract` constructor.
+    # Codex round-3: validate every policy knob at the wrapper boundary
+    # (`replay_tol` / `positivity_cfl_limit` / `boundary_stub_tol`). The
+    # `ReducedGaussianContract` constructor validates too, but the
+    # wrapper is exported and CS production paths call analogous CS
+    # wrappers directly — same defense-in-depth pattern.
+    _validate_replay_tol(replay_tol, "verify_rg_window_contract!")
+    _validate_cfl_limit(positivity_cfl_limit, "verify_rg_window_contract!")
     isfinite(boundary_stub_tol) && boundary_stub_tol ≥ 0 ||
         error("verify_rg_window_contract!: boundary_stub_tol = " *
               "$(boundary_stub_tol); must be finite and ≥ 0.")
@@ -382,23 +396,20 @@ end
 Zero-valued state for accumulating the worst per-window RG positivity
 diagnostic across a preprocessing loop.
 """
-init_rg_positivity_accumulator() = (ratio = 0.0,
-                                     direction = :none,
-                                     win = 0,
-                                     location = (0, 0))
+init_rg_positivity_accumulator() = RGWorst((0.0, :none, 0, (0, 0)))
 
 """
     update_rg_positivity_accumulator(worst, diag, win_idx) -> NamedTuple
 
 Return an updated RG accumulator from a fresh per-window diagnostic.
 """
-function update_rg_positivity_accumulator(worst::NamedTuple, diag::NamedTuple,
+function update_rg_positivity_accumulator(worst::RGWorst, diag::NamedTuple,
                                             win_idx::Integer)
     diag.ratio > worst.ratio || return worst
-    return (ratio = diag.ratio,
-            direction = diag.direction === nothing ? :none : diag.direction,
-            win = Int(win_idx),
-            location = diag.location)
+    return RGWorst((Float64(diag.ratio),
+                    diag.direction === nothing ? :none : Symbol(diag.direction),
+                    Int(win_idx),
+                    NTuple{2, Int}(diag.location)))
 end
 
 """
@@ -410,7 +421,7 @@ Post-loop summary helper for the RG positivity accumulator. Mirrors
 `summarize_cs_positivity_status` (CS round-2 + round-3 escape-hatch
 semantics).
 """
-function summarize_rg_positivity_status(worst::NamedTuple;
+function summarize_rg_positivity_status(worst::RGWorst;
                                           cfl_limit::Real,
                                           steps_per_window::Integer,
                                           require_substep_positivity::Bool = true,
@@ -495,7 +506,7 @@ mutable struct ReducedGaussianContract{FT} <:
     boundary_stub_tol           :: Float64
     face_left                   :: Vector{Int32}
     face_right                  :: Vector{Int32}
-    worst                       :: NamedTuple
+    worst                       :: RGWorst
     # Lazy scratch (codex round-2): allocated on first `verify_window!`
     # call from the window's `(nc, Nz)` shape and reused thereafter.
     # Eliminates per-window `Array{Float64}(undef, nc, Nz)` allocations

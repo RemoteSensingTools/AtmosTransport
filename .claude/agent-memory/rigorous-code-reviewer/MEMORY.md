@@ -4,6 +4,10 @@ This directory holds review notes from prior code-review sessions. Not
 all are current. Trust each entry only after verifying its file:line
 citations against the current `src/` tree.
 
+## Project-specific durable notes
+
+- [LinRood adjoint ORD gap](linrood_adjoint_ord_gap.md) — `_record_linrood_horizontal_substep!` hardcodes Val(5); ORD=7 silently mis-recorded with no guard
+
 ## TM5 Fortran reference knowledge (durable, external)
 
 These describe TM5 Fortran source code at `deps/tm5/base/src/` (external

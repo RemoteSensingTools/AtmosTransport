@@ -1,5 +1,89 @@
 # Spectral ERA5 to structured lat-lon transport-binary preprocessing path.
 
+mutable struct LatLonSpectralWindowWorkspace{FT, TW, MW, SW, QW} <:
+               AbstractWindowWorkspace{LatLonTargetGeometry, FT}
+    transform      :: TW
+    merged         :: MW
+    storage        :: SW
+    qv             :: QW
+    ps_offsets     :: Vector{Float64}
+    last_hour_next :: Any
+end
+
+function allocate_window_workspace(grid::LatLonTargetGeometry,
+                                   settings,
+                                   vertical,
+                                   spec,
+                                   date::Date,
+                                   ::Type{FT};
+                                   cache = nothing) where FT
+    Nz_native = vertical.Nz_native
+    Nz = vertical.Nz
+    Nt = spec.n_times
+    transform = allocate_transform_workspace(grid, spec.T, Nz_native)
+    merged = allocate_merge_workspace(grid, Nz_native, Nz, FT)
+    storage = allocate_window_storage(Nt, FT;
+                                       include_qv = settings.include_qv,
+                                       tm5_convection = settings.tm5_convection_enable,
+                                       include_surface = settings.include_surface)
+    qv = allocate_qv_workspace(grid, settings, date, Nz_native, Nz, FT)
+    ps_offsets = zeros(Float64, Nt + 1)
+    return LatLonSpectralWindowWorkspace{FT, typeof(transform), typeof(merged),
+                                         typeof(storage), typeof(qv)}(
+        transform, merged, storage, qv, ps_offsets, nothing)
+end
+
+function ingest_window!(workspace::LatLonSpectralWindowWorkspace,
+                        win_idx::Int,
+                        hour::Int,
+                        spec,
+                        grid::LatLonTargetGeometry,
+                        vertical,
+                        settings;
+                        physics_reader = nothing,
+                        tm5_ws = nothing,
+                        tm5_stats = nothing,
+                        surface_reader = nothing)
+    process_window!(win_idx, hour, spec, grid, vertical, settings,
+                    workspace.transform, workspace.merged, workspace.qv,
+                    workspace.storage, workspace.ps_offsets;
+                    physics_reader = physics_reader,
+                    tm5_ws = tm5_ws,
+                    tm5_stats = tm5_stats,
+                    surface_reader = surface_reader)
+    return nothing
+end
+
+drain_ready_windows!(::LatLonSpectralWindowWorkspace) = ()
+
+function flush_final_windows!(workspace::LatLonSpectralWindowWorkspace{FT},
+                              next_day_hour0,
+                              date::Date,
+                              grid::LatLonTargetGeometry,
+                              vertical,
+                              settings,
+                              contract::LatLonContract{FT}) where FT
+    workspace.last_hour_next = next_day_merged_fields(
+        next_day_hour0, date, grid, vertical, settings,
+        workspace.transform, workspace.merged, workspace.qv,
+        workspace.ps_offsets)
+    apply_poisson_balance!(workspace.storage, workspace.last_hour_next,
+                           contract.steps_per_window, contract)
+    fill_qv_endpoints!(workspace.storage, workspace.last_hour_next)
+    return (ReadyWindow{LatLonTargetGeometry, FT}(
+                win_idx,
+                (m_cur = workspace.storage.all_m[win_idx],
+                 am = workspace.storage.all_am[win_idx],
+                 bm = workspace.storage.all_bm[win_idx],
+                 cm = workspace.storage.all_cm[win_idx],
+                 m_next = win_idx < length(workspace.storage.all_m) ?
+                    workspace.storage.all_m[win_idx + 1] :
+                    workspace.last_hour_next === nothing ?
+                        workspace.storage.all_m[win_idx] :
+                        workspace.last_hour_next.m))
+            for win_idx in eachindex(workspace.storage.all_m))
+end
+
 """
     process_day(date, grid::LatLonTargetGeometry, settings, vertical;
                 next_day_hour0=nothing, positivity_cfl_limit=0.95,
@@ -70,14 +154,10 @@ function process_day(date::Date,
     length(header_json) < HEADER_SIZE ||
         error("Header JSON too large: $(length(header_json)) >= $(HEADER_SIZE)")
 
-    transform = allocate_transform_workspace(grid, spec.T, Nz_native)
-    merged = allocate_merge_workspace(grid, Nz_native, Nz, FT)
-    storage = allocate_window_storage(Nt, FT;
-                                       include_qv=settings.include_qv,
-                                       tm5_convection=settings.tm5_convection_enable,
-                                       include_surface=settings.include_surface)
-    qv = allocate_qv_workspace(grid, settings, date, Nz_native, Nz, FT)
-    ps_offsets = zeros(Float64, Nt + 1)
+    workspace = allocate_window_workspace(grid, settings, vertical, spec, date, FT)
+    storage = workspace.storage
+    merged = workspace.merged
+    ps_offsets = workspace.ps_offsets
     window_contract = LatLonContract{FT}(
         replay_tol = replay_tolerance(FT),
         positivity_cfl_limit = positivity_cfl_limit,
@@ -114,12 +194,11 @@ function process_day(date::Date,
 
     try
         for (win_idx, hour) in enumerate(spec.hours)
-            process_window!(win_idx, hour, spec, grid, vertical, settings,
-                            transform, merged, qv, storage, ps_offsets;
-                            physics_reader = physics_reader,
-                            tm5_ws         = tm5_ws,
-                            tm5_stats      = tm5_stats,
-                            surface_reader = surface_reader)
+            ingest_window!(workspace, win_idx, hour, spec, grid, vertical, settings;
+                           physics_reader = physics_reader,
+                           tm5_ws = tm5_ws,
+                           tm5_stats = tm5_stats,
+                           surface_reader = surface_reader)
         end
 
         if settings.mass_fix_enable
@@ -131,12 +210,9 @@ function process_day(date::Date,
 
         tm5_stats === nothing || log_tm5_cleanup_stats(tm5_stats, date_str)
 
-        last_hour_next = next_day_merged_fields(next_day_hour0, date, grid, vertical,
-                                                settings, transform, merged, qv, ps_offsets)
-
-        apply_poisson_balance!(storage, last_hour_next, sizes.steps_per_met,
-                               window_contract)
-        fill_qv_endpoints!(storage, last_hour_next)
+        flush_final_windows!(workspace, next_day_hour0, date, grid, vertical,
+                             settings, window_contract)
+        last_hour_next = workspace.last_hour_next
         summarize_status!(window_contract; quarantine_path = bin_path)
 
         header["ps_offsets_pa_per_window"] = ps_offsets[1:Nt]

@@ -5,9 +5,23 @@
 Drafted 2026-05-15 (carried over from the CS-contract-round-3 session on
 2026-05-14). Awaiting executor (Codex).
 
-Triggered by user observation: "binary preprocessor uses very different
-paths for the different variations of met data and target grids; this
-should be unified with multi-dispatch."
+**Read [DESIGN.md](DESIGN.md) first** for the typed three-axis rationale,
+the anti-pattern audit with file:line citations, and the foot-gun
+closure table. This NOTES.md is the executor punch-list; DESIGN.md is
+the design contract.
+
+Triggered by user observations:
+- 2026-05-15 morning: "binary preprocessor uses very different paths
+  for the different variations of met data and target grids; this
+  should be unified with multi-dispatch."
+- 2026-05-15 afternoon: "it seems haphazard and dangerous right now."
+- 2026-05-15 afternoon: "layer merging should be part of the path for
+  ALL pathways, so doing this now will fix two problems in one go."
+
+Layer merging is **in scope** (Axis 2: `AbstractVerticalTransform`),
+not "future fix". The 2026-05-14 thin-mesospheric-layer regen issue
+becomes a config choice (`[vertical].transform = "thin_level_merge"`)
+once Axis-2 lands.
 
 ## Problem statement
 
@@ -219,19 +233,41 @@ Each commit ships green, with all tests passing. Migration is
 **additive** until the last commit so we can compare new ↔ legacy
 behavior diff-by-diff.
 
-### P0 — Reader trait surface (no behavior change)
+### P0 — Reader trait + Vertical-transform trait (no behavior change)
 
-Define `AbstractMetReader` + the 4 trait functions in
-`src/Preprocessing/met_readers.jl`. Concrete `ERA5SpectralReader` and
-`GEOSNativeReader` wrap the *existing* `open_geos_day` / spectral
-machinery — no rewrites, just a thin façade.
+Two independent additions, can ship as a single commit OR two
+adjacent commits.
 
-Definition of done: `julia --project=. -e 'using ...; reader =
-open_day(geos_settings, Date("2021-12-02"), Float32; …); for w in
-1:windows_per_day(reader); read_window!(dst, reader, w); end' ` runs
-clean and produces the same `(m, am, bm, cm, m_next, …)` arrays the
-GEOS path produces today, bit-for-bit. Add focused test
-`test_met_readers.jl`.
+**P0a** — Define `AbstractMetReader{FT, MetSettings, ChainPolicy}` +
+the trait functions (`open_day`, `windows_per_day`, `read_window!`,
+`end_of_day_seed`, `native_vertical`, `window_metadata`, `close_day!`)
+in `src/Preprocessing/met_readers.jl`. Concrete `ERA5SpectralReader`
+and `GEOSNativeReader` wrap the *existing* `open_geos_day` / spectral
+machinery — no rewrites, just a thin typed façade. `ChainPolicy` is
+either `NoChain` or `ChainedMass{T}` (`T` is the seed array type).
+
+**P0b** — Define `AbstractVerticalTransform` + `VerticalPlan{FT}` +
+the four concrete types (`IdentityVertical`, `ThinLevelMerge`,
+`LevelSelection`, `PressureOverlap`) in
+`src/Preprocessing/vertical_transforms.jl`. `plan_vertical` and
+`apply_vertical!(_, _, plan, ::FieldKind)` are the trait surface.
+The existing `merge_thin_levels` (vertical_coordinates.jl:11) and
+`select_levels_echlevs` become `ThinLevelMerge` and `LevelSelection`
+implementations.
+
+Definition of done:
+- (P0a) A 1-day GEOS smoke `julia --project=. -e 'reader =
+  open_day(geos_settings, Date("2021-12-02"), Float32); for w in
+  1:windows_per_day(reader); read_window!(dst, reader, w); end'`
+  produces the same `(m, am, bm, cm, m_next, …)` arrays as today's
+  GEOS path, bit-for-bit. Add focused test `test_met_readers.jl`.
+- (P0b) Round-trip: starting from the existing `build_vertical_setup`
+  output, construct the equivalent `AbstractVerticalTransform` from
+  config, plan it, and verify `merged_vc` / `merge_map` /
+  `Nz_output` agree to bit-exactness. Add focused test
+  `test_vertical_transforms.jl` covering all four transforms +
+  the `MassField` / `MassFluxField` / `PressureFluxField` field-kind
+  rules.
 
 ### P1 — Target dispatch tightening
 
@@ -349,5 +385,9 @@ no new `process_day` method, no driver edits. If this commit is
 - TM5 convection preprocessing (`tm5_convection_conversion.jl`).
 - Runtime I/O — that's Plan 40, already shipped.
 - Adding new target topologies beyond LL / RG / CS.
-- Layer merging for GEOS-IT (separate plan; this refactor enables it
-  but does not require it).
+
+**No longer out of scope (was, until 2026-05-15 afternoon):**
+- Layer merging for GEOS-IT is **in scope** as Axis-2 of the typed
+  design (see DESIGN.md). The 2026-05-14 thin-mesospheric-layer regen
+  issue becomes a `[vertical].transform = "thin_level_merge"` config
+  choice once P0b ships.

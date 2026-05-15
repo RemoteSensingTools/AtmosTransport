@@ -86,8 +86,24 @@ _resolve_chain_mass(cfg::AbstractDict) =
 # (spectral, regrid, GEOS-native) reads them from the same `[numerics]` block
 # so a config can't silently bypass the contract on one path while honoring it
 # on another.
-_resolve_positivity_cfl_limit(cfg::AbstractDict) =
-    Float64(get(get(cfg, "numerics", Dict()), "positivity_cfl_limit", 0.95))
+#
+# Validation: `positivity_cfl_limit` must be a finite positive value bounded
+# by 1.0. A `0.0` or negative value would make
+# `summarize_cs_positivity_status` divide by zero (or produce a negative
+# recommendation) AFTER a contract violation has been recorded — by then the
+# preprocessor has already paid the cost of the loop, so we'd rather refuse
+# to start than throw an `InexactError` at the end. Values > 1.0 are also
+# nonsensical (the runtime's `_cs_static_subcycle_count` only protects
+# against outgoing < cell mass).
+function _resolve_positivity_cfl_limit(cfg::AbstractDict)
+    raw = get(get(cfg, "numerics", Dict()), "positivity_cfl_limit", 0.95)
+    limit = Float64(raw)
+    isfinite(limit) && 0 < limit <= 1 ||
+        error("Invalid `[numerics].positivity_cfl_limit = $(raw)`: must be a " *
+              "finite value in (0, 1]. The default `0.95` is what the regrid " *
+              "path has enforced since plan 39.")
+    return limit
+end
 
 _resolve_require_substep_positivity(cfg::AbstractDict) =
     Bool(get(get(cfg, "numerics", Dict()), "require_substep_positivity", true))

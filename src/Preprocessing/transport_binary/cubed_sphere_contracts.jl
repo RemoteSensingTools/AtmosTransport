@@ -240,12 +240,22 @@ function summarize_cs_positivity_status(worst::NamedTuple;
         return nothing
     end
 
-    # Branch on finiteness BEFORE computing the recommended steps count.
-    # Non-finite ratios (Inf from m<=0 or m/flux NaN-tagging in
-    # `verify_substep_positivity_cs!`) cannot be turned into an integer step
-    # recommendation — `ceil(Int, Inf)` throws `InexactError`. Report the
-    # structural failure instead and skip the rescue suggestion.
-    detail = if isfinite(worst.ratio)
+    # A useful integer step recommendation requires that (a) the observed
+    # ratio is finite, (b) the configured `cfl_limit` is a sensible positive
+    # finite divisor, and (c) `ceil(Int, ratio / cfl_limit) * steps_per_window`
+    # fits in `Int`. Any of these failing — `Inf`/`NaN` ratio from m<=0 or
+    # NaN-mass/flux, an invalid `cfl_limit = 0` that produces `Inf` from the
+    # divide, or a finite-but-pathologically-large ratio like `1e308` — would
+    # throw `InexactError` from `ceil(Int, ...)` BEFORE the intended
+    # error/warn path runs, which would re-break the
+    # `require_substep_positivity = false` escape hatch exactly when an
+    # operator needs it most. Branch *before* the rescue arithmetic.
+    max_safe_factor       = typemax(Int) ÷ max(steps_per_window, 1)
+    useful_recommendation = isfinite(worst.ratio) &&
+                             isfinite(cfl_limit) && cfl_limit > 0 &&
+                             worst.ratio / cfl_limit <= max_safe_factor
+
+    detail = if useful_recommendation
         recommended = max(steps_per_window,
                           ceil(Int, worst.ratio / cfl_limit) * steps_per_window)
         "Per-substep positivity contract violated: $msg. " *
@@ -255,11 +265,14 @@ function summarize_cs_positivity_status(worst::NamedTuple;
         "preprocessing config, or set `[numerics].require_substep_positivity = false` " *
         "to suppress."
     else
-        "Per-substep positivity contract violated by non-finite air mass or flux: $msg. " *
-        "A cell carried `m <= 0`, `NaN`, or `Inf` — either the source data " *
-        "has been corrupted upstream of preprocessing, or the pressure-fixer / " *
-        "endpoint-balance pass drove a cell negative. Increasing " *
-        "`steps_per_window` cannot rescue a non-finite ratio; investigate the " *
+        "Per-substep positivity contract violated, and no representable " *
+        "`steps_per_window` can rescue it: $msg. " *
+        "The observed ratio is `Inf`/`NaN` (m<=0, NaN-mass/flux, or Inf-flux) " *
+        "or finite but pathologically large; the configured `cfl_limit` may " *
+        "also be non-positive. Either the source data has been corrupted " *
+        "upstream of preprocessing, the pressure-fixer / endpoint-balance " *
+        "pass drove a cell negative, or `[numerics].positivity_cfl_limit` is " *
+        "misconfigured (must satisfy `0 < cfl_limit <= 1`). Investigate the " *
         "source field at the reported cell location, or set " *
         "`[numerics].require_substep_positivity = false` to record the " *
         "violation as a warning and keep the binary for diagnostic inspection."

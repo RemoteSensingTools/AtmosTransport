@@ -19,6 +19,12 @@ using .AtmosTransport.Preprocessing: verify_substep_positivity_cs!,
                                        update_cs_positivity_accumulator,
                                        summarize_cs_positivity_status
 
+# Internal helper; not exported. Accessed by qualified name so the entrypoint
+# validation regression (round-3) doesn't require exporting an underscore
+# helper just for tests.
+const _resolve_positivity_cfl_limit =
+    AtmosTransport.Preprocessing._resolve_positivity_cfl_limit
+
 # Build a 6-panel CS window whose horizontal fluxes vanish and whose vertical
 # fluxes encode the per-cell mass tendency exactly. The result satisfies the
 # write-time replay gate to F64 ULP, so the positivity scan can be exercised
@@ -358,7 +364,10 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
         end
         @test err isa ErrorException
         @test !(err isa InexactError)
-        @test occursin("non-finite", err.msg)
+        # Round-2 used a dedicated "non-finite" message; round-3 merged the
+        # non-finite and finite-but-pathologically-large branches under one
+        # "no representable rescue" message so both are handled uniformly.
+        @test occursin("no representable", err.msg)
     end
 
     @testset "summary: Inf ratio + require=false warns (no InexactError) (round-2 fix)" begin
@@ -391,5 +400,110 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
             worst; cfl_limit = 0.95, steps_per_window = 8,
             require_substep_positivity = true, quarantine_path = missing_path,
         )
+    end
+
+    # ------------------------------------------------------------------
+    # Round-3: the `isfinite(worst.ratio)` guard from round-2 only covered
+    # `Inf`/`NaN`; `ceil(Int, ratio / cfl_limit)` could still throw
+    # `InexactError` for finite-but-huge ratios (e.g. `1e308`) or when an
+    # invalid `cfl_limit = 0.0` drives the divide to `Inf`. The fix
+    # routes both through the same "no representable rescue" branch and
+    # validates `0 < cfl_limit <= 1` at TOML resolve time.
+    # ------------------------------------------------------------------
+
+    @testset "summary: finite-but-pathologically-large ratio + require=true (round-3 fix)" begin
+        # ceil(Int, 1e308 / 0.95) overflows Int — the pre-round-3 path
+        # threw InexactError before the intended error/warn branch.
+        worst = (ratio = 1e308, direction = :z, win = 4, location = (2, 3, 3, 2))
+        err = try
+            summarize_cs_positivity_status(worst; cfl_limit = 0.95,
+                                            steps_per_window = 8,
+                                            require_substep_positivity = true)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ErrorException
+        @test !(err isa InexactError)
+        @test occursin("no representable", err.msg)
+    end
+
+    @testset "summary: finite-but-pathologically-large ratio + require=false (round-3 fix)" begin
+        worst = (ratio = 1e308, direction = :z, win = 4, location = (2, 3, 3, 2))
+        r = with_quiet_logger() do
+            summarize_cs_positivity_status(worst; cfl_limit = 0.95,
+                                            steps_per_window = 8,
+                                            require_substep_positivity = false)
+        end
+        @test r === nothing
+    end
+
+    @testset "summary: cfl_limit = 0.0 + require=true (round-3 fix)" begin
+        # 1.5 / 0.0 = Inf → ceil(Int, Inf) hit InexactError pre-round-3.
+        # The entrypoint resolver now rejects cfl_limit = 0 at TOML load
+        # time, but the summary helper is also called from inspectors and
+        # direct callers, so it must defend itself.
+        worst = (ratio = 1.5, direction = :x, win = 1, location = (1, 1, 1, 1))
+        err = try
+            summarize_cs_positivity_status(worst; cfl_limit = 0.0,
+                                            steps_per_window = 8,
+                                            require_substep_positivity = true)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ErrorException
+        @test !(err isa InexactError)
+        @test occursin("no representable", err.msg)
+    end
+
+    @testset "summary: boundary ratio_factor at typemax(Int) ÷ steps_per_window (round-3)" begin
+        # The Float64 representation of `typemax(Int) ÷ 8` is at the edge
+        # of Int64 exactness; the guard must route the case through the
+        # "no representable rescue" branch rather than risk silent
+        # `ceil(Int, _) * 8` overflow.
+        max_factor = typemax(Int) ÷ 8
+        worst = (ratio = Float64(max_factor) * 0.95, direction = :z, win = 1,
+                 location = (1, 1, 1, 1))
+        err = try
+            summarize_cs_positivity_status(worst; cfl_limit = 0.95,
+                                            steps_per_window = 8,
+                                            require_substep_positivity = true)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ErrorException
+        @test !(err isa InexactError)
+    end
+
+    # ------------------------------------------------------------------
+    # Round-3: TOML-resolver validation of `[numerics].positivity_cfl_limit`.
+    # ------------------------------------------------------------------
+
+    @testset "entrypoint: default cfl_limit is 0.95" begin
+        @test _resolve_positivity_cfl_limit(Dict{String, Any}()) == 0.95
+    end
+
+    @testset "entrypoint: valid cfl_limit values are accepted" begin
+        for v in (0.1, 0.5, 0.95, 1.0)
+            cfg = Dict("numerics" => Dict("positivity_cfl_limit" => v))
+            @test _resolve_positivity_cfl_limit(cfg) == v
+        end
+    end
+
+    @testset "entrypoint: invalid cfl_limit values are rejected at TOML load" begin
+        for v in (0.0, -0.5, 1.5, Inf, -Inf, NaN)
+            cfg = Dict("numerics" => Dict("positivity_cfl_limit" => v))
+            err = try
+                _resolve_positivity_cfl_limit(cfg)
+                nothing
+            catch e
+                e
+            end
+            @test err isa ErrorException
+            @test occursin("positivity_cfl_limit", err.msg)
+            @test occursin("0, 1", err.msg)
+        end
     end
 end

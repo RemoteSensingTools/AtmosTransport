@@ -529,8 +529,11 @@ in-scope axis. Concretely:
   - **P2c:** concrete workspaces. The per-method driving loops in
     `latlon_spectral.jl`, `cubed_sphere_spectral.jl`,
     `cubed_sphere_geos.jl`, and `reduced_transport_helpers.jl`
-    delegate allocation/readiness to the trait calls and shrink toward
-    the unified-driver shape.
+    delegate allocation/readiness to the trait calls, and the spectral
+    entrypoint owns a run-level cache for expensive topology artifacts.
+    Full `process_day` collapse is deliberately left to P3's opt-in
+    unified driver so P2 stays bit-exact and keeps writer behavior in
+    the existing paths.
 
 - **P3 (was: "unified driver")** → the ~80-line driver above lives
   behind a `[preprocessor].unified = true` opt-in flag. Side-by-side

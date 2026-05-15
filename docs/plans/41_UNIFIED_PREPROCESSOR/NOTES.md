@@ -18,8 +18,12 @@ Executor state, 2026-05-15:
   `ReadyWindow{G, FT}`, `PreprocessorRunCache{G, FT}`, and bare
   workspace/readiness generics (`allocate_window_workspace`,
   `ingest_window!`, `drain_ready_windows!`, `flush_final_windows!`).
-- Next P2 slice: concrete topology workspaces + readiness methods,
-  then shrink the per-topology drivers.
+- P2c shipped: concrete LL spectral, RG spectral, CS spectral, and
+  GEOS-native CS window workspaces. Spectral entrypoint now owns a
+  run-level `PreprocessorRunCache`; RG reuses compressed Laplacians
+  across days and CS spectral reuses LL→CS regridders across days.
+- Next phase is P3: collapse the still-long legacy `process_day`
+  driver bodies into the unified driver behind an opt-in flag.
 
 **Read [DESIGN.md](DESIGN.md) first** for the typed three-axis rationale,
 the anti-pattern audit with file:line citations, and the foot-gun
@@ -404,10 +408,14 @@ the RG compressed Laplacian should be build-once-per-run when source
 geometry and target geometry are unchanged across days.
 
 This is mechanical surgery; the math doesn't change. Definition of
-done: each existing `process_day` method drops to <50 lines and calls
-the new trait surface for everything except its own driving loop. A
-multi-day CS spectral smoke logs one regridder build, and a multi-day RG
-smoke logs one compressed-Laplacian build.
+done for P2c: every production topology has a concrete workspace and
+the existing drivers call the workspace/readiness hooks for allocation,
+ingest, and ready-window packaging. A multi-day CS spectral run reuses
+the LL→CS regridder from `PreprocessorRunCache`; a multi-day RG run
+reuses the compressed Laplacian. The old "drop each process_day to
+<50 lines" target moves to P3, because that requires the unified
+driver opt-in and writer abstraction rather than just workspace
+extraction.
 
 ### P3 — Unified driver
 

@@ -127,6 +127,14 @@ include("logging.jl")
 # Vertical coordinate handling and level merging
 include("vertical_coordinates.jl")
 
+# Plan 41 P0b — typed vertical-transform surface (Vertical axis of the
+# unified preprocessor). Wraps `merge_thin_levels` and
+# `select_levels_echlevs` into first-class transform types so layer
+# merging is available to every preprocessor pathway (LL/RG/CS ×
+# spectral/native), not just the ERA5 spectral path. Closes foot-gun
+# (B) from `docs/plans/41_UNIFIED_PREPROCESSOR/DESIGN.md`.
+include("vertical_transforms.jl")
+
 # Global 6-panel Poisson balance for cubed-sphere grids
 # (must precede target_geometry.jl which uses CSGlobalFaceTable)
 include("cs_poisson_balance.jl")
@@ -211,6 +219,16 @@ export native_vertical, window_metadata
 # Note: `windows_per_day` and `read_window!` are already exported above
 # (the existing `AbstractMetSettings` trait surface). P0a adds reader-
 # typed methods on the same generic functions.
+
+# Plan 41 P0b — typed vertical-transform surface (Vertical axis)
+export AbstractVerticalTransform, VerticalPlan
+export IdentityVertical, MergeByIndex, MergeLayersThinnerThan,
+       MergeAbovePressure, LevelSelection, PressureOverlap
+export AbstractFieldKind
+export MassField, TracerMassField, MassFluxField, PressureFluxField,
+       ConvectionInterfaceFlux, ConvectionTendencyField,
+       IntensiveCenterField, SurfaceField
+export plan_vertical, apply_vertical!
 
 # Exports for the CLI script and advanced users
 export build_target_geometry, target_summary

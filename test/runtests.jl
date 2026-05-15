@@ -72,6 +72,8 @@ core_tests = [
     "test_era5_physics_binary.jl",
     "test_preprocessing_vertical_presets.jl",
     "test_cs_preprocessor_contract.jl",
+    "test_ll_preprocessor_contract.jl",
+    "test_rg_preprocessor_contract.jl",
     "test_tm5_vertical_remap.jl",
     "test_tm5_process_day.jl",
     "test_tm5_vs_cmfmc_parity.jl",

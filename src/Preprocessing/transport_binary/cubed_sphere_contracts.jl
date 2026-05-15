@@ -285,3 +285,128 @@ function summarize_cs_positivity_status(worst::NamedTuple;
     end
     return nothing
 end
+
+# ===========================================================================
+# Plan 41 P1 — typed CS contract concrete.
+#
+# `CubedSphereContract{FT}` wraps the existing CS gate state (policy fields
+# + worst-window accumulator) in a typed nominal that participates in the
+# unified `AbstractWindowContract{G, FT}` dispatch surface. The struct holds
+# the policy at construction time (closes foot-gun A) and validates
+# `positivity_cfl_limit` in its inner constructor so an invalid TOML value
+# errors before any window runs.
+#
+# The trait-surface methods (`verify_window!`, `update_accumulator!`,
+# `summarize_status!`) delegate to the existing NamedTuple-based helpers
+# above so the per-window math is bit-exact identical to today's path —
+# the typed surface is additive scaffolding for the P2 unified driver.
+# ===========================================================================
+
+"""
+    CubedSphereContract{FT} <: AbstractWindowContract{CubedSphereTargetGeometry, FT}
+
+Typed nominal owning a CS preprocessor's per-window gate policy and
+worst-window positivity accumulator.
+
+Fields:
+
+  - `replay_tol::Float64` — relative replay tolerance.
+  - `positivity_cfl_limit::Float64` — per-substep positivity CFL gate.
+    Must satisfy `0 < limit ≤ 1`; validated at construction.
+  - `require_substep_positivity::Bool` — whether `summarize_status!`
+    errors (`true`) or warns (`false`) on a positivity violation.
+  - `steps_per_window::Int` — for the recommended-steps message in the
+    summary's escape-hatch detail. Must be ≥ 1.
+  - `halo_width::Int` — passed through to `verify_substep_positivity_cs!`.
+  - `worst::NamedTuple` — mutable accumulator (initially zero).
+
+Construct with explicit kwargs; defaults match the CS round-2/round-3
+production policy.
+"""
+mutable struct CubedSphereContract{FT} <:
+                AbstractWindowContract{CubedSphereTargetGeometry, FT}
+    replay_tol                  :: Float64
+    positivity_cfl_limit        :: Float64
+    require_substep_positivity  :: Bool
+    steps_per_window            :: Int
+    halo_width                  :: Int
+    worst                       :: NamedTuple
+
+    function CubedSphereContract{FT}(;
+                                      replay_tol::Real,
+                                      positivity_cfl_limit::Real = 0.95,
+                                      require_substep_positivity::Bool = true,
+                                      steps_per_window::Integer,
+                                      halo_width::Integer = 0) where FT
+        isfinite(positivity_cfl_limit) && 0 < positivity_cfl_limit ≤ 1 ||
+            error("CubedSphereContract: positivity_cfl_limit = " *
+                  "$(positivity_cfl_limit); must be in (0, 1].")
+        steps_per_window ≥ 1 ||
+            error("CubedSphereContract: steps_per_window = " *
+                  "$(steps_per_window); must be ≥ 1.")
+        halo_width ≥ 0 ||
+            error("CubedSphereContract: halo_width = $(halo_width); " *
+                  "must be ≥ 0.")
+        return new(Float64(replay_tol),
+                   Float64(positivity_cfl_limit),
+                   require_substep_positivity,
+                   Int(steps_per_window),
+                   Int(halo_width),
+                   init_cs_positivity_accumulator())
+    end
+end
+
+# Convenience accessor shims so the abstract trait surface answers.
+@inline contract_replay_tolerance(c::CubedSphereContract)    = c.replay_tol
+@inline contract_cfl_limit(c::CubedSphereContract)           = c.positivity_cfl_limit
+@inline contract_require_positivity(c::CubedSphereContract)  = c.require_substep_positivity
+
+"""
+    verify_window!(window, contract::CubedSphereContract, win_idx::Int)
+        -> (; replay, positivity)
+
+Run the per-window CS contract on a NamedTuple `window` with fields
+`m_cur`, `am`, `bm`, `cm`, `m_next` (each a 6-tuple of panel arrays).
+Delegates to `verify_cs_window_contract!`; the replay gate throws on
+violation, the positivity gate is non-fatal here.
+"""
+function verify_window!(window, contract::CubedSphereContract, win_idx::Integer)
+    return verify_cs_window_contract!(window.m_cur, window.am, window.bm,
+                                       window.cm, window.m_next,
+                                       contract.steps_per_window, Int(win_idx);
+                                       replay_tol           = contract.replay_tol,
+                                       positivity_cfl_limit = contract.positivity_cfl_limit,
+                                       halo_width           = contract.halo_width)
+end
+
+"""
+    update_accumulator!(contract::CubedSphereContract, positivity_diag, win_idx::Int)
+
+Fold one window's positivity diagnostic into the CS contract's
+worst-window accumulator. Mutates `contract.worst`.
+"""
+function update_accumulator!(contract::CubedSphereContract, positivity_diag,
+                              win_idx::Integer)
+    contract.worst = update_cs_positivity_accumulator(contract.worst,
+                                                       positivity_diag,
+                                                       Int(win_idx))
+    return nothing
+end
+
+"""
+    summarize_status!(contract::CubedSphereContract;
+                       quarantine_path::Union{Nothing, AbstractString} = nothing)
+
+Run the CS positivity post-loop summary using the contract's worst
+accumulator and policy fields. May log, warn, or error depending on
+the accumulator state and `require_substep_positivity`.
+"""
+function summarize_status!(contract::CubedSphereContract;
+                            quarantine_path::Union{Nothing, AbstractString} = nothing)
+    return summarize_cs_positivity_status(contract.worst;
+                                           cfl_limit = contract.positivity_cfl_limit,
+                                           steps_per_window = contract.steps_per_window,
+                                           require_substep_positivity =
+                                               contract.require_substep_positivity,
+                                           quarantine_path = quarantine_path)
+end

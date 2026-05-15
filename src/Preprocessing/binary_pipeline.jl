@@ -14,8 +14,16 @@ Shared contracts and support code are kept separate from topology workflows:
 
 - `core.jl` handles binary metadata, payload sizing, provenance, and raw writes.
 - `latlon_workspaces.jl` stages spectral, humidity, dry-basis, and vertical merge state.
-- `latlon_contracts.jl` implements structured replay, Poisson closure, and v4 writes.
-- `cubed_sphere_contracts.jl` implements CS replay and endpoint-delta helpers.
+- `window_contracts.jl` declares the typed Axis-3 abstract surface
+  (`AbstractWindowContract` / `AbstractWindowWorkspace` /
+  `AbstractBinaryWriter` + `AbstractMassBasis`) shared by every topology.
+- `latlon_contracts.jl` implements structured replay, Poisson closure, v4 writes,
+  the LL per-substep positivity gate, and `LatLonContract{FT}`.
+- `cubed_sphere_contracts.jl` implements CS replay, the CS per-substep
+  positivity gate, and `CubedSphereContract{FT}`.
+- `reduced_gaussian_contracts.jl` implements the RG per-substep positivity
+  gate and `ReducedGaussianContract{FT}` (RG replay lives in
+  `reduced_transport_helpers.jl`).
 - `topology_dispatch.jl` documents the `process_day(date, grid, settings, vertical)` extension point.
 
 New topologies should add a dedicated workflow file and dispatch on a new
@@ -25,9 +33,11 @@ replay validation, declared payload semantics, and load-time replay coverage.
 """
 
 include("transport_binary/core.jl")
+include("transport_binary/window_contracts.jl")
 include("transport_binary/latlon_workspaces.jl")
 include("transport_binary/latlon_contracts.jl")
 include("transport_binary/cubed_sphere_contracts.jl")
+include("transport_binary/reduced_gaussian_contracts.jl")
 include("transport_binary/topology_dispatch.jl")
 include("transport_binary/cubed_sphere_spectral.jl")
 include("transport_binary/cubed_sphere_regrid.jl")

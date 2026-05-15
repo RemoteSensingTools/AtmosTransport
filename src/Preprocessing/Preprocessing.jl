@@ -80,6 +80,7 @@ using ..Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                default_panel_connectivity, gnomonic_panel_connectivity, reciprocal_edge,
                GnomonicPanelConvention, GEOSNativePanelConvention,
                EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST
+using ..State: AbstractMassBasis, DryBasis, MoistBasis
 using ..Regridding: build_regridder, apply_regridder!
 using ..Quantities: QuantityKind, IntensiveCellField, ExtensiveCellField,
                     HorizontalVectorField, HorizontalFluxField
@@ -111,6 +112,29 @@ export verify_write_replay_cs!,
        init_cs_positivity_accumulator,
        update_cs_positivity_accumulator,
        summarize_cs_positivity_status
+
+# Plan 41 P1 — typed Axis-3 window-contract surface. The abstract types
+# (`AbstractWindowContract` / `AbstractWindowWorkspace` /
+# `AbstractBinaryWriter`) plus the concrete LL / CS / RG contract
+# structs and per-topology positivity kernels. Mass-basis tags
+# (`AbstractMassBasis` / `DryBasis` / `MoistBasis`) are reused from
+# `State.Basis` — `AbstractBinaryWriter{G, FT, Basis}` parametrizes
+# directly on those existing nominals so a writer↔reader pairing
+# mismatch is a compile-time `MethodError`. Exported so external
+# auditors (focused tests, the binary inspector,
+# `scripts/diagnostics/*`) can gate a binary against the same contract
+# without duplicating logic.
+export mass_basis_symbol, mass_basis_from_symbol
+export AbstractWindowContract, AbstractWindowWorkspace, AbstractBinaryWriter
+export verify_window!, update_accumulator!, summarize_status!
+export contract_replay_tolerance, contract_cfl_limit, contract_require_positivity
+export CubedSphereContract, LatLonContract, ReducedGaussianContract
+export verify_substep_positivity_ll!, verify_ll_window_contract!,
+       init_ll_positivity_accumulator, update_ll_positivity_accumulator,
+       summarize_ll_positivity_status
+export verify_substep_positivity_rg!, verify_rg_window_contract!,
+       init_rg_positivity_accumulator, update_rg_positivity_accumulator,
+       summarize_rg_positivity_status
 
 # Met source abstraction (AbstractMetSettings + RawWindow)
 include("met_sources.jl")

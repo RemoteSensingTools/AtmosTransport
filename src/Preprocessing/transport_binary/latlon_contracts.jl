@@ -286,6 +286,319 @@ function write_window!(io::IO,
     return bytes_written
 end
 
+# ===========================================================================
+# Plan 41 P1 — per-window LL transport-binary contract surface.
+#
+# Mirrors `cubed_sphere_contracts.jl` for the structured lat-lon
+# topology. Today the LL preprocessor calls only `verify_window_continuity_ll`
+# (the replay gate); there is no analogue of `verify_substep_positivity_cs!`
+# for LL fluxes, so an LL binary that drives a cell mass negative mid-sweep
+# can pass replay and only break later inside the runtime CFL scan. P1
+# closes that asymmetry: LL gets the same per-substep positivity gate,
+# the same worst-window accumulator, and the same `require_substep_positivity`
+# escape-hatch policy as CS. The gate is intentionally NOT wired into the
+# LL `process_day` orchestrator yet — that's P2.
+#
+# LL array shapes (confirmed from `mass_support.jl` and the storage struct
+# in `latlon_workspaces.jl`):
+#
+#     m  :: (Nx, Ny, Nz)
+#     am :: (Nx + 1, Ny, Nz)     # periodic in x: am[1,j,k] == am[Nx+1,j,k]
+#     bm :: (Nx, Ny + 1, Nz)     # bm[:, 1, :] = bm[:, Ny+1, :] = 0 at poles
+#     cm :: (Nx, Ny, Nz + 1)     # cm[:, :, 1] = cm[:, :, Nz+1] = 0 (TOA/sfc)
+#
+# So the positivity kernel is identical to a single CS panel modulo the
+# missing panel loop. The diagnostic NamedTuple uses `(i, j, k)` instead
+# of `(panel, i, j, k)`.
+#
+# LL/RG positivity probe note (Plan 41 P1, DESIGN.md "Open design questions"):
+# the design asks for an explicit yes-with-gate or no-with-stub answer to
+# "do LL fluxes have a substep-positivity contract?". The gate IS shipped
+# here because (a) the kernel is essentially free to implement once the CS
+# kernel exists and (b) running it on a representative ERA5 day is the
+# cheapest way to answer the question once-and-for-all in P2 when the
+# unified driver wires the call into `process_day`. Until then, the gate
+# exists as a contract type with full test coverage but is not invoked by
+# the production orchestrator, so it cannot regress any current path.
+# ===========================================================================
+
+"""
+    verify_substep_positivity_ll!(m, am, bm, cm; cfl_limit = 0.95)
+
+Per-substep horizontal+vertical positivity scan for a structured LL
+window. Mirrors `verify_substep_positivity_cs!` but operates on a single
+LL window (no panel dimension).
+
+For every cell `(i, j, k)`:
+  1. `m > 0`. A non-positive cell mass is reported with `ratio = Inf`
+     and short-circuits this cell's CFL ratios; the runtime divides by
+     `m` and would `Inf`/`NaN` otherwise.
+  2. Outgoing mass per substep, per direction, ≤ `cfl_limit * m`.
+
+`NaN`/`Inf` cell mass and `NaN`/`Inf` fluxes are flagged as `ratio = Inf`
+(see CS round-2 fix in `cubed_sphere_contracts.jl`).
+
+Returns `(direction, ratio, location, ok)` with:
+  - `direction :: Union{Symbol, Nothing}` — `:x` / `:y` / `:z` /
+    `nothing` (no inspection).
+  - `ratio :: Float64` — worst `outgoing / m`.
+  - `location :: NTuple{3, Int}` — `(i, j, k)`.
+  - `ok :: Bool` — `ratio ≤ cfl_limit`.
+"""
+function verify_substep_positivity_ll!(m::AbstractArray{FT, 3},
+                                        am::AbstractArray,
+                                        bm::AbstractArray,
+                                        cm::AbstractArray;
+                                        cfl_limit::Real = 0.95) where FT
+    Nx, Ny, Nz = size(m)
+    size(am) == (Nx + 1, Ny, Nz) ||
+        error("verify_substep_positivity_ll!: am shape $(size(am)) " *
+              "incompatible with m $(size(m)); expected ($(Nx + 1), $(Ny), $(Nz)).")
+    size(bm) == (Nx, Ny + 1, Nz) ||
+        error("verify_substep_positivity_ll!: bm shape $(size(bm)) " *
+              "incompatible with m $(size(m)); expected ($(Nx), $(Ny + 1), $(Nz)).")
+    size(cm) == (Nx, Ny, Nz + 1) ||
+        error("verify_substep_positivity_ll!: cm shape $(size(cm)) " *
+              "incompatible with m $(size(m)); expected ($(Nx), $(Ny), $(Nz + 1)).")
+
+    worst_dir = nothing
+    worst_ratio = 0.0
+    worst_loc = (0, 0, 0)
+    for (dir, F_lo_view, F_hi_view) in (
+        (:x, view(am, 1:Nx,     1:Ny,     1:Nz),
+             view(am, 2:Nx + 1, 1:Ny,     1:Nz)),
+        (:y, view(bm, 1:Nx,     1:Ny,     1:Nz),
+             view(bm, 1:Nx,     2:Ny + 1, 1:Nz)),
+        (:z, view(cm, 1:Nx,     1:Ny,     1:Nz),
+             view(cm, 1:Nx,     1:Ny,     2:Nz + 1)),
+    )
+        for k in 1:Nz, j in 1:Ny, i in 1:Nx
+            mi = m[i, j, k]
+            fl = F_lo_view[i, j, k]
+            fh = F_hi_view[i, j, k]
+            # NaN-aware short-circuit: matches the CS round-2 fix so
+            # `NaN`-mass cells, `NaN`/`Inf` fluxes, and `m ≤ 0` are all
+            # surfaced consistently. NaN comparisons return `false`, so
+            # `mi <= 0` alone would let `NaN`-mass cells slip through.
+            if !isfinite(mi) || mi <= zero(FT) ||
+               !isfinite(fl) || !isfinite(fh)
+                if !isinf(worst_ratio)
+                    worst_ratio = Inf
+                    worst_dir = dir
+                    worst_loc = (i, j, k)
+                end
+                continue
+            end
+            outgoing = max(zero(FT), -fl) + max(zero(FT), fh)
+            ratio = outgoing / mi
+            if ratio > worst_ratio
+                worst_ratio = ratio
+                worst_dir = dir
+                worst_loc = (i, j, k)
+            end
+        end
+    end
+    return (direction = worst_dir, ratio = Float64(worst_ratio),
+            location = worst_loc, ok = worst_ratio <= cfl_limit)
+end
+
+"""
+    verify_ll_window_contract!(m_cur, am, bm, cm, m_next, steps_per_window, win_idx;
+                               replay_tol, positivity_cfl_limit = 0.95)
+
+Single canonical per-window LL binary contract check. Runs the replay
+gate (`verify_window_continuity_ll`, errors on failure) followed by the
+per-substep positivity scan (`verify_substep_positivity_ll!`, returns a
+diagnostic).
+
+Returns `(; replay, positivity)`. Positivity is non-fatal here — callers
+aggregate the worst window across the loop and pass it to
+`summarize_ll_positivity_status` where the run-level
+`require_substep_positivity` policy decides whether to error or warn.
+"""
+function verify_ll_window_contract!(m_cur::AbstractArray{FT, 3},
+                                     am::AbstractArray,
+                                     bm::AbstractArray,
+                                     cm::AbstractArray,
+                                     m_next::AbstractArray,
+                                     steps_per_window::Integer,
+                                     win_idx::Integer;
+                                     replay_tol::Real,
+                                     positivity_cfl_limit::Real = 0.95) where FT
+    replay = verify_window_continuity_ll(m_cur, am, bm, cm, m_next, steps_per_window)
+    replay.max_rel_err <= replay_tol ||
+        error("Write-time replay gate FAILED for LL window $(win_idx): " *
+              "rel=$(replay.max_rel_err) > tol=$(replay_tol) at cell " *
+              "$(replay.worst_idx) (abs=$(replay.max_abs_err) kg). Stored LL " *
+              "fluxes do not integrate to the target mass endpoint under " *
+              "palindrome continuity.")
+    positivity = verify_substep_positivity_ll!(m_cur, am, bm, cm;
+                                                cfl_limit = positivity_cfl_limit)
+    return (replay = replay, positivity = positivity)
+end
+
+"""
+    init_ll_positivity_accumulator() -> NamedTuple
+
+Zero-valued state for accumulating the worst per-window LL positivity
+diagnostic across a preprocessing loop. Pair with
+`update_ll_positivity_accumulator`.
+"""
+init_ll_positivity_accumulator() = (ratio = 0.0,
+                                     direction = :none,
+                                     win = 0,
+                                     location = (0, 0, 0))
+
+"""
+    update_ll_positivity_accumulator(worst, diag, win_idx) -> NamedTuple
+
+Return an updated LL accumulator from a fresh per-window diagnostic.
+"""
+function update_ll_positivity_accumulator(worst::NamedTuple, diag::NamedTuple,
+                                            win_idx::Integer)
+    diag.ratio > worst.ratio || return worst
+    return (ratio = diag.ratio,
+            direction = diag.direction === nothing ? :none : diag.direction,
+            win = Int(win_idx),
+            location = diag.location)
+end
+
+"""
+    summarize_ll_positivity_status(worst; cfl_limit, steps_per_window,
+                                   require_substep_positivity = true,
+                                   quarantine_path = nothing)
+
+Post-loop summary helper for the LL positivity accumulator. Logs the
+worst-window outcome, and if it exceeds `cfl_limit`:
+* deletes `quarantine_path` (if given) so a downstream consumer cannot
+  pick up the half-written binary;
+* errors when `require_substep_positivity = true`, otherwise warns.
+
+The error/warn message includes a recommended `steps_per_window` value
+that would satisfy the gate, computed from the observed worst ratio.
+The "no representable rescue" branch from CS round-3 is mirrored here.
+"""
+function summarize_ll_positivity_status(worst::NamedTuple;
+                                          cfl_limit::Real,
+                                          steps_per_window::Integer,
+                                          require_substep_positivity::Bool = true,
+                                          quarantine_path::Union{Nothing, AbstractString} = nothing)
+    msg = @sprintf("max outgoing/m=%.3f dir=%s win=%d cell=%s (limit=%.2f)",
+                   worst.ratio, worst.direction, worst.win,
+                   worst.location, cfl_limit)
+    if worst.ratio <= cfl_limit
+        @info "  Per-substep positivity gate: $msg"
+        return nothing
+    end
+
+    max_safe_factor       = typemax(Int) ÷ max(Int(steps_per_window), 1)
+    useful_recommendation = isfinite(worst.ratio) &&
+                             isfinite(cfl_limit) && cfl_limit > 0 &&
+                             worst.ratio / cfl_limit <= max_safe_factor
+
+    detail = if useful_recommendation
+        recommended = max(Int(steps_per_window),
+                          ceil(Int, worst.ratio / cfl_limit) * Int(steps_per_window))
+        "Per-substep positivity contract violated: $msg. " *
+        "The binary stores fluxes that violate positivity at the recorded " *
+        "`steps_per_window=$(steps_per_window)`. Re-run with " *
+        "`steps_per_window=$(recommended)` (or higher) on the source " *
+        "preprocessing config, or set `[numerics].require_substep_positivity = false` " *
+        "to suppress."
+    else
+        "Per-substep positivity contract violated, and no representable " *
+        "`steps_per_window` can rescue it: $msg. " *
+        "The observed ratio is `Inf`/`NaN` (m<=0, NaN-mass/flux, or Inf-flux) " *
+        "or finite but pathologically large; the configured `cfl_limit` may " *
+        "also be non-positive. Either the source data has been corrupted " *
+        "upstream of preprocessing, the pressure-fixer / endpoint-balance " *
+        "pass drove a cell negative, or `[numerics].positivity_cfl_limit` is " *
+        "misconfigured (must satisfy `0 < cfl_limit <= 1`). Investigate the " *
+        "source field at the reported cell location, or set " *
+        "`[numerics].require_substep_positivity = false` to record the " *
+        "violation as a warning and keep the binary for diagnostic inspection."
+    end
+    if require_substep_positivity
+        quarantine_path === nothing || (isfile(quarantine_path) && rm(quarantine_path; force = true))
+        error(detail)
+    else
+        @warn detail
+    end
+    return nothing
+end
+
+# ---------------------------------------------------------------------------
+# `LatLonContract{FT}` — typed Axis-3 concrete for the structured LL
+# topology. Mirrors `CubedSphereContract{FT}` so the unified driver in P2
+# can dispatch the same `verify_window!` / `update_accumulator!` /
+# `summarize_status!` trait surface on either topology.
+# ---------------------------------------------------------------------------
+
+"""
+    LatLonContract{FT} <: AbstractWindowContract{LatLonTargetGeometry, FT}
+
+Typed nominal owning an LL preprocessor's per-window gate policy and
+worst-window positivity accumulator. Construction validates
+`positivity_cfl_limit ∈ (0, 1]` and `steps_per_window ≥ 1` so an
+invalid TOML value fails before any window runs.
+"""
+mutable struct LatLonContract{FT} <:
+                AbstractWindowContract{LatLonTargetGeometry, FT}
+    replay_tol                  :: Float64
+    positivity_cfl_limit        :: Float64
+    require_substep_positivity  :: Bool
+    steps_per_window            :: Int
+    worst                       :: NamedTuple
+
+    function LatLonContract{FT}(;
+                                 replay_tol::Real,
+                                 positivity_cfl_limit::Real = 0.95,
+                                 require_substep_positivity::Bool = true,
+                                 steps_per_window::Integer) where FT
+        isfinite(positivity_cfl_limit) && 0 < positivity_cfl_limit ≤ 1 ||
+            error("LatLonContract: positivity_cfl_limit = " *
+                  "$(positivity_cfl_limit); must be in (0, 1].")
+        steps_per_window ≥ 1 ||
+            error("LatLonContract: steps_per_window = " *
+                  "$(steps_per_window); must be ≥ 1.")
+        return new(Float64(replay_tol),
+                   Float64(positivity_cfl_limit),
+                   require_substep_positivity,
+                   Int(steps_per_window),
+                   init_ll_positivity_accumulator())
+    end
+end
+
+@inline contract_replay_tolerance(c::LatLonContract)   = c.replay_tol
+@inline contract_cfl_limit(c::LatLonContract)          = c.positivity_cfl_limit
+@inline contract_require_positivity(c::LatLonContract) = c.require_substep_positivity
+
+function verify_window!(window, contract::LatLonContract, win_idx::Integer)
+    return verify_ll_window_contract!(window.m_cur, window.am, window.bm,
+                                       window.cm, window.m_next,
+                                       contract.steps_per_window, Int(win_idx);
+                                       replay_tol           = contract.replay_tol,
+                                       positivity_cfl_limit = contract.positivity_cfl_limit)
+end
+
+function update_accumulator!(contract::LatLonContract, positivity_diag,
+                              win_idx::Integer)
+    contract.worst = update_ll_positivity_accumulator(contract.worst,
+                                                       positivity_diag,
+                                                       Int(win_idx))
+    return nothing
+end
+
+function summarize_status!(contract::LatLonContract;
+                            quarantine_path::Union{Nothing, AbstractString} = nothing)
+    return summarize_ll_positivity_status(contract.worst;
+                                            cfl_limit = contract.positivity_cfl_limit,
+                                            steps_per_window = contract.steps_per_window,
+                                            require_substep_positivity =
+                                                contract.require_substep_positivity,
+                                            quarantine_path = quarantine_path)
+end
+
 """
     write_day_binary!(bin_path, header_json, storage, settings, merged, last_hour_next)
 

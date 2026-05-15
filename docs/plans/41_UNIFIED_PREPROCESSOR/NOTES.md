@@ -1,0 +1,353 @@
+# Plan 41 — Unified Transport-Binary Preprocessor
+
+## Status
+
+Drafted 2026-05-15 (carried over from the CS-contract-round-3 session on
+2026-05-14). Awaiting executor (Codex).
+
+Triggered by user observation: "binary preprocessor uses very different
+paths for the different variations of met data and target grids; this
+should be unified with multi-dispatch."
+
+## Problem statement
+
+The transport-binary preprocessor currently spreads four near-identical
+per-window driving loops across four sibling files in
+`src/Preprocessing/transport_binary/` (plus one more entry point in
+`src/Preprocessing/reduced_transport_helpers.jl`), branched by source-
+kind in `entrypoint.jl`, and only the cubed-sphere paths carry a
+per-substep positivity contract.
+
+Concretely, the surface looks like this today:
+
+| File | `process_day` signature dispatches on | Source assumption |
+|---|---|---|
+| `transport_binary/latlon_spectral.jl:10` | `grid::LatLonTargetGeometry` | ERA5 spectral |
+| `transport_binary/cubed_sphere_spectral.jl:10` | `grid::CubedSphereTargetGeometry` | ERA5 spectral |
+| `transport_binary/cubed_sphere_geos.jl:377` | `grid::CubedSphereTargetGeometry, settings::AbstractGEOSSettings` | GEOS native NetCDF |
+| `Preprocessing/reduced_transport_helpers.jl:1250` | `grid::ReducedGaussianTargetGeometry` | ERA5 spectral |
+| `transport_binary/cubed_sphere_regrid.jl` | (not `process_day`) | LL binary → CS |
+
+Top-level driver in `transport_binary/entrypoint.jl` is split by
+**source-kind, not topology**:
+
+- `_process_day_native` (line 116) handles typed `AbstractMetSettings`
+  factories (currently only GEOS-IT). Reads `[source].toml`, builds
+  settings, owns its own date loop.
+- `_process_day_spectral` (line 205) handles legacy NamedTuple settings
+  (ERA5 spectral). Owns its own date loop, different kwarg surface.
+
+Per-window contract calls (replay + CS positivity) are made by each
+`process_day` method *independently* — the call sites live inside four
+sibling driving loops that all look like:
+
+```julia
+for win in 1:Nwindows
+    ...build (m, am, bm, cm, m_next)...
+    ...call write-time replay gate (LL: verify_window_continuity_ll;
+                                    RG: verify_window_continuity_rg;
+                                    CS: verify_cs_window_contract!)...
+    ...write window to streaming binary...
+    ...accumulate diagnostics...
+end
+...post-loop summary...
+```
+
+The d1f50b6/45b87f3/9b1ceda series consolidated *the contract calls
+themselves* into `cubed_sphere_contracts.jl` (one source of truth for
+the CS gates). But the **outer scaffolding** around those calls is
+still copy-pasted four times.
+
+### Concrete duplication smell
+
+1. **Date-loop scaffolding duplicated.** Every method opens its own
+   `for d in dates / for win in 1:Nwindows` and re-implements `[idx/N]
+   $(d) → $(out_path)` logging.
+2. **Writer open/close duplicated**, including the `try`-`finally` plus
+   the per-window `bytes_per_window` accounting added in the round-2
+   review.
+3. **Positivity gate is CS-only.** LL and RG paths have no analogue of
+   `verify_substep_positivity_*!`; whether this is a real gap or a
+   "doesn't apply" depends on whether LL/RG fluxes can violate
+   substep positivity. This plan answers that explicitly.
+4. **`out_path` lifecycle inconsistent.** The CS-GEOS path stages to
+   `.tmp` and atomically renames; LL/RG paths write in place.
+5. **Kwarg surface differs.** GEOS path takes 9 explicit kwargs
+   (`out_path`, `dt_met_seconds`, `FT`, `mass_basis`, `replay_tol`,
+   `positivity_cfl_limit`, `require_substep_positivity`, `chain_mass`,
+   `seed_m`); CS-spectral takes 3; LL/RG take 1.
+
+## End-state architecture
+
+Two orthogonal axes, both registered through multi-dispatch:
+
+### Axis A — Source (where the per-window state comes from)
+
+A new abstract type and trait surface:
+
+```julia
+abstract type AbstractMetReader{FT, MetSettings} end
+
+# Open all handles for one calendar day. Returns a typed reader that
+# carries everything the per-window step needs (file handles, vertical
+# coordinate, chained-mass seed, …).
+open_day(settings::MetSettings, date::Date,
+         ::Type{FT}; next_day_handle::Bool, seed::Any) where {FT}
+    → AbstractMetReader{FT, MetSettings}
+
+# Number of write-windows produced per day. Currently 24 (1-hour
+# windows). Per-source so a 3-hourly source would say 8.
+windows_per_day(reader)::Int
+
+# Read window `w` into preallocated buffers `dst` (NamedTuple of
+# topology-shaped arrays). `dst` is allocated once per day by the
+# driver and reused across windows.
+read_window!(dst, reader, w::Int) → nothing
+
+# Cross-day carry (e.g., GEOS pressure-fixer endpoint) returned from
+# the last window. Used by the next day's `open_day(... ; seed=...)`.
+end_of_day_seed(reader) → Any
+
+close_day!(reader)
+```
+
+Concrete readers:
+- `ERA5SpectralReader` — owns spectral synth + LL regrid (collapses
+  the `_process_day_spectral`-side `Workspace` bookkeeping).
+- `GEOSNativeReader` — owns `open_geos_day` + CTM_A1/CTM_I1 + PF
+  chaining (replaces the inner half of `cubed_sphere_geos.jl::process_day`).
+- (future) `MERRANativeReader`, `GEOSFPSpectralReader`, etc.
+
+### Axis B — Target topology (how the window is shaped + contract)
+
+Already-typed `AbstractTargetGeometry` is the dispatch key. We tighten
+the surface so EVERY method below MUST exist for a new topology:
+
+```julia
+# Allocate per-day workspace buffers (haloed panel tuples for CS,
+# face-indexed arrays for RG, structured arrays for LL).
+allocate_window_workspace(grid::AbstractTargetGeometry, vertical, FT)
+    → NamedTuple
+
+# Regrid one read window from source-native shape to target shape.
+# Source-/target-pairwise specialization may stack on top.
+regrid_window!(target_dst, source_dst, grid, reader, win_idx, vertical)
+
+# Single-window contract: replay + positivity (where applicable). Each
+# topology has its own contract module and accumulator type.
+verify_window_contract!(target_dst, grid, contract_state, win_idx;
+                        replay_tol, positivity_cfl_limit, halo_width=0)
+    → (replay, positivity)  # positivity = (direction, ratio, ok)
+
+# Streaming writer for the topology's binary format.
+open_streaming_binary(grid, out_path, header) → writer
+write_window!(writer, target_dst, win_idx) → bytes
+close_streaming_binary!(writer)
+
+# Initialize, update, and summarize the per-day contract accumulator.
+init_contract_accumulator(grid)
+update_contract_accumulator(grid, worst, diag, win)
+summarize_contract_status(grid, worst; cfl_limit, steps_per_window,
+                          require_substep_positivity, quarantine_path)
+```
+
+### Unified driver
+
+One driver function in `transport_binary/driver.jl`, callable for any
+`(source, target)` combination:
+
+```julia
+function process_day(cfg::AbstractDict;
+                     day_override = nothing,
+                     start_date = nothing,
+                     end_date = nothing)
+    FT       = _resolve_float_type(cfg)
+    grid     = build_target_geometry(cfg["grid"], FT)
+    settings = build_met_settings(cfg["source"], FT)
+    vertical = build_vertical_setup(cfg, settings, grid, FT)
+    dates    = _resolve_dates(cfg, settings; day_override, start_date, end_date)
+
+    contract_kwargs = _resolve_contract_kwargs(cfg)
+    workspace = allocate_window_workspace(grid, vertical, FT)
+    seed = nothing
+
+    for (idx, d) in enumerate(dates)
+        out_path = _output_path(cfg, settings, d, FT)
+        reader = open_day(settings, d, FT;
+                          next_day_handle = idx < length(dates) ||
+                                            _has_next_day(settings, d),
+                          seed = seed)
+        try
+            worst = init_contract_accumulator(grid)
+            writer = open_streaming_binary(grid, out_path * ".tmp",
+                                            header_from(reader, grid, vertical))
+            local writer_closed = false
+            try
+                for w in 1:windows_per_day(reader)
+                    read_window!(workspace.source, reader, w)
+                    regrid_window!(workspace.target, workspace.source,
+                                    grid, reader, w, vertical)
+                    diag = verify_window_contract!(
+                        workspace.target, grid, workspace.contract, w;
+                        contract_kwargs...)
+                    worst = update_contract_accumulator(grid, worst,
+                                                         diag.positivity, w)
+                    write_window!(writer, workspace.target, w)
+                end
+                close_streaming_binary!(writer); writer_closed = true
+            finally
+                writer_closed || close_streaming_binary!(writer)
+            end
+            summarize_contract_status(grid, worst;
+                                       quarantine_path = out_path * ".tmp",
+                                       contract_kwargs...)
+            mv(out_path * ".tmp", out_path; force = true)
+            seed = end_of_day_seed(reader)
+        finally
+            close_day!(reader)
+        end
+    end
+end
+```
+
+This is ~80 lines and replaces TWO `_process_day_*` entrypoints plus
+FOUR `process_day(date, grid, settings, vertical)` methods.
+
+## Commit-by-commit migration
+
+Each commit ships green, with all tests passing. Migration is
+**additive** until the last commit so we can compare new ↔ legacy
+behavior diff-by-diff.
+
+### P0 — Reader trait surface (no behavior change)
+
+Define `AbstractMetReader` + the 4 trait functions in
+`src/Preprocessing/met_readers.jl`. Concrete `ERA5SpectralReader` and
+`GEOSNativeReader` wrap the *existing* `open_geos_day` / spectral
+machinery — no rewrites, just a thin façade.
+
+Definition of done: `julia --project=. -e 'using ...; reader =
+open_day(geos_settings, Date("2021-12-02"), Float32; …); for w in
+1:windows_per_day(reader); read_window!(dst, reader, w); end' ` runs
+clean and produces the same `(m, am, bm, cm, m_next, …)` arrays the
+GEOS path produces today, bit-for-bit. Add focused test
+`test_met_readers.jl`.
+
+### P1 — Target dispatch tightening
+
+Add the three missing topology contract surfaces:
+
+- `latlon_contracts.jl` → add `verify_ll_window_contract!`,
+  `init_ll_positivity_accumulator`, …, mirroring `cubed_sphere_contracts.jl`.
+  **Decision needed during P1**: do LL fluxes have a substep-positivity
+  contract? Probe by running a representative ERA5 day's stored
+  (am, bm, cm) through a probe equivalent of `verify_substep_positivity_cs!`
+  and see whether ratios exceed 0.95 anywhere. If yes, ship the gate;
+  if no, ship a stub that always returns `ok = true` and document the
+  invariant.
+- `reduced_gaussian_contracts.jl` → ditto for the RG path.
+- Hoist any other duplicated contract helpers into per-topology
+  modules.
+
+Definition of done: every topology's `process_day` calls
+`verify_*_window_contract!` instead of bare `verify_window_continuity_*`.
+All existing tests stay green. Add focused
+`test_ll_preprocessor_contract.jl` and `test_rg_preprocessor_contract.jl`
+mirroring `test_cs_preprocessor_contract.jl`.
+
+### P2 — Workspace + regrid trait
+
+Pull every method's "allocate per-day arrays" block into
+`allocate_window_workspace(grid, vertical, FT)` per topology. Pull the
+"regrid one window" inner block (the part that consumes
+`reader.read_window` output and produces topology-shaped output) into
+`regrid_window!(target, source, grid, reader, w, vertical)` per
+topology.
+
+This is mechanical surgery; the math doesn't change. Definition of
+done: each existing `process_day` method drops to <50 lines and calls
+the new trait surface for everything except its own driving loop.
+
+### P3 — Unified driver
+
+Add `transport_binary/driver.jl` with the ~80-line driver above.
+**Don't** wire it in yet — `entrypoint.jl::process_day` still routes
+through `_process_day_native` / `_process_day_spectral`.
+
+Add a new opt-in code path: if `cfg["preprocessor"]["unified"] = true`,
+call the new driver; otherwise route through legacy. Run side-by-side
+on 1-day smoke configs for ERA5 spectral × LL, ERA5 spectral × CS,
+GEOS native × CS, and compare binaries byte-for-byte.
+
+Definition of done: the 3 side-by-side smokes produce bit-identical
+binaries (or document any FP-rounding-tier difference). Adds
+`scripts/diagnostics/compare_preprocessors.jl`.
+
+### P4 — Cut over
+
+Switch `entrypoint.jl::process_day` to call `driver.process_day`
+unconditionally. Move the four old `process_day(date, grid, settings,
+vertical)` methods + `_process_day_native` + `_process_day_spectral`
+into `src_legacy/Preprocessing/`. Delete the unified-vs-legacy opt-in
+flag.
+
+Definition of done: every regression test that exercises preprocessing
+passes. The 1-day smoke configs from P3 produce bit-identical binaries
+to the pre-cut-over commit. `scripts/preprocessing/preprocess_transport_binary.jl`
+needs no change (it already takes a single TOML).
+
+### P5 — Add MERRA or GEOS-FP native reader (validation)
+
+The proof-of-extensibility test: add one new source by implementing
+`open_day` + `read_window!` + `windows_per_day` + `close_day!` only —
+no new `process_day` method, no driver edits. If this commit is
+~150 lines plus tests, the unification did its job.
+
+## Notes for the executor
+
+- `cubed_sphere_geos.jl` is the only file today with `process_day`
+  dispatching on `settings::AbstractGEOSSettings`. That dispatch
+  collapses naturally into `GEOSNativeReader` (settings axis lives
+  on the reader, not on `process_day`).
+- `cubed_sphere_regrid.jl::regrid_ll_binary_to_cs` is a **different
+  pipeline** (LL binary → CS binary), not a `process_day` variant.
+  Out of scope for this plan. After P4 it becomes a topology
+  transformer that could optionally use the new reader surface for
+  its LL input — leave that for Plan 42.
+- The d1f50b6 / 45b87f3 / 9b1ceda work (CS contract + tests) is the
+  template for what `latlon_contracts.jl` and `reduced_gaussian_contracts.jl`
+  should look like under this plan. Mirror `test_cs_preprocessor_contract.jl`
+  one-to-one in the new topology test files.
+- The `merge_thin_levels` machinery
+  (`Preprocessing/vertical_coordinates.jl:11`,
+  `Preprocessing/configuration.jl:295`) is currently wired only into
+  the ERA5 spectral `build_vertical_setup`. The unified driver should
+  expose layer merging as a per-source option so GEOS-IT can opt in
+  (relevant to the v4 thin-mesospheric-layer regen issue documented
+  in [cs_contract_round3_regen_blocked_2026_05_14.md](../../../.claude/projects/-home-cfranken-code-gitHub-AtmosTransportModel/memory/cs_contract_round3_regen_blocked_2026_05_14.md)).
+  This becomes natural in P2 because `build_vertical_setup` moves
+  next to `allocate_window_workspace`.
+
+## Hard constraints (must not break)
+
+1. **Bit-exact binaries** for every existing TOML config through P4.
+2. **Existing contract surface is the floor.** The CS round-3 gate
+   semantics (round-2's `Inf`/`NaN` fix, round-3's
+   `typemax(Int)` + `cfl_limit` validation, the
+   `require_substep_positivity = false` escape hatch) stay verbatim.
+3. **GEOS chained-mass seed plumbing.** The pressure-fixer endpoint
+   handoff in `_process_day_native` is load-bearing; the
+   `end_of_day_seed(reader)` / `seed=` round-trip must be tested with
+   the existing 5-day chained-mass smoke before P4 lands.
+4. **Boundary-day error handling.** The 2023-12-31 boundary failure
+   in the previous regen (no next-day CTM_I1 endpoint) must still
+   surface with a comprehensible error, not a generic "missing file".
+
+## Out of scope
+
+- `cubed_sphere_regrid.jl::regrid_ll_binary_to_cs` (Plan 42).
+- TM5 convection preprocessing (`tm5_convection_conversion.jl`).
+- Runtime I/O — that's Plan 40, already shipped.
+- Adding new target topologies beyond LL / RG / CS.
+- Layer merging for GEOS-IT (separate plan; this refactor enables it
+  but does not require it).

@@ -134,6 +134,10 @@ export allocate_window_workspace, reset_workspace!,
 export LatLonBinaryWriter, ReducedGaussianBinaryWriter, CubedSphereBinaryWriter
 export write_window!, close_streaming_binary!, promote_streaming_binary!,
        quarantine_streaming_binary!, writer_staging_path, writer_final_path
+export UnifiedPreprocessorDay, run_unified_preprocessor_day!
+export driver_windows_per_day, driver_ingest_window!,
+       driver_drain_ready_windows!, driver_flush_final_windows!,
+       driver_after_write_window!
 export CubedSphereContract, LatLonContract, ReducedGaussianContract
 export verify_substep_positivity_ll!, verify_ll_window_contract!,
        init_ll_positivity_accumulator, update_ll_positivity_accumulator,

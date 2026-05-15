@@ -26,6 +26,11 @@ Executor state, 2026-05-15:
   writer adapters now implement the typed `AbstractBinaryWriter{G, FT, Basis}`
   surface plus close/promote/quarantine hooks. Production call sites are
   unchanged; focused tests pin topology-dispatch mismatches as `MethodError`.
+- P3b shipped in the current Codex working tree: additive
+  `UnifiedPreprocessorDay` + `run_unified_preprocessor_day!` driver shell,
+  with migration hooks for window count, ingest, drain, flush, and post-write
+  advancement. It normalizes both future raw `ReadyWindow`s and current
+  preverified `(ready, contract)` events.
 - Next phase is P3: collapse the still-long legacy `process_day`
   driver bodies into the unified driver behind an opt-in flag.
 
@@ -427,6 +432,12 @@ P3a adds concrete writer adapters first. They wrap the current LL v4
 full-day writer and the existing RG/CS `StreamingTransportBinaryWriter`
 without changing byte layout or production call sites. This gives the
 unified driver a typed writer surface before any driver code is moved.
+
+P3b adds the driver shell without wiring it into production. It owns the
+common lifecycle (ingest -> drain -> verify/update -> write -> close ->
+summarize -> promote; close/quarantine on failure) and exposes small
+migration hooks so existing workspace methods can be adapted one topology
+at a time.
 
 Add `transport_binary/driver.jl` with the ~80-line driver above.
 **Don't** wire it in yet — `entrypoint.jl::process_day` still routes

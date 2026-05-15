@@ -1161,7 +1161,7 @@ end
 
 """
     balance_window!(hflux_work, m_cur_work, m_next_work, cm_work, div_scratch,
-                    buf, slot, m_next, work, cL, steps_per_window;
+                    dm_target_work, buf, slot, m_next, work, cL, steps_per_window;
                     tol, max_iter)
 
 Poisson-balance the horizontal fluxes in buffer `slot` using the
@@ -1177,6 +1177,7 @@ function balance_window!(hflux_work::Matrix{Float64},
                          m_next_work::Matrix{Float64},
                          cm_work::Matrix{Float64},
                          div_scratch::Matrix{Float64},
+                         dm_target_work::Matrix{Float64},
                          buf::SlidingWindowBuffer{FT},
                          slot::Int,
                          m_next::AbstractMatrix{FT},
@@ -1206,35 +1207,71 @@ function balance_window!(hflux_work::Matrix{Float64},
     # Recompute cm from balanced hflux using the explicit-dm closure
     # (plan 39 dry-basis fix, 2026-04-22). See apply_reduced_poisson_balance!
     # comment for rationale.
-    dm_target = similar(m_cur_work)
+    size(dm_target_work) == size(m_cur_work) ||
+        error("balance_window!: dm_target_work shape $(size(dm_target_work)) " *
+              "!= m_cur_work shape $(size(m_cur_work)).")
     inv_scale = 1.0 / (2 * max(Int(steps_per_window), 1))
-    @. dm_target = (m_next_work - m_cur_work) * inv_scale
-    recompute_cm_from_dm_target!(replay_layout, div_scratch, cm_work, m_cur_work, dm_target, hflux_work)
+    @. dm_target_work = (m_next_work - m_cur_work) * inv_scale
+    recompute_cm_from_dm_target!(replay_layout, div_scratch, cm_work,
+                                 m_cur_work, dm_target_work, hflux_work)
     buf.cm[slot] .= FT.(cm_work)
 
-    # Plan 39 Commit E: per-window replay gate for the streaming RG path.
-    # Skips the Float64→FT round-trip to keep the check at full precision.
-    if get(ENV, "ATMOSTR_NO_WRITE_REPLAY_CHECK", "0") != "1"
-        diag_replay = verify_window_continuity_rg(m_cur_work, hflux_work, cm_work,
-                                                   m_next_work,
-                                                   work.face_left, work.face_right,
-                                                   div_scratch, steps_per_window)
-        tol_rel = replay_tolerance(FT)
-        if diag_replay.max_rel_err > tol_rel
-            tol_msg = @sprintf("rel=%.3e > tol=%.3e at cell %s (abs=%.3e kg)",
-                                diag_replay.max_rel_err, tol_rel, diag_replay.worst_idx,
-                                diag_replay.max_abs_err)
-            error("Streaming RG write-time replay gate FAILED: $tol_msg. Stored fluxes do not " *
-                  "integrate to stored m_next under palindrome continuity. See plan 39 memo.")
+    return diag
+end
+
+function _verify_rg_balanced_window!(window_contract,
+                                     m_cur_work::Matrix{Float64},
+                                     hflux_work::Matrix{Float64},
+                                     cm_work::Matrix{Float64},
+                                     m_next_work::Matrix{Float64},
+                                     win_idx::Int;
+                                     write_replay_on::Bool)
+    if write_replay_on
+        diag = verify_window!((m_cur = m_cur_work,
+                               hflux = hflux_work,
+                               cm = cm_work,
+                               m_next = m_next_work),
+                              window_contract, win_idx)
+    else
+        stub = verify_boundary_stub_flux_rg(hflux_work,
+                                             window_contract.face_left,
+                                             window_contract.face_right;
+                                             tol = window_contract.boundary_stub_tol)
+        stub.violated &&
+            error("Boundary-stub flux gate FAILED for RG window $(win_idx): " *
+                  "hflux=$(stub.worst_flux) on face=$(stub.worst_face) " *
+                  "level=$(stub.worst_level) where " *
+                  "face_left=$(window_contract.face_left[stub.worst_face]) " *
+                  "face_right=$(window_contract.face_right[stub.worst_face]); " *
+                  "runtime advection (`StrangSplitting.jl:279`) will silently " *
+                  "discard this flux.")
+
+        m_shape = size(m_cur_work)
+        if window_contract._outgoing_h === nothing ||
+           size(window_contract._outgoing_h) != m_shape
+            window_contract._outgoing_h = Array{Float64}(undef, m_shape)
+            window_contract._bad_h = Array{Bool}(undef, m_shape)
         end
+        positivity = verify_substep_positivity_rg!(m_cur_work, hflux_work, cm_work,
+                                                    window_contract.face_left,
+                                                    window_contract.face_right;
+                                                    cfl_limit =
+                                                        window_contract.positivity_cfl_limit,
+                                                    outgoing_h =
+                                                        window_contract._outgoing_h,
+                                                    bad_h =
+                                                        window_contract._bad_h)
+        diag = (replay = nothing, positivity = positivity)
     end
 
+    update_accumulator!(window_contract, diag.positivity, win_idx)
     return diag
 end
 
 """
     process_day(date, grid::ReducedGaussianTargetGeometry, settings, vertical;
-                next_day_hour0=nothing)
+                next_day_hour0=nothing, positivity_cfl_limit=0.95,
+                require_substep_positivity=true)
 
 Streaming one-day preprocessing for reduced-Gaussian targets.
 
@@ -1251,7 +1288,9 @@ function process_day(date::Date,
                      grid::ReducedGaussianTargetGeometry,
                      settings,
                      vertical;
-                     next_day_hour0=nothing)
+                     next_day_hour0=nothing,
+                     positivity_cfl_limit::Real = 0.95,
+                     require_substep_positivity::Bool = true)
     FT = settings.output_float_type
     mesh = grid.mesh
     nc = ncells(mesh)
@@ -1313,6 +1352,18 @@ function process_day(date::Date,
     m_next_work   = zeros(Float64, nc, Nz)
     cm_work       = zeros(Float64, nc, Nz + 1)
     div_scratch_b = zeros(Float64, nc, Nz)
+    dm_target_work = zeros(Float64, nc, Nz)
+    write_replay_on = get(ENV, "ATMOSTR_NO_WRITE_REPLAY_CHECK", "0") != "1"
+    write_replay_on ||
+        @info "  Write-time replay gate SKIPPED (ATMOSTR_NO_WRITE_REPLAY_CHECK=1)"
+    window_contract = ReducedGaussianContract{FT}(
+        replay_tol = replay_tolerance(FT),
+        positivity_cfl_limit = positivity_cfl_limit,
+        require_substep_positivity = require_substep_positivity,
+        steps_per_window = steps_per_met,
+        face_left = work.face_left,
+        face_right = work.face_right,
+    )
 
     # Open the streaming binary writer
     vc_merged = vertical.merged_vc
@@ -1372,6 +1423,10 @@ function process_day(date::Date,
     worst_post_proj = 0.0
     worst_post_raw = 0.0
     worst_iter     = 0
+    worst_replay_rel = 0.0
+    worst_replay_abs = 0.0
+    worst_replay_win = 0
+    worst_replay_idx = (0, 0)
 
     # cur/nxt are indices into the 2-slot buffer (swap instead of copy)
     cur = 1
@@ -1399,7 +1454,7 @@ function process_day(date::Date,
         # Balance the PREVIOUS window using (m_cur, m_next)
         t_bal = time()
         diag = balance_window!(hflux_work, m_cur_work, m_next_work,
-                               cm_work, div_scratch_b,
+                               cm_work, div_scratch_b, dm_target_work,
                                buf, cur, buf.m[nxt],
                                work, cL, steps_per_met)
         t_bal = time() - t_bal
@@ -1409,12 +1464,22 @@ function process_day(date::Date,
         worst_post_raw  = max(worst_post_raw,   diag.max_post_raw_residual)
         worst_iter      = max(worst_iter,       diag.max_cg_iter)
 
+        written_win = win - 1  # balance diagnostics are for the PREVIOUS window
+        contract_diag = _verify_rg_balanced_window!(
+            window_contract, m_cur_work, hflux_work, cm_work, m_next_work,
+            written_win; write_replay_on = write_replay_on)
+        if write_replay_on && contract_diag.replay.max_rel_err > worst_replay_rel
+            worst_replay_rel = contract_diag.replay.max_rel_err
+            worst_replay_abs = contract_diag.replay.max_abs_err
+            worst_replay_win = written_win
+            worst_replay_idx = contract_diag.replay.worst_idx
+        end
+
         # Write the balanced previous window
         window_nt = (m = buf.m[cur], hflux = buf.hflux[cur],
                      cm = buf.cm[cur], ps = buf.ps[cur])
         write_streaming_window!(writer, window_nt)
 
-        written_win = win - 1  # balance diagnostics are for the PREVIOUS window
         should_log_window(written_win, Nt) &&
             @info @sprintf("    Window %2d/%d: wrote (bal %.2fs pre_raw=%.2e post_proj=%.2e iter=%d) | synth %2d (%.2fs) offset=%+.3f Pa",
                            written_win, Nt, t_bal, diag.max_pre_raw_residual, diag.max_post_projected, diag.max_cg_iter, win, t_synth, ps_offsets[win])
@@ -1426,7 +1491,7 @@ function process_day(date::Date,
     # ── Balance & write the LAST window (zero-tendency fallback) ──
     t_bal = time()
     diag = balance_window!(hflux_work, m_cur_work, m_next_work,
-                           cm_work, div_scratch_b,
+                           cm_work, div_scratch_b, dm_target_work,
                            buf, cur, buf.m[cur],   # m_next = m_cur → zero tendency
                            work, cL, steps_per_met)
     t_bal = time() - t_bal
@@ -1435,6 +1500,16 @@ function process_day(date::Date,
     worst_post_proj = max(worst_post_proj,  diag.max_post_projected)
     worst_post_raw  = max(worst_post_raw,   diag.max_post_raw_residual)
     worst_iter      = max(worst_iter,       diag.max_cg_iter)
+
+    contract_diag = _verify_rg_balanced_window!(
+        window_contract, m_cur_work, hflux_work, cm_work, m_next_work,
+        Nt; write_replay_on = write_replay_on)
+    if write_replay_on && contract_diag.replay.max_rel_err > worst_replay_rel
+        worst_replay_rel = contract_diag.replay.max_rel_err
+        worst_replay_abs = contract_diag.replay.max_abs_err
+        worst_replay_win = Nt
+        worst_replay_idx = contract_diag.replay.worst_idx
+    end
 
     window_nt = (m = buf.m[cur], hflux = buf.hflux[cur],
                  cm = buf.cm[cur], ps = buf.ps[cur])
@@ -1452,6 +1527,13 @@ function process_day(date::Date,
                        minimum(ps_offsets), maximum(ps_offsets),
                        sum(ps_offsets) / Nt)
     end
+
+    if write_replay_on
+        @info @sprintf("  Write-time RG replay gate: max rel=%.3e abs=%.3e win=%d cell=%s",
+                       worst_replay_rel, worst_replay_abs,
+                       worst_replay_win, worst_replay_idx)
+    end
+    summarize_status!(window_contract; quarantine_path = bin_path)
 
     @info @sprintf("  Poisson balance summary: pre_raw=%.3e  post_proj=%.3e  post_raw=%.3e  max_cg_iter=%d",
                    worst_pre_raw, worst_post_proj, worst_post_raw, worst_iter)

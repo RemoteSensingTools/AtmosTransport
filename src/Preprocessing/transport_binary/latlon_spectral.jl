@@ -1,7 +1,9 @@
 # Spectral ERA5 to structured lat-lon transport-binary preprocessing path.
 
 """
-    process_day(date, grid::LatLonTargetGeometry, settings, vertical; next_day_hour0=nothing)
+    process_day(date, grid::LatLonTargetGeometry, settings, vertical;
+                next_day_hour0=nothing, positivity_cfl_limit=0.95,
+                require_substep_positivity=true)
 
 Run the full one-day preprocessing workflow for the structured lat-lon target:
 read spectral input, process all windows, close continuity against forward mass
@@ -11,7 +13,9 @@ function process_day(date::Date,
                      grid::LatLonTargetGeometry,
                      settings,
                      vertical;
-                     next_day_hour0=nothing)
+                     next_day_hour0=nothing,
+                     positivity_cfl_limit::Real = 0.95,
+                     require_substep_positivity::Bool = true)
     FT = settings.output_float_type
     Nz_native = vertical.Nz_native
     Nz = vertical.Nz
@@ -74,6 +78,12 @@ function process_day(date::Date,
                                        include_surface=settings.include_surface)
     qv = allocate_qv_workspace(grid, settings, date, Nz_native, Nz, FT)
     ps_offsets = zeros(Float64, Nt + 1)
+    window_contract = LatLonContract{FT}(
+        replay_tol = replay_tolerance(FT),
+        positivity_cfl_limit = positivity_cfl_limit,
+        require_substep_positivity = require_substep_positivity,
+        steps_per_window = steps_per_met,
+    )
 
     # Plan 24 Commit 4: TM5 convection setup (LL target == ERA5 native
     # 720×361 only — see NOTES.md for the scope narrowing).  When
@@ -124,8 +134,10 @@ function process_day(date::Date,
         last_hour_next = next_day_merged_fields(next_day_hour0, date, grid, vertical,
                                                 settings, transform, merged, qv, ps_offsets)
 
-        apply_poisson_balance!(storage, last_hour_next, sizes.steps_per_met)
+        apply_poisson_balance!(storage, last_hour_next, sizes.steps_per_met,
+                               window_contract)
         fill_qv_endpoints!(storage, last_hour_next)
+        summarize_status!(window_contract; quarantine_path = bin_path)
 
         header["ps_offsets_pa_per_window"] = ps_offsets[1:Nt]
         header["ps_offsets_next_day_hour0_pa"] = ps_offsets[Nt + 1]

@@ -490,7 +490,12 @@ function process_day(date::Date,
         worst_replay_rel = 0.0
         worst_replay_abs = 0.0
         worst_replay_win = 0
-        worst_positivity = init_cs_positivity_accumulator()
+        window_contract = CubedSphereContract{FT}(
+            replay_tol = replay_tol,
+            positivity_cfl_limit = positivity_cfl_limit,
+            require_substep_positivity = require_substep_positivity,
+            steps_per_window = steps_per_met,
+        )
 
         t_start = time()
 
@@ -537,17 +542,18 @@ function process_day(date::Date,
             #    `_cs_static_subcycle_count` depends on this — without it,
             #    locally-CFL>1 cells drive air mass slightly negative and the
             #    runtime spirals into n_sub blowup at integration time).
-            contract = verify_cs_window_contract!(m_cur, am_v4, bm_v4, cm_v4,
-                                                  m_next_pf, steps_per_met, win;
-                                                  replay_tol = replay_tol,
-                                                  positivity_cfl_limit = positivity_cfl_limit)
-            if worst_replay_win == 0 || contract.replay.max_rel_err > worst_replay_rel
-                worst_replay_rel = contract.replay.max_rel_err
-                worst_replay_abs = contract.replay.max_abs_err
+            contract_diag = verify_window!((m_cur = m_cur,
+                                             am = am_v4,
+                                             bm = bm_v4,
+                                             cm = cm_v4,
+                                             m_next = m_next_pf),
+                                            window_contract, win)
+            if worst_replay_win == 0 || contract_diag.replay.max_rel_err > worst_replay_rel
+                worst_replay_rel = contract_diag.replay.max_rel_err
+                worst_replay_abs = contract_diag.replay.max_abs_err
                 worst_replay_win = win
             end
-            worst_positivity = update_cs_positivity_accumulator(worst_positivity,
-                                                                 contract.positivity, win)
+            update_accumulator!(window_contract, contract_diag.positivity, win)
 
             # 7. Pack the on-disk endpoint delta `dm = m_next_pf − m_cur` and write.
             #    `convert_cs_mass_target_to_delta!` mutates m_next_pf into the
@@ -592,11 +598,7 @@ function process_day(date::Date,
         # binary cleanly without an open file handle on it.
         close_streaming_transport_binary!(writer)
         writer_closed = true
-        summarize_cs_positivity_status(worst_positivity;
-                                       cfl_limit = positivity_cfl_limit,
-                                       steps_per_window = steps_per_met,
-                                       require_substep_positivity = require_substep_positivity,
-                                       quarantine_path = tmp_path)
+        summarize_status!(window_contract; quarantine_path = tmp_path)
 
         # Reached only when positivity passed, or when require_substep_positivity=false
         # turned a violation into a warning. Promote the staged file either way.

@@ -127,7 +127,76 @@ function verify_storage_continuity_ll!(storage::WindowStorage{FT},
 end
 
 """
-    apply_poisson_balance!(storage, last_hour_next, steps_per_window)
+    verify_storage_contract_ll!(storage, last_hour_next, contract)
+
+Run the typed LL window contract across balanced per-day storage. This is the
+P2a production bridge: the legacy `apply_poisson_balance!` loop still owns the
+numerics, but the post-balance write gate now uses `LatLonContract`'s typed
+policy and accumulator state.
+
+If `ATMOSTR_NO_WRITE_REPLAY_CHECK=1` is set, only the replay gate is skipped;
+the positivity scan still runs so diagnostic binaries cannot silently bypass
+the runtime CFL contract.
+"""
+function verify_storage_contract_ll!(storage::WindowStorage{FT},
+                                      last_hour_next,
+                                      contract) where FT
+    Nt = length(storage.all_m)
+    Nt == 0 && return contract
+
+    write_replay_on = get(ENV, "ATMOSTR_NO_WRITE_REPLAY_CHECK", "0") != "1"
+    write_replay_on ||
+        @info "  Write-time replay gate SKIPPED (ATMOSTR_NO_WRITE_REPLAY_CHECK=1)"
+
+    worst_rel = 0.0
+    worst_abs = 0.0
+    worst_win = 0
+    worst_idx = (0, 0, 0)
+
+    for win_idx in 1:Nt
+        m_next = if win_idx < Nt
+            storage.all_m[win_idx + 1]
+        elseif last_hour_next !== nothing
+            last_hour_next.m
+        else
+            storage.all_m[win_idx]
+        end
+
+        if write_replay_on
+            diag = verify_window!((m_cur = storage.all_m[win_idx],
+                                   am = storage.all_am[win_idx],
+                                   bm = storage.all_bm[win_idx],
+                                   cm = storage.all_cm[win_idx],
+                                   m_next = m_next),
+                                  contract, win_idx)
+            if diag.replay.max_rel_err > worst_rel
+                worst_rel = diag.replay.max_rel_err
+                worst_abs = diag.replay.max_abs_err
+                worst_win = win_idx
+                worst_idx = diag.replay.worst_idx
+            end
+            update_accumulator!(contract, diag.positivity, win_idx)
+        else
+            positivity = verify_substep_positivity_ll!(storage.all_m[win_idx],
+                                                        storage.all_am[win_idx],
+                                                        storage.all_bm[win_idx],
+                                                        storage.all_cm[win_idx];
+                                                        cfl_limit =
+                                                            contract.positivity_cfl_limit)
+            update_accumulator!(contract, positivity, win_idx)
+        end
+    end
+
+    if write_replay_on
+        @info @sprintf("  Write-time LL replay gate: max rel=%.3e abs=%.3e win=%d cell=%s",
+                       worst_rel, worst_abs, worst_win, worst_idx)
+    end
+
+    return contract
+end
+
+"""
+    apply_poisson_balance!(storage, last_hour_next, steps_per_window, contract=nothing)
 
 Close each stored window against its forward mass endpoint.
 
@@ -141,7 +210,8 @@ horizontal Poisson correction mode for controlled comparisons.
 """
 function apply_poisson_balance!(storage::WindowStorage{FT},
                                 last_hour_next,
-                                steps_per_window::Int) where FT
+                                steps_per_window::Int,
+                                contract = nothing) where FT
     Nx, Ny, Nz = size(storage.all_m[1])
     dm_dt_buf = Array{FT}(undef, Nx, Ny, Nz)
     div_scratch = Array{Float64}(undef, Nx, Ny, Nz)
@@ -191,13 +261,18 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
                        worst_column_pre, worst_column_post, worst_column_delta)
     end
 
-    # Plan 39 Commit E: write-time replay gate. Under the `:window_constant`
-    # contract, starting from `storage.all_m[k]` and integrating the stored
-    # fluxes (am, bm, cm) over one window via palindrome continuity must
-    # reproduce `storage.all_m[k+1]` (or `last_hour_next.m` for k=Nt) to
-    # within the Poisson-balance tolerance floor. Fails loudly if the fix
-    # regresses or a new preprocessor path breaks the contract.
-    verify_storage_continuity_ll!(storage, last_hour_next, steps_per_window, FT)
+    # Plan 39 Commit E / Plan 41 P2a: write-time replay gate. Under the
+    # `:window_constant` contract, starting from `storage.all_m[k]` and
+    # integrating the stored fluxes (am, bm, cm) over one window via
+    # palindrome continuity must reproduce `storage.all_m[k+1]` (or
+    # `last_hour_next.m` for k=Nt). P2a routes production callers through the
+    # typed contract so the positivity gate and run-level policy are active
+    # too; the legacy helper remains for direct/debug callers.
+    if contract === nothing
+        verify_storage_continuity_ll!(storage, last_hour_next, steps_per_window, FT)
+    else
+        verify_storage_contract_ll!(storage, last_hour_next, contract)
+    end
     @info "  Continuity closure complete for $(length(storage.all_m)) windows"
 
     return nothing

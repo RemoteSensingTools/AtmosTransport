@@ -122,6 +122,81 @@ P1 ships only the abstract type; concrete subtypes land in P2.
 abstract type AbstractBinaryWriter{G <: AbstractTargetGeometry, FT,
                                     Basis <: AbstractMassBasis} end
 
+# ---------------------------------------------------------------------------
+# P2b readiness/workspace skeleton.
+#
+# These are additive nominals for the unified driver cutover. Existing
+# preprocessors still own their control flow, but they can now hand a typed
+# `ReadyWindow{G, FT}` to the same `verify_window!` contract surface the P1
+# NamedTuple payloads used. `ReadyWindow` deliberately forwards unknown
+# property access to its payload so the P1 contract methods do not need
+# duplicate overloads while the drivers migrate.
+# ---------------------------------------------------------------------------
+
+"""
+    ReadyWindow{G, FT}(index, payload::NamedTuple)
+
+Typed wrapper for a topology-specific window payload that is ready to be
+verified and written. `G` is the target geometry, `FT` is the on-disk float
+type, and `payload` is the existing topology NamedTuple (`m_cur`/`am`/... for
+LL/CS, `m_cur`/`hflux`/... for RG).
+
+Unknown property access is forwarded to `payload`, so existing
+`verify_window!(window, contract, win_idx)` methods can accept either a raw
+NamedTuple or a `ReadyWindow`.
+"""
+struct ReadyWindow{G <: AbstractTargetGeometry, FT, P <: NamedTuple}
+    index   :: Int
+    payload :: P
+
+    function ReadyWindow{G, FT, P}(index::Integer, payload::P) where
+            {G <: AbstractTargetGeometry, FT, P <: NamedTuple}
+        index >= 1 || throw(ArgumentError("ReadyWindow: index = $(index); must be >= 1."))
+        return new{G, FT, P}(Int(index), payload)
+    end
+end
+
+ReadyWindow{G, FT}(index::Integer, payload::P) where
+    {G <: AbstractTargetGeometry, FT, P <: NamedTuple} =
+        ReadyWindow{G, FT, P}(index, payload)
+
+@inline function Base.getproperty(window::ReadyWindow, name::Symbol)
+    if name === :index || name === :payload
+        return getfield(window, name)
+    end
+    return getproperty(getfield(window, :payload), name)
+end
+
+function Base.propertynames(window::ReadyWindow, private::Bool = false)
+    payload_names = propertynames(getfield(window, :payload), private)
+    return private ? (:index, :payload, payload_names...) :
+                     (:index, payload_names...)
+end
+
+"""
+    PreprocessorRunCache{G, FT}()
+
+Small typed cache for artifacts that should be built once per preprocessing run
+instead of once per day/window (for example spectral LL->CS regridders or RG
+compressed Laplacians). P2b only introduces the nominal and storage; concrete
+drivers decide which keys they own as they migrate.
+"""
+mutable struct PreprocessorRunCache{G <: AbstractTargetGeometry, FT}
+    entries :: Dict{Symbol, Any}
+end
+
+PreprocessorRunCache{G, FT}() where {G <: AbstractTargetGeometry, FT} =
+    PreprocessorRunCache{G, FT}(Dict{Symbol, Any}())
+
+PreprocessorRunCache(::Type{G}, ::Type{FT}) where
+    {G <: AbstractTargetGeometry, FT} = PreprocessorRunCache{G, FT}()
+
+Base.haskey(cache::PreprocessorRunCache, key::Symbol) = haskey(cache.entries, key)
+Base.getindex(cache::PreprocessorRunCache, key::Symbol) = cache.entries[key]
+Base.get(cache::PreprocessorRunCache, key::Symbol, default) = get(cache.entries, key, default)
+Base.setindex!(cache::PreprocessorRunCache, value, key::Symbol) =
+    setindex!(cache.entries, value, key)
+
 # Generic trait functions. The four below are the canonical contract
 # surface that every concrete `AbstractWindowContract{G, FT}` registers
 # a method on. Declared here (as bare generic functions) so the per-
@@ -191,6 +266,44 @@ Whether `summarize_status!` errors (`true`) or warns (`false`) on a
 positivity violation. Closes-the-escape-hatch toggle from CS round-2.
 """
 function contract_require_positivity end
+
+"""
+    allocate_window_workspace(grid, settings, vertical, ::Type{FT}; cache)
+
+Construct the topology-specific `AbstractWindowWorkspace{G, FT}` for one
+preprocessing day. Concrete methods land as production drivers migrate.
+"""
+function allocate_window_workspace end
+
+"""
+    reset_workspace!(workspace, day_state) -> workspace
+
+Reset a reusable workspace before ingesting a new day/source stream.
+"""
+function reset_workspace! end
+
+"""
+    ingest_window!(workspace, raw_window, reader, vertical, contract; cache) -> nothing
+
+Consume one source/met window into the topology workspace. Ready windows are
+exposed by `drain_ready_windows!`.
+"""
+function ingest_window! end
+
+"""
+    drain_ready_windows!(workspace) -> iterator of `ReadyWindow`
+
+Return the windows that became write-ready after the last ingest.
+"""
+function drain_ready_windows! end
+
+"""
+    flush_final_windows!(workspace, reader, vertical, contract; cache)
+
+Emit any final cross-day/zero-tendency windows once the source stream is
+exhausted.
+"""
+function flush_final_windows! end
 
 # ---------------------------------------------------------------------------
 # Shared parameter-validation helpers used at the entry of every exported

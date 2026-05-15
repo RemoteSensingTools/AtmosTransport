@@ -517,10 +517,20 @@ in-scope axis. Concretely:
   question to be answered explicitly (yes-with-implementation or
   no-with-justification).
 
-- **P2 (was: "workspace + readiness trait")** → integration: the
-  per-method driving loops in `latlon_spectral.jl`,
-  `cubed_sphere_spectral.jl`, `cubed_sphere_geos.jl`,
-  `reduced_transport_helpers.jl` now delegate to the trait calls.
+- **P2 (was: "workspace + readiness trait")** → split into three
+  executable cuts:
+  - **P2a:** production contract wiring. The existing LL/RG/CS
+    preprocessors construct typed `AbstractWindowContract` concretes
+    and use `verify_window!` / `update_accumulator!` /
+    `summarize_status!` at their current call sites.
+  - **P2b:** additive readiness nouns. Introduce
+    `ReadyWindow{G, FT}`, `PreprocessorRunCache{G, FT}`, and the bare
+    workspace/readiness generics.
+  - **P2c:** concrete workspaces. The per-method driving loops in
+    `latlon_spectral.jl`, `cubed_sphere_spectral.jl`,
+    `cubed_sphere_geos.jl`, and `reduced_transport_helpers.jl`
+    delegate allocation/readiness to the trait calls and shrink toward
+    the unified-driver shape.
 
 - **P3 (was: "unified driver")** → the ~80-line driver above lives
   behind a `[preprocessor].unified = true` opt-in flag. Side-by-side

@@ -24,6 +24,8 @@ using .AtmosTransport.Preprocessing: verify_substep_positivity_ll!,
                                        summarize_ll_positivity_status,
                                        LatLonContract,
                                        AbstractWindowContract,
+                                       ReadyWindow,
+                                       PreprocessorRunCache,
                                        verify_window!,
                                        update_accumulator!,
                                        summarize_status!
@@ -456,6 +458,35 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
                                  cm = w.cm, m_next = w.m_next), contract, 1)
         @test result.replay.max_rel_err <= 1e-12
         @test result.positivity.ok
+    end
+
+    @testset "P2b skeleton: ReadyWindow forwards payload and cache is typed" begin
+        w = build_clean_ll_window(Float64)
+        payload = (m_cur = w.m_cur, am = w.am, bm = w.bm,
+                   cm = w.cm, m_next = w.m_next)
+        ready = ReadyWindow{AtmosTransport.Preprocessing.AbstractTargetGeometry,
+                            Float64}(3, payload)
+        @test ready.index == 3
+        @test ready.payload === payload
+        @test ready.m_cur === w.m_cur
+        @test :m_cur in propertynames(ready)
+        @test !(:payload in propertynames(ready))
+        @test :payload in propertynames(ready, true)
+
+        contract = LatLonContract{Float64}(replay_tol = 1e-12,
+                                            positivity_cfl_limit = 0.95,
+                                            steps_per_window = w.steps)
+        result = verify_window!(ready, contract, ready.index)
+        @test result.replay.max_rel_err <= 1e-12
+        @test result.positivity.ok
+
+        cache = PreprocessorRunCache{
+            AtmosTransport.Preprocessing.AbstractTargetGeometry, Float64}()
+        @test !haskey(cache, :compressed_laplacian)
+        cache[:compressed_laplacian] = :built_once
+        @test haskey(cache, :compressed_laplacian)
+        @test cache[:compressed_laplacian] === :built_once
+        @test get(cache, :missing, :fallback) === :fallback
     end
 
     # ------------------------------------------------------------------

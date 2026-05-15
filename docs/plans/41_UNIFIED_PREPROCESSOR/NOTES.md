@@ -3,7 +3,23 @@
 ## Status
 
 Drafted 2026-05-15 (carried over from the CS-contract-round-3 session on
-2026-05-14). Awaiting executor (Codex).
+2026-05-14).
+
+Executor state, 2026-05-15:
+- P0a / P0b shipped: typed met-reader and vertical-transform surfaces.
+- P1 shipped: typed Axis-3 contract surfaces for CS / LL / RG, with
+  lazy contract-owned scratch.
+- P2a shipped in the current Codex working tree: LL, RG, CS spectral,
+  and CS GEOS production paths construct typed contracts and update the
+  contract accumulator from production windows. LL/RG now receive the
+  positivity policy kwargs passed by `entrypoint.jl`. `cubed_sphere_regrid.jl`
+  remains out of scope for Plan 41 per foot-gun (F) / Plan 42.
+- P2b shipped in the current Codex working tree: additive
+  `ReadyWindow{G, FT}`, `PreprocessorRunCache{G, FT}`, and bare
+  workspace/readiness generics (`allocate_window_workspace`,
+  `ingest_window!`, `drain_ready_windows!`, `flush_final_windows!`).
+- Next P2 slice: concrete topology workspaces + readiness methods,
+  then shrink the per-topology drivers.
 
 **Read [DESIGN.md](DESIGN.md) first** for the typed three-axis rationale,
 the anti-pattern audit with file:line citations, and the foot-gun
@@ -328,13 +344,53 @@ Add the three missing topology contract surfaces:
 - Hoist any other duplicated contract helpers into per-topology
   modules.
 
-Definition of done: every topology's `process_day` calls
-`verify_*_window_contract!` instead of bare `verify_window_continuity_*`.
-All existing tests stay green. Add focused
+Definition of done: ship the additive typed surfaces and focused
+contract tests without changing binary output. Add focused
 `test_ll_preprocessor_contract.jl` and `test_rg_preprocessor_contract.jl`
 mirroring `test_cs_preprocessor_contract.jl`.
 
-### P2 — Workspace + readiness trait
+P2a handles the production call-site cutover so P1 can remain
+bit-exact/additive.
+
+### P2a — Production contract wiring
+
+Wire production preprocessors into the P1 contract lifecycle without
+changing driver control flow:
+
+- LL spectral accepts `positivity_cfl_limit` and
+  `require_substep_positivity`, constructs `LatLonContract{FT}`, runs
+  replay + positivity across balanced storage, then summarizes before
+  writing.
+- RG spectral accepts the same policy kwargs, constructs
+  `ReducedGaussianContract{FT}`, runs boundary-stub -> replay ->
+  positivity on the Float64 balanced work buffers before each write,
+  and summarizes after writer close.
+- CS spectral and CS GEOS replace the free accumulator helpers with
+  `CubedSphereContract{FT}` plus `verify_window!` /
+  `update_accumulator!` / `summarize_status!`.
+- Keep `ATMOSTR_NO_WRITE_REPLAY_CHECK=1` as a replay-only diagnostic
+  bypass; positivity still runs.
+- Remove obvious per-window scratch allocation while touching RG:
+  `balance_window!` receives reusable `dm_target_work`.
+
+Definition of done: CS / LL / RG contract suites and adjacent P0/P1
+regressions pass; no binary-format or math changes.
+
+### P2b — Additive workspace/readiness skeleton
+
+Add the typed nouns needed by the later driver cutover:
+
+- `ReadyWindow{G, FT, P}` wraps a ready payload and forwards payload
+  properties so existing contract methods accept it.
+- `PreprocessorRunCache{G, FT}` provides a typed per-run cache for
+  artifacts such as CS regridders and RG compressed Laplacians.
+- Bare generic hooks: `allocate_window_workspace`, `reset_workspace!`,
+  `ingest_window!`, `drain_ready_windows!`, `flush_final_windows!`.
+
+Definition of done: skeleton exports are tested, and `ReadyWindow`
+round-trips through at least one real contract method.
+
+### P2c — Concrete workspaces + readiness methods
 
 Pull every method's "allocate per-day arrays" block into
 `allocate_window_workspace(grid, vertical, reader, FT; cache)` per

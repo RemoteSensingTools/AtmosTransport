@@ -99,7 +99,8 @@ function process_day(date::Date,
                      vertical;
                      next_day_hour0=nothing,
                      positivity_cfl_limit::Real = 0.95,
-                     require_substep_positivity::Bool = true)
+                     require_substep_positivity::Bool = true,
+                     run_cache = nothing)
     FT = settings.output_float_type
     Nz_native = vertical.Nz_native
     Nz = vertical.Nz
@@ -154,7 +155,8 @@ function process_day(date::Date,
     length(header_json) < HEADER_SIZE ||
         error("Header JSON too large: $(length(header_json)) >= $(HEADER_SIZE)")
 
-    workspace = allocate_window_workspace(grid, settings, vertical, spec, date, FT)
+    workspace = allocate_window_workspace(grid, settings, vertical, spec, date, FT;
+                                          cache = run_cache)
     storage = workspace.storage
     merged = workspace.merged
     ps_offsets = workspace.ps_offsets

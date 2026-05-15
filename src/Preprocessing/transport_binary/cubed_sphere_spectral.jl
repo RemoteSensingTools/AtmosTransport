@@ -13,7 +13,8 @@ function process_day(date::Date,
                      vertical;
                      positivity_cfl_limit::Real = 0.95,
                      require_substep_positivity::Bool = true,
-                     next_day_hour0=nothing)
+                     next_day_hour0=nothing,
+                     run_cache = nothing)
     FT = settings.output_float_type
     Nc = grid.Nc
     Nz_native = vertical.Nz_native

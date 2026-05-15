@@ -223,6 +223,7 @@ function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
 
     @info @sprintf("Processing %d days: %s to %s", length(dates), first(dates), last(dates))
     t_total = time()
+    run_cache = PreprocessorRunCache(typeof(grid), settings.output_float_type)
     for (idx, date) in enumerate(dates)
         @info @sprintf("[%d/%d] %s", idx, length(dates), date)
         next_day_h0 = next_day_hour0(date, dates, settings.spectral_dir, settings.T_target;
@@ -231,7 +232,8 @@ function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
         process_day(date, grid, settings, vertical;
                     positivity_cfl_limit       = positivity_cfl_limit,
                     require_substep_positivity = require_substep_positivity,
-                    next_day_hour0             = next_day_h0)
+                    next_day_hour0             = next_day_h0,
+                    run_cache                  = run_cache)
     end
     elapsed = time() - t_total
     @info @sprintf("All done! %d days in %.1fs (%.1fs/day)",

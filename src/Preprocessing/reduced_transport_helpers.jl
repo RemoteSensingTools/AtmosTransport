@@ -1058,6 +1058,167 @@ function fill_buffer_slot!(buf::SlidingWindowBuffer{FT},
     return nothing
 end
 
+mutable struct ReducedGaussianSpectralWindowWorkspace{FT, TW, MW, BW, QW, CL}
+    work           :: TW
+    merged         :: MW
+    buf            :: BW
+    qv_ws          :: QW
+    thermo_path    :: String
+    ps_offsets     :: Vector{Float64}
+    cL             :: CL
+    hflux_work     :: Matrix{Float64}
+    m_cur_work     :: Matrix{Float64}
+    m_next_work    :: Matrix{Float64}
+    cm_work        :: Matrix{Float64}
+    div_scratch    :: Matrix{Float64}
+    dm_target_work :: Matrix{Float64}
+    cur            :: Int
+    nxt            :: Int
+end
+
+_rg_compressed_laplacian_cache_key(grid::ReducedGaussianTargetGeometry) =
+    Symbol("rg_compressed_laplacian_", grid.gaussian_number)
+
+function _get_or_build_rg_compressed_laplacian!(cache,
+                                                grid::ReducedGaussianTargetGeometry,
+                                                work::ReducedTransformWorkspace,
+                                                nc::Int,
+                                                nf::Int)
+    cache_key = _rg_compressed_laplacian_cache_key(grid)
+    cached = cache === nothing ? nothing : get(cache, cache_key, nothing)
+    t_cl = time()
+    if cached !== nothing
+        cL = cached
+        total_entries = cL.row_ptr[end] - 1
+        avg_neighbors = total_entries / nc
+        @info @sprintf("  Compressed Laplacian: reused %d unique entries (avg %.1f neighbors/cell) from %d faces (%.0f× compression, %.2fs)",
+                       total_entries, avg_neighbors, nf,
+                       nf / max(total_entries, 1), time() - t_cl)
+        return cL
+    end
+
+    cL = build_compressed_laplacian(work.face_left, work.face_right, nc)
+    cache === nothing || (cache[cache_key] = cL)
+    total_entries = cL.row_ptr[end] - 1
+    avg_neighbors = total_entries / nc
+    @info @sprintf("  Compressed Laplacian: %d unique entries (avg %.1f neighbors/cell) from %d faces (%.0f× compression, %.2fs)",
+                   total_entries, avg_neighbors, nf,
+                   nf / max(total_entries, 1), time() - t_cl)
+    return cL
+end
+
+function allocate_window_workspace(grid::ReducedGaussianTargetGeometry,
+                                   settings,
+                                   vertical,
+                                   spec,
+                                   date::Date,
+                                   ::Type{FT};
+                                   cache = nothing) where FT
+    mesh = grid.mesh
+    nc = ncells(mesh)
+    nf = nfaces(mesh)
+    Nz_native = vertical.Nz_native
+    Nz = vertical.Nz
+
+    work = allocate_reduced_transform_workspace(grid, spec.T, Nz_native)
+    merged = allocate_reduced_merge_workspace(grid, Nz_native, Nz, FT)
+    buf = allocate_sliding_window_buffer(nc, nf, Nz, FT)
+    ps_offsets = zeros(Float64, spec.n_times)
+
+    thermo_path = ""
+    qv_ws = nothing
+    if settings.mass_basis == :dry
+        date_str = Dates.format(date, "yyyymmdd")
+        thermo_path = joinpath(settings.thermo_dir,
+                               "era5_thermo_ml_$(date_str).nc")
+        isfile(thermo_path) ||
+            error("Thermo file not found for dry-basis conversion: $thermo_path")
+        qv_ws = allocate_reduced_qv_workspace(grid, Nz_native, thermo_path;
+                                              settings = settings)
+        @info "  Dry-basis: QV from $thermo_path → $(qv_ws.Nx_ll)×$(qv_ws.Ny_ll) LL → $(nc) RG cells"
+    end
+
+    cL = _get_or_build_rg_compressed_laplacian!(cache, grid, work, nc, nf)
+
+    hflux_work = zeros(Float64, nf, Nz)
+    m_cur_work = zeros(Float64, nc, Nz)
+    m_next_work = zeros(Float64, nc, Nz)
+    cm_work = zeros(Float64, nc, Nz + 1)
+    div_scratch = zeros(Float64, nc, Nz)
+    dm_target_work = zeros(Float64, nc, Nz)
+
+    return ReducedGaussianSpectralWindowWorkspace{
+        FT, typeof(work), typeof(merged), typeof(buf), typeof(qv_ws), typeof(cL)}(
+            work, merged, buf, qv_ws, thermo_path, ps_offsets, cL,
+            hflux_work, m_cur_work, m_next_work, cm_work, div_scratch,
+            dm_target_work, 1, 2)
+end
+
+function ingest_window!(workspace::ReducedGaussianSpectralWindowWorkspace,
+                        slot::Int,
+                        win_idx::Int,
+                        hour::Int,
+                        spec,
+                        grid::ReducedGaussianTargetGeometry,
+                        vertical,
+                        settings)
+    t0 = time()
+    synthesize_and_merge_window!(workspace.work, workspace.merged, hour, spec,
+                                 grid, vertical, settings,
+                                 workspace.ps_offsets, win_idx;
+                                 qv_ws = workspace.qv_ws,
+                                 thermo_path = workspace.thermo_path)
+    fill_buffer_slot!(workspace.buf, slot, workspace.merged, workspace.work.sp)
+    return time() - t0
+end
+
+function drain_ready_windows!(workspace::ReducedGaussianSpectralWindowWorkspace{FT},
+                              contract,
+                              win_idx::Int,
+                              steps_per_window::Int;
+                              write_replay_on::Bool) where FT
+    diag = balance_window!(workspace.hflux_work, workspace.m_cur_work,
+                           workspace.m_next_work, workspace.cm_work,
+                           workspace.div_scratch, workspace.dm_target_work,
+                           workspace.buf, workspace.cur,
+                           workspace.buf.m[workspace.nxt],
+                           workspace.work, workspace.cL, steps_per_window)
+    contract_diag = _verify_rg_balanced_window!(
+        contract, workspace.m_cur_work, workspace.hflux_work, workspace.cm_work,
+        workspace.m_next_work, win_idx; write_replay_on = write_replay_on)
+    ready = ReadyWindow{ReducedGaussianTargetGeometry, FT}(
+        win_idx,
+        (m = workspace.buf.m[workspace.cur],
+         hflux = workspace.buf.hflux[workspace.cur],
+         cm = workspace.buf.cm[workspace.cur],
+         ps = workspace.buf.ps[workspace.cur]))
+    workspace.cur, workspace.nxt = workspace.nxt, workspace.cur
+    return (ready = ready, balance = diag, contract = contract_diag)
+end
+
+function flush_final_windows!(workspace::ReducedGaussianSpectralWindowWorkspace{FT},
+                              contract,
+                              win_idx::Int,
+                              steps_per_window::Int;
+                              write_replay_on::Bool) where FT
+    diag = balance_window!(workspace.hflux_work, workspace.m_cur_work,
+                           workspace.m_next_work, workspace.cm_work,
+                           workspace.div_scratch, workspace.dm_target_work,
+                           workspace.buf, workspace.cur,
+                           workspace.buf.m[workspace.cur],
+                           workspace.work, workspace.cL, steps_per_window)
+    contract_diag = _verify_rg_balanced_window!(
+        contract, workspace.m_cur_work, workspace.hflux_work, workspace.cm_work,
+        workspace.m_next_work, win_idx; write_replay_on = write_replay_on)
+    ready = ReadyWindow{ReducedGaussianTargetGeometry, FT}(
+        win_idx,
+        (m = workspace.buf.m[workspace.cur],
+         hflux = workspace.buf.hflux[workspace.cur],
+         cm = workspace.buf.cm[workspace.cur],
+         ps = workspace.buf.ps[workspace.cur]))
+    return (ready = ready, balance = diag, contract = contract_diag)
+end
+
 # =========================================================================
 # RG process_window! and process_day — mirrors the LL path in binary_pipeline.jl
 # =========================================================================
@@ -1290,12 +1451,12 @@ function process_day(date::Date,
                      vertical;
                      next_day_hour0=nothing,
                      positivity_cfl_limit::Real = 0.95,
-                     require_substep_positivity::Bool = true)
+                     require_substep_positivity::Bool = true,
+                     run_cache = nothing)
     FT = settings.output_float_type
     mesh = grid.mesh
     nc = ncells(mesh)
     nf = nfaces(mesh)
-    Nz_native = vertical.Nz_native
     Nz = vertical.Nz
     steps_per_met = exact_steps_per_window(settings.met_interval, settings.dt)
     date_str = Dates.format(date, "yyyymmdd")
@@ -1320,39 +1481,11 @@ function process_day(date::Date,
     mkpath(settings.out_dir)
     bin_path = output_binary_path(date, settings.out_dir, settings.min_dp, FT)
 
-    # Allocate workspaces — shared across all windows (no per-window allocation)
-    work   = allocate_reduced_transform_workspace(grid, spec.T, Nz_native)
-    merged = allocate_reduced_merge_workspace(grid, Nz_native, Nz, FT)
-    buf    = allocate_sliding_window_buffer(nc, nf, Nz, FT)
-    ps_offsets = zeros(Float64, Nt)
-
-    # QV workspace for dry-basis conversion (Invariant 14)
-    thermo_path = ""
-    qv_ws = nothing
-    if settings.mass_basis == :dry
-        thermo_path = joinpath(settings.thermo_dir,
-                               "era5_thermo_ml_$(date_str).nc")
-        isfile(thermo_path) || error("Thermo file not found for dry-basis conversion: $thermo_path")
-        qv_ws = allocate_reduced_qv_workspace(grid, Nz_native, thermo_path;
-                                              settings=settings)
-        @info "  Dry-basis: QV from $thermo_path → $(qv_ws.Nx_ll)×$(qv_ws.Ny_ll) LL → $(nc) RG cells"
-    end
-
-    # Build compressed Laplacian for fast Poisson balance (~16-27× faster than face-indexed CG)
-    t_cl = time()
-    cL = build_compressed_laplacian(work.face_left, work.face_right, nc)
-    total_entries = cL.row_ptr[end] - 1
-    avg_neighbors = total_entries / nc
-    @info @sprintf("  Compressed Laplacian: %d unique entries (avg %.1f neighbors/cell) from %d faces (%.0f× compression, %.2fs)",
-                   total_entries, avg_neighbors, nf, nf / max(total_entries, 1), time() - t_cl)
-
-    # Poisson-balance scratch (Float64, reused every window — no per-call allocation)
-    hflux_work    = zeros(Float64, nf, Nz)
-    m_cur_work    = zeros(Float64, nc, Nz)
-    m_next_work   = zeros(Float64, nc, Nz)
-    cm_work       = zeros(Float64, nc, Nz + 1)
-    div_scratch_b = zeros(Float64, nc, Nz)
-    dm_target_work = zeros(Float64, nc, Nz)
+    workspace = allocate_window_workspace(grid, settings, vertical, spec, date, FT;
+                                          cache = run_cache)
+    work = workspace.work
+    buf = workspace.buf
+    ps_offsets = workspace.ps_offsets
     write_replay_on = get(ENV, "ATMOSTR_NO_WRITE_REPLAY_CHECK", "0") != "1"
     write_replay_on ||
         @info "  Write-time replay gate SKIPPED (ATMOSTR_NO_WRITE_REPLAY_CHECK=1)"
@@ -1428,46 +1561,33 @@ function process_day(date::Date,
     worst_replay_win = 0
     worst_replay_idx = (0, 0)
 
-    # cur/nxt are indices into the 2-slot buffer (swap instead of copy)
-    cur = 1
-    nxt = 2
-
     # ── Process first window into slot `cur` ──
-    t0 = time()
-    synthesize_and_merge_window!(work, merged, spec.hours[1], spec, grid,
-                                 vertical, settings, ps_offsets, 1;
-                                 qv_ws=qv_ws, thermo_path=thermo_path)
-    fill_buffer_slot!(buf, cur, merged, work.sp)
+    t_first_synth = ingest_window!(workspace, workspace.cur, 1, spec.hours[1],
+                                   spec, grid, vertical, settings)
     should_log_window(1, Nt) &&
         @info @sprintf("    Window  1/%d (hour %02d): synth %.2fs  offset=%+.3f Pa",
-                       Nt, spec.hours[1], time() - t0, ps_offsets[1])
+                       Nt, spec.hours[1], t_first_synth, ps_offsets[1])
 
     # ── Sliding-buffer loop: windows 2..Nt ──
     for win in 2:Nt
-        t0 = time()
-        synthesize_and_merge_window!(work, merged, spec.hours[win], spec, grid,
-                                     vertical, settings, ps_offsets, win;
-                                     qv_ws=qv_ws, thermo_path=thermo_path)
-        fill_buffer_slot!(buf, nxt, merged, work.sp)
-        t_synth = time() - t0
+        t_synth = ingest_window!(workspace, workspace.nxt, win,
+                                 spec.hours[win], spec, grid, vertical, settings)
 
         # Balance the PREVIOUS window using (m_cur, m_next)
         t_bal = time()
-        diag = balance_window!(hflux_work, m_cur_work, m_next_work,
-                               cm_work, div_scratch_b, dm_target_work,
-                               buf, cur, buf.m[nxt],
-                               work, cL, steps_per_met)
+        written_win = win - 1  # balance diagnostics are for the PREVIOUS window
+        ready_diag = drain_ready_windows!(workspace, window_contract,
+                                          written_win, steps_per_met;
+                                          write_replay_on = write_replay_on)
         t_bal = time() - t_bal
+        diag = ready_diag.balance
+        contract_diag = ready_diag.contract
 
         worst_pre_raw   = max(worst_pre_raw,   diag.max_pre_raw_residual)
         worst_post_proj = max(worst_post_proj,  diag.max_post_projected)
         worst_post_raw  = max(worst_post_raw,   diag.max_post_raw_residual)
         worst_iter      = max(worst_iter,       diag.max_cg_iter)
 
-        written_win = win - 1  # balance diagnostics are for the PREVIOUS window
-        contract_diag = _verify_rg_balanced_window!(
-            window_contract, m_cur_work, hflux_work, cm_work, m_next_work,
-            written_win; write_replay_on = write_replay_on)
         if write_replay_on && contract_diag.replay.max_rel_err > worst_replay_rel
             worst_replay_rel = contract_diag.replay.max_rel_err
             worst_replay_abs = contract_diag.replay.max_abs_err
@@ -1476,34 +1596,28 @@ function process_day(date::Date,
         end
 
         # Write the balanced previous window
-        window_nt = (m = buf.m[cur], hflux = buf.hflux[cur],
-                     cm = buf.cm[cur], ps = buf.ps[cur])
-        write_streaming_window!(writer, window_nt)
+        write_streaming_window!(writer, ready_diag.ready.payload)
 
         should_log_window(written_win, Nt) &&
             @info @sprintf("    Window %2d/%d: wrote (bal %.2fs pre_raw=%.2e post_proj=%.2e iter=%d) | synth %2d (%.2fs) offset=%+.3f Pa",
                            written_win, Nt, t_bal, diag.max_pre_raw_residual, diag.max_post_projected, diag.max_cg_iter, win, t_synth, ps_offsets[win])
 
-        # Swap slots
-        cur, nxt = nxt, cur
     end
 
     # ── Balance & write the LAST window (zero-tendency fallback) ──
     t_bal = time()
-    diag = balance_window!(hflux_work, m_cur_work, m_next_work,
-                           cm_work, div_scratch_b, dm_target_work,
-                           buf, cur, buf.m[cur],   # m_next = m_cur → zero tendency
-                           work, cL, steps_per_met)
+    ready_diag = flush_final_windows!(workspace, window_contract,
+                                      Nt, steps_per_met;
+                                      write_replay_on = write_replay_on)
     t_bal = time() - t_bal
+    diag = ready_diag.balance
+    contract_diag = ready_diag.contract
 
     worst_pre_raw   = max(worst_pre_raw,   diag.max_pre_raw_residual)
     worst_post_proj = max(worst_post_proj,  diag.max_post_projected)
     worst_post_raw  = max(worst_post_raw,   diag.max_post_raw_residual)
     worst_iter      = max(worst_iter,       diag.max_cg_iter)
 
-    contract_diag = _verify_rg_balanced_window!(
-        window_contract, m_cur_work, hflux_work, cm_work, m_next_work,
-        Nt; write_replay_on = write_replay_on)
     if write_replay_on && contract_diag.replay.max_rel_err > worst_replay_rel
         worst_replay_rel = contract_diag.replay.max_rel_err
         worst_replay_abs = contract_diag.replay.max_abs_err
@@ -1511,9 +1625,7 @@ function process_day(date::Date,
         worst_replay_idx = contract_diag.replay.worst_idx
     end
 
-    window_nt = (m = buf.m[cur], hflux = buf.hflux[cur],
-                 cm = buf.cm[cur], ps = buf.ps[cur])
-    write_streaming_window!(writer, window_nt)
+    write_streaming_window!(writer, ready_diag.ready.payload)
 
     @info @sprintf("    Window %2d/%d (last): bal %.2fs  pre_raw=%.2e post_proj=%.2e iter=%d",
                    Nt, Nt, t_bal, diag.max_pre_raw_residual,

@@ -19,10 +19,15 @@
 #     redistribution.
 #
 # Limitations carried forward (Plan 25 NOTES):
-#   * ORD=5 only (LinRoodPPMScheme default).
 #   * `copy_corners!` reverse not implemented; the small contribution
 #     from corner halos to the gradient is treated as zero. Real-data
 #     impact is concentrated near panel corners and decays inward.
+#
+# Lifted limitations:
+#   * ORD ∈ {5, 7} (LinRoodPPMScheme(5) and LinRoodPPMScheme(7) both
+#     supported as of Plan-25 Commit 3b, 2026-05-15). `_CSLinRoodHorizRecord`
+#     binds ORD as a type parameter; the reverse pass reads it via
+#     dispatch and forwards `Val(ORD)` to the face-kernel adjoints.
 # ---------------------------------------------------------------------------
 
 # Forward kernels + adjoint wrappers from Operators.Advection. Imported at

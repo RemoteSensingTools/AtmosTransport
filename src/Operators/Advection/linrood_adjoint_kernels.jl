@@ -1569,8 +1569,20 @@ end
 
 # Per-substep tape entry produced by the forward pass: holds the
 # state at the START of the substep plus the intermediate q_buf
-# snapshots needed by the reverse pass.
-struct LinRoodHorizontalTapeEntry{FT, A3, A3x, A3y}
+# snapshots needed by the reverse pass. `ORD` (5 or 7) binds the
+# entry to the LinRood scheme order that produced it; the reverse
+# pass (`apply_linrood_multi_substep_adjoint!`) reads it from the
+# tape's element type and dispatches the face-kernel adjoints to
+# the matching ORD=5 or ORD=7 kernel — guaranteeing the adjoint
+# matches the forward path at panel-edge faces. Same pattern as
+# `_CSLinRoodHorizRecord` in `src/Adjoints/LinRoodTape.jl`.
+#
+# (Codex review M1 2026-05-15: before this binding, a tape recorded
+# at ORD=7 silently reversed with ORD=5 if the caller did not pass
+# `Val(7)` to `apply_linrood_multi_substep_adjoint!` — reproduced
+# with a smooth one-step FD/VJP check, default error ~1.34e-4 vs
+# correct error ~6.9e-10.)
+struct LinRoodHorizontalTapeEntry{FT, A3, A3x, A3y, ORD}
     rm     :: A3   # rm at substep start (haloed)
     m      :: A3   # m  at substep start (haloed)
     q_buf_phase2 :: A3   # q_buf state B (end of phase 1)
@@ -1654,7 +1666,7 @@ function record_linrood_substep!(rm, m, am, bm,
         m_new[i, j, k]  = update_buf_m[i, j, k]
     end
 
-    entry = LinRoodHorizontalTapeEntry{FT, typeof(rm), typeof(fx_in), typeof(fy_in)}(
+    entry = LinRoodHorizontalTapeEntry{FT, typeof(rm), typeof(fx_in), typeof(fy_in), ORD}(
         copy(rm), copy(m), q_buf_phase2, q_buf_phase3, fx_in, fx_out, fy_in)
     return (entry, rm_new, m_new)
 end
@@ -1676,15 +1688,20 @@ Accumulates the gradient of the final-state objective
 substep-0 state into `(lambda_rm0, lambda_m0)`. Pure single-panel
 zero-cross-panel-halo path — same scope as Commit 4 extended over
 substeps.
+
+The PPM scheme order `ORD` is read from the tape's element type
+(`LinRoodHorizontalTapeEntry{…, ORD}`), so a tape recorded at
+ORD=7 always reverses with the ORD=7 face-kernel adjoints — the
+ORD is not a separate kwarg that could drift from the forward
+pass. (Codex review M1 2026-05-15.)
 """
 function apply_linrood_multi_substep_adjoint!(
     lambda_rm0, lambda_m0,
     lambda_rm_final, lambda_m_final,
-    tape::AbstractVector{<:LinRoodHorizontalTapeEntry},
+    tape::AbstractVector{<:LinRoodHorizontalTapeEntry{FT_, A3_, A3x_, A3y_, ORD}},
     am_steps, bm_steps,
     mesh::CubedSphereMesh,
-    ::Val{ORD}=Val(5),
-) where {ORD}
+) where {FT_, A3_, A3x_, A3y_, ORD}
     nsteps = length(tape)
     @assert length(am_steps) == nsteps
     @assert length(bm_steps) == nsteps

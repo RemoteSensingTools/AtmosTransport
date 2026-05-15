@@ -1041,3 +1041,87 @@ end
 
     @test isapprox(lhs, rhs; atol=1e-7, rtol=1e-4)
 end
+
+@testset "Plan 25 Commit 5 (ORD=7) — multi-substep LinRood adjoint, no Val(7) kwarg" begin
+    # Codex review M1 2026-05-15: before binding ORD into
+    # `LinRoodHorizontalTapeEntry`, a tape recorded at ORD=7 silently
+    # reversed with ORD=5 when the caller did not pass an explicit
+    # `Val(7)` to `apply_linrood_multi_substep_adjoint!` (the kwarg
+    # defaulted to Val(5)). Codex reproduced this with a smooth
+    # one-step probe: default reverse error ~1.34e-4, explicit
+    # Val(7) error ~6.9e-10. After the binding, the reverse pass
+    # reads ORD from the tape's element type and the kwarg is gone,
+    # so the foot-gun is dispatch-impossible. This test calls
+    # `apply_linrood_multi_substep_adjoint!` WITHOUT specifying ORD
+    # and verifies the FD/VJP identity passes — i.e., the ORD=7
+    # reverse path is the one being exercised.
+    FT = Float64
+    Nc = 4; Hp = 3; Nz = 2
+    mesh = AT.CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
+    N = Nc + 2Hp
+    nsteps = 3
+
+    rng = MersenneTwister(701)
+    rm0 = zeros(FT, N, N, Nz)
+    m0  = zeros(FT, N, N, Nz)
+    @inbounds for k in 1:Nz, j in (Hp + 1):(Hp + Nc), i in (Hp + 1):(Hp + Nc)
+        rm0[i, j, k] = FT(0.5) * sin(0.13i + 0.21j + 0.07k)
+        m0[i, j, k]  = FT(3) + FT(0.1) * sin(0.09i - 0.11j)
+    end
+    am_steps = [FT(0.005) .* randn(rng, FT, Nc + 1, Nc, Nz) for _ in 1:nsteps]
+    bm_steps = [FT(0.005) .* randn(rng, FT, Nc, Nc + 1, Nz) for _ in 1:nsteps]
+
+    # Forward sequence with ord=Val(7) — tape entries are typed
+    # LinRoodHorizontalTapeEntry{…, 7}.
+    function _forward_sequence_ord7(rm0, m0)
+        rm = copy(rm0); m = copy(m0)
+        tape = Vector{Any}(undef, nsteps)
+        for t in 1:nsteps
+            entry, rm_next, m_next = Adv.record_linrood_substep!(
+                rm, m, am_steps[t], bm_steps[t], mesh; ord=Val(7))
+            tape[t] = entry
+            rm = rm_next
+            m  = m_next
+        end
+        return (tape=tape, rm_final=rm, m_final=m)
+    end
+
+    out = _forward_sequence_ord7(rm0, m0)
+    tape_vec = Vector{typeof(out.tape[1])}(out.tape)
+
+    lambda_rm_final = zeros(FT, N, N, Nz)
+    lambda_m_final  = zeros(FT, N, N, Nz)
+    @inbounds for k in 1:Nz, j in (Hp + 1):(Hp + Nc), i in (Hp + 1):(Hp + Nc)
+        lambda_rm_final[i, j, k] = randn(rng, FT)
+        lambda_m_final[i, j, k]  = randn(rng, FT)
+    end
+
+    lambda_rm0 = zeros(FT, N, N, Nz)
+    lambda_m0  = zeros(FT, N, N, Nz)
+    # CRITICAL: do NOT pass an explicit Val(ORD). ORD must come from
+    # the tape's element type via dispatch.
+    Adv.apply_linrood_multi_substep_adjoint!(
+        lambda_rm0, lambda_m0,
+        lambda_rm_final, lambda_m_final,
+        tape_vec, am_steps, bm_steps, mesh,
+    )
+
+    drm = zeros(FT, N, N, Nz)
+    dm  = zeros(FT, N, N, Nz)
+    @inbounds for k in 1:Nz, j in (Hp + 1):(Hp + Nc), i in (Hp + 1):(Hp + Nc)
+        drm[i, j, k] = randn(rng, FT)
+        dm[i, j, k]  = randn(rng, FT)
+    end
+    eps_fd = 1e-6
+    out_plus  = _forward_sequence_ord7(rm0 .+ eps_fd .* drm, m0 .+ eps_fd .* dm)
+    out_minus = _forward_sequence_ord7(rm0 .- eps_fd .* drm, m0 .- eps_fd .* dm)
+    fd_drm_final = (out_plus.rm_final .- out_minus.rm_final) ./ (2eps_fd)
+    fd_dm_final  = (out_plus.m_final  .- out_minus.m_final)  ./ (2eps_fd)
+
+    lhs = sum(lambda_rm_final .* fd_drm_final) +
+          sum(lambda_m_final  .* fd_dm_final)
+    rhs = sum(lambda_rm0 .* drm) + sum(lambda_m0 .* dm)
+
+    @test isapprox(lhs, rhs; atol=1e-7, rtol=1e-4)
+end
+

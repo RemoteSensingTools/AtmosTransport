@@ -108,6 +108,9 @@ end
 _resolve_require_substep_positivity(cfg::AbstractDict) =
     Bool(get(get(cfg, "numerics", Dict()), "require_substep_positivity", true))
 
+_resolve_unified_preprocessor(cfg::AbstractDict) =
+    Bool(get(get(cfg, "preprocessor", Dict()), "unified", false))
+
 # ---------------------------------------------------------------------------
 # Native-source preprocessor: typed `AbstractMetSettings` + cross-day state
 # carry (e.g. GEOS pressure-fixer chained mass).
@@ -167,27 +170,40 @@ function _process_day_native(cfg::AbstractDict;
     chain_mass     = _resolve_chain_mass(cfg)
     positivity_cfl_limit       = _resolve_positivity_cfl_limit(cfg)
     require_substep_positivity = _resolve_require_substep_positivity(cfg)
+    unified_preprocessor       = _resolve_unified_preprocessor(cfg)
+    if unified_preprocessor &&
+       !(grid isa CubedSphereTargetGeometry && settings isa AbstractGEOSSettings)
+        error("`[preprocessor].unified = true` currently supports only " *
+              "native GEOS → cubed_sphere preprocessing.")
+    end
 
     dates = _resolve_dates_native(cfg; day_override, start_date, end_date)
 
     @info @sprintf("Preprocessor: %s  Nc=%d  → %s  Nz=%d  FT=%s  %d day(s)",
                    typeof(settings), settings.Nc, typeof(grid),
                    vertical.Nz, FT, length(dates))
+    unified_preprocessor &&
+        @info "Plan 41 unified driver opt-in enabled for native GEOS → cubed_sphere"
 
     t_total = time()
     seed_m = nothing                   # source-defined cross-day state (e.g. GEOS PF endpoint)
     for (idx, d) in enumerate(dates)
         out_path = _native_output_path(cfg, settings, d, FT)
         @info "[$idx/$(length(dates))] $(d) → $(out_path)"
-        result = process_day(d, grid, settings, vertical;
-                             out_path        = out_path,
-                             dt_met_seconds  = dt_met_seconds,
-                             FT              = FT,
-                             mass_basis      = mass_basis,
-                             chain_mass      = chain_mass,
-                             positivity_cfl_limit       = positivity_cfl_limit,
-                             require_substep_positivity = require_substep_positivity,
-                             seed_m          = seed_m)
+        day_kwargs = (
+            out_path        = out_path,
+            dt_met_seconds  = dt_met_seconds,
+            FT              = FT,
+            mass_basis      = mass_basis,
+            chain_mass      = chain_mass,
+            positivity_cfl_limit       = positivity_cfl_limit,
+            require_substep_positivity = require_substep_positivity,
+            seed_m          = seed_m,
+        )
+        if unified_preprocessor
+            day_kwargs = (day_kwargs..., unified_driver = true)
+        end
+        result = process_day(d, grid, settings, vertical; day_kwargs...)
         seed_m = get(result, :final_m, nothing)
     end
     elapsed = time() - t_total

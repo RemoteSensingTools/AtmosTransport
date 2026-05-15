@@ -35,6 +35,9 @@ Executor state, 2026-05-15:
   real production opt-in (`unified_driver = true`). The default legacy loop is
   unchanged, and the synthetic GEOS passthrough test now byte-compares legacy
   vs unified outputs.
+- P3d shipped in the current Codex working tree: TOML native-source entrypoint
+  reads `[preprocessor].unified = true` and threads it only to supported
+  native GEOS -> cubed-sphere runs. Default config behavior remains legacy.
 - Next phase is P3: collapse the still-long legacy `process_day`
   driver bodies into the unified driver behind an opt-in flag.
 
@@ -447,6 +450,9 @@ P3c wires the first production opt-in: GEOS-native CS gets
 `process_day(...; unified_driver=true)`. The legacy path stays default.
 The parity gate is byte equality between the legacy and unified binaries
 on the synthetic GEOS passthrough fixture.
+
+P3d exposes that opt-in at the TOML entrypoint as
+`[preprocessor].unified = true` for native GEOS -> cubed-sphere only.
 
 Add `transport_binary/driver.jl` with the ~80-line driver above.
 **Don't** wire it in yet — `entrypoint.jl::process_day` still routes

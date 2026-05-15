@@ -26,6 +26,8 @@ using .AtmosTransport.Preprocessing: verify_substep_positivity_cs!,
 # helper just for tests.
 const _resolve_positivity_cfl_limit =
     AtmosTransport.Preprocessing._resolve_positivity_cfl_limit
+const _resolve_unified_preprocessor =
+    AtmosTransport.Preprocessing._resolve_unified_preprocessor
 
 # Build a 6-panel CS window whose horizontal fluxes vanish and whose vertical
 # fluxes encode the per-cell mass tendency exactly. The result satisfies the
@@ -507,6 +509,12 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
             @test occursin("positivity_cfl_limit", err.msg)
             @test occursin("0, 1", err.msg)
         end
+    end
+
+    @testset "entrypoint: unified preprocessor opt-in defaults off" begin
+        @test !_resolve_unified_preprocessor(Dict{String, Any}())
+        @test _resolve_unified_preprocessor(Dict("preprocessor" => Dict("unified" => true)))
+        @test !_resolve_unified_preprocessor(Dict("preprocessor" => Dict("unified" => false)))
     end
 
     # ------------------------------------------------------------------

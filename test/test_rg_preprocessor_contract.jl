@@ -18,6 +18,7 @@ include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 using .AtmosTransport.Preprocessing: verify_substep_positivity_rg!,
                                        verify_rg_window_contract!,
+                                       verify_boundary_stub_flux_rg,
                                        init_rg_positivity_accumulator,
                                        update_rg_positivity_accumulator,
                                        summarize_rg_positivity_status,
@@ -175,23 +176,139 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
             cfl_limit = 0.95)
     end
 
-    @testset "positivity: boundary face (face_left = 0) is ignored on the left side" begin
-        # Face 1 has face_left = 0 → only its right side (cell 2) counts.
-        # A positive flux on this face should NOT increase cell-1 outflow
-        # (which has no left attachment) but SHOULD increase cell-2
-        # ingest balance (no outflow from cell 2 in this scenario).
+    # ------------------------------------------------------------------
+    # Boundary-stub handling (codex review of `3796526` round-1).
+    #
+    # Runtime advection in `StrangSplitting.jl:279` skips any face
+    # where `face_left == 0` OR `face_right == 0`; the cell on the
+    # "real" side sees ZERO mass change from that face. So the
+    # positivity gate must also skip boundary stubs — otherwise a
+    # binary with `(face_left=0, face_right=1, hflux=-0.99e9)` would
+    # falsely trip the gate even though the runtime never applies the
+    # flux. The codex review caught that the original P1 test only
+    # covered the non-outgoing sign and missed the asymmetry.
+    # ------------------------------------------------------------------
+
+    @testset "positivity: boundary stub (face_left=0) does NOT count as cell-2 outflow on positive sign" begin
         w = build_clean_rg_window(Float64)
         face_left = copy(w.face_left)
         face_left[1] = 0
         hflux = copy(w.hflux)
-        hflux[1, 1] = 0.99e9
+        hflux[1, 1] = 0.99e9   # positive flux: would flow toward cell 2
         diag = verify_substep_positivity_rg!(w.m_cur, hflux, w.cm,
                                               face_left, w.face_right;
                                               cfl_limit = 0.95)
-        # Cell 2 has flux INCOMING on its right side (positive), so its
-        # outflow does NOT increase; the clean baseline's tiny z-ratio
-        # dominates and the gate still passes.
-        @test diag.ok
+        @test diag.ok          # runtime would not apply this flux
+    end
+
+    @testset "positivity: boundary stub (face_left=0) does NOT count as cell-2 outflow on NEGATIVE sign (codex round-1 fix)" begin
+        # This is the case the original P1 test missed. A negative flux
+        # on a face with face_left=0, face_right=2 would imply outflow
+        # from cell 2 if we naively followed the sign convention — but
+        # the runtime SKIPS this face entirely. The positivity gate
+        # must match: no horizontal outflow contribution from cell 2.
+        w = build_clean_rg_window(Float64)
+        face_left = copy(w.face_left)
+        face_left[1] = 0
+        hflux = copy(w.hflux)
+        hflux[1, 1] = -0.99e9  # negative flux: naively cell-2 outflow
+        diag = verify_substep_positivity_rg!(w.m_cur, hflux, w.cm,
+                                              face_left, w.face_right;
+                                              cfl_limit = 0.95)
+        @test diag.ok          # but the runtime skips this face
+        @test diag.ratio < 0.95
+    end
+
+    @testset "positivity: boundary stub (face_right=0) does NOT count as cell-1 outflow on either sign (codex round-1 fix)" begin
+        # Symmetric case for face_right=0 (north-pole singularity).
+        w = build_clean_rg_window(Float64)
+        face_right = copy(w.face_right)
+        face_right[1] = 0
+        for sign in (+1.0, -1.0)
+            hflux = copy(w.hflux)
+            hflux[1, 2] = sign * 0.99e9
+            diag = verify_substep_positivity_rg!(w.m_cur, hflux, w.cm,
+                                                  w.face_left, face_right;
+                                                  cfl_limit = 0.95)
+            @test diag.ok
+        end
+    end
+
+    # ------------------------------------------------------------------
+    # `verify_boundary_stub_flux_rg` — explicit-invariant scan for
+    # non-zero flux on boundary stubs. Such fluxes are silently
+    # discarded by the runtime, so the writer is broken if it emits
+    # them. The wrapper errors hard with no `require_*` escape hatch.
+    # ------------------------------------------------------------------
+
+    @testset "boundary-stub: zero flux on all stubs is benign" begin
+        w = build_clean_rg_window(Float64)
+        face_left = copy(w.face_left)
+        face_left[1] = 0
+        diag = verify_boundary_stub_flux_rg(w.hflux, face_left, w.face_right)
+        @test !diag.violated
+        @test diag.worst_face == 0
+        @test diag.worst_level == 0
+    end
+
+    @testset "boundary-stub: non-zero flux is flagged with face + level + value" begin
+        w = build_clean_rg_window(Float64)
+        face_left = copy(w.face_left)
+        face_left[1] = 0
+        hflux = copy(w.hflux)
+        hflux[1, 2] = -0.5e9
+        hflux[1, 3] = +0.3e9        # smaller magnitude — should NOT win
+        diag = verify_boundary_stub_flux_rg(hflux, face_left, w.face_right)
+        @test diag.violated
+        @test diag.worst_face == 1
+        @test diag.worst_level == 2
+        @test diag.worst_flux ≈ -0.5e9 atol = 1e-12
+    end
+
+    @testset "boundary-stub: tol = 1e8 admits |flux| < 1e8" begin
+        w = build_clean_rg_window(Float64)
+        face_left = copy(w.face_left)
+        face_left[1] = 0
+        hflux = copy(w.hflux)
+        hflux[1, 2] = 5e7           # below tol
+        diag = verify_boundary_stub_flux_rg(hflux, face_left, w.face_right;
+                                             tol = 1e8)
+        @test !diag.violated
+    end
+
+    @testset "boundary-stub: NaN/Inf flux is flagged with isinf worst_abs" begin
+        w = build_clean_rg_window(Float64)
+        face_left = copy(w.face_left)
+        face_left[1] = 0
+        hflux = copy(w.hflux)
+        hflux[1, 1] = NaN
+        diag = verify_boundary_stub_flux_rg(hflux, face_left, w.face_right)
+        @test diag.violated
+        @test isnan(diag.worst_flux) || isinf(diag.worst_flux)
+    end
+
+    @testset "wrapper: boundary-stub failure errors BEFORE the replay gate (no escape hatch)" begin
+        w = build_clean_rg_window(Float64)
+        face_left = copy(w.face_left)
+        face_left[1] = 0
+        hflux = copy(w.hflux)
+        hflux[1, 1] = -0.5e9
+        # cm closure was built for the un-perturbed window, so replay
+        # would also fail — but the wrapper must surface the boundary
+        # stub error first because that's the more diagnostic cause.
+        err = try
+            verify_rg_window_contract!(w.m_cur, hflux, w.cm, w.m_next,
+                                        face_left, w.face_right,
+                                        w.steps, 1;
+                                        replay_tol = 1e-12,
+                                        positivity_cfl_limit = 0.95)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ErrorException
+        @test occursin("Boundary-stub flux gate FAILED", err.msg)
+        @test occursin("StrangSplitting.jl", err.msg)
     end
 
     # ------------------------------------------------------------------
@@ -431,6 +548,14 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
     @testset "ReducedGaussianContract: construction validates policy fields" begin
         face_left  = Int32[1, 2, 3, 4]
         face_right = Int32[2, 3, 4, 1]
+        # replay_tol must be finite and > 0 (codex round-1: Inf would
+        # silently disable replay; NaN would fail every window late).
+        for bad in (Inf, NaN, 0.0, -1e-12, -Inf)
+            @test_throws ErrorException ReducedGaussianContract{Float64}(
+                replay_tol = bad, positivity_cfl_limit = 0.95,
+                steps_per_window = 1,
+                face_left = face_left, face_right = face_right)
+        end
         @test_throws ErrorException ReducedGaussianContract{Float64}(
             replay_tol = 1e-12, positivity_cfl_limit = 0.0,
             steps_per_window = 1, face_left = face_left, face_right = face_right)
@@ -443,6 +568,13 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
         @test_throws ErrorException ReducedGaussianContract{Float64}(
             replay_tol = 1e-12, positivity_cfl_limit = 0.95,
             steps_per_window = 1, face_left = face_left[1:3], face_right = face_right)
+        # boundary_stub_tol must be finite and ≥ 0 (default is 0.0).
+        for bad in (Inf, NaN, -1.0, -Inf)
+            @test_throws ErrorException ReducedGaussianContract{Float64}(
+                replay_tol = 1e-12, positivity_cfl_limit = 0.95,
+                steps_per_window = 1, boundary_stub_tol = bad,
+                face_left = face_left, face_right = face_right)
+        end
         c = ReducedGaussianContract{Float64}(replay_tol = 1e-12,
                                               positivity_cfl_limit = 0.95,
                                               steps_per_window = 8,
@@ -453,8 +585,96 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
         @test c.positivity_cfl_limit == 0.95
         @test c.require_substep_positivity == true
         @test c.steps_per_window == 8
+        @test c.boundary_stub_tol == 0.0
         @test c.face_left == face_left
         @test c.worst.ratio == 0.0
+    end
+
+    @testset "ReducedGaussianContract: boundary_stub_tol field threads from struct to wrapper" begin
+        # Note on what the boundary-stub gate guards against:
+        # Replay's `horizontal_divergence!` IS one-sided
+        # (`left > 0 && div_h[left] += flux; right > 0 && div_h[right] -= flux`),
+        # while the runtime SKIPS boundary-stub faces entirely. So a
+        # non-zero boundary-stub flux silently teaches the
+        # writer-side cm closure to "balance" mass that the runtime
+        # will never apply — replay passes, runtime drifts. The
+        # boundary-stub gate fires BEFORE the replay gate so the
+        # writer-bug surface diagnostic is preserved.
+        #
+        # This test confirms that the contract's `boundary_stub_tol`
+        # field actually flows into the wrapper. Under the strict
+        # default (0.0) the wrapper errors with the boundary-stub
+        # message; loosen it to 1e8 and the message becomes a
+        # different error (e.g. replay) — but it must NOT be the
+        # boundary-stub message.
+        face_left  = Int32[0, 2, 3, 4]
+        face_right = Int32[2, 3, 4, 1]
+        w = build_clean_rg_window(Float64)
+        hflux = copy(w.hflux)
+        hflux[1, 1] = 5e7                 # under 1e8 but > 0
+
+        strict = ReducedGaussianContract{Float64}(replay_tol = 1e-12,
+                                                   positivity_cfl_limit = 0.95,
+                                                   steps_per_window = w.steps,
+                                                   face_left = face_left,
+                                                   face_right = face_right)
+        err_strict = try
+            verify_window!((m_cur = w.m_cur, hflux = hflux, cm = w.cm,
+                            m_next = w.m_next), strict, 1)
+            nothing
+        catch e
+            e
+        end
+        @test err_strict isa ErrorException
+        @test occursin("Boundary-stub flux gate FAILED", err_strict.msg)
+
+        loose = ReducedGaussianContract{Float64}(replay_tol = 1e-12,
+                                                  positivity_cfl_limit = 0.95,
+                                                  steps_per_window = w.steps,
+                                                  boundary_stub_tol = 1e8,
+                                                  face_left = face_left,
+                                                  face_right = face_right)
+        err_loose = try
+            verify_window!((m_cur = w.m_cur, hflux = hflux, cm = w.cm,
+                            m_next = w.m_next), loose, 1)
+            nothing
+        catch e
+            e
+        end
+        # The boundary-stub gate must NOT fire under the relaxed tol;
+        # replay still fails downstream because cm wasn't built for
+        # the boundary divergence, but THAT is a different error.
+        @test err_loose isa ErrorException
+        @test !occursin("Boundary-stub flux gate FAILED", err_loose.msg)
+        @test occursin("replay gate FAILED", err_loose.msg)
+    end
+
+    @testset "verify_rg_window_contract!: scratch kwargs are reused (codex round-1)" begin
+        w = build_clean_rg_window(Float64)
+        nc, Nz = size(w.m_cur)
+        div_scratch = Array{Float64}(undef, nc, Nz)
+        outgoing_h  = Array{Float64}(undef, nc, Nz)
+        bad_h       = Array{Bool}(undef, nc, Nz)
+        # Poison scratch to confirm the helper resets it.
+        fill!(div_scratch, NaN)
+        fill!(outgoing_h, NaN)
+        fill!(bad_h, true)
+        result = verify_rg_window_contract!(w.m_cur, w.hflux, w.cm, w.m_next,
+                                             w.face_left, w.face_right,
+                                             w.steps, 1;
+                                             replay_tol = 1e-12,
+                                             positivity_cfl_limit = 0.95,
+                                             div_scratch = div_scratch,
+                                             outgoing_h = outgoing_h,
+                                             bad_h = bad_h)
+        @test result.replay.max_rel_err <= 1e-12
+        @test result.positivity.ok
+        # Shape-mismatch scratch must fail loudly.
+        @test_throws ErrorException verify_rg_window_contract!(
+            w.m_cur, w.hflux, w.cm, w.m_next,
+            w.face_left, w.face_right, w.steps, 1;
+            replay_tol = 1e-12,
+            div_scratch = zeros(Float64, nc + 1, Nz))
     end
 
     @testset "ReducedGaussianContract: verify_window! returns the same diagnostics" begin

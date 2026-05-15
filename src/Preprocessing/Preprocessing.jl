@@ -133,6 +133,7 @@ export verify_substep_positivity_ll!, verify_ll_window_contract!,
        init_ll_positivity_accumulator, update_ll_positivity_accumulator,
        summarize_ll_positivity_status
 export verify_substep_positivity_rg!, verify_rg_window_contract!,
+       verify_boundary_stub_flux_rg,
        init_rg_positivity_accumulator, update_rg_positivity_accumulator,
        summarize_rg_positivity_status
 

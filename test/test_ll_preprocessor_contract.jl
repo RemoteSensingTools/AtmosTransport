@@ -401,6 +401,13 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
     # ------------------------------------------------------------------
 
     @testset "LatLonContract: construction validates policy fields" begin
+        # replay_tol must be finite and > 0 (codex round-1: Inf would
+        # silently disable replay; NaN would fail every window late).
+        for bad in (Inf, NaN, 0.0, -1e-12, -Inf)
+            @test_throws ErrorException LatLonContract{Float64}(
+                replay_tol = bad, positivity_cfl_limit = 0.95,
+                steps_per_window = 1)
+        end
         @test_throws ErrorException LatLonContract{Float64}(
             replay_tol = 1e-12, positivity_cfl_limit = 0.0, steps_per_window = 1)
         @test_throws ErrorException LatLonContract{Float64}(
@@ -418,6 +425,26 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
         @test c.require_substep_positivity == true
         @test c.steps_per_window == 8
         @test c.worst.ratio == 0.0
+    end
+
+    @testset "verify_ll_window_contract!: scratch kwarg is reused (codex round-1)" begin
+        w = build_clean_ll_window(Float64)
+        div_scratch = Array{Float64}(undef, size(w.m_cur))
+        fill!(div_scratch, NaN)
+        result = verify_ll_window_contract!(w.m_cur, w.am, w.bm, w.cm, w.m_next,
+                                             w.steps, 1;
+                                             replay_tol = 1e-12,
+                                             positivity_cfl_limit = 0.95,
+                                             div_scratch = div_scratch)
+        @test result.replay.max_rel_err <= 1e-12
+        @test result.positivity.ok
+        # Shape-mismatch scratch must fail loudly.
+        bad_scratch = zeros(Float64, size(w.m_cur, 1) + 1, size(w.m_cur, 2),
+                             size(w.m_cur, 3))
+        @test_throws ErrorException verify_ll_window_contract!(
+            w.m_cur, w.am, w.bm, w.cm, w.m_next, w.steps, 1;
+            replay_tol = 1e-12,
+            div_scratch = bad_scratch)
     end
 
     @testset "LatLonContract: verify_window! returns the same diagnostics" begin

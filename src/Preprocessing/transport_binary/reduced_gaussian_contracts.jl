@@ -21,15 +21,37 @@
 #     face_right :: Vector{Int32}        # same on the right side
 #
 # Sign convention: `hflux[f, k] > 0` means flux goes from
-# `face_left[f]` to `face_right[f]`. So for cell `c`, the outgoing
-# horizontal flux through face `f`:
+# `face_left[f]` to `face_right[f]`. So for an interior face touching
+# cell `c` on BOTH sides:
 #
 #     face_left[f]  == c → outgoing = max(0,  hflux[f, k])
 #     face_right[f] == c → outgoing = max(0, -hflux[f, k])
 #
-# Some faces are "boundary" (one of `face_left` / `face_right` is 0 or
-# negative). The replay kernel only accumulates the interior faces; the
-# positivity kernel does the same.
+# Boundary stubs (`face_left[f] ≤ 0` or `face_right[f] ≤ 0`) — the
+# south/north pole singularities of the RG mesh — are SKIPPED entirely.
+# This matches the runtime advection in
+# `src/Operators/Advection/StrangSplitting.jl:279`:
+#
+#     if left > 0 && right > 0
+#         # accumulate flux to both cells
+#     end
+#     # else: skip — no mass enters or leaves through the pole singularity
+#
+# If the contract counted boundary-stub outflow against the interior
+# cell, a binary with `(face_left=0, face_right=1, hflux=-0.99)` would
+# trip the positivity gate, but the runtime would never apply that flux
+# (the cell mass is unchanged by the face). The codex review of
+# `3796526` (round-1) caught this asymmetry; the round-2 fix in this
+# file moves the both-interior check above the sign branch.
+#
+# Non-zero flux on a boundary stub is its OWN explicit invariant
+# violation. The writer that produces such a value is silently writing
+# data the runtime will discard, which usually indicates a sign-flip
+# bug in the boundary masking. `verify_boundary_stub_flux_rg` returns a
+# diagnostic for the worst boundary-stub flux, and the wrapper
+# `verify_rg_window_contract!` errors hard when this fires (no
+# `require_*` escape hatch — there's no legitimate operational reason
+# for a boundary-stub flux to be non-zero).
 #
 # Direction reported in the diagnostic is `:h` (horizontal) or `:z`
 # (vertical); RG faces aren't axis-aligned, so there is no separate `:x`/
@@ -41,7 +63,8 @@
 
 """
     verify_substep_positivity_rg!(m, hflux, cm, face_left, face_right;
-                                  cfl_limit = 0.95)
+                                  cfl_limit = 0.95,
+                                  outgoing_h = nothing, bad_h = nothing)
 
 Per-substep horizontal+vertical positivity scan for a face-indexed RG
 window. Mirrors `verify_substep_positivity_cs!` / `..._ll!` but operates
@@ -49,14 +72,21 @@ on the face-indexed RG mass-flux representation.
 
 For every cell `(c, k)`:
   1. `m > 0`. A non-positive cell mass is reported with `ratio = Inf`.
-  2. Horizontal outgoing mass per substep ≤ `cfl_limit * m`. Horizontal
-     outgoing is the sum across all RG faces that touch cell `c` of the
-     per-face outflow (sign-aware, see file header).
+  2. Horizontal outgoing mass per substep ≤ `cfl_limit * m`. Only
+     interior faces (`face_left > 0 && face_right > 0`) contribute,
+     matching the runtime advection in `StrangSplitting.jl:279`.
+     Boundary stubs are not counted as outflow here — see
+     `verify_boundary_stub_flux_rg` for the separate "non-zero flux on
+     a boundary stub" invariant.
   3. Vertical outgoing mass per substep ≤ `cfl_limit * m`. Same as
      CS / LL: `max(0, -cm[c, k]) + max(0, cm[c, k+1])`.
 
 `NaN`/`Inf` cell mass and `NaN`/`Inf` fluxes are flagged as `ratio = Inf`
 (matches the CS round-2 fix).
+
+`outgoing_h` and `bad_h` can be passed in as workspace-owned scratch
+to suppress per-window allocation once P2 wires this into the
+unified driver. Default `nothing` → allocate locally.
 
 Returns `(direction, ratio, location, ok)` with:
   - `direction :: Union{Symbol, Nothing}` — `:h` / `:z` / `nothing`.
@@ -69,7 +99,9 @@ function verify_substep_positivity_rg!(m::AbstractMatrix{FT},
                                         cm::AbstractMatrix,
                                         face_left::AbstractVector{<:Integer},
                                         face_right::AbstractVector{<:Integer};
-                                        cfl_limit::Real = 0.95) where FT
+                                        cfl_limit::Real = 0.95,
+                                        outgoing_h::Union{Nothing, AbstractMatrix{Float64}} = nothing,
+                                        bad_h::Union{Nothing, AbstractMatrix{Bool}} = nothing) where FT
     nc, Nz = size(m)
     size(hflux, 2) == Nz ||
         error("verify_substep_positivity_rg!: hflux level count " *
@@ -85,27 +117,51 @@ function verify_substep_positivity_rg!(m::AbstractMatrix{FT},
         error("verify_substep_positivity_rg!: face_right length " *
               "$(length(face_right)) != nfaces $(nf).")
 
-    # Accumulate per-cell horizontal outflow once for all levels. A NaN
-    # or Inf flux at any face is propagated into the affected cells'
-    # outflow so the worst-ratio scan reports the contamination.
-    outgoing_h = zeros(Float64, nc, Nz)
-    bad_h      = falses(nc, Nz)
+    # Scratch buffers — pre-allocated by the caller (P2 will plumb this
+    # through workspace state) or auto-allocated here as a fallback.
+    if outgoing_h === nothing
+        outgoing_h = zeros(Float64, nc, Nz)
+    else
+        size(outgoing_h) == (nc, Nz) ||
+            error("verify_substep_positivity_rg!: outgoing_h scratch " *
+                  "shape $(size(outgoing_h)) != expected ($(nc), $(Nz)).")
+        fill!(outgoing_h, 0.0)
+    end
+    if bad_h === nothing
+        bad_h = falses(nc, Nz)
+    else
+        size(bad_h) == (nc, Nz) ||
+            error("verify_substep_positivity_rg!: bad_h scratch " *
+                  "shape $(size(bad_h)) != expected ($(nc), $(Nz)).")
+        fill!(bad_h, false)
+    end
+
+    # Accumulate per-cell horizontal outflow once for all levels. Only
+    # interior faces contribute, matching the runtime semantics. A NaN
+    # or Inf flux at any interior face is propagated into the affected
+    # cells' bad-flux flag so the worst-ratio scan reports the
+    # contamination.
     @inbounds for f in 1:nf
         cL = Int(face_left[f])
         cR = Int(face_right[f])
         cL_interior = 1 ≤ cL ≤ nc
         cR_interior = 1 ≤ cR ≤ nc
+        both_interior = cL_interior && cR_interior
+        # Skip boundary stubs (one side is a pole / non-interior). The
+        # runtime advection skips these faces entirely — counting them
+        # as outflow here would falsely trip the positivity gate on
+        # binaries whose runtime mass evolution is unaffected.
+        both_interior || continue
         for k in 1:Nz
             h = hflux[f, k]
             if !isfinite(h)
-                cL_interior && (bad_h[cL, k] = true)
-                cR_interior && (bad_h[cR, k] = true)
+                bad_h[cL, k] = true
+                bad_h[cR, k] = true
                 continue
             end
-            if cL_interior && h > zero(h)
+            if h > zero(h)
                 outgoing_h[cL, k] += Float64(h)
-            end
-            if cR_interior && h < zero(h)
+            elseif h < zero(h)
                 outgoing_h[cR, k] -= Float64(h)
             end
         end
@@ -164,16 +220,96 @@ function verify_substep_positivity_rg!(m::AbstractMatrix{FT},
 end
 
 """
+    verify_boundary_stub_flux_rg(hflux, face_left, face_right;
+                                 tol = 0.0) -> NamedTuple
+
+Explicit-invariant scan: any non-zero `hflux` value on a boundary stub
+(`face_left ≤ 0` or `face_right ≤ 0`) is a contract violation. The
+runtime advection silently discards such fluxes
+(`StrangSplitting.jl:279`), so a writer that produces them is emitting
+data the runtime cannot apply — almost always a sign-flip or boundary-
+masking bug in preprocessing.
+
+Returns `(violated, worst_flux, worst_face, worst_level)`:
+  - `violated :: Bool` — `true` iff any |flux| > tol on a boundary stub.
+  - `worst_flux :: Float64` — signed value of the worst-magnitude
+    violation, or `0.0` if none.
+  - `worst_face :: Int` — face index of the worst violation, or `0`.
+  - `worst_level :: Int` — k-index of the worst violation, or `0`.
+
+`tol` is the absolute tolerance below which a "near-zero" stub flux is
+permitted. Default 0.0 (strict) — RG writers should explicitly zero
+boundary stubs.
+"""
+function verify_boundary_stub_flux_rg(hflux::AbstractMatrix,
+                                        face_left::AbstractVector{<:Integer},
+                                        face_right::AbstractVector{<:Integer};
+                                        tol::Real = 0.0)
+    nf = size(hflux, 1)
+    length(face_left)  == nf ||
+        error("verify_boundary_stub_flux_rg: face_left length " *
+              "$(length(face_left)) != nfaces $(nf).")
+    length(face_right) == nf ||
+        error("verify_boundary_stub_flux_rg: face_right length " *
+              "$(length(face_right)) != nfaces $(nf).")
+    Nz = size(hflux, 2)
+    worst_abs = Float64(tol)
+    worst_flux = 0.0
+    worst_face = 0
+    worst_level = 0
+    @inbounds for f in 1:nf
+        cL = Int(face_left[f])
+        cR = Int(face_right[f])
+        is_stub = cL <= 0 || cR <= 0
+        is_stub || continue
+        for k in 1:Nz
+            h = hflux[f, k]
+            ah = isfinite(h) ? abs(Float64(h)) : Inf
+            if ah > worst_abs
+                worst_abs   = ah
+                worst_flux  = isfinite(h) ? Float64(h) : Float64(h)  # preserves NaN/Inf
+                worst_face  = f
+                worst_level = k
+            end
+        end
+    end
+    return (violated   = worst_face != 0,
+            worst_flux = worst_flux,
+            worst_face = worst_face,
+            worst_level = worst_level)
+end
+
+"""
     verify_rg_window_contract!(m_cur, hflux, cm, m_next, face_left, face_right,
                                steps_per_window, win_idx;
-                               replay_tol, positivity_cfl_limit = 0.95)
+                               replay_tol, positivity_cfl_limit = 0.95,
+                               div_scratch = nothing,
+                               outgoing_h = nothing, bad_h = nothing,
+                               boundary_stub_tol = 0.0)
 
-Single canonical per-window RG binary contract check. Runs the replay
-gate (`verify_window_continuity_rg`, errors on failure) followed by the
-per-substep positivity scan (`verify_substep_positivity_rg!`, returns a
-diagnostic).
+Single canonical per-window RG binary contract check. Runs three gates
+in order:
 
-Returns `(; replay, positivity)`.
+  1. **Boundary-stub flux gate** — errors hard if any boundary stub
+     (`face_left ≤ 0` / `face_right ≤ 0`) carries non-zero `hflux`
+     above `boundary_stub_tol`. No `require_*` escape hatch: such
+     fluxes are silently discarded by the runtime
+     (`StrangSplitting.jl:279`), so emitting them is always a writer
+     bug.
+  2. **Replay gate** — `verify_window_continuity_rg`; errors on
+     failure.
+  3. **Per-substep positivity scan** —
+     `verify_substep_positivity_rg!`, returns a non-fatal diagnostic;
+     the run-level accumulator + `summarize_rg_positivity_status`
+     decides fatal-vs-warn.
+
+`div_scratch`, `outgoing_h`, `bad_h` may be pre-allocated by the
+caller (workspace-owned scratch from P2) to suppress per-window
+allocation. Default `nothing` → allocate locally.
+
+Returns `(; replay, positivity)`. Boundary-stub failure does not
+return; it errors out before the replay gate so a broken writer
+cannot silently emit a binary the runtime would partially evaluate.
 """
 function verify_rg_window_contract!(m_cur::AbstractMatrix{FT},
                                      hflux::AbstractMatrix,
@@ -184,8 +320,28 @@ function verify_rg_window_contract!(m_cur::AbstractMatrix{FT},
                                      steps_per_window::Integer,
                                      win_idx::Integer;
                                      replay_tol::Real,
-                                     positivity_cfl_limit::Real = 0.95) where FT
-    div_scratch = Array{Float64}(undef, size(m_cur))
+                                     positivity_cfl_limit::Real = 0.95,
+                                     div_scratch::Union{Nothing, AbstractMatrix{Float64}} = nothing,
+                                     outgoing_h::Union{Nothing, AbstractMatrix{Float64}} = nothing,
+                                     bad_h::Union{Nothing, AbstractMatrix{Bool}} = nothing,
+                                     boundary_stub_tol::Real = 0.0) where FT
+    stub = verify_boundary_stub_flux_rg(hflux, face_left, face_right;
+                                          tol = boundary_stub_tol)
+    stub.violated &&
+        error("Boundary-stub flux gate FAILED for RG window $(win_idx): " *
+              "hflux=$(stub.worst_flux) on face=$(stub.worst_face) " *
+              "level=$(stub.worst_level) where face_left=$(face_left[stub.worst_face]) " *
+              "face_right=$(face_right[stub.worst_face]); runtime advection " *
+              "(`StrangSplitting.jl:279`) will silently discard this flux. " *
+              "Either the writer's boundary-masking logic dropped a zero, " *
+              "or `face_left`/`face_right` connectivity has the wrong sign.")
+    if div_scratch === nothing
+        div_scratch = Array{Float64}(undef, size(m_cur))
+    else
+        size(div_scratch) == size(m_cur) ||
+            error("verify_rg_window_contract!: div_scratch shape " *
+                  "$(size(div_scratch)) != m_cur shape $(size(m_cur)).")
+    end
     replay = verify_window_continuity_rg(m_cur, hflux, cm, m_next,
                                           face_left, face_right,
                                           div_scratch, steps_per_window)
@@ -197,7 +353,9 @@ function verify_rg_window_contract!(m_cur::AbstractMatrix{FT},
               "palindrome continuity.")
     positivity = verify_substep_positivity_rg!(m_cur, hflux, cm,
                                                 face_left, face_right;
-                                                cfl_limit = positivity_cfl_limit)
+                                                cfl_limit = positivity_cfl_limit,
+                                                outgoing_h = outgoing_h,
+                                                bad_h = bad_h)
     return (replay = replay, positivity = positivity)
 end
 
@@ -303,8 +461,13 @@ worst-window positivity accumulator. Holds the face connectivity
 (`face_left` / `face_right`) so the per-window call site doesn't need
 to thread it through every call.
 
-Construction validates `positivity_cfl_limit ∈ (0, 1]`,
-`steps_per_window ≥ 1`, and `length(face_left) == length(face_right)`.
+Construction validates `replay_tol`, `positivity_cfl_limit ∈ (0, 1]`,
+`steps_per_window ≥ 1`, `boundary_stub_tol ≥ 0`, and
+`length(face_left) == length(face_right)`.
+
+`boundary_stub_tol` (default `0.0`) is the absolute tolerance for the
+boundary-stub flux gate (`verify_boundary_stub_flux_rg`). Default is
+strict; tighten only with caution.
 """
 mutable struct ReducedGaussianContract{FT} <:
                 AbstractWindowContract{ReducedGaussianTargetGeometry, FT}
@@ -312,6 +475,7 @@ mutable struct ReducedGaussianContract{FT} <:
     positivity_cfl_limit        :: Float64
     require_substep_positivity  :: Bool
     steps_per_window            :: Int
+    boundary_stub_tol           :: Float64
     face_left                   :: Vector{Int32}
     face_right                  :: Vector{Int32}
     worst                       :: NamedTuple
@@ -321,14 +485,22 @@ mutable struct ReducedGaussianContract{FT} <:
                                           positivity_cfl_limit::Real = 0.95,
                                           require_substep_positivity::Bool = true,
                                           steps_per_window::Integer,
+                                          boundary_stub_tol::Real = 0.0,
                                           face_left::AbstractVector{<:Integer},
                                           face_right::AbstractVector{<:Integer}) where FT
+        isfinite(replay_tol) && replay_tol > 0 ||
+            error("ReducedGaussianContract: replay_tol = $(replay_tol); " *
+                  "must be finite and > 0 (Inf would silently disable replay; " *
+                  "NaN would fail every window late).")
         isfinite(positivity_cfl_limit) && 0 < positivity_cfl_limit ≤ 1 ||
             error("ReducedGaussianContract: positivity_cfl_limit = " *
                   "$(positivity_cfl_limit); must be in (0, 1].")
         steps_per_window ≥ 1 ||
             error("ReducedGaussianContract: steps_per_window = " *
                   "$(steps_per_window); must be ≥ 1.")
+        isfinite(boundary_stub_tol) && boundary_stub_tol ≥ 0 ||
+            error("ReducedGaussianContract: boundary_stub_tol = " *
+                  "$(boundary_stub_tol); must be finite and ≥ 0.")
         length(face_left) == length(face_right) ||
             error("ReducedGaussianContract: face_left length " *
                   "$(length(face_left)) != face_right length " *
@@ -337,6 +509,7 @@ mutable struct ReducedGaussianContract{FT} <:
                    Float64(positivity_cfl_limit),
                    require_substep_positivity,
                    Int(steps_per_window),
+                   Float64(boundary_stub_tol),
                    Vector{Int32}(face_left),
                    Vector{Int32}(face_right),
                    init_rg_positivity_accumulator())
@@ -353,7 +526,8 @@ function verify_window!(window, contract::ReducedGaussianContract, win_idx::Inte
                                        contract.face_left, contract.face_right,
                                        contract.steps_per_window, Int(win_idx);
                                        replay_tol           = contract.replay_tol,
-                                       positivity_cfl_limit = contract.positivity_cfl_limit)
+                                       positivity_cfl_limit = contract.positivity_cfl_limit,
+                                       boundary_stub_tol    = contract.boundary_stub_tol)
 end
 
 function update_accumulator!(contract::ReducedGaussianContract, positivity_diag,

@@ -17,7 +17,9 @@ using .AtmosTransport.Preprocessing: verify_substep_positivity_cs!,
                                        verify_cs_window_contract!,
                                        init_cs_positivity_accumulator,
                                        update_cs_positivity_accumulator,
-                                       summarize_cs_positivity_status
+                                       summarize_cs_positivity_status,
+                                       CubedSphereContract,
+                                       AbstractWindowContract
 
 # Internal helper; not exported. Accessed by qualified name so the entrypoint
 # validation regression (round-3) doesn't require exporting an underscore
@@ -505,5 +507,45 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
             @test occursin("positivity_cfl_limit", err.msg)
             @test occursin("0, 1", err.msg)
         end
+    end
+
+    # ------------------------------------------------------------------
+    # CubedSphereContract construction validation (codex round-1 — Inf
+    # would silently disable replay; NaN would fail every window late).
+    # The typed concrete validates every policy knob at construction so
+    # an invalid TOML value fails BEFORE any window is preprocessed.
+    # ------------------------------------------------------------------
+
+    @testset "CubedSphereContract: construction validates policy fields" begin
+        for bad in (Inf, NaN, 0.0, -1e-12, -Inf)
+            @test_throws ErrorException CubedSphereContract{Float64}(
+                replay_tol = bad, positivity_cfl_limit = 0.95,
+                steps_per_window = 1)
+        end
+        @test_throws ErrorException CubedSphereContract{Float64}(
+            replay_tol = 1e-12, positivity_cfl_limit = 0.0,
+            steps_per_window = 1)
+        @test_throws ErrorException CubedSphereContract{Float64}(
+            replay_tol = 1e-12, positivity_cfl_limit = 1.5,
+            steps_per_window = 1)
+        @test_throws ErrorException CubedSphereContract{Float64}(
+            replay_tol = 1e-12, positivity_cfl_limit = NaN,
+            steps_per_window = 1)
+        @test_throws ErrorException CubedSphereContract{Float64}(
+            replay_tol = 1e-12, positivity_cfl_limit = 0.95,
+            steps_per_window = 0)
+        @test_throws ErrorException CubedSphereContract{Float64}(
+            replay_tol = 1e-12, positivity_cfl_limit = 0.95,
+            steps_per_window = 1, halo_width = -1)
+        c = CubedSphereContract{Float64}(replay_tol = 1e-12,
+                                          positivity_cfl_limit = 0.95,
+                                          steps_per_window = 8)
+        @test c isa AbstractWindowContract
+        @test c.replay_tol == 1e-12
+        @test c.positivity_cfl_limit == 0.95
+        @test c.require_substep_positivity == true
+        @test c.steps_per_window == 8
+        @test c.halo_width == 0
+        @test c.worst.ratio == 0.0
     end
 end

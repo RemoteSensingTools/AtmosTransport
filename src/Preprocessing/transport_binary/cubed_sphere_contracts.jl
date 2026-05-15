@@ -338,6 +338,10 @@ mutable struct CubedSphereContract{FT} <:
                                       require_substep_positivity::Bool = true,
                                       steps_per_window::Integer,
                                       halo_width::Integer = 0) where FT
+        isfinite(replay_tol) && replay_tol > 0 ||
+            error("CubedSphereContract: replay_tol = $(replay_tol); " *
+                  "must be finite and > 0 (Inf would silently disable replay; " *
+                  "NaN would fail every window late).")
         isfinite(positivity_cfl_limit) && 0 < positivity_cfl_limit ≤ 1 ||
             error("CubedSphereContract: positivity_cfl_limit = " *
                   "$(positivity_cfl_limit); must be in (0, 1].")

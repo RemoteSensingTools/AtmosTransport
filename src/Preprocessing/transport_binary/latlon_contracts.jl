@@ -404,15 +404,20 @@ end
 
 """
     verify_ll_window_contract!(m_cur, am, bm, cm, m_next, steps_per_window, win_idx;
-                               replay_tol, positivity_cfl_limit = 0.95)
+                               replay_tol, positivity_cfl_limit = 0.95,
+                               div_scratch = nothing)
 
 Single canonical per-window LL binary contract check. Runs the replay
-gate (`verify_window_continuity_ll`, errors on failure) followed by the
-per-substep positivity scan (`verify_substep_positivity_ll!`, returns a
-diagnostic).
+gate (errors on failure) followed by the per-substep positivity scan
+(`verify_substep_positivity_ll!`, returns a diagnostic).
 
-Returns `(; replay, positivity)`. Positivity is non-fatal here — callers
-aggregate the worst window across the loop and pass it to
+`div_scratch` may be pre-allocated by the caller (workspace-owned
+scratch from P2) to suppress the per-window `Array{Float64}` the
+default-allocating `verify_window_continuity_ll` would otherwise
+produce. Default `nothing` → allocate locally.
+
+Returns `(; replay, positivity)`. Positivity is non-fatal here —
+callers aggregate the worst window across the loop and pass it to
 `summarize_ll_positivity_status` where the run-level
 `require_substep_positivity` policy decides whether to error or warn.
 """
@@ -424,8 +429,18 @@ function verify_ll_window_contract!(m_cur::AbstractArray{FT, 3},
                                      steps_per_window::Integer,
                                      win_idx::Integer;
                                      replay_tol::Real,
-                                     positivity_cfl_limit::Real = 0.95) where FT
-    replay = verify_window_continuity_ll(m_cur, am, bm, cm, m_next, steps_per_window)
+                                     positivity_cfl_limit::Real = 0.95,
+                                     div_scratch::Union{Nothing, AbstractArray{Float64, 3}} = nothing) where FT
+    if div_scratch === nothing
+        div_scratch = Array{Float64}(undef, size(m_cur))
+    else
+        size(div_scratch) == size(m_cur) ||
+            error("verify_ll_window_contract!: div_scratch shape " *
+                  "$(size(div_scratch)) != m_cur shape $(size(m_cur)).")
+    end
+    replay = verify_window_continuity(structured_replay_layout(),
+                                       div_scratch, m_cur, cm, m_next,
+                                       steps_per_window, am, bm)
     replay.max_rel_err <= replay_tol ||
         error("Write-time replay gate FAILED for LL window $(win_idx): " *
               "rel=$(replay.max_rel_err) > tol=$(replay_tol) at cell " *
@@ -555,6 +570,10 @@ mutable struct LatLonContract{FT} <:
                                  positivity_cfl_limit::Real = 0.95,
                                  require_substep_positivity::Bool = true,
                                  steps_per_window::Integer) where FT
+        isfinite(replay_tol) && replay_tol > 0 ||
+            error("LatLonContract: replay_tol = $(replay_tol); " *
+                  "must be finite and > 0 (Inf would silently disable replay; " *
+                  "NaN would fail every window late).")
         isfinite(positivity_cfl_limit) && 0 < positivity_cfl_limit ≤ 1 ||
             error("LatLonContract: positivity_cfl_limit = " *
                   "$(positivity_cfl_limit); must be in (0, 1].")

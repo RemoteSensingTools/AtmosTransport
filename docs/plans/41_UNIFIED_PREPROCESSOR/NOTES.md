@@ -82,9 +82,12 @@ Executor state, 2026-05-15:
   With `--warn-only-positivity`, legacy and unified outputs compare exact
   byte-for-byte for the 2021-12-01 F32 binary (`9551547392` bytes); replay
   stayed active and matched worst rel `2.63e-7` / abs `5.20e5` at win 13.
-- Remaining P3 work after P3i: decide the RG replay blocker / GEOS positivity
-  gate policy, then remove legacy scaffolding once the opt-ins have had enough
-  bake time.
+- GEOS gate-policy decision: mirror the full-archive C180 regen config in the
+  one-day smoke config. Replay remains mandatory; substep positivity is
+  log-only (`require_substep_positivity = false`) until GEOS-native vertical
+  merging can remove the thin-L72-mesosphere false blocker.
+- Remaining P3 work after P3i: decide the RG replay blocker, then remove
+  legacy scaffolding once the opt-ins have had enough bake time.
 
 **Read [DESIGN.md](DESIGN.md) first** for the typed three-axis rationale,
 the anti-pattern audit with file:line citations, and the foot-gun

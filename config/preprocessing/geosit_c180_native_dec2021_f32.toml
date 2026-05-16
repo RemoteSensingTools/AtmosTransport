@@ -46,3 +46,12 @@ dt_met_seconds = 3600.0
 # tracer VMR, so each binary window should start from the raw GEOS endpoint
 # instead of a multi-day pressure-fixer chain.
 chain_mass     = false
+
+# Keep replay strict, but make the substep-positivity gate log-only for the
+# GEOS-IT L72 smoke. The upper mesospheric layers are ~14 Pa thick, so the
+# native CMFMC/pressure-fixer signal can exceed outgoing/m=0.95 without a
+# binary-writer bug. The full-archive C180 regen config carries the longer
+# audit note; this smoke mirrors that gate policy until GEOS-native vertical
+# merging is available.
+positivity_cfl_limit       = 0.95
+require_substep_positivity = false

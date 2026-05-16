@@ -74,6 +74,14 @@ Executor state, 2026-05-15:
   the write-time RG replay gate at window 1 (`rel=3.78e-3 > 1e-10` at cell
   `(1051, 28)`). Treat as a pre-existing config/data contract failure rather
   than a Plan 41 unified-driver regression.
+  Current code audit points at the RG mass-closure null space: the compressed
+  face-Laplacian can only remove mean-zero per-level divergence, while the
+  vertical `cm` closure forces the bottom interface back to zero by
+  redistributing the remaining column residual. If that residual is not already
+  negligible, the stored fluxes are surface-closed but no longer replay to the
+  raw next-window mass. Do **not** weaken the replay gate to pass this config;
+  either make RG mass endpoints chained/replay-consistent or regenerate with a
+  source/mass-fix setup whose residual is below the replay tolerance.
 - Native GEOS strict-gate blocker: `geosit_c180_native_dec2021_f32.toml` for
   2021-12-01 fails before unified comparison because the legacy path trips the
   CS substep-positivity gate at window 24 (`outgoing/m=1.046 > 0.95`) in the
@@ -86,8 +94,13 @@ Executor state, 2026-05-15:
   one-day smoke config. Replay remains mandatory; substep positivity is
   log-only (`require_substep_positivity = false`) until GEOS-native vertical
   merging can remove the thin-L72-mesosphere false blocker.
-- Remaining P3 work after P3i: decide the RG replay blocker, then remove
-  legacy scaffolding once the opt-ins have had enough bake time.
+- RG blocker decision: keep replay mandatory and carry the real N24 dry config
+  as an inadmissible legacy-input blocker, not a unified-driver blocker. The
+  fake decoded spectral-cache RG fixture remains the byte-parity cutover test
+  until a follow-up fixes RG mass closure for real dry ERA5.
+- Remaining P3/P4 work: remove legacy opt-in scaffolding in small topology
+  commits, preserving the fake-fixture byte-parity tests and the LL/CS/GEOS
+  real-bake evidence above.
 
 **Read [DESIGN.md](DESIGN.md) first** for the typed three-axis rationale,
 the anti-pattern audit with file:line citations, and the foot-gun

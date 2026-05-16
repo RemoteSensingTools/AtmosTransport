@@ -43,8 +43,15 @@ Executor state, 2026-05-15:
   entrypoint threads `[preprocessor].unified = true` only for RG targets.
   A fake decoded spectral-cache fixture byte-compares legacy vs unified RG
   binaries.
-- Next phase is P3: collapse the still-long legacy `process_day`
-  driver bodies into the unified driver behind an opt-in flag.
+- P3f shipped in the current Codex working tree: ERA5 spectral -> cubed
+  sphere has a `unified_driver = true` opt-in, the spectral TOML entrypoint
+  now allows RG and CS targets, and a fake decoded spectral-cache fixture
+  byte-compares legacy vs unified CS binaries. LL remains last because its
+  fixed header needs post-flush pressure-offset metadata before the writer
+  adapter can open safely.
+- Remaining P3 work: land the LL spectral opt-in after adding a delayed-header
+  writer path for post-flush pressure-offset metadata, then remove legacy
+  scaffolding once all opt-ins have had parity coverage.
 
 **Read [DESIGN.md](DESIGN.md) first** for the typed three-axis rationale,
 the anti-pattern audit with file:line citations, and the foot-gun

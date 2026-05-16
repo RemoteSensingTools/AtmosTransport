@@ -237,14 +237,17 @@ function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
     positivity_cfl_limit       = _resolve_positivity_cfl_limit(cfg)
     require_substep_positivity = _resolve_require_substep_positivity(cfg)
     unified_preprocessor       = _resolve_unified_preprocessor(cfg)
-    if unified_preprocessor && !(grid isa ReducedGaussianTargetGeometry)
+    spectral_unified_supported =
+        grid isa ReducedGaussianTargetGeometry ||
+        grid isa CubedSphereTargetGeometry
+    if unified_preprocessor && !spectral_unified_supported
         error("`[preprocessor].unified = true` for ERA5 spectral currently " *
-              "supports only reduced_gaussian targets.")
+              "supports only reduced_gaussian and cubed_sphere targets.")
     end
 
     @info @sprintf("Processing %d days: %s to %s", length(dates), first(dates), last(dates))
     unified_preprocessor &&
-        @info "Plan 41 unified driver opt-in enabled for ERA5 spectral → reduced_gaussian"
+        @info "Plan 41 unified driver opt-in enabled for ERA5 spectral → $(grid_kind(grid))"
     t_total = time()
     run_cache = PreprocessorRunCache(typeof(grid), settings.output_float_type)
     for (idx, date) in enumerate(dates)

@@ -54,8 +54,14 @@ Executor state, 2026-05-15:
   only after post-flush pressure-offset metadata exists. The full-day LL
   contract remains owned by `flush_final_windows!`, so the driver receives
   preverified ready events rather than replaying the gate a second time.
-- Remaining P3 work after P3g: remove legacy scaffolding once the opt-ins have
-  had enough real-config bake time.
+- P3h shipped in the current Codex working tree: added
+  `scripts/diagnostics/compare_preprocessors.jl` for the
+  required side-by-side legacy vs unified bakes. It runs one config into
+  separate output directories, compares file sets, then reports exact byte
+  equality or header-normalized equality with payload byte equality (needed
+  for LL's volatile `creation_time` header).
+- Remaining P3 work after P3h: run the four real smoke comparisons, then
+  remove legacy scaffolding once the opt-ins have had enough bake time.
 
 **Read [DESIGN.md](DESIGN.md) first** for the typed three-axis rationale,
 the anti-pattern audit with file:line citations, and the foot-gun

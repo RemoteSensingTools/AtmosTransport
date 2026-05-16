@@ -106,6 +106,8 @@ Executor state, 2026-05-15:
   Direct `process_day(...; unified_driver = false)` remains temporarily for
   parity tests and local bisection, but users no longer select the legacy loop
   from config.
+- P4c in progress: delete per-topology legacy loops, starting with the RG
+  spectral hand-written sliding-window writer.
 
 **Read [DESIGN.md](DESIGN.md) first** for the typed three-axis rationale,
 the anti-pattern audit with file:line citations, and the foot-gun

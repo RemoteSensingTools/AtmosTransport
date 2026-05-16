@@ -1537,9 +1537,9 @@ Pipeline per window:
   spectral synthesis → mass fix → level merge → (wait for next window) →
   Poisson balance using (m_cur, m_next) → cm recomputation → stream-write
 
-Set `unified_driver = true` to run the additive Plan 41 P3 driver shell for
-this topology. Default remains the legacy loop until the spectral cutover is
-complete.
+Runs through the Plan 41 unified driver lifecycle. The `unified_driver`
+keyword is accepted temporarily for test/bisect callers but no longer selects
+between production loops.
 """
 function process_day(date::Date,
                      grid::ReducedGaussianTargetGeometry,
@@ -1549,7 +1549,7 @@ function process_day(date::Date,
                      positivity_cfl_limit::Real = 0.95,
                      require_substep_positivity::Bool = true,
                      run_cache = nothing,
-                     unified_driver::Bool = false)
+                     unified_driver::Bool = true)
     FT = settings.output_float_type
     mesh = grid.mesh
     nc = ncells(mesh)
@@ -1648,124 +1648,18 @@ function process_day(date::Date,
     log_mass_fix_configuration(settings)
     @info "  Streaming: synthesize → balance → write (2-window sliding buffer)..."
 
-    if unified_driver
-        window_writer = ReducedGaussianBinaryWriter(
-            writer,
-            mass_basis_from_symbol(Symbol(settings.mass_basis));
-            final_path = bin_path)
-        ctx = RGSpectralUnifiedDriverContext(
-            grid, settings, vertical, spec, steps_per_met, write_replay_on,
-            0.0, 0.0, 0.0, 0, 0.0, 0.0, 0, (0, 0))
-        run_unified_preprocessor_day!(
-            UnifiedPreprocessorDay(nothing, workspace, window_contract, window_writer;
-                                   context = ctx);
-            close_reader = false)
-
-        if settings.mass_fix_enable
-            @info @sprintf("  Mass-fix offsets (Pa) min/max/mean: %+.3f / %+.3f / %+.3f",
-                           minimum(ps_offsets), maximum(ps_offsets),
-                           sum(ps_offsets) / Nt)
-        end
-        if write_replay_on
-            @info @sprintf("  Write-time RG replay gate: max rel=%.3e abs=%.3e win=%d cell=%s",
-                           ctx.worst_replay_rel, ctx.worst_replay_abs,
-                           ctx.worst_replay_win, ctx.worst_replay_idx)
-        end
-        @info @sprintf("  Poisson balance summary: pre_raw=%.3e  post_proj=%.3e  post_raw=%.3e  max_cg_iter=%d",
-                       ctx.worst_pre_raw, ctx.worst_post_proj,
-                       ctx.worst_post_raw, ctx.worst_iter)
-
-        actual = filesize(bin_path)
-        @info @sprintf("  Done: %s (%.2f GB, %.1fs)", basename(bin_path),
-                       actual / 1e9, time() - t_day)
-        actual == expected_total ||
-            @warn @sprintf("File size mismatch: expected %d bytes, got %d", expected_total, actual)
-
-        return bin_path
-    end
-
-    # Worst-case balance diagnostics across all windows
-    worst_pre_raw  = 0.0
-    worst_post_proj = 0.0
-    worst_post_raw = 0.0
-    worst_iter     = 0
-    worst_replay_rel = 0.0
-    worst_replay_abs = 0.0
-    worst_replay_win = 0
-    worst_replay_idx = (0, 0)
-
-    # ── Process first window into slot `cur` ──
-    t_first_synth = ingest_window!(workspace, workspace.cur, 1, spec.hours[1],
-                                   spec, grid, vertical, settings)
-    should_log_window(1, Nt) &&
-        @info @sprintf("    Window  1/%d (hour %02d): synth %.2fs  offset=%+.3f Pa",
-                       Nt, spec.hours[1], t_first_synth, ps_offsets[1])
-
-    # ── Sliding-buffer loop: windows 2..Nt ──
-    for win in 2:Nt
-        t_synth = ingest_window!(workspace, workspace.nxt, win,
-                                 spec.hours[win], spec, grid, vertical, settings)
-
-        # Balance the PREVIOUS window using (m_cur, m_next)
-        t_bal = time()
-        written_win = win - 1  # balance diagnostics are for the PREVIOUS window
-        ready_diag = drain_ready_windows!(workspace, window_contract,
-                                          written_win, steps_per_met;
-                                          write_replay_on = write_replay_on)
-        t_bal = time() - t_bal
-        diag = ready_diag.balance
-        contract_diag = ready_diag.contract
-
-        worst_pre_raw   = max(worst_pre_raw,   diag.max_pre_raw_residual)
-        worst_post_proj = max(worst_post_proj,  diag.max_post_projected)
-        worst_post_raw  = max(worst_post_raw,   diag.max_post_raw_residual)
-        worst_iter      = max(worst_iter,       diag.max_cg_iter)
-
-        if write_replay_on && contract_diag.replay.max_rel_err > worst_replay_rel
-            worst_replay_rel = contract_diag.replay.max_rel_err
-            worst_replay_abs = contract_diag.replay.max_abs_err
-            worst_replay_win = written_win
-            worst_replay_idx = contract_diag.replay.worst_idx
-        end
-
-        # Write the balanced previous window
-        write_streaming_window!(writer, ready_diag.ready.payload)
-
-        should_log_window(written_win, Nt) &&
-            @info @sprintf("    Window %2d/%d: wrote (bal %.2fs pre_raw=%.2e post_proj=%.2e iter=%d) | synth %2d (%.2fs) offset=%+.3f Pa",
-                           written_win, Nt, t_bal, diag.max_pre_raw_residual, diag.max_post_projected, diag.max_cg_iter, win, t_synth, ps_offsets[win])
-
-    end
-
-    # ── Balance & write the LAST window (zero-tendency fallback) ──
-    t_bal = time()
-    ready_diag = flush_final_windows!(workspace, window_contract,
-                                      Nt, steps_per_met;
-                                      write_replay_on = write_replay_on)
-    t_bal = time() - t_bal
-    diag = ready_diag.balance
-    contract_diag = ready_diag.contract
-
-    worst_pre_raw   = max(worst_pre_raw,   diag.max_pre_raw_residual)
-    worst_post_proj = max(worst_post_proj,  diag.max_post_projected)
-    worst_post_raw  = max(worst_post_raw,   diag.max_post_raw_residual)
-    worst_iter      = max(worst_iter,       diag.max_cg_iter)
-
-    if write_replay_on && contract_diag.replay.max_rel_err > worst_replay_rel
-        worst_replay_rel = contract_diag.replay.max_rel_err
-        worst_replay_abs = contract_diag.replay.max_abs_err
-        worst_replay_win = Nt
-        worst_replay_idx = contract_diag.replay.worst_idx
-    end
-
-    write_streaming_window!(writer, ready_diag.ready.payload)
-
-    @info @sprintf("    Window %2d/%d (last): bal %.2fs  pre_raw=%.2e post_proj=%.2e iter=%d",
-                   Nt, Nt, t_bal, diag.max_pre_raw_residual,
-                   diag.max_post_projected, diag.max_cg_iter)
-
-    # ── Finalize ──
-    close_streaming_transport_binary!(writer)
+    unified_driver || @warn "RG spectral legacy loop has been removed; unified driver is always used."
+    window_writer = ReducedGaussianBinaryWriter(
+        writer,
+        mass_basis_from_symbol(Symbol(settings.mass_basis));
+        final_path = bin_path)
+    ctx = RGSpectralUnifiedDriverContext(
+        grid, settings, vertical, spec, steps_per_met, write_replay_on,
+        0.0, 0.0, 0.0, 0, 0.0, 0.0, 0, (0, 0))
+    run_unified_preprocessor_day!(
+        UnifiedPreprocessorDay(nothing, workspace, window_contract, window_writer;
+                               context = ctx);
+        close_reader = false)
 
     if settings.mass_fix_enable
         @info @sprintf("  Mass-fix offsets (Pa) min/max/mean: %+.3f / %+.3f / %+.3f",
@@ -1775,13 +1669,13 @@ function process_day(date::Date,
 
     if write_replay_on
         @info @sprintf("  Write-time RG replay gate: max rel=%.3e abs=%.3e win=%d cell=%s",
-                       worst_replay_rel, worst_replay_abs,
-                       worst_replay_win, worst_replay_idx)
+                       ctx.worst_replay_rel, ctx.worst_replay_abs,
+                       ctx.worst_replay_win, ctx.worst_replay_idx)
     end
-    summarize_status!(window_contract; quarantine_path = bin_path)
 
     @info @sprintf("  Poisson balance summary: pre_raw=%.3e  post_proj=%.3e  post_raw=%.3e  max_cg_iter=%d",
-                   worst_pre_raw, worst_post_proj, worst_post_raw, worst_iter)
+                   ctx.worst_pre_raw, ctx.worst_post_proj,
+                   ctx.worst_post_raw, ctx.worst_iter)
 
     actual = filesize(bin_path)
     @info @sprintf("  Done: %s (%.2f GB, %.1fs)", basename(bin_path),

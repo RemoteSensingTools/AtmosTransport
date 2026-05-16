@@ -69,7 +69,7 @@ function _rg_test_settings(::Type{FT}, spectral_dir, cache_dir, out_dir) where F
     )
 end
 
-@testset "RG spectral unified driver matches legacy bytes" begin
+@testset "RG spectral unified driver emits stable bytes" begin
     mktempdir() do tmp
         FT = Float64
         date = Date(2021, 12, 1)
@@ -81,20 +81,20 @@ end
                                      Dict{String, Any}("gaussian_number" => 1),
                                      FT)
         vertical = _rg_test_vertical(FT)
-        legacy_settings = _rg_test_settings(FT, spectral_dir, cache_dir,
-                                            joinpath(tmp, "legacy"))
+        default_settings = _rg_test_settings(FT, spectral_dir, cache_dir,
+                                             joinpath(tmp, "default"))
         unified_settings = _rg_test_settings(FT, spectral_dir, cache_dir,
                                              joinpath(tmp, "unified"))
 
-        legacy_path = process_day(date, grid, legacy_settings, vertical;
-                                  positivity_cfl_limit = 0.95)
+        default_path = process_day(date, grid, default_settings, vertical;
+                                   positivity_cfl_limit = 0.95)
         unified_path = process_day(date, grid, unified_settings, vertical;
                                    positivity_cfl_limit = 0.95,
                                    unified_driver = true)
 
-        @test isfile(legacy_path)
+        @test isfile(default_path)
         @test isfile(unified_path)
-        @test filesize(legacy_path) == filesize(unified_path)
-        @test read(unified_path) == read(legacy_path)
+        @test filesize(default_path) == filesize(unified_path)
+        @test read(unified_path) == read(default_path)
     end
 end

@@ -26,7 +26,7 @@ include_surface = true
 include_convection = true
 
 [output]
-directory  = "/temp1/c180_geosit_native_v4_dec2021_f32"
+directory  = "/temp1/c180_geosit_native_v4_merge025hpa_dec2021_f32"
 mass_basis = "dry"
 
 [grid]
@@ -38,6 +38,8 @@ regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
 
 [vertical]
 coefficients = "config/geos_L72_coefficients.toml"
+transform    = "merge_above_pressure"
+pressure_hPa = 0.25
 
 [numerics]
 float_type     = "Float32"
@@ -47,11 +49,8 @@ dt_met_seconds = 3600.0
 # instead of a multi-day pressure-fixer chain.
 chain_mass     = false
 
-# Keep replay strict, but make the substep-positivity gate log-only for the
-# GEOS-IT L72 smoke. The upper mesospheric layers are ~14 Pa thick, so the
-# native CMFMC/pressure-fixer signal can exceed outgoing/m=0.95 without a
-# binary-writer bug. The full-archive C180 regen config carries the longer
-# audit note; this smoke mirrors that gate policy until GEOS-native vertical
-# merging is available.
+# Keep replay and substep positivity strict. The vertical transform merges
+# all native GEOS layers above 0.25 hPa into one cap, eliminating the prior
+# mesospheric thin-layer CFL violation instead of logging through it.
 positivity_cfl_limit       = 0.95
-require_substep_positivity = false
+require_substep_positivity = true

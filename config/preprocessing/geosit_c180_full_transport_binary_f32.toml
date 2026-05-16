@@ -8,7 +8,8 @@
 #
 # Output goes to NAS (`~/data/AtmosTransport/met/geosit/C180/...`) NOT
 # NVMe scratch, so the binaries are stable beyond reboot and visible
-# to any kiwi-mounted machine.
+# to any kiwi-mounted machine. The merged-level regen uses a new directory
+# so it cannot mix old 72-level binaries with new 64-level binaries.
 #
 # Differs from `geosit_c180_native_dec2021_f32.toml` only in (a)
 # output location (NAS), (b) intended date range (full archive),
@@ -36,7 +37,7 @@ include_surface    = true     # writes the PBL section for runtime diffusion
 include_convection = true     # writes CMFMC + DTRAIN for runtime convection
 
 [output]
-directory  = "/home/cfranken/data/AtmosTransport/met/geosit/C180/transport_binary_v4_f32"
+directory  = "/home/cfranken/data/AtmosTransport/met/geosit/C180/transport_binary_v4_merge025hpa_f32"
 mass_basis = "dry"
 
 [grid]
@@ -48,6 +49,8 @@ regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
 
 [vertical]
 coefficients = "config/geos_L72_coefficients.toml"
+transform    = "merge_above_pressure"
+pressure_hPa = 0.25
 
 [numerics]
 float_type     = "Float32"
@@ -58,28 +61,9 @@ dt_met_seconds = 3600.0
 chain_mass     = false
 
 # Per-substep positivity gate (commits d1f50b6 / ae82b6d / 45b87f3 / 9b1ceda).
-# The L72 vertical grid puts the upper half-dozen layers at ~14 Pa thickness,
-# which produces legitimate `outgoing/m > 1` from CMFMC at panel-4 mesosphere
-# cells (smoke 2021-12-02 surfaced ratio = 1.356 at cell (4, 47, 31, 61)).
-# This is a thin-layer physical signal in the source data, not a
-# preprocessing bug. Plan 41 (`docs/plans/41_UNIFIED_PREPROCESSOR/`) makes
-# layer merging a first-class option (`[vertical].transform = "thin_level_merge"`)
-# for all preprocessor pathways; until that lands, set
-# `require_substep_positivity = false` so the gate becomes log-only for this
-# v4 regen.
-#
-# What the log will record (Codex review M2 2026-05-15): the preprocessor
-# tracks ONLY the WORST violating window per day via
-# `update_cs_positivity_accumulator` / `summarize_cs_positivity_status` in
-# `src/Preprocessing/transport_binary/cubed_sphere_contracts.jl`. The summary
-# names `(panel, i, j, k)` of the single worst cell plus its ratio — not
-# every violating window. If audit needs per-window coverage, either grep
-# the log for the per-window `[idx/N] YYYY-MM-DD` headers (each day's
-# block ends with one summary line) or add per-window logging upstream.
-#
-# If the log shows a ratio at any cell that approaches the original
-# n_sub = 99,428 spiral, treat that day as a hard fail and investigate
-# before shipping the binary. The runtime's `_cs_static_subcycle_count`
-# absorbs moderate ratios at no measured cost.
+# The prior native-L72 path hit `outgoing/m > 1` in very thin mesospheric
+# layers. This regen merges all native layers above 0.25 hPa into one cap, so
+# the CFL guard is strict again; a violation here is a preprocessing or source
+# data issue, not an expected thin-layer artifact.
 positivity_cfl_limit       = 0.95
-require_substep_positivity = false
+require_substep_positivity = true

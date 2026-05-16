@@ -25,6 +25,8 @@ function _usage()
       --workdir DIR            Directory for legacy/unified outputs.
       --keep                   Keep the generated comparison directory.
       --ignore-header-key KEY  Ignore an additional top-level JSON header key.
+      --warn-only-positivity   Set [numerics].require_substep_positivity=false
+                               for both runs.
 
     The script runs the config twice with separate output directories:
     legacy  -> [preprocessor].unified = false
@@ -46,6 +48,7 @@ function _parse_args(args)
     end_date = nothing
     workdir = nothing
     keep = false
+    warn_only_positivity = false
     ignored = copy(DEFAULT_IGNORED_HEADER_KEYS)
 
     i = 2
@@ -69,6 +72,9 @@ function _parse_args(args)
         elseif arg == "--keep"
             keep = true
             i += 1
+        elseif arg == "--warn-only-positivity"
+            warn_only_positivity = true
+            i += 1
         elseif arg == "--help" || arg == "-h"
             println(_usage())
             exit(0)
@@ -86,6 +92,7 @@ function _parse_args(args)
             end_date = end_date,
             workdir = workdir,
             keep = keep,
+            warn_only_positivity = warn_only_positivity,
             ignored = ignored)
 end
 
@@ -107,12 +114,19 @@ function _ensure_table!(cfg::Dict{String, Any}, key::String)
     return table
 end
 
-function _prepared_cfg(base_cfg, out_dir::AbstractString, unified::Bool)
+function _prepared_cfg(base_cfg,
+                       out_dir::AbstractString,
+                       unified::Bool,
+                       warn_only_positivity::Bool)
     cfg = _deepcopy_cfg(base_cfg)
     output = _ensure_table!(cfg, "output")
     output["directory"] = String(out_dir)
     preprocessor = _ensure_table!(cfg, "preprocessor")
     preprocessor["unified"] = unified
+    if warn_only_positivity
+        numerics = _ensure_table!(cfg, "numerics")
+        numerics["require_substep_positivity"] = false
+    end
     return cfg
 end
 
@@ -298,10 +312,12 @@ function main(args = ARGS)
         mkpath(unified_dir)
 
         @info "Running legacy preprocessor" config = parsed.cfg_path output = legacy_dir
-        _run_preprocessor!(_prepared_cfg(base_cfg, legacy_dir, false), parsed)
+        _run_preprocessor!(_prepared_cfg(base_cfg, legacy_dir, false,
+                                         parsed.warn_only_positivity), parsed)
 
         @info "Running unified preprocessor" config = parsed.cfg_path output = unified_dir
-        _run_preprocessor!(_prepared_cfg(base_cfg, unified_dir, true), parsed)
+        _run_preprocessor!(_prepared_cfg(base_cfg, unified_dir, true,
+                                         parsed.warn_only_positivity), parsed)
 
         ok, results = _compare_outputs(legacy_dir, unified_dir, parsed.ignored)
         println()

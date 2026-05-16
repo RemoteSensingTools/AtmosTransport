@@ -61,7 +61,9 @@ Executor state, 2026-05-15:
   equality or header-normalized equality with payload byte equality (needed
   for LL's volatile `creation_time` header). P3j made this diagnostic
   chunk-stream large binaries instead of reading whole files into memory, so
-  C180 native GEOS comparisons are feasible.
+  C180 native GEOS comparisons are feasible. P3k added
+  `--warn-only-positivity` so known positivity-gate policy investigations can
+  still compare legacy vs unified bytes without editing the source TOML.
 - P3i in progress: real side-by-side bakes. `era5_ll72x37_advresln_dec2021_f32.toml`
   for 2021-12-01 passes with header-normalized equality and identical payload
   bytes (`creation_time` is the only intentionally ignored header field).
@@ -72,8 +74,17 @@ Executor state, 2026-05-15:
   the write-time RG replay gate at window 1 (`rel=3.78e-3 > 1e-10` at cell
   `(1051, 28)`). Treat as a pre-existing config/data contract failure rather
   than a Plan 41 unified-driver regression.
-- Remaining P3 work after P3i: run native GEOS real smoke comparison, then
-  remove legacy scaffolding once the opt-ins have had enough bake time.
+- Native GEOS strict-gate blocker: `geosit_c180_native_dec2021_f32.toml` for
+  2021-12-01 fails before unified comparison because the legacy path trips the
+  CS substep-positivity gate at window 24 (`outgoing/m=1.046 > 0.95`) in the
+  thin upper layer at cell `(4, 53, 24, 61)`. This is the same gate-policy
+  issue already parked for the C180 L72 mesospheric regen.
+  With `--warn-only-positivity`, legacy and unified outputs compare exact
+  byte-for-byte for the 2021-12-01 F32 binary (`9551547392` bytes); replay
+  stayed active and matched worst rel `2.63e-7` / abs `5.20e5` at win 13.
+- Remaining P3 work after P3i: decide the RG replay blocker / GEOS positivity
+  gate policy, then remove legacy scaffolding once the opt-ins have had enough
+  bake time.
 
 **Read [DESIGN.md](DESIGN.md) first** for the typed three-axis rationale,
 the anti-pattern audit with file:line citations, and the foot-gun

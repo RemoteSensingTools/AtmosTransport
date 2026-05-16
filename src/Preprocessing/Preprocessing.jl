@@ -126,7 +126,7 @@ export verify_write_replay_cs!,
 # without duplicating logic.
 export mass_basis_symbol, mass_basis_from_symbol
 export AbstractWindowContract, AbstractWindowWorkspace, AbstractBinaryWriter
-export ReadyWindow, PreprocessorRunCache
+export ReadyWindow, PreverifiedWindow, PreprocessorRunCache
 export verify_window!, update_accumulator!, summarize_status!
 export contract_replay_tolerance, contract_cfl_limit, contract_require_positivity
 export allocate_window_workspace, reset_workspace!,

@@ -1500,7 +1500,8 @@ function driver_drain_ready_windows!(workspace::ReducedGaussianSpectralWindowWor
                        written_win, ctx.spec.n_times, t_bal,
                        diag.max_pre_raw_residual, diag.max_post_projected,
                        diag.max_cg_iter)
-    return (merge(ready_diag, (accumulated = true,)),)
+    return (PreverifiedWindow(ready_diag.ready, ready_diag.contract;
+                              accumulated = true),)
 end
 
 function driver_flush_final_windows!(workspace::ReducedGaussianSpectralWindowWorkspace,
@@ -1518,7 +1519,8 @@ function driver_flush_final_windows!(workspace::ReducedGaussianSpectralWindowWor
     @info @sprintf("    Window %2d/%d (last): bal %.2fs  pre_raw=%.2e post_proj=%.2e iter=%d",
                    Nt, Nt, t_bal, diag.max_pre_raw_residual,
                    diag.max_post_projected, diag.max_cg_iter)
-    return (merge(ready_diag, (accumulated = true,)),)
+    return (PreverifiedWindow(ready_diag.ready, ready_diag.contract;
+                              accumulated = true),)
 end
 
 """

@@ -332,7 +332,7 @@ function _cs_spectral_contract_diag!(workspace::CubedSphereSpectralWindowWorkspa
     payload = (m = cur_m, am = cur_am, bm = cur_bm, cm = cur_cm,
                ps = workspace.cur_ps, dm = cs_ws.m_next_panels)
     ready = ReadyWindow{CubedSphereTargetGeometry, FT}(win, payload)
-    return (ready = ready, contract = contract_diag, accumulated = true)
+    return PreverifiedWindow(ready, contract_diag; accumulated = true)
 end
 
 function driver_drain_ready_windows!(workspace::CubedSphereSpectralWindowWorkspace{FT},

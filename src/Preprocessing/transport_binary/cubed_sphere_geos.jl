@@ -476,7 +476,7 @@ function drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{FT},
                                workspace.raw)))
     end
     ready = ReadyWindow{CubedSphereTargetGeometry, FT}(win, window_nt)
-    return (ready = ready, contract = contract_diag)
+    return PreverifiedWindow(ready, contract_diag)
 end
 
 function advance_window!(workspace::GEOSCubedSphereWindowWorkspace,

@@ -14,6 +14,7 @@ using .AtmosTransport.Preprocessing: AbstractMetSettings,
                                        DryBasis,
                                        NoChain,
                                        ReadyWindow,
+                                       PreverifiedWindow,
                                        UnifiedPreprocessorDay,
                                        run_unified_preprocessor_day!
 
@@ -62,8 +63,8 @@ _fake_diag() = (replay = (max_rel_err = 0.0, max_abs_err = 0.0),
                               location = (0, 0, 0)))
 
 _fake_event(ws::FakeWorkspace{FT}, index::Int) where FT =
-    ws.preverified ? (ready = _fake_ready(FT, index), contract = _fake_diag(),
-                      accumulated = ws.accumulated) :
+    ws.preverified ? PreverifiedWindow(_fake_ready(FT, index), _fake_diag();
+                                       accumulated = ws.accumulated) :
                      _fake_ready(FT, index)
 
 function ingest_window!(ws::FakeWorkspace{FT}, _reader::FakeReader{FT},

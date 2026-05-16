@@ -160,6 +160,31 @@ ReadyWindow{G, FT}(index::Integer, payload::P) where
     {G <: AbstractTargetGeometry, FT, P <: NamedTuple} =
         ReadyWindow{G, FT, P}(index, payload)
 
+"""
+    PreverifiedWindow(ready::ReadyWindow, contract_diag; accumulated=false)
+
+Typed event wrapper for topology hooks that have already run
+`verify_window!` before handing a window to the generic driver. When
+`accumulated=true`, the hook also guarantees it has already folded the
+positivity diagnostic into the contract accumulator.
+"""
+struct PreverifiedWindow{G <: AbstractTargetGeometry, FT,
+                         P <: NamedTuple, D}
+    ready       :: ReadyWindow{G, FT, P}
+    contract    :: D
+    accumulated :: Bool
+end
+
+function PreverifiedWindow(ready::ReadyWindow{G, FT, P},
+                           contract_diag;
+                           accumulated::Bool=false) where
+        {G <: AbstractTargetGeometry, FT, P <: NamedTuple}
+    hasproperty(contract_diag, :positivity) ||
+        throw(ArgumentError("PreverifiedWindow contract diagnostic must expose `.positivity`."))
+    return PreverifiedWindow{G, FT, P, typeof(contract_diag)}(
+        ready, contract_diag, accumulated)
+end
+
 @inline function Base.getproperty(window::ReadyWindow, name::Symbol)
     if name === :index || name === :payload
         return getfield(window, name)

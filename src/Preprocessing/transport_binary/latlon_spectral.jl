@@ -185,7 +185,7 @@ function driver_flush_final_windows!(workspace::LatLonSpectralWindowWorkspace,
                              ratio = 0.0,
                              direction = :none,
                              location = (0, 0, 0)))
-    return ((ready = ready, contract = checked, accumulated = true)
+    return (PreverifiedWindow(ready, checked; accumulated = true)
             for ready in ready_windows)
 end
 

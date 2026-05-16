@@ -42,8 +42,8 @@ driver_ingest_window!(workspace, reader, win::Int, _context) =
     driver_drain_ready_windows!(workspace, contract, win, context)
 
 Return ready windows produced by the most recent ingest. A hook may return a
-single `ReadyWindow`, a single event named tuple `(ready=..., contract=...)`,
-or any iterator of either shape.
+single `ReadyWindow`, a single `PreverifiedWindow`, or any iterator of either
+shape.
 """
 driver_drain_ready_windows!(workspace, _contract, _win::Int, _context) =
     drain_ready_windows!(workspace)
@@ -64,28 +64,23 @@ pressure-fixer state; most topologies do nothing.
 """
 driver_after_write_window!(_workspace, _reader, _ready, _context) = nothing
 
-@inline _is_ready_event(x) =
-    hasproperty(x, :ready) && getproperty(x, :ready) isa ReadyWindow
-
-@inline _ready_from_event(event::ReadyWindow) = event
-@inline _ready_from_event(event) = getproperty(event, :ready)
-
 function _ready_events(result)
     result === nothing && return ()
     result isa ReadyWindow && return (result,)
-    _is_ready_event(result) && return (result,)
+    result isa PreverifiedWindow && return (result,)
     return result
 end
 
-function _verify_ready_event!(event, contract)
-    ready = _ready_from_event(event)
-    diag = _is_ready_event(event) && hasproperty(event, :contract) ?
-        getproperty(event, :contract) :
-        verify_window!(ready, contract, ready.index)
-    already_accumulated = _is_ready_event(event) &&
-        hasproperty(event, :accumulated) &&
-        Bool(getproperty(event, :accumulated))
-    already_accumulated || update_accumulator!(contract, diag.positivity, ready.index)
+function _verify_ready_event!(ready::ReadyWindow, contract)
+    diag = verify_window!(ready, contract, ready.index)
+    update_accumulator!(contract, diag.positivity, ready.index)
+    return ready
+end
+
+function _verify_ready_event!(event::PreverifiedWindow, contract)
+    ready = event.ready
+    event.accumulated ||
+        update_accumulator!(contract, event.contract.positivity, ready.index)
     return ready
 end
 

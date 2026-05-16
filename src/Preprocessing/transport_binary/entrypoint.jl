@@ -109,7 +109,7 @@ _resolve_require_substep_positivity(cfg::AbstractDict) =
     Bool(get(get(cfg, "numerics", Dict()), "require_substep_positivity", true))
 
 _resolve_unified_preprocessor(cfg::AbstractDict) =
-    Bool(get(get(cfg, "preprocessor", Dict()), "unified", false))
+    Bool(get(get(cfg, "preprocessor", Dict()), "unified", true))
 
 # ---------------------------------------------------------------------------
 # Native-source preprocessor: typed `AbstractMetSettings` + cross-day state

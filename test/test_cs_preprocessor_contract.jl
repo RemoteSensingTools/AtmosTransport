@@ -511,8 +511,8 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
         end
     end
 
-    @testset "entrypoint: unified preprocessor opt-in defaults off" begin
-        @test !_resolve_unified_preprocessor(Dict{String, Any}())
+    @testset "entrypoint: unified preprocessor defaults on" begin
+        @test _resolve_unified_preprocessor(Dict{String, Any}())
         @test _resolve_unified_preprocessor(Dict("preprocessor" => Dict("unified" => true)))
         @test !_resolve_unified_preprocessor(Dict("preprocessor" => Dict("unified" => false)))
     end

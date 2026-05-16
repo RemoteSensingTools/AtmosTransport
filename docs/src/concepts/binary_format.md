@@ -59,14 +59,17 @@ the runtime actually dispatches on:
 | `cs_center_law` | `Symbol` | CS only — `:angular_midpoint` or `:four_corner_normalized` |
 | `longitude_offset_deg` | `Float64` | CS only — final longitude rotation, `-10.0` for GEOS native |
 | `dt_met_seconds` | `Float64` | met-window cadence (typically 3600 s for hourly ERA5) |
-| `steps_per_window` | `Int` | preprocessor sub-steps per window (used by the replay gate) |
+| `steps_per_window` | `Int` | compatibility scalar, equal to `maximum(steps_per_window_by_window)` |
+| `steps_per_window_by_window` | `Vector{Int}` | required v2 per-window substep schedule used by replay gates and runtime stepping |
+| `time_step_schedule` | `Symbol` | `:constant` or `:per_window` |
 | `flux_sampling` | `Symbol` | currently `:window_constant` (same flux at every substep) |
 | `flux_kind` | `Symbol` | currently `:substep_mass_amount` (kg per substep, not integrated over window) |
 | `float_type` (JSON key; struct field `on_disk_float_type`) | `Symbol` | `:Float32` or `:Float64` |
 | `nwindow` | `Int` | windows per day (typically 24) |
 | `payload_sections` | `Vector{Symbol}` | which arrays this binary actually contains |
 
-`format_version`, `header_bytes`, and a few sampling-metadata fields
+`format_version` is currently `2`; older transport binaries are intentionally
+rejected and must be regenerated. `header_bytes` and a few sampling-metadata fields
 (`source_flux_sampling`, `air_mass_sampling`, `humidity_sampling`,
 `delta_semantics`) round out the header. The full list lives in
 `src/MetDrivers/TransportBinary.jl`.

@@ -21,6 +21,7 @@ using Mmap
 Parsed header for a cubed-sphere transport binary.
 """
 struct CubedSphereBinaryHeader
+    format_version   :: Int
     Nc               :: Int
     npanel           :: Int
     nlevel           :: Int
@@ -86,7 +87,15 @@ function CubedSphereBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = F
     raw = read(io, min(filesize(bin_path), 262144))
     json_end = something(findfirst(==(0x00), raw), length(raw) + 1) - 1
     hdr = JSON3.read(String(raw[1:json_end]))
+    hdr_dict = Dict{String, Any}(String(k) => v for (k, v) in pairs(hdr))
+    try
+        validate_transport_contract!(hdr_dict)
+    catch e
+        close(io)
+        rethrow(e)
+    end
 
+    format_version = Int(hdr.format_version)
     header_bytes = Int(get(hdr, :header_bytes, 16384))
     float_bytes = Int(get(hdr, :float_bytes, 8))
     Nc = Int(get(hdr, :Nc, get(hdr, :Nx, 0)))
@@ -135,7 +144,7 @@ function CubedSphereBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = F
     elems_per_window = Int(hdr.elems_per_window)
 
     cs_header = CubedSphereBinaryHeader(
-        Nc, npanel, nlevel, nwindow, header_bytes, float_bytes,
+        format_version, Nc, npanel, nlevel, nwindow, header_bytes, float_bytes,
         dt_met, steps_per_window, steps_schedule, mass_basis, panel_convention,
         cs_definition, coordinate_law, center_law, longitude_offset_deg,
         A_ifc, B_ifc,

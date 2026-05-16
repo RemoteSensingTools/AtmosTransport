@@ -47,9 +47,9 @@ config that requests `convection.kind = "cmfmc"` against a binary
 without `:cmfmc` / `:dtrain` payload sections is rejected at load time —
 no silent capability mismatch.
 
-For pre-plan-39 binaries that lack the 8 self-describing header fields,
-pass `--allow-legacy` to demote the contract violation to a warning
-(runtime behavior is then **not** trusted).
+Transport binaries must be `format_version = 2`. Older files are rejected by
+the same reader path used by runtime drivers; regenerate them with the current
+preprocessor rather than loading them with compatibility defaults.
 
 ## Inspect a snapshot NetCDF
 

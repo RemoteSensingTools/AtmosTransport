@@ -112,6 +112,11 @@ Executor state, 2026-05-16:
   `required_preprocessor_contract = "plan41_variable_substeps"`, and
   `require_adaptive_substeps = true`, so old 72-level constant-step
   files fail at startup.
+- P4j shipped: transport binaries are now `format_version = 2`. Readers
+  reject all older files before mmap, including CS files, and v2 requires
+  `steps_per_window_by_window`, `time_step_schedule`, and
+  `poisson_balance_target_scale_by_window` even for constant-step products.
+  The old legacy contract bypass no longer admits stale runtime binaries.
 
 **Read [DESIGN.md](DESIGN.md) first** for the typed three-axis rationale,
 the anti-pattern audit with file:line citations, and the foot-gun

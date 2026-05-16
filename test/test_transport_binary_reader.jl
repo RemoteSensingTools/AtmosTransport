@@ -1,9 +1,33 @@
 #!/usr/bin/env julia
 
 using Test
+using JSON3
 
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
+
+function rewrite_transport_header!(path::AbstractString;
+                                   updates = Dict{String, Any}(),
+                                   delete_keys = String[])
+    open(path, "r+") do io
+        raw = read(io, min(filesize(path), 262144))
+        json_end = something(findfirst(==(0x00), raw), length(raw) + 1) - 1
+        header = Dict{String, Any}(String(k) => v for (k, v) in
+                                   pairs(JSON3.read(String(raw[1:json_end]))))
+        for key in delete_keys
+            delete!(header, key)
+        end
+        merge!(header, Dict{String, Any}(updates))
+        header_bytes = Int(header["header_bytes"])
+        header_json = JSON3.write(header)
+        pad = header_bytes - ncodeunits(header_json)
+        pad >= 0 || error("patched header does not fit")
+        seek(io, 0)
+        write(io, header_json)
+        write(io, zeros(UInt8, pad))
+    end
+    return nothing
+end
 
 function write_test_transport_binary_reduced(path::AbstractString;
                                              FT::Type{<:AbstractFloat}=Float64,
@@ -99,9 +123,12 @@ end
         grid_ref = write_test_transport_binary_latlon(path; FT=Float64)
 
         reader = TransportBinaryReader(path; FT=Float64)
+        @test reader.header.format_version == TRANSPORT_BINARY_FORMAT_VERSION
         @test grid_type(reader) == :latlon
         @test horizontal_topology(reader) == :structureddirectional
         @test window_count(reader) == 2
+        @test reader.header.steps_per_window_by_window == [2, 2]
+        @test reader.header.poisson_balance_target_scale_by_window == [0.25, 0.25]
         @test mass_basis(reader) == :moist
         @test has_qv(reader)
         @test has_qv_endpoints(reader)
@@ -359,6 +386,65 @@ end
         @test steps_per_window(driver, 2) == 3
         @test steps_per_window_schedule(driver) == [2, 3]
         close(driver)
+    end
+end
+
+@testset "Transport binary v2 contract rejects obsolete or incomplete headers" begin
+    mktemp() do path, io
+        close(io)
+        write_test_transport_binary_latlon(path; FT=Float64)
+        rewrite_transport_header!(path; updates = Dict("format_version" => 1))
+        @test_throws ArgumentError TransportBinaryReader(path; FT=Float64)
+    end
+
+    mktemp() do path, io
+        close(io)
+        write_test_transport_binary_latlon(path; FT=Float64)
+        rewrite_transport_header!(path; delete_keys = ["steps_per_window_by_window"])
+        @test_throws ArgumentError TransportBinaryReader(path; FT=Float64)
+    end
+
+    mktemp() do path, io
+        close(io)
+        write_test_transport_binary_latlon(path; FT=Float64)
+        rewrite_transport_header!(path; updates = Dict(
+            "steps_per_window" => 2,
+            "steps_per_window_by_window" => [2, 3],
+            "time_step_schedule" => "per_window",
+            "poisson_balance_target_scale" => 0.25,
+            "poisson_balance_target_scale_by_window" => [0.25, 1 / 6],
+            "poisson_balance_target_semantics" =>
+                "forward_window_mass_difference / (2 * steps_per_window_by_window[win])",
+        ))
+        @test_throws ArgumentError TransportBinaryReader(path; FT=Float64)
+    end
+end
+
+@testset "Transport binary writers reject contract-breaking header overrides" begin
+    mktemp() do path, io
+        close(io)
+        FT = Float64
+        mesh = ReducedGaussianMesh(FT[-45, 45], [4, 4]; FT=FT)
+        vertical = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
+        grid = AtmosGrid(mesh, vertical, CPU(); FT=FT)
+        ncell = ncells(mesh)
+        nface_h = nfaces(mesh)
+        nlevel = nlevels(grid)
+        window = (
+            m = fill(FT(1), ncell, nlevel),
+            hflux = zeros(FT, nface_h, nlevel),
+            cm = zeros(FT, ncell, nlevel + 1),
+            ps = fill(FT(90000), ncell),
+        )
+        @test_throws ArgumentError write_transport_binary(
+            path, grid, [window];
+            FT = FT,
+            dt_met_seconds = 3600.0,
+            half_dt_seconds = 1800.0,
+            steps_per_window = 2,
+            source_flux_sampling = :window_start_endpoint,
+            mass_basis = :moist,
+            extra_header = Dict("format_version" => 1))
     end
 end
 

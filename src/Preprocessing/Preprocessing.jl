@@ -85,6 +85,7 @@ using ..Regridding: build_regridder, apply_regridder!
 using ..Quantities: QuantityKind, IntensiveCellField, ExtensiveCellField,
                     HorizontalVectorField, HorizontalFluxField
 using ..MetDrivers: TransportBinaryReader, TransportBinaryHeader, write_transport_binary,
+                    TRANSPORT_BINARY_FORMAT_VERSION,
                     StreamingTransportBinaryWriter,
                     open_streaming_transport_binary, write_streaming_window!,
                     close_streaming_transport_binary!,
@@ -94,6 +95,7 @@ using ..MetDrivers: TransportBinaryReader, TransportBinaryHeader, write_transpor
                     has_tm5_convection, load_tm5_convection_window!,
                     load_surface_window!,
                     TransportBinaryContract, canonical_window_constant_contract,
+                    validate_transport_contract!,
                     recompute_cm_from_dm_target!, recompute_faceindexed_cm_from_dm_target!,
                     verify_window_continuity, verify_window_continuity_ll,
                     verify_window_continuity_rg, verify_window_continuity_cs,

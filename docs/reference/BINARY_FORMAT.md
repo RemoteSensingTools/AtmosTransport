@@ -64,7 +64,7 @@ and `horizontal_topology` for the rest.
 | Key | Type | Description |
 |-----|------|-------------|
 | `magic` | string | `"MFLX"` — identifies file type |
-| `format_version` | int | Version of this spec (1) |
+| `format_version` | int | Version of this spec (2). Readers reject all older transport binaries. |
 | `header_bytes` | int | Total header size in bytes (≥ 16384) |
 | `float_type` | string | `"Float32"` or `"Float64"` |
 | `float_bytes` | int | 4 or 8 |
@@ -108,15 +108,18 @@ and `horizontal_topology` for the rest.
 |-----|------|-------------|
 | `dt_met_seconds` | float | Met-window duration [s] |
 | `half_dt_seconds` | float | Legacy timing metadata retained for interoperability; `src` kernels do not read this field directly |
-| `steps_per_window` | int | Advection substeps per window |
+| `steps_per_window` | int | Compatibility scalar equal to `maximum(steps_per_window_by_window)` |
+| `steps_per_window_by_window` | int[nwindow] | Required per-window advection substep schedule |
+| `time_step_schedule` | string | `"constant"` when all schedule entries match, otherwise `"per_window"` |
 | `source_flux_sampling` | string | Raw met-flux provenance recorded by the writer: `"window_start_endpoint"`, `"window_end_endpoint"`, `"window_mean"`, or `"interval_integrated"` (`"unknown"` is reader-only legacy compatibility) |
 | `air_mass_sampling` | string | Stored air-mass timing semantics; current `src` runtime expects `"window_start_endpoint"` |
 | `flux_sampling` | string | Stored horizontal/vertical flux timing semantics; current runtime support is driver-specific, and the ERA5 lat-lon reference path uses `"window_constant"` |
 | `flux_kind` | string | Stored flux value contract; current runtime expects `"substep_mass_amount"` |
 | `humidity_sampling` | string | `"window_endpoints"`, `"single_field"`, or `"none"` |
 | `delta_semantics` | string | `"forward_window_endpoint_difference"` or `"none"` |
-| `poisson_balance_target_scale` | float | Preprocessing continuity target scale applied to `(m_next - m_curr)` before Poisson balancing horizontal fluxes |
-| `poisson_balance_target_semantics` | string | Human-readable description of the Poisson target normalization |
+| `poisson_balance_target_scale` | float | Compatibility scalar equal to `1 / (2 * steps_per_window)` |
+| `poisson_balance_target_scale_by_window` | float[nwindow] | Required schedule with entry `1 / (2 * steps_per_window_by_window[win])` |
+| `poisson_balance_target_semantics` | string | Exact description of the Poisson target normalization; for variable schedules this must reference `steps_per_window_by_window[win]` |
 
 The crucial distinction is between raw met provenance and stored runtime semantics.
 A preprocessor may ingest interval-mean or interval-integrated source products,
@@ -128,6 +131,11 @@ contract chosen by the driver. For the ERA5 lat-lon reference path that means:
 - `flux_sampling = "window_constant"`
 - `flux_kind = "substep_mass_amount"`
 - `delta_semantics = "forward_window_endpoint_difference"` when deltas are present
+
+Format v2 deliberately makes the schedule explicit even for constant-step
+products. The scalar fields remain for compatibility and summary display only;
+replay gates, positivity gates, runtime stepping, diagnostics, and adjoint
+replay must use the per-window schedule.
 
 ### 3.6 Mass basis
 

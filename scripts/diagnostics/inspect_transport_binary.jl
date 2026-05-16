@@ -17,9 +17,8 @@ function _argparse_settings()
     @add_arg_table! s begin
         "--allow-legacy"
             action = :store_true
-            help = "Demote contract-violation ArgumentError to warning, so " *
-                   "pre-plan-39 binaries without the 8 self-describing fields " *
-                   "can be inspected (runtime behavior NOT trusted)."
+            help = "Deprecated. Obsolete format_version<2 binaries are no longer " *
+                   "loaded by runtime readers; regenerate them with the current preprocessor."
         "path"
             arg_type = String
             required = true
@@ -43,8 +42,7 @@ function main(args)
     path = abspath(parsed["path"])
 
     if parsed["allow-legacy"]
-        ENV["ATMOSTR_ALLOW_LEGACY_BINARY"] = "1"
-        @info "inspect: --allow-legacy set; contract violations demoted to warnings"
+        @warn "inspect: --allow-legacy is deprecated; obsolete transport binaries are rejected"
     end
 
     # `inspect_binary` prints a rich report (header, geometry, semantics,

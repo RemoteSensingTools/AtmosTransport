@@ -1,10 +1,29 @@
 #!/usr/bin/env julia
 
 using Test
+using JSON3
 
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 using .AtmosTransport.Architectures: CPU
+
+function rewrite_cs_header!(path::AbstractString; updates = Dict{String, Any}())
+    open(path, "r+") do io
+        raw = read(io, min(filesize(path), 262144))
+        json_end = something(findfirst(==(0x00), raw), length(raw) + 1) - 1
+        header = Dict{String, Any}(String(k) => v for (k, v) in
+                                   pairs(JSON3.read(String(raw[1:json_end]))))
+        merge!(header, Dict{String, Any}(updates))
+        header_bytes = Int(header["header_bytes"])
+        header_json = JSON3.write(header)
+        pad = header_bytes - ncodeunits(header_json)
+        pad >= 0 || error("patched header does not fit")
+        seek(io, 0)
+        write(io, header_json)
+        write(io, zeros(UInt8, pad))
+    end
+    return nothing
+end
 
 function write_driven_cs_binary(path::AbstractString;
                                 FT::Type{<:AbstractFloat} = Float64,
@@ -128,6 +147,17 @@ end
         @test sim.time == 7200.0
         @test window_index(sim) == 2
         close(driver)
+    end
+end
+
+@testset "CubedSphere reader rejects obsolete transport format version" begin
+    mktemp() do path, io
+        close(io)
+        write_driven_cs_binary(path; FT=Float64, Nc=4, Nz=2,
+                               window_mass_scales=(1, 1),
+                               steps_per_window=2)
+        rewrite_cs_header!(path; updates = Dict("format_version" => 1))
+        @test_throws ArgumentError CubedSphereBinaryReader(path; FT=Float64)
     end
 end
 

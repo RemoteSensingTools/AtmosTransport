@@ -378,20 +378,12 @@ function _validate_runtime_semantics(reader::TransportBinaryReader)
 
     if has_flux_delta(reader)
         poisson_scale = h.poisson_balance_target_scale
-        if !isfinite(poisson_scale)
-            h.format_version == 1 ||
-                throw(ArgumentError("TransportBinaryDriver requires poisson_balance_target_scale metadata for delta-bearing transport binaries"))
-            @warn "Legacy transport binary $(basename(reader.path)) is missing poisson_balance_target_scale; assuming $(expected_poisson_scale)"
-            poisson_scale = expected_poisson_scale
-        end
+        isfinite(poisson_scale) ||
+            throw(ArgumentError("TransportBinaryDriver requires finite poisson_balance_target_scale metadata for delta-bearing transport binaries"))
 
         poisson_semantics = h.poisson_balance_target_semantics
-        if isempty(poisson_semantics)
-            h.format_version == 1 ||
-                throw(ArgumentError("TransportBinaryDriver requires poisson_balance_target_semantics metadata for delta-bearing transport binaries"))
-            @warn "Legacy transport binary $(basename(reader.path)) is missing poisson_balance_target_semantics; assuming $(repr(expected_poisson_semantics))"
-            poisson_semantics = expected_poisson_semantics
-        end
+        isempty(poisson_semantics) &&
+            throw(ArgumentError("TransportBinaryDriver requires poisson_balance_target_semantics metadata for delta-bearing transport binaries"))
 
         if variable_steps
             length(h.poisson_balance_target_scale_by_window) == h.nwindow ||

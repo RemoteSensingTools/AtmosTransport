@@ -55,6 +55,7 @@ load_surface_window!(r::ERA5BinaryReader, win::Int; kwargs...) =
 # Re-export reader and adapter types
 export PreprocessedERA5Driver
 export ERA5BinaryReader, ERA5BinaryHeader
+export TRANSPORT_BINARY_FORMAT_VERSION
 export TransportBinaryReader, TransportBinaryHeader, write_transport_binary
 export TransportBinaryContract, canonical_window_constant_contract,
        validate_transport_contract!

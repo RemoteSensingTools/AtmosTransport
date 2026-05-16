@@ -123,8 +123,13 @@ function build_v4_header(date::Date,
         include_flux_delta = true,
     )
 
+    step_schedule = fill(Int(sizes.steps_per_met), Int(sizes.Nt))
+    poisson_scale_schedule = [1.0 / (2 * s) for s in step_schedule]
+
     header = Dict{String, Any}(
-        "magic" => "MFLX", "version" => 4, "format_version" => 1, "header_bytes" => HEADER_SIZE,
+        "magic" => "MFLX", "version" => 4,
+        "format_version" => TRANSPORT_BINARY_FORMAT_VERSION,
+        "header_bytes" => HEADER_SIZE,
         "grid_type" => "latlon", "horizontal_topology" => "StructuredDirectional",
         "ncell" => ncell, "nface_h" => nface_h, "nlevel" => sizes.Nz, "nwindow" => sizes.Nt,
         "Nx" => sizes.Nx, "Ny" => sizes.Ny, "Nz" => sizes.Nz,
@@ -166,6 +171,8 @@ function build_v4_header(date::Date,
         "dt_seconds" => settings.dt,
         "half_dt_seconds" => settings.half_dt,
         "steps_per_window" => sizes.steps_per_met,
+        "steps_per_window_by_window" => step_schedule,
+        "time_step_schedule" => "constant",
         "steps_per_met_window" => sizes.steps_per_met,
         "level_top" => first(vertical.level_range), "level_bot" => last(vertical.level_range),
         "A_ifc" => Float64.(vertical.merged_vc.A), "B_ifc" => Float64.(vertical.merged_vc.B),
@@ -181,6 +188,7 @@ function build_v4_header(date::Date,
         # Poisson fields driven by the same TransportBinaryContract above — single source of truth.
         "poisson_balance_target_scale"     => contract.poisson_balance_target_scale,
         "poisson_balance_target_semantics" => contract.poisson_balance_target_semantics,
+        "poisson_balance_target_scale_by_window" => poisson_scale_schedule,
         "script_path" => provenance.script_path,
         "script_mtime_unix" => provenance.script_mtime,
         "git_commit" => provenance.git_commit,
@@ -206,6 +214,7 @@ function build_v4_header(date::Date,
     )
 
     merge!(header, target_header_metadata(grid))
+    validate_transport_contract!(header)
     return header
 end
 

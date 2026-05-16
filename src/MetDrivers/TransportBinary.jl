@@ -7,6 +7,7 @@ import ..State: mass_basis
 
 const _PBL_SURFACE_PAYLOAD_SECTIONS = (:pblh, :ustar, :pbl_hflux, :t2m)
 const _PBL_SURFACE_FIELD_NAMES = (:pblh, :ustar, :hflux, :t2m)
+const TRANSPORT_BINARY_FORMAT_VERSION = 2
 
 @inline _is_pbl_surface_payload_section(section::Symbol) =
     section in _PBL_SURFACE_PAYLOAD_SECTIONS
@@ -89,29 +90,35 @@ end
 
 function _parse_steps_per_window_schedule(hdr, nwindow::Integer,
                                           steps_per_window::Integer)
-    schedule = if haskey(hdr, :steps_per_window_by_window)
-        Int.(collect(hdr.steps_per_window_by_window))
-    else
-        fill(Int(steps_per_window), Int(nwindow))
-    end
+    haskey(hdr, :steps_per_window_by_window) ||
+        throw(ArgumentError("format_version=$(TRANSPORT_BINARY_FORMAT_VERSION) requires " *
+                            "`steps_per_window_by_window`; regenerate this binary"))
+    schedule = Int.(collect(hdr.steps_per_window_by_window))
     length(schedule) == Int(nwindow) ||
         throw(ArgumentError("steps_per_window_by_window length $(length(schedule)) " *
                             "does not match nwindow=$(nwindow)"))
     all(>=(1), schedule) ||
         throw(ArgumentError("steps_per_window_by_window must contain only positive integers; got $(schedule)"))
+    Int(steps_per_window) == maximum(schedule) ||
+        throw(ArgumentError("steps_per_window must be maximum(steps_per_window_by_window); " *
+                            "got steps_per_window=$(steps_per_window), schedule=$(schedule)"))
     return schedule
 end
 
 function _parse_poisson_scale_schedule(hdr, nwindow::Integer,
                                        scalar_scale::Real)
-    if haskey(hdr, :poisson_balance_target_scale_by_window)
-        scales = Float64.(collect(hdr.poisson_balance_target_scale_by_window))
-        length(scales) == Int(nwindow) ||
-            throw(ArgumentError("poisson_balance_target_scale_by_window length $(length(scales)) " *
-                                "does not match nwindow=$(nwindow)"))
-        return scales
-    end
-    return fill(Float64(scalar_scale), Int(nwindow))
+    haskey(hdr, :poisson_balance_target_scale_by_window) ||
+        throw(ArgumentError("format_version=$(TRANSPORT_BINARY_FORMAT_VERSION) requires " *
+                            "`poisson_balance_target_scale_by_window`; regenerate this binary"))
+    scales = Float64.(collect(hdr.poisson_balance_target_scale_by_window))
+    length(scales) == Int(nwindow) ||
+        throw(ArgumentError("poisson_balance_target_scale_by_window length $(length(scales)) " *
+                            "does not match nwindow=$(nwindow)"))
+    all(s -> isfinite(s) && s > 0, scales) ||
+        throw(ArgumentError("poisson_balance_target_scale_by_window must contain only finite positive values"))
+    isfinite(Float64(scalar_scale)) && Float64(scalar_scale) > 0 ||
+        throw(ArgumentError("poisson_balance_target_scale must be finite and positive"))
+    return scales
 end
 
 @inline _has_variable_step_schedule(schedule::AbstractVector{<:Integer}) =
@@ -319,9 +326,9 @@ a capability-augmented report to `io`, and return the
 `binary_capabilities` NamedTuple for programmatic consumption (tests,
 CLI capability-intersection, folder-level validation).
 
-Set `ENV["ATMOSTR_ALLOW_LEGACY_BINARY"] = "1"` before calling to
-demote plan-39 contract violations to warnings (for inspection of
-pre-plan-39 binaries; runtime behaviour NOT trusted).
+Obsolete `format_version < TRANSPORT_BINARY_FORMAT_VERSION` files are rejected
+here just like runtime drivers; inspect the raw JSON header with external tools
+if a stale file must be audited.
 """
 function inspect_binary(path::AbstractString; io::IO = stdout)
     isfile(path) || throw(ArgumentError("binary not found: $(path)"))
@@ -606,28 +613,45 @@ end
 """
     validate_transport_contract!(header::AbstractDict; allow_legacy::Bool = false)
 
-Assert that `header` declares all eight contract fields and that they are
-self-consistent. Throws `ArgumentError` with a clear, action-named message
-when a field is missing or unknown. When `allow_legacy=true` (or when the
-environment variable `ATMOSTR_ALLOW_LEGACY_BINARY` is set to `"1"`),
-missing/unknown fields are demoted to `@warn` and a "this binary cannot be
-trusted" banner, and the function returns a (best-effort) contract filled
-with `:unknown` placeholders.
+Assert that `header` declares the current transport-binary contract and that
+the timing metadata is self-consistent. `format_version` is a hard boundary:
+only [`TRANSPORT_BINARY_FORMAT_VERSION`](@ref) is accepted. Older files are
+obsolete and must be regenerated rather than loaded through compatibility
+defaults.
 
 Shared between `TransportBinaryDriver`, `TransportBinaryReader`, and the
 `scripts/diagnostics/inspect_transport_binary.jl` tool so there is ONE
-validator every reader-facing tool calls. Wiring these three call sites
-is deferred to Commit D; this commit just introduces the function.
+validator every reader-facing tool calls. `allow_legacy` is retained for API
+compatibility but no longer bypasses the v2 runtime contract.
 """
 function validate_transport_contract!(header::AbstractDict;
                                       allow_legacy::Bool = false)
-    envvar = get(ENV, "ATMOSTR_ALLOW_LEGACY_BINARY", "")
-    effective_allow = allow_legacy || envvar == "1"
+    _ = allow_legacy
 
     missing_or_unknown = String[]
+    magic = get(header, "magic", nothing)
+    magic == "MFLX" || throw(ArgumentError(
+        "Transport-binary contract violation — expected magic=\"MFLX\", got $(repr(magic)). " *
+        "This is not a current transport binary."))
+
+    haskey(header, "format_version") || throw(ArgumentError(
+        "Transport-binary contract violation — missing format_version. " *
+        "All pre-v$(TRANSPORT_BINARY_FORMAT_VERSION) transport binaries are obsolete; regenerate."))
+    format_version = try
+        Int(header["format_version"])
+    catch
+        throw(ArgumentError("Transport-binary contract violation — invalid format_version=$(repr(header["format_version"]))"))
+    end
+    format_version == TRANSPORT_BINARY_FORMAT_VERSION || throw(ArgumentError(
+        "Obsolete transport binary format_version=$(format_version); current runtime requires " *
+        "format_version=$(TRANSPORT_BINARY_FORMAT_VERSION). Regenerate this file with the current " *
+        "preprocessor so the header carries the per-window substep schedule and v2 contract."))
+
     fields = ("source_flux_sampling", "air_mass_sampling", "flux_sampling",
               "flux_kind", "delta_semantics", "humidity_sampling",
-              "poisson_balance_target_scale", "poisson_balance_target_semantics")
+              "poisson_balance_target_scale", "poisson_balance_target_semantics",
+              "nwindow", "steps_per_window", "steps_per_window_by_window",
+              "time_step_schedule", "poisson_balance_target_scale_by_window")
 
     for f in fields
         if !haskey(header, f)
@@ -640,7 +664,8 @@ function validate_transport_contract!(header::AbstractDict;
                 (isnan(vf) || vf <= 0) && push!(missing_or_unknown, "$f (value=$val)")
             elseif f == "poisson_balance_target_semantics"
                 isempty(String(val)) && push!(missing_or_unknown, "$f (empty)")
-            else
+            elseif f in ("source_flux_sampling", "air_mass_sampling", "flux_sampling",
+                         "flux_kind", "delta_semantics", "humidity_sampling")
                 sym = _transport_normalize_symbol(val)
                 sym === :unknown && push!(missing_or_unknown, "$f (:unknown)")
             end
@@ -653,16 +678,8 @@ function validate_transport_contract!(header::AbstractDict;
               join(missing_or_unknown, "\n  ") *
               "\nThis binary was produced by a preprocessor that does not declare the " *
               "runtime forcing contract. Regenerate via the current preprocessor " *
-              "(scripts/preprocessing/preprocess_transport_binary.jl) or, if you MUST " *
-              "load a legacy binary for inspection only, set " *
-              "ATMOSTR_ALLOW_LEGACY_BINARY=1 (the runtime will not guarantee correctness)."
-        if effective_allow
-            @warn "╔══ LEGACY TRANSPORT BINARY — contract violations ignored ══╗\n" * msg *
-                  "\n╚═══════════════════════════════════════════════════════════╝"
-            return nothing
-        else
-            throw(ArgumentError(msg))
-        end
+              "(scripts/preprocessing/preprocess_transport_binary.jl)."
+        throw(ArgumentError(msg))
     end
 
     # All fields present — validate ranges via a roundtrip construction.
@@ -679,11 +696,71 @@ function validate_transport_contract!(header::AbstractDict;
             poisson_balance_target_semantics = String(header["poisson_balance_target_semantics"]),
         )
     catch e
-        if effective_allow
-            @warn "Transport-binary contract values out of range (legacy bypass on): $e"
-        else
-            rethrow(e)
-        end
+        rethrow(e)
+    end
+
+    nwindow = try
+        Int(header["nwindow"])
+    catch
+        throw(ArgumentError("Transport-binary contract violation — nwindow must be an integer"))
+    end
+    nwindow > 0 ||
+        throw(ArgumentError("Transport-binary contract violation — nwindow must be positive"))
+    steps_per_window = try
+        Int(header["steps_per_window"])
+    catch
+        throw(ArgumentError("Transport-binary contract violation — steps_per_window must be an integer"))
+    end
+    steps_per_window > 0 ||
+        throw(ArgumentError("Transport-binary contract violation — steps_per_window must be positive"))
+
+    schedule = try
+        Int.(collect(header["steps_per_window_by_window"]))
+    catch
+        throw(ArgumentError("Transport-binary contract violation — steps_per_window_by_window must be an integer vector"))
+    end
+    length(schedule) == nwindow ||
+        throw(ArgumentError("Transport-binary contract violation — steps_per_window_by_window length $(length(schedule)) " *
+                            "does not match nwindow=$(nwindow)"))
+    all(>=(1), schedule) ||
+        throw(ArgumentError("Transport-binary contract violation — steps_per_window_by_window must contain only positive integers"))
+    steps_per_window == maximum(schedule) ||
+        throw(ArgumentError("Transport-binary contract violation — steps_per_window=$(steps_per_window) must equal " *
+                            "maximum(steps_per_window_by_window)=$(maximum(schedule))"))
+
+    variable_steps = _has_variable_step_schedule(schedule)
+    expected_time_step_schedule = variable_steps ? "per_window" : "constant"
+    time_step_schedule = String(header["time_step_schedule"])
+    time_step_schedule == expected_time_step_schedule ||
+        throw(ArgumentError("Transport-binary contract violation — time_step_schedule=$(repr(time_step_schedule)) " *
+                            "but schedule requires $(repr(expected_time_step_schedule))"))
+
+    scalar_scale = Float64(header["poisson_balance_target_scale"])
+    expected_scalar_scale = 1.0 / (2 * steps_per_window)
+    isapprox(scalar_scale, expected_scalar_scale; atol=eps(Float64) * 8, rtol=0.0) ||
+        throw(ArgumentError("Transport-binary contract violation — poisson_balance_target_scale=$(scalar_scale), " *
+                            "expected $(expected_scalar_scale) from steps_per_window=$(steps_per_window)"))
+    expected_semantics = variable_steps ?
+        "forward_window_mass_difference / (2 * steps_per_window_by_window[win])" :
+        "forward_window_mass_difference / (2 * steps_per_window)"
+    semantics = String(header["poisson_balance_target_semantics"])
+    semantics == expected_semantics ||
+        throw(ArgumentError("Transport-binary contract violation — poisson_balance_target_semantics=$(repr(semantics)), " *
+                            "expected $(repr(expected_semantics))"))
+
+    scale_schedule = try
+        Float64.(collect(header["poisson_balance_target_scale_by_window"]))
+    catch
+        throw(ArgumentError("Transport-binary contract violation — poisson_balance_target_scale_by_window must be a numeric vector"))
+    end
+    length(scale_schedule) == nwindow ||
+        throw(ArgumentError("Transport-binary contract violation — poisson_balance_target_scale_by_window length $(length(scale_schedule)) " *
+                            "does not match nwindow=$(nwindow)"))
+    for win in 1:nwindow
+        expected = 1.0 / (2 * schedule[win])
+        isapprox(scale_schedule[win], expected; atol=eps(Float64) * 8, rtol=0.0) ||
+            throw(ArgumentError("Transport-binary contract violation — poisson_balance_target_scale_by_window[$win]=" *
+                                "$(scale_schedule[win]), expected $(expected) from steps_per_window_by_window[$win]=$(schedule[win])"))
     end
     return nothing
 end
@@ -732,6 +809,9 @@ function _parse_transport_header(raw_bytes::Vector{UInt8})
     # fields come back as :unknown and downstream code must handle them
     # (or trip on a later typed check).
     format_version = Int(hdr.format_version)
+    format_version == TRANSPORT_BINARY_FORMAT_VERSION ||
+        throw(ArgumentError("Obsolete transport binary format_version=$(format_version); " *
+                            "current runtime requires format_version=$(TRANSPORT_BINARY_FORMAT_VERSION). Regenerate."))
     header_bytes = Int(get(hdr, :header_bytes, 16384))
     disk_ft, float_bytes = _transport_parse_on_disk_float_type(hdr)
     grid_type = _transport_parse_grid_type(hdr)
@@ -837,8 +917,7 @@ function TransportBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = Flo
     # Plan 39 Commit D: validate the self-describing transport-binary
     # contract BEFORE mmap'ing the payload. Rejects ambiguous/legacy
     # headers with a clear error (names the missing field + regeneration
-    # command). Env-var ATMOSTR_ALLOW_LEGACY_BINARY=1 demotes to loud warn
-    # for inspection-only loads — downstream semantics are then :unknown.
+    # command). format_version is a hard boundary: v1 files are obsolete.
     # This call site is shared with `TransportBinaryDriver` and the
     # `scripts/diagnostics/inspect_transport_binary.jl` tool, so ONE
     # validator gates every reader-facing entry point.
@@ -1250,6 +1329,10 @@ function _transport_common_header(grid_type::String,
     n_tm5 = (:entu in payload_sections) ? ncell * nlevel : 0
     humidity_sampling = humidity_sampling === :auto ? _transport_default_humidity_sampling(payload_sections) : _transport_normalize_symbol(humidity_sampling)
     delta_semantics = delta_semantics === :auto ? _transport_default_delta_semantics(payload_sections) : _transport_normalize_symbol(delta_semantics)
+    steps = Int(steps_per_window)
+    steps > 0 || throw(ArgumentError("steps_per_window must be positive"))
+    step_schedule = fill(steps, nwindow)
+    poisson_scale_schedule = [1.0 / (2 * s) for s in step_schedule]
     contract = TransportBinaryContract(
         source_flux_sampling = source_flux_sampling,
         air_mass_sampling = air_mass_sampling,
@@ -1257,13 +1340,13 @@ function _transport_common_header(grid_type::String,
         flux_kind = flux_kind,
         delta_semantics = delta_semantics,
         humidity_sampling = humidity_sampling,
-        poisson_balance_target_scale = 1.0 / (2 * Int(steps_per_window)),
+        poisson_balance_target_scale = 1.0 / (2 * steps),
         poisson_balance_target_semantics = "forward_window_mass_difference / (2 * steps_per_window)",
     )
 
     return Dict{String, Any}(
         "magic" => "MFLX",
-        "format_version" => 1,
+        "format_version" => TRANSPORT_BINARY_FORMAT_VERSION,
         "header_bytes" => header_bytes,
         "float_type" => string(FT),
         "float_bytes" => sizeof(FT),
@@ -1278,7 +1361,9 @@ function _transport_common_header(grid_type::String,
         "B_ifc" => Float64.(vc.B),
         "dt_met_seconds" => Float64(dt_met_seconds),
         "half_dt_seconds" => Float64(half_dt_seconds),
-        "steps_per_window" => Int(steps_per_window),
+        "steps_per_window" => steps,
+        "steps_per_window_by_window" => step_schedule,
+        "time_step_schedule" => "constant",
         "source_flux_sampling" => String(contract.source_flux_sampling),
         "air_mass_sampling" => String(contract.air_mass_sampling),
         "flux_sampling" => String(contract.flux_sampling),
@@ -1287,6 +1372,7 @@ function _transport_common_header(grid_type::String,
         "delta_semantics" => String(contract.delta_semantics),
         "poisson_balance_target_scale" => contract.poisson_balance_target_scale,
         "poisson_balance_target_semantics" => contract.poisson_balance_target_semantics,
+        "poisson_balance_target_scale_by_window" => poisson_scale_schedule,
         "mass_basis" => String(mass_basis),
         "payload_sections" => String.(payload_sections),
         "include_qv" => :qv in payload_sections,
@@ -1438,6 +1524,7 @@ function write_transport_binary(path::AbstractString,
     ))
     isempty(extra_header) || merge!(header, Dict{String, Any}(extra_header))
 
+    validate_transport_contract!(header)
     header_json = JSON3.write(header)
     pad = header_bytes - ncodeunits(header_json)
     pad >= 0 || error("transport binary header exceeds header_bytes=$(header_bytes)")
@@ -1512,6 +1599,7 @@ function write_transport_binary(path::AbstractString,
     ))
     isempty(extra_header) || merge!(header, Dict{String, Any}(extra_header))
 
+    validate_transport_contract!(header)
     header_json = JSON3.write(header)
     pad = header_bytes - ncodeunits(header_json)
     pad >= 0 || error("transport binary header exceeds header_bytes=$(header_bytes)")
@@ -1627,6 +1715,7 @@ function open_streaming_transport_binary(
     ))
     isempty(extra_header) || merge!(header, Dict{String, Any}(extra_header))
 
+    validate_transport_contract!(header)
     header_json = JSON3.write(header)
     pad = header_bytes - ncodeunits(header_json)
     pad >= 0 || error("transport binary header exceeds header_bytes=$(header_bytes)")
@@ -1662,10 +1751,12 @@ function set_streaming_steps_per_window_schedule!(
         "forward_window_mass_difference / (2 * steps_per_window_by_window[win])" :
         "forward_window_mass_difference / (2 * steps_per_window)"
     writer.header["poisson_balance_target_scale"] = 1.0 / (2 * maximum(steps))
+    validate_transport_contract!(writer.header)
     return writer
 end
 
 function _rewrite_streaming_header!(writer::StreamingTransportBinaryWriter)
+    validate_transport_contract!(writer.header)
     header_json = JSON3.write(writer.header)
     pad = writer.header_bytes - ncodeunits(header_json)
     pad >= 0 || error("transport binary header exceeds header_bytes=$(writer.header_bytes)")
@@ -1935,6 +2026,7 @@ function open_streaming_cs_transport_binary(
         header["longitude_offset_deg"] = get(header, "longitude_offset_deg", default_geometry.longitude_offset_deg)
     end
 
+    validate_transport_contract!(header)
     header_json = JSON3.write(header)
     pad = header_bytes - ncodeunits(header_json)
     pad >= 0 || error("transport binary header exceeds header_bytes=$(header_bytes)")

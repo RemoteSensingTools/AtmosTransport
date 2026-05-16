@@ -12,6 +12,7 @@ using .AtmosTransport
 using .AtmosTransport.Preprocessing
 
 const DEFAULT_IGNORED_HEADER_KEYS = Set{Symbol}([:creation_time])
+const COMPARE_CHUNK_BYTES = 64 * 1024 * 1024
 
 function _usage()
     return """
@@ -148,6 +149,59 @@ function _json_to_julia(x)
     end
 end
 
+function _read_header(path::AbstractString)
+    prefix = UInt8[]
+    result = nothing
+    open(path, "r") do io
+        while !eof(io) && result === nothing
+            append!(prefix, read(io, min(COMPARE_CHUNK_BYTES, 1024 * 1024)))
+            nul = findfirst(==(0x00), prefix)
+            if nul !== nothing
+                header = _json_to_julia(JSON3.read(String(prefix[1:nul - 1])))
+                header_bytes = Int(get(header, :header_bytes,
+                                       AtmosTransport.Preprocessing.HEADER_SIZE))
+                header_bytes <= filesize(path) ||
+                    error("Header declares header_bytes=$header_bytes, " *
+                          "but file has only $(filesize(path)) bytes: $path")
+                result = (header, header_bytes)
+            end
+            length(prefix) <= 4 * 1024 * 1024 ||
+                error("Could not find NUL-padded JSON header boundary in first 4 MiB: $path")
+        end
+    end
+    result === nothing &&
+        error("Could not find NUL-padded JSON header boundary in empty/truncated file: $path")
+    return result
+end
+
+function _files_equal(a::AbstractString,
+                      b::AbstractString;
+                      offset_a::Integer = 0,
+                      offset_b::Integer = 0,
+                      chunk_bytes::Integer = COMPARE_CHUNK_BYTES)
+    size_a = filesize(a) - Int(offset_a)
+    size_b = filesize(b) - Int(offset_b)
+    (size_a >= 0 && size_b >= 0) || return false
+    size_a == size_b || return false
+    equal = true
+    open(a, "r") do io_a
+        open(b, "r") do io_b
+            seek(io_a, Int(offset_a))
+            seek(io_b, Int(offset_b))
+            remaining = size_a
+            while remaining > 0
+                n = min(Int(chunk_bytes), remaining)
+                if read(io_a, n) != read(io_b, n)
+                    equal = false
+                    break
+                end
+                remaining -= n
+            end
+        end
+    end
+    return equal
+end
+
 function _read_header_and_payload(bytes::Vector{UInt8})
     nul = findfirst(==(0x00), bytes)
     nul === nothing && error("Could not find NUL-padded JSON header boundary.")
@@ -175,28 +229,30 @@ end
 function _compare_file_pair(legacy_path::AbstractString,
                             unified_path::AbstractString,
                             ignored::Set{Symbol})
-    legacy = read(legacy_path)
-    unified = read(unified_path)
-    if legacy == unified
+    legacy_size = filesize(legacy_path)
+    unified_size = filesize(unified_path)
+    if legacy_size == unified_size && _files_equal(legacy_path, unified_path)
         return (status = :exact,
-                legacy_size = length(legacy),
-                unified_size = length(unified),
+                legacy_size = legacy_size,
+                unified_size = unified_size,
                 changed_header_keys = Symbol[])
     end
 
-    legacy_header, legacy_payload = _read_header_and_payload(legacy)
-    unified_header, unified_payload = _read_header_and_payload(unified)
+    legacy_header, legacy_header_bytes = _read_header(legacy_path)
+    unified_header, unified_header_bytes = _read_header(unified_path)
     _normalize_header!(legacy_header, ignored)
     _normalize_header!(unified_header, ignored)
 
     headers_equal = legacy_header == unified_header
-    payload_equal = legacy_payload == unified_payload
+    payload_equal = _files_equal(legacy_path, unified_path;
+                                 offset_a = legacy_header_bytes,
+                                 offset_b = unified_header_bytes)
     status = headers_equal && payload_equal ? :header_normalized :
              payload_equal ? :header_mismatch :
              :payload_mismatch
     return (status = status,
-            legacy_size = length(legacy),
-            unified_size = length(unified),
+            legacy_size = legacy_size,
+            unified_size = unified_size,
             changed_header_keys = headers_equal ? Symbol[] :
                 _changed_header_keys(legacy_header, unified_header))
 end

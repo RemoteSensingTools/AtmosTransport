@@ -59,7 +59,9 @@ Executor state, 2026-05-15:
   required side-by-side legacy vs unified bakes. It runs one config into
   separate output directories, compares file sets, then reports exact byte
   equality or header-normalized equality with payload byte equality (needed
-  for LL's volatile `creation_time` header).
+  for LL's volatile `creation_time` header). P3j made this diagnostic
+  chunk-stream large binaries instead of reading whole files into memory, so
+  C180 native GEOS comparisons are feasible.
 - P3i in progress: real side-by-side bakes. `era5_ll72x37_advresln_dec2021_f32.toml`
   for 2021-12-01 passes with header-normalized equality and identical payload
   bytes (`creation_time` is the only intentionally ignored header field).

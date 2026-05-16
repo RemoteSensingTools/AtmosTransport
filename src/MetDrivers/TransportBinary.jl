@@ -54,7 +54,8 @@ struct TransportBinaryHeader
     nwindow              :: Int         # windows per day (typically 24)
     dt_met_seconds       :: Float64     # met-data window interval [s] (3600 for hourly)
     half_dt_seconds      :: Float64     # half-step time [s] for flux scaling
-    steps_per_window     :: Int         # substeps per window (window_dt / dt)
+    steps_per_window     :: Int         # scalar compatibility summary (constant value or max schedule)
+    steps_per_window_by_window :: Vector{Int}
     source_flux_sampling :: Symbol
     air_mass_sampling    :: Symbol
     flux_sampling        :: Symbol      # :window_constant
@@ -63,6 +64,7 @@ struct TransportBinaryHeader
     delta_semantics      :: Symbol
     poisson_balance_target_scale :: Float64
     poisson_balance_target_semantics :: String
+    poisson_balance_target_scale_by_window :: Vector{Float64}
     A_ifc                :: Vector{Float64}  # hybrid A [Pa], length nlevel+1
     B_ifc                :: Vector{Float64}  # hybrid B [1],  length nlevel+1
     mass_basis           :: Symbol           # :moist or :dry
@@ -83,6 +85,45 @@ struct TransportBinaryHeader
     nlat                 :: Int
     ring_latitudes_f64   :: Vector{Float64}
     nlon_per_ring        :: Vector{Int}
+end
+
+function _parse_steps_per_window_schedule(hdr, nwindow::Integer,
+                                          steps_per_window::Integer)
+    schedule = if haskey(hdr, :steps_per_window_by_window)
+        Int.(collect(hdr.steps_per_window_by_window))
+    else
+        fill(Int(steps_per_window), Int(nwindow))
+    end
+    length(schedule) == Int(nwindow) ||
+        throw(ArgumentError("steps_per_window_by_window length $(length(schedule)) " *
+                            "does not match nwindow=$(nwindow)"))
+    all(>=(1), schedule) ||
+        throw(ArgumentError("steps_per_window_by_window must contain only positive integers; got $(schedule)"))
+    return schedule
+end
+
+function _parse_poisson_scale_schedule(hdr, nwindow::Integer,
+                                       scalar_scale::Real)
+    if haskey(hdr, :poisson_balance_target_scale_by_window)
+        scales = Float64.(collect(hdr.poisson_balance_target_scale_by_window))
+        length(scales) == Int(nwindow) ||
+            throw(ArgumentError("poisson_balance_target_scale_by_window length $(length(scales)) " *
+                                "does not match nwindow=$(nwindow)"))
+        return scales
+    end
+    return fill(Float64(scalar_scale), Int(nwindow))
+end
+
+@inline _has_variable_step_schedule(schedule::AbstractVector{<:Integer}) =
+    !isempty(schedule) && any(!=(first(schedule)), schedule)
+
+function _steps_per_window_summary(steps::Integer,
+                                   schedule::AbstractVector{<:Integer})
+    if _has_variable_step_schedule(schedule)
+        return string(Int(steps), " max (per-window ",
+                      minimum(schedule), ":", maximum(schedule), ")")
+    end
+    return string(Int(steps))
 end
 
 """
@@ -143,7 +184,8 @@ function Base.show(io::IO, h::TransportBinaryHeader)
     print(io, summary(h), "\n",
           "├── geometry:      ", _transport_geometry_summary(h), "\n",
           "├── storage:       ", h.on_disk_float_type, " on disk, basis=", h.mass_basis, "\n",
-          "├── timing:        dt=", h.dt_met_seconds, " s, steps/window=", h.steps_per_window, "\n",
+          "├── timing:        dt=", h.dt_met_seconds, " s, steps/window=",
+              _steps_per_window_summary(h.steps_per_window, h.steps_per_window_by_window), "\n",
           "├── payload:       ", join(String.(h.payload_sections), ", "), "\n",
           "├── humidity:      ", _transport_qv_summary(h), "\n",
           "├── semantics:     ", _transport_semantics_summary(h), "\n",
@@ -167,7 +209,8 @@ function Base.show(io::IO, r::TransportBinaryReader)
           "├── geometry:      ", _transport_geometry_summary(h), "\n",
           "├── storage:       ", h.on_disk_float_type, " on disk, load as ", eltype(r.data), "\n",
           "├── basis:         ", h.mass_basis, "\n",
-          "├── timing:        dt=", h.dt_met_seconds, " s, steps/window=", h.steps_per_window, "\n",
+          "├── timing:        dt=", h.dt_met_seconds, " s, steps/window=",
+              _steps_per_window_summary(h.steps_per_window, h.steps_per_window_by_window), "\n",
           "├── payload:       ", join(String.(h.payload_sections), ", "), "\n",
           "├── humidity:      ", _transport_qv_summary(h), "\n",
           "├── semantics:     ", _transport_semantics_summary(h), "\n",
@@ -177,6 +220,11 @@ function Base.show(io::IO, r::TransportBinaryReader)
 end
 
 window_count(r::TransportBinaryReader) = r.header.nwindow
+steps_per_window(r::TransportBinaryReader) = r.header.steps_per_window
+steps_per_window(r::TransportBinaryReader, win::Integer) =
+    r.header.steps_per_window_by_window[Int(win)]
+steps_per_window_schedule(r::TransportBinaryReader) =
+    copy(r.header.steps_per_window_by_window)
 mass_basis(r::TransportBinaryReader) = r.header.mass_basis
 grid_type(r::TransportBinaryReader) = r.header.grid_type
 horizontal_topology(r::TransportBinaryReader) = r.header.horizontal_topology
@@ -253,6 +301,12 @@ function binary_capabilities(reader::TransportBinaryReader)
         humidity         = has_qv(reader),
         mass_basis       = hdr.mass_basis,
         grid_type        = Symbol(hdr.grid_type),
+        nlevel           = hdr.nlevel,
+        steps_per_window = hdr.steps_per_window,
+        variable_step_schedule = _has_variable_step_schedule(hdr.steps_per_window_by_window),
+        preprocessor_contract = nothing,
+        vertical_Nz_output = nothing,
+        adaptive_substeps = nothing,
         payload_sections = hdr.payload_sections,
     )
 end
@@ -701,6 +755,10 @@ function _parse_transport_header(raw_bytes::Vector{UInt8})
                                    Float64(hdr.poisson_balance_target_scale) : NaN
     poisson_balance_target_semantics = haskey(hdr, :poisson_balance_target_semantics) ?
                                        String(hdr.poisson_balance_target_semantics) : ""
+    steps_per_window = Int(hdr.steps_per_window)
+    steps_schedule = _parse_steps_per_window_schedule(hdr, nwindow, steps_per_window)
+    poisson_scale_schedule = _parse_poisson_scale_schedule(
+        hdr, nwindow, poisson_balance_target_scale)
     n_qv = Int(get(hdr, :n_qv, include_qv ? ncell * nlevel : 0))
     n_qv_start = Int(get(hdr, :n_qv_start, include_qv_endpoints ? ncell * nlevel : 0))
     n_qv_end = Int(get(hdr, :n_qv_end, include_qv_endpoints ? ncell * nlevel : 0))
@@ -737,7 +795,8 @@ function _parse_transport_header(raw_bytes::Vector{UInt8})
         nwindow,
         Float64(hdr.dt_met_seconds),
         Float64(hdr.half_dt_seconds),
-        Int(hdr.steps_per_window),
+        steps_per_window,
+        steps_schedule,
         source_flux_sampling,
         air_mass_sampling,
         flux_sampling,
@@ -746,6 +805,7 @@ function _parse_transport_header(raw_bytes::Vector{UInt8})
         delta_semantics,
         poisson_balance_target_scale,
         poisson_balance_target_semantics,
+        poisson_scale_schedule,
         A_ifc,
         B_ifc,
         _transport_parse_mass_basis(hdr),
@@ -1483,6 +1543,7 @@ plus the open `IOStream`.  All other per-window data is owned by the caller.
 mutable struct StreamingTransportBinaryWriter{FT}
     io::IOStream
     path::String
+    header::Dict{String, Any}
     payload_sections::Vector{Symbol}
     elems_per_window::Int
     header_bytes::Int
@@ -1577,8 +1638,42 @@ function open_streaming_transport_binary(
     pack_buffer = Vector{FT}(undef, elems_per_window)
 
     return StreamingTransportBinaryWriter{FT}(
-        io, String(path), payload_sections, elems_per_window,
+        io, String(path), header, payload_sections, elems_per_window,
         header_bytes, nwindow, 0, pack_buffer)
+end
+
+function set_streaming_steps_per_window_schedule!(
+        writer::StreamingTransportBinaryWriter,
+        schedule::AbstractVector{<:Integer})
+    steps = Int.(collect(schedule))
+    length(steps) == writer.expected_windows ||
+        throw(ArgumentError("steps_per_window schedule length $(length(steps)) " *
+                            "does not match expected windows $(writer.expected_windows)"))
+    all(>=(1), steps) ||
+        throw(ArgumentError("steps_per_window schedule must contain only positive integers; got $(steps)"))
+    writer.header["steps_per_window_by_window"] = steps
+    writer.header["steps_per_window"] = maximum(steps)
+    writer.header["time_step_schedule"] =
+        _has_variable_step_schedule(steps) ? "per_window" : "constant"
+    writer.header["poisson_balance_target_scale_by_window"] =
+        [1.0 / (2 * s) for s in steps]
+    writer.header["poisson_balance_target_semantics"] =
+        _has_variable_step_schedule(steps) ?
+        "forward_window_mass_difference / (2 * steps_per_window_by_window[win])" :
+        "forward_window_mass_difference / (2 * steps_per_window)"
+    writer.header["poisson_balance_target_scale"] = 1.0 / (2 * maximum(steps))
+    return writer
+end
+
+function _rewrite_streaming_header!(writer::StreamingTransportBinaryWriter)
+    header_json = JSON3.write(writer.header)
+    pad = writer.header_bytes - ncodeunits(header_json)
+    pad >= 0 || error("transport binary header exceeds header_bytes=$(writer.header_bytes)")
+    seek(writer.io, 0)
+    write(writer.io, header_json)
+    write(writer.io, zeros(UInt8, pad))
+    flush(writer.io)
+    return nothing
 end
 
 """
@@ -1607,6 +1702,7 @@ function close_streaming_transport_binary!(writer::StreamingTransportBinaryWrite
     writer.written_windows == writer.expected_windows ||
         @warn("Streaming binary: expected $(writer.expected_windows) windows, " *
               "wrote $(writer.written_windows)")
+    _rewrite_streaming_header!(writer)
     close(writer.io)
     return writer.path
 end
@@ -1850,7 +1946,7 @@ function open_streaming_cs_transport_binary(
     pack_buffer = Vector{FT}(undef, elems_per_window)
 
     return StreamingTransportBinaryWriter{FT}(
-        io, String(path), payload_sections, elems_per_window,
+        io, String(path), header, payload_sections, elems_per_window,
         header_bytes, nwindow, 0, pack_buffer)
 end
 

@@ -64,6 +64,14 @@ pressure-fixer state; most topologies do nothing.
 """
 driver_after_write_window!(_workspace, _reader, _ready, _context) = nothing
 
+"""
+    driver_before_close_writer!(workspace, reader, contract, writer, context)
+
+Final metadata hook before the streaming writer is closed. Variable-step
+writers use this to patch schedules into the fixed-size JSON header.
+"""
+driver_before_close_writer!(_workspace, _reader, _contract, _writer, _context) = nothing
+
 function _ready_events(result)
     result === nothing && return ()
     result isa ReadyWindow && return (result,)
@@ -129,6 +137,8 @@ function run_unified_preprocessor_day!(day::UnifiedPreprocessorDay;
             last_ready_index = ready.index
         end
 
+        driver_before_close_writer!(day.workspace, day.reader, day.contract,
+                                    day.writer, day.context)
         close_streaming_binary!(day.writer)
         writer_closed = true
         summarize_status!(day.contract; quarantine_path = writer_staging_path(day.writer))

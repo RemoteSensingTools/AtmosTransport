@@ -53,8 +53,9 @@ function load_era5_cs_window1(path)
     Nc, Nz, npanel = h.Nc, h.nlevel, h.npanel
     @info @sprintf("ERA5 CS binary: C%d, %d levels, %d panels, mass_basis=%s",
                    Nc, Nz, npanel, h.mass_basis)
-    @info @sprintf("  dt_met=%.0fs, steps_per_window=%d, half_dt=%.0fs",
-                   h.dt_met_seconds, h.steps_per_window, h.dt_met_seconds/2)
+    @info @sprintf("  dt_met=%.0fs, window1 steps=%d, half_dt=%.0fs",
+                   h.dt_met_seconds, h.steps_per_window_by_window[1],
+                   h.dt_met_seconds/2)
 
     sections = h.payload_sections
     @info "  Payload sections: $(join(String.(sections), ", "))"
@@ -272,8 +273,9 @@ function main()
     geos_bm_rms = sqrt(mean(geos_bm_kgs .^ 2))
 
     # ERA5 substep flux to kg/s: am is already in kg per substep
-    # substep = dt_met / steps_per_window = 3600 / 4 = 900 s
-    era5_dt_sub = era5.header.dt_met_seconds / era5.header.steps_per_window
+    # substep = dt_met / steps_per_window_by_window[1]
+    era5_dt_sub = era5.header.dt_met_seconds /
+                  era5.header.steps_per_window_by_window[1]
     era5_am_kgs_rms = era5_am_rms / era5_dt_sub
     era5_bm_kgs_rms = era5_bm_rms / era5_dt_sub
 

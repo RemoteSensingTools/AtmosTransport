@@ -371,6 +371,30 @@ end
 # run_driven_simulation — top-level entry
 # ===========================================================================
 
+function _validate_input_binary_expectations(caps, input_cfg::AbstractDict,
+                                             path::AbstractString)
+    if haskey(input_cfg, "expected_nlevel")
+        expected = Int(input_cfg["expected_nlevel"])
+        caps.nlevel == expected || throw(ArgumentError(
+            "[input].expected_nlevel=$expected but $(basename(path)) has " *
+            "nlevel=$(caps.nlevel). This usually means the run config is " *
+            "pointing at an older preprocessing product."))
+    end
+    if haskey(input_cfg, "required_preprocessor_contract")
+        required = String(input_cfg["required_preprocessor_contract"])
+        actual = caps.preprocessor_contract
+        actual == required || throw(ArgumentError(
+            "[input].required_preprocessor_contract=$(repr(required)) but " *
+            "$(basename(path)) declares $(repr(actual))."))
+    end
+    if Bool(get(input_cfg, "require_adaptive_substeps", false))
+        caps.adaptive_substeps === true || throw(ArgumentError(
+            "[input].require_adaptive_substeps=true but $(basename(path)) " *
+            "does not declare adaptive_substeps=true."))
+    end
+    return nothing
+end
+
 """
     run_driven_simulation(cfg::AbstractDict) -> TransportModel
 
@@ -399,6 +423,7 @@ function run_driven_simulation(cfg::AbstractDict)
     # gates (stale-binary, cm-continuity) as a side effect of opening
     # the reader in `inspect_binary`.
     caps = inspect_binary(first(binary_paths); io = devnull)
+    _validate_input_binary_expectations(caps, input_cfg, first(binary_paths))
     result = if caps.grid_type === :cubed_sphere
         _run_driven_simulation_cs(binary_paths, cfg)
     else
@@ -796,7 +821,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
                        basename(path), stop_window)
         while sim.iteration < sim.final_iteration
             timed_transport!(timer, () -> step!(sim))
-            if sim.iteration % sim.steps_per_window == 0
+            if sim.iteration == sim.current_window_end_iteration
                 tick_window!(timer)
                 total_hour += window_hours
                 while snap_idx <= length(snapshot_hours) &&

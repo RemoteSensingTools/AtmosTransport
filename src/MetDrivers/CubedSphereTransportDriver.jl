@@ -52,11 +52,17 @@ function Base.show(io::IO, driver::CubedSphereTransportDriver)
     print(io, summary(driver), "\n",
           "├── grid:          C", driver.grid.horizontal.Nc, ", Hp=", driver.grid.horizontal.Hp, "\n",
           "├── basis:         ", air_mass_basis(driver), "\n",
-          "├── timing:        dt=", window_dt(driver), " s, steps/window=", steps_per_window(driver), "\n",
+          "├── timing:        dt=", window_dt(driver), " s, steps/window=",
+              _steps_per_window_summary(steps_per_window(driver), steps_per_window_schedule(driver)), "\n",
           "└── windows:       ", total_windows(driver))
 end
 
 window_count(reader::CubedSphereBinaryReader) = cs_window_count(reader)
+steps_per_window(reader::CubedSphereBinaryReader) = reader.header.steps_per_window
+steps_per_window(reader::CubedSphereBinaryReader, win::Integer) =
+    reader.header.steps_per_window_by_window[Int(win)]
+steps_per_window_schedule(reader::CubedSphereBinaryReader) =
+    copy(reader.header.steps_per_window_by_window)
 mass_basis(reader::CubedSphereBinaryReader) = reader.header.mass_basis
 grid_type(::CubedSphereBinaryReader) = :cubed_sphere
 horizontal_topology(::CubedSphereBinaryReader) = :structureddirectional
@@ -89,6 +95,12 @@ function binary_capabilities(reader::CubedSphereBinaryReader)
         humidity         = has_qv(reader),
         mass_basis       = hdr.mass_basis,
         grid_type        = :cubed_sphere,
+        nlevel           = hdr.nlevel,
+        steps_per_window = hdr.steps_per_window,
+        variable_step_schedule = _has_variable_step_schedule(hdr.steps_per_window_by_window),
+        preprocessor_contract = get(hdr.raw_header, "preprocessor_contract", nothing),
+        vertical_Nz_output = get(hdr.raw_header, "vertical_Nz_output", nothing),
+        adaptive_substeps = get(hdr.raw_header, "adaptive_substeps", nothing),
         payload_sections = hdr.payload_sections,
     )
 end
@@ -122,7 +134,6 @@ function _validate_replay_consistency_cs(reader::CubedSphereBinaryReader{FT}) wh
         return nothing
     end
     tol_rel = replay_tolerance(FT)
-    steps = reader.header.steps_per_window
     Nt = window_count(reader)
     Nt >= 1 || return nothing
 
@@ -133,6 +144,7 @@ function _validate_replay_consistency_cs(reader::CubedSphereBinaryReader{FT}) wh
 
     for k in 1:Nt
         cur = load_cs_window(reader, k)
+        steps = reader.header.steps_per_window_by_window[k]
         m_target = if k < Nt
             load_cs_window(reader, k + 1).m
         elseif has_flux_delta(reader)
@@ -188,6 +200,10 @@ end
 total_windows(driver::CubedSphereTransportDriver) = window_count(driver.reader)
 window_dt(driver::CubedSphereTransportDriver{FT}) where {FT} = FT(driver.reader.header.dt_met_seconds)
 steps_per_window(driver::CubedSphereTransportDriver) = driver.reader.header.steps_per_window
+steps_per_window(driver::CubedSphereTransportDriver, win::Integer) =
+    driver.reader.header.steps_per_window_by_window[Int(win)]
+steps_per_window_schedule(driver::CubedSphereTransportDriver) =
+    copy(driver.reader.header.steps_per_window_by_window)
 air_mass_basis(driver::CubedSphereTransportDriver) = mass_basis(driver.reader)
 supports_native_vertical_flux(::CubedSphereTransportDriver) = true
 supports_moisture(::CubedSphereTransportDriver) = false

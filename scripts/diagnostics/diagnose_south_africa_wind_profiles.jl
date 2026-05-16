@@ -161,8 +161,8 @@ function profile_rows(source::SourceSpec, masks::Vector{MaskSpec}, area, cfg::Co
         mesh = source_mesh(reader)
         window = load_cs_window(reader, cfg.profile_window)
         basis = ntuple(p -> panel_cell_local_tangent_basis(mesh, p), 6)
-        dt_factor = Float64(reader.header.dt_met_seconds) /
-            (2.0 * Float64(reader.header.steps_per_window))
+        steps = reader.header.steps_per_window_by_window[cfg.profile_window]
+        dt_factor = Float64(reader.header.dt_met_seconds) / (2.0 * Float64(steps))
         rows = NamedTuple[]
         for mask_spec in masks
             idxs = findall(mask_spec.mask)

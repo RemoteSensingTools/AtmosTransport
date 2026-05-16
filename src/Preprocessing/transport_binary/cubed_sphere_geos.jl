@@ -388,8 +388,16 @@ mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV} <
     g           :: FT
     inv_g       :: FT
     cell_areas  :: CA
+    base_flux_scale :: FT
     flux_scale  :: FT
     two_steps   :: FT
+    source_steps_per_met :: Int
+    steps_current :: Int
+    steps_schedule :: Vector{Int}
+    adaptive_substeps :: Bool
+    substep_cfl_target :: Float64
+    min_steps_per_window :: Int
+    max_steps_per_window :: Int
     chain_mass  :: Bool
 end
 
@@ -399,7 +407,11 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
                                    ::Type{FT};
                                    dt_met_seconds::Real,
                                    chain_mass::Bool = true,
-                                   cache = nothing) where FT
+                                   cache = nothing,
+                                   adaptive_substeps::Bool = false,
+                                   substep_cfl_target::Real = 0.95,
+                                   min_steps_per_window::Integer = 1,
+                                   max_steps_per_window::Integer = typemax(Int)) where FT
     Nc = grid.Nc
     Nz = vertical.Nz
     Nz_native = vertical.Nz_native
@@ -426,6 +438,13 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
     dt_factor = FT(settings.mass_flux_dt / 2)
     flux_scale = dt_factor / g
     two_steps = FT(2 * steps_per_met)
+    target = Float64(substep_cfl_target)
+    isfinite(target) && target > 0 ||
+        error("substep_cfl_target must be finite and > 0; got $(substep_cfl_target)")
+    min_steps = Int(min_steps_per_window)
+    max_steps = Int(max_steps_per_window)
+    1 <= min_steps <= max_steps ||
+        error("invalid adaptive substep bounds: min=$(min_steps), max=$(max_steps)")
 
     am_native_v4 = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz_native), npanel)
     bm_native_v4 = ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz_native), npanel)
@@ -450,7 +469,48 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
             am_native_v4, bm_native_v4, m_native_kg,
             am_v4, bm_v4, cm_v4, dm_v4,
             m_cur, m_next_pf, ps_cur, cmfmc_v4, dtrain_v4, ΔB, g, inv_g, cell_areas,
-            flux_scale, two_steps, chain_mass)
+            flux_scale, flux_scale, two_steps, steps_per_met, steps_per_met,
+            Int[], Bool(adaptive_substeps),
+            target, min_steps, max_steps, chain_mass)
+end
+
+@inline _geos_clamp_steps(n::Integer, lo::Integer, hi::Integer) =
+    min(max(Int(n), Int(lo)), Int(hi))
+
+function _scale_cs_flux_panels!(panels, factor)
+    for p in 1:CS_PANEL_COUNT
+        panels[p] .*= factor
+    end
+    return panels
+end
+
+function _geos_select_steps_for_window!(workspace::GEOSCubedSphereWindowWorkspace,
+                                        win::Int)
+    steps = workspace.source_steps_per_met
+    if workspace.adaptive_substeps
+        diag = verify_substep_positivity_cs!(workspace.m_cur, workspace.am_v4,
+                                             workspace.bm_v4, workspace.cm_v4;
+                                             cfl_limit = workspace.substep_cfl_target)
+        if isfinite(diag.ratio)
+            required = ceil(Int, steps * Float64(diag.ratio) /
+                                 workspace.substep_cfl_target)
+            steps = _geos_clamp_steps(required, workspace.min_steps_per_window,
+                                      workspace.max_steps_per_window)
+        end
+    end
+    workspace.steps_current = steps
+    length(workspace.steps_schedule) < win && resize!(workspace.steps_schedule, win)
+    workspace.steps_schedule[win] = steps
+    if steps != workspace.source_steps_per_met
+        factor = eltype(workspace.am_v4[1])(workspace.source_steps_per_met / steps)
+        _scale_cs_flux_panels!(workspace.am_v4, factor)
+        _scale_cs_flux_panels!(workspace.bm_v4, factor)
+        _scale_cs_flux_panels!(workspace.cm_v4, factor)
+    end
+    workspace.flux_scale = workspace.base_flux_scale *
+                           (workspace.source_steps_per_met / steps)
+    workspace.two_steps = eltype(workspace.am_v4[1])(2 * steps)
+    return steps
 end
 
 function ingest_window!(workspace::GEOSCubedSphereWindowWorkspace{FT},
@@ -463,6 +523,9 @@ function ingest_window!(workspace::GEOSCubedSphereWindowWorkspace{FT},
     Nz = vertical.Nz
     Nz_native = vertical.Nz_native
     read_window!(workspace.raw, reader, win)
+    workspace.flux_scale = workspace.base_flux_scale
+    workspace.two_steps = FT(2 * workspace.source_steps_per_met)
+    workspace.steps_current = workspace.source_steps_per_met
 
     _geos_fluxes_to_target!(workspace.strategy, workspace.strategy_ws,
                             workspace.am_native_v4, workspace.bm_native_v4,
@@ -502,6 +565,7 @@ function ingest_window!(workspace::GEOSCubedSphereWindowWorkspace{FT},
     _evolve_mass_pressure_fixer!(workspace.m_next_pf, workspace.m_cur,
                                  workspace.am_v4, workspace.bm_v4,
                                  workspace.ΔB, workspace.two_steps, Nc, Nz)
+    _geos_select_steps_for_window!(workspace, win)
     return nothing
 end
 
@@ -511,8 +575,10 @@ function drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{FT},
                               grid::CubedSphereTargetGeometry,
                               settings::AbstractGEOSSettings,
                               steps_per_met::Int) where FT
+    steps = workspace.steps_current
     fill_cs_window_mass_tendency!(workspace.dm_v4, workspace.m_cur,
-                                  workspace.m_next_pf, steps_per_met)
+                                  workspace.m_next_pf, steps)
+    contract.steps_per_window = steps
     contract_diag = verify_window!((m_cur = workspace.m_cur,
                                      am = workspace.am_v4,
                                      bm = workspace.bm_v4,
@@ -604,6 +670,15 @@ function driver_flush_final_windows!(::GEOSCubedSphereWindowWorkspace,
     return ()
 end
 
+function driver_before_close_writer!(workspace::GEOSCubedSphereWindowWorkspace,
+                                     _reader::GEOSNativeReader,
+                                     _contract::CubedSphereContract,
+                                     writer::CubedSphereBinaryWriter,
+                                     _ctx::GEOSCSUnifiedDriverContext)
+    set_streaming_steps_per_window_schedule!(writer.inner, workspace.steps_schedule)
+    return nothing
+end
+
 function driver_after_write_window!(workspace::GEOSCubedSphereWindowWorkspace,
                                     _reader::GEOSNativeReader,
                                     _ready::ReadyWindow,
@@ -622,6 +697,10 @@ function _process_day_geos_cs_unified(date::Date,
                                       replay_tol::Real,
                                       positivity_cfl_limit::Real,
                                       require_substep_positivity::Bool,
+                                      adaptive_substeps::Bool,
+                                      substep_cfl_target::Real,
+                                      min_steps_per_window::Integer,
+                                      max_steps_per_window::Integer,
                                       chain_mass::Bool,
                                       seed_m::Union{Nothing, NTuple{6, <:AbstractArray}})
     Nc     = grid.Nc
@@ -644,12 +723,18 @@ function _process_day_geos_cs_unified(date::Date,
     try
         nw = windows_per_day(reader)
         workspace = allocate_window_workspace(grid, settings, vertical, FT;
-                                              dt_met_seconds = dt_met_seconds,
-                                              chain_mass = chain_mass)
+                                               dt_met_seconds = dt_met_seconds,
+                                               chain_mass = chain_mass,
+                                               adaptive_substeps = adaptive_substeps,
+                                               substep_cfl_target = substep_cfl_target,
+                                               min_steps_per_window = min_steps_per_window,
+                                               max_steps_per_window = max_steps_per_window)
 
         @info "GEOS → CS: $(date), source=$(settings) → $(out_path) [unified]"
         @info "  source_C=$(settings.Nc) target_C=$Nc  strategy=$(_geos_cs_strategy_name(workspace.strategy))"
         @info "  Nz=$Nz  windows=$nw  steps_per_met=$steps_per_met  flux_scale=$(workspace.flux_scale)"
+        adaptive_substeps &&
+            @info "  Adaptive substeps: target CFL=$(Float64(substep_cfl_target)) bounds=$(Int(min_steps_per_window)):$(Int(max_steps_per_window))"
         @info "  Level orientation: $(reader.handles.orientation)  (next-day endpoint: $(_geos_next_endpoint_available(reader.handles)))"
 
         mkpath(dirname(out_path))
@@ -671,8 +756,18 @@ function _process_day_geos_cs_unified(date::Date,
             cs_center_law      = _cs_center_law_tag(grid),
             longitude_offset_deg = longitude_offset_deg(cs_definition(grid.mesh)),
             extra_header = Dict{String, Any}(
+                "preprocessor" => "geos_native_to_cs",
+                "preprocessor_contract" => "plan41_variable_substeps",
                 "source_Nc" => settings.Nc,
                 "geos_cs_resolution_strategy" => _geos_cs_strategy_name(workspace.strategy),
+                "source_steps_per_window" => steps_per_met,
+                "adaptive_substeps" => adaptive_substeps,
+                "substep_cfl_target" => Float64(substep_cfl_target),
+                "positivity_cfl_limit" => Float64(positivity_cfl_limit),
+                "require_substep_positivity" => require_substep_positivity,
+                "vertical_transform" => String(Symbol(get(vertical, :vertical_mapping_method, :identity))),
+                "vertical_Nz_native" => vertical.Nz_native,
+                "vertical_Nz_output" => vertical.Nz,
             ),
         )
         writer = CubedSphereBinaryWriter(inner_writer, DryBasis();
@@ -706,6 +801,7 @@ function _process_day_geos_cs_unified(date::Date,
             worst_replay_abs = stats.worst_replay_abs,
             worst_replay_win = stats.worst_replay_win,
             out_path = driver_result.out_path,
+            steps_per_window_by_window = copy(workspace.steps_schedule),
             final_m = final_m,
         )
     finally
@@ -771,6 +867,10 @@ function process_day(date::Date,
                      replay_tol::Real = replay_tolerance(FT),
                      positivity_cfl_limit::Real = 0.95,
                      require_substep_positivity::Bool = true,
+                     adaptive_substeps::Bool = false,
+                     substep_cfl_target::Real = positivity_cfl_limit,
+                     min_steps_per_window::Integer = 1,
+                     max_steps_per_window::Integer = typemax(Int),
                      chain_mass::Bool = true,
                      seed_m::Union{Nothing, NTuple{6, <:AbstractArray}} = nothing,
                      next_day_hour0 = nothing)
@@ -788,6 +888,10 @@ function process_day(date::Date,
         replay_tol = replay_tol,
         positivity_cfl_limit = positivity_cfl_limit,
         require_substep_positivity = require_substep_positivity,
+        adaptive_substeps = adaptive_substeps,
+        substep_cfl_target = substep_cfl_target,
+        min_steps_per_window = min_steps_per_window,
+        max_steps_per_window = max_steps_per_window,
         chain_mass = chain_mass,
         seed_m = seed_m,
     )

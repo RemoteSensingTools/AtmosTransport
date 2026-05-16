@@ -59,7 +59,8 @@ export TransportBinaryReader, TransportBinaryHeader, write_transport_binary
 export TransportBinaryContract, canonical_window_constant_contract,
        validate_transport_contract!
 export StreamingTransportBinaryWriter
-export open_streaming_transport_binary, write_streaming_window!, close_streaming_transport_binary!
+export open_streaming_transport_binary, write_streaming_window!,
+       close_streaming_transport_binary!, set_streaming_steps_per_window_schedule!
 export TransportBinaryDriver, AbstractTransportWindow
 export StructuredFluxDeltas, FaceIndexedFluxDeltas
 export StructuredTransportWindow, FaceIndexedTransportWindow
@@ -75,6 +76,7 @@ export ConvectionForcing, has_convection_forcing
 export copy_convection_forcing!, allocate_convection_forcing_like
 export PBLSurfaceForcing, has_pbl_surface_forcing
 export window_count, has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc
+export total_windows, window_dt, steps_per_window, steps_per_window_schedule
 export binary_capabilities, inspect_binary   # plan 40 Commit 5
 export has_surface, has_tm5conv, has_temperature
 export mass_basis, grid_type, horizontal_topology, A_ifc, B_ifc

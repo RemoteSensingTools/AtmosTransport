@@ -478,8 +478,9 @@ function main()
                 for spec in SOURCES
                     reader = readers[spec.name]
                     ctx = contexts[spec.name]
+                    steps = reader.header.steps_per_window_by_window[win]
                     dt_factor = Float64(reader.header.dt_met_seconds) /
-                        (2.0 * Float64(reader.header.steps_per_window))
+                        (2.0 * Float64(steps))
                     window = load_mass_flux_window(reader, win)
                     speeds = speed_fields_at_pressures(window, ctx.mesh, ctx.basis, dt_factor, TARGET_HPA)
                     cmrates = cm_abs_rate_fields_at_pressures(window, ctx.mesh, dt_factor, TARGET_HPA)

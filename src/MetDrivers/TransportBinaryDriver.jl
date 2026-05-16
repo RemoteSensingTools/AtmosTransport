@@ -215,13 +215,11 @@ closure bug) is rejected before any runtime integration.
 
 Bypass with env var `ATMOSTR_NO_REPLAY_CHECK=1`.
 """
-function _validate_replay_consistency_ll(reader::TransportBinaryReader)
+function _validate_replay_consistency_ll(reader::TransportBinaryReader{FT}) where FT
     if get(ENV, "ATMOSTR_NO_REPLAY_CHECK", "0") == "1"
         return nothing
     end
-    FT = reader.header.float_type
     tol_rel = replay_tolerance(FT)
-    steps = reader.header.steps_per_window
     Nt = window_count(reader)
     Nt >= 2 || return nothing
 
@@ -234,6 +232,7 @@ function _validate_replay_consistency_ll(reader::TransportBinaryReader)
     worst_idx = (0, 0, 0)
     for k in 1:(Nt - 1)
         m_next, _ps_next, _fluxes_next = load_window!(reader, k + 1)
+        steps = reader.header.steps_per_window_by_window[k]
         diag = _replay_window_pair(layout, div_scratch, m_cur, fluxes, m_next, steps)
         if diag.max_rel_err > worst_rel
             worst_rel = diag.max_rel_err
@@ -298,13 +297,11 @@ connectivity, then walks consecutive window pairs and asserts
 to within `tol_rel = 1e-10` (Float64) / `1e-4` (Float32). Bypass with
 `ENV["ATMOSTR_NO_REPLAY_CHECK"]="1"`.
 """
-function _validate_replay_consistency_rg(reader::TransportBinaryReader, grid)
+function _validate_replay_consistency_rg(reader::TransportBinaryReader{FT}, grid) where FT
     if get(ENV, "ATMOSTR_NO_REPLAY_CHECK", "0") == "1"
         return nothing
     end
-    FT = reader.header.float_type
     tol_rel = replay_tolerance(FT)
-    steps = reader.header.steps_per_window
     Nt = window_count(reader)
     Nt >= 2 || return nothing
 
@@ -320,6 +317,7 @@ function _validate_replay_consistency_rg(reader::TransportBinaryReader, grid)
     worst_idx = (0, 0)
     for k in 1:(Nt - 1)
         m_next, _, _ = load_window!(reader, k + 1)
+        steps = reader.header.steps_per_window_by_window[k]
         diag = _replay_window_pair(layout, div_scratch, m_cur, fluxes, m_next, steps)
         if diag.max_rel_err > worst_rel
             worst_rel = diag.max_rel_err
@@ -348,8 +346,11 @@ _validate_replay_consistency_rg(::Any, ::Any) = nothing
 
 function _validate_runtime_semantics(reader::TransportBinaryReader)
     h = reader.header
+    variable_steps = _has_variable_step_schedule(h.steps_per_window_by_window)
     expected_poisson_scale = 1.0 / (2 * h.steps_per_window)
-    expected_poisson_semantics = "forward_window_mass_difference / (2 * steps_per_window)"
+    expected_poisson_semantics = variable_steps ?
+        "forward_window_mass_difference / (2 * steps_per_window_by_window[win])" :
+        "forward_window_mass_difference / (2 * steps_per_window)"
 
     h.flux_kind === :substep_mass_amount ||
         throw(ArgumentError("TransportBinaryDriver requires flux_kind = :substep_mass_amount, got $(h.flux_kind)"))
@@ -392,8 +393,19 @@ function _validate_runtime_semantics(reader::TransportBinaryReader)
             poisson_semantics = expected_poisson_semantics
         end
 
-        isapprox(poisson_scale, expected_poisson_scale; atol=eps(Float64)*8, rtol=0.0) ||
-            throw(ArgumentError("TransportBinaryDriver requires poisson_balance_target_scale=$(expected_poisson_scale), got $(poisson_scale)"))
+        if variable_steps
+            length(h.poisson_balance_target_scale_by_window) == h.nwindow ||
+                throw(ArgumentError("TransportBinaryDriver requires poisson_balance_target_scale_by_window length $(h.nwindow) for variable-step binaries"))
+            for win in 1:h.nwindow
+                expected_win_scale = 1.0 / (2 * h.steps_per_window_by_window[win])
+                isapprox(h.poisson_balance_target_scale_by_window[win], expected_win_scale;
+                         atol=eps(Float64)*8, rtol=0.0) ||
+                    throw(ArgumentError("TransportBinaryDriver requires poisson_balance_target_scale_by_window[$win]=$(expected_win_scale), got $(h.poisson_balance_target_scale_by_window[win])"))
+            end
+        else
+            isapprox(poisson_scale, expected_poisson_scale; atol=eps(Float64)*8, rtol=0.0) ||
+                throw(ArgumentError("TransportBinaryDriver requires poisson_balance_target_scale=$(expected_poisson_scale), got $(poisson_scale)"))
+        end
         poisson_semantics == expected_poisson_semantics ||
             throw(ArgumentError("TransportBinaryDriver requires poisson_balance_target_semantics = '$(expected_poisson_semantics)', got $(repr(poisson_semantics))"))
     end
@@ -414,7 +426,8 @@ function Base.show(io::IO, driver::TransportBinaryDriver)
     print(io, summary(driver), "\n",
           "├── grid:          ", summary(driver.grid.horizontal), "\n",
           "├── basis:         ", air_mass_basis(driver), "\n",
-          "├── timing:        dt=", window_dt(driver), " s, steps/window=", steps_per_window(driver), "\n",
+          "├── timing:        dt=", window_dt(driver), " s, steps/window=",
+              _steps_per_window_summary(steps_per_window(driver), steps_per_window_schedule(driver)), "\n",
           "├── payload:       ", join(String.(h.payload_sections), ", "), "\n",
           "├── humidity:      ", has_qv_endpoints(reader) ? "qv_start/qv_end" : (has_qv(reader) ? "qv" : "none"), "\n",
           "├── semantics:     air_mass=", h.air_mass_sampling, ", flux=", h.flux_sampling, "/", h.flux_kind, "\n",
@@ -454,6 +467,10 @@ Base.close(driver::TransportBinaryDriver) = close(driver.reader)
 total_windows(driver::TransportBinaryDriver) = window_count(driver.reader)
 window_dt(driver::TransportBinaryDriver{FT}) where {FT} = FT(driver.reader.header.dt_met_seconds)
 steps_per_window(driver::TransportBinaryDriver) = driver.reader.header.steps_per_window
+steps_per_window(driver::TransportBinaryDriver, win::Integer) =
+    driver.reader.header.steps_per_window_by_window[Int(win)]
+steps_per_window_schedule(driver::TransportBinaryDriver) =
+    copy(driver.reader.header.steps_per_window_by_window)
 air_mass_basis(driver::TransportBinaryDriver) = mass_basis(driver.reader)
 supports_moisture(driver::TransportBinaryDriver) = has_qv(driver.reader)
 supports_native_vertical_flux(::TransportBinaryDriver) = true

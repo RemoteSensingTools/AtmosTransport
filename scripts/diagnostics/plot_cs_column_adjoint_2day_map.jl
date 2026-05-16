@@ -804,12 +804,12 @@ function _validate_replay_safe_boundaries!(reader, start_window::Int,
                                            final_window::Int,
                                            ::Type{FT}) where {FT <: AbstractFloat}
     tol = Float64(_replay_safety_tolerance(FT))
-    steps = Int(reader.header.steps_per_window)
     worst = (rel = 0.0, abs = 0.0, window = 0, idx = nothing)
     for win in start_window:final_window
         win < reader.header.nwindow || continue
         cur = load_cs_window(reader, win)
         nxt = load_cs_window(reader, win + 1)
+        steps = reader.header.steps_per_window_by_window[win]
         diag = AtmosTransport.MetDrivers.verify_window_continuity_cs(
             cur.m, cur.am, cur.bm, cur.cm, nxt.m, steps)
         if diag.max_rel_err > worst.rel
@@ -845,6 +845,14 @@ function _real_binary_problem(path::AbstractString; start_window::Int,
     driver = CubedSphereTransportDriver(bin_path; FT=FT, Hp=Hp,
                                         validate_replay=false)
     try
+        step_schedule = steps_per_window_schedule(driver)
+        length(unique(step_schedule)) == 1 || error(
+            "This checkpointed adjoint diagnostic still assumes one scalar " *
+            "dt for every model step. $(basename(bin_path)) has a variable " *
+            "steps_per_window_by_window schedule ($(minimum(step_schedule)):" *
+            "$(maximum(step_schedule))). Runtime transport supports this, " *
+            "but the diagnostic needs per-step dt plumbing before it can " *
+            "produce correct dJ/dE units.")
         nwin = total_windows(driver)
         1 <= start_window <= nwin ||
             error("--start-window must be in 1:$nwin for $(basename(bin_path))")

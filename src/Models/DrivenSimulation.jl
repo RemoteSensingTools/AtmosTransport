@@ -23,9 +23,13 @@ mutable struct DrivenSimulation{ModelT, DriverT, WindowT, AT, QT, FT, CB, SS, CT
     Δt                    :: FT
     window_dt             :: FT
     steps_per_window      :: Int
+    steps_per_window_schedule :: Vector{Int}
     time                  :: FT
     iteration             :: Int
+    start_window          :: Int
     current_window_index  :: Int
+    current_window_start_iteration :: Int
+    current_window_end_iteration   :: Int
     stop_window           :: Int
     final_iteration       :: Int
     callbacks                   :: CB
@@ -72,6 +76,16 @@ end
 end
 
 @inline _active_substep(iteration::Int, steps_per_window::Int) = mod(iteration, steps_per_window) + 1
+
+function _driver_step_schedule(driver::AbstractMetDriver)
+    schedule = Int.(steps_per_window_schedule(driver))
+    length(schedule) == total_windows(driver) ||
+        throw(ArgumentError("driver steps_per_window_schedule length $(length(schedule)) " *
+                            "does not match total_windows=$(total_windows(driver))"))
+    all(>=(1), schedule) ||
+        throw(ArgumentError("driver steps_per_window_schedule must contain only positive integers"))
+    return schedule
+end
 
 @inline _allocate_storage_like(reference) = similar(reference)
 @inline _allocate_storage_like(reference::NTuple{6}) = ntuple(p -> similar(reference[p]), 6)
@@ -312,13 +326,17 @@ function _load_window(driver::D, win::Int) where {D <: AbstractMetDriver}
     return load_transport_window(driver, win)
 end
 
-function _maybe_advance_window!(sim::DrivenSimulation, substep::Int)
-    if sim.iteration > 0 && substep == 1
+function _maybe_advance_window!(sim::DrivenSimulation)
+    if sim.iteration > 0 && sim.iteration == sim.current_window_end_iteration
         next_window = sim.current_window_index + 1
         next_window <= sim.stop_window ||
             throw(ArgumentError("DrivenSimulation attempted to step past stop_window=$(sim.stop_window)"))
-        sim.window = _adapt_window_to_model_backend(_load_window(sim.driver, next_window), sim.model.state.air_mass)
+        sim.current_window_start_iteration = sim.iteration
         sim.current_window_index = next_window
+        sim.steps_per_window = sim.steps_per_window_schedule[next_window]
+        sim.current_window_end_iteration = sim.iteration + sim.steps_per_window
+        sim.Δt = sim.window_dt / typeof(sim.Δt)(sim.steps_per_window)
+        sim.window = _adapt_window_to_model_backend(_load_window(sim.driver, next_window), sim.model.state.air_mass)
         if sim.reset_air_mass_each_window
             _reset_air_mass_preserve_vmr!(sim.model.state, sim.window.air_mass,
                                           sim.model.grid.horizontal)
@@ -422,8 +440,10 @@ function DrivenSimulation(model::TransportModel,
     end
     model = _install_convection_forcing(model, driver, window)
     FT = _storage_eltype(model.state.air_mass)
-    Δt = FT(window_dt(driver)) / FT(steps_per_window(driver))
-    nsteps_total = (stop_window - start_window + 1) * steps_per_window(driver)
+    step_schedule = _driver_step_schedule(driver)
+    steps_current = step_schedule[Int(start_window)]
+    Δt = FT(window_dt(driver)) / FT(steps_current)
+    nsteps_total = sum(@view step_schedule[Int(start_window):Int(stop_window)])
 
     flux_interp = interpolate_fluxes_within_window === nothing ?
                   (flux_interpolation_mode(driver) === :interpolate) : Bool(interpolate_fluxes_within_window)
@@ -436,10 +456,14 @@ function DrivenSimulation(model::TransportModel,
         qv_buffer,
         Δt,
         FT(window_dt(driver)),
-        steps_per_window(driver),
+        steps_current,
+        step_schedule,
         zero(FT),
         0,
         Int(start_window),
+        Int(start_window),
+        0,
+        steps_current,
         Int(stop_window),
         Int(nsteps_total),
         callbacks,
@@ -471,7 +495,14 @@ function DrivenSimulation(model::TransportModel,
 end
 
 window_index(sim::DrivenSimulation) = sim.current_window_index
-substep_index(sim::DrivenSimulation) = _active_substep(sim.iteration, sim.steps_per_window)
+function substep_index(sim::DrivenSimulation)
+    if sim.iteration == sim.current_window_end_iteration &&
+       sim.current_window_index < sim.stop_window
+        return 1
+    end
+    return min(sim.steps_per_window,
+               sim.iteration - sim.current_window_start_iteration + 1)
+end
 current_qv(sim::DrivenSimulation) = sim.qv_buffer
 
 """
@@ -501,8 +532,8 @@ function step!(sim::DrivenSimulation)
     sim.iteration < sim.final_iteration ||
         throw(ArgumentError("DrivenSimulation has already completed all scheduled steps"))
 
-    substep = _active_substep(sim.iteration, sim.steps_per_window)
-    SectionTimer.@section :window_advance _maybe_advance_window!(sim, substep)
+    SectionTimer.@section :window_advance _maybe_advance_window!(sim)
+    substep = substep_index(sim)
     SectionTimer.@section :forcing_refresh _refresh_forcing!(sim, substep)
 
     # Plan 17 Commit 6 + plan 18 A3: step!(model) runs the live operator
@@ -522,8 +553,11 @@ function step!(sim::DrivenSimulation)
 end
 
 function run_window!(sim::DrivenSimulation)
-    target_iteration = min(sim.final_iteration,
-                           ((div(sim.iteration, sim.steps_per_window) + 1) * sim.steps_per_window))
+    if sim.iteration == sim.current_window_end_iteration &&
+       sim.current_window_index < sim.stop_window
+        SectionTimer.@section :window_advance _maybe_advance_window!(sim)
+    end
+    target_iteration = min(sim.final_iteration, sim.current_window_end_iteration)
     while sim.iteration < target_iteration
         step!(sim)
     end

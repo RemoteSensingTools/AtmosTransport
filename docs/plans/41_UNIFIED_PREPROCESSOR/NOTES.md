@@ -5,7 +5,7 @@
 Drafted 2026-05-15 (carried over from the CS-contract-round-3 session on
 2026-05-14).
 
-Executor state, 2026-05-15:
+Executor state, 2026-05-16:
 - P0a / P0b shipped: typed met-reader and vertical-transform surfaces.
 - P1 shipped: typed Axis-3 contract surfaces for CS / LL / RG, with
   lazy contract-owned scratch.
@@ -73,10 +73,12 @@ Executor state, 2026-05-15:
   With `--warn-only-positivity`, legacy and unified outputs compare exact
   byte-for-byte for the 2021-12-01 F32 binary (`9551547392` bytes); replay
   stayed active and matched worst rel `2.63e-7` / abs `5.20e5` at win 13.
-- GEOS gate-policy decision: mirror the full-archive C180 regen config in the
-  one-day smoke config. Replay remains mandatory; substep positivity is
-  log-only (`require_substep_positivity = false`) until GEOS-native vertical
-  merging can remove the thin-L72-mesosphere false blocker.
+- GEOS gate-policy decision: keep replay and substep positivity mandatory.
+  The 0.25 hPa vertical cap handles the mesospheric thin-layer artifact;
+  remaining C180 CFL variability is handled by adaptive per-window integer
+  substeps instead of forcing every hour to the worst hour's step count.
+  The previous log-only workaround is retired for the GEOS-native regen
+  configs.
 - RG blocker decision: keep replay mandatory and carry the real N24 dry config
   as an inadmissible legacy-input blocker, not a unified-driver blocker. The
   fake decoded spectral-cache RG fixture remains the byte-parity cutover test
@@ -96,6 +98,20 @@ Executor state, 2026-05-15:
   header writer remains the single LL production writer path.
 - P4g shipped: deleted the now-dead `unified_driver` production keyword
   and test call sites.
+- P4h shipped: GEOS-native CS preprocessing can emit a per-window
+  `steps_per_window_by_window` schedule. `[numerics].substep_schedule =
+  "adaptive_cfl"` chooses the integer hourly substep count from the
+  write-time CS positivity diagnostic, rescales per-substep fluxes and
+  `dm` consistently, and patches the streaming header before close.
+  Runtime `DrivenSimulation` now advances by the driver schedule instead
+  of assuming one scalar step count.
+- P4i shipped: C180 GEOS configs now target the 64-level
+  merge-above-0.25 hPa product with adaptive substeps
+  (`substep_cfl_target = 0.5`, max 64). The Catrine GEOS run configs
+  point at the adaptive directory and require `expected_nlevel = 64`,
+  `required_preprocessor_contract = "plan41_variable_substeps"`, and
+  `require_adaptive_substeps = true`, so old 72-level constant-step
+  files fail at startup.
 
 **Read [DESIGN.md](DESIGN.md) first** for the typed three-axis rationale,
 the anti-pattern audit with file:line citations, and the foot-gun

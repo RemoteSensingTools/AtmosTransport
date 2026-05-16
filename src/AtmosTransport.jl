@@ -139,13 +139,14 @@ using .MetDrivers: AbstractDriver, AbstractClosure, AbstractMetDriver,
                    ERA5ReducedGaussianGeometry,
                    read_era5_reduced_gaussian_geometry, read_era5_reduced_gaussian_mesh,
                    build_dry_fluxes!, build_air_mass!,
-                   total_windows, window_dt, steps_per_window, supports_diffusion, supports_convection,
+                   total_windows, window_dt, steps_per_window, steps_per_window_schedule,
+                   supports_diffusion, supports_convection,
                    DiagnoseVerticalFromHorizontal, PressureTendencyClosure,
                    CubedSphereBinaryReader, CubedSphereBinaryHeader,
                    load_cs_window, cs_window_count, mesh_convention, mesh_definition,
                    StreamingTransportBinaryWriter,
                    open_streaming_transport_binary, write_streaming_window!,
-                   close_streaming_transport_binary!,
+                   close_streaming_transport_binary!, set_streaming_steps_per_window_schedule!,
                    binary_capabilities, inspect_binary   # plan 40 Commit 5
 
 # ---- Physics operators ----
@@ -364,7 +365,7 @@ export grid_type, horizontal_topology
 export source_flux_sampling, air_mass_sampling, flux_sampling, flux_kind, humidity_sampling, delta_semantics
 export A_ifc, B_ifc
 export build_dry_fluxes!, build_air_mass!
-export total_windows, window_dt, steps_per_window
+export total_windows, window_dt, steps_per_window, steps_per_window_schedule
 export diagnose_cm_from_continuity!, diagnose_cm_from_continuity_vc!
 export diagnose_cm_from_continuity_ka!
 export ERA5ReducedGaussianGeometry
@@ -374,7 +375,8 @@ export supports_diffusion, supports_convection
 export CubedSphereBinaryReader, CubedSphereBinaryHeader
 export load_cs_window, cs_window_count, mesh_convention, mesh_definition
 export StreamingTransportBinaryWriter
-export open_streaming_transport_binary, write_streaming_window!, close_streaming_transport_binary!
+export open_streaming_transport_binary, write_streaming_window!,
+       close_streaming_transport_binary!, set_streaming_steps_per_window_schedule!
 
 # Models
 export TransportModel, Simulation, DrivenSimulation, SurfaceFluxSource

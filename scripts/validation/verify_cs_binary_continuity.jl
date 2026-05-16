@@ -3,8 +3,8 @@
 # Test 4 — replay-continuity validation for cubed-sphere transport binaries.
 #
 # For windows 1..Nt-1, replay the stored fluxes against the next stored
-# window's `m` field.  For the final window, use the explicit `dm` payload
-# when present: m_next = m_cur + (2 * steps_per_window) * dm.
+# window's `m` field. For the final window, use the explicit total-mass
+# `dm` payload when present: m_next = m_cur + dm.
 
 using Printf
 
@@ -92,10 +92,13 @@ function main(argv = ARGS)
     try
         h = reader.header
         Nt = h.nwindow
-        steps = h.steps_per_window
+        steps_schedule = h.steps_per_window_by_window
         has_dm = :dm in h.payload_sections
-        @info @sprintf("  grid: C%d panels=%d levels=%d windows=%d steps/window=%d",
-                       h.Nc, h.npanel, h.nlevel, Nt, steps)
+        @info @sprintf("  grid: C%d panels=%d levels=%d windows=%d steps/window=%d%s",
+                       h.Nc, h.npanel, h.nlevel, Nt, h.steps_per_window,
+                       length(unique(steps_schedule)) == 1 ? "" :
+                       @sprintf(" max (per-window %d:%d)",
+                                minimum(steps_schedule), maximum(steps_schedule)))
         @info "  payload sections: $(h.payload_sections)"
 
         rows = NamedTuple[]
@@ -134,6 +137,7 @@ function main(argv = ARGS)
                 break
             end
 
+            steps = steps_schedule[win]
             diag = verify_window_continuity_cs(cur.m, cur.am, cur.bm, cur.cm,
                                                m_next, steps)
             row = (window = win, max_abs_err = diag.max_abs_err,

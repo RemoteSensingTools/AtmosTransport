@@ -14,7 +14,9 @@
 # Differs from `geosit_c180_native_dec2021_f32.toml` only in (a)
 # output location (NAS), (b) intended date range (full archive),
 # and (c) the canonical CLI invocation uses `--start/--end` to drive
-# the per-day loop.
+# the per-day loop. The adaptive output directory is intentionally separate
+# from the earlier merge-only attempt so old 72L/constant-step files cannot
+# be mistaken for the new product.
 #
 # Usage (foreground smoke):
 #   julia -t8 --project=. \
@@ -37,7 +39,7 @@ include_surface    = true     # writes the PBL section for runtime diffusion
 include_convection = true     # writes CMFMC + DTRAIN for runtime convection
 
 [output]
-directory  = "/home/cfranken/data/AtmosTransport/met/geosit/C180/transport_binary_v4_merge025hpa_f32"
+directory  = "/home/cfranken/data/AtmosTransport/met/geosit/C180/transport_binary_v4_merge025hpa_adaptive_f32"
 mass_basis = "dry"
 
 [grid]
@@ -60,10 +62,14 @@ dt_met_seconds = 3600.0
 # rather than a multi-day pressure-fixer chain.
 chain_mass     = false
 
-# Per-substep positivity gate (commits d1f50b6 / ae82b6d / 45b87f3 / 9b1ceda).
-# The prior native-L72 path hit `outgoing/m > 1` in very thin mesospheric
-# layers. This regen merges all native layers above 0.25 hPa into one cap, so
-# the CFL guard is strict again; a violation here is a preprocessing or source
-# data issue, not an expected thin-layer artifact.
+# Per-substep positivity gate plus adaptive per-window substeps. The prior
+# native-L72 path hit `outgoing/m > 1` in thin upper layers; the 0.25 hPa cap
+# removes that artifact, while the per-window schedule handles normal C180
+# CFL variability elsewhere in the column without forcing all hours to use
+# the worst hour's step count.
 positivity_cfl_limit       = 0.95
 require_substep_positivity = true
+substep_schedule           = "adaptive_cfl"
+substep_cfl_target         = 0.5
+min_steps_per_window       = 1
+max_steps_per_window       = 64

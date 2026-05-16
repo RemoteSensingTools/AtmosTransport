@@ -68,7 +68,8 @@ function ll_binary_profile(path::AbstractString, cfg::Config)
         nx, ny, nz = size(m)
         u = Array{Float32}(undef, nx, ny, nz)
         v = Array{Float32}(undef, nx, ny, nz)
-        dt_factor = Float32(reader.header.dt_met_seconds / (2.0 * reader.header.steps_per_window))
+        steps = reader.header.steps_per_window_by_window[cfg.profile_window]
+        dt_factor = Float32(reader.header.dt_met_seconds / (2.0 * steps))
         recover_ll_cell_center_winds!(u, v, fluxes.am, fluxes.bm, ps,
             Float32.(reader.header.A_ifc), Float32.(reader.header.B_ifc),
             Float32.(mesh.φᶜ), Float32(mesh.radius * deg2rad(mesh.Δφ)),

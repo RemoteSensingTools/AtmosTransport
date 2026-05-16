@@ -23,6 +23,8 @@ Supertype for all meteorological data drivers.
     total_windows(driver) -> Int
     window_dt(driver) -> FT (seconds per met window)
     steps_per_window(driver) -> Int
+    steps_per_window(driver, win_index) -> Int
+    steps_per_window_schedule(driver) -> Vector{Int}
     load_transport_window(driver, win_index)
     driver_grid(driver)
     air_mass_basis(driver)
@@ -48,6 +50,7 @@ abstract type AbstractMassFluxMetDriver <: AbstractMetDriver end
 function total_windows end
 function window_dt end
 function steps_per_window end
+function steps_per_window_schedule end
 function load_transport_window end
 function driver_grid end
 function air_mass_basis end
@@ -56,6 +59,9 @@ function load_met_window! end
 
 met_interval(d::AbstractMetDriver) = window_dt(d)
 start_date(::AbstractMetDriver) = Date(2000, 1, 1)
+steps_per_window(d::AbstractMetDriver, _win::Integer) = steps_per_window(d)
+steps_per_window_schedule(d::AbstractMetDriver) =
+    fill(steps_per_window(d), total_windows(d))
 
 """
     current_time(meteo) -> Float64
@@ -108,7 +114,8 @@ supports_moisture(::AbstractMetDriver) = false
 
 export AbstractMetDriver, AbstractRawMetDriver, AbstractMassFluxMetDriver
 export AbstractDriver
-export total_windows, window_dt, steps_per_window, load_transport_window, load_met_window!
+export total_windows, window_dt, steps_per_window, steps_per_window_schedule,
+       load_transport_window, load_met_window!
 export driver_grid, air_mass_basis, flux_interpolation_mode
 export supports_diffusion, supports_convection
 export supports_native_vertical_flux, supports_moisture

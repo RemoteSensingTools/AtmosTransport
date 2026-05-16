@@ -29,6 +29,7 @@ struct CubedSphereBinaryHeader
     float_bytes      :: Int
     dt_met_seconds   :: Float64
     steps_per_window :: Int
+    steps_per_window_by_window :: Vector{Int}
     mass_basis       :: Symbol
     panel_convention :: Symbol   # :gnomonic or :geos_native
     cs_definition    :: Symbol
@@ -39,6 +40,7 @@ struct CubedSphereBinaryHeader
     B_ifc            :: Vector{Float64}
     payload_sections :: Vector{Symbol}
     elems_per_window :: Int
+    poisson_balance_target_scale_by_window :: Vector{Float64}
     raw_header       :: Dict{String, Any}
 end
 
@@ -93,6 +95,11 @@ function CubedSphereBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = F
     nwindow = Int(hdr.nwindow)
     dt_met = Float64(hdr.dt_met_seconds)
     steps_per_window = Int(hdr.steps_per_window)
+    steps_schedule = _parse_steps_per_window_schedule(hdr, nwindow, steps_per_window)
+    scalar_poisson_scale = haskey(hdr, :poisson_balance_target_scale) ?
+        Float64(hdr.poisson_balance_target_scale) : 1.0 / (2 * steps_per_window)
+    poisson_scale_schedule = _parse_poisson_scale_schedule(
+        hdr, nwindow, scalar_poisson_scale)
     mass_basis = Symbol(lowercase(String(get(hdr, :mass_basis, "moist"))))
     panel_convention_str = lowercase(String(get(hdr, :panel_convention, "gnomonic")))
     panel_convention = if panel_convention_str in ("gnomonic", "gnomic")
@@ -129,10 +136,10 @@ function CubedSphereBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = F
 
     cs_header = CubedSphereBinaryHeader(
         Nc, npanel, nlevel, nwindow, header_bytes, float_bytes,
-        dt_met, steps_per_window, mass_basis, panel_convention,
+        dt_met, steps_per_window, steps_schedule, mass_basis, panel_convention,
         cs_definition, coordinate_law, center_law, longitude_offset_deg,
         A_ifc, B_ifc,
-        payload_sections, elems_per_window,
+        payload_sections, elems_per_window, poisson_scale_schedule,
         Dict{String, Any}(String(k) => v for (k, v) in pairs(hdr))
     )
 
@@ -168,7 +175,8 @@ function Base.show(io::IO, r::CubedSphereBinaryReader)
           ", convention=", h.panel_convention, ", definition=", h.cs_definition, "\n",
           "├── storage:       ", disk_ft, " on disk, load as ", eltype(r.data), "\n",
           "├── basis:         ", h.mass_basis, "\n",
-          "├── timing:        dt=", h.dt_met_seconds, " s, steps/window=", h.steps_per_window, "\n",
+          "├── timing:        dt=", h.dt_met_seconds, " s, steps/window=",
+              _steps_per_window_summary(h.steps_per_window, h.steps_per_window_by_window), "\n",
           "├── payload:       ", join(String.(h.payload_sections), ", "), "\n",
           "└── windows:       ", h.nwindow)
 end

@@ -108,6 +108,37 @@ end
 _resolve_require_substep_positivity(cfg::AbstractDict) =
     Bool(get(get(cfg, "numerics", Dict()), "require_substep_positivity", true))
 
+function _resolve_substep_schedule_policy(cfg::AbstractDict,
+                                          positivity_cfl_limit::Real)
+    numerics = get(cfg, "numerics", Dict())
+    mode = Symbol(lowercase(String(get(numerics, "substep_schedule", "fixed"))))
+    adaptive = mode in (:adaptive, :adaptive_cfl, :cfl)
+    mode in (:fixed, :constant, :adaptive, :adaptive_cfl, :cfl) ||
+        error("Invalid `[numerics].substep_schedule = $(mode)`: expected " *
+              "`fixed` or `adaptive_cfl`.")
+    target = Float64(get(numerics, "substep_cfl_target",
+                         adaptive ? min(Float64(positivity_cfl_limit), 0.5) :
+                         Float64(positivity_cfl_limit)))
+    isfinite(target) && target > 0 ||
+        error("Invalid `[numerics].substep_cfl_target = $(target)`: must be finite and > 0.")
+    min_steps = Int(get(numerics, "min_steps_per_window", 1))
+    max_steps = Int(get(numerics, "max_steps_per_window", typemax(Int)))
+    1 <= min_steps <= max_steps ||
+        error("Invalid adaptive step bounds: min_steps_per_window=$(min_steps), " *
+              "max_steps_per_window=$(max_steps).")
+    target <= Float64(positivity_cfl_limit) || @warn(
+        "`substep_cfl_target` is looser than `positivity_cfl_limit`; " *
+        "adaptive scheduling may still be rejected by the final positivity contract",
+        substep_cfl_target = target,
+        positivity_cfl_limit = positivity_cfl_limit)
+    return (
+        adaptive_substeps = adaptive,
+        substep_cfl_target = target,
+        min_steps_per_window = min_steps,
+        max_steps_per_window = max_steps,
+    )
+end
+
 function _vertical_float(raw, key::AbstractString)
     value = if raw isa AbstractString
         s = strip(raw)
@@ -231,6 +262,7 @@ function _process_day_native(cfg::AbstractDict;
     chain_mass     = _resolve_chain_mass(cfg)
     positivity_cfl_limit       = _resolve_positivity_cfl_limit(cfg)
     require_substep_positivity = _resolve_require_substep_positivity(cfg)
+    substep_policy = _resolve_substep_schedule_policy(cfg, positivity_cfl_limit)
     if !(grid isa CubedSphereTargetGeometry && settings isa AbstractGEOSSettings)
         error("Unified native-source preprocessing currently supports only " *
               "native GEOS → cubed_sphere preprocessing.")
@@ -259,6 +291,10 @@ function _process_day_native(cfg::AbstractDict;
             chain_mass      = chain_mass,
             positivity_cfl_limit       = positivity_cfl_limit,
             require_substep_positivity = require_substep_positivity,
+            adaptive_substeps          = substep_policy.adaptive_substeps,
+            substep_cfl_target         = substep_policy.substep_cfl_target,
+            min_steps_per_window       = substep_policy.min_steps_per_window,
+            max_steps_per_window       = substep_policy.max_steps_per_window,
             seed_m          = seed_m,
         )
         result = process_day(d, grid, settings, vertical; day_kwargs...)

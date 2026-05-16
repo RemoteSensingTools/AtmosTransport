@@ -215,7 +215,6 @@ function run_cs(cfg)
     reader1 = CubedSphereBinaryReader(first(binary_paths); FT)
     h = reader1.header
     Nc, Nz = h.Nc, h.nlevel
-    steps_per_window = h.steps_per_window
     window_hours = h.dt_met_seconds / 3600.0
     mesh = CubedSphereMesh(; Nc, Hp, definition=mesh_definition(reader1))
 
@@ -266,6 +265,7 @@ function run_cs(cfg)
         stop_win = stop_window_override === nothing ? n_win : min(Int(stop_window_override), n_win)
 
         for win in start_window:stop_win
+            steps_per_window = reader.header.steps_per_window_by_window[win]
             pm_w, _, pam_w, pbm_w, pcm_w = load_cs_window(reader, win)
 
             for p in 1:6; pm[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, :] .= AT(pm_w[p]); end

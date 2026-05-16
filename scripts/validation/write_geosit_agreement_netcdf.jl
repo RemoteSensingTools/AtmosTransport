@@ -309,8 +309,6 @@ function main()
     tangent_basis = ntuple(p -> panel_cell_local_tangent_basis(mesh, p), 6)
     Nc = h.Nc
     Nz = h.nlevel
-    dt_factor = Float32(h.dt_met_seconds / (2 * h.steps_per_window))
-    geos_flux_scale = Float32(Float64(dt_factor) / geos_mass_flux_dt) / GRAVITY
     map_index = Dict(k => i for (i, k) in enumerate(map_levels))
 
     @info @sprintf("Writing GEOS-IT agreement NetCDF: C%d L%d, %d window(s), %d map level(s)",
@@ -413,6 +411,9 @@ function main()
 
             for (tw, w) in enumerate(windows)
                 @info @sprintf("  Window %d/%d (GEOS time index %d)", tw, length(windows), w)
+                steps = h.steps_per_window_by_window[w]
+                dt_factor = Float32(h.dt_met_seconds / (2 * steps))
+                geos_flux_scale = Float32(Float64(dt_factor) / geos_mass_flux_dt) / GRAVITY
                 win = load_cs_window(reader, w)
                 fill_dp_from_mass!(gen_dp, win.m, mesh.cell_areas, GRAVITY)
                 recover_cs_cell_center_winds!(gen_u_loc, gen_v_loc, win.am, win.bm,

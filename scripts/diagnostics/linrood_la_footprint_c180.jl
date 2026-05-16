@@ -58,6 +58,10 @@ function _build_meteo_step_sequence(reader, nsteps_total, AT)
     # Load N windows × M substeps, where each substep within a window
     # shares the same (am, bm, cm). nsteps_total = N × M.
     steps_per_window = reader.header.steps_per_window
+    length(unique(reader.header.steps_per_window_by_window)) == 1 ||
+        error("linrood_la_footprint_c180.jl currently assumes a constant " *
+              "steps_per_window schedule; variable-step binaries need a " *
+              "per-step dt/metadata path in this diagnostic.")
     @assert nsteps_total % steps_per_window == 0
         "nsteps_total ($nsteps_total) must be a multiple of steps_per_window ($steps_per_window)"
     n_windows = nsteps_total ÷ steps_per_window

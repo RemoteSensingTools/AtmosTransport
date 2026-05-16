@@ -19,10 +19,13 @@ backend = "cuda"
 float_type = "Float32"
 
 [input]
-folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_v4_f32"
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_v4_merge025hpa_adaptive_f32"
 start_date   = "2021-12-01"
 end_date     = "2021-12-03"
 file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+expected_nlevel = 64
+required_preprocessor_contract = "plan41_variable_substeps"
+require_adaptive_substeps = true
 
 [run]
 scheme = "ppm"

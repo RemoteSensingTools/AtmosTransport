@@ -317,6 +317,51 @@ end
     end
 end
 
+@testset "Streaming transport binary carries per-window step schedule" begin
+    mktemp() do path, io
+        close(io)
+        FT = Float64
+        mesh = ReducedGaussianMesh(FT[-45, 45], [4, 4]; FT=FT)
+        vertical = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
+        grid = AtmosGrid(mesh, vertical, CPU(); FT=FT)
+        ncell = ncells(mesh)
+        nface_h = nfaces(mesh)
+        nlevel = nlevels(grid)
+        window = (
+            m = fill(FT(1), ncell, nlevel),
+            hflux = zeros(FT, nface_h, nlevel),
+            cm = zeros(FT, ncell, nlevel + 1),
+            ps = fill(FT(90000), ncell),
+        )
+        writer = open_streaming_transport_binary(
+            path, grid, 2, window;
+            FT = FT,
+            dt_met_seconds = 3600.0,
+            steps_per_window = 2,
+            source_flux_sampling = :window_start_endpoint,
+            mass_basis = :moist)
+        set_streaming_steps_per_window_schedule!(writer, [2, 3])
+        write_streaming_window!(writer, window)
+        write_streaming_window!(writer, window)
+        close_streaming_transport_binary!(writer)
+
+        reader = TransportBinaryReader(path; FT=FT)
+        @test reader.header.steps_per_window == 3
+        @test reader.header.steps_per_window_by_window == [2, 3]
+        @test reader.header.poisson_balance_target_scale_by_window == [0.25, 1 / 6]
+        @test reader.header.poisson_balance_target_semantics ==
+              "forward_window_mass_difference / (2 * steps_per_window_by_window[win])"
+        close(reader)
+
+        driver = TransportBinaryDriver(path; FT=FT, arch=CPU())
+        @test steps_per_window(driver) == 3
+        @test steps_per_window(driver, 1) == 2
+        @test steps_per_window(driver, 2) == 3
+        @test steps_per_window_schedule(driver) == [2, 3]
+        close(driver)
+    end
+end
+
 @testset "TransportBinaryDriver timing semantics validation" begin
     mktemp() do path, io
         close(io)

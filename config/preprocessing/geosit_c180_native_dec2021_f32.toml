@@ -26,7 +26,7 @@ include_surface = true
 include_convection = true
 
 [output]
-directory  = "/temp1/c180_geosit_native_v4_merge025hpa_dec2021_f32"
+directory  = "/temp1/c180_geosit_native_v4_merge025hpa_adaptive_dec2021_f32"
 mass_basis = "dry"
 
 [grid]
@@ -50,7 +50,11 @@ dt_met_seconds = 3600.0
 chain_mass     = false
 
 # Keep replay and substep positivity strict. The vertical transform merges
-# all native GEOS layers above 0.25 hPa into one cap, eliminating the prior
-# mesospheric thin-layer CFL violation instead of logging through it.
+# all native GEOS layers above 0.25 hPa into one cap; the remaining CFL
+# variation is handled by a per-window integer substep schedule.
 positivity_cfl_limit       = 0.95
 require_substep_positivity = true
+substep_schedule           = "adaptive_cfl"
+substep_cfl_target         = 0.5
+min_steps_per_window       = 1
+max_steps_per_window       = 64

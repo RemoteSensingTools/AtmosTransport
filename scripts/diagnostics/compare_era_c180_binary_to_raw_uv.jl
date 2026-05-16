@@ -199,7 +199,8 @@ function main()
         mesh = load_grid(reader; FT=Float32, arch=CPU(), Hp=0).horizontal
         basis = ntuple(p -> panel_cell_local_tangent_basis(mesh, p), 6)
         lonlat = ntuple(p -> panel_cell_center_lonlat(mesh, p), 6)
-        dt_factor = Float64(reader.header.dt_met_seconds) / (2.0 * Float64(reader.header.steps_per_window))
+        steps = reader.header.steps_per_window_by_window[cfg.window]
+        dt_factor = Float64(reader.header.dt_met_seconds) / (2.0 * Float64(steps))
 
         rows = NamedTuple[]
         for p in 1:6

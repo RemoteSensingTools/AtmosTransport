@@ -4,6 +4,7 @@ using Test
 
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
+using .AtmosTransport.Architectures: CPU
 
 function write_driven_cs_binary(path::AbstractString;
                                 FT::Type{<:AbstractFloat} = Float64,
@@ -14,7 +15,9 @@ function write_driven_cs_binary(path::AbstractString;
                                 surface_windows = nothing,
                                 convection_windows = nothing,
                                 dtrain_windows = nothing,
-                                tm5_windows = nothing)
+                                tm5_windows = nothing,
+                                steps_per_window::Int = 2,
+                                steps_per_window_by_window = nothing)
     window_dm_panels !== nothing &&
         length(window_dm_panels) == length(window_mass_scales) ||
         window_dm_panels === nothing || throw(ArgumentError("window_dm_panels length must match window_mass_scales"))
@@ -31,19 +34,20 @@ function write_driven_cs_binary(path::AbstractString;
         length(tm5_windows) == length(window_mass_scales) ||
         tm5_windows === nothing || throw(ArgumentError("tm5_windows length must match window_mass_scales"))
     vc = if Nz == 2
-        HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
+        AtmosTransport.HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
     elseif Nz == 5
-        HybridSigmaPressure(FT[0, 100, 300, 600, 1000, 2000],
-                            FT[0, 0, 0.1, 0.3, 0.7, 1])
+        AtmosTransport.HybridSigmaPressure(FT[0, 100, 300, 600, 1000, 2000],
+                                           FT[0, 0, 0.1, 0.3, 0.7, 1])
     else
-        HybridSigmaPressure(FT.(collect(range(0, stop = 2000, length = Nz + 1))),
-                            FT.(collect(range(0, stop = 1, length = Nz + 1))))
+        AtmosTransport.HybridSigmaPressure(
+            FT.(collect(range(0, stop = 2000, length = Nz + 1))),
+            FT.(collect(range(0, stop = 1, length = Nz + 1))))
     end
     writer = AtmosTransport.MetDrivers.open_streaming_cs_transport_binary(
         path, Nc, 6, Nz, length(window_mass_scales), vc;
         FT = FT,
         dt_met_seconds = 3600.0,
-        steps_per_window = 2,
+        steps_per_window = steps_per_window,
         include_flux_delta = window_dm_panels !== nothing,
         mass_basis = :dry,
         include_surface = surface_windows !== nothing,
@@ -51,6 +55,9 @@ function write_driven_cs_binary(path::AbstractString;
         include_dtrain = dtrain_windows !== nothing,
         include_tm5conv = tm5_windows !== nothing,
     )
+    steps_per_window_by_window !== nothing &&
+        AtmosTransport.MetDrivers.set_streaming_steps_per_window_schedule!(
+            writer, steps_per_window_by_window)
 
     for (win, scale) in enumerate(window_mass_scales)
         window = (
@@ -80,6 +87,48 @@ function write_driven_cs_binary(path::AbstractString;
 
     AtmosTransport.MetDrivers.close_streaming_transport_binary!(writer)
     return nothing
+end
+
+@testset "CubedSphere driven runtime honors per-window step schedule" begin
+    mktemp() do path, io
+        close(io)
+        write_driven_cs_binary(path; FT=Float64, Nc=4, Nz=2,
+                               window_mass_scales=(1, 1),
+                               steps_per_window=3,
+                               steps_per_window_by_window=[2, 3])
+        driver = CubedSphereTransportDriver(path; FT=Float64, arch=CPU(), Hp=1)
+        @test steps_per_window(driver) == 3
+        @test steps_per_window(driver, 1) == 2
+        @test steps_per_window(driver, 2) == 3
+        @test steps_per_window_schedule(driver) == [2, 3]
+
+        window = load_transport_window(driver, 1)
+        mesh = driver_grid(driver).horizontal
+        state = CubedSphereState(DryBasis, mesh, window.air_mass;
+                                 CO2 = ntuple(p -> window.air_mass[p] .* 1e-6, 6))
+        fluxes = allocate_face_fluxes(mesh, 2; FT=Float64, basis=DryBasis)
+        model = TransportModel(state, fluxes, driver_grid(driver), UpwindScheme())
+        sim = DrivenSimulation(model, driver; start_window=1, stop_window=2)
+
+        @test sim.final_iteration == 5
+        @test sim.steps_per_window == 2
+        @test sim.Δt == 1800.0
+        run_window!(sim)
+        @test sim.iteration == 2
+        @test window_index(sim) == 1
+
+        step!(sim)
+        @test window_index(sim) == 2
+        @test sim.steps_per_window == 3
+        @test sim.Δt == 1200.0
+        @test sim.time == 4800.0
+
+        run!(sim)
+        @test sim.iteration == 5
+        @test sim.time == 7200.0
+        @test window_index(sim) == 2
+        close(driver)
+    end
 end
 
 function make_cs_surface_panels(FT::Type{<:AbstractFloat}, Nc::Int;
@@ -497,7 +546,7 @@ end
     FT = Float64
     Nx, Ny, Nz = 3, 2, 2
     mesh = LatLonMesh(; FT = FT, Nx = Nx, Ny = Ny)
-    vertical = HybridSigmaPressure(FT[0, 100, 1000], FT[0, 0.2, 1])
+    vertical = AtmosTransport.HybridSigmaPressure(FT[0, 100, 1000], FT[0, 0.2, 1])
     grid = AtmosGrid(mesh, vertical, CPU(); FT = FT)
     window = (
         m = fill(FT(1e12), Nx, Ny, Nz),

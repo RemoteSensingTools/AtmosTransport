@@ -219,8 +219,6 @@ function main()
     tangent_basis = ntuple(p -> panel_cell_local_tangent_basis(mesh, p), 6)
     Nc = h.Nc
     Nz_gen = h.nlevel
-    dt_factor = Float32(h.dt_met_seconds / (2 * h.steps_per_window))
-    geos_flux_scale = Float32(Float64(dt_factor) / geos_mass_flux_dt) / GRAVITY
 
     @assert h.panel_convention === :geos_native
     @assert h.cs_definition === :gmao_equal_distance
@@ -274,10 +272,20 @@ function main()
 
         @printf("Comparing %d window(s), generated Nz=%d, GEOS Nz=%d, speed gate %.2f m/s\n",
                 length(windows), Nz_gen, Nz_geos, speed_threshold)
-        @printf("GEOS MFXC/MFYC scale: dt_factor %.1f s / mass_flux_dt %.1f s / g = %.6g\n",
-                Float64(dt_factor), geos_mass_flux_dt, geos_flux_scale)
+        if length(unique(h.steps_per_window_by_window[windows])) == 1
+            steps = h.steps_per_window_by_window[first(windows)]
+            dt_factor = Float32(h.dt_met_seconds / (2 * steps))
+            geos_flux_scale = Float32(Float64(dt_factor) / geos_mass_flux_dt) / GRAVITY
+            @printf("GEOS MFXC/MFYC scale: dt_factor %.1f s / mass_flux_dt %.1f s / g = %.6g\n",
+                    Float64(dt_factor), geos_mass_flux_dt, geos_flux_scale)
+        else
+            @printf("GEOS MFXC/MFYC scale varies by window via steps_per_window_by_window.\n")
+        end
 
         for w in windows
+            steps = h.steps_per_window_by_window[w]
+            dt_factor = Float32(h.dt_met_seconds / (2 * steps))
+            geos_flux_scale = Float32(Float64(dt_factor) / geos_mass_flux_dt) / GRAVITY
             win = load_cs_window(reader, w)
             fill_dp_from_mass!(gen_dp, win.m, mesh.cell_areas, GRAVITY)
             recover_cs_cell_center_winds!(gen_u_loc, gen_v_loc, win.am, win.bm,

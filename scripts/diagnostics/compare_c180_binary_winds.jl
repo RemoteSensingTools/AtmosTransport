@@ -150,10 +150,11 @@ function load_binary_window(path)
                                         validate_replay = false)
     window = load_transport_window(driver, WINDOW_INDEX)
     mesh = driver_grid(driver).horizontal
-    dt_factor = Float64(window_dt(driver)) / (2.0 * Float64(steps_per_window(driver)))
+    steps = steps_per_window(driver, WINDOW_INDEX)
+    dt_factor = Float64(window_dt(driver)) / (2.0 * Float64(steps))
     basis = ntuple(p -> panel_cell_local_tangent_basis(mesh, p), 6)
     return (; driver, window, mesh, dt_factor, basis,
-            dt = Float64(window_dt(driver)), steps = steps_per_window(driver),
+            dt = Float64(window_dt(driver)), steps = steps,
             Nz = size(window.air_mass[1], 3))
 end
 

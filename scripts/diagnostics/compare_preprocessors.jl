@@ -1,5 +1,5 @@
 #!/usr/bin/env julia
-# Compare Plan 41 legacy and unified preprocessor paths on one TOML config.
+# Compare two current preprocessor runs on one TOML config for byte stability.
 
 using Dates
 using JSON3
@@ -22,15 +22,19 @@ function _usage()
     Options:
       --start YYYY-MM-DD       Start date for native-source ranges.
       --end YYYY-MM-DD         End date for native-source ranges.
-      --workdir DIR            Directory for legacy/unified outputs.
+      --workdir DIR            Directory for baseline/candidate outputs.
       --keep                   Keep the generated comparison directory.
       --ignore-header-key KEY  Ignore an additional top-level JSON header key.
       --warn-only-positivity   Set [numerics].require_substep_positivity=false
                                for both runs.
 
     The script runs the config twice with separate output directories:
-    legacy  -> [preprocessor].unified = false
-    unified -> [preprocessor].unified = true
+    baseline  -> first current-code run
+    candidate -> second current-code run
+
+    Historical legacy-vs-unified cutover comparisons must be run from the
+    relevant pre-cutover commit. After Plan 41 P4, the TOML-level unified
+    switch no longer exists in production code.
 
     It reports exact byte equality when possible. If bytes differ, it parses
     the fixed JSON header, ignores volatile header keys such as creation_time,
@@ -96,16 +100,6 @@ function _parse_args(args)
             ignored = ignored)
 end
 
-function _deepcopy_cfg(x)
-    if x isa AbstractDict
-        return Dict{String, Any}(String(k) => _deepcopy_cfg(v) for (k, v) in x)
-    elseif x isa AbstractVector
-        return [_deepcopy_cfg(v) for v in x]
-    else
-        return x
-    end
-end
-
 function _ensure_table!(cfg::Dict{String, Any}, key::String)
     table = get!(cfg, key) do
         Dict{String, Any}()
@@ -116,13 +110,10 @@ end
 
 function _prepared_cfg(base_cfg,
                        out_dir::AbstractString,
-                       unified::Bool,
                        warn_only_positivity::Bool)
-    cfg = _deepcopy_cfg(base_cfg)
+    cfg = deepcopy(base_cfg)
     output = _ensure_table!(cfg, "output")
     output["directory"] = String(out_dir)
-    preprocessor = _ensure_table!(cfg, "preprocessor")
-    preprocessor["unified"] = unified
     if warn_only_positivity
         numerics = _ensure_table!(cfg, "numerics")
         numerics["require_substep_positivity"] = false
@@ -240,50 +231,50 @@ function _changed_header_keys(a::Dict{Symbol, Any}, b::Dict{Symbol, Any})
     return [k for k in keys_all if get(a, k, nothing) != get(b, k, nothing)]
 end
 
-function _compare_file_pair(legacy_path::AbstractString,
-                            unified_path::AbstractString,
+function _compare_file_pair(baseline_path::AbstractString,
+                            candidate_path::AbstractString,
                             ignored::Set{Symbol})
-    legacy_size = filesize(legacy_path)
-    unified_size = filesize(unified_path)
-    if legacy_size == unified_size && _files_equal(legacy_path, unified_path)
+    baseline_size = filesize(baseline_path)
+    candidate_size = filesize(candidate_path)
+    if baseline_size == candidate_size && _files_equal(baseline_path, candidate_path)
         return (status = :exact,
-                legacy_size = legacy_size,
-                unified_size = unified_size,
+                baseline_size = baseline_size,
+                candidate_size = candidate_size,
                 changed_header_keys = Symbol[])
     end
 
-    legacy_header, legacy_header_bytes = _read_header(legacy_path)
-    unified_header, unified_header_bytes = _read_header(unified_path)
-    _normalize_header!(legacy_header, ignored)
-    _normalize_header!(unified_header, ignored)
+    baseline_header, baseline_header_bytes = _read_header(baseline_path)
+    candidate_header, candidate_header_bytes = _read_header(candidate_path)
+    _normalize_header!(baseline_header, ignored)
+    _normalize_header!(candidate_header, ignored)
 
-    headers_equal = legacy_header == unified_header
-    payload_equal = _files_equal(legacy_path, unified_path;
-                                 offset_a = legacy_header_bytes,
-                                 offset_b = unified_header_bytes)
+    headers_equal = baseline_header == candidate_header
+    payload_equal = _files_equal(baseline_path, candidate_path;
+                                 offset_a = baseline_header_bytes,
+                                 offset_b = candidate_header_bytes)
     status = headers_equal && payload_equal ? :header_normalized :
              payload_equal ? :header_mismatch :
              :payload_mismatch
     return (status = status,
-            legacy_size = legacy_size,
-            unified_size = unified_size,
+            baseline_size = baseline_size,
+            candidate_size = candidate_size,
             changed_header_keys = headers_equal ? Symbol[] :
-                _changed_header_keys(legacy_header, unified_header))
+                _changed_header_keys(baseline_header, candidate_header))
 end
 
-function _compare_outputs(legacy_dir::AbstractString,
-                          unified_dir::AbstractString,
+function _compare_outputs(baseline_dir::AbstractString,
+                          candidate_dir::AbstractString,
                           ignored::Set{Symbol})
-    legacy_files = _collect_files(legacy_dir)
-    unified_files = _collect_files(unified_dir)
-    legacy_files == unified_files || error(
-        "Output file sets differ.\nlegacy:  $(legacy_files)\nunified: $(unified_files)")
+    baseline_files = _collect_files(baseline_dir)
+    candidate_files = _collect_files(candidate_dir)
+    baseline_files == candidate_files || error(
+        "Output file sets differ.\nbaseline:  $(baseline_files)\ncandidate: $(candidate_files)")
 
     results = Pair{String, Any}[]
     ok = true
-    for rel in legacy_files
-        result = _compare_file_pair(joinpath(legacy_dir, rel),
-                                    joinpath(unified_dir, rel),
+    for rel in baseline_files
+        result = _compare_file_pair(joinpath(baseline_dir, rel),
+                                    joinpath(candidate_dir, rel),
                                     ignored)
         push!(results, rel => result)
         ok &= result.status in (:exact, :header_normalized)
@@ -297,8 +288,8 @@ function main(args = ARGS)
     workdir = parsed.workdir === nothing ?
         mktempdir(; prefix = "preprocessor_compare_") :
         parsed.workdir
-    legacy_dir = joinpath(workdir, "legacy")
-    unified_dir = joinpath(workdir, "unified")
+    baseline_dir = joinpath(workdir, "baseline")
+    candidate_dir = joinpath(workdir, "candidate")
 
     generated_workdir = parsed.workdir === nothing
     keep = parsed.keep || !generated_workdir
@@ -306,29 +297,29 @@ function main(args = ARGS)
     global_logger(AtmosTransport.Preprocessing._FlushingLogger(base_logger))
 
     try
-        rm(legacy_dir; recursive = true, force = true)
-        rm(unified_dir; recursive = true, force = true)
-        mkpath(legacy_dir)
-        mkpath(unified_dir)
+        rm(baseline_dir; recursive = true, force = true)
+        rm(candidate_dir; recursive = true, force = true)
+        mkpath(baseline_dir)
+        mkpath(candidate_dir)
 
-        @info "Running legacy preprocessor" config = parsed.cfg_path output = legacy_dir
-        _run_preprocessor!(_prepared_cfg(base_cfg, legacy_dir, false,
+        @info "Running baseline preprocessor" config = parsed.cfg_path output = baseline_dir
+        _run_preprocessor!(_prepared_cfg(base_cfg, baseline_dir,
                                          parsed.warn_only_positivity), parsed)
 
-        @info "Running unified preprocessor" config = parsed.cfg_path output = unified_dir
-        _run_preprocessor!(_prepared_cfg(base_cfg, unified_dir, true,
+        @info "Running candidate preprocessor" config = parsed.cfg_path output = candidate_dir
+        _run_preprocessor!(_prepared_cfg(base_cfg, candidate_dir,
                                          parsed.warn_only_positivity), parsed)
 
-        ok, results = _compare_outputs(legacy_dir, unified_dir, parsed.ignored)
+        ok, results = _compare_outputs(baseline_dir, candidate_dir, parsed.ignored)
         println()
-        println("Preprocessor comparison: ", ok ? "PASS" : "FAIL")
+        println("Preprocessor reproducibility comparison: ", ok ? "PASS" : "FAIL")
         println("workdir: ", workdir)
         for (rel, result) in results
             changed = isempty(result.changed_header_keys) ? "" :
                 " changed_header_keys=$(join(String.(result.changed_header_keys), ","))"
-            println(@sprintf("  %-36s %-18s legacy=%d unified=%d%s",
+            println(@sprintf("  %-36s %-18s baseline=%d candidate=%d%s",
                              rel, String(result.status),
-                             result.legacy_size, result.unified_size, changed))
+                             result.baseline_size, result.candidate_size, changed))
         end
         ok || exit(1)
     finally

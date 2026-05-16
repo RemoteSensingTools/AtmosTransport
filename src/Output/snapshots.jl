@@ -14,11 +14,25 @@ diagnostics are computed by [`write_snapshot_netcdf`](@ref), which keeps the
 runtime capture contract lossless enough for per-level extraction and
 area-normalized mass diagnostics.
 """
-struct SnapshotFrame
+struct SnapshotFrame{A}
     time_hours::Float64
-    air_mass::Any
-    tracers::Dict{Symbol, Any}
+    air_mass::A
+    tracers::Dict{Symbol, A}
     mass_basis::Symbol
+end
+
+function SnapshotFrame(time_hours::Real,
+                       air_mass::A,
+                       tracers::AbstractDict{Symbol, <:Any},
+                       mass_basis::Symbol) where A
+    typed_tracers = Dict{Symbol, A}()
+    for (name, tracer) in tracers
+        tracer isa A || throw(ArgumentError(
+            "snapshot tracer $(name) has type $(typeof(tracer)); expected $(A) to match air_mass"))
+        typed_tracers[name] = tracer
+    end
+    return SnapshotFrame{A}(Float64(time_hours), air_mass, typed_tracers,
+                            mass_basis)
 end
 
 """
@@ -31,8 +45,8 @@ Options controlling NetCDF snapshot output.
   `0` disables compression, `1` is fast/light, and `9` is maximum compression.
 - `shuffle` enables the NetCDF shuffle filter when compression is active.
 """
-struct SnapshotWriteOptions
-    float_type::DataType
+struct SnapshotWriteOptions{FT <: AbstractFloat}
+    float_type::Type{FT}
     deflate_level::Int
     shuffle::Bool
 end
@@ -44,7 +58,11 @@ function SnapshotWriteOptions(; float_type::DataType=Float32,
         throw(ArgumentError("float_type must be Float32 or Float64 for NetCDF output, got $(float_type)"))
     0 <= deflate_level <= 9 ||
         throw(ArgumentError("deflate_level must be in 0:9, got $(deflate_level)"))
-    return SnapshotWriteOptions(float_type, Int(deflate_level), shuffle)
+    if float_type === Float32
+        return SnapshotWriteOptions{Float32}(Float32, Int(deflate_level), shuffle)
+    else
+        return SnapshotWriteOptions{Float64}(Float64, Int(deflate_level), shuffle)
+    end
 end
 
 _basis_symbol(::DryBasis) = :dry
@@ -84,7 +102,7 @@ function capture_snapshot(model; time_hours::Real=0, halo_width::Integer=0)
     mesh = model.grid.horizontal
     air = _extract_for_output(model.state.air_mass, mesh; halo_width=halo_width)
     names = tracer_names(model.state)
-    tracers = Dict{Symbol, Any}()
+    tracers = Dict{Symbol, typeof(air)}()
     for name in names
         tracers[name] = _extract_for_output(get_tracer(model.state, name), mesh;
                                             halo_width=halo_width)

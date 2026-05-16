@@ -109,6 +109,8 @@ Executor state, 2026-05-15:
 - P4c shipped: removed the RG spectral hand-written sliding-window writer.
 - P4d in progress: remove the GEOS-native CS inline legacy loop; the outer
   dispatch now validates inputs and calls `_process_day_geos_cs_unified`.
+- P4e in progress: remove the CS spectral inline sliding-window loop; the
+  `process_day` body now uses `run_unified_preprocessor_day!` directly.
 
 **Read [DESIGN.md](DESIGN.md) first** for the typed three-axis rationale,
 the anti-pattern audit with file:line citations, and the foot-gun

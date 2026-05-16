@@ -111,6 +111,8 @@ Executor state, 2026-05-15:
   dispatch now validates inputs and calls `_process_day_geos_cs_unified`.
 - P4e in progress: remove the CS spectral inline sliding-window loop; the
   `process_day` body now uses `run_unified_preprocessor_day!` directly.
+- P4f in progress: remove the LL spectral full-day legacy loop; the deferred
+  header writer remains the single LL production writer path.
 
 **Read [DESIGN.md](DESIGN.md) first** for the typed three-axis rationale,
 the anti-pattern audit with file:line citations, and the foot-gun

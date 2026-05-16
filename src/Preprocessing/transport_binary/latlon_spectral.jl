@@ -225,7 +225,9 @@ end
 
 Run the full one-day preprocessing workflow for the structured lat-lon target:
 read spectral input, process all windows, close continuity against forward mass
-endpoints, and write the final binary.
+endpoints, and write the final binary. The `unified_driver` keyword is
+accepted temporarily for test/bisect callers but no longer selects between
+production loops.
 """
 function process_day(date::Date,
                      grid::LatLonTargetGeometry,
@@ -235,7 +237,7 @@ function process_day(date::Date,
                      positivity_cfl_limit::Real = 0.95,
                      require_substep_positivity::Bool = true,
                      run_cache = nothing,
-                     unified_driver::Bool = false)
+                     unified_driver::Bool = true)
     FT = settings.output_float_type
     Nz_native = vertical.Nz_native
     Nz = vertical.Nz
@@ -293,7 +295,6 @@ function process_day(date::Date,
     workspace = allocate_window_workspace(grid, settings, vertical, spec, date, FT;
                                           cache = run_cache)
     storage = workspace.storage
-    merged = workspace.merged
     ps_offsets = workspace.ps_offsets
     window_contract = LatLonContract{FT}(
         replay_tol = replay_tolerance(FT),
@@ -330,48 +331,18 @@ function process_day(date::Date,
     @info "  Computing spectral -> gridpoint -> merged for $Nt windows..."
 
     try
-        if unified_driver
-            writer = LatLonDeferredBinaryWriter(
-                bin_path, header, workspace, settings, FT,
-                mass_basis_from_symbol(Symbol(settings.mass_basis)))
-            ctx = LLSpectralUnifiedDriverContext(
-                grid, settings, vertical, spec, next_day_hour0, date,
-                physics_reader, tm5_ws, tm5_stats, surface_reader)
+        unified_driver || @warn "LL spectral legacy loop has been removed; unified driver is always used."
+        writer = LatLonDeferredBinaryWriter(
+            bin_path, header, workspace, settings, FT,
+            mass_basis_from_symbol(Symbol(settings.mass_basis)))
+        ctx = LLSpectralUnifiedDriverContext(
+            grid, settings, vertical, spec, next_day_hour0, date,
+            physics_reader, tm5_ws, tm5_stats, surface_reader)
 
-            driver_result = run_unified_preprocessor_day!(
-                UnifiedPreprocessorDay(nothing, workspace, window_contract,
-                                       writer; context = ctx);
-                close_reader = false)
-
-            if settings.mass_fix_enable
-                @info @sprintf("  Mass-fix offsets (Pa) min/max/mean: %+.3f / %+.3f / %+.3f",
-                               minimum(ps_offsets[1:Nt]),
-                               maximum(ps_offsets[1:Nt]),
-                               sum(ps_offsets[1:Nt]) / Nt)
-            end
-            tm5_stats === nothing || log_tm5_cleanup_stats(tm5_stats, date_str)
-
-            actual = filesize(driver_result.out_path)
-            @info @sprintf("  Done: %s (%.2f GB, %.1fs)",
-                           basename(driver_result.out_path), actual / 1e9,
-                           time() - t_day)
-            actual == byte_sizes.total_bytes ||
-                error(@sprintf("SIZE MISMATCH: expected %d bytes, got %d",
-                               byte_sizes.total_bytes, actual))
-
-            last_merged = (m = storage.all_m[Nt],
-                           am = storage.all_am[Nt],
-                           bm = storage.all_bm[Nt])
-            return driver_result.out_path, last_merged
-        end
-
-        for (win_idx, hour) in enumerate(spec.hours)
-            ingest_window!(workspace, win_idx, hour, spec, grid, vertical, settings;
-                           physics_reader = physics_reader,
-                           tm5_ws = tm5_ws,
-                           tm5_stats = tm5_stats,
-                           surface_reader = surface_reader)
-        end
+        driver_result = run_unified_preprocessor_day!(
+            UnifiedPreprocessorDay(nothing, workspace, window_contract,
+                                   writer; context = ctx);
+            close_reader = false)
 
         if settings.mass_fix_enable
             @info @sprintf("  Mass-fix offsets (Pa) min/max/mean: %+.3f / %+.3f / %+.3f",
@@ -379,31 +350,22 @@ function process_day(date::Date,
                            maximum(ps_offsets[1:Nt]),
                            sum(ps_offsets[1:Nt]) / Nt)
         end
-
         tm5_stats === nothing || log_tm5_cleanup_stats(tm5_stats, date_str)
 
-        flush_final_windows!(workspace, next_day_hour0, date, grid, vertical,
-                             settings, window_contract)
-        last_hour_next = workspace.last_hour_next
-        summarize_status!(window_contract; quarantine_path = bin_path)
+        actual = filesize(driver_result.out_path)
+        @info @sprintf("  Done: %s (%.2f GB, %.1fs)",
+                       basename(driver_result.out_path), actual / 1e9,
+                       time() - t_day)
+        actual == byte_sizes.total_bytes ||
+            error(@sprintf("SIZE MISMATCH: expected %d bytes, got %d",
+                           byte_sizes.total_bytes, actual))
 
-        header["ps_offsets_pa_per_window"] = ps_offsets[1:Nt]
-        header["ps_offsets_next_day_hour0_pa"] = ps_offsets[Nt + 1]
-        header_json = JSON3.write(header)
-        length(header_json) < HEADER_SIZE ||
-            error("Header JSON too large after offsets update: $(length(header_json)) >= $(HEADER_SIZE)")
-
-        write_day_binary!(bin_path, header_json, storage, settings, merged, last_hour_next)
+        last_merged = (m = storage.all_m[Nt],
+                       am = storage.all_am[Nt],
+                       bm = storage.all_bm[Nt])
+        return driver_result.out_path, last_merged
     finally
         physics_reader === nothing || close_era5_physics_binary(physics_reader)
         surface_reader === nothing || close_era5_surface_reader(surface_reader)
     end
-
-    actual = filesize(bin_path)
-    @info @sprintf("  Done: %s (%.2f GB, %.1fs)", basename(bin_path), actual / 1e9, time() - t_day)
-    actual == byte_sizes.total_bytes ||
-        error(@sprintf("SIZE MISMATCH: expected %d bytes, got %d", byte_sizes.total_bytes, actual))
-
-    last_merged = (m = storage.all_m[Nt], am = storage.all_am[Nt], bm = storage.all_bm[Nt])
-    return bin_path, last_merged
 end

@@ -81,7 +81,7 @@ function _header_without_creation_time(path)
     return header
 end
 
-@testset "LL spectral unified driver matches legacy payload bytes" begin
+@testset "LL spectral unified driver emits stable payload bytes" begin
     mktempdir() do tmp
         FT = Float64
         date = Date(2021, 12, 1)
@@ -94,28 +94,28 @@ end
                                                        "nlat" => 3),
                                      FT)
         vertical = _ll_test_vertical(FT)
-        legacy_settings = _ll_test_settings(FT, spectral_dir, cache_dir,
-                                            joinpath(tmp, "legacy"))
+        default_settings = _ll_test_settings(FT, spectral_dir, cache_dir,
+                                             joinpath(tmp, "default"))
         unified_settings = _ll_test_settings(FT, spectral_dir, cache_dir,
                                              joinpath(tmp, "unified"))
 
-        legacy_path, legacy_last = process_day(date, grid, legacy_settings,
-                                               vertical;
-                                               positivity_cfl_limit = 0.95)
+        default_path, default_last = process_day(date, grid, default_settings,
+                                                 vertical;
+                                                 positivity_cfl_limit = 0.95)
         unified_path, unified_last = process_day(date, grid, unified_settings,
                                                  vertical;
                                                  positivity_cfl_limit = 0.95,
                                                  unified_driver = true)
 
-        @test isfile(legacy_path)
+        @test isfile(default_path)
         @test isfile(unified_path)
-        @test filesize(legacy_path) == filesize(unified_path)
+        @test filesize(default_path) == filesize(unified_path)
         @test _header_without_creation_time(unified_path) ==
-              _header_without_creation_time(legacy_path)
+              _header_without_creation_time(default_path)
         @test read(unified_path)[HEADER_SIZE + 1:end] ==
-              read(legacy_path)[HEADER_SIZE + 1:end]
-        @test unified_last.m == legacy_last.m
-        @test unified_last.am == legacy_last.am
-        @test unified_last.bm == legacy_last.bm
+              read(default_path)[HEADER_SIZE + 1:end]
+        @test unified_last.m == default_last.m
+        @test unified_last.am == default_last.am
+        @test unified_last.bm == default_last.bm
     end
 end

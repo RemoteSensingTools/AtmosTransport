@@ -49,9 +49,13 @@ Executor state, 2026-05-15:
   byte-compares legacy vs unified CS binaries. LL remains last because its
   fixed header needs post-flush pressure-offset metadata before the writer
   adapter can open safely.
-- Remaining P3 work: land the LL spectral opt-in after adding a delayed-header
-  writer path for post-flush pressure-offset metadata, then remove legacy
-  scaffolding once all opt-ins have had parity coverage.
+- P3g shipped in the current Codex working tree: ERA5 spectral -> lat-lon has
+  a `unified_driver = true` opt-in using a deferred-header writer that opens
+  only after post-flush pressure-offset metadata exists. The full-day LL
+  contract remains owned by `flush_final_windows!`, so the driver receives
+  preverified ready events rather than replaying the gate a second time.
+- Remaining P3 work after P3g: remove legacy scaffolding once the opt-ins have
+  had enough real-config bake time.
 
 **Read [DESIGN.md](DESIGN.md) first** for the typed three-axis rationale,
 the anti-pattern audit with file:line citations, and the foot-gun

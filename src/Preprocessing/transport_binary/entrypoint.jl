@@ -239,10 +239,11 @@ function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
     unified_preprocessor       = _resolve_unified_preprocessor(cfg)
     spectral_unified_supported =
         grid isa ReducedGaussianTargetGeometry ||
-        grid isa CubedSphereTargetGeometry
+        grid isa CubedSphereTargetGeometry ||
+        grid isa LatLonTargetGeometry
     if unified_preprocessor && !spectral_unified_supported
         error("`[preprocessor].unified = true` for ERA5 spectral currently " *
-              "supports only reduced_gaussian and cubed_sphere targets.")
+              "supports only latlon, reduced_gaussian, and cubed_sphere targets.")
     end
 
     @info @sprintf("Processing %d days: %s to %s", length(dates), first(dates), last(dates))

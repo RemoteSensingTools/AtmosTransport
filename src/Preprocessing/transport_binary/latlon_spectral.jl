@@ -10,6 +10,82 @@ mutable struct LatLonSpectralWindowWorkspace{FT, TW, MW, SW, QW} <:
     last_hour_next :: Any
 end
 
+mutable struct LatLonDeferredBinaryWriter{FT,
+                                          Basis<:AbstractMassBasis,
+                                          H,
+                                          W,
+                                          S} <:
+               AbstractBinaryWriter{LatLonTargetGeometry, FT, Basis}
+    path        :: String
+    final_path  :: String
+    header      :: H
+    workspace   :: W
+    settings    :: S
+    basis       :: Basis
+    inner       :: Union{Nothing, LatLonBinaryWriter}
+    closed      :: Bool
+    promoted    :: Bool
+end
+
+function LatLonDeferredBinaryWriter(path::AbstractString,
+                                    header,
+                                    workspace,
+                                    settings,
+                                    ::Type{FT},
+                                    basis::Basis;
+                                    final_path::AbstractString=path) where
+        {FT, Basis<:AbstractMassBasis}
+    return LatLonDeferredBinaryWriter{FT, Basis, typeof(header),
+                                      typeof(workspace), typeof(settings)}(
+        String(path), String(final_path), header, workspace, settings,
+        basis, nothing, false, false)
+end
+
+function _open_latlon_deferred_writer!(writer::LatLonDeferredBinaryWriter{FT}) where FT
+    writer.inner !== nothing && return writer.inner
+    Nt = length(writer.workspace.storage.all_m)
+    writer.header["ps_offsets_pa_per_window"] = writer.workspace.ps_offsets[1:Nt]
+    writer.header["ps_offsets_next_day_hour0_pa"] = writer.workspace.ps_offsets[Nt + 1]
+    header_json = JSON3.write(writer.header)
+    length(header_json) < HEADER_SIZE ||
+        error("Header JSON too large after offsets update: $(length(header_json)) >= $(HEADER_SIZE)")
+    writer.inner = LatLonBinaryWriter(
+        writer.path, header_json, writer.settings, writer.workspace.merged,
+        writer.workspace.last_hour_next, FT, writer.basis;
+        final_path = writer.final_path)
+    return writer.inner
+end
+
+function write_window!(writer::LatLonDeferredBinaryWriter{FT},
+                       ready::ReadyWindow{LatLonTargetGeometry, FT}) where FT
+    writer.closed && throw(ArgumentError("cannot write to a closed LatLonDeferredBinaryWriter"))
+    return write_window!(_open_latlon_deferred_writer!(writer), ready)
+end
+
+function close_streaming_binary!(writer::LatLonDeferredBinaryWriter)
+    writer.closed && return writer.path
+    writer.inner === nothing || close_streaming_binary!(writer.inner)
+    writer.closed = true
+    return writer.path
+end
+
+function promote_streaming_binary!(writer::LatLonDeferredBinaryWriter)
+    writer.promoted && return writer.final_path
+    close_streaming_binary!(writer)
+    if writer.path != writer.final_path && isfile(writer.path)
+        mv(writer.path, writer.final_path; force = true)
+    end
+    writer.promoted = true
+    return writer.final_path
+end
+
+function quarantine_streaming_binary!(writer::LatLonDeferredBinaryWriter)
+    writer.promoted && return writer.path
+    close_streaming_binary!(writer)
+    isfile(writer.path) && rm(writer.path; force = true)
+    return writer.path
+end
+
 function allocate_window_workspace(grid::LatLonTargetGeometry,
                                    settings,
                                    vertical,
@@ -56,6 +132,63 @@ end
 
 drain_ready_windows!(::LatLonSpectralWindowWorkspace) = ()
 
+struct LLSpectralUnifiedDriverContext{G, S, V, SP, N, PR, TW, TS, SR}
+    grid            :: G
+    settings        :: S
+    vertical        :: V
+    spec            :: SP
+    next_day_hour0  :: N
+    date            :: Date
+    physics_reader  :: PR
+    tm5_ws          :: TW
+    tm5_stats       :: TS
+    surface_reader  :: SR
+end
+
+driver_windows_per_day(::Nothing, ctx::LLSpectralUnifiedDriverContext) =
+    ctx.spec.n_times
+
+function driver_ingest_window!(workspace::LatLonSpectralWindowWorkspace,
+                               ::Nothing,
+                               win::Int,
+                               ctx::LLSpectralUnifiedDriverContext)
+    return ingest_window!(workspace, win, ctx.spec.hours[win], ctx.spec,
+                          ctx.grid, ctx.vertical, ctx.settings;
+                          physics_reader = ctx.physics_reader,
+                          tm5_ws = ctx.tm5_ws,
+                          tm5_stats = ctx.tm5_stats,
+                          surface_reader = ctx.surface_reader)
+end
+
+function driver_drain_ready_windows!(::LatLonSpectralWindowWorkspace,
+                                     ::LatLonContract,
+                                     ::Int,
+                                     ::LLSpectralUnifiedDriverContext)
+    return ()
+end
+
+function driver_flush_final_windows!(workspace::LatLonSpectralWindowWorkspace,
+                                     ::Nothing,
+                                     contract::LatLonContract,
+                                     ctx::LLSpectralUnifiedDriverContext)
+    ready_windows = flush_final_windows!(workspace, ctx.next_day_hour0,
+                                         ctx.date, ctx.grid, ctx.vertical,
+                                         ctx.settings, contract)
+    # `flush_final_windows!` calls `apply_poisson_balance!`, which already
+    # runs the typed LL contract over every stored window and updates the
+    # contract accumulator. Return preverified events so the generic driver
+    # writes and summarizes without replaying the expensive full-day gate.
+    checked = (replay = (max_rel_err = 0.0,
+                         max_abs_err = 0.0,
+                         worst_idx = (0, 0, 0)),
+               positivity = (ok = true,
+                             ratio = 0.0,
+                             direction = :none,
+                             location = (0, 0, 0)))
+    return ((ready = ready, contract = checked, accumulated = true)
+            for ready in ready_windows)
+end
+
 function flush_final_windows!(workspace::LatLonSpectralWindowWorkspace{FT},
                               next_day_hour0,
                               date::Date,
@@ -76,6 +209,7 @@ function flush_final_windows!(workspace::LatLonSpectralWindowWorkspace{FT},
                  am = workspace.storage.all_am[win_idx],
                  bm = workspace.storage.all_bm[win_idx],
                  cm = workspace.storage.all_cm[win_idx],
+                 storage = workspace.storage,
                  m_next = win_idx < length(workspace.storage.all_m) ?
                     workspace.storage.all_m[win_idx + 1] :
                     workspace.last_hour_next === nothing ?
@@ -100,7 +234,8 @@ function process_day(date::Date,
                      next_day_hour0=nothing,
                      positivity_cfl_limit::Real = 0.95,
                      require_substep_positivity::Bool = true,
-                     run_cache = nothing)
+                     run_cache = nothing,
+                     unified_driver::Bool = false)
     FT = settings.output_float_type
     Nz_native = vertical.Nz_native
     Nz = vertical.Nz
@@ -195,6 +330,41 @@ function process_day(date::Date,
     @info "  Computing spectral -> gridpoint -> merged for $Nt windows..."
 
     try
+        if unified_driver
+            writer = LatLonDeferredBinaryWriter(
+                bin_path, header, workspace, settings, FT,
+                mass_basis_from_symbol(Symbol(settings.mass_basis)))
+            ctx = LLSpectralUnifiedDriverContext(
+                grid, settings, vertical, spec, next_day_hour0, date,
+                physics_reader, tm5_ws, tm5_stats, surface_reader)
+
+            driver_result = run_unified_preprocessor_day!(
+                UnifiedPreprocessorDay(nothing, workspace, window_contract,
+                                       writer; context = ctx);
+                close_reader = false)
+
+            if settings.mass_fix_enable
+                @info @sprintf("  Mass-fix offsets (Pa) min/max/mean: %+.3f / %+.3f / %+.3f",
+                               minimum(ps_offsets[1:Nt]),
+                               maximum(ps_offsets[1:Nt]),
+                               sum(ps_offsets[1:Nt]) / Nt)
+            end
+            tm5_stats === nothing || log_tm5_cleanup_stats(tm5_stats, date_str)
+
+            actual = filesize(driver_result.out_path)
+            @info @sprintf("  Done: %s (%.2f GB, %.1fs)",
+                           basename(driver_result.out_path), actual / 1e9,
+                           time() - t_day)
+            actual == byte_sizes.total_bytes ||
+                error(@sprintf("SIZE MISMATCH: expected %d bytes, got %d",
+                               byte_sizes.total_bytes, actual))
+
+            last_merged = (m = storage.all_m[Nt],
+                           am = storage.all_am[Nt],
+                           bm = storage.all_bm[Nt])
+            return driver_result.out_path, last_merged
+        end
+
         for (win_idx, hour) in enumerate(spec.hours)
             ingest_window!(workspace, win_idx, hour, spec, grid, vertical, settings;
                            physics_reader = physics_reader,

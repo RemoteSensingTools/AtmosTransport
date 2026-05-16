@@ -39,8 +39,9 @@ const PAYLOAD_FILL_VALUE = 1.0e15
 @inline _payload_fill_value(::Type{Float32}) = Float32(PAYLOAD_FILL_VALUE)
 @inline _payload_fill_value(::Type{Float64}) = Float64(PAYLOAD_FILL_VALUE)
 
-function _def_payload_var(ds, name::AbstractString, T::DataType, dims;
-                          attrib, options::SnapshotWriteOptions)
+function _def_payload_var(ds, name::AbstractString, ::Type{T}, dims;
+                          attrib, options::SnapshotWriteOptions{T}) where
+        {T <: AbstractFloat}
     # Inject the FillValue sentinel as both `_FillValue` (CF) and
     # `missing_value` (GEOS-Chem / GrADS / older readers) so every tool
     # masks invalid cells correctly. `defVar(..., fillvalue=...)` writes

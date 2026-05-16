@@ -22,7 +22,7 @@ mutable struct LatLonDeferredBinaryWriter{FT,
     workspace   :: W
     settings    :: S
     basis       :: Basis
-    inner       :: Union{Nothing, LatLonBinaryWriter}
+    inner       :: Union{Nothing, LatLonBinaryWriter{FT, Basis}}
     closed      :: Bool
     promoted    :: Bool
 end

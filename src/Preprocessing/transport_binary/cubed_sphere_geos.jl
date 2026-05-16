@@ -492,15 +492,25 @@ function advance_window!(workspace::GEOSCubedSphereWindowWorkspace,
     return nothing
 end
 
-mutable struct GEOSCSUnifiedDriverContext{G, S, V}
-    grid             :: G
-    settings         :: S
-    vertical         :: V
-    steps_per_met    :: Int
+struct GEOSReplayStats
     worst_replay_rel :: Float64
     worst_replay_abs :: Float64
     worst_replay_win :: Int
 end
+
+GEOSReplayStats() = GEOSReplayStats(0.0, 0.0, 0)
+
+struct GEOSCSUnifiedDriverContext{G, S, V}
+    grid             :: G
+    settings         :: S
+    vertical         :: V
+    steps_per_met    :: Int
+    replay_stats     :: Base.RefValue{GEOSReplayStats}
+end
+
+GEOSCSUnifiedDriverContext(grid, settings, vertical, steps_per_met::Integer) =
+    GEOSCSUnifiedDriverContext{typeof(grid), typeof(settings), typeof(vertical)}(
+        grid, settings, vertical, Int(steps_per_met), Ref(GEOSReplayStats()))
 
 function driver_ingest_window!(workspace::GEOSCubedSphereWindowWorkspace{FT},
                                reader::GEOSNativeReader{FT},
@@ -516,10 +526,11 @@ function driver_drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{F
     ready_diag = drain_ready_windows!(workspace, contract, win, ctx.grid,
                                       ctx.settings, ctx.steps_per_met)
     replay = ready_diag.contract.replay
-    if ctx.worst_replay_win == 0 || replay.max_rel_err > ctx.worst_replay_rel
-        ctx.worst_replay_rel = replay.max_rel_err
-        ctx.worst_replay_abs = replay.max_abs_err
-        ctx.worst_replay_win = win
+    stats = ctx.replay_stats[]
+    if stats.worst_replay_win == 0 || replay.max_rel_err > stats.worst_replay_rel
+        ctx.replay_stats[] = GEOSReplayStats(replay.max_rel_err,
+                                             replay.max_abs_err,
+                                             win)
     end
     return ready_diag
 end
@@ -611,8 +622,7 @@ function _process_day_geos_cs_unified(date::Date,
             require_substep_positivity = require_substep_positivity,
             steps_per_window = steps_per_met,
         )
-        ctx = GEOSCSUnifiedDriverContext(grid, settings, vertical, steps_per_met,
-                                         0.0, 0.0, 0)
+        ctx = GEOSCSUnifiedDriverContext(grid, settings, vertical, steps_per_met)
 
         t_start = time()
         driver_started = true
@@ -620,18 +630,19 @@ function _process_day_geos_cs_unified(date::Date,
             UnifiedPreprocessorDay(reader, workspace, window_contract, writer;
                                    context = ctx))
         elapsed = time() - t_start
+        stats = ctx.replay_stats[]
         @info @sprintf("  Done in %.1fs (%.2fs/window). Worst replay: rel=%.2e abs=%.2e at win=%d",
-                       elapsed, elapsed / nw, ctx.worst_replay_rel,
-                       ctx.worst_replay_abs, ctx.worst_replay_win)
+                       elapsed, elapsed / nw, stats.worst_replay_rel,
+                       stats.worst_replay_abs, stats.worst_replay_win)
 
         final_m = chain_mass ? ntuple(p -> copy(workspace.m_cur[p]), npanel) : nothing
         set_end_of_day_seed!(reader, final_m)
 
         return (
             elapsed = elapsed,
-            worst_replay_rel = ctx.worst_replay_rel,
-            worst_replay_abs = ctx.worst_replay_abs,
-            worst_replay_win = ctx.worst_replay_win,
+            worst_replay_rel = stats.worst_replay_rel,
+            worst_replay_abs = stats.worst_replay_abs,
+            worst_replay_win = stats.worst_replay_win,
             out_path = driver_result.out_path,
             final_m = final_m,
         )

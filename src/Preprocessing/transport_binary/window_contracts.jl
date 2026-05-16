@@ -293,7 +293,7 @@ positivity violation. Closes-the-escape-hatch toggle from CS round-2.
 function contract_require_positivity end
 
 """
-    allocate_window_workspace(grid, settings, vertical, ::Type{FT}; cache)
+    allocate_window_workspace(args...; kwargs...)
 
 Construct the topology-specific `AbstractWindowWorkspace{G, FT}` for one
 preprocessing day. Concrete methods land as production drivers migrate.
@@ -308,7 +308,7 @@ Reset a reusable workspace before ingesting a new day/source stream.
 function reset_workspace! end
 
 """
-    ingest_window!(workspace, raw_window, reader, vertical, contract; cache) -> nothing
+    ingest_window!(workspace, args...; kwargs...) -> nothing
 
 Consume one source/met window into the topology workspace. Ready windows are
 exposed by `drain_ready_windows!`.
@@ -323,7 +323,7 @@ Return the windows that became write-ready after the last ingest.
 function drain_ready_windows! end
 
 """
-    flush_final_windows!(workspace, reader, vertical, contract; cache)
+    flush_final_windows!(workspace, args...; kwargs...)
 
 Emit any final cross-day/zero-tendency windows once the source stream is
 exhausted.

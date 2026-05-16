@@ -1,5 +1,5 @@
 #!/usr/bin/env julia
-# Plan 41 P3f - CS spectral unified-driver opt-in parity.
+# Plan 41 - CS spectral unified-driver byte stability.
 
 using Test
 using Dates

@@ -1,10 +1,6 @@
-# Additive Plan 41 P3 unified-driver shell.
-#
-# This is intentionally not wired into `entrypoint.jl` yet. It gives the next
-# migration step one place for the lifecycle that all topology-specific drivers
-# already reimplement: ingest source windows, drain ready windows, verify and
-# accumulate the contract, write, close, summarize, promote, and quarantine on
-# failure.
+# Plan 41 unified-preprocessor lifecycle shared by production topology drivers:
+# ingest source windows, drain ready windows, verify and accumulate the
+# contract, write, close, summarize, promote, and quarantine on failure.
 
 """
     UnifiedPreprocessorDay(reader, workspace, contract, writer; context=nothing)

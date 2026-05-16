@@ -26,8 +26,8 @@ Shared contracts and support code are kept separate from topology workflows:
   `reduced_transport_helpers.jl`).
 - `writer_adapters.jl` wraps the existing LL/RG/CS binary writers behind the
   typed `AbstractBinaryWriter{G, FT, Basis}` surface.
-- `driver.jl` holds the additive unified-driver shell used by the P3 opt-in
-  migration.
+- `driver.jl` holds the shared unified-preprocessor lifecycle used by
+  production topology workflows.
 - `topology_dispatch.jl` documents the `process_day(date, grid, settings, vertical)` extension point.
 
 New topologies should add a dedicated workflow file and dispatch on a new

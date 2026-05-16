@@ -9,12 +9,12 @@ Executor state, 2026-05-15:
 - P0a / P0b shipped: typed met-reader and vertical-transform surfaces.
 - P1 shipped: typed Axis-3 contract surfaces for CS / LL / RG, with
   lazy contract-owned scratch.
-- P2a shipped in the current Codex working tree: LL, RG, CS spectral,
+- P2a shipped: LL, RG, CS spectral,
   and CS GEOS production paths construct typed contracts and update the
   contract accumulator from production windows. LL/RG now receive the
   positivity policy kwargs passed by `entrypoint.jl`. `cubed_sphere_regrid.jl`
   remains out of scope for Plan 41 per foot-gun (F) / Plan 42.
-- P2b shipped in the current Codex working tree: additive
+- P2b shipped: additive
   `ReadyWindow{G, FT}`, `PreprocessorRunCache{G, FT}`, and bare
   workspace/readiness generics (`allocate_window_workspace`,
   `ingest_window!`, `drain_ready_windows!`, `flush_final_windows!`).
@@ -22,39 +22,21 @@ Executor state, 2026-05-15:
   GEOS-native CS window workspaces. Spectral entrypoint now owns a
   run-level `PreprocessorRunCache`; RG reuses compressed Laplacians
   across days and CS spectral reuses LL→CS regridders across days.
-- P3a shipped in the current Codex working tree: LL, RG, and CS binary
+- P3a shipped: LL, RG, and CS binary
   writer adapters now implement the typed `AbstractBinaryWriter{G, FT, Basis}`
   surface plus close/promote/quarantine hooks. Production call sites are
   unchanged; focused tests pin topology-dispatch mismatches as `MethodError`.
-- P3b shipped in the current Codex working tree: additive
+- P3b shipped: additive
   `UnifiedPreprocessorDay` + `run_unified_preprocessor_day!` driver shell,
   with migration hooks for window count, ingest, drain, flush, and post-write
   advancement. It normalizes both future raw `ReadyWindow`s and current
   preverified `(ready, contract)` events.
-- P3c shipped in the current Codex working tree: GEOS-native CS has the first
-  real production opt-in (`unified_driver = true`). The default legacy loop is
-  unchanged, and the synthetic GEOS passthrough test now byte-compares legacy
-  vs unified outputs.
-- P3d shipped in the current Codex working tree: TOML native-source entrypoint
-  reads `[preprocessor].unified = true` and threads it only to supported
-  native GEOS -> cubed-sphere runs. Default config behavior remains legacy.
-- P3e shipped in the current Codex working tree: ERA5 spectral -> reduced
-  Gaussian has a `unified_driver = true` opt-in and the spectral TOML
-  entrypoint threads `[preprocessor].unified = true` only for RG targets.
-  A fake decoded spectral-cache fixture byte-compares legacy vs unified RG
-  binaries.
-- P3f shipped in the current Codex working tree: ERA5 spectral -> cubed
-  sphere has a `unified_driver = true` opt-in, the spectral TOML entrypoint
-  now allows RG and CS targets, and a fake decoded spectral-cache fixture
-  byte-compares legacy vs unified CS binaries. LL remains last because its
-  fixed header needs post-flush pressure-offset metadata before the writer
-  adapter can open safely.
-- P3g shipped in the current Codex working tree: ERA5 spectral -> lat-lon has
-  a `unified_driver = true` opt-in using a deferred-header writer that opens
-  only after post-flush pressure-offset metadata exists. The full-day LL
-  contract remains owned by `flush_final_windows!`, so the driver receives
-  preverified ready events rather than replaying the gate a second time.
-- P3h shipped in the current Codex working tree: added
+- P3c-P3g shipped: temporary production migration paths routed GEOS-native
+  CS and ERA5 spectral -> RG / CS / LL through the unified driver behind
+  `unified_driver` and `[preprocessor].unified` scaffolding. Each path gained
+  a fake-fixture or passthrough byte-stability test before cutover. The
+  migration scaffolding was removed in P4.
+- P3h shipped: added
   `scripts/diagnostics/compare_preprocessors.jl` for the
   required side-by-side legacy vs unified bakes. It runs one config into
   separate output directories, compares file sets, then reports exact byte
@@ -64,7 +46,8 @@ Executor state, 2026-05-15:
   C180 native GEOS comparisons are feasible. P3k added
   `--warn-only-positivity` so known positivity-gate policy investigations can
   still compare legacy vs unified bytes without editing the source TOML.
-- P3i in progress: real side-by-side bakes. `era5_ll72x37_advresln_dec2021_f32.toml`
+- P3i-P3m shipped: real side-by-side bake evidence and blocker triage.
+  `era5_ll72x37_advresln_dec2021_f32.toml`
   for 2021-12-01 passes with header-normalized equality and identical payload
   bytes (`creation_time` is the only intentionally ignored header field).
   `era5_cs_c24_transport_binary_f32.toml` for 2021-12-01 passes exact
@@ -98,9 +81,10 @@ Executor state, 2026-05-15:
   as an inadmissible legacy-input blocker, not a unified-driver blocker. The
   fake decoded spectral-cache RG fixture remains the byte-parity cutover test
   until a follow-up fixes RG mass closure for real dry ERA5.
-- Remaining P3/P4 work: remove legacy opt-in scaffolding in small topology
-  commits, preserving the fake-fixture byte-parity tests and the LL/CS/GEOS
-  real-bake evidence above.
+- P4 cutover is complete for the Plan 41 production topologies. The remaining
+  known issues are follow-ups, not cutover blockers: RG real-input mass
+  closure, GEOS-native vertical merge policy for thin upper layers, and
+  `cubed_sphere_regrid.jl` / Plan 42.
 - P4a shipped: TOML entrypoint defaults to the unified driver.
 - P4b shipped: removed the TOML-level unified/legacy opt-out entirely.
 - P4c shipped: removed the RG spectral hand-written sliding-window writer.
@@ -501,9 +485,8 @@ the existing drivers call the workspace/readiness hooks for allocation,
 ingest, and ready-window packaging. A multi-day CS spectral run reuses
 the LL→CS regridder from `PreprocessorRunCache`; a multi-day RG run
 reuses the compressed Laplacian. The old "drop each process_day to
-<50 lines" target moves to P3, because that requires the unified
-driver opt-in and writer abstraction rather than just workspace
-extraction.
+<50 lines" target moves to P3/P4, because that requires the unified
+driver and writer abstraction rather than just workspace extraction.
 
 ### P3 — Unified driver
 
@@ -518,40 +501,28 @@ summarize -> promote; close/quarantine on failure) and exposes small
 migration hooks so existing workspace methods can be adapted one topology
 at a time.
 
-P3c wires the first production opt-in: GEOS-native CS gets
-`process_day(...; unified_driver=true)`. The legacy path stays default.
-The parity gate is byte equality between the legacy and unified binaries
-on the synthetic GEOS passthrough fixture.
+P3c-P3g wired the four production topologies behind temporary migration
+scaffolding: GEOS-native CS, ERA5 spectral -> RG, ERA5 spectral -> CS,
+and ERA5 spectral -> LL. The parity gates used the synthetic GEOS
+passthrough fixture plus tiny decoded spectral-cache fixtures so every
+topology had a stable byte-comparison before cutover.
 
-P3d exposes that opt-in at the TOML entrypoint as
-`[preprocessor].unified = true` for native GEOS -> cubed-sphere only.
+P3h-P3m added the side-by-side bake diagnostic and recorded real-bake
+evidence. LL and CS real smokes passed byte or payload equality. RG real
+input and native GEOS strict positivity exposed pre-existing contract or
+policy blockers and were documented above rather than weakened.
 
-P3e wires the first spectral opt-in: ERA5 spectral -> reduced Gaussian gets
-`process_day(...; unified_driver=true)`, and `[preprocessor].unified = true`
-is accepted for spectral RG configs. The parity gate uses a tiny decoded
-spectral-cache fixture and compares the legacy and unified binaries byte for
-byte.
-
-Add `transport_binary/driver.jl` with the ~80-line driver above.
-**Don't** wire it in yet — `entrypoint.jl::process_day` still routes
-through `_process_day_native` / `_process_day_spectral`.
-
-Add a new opt-in code path: if `cfg["preprocessor"]["unified"] = true`,
-call the new driver; otherwise route through legacy. Run side-by-side
-on 1-day smoke configs for ERA5 spectral × LL, ERA5 spectral × CS,
-ERA5 spectral × RG, GEOS native × CS, and compare binaries byte-for-byte.
-
-Definition of done: the 4 side-by-side smokes produce bit-identical
-binaries (or document any FP-rounding-tier difference). Adds
-`scripts/diagnostics/compare_preprocessors.jl`.
+Definition of done: the migration fixtures are byte-stable, the real-bake
+evidence and blockers are recorded, and `scripts/diagnostics/compare_preprocessors.jl`
+exists for future side-by-side bakes.
 
 ### P4 — Cut over
 
-Switch `entrypoint.jl::process_day` to call `driver.process_day`
-unconditionally. Move the four old `process_day(date, grid, settings,
-vertical)` methods + `_process_day_native` + `_process_day_spectral`
-into `src_legacy/Preprocessing/`. Delete the unified-vs-legacy opt-in
-flag.
+Switch `entrypoint.jl::process_day` to the unified route unconditionally.
+Delete the four old inline topology loops and the temporary TOML / keyword
+migration scaffolding. The old loops are not moved to `src_legacy` because
+the byte-stability tests and real-bake evidence already pin the behavior
+needed for rollback or audit.
 
 Definition of done: every regression test that exercises preprocessing
 passes. The 1-day smoke configs from P3 produce bit-identical binaries

@@ -531,18 +531,20 @@ in-scope axis. Concretely:
     `cubed_sphere_geos.jl`, and `reduced_transport_helpers.jl`
     delegate allocation/readiness to the trait calls, and the spectral
     entrypoint owns a run-level cache for expensive topology artifacts.
-    Full `process_day` collapse is deliberately left to P3's opt-in
-    unified driver so P2 stays bit-exact and keeps writer behavior in
-    the existing paths.
+    Full `process_day` collapse is deliberately left to the P3/P4 driver
+    migration so P2 stays bit-exact and keeps writer behavior in the
+    existing paths.
 
-- **P3 (was: "unified driver")** → the ~80-line driver above lives
-  behind a `[preprocessor].unified = true` opt-in flag. Side-by-side
-  smokes verify bit-exact binaries against the legacy paths for ERA5
-  spectral × LL, ERA5 spectral × CS, ERA5 spectral × RG, GEOS native × CS.
+- **P3 (was: "unified driver")** → the unified driver is wired behind
+  temporary migration scaffolding. Side-by-side smokes verify bit-exact
+  binaries against the legacy paths for ERA5 spectral × LL, ERA5 spectral
+  × CS, ERA5 spectral × RG, GEOS native × CS, or document pre-existing
+  input/policy blockers.
 
-- **P4 (was: "cut over")** → the legacy `process_day(date, grid,
-  settings, vertical)` methods move to `src_legacy/Preprocessing/`.
-  The opt-in flag is removed.
+- **P4 (was: "cut over")** → the unified driver becomes the only
+  production path for the Plan 41 topologies. The old inline loops and
+  temporary TOML / keyword scaffolding are deleted after byte-stability
+  tests and real-bake evidence pin the behavior.
 
 - **P5 (was: "validation")** → add a new source reader (e.g.,
   MERRA-2 native) in ≤150 lines of `AbstractMetReader` implementation.

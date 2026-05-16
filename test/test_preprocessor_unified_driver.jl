@@ -1,5 +1,5 @@
 #!/usr/bin/env julia
-# Plan 41 P3b - focused tests for the additive unified-driver shell.
+# Plan 41 - focused tests for the unified-preprocessor lifecycle.
 
 using Test
 

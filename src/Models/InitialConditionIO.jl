@@ -1097,8 +1097,9 @@ function _renormalize_surface_flux_rate!(rate::AbstractArray{FT}, source::FileSu
     return rate
 end
 
-"""Parse regridding method from config: "conservative" or "bilinear" (default)."""
-_regridding_method(cfg) = Symbol(lowercase(String(get(cfg, "regridding", "bilinear"))))
+"""Parse regridding method from config, with a caller-owned default."""
+_regridding_method(cfg, default::AbstractString = "bilinear") =
+    Symbol(lowercase(String(get(cfg, "regridding", default))))
 
 """
     _conservative_surface_flux_rate(source, dst_mesh, FT) -> Vector{FT}
@@ -1221,8 +1222,9 @@ function build_surface_flux_source(grid::AtmosGrid{<:CubedSphereMesh},
     kind = _surface_flux_kind(cfg)
     kind === :none && return nothing
 
-    method = _regridding_method(cfg)
-    method === :conservative || @warn "CS surface-flux: `regridding = \"$(method)\"` requested; CS supports conservative only — forcing conservative."
+    method = _regridding_method(cfg, "conservative")
+    haskey(cfg, "regridding") && method !== :conservative &&
+        @warn "CS surface-flux: `regridding = \"$(method)\"` requested; CS supports conservative only — forcing conservative."
 
     source = _load_file_surface_flux_field(cfg, FT)
     mesh = grid.horizontal

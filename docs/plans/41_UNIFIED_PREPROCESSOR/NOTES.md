@@ -60,7 +60,17 @@ Executor state, 2026-05-15:
   separate output directories, compares file sets, then reports exact byte
   equality or header-normalized equality with payload byte equality (needed
   for LL's volatile `creation_time` header).
-- Remaining P3 work after P3h: run the four real smoke comparisons, then
+- P3i in progress: real side-by-side bakes. `era5_ll72x37_advresln_dec2021_f32.toml`
+  for 2021-12-01 passes with header-normalized equality and identical payload
+  bytes (`creation_time` is the only intentionally ignored header field).
+  `era5_cs_c24_transport_binary_f32.toml` for 2021-12-01 passes exact
+  byte-for-byte equality (`58136576` bytes).
+- RG real smoke blocker: `era5_synthetic_rgN24_transport_binary_v2.toml`
+  for 2021-12-01 fails before unified comparison because the legacy path trips
+  the write-time RG replay gate at window 1 (`rel=3.78e-3 > 1e-10` at cell
+  `(1051, 28)`). Treat as a pre-existing config/data contract failure rather
+  than a Plan 41 unified-driver regression.
+- Remaining P3 work after P3i: run native GEOS real smoke comparison, then
   remove legacy scaffolding once the opt-ins have had enough bake time.
 
 **Read [DESIGN.md](DESIGN.md) first** for the typed three-axis rationale,

@@ -69,7 +69,7 @@ function _rg_test_settings(::Type{FT}, spectral_dir, cache_dir, out_dir) where F
     )
 end
 
-@testset "RG spectral unified driver emits stable bytes" begin
+@testset "RG spectral unified driver emits reproducible bytes" begin
     mktempdir() do tmp
         FT = Float64
         date = Date(2021, 12, 1)
@@ -81,19 +81,19 @@ end
                                      Dict{String, Any}("gaussian_number" => 1),
                                      FT)
         vertical = _rg_test_vertical(FT)
-        default_settings = _rg_test_settings(FT, spectral_dir, cache_dir,
-                                             joinpath(tmp, "default"))
-        unified_settings = _rg_test_settings(FT, spectral_dir, cache_dir,
-                                             joinpath(tmp, "unified"))
+        first_settings = _rg_test_settings(FT, spectral_dir, cache_dir,
+                                           joinpath(tmp, "first"))
+        second_settings = _rg_test_settings(FT, spectral_dir, cache_dir,
+                                            joinpath(tmp, "second"))
 
-        default_path = process_day(date, grid, default_settings, vertical;
-                                   positivity_cfl_limit = 0.95)
-        unified_path = process_day(date, grid, unified_settings, vertical;
-                                   positivity_cfl_limit = 0.95)
+        first_path = process_day(date, grid, first_settings, vertical;
+                                 positivity_cfl_limit = 0.95)
+        second_path = process_day(date, grid, second_settings, vertical;
+                                  positivity_cfl_limit = 0.95)
 
-        @test isfile(default_path)
-        @test isfile(unified_path)
-        @test filesize(default_path) == filesize(unified_path)
-        @test read(unified_path) == read(default_path)
+        @test isfile(first_path)
+        @test isfile(second_path)
+        @test filesize(first_path) == filesize(second_path)
+        @test read(second_path) == read(first_path)
     end
 end

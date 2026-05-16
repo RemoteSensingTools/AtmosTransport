@@ -229,18 +229,18 @@ end
         @test all(dst_y .== 2)
     end
 
-    @testset "process_day writes a valid CS binary with stable unified bytes" begin
+    @testset "process_day writes a valid CS binary with reproducible bytes" begin
         out_path = joinpath(tmpdir, "out_cs.bin")
-        default = process_day(Date(2021, 12, 1), grid, settings, vertical;
-                              out_path = out_path,
-                              dt_met_seconds = 3600.0,
-                              FT = FT_TEST,
-                              mass_basis = :dry,
-                              replay_tol = 1e-12)
+        first = process_day(Date(2021, 12, 1), grid, settings, vertical;
+                            out_path = out_path,
+                            dt_met_seconds = 3600.0,
+                            FT = FT_TEST,
+                            mass_basis = :dry,
+                            replay_tol = 1e-12)
         @test isfile(out_path)
-        @test default.elapsed > 0
-        @test default.worst_replay_rel < 1e-12
-        @test default.out_path == out_path
+        @test first.elapsed > 0
+        @test first.worst_replay_rel < 1e-12
+        @test first.out_path == out_path
 
         # Open the binary back and confirm the header round-trips.
         reader = CubedSphereBinaryReader(out_path; FT=FT_TEST)
@@ -265,21 +265,21 @@ end
             close(reader)
         end
 
-        unified_path = joinpath(tmpdir, "out_cs_unified.bin")
-        unified = process_day(Date(2021, 12, 1), grid, settings, vertical;
-                              out_path = unified_path,
-                              dt_met_seconds = 3600.0,
-                              FT = FT_TEST,
-                              mass_basis = :dry,
-                              replay_tol = 1e-12)
-        @test isfile(unified_path)
-        @test unified.out_path == unified_path
-        @test unified.worst_replay_rel ≈ default.worst_replay_rel
-        @test unified.worst_replay_abs ≈ default.worst_replay_abs
-        @test unified.worst_replay_win == default.worst_replay_win
-        @test read(unified_path) == read(out_path)
+        second_path = joinpath(tmpdir, "out_cs_second.bin")
+        second = process_day(Date(2021, 12, 1), grid, settings, vertical;
+                             out_path = second_path,
+                             dt_met_seconds = 3600.0,
+                             FT = FT_TEST,
+                             mass_basis = :dry,
+                             replay_tol = 1e-12)
+        @test isfile(second_path)
+        @test second.out_path == second_path
+        @test second.worst_replay_rel ≈ first.worst_replay_rel
+        @test second.worst_replay_abs ≈ first.worst_replay_abs
+        @test second.worst_replay_win == first.worst_replay_win
+        @test read(second_path) == read(out_path)
         for p in 1:6
-            @test unified.final_m[p] == default.final_m[p]
+            @test second.final_m[p] == first.final_m[p]
         end
     end
 end

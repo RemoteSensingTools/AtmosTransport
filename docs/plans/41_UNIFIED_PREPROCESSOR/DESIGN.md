@@ -537,7 +537,7 @@ in-scope axis. Concretely:
 
 - **P3 (was: "unified driver")** → the unified driver is wired behind
   temporary migration scaffolding. Side-by-side smokes verify bit-exact
-  binaries against the legacy paths for ERA5 spectral × LL, ERA5 spectral
+  binaries against the pre-cutover paths for ERA5 spectral × LL, ERA5 spectral
   × CS, ERA5 spectral × RG, GEOS native × CS, or document pre-existing
   input/policy blockers.
 
@@ -612,8 +612,8 @@ in-scope axis. Concretely:
    only when needed by the writer's header.
 
 6. **Should the unified driver also subsume the existing
-   `_process_day_spectral` legacy NamedTuple-settings path?** The
+   `_process_day_spectral` historical NamedTuple-settings path?** The
    answer is yes — `ERA5SpectralReader` wraps the old
    `resolve_runtime_settings` and exposes the same per-window
-   interface as `GEOSNativeReader`. The legacy `NamedTuple` lives
+   interface as `GEOSNativeReader`. The historical `NamedTuple` lives
    inside the reader, not in any public API.

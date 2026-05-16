@@ -19,15 +19,12 @@
 #       `end_of_day_seed` is inferred to the right return type at compile
 #       time, not derived from a NamedTuple lookup.
 #
-# What this commit does NOT do (deferred to later P-stages):
-#   * Drive the unified `process_day` loop. The existing per-method
-#     `process_day` orchestrators stay unchanged; this surface is parallel
-#     and additive.
+# What this surface still does NOT do:
 #   * Implement `ERA5SpectralReader.read_window!` faithfully — today's
 #     spectral pipeline fuses spectral synthesis + native-grid regrid +
-#     vertical merge into one `process_window!` call. Splitting it is a
-#     P2 refactor; for P0a, `ERA5SpectralReader` exists as the typed
-#     nominal with `read_window!` throwing a clear "lands in P2" error.
+#     vertical merge into topology workspaces. Splitting that source reader
+#     cleanly is a follow-up; for now, `ERA5SpectralReader` exists as the
+#     typed nominal with `read_window!` throwing a clear unsupported error.
 # ===========================================================================
 
 # ---------------------------------------------------------------------------
@@ -301,15 +298,14 @@ end
 # ---------------------------------------------------------------------------
 # ERA5SpectralReader — typed nominal for the spectral path.
 #
-# P0a ships the type and constructor / `windows_per_day` / `native_vertical`
-# / `close_reader!` so the abstract surface compiles and dispatches.
-# `read_window!` is deferred to P2: today's spectral pipeline fuses
+# The type and constructor / `windows_per_day` / `native_vertical` /
+# `close_reader!` let the abstract surface compile and dispatch.
+# `read_window!` is still intentionally unsupported: today's spectral path fuses
 # spectral synthesis + native-grid regrid + vertical merge into one
 # `process_window!` call in `transport_binary/latlon_workspaces.jl:634`.
-# Splitting it cleanly is the spectral-path refactor that lands when the
-# unified driver replaces `_process_day_spectral`. Until then,
-# `read_window!(::ERA5SpectralRawWindow, ::ERA5SpectralReader, ::Int)`
-# throws an explicit "lands in P2" error so a caller cannot silently get
+# Splitting it cleanly is a source-axis follow-up. Until then,
+# `read_window!(::ERA5SpectralReader, ::Int)` throws an explicit unsupported
+# error so a caller cannot silently get
 # zero-filled or stale data.
 # ---------------------------------------------------------------------------
 
@@ -381,23 +377,21 @@ end
 @inline windows_per_day(reader::ERA5SpectralReader) = 24
 
 @inline function native_vertical(reader::ERA5SpectralReader)
-    # P2 will plumb this through the spectral workspace's vertical setup.
-    error("native_vertical(::ERA5SpectralReader) lands in P2 alongside the " *
-          "spectral-path unified-driver cutover. The typed nominal exists " *
-          "now so the source axis can be dispatched on; the data accessors " *
-          "follow once `process_window!` is split.")
+    error("native_vertical(::ERA5SpectralReader) is not implemented yet. " *
+          "The typed nominal exists so the source axis can be dispatched on; " *
+          "the data accessors follow once the spectral source reader is split " *
+          "out of the topology workspaces.")
 end
 
 @inline window_metadata(reader::ERA5SpectralReader) =
     (windows = windows_per_day(reader), substeps = 1, dt_substep = 3600.0)
 
 @inline function read_window!(_dst, reader::ERA5SpectralReader, _w::Int)
-    error("read_window!(::ERA5SpectralReader, …) lands in P2 of Plan 41 — " *
-          "today's spectral pipeline fuses spectral synthesis + native-grid " *
-          "regrid + vertical merge inside `process_window!` " *
-          "(`transport_binary/latlon_workspaces.jl:634`). Splitting it is " *
-          "the spectral-path unified-driver work. For now the typed nominal " *
-          "is shipped so downstream dispatch surfaces (target topology, " *
+    error("read_window!(::ERA5SpectralReader, …) is not implemented yet. " *
+          "Today's spectral pipeline fuses spectral synthesis + native-grid " *
+          "regrid + vertical merge inside the topology workspaces. Splitting " *
+          "that source reader is a follow-up. For now the typed nominal " *
+          "exists so downstream dispatch surfaces (target topology, " *
           "vertical transform) can be exercised against it. See " *
           "`docs/plans/41_UNIFIED_PREPROCESSOR/NOTES.md`.")
 end

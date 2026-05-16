@@ -133,7 +133,7 @@ end
     end
 
     # -----------------------------------------------------------------------
-    # ERA5SpectralReader — typed nominal exists; read_window! deferred to P2.
+    # ERA5SpectralReader — typed nominal exists; read_window! remains explicit.
     # -----------------------------------------------------------------------
 
     @testset "ERA5SpectralReader nominal" begin
@@ -151,7 +151,7 @@ end
         @test Pre.windows_per_day(reader) == 24
         @test Pre.end_of_day_seed(reader) === nothing
 
-        # read_window! is deferred to P2 with a clear error.
+        # read_window! remains unsupported with a clear error.
         err = try
             Pre.read_window!(nothing, reader, 1)
             nothing
@@ -159,7 +159,7 @@ end
             e
         end
         @test err isa ErrorException
-        @test occursin("lands in P2", err.msg)
+        @test occursin("not implemented yet", err.msg)
 
         # ChainPolicy is fixed at NoChain for the spectral path; passing a
         # non-nothing seed is a static API violation.

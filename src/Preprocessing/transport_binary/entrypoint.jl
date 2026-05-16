@@ -11,7 +11,7 @@
 # ---------------------------------------------------------------------------
 # Source detection. A config that declares `[source].toml = "..."` is
 # routed through the typed `AbstractMetSettings` factory; otherwise the
-# legacy ERA5-spectral path resolves a NamedTuple settings via
+# ERA5-spectral config path resolves historical NamedTuple settings via
 # `resolve_runtime_settings`. Both paths converge on
 # `process_day(date, grid, settings, vertical; ...)` for actual work.
 # ---------------------------------------------------------------------------
@@ -204,9 +204,9 @@ function _process_day_native(cfg::AbstractDict;
 end
 
 # ---------------------------------------------------------------------------
-# Legacy ERA5-spectral preprocessor: NamedTuple settings via
-# `resolve_runtime_settings`. Kept verbatim so existing ERA5 configs keep
-# working unchanged. New met sources must use the native-source path.
+# ERA5-spectral preprocessor: historical NamedTuple settings via
+# `resolve_runtime_settings`. Existing ERA5 configs keep working unchanged;
+# new met sources must use the typed native-source path.
 # ---------------------------------------------------------------------------
 
 function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
@@ -227,11 +227,11 @@ function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
 
     positivity_cfl_limit       = _resolve_positivity_cfl_limit(cfg)
     require_substep_positivity = _resolve_require_substep_positivity(cfg)
-    spectral_unified_supported =
+    spectral_target_supported =
         grid isa ReducedGaussianTargetGeometry ||
         grid isa CubedSphereTargetGeometry ||
         grid isa LatLonTargetGeometry
-    if !spectral_unified_supported
+    if !spectral_target_supported
         error("Unified ERA5 spectral preprocessing currently " *
               "supports only latlon, reduced_gaussian, and cubed_sphere targets.")
     end
@@ -271,7 +271,7 @@ Top-level TOML-driven preprocessor entry. Detects source type from `cfg`:
 * `[source].toml = "config/met_sources/<source>.toml"` → typed
   `AbstractMetSettings` path, supports cross-day state carry (e.g. GEOS
   pressure-fixer chained mass) and `--start/--end` date ranges.
-* otherwise → legacy ERA5 spectral path (`[input].spectral_dir`).
+* otherwise → ERA5 spectral config path (`[input].spectral_dir`).
 
 Both paths converge on `process_day(date, grid::AbstractTargetGeometry,
 settings, vertical; ...)` for the per-day work. There is no parallel

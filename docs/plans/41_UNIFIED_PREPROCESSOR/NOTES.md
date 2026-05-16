@@ -53,8 +53,8 @@ Executor state, 2026-05-15:
   `era5_cs_c24_transport_binary_f32.toml` for 2021-12-01 passes exact
   byte-for-byte equality (`58136576` bytes).
 - RG real smoke blocker: `era5_synthetic_rgN24_transport_binary_v2.toml`
-  for 2021-12-01 fails before unified comparison because the legacy path trips
-  the write-time RG replay gate at window 1 (`rel=3.78e-3 > 1e-10` at cell
+  for 2021-12-01 fails before unified comparison because the pre-cutover path
+  trips the write-time RG replay gate at window 1 (`rel=3.78e-3 > 1e-10` at cell
   `(1051, 28)`). Treat as a pre-existing config/data contract failure rather
   than a Plan 41 unified-driver regression.
   Current code audit points at the RG mass-closure null space: the compressed
@@ -66,8 +66,8 @@ Executor state, 2026-05-15:
   either make RG mass endpoints chained/replay-consistent or regenerate with a
   source/mass-fix setup whose residual is below the replay tolerance.
 - Native GEOS strict-gate blocker: `geosit_c180_native_dec2021_f32.toml` for
-  2021-12-01 fails before unified comparison because the legacy path trips the
-  CS substep-positivity gate at window 24 (`outgoing/m=1.046 > 0.95`) in the
+  2021-12-01 fails before unified comparison because the pre-cutover path
+  trips the CS substep-positivity gate at window 24 (`outgoing/m=1.046 > 0.95`) in the
   thin upper layer at cell `(4, 53, 24, 61)`. This is the same gate-policy
   issue already parked for the C180 L72 mesospheric regen.
   With `--warn-only-positivity`, legacy and unified outputs compare exact
@@ -140,7 +140,7 @@ Top-level driver in `transport_binary/entrypoint.jl` is split by
 - `_process_day_native` (line 116) handles typed `AbstractMetSettings`
   factories (currently only GEOS-IT). Reads `[source].toml`, builds
   settings, owns its own date loop.
-- `_process_day_spectral` (line 205) handles legacy NamedTuple settings
+- `_process_day_spectral` (line 205) handles historical NamedTuple settings
   (ERA5 spectral). Owns its own date loop, different kwarg surface.
 
 Per-window contract calls (replay + CS positivity) are made by each

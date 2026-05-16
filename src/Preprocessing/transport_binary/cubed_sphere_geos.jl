@@ -235,20 +235,22 @@ end
 function _geos_strategy_workspace(::GEOSCSIdentityStrategy,
                                   settings::AbstractGEOSSettings,
                                   grid::CubedSphereTargetGeometry,
-                                  ::Type{FT}, Nz::Int) where FT
+                                  ::Type{FT}, Nz_native::Int,
+                                  Nz_out::Int) where FT
     return nothing
 end
 
 function _geos_strategy_workspace(::GEOSCSBlockCoarsenStrategy{R},
                                   settings::AbstractGEOSSettings,
                                   grid::CubedSphereTargetGeometry,
-                                  ::Type{FT}, Nz::Int) where {FT, R}
+                                  ::Type{FT}, Nz_native::Int,
+                                  Nz_out::Int) where {FT, R}
     source_mesh = source_grid(settings; FT = FT)
     Nsrc = settings.Nc
     Nc = grid.Nc
-    panels_3d_src() = ntuple(_ -> zeros(FT, Nsrc, Nsrc, Nz), CS_PANEL_COUNT)
-    panels_xface_src() = ntuple(_ -> zeros(FT, Nsrc + 1, Nsrc, Nz), CS_PANEL_COUNT)
-    panels_yface_src() = ntuple(_ -> zeros(FT, Nsrc, Nsrc + 1, Nz), CS_PANEL_COUNT)
+    panels_3d_src() = ntuple(_ -> zeros(FT, Nsrc, Nsrc, Nz_native), CS_PANEL_COUNT)
+    panels_xface_src() = ntuple(_ -> zeros(FT, Nsrc + 1, Nsrc, Nz_native), CS_PANEL_COUNT)
+    panels_yface_src() = ntuple(_ -> zeros(FT, Nsrc, Nsrc + 1, Nz_native), CS_PANEL_COUNT)
     panels_2d_dst() = ntuple(_ -> zeros(FT, Nc, Nc), CS_PANEL_COUNT)
     panels_3d_dst(nlev) = ntuple(_ -> zeros(FT, Nc, Nc, nlev), CS_PANEL_COUNT)
     return (
@@ -257,14 +259,14 @@ function _geos_strategy_workspace(::GEOSCSBlockCoarsenStrategy{R},
         fine_m_kg = panels_3d_src(),
         fine_am_v4 = panels_xface_src(),
         fine_bm_v4 = panels_yface_src(),
+        cmfmc_native = settings.include_convection ? panels_3d_dst(Nz_native + 1) : nothing,
+        dtrain_native = settings.include_convection ? panels_3d_dst(Nz_native) : nothing,
         surface = settings.include_surface ? (
             pblh = panels_2d_dst(),
             ustar = panels_2d_dst(),
             hflux = panels_2d_dst(),
             t2m = panels_2d_dst(),
         ) : nothing,
-        cmfmc = settings.include_convection ? panels_3d_dst(Nz + 1) : nothing,
-        dtrain = settings.include_convection ? panels_3d_dst(Nz) : nothing,
     )
 end
 
@@ -319,30 +321,60 @@ function _geos_surface_payload!(::GEOSCSBlockCoarsenStrategy{R}, ws, raw) where 
     return ws.surface
 end
 
-_geos_cmfmc_payload!(::GEOSCSIdentityStrategy, _ws, raw) = raw.cmfmc
-_geos_dtrain_payload!(::GEOSCSIdentityStrategy, _ws, raw) = raw.dtrain
+_geos_cmfmc_native_target!(::GEOSCSIdentityStrategy, _ws, raw) = raw.cmfmc
+_geos_dtrain_native_target!(::GEOSCSIdentityStrategy, _ws, raw) = raw.dtrain
 
-function _geos_cmfmc_payload!(::GEOSCSBlockCoarsenStrategy{R}, ws, raw) where R
+function _geos_cmfmc_native_target!(::GEOSCSBlockCoarsenStrategy{R}, ws, raw) where R
     raw.cmfmc === nothing && return nothing
     for p in 1:CS_PANEL_COUNT
-        _coarsen_area_weighted3!(ws.cmfmc[p], raw.cmfmc[p], ws.source_cell_areas, Val(R))
+        _coarsen_area_weighted3!(ws.cmfmc_native[p], raw.cmfmc[p],
+                                 ws.source_cell_areas, Val(R))
     end
-    return ws.cmfmc
+    return ws.cmfmc_native
 end
 
-function _geos_dtrain_payload!(::GEOSCSBlockCoarsenStrategy{R}, ws, raw) where R
+function _geos_dtrain_native_target!(::GEOSCSBlockCoarsenStrategy{R}, ws, raw) where R
     raw.dtrain === nothing && return nothing
     for p in 1:CS_PANEL_COUNT
-        _coarsen_area_weighted3!(ws.dtrain[p], raw.dtrain[p], ws.source_cell_areas, Val(R))
+        _coarsen_area_weighted3!(ws.dtrain_native[p], raw.dtrain[p],
+                                 ws.source_cell_areas, Val(R))
     end
-    return ws.dtrain
+    return ws.dtrain_native
 end
 
-mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA} <:
+function _geos_cmfmc_payload!(workspace)
+    workspace.cmfmc_v4 === nothing && return nothing
+    native = _geos_cmfmc_native_target!(workspace.strategy, workspace.strategy_ws,
+                                        workspace.raw)
+    native === nothing && return nothing
+    for p in 1:CS_PANEL_COUNT
+        apply_vertical!(workspace.cmfmc_v4[p], native[p], workspace.plan,
+                        ConvectionInterfaceFlux())
+    end
+    return workspace.cmfmc_v4
+end
+
+function _geos_dtrain_payload!(workspace)
+    workspace.dtrain_v4 === nothing && return nothing
+    native = _geos_dtrain_native_target!(workspace.strategy, workspace.strategy_ws,
+                                         workspace.raw)
+    native === nothing && return nothing
+    for p in 1:CS_PANEL_COUNT
+        apply_vertical!(workspace.dtrain_v4[p], native[p], workspace.plan,
+                        ConvectionTendencyField())
+    end
+    return workspace.dtrain_v4
+end
+
+mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV} <:
                AbstractWindowWorkspace{CubedSphereTargetGeometry, FT}
     strategy    :: ST
     strategy_ws :: SW
     raw         :: RAW
+    plan        :: VP
+    am_native_v4 :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
+    bm_native_v4 :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
+    m_native_kg  :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
     am_v4       :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
     bm_v4       :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
     cm_v4       :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
@@ -350,6 +382,8 @@ mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA} <:
     m_cur       :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
     m_next_pf   :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
     ps_cur      :: NTuple{CS_PANEL_COUNT, Array{FT, 2}}
+    cmfmc_v4    :: CV
+    dtrain_v4   :: DV
     ΔB          :: Vector{FT}
     g           :: FT
     inv_g       :: FT
@@ -368,8 +402,19 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
                                    cache = nothing) where FT
     Nc = grid.Nc
     Nz = vertical.Nz
+    Nz_native = vertical.Nz_native
+    plan = if hasproperty(vertical, :plan)
+        vertical.plan
+    else
+        Nz == Nz_native ||
+            error("GEOS vertical setup with Nz=$(Nz), Nz_native=$(Nz_native) must carry a `plan` field.")
+        vc_identity = HybridSigmaPressure(FT.(vertical.merged_vc.A),
+                                          FT.(vertical.merged_vc.B))
+        plan_vertical(IdentityVertical(), vc_identity)
+    end
     strategy = _geos_cs_resolution_strategy(settings, grid)
-    strategy_ws = _geos_strategy_workspace(strategy, settings, grid, FT, Nz)
+    strategy_ws = _geos_strategy_workspace(strategy, settings, grid, FT,
+                                           Nz_native, Nz)
     npanel = CS_PANEL_COUNT
 
     vc = vertical.merged_vc
@@ -382,6 +427,9 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
     flux_scale = dt_factor / g
     two_steps = FT(2 * steps_per_met)
 
+    am_native_v4 = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz_native), npanel)
+    bm_native_v4 = ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz_native), npanel)
+    m_native_kg = ntuple(_ -> zeros(FT, Nc, Nc, Nz_native), npanel)
     am_v4 = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz), npanel)
     bm_v4 = ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz), npanel)
     cm_v4 = ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), npanel)
@@ -389,12 +437,19 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
     m_cur = ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel)
     m_next_pf = ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel)
     ps_cur = ntuple(_ -> zeros(FT, Nc, Nc), npanel)
-    raw = allocate_raw_window(settings; FT = FT, Nz = Nz)
+    cmfmc_v4 = settings.include_convection ?
+        ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), npanel) : nothing
+    dtrain_v4 = settings.include_convection ?
+        ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel) : nothing
+    raw = allocate_raw_window(settings; FT = FT, Nz = Nz_native)
 
     return GEOSCubedSphereWindowWorkspace{
-        FT, typeof(strategy), typeof(strategy_ws), typeof(raw), typeof(cell_areas)}(
-            strategy, strategy_ws, raw, am_v4, bm_v4, cm_v4, dm_v4,
-            m_cur, m_next_pf, ps_cur, ΔB, g, inv_g, cell_areas,
+        FT, typeof(strategy), typeof(strategy_ws), typeof(raw), typeof(cell_areas),
+        typeof(plan), typeof(cmfmc_v4), typeof(dtrain_v4)}(
+            strategy, strategy_ws, raw, plan,
+            am_native_v4, bm_native_v4, m_native_kg,
+            am_v4, bm_v4, cm_v4, dm_v4,
+            m_cur, m_next_pf, ps_cur, cmfmc_v4, dtrain_v4, ΔB, g, inv_g, cell_areas,
             flux_scale, two_steps, chain_mass)
 end
 
@@ -406,12 +461,19 @@ function ingest_window!(workspace::GEOSCubedSphereWindowWorkspace{FT},
                         vertical) where FT
     Nc = grid.Nc
     Nz = vertical.Nz
+    Nz_native = vertical.Nz_native
     read_window!(workspace.raw, reader, win)
 
     _geos_fluxes_to_target!(workspace.strategy, workspace.strategy_ws,
-                            workspace.am_v4, workspace.bm_v4,
-                            workspace.raw, grid, Nc, Nz,
+                            workspace.am_native_v4, workspace.bm_native_v4,
+                            workspace.raw, grid, Nc, Nz_native,
                             workspace.flux_scale)
+    for p in 1:CS_PANEL_COUNT
+        apply_vertical!(workspace.am_v4[p], workspace.am_native_v4[p],
+                        workspace.plan, MassFluxField())
+        apply_vertical!(workspace.bm_v4[p], workspace.bm_native_v4[p],
+                        workspace.plan, MassFluxField())
+    end
 
     if win == 1 || !workspace.chain_mass
         if workspace.chain_mass && win == 1 && reader.seed !== nothing
@@ -422,8 +484,12 @@ function ingest_window!(workspace::GEOSCubedSphereWindowWorkspace{FT},
             end
         else
             _geos_seed_mass!(workspace.strategy, workspace.strategy_ws,
-                             workspace.m_cur, workspace.raw,
-                             workspace.cell_areas, workspace.inv_g, Nc, Nz)
+                             workspace.m_native_kg, workspace.raw,
+                             workspace.cell_areas, workspace.inv_g, Nc, Nz_native)
+            for p in 1:CS_PANEL_COUNT
+                apply_vertical!(workspace.m_cur[p], workspace.m_native_kg[p],
+                                workspace.plan, MassField())
+            end
         end
         for p in 1:CS_PANEL_COUNT
             _ps_from_air_mass!(workspace.ps_cur[p], workspace.m_cur[p],
@@ -468,12 +534,8 @@ function drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{FT},
     end
     if settings.include_convection
         window_nt = merge(window_nt,
-                          (cmfmc = _geos_cmfmc_payload!(
-                               workspace.strategy, workspace.strategy_ws,
-                               workspace.raw),
-                           dtrain = _geos_dtrain_payload!(
-                               workspace.strategy, workspace.strategy_ws,
-                               workspace.raw)))
+                          (cmfmc = _geos_cmfmc_payload!(workspace),
+                           dtrain = _geos_dtrain_payload!(workspace)))
     end
     ready = ReadyWindow{CubedSphereTargetGeometry, FT}(win, window_nt)
     return PreverifiedWindow(ready, contract_diag)

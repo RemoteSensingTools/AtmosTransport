@@ -108,6 +108,71 @@ end
 _resolve_require_substep_positivity(cfg::AbstractDict) =
     Bool(get(get(cfg, "numerics", Dict()), "require_substep_positivity", true))
 
+function _vertical_float(raw, key::AbstractString)
+    value = if raw isa AbstractString
+        s = strip(raw)
+        lowercase(s) in ("inf", "+inf", "infinity", "+infinity") && return Inf
+        parse(Float64, s)
+    else
+        Float64(raw)
+    end
+    isfinite(value) || value == Inf ||
+        error("Invalid `[vertical].$(key) = $(raw)`: must be finite or `Inf`.")
+    return value
+end
+
+function _build_native_vertical_setup(cfg_vertical::AbstractDict,
+                                      vc_raw::HybridSigmaPressure,
+                                      ::Type{FT}) where FT
+    vc = HybridSigmaPressure(FT.(vc_raw.A), FT.(vc_raw.B))
+    transform_name = lowercase(String(get(cfg_vertical, "transform", "identity")))
+    transform = if transform_name in ("identity", "none")
+        IdentityVertical()
+    elseif transform_name in ("merge_above_pressure", "merge_above_pressure_pa")
+        pressure_pa = if haskey(cfg_vertical, "pressure_Pa")
+            _vertical_float(cfg_vertical["pressure_Pa"], "pressure_Pa")
+        elseif haskey(cfg_vertical, "pressure_hPa")
+            100.0 * _vertical_float(cfg_vertical["pressure_hPa"], "pressure_hPa")
+        else
+            error("`[vertical].transform = \"merge_above_pressure\"` requires " *
+                  "`pressure_Pa` or `pressure_hPa`.")
+        end
+        MergeAbovePressure(
+            pressure_Pa = pressure_pa,
+            target_min_thickness_Pa =
+                _vertical_float(get(cfg_vertical, "target_min_thickness_Pa", Inf),
+                                "target_min_thickness_Pa"),
+            reference_surface_pressure_Pa =
+                _vertical_float(get(cfg_vertical, "reference_surface_pressure_Pa", 101325.0),
+                                "reference_surface_pressure_Pa"))
+    elseif transform_name in ("merge_layers_thinner_than", "thin_level_merge")
+        MergeLayersThinnerThan(
+            min_thickness_Pa =
+                _vertical_float(get(cfg_vertical, "min_thickness_Pa",
+                                    get(cfg_vertical, "target_min_thickness_Pa", 50.0)),
+                                "min_thickness_Pa"),
+            reference_surface_pressure_Pa =
+                _vertical_float(get(cfg_vertical, "reference_surface_pressure_Pa", 101325.0),
+                                "reference_surface_pressure_Pa"))
+    else
+        error("Unsupported native `[vertical].transform = $(repr(transform_name))`. " *
+              "Supported: identity, merge_above_pressure, merge_layers_thinner_than.")
+    end
+
+    plan = plan_vertical(transform, vc)
+    return (
+        plan = plan,
+        transform = transform,
+        merged_vc = plan.merged_vc,
+        native_vc = plan.native_vc,
+        merge_map = plan.merge_map,
+        groups = plan.groups,
+        vertical_mapping_method = Symbol(transform_name),
+        Nz = plan.Nz_output,
+        Nz_native = plan.Nz_native,
+    )
+end
+
 # ---------------------------------------------------------------------------
 # Native-source preprocessor: typed `AbstractMetSettings` + cross-day state
 # carry (e.g. GEOS pressure-fixer chained mass).
@@ -159,8 +224,7 @@ function _process_day_native(cfg::AbstractDict;
     settings = load_met_settings(toml_path; settings_kwargs...)
 
     vc = load_hybrid_coefficients(expand_data_path(settings.coefficients_file))
-    Nz = length(vc.A) - 1
-    vertical = (merged_vc = vc, Nz = Nz, Nz_native = Nz)
+    vertical = _build_native_vertical_setup(cfg_vertical, vc, FT)
 
     mass_basis     = _resolve_mass_basis(cfg)
     dt_met_seconds = _resolve_dt_met(cfg)
@@ -177,6 +241,9 @@ function _process_day_native(cfg::AbstractDict;
     @info @sprintf("Preprocessor: %s  Nc=%d  → %s  Nz=%d  FT=%s  %d day(s)",
                    typeof(settings), settings.Nc, typeof(grid),
                    vertical.Nz, FT, length(dates))
+    vertical.Nz == vertical.Nz_native ||
+        @info @sprintf("Vertical transform: %s  native Nz=%d → output Nz=%d",
+                       typeof(vertical.transform), vertical.Nz_native, vertical.Nz)
     @info "Plan 41 unified driver enabled for native GEOS → cubed_sphere"
 
     t_total = time()

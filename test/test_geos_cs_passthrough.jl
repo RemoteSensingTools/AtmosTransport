@@ -28,6 +28,8 @@ using .AtmosTransport.Preprocessing: GEOSITSettings, process_day,
                                       geos_native_to_face_flux!,
                                       sync_all_cs_boundary_mirrors!,
                                       load_hybrid_coefficients,
+                                      plan_vertical,
+                                      MergeAbovePressure,
                                       CS_PANEL_COUNT
 using .AtmosTransport.MetDrivers: CubedSphereBinaryReader, load_cs_window
 
@@ -165,6 +167,21 @@ end
         Nz = NZ,
         Nz_native = NZ,
     )
+    merged_plan = plan_vertical(
+        MergeAbovePressure(pressure_Pa = 20_000.0,
+                           target_min_thickness_Pa = Inf),
+        vertical.merged_vc)
+    vertical_merged = (
+        plan = merged_plan,
+        transform = merged_plan.transform,
+        merged_vc = merged_plan.merged_vc,
+        native_vc = merged_plan.native_vc,
+        merge_map = merged_plan.merge_map,
+        groups = merged_plan.groups,
+        vertical_mapping_method = :merge_above_pressure,
+        Nz = merged_plan.Nz_output,
+        Nz_native = merged_plan.Nz_native,
+    )
 
     @testset "geos_native_to_face_flux! shape + values" begin
         # Use a SINGLE constant for both am_native and bm_native — that way,
@@ -280,6 +297,44 @@ end
         @test read(second_path) == read(out_path)
         for p in 1:6
             @test second.final_m[p] == first.final_m[p]
+        end
+    end
+
+    @testset "process_day supports GEOS native vertical merge above pressure" begin
+        @test vertical_merged.groups == [1:2, 3:3, 4:4]
+        @test vertical_merged.Nz == 3
+        parsed_vertical = AtmosTransport.Preprocessing._build_native_vertical_setup(
+            Dict{String, Any}("transform" => "merge_above_pressure",
+                              "pressure_hPa" => 200.0),
+            vertical.merged_vc,
+            FT_TEST)
+        @test parsed_vertical.Nz == vertical_merged.Nz
+        @test parsed_vertical.groups == vertical_merged.groups
+
+        out_path = joinpath(tmpdir, "out_cs_merged.bin")
+        result = process_day(Date(2021, 12, 1), grid, settings, vertical_merged;
+                             out_path = out_path,
+                             dt_met_seconds = 3600.0,
+                             FT = FT_TEST,
+                             mass_basis = :dry,
+                             replay_tol = 1e-12)
+        @test isfile(out_path)
+        @test result.worst_replay_rel < 1e-12
+
+        reader = CubedSphereBinaryReader(out_path; FT=FT_TEST)
+        try
+            @test reader.header.nlevel == 3
+            window = load_cs_window(reader, 1)
+            expected_am = MFXC_C5 / (2 * 9.80665)
+            expected_bm = MFYC_C5 / (2 * 9.80665)
+            for p in 1:6
+                @test all(window.am[p][2:end, :, 1] .≈ 2 * expected_am)
+                @test all(window.am[p][2:end, :, 2:3] .≈ expected_am)
+                @test all(window.bm[p][:, 2:end, 1] .≈ 2 * expected_bm)
+                @test all(window.bm[p][:, 2:end, 2:3] .≈ expected_bm)
+            end
+        finally
+            close(reader)
         end
     end
 end

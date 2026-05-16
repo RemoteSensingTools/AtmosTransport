@@ -662,7 +662,7 @@ end
                 seed_m = nothing,
                 next_day_hour0 = nothing,
                 chain_mass = true,
-                unified_driver = false) -> NamedTuple
+                unified_driver = true) -> NamedTuple
 
 Build a v4 cubed-sphere transport binary at `out_path` from one UTC day of
 native GEOS data. Source mesh and target mesh must match (CS passthrough).
@@ -688,9 +688,9 @@ last window. With `chain_mass = false`, `final_m` is `nothing`.
 unused — the GEOS reader handles next-day endpoints internally via
 `next_ctm_i1`.
 
-Set `unified_driver = true` to run the additive Plan 41 P3 driver shell for
-this topology. Default remains the legacy loop until all topologies have an
-opt-in parity path.
+Runs through the Plan 41 unified driver lifecycle. The `unified_driver`
+keyword is accepted temporarily for test/bisect callers but no longer selects
+between production loops.
 """
 function process_day(date::Date,
                      grid::CubedSphereTargetGeometry,
@@ -706,171 +706,23 @@ function process_day(date::Date,
                      chain_mass::Bool = true,
                      seed_m::Union{Nothing, NTuple{6, <:AbstractArray}} = nothing,
                      next_day_hour0 = nothing,
-                     unified_driver::Bool = false)
+                     unified_driver::Bool = true)
     # Reject configurations the path cannot honor:
     mass_basis === :dry ||
         error("GEOS-CS passthrough only supports mass_basis=:dry; got $(mass_basis). " *
               "GEOS MFXC/MFYC are already dry; the chained pressure-fixer is dry-basis.")
     _validate_geos_native_panel_convention(grid.mesh.convention)
-    # Single source of truth: the binary's panel-convention attrib comes from
-    # the target mesh's convention, not from a duplicated config key.
-    panel_convention = "geos_native"
-
-    if unified_driver
-        return _process_day_geos_cs_unified(
-            date, grid, settings, vertical;
-            out_path = out_path,
-            dt_met_seconds = dt_met_seconds,
-            FT = FT,
-            mass_basis = mass_basis,
-            replay_tol = replay_tol,
-            positivity_cfl_limit = positivity_cfl_limit,
-            require_substep_positivity = require_substep_positivity,
-            chain_mass = chain_mass,
-            seed_m = seed_m,
-        )
-    end
-
-    Nc     = grid.Nc
-    npanel = CS_PANEL_COUNT
-    Nz     = vertical.Nz
-    vc     = vertical.merged_vc
-
-    steps_per_met = round(Int, FT(dt_met_seconds) / FT(settings.mass_flux_dt))
-    # `read_window!` exposes GEOS MFXC/MFYC as a rate-like diagnostic
-    # (`raw.am = MFXC / mass_flux_dt`). CTM_A1's MFXC/MFYC values are one
-    # dynamics-step pressure-area transport amount, not an hourly accumulated
-    # total. The v4 CS runtime uses the same window-constant transport for each
-    # 450 s substep inside the hour, with two horizontal Strang half-sweeps per
-    # substep, so each stored half-sweep face flux is `MFXC / (2g)`.
-    # Because `raw.am` has already divided by `mass_flux_dt`, multiply by
-    # `mass_flux_dt / (2g)` here.
-    reader_seed = seed_m === nothing ? nothing :
-        ntuple(p -> Array{FT, 3}(seed_m[p]), CS_PANEL_COUNT)
-    reader = open_reader(settings, date, FT;
-                         seed = reader_seed,
-                         chain_mass = chain_mass,
-                         next_day_handle = true)
-    nw = windows_per_day(reader)
-    workspace = allocate_window_workspace(grid, settings, vertical, FT;
-                                          dt_met_seconds = dt_met_seconds,
-                                          chain_mass = chain_mass)
-
-    @info "GEOS → CS: $(date), source=$(settings) → $(out_path)"
-    @info "  source_C=$(settings.Nc) target_C=$Nc  strategy=$(_geos_cs_strategy_name(workspace.strategy))"
-    @info "  Nz=$Nz  windows=$nw  steps_per_met=$steps_per_met  flux_scale=$(workspace.flux_scale)"
-    @info "  Level orientation: $(reader.handles.orientation)  (next-day endpoint: $(_geos_next_endpoint_available(reader.handles)))"
-
-    mkpath(dirname(out_path))
-
-    # Stage to `.tmp` so a mid-loop replay failure or post-loop positivity
-    # quarantine never leaves a partial binary at `out_path`. Promote
-    # `tmp_path -> out_path` only after all contract gates pass (or after the
-    # summary warns under `require_substep_positivity = false`).
-    tmp_path = out_path * ".tmp"
-    isfile(tmp_path) && rm(tmp_path; force = true)
-
-    # Writer-open is inside the protected region: if `open_…!` writes a header
-    # then errors (e.g. truncated payload negotiation), the `finally` block
-    # still removes the partial `tmp_path`. `writer = nothing` lets the
-    # finally close-guard distinguish "never opened" from "opened but not yet
-    # explicitly closed".
-    writer        = nothing
-    writer_closed = false
-    mv_done       = false
-    try
-        writer = open_streaming_cs_transport_binary(
-            tmp_path, Nc, npanel, Nz, nw, vc;
-            FT = FT,
-            dt_met_seconds = dt_met_seconds,
-            steps_per_window = steps_per_met,
-            mass_basis = mass_basis,
-            include_flux_delta = true,
-            include_surface    = settings.include_surface,
-            include_cmfmc      = settings.include_convection,
-            include_dtrain     = settings.include_convection,
-            panel_convention   = panel_convention,
-            cs_definition      = _cs_definition_tag(grid),
-            cs_coordinate_law  = _cs_coordinate_law_tag(grid),
-            cs_center_law      = _cs_center_law_tag(grid),
-            longitude_offset_deg = longitude_offset_deg(cs_definition(grid.mesh)),
-            extra_header = Dict{String, Any}(
-                "source_Nc" => settings.Nc,
-                "geos_cs_resolution_strategy" => _geos_cs_strategy_name(workspace.strategy),
-            ),
-        )
-
-        worst_replay_rel = 0.0
-        worst_replay_abs = 0.0
-        worst_replay_win = 0
-        window_contract = CubedSphereContract{FT}(
-            replay_tol = replay_tol,
-            positivity_cfl_limit = positivity_cfl_limit,
-            require_substep_positivity = require_substep_positivity,
-            steps_per_window = steps_per_met,
-        )
-
-        t_start = time()
-
-        @inbounds for win in 1:nw
-            ingest_window!(workspace, reader, win, grid, settings, vertical)
-            ready_diag = drain_ready_windows!(workspace, window_contract,
-                                              win, grid, settings, steps_per_met)
-            contract_diag = ready_diag.contract
-            if worst_replay_win == 0 || contract_diag.replay.max_rel_err > worst_replay_rel
-                worst_replay_rel = contract_diag.replay.max_rel_err
-                worst_replay_abs = contract_diag.replay.max_abs_err
-                worst_replay_win = win
-            end
-            update_accumulator!(window_contract, contract_diag.positivity, win)
-            write_streaming_cs_window!(writer, ready_diag.ready.payload, Nc, npanel)
-            advance_window!(workspace, grid)
-        end
-
-        elapsed = time() - t_start
-        @info @sprintf("  Done in %.1fs (%.2fs/window). Worst replay: rel=%.2e abs=%.2e at win=%d",
-                       elapsed, elapsed / nw, worst_replay_rel, worst_replay_abs, worst_replay_win)
-
-        # Close the writer before the positivity summary so a quarantine
-        # delete (require_substep_positivity=true + violation) can remove the
-        # binary cleanly without an open file handle on it.
-        close_streaming_transport_binary!(writer)
-        writer_closed = true
-        summarize_status!(window_contract; quarantine_path = tmp_path)
-
-        # Reached only when positivity passed, or when require_substep_positivity=false
-        # turned a violation into a warning. Promote the staged file either way.
-        mv(tmp_path, out_path; force = true)
-        mv_done = true
-
-        # Capture the pressure-fixer endpoint from the last window so the
-        # caller can seed the next day's `process_day` and preserve cross-day
-        # continuity (codex 2026-04-25 P2).
-        final_m = chain_mass ? ntuple(p -> copy(workspace.m_cur[p]), npanel) : nothing
-        set_end_of_day_seed!(reader, final_m)
-
-        return (
-            elapsed = elapsed,
-            worst_replay_rel = worst_replay_rel,
-            worst_replay_abs = worst_replay_abs,
-            worst_replay_win = worst_replay_win,
-            out_path = out_path,
-            final_m = final_m,
-        )
-    finally
-        # Guard on `writer !== nothing` so a failure in `open_…` itself
-        # (before assignment) does not try to close a `nothing`.
-        if writer !== nothing && !writer_closed
-            close_streaming_transport_binary!(writer)
-        end
-        # On any non-clean exit (loop exception, replay error, quarantined
-        # positivity violation), remove the staged file so it cannot be
-        # mistaken for a finished binary on retry. `summarize_…` already
-        # deleted it in the explicit quarantine case; this guard catches the
-        # other failure modes.
-        if !mv_done && isfile(tmp_path)
-            rm(tmp_path; force = true)
-        end
-        close_reader!(reader)
-    end
+    unified_driver || @warn "GEOS-CS legacy loop has been removed; unified driver is always used."
+    return _process_day_geos_cs_unified(
+        date, grid, settings, vertical;
+        out_path = out_path,
+        dt_met_seconds = dt_met_seconds,
+        FT = FT,
+        mass_basis = mass_basis,
+        replay_tol = replay_tol,
+        positivity_cfl_limit = positivity_cfl_limit,
+        require_substep_positivity = require_substep_positivity,
+        chain_mass = chain_mass,
+        seed_m = seed_m,
+    )
 end

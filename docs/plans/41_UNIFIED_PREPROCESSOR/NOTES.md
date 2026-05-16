@@ -106,8 +106,9 @@ Executor state, 2026-05-15:
   Direct `process_day(...; unified_driver = false)` remains temporarily for
   parity tests and local bisection, but users no longer select the legacy loop
   from config.
-- P4c in progress: delete per-topology legacy loops, starting with the RG
-  spectral hand-written sliding-window writer.
+- P4c shipped: removed the RG spectral hand-written sliding-window writer.
+- P4d in progress: remove the GEOS-native CS inline legacy loop; the outer
+  dispatch now validates inputs and calls `_process_day_geos_cs_unified`.
 
 **Read [DESIGN.md](DESIGN.md) first** for the typed three-axis rationale,
 the anti-pattern audit with file:line citations, and the foot-gun

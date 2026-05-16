@@ -101,10 +101,11 @@ Executor state, 2026-05-15:
 - Remaining P3/P4 work: remove legacy opt-in scaffolding in small topology
   commits, preserving the fake-fixture byte-parity tests and the LL/CS/GEOS
   real-bake evidence above.
-- P4a in progress: flip the TOML entrypoint default to the unified driver
-  (`[preprocessor].unified` now defaults to `true`) while preserving
-  `[preprocessor].unified = false` and direct `process_day(...;
-  unified_driver = false)` for one commit of bisectability.
+- P4a shipped: TOML entrypoint defaults to the unified driver.
+- P4b in progress: remove the TOML-level unified/legacy opt-out entirely.
+  Direct `process_day(...; unified_driver = false)` remains temporarily for
+  parity tests and local bisection, but users no longer select the legacy loop
+  from config.
 
 **Read [DESIGN.md](DESIGN.md) first** for the typed three-axis rationale,
 the anti-pattern audit with file:line citations, and the foot-gun

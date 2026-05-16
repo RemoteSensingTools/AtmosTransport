@@ -108,9 +108,6 @@ end
 _resolve_require_substep_positivity(cfg::AbstractDict) =
     Bool(get(get(cfg, "numerics", Dict()), "require_substep_positivity", true))
 
-_resolve_unified_preprocessor(cfg::AbstractDict) =
-    Bool(get(get(cfg, "preprocessor", Dict()), "unified", true))
-
 # ---------------------------------------------------------------------------
 # Native-source preprocessor: typed `AbstractMetSettings` + cross-day state
 # carry (e.g. GEOS pressure-fixer chained mass).
@@ -170,10 +167,8 @@ function _process_day_native(cfg::AbstractDict;
     chain_mass     = _resolve_chain_mass(cfg)
     positivity_cfl_limit       = _resolve_positivity_cfl_limit(cfg)
     require_substep_positivity = _resolve_require_substep_positivity(cfg)
-    unified_preprocessor       = _resolve_unified_preprocessor(cfg)
-    if unified_preprocessor &&
-       !(grid isa CubedSphereTargetGeometry && settings isa AbstractGEOSSettings)
-        error("`[preprocessor].unified = true` currently supports only " *
+    if !(grid isa CubedSphereTargetGeometry && settings isa AbstractGEOSSettings)
+        error("Unified native-source preprocessing currently supports only " *
               "native GEOS → cubed_sphere preprocessing.")
     end
 
@@ -182,8 +177,7 @@ function _process_day_native(cfg::AbstractDict;
     @info @sprintf("Preprocessor: %s  Nc=%d  → %s  Nz=%d  FT=%s  %d day(s)",
                    typeof(settings), settings.Nc, typeof(grid),
                    vertical.Nz, FT, length(dates))
-    unified_preprocessor &&
-        @info "Plan 41 unified driver opt-in enabled for native GEOS → cubed_sphere"
+    @info "Plan 41 unified driver enabled for native GEOS → cubed_sphere"
 
     t_total = time()
     seed_m = nothing                   # source-defined cross-day state (e.g. GEOS PF endpoint)
@@ -199,10 +193,8 @@ function _process_day_native(cfg::AbstractDict;
             positivity_cfl_limit       = positivity_cfl_limit,
             require_substep_positivity = require_substep_positivity,
             seed_m          = seed_m,
+            unified_driver  = true,
         )
-        if unified_preprocessor
-            day_kwargs = (day_kwargs..., unified_driver = true)
-        end
         result = process_day(d, grid, settings, vertical; day_kwargs...)
         seed_m = get(result, :final_m, nothing)
     end
@@ -236,19 +228,17 @@ function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
 
     positivity_cfl_limit       = _resolve_positivity_cfl_limit(cfg)
     require_substep_positivity = _resolve_require_substep_positivity(cfg)
-    unified_preprocessor       = _resolve_unified_preprocessor(cfg)
     spectral_unified_supported =
         grid isa ReducedGaussianTargetGeometry ||
         grid isa CubedSphereTargetGeometry ||
         grid isa LatLonTargetGeometry
-    if unified_preprocessor && !spectral_unified_supported
-        error("`[preprocessor].unified = true` for ERA5 spectral currently " *
+    if !spectral_unified_supported
+        error("Unified ERA5 spectral preprocessing currently " *
               "supports only latlon, reduced_gaussian, and cubed_sphere targets.")
     end
 
     @info @sprintf("Processing %d days: %s to %s", length(dates), first(dates), last(dates))
-    unified_preprocessor &&
-        @info "Plan 41 unified driver opt-in enabled for ERA5 spectral → $(grid_kind(grid))"
+    @info "Plan 41 unified driver enabled for ERA5 spectral → $(grid_kind(grid))"
     t_total = time()
     run_cache = PreprocessorRunCache(typeof(grid), settings.output_float_type)
     for (idx, date) in enumerate(dates)
@@ -261,10 +251,8 @@ function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
             require_substep_positivity = require_substep_positivity,
             next_day_hour0             = next_day_h0,
             run_cache                  = run_cache,
+            unified_driver             = true,
         )
-        if unified_preprocessor
-            day_kwargs = (day_kwargs..., unified_driver = true)
-        end
         process_day(date, grid, settings, vertical; day_kwargs...)
     end
     elapsed = time() - t_total

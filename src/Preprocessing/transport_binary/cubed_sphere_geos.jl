@@ -661,8 +661,7 @@ end
                 replay_tol = replay_tolerance(FT),
                 seed_m = nothing,
                 next_day_hour0 = nothing,
-                chain_mass = true,
-                unified_driver = true) -> NamedTuple
+                chain_mass = true) -> NamedTuple
 
 Build a v4 cubed-sphere transport binary at `out_path` from one UTC day of
 native GEOS data. Source mesh and target mesh must match (CS passthrough).
@@ -687,10 +686,6 @@ last window. With `chain_mass = false`, `final_m` is `nothing`.
 `next_day_hour0` is part of the inherited topology-dispatch contract but
 unused — the GEOS reader handles next-day endpoints internally via
 `next_ctm_i1`.
-
-Runs through the Plan 41 unified driver lifecycle. The `unified_driver`
-keyword is accepted temporarily for test/bisect callers but no longer selects
-between production loops.
 """
 function process_day(date::Date,
                      grid::CubedSphereTargetGeometry,
@@ -705,14 +700,12 @@ function process_day(date::Date,
                      require_substep_positivity::Bool = true,
                      chain_mass::Bool = true,
                      seed_m::Union{Nothing, NTuple{6, <:AbstractArray}} = nothing,
-                     next_day_hour0 = nothing,
-                     unified_driver::Bool = true)
+                     next_day_hour0 = nothing)
     # Reject configurations the path cannot honor:
     mass_basis === :dry ||
         error("GEOS-CS passthrough only supports mass_basis=:dry; got $(mass_basis). " *
               "GEOS MFXC/MFYC are already dry; the chained pressure-fixer is dry-basis.")
     _validate_geos_native_panel_convention(grid.mesh.convention)
-    unified_driver || @warn "GEOS-CS legacy loop has been removed; unified driver is always used."
     return _process_day_geos_cs_unified(
         date, grid, settings, vertical;
         out_path = out_path,

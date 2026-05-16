@@ -104,8 +104,7 @@ end
                                                  positivity_cfl_limit = 0.95)
         unified_path, unified_last = process_day(date, grid, unified_settings,
                                                  vertical;
-                                                 positivity_cfl_limit = 0.95,
-                                                 unified_driver = true)
+                                                 positivity_cfl_limit = 0.95)
 
         @test isfile(default_path)
         @test isfile(unified_path)

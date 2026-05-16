@@ -102,17 +102,16 @@ Executor state, 2026-05-15:
   commits, preserving the fake-fixture byte-parity tests and the LL/CS/GEOS
   real-bake evidence above.
 - P4a shipped: TOML entrypoint defaults to the unified driver.
-- P4b in progress: remove the TOML-level unified/legacy opt-out entirely.
-  Direct `process_day(...; unified_driver = false)` remains temporarily for
-  parity tests and local bisection, but users no longer select the legacy loop
-  from config.
+- P4b shipped: removed the TOML-level unified/legacy opt-out entirely.
 - P4c shipped: removed the RG spectral hand-written sliding-window writer.
-- P4d in progress: remove the GEOS-native CS inline legacy loop; the outer
+- P4d shipped: removed the GEOS-native CS inline legacy loop; the outer
   dispatch now validates inputs and calls `_process_day_geos_cs_unified`.
-- P4e in progress: remove the CS spectral inline sliding-window loop; the
+- P4e shipped: removed the CS spectral inline sliding-window loop; the
   `process_day` body now uses `run_unified_preprocessor_day!` directly.
-- P4f in progress: remove the LL spectral full-day legacy loop; the deferred
+- P4f shipped: removed the LL spectral full-day legacy loop; the deferred
   header writer remains the single LL production writer path.
+- P4g shipped: deleted the now-dead `unified_driver` production keyword
+  and test call sites.
 
 **Read [DESIGN.md](DESIGN.md) first** for the typed three-axis rationale,
 the anti-pattern audit with file:line citations, and the foot-gun

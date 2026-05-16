@@ -225,9 +225,7 @@ end
 
 Run the full one-day preprocessing workflow for the structured lat-lon target:
 read spectral input, process all windows, close continuity against forward mass
-endpoints, and write the final binary. The `unified_driver` keyword is
-accepted temporarily for test/bisect callers but no longer selects between
-production loops.
+endpoints, and write the final binary.
 """
 function process_day(date::Date,
                      grid::LatLonTargetGeometry,
@@ -236,8 +234,7 @@ function process_day(date::Date,
                      next_day_hour0=nothing,
                      positivity_cfl_limit::Real = 0.95,
                      require_substep_positivity::Bool = true,
-                     run_cache = nothing,
-                     unified_driver::Bool = true)
+                     run_cache = nothing)
     FT = settings.output_float_type
     Nz_native = vertical.Nz_native
     Nz = vertical.Nz
@@ -331,7 +328,6 @@ function process_day(date::Date,
     @info "  Computing spectral -> gridpoint -> merged for $Nt windows..."
 
     try
-        unified_driver || @warn "LL spectral legacy loop has been removed; unified driver is always used."
         writer = LatLonDeferredBinaryWriter(
             bin_path, header, workspace, settings, FT,
             mass_basis_from_symbol(Symbol(settings.mass_basis)))

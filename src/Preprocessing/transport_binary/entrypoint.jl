@@ -193,7 +193,6 @@ function _process_day_native(cfg::AbstractDict;
             positivity_cfl_limit       = positivity_cfl_limit,
             require_substep_positivity = require_substep_positivity,
             seed_m          = seed_m,
-            unified_driver  = true,
         )
         result = process_day(d, grid, settings, vertical; day_kwargs...)
         seed_m = get(result, :final_m, nothing)
@@ -251,7 +250,6 @@ function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
             require_substep_positivity = require_substep_positivity,
             next_day_hour0             = next_day_h0,
             run_cache                  = run_cache,
-            unified_driver             = true,
         )
         process_day(date, grid, settings, vertical; day_kwargs...)
     end

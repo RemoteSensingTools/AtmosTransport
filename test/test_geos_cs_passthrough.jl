@@ -271,8 +271,7 @@ end
                               dt_met_seconds = 3600.0,
                               FT = FT_TEST,
                               mass_basis = :dry,
-                              replay_tol = 1e-12,
-                              unified_driver = true)
+                              replay_tol = 1e-12)
         @test isfile(unified_path)
         @test unified.out_path == unified_path
         @test unified.worst_replay_rel ≈ default.worst_replay_rel

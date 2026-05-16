@@ -388,9 +388,7 @@ end
 
 Spectral→CS transport binary: spectral synthesis to an internal LL staging grid,
 conservative regridding to CS panels, endpoint continuity closure, and streaming
-binary write. No on-disk LL intermediate. The `unified_driver` keyword is
-accepted temporarily for test/bisect callers but no longer selects between
-production loops.
+binary write. No on-disk LL intermediate.
 """
 function process_day(date::Date,
                      grid::CubedSphereTargetGeometry,
@@ -399,8 +397,7 @@ function process_day(date::Date,
                      positivity_cfl_limit::Real = 0.95,
                      require_substep_positivity::Bool = true,
                      next_day_hour0=nothing,
-                     run_cache = nothing,
-                     unified_driver::Bool = true)
+                     run_cache = nothing)
     FT = settings.output_float_type
     Nc = grid.Nc
     Nz = vertical.Nz
@@ -452,7 +449,6 @@ function process_day(date::Date,
     write_replay_on || @info "  Write-time CS replay gate SKIPPED (ATMOSTR_NO_WRITE_REPLAY_CHECK=1)"
     replay_tol = replay_tolerance(FT)
 
-    unified_driver || @warn "CS spectral legacy loop has been removed; unified driver is always used."
         writer = nothing
         driver_started = false
         try

@@ -1524,7 +1524,7 @@ end
 """
     process_day(date, grid::ReducedGaussianTargetGeometry, settings, vertical;
                 next_day_hour0=nothing, positivity_cfl_limit=0.95,
-                require_substep_positivity=true, unified_driver=false)
+                require_substep_positivity=true)
 
 Streaming one-day preprocessing for reduced-Gaussian targets.
 
@@ -1536,10 +1536,6 @@ memory from `O(Nt)` to `O(1)` and enables O160/O320 binary generation.
 Pipeline per window:
   spectral synthesis → mass fix → level merge → (wait for next window) →
   Poisson balance using (m_cur, m_next) → cm recomputation → stream-write
-
-Runs through the Plan 41 unified driver lifecycle. The `unified_driver`
-keyword is accepted temporarily for test/bisect callers but no longer selects
-between production loops.
 """
 function process_day(date::Date,
                      grid::ReducedGaussianTargetGeometry,
@@ -1548,8 +1544,7 @@ function process_day(date::Date,
                      next_day_hour0=nothing,
                      positivity_cfl_limit::Real = 0.95,
                      require_substep_positivity::Bool = true,
-                     run_cache = nothing,
-                     unified_driver::Bool = true)
+                     run_cache = nothing)
     FT = settings.output_float_type
     mesh = grid.mesh
     nc = ncells(mesh)
@@ -1648,7 +1643,6 @@ function process_day(date::Date,
     log_mass_fix_configuration(settings)
     @info "  Streaming: synthesize → balance → write (2-window sliding buffer)..."
 
-    unified_driver || @warn "RG spectral legacy loop has been removed; unified driver is always used."
     window_writer = ReducedGaussianBinaryWriter(
         writer,
         mass_basis_from_symbol(Symbol(settings.mass_basis));

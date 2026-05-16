@@ -1429,10 +1429,102 @@ function _verify_rg_balanced_window!(window_contract,
     return diag
 end
 
+mutable struct RGSpectralUnifiedDriverContext{G, S, V, SP}
+    grid              :: G
+    settings          :: S
+    vertical          :: V
+    spec              :: SP
+    steps_per_window  :: Int
+    write_replay_on   :: Bool
+    worst_pre_raw     :: Float64
+    worst_post_proj   :: Float64
+    worst_post_raw    :: Float64
+    worst_iter        :: Int
+    worst_replay_rel  :: Float64
+    worst_replay_abs  :: Float64
+    worst_replay_win  :: Int
+    worst_replay_idx  :: Tuple{Int, Int}
+end
+
+driver_windows_per_day(::Nothing, ctx::RGSpectralUnifiedDriverContext) =
+    ctx.spec.n_times
+
+function driver_ingest_window!(workspace::ReducedGaussianSpectralWindowWorkspace,
+                               ::Nothing,
+                               win::Int,
+                               ctx::RGSpectralUnifiedDriverContext)
+    slot = win == 1 ? workspace.cur : workspace.nxt
+    t_synth = ingest_window!(workspace, slot, win, ctx.spec.hours[win],
+                             ctx.spec, ctx.grid, ctx.vertical, ctx.settings)
+    should_log_window(win, ctx.spec.n_times) &&
+        @info @sprintf("    Window %2d/%d (hour %02d): synth %.2fs  offset=%+.3f Pa",
+                       win, ctx.spec.n_times, ctx.spec.hours[win], t_synth,
+                       workspace.ps_offsets[win])
+    return nothing
+end
+
+function _rg_unified_record_diag!(ctx::RGSpectralUnifiedDriverContext,
+                                  ready_diag,
+                                  win::Int)
+    diag = ready_diag.balance
+    ctx.worst_pre_raw = max(ctx.worst_pre_raw, diag.max_pre_raw_residual)
+    ctx.worst_post_proj = max(ctx.worst_post_proj, diag.max_post_projected)
+    ctx.worst_post_raw = max(ctx.worst_post_raw, diag.max_post_raw_residual)
+    ctx.worst_iter = max(ctx.worst_iter, diag.max_cg_iter)
+
+    contract_diag = ready_diag.contract
+    if ctx.write_replay_on && contract_diag.replay.max_rel_err > ctx.worst_replay_rel
+        ctx.worst_replay_rel = contract_diag.replay.max_rel_err
+        ctx.worst_replay_abs = contract_diag.replay.max_abs_err
+        ctx.worst_replay_win = win
+        ctx.worst_replay_idx = contract_diag.replay.worst_idx
+    end
+    return nothing
+end
+
+function driver_drain_ready_windows!(workspace::ReducedGaussianSpectralWindowWorkspace,
+                                     contract,
+                                     win::Int,
+                                     ctx::RGSpectralUnifiedDriverContext)
+    win == 1 && return ()
+    written_win = win - 1
+    t_bal = time()
+    ready_diag = drain_ready_windows!(workspace, contract, written_win,
+                                      ctx.steps_per_window;
+                                      write_replay_on = ctx.write_replay_on)
+    t_bal = time() - t_bal
+    _rg_unified_record_diag!(ctx, ready_diag, written_win)
+    diag = ready_diag.balance
+    should_log_window(written_win, ctx.spec.n_times) &&
+        @info @sprintf("    Window %2d/%d: wrote (bal %.2fs pre_raw=%.2e post_proj=%.2e iter=%d)",
+                       written_win, ctx.spec.n_times, t_bal,
+                       diag.max_pre_raw_residual, diag.max_post_projected,
+                       diag.max_cg_iter)
+    return (merge(ready_diag, (accumulated = true,)),)
+end
+
+function driver_flush_final_windows!(workspace::ReducedGaussianSpectralWindowWorkspace,
+                                     ::Nothing,
+                                     contract,
+                                     ctx::RGSpectralUnifiedDriverContext)
+    Nt = ctx.spec.n_times
+    t_bal = time()
+    ready_diag = flush_final_windows!(workspace, contract, Nt,
+                                      ctx.steps_per_window;
+                                      write_replay_on = ctx.write_replay_on)
+    t_bal = time() - t_bal
+    _rg_unified_record_diag!(ctx, ready_diag, Nt)
+    diag = ready_diag.balance
+    @info @sprintf("    Window %2d/%d (last): bal %.2fs  pre_raw=%.2e post_proj=%.2e iter=%d",
+                   Nt, Nt, t_bal, diag.max_pre_raw_residual,
+                   diag.max_post_projected, diag.max_cg_iter)
+    return (merge(ready_diag, (accumulated = true,)),)
+end
+
 """
     process_day(date, grid::ReducedGaussianTargetGeometry, settings, vertical;
                 next_day_hour0=nothing, positivity_cfl_limit=0.95,
-                require_substep_positivity=true)
+                require_substep_positivity=true, unified_driver=false)
 
 Streaming one-day preprocessing for reduced-Gaussian targets.
 
@@ -1444,6 +1536,10 @@ memory from `O(Nt)` to `O(1)` and enables O160/O320 binary generation.
 Pipeline per window:
   spectral synthesis → mass fix → level merge → (wait for next window) →
   Poisson balance using (m_cur, m_next) → cm recomputation → stream-write
+
+Set `unified_driver = true` to run the additive Plan 41 P3 driver shell for
+this topology. Default remains the legacy loop until the spectral cutover is
+complete.
 """
 function process_day(date::Date,
                      grid::ReducedGaussianTargetGeometry,
@@ -1452,7 +1548,8 @@ function process_day(date::Date,
                      next_day_hour0=nothing,
                      positivity_cfl_limit::Real = 0.95,
                      require_substep_positivity::Bool = true,
-                     run_cache = nothing)
+                     run_cache = nothing,
+                     unified_driver::Bool = false)
     FT = settings.output_float_type
     mesh = grid.mesh
     nc = ncells(mesh)
@@ -1550,6 +1647,42 @@ function process_day(date::Date,
 
     log_mass_fix_configuration(settings)
     @info "  Streaming: synthesize → balance → write (2-window sliding buffer)..."
+
+    if unified_driver
+        window_writer = ReducedGaussianBinaryWriter(
+            writer,
+            mass_basis_from_symbol(Symbol(settings.mass_basis));
+            final_path = bin_path)
+        ctx = RGSpectralUnifiedDriverContext(
+            grid, settings, vertical, spec, steps_per_met, write_replay_on,
+            0.0, 0.0, 0.0, 0, 0.0, 0.0, 0, (0, 0))
+        run_unified_preprocessor_day!(
+            UnifiedPreprocessorDay(nothing, workspace, window_contract, window_writer;
+                                   context = ctx);
+            close_reader = false)
+
+        if settings.mass_fix_enable
+            @info @sprintf("  Mass-fix offsets (Pa) min/max/mean: %+.3f / %+.3f / %+.3f",
+                           minimum(ps_offsets), maximum(ps_offsets),
+                           sum(ps_offsets) / Nt)
+        end
+        if write_replay_on
+            @info @sprintf("  Write-time RG replay gate: max rel=%.3e abs=%.3e win=%d cell=%s",
+                           ctx.worst_replay_rel, ctx.worst_replay_abs,
+                           ctx.worst_replay_win, ctx.worst_replay_idx)
+        end
+        @info @sprintf("  Poisson balance summary: pre_raw=%.3e  post_proj=%.3e  post_raw=%.3e  max_cg_iter=%d",
+                       ctx.worst_pre_raw, ctx.worst_post_proj,
+                       ctx.worst_post_raw, ctx.worst_iter)
+
+        actual = filesize(bin_path)
+        @info @sprintf("  Done: %s (%.2f GB, %.1fs)", basename(bin_path),
+                       actual / 1e9, time() - t_day)
+        actual == expected_total ||
+            @warn @sprintf("File size mismatch: expected %d bytes, got %d", expected_total, actual)
+
+        return bin_path
+    end
 
     # Worst-case balance diagnostics across all windows
     worst_pre_raw  = 0.0

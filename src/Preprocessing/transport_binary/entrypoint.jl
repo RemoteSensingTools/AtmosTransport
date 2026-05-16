@@ -236,8 +236,15 @@ function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
 
     positivity_cfl_limit       = _resolve_positivity_cfl_limit(cfg)
     require_substep_positivity = _resolve_require_substep_positivity(cfg)
+    unified_preprocessor       = _resolve_unified_preprocessor(cfg)
+    if unified_preprocessor && !(grid isa ReducedGaussianTargetGeometry)
+        error("`[preprocessor].unified = true` for ERA5 spectral currently " *
+              "supports only reduced_gaussian targets.")
+    end
 
     @info @sprintf("Processing %d days: %s to %s", length(dates), first(dates), last(dates))
+    unified_preprocessor &&
+        @info "Plan 41 unified driver opt-in enabled for ERA5 spectral → reduced_gaussian"
     t_total = time()
     run_cache = PreprocessorRunCache(typeof(grid), settings.output_float_type)
     for (idx, date) in enumerate(dates)
@@ -245,11 +252,16 @@ function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
         next_day_h0 = next_day_hour0(date, dates, settings.spectral_dir, settings.T_target;
                                      cache_dir = settings.spectral_cache_dir)
         next_day_h0 !== nothing && @info("  Next day hour 0 available for last-window delta")
-        process_day(date, grid, settings, vertical;
-                    positivity_cfl_limit       = positivity_cfl_limit,
-                    require_substep_positivity = require_substep_positivity,
-                    next_day_hour0             = next_day_h0,
-                    run_cache                  = run_cache)
+        day_kwargs = (
+            positivity_cfl_limit       = positivity_cfl_limit,
+            require_substep_positivity = require_substep_positivity,
+            next_day_hour0             = next_day_h0,
+            run_cache                  = run_cache,
+        )
+        if unified_preprocessor
+            day_kwargs = (day_kwargs..., unified_driver = true)
+        end
+        process_day(date, grid, settings, vertical; day_kwargs...)
     end
     elapsed = time() - t_total
     @info @sprintf("All done! %d days in %.1fs (%.1fs/day)",

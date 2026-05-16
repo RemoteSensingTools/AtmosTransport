@@ -86,7 +86,10 @@ function _verify_ready_event!(event, contract)
     diag = _is_ready_event(event) && hasproperty(event, :contract) ?
         getproperty(event, :contract) :
         verify_window!(ready, contract, ready.index)
-    update_accumulator!(contract, diag.positivity, ready.index)
+    already_accumulated = _is_ready_event(event) &&
+        hasproperty(event, :accumulated) &&
+        Bool(getproperty(event, :accumulated))
+    already_accumulated || update_accumulator!(contract, diag.positivity, ready.index)
     return ready
 end
 

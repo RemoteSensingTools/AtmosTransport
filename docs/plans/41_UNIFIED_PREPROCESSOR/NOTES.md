@@ -38,6 +38,11 @@ Executor state, 2026-05-15:
 - P3d shipped in the current Codex working tree: TOML native-source entrypoint
   reads `[preprocessor].unified = true` and threads it only to supported
   native GEOS -> cubed-sphere runs. Default config behavior remains legacy.
+- P3e shipped in the current Codex working tree: ERA5 spectral -> reduced
+  Gaussian has a `unified_driver = true` opt-in and the spectral TOML
+  entrypoint threads `[preprocessor].unified = true` only for RG targets.
+  A fake decoded spectral-cache fixture byte-compares legacy vs unified RG
+  binaries.
 - Next phase is P3: collapse the still-long legacy `process_day`
   driver bodies into the unified driver behind an opt-in flag.
 
@@ -453,6 +458,12 @@ on the synthetic GEOS passthrough fixture.
 
 P3d exposes that opt-in at the TOML entrypoint as
 `[preprocessor].unified = true` for native GEOS -> cubed-sphere only.
+
+P3e wires the first spectral opt-in: ERA5 spectral -> reduced Gaussian gets
+`process_day(...; unified_driver=true)`, and `[preprocessor].unified = true`
+is accepted for spectral RG configs. The parity gate uses a tiny decoded
+spectral-cache fixture and compares the legacy and unified binaries byte for
+byte.
 
 Add `transport_binary/driver.jl` with the ~80-line driver above.
 **Don't** wire it in yet — `entrypoint.jl::process_day` still routes

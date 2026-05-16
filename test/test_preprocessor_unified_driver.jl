@@ -47,10 +47,12 @@ mutable struct FakeWorkspace{FT} <: AbstractWindowWorkspace{LatLonTargetGeometry
     after_written :: Vector{Int}
     flush_final   :: Bool
     preverified   :: Bool
+    accumulated   :: Bool
 end
 
-FakeWorkspace{FT}(; flush_final::Bool=false, preverified::Bool=false) where FT =
-    FakeWorkspace{FT}(Any[], Int[], Int[], flush_final, preverified)
+FakeWorkspace{FT}(; flush_final::Bool=false, preverified::Bool=false,
+                  accumulated::Bool=false) where FT =
+    FakeWorkspace{FT}(Any[], Int[], Int[], flush_final, preverified, accumulated)
 
 _fake_ready(::Type{FT}, index::Int) where FT =
     ReadyWindow{LatLonTargetGeometry, FT}(index, (token = index,))
@@ -60,7 +62,8 @@ _fake_diag() = (replay = (max_rel_err = 0.0, max_abs_err = 0.0),
                               location = (0, 0, 0)))
 
 _fake_event(ws::FakeWorkspace{FT}, index::Int) where FT =
-    ws.preverified ? (ready = _fake_ready(FT, index), contract = _fake_diag()) :
+    ws.preverified ? (ready = _fake_ready(FT, index), contract = _fake_diag(),
+                      accumulated = ws.accumulated) :
                      _fake_ready(FT, index)
 
 function ingest_window!(ws::FakeWorkspace{FT}, _reader::FakeReader{FT},
@@ -195,6 +198,24 @@ end
     @test result.windows_written == 2
     @test writer.written == [1, 2]
     @test contract.updates == [1, 2]
+    @test contract.verify_calls == 0
+    @test writer.promoted
+    @test reader.closed
+end
+
+@testset "unified driver can skip already-accumulated ready events" begin
+    FT = Float64
+    reader = FakeReader{FT}(2, false)
+    workspace = FakeWorkspace{FT}(preverified = true, accumulated = true)
+    contract = FakeContract{FT}()
+    writer = FakeWriter{FT}()
+
+    result = run_unified_preprocessor_day!(
+        UnifiedPreprocessorDay(reader, workspace, contract, writer))
+
+    @test result.windows_written == 2
+    @test writer.written == [1, 2]
+    @test isempty(contract.updates)
     @test contract.verify_calls == 0
     @test writer.promoted
     @test reader.closed

@@ -66,10 +66,11 @@ chain_mass     = false
 # native-L72 path hit `outgoing/m > 1` in thin upper layers; the 0.25 hPa cap
 # removes that artifact, while the per-window schedule handles normal C180
 # CFL variability elsewhere in the column without forcing all hours to use
-# the worst hour's step count.
+# the worst hour's step count. Use the runtime positivity limit as the target;
+# a 0.5 safety target is unnecessarily conservative and over-subcycles.
 positivity_cfl_limit       = 0.95
 require_substep_positivity = true
 substep_schedule           = "adaptive_cfl"
-substep_cfl_target         = 0.5
+substep_cfl_target         = 0.95
 min_steps_per_window       = 1
 max_steps_per_window       = 64

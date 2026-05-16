@@ -7,7 +7,7 @@ import ..State: mass_basis
 
 const _PBL_SURFACE_PAYLOAD_SECTIONS = (:pblh, :ustar, :pbl_hflux, :t2m)
 const _PBL_SURFACE_FIELD_NAMES = (:pblh, :ustar, :hflux, :t2m)
-const TRANSPORT_BINARY_FORMAT_VERSION = 2
+const TRANSPORT_BINARY_FORMAT_VERSION = 3
 
 @inline _is_pbl_surface_payload_section(section::Symbol) =
     section in _PBL_SURFACE_PAYLOAD_SECTIONS
@@ -622,7 +622,7 @@ defaults.
 Shared between `TransportBinaryDriver`, `TransportBinaryReader`, and the
 `scripts/diagnostics/inspect_transport_binary.jl` tool so there is ONE
 validator every reader-facing tool calls. `allow_legacy` is retained for API
-compatibility but no longer bypasses the v2 runtime contract.
+compatibility but no longer bypasses the current runtime contract.
 """
 function validate_transport_contract!(header::AbstractDict;
                                       allow_legacy::Bool = false)
@@ -645,7 +645,7 @@ function validate_transport_contract!(header::AbstractDict;
     format_version == TRANSPORT_BINARY_FORMAT_VERSION || throw(ArgumentError(
         "Obsolete transport binary format_version=$(format_version); current runtime requires " *
         "format_version=$(TRANSPORT_BINARY_FORMAT_VERSION). Regenerate this file with the current " *
-        "preprocessor so the header carries the per-window substep schedule and v2 contract."))
+        "preprocessor so the header carries the per-window substep schedule and runtime contract."))
 
     fields = ("source_flux_sampling", "air_mass_sampling", "flux_sampling",
               "flux_kind", "delta_semantics", "humidity_sampling",

@@ -107,16 +107,24 @@ Executor state, 2026-05-16:
   of assuming one scalar step count.
 - P4i shipped: C180 GEOS configs now target the 64-level
   merge-above-0.25 hPa product with adaptive substeps
-  (`substep_cfl_target = 0.5`, max 64). The Catrine GEOS run configs
-  point at the adaptive directory and require `expected_nlevel = 64`,
-  `required_preprocessor_contract = "plan41_variable_substeps"`, and
-  `require_adaptive_substeps = true`, so old 72-level constant-step
-  files fail at startup.
-- P4j shipped: transport binaries are now `format_version = 2`. Readers
-  reject all older files before mmap, including CS files, and v2 requires
+  (`substep_cfl_target = 0.95`, max 64). The Catrine GEOS run configs
+  point at the adaptive directory. The output level count and adaptive
+  runtime schedule are deliberately binary-owned; run TOMLs should not
+  restate `expected_nlevel` or duplicate the header contract.
+- P4j/P4k shipped: transport binaries are now `format_version = 3`. Readers
+  reject all older files before mmap, including CS files, and v3 requires
   `steps_per_window_by_window`, `time_step_schedule`, and
   `poisson_balance_target_scale_by_window` even for constant-step products.
-  The old legacy contract bypass no longer admits stale runtime binaries.
+  CS Plan-41 binaries also declare `runtime_substep_contract =
+  "binary_schedule"` so the runtime uses the serialized schedule rather than
+  re-piloting subcycles. The old legacy contract bypass no longer admits stale
+  runtime binaries.
+- Runtime cadence follow-up shipped: the v3 binary schedule is now explicitly
+  a transport-block cadence. `DrivenSimulation` applies
+  `transport_step!` on each serialized substep for
+  `runtime_substep_contract = "binary_schedule"` files, then applies
+  convection and chemistry once at the met-window boundary with `window_dt`.
+  Default non-binary drivers still call the full `step!` each substep.
 
 **Read [DESIGN.md](DESIGN.md) first** for the typed three-axis rationale,
 the anti-pattern audit with file:line citations, and the foot-gun
@@ -230,7 +238,7 @@ windows_per_day(reader)::Int
 # is owned by the target workspace and reused across windows.
 read_window!(dst, reader, w::Int) → nothing
 
-# Cross-day carry (e.g., GEOS pressure-fixer endpoint) returned from
+# Cross-day carry (e.g., GEOS raw endpoint mass) returned from
 # the last window. Used by the next day's `open_day(... ; seed=...)`.
 end_of_day_seed(reader) → Any
 
@@ -589,7 +597,7 @@ no new `process_day` method, no driver edits. If this commit is
    semantics (round-2's `Inf`/`NaN` fix, round-3's
    `typemax(Int)` + `cfl_limit` validation, the
    `require_substep_positivity = false` escape hatch) stay verbatim.
-3. **GEOS chained-mass seed plumbing.** The pressure-fixer endpoint
+3. **GEOS chained-mass seed plumbing.** The raw endpoint-mass
    handoff in `_process_day_native` is load-bearing; the
    `end_of_day_seed(reader)` / `seed=` round-trip must be tested with
    the existing 5-day chained-mass smoke before P4 lands.

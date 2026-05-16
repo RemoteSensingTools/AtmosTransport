@@ -1009,10 +1009,12 @@ function _cs_transport_step!(::CSSplitSweepStyle,
                              scheme::AbstractAdvectionScheme,
                              workspace::CSAdvectionWorkspace;
                              cfl_limit::Real = 0.95,
+                             subcycle_count::Union{Nothing, Integer} = nothing,
                              midpoint! = nothing)
     strang_split_cs!(rm_tracer, m, fluxes.am, fluxes.bm, fluxes.cm,
                      mesh, scheme, workspace;
                      cfl_limit = cfl_limit,
+                     subcycle_count = subcycle_count,
                      midpoint! = midpoint!)
     return nothing
 end
@@ -1036,7 +1038,9 @@ function _cs_transport_step!(::CSLinRoodStyle,
                              scheme::LinRoodPPMScheme{ORD},
                              workspace::CSLinRoodAdvectionWorkspace;
                              cfl_limit::Real = 0.95,
+                             subcycle_count::Union{Nothing, Integer} = nothing,
                              midpoint! = nothing) where ORD
+    _ = subcycle_count
     _strang_split_linrood_ppm_cs!(rm_tracer, m, fluxes.am, fluxes.bm, fluxes.cm,
                                   mesh, Val(ORD), workspace;
                                   cfl_limit = cfl_limit,
@@ -1054,6 +1058,15 @@ function _cs_transport_step!(::CSLinRoodStyle,
     throw(ArgumentError(
         "Cubed-sphere Lin-Rood advection with $(typeof(scheme)) requires " *
         "`CSLinRoodAdvectionWorkspace`; got $(typeof(workspace))."))
+end
+
+@inline _meteo_driver_for_substeps(::Nothing) = nothing
+@inline function _meteo_driver_for_substeps(meteo)
+    return hasproperty(meteo, :driver) ? getproperty(meteo, :driver) : meteo
+end
+
+@inline function _cs_runtime_subcycle_count(meteo)
+    return uses_binary_substep_contract(_meteo_driver_for_substeps(meteo)) ? 1 : nothing
 end
 
 function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxState{B},
@@ -1107,9 +1120,11 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
                     halo_width = state.halo_width)
             end
         end
+        subcycle_count = _cs_runtime_subcycle_count(meteo)
         _cs_transport_step!(cs_advection_style(scheme),
                             rm_tracer, m, fluxes, grid.horizontal, scheme, workspace;
                             cfl_limit = cfl_limit,
+                            subcycle_count = subcycle_count,
                             midpoint! = midpoint!)
     end
 

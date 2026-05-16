@@ -105,6 +105,12 @@ function binary_capabilities(reader::CubedSphereBinaryReader)
     )
 end
 
+function uses_binary_substep_contract(driver::CubedSphereTransportDriver)
+    hdr = driver.reader.header.raw_header
+    contract = get(hdr, "runtime_substep_contract", nothing)
+    return contract == "binary_schedule"
+end
+
 function _cs_header_symbol(reader::CubedSphereBinaryReader, key::AbstractString, default::Symbol)
     value = get(reader.header.raw_header, key, String(default))
     return Symbol(replace(lowercase(String(value)), '-' => '_', ' ' => '_'))

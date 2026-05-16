@@ -528,6 +528,9 @@ provide real time information on its own.
 """
 MetDrivers.current_time(sim::DrivenSimulation) = sim.time
 
+@inline _uses_binary_transport_schedule(sim::DrivenSimulation) =
+    uses_binary_substep_contract(sim.driver)
+
 function step!(sim::DrivenSimulation)
     sim.iteration < sim.final_iteration ||
         throw(ArgumentError("DrivenSimulation has already completed all scheduled steps"))
@@ -536,16 +539,22 @@ function step!(sim::DrivenSimulation)
     substep = substep_index(sim)
     SectionTimer.@section :forcing_refresh _refresh_forcing!(sim, substep)
 
-    # Plan 17 Commit 6 + plan 18 A3: step!(model) runs the live operator
-    # suite (advection with palindrome-centered V and S, then convection,
-    # then chemistry) in one call. Plan 18 A3 passes `meteo = sim`
-    # (not `sim.driver`) so operators see
-    # `current_time(sim) = sim.time` and can still reach the driver via
-    # `meteo.driver`. The driver is stateless and cannot provide
-    # `current_time` on its own.
-    step!(sim.model, sim.Δt; meteo = sim)
+    # Plan 17 Commit 6 + plan 18 A3: the default path keeps the live
+    # operator suite in one call. Plan 41 v3 transport binaries carry an
+    # advection substep contract, not a physics cadence contract, so driven
+    # binary-scheduled runs apply only the transport block at each stored
+    # substep and defer convection + chemistry to the end of the met window.
+    if _uses_binary_transport_schedule(sim)
+        transport_step!(sim.model, sim.Δt; meteo = sim)
+    else
+        step!(sim.model, sim.Δt; meteo = sim)
+    end
     sim.time += sim.Δt
     sim.iteration += 1
+    if _uses_binary_transport_schedule(sim) &&
+       sim.iteration == sim.current_window_end_iteration
+        convection_chemistry_step!(sim.model, sim.window_dt; meteo = sim)
+    end
     for callback in values(sim.callbacks)
         callback(sim)
     end

@@ -362,12 +362,49 @@ function Adapt.adapt_structure(to, model::TransportModel)
 end
 
 """
+    transport_step!(model::TransportModel, dt; meteo = nothing)
+
+Advance `model.state` by one transport step: advection with
+vertical diffusion at the palindrome center, surface emissions
+wrapped by the two V half-steps when active.
+
+Binary-scheduled driven runs use this block at the per-window
+advection substep cadence stored in the transport binary. Convection
+and chemistry are separate physics blocks and can run at the met-window
+cadence via [`convection_chemistry_step!`](@ref).
+"""
+function transport_step!(model::TransportModel, dt; meteo = nothing)
+    SectionTimer.@section :advection apply!(model.state, model.fluxes, model.grid, model.advection, dt;
+           workspace = model.workspace.advection_ws,
+           diffusion_op = model.diffusion,
+           emissions_op = model.emissions,
+           meteo = meteo)
+    return nothing
+end
+
+"""
+    convection_chemistry_step!(model::TransportModel, dt; meteo = nothing)
+
+Advance the non-transport physics blocks once: convection block →
+chemistry block.
+"""
+function convection_chemistry_step!(model::TransportModel, dt; meteo = nothing)
+    if !(model.convection isa NoConvection)
+        SectionTimer.@section :convection apply!(model.state, model.convection_forcing, model.grid,
+               model.convection, dt;
+               workspace = model.workspace.convection_ws)
+    end
+    SectionTimer.@section :chemistry chemistry_block!(model.state, meteo, model.grid, model.chemistry, dt)
+    return nothing
+end
+
+"""
     step!(model::TransportModel, dt; meteo = nothing)
 
-Advance `model.state` by one step: transport block (advection with
-vertical diffusion at the palindrome center, surface emissions
-wrapped by the two V half-steps when active) → convection block →
-chemistry block.
+Advance `model.state` by one full runtime step: transport block
+(advection with vertical diffusion at the palindrome center, surface
+emissions wrapped by the two V half-steps when active) → convection
+block → chemistry block.
 
 With defaults `diffusion = NoDiffusion()`, `emissions = NoSurfaceFlux()`,
 `chemistry = NoChemistry()`, `convection = NoConvection()`, every live
@@ -380,20 +417,11 @@ meteorology object (`AbstractMetDriver`) or a `DrivenSimulation`
 that consume time-varying fields.
 """
 function step!(model::TransportModel, dt; meteo = nothing)
-    SectionTimer.@section :advection apply!(model.state, model.fluxes, model.grid, model.advection, dt;
-           workspace = model.workspace.advection_ws,
-           diffusion_op = model.diffusion,
-           emissions_op = model.emissions,
-           meteo = meteo)
-    if !(model.convection isa NoConvection)
-        SectionTimer.@section :convection apply!(model.state, model.convection_forcing, model.grid,
-               model.convection, dt;
-               workspace = model.workspace.convection_ws)
-    end
-    SectionTimer.@section :chemistry chemistry_block!(model.state, meteo, model.grid, model.chemistry, dt)
+    transport_step!(model, dt; meteo = meteo)
+    convection_chemistry_step!(model, dt; meteo = meteo)
     return nothing
 end
 
-export TransportModel, step!
+export TransportModel, step!, transport_step!, convection_chemistry_step!
 export with_chemistry, with_diffusion, with_emissions
 export with_convection, with_convection_forcing

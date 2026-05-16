@@ -3,8 +3,9 @@
 #
 # Dec 2021 (31 days) on the new
 # `~/data/AtmosTransport/met/geosit/C180/transport_binary_v4_merge025hpa_adaptive_f32/`
-# daily binaries produced by the Plan 41 GEOS-native preprocessor. Full physics: PPM advection +
-# nonlocal-PBL diffusion + CMFMC convection + Rn-222 radioactive decay.
+# daily binaries produced by the Plan 41 GEOS-native preprocessor. Full physics:
+# Lin-Rood ORD=7 advection + nonlocal-PBL diffusion + CMFMC convection +
+# Rn-222 radioactive decay.
 # Snapshot output is 3-hourly to align directly with the GeosChem
 # Catrine reference in `~/data/AtmosTransport/catrine-geoschem-runs/`.
 #
@@ -28,12 +29,12 @@ folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_v4_merge0
 start_date   = "2021-12-01"
 end_date     = "2021-12-31"
 file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
-expected_nlevel = 64
-required_preprocessor_contract = "plan41_variable_substeps"
-require_adaptive_substeps = true
 
 [run]
-scheme = "ppm"   # GCHP-style PPM split path (PPMScheme).
+scheme = "linrood"
+
+[advection]
+ppm_order = 7
 
 # Per-tracer initial conditions + surface fluxes. Tracer symbols match
 # the GeosChem `SpeciesConcVV_*` naming so the comparison script can

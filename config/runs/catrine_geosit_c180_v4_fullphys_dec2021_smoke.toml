@@ -1,8 +1,8 @@
 # ===========================================================================
-# Catrine 4-tracer 3-day smoke companion to
+# Catrine 4-tracer 5-day smoke companion to
 # `catrine_geosit_c180_v4_fullphys_dec2021.toml`. Same physics, same
 # IC + flux + chemistry wiring; just a shorter date range and a
-# distinct output file. Runs in ~5–10 min on L40S Float32; verifies
+# distinct output file. Verifies
 # the full Phase B+C+v4 stack assembles end-to-end before the 31-day
 # commit.
 #
@@ -21,14 +21,15 @@ float_type = "Float32"
 [input]
 folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_v4_merge025hpa_adaptive_f32"
 start_date   = "2021-12-01"
-end_date     = "2021-12-03"
+end_date     = "2021-12-05"
 file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
-expected_nlevel = 64
-required_preprocessor_contract = "plan41_variable_substeps"
-require_adaptive_substeps = true
 
 [run]
-scheme = "ppm"
+scheme = "linrood"
+reset_air_mass_each_window = true
+
+[advection]
+ppm_order = 7
 
 [tracers.co2_natural]
   [tracers.co2_natural.init]
@@ -73,4 +74,4 @@ kind = "decay"
 
 [output]
 snapshot_interval_hours = 3
-snapshot_file = "~/data/AtmosTransport/output/catrine_geosit_c180_v4_fullphys_dec2021_smoke.nc"
+snapshot_file = "~/data/AtmosTransport/output/catrine_geosit_c180_v4_fullphys_dec2021_5day_smoke.nc"

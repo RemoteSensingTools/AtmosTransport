@@ -136,34 +136,30 @@ For each of the 24 hourly windows:
       (`am[i+1, j, k] = MFXC[i, j, k]`).
     - Sync west / south halos via `_propagate_cs_outflow_to_halo!`.
 
-4. **FV3 pressure-fixer cm**
-   (`compute_cs_cm_pressure_fixer!`):
-    - Per column, compute `pit = Σ_k (am_inflow + bm_inflow)`.
-    - Apply the FV3 formula
-      `cm[k+1] = cm[k] + (C_k − ΔB[k] · pit)`
-      with `cm[1] = 0` (TOA boundary). The closure
-      `cm[Nz+1] = 0` (surface boundary) holds **exactly** by
-      construction — no residual to redistribute.
+4. **Raw dry endpoint target + column balance**
+   (`balance_cs_column_mass_fluxes!`):
+    - The next-hour raw GEOS `DELP_dry` endpoint is transformed with the
+      same vertical plan as `m_cur`.
+    - Native horizontal fluxes are column-balanced to that endpoint for the
+      selected per-window substep count.
 
-5. **Pressure-fixer mass evolution**
-   (`_evolve_mass_pressure_fixer!`):
-    - The pressure-fixer rule implies a per-level mass increment from
-      the horizontal flux divergence. The v4 binary stores
-      `dm = (m_next_pf - m_cur) / (2 * steps_per_met)` so runtime replay
-      closes against the same pressure-fixer endpoint.
-    - By default this endpoint is chained into the next window. For
-      GEOS-native diagnostic campaigns that must stay pinned to the raw
-      archived GEOS mass at every hour, set `[numerics] chain_mass = false`.
-      In that mode every window seeds `m_cur` from the raw GEOS endpoint
-      and still writes a self-consistent pressure-fixer `dm` for replay.
+5. **Diagnosed vertical mass flux**
+   (`diagnose_cs_cm!`):
+    - The binary stores `dm = (m_next_raw - m_cur) / (2 * n_sub[win])`.
+    - `cm` is diagnosed from the balanced horizontal fluxes and this `dm`, so
+      runtime replay closes against the same raw endpoint used by the
+      positivity gate.
+    - With `chain_mass = true`, the raw endpoint is chained into the next
+      window/day. With `chain_mass = false`, every window seeds `m_cur` from
+      the raw GEOS start endpoint.
 
 6. **Write-time replay gate** — same contract as the spectral path
    (`verify_write_replay_cs!`); failures abort.
 
 7. **Cross-day chain** — when `chain_mass = true`, the day's `final_m`
    is threaded as `seed_m` for the next day's `process_day` invocation.
-   When `chain_mass = false`, no cross-day pressure-fixer seed is
-   returned; each day/window is re-seeded from raw GEOS mass.
+   When `chain_mass = false`, no cross-day seed is returned; each day/window
+   is re-seeded from raw GEOS mass.
 
 ## GCHP-style convection wiring (Section C, recently shipped)
 

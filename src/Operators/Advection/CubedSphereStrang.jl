@@ -471,8 +471,10 @@ defensive.
 """
 function _cs_static_subcycle_count(panels_flux::NTuple{6}, panels_m::NTuple{6},
                                     Nc::Int, Hp::Int, Nz::Int, cfl_limit::Real,
-                                    direction::Symbol)
+                                    direction::Symbol;
+                                    flux_scale = one(eltype(panels_m[1])))
     FT = eltype(panels_m[1])
+    fs = convert(FT, flux_scale)
     iL = Hp + 1
     iH = Hp + Nc
     max_cfl = zero(FT)
@@ -492,13 +494,64 @@ function _cs_static_subcycle_count(panels_flux::NTuple{6}, panels_m::NTuple{6},
         end
         zero_FT = zero(FT)
         cfl_panel = mapreduce(max, m_int, F_lo, F_hi; init = zero_FT) do mi, fl, fh
-            outgoing = max(zero_FT, -fl) + max(zero_FT, fh)
+            fls = fs * fl
+            fhs = fs * fh
+            outgoing = max(zero_FT, -fls) + max(zero_FT, fhs)
             ifelse(mi > zero_FT, outgoing / mi, zero_FT)
         end
         max_cfl = max(max_cfl, cfl_panel)
     end
     max_cfl <= cfl_limit && return 1
     return ceil(Int, max_cfl / cfl_limit)
+end
+
+"""Static palindrome CFL subcycle count from initial mass.
+
+This is the runtime-side second line of defense for the CS Strang sequence.
+The actual sequence applies each direction twice (`X-Y-Z-Z-Y-X`), so a
+per-direction CFL pilot can under-estimate cells where moderate outgoing flux
+exists in several directions at once. This budget is still a static proxy, not
+an evolving-mass proof, but it is conservative with respect to the old
+direction-isolated metric and matches the preprocessor's adaptive schedule
+gate.
+"""
+function _cs_static_palindrome_subcycle_count(panels_am::NTuple{6},
+                                              panels_bm::NTuple{6},
+                                              panels_cm::NTuple{6},
+                                              panels_m::NTuple{6},
+                                              Nc::Int, Hp::Int, Nz::Int,
+                                              cfl_limit::Real;
+                                              flux_scale = one(eltype(panels_m[1])),
+                                              max_n_sub::Int = 4096)
+    FT = eltype(panels_m[1])
+    fs = convert(FT, flux_scale)
+    iL = Hp + 1
+    iH = Hp + Nc
+    max_cfl = zero(FT)
+    @inbounds for p in 1:6
+        m_int = view(panels_m[p], iL:iH, iL:iH, 1:Nz)
+        ax_lo = view(panels_am[p], iL    :iH,     iL:iH,     1:Nz)
+        ax_hi = view(panels_am[p], iL + 1:iH + 1, iL:iH,     1:Nz)
+        by_lo = view(panels_bm[p], iL:iH,     iL    :iH,     1:Nz)
+        by_hi = view(panels_bm[p], iL:iH,     iL + 1:iH + 1, 1:Nz)
+        cz_lo = view(panels_cm[p], iL:iH, iL:iH, 1    :Nz)
+        cz_hi = view(panels_cm[p], iL:iH, iL:iH, 2:Nz + 1)
+        zero_FT = zero(FT)
+        cfl_panel = mapreduce(max, m_int, ax_lo, ax_hi, by_lo, by_hi,
+                              cz_lo, cz_hi; init = zero_FT) do mi, axl, axh, byl, byh, czl, czh
+            out_x = max(zero_FT, -(fs * axl)) + max(zero_FT, fs * axh)
+            out_y = max(zero_FT, -(fs * byl)) + max(zero_FT, fs * byh)
+            out_z = max(zero_FT, -(fs * czl)) + max(zero_FT, fs * czh)
+            outgoing = FT(2) * (out_x + out_y + out_z)
+            ifelse(mi > zero_FT, outgoing / mi, zero_FT)
+        end
+        max_cfl = max(max_cfl, cfl_panel)
+    end
+    max_cfl <= cfl_limit && return 1
+    n_sub = ceil(Int, max_cfl / cfl_limit)
+    n_sub <= max_n_sub ||
+        error("cubed-sphere palindrome subcycling exceeded max_n_sub=$(max_n_sub)")
+    return n_sub
 end
 
 
@@ -573,6 +626,7 @@ function strang_split_cs!(panels_rm::NTuple{6},
                           workspace::CSAdvectionWorkspace;
                           flux_scale = one(eltype(panels_m[1])),
                           cfl_limit::Real = 0.95,
+                          subcycle_count::Union{Nothing, Integer} = nothing,
                           midpoint! = nothing)
     Nc, Hp = mesh.Nc, mesh.Hp
     Nz = size(panels_rm[1], 3)
@@ -581,13 +635,32 @@ function strang_split_cs!(panels_rm::NTuple{6},
     fs = convert(FT, flux_scale)
     cfl_ft = convert(FT, cfl_limit)
 
-    # Static CFL subcycle count. Gamma clamping in the sweep kernels handles
-    # per-cell CFL > 1 correctly (tracer flux saturates at donor mass, mass
-    # update is exact). Subcycling reduces the average CFL but isn't required
-    # for stability — it's for accuracy (second-order advection needs CFL < 1).
-    n_x = SectionTimer.@section :cs_cfl_x _cs_static_subcycle_count(panels_am, panels_m, Nc, Hp, Nz, cfl_ft, :x)
-    n_y = SectionTimer.@section :cs_cfl_y _cs_static_subcycle_count(panels_bm, panels_m, Nc, Hp, Nz, cfl_ft, :y)
-    n_z = SectionTimer.@section :cs_cfl_z _cs_static_subcycle_count(panels_cm, panels_m, Nc, Hp, Nz, cfl_ft, :z)
+    n_pal = if subcycle_count === nothing
+        # Static CFL subcycle count. Gamma clamping in the sweep kernels handles
+        # per-cell CFL > 1 correctly (tracer flux saturates at donor mass, mass
+        # update is exact). Subcycling reduces the average CFL but isn't required
+        # for stability — it's for accuracy (second-order advection needs CFL < 1).
+        SectionTimer.@section :cs_cfl_x _cs_static_palindrome_subcycle_count(
+            panels_am, panels_bm, panels_cm, panels_m, Nc, Hp, Nz, cfl_ft;
+            flux_scale = fs)
+    else
+        n = Int(subcycle_count)
+        n >= 1 || throw(ArgumentError("strang_split_cs!: subcycle_count must be ≥ 1, got $(subcycle_count)"))
+        if get(ENV, "ATMOSTR_ASSERT_CS_BINARY_CFL", "0") == "1"
+            required = SectionTimer.@section :cs_cfl_x _cs_static_palindrome_subcycle_count(
+                panels_am, panels_bm, panels_cm, panels_m, Nc, Hp, Nz, cfl_ft;
+                flux_scale = fs)
+            required <= n || throw(ArgumentError(
+                "strang_split_cs!: binary substep contract requested " *
+                "subcycle_count=$n, but runtime CFL assertion requires " *
+                "$required. Regenerate the binary or disable " *
+                "ATMOSTR_ASSERT_CS_BINARY_CFL for diagnostic runs."))
+        end
+        n
+    end
+    n_x = n_pal
+    n_y = n_pal
+    n_z = n_pal
 
     let (mx, my, mz) = _STRANG_CS_MAX_SUB[]
         if n_x > mx || n_y > my || n_z > mz

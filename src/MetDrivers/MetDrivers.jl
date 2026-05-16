@@ -81,6 +81,7 @@ export total_windows, window_dt, steps_per_window, steps_per_window_schedule
 export binary_capabilities, inspect_binary   # plan 40 Commit 5
 export has_surface, has_tm5conv, has_temperature
 export mass_basis, grid_type, horizontal_topology, A_ifc, B_ifc
+export uses_binary_substep_contract
 export source_flux_sampling, air_mass_sampling, flux_sampling, flux_kind, humidity_sampling, delta_semantics
 export diagnose_cm_from_continuity!, diagnose_cm_from_continuity_vc!
 export diagnose_cm_from_continuity_ka!

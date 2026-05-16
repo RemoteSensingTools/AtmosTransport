@@ -64,7 +64,7 @@ and `horizontal_topology` for the rest.
 | Key | Type | Description |
 |-----|------|-------------|
 | `magic` | string | `"MFLX"` — identifies file type |
-| `format_version` | int | Version of this spec (2). Readers reject all older transport binaries. |
+| `format_version` | int | Version of this spec (3). Readers reject all older transport binaries. |
 | `header_bytes` | int | Total header size in bytes (≥ 16384) |
 | `float_type` | string | `"Float32"` or `"Float64"` |
 | `float_bytes` | int | 4 or 8 |
@@ -132,7 +132,7 @@ contract chosen by the driver. For the ERA5 lat-lon reference path that means:
 - `flux_kind = "substep_mass_amount"`
 - `delta_semantics = "forward_window_endpoint_difference"` when deltas are present
 
-Format v2 deliberately makes the schedule explicit even for constant-step
+Format v3 deliberately makes the schedule explicit even for constant-step
 products. The scalar fields remain for compatibility and summary display only;
 replay gates, positivity gates, runtime stepping, diagnostics, and adjoint
 replay must use the per-window schedule.

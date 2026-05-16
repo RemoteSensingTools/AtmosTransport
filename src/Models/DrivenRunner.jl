@@ -129,13 +129,16 @@ mutable struct RunProgressTimer
     t_transport     :: Float64   # advection + diffusion + convection + emissions
     t_io_write      :: Float64   # snapshot capture + final NetCDF write
     windows_total   :: Int
+    status_line     :: String
+    detail_line     :: String
 end
 
 RunProgressTimer(total_windows::Integer; label::AbstractString = "Forward run ") =
     RunProgressTimer(
         Progress(max(Int(total_windows), 1);
                   desc = label, showspeed = true, barlen = 40),
-        time(), 0.0, 0.0, 0.0, Int(total_windows))
+        time(), 0.0, 0.0, 0.0, Int(total_windows),
+        "initializing", "transport 0.0s | io_read 0.0s | io_write 0.0s")
 
 @inline function _timed!(field::Symbol, timer::RunProgressTimer, f)
     t0 = time()
@@ -154,17 +157,42 @@ end
 # Mark IO write (snapshot capture + final NetCDF write).
 @inline timed_io_write!(timer, f) = _timed!(:t_io_write, timer, f)
 
-# Tick the progress bar after one window has advanced. Surface the running
-# Transport vs IO split so the user can read it live while the bar advances.
-@inline function tick_window!(timer::RunProgressTimer)
+function _progress_detail_line(timer::RunProgressTimer)
     wall = max(time() - timer.t_start, eps())
+    return @sprintf("transport %.1fs (%4.1f%%) | io_read %.1fs | io_write %.1fs | wall %.1fs",
+                    timer.t_transport, 100 * timer.t_transport / wall,
+                    timer.t_io_read, timer.t_io_write, wall)
+end
+
+@inline function _progress_showvalues(timer::RunProgressTimer)
+    detail = isempty(timer.detail_line) ?
+             _progress_detail_line(timer) :
+             string(_progress_detail_line(timer), " | ", timer.detail_line)
+    return [(:status, timer.status_line), (:timing, detail)]
+end
+
+function set_progress_status!(timer::RunProgressTimer;
+                              status::Union{Nothing, AbstractString} = nothing,
+                              detail::Union{Nothing, AbstractString} = nothing,
+                              redraw::Bool = false)
+    status === nothing || (timer.status_line = String(status))
+    detail === nothing || (timer.detail_line = String(detail))
+    redraw && update!(timer.prog, timer.prog.counter;
+                      showvalues = _progress_showvalues(timer))
+    return timer
+end
+
+# Tick the progress bar after one window has advanced. Keep routine runtime
+# status in the two redrawable lines below the bar so `@info` output does not
+# interrupt ETA/progress rendering during long runs.
+@inline function tick_window!(timer::RunProgressTimer;
+                              status::Union{Nothing, AbstractString} = nothing,
+                              detail::Union{Nothing, AbstractString} = nothing)
+    status === nothing || (timer.status_line = String(status))
+    detail === nothing || (timer.detail_line = String(detail))
     next!(timer.prog; showvalues = [
-        (:transport, @sprintf("%6.1fs (%4.1f%%)", timer.t_transport,
-                               100 * timer.t_transport / wall)),
-        (:io_read,   @sprintf("%6.1fs (%4.1f%%)", timer.t_io_read,
-                               100 * timer.t_io_read   / wall)),
-        (:io_write,  @sprintf("%6.1fs (%4.1f%%)", timer.t_io_write,
-                               100 * timer.t_io_write  / wall)),
+        (:status, timer.status_line),
+        (:timing, string(_progress_detail_line(timer), " | ", timer.detail_line)),
     ])
 end
 
@@ -510,7 +538,10 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
        abs(snapshot_hours[snap_idx]) < 0.5
         timed_io_write!(timer,
             () -> push!(snapshots, capture_snapshot(model; time_hours = 0.0)))
-        @info @sprintf("Snapshot %d at t=%.0fh", snap_idx, 0.0)
+        set_progress_status!(timer;
+                             detail = @sprintf("snapshot %d at t=%.0fh",
+                                               snap_idx, 0.0),
+                             redraw = true)
         snap_idx += 1
     end
 
@@ -534,23 +565,36 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
         if !initialize_air_mass
             boundary_rel = maximum(abs.(model.state.air_mass .- sim.window.air_mass)) /
                            max(maximum(abs.(sim.window.air_mass)), eps(FT))
-            @info @sprintf("Boundary air-mass mismatch before %s: %.3e",
-                           basename(path), boundary_rel)
+            set_progress_status!(timer;
+                                 detail = @sprintf("boundary air-mass mismatch before %s: %.3e",
+                                                   basename(path), boundary_rel),
+                                 redraw = true)
         end
         window_hours = Float64(window_dt(driver)) / 3600.0
         n_windows = stop_window - start_window + 1
-        @info @sprintf("Running %s with %s on %s (%d windows)",
-                       basename(path),
-                       nameof(typeof(recipe.advection)),
-                       summary(driver_grid(driver).horizontal),
-                       n_windows)
+        set_progress_status!(timer;
+                             status = @sprintf("running %s with %s on %s (%d windows)",
+                                               basename(path),
+                                               nameof(typeof(recipe.advection)),
+                                               summary(driver_grid(driver).horizontal),
+                                               n_windows),
+                             detail = "loading first window",
+                             redraw = true)
         _synchronize_backend!(cfg)
         t0 = time()
 
         if do_snapshots
             for _ in 1:n_windows
                 timed_transport!(timer, () -> run_window!(sim))
-                tick_window!(timer)
+                tick_window!(timer;
+                             status = @sprintf("%s window %d/%d  steps/window=%d",
+                                               basename(path),
+                                               sim.current_window_index,
+                                               stop_window,
+                                               sim.steps_per_window),
+                             detail = @sprintf("snapshots=%d  output=%s",
+                                               length(snapshots),
+                                               basename(snapshot_file)))
                 total_elapsed_hours += window_hours
                 while snap_idx <= length(snapshot_hours) &&
                       abs(total_elapsed_hours - snapshot_hours[snap_idx]) < 0.5
@@ -558,8 +602,12 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
                         () -> push!(snapshots,
                                     capture_snapshot(model;
                                                      time_hours = total_elapsed_hours)))
-                    @info @sprintf("Snapshot %d at t=%.0fh",
-                                   snap_idx, total_elapsed_hours)
+                    set_progress_status!(timer;
+                                         detail = @sprintf("snapshot %d at t=%.0fh  output=%s",
+                                                           snap_idx,
+                                                           total_elapsed_hours,
+                                                           basename(snapshot_file)),
+                                         redraw = true)
                     snap_idx += 1
                 end
             end
@@ -568,13 +616,21 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
             total_elapsed_hours += n_windows * window_hours
             # `run!` doesn't tick per window; advance the bar to the
             # binary's window count in one shot.
-            for _ in 1:n_windows
-                tick_window!(timer)
+            for local_win in start_window:stop_window
+                tick_window!(timer;
+                             status = @sprintf("%s window %d/%d  steps/window=%d",
+                                               basename(path), local_win,
+                                               stop_window,
+                                               sim.steps_per_window_schedule[local_win]),
+                             detail = "batch window accounting after run!()")
             end
         end
 
         _synchronize_backend!(cfg)
-        @info @sprintf("Finished %s in %.2f s", basename(path), time() - t0)
+        set_progress_status!(timer;
+                             status = @sprintf("finished %s", basename(path)),
+                             detail = @sprintf("file wall %.2fs", time() - t0),
+                             redraw = true)
         close(driver)
     end
 
@@ -770,7 +826,10 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
     total_hour = 0.0
     if snap_idx <= length(snapshot_hours) && abs(snapshot_hours[snap_idx]) < 0.5
         capture_cs!(0.0)
-        @info @sprintf("  Snapshot %d at t=%.1fh", snap_idx, 0.0)
+        set_progress_status!(timer;
+                             detail = @sprintf("snapshot %d at t=%.1fh",
+                                               snap_idx, 0.0),
+                             redraw = true)
         snap_idx += 1
     end
 
@@ -817,24 +876,43 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
         model = sim.model
 
         day_t0 = time()
-        @info @sprintf("Running %s (%d windows)",
-                       basename(path), stop_window)
+        set_progress_status!(timer;
+                             status = @sprintf("running %s (%d windows)",
+                                               basename(path), stop_window),
+                             detail = @sprintf("schedule max=%d current=%d",
+                                               maximum(sim.steps_per_window_schedule),
+                                               sim.steps_per_window),
+                             redraw = true)
         while sim.iteration < sim.final_iteration
             timed_transport!(timer, () -> step!(sim))
             if sim.iteration == sim.current_window_end_iteration
-                tick_window!(timer)
+                tick_window!(timer;
+                             status = @sprintf("%s window %d/%d  steps/window=%d",
+                                               basename(path),
+                                               sim.current_window_index,
+                                               stop_window,
+                                               sim.steps_per_window),
+                             detail = @sprintf("snapshots=%d  output=%s",
+                                               length(snapshots),
+                                               basename(snapshot_file)))
                 total_hour += window_hours
                 while snap_idx <= length(snapshot_hours) &&
                       abs(total_hour - snapshot_hours[snap_idx]) < 0.5
                     capture_cs!(total_hour)
-                    @info @sprintf("  Snapshot %d at t=%.1fh",
-                                   snap_idx, total_hour)
+                    set_progress_status!(timer;
+                                         detail = @sprintf("snapshot %d at t=%.1fh  output=%s",
+                                                           snap_idx,
+                                                           total_hour,
+                                                           basename(snapshot_file)),
+                                         redraw = true)
                     snap_idx += 1
                 end
             end
         end
-        @info @sprintf("Finished %s in %.1fs",
-                       basename(path), time() - day_t0)
+        set_progress_status!(timer;
+                             status = @sprintf("finished %s", basename(path)),
+                             detail = @sprintf("file wall %.1fs", time() - day_t0),
+                             redraw = true)
         close(driver)
     end
 

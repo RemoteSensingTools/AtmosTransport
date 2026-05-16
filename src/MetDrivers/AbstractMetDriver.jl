@@ -55,6 +55,7 @@ function load_transport_window end
 function driver_grid end
 function air_mass_basis end
 function flux_interpolation_mode end
+function uses_binary_substep_contract end
 function load_met_window! end
 
 met_interval(d::AbstractMetDriver) = window_dt(d)
@@ -109,6 +110,11 @@ supports_native_vertical_flux(::AbstractMetDriver) = false
 """How should flux forcing vary within a met window?"""
 flux_interpolation_mode(::AbstractMetDriver) = :constant
 
+"""Does this driver provide a verified per-window timestep contract?"""
+uses_binary_substep_contract(::Any) = false
+uses_binary_substep_contract(::AbstractMetDriver) = false
+uses_binary_substep_contract(::Nothing) = false
+
 """Does this driver provide specific humidity for dry-mass correction?"""
 supports_moisture(::AbstractMetDriver) = false
 
@@ -117,6 +123,7 @@ export AbstractDriver
 export total_windows, window_dt, steps_per_window, steps_per_window_schedule,
        load_transport_window, load_met_window!
 export driver_grid, air_mass_basis, flux_interpolation_mode
+export uses_binary_substep_contract
 export supports_diffusion, supports_convection
 export supports_native_vertical_flux, supports_moisture
 export current_time

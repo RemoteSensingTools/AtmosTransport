@@ -12,31 +12,23 @@
 #     floating-point noise at the cost of distorting the physics-consistent
 #     fluxes. (User correction 2026-04-24.)
 #
-#  2. **Pressure-fixer cm + optional endpoint-mass chaining** (codex Option C,
-#     validated 2026-04-25). FV3 conserves moist mass; per-column dry mass changes via
-#     both horizontal MFXC divergence AND vertical moisture transport. The
-#     raw GEOS DELP_dry endpoints don't satisfy strict per-level
-#     `(m_next-m)/(2·steps) = -(div_h+div_v)` for any local `cm` choice.
-#     The historical GEOS-FP runner (commit `76fa489::compute_cm_panel_cpu!`)
-#     instead used FV3's pressure-fixer rule
-#       `cm[k+1]-cm[k] = C_k - ΔB[k]·pit`,  pit = Σ_k C_k
-#     which closes `cm[Nz+1] = 0` exactly without any per-cell residual
-#     redistribution. Substituted into the v4 replay equation, the per-level
-#     mass evolution is `Δm[k] = +2·steps · ΔB[k]·pit`. With
-#     `chain_mass = true`, window 1 starts from raw GEOS DELP_dry and
-#     subsequent windows take `m_cur = m_next_pf` from the previous window.
-#     With `chain_mass = false`, every window starts from raw GEOS DELP_dry
-#     and writes a local pressure-fixer tendency. Both modes are internally
-#     self-consistent: replay closes to roundoff and the runtime tracer mass
-#     evolves with the same fluxes that produced that window's `m_next_pf`.
+#  2. **Raw dry endpoint mass + diagnosed cm.** FV3's pressure-fixer rule is
+#     useful for closing a local vertical flux, but its implied dry endpoint
+#     can go negative in GEOS-IT's very thin upper layers even when the raw
+#     next-hour GEOS dry mass is healthy. Plan-41 binary v3 therefore makes
+#     the raw GEOS DELP_dry endpoint the written mass target. The native
+#     horizontal fluxes are column-balanced to that target, then `cm` is
+#     diagnosed from `(am, bm, dm)` so replay and endpoint positivity are both
+#     checked against the same physical endpoint.
 #
 #  3. **Window-by-window loop**:
 #
 #       read_window!(settings, handles, date, win)         # raw GEOS endpoints
 #       geos_native_to_face_flux!(am_v4, bm_v4, ...)       # face-stagger + panel halos
-#       compute_cs_cm_pressure_fixer!(cm_v4, am_v4, bm_v4, ΔB, ...)
-#       evolve m_next_pf = m_cur + 2·steps · ΔB·pit         # closes replay exactly
-#       fill dm = m_next_pf - m_cur, write window, m_cur ← m_next_pf
+#       derive m_next_target from raw GEOS DELP_dry endpoint
+#       choose per-window steps, scale fluxes, balance column fluxes
+#       diagnose cm from dm = (m_next_target - m_cur)/(2·steps)
+#       write window, m_cur ← m_next_target when chaining
 # ===========================================================================
 
 """
@@ -55,44 +47,6 @@ function _delp_pa_to_air_mass_kg!(m_kg::AbstractArray{FT, 3},
         m_kg[i, j, k] = m_pa[i, j, k] * cell_areas[i, j] * inv_g
     end
     return m_kg
-end
-
-"""
-    _evolve_mass_pressure_fixer!(m_next, m_cur, am_v4, bm_v4, ΔB,
-                                 two_steps, Nc, Nz)
-
-Per-cell column evolution under the FV3 pressure-fixer rule:
-
-    pit       = Σ_k (am_inflow_k + bm_inflow_k)
-    m_next[k] = m_cur[k] + two_steps · ΔB[k] · pit
-
-This is the unique mass evolution that makes the replay equation close
-exactly when the stored `cm` is the pressure-fixer's
-`cm[k+1]-cm[k] = C_k - ΔB[k]·pit`. See module-header rationale for why
-this differs from the raw GEOS DELP_dry endpoint tendency.
-"""
-function _evolve_mass_pressure_fixer!(
-        m_next::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
-        m_cur::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
-        am_v4::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
-        bm_v4::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
-        ΔB::AbstractVector,
-        two_steps::FT, Nc::Int, Nz::Int) where {FT}
-    @inbounds for p in 1:CS_PANEL_COUNT
-        am = am_v4[p]; bm = bm_v4[p]
-        m  = m_cur[p]; mn = m_next[p]
-        for j in 1:Nc, i in 1:Nc
-            pit = zero(FT)
-            for k in 1:Nz
-                pit += (am[i, j, k] - am[i + 1, j, k]) +
-                       (bm[i, j, k] - bm[i, j + 1, k])
-            end
-            for k in 1:Nz
-                mn[i, j, k] = m[i, j, k] + two_steps * FT(ΔB[k]) * pit
-            end
-        end
-    end
-    return nothing
 end
 
 """
@@ -308,6 +262,23 @@ function _geos_seed_mass!(::GEOSCSBlockCoarsenStrategy{R}, ws, m_cur, raw,
     return nothing
 end
 
+function _geos_target_mass!(::GEOSCSIdentityStrategy, _ws, m_next, raw,
+                            cell_areas, inv_g, Nc::Int, Nz::Int)
+    for p in 1:CS_PANEL_COUNT
+        _delp_pa_to_air_mass_kg!(m_next[p], raw.m_next[p], cell_areas, inv_g)
+    end
+    return nothing
+end
+
+function _geos_target_mass!(::GEOSCSBlockCoarsenStrategy{R}, ws, m_next, raw,
+                            _cell_areas, inv_g, _Nc::Int, _Nz::Int) where R
+    for p in 1:CS_PANEL_COUNT
+        _delp_pa_to_air_mass_kg!(ws.fine_m_kg[p], raw.m_next[p], ws.source_cell_areas, inv_g)
+        _coarsen_sum3!(m_next[p], ws.fine_m_kg[p], Val(R))
+    end
+    return nothing
+end
+
 _geos_surface_payload!(::GEOSCSIdentityStrategy, _ws, raw) = raw.surface
 
 function _geos_surface_payload!(::GEOSCSBlockCoarsenStrategy{R}, ws, raw) where R
@@ -380,17 +351,15 @@ mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV} <
     cm_v4       :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
     dm_v4       :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
     m_cur       :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
-    m_next_pf   :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
+    m_next_target :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
     ps_cur      :: NTuple{CS_PANEL_COUNT, Array{FT, 2}}
     cmfmc_v4    :: CV
     dtrain_v4   :: DV
-    ΔB          :: Vector{FT}
     g           :: FT
     inv_g       :: FT
     cell_areas  :: CA
     base_flux_scale :: FT
     flux_scale  :: FT
-    two_steps   :: FT
     source_steps_per_met :: Int
     steps_current :: Int
     steps_schedule :: Vector{Int}
@@ -429,15 +398,12 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
                                            Nz_native, Nz)
     npanel = CS_PANEL_COUNT
 
-    vc = vertical.merged_vc
     g = FT(GRAV)
     inv_g = inv(g)
     cell_areas = grid.mesh.cell_areas
-    ΔB = FT[FT(vc.B[k + 1] - vc.B[k]) for k in 1:Nz]
     steps_per_met = round(Int, FT(dt_met_seconds) / FT(settings.mass_flux_dt))
     dt_factor = FT(settings.mass_flux_dt / 2)
     flux_scale = dt_factor / g
-    two_steps = FT(2 * steps_per_met)
     target = Float64(substep_cfl_target)
     isfinite(target) && target > 0 ||
         error("substep_cfl_target must be finite and > 0; got $(substep_cfl_target)")
@@ -454,7 +420,7 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
     cm_v4 = ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), npanel)
     dm_v4 = ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel)
     m_cur = ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel)
-    m_next_pf = ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel)
+    m_next_target = ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel)
     ps_cur = ntuple(_ -> zeros(FT, Nc, Nc), npanel)
     cmfmc_v4 = settings.include_convection ?
         ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), npanel) : nothing
@@ -468,8 +434,8 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
             strategy, strategy_ws, raw, plan,
             am_native_v4, bm_native_v4, m_native_kg,
             am_v4, bm_v4, cm_v4, dm_v4,
-            m_cur, m_next_pf, ps_cur, cmfmc_v4, dtrain_v4, ΔB, g, inv_g, cell_areas,
-            flux_scale, flux_scale, two_steps, steps_per_met, steps_per_met,
+            m_cur, m_next_target, ps_cur, cmfmc_v4, dtrain_v4, g, inv_g, cell_areas,
+            flux_scale, flux_scale, steps_per_met, steps_per_met,
             Int[], Bool(adaptive_substeps),
             target, min_steps, max_steps, chain_mass)
 end
@@ -484,33 +450,82 @@ function _scale_cs_flux_panels!(panels, factor)
     return panels
 end
 
+function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspace{FT},
+                                         grid::CubedSphereTargetGeometry,
+                                         steps::Int) where FT
+    Nc = grid.Nc
+    Nz = size(workspace.m_cur[1], 3)
+    for p in 1:CS_PANEL_COUNT
+        apply_vertical!(workspace.am_v4[p], workspace.am_native_v4[p],
+                        workspace.plan, MassFluxField())
+        apply_vertical!(workspace.bm_v4[p], workspace.bm_native_v4[p],
+                        workspace.plan, MassFluxField())
+    end
+    if steps != workspace.source_steps_per_met
+        factor = FT(workspace.source_steps_per_met / steps)
+        _scale_cs_flux_panels!(workspace.am_v4, factor)
+        _scale_cs_flux_panels!(workspace.bm_v4, factor)
+    end
+    workspace.flux_scale = workspace.base_flux_scale *
+                           (workspace.source_steps_per_met / steps)
+
+    bal_diag = balance_cs_column_mass_fluxes!(
+        workspace.am_v4, workspace.bm_v4, workspace.m_cur,
+        workspace.m_next_target, grid.face_table, grid.cell_degree, steps,
+        grid.poisson_scratch)
+    fill_cs_window_mass_tendency!(workspace.dm_v4, workspace.m_cur,
+                                  workspace.m_next_target, steps)
+    for p in 1:CS_PANEL_COUNT
+        fill!(workspace.cm_v4[p], zero(FT))
+    end
+    diagnose_cs_cm!(workspace.cm_v4, workspace.am_v4, workspace.bm_v4,
+                    workspace.dm_v4, workspace.m_cur, Nc, Nz)
+    return bal_diag
+end
+
+function _geos_required_steps(steps::Int, ratio::Float64, cfl_target::Float64,
+                              min_steps::Int, max_steps::Int)
+    required = if isfinite(ratio)
+        ceil(Int, steps * ratio / cfl_target)
+    else
+        max_steps
+    end
+    return _geos_clamp_steps(max(required, 1), min_steps, max_steps)
+end
+
 function _geos_select_steps_for_window!(workspace::GEOSCubedSphereWindowWorkspace,
+                                        grid::CubedSphereTargetGeometry,
                                         win::Int)
-    steps = workspace.source_steps_per_met
+    steps = _geos_clamp_steps(workspace.source_steps_per_met,
+                              workspace.min_steps_per_window,
+                              workspace.max_steps_per_window)
+    bal_diag = nothing
+    positivity = nothing
+    prepared_steps = 0
     if workspace.adaptive_substeps
-        diag = verify_substep_positivity_cs!(workspace.m_cur, workspace.am_v4,
-                                             workspace.bm_v4, workspace.cm_v4;
-                                             cfl_limit = workspace.substep_cfl_target)
-        if isfinite(diag.ratio)
-            required = ceil(Int, steps * Float64(diag.ratio) /
-                                 workspace.substep_cfl_target)
-            steps = _geos_clamp_steps(required, workspace.min_steps_per_window,
-                                      workspace.max_steps_per_window)
+        for _ in 1:8
+            bal_diag = _geos_prepare_window_for_steps!(workspace, grid, steps)
+            prepared_steps = steps
+            positivity = verify_substep_positivity_cs!(
+                workspace.m_cur, workspace.am_v4, workspace.bm_v4,
+                workspace.cm_v4; cfl_limit = workspace.substep_cfl_target,
+                m_next = workspace.m_next_target)
+            next_steps = _geos_required_steps(
+                steps, Float64(positivity.ratio), workspace.substep_cfl_target,
+                workspace.min_steps_per_window, workspace.max_steps_per_window)
+            next_steps == steps && break
+            steps = next_steps
         end
+        if prepared_steps != steps
+            bal_diag = _geos_prepare_window_for_steps!(workspace, grid, steps)
+        end
+    else
+        bal_diag = _geos_prepare_window_for_steps!(workspace, grid, steps)
     end
     workspace.steps_current = steps
     length(workspace.steps_schedule) < win && resize!(workspace.steps_schedule, win)
     workspace.steps_schedule[win] = steps
-    if steps != workspace.source_steps_per_met
-        factor = eltype(workspace.am_v4[1])(workspace.source_steps_per_met / steps)
-        _scale_cs_flux_panels!(workspace.am_v4, factor)
-        _scale_cs_flux_panels!(workspace.bm_v4, factor)
-        _scale_cs_flux_panels!(workspace.cm_v4, factor)
-    end
-    workspace.flux_scale = workspace.base_flux_scale *
-                           (workspace.source_steps_per_met / steps)
-    workspace.two_steps = eltype(workspace.am_v4[1])(2 * steps)
-    return steps
+    return (steps = steps, balance = bal_diag, positivity = positivity)
 end
 
 function ingest_window!(workspace::GEOSCubedSphereWindowWorkspace{FT},
@@ -524,7 +539,6 @@ function ingest_window!(workspace::GEOSCubedSphereWindowWorkspace{FT},
     Nz_native = vertical.Nz_native
     read_window!(workspace.raw, reader, win)
     workspace.flux_scale = workspace.base_flux_scale
-    workspace.two_steps = FT(2 * workspace.source_steps_per_met)
     workspace.steps_current = workspace.source_steps_per_met
 
     _geos_fluxes_to_target!(workspace.strategy, workspace.strategy_ws,
@@ -560,12 +574,14 @@ function ingest_window!(workspace::GEOSCubedSphereWindowWorkspace{FT},
         end
     end
 
-    compute_cs_cm_pressure_fixer!(workspace.cm_v4, workspace.am_v4,
-                                  workspace.bm_v4, workspace.ΔB, Nc, Nz)
-    _evolve_mass_pressure_fixer!(workspace.m_next_pf, workspace.m_cur,
-                                 workspace.am_v4, workspace.bm_v4,
-                                 workspace.ΔB, workspace.two_steps, Nc, Nz)
-    _geos_select_steps_for_window!(workspace, win)
+    _geos_target_mass!(workspace.strategy, workspace.strategy_ws,
+                       workspace.m_native_kg, workspace.raw,
+                       workspace.cell_areas, workspace.inv_g, Nc, Nz_native)
+    for p in 1:CS_PANEL_COUNT
+        apply_vertical!(workspace.m_next_target[p], workspace.m_native_kg[p],
+                        workspace.plan, MassField())
+    end
+    _geos_select_steps_for_window!(workspace, grid, win)
     return nothing
 end
 
@@ -576,17 +592,15 @@ function drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{FT},
                               settings::AbstractGEOSSettings,
                               steps_per_met::Int) where FT
     steps = workspace.steps_current
-    fill_cs_window_mass_tendency!(workspace.dm_v4, workspace.m_cur,
-                                  workspace.m_next_pf, steps)
     contract.steps_per_window = steps
     contract_diag = verify_window!((m_cur = workspace.m_cur,
                                      am = workspace.am_v4,
                                      bm = workspace.bm_v4,
                                      cm = workspace.cm_v4,
-                                     m_next = workspace.m_next_pf),
+                                     m_next = workspace.m_next_target),
                                     contract, win)
 
-    m_target = ntuple(p -> copy(workspace.m_next_pf[p]), CS_PANEL_COUNT)
+    m_target = ntuple(p -> copy(workspace.m_next_target[p]), CS_PANEL_COUNT)
     convert_cs_mass_target_to_delta!(m_target, workspace.m_cur)
 
     window_nt = (m = workspace.m_cur, am = workspace.am_v4,
@@ -613,7 +627,7 @@ function advance_window!(workspace::GEOSCubedSphereWindowWorkspace,
     Nc = grid.Nc
     Nz = size(workspace.m_cur[1], 3)
     for p in 1:CS_PANEL_COUNT
-        copyto!(workspace.m_cur[p], workspace.m_next_pf[p])
+        copyto!(workspace.m_cur[p], workspace.m_next_target[p])
         _ps_from_air_mass!(workspace.ps_cur[p], workspace.m_cur[p],
                            workspace.cell_areas, workspace.g, Nc, Nz)
     end
@@ -758,6 +772,10 @@ function _process_day_geos_cs_unified(date::Date,
             extra_header = Dict{String, Any}(
                 "preprocessor" => "geos_native_to_cs",
                 "preprocessor_contract" => "plan41_variable_substeps",
+                "runtime_substep_contract" => "binary_schedule",
+                "geos_mass_endpoint" => "raw_dry_endpoint",
+                "geos_horizontal_balance" => "column_poisson_to_raw_endpoint",
+                "geos_vertical_flux" => "diagnosed_from_balanced_horizontal_and_raw_endpoint",
                 "source_Nc" => settings.Nc,
                 "geos_cs_resolution_strategy" => _geos_cs_strategy_name(workspace.strategy),
                 "source_steps_per_window" => steps_per_met,
@@ -835,21 +853,20 @@ end
 Build a v4 cubed-sphere transport binary at `out_path` from one UTC day of
 native GEOS data. Source mesh and target mesh must match (CS passthrough).
 
-Stored mass is the pressure-fixer evolution from the current window's
-initial mass (see module header), not a naive raw-endpoint tendency. The
-replay gate closes to roundoff by construction; the maximum absolute
-residual goes down to floating-point noise instead of the ~1% column-residual
-the naive `m=DELP_dry, cm=diagnose_cs_cm` path produced.
+Stored mass targets the raw GEOS dry endpoint (`DELP_dry`) transformed to the
+output vertical grid. The native horizontal fluxes are column-balanced to that
+endpoint, then `cm` is diagnosed so the replay and positivity contracts are
+checked against the same endpoint the runtime will see.
 
 For multi-day preprocessing with `chain_mass = true`, `seed_m` carries the
-pressure-fixer endpoint from the previous day so adjacent daily binaries share
-a boundary mass: pass `nothing` (default) on day 1 to seed from raw GEOS
-DELP_dry, and on day N+1 pass the `final_m` returned by day N's
-`process_day`. With `chain_mass = false`, `seed_m` is ignored and every
-window reinitializes from raw GEOS mass.
+raw endpoint from the previous day so adjacent daily binaries share a boundary
+mass: pass `nothing` (default) on day 1 to seed from raw GEOS DELP_dry, and on
+day N+1 pass the `final_m` returned by day N's `process_day`. With
+`chain_mass = false`, `seed_m` is ignored and every window reinitializes from
+raw GEOS mass.
 
 When `chain_mass = true`, the returned NamedTuple includes
-`final_m::NTuple{6, Array{FT, 3}}`, the pressure-fixer state at the END of the
+`final_m::NTuple{6, Array{FT, 3}}`, the raw-endpoint state at the END of the
 last window. With `chain_mass = false`, `final_m` is `nothing`.
 
 `next_day_hour0` is part of the inherited topology-dispatch contract but

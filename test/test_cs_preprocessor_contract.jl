@@ -95,7 +95,7 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
                                               cfl_limit = 0.95)
         @test !diag.ok
         @test diag.direction === :x
-        @test diag.ratio ≈ 0.99 atol = 1e-12
+        @test diag.ratio ≈ 1.98 atol = 1e-12
         @test diag.location == (3, 2, 2, 1)
     end
 
@@ -110,7 +110,7 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
                                               cfl_limit = 0.95)
         @test !diag.ok
         @test diag.direction === :y
-        @test diag.ratio ≈ 0.97 atol = 1e-12
+        @test diag.ratio ≈ 1.94 atol = 1e-12
         @test diag.location == (5, 2, 2, 2)
     end
 
@@ -128,11 +128,56 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
         @test !diag.ok
         @test diag.direction === :z
         # The clean-window baseline contributes a few units to cm at this
-        # interface, so the observed ratio is slightly above 0.98 — loose
+        # interface, so the observed palindrome ratio is slightly above
+        # 2 * 0.98 — loose
         # tolerance is fine, the point is that the z-direction violation
         # surfaces rather than being silently dominated by tiny x/y ratios.
-        @test diag.ratio ≈ 0.98 atol = 1e-3
+        @test diag.ratio ≈ 1.96 atol = 1e-3
         @test diag.location == (6, 1, 1, 2)
+    end
+
+    @testset "positivity: combined palindrome budget catches per-direction-safe cells" begin
+        w = build_clean_cs_window(Float64)
+        am = ntuple(6) do p
+            arr = copy(w.am[p])
+            p == 1 && (arr[2, 2, 1] = 0.30e9)
+            arr
+        end
+        bm = ntuple(6) do p
+            arr = copy(w.bm[p])
+            p == 1 && (arr[1, 3, 1] = 0.30e9)
+            arr
+        end
+        cm = ntuple(6) do p
+            arr = copy(w.cm[p])
+            p == 1 && (arr[1, 2, 2] = 0.20e9)
+            arr
+        end
+        diag = verify_substep_positivity_cs!(w.m_cur, am, bm, cm;
+                                              cfl_limit = 0.95)
+        @test !diag.ok
+        @test diag.ratio ≈ 1.60 atol = 1e-12
+        @test diag.location == (1, 1, 2, 1)
+    end
+
+    @testset "positivity: m_next tightens the reference mass" begin
+        w = build_clean_cs_window(Float64)
+        am = ntuple(6) do p
+            arr = copy(w.am[p])
+            p == 1 && (arr[2, 2, 1] = 0.30e9)
+            arr
+        end
+        m_next = ntuple(6) do p
+            arr = copy(w.m_next[p])
+            p == 1 && (arr[1, 2, 1] = 0.50e9)
+            arr
+        end
+        diag = verify_substep_positivity_cs!(w.m_cur, am, w.bm, w.cm;
+                                              cfl_limit = 0.95,
+                                              m_next = m_next)
+        @test !diag.ok
+        @test diag.ratio ≈ 1.20 atol = 1e-12
+        @test diag.location == (1, 1, 2, 1)
     end
 
     @testset "positivity: m <= 0 is flagged Inf regardless of flux magnitude (round-2 fix)" begin
@@ -253,7 +298,8 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
 
     @testset "wrapper: positivity failure with passing replay is non-fatal (caller policy)" begin
         # Closed-loop uniform shift on one (j, k) row preserves per-cell
-        # divergence on the perturbed row but drives outgoing/m up to 0.99.
+        # divergence on the perturbed row but drives the palindrome outgoing
+        # budget above the limit.
         # `verify_cs_window_contract!` must return both diagnostics so the
         # caller — not the wrapper — decides whether to error or warn after
         # aggregating across windows.
@@ -270,7 +316,7 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
         @test result.replay.max_rel_err <= 1e-12
         @test !result.positivity.ok
         @test result.positivity.direction === :x
-        @test result.positivity.ratio ≈ 0.99 atol = 1e-12
+        @test result.positivity.ratio ≈ 1.98 atol = 1e-12
         @test result.positivity.location == (2, 1, 1, 1)
     end
 

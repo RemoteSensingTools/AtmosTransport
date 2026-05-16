@@ -11,13 +11,11 @@ DrivenSimulation.step!(sim)
   └─ _active_substep
   └─ _maybe_advance_window!(sim, substep)  ← load next transport window if needed
   └─ _refresh_forcing!(sim, substep)       ← driver window → model forcing + convection_forcing
-  └─ step!(sim.model, sim.Δt; meteo = sim)
-       ├─ transport block: apply!(state, fluxes, grid, advection, dt;
-       │                           workspace, diffusion_op, emissions_op, meteo)
-       ├─ convection block: if !(model.convection isa NoConvection)
-       │                      apply!(state, convection_forcing, grid, convection, dt;
-       │                             workspace = convection_ws)
-       └─ chemistry block: chemistry_block!(state, meteo, grid, chemistry, dt)
+  └─ default drivers: step!(sim.model, sim.Δt; meteo = sim)
+     binary-scheduled drivers:
+       ├─ transport_step!(sim.model, sim.Δt; meteo = sim)
+       └─ at met-window boundary:
+          convection_chemistry_step!(sim.model, sim.window_dt; meteo = sim)
   └─ sim.time += sim.Δt; sim.iteration += 1; callbacks
 ```
 
@@ -48,9 +46,17 @@ Defined at [`src/Models/DrivenSimulation.jl:349`](../src/Models/DrivenSimulation
 substep = _active_substep(sim.iteration, sim.steps_per_window)
 _maybe_advance_window!(sim, substep)
 _refresh_forcing!(sim, substep)
-step!(sim.model, sim.Δt; meteo = sim)
+if uses_binary_substep_contract(sim.driver)
+    transport_step!(sim.model, sim.Δt; meteo = sim)
+else
+    step!(sim.model, sim.Δt; meteo = sim)
+end
 sim.time += sim.Δt
 sim.iteration += 1
+if uses_binary_substep_contract(sim.driver) &&
+   sim.iteration == sim.current_window_end_iteration
+    convection_chemistry_step!(sim.model, sim.window_dt; meteo = sim)
+end
 for callback in values(sim.callbacks)
     callback(sim)
 end
@@ -73,11 +79,33 @@ Defined at [`src/Models/TransportModel.jl:335`](../src/Models/TransportModel.jl#
 
 ```julia
 function step!(model::TransportModel, dt; meteo = nothing)
+    transport_step!(model, dt; meteo = meteo)
+    convection_chemistry_step!(model, dt; meteo = meteo)
+    return nothing
+end
+```
+
+For Plan-41 v3 transport binaries that declare
+`runtime_substep_contract = "binary_schedule"`, `DrivenSimulation` calls
+`transport_step!` on every stored binary substep and calls
+`convection_chemistry_step!` once at the met-window boundary with
+`dt = sim.window_dt`. The stored schedule is therefore the advection/transport
+cadence, not a request to run convection and chemistry dozens of times per
+hour.
+
+The block helpers are:
+
+```julia
+function transport_step!(model::TransportModel, dt; meteo = nothing)
     apply!(model.state, model.fluxes, model.grid, model.advection, dt;
            workspace = model.workspace.advection_ws,
            diffusion_op = model.diffusion,
            emissions_op = model.emissions,
            meteo = meteo)
+    return nothing
+end
+
+function convection_chemistry_step!(model::TransportModel, dt; meteo = nothing)
     if !(model.convection isa NoConvection)
         apply!(model.state, model.convection_forcing, model.grid,
                model.convection, dt;
@@ -114,7 +142,7 @@ Forcing refresh is upstream in `_refresh_forcing!`. The kernel consumes `convect
 
 ### 7. Chemistry block
 
-`chemistry_block!(state, meteo, grid, chemistry, dt)` dispatches on `typeof(chemistry)`. Operators: `ExponentialDecay` and `CompositeChemistry` both support `CellState` (LatLon and RG). **CubedSphere chemistry has no dispatch today** — this is the known topology gap documented in [`../src/Operators/TOPOLOGY_SUPPORT.md`](../src/Operators/TOPOLOGY_SUPPORT.md).
+`chemistry_block!(state, meteo, grid, chemistry, dt)` dispatches on `typeof(chemistry)`. Operators: `ExponentialDecay` and `CompositeChemistry` support `CellState` (LatLon and RG) and `CubedSphereState`.
 
 ### 8. Callbacks
 

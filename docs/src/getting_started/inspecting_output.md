@@ -47,7 +47,7 @@ config that requests `convection.kind = "cmfmc"` against a binary
 without `:cmfmc` / `:dtrain` payload sections is rejected at load time —
 no silent capability mismatch.
 
-Transport binaries must be `format_version = 2`. Older files are rejected by
+Transport binaries must be `format_version = 3`. Older files are rejected by
 the same reader path used by runtime drivers; regenerate them with the current
 preprocessor rather than loading them with compatibility defaults.
 

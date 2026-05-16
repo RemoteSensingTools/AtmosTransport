@@ -55,6 +55,7 @@ For a new contributor or agent:
 |-------|------|
 | Data folder conventions | [`reference/DATA_LAYOUT.md`](reference/DATA_LAYOUT.md) |
 | Binary format spec | [`reference/BINARY_FORMAT.md`](reference/BINARY_FORMAT.md) |
+| Binary preprocessing architecture | [`reference/BINARY_PREPROCESSING_ARCHITECTURE.md`](reference/BINARY_PREPROCESSING_ARCHITECTURE.md) |
 | Quick-start guide | [`reference/QUICKSTART.md`](reference/QUICKSTART.md) |
 | Architecture overview | [`reference/ARCHITECTURE.md`](reference/ARCHITECTURE.md) |
 | Preprocessing pipeline | [`reference/PREPROCESSING_PHILOSOPHY.md`](reference/PREPROCESSING_PHILOSOPHY.md) |

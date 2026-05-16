@@ -51,7 +51,7 @@ using ...Grids: AtmosGrid, AbstractHorizontalMesh, AbstractStructuredMesh,
     LatLonMesh, CubedSphereMesh, face_cells, nfaces,
     PanelConnectivity, reciprocal_edge,
     EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST
-using ...MetDrivers: diagnose_cm_from_continuity!
+using ...MetDrivers: diagnose_cm_from_continuity!, uses_binary_substep_contract
 using ...Architectures: _kahan_add
 
 # New scheme hierarchy (include before anything that references these types)

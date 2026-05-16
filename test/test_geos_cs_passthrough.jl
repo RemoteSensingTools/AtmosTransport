@@ -6,10 +6,8 @@
 #   1. process_day(date, ::CSGrid, ::AbstractGEOSSettings, vertical; out_path)
 #      writes a v4 binary at out_path with the expected size and shape.
 #   2. The binary's write-time replay gate is below the requested tolerance.
-#   3. NO Poisson-balance call is invoked on the passthrough path (it would
-#      be a regression if the user's "GEOS already provides mass fluxes"
-#      semantic was lost). Verified by stubbing
-#      `balance_cs_global_mass_fluxes!` to error.
+#   3. The GEOS native path column-balances fluxes to the raw dry endpoint
+#      and writes a binary that closes replay against that endpoint.
 #   4. `geos_native_to_face_flux!` correctly maps MFXC → am_v4 with
 #      panel-edge halos populated by mirror sync.
 # ---------------------------------------------------------------------------
@@ -31,7 +29,9 @@ using .AtmosTransport.Preprocessing: GEOSITSettings, process_day,
                                       plan_vertical,
                                       MergeAbovePressure,
                                       CS_PANEL_COUNT
-using .AtmosTransport.MetDrivers: CubedSphereBinaryReader, load_cs_window
+using .AtmosTransport.MetDrivers: CubedSphereBinaryReader, load_cs_window,
+                                  load_flux_delta_window!,
+                                  verify_window_continuity_cs
 
 const FT_TEST = Float64
 const NC = 8
@@ -39,6 +39,22 @@ const NPANEL = 6
 const NZ = 4
 const MFXC_C5 = 80.0
 const MFYC_C5 = -40.0
+
+function assert_cs_window_replay(reader::CubedSphereBinaryReader, win::Int;
+                                 tol::Real = 1e-12)
+    window = load_cs_window(reader, win)
+    deltas = load_flux_delta_window!(reader, win)
+    steps = reader.header.steps_per_window_by_window[win]
+    m_next = ntuple(p -> window.m[p] .+ deltas.dm[p], 6)
+    diag = verify_window_continuity_cs(window.m, window.am, window.bm,
+                                       window.cm, m_next, steps)
+    @test diag.max_rel_err < tol
+    @test all(all(isfinite, panel) for panel in window.am)
+    @test all(all(isfinite, panel) for panel in window.bm)
+    @test all(all(isfinite, panel) for panel in window.cm)
+    @test all(all(>(0), panel) for panel in m_next)
+    return window
+end
 
 # Inline the synthetic fixture writers (same shape as test_geos_reader.jl;
 # duplicating ~50 lines is cleaner than cross-test importing).
@@ -270,14 +286,14 @@ end
             @test reader.header.mass_basis === :dry
             @test reader.header.panel_convention === :geos_native
             @test :dm in reader.header.payload_sections              # delta enabled
+            @test reader.header.raw_header["runtime_substep_contract"] == "binary_schedule"
+            @test reader.header.raw_header["geos_mass_endpoint"] == "raw_dry_endpoint"
+            @test reader.header.raw_header["geos_horizontal_balance"] ==
+                  "column_poisson_to_raw_endpoint"
 
-            window = load_cs_window(reader, 1)
-            expected_am = MFXC_C5 / (2 * 9.80665)
-            expected_bm = MFYC_C5 / (2 * 9.80665)
-            for p in 1:6
-                @test all(window.am[p][2:end, :, :] .≈ expected_am)
-                @test all(window.bm[p][:, 2:end, :] .≈ expected_bm)
-            end
+            window = assert_cs_window_replay(reader, 1)
+            @test any(panel -> any(x -> x != 0, panel), window.am)
+            @test any(panel -> any(x -> x != 0, panel), window.bm)
         finally
             close(reader)
         end
@@ -324,15 +340,11 @@ end
         reader = CubedSphereBinaryReader(out_path; FT=FT_TEST)
         try
             @test reader.header.nlevel == 3
-            window = load_cs_window(reader, 1)
-            expected_am = MFXC_C5 / (2 * 9.80665)
-            expected_bm = MFYC_C5 / (2 * 9.80665)
-            for p in 1:6
-                @test all(window.am[p][2:end, :, 1] .≈ 2 * expected_am)
-                @test all(window.am[p][2:end, :, 2:3] .≈ expected_am)
-                @test all(window.bm[p][:, 2:end, 1] .≈ 2 * expected_bm)
-                @test all(window.bm[p][:, 2:end, 2:3] .≈ expected_bm)
-            end
+            @test reader.header.raw_header["vertical_Nz_output"] == 3
+            window = assert_cs_window_replay(reader, 1)
+            @test size(window.am[1], 3) == 3
+            @test size(window.bm[1], 3) == 3
+            @test size(window.cm[1], 3) == 4
         finally
             close(reader)
         end

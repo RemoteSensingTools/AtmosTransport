@@ -382,7 +382,7 @@ export open_streaming_transport_binary, write_streaming_window!,
 
 # Models
 export TransportModel, Simulation, DrivenSimulation, SurfaceFluxSource
-export step!, run!, run_window!
+export step!, transport_step!, convection_chemistry_step!, run!, run_window!
 export window_index, substep_index, current_qv
 export with_chemistry, with_diffusion, with_emissions
 export with_convection, with_convection_forcing

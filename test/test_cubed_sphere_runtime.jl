@@ -161,6 +161,27 @@ end
     end
 end
 
+@testset "CubedSphere binary schedule can own runtime subcycling" begin
+    mktemp() do path, io
+        close(io)
+        write_driven_cs_binary(path; FT=Float64, Nc=4, Nz=2,
+                               window_mass_scales=(1,),
+                               steps_per_window=4)
+        driver_legacy = CubedSphereTransportDriver(path; FT=Float64, arch=CPU(), Hp=1)
+        @test !AtmosTransport.MetDrivers.uses_binary_substep_contract(driver_legacy)
+        close(driver_legacy)
+
+        rewrite_cs_header!(path; updates = Dict(
+            "preprocessor_contract" => "plan41_variable_substeps",
+            "adaptive_substeps" => true,
+            "runtime_substep_contract" => "binary_schedule",
+        ))
+        driver = CubedSphereTransportDriver(path; FT=Float64, arch=CPU(), Hp=1)
+        @test AtmosTransport.MetDrivers.uses_binary_substep_contract(driver)
+        close(driver)
+    end
+end
+
 function make_cs_surface_panels(FT::Type{<:AbstractFloat}, Nc::Int;
                                 pblh = FT(1000),
                                 ustar = FT(0.35),

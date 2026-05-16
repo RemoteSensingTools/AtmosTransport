@@ -112,7 +112,8 @@ function verify_write_replay_cs!(m_cur::NTuple{NP, <:AbstractArray{FT, 3}},
 end
 
 """
-    verify_substep_positivity_cs!(m, am, bm, cm; cfl_limit = 0.95, halo_width = 0)
+    verify_substep_positivity_cs!(m, am, bm, cm; cfl_limit = 0.95,
+                                  halo_width = 0, m_next = nothing)
 
 Verify the per-substep horizontal+vertical positivity contract that the runtime's
 `_cs_static_subcycle_count` depends on. For every interior cell on every panel:
@@ -121,13 +122,18 @@ Verify the per-substep horizontal+vertical positivity contract that the runtime'
      mass is an immediate contract violation — the runtime divides by `m` and
      would produce `Inf` or `NaN` in the CFL scan. Such a cell is reported with
      `ratio = Inf` regardless of flux magnitude.
-  2. The per-direction outgoing mass per substep must not exceed `cfl_limit * m`.
+  2. The combined Strang-palindrome outgoing budget
+     `2 * (out_x + out_y + out_z)` must not exceed `cfl_limit * m_ref`, where
+     `m_ref = min(m, m_next)` when `m_next` is supplied by a caller that wants
+     endpoint tightening, and `m_ref = m` otherwise. The factor of 2 is
+     required because the CS runtime applies the
+     direction sequence `X-Y-Z-Z-Y-X` for every met substep.
 
 Returns a NamedTuple `(direction, ratio, location, ok)`:
-* `direction :: Union{Symbol, Nothing}` — `:x`, `:y`, `:z`, or `nothing` when no
-  cell was inspected.
-* `ratio :: Float64` — worst observed `outgoing / m` over the window, or `Inf`
-  if any cell had `m <= 0`.
+* `direction :: Union{Symbol, Nothing}` — the dominant contributor among
+  `:x`, `:y`, `:z`, or `nothing` when no cell was inspected.
+* `ratio :: Float64` — worst observed palindrome outgoing budget over the
+  reference mass, or `Inf` if any inspected cell had invalid mass or flux.
 * `location :: NTuple{4, Int}` — `(panel, i, j, k)` of the worst cell.
 * `ok :: Bool` — `true` iff `ratio <= cfl_limit`.
 
@@ -144,7 +150,8 @@ function verify_substep_positivity_cs!(m::NTuple{NP, <:AbstractArray{FT, 3}},
                                        bm::NTuple{NP, <:AbstractArray},
                                        cm::NTuple{NP, <:AbstractArray};
                                        cfl_limit::Real = 0.95,
-                                       halo_width::Integer = 0) where {FT, NP}
+                                       halo_width::Integer = 0,
+                                       m_next::Union{Nothing, NTuple{NP, <:AbstractArray}} = nothing) where {FT, NP}
     _validate_cfl_limit(cfl_limit, "verify_substep_positivity_cs!")
     Hp = Int(halo_width)
     # All buffers share the same interior extent `(Nc, Nc, Nz)`; derive from m.
@@ -157,43 +164,47 @@ function verify_substep_positivity_cs!(m::NTuple{NP, <:AbstractArray{FT, 3}},
     worst_loc = (0, 0, 0, 0)
     for p in 1:NP
         m_p = m[p]
-        for (dir, F_lo_view, F_hi_view) in (
-            (:x, view(am[p], iL    :iH,     iL:iH,     1:Nz),
-                 view(am[p], iL + 1:iH + 1, iL:iH,     1:Nz)),
-            (:y, view(bm[p], iL:iH,     iL    :iH,     1:Nz),
-                 view(bm[p], iL:iH,     iL + 1:iH + 1, 1:Nz)),
-            (:z, view(cm[p], iL:iH, iL:iH, 1    :Nz),
-                 view(cm[p], iL:iH, iL:iH, 2:Nz + 1)),
-        )
-            m_int = view(m_p, iL:iH, iL:iH, 1:Nz)
-            for k in 1:Nz, j in 1:Nc, i in 1:Nc
-                mi = m_int[i, j, k]
-                fl = F_lo_view[i, j, k]
-                fh = F_hi_view[i, j, k]
-                # Any non-finite cell mass, non-finite face flux, or
-                # non-positive cell mass is an immediate contract violation
-                # regardless of how the CFL ratio would round. NaN comparisons
-                # all return `false` in Julia, so `mi <= 0` alone would let
-                # `NaN`-mass cells slip through; `!isfinite` handles `NaN` and
-                # `±Inf` consistently. Pin the report to the first such cell
-                # encountered (subsequent ones cannot make `Inf` worse, and
-                # `NaN > Inf` is false so the diagnostic stays stable).
-                if !isfinite(mi) || mi <= zero(FT) ||
-                   !isfinite(fl) || !isfinite(fh)
-                    if !isinf(worst_ratio)
-                        worst_ratio = Inf
-                        worst_dir = dir
-                        worst_loc = (p, i, j, k)
-                    end
-                    continue
-                end
-                outgoing = max(zero(FT), -fl) + max(zero(FT), fh)
-                ratio = outgoing / mi
-                if ratio > worst_ratio
-                    worst_ratio = ratio
-                    worst_dir = dir
+        m_next_p = m_next === nothing ? nothing : m_next[p]
+        m_int = view(m_p, iL:iH, iL:iH, 1:Nz)
+        m_next_int = m_next_p === nothing ? nothing :
+                     view(m_next_p, iL:iH, iL:iH, 1:Nz)
+        am_lo = view(am[p], iL    :iH,     iL:iH,     1:Nz)
+        am_hi = view(am[p], iL + 1:iH + 1, iL:iH,     1:Nz)
+        bm_lo = view(bm[p], iL:iH,     iL    :iH,     1:Nz)
+        bm_hi = view(bm[p], iL:iH,     iL + 1:iH + 1, 1:Nz)
+        cm_lo = view(cm[p], iL:iH, iL:iH, 1    :Nz)
+        cm_hi = view(cm[p], iL:iH, iL:iH, 2:Nz + 1)
+        for k in 1:Nz, j in 1:Nc, i in 1:Nc
+            mi = m_int[i, j, k]
+            mi_next = m_next_int === nothing ? mi : m_next_int[i, j, k]
+            ax_l = am_lo[i, j, k]
+            ax_h = am_hi[i, j, k]
+            by_l = bm_lo[i, j, k]
+            by_h = bm_hi[i, j, k]
+            cz_l = cm_lo[i, j, k]
+            cz_h = cm_hi[i, j, k]
+            if !isfinite(mi) || mi <= zero(FT) ||
+               !isfinite(mi_next) || mi_next <= zero(FT) ||
+               !isfinite(ax_l) || !isfinite(ax_h) ||
+               !isfinite(by_l) || !isfinite(by_h) ||
+               !isfinite(cz_l) || !isfinite(cz_h)
+                if !isinf(worst_ratio)
+                    worst_ratio = Inf
+                    worst_dir = :x
                     worst_loc = (p, i, j, k)
                 end
+                continue
+            end
+            out_x = max(zero(FT), -ax_l) + max(zero(FT), ax_h)
+            out_y = max(zero(FT), -by_l) + max(zero(FT), by_h)
+            out_z = max(zero(FT), -cz_l) + max(zero(FT), cz_h)
+            outgoing = FT(2) * (out_x + out_y + out_z)
+            ratio = outgoing / min(mi, mi_next)
+            if ratio > worst_ratio
+                worst_ratio = ratio
+                worst_dir = out_x >= out_y && out_x >= out_z ? :x :
+                            out_y >= out_z ? :y : :z
+                worst_loc = (p, i, j, k)
             end
         end
     end
@@ -234,7 +245,8 @@ function verify_cs_window_contract!(m_cur::NTuple{NP, <:AbstractArray{FT, 3}},
                                      div_scratch = div_scratch)
     positivity = verify_substep_positivity_cs!(m_cur, am, bm, cm;
                                                cfl_limit = positivity_cfl_limit,
-                                               halo_width = halo_width)
+                                               halo_width = halo_width,
+                                               m_next = m_next)
     return (replay = replay, positivity = positivity)
 end
 
@@ -279,7 +291,7 @@ function summarize_cs_positivity_status(worst::CSWorst;
                                         steps_per_window::Int,
                                         require_substep_positivity::Bool = true,
                                         quarantine_path::Union{Nothing, AbstractString} = nothing)
-    msg = @sprintf("max outgoing/m=%.3f dir=%s win=%d cell=%s (limit=%.2f)",
+    msg = @sprintf("max palindrome outgoing/m_ref=%.3f dir=%s win=%d cell=%s (limit=%.2f)",
                    worst.ratio, worst.direction, worst.win,
                    worst.location, cfl_limit)
     if worst.ratio <= cfl_limit

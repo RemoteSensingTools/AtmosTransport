@@ -389,7 +389,7 @@ end
     end
 end
 
-@testset "Transport binary v2 contract rejects obsolete or incomplete headers" begin
+@testset "Transport binary current contract rejects obsolete or incomplete headers" begin
     mktemp() do path, io
         close(io)
         write_test_transport_binary_latlon(path; FT=Float64)

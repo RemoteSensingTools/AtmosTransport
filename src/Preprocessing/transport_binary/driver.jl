@@ -60,7 +60,7 @@ driver_flush_final_windows!(workspace, reader, contract, _context) =
     driver_after_write_window!(workspace, reader, ready, context)
 
 Post-write migration hook. GEOS-native CS uses this to advance its chained
-pressure-fixer state; most topologies do nothing.
+endpoint state; most topologies do nothing.
 """
 driver_after_write_window!(_workspace, _reader, _ready, _context) = nothing
 

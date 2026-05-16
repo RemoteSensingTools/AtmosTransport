@@ -34,11 +34,10 @@
 #   * `m` and `m_next` in the produced `RawWindow` are DELP_dry at the two
 #     window endpoints, reconstructed from PS_total via the hybrid coordinate.
 #     `Σ m_k = ps_dry` at every endpoint to roundoff. The orchestrator can
-#     either chain the FV3 pressure-fixer endpoint mass across windows
-#     (`chain_mass = true`, historical default) or seed every window from
-#     these raw GEOS endpoints (`chain_mass = false`, used by the GEOS-IT
-#     native diagnostic campaign). In both modes, each written window stores
-#     a self-consistent pressure-fixer tendency for v4 replay.
+#     either chain raw endpoint mass across windows (`chain_mass = true`) or
+#     seed every window from these raw GEOS endpoints (`chain_mass = false`).
+#     Written windows balance horizontal fluxes to the raw endpoint and
+#     diagnose `cm` from that same target for replay.
 # ===========================================================================
 
 abstract type AbstractGEOSSettings <: AbstractMetSettings end

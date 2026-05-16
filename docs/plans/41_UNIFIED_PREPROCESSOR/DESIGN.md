@@ -347,8 +347,8 @@ promote_streaming_binary!(writer)
 ```
 
 The writer/reader contract also carries the time-step schedule.
-`format_version = 2` is a hard boundary: v1 binaries are obsolete and readers
-reject them before mmap. Every v2 product, including constant-step products,
+`format_version = 3` is a hard boundary: older binaries are obsolete and readers
+reject them before mmap. Every v3 product, including constant-step products,
 must carry `steps_per_window_by_window::Vector{Int}`,
 `time_step_schedule`, and `poisson_balance_target_scale_by_window`. The scalar
 `steps_per_window` remains only as a compatibility summary

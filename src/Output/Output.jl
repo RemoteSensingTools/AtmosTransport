@@ -23,6 +23,7 @@ functions in this folder; they should not special-case the runner.
 """
 module Output
 
+using Dates
 using NCDatasets
 using Printf
 

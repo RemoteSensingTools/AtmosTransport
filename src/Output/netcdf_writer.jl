@@ -25,10 +25,33 @@ function _payload_shuffle(options::SnapshotWriteOptions)
     return options.deflate_level > 0 && options.shuffle
 end
 
+"""
+    PAYLOAD_FILL_VALUE
+
+Sentinel for masked / invalid payload cells in NetCDF snapshots. Matches the
+GEOS-Chem convention (`Met_AD._FillValue == 1.0e15`) so Panoply / ncview / IDV
+all mask the same out-of-range cells with the same value. Float32 outputs
+truncate to `Float32(1e15)`, which is well below `floatmax(Float32) ≈ 3.4e38`
+and safely outside any physical mass or mixing-ratio range.
+"""
+const PAYLOAD_FILL_VALUE = 1.0e15
+
+@inline _payload_fill_value(::Type{Float32}) = Float32(PAYLOAD_FILL_VALUE)
+@inline _payload_fill_value(::Type{Float64}) = Float64(PAYLOAD_FILL_VALUE)
+
 function _def_payload_var(ds, name::AbstractString, T::DataType, dims;
                           attrib, options::SnapshotWriteOptions)
+    # Inject the FillValue sentinel as both `_FillValue` (CF) and
+    # `missing_value` (GEOS-Chem / GrADS / older readers) so every tool
+    # masks invalid cells correctly. `defVar(..., fillvalue=...)` writes
+    # the storage default at file-creation time so uninitialized cells
+    # are masked even if the writer never reaches them.
+    fv = _payload_fill_value(T)
+    attrs = copy(attrib)
+    attrs["missing_value"] = fv
     return defVar(ds, name, T, dims;
-                  attrib = attrib,
+                  attrib = attrs,
+                  fillvalue = fv,
                   deflatelevel = _payload_deflate_level(options),
                   shuffle = _payload_shuffle(options))
 end
@@ -93,7 +116,7 @@ function write_snapshot_netcdf(path::AbstractString,
     tracer_keys = _check_same_keys(frames)
 
     NCDataset(expanded, "c") do ds
-        _define_common_attributes!(ds, mesh, frames, mass_basis)
+        _define_common_attributes!(ds, mesh, frames, mass_basis; options = options)
         geometry = _define_geometry!(ds, mesh, Nz, times)
         _write_snapshot_payload!(ds, mesh, frames, tracer_keys, geometry,
                                  mass_basis, options)

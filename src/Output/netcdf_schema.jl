@@ -16,15 +16,105 @@ function _nlevel(frame::SnapshotFrame, ::CubedSphereMesh)
     return size(frame.air_mass[1], 3)
 end
 
-function _define_common_attributes!(ds, mesh, frames, mass_basis_sym::Symbol)
-    ds.attrib["Conventions"] = "CF-1.8"
-    ds.attrib["title"] = "AtmosTransport runtime snapshot"
-    ds.attrib["source"] = "AtmosTransport.jl"
-    ds.attrib["grid"] = summary(mesh)
-    ds.attrib["grid_type"] = _grid_type_string(mesh)
-    ds.attrib["mass_basis"] = String(mass_basis_sym)
-    ds.attrib["output_contract"] = "AtmosTransport snapshot v2"
-    ds.attrib["history"] = @sprintf("written by AtmosTransport.Output with %d frame(s)", length(frames))
+# ---------------------------------------------------------------------------
+# Automated provenance metadata.
+#
+# Everything below is computed at write time so a downstream consumer
+# (or "what produced this binary?" forensic question) has a stable
+# answer without bookkeeping at the call site. Git SHA / dirty status
+# fall back to `"unknown"` when the source tree isn't a git checkout or
+# `git` isn't on PATH, so users running from a tarball get a working
+# file with explicit "unknown" provenance instead of a hard error.
+# ---------------------------------------------------------------------------
+
+const _OUTPUT_CONTRACT = "AtmosTransport snapshot v2"
+
+function _git_command(args::Vector{String})
+    # `@__DIR__` is `src/Output/`; pin the repo root via -C so callers
+    # running from arbitrary CWDs still resolve the right tree.
+    repo_dir = joinpath(@__DIR__, "..", "..")
+    return Cmd(vcat(["git", "-C", repo_dir], args))
+end
+
+function _git_commit_sha()
+    try
+        return strip(read(_git_command(["rev-parse", "HEAD"]), String))
+    catch
+        return "unknown"
+    end
+end
+
+function _git_dirty_flag()
+    try
+        out = strip(read(_git_command(["status", "--porcelain"]), String))
+        return isempty(out) ? "clean" : "dirty"
+    catch
+        return "unknown"
+    end
+end
+
+function _iso8601_utc_now()
+    # Dates.now(UTC) is portable; format with explicit "Z" suffix.
+    return Dates.format(Dates.now(Dates.UTC), "yyyy-mm-ddTHH:MM:SS") * "Z"
+end
+
+function _runtime_environment_string()
+    return @sprintf("Julia %s on %s (%s/%s)",
+                    VERSION, Sys.MACHINE,
+                    Sys.KERNEL, Sys.iswindows() ? "Windows" :
+                                Sys.isapple()   ? "macOS"   :
+                                Sys.islinux()   ? "Linux"   : "Unknown")
+end
+
+function _options_string(options)
+    return @sprintf("float_type=%s, deflate_level=%d, shuffle=%s",
+                    options.float_type, options.deflate_level, options.shuffle)
+end
+
+function _define_common_attributes!(ds, mesh, frames, mass_basis_sym::Symbol;
+                                     options = nothing)
+    ds.attrib["Conventions"]    = "CF-1.8"
+    ds.attrib["title"]          = "AtmosTransport runtime snapshot"
+    ds.attrib["source"]         = "AtmosTransport.jl"
+    ds.attrib["institution"]    = get(ENV, "ATMOSTR_INSTITUTION",
+                                       "Caltech / Frankenberg group")
+    ds.attrib["grid"]            = summary(mesh)
+    ds.attrib["grid_type"]       = _grid_type_string(mesh)
+    ds.attrib["mass_basis"]      = String(mass_basis_sym)
+    ds.attrib["output_contract"] = _OUTPUT_CONTRACT
+
+    # Automated provenance: timestamp, source-tree state, runtime env,
+    # writer options. Each value is best-effort and falls back to
+    # `"unknown"` rather than throwing — non-git checkouts still
+    # produce a complete metadata block.
+    creation_date = _iso8601_utc_now()
+    git_commit    = _git_commit_sha()
+    git_dirty     = _git_dirty_flag()
+    hostname      = try
+        Base.Libc.gethostname()
+    catch
+        "unknown"
+    end
+    user_id = get(ENV, "USER", get(ENV, "USERNAME", "unknown"))
+
+    ds.attrib["creation_date"]    = creation_date
+    ds.attrib["framework"]        = "AtmosTransport.jl"
+    ds.attrib["framework_commit"] = git_commit
+    ds.attrib["framework_dirty"]  = git_dirty
+    ds.attrib["runtime"]          = _runtime_environment_string()
+    ds.attrib["hostname"]         = hostname
+    ds.attrib["user"]             = user_id
+    options === nothing ||
+        (ds.attrib["output_options"] = _options_string(options))
+
+    # `history` is the CF-canonical "what touched this file" chain. We
+    # prepend a single line; readers that pass the file through other
+    # tools (CDO, NCO, xarray) append their own lines downstream.
+    ds.attrib["history"] = @sprintf("%s: written by AtmosTransport.Output (commit %s%s) with %d frame(s)",
+                                     creation_date,
+                                     git_commit == "unknown" ? "unknown" : first(git_commit, 12),
+                                     git_dirty == "dirty"    ? "+dirty"  : "",
+                                     length(frames))
     return nothing
 end
 
@@ -46,10 +136,19 @@ end
 
 function _define_lev!(ds, Nz::Integer)
     defDim(ds, "lev", Int(Nz))
+    # `axis = "Z"` + `positive = "down"` is what Panoply / ncview look
+    # for to identify the vertical axis (and to render vertical profiles
+    # when the user clicks a horizontal cell). `standard_name =
+    # "model_level_number"` is the CF-canonical choice for integer-level
+    # vertical coords; `coordinate = "eta"` is a GEOS-Chem hint readers
+    # may consult for hybrid-sigma context.
     v = defVar(ds, "lev", Float64, ("lev",),
                attrib = Dict("units" => "1",
                              "long_name" => "model level",
-                             "positive" => "down"))
+                             "standard_name" => "model_level_number",
+                             "axis" => "Z",
+                             "positive" => "down",
+                             "coordinate" => "eta"))
     v[:] = collect(1.0:Float64(Nz))
     return v
 end
@@ -251,16 +350,24 @@ function _define_cs_geometry!(ds, mesh::CubedSphereMesh, Nz::Integer, times)
     ds.attrib["grid_mapping_name"] = "gnomonic cubed-sphere"
     ds.attrib["longitude_of_central_meridian"] = central_meridian
 
+    # GEOS-Chem-compatibility trick: tag the 1D panel-index axes with
+    # `degrees_east` / `degrees_north` so Panoply (and GrADS, ncview, …)
+    # auto-recognize the dataset as geographic and render a per-face
+    # map. The numeric values stay panel indices `1..Nc`; geographic
+    # truth lives in the auxiliary `lons`/`lats` 3D coords below. The
+    # "Fake …" long_name is the documented GEOS-Chem convention so a
+    # reader doesn't mistake these for true 1D longitudes/latitudes.
     defVar(ds, "Xdim", Float64, ("Xdim",),
-           attrib = Dict("units" => "1",
-                         "long_name" => "cubed-sphere panel X index"))[:] =
-        collect(1.0:Nc)
+           attrib = Dict("units" => "degrees_east",
+                         "long_name" => "Fake Longitude for GrADS Compatibility",
+                         "axis" => "X"))[:] = collect(1.0:Nc)
     defVar(ds, "Ydim", Float64, ("Ydim",),
-           attrib = Dict("units" => "1",
-                         "long_name" => "cubed-sphere panel Y index"))[:] =
-        collect(1.0:Nc)
+           attrib = Dict("units" => "degrees_north",
+                         "long_name" => "Fake Latitude for GrADS Compatibility",
+                         "axis" => "Y"))[:] = collect(1.0:Nc)
     defVar(ds, "nf", Int32, ("nf",),
            attrib = Dict("axis" => "e",
+                         "grads_dim" => "e",
                          "long_name" => "cubed-sphere face"))[:] = Int32.(1:6)
 
     lons, lats = _cs_panel_center_arrays(mesh)

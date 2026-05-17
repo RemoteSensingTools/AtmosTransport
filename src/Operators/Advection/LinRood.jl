@@ -216,13 +216,13 @@ where bl = q_L - c, br = q_R - c, b0 = bl + br (curvature).
                                   q_L_lo, q_R_lo, q_L_hi, q_R_hi)
     FT = typeof(c_lo)
     if flux >= zero(FT)
-        alpha = m_lo > 100 * eps(FT) ? flux / m_lo : zero(FT)
+        alpha = m_lo > 100 * eps(FT) ? clamp(flux / m_lo, zero(FT), one(FT)) : zero(FT)
         bl = q_L_lo - c_lo
         br = q_R_lo - c_lo
         b0 = bl + br
         return c_lo + (one(FT) - alpha) * (br - alpha * b0)
     else
-        alpha = m_hi > 100 * eps(FT) ? flux / m_hi : zero(FT)
+        alpha = m_hi > 100 * eps(FT) ? clamp(flux / m_hi, -one(FT), zero(FT)) : zero(FT)
         bl = q_L_hi - c_hi
         br = q_R_hi - c_hi
         b0 = bl + br
@@ -367,9 +367,14 @@ end
     i, j, k = @index(Global, NTuple)
     @inbounds begin
         ii = Hp + i;  jj = Hp + j
+        FT = eltype(rm)
         bm_s = bm[i, j, k];  bm_n = bm[i, j + 1, k]
-        rm_new = rm[ii, jj, k] + bm_s * fy_face[i, j, k] - bm_n * fy_face[i, j + 1, k]
-        m_new  = m[ii, jj, k]  + bm_s - bm_n
+        m1 = m[ii, jj, k]
+        mass_div = bm_s - bm_n
+        max_outflow = FT(0.9) * m1
+        scale = mass_div < -max_outflow && m1 > zero(FT) ? max_outflow / (-mass_div) : one(FT)
+        rm_new = rm[ii, jj, k] + scale * (bm_s * fy_face[i, j, k] - bm_n * fy_face[i, j + 1, k])
+        m_new  = m1 + scale * mass_div
         q_i[ii, jj, k] = _safe_mixing_ratio(rm_new, m_new)
     end
 end
@@ -380,9 +385,14 @@ end
     i, j, k = @index(Global, NTuple)
     @inbounds begin
         ii = Hp + i;  jj = Hp + j
+        FT = eltype(rm)
         am_w = am[i, j, k];  am_e = am[i + 1, j, k]
-        rm_new = rm[ii, jj, k] + am_w * fx_face[i, j, k] - am_e * fx_face[i + 1, j, k]
-        m_new  = m[ii, jj, k]  + am_w - am_e
+        m1 = m[ii, jj, k]
+        mass_div = am_w - am_e
+        max_outflow = FT(0.9) * m1
+        scale = mass_div < -max_outflow && m1 > zero(FT) ? max_outflow / (-mass_div) : one(FT)
+        rm_new = rm[ii, jj, k] + scale * (am_w * fx_face[i, j, k] - am_e * fx_face[i + 1, j, k])
+        m_new  = m1 + scale * mass_div
         q_j[ii, jj, k] = _safe_mixing_ratio(rm_new, m_new)
     end
 end
@@ -681,6 +691,14 @@ function fillz_q!(q_panels::NTuple{6}, m_panels::NTuple{6}, mesh::CubedSphereMes
     synchronize(backend)
 end
 
+function _fillz_rm_panels!(rm_panels::NTuple{6}, m_panels::NTuple{6},
+                           mesh::CubedSphereMesh)
+    rm_to_q_panels!(rm_panels, m_panels, mesh)
+    fillz_q!(rm_panels, m_panels, mesh)
+    q_to_rm_panels!(rm_panels, m_panels, mesh)
+    return nothing
+end
+
 # ---------------------------------------------------------------------------
 # Main Lin-Rood Horizontal Advection
 # ---------------------------------------------------------------------------
@@ -911,10 +929,14 @@ function strang_split_linrood_ppm!(rm_panels, m_panels, am_panels, bm_panels, cm
                                     cfl_limit=0.95, damp_coeff=0.0) where ORD
     fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
                   mesh, Val(ORD), ws, ws_lr; damp_coeff)
+    _fillz_rm_panels!(rm_panels, m_panels, mesh)
     _sweep_z!(rm_panels, m_panels, cm_panels, mesh, true, ws)
+    _fillz_rm_panels!(rm_panels, m_panels, mesh)
     _sweep_z!(rm_panels, m_panels, cm_panels, mesh, true, ws)
+    _fillz_rm_panels!(rm_panels, m_panels, mesh)
     fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
                   mesh, Val(ORD), ws, ws_lr; damp_coeff=0.0)
+    _fillz_rm_panels!(rm_panels, m_panels, mesh)
     return nothing
 end
 
@@ -926,11 +948,15 @@ function _strang_split_linrood_ppm_cs!(rm_panels, m_panels, am_panels, bm_panels
     _ = cfl_limit
     fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
                  mesh, Val(ORD), ws.cs, ws.linrood; damp_coeff)
+    _fillz_rm_panels!(rm_panels, m_panels, mesh)
     _sweep_z!(rm_panels, m_panels, cm_panels, mesh, true, ws.cs)
+    _fillz_rm_panels!(rm_panels, m_panels, mesh)
     midpoint! === nothing || midpoint!()
     _sweep_z!(rm_panels, m_panels, cm_panels, mesh, true, ws.cs)
+    _fillz_rm_panels!(rm_panels, m_panels, mesh)
     fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
                  mesh, Val(ORD), ws.cs, ws.linrood; damp_coeff = 0.0)
+    _fillz_rm_panels!(rm_panels, m_panels, mesh)
     return nothing
 end
 

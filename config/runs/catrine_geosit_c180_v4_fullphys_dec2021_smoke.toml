@@ -25,11 +25,10 @@ end_date     = "2021-12-05"
 file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
 
 [run]
-scheme = "linrood"
 reset_air_mass_each_window = true
 
 [advection]
-ppm_order = 7
+scheme = "ppm"
 
 [tracers.co2_natural]
   [tracers.co2_natural.init]

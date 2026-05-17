@@ -115,6 +115,10 @@ end
                                window_mass_scales=(1, 1),
                                steps_per_window=3,
                                steps_per_window_by_window=[2, 3])
+        caps = inspect_binary(path; io=devnull)
+        @test caps.variable_step_schedule === true
+        @test caps.steps_per_window == 3
+
         driver = CubedSphereTransportDriver(path; FT=Float64, arch=CPU(), Hp=1)
         @test steps_per_window(driver) == 3
         @test steps_per_window(driver, 1) == 2

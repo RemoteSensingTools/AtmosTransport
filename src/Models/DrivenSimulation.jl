@@ -14,10 +14,13 @@ harness.
 below for backward compatibility with external callers that imported it
 via `AtmosTransport.SurfaceFluxSource`.
 """
-mutable struct DrivenSimulation{ModelT, DriverT, WindowT, AT, QT, FT, CB, SS, CT}
+mutable struct DrivenSimulation{ModelT, DriverT, WindowT, AT, QT, FT, CB, SS, CT, PT}
     model                 :: ModelT
     driver                :: DriverT
     window                :: WindowT
+    prefetch_window       :: WindowT
+    prefetch_task         :: PT
+    prefetch_window_index :: Int
     expected_air_mass     :: AT
     qv_buffer             :: QT
     Δt                    :: FT
@@ -87,8 +90,9 @@ function _driver_step_schedule(driver::AbstractMetDriver)
     return schedule
 end
 
-@inline _allocate_storage_like(reference) = similar(reference)
-@inline _allocate_storage_like(reference::NTuple{6}) = ntuple(p -> similar(reference[p]), 6)
+@inline _allocate_storage_like(reference) = Base.invokelatest(similar, reference)
+@inline _allocate_storage_like(reference::NTuple{6}) =
+    ntuple(p -> Base.invokelatest(similar, reference[p]), 6)
 
 @inline _copy_storage!(dest, src) = copyto!(dest, src)
 @inline function _copy_storage!(dest::NTuple{6}, src::NTuple{6})
@@ -100,6 +104,8 @@ end
 
 @inline _storage_eltype(reference) = eltype(reference)
 @inline _storage_eltype(reference::NTuple{6}) = eltype(reference[1])
+
+@inline _empty_prefetch_task() = Task(() -> nothing)
 
 _refresh_state_halos!(state, _mesh) = state
 
@@ -159,6 +165,182 @@ end
 @inline function _adapt_window_to_model_backend(window, model_air_mass)
     adaptor = _window_backend_adapter(model_air_mass)
     return adaptor === Array ? window : Base.invokelatest(Adapt.adapt, adaptor, window)
+end
+
+@inline function _copy_optional_storage!(dest, src, field::Symbol)
+    if dest === nothing || src === nothing
+        dest === src ||
+            throw(ArgumentError("transport window capability for `$(field)` changed between windows"))
+        return dest
+    end
+    return _copy_storage!(dest, src)
+end
+
+@inline function _copy_optional_convection!(dest, src)
+    if dest === nothing || src === nothing
+        dest === src ||
+            throw(ArgumentError("transport window convection capability changed between windows"))
+        return dest
+    end
+    return copy_convection_forcing!(dest, src)
+end
+
+@inline function _copy_optional_surface!(dest, src)
+    if dest === nothing || src === nothing
+        dest === src ||
+            throw(ArgumentError("transport window surface-forcing capability changed between windows"))
+        return dest
+    end
+    return _copy_surface_forcing!(dest, src)
+end
+
+@inline _copy_surface_forcing!(dest, src) =
+    throw(ArgumentError("unsupported surface-forcing refresh from $(typeof(src)) to $(typeof(dest))"))
+
+@inline function _copy_surface_forcing!(dest::PBLSurfaceForcing, src::PBLSurfaceForcing)
+    _copy_storage!(dest.pblh, src.pblh)
+    _copy_storage!(dest.ustar, src.ustar)
+    _copy_storage!(dest.hflux, src.hflux)
+    _copy_storage!(dest.t2m, src.t2m)
+    return dest
+end
+
+@inline function _copy_flux_deltas!(dest::StructuredFluxDeltas, src::StructuredFluxDeltas)
+    _copy_storage!(dest.dam, src.dam)
+    _copy_storage!(dest.dbm, src.dbm)
+    _copy_storage!(dest.dcm, src.dcm)
+    _copy_storage!(dest.dm, src.dm)
+    return dest
+end
+
+@inline function _copy_flux_deltas!(dest::FaceIndexedFluxDeltas, src::FaceIndexedFluxDeltas)
+    _copy_storage!(dest.dhflux, src.dhflux)
+    _copy_storage!(dest.dcm, src.dcm)
+    _copy_storage!(dest.dm, src.dm)
+    return dest
+end
+
+@inline function _copy_flux_deltas!(dest::CubedSphereFluxDeltas, src::CubedSphereFluxDeltas)
+    _copy_storage!(dest.dm, src.dm)
+    return dest
+end
+
+@inline function _copy_optional_deltas!(dest, src)
+    if dest === nothing || src === nothing
+        dest === src ||
+            throw(ArgumentError("transport window flux-delta capability changed between windows"))
+        return dest
+    end
+    return _copy_flux_deltas!(dest, src)
+end
+
+function _copy_window_payload!(dest::StructuredTransportWindow{B},
+                               src::StructuredTransportWindow{B}) where {B <: AbstractMassBasis}
+    _copy_storage!(dest.air_mass, src.air_mass)
+    _copy_storage!(dest.surface_pressure, src.surface_pressure)
+    copy_fluxes!(dest.fluxes, src.fluxes)
+    _copy_optional_storage!(dest.qv_start, src.qv_start, :qv_start)
+    _copy_optional_storage!(dest.qv_end, src.qv_end, :qv_end)
+    _copy_optional_deltas!(dest.deltas, src.deltas)
+    _copy_optional_convection!(dest.convection, src.convection)
+    return dest
+end
+
+function _copy_window_payload!(dest::FaceIndexedTransportWindow{B},
+                               src::FaceIndexedTransportWindow{B}) where {B <: AbstractMassBasis}
+    _copy_storage!(dest.air_mass, src.air_mass)
+    _copy_storage!(dest.surface_pressure, src.surface_pressure)
+    copy_fluxes!(dest.fluxes, src.fluxes)
+    _copy_optional_storage!(dest.qv_start, src.qv_start, :qv_start)
+    _copy_optional_storage!(dest.qv_end, src.qv_end, :qv_end)
+    _copy_optional_deltas!(dest.deltas, src.deltas)
+    _copy_optional_convection!(dest.convection, src.convection)
+    return dest
+end
+
+function _copy_window_payload!(dest::CubedSphereTransportWindow{B},
+                               src::CubedSphereTransportWindow{B}) where {B <: AbstractMassBasis}
+    _copy_storage!(dest.air_mass, src.air_mass)
+    _copy_storage!(dest.surface_pressure, src.surface_pressure)
+    copy_fluxes!(dest.fluxes, src.fluxes)
+    _copy_optional_storage!(dest.qv_start, src.qv_start, :qv_start)
+    _copy_optional_storage!(dest.qv_end, src.qv_end, :qv_end)
+    _copy_optional_deltas!(dest.deltas, src.deltas)
+    _copy_optional_convection!(dest.convection, src.convection)
+    _copy_optional_surface!(dest.surface, src.surface)
+    return dest
+end
+
+function _load_window_into_existing_backend!(existing_window,
+                                             driver::AbstractMetDriver,
+                                             win::Int,
+                                             model_air_mass)
+    loaded = _load_window(driver, win)
+    adaptor = _window_backend_adapter(model_air_mass)
+    if adaptor === Array
+        return loaded
+    end
+    _copy_window_payload!(existing_window, loaded)
+    return existing_window
+end
+
+@inline _prefetch_enabled(model_air_mass) =
+    _window_backend_adapter(model_air_mass) !== Array && Threads.nthreads() > 1
+
+function _start_window_prefetch!(sim::DrivenSimulation, target_window::Int)
+    if target_window > sim.stop_window || !_prefetch_enabled(sim.model.state.air_mass)
+        sim.prefetch_window_index = 0
+        sim.prefetch_task = _empty_prefetch_task()
+        return nothing
+    end
+    target_slot = sim.prefetch_window
+    driver = sim.driver
+    model_air_mass = sim.model.state.air_mass
+    sim.prefetch_window_index = target_window
+    sim.prefetch_task = Threads.@spawn _load_window_into_existing_backend!(
+        target_slot, driver, target_window, model_air_mass)
+    return nothing
+end
+
+function _take_prefetched_window!(sim::DrivenSimulation, next_window::Int)
+    if _prefetch_enabled(sim.model.state.air_mass) &&
+       sim.prefetch_window_index == next_window
+        fetched = fetch(sim.prefetch_task)
+        fetched === sim.prefetch_window ||
+            throw(ArgumentError("prefetched transport window identity changed unexpectedly"))
+        old_current = sim.window
+        sim.window = sim.prefetch_window
+        sim.prefetch_window = old_current
+        sim.prefetch_task = _empty_prefetch_task()
+        sim.prefetch_window_index = 0
+        return nothing
+    end
+    sim.window = _load_window_into_existing_backend!(sim.window, sim.driver,
+                                                     next_window,
+                                                     sim.model.state.air_mass)
+    return nothing
+end
+
+function _reclaim_backend_pool_after_startup!(model_air_mass)
+    _window_backend_adapter(model_air_mass) === Array && return nothing
+    # Startup can allocate large transient CuArrays while adapting initial
+    # conditions and first-window forcing. They are dead before the run loop,
+    # but CUDA.jl's pool keeps them reserved unless we explicitly trim it.
+    GC.gc(false)
+    if isdefined(Main, :CUDA)
+        CUDA = getproperty(Main, :CUDA)
+        if isdefined(CUDA, :synchronize)
+            Base.invokelatest(getproperty(CUDA, :synchronize))
+        end
+        if isdefined(CUDA, :reclaim)
+            Base.invokelatest(getproperty(CUDA, :reclaim))
+        end
+    elseif isdefined(Main, :Metal)
+        Metal = getproperty(Main, :Metal)
+        isdefined(Metal, :synchronize) &&
+            Base.invokelatest(getproperty(Metal, :synchronize))
+    end
+    return nothing
 end
 
 @inline function _adapt_sources_to_model_backend(surface_sources, model_air_mass)
@@ -336,7 +518,7 @@ function _maybe_advance_window!(sim::DrivenSimulation)
         sim.steps_per_window = sim.steps_per_window_schedule[next_window]
         sim.current_window_end_iteration = sim.iteration + sim.steps_per_window
         sim.Δt = sim.window_dt / typeof(sim.Δt)(sim.steps_per_window)
-        sim.window = _adapt_window_to_model_backend(_load_window(sim.driver, next_window), sim.model.state.air_mass)
+        _take_prefetched_window!(sim, next_window)
         if sim.reset_air_mass_each_window
             _reset_air_mass_preserve_vmr!(sim.model.state, sim.window.air_mass,
                                           sim.model.grid.horizontal)
@@ -356,7 +538,17 @@ function _maybe_advance_window!(sim::DrivenSimulation)
         # upwind monotonicity-violating window-edge jump (~0.87% on uniform
         # IC) diagnosed in plan-24 post-mortem (memo 37 + this plan).
         invalidate_cmfmc_cache!(sim.model.workspace.convection_ws)
+        _start_window_prefetch!(sim, next_window + 1)
     end
+    return nothing
+end
+
+function _maybe_reset_to_window_endpoint!(sim::DrivenSimulation)
+    (sim.reset_air_mass_each_window && _uses_binary_transport_schedule(sim)) ||
+        return nothing
+    expected_air_mass!(sim.expected_air_mass, sim.window, one(typeof(sim.Δt)))
+    _reset_air_mass_preserve_vmr!(sim.model.state, sim.expected_air_mass,
+                                  sim.model.grid.horizontal)
     return nothing
 end
 
@@ -372,24 +564,13 @@ Keyword arguments:
 - `use_midpoint_forcing=true`
 - `interpolate_fluxes_within_window=nothing` (derive from driver)
 - `reset_air_mass_each_window=false` — when true, each newly loaded
-  window replaces prognostic air mass while preserving tracer VMR
+  window replaces prognostic air mass while preserving tracer VMR.
+  For binary-scheduled runs, the same endpoint reset is applied before
+  the once-per-window convection/chemistry block so physics sees the
+  binary's authoritative window-end mass.
 - `surface_sources=()`
 - `chemistry=NoChemistry()` — applied after advection + surface sources each step
 - `callbacks=NamedTuple()`
-
-Plan 39 Commit G: the `reset_air_mass_each_window` kwarg has been
-removed. It used to overwrite `state.air_mass` at every window
-boundary with the stored `m_next`, which under the pre-memo-37
-legacy flux-interpolation contract was needed to compensate for a
-runtime flux-sum vs stored-endpoint mismatch. Under the canonical
-`:window_constant` contract (enforced by Commit D and produced by
-Commits B/C), the runtime's own flux divergence integrates to
-`(m_next − m)` over the window, so no reset is needed; keeping it
-would inject a window-edge air_mass discontinuity that breaks
-upwind monotonicity (the plan-24 post-mortem bug). Existing callers
-that passed `reset_air_mass_each_window=false` (all 5 in-repo
-callers per Phase-1 survey) simply drop the kwarg — behavior is now
-the default-and-only one.
 """
 function DrivenSimulation(model::TransportModel,
                           driver::D;
@@ -411,6 +592,10 @@ function DrivenSimulation(model::TransportModel,
     _check_basis_compatibility(model, driver)
 
     window = _adapt_window_to_model_backend(_load_window(driver, start_window), model.state.air_mass)
+    prefetch_window = _prefetch_enabled(model.state.air_mass) && start_window < stop_window ?
+                      _adapt_window_to_model_backend(_load_window(driver, start_window), model.state.air_mass) :
+                      window
+    prefetch_task = _empty_prefetch_task()
     expected_air_mass = _allocate_storage_like(model.state.air_mass)
     qv_buffer = _allocate_qv_buffer(window)
     surface_sources_adapted = _adapt_sources_to_model_backend(Tuple(surface_sources), model.state.air_mass)
@@ -448,10 +633,16 @@ function DrivenSimulation(model::TransportModel,
     flux_interp = interpolate_fluxes_within_window === nothing ?
                   (flux_interpolation_mode(driver) === :interpolate) : Bool(interpolate_fluxes_within_window)
 
-    sim = DrivenSimulation{typeof(model), typeof(driver), typeof(window), typeof(expected_air_mass), typeof(qv_buffer), FT, typeof(callbacks), typeof(surface_sources_adapted), typeof(chemistry)}(
+    sim = DrivenSimulation{typeof(model), typeof(driver), typeof(window),
+                           typeof(expected_air_mass), typeof(qv_buffer), FT,
+                           typeof(callbacks), typeof(surface_sources_adapted),
+                           typeof(chemistry), typeof(prefetch_task)}(
         model,
         driver,
         window,
+        prefetch_window,
+        prefetch_task,
+        0,
         expected_air_mass,
         qv_buffer,
         Δt,
@@ -491,6 +682,8 @@ function DrivenSimulation(model::TransportModel,
     end
     _refresh_dz_for_window!(sim)
     _refresh_pbl_kz_for_window!(sim.model.diffusion, sim)
+    _reclaim_backend_pool_after_startup!(sim.model.state.air_mass)
+    _start_window_prefetch!(sim, Int(start_window) + 1)
     return sim
 end
 
@@ -553,6 +746,7 @@ function step!(sim::DrivenSimulation)
     sim.iteration += 1
     if _uses_binary_transport_schedule(sim) &&
        sim.iteration == sim.current_window_end_iteration
+        _maybe_reset_to_window_endpoint!(sim)
         convection_chemistry_step!(sim.model, sim.window_dt; meteo = sim)
     end
     for callback in values(sim.callbacks)

@@ -225,6 +225,26 @@ end
     end
 end
 
+@testset "Generic transport binaries reject CS-only adaptive runtime contract" begin
+    mktemp() do path, io
+        close(io)
+        write_test_transport_binary_latlon(path; FT=Float64)
+        rewrite_transport_header!(path; updates = Dict(
+            "runtime_substep_contract" => "binary_schedule",
+        ))
+        @test_throws ArgumentError TransportBinaryDriver(path; FT=Float64, arch=CPU())
+    end
+
+    mktemp() do path, io
+        close(io)
+        write_test_transport_binary_reduced(path; FT=Float64)
+        rewrite_transport_header!(path; updates = Dict(
+            "runtime_substep_contract" => "binary_schedule",
+        ))
+        @test_throws ArgumentError TransportBinaryDriver(path; FT=Float64, arch=CPU())
+    end
+end
+
 @testset "TransportBinaryReader reduced-Gaussian path" begin
     mktemp() do path, io
         close(io)

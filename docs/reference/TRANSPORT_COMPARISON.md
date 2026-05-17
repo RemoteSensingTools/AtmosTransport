@@ -227,20 +227,24 @@ GCHP uses the MAPL framework for operator splitting. Transport (FV3 advection)
 and chemistry/emissions are coupled through ESMF. The splitting order and
 frequency are configurable.
 
-### This Model: Symmetric Strang Splitting (TM5-aligned)
+### This Model: Symmetric Transport Palindrome
 
-We use the same Strang split as TM5:
+The transport core uses the same directional Strang palindrome as TM5:
 
 ```
 X(dt/2) → Y(dt/2) → Z(dt/2) → Z(dt/2) → Y(dt/2) → X(dt/2)
 ```
 
 within `strang_split_massflux!()`. The air mass `m` is passed through the
-entire split without resetting, matching TM5's continuous mass tracking.
+transport split without resetting, matching TM5's continuous mass tracking for
+advection.
 
-Sources (EDGAR emissions) are injected once per meteorological window (before
-the advection sub-steps), while convection and diffusion are applied after
-advection in the same window. This matches TM5's operator-level splitting.
+For binary-scheduled GEOS-CS runs, the binary contract owns the transport
+sub-step count per met window. Advection and implicit diffusion run at that
+sub-step cadence. Convection and chemistry run once at the met-window boundary
+after resetting air mass to the binary-verified endpoint. That physics cadence
+is closer to GEOS-Chem-style window coupling than to TM5's in-palindrome
+convection placement; see `FROM_TM5.md`.
 
 ## 5. Vertical Transport: Convection and Boundary Layer Mixing
 

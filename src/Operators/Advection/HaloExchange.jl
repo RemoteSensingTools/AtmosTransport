@@ -80,7 +80,6 @@ function _fill_edge!(dst::AbstractArray{T, 3}, src::AbstractArray{T, 3},
     else
         k! = _fill_edge_kernel!(backend, 256)
         k!(dst, src, e, q_e, flip, Nc, Hp; ndrange=(Nc, Hp, Nk))
-        synchronize(backend)
     end
     return nothing
 end
@@ -141,10 +140,10 @@ end
 function _fill_corners!(panels::NTuple{6}, Nc::Int, Hp::Int, dir::Int)
     Hp == 0 && return nothing
     N = Nc + 2 * Hp
+    backend = get_backend(panels[1])
     for p in 1:6
         q = panels[p]
         Nk = size(q, 3)
-        backend = get_backend(q)
         if backend isa KA_CPU
             @inbounds for k in 1:Nk
                 for dj in 1:Hp
@@ -156,9 +155,9 @@ function _fill_corners!(panels::NTuple{6}, Nc::Int, Hp::Int, dir::Int)
         else
             k! = _copy_corners_kernel!(backend, 256)
             k!(q, Nc, Hp, N, dir; ndrange=(Hp, Hp, Nk))
-            synchronize(backend)
         end
     end
+    backend isa KA_CPU || synchronize(backend)
     return nothing
 end
 
@@ -193,6 +192,8 @@ function fill_panel_halos!(panels::NTuple{6, A},
             _fill_edge!(panels[p], panels[nb.panel], e, q_e, nb.orientation, Nc, Hp)
         end
     end
+    backend = get_backend(panels[1])
+    backend isa KA_CPU || synchronize(backend)
 
     # Corner rotation if a sweep direction is specified
     if dir in (1, 2)

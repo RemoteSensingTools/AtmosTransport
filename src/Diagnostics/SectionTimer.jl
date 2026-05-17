@@ -3,9 +3,11 @@ module SectionTimer
 # Plan TM5-storage-redesign Commit 1.
 #
 # Hand-rolled host-side section timer. Off by default; enabled when
-# `ENV["ATMOSTR_TIMERS"] == "1"` at run-start. Measures wall-clock at
-# named host call boundaries; relies on the existing `synchronize(backend)`
-# calls inside operator applys to make host time ≈ GPU time per section.
+# `ENV["ATMOSTR_TIMERS"] == "1"` at run-start. Set
+# `ATMOSTR_ALLOC_TIMERS=1` as well to collect CPU allocation bytes for
+# the same sections. Measures wall-clock at named host call boundaries;
+# relies on the existing `synchronize(backend)` calls inside operator
+# applys to make host time ≈ GPU time per section.
 # Per-phase decomposition inside a single kernel launch (build / LU / solve
 # inside `_tm5_solve_column!`) is not host-timeable; that lives in the
 # Commit 1b CPU microbenchmark.
@@ -13,7 +15,9 @@ module SectionTimer
 using Printf
 
 const _ENABLED = Ref(false)
+const _ALLOC_ENABLED = Ref(false)
 const _TIMINGS = Dict{Symbol, Vector{Float64}}()
+const _ALLOCATIONS = Dict{Symbol, Vector{Int64}}()
 const _WALL_T0 = Ref{Float64}(0.0)
 const _WALL_TOTAL = Ref{Float64}(0.0)
 
@@ -21,9 +25,11 @@ const _WALL_TOTAL = Ref{Float64}(0.0)
     enable!()
 Reset and turn on. Called at run start when `ATMOSTR_TIMERS=1`.
 """
-function enable!()
+function enable!(; allocations::Bool = false)
     empty!(_TIMINGS)
+    empty!(_ALLOCATIONS)
     _ENABLED[] = true
+    _ALLOC_ENABLED[] = allocations
     _WALL_T0[] = time_ns() / 1e9
     _WALL_TOTAL[] = 0.0
     return nothing
@@ -37,14 +43,19 @@ is called again.
 function disable!()
     _WALL_TOTAL[] = (time_ns() / 1e9) - _WALL_T0[]
     _ENABLED[] = false
+    _ALLOC_ENABLED[] = false
     return nothing
 end
 
 is_enabled() = _ENABLED[]
 
-@inline function _record_ns!(section::Symbol, ns::Float64)
+@inline function _record_sample!(section::Symbol, ns::Float64, bytes::Int64)
     samples = get!(() -> Float64[], _TIMINGS, section)
     push!(samples, ns)
+    if _ALLOC_ENABLED[]
+        allocs = get!(() -> Int64[], _ALLOCATIONS, section)
+        push!(allocs, bytes)
+    end
     return nothing
 end
 
@@ -58,8 +69,16 @@ macro section(name, expr)
     quote
         if _ENABLED[]
             local _t0 = time_ns()
-            local _result = $(esc(expr))
-            _record_ns!($(esc(name)), Float64(time_ns() - _t0))
+            local _result
+            local _bytes = if _ALLOC_ENABLED[]
+                Int64(Base.@allocated begin
+                    _result = $(esc(expr))
+                end)
+            else
+                _result = $(esc(expr))
+                Int64(0)
+            end
+            _record_sample!($(esc(name)), Float64(time_ns() - _t0), _bytes)
             _result
         else
             $(esc(expr))
@@ -75,8 +94,16 @@ a do-block or already a closure.
 @inline function time_section(f, name::Symbol)
     _ENABLED[] || return f()
     t0 = time_ns()
-    result = f()
-    _record_ns!(name, Float64(time_ns() - t0))
+    result = nothing
+    bytes = if _ALLOC_ENABLED[]
+        Int64(Base.@allocated begin
+            result = f()
+        end)
+    else
+        result = f()
+        Int64(0)
+    end
+    _record_sample!(name, Float64(time_ns() - t0), bytes)
     return result
 end
 
@@ -100,17 +127,34 @@ is reported separately).
 function report(io::IO = stderr)
     isempty(_TIMINGS) && (println(io, "[SectionTimer] no samples"); return)
     section_total_ns = sum(sum(v) for v in values(_TIMINGS); init=0.0)
+    section_total_alloc = sum(sum(v) for v in values(_ALLOCATIONS); init=Int64(0))
     wall_s = _WALL_TOTAL[] > 0 ? _WALL_TOTAL[] : (time_ns() / 1e9 - _WALL_T0[])
     @printf(io, "[SectionTimer] wall=%.2fs  covered=%.2fs (%.1f%%)\n",
             wall_s, section_total_ns / 1e9,
             wall_s > 0 ? 100 * (section_total_ns / 1e9) / wall_s : 0.0)
-    @printf(io, "%-30s %8s %10s %10s %10s %8s\n",
-            "section", "n_calls", "total_s", "mean_ms", "p95_ms", "frac%")
+    if !isempty(_ALLOCATIONS)
+        @printf(io, "[SectionTimer] allocated=%.3f MiB\n",
+                section_total_alloc / 2.0^20)
+        @printf(io, "%-30s %8s %10s %10s %10s %8s %12s %12s\n",
+                "section", "n_calls", "total_s", "mean_ms", "p95_ms",
+                "frac%", "alloc_MiB", "mean_KiB")
+    else
+        @printf(io, "%-30s %8s %10s %10s %10s %8s\n",
+                "section", "n_calls", "total_s", "mean_ms", "p95_ms", "frac%")
+    end
     for (sec, samples) in sort(collect(_TIMINGS); by = p -> -sum(p.second))
         n, total_s, mean_ms, p95_ms = _summary_row(samples)
         frac = 100 * (sum(samples) / max(section_total_ns, eps()))
-        @printf(io, "%-30s %8d %10.3f %10.3f %10.3f %8.2f\n",
-                String(sec), n, total_s, mean_ms, p95_ms, frac)
+        if !isempty(_ALLOCATIONS)
+            alloc = sum(get(_ALLOCATIONS, sec, Int64[]))
+            mean_kib = n == 0 ? 0.0 : alloc / n / 2.0^10
+            @printf(io, "%-30s %8d %10.3f %10.3f %10.3f %8.2f %12.3f %12.3f\n",
+                    String(sec), n, total_s, mean_ms, p95_ms, frac,
+                    alloc / 2.0^20, mean_kib)
+        else
+            @printf(io, "%-30s %8d %10.3f %10.3f %10.3f %8.2f\n",
+                    String(sec), n, total_s, mean_ms, p95_ms, frac)
+        end
     end
     return nothing
 end
@@ -126,12 +170,15 @@ function write_csv(path::AbstractString)
     section_total_ns = sum(sum(v) for v in values(_TIMINGS); init=0.0)
     mkpath(dirname(abspath(path)))
     open(path, "w") do io
-        println(io, "section,n_calls,total_s,mean_ms,p95_ms,fraction_of_total")
+        println(io, "section,n_calls,total_s,mean_ms,p95_ms,fraction_of_total,allocated_bytes,mean_alloc_bytes")
         for (sec, samples) in sort(collect(_TIMINGS); by = p -> -sum(p.second))
             n, total_s, mean_ms, p95_ms = _summary_row(samples)
             frac = sum(samples) / max(section_total_ns, eps())
-            @printf(io, "%s,%d,%.6f,%.6f,%.6f,%.6f\n",
-                    String(sec), n, total_s, mean_ms, p95_ms, frac)
+            alloc = sum(get(_ALLOCATIONS, sec, Int64[]))
+            mean_alloc = n == 0 ? 0.0 : alloc / n
+            @printf(io, "%s,%d,%.6f,%.6f,%.6f,%.6f,%d,%.3f\n",
+                    String(sec), n, total_s, mean_ms, p95_ms, frac,
+                    alloc, mean_alloc)
         end
     end
     return path
@@ -145,7 +192,8 @@ turn timers on; anything else (or unset) is a no-op. Idempotent.
 function maybe_enable_from_env!()
     raw = get(ENV, "ATMOSTR_TIMERS", "")
     if lowercase(raw) in ("1", "true", "on", "yes")
-        enable!()
+        alloc_raw = get(ENV, "ATMOSTR_ALLOC_TIMERS", "")
+        enable!(allocations = lowercase(alloc_raw) in ("1", "true", "on", "yes"))
         return true
     end
     return false

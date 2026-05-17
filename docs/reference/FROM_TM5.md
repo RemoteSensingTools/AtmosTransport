@@ -75,6 +75,36 @@ GPU. No separate GPU code to maintain.
 | `"slopes"` | `SlopesScheme()` | Default TM5 (Russell-Lerner) | 2nd order |
 | `"ppm"` | `PPMScheme()` | Not in standard TM5 | 3rd order |
 
+`scheme = "linrood"` / `LinRoodPPMScheme` remains experimental for driven
+GEOS-CS production runs. The current runtime path now clamps donor Courant
+fractions and applies a GCHP-style positive tracer repair after Lin-Rood
+sweeps, which removes the immediate negative blow-up seen at C180. It still
+shows unacceptable positive overshoot over a 24-hour C180 full-physics smoke,
+so production configs should use `scheme = "ppm"` until the Lin-Rood path is
+rewritten around a fully bounded q-space/fillz update and revalidated.
+
+## Operator cadence
+
+TM5 places convection inside the transport palindrome. In TM5 notation the
+transport/physics order is effectively `X -> Y -> Z -> V -> V -> Z -> Y -> X`
+for each advection sub-step, so convection is symmetrically centered with the
+two vertical half-sweeps.
+
+AtmosTransport's binary-scheduled GEOS-CS path is intentionally different:
+the binary owns the transport sub-step count for each met window, advection and
+implicit diffusion run at that sub-step cadence, and convection plus chemistry
+run once at the met-window boundary using the full window length. Before that
+once-per-window physics block, the runtime resets air mass to the binary's
+verified endpoint so CMFMC sees the same column mass basis as the preprocessor.
+
+This cadence is closer to GEOS-Chem-style physics-window coupling than to TM5's
+in-palindrome convection placement. The mass units and endpoint invariants are
+checked by the binary contract, but the operator-splitting error is not
+identical to TM5. Before campaign-scale TM5-equivalence claims, run a synthetic
+strong-updraft column comparison with convection applied inside the palindrome
+versus once per met window, and include a Float32/Float64 uniform-tracer drift
+audit when adaptive substeps vary strongly within a day.
+
 ## File locations
 
 | What | TM5 | AtmosTransport |

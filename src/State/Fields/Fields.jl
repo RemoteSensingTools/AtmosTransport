@@ -28,6 +28,7 @@ Concrete types:
 module Fields
 
 using Adapt
+using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
 
 export AbstractTimeVaryingField, AbstractCubedSphereField
 export ConstantField, ProfileKzField, PreComputedKzField, CubedSphereField

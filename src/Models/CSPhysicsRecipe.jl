@@ -45,7 +45,19 @@ const CSPhysicsRecipe = RuntimePhysicsRecipe
 @inline _config_symbol(section, key::AbstractString, default::AbstractString) =
     Symbol(lowercase(String(get(section, key, default))))
 
-@inline _advection_section(cfg) = get(cfg, "advection", get(cfg, "run", Dict{String,Any}()))
+function _advection_section(cfg)
+    run = get(cfg, "run", Dict{String,Any}())
+    if haskey(cfg, "advection")
+        for key in ("scheme", "ppm_order")
+            haskey(run, key) && throw(ArgumentError(
+                "Advection option `[run].$(key)` is ambiguous because `[advection]` " *
+                "is present. Move `$(key)` into `[advection]`; legacy `[run].$(key)` " *
+                "is only accepted when `[advection]` is absent."))
+        end
+        return cfg["advection"]
+    end
+    return run
+end
 @inline _diffusion_section(cfg) = get(cfg, "diffusion", Dict{String,Any}())
 @inline _convection_section(cfg) = get(cfg, "convection", Dict{String,Any}())
 

@@ -50,6 +50,7 @@ using ..State: AbstractMassBasis, DryBasis, MoistBasis, CellState,
                 CubedSphereState, total_air_mass, total_mass, tracer_names,
                 tracer_index, get_tracer
 using ..Grids: nlevels
+using ..Operators: LinRoodPPMScheme, PPMScheme, SlopesScheme, UpwindScheme
 using ..Architectures: CPU, GPU,
                        runtime_backend_from_config, is_gpu_backend,
                        ensure_backend_runtime!, backend_array_adapter,
@@ -59,7 +60,8 @@ using ..Architectures: CPU, GPU,
 using ..MetDrivers: TransportBinaryDriver, CubedSphereTransportDriver,
                      load_transport_window, driver_grid, air_mass_basis,
                      total_windows, window_dt, binary_capabilities,
-                     inspect_binary
+                     inspect_binary, steps_per_window,
+                     steps_per_window_schedule
 using ..InitialConditionIO: build_initial_mixing_ratio,
                              pack_initial_tracer_mass,
                              build_surface_flux_sources
@@ -282,6 +284,64 @@ end
 function _backend_label(cfg)
     backend = _cfg_runtime_backend(cfg)
     return backend_label(backend)
+end
+
+@inline _ansi_enabled() =
+    get(ENV, "NO_COLOR", "") == "" && get(ENV, "TERM", "dumb") != "dumb"
+
+@inline function _ansi_style(text::AbstractString, code::AbstractString)
+    return _ansi_enabled() ? string("\e[", code, "m", text, "\e[0m") : String(text)
+end
+
+@inline _bold(text::AbstractString) = _ansi_style(text, "1")
+@inline _cyan(text::AbstractString) = _ansi_style(text, "1;36")
+
+_advection_label(scheme) = String(nameof(typeof(scheme)))
+_advection_label(::LinRoodPPMScheme{ORD}) where ORD = "Lin-Rood PPM$(ORD)"
+_advection_label(::PPMScheme) = "PPM"
+_advection_label(::SlopesScheme) = "Slopes"
+_advection_label(::UpwindScheme) = "Upwind"
+
+function _schedule_label(driver)
+    schedule = steps_per_window_schedule(driver)
+    if isempty(schedule)
+        return "n/a"
+    end
+    lo, hi = extrema(schedule)
+    if lo == hi
+        return string(first(schedule))
+    end
+    return @sprintf("%d..%d, max=%d", lo, hi, steps_per_window(driver))
+end
+
+function _physics_summary_lines(; topology, mesh_label, levels, halo_width,
+                                  backend, FT, recipe, driver, tracers,
+                                  binary_count, snapshot_file)
+    scheme = _cyan(_advection_label(recipe.advection))
+    return (
+        @sprintf("%s", _bold(String(topology))),
+        @sprintf("|-- grid:      %s, levels=%d, Hp=%d",
+                 mesh_label, levels, halo_width),
+        @sprintf("|-- numerics:  scheme=%s, FT=%s, backend=%s",
+                 scheme, FT, backend),
+        @sprintf("|-- physics:   diffusion=%s, convection=%s",
+                 nameof(typeof(recipe.diffusion)),
+                 nameof(typeof(recipe.convection))),
+        @sprintf("|-- schedule:  window_dt=%.0fs, steps/window=%s, binaries=%d",
+                 Float64(window_dt(driver)), _schedule_label(driver),
+                 binary_count),
+        @sprintf("|-- tracers:   %s", join(String.(tracers), ", ")),
+        @sprintf("`-- output:    %s", snapshot_file),
+    )
+end
+
+function _log_runtime_summary(; topology, mesh_label, levels, halo_width,
+                                backend, FT, recipe, driver, tracers,
+                                binary_count, snapshot_file)
+    lines = _physics_summary_lines(; topology, mesh_label, levels, halo_width,
+                                   backend, FT, recipe, driver, tracers,
+                                   binary_count, snapshot_file)
+    @info "Driven runtime\n" * join(lines, "\n")
 end
 
 function _snapshot_write_options(cfg, ::Type{FT}) where FT <: AbstractFloat
@@ -512,10 +572,17 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
                           for name in tracer_names(model.state))
     source_tracers = Set(source.tracer_name for source in surface_sources)
 
-    @info "Backend: $(_backend_label(cfg))"
-    @info "Physics: advection=$(nameof(typeof(recipe.advection))) " *
-          "diffusion=$(nameof(typeof(recipe.diffusion))) " *
-          "convection=$(nameof(typeof(recipe.convection)))"
+    _log_runtime_summary(topology = :Structured,
+                         mesh_label = summary(grid_of_first.horizontal),
+                         levels = nlevels(grid_of_first),
+                         halo_width = 0,
+                         backend = _backend_label(cfg),
+                         FT = FT,
+                         recipe = recipe,
+                         driver = first_driver,
+                         tracers = tracer_names(model.state),
+                         binary_count = length(binary_paths),
+                         snapshot_file = snapshot_file)
     for source in surface_sources
         @info @sprintf("Surface source %s total mass rate: %.12e kg/s",
                        String(source.tracer_name),
@@ -793,16 +860,17 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
                        String(source.tracer_name), total_rate)
     end
 
-    @info @sprintf("CS driven runner  C%d × %d levels  Hp=%d  %s  FT=%s  %s",
-                   mesh.Nc, Nz, Hp, typeof(recipe.advection).name.name, FT,
-                   _cfg_use_gpu(cfg) ? "GPU" : "CPU")
-    @info @sprintf("Physics: advection=%s  diffusion=%s  convection=%s",
-                   typeof(recipe.advection).name.name,
-                   typeof(recipe.diffusion).name.name,
-                   typeof(recipe.convection).name.name)
-    @info @sprintf("Tracers: %s   Binaries: %d → %s",
-                   join(String.(keys(tracer_init)), ", "),
-                   length(binary_paths), snapshot_file)
+    _log_runtime_summary(topology = :CubedSphere,
+                         mesh_label = @sprintf("C%d", mesh.Nc),
+                         levels = Nz,
+                         halo_width = Hp,
+                         backend = _backend_label(cfg),
+                         FT = FT,
+                         recipe = recipe,
+                         driver = driver1,
+                         tracers = keys(tracer_init),
+                         binary_count = length(binary_paths),
+                         snapshot_file = snapshot_file)
 
     # Snapshot storage is full-state and topology-native; Output handles halo
     # stripping and NetCDF diagnostics.

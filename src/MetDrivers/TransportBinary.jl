@@ -647,6 +647,21 @@ function validate_transport_contract!(header::AbstractDict;
         "format_version=$(TRANSPORT_BINARY_FORMAT_VERSION). Regenerate this file with the current " *
         "preprocessor so the header carries the per-window substep schedule and runtime contract."))
 
+    runtime_contract = get(header, "runtime_substep_contract", nothing)
+    if runtime_contract !== nothing
+        String(runtime_contract) == "binary_schedule" ||
+            throw(ArgumentError("Transport-binary contract violation — unknown runtime_substep_contract=$(repr(runtime_contract))"))
+        grid_type = lowercase(String(get(header, "grid_type", "")))
+        if grid_type != "cubed_sphere"
+            throw(ArgumentError(
+                "Transport-binary contract violation — runtime_substep_contract=\"binary_schedule\" " *
+                "is currently supported only by CubedSphereTransportDriver. Generic LL/RG binaries " *
+                "would otherwise fall back to the runtime CFL pilot and double-subcycle adaptive " *
+                "schedules. Add an LL/RG runtime contract before writing adaptive LL/RG binaries."
+            ))
+        end
+    end
+
     fields = ("source_flux_sampling", "air_mass_sampling", "flux_sampling",
               "flux_kind", "delta_semantics", "humidity_sampling",
               "poisson_balance_target_scale", "poisson_balance_target_semantics",

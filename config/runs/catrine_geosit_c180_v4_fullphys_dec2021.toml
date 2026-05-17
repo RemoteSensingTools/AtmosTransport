@@ -30,11 +30,8 @@ start_date   = "2021-12-01"
 end_date     = "2021-12-31"
 file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
 
-[run]
-scheme = "linrood"
-
 [advection]
-ppm_order = 7
+scheme = "ppm"
 
 # Per-tracer initial conditions + surface fluxes. Tracer symbols match
 # the GeosChem `SpeciesConcVV_*` naming so the comparison script can

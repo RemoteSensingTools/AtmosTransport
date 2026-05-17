@@ -69,6 +69,9 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
         @test_throws ArgumentError build_cs_advection(
             Dict("advection" => Dict("scheme" => "ppm", "ppm_order" => 7)))
         @test_throws ArgumentError build_cs_advection(Dict("advection" => Dict("scheme" => "xyz")))
+        @test_throws ArgumentError build_cs_advection(
+            Dict("run" => Dict("scheme" => "linrood"),
+                 "advection" => Dict("ppm_order" => 7)))
     end
 
     @testset "configured_cs_halo_width dispatch" begin

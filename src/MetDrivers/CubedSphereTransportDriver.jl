@@ -16,6 +16,10 @@ struct CubedSphereTransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D, C,
     surface          :: S
 end
 
+struct CubedSphereFluxDeltas{AM}
+    dm :: AM
+end
+
 function CubedSphereTransportWindow(air_mass, surface_pressure,
                                     fluxes::CubedSphereFaceFluxState{B};
                                     qv_start = nothing, qv_end = nothing,
@@ -38,6 +42,10 @@ function Adapt.adapt_structure(to, window::CubedSphereTransportWindow{B}) where 
     return CubedSphereTransportWindow{B, typeof(air_mass), typeof(surface_pressure), typeof(fluxes),
                                       typeof(qv_start), typeof(deltas), typeof(convection), typeof(surface)}(
         air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas, convection, surface)
+end
+
+function Adapt.adapt_structure(to, deltas::CubedSphereFluxDeltas)
+    return CubedSphereFluxDeltas(Adapt.adapt(to, deltas.dm))
 end
 
 struct CubedSphereTransportDriver{FT, ReaderT, GridT} <: AbstractMassFluxMetDriver
@@ -251,7 +259,13 @@ function interpolate_fluxes!(dest::CubedSphereFaceFluxState, window::CubedSphere
 end
 
 function expected_air_mass!(dest::NTuple{6}, window::CubedSphereTransportWindow, λ::Real)
-    return _copy_cs_storage!(dest, window.air_mass)
+    _copy_cs_storage!(dest, window.air_mass)
+    window.deltas === nothing && return dest
+    λ_ft = convert(eltype(dest[1]), λ)
+    @inbounds for p in 1:6
+        @. dest[p] = dest[p] + λ_ft * window.deltas.dm[p]
+    end
+    return dest
 end
 
 function load_transport_window(driver::CubedSphereTransportDriver, win::Int)
@@ -278,7 +292,11 @@ function load_transport_window(driver::CubedSphereTransportDriver, win::Int)
     else
         nothing
     end
+    delta_raw = load_flux_delta_window!(driver.reader, win)
+    deltas = delta_raw === nothing ? nothing : CubedSphereFluxDeltas(
+        ntuple(p -> _pad_horizontal(delta_raw.dm[p], Hp), 6))
     return CubedSphereTransportWindow(panels_m, panels_ps, fluxes;
+                                      deltas = deltas,
                                       convection = convection,
                                       surface = raw.surface)
 end

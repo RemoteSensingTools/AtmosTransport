@@ -38,10 +38,10 @@ has_pbl_surface_forcing(f::PBLSurfaceForcing) = true
 has_pbl_surface_forcing(::Nothing) = false
 
 function Adapt.adapt_structure(_to, f::PBLSurfaceForcing)
-    # Surface fields are consumed by host-side Kz refresh logic, not kernels.
-    # Keeping them host-resident avoids unnecessary device transfers and still
-    # lets window adaptation move the large advection/convection payloads.
-    return f
+    return PBLSurfaceForcing(Adapt.adapt(_to, f.pblh),
+                             Adapt.adapt(_to, f.ustar),
+                             Adapt.adapt(_to, f.hflux),
+                             Adapt.adapt(_to, f.t2m))
 end
 
 export PBLSurfaceForcing, has_pbl_surface_forcing

@@ -28,7 +28,7 @@ using KernelAbstractions: @kernel, @index, @Const, synchronize, get_backend
 
 # Track max (n_x, n_y, n_z) across the run; emit one @info line each time
 # any component grows. Quiet on stable flows, surfaces CFL hotspots early.
-const _STRANG_CS_MAX_SUB = Ref((0, 0, 0))
+const _STRANG_CS_MAX_SUB = Ref((1, 1, 1))
 
 # =========================================================================
 # CS panel sweep kernels
@@ -542,7 +542,8 @@ function _cs_static_palindrome_subcycle_count(panels_am::NTuple{6},
             out_x = max(zero_FT, -(fs * axl)) + max(zero_FT, fs * axh)
             out_y = max(zero_FT, -(fs * byl)) + max(zero_FT, fs * byh)
             out_z = max(zero_FT, -(fs * czl)) + max(zero_FT, fs * czh)
-            outgoing = FT(2) * (out_x + out_y + out_z)
+            outgoing_half = out_x + out_y + out_z
+            outgoing = outgoing_half + outgoing_half
             ifelse(mi > zero_FT, outgoing / mi, zero_FT)
         end
         max_cfl = max(max_cfl, cfl_panel)

@@ -471,6 +471,7 @@ supports_convection(driver::TransportBinaryDriver) =
 driver_grid(driver::TransportBinaryDriver) = driver.grid
 flux_interpolation_mode(driver::TransportBinaryDriver) =
     has_flux_delta(driver.reader) && driver.reader.header.flux_sampling !== :window_constant ? :interpolate : :constant
+uses_binary_substep_contract(::TransportBinaryDriver) = false
 
 @inline function _interpolate_field!(dest, base, delta, λ)
     @. dest = base + λ * delta

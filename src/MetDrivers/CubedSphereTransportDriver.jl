@@ -5,7 +5,7 @@
 # through the flat structured transport-binary contract.
 # ---------------------------------------------------------------------------
 
-struct CubedSphereTransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D, C, S} <: AbstractTransportWindow{Basis}
+struct CubedSphereTransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D, C, S, V} <: AbstractTransportWindow{Basis}
     air_mass         :: M
     surface_pressure :: PS
     fluxes           :: F
@@ -14,6 +14,7 @@ struct CubedSphereTransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D, C,
     deltas           :: D
     convection       :: C
     surface          :: S
+    vdiff            :: V
 end
 
 struct CubedSphereFluxDeltas{AM}
@@ -24,10 +25,11 @@ function CubedSphereTransportWindow(air_mass, surface_pressure,
                                     fluxes::CubedSphereFaceFluxState{B};
                                     qv_start = nothing, qv_end = nothing,
                                     deltas = nothing, convection = nothing,
-                                    surface = nothing) where {B <: AbstractMassBasis}
+                                    surface = nothing, vdiff = nothing) where {B <: AbstractMassBasis}
     return CubedSphereTransportWindow{B, typeof(air_mass), typeof(surface_pressure), typeof(fluxes),
-                                      typeof(qv_start), typeof(deltas), typeof(convection), typeof(surface)}(
-        air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas, convection, surface)
+                                      typeof(qv_start), typeof(deltas), typeof(convection), typeof(surface),
+                                      typeof(vdiff)}(
+        air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas, convection, surface, vdiff)
 end
 
 function Adapt.adapt_structure(to, window::CubedSphereTransportWindow{B}) where {B <: AbstractMassBasis}
@@ -39,9 +41,11 @@ function Adapt.adapt_structure(to, window::CubedSphereTransportWindow{B}) where 
     deltas = Adapt.adapt(to, window.deltas)
     convection = Adapt.adapt(to, window.convection)
     surface = Adapt.adapt(to, window.surface)
+    vdiff = Adapt.adapt(to, window.vdiff)
     return CubedSphereTransportWindow{B, typeof(air_mass), typeof(surface_pressure), typeof(fluxes),
-                                      typeof(qv_start), typeof(deltas), typeof(convection), typeof(surface)}(
-        air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas, convection, surface)
+                                      typeof(qv_start), typeof(deltas), typeof(convection), typeof(surface),
+                                      typeof(vdiff)}(
+        air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas, convection, surface, vdiff)
 end
 
 function Adapt.adapt_structure(to, deltas::CubedSphereFluxDeltas)
@@ -301,7 +305,8 @@ function load_transport_window(driver::CubedSphereTransportDriver, win::Int)
     return CubedSphereTransportWindow(panels_m, panels_ps, fluxes;
                                       deltas = deltas,
                                       convection = convection,
-                                      surface = raw.surface)
+                                      surface = raw.surface,
+                                      vdiff = raw.vdiff)
 end
 
 export CubedSphereTransportWindow, CubedSphereTransportDriver

@@ -1,0 +1,284 @@
+"""
+    GCHPHoltslagBovilleKzField(host_cache; params = PBLPhysicsParameters{FT}())
+
+Panel-native Kz cache for the GEOS/GCHP VDIFF runtime path.
+
+The cache is refreshed from the active window's GEOS VDIFF payload
+(`vdiff_u`, `vdiff_v`, `vdiff_t`, `vdiff_qv`) plus PBL surface fields.
+This is a local-Kz Holtslag-Boville style closure: it uses GEOS
+temperature, humidity, and wind shear to derive column geometry and
+free-tropospheric shear enhancement, while retaining the existing
+surface-layer Beljaars-Viterbo shape inside the diagnosed PBL. The
+nonlocal counter-gradient term is not applied by this field.
+"""
+struct GCHPHoltslagBovilleKzField{FT, F <: AbstractTimeVaryingField{FT, 3}, H,
+                                  P <: PBLPhysicsParameters{FT}, A} <: AbstractCubedSphereField{FT}
+    panels     :: NTuple{6, F}
+    host_cache :: H
+    params     :: P
+    area_cache :: A
+end
+
+function GCHPHoltslagBovilleKzField(host_cache::NTuple{6, Array{FT, 3}};
+                                    params = PBLPhysicsParameters{FT}()) where FT
+    params isa PBLPhysicsParameters{FT} ||
+        throw(ArgumentError("params must be a PBLPhysicsParameters{$FT}; got $(typeof(params))"))
+    panels = ntuple(p -> PreComputedKzField(host_cache[p]), 6)
+    area_cache = Ref{Any}(nothing)
+    return GCHPHoltslagBovilleKzField{FT, typeof(panels[1]), typeof(host_cache),
+                                      typeof(params), typeof(area_cache)}(
+        panels, host_cache, params, area_cache)
+end
+
+@inline panel_field(f::GCHPHoltslagBovilleKzField, p::Integer) = f.panels[Int(p)]
+update_field!(f::GCHPHoltslagBovilleKzField, ::Real) = f
+
+function Adapt.adapt_structure(to, f::GCHPHoltslagBovilleKzField)
+    panels = Adapt.adapt(to, f.panels)
+    return GCHPHoltslagBovilleKzField{_gchp_hb_eltype(f), typeof(panels[1]),
+                                      typeof(f.host_cache), typeof(f.params),
+                                      typeof(f.area_cache)}(
+        panels, f.host_cache, f.params, f.area_cache)
+end
+
+@inline _gchp_hb_eltype(::GCHPHoltslagBovilleKzField{FT}) where FT = FT
+
+@inline function _virtual_temperature(t, qv, ::Type{FT}) where FT
+    return max(FT(t), FT(180)) * (one(FT) + FT(0.61) * max(FT(qv), zero(FT)))
+end
+
+@inline function _potential_temperature(tv, p_mid, p::PBLPhysicsParameters{FT}) where FT
+    R_dry = p.cp_dry / FT(3.5)
+    kappa = R_dry / p.cp_dry
+    return tv * (FT(100000) / max(p_mid, FT(1)))^kappa
+end
+
+@inline function _shear_enhanced_kz(base_kz, z_lower, z_upper, theta_lower,
+                                    theta_upper, u_lower, u_upper,
+                                    v_lower, v_upper,
+                                    p::PBLPhysicsParameters{FT}) where FT
+    dz = max(abs(z_upper - z_lower), FT(1))
+    du_dz = (u_upper - u_lower) / dz
+    dv_dz = (v_upper - v_lower) / dz
+    shear2 = du_dz * du_dz + dv_dz * dv_dz
+    shear = sqrt(max(shear2, zero(FT)))
+    shear <= FT(1e-6) && return base_kz
+
+    theta_mid = max((theta_lower + theta_upper) / FT(2), FT(100))
+    dtheta_dz_up = (theta_upper - theta_lower) / dz
+    n2 = p.gravity / theta_mid * dtheta_dz_up
+    ri = n2 / max(shear2, FT(1e-12))
+    ric = FT(0.25)
+    stability = ri <= zero(FT) ? one(FT) : max(zero(FT), one(FT) - ri / ric)^2
+    l_mix = min(p.kappa_vk * max(min(z_lower, z_upper), FT(1)), FT(150))
+    shear_kz = l_mix * l_mix * shear * stability
+    return clamp(max(base_kz, p.Kz_bg + shear_kz), p.Kz_bg, p.Kz_max)
+end
+
+@kernel function _gchp_hb_kz_cs_panel_kernel!(cache, @Const(air_mass),
+                                              @Const(pblh), @Const(ustar),
+                                              @Const(hflux), @Const(t2m),
+                                              @Const(u), @Const(v),
+                                              @Const(t), @Const(qv),
+                                              @Const(areas), params, Hp)
+    i, j = @index(Global, NTuple)
+    Nz = size(cache, 3)
+    FT = eltype(cache)
+    p = params
+    R_dry = p.cp_dry / FT(3.5)
+
+    h_pbl = max(FT(pblh[i, j]), FT(100))
+    us = max(FT(ustar[i, j]), FT(0.01))
+    H_sfc = FT(hflux[i, j])
+    T_sfc = max(max(FT(t2m[i, j]), FT(t[i, j, Nz])), FT(200))
+
+    L_ob, H_kin = _obukhov_length(H_sfc, us, T_sfc, p)
+    Pr_inv = _prandtl_inverse(h_pbl, us, H_kin, T_sfc, L_ob, p)
+
+    z_col = zero(FT)
+    p_top = zero(FT)
+    @inbounds for k in 1:Nz
+        tv = _virtual_temperature(t[i, j, k], qv[i, j, k], FT)
+        delp_k = FT(air_mass[i + Hp, j + Hp, k]) * p.gravity / FT(areas[i, j])
+        p_bot = p_top + delp_k
+        p_mid = max((p_top + p_bot) / FT(2), FT(1))
+        z_col += delp_k * R_dry * tv / (p.gravity * p_mid)
+        p_top = p_bot
+    end
+
+    z_above = z_col
+    p_top = zero(FT)
+    prev_z = zero(FT)
+    prev_theta = zero(FT)
+    prev_u = zero(FT)
+    prev_v = zero(FT)
+    @inbounds for k in 1:Nz
+        tv = _virtual_temperature(t[i, j, k], qv[i, j, k], FT)
+        delp_k = FT(air_mass[i + Hp, j + Hp, k]) * p.gravity / FT(areas[i, j])
+        p_bot = p_top + delp_k
+        p_mid = max((p_top + p_bot) / FT(2), FT(1))
+        dz_k = delp_k * R_dry * tv / (p.gravity * p_mid)
+        z_center = z_above - dz_k / FT(2)
+        theta = _potential_temperature(tv, p_mid, p)
+        base_kz = _beljaars_viterbo_kz(z_center, h_pbl, us, L_ob, Pr_inv, p)
+        kz = base_kz
+        if k > 1
+            kz = _shear_enhanced_kz(base_kz, z_center, prev_z,
+                                    theta, prev_theta,
+                                    FT(u[i, j, k]), prev_u,
+                                    FT(v[i, j, k]), prev_v, p)
+        end
+        cache[i, j, k] = kz
+        prev_z = z_center
+        prev_theta = theta
+        prev_u = FT(u[i, j, k])
+        prev_v = FT(v[i, j, k])
+        z_above -= dz_k
+        p_top = p_bot
+    end
+end
+
+function _cached_backend_cell_areas!(field::GCHPHoltslagBovilleKzField{FT},
+                                     cell_areas::AbstractMatrix,
+                                     reference) where FT
+    cache = field.area_cache[]
+    if cache === nothing || size(cache) != size(cell_areas) ||
+       eltype(cache) != FT
+        cache = similar(reference, FT, size(cell_areas))
+        copyto!(cache, cell_areas)
+        field.area_cache[] = cache
+    end
+    return cache
+end
+
+@inline function _vdiff_ready(vdiff)
+    vdiff === nothing && return false
+    return all(p -> _backend_ready_array(vdiff.u[p]) &&
+                    _backend_ready_array(vdiff.v[p]) &&
+                    _backend_ready_array(vdiff.t[p]) &&
+                    _backend_ready_array(vdiff.qv[p]), 1:6)
+end
+
+function _try_refresh_gchp_hb_kz_cache_backend!(field::GCHPHoltslagBovilleKzField{FT},
+                                                surface,
+                                                vdiff,
+                                                air_mass::NTuple{6},
+                                                cell_areas::AbstractMatrix;
+                                                halo_width::Integer = 0) where FT
+    data1 = field.panels[1].data
+    (_backend_ready_array(data1) &&
+     all(p -> _backend_ready_array(air_mass[p]), 1:6) &&
+     _backend_ready_surface(surface) &&
+     _vdiff_ready(vdiff)) || return false
+
+    areas = _cached_backend_cell_areas!(field, cell_areas, data1)
+    backend = get_backend(data1)
+    Hp = Int(halo_width)
+    @inbounds for panel in 1:6
+        cache = field.panels[panel].data
+        kernel! = _gchp_hb_kz_cs_panel_kernel!(backend)
+        kernel!(cache, air_mass[panel], surface.pblh[panel],
+                surface.ustar[panel], surface.hflux[panel],
+                surface.t2m[panel], vdiff.u[panel], vdiff.v[panel],
+                vdiff.t[panel], vdiff.qv[panel], areas, field.params, Hp;
+                ndrange = (size(cache, 1), size(cache, 2)))
+    end
+    synchronize(backend)
+    return true
+end
+
+@inline function _vdiff_panel(vdiff, name::Symbol, p::Int)
+    return _host_array(getfield(vdiff, name)[p])
+end
+
+function refresh_gchp_holtslag_boville_kz_cache!(field::GCHPHoltslagBovilleKzField{FT},
+                                                  surface,
+                                                  vdiff,
+                                                  air_mass::NTuple{6},
+                                                  cell_areas::AbstractMatrix;
+                                                  halo_width::Integer = 0) where FT
+    surface === nothing &&
+        throw(ArgumentError("[diffusion] kind=\"geoschem_holtslag_boville_vdiff\" requires pblh/ustar/pbl_hflux/t2m surface fields in the transport window"))
+    vdiff === nothing &&
+        throw(ArgumentError("[diffusion] kind=\"geoschem_holtslag_boville_vdiff\" requires vdiff_u/vdiff_v/vdiff_t/vdiff_qv sections in the transport window"))
+    if _try_refresh_gchp_hb_kz_cache_backend!(field, surface, vdiff, air_mass,
+                                              cell_areas; halo_width = halo_width)
+        return field
+    end
+
+    Hp = Int(halo_width)
+    areas = FT.(_host_array(cell_areas))
+    p = field.params
+    R_dry = p.cp_dry / FT(3.5)
+
+    @inbounds for panel in 1:6
+        cache = field.host_cache[panel]
+        mhost = _host_array(air_mass[panel])
+        pblh  = _surface_panel(surface, :pblh,  panel)
+        ustar = _surface_panel(surface, :ustar, panel)
+        hflux = _surface_panel(surface, :hflux, panel)
+        t2m   = _surface_panel(surface, :t2m,   panel)
+        u3 = _vdiff_panel(vdiff, :u, panel)
+        v3 = _vdiff_panel(vdiff, :v, panel)
+        t3 = _vdiff_panel(vdiff, :t, panel)
+        q3 = _vdiff_panel(vdiff, :qv, panel)
+        Nc, Ny, Nz = size(cache)
+
+        for j in 1:Ny, i in 1:Nc
+            h_pbl = max(FT(pblh[i, j]), FT(100))
+            us = max(FT(ustar[i, j]), FT(0.01))
+            H_sfc = FT(hflux[i, j])
+            T_sfc = max(max(FT(t2m[i, j]), FT(t3[i, j, Nz])), FT(200))
+            L_ob, H_kin = _obukhov_length(H_sfc, us, T_sfc, p)
+            Pr_inv = _prandtl_inverse(h_pbl, us, H_kin, T_sfc, L_ob, p)
+
+            z_col = zero(FT)
+            p_top = zero(FT)
+            for k in 1:Nz
+                tv = _virtual_temperature(t3[i, j, k], q3[i, j, k], FT)
+                delp_k = FT(mhost[i + Hp, j + Hp, k]) * p.gravity / areas[i, j]
+                p_bot = p_top + delp_k
+                p_mid = max((p_top + p_bot) / FT(2), FT(1))
+                z_col += delp_k * R_dry * tv / (p.gravity * p_mid)
+                p_top = p_bot
+            end
+
+            z_above = z_col
+            p_top = zero(FT)
+            prev_z = zero(FT)
+            prev_theta = zero(FT)
+            prev_u = zero(FT)
+            prev_v = zero(FT)
+            for k in 1:Nz
+                tv = _virtual_temperature(t3[i, j, k], q3[i, j, k], FT)
+                delp_k = FT(mhost[i + Hp, j + Hp, k]) * p.gravity / areas[i, j]
+                p_bot = p_top + delp_k
+                p_mid = max((p_top + p_bot) / FT(2), FT(1))
+                dz_k = delp_k * R_dry * tv / (p.gravity * p_mid)
+                z_center = z_above - dz_k / FT(2)
+                theta = _potential_temperature(tv, p_mid, p)
+                base_kz = _beljaars_viterbo_kz(z_center, h_pbl, us, L_ob,
+                                               Pr_inv, p)
+                kz = base_kz
+                if k > 1
+                    kz = _shear_enhanced_kz(base_kz, z_center, prev_z,
+                                            theta, prev_theta,
+                                            FT(u3[i, j, k]), prev_u,
+                                            FT(v3[i, j, k]), prev_v, p)
+                end
+                cache[i, j, k] = kz
+                prev_z = z_center
+                prev_theta = theta
+                prev_u = FT(u3[i, j, k])
+                prev_v = FT(v3[i, j, k])
+                z_above -= dz_k
+                p_top = p_bot
+            end
+        end
+
+        copyto!(field.panels[panel].data, cache)
+    end
+    return field
+end
+
+export GCHPHoltslagBovilleKzField, refresh_gchp_holtslag_boville_kz_cache!

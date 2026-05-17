@@ -29,14 +29,18 @@ include("Fields/Fields.jl")
 using .Fields: AbstractTimeVaryingField, AbstractCubedSphereField,
                ConstantField, ProfileKzField, PreComputedKzField,
                CubedSphereField, DerivedKzField, WindowPBLKzField,
+               GCHPHoltslagBovilleKzField,
                PBLPhysicsParameters, StepwiseField,
                field_value, update_field!, refresh_pbl_kz_cache!,
+               refresh_gchp_holtslag_boville_kz_cache!,
                integral_between, panel_field
 export AbstractTimeVaryingField, AbstractCubedSphereField,
        ConstantField, ProfileKzField, PreComputedKzField,
        CubedSphereField, DerivedKzField, WindowPBLKzField,
+       GCHPHoltslagBovilleKzField,
        PBLPhysicsParameters, StepwiseField,
        field_value, update_field!, refresh_pbl_kz_cache!,
+       refresh_gchp_holtslag_boville_kz_cache!,
        integral_between, panel_field
 
 end # module State

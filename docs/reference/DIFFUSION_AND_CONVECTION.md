@@ -38,6 +38,15 @@ V(dt/2) -> S(dt) -> V(dt/2)
 Use the boundary placement for production full-physics runs unless a parity
 experiment explicitly needs the old split.
 
+For GEOS/GCHP comparison experiments with binaries that carry the optional
+VDIFF payload, the cubed-sphere runtime also accepts:
+
+```toml
+[diffusion]
+kind = "geoschem_holtslag_boville_vdiff"
+surface_flux_boundary = true
+```
+
 ## Diffusion Closures
 
 ### `tm5_beljaars_viterbo_local_kz`
@@ -61,14 +70,20 @@ use the explicit name.
 
 ### `geoschem_holtslag_boville_vdiff`
 
-This name is reserved for a GCHP/GEOS-Chem VDIFF-compatible non-local closure.
-The data path is now explicit, but the runtime operator is still gated until
-the Holtslag-Boville Kz and counter-gradient terms are implemented and tested.
+This is the GEOS/GCHP VDIFF-derived local-Kz runtime path for cubed-sphere
+binaries. It uses the GEOS VDIFF source fields for virtual temperature,
+hydrostatic column geometry, and wind-shear/stability enhancement, while using
+the same `ImplicitVerticalDiffusion` tridiagonal column solve as the other
+runtime diffusion closures.
 
-GCHP's VDIFF path is not just a different constant set for the current local
-Kz code. It uses wind shear, virtual-potential-temperature stability, PBL
-structure, and counter-gradient terms. GEOS-IT binaries can now carry the
-required source fields through the optional `gchp_vdiff` payload:
+Important scope boundary: this path is not yet full GEOS-Chem VDIFF parity.
+The nonlocal counter-gradient term is not applied. The name records the source
+lineage and required payload; campaign use should still be validated against
+GCHP diagnostics before treating it as equivalent to GEOS-Chem's complete VDIFF
+module.
+
+GEOS-IT binaries carry the required source fields through the optional
+`gchp_vdiff` payload:
 
 - `vdiff_u`, `vdiff_v` from `A3dyn` (`U`, `V`; 3-hourly hold-constant)
 - `vdiff_t` from `I3` (`T`; 3-hourly hold-constant)
@@ -135,5 +150,6 @@ cadence choice, not part of the advection CFL schedule.
   toggle; they are not hidden inside the diffusion operator.
 - Topology-specific refresh code belongs in typed field/cache objects and
   dispatch methods. Runners should not grow source/topology `if` trees.
-- Any future GCHP VDIFF implementation must add a new typed Kz/counter-gradient
-  closure and tests against single-column reference cases before campaign use.
+- GCHP VDIFF counter-gradient support must extend
+  `GCHPHoltslagBovilleKzField` or add a sibling typed field/operator, with
+  tests against single-column reference cases before campaign use.

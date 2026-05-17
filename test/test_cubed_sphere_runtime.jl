@@ -32,6 +32,7 @@ function write_driven_cs_binary(path::AbstractString;
                                 window_mass_scales::Tuple{Vararg{Real}} = (1, 1),
                                 window_dm_panels = nothing,
                                 surface_windows = nothing,
+                                vdiff_windows = nothing,
                                 convection_windows = nothing,
                                 dtrain_windows = nothing,
                                 tm5_windows = nothing,
@@ -43,6 +44,9 @@ function write_driven_cs_binary(path::AbstractString;
     surface_windows !== nothing &&
         length(surface_windows) == length(window_mass_scales) ||
         surface_windows === nothing || throw(ArgumentError("surface_windows length must match window_mass_scales"))
+    vdiff_windows !== nothing &&
+        length(vdiff_windows) == length(window_mass_scales) ||
+        vdiff_windows === nothing || throw(ArgumentError("vdiff_windows length must match window_mass_scales"))
     convection_windows !== nothing &&
         length(convection_windows) == length(window_mass_scales) ||
         convection_windows === nothing || throw(ArgumentError("convection_windows length must match window_mass_scales"))
@@ -73,6 +77,7 @@ function write_driven_cs_binary(path::AbstractString;
         include_cmfmc = convection_windows !== nothing,
         include_dtrain = dtrain_windows !== nothing,
         include_tm5conv = tm5_windows !== nothing,
+        include_gchp_vdiff = vdiff_windows !== nothing,
     )
     steps_per_window_by_window !== nothing &&
         AtmosTransport.MetDrivers.set_streaming_steps_per_window_schedule!(
@@ -91,6 +96,9 @@ function write_driven_cs_binary(path::AbstractString;
         end
         if surface_windows !== nothing
             window = merge(window, (surface = surface_windows[win],))
+        end
+        if vdiff_windows !== nothing
+            window = merge(window, (vdiff = vdiff_windows[win],))
         end
         if dtrain_windows !== nothing
             window = merge(window, (dtrain = dtrain_windows[win],))
@@ -196,6 +204,19 @@ function make_cs_surface_panels(FT::Type{<:AbstractFloat}, Nc::Int;
         ntuple(_ -> fill(ustar, Nc, Nc), 6),
         ntuple(_ -> fill(hflux, Nc, Nc), 6),
         ntuple(_ -> fill(t2m,   Nc, Nc), 6),
+    )
+end
+
+function make_cs_vdiff_panels(FT::Type{<:AbstractFloat}, Nc::Int, Nz::Int;
+                              u0 = FT(5),
+                              v0 = FT(-2),
+                              t0 = FT(285),
+                              qv0 = FT(0.004))
+    return (
+        u = ntuple(p -> [FT(u0 + 0.1p + 0.01k) for i in 1:Nc, j in 1:Nc, k in 1:Nz], 6),
+        v = ntuple(p -> [FT(v0 - 0.1p + 0.02k) for i in 1:Nc, j in 1:Nc, k in 1:Nz], 6),
+        t = ntuple(p -> [FT(t0 - 6k + 0.05p) for i in 1:Nc, j in 1:Nc, k in 1:Nz], 6),
+        qv = ntuple(p -> [max(FT(0), FT(qv0 / k)) for i in 1:Nc, j in 1:Nc, k in 1:Nz], 6),
     )
 end
 
@@ -369,6 +390,67 @@ end
         run!(sim)
         @test sim.iteration == 2
         @test all(isfinite, sim.model.diffusion.kz_field.host_cache[1])
+        @test all(isfinite, get_tracer(sim.model.state, :CO2)[1])
+
+        close(driver)
+    end
+end
+
+@testset "CubedSphere GCHP VDIFF payload drives Holtslag-Boville local Kz" begin
+    FT = Float64
+    Nc, Nz = 4, 5
+    surface = make_cs_surface_panels(FT, Nc)
+    vdiff = make_cs_vdiff_panels(FT, Nc, Nz)
+
+    mktemp() do path, io
+        close(io)
+        write_driven_cs_binary(path;
+                               FT = FT,
+                               Nc = Nc,
+                               Nz = Nz,
+                               window_mass_scales = (FT(5e15),),
+                               surface_windows = (surface,),
+                               vdiff_windows = (vdiff,))
+
+        reader = CubedSphereBinaryReader(path; FT = FT)
+        @test has_surface(reader)
+        @test has_vdiff_fields(reader)
+        raw = load_cs_window(reader, 1)
+        @test raw.vdiff !== nothing
+        @test raw.vdiff.t[2] == vdiff.t[2]
+        close(reader)
+
+        driver = CubedSphereTransportDriver(path; FT = FT, arch = CPU(), Hp = 1)
+        recipe = build_runtime_physics_recipe(
+            Dict("diffusion" => Dict("kind" => "geoschem_holtslag_boville_vdiff")),
+            driver,
+            FT,
+        )
+        @test recipe.diffusion isa ImplicitVerticalDiffusion
+        @test recipe.diffusion.kz_field isa GCHPHoltslagBovilleKzField
+
+        window = load_transport_window(driver, 1)
+        mesh = driver_grid(driver).horizontal
+        tracer_panels = ntuple(6) do p
+            rm = zeros(FT, size(window.air_mass[p]))
+            @views rm[mesh.Hp + 1:mesh.Hp + mesh.Nc,
+                      mesh.Hp + 1:mesh.Hp + mesh.Nc,
+                      Nz] .= FT(1e-6) .* window.air_mass[p][mesh.Hp + 1:mesh.Hp + mesh.Nc,
+                                                           mesh.Hp + 1:mesh.Hp + mesh.Nc,
+                                                           Nz]
+            rm
+        end
+
+        state = CubedSphereState(DryBasis, mesh, window.air_mass; CO2 = tracer_panels)
+        fluxes = allocate_face_fluxes(mesh, Nz; FT = FT, basis = DryBasis)
+        model = TransportModel(state, fluxes, driver_grid(driver), UpwindScheme();
+                               diffusion = recipe.diffusion)
+        sim = DrivenSimulation(model, driver; start_window = 1, stop_window = 1)
+
+        @test maximum(sim.model.diffusion.kz_field.host_cache[1]) > 0
+        @test all(isfinite, sim.model.diffusion.kz_field.host_cache[1])
+        run!(sim)
+        @test sim.iteration == 2
         @test all(isfinite, get_tracer(sim.model.state, :CO2)[1])
 
         close(driver)

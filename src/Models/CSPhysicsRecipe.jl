@@ -162,17 +162,19 @@ function build_runtime_diffusion(cfg, style::AbstractRuntimeRecipeStyle, ::Type{
     # it to NoDiffusion. Configs that said `type = "pbl"` / `"nonlocal_pbl"`
     # etc. expected diffusion to run; the silent fall-through hid that for
     # months. Migrate to `kind` — supported kinds today are "none",
-    # "constant", and the named PBL closures. (Codex Section B P0 fix.)
+    # "constant", and the named PBL/VDIFF closures. (Codex Section B P0 fix.)
     haskey(section, "type") && !haskey(section, "kind") &&
         throw(ArgumentError(
             "[diffusion] uses legacy `type = \"$(section["type"])\"`; rename to " *
             "`kind = \"...\"`. Supported kinds: \"none\", \"constant\", " *
-            "\"tm5_beljaars_viterbo_local_kz\"."))
+            "\"tm5_beljaars_viterbo_local_kz\", " *
+            "\"geoschem_holtslag_boville_vdiff\"."))
     haskey(section, "kind") ||
         throw(ArgumentError(
             "[diffusion] section is present but has no `kind` key. " *
-            "Set `kind = \"none\"`, `kind = \"constant\"`, or " *
-            "`kind = \"tm5_beljaars_viterbo_local_kz\"`."))
+            "Set `kind = \"none\"`, `kind = \"constant\"`, " *
+            "`kind = \"tm5_beljaars_viterbo_local_kz\"`, or " *
+            "`kind = \"geoschem_holtslag_boville_vdiff\"`."))
     return build_runtime_diffusion(style,
                                    Val(_config_symbol(section, "kind", "none")),
                                    section,
@@ -224,6 +226,14 @@ _runtime_has_surface(reader::CubedSphereBinaryReader) = has_surface(reader)
 _runtime_has_surface(driver::TransportBinaryDriver) = has_surface(driver.reader)
 _runtime_has_surface(driver::CubedSphereTransportDriver) = has_surface(driver.reader)
 
+function _runtime_has_gchp_vdiff(_context)
+    return false
+end
+_runtime_has_gchp_vdiff(reader::CubedSphereBinaryReader) =
+    has_surface(reader) && has_vdiff_fields(reader)
+_runtime_has_gchp_vdiff(driver::CubedSphereTransportDriver) =
+    _runtime_has_gchp_vdiff(driver.reader)
+
 function build_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
                                  ::Val{:pbl},
                                  _section,
@@ -265,20 +275,32 @@ function build_runtime_diffusion(::AbstractRuntimeRecipeStyle,
         "runtime binaries with pblh/ustar/pbl_hflux/t2m sections."))
 end
 
+function build_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
+                                 ::Val{:geoschem_holtslag_boville_vdiff},
+                                 section,
+                                 ::Type{FT},
+                                 context) where FT
+    _runtime_has_gchp_vdiff(context) ||
+        throw(ArgumentError(
+            "[diffusion] kind = \"geoschem_holtslag_boville_vdiff\" requires " *
+            "pblh/ustar/pbl_hflux/t2m and vdiff_u/vdiff_v/vdiff_t/vdiff_qv " *
+            "sections in the cubed-sphere transport binary. Regenerate with " *
+            "include_surface=true and include_gchp_vdiff=true."))
+    Nc1, Nc2, Nz = _pbl_cache_shape(context)
+    host_cache = ntuple(_ -> zeros(FT, Nc1, Nc2, Nz), 6)
+    return ImplicitVerticalDiffusion(;
+        kz_field = GCHPHoltslagBovilleKzField(host_cache),
+        surface_flux_coupling = _surface_flux_coupling(section))
+end
+
 function build_runtime_diffusion(::AbstractRuntimeRecipeStyle,
                                  ::Val{:geoschem_holtslag_boville_vdiff},
                                  _section,
                                  ::Type{FT},
                                  _context) where FT
     throw(ArgumentError(
-        "[diffusion] kind = \"geoschem_holtslag_boville_vdiff\" is reserved " *
-        "for the GCHP/GEOS-Chem non-local VDIFF closure, but it is not a " *
-        "production runtime operator yet. GEOS-IT preprocessing can now write " *
-        "the required `gchp_vdiff` binary payload (vdiff_u/vdiff_v/vdiff_t/" *
-        "vdiff_qv plus PBL surface fields); the Kz and counter-gradient closure " *
-        "still needs the runtime implementation. Use `kind = " *
-        "\"tm5_beljaars_viterbo_local_kz\"` with " *
-        "`surface_flux_boundary = true` for current ERA/GEOS production runs."))
+        "[diffusion] kind = \"geoschem_holtslag_boville_vdiff\" is currently " *
+        "implemented for cubed-sphere runtime binaries with GCHP VDIFF payloads."))
 end
 
 function build_runtime_diffusion(::AbstractRuntimeRecipeStyle,
@@ -287,7 +309,8 @@ function build_runtime_diffusion(::AbstractRuntimeRecipeStyle,
                                  ::Type{FT}) where {name, FT}
     throw(ArgumentError(
         "Unknown [diffusion] kind: $(name). Supported: none | constant | " *
-        "tm5_beljaars_viterbo_local_kz | pbl (legacy alias)"))
+        "tm5_beljaars_viterbo_local_kz | geoschem_holtslag_boville_vdiff | " *
+        "pbl (legacy alias)"))
 end
 build_runtime_diffusion(style::AbstractRuntimeRecipeStyle, ::Val{name}, section,
                         ::Type{FT}, _context) where {name, FT} =
@@ -365,6 +388,17 @@ function validate_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
         throw(ArgumentError(
             "[diffusion] kind = \"pbl\" requires pblh/ustar/pbl_hflux/t2m sections " *
             "in every cubed-sphere transport binary."))
+    return nothing
+end
+
+function validate_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
+                                    ::ImplicitVerticalDiffusion{FT, <:GCHPHoltslagBovilleKzField},
+                                    context) where FT
+    _runtime_has_gchp_vdiff(context) ||
+        throw(ArgumentError(
+            "[diffusion] kind = \"geoschem_holtslag_boville_vdiff\" requires " *
+            "pblh/ustar/pbl_hflux/t2m and vdiff_u/vdiff_v/vdiff_t/vdiff_qv " *
+            "sections in every cubed-sphere transport binary."))
     return nothing
 end
 

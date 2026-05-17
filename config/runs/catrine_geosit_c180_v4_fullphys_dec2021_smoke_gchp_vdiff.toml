@@ -1,0 +1,87 @@
+# ===========================================================================
+# Catrine 4-tracer 5-day smoke with GEOS/GCHP VDIFF-derived local Kz.
+#
+# Companion to `catrine_geosit_c180_v4_fullphys_dec2021_smoke.toml`; all
+# transport, emissions, convection, chemistry, and output-field choices are
+# identical except for `[diffusion].kind` and the output filename.
+#
+# Runner:
+#   julia --project=. scripts/run_transport.jl \
+#       config/runs/catrine_geosit_c180_v4_fullphys_dec2021_smoke_gchp_vdiff.toml
+# ===========================================================================
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_v4_merge025hpa_adaptive_f32"
+start_date   = "2021-12-01"
+end_date     = "2021-12-05"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+
+[run]
+reset_air_mass_each_window = true
+
+[advection]
+scheme = "ppm"
+
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"
+  [tracers.co2_natural.surface_flux]
+  kind = "lmdz_co2"
+
+[tracers.co2_fossil]
+  [tracers.co2_fossil.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.co2_fossil.surface_flux]
+  kind = "gridfed_fossil_co2"
+  time_index = 12
+
+[tracers.sf6]
+  [tracers.sf6.init]
+  kind = "file"
+  file = "~/data/AtmosTransport/catrine/InitialConditions/startSF6_202112010000.nc"
+  variable = "SF6"
+  [tracers.sf6.surface_flux]
+  kind = "edgar_sf6"
+
+[tracers.rn222]
+  [tracers.rn222.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.rn222.surface_flux]
+  kind = "zhang_rn222"
+  time_index = 12
+
+[diffusion]
+kind = "geoschem_holtslag_boville_vdiff"
+surface_flux_boundary = true
+
+[convection]
+kind = "cmfmc"
+
+[chemistry]
+kind = "decay"
+  [chemistry.half_lives_seconds]
+  rn222 = 330350.4
+
+[output]
+path = "~/data/AtmosTransport/output/catrine_geosit_c180_v4_fullphys_dec2021_5day_smoke_gchp_vdiff.nc"
+cadence_hours = 3
+split = "single"
+
+[output.fields]
+tracers = ["rn222", "co2_natural", "sf6", "co2_fossil"]
+layers = "none"
+column_mean = true
+column_mass_per_area = false
+air_mass_layers = "none"
+air_mass = false
+air_mass_per_area = false
+column_air_mass_per_area = true

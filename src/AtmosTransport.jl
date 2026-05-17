@@ -130,7 +130,7 @@ using .MetDrivers: AbstractDriver, AbstractClosure, AbstractMetDriver,
                    copy_convection_forcing!, allocate_convection_forcing_like,
                    PBLSurfaceForcing, has_pbl_surface_forcing,
                    window_count, has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc,
-                   has_surface, has_tm5conv, has_temperature,
+                   has_surface, has_vdiff_fields, has_tm5conv, has_temperature,
                    grid_type, horizontal_topology,
                    source_flux_sampling, air_mass_sampling, flux_sampling, flux_kind, humidity_sampling, delta_semantics,
                    A_ifc, B_ifc,
@@ -264,8 +264,10 @@ export column_mean_mixing_ratio, layer_mass_per_area, column_mass_per_area
 # Time-varying field abstraction (plan 16a, extended in 16b/17)
 export AbstractTimeVaryingField, AbstractCubedSphereField,
        ConstantField, ProfileKzField, PreComputedKzField, CubedSphereField,
-       DerivedKzField, WindowPBLKzField, PBLPhysicsParameters, StepwiseField,
+       DerivedKzField, WindowPBLKzField, GCHPHoltslagBovilleKzField,
+       PBLPhysicsParameters, StepwiseField,
        field_value, update_field!, refresh_pbl_kz_cache!,
+       refresh_gchp_holtslag_boville_kz_cache!,
        integral_between, panel_field
 
 # Operators -- public transport API
@@ -372,7 +374,7 @@ export ConvectionForcing, has_convection_forcing
 export copy_convection_forcing!, allocate_convection_forcing_like
 export PBLSurfaceForcing, has_pbl_surface_forcing
 export window_count, has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc
-export has_surface, has_tm5conv, has_temperature
+export has_surface, has_vdiff_fields, has_tm5conv, has_temperature
 export grid_type, horizontal_topology
 export source_flux_sampling, air_mass_sampling, flux_sampling, flux_kind, humidity_sampling, delta_semantics
 export A_ifc, B_ifc

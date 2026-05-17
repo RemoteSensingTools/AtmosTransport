@@ -28,6 +28,15 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubPBLReader) = false
 AtmosTransport.Models._runtime_has_surface(::StubPBLReader) = true
 AtmosTransport.Models._pbl_cache_shape(::StubPBLReader) = (4, 4, 2)
 
+struct StubGCHPVDIFFReader end
+AtmosTransport.Models._runtime_recipe_style(::StubGCHPVDIFFReader) =
+    AtmosTransport.Models.CubedSphereRuntimeRecipeStyle()
+AtmosTransport.Models._runtime_has_tm5conv(::StubGCHPVDIFFReader) = false
+AtmosTransport.Models._runtime_has_cmfmc(::StubGCHPVDIFFReader) = false
+AtmosTransport.Models._runtime_has_surface(::StubGCHPVDIFFReader) = true
+AtmosTransport.Models._runtime_has_gchp_vdiff(::StubGCHPVDIFFReader) = true
+AtmosTransport.Models._pbl_cache_shape(::StubGCHPVDIFFReader) = (4, 4, 2)
+
 struct StubStructuredReader
     has_tm5 :: Bool
 end
@@ -133,6 +142,13 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
 
         @test_throws ArgumentError build_cs_physics_recipe(
             Dict("diffusion" => Dict("kind" => "pbl")), StubReader(false, false), Float64)
+        gchp_vdiff_recipe = build_cs_physics_recipe(
+            Dict("diffusion" => Dict("kind" => "geoschem_holtslag_boville_vdiff")),
+            StubGCHPVDIFFReader(),
+            Float64,
+        )
+        @test gchp_vdiff_recipe.diffusion isa ImplicitVerticalDiffusion
+        @test gchp_vdiff_recipe.diffusion.kz_field isa GCHPHoltslagBovilleKzField
         @test_throws ArgumentError build_cs_physics_recipe(
             Dict("diffusion" => Dict("kind" => "geoschem_holtslag_boville_vdiff")),
             StubPBLReader(),

@@ -179,6 +179,29 @@ for an explicit filename template, otherwise the date is inserted before
 `snapshot_interval_hours` are still accepted. See [Output schema](@ref) for
 the per-topology variable list the file actually contains.
 
+Optional field selection keeps production files small:
+
+```toml
+[output.fields]
+tracers = ["co2_natural", "co2_fossil"]  # omit for all tracers
+layers = "none"                          # "full" | "selected" | "none"
+levels = [1, 32, 64]                     # used when layers = "selected"
+column_mean = true
+column_mass_per_area = false
+air_mass_layers = "none"
+air_mass = false
+air_mass_per_area = false
+column_air_mass_per_area = true
+
+[output.fields.per_tracer.co2_natural]
+layers = "selected"
+column_mean = true
+```
+
+Defaults match the historical writer: all tracers, full per-level tracer VMR,
+column means, column tracer mass per area, stored air mass, layer air mass per
+area, and column air mass per area.
+
 ### Multi-threaded execution
 
 ```bash

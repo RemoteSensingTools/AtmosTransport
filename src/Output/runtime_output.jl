@@ -1,5 +1,6 @@
 abstract type AbstractOutputSchedule end
 abstract type AbstractOutputPartition end
+abstract type AbstractLayerSelection end
 
 struct ExplicitSnapshotSchedule <: AbstractOutputSchedule
     hours::Vector{Float64}
@@ -14,13 +15,36 @@ end
 struct SingleOutputFile <: AbstractOutputPartition end
 struct DailyOutputFiles <: AbstractOutputPartition end
 
+struct FullLayerSelection <: AbstractLayerSelection end
+struct SelectedLayerSelection <: AbstractLayerSelection end
+struct NoLayerSelection <: AbstractLayerSelection end
+
+struct TracerOutputFields{L <: AbstractLayerSelection}
+    layers::L
+    column_mean::Bool
+    column_mass_per_area::Bool
+end
+
+struct OutputFieldSpec{L <: AbstractLayerSelection}
+    tracers::Union{Nothing, Vector{Symbol}}
+    selected_levels::Vector{Int}
+    default_tracer::TracerOutputFields
+    tracer_overrides::Dict{Symbol, TracerOutputFields}
+    air_mass_layers::L
+    air_mass::Bool
+    air_mass_per_area::Bool
+    column_air_mass_per_area::Bool
+end
+
 struct RuntimeOutputSpec{S <: AbstractOutputSchedule,
                          P <: AbstractOutputPartition,
-                         O <: SnapshotWriteOptions}
+                         O <: SnapshotWriteOptions,
+                         F <: OutputFieldSpec}
     path::String
     schedule::S
     partition::P
     options::O
+    fields::F
     enabled::Bool
 end
 
@@ -61,6 +85,105 @@ output_enabled(spec::RuntimeOutputSpec) =
 output_path(spec::RuntimeOutputSpec) = spec.path
 output_split(::RuntimeOutputSpec{<:Any, SingleOutputFile}) = :single
 output_split(::RuntimeOutputSpec{<:Any, DailyOutputFiles}) = :daily
+output_fields(spec::RuntimeOutputSpec) = spec.fields
+
+layer_selection(::FullLayerSelection) = :full
+layer_selection(::SelectedLayerSelection) = :selected
+layer_selection(::NoLayerSelection) = :none
+layer_selection(fields::TracerOutputFields) = layer_selection(fields.layers)
+air_mass_layer_selection(fields::OutputFieldSpec) = layer_selection(fields.air_mass_layers)
+
+function _parse_layer_selection(value, key::AbstractString)
+    s = lowercase(String(value))
+    if s in ("full", "all", "true")
+        return FullLayerSelection()
+    elseif s in ("selected", "select", "levels")
+        return SelectedLayerSelection()
+    elseif s in ("none", "off", "false", "column", "columns")
+        return NoLayerSelection()
+    else
+        throw(ArgumentError("$(key) must be \"full\", \"selected\", or \"none\", got $(repr(s))"))
+    end
+end
+
+function _parse_tracer_names(value)
+    if value === nothing
+        return nothing
+    elseif value isa AbstractString
+        s = lowercase(String(value))
+        s in ("*", "all") && return nothing
+        s in ("none", "false", "off") && return Symbol[]
+        return Symbol[String(value)]
+    elseif value isa AbstractVector
+        return Symbol.(String.(value))
+    else
+        throw(ArgumentError("[output.fields].tracers must be a string or array of tracer names"))
+    end
+end
+
+function _parse_levels(value)
+    value === nothing && return Int[]
+    value isa AbstractVector ||
+        throw(ArgumentError("[output.fields].levels must be an array of 1-based model levels"))
+    levels = Int.(value)
+    any(<=(0), levels) &&
+        throw(ArgumentError("[output.fields].levels must contain positive 1-based model levels"))
+    return sort!(unique(levels))
+end
+
+function _tracer_fields_from_cfg(cfg::AbstractDict, fallback::TracerOutputFields;
+                                 key_prefix::AbstractString = "[output.fields]")
+    layers = haskey(cfg, "layers") ?
+             _parse_layer_selection(cfg["layers"], "$(key_prefix).layers") :
+             fallback.layers
+    column_mean = Bool(get(cfg, "column_mean", fallback.column_mean))
+    column_mass = Bool(get(cfg, "column_mass_per_area",
+                           get(cfg, "column_mass", fallback.column_mass_per_area)))
+    return TracerOutputFields(layers, column_mean, column_mass)
+end
+
+function _parse_tracer_overrides(fields_cfg::AbstractDict,
+                                 fallback::TracerOutputFields)
+    raw = get(fields_cfg, "per_tracer",
+              get(fields_cfg, "tracer_fields", Dict{String, Any}()))
+    raw isa AbstractDict ||
+        throw(ArgumentError("[output.fields].per_tracer must be a table keyed by tracer name"))
+    out = Dict{Symbol, TracerOutputFields}()
+    for (name, cfg) in pairs(raw)
+        cfg isa AbstractDict ||
+            throw(ArgumentError("[output.fields.per_tracer.$(name)] must be a table"))
+        out[Symbol(String(name))] =
+            _tracer_fields_from_cfg(cfg, fallback;
+                                    key_prefix = "[output.fields.per_tracer.$(name)]")
+    end
+    return out
+end
+
+function output_field_spec(fields_cfg::AbstractDict = Dict{String, Any}())
+    default_tracer = TracerOutputFields(
+        _parse_layer_selection(get(fields_cfg, "layers", "full"), "[output.fields].layers"),
+        Bool(get(fields_cfg, "column_mean", true)),
+        Bool(get(fields_cfg, "column_mass_per_area",
+                 get(fields_cfg, "column_mass", true))),
+    )
+    air_layers = _parse_layer_selection(get(fields_cfg, "air_mass_layers",
+                                            get(fields_cfg, "layers", "full")),
+                                        "[output.fields].air_mass_layers")
+    return OutputFieldSpec(
+        _parse_tracer_names(get(fields_cfg, "tracers", nothing)),
+        _parse_levels(get(fields_cfg, "levels", nothing)),
+        default_tracer,
+        _parse_tracer_overrides(fields_cfg, default_tracer),
+        air_layers,
+        Bool(get(fields_cfg, "air_mass", true)),
+        Bool(get(fields_cfg, "air_mass_per_area", true)),
+        Bool(get(fields_cfg, "column_air_mass_per_area", true)),
+    )
+end
+
+output_field_spec() = output_field_spec(Dict{String, Any}())
+tracer_fields(fields::OutputFieldSpec, name::Symbol) =
+    get(fields.tracer_overrides, name, fields.default_tracer)
 
 function _output_options(output_cfg::AbstractDict, ::Type{FT}) where FT <: AbstractFloat
     return SnapshotWriteOptions(float_type = FT,
@@ -137,9 +260,10 @@ function runtime_output_spec(output_cfg::AbstractDict, ::Type{FT};
                                 fallback_hours = fallback_hours)
     partition = _output_partition(output_cfg)
     options = _output_options(output_cfg, FT)
+    fields = output_field_spec(get(output_cfg, "fields", Dict{String, Any}()))
     enabled = Bool(get(output_cfg, "enabled", true))
     path = _output_path(output_cfg, default_path)
-    return RuntimeOutputSpec(path, schedule, partition, options, enabled)
+    return RuntimeOutputSpec(path, schedule, partition, options, fields, enabled)
 end
 
 function _insert_suffix_before_extension(path::AbstractString, suffix::AbstractString)

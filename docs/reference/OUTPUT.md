@@ -68,6 +68,32 @@ writes one complete NetCDF per daily binary. If `path` contains `{date}`,
 `{YYYYMMDD}`, or `{day}`, those tokens are replaced; otherwise the date suffix
 is inserted before `.nc`, e.g. `run.nc` becomes `run_20211201.nc`.
 
+Field selection is explicit and independent of cadence:
+
+```toml
+[output.fields]
+tracers = ["co2_natural", "co2_fossil"]  # omit or use "all" for every tracer
+layers = "selected"                      # "full" | "selected" | "none"
+levels = [1, 32, 64]                     # 1-based model levels for selected
+column_mean = true
+column_mass_per_area = false
+air_mass_layers = "none"                 # same choices as layers
+air_mass = false
+air_mass_per_area = false
+column_air_mass_per_area = true
+
+[output.fields.per_tracer.sf6]
+layers = "none"
+column_mean = true
+column_mass_per_area = false
+```
+
+Defaults preserve the historical full diagnostic file: all tracers, all
+levels, tracer column means, tracer column mass per area, stored air mass,
+layer air mass per area, and column air mass per area. Production smoke runs
+should usually set `layers = "none"` and keep `column_mean = true` to avoid
+writing multi-GB per-level files when only maps/timeseries are needed.
+
 Legacy keys remain accepted while configs migrate:
 
 ```toml

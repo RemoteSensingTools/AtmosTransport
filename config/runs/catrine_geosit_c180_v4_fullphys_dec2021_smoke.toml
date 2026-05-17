@@ -75,3 +75,13 @@ kind = "decay"
 path = "~/data/AtmosTransport/output/catrine_geosit_c180_v4_fullphys_dec2021_5day_smoke.nc"
 cadence_hours = 3
 split = "single"
+
+[output.fields]
+tracers = ["rn222", "co2_natural", "sf6", "co2_fossil"]
+layers = "none"
+column_mean = true
+column_mass_per_area = false
+air_mass_layers = "none"
+air_mass = false
+air_mass_per_area = false
+column_air_mass_per_area = true

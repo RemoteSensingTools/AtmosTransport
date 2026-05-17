@@ -351,7 +351,8 @@ function _write_output_frames!(timer::RunProgressTimer,
     timed_io_write!(timer,
         () -> write_snapshot_netcdf(path, frames, grid;
                                     mass_basis = mass_basis,
-                                    options = spec.options))
+                                    options = spec.options,
+                                    fields = spec.fields))
     return path
 end
 

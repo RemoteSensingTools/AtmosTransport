@@ -58,6 +58,10 @@ from `hours`, `cadence_hours`, or `cadence_seconds`. `split = "single"` writes
 one file for the run; `split = "daily"` writes one file per daily binary. The
 variables and their dimensions depend on the target topology:
 
+`[output.fields]` can further restrict output to selected tracers, column means
+only, or selected model levels. If a variable is missing, first check whether
+the run config intentionally disabled that product.
+
 For a lat-lon snapshot the actual variable list looks like (verified
 against `config/runs/quickstart/ll72x37_advonly.toml`):
 

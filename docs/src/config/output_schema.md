@@ -11,6 +11,12 @@ The writer entry point is `src/Output/netcdf_writer.jl`
 (`write_snapshot_netcdf` at line 81) which dispatches on the runtime
 mesh type into one of three per-topology writers.
 
+The variable list is controlled by `[output.fields]`. By default every field
+below is written. Setting `layers = "none"` suppresses per-level tracer VMR
+variables; setting `layers = "selected"` writes the same variable names on the
+`lev_selected` dimension. `tracers = [...]` restricts all tracer diagnostics to
+that subset, with optional `[output.fields.per_tracer.<name>]` overrides.
+
 ## Global attributes
 
 Every snapshot file carries a CF-style global header (declared in
@@ -37,6 +43,7 @@ Dimensions:
 | `lat` | `Ny` |
 | `lev` | `Nz` (`positive = "down"` — `lev[1]` is TOA, `lev[end]` is surface) |
 | `time` | one entry per configured output time that actually fired |
+| `lev_selected` | only present when `[output.fields] layers = "selected"` or `air_mass_layers = "selected"` |
 
 Coordinate variables:
 

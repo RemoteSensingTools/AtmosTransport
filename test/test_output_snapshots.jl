@@ -28,6 +28,7 @@ using .AtmosTransport
             @test snapshot_hours(spec) == [0.0, 3.0, 6.0, 9.0, 12.0]
             @test spec.options.float_type === Float32
             @test spec.options.deflate_level == 1
+            @test layer_selection(output_fields(spec).default_tracer) === :full
 
             daily = runtime_output_spec(Dict{String, Any}(
                                             "path" => joinpath(dir, "run_{date}.nc"),
@@ -58,6 +59,24 @@ using .AtmosTransport
                                                                "path" => path,
                                                                "cadence_hours" => 0),
                                                            Float32)
+
+            fields = output_field_spec(Dict{String, Any}(
+                "tracers" => ["co2"],
+                "layers" => "selected",
+                "levels" => [3, 1, 3],
+                "column_mean" => true,
+                "column_mass_per_area" => false,
+                "air_mass_layers" => "none",
+                "air_mass" => false,
+                "air_mass_per_area" => false,
+                "column_air_mass_per_area" => true,
+                "per_tracer" => Dict("co2" => Dict("layers" => "full"))))
+            @test fields.tracers == [:co2]
+            @test fields.selected_levels == [1, 3]
+            @test air_mass_layer_selection(fields) === :none
+            @test layer_selection(fields.default_tracer) === :selected
+            @test layer_selection(tracer_fields(fields, :co2)) === :full
+            @test !tracer_fields(fields, :co2).column_mass_per_area
         end
     end
 
@@ -108,6 +127,52 @@ using .AtmosTransport
                 @test haskey(ds, "co2_column_mass_per_area")
                 @test NCDatasets.deflate(ds["co2"].var) == (true, true, 1)
                 @test ds["co2_column_mean"][1, 1, 1] ≈ 450e-6
+                @test ds["co2"][1, 1, 2, 1] ≈ 600e-6
+            end
+        end
+    end
+
+    @testset "writer honors tracer and layer field selection" begin
+        mktempdir() do dir
+            mesh = LatLonMesh(; FT=Float64, Nx=4, Ny=3)
+            grid = AtmosGrid(mesh, HybridSigmaPressure(Float64[0, 1, 2, 3], Float64[0, 0.3, 0.6, 1]),
+                             CPU(); FT=Float64)
+            air = fill(2.0, 4, 3, 3)
+            co2 = similar(air)
+            sf6 = similar(air)
+            for k in 1:3
+                co2[:, :, k] .= (300e-6 + 100e-6 * k) .* air[:, :, k]
+                sf6[:, :, k] .= (5e-12 + 1e-12 * k) .* air[:, :, k]
+            end
+            frame = SnapshotFrame(0.0, air, Dict(:co2 => co2, :sf6 => sf6), :dry)
+            fields = output_field_spec(Dict{String, Any}(
+                "tracers" => ["co2"],
+                "layers" => "selected",
+                "levels" => [1, 3],
+                "column_mean" => true,
+                "column_mass_per_area" => false,
+                "air_mass_layers" => "none",
+                "air_mass" => false,
+                "air_mass_per_area" => false,
+                "column_air_mass_per_area" => true))
+            path = write_snapshot_netcdf(joinpath(dir, "selected.nc"), [frame], grid;
+                                         mass_basis=:dry,
+                                         options=SnapshotWriteOptions(float_type=Float64),
+                                         fields=fields)
+
+            NCDataset(path, "r") do ds
+                @test haskey(ds, "lev_selected")
+                @test ds["lev_selected"][:] == [1.0, 3.0]
+                @test !haskey(ds, "air_mass")
+                @test !haskey(ds, "air_mass_per_area")
+                @test haskey(ds, "column_air_mass_per_area")
+                @test haskey(ds, "co2")
+                @test size(ds["co2"]) == (4, 3, 2, 1)
+                @test haskey(ds, "co2_column_mean")
+                @test !haskey(ds, "co2_column_mass_per_area")
+                @test !haskey(ds, "sf6")
+                @test !haskey(ds, "sf6_column_mean")
+                @test ds["co2"][1, 1, 1, 1] ≈ 400e-6
                 @test ds["co2"][1, 1, 2, 1] ≈ 600e-6
             end
         end

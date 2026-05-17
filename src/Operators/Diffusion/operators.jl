@@ -148,10 +148,9 @@ function apply!(state::CubedSphereState, meteo, grid,
     workspace === nothing && throw(ArgumentError(
         "ImplicitVerticalDiffusion.apply!: workspace is required " *
         "(cubed-sphere diffusion needs panel-native w_scratch and dz_scratch)"))
-    for (_, rm_panels) in eachtracer(state)
-        apply_vertical_diffusion_vmr!(rm_panels, state.air_mass, op, workspace,
-                                      dt, meteo; halo_width = state.halo_width)
-    end
+    apply_vertical_diffusion_vmr!(state.tracers_raw, state.air_mass, op,
+                                  workspace, dt, meteo;
+                                  halo_width = state.halo_width)
     return state
 end
 

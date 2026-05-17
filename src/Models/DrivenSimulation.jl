@@ -111,9 +111,7 @@ _refresh_state_halos!(state, _mesh) = state
 
 function _refresh_state_halos!(state::CubedSphereState, mesh::CubedSphereMesh)
     fill_panel_halos!(state.air_mass, mesh; dir = 1)
-    for idx in 1:length(tracer_names(state))
-        fill_panel_halos!(get_tracer(state, idx), mesh; dir = 1)
-    end
+    fill_panel_halos!(state.tracers_raw, mesh; dir = 1)
     return state
 end
 

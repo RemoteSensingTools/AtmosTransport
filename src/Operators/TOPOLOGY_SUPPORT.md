@@ -4,7 +4,7 @@ Canonical source of truth for which operators support which
 topologies. Module READMEs reference this file rather than
 duplicating coverage claims.
 
-**Last verified:** 2026-04-21 (plan 21 Phase 5 + CS chemistry follow-up)
+**Last verified:** 2026-05-16 (Plan 41 CS packed split-sweep follow-up)
 
 ## Topologies
 
@@ -36,9 +36,10 @@ For each ✅ combination, the authoritative dispatch method:
 - **LatLon** — rank-4 Strang palindrome `X→Y→Z→V(dt)→Z→Y→X` in
   [`Advection/StrangSplitting.jl`](Advection/StrangSplitting.jl)
 - **RG** — face-indexed `H→V(dt)→H` in the same file
-- **CS** — panel-oriented
-  [`strang_split_cs!`](Advection/CubedSphereStrang.jl) with halo
-  exchanges between panels
+- **CS** — panel-oriented packed-tracer
+  [`strang_split_cs_mt!`](Advection/CubedSphereStrang.jl) for split-sweep
+  schemes, with [`strang_split_cs!`](Advection/CubedSphereStrang.jl) retained
+  as the scalar reference and Lin-Rood support path
 
 ### Diffusion
 
@@ -48,7 +49,8 @@ branch methods in [`Diffusion/operators.jl`](Diffusion/operators.jl):
 - rank-4 (LatLon)
 - rank-3 (RG face-indexed, multi-tracer)
 - rank-2 (RG face-indexed, single-tracer)
-- `NTuple{6, Array{FT, 3}}` (CS)
+- `NTuple{6, Array{FT, 4}}` (CS packed production path)
+- `NTuple{6, Array{FT, 3}}` (CS scalar compatibility/reference path)
 
 ### Surface flux
 

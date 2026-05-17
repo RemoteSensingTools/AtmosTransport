@@ -108,7 +108,7 @@ identity binary (mass fluxes ≡ 0).
 | Subtype | Use |
 |---|---|
 | `NoDiffusion()` | Identity no-op; default when `[diffusion]` is absent or `kind = "none"`. |
-| `ImplicitVerticalDiffusion{FT, KzF}` | Backward-Euler vertical diffusion driven by an `AbstractTimeVaryingField` Kz. |
+| `ImplicitVerticalDiffusion{FT, KzF, SFC}` | Backward-Euler vertical diffusion driven by an `AbstractTimeVaryingField` Kz. `SFC` chooses legacy split surface flux placement or lower-boundary flux placement. |
 
 The implicit solver runs a per-column Thomas tridiagonal solve; the
 column kernel is exposed as `solve_tridiagonal!` for tests and
@@ -125,8 +125,12 @@ value = 1.0      # Kz [m²/s]; broadcast to all (i, j, k)
 ```
 
 `kind = "none"` (or omitting the block entirely) selects `NoDiffusion`.
-Profile / derived / precomputed Kz fields exist in
-`src/State/Fields/` but are not yet TOML-selectable — see
+Cubed-sphere binaries carrying PBL surface sections can use
+`kind = "tm5_beljaars_viterbo_local_kz"` (`"pbl"` remains a legacy alias).
+`surface_flux_boundary = true` places configured surface fluxes at the lower
+boundary of the implicit vertical solve (`S(dt) -> V(dt)`) instead of the
+legacy midpoint split (`V(dt/2) -> S(dt) -> V(dt/2)`).
+Profile / derived / precomputed Kz fields exist in `src/State/Fields/` — see
 [State & basis](@ref) for the full field-type list.
 
 ## Convection

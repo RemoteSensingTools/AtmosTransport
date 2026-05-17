@@ -9,6 +9,23 @@
 # mutating `state.tracers_raw` in place and returning `state`.
 
 """
+    AbstractSurfaceFluxCoupling
+
+Typed policy for where configured surface fluxes enter relative to a
+vertical diffusion/mixing operator.
+
+- `SplitSurfaceFluxCoupling`: existing Strang-center composition,
+  `V(dt/2) -> S(dt) -> V(dt/2)`.
+- `DiffusiveSurfaceFluxBoundary`: GCHP/VDIFF-style lower-boundary
+  placement, `S(dt) -> V(dt)`, so fresh surface flux is included in
+  the implicit vertical mixing solve.
+"""
+abstract type AbstractSurfaceFluxCoupling end
+
+struct SplitSurfaceFluxCoupling <: AbstractSurfaceFluxCoupling end
+struct DiffusiveSurfaceFluxBoundary <: AbstractSurfaceFluxCoupling end
+
+"""
     NoDiffusion()
 
 Identity operator — `apply!` is a no-op. Default for configurations
@@ -18,6 +35,8 @@ when the palindrome's V position is unoccupied (Commit 4).
 struct NoDiffusion <: AbstractDiffusion end
 
 Adapt.adapt_structure(_to, op::NoDiffusion) = op
+
+@inline uses_diffusive_surface_flux_boundary(::NoDiffusion) = false
 
 """
     ImplicitVerticalDiffusion(; kz_field)
@@ -64,17 +83,20 @@ palindrome integration.
   `AbstractTimeVaryingField{FT, 3}` providing cell-centered Kz values
   [m²/s geometric].
 """
-struct ImplicitVerticalDiffusion{FT, KzF} <: AbstractDiffusion
-    kz_field :: KzF
+struct ImplicitVerticalDiffusion{FT, KzF, SFC <: AbstractSurfaceFluxCoupling} <: AbstractDiffusion
+    kz_field              :: KzF
+    surface_flux_coupling :: SFC
 
-    function ImplicitVerticalDiffusion{FT, KzF}(kz_field::KzF) where {FT, KzF}
+    function ImplicitVerticalDiffusion{FT, KzF, SFC}(kz_field::KzF,
+                                                     surface_flux_coupling::SFC) where {
+                                                     FT, KzF, SFC <: AbstractSurfaceFluxCoupling}
         (KzF <: AbstractTimeVaryingField{FT, 2} ||
          KzF <: AbstractTimeVaryingField{FT, 3} ||
          KzF <: AbstractCubedSphereField{FT}) ||
             throw(ArgumentError("ImplicitVerticalDiffusion: kz_field must be an " *
                 "AbstractTimeVaryingField{$FT, 2}, AbstractTimeVaryingField{$FT, 3}, " *
                 "or AbstractCubedSphereField{$FT}; got $KzF"))
-        new{FT, KzF}(kz_field)
+        new{FT, KzF, SFC}(kz_field, surface_flux_coupling)
     end
 end
 
@@ -91,13 +113,21 @@ Keyword constructor. `FT` is inferred from `kz_field`.
         "AbstractTimeVaryingField or AbstractCubedSphereField; got $(typeof(kz_field))"))
 end
 
-function ImplicitVerticalDiffusion(; kz_field)
+function ImplicitVerticalDiffusion(; kz_field,
+                                   surface_flux_coupling::AbstractSurfaceFluxCoupling =
+                                       SplitSurfaceFluxCoupling())
     FT = _diffusion_field_eltype(kz_field)
-    return ImplicitVerticalDiffusion{FT, typeof(kz_field)}(kz_field)
+    return ImplicitVerticalDiffusion{FT, typeof(kz_field),
+                                     typeof(surface_flux_coupling)}(
+        kz_field, surface_flux_coupling)
 end
 
 Adapt.adapt_structure(to, op::ImplicitVerticalDiffusion) =
-    ImplicitVerticalDiffusion(; kz_field = Adapt.adapt(to, op.kz_field))
+    ImplicitVerticalDiffusion(; kz_field = Adapt.adapt(to, op.kz_field),
+                              surface_flux_coupling = op.surface_flux_coupling)
+
+@inline uses_diffusive_surface_flux_boundary(op::ImplicitVerticalDiffusion) =
+    op.surface_flux_coupling isa DiffusiveSurfaceFluxBoundary
 
 # =========================================================================
 # apply!

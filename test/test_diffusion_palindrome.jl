@@ -30,6 +30,8 @@ using Test
 using AtmosTransport: CellState, AdvectionWorkspace,
                       ConstantField, PreComputedKzField,
                       NoDiffusion, ImplicitVerticalDiffusion,
+                      SplitSurfaceFluxCoupling, DiffusiveSurfaceFluxBoundary,
+                      SurfaceFluxSource, SurfaceFluxOperator,
                       UpwindScheme,
                       apply_vertical_diffusion!
 using AtmosTransport.Operators.Advection: strang_split_mt!
@@ -231,7 +233,46 @@ end
 end
 
 # =========================================================================
-# 6. dt required when diffusion_op != NoDiffusion
+# 6. Surface flux boundary coupling
+# =========================================================================
+
+@testset "DiffusiveSurfaceFluxBoundary applies S(dt) as diffusion RHS" begin
+    FT = Float64
+    Nx, Ny, Nz, Nt = 2, 2, 6, 1
+    dt = FT(3.0)
+
+    rm_boundary, m, am, bm, cm, scheme, ws_boundary =
+        _make_palindrome_inputs(FT; Nx = Nx, Ny = Ny, Nz = Nz, Nt = Nt,
+                                flux_val = 0.0)
+    fill!(rm_boundary, zero(FT))
+    fill!(ws_boundary.dz_scratch, FT(100.0))
+
+    rate = fill(FT(2.0), Nx, Ny)
+    emissions = SurfaceFluxOperator(SurfaceFluxSource(:CO2, rate))
+    op_boundary = ImplicitVerticalDiffusion(;
+        kz_field = ConstantField{FT, 3}(FT(1.0)),
+        surface_flux_coupling = DiffusiveSurfaceFluxBoundary())
+
+    strang_split_mt!(rm_boundary, m, am, bm, cm, scheme, ws_boundary;
+                     diffusion_op = op_boundary,
+                     emissions_op = emissions,
+                     tracer_names = (:CO2,),
+                     dt = dt)
+
+    rm_ref = zeros(FT, Nx, Ny, Nz, Nt)
+    rm_ref[:, :, Nz, 1] .= rate .* dt
+    ws_ref = AdvectionWorkspace(copy(m); n_tracers = Nt)
+    fill!(ws_ref.dz_scratch, FT(100.0))
+    op_ref = ImplicitVerticalDiffusion(;
+        kz_field = ConstantField{FT, 3}(FT(1.0)),
+        surface_flux_coupling = SplitSurfaceFluxCoupling())
+    apply_vertical_diffusion!(rm_ref, op_ref, ws_ref, dt)
+
+    @test rm_boundary ≈ rm_ref atol=1e-12 rtol=1e-12
+end
+
+# =========================================================================
+# 7. dt required when diffusion_op != NoDiffusion
 # =========================================================================
 
 @testset "ImplicitVerticalDiffusion with dt = nothing is rejected at runtime" begin

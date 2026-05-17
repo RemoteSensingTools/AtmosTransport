@@ -119,8 +119,25 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
         )
         @test pbl_recipe.diffusion isa ImplicitVerticalDiffusion
         @test pbl_recipe.diffusion.kz_field isa WindowPBLKzField
+        @test !uses_diffusive_surface_flux_boundary(pbl_recipe.diffusion)
+
+        named_pbl_recipe = build_cs_physics_recipe(
+            Dict("diffusion" => Dict("kind" => "tm5_beljaars_viterbo_local_kz",
+                                     "surface_flux_boundary" => true)),
+            StubPBLReader(),
+            Float64,
+        )
+        @test named_pbl_recipe.diffusion isa ImplicitVerticalDiffusion
+        @test named_pbl_recipe.diffusion.kz_field isa WindowPBLKzField
+        @test uses_diffusive_surface_flux_boundary(named_pbl_recipe.diffusion)
+
         @test_throws ArgumentError build_cs_physics_recipe(
             Dict("diffusion" => Dict("kind" => "pbl")), StubReader(false, false), Float64)
+        @test_throws ArgumentError build_cs_physics_recipe(
+            Dict("diffusion" => Dict("kind" => "geoschem_holtslag_boville_vdiff")),
+            StubPBLReader(),
+            Float64,
+        )
 
         # Section B (codex) P0: legacy `type = "..."` schema must NOT
         # silently fall through to NoDiffusion. It must error with a

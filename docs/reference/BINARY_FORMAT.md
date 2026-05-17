@@ -328,8 +328,14 @@ Appear in `payload_sections` order when present:
 | `qv_end` | (Nx, Ny, Nz) | (ncell, Nz) |
 | `cmfmc` | (Nx, Ny, Nz+1) | (ncell, Nz+1) |
 | `temperature` | (Nx, Ny, Nz) | (ncell, Nz) |
+| `vdiff_u`, `vdiff_v`, `vdiff_t`, `vdiff_qv` | (Nx, Ny, Nz) | (ncell, Nz) |
 | surface fields | per-field (Nx, Ny) | per-field (ncell,) |
 | flux deltas | matching hflux+cm shapes | matching shapes |
+
+For cubed-sphere binaries the GCHP Holtslag-Boville VDIFF sections are stored
+as six panel arrays with shape `6 × (Nc, Nc, Nz)`. The capability flag
+`binary_capabilities(reader).gchp_vdiff` is true only when all four VDIFF
+sections and the PBL surface payload are present.
 
 ---
 
@@ -456,6 +462,7 @@ load_qv_pair_window!(reader, win)      # → (; qv_start, qv_end) or nothing
 load_flux_delta_window!(reader, win)   # → NamedTuple or nothing
 load_cmfmc_window!(reader, win)        # → Array or nothing
 load_temperature_window!(reader, win)  # → Array or nothing
+load_cs_window(reader, win).vdiff      # → (; u, v, t, qv) or nothing for CS
 ```
 
 All return `nothing` when the section is absent.

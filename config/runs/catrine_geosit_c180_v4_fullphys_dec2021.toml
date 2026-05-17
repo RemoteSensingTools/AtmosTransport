@@ -68,7 +68,9 @@ scheme = "ppm"
   time_index = 12        # December soil-emission climatology
 
 [diffusion]
-kind = "pbl"             # uses PBLH + USTAR + HFLUX + T2M from v4 binary
+# uses PBLH + USTAR + HFLUX + T2M from v4 binary
+kind = "tm5_beljaars_viterbo_local_kz"
+surface_flux_boundary = true
 
 [convection]
 kind = "cmfmc"           # uses CMFMC + DTRAIN from v4 binary

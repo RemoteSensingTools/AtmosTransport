@@ -36,6 +36,8 @@ import ..AbstractDiffusion                # global root from src/Operators/Abstr
 export solve_tridiagonal!, build_diffusion_coefficients
 export _vertical_diffusion_kernel!
 export AbstractDiffusion, NoDiffusion, ImplicitVerticalDiffusion
+export AbstractSurfaceFluxCoupling, SplitSurfaceFluxCoupling,
+       DiffusiveSurfaceFluxBoundary, uses_diffusive_surface_flux_boundary
 export apply_vertical_diffusion!, apply_vertical_diffusion_vmr!
 export fill_dz_hydrostatic_constT!
 

@@ -37,6 +37,7 @@ toml               = "config/met_sources/geosit.toml"
 root_dir           = "/home/cfranken/data/AtmosTransport/met/geosit/C180/raw_catrine"
 include_surface    = true     # writes the PBL section for runtime diffusion
 include_convection = true     # writes CMFMC + DTRAIN for runtime convection
+include_vdiff_fields = true   # writes U/V/T/QV inputs for GCHP Holtslag-Boville VDIFF
 
 [output]
 directory  = "/home/cfranken/data/AtmosTransport/met/geosit/C180/transport_binary_v4_merge025hpa_adaptive_f32"

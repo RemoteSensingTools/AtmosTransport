@@ -61,6 +61,7 @@ Base.@kwdef struct GEOSSettings{flavor} <: AbstractGEOSSettings
     level_orientation   :: Symbol  = :auto    # :auto, :bottom_up, :top_down
     include_surface     :: Bool    = false
     include_convection  :: Bool    = false
+    include_vdiff_fields :: Bool   = false
     physics_dir         :: String  = ""       # GEOS-FP 0.25°/CS fallback for surface + convection
     physics_layout      :: Symbol  = :auto    # :auto, :latlon_025, :cubed_sphere
     coefficients_file   :: String  = "config/geos_L72_coefficients.toml"
@@ -283,6 +284,7 @@ mutable struct GEOSDayHandles{V <: HybridSigmaPressure}
     a1          :: Union{Nothing, NCDataset}
     a3dyn       :: Union{Nothing, NCDataset}
     a3mste      :: Union{Nothing, NCDataset}
+    i3          :: Union{Nothing, NCDataset}
     orientation :: Symbol                          # :bottom_up or :top_down
     vc          :: V                               # hybrid sigma-pressure (top-down)
 end
@@ -316,13 +318,18 @@ function open_geos_day(settings::GEOSSettings, date::Date;
         end
     end
 
-    a1     = settings.include_surface ? NCDataset(geos_collection_path(settings, date, "A1"), "r") : nothing
+    need_surface = settings.include_surface || settings.include_vdiff_fields
+    need_a3dyn = settings.include_convection || settings.include_vdiff_fields
+    a1     = need_surface ? NCDataset(geos_collection_path(settings, date, "A1"), "r") : nothing
     a3dyn  = nothing
     a3mste = nothing
-    if settings.include_convection
+    if need_a3dyn
         a3dyn  = NCDataset(geos_collection_path(settings, date, "A3dyn"),  "r")
+    end
+    if settings.include_convection
         a3mste = NCDataset(geos_collection_path(settings, date, "A3mstE"), "r")
     end
+    i3 = settings.include_vdiff_fields ? NCDataset(geos_collection_path(settings, date, "I3"), "r") : nothing
 
     orientation = settings.level_orientation === :auto ?
                   detect_level_orientation(ctm_a1) :
@@ -330,11 +337,14 @@ function open_geos_day(settings::GEOSSettings, date::Date;
 
     vc = load_hybrid_coefficients(expand_data_path(settings.coefficients_file))
 
-    return GEOSDayHandles(ctm_a1, ctm_i1, next_ctm_i1, a1, a3dyn, a3mste, orientation, vc)
+    return GEOSDayHandles(ctm_a1, ctm_i1, next_ctm_i1, a1, a3dyn, a3mste, i3, orientation, vc)
 end
 
 function open_geosfp_native_day(settings::GEOSSettings{:geosfp}, date::Date;
                                 next_day_handle::Bool = true)
+    settings.include_vdiff_fields &&
+        throw(ArgumentError("GEOS-FP GCHP VDIFF binary fields are not wired yet; " *
+                            "use GEOS-IT C180 or add the required native/fallback T/U/V/QV collections."))
     ctm = [NCDataset(geosfp_native_hourly_ctm_path(settings, date, h), "r")
            for h in 0:23]
     next_ctm = nothing
@@ -361,6 +371,7 @@ function close_geos_day!(handles::GEOSDayHandles)
     handles.a1          === nothing || close(handles.a1)
     handles.a3dyn       === nothing || close(handles.a3dyn)
     handles.a3mste      === nothing || close(handles.a3mste)
+    handles.i3          === nothing || close(handles.i3)
     return nothing
 end
 
@@ -643,6 +654,23 @@ function _validate_geos_convection_panels!(field, name::String, path::String, wi
     return nothing
 end
 
+function _validate_geos_vdiff_panels!(vdiff, win_idx::Int)
+    for name in (:u, :v, :t, :qv)
+        field = getfield(vdiff, name)
+        all(p -> all(isfinite, p), field) ||
+            error("GEOS GCHP VDIFF $(name) contains non-finite values in window $(win_idx)")
+    end
+    maximum(p -> maximum(abs, p), vdiff.u) < 500 ||
+        error("GEOS GCHP VDIFF U wind magnitude is out of range in window $(win_idx)")
+    maximum(p -> maximum(abs, p), vdiff.v) < 500 ||
+        error("GEOS GCHP VDIFF V wind magnitude is out of range in window $(win_idx)")
+    minimum(minimum, vdiff.t) > 100 && maximum(maximum, vdiff.t) < 400 ||
+        error("GEOS GCHP VDIFF temperature is out of range in window $(win_idx)")
+    minimum(minimum, vdiff.qv) >= 0 && maximum(maximum, vdiff.qv) < 0.2 ||
+        error("GEOS GCHP VDIFF specific humidity is out of range in window $(win_idx)")
+    return nothing
+end
+
 """
     _ps_pa_factor(var) -> FT scaling
 
@@ -760,7 +788,8 @@ _native_output_filename(::AbstractGEOSSettings, date::Date, FT::Type) =
 # payload sections, and the runtime `CMFMCConvection` operator consumes
 # them via `ConvectionForcing` (GCHP RAS / Grell-Freitas, dry-basis).
 has_convection(s::GEOSSettings) = s.include_convection
-has_surface(s::GEOSSettings) = s.include_surface
+has_surface(s::GEOSSettings) = s.include_surface || s.include_vdiff_fields
+has_vdiff_fields(s::GEOSSettings) = s.include_vdiff_fields
 
 # ---------------------------------------------------------------------------
 # Canonical AbstractMetSettings interface implementations.
@@ -815,11 +844,18 @@ function allocate_raw_window(settings::GEOSSettings; FT::Type{<:AbstractFloat}, 
     m       = panels_3d(); ps      = panels_2d(); qv      = panels_3d()
     m_next  = panels_3d(); ps_next = panels_2d(); qv_next = panels_3d()
     am      = panels_3d(); bm      = panels_3d()
-    surface = settings.include_surface ? (
+    need_surface = settings.include_surface || settings.include_vdiff_fields
+    surface = need_surface ? (
         pblh  = panels_2d(),
         ustar = panels_2d(),
         hflux = panels_2d(),
         t2m   = panels_2d(),
+    ) : nothing
+    vdiff = settings.include_vdiff_fields ? (
+        u  = panels_3d(),
+        v  = panels_3d(),
+        t  = panels_3d(),
+        qv = panels_3d(),
     ) : nothing
     cmfmc   = settings.include_convection ? panels_3d_iface() : nothing
     dtrain  = settings.include_convection ? panels_3d()       : nothing
@@ -828,7 +864,7 @@ function allocate_raw_window(settings::GEOSSettings; FT::Type{<:AbstractFloat}, 
         m_next,  ps_next, qv_next,
         am,      bm,
         nothing, nothing,
-        surface,
+        surface, vdiff,
         cmfmc,   dtrain,
     )
 end
@@ -887,9 +923,11 @@ function read_window!(raw::RawWindow{FT}, settings::GEOSSettings,
         _scale_flux!(raw.bm[p], mfyc_raw[p], inv_dt)
     end
 
-    if settings.include_surface
+    if settings.include_surface || settings.include_vdiff_fields
         _read_geos_surface_window!(raw, handles, win_idx)
     end
+    settings.include_vdiff_fields &&
+        _read_geos_vdiff_window!(raw, handles, win_idx, or)
 
     # ---- Optional convection forcing (GCHP RAS / Grell-Freitas inputs) ----
     if settings.include_convection
@@ -966,6 +1004,33 @@ function _read_geos_surface_window!(raw::RawWindow{FT},
         copyto!(raw.surface.hflux[p], hflux[p])
         copyto!(raw.surface.t2m[p],   t2m[p])
     end
+    return raw
+end
+
+function _read_geos_vdiff_window!(raw::RawWindow{FT},
+                                  handles::GEOSDayHandles,
+                                  win_idx::Int,
+                                  orientation::Symbol) where {FT}
+    handles.a3dyn === nothing &&
+        error("settings.include_vdiff_fields=true but A3dyn handle is missing; VDIFF needs U/V")
+    handles.i3 === nothing &&
+        error("settings.include_vdiff_fields=true but I3 handle is missing; VDIFF needs T")
+    raw.vdiff === nothing &&
+        error("RawWindow.vdiff must be allocated when GCHP VDIFF fields are enabled")
+    raw.qv === nothing &&
+        error("RawWindow.qv must be allocated when GCHP VDIFF fields are enabled")
+
+    a3_idx = _a3_index_for_window(win_idx)
+    u = _read_panels_3d(handles.a3dyn, "U", a3_idx, orientation; FT=FT)
+    v = _read_panels_3d(handles.a3dyn, "V", a3_idx, orientation; FT=FT)
+    t = _read_panels_3d(handles.i3, "T", a3_idx, orientation; FT=FT)
+    for p in 1:CS_PANEL_COUNT
+        copyto!(raw.vdiff.u[p],  u[p])
+        copyto!(raw.vdiff.v[p],  v[p])
+        copyto!(raw.vdiff.t[p],  t[p])
+        copyto!(raw.vdiff.qv[p], raw.qv[p])
+    end
+    _validate_geos_vdiff_panels!(raw.vdiff, win_idx)
     return raw
 end
 

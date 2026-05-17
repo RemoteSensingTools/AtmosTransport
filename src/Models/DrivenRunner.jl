@@ -50,7 +50,9 @@ using ..State: AbstractMassBasis, DryBasis, MoistBasis, CellState,
                 CubedSphereState, total_air_mass, total_mass, tracer_names,
                 tracer_index, get_tracer
 using ..Grids: nlevels
-using ..Operators: LinRoodPPMScheme, PPMScheme, SlopesScheme, UpwindScheme
+using ..Operators: LinRoodPPMScheme, PPMScheme, SlopesScheme, UpwindScheme,
+                  ImplicitVerticalDiffusion,
+                  uses_diffusive_surface_flux_boundary
 using ..Architectures: CPU, GPU,
                        runtime_backend_from_config, is_gpu_backend,
                        ensure_backend_runtime!, backend_array_adapter,
@@ -271,6 +273,13 @@ _advection_label(::PPMScheme) = "PPM"
 _advection_label(::SlopesScheme) = "Slopes"
 _advection_label(::UpwindScheme) = "Upwind"
 
+_diffusion_label(op) = String(nameof(typeof(op)))
+function _diffusion_label(op::ImplicitVerticalDiffusion)
+    coupling = uses_diffusive_surface_flux_boundary(op) ? ", surface_flux=boundary" :
+               ", surface_flux=split"
+    return string(nameof(typeof(op)), coupling)
+end
+
 function _schedule_label(driver)
     schedule = steps_per_window_schedule(driver)
     if isempty(schedule)
@@ -294,7 +303,7 @@ function _physics_summary_lines(; topology, mesh_label, levels, halo_width,
         @sprintf("|-- numerics:  scheme=%s, FT=%s, backend=%s",
                  scheme, FT, backend),
         @sprintf("|-- physics:   diffusion=%s, convection=%s",
-                 nameof(typeof(recipe.diffusion)),
+                 _diffusion_label(recipe.diffusion),
                  nameof(typeof(recipe.convection))),
         @sprintf("|-- schedule:  window_dt=%.0fs, steps/window=%s, binaries=%d",
                  Float64(window_dt(driver)), _schedule_label(driver),

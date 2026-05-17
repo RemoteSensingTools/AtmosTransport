@@ -41,9 +41,11 @@ stay `nothing` and `am`/`bm` are written through directly after vertical
 merging.
 
 `cmfmc`/`dtrain` are filled only when the source supports convection and
-the user has enabled it via `settings.include_convection`.
+the user has enabled it via `settings.include_convection`. `vdiff` carries
+optional Holtslag-Boville VDIFF source fields `(u, v, t, qv)` when the source
+can archive them into the transport binary for runtime diffusion.
 """
-struct RawWindow{FT <: AbstractFloat, P, V, S}
+struct RawWindow{FT <: AbstractFloat, P, V, S, VD}
     # left endpoint (t_n)
     m       :: V
     ps      :: P
@@ -62,6 +64,8 @@ struct RawWindow{FT <: AbstractFloat, P, V, S}
     v       :: Union{Nothing, V}
     # optional raw PBL surface fields `(pblh, ustar, hflux, t2m)`
     surface :: S
+    # optional GCHP Holtslag-Boville VDIFF fields `(u, v, t, qv)`
+    vdiff   :: VD
     # optional convection sources
     cmfmc   :: Union{Nothing, V}   # at interfaces
     dtrain  :: Union{Nothing, V}   # at centers
@@ -72,12 +76,12 @@ function RawWindow{FT, P, V}(m, ps, qv,
                              am, bm,
                              u, v,
                              cmfmc, dtrain) where {FT <: AbstractFloat, P, V}
-    return RawWindow{FT, P, V, Nothing}(
+    return RawWindow{FT, P, V, Nothing, Nothing}(
         m, ps, qv,
         m_next, ps_next, qv_next,
         am, bm,
         u, v,
-        nothing,
+        nothing, nothing,
         cmfmc, dtrain)
 end
 
@@ -87,12 +91,27 @@ function RawWindow{FT, P, V}(m, ps, qv,
                              u, v,
                              surface,
                              cmfmc, dtrain) where {FT <: AbstractFloat, P, V}
-    return RawWindow{FT, P, V, typeof(surface)}(
+    return RawWindow{FT, P, V, typeof(surface), Nothing}(
         m, ps, qv,
         m_next, ps_next, qv_next,
         am, bm,
         u, v,
-        surface,
+        surface, nothing,
+        cmfmc, dtrain)
+end
+
+function RawWindow{FT, P, V}(m, ps, qv,
+                             m_next, ps_next, qv_next,
+                             am, bm,
+                             u, v,
+                             surface, vdiff,
+                             cmfmc, dtrain) where {FT <: AbstractFloat, P, V}
+    return RawWindow{FT, P, V, typeof(surface), typeof(vdiff)}(
+        m, ps, qv,
+        m_next, ps_next, qv_next,
+        am, bm,
+        u, v,
+        surface, vdiff,
         cmfmc, dtrain)
 end
 
@@ -185,3 +204,11 @@ Whether this source can populate raw PBL surface fields in `RawWindow.surface`.
 Sources gate actual reads behind their settings flags.
 """
 has_surface(::AbstractMetSettings) = false
+
+"""
+    has_vdiff_fields(settings::AbstractMetSettings) -> Bool
+
+Whether this source can populate `RawWindow.vdiff` with layer-center fields
+needed by the GCHP Holtslag-Boville vertical-diffusion data contract.
+"""
+has_vdiff_fields(::AbstractMetSettings) = false

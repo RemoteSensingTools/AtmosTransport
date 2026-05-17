@@ -18,9 +18,9 @@ TM5-style convective transport operator. Four-field mass-flux scheme
 following Tiedtke (1989) as implemented in TM5-4DVAR: two entrainment
 and two detrainment fields (updraft + downdraft). The backward-Euler
 transport matrix `conv1 = I - dt·D` is dense within the cloud window
-and identity above; the solver factorizes the full `[1, Nz]` range
-with partial-pivot Gaussian elimination and stores the pivot vector
-for adjoint replay in plan 19.
+and identity above; the solver assembles and factorizes only the active
+lower-right cloud block and stores the pivot vector for adjoint replay
+in plan 19.
 
 The forcing arrays `(entu, detu, entd, detd)` arrive via
 `TransportModel.convection_forcing.tm5_fields`, populated each
@@ -69,11 +69,11 @@ gymnastics (plan 23 principle 1).
 
 # Solver class
 
-Partial-pivot Gaussian elimination on the full `[1, Nz]` range per
-column (see `artifacts/plan23/matrix_structure.md`
-for the structure survey). Identity rows above the cloud window
-factorize trivially; `lmc`-limited factorization is a deferred
-optimization (storage plan Commit 7).
+Partial-pivot Gaussian elimination on the active lower-right block per
+column (see `artifacts/plan23/matrix_structure.md` and
+`test/test_tm5_sparsity_above_icltop.jl` for the structure survey).
+Identity rows above the effective cloud top and the lower-left zero
+quadrant are skipped by both the factorization and the tracer solve.
 
 Pivoting is kept even though the matrix is diagonally dominant by
 construction (upstream Fortran comment says pivoting "not needed").

@@ -227,6 +227,8 @@ function _cs_section_elements(h::CubedSphereBinaryHeader, section::Symbol)
         return np * Nc * Nc
     elseif _is_pbl_surface_payload_section(section)
         return np * Nc * Nc
+    elseif _is_gchp_vdiff_payload_section(section)
+        return np * Nc * Nc * Nz
     elseif section === :cmfmc
         return np * Nc * Nc * (Nz + 1)
     elseif section === :dtrain
@@ -284,6 +286,14 @@ function load_cs_window(reader::CubedSphereBinaryReader{FT}, win::Int) where FT
     panels_t2m   = surface_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc), np) : nothing
     panels_cmfmc = :cmfmc in h.payload_sections ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz + 1), np) : nothing
     panels_dtrain = :dtrain in h.payload_sections ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np) : nothing
+    vdiff_present = all(s in h.payload_sections for s in _GCHP_VDIFF_PAYLOAD_SECTIONS)
+    vdiff_partial = any(s in h.payload_sections for s in _GCHP_VDIFF_PAYLOAD_SECTIONS) && !vdiff_present
+    vdiff_partial &&
+        throw(ArgumentError("CS binary has a partial GCHP VDIFF payload; expected all of vdiff_u, vdiff_v, vdiff_t, vdiff_qv"))
+    panels_vdiff_u  = vdiff_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np) : nothing
+    panels_vdiff_v  = vdiff_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np) : nothing
+    panels_vdiff_t  = vdiff_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np) : nothing
+    panels_vdiff_qv = vdiff_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np) : nothing
 
     # TM5 convection fields — all four must be present together or
     # all four absent. The runtime `_validate_convection_window!`
@@ -386,6 +396,30 @@ function load_cs_window(reader::CubedSphereBinaryReader{FT}, win::Int) where FT
                 copyto!(panels_detd[p], 1, reader.data, o + 1, n)
                 o += n
             end
+        elseif section === :vdiff_u
+            for p in 1:np
+                n = Nc * Nc * Nz
+                copyto!(panels_vdiff_u[p], 1, reader.data, o + 1, n)
+                o += n
+            end
+        elseif section === :vdiff_v
+            for p in 1:np
+                n = Nc * Nc * Nz
+                copyto!(panels_vdiff_v[p], 1, reader.data, o + 1, n)
+                o += n
+            end
+        elseif section === :vdiff_t
+            for p in 1:np
+                n = Nc * Nc * Nz
+                copyto!(panels_vdiff_t[p], 1, reader.data, o + 1, n)
+                o += n
+            end
+        elseif section === :vdiff_qv
+            for p in 1:np
+                n = Nc * Nc * Nz
+                copyto!(panels_vdiff_qv[p], 1, reader.data, o + 1, n)
+                o += n
+            end
         else
             # Skip unknown sections
             n = _cs_section_elements(h, section)
@@ -403,6 +437,10 @@ function load_cs_window(reader::CubedSphereBinaryReader{FT}, win::Int) where FT
     surface = surface_present ?
         PBLSurfaceForcing(panels_pblh, panels_ustar, panels_hflux, panels_t2m) :
         nothing
+    vdiff = vdiff_present ?
+        (u = panels_vdiff_u, v = panels_vdiff_v,
+         t = panels_vdiff_t, qv = panels_vdiff_qv) :
+        nothing
 
     return (
         m = panels_m,
@@ -414,6 +452,7 @@ function load_cs_window(reader::CubedSphereBinaryReader{FT}, win::Int) where FT
         cmfmc = panels_cmfmc,
         dtrain = panels_dtrain,
         tm5_fields = tm5_fields,
+        vdiff = vdiff,
     )
 end
 

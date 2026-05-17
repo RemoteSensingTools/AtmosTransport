@@ -95,6 +95,18 @@ or, when surface fluxes are active:
 X -> Y -> Z -> V(dt/2) -> S(dt) -> V(dt/2) -> Z -> Y -> X
 ```
 
+If `[diffusion].surface_flux_boundary = true`, configured surface fluxes are
+treated as the lower-boundary source for the vertical mixer:
+
+```text
+X -> Y -> Z -> S(dt) -> V(dt) -> Z -> Y -> X
+```
+
+This is the production choice for GEOS/ERA full-physics runs because fresh
+emissions are mixed by the same implicit column solve instead of sitting in the
+bottom layer until the next transport substep. The legacy split placement
+remains available for parity experiments.
+
 For binary-scheduled driven runs, the binary schedule is an advection substep
 contract, not a physics cadence contract. The runtime applies the transport
 block at each stored substep, resets to the verified window endpoint, then

@@ -143,8 +143,9 @@ scheme    = "ppm"
 ppm_order = 7                  # cubed-sphere LinRoodPPM only; ∈ {5, 7}
 
 [diffusion]
-kind  = "constant"             # "none" | "constant"
+kind  = "constant"             # "none" | "constant" | "tm5_beljaars_viterbo_local_kz"
 value = 1.0                    # m²/s — broadcast Kz when kind="constant"
+surface_flux_boundary = false  # true: S(dt)->V(dt); false: V/2->S->V/2
 
 [convection]
 kind = "cmfmc"                 # "none" | "cmfmc" | "tm5"

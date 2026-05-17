@@ -38,6 +38,7 @@ has_qv(r::ERA5BinaryReader) = ERA5.has_qv(r)
 has_flux_delta(r::ERA5BinaryReader) = ERA5.has_flux_delta(r)
 has_cmfmc(r::ERA5BinaryReader) = ERA5.has_cmfmc(r)
 has_surface(r::ERA5BinaryReader) = ERA5.has_surface(r)
+has_vdiff_fields(::ERA5BinaryReader) = false
 has_tm5conv(r::ERA5BinaryReader) = ERA5.has_tm5conv(r)
 has_temperature(r::ERA5BinaryReader) = ERA5.has_temperature(r)
 mass_basis(r::ERA5BinaryReader) = ERA5.mass_basis(r)
@@ -79,7 +80,7 @@ export PBLSurfaceForcing, has_pbl_surface_forcing
 export window_count, has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc
 export total_windows, window_dt, steps_per_window, steps_per_window_schedule
 export binary_capabilities, inspect_binary   # plan 40 Commit 5
-export has_surface, has_tm5conv, has_temperature
+export has_surface, has_vdiff_fields, has_tm5conv, has_temperature
 export mass_basis, grid_type, horizontal_topology, A_ifc, B_ifc
 export uses_binary_substep_contract
 export source_flux_sampling, air_mass_sampling, flux_sampling, flux_kind, humidity_sampling, delta_semantics

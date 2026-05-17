@@ -7,12 +7,23 @@ import ..State: mass_basis
 
 const _PBL_SURFACE_PAYLOAD_SECTIONS = (:pblh, :ustar, :pbl_hflux, :t2m)
 const _PBL_SURFACE_FIELD_NAMES = (:pblh, :ustar, :hflux, :t2m)
+const _GCHP_VDIFF_PAYLOAD_SECTIONS = (:vdiff_u, :vdiff_v, :vdiff_t, :vdiff_qv)
+const _GCHP_VDIFF_FIELD_NAMES = (:u, :v, :t, :qv)
 const TRANSPORT_BINARY_FORMAT_VERSION = 3
 
 @inline _is_pbl_surface_payload_section(section::Symbol) =
     section in _PBL_SURFACE_PAYLOAD_SECTIONS
 @inline _pbl_surface_field_name(section::Symbol) =
     section === :pbl_hflux ? :hflux : section
+@inline _is_gchp_vdiff_payload_section(section::Symbol) =
+    section in _GCHP_VDIFF_PAYLOAD_SECTIONS
+@inline function _gchp_vdiff_field_name(section::Symbol)
+    section === :vdiff_u  && return :u
+    section === :vdiff_v  && return :v
+    section === :vdiff_t  && return :t
+    section === :vdiff_qv && return :qv
+    throw(ArgumentError("not a GCHP VDIFF payload section: $(section)"))
+end
 
 """
     TransportBinaryHeader
@@ -262,6 +273,8 @@ has_tm5conv(r::TransportBinaryReader) = has_tm5_convection(r)
 has_cmfmc(::TransportBinaryReader) = false
 has_surface(r::TransportBinaryReader) =
     all(s in r.header.payload_sections for s in _PBL_SURFACE_PAYLOAD_SECTIONS)
+has_vdiff_fields(r::TransportBinaryReader) =
+    all(s in r.header.payload_sections for s in _GCHP_VDIFF_PAYLOAD_SECTIONS)
 
 # ---------------------------------------------------------------------------
 # Capability summary + `inspect_binary` (plan 40 Commit 5)
@@ -304,6 +317,7 @@ function binary_capabilities(reader::TransportBinaryReader)
         tm5_convection   = has_tm5_convection(reader),
         cmfmc_convection = has_cmfmc(reader),
         pbl_diffusion    = has_surface(reader),
+        gchp_vdiff       = has_surface(reader) && has_vdiff_fields(reader),
         surface_pressure = :ps in hdr.payload_sections,
         humidity         = has_qv(reader),
         mass_basis       = hdr.mass_basis,
@@ -968,7 +982,8 @@ Base.close(r::TransportBinaryReader) = close(r.io)
     r.header.n_geometry_elems + (win - 1) * r.header.elems_per_window
 
 @inline function _transport_structured_section_elements(Nx::Int, Ny::Int, ncell::Int, nlevel::Int, section::Symbol)
-    if section === :m || section === :dm || section === :qv || section === :qv_start || section === :qv_end
+    if section === :m || section === :dm || section === :qv || section === :qv_start || section === :qv_end ||
+       _is_gchp_vdiff_payload_section(section)
         return ncell * nlevel
     elseif section === :am || section === :dam
         return (Nx + 1) * Ny * nlevel
@@ -990,7 +1005,8 @@ Base.close(r::TransportBinaryReader) = close(r.io)
 end
 
 @inline function _transport_faceindexed_section_elements(ncell::Int, nface_h::Int, nlevel::Int, section::Symbol)
-    if section === :m || section === :dm || section === :qv || section === :qv_start || section === :qv_end
+    if section === :m || section === :dm || section === :qv || section === :qv_start || section === :qv_end ||
+       _is_gchp_vdiff_payload_section(section)
         return ncell * nlevel
     elseif section === :hflux || section === :dhflux
         return nface_h * nlevel
@@ -1103,6 +1119,29 @@ end
     return getproperty(nt, name)
 end
 
+@inline function _transport_window_has_vdiff_fields(window)
+    if haskey(window, :vdiff)
+        return window.vdiff !== nothing
+    end
+    present = map(name -> haskey(window, Symbol(:vdiff_, name)), _GCHP_VDIFF_FIELD_NAMES)
+    if any(present) && !all(present)
+        throw(ArgumentError(
+            "transport-binary GCHP VDIFF payload is partial; provide all of " *
+            "`vdiff_u`, `vdiff_v`, `vdiff_t`, and `vdiff_qv`, or none of them."))
+    end
+    return any(present)
+end
+
+@inline function _transport_window_vdiff_field(window, name::Symbol)
+    if haskey(window, :vdiff) && window.vdiff !== nothing
+        return getfield(window.vdiff, name)
+    end
+    key = Symbol(:vdiff_, name)
+    haskey(window, key) ||
+        error("transport-binary window is missing GCHP VDIFF field `$(key)`")
+    return getfield(window, key)
+end
+
 function _transport_window_field(window, section::Symbol)
     if section === :m
         return _transport_window_mass(window)
@@ -1149,6 +1188,8 @@ function _transport_window_field(window, section::Symbol)
         return _transport_window_tm5_field(window, :entd)
     elseif section === :detd
         return _transport_window_tm5_field(window, :detd)
+    elseif _is_gchp_vdiff_payload_section(section)
+        return _transport_window_vdiff_field(window, _gchp_vdiff_field_name(section))
     else
         error("Unsupported transport-binary section: $section")
     end
@@ -1179,6 +1220,9 @@ function _transport_push_optional_sections!(sections::Vector{Symbol}, window)
         push!(sections, :detu)
         push!(sections, :entd)
         push!(sections, :detd)
+    end
+    if _transport_window_has_vdiff_fields(window)
+        append!(sections, _GCHP_VDIFF_PAYLOAD_SECTIONS)
     end
     return sections
 end
@@ -1225,6 +1269,16 @@ function _transport_validate_optional_surface(window, expected)
         field = _transport_window_surface_field(window, name)
         size(field) == expected ||
             throw(DimensionMismatch("window $(name) has size $(size(field)), expected $(expected)"))
+    end
+    return nothing
+end
+
+function _transport_validate_optional_vdiff(window, expected)
+    _transport_window_has_vdiff_fields(window) || return nothing
+    for name in _GCHP_VDIFF_FIELD_NAMES
+        field = _transport_window_vdiff_field(window, name)
+        size(field) == expected ||
+            throw(DimensionMismatch("window vdiff_$(name) has size $(size(field)), expected $(expected)"))
     end
     return nothing
 end
@@ -1288,6 +1342,7 @@ function _transport_validate_structured_window(window,
     _transport_validate_optional_qv(window, (Nx, Ny, nlevel))
     _transport_validate_optional_structured_deltas(window, Nx, Ny, nlevel)
     _transport_validate_optional_surface(window, (Nx, Ny))
+    _transport_validate_optional_vdiff(window, (Nx, Ny, nlevel))
     _transport_validate_basis(window, basis_sym)
     return nothing
 end
@@ -1312,6 +1367,7 @@ function _transport_validate_reduced_window(window,
     _transport_validate_optional_qv(window, (ncell, nlevel))
     _transport_validate_optional_faceindexed_deltas(window, ncell, nface_h, nlevel)
     _transport_validate_optional_surface(window, (ncell,))
+    _transport_validate_optional_vdiff(window, (ncell, nlevel))
     _transport_validate_basis(window, basis_sym)
     return nothing
 end
@@ -1342,6 +1398,7 @@ function _transport_common_header(grid_type::String,
     n_qv_end = (:qv_end in payload_sections) ? ncell * nlevel : 0
     n_surface = (:pblh in payload_sections) ? ncell : 0
     n_tm5 = (:entu in payload_sections) ? ncell * nlevel : 0
+    n_vdiff = (:vdiff_u in payload_sections) ? ncell * nlevel : 0
     humidity_sampling = humidity_sampling === :auto ? _transport_default_humidity_sampling(payload_sections) : _transport_normalize_symbol(humidity_sampling)
     delta_semantics = delta_semantics === :auto ? _transport_default_delta_semantics(payload_sections) : _transport_normalize_symbol(delta_semantics)
     steps = Int(steps_per_window)
@@ -1396,6 +1453,8 @@ function _transport_common_header(grid_type::String,
         "include_surface" => n_surface > 0,
         "surface_payload" => n_surface > 0 ? "pbl_raw_v2" : "none",
         "include_tm5conv" => n_tm5 > 0,
+        "include_gchp_vdiff" => n_vdiff > 0,
+        "gchp_vdiff_payload" => n_vdiff > 0 ? "u_v_t_qv_layer_center_v1" : "none",
         "n_qv" => n_qv,
         "n_qv_start" => n_qv_start,
         "n_qv_end" => n_qv_end,
@@ -1407,6 +1466,10 @@ function _transport_common_header(grid_type::String,
         "n_detu" => n_tm5,
         "n_entd" => n_tm5,
         "n_detd" => n_tm5,
+        "n_vdiff_u" => n_vdiff,
+        "n_vdiff_v" => n_vdiff,
+        "n_vdiff_t" => n_vdiff,
+        "n_vdiff_qv" => n_vdiff,
         "n_geometry_elems" => 0,
         "elems_per_window" => elems_per_window,
     )
@@ -1838,6 +1901,8 @@ function _cs_section_elements(Nc::Int, npanel::Int, nlevel::Int, section::Symbol
         return npanel * Nc * Nc
     elseif _is_pbl_surface_payload_section(section)
         return npanel * Nc * Nc
+    elseif _is_gchp_vdiff_payload_section(section)
+        return npanel * Nc * Nc * nlevel
     elseif section === :cmfmc
         return npanel * Nc * Nc * (nlevel + 1)
     elseif section === :dtrain
@@ -1872,6 +1937,11 @@ Each section's panels are stored sequentially: [P1][P2]...[P6].
         haskey(window, :tm5_fields) && window.tm5_fields !== nothing ||
             error("CS streaming window is missing `tm5_fields` required by section $(section)")
         return getfield(window.tm5_fields, section)
+    end
+    if _is_gchp_vdiff_payload_section(section)
+        haskey(window, :vdiff) && window.vdiff !== nothing ||
+            error("CS streaming window is missing `vdiff` required by section $(section)")
+        return getfield(window.vdiff, _gchp_vdiff_field_name(section))
     end
     return getfield(window, section)
 end
@@ -1956,6 +2026,7 @@ function open_streaming_cs_transport_binary(
         include_dtrain::Bool = false,
         include_surface::Bool = false,
         include_tm5conv::Bool = false,
+        include_gchp_vdiff::Bool = false,
         panel_convention = "gnomonic",
         cs_definition = nothing,
         cs_coordinate_law = nothing,
@@ -1977,6 +2048,7 @@ function open_streaming_cs_transport_binary(
     if include_tm5conv
         append!(payload_sections, (:entu, :detu, :entd, :detd))
     end
+    include_gchp_vdiff && append!(payload_sections, _GCHP_VDIFF_PAYLOAD_SECTIONS)
 
     elems_per_window = sum(_cs_section_elements(Nc, npanel, nlevel, s)
                            for s in payload_sections)
@@ -2019,6 +2091,8 @@ function open_streaming_cs_transport_binary(
         "include_surface" => include_surface,
         "surface_payload" => include_surface ? "pbl_raw_v2" : "none",
         "include_tm5conv" => include_tm5conv,
+        "include_gchp_vdiff" => include_gchp_vdiff,
+        "gchp_vdiff_payload" => include_gchp_vdiff ? "u_v_t_qv_layer_center_v1" : "none",
         "n_pblh" => include_surface ? _cs_section_elements(Nc, npanel, nlevel, :pblh) : 0,
         "n_ustar" => include_surface ? _cs_section_elements(Nc, npanel, nlevel, :ustar) : 0,
         "n_pbl_hflux" => include_surface ? _cs_section_elements(Nc, npanel, nlevel, :pbl_hflux) : 0,
@@ -2029,6 +2103,10 @@ function open_streaming_cs_transport_binary(
         "n_detu" => include_tm5conv ? _cs_section_elements(Nc, npanel, nlevel, :detu) : 0,
         "n_entd" => include_tm5conv ? _cs_section_elements(Nc, npanel, nlevel, :entd) : 0,
         "n_detd" => include_tm5conv ? _cs_section_elements(Nc, npanel, nlevel, :detd) : 0,
+        "n_vdiff_u" => include_gchp_vdiff ? _cs_section_elements(Nc, npanel, nlevel, :vdiff_u) : 0,
+        "n_vdiff_v" => include_gchp_vdiff ? _cs_section_elements(Nc, npanel, nlevel, :vdiff_v) : 0,
+        "n_vdiff_t" => include_gchp_vdiff ? _cs_section_elements(Nc, npanel, nlevel, :vdiff_t) : 0,
+        "n_vdiff_qv" => include_gchp_vdiff ? _cs_section_elements(Nc, npanel, nlevel, :vdiff_qv) : 0,
     ))
     isempty(extra_header) || merge!(header, Dict{String, Any}(extra_header))
     header["panel_convention"] = _normalize_cs_panel_convention(header["panel_convention"])

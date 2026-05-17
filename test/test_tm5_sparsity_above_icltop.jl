@@ -7,10 +7,12 @@
 # `icltop_eff = min(icllfs, max(icltop, 2) - 1)` formula and the
 # active-window LU implementation.
 #
-# Two assertions per fixture:
+# Assertions per fixture:
 # 1. Upper rows are identity:  conv1[k, j] == (k == j) for k ∈ [1, icltop_eff-1].
 # 2. Lower-left quadrant zero: conv1[k, j] == 0 for k ∈ [icltop_eff, Nz]
 #    and j ∈ [1, icltop_eff-1].
+# 3. The production `f === conv1` alias path matches the standalone
+#    `(Nz+1, Nz)` scratch path.
 #
 # Failing this test means the `_tm5_build_conv1!` builder changed and
 # the `icltop_eff` formula needs revisiting. It does NOT mean "fall
@@ -81,6 +83,14 @@ function _build_and_check(name::String; Nz::Int,
     _tm5_build_conv1!(conv1, entu, detu, entd, detd, m_col,
                       icltop, icllfs, dt, Nz;
                       f = f_buf, amu = amu, amd = amd)
+
+    conv1_alias = zeros(FT, Nz, Nz)
+    amu_alias = zeros(FT, Nz + 1)
+    amd_alias = zeros(FT, Nz + 1)
+    _tm5_build_conv1!(conv1_alias, entu, detu, entd, detd, m_col,
+                      icltop, icllfs, dt, Nz;
+                      f = conv1_alias, amu = amu_alias, amd = amd_alias)
+    @test conv1_alias == conv1
 
     icltop_eff = _icltop_eff(icltop, icllfs)
     upper_ok = true

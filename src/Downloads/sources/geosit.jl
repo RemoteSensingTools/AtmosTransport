@@ -50,8 +50,9 @@ function _geosit_collections(source::GEOSITSource, requests::Vector)
             return req["collections"]
         end
     end
-    # Default: core transport + physics collections
-    return ["CTM_A1", "A3mstE", "A1", "A3dyn"]
+    # Default: core transport + physics collections. CTM_I1 is required by
+    # the dry-endpoint preprocessor even when a request omits explicit lists.
+    return ["CTM_A1", "CTM_I1", "A3mstE", "A1", "A3dyn"]
 end
 
 function _geosit_collection_size(coll::String)

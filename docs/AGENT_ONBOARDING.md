@@ -56,7 +56,7 @@ AbstractFaceFluxState{Basis}
   CubedSphereFaceFluxState{Basis}      -- CubedSphere (panel-native)
 
 AbstractDiffusion
-  NoDiffusion | ImplicitVerticalDiffusion{FT, KzF}
+  NoDiffusion | ImplicitVerticalDiffusion{FT, KzF, SFC}
 
 AbstractSurfaceFluxOperator
   NoSurfaceFlux | SurfaceFluxOperator{FT, M}

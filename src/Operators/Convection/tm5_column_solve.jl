@@ -13,21 +13,20 @@
 #   1. Diagnose cloud dims (icltop, iclbas, icllfs) from `detu` / `entd`.
 #   2. If icltop > Nz (no detu-positive layer), return immediately:
 #      this column has identity convection.
-#   3. Build the full flux-divergence matrix `conv1 = I - dt·D`.
-#      Rows outside the active cloud window are often identity, but
-#      cloud-top interface fluxes can touch adjacent rows, so the current
-#      production solver keeps the full matrix for exact TM5 parity.
-#   4. Factorize conv1[1:Nz, 1:Nz] with partial pivoting. Store the
-#      permutation vector in `pivots[1:Nz]` (plan 23 principle 3 —
+#   3. Build the flux-divergence matrix `conv1 = I - dt·D`. Rows above
+#      the effective cloud window are explicit identity rows and the
+#      lower-left quadrant below that window is zero.
+#   4. Factorize the active lower-right block with partial pivoting. Store the
+#      permutation vector in `pivots` (plan 23 principle 3 —
 #      plan 19's adjoint replays this factorization with trans='T';
 #      do NOT fuse the permutation into the solved coefficients).
-#   5. Back-substitute each tracer's full vertical profile.
+#   5. Back-substitute each tracer's active vertical profile.
 #
 # The matrix is dense lower + upper triangular within the cloud-coupled
 # window (no simple banded structure to exploit; see
-# artifacts/plan23/matrix_structure.md). The current implementation pays
-# O(Nz³) factorization once a column is active. A future active-window
-# solver should be validated against the full-matrix path column-by-column.
+# artifacts/plan23/matrix_structure.md). The production implementation
+# skips the identity rows above the cloud window but intentionally keeps
+# the dense active block for TM5 parity and adjoint replay.
 # ---------------------------------------------------------------------------
 
 """
@@ -134,7 +133,6 @@ function _tm5_build_conv1!(conv1::AbstractMatrix{FT},
     # the loop body never reads `f[Nz+1, ...]` (the surface row is
     # supplied as a literal zero in the propagation step at
     # `k_atm == Nz`, and the final assembly uses the same guard).
-    fill!(f,   zero(FT))
     fill!(amu, zero(FT))
     fill!(amd, zero(FT))
 
@@ -148,6 +146,17 @@ function _tm5_build_conv1!(conv1::AbstractMatrix{FT},
     #   updraft entries) with `k_atm = Nz+1-k_tm5`. The implicit
     #   "TM5 row 0" / surface row at index Nz+1 is treated as zero;
     #   no shape needs to materialize it.
+    icltop_eff = min(Int(icllfs), max(Int(icltop), 2) - 1)
+    k_lo = max(icltop_eff, 1)
+
+    # `f` may alias `conv1` and can contain stale values from the previous
+    # column. Only the active lower-right block can be read by the final
+    # assembly and active LU; clear that block instead of the full matrix.
+    @inbounds for kk_atm in k_lo:Nz
+        for k_atm in k_lo:Nz
+            f[k_atm, kk_atm] = zero(FT)
+        end
+    end
 
     # --- Updraft pass (AtmosTransport surface → cloud top) ------
     # For each layer k_atm iterated surface-up, compute amu[k_atm],
@@ -237,8 +246,22 @@ function _tm5_build_conv1!(conv1::AbstractMatrix{FT},
     # `f` is allowed to alias `conv1` in the production workspace. Iterate
     # from top to bottom so overwriting row k never destroys row k+1 before it
     # is read by a later iteration. The implicit bottom row f[Nz+1, :] is zero.
-    @inbounds for k_atm in 1:Nz
+    #
+    # Rows above `icltop_eff` are provably identity rows and the active
+    # lower-left quadrant is provably zero
+    # (`test/test_tm5_sparsity_above_icltop.jl`). Write those explicitly and
+    # only assemble the lower-right active block. This keeps the full-matrix
+    # public contract while avoiding O(Nz²) dead work for shallow convection.
+    @inbounds for k_atm in 1:(k_lo - 1)
         for kk_atm in 1:Nz
+            conv1[k_atm, kk_atm] = k_atm == kk_atm ? one(FT) : zero(FT)
+        end
+    end
+    @inbounds for k_atm in k_lo:Nz
+        for kk_atm in 1:(k_lo - 1)
+            conv1[k_atm, kk_atm] = zero(FT)
+        end
+        for kk_atm in k_lo:Nz
             f_below = k_atm == Nz ? zero(FT) : f[k_atm + 1, kk_atm]
             fdiff = f_below - f[k_atm, kk_atm]
             if fdiff != zero(FT)

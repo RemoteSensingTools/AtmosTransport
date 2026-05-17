@@ -61,6 +61,13 @@ end
 @inline _diffusion_section(cfg) = get(cfg, "diffusion", Dict{String,Any}())
 @inline _convection_section(cfg) = get(cfg, "convection", Dict{String,Any}())
 
+function _surface_flux_coupling(section)
+    boundary = get(section, "surface_flux_boundary", false)
+    boundary isa Bool || throw(ArgumentError(
+        "[diffusion].surface_flux_boundary must be true or false; got $(boundary)"))
+    return boundary ? DiffusiveSurfaceFluxBoundary() : SplitSurfaceFluxCoupling()
+end
+
 @inline _runtime_recipe_style(style::AbstractRuntimeRecipeStyle) = style
 @inline _runtime_recipe_style(::AtmosGrid{<:LatLonMesh}) = LatLonRuntimeRecipeStyle()
 @inline _runtime_recipe_style(::AtmosGrid{<:ReducedGaussianMesh}) = ReducedGaussianRuntimeRecipeStyle()
@@ -154,16 +161,18 @@ function build_runtime_diffusion(cfg, style::AbstractRuntimeRecipeStyle, ::Type{
     # Reject the legacy `type = "..."` schema rather than silently mapping
     # it to NoDiffusion. Configs that said `type = "pbl"` / `"nonlocal_pbl"`
     # etc. expected diffusion to run; the silent fall-through hid that for
-    # months. Migrate to `kind` — supported kinds today are "none" and
-    # "constant". (Codex Section B P0 fix.)
+    # months. Migrate to `kind` — supported kinds today are "none",
+    # "constant", and the named PBL closures. (Codex Section B P0 fix.)
     haskey(section, "type") && !haskey(section, "kind") &&
         throw(ArgumentError(
             "[diffusion] uses legacy `type = \"$(section["type"])\"`; rename to " *
-            "`kind = \"...\"`. Supported kinds: \"none\", \"constant\", \"pbl\"."))
+            "`kind = \"...\"`. Supported kinds: \"none\", \"constant\", " *
+            "\"tm5_beljaars_viterbo_local_kz\"."))
     haskey(section, "kind") ||
         throw(ArgumentError(
             "[diffusion] section is present but has no `kind` key. " *
-            "Set `kind = \"none\"`, `kind = \"constant\"`, or `kind = \"pbl\"`."))
+            "Set `kind = \"none\"`, `kind = \"constant\"`, or " *
+            "`kind = \"tm5_beljaars_viterbo_local_kz\"`."))
     return build_runtime_diffusion(style,
                                    Val(_config_symbol(section, "kind", "none")),
                                    section,
@@ -189,7 +198,9 @@ function build_runtime_diffusion(style::AbstractRuntimeRecipeStyle,
                                  section,
                                  ::Type{FT}) where FT
     value = FT(get(section, "value", 1.0))
-    return ImplicitVerticalDiffusion(; kz_field = _constant_runtime_kz_field(style, value))
+    return ImplicitVerticalDiffusion(;
+        kz_field = _constant_runtime_kz_field(style, value),
+        surface_flux_coupling = _surface_flux_coupling(section))
 end
 build_runtime_diffusion(style::AbstractRuntimeRecipeStyle, ::Val{:constant}, section,
                         ::Type{FT}, _context) where FT =
@@ -225,8 +236,24 @@ function build_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
             "include_surface=true."))
     Nc1, Nc2, Nz = _pbl_cache_shape(context)
     host_cache = ntuple(_ -> zeros(FT, Nc1, Nc2, Nz), 6)
-    return ImplicitVerticalDiffusion(; kz_field = WindowPBLKzField(host_cache))
+    return ImplicitVerticalDiffusion(;
+        kz_field = WindowPBLKzField(host_cache),
+        surface_flux_coupling = _surface_flux_coupling(_section))
 end
+
+build_runtime_diffusion(style::AbstractRuntimeRecipeStyle,
+                        ::Val{:tm5_beljaars_viterbo_local_kz},
+                        section,
+                        ::Type{FT},
+                        context) where FT =
+    build_runtime_diffusion(style, Val(:pbl), section, FT, context)
+
+build_runtime_diffusion(style::AbstractRuntimeRecipeStyle,
+                        ::Val{:beljaars_viterbo_local_kz},
+                        section,
+                        ::Type{FT},
+                        context) where FT =
+    build_runtime_diffusion(style, Val(:pbl), section, FT, context)
 
 function build_runtime_diffusion(::AbstractRuntimeRecipeStyle,
                                  ::Val{:pbl},
@@ -239,11 +266,28 @@ function build_runtime_diffusion(::AbstractRuntimeRecipeStyle,
 end
 
 function build_runtime_diffusion(::AbstractRuntimeRecipeStyle,
+                                 ::Val{:geoschem_holtslag_boville_vdiff},
+                                 _section,
+                                 ::Type{FT},
+                                 _context) where FT
+    throw(ArgumentError(
+        "[diffusion] kind = \"geoschem_holtslag_boville_vdiff\" is reserved " *
+        "for the GCHP/GEOS-Chem non-local VDIFF closure, but it is not a " *
+        "production runtime operator yet. GEOS-IT preprocessing can now write " *
+        "the required `gchp_vdiff` binary payload (vdiff_u/vdiff_v/vdiff_t/" *
+        "vdiff_qv plus PBL surface fields); the Kz and counter-gradient closure " *
+        "still needs the runtime implementation. Use `kind = " *
+        "\"tm5_beljaars_viterbo_local_kz\"` with " *
+        "`surface_flux_boundary = true` for current ERA/GEOS production runs."))
+end
+
+function build_runtime_diffusion(::AbstractRuntimeRecipeStyle,
                                  ::Val{name},
                                  _section,
                                  ::Type{FT}) where {name, FT}
     throw(ArgumentError(
-        "Unknown [diffusion] kind: $(name). Supported: none | constant | pbl"))
+        "Unknown [diffusion] kind: $(name). Supported: none | constant | " *
+        "tm5_beljaars_viterbo_local_kz | pbl (legacy alias)"))
 end
 build_runtime_diffusion(style::AbstractRuntimeRecipeStyle, ::Val{name}, section,
                         ::Type{FT}, _context) where {name, FT} =

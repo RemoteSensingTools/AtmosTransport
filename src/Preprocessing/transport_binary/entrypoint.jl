@@ -238,6 +238,9 @@ function _process_day_native(cfg::AbstractDict;
     if haskey(src_cfg, "include_convection")
         settings_kwargs = (settings_kwargs..., include_convection = Bool(src_cfg["include_convection"]))
     end
+    if haskey(src_cfg, "include_vdiff_fields")
+        settings_kwargs = (settings_kwargs..., include_vdiff_fields = Bool(src_cfg["include_vdiff_fields"]))
+    end
     for key in ("physics_dir", "surface_dir")
         if haskey(src_cfg, key)
             settings_kwargs = (settings_kwargs..., physics_dir = expand_data_path(String(src_cfg[key])))

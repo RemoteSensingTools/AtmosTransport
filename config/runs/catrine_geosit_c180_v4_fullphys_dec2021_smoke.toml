@@ -61,7 +61,8 @@ scheme = "ppm"
   time_index = 12
 
 [diffusion]
-kind = "pbl"
+kind = "tm5_beljaars_viterbo_local_kz"
+surface_flux_boundary = true
 
 [convection]
 kind = "cmfmc"

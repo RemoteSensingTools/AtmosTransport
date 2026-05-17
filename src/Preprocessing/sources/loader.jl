@@ -14,7 +14,8 @@
 Construct a typed met-source descriptor from `toml_path`. The TOML's
 `[source].name` key picks the concrete settings type. The `[preprocessing]`
 table (if present) supplies defaults for `level_orientation`,
-`mass_flux_dt_seconds`, `include_surface`, and `include_convection`; explicit keyword
+`mass_flux_dt_seconds`, `include_surface`, `include_convection`, and
+`include_vdiff_fields`; explicit keyword
 arguments override.
 
 `root_dir` is the on-disk directory holding the source's daily NetCDF files
@@ -39,13 +40,14 @@ function load_met_settings(toml_path::String;
         level_orientation = Symbol(get(pre_cfg, "level_orientation", "auto"))
         include_surface = Bool(get(pre_cfg, "include_surface", false))
         include_convection = Bool(get(pre_cfg, "include_convection", false))
+        include_vdiff_fields = Bool(get(pre_cfg, "include_vdiff_fields", false))
         physics_dir = String(get(pre_cfg, "physics_dir", ""))
         physics_layout = Symbol(get(pre_cfg, "physics_layout", "auto"))
 
         ctor = name == "GEOS-IT" ? GEOSITSettings : GEOSFPSettings
         return ctor(; root_dir = String(root_dir),
                       Nc, mass_flux_dt, level_orientation,
-                      include_surface, include_convection,
+                      include_surface, include_convection, include_vdiff_fields,
                       physics_dir, physics_layout,
                       coefficients_file = coefs, kwargs...)
     end

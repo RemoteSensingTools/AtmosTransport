@@ -215,12 +215,20 @@ function _geos_strategy_workspace(::GEOSCSBlockCoarsenStrategy{R},
         fine_bm_v4 = panels_yface_src(),
         cmfmc_native = settings.include_convection ? panels_3d_dst(Nz_native + 1) : nothing,
         dtrain_native = settings.include_convection ? panels_3d_dst(Nz_native) : nothing,
-        surface = settings.include_surface ? (
+        surface = (settings.include_surface || settings.include_vdiff_fields) ? (
             pblh = panels_2d_dst(),
             ustar = panels_2d_dst(),
             hflux = panels_2d_dst(),
             t2m = panels_2d_dst(),
         ) : nothing,
+        vdiff_native = settings.include_vdiff_fields ? (
+            u = panels_3d_dst(Nz_native),
+            v = panels_3d_dst(Nz_native),
+            t = panels_3d_dst(Nz_native),
+            qv = panels_3d_dst(Nz_native),
+        ) : nothing,
+        vdiff_weights_native = settings.include_vdiff_fields ?
+            panels_3d_dst(Nz_native) : nothing,
     )
 end
 
@@ -292,6 +300,35 @@ function _geos_surface_payload!(::GEOSCSBlockCoarsenStrategy{R}, ws, raw) where 
     return ws.surface
 end
 
+_geos_vdiff_native_target!(::GEOSCSIdentityStrategy, _ws, raw) = raw.vdiff
+_geos_vdiff_native_weights!(::GEOSCSIdentityStrategy, _ws, raw,
+                            _cell_areas, _inv_g) = raw.m
+
+function _geos_vdiff_native_target!(::GEOSCSBlockCoarsenStrategy{R}, ws, raw) where R
+    raw.vdiff === nothing && return nothing
+    for p in 1:CS_PANEL_COUNT
+        _coarsen_area_weighted3!(ws.vdiff_native.u[p], raw.vdiff.u[p],
+                                 ws.source_cell_areas, Val(R))
+        _coarsen_area_weighted3!(ws.vdiff_native.v[p], raw.vdiff.v[p],
+                                 ws.source_cell_areas, Val(R))
+        _coarsen_area_weighted3!(ws.vdiff_native.t[p], raw.vdiff.t[p],
+                                 ws.source_cell_areas, Val(R))
+        _coarsen_area_weighted3!(ws.vdiff_native.qv[p], raw.vdiff.qv[p],
+                                 ws.source_cell_areas, Val(R))
+    end
+    return ws.vdiff_native
+end
+
+function _geos_vdiff_native_weights!(::GEOSCSBlockCoarsenStrategy{R}, ws, raw,
+                                     _cell_areas, inv_g) where R
+    for p in 1:CS_PANEL_COUNT
+        _delp_pa_to_air_mass_kg!(ws.fine_m_kg[p], raw.m[p],
+                                  ws.source_cell_areas, inv_g)
+        _coarsen_sum3!(ws.vdiff_weights_native[p], ws.fine_m_kg[p], Val(R))
+    end
+    return ws.vdiff_weights_native
+end
+
 _geos_cmfmc_native_target!(::GEOSCSIdentityStrategy, _ws, raw) = raw.cmfmc
 _geos_dtrain_native_target!(::GEOSCSIdentityStrategy, _ws, raw) = raw.dtrain
 
@@ -337,7 +374,28 @@ function _geos_dtrain_payload!(workspace)
     return workspace.dtrain_v4
 end
 
-mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV} <:
+function _geos_vdiff_payload!(workspace)
+    workspace.vdiff_v4 === nothing && return nothing
+    native = _geos_vdiff_native_target!(workspace.strategy, workspace.strategy_ws,
+                                        workspace.raw)
+    native === nothing && return nothing
+    weights = _geos_vdiff_native_weights!(workspace.strategy, workspace.strategy_ws,
+                                          workspace.raw, workspace.cell_areas,
+                                          workspace.inv_g)
+    for p in 1:CS_PANEL_COUNT
+        apply_vertical!(workspace.vdiff_v4.u[p], native.u[p], workspace.plan,
+                        IntensiveCenterField(), weights[p])
+        apply_vertical!(workspace.vdiff_v4.v[p], native.v[p], workspace.plan,
+                        IntensiveCenterField(), weights[p])
+        apply_vertical!(workspace.vdiff_v4.t[p], native.t[p], workspace.plan,
+                        IntensiveCenterField(), weights[p])
+        apply_vertical!(workspace.vdiff_v4.qv[p], native.qv[p], workspace.plan,
+                        IntensiveCenterField(), weights[p])
+    end
+    return workspace.vdiff_v4
+end
+
+mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV, VD} <:
                AbstractWindowWorkspace{CubedSphereTargetGeometry, FT}
     strategy    :: ST
     strategy_ws :: SW
@@ -355,6 +413,7 @@ mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV} <
     ps_cur      :: NTuple{CS_PANEL_COUNT, Array{FT, 2}}
     cmfmc_v4    :: CV
     dtrain_v4   :: DV
+    vdiff_v4    :: VD
     g           :: FT
     inv_g       :: FT
     cell_areas  :: CA
@@ -426,15 +485,22 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
         ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), npanel) : nothing
     dtrain_v4 = settings.include_convection ?
         ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel) : nothing
+    vdiff_v4 = settings.include_vdiff_fields ? (
+        u  = ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel),
+        v  = ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel),
+        t  = ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel),
+        qv = ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel),
+    ) : nothing
     raw = allocate_raw_window(settings; FT = FT, Nz = Nz_native)
 
     return GEOSCubedSphereWindowWorkspace{
         FT, typeof(strategy), typeof(strategy_ws), typeof(raw), typeof(cell_areas),
-        typeof(plan), typeof(cmfmc_v4), typeof(dtrain_v4)}(
+        typeof(plan), typeof(cmfmc_v4), typeof(dtrain_v4), typeof(vdiff_v4)}(
             strategy, strategy_ws, raw, plan,
             am_native_v4, bm_native_v4, m_native_kg,
             am_v4, bm_v4, cm_v4, dm_v4,
-            m_cur, m_next_target, ps_cur, cmfmc_v4, dtrain_v4, g, inv_g, cell_areas,
+            m_cur, m_next_target, ps_cur, cmfmc_v4, dtrain_v4, vdiff_v4,
+            g, inv_g, cell_areas,
             flux_scale, flux_scale, steps_per_met, steps_per_met,
             Int[], Bool(adaptive_substeps),
             target, min_steps, max_steps, chain_mass)
@@ -606,7 +672,7 @@ function drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{FT},
     window_nt = (m = workspace.m_cur, am = workspace.am_v4,
                  bm = workspace.bm_v4, cm = workspace.cm_v4,
                  ps = workspace.ps_cur, dm = m_target)
-    if settings.include_surface
+    if settings.include_surface || settings.include_vdiff_fields
         window_nt = merge(window_nt,
                           (surface = _geos_surface_payload!(
                                workspace.strategy, workspace.strategy_ws,
@@ -616,6 +682,10 @@ function drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{FT},
         window_nt = merge(window_nt,
                           (cmfmc = _geos_cmfmc_payload!(workspace),
                            dtrain = _geos_dtrain_payload!(workspace)))
+    end
+    if settings.include_vdiff_fields
+        window_nt = merge(window_nt,
+                          (vdiff = _geos_vdiff_payload!(workspace),))
     end
     ready = ReadyWindow{CubedSphereTargetGeometry, FT}(win, window_nt)
     return PreverifiedWindow(ready, contract_diag)
@@ -761,9 +831,10 @@ function _process_day_geos_cs_unified(date::Date,
             steps_per_window = steps_per_met,
             mass_basis = mass_basis,
             include_flux_delta = true,
-            include_surface    = settings.include_surface,
+            include_surface    = settings.include_surface || settings.include_vdiff_fields,
             include_cmfmc      = settings.include_convection,
             include_dtrain     = settings.include_convection,
+            include_gchp_vdiff = settings.include_vdiff_fields,
             panel_convention   = panel_convention,
             cs_definition      = _cs_definition_tag(grid),
             cs_coordinate_law  = _cs_coordinate_law_tag(grid),
@@ -783,6 +854,11 @@ function _process_day_geos_cs_unified(date::Date,
                 "substep_cfl_target" => Float64(substep_cfl_target),
                 "positivity_cfl_limit" => Float64(positivity_cfl_limit),
                 "require_substep_positivity" => require_substep_positivity,
+                "include_gchp_vdiff" => settings.include_vdiff_fields,
+                "gchp_vdiff_source_fields" => settings.include_vdiff_fields ?
+                    "A3dyn:U,V + I3:T + CTM_I1:QV + A1:PBLH,USTAR,HFLUX,T2M" : "none",
+                "gchp_vdiff_sampling" => settings.include_vdiff_fields ?
+                    "A3/I3 held constant over 3 hourly windows; QV uses left CTM_I1 endpoint" : "none",
                 "vertical_transform" => String(Symbol(get(vertical, :vertical_mapping_method, :identity))),
                 "vertical_Nz_native" => vertical.Nz_native,
                 "vertical_Nz_output" => vertical.Nz,

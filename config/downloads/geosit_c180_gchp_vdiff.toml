@@ -1,21 +1,18 @@
 # ===========================================================================
-# GEOS-IT C180 cubed-sphere download
+# GEOS-IT C180 cubed-sphere download with GCHP Holtslag-Boville VDIFF inputs
 #
-# Downloads daily NetCDF files from AWS S3 (public, no authentication).
-# Output follows canonical Data Layout: met/geosit/C180/raw/YYYYMMDD/
+# Adds I3 (T) to the standard transport + surface + convection request.
+# The binary preprocessor uses:
+#   CTM_A1/CTM_I1: mass, fluxes, PS, QV
+#   A1:            PBLH, USTAR, HFLUX, T2M
+#   A3dyn:         U, V, DTRAIN
+#   A3mstE:        CMFMC
+#   I3:            T
 #
 # Usage:
 #   julia --project=. scripts/downloads/download_data.jl \
-#       config/downloads/geosit_c180.toml
-#
-#   # Single month:
-#   julia --project=. scripts/downloads/download_data.jl \
-#       config/downloads/geosit_c180.toml \
-#       --start 2021-12-01 --end 2021-12-31
-#
-#   # Dry run (preview files):
-#   julia --project=. scripts/downloads/download_data.jl \
-#       config/downloads/geosit_c180.toml --dry-run
+#       config/downloads/geosit_c180_gchp_vdiff.toml \
+#       --start 2021-12-01 --end 2021-12-05
 # ===========================================================================
 
 [source]
@@ -28,9 +25,9 @@ prefix = "GEOS_C180/GEOS_IT"
 no_sign_request = true
 
 [[download.requests]]
-name = "transport"
-description = "CTM mass fluxes + dynamics + convection + surface"
-collections = ["CTM_A1", "CTM_I1", "A3mstE", "A1", "A3dyn"]
+name = "transport_gchp_vdiff"
+description = "CTM transport + surface + convection + GCHP Holtslag-Boville VDIFF inputs"
+collections = ["CTM_A1", "CTM_I1", "A1", "A3dyn", "A3mstE", "I3"]
 
 [output]
 data_root = "~/data/AtmosTransport"

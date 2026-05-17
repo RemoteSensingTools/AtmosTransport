@@ -86,7 +86,12 @@ For each `YYYYMMDD`:
 | `GEOSIT.YYYYMMDD.CTM_I1.C180.nc` | hourly (instantaneous) | `PS`, `QV` |
 | `GEOSIT.YYYYMMDD.A1.C180.nc` | hourly | `PBLH`, `USTAR`, `HFLUX`, `T2M` *(only with `include_surface`)* |
 | `GEOSIT.YYYYMMDD.A3mstE.C180.nc` | 3-hourly | `CMFMC` *(only with `include_convection`)* |
-| `GEOSIT.YYYYMMDD.A3dyn.C180.nc` | 3-hourly | `DTRAIN` *(only with `include_convection`)* |
+| `GEOSIT.YYYYMMDD.A3dyn.C180.nc` | 3-hourly | `DTRAIN` *(only with `include_convection`)*; `U`, `V` *(with `include_vdiff_fields`)* |
+| `GEOSIT.YYYYMMDD.I3.C180.nc` | 3-hourly | `T` *(only with `include_vdiff_fields`)* |
+
+The GCHP Holtslag-Boville VDIFF data contract additionally requires
+`include_vdiff_fields = true` in the preprocessing TOML and the
+`config/downloads/geosit_c180_gchp_vdiff.toml` download recipe.
 
 The preprocessor needs **next-day hour 0** for the last window's
 forward-flux endpoint; download `[start, end+1]` for production
@@ -116,7 +121,8 @@ a per-day subdirectory:
                 ├── GEOSIT.20211201.CTM_A1.C180.nc
                 ├── GEOSIT.20211201.CTM_I1.C180.nc
                 ├── GEOSIT.20211201.A3mstE.C180.nc       # if convection
-                └── GEOSIT.20211201.A3dyn.C180.nc        # if convection
+                ├── GEOSIT.20211201.A3dyn.C180.nc        # if convection or VDIFF
+                └── GEOSIT.20211201.I3.C180.nc           # if GCHP VDIFF
 ```
 
 The `[source].root_dir` key in the GEOS preprocessing TOML points at

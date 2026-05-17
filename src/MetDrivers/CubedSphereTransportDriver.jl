@@ -83,6 +83,8 @@ has_flux_delta(reader::CubedSphereBinaryReader) =
 has_cmfmc(reader::CubedSphereBinaryReader) = :cmfmc in reader.header.payload_sections
 has_surface(reader::CubedSphereBinaryReader) =
     all(s in reader.header.payload_sections for s in _PBL_SURFACE_PAYLOAD_SECTIONS)
+has_vdiff_fields(reader::CubedSphereBinaryReader) =
+    all(s in reader.header.payload_sections for s in _GCHP_VDIFF_PAYLOAD_SECTIONS)
 has_tm5conv(reader::CubedSphereBinaryReader) =
     all(s in reader.header.payload_sections for s in (:entu, :detu, :entd, :detd))
 has_tm5_convection(reader::CubedSphereBinaryReader) = has_tm5conv(reader)
@@ -99,6 +101,7 @@ function binary_capabilities(reader::CubedSphereBinaryReader)
         tm5_convection   = has_tm5_convection(reader),
         cmfmc_convection = has_cmfmc(reader),
         pbl_diffusion    = has_surface(reader),
+        gchp_vdiff       = has_surface(reader) && has_vdiff_fields(reader),
         surface_pressure = :ps in hdr.payload_sections,
         humidity         = has_qv(reader),
         mass_basis       = hdr.mass_basis,

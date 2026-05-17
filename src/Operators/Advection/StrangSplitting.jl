@@ -1113,6 +1113,15 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
             () -> SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
                 state.tracers_raw, m, diffusion_op, workspace, dt, meteo;
                 halo_width = state.halo_width)
+        elseif uses_diffusive_surface_flux_boundary(diffusion_op)
+            () -> begin
+                apply_surface_flux!(state.tracers_raw, emissions_op, workspace, dt, meteo, grid;
+                                    tracer_names = state.tracer_names,
+                                    halo_width = state.halo_width)
+                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
+                    state.tracers_raw, m, diffusion_op, workspace, dt, meteo;
+                    halo_width = state.halo_width)
+            end
         else
             half_dt = dt / 2
             () -> begin
@@ -1153,6 +1162,15 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
             () -> SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
                 rm_tracer, m, diffusion_op, workspace, dt, meteo;
                 halo_width = state.halo_width)
+        elseif uses_diffusive_surface_flux_boundary(diffusion_op)
+            () -> begin
+                apply_surface_flux!(rm_tracer, emissions_op, workspace, dt, meteo, grid;
+                                    tracer_names = (tracer_name,),
+                                    halo_width = state.halo_width)
+                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
+                    rm_tracer, m, diffusion_op, workspace, dt, meteo;
+                    halo_width = state.halo_width)
+            end
         else
             half_dt = dt / 2
             () -> begin
@@ -1454,6 +1472,15 @@ function strang_split_mt!(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
     # the two halves of V differ by O((dt·D)²). Acceptable since Path 2
     # is only reached when the user opts in to emissions.
     if emissions_op isa NoSurfaceFlux
+        apply_vertical_diffusion!(rm_cur, diffusion_op, ws, dt, meteo)
+    elseif uses_diffusive_surface_flux_boundary(diffusion_op)
+        tracer_names === nothing && throw(ArgumentError(
+            "strang_split_mt!: `emissions_op` is non-trivial but " *
+            "`tracer_names` was not supplied — the surface-flux " *
+            "kernel needs per-tracer index resolution. Pass " *
+            "`tracer_names = state.tracer_names`."))
+        apply_surface_flux!(rm_cur, emissions_op, ws, dt, meteo, grid;
+                            tracer_names = tracer_names)
         apply_vertical_diffusion!(rm_cur, diffusion_op, ws, dt, meteo)
     else
         tracer_names === nothing && throw(ArgumentError(

@@ -159,7 +159,7 @@ function _parse_tracer_overrides(fields_cfg::AbstractDict,
     return out
 end
 
-function output_field_spec(fields_cfg::AbstractDict = Dict{String, Any}())
+function output_field_spec(fields_cfg::AbstractDict)
     default_tracer = TracerOutputFields(
         _parse_layer_selection(get(fields_cfg, "layers", "full"), "[output.fields].layers"),
         Bool(get(fields_cfg, "column_mean", true)),

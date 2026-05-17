@@ -276,6 +276,8 @@ export diagnose_cm!
 # Diffusion solver infrastructure + operator types (plan 16b Commits 2-4)
 export solve_tridiagonal!, build_diffusion_coefficients
 export AbstractDiffusion, NoDiffusion, ImplicitVerticalDiffusion
+export AbstractSurfaceFluxCoupling, SplitSurfaceFluxCoupling,
+       DiffusiveSurfaceFluxBoundary, uses_diffusive_surface_flux_boundary
 export apply_vertical_diffusion!, apply_vertical_diffusion_vmr!
 
 # Surface flux data types + operator hierarchy (plan 17 Commits 2-3).

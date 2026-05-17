@@ -250,6 +250,11 @@ export ntracers, tracer_index, tracer_name, get_tracer, eachtracer
 
 # Output diagnostics
 export SnapshotFrame, SnapshotWriteOptions
+export AbstractOutputSchedule, AbstractOutputPartition
+export ExplicitSnapshotSchedule, IntervalSnapshotSchedule
+export SingleOutputFile, DailyOutputFiles, RuntimeOutputSpec
+export runtime_output_spec, snapshot_hours, output_enabled, output_path
+export output_split, output_path_for_day
 export capture_snapshot, write_snapshot_netcdf
 export column_mean_mixing_ratio, layer_mass_per_area, column_mass_per_area
 

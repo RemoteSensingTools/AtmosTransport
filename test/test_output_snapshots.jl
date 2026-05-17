@@ -12,6 +12,55 @@ using .AtmosTransport
         @test_throws ArgumentError SnapshotWriteOptions(float_type=Float16)
     end
 
+    @testset "runtime output spec parses cadence and partitions" begin
+        mktempdir() do dir
+            path = joinpath(dir, "run.nc")
+            spec = runtime_output_spec(Dict{String, Any}(
+                                           "path" => path,
+                                           "cadence_hours" => 3,
+                                           "stop_hour" => 12,
+                                           "split" => "single",
+                                           "deflate_level" => 1),
+                                       Float32)
+            @test output_enabled(spec)
+            @test output_split(spec) === :single
+            @test output_path(spec) == path
+            @test snapshot_hours(spec) == [0.0, 3.0, 6.0, 9.0, 12.0]
+            @test spec.options.float_type === Float32
+            @test spec.options.deflate_level == 1
+
+            daily = runtime_output_spec(Dict{String, Any}(
+                                            "path" => joinpath(dir, "run_{date}.nc"),
+                                            "hours" => [0, 6, 24],
+                                            "split" => "daily"),
+                                        Float64)
+            @test output_enabled(daily)
+            @test output_split(daily) === :daily
+            @test snapshot_hours(daily) == [0.0, 6.0, 24.0]
+            @test output_path_for_day(daily, "20211202", 2) ==
+                  joinpath(dir, "run_20211202.nc")
+
+            suffixed = runtime_output_spec(Dict{String, Any}(
+                                               "path" => joinpath(dir, "run.nc"),
+                                               "snapshot_interval_hours" => 6,
+                                               "stop_hour" => 6,
+                                               "split" => "daily"),
+                                           Float32)
+            @test output_path_for_day(suffixed, "20211203", 3) ==
+                  joinpath(dir, "run_20211203.nc")
+
+            disabled = runtime_output_spec(Dict{String, Any}("enabled" => false,
+                                                             "path" => path,
+                                                             "cadence_hours" => 1),
+                                           Float32)
+            @test !output_enabled(disabled)
+            @test_throws ArgumentError runtime_output_spec(Dict{String, Any}(
+                                                               "path" => path,
+                                                               "cadence_hours" => 0),
+                                                           Float32)
+        end
+    end
+
     @testset "writer rejects inconsistent snapshot contracts" begin
         mktempdir() do dir
             mesh = LatLonMesh(; FT=Float64, Nx=4, Ny=3)
@@ -163,8 +212,9 @@ using .AtmosTransport
                 "numerics" => Dict("float_type" => "Float64"),
                 "run" => Dict("tracer_name" => "co2"),
                 "init" => Dict("kind" => "uniform", "background" => 400e-6),
-                "output" => Dict("snapshot_file" => out,
-                                  "snapshot_hours" => [0.0, 1.0],
+                "output" => Dict("path" => out,
+                                  "hours" => [0.0, 1.0],
+                                  "split" => "single",
                                   "deflate_level" => 1),
             )
             run_driven_simulation(cfg)
@@ -175,6 +225,19 @@ using .AtmosTransport
                 @test NCDatasets.deflate(ds["co2"].var) == (true, true, 1)
                 @test size(ds["co2_column_mean"]) == (2, 2, 2)
                 @test all(isapprox.(ds["co2_column_mean"][:, :, :], 400e-6; atol=1e-14))
+            end
+
+            daily_base = joinpath(dir, "daily.nc")
+            daily_cfg = copy(cfg)
+            daily_cfg["output"] = Dict("path" => daily_base,
+                                       "hours" => [0.0, 1.0],
+                                       "split" => "daily")
+            run_driven_simulation(daily_cfg)
+            daily_out = joinpath(dir, "daily_001.nc")
+            @test isfile(daily_out)
+            NCDataset(daily_out, "r") do ds
+                @test size(ds["co2_column_mean"]) == (2, 2, 2)
+                @test length(ds["time"][:]) == 2
             end
         end
     end

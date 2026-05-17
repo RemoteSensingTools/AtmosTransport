@@ -1,10 +1,11 @@
 # Output schema
 
-The runtime writes a single **NetCDF4** file per run, declared by
-`[output] snapshot_file` in the run config. This page documents the
-exact variable layout, dimensions, units, and per-topology
-conventions, so a downstream tool (Python / Julia / NCO / CDO) can
-consume the output without having to look up the writer source.
+The runtime writes **NetCDF4** snapshot files declared by `[output] path` in
+the run config. `split = "single"` writes one file per run; `split = "daily"`
+writes one file per daily binary. This page documents the exact variable
+layout, dimensions, units, and per-topology conventions, so a downstream tool
+(Python / Julia / NCO / CDO) can consume the output without having to look up
+the writer source.
 
 The writer entry point is `src/Output/netcdf_writer.jl`
 (`write_snapshot_netcdf` at line 81) which dispatches on the runtime
@@ -35,7 +36,7 @@ Dimensions:
 | `lon` | `Nx` (cell centers) |
 | `lat` | `Ny` |
 | `lev` | `Nz` (`positive = "down"` — `lev[1]` is TOA, `lev[end]` is surface) |
-| `time` | one entry per `snapshot_hours` value that actually fired |
+| `time` | one entry per configured output time that actually fired |
 
 Coordinate variables:
 

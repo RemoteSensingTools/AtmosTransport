@@ -37,10 +37,16 @@ using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
 using ..State: DryBasis, MoistBasis, mass_basis, tracer_names, get_tracer
 
 export SnapshotFrame, SnapshotWriteOptions
+export AbstractOutputSchedule, AbstractOutputPartition
+export ExplicitSnapshotSchedule, IntervalSnapshotSchedule
+export SingleOutputFile, DailyOutputFiles, RuntimeOutputSpec
+export runtime_output_spec, snapshot_hours, output_enabled, output_path
+export output_split, output_path_for_day
 export capture_snapshot, write_snapshot_netcdf
 export column_mean_mixing_ratio, layer_mass_per_area, column_mass_per_area
 
 include("snapshots.jl")
+include("runtime_output.jl")
 include("diagnostics.jl")
 include("netcdf_schema.jl")
 include("netcdf_writer.jl")

@@ -66,7 +66,9 @@ using ..InitialConditionIO: build_initial_mixing_ratio,
                              pack_initial_tracer_mass,
                              build_surface_flux_sources
 using ..BinaryPathExpander: expand_binary_paths
-using ..Output: SnapshotFrame, SnapshotWriteOptions,
+using ..Output: SnapshotFrame,
+                RuntimeOutputSpec, runtime_output_spec, snapshot_hours,
+                output_enabled, output_path, output_split, output_path_for_day,
                 capture_snapshot, write_snapshot_netcdf
 # TransportModel + DrivenSimulation live alongside us in the Models module;
 # reach up to the parent and pull them in.
@@ -80,39 +82,6 @@ using ..Models: build_runtime_physics_recipe, validate_runtime_physics_recipe,
                  configured_halo_width, build_cs_advection
 
 export run_driven_simulation, TransportTracerSpec
-
-# ===========================================================================
-# Snapshot-hours resolution helper. Supports two TOML shapes:
-#
-#   [output]
-#   snapshot_hours = [0, 3, 6, ...]          # explicit list
-#
-# or
-#
-#   [output]
-#   snapshot_interval_hours = 3              # snapshots every 3 h, covering
-#                                            # the full run
-#
-# The capture loop only emits snapshots that fall within
-# `total_elapsed_hours`, so a generous over-shoot at the upper bound is
-# safe — the helper writes `0, interval, 2*interval, …` up to
-# `default_cap_hours` (one year by default) when only the interval is
-# provided.
-# ===========================================================================
-function _resolve_snapshot_hours(output_cfg::AbstractDict;
-                                  default_cap_hours::Real = 8760.0,
-                                  fallback::AbstractVector{<:Real} = Float64[])
-    if haskey(output_cfg, "snapshot_hours")
-        return Float64.(output_cfg["snapshot_hours"])
-    elseif haskey(output_cfg, "snapshot_interval_hours")
-        interval = Float64(output_cfg["snapshot_interval_hours"])
-        interval > 0 || throw(ArgumentError(
-            "[output].snapshot_interval_hours must be positive, got $interval"))
-        return Float64.(0:interval:Float64(default_cap_hours))
-    else
-        return Float64.(fallback)
-    end
-end
 
 # ===========================================================================
 # Forward-run progress timer — Transport vs IO wall-clock breakdown.
@@ -344,11 +313,46 @@ function _log_runtime_summary(; topology, mesh_label, levels, halo_width,
     @info "Driven runtime\n" * join(lines, "\n")
 end
 
-function _snapshot_write_options(cfg, ::Type{FT}) where FT <: AbstractFloat
-    output_cfg = get(cfg, "output", Dict{String, Any}())
-    return SnapshotWriteOptions(float_type = FT,
-                                deflate_level = Int(get(output_cfg, "deflate_level", 0)),
-                                shuffle = Bool(get(output_cfg, "shuffle", true)))
+function _output_display_path(spec::RuntimeOutputSpec)
+    return output_enabled(spec) ? output_path(spec) : "(disabled)"
+end
+
+function _output_basename(spec::RuntimeOutputSpec)
+    return output_enabled(spec) ? basename(output_path(spec)) : "(disabled)"
+end
+
+function _binary_date_label(path::AbstractString)
+    m = match(r"(\d{8})", basename(path))
+    return m === nothing ? "" : String(m.captures[1])
+end
+
+function _output_default_cap_hours(driver, binary_count::Integer;
+                                   start_window::Integer = 1,
+                                   stop_window_override = nothing)
+    stop_window = stop_window_override === nothing ?
+                  total_windows(driver) :
+                  min(Int(stop_window_override), total_windows(driver))
+    nw = max(stop_window - start_window + 1, 0)
+    return Float64(nw * Int(binary_count)) * Float64(window_dt(driver)) / 3600.0
+end
+
+function _write_output_frames!(timer::RunProgressTimer,
+                               spec::RuntimeOutputSpec,
+                               frames::Vector{SnapshotFrame},
+                               grid;
+                               mass_basis::Symbol,
+                               date_label::AbstractString = "",
+                               day_index::Integer = 1)
+    output_enabled(spec) || return nothing
+    isempty(frames) && return nothing
+    path = output_split(spec) === :daily ?
+           output_path_for_day(spec, date_label, day_index) :
+           output_path(spec)
+    timed_io_write!(timer,
+        () -> write_snapshot_netcdf(path, frames, grid;
+                                    mass_basis = mass_basis,
+                                    options = spec.options))
+    return path
 end
 
 function _synchronize_backend!(cfg)
@@ -521,7 +525,9 @@ function run_driven_simulation(cfg::AbstractDict)
         SectionTimer.disable!()
         SectionTimer.report(stderr)
         output_cfg = get(cfg, "output", Dict{String, Any}())
-        snapshot_file = expand_data_path(String(get(output_cfg, "snapshot_file", "")))
+        snapshot_file = expand_data_path(String(get(output_cfg, "path",
+                                                    get(output_cfg, "snapshot_file",
+                                                        get(output_cfg, "filename", "")))))
         if !isempty(snapshot_file)
             csv_path = replace(snapshot_file, r"\.nc$" => "") * ".timings.csv"
             written = SectionTimer.write_csv(csv_path)
@@ -546,17 +552,20 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
                                                   _copy_cfg_dict(init_cfg),
                                                   Dict{String, Any}()),))
 
-    output_cfg = get(cfg, "output", Dict{String, Any}())
-    snapshot_hours = _resolve_snapshot_hours(output_cfg)
-    snapshot_file = expand_data_path(String(get(output_cfg, "snapshot_file", "")))
-    do_snapshots = !isempty(snapshot_hours) && !isempty(snapshot_file)
-
     _ensure_gpu_runtime!(cfg)
 
     # Open first driver, build recipe, validate capability, build model
     first_driver = TransportBinaryDriver(first(binary_paths);
                                           FT = FT,
                                           arch = CPU())
+    output_cfg = get(cfg, "output", Dict{String, Any}())
+    output_spec = runtime_output_spec(output_cfg, FT;
+                                      default_cap_hours = _output_default_cap_hours(
+                                          first_driver, length(binary_paths);
+                                          start_window = start_window,
+                                          stop_window_override = stop_window_override))
+    snapshot_schedule_hours = snapshot_hours(output_spec)
+    do_snapshots = output_enabled(output_spec)
     recipe = build_runtime_physics_recipe(cfg, first_driver, FT)
     _validate_capability_match(first_driver, recipe, cfg)
 
@@ -582,7 +591,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
                          driver = first_driver,
                          tracers = tracer_names(model.state),
                          binary_count = length(binary_paths),
-                         snapshot_file = snapshot_file)
+                         snapshot_file = _output_display_path(output_spec))
     for source in surface_sources
         @info @sprintf("Surface source %s total mass rate: %.12e kg/s",
                        String(source.tracer_name),
@@ -590,6 +599,8 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
     end
 
     snapshots = SnapshotFrame[]
+    day_snapshots = SnapshotFrame[]
+    snapshot_count = 0
     snap_idx = 1
     total_elapsed_hours = 0.0
 
@@ -601,10 +612,22 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
                  Int(stop_window_override) - start_window + 1
     timer = RunProgressTimer(per_binary * length(binary_paths))
 
-    if do_snapshots && snap_idx <= length(snapshot_hours) &&
-       abs(snapshot_hours[snap_idx]) < 0.5
-        timed_io_write!(timer,
-            () -> push!(snapshots, capture_snapshot(model; time_hours = 0.0)))
+    function capture_structured!(hour_total)
+        timed_io_write!(timer, () -> begin
+            frame = capture_snapshot(model; time_hours = hour_total)
+            if output_split(output_spec) === :daily
+                push!(day_snapshots, frame)
+            else
+                push!(snapshots, frame)
+            end
+        end)
+        snapshot_count += 1
+        return nothing
+    end
+
+    if do_snapshots && snap_idx <= length(snapshot_schedule_hours) &&
+       abs(snapshot_schedule_hours[snap_idx]) < 0.5
+        capture_structured!(0.0)
         set_progress_status!(timer;
                              detail = @sprintf("snapshot %d at t=%.0fh",
                                                snap_idx, 0.0),
@@ -660,20 +683,17 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
                                                stop_window,
                                                sim.steps_per_window),
                              detail = @sprintf("snapshots=%d  output=%s",
-                                               length(snapshots),
-                                               basename(snapshot_file)))
+                                               snapshot_count,
+                                               _output_basename(output_spec)))
                 total_elapsed_hours += window_hours
-                while snap_idx <= length(snapshot_hours) &&
-                      abs(total_elapsed_hours - snapshot_hours[snap_idx]) < 0.5
-                    timed_io_write!(timer,
-                        () -> push!(snapshots,
-                                    capture_snapshot(model;
-                                                     time_hours = total_elapsed_hours)))
+                while snap_idx <= length(snapshot_schedule_hours) &&
+                      abs(total_elapsed_hours - snapshot_schedule_hours[snap_idx]) < 0.5
+                    capture_structured!(total_elapsed_hours)
                     set_progress_status!(timer;
                                          detail = @sprintf("snapshot %d at t=%.0fh  output=%s",
                                                            snap_idx,
                                                            total_elapsed_hours,
-                                                           basename(snapshot_file)),
+                                                           _output_basename(output_spec)),
                                          redraw = true)
                     snap_idx += 1
                 end
@@ -698,18 +718,26 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
                              status = @sprintf("finished %s", basename(path)),
                              detail = @sprintf("file wall %.2fs", time() - t0),
                              redraw = true)
+        if do_snapshots && output_split(output_spec) === :daily && !isempty(day_snapshots)
+            written = _write_output_frames!(timer, output_spec, day_snapshots,
+                                            driver_grid(first_driver);
+                                            mass_basis = air_mass_basis(first_driver),
+                                            date_label = _binary_date_label(path),
+                                            day_index = idx)
+            set_progress_status!(timer;
+                                 detail = @sprintf("wrote %s", basename(written)),
+                                 redraw = true)
+            empty!(day_snapshots)
+        end
         close(driver)
     end
 
-    if do_snapshots && !isempty(snapshots)
+    if do_snapshots && output_split(output_spec) === :single && !isempty(snapshots)
         # `air_mass_basis(driver)` already returns the Symbol and has been
         # validated to match `model.state`'s basis by
         # `_check_basis_compatibility` before any step!.
-        timed_io_write!(timer,
-            () -> write_snapshot_netcdf(
-                snapshot_file, snapshots, driver_grid(first_driver);
-                mass_basis = air_mass_basis(first_driver),
-                options = _snapshot_write_options(cfg, FT)))
+        _write_output_frames!(timer, output_spec, snapshots, driver_grid(first_driver);
+                              mass_basis = air_mass_basis(first_driver))
     end
 
     summarize_progress!(timer)
@@ -760,12 +788,6 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
     stop_window_override = get(run_cfg, "stop_window", nothing)
     reset_air_mass_each_window = Bool(get(run_cfg, "reset_air_mass_each_window", false))
 
-    output_cfg = get(cfg, "output", Dict{String, Any}())
-    snapshot_hours = _resolve_snapshot_hours(output_cfg;
-                                             fallback = Float64[0, 24, 48])
-    snapshot_file  = expanduser(String(get(output_cfg, "snapshot_file",
-                                           "cs_driven_snapshot.nc")))
-
     tracers_cfg = get(cfg, "tracers", Dict{String, Any}())
     isempty(tracers_cfg) && error("[tracers] must define at least one tracer")
     # Use the same tracer-spec parser as the LL/RG runner so
@@ -780,6 +802,13 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
     # First driver + model (reuses air_mass from window 1)
     driver1 = CubedSphereTransportDriver(first(binary_paths);
                                           FT = FT, arch = arch, Hp = Hp)
+    output_cfg = get(cfg, "output", Dict{String, Any}())
+    output_spec = runtime_output_spec(output_cfg, FT;
+                                      default_cap_hours = _output_default_cap_hours(
+                                          driver1, length(binary_paths);
+                                          stop_window_override = stop_window_override))
+    snapshot_schedule_hours = snapshot_hours(output_spec)
+    do_snapshots = output_enabled(output_spec)
     if stop_window_override !== nothing && length(binary_paths) > 1 &&
        Int(stop_window_override) < total_windows(driver1)
         close(driver1)
@@ -870,11 +899,13 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
                          driver = driver1,
                          tracers = keys(tracer_init),
                          binary_count = length(binary_paths),
-                         snapshot_file = snapshot_file)
+                         snapshot_file = _output_display_path(output_spec))
 
     # Snapshot storage is full-state and topology-native; Output handles halo
     # stripping and NetCDF diagnostics.
     snapshots = SnapshotFrame[]
+    day_snapshots = SnapshotFrame[]
+    snapshot_count = 0
 
     # Progress + IO/Transport timer. Estimate total windows from the
     # first driver; closes to the truth on homogeneous daily runs.
@@ -884,15 +915,23 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
     timer = RunProgressTimer(per_binary_estimate * length(binary_paths))
 
     function capture_cs!(hour_total)
-        timed_io_write!(timer,
-            () -> push!(snapshots,
-                        capture_snapshot(model; time_hours = hour_total,
-                                         halo_width = Hp)))
+        timed_io_write!(timer, () -> begin
+            frame = capture_snapshot(model; time_hours = hour_total,
+                                     halo_width = Hp)
+            if output_split(output_spec) === :daily
+                push!(day_snapshots, frame)
+            else
+                push!(snapshots, frame)
+            end
+        end)
+        snapshot_count += 1
+        return nothing
     end
 
     snap_idx = 1
     total_hour = 0.0
-    if snap_idx <= length(snapshot_hours) && abs(snapshot_hours[snap_idx]) < 0.5
+    if do_snapshots && snap_idx <= length(snapshot_schedule_hours) &&
+       abs(snapshot_schedule_hours[snap_idx]) < 0.5
         capture_cs!(0.0)
         set_progress_status!(timer;
                              detail = @sprintf("snapshot %d at t=%.1fh",
@@ -961,17 +1000,17 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
                                                stop_window,
                                                sim.steps_per_window),
                              detail = @sprintf("snapshots=%d  output=%s",
-                                               length(snapshots),
-                                               basename(snapshot_file)))
+                                               snapshot_count,
+                                               _output_basename(output_spec)))
                 total_hour += window_hours
-                while snap_idx <= length(snapshot_hours) &&
-                      abs(total_hour - snapshot_hours[snap_idx]) < 0.5
+                while do_snapshots && snap_idx <= length(snapshot_schedule_hours) &&
+                      abs(total_hour - snapshot_schedule_hours[snap_idx]) < 0.5
                     capture_cs!(total_hour)
                     set_progress_status!(timer;
                                          detail = @sprintf("snapshot %d at t=%.1fh  output=%s",
                                                            snap_idx,
                                                            total_hour,
-                                                           basename(snapshot_file)),
+                                                           _output_basename(output_spec)),
                                          redraw = true)
                     snap_idx += 1
                 end
@@ -981,11 +1020,22 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
                              status = @sprintf("finished %s", basename(path)),
                              detail = @sprintf("file wall %.1fs", time() - day_t0),
                              redraw = true)
+        if do_snapshots && output_split(output_spec) === :daily && !isempty(day_snapshots)
+            written = _write_output_frames!(timer, output_spec, day_snapshots,
+                                            grid;
+                                            mass_basis = BasisT === DryBasis ? :dry : :moist,
+                                            date_label = _binary_date_label(path),
+                                            day_index = driver_idx)
+            set_progress_status!(timer;
+                                 detail = @sprintf("wrote %s", basename(written)),
+                                 redraw = true)
+            empty!(day_snapshots)
+        end
         close(driver)
     end
 
     @info @sprintf("Done: %.1fs  (%d snapshots, final t=%.1fh)",
-                   time() - t0, length(snapshots), total_hour)
+                   time() - t0, snapshot_count, total_hour)
 
     for name in keys(tracer_init)
         rm1 = Float64(total_mass(state, name))
@@ -996,15 +1046,12 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
         end
     end
 
-    if !isempty(snapshots)
+    if do_snapshots && output_split(output_spec) === :single && !isempty(snapshots)
         # BasisT was bound at model construction (dry by default on CS per
         # invariant 14); reuse it so the NetCDF records the same basis the
         # `air_mass` arrays were stored under.
-        timed_io_write!(timer,
-            () -> write_snapshot_netcdf(
-                snapshot_file, snapshots, grid;
-                mass_basis = BasisT === DryBasis ? :dry : :moist,
-                options = _snapshot_write_options(cfg, FT)))
+        _write_output_frames!(timer, output_spec, snapshots, grid;
+                              mass_basis = BasisT === DryBasis ? :dry : :moist)
     end
     summarize_progress!(timer)
     return model

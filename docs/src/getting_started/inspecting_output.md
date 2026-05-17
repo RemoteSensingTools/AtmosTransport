@@ -53,9 +53,10 @@ preprocessor rather than loading them with compatibility defaults.
 
 ## Inspect a snapshot NetCDF
 
-The runtime's `[output]` block writes a single NetCDF at `snapshot_file`,
-one frame per entry in `snapshot_hours`. The variables and their
-dimensions depend on the target topology:
+The runtime's `[output]` block writes NetCDF snapshots at `path`, with cadence
+from `hours`, `cadence_hours`, or `cadence_seconds`. `split = "single"` writes
+one file for the run; `split = "daily"` writes one file per daily binary. The
+variables and their dimensions depend on the target topology:
 
 For a lat-lon snapshot the actual variable list looks like (verified
 against `config/runs/quickstart/ll72x37_advonly.toml`):

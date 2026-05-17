@@ -165,16 +165,19 @@ against a binary lacking `:cmfmc` payload). See
 
 ```toml
 [output]
-snapshot_hours = [0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72]
-snapshot_file  = "~/data/.../my_run.nc"
-deflate_level  = 0             # NetCDF4 deflate (0..9); 0 = no compression
-shuffle        = true          # shuffle filter; only effective when deflate>0
+path          = "~/data/.../my_run.nc"
+cadence_hours = 3              # or hours = [0, 6, 12, ...]
+split         = "single"       # "single" | "daily"
+deflate_level = 0              # NetCDF4 deflate (0..9); 0 = no compression
+shuffle       = true           # shuffle filter; only effective when deflate>0
 ```
 
-A frame lands when `|t_simulation_hours − snapshot_hours[k]| < 0.5`
-(`DrivenRunner.jl:398`); the float-tolerance window absorbs
-sub-step rounding. See [Output schema](@ref) for the per-topology
-variable list the file actually contains.
+`split = "single"` writes one NetCDF after the run. `split = "daily"` writes
+one complete NetCDF per daily binary; use `{date}` or `{YYYYMMDD}` in `path`
+for an explicit filename template, otherwise the date is inserted before
+`.nc`. Legacy `snapshot_file`, `snapshot_hours`, and
+`snapshot_interval_hours` are still accepted. See [Output schema](@ref) for
+the per-topology variable list the file actually contains.
 
 ### Multi-threaded execution
 

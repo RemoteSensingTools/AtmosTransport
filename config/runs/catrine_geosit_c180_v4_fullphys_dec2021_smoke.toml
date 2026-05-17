@@ -72,5 +72,6 @@ kind = "decay"
   rn222 = 330350.4
 
 [output]
-snapshot_interval_hours = 3
-snapshot_file = "~/data/AtmosTransport/output/catrine_geosit_c180_v4_fullphys_dec2021_5day_smoke.nc"
+path = "~/data/AtmosTransport/output/catrine_geosit_c180_v4_fullphys_dec2021_5day_smoke.nc"
+cadence_hours = 3
+split = "single"

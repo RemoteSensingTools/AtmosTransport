@@ -1,8 +1,8 @@
 # Diagnostic NetCDF Output
 
-`AtmosTransport.Output` owns runtime snapshot capture and NetCDF layout. Runners
-should only decide when to sample; they should call `capture_snapshot` and
-`write_snapshot_netcdf` rather than defining topology-specific NetCDF schemas.
+`AtmosTransport.Output` owns runtime snapshot capture, cadence parsing, file
+partitioning, and NetCDF layout. Runners should call the typed output contract
+instead of defining topology-specific schedules or paths.
 
 ## Contract
 
@@ -10,6 +10,9 @@ should only decide when to sample; they should call `capture_snapshot` and
 - The writer derives per-layer VMR, air-mass-weighted column mean VMR, layer air mass per area, column air mass per area, and tracer column mass per area.
 - `mass_basis` is written globally and must match every `SnapshotFrame`.
 - LL, RG, and CS dispatch through one writer API.
+- `[output]` is parsed into a `RuntimeOutputSpec`, whose schedule and
+  partition are typed (`ExplicitSnapshotSchedule` /
+  `IntervalSnapshotSchedule`, `SingleOutputFile` / `DailyOutputFiles`).
 
 ## Topology Layout
 
@@ -44,14 +47,34 @@ write_snapshot_netcdf("snapshot.nc", [frame], model.grid;
 `halo_width` is only needed for panel-native CS runtime state; it strips halos
 before writing panel interiors.
 
-From TOML, runners read these `[output]` keys:
+From TOML, prefer these `[output]` keys:
+
+```toml
+[output]
+path = "~/data/AtmosTransport/output/run.nc"
+cadence_hours = 3
+split = "single"       # "single" or "daily"
+deflate_level = 1
+shuffle = true
+```
+
+For exact output times, replace `cadence_hours` with `hours = [0, 6, 12, 24]`.
+For second-based cadence, use `cadence_seconds`. `start_hour` and `stop_hour`
+bound interval schedules when the run should not use the default generous
+coverage.
+
+`split = "single"` writes one NetCDF at `path` after the run. `split = "daily"`
+writes one complete NetCDF per daily binary. If `path` contains `{date}`,
+`{YYYYMMDD}`, or `{day}`, those tokens are replaced; otherwise the date suffix
+is inserted before `.nc`, e.g. `run.nc` becomes `run_20211201.nc`.
+
+Legacy keys remain accepted while configs migrate:
 
 ```toml
 [output]
 snapshot_hours = [0, 6, 12, 24]
 snapshot_file = "~/data/AtmosTransport/output/run.nc"
-deflate_level = 1
-shuffle = true
+snapshot_interval_hours = 3
 ```
 
 ## Storage Options

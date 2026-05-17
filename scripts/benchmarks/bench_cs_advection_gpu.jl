@@ -33,7 +33,8 @@ using AtmosTransport: CubedSphereMesh, GEOSNativePanelConvention,
     DryBasis, DryMassFluxBasis, CubedSphereFaceFluxState,
     CSAdvectionWorkspace, CSLinRoodAdvectionWorkspace,
     CubedSphereState, PPMScheme, SlopesScheme, UpwindScheme,
-    LinRoodPPMScheme, MonotoneLimiter, fill_panel_halos!, strang_split_cs!
+    LinRoodPPMScheme, MonotoneLimiter, fill_panel_halos!, strang_split_cs!,
+    strang_split_cs_mt!
 using Adapt
 using Statistics
 using Printf
@@ -260,6 +261,7 @@ function build_problem(::Type{FT}, Nc::Int, Nz::Int, Nt::Int, backend) where {FT
     panels_m_cpu = ntuple(_ -> _haloed_panel(FT, Nc, Hp, Nz), 6)
     _fill_mass!(panels_m_cpu, mesh, FT)
     tracers_cpu = [_make_tracer(panels_m_cpu, mesh, FT, t) for t in 1:Nt]
+    tracers_raw_cpu = ntuple(p -> cat((tracers_cpu[t][p] for t in 1:Nt)...; dims = 4), 6)
 
     N = Nc + 2Hp
     am_cpu = ntuple(_ -> zeros(FT, N + 1, N, Nz), 6)
@@ -269,12 +271,13 @@ function build_problem(::Type{FT}, Nc::Int, Nz::Int, Nt::Int, backend) where {FT
 
     panels_m = Adapt.adapt(_array_type(backend), panels_m_cpu)
     tracers = [Adapt.adapt(_array_type(backend), tr) for tr in tracers_cpu]
+    tracers_raw = Adapt.adapt(_array_type(backend), tracers_raw_cpu)
     fluxes = CubedSphereFaceFluxState{DryMassFluxBasis}(
         Adapt.adapt(_array_type(backend), am_cpu),
         Adapt.adapt(_array_type(backend), bm_cpu),
         Adapt.adapt(_array_type(backend), cm_cpu))
     m_save = ntuple(p -> similar(panels_m[p]), 6)
-    return mesh, panels_m, m_save, tracers, fluxes
+    return mesh, panels_m, m_save, tracers, tracers_raw, fluxes
 end
 
 function _copy_panels!(dst::NTuple{6}, src::NTuple{6})
@@ -284,18 +287,19 @@ function _copy_panels!(dst::NTuple{6}, src::NTuple{6})
     return nothing
 end
 
-function _workspace_for_problem(mesh, panels_m, scheme)
+function _workspace_for_problem(mesh, panels_m, scheme, Nt::Int)
     if scheme isa LinRoodPPMScheme
         return CSLinRoodAdvectionWorkspace(mesh, panels_m[1])
     end
-    return CSAdvectionWorkspace(mesh, panels_m[1])
+    return CSAdvectionWorkspace(mesh, panels_m[1]; n_tracers = Nt)
 end
 
 # ---------------------------------------------------------------------------
 # Benchmark kernels
 # ---------------------------------------------------------------------------
 
-function run_window!(panels_m, m_save, tracers, fluxes, mesh, scheme, ws, n_sub::Int)
+function run_window!(panels_m, m_save, tracers, tracers_raw, fluxes, mesh,
+                     scheme::LinRoodPPMScheme, ws, n_sub::Int)
     _copy_panels!(m_save, panels_m)
     for (idx, rm) in enumerate(tracers)
         idx > 1 && _copy_panels!(panels_m, m_save)
@@ -306,21 +310,31 @@ function run_window!(panels_m, m_save, tracers, fluxes, mesh, scheme, ws, n_sub:
     return nothing
 end
 
+function run_window!(panels_m, m_save, tracers, tracers_raw, fluxes, mesh,
+                     scheme, ws, n_sub::Int)
+    _ = m_save
+    _ = tracers
+    fill_panel_halos!(tracers_raw, mesh; dir = 1)
+    strang_split_cs_mt!(tracers_raw, panels_m, fluxes.am, fluxes.bm, fluxes.cm,
+                        mesh, scheme, ws; subcycle_count = n_sub)
+    return nothing
+end
+
 function time_case(::Type{FT}, Nc::Int, Nz::Int, Nt::Int, n_sub::Int,
                    scheme, backend; repeat::Int, warmup::Int) where {FT}
-    mesh, panels_m, m_save, tracers, fluxes = build_problem(FT, Nc, Nz, Nt, backend)
-    ws = _workspace_for_problem(mesh, panels_m, scheme)
+    mesh, panels_m, m_save, tracers, tracers_raw, fluxes = build_problem(FT, Nc, Nz, Nt, backend)
+    ws = _workspace_for_problem(mesh, panels_m, scheme, Nt)
     _sync(backend)
 
     for _ in 1:warmup
-        run_window!(panels_m, m_save, tracers, fluxes, mesh, scheme, ws, n_sub)
+        run_window!(panels_m, m_save, tracers, tracers_raw, fluxes, mesh, scheme, ws, n_sub)
     end
     _sync(backend)
 
     times = Float64[]
     for _ in 1:repeat
         t0 = time_ns()
-        run_window!(panels_m, m_save, tracers, fluxes, mesh, scheme, ws, n_sub)
+        run_window!(panels_m, m_save, tracers, tracers_raw, fluxes, mesh, scheme, ws, n_sub)
         _sync(backend)
         push!(times, (time_ns() - t0) * 1e-9)
     end

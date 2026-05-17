@@ -1020,6 +1020,24 @@ function _cs_transport_step!(::CSSplitSweepStyle,
 end
 
 function _cs_transport_step!(::CSSplitSweepStyle,
+                             rm_4d::NTuple{6, <:AbstractArray{<:Any, 4}},
+                             m,
+                             fluxes::CubedSphereFaceFluxState,
+                             mesh::CubedSphereMesh,
+                             scheme::AbstractAdvectionScheme,
+                             workspace::CSAdvectionWorkspace;
+                             cfl_limit::Real = 0.95,
+                             subcycle_count::Union{Nothing, Integer} = nothing,
+                             midpoint! = nothing)
+    strang_split_cs_mt!(rm_4d, m, fluxes.am, fluxes.bm, fluxes.cm,
+                        mesh, scheme, workspace;
+                        cfl_limit = cfl_limit,
+                        subcycle_count = subcycle_count,
+                        midpoint! = midpoint!)
+    return nothing
+end
+
+function _cs_transport_step!(::CSSplitSweepStyle,
                              _rm_tracer, _m,
                              _fluxes::CubedSphereFaceFluxState,
                              _mesh::CubedSphereMesh,
@@ -1088,6 +1106,35 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
     fill_panel_halos!(state.air_mass, grid.horizontal; dir=1)
 
     m = state.air_mass
+    subcycle_count = _cs_runtime_subcycle_count(meteo)
+    if cs_advection_style(scheme) isa CSSplitSweepStyle
+        fill_panel_halos!(state.tracers_raw, grid.horizontal; dir=1)
+        midpoint! = if emissions_op isa NoSurfaceFlux
+            () -> SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
+                state.tracers_raw, m, diffusion_op, workspace, dt, meteo;
+                halo_width = state.halo_width)
+        else
+            half_dt = dt / 2
+            () -> begin
+                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
+                    state.tracers_raw, m, diffusion_op, workspace, half_dt, meteo;
+                    halo_width = state.halo_width)
+                apply_surface_flux!(state.tracers_raw, emissions_op, workspace, dt, meteo, grid;
+                                    tracer_names = state.tracer_names,
+                                    halo_width = state.halo_width)
+                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
+                    state.tracers_raw, m, diffusion_op, workspace, half_dt, meteo;
+                    halo_width = state.halo_width)
+            end
+        end
+        _cs_transport_step!(CSSplitSweepStyle(), state.tracers_raw, m, fluxes,
+                            grid.horizontal, scheme, workspace;
+                            cfl_limit = cfl_limit,
+                            subcycle_count = subcycle_count,
+                            midpoint! = midpoint!)
+        return nothing
+    end
+
     m_save = n_tr > 1 ? _similar_cs_storage(m) : m
     if n_tr > 1
         _copy_cs_storage!(m_save, m)
@@ -1120,7 +1167,6 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
                     halo_width = state.halo_width)
             end
         end
-        subcycle_count = _cs_runtime_subcycle_count(meteo)
         _cs_transport_step!(cs_advection_style(scheme),
                             rm_tracer, m, fluxes, grid.horizontal, scheme, workspace;
                             cfl_limit = cfl_limit,

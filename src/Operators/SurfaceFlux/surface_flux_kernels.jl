@@ -69,3 +69,15 @@ interior `(Nc, Nc)` panel source.
     ii, jj = @index(Global, NTuple)
     @inbounds q_raw[ii + Hp, jj + Hp, Nz] += rate[ii, jj] * dt
 end
+
+"""
+    _surface_flux_cs_kernel!(q_raw, rate, dt, tracer_idx, Nz, Hp)
+
+Packed cubed-sphere surface-flux kernel. `q_raw` is one halo-padded panel
+`(Nc + 2Hp, Nc + 2Hp, Nz, Nt)` and `rate` is the interior `(Nc, Nc)`
+panel source for `tracer_idx`.
+"""
+@kernel function _surface_flux_cs_kernel!(q_raw, @Const(rate), dt, tracer_idx, Nz, Hp)
+    ii, jj = @index(Global, NTuple)
+    @inbounds q_raw[ii + Hp, jj + Hp, Nz, tracer_idx] += rate[ii, jj] * dt
+end

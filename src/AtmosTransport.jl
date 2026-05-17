@@ -300,7 +300,8 @@ export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemis
 export chemistry_block!
 
 # Cubed-sphere advection
-export fill_panel_halos!, copy_corners!, strang_split_cs!, CSAdvectionWorkspace
+export fill_panel_halos!, copy_corners!, strang_split_cs!, strang_split_cs_mt!,
+       CSAdvectionWorkspace
 
 # Prototype adjoint / footprint utilities
 export AbstractCSFootprintObjective

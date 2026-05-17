@@ -6,7 +6,7 @@ using Logging
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 using .AtmosTransport.Operators.Advection: fill_panel_halos!, strang_split_cs!,
-    CSAdvectionWorkspace, VerticalRemapWorkspace,
+    strang_split_cs_mt!, CSAdvectionWorkspace, VerticalRemapWorkspace,
     compute_target_pressure_from_mass_direct!, vertical_remap_cs!
 
 # ---------------------------------------------------------------------------
@@ -26,6 +26,22 @@ function max_vmr_deviation(panels_rm, panels_m, Nc, Hp, Nz, target)
     for p in 1:6, k in 1:Nz, j in (Hp+1):(Hp+Nc), i in (Hp+1):(Hp+Nc)
         vmr = panels_rm[p][i, j, k] / panels_m[p][i, j, k]
         dev = max(dev, abs(vmr - target))
+    end
+    return dev
+end
+
+function max_interior_absdiff(a, b, Nc, Hp, Nz)
+    dev = 0.0
+    for p in 1:6, k in 1:Nz, j in (Hp+1):(Hp+Nc), i in (Hp+1):(Hp+Nc)
+        dev = max(dev, abs(a[p][i, j, k] - b[p][i, j, k]))
+    end
+    return dev
+end
+
+function max_interior_absdiff_4d(a, b, Nc, Hp, Nz, Nt)
+    dev = 0.0
+    for t in 1:Nt, p in 1:6, k in 1:Nz, j in (Hp+1):(Hp+Nc), i in (Hp+1):(Hp+Nc)
+        dev = max(dev, abs(a[p][i, j, k, t] - b[p][i, j, k, t]))
     end
     return dev
 end
@@ -189,6 +205,58 @@ end
 
         dev = max_vmr_deviation(panels_rm, panels_m, Nc, Hp, Nz, 411.0)
         @test dev < 1e-10
+    end
+
+    @testset "Packed multi-tracer path matches single-tracer reference" begin
+        for scheme in (UpwindScheme(), PPMScheme())
+            Hp = required_halo_width(scheme)
+            mesh, panels_m0, panels_rm0 = make_cs_test_state(Nc=8, Hp=Hp, Nz=3, vmr=100.0)
+            Nc, Nz = mesh.Nc, 3
+            N = Nc + 2Hp
+            panels_rm2 = ntuple(p -> panels_rm0[p] .* 1.7, 6)
+            panels_am = ntuple(6) do p
+                am = zeros(Float64, N + 1, N, Nz)
+                for k in 1:Nz, j in (Hp+1):(Hp+Nc), i in (Hp+1):(Hp+Nc+1)
+                    am[i, j, k] = 0.015 * sin(0.2p + 0.7i - 0.4j + 0.3k)
+                end
+                am
+            end
+            panels_bm = ntuple(6) do p
+                bm = zeros(Float64, N, N + 1, Nz)
+                for k in 1:Nz, j in (Hp+1):(Hp+Nc+1), i in (Hp+1):(Hp+Nc)
+                    bm[i, j, k] = 0.012 * cos(0.3p - 0.5i + 0.6j + 0.2k)
+                end
+                bm
+            end
+            panels_cm = ntuple(6) do p
+                cm = zeros(Float64, N, N, Nz + 1)
+                for k in 2:Nz, j in (Hp+1):(Hp+Nc), i in (Hp+1):(Hp+Nc)
+                    cm[i, j, k] = 0.01 * sin(0.1p + 0.2i + 0.3j - 0.7k)
+                end
+                cm
+            end
+
+            m_ref0 = deepcopy(panels_m0)
+            m_ref = deepcopy(panels_m0)
+            rm_ref1 = deepcopy(panels_rm0)
+            rm_ref2 = deepcopy(panels_rm2)
+            ws_ref = CSAdvectionWorkspace(mesh, Nz)
+            strang_split_cs!(rm_ref1, m_ref, panels_am, panels_bm, panels_cm,
+                             mesh, scheme, ws_ref; subcycle_count = 1)
+            copyto!.(m_ref, m_ref0)
+            strang_split_cs!(rm_ref2, m_ref, panels_am, panels_bm, panels_cm,
+                             mesh, scheme, ws_ref; subcycle_count = 1)
+
+            rm_mt = ntuple(p -> cat(panels_rm0[p], panels_rm2[p]; dims = 4), 6)
+            m_mt = deepcopy(panels_m0)
+            ws_mt = CSAdvectionWorkspace(mesh, Nz; n_tracers = 2)
+            strang_split_cs_mt!(rm_mt, m_mt, panels_am, panels_bm, panels_cm,
+                                mesh, scheme, ws_mt; subcycle_count = 1)
+            rm_ref = ntuple(p -> cat(rm_ref1[p], rm_ref2[p]; dims = 4), 6)
+
+            @test max_interior_absdiff_4d(rm_mt, rm_ref, Nc, Hp, Nz, 2) < 1e-12
+            @test max_interior_absdiff(m_mt, m_ref, Nc, Hp, Nz) < 1e-12
+        end
     end
 
     @testset "Mass conservation — interior fluxes" begin

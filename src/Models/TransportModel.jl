@@ -73,7 +73,8 @@ _convection_workspace_for(::NoConvection, state, grid) = nothing
 _cs_advection_workspace_for(::AbstractAdvectionScheme,
                             state::CubedSphereState,
                             grid::AtmosGrid{<:CubedSphereMesh}) =
-    CSAdvectionWorkspace(grid.horizontal, state.air_mass[1])
+    CSAdvectionWorkspace(grid.horizontal, state.air_mass[1];
+                         n_tracers = ntracers(state))
 
 _cs_advection_workspace_for(::LinRoodPPMScheme,
                             state::CubedSphereState,

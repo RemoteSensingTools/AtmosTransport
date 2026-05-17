@@ -90,7 +90,8 @@ export TM5Workspace                             # plan 23 Commit 1
 export apply_convection!
 
 # Cubed-sphere advection
-export fill_panel_halos!, copy_corners!, strang_split_cs!, CSAdvectionWorkspace
+export fill_panel_halos!, copy_corners!, strang_split_cs!, strang_split_cs_mt!,
+       CSAdvectionWorkspace
 
 # Lin-Rood cross-term advection (FV3 fv_tp_2d)
 export LinRoodWorkspace, CSLinRoodAdvectionWorkspace

@@ -199,6 +199,87 @@ column solve is unchanged; only the panel halo offset differs.
     end
 end
 
+"""
+    _vertical_diffusion_cs_kernel!(q, kz_field, dz, w_scratch, dt, Nz, Hp)
+
+Packed cubed-sphere diffusion kernel. `q` is one halo-padded panel
+`(Nc + 2Hp, Nc + 2Hp, Nz, Nt)`. One thread owns one `(ii, jj, tracer)`
+column; the tridiagonal coefficients are identical for all tracers in a
+column and are computed locally to keep the workspace rank unchanged.
+"""
+@kernel function _vertical_diffusion_cs_kernel!(q, kz_field,
+                                                @Const(dz),
+                                                w_scratch,
+                                                dt, Nz::Int, Hp::Int)
+    ii, jj, t = @index(Global, NTuple)
+    FT = eltype(q)
+    @inbounds begin
+        i = ii + Hp
+        j = jj + Hp
+        dt_ft = FT(dt)
+
+        Kz_prev = zero(FT)
+        dz_prev = zero(FT)
+        w_prev  = zero(FT)
+        g_prev  = zero(FT)
+
+        Kz_k = field_value(kz_field, (ii, jj, 1))
+        dz_k = dz[ii, jj, 1]
+
+        for k in 1:Nz
+            D_above = zero(FT)
+            D_below = zero(FT)
+            Kz_next = zero(FT)
+            dz_next = zero(FT)
+
+            if k > 1
+                Kz_above = (Kz_prev + Kz_k) / FT(2)
+                dz_above = (dz_prev + dz_k) / FT(2)
+                D_above  = Kz_above / (dz_k * dz_above)
+            end
+
+            if k < Nz
+                Kz_next  = field_value(kz_field, (ii, jj, k + 1))
+                dz_next  = dz[ii, jj, k + 1]
+                Kz_below = (Kz_k + Kz_next) / FT(2)
+                dz_below = (dz_k + dz_next) / FT(2)
+                D_below  = Kz_below / (dz_k * dz_below)
+            end
+
+            a_k = (k > 1)  ? -dt_ft * D_above : zero(FT)
+            b_k = one(FT) + dt_ft * (D_above + D_below)
+            c_k = (k < Nz) ? -dt_ft * D_below : zero(FT)
+            d_k = q[i, j, k, t]
+
+            if k == 1
+                denom = b_k
+                w_k   = c_k / denom
+                g_k   = d_k / denom
+            else
+                denom = b_k - a_k * w_prev
+                w_k   = c_k / denom
+                g_k   = (d_k - a_k * g_prev) / denom
+            end
+
+            w_scratch[ii, jj, k] = w_k
+            q[i, j, k, t]        = g_k
+
+            if k < Nz
+                w_prev  = w_k
+                g_prev  = g_k
+                Kz_prev = Kz_k
+                dz_prev = dz_k
+                Kz_k    = Kz_next
+                dz_k    = dz_next
+            end
+        end
+
+        for k in (Nz - 1):-1:1
+            q[i, j, k, t] = q[i, j, k, t] - w_scratch[ii, jj, k] * q[i, j, k + 1, t]
+        end
+    end
+end
+
 @kernel function _cs_tracer_mass_to_vmr_kernel!(q, @Const(air_mass), Hp::Int)
     ii, jj, k = @index(Global, NTuple)
     FT = eltype(q)
@@ -216,6 +297,26 @@ end
         i = ii + Hp
         j = jj + Hp
         q[i, j, k] *= air_mass[i, j, k]
+    end
+end
+
+@kernel function _cs_tracer_mass_to_vmr_4d_kernel!(q, @Const(air_mass), Hp::Int)
+    ii, jj, k, t = @index(Global, NTuple)
+    FT = eltype(q)
+    @inbounds begin
+        i = ii + Hp
+        j = jj + Hp
+        m = air_mass[i, j, k]
+        q[i, j, k, t] = m > zero(FT) ? q[i, j, k, t] / m : zero(FT)
+    end
+end
+
+@kernel function _cs_vmr_to_tracer_mass_4d_kernel!(q, @Const(air_mass), Hp::Int)
+    ii, jj, k, t = @index(Global, NTuple)
+    @inbounds begin
+        i = ii + Hp
+        j = jj + Hp
+        q[i, j, k, t] *= air_mass[i, j, k]
     end
 end
 

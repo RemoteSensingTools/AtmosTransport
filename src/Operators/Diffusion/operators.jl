@@ -333,6 +333,42 @@ function apply_vertical_diffusion!(q_raw::NTuple{6, A},
     return nothing
 end
 
+function apply_vertical_diffusion!(q_raw::NTuple{6, A},
+                                   op::ImplicitVerticalDiffusion{FT, KzF},
+                                   workspace, dt,
+                                   meteo = nothing;
+                                   halo_width::Integer) where {FT, A <: AbstractArray{FT, 4},
+                                                                KzF <: AbstractCubedSphereField{FT}}
+    hasproperty(workspace, :w_scratch) && hasproperty(workspace, :dz_scratch) ||
+        throw(ArgumentError(
+            "cubed-sphere diffusion requires a workspace with panel-native " *
+            "`w_scratch` and `dz_scratch` tuples"))
+
+    w_scratch = getproperty(workspace, :w_scratch)
+    dz_scratch = getproperty(workspace, :dz_scratch)
+    length(w_scratch) == 6 && length(dz_scratch) == 6 ||
+        throw(DimensionMismatch("cubed-sphere diffusion workspace must provide 6 panel scratch arrays"))
+
+    update_field!(op.kz_field, _diffusion_time(FT, meteo))
+
+    Hp = Int(halo_width)
+    @inbounds for p in 1:6
+        panel_q = q_raw[p]
+        Nc = size(panel_q, 1) - 2 * Hp
+        Ny = size(panel_q, 2) - 2 * Hp
+        Nz = size(panel_q, 3)
+        Nt = size(panel_q, 4)
+        _check_cs_diffusion_workspace_shape(dz_scratch[p], w_scratch[p], (Nc, Ny, Nz), p)
+        panel_kz = panel_field(op.kz_field, p)
+        backend = get_backend(panel_q)
+        kernel = _vertical_diffusion_cs_kernel!(backend, (8, 8, 1))
+        kernel(panel_q, panel_kz, dz_scratch[p], w_scratch[p], FT(dt), Nz, Hp;
+               ndrange = (Nc, Ny, Nt))
+        synchronize(backend)
+    end
+    return nothing
+end
+
 function _cs_scale_tracer_mass_to_vmr!(q_raw::NTuple{6, A},
                                        air_mass::NTuple{6},
                                        halo_width::Integer) where {A <: AbstractArray}
@@ -352,6 +388,31 @@ function _cs_scale_tracer_mass_to_vmr!(q_raw::NTuple{6, A},
         backend = get_backend(panel_q)
         kernel = _cs_tracer_mass_to_vmr_kernel!(backend, (8, 8, 1))
         kernel(panel_q, panel_m, Hp; ndrange = (Nc, Ny, Nz))
+        synchronize(backend)
+    end
+    return q_raw
+end
+
+function _cs_scale_tracer_mass_to_vmr!(q_raw::NTuple{6, A},
+                                       air_mass::NTuple{6},
+                                       halo_width::Integer) where {A <: AbstractArray{<:Any, 4}}
+    Hp = Int(halo_width)
+    @inbounds for p in 1:6
+        panel_q = q_raw[p]
+        panel_m = air_mass[p]
+        size(panel_q)[1:3] == size(panel_m) || throw(DimensionMismatch(
+            "cubed-sphere packed tracer panel $p spatial shape $(size(panel_q)[1:3]) " *
+            "does not match air_mass shape $(size(panel_m))"))
+        Nc = size(panel_q, 1) - 2 * Hp
+        Ny = size(panel_q, 2) - 2 * Hp
+        Nz = size(panel_q, 3)
+        Nt = size(panel_q, 4)
+        Nc > 0 && Ny > 0 || throw(DimensionMismatch(
+            "cubed-sphere panel $p shape $(size(panel_q)) cannot provide an " *
+            "interior with halo_width=$Hp"))
+        backend = get_backend(panel_q)
+        kernel = _cs_tracer_mass_to_vmr_4d_kernel!(backend, (8, 8, 1))
+        kernel(panel_q, panel_m, Hp; ndrange = (Nc, Ny, Nz, Nt))
         synchronize(backend)
     end
     return q_raw
@@ -381,6 +442,31 @@ function _cs_scale_vmr_to_tracer_mass!(q_raw::NTuple{6, A},
     return q_raw
 end
 
+function _cs_scale_vmr_to_tracer_mass!(q_raw::NTuple{6, A},
+                                       air_mass::NTuple{6},
+                                       halo_width::Integer) where {A <: AbstractArray{<:Any, 4}}
+    Hp = Int(halo_width)
+    @inbounds for p in 1:6
+        panel_q = q_raw[p]
+        panel_m = air_mass[p]
+        size(panel_q)[1:3] == size(panel_m) || throw(DimensionMismatch(
+            "cubed-sphere packed tracer panel $p spatial shape $(size(panel_q)[1:3]) " *
+            "does not match air_mass shape $(size(panel_m))"))
+        Nc = size(panel_q, 1) - 2 * Hp
+        Ny = size(panel_q, 2) - 2 * Hp
+        Nz = size(panel_q, 3)
+        Nt = size(panel_q, 4)
+        Nc > 0 && Ny > 0 || throw(DimensionMismatch(
+            "cubed-sphere panel $p shape $(size(panel_q)) cannot provide an " *
+            "interior with halo_width=$Hp"))
+        backend = get_backend(panel_q)
+        kernel = _cs_vmr_to_tracer_mass_4d_kernel!(backend, (8, 8, 1))
+        kernel(panel_q, panel_m, Hp; ndrange = (Nc, Ny, Nz, Nt))
+        synchronize(backend)
+    end
+    return q_raw
+end
+
 """
     apply_vertical_diffusion_vmr!(rm, air_mass, op, workspace, dt, meteo; halo_width)
 
@@ -395,6 +481,20 @@ function apply_vertical_diffusion_vmr!(q_raw::NTuple{6, A},
                                        workspace, dt,
                                        meteo = nothing;
                                        halo_width::Integer) where {FT, A <: AbstractArray{FT, 3},
+                                                                    KzF <: AbstractCubedSphereField{FT}}
+    _cs_scale_tracer_mass_to_vmr!(q_raw, air_mass, halo_width)
+    apply_vertical_diffusion!(q_raw, op, workspace, dt, meteo;
+                              halo_width = halo_width)
+    _cs_scale_vmr_to_tracer_mass!(q_raw, air_mass, halo_width)
+    return nothing
+end
+
+function apply_vertical_diffusion_vmr!(q_raw::NTuple{6, A},
+                                       air_mass::NTuple{6},
+                                       op::ImplicitVerticalDiffusion{FT, KzF},
+                                       workspace, dt,
+                                       meteo = nothing;
+                                       halo_width::Integer) where {FT, A <: AbstractArray{FT, 4},
                                                                     KzF <: AbstractCubedSphereField{FT}}
     _cs_scale_tracer_mass_to_vmr!(q_raw, air_mass, halo_width)
     apply_vertical_diffusion!(q_raw, op, workspace, dt, meteo;

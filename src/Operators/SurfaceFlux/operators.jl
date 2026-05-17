@@ -258,6 +258,40 @@ function apply_surface_flux!(q_raw::NTuple{6, A},
     return nothing
 end
 
+function apply_surface_flux!(q_raw::NTuple{6, A},
+                             op::SurfaceFluxOperator,
+                             workspace,
+                             dt::Real,
+                             meteo,
+                             grid;
+                             tracer_names::Tuple,
+                             halo_width::Integer) where {FT, A <: AbstractArray{FT, 4}}
+    Hp = Int(halo_width)
+    dt_FT = FT(dt)
+
+    for src in op.flux_map.sources
+        t_idx = findfirst(==(src.tracer_name), tracer_names)
+        t_idx === nothing && continue
+        rates = src.cell_mass_rate
+        rates isa NTuple{6} || throw(ArgumentError(
+            "apply_surface_flux!: cubed-sphere source $(src.tracer_name) must provide NTuple{6} panel rates"))
+        @inbounds for p in 1:6
+            panel_q = q_raw[p]
+            Nc = size(panel_q, 1) - 2Hp
+            Ny = size(panel_q, 2) - 2Hp
+            Nz = size(panel_q, 3)
+            size(rates[p]) == (Nc, Ny) || throw(DimensionMismatch(
+                "surface source $(src.tracer_name) panel $p has shape $(size(rates[p])) " *
+                "but cubed-sphere interior panel shape is $((Nc, Ny))"))
+            backend = get_backend(panel_q)
+            kernel = _surface_flux_cs_kernel!(backend, (16, 16))
+            kernel(panel_q, rates[p], dt_FT, t_idx, Nz, Hp; ndrange = (Nc, Ny))
+            synchronize(backend)
+        end
+    end
+    return nothing
+end
+
 # =========================================================================
 # State-level entry point
 # =========================================================================
@@ -282,11 +316,9 @@ end
 
 function apply!(state::CubedSphereState, meteo, grid, op::SurfaceFluxOperator, dt;
                 workspace = nothing)
-    for (name, rm_panels) in eachtracer(state)
-        apply_surface_flux!(rm_panels, op, workspace, dt, meteo, grid;
-                            tracer_names = (name,),
-                            halo_width = state.halo_width)
-    end
+    apply_surface_flux!(state.tracers_raw, op, workspace, dt, meteo, grid;
+                        tracer_names = state.tracer_names,
+                        halo_width = state.halo_width)
     return state
 end
 

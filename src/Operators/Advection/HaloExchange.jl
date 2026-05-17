@@ -94,6 +94,45 @@ end
     end
 end
 
+"""Fill one edge's halo for packed per-panel tracer storage `(x, y, z, tracer)`."""
+function _fill_edge!(dst::AbstractArray{T, 4}, src::AbstractArray{T, 4},
+                     e::Int, q_e::Int, orient::Int,
+                     Nc::Int, Hp::Int) where T
+    Nk = size(dst, 3)
+    Nt = size(dst, 4)
+    flip = orient >= 2
+
+    backend = get_backend(dst)
+    if backend isa KA_CPU
+        @inbounds for t in 1:Nt
+            for k in 1:Nk
+                for d in 1:Hp
+                    for s in 1:Nc
+                        s_src = flip ? (Nc + 1 - s) : s
+                        i_src, j_src = _edge_interior_ij(q_e, d, s_src, Nc, Hp)
+                        i_dst, j_dst = _edge_halo_ij(e, d, s, Nc, Hp)
+                        dst[i_dst, j_dst, k, t] = src[i_src, j_src, k, t]
+                    end
+                end
+            end
+        end
+    else
+        k! = _fill_edge4_kernel!(backend, 256)
+        k!(dst, src, e, q_e, flip, Nc, Hp; ndrange=(Nc, Hp, Nk, Nt))
+    end
+    return nothing
+end
+
+@kernel function _fill_edge4_kernel!(dst, @Const(src), e, q_e, flip, Nc, Hp)
+    s, d, k, t = @index(Global, NTuple)
+    @inbounds begin
+        s_src = flip ? (Nc + 1 - s) : s
+        i_src, j_src = _edge_interior_ij(q_e, d, s_src, Nc, Hp)
+        i_dst, j_dst = _edge_halo_ij(e, d, s, Nc, Hp)
+        dst[i_dst, j_dst, k, t] = src[i_src, j_src, k, t]
+    end
+end
+
 # ---------------------------------------------------------------------------
 # Corner fill — FV3 tp_core.F90 rotation formulas
 # ---------------------------------------------------------------------------
@@ -136,6 +175,33 @@ end
     @inbounds _set_corner_cells!(q, di, dj, k, Nc, Hp, N, dir)
 end
 
+@inline function _set_corner_cells!(q::AbstractArray{<:Any, 4}, di::Int, dj::Int,
+                                     k::Int, t::Int, Nc::Int, Hp::Int,
+                                     N::Int, dir::Int)
+    oi_sw = Hp + 1 - di;  oj_sw = Hp + 1 - dj
+    oi_se = Hp + Nc + di; oj_se = Hp + 1 - dj
+    oi_ne = Hp + Nc + di; oj_ne = Hp + Nc + dj
+    oi_nw = Hp + 1 - di;  oj_nw = Hp + Nc + dj
+
+    @inbounds if dir == 1
+        q[oi_sw, oj_sw, k, t] = q[oj_sw, 2*Hp + 1 - oi_sw, k, t]
+        q[oi_se, oj_se, k, t] = q[N + 1 - oj_se, oi_se - Nc, k, t]
+        q[oi_ne, oj_ne, k, t] = q[oj_ne, 2*(Nc + Hp) + 1 - oi_ne, k, t]
+        q[oi_nw, oj_nw, k, t] = q[N + 1 - oj_nw, oi_nw + Nc, k, t]
+    else
+        q[oi_sw, oj_sw, k, t] = q[2*Hp + 1 - oj_sw, oi_sw, k, t]
+        q[oi_se, oj_se, k, t] = q[Nc + oj_se, N + 1 - oi_se, k, t]
+        q[oi_ne, oj_ne, k, t] = q[2*(Nc + Hp) + 1 - oj_ne, oi_ne, k, t]
+        q[oi_nw, oj_nw, k, t] = q[oj_nw - Nc, N + 1 - oi_nw, k, t]
+    end
+    return nothing
+end
+
+@kernel function _copy_corners4_kernel!(q, Nc, Hp, N, dir)
+    di, dj, k, t = @index(Global, NTuple)
+    @inbounds _set_corner_cells!(q, di, dj, k, t, Nc, Hp, N, dir)
+end
+
 """Fill corners for all 6 panels of a single field."""
 function _fill_corners!(panels::NTuple{6}, Nc::Int, Hp::Int, dir::Int)
     Hp == 0 && return nothing
@@ -155,6 +221,34 @@ function _fill_corners!(panels::NTuple{6}, Nc::Int, Hp::Int, dir::Int)
         else
             k! = _copy_corners_kernel!(backend, 256)
             k!(q, Nc, Hp, N, dir; ndrange=(Hp, Hp, Nk))
+        end
+    end
+    backend isa KA_CPU || synchronize(backend)
+    return nothing
+end
+
+"""Fill corners for all 6 panels of packed per-panel tracer storage."""
+function _fill_corners!(panels::NTuple{6, A}, Nc::Int, Hp::Int, dir::Int) where {A <: AbstractArray{<:Any, 4}}
+    Hp == 0 && return nothing
+    N = Nc + 2 * Hp
+    backend = get_backend(panels[1])
+    for p in 1:6
+        q = panels[p]
+        Nk = size(q, 3)
+        Nt = size(q, 4)
+        if backend isa KA_CPU
+            @inbounds for t in 1:Nt
+                for k in 1:Nk
+                    for dj in 1:Hp
+                        for di in 1:Hp
+                            _set_corner_cells!(q, di, dj, k, t, Nc, Hp, N, dir)
+                        end
+                    end
+                end
+            end
+        else
+            k! = _copy_corners4_kernel!(backend, 256)
+            k!(q, Nc, Hp, N, dir; ndrange=(Hp, Hp, Nk, Nt))
         end
     end
     backend isa KA_CPU || synchronize(backend)

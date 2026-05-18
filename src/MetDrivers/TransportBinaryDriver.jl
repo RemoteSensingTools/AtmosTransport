@@ -231,7 +231,7 @@ function _validate_replay_consistency_ll(reader::TransportBinaryReader{FT}) wher
     worst_win = 0
     worst_idx = (0, 0, 0)
     for k in 1:(Nt - 1)
-        m_next, _ps_next, _fluxes_next = load_window!(reader, k + 1)
+        m_next, _ps_next, fluxes_next = load_window!(reader, k + 1)
         steps = reader.header.steps_per_window_by_window[k]
         diag = _replay_window_pair(layout, div_scratch, m_cur, fluxes, m_next, steps)
         if diag.max_rel_err > worst_rel
@@ -242,7 +242,7 @@ function _validate_replay_consistency_ll(reader::TransportBinaryReader{FT}) wher
         end
         # Advance: next window becomes current.
         m_cur = m_next
-        _, _, fluxes = load_window!(reader, k + 1)
+        fluxes = fluxes_next
     end
 
     worst_rel <= tol_rel ||
@@ -316,7 +316,7 @@ function _validate_replay_consistency_rg(reader::TransportBinaryReader{FT}, grid
     worst_win = 0
     worst_idx = (0, 0)
     for k in 1:(Nt - 1)
-        m_next, _, _ = load_window!(reader, k + 1)
+        m_next, _, fluxes_next = load_window!(reader, k + 1)
         steps = reader.header.steps_per_window_by_window[k]
         diag = _replay_window_pair(layout, div_scratch, m_cur, fluxes, m_next, steps)
         if diag.max_rel_err > worst_rel
@@ -326,7 +326,7 @@ function _validate_replay_consistency_rg(reader::TransportBinaryReader{FT}, grid
             worst_idx = diag.worst_idx
         end
         m_cur = m_next
-        _, _, fluxes = load_window!(reader, k + 1)
+        fluxes = fluxes_next
     end
 
     worst_rel <= tol_rel ||

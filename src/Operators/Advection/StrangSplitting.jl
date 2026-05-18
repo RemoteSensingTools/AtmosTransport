@@ -22,7 +22,7 @@
 #   → Strang splitting of slopes advection in TM5.
 # ---------------------------------------------------------------------------
 
-using KernelAbstractions: get_backend, synchronize, @kernel, @index, @Const, @atomic
+using KernelAbstractions: get_backend, synchronize, @kernel, @index, @Const, @atomic, CPU as KA_CPU
 
 # =========================================================================
 # AdvectionWorkspace — pre-allocated double buffers
@@ -320,14 +320,13 @@ of cell `(c, k)`. Positive cm = downward (toward surface).
     end
 end
 
-function _sweep_horizontal_face_gpu!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
+function _sweep_horizontal_face_gpu!(backend, rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
                                      horizontal_flux::AbstractArray{FT,2},
                                      scheme::UpwindScheme,
                                      ws::AdvectionWorkspace{FT},
                                      flux_scale::FT) where FT
     isempty(ws.face_left) &&
         throw(ArgumentError("face-indexed GPU sweep requires mesh connectivity in AdvectionWorkspace"))
-    backend = get_backend(rm)
     copyto!(ws.rm_A, rm)
     copyto!(ws.m_A, m)
     kernel! = _horizontal_face_atomic_kernel!(backend, 256)
@@ -339,12 +338,11 @@ function _sweep_horizontal_face_gpu!(rm::AbstractArray{FT,2}, m::AbstractArray{F
     return nothing
 end
 
-function _sweep_vertical_face_gpu!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
+function _sweep_vertical_face_gpu!(backend, rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
                                    cm::AbstractArray{FT,2},
                                    scheme::UpwindScheme,
                                    ws::AdvectionWorkspace{FT},
                                    flux_scale::FT) where FT
-    backend = get_backend(rm)
     kernel! = _vertical_face_kernel!(backend, 256)
     kernel!(ws.rm_A, rm, ws.m_A, m, cm, scheme, flux_scale, Int32(size(m, 2));
             ndrange=size(m))
@@ -352,6 +350,50 @@ function _sweep_vertical_face_gpu!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,
     copyto!(rm, ws.rm_A)
     copyto!(m, ws.m_A)
     return nothing
+end
+
+function _sweep_horizontal_face_backend!(::KA_CPU,
+                                         rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
+                                         horizontal_flux::AbstractArray{FT,2},
+                                         mesh::AbstractHorizontalMesh,
+                                         scheme::UpwindScheme,
+                                         ws::AdvectionWorkspace{FT},
+                                         flux_scale::FT) where FT
+    _horizontal_face_tendency!(ws.rm_A, rm, ws.m_A, m, horizontal_flux, mesh, scheme, flux_scale)
+    copyto!(rm, ws.rm_A)
+    copyto!(m, ws.m_A)
+    return nothing
+end
+
+function _sweep_horizontal_face_backend!(backend,
+                                         rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
+                                         horizontal_flux::AbstractArray{FT,2},
+                                         mesh::AbstractHorizontalMesh,
+                                         scheme::UpwindScheme,
+                                         ws::AdvectionWorkspace{FT},
+                                         flux_scale::FT) where FT
+    _sweep_horizontal_face_gpu!(backend, rm, m, horizontal_flux, scheme, ws, flux_scale)
+end
+
+function _sweep_vertical_face_backend!(::KA_CPU,
+                                       rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
+                                       cm::AbstractArray{FT,2},
+                                       scheme::UpwindScheme,
+                                       ws::AdvectionWorkspace{FT},
+                                       flux_scale::FT) where FT
+    _vertical_column_tendency!(ws.rm_A, rm, ws.m_A, m, cm, scheme, flux_scale)
+    copyto!(rm, ws.rm_A)
+    copyto!(m, ws.m_A)
+    return nothing
+end
+
+function _sweep_vertical_face_backend!(backend,
+                                       rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
+                                       cm::AbstractArray{FT,2},
+                                       scheme::UpwindScheme,
+                                       ws::AdvectionWorkspace{FT},
+                                       flux_scale::FT) where FT
+    _sweep_vertical_face_gpu!(backend, rm, m, cm, scheme, ws, flux_scale)
 end
 
 # Additional structured sweep overloads with explicit flux scaling.
@@ -400,14 +442,7 @@ function sweep_horizontal!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
                            mesh::AbstractHorizontalMesh,
                            scheme::UpwindScheme,
                            ws::AdvectionWorkspace{FT}) where FT
-    if parent(rm) isa Array
-        _horizontal_face_tendency!(ws.rm_A, rm, ws.m_A, m, horizontal_flux, mesh, scheme, one(FT))
-        copyto!(rm, ws.rm_A)
-        copyto!(m, ws.m_A)
-    else
-        _sweep_horizontal_face_gpu!(rm, m, horizontal_flux, scheme, ws, one(FT))
-    end
-    return nothing
+    return _sweep_horizontal_face_backend!(get_backend(rm), rm, m, horizontal_flux, mesh, scheme, ws, one(FT))
 end
 
 function sweep_horizontal!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
@@ -416,14 +451,7 @@ function sweep_horizontal!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
                            scheme::UpwindScheme,
                            ws::AdvectionWorkspace{FT},
                            flux_scale::FT) where FT
-    if parent(rm) isa Array
-        _horizontal_face_tendency!(ws.rm_A, rm, ws.m_A, m, horizontal_flux, mesh, scheme, flux_scale)
-        copyto!(rm, ws.rm_A)
-        copyto!(m, ws.m_A)
-    else
-        _sweep_horizontal_face_gpu!(rm, m, horizontal_flux, scheme, ws, flux_scale)
-    end
-    return nothing
+    return _sweep_horizontal_face_backend!(get_backend(rm), rm, m, horizontal_flux, mesh, scheme, ws, flux_scale)
 end
 
 function _throw_unsupported_face_indexed_scheme(op::Symbol, scheme::AbstractAdvectionScheme)
@@ -451,14 +479,7 @@ function sweep_vertical!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
                          cm::AbstractArray{FT,2},
                          scheme::UpwindScheme,
                          ws::AdvectionWorkspace{FT}) where FT
-    if parent(rm) isa Array
-        _vertical_column_tendency!(ws.rm_A, rm, ws.m_A, m, cm, scheme, one(FT))
-        copyto!(rm, ws.rm_A)
-        copyto!(m, ws.m_A)
-    else
-        _sweep_vertical_face_gpu!(rm, m, cm, scheme, ws, one(FT))
-    end
-    return nothing
+    return _sweep_vertical_face_backend!(get_backend(rm), rm, m, cm, scheme, ws, one(FT))
 end
 
 function sweep_vertical!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
@@ -466,14 +487,7 @@ function sweep_vertical!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
                          scheme::UpwindScheme,
                          ws::AdvectionWorkspace{FT},
                          flux_scale::FT) where FT
-    if parent(rm) isa Array
-        _vertical_column_tendency!(ws.rm_A, rm, ws.m_A, m, cm, scheme, flux_scale)
-        copyto!(rm, ws.rm_A)
-        copyto!(m, ws.m_A)
-    else
-        _sweep_vertical_face_gpu!(rm, m, cm, scheme, ws, flux_scale)
-    end
-    return nothing
+    return _sweep_vertical_face_backend!(get_backend(rm), rm, m, cm, scheme, ws, flux_scale)
 end
 
 # =========================================================================

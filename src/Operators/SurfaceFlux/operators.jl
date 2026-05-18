@@ -242,6 +242,7 @@ function apply_surface_flux!(q_raw::NTuple{6, A},
 
     Hp = Int(halo_width)
     dt_FT = FT(dt)
+    backend = get_backend(q_raw[1])
     @inbounds for p in 1:6
         panel_q = q_raw[p]
         Nc = size(panel_q, 1) - 2Hp
@@ -250,11 +251,10 @@ function apply_surface_flux!(q_raw::NTuple{6, A},
         size(rates[p]) == (Nc, Ny) || throw(DimensionMismatch(
             "surface source $(src.tracer_name) panel $p has shape $(size(rates[p])) " *
             "but cubed-sphere interior panel shape is $((Nc, Ny))"))
-        backend = get_backend(panel_q)
         kernel = _surface_flux_cs_single_kernel!(backend, (16, 16))
         kernel(panel_q, rates[p], dt_FT, Nz, Hp; ndrange = (Nc, Ny))
-        synchronize(backend)
     end
+    synchronize(backend)
     return nothing
 end
 
@@ -268,6 +268,7 @@ function apply_surface_flux!(q_raw::NTuple{6, A},
                              halo_width::Integer) where {FT, A <: AbstractArray{FT, 4}}
     Hp = Int(halo_width)
     dt_FT = FT(dt)
+    backend = get_backend(q_raw[1])
 
     for src in op.flux_map.sources
         t_idx = findfirst(==(src.tracer_name), tracer_names)
@@ -283,12 +284,11 @@ function apply_surface_flux!(q_raw::NTuple{6, A},
             size(rates[p]) == (Nc, Ny) || throw(DimensionMismatch(
                 "surface source $(src.tracer_name) panel $p has shape $(size(rates[p])) " *
                 "but cubed-sphere interior panel shape is $((Nc, Ny))"))
-            backend = get_backend(panel_q)
             kernel = _surface_flux_cs_kernel!(backend, (16, 16))
             kernel(panel_q, rates[p], dt_FT, t_idx, Nz, Hp; ndrange = (Nc, Ny))
-            synchronize(backend)
         end
     end
+    synchronize(backend)
     return nothing
 end
 

@@ -203,6 +203,35 @@ end
         @test sum(state.tracers.CO2) ≈ expected
     end
 
+    @testset "Cubed-sphere surface flux updates interior surface layer" begin
+        FT = Float64
+        Nc, Hp, Nz = 3, 1, 4
+        dt = FT(5)
+        rates = ntuple(p -> fill(FT(p), Nc, Nc), 6)
+
+        q4 = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz, 2), 6)
+        op = SurfaceFluxOperator(SurfaceFluxSource(:CO2, rates))
+        AtmosTransport.Operators.SurfaceFlux.apply_surface_flux!(
+            q4, op, nothing, dt, nothing, nothing;
+            tracer_names = (:CO2, :SF6), halo_width = Hp)
+        @inbounds for p in 1:6
+            @test all(q4[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, Nz, 1] .== rates[p] .* dt)
+            @test all(q4[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, Nz, 2] .== zero(FT))
+            @test all(q4[p][1, :, :, :] .== zero(FT))
+            @test all(q4[p][:, 1, :, :] .== zero(FT))
+        end
+
+        q3 = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz), 6)
+        AtmosTransport.Operators.SurfaceFlux.apply_surface_flux!(
+            q3, op, nothing, dt, nothing, nothing;
+            tracer_names = (:CO2,), halo_width = Hp)
+        @inbounds for p in 1:6
+            @test all(q3[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, Nz] .== rates[p] .* dt)
+            @test all(q3[p][1, :, :] .== zero(FT))
+            @test all(q3[p][:, 1, :] .== zero(FT))
+        end
+    end
+
     @testset "V(dt/2) S V(dt/2) vs V(dt) S with active diffusion: diffusion is symmetric" begin
         # With active diffusion and active emissions, the V(dt/2) → S → V(dt/2)
         # arrangement should mix fresh emissions upward (non-zero at upper

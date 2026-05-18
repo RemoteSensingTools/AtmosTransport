@@ -137,79 +137,6 @@ nonlinear clamp that would break the adjoint-identity property.
     return q_env + (dt / bmass) * tsum
 end
 
-"""
-    _cmfmc_wellmix_subcloud!(q_view, delp_view, cldbase_k, q_cldbase,
-                              cmfmc_at_cldbase, dt)
-
-Pressure-weighted well-mixed treatment below cloud base.
-
-Per GCHP `convection_mod.F90:742-782`. Plan 18 ADDS this treatment
-relative to the earlier Julia port of RAS convection (git commit
-ec2d2c0 contains `src_legacy/Convection/ras_convection.jl`, which
-omits it — Decision 17 is a deliberate correction).
-
-In our convention `k=1=TOA, k=Nz=surface`, "below cloud base" means
-layers with `k > cldbase_k` (larger k = closer to surface). The
-well-mixed treatment replaces the sub-cloud environment at layers
-`cldbase_k+1 … Nz` with a single uniform mixing ratio `qc_mixed`
-that combines a pressure-weighted average of the pre-step values
-with an inflow contribution from the updraft flux at cloud base.
-
-# Arguments
-
-- `q_view` — view of the tracer-mass column at `(i, j, :)`, indexed
-  by `k = 1..Nz`. Modified in place.
-- `air_mass_view` — view of the air-mass column at `(i, j, :)`,
-  indexed by `k = 1..Nz`. Read for mass-weighting.
-- `cldbase_k` — cloud base level (smallest `k ∈ 1..Nz` with
-  `cmfmc > tiny`; for our convention, the cloud is AT layer
-  `cldbase_k`, and sub-cloud layers are `cldbase_k+1..Nz`).
-- `q_cldbase` — environment mixing ratio at the cloud-base layer
-  (`k = cldbase_k`), pre-step.
-- `cmfmc_at_cldbase` — updraft flux entering the cloud base from
-  below (the bottom-of-cloud-base-layer interface, i.e.
-  `cmfmc[:, :, cldbase_k + 1]`) [kg / m² / s].
-- `dt` — sub-step length [s].
-
-# Formula
-
-```
-qb = (Σ_{k in sub} q_k · m_k) / Σ m_k           # pressure-weighted avg
-mb = Σ m_k                                        # total sub-cloud mass
-qc_mixed = (mb · qb + cmfmc_at_cldbase · q_cldbase · dt)
-           / (mb + cmfmc_at_cldbase · dt)
-q_k ← qc_mixed                                    # apply uniformly, all k > cldbase_k
-```
-
-Caller is responsible for guard conditions (cldbase_k < Nz, non-zero
-sub-cloud thickness). No-op if `cldbase_k >= Nz` (no layers below).
-"""
-@inline function _cmfmc_wellmix_subcloud!(q_view, air_mass_view, cldbase_k,
-                                           q_cldbase, cmfmc_at_cldbase, dt)
-    cldbase_k >= length(q_view) && return nothing   # no sub-cloud layers
-    FT = eltype(q_view)
-
-    qb_num = zero(FT)
-    mb     = zero(FT)
-    @inbounds for k in (cldbase_k + 1):length(q_view)
-        m_k = air_mass_view[k]
-        q_k = m_k > FT(1e-30) ? q_view[k] / m_k : zero(FT)
-        qb_num += q_k * m_k
-        mb     += m_k
-    end
-
-    mb > zero(FT) || return nothing
-
-    qb = qb_num / mb
-    qc_mixed = (mb * qb + cmfmc_at_cldbase * q_cldbase * dt) /
-               (mb + cmfmc_at_cldbase * dt)
-
-    @inbounds for k in (cldbase_k + 1):length(q_view)
-        q_view[k] = qc_mixed * air_mass_view[k]
-    end
-    return nothing
-end
-
 # =========================================================================
 # CFL sub-cycling
 # =========================================================================
@@ -545,8 +472,8 @@ end
                 tracers_raw[i, j, cldbase_k, t_idx] / m_cb : zero(FT)
             cmfmc_at_cldbase = cmfmc[i, j, cldbase_k + 1]
             if cmfmc_at_cldbase > tiny
-                # Mirror of _cmfmc_wellmix_subcloud! inlined here because
-                # we can't take views inside a KA @kernel body cleanly.
+                # Inline the GCHP well-mixed sub-cloud formula; KA kernels
+                # cannot take column views cleanly.
                 qb_num = zero(FT); qb_comp = zero(FT)
                 mb = zero(FT); mb_comp = zero(FT)
                 for k in (cldbase_k + 1):Nz

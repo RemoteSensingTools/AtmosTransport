@@ -390,12 +390,17 @@ Advance the non-transport physics blocks once: convection block →
 chemistry block.
 """
 function convection_chemistry_step!(model::TransportModel, dt; meteo = nothing)
-    if !(model.convection isa NoConvection)
-        SectionTimer.@section :convection apply!(model.state, model.convection_forcing, model.grid,
-               model.convection, dt;
-               workspace = model.workspace.convection_ws)
-    end
+    _convection_block!(model.convection, model, dt)
     SectionTimer.@section :chemistry chemistry_block!(model.state, meteo, model.grid, model.chemistry, dt)
+    return nothing
+end
+
+@inline _convection_block!(::NoConvection, model::TransportModel, dt) = nothing
+
+function _convection_block!(op::AbstractConvection, model::TransportModel, dt)
+    SectionTimer.@section :convection apply!(model.state, model.convection_forcing,
+                                             model.grid, op, dt;
+                                             workspace = model.workspace.convection_ws)
     return nothing
 end
 

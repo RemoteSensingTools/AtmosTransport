@@ -455,6 +455,19 @@ end
     @test state_b.tracers_raw != rm_init   # path B moved mass
 end
 
+@testset "B2b. DTRAIN fallback preserves source array backend" begin
+    FT = Float64
+    grid = _make_grid(FT = FT)
+    Nx, Ny, Nz = grid.horizontal.Nx, grid.horizontal.Ny, length(grid.vertical.A) - 1
+    cmfmc = _make_cmfmc_profile(FT, Nx, Ny, Nz)
+    air_mass = fill(FT(_REALISTIC_AIR_MASS_KG), Nx, Ny, Nz)
+
+    dtrain = AtmosTransport.Operators.Convection._cmfmc_dtrain_array(cmfmc, nothing, air_mass)
+    @test dtrain isa Array{FT, 3}
+    @test size(dtrain) == size(air_mass)
+    @test all(dtrain .>= zero(FT))
+end
+
 @testset "B3. Cloud-base detection + no-convection skip" begin
     FT = Float64
     grid = _make_grid(FT = FT)
@@ -534,6 +547,28 @@ end
                                        FT(1800.0); workspace = ws)
 end
 
+@testset "B5b. CubedSphereState on non-CS grid gets topology-specific error" begin
+    FT = Float64
+    Nc, Hp, Nz = 2, 1, 3
+    mesh = CubedSphereMesh(; FT = FT, Nc = Nc, Hp = Hp)
+    air_mass = ntuple(_ -> fill(FT(1e7), Nc + 2Hp, Nc + 2Hp, Nz), 6)
+    tracer = ntuple(_ -> fill(FT(1e-6), Nc + 2Hp, Nc + 2Hp, Nz), 6)
+    state = CubedSphereState(DryBasis, mesh, air_mass; CO2 = tracer)
+    bad_grid = _make_grid(FT = FT, Nx = 2, Ny = 2, Nz = Nz)
+    forcing = ConvectionForcing(ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), 6),
+                                nothing, nothing)
+    err = try
+        apply!(state, forcing, bad_grid, CMFMCConvection(), FT(1);
+               workspace = nothing)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin("CubedSphereState", sprint(showerror, err))
+    @test occursin("CubedSphereMesh", sprint(showerror, err))
+end
+
 const _HAS_CUDA_CMFMC_TEST = try
     @eval using CUDA
     CUDA.functional()
@@ -560,6 +595,11 @@ end
             cmfmc_gpu, air_gpu, area_gpu, FT(450.0))
 
         @test actual ≈ expected
+
+        dtrain_gpu = AtmosTransport.Operators.Convection._cmfmc_dtrain_array(
+            cmfmc_gpu, nothing, air_gpu)
+        @test all(d -> d isa CUDA.CuArray, dtrain_gpu)
+        @test size(dtrain_gpu[1]) == (Nc, Nc, Nz)
     end
 end
 

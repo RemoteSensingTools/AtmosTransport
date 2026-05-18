@@ -103,10 +103,8 @@ function _cmfmc_dtrain_array(cmfmc::AbstractArray{FT, 3},
                              dtrain::Nothing,
                              air_mass::AbstractArray{FT, 3}) where FT
     Nx_c, Ny_c, Nz_c = size(air_mass)
-    darr = Array{FT}(undef, Nx_c, Ny_c, Nz_c)
-    @inbounds for k in 1:Nz_c, j in 1:Ny_c, i in 1:Nx_c
-        darr[i, j, k] = max(zero(FT), cmfmc[i, j, k + 1] - cmfmc[i, j, k])
-    end
+    darr = similar(cmfmc, FT, Nx_c, Ny_c, Nz_c)
+    @views darr .= max.(zero(FT), cmfmc[:, :, 2:Nz_c + 1] .- cmfmc[:, :, 1:Nz_c])
     return darr
 end
 
@@ -117,10 +115,9 @@ function _cmfmc_dtrain_array(cmfmc::NTuple{6, <:AbstractArray{FT, 3}},
                              air_mass::NTuple{6, <:AbstractArray{FT, 3}}) where FT
     return ntuple(6) do p
         Nx_c, Ny_c, Nzp1 = size(cmfmc[p])
-        darr = Array{FT}(undef, Nx_c, Ny_c, Nzp1 - 1)
-        @inbounds for k in 1:(Nzp1 - 1), j in 1:Ny_c, i in 1:Nx_c
-            darr[i, j, k] = max(zero(FT), cmfmc[p][i, j, k + 1] - cmfmc[p][i, j, k])
-        end
+        Nz_c = Nzp1 - 1
+        darr = similar(cmfmc[p], FT, Nx_c, Ny_c, Nz_c)
+        @views darr .= max.(zero(FT), cmfmc[p][:, :, 2:Nzp1] .- cmfmc[p][:, :, 1:Nz_c])
         darr
     end
 end
@@ -322,6 +319,17 @@ function apply!(state::CellState{B, A, Raw, Names},
     throw(ArgumentError(
         "`CMFMCConvection` supports face-indexed state only on " *
         "`ReducedGaussianMesh`; got $(typeof(grid.horizontal))."))
+end
+
+function apply!(state::CubedSphereState,
+                forcing::ConvectionForcing,
+                grid::AtmosGrid,
+                op::CMFMCConvection,
+                dt::Real;
+                workspace = nothing)
+    throw(ArgumentError(
+        "`CMFMCConvection` supports `CubedSphereState` only on " *
+        "`CubedSphereMesh`; got $(typeof(grid.horizontal))."))
 end
 
 function apply!(state::CubedSphereState{B},

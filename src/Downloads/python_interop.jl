@@ -33,18 +33,6 @@ function detect_python_env(python_path::String="python3")
 end
 
 """
-    preferred_era5_api(env::PythonEnvironment) -> Symbol
-
-Returns :mars if MARS is available (faster), :cds otherwise.
-"""
-function preferred_era5_api(env::PythonEnvironment)
-    env.mars_credentials && env.has_ecmwfapi && return :mars
-    env.cds_credentials && env.has_cdsapi && return :cds
-    error("No ECMWF API credentials found. Configure ~/.ecmwfapirc (MARS) " *
-          "or ~/.cdsapirc (CDS)")
-end
-
-"""
     run_python(script::String, env::PythonEnvironment; label="")
 
 Write `script` to a temporary file, execute with the configured Python

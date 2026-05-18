@@ -120,6 +120,40 @@ function _cs_diffusion_context(mesh, prototype; kz=2.0, dz=50.0)
     return op, ws
 end
 
+function _cs_gchp_vdiff_diffusion_context(mesh, panels_m; dz=50.0)
+    FT = eltype(panels_m[1])
+    Nc = mesh.Nc
+    Nz = size(panels_m[1], 3)
+    ws = AT.CSAdvectionWorkspace(mesh, panels_m[1])
+    for p in 1:6
+        fill!(ws.dz_scratch[p], FT(dz))
+    end
+
+    surface = AT.PBLSurfaceForcing(
+        ntuple(p -> [FT(900 + 15p + 2i + j) for i in 1:Nc, j in 1:Nc], 6),
+        ntuple(p -> [FT(0.22 + 0.01p + 0.001i) for i in 1:Nc, j in 1:Nc], 6),
+        ntuple(p -> [FT(65 + 3p + i - 0.5j) for i in 1:Nc, j in 1:Nc], 6),
+        ntuple(p -> [FT(285 + 0.2p + 0.05i - 0.03j) for i in 1:Nc, j in 1:Nc], 6),
+    )
+    vdiff = (
+        u = ntuple(p -> [FT(4 + 0.3p + 0.02i - 0.01j + 0.05k)
+                         for i in 1:Nc, j in 1:Nc, k in 1:Nz], 6),
+        v = ntuple(p -> [FT(-2 + 0.1p - 0.01i + 0.03j - 0.02k)
+                         for i in 1:Nc, j in 1:Nc, k in 1:Nz], 6),
+        t = ntuple(p -> [FT(285 - 5k + 0.1p + 0.02i)
+                         for i in 1:Nc, j in 1:Nc, k in 1:Nz], 6),
+        qv = ntuple(p -> [FT(0.006 / k + 0.0001p)
+                          for i in 1:Nc, j in 1:Nc, k in 1:Nz], 6),
+    )
+    host_cache = ntuple(_ -> zeros(FT, Nc, Nc, Nz), 6)
+    kz_field = AT.GCHPHoltslagBovilleKzField(host_cache)
+    AT.refresh_gchp_holtslag_boville_kz_cache!(
+        kz_field, surface, vdiff, panels_m, mesh.cell_areas;
+        halo_width = mesh.Hp)
+    op = AT.ImplicitVerticalDiffusion(; kz_field)
+    return op, ws
+end
+
 function _cs_tm5_convection_context(mesh, panels_m)
     FT = eltype(panels_m[1])
     Nc = mesh.Nc
@@ -608,6 +642,56 @@ end
         fd = (j_plus - j_minus) / (2eps_dir)
         predicted = _dot_footprint(result, rates)
         @test predicted ≈ fd rtol=3e-5 atol=1e-10
+    end
+
+    @testset "Generated footprint includes GCHP VDIFF local-Kz diffusion adjoint" begin
+        mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
+            _constant_cs_problem(Nc=3, Nz=5, nsteps=2)
+        dt = 300.0
+        scheme = AT.PPMScheme(AT.NoLimiter())
+        diffusion_op, diffusion_ws = _cs_gchp_vdiff_diffusion_context(
+            mesh, panels_m; dz=55.0)
+        obj = AT.CSLayerMeanObjective(1, 2, 2, 4)
+
+        result = AT.cs_surface_emission_footprint(
+            panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
+            scheme=scheme, dt=dt,
+            diffusion_op=diffusion_op,
+            diffusion_workspace=diffusion_ws)
+
+        @test result.footprints[2][1][2, 2] > 0
+
+        rates = [ntuple(6) do p
+            [sin(0.31step + 0.17p + 0.23i - 0.19j)
+             for i in 1:mesh.Nc, j in 1:mesh.Nc]
+        end for step in 1:2]
+
+        eps_dir = 1e-7
+        j_plus = AT.run_cs_footprint_forward(
+            panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
+            scheme=scheme, dt=dt,
+            emission_rates=_scaled_rates(rates, eps_dir),
+            diffusion_op=diffusion_op,
+            diffusion_workspace=diffusion_ws)
+        j_minus = AT.run_cs_footprint_forward(
+            panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
+            scheme=scheme, dt=dt,
+            emission_rates=_scaled_rates(rates, -eps_dir),
+            diffusion_op=diffusion_op,
+            diffusion_workspace=diffusion_ws)
+
+        fd = (j_plus - j_minus) / (2eps_dir)
+        predicted = _dot_footprint(result, rates)
+        @test predicted ≈ fd rtol=3e-5 atol=1e-10
+
+        stale_cache = ntuple(_ -> zeros(Float64, mesh.Nc, mesh.Nc, size(panels_m[1], 3)), 6)
+        stale_op = AT.ImplicitVerticalDiffusion(;
+            kz_field = AT.GCHPHoltslagBovilleKzField(stale_cache))
+        @test_throws ArgumentError AT.cs_surface_emission_footprint(
+            panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
+            scheme=scheme, dt=dt,
+            diffusion_op=stale_op,
+            diffusion_workspace=diffusion_ws)
     end
 
     @testset "Generated footprint includes TM5 convection transpose" begin

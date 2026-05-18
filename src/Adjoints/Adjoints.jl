@@ -40,7 +40,8 @@ using ..Operators.Convection: CMFMCConvection, CMFMCWorkspace,
     NoConvection, TM5Convection, TM5Workspace,
     invalidate_cmfmc_cache!, _get_or_compute_n_sub!,
     _tm5_diagnose_cloud_dims, _tm5_build_conv1!, _tm5_lu!
-using ..State: AbstractCubedSphereField, field_value, panel_field, update_field!
+using ..State: AbstractCubedSphereField, GCHPHoltslagBovilleKzField,
+    field_value, panel_field, update_field!
 using ..MetDrivers: ConvectionForcing, current_time
 
 # Plan 26 P0.1 — tape storage policies + record types live in src/Tape/

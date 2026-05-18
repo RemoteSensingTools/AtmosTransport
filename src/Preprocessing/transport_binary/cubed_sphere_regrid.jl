@@ -186,7 +186,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     mkpath(dirname(out_path))
     tmp_path = out_path * ".tmp"
     isfile(tmp_path) && rm(tmp_path)
-    writer = open_streaming_cs_transport_binary(
+    inner_writer = open_streaming_cs_transport_binary(
         tmp_path, Nc, CS_PANEL_COUNT, Nz, Nt, vc_merged;
         FT=FT,
         dt_met_seconds=met_interval,
@@ -209,9 +209,13 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
             "regrid_method"     => "conservative",
             "poisson_balanced"  => true,
         ))
+    writer = CubedSphereBinaryWriter(inner_writer, mass_basis_from_symbol(output_basis);
+                                     Nc = Nc,
+                                     npanel = CS_PANEL_COUNT,
+                                     final_path = out_path)
 
-    bytes_per_window = writer.elems_per_window * sizeof(FT)
-    expected_total = writer.header_bytes + Nt * bytes_per_window
+    bytes_per_window = writer.inner.elems_per_window * sizeof(FT)
+    expected_total = writer.inner.header_bytes + Nt * bytes_per_window
     @info @sprintf("  Output: %s (%.2f GB, %d windows)", basename(out_path),
                    expected_total / 1e9, Nt)
     @info "  Streaming: LL binary → CS regrid → balance → write..."
@@ -407,7 +411,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                               (tm5_fields=(entu=cur_entu, detu=cur_detu,
                                            entd=cur_entd, detd=cur_detd),))
         end
-        write_streaming_cs_window!(writer, window_nt, Nc, CS_PANEL_COUNT)
+        write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(win - 1, window_nt))
 
         if should_log_window(win - 1, Nt)
             if apply_horizontal_balance
@@ -511,7 +515,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                           (tm5_fields=(entu=cur_entu, detu=cur_detu,
                                        entd=cur_entd, detd=cur_detd),))
     end
-    write_streaming_cs_window!(writer, window_nt, Nc, CS_PANEL_COUNT)
+    write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(Nt, window_nt))
 
     if apply_horizontal_balance
         @info @sprintf("    Window %2d/%d (last): bal %.2fs  pre=%.2e post=%.2e iter=%d",
@@ -523,7 +527,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                        bal_diag.max_post_residual, bal_diag.max_cg_iter)
     end
 
-    close_streaming_transport_binary!(writer)
+    close_streaming_binary!(writer)
     close(reader)
 
     if apply_horizontal_balance
@@ -547,10 +551,10 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                                    cfl_limit = positivity_cfl_limit,
                                    steps_per_window = steps_per_met,
                                    require_substep_positivity = require_substep_positivity,
-                                   quarantine_path = tmp_path)
+                                   quarantine_path = writer_staging_path(writer))
     # Reached only when positivity passed, or when require_substep_positivity=false
     # turned a violation into a warning. Promote the staged file either way.
-    mv(tmp_path, out_path; force = true)
+    promote_streaming_binary!(writer)
 
     actual = filesize(out_path)
     @info @sprintf("  Done: %s (%.2f GB, %.1fs)", basename(out_path),

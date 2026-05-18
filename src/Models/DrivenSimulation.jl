@@ -466,12 +466,19 @@ function _validate_convection_window!(op::AbstractConvection,
         "requirements."))
 end
 
-function _validate_convection_runtime(model::TransportModel,
+_validate_convection_runtime(model::TransportModel,
+                             driver::AbstractMetDriver,
+                             window::AbstractTransportWindow) =
+    _validate_convection_runtime(model.convection, model, driver, window)
+
+@inline _validate_convection_runtime(::NoConvection, ::TransportModel,
+                                     ::AbstractMetDriver,
+                                     ::AbstractTransportWindow) = nothing
+
+function _validate_convection_runtime(op::AbstractConvection,
+                                      model::TransportModel,
                                       driver::AbstractMetDriver,
                                       window::AbstractTransportWindow)
-    op = model.convection
-    op isa NoConvection && return nothing
-
     window.convection === nothing &&
         throw(ArgumentError(
             "DrivenSimulation loaded a transport window without convection forcing, " *
@@ -487,11 +494,26 @@ function _install_convection_forcing(model::TransportModel,
                                      driver::AbstractMetDriver,
                                      window::AbstractTransportWindow)
     _validate_convection_runtime(model, driver, window)
-    model.convection isa NoConvection && return model
+    return _install_convection_forcing(model.convection, model, window)
+end
 
+@inline _install_convection_forcing(::NoConvection, model::TransportModel,
+                                    ::AbstractTransportWindow) = model
+
+function _install_convection_forcing(::AbstractConvection, model::TransportModel,
+                                     window::AbstractTransportWindow)
     forcing = allocate_convection_forcing_like(window.convection, model.state.air_mass)
     copy_convection_forcing!(forcing, window.convection)
     return with_convection_forcing(model, forcing)
+end
+
+@inline _refresh_convection_forcing!(::NoConvection, ::TransportModel,
+                                     ::AbstractTransportWindow) = nothing
+
+function _refresh_convection_forcing!(::AbstractConvection, model::TransportModel,
+                                      window::AbstractTransportWindow)
+    copy_convection_forcing!(model.convection_forcing, window.convection)
+    return nothing
 end
 
 function _refresh_forcing!(sim::DrivenSimulation, substep::Int)
@@ -505,9 +527,7 @@ function _refresh_forcing!(sim::DrivenSimulation, substep::Int)
     if sim.qv_buffer !== nothing
         interpolate_qv!(sim.qv_buffer, sim.window, λ)
     end
-    if !(sim.model.convection isa NoConvection)
-        copy_convection_forcing!(sim.model.convection_forcing, sim.window.convection)
-    end
+    _refresh_convection_forcing!(sim.model.convection, sim.model, sim.window)
     return λ
 end
 

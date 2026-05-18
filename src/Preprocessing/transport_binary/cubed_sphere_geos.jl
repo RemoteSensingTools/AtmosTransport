@@ -674,8 +674,10 @@ function drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{FT},
                                      m_next = workspace.m_next_target),
                                     contract, win)
 
-    m_target = ntuple(p -> copy(workspace.m_next_target[p]), CS_PANEL_COUNT)
-    convert_cs_mass_target_to_delta!(m_target, workspace.m_cur)
+    for p in 1:CS_PANEL_COUNT
+        copyto!(workspace.dm_v4[p], workspace.m_next_target[p])
+    end
+    convert_cs_mass_target_to_delta!(workspace.dm_v4, workspace.m_cur)
 
     surface_payload = (settings.include_surface || settings.include_vdiff_fields) ?
         _geos_surface_payload!(workspace.strategy, workspace.strategy_ws,
@@ -685,7 +687,7 @@ function drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{FT},
     vdiff_payload = settings.include_vdiff_fields ? _geos_vdiff_payload!(workspace) : nothing
     window_nt = (m = workspace.m_cur, am = workspace.am_v4,
                  bm = workspace.bm_v4, cm = workspace.cm_v4,
-                 ps = workspace.ps_cur, dm = m_target,
+                 ps = workspace.ps_cur, dm = workspace.dm_v4,
                  surface = surface_payload,
                  cmfmc = cmfmc_payload,
                  dtrain = dtrain_payload,

@@ -4,6 +4,42 @@
 # `cubed_sphere_contracts.jl` — all three CS-producing preprocessors call the
 # same `verify_cs_window_contract!` so no path can silently skip a check.
 
+function _ll_binary_to_cs_regridder_cache_key(grid::CubedSphereTargetGeometry,
+                                              Nx_ll::Integer,
+                                              Ny_ll::Integer)
+    return Symbol("cs_binary_ll_to_cs_regridder_C", grid.Nc, "_",
+                  Int(Nx_ll), "x", Int(Ny_ll))
+end
+
+function _get_or_build_ll_binary_to_cs_regridder!(cache,
+                                                  ll_mesh,
+                                                  grid::CubedSphereTargetGeometry,
+                                                  Nx_ll::Integer,
+                                                  Ny_ll::Integer)
+    cache_key = _ll_binary_to_cs_regridder_cache_key(grid, Nx_ll, Ny_ll)
+    cached = cache === nothing ? nothing : get(cache, cache_key, nothing)
+    t_reg = time()
+    if cached !== nothing
+        n_src = length(cached.src_areas)
+        n_dst = length(cached.dst_areas)
+        @info @sprintf("  Regridder: reused %d→%d  nnz=%d (%.1fs)",
+                       n_src, n_dst, length(cached.intersections.nzval),
+                       time() - t_reg)
+        return cached
+    end
+
+    regridder = build_regridder(ll_mesh, grid.mesh;
+                                normalize=false,
+                                cache_dir=grid.cache_dir)
+    cache === nothing || (cache[cache_key] = regridder)
+    n_src = length(regridder.src_areas)
+    n_dst = length(regridder.dst_areas)
+    @info @sprintf("  Regridder: %d→%d  nnz=%d (%.1fs)",
+                   n_src, n_dst, length(regridder.intersections.nzval),
+                   time() - t_reg)
+    return regridder
+end
+
 """
     regrid_ll_binary_to_cs(ll_binary_path, cs_grid, out_path; FT=Float64, mass_basis=nothing)
 
@@ -38,6 +74,8 @@ face fluxes are reconstructed with the output scaling.
   for legacy LL sources that do not carry `dm`. Production-safe regrids should
   leave this at `false` so the final CS window is closed against an explicit
   endpoint target instead of an inferred zero-tendency fallback.
+- `run_cache = nothing` — optional `PreprocessorRunCache` used to reuse the
+  LL→CS conservative regridder across calls in the same preprocessing run.
 """
 function regrid_ll_binary_to_cs(ll_binary_path::String,
                                 cs_grid::CubedSphereTargetGeometry,
@@ -49,7 +87,8 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                                 require_substep_positivity::Bool = true,
                                 steps_per_window::Union{Nothing, Integer} = nothing,
                                 cs_balance_tol::Real = 1e-14,
-                                cs_balance_project_every::Integer = 50)
+                                cs_balance_project_every::Integer = 50,
+                                run_cache = nothing)
     t_start = time()
     Nc = cs_grid.Nc
 
@@ -136,14 +175,10 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     Δlon_ll = FT(deg2rad(ll_mesh.Δλ))
 
     # --- Build conservative regridder (LL → CS) ---
-    t_reg = time()
-    regridder = build_regridder(ll_mesh, cs_grid.mesh;
-                                normalize=false,
-                                cache_dir=cs_grid.cache_dir)
+    regridder = _get_or_build_ll_binary_to_cs_regridder!(
+        run_cache, ll_mesh, cs_grid, Nx_ll, Ny_ll)
     n_src = length(regridder.src_areas)
     n_dst = length(regridder.dst_areas)
-    @info @sprintf("  Regridder: %d→%d  nnz=%d (%.1fs)",
-                   n_src, n_dst, length(regridder.intersections.nzval), time() - t_reg)
 
     # --- Allocate workspaces ---
     cs_ws = allocate_cs_preprocess_workspace(Nc, Nx_ll, Ny_ll, Nz, n_src, n_dst, FT)

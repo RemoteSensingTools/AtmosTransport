@@ -22,7 +22,8 @@ using Test
 
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
-using .AtmosTransport.Preprocessing: regrid_ll_binary_to_cs, build_target_geometry
+using .AtmosTransport.Preprocessing: regrid_ll_binary_to_cs, build_target_geometry,
+                                      PreprocessorRunCache, CubedSphereTargetGeometry
 using .AtmosTransport.MetDrivers: load_cs_window, has_surface
 
 # LL fixture: small but non-trivial. Pressure varies with latitude so
@@ -338,10 +339,15 @@ end
                 "regridder_cache_dir" => joinpath(dir, "cr_cache"),
             )
             cs_grid = build_target_geometry(Val(:cubed_sphere), cfg_grid, Float64)
+            run_cache = PreprocessorRunCache(CubedSphereTargetGeometry, Float64)
 
-            regrid_ll_binary_to_cs(ll_path, cs_grid, cs_default_path; FT = Float64)
+            regrid_ll_binary_to_cs(ll_path, cs_grid, cs_default_path;
+                                   FT = Float64, run_cache = run_cache)
+            @test length(run_cache.entries) == 1
             regrid_ll_binary_to_cs(ll_path, cs_grid, cs_override_path;
-                                   FT = Float64, steps_per_window = 4)
+                                   FT = Float64, steps_per_window = 4,
+                                   run_cache = run_cache)
+            @test length(run_cache.entries) == 1
 
             function _horizontal_flux_l1(path)
                 reader = CubedSphereBinaryReader(path; FT = Float64)

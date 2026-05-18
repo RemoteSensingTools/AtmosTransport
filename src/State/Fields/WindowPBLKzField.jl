@@ -21,7 +21,8 @@ function WindowPBLKzField(host_cache::NTuple{6, Array{FT, 3}};
     params isa PBLPhysicsParameters{FT} ||
         throw(ArgumentError("params must be a PBLPhysicsParameters{$FT}; got $(typeof(params))"))
     panels = ntuple(p -> PreComputedKzField(host_cache[p]), 6)
-    area_cache = Ref{Any}(nothing)
+    area_cache = _typed_area_cache_ref(FT, host_cache[1], size(host_cache[1], 1),
+                                       size(host_cache[1], 2))
     return WindowPBLKzField{FT, typeof(panels[1]), typeof(host_cache),
                             typeof(params), typeof(area_cache)}(
         panels, host_cache, params, area_cache)
@@ -32,13 +33,21 @@ update_field!(f::WindowPBLKzField, ::Real) = f
 
 function Adapt.adapt_structure(to, f::WindowPBLKzField)
     panels = Adapt.adapt(to, f.panels)
+    data1 = panels[1].data
+    area_cache = _typed_area_cache_ref(_window_pbl_eltype(f), data1,
+                                       size(data1, 1), size(data1, 2))
     return WindowPBLKzField{_window_pbl_eltype(f), typeof(panels[1]),
                             typeof(f.host_cache), typeof(f.params),
-                            typeof(f.area_cache)}(
-        panels, f.host_cache, f.params, f.area_cache)
+                            typeof(area_cache)}(
+        panels, f.host_cache, f.params, area_cache)
 end
 
 @inline _window_pbl_eltype(::WindowPBLKzField{FT}) where FT = FT
+
+function _typed_area_cache_ref(::Type{FT}, reference, nx::Integer, ny::Integer) where FT
+    probe = similar(reference, FT, Int(nx), Int(ny))
+    return Ref{Union{Nothing, typeof(probe)}}(nothing)
+end
 
 _host_array(a::Array) = a
 _host_array(a) = Array(a)

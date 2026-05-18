@@ -1020,6 +1020,8 @@ function _read_geos_vdiff_window!(raw::RawWindow{FT},
     raw.qv === nothing &&
         error("RawWindow.qv must be allocated when GCHP VDIFF fields are enabled")
 
+    # GEOS A3dyn and I3 are both 3-hourly instantaneous/averaged blocks in
+    # this archive, so U/V and T intentionally share the same window block.
     a3_idx = _a3_index_for_window(win_idx)
     u = _read_panels_3d(handles.a3dyn, "U", a3_idx, orientation; FT=FT)
     v = _read_panels_3d(handles.a3dyn, "V", a3_idx, orientation; FT=FT)

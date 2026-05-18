@@ -83,15 +83,16 @@ _schedule_has_times(schedule::IntervalSnapshotSchedule) = schedule.stop_hour >= 
 output_enabled(spec::RuntimeOutputSpec) =
     spec.enabled && !isempty(spec.path) && _schedule_has_times(spec.schedule)
 output_path(spec::RuntimeOutputSpec) = spec.path
-output_split(::RuntimeOutputSpec{<:Any, SingleOutputFile}) = :single
-output_split(::RuntimeOutputSpec{<:Any, DailyOutputFiles}) = :daily
 output_fields(spec::RuntimeOutputSpec) = spec.fields
 
-layer_selection(::FullLayerSelection) = :full
-layer_selection(::SelectedLayerSelection) = :selected
-layer_selection(::NoLayerSelection) = :none
-layer_selection(fields::TracerOutputFields) = layer_selection(fields.layers)
-air_mass_layer_selection(fields::OutputFieldSpec) = layer_selection(fields.air_mass_layers)
+layer_selection_label(::FullLayerSelection) = :full
+layer_selection_label(::SelectedLayerSelection) = :selected
+layer_selection_label(::NoLayerSelection) = :none
+layer_selection(fields::TracerOutputFields) = layer_selection_label(fields.layers)
+air_mass_layer_selection(fields::OutputFieldSpec) = layer_selection_label(fields.air_mass_layers)
+layer_selection(s::FullLayerSelection) = layer_selection_label(s)
+layer_selection(s::SelectedLayerSelection) = layer_selection_label(s)
+layer_selection(s::NoLayerSelection) = layer_selection_label(s)
 
 function _parse_layer_selection(value, key::AbstractString)
     s = lowercase(String(value))

@@ -134,14 +134,14 @@ function _layer_dims(base_dims::Tuple, ::SelectedLayerSelection)
     return (base_dims..., "lev_selected", "time")
 end
 
-function _select_levels(a::AbstractArray, idx::AbstractVector{Int})
-    if ndims(a) == 3
-        return a[:, :, idx]
-    elseif ndims(a) == 2
-        return a[:, idx]
-    else
-        throw(ArgumentError("selected layer output expects 2D or 3D arrays, got ndims=$(ndims(a))"))
-    end
+_select_levels(a::AbstractArray{<:Any, 3}, idx::AbstractVector{Int}) =
+    a[:, :, idx]
+
+_select_levels(a::AbstractArray{<:Any, 2}, idx::AbstractVector{Int}) =
+    a[:, idx]
+
+function _select_levels(a::AbstractArray, ::AbstractVector{Int})
+    throw(ArgumentError("selected layer output expects 2D or 3D arrays, got ndims=$(ndims(a))"))
 end
 
 _select_levels(a::NTuple{6, <:AbstractArray}, idx::AbstractVector{Int}) =
@@ -150,10 +150,10 @@ _select_levels(a::NTuple{6, <:AbstractArray}, idx::AbstractVector{Int}) =
 function _fields_string(fields::OutputFieldSpec, tracer_keys)
     tracer_label = fields.tracers === nothing ? "all" : join(String.(fields.tracers), ",")
     written = join(String.(tracer_keys), ",")
-    return "tracers=$(tracer_label); tracer_layers=$(layer_selection(fields.default_tracer)); " *
+    return "tracers=$(tracer_label); tracer_layers=$(layer_selection_label(fields.default_tracer.layers)); " *
            "levels=$(fields.selected_levels); column_mean=$(fields.default_tracer.column_mean); " *
            "column_mass_per_area=$(fields.default_tracer.column_mass_per_area); " *
-           "air_mass_layers=$(air_mass_layer_selection(fields)); air_mass=$(fields.air_mass); " *
+           "air_mass_layers=$(layer_selection_label(fields.air_mass_layers)); air_mass=$(fields.air_mass); " *
            "air_mass_per_area=$(fields.air_mass_per_area); " *
            "column_air_mass_per_area=$(fields.column_air_mass_per_area); " *
            "written_tracers=$(written)"

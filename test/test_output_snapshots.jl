@@ -23,7 +23,7 @@ using .AtmosTransport
                                            "deflate_level" => 1),
                                        Float32)
             @test output_enabled(spec)
-            @test output_split(spec) === :single
+            @test spec.partition isa SingleOutputFile
             @test output_path(spec) == path
             @test snapshot_hours(spec) == [0.0, 3.0, 6.0, 9.0, 12.0]
             @test spec.options.float_type === Float32
@@ -36,7 +36,7 @@ using .AtmosTransport
                                             "split" => "daily"),
                                         Float64)
             @test output_enabled(daily)
-            @test output_split(daily) === :daily
+            @test daily.partition isa DailyOutputFiles
             @test snapshot_hours(daily) == [0.0, 6.0, 24.0]
             @test output_path_for_day(daily, "20211202", 2) ==
                   joinpath(dir, "run_20211202.nc")

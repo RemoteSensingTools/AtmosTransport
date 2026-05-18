@@ -24,7 +24,8 @@ function GCHPHoltslagBovilleKzField(host_cache::NTuple{6, Array{FT, 3}};
     params isa PBLPhysicsParameters{FT} ||
         throw(ArgumentError("params must be a PBLPhysicsParameters{$FT}; got $(typeof(params))"))
     panels = ntuple(p -> PreComputedKzField(host_cache[p]), 6)
-    area_cache = Ref{Any}(nothing)
+    area_cache = _typed_area_cache_ref(FT, host_cache[1], size(host_cache[1], 1),
+                                       size(host_cache[1], 2))
     return GCHPHoltslagBovilleKzField{FT, typeof(panels[1]), typeof(host_cache),
                                       typeof(params), typeof(area_cache)}(
         panels, host_cache, params, area_cache)
@@ -35,10 +36,13 @@ update_field!(f::GCHPHoltslagBovilleKzField, ::Real) = f
 
 function Adapt.adapt_structure(to, f::GCHPHoltslagBovilleKzField)
     panels = Adapt.adapt(to, f.panels)
+    data1 = panels[1].data
+    area_cache = _typed_area_cache_ref(_gchp_hb_eltype(f), data1,
+                                       size(data1, 1), size(data1, 2))
     return GCHPHoltslagBovilleKzField{_gchp_hb_eltype(f), typeof(panels[1]),
                                       typeof(f.host_cache), typeof(f.params),
-                                      typeof(f.area_cache)}(
-        panels, f.host_cache, f.params, f.area_cache)
+                                      typeof(area_cache)}(
+        panels, f.host_cache, f.params, area_cache)
 end
 
 @inline _gchp_hb_eltype(::GCHPHoltslagBovilleKzField{FT}) where FT = FT
@@ -47,9 +51,8 @@ end
     return max(FT(t), FT(180)) * (one(FT) + FT(0.61) * max(FT(qv), zero(FT)))
 end
 
-@inline function _potential_temperature(tv, p_mid, p::PBLPhysicsParameters{FT}) where FT
-    R_dry = p.cp_dry / FT(3.5)
-    kappa = R_dry / p.cp_dry
+@inline function _potential_temperature(tv, p_mid, ::PBLPhysicsParameters{FT}) where FT
+    kappa = one(FT) / FT(3.5)
     return tv * (FT(100000) / max(p_mid, FT(1)))^kappa
 end
 
@@ -187,10 +190,6 @@ function _try_refresh_gchp_hb_kz_cache_backend!(field::GCHPHoltslagBovilleKzFiel
     return true
 end
 
-@inline function _vdiff_panel(vdiff, name::Symbol, p::Int)
-    return _host_array(getfield(vdiff, name)[p])
-end
-
 function refresh_gchp_holtslag_boville_kz_cache!(field::GCHPHoltslagBovilleKzField{FT},
                                                   surface,
                                                   vdiff,
@@ -218,10 +217,10 @@ function refresh_gchp_holtslag_boville_kz_cache!(field::GCHPHoltslagBovilleKzFie
         ustar = _surface_panel(surface, :ustar, panel)
         hflux = _surface_panel(surface, :hflux, panel)
         t2m   = _surface_panel(surface, :t2m,   panel)
-        u3 = _vdiff_panel(vdiff, :u, panel)
-        v3 = _vdiff_panel(vdiff, :v, panel)
-        t3 = _vdiff_panel(vdiff, :t, panel)
-        q3 = _vdiff_panel(vdiff, :qv, panel)
+        u3 = _host_array(vdiff.u[panel])
+        v3 = _host_array(vdiff.v[panel])
+        t3 = _host_array(vdiff.t[panel])
+        q3 = _host_array(vdiff.qv[panel])
         Nc, Ny, Nz = size(cache)
 
         for j in 1:Ny, i in 1:Nc

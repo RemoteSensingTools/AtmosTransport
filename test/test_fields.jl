@@ -16,8 +16,9 @@ extends this suite.
 using Test
 using AtmosTransport: AbstractTimeVaryingField, ConstantField, ProfileKzField,
                       PreComputedKzField, DerivedKzField, PBLPhysicsParameters,
-                      StepwiseField,
-                      field_value, update_field!, integral_between
+                      StepwiseField, GCHPHoltslagBovilleKzField,
+                      field_value, update_field!, integral_between,
+                      refresh_gchp_holtslag_boville_kz_cache!
 using AtmosTransport.State.Fields: _beljaars_viterbo_kz, _obukhov_length,
                                     _prandtl_inverse
 using KernelAbstractions: @kernel, @index, get_backend, synchronize
@@ -666,6 +667,72 @@ _constant_surface(::Type{FT}; pblh, ustar, hflux, t2m) where FT = (
         f       = DerivedKzField(; surface, delp, cache)
         update_field!(f, 0.0)
         @test @inferred(field_value(f, (1, 1, 1))) isa Float64
+    end
+end
+
+@testset "TimeVaryingField — GCHP Holtslag-Boville VDIFF Kz" begin
+    FT = Float64
+    Nx, Ny, Nz = 2, 2, 4
+    params = PBLPhysicsParameters{FT}()
+    areas = fill(FT(1.0e10), Nx, Ny)
+    delp = fill(FT(25000), Nz)
+    air_col = delp .* areas[1, 1] ./ params.gravity
+    air_mass = ntuple(_ -> reshape(repeat(air_col, inner = Nx * Ny), Nx, Ny, Nz), 6)
+    cache = ntuple(_ -> fill(FT(-1), Nx, Ny, Nz), 6)
+    field = GCHPHoltslagBovilleKzField(cache; params)
+
+    pblh = FT(1800)
+    ustar = FT(0.35)
+    hflux = FT(80)
+    t2m = FT(295)
+    surface = (
+        pblh  = ntuple(_ -> fill(pblh, Nx, Ny), 6),
+        ustar = ntuple(_ -> fill(ustar, Nx, Ny), 6),
+        hflux = ntuple(_ -> fill(hflux, Nx, Ny), 6),
+        t2m   = ntuple(_ -> fill(t2m, Nx, Ny), 6),
+    )
+    t_profile = FT[245, 255, 270, 285]
+    q_profile = FT[1e-5, 5e-4, 2e-3, 6e-3]
+    u_profile = fill(FT(12), Nz)
+    v_profile = fill(FT(-4), Nz)
+    vdiff = (
+        u  = ntuple(_ -> reshape(repeat(u_profile, inner = Nx * Ny), Nx, Ny, Nz), 6),
+        v  = ntuple(_ -> reshape(repeat(v_profile, inner = Nx * Ny), Nx, Ny, Nz), 6),
+        t  = ntuple(_ -> reshape(repeat(t_profile, inner = Nx * Ny), Nx, Ny, Nz), 6),
+        qv = ntuple(_ -> reshape(repeat(q_profile, inner = Nx * Ny), Nx, Ny, Nz), 6),
+    )
+
+    refresh_gchp_holtslag_boville_kz_cache!(field, surface, vdiff, air_mass,
+                                            areas; halo_width = 0)
+
+    R_dry = params.cp_dry / FT(3.5)
+    tv = max.(t_profile, FT(180)) .* (one(FT) .+ FT(0.61) .* max.(q_profile, zero(FT)))
+    L_ob, H_kin = _obukhov_length(hflux, ustar, t2m, params)
+    Pr_inv = _prandtl_inverse(pblh, ustar, H_kin, t2m, L_ob, params)
+    z_col = zero(FT)
+    p_top = zero(FT)
+    for k in 1:Nz
+        p_bot = p_top + delp[k]
+        p_mid = max((p_top + p_bot) / FT(2), FT(1))
+        z_col += delp[k] * R_dry * tv[k] / (params.gravity * p_mid)
+        p_top = p_bot
+    end
+    expected = Vector{FT}(undef, Nz)
+    z_above = z_col
+    for k in 1:Nz
+        dz = delp[k] * R_dry * tv[k] /
+             (params.gravity * max((sum(delp[1:k-1]) + sum(delp[1:k])) / FT(2), FT(1)))
+        z_center = z_above - dz / FT(2)
+        expected[k] = _beljaars_viterbo_kz(z_center, pblh, ustar, L_ob,
+                                           Pr_inv, params)
+        z_above -= dz
+    end
+
+    @test all(isfinite, field.host_cache[1])
+    @test all(field.host_cache[1] .>= params.Kz_bg)
+    for panel in 1:6
+        @test field.host_cache[panel][1, 1, :] ≈ expected rtol=1e-12 atol=1e-12
+        @test field.host_cache[panel][2, 2, :] ≈ expected rtol=1e-12 atol=1e-12
     end
 end
 

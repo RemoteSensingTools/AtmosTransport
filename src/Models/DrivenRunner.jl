@@ -69,8 +69,9 @@ using ..InitialConditionIO: build_initial_mixing_ratio,
                              build_surface_flux_sources
 using ..BinaryPathExpander: expand_binary_paths
 using ..Output: SnapshotFrame,
+                AbstractOutputPartition, SingleOutputFile, DailyOutputFiles,
                 RuntimeOutputSpec, runtime_output_spec, snapshot_hours,
-                output_enabled, output_path, output_split, output_path_for_day,
+                output_enabled, output_path, output_path_for_day,
                 capture_snapshot, write_snapshot_netcdf
 # TransportModel + DrivenSimulation live alongside us in the Models module;
 # reach up to the parent and pull them in.
@@ -345,8 +346,31 @@ function _output_default_cap_hours(driver, binary_count::Integer;
     return Float64(nw * Int(binary_count)) * Float64(window_dt(driver)) / 3600.0
 end
 
+_output_path_for_partition(spec::RuntimeOutputSpec, ::SingleOutputFile,
+                           ::AbstractString, ::Integer) = output_path(spec)
+_output_path_for_partition(spec::RuntimeOutputSpec, ::DailyOutputFiles,
+                           date_label::AbstractString, day_index::Integer) =
+    output_path_for_day(spec, date_label, day_index)
+
+function _push_snapshot_frame!(::SingleOutputFile,
+                               snapshots::Vector{SnapshotFrame},
+                               ::Vector{SnapshotFrame},
+                               frame::SnapshotFrame)
+    push!(snapshots, frame)
+    return nothing
+end
+
+function _push_snapshot_frame!(::DailyOutputFiles,
+                               ::Vector{SnapshotFrame},
+                               day_snapshots::Vector{SnapshotFrame},
+                               frame::SnapshotFrame)
+    push!(day_snapshots, frame)
+    return nothing
+end
+
 function _write_output_frames!(timer::RunProgressTimer,
                                spec::RuntimeOutputSpec,
+                               partition::AbstractOutputPartition,
                                frames::Vector{SnapshotFrame},
                                grid;
                                mass_basis::Symbol,
@@ -354,15 +378,36 @@ function _write_output_frames!(timer::RunProgressTimer,
                                day_index::Integer = 1)
     output_enabled(spec) || return nothing
     isempty(frames) && return nothing
-    path = output_split(spec) === :daily ?
-           output_path_for_day(spec, date_label, day_index) :
-           output_path(spec)
+    path = _output_path_for_partition(spec, partition, date_label, day_index)
     timed_io_write!(timer,
         () -> write_snapshot_netcdf(path, frames, grid;
                                     mass_basis = mass_basis,
                                     options = spec.options,
                                     fields = spec.fields))
     return path
+end
+
+_flush_daily_output!(::SingleOutputFile, timer, spec, frames, grid;
+                     mass_basis, date_label, day_index) = nothing
+
+function _flush_daily_output!(partition::DailyOutputFiles, timer, spec, frames, grid;
+                              mass_basis, date_label, day_index)
+    isempty(frames) && return nothing
+    written = _write_output_frames!(timer, spec, partition, frames, grid;
+                                    mass_basis = mass_basis,
+                                    date_label = date_label,
+                                    day_index = day_index)
+    empty!(frames)
+    return written
+end
+
+_flush_single_output!(::DailyOutputFiles, timer, spec, frames, grid;
+                      mass_basis) = nothing
+
+function _flush_single_output!(partition::SingleOutputFile, timer, spec, frames, grid;
+                               mass_basis)
+    return _write_output_frames!(timer, spec, partition, frames, grid;
+                                 mass_basis = mass_basis)
 end
 
 function _synchronize_backend!(cfg)
@@ -610,7 +655,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
 
     snapshots = SnapshotFrame[]
     day_snapshots = SnapshotFrame[]
-    snapshot_count = 0
+    snapshot_count = Ref(0)
     snap_idx = 1
     total_elapsed_hours = 0.0
 
@@ -625,13 +670,10 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
     function capture_structured!(hour_total)
         timed_io_write!(timer, () -> begin
             frame = capture_snapshot(model; time_hours = hour_total)
-            if output_split(output_spec) === :daily
-                push!(day_snapshots, frame)
-            else
-                push!(snapshots, frame)
-            end
+            _push_snapshot_frame!(output_spec.partition, snapshots,
+                                  day_snapshots, frame)
         end)
-        snapshot_count += 1
+        snapshot_count[] += 1
         return nothing
     end
 
@@ -693,7 +735,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
                                                stop_window,
                                                sim.steps_per_window),
                              detail = @sprintf("snapshots=%d  output=%s",
-                                               snapshot_count,
+                                               snapshot_count[],
                                                _output_basename(output_spec)))
                 total_elapsed_hours += window_hours
                 while snap_idx <= length(snapshot_schedule_hours) &&
@@ -728,25 +770,27 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
                              status = @sprintf("finished %s", basename(path)),
                              detail = @sprintf("file wall %.2fs", time() - t0),
                              redraw = true)
-        if do_snapshots && output_split(output_spec) === :daily && !isempty(day_snapshots)
-            written = _write_output_frames!(timer, output_spec, day_snapshots,
-                                            driver_grid(first_driver);
-                                            mass_basis = air_mass_basis(first_driver),
-                                            date_label = _binary_date_label(path),
-                                            day_index = idx)
-            set_progress_status!(timer;
-                                 detail = @sprintf("wrote %s", basename(written)),
-                                 redraw = true)
-            empty!(day_snapshots)
+        if do_snapshots
+            written = _flush_daily_output!(output_spec.partition, timer,
+                                           output_spec, day_snapshots,
+                                           driver_grid(first_driver);
+                                           mass_basis = air_mass_basis(first_driver),
+                                           date_label = _binary_date_label(path),
+                                           day_index = idx)
+            written !== nothing &&
+                set_progress_status!(timer;
+                                     detail = @sprintf("wrote %s", basename(written)),
+                                     redraw = true)
         end
         close(driver)
     end
 
-    if do_snapshots && output_split(output_spec) === :single && !isempty(snapshots)
+    if do_snapshots
         # `air_mass_basis(driver)` already returns the Symbol and has been
         # validated to match `model.state`'s basis by
         # `_check_basis_compatibility` before any step!.
-        _write_output_frames!(timer, output_spec, snapshots, driver_grid(first_driver);
+        _flush_single_output!(output_spec.partition, timer, output_spec,
+                              snapshots, driver_grid(first_driver);
                               mass_basis = air_mass_basis(first_driver))
     end
 
@@ -915,7 +959,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
     # stripping and NetCDF diagnostics.
     snapshots = SnapshotFrame[]
     day_snapshots = SnapshotFrame[]
-    snapshot_count = 0
+    snapshot_count = Ref(0)
 
     # Progress + IO/Transport timer. Estimate total windows from the
     # first driver; closes to the truth on homogeneous daily runs.
@@ -928,13 +972,10 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
         timed_io_write!(timer, () -> begin
             frame = capture_snapshot(model; time_hours = hour_total,
                                      halo_width = Hp)
-            if output_split(output_spec) === :daily
-                push!(day_snapshots, frame)
-            else
-                push!(snapshots, frame)
-            end
+            _push_snapshot_frame!(output_spec.partition, snapshots,
+                                  day_snapshots, frame)
         end)
-        snapshot_count += 1
+        snapshot_count[] += 1
         return nothing
     end
 
@@ -1010,7 +1051,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
                                                stop_window,
                                                sim.steps_per_window),
                              detail = @sprintf("snapshots=%d  output=%s",
-                                               snapshot_count,
+                                               snapshot_count[],
                                                _output_basename(output_spec)))
                 total_hour += window_hours
                 while do_snapshots && snap_idx <= length(snapshot_schedule_hours) &&
@@ -1030,22 +1071,22 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
                              status = @sprintf("finished %s", basename(path)),
                              detail = @sprintf("file wall %.1fs", time() - day_t0),
                              redraw = true)
-        if do_snapshots && output_split(output_spec) === :daily && !isempty(day_snapshots)
-            written = _write_output_frames!(timer, output_spec, day_snapshots,
-                                            grid;
-                                            mass_basis = BasisT === DryBasis ? :dry : :moist,
-                                            date_label = _binary_date_label(path),
-                                            day_index = driver_idx)
-            set_progress_status!(timer;
-                                 detail = @sprintf("wrote %s", basename(written)),
-                                 redraw = true)
-            empty!(day_snapshots)
+        if do_snapshots
+            written = _flush_daily_output!(output_spec.partition, timer,
+                                           output_spec, day_snapshots, grid;
+                                           mass_basis = BasisT === DryBasis ? :dry : :moist,
+                                           date_label = _binary_date_label(path),
+                                           day_index = driver_idx)
+            written !== nothing &&
+                set_progress_status!(timer;
+                                     detail = @sprintf("wrote %s", basename(written)),
+                                     redraw = true)
         end
         close(driver)
     end
 
     @info @sprintf("Done: %.1fs  (%d snapshots, final t=%.1fh)",
-                   time() - t0, snapshot_count, total_hour)
+                   time() - t0, snapshot_count[], total_hour)
 
     for name in keys(tracer_init)
         rm1 = Float64(total_mass(state, name))
@@ -1056,11 +1097,12 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
         end
     end
 
-    if do_snapshots && output_split(output_spec) === :single && !isempty(snapshots)
+    if do_snapshots
         # BasisT was bound at model construction (dry by default on CS per
         # invariant 14); reuse it so the NetCDF records the same basis the
         # `air_mass` arrays were stored under.
-        _write_output_frames!(timer, output_spec, snapshots, grid;
+        _flush_single_output!(output_spec.partition, timer, output_spec,
+                              snapshots, grid;
                               mass_basis = BasisT === DryBasis ? :dry : :moist)
     end
     summarize_progress!(timer)

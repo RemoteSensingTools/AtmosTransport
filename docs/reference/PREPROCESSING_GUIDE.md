@@ -16,8 +16,9 @@ What met data source?
 │       ├── Spectral (VO, D, LNSP) → recommended (exact mass conservation)
 │       └── Gridpoint (u, v, sp) → legacy only (~0.9% mass drift)
 │
-├── GEOS-FP C720 → likely_legacy for now; unified path pending
-├── GEOS-IT C180 → likely_legacy for now; unified path pending
+├── GEOS-IT / GEOS-FP native cubed sphere
+│   ├── Native CS target (same Nc or nested coarsening) → preprocess_transport_binary.jl
+│   └── Vertical thinning / upper-atmosphere merge → typed vertical transform
 └── MERRA-2 → not yet implemented
 ```
 
@@ -105,15 +106,36 @@ julia -t8 --project=. scripts/preprocessing/preprocess_transport_binary.jl \
     config/preprocessing/era5_cs_c90_transport_binary.toml --day 2021-12-01
 ```
 
+## GEOS Native Cubed Sphere
+
+GEOS-IT and GEOS-FP native cubed-sphere products use the unified
+source/vertical/target driver directly. The binary header carries the output
+level count, vertical transform, mass basis, payload manifest, and per-window
+substep schedule; run TOMLs should not restate those facts.
+
+Example C180 GEOS-IT preprocessing:
+
+```bash
+julia -t8 --project=. scripts/preprocessing/preprocess_transport_binary.jl \
+    config/preprocessing/geosit_c180_full_transport_binary_f32.toml \
+    --start 2021-12-01 --end 2021-12-05
+```
+
+For the current C180 production-style product, upper mesospheric layers are
+merged with a typed `MergeAbovePressure` transform, and the preprocessor writes
+a per-window adaptive transport schedule selected by the cubed-sphere replay
+and palindrome positivity contract. The runtime reads that schedule from the
+binary and bypasses the older pilot subcycler for matching CS binaries.
+
 ## What the preprocessor does
 
-1. **Read** ERA5 spectral/gridpoint data
-2. **Synthesize** winds on the target grid (spectral → grid via Legendre + FFT)
-3. **Compute mass fluxes** (am, bm) from winds and surface pressure
-4. **Poisson balance** the horizontal fluxes (ensures div(flux) is solvable)
-5. **Diagnose cm** from continuity: cm[k+1] = cm[k] + dm - div_h
-6. **Pin global ps** to fixed dry-air mass target (TM5 `Match('area-aver')` equivalent)
-7. **Write** binary with v4/v5 header (provenance, checksums, ps offsets)
+1. **Read** source meteorology through the source-specific reader.
+2. **Transform vertical levels** with an explicit typed vertical policy.
+3. **Build target-grid transport fields** (`m`, horizontal fluxes, `cm`, and optional physics payloads).
+4. **Balance / diagnose continuity** where the target contract requires it.
+5. **Select and write substep schedule** when the target uses adaptive transport substeps.
+6. **Verify replay and positivity contracts** before promoting the staging file.
+7. **Write** the binary header and payloads with provenance, checksums, and runtime contract metadata.
 
 ## Implementation layout
 

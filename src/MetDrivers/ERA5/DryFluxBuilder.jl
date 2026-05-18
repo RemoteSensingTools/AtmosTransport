@@ -8,8 +8,9 @@
 # balance and cm diagnosis.
 #
 # Two paths:
-#   1. PreprocessedERA5Driver — reads preprocessed binary (am, bm, cm, m already
-#      in mass-flux form from the v4 spectral preprocessor)
+#   1. PreprocessedERA5Driver — legacy conversion tag for preprocessed binary
+#      fields (am, bm, cm, m already in mass-flux form from the v4 spectral
+#      preprocessor)
 #   2. RawERA5Driver — reads u, v, lnsp, q and computes fluxes on the fly
 #
 # Path (1) with dry binaries is the production path. The build_dry_fluxes!
@@ -17,12 +18,14 @@
 # ---------------------------------------------------------------------------
 
 """
-    PreprocessedERA5Driver <: AbstractMassFluxMetDriver
+    PreprocessedERA5Driver
 
-Reads preprocessed ERA5 mass fluxes from binary files (v4 spectral preprocessor).
-The binary already contains prepared transport fields (`am`, `bm`, `cm`, `m`, `ps`) in the stored runtime contract expected by `src`.
+Legacy conversion tag for preprocessed ERA5 mass fluxes (v4 spectral
+preprocessor). The real runtime reader/driver is `TransportBinaryDriver`;
+this type only carries the old moist-to-dry conversion settings used by
+`build_dry_fluxes!`.
 """
-struct PreprocessedERA5Driver <: AbstractMassFluxMetDriver
+struct PreprocessedERA5Driver
     n_windows :: Int
     dt        :: Float64
     n_substeps :: Int

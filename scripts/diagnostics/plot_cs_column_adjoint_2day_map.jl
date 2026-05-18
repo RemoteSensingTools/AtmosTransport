@@ -56,6 +56,7 @@ Usage: julia --project=docs scripts/diagnostics/plot_cs_column_adjoint_2day_map.
            [--horizontal-cfl X] [--vertical-cfl X] [--float-type Float32|Float64] \\
            [--receptor-lon LON] [--receptor-lat LAT] \\
            [--physics transport|diffusion|full] \\
+           [--diffusion-kind tm5_beljaars_viterbo|geoschem_holtslag_boville] \\
            [--scheme upwind|slopes|ppm_unlimited|ppm_limited|linrood] \\
            [--backend cpu|cuda] [--tape-storage auto|device|pinned_host]
 """
@@ -77,6 +78,7 @@ function _parse_args(argv)
     mode = :single
     global_view = true
     physics = :transport
+    diffusion_kind = :tm5_beljaars_viterbo
     scheme = :upwind
     backend = :cpu
     tape_storage = :auto
@@ -144,6 +146,11 @@ function _parse_args(argv)
             physics in (:transport, :diffusion, :full) ||
                 error("--physics must be transport, diffusion, or full")
             i += 2
+        elseif arg == "--diffusion-kind" && i + 1 <= length(argv)
+            diffusion_kind = Symbol(replace(lowercase(argv[i + 1]), '-' => '_'))
+            diffusion_kind in (:tm5_beljaars_viterbo, :geoschem_holtslag_boville) ||
+                error("--diffusion-kind must be tm5_beljaars_viterbo or geoschem_holtslag_boville")
+            i += 2
         elseif arg == "--scheme" && i + 1 <= length(argv)
             scheme = _parse_scheme(argv[i + 1])
             i += 2
@@ -190,7 +197,8 @@ function _parse_args(argv)
     return (; out, nc, days, dt_hours, grid_spacing, threshold, map_resolution,
             log_mode, log_decades, cs_binary, start_window,
             receptor_lon, receptor_lat, mode, physics, scheme, horizontal_cfl,
-            vertical_cfl, float_type, global_view, backend, tape_storage)
+            vertical_cfl, float_type, global_view, backend, tape_storage,
+            diffusion_kind)
 end
 
 function _parse_scheme(value::AbstractString)
@@ -715,10 +723,12 @@ _scheme_halo_width(scheme::Symbol) = _scheme_halo_width(Val(scheme))
 
 function _physics_kwargs(mesh, panels_rm, panels_m, physics::Symbol,
                          scheme::Symbol, dt, backend::_DiagnosticBackend,
-                         tape_storage::Symbol)
+                         tape_storage::Symbol, diffusion_kind::Symbol)
     kwargs = (; scheme=_advection_scheme(scheme), dt=dt,
               tape_storage=tape_storage)
     if physics in (:diffusion, :full)
+        diffusion_kind === :tm5_beljaars_viterbo ||
+            error("--diffusion-kind=$diffusion_kind is only supported with --cs-binary; synthetic diagnostics use tm5_beljaars_viterbo")
         diffusion_op, diffusion_ws = _demo_diffusion(mesh, panels_rm[1])
         kwargs = merge(kwargs, (;
             diffusion_op=_adapt_backend(backend, diffusion_op),
@@ -836,7 +846,8 @@ function _real_binary_problem(path::AbstractString; start_window::Int,
                               requested_days::Real,
                               FT::Type{<:AbstractFloat},
                               scheme::Symbol,
-                              physics::Symbol)
+                              physics::Symbol,
+                              diffusion_kind::Symbol)
     physics === :full && error(
         "--physics full is not implemented for --cs-binary in this diagnostic; " *
         "use --physics transport or --physics diffusion")
@@ -846,31 +857,24 @@ function _real_binary_problem(path::AbstractString; start_window::Int,
                                         validate_replay=false)
     try
         step_schedule = steps_per_window_schedule(driver)
-        length(unique(step_schedule)) == 1 || error(
-            "This checkpointed adjoint diagnostic still assumes one scalar " *
-            "dt for every model step. $(basename(bin_path)) has a variable " *
-            "steps_per_window_by_window schedule ($(minimum(step_schedule)):" *
-            "$(maximum(step_schedule))). Runtime transport supports this, " *
-            "but the diagnostic needs per-step dt plumbing before it can " *
-            "produce correct dJ/dE units.")
         nwin = total_windows(driver)
         1 <= start_window <= nwin ||
             error("--start-window must be in 1:$nwin for $(basename(bin_path))")
         window = load_transport_window(driver, start_window)
         mesh = driver.grid.horizontal
-        dt = Float64(window_dt(driver)) / steps_per_window(driver)
-        steps_per_win = steps_per_window(driver)
-        requested_steps = max(1, round(Int, requested_days * 86400 / dt))
-        windows_needed = cld(requested_steps, steps_per_win)
+        requested_seconds = Float64(requested_days) * 86400.0
+        window_seconds = Float64(window_dt(driver))
+        windows_needed = max(1, ceil(Int, requested_seconds / window_seconds))
         final_window = start_window + windows_needed - 1
         if final_window > nwin
             max_days = Float64((nwin - start_window + 1) * window_dt(driver)) / 86400
             error(
-                "requested $(requested_steps) substeps reaches window " *
-                "$final_window, but $(basename(bin_path)) only has $nwin windows. " *
+                "requested $(requested_days) days reaches window $final_window, " *
+                "but $(basename(bin_path)) only has $nwin windows. " *
                 "Use --days <= $(max_days), lower --start-window, or pass a " *
                 "binary containing more windows.")
         end
+        requested_steps = sum(@view step_schedule[start_window:final_window])
         reset_aware = false
         try
             _validate_replay_safe_boundaries!(driver.reader, start_window,
@@ -907,7 +911,9 @@ function _real_binary_problem(path::AbstractString; start_window::Int,
             _validate_positive_air_mass!(
                 win_window.air_mass, mesh,
                 "window $win of $(basename(bin_path))")
-            n_this = min(steps_per_win, requested_steps - step_idx)
+            steps_this = Int(step_schedule[win])
+            n_this = min(steps_this, requested_steps - step_idx)
+            dt_this = Float64(window_dt(driver)) / steps_this
             chunk_m0 = _copy_haloed_air_mass(win_window, mesh)
             chunk_am = Vector{Any}(undef, n_this)
             chunk_bm = Vector{Any}(undef, n_this)
@@ -925,11 +931,22 @@ function _real_binary_problem(path::AbstractString; start_window::Int,
                                             driver.grid.vertical.B)
                 Nz = size(panels_m[1], 3)
                 kz_cache = ntuple(_ -> zeros(FT, mesh.Nc, mesh.Nc, Nz), 6)
-                diffusion_op = ImplicitVerticalDiffusion(;
-                    kz_field = WindowPBLKzField(kz_cache))
-                refresh_pbl_kz_cache!(diffusion_op.kz_field, win_window.surface,
-                                      chunk_m0, mesh.cell_areas;
-                                      halo_width = mesh.Hp)
+                if diffusion_kind === :tm5_beljaars_viterbo
+                    diffusion_op = ImplicitVerticalDiffusion(;
+                        kz_field = WindowPBLKzField(kz_cache))
+                    refresh_pbl_kz_cache!(diffusion_op.kz_field, win_window.surface,
+                                          chunk_m0, mesh.cell_areas;
+                                          halo_width = mesh.Hp)
+                elseif diffusion_kind === :geoschem_holtslag_boville
+                    diffusion_op = ImplicitVerticalDiffusion(;
+                        kz_field = GCHPHoltslagBovilleKzField(kz_cache))
+                    refresh_gchp_holtslag_boville_kz_cache!(
+                        diffusion_op.kz_field, win_window.surface,
+                        win_window.vdiff, chunk_m0, mesh.cell_areas;
+                        halo_width = mesh.Hp)
+                else
+                    error("unknown diffusion kind $diffusion_kind")
+                end
             end
             for local_step in 1:n_this
                 step_idx += 1
@@ -953,14 +970,15 @@ function _real_binary_problem(path::AbstractString; start_window::Int,
                 panels_bm_steps = chunk_bm,
                 panels_cm_steps = chunk_cm,
                 diffusion_op = chunk_diffusion_ops,
-                diffusion_workspace = chunk_diffusion_wss))
+                diffusion_workspace = chunk_diffusion_wss,
+                dt = dt_this))
         end
         if physics === :diffusion
             kwargs_extra = (;
                 diffusion_op = diffusion_ops,
                 diffusion_workspace = diffusion_wss)
         end
-        final_window_state = if step_idx % steps_per_win == 0 && final_window < nwin
+        final_window_state = if final_window < nwin
             load_transport_window(driver, final_window + 1)
         else
             nothing
@@ -976,9 +994,11 @@ function _real_binary_problem(path::AbstractString; start_window::Int,
         h = driver.reader.header
         boundary_label = reset_aware ? "reset-aware boundaries" : "replay-continuous"
         source_label = @sprintf(
-            "real %s; windows %d-%d/%d; native %.0f s window, %d substeps/window; %s; %s; %s",
+            "real %s; windows %d-%d/%d; native %.0f s window, %d:%d substeps/window; %s; %s; %s",
             basename(bin_path), start_window, final_window, nwin,
-            Float64(window_dt(driver)), steps_per_window(driver),
+            Float64(window_dt(driver)),
+            minimum(@view step_schedule[start_window:final_window]),
+            maximum(@view step_schedule[start_window:final_window]),
             String(h.panel_convention),
             String(h.cs_definition),
             boundary_label)
@@ -986,7 +1006,8 @@ function _real_binary_problem(path::AbstractString; start_window::Int,
                 panels_am_steps = panels_am,
                 panels_bm_steps = panels_bm,
                 panels_cm_steps = panels_cm,
-                dt, nsteps = requested_steps,
+                dt = Float64(window_dt(driver)) / step_schedule[start_window],
+                nsteps = requested_steps,
                 source_label, kwargs_extra, chunks, final_m, reset_aware)
     finally
         close(driver)
@@ -1005,6 +1026,7 @@ end
 function _stage_chunk_for_backend(chunk, backend::_DiagnosticBackend)
     return (;
         window = chunk.window,
+        dt = chunk.dt,
         panels_m0 = _to_backend_tuple(backend, chunk.panels_m0),
         panels_am_steps = _to_backend_steps(backend, chunk.panels_am_steps),
         panels_bm_steps = _to_backend_steps(backend, chunk.panels_bm_steps),
@@ -1028,7 +1050,7 @@ end
 
 function _column_footprint_checkpointed(mesh::CubedSphereMesh, chunks,
                                         final_m, receptor, scheme::Symbol,
-                                        dt, backend::_DiagnosticBackend,
+                                        _dt, backend::_DiagnosticBackend,
                                         tape_storage::Symbol,
                                         reset_aware::Bool = false)
     final_m === nothing && error(
@@ -1064,7 +1086,7 @@ function _column_footprint_checkpointed(mesh::CubedSphereMesh, chunks,
             adv_scheme;
             cfl_limit = 0.95,
             flux_scale = one(FT),
-            dt = FT(dt),
+            dt = FT(staged.dt),
             diffusion_op = staged.diffusion_op,
             diffusion_workspace = staged.diffusion_workspace,
             tape_storage = storage)
@@ -1074,7 +1096,7 @@ function _column_footprint_checkpointed(mesh::CubedSphereMesh, chunks,
         end
         result = AtmosTransport.Adjoints._collect_surface_footprints(
             lambda_panels, ops, staged.panels_m0, mesh,
-            CSSeedObjective(), FT(dt);
+            CSSeedObjective(), FT(staged.dt);
             diffusion_workspace = nothing,
             diffusion_meteo = nothing,
             convection_workspace = nothing)
@@ -1096,7 +1118,8 @@ function _plot_single(out::AbstractString; Nc::Int, days::Real, dt_hours::Real,
                       log_mode::Symbol, log_decades::Real,
                       cs_binary, start_window::Int,
                       backend::_DiagnosticBackend,
-                      tape_storage::Symbol)
+                      tape_storage::Symbol,
+                      diffusion_kind::Symbol)
     tape_storage = _resolved_tape_storage(backend, tape_storage)
     checkpoint_chunks = nothing
     final_m_checkpoint = nothing
@@ -1123,7 +1146,8 @@ function _plot_single(out::AbstractString; Nc::Int, days::Real, dt_hours::Real,
             requested_days = days,
             FT = FT,
             scheme = scheme,
-            physics = physics)
+            physics = physics,
+            diffusion_kind = diffusion_kind)
         mesh = problem.mesh
         panels_m = problem.panels_m
         panels_rm = problem.panels_rm
@@ -1143,7 +1167,7 @@ function _plot_single(out::AbstractString; Nc::Int, days::Real, dt_hours::Real,
     receptor = _nearest_cs_cell(mesh, receptor_lon, receptor_lat)
     kwargs = cs_binary === nothing ?
         _physics_kwargs(mesh, panels_rm, panels_m, physics, scheme, dt,
-                        backend, tape_storage) :
+                        backend, tape_storage, diffusion_kind) :
         (; scheme=_advection_scheme(scheme), dt=dt, tape_storage=tape_storage)
     kwargs = merge(kwargs, kwargs_extra)
     @info "computing single-receptor adjoint footprint" Nc nsteps physics scheme receptor backend=_backend_name(backend) tape_storage
@@ -1206,7 +1230,8 @@ function _plot_grid(out::AbstractString; Nc::Int, days::Real, dt_hours::Real,
                     grid_spacing::Real, threshold::Real, physics::Symbol,
                     scheme::Symbol, horizontal_cfl::Real, vertical_cfl::Real,
                     FT::Type{<:AbstractFloat}, map_resolution::Real,
-                    log_mode::Symbol, log_decades::Real)
+                    log_mode::Symbol, log_decades::Real,
+                    diffusion_kind::Symbol)
     nsteps = round(Int, days * 24 / dt_hours)
     nsteps >= 1 || error("lookback window rounds to zero model steps")
     dt = 3600.0 * dt_hours
@@ -1216,7 +1241,7 @@ function _plot_grid(out::AbstractString; Nc::Int, days::Real, dt_hours::Real,
                       horizontal_cfl=horizontal_cfl,
                       vertical_cfl=vertical_cfl)
     kwargs = _physics_kwargs(mesh, panels_rm, panels_m, physics, scheme, dt,
-                             _CPUBackend(), :device)
+                             _CPUBackend(), :device, diffusion_kind)
     receptors = _receptor_grid(mesh, grid_spacing)
     objective = _GridColumnMeanObjective(receptors, true)
     @info "computing combined receptor-grid adjoint footprint" receptors=length(receptors) nsteps physics scheme
@@ -1284,7 +1309,8 @@ function main(argv=ARGS)
                             cs_binary=opts.cs_binary,
                             start_window=opts.start_window,
                             backend=backend,
-                            tape_storage=opts.tape_storage)
+                            tape_storage=opts.tape_storage,
+                            diffusion_kind=opts.diffusion_kind)
     else
         opts.backend === :cpu ||
             error("--grid receptor averaging is currently CPU-only; use --single for CUDA maps")
@@ -1301,7 +1327,8 @@ function main(argv=ARGS)
                           FT=opts.float_type,
                           map_resolution=opts.map_resolution,
                           log_mode=opts.log_mode,
-                          log_decades=opts.log_decades)
+                          log_decades=opts.log_decades,
+                          diffusion_kind=opts.diffusion_kind)
     end
 end
 

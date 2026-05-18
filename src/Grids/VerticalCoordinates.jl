@@ -23,6 +23,18 @@ struct HybridSigmaPressure{FT} <: AbstractVerticalCoordinate{FT}
     end
 end
 
+_missing_vertical_method(vc::AbstractVerticalCoordinate, name::Symbol) =
+    throw(ArgumentError("`$(name)` must be implemented for vertical coordinate " *
+                        "`$(typeof(vc))`."))
+
+n_levels(vc::AbstractVerticalCoordinate) = _missing_vertical_method(vc, :n_levels)
+pressure_at_interface(vc::AbstractVerticalCoordinate, _k, _p_s) =
+    _missing_vertical_method(vc, :pressure_at_interface)
+pressure_at_level(vc::AbstractVerticalCoordinate, _k, _p_s) =
+    _missing_vertical_method(vc, :pressure_at_level)
+level_thickness(vc::AbstractVerticalCoordinate, _k, _p_s) =
+    _missing_vertical_method(vc, :level_thickness)
+
 n_levels(vc::HybridSigmaPressure) = length(vc.A) - 1
 
 pressure_at_interface(vc::HybridSigmaPressure, k, p_s) = vc.A[k] + vc.B[k] * p_s
@@ -38,11 +50,12 @@ function level_thickness(vc::HybridSigmaPressure, k, p_s)
 end
 
 """
-    b_sum(vc::HybridSigmaPressure, k)
+    b_diff(vc::AbstractVerticalCoordinate, k)
 
 Difference of B coefficients across level k: B[k+1] - B[k].
 Used for distributing surface pressure tendency across levels.
 """
+b_diff(vc::AbstractVerticalCoordinate, _k) = _missing_vertical_method(vc, :b_diff)
 b_diff(vc::HybridSigmaPressure, k) = vc.B[k + 1] - vc.B[k]
 
 export HybridSigmaPressure

@@ -13,6 +13,13 @@ catch
     false
 end
 
+struct _IncompleteHorizontalMesh <: AtmosTransport.Grids.AbstractHorizontalMesh end
+struct _IncompleteStructuredMesh <: AtmosTransport.Grids.AbstractStructuredMesh end
+Base.eltype(::_IncompleteHorizontalMesh) = Float64
+Base.eltype(::_IncompleteStructuredMesh) = Float64
+
+struct _IncompleteVerticalCoordinate{FT} <: AtmosTransport.Grids.AbstractVerticalCoordinate{FT} end
+
 @testset "PlanetParameters and AtmosGrid" begin
     params = PlanetParameters(; FT=Float32, radius=6.0f6, gravity=9.8f0, reference_pressure=1.0f5)
     mesh = LatLonMesh(; FT=Float32, Nx=4, Ny=3)
@@ -50,6 +57,50 @@ end
     ws = AdvectionWorkspace(state_dry.air_mass)
 
     @test_throws MethodError apply!(state_dry, flux_moist, grid, UpwindScheme(), 1800.0; workspace=ws)
+end
+
+@testset "Abstract grid contracts fail with actionable errors" begin
+    mesh = _IncompleteHorizontalMesh()
+    smesh = _IncompleteStructuredMesh()
+    vc = _IncompleteVerticalCoordinate{Float64}()
+
+    for f in (
+        () -> ncells(mesh),
+        () -> nfaces(mesh),
+        () -> cell_area(mesh, 1),
+        () -> face_length(mesh, 1),
+        () -> face_normal(mesh, 1),
+        () -> face_cells(mesh, 1),
+        () -> cell_faces(mesh, 1),
+        () -> nx(smesh),
+        () -> ny(smesh),
+    )
+        err = try
+            f()
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("must be implemented", sprint(showerror, err))
+    end
+
+    for f in (
+        () -> n_levels(vc),
+        () -> pressure_at_interface(vc, 1, 1000.0),
+        () -> pressure_at_level(vc, 1, 1000.0),
+        () -> level_thickness(vc, 1, 1000.0),
+        () -> AtmosTransport.Grids.b_diff(vc, 1),
+    )
+        err = try
+            f()
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("must be implemented", sprint(showerror, err))
+    end
 end
 
 @testset "Standalone runtime smoke test" begin
@@ -211,8 +262,8 @@ end
 
 @testset "CubedSphere runtime uses dedicated panel-native types" begin
     mesh = CubedSphereMesh(; FT=Float64, Nc=4)
-    @test_throws MethodError cell_area(mesh, 1)
-    @test_throws MethodError face_cells(mesh, 1)
+    @test_throws ArgumentError cell_area(mesh, 1)
+    @test_throws ArgumentError face_cells(mesh, 1)
 
     vc = HybridSigmaPressure([0.0, 100.0, 300.0], [0.0, 0.0, 1.0])
     grid = AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT=Float64)

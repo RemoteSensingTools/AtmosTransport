@@ -14,6 +14,10 @@
 Total number of horizontal cells in the mesh.
 """
 function ncells end
+_missing_mesh_method(mesh::AbstractHorizontalMesh, name::Symbol) =
+    throw(ArgumentError("`$(name)` must be implemented for horizontal mesh " *
+                        "`$(typeof(mesh))`."))
+ncells(mesh::AbstractHorizontalMesh) = _missing_mesh_method(mesh, :ncells)
 
 """
     cell_area(mesh::AbstractHorizontalMesh, c) -> FT
@@ -27,6 +31,7 @@ Area [m²] of cell `c`.
 Both forms must be implemented by all concrete mesh types.
 """
 function cell_area end
+cell_area(mesh::AbstractHorizontalMesh, _c) = _missing_mesh_method(mesh, :cell_area)
 
 """
     cell_faces(mesh::AbstractHorizontalMesh, c) -> indices
@@ -36,6 +41,7 @@ returns the 4 (or 6 for hex) face indices; for unstructured meshes
 it uses the CSR adjacency.
 """
 function cell_faces end
+cell_faces(mesh::AbstractHorizontalMesh, _c) = _missing_mesh_method(mesh, :cell_faces)
 
 # ---- Face queries ----
 
@@ -45,6 +51,7 @@ function cell_faces end
 Total number of horizontal faces in the mesh.
 """
 function nfaces end
+nfaces(mesh::AbstractHorizontalMesh) = _missing_mesh_method(mesh, :nfaces)
 
 """
     face_length(mesh::AbstractHorizontalMesh, f) -> FT
@@ -52,6 +59,7 @@ function nfaces end
 Length [m] of face `f` (or area of the face cross-section for 3D).
 """
 function face_length end
+face_length(mesh::AbstractHorizontalMesh, _f) = _missing_mesh_method(mesh, :face_length)
 
 """
     face_normal(mesh::AbstractHorizontalMesh, f) -> (nx, ny)
@@ -73,6 +81,7 @@ Consistent normal orientation between `face_cells` (left → right = positive)
 and `face_normal` is required.
 """
 function face_normal end
+face_normal(mesh::AbstractHorizontalMesh, _f) = _missing_mesh_method(mesh, :face_normal)
 
 """
     face_cells(mesh::AbstractHorizontalMesh, f) -> (left, right)
@@ -81,6 +90,7 @@ The two cells sharing face `f`. Convention: flux from left to right
 is positive. Boundary faces use `0` or a sentinel for the exterior cell.
 """
 function face_cells end
+face_cells(mesh::AbstractHorizontalMesh, _f) = _missing_mesh_method(mesh, :face_cells)
 
 # ---- Structured mesh convenience ----
 
@@ -92,6 +102,8 @@ Logical grid dimensions for structured meshes.
 """
 function nx end
 function ny end
+nx(mesh::AbstractStructuredMesh) = _missing_mesh_method(mesh, :nx)
+ny(mesh::AbstractStructuredMesh) = _missing_mesh_method(mesh, :ny)
 
 export ncells, nfaces, cell_area, cell_faces
 export face_length, face_normal, face_cells

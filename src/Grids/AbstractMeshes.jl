@@ -152,7 +152,6 @@ planet_parameters(g::AtmosGrid) = g.planet
 radius(g::AtmosGrid) = g.planet.radius
 gravity(g::AtmosGrid) = g.planet.gravity
 reference_pressure(g::AtmosGrid) = g.planet.reference_pressure
-const Grid = AtmosGrid
 
 function Base.getproperty(g::AtmosGrid, s::Symbol)
     if s === :radius
@@ -171,5 +170,5 @@ export AbstractFluxTopology, StructuredFluxTopology, FaceIndexedFluxTopology
 export StructuredTopology, FaceConnectedTopology
 export flux_topology
 export AbstractVerticalCoordinate
-export AtmosGrid, Grid, floattype, nlevels  # `architecture` re-exported via Architectures
+export AtmosGrid, floattype, nlevels  # `architecture` re-exported via Architectures
 export planet_parameters, radius, gravity, reference_pressure

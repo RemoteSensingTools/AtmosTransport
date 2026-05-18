@@ -57,6 +57,20 @@ end
     ws = AdvectionWorkspace(state_dry.air_mass)
 
     @test_throws MethodError apply!(state_dry, flux_moist, grid, UpwindScheme(), 1800.0; workspace=ws)
+
+    face_rm = ones(Float64, ncells(mesh), 2)
+    face_m = ones(Float64, ncells(mesh), 2)
+    face_flux = zeros(Float64, nfaces(mesh), 2)
+    face_ws = AdvectionWorkspace(face_m)
+    err = try
+        AtmosTransport.Operators.Advection.sweep_horizontal!(
+            face_rm, face_m, face_flux, mesh, SlopesScheme(), face_ws)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin("face-indexed meshes supports UpwindScheme only", sprint(showerror, err))
 end
 
 @testset "Abstract grid contracts fail with actionable errors" begin

@@ -426,6 +426,27 @@ function sweep_horizontal!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
     return nothing
 end
 
+function _throw_unsupported_face_indexed_scheme(op::Symbol, scheme::AbstractAdvectionScheme)
+    throw(ArgumentError("$(op) on face-indexed meshes supports UpwindScheme only; got $(typeof(scheme)). Use structured-grid sweeps for SlopesScheme/PPMScheme or the cubed-sphere driver for LinRoodPPMScheme."))
+end
+
+function sweep_horizontal!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
+                           horizontal_flux::AbstractArray{FT,2},
+                           mesh::AbstractHorizontalMesh,
+                           scheme::AbstractAdvectionScheme,
+                           ws::AdvectionWorkspace{FT}) where FT
+    _throw_unsupported_face_indexed_scheme(:sweep_horizontal!, scheme)
+end
+
+function sweep_horizontal!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
+                           horizontal_flux::AbstractArray{FT,2},
+                           mesh::AbstractHorizontalMesh,
+                           scheme::AbstractAdvectionScheme,
+                           ws::AdvectionWorkspace{FT},
+                           flux_scale::FT) where FT
+    _throw_unsupported_face_indexed_scheme(:sweep_horizontal!, scheme)
+end
+
 function sweep_vertical!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},
                          cm::AbstractArray{FT,2},
                          scheme::UpwindScheme,

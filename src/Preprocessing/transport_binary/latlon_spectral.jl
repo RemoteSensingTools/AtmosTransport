@@ -1,5 +1,13 @@
 # Spectral ERA5 to structured lat-lon transport-binary preprocessing path.
 
+const LLNextDayFields{FT} = @NamedTuple{
+    m::Array{FT, 3},
+    am::Array{FT, 3},
+    bm::Array{FT, 3},
+    cm::Array{FT, 3},
+    qv::Union{Nothing, Array{FT, 3}},
+}
+
 mutable struct LatLonSpectralWindowWorkspace{FT, TW, MW, SW, QW} <:
                AbstractWindowWorkspace{LatLonTargetGeometry, FT}
     transform      :: TW
@@ -7,7 +15,7 @@ mutable struct LatLonSpectralWindowWorkspace{FT, TW, MW, SW, QW} <:
     storage        :: SW
     qv             :: QW
     ps_offsets     :: Vector{Float64}
-    last_hour_next :: Any
+    last_hour_next :: Union{Nothing, LLNextDayFields{FT}}
 end
 
 mutable struct LatLonDeferredBinaryWriter{FT,

@@ -930,9 +930,9 @@ function strang_split_linrood_ppm!(rm_panels, m_panels, am_panels, bm_panels, cm
     fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
                   mesh, Val(ORD), ws, ws_lr; damp_coeff)
     _fillz_rm_panels!(rm_panels, m_panels, mesh)
-    _sweep_z!(rm_panels, m_panels, cm_panels, mesh, true, ws)
+    _sweep_z!(rm_panels, m_panels, cm_panels, mesh, ws)
     _fillz_rm_panels!(rm_panels, m_panels, mesh)
-    _sweep_z!(rm_panels, m_panels, cm_panels, mesh, true, ws)
+    _sweep_z!(rm_panels, m_panels, cm_panels, mesh, ws)
     _fillz_rm_panels!(rm_panels, m_panels, mesh)
     fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
                   mesh, Val(ORD), ws, ws_lr; damp_coeff=0.0)
@@ -949,10 +949,10 @@ function _strang_split_linrood_ppm_cs!(rm_panels, m_panels, am_panels, bm_panels
     fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
                  mesh, Val(ORD), ws.cs, ws.linrood; damp_coeff)
     _fillz_rm_panels!(rm_panels, m_panels, mesh)
-    _sweep_z!(rm_panels, m_panels, cm_panels, mesh, true, ws.cs)
+    _sweep_z!(rm_panels, m_panels, cm_panels, mesh, ws.cs)
     _fillz_rm_panels!(rm_panels, m_panels, mesh)
     midpoint! === nothing || midpoint!()
-    _sweep_z!(rm_panels, m_panels, cm_panels, mesh, true, ws.cs)
+    _sweep_z!(rm_panels, m_panels, cm_panels, mesh, ws.cs)
     _fillz_rm_panels!(rm_panels, m_panels, mesh)
     fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
                  mesh, Val(ORD), ws.cs, ws.linrood; damp_coeff = 0.0)

@@ -1130,16 +1130,14 @@ function strang_split_cs_mt!(panels_rm_4d::NTuple{6},
 end
 
 """
-    _sweep_z!(rm_panels, m_panels, cm_panels, mesh, use_limiter, ws)
+    _sweep_z!(rm_panels, m_panels, cm_panels, mesh, ws)
 
 Multi-panel Z-sweep orchestrator for LinRood integration. Applies vertical
 mass-flux advection to all 6 panels using the per-panel `_sweep_z_panel!`.
 Always uses `UpwindScheme()` (matching FV3's upwind vertical advection).
-The `use_limiter` argument is accepted for call-site compatibility but ignored.
 """
 function _sweep_z!(rm_panels, m_panels, cm_panels,
-                   mesh::CubedSphereMesh, use_limiter::Bool,
-                   ws::CSAdvectionWorkspace)
+                   mesh::CubedSphereMesh, ws::CSAdvectionWorkspace)
     Nc, Hp = mesh.Nc, mesh.Hp
     Nz = size(rm_panels[1], 3)
     for p in 1:6

@@ -494,11 +494,11 @@ function _linrood_run_forward_step!(panels_rm, panels_m,
     # `_strang_split_linrood_ppm_cs!`).
     fv_tp_2d_cs!(panels_rm, panels_m, panels_am, panels_bm,
                                       mesh, Val(ORD), ws, ws_lr)
-    _sweep_z!(panels_rm, panels_m, panels_cm, mesh, true, ws)
+    _sweep_z!(panels_rm, panels_m, panels_cm, mesh, ws)
     if midpoint! !== nothing
         midpoint!()
     end
-    _sweep_z!(panels_rm, panels_m, panels_cm, mesh, true, ws)
+    _sweep_z!(panels_rm, panels_m, panels_cm, mesh, ws)
     fv_tp_2d_cs!(panels_rm, panels_m, panels_am, panels_bm,
                                       mesh, Val(ORD), ws, ws_lr)
     return nothing

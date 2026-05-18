@@ -135,6 +135,8 @@ MockStructuredFluxState{B}(am, bm, cm) where {B} =
     mock_fluxes = MockStructuredFluxState{DryBasis}(am, bm, cm)
     @test mock_fluxes isa AbstractStructuredFaceFluxState
     @test !(mock_fluxes isa StructuredFaceFluxState)
+    @test flux_basis(mock_fluxes) isa DryBasis
+    @test mass_basis(mock_fluxes) isa DryBasis
     @test_throws MethodError strang_split!(state, mock_fluxes, grid, scheme; workspace=ws)
 
     # Moist basis → MethodError (wrong basis)

@@ -35,6 +35,7 @@ using .ERA5
 # .ERA5`, so add forwarding methods on the public MetDrivers generics.
 window_count(r::ERA5BinaryReader) = ERA5.window_count(r)
 has_qv(r::ERA5BinaryReader) = ERA5.has_qv(r)
+has_qv_endpoints(r::ERA5BinaryReader) = ERA5.has_qv_endpoints(r)
 has_flux_delta(r::ERA5BinaryReader) = ERA5.has_flux_delta(r)
 has_cmfmc(r::ERA5BinaryReader) = ERA5.has_cmfmc(r)
 has_surface(r::ERA5BinaryReader) = ERA5.has_surface(r)

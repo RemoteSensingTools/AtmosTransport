@@ -24,6 +24,12 @@ using Test
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 
+function _no_convection_apply_allocs(state, forcing, grid, op, dt)
+    apply!(state, forcing, grid, op, dt; workspace = nothing)
+    GC.gc()
+    return @allocated apply!(state, forcing, grid, op, dt; workspace = nothing)
+end
+
 @testset "Type hierarchy: NoConvection <: AbstractConvection" begin
     @test NoConvection <: AbstractConvection
     @test NoConvection() isa AbstractConvection
@@ -87,6 +93,27 @@ end
     end
 end
 
+@testset "State-level apply!(::NoConvection) supports cubed-sphere state" begin
+    FT = Float64
+    Nc, Hp, Nz = 2, 1, 2
+    mesh = CubedSphereMesh(; FT = FT, Nc = Nc, Hp = Hp)
+    vertical = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
+    grid = AtmosGrid(mesh, vertical, CPU(); FT = FT)
+    dims = (Nc + 2Hp, Nc + 2Hp, Nz)
+    air_mass = ntuple(_ -> ones(FT, dims), 6)
+    co2 = ntuple(_ -> fill(FT(400e-6), dims), 6)
+    state = CubedSphereState(DryBasis, mesh, air_mass; CO2 = co2)
+    air_before = deepcopy(state.air_mass)
+    raw_before = deepcopy(state.tracers_raw)
+
+    result = apply!(state, ConvectionForcing(), grid, NoConvection(),
+                    FT(1800); workspace = nothing)
+
+    @test result === state
+    @test state.air_mass == air_before
+    @test state.tracers_raw == raw_before
+end
+
 @testset "Array-level apply_convection!(::NoConvection) is no-op" begin
     FT = Float64
     Nx, Ny, Nz, Nt = 4, 3, 2, 1
@@ -131,12 +158,9 @@ end
     m = ones(FT, 2, 2, 2)
     state = CellState(m; CO2 = FT(400e-6) .* m)
     forcing = ConvectionForcing()
+    op = NoConvection()
 
-    # Warmup
-    apply!(state, forcing, grid, NoConvection(), FT(1); workspace = nothing)
-    # Measure
-    allocs = @allocated apply!(state, forcing, grid, NoConvection(),
-                                FT(1); workspace = nothing)
+    allocs = _no_convection_apply_allocs(state, forcing, grid, op, FT(1))
     @test allocs == 0
 end
 

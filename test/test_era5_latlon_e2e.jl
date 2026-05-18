@@ -480,6 +480,7 @@ end
         write_synthetic_binary(bin_path; Nx=6, Ny=4, Nz=3, Nt=1, include_qv=false)
         reader = ERA5BinaryReader(bin_path; FT=Float64)
         @test mass_basis(reader) === :moist
+        @test !has_qv_endpoints(reader)
         _, _, fluxes = load_window!(reader, 1)
         @test fluxes isa StructuredFaceFluxState{MoistMassFluxBasis}
         @test flux_basis(fluxes) isa MoistMassFluxBasis

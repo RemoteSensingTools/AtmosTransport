@@ -48,16 +48,22 @@ struct NoConvection <: AbstractConvection end
 # =========================================================================
 
 """
-    apply!(state::CellState, forcing::ConvectionForcing, grid::AtmosGrid,
+    apply!(state, forcing::ConvectionForcing, grid::AtmosGrid,
            ::NoConvection, dt; workspace=nothing)
 
 No-op. Accepts any `ConvectionForcing` (including the all-nothing
 placeholder) and any workspace, including `nothing`. Returns `state`
 unchanged.
 """
-function apply!(state::CellState, forcing::ConvectionForcing, grid::AtmosGrid,
-                ::NoConvection, dt::Real;
-                workspace = nothing)
+@inline function apply!(state::CellState, forcing::ConvectionForcing, grid::AtmosGrid,
+                        ::NoConvection, dt::Real;
+                        workspace = nothing)
+    return state
+end
+
+@inline function apply!(state::CubedSphereState, forcing::ConvectionForcing,
+                        grid::AtmosGrid, ::NoConvection, dt::Real;
+                        workspace = nothing)
     return state
 end
 

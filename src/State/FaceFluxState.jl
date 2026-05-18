@@ -204,12 +204,8 @@ end
 
 Return the mass flux basis tag for the given flux state.
 """
-@inline flux_basis(::StructuredFaceFluxState{B}) where {B} = B()
-@inline flux_basis(::FaceIndexedFluxState{B}) where {B} = B()
-@inline flux_basis(::CubedSphereFaceFluxState{B}) where {B} = B()
-@inline mass_basis(::StructuredFaceFluxState{B}) where {B} = B()
-@inline mass_basis(::FaceIndexedFluxState{B}) where {B} = B()
-@inline mass_basis(::CubedSphereFaceFluxState{B}) where {B} = B()
+@inline flux_basis(::AbstractFaceFluxState{B}) where {B <: AbstractMassBasis} = B()
+@inline mass_basis(::AbstractFaceFluxState{B}) where {B <: AbstractMassBasis} = B()
 
 # ---------------------------------------------------------------------------
 # Type alias for convenience

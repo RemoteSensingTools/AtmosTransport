@@ -169,6 +169,7 @@ Ny(r::ERA5BinaryReader) = r.header.Ny
 Nz(r::ERA5BinaryReader) = r.header.Nz
 window_count(r::ERA5BinaryReader) = r.header.Nt
 has_qv(r::ERA5BinaryReader) = r.header.has_qv
+has_qv_endpoints(::ERA5BinaryReader) = false
 has_flux_delta(r::ERA5BinaryReader) = r.header.has_flux_delta
 has_cmfmc(r::ERA5BinaryReader) = r.header.has_cmfmc
 has_surface(r::ERA5BinaryReader) = r.header.has_surface
@@ -508,6 +509,6 @@ export ERA5BinaryReader, ERA5BinaryHeader
 export load_window!, load_qv_window!, load_flux_delta_window!
 export load_cmfmc_window!, load_surface_window!, load_tm5conv_window!
 export load_temperature_window!
-export window_count, has_qv, has_flux_delta, has_cmfmc
+export window_count, has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc
 export has_surface, has_tm5conv, has_temperature
 export mass_basis, A_ifc, B_ifc

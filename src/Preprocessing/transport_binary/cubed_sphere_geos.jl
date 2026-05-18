@@ -677,24 +677,19 @@ function drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{FT},
     m_target = ntuple(p -> copy(workspace.m_next_target[p]), CS_PANEL_COUNT)
     convert_cs_mass_target_to_delta!(m_target, workspace.m_cur)
 
+    surface_payload = (settings.include_surface || settings.include_vdiff_fields) ?
+        _geos_surface_payload!(workspace.strategy, workspace.strategy_ws,
+                               workspace.raw) : nothing
+    cmfmc_payload = settings.include_convection ? _geos_cmfmc_payload!(workspace) : nothing
+    dtrain_payload = settings.include_convection ? _geos_dtrain_payload!(workspace) : nothing
+    vdiff_payload = settings.include_vdiff_fields ? _geos_vdiff_payload!(workspace) : nothing
     window_nt = (m = workspace.m_cur, am = workspace.am_v4,
                  bm = workspace.bm_v4, cm = workspace.cm_v4,
-                 ps = workspace.ps_cur, dm = m_target)
-    if settings.include_surface || settings.include_vdiff_fields
-        window_nt = merge(window_nt,
-                          (surface = _geos_surface_payload!(
-                               workspace.strategy, workspace.strategy_ws,
-                               workspace.raw),))
-    end
-    if settings.include_convection
-        window_nt = merge(window_nt,
-                          (cmfmc = _geos_cmfmc_payload!(workspace),
-                           dtrain = _geos_dtrain_payload!(workspace)))
-    end
-    if settings.include_vdiff_fields
-        window_nt = merge(window_nt,
-                          (vdiff = _geos_vdiff_payload!(workspace),))
-    end
+                 ps = workspace.ps_cur, dm = m_target,
+                 surface = surface_payload,
+                 cmfmc = cmfmc_payload,
+                 dtrain = dtrain_payload,
+                 vdiff = vdiff_payload)
     ready = ReadyWindow{CubedSphereTargetGeometry, FT}(win, window_nt)
     return PreverifiedWindow(ready, contract_diag)
 end

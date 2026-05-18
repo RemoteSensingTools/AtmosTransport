@@ -1072,6 +1072,7 @@ mutable struct ReducedGaussianSpectralWindowWorkspace{FT, TW, MW, BW, QW, CL}
     cm_work        :: Matrix{Float64}
     div_scratch    :: Matrix{Float64}
     dm_target_work :: Matrix{Float64}
+    steps_schedule :: Vector{Int}
     cur            :: Int
     nxt            :: Int
 end
@@ -1151,7 +1152,10 @@ function allocate_window_workspace(grid::ReducedGaussianTargetGeometry,
         FT, typeof(work), typeof(merged), typeof(buf), typeof(qv_ws), typeof(cL)}(
             work, merged, buf, qv_ws, thermo_path, ps_offsets, cL,
             hflux_work, m_cur_work, m_next_work, cm_work, div_scratch,
-            dm_target_work, 1, 2)
+            dm_target_work, fill(exact_steps_per_window(settings.met_interval,
+                                                         settings.dt),
+                                  spec.n_times),
+            1, 2)
 end
 
 function ingest_window!(workspace::ReducedGaussianSpectralWindowWorkspace,
@@ -1176,16 +1180,36 @@ function drain_ready_windows!(workspace::ReducedGaussianSpectralWindowWorkspace{
                               contract,
                               win_idx::Int,
                               steps_per_window::Int;
-                              write_replay_on::Bool) where FT
-    diag = balance_window!(workspace.hflux_work, workspace.m_cur_work,
-                           workspace.m_next_work, workspace.cm_work,
-                           workspace.div_scratch, workspace.dm_target_work,
-                           workspace.buf, workspace.cur,
-                           workspace.buf.m[workspace.nxt],
-                           workspace.work, workspace.cL, steps_per_window)
-    contract_diag = _verify_rg_balanced_window!(
-        contract, workspace.m_cur_work, workspace.hflux_work, workspace.cm_work,
-        workspace.m_next_work, win_idx; write_replay_on = write_replay_on)
+                              write_replay_on::Bool,
+                              substep_policy) where FT
+    _ = steps_per_window
+    steps = initial_substeps(substep_policy, workspace.steps_schedule[win_idx])
+    old_steps = workspace.steps_schedule[win_idx]
+    diag = nothing
+    contract_diag = nothing
+    while true
+        old_steps == steps ||
+            rescale_substep_amounts!((workspace.buf.hflux[workspace.cur],),
+                                     old_steps, steps)
+        old_steps = steps
+        workspace.steps_schedule[win_idx] = steps
+        contract.steps_per_window = steps
+        diag = balance_window!(workspace.hflux_work, workspace.m_cur_work,
+                               workspace.m_next_work, workspace.cm_work,
+                               workspace.div_scratch, workspace.dm_target_work,
+                               workspace.buf, workspace.cur,
+                               workspace.buf.m[workspace.nxt],
+                               workspace.work, workspace.cL, steps)
+        contract_diag = _verify_rg_balanced_window!(
+            contract, workspace.m_cur_work, workspace.hflux_work, workspace.cm_work,
+            workspace.m_next_work, win_idx; write_replay_on = write_replay_on,
+            accumulate = false)
+        next_steps = next_substeps(substep_policy, steps,
+                                   contract_diag.positivity.ratio)
+        next_steps == steps && break
+        steps = next_steps
+    end
+    update_accumulator!(contract, contract_diag.positivity, win_idx)
     ready = ReadyWindow{ReducedGaussianTargetGeometry, FT}(
         win_idx,
         (m = workspace.buf.m[workspace.cur],
@@ -1200,16 +1224,36 @@ function flush_final_windows!(workspace::ReducedGaussianSpectralWindowWorkspace{
                               contract,
                               win_idx::Int,
                               steps_per_window::Int;
-                              write_replay_on::Bool) where FT
-    diag = balance_window!(workspace.hflux_work, workspace.m_cur_work,
-                           workspace.m_next_work, workspace.cm_work,
-                           workspace.div_scratch, workspace.dm_target_work,
-                           workspace.buf, workspace.cur,
-                           workspace.buf.m[workspace.cur],
-                           workspace.work, workspace.cL, steps_per_window)
-    contract_diag = _verify_rg_balanced_window!(
-        contract, workspace.m_cur_work, workspace.hflux_work, workspace.cm_work,
-        workspace.m_next_work, win_idx; write_replay_on = write_replay_on)
+                              write_replay_on::Bool,
+                              substep_policy) where FT
+    _ = steps_per_window
+    steps = initial_substeps(substep_policy, workspace.steps_schedule[win_idx])
+    old_steps = workspace.steps_schedule[win_idx]
+    diag = nothing
+    contract_diag = nothing
+    while true
+        old_steps == steps ||
+            rescale_substep_amounts!((workspace.buf.hflux[workspace.cur],),
+                                     old_steps, steps)
+        old_steps = steps
+        workspace.steps_schedule[win_idx] = steps
+        contract.steps_per_window = steps
+        diag = balance_window!(workspace.hflux_work, workspace.m_cur_work,
+                               workspace.m_next_work, workspace.cm_work,
+                               workspace.div_scratch, workspace.dm_target_work,
+                               workspace.buf, workspace.cur,
+                               workspace.buf.m[workspace.cur],
+                               workspace.work, workspace.cL, steps)
+        contract_diag = _verify_rg_balanced_window!(
+            contract, workspace.m_cur_work, workspace.hflux_work, workspace.cm_work,
+            workspace.m_next_work, win_idx; write_replay_on = write_replay_on,
+            accumulate = false)
+        next_steps = next_substeps(substep_policy, steps,
+                                   contract_diag.positivity.ratio)
+        next_steps == steps && break
+        steps = next_steps
+    end
+    update_accumulator!(contract, contract_diag.positivity, win_idx)
     ready = ReadyWindow{ReducedGaussianTargetGeometry, FT}(
         win_idx,
         (m = workspace.buf.m[workspace.cur],
@@ -1386,7 +1430,8 @@ function _verify_rg_balanced_window!(window_contract,
                                      cm_work::Matrix{Float64},
                                      m_next_work::Matrix{Float64},
                                      win_idx::Int;
-                                     write_replay_on::Bool)
+                                     write_replay_on::Bool,
+                                     accumulate::Bool = true)
     if write_replay_on
         diag = verify_window!((m_cur = m_cur_work,
                                hflux = hflux_work,
@@ -1425,7 +1470,7 @@ function _verify_rg_balanced_window!(window_contract,
         diag = (replay = nothing, positivity = positivity)
     end
 
-    update_accumulator!(window_contract, diag.positivity, win_idx)
+    accumulate && update_accumulator!(window_contract, diag.positivity, win_idx)
     return diag
 end
 
@@ -1434,6 +1479,7 @@ mutable struct RGSpectralUnifiedDriverContext{G, S, V, SP}
     settings          :: S
     vertical          :: V
     spec              :: SP
+    substep_policy    :: Any
     steps_per_window  :: Int
     write_replay_on   :: Bool
     worst_pre_raw     :: Float64
@@ -1491,7 +1537,8 @@ function driver_drain_ready_windows!(workspace::ReducedGaussianSpectralWindowWor
     t_bal = time()
     ready_diag = drain_ready_windows!(workspace, contract, written_win,
                                       ctx.steps_per_window;
-                                      write_replay_on = ctx.write_replay_on)
+                                      write_replay_on = ctx.write_replay_on,
+                                      substep_policy = ctx.substep_policy)
     t_bal = time() - t_bal
     _rg_unified_record_diag!(ctx, ready_diag, written_win)
     diag = ready_diag.balance
@@ -1512,7 +1559,8 @@ function driver_flush_final_windows!(workspace::ReducedGaussianSpectralWindowWor
     t_bal = time()
     ready_diag = flush_final_windows!(workspace, contract, Nt,
                                       ctx.steps_per_window;
-                                      write_replay_on = ctx.write_replay_on)
+                                      write_replay_on = ctx.write_replay_on,
+                                      substep_policy = ctx.substep_policy)
     t_bal = time() - t_bal
     _rg_unified_record_diag!(ctx, ready_diag, Nt)
     diag = ready_diag.balance
@@ -1521,6 +1569,16 @@ function driver_flush_final_windows!(workspace::ReducedGaussianSpectralWindowWor
                    diag.max_post_projected, diag.max_cg_iter)
     return (PreverifiedWindow(ready_diag.ready, ready_diag.contract;
                               accumulated = true),)
+end
+
+function driver_before_close_writer!(workspace::ReducedGaussianSpectralWindowWorkspace,
+                                     ::Nothing,
+                                     contract,
+                                     writer,
+                                     ::RGSpectralUnifiedDriverContext)
+    set_streaming_steps_per_window_schedule!(writer.inner, workspace.steps_schedule)
+    set_contract_steps_schedule!(contract, workspace.steps_schedule)
+    return nothing
 end
 
 """
@@ -1546,6 +1604,10 @@ function process_day(date::Date,
                      next_day_hour0=nothing,
                      positivity_cfl_limit::Real = 0.95,
                      require_substep_positivity::Bool = true,
+                     substep_policy =
+                         SubstepSchedulePolicy(
+                             adaptive_substeps = false,
+                             substep_cfl_target = positivity_cfl_limit),
                      run_cache = nothing)
     FT = settings.output_float_type
     mesh = grid.mesh
@@ -1650,7 +1712,8 @@ function process_day(date::Date,
         mass_basis_from_symbol(Symbol(settings.mass_basis));
         final_path = bin_path)
     ctx = RGSpectralUnifiedDriverContext(
-        grid, settings, vertical, spec, steps_per_met, write_replay_on,
+        grid, settings, vertical, spec, substep_policy,
+        steps_per_met, write_replay_on,
         0.0, 0.0, 0.0, 0, 0.0, 0.0, 0, (0, 0))
     run_unified_preprocessor_day!(
         UnifiedPreprocessorDay(nothing, workspace, window_contract, window_writer;

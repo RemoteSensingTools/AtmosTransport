@@ -111,13 +111,12 @@ _resolve_require_substep_positivity(cfg::AbstractDict) =
 function _resolve_substep_schedule_policy(cfg::AbstractDict,
                                           positivity_cfl_limit::Real)
     numerics = get(cfg, "numerics", Dict())
-    mode = Symbol(lowercase(String(get(numerics, "substep_schedule", "fixed"))))
+    mode = Symbol(lowercase(String(get(numerics, "substep_schedule", "adaptive_cfl"))))
     adaptive = mode in (:adaptive, :adaptive_cfl, :cfl)
     mode in (:fixed, :constant, :adaptive, :adaptive_cfl, :cfl) ||
         error("Invalid `[numerics].substep_schedule = $(mode)`: expected " *
               "`fixed` or `adaptive_cfl`.")
     target = Float64(get(numerics, "substep_cfl_target",
-                         adaptive ? min(Float64(positivity_cfl_limit), 0.5) :
                          Float64(positivity_cfl_limit)))
     isfinite(target) && target > 0 ||
         error("Invalid `[numerics].substep_cfl_target = $(target)`: must be finite and > 0.")
@@ -131,7 +130,7 @@ function _resolve_substep_schedule_policy(cfg::AbstractDict,
         "adaptive scheduling may still be rejected by the final positivity contract",
         substep_cfl_target = target,
         positivity_cfl_limit = positivity_cfl_limit)
-    return (
+    return SubstepSchedulePolicy(
         adaptive_substeps = adaptive,
         substep_cfl_target = target,
         min_steps_per_window = min_steps,
@@ -316,7 +315,9 @@ end
 # ---------------------------------------------------------------------------
 
 function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
-                               day_override = nothing)
+                               day_override = nothing,
+                               start_date   = nothing,
+                               end_date     = nothing)
     settings = resolve_runtime_settings(cfg)
     settings = merge(settings, (T_target = target_spectral_truncation(grid),))
     vertical = build_vertical_setup(settings.coeff_path, settings.level_range,
@@ -326,6 +327,13 @@ function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
 
     dates = if day_override !== nothing
         [Date(String(day_override))]
+    elseif start_date !== nothing || end_date !== nothing
+        all_dates = sort(available_spectral_dates(settings.spectral_dir))
+        start_d = start_date === nothing ? first(all_dates) : Date(String(start_date))
+        end_d   = end_date   === nothing ? last(all_dates)  : Date(String(end_date))
+        start_d <= end_d ||
+            error("--start $(start_d) must be <= --end $(end_d)")
+        [d for d in all_dates if start_d <= d <= end_d]
     else
         day_filter = parse_day_filter(day_override === nothing ? String[] : ["--day", day_override])
         select_processing_dates(available_spectral_dates(settings.spectral_dir), day_filter)
@@ -333,6 +341,7 @@ function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
 
     positivity_cfl_limit       = _resolve_positivity_cfl_limit(cfg)
     require_substep_positivity = _resolve_require_substep_positivity(cfg)
+    substep_policy             = _resolve_substep_schedule_policy(cfg, positivity_cfl_limit)
     spectral_target_supported =
         grid isa ReducedGaussianTargetGeometry ||
         grid isa CubedSphereTargetGeometry ||
@@ -354,6 +363,7 @@ function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
         day_kwargs = (
             positivity_cfl_limit       = positivity_cfl_limit,
             require_substep_positivity = require_substep_positivity,
+            substep_policy             = substep_policy,
             next_day_hour0             = next_day_h0,
             run_cache                  = run_cache,
         )
@@ -397,6 +407,6 @@ function process_day(cfg::Dict{String, Any};
         # (the spectral preprocessor casts to settings.output_float_type later).
         grid = build_target_geometry(cfg["grid"], Float64)
         ensure_supported_target(grid)
-        return _process_day_spectral(cfg, grid; day_override)
+        return _process_day_spectral(cfg, grid; day_override, start_date, end_date)
     end
 end

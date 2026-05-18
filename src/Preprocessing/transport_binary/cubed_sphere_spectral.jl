@@ -20,6 +20,7 @@ mutable struct CubedSphereSpectralWindowWorkspace{FT, SG, R, TW, MW, QW, CSW, DX
     cur_am       :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
     cur_bm       :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
     cur_cm       :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
+    steps_schedule :: Vector{Int}
     regridder_time :: Float64
     qv_time        :: Float64
 end
@@ -115,6 +116,7 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
             staging_grid, regridder, transform, merged, qv, ps_offsets,
             cs_ws, A_ifc, B_ifc, gravity, dt_factor, Δx, Δy,
             cur_m, cur_ps, cur_am, cur_bm, cur_cm,
+            fill(steps_per_met, spec.n_times),
             t_regridder, t_qv)
 end
 
@@ -200,6 +202,7 @@ mutable struct CSSpectralUnifiedDriverContext{G, S, V, SP, N}
     spec                       :: SP
     next_day_hour0             :: N
     date                       :: Date
+    substep_policy             :: SubstepSchedulePolicy
     steps_per_met              :: Int
     cs_balance_tol             :: Float64
     cs_balance_project_every   :: Int
@@ -221,6 +224,7 @@ end
 function CSSpectralUnifiedDriverContext(grid, settings, vertical, spec,
                                         next_day_hour0,
                                         date::Date,
+                                        substep_policy::SubstepSchedulePolicy,
                                         steps_per_met::Integer,
                                         cs_balance_tol::Real,
                                         cs_balance_project_every::Integer,
@@ -228,9 +232,9 @@ function CSSpectralUnifiedDriverContext(grid, settings, vertical, spec,
                                         apply_horizontal_balance::Bool)
     return CSSpectralUnifiedDriverContext{
         typeof(grid), typeof(settings), typeof(vertical), typeof(spec),
-        typeof(next_day_hour0)}(
+            typeof(next_day_hour0)}(
             grid, settings, vertical, spec, next_day_hour0,
-            date, Int(steps_per_met), Float64(cs_balance_tol),
+            date, substep_policy, Int(steps_per_met), Float64(cs_balance_tol),
             Int(cs_balance_project_every), write_replay_on,
             apply_horizontal_balance, 0.0, 0.0, 0, 0.0, 0.0, 0,
             (0, 0, 0, 0), 0.0, 0.0, 0.0, 0.0)
@@ -272,59 +276,80 @@ function _cs_spectral_contract_diag!(workspace::CubedSphereSpectralWindowWorkspa
     Nc = grid.Nc
     Nz = ctx.vertical.Nz
 
-    t_bal = time()
-    bal_diag = if ctx.apply_horizontal_balance
-        balance_cs_global_mass_fluxes!(
-            cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
-            grid.face_table, grid.cell_degree, ctx.steps_per_met,
-            grid.poisson_scratch; tol=ctx.cs_balance_tol, max_iter=max_iter,
-            project_every=ctx.cs_balance_project_every)
-    else
-        balance_cs_column_mass_fluxes!(
-            cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
-            grid.face_table, grid.cell_degree, ctx.steps_per_met,
-            grid.poisson_scratch; tol=ctx.cs_balance_tol, max_iter=max_iter,
-            project_every=ctx.cs_balance_project_every)
-    end
-    ctx.total_balance += time() - t_bal
-    ctx.worst_pre  = max(ctx.worst_pre,  bal_diag.max_pre_residual)
-    ctx.worst_post = max(ctx.worst_post, bal_diag.max_post_residual)
-    ctx.worst_iter = max(ctx.worst_iter, bal_diag.max_cg_iter)
-
-    sync_all_cs_boundary_mirrors!(cur_am, cur_bm, grid.mesh.connectivity,
-                                  Nc, Nz)
-    fill_cs_window_mass_tendency!(cs_ws.dm_panels, cur_m, cs_ws.m_next_panels,
-                                  ctx.steps_per_met)
-    for p in 1:CS_PANEL_COUNT
-        fill!(cur_cm[p], zero(FT))
-    end
-    diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz)
-
-    contract_diag = if ctx.write_replay_on
-        t_replay = time()
-        diag = verify_window!((m_cur = cur_m,
-                               am = cur_am,
-                               bm = cur_bm,
-                               cm = cur_cm,
-                               m_next = cs_ws.m_next_panels),
-                              contract, win)
-        ctx.total_replay += time() - t_replay
-        replay = diag.replay
-        if ctx.worst_replay_win == 0 ||
-                replay.max_rel_err > ctx.worst_replay_rel
-            ctx.worst_replay_rel = replay.max_rel_err
-            ctx.worst_replay_abs = replay.max_abs_err
-            ctx.worst_replay_win = win
-            ctx.worst_replay_idx = replay.worst_idx
+    steps = initial_substeps(ctx.substep_policy, workspace.steps_schedule[win])
+    old_steps = workspace.steps_schedule[win]
+    contract_diag = nothing
+    while true
+        old_steps == steps || begin
+            rescale_substep_amounts!(cur_am, old_steps, steps)
+            rescale_substep_amounts!(cur_bm, old_steps, steps)
         end
-        diag
-    else
-        positivity = verify_substep_positivity_cs!(
-            cur_m, cur_am, cur_bm, cur_cm;
-            cfl_limit = contract.positivity_cfl_limit)
-        (replay = (max_rel_err = 0.0, max_abs_err = 0.0,
-                   worst_idx = (0, 0, 0, 0)),
-         positivity = positivity)
+        old_steps = steps
+        workspace.steps_schedule[win] = steps
+        contract.steps_per_window = steps
+
+        t_bal = time()
+        bal_diag = if ctx.apply_horizontal_balance
+            balance_cs_global_mass_fluxes!(
+                cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
+                grid.face_table, grid.cell_degree, steps,
+                grid.poisson_scratch; tol=ctx.cs_balance_tol, max_iter=max_iter,
+                project_every=ctx.cs_balance_project_every)
+        else
+            balance_cs_column_mass_fluxes!(
+                cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
+                grid.face_table, grid.cell_degree, steps,
+                grid.poisson_scratch; tol=ctx.cs_balance_tol, max_iter=max_iter,
+                project_every=ctx.cs_balance_project_every)
+        end
+        ctx.total_balance += time() - t_bal
+        ctx.worst_pre  = max(ctx.worst_pre,  bal_diag.max_pre_residual)
+        ctx.worst_post = max(ctx.worst_post, bal_diag.max_post_residual)
+        ctx.worst_iter = max(ctx.worst_iter, bal_diag.max_cg_iter)
+
+        sync_all_cs_boundary_mirrors!(cur_am, cur_bm, grid.mesh.connectivity,
+                                      Nc, Nz)
+        fill_cs_window_mass_tendency!(cs_ws.dm_panels, cur_m,
+                                      cs_ws.m_next_panels, steps)
+        for p in 1:CS_PANEL_COUNT
+            fill!(cur_cm[p], zero(FT))
+        end
+        diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz)
+
+        contract_diag = if ctx.write_replay_on
+            t_replay = time()
+            diag = verify_window!((m_cur = cur_m,
+                                   am = cur_am,
+                                   bm = cur_bm,
+                                   cm = cur_cm,
+                                   m_next = cs_ws.m_next_panels),
+                                  contract, win)
+            ctx.total_replay += time() - t_replay
+            diag
+        else
+            positivity = verify_substep_positivity_cs!(
+                cur_m, cur_am, cur_bm, cur_cm;
+                cfl_limit = contract.positivity_cfl_limit,
+                m_next = cs_ws.m_next_panels)
+            (replay = (max_rel_err = 0.0, max_abs_err = 0.0,
+                       worst_idx = (0, 0, 0, 0)),
+             positivity = positivity)
+        end
+
+        next_steps = next_substeps(ctx.substep_policy, steps,
+                                   contract_diag.positivity.ratio)
+        next_steps == steps && break
+        steps = next_steps
+    end
+
+    replay = contract_diag.replay
+    if ctx.write_replay_on &&
+            (ctx.worst_replay_win == 0 ||
+             replay.max_rel_err > ctx.worst_replay_rel)
+        ctx.worst_replay_rel = replay.max_rel_err
+        ctx.worst_replay_abs = replay.max_abs_err
+        ctx.worst_replay_win = win
+        ctx.worst_replay_idx = replay.worst_idx
     end
     update_accumulator!(contract, contract_diag.positivity, win)
 
@@ -383,6 +408,16 @@ function driver_after_write_window!(workspace::CubedSphereSpectralWindowWorkspac
     return nothing
 end
 
+function driver_before_close_writer!(workspace::CubedSphereSpectralWindowWorkspace,
+                                     ::Nothing,
+                                     contract::CubedSphereContract,
+                                     writer::CubedSphereBinaryWriter,
+                                     ::CSSpectralUnifiedDriverContext)
+    set_streaming_steps_per_window_schedule!(writer.inner, workspace.steps_schedule)
+    set_contract_steps_schedule!(contract, workspace.steps_schedule)
+    return nothing
+end
+
 """
     process_day(date, grid::CubedSphereTargetGeometry, settings, vertical; ...)
 
@@ -396,6 +431,10 @@ function process_day(date::Date,
                      vertical;
                      positivity_cfl_limit::Real = 0.95,
                      require_substep_positivity::Bool = true,
+                     substep_policy::SubstepSchedulePolicy =
+                         SubstepSchedulePolicy(
+                             adaptive_substeps = false,
+                             substep_cfl_target = positivity_cfl_limit),
                      next_day_hour0=nothing,
                      run_cache = nothing)
     FT = settings.output_float_type
@@ -467,6 +506,8 @@ function process_day(date::Date,
                 longitude_offset_deg=longitude_offset_deg(cs_definition(grid.mesh)),
                 extra_header=Dict{String, Any}(
                     "preprocessor"     => "preprocess_transport_binary.jl",
+                    "preprocessor_contract" => "plan41_variable_substeps",
+                    "runtime_substep_contract" => "binary_schedule",
                     "source_type"      => "era5_spectral",
                     "target_type"      => "cubed_sphere",
                     "staging_nlon"     => Nx_stg,
@@ -507,7 +548,7 @@ function process_day(date::Date,
                 final_path = bin_path)
             ctx = CSSpectralUnifiedDriverContext(
                 grid, settings, vertical, spec, next_day_hour0, date,
-                steps_per_met, cs_balance_tol, cs_balance_project_every,
+                substep_policy, steps_per_met, cs_balance_tol, cs_balance_project_every,
                 write_replay_on, apply_horizontal_balance)
 
             driver_started = true

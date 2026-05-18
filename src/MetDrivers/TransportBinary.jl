@@ -629,9 +629,8 @@ end
 
 Assert that `header` declares the current transport-binary contract and that
 the timing metadata is self-consistent. `format_version` is a hard boundary:
-only [`TRANSPORT_BINARY_FORMAT_VERSION`](@ref) is accepted. Older files are
-obsolete and must be regenerated rather than loaded through compatibility
-defaults.
+only `TRANSPORT_BINARY_FORMAT_VERSION` is accepted. Older files are obsolete
+and must be regenerated rather than loaded through compatibility defaults.
 
 Shared between `TransportBinaryDriver`, `TransportBinaryReader`, and the
 `scripts/diagnostics/inspect_transport_binary.jl` tool so there is ONE
@@ -1809,27 +1808,36 @@ function open_streaming_transport_binary(
         header_bytes, nwindow, 0, pack_buffer)
 end
 
-function set_streaming_steps_per_window_schedule!(
-        writer::StreamingTransportBinaryWriter,
+function set_transport_header_steps_per_window_schedule!(
+        header::AbstractDict,
         schedule::AbstractVector{<:Integer})
     steps = Int.(collect(schedule))
-    length(steps) == writer.expected_windows ||
-        throw(ArgumentError("steps_per_window schedule length $(length(steps)) " *
-                            "does not match expected windows $(writer.expected_windows)"))
+    isempty(steps) &&
+        throw(ArgumentError("steps_per_window schedule must not be empty"))
     all(>=(1), steps) ||
         throw(ArgumentError("steps_per_window schedule must contain only positive integers; got $(steps)"))
-    writer.header["steps_per_window_by_window"] = steps
-    writer.header["steps_per_window"] = maximum(steps)
-    writer.header["time_step_schedule"] =
+    header["steps_per_window_by_window"] = steps
+    header["steps_per_window"] = maximum(steps)
+    header["time_step_schedule"] =
         _has_variable_step_schedule(steps) ? "per_window" : "constant"
-    writer.header["poisson_balance_target_scale_by_window"] =
+    header["poisson_balance_target_scale_by_window"] =
         [1.0 / (2 * s) for s in steps]
-    writer.header["poisson_balance_target_semantics"] =
+    header["poisson_balance_target_semantics"] =
         _has_variable_step_schedule(steps) ?
         "forward_window_mass_difference / (2 * steps_per_window_by_window[win])" :
         "forward_window_mass_difference / (2 * steps_per_window)"
-    writer.header["poisson_balance_target_scale"] = 1.0 / (2 * maximum(steps))
-    validate_transport_contract!(writer.header)
+    header["poisson_balance_target_scale"] = 1.0 / (2 * maximum(steps))
+    validate_transport_contract!(header)
+    return header
+end
+
+function set_streaming_steps_per_window_schedule!(
+        writer::StreamingTransportBinaryWriter,
+        schedule::AbstractVector{<:Integer})
+    length(schedule) == writer.expected_windows ||
+        throw(ArgumentError("steps_per_window schedule length $(length(schedule)) " *
+                            "does not match expected windows $(writer.expected_windows)"))
+    set_transport_header_steps_per_window_schedule!(writer.header, schedule)
     return writer
 end
 

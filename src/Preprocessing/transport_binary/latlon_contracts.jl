@@ -278,6 +278,140 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
     return nothing
 end
 
+function apply_poisson_balance!(storage::WindowStorage{FT},
+                                last_hour_next,
+                                steps_schedule::Vector{Int},
+                                contract,
+                                substep_policy::SubstepSchedulePolicy) where FT
+    contract === nothing &&
+        throw(ArgumentError("adaptive LL Poisson balance requires a LatLonContract"))
+    Nt = length(storage.all_m)
+    length(steps_schedule) == Nt ||
+        throw(ArgumentError("LL steps_schedule length $(length(steps_schedule)) != Nt=$(Nt)"))
+    Nx, Ny, Nz = size(storage.all_m[1])
+    dm_dt_buf = Array{FT}(undef, Nx, Ny, Nz)
+    div_scratch = Array{Float64}(undef, Nx, Ny, Nz)
+    replay_layout = structured_replay_layout()
+
+    apply_horizontal_balance = horizontal_poisson_balance_enabled()
+    poisson_ws = LLPoissonWorkspace(Nx, Ny)
+    if apply_horizontal_balance
+        @info "  Applying horizontal Poisson mass-flux balance (legacy opt-in)..."
+    else
+        mode = substep_policy.adaptive_substeps ? "adaptive" : "fixed"
+        @info "  Applying column mass-balance correction with $(mode) substep schedule..."
+    end
+
+    write_replay_on = get(ENV, "ATMOSTR_NO_WRITE_REPLAY_CHECK", "0") != "1"
+    write_replay_on ||
+        @info "  Write-time replay gate SKIPPED (ATMOSTR_NO_WRITE_REPLAY_CHECK=1)"
+
+    worst_column_pre = 0.0
+    worst_column_post = 0.0
+    worst_column_delta = 0.0
+    worst_replay_rel = 0.0
+    worst_replay_abs = 0.0
+    worst_replay_win = 0
+    worst_replay_idx = (0, 0, 0)
+
+    for win_idx in 1:Nt
+        steps = initial_substeps(substep_policy, steps_schedule[win_idx])
+        old_steps = steps_schedule[win_idx]
+        while true
+            old_steps == steps ||
+                rescale_substep_amounts!(
+                    (storage.all_am[win_idx], storage.all_bm[win_idx]),
+                    old_steps, steps)
+            old_steps = steps
+            steps_schedule[win_idx] = steps
+            contract.steps_per_window = steps
+
+            fill_window_mass_tendency!(dm_dt_buf, storage, last_hour_next,
+                                       win_idx, steps)
+            if apply_horizontal_balance
+                balance_mass_fluxes!(storage.all_am[win_idx],
+                                     storage.all_bm[win_idx],
+                                     dm_dt_buf, poisson_ws)
+                @views storage.all_bm[win_idx][:, 1, :] .= zero(FT)
+                @views storage.all_bm[win_idx][:, Ny + 1, :] .= zero(FT)
+            else
+                col_diag = balance_column_mass_fluxes!(storage.all_am[win_idx],
+                                                       storage.all_bm[win_idx],
+                                                       storage.all_m[win_idx],
+                                                       dm_dt_buf, poisson_ws)
+                worst_column_pre = max(worst_column_pre, col_diag.max_pre_residual)
+                worst_column_post = max(worst_column_post, col_diag.max_post_residual)
+                worst_column_delta = max(worst_column_delta, col_diag.max_face_delta)
+            end
+            recompute_cm_from_dm_target!(replay_layout, div_scratch,
+                                         storage.all_cm[win_idx],
+                                         storage.all_m[win_idx], dm_dt_buf,
+                                         storage.all_am[win_idx],
+                                         storage.all_bm[win_idx])
+            @views storage.all_cm[win_idx][:, :, 1] .= zero(FT)
+            @views storage.all_cm[win_idx][:, :, Nz + 1] .= zero(FT)
+
+            m_next = if win_idx < Nt
+                storage.all_m[win_idx + 1]
+            elseif last_hour_next !== nothing
+                last_hour_next.m
+            else
+                storage.all_m[win_idx]
+            end
+
+            diag = if write_replay_on
+                verify_window!((m_cur = storage.all_m[win_idx],
+                                am = storage.all_am[win_idx],
+                                bm = storage.all_bm[win_idx],
+                                cm = storage.all_cm[win_idx],
+                                m_next = m_next),
+                               contract, win_idx)
+            else
+                positivity = verify_substep_positivity_ll!(
+                    storage.all_m[win_idx], storage.all_am[win_idx],
+                    storage.all_bm[win_idx], storage.all_cm[win_idx];
+                    cfl_limit = contract.positivity_cfl_limit)
+                (replay = nothing, positivity = positivity)
+            end
+
+            next_steps = next_substeps(substep_policy, steps,
+                                       diag.positivity.ratio)
+            if next_steps == steps
+                update_accumulator!(contract, diag.positivity, win_idx)
+                if write_replay_on &&
+                        (worst_replay_win == 0 ||
+                         diag.replay.max_rel_err > worst_replay_rel)
+                    worst_replay_rel = diag.replay.max_rel_err
+                    worst_replay_abs = diag.replay.max_abs_err
+                    worst_replay_win = win_idx
+                    worst_replay_idx = diag.replay.worst_idx
+                end
+                break
+            end
+            steps = next_steps
+        end
+    end
+
+    set_contract_steps_schedule!(contract, steps_schedule)
+    if !apply_horizontal_balance
+        @info @sprintf("  Column balance summary: pre=%.3e post=%.3e max_face_delta=%.3e kg",
+                       worst_column_pre, worst_column_post, worst_column_delta)
+    end
+    if write_replay_on
+        @info @sprintf("  Write-time LL replay gate: max rel=%.3e abs=%.3e win=%d cell=%s",
+                       worst_replay_rel, worst_replay_abs, worst_replay_win,
+                       worst_replay_idx)
+    end
+    if !isempty(steps_schedule)
+        @info @sprintf("  LL substep schedule: min=%d max=%d%s",
+                       minimum(steps_schedule), maximum(steps_schedule),
+                       all(==(first(steps_schedule)), steps_schedule) ?
+                           " (constant)" : " (per-window)")
+    end
+    @info "  Continuity closure complete for $(Nt) windows"
+    return nothing
+end
+
 """
     compute_window_deltas!(merged, storage, win_idx, last_hour_next)
 

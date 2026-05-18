@@ -123,6 +123,94 @@ abstract type AbstractBinaryWriter{G <: AbstractTargetGeometry, FT,
                                     Basis <: AbstractMassBasis} end
 
 # ---------------------------------------------------------------------------
+# Substep scheduling policy shared by every binary-producing topology.
+#
+# The binary format is already able to carry a per-window integer schedule.
+# This policy is the preprocessor-side single source of truth for choosing
+# those integers from a measured positivity ratio, so LL/RG/CS do not each
+# reinvent "rerun with N steps" arithmetic.
+# ---------------------------------------------------------------------------
+
+struct SubstepSchedulePolicy
+    adaptive_substeps    :: Bool
+    substep_cfl_target   :: Float64
+    min_steps_per_window :: Int
+    max_steps_per_window :: Int
+
+    function SubstepSchedulePolicy(;
+            adaptive_substeps::Bool,
+            substep_cfl_target::Real,
+            min_steps_per_window::Integer = 1,
+            max_steps_per_window::Integer = typemax(Int))
+        target = Float64(substep_cfl_target)
+        isfinite(target) && target > 0 ||
+            throw(ArgumentError("substep_cfl_target must be finite and > 0; got $(substep_cfl_target)"))
+        min_steps = Int(min_steps_per_window)
+        max_steps = Int(max_steps_per_window)
+        1 <= min_steps <= max_steps ||
+            throw(ArgumentError("invalid adaptive substep bounds: min_steps_per_window=$(min_steps), max_steps_per_window=$(max_steps)"))
+        return new(Bool(adaptive_substeps), target, min_steps, max_steps)
+    end
+end
+
+@inline function clamp_substeps(policy::SubstepSchedulePolicy, steps::Integer)
+    return min(max(Int(steps), policy.min_steps_per_window),
+               policy.max_steps_per_window)
+end
+
+@inline function initial_substeps(policy::SubstepSchedulePolicy,
+                                  source_steps::Integer)
+    return clamp_substeps(policy, source_steps)
+end
+
+function required_substeps(policy::SubstepSchedulePolicy,
+                           current_steps::Integer,
+                           ratio::Real)
+    current = Int(current_steps)
+    current >= 1 ||
+        throw(ArgumentError("current_steps must be positive; got $(current_steps)"))
+    required = if isfinite(Float64(ratio))
+        ceil(Int, Float64(current) * Float64(ratio) / policy.substep_cfl_target)
+    else
+        policy.max_steps_per_window
+    end
+    return clamp_substeps(policy, max(required, current, 1))
+end
+
+function next_substeps(policy::SubstepSchedulePolicy,
+                       current_steps::Integer,
+                       ratio::Real)
+    policy.adaptive_substeps ||
+        return clamp_substeps(policy, current_steps)
+    return required_substeps(policy, current_steps, ratio)
+end
+
+function rescale_substep_amounts!(arrays, old_steps::Integer, new_steps::Integer)
+    old = Int(old_steps)
+    new = Int(new_steps)
+    old >= 1 && new >= 1 ||
+        throw(ArgumentError("substep counts must be positive; got old=$(old), new=$(new)"))
+    old == new && return arrays
+    factor = old / new
+    for arr in arrays
+        arr .*= factor
+    end
+    return arrays
+end
+
+@inline contract_steps_for_window(c, _win::Integer) = c.steps_per_window
+
+function set_contract_steps_schedule!(contract, schedule::AbstractVector{<:Integer})
+    steps = Int.(collect(schedule))
+    isempty(steps) &&
+        throw(ArgumentError("steps_per_window schedule must not be empty"))
+    all(>=(1), steps) ||
+        throw(ArgumentError("steps_per_window schedule must contain only positive integers; got $(steps)"))
+    contract.steps_per_window = maximum(steps)
+    return contract
+end
+
+# ---------------------------------------------------------------------------
 # P2b readiness/workspace skeleton.
 #
 # These are additive nominals for the unified driver cutover. Existing

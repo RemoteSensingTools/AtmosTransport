@@ -74,6 +74,7 @@ core_tests = [
     "test_cs_preprocessor_contract.jl",
     "test_ll_preprocessor_contract.jl",
     "test_rg_preprocessor_contract.jl",
+    "test_preprocessor_substep_schedule.jl",
     "test_preprocessor_writer_adapters.jl",
     "test_preprocessor_unified_driver.jl",
     "test_rg_preprocessor_unified_driver.jl",

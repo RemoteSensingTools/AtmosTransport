@@ -16,6 +16,7 @@ mutable struct LatLonSpectralWindowWorkspace{FT, TW, MW, SW, QW} <:
     qv             :: QW
     ps_offsets     :: Vector{Float64}
     last_hour_next :: Union{Nothing, LLNextDayFields{FT}}
+    steps_schedule :: Vector{Int}
 end
 
 mutable struct LatLonDeferredBinaryWriter{FT,
@@ -54,6 +55,8 @@ function _open_latlon_deferred_writer!(writer::LatLonDeferredBinaryWriter{FT}) w
     Nt = length(writer.workspace.storage.all_m)
     writer.header["ps_offsets_pa_per_window"] = writer.workspace.ps_offsets[1:Nt]
     writer.header["ps_offsets_next_day_hour0_pa"] = writer.workspace.ps_offsets[Nt + 1]
+    set_transport_header_steps_per_window_schedule!(
+        writer.header, writer.workspace.steps_schedule[1:Nt])
     header_json = JSON3.write(writer.header)
     length(header_json) < HEADER_SIZE ||
         error("Header JSON too large after offsets update: $(length(header_json)) >= $(HEADER_SIZE)")
@@ -100,7 +103,8 @@ function allocate_window_workspace(grid::LatLonTargetGeometry,
                                    spec,
                                    date::Date,
                                    ::Type{FT};
-                                   cache = nothing) where FT
+                                   cache = nothing,
+                                   source_steps_per_window::Integer = 1) where FT
     Nz_native = vertical.Nz_native
     Nz = vertical.Nz
     Nt = spec.n_times
@@ -112,9 +116,10 @@ function allocate_window_workspace(grid::LatLonTargetGeometry,
                                        include_surface = settings.include_surface)
     qv = allocate_qv_workspace(grid, settings, date, Nz_native, Nz, FT)
     ps_offsets = zeros(Float64, Nt + 1)
+    steps_schedule = fill(Int(source_steps_per_window), Nt)
     return LatLonSpectralWindowWorkspace{FT, typeof(transform), typeof(merged),
                                          typeof(storage), typeof(qv)}(
-        transform, merged, storage, qv, ps_offsets, nothing)
+        transform, merged, storage, qv, ps_offsets, nothing, steps_schedule)
 end
 
 function ingest_window!(workspace::LatLonSpectralWindowWorkspace,
@@ -147,6 +152,7 @@ struct LLSpectralUnifiedDriverContext{G, S, V, SP, N, PR, TW, TS, SR}
     spec            :: SP
     next_day_hour0  :: N
     date            :: Date
+    substep_policy  :: SubstepSchedulePolicy
     physics_reader  :: PR
     tm5_ws          :: TW
     tm5_stats       :: TS
@@ -181,7 +187,7 @@ function driver_flush_final_windows!(workspace::LatLonSpectralWindowWorkspace,
                                      ctx::LLSpectralUnifiedDriverContext)
     ready_windows = flush_final_windows!(workspace, ctx.next_day_hour0,
                                          ctx.date, ctx.grid, ctx.vertical,
-                                         ctx.settings, contract)
+                                     ctx.settings, contract, ctx.substep_policy)
     # `flush_final_windows!` calls `apply_poisson_balance!`, which already
     # runs the typed LL contract over every stored window and updates the
     # contract accumulator. Return preverified events so the generic driver
@@ -203,13 +209,14 @@ function flush_final_windows!(workspace::LatLonSpectralWindowWorkspace{FT},
                               grid::LatLonTargetGeometry,
                               vertical,
                               settings,
-                              contract::LatLonContract{FT}) where FT
+                              contract::LatLonContract{FT},
+                              substep_policy::SubstepSchedulePolicy) where FT
     workspace.last_hour_next = next_day_merged_fields(
         next_day_hour0, date, grid, vertical, settings,
         workspace.transform, workspace.merged, workspace.qv,
         workspace.ps_offsets)
     apply_poisson_balance!(workspace.storage, workspace.last_hour_next,
-                           contract.steps_per_window, contract)
+                           workspace.steps_schedule, contract, substep_policy)
     fill_qv_endpoints!(workspace.storage, workspace.last_hour_next)
     return (ReadyWindow{LatLonTargetGeometry, FT}(
                 win_idx,
@@ -242,6 +249,10 @@ function process_day(date::Date,
                      next_day_hour0=nothing,
                      positivity_cfl_limit::Real = 0.95,
                      require_substep_positivity::Bool = true,
+                     substep_policy::SubstepSchedulePolicy =
+                         SubstepSchedulePolicy(
+                             adaptive_substeps = false,
+                             substep_cfl_target = positivity_cfl_limit),
                      run_cache = nothing)
     FT = settings.output_float_type
     Nz_native = vertical.Nz_native
@@ -298,7 +309,8 @@ function process_day(date::Date,
         error("Header JSON too large: $(length(header_json)) >= $(HEADER_SIZE)")
 
     workspace = allocate_window_workspace(grid, settings, vertical, spec, date, FT;
-                                          cache = run_cache)
+                                          cache = run_cache,
+                                          source_steps_per_window = steps_per_met)
     storage = workspace.storage
     ps_offsets = workspace.ps_offsets
     window_contract = LatLonContract{FT}(
@@ -341,6 +353,7 @@ function process_day(date::Date,
             mass_basis_from_symbol(Symbol(settings.mass_basis)))
         ctx = LLSpectralUnifiedDriverContext(
             grid, settings, vertical, spec, next_day_hour0, date,
+            substep_policy,
             physics_reader, tm5_ws, tm5_stats, surface_reader)
 
         driver_result = run_unified_preprocessor_day!(

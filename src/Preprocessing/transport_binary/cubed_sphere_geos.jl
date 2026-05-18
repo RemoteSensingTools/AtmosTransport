@@ -512,9 +512,6 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
             target, min_steps, max_steps, chain_mass)
 end
 
-@inline _geos_clamp_steps(n::Integer, lo::Integer, hi::Integer) =
-    min(max(Int(n), Int(lo)), Int(hi))
-
 function _scale_cs_flux_panels!(panels, factor)
     for p in 1:CS_PANEL_COUNT
         panels[p] .*= factor
@@ -555,22 +552,15 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
     return bal_diag
 end
 
-function _geos_required_steps(steps::Int, ratio::Float64, cfl_target::Float64,
-                              min_steps::Int, max_steps::Int)
-    required = if isfinite(ratio)
-        ceil(Int, steps * ratio / cfl_target)
-    else
-        max_steps
-    end
-    return _geos_clamp_steps(max(required, 1), min_steps, max_steps)
-end
-
 function _geos_select_steps_for_window!(workspace::GEOSCubedSphereWindowWorkspace,
                                         grid::CubedSphereTargetGeometry,
                                         win::Int)
-    steps = _geos_clamp_steps(workspace.source_steps_per_met,
-                              workspace.min_steps_per_window,
-                              workspace.max_steps_per_window)
+    policy = SubstepSchedulePolicy(
+        adaptive_substeps = workspace.adaptive_substeps,
+        substep_cfl_target = workspace.substep_cfl_target,
+        min_steps_per_window = workspace.min_steps_per_window,
+        max_steps_per_window = workspace.max_steps_per_window)
+    steps = initial_substeps(policy, workspace.source_steps_per_met)
     bal_diag = nothing
     positivity = nothing
     prepared_steps = 0
@@ -582,9 +572,7 @@ function _geos_select_steps_for_window!(workspace::GEOSCubedSphereWindowWorkspac
                 workspace.m_cur, workspace.am_v4, workspace.bm_v4,
                 workspace.cm_v4; cfl_limit = workspace.substep_cfl_target,
                 m_next = workspace.m_next_target)
-            next_steps = _geos_required_steps(
-                steps, Float64(positivity.ratio), workspace.substep_cfl_target,
-                workspace.min_steps_per_window, workspace.max_steps_per_window)
+            next_steps = next_substeps(policy, steps, positivity.ratio)
             next_steps == steps && break
             steps = next_steps
         end

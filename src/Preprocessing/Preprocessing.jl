@@ -90,6 +90,7 @@ using ..MetDrivers: TransportBinaryReader, TransportBinaryHeader, write_transpor
                     open_streaming_transport_binary, write_streaming_window!,
                     close_streaming_transport_binary!,
                     set_streaming_steps_per_window_schedule!,
+                    set_transport_header_steps_per_window_schedule!,
                     open_streaming_cs_transport_binary, write_streaming_cs_window!,
                     load_window!, load_flux_delta_window!,
                     has_tm5_convection, load_tm5_convection_window!,
@@ -129,6 +130,9 @@ export verify_write_replay_cs!,
 # without duplicating logic.
 export mass_basis_symbol, mass_basis_from_symbol
 export AbstractWindowContract, AbstractWindowWorkspace, AbstractBinaryWriter
+export SubstepSchedulePolicy, clamp_substeps, initial_substeps,
+       required_substeps, next_substeps, rescale_substep_amounts!,
+       contract_steps_for_window, set_contract_steps_schedule!
 export ReadyWindow, PreverifiedWindow, PreprocessorRunCache
 export verify_window!, update_accumulator!, summarize_status!
 export contract_replay_tolerance, contract_cfl_limit, contract_require_positivity

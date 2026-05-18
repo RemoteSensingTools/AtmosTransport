@@ -429,6 +429,8 @@ mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV, V
     chain_mass  :: Bool
 end
 
+const _GEOS_ADAPTIVE_SUBSTEP_MAX_REFINEMENTS = 8
+
 function allocate_window_workspace(grid::CubedSphereTargetGeometry,
                                    settings::AbstractGEOSSettings,
                                    vertical,
@@ -439,7 +441,8 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
                                    adaptive_substeps::Bool = false,
                                    substep_cfl_target::Real = 0.95,
                                    min_steps_per_window::Integer = 1,
-                                   max_steps_per_window::Integer = typemax(Int)) where FT
+                                   max_steps_per_window::Integer = typemax(Int),
+                                   windows_per_day::Integer = 0) where FT
     Nc = grid.Nc
     Nz = vertical.Nz
     Nz_native = vertical.Nz_native
@@ -470,6 +473,9 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
     max_steps = Int(max_steps_per_window)
     1 <= min_steps <= max_steps ||
         error("invalid adaptive substep bounds: min=$(min_steps), max=$(max_steps)")
+    schedule_len = Int(windows_per_day)
+    schedule_len >= 0 ||
+        error("windows_per_day must be non-negative, got $(windows_per_day)")
 
     am_native_v4 = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz_native), npanel)
     bm_native_v4 = ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz_native), npanel)
@@ -502,7 +508,7 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
             m_cur, m_next_target, ps_cur, cmfmc_v4, dtrain_v4, vdiff_v4,
             g, inv_g, cell_areas,
             flux_scale, flux_scale, steps_per_met, steps_per_met,
-            Int[], Bool(adaptive_substeps),
+            fill(steps_per_met, schedule_len), Bool(adaptive_substeps),
             target, min_steps, max_steps, chain_mass)
 end
 
@@ -569,7 +575,7 @@ function _geos_select_steps_for_window!(workspace::GEOSCubedSphereWindowWorkspac
     positivity = nothing
     prepared_steps = 0
     if workspace.adaptive_substeps
-        for _ in 1:8
+        for _ in 1:_GEOS_ADAPTIVE_SUBSTEP_MAX_REFINEMENTS
             bal_diag = _geos_prepare_window_for_steps!(workspace, grid, steps)
             prepared_steps = steps
             positivity = verify_substep_positivity_cs!(
@@ -589,7 +595,9 @@ function _geos_select_steps_for_window!(workspace::GEOSCubedSphereWindowWorkspac
         bal_diag = _geos_prepare_window_for_steps!(workspace, grid, steps)
     end
     workspace.steps_current = steps
-    length(workspace.steps_schedule) < win && resize!(workspace.steps_schedule, win)
+    1 <= win <= length(workspace.steps_schedule) ||
+        throw(ArgumentError("GEOS steps_schedule length $(length(workspace.steps_schedule)) " *
+                            "cannot record window $(win)."))
     workspace.steps_schedule[win] = steps
     return (steps = steps, balance = bal_diag, positivity = positivity)
 end
@@ -812,7 +820,8 @@ function _process_day_geos_cs_unified(date::Date,
                                                adaptive_substeps = adaptive_substeps,
                                                substep_cfl_target = substep_cfl_target,
                                                min_steps_per_window = min_steps_per_window,
-                                               max_steps_per_window = max_steps_per_window)
+                                               max_steps_per_window = max_steps_per_window,
+                                               windows_per_day = nw)
 
         @info "GEOS → CS: $(date), source=$(settings) → $(out_path) [unified]"
         @info "  source_C=$(settings.Nc) target_C=$Nc  strategy=$(_geos_cs_strategy_name(workspace.strategy))"

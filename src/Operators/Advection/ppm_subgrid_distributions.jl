@@ -33,13 +33,7 @@ Minmod limiter for PPM: returns the value with smallest magnitude if all have
 the same sign, otherwise zero. Used in ORD=4 and ORD=5.
 """
 @inline function minmod_ppm(a::FT, b::FT, c::FT) where FT
-    if a > zero(FT) && b > zero(FT) && c > zero(FT)
-        return min(a, b, c)
-    elseif a < zero(FT) && b < zero(FT) && c < zero(FT)
-        return max(a, b, c)
-    else
-        return zero(FT)
-    end
+    return _minmod3(a, b, c)
 end
 
 # ---------------------------------------------------------------------------
@@ -61,18 +55,13 @@ q_6 = 3(q_c - (2q_L + q_R)/3) is clamped to lie in [-|q_R - q_L|, |q_R - q_L|]
 @inline function huynh_second_constraint(q_l, q_c, q_r, q_LL, q_RR)
     FT = typeof(q_l)
     denom = q_r - q_l
-
-    # If edge values are identical, curvature is zero
-    if abs(denom) < 10 * eps(FT)
-        return zero(FT)
-    end
+    mag = abs(denom)
 
     # Curvature coefficient in the parabolic profile
     q_6 = 3 * (q_c - (2 * q_l + q_r) / 3)
 
     # Clamp to magnitude of edge difference
-    mag = abs(denom)
-    return clamp(q_6, -mag, mag)
+    return ifelse(mag < 10 * eps(FT), zero(FT), clamp(q_6, -mag, mag))
 end
 
 # ---------------------------------------------------------------------------

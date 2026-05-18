@@ -321,12 +321,12 @@ function apply!(state::CellState{B, A, Raw, Names},
         "`ReducedGaussianMesh`; got $(typeof(grid.horizontal))."))
 end
 
-function apply!(state::CubedSphereState,
+function apply!(state::CubedSphereState{B},
                 forcing::ConvectionForcing,
                 grid::AtmosGrid,
                 op::CMFMCConvection,
                 dt::Real;
-                workspace = nothing)
+                workspace = nothing) where {B}
     throw(ArgumentError(
         "`CMFMCConvection` supports `CubedSphereState` only on " *
         "`CubedSphereMesh`; got $(typeof(grid.horizontal))."))

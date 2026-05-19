@@ -196,7 +196,7 @@ in Float32 arithmetic.
 > (Thomas-solver coefficient layout, time-pure `ConvectionForcing`
 > dispatch, Strang palindrome time symmetry) but the adjoint kernels
 > themselves are pending. See
-> [Adjoint status](https://RemoteSensingTools.github.io/AtmosTransport/dev/theory/adjoint_status/)
+> [Adjoint status](https://RemoteSensingTools.github.io/AtmosTransport/dev/theory/adjoint_status)
 > for details.
 
 ## Architecture
@@ -265,7 +265,7 @@ The bundle is hosted as assets on the
 [`data-quickstart-v2` GitHub Release](https://github.com/RemoteSensingTools/AtmosTransport/releases/tag/data-quickstart-v2)
 and contains preprocessed transport binaries at four grid configurations
 (LL 72x37, LL 144x73, CS C24, CS C90, all F32, Dec 1-3 2021). See the
-[Quickstart with example data](https://RemoteSensingTools.github.io/AtmosTransport/dev/getting_started/quickstart/)
+[Quickstart with example data](https://RemoteSensingTools.github.io/AtmosTransport/dev/getting_started/quickstart)
 docs page for the full walkthrough.
 
 Quickstart configs default to `use_gpu = true` with automatic backend
@@ -279,12 +279,12 @@ Full documentation lives at
 [RemoteSensingTools.github.io/AtmosTransport](https://RemoteSensingTools.github.io/AtmosTransport/dev/).
 The reading order:
 
-1. **[Getting Started](https://RemoteSensingTools.github.io/AtmosTransport/dev/getting_started/installation/)** — install, quickstart, first run, inspecting output.
-2. **[Concepts](https://RemoteSensingTools.github.io/AtmosTransport/dev/concepts/grids/)** — grids, state & basis, operators, binary format.
-3. **[Tutorials](https://RemoteSensingTools.github.io/AtmosTransport/dev/tutorials/_generated/synthetic_latlon/)** — Literate-driven, runnable end-to-end examples.
-4. **[Preprocessing](https://RemoteSensingTools.github.io/AtmosTransport/dev/preprocessing/overview/)** — ERA5 spectral, GEOS native CS, regridding, conventions cheat sheet.
-5. **[Theory & Verification](https://RemoteSensingTools.github.io/AtmosTransport/dev/theory/mass_conservation/)** — mass-conservation derivation, advection schemes, conservation budgets, validation status, adjoint status.
-6. **[Configuration & Runtime](https://RemoteSensingTools.github.io/AtmosTransport/dev/config/toml_schema/)** — TOML schema, output schema, data sources.
+1. **[Getting Started](https://RemoteSensingTools.github.io/AtmosTransport/dev/getting_started/installation)** — install, quickstart, first run, inspecting output.
+2. **[Concepts](https://RemoteSensingTools.github.io/AtmosTransport/dev/concepts/grids)** — grids, state & basis, operators, binary format.
+3. **[Tutorials](https://RemoteSensingTools.github.io/AtmosTransport/dev/tutorials/_generated/synthetic_latlon)** — Literate-driven, runnable end-to-end examples.
+4. **[Preprocessing](https://RemoteSensingTools.github.io/AtmosTransport/dev/preprocessing/overview)** — ERA5 spectral, GEOS native CS, regridding, conventions cheat sheet.
+5. **[Theory & Verification](https://RemoteSensingTools.github.io/AtmosTransport/dev/theory/mass_conservation)** — mass-conservation derivation, advection schemes, conservation budgets, validation status, adjoint status.
+6. **[Configuration & Runtime](https://RemoteSensingTools.github.io/AtmosTransport/dev/config/toml_schema)** — TOML schema, output schema, data sources.
 7. **[API Reference](https://RemoteSensingTools.github.io/AtmosTransport/dev/api/)** — auto-generated per submodule.
 
 A high-signal in-repo summary of invariants and "fast failure triage" lives
@@ -318,7 +318,7 @@ at [`CLAUDE.md`](CLAUDE.md) in the repo root.
 - **Multi-month + observational closure:** *not yet done*; the forward
   operators have the fidelity, the cross-model intercomparison reports
   haven't been written yet. See
-  [Validation status](https://RemoteSensingTools.github.io/AtmosTransport/dev/theory/validation_status/)
+  [Validation status](https://RemoteSensingTools.github.io/AtmosTransport/dev/theory/validation_status)
   for the honest current-state report.
 
 ## References

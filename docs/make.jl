@@ -158,10 +158,9 @@ makedocs(
     authors  = "RemoteSensingTools and contributors",
     repo     = Remotes.GitHub("RemoteSensingTools", "AtmosTransport"),
     format   = DocumenterVitepress.MarkdownVitepress(
-        repo          = "https://github.com/RemoteSensingTools/AtmosTransport",
+        repo          = "github.com/RemoteSensingTools/AtmosTransport",
         devbranch     = "main",
         devurl        = "dev",
-        deploy_url    = "RemoteSensingTools.github.io/AtmosTransport",
     ),
     pages    = PAGES,
     # Phase 1 keeps the build permissive so missing-docstring / autodoc work
@@ -171,14 +170,24 @@ makedocs(
     checkdocs = :none,
 )
 
-# DocumenterVitepress builds a static VitePress site under docs/build/;
-# `deploydocs` is invoked with `target = "build"` so the gh-pages branch
-# receives the rendered HTML rather than the raw Markdown.
-deploydocs(
-    repo         = "github.com/RemoteSensingTools/AtmosTransport.git",
-    target       = "build",
-    devbranch    = "main",
-    branch       = "gh-pages",
-    push_preview = true,
-    forcepush    = true,
-)
+# DocumenterVitepress builds separate VitePress outputs under docs/build/1,
+# docs/build/2, ... and records their destination folders in docs/build/bases.txt.
+# Its deploy wrapper publishes those rendered folders into gh-pages/dev,
+# gh-pages/stable, etc. Calling Documenter.deploydocs directly would publish the
+# wrapper directory itself and leave the public /dev/ URL without an index page.
+const ATMOSTR_DOCS_BUILD_ONLY =
+    lowercase(get(ENV, "ATMOSTR_DOCS_BUILD_ONLY", "false")) in ("1", "true", "yes")
+
+if ATMOSTR_DOCS_BUILD_ONLY
+    @info "Skipping docs deployment because ATMOSTR_DOCS_BUILD_ONLY is set"
+else
+    DocumenterVitepress.deploydocs(
+        root         = @__DIR__,
+        repo         = "github.com/RemoteSensingTools/AtmosTransport.git",
+        target       = "build",
+        devbranch    = "main",
+        branch       = "gh-pages",
+        push_preview = true,
+        forcepush    = true,
+    )
+end

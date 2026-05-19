@@ -430,7 +430,9 @@ in `_validate_convection_runtime` into this dispatch pattern so
 adding `TM5Convection` (or any future operator) does not require
 editing the old runtime block, only adding a method here.
 """
-_validate_convection_window!(::NoConvection, _window, _driver) = nothing
+_validate_convection_window!(::NoConvection,
+                              ::AbstractTransportWindow,
+                              ::AbstractMetDriver) = nothing
 
 function _validate_convection_window!(::CMFMCConvection,
                                        window::AbstractTransportWindow,

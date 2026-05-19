@@ -17,6 +17,24 @@ mutable struct LatLonSpectralWindowWorkspace{FT, TW, MW, SW, QW} <:
     ps_offsets     :: Vector{Float64}
     last_hour_next :: Union{Nothing, LLNextDayFields{FT}}
     steps_schedule :: Vector{Int}
+
+    function LatLonSpectralWindowWorkspace{FT, TW, MW, SW, QW}(
+            transform::TW,
+            merged::MW,
+            storage::SW,
+            qv::QW,
+            ps_offsets::Vector{Float64},
+            last_hour_next,
+            steps_schedule::Vector{Int}) where {FT, TW, MW, SW, QW}
+        if last_hour_next !== nothing && !(last_hour_next isa LLNextDayFields{FT})
+            throw(ArgumentError(
+                "last_hour_next must be `nothing` or LLNextDayFields{$FT}; " *
+                "got $(typeof(last_hour_next))"))
+        end
+        return new{FT, TW, MW, SW, QW}(
+            transform, merged, storage, qv, ps_offsets, last_hour_next,
+            steps_schedule)
+    end
 end
 
 mutable struct LatLonDeferredBinaryWriter{FT,
@@ -34,6 +52,26 @@ mutable struct LatLonDeferredBinaryWriter{FT,
     inner       :: Union{Nothing, LatLonBinaryWriter{FT, Basis}}
     closed      :: Bool
     promoted    :: Bool
+
+    function LatLonDeferredBinaryWriter{FT, Basis, H, W, S}(
+            path::String,
+            final_path::String,
+            header::H,
+            workspace::W,
+            settings::S,
+            basis::Basis,
+            inner,
+            closed::Bool,
+            promoted::Bool) where {FT, Basis<:AbstractMassBasis, H, W, S}
+        if inner !== nothing && !(inner isa LatLonBinaryWriter{FT, Basis})
+            throw(ArgumentError(
+                "inner must be `nothing` or LatLonBinaryWriter{$FT, $Basis}; " *
+                "got $(typeof(inner))"))
+        end
+        return new{FT, Basis, H, W, S}(
+            path, final_path, header, workspace, settings, basis, inner,
+            closed, promoted)
+    end
 end
 
 function LatLonDeferredBinaryWriter(path::AbstractString,

@@ -608,6 +608,16 @@ function apply_vertical!(buf_out::AbstractArray{T, 2},
     return buf_out
 end
 
+function apply_vertical!(buf_out::AbstractMatrix{T},
+                          buf_in::AbstractMatrix{S},
+                          ::VerticalPlan{FT, PressureOverlap},
+                          ::SurfaceField) where {FT, T, S}
+    size(buf_out) == size(buf_in) ||
+        error("apply_vertical!(SurfaceField) — out $(size(buf_out)) vs in $(size(buf_in)) shape mismatch.")
+    copyto!(buf_out, buf_in)
+    return buf_out
+end
+
 # PressureOverlap fallback — full implementation lands in P1.
 function apply_vertical!(_buf_out, _buf_in,
                           ::VerticalPlan{FT, PressureOverlap},

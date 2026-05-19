@@ -35,7 +35,9 @@ using AtmosTransport
         unbound_args      = true,
         undefined_exports = true,
         project_extras    = true,
-        stale_deps        = true,
+        # ArgParse is intentionally a root-project dependency for CLI scripts
+        # run as `julia --project=. scripts/...`; package code does not load it.
+        stale_deps        = (; ignore = [:ArgParse]),
         deps_compat       = true,
         piracies          = true,
         persistent_tasks  = false,

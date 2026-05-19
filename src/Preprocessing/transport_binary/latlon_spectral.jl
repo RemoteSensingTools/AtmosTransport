@@ -169,6 +169,7 @@ function ingest_window!(workspace::LatLonSpectralWindowWorkspace,
                         settings;
                         physics_reader = nothing,
                         tm5_ws = nothing,
+                        tm5_source_ps = nothing,
                         tm5_stats = nothing,
                         surface_reader = nothing)
     process_window!(win_idx, hour, spec, grid, vertical, settings,
@@ -176,6 +177,7 @@ function ingest_window!(workspace::LatLonSpectralWindowWorkspace,
                     workspace.storage, workspace.ps_offsets;
                     physics_reader = physics_reader,
                     tm5_ws = tm5_ws,
+                    tm5_source_ps = tm5_source_ps,
                     tm5_stats = tm5_stats,
                     surface_reader = surface_reader)
     return nothing
@@ -183,7 +185,7 @@ end
 
 drain_ready_windows!(::LatLonSpectralWindowWorkspace) = ()
 
-struct LLSpectralUnifiedDriverContext{G, S, V, SP, N, PR, TW, TS, SR}
+struct LLSpectralUnifiedDriverContext{G, S, V, SP, N, PR, TW, TPS, TS, SR}
     grid            :: G
     settings        :: S
     vertical        :: V
@@ -193,6 +195,7 @@ struct LLSpectralUnifiedDriverContext{G, S, V, SP, N, PR, TW, TS, SR}
     substep_policy  :: SubstepSchedulePolicy
     physics_reader  :: PR
     tm5_ws          :: TW
+    tm5_source_ps   :: TPS
     tm5_stats       :: TS
     surface_reader  :: SR
 end
@@ -208,6 +211,7 @@ function driver_ingest_window!(workspace::LatLonSpectralWindowWorkspace,
                           ctx.grid, ctx.vertical, ctx.settings;
                           physics_reader = ctx.physics_reader,
                           tm5_ws = ctx.tm5_ws,
+                          tm5_source_ps = ctx.tm5_source_ps,
                           tm5_stats = ctx.tm5_stats,
                           surface_reader = ctx.surface_reader)
 end
@@ -269,6 +273,59 @@ function flush_final_windows!(workspace::LatLonSpectralWindowWorkspace{FT},
                         workspace.storage.all_m[win_idx] :
                         workspace.last_hour_next.m))
             for win_idx in eachindex(workspace.storage.all_m))
+end
+
+function _tm5_ll_source_grid_from_physics(reader, ::Type{FT}) where FT <: AbstractFloat
+    h = reader.header
+    return build_target_geometry(Val(:latlon),
+        Dict{String, Any}("type" => "latlon",
+                          "nlon" => h.Nlon,
+                          "nlat" => h.Nlat),
+        FT)
+end
+
+@inline _tm5_ll_same_shape(source::LatLonTargetGeometry,
+                           target::LatLonTargetGeometry) =
+    nlon(source) == nlon(target) && nlat(source) == nlat(target)
+
+function _tm5_ll_regridder_cache_key(source::LatLonTargetGeometry,
+                                     target::LatLonTargetGeometry)
+    return Symbol("tm5_ll_regridder_",
+                  nlon(source), "x", nlat(source),
+                  "_to_", nlon(target), "x", nlat(target))
+end
+
+function _get_or_build_tm5_ll_regridder!(cache,
+                                         source::LatLonTargetGeometry,
+                                         target::LatLonTargetGeometry)
+    _tm5_ll_same_shape(source, target) && return nothing
+    key = _tm5_ll_regridder_cache_key(source, target)
+    cached = cache === nothing ? nothing : get(cache, key, nothing)
+    cached !== nothing && return cached
+
+    t0 = time()
+    regridder = build_regridder(source.mesh, target.mesh; normalize = false)
+    cache === nothing || (cache[key] = regridder)
+    @info @sprintf("  TM5 LL regridder: %dx%d -> %dx%d  nnz=%d (%.1fs)",
+                   nlon(source), nlat(source), nlon(target), nlat(target),
+                   length(regridder.intersections.nzval), time() - t0)
+    return regridder
+end
+
+function _install_tm5_regrid_header_metadata!(header,
+                                              source::LatLonTargetGeometry,
+                                              target::LatLonTargetGeometry,
+                                              regridder)
+    source_matches_target = regridder === nothing
+    header["tm5_source_grid_type"] = "latlon"
+    header["tm5_source_nlon"] = nlon(source)
+    header["tm5_source_nlat"] = nlat(source)
+    header["tm5_target_nlon"] = nlon(target)
+    header["tm5_target_nlat"] = nlat(target)
+    header["tm5_regrid_method"] = source_matches_target ? "identity" : "conservative"
+    header["tm5_ps_source"] = source_matches_target ?
+        "spectral_target_grid" : "spectral_source_grid_with_target_mass_fix_offset"
+    return header
 end
 
 """
@@ -358,25 +415,34 @@ function process_day(date::Date,
         steps_per_window = steps_per_met,
     )
 
-    # Plan 24 Commit 4: TM5 convection setup (LL target == ERA5 native
-    # 720×361 only — see NOTES.md for the scope narrowing).  When
-    # enabled, open the day's physics BIN, shape-check against the
-    # target, and allocate the per-day workspace + cleanup stats.
+    # TM5 convection setup. Native LL keeps the identity fast path; lower-
+    # resolution LL targets synthesize source-grid PS and conservatively
+    # regrid merged TM5 fields onto the target payload grid.
     physics_reader = nothing
     tm5_ws         = nothing
+    tm5_source_ps  = nothing
     tm5_stats      = nothing
     if settings.tm5_convection_enable
         physics_reader = open_era5_physics_binary(settings.tm5_physics_bin_dir, date)
         Nlon_src = physics_reader.header.Nlon
         Nlat_src = physics_reader.header.Nlat
-        (Nlon_src == Nx && Nlat_src == Ny) || error(
-            "Plan 24 Commit 4 requires LL target == physics BIN shape. " *
-            "BIN is ($Nlon_src, $Nlat_src), target is ($Nx, $Ny). " *
-            "Either (a) use a 720×361 LL target config, or (b) wait for " *
-            "Commit 4b/4c (regrid + PS sourcing for coarser / non-LL targets).")
+        tm5_source_grid = _tm5_ll_source_grid_from_physics(physics_reader, Float64)
+        tm5_regridder = _get_or_build_tm5_ll_regridder!(run_cache, tm5_source_grid, grid)
+        _install_tm5_regrid_header_metadata!(header, tm5_source_grid, grid, tm5_regridder)
+        if tm5_regridder !== nothing
+            tm5_source_ps = allocate_tm5_source_pressure_workspace(tm5_source_grid, spec.T)
+            @info @sprintf("  TM5 source-grid PS: spectral %dx%d -> physics %dx%d; fields regridded to target %dx%d",
+                           Nx, Ny, Nlon_src, Nlat_src, Nx, Ny)
+        end
         tm5_ws    = allocate_tm5_workspace(Nlon_src, Nlat_src, Nz_native, Nz, FT;
+                                            regridder = tm5_regridder,
+                                            target_nlon = Nx,
+                                            target_nlat = Ny,
                                             physics_eltype = Float32)
         tm5_stats = TM5CleanupStats()
+        header_json = JSON3.write(header)
+        length(header_json) < HEADER_SIZE ||
+            error("Header JSON too large after TM5 metadata: $(length(header_json)) >= $(HEADER_SIZE)")
     end
 
     surface_reader = settings.include_surface ?
@@ -392,7 +458,7 @@ function process_day(date::Date,
         ctx = LLSpectralUnifiedDriverContext(
             grid, settings, vertical, spec, next_day_hour0, date,
             substep_policy,
-            physics_reader, tm5_ws, tm5_stats, surface_reader)
+            physics_reader, tm5_ws, tm5_source_ps, tm5_stats, surface_reader)
 
         driver_result = run_unified_preprocessor_day!(
             UnifiedPreprocessorDay(nothing, workspace, window_contract,

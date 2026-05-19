@@ -42,9 +42,12 @@ using .AtmosTransport.Preprocessing: resolve_tm5_convection_settings,
                                        convert_era5_physics_nc_to_bin,
                                        open_era5_physics_binary,
                                        close_era5_physics_binary,
+                                       build_target_geometry,
                                        allocate_tm5_workspace,
+                                       tm5_copy_or_regrid_ll!,
                                        compute_tm5_merged_hour_on_source!,
                                        TM5CleanupStats
+using .AtmosTransport.Regridding: build_regridder
 
 const RUN_ALL = "--all" in ARGS
 
@@ -79,6 +82,32 @@ const RUN_ALL = "--all" in ARGS
     @test err isa ErrorException
     @test occursin("physics_bin_dir", err.msg)
     @test occursin("convert_era5_physics_nc_to_bin.jl", err.msg)
+end
+
+# ─────────────────────────────────────────────────────────────────────────
+# (1b) LL TM5 source->target regrid helper
+# ─────────────────────────────────────────────────────────────────────────
+
+@testset "tm5_copy_or_regrid_ll! supports lower-resolution LL target shape" begin
+    FT = Float64
+    source_grid = build_target_geometry(Val(:latlon),
+        Dict{String, Any}("type" => "latlon", "nlon" => 8, "nlat" => 4), FT)
+    target_grid = build_target_geometry(Val(:latlon),
+        Dict{String, Any}("type" => "latlon", "nlon" => 4, "nlat" => 2), FT)
+    regridder = build_regridder(source_grid.mesh, target_grid.mesh; normalize = false)
+
+    ws = allocate_tm5_workspace(8, 4, 3, 2, FT;
+                                regridder = regridder,
+                                target_nlon = 4,
+                                target_nlat = 2,
+                                physics_eltype = Float32)
+    fill!(ws.entu_merged_src, FT(7))
+    dst = Array{FT, 3}(undef, 4, 2, 2)
+
+    tm5_copy_or_regrid_ll!(dst, ws.entu_merged_src, ws)
+
+    @test size(dst) == (4, 2, 2)
+    @test maximum(abs.(dst .- FT(7))) < 1e-10
 end
 
 # ─────────────────────────────────────────────────────────────────────────

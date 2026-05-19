@@ -1,10 +1,10 @@
     # 5-day Catrine campaign — ll72 ERA5 spectral → daily transport binary
-    # (Float64, advection-only).
+    # (Float64, TM5 convection enabled).
     #
     # Usage:
     #   for d in 01 02 03 04 05; do
     #     julia -t8 --project=. scripts/preprocessing/preprocess_transport_binary.jl \
-    #         config/preprocessing/catrine5d/ll72_dec2021_f64.toml \
+    #         config/preprocessing/catrine5d/ll72_dec2021_f64_tm5.toml \
     #         --day 2021-12-$d
     #   done
 
@@ -14,7 +14,7 @@
     coefficients = "config/era5_L137_coefficients.toml"
 
     [output]
-    directory  = "$ATMOSTRANSPORT_DATA_ROOT/met/era5/ll72x37_advresln/transport_binary_v2_tropo34_dec2021_f64"
+    directory  = "$ATMOSTRANSPORT_DATA_ROOT/met/era5/ll72x37_advresln/transport_binary_v2_tropo34_dec2021_f64_tm5"
     mass_basis = "dry"
     include_qv = false
 
@@ -36,3 +36,7 @@
     enable                = true
     target_ps_dry_pa      = 98726.0
     qv_global_climatology = 0.00247
+
+[tm5_convection]
+enable          = true
+physics_bin_dir = "$ATMOSTRANSPORT_DATA_ROOT/met/era5/0.5x0.5/physics_bin"

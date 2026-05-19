@@ -5,7 +5,7 @@
 #         config/runs/catrine5d/ll72_f32_advonly_gpu.toml
 
 [input]
-folder     = "$ATMOSTRANSPORT_DATA_ROOT/met/era5/ll72x37_advresln/transport_binary_v2_tropo34_dec2021_f32"
+folder     = "$ATMOSTRANSPORT_DATA_ROOT/met/era5/ll72x37_advresln/transport_binary_v2_tropo34_dec2021_f32_tm5"
 start_date = "2021-12-02"
 end_date   = "2021-12-05"
 

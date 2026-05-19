@@ -54,11 +54,14 @@ struct TM5PreprocessingWorkspace{FT, R, B}
     detd_merged_src :: Array{FT, 3}
     physics_bufs    :: B
     regridder       :: R
+    target_nlon     :: Int
+    target_nlat     :: Int
 end
 
 """
     allocate_tm5_workspace(Nlon_src, Nlat_src, Nz_native, Nz, FT;
-                           regridder=nothing) -> TM5PreprocessingWorkspace
+                           regridder=nothing, target_nlon=Nlon_src,
+                           target_nlat=Nlat_src) -> TM5PreprocessingWorkspace
 
 Allocate the TM5 preprocessing workspace.  Pass `regridder=nothing`
 for identity (source and target grids match).  Otherwise pass a
@@ -70,6 +73,8 @@ function allocate_tm5_workspace(Nlon_src::Integer, Nlat_src::Integer,
                                 Nz_native::Integer, Nz::Integer,
                                 ::Type{FT};
                                 regridder = nothing,
+                                target_nlon::Integer = Nlon_src,
+                                target_nlat::Integer = Nlat_src,
                                 physics_eltype::Type{<:AbstractFloat} = Float32,
                                 ) where {FT <: AbstractFloat}
     col_scratch = (
@@ -103,6 +108,8 @@ function allocate_tm5_workspace(Nlon_src::Integer, Nlat_src::Integer,
         Array{FT, 3}(undef, Nlon_src, Nlat_src, Nz),
         physics_bufs,
         regridder,
+        Int(target_nlon),
+        Int(target_nlat),
     )
 end
 
@@ -265,7 +272,15 @@ function tm5_copy_or_regrid_ll!(dst_3d::AbstractArray{FT, 3},
                   "dst=$(size(dst_3d)) vs src=$(size(ws_field))")
         copyto!(dst_3d, ws_field)
     else
-        apply_regridder!(dst_3d, ws.regridder, ws_field)
+        size(dst_3d, 1) == ws.target_nlon && size(dst_3d, 2) == ws.target_nlat ||
+            error("TM5 LL regrid target shape mismatch: dst=$(size(dst_3d)), " *
+                  "expected ($(ws.target_nlon), $(ws.target_nlat), $(size(ws_field, 3)))")
+        size(dst_3d, 3) == size(ws_field, 3) ||
+            error("TM5 LL regrid vertical mismatch: dst Nz=$(size(dst_3d, 3)) " *
+                  "vs src Nz=$(size(ws_field, 3))")
+        src_flat = reshape(ws_field, size(ws_field, 1) * size(ws_field, 2), size(ws_field, 3))
+        dst_flat = reshape(dst_3d, size(dst_3d, 1) * size(dst_3d, 2), size(dst_3d, 3))
+        apply_regridder!(dst_flat, ws.regridder, src_flat)
     end
     return dst_3d
 end

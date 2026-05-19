@@ -28,15 +28,12 @@ mkpath(RUNS_DIR)
 
 # ----------- LL spectral preprocessing configs --------------------------------
 
-# Two LL preprocessing flavors:
-#   * `ll720_dec2021_<ft>_tm5.toml`  — TM5 convection enabled.  Native
-#     720×361 only; output is the source for the CS regrid.
-#   * `<grid>_dec2021_<ft>.toml`     — LL 72/144 with TM5 disabled
-#     (no `[tm5_convection]` block).  Used directly by the LL runs;
-#     advdiffconv configs aren't emitted for LL targets.
+# LL preprocessing configs now all carry TM5 sections.  Lower-resolution
+# LL targets synthesize source-grid PS from the same spectral day and
+# conservatively regrid ERA5 720×361 TM5 fields onto their target grids.
 const LL_GRIDS = [
-    (name = "ll72",  Nx = 72,  Ny = 37,  out = "ll72x37_advresln",  with_tm5 = false),
-    (name = "ll144", Nx = 144, Ny = 73,  out = "ll144x73_advresln", with_tm5 = false),
+    (name = "ll72",  Nx = 72,  Ny = 37,  out = "ll72x37_advresln",  with_tm5 = true),
+    (name = "ll144", Nx = 144, Ny = 73,  out = "ll144x73_advresln", with_tm5 = true),
     (name = "ll720", Nx = 720, Ny = 361, out = "ll720x361_v4",      with_tm5 = true),
 ]
 
@@ -108,17 +105,11 @@ end
 
 # ----------- Run configs ------------------------------------------------------
 
-# LL 72/144 binaries are built WITHOUT TM5 sections — the spectral
-# preprocessor's TM5 path is hard-coded to native physics-BIN shape
-# (720×361) and porting LL→LL regrid would require a new
-# `reconstruct_ll_fluxes!` helper. CS C48/C180 binaries DO carry TM5
-# (regridded LL 720 → CS via the existing path).  Consequence:
-# advdiffconv configs are emitted only for CS targets.
 function binary_folder(grid::Symbol, ft_tag::String)
     if grid === :ll72
-        "\$ATMOSTRANSPORT_DATA_ROOT/met/era5/ll72x37_advresln/transport_binary_v2_tropo34_dec2021_$ft_tag"
+        "\$ATMOSTRANSPORT_DATA_ROOT/met/era5/ll72x37_advresln/transport_binary_v2_tropo34_dec2021_$(ft_tag)_tm5"
     elseif grid === :ll144
-        "\$ATMOSTRANSPORT_DATA_ROOT/met/era5/ll144x73_advresln/transport_binary_v2_tropo34_dec2021_$ft_tag"
+        "\$ATMOSTRANSPORT_DATA_ROOT/met/era5/ll144x73_advresln/transport_binary_v2_tropo34_dec2021_$(ft_tag)_tm5"
     elseif grid === :c48
         "\$ATMOSTRANSPORT_DATA_ROOT/met/era5/cs_c48/transport_binary_v2_tropo34_dec2021_$(ft_tag)_tm5"
     elseif grid === :c180
@@ -221,11 +212,7 @@ const PRECS  = ("Float32", "Float64")
 const OPS    = (:advonly, :advdiff, :advdiffconv)
 
 count_runs = 0
-const LL_GRIDS_RUNTIME = (:ll72, :ll144)  # no TM5 carry-through → no advdiffconv
 for grid in (COARSE..., FINE...), ft_str in PRECS, op in OPS
-    # Skip advdiffconv on LL grids — their binaries don't carry TM5
-    # sections (path-1 scope decision; would need an LL→LL regrid path).
-    op === :advdiffconv && grid in LL_GRIDS_RUNTIME && continue
     hws = grid in COARSE ? (:cpu, :gpu) : (:gpu,)
     for hw in hws
         ft_tag = ft_str == "Float32" ? "f32" : "f64"

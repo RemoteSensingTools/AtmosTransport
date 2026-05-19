@@ -31,6 +31,7 @@ archaeology — both live in commit history.
 | Plan | Title | Status | Blocked by |
 |------|-------|--------|------------|
 | 24 | TM5 convection preprocessor integration | **in progress — Commit 0 baseline** | 23 |
+| 42 | Lat-lon TM5 down-resolution contract | shipped for spectral+physics path; LL->LL binary follow-up pending | 24, 41 |
 | 19 | Adjoint operator suite | pending | 21, 23 |
 | 20 | Documentation overhaul (Documenter + Literate) | pending | 21, 19 |
 

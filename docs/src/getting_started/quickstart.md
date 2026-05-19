@@ -88,11 +88,13 @@ Output variables are `<tracer>_column_mean(…)`,
 `column_air_mass_per_area(…)` — see [Inspecting output](@ref) for
 the full per-topology schema.
 
-The configs default to `use_gpu = true`. For CPU execution edit
-`[architecture] use_gpu = false` in the chosen config — every
-example in the bundle runs comfortably on a recent CPU at these
-resolutions, with the C90 run being the slowest at a few minutes
-per day.
+The configs default to `use_gpu = true` with automatic backend
+detection: CUDA on NVIDIA hosts and Metal on Apple Silicon. The runtime
+does not silently fall back to CPU if no usable GPU backend is available;
+it fails so the execution path is explicit. For CPU execution edit
+`[architecture] use_gpu = false` in the chosen config — every example
+in the bundle runs comfortably on a recent CPU at these resolutions, with
+the C90 run being the slowest at a few minutes per day.
 
 ## 3. Inspect the output
 

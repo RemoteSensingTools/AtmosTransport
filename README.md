@@ -143,6 +143,11 @@ and contains preprocessed transport binaries at four grid configurations
 [Quickstart with example data](https://RemoteSensingTools.github.io/AtmosTransport/dev/getting_started/quickstart/)
 docs page for the full walkthrough.
 
+Quickstart configs default to `use_gpu = true` with automatic backend
+detection: CUDA on NVIDIA hosts and Metal on Apple Silicon. If no usable GPU
+backend is available, the run fails rather than falling back to CPU; set
+`[architecture] use_gpu = false` in the TOML for CPU execution.
+
 ## Documentation
 
 Full documentation lives at

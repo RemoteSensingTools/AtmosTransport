@@ -115,31 +115,46 @@ matters when the IC interpolates from a different mesh.
 
 | Test | Asserts |
 |---|---|
-| `test/test_initial_condition_io.jl` | The `from_netcdf` IC kind round-trips a known field through the IC pipeline and asserts the recovered mixing ratio matches the source within tolerance. |
-| `test/test_basis_explicit_core.jl` | Dry-basis IC interpretation: `[init.uniform_value = 4.0e-4]` produces a tracer field whose `mixing_ratio(state, :CO2)` is `4.0e-4` exactly when `air_mass` is on dry basis. |
+| `test/test_initial_condition_io.jl` | The `file` / `netcdf` IC kinds round-trip a known field through the IC pipeline and assert the recovered mixing ratio matches the source within tolerance. |
+| `test/test_basis_explicit_core.jl` | Dry-basis IC interpretation: `[tracers.co2.init] kind = "uniform"; background = 4.0e-4` produces a tracer field whose `mixing_ratio(state, :CO2)` is `4.0e-4` exactly when `air_mass` is on dry basis. |
+
+## Plan 41 preprocessor contract suite
+
+The Plan 41 unified preprocessor (`run_unified_preprocessor_day!`)
+anchors its window-contract invariants with a dedicated test set:
+
+| Test | Asserts |
+| --- | --- |
+| `test_ll_preprocessor_contract.jl` | `LatLonContract` + `LatLonSpectralWindowWorkspace` + LL writer satisfy mass-balance and per-substep positivity gates. |
+| `test_rg_preprocessor_contract.jl` | Same on the face-indexed RG topology, including the boundary-stub-flux invariant for pole-singular faces. |
+| `test_cs_preprocessor_contract.jl` | Same on cubed-sphere, including the palindrome-budget positivity check. |
+| `test_preprocessor_unified_driver.jl` | The driver dispatches correctly across (source × vertical × target). |
+| `test_preprocessor_writer_adapters.jl` | Each `AbstractBinaryWriter` matches its paired `AbstractWindowContract` on basis and topology at the type level. |
+| `test_{ll,rg,cs}_spectral_unified_driver.jl` | End-to-end day builds for the spectral path. |
+
+## Plan 26 inversion / adjoint suite
+
+The CS surface-emission footprint and 4D-Var stack are anchored by:
+
+| Test | Asserts |
+| --- | --- |
+| `test_cs_ppm_adjoint_footprint.jl` | Kernel-level transposition + finite-difference VJPs for split-sweep schemes. |
+| `test_linrood_kernel_adjoints.jl` | Kernel-level transposition for the LinRood adjoint kernels (ORD=5 and ORD=7). |
+| `test_cs_inversion_truth_recovery.jl` | Synthetic-truth-recovery end-to-end through `cs_surface_flux_4dvar_solve` + L-BFGS. |
+| `test_cs_4dvar_preconditioned.jl`, `test_cs_lbfgs.jl`, `test_cs_optimizer_dispatch.jl` | Preconditioning, optimizer dispatch, and gradient identities. |
+| `test_cs_covariance.jl`, `test_cs_preconditioning.jl` | `apply_B_half!` / `apply_B_half_adjoint!` / `apply_B_half_inverse!` identities. |
+| `test_cs_observations_io.jl`, `test_cs_observation_binding.jl`, `test_cs_departures_io.jl` | Observation IO + bind-to-mesh + departures-file round-trip. |
+| `test_cs_stride_checkpoint.jl`, `test_cs_revolve_checkpoint.jl`, `test_cs_tape_mmap_roundtrip.jl` | Tape storage and checkpoint scheduler correctness. |
 
 ## Test-pass status
 
-The `core_tests` set in `test/runtests.jl` (lines 26–66) ships
-**39 test files** that all run without external met data. The CI
-workflow runs the core suite on every push and PR; recent runs are
-clean. Real-data tests (lines 75–92, gated by `--all`) require
-preprocessed binaries in `~/data/AtmosTransport/`.
+The `core_tests` set in `test/runtests.jl` ships ~75 test files that
+all run without external met data. The CI workflow runs the core
+suite on every push and PR. Real-data tests (gated by the `--all`
+flag) require preprocessed binaries in `~/data/AtmosTransport/`.
 
-Indicative case counts on the conservation-relevant tests (from the
-Phase 3 / 5 verification runs already in this branch):
-
-| Test file | Pass count |
-|---|---|
-| `test_advection_kernels.jl` | large (~hundreds across CPU+GPU × 4 schemes × multiple precisions) |
-| `test_geos_cs_passthrough.jl` | 3467 |
-| `test_geos_convection.jl` | 26 |
-| `test_geos_reader.jl` | 48 |
-| `test_cs_panel_geographic_roundtrip.jl` | 84 |
-| `test_replay_consistency.jl` | smaller (~30) — but the regressions it covers are critical-path |
-
-Total core-suite case count: thousands; CI reports per-test pass /
-fail breakdown on every run.
+Total core-suite case count is in the thousands; CI reports per-test
+pass / fail breakdown on every run.
 
 ## What's next
 

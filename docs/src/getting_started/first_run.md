@@ -83,8 +83,12 @@ Things to know:
 - **Topology** is auto-detected from the binary's `grid_type` header
   field. The runtime then dispatches `DrivenRunner` on the mesh type;
   no explicit `[grid]` block is needed for a run.
-- **`[run] scheme`** picks the advection scheme. For PPM, add
-  `ppm_order = 7` (orders 4-7).
+- **`[advection] scheme`** picks the advection scheme (`"upwind"` /
+  `"slopes"` / `"ppm"` / `"linrood"`). `[run] scheme` is the legacy
+  alias; if `[advection]` is present, `[run].scheme` is rejected.
+  `LinRoodPPMScheme` is CS-only and takes `ppm_order = 5` or `7`
+  (orders 5 and 7 are the only valid choices; `"ppm"` does not accept
+  `ppm_order`).
 - **`[tracers.<name>.init]`** declares the initial condition. Cubed-sphere
   supports `uniform | file | netcdf | file_field | catrine_co2`. Lat-lon
   additionally supports `bl_enhanced | gaussian_blob`.
@@ -95,9 +99,9 @@ Things to know:
 
 ## Where the met data comes from
 
-The runtime consumes **v4 transport binaries** — a self-describing flat
-format produced by the preprocessor. There are two preprocessing paths
-today:
+The runtime consumes **transport binaries** (`format_version = 3`) — a
+self-describing flat format produced by the preprocessor. There are two
+preprocessing paths today:
 
 1. **ERA5 spectral**. Reads vorticity, divergence, and log-PS GRIB files;
    synthesizes mass fluxes via Holton's continuity-consistent approach;
@@ -106,8 +110,8 @@ today:
 
 2. **GEOS native cubed-sphere**. Reads GEOS-IT C180 NetCDF
    (CTM_A1 hourly, CTM_I1 instantaneous, optionally A3mstE / A3dyn for
-   convection); applies dry-basis conversion, FV3 pressure-fixer cm, and
-   chained cross-day mass continuity. Configs in
+   convection); applies dry-basis conversion, column-balanced fluxes,
+   and chained cross-day mass continuity. Configs in
    `config/preprocessing/geosit_*.toml`.
 
 CLI:
@@ -122,16 +126,16 @@ julia --project=. scripts/preprocessing/preprocess_transport_binary.jl \
 
 The preprocessor writes one binary per day to the path declared in the
 config's `[output] directory`. A subsequent run config points at that
-directory via `[met_data] preprocessed_dir`.
+directory via `[input] folder`.
 
 The detailed preprocessing guide lands in Phase 5 of the documentation
 overhaul.
 
 ## Synthetic-fixture route (no external data)
 
-The following test files build complete v4 binaries from synthetic fixtures
-and exercise the runtime end-to-end. They are the most accurate "minimal
-working example" today:
+The following test files build complete transport binaries from synthetic
+fixtures and exercise the runtime end-to-end. They are the most accurate
+"minimal working example" today:
 
 | File | What it covers |
 |---|---|

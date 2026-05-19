@@ -7,6 +7,131 @@
 
 [![Documentation](https://img.shields.io/badge/docs-dev-blue.svg)](https://RemoteSensingTools.github.io/AtmosTransport/dev/)
 
+## Status tracker
+
+Single source of truth for what is production-ready, what is preview /
+experimental, and what is planned. Updated `2026-05-17`. Items move out
+of "experimental" only after a passing CPU+GPU regression suite and a
+documented validation run.
+
+### Legend
+
+| Symbol | Meaning |
+| :---: | --- |
+| ✅ | **Stable.** Used in production runs; CPU+GPU regression-tested; covered by docs. |
+| 🟡 | **Preview.** Implementation complete and tested in isolation; not yet validated on a multi-day campaign. Expect rough edges. |
+| 🧪 | **Experimental.** Wired in but the contract is not stable; API may move; treat output as research-only. |
+| 📐 | **Planned.** Scoped in a plan / memo; not yet implemented. |
+| ❌ | **Not supported.** Out of scope today; no current path to "yes". |
+
+### Grids and topology
+
+| Capability | Status | Notes |
+| --- | :---: | --- |
+| Lat-Lon (structured) | ✅ | Full operator suite, multi-tracer fused kernels |
+| Reduced Gaussian (face-indexed) | ✅ | Spectral path + ring-aware Poisson balance |
+| Cubed-sphere (gnomonic) | ✅ | Six-panel split-sweep + Lin-Rood ORD=5/7 |
+| Cubed-sphere (GEOS-native) | ✅ | Panel-5 rotation, GEOS-IT C180 validated |
+| Hybrid σ-pressure vertical | ✅ | TOA at k=1, surface at k=Nz |
+
+### Met sources and preprocessing
+
+| Capability | Status | Notes |
+| --- | :---: | --- |
+| ERA5 spectral → LL / RG / CS | ✅ | CDS API; `pin_global_mean_ps!` enabled |
+| GEOS-IT native → CS (C180) | ✅ | Adaptive substep schedule per window |
+| GEOS-FP native | 📐 | Source-axis abstraction in place |
+| MERRA-2 (OPeNDAP) | ❌ | `MERRA2Source` declared; `execute!` throws |
+| LL → CS conservative regrid | 🟡 | Works; not yet on the unified Plan 41 driver |
+| Compressed binaries at rest (zstd) | ✅ | User-side; runtime always reads uncompressed |
+
+### Advection schemes
+
+| Scheme | LL | RG | CS split-sweep | CS Lin-Rood | Multi-tracer fused |
+| --- | :---: | :---: | :---: | :---: | :---: |
+| `UpwindScheme` (1st order) | ✅ | ✅ | ✅ | — | ✅ |
+| `SlopesScheme` (Russell-Lerner) | ✅ | ✅ | ✅ | — | ✅ |
+| `PPMScheme` (Putman-Lin) | ✅ | ✅ | ✅ | — | ✅ |
+| `LinRoodPPMScheme{5}` | — | — | — | ✅ | ❌ (per-tracer loop) |
+| `LinRoodPPMScheme{7}` | — | — | — | 🟡 | ❌ (per-tracer loop) |
+
+### Diffusion (vertical)
+
+| Kz field | Status | Notes |
+| --- | :---: | --- |
+| `ProfileKzField` (static) | ✅ | Constant or analytic profile |
+| `DerivedKzField` (Beljaars–Viterbo) | ✅ | Default for ERA5 runs |
+| `WindowPBLKzField` | ✅ | PBL-aware variant |
+| `GCHPHoltslagBovilleKzField` | 🟡 | Non-local; one direct-physics test gap (shipped 2026-05-17) |
+| `PreComputedKzField` (`:Kz` payload) | 📐 | Section reserved in binary schema |
+| `DiffusiveSurfaceFluxBoundary` | 🟡 | Pre-Thomas mass add; differs from GCHP Neumann |
+
+### Convection
+
+| Operator | Status | Notes |
+| --- | :---: | --- |
+| `CMFMCConvection` (GCHP-style) | ✅ | Consumes `:cmfmc` (+ optional `:dtrain`) |
+| `TM5Convection` (four-field) | ✅ | Consumes `:entu / :detu / :entd / :detd` |
+| Placement: after-FV (GCHP-style) | ✅ | Default |
+| Placement: in-palindrome (TM5-style) | 📐 | `[run].convection_placement` planned |
+
+### Surface flux and chemistry
+
+| Operator | Status | Notes |
+| --- | :---: | --- |
+| `SurfaceFluxOperator` + `PerTracerFluxMap` | ✅ | kg/s per cell (area-integrated) contract |
+| EDGAR / GFED / GridFED / Catrine sources | ✅ | Each has a typed `AbstractSurfaceFluxSource` |
+| `ExponentialDecay` (radioactive / first-order) | ✅ | Used for `222Rn → 222Pb` etc. |
+| Wet deposition | ❌ | No `AbstractWetDeposition` family yet |
+| Dry deposition (resistance-based) | ❌ | Today only via surface flux |
+| Photolysis / fast chemistry | ❌ | Out of scope |
+
+### Adjoint and inversion
+
+| Capability | Status | Notes |
+| --- | :---: | --- |
+| Forward tape + checkpoint (revolve) | ✅ | `:device`, `:pinned_host`, `:mmap` storage |
+| Surface-emission footprints (LinRood ORD=5) | ✅ | `cs_surface_emission_footprint` |
+| Lin-Rood ORD=7 adjoint | 🟡 | Partial; panel-boundary correction wiring open |
+| TM5 convection adjoint | 🧪 | Column solve transposed; full regression open |
+| CMFMC convection adjoint | 📐 | Forward only |
+| `copy_corners` reverse | 📐 | CS halo-corner adjoint gap |
+| Covariance B^{1/2} | ✅ | B1 shipped (`src/Inversion/Covariance.jl`) |
+| Preconditioning + log-normal bijection | 📐 | Plan 26 B2 |
+| End-to-end 4D-Var driver | 📐 | Plan 26 Phase C |
+
+### Backends and IO
+
+| Capability | Status | Notes |
+| --- | :---: | --- |
+| CPU (multi-threaded) | ✅ | Reference path; bit-reproducible |
+| NVIDIA CUDA | ✅ | End-to-end; production runs on L40S / A100 |
+| Apple Silicon Metal | 🟡 | Float32 only; weakdep extension |
+| AMD ROCm | 📐 | Backend axis in place; not wired |
+| mmap binary reader | ✅ | Zero-copy `reinterpret` slices |
+| NetCDF snapshot writer | ✅ | Typed `SingleOutputFile` / `DailyOutputFiles` |
+| Replay-gate (write-time) | ✅ | Always on in preprocessing |
+| Replay-gate (load-time, opt-in) | ✅ | `[run].replay_check = true` |
+
+### Documentation
+
+| Section | Status | Notes |
+| --- | :---: | --- |
+| For TM5 & GCHP users | ✅ | Philosophy, binary pipeline, operators, adjoints, kernels |
+| Concepts (grids, state, operators, binary) | ✅ | |
+| Preprocessing reference | 🟡 | Plan 41 invariants not yet folded in |
+| Theory (mass conservation, advection) | ✅ | |
+| Tutorials | 🟡 | Synthetic LL only; real-data tutorials planned |
+| API reference (auto-generated) | 🟡 | Docstrings incomplete in several modules |
+| Validation campaigns / inter-comparison | 📐 | Plan 40 ledger; not yet a top-level page |
+
+### Known broken
+
+| Item | Status | Notes |
+| --- | :---: | --- |
+| `MERRA2Source` / `OPeNDAPProtocol` | 🔴 broken | `execute!` is a permanent `error()` stub. |
+
+
 A Julia-based, GPU-portable atmospheric tracer transport model for offline
 chemistry / chemical-transport applications. Designed for **mass-conserving**
 advection, convection, and boundary-layer diffusion on **lat-lon, reduced
@@ -124,21 +249,26 @@ julia --project=. -e 'using Pkg; Pkg.instantiate()'
 # 2. Verify the install (synthetic-fixture suite, no external data)
 julia --project=. -e 'using Pkg; Pkg.test()'
 
-# 3. Download the quickstart bundle (preprocessed ERA5 binaries)
-bash scripts/download_quickstart_data.sh ll       # newcomer path; just LL (~1 GB)
-# or `bash scripts/download_quickstart_data.sh`   # both LL and CS bundles (~2.7 GB)
+# 3. Download the quickstart v2 bundle (preprocessed ERA5 v3 binaries)
+bash scripts/download_quickstart_data.sh ll       # newcomer path; just LL (~1.0 GB)
+# or `bash scripts/download_quickstart_data.sh`   # both LL and CS bundles (~2.9 GB)
 
-# 4. Run a 3-day advection-only simulation (defaults to GPU; set
-#    [architecture] use_gpu = false in the TOML for CPU)
+# 4. Run a 3-day advection-only simulation (GPU by default;
+#    set [architecture] use_gpu = false in the TOML for CPU)
 julia --project=. scripts/run_transport.jl config/runs/quickstart/ll72x37_advonly.toml
 ```
 
 The bundle is hosted as assets on the
-[`data-quickstart-v1` GitHub Release](https://github.com/RemoteSensingTools/AtmosTransport/releases/tag/data-quickstart-v1)
+[`data-quickstart-v2` GitHub Release](https://github.com/RemoteSensingTools/AtmosTransport/releases/tag/data-quickstart-v2)
 and contains preprocessed transport binaries at four grid configurations
-(LL 72×37, LL 144×73, CS C24, CS C90, all F32, Dec 1-3 2021). See the
+(LL 72x37, LL 144x73, CS C24, CS C90, all F32, Dec 1-3 2021). See the
 [Quickstart with example data](https://RemoteSensingTools.github.io/AtmosTransport/dev/getting_started/quickstart/)
 docs page for the full walkthrough.
+
+Quickstart configs default to `use_gpu = true` with automatic backend
+detection: CUDA on NVIDIA hosts and Metal on Apple Silicon. If no usable GPU
+backend is available, the run fails rather than falling back to CPU; set
+`[architecture] use_gpu = false` in the TOML for CPU execution.
 
 ## Documentation
 

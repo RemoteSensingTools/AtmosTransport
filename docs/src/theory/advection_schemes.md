@@ -9,7 +9,7 @@ in reconstruction order, monotonicity, and panel-edge handling.
 | Scheme | Smooth-flow accuracy | Monotone? | Positive? | LL | CS | RG |
 |---|---|---|---|---|---|---|
 | `UpwindScheme` | 1st order (donor cell) | yes (trivially) | yes (trivially) | yes | yes | **yes — RG's only option today** |
-| `SlopesScheme{L}` | 2nd order in smooth regions (van Leer / Russell-Lerner) | yes if `L = MonotoneLimiter` (default) | only with `L = PositivityLimiter`, and even then only weakly (see [Limiters](@ref Limiters) below) | yes | yes | no (rejected at `StrangSplitting.jl:1237`) |
+| `SlopesScheme{L}` | 2nd order in smooth regions (van Leer / Russell-Lerner) | yes if `L = MonotoneLimiter` (default) | only with `L = PositivityLimiter`, and even then only weakly (see [Limiters](@ref Limiters) below) | yes | yes | no (the face-indexed Strang path restricts to `AbstractConstantScheme`) |
 | `PPMScheme{L}` | 3rd order in smooth regions (Colella-Woodward 1984) | yes with `MonotoneLimiter`, may oscillate without | as `Slopes` | yes | yes — covered by `test/test_cubed_sphere_advection.jl` | no (same rejection) |
 | `LinRoodPPMScheme{ORD}` | piecewise-parabolic; `ORD ∈ {5, 7}` selects the boundary stencil | yes (FV3 piecewise-parabolic limiter) | yes | n/a | yes — uses FV3 cross-term advection (`fv_tp_2d_cs!`) | n/a |
 
@@ -38,10 +38,11 @@ with `α = F / m` the local Courant fraction (`F` is the per-substep
 mass amount stored in the binary, so the `Δt` factor is already
 absorbed into `F` — see [Mass conservation](@ref) for the
 `flux_kind = :substep_mass_amount` convention). This is implemented
-unchanged from TM5's `advectx__slopes` / `advecty__slopes` routines
-(`src/Operators/Advection/reconstruction.jl::_slopes_face_flux`,
-declared at line 266 with the canonical formula derivation in the
-docstring at lines 213-265).
+unchanged from TM5's `advectx__slopes` / `advecty__slopes` routines;
+the production kernel is
+`_slopes_face_flux` in
+`src/Operators/Advection/reconstruction.jl`, with the canonical
+formula derivation in that function's docstring.
 
 **Properties:**
 - 2nd order in smooth regions even with `NoLimiter` (the centered
@@ -75,12 +76,12 @@ The face flux is the integral of this parabola over the swept region
   limiter PPM is **not monotone** and can produce small oscillations
   near discontinuities.
 - Shipped on lat-lon AND cubed-sphere structured layouts (the CS
-  case is exercised by `test/test_cubed_sphere_advection.jl:374-455`).
+  case is exercised by `test/test_cubed_sphere_advection.jl`).
   Face-connected PPM for the **reduced-Gaussian** topology is not
   currently wired — and neither is `SlopesScheme` on RG. The
-  face-indexed Strang path at `StrangSplitting.jl:1237` rejects
-  every advection scheme except `UpwindScheme`, so **`UpwindScheme`
-  is the only advection option for RG production runs today**.
+  face-indexed Strang path restricts to `AbstractConstantScheme`, so
+  **`UpwindScheme` is the only advection option for RG production
+  runs today**.
 
 For cubed-sphere production runs that need the FV3 cross-term
 advection at panel edges, `LinRoodPPMScheme` (next section) is the
@@ -150,21 +151,27 @@ Strang palindrome use the same per-direction count to preserve time
 symmetry.
 
 `_subcycling_pass_count` in
-`src/Operators/Advection/StrangSplitting.jl:620-622` is the
-per-direction counter; the structured per-direction max-α helpers
-are `_x_subcycling_pass_count` / `_y_subcycling_pass_count` /
-`_z_subcycling_pass_count` near `StrangSplitting.jl:753`. The CS
-analogue lives in `src/Operators/Advection/CubedSphereStrang.jl:389`.
+`src/Operators/Advection/StrangSplitting.jl` is the per-direction
+counter; the structured per-direction max-α helpers are
+`_x_subcycling_pass_count` / `_y_subcycling_pass_count` /
+`_z_subcycling_pass_count` in the same file. The CS analogue is
+`_cs_static_subcycle_count` plus the palindrome-aware
+`_cs_static_palindrome_subcycle_count` in
+`src/Operators/Advection/CubedSphereStrang.jl`. The CS palindrome
+budget sums all six legs and uses
+`2·(out_x + out_y + out_z) / m_start` — see
+[Operators on top of the binary](../for_tm5_gchp_users/operators_on_binaries.md#cubed-sphere-palindrome-and-the-positivity-budget)
+for the derivation.
 
 The `cfl_limit` defaults are baked into the per-topology Strang
 entry points:
 
-| Topology | Default `cfl_limit` | Source |
-|---|---|---|
-| Lat-lon (structured-grid Strang) | `1.0` | `StrangSplitting.jl:964` |
-| Reduced Gaussian (face-indexed Strang — separate code path from LL) | `1.0` | `StrangSplitting.jl:1182` |
-| Cubed-sphere (`SlopesScheme` / `PPMScheme`) | `0.95` | `StrangSplitting.jl:1063` |
-| Cubed-sphere (`LinRoodPPMScheme`) | not used — the LinRood path **does not consume** `cfl_limit` and therefore does not subcycle on the standard advection sub-step. The Lin-Rood operator is run once per sub-step regardless of α. | `LinRood.jl:926` |
+| Topology | Default `cfl_limit` | Notes |
+| --- | --- | --- |
+| Lat-lon (structured-grid Strang, `strang_split!`) | `1.0` | |
+| Reduced Gaussian (face-indexed Strang) | `1.0` | Only `UpwindScheme` reachable today. |
+| Cubed-sphere (`SlopesScheme` / `PPMScheme`, `strang_split_cs!`) | `0.95` | Palindrome-budget metric. |
+| Cubed-sphere (`LinRoodPPMScheme`) | not used | The LinRood path does not consume `cfl_limit`; it relies on the binary's adaptive substep schedule plus in-kernel 0.9 × cell-mass flux clipping for positivity. |
 
 If you're running `LinRoodPPMScheme` on a flow with locally large
 Courant numbers, the recourse is to halve `dt` in the run config
@@ -222,19 +229,19 @@ between them. Performance-tuning notes are inline at line 118.
 
 ## Where the schemes meet the code
 
-| Concept | File:line |
-|---|---|
-| Scheme abstract root | `src/Operators/Advection/schemes.jl::AbstractAdvectionScheme` (line 67) |
-| `UpwindScheme` | `schemes.jl:195` |
-| `SlopesScheme{L}` | `schemes.jl:233` |
-| `PPMScheme{L}` | `schemes.jl:260` |
-| `LinRoodPPMScheme{ORD}` | `schemes.jl:288` |
-| Limiter primitives | `src/Operators/Advection/limiters.jl` |
-| Slopes face flux (Russell-Lerner formula) | `src/Operators/Advection/reconstruction.jl::_slopes_face_flux` (line 266) |
-| Strang palindrome | `src/Operators/Advection/StrangSplitting.jl:1363-1410` |
-| CFL subcycle counters | `StrangSplitting.jl::_subcycling_pass_count` (line 620), `_static_*_subcycle_count` (lines 679-694) |
+| Concept | File / function |
+| --- | --- |
+| Scheme abstract root | `src/Operators/Advection/schemes.jl::AbstractAdvectionScheme` |
+| `UpwindScheme`, `SlopesScheme{L}`, `PPMScheme{L}`, `LinRoodPPMScheme{ORD}` | `src/Operators/Advection/schemes.jl` |
+| Limiter primitives (branchless, GPU-safe) | `src/Operators/Advection/limiters.jl` |
+| Slopes face flux (Russell-Lerner formula) | `src/Operators/Advection/reconstruction.jl::_slopes_face_flux` |
+| Structured-grid Strang palindrome | `src/Operators/Advection/StrangSplitting.jl::strang_split!` |
+| Cubed-sphere Strang palindrome | `src/Operators/Advection/CubedSphereStrang.jl::strang_split_cs!` |
+| CFL subcycle counters (structured) | `StrangSplitting.jl::_subcycling_pass_count`, `_static_*_subcycle_count` |
+| CFL subcycle counters (CS) | `CubedSphereStrang.jl::_cs_static_subcycle_count`, `_cs_static_palindrome_subcycle_count` |
+| CS multi-tracer fused kernels (X / Y / Z) | `src/Operators/Advection/multitracer_kernels.jl` |
 | CS panel-edge halo sync | `src/Grids/PanelConnectivity.jl` + `cs_transport_helpers.jl::_propagate_cs_outflow_to_halo!` |
-| Lin-Rood cross-term + del-2 damping | `src/Operators/Advection/LinRood.jl` |
+| Lin-Rood cross-term + del-2 damping + fillz | `src/Operators/Advection/LinRood.jl` |
 
 ## What's next
 

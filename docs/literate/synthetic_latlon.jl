@@ -82,9 +82,14 @@ caps
 
 driver = TransportBinaryDriver(bin_path; FT = Float64, arch = CPU())
 
+# `CellState` stores tracers as **mass**, not VMR. With `air_mass = 1`
+# everywhere, a dry VMR of 4e-4 corresponds to a tracer mass of 4e-4
+# per cell (since `tracer_mass = χ × air_mass`).
+air_mass_arr = ones(Float64, 8, 4, 2)
+co2_vmr      = 400e-6
 state = CellState(DryBasis,
-                  ones(Float64, 8, 4, 2);
-                  CO2 = fill(400e-6, 8, 4, 2))
+                  air_mass_arr;
+                  CO2 = fill(co2_vmr * air_mass_arr[1, 1, 1], 8, 4, 2))
 
 fluxes = allocate_face_fluxes(grid.horizontal, 2; FT = Float64,
                               basis = DryBasis)
@@ -127,8 +132,8 @@ close(driver)
 # - Swap `UpwindScheme()` for `SlopesScheme()` or `PPMScheme()` to
 #   see scheme-dependent behavior on the same forcing.
 # - Add a non-trivial initial condition to `CellState`'s `CO2 = …`
-#   keyword (e.g. a Gaussian blob) and watch advection move it.
-# - When the downloadable quickstart bundle lands, swap the synthetic
-#   binary for a real preprocessed ERA5 day from
-#   `~/data/AtmosTransport_quickstart/met/era5_ll72x37_dec2021_f32/`
+#   keyword (e.g. a Gaussian blob, remembering tracer storage is mass
+#   not VMR) and watch advection move it.
+# - Swap the synthetic binary for a real preprocessed ERA5 day
+#   produced by `scripts/preprocessing/preprocess_transport_binary.jl`
 #   and the same code structure runs against real meteorology.

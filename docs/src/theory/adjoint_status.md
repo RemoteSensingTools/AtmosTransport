@@ -1,179 +1,164 @@
 # Adjoint status
 
-This page is a candid statement of what's actually shipped on the
-adjoint side **vs** what the top-level README claims. The short
-version: **a production discrete adjoint is not yet implemented**.
-There is a tested CS surface-flux prototype, but the README's
-"Hand-coded discrete adjoint: TM5-4DVar-style adjoint with Revolve
-checkpointing" remains a roadmap goal, not shipped production code.
-
-This page exists so that anyone reading the docs gets the truth from
-the docs and not from outdated marketing copy.
+This page is a candid statement of what is shipped on the adjoint
+side. As of 2026-05-17 the picture is significantly different from
+what earlier drafts of this page claimed: Plan 25 (LinRood adjoint)
+and Plan 26 (TM5-style inversion scaffold) are largely shipped, and
+the inversion stack is on CI. The roadmap section below tracks what
+is and is not done by stage.
 
 ## What is shipped
 
-The forward transport model — advection (4 schemes), convection
-(CMFMC + TM5), vertical diffusion (Implicit / Backward Euler), surface
-flux source — is fully shipped, GPU-portable, mass-conserving, and
-covered by the test suite documented in [Conservation budgets](@ref).
+### Forward operators (unchanged)
 
-There is now one deliberately limited adjoint-adjacent prototype:
-`AtmosTransport.Adjoints.cs_surface_emission_footprint` runs a
-kernelized reverse pass for CS split-sweep advection, with optional
-midpoint implicit vertical diffusion and post-transport
-`CMFMCConvection` or `TM5Convection`,
-accumulating source-receptor footprints for surface-emission controls.
-The supported linearized advection schemes are `UpwindScheme()`,
-`SlopesScheme(NoLimiter())`, and `PPMScheme(NoLimiter())`. The
-monotone-limited split-sweep `PPMScheme()` is also supported via a
-stored tracer branch tape around the base trajectory.
-`LinRoodPPMScheme` is supported at the **kernel** level (Plan 25
-Commits 1–4) for ORD=5 only. The shipped reverse-mode counterparts in
-`src/Operators/Advection/linrood_adjoint_kernels.jl` are:
+The forward transport model — advection (four schemes: `UpwindScheme`,
+`SlopesScheme`, `PPMScheme`, `LinRoodPPMScheme`), convection (CMFMC +
+TM5), implicit vertical diffusion (Beljaars–Viterbo / Holtslag–Boville
+Kz fields), surface flux source — is fully shipped, GPU-portable,
+mass-conserving, and covered by the test suite documented in
+[Conservation budgets](@ref).
 
-1. `apply_linrood_update_adjoint!` (averaged-flux update)
-2. `apply_pre_advect_x_adjoint!`
-3. `apply_pre_advect_y_adjoint!`
-4. `apply_ppm_x_face_from_q_adjoint!`
-5. `apply_ppm_y_face_from_q_adjoint!`
-6. `apply_ppm_x_face_adjoint!` (rm-input variant)
-7. `apply_ppm_y_face_adjoint!` (rm-input variant)
+### Tape, checkpoint, and reverse pass
 
-…with transposition tests in `test/test_linrood_kernel_adjoints.jl`. A
-single-panel zero-halo composition
-`apply_linrood_horizontal_adjoint_single_panel!` is verified by a
-finite-difference JVP/VJP check. Cross-panel halo adjoint integration
-into `cs_surface_emission_footprint` (Plan 25 Commits 5–6) is the
-remaining gap; until that lands,
-`cs_surface_emission_footprint(scheme=LinRoodPPMScheme(),…)` errors
-because `LinRoodPPMScheme` is not in `CSAdjointSupportedScheme`. The
-plan and progress are tracked in
-`docs/plans/25_LINROOD_ADJOINT/NOTES.md`. The companion
-`cs_surface_emission_footprint_from_seed` accepts an explicit final
-`dJ/drm` seed so arbitrary observation operators can reuse the same
-CPU/GPU kernels. `cs_surface_flux_jacobian` batches layer/column
-objectives and aggregates per-step footprints into named user-defined
-time windows. `cs_surface_flux_4dvar` adds the prototype cost/gradient
-layer: step-indexed scalar observations, named surface-flux controls,
-and optional diagonal background terms. `cs_surface_flux_4dvar_optimize`
-wraps that evaluator in a small dependency-free gradient-descent driver
-with kernelized control updates, so the path can run a real prototype
-inversion without an external optimizer package. The tests check the
-resulting vector-Jacobian products and 4D-Var gradients against
-directional finite-difference probes, including the Backward-Euler
-diffusion transpose and the CMFMC/TM5 convection transposes. This is
-useful for inverse-system design and plotting, but it is **not** the
-full production adjoint suite.
+`src/Adjoints/` ships a full discrete-adjoint pipeline for the
+cubed-sphere split-sweep path, with a separate kernel-level pipeline
+for `LinRoodPPMScheme` integrated through `cs_surface_emission_footprint`.
 
-The forward operators are written so a future adjoint pass can
-transpose them mechanically. Three concrete examples:
+The shipped pieces, all exported through `AtmosTransport.Adjoints`:
 
-- **Vertical diffusion** — the Thomas-tridiagonal coefficients
-  `(a, b, c)` are kept as **named locals at every level `k`** rather
-  than fused into a pre-factored `(b, factor)` form. The Diffusion
-  module docstring (`src/Operators/Diffusion/Diffusion.jl:20-22`)
-  records this as a deliberate adjoint-readiness choice. The CS
-  footprint prototype now uses that layout to transpose the
-  Backward-Euler column solve, including the tracer-mass/VMR scaling.
-- **Convection (CMFMC + TM5)** — the apply!() contract takes a
-  `ConvectionForcing` carrier explicitly so the operator does not
-  call `current_time` internally; this keeps the operator pure-
-  functional in the time variable, which simplifies the eventual
-  adjoint integration. The CS footprint prototype includes
-  `CMFMCConvection` by transposing the well-mixed sub-cloud,
-  updraft, and tendency passes, and includes `TM5Convection` by
-  rebuilding the same per-column matrix and solving with the
-  transposed LU factors.
+| Surface | What it does |
+| --- | --- |
+| `cs_surface_emission_footprint` | Forward → tape → reverse pass driver for CS, returning `dJ/dE_t` at every surface step |
+| `cs_surface_emission_footprint_from_seed` | Same, but accepts an explicit final `dJ/drm` seed for arbitrary observation operators |
+| `cs_surface_flux_jacobian` | Batches layer/column objectives, aggregates per-step footprints into named user windows |
+| `cs_surface_flux_4dvar` | 4D-Var cost / gradient with named controls, step-indexed scalar observations, diagonal background |
+| `cs_surface_flux_4dvar_optimize` | Dependency-free gradient-descent driver for the above |
+| `cs_surface_flux_4dvar_solve` | Production driver with optimizer choice (`CSGradientDescent` / `CSLBFGS`) |
+
+The adjoint supports the following advection schemes (full union in
+`CSAdjointSupportedScheme`):
+
+- `UpwindScheme()`
+- `SlopesScheme(NoLimiter())`
+- `PPMScheme(NoLimiter())`
+- `PPMScheme(MonotoneLimiter())` — via a stored tracer-branch tape around the base trajectory
+- `LinRoodPPMScheme(; ppm_order = 5)` — Plan 25 Commits 1–6 shipped
+- `LinRoodPPMScheme(; ppm_order = 7)` — Plan 25 ORD=7 also shipped
+
+The supporting kernel adjoints in
+`src/Operators/Advection/linrood_adjoint_kernels.jl` are
+transposition-tested (`test/test_linrood_kernel_adjoints.jl`) and
+finite-difference VJP-tested via single-panel and cross-panel halo
+compositions.
+
+### Checkpoint schedules
+
+`src/Tape/CheckpointSchedule.jl` ships three checkpoint policies,
+selectable via the `checkpoint` kwarg of `cs_surface_emission_footprint`:
+
+| Policy | Memory | Recompute |
+| --- | --- | --- |
+| `FullCheckpoint` | O(N) state snapshots | none — fastest reverse pass |
+| `StrideCheckpoint(stride)` | O(N/stride) | replays each stride forward |
+| `RevolveCheckpoint(budget)` | O(log N) | bisection-based; logarithmic-memory variant of Griewank–Walther |
+
+`RevolveCheckpoint` is a bisection variant rather than the optimal
+binomial Revolve, but it ships the logarithmic-memory contract and is
+on the test suite (`test_cs_stride_checkpoint.jl`,
+`test_cs_revolve_checkpoint.jl`).
+
+### Tape storage backends
+
+Tape records can live on the device, in pinned-host memory (default
+for GPU runs), or on disk via mmap — selectable via the `tape_storage`
+kwarg (`:device` / `:pinned_host` / `:mmap`). Storage backends are
+defined in `src/Tape/TapeStorage.jl` and `src/Tape/MmapTapeStorage.jl`;
+the mmap path is covered by `test_cs_tape_mmap_roundtrip.jl`.
+
+### Inversion scaffold (Plan 26)
+
+`src/Inversion/` ships:
+
+| Module | Surface |
+| --- | --- |
+| `Covariance.jl` | `DiagonalCSCovariance`, `IsotropicGaussianCSCovariance`, `apply_B_half!`, `apply_B_half_adjoint!`, `apply_B_half_inverse!` |
+| `Preconditioning.jl` | `apply_preconditioner!`, `LinearOptimType`, `LogNormalOptimType` |
+| `Optimizer.jl` | `AbstractCSOptimizer`, `CSGradientDescent`, `CSLBFGS` (via multiple-dispatch surfaces) |
+| `Jacobian.jl` | Footprint-Jacobian assembly for batched observation operators |
+| `CostGradient.jl` | 4D-Var cost / gradient evaluator with preconditioning |
+| `Observations.jl`, `ObservationBinding.jl`, `ObservationsIO.jl` | Typed observation surface + Plan-26-D3 schema |
+| `DeparturesIO.jl` | Departures-file IO |
+
+These are all on CI. Full inversion tests:
+`test_cs_4dvar_preconditioned.jl`, `test_cs_lbfgs.jl`,
+`test_cs_inversion_driver.jl`, `test_cs_inversion_truth_recovery.jl`,
+`test_cs_iteration_log.jl`, `test_cs_observations_io.jl`,
+`test_cs_observation_binding.jl`, `test_cs_departures_io.jl`,
+`test_cs_covariance.jl`, `test_cs_preconditioning.jl`,
+`test_cs_optimizer_dispatch.jl`.
+
+## What is not yet shipped
+
+| Item | Notes |
+| --- | --- |
+| **Optimal binomial Revolve** | `RevolveCheckpoint` ships as the bisection variant — logarithmic memory but not the Griewank–Walther optimal recompute count. Optimal binomial Revolve is the next refinement. |
+| **CMFMC convection adjoint** | The four-field TM5 convection has a transposed column solve; CMFMC does not have an adjoint kernel yet, so `cs_surface_emission_footprint` with `CMFMCConvection` is forward-only. |
+| **`copy_corners` reverse** | Cubed-sphere halo-corner exchange in the reverse pass is the remaining CS-side gap. |
+| **TM5-4DVAR cross-validation** | Synthetic truth-recovery via `test_cs_inversion_truth_recovery.jl` is on CI; a side-by-side parity run against TM5-4DVAR on real data has not been published. |
+| **Tangent-linear model** | Forward TL is not exposed as a separate driver. If you need it, use the reverse pass plus identity seeding. |
+| **LinRood ORD=7 panel-boundary adjoint records** | ORD=7 kernel adjoints ship, but the panel-boundary correction is folded into the ORD=5 record type; a dedicated ORD=7 record family is a roadmap item. |
+
+## Adjoint-readiness in the forward design
+
+Three concrete forward-design choices that pay off in the adjoint:
+
+- **Vertical diffusion** — the Thomas-tridiagonal coefficients `(a, b,
+  c)` are kept as **named locals at every level `k`** rather than fused
+  into a pre-factored `(b, factor)` form. The Diffusion module
+  docstring records this as a deliberate adjoint-readiness choice. The
+  CS reverse pass uses that layout to transpose the Backward-Euler
+  column solve, including the tracer-mass / VMR scaling.
+- **Convection (CMFMC + TM5)** — `apply!` takes a `ConvectionForcing`
+  carrier explicitly so the operator does not call `current_time`
+  internally; this keeps the operator pure-functional in the time
+  variable. The TM5 reverse pass rebuilds the same per-column matrix
+  and solves with the transposed LU factors.
 - **Advection** — the Strang palindrome's time symmetry means the
   forward integrator is its own time-reverse; the adjoint of the
   composition is the composition of the adjoints in reverse order,
   which is structurally the same code path with each operator's
   adjoint substituted in.
 
-## What is NOT shipped
+## How to use the adjoint today
 
-There is no production adjoint suite in `src/`. Specifically:
+```julia
+using AtmosTransport
+using AtmosTransport.Adjoints
 
-| Claimed in README | Actual status |
-|---|---|
-| "Hand-coded discrete adjoint: TM5-4DVar-style adjoint" | Not shipped as a full suite. `src/Adjoints` has a limited CS split-sweep surface-emission footprint reverse pass for the schemes listed above plus midpoint implicit vertical diffusion and post-transport CMFMC/TM5 convection. Plan 25 (in progress) ships the kernel-level LinRood adjoints and a single-panel composition; no CS-footprint-integrated / cross-panel LinRood adjoint driver yet (Plan 25 Commits 5-6 remaining). No general production `adjoint_advect!`, `adjoint_diffuse!`, `adjoint_convect!`, or checkpointed driver exists. |
-| "with Revolve checkpointing for bounded memory" | No Revolve integration. No checkpoint scheduler. |
-| Adjoint test suite | No production forward+backward suite and no Revolve scheduler tests. However: `test/test_diffusion_kernels.jl:181-232` and `test/test_cmfmc_convection.jl:213-263` contain **adjoint-identity / transposition checks** for the specific kernels they cover, asserting `⟨A x, y⟩ = ⟨x, Aᵀ y⟩` to floating-point. `test/test_cs_ppm_adjoint_footprint.jl` adds kernelized CS split-sweep + limited-PPM branch-tape + diffusion + CMFMC/TM5-convection surface-emission footprint/VJP checks against directional finite differences, time-window Jacobian aggregation tests, and prototype 4D-Var cost-gradient checks. These verify adjoint contracts and prototype source-receptor generation, not a full production discrete adjoint. |
-| 4DVar driver | Prototype `cs_surface_flux_4dvar` and `cs_surface_flux_4dvar_optimize` exist for CS surface-flux controls and scalar layer/column observations. No checkpointed production driver yet. |
+# Run the forward + tape + reverse pipeline for a single objective.
+result = cs_surface_emission_footprint(
+    driver, model;
+    scheme       = LinRoodPPMScheme(; ppm_order = 5),
+    objective    = SiteConcentrationObjective(:MLO; lev = 1),
+    checkpoint   = RevolveCheckpoint(budget = 8),
+    tape_storage = :pinned_host,
+)
+# result.footprints[t] :: NTuple{6, Matrix{FT}} — dJ/dE_t at step t.
+```
 
-Legacy adjoint **templates** live under
-`docs/resources/developer_notes/legacy_adjoint_templates/` —
-specifically `Adjoint.jl`, `boundary_layer_diffusion_adjoint.jl`,
-`checkpointing.jl`, `cost_functions.jl`, `gradient_test.jl`. **These
-files are not compiled into the package.** They are reference
-material from earlier prototypes; rolling them forward into the
-current architecture is the work that is not yet done.
-
-## The roadmap
-
-Adjoint development is staged. The current status is:
-
-| Stage | Done? |
-|---|---|
-| Forward operator design that does not preclude an adjoint | yes (advection / diffusion / convection apply!() contract; Thomas solver coefficient layout; ConvectionForcing time-pure dispatch) |
-| Per-operator hand-coded adjoint kernels | partial — CS split-sweep advection, implicit vertical diffusion, and CMFMC/TM5 convection in the footprint path |
-| Adjoint test suite (gradient checks via finite-difference probe) | partial — CS PPM emission-footprint prototype, time-window Jacobian aggregation, plus existing kernel transposition checks |
-| Revolve-style checkpoint scheduler | not yet |
-| 4DVar driver | partial — prototype CS surface-flux cost/gradient evaluator plus dependency-free descent wrapper, no checkpointed production driver |
-| Cross-validation against TM5-4DVar | not yet |
-
-In-source comments tag the adjoint as "future" / "plan 19" in
-several locations:
-
-- `src/Operators/Diffusion/Diffusion.jl:20-22` — coefficient layout
-  rationale.
-- `src/Operators/Diffusion/diffusion_kernels.jl:27-32` — references
-  the legacy template under `docs/resources/`.
-- `src/Operators/Diffusion/thomas_solve.jl:28-31` — explicit "future
-  adjoint kernel calls this same `solve_tridiagonal!` after
-  coefficient transposition."
-- `src/Operators/Convection/CMFMCConvection.jl` and
-  `TM5Convection.jl` — both reference plan-19 adjoint as the future
-  consumer of the current forward design.
-
-## What this means for users
-
-If your work needs gradients of model output with respect to model
-input — surface fluxes, initial conditions, parameter values — you
-have three options today:
-
-1. **Use the prototype CS surface-flux path.**
-   `cs_surface_flux_4dvar` provides tested gradients for named
-   surface-flux windows, step-indexed layer/column observations,
-   optional implicit vertical diffusion, and CMFMC/TM5 convection.
-   `cs_surface_flux_4dvar_optimize` adds a simple line-searched
-   descent loop around those gradients.
-2. **Use external automatic differentiation.** Some users have
-   reported success wrapping the forward `step!` call with
-   `Enzyme.jl` or `ReverseDiff.jl` in source-to-source AD mode for
-   small problems. The runtime is not designed for AD efficiency;
-   memory will be the limiting factor at production resolutions.
-3. **Use TM5-4DVar for production inversions until the checkpointed
-   driver lands.** The TM5 four-field convection
-   (`entu/detu/entd/detd`) parity work means the forward physics in
-   AtmosTransport closely matches TM5; running TM5-4DVar on the same
-   data, then forward-only AtmosTransport for analysis, is a
-   workable workaround.
+For an end-to-end inversion (synthetic truth recovery), see
+`test/test_cs_inversion_truth_recovery.jl` as the runnable template.
 
 ## Where to read next
 
-- [Validation status](@ref) — what the forward model HAS been
+- [Validation status](@ref) — what the forward model has been
   validated against.
 - [Conservation budgets](@ref) — the explicit verification tests
   the forward operators pass.
-- `docs/resources/developer_notes/TM5_ADJOINT_CONTROLS.md` — what
-  TM5-4DVAR optimizes with its adjoint and how that maps to the first
-  AtmosTransport controls.
-- *Phase 7: Configuration & Runtime* — the run-side TOML schema.
-
-!!! note "Why this page exists"
-    The README's adjoint claim was caught during the codex review of
-    this documentation overhaul. Rather than soften the README and
-    leave a future reader to wonder, this page states the truth
-    directly. The README will be updated in Phase 9 of the docs
-    overhaul to point at this page.
+- [Adjoints on top of the binary](../for_tm5_gchp_users/adjoints.md) —
+  TM5-4DVAR / GIGC-adjoint user perspective on how the pipeline maps
+  to those workflows.
+- The Plan 25 LinRood adjoint progress ledger:
+  `docs/plans/25_LINROOD_ADJOINT/`.
+- The Plan 26 inversion scaffold progress ledger:
+  `docs/plans/26_TM5_STYLE_INVERSION/`.

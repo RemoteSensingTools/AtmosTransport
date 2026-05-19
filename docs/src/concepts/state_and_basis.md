@@ -88,10 +88,15 @@ representation is mass for numerical reasons (it composes naturally
 with mass-conserving advection). The conversion happens at the
 boundaries:
 
-- **Initial conditions.** A TOML entry `co2.uniform_value = 4.0e-4`
-  is read as a *dry VMR* and converted to mass via
-  `χ × air_mass` at construction time
-  (`set_uniform_mixing_ratio!`).
+- **Initial conditions.** A TOML entry
+  ```toml
+  [tracers.co2.init]
+  kind       = "uniform"
+  background = 4.0e-4
+  ```
+  is read as a *dry VMR* (`background`) and converted to mass via
+  `χ × air_mass` at construction time (the `kind = "uniform"` branch
+  of `build_initial_mixing_ratio`).
 - **In the loop.** Operators consume `state.tracers_raw` as mass; the
   mass-conservation contract holds because both `air_mass` and the
   tracer-mass slices are pinged through the same flux divergence.

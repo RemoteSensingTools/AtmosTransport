@@ -1,5 +1,5 @@
 using Documenter
-using DocumenterMermaid     # Mermaid block rendering in Documenter HTML
+using DocumenterVitepress    # VitePress frontend; native Mermaid via VitePress
 using Literate               # .jl tutorial source → .md (with executed output)
 using AtmosTransport
 
@@ -44,6 +44,13 @@ const PAGES = [
         "getting_started/quickstart.md",
         "getting_started/first_run.md",
         "getting_started/inspecting_output.md",
+    ],
+    "For TM5 & GCHP users" => [
+        "for_tm5_gchp_users/philosophy.md",
+        "for_tm5_gchp_users/binary_pipeline.md",
+        "for_tm5_gchp_users/operators_on_binaries.md",
+        "for_tm5_gchp_users/adjoints.md",
+        "for_tm5_gchp_users/kernel_architecture.md",
     ],
     "Concepts" => [
         "concepts/grids.md",
@@ -145,15 +152,16 @@ const PAGES = [
 # ]
 
 makedocs(
+    root     = @__DIR__,
     modules  = [AtmosTransport],
     sitename = "AtmosTransport.jl",
     authors  = "RemoteSensingTools and contributors",
     repo     = Remotes.GitHub("RemoteSensingTools", "AtmosTransport"),
-    format   = Documenter.HTML(
-        prettyurls = get(ENV, "CI", "false") == "true",
-        canonical  = "https://RemoteSensingTools.github.io/AtmosTransport/dev/",
-        edit_link  = "main",
-        assets     = String[],
+    format   = DocumenterVitepress.MarkdownVitepress(
+        repo          = "https://github.com/RemoteSensingTools/AtmosTransport",
+        devbranch     = "main",
+        devurl        = "dev",
+        deploy_url    = "RemoteSensingTools.github.io/AtmosTransport",
     ),
     pages    = PAGES,
     # Phase 1 keeps the build permissive so missing-docstring / autodoc work
@@ -163,9 +171,14 @@ makedocs(
     checkdocs = :none,
 )
 
+# DocumenterVitepress builds a static VitePress site under docs/build/;
+# `deploydocs` is invoked with `target = "build"` so the gh-pages branch
+# receives the rendered HTML rather than the raw Markdown.
 deploydocs(
     repo         = "github.com/RemoteSensingTools/AtmosTransport.git",
+    target       = "build",
     devbranch    = "main",
+    branch       = "gh-pages",
     push_preview = true,
     forcepush    = true,
 )

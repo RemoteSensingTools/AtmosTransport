@@ -20,32 +20,33 @@ Typical output:
 
 ```text
 TransportBinaryReader
-  path:           /temp2/.../geos_transport_20211201_float32.bin
-  grid_type:      :cubed_sphere
-  Nc:             180
-  Nz:             72
-  windows:        24
-  steps_per_met:  8
-  mass_basis:     :dry
-  panel_convention: :geos_native
-  payload_sections: [:m, :am, :bm, :cm, :ps, :dm]
-  flux_kind:      :substep
-  source_flux_sampling: :window_constant
-
+├── path:          /temp2/.../era5_transport_20211201_merged1000Pa_float32.bin
+├── geometry:      latlon 72×37×34, ncell=2664, nface_h=…
+├── storage:       Float32 on disk, load as Float32
+├── basis:         dry
+├── timing:        dt=3600.0 s, steps/window=8 (constant)
+├── payload:       m, am, bm, cm, ps, dam, dbm, dcm, qv
+├── humidity:      window-constant qv
+├── semantics:     flux_sampling=window_constant, flux_kind=substep_mass_amount
+├── poisson:       scale=1.0, target=continuity
+└── windows:       24
 Capabilities:
-  ✓ supports_advection
-  ✓ supports_diagnostic_replay
-  ✓ supports_dry_basis_runtime
-  ✗ supports_convection         (cmfmc / dtrain not present)
-  ✗ supports_diffusion          (Kz not present)
-  ✓ supports_surface_pressure
-  ✓ supports_flux_delta
+  ✓ advection         (m, am, bm, cm)
+  ✓ plan-39 replay    (dam, dbm, dcm, dm)
+  ✗ TM5 convection    (entu, detu, entd, detd)
+  ✗ CMFMC convection  (cmfmc)
+  ✗ PBL diffusion     (pblh, ustar, pbl_hflux, t2m)
+  ✓ surface pressure  (ps)
+  ✓ humidity          (qv or qv_start/qv_end)
+  mass_basis       = :dry
+  grid_type        = :latlon
 ```
 
 The capability rows tell the runtime which operators are eligible. A
 config that requests `convection.kind = "cmfmc"` against a binary
-without `:cmfmc` / `:dtrain` payload sections is rejected at load time —
-no silent capability mismatch.
+without the `:cmfmc` payload section is rejected at load time —
+no silent capability mismatch. (`:dtrain` is optional even when
+`:cmfmc` is present.)
 
 Transport binaries must be `format_version = 3`. Older files are rejected by
 the same reader path used by runtime drivers; regenerate them with the current
@@ -62,14 +63,21 @@ variables and their dimensions depend on the target topology:
 only, or selected model levels. If a variable is missing, first check whether
 the run config intentionally disabled that product.
 
-For a lat-lon snapshot the actual variable list looks like (verified
-against `config/runs/quickstart/ll72x37_advonly.toml`):
+For a lat-lon snapshot the actual variable list looks like:
 
 ```
 lev, time, lon, lat, lon_bounds, lat_bounds, cell_area,
 air_mass, air_mass_per_area, column_air_mass_per_area,
 co2_bl, co2_bl_column_mean, co2_bl_column_mass_per_area
 ```
+
+Dimension order for LL payload variables follows
+`netcdf_writer.jl::_def_payload_var`: 3D variables (column-mean,
+column-mass-per-area) are `(lon, lat, time)`; 4D per-layer variables
+are `(lon, lat, lev, time)`. Note this is the column-major Julia
+storage order; readers that report `(time, lev, lat, lon)` (e.g.
+`xarray`, `ncdump`) print the dimensions in row-major order — same
+data, opposite-ordered axes.
 
 Per topology, the per-tracer set is:
 

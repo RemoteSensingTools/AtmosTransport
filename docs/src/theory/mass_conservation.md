@@ -75,23 +75,31 @@ m^{n+1}_c \;=\; m^n_c \;-\; 2\,\text{steps}\,(am_{e} - am_{w} \;+\; bm_{n} - bm_
 ```
 
 with the surface boundary `cm` at `k = N_z + 1` pinned to zero (no mass
-flux through the ground). Two paths produce a `cm` field that satisfies
-this closure:
+flux through the ground). All three production preprocessing paths
+produce `cm` via the **same diagnostic**:
 
-1. **Diagnose `cm` from `(am, bm, dm)`** — used by the LL / RG spectral
-   preprocessor's `recompute_cm_from_dm_target!` after Poisson balance
-   has corrected `am, bm`.
-2. **The FV3 pressure-fixer `cm`** — used by the GEOS native CS
-   preprocessor's `compute_cs_cm_pressure_fixer!`. Per-column scan that
-   computes `cm[k+1] = cm[k] + (C_k − ΔB[k] · pit)` where
-   `pit = Σ_k (am_inflow + bm_inflow)` is the column-integrated horizontal
-   convergence. Closes `cm[N_z + 1] = 0` **exactly** by construction —
-   no residual to redistribute.
+1. **LL spectral preprocessor.** Runs FFT-based Poisson balance over
+   the periodic-longitude grid, then calls
+   `recompute_cm_from_dm_target!` to diagnose `cm` from the explicit
+   `(am, bm, dm)` field.
+2. **RG spectral preprocessor.** Runs ring-aware Poisson balance via
+   the compressed Laplacian, then calls the same
+   `recompute_cm_from_dm_target!` diagnostic.
+3. **GEOS native CS preprocessor.** Column-balances horizontal mass
+   fluxes against the raw next-hour dry endpoint
+   (`balance_cs_column_mass_fluxes!`), then calls `diagnose_cs_cm!`
+   (the cubed-sphere analogue of `recompute_cm_from_dm_target!`).
 
-Either way, the binary lands with a `cm` field that closes the explicit-
-`dm` continuity equation to floating-point tolerance — the
+In every case the binary lands with a `cm` field that closes the
+explicit-`dm` continuity equation to floating-point tolerance — the
 **write-time replay gate** then verifies it before the binary file is
 committed to disk.
+
+A separate FV3-style pressure-fixer `cm` diagnostic
+(`compute_cs_cm_pressure_fixer!`) still exists in
+`src/Preprocessing/cs_transport_helpers.jl` but is **not** used by the
+production GEOS-CS path; it is preserved for legacy regrid pathways and
+research comparison.
 
 ## Replay-gate tolerance
 
@@ -122,10 +130,10 @@ The gate fires twice in the lifecycle of a binary:
    producing a known-bad file. The binary committed to disk is, by
    construction, replay-clean.
 2. **Load-time** (opt-in, in the runtime). Set
-   `[met_data] validate_replay = true` in the run config or
-   `ATMOSTR_REPLAY_CHECK=1` in the environment. Off by default because
-   it doubles binary load time; recommended for any new binary
-   configuration before a long production simulation.
+   `ATMOSTR_REPLAY_CHECK=1` in the environment (no TOML key today;
+   the load-time gate is a driver kwarg or env-var setting). Off by
+   default because it doubles binary load time; recommended for any
+   new binary configuration before a long production simulation.
 
 ## Dry-basis vs moist-basis
 
@@ -164,16 +172,19 @@ well before any windows actually step.
 
 ## Where the math meets the code
 
-| Concept | File:line |
+| Concept | File |
 |---|---|
-| X-sweep kernel (flux-form telescoping) | `src/Operators/Advection/structured_kernels.jl:78–95` |
-| Strang palindrome (X→Y→Z / V/S/V / Z→Y→X) | `src/Operators/Advection/StrangSplitting.jl:1363–1410` |
-| FV3 pressure-fixer `cm` | `src/Preprocessing/cs_transport_helpers.jl::compute_cs_cm_pressure_fixer!` |
-| Diagnose `cm` from `dm` target (LL / RG / CS) | shared implementation `src/MetDrivers/ReplayContinuity.jl::recompute_cm_from_dm_target!` (function definition starts at line 94); LL preprocessor calls it from `latlon_contracts.jl:146` after Poisson balance |
+| X-sweep kernel (flux-form telescoping) | `src/Operators/Advection/structured_kernels.jl` |
+| Strang palindrome (X→Y→Z / V/S/V / Z→Y→X) | `src/Operators/Advection/StrangSplitting.jl` (`strang_split!`) and `CubedSphereStrang.jl` (`strang_split_cs!`) |
+| Diagnose `cm` from `dm` target (LL / RG) | `src/MetDrivers/ReplayContinuity.jl::recompute_cm_from_dm_target!` |
+| Diagnose `cm` from `dm` target (CS) | `src/Preprocessing/cs_poisson_balance.jl::diagnose_cs_cm!` |
+| Column balance against next-hour endpoint (GEOS-CS) | `src/Preprocessing/cs_poisson_balance.jl::balance_cs_column_mass_fluxes!` |
 | Write-time replay gate | `src/MetDrivers/ReplayContinuity.jl::verify_window_continuity_*!` |
-| `replay_tolerance(FT)` | `src/MetDrivers/ReplayContinuity.jl:25–26` |
+| `replay_tolerance(FT)` | `src/MetDrivers/ReplayContinuity.jl` |
+| Substep positivity gates | `src/Preprocessing/transport_binary/{cubed_sphere_contracts.jl, latlon_contracts.jl, reduced_gaussian_contracts.jl}` |
 | Dry-basis correction | `src/Preprocessing/mass_support.jl::apply_dry_basis_native!` |
 | Basis-mismatch enforcement | `src/Models/DrivenSimulation.jl` (construction) |
+| Legacy FV3 pressure-fixer `cm` (not on production path) | `src/Preprocessing/cs_transport_helpers.jl::compute_cs_cm_pressure_fixer!` |
 
 ## What's next
 

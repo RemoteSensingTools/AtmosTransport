@@ -36,9 +36,11 @@ comparison or observational match, read the gaps below.
 
 ### Synthetic-fixture suite (verification, comprehensive)
 
-The **39** core test files in `test/runtests.jl` lines 26–66 run on
-every push and PR via the `CI` workflow, with no external data
-dependency:
+The **~75** core test files in `test/runtests.jl` run on every push
+and PR via the `CI` workflow, with no external data dependency. The
+count grows steadily; the current authoritative list lives between
+the `core_tests = [` opening and its matching `]` in
+`test/runtests.jl`. Anchor tables:
 
 | Property | Test files | Status |
 |---|---|---|
@@ -48,7 +50,7 @@ dependency:
 | Cross-day continuity (synthetic GEOS C8 fixture) | `test_geos_cs_passthrough.jl` (3467 cases) | green |
 | GEOS native CS preprocessor end-to-end (synthetic fixture) | `test_geos_reader.jl` (48), `test_geos_cs_passthrough.jl`, `test_geos_convection.jl` (26) | green |
 | Conservative regrid mass closure | `test/regridding/test_conservation.jl`, `test_ll_to_cs_regrid_script.jl` (script-level tol `1e-6`) | green |
-| CPU / GPU agreement (4 ULP for Upwind 1-step; 16 ULP for Slopes / PPM 4-step, F32 and F64; LinRood not in matrix) | `test_advection_kernels.jl::"CPU-GPU agreement"`; CUDA-gated | green where exercised |
+| CPU / GPU agreement (4 ULP for Upwind 1-step; 16 ULP for Slopes / PPM 4-step, F32 and F64; LinRood smoke-only) | `test_advection_kernels.jl` (CUDA-gated `@testset "CPU-GPU agreement"`); LinRood CS smoke in `test_cubed_sphere_runtime.jl` | green where exercised |
 | Operator dispatch (Strang palindrome ordering, NoOp dead branches) | `test_transport_model_convection.jl`, `test_tm5_convection.jl`, `test_cmfmc_convection.jl` | green |
 
 Total core-suite cases: thousands; CI breaks down pass/fail per file.
@@ -61,7 +63,7 @@ Total core-suite cases: thousands; CI breaks down pass/fail per file.
 | ERA5 spectral → LL 144×73 F32, Dec 2021 | same | green |
 | ERA5 spectral → CS C24 F32, Dec 2021 | same; F32-CS path requires the `f3b3abf` fix to spectral_synthesis.jl | green (post-`f3b3abf`) |
 | ERA5 spectral → CS C90 F32, Dec 2021 | same | green (post-`f3b3abf`) |
-| GEOS-IT C180 → CS C180 F64 native | preprocessor closes write-time replay gate; binary loads cleanly via `inspect_transport_binary.jl`; per-window snapshot output verified. Runtime GPU step on the C180 binary failed at step 1 in the unified-chain validation memo of 2026-04-25 (`docs/validation/geosit_c180_unified_chain_2026_04_25.md:70`); the runtime stepping itself is therefore **not yet proven** on real C180 GPU. | preprocessor green; runtime GPU step pending fix |
+| GEOS-IT C180 → CS C180 F64 native | preprocessor closes write-time replay gate; binary loads cleanly via `inspect_transport_binary.jl`; per-window snapshot output verified. The 2026-04-25 unified-chain validation flagged a runtime GPU step-1 blocker on the unmerged-vertical C180 binary; the production response (Plan 41 P4i) targets the `merge_above_pressure = 0.25 hPa` 64-level product with adaptive substeps. Status against that product is tracked in current Catrine config notes. | preprocessor green; current C180 runtime path uses Plan-41-P4i merged + adaptive-substep binaries |
 
 ### Model parity (TM5)
 
@@ -83,7 +85,7 @@ The following work is on the roadmap but **not yet done**:
 | **CATRINE D7.1 intercomparison** | The European CATRINE protocol is the natural validation target (4 tracers: CO2, fossil CO2, SF6, 222Rn; full-physics; multi-month). The configs (`config/runs/catrine_*.toml`) exist; the runtime can produce the output. The **gated 1-day smoke test** `test/test_tm5_catrine_1day.jl` (in the `--all` suite) exercises the Catrine TM5-physics setup over a single day, but **no full multi-month CATRINE-protocol regression test** is committed and no protocol-vs-reference comparison memo has been published. | gated 1-day smoke test in place; output runs successfully (see `docs/validation/geosit_c180_unified_chain_2026_04_25.md` — internal memo); full protocol regression not yet wired |
 | **Observational closure** | Comparison of model output (column CO2, surface SF6 etc.) against an observational network (NOAA in-situ + TCCON / OCO satellite) | not started |
 | **Multi-month GPU production runs** | The longest GPU validation run committed is 7 days. Multi-week stability has been spot-checked but not regression-tested. | committed test ceiling: 7-day; production target: ~30-day |
-| **Adjoint kernels** | See [Adjoint status](@ref) — the README's "TM5-4DVar-style adjoint with Revolve checkpointing" is a roadmap item, not shipped code. | NOT shipped |
+| **Adjoint kernels** | See [Adjoint status](@ref) — Plan 25 (LinRood adjoint) and Plan 26 (TM5-style inversion scaffold) have largely shipped. Tape + checkpoint + revolve (bisection variant) + four-scheme reverse pass + 4D-Var driver are on CI. Gaps: CMFMC convection adjoint, `copy_corners` reverse, optimal binomial Revolve, TM5-4DVAR cross-validation. | partial (shipped) |
 
 ## Floating-point tolerance practice
 
@@ -93,9 +95,9 @@ Tolerances vary by operation; the canonical sources:
 |---|---|---|---|
 | Per-window replay gate | `1e-10` | `1e-4` | `src/MetDrivers/ReplayContinuity.jl::replay_tolerance(FT)` |
 | Window-continuity verification (test variant) | `1e-12` | `1e-6` | `test/test_replay_consistency.jl:84` |
-| Per-step uniform-tracer invariance (relative) | `1e-6` | `1e-6` | `test_advection_kernels.jl:153–157` |
-| 4-step total mass conservation (gradient IC, structured grid) | `1e-12` | `5e-5` | `test_advection_kernels.jl:166–171` |
-| CPU/GPU advection agreement | `4 * eps(FT)` (Upwind 1-step) / `16 * eps(FT)` (Upwind 4-step, Slopes 4-step, PPM 4-step) | same as F64 column | `test_advection_kernels.jl:216, 237, 345, 451` (LinRoodPPMScheme not in this matrix; only a CPU CS smoke at `test_cubed_sphere_runtime.jl:322`) |
+| Per-step uniform-tracer invariance (relative) | `1e-6` | `1e-6` | `test_advection_kernels.jl` (`@testset "uniform tracer"`) |
+| 4-step total mass conservation (gradient IC, structured grid) | `1e-12` | `5e-5` | `test_advection_kernels.jl` (`@testset "mass conservation"`) |
+| CPU/GPU advection agreement | `4 * eps(FT)` (Upwind 1-step) / `16 * eps(FT)` (Upwind / Slopes / PPM 4-step) | same as F64 column | `test_advection_kernels.jl` (CUDA-gated `@testset "CPU-GPU agreement"`). `LinRoodPPMScheme` covered only by the CS smoke in `test_cubed_sphere_runtime.jl`. |
 | Conservative regrid mass closure (script-level acceptance) | `≤ 1e-6` rel | same | `test/test_ll_to_cs_regrid_script.jl:175–178` |
 | Cross-day GEOS chain continuity | machine epsilon (`5.94e-16` F64 measured) | `~3.5e-7` F32 measured | preprocessor stdout from `process_day` |
 
@@ -115,8 +117,10 @@ If you are doing:
   end-to-end intercomparison report has not been written. Run a
   side-by-side and compare yourself; the run scripts in
   `scripts/diagnostics/compare_*` are the starting point.
-- **Inverse modelling that needs an adjoint** → the adjoint is **not
-  shipped**. See [Adjoint status](@ref) for what's on the roadmap.
+- **Inverse modelling that needs an adjoint** → the adjoint and
+  4D-Var stack ship on CS. See [Adjoint status](@ref) for the supported
+  scheme matrix and the remaining gaps (CMFMC adjoint kernel,
+  `copy_corners` reverse, TM5-4DVAR cross-validation).
 - **Validation against observations** → not in scope today; the
   forward model has the fidelity, but the observation-comparison
   diagnostics are external.

@@ -117,12 +117,15 @@ variables `time`, `lev`, `lon`, `lat`. CS snapshots have a
 The C90 cubed-sphere quickstart produces a filled column-mean heatmap
 like this after 72 hours:
 
-<video controls loop muted playsinline
+```@raw html
+<video src="../assets/quickstart/cs_c90_advonly.mp4"
+       controls="controls"
+       loop="loop"
+       muted="muted"
+       playsinline="playsinline"
        poster="../assets/quickstart/cs_c90_advonly_t72.png"
-       style="width: 100%; border: 1px solid var(--vp-c-divider); border-radius: 8px;">
-  <source src="../assets/quickstart/cs_c90_advonly.mp4" type="video/mp4">
-  Your browser does not support embedded MP4 video.
-</video>
+       style="width: 100%; border: 1px solid var(--vp-c-divider); border-radius: 8px;"></video>
+```
 
 The movie was generated from the NetCDF snapshot with the topology-aware
 visualization CLI:

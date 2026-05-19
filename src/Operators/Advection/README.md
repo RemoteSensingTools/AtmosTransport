@@ -58,6 +58,8 @@ the model-facing `apply!` entrypoints that the transport block calls.
   subcell distributions shared by CS-specific code
 - [`LinRood.jl`](LinRood.jl) — Lin-Rood style cubed-sphere horizontal
   transport utilities
+- [`linrood_adjoint_kernels.jl`](linrood_adjoint_kernels.jl) —
+  Lin-Rood adjoint kernel helpers used by the CS reverse path
 - [`VerticalRemap.jl`](VerticalRemap.jl) — conservative vertical remap
   helpers used by CS/FV3-style paths
 - [`Divergence.jl`](Divergence.jl) — divergence and vertical-flux

@@ -40,6 +40,9 @@ read.
   model runs
 - [`DrivenSimulation.jl`](DrivenSimulation.jl) — met-window-driven loop,
   forcing interpolation, air-mass refresh, and runtime compatibility checks
+- [`CSPhysicsRecipe.jl`](CSPhysicsRecipe.jl) — CS runtime physics recipe
+  builders and capability validation for advection, diffusion,
+  convection, and surface forcing
 - [`InitialConditionIO.jl`](InitialConditionIO.jl) — topology-dispatched
   VMR builder (`build_initial_mixing_ratio` on LL/RG/CS),
   basis-aware VMR → tracer-mass packer (`pack_initial_tracer_mass`),

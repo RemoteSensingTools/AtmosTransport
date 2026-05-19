@@ -47,6 +47,10 @@ cubed-sphere-specific data paths.
   assembly helpers
 - [`ConvectionForcing.jl`](ConvectionForcing.jl) — convection forcing
   storage, adaptation, and copy helpers
+- [`SurfaceForcing.jl`](SurfaceForcing.jl) — surface forcing payload
+  containers and copy helpers for runtime physics fields
+- [`ReplayContinuity.jl`](ReplayContinuity.jl) — runtime replay and
+  continuity diagnostics for loaded transport windows
 - [`TransportBinary.jl`](TransportBinary.jl) — binary reader/writer and
   transport-window loading helpers
 - [`TransportBinaryDriver.jl`](TransportBinaryDriver.jl) — structured and

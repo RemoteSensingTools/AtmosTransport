@@ -45,6 +45,10 @@ runs on the host and may refresh caches before an operator launch.
   wrapper over six structured rank-3 fields
 - [`DerivedKzField.jl`](DerivedKzField.jl) — Kz derived from
   meteorological inputs and PBL parameter choices
+- [`WindowPBLKzField.jl`](WindowPBLKzField.jl) — window-cached
+  panel-native PBL Kz field from runtime surface forcing
+- [`GCHPHoltslagBovilleKzField.jl`](GCHPHoltslagBovilleKzField.jl) —
+  GCHP Holtslag-Boville Kz field backed by GEOS-style surface inputs
 - [`StepwiseField.jl`](StepwiseField.jl) — piecewise-constant-in-time
   field cache
 

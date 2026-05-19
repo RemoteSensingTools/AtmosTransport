@@ -42,6 +42,8 @@ run on structured, face-indexed, and panel-native cubed-sphere state.
   coefficient builder
 - [`diffusion_kernels.jl`](diffusion_kernels.jl) — KernelAbstractions
   kernels for structured, face-indexed, and cubed-sphere panel solves
+- [`dz_helpers.jl`](dz_helpers.jl) — hydrostatic layer-thickness helper
+  kernels and host wrappers shared by vertical diffusion paths
 - [`operators.jl`](operators.jl) — operator hierarchy, constructor
   validation, state-level `apply!`, array-level `apply_vertical_diffusion!`
 

@@ -41,6 +41,31 @@ function _get_or_build_ll_binary_to_cs_regridder!(cache,
 end
 
 """
+    regrid_transport_binary(input_path, target_grid, out_path; kwargs...)
+
+Generic transport-binary regrid extension point. Concrete target/source
+combinations implement methods here instead of adding new topology-specific
+scripts. The currently implemented production pair is LL transport binary to
+cubed sphere.
+"""
+function regrid_transport_binary(input_path::String,
+                                 target_grid::AbstractTargetGeometry,
+                                 out_path::String; kwargs...)
+    throw(ArgumentError(
+        "No transport-binary regrid implementation for target=" *
+        "$(nameof(typeof(target_grid))). Implement `regrid_transport_binary` " *
+        "for this target/source pair. Existing production support is " *
+        "lat-lon transport binary -> cubed_sphere; LL -> lower-resolution LL " *
+        "is still an explicit missing contract."))
+end
+
+function regrid_transport_binary(input_path::String,
+                                 target_grid::CubedSphereTargetGeometry,
+                                 out_path::String; kwargs...)
+    return regrid_ll_binary_to_cs(input_path, target_grid, out_path; kwargs...)
+end
+
+"""
     regrid_ll_binary_to_cs(ll_binary_path, cs_grid, out_path; FT=Float64, mass_basis=nothing)
 
 Regrid an existing LL transport binary to a cubed-sphere binary.

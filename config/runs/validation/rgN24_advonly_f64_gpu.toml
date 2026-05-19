@@ -1,7 +1,7 @@
 # --- Reduced Gaussian N24 (4608 cells) advection-only validation --- F64 GPU ---
 #
 # Usage:
-#   julia --project=. scripts/run_transport_binary.jl \
+#   julia --project=. scripts/run_transport.jl \
 #       config/runs/validation/rgN24_advonly_f64_gpu.toml
 
 [input]

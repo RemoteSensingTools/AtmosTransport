@@ -1,7 +1,7 @@
 # --- LatLon 96x48 (3.75 deg) advection-only validation --- F32 CPU ---
 #
 # Usage:
-#   julia --project=. scripts/run_transport_binary.jl \
+#   julia --project=. scripts/run_transport.jl \
 #       config/runs/validation/ll96x48_advonly_f32_cpu.toml
 
 [input]

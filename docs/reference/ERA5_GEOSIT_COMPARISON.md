@@ -16,7 +16,7 @@ forcing and grid.
 | Mass fluxes | Spectral-derived (TM5-style) | Native model MFXC/MFYC |
 | Convection | Tiedtke (from ERA5 CMFMC) | Tiedtke (from GEOS CMFMC) |
 | Diffusion | PBL (from ERA5 BLH/SSHF/U10) | PBL (from GEOS PBLH/USTAR/HFLUX) |
-| Config | `config/runs/era5_spectral_june2023.toml` | `config/runs/geosit_c180_june2023.toml` |
+| Config | `config/runs/likely_legacy/era5_spectral_june2023.toml` | `config/runs/likely_legacy/geosit_c180_june2023.toml` |
 
 **Total data footprint** (after preprocessing, June 2023):
 
@@ -110,7 +110,7 @@ done
 ### 1.2 Configuration
 
 The run config is already complete at
-[`config/runs/geosit_c180_june2023.toml`](../config/runs/geosit_c180_june2023.toml).
+[`config/runs/likely_legacy/geosit_c180_june2023.toml`](../config/runs/likely_legacy/geosit_c180_june2023.toml).
 Verify `netcdf_dir` points to your data directory:
 
 ```toml
@@ -126,7 +126,7 @@ mass_flux_dt = 450
 ### 1.3 Run
 
 ```bash
-julia --threads=2 --project=. scripts/run.jl config/runs/geosit_c180_june2023.toml
+julia --threads=2 --project=. scripts/run_transport.jl config/runs/likely_legacy/geosit_c180_june2023.toml
 ```
 
 Expected performance (A100 GPU, SingleBuffer): ~0.11 s/window GPU, ~1 s/window IO,
@@ -223,8 +223,8 @@ Per-day GRIB files (~800 MB/day at 0.5°, all 137 model levels):
 Convert VO/D/LNSP spectral coefficients to gridpoint mass fluxes on the 0.5° grid:
 
 ```bash
-julia --project=. scripts/preprocess_spectral_massflux.jl \
-    config/preprocessing/spectral_june2023.toml
+julia --project=. scripts/preprocessing/preprocess_transport_binary.jl \
+    config/preprocessing/likely_legacy/spectral_june2023.toml
 ```
 
 **Processing steps** (per 6-hourly window):
@@ -248,7 +248,7 @@ julia --project=. scripts/preprocess_spectral_massflux.jl \
 **Timing**: ~30–60 seconds per day × 30 days ≈ 15–30 minutes total on a
 modern CPU (dominated by the inverse SHT at T359).
 
-The config file [`config/preprocessing/spectral_june2023.toml`](../config/preprocessing/spectral_june2023.toml)
+The config file [`config/preprocessing/likely_legacy/spectral_june2023.toml`](../config/preprocessing/likely_legacy/spectral_june2023.toml)
 specifies all parameters:
 ```toml
 [input]
@@ -277,7 +277,7 @@ appends `pblh`, `ustar`, `hflux`, `t2m`, and `conv_mass_flux` variables:
 
 ```bash
 julia --project=. scripts/postprocess_era5_surface_physics.jl \
-    config/preprocessing/spectral_june2023.toml
+    config/preprocessing/likely_legacy/spectral_june2023.toml
 ```
 
 **Derived quantities**:
@@ -328,7 +328,7 @@ Grid: 720 × 361 × 137
 ### 2.7 Configuration
 
 The run config is at
-[`config/runs/era5_spectral_june2023.toml`](../config/runs/era5_spectral_june2023.toml).
+[`config/runs/likely_legacy/era5_spectral_june2023.toml`](../config/runs/likely_legacy/era5_spectral_june2023.toml).
 Verify `directory` matches your preprocessed output:
 
 ```toml
@@ -341,7 +341,7 @@ dt        = 900
 ### 2.8 Run
 
 ```bash
-julia --threads=2 --project=. scripts/run.jl config/runs/era5_spectral_june2023.toml
+julia --threads=2 --project=. scripts/run_transport.jl config/runs/likely_legacy/era5_spectral_june2023.toml
 ```
 
 ---
@@ -366,10 +366,10 @@ Once preprocessing is complete, run both models and compare:
 
 ```bash
 # Terminal 1: GEOS-IT (data already available)
-julia --threads=2 --project=. scripts/run.jl config/runs/geosit_c180_june2023.toml
+julia --threads=2 --project=. scripts/run_transport.jl config/runs/likely_legacy/geosit_c180_june2023.toml
 
 # Terminal 2 (after ERA5 preprocessing completes):
-julia --threads=2 --project=. scripts/run.jl config/runs/era5_spectral_june2023.toml
+julia --threads=2 --project=. scripts/run_transport.jl config/runs/likely_legacy/era5_spectral_june2023.toml
 ```
 
 ### Expected Outputs

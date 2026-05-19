@@ -2,7 +2,7 @@
 #
 # Single passive tracer (uniform 400 ppm CO2) advected over 48 hours on the
 # new GEOS-native CS C180 transport binary produced by
-# `scripts/preprocessing/preprocess_geos_transport_binary.jl`. The point of
+# `scripts/preprocessing/preprocess_transport_binary.jl`. The point of
 # this run is to validate the GEOS preprocessor end-to-end:
 #
 #   - the v4 binary loads cleanly and the runtime constructs a
@@ -18,7 +18,7 @@
 #   ~/data/AtmosTransport/met/geosit/C180/preprocessed/v4_dec2021/
 #       geos_transport_2021120{1,2}_float64.bin
 # generated via:
-#   julia -t8 --project=. scripts/preprocessing/preprocess_geos_transport_binary.jl \
+#   julia -t8 --project=. scripts/preprocessing/preprocess_transport_binary.jl \
 #       config/preprocessing/geosit_c180_to_cs180.toml \
 #       --start 2021-12-01 --end 2021-12-02
 

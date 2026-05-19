@@ -23,6 +23,30 @@ vertical; ...)` dispatches on `settings` to pick the reader.
 abstract type AbstractMetSettings end
 
 """
+    ERA5SpectralSettings <: AbstractMetSettings
+
+Typed wrapper for the historical ERA5 spectral settings `NamedTuple`.
+The spectral preprocessor still performs spectral synthesis inside the
+topology workspaces, but the source axis is now explicit: TOML parsing
+constructs this settings type and topology methods dispatch on it.
+"""
+struct ERA5SpectralSettings <: AbstractMetSettings
+    nt :: NamedTuple
+end
+
+# Forward the existing settings surface to the wrapped NamedTuple so the
+# spectral implementation can be ported to typed dispatch without changing
+# every field access in the same patch.
+Base.getproperty(s::ERA5SpectralSettings, k::Symbol) =
+    k === :nt ? getfield(s, :nt) : getfield(s, :nt)[k]
+Base.propertynames(s::ERA5SpectralSettings) =
+    propertynames(getfield(s, :nt))
+Base.haskey(s::ERA5SpectralSettings, k::Symbol) =
+    haskey(getfield(s, :nt), k)
+Base.get(s::ERA5SpectralSettings, k::Symbol, default) =
+    haskey(s, k) ? getfield(s, :nt)[k] : default
+
+"""
     RawWindow{FT, A2, A3}
 
 Per-window source-grid intermediate carrying **both window endpoints**

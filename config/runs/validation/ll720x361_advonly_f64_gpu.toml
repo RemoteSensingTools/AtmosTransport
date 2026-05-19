@@ -1,7 +1,7 @@
 # --- LatLon 720x361 (0.5 deg) advection-only validation --- F64 GPU ---
 #
 # Usage:
-#   julia --project=. scripts/run_transport_binary.jl \
+#   julia --project=. scripts/run_transport.jl \
 #       config/runs/validation/ll720x361_advonly_f64_gpu.toml
 
 [input]

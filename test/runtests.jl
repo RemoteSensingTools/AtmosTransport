@@ -38,6 +38,7 @@ core_tests = [
     "test_identity_regrid.jl",
     "test_geos_reader.jl",
     "test_met_source_loader.jl",
+    "test_config_matrix_contract.jl",
     "test_geos_cs_passthrough.jl",
     "test_geos_convection.jl",
     "test_cs_panel_geographic_roundtrip.jl",

@@ -91,10 +91,10 @@ unaffected by the reordering.
 
 Two ERA5 mass-flux pipelines are available:
 
-1. **Spectral (recommended):** `preprocess_spectral_massflux.jl` converts ERA5
+1. **Spectral (recommended):** `preprocess_transport_binary.jl` converts ERA5
    spectral harmonics (VO, D, LNSP) to mass-conserving mass fluxes, following
    TM5's approach (Bregman et al. 2003). This achieves near-zero mass drift.
-   Config: `config/preprocessing/spectral_june2023.toml`.
+   Config: `config/preprocessing/likely_legacy/spectral_june2023.toml`.
 
 2. **Gridpoint (stopgap):** `preprocess_mass_fluxes.jl` derives mass fluxes
    from gridpoint u/v winds. This introduces ~0.9% mass drift per simulation
@@ -213,7 +213,7 @@ actually be the start of a second run overlaid on the first.
 
 ```bash
 rm ~/data/output/my_output.nc
-julia --project=. scripts/run.jl config/runs/my_config.toml
+julia --project=. scripts/run_transport.jl config/runs/my_config.toml
 ```
 
 ### TOML Output Field Naming

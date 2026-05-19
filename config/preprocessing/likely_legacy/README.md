@@ -7,6 +7,10 @@ Files here either reference preprocessor scripts that no longer exist in
 that have not yet been re-established in the unified `src/Preprocessing`
 pipeline.
 
+Active preprocessing configs must declare either `[source].toml` for a typed
+native source or `[input].spectral_dir` for ERA5 spectral, plus an explicit
+`[grid].type`.
+
 Before reactivating a config:
 
 1. Update the command header to use an existing entrypoint.

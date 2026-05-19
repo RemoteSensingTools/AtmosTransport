@@ -278,7 +278,7 @@ of the unified system above.
 |--------|-----------|--------|
 | `download_geosfp_cs_massflux.jl` | C720/C180 CTM mass flux | WashU archive |
 | `download_geosit_c180_s3.sh` | C180 all collections | AWS S3 (public) |
-| `download_geosfp_surface_fields.jl` | 0.25° surface+physics | AWS S3 (public) |
+| Typed source configs | 0.25° surface+physics | Source archive declared in TOML |
 
 ## Preprocessing Scripts
 
@@ -286,7 +286,7 @@ of the unified system above.
 
 | Script | Input | Output |
 |--------|-------|--------|
-| `scripts/preprocessing/preprocess_spectral_massflux.jl` | Spectral GRIB (VO/D/LNSP) | NetCDF mass fluxes (am, bm, cm, m, ps) |
+| `scripts/preprocessing/preprocess_transport_binary.jl` | Spectral GRIB (VO/D/LNSP) | v4 transport binaries |
 | `scripts/preprocessing/merge_era5_cmfmc_to_massflux.jl` | CMFMC NetCDF (cmfmc/) | Appends `conv_mass_flux` to massflux NC |
 | `scripts/preprocessing/preprocess_era5_tm5_convection.jl` | CMFMC + detrainment NetCDF | Appends entu/detu/entd/detd to massflux NC |
 
@@ -295,5 +295,5 @@ of the unified system above.
 | Script | Input | Output |
 |--------|-------|--------|
 | `scripts/preprocessing/preprocess_geosfp_cs.jl` | CTM_A1 NetCDF | massflux/ binary |
-| `scripts/preprocessing/convert_surface_cs_to_binary.jl` | A1, A3mstE, A3dyn NetCDF | physics/ binary |
+| `scripts/preprocessing/preprocess_transport_binary.jl` | GEOS A1, A3mstE, A3dyn NetCDF | transport binary sections |
 | `scripts/preprocessing/convert_ctm_i1_to_binary.jl` | CTM_I1 NetCDF | physics/ CTM_I1 binary |

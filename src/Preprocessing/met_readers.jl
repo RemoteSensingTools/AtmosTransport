@@ -310,32 +310,12 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    ERA5SpectralSettings <: AbstractMetSettings
-
-P0a placeholder. Today's spectral path uses a `NamedTuple` returned by
-`resolve_runtime_settings` in `configuration.jl:170`; this typed nominal
-is the wrapper we'll move it inside during P2. Holds the same
-NamedTuple verbatim — no semantics change.
-"""
-struct ERA5SpectralSettings <: AbstractMetSettings
-    nt :: NamedTuple
-end
-
-# Forward the existing settings-trait surface to the wrapped NamedTuple
-# so any code that does `settings.field` keeps working. P0a additive
-# scope: nothing reads this yet, but the indirection costs zero.
-Base.getproperty(s::ERA5SpectralSettings, k::Symbol) =
-    k === :nt ? getfield(s, :nt) : getfield(s, :nt)[k]
-Base.propertynames(s::ERA5SpectralSettings) = propertynames(getfield(s, :nt))
-
-"""
     ERA5SpectralReader{FT, S} <: AbstractMetReader{FT, S, NoChain}
 
-Typed nominal for the ERA5 spectral path. ChainPolicy is fixed at
+Typed reader nominal for the ERA5 spectral path. ChainPolicy is fixed at
 `NoChain` because today's spectral path does not carry cross-day mass
-state (it pins global-mean ps per window instead). P0a ships the
-nominal + lifecycle methods; the per-window read fuses with merge in
-today's `process_window!` and is deferred to P2.
+state (it pins global-mean ps per window instead). The per-window read
+still fuses with merge in today's `process_window!` and is deferred to P2.
 """
 mutable struct ERA5SpectralReader{FT, S <: AbstractMetSettings} <:
                 AbstractMetReader{FT, S, NoChain}
@@ -400,3 +380,12 @@ end
     reader.closed = true
     return nothing
 end
+
+# Source/target support matrix for the TOML entrypoint. Methods live here
+# because all participating types (`ERA5SpectralSettings`,
+# `AbstractGEOSSettings`, and the target geometries) are visible by the time
+# this file is included.
+preprocessor_pair_supported(::LatLonTargetGeometry, ::ERA5SpectralSettings) = true
+preprocessor_pair_supported(::ReducedGaussianTargetGeometry, ::ERA5SpectralSettings) = true
+preprocessor_pair_supported(::CubedSphereTargetGeometry, ::ERA5SpectralSettings) = true
+preprocessor_pair_supported(::CubedSphereTargetGeometry, ::AbstractGEOSSettings) = true

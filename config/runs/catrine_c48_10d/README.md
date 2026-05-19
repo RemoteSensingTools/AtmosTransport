@@ -7,7 +7,7 @@ Three physics-ladder configs for `scripts/run_transport.jl` at C48, 10 days
 (plan 40 Commit 6c). It dispatches on `grid_type` from the binary
 header, so the same CLI handles LL, RG, and CS binaries. Physics,
 diffusion, and convection are composed from TOML. The pre-existing
-`run_cs_transport.jl` (low-level panel-native, advection-only) is
+`scripts/benchmarks/run_cs_transport.jl` (low-level panel-native, advection-only) is
 untouched and remains the fast path for pure-advection work.
 
 `run_cs_driven.jl` is kept as a deprecation shim for one migration

@@ -223,7 +223,7 @@ convection, diffusion) only depends on the `HybridSigmaPressure` interface.
 
 **ERA5 spectral (recommended)**:
 1. Download spectral GRIB (VO, D, LNSP) via `scripts/download_era5_grib_tm5.py`
-2. Preprocess: `scripts/preprocess_spectral_massflux.jl` converts spectral harmonics
+2. Preprocess: `scripts/preprocessing/preprocess_transport_binary.jl` converts spectral harmonics
    to mass-conserving mass fluxes (am, bm, cm) following TM5's approach (Bregman et al. 2003)
 3. Run via `driver = "preprocessed_latlon"` — reads preprocessed NetCDF mass fluxes directly
 
@@ -260,7 +260,7 @@ pipeline for production runs.
 
 ### Current status
 
-- **ERA5 spectral mass fluxes** (recommended): `preprocess_spectral_massflux.jl` converts
+- **ERA5 spectral mass fluxes** (recommended): `preprocess_transport_binary.jl` converts
   spectral VO/D/LNSP to mass-conserving mass fluxes, achieving near-zero mass drift
 - **GEOS-FP C720** native cubed-sphere mass flux reader (`src/IO/geosfp_cubed_sphere_reader.jl`)
   with auto-detection of vertical level ordering and panel convention handling
@@ -369,7 +369,7 @@ ERA5 (ECMWF archive)
             |         mass-conserving mass fluxes
             |
             +--> Julia preprocessing -----------------> Julia forward run
-                  (preprocess_spectral_massflux.jl)
+                  (preprocess_transport_binary.jl)
                   mass-conserving mass fluxes (same approach)
 ```
 
@@ -418,7 +418,7 @@ transport errors in offline models. Key findings relevant to our model:
    for 1998-present. These avoid all regridding/restaggering errors.
 
 **How our model addresses this:**
-- **ERA5 spectral mass fluxes**: `preprocess_spectral_massflux.jl` follows TM5's approach,
+- **ERA5 spectral mass fluxes**: `preprocess_transport_binary.jl` follows TM5's approach,
   achieving near-zero mass drift (same spectral integration as Bregman et al. 2003)
 - **GEOS-FP/IT native cubed-sphere**: Direct ingestion of C720/C180 mass fluxes (MFXC, MFYC)
   from the WashU archive, avoiding all regridding/restaggering errors

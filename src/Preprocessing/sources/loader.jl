@@ -3,10 +3,21 @@
 #
 # `load_met_settings(toml_path; root_dir, kwargs...)` reads a met_sources
 # TOML and returns the typed `AbstractMetSettings` for that source. Dispatch
-# is on `[source].name` — currently "GEOS-IT" and "GEOS-FP" map to the
-# corresponding `GEOSSettings{flavor}` aliases. MERRA-2 (LL) and other
-# sources will plug in by extending the `name => Settings` mapping.
+# is on `[source].name` through `_settings_constructor`; currently "GEOS-IT"
+# and "GEOS-FP" map to the corresponding `GEOSSettings{flavor}` aliases.
+# MERRA-2 (LL) and other sources plug in by adding methods, not by extending
+# a central if/else chain.
 # ===========================================================================
+
+_settings_constructor(name::AbstractString) =
+    _settings_constructor(Val(Symbol(name)))
+
+_settings_constructor(::Val{Symbol("GEOS-IT")}) = GEOSITSettings
+_settings_constructor(::Val{Symbol("GEOS-FP")}) = GEOSFPSettings
+
+function _settings_constructor(::Val{name}) where name
+    error("Unsupported met source `$(String(name))`. Supported: GEOS-IT, GEOS-FP.")
+end
 
 """
     load_met_settings(toml_path::String; root_dir, kwargs...) -> AbstractMetSettings
@@ -34,23 +45,19 @@ function load_met_settings(toml_path::String;
 
     coefs = String(get(vertical_cfg, "coefficients_file", "config/geos_L72_coefficients.toml"))
 
-    if name == "GEOS-IT" || name == "GEOS-FP"
-        Nc = Int(grid_cfg["Nc"])
-        mass_flux_dt = Float64(get(pre_cfg, "mass_flux_dt_seconds", 450.0))
-        level_orientation = Symbol(get(pre_cfg, "level_orientation", "auto"))
-        include_surface = Bool(get(pre_cfg, "include_surface", false))
-        include_convection = Bool(get(pre_cfg, "include_convection", false))
-        include_vdiff_fields = Bool(get(pre_cfg, "include_vdiff_fields", false))
-        physics_dir = String(get(pre_cfg, "physics_dir", ""))
-        physics_layout = Symbol(get(pre_cfg, "physics_layout", "auto"))
+    ctor = _settings_constructor(name)
+    Nc = Int(grid_cfg["Nc"])
+    mass_flux_dt = Float64(get(pre_cfg, "mass_flux_dt_seconds", 450.0))
+    level_orientation = Symbol(get(pre_cfg, "level_orientation", "auto"))
+    include_surface = Bool(get(pre_cfg, "include_surface", false))
+    include_convection = Bool(get(pre_cfg, "include_convection", false))
+    include_vdiff_fields = Bool(get(pre_cfg, "include_vdiff_fields", false))
+    physics_dir = String(get(pre_cfg, "physics_dir", ""))
+    physics_layout = Symbol(get(pre_cfg, "physics_layout", "auto"))
 
-        ctor = name == "GEOS-IT" ? GEOSITSettings : GEOSFPSettings
-        return ctor(; root_dir = String(root_dir),
-                      Nc, mass_flux_dt, level_orientation,
-                      include_surface, include_convection, include_vdiff_fields,
-                      physics_dir, physics_layout,
-                      coefficients_file = coefs, kwargs...)
-    end
-
-    error("Unsupported met source `$(name)`. Supported: GEOS-IT, GEOS-FP.")
+    return ctor(; root_dir = String(root_dir),
+                  Nc, mass_flux_dt, level_orientation,
+                  include_surface, include_convection, include_vdiff_fields,
+                  physics_dir, physics_layout,
+                  coefficients_file = coefs, kwargs...)
 end

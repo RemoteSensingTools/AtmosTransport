@@ -1599,7 +1599,7 @@ Pipeline per window:
 """
 function process_day(date::Date,
                      grid::ReducedGaussianTargetGeometry,
-                     settings,
+                     settings::ERA5SpectralSettings,
                      vertical;
                      next_day_hour0=nothing,
                      positivity_cfl_limit::Real = 0.95,

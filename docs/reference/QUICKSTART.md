@@ -35,7 +35,7 @@ Output: `quickstart_output.nc` + snapshot PNG.
 
 To run with full control over parameters:
 ```bash
-julia --project=. scripts/run.jl config/runs/quickstart.toml
+julia --project=. scripts/run_transport.jl config/runs/quickstart/ll72x37_advonly.toml
 ```
 
 ## Prerequisites
@@ -54,14 +54,14 @@ julia --project=. scripts/run.jl config/runs/quickstart.toml
 All simulations use a single universal runner with a TOML configuration file:
 
 ```bash
-julia --project=. scripts/run.jl <config.toml>
+julia --project=. scripts/run_transport.jl <config.toml>
 ```
 
 For double-buffered I/O overlap (disk reads in parallel with GPU compute),
 start Julia with multiple threads:
 
 ```bash
-julia --threads=2 --project=. scripts/run.jl <config.toml>
+julia --threads=2 --project=. scripts/run_transport.jl <config.toml>
 ```
 
 ### Available Configurations
@@ -84,13 +84,13 @@ All configs are in `config/runs/`.
 
 ```bash
 # GEOS-FP C720 cubed-sphere on GPU (30-day, NetCDF mode)
-julia --threads=2 --project=. scripts/run.jl config/runs/geosfp_c720_june2024_fixed.toml
+julia --threads=2 --project=. scripts/run_transport.jl config/runs/completed_experiments/geosfp_c720_june2024_fixed.toml
 
 # GEOS-IT C180 with PPM advection
-julia --threads=2 --project=. scripts/run.jl config/runs/geosit_c180_june2023_ppm.toml
+julia --threads=2 --project=. scripts/run_transport.jl config/runs/likely_legacy/geosit_c180_june2023_ppm.toml
 
 # ERA5 spectral on GPU
-julia --threads=2 --project=. scripts/run.jl config/runs/era5_spectral_june2023.toml
+julia --threads=2 --project=. scripts/run_transport.jl config/runs/likely_legacy/era5_spectral_june2023.toml
 ```
 
 ---
@@ -385,14 +385,14 @@ the recommended ERA5 pipeline — it achieves better mass conservation than
 the gridpoint approach.
 
 **Input**: ERA5 spectral GRIB files (VO, D, LNSP)
-**Output**: NetCDF mass fluxes (am, bm, cm, m, ps)
+**Output**: v4 transport binaries
 
 ```bash
-julia --project=. scripts/preprocess_spectral_massflux.jl \
-    config/preprocessing/spectral_june2023.toml
+julia --project=. scripts/preprocessing/preprocess_transport_binary.jl \
+    config/preprocessing/likely_legacy/spectral_june2023.toml
 ```
 
-See `config/preprocessing/spectral_june2023.toml` for configuration options.
+See `config/preprocessing/likely_legacy/spectral_june2023.toml` for configuration options.
 
 ### GEOS-FP/IT CS: NetCDF to Binary
 
@@ -488,7 +488,7 @@ julia --project=. scripts/preprocess_geosfp_cs.jl \
     config/preprocessing/geosfp_c720_june2024.toml
 
 # 3. Run! (NetCDF mode — reads raw .nc4 directly, no preprocessing needed)
-julia --threads=2 --project=. scripts/run.jl config/runs/geosfp_c720_june2024_fixed.toml
+julia --threads=2 --project=. scripts/run_transport.jl config/runs/completed_experiments/geosfp_c720_june2024_fixed.toml
 ```
 
 **Important**: The config must set `mass_flux_dt = 450` (GEOS dynamics timestep).
@@ -514,7 +514,7 @@ julia --project=. scripts/preprocessing/preprocess_geosfp_cs.jl \
 julia --project=. scripts/preprocessing/regrid_emissions.jl config/emissions/edgar_sf6.toml
 
 # 6. Run (slopes advection)
-julia --threads=2 --project=. scripts/run.jl config/runs/geosit_c180_june2023_ppm.toml
+julia --threads=2 --project=. scripts/run_transport.jl config/runs/likely_legacy/geosit_c180_june2023_ppm.toml
 ```
 
 The `coord_file` in the TOML config must point to a CS gridspec NetCDF file
@@ -542,7 +542,7 @@ julia --project=. scripts/preprocessing/regrid_emissions.jl config/emissions/lmd
 julia --project=. scripts/preprocessing/regrid_emissions.jl config/emissions/gridfed_fossil_co2.toml
 
 # 4. Run (7 days in ~3 min on L40S GPU)
-julia --threads=2 --project=. scripts/run.jl config/runs/catrine_geosit_c180.toml
+julia --threads=2 --project=. scripts/run_transport.jl config/runs/likely_legacy/catrine_geosit_c180.toml
 ```
 
 Output: 3-hourly native CS binary files (~1.8 GB/day) with 4 tracer
@@ -557,11 +557,11 @@ preprocessing details.
 python scripts/download_era5_grib_tm5.py
 
 # 2. Preprocess spectral → mass fluxes (one-time)
-julia --project=. scripts/preprocess_spectral_massflux.jl \
-    config/preprocessing/spectral_june2023.toml
+julia --project=. scripts/preprocessing/preprocess_transport_binary.jl \
+    config/preprocessing/likely_legacy/spectral_june2023.toml
 
 # 3. Run
-julia --threads=2 --project=. scripts/run.jl config/runs/era5_spectral_june2023.toml
+julia --threads=2 --project=. scripts/run_transport.jl config/runs/likely_legacy/era5_spectral_june2023.toml
 ```
 
 ---

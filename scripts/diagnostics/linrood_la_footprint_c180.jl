@@ -7,7 +7,8 @@
 # 8 substeps × 450 s = 1 day) and runs the adjoint backward for the
 # first 6 hours = 48 substeps.
 #
-# Uses the same loaders as `run_cs_transport.jl` (`CubedSphereBinaryReader`,
+# Uses the same loaders as `scripts/benchmarks/run_cs_transport.jl`
+# (`CubedSphereBinaryReader`,
 # `load_cs_window`, `_pad` to Hp=3). Memory budget is bounded by the
 # LinRood horizontal tape (~5-10 GB) and `_CSSweepRecord` Z snapshots
 # (~10-15 GB). Total comfortably fits in 64 GB+ host memory.

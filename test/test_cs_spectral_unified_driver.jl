@@ -6,7 +6,8 @@ using Dates
 
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
-using .AtmosTransport.Preprocessing: build_target_geometry, process_day
+using .AtmosTransport.Preprocessing: build_target_geometry, process_day,
+                                      ERA5SpectralSettings
 
 const Pre = AtmosTransport.Preprocessing
 
@@ -50,7 +51,7 @@ function _cs_test_vertical(::Type{FT}) where FT
 end
 
 function _cs_test_settings(::Type{FT}, spectral_dir, cache_dir, out_dir) where FT
-    return (
+    return ERA5SpectralSettings((
         output_float_type = FT,
         spectral_dir = spectral_dir,
         spectral_cache_dir = cache_dir,
@@ -66,7 +67,7 @@ function _cs_test_settings(::Type{FT}, spectral_dir, cache_dir, out_dir) where F
         met_interval = 3600.0,
         dt = 900.0,
         out_dir = out_dir,
-    )
+    ))
 end
 
 @testset "CS spectral unified driver emits reproducible bytes" begin

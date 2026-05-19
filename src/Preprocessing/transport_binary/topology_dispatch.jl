@@ -1,4 +1,18 @@
-# Multiple-dispatch extension point for topology-specific daily preprocessors.
+# Multiple-dispatch extension points for source/topology preprocessing.
+
+preprocessor_pair_supported(::AbstractTargetGeometry, _settings) = false
+
+function ensure_preprocessor_pair_supported(grid::AbstractTargetGeometry,
+                                            settings;
+                                            context::AbstractString)
+    ensure_supported_target(grid)
+    preprocessor_pair_supported(grid, settings) && return nothing
+    throw(ArgumentError(
+        "$(context) preprocessing does not support source=$(nameof(typeof(settings))) " *
+        "target=$(nameof(typeof(grid))). Add a `process_day(::Date, ::$(nameof(typeof(grid))), " *
+        "::$(nameof(typeof(settings))), vertical; ...)` method and a matching " *
+        "`preprocessor_pair_supported` method, or move this config under likely_legacy."))
+end
 
 """
     process_day(date::Date, grid::AbstractTargetGeometry, settings, vertical; next_day_hour0=nothing)
@@ -20,7 +34,7 @@ Every implementation must satisfy the same transport contract:
 - run a write-time replay check unless explicitly disabled for diagnostics;
 - produce binaries that the runtime driver can load with replay validation.
 
-This fallback rejects unsupported target geometries after config parsing has
+This fallback rejects unsupported source/target pairs after config parsing has
 already produced an `AbstractTargetGeometry`.
 """
 function process_day(date::Date,
@@ -28,6 +42,12 @@ function process_day(date::Date,
                      settings,
                      vertical;
                      next_day_hour0=nothing)
-    ensure_supported_target(grid)
-    return nothing
+    _ = date
+    _ = vertical
+    _ = next_day_hour0
+    ensure_preprocessor_pair_supported(grid, settings;
+                                       context = "transport-binary")
+    throw(ArgumentError(
+        "No transport-binary preprocessor implementation for " *
+        "source=$(nameof(typeof(settings))) target=$(nameof(typeof(grid)))."))
 end

@@ -63,7 +63,7 @@ See `config/runs/` for complete examples with emissions, snapshots, and multi-tr
 julia --project=. scripts/run_transport_binary.jl config/runs/your_config.toml
 
 # Cubed-sphere grids:
-julia --project=. scripts/run_cs_transport.jl config/runs/your_cs_config.toml
+julia --project=. scripts/run_transport.jl config/runs/your_cs_config.toml
 ```
 
 Expected output:

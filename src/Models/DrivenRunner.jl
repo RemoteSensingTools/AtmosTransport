@@ -573,11 +573,7 @@ function run_driven_simulation(cfg::AbstractDict)
     # the reader in `inspect_binary`.
     caps = inspect_binary(first(binary_paths); io = devnull)
     _validate_input_binary_expectations(caps, input_cfg, first(binary_paths))
-    result = if caps.grid_type === :cubed_sphere
-        _run_driven_simulation_cs(binary_paths, cfg)
-    else
-        _run_driven_simulation_structured(binary_paths, cfg)
-    end
+    result = _run_driven_simulation_for(Val(caps.grid_type), binary_paths, cfg)
     if timers_on
         SectionTimer.disable!()
         SectionTimer.report(stderr)
@@ -592,6 +588,16 @@ function run_driven_simulation(cfg::AbstractDict)
         end
     end
     return result
+end
+
+_run_driven_simulation_for(::Val{:latlon}, binary_paths::Vector{String}, cfg) =
+    _run_driven_simulation_structured(binary_paths, cfg)
+_run_driven_simulation_for(::Val{:reduced_gaussian}, binary_paths::Vector{String}, cfg) =
+    _run_driven_simulation_structured(binary_paths, cfg)
+_run_driven_simulation_for(::Val{:cubed_sphere}, binary_paths::Vector{String}, cfg) =
+    _run_driven_simulation_cs(binary_paths, cfg)
+function _run_driven_simulation_for(::Val{grid_type}, _binary_paths::Vector{String}, _cfg) where grid_type
+    throw(ArgumentError("Unsupported transport-binary grid_type=$(grid_type)."))
 end
 
 function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)

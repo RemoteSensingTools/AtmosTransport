@@ -7,7 +7,8 @@ using JSON3
 
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
-using .AtmosTransport.Preprocessing: build_target_geometry, process_day, HEADER_SIZE
+using .AtmosTransport.Preprocessing: build_target_geometry, process_day, HEADER_SIZE,
+                                      ERA5SpectralSettings
 
 const Pre = AtmosTransport.Preprocessing
 
@@ -51,7 +52,7 @@ function _ll_test_vertical(::Type{FT}) where FT
 end
 
 function _ll_test_settings(::Type{FT}, spectral_dir, cache_dir, out_dir) where FT
-    return (
+    return ERA5SpectralSettings((
         output_float_type = FT,
         spectral_dir = spectral_dir,
         spectral_cache_dir = cache_dir,
@@ -69,7 +70,7 @@ function _ll_test_settings(::Type{FT}, spectral_dir, cache_dir, out_dir) where F
         out_dir = out_dir,
         tm5_convection_enable = false,
         include_surface = false,
-    )
+    ))
 end
 
 function _header_without_creation_time(path)

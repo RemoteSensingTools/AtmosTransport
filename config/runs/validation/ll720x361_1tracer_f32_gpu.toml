@@ -2,7 +2,7 @@
 # Uses v4-preprocessed binary (Poisson-balanced, mass-fixed)
 #
 # Usage:
-#   CUDA_VISIBLE_DEVICES=0 julia --project=. scripts/run_transport_binary.jl \
+#   CUDA_VISIBLE_DEVICES=0 julia --project=. scripts/run_transport.jl \
 #       config/runs/validation/ll720x361_1tracer_f32_gpu.toml
 
 [input]

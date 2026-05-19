@@ -156,7 +156,7 @@ TM5 requires preprocessed meteo (mass fluxes from spectral harmonics), not raw E
 NetCDF. See [METEO_PREPROCESSING.md](METEO_PREPROCESSING.md) for details.
 
 1. Download ERA5 spectral GRIB data (VO, D, LNSP) - **DONE**
-2. Julia spectral preprocessing (`preprocess_spectral_massflux.jl`) - **DONE**
+2. Julia spectral preprocessing (`preprocess_transport_binary.jl`) - **DONE**
 3. Configure TM5 GRIB reader (tmm.sourcekey format) - **TODO**
 4. Run TM5 preprocessing mode - **TODO**
 5. Run TM5 forward simulation - **TODO**
@@ -197,7 +197,7 @@ fluxes from ERA5. The remaining step is running TM5 itself for direct comparison
 ## Configuration
 
 All simulation parameters are specified in TOML configuration files under
-`config/runs/`. The universal runner `scripts/run.jl` reads the config and
+`config/runs/`. The universal runner `scripts/run_transport.jl` reads the config and
 handles GPU loading, grid construction, met driver selection, and output.
 See [QUICKSTART.md](QUICKSTART.md) for the full TOML reference.
 

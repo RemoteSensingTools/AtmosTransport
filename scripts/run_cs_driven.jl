@@ -10,8 +10,9 @@
 #
 #   julia --project=. scripts/run_transport.jl <config.toml>
 #
-# For the low-level, advection-only CS benchmark, `run_cs_transport.jl`
-# is untouched and remains a separate entry point.
+# For the low-level, advection-only CS benchmark,
+# `scripts/benchmarks/run_cs_transport.jl` remains separate from the
+# production runtime matrix.
 #
 # The shim will be removed in a follow-up plan.
 # ---------------------------------------------------------------------------

@@ -427,7 +427,7 @@ binary write. No on-disk LL intermediate.
 """
 function process_day(date::Date,
                      grid::CubedSphereTargetGeometry,
-                     settings,
+                     settings::ERA5SpectralSettings,
                      vertical;
                      positivity_cfl_limit::Real = 0.95,
                      require_substep_positivity::Bool = true,

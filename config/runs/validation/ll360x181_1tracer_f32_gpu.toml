@@ -1,7 +1,7 @@
 # 1-degree LatLon, single CO2 tracer, F32 GPU — baseline validation
 #
 # Usage:
-#   CUDA_VISIBLE_DEVICES=0 julia --project=. scripts/run_transport_binary.jl \
+#   CUDA_VISIBLE_DEVICES=0 julia --project=. scripts/run_transport.jl \
 #       config/runs/validation/ll360x181_1tracer_f32_gpu.toml
 
 [input]

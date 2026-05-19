@@ -107,5 +107,5 @@ See [QUICKSTART.md](QUICKSTART.md) for end-to-end setup.
 
 For GCHP-equivalent CS runs:
 1. Preprocess: `julia scripts/preprocessing/preprocess_transport_binary.jl config/preprocessing/era5_cs_c90_transport_binary.toml --day 2021-12-01`
-2. Run: `julia scripts/run.jl config/runs/your_cs_config.toml`
+2. Run: `julia scripts/run_transport.jl config/runs/your_cs_config.toml`
 3. Use `scheme = "slopes"` for GCHP-equivalent advection (or `"ppm"` for higher accuracy)

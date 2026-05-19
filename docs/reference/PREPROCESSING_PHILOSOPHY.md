@@ -105,7 +105,7 @@ target_summary(target)
 
 Current config-driven target families:
 - structured lat-lon transport binaries via `preprocess_era5_latlon_transport_binary_v2.jl`
-- reduced-Gaussian transport binaries via `preprocess_era5_reduced_gaussian_transport_binary_v2.jl`
+- reduced-Gaussian transport binaries via `preprocess_transport_binary.jl`
 
 Extension contract for new config-driven targets:
 

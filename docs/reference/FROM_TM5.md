@@ -29,7 +29,7 @@ passes explicit `CellState` + `FaceFluxState` objects through dispatch.
 ### Config-driven, no recompilation
 TM5 builds use `#ifdef` and Makefile options. AtmosTransport uses TOML configs:
 ```bash
-julia --project=. scripts/run.jl config/runs/era5_f64_debug.toml
+julia --project=. scripts/run_transport.jl config/runs/era5_f64_debug.toml
 ```
 
 ### Grid dispatch (not if/else)
@@ -56,7 +56,7 @@ GPU. No separate GPU code to maintain.
 2. Preprocess:
    julia scripts/preprocessing/preprocess_transport_binary.jl config.toml --day 2021-12-01
 3. Run transport:
-   julia scripts/run.jl config/runs/my_config.toml
+   julia scripts/run_transport.jl config/runs/my_config.toml
 ```
 
 ### Preprocessing targets

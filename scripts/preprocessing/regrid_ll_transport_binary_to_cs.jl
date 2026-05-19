@@ -2,7 +2,10 @@
 # ===========================================================================
 # Regrid an LL transport binary to a cubed-sphere transport binary.
 #
-# Thin CLI over `Preprocessing.regrid_ll_binary_to_cs` (plan 40 Commit 3).
+# Compatibility CLI over `Preprocessing.regrid_transport_binary` (plan 40
+# Commit 3). The concrete implementation currently dispatches to the LL → CS
+# method; new binary regrid pairs should extend `regrid_transport_binary`
+# rather than adding another topology-specific script.
 # All of the real work — conservative regrid, wind recovery, panel-local
 # rotation, flux reconstruction, per-level mass consistency, CS Poisson
 # balance, cm diagnosis, streaming v4 write — lives in
@@ -40,7 +43,7 @@ using Dates
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
-using .AtmosTransport.Preprocessing: regrid_ll_binary_to_cs, build_target_geometry
+using .AtmosTransport.Preprocessing: regrid_transport_binary, build_target_geometry
 
 const USAGE = """
 Usage: julia --project=. scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl \\
@@ -151,11 +154,11 @@ function main()
     opts.steps_per_window === nothing ||
         @info "  steps_per_window override: $(opts.steps_per_window)"
 
-    regrid_ll_binary_to_cs(opts.input, cs_grid, opts.output;
-                           FT         = FT,
-                           mass_basis = basis_sym,
-                           steps_per_window = opts.steps_per_window,
-                           require_substep_positivity = opts.require_substep_positivity)
+    regrid_transport_binary(opts.input, cs_grid, opts.output;
+                            FT         = FT,
+                            mass_basis = basis_sym,
+                            steps_per_window = opts.steps_per_window,
+                            require_substep_positivity = opts.require_substep_positivity)
 
     return opts.output
 end

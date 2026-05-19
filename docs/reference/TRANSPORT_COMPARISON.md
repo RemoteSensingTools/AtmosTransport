@@ -172,7 +172,7 @@ grid. No restaggering or regridding is needed.
 
 We support three mass flux pipelines with different conservation properties:
 
-1. **ERA5 spectral** (`preprocess_spectral_massflux.jl`): Converts ERA5 spectral
+1. **ERA5 spectral** (`preprocess_transport_binary.jl`): Converts ERA5 spectral
    harmonics (VO, D, LNSP) to mass-conserving mass fluxes, following TM5's
    approach. Achieves near-zero mass drift. This is the recommended ERA5 pipeline.
 
@@ -345,8 +345,8 @@ Three met data pipelines:
 **ERA5 spectral (recommended):**
 ```
 ERA5 GRIB (spectral VO, D, LNSP)
-    → preprocess_spectral_massflux.jl (spectral integration)
-    → NetCDF mass fluxes (am, bm, cm, m, ps)
+    → preprocess_transport_binary.jl (spectral integration)
+    → v4 transport binaries
     → forward run
 ```
 
@@ -387,7 +387,7 @@ GEOS-FP/IT NetCDF (native C720/C180 MFXC, MFYC, DELP)
 3. **Boundary layer diffusion with met-driven Kz**: Add ERA5 boundary layer
    height (`blh`, param 159) to the config and derive Kz profiles from it.
 
-4. ~~**Spectral mass flux preprocessing**~~: **DONE.** `preprocess_spectral_massflux.jl`
+4. ~~**Spectral mass flux preprocessing**~~: **DONE.** `preprocess_transport_binary.jl`
    converts ERA5 spectral VO/D/LNSP to mass-conserving mass fluxes.
 
 5. ~~**Native cubed-sphere support**~~: **DONE.** Full GPU pipeline for GEOS-FP C720

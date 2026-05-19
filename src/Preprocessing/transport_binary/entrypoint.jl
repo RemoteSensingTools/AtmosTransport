@@ -11,8 +11,8 @@
 # ---------------------------------------------------------------------------
 # Source detection. A config that declares `[source].toml = "..."` is
 # routed through the typed `AbstractMetSettings` factory; otherwise the
-# ERA5-spectral config path resolves historical NamedTuple settings via
-# `resolve_runtime_settings`. Both paths converge on
+# ERA5-spectral config path wraps historical settings in
+# `ERA5SpectralSettings`. Both paths converge on
 # `process_day(date, grid, settings, vertical; ...)` for actual work.
 # ---------------------------------------------------------------------------
 
@@ -265,10 +265,7 @@ function _process_day_native(cfg::AbstractDict;
     positivity_cfl_limit       = _resolve_positivity_cfl_limit(cfg)
     require_substep_positivity = _resolve_require_substep_positivity(cfg)
     substep_policy = _resolve_substep_schedule_policy(cfg, positivity_cfl_limit)
-    if !(grid isa CubedSphereTargetGeometry && settings isa AbstractGEOSSettings)
-        error("Unified native-source preprocessing currently supports only " *
-              "native GEOS → cubed_sphere preprocessing.")
-    end
+    ensure_preprocessor_pair_supported(grid, settings; context = "native-source")
 
     dates = _resolve_dates_native(cfg; day_override, start_date, end_date)
 
@@ -278,7 +275,7 @@ function _process_day_native(cfg::AbstractDict;
     vertical.Nz == vertical.Nz_native ||
         @info @sprintf("Vertical transform: %s  native Nz=%d → output Nz=%d",
                        typeof(vertical.transform), vertical.Nz_native, vertical.Nz)
-    @info "Plan 41 unified driver enabled for native GEOS → cubed_sphere"
+    @info "Plan 41 unified driver enabled for $(nameof(typeof(settings))) → $(grid_kind(grid))"
 
     t_total = time()
     seed_m = nothing                   # source-defined cross-day state (e.g. GEOS PF endpoint)
@@ -309,8 +306,8 @@ function _process_day_native(cfg::AbstractDict;
 end
 
 # ---------------------------------------------------------------------------
-# ERA5-spectral preprocessor: historical NamedTuple settings via
-# `resolve_runtime_settings`. Existing ERA5 configs keep working unchanged;
+# ERA5-spectral preprocessor: typed `ERA5SpectralSettings` wrapper over the
+# historical settings bundle. Existing ERA5 configs keep working unchanged;
 # new met sources must use the typed native-source path.
 # ---------------------------------------------------------------------------
 
@@ -318,8 +315,9 @@ function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
                                day_override = nothing,
                                start_date   = nothing,
                                end_date     = nothing)
-    settings = resolve_runtime_settings(cfg)
-    settings = merge(settings, (T_target = target_spectral_truncation(grid),))
+    settings_nt = resolve_runtime_settings(cfg)
+    settings = ERA5SpectralSettings(
+        merge(settings_nt, (T_target = target_spectral_truncation(grid),)))
     vertical = build_vertical_setup(settings.coeff_path, settings.level_range,
                                     settings.min_dp, cfg["grid"])
 
@@ -342,14 +340,7 @@ function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
     positivity_cfl_limit       = _resolve_positivity_cfl_limit(cfg)
     require_substep_positivity = _resolve_require_substep_positivity(cfg)
     substep_policy             = _resolve_substep_schedule_policy(cfg, positivity_cfl_limit)
-    spectral_target_supported =
-        grid isa ReducedGaussianTargetGeometry ||
-        grid isa CubedSphereTargetGeometry ||
-        grid isa LatLonTargetGeometry
-    if !spectral_target_supported
-        error("Unified ERA5 spectral preprocessing currently " *
-              "supports only latlon, reduced_gaussian, and cubed_sphere targets.")
-    end
+    ensure_preprocessor_pair_supported(grid, settings; context = "ERA5 spectral")
 
     @info @sprintf("Processing %d days: %s to %s", length(dates), first(dates), last(dates))
     @info "Plan 41 unified driver enabled for ERA5 spectral → $(grid_kind(grid))"
@@ -387,7 +378,7 @@ Top-level TOML-driven preprocessor entry. Detects source type from `cfg`:
 * `[source].toml = "config/met_sources/<source>.toml"` → typed
   `AbstractMetSettings` path, supports cross-day state carry (e.g. GEOS
   pressure-fixer chained mass) and `--start/--end` date ranges.
-* otherwise → ERA5 spectral config path (`[input].spectral_dir`).
+* otherwise → typed ERA5 spectral config path (`[input].spectral_dir`).
 
 Both paths converge on `process_day(date, grid::AbstractTargetGeometry,
 settings, vertical; ...)` for the per-day work. There is no parallel

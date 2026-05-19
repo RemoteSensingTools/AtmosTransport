@@ -8,8 +8,10 @@ topology-dispatched VMR builders for the unified runtime.
 
 - [`build_initial_mixing_ratio`](@ref) — topology-dispatched builder
   returning **dry VMR** on interior cells. Accepts `kind = uniform |
-  gaussian_blob | file | netcdf | file_field | catrine_co2` for LL/RG
-  meshes. CS file-based dispatch is added in plan 40 Commit 1c.
+  latitude_step | gaussian_blob | file | netcdf | file_field |
+  catrine_co2` for LL/RG meshes. CS supports `uniform |
+  latitude_step | gaussian_blob | file | netcdf | file_field |
+  catrine_co2`.
 - [`pack_initial_tracer_mass`](@ref) — basis-aware VMR → tracer-mass
   conversion. Dispatches on `mass_basis::AbstractMassBasis`:
   - `DryBasis` (default per CLAUDE.md invariant 14): `rm = vmr .* air_mass`.
@@ -48,7 +50,7 @@ import ...expand_data_path
 using ..State: AbstractMassBasis, DryBasis, MoistBasis
 using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                 nrings, ring_longitudes, cell_index, cell_area,
-                gravity
+                gravity, panel_cell_center_lonlat
 # Regridding + Preprocessing are loaded before Models (AtmosTransport.jl,
 # plan 40 Commit 1c reorder) so we can pull in the LL→CS conservative
 # regridder + panel unpacking helpers for the CS file-based IC path.
@@ -76,6 +78,26 @@ using Printf: @sprintf
 
 @inline _init_kind(cfg) = Symbol(lowercase(String(get(cfg, "kind", "uniform"))))
 @inline _is_file_init_kind(kind::Symbol) = kind in (:file, :netcdf, :file_field, :catrine_co2)
+@inline _is_latitude_step_kind(kind::Symbol) =
+    kind in (:latitude_step, :lat_step, :hemisphere_step)
+
+function _cfg_get_alias(cfg, key::String, alias::String, default)
+    haskey(cfg, key) && return cfg[key]
+    haskey(cfg, alias) && return cfg[alias]
+    return default
+end
+
+function _latitude_step_values(cfg, ::Type{FT}) where FT
+    south = FT(_cfg_get_alias(cfg, "south_value", "south",
+                              get(cfg, "background", 4.0e-4)))
+    north = FT(_cfg_get_alias(cfg, "north_value", "north", 4.4e-4))
+    split = FT(get(cfg, "split_lat_deg", 0.0))
+    return (; south, north, split)
+end
+
+@inline function _latitude_step_value(lat, vals)
+    return typeof(vals.split)(lat) >= vals.split ? vals.north : vals.south
+end
 
 # ---------------------------------------------------------------------------
 # FileInitialConditionSource struct (hoisted from run_transport_binary.jl:59)
@@ -468,6 +490,14 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT}, mesh::LatLonMes
     background = FT(get(cfg, "background", 4.0e-4))
     if kind === :uniform
         return fill(background, size(air_mass))
+    elseif _is_latitude_step_kind(kind)
+        vals = _latitude_step_values(cfg, FT)
+        q = Array{FT}(undef, size(air_mass))
+        for j in axes(q, 2)
+            value = _latitude_step_value(mesh.φᶜ[j], vals)
+            @views q[:, j, :] .= value
+        end
+        return q
     elseif kind === :bl_enhanced
         # Flat background + enhancement in the lowest `n_layers` model levels
         # (k = Nz-n_layers+1:Nz, since k=1=TOA, k=Nz=surface). Layer-based
@@ -503,6 +533,17 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT}, mesh::ReducedGa
     background = FT(get(cfg, "background", 4.0e-4))
     if kind === :uniform
         return fill(background, size(air_mass))
+    elseif _is_latitude_step_kind(kind)
+        vals = _latitude_step_values(cfg, FT)
+        q = Array{FT}(undef, size(air_mass))
+        for j in 1:nrings(mesh)
+            value = _latitude_step_value(mesh.latitudes[j], vals)
+            for i in 1:mesh.nlon_per_ring[j]
+                c = cell_index(mesh, i, j)
+                @views q[c, :] .= value
+            end
+        end
+        return q
     elseif kind === :gaussian_blob
         lon0 = FT(get(cfg, "lon0_deg", 0.0))
         lat0 = FT(get(cfg, "lat0_deg", 0.0))
@@ -736,10 +777,39 @@ function build_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 3}},
     mesh = grid.horizontal
     Nc = mesh.Nc
     Nz = size(air_mass[1], 3)
+    background = FT(get(cfg, "background", 4.0e-4))
 
     if kind === :uniform
-        background = FT(get(cfg, "background", 4.0e-4))
         return ntuple(_ -> fill(background, Nc, Nc, Nz), CS_PANEL_COUNT)
+    elseif _is_latitude_step_kind(kind)
+        vals = _latitude_step_values(cfg, FT)
+        return ntuple(p -> begin
+            _lons, lats = panel_cell_center_lonlat(mesh, p)
+            q = Array{FT}(undef, Nc, Nc, Nz)
+            for j in 1:Nc, i in 1:Nc
+                value = _latitude_step_value(lats[i, j], vals)
+                @views q[i, j, :] .= value
+            end
+            q
+        end, CS_PANEL_COUNT)
+    elseif kind === :gaussian_blob
+        lon0 = FT(get(cfg, "lon0_deg", 0.0))
+        lat0 = FT(get(cfg, "lat0_deg", 0.0))
+        sigma_lon = FT(get(cfg, "sigma_lon_deg", 10.0))
+        sigma_lat = FT(get(cfg, "sigma_lat_deg", 10.0))
+        amplitude = FT(get(cfg, "amplitude", background))
+        return ntuple(p -> begin
+            lons, lats = panel_cell_center_lonlat(mesh, p)
+            q = Array{FT}(undef, Nc, Nc, Nz)
+            for j in 1:Nc, i in 1:Nc
+                dlon = wrapped_longitude_distance(lons[i, j], lon0)
+                dlat = lats[i, j] - lat0
+                value = background + amplitude * exp(-FT(0.5) *
+                    ((dlon / sigma_lon)^2 + (dlat / sigma_lat)^2))
+                @views q[i, j, :] .= value
+            end
+            q
+        end, CS_PANEL_COUNT)
     elseif _is_file_init_kind(kind)
         surface_pressure === nothing && throw(ArgumentError(
             "build_initial_mixing_ratio(::AtmosGrid{<:CubedSphereMesh}, ...) " *
@@ -758,7 +828,7 @@ function build_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 3}},
     else
         throw(ArgumentError(
             "unsupported init.kind=$(kind) for CubedSphereMesh; " *
-            "supported: uniform | file | netcdf | file_field | catrine_co2"))
+            "supported: uniform | latitude_step | gaussian_blob | file | netcdf | file_field | catrine_co2"))
     end
 end
 

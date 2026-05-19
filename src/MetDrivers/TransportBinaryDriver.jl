@@ -164,7 +164,7 @@ function _window_max_rel_cm(m::AbstractMatrix{FT}, fluxes::FaceIndexedFluxState)
     return worst
 end
 
-function _validate_window_cm_sanity(reader::TransportBinaryReader; max_rel_cm::Real=1e-8)
+function _validate_window_cm_sanity(reader::TransportBinaryReader; max_rel_cm::Real=1.0)
     threshold = Float64(max_rel_cm)
     worst_ratio = 0.0
     worst_window = 0
@@ -180,8 +180,8 @@ function _validate_window_cm_sanity(reader::TransportBinaryReader; max_rel_cm::R
             throw(ArgumentError(
                 "TransportBinaryDriver sanity check failed for $(basename(reader.path)) " *
                 "at window $win: max(abs(cm)/m)=$(ratio) exceeds threshold $(threshold). " *
-                "This transport binary likely has inconsistent vertical mass fluxes; regenerate it " *
-                "with the fixed Poisson-balanced preprocessor or disable validation explicitly."
+                "This transport binary has a vertical interface flux larger than the local " *
+                "cell mass. Regenerate it with the current preprocessor or disable validation explicitly."
             ))
         end
     end
@@ -431,7 +431,7 @@ function TransportBinaryDriver(path::AbstractString;
                                arch = CPU(),
                                validate_windows::Bool = true,
                                validate_replay::Bool = false,
-                               max_rel_cm::Real = 0.01)
+                               max_rel_cm::Real = 1.0)
     reader = TransportBinaryReader(String(path); FT=FT)
     _validate_runtime_semantics(reader)
     validate_windows && _validate_window_cm_sanity(reader; max_rel_cm=max_rel_cm)

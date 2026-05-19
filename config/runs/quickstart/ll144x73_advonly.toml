@@ -1,4 +1,4 @@
-# Quickstart: 2.5° (144x73) lat-lon, 3-day advection-only, F32, BL-enhanced IC.
+# Quickstart: 2.5° (144x73) lat-lon, 3-day advection-only, F32, Gaussian anomaly IC.
 #
 # Pairs with the downloadable example bundle (see
 # docs/src/getting_started/quickstart.md).
@@ -23,10 +23,13 @@ scheme = "slopes"
 
 [tracers.co2_bl]
 [tracers.co2_bl.init]
-kind        = "bl_enhanced"
-background  = 4.0e-4
-enhancement = 1.0e-4
-n_layers    = 3
+kind          = "gaussian_blob"
+background    = 4.0e-4
+amplitude     = 8.0e-5
+lon0_deg      = -80.0
+lat0_deg      = 35.0
+sigma_lon_deg = 35.0
+sigma_lat_deg = 18.0
 
 [output]
 snapshot_hours = [0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72]

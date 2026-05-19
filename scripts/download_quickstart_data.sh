@@ -5,11 +5,11 @@
 # Two tarballs are hosted as assets on a GitHub Release tag, both built
 # from raw ERA5 spectral input for Dec 1-3, 2021:
 #
-#   quickstart_ll_dec2021_v1.tar.gz
+#   quickstart_ll_dec2021_v2.tar.gz
 #       - era5_ll72x37_dec2021_f32   (5° lat-lon, F32)
 #       - era5_ll144x73_dec2021_f32  (2.5° lat-lon, F32)
 #
-#   quickstart_cs_dec2021_v1.tar.gz
+#   quickstart_cs_dec2021_v2.tar.gz
 #       - era5_cs_c24_dec2021_f32    (cubed-sphere C24, F32)
 #       - era5_cs_c90_dec2021_f32    (cubed-sphere C90 ~1°, F32)
 #
@@ -23,10 +23,11 @@
 #
 # Destination (highest precedence first):
 #   1. --dest / -d <path>       — explicit CLI flag
-#   2. ATMOSTRANSPORT_DATA_ROOT — env var, also honored by the runtime
-#                                 (config TOMLs reference $ATMOSTRANSPORT_DATA_ROOT)
+#   2. ATMOSTRANSPORT_DATA_ROOT_quickstart
+#                               — env var also honored by the quickstart
+#                                 TOMLs
 #   3. ATMOSTR_QUICKSTART_DIR   — legacy quickstart-only env (kept for backward compat)
-#   4. ~/data/AtmosTransport    — fallback (matches the runtime fallback)
+#   4. ~/data/AtmosTransport_quickstart
 #
 # Env overrides for tarball URLs / SHAs (rarely needed):
 #   ATMOSTR_QUICKSTART_LL_URL   — override the LL tarball URL
@@ -40,16 +41,16 @@
 set -euo pipefail
 
 # ── Bundle metadata (one line each — update on a new release) ──────────────
-RELEASE_TAG="data-quickstart-v1"
+RELEASE_TAG="data-quickstart-v2"
 RELEASE_BASE="https://github.com/RemoteSensingTools/AtmosTransport/releases/download/${RELEASE_TAG}"
 
-LL_NAME="quickstart_ll_dec2021_v1.tar.gz"
+LL_NAME="quickstart_ll_dec2021_v2.tar.gz"
 LL_URL_DEFAULT="${RELEASE_BASE}/${LL_NAME}"
-LL_SHA_DEFAULT="1d9928c3f43084f8397af14399f8c438a6c4bfeadabe37f0000fad3fa1ef76d7"
+LL_SHA_DEFAULT="656fde3472014adc3b60ebc3fd1666a2ffe4e46761ec363ec9e61c98300fd735"
 
-CS_NAME="quickstart_cs_dec2021_v1.tar.gz"
+CS_NAME="quickstart_cs_dec2021_v2.tar.gz"
 CS_URL_DEFAULT="${RELEASE_BASE}/${CS_NAME}"
-CS_SHA_DEFAULT="ada76e875cf2852d23f544f9aeb41456e6f13c502d4d6227fac676dcca554b94"
+CS_SHA_DEFAULT="ab554354a4d6a4289e5b68f9d53f3cdf97d00eb3568ada381334f49d5b59eec6"
 
 # ── CLI parsing: positional selector + optional --dest/-d <path> ────────────
 SELECT="all"
@@ -70,9 +71,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Destination resolution: CLI flag > ATMOSTRANSPORT_DATA_ROOT >
-# ATMOSTR_QUICKSTART_DIR (legacy) > ~/data/AtmosTransport (runtime fallback).
-DEST_DIR="${DEST_OVERRIDE:-${ATMOSTRANSPORT_DATA_ROOT:-${ATMOSTR_QUICKSTART_DIR:-$HOME/data/AtmosTransport}}}"
+# Destination resolution: CLI flag > ATMOSTRANSPORT_DATA_ROOT_quickstart >
+# ATMOSTR_QUICKSTART_DIR (legacy) > ~/data/AtmosTransport_quickstart.
+DEST_DIR="${DEST_OVERRIDE:-${ATMOSTRANSPORT_DATA_ROOT_quickstart:-${ATMOSTR_QUICKSTART_DIR:-$HOME/data/AtmosTransport_quickstart}}}"
 DEST_DIR="${DEST_DIR%/}"   # strip trailing slash for tidy paths
 mkdir -p "$DEST_DIR"
 echo "[quickstart] destination: $DEST_DIR"
@@ -156,8 +157,8 @@ fi
 note "Quickstart bundle ready at $DEST_DIR"
 note ""
 note "If this destination is non-default, point the runtime at it via:"
-note "  export ATMOSTRANSPORT_DATA_ROOT=$DEST_DIR"
-note "(Run-config TOMLs use \$ATMOSTRANSPORT_DATA_ROOT in input/output paths.)"
+note "  export ATMOSTRANSPORT_DATA_ROOT_quickstart=$DEST_DIR"
+note "(Run-config TOMLs use \$ATMOSTRANSPORT_DATA_ROOT_quickstart in input/output paths.)"
 note ""
 note "Next: run one of the bundled configs"
 [[ "$SELECT" == "ll" || "$SELECT" == "all" ]] && {

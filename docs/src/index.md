@@ -4,6 +4,8 @@ CurrentModule = AtmosTransport
 
 # AtmosTransport.jl
 
+![AtmosTransport.jl](assets/brand/AtmosTransport_banner.png)
+
 A Julia-based, GPU-portable atmospheric tracer transport model for offline
 chemistry / chemical-transport applications. Designed for **mass-conserving**
 advection, convection, and boundary-layer diffusion on **lat-lon, reduced
@@ -56,13 +58,13 @@ Once the rest of these docs land, the recommended reading order is:
 3. **[Tutorials](#)** — end-to-end runnable examples per grid topology.
 4. **[Theory & Verification](#)** — mass conservation derivation, advection
    schemes, validation results.
-5. **[Preprocessing](#)** — turning raw met data into a v4 transport binary.
+5. **[Preprocessing](#)** — turning raw met data into a transport binary.
 6. **[API Reference](#)** — full function/type index.
 
 In the meantime, the most useful entry points in the repository are:
 
 - `scripts/run_transport.jl` — runtime driver script.
 - `scripts/preprocessing/preprocess_transport_binary.jl` — preprocessing CLI.
-- `scripts/diagnostics/inspect_transport_binary.jl` — inspect a v4 binary.
+- `scripts/diagnostics/inspect_transport_binary.jl` — inspect a transport binary.
 - `config/runs/` — example run configurations (TOML).
 - `CLAUDE.md` (root) — high-signal invariants and project map.

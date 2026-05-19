@@ -199,7 +199,9 @@ function _tracer_init_cfg(tracer_cfg)
     end
     cfg = Dict{String, Any}()
     for key in ("kind", "background", "lon0_deg", "lat0_deg", "sigma_lon_deg",
-                "sigma_lat_deg", "amplitude", "file", "variable", "time_index")
+                "sigma_lat_deg", "amplitude", "south_value", "north_value",
+                "south", "north", "split_lat_deg", "file", "variable",
+                "time_index")
         haskey(tracer_cfg, key) && (cfg[key] = tracer_cfg[key])
     end
     isempty(cfg) && return Dict{String, Any}("kind" => "uniform", "background" => 0.0)

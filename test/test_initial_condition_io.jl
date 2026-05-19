@@ -42,6 +42,15 @@ const ICIO = AtmosTransport.Models.InitialConditionIO
         @test size(q) == size(air_mass)
         @test all(q .== FT(1.5e-4))
 
+        q_step = build_initial_mixing_ratio(air_mass, mesh,
+                                            Dict("kind" => "latitude_step",
+                                                 "south_value" => 4.0e-4,
+                                                 "north_value" => 4.4e-4,
+                                                 "split_lat_deg" => 0.0))
+        @test size(q_step) == size(air_mass)
+        @test all(q_step[:, 1, :] .== FT(4.0e-4))
+        @test all(q_step[:, 2:3, :] .== FT(4.4e-4))
+
         # gaussian_blob — non-uniform profile centered at (0, 0)
         q2 = build_initial_mixing_ratio(air_mass, mesh,
                                         Dict("kind" => "gaussian_blob",
@@ -69,6 +78,13 @@ const ICIO = AtmosTransport.Models.InitialConditionIO
                                             "background" => 2.0e-4))
         @test size(q) == (ncells_, Nz)
         @test all(q .== FT(2.0e-4))
+
+        q_step = build_initial_mixing_ratio(air_mass, mesh,
+                                            Dict("kind" => "hemisphere_step",
+                                                 "south_value" => 4.0e-4,
+                                                 "north_value" => 4.4e-4))
+        @test all(q_step[1:12, :] .== FT(4.0e-4))
+        @test all(q_step[13:end, :] .== FT(4.4e-4))
 
         q2 = build_initial_mixing_ratio(air_mass, mesh,
                                         Dict("kind" => "gaussian_blob",
@@ -174,9 +190,35 @@ const ICIO = AtmosTransport.Models.InitialConditionIO
         @test all(size(vmr[p]) == (Nc, Nc, Nz) for p in 1:6)   # interior only
         @test all(all(vmr[p] .== FT(4.11e-4)) for p in 1:6)
 
+        vmr_step = build_initial_mixing_ratio(air_mass, grid,
+                                              Dict("kind" => "latitude_step",
+                                                   "south_value" => 4.0e-4,
+                                                   "north_value" => 4.4e-4))
+        @test vmr_step isa NTuple{6, Array{FT, 3}}
+        @test all(size(vmr_step[p]) == (Nc, Nc, Nz) for p in 1:6)
+        step_vals = vcat((vec(vmr_step[p]) for p in 1:6)...)
+        @test all(v -> v == FT(4.0e-4) || v == FT(4.4e-4), step_vals)
+        @test minimum(step_vals) == FT(4.0e-4)
+        @test maximum(step_vals) == FT(4.4e-4)
+
+        vmr_blob = build_initial_mixing_ratio(air_mass, grid,
+                                              Dict("kind" => "gaussian_blob",
+                                                   "lon0_deg" => 0.0,
+                                                   "lat0_deg" => 35.0,
+                                                   "sigma_lon_deg" => 30.0,
+                                                   "sigma_lat_deg" => 20.0,
+                                                   "amplitude" => 8.0e-5,
+                                                   "background" => 4.0e-4))
+        @test vmr_blob isa NTuple{6, Array{FT, 3}}
+        @test all(size(vmr_blob[p]) == (Nc, Nc, Nz) for p in 1:6)
+        blob_vals = vcat((vec(vmr_blob[p]) for p in 1:6)...)
+        @test minimum(blob_vals) ≥ FT(4.0e-4)
+        @test maximum(blob_vals) > FT(4.0e-4)
+        @test maximum(blob_vals) < FT(4.8e-4)
+
         # Unsupported kind errors with a helpful message
         @test_throws ArgumentError build_initial_mixing_ratio(air_mass, grid,
-                                                              Dict("kind" => "gaussian_blob"))
+                                                              Dict("kind" => "bl_enhanced"))
     end
 
     @testset "pack_initial_tracer_mass — CubedSphereMesh (DryBasis)" begin

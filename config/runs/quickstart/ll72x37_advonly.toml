@@ -1,4 +1,4 @@
-# Quickstart: 5° (72x37) lat-lon, 3-day advection-only, F32, BL-enhanced IC.
+# Quickstart: 5° (72x37) lat-lon, 3-day advection-only, F32, Gaussian anomaly IC.
 #
 # Pairs with the downloadable example bundle (see
 # docs/src/getting_started/quickstart.md). Pure advection — no
@@ -24,10 +24,13 @@ scheme = "slopes"               # Russell-Lerner; try "ppm" for higher order
 
 [tracers.co2_bl]
 [tracers.co2_bl.init]
-kind        = "bl_enhanced"     # uniform background + lowest-N-layer enhancement
-background  = 4.0e-4            # ~400 ppm dry VMR
-enhancement = 1.0e-4            # +100 ppm in BL
-n_layers    = 3                 # bottom 3 model layers
+kind          = "gaussian_blob"  # localized 480 ppm plume on a 400 ppm background
+background    = 4.0e-4
+amplitude     = 8.0e-5
+lon0_deg      = -80.0
+lat0_deg      = 35.0
+sigma_lon_deg = 35.0
+sigma_lat_deg = 18.0
 
 [output]
 snapshot_hours = [0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72]

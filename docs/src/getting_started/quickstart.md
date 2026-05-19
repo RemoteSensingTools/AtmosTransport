@@ -11,10 +11,10 @@ so newcomers can grab just LL on a slow connection:
 
 | Bundle | Grid | Resolution | Points | Approx raw size |
 |---|---|---|---|---|
-| `quickstart_ll_dec2021_v1.tar.gz` | regular lat-lon | 5°    | 72 × 37   | ~260 MB |
-| `quickstart_ll_dec2021_v1.tar.gz` | regular lat-lon | 2.5°  | 144 × 73  | ~1.0 GB |
-| `quickstart_cs_dec2021_v1.tar.gz` | cubed-sphere    | C24   | 6 × 24²   | ~175 MB |
-| `quickstart_cs_dec2021_v1.tar.gz` | cubed-sphere    | C90 (~1°) | 6 × 90² | ~2.4 GB |
+| `quickstart_ll_dec2021_v2.tar.gz` | regular lat-lon | 5°    | 72 × 37   | ~260 MB |
+| `quickstart_ll_dec2021_v2.tar.gz` | regular lat-lon | 2.5°  | 144 × 73  | ~1.0 GB |
+| `quickstart_cs_dec2021_v2.tar.gz` | cubed-sphere    | C24   | 6 × 24²   | ~175 MB |
+| `quickstart_cs_dec2021_v2.tar.gz` | cubed-sphere    | C90 (~1°) | 6 × 90² | ~2.4 GB |
 
 All four are **F32**, dry-basis, level-merged to ~34 tropospheric
 layers, written by the canonical
@@ -25,13 +25,13 @@ benchmark — without depending on a multi-TB ERA5 archive.
 ## 1. Download the bundle
 
 Both tarballs are hosted as assets on the
-[`data-quickstart-v1`](https://github.com/RemoteSensingTools/AtmosTransport/releases/tag/data-quickstart-v1)
+[`data-quickstart-v2`](https://github.com/RemoteSensingTools/AtmosTransport/releases/tag/data-quickstart-v2)
 GitHub Release.
 
 | Tarball | SHA-256 | Approx compressed |
 |---|---|---|
-| `quickstart_ll_dec2021_v1.tar.gz` | `1d9928c3f43084f8397af14399f8c438a6c4bfeadabe37f0000fad3fa1ef76d7` | ~1.0 GB |
-| `quickstart_cs_dec2021_v1.tar.gz` | `ada76e875cf2852d23f544f9aeb41456e6f13c502d4d6227fac676dcca554b94` | ~1.6 GB |
+| `quickstart_ll_dec2021_v2.tar.gz` | `656fde3472014adc3b60ebc3fd1666a2ffe4e46761ec363ec9e61c98300fd735` | ~1.0 GB |
+| `quickstart_cs_dec2021_v2.tar.gz` | `ab554354a4d6a4289e5b68f9d53f3cdf97d00eb3568ada381334f49d5b59eec6` | ~1.9 GB |
 
 ```bash
 # Just LL (newcomer path; small download)
@@ -79,13 +79,11 @@ julia --project=. scripts/run_transport.jl config/runs/quickstart/cs_c90_advonly
 
 The four configs all run a **3-day advection-only** simulation (no
 diffusion, no convection, no chemistry) with a single passive tracer
-named `co2_bl`. The two **lat-lon** configs use a `bl_enhanced` IC
-(uniform 400 ppm + 100 ppm in the lowest 3 model layers — a BL
-injection at `t = 0`); the two **cubed-sphere** configs use a
-`uniform` 400 ppm IC (`bl_enhanced` is currently LL-only). Output is
-13 frames every 6 hours (t=0…72h), written as a single NetCDF per
-run under `~/data/AtmosTransport_quickstart/output/`. Output
-variables are `<tracer>_column_mean(…)`,
+named `co2_bl`. They start from a localized Gaussian anomaly:
+a 400 ppm background plus an 80 ppm plume centered over the northern
+midlatitudes. Output is 13 frames every 6 hours (t=0…72h), written as
+a single NetCDF per run under `~/data/AtmosTransport_quickstart/output/`.
+Output variables are `<tracer>_column_mean(…)`,
 `<tracer>_column_mass_per_area(…)`, and
 `column_air_mass_per_area(…)` — see [Inspecting output](@ref) for
 the full per-topology schema.
@@ -114,14 +112,39 @@ variables `time`, `lev`, `lon`, `lat`. CS snapshots have a
 `(time, lev, nf, Ydim, Xdim)` layout per panel — see
 [Inspecting output](@ref) for the full schema.
 
+The C90 cubed-sphere quickstart produces a filled column-mean heatmap
+like this after 72 hours:
+
+<video controls loop muted playsinline
+       poster="../assets/quickstart/cs_c90_advonly_t72.png"
+       style="width: 100%; border: 1px solid var(--vp-c-divider); border-radius: 8px;">
+  <source src="../assets/quickstart/cs_c90_advonly.mp4" type="video/mp4">
+  Your browser does not support embedded MP4 video.
+</video>
+
+The movie was generated from the NetCDF snapshot with the topology-aware
+visualization CLI:
+
+```bash
+julia --project=. scripts/visualization/atmos_viz.jl \
+    --input ~/data/AtmosTransport_quickstart/output/cs_c90_advonly.nc \
+    --tracer co2_bl \
+    --kind movie \
+    --transform column_mean \
+    --ppm \
+    --fps 4 \
+    --out ~/data/AtmosTransport_quickstart/output/cs_c90_advonly.mp4
+```
+
 For a quick numeric sanity check from Python:
 
 ```python
+import os
 import netCDF4 as nc
-ds = nc.Dataset("~/data/AtmosTransport_quickstart/output/ll72x37_advonly.nc")
+ds = nc.Dataset(os.path.expanduser("~/data/AtmosTransport_quickstart/output/cs_c90_advonly.nc"))
 cm = ds["co2_bl_column_mean"][:]
 print(cm.shape, "min", cm.min(), "max", cm.max(), "mean", cm.mean())
-# Expect: shape (13, 37, 72)  min ~3.99e-4  max ~5e-4  mean ~4.01e-4
+# Expect: shape (90, 90, 6, 13)  min ~4.00e-4  max ~4.80e-4  mean ~4.06e-4
 ```
 
 ## 4. Modify and re-run
@@ -131,7 +154,7 @@ them as starting points:
 
 | To try… | Edit |
 |---|---|
-| A different IC | `[tracers.co2_bl.init]` block. `kind = "uniform"` with `background = 4.0e-4` is the simplest; `kind = "bl_enhanced"` (LL only) with `background`, `enhancement`, `n_layers`; `kind = "gaussian_blob"` (LL only); `kind = "file"` / `"netcdf"` to load from disk (see `config/runs/catrine_*.toml` for file-init examples). |
+| A different IC | `[tracers.co2_bl.init]` block. `kind = "uniform"` with `background = 4.0e-4` is the simplest; `kind = "latitude_step"` with `south_value`, `north_value`, `split_lat_deg` works on LL/RG/CS; `kind = "gaussian_blob"` with `background`, `amplitude`, `lon0_deg`, `lat0_deg`, `sigma_lon_deg`, `sigma_lat_deg`; `kind = "bl_enhanced"` (LL only) with `background`, `enhancement`, `n_layers`; `kind = "file"` / `"netcdf"` to load from disk (see `config/runs/catrine_*.toml` for file-init examples). |
 | A second tracer | Add `[tracers.<name>]` and `[tracers.<name>.init]` blocks; the runtime advects all tracers in lockstep. |
 | Different snapshot times | Edit `[output] snapshot_hours = […]`. |
 | F64 instead of F32 | Re-preprocess from raw ERA5 to F64; use `config/preprocessing/era5_ll72x37_advresln_dec2021.toml` (the F64 sibling) as the template. |

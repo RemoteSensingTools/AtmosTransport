@@ -127,9 +127,9 @@ julia --project=. -e 'using Pkg; Pkg.instantiate()'
 # 2. Verify the install (synthetic-fixture suite, no external data)
 julia --project=. -e 'using Pkg; Pkg.test()'
 
-# 3. Download the quickstart bundle (preprocessed ERA5 binaries)
-bash scripts/download_quickstart_data.sh ll       # newcomer path; just LL (~1 GB)
-# or `bash scripts/download_quickstart_data.sh`   # both LL and CS bundles (~2.7 GB)
+# 3. Download the quickstart v2 bundle (preprocessed ERA5 v3 binaries)
+bash scripts/download_quickstart_data.sh ll       # newcomer path; just LL (~1.0 GB)
+# or `bash scripts/download_quickstart_data.sh`   # both LL and CS bundles (~2.9 GB)
 
 # 4. Run a 3-day advection-only simulation (defaults to GPU; set
 #    [architecture] use_gpu = false in the TOML for CPU)
@@ -137,9 +137,9 @@ julia --project=. scripts/run_transport.jl config/runs/quickstart/ll72x37_advonl
 ```
 
 The bundle is hosted as assets on the
-[`data-quickstart-v1` GitHub Release](https://github.com/RemoteSensingTools/AtmosTransport/releases/tag/data-quickstart-v1)
+[`data-quickstart-v2` GitHub Release](https://github.com/RemoteSensingTools/AtmosTransport/releases/tag/data-quickstart-v2)
 and contains preprocessed transport binaries at four grid configurations
-(LL 72×37, LL 144×73, CS C24, CS C90, all F32, Dec 1-3 2021). See the
+(LL 72x37, LL 144x73, CS C24, CS C90, all F32, Dec 1-3 2021). See the
 [Quickstart with example data](https://RemoteSensingTools.github.io/AtmosTransport/dev/getting_started/quickstart/)
 docs page for the full walkthrough.
 

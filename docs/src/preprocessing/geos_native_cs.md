@@ -1,7 +1,7 @@
 # GEOS native cubed-sphere
 
 The GEOS path takes **GEOS-IT C180** native NetCDF — the FV3
-dynamical core's own cubed-sphere output — and writes a v4 transport
+dynamical core's own cubed-sphere output — and writes a transport
 binary on the same cubed-sphere grid (no horizontal regrid). GEOS-FP
 native C720 hourly CTM files use the same source contract, with one
 file per UTC hour. It
@@ -16,7 +16,7 @@ the 0.25° GEOS-FP products can be attached by setting
 `include_convection = true`; the day handle validates and embeds those
 payloads into the same transport binary.
 
-## Why no Poisson balance?
+## Why column balance instead of Poisson balance?
 
 A spectral preprocessor needs a Poisson balance step because winds
 synthesized from VO + D do **not** satisfy the continuity equation
@@ -26,9 +26,21 @@ GEOS native MFXC / MFYC are **already discrete-conservative** — the
 FV3 dynamical core integrated them under its own discrete continuity.
 Running a Poisson balance on top would add a small spurious
 correction with no physical justification. The GEOS path therefore
-**skips Poisson balance entirely** and uses the FV3 pressure-fixer
-formula to derive the vertical mass flux `cm` from the horizontal
-flux divergence and the surface-tendency closure.
+**skips Poisson balance** and instead runs a one-pass **column
+balance** (`balance_cs_column_mass_fluxes!`) to close the horizontal
+fluxes against the raw next-hour dry-air-mass endpoint, then
+diagnoses the vertical mass flux `cm` from those balanced fluxes via
+`diagnose_cs_cm!` (the same diagnostic used by the LL and RG spectral
+paths after their respective Poisson balances).
+
+The endpoint convention is the **raw dry endpoint** rather than the
+endpoint implied by an FV3-style pressure fixer. The pressure-fixer
+endpoint can go slightly negative in thin upper layers; the raw
+endpoint is robust and the header records
+`"geos_mass_endpoint" => "raw_dry_endpoint"` for traceability. The
+legacy `compute_cs_cm_pressure_fixer!` still exists in
+`src/Preprocessing/cs_transport_helpers.jl` for reference but is not
+on the production path.
 
 ## Required input per day
 
@@ -57,13 +69,14 @@ source's invariants):
 ```toml
 # config/preprocessing/geosit_c180_to_cs180.toml
 [source]
-toml     = "config/met_sources/geosit.toml"   # source descriptor (below)
-root_dir = "~/data/AtmosTransport/met/geosit_c180/raw_catrine"
-include_surface = true
-include_convection = true
+toml               = "config/met_sources/geosit.toml"   # source descriptor (below)
+root_dir           = "~/data/AtmosTransport/met/geosit_c180/raw_catrine"
+include_surface    = true     # PBL surface payload (pblh, ustar, hflux, t2m)
+include_convection = true     # CMFMC + DTRAIN payload
+include_vdiff_fields = true   # GCHP VDIFF payload (u, v, T, qv at substep cadence)
 
 [output]
-directory  = "~/data/AtmosTransport/met/geosit/C180/preprocessed/v4_dec2021"
+directory  = "~/data/AtmosTransport/met/geosit/C180/preprocessed/merge025hpa_adaptive_f32"
 mass_basis = "dry"                             # binary header
 
 [grid]
@@ -73,13 +86,21 @@ panel_convention    = "geos_native"
 regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
 
 [vertical]
+transform    = "merge_above_pressure"
+threshold_pa = 25.0                              # merge above 0.25 hPa → 64-level product
 coefficients = "config/geos_L72_coefficients.toml"
-# 72-level passthrough preserves source resolution; level merging is
-# available but is usually deferred for the spectral path, not GEOS.
+# The default "identity" transform keeps all 72 levels; production
+# C180 uses "merge_above_pressure" with threshold_pa = 25.0 (0.25 hPa)
+# to fold the very thin upper-mesosphere layers into one, which makes
+# the palindrome positivity budget feasible.
 
 [numerics]
-float_type     = "Float64"
-dt_met_seconds = 3600.0           # CTM cadence (hourly for GEOS-IT)
+float_type            = "Float32"
+dt_met_seconds        = 3600.0           # CTM cadence (hourly for GEOS-IT)
+substep_schedule      = "adaptive_cfl"   # per-window adaptive substep count
+substep_cfl_target    = 0.95
+min_steps_per_window  = 2
+max_steps_per_window  = 16
 ```
 
 The source descriptor (referenced via `[source] toml = …`) declares
@@ -97,10 +118,45 @@ collections_optional  = ["A3mstE", "A3dyn"]   # used when convection is on
 ```
 
 The preprocessing TOML's `[source]` block can override
-`include_surface`, `include_convection`, and, for GEOS-FP,
-`physics_dir` / `physics_layout`. GEOS-IT reads native A1/A3 files next
-to CTM_A1/CTM_I1. GEOS-FP reads native C720 CTM files from `root_dir`
-and physics fallback files from `physics_dir`.
+`include_surface`, `include_convection`, `include_vdiff_fields`, and,
+for GEOS-FP, `physics_dir` / `physics_layout`. GEOS-IT reads native
+A1/A3 files next to CTM_A1/CTM_I1. GEOS-FP reads native C720 CTM files
+from `root_dir` and physics fallback files from `physics_dir`.
+
+## Adaptive substep schedule
+
+The CS GEOS-native path supports per-window adaptive substep counts.
+When `[numerics].substep_schedule = "adaptive_cfl"`:
+
+1. `_geos_select_steps_for_window!` runs up to 8 refinement iterations
+   per window, evaluating the palindrome positivity budget
+   `2·(out_x + out_y + out_z) / m_start` against `substep_cfl_target`.
+2. The final per-window substep count is collected into a
+   `steps_per_window_by_window :: Vector{Int}` of length 24.
+3. `driver_before_close_writer!` patches the schedule into the streaming
+   binary header via `set_streaming_steps_per_window_schedule!`.
+4. The header carries `runtime_substep_contract = "binary_schedule"`,
+   which tells the runtime to advance using the per-window schedule
+   rather than a single scalar.
+
+C180 production binaries use this. The scalar `steps_per_window` in
+the header equals `maximum(schedule)`; the runtime reads
+`steps_per_window_by_window` instead and gets per-window granularity.
+
+## GCHP VDIFF preprocessing payload
+
+When `[source].include_vdiff_fields = true`, the preprocessor writes
+four extra payload sections:
+
+| Section | Contents |
+| --- | --- |
+| `:vdiff_u`, `:vdiff_v` | Substep-cadence horizontal wind components |
+| `:vdiff_t`, `:vdiff_qv` | Substep-cadence temperature and specific humidity |
+
+These feed the `GCHPHoltslagBovilleKzField` non-local Kz at runtime.
+The binary's capability surface advertises `gchp_vdiff = true` once all
+four are present. The runtime's `[diffusion].kind =
+"geoschem_holtslag_boville_vdiff"` requires this capability.
 
 ## Per-window pipeline
 
@@ -161,7 +217,7 @@ For each of the 24 hourly windows:
    When `chain_mass = false`, no cross-day seed is returned; each day/window
    is re-seeded from raw GEOS mass.
 
-## GCHP-style convection wiring (Section C, recently shipped)
+## GCHP-style convection wiring
 
 When `[source] include_convection = true`:
 
@@ -201,21 +257,18 @@ runtime convection is automatically gated off).
 
 - A 1-day GEOS-IT C180 → CS C180 F32 preprocess is ~1 minute on a
   recent workstation; with `include_convection = true`, add ~10 s per
-  day for the A3 reads.
-- The pressure-fixer / chained-mass approach has **zero global Poisson
-  iteration** — every step is a per-column scan, embarrassingly
+  day for the A3 reads. `include_vdiff_fields = true` adds another
+  ~10 s per day for the substep-cadence VDIFF fields.
+- The column-balance + `diagnose_cs_cm!` path has **zero global
+  Poisson iteration** — every step is a per-column scan, embarrassingly
   parallel. There's no diminishing return from adding cores.
 - Real GEOS-IT data closes write-time replay at machine precision for
-  each written window. The 2021-12 C180/L72 F32 campaign with
-  `chain_mass = false` reported worst replay relative errors of
-  `4.93e-08`, `5.73e-08`, and `5.38e-08` for Dec 2-4.
+  each written window. Worst replay relative errors on real C180 days
+  land around `5e-08` in F32.
 
 ## What's next
 
-- [Regridding](@ref) — how the conservative weights are built and
-  cached (relevant for cross-topology paths).
-- [Conventions cheat sheet](@ref) — `mass_flux_dt = 450 s`, panel
-  conventions, units cheat sheet.
-- *Tutorials* — once the LL+CS quickstart bundle becomes a Pkg
-  LazyArtifact, a Literate tutorial will end-to-end-demo a GEOS-IT
-  preprocess on a synthetic C8 fixture.
+- [Regridding](regridding.md) — how the conservative weights are built
+  and cached (relevant for cross-topology paths).
+- [Conventions cheat sheet](conventions.md) — `mass_flux_dt = 450 s`,
+  panel conventions, units cheat sheet.

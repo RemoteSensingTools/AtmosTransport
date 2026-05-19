@@ -15,7 +15,7 @@ depend on later ones:
 | [Parameters](@ref Parameters-API) | `PlanetParameters`, `earth_parameters`. |
 | [Grids](@ref Grids-API) | `LatLonMesh`, `CubedSphereMesh`, `ReducedGaussianMesh`, `AtmosGrid`. |
 | [State](@ref State-API) | `CellState`, `CubedSphereState`, basis tags, tracer accessors. |
-| [MetDrivers](@ref MetDrivers-API) | `TransportBinaryDriver`, `inspect_binary`, the v4 binary I/O. |
+| [MetDrivers](@ref MetDrivers-API) | `TransportBinaryDriver`, `inspect_binary`, the binary I/O. |
 | [Operators](@ref Operators-API) | Advection / Convection / Diffusion / SurfaceFlux. |
 | [Models](@ref Models-API) | `TransportModel`, `DrivenSimulation`, the runtime stepper. |
 | [Preprocessing](@ref Preprocessing-API) | `process_day` and the source/target dispatch. |

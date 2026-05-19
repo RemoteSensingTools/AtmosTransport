@@ -75,27 +75,31 @@ specialized kernels via Julia's multiple dispatch on the grid type.
 `src/Operators/Advection/schemes.jl`:
 
 | Subtype | Order | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `UpwindScheme` | 1 | Donor-cell; cheap, very diffusive. |
-| `SlopesScheme{L}` | 2 | Russell-Lerner slopes, optionally with a limiter `L`. |
-| `PPMScheme{L}` | — | Putman-Lin Piecewise Parabolic Method (fixed reconstruction; no `order` parameter). |
-| `LinRoodPPMScheme` | 5 or 7 | PPM with cubed-sphere cross-term advection (CS only). Selectable `ppm_order ∈ {5, 7}`. |
+| `SlopesScheme{L}` | 2 | Russell-Lerner slopes (TM5 `sl_advection` port). Limiter parameter `L`. |
+| `PPMScheme{L}` | 3 in smooth regions | Putman-Lin Piecewise Parabolic. Limiter parameter `L`. Multi-tracer fused on LL/RG/CS split-sweep. |
+| `LinRoodPPMScheme` | 5 or 7 | FV3 Lin-Rood PPM with cross-term advection (CS only); ORD=7 adds a panel-boundary correction. Selectable `ppm_order ∈ {5, 7}`. |
 
 Limiter parameter `L` ranges over `NoLimiter`, `MonotoneLimiter`,
-`PositivityLimiter` — declared in the same file.
+`PositivityLimiter` — declared in the same file. `PPMScheme()` with
+no limiter defaults to `NoLimiter()`.
 
-**TOML config** (one of the supported forms in `[advection]` or
-`[run]` depending on recipe):
+**TOML config** (preferred form):
 
 ```toml
-[run]
-scheme = "slopes"     # or "upwind" / "ppm" / "linrood"
+[advection]
+scheme = "slopes"     # "upwind" | "slopes" | "ppm" | "linrood"
 
 # Cubed-sphere only: pick the LinRoodPPM order (5 or 7).
-# `ppm_order` is ignored — and rejected — for the plain "ppm" path.
+# Only valid with scheme = "linrood"; setting ppm_order with
+# scheme = "ppm" errors at config-parse time.
 # scheme    = "linrood"
 # ppm_order = 7
 ```
+
+`[run].scheme` is the legacy alias; if `[advection]` is present,
+`[run].scheme` is rejected.
 
 Advection has **no `NoAdvection` operator** — it's always active. To
 disable transport for a debug run, set `dt` very small or use the
@@ -138,10 +142,10 @@ Profile / derived / precomputed Kz fields exist in `src/State/Fields/` — see
 `AbstractConvection` is the root; concrete subtypes:
 
 | Subtype | Forcing carrier | Source |
-|---|---|---|
+| --- | --- | --- |
 | `NoConvection()` | — | Identity no-op; default. |
-| `CMFMCConvection()` | `ConvectionForcing.{cmfmc, dtrain}` | GCHP-style RAS / Grell-Freitas mass flux + optional detrainment (used with GEOS sources). |
-| `TM5Convection()` | `ConvectionForcing.tm5_fields.{entu, detu, entd, detd}` | TM5 Tiedtke-1989 four-field entrainment / detrainment (used with ERA5 sources). |
+| `CMFMCConvection()` | `ConvectionForcing.{cmfmc, dtrain}` | GCHP-style upwind moist convection; mass flux + optional detrainment. |
+| `TM5Convection{FT}()` | `ConvectionForcing.tm5_fields.{entu, detu, detu, detd}` | TM5 Tiedtke-1989 four-field entrainment / detrainment with an implicit column solve. Parametric on `FT`. |
 
 Both real subtypes consume a `ConvectionForcing` carrier (declared in
 `src/MetDrivers/ConvectionForcing.jl`) — different physics, identical

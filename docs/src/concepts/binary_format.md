@@ -68,23 +68,27 @@ the runtime actually dispatches on:
 | `nwindow` | `Int` | windows per day (typically 24) |
 | `payload_sections` | `Vector{Symbol}` | which arrays this binary actually contains |
 
-`format_version` is currently `2`; older transport binaries are intentionally
-rejected and must be regenerated. `header_bytes` and a few sampling-metadata fields
+`format_version` is currently `3`; older transport binaries are intentionally
+rejected and must be regenerated. The v3 contract requires
+`steps_per_window_by_window :: Vector{Int}` (per-window adaptive substep
+schedule) and `poisson_balance_target_scale_by_window :: Vector{Float64}` in
+the header. `header_bytes` and a few sampling-metadata fields
 (`source_flux_sampling`, `air_mass_sampling`, `humidity_sampling`,
-`delta_semantics`) round out the header. The full list lives in
-`src/MetDrivers/TransportBinary.jl`.
+`delta_semantics`, optional `runtime_substep_contract`) round out the header.
+The full list lives in `src/MetDrivers/TransportBinary.jl`.
 
 ## Payload sections
 
-### Required for any v4 transport binary
+### Required for any transport binary
 
 - `:m` — air mass per cell, kg / m². Shape `(Nx, Ny, Nz)` for LL,
   `(ncells, Nz)` for RG, `NTuple{6, (Nc, Nc, Nz)}` for CS.
 - **Horizontal mass fluxes**:
   - LL / CS: `:am`, `:bm` through x-faces and y-faces. Shapes have
     one extra cell along the staggered axis (`(Nx+1, Ny, Nz)` /
-    `(Nx, Ny+1, Nz)`); on CS the v4 layout puts both the canonical
-    and the halo face into the same array.
+    `(Nx, Ny+1, Nz)`). CS stores six per-panel arrays of the same
+    staggered shape — one canonical face array per panel; no halo
+    packing.
   - RG: a single face-indexed `:hflux` array of shape
     `(nface_h, Nz)` (the unstructured analogue — one entry per
     horizontal face under the LCM-segmented ring topology).
@@ -96,15 +100,20 @@ rejected and must be regenerated. `header_bytes` and a few sampling-metadata fie
 
 | Section(s) | Capability unlocked |
 |---|---|
-| `:dm` (and `:dam`, `:dbm`, `:dcm` on the LL side) | Plan-39 explicit-`dm` flux deltas. Required for the strict load-time replay gate. |
+| `:dm` on CS, or `:dam` / `:dbm` / `:dcm` on LL | Plan-39 explicit flux deltas. Required for the strict load-time replay gate. |
 | `:qv`, or `:qv_start`/`:qv_end` | Specific-humidity input for diagnostics or moist-conversion bookkeeping. |
 | `:cmfmc` (+ optional `:dtrain`) | `CMFMCConvection` operator (GCHP-style). |
 | `:entu`, `:detu`, `:entd`, `:detd` (all four) | `TM5Convection` operator (TM5 four-field). |
+| `:pblh`, `:ustar`, `:pbl_hflux`, `:t2m` | Surface payload — feeds the `WindowPBLKzField` runtime Kz path. |
+| `:vdiff_u`, `:vdiff_v`, `:vdiff_t`, `:vdiff_qv` | GCHP VDIFF preprocessing payload — feeds the `GCHPHoltslagBovilleKzField` non-local Kz. |
 
-A time-varying `:Kz` payload (for stepwise vertical diffusion driven
-straight from the binary) is on the roadmap; today, the
-`ImplicitVerticalDiffusion` operator only consumes constant or
-profile-shaped Kz from the runtime config, not from the binary.
+The PBL surface and GCHP VDIFF sections together replace the older "constant
+or profile-shaped Kz from runtime config" model. Cubed-sphere runs with
+`diffusion.kind = "pbl"` (alias for `tm5_beljaars_viterbo_local_kz`) consume
+the four surface fields from the binary at each window; the GCHP VDIFF
+non-local Kz path consumes the four `:vdiff_*` fields. The `ImplicitVerticalDiffusion`
+operator still also supports static `ProfileKzField` / `ConstantField` when no
+binary Kz payload is present.
 
 A run config that asks for an operator the binary does not carry is
 rejected at load time — the `inspect_binary` capability NamedTuple is
@@ -125,10 +134,17 @@ returns a `NamedTuple`:
 | `replay_gate :: Bool` | `true` iff the flux-delta sections needed for plan-39 replay are present |
 | `tm5_convection :: Bool` | `true` iff all four TM5 sections are present |
 | `cmfmc_convection :: Bool` | `true` iff `:cmfmc` is present (CS only) |
+| `pbl_diffusion :: Bool` | `true` iff the four PBL surface sections (`:pblh`, `:ustar`, `:pbl_hflux`, `:t2m`) are present (CS only) |
+| `gchp_vdiff :: Bool` | `true` iff the four GCHP VDIFF payload sections (`:vdiff_u`, `:vdiff_v`, `:vdiff_t`, `:vdiff_qv`) are present (CS only) |
 | `surface_pressure :: Bool` | `true` iff `:ps` is present |
 | `humidity :: Bool` | `true` iff `:qv` (or the start/end pair) is present |
 | `mass_basis :: Symbol` | `:dry` or `:moist` (echoed from header) |
 | `grid_type :: Symbol` | `:latlon` / `:reduced_gaussian` / `:cubed_sphere` |
+| `nlevel :: Int` | vertical levels |
+| `steps_per_window :: Int` | scalar substep count (`maximum(steps_per_window_by_window)`) |
+| `variable_step_schedule :: Bool` | `true` iff `time_step_schedule == :per_window` |
+| `adaptive_substeps :: Bool` | `true` iff the header carries `runtime_substep_contract` |
+| `preprocessor_contract :: Union{Nothing, String}` | preprocessor contract tag (CS only); e.g. `"plan41_variable_substeps"` |
 | `payload_sections :: Vector{Symbol}` | the raw list, for advanced filtering |
 
 The CLI tool `scripts/diagnostics/inspect_transport_binary.jl` is a
@@ -157,14 +173,18 @@ basis `state.air_mass` carries.
 By default the entire pipeline ships dry: ERA5 spectral preprocessing
 applies the `(1 − qv)` correction and writes `mass_basis = :dry`; the
 GEOS native CS path does the same via dry-basis `DELP` reconstruction
-plus an FV3-style pressure-fixer cm. See [State & basis](@ref) for
-how this propagates to runtime tracer semantics.
+and a column balance against the raw next-hour dry endpoint, with the
+final `cm` diagnosed from the balanced fluxes via `diagnose_cs_cm!`.
+See [State & basis](@ref) for how this propagates to runtime tracer
+semantics.
 
 ## Streaming writer entrypoints
 
 Two writer entry points cover the topology axis. Users rarely call
-either directly — the preprocessor's `process_day` orchestrators
-wrap them — but the kwargs are useful to know when reading the source.
+either directly — the preprocessor's unified driver
+(`run_unified_preprocessor_day!`) wraps them — but the kwargs are
+useful to know when reading the source. Example calls (defaults are
+from the actual signatures in `src/MetDrivers/TransportBinary.jl`):
 
 ```julia
 # Reduced Gaussian (face-indexed). LatLon goes through a separate
@@ -173,10 +193,13 @@ writer = open_streaming_transport_binary(
     path, grid, nwindow, sample_window;
     FT = Float64,
     dt_met_seconds        = 3600.0,
-    steps_per_window      = 8,
+    steps_per_window      = 2,   # default; overwritten with adaptive schedule
     mass_basis            = :dry,
     flux_kind             = :substep_mass_amount,
-    flux_sampling         = :window_constant,
+    flux_sampling         = :window_start_endpoint,
+    air_mass_sampling     = :window_start_endpoint,
+    humidity_sampling     = :auto,
+    delta_semantics       = :auto,
     source_flux_sampling  = :window_constant,    # required kwarg, no default
     extra_header          = Dict(),
 )
@@ -186,10 +209,14 @@ writer = open_streaming_cs_transport_binary(
     path, Nc, npanel, nlevel, nwindow, vc;
     FT = Float64,
     dt_met_seconds = 3600.0,
-    steps_per_window = 8,
-    include_flux_delta = true,    # writes :dm (and :dam/:dbm/:dcm in v5)
+    steps_per_window = 4,
+    mass_basis = :dry,
+    include_flux_delta = false,    # writes :dm (CS only; no :dam/:dbm/:dcm)
     include_cmfmc = false,         # writes :cmfmc when true
-    include_dtrain = false,        # writes :dtrain when true
+    include_dtrain = false,        # writes :dtrain when true (requires include_cmfmc)
+    include_surface = false,       # writes :pblh, :ustar, :pbl_hflux, :t2m
+    include_tm5conv = false,       # writes :entu, :detu, :entd, :detd
+    include_gchp_vdiff = false,    # writes :vdiff_u, :vdiff_v, :vdiff_t, :vdiff_qv
     panel_convention = :gnomonic,  # or :geos_native
     cs_definition = :equiangular_gnomonic,
     cs_coordinate_law = :equiangular_gnomonic,
@@ -201,9 +228,10 @@ writer = open_streaming_cs_transport_binary(
 
 The `include_*` knobs control which optional sections land in the
 binary; the CS reader's `binary_capabilities` then advertises whatever
-you asked for. `source_flux_sampling` is a required kwarg on the
-RG path — it has no default because the LL spectral path and the
-GEOS-CS-source path use it differently.
+you asked for. `include_dtrain = true` without `include_cmfmc = true`
+is rejected at writer-open time. `source_flux_sampling` is a required
+kwarg on the RG path — it has no default because the LL spectral path
+and the GEOS-CS-source path use it differently.
 
 ## Replay gate
 
@@ -226,13 +254,20 @@ known-bad file.
 
 ### Load-time gate (opt-in)
 
-The runtime can re-run the same replay check at binary open. Two
-ways to enable:
+The runtime can re-run the same replay check at binary open. Enable
+either via the env var or as a driver kwarg:
 
-```toml
-[met_data]
-validate_replay = true     # per-config kwarg
+```bash
+ATMOSTR_REPLAY_CHECK=1 julia --project=. scripts/run_transport.jl <cfg.toml>
 ```
+
+```julia
+# When constructing the driver directly (advanced)
+driver = TransportBinaryDriver(path; validate_replay = true)
+```
+
+There is no TOML key for the load-time gate today; use the env var
+when running from the CLI. The write-time gate (above) is always on.
 
 ```bash
 ATMOSTR_REPLAY_CHECK=1 julia --project=. scripts/run_transport.jl <cfg.toml>

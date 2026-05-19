@@ -118,20 +118,27 @@ Initial-condition kinds (declared in `src/Models/InitialConditionIO.jl`):
 | `"file_field"` | yes | yes | yes | `file`, `variable` |
 | `"catrine_co2"` | yes | yes | yes | `file`, `variable`, optional `time_index` |
 
-Surface-flux emission is configured under the same tracer block via
-`surface_flux_*` keys (read at `DrivenRunner.jl:109-114`):
+Surface-flux emission is configured as a nested sub-table under each
+tracer. Each tracer that emits gets one `[tracers.<name>.surface_flux]`
+block with a `kind` selector and per-kind keys:
 
 ```toml
-[tracers.co2_bl]
-surface_flux_kind     = "edgar_co2"
-surface_flux_file     = "~/data/.../EDGAR_v8.0_CO2.nc"
-surface_flux_variable = "emi_co2"
-surface_flux_time_index = 1
-surface_flux_month    = 12        # for inventories indexed by month
-surface_flux_scale    = 1.0
+[tracers.co2_fossil.surface_flux]
+kind       = "gridfed_fossil_co2"   # one of the registered source kinds
+time_index = 12                     # month index (1..12) for monthly inventories
+scale      = 1.0                    # optional multiplicative scaling
+
+[tracers.sf6.surface_flux]
+kind = "edgar_sf6"
 ```
 
-### `[advection]`, `[diffusion]`, `[convection]`
+Registered surface-flux source kinds (full list in
+`src/Models/InitialConditionIO.jl`): `lmdz_co2`, `gridfed_fossil_co2`,
+`edgar_sf6`, `zhang_rn222`, plus a generic `file` for arbitrary
+NetCDF sources. There is no `edgar_co2` kind — use
+`gridfed_fossil_co2` for the GridFED-derived fossil CO₂ inventory.
+
+### `[advection]`, `[diffusion]`, `[convection]`, `[chemistry]`
 
 Each operator has a `kind` selector + per-kind kwargs. See
 [Operators](@ref) and [Advection schemes](@ref) for what each
@@ -139,22 +146,32 @@ selector means; relevant config keys:
 
 ```toml
 [advection]
-scheme    = "ppm"
-ppm_order = 7                  # cubed-sphere LinRoodPPM only; ∈ {5, 7}
+scheme    = "ppm"               # "upwind" | "slopes" | "ppm" | "linrood"
+ppm_order = 7                   # cubed-sphere LinRoodPPM only; ∈ {5, 7}.
+                                # Setting ppm_order with scheme = "ppm" errors.
 
 [diffusion]
-kind  = "constant"             # "none" | "constant" | "tm5_beljaars_viterbo_local_kz"
-value = 1.0                    # m²/s — broadcast Kz when kind="constant"
-surface_flux_boundary = false  # true: S(dt)->V(dt); false: V/2->S->V/2
+kind  = "constant"              # "none" | "constant" |
+                                # "tm5_beljaars_viterbo_local_kz" |
+                                # "pbl" (legacy alias for the above; CS-only) |
+                                # "geoschem_holtslag_boville_vdiff" (CS-only;
+                                #   requires include_gchp_vdiff=true binary)
+value = 1.0                     # m²/s — broadcast Kz when kind="constant"
+surface_flux_boundary = false   # true: S(dt)->V(dt); false: V/2->S->V/2
 
 [convection]
-kind = "cmfmc"                 # "none" | "cmfmc" | "tm5"
+kind = "cmfmc"                  # "none" | "cmfmc" | "tm5"
 
 # TM5-only — per-topology budget for the column-tile workspace,
 # in binary GiB. Default 1.0 (fits production through C720/L137 on
 # H100). Set lower on memory-tight GPUs; setting it higher beyond
 # the topology's total cells is a no-op.
 tile_workspace_gib = 1.0
+
+[chemistry]
+kind = "decay"                  # currently only first-order decay
+  [chemistry.half_lives_seconds]
+  rn222 = 330350.4              # per-tracer half-lives (seconds)
 ```
 
 The runtime **rejects** at load time any operator selection that

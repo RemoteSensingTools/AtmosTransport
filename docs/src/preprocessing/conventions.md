@@ -91,6 +91,8 @@ schematic.
 | `:cmfmc`    | kg / m² / s | dry-converted by the GEOS reader | NZ+1 interfaces |
 | `:dtrain`   | kg / m² / s | dry-converted by the GEOS reader | NZ centers |
 | `:entu`, `:detu`, `:entd`, `:detd` | kg / m² / s | dry | NZ centers, all four required together for `TM5Convection` |
+| `:pblh`, `:ustar`, `:pbl_hflux`, `:t2m` | SI surface quantities | basis-agnostic | per-cell surface fields; all four together feed `WindowPBLKzField` |
+| `:vdiff_u`, `:vdiff_v`, `:vdiff_t`, `:vdiff_qv` | m/s, K, kg/kg at substep cadence | dry where applicable | NZ centers, feeds `GCHPHoltslagBovilleKzField` |
 
 The transport-binary core fields (`:m`, `:am`, `:bm`, `:cm`, `:dm`)
 are stored as **per-cell mass** and **per-substep mass amount**
@@ -113,10 +115,10 @@ Defined in `src/MetDrivers/ReplayContinuity.jl`. Used by:
 - **Write-time gate** in every preprocessing path
   (`verify_storage_continuity_*!`, `verify_write_replay_cs!`).
   Failures abort the run.
-- **Opt-in load-time gate** at runtime
-  (`validate_replay = true` in `[met_data]` or
-  `ATMOSTR_REPLAY_CHECK=1` env var). Failures throw an
-  `ArgumentError` pointing at the worst-cell location.
+- **Opt-in load-time gate** at runtime. Enable via the env var
+  `ATMOSTR_REPLAY_CHECK=1` or by constructing the driver with
+  `validate_replay = true` (driver kwarg, not a TOML key). Failures
+  throw an `ArgumentError` pointing at the worst-cell location.
 
 The asymmetry between F64 and F32 reflects the noise floor: F32
 arithmetic at production resolutions accumulates rounding to ~`1e-5`
@@ -150,8 +152,21 @@ binaries.
 The day after the requested range is also required (for the last
 window's forward-flux endpoints).
 
+## v3 header fields (preprocessor-set)
+
+| Field | Required? | Notes |
+| --- | --- | --- |
+| `format_version` | yes | Must be `3` — older versions are rejected. |
+| `steps_per_window_by_window :: Vector{Int}` | yes | Length `nwindow`. Per-window adaptive substep count (GEOS-CS) or constant (spectral). |
+| `poisson_balance_target_scale_by_window :: Vector{Float64}` | yes | Length `nwindow`. Scale factor used by the per-window balance step. |
+| `time_step_schedule` | yes | `"constant"` if all entries of `steps_per_window_by_window` are equal, else `"per_window"`. |
+| `runtime_substep_contract` | optional | `"binary_schedule"` (CS only) — tells the runtime to advance using the per-window schedule. |
+| `geos_mass_endpoint` | optional (CS GEOS only) | `"raw_dry_endpoint"` — records that the mass target is the raw GEOS dry endpoint, not the pressure-fixer endpoint. |
+| `ps_offsets_pa_per_window` | optional (LL spectral only) | Per-window PS offsets applied by `pin_global_mean_ps!`. |
+| `preprocessor_contract` | optional (CS only) | Free-form tag, e.g. `"plan41_variable_substeps"`. |
+
 ## What's next
 
-- [Inspecting output](@ref) — verify a freshly-built binary.
-- [Concepts: binary format](@ref Binary-format) — the full v4 header
-  schema and capability surface.
+- [Inspecting output](../getting_started/inspecting_output.md) — verify a freshly-built binary.
+- [Concepts: binary format](../concepts/binary_format.md) — the full
+  header schema and capability surface.

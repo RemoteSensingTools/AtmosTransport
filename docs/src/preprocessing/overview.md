@@ -1,74 +1,75 @@
 # Preprocessing overview
 
 The preprocessor turns **raw meteorological input** (ERA5 spectral GRIB,
-GEOS-IT/FP native NetCDF, …) into the **v4 transport binary** the
-runtime consumes. It runs offline, once per day per (source, target)
-combination; the runtime then memory-maps the result.
+GEOS-IT / GEOS-FP native NetCDF, …) into the **transport binary**
+(`format_version = 3`) the runtime consumes. It runs offline, once per
+day per (source, target) combination; the runtime then memory-maps the
+result.
 
-!!! warning "Preprocessing is time-intensive — and that's the point"
+!!! tip "Preprocessing is time-intensive — and that's the point"
     A single day of GEOS-IT C180 → CS C180 preprocessing takes a few
     minutes on a current workstation; a global ERA5 spectral day at
-    LL 720×361 takes longer. **This is intentional.** The
-    preprocessor does the expensive work once: spectral synthesis,
-    vertical level merging, conservative regridding, mass-fix,
-    Poisson balance, write-time replay-gate verification. The
-    resulting binary is a flat, self-describing, memory-map-friendly
-    file with **fixed-stride per-window I/O** so the runtime can
-    stream a window in microseconds. Plan to spend hours
-    preprocessing a multi-day production dataset; expect to spend
-    fractions of a second per window during the actual simulation.
+    LL 720×361 takes longer. This is intentional. The preprocessor
+    does the expensive work once: spectral synthesis, vertical level
+    merging, conservative regridding, mass-fix, Poisson balance,
+    write-time replay-gate verification. The resulting binary is a
+    flat, self-describing, memory-map-friendly file with fixed-stride
+    per-window I/O so the runtime can stream a window in microseconds.
 
-## Two dispatch axes, one entry point
+## One unified driver, three dispatch axes
 
-The whole preprocessor sits behind one orchestrator method that
-dispatches on **source** (which raw met data) × **target** (which
-output topology):
+Every preprocessing path goes through one entry point — the unified
+driver `run_unified_preprocessor_day!` in
+`src/Preprocessing/transport_binary/driver.jl`. The driver dispatches
+on three orthogonal axes, each a typed abstraction:
 
-```
-process_day(date, grid::AbstractTargetGeometry,
-                  settings::AbstractMetSettings,
-                  vertical; …)
-```
+| Axis | Abstract type | Concrete examples |
+| --- | --- | --- |
+| **Source** | `AbstractMetReader` | `ERA5SpectralReader`, `GEOSNativeReader` (with chained mass policy) |
+| **Vertical transform** | `AbstractVerticalTransform` | `IdentityVertical`, `MergeAbovePressure`, `MergeLayersThinnerThan`, `PressureOverlap` |
+| **Target topology** | `AbstractTargetGeometry` | `LatLonTargetGeometry`, `ReducedGaussianTargetGeometry`, `CubedSphereTargetGeometry` |
 
-- **`settings`** — the source. `GEOSITSettings` /
-  `GEOSFPSettings` for the native GEOS family (subtypes of
-  `AbstractMetSettings` / `AbstractGEOSSettings`); the spectral-ERA5
-  path predates the trait and uses an untyped settings NamedTuple
-  built directly from the preprocessing TOML.
-- **`grid::AbstractTargetGeometry`** — the target. `LatLonTargetGeometry`,
-  `ReducedGaussianGeometry`, `CubedSphereTargetGeometry`.
+The driver pairs each concrete source / vertical / target combination
+with a typed contract surface from
+`src/Preprocessing/transport_binary/window_contracts.jl`:
 
-Each (source, target) pair routes to a specialized orchestrator file
-under `src/Preprocessing/transport_binary/`:
+| Trait | Role |
+| --- | --- |
+| `AbstractWindowContract{G, FT}` | Per-window mass-balance + positivity verification |
+| `AbstractWindowWorkspace{G, FT}` | Pre-allocated scratch for the topology |
+| `AbstractBinaryWriter{G, FT, Basis}` | On-disk schema for that target + basis |
+| `PreprocessorRunCache` | Run-level cache for regridders, compressed Laplacians, etc. |
 
-| Source ↓  Target → | LatLon | Reduced Gaussian | CubedSphere |
-|---|---|---|---|
-| **Spectral ERA5** | `latlon_spectral.jl` | `reduced_transport_helpers.jl` (RG path lives here, not in a `_spectral.jl` peer) | `cubed_sphere_spectral.jl` |
-| **GEOS-IT** native | (planned, deferred) | (planned, deferred) | `cubed_sphere_geos.jl` |
-| **GEOS-FP** native | (planned, deferred) | (planned, deferred) | hourly C720 CTM reader; identity or nested C720→C180 block coarsening with optional physics fallback |
-| **MERRA-2** (future) | (planned) | (planned) | (planned) |
+The `G` type parameter pins topology at compile time; the `Basis`
+parameter pins the writer's on-disk label to the runtime's mass basis.
+Mismatches are a `MethodError` at write time, not a silent data error.
 
 ```mermaid
 flowchart LR
     RAW[Raw meteo<br/>GRIB / NetCDF]
-    READER[Source reader<br/>fills RawWindow]
-    REGRID[Regrid /<br/>identity]
-    BAL[Mass-fix +<br/>Poisson / cm]
-    GATE[Write-time<br/>replay gate]
-    BIN[v4 transport<br/>binary]
-    RAW --> READER
-    READER --> REGRID
-    REGRID --> BAL
-    BAL --> GATE
-    GATE --> BIN
+    READER[AbstractMetReader<br/>ingest_window!]
+    VT[AbstractVerticalTransform<br/>apply_vertical!]
+    DRIVER[run_unified_preprocessor_day!]
+    BAL[Mass-fix +<br/>Poisson / column balance]
+    GATE[Write-time<br/>replay gate + positivity gate]
+    WRITER[AbstractBinaryWriter]
+    BIN[transport binary]
+    RAW --> READER --> VT --> DRIVER --> BAL --> GATE --> WRITER --> BIN
 ```
 
-The native-GEOS path uses `RawWindow{FT, A2, A3}` (declared in
-`src/Preprocessing/met_sources.jl`) as the in-flight intermediate
-between source readers and target orchestrators. The legacy spectral
-path threads its own intermediate buffers through
-`SpectralTransformWorkspace` rather than `RawWindow`; both
-ultimately call into the same writer machinery.
+### Supported (source × target) combinations
+
+| Source ↓  Target → | LatLon | Reduced Gaussian | CubedSphere |
+| --- | --- | --- | --- |
+| **Spectral ERA5** | ✅ unified driver | ✅ unified driver | ✅ unified driver |
+| **GEOS-IT native** | — | — | ✅ unified driver (production) |
+| **GEOS-FP native** | — | — | ✅ unified driver |
+| **MERRA-2** | — | — | 📐 planned (declared but `OPeNDAPProtocol.execute!` is a stub) |
+| **LL transport binary → CS** (regrid passthrough) | — | — | 🟡 `regrid_ll_binary_to_cs` (functional; not yet on the unified driver) |
+
+All four production combinations share `run_unified_preprocessor_day!`
+and the typed contract surface. `regrid_ll_binary_to_cs` still owns
+its own loop and is the remaining migration item.
 
 ## Run from the CLI
 
@@ -78,102 +79,118 @@ The canonical entry point:
 julia --project=. -t8 scripts/preprocessing/preprocess_transport_binary.jl \
     <preprocessing-config.toml> --day 2021-12-01
 
-# Or a date range (native GEOS-source path only):
+# Or a date range:
 julia --project=. -t8 scripts/preprocessing/preprocess_transport_binary.jl \
     <preprocessing-config.toml> --start 2021-12-01 --end 2021-12-03
 ```
 
 The CLI accepts:
 
-- **`--day YYYY-MM-DD`** on every source path (spectral and native).
-- **`--start YYYY-MM-DD --end YYYY-MM-DD`** on the **native-source
-  paths only** (GEOS-IT today). The spectral path either takes
-  `--day` or, if neither flag is given, processes every day for
-  which spectral input is on disk.
+- **`--day YYYY-MM-DD`** on every source path.
+- **`--start YYYY-MM-DD --end YYYY-MM-DD`** on the native GEOS-source
+  paths. The spectral path can also take `--day`; if neither flag is
+  given, the spectral path processes every day for which spectral
+  input is on disk.
 
 `-t8` enables 8 Julia threads — the spectral synthesis path
 parallelizes naturally per latitude row, so threads pay off. The
-script reads the TOML, looks at the `[grid]` block to pick the
-target geometry, looks at the `[input]` or `[source]` block to pick
-the source, and dispatches to the right `process_day` method.
+script reads the TOML, picks the source / vertical / target based on
+the configuration, and dispatches into `run_unified_preprocessor_day!`.
 
 ## What a preprocessing config contains
 
-A typical config has six blocks:
+A typical config has these blocks:
 
 ```toml
-# WHERE the raw met data lives
+# Where the raw met data lives
 [input]
 spectral_dir = "~/data/AtmosTransport/met/era5/0.5x0.5/spectral_hourly"
 thermo_dir   = "~/data/AtmosTransport/met/era5/0.5x0.5/physics"
 coefficients = "config/era5_L137_coefficients.toml"
 
-# WHERE the output binary goes + on what basis
+# Where the output binary goes + on what basis
 [output]
-directory  = "~/data/AtmosTransport/met/era5/ll72x37_advresln/transport_binary_v2_tropo34_dec2021_f32"
+directory  = "~/data/AtmosTransport/met/era5/ll72x37_advresln/transport_binary_dec2021_f32"
 mass_basis = "dry"          # binary header: mass_basis = :dry
 
-# THE TARGET TOPOLOGY (drives target-axis dispatch)
+# Target topology (drives the target axis)
 [grid]
-type    = "latlon"          # or "cubed_sphere", "synthetic_reduced_gaussian"
-nlon    = 72
-nlat    = 37
-echlevs = "ml137_tropo34"   # tropospheric vertical-level merging mode
+type = "latlon"             # "latlon" | "reduced_gaussian" | "cubed_sphere"
+nlon = 72
+nlat = 37
 
-# NUMERICS
+# Vertical transform (drives the vertical axis)
+[vertical]
+transform   = "merge_above_pressure"   # "identity" | "merge_above_pressure" |
+                                       #   "merge_layers_thinner_than" |
+                                       #   "pressure_overlap"
+threshold_pa = 25.0                    # merge anything above 0.25 hPa into one layer
+coefficients = "config/era5_L137_coefficients.toml"
+
+# Numerics
 [numerics]
-float_type   = "Float32"     # binary's on_disk_float_type
-dt           = 900.0         # advection sub-step (s) used for replay gate
-met_interval = 3600.0        # window cadence (s); 1 hour for ERA5/GEOS-IT
+float_type        = "Float32"        # binary's on_disk_float_type
+dt                = 900.0            # advection sub-step (s)
+met_interval      = 3600.0           # window cadence (s); 1 h for ERA5/GEOS-IT
+substep_schedule  = "adaptive_cfl"   # "constant" | "adaptive_cfl"
+substep_cfl_target = 0.95            # palindrome-budget CFL target
+min_steps_per_window = 2
+max_steps_per_window = 16
 
-# OPTIONAL: pin global-mean dry surface pressure (recommended for ERA5)
+# Optional: pin global-mean dry surface pressure (recommended for ERA5)
 [mass_fix]
 enable                = true
 target_ps_dry_pa      = 98726.0
 qv_global_climatology = 0.00247
 ```
 
-For GEOS-native preprocessing the source axis is selected by
-including a `[source]` block (e.g. `name = "geosit"`) instead of the
-spectral `[input]` paths. See [GEOS native cubed-sphere](@ref) for
-the full schema.
+For GEOS-native preprocessing the `[input]` block is replaced by a
+`[source]` block (e.g. `name = "GEOS-IT"`) and the vertical transform
+defaults to `"identity"` if you want the 72-level passthrough — see
+[GEOS native cubed-sphere](geos_native_cs.md) for the full schema.
 
-## What the orchestrator does, conceptually
+## What the unified driver does, conceptually
 
 For every date in the requested range:
 
-1. **Open the day's raw data** — open all the necessary GRIB / NetCDF
-   handles. For GEOS-IT this means `CTM_A1`, `CTM_I1`, optionally
-   `A3mstE`, `A3dyn`. For ERA5 spectral it's `_lnsp.gb`, `_vo_d.gb`,
-   `_thermo_ml_*.nc`.
-2. **Build the regridder** (if source mesh ≠ target mesh) — conservative
-   weights, cached as JLD2 under `~/.cache/AtmosTransport/cr_regridding/`.
-   Same-mesh paths use `IdentityRegrid` (zero-overhead passthrough).
-3. **Per window (typically 24 hourly windows per day)**:
-    - Read the source data into `RawWindow` — endpoints at `t_n` and
-      `t_{n+1}`, plus window-integrated mass fluxes.
-    - Apply the source-specific physics conventions (level orientation,
-      dry-basis conversion, `mass_flux_dt = 450 s` for FV3).
-    - Regrid (or pass through identically) to the target mesh.
-    - Compute the vertical mass flux `cm` — by **Poisson balance** for
-      synthesized winds (spectral path), by the **FV3 pressure-fixer**
-      formula for native FV3 mass fluxes (GEOS path).
-    - Run the **write-time replay gate**:
-      `‖m_evolved − m_stored_{n+1}‖ / ‖m_stored_{n+1}‖ ≤ tol`.
-      Failures abort the run rather than producing a known-bad file.
-    - Stream the window to the binary.
-4. **Cross-day chaining** — the day's final mass endpoint is threaded
-   into the next day's `seed_m` so window boundaries close.
+1. **Build the run-level cache** (`PreprocessorRunCache`) — once per
+   run, not once per day. The LL→CS regridder and the RG compressed
+   Laplacian both live here.
+2. **Allocate the topology workspace** (`allocate_window_workspace`) —
+   one instance per day; reused across all 24 windows.
+3. **Open the day's source readers** — `ERA5SpectralReader` opens GRIB
+   handles, `GEOSNativeReader` opens hourly NetCDF.
+4. **Per window** (typically 24 hourly windows per day):
+    - **`ingest_window!`** — read the source data into the workspace's
+      raw buffers. For chained sources (`GEOSNativeReader`) the
+      previous window's endpoint feeds into the current window's seed.
+    - **`apply_vertical!`** — fold raw vertical fields through the
+      configured `AbstractVerticalTransform`.
+    - **`drain_ready_windows!`** — once enough source windows are
+      ready, balance horizontal fluxes (spectral: Poisson; GEOS-native:
+      column balance against the raw next-hour dry endpoint), then
+      diagnose `cm` from the balanced fluxes and the explicit `dm`.
+    - **`verify_window!`** — write-time replay gate
+      (`‖m_evolved − m_stored_{n+1}‖ / ‖m_stored_{n+1}‖ ≤ tol`) plus
+      per-substep positivity gate
+      (`2·(out_x + out_y + out_z) / m_start < safety`). Failures abort
+      the run rather than producing a known-bad file.
+    - **`write_window!`** — stream the window to the binary.
+5. **`flush_final_windows!`** — handle the last window's closure
+   (next-day hour-0 endpoint or zero-tendency fallback) and patch the
+   header (`steps_per_window_by_window`, `poisson_balance_target_scale_by_window`).
+6. **Cross-day chaining** — the day's final mass endpoint is threaded
+   into the next day's seed so window boundaries close.
 
 ## Where to read next
 
-- [ERA5 spectral path](@ref) — the LL / RG / CS spectral pipeline
+- [ERA5 spectral path](spectral_era5.md) — the LL / RG / CS spectral pipeline
   (Holton synthesis, vertical merging, mass-fix, Poisson balance).
-- [GEOS native cubed-sphere](@ref) — the GEOS-IT / GEOS-FP CS
-  passthrough (FV3 pressure-fixer cm, dry-basis conversion, GCHP
-  convection wiring, `mass_flux_dt = 450`).
-- [Regridding](@ref) — conservative weights, IdentityRegrid, cache
-  key, mass-consistency correction.
-- [Conventions cheat sheet](@ref) — units, replay tolerances, level
-  orientation, panel conventions — the one-page reference for
+- [GEOS native cubed-sphere](geos_native_cs.md) — the GEOS-IT / GEOS-FP CS
+  passthrough (column balance + raw dry endpoint, dry-basis conversion,
+  GCHP convection + VDIFF wiring, adaptive substep schedule).
+- [Regridding](regridding.md) — conservative weights, `IdentityRegrid`,
+  extensive/intensive contract.
+- [Conventions cheat sheet](conventions.md) — units, replay tolerances,
+  level orientation, panel conventions — the one-page reference for
   debugging an unexpected binary.

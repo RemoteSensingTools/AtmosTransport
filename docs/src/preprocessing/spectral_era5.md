@@ -3,12 +3,12 @@
 The ERA5 spectral path takes ECMWF model-level **vorticity (VO)**,
 **divergence (D)**, and **log surface pressure (LNSP)** GRIB fields,
 synthesizes mass-conserving wind / mass-flux fields on a target grid
-via Holton-style continuity-consistent reconstruction, and writes a v4
-transport binary.
+via Holton-style continuity-consistent reconstruction, and writes a
+transport binary (`format_version = 3`).
 
-This is the path used to build the LL quickstart bundles (the 72×37
-and 144×73 binaries) and to produce the validation reference for any
-GEOS-CS comparison run.
+All three target topologies (LL, RG, CS) run through the unified driver
+`run_unified_preprocessor_day!` with the source axis fixed to
+`ERA5SpectralReader` and the target axis chosen via `[grid].type`.
 
 ## Required input
 
@@ -39,11 +39,18 @@ sized one-day jobs are fine without.
 The spectral source supports all three target topologies; pick the
 one that matches your downstream run:
 
-| Target | Orchestrator file |
-|---|---|
-| `LatLonTargetGeometry` | `src/Preprocessing/transport_binary/latlon_spectral.jl` |
-| `ReducedGaussianGeometry` | `src/Preprocessing/reduced_transport_helpers.jl` (no separate `_spectral.jl` peer; the RG path lives in this helper module) |
-| `CubedSphereTargetGeometry` | `src/Preprocessing/transport_binary/cubed_sphere_spectral.jl` |
+| Target | Topology-specific workspace |
+| --- | --- |
+| `LatLonTargetGeometry` | `LatLonSpectralWindowWorkspace` (`src/Preprocessing/transport_binary/latlon_spectral.jl`) |
+| `ReducedGaussianTargetGeometry` | `ReducedGaussianSpectralWindowWorkspace` (`src/Preprocessing/reduced_transport_helpers.jl`) |
+| `CubedSphereTargetGeometry` | `CubedSphereSpectralWindowWorkspace` (`src/Preprocessing/transport_binary/cubed_sphere_spectral.jl`) |
+
+All three workspaces subtype `AbstractWindowWorkspace{G, FT}` and are
+allocated once per day by `allocate_window_workspace`. The
+`PreprocessorRunCache` (allocated once per run) holds the shared
+expensive objects: the LL→CS conservative regridder, the RG
+compressed-Laplacian factorization. These persist across days within
+a single batch invocation.
 
 The CS target adds a **lat-lon staging step** between spectral
 synthesis and CS panels — spectral-to-CS-direct is mathematically
@@ -175,18 +182,21 @@ The synthetic-RG variant uses
 - The slowest step is **spectral synthesis**: at LL 720×361 it's
   ~30 s per window F64 on a recent 8-core CPU, ~10 s F32.
   Multiplied by 24 windows × 30 days, a one-month F32 run is ~2 h.
-- The CS variant's **conservative regrid** dominates at high `Nc`;
-  the JLD2 cache makes day 2 onward much faster than day 1.
+- The CS variant's **conservative regrid** dominates at high `Nc`.
+  `PreprocessorRunCache` builds the regridder once per batch run; the
+  JLD2 cache (under `~/.cache/AtmosTransport/cr_regridding/`) makes
+  the regridder persist across batch invocations.
 - **Replay-gate verification** doubles the window's compute (one
-  forward step per window). It is non-optional today.
-- The Float32 spectral-CS path currently has a real bug in
-  `compute_legendre_column!` and downstream Float64 type pinning;
-  use Float64 spectral-CS while that fix is in progress.
+  forward step per window). It is on by default; set the env var
+  `ATMOSTR_NO_WRITE_REPLAY_CHECK=1` to skip (not recommended for
+  production binaries).
+- All three target topologies (LL, RG, CS) run on F32 in production.
 
 ## What's next
 
 - [GEOS native cubed-sphere](@ref) — the FV3-native path (no
-  spectral synthesis, no Poisson balance, FV3 pressure-fixer cm).
+  spectral synthesis, no Poisson balance; column-balanced fluxes with
+  the raw next-hour dry endpoint).
 - [Regridding](@ref) — how the conservative weights are built and
   cached.
 - [Conventions cheat sheet](@ref) — units, tolerances, panel

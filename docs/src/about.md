@@ -1,152 +1,67 @@
 # About these docs
 
-The documentation is being overhauled. This page tracks where we are.
+This site is the AtmosTransport.jl reference site. It is built with
+[Documenter.jl](https://documenter.juliadocs.org/) and
+[DocumenterVitepress.jl](https://luxdl.github.io/DocumenterVitepress.jl/),
+which produces a VitePress static site with native Mermaid rendering.
 
-## Status (2026-04-25)
+## What you'll find here
 
-**Phase 1 — Infrastructure** (shipped). Documenter + Literate.jl scaffolding;
-CI workflow wired green; landing page + this status page in place.
+- **Getting Started** — install AtmosTransport.jl, run the synthetic
+  smoke tests, and inspect the output of a real run.
+- **For TM5 & GCHP users** — five pages mapping TM5 / GCHP / GIGC
+  vocabulary onto AtmosTransport's design: philosophy, the binary
+  pipeline, operator dispatch, adjoints, and the kernel + I/O
+  architecture.
+- **Concepts** — grids, state and basis, operators, binary format.
+- **Tutorials** — end-to-end runnable examples (CI-safe, executed at
+  build time).
+- **Preprocessing** — turning raw met data (ERA5 spectral GRIB, GEOS
+  native NetCDF) into a transport binary.
+- **Theory & Verification** — discrete mass conservation, advection
+  schemes, conservation budgets, validation status, adjoint status.
+- **Configuration & Runtime** — TOML schema, NetCDF output schema,
+  data sources.
+- **API Reference** — auto-generated docstrings per submodule.
 
-**Phase 2 — Getting Started onramp** (shipped). Four pages cover
-installation, a downloadable-bundle **quickstart**, the general
-"first run" walkthrough, and inspecting output. All four are written
-against the current `scripts/run_transport.jl` invocation, the
-current TOML schema, and the current NetCDF output schema.
+## Source of truth
 
-The quickstart bundle ships 3 days of preprocessed ERA5 transport
-binaries at two LL resolutions (72×37 and 144×73, F32) with matching
-ready-to-run configs in `config/runs/quickstart/`. The convenience
-script `scripts/download_quickstart_data.sh` fetches the tarball,
-verifies its SHA-256, and extracts it under
-`~/data/AtmosTransport_quickstart/`. CS bundles are deferred until
-the F32 spectral-CS preprocessor fix lands.
+When this site and the source code disagree, **the source code wins**.
+Open an issue if you find a contradiction and we'll patch the doc.
+Concrete invariants and file-level pointers live in the root
+[`CLAUDE.md`](https://github.com/RemoteSensingTools/AtmosTransport/blob/main/CLAUDE.md);
+that file is the canonical "high-signal invariants" reference.
 
-**Phase 3A — Concepts: grids + state & basis** (shipped). Two pages
-covering the three horizontal mesh types, the AtmosGrid composite,
-state types, dry-basis contract, and tracer accessor API. Mermaid
-hierarchy diagrams + three CairoMakie-rendered grid schematics
-(LatLon, ReducedGaussian, CubedSphere with both panel conventions
-side by side).
-
-**Phase 3B — Concepts: operators + binary format** (shipped). Two
-pages: the four operator families (advection schemes, diffusion,
-convection, surface flux) with the `apply!` contract and the Strang
-palindrome; and the v4 transport-binary header schema, payload
-sections, capability surface, mass-basis contract, streaming-writer
-entry points, and replay-gate contract.
-
-**Phase 4 — Tutorials** (shipped, partial). Literate.jl wired into
-the docs build (`docs/literate/*.jl` → `docs/src/tutorials/_generated/*.md`,
-executed at build time so the rendered output matches what the
-reader will actually see locally). First tutorial:
-`synthetic_latlon.jl` — builds a tiny synthetic transport binary in
-memory using only public API and steps it forward. CI-safe.
-Real-data topology tutorials will land once the LL+CS quickstart
-bundle is distributable as a Julia LazyArtifact (currently blocked
-on the F32 spectral-CS preprocessing fix).
-
-**Phase 5 — Preprocessing guide** (shipped). Five pages: a unified
-overview with the source × target dispatch model and a prominent
-warning that preprocessing is time-intensive (but the resulting
-binaries enable optimized I/O at runtime); per-source deep-dives for
-ERA5 spectral and GEOS native CS; a regridding chapter; a
-conventions cheat sheet.
-
-**Phase 6 — Theory & Verification** (shipped). Five pages aimed at
-atmospheric-transport practitioners: the discrete mass-conservation
-contract; per-scheme advection properties; the explicit `@test`
-assertions that anchor each conservation property; an honest
-validation-status report; and an adjoint-status page that corrects
-the README's overclaim (the discrete adjoint is roadmap, not
-shipped). Five codex review rounds caught dozens of citation /
-tolerance / scope-overclaim issues across the five pages; all
-folded in.
-
-**Phase 7 — Configuration & Runtime** (shipped). Three pages
-covering the TOML schema (run + preprocessing configs, per-block
-per-key reference), the snapshot NetCDF output schema (per-topology
-variable layout + dimensions), and the data-source story (ERA5
-CDS credentials, GEOS-IT AWS S3, recommended local layout,
-quickstart-bundle pointer). Four codex review rounds caught
-schema / units / dim-order issues; all folded in.
-
-**Phase 8 — API Reference** (shipped). Nine `@autodocs` pages —
-one per submodule — public-first via `Private = false`. Pages
-cover Architectures, Parameters, Grids, State, MetDrivers,
-Operators (top-level + Advection + Convection + Diffusion +
-SurfaceFlux), Models, Preprocessing. The pages surface every
-public docstring; the docstring-audit pass to fix stubs and
-stale references is intentionally deferred to a follow-up commit.
-
-**Phase 9 — README + final polish** (shipped). Top-level
-`README.md` rewritten to align with the new doc tree: false
-adjoint claim replaced with an honest "Note on adjoint maturity"
-callout; broken Quick Start code (LatitudeLongitudeGrid /
-default_met_config / TiedtkeConvection — none exist) replaced
-with the bash invocation that downloads the quickstart bundle and
-runs the LL 72×37 example; references to nonexistent legacy doc
-files removed; per-section links point at the new doc tree. The
-architecture diagram updated to reflect the actual module flow
-(STEP → OPS → STATE).
-
-**The documentation overhaul is complete.** The remaining
-follow-on work (docstring audit to clear the stub-warnings,
-migration / archival of the legacy `docs/reference/` content) is
-tracked as separate maintenance and is not blocking.
-
-**Caveats carried forward:**
-
-- The two repository Python diagnostic scripts
-  (`scripts/diagnostics/verify_snapshot_netcdf.py` and `quick_viz.py`)
-  were written against an older snapshot variable schema; this is
-  flagged in `inspecting_output.md` and tracked as a Phase-2
-  follow-up.
-- The Dropbox URL in `download_quickstart_data.sh` is still a TODO
-  placeholder until the LL bundle is uploaded.
-
-The scattered legacy docs at `docs/reference/`, `docs/memos/`, and the
-top-level numbered files (`docs/00_*.md`, `docs/30_*.md`, etc.) are
-**not yet integrated**. They remain in the repository (still browsable
-via the GitHub web UI and any prior bookmarks) but are **not built
-into this Documenter site** — the search index and cross-references
-here only cover pages under `docs/src/`. Subsequent phases will fold
-each legacy file into this tree or archive it.
-
-## Roadmap
-
-| Phase | Scope | State |
-|------:|-------|-------|
-| 1 | Documenter + Literate scaffolding, CI green | shipped |
-| 2 | Getting-Started onramp (install, quickstart, first run, inspecting output) | shipped |
-| 3A | Concepts: grids, state & basis (Mermaid hierarchies + grid schematics) | shipped |
-| 3B | Concepts: operators, binary format | shipped |
-| 4 | Tutorials (Literate.jl) — synthetic LL shipped; real-data topology tutorials pending bundle artifact | shipped |
-| 5 | Preprocessing guide (overview, spectral_era5, geos_native_cs, regridding, conventions) | shipped |
-| 6 | Theory & Verification (mass conservation, advection schemes, conservation budgets, validation status, adjoint status) | shipped |
-| 7 | Configuration & Runtime (toml_schema, output_schema, data_sources) | shipped |
-| 8 | API Reference (`@autodocs` per module) | shipped |
-| 9 | README rewrite + final polish | shipped |
-
-## Content owners
-
-The docs aim to satisfy two audiences in one site:
-
-- **Newcomers** — gentle onramp through Getting Started, Concepts, and
-  one runnable Tutorial per topology.
-- **Atmospheric-transport practitioners** — Theory & Verification with
-  scheme derivations, mass-conservation contracts, and the full API
-  reference.
-
-If the level of explanation in a given page does not serve both, file
-an issue and we will rework it.
-
-## How to build the docs locally
+## Build the docs locally
 
 ```bash
 julia --project=docs -e 'using Pkg; Pkg.develop(PackageSpec(path=pwd())); Pkg.instantiate()'
 julia --project=docs docs/make.jl
 ```
 
-The HTML output lands in `docs/build/`. CI builds the same target on
-every push and PR; deployment to `gh-pages` happens on pushes to
-`main`.
+The rendered VitePress site lands in `docs/build/`. To serve it
+locally for live preview:
+
+```bash
+cd docs && julia --project -e 'using DocumenterVitepress; DocumenterVitepress.dev_docs("build")'
+```
+
+CI builds the same target on every push and PR; deployment to
+`gh-pages` happens on pushes to `main`.
+
+## How to contribute documentation
+
+- **Concepts and theory pages.** Prose-heavy. Cite source file paths
+  (`src/Path/To/File.jl`) for any concrete claim; if a claim depends
+  on a specific function, link the function in the API reference
+  rather than copying its signature inline (signatures drift; the
+  autodoc does not).
+- **Tutorials.** Add a new `.jl` under `docs/literate/`; the build
+  picks it up automatically and executes it. Keep tutorials
+  CI-friendly (no external downloads, no GPU-only paths).
+- **API reference.** Edit the source-side docstring rather than the
+  generated `api/*.md`; the autodoc surfaces whatever is in the
+  source.
+- **Status tracker.** The top-level [`README.md`](https://github.com/RemoteSensingTools/AtmosTransport)
+  carries the canonical "what works now, what's experimental" table.
+  Update that table when a capability moves between status tiers.

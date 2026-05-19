@@ -102,33 +102,26 @@ uses the generic conservative path. The per-ring workaround is the
 reason the RG-target preprocessing takes a bit longer to build than
 equivalent LL or CS targets at first run.
 
-## Mass-consistency correction after regrid
+## Mass closure across topologies
 
-Conservative regridding preserves total mass exactly, but distributes
-that mass across cells in a way that can shift the **per-level sum**
-by `O(10⁻⁶)` relative — small enough to ignore for column-mean
-diagnostics, but big enough to break the per-level Poisson topology
-on a closed sphere (where `Σ div_h = 0` per level is required for
-the balance to converge).
+Conservative regridding preserves total mass exactly. The earlier
+"per-level mass correction" helper
+(`_enforce_perlevel_mass_consistency!`) has been **removed** — it
+was a band-aid for a regrid path that did not respect the
+extensive / intensive distinction.
 
-The fix is `_enforce_perlevel_mass_consistency!` in
-`src/Preprocessing/cs_transport_helpers.jl`:
+The current path uses `regrid_3d_to_cs_panels!` with an
+`ExtensiveCellField()` flag on both sides of the regrid. The
+extensive-on-both-sides contract converts through density, so the
+spatial distribution is preserved by construction and the per-level
+mass identity holds to floating-point tolerance without any
+post-regrid correction.
 
-```
-for k in 1:Nz
-    offset[k] = (Σ_source m[k] − Σ_dest m[k]) / total_dest_cells
-    m[:, :, k] .+= offset[k]
-end
-```
-
-A uniform additive correction per level. Applied after every
-cross-topology regrid in the spectral-CS path; without it, the LL
-spectral → CS Poisson balance does not converge to the
-plan-39 dry-basis tolerance and the write-time replay gate fails.
-
-The correction is small (`< 1e-10` relative per level on real ERA5
-days) and is folded into the binary's stored `m` so the contract is
-self-consistent.
+If you are extending the regridding subsystem with a new mesh pair
+and the write-time replay gate fails because the per-level totals
+drift: the first check is whether you are using
+`ExtensiveCellField()` consistently — not whether you need to
+re-introduce a post-regrid correction.
 
 ## What's next
 

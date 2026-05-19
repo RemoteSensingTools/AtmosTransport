@@ -19,19 +19,34 @@ that subset, with optional `[output.fields.per_tracer.<name>]` overrides.
 
 ## Global attributes
 
-Every snapshot file carries a CF-style global header (declared in
-`src/Output/netcdf_schema.jl:19-29`):
+Every snapshot file carries a CF-style global header set by
+`_define_common_attributes!` in `src/Output/netcdf_schema.jl`:
 
 | Attribute | Value |
-|---|---|
+| --- | --- |
 | `Conventions` | `"CF-1.8"` |
 | `title` | `"AtmosTransport runtime snapshot"` |
 | `source` | `"AtmosTransport.jl"` |
+| `institution` | `ENV["ATMOSTR_INSTITUTION"]` if set, else `"Caltech / Frankenberg group"` |
 | `grid` | `summary(mesh)` string (e.g. `"72×37 LatLonMesh{Float32}"`) |
 | `grid_type` | `"latlon"` / `"reduced_gaussian"` / `"cubed_sphere"` |
 | `mass_basis` | `"dry"` or `"moist"` (matches `state.air_mass`) |
 | `output_contract` | version tag for the schema |
-| `history` | `@sprintf("written by AtmosTransport.Output with %d frame(s)", length(frames))` |
+| `creation_date` | ISO-8601 UTC timestamp of the run |
+| `framework` | `"AtmosTransport.jl"` |
+| `framework_commit` | git SHA of the source tree at run time (or `"unknown"`) |
+| `framework_dirty` | `"clean"` or `"dirty"` (uncommitted changes flag) |
+| `runtime` | Julia + backend string (e.g. `"julia 1.10.5 / CUDA 12.4"`) |
+| `hostname` | `Base.Libc.gethostname()` at run start |
+| `user` | `$USER` (or `$USERNAME` on Windows; `"unknown"` if neither is set) |
+| `output_options` | `float_type=…, deflate_level=…, shuffle=…` (only present when writer options are passed) |
+| `history` | CF-canonical chain; the writer prepends `"<creation_date>: written by AtmosTransport.Output (commit <sha>[+dirty]) with N frame(s)"` |
+
+Every value is best-effort: non-git checkouts get `framework_commit =
+"unknown"`; environments without a `USER` env var get `user =
+"unknown"`. No attribute is required at read time — but they are
+written unconditionally, so downstream tooling can rely on the keys
+being present.
 
 ## Lat-lon snapshot
 
@@ -179,10 +194,22 @@ co2_cm = ds["co2_bl_column_mean"][:, :, end]   # last frame, (lon, lat) for LL
 co2_air = ds["air_mass"][:, :, :, end]         # full 3D, (lon, lat, lev) for LL
 ```
 
+## Fill value
+
+Every payload variable is defined with `_FillValue = 1.0e15` (and
+`missing_value = 1.0e15` for older tools); this matches the GEOS-Chem
+convention (`Met_AD._FillValue == 1.0e15`) so Panoply / ncview / IDV
+mask the same out-of-range cells with the same value. Float32 outputs
+truncate to `Float32(1e15)`, which sits comfortably below
+`floatmax(Float32) ≈ 3.4e38` and outside any physical mass /
+mixing-ratio range. The sentinel is written via NetCDF4's storage
+default so uninitialised cells are masked even if the writer never
+reaches them.
+
 ## Compression and packing
 
 | Option | Default | Effect |
-|---|---|---|
+| --- | --- | --- |
 | `[output] deflate_level` | `0` (no compression) | NetCDF4 zlib level 0..9 |
 | `[output] shuffle` | `true` | shuffle filter (only effective when `deflate_level > 0`) |
 

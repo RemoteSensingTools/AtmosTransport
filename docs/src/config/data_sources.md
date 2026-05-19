@@ -28,15 +28,17 @@ default). All three files are model-level (137 levels, hybrid σ-p).
 
 ### Credentials
 
-Get a free CDS account, then drop your key in `~/.cdsapirc`:
+Get a free CDS account, then drop your Personal Access Token (PAT)
+in `~/.cdsapirc`:
 
 ```text
 url: https://cds.climate.copernicus.eu/api
-key: <UID>:<API-KEY>
+key: <YOUR-PAT>
 ```
 
-(Get the `<UID>:<API-KEY>` pair from the bottom-right of your CDS
-account profile page once you're logged in.) The `base_url` in
+CDS migrated to single PAT-style keys in September 2024; the legacy
+`<UID>:<API-KEY>` format is no longer accepted. Get your PAT from your
+CDS account profile page once you're logged in. The `base_url` in
 `config/met_sources/era5.toml` matches this. Tools that read the
 CDS API will pick up the `~/.cdsapirc` file automatically.
 
@@ -165,12 +167,12 @@ access.
 
 If you don't want to manage raw met data — for a smoke test, a tutorial,
 or a short benchmark — there's a **preprocessed bundle** on the
-[`data-quickstart-v1` GitHub Release](https://github.com/RemoteSensingTools/AtmosTransport/releases/tag/data-quickstart-v1):
+[`data-quickstart-v2` GitHub Release](https://github.com/RemoteSensingTools/AtmosTransport/releases/tag/data-quickstart-v2):
 
 | Tarball | Contents |
 |---|---|
-| `quickstart_ll_dec2021_v1.tar.gz` (~1 GB) | LL 72×37 + LL 144×73 v4 transport binaries, F32, Dec 1-3 2021 |
-| `quickstart_cs_dec2021_v1.tar.gz` (~1.6 GB) | CS C24 + CS C90 v4 transport binaries, F32, Dec 1-3 2021 |
+| `quickstart_ll_dec2021_v2.tar.gz` (~1.0 GB) | LL 72x37 + LL 144x73 transport binaries, F32, Dec 1-3 2021 |
+| `quickstart_cs_dec2021_v2.tar.gz` (~1.9 GB) | CS C24 + CS C90 transport binaries, F32, Dec 1-3 2021 |
 
 Both built from raw ERA5 spectral via the preprocessor described in
 [ERA5 spectral path](@ref). Use:

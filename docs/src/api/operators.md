@@ -44,3 +44,11 @@ Modules = [AtmosTransport.Operators.SurfaceFlux]
 Order   = [:type, :function]
 Private = false
 ```
+
+## Chemistry
+
+```@autodocs
+Modules = [AtmosTransport.Operators.Chemistry]
+Order   = [:type, :function]
+Private = false
+```

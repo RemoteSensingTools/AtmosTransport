@@ -277,8 +277,25 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
                                             mass_basis = DryBasis())
         @test all(iszero, rm_zero[1])
 
+        # CS gaussian blob path mirrors the quickstart configs and returns
+        # halo-free panel interiors for packing.
+        vmr_blob = build_initial_mixing_ratio(
+            air_mass, grid,
+            Dict("kind" => "gaussian_blob",
+                 "background" => 4.0e-4,
+                 "amplitude" => 8.0e-5,
+                 "lon0_deg" => 0.0,
+                 "lat0_deg" => 35.0,
+                 "sigma_lon_deg" => 30.0,
+                 "sigma_lat_deg" => 20.0))
+        @test vmr_blob isa NTuple{6, Array{FT, 3}}
+        @test all(size(vmr_blob[p]) == (Nc, Nc, Nz) for p in 1:6)
+        blob_vals = vcat((vec(vmr_blob[p]) for p in 1:6)...)
+        @test minimum(blob_vals) ≥ FT(4.0e-4)
+        @test maximum(blob_vals) > FT(4.0e-4)
+
         # Unsupported kind errors
         @test_throws ArgumentError build_initial_mixing_ratio(
-            air_mass, grid, Dict("kind" => "gaussian_blob"))
+            air_mass, grid, Dict("kind" => "bl_enhanced"))
     end
 end

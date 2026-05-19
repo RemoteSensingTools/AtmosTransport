@@ -113,7 +113,7 @@ Initial-condition kinds (declared in `src/Models/InitialConditionIO.jl`):
 |---|---|---|---|---|
 | `"uniform"` | yes | yes | yes | `background` |
 | `"bl_enhanced"` | yes | **no** | **no** | `background`, `enhancement`, `n_layers` (LL-only; RG/CS path errors at IC build) |
-| `"gaussian_blob"` | yes | yes | **no** | `background`, `lon0_deg`, `lat0_deg`, `sigma_lon_deg`, `sigma_lat_deg`, `amplitude` |
+| `"gaussian_blob"` | yes | yes | yes | `background`, `lon0_deg`, `lat0_deg`, `sigma_lon_deg`, `sigma_lat_deg`, `amplitude` |
 | `"file"` / `"netcdf"` | yes | yes | yes | `file`, `variable`, optional `time_index` |
 | `"file_field"` | yes | yes | yes | `file`, `variable` |
 | `"catrine_co2"` | yes | yes | yes | `file`, `variable`, optional `time_index` |

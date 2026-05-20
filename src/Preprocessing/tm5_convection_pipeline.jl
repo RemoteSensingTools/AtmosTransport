@@ -123,12 +123,10 @@ column-by-column into `ws.*_native`, then collapses to merged Nz
 into `ws.*_merged_src`.  All work is on the ERA5-native horizontal
 grid (720×361 for standard physics BINs).
 
-Commit 4 narrowed scope: source and target grids MUST match
-(Nx, Ny) == (720, 361).  PS comes from the caller (typically the
-preprocessor's `transform.sp` after spectral synthesis) because
-the Commit-2 physics BIN does not carry PS.  See
-`docs/plans/24_TM5_PREPROCESSOR/NOTES.md` §"Deviations from plan
-doc §4.4" for why RG/CS are follow-on commits.
+This path requires source and target grids to match
+`(Nx, Ny) == (720, 361)`.  PS comes from the caller (typically the
+preprocessor's `transform.sp` after spectral synthesis) because the
+physics BIN does not carry PS.
 
 `stats::Union{Nothing, NamedTuple}` is the TM5CleanupStats bundle;
 when non-nothing, counters accumulate across all columns of all

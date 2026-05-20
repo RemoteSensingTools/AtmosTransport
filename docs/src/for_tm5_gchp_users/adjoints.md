@@ -157,30 +157,26 @@ with `scripts/diagnostics/inspect_tape.jl`.
 | Tangent linear | Hand-coded | Hand-coded | Not currently exposed |
 | Adjoint forcing | TM5 obs operator | gchem_adj | `bind_to_mesh` + observation IO |
 | Observation IO | Specific files per inst | NetCDF | `src/Inversion/ObservationsIO.jl` |
-| Covariance B^{1/2} | Diagonal + horizontal correlation | Shipped | `src/Inversion/Covariance.jl` (B1) |
-| Preconditioning | Hand-coded | Hand-coded | `src/Inversion/Preconditioning.jl` (B2 — next milestone) |
+| Covariance B^{1/2} | Diagonal + horizontal correlation | Shipped | `src/Inversion/Covariance.jl` |
+| Preconditioning | Hand-coded | Hand-coded | `src/Inversion/Preconditioning.jl` |
 | Optimizer | M1QN3 (L-BFGS-B variant) | L-BFGS-B | Pluggable `AbstractCSOptimizer` |
-| Driver | tm5-4dvar.x | gchem_4dvar | Phase C (planned) |
+| Driver | tm5-4dvar.x | gchem_4dvar | Prototype driver under `scripts/inversions/` |
 
-What's **shipped** today (the
-[Plan 26](https://github.com/cfranken/AtmosTransportModel/tree/main/docs/plans/26_tm5_inversion_scaffold)
-ledger):
+What's **shipped** today:
 
 - Tape + checkpoint + revolve schedule.
 - Public footprint API (`cs_surface_emission_footprint`).
-- Observation IO with the schema documented in
-  [Plan 26 D3](https://github.com/cfranken/AtmosTransportModel/tree/main/docs/plans/26_tm5_inversion_scaffold).
+- Observation IO and departures IO.
 - `bind_to_mesh` for observation co-location.
-- Covariance B^{1/2} construction (B1).
+- Covariance B^{1/2} construction.
+- Preconditioning and 4D-Var cost/gradient assembly.
+- Pluggable optimizer dispatch.
 
-What's **next** (Plan 26 B2 → B3 → Phase C):
+What's **next**:
 
-- B2: preconditioning, adjoint-identity test, log-normal bijection.
-- B3: wire B^{1/2} into the 4D-Var cost/gradient via the existing
-  `bind_to_mesh` path.
-- Phase C: pluggable optimizer (L-BFGS-B first), end-to-end inverse
-  driver that consumes a TOML, runs the forward, runs the adjoint
-  walk per observation, and reports a control-vector update.
+- Hardening the TOML-facing inversion driver.
+- Publishing a real-data TM5-4DVAR cross-validation.
+- Completing the remaining physics-adjoint gaps listed below.
 
 ## Practical knobs
 
@@ -209,8 +205,7 @@ The forward operators that lack a fully-wired adjoint kernel today:
 - **Lin-Rood ORD=7 panel-boundary correction** has a partial adjoint
   (kernel exists, but the panel-edge stencil is not yet a separate
   record family); the production CS adjoint path uses
-  `LinRoodPPMScheme(ORD=5)`. The ORD=7 wiring is on the Plan 26
-  follow-up list.
+  `LinRoodPPMScheme(ORD=5)`.
 - **`copy_corners` reverse** is the named gap for the cubed-sphere
   halo-corner exchange.
 - **TM5 convection adjoint** — the four-field column solve has a
@@ -241,11 +236,7 @@ resolution and substantially faster than GIGC-adjoint
 
 ## Reading next
 
-- For the surface emission footprint demo and reproduction recipe,
-  see the LA footprint memo in `artifacts/` (a top-level docs page
-  will land once the validation suite docs are written).
 - For the kernel architecture details that make the adjoint pass
   fast on GPU, see [Kernel architecture](kernel_architecture.md).
-- For the open-source 4D-Var driver plan, see
-  [Plan 26](https://github.com/cfranken/AtmosTransportModel/tree/main/docs/plans/26_tm5_inversion_scaffold)
-  in the repo.
+- For the current implementation status, see
+  [Adjoint status](../theory/adjoint_status.md).

@@ -102,7 +102,8 @@ the model-facing `apply!` entrypoints that the transport block calls.
 - Topology coverage:
   [`../TOPOLOGY_SUPPORT.md`](../TOPOLOGY_SUPPORT.md)
 - Runtime/block ordering:
-  [`../../../docs/plans/OPERATOR_COMPOSITION.md`](../../../docs/plans/OPERATOR_COMPOSITION.md)
+  [`../../Models/TransportModel.jl`](../../Models/TransportModel.jl) and
+  [`../../../docs/20_RUNTIME_FLOW.md`](../../../docs/20_RUNTIME_FLOW.md)
 - Runtime walkthrough:
   [`../../../docs/20_RUNTIME_FLOW.md`](../../../docs/20_RUNTIME_FLOW.md)
 - Tests:

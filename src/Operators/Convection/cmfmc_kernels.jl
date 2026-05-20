@@ -1,25 +1,19 @@
 # ---------------------------------------------------------------------------
-# CMFMCConvection kernel + inline helpers — plan 18 Commit 3.
+# CMFMCConvection kernel + inline helpers.
 #
 # Ports from GEOS-Chem `convection_mod.F90:DO_RAS_CLOUD_CONVECTION`.
-# Derivation + four-term-vs-two-term equivalence is captured in the
-# plan-18 upstream notes; those were deleted during plan-21 cleanup,
-# so reach them via git archaeology at commit 27e9d2e, path
-# docs/plans/18_ConvectionPlan/18_CONVECTION_UPSTREAM_GCHP_NOTES.md.
-# Medium cleanup from the earlier Julia port per Decision 15. Two
-# deliberate departures from that legacy port:
+# Two deliberate departures from the earlier Julia port:
 #
-#   1. **ADD well-mixed sub-cloud layer** (Decision 17) —
-#      pressure-weighted below-cloud-base treatment from GCHP
+#   1. **ADD well-mixed sub-cloud layer** — pressure-weighted
+#      below-cloud-base treatment from GCHP
 #      convection_mod.F90:742-782. The legacy Julia port skipped this;
 #      git commit ec2d2c0 preserves it at
 #      src_legacy/Convection/ras_convection.jl for comparison.
-#   2. **KEEP no positivity clamp** (Decision 11 — adjoint addendum §D).
-#      Legacy already has no clamp (git commit ec2d2c0,
-#      src_legacy/Convection/ras_convection.jl:208-214); plan 18
-#      preserves this and adds a docstring pointer to the rationale.
+#   2. **KEEP no positivity clamp**. Legacy already has no clamp
+#      (git commit ec2d2c0, src_legacy/Convection/ras_convection.jl:208-214);
+#      preserving linearity is important for the adjoint path.
 #
-# Convention (per CLAUDE.md Invariant 2): `k=1=TOA`, `k=Nz=surface`.
+# Convention: `k=1=TOA`, `k=Nz=surface`.
 # CMFMC is stored at interfaces: `cmfmc[i, j, k]` = flux at the TOP
 # of layer k (going UP), so `cmfmc[i, j, k+1]` = flux at the BOTTOM
 # of layer k (from below). The pass directions reflect this:
@@ -29,17 +23,16 @@
 #   Pass 2 (tendency, top-to-bottom): k = 1 up to Nz (our "top-down"
 #     equals increasing k).
 #
-# No field type parameter on CMFMCConvection (plan 18 v5.1 §2.3
-# Decision 20) — the operator is basis-polymorphic; the consumer
-# contract is "CMFMC and DTRAIN must match state.air_mass basis".
+# No field type parameter on CMFMCConvection: the operator is
+# basis-polymorphic; the consumer contract is "CMFMC and DTRAIN must
+# match state.air_mass basis".
 #
 # Imports come from the parent `Convection.jl` module; this file is
 # `include`d into that module scope.
 # ---------------------------------------------------------------------------
 
 # =========================================================================
-# Inline helpers (Decision 19 — dispatch-ready structure for future
-# wet scavenging).
+# Inline helpers, dispatch-ready for future wet scavenging.
 # =========================================================================
 
 """
@@ -49,7 +42,7 @@
 Updraft mixing at one level: environment air (`q_env`) mixes with
 updraft air from below (`qc_below`) in mass-weighted proportion.
 
-# Inert-tracer version (plan 18)
+# Inert-tracer version
 
 Returns `(qc, zero(qc))` — `qc` is the post-mix concentration, the
 scavenging fraction is identically zero. A future wet-deposition
@@ -88,9 +81,7 @@ current layer.
 
 The GCHP four-term tendency from `convection_mod.F90:DO_RAS_CLOUD_CONVECTION`
 is algebraically equivalent to the two-term form below for inert tracers
-(`QC_PRES = old_QC`). §5.3 of the plan-18 upstream notes works through
-the simplification — see commit 27e9d2e,
-`docs/plans/18_ConvectionPlan/18_CONVECTION_UPSTREAM_GCHP_NOTES.md`.
+(`QC_PRES = old_QC`).
 
 ```
 tsum = cmfmc_above * (q_above - q_env) + dtrain * (qc_post_mix - q_env)

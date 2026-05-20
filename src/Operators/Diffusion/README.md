@@ -79,7 +79,8 @@ run on structured, face-indexed, and panel-native cubed-sphere state.
 ## Related Docs And Tests
 
 - Runtime/block ordering:
-  [`../../../docs/plans/OPERATOR_COMPOSITION.md`](../../../docs/plans/OPERATOR_COMPOSITION.md)
+  [`../../Models/TransportModel.jl`](../../Models/TransportModel.jl) and
+  [`../../../docs/20_RUNTIME_FLOW.md`](../../../docs/20_RUNTIME_FLOW.md)
 - Topology status:
   [`../TOPOLOGY_SUPPORT.md`](../TOPOLOGY_SUPPORT.md)
 - Tests:

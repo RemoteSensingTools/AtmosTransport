@@ -68,4 +68,5 @@ Geometry and topology decisions come from
 - Quality gates:
   [`../docs/40_QUALITY_GATES.md`](../docs/40_QUALITY_GATES.md)
 - Operator block ordering:
-  [`../docs/plans/OPERATOR_COMPOSITION.md`](../docs/plans/OPERATOR_COMPOSITION.md)
+  [`Operators/README.md`](Operators/README.md) and
+  [`../docs/20_RUNTIME_FLOW.md`](../docs/20_RUNTIME_FLOW.md)

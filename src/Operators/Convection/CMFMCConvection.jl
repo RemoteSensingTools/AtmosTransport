@@ -1,9 +1,7 @@
 # ---------------------------------------------------------------------------
 # CMFMCConvection — GCHP RAS / Grell-Freitas convective transport.
-# Plan 18 Commit 3, v5.1 §2.3 Decision 20 (basis-polymorphic),
-# Decision 17 (well-mixed sub-cloud), Decision 21 (mandatory CFL
-# sub-cycling), Decision 11 (no positivity clamp; adjoint-structure
-# preserving).
+# Basis-polymorphic, with well-mixed sub-cloud treatment, mandatory CFL
+# sub-cycling, and no positivity clamp to preserve adjoint structure.
 # ---------------------------------------------------------------------------
 
 """
@@ -12,16 +10,15 @@
 GEOS-Chem RAS / Grell-Freitas convective transport operator.
 
 No struct fields — the forcing arrays (`cmfmc`, optionally `dtrain`)
-arrive via `TransportModel.convection_forcing` (plan 18 v5.1 §2.17
-Decision 23), populated each substep by
+arrive via `TransportModel.convection_forcing`, populated each substep by
 `DrivenSimulation._refresh_forcing!` from `sim.window.convection`.
 
 # Basis convention
 
-Plan 18 Decision 20: the operator is basis-polymorphic. `cmfmc` and
-`dtrain` must be on the SAME basis as `state.air_mass` (dry in
+The operator is basis-polymorphic. `cmfmc` and `dtrain` must be on the
+SAME basis as `state.air_mass` (dry in
 CATRINE usage, moist if the driver supplies moist forcing). The
-driver is responsible for basis correction upstream (Commit 7).
+driver is responsible for basis correction upstream.
 
 # Fields required on `ConvectionForcing`
 
@@ -29,14 +26,13 @@ driver is responsible for basis correction upstream (Commit 7).
   `(Nx, Ny, Nz+1)`. Units kg / m² / s on the state's basis.
 - `forcing.dtrain :: Union{AbstractArray{FT, 3}, Nothing}` at centers,
   shape `(Nx, Ny, Nz)`. When `nothing`, the kernel runs
-  Tiedtke-style single-flux transport (DTRAIN-missing fallback per
-  plan 18 v5.1 Decision 2).
+  Tiedtke-style single-flux transport.
 
 Face-indexed ReducedGaussian uses `(ncell, Nz+1)` / `(ncell, Nz)`.
 CubedSphere uses `NTuple{6}` of per-panel `(Nc, Nc, Nz+1)` /
 `(Nc, Nc, Nz)` arrays.
 
-# CFL sub-cycling (Decision 21)
+# CFL sub-cycling
 
 The kernel sub-cycles internally based on the CMFMC profile:
 
@@ -47,7 +43,7 @@ driver clears the cache on window roll via
 `invalidate_cmfmc_cache!(workspace)`. Bit-exact: one call with `dt`
 matches `n_sub` manual calls with `sdt = dt / n_sub`.
 
-# Well-mixed sub-cloud layer (Decision 17)
+# Well-mixed sub-cloud layer
 
 Applies GCHP's pressure-weighted well-mixed treatment below cloud
 base (`convection_mod.F90:742-782`). Absent in legacy Julia;
@@ -62,22 +58,17 @@ path keeps forcing panel-native too: `forcing.cmfmc` and
 `forcing.dtrain` are `NTuple{6}` payloads loaded by the CS transport
 driver and applied column-locally on the halo-free panel interior.
 
-# Adjoint path (not shipped in plan 18)
+# Adjoint path
 
 The forward operator is linear in tracer mixing ratio (verified by
-the Tier A adjoint-identity test in `test/test_cmfmc_convection.jl`).
-NO positivity clamp is applied inside the kernel (Decision 11 +
-adjoint addendum §D): the two-term tendency
+the adjoint-identity test in `test/test_cmfmc_convection.jl`). NO
+positivity clamp is applied inside the kernel: the two-term tendency
 `cmfmc · (q_above - q_env) + dtrain · (qc - q_env)` stays linear,
 and tiny negativities that arise from inconsistent met data are
-absorbed by the global mass fixer. A future `Plan 19: Adjoint
-operator suite` kernel reverses the two-pass order (tendency first,
-then updraft accumulation) with transposed coefficients; the
-four-term scavenging-restoring form is a wet-deposition follow-up.
-Derivation archived at git commit 27e9d2e, path
-`docs/plans/18_ConvectionPlan/18_CONVECTION_UPSTREAM_GCHP_NOTES.md`
-§5.3 (plan-18 upstream notes — deleted during plan-21 cleanup; reach
-via git archaeology).
+absorbed by the global mass fixer. A future adjoint kernel reverses
+the two-pass order (tendency first, then updraft accumulation) with
+transposed coefficients; the four-term scavenging-restoring form is a
+wet-deposition follow-up.
 """
 struct CMFMCConvection <: AbstractConvection end
 

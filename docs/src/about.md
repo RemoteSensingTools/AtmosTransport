@@ -28,9 +28,8 @@ which produces a VitePress static site with native Mermaid rendering.
 
 When this site and the source code disagree, **the source code wins**.
 Open an issue if you find a contradiction and we'll patch the doc.
-Concrete invariants and file-level pointers live in the root
-[`CLAUDE.md`](https://github.com/RemoteSensingTools/AtmosTransport/blob/main/CLAUDE.md);
-that file is the canonical "high-signal invariants" reference.
+Concrete invariants and file-level pointers live in the repository
+`README.md`, `docs/reference/`, and the source-side module docstrings.
 
 ## Build the docs locally
 

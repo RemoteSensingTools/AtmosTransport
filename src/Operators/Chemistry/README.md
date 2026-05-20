@@ -64,8 +64,8 @@ operators, and the `chemistry_block!` composition step that
   time-varying rate fields
 - [`../../Models/TransportModel.jl`](../../Models/TransportModel.jl)
   executes `chemistry_block!` after transport
-- [`../../../docs/plans/OPERATOR_COMPOSITION.md`](../../../docs/plans/OPERATOR_COMPOSITION.md)
-  defines the block-order contract
+- [`../../../docs/20_RUNTIME_FLOW.md`](../../../docs/20_RUNTIME_FLOW.md)
+  walks through the runtime block order
 
 ## Related Docs And Tests
 

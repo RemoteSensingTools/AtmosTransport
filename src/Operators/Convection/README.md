@@ -118,13 +118,11 @@ are genuine fast-path implementations, not generic wrappers.
 - [`../../State/`](../../State/) and [`../../Grids/`](../../Grids/)
   define `CellState` (LatLon, RG) and `CubedSphereState` (CS) runtime
   containers
-- [`../../../docs/plans/PLAN_HISTORY.md`](../../../docs/plans/PLAN_HISTORY.md)
-  carries the plan 22A/B/C/D retrospective
-
 ## Related Docs And Tests
 
 - Runtime/block ordering target:
-  [`../../../docs/plans/OPERATOR_COMPOSITION.md`](../../../docs/plans/OPERATOR_COMPOSITION.md)
+  [`../../Models/TransportModel.jl`](../../Models/TransportModel.jl) and
+  [`../../../docs/20_RUNTIME_FLOW.md`](../../../docs/20_RUNTIME_FLOW.md)
 - Tests:
   - [`../../../test/test_convection_types.jl`](../../../test/test_convection_types.jl)
   - [`../../../test/test_convection_forcing.jl`](../../../test/test_convection_forcing.jl)

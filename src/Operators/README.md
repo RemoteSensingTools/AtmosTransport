@@ -101,12 +101,12 @@ submodules before assuming it is cosmetic.
 ## Related Docs And Tests
 
 - Runtime/block ordering:
-  [`../../docs/plans/OPERATOR_COMPOSITION.md`](../../docs/plans/OPERATOR_COMPOSITION.md)
+  [`../Models/TransportModel.jl`](../Models/TransportModel.jl) and
+  [`../../docs/20_RUNTIME_FLOW.md`](../../docs/20_RUNTIME_FLOW.md)
 - Runtime walkthrough:
   [`../../docs/20_RUNTIME_FLOW.md`](../../docs/20_RUNTIME_FLOW.md)
 - Topology coverage and current status:
-  [`TOPOLOGY_SUPPORT.md`](TOPOLOGY_SUPPORT.md); plan-level history in
-  [`../../docs/plans/PLAN_HISTORY.md`](../../docs/plans/PLAN_HISTORY.md)
+  [`TOPOLOGY_SUPPORT.md`](TOPOLOGY_SUPPORT.md)
 - Test entrypoints:
   - [`../../test/test_basis_explicit_core.jl`](../../test/test_basis_explicit_core.jl)
   - [`../../test/test_driven_simulation.jl`](../../test/test_driven_simulation.jl)

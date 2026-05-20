@@ -52,7 +52,7 @@ Usage: julia --project=docs scripts/diagnostics/plot_cs_column_adjoint_2day_map.
            [--grid-spacing DEG] [--threshold X] [--grid] [--single] \\
            [--global|--regional] [--map-resolution DEG] \\
            [--log-mode positive|floor|signed] [--log-decades N] \\
-           [--cs-binary PATH] [--start-window N] \\
+           [--cs-binary PATH] [--start-window N] [--start-date YYYY-MM-DD] [--end-date YYYY-MM-DD] \\
            [--horizontal-cfl X] [--vertical-cfl X] [--float-type Float32|Float64] \\
            [--receptor-lon LON] [--receptor-lat LAT] \\
            [--physics transport|diffusion|full] \\
@@ -73,6 +73,8 @@ function _parse_args(argv)
     log_decades = 12.0
     cs_binary = nothing
     start_window = 1
+    start_date = nothing
+    end_date = nothing
     receptor_lon = -95.0
     receptor_lat = 40.0
     mode = :single
@@ -122,6 +124,12 @@ function _parse_args(argv)
             i += 2
         elseif arg == "--start-window" && i + 1 <= length(argv)
             start_window = parse(Int, argv[i + 1])
+            i += 2
+        elseif arg == "--start-date" && i + 1 <= length(argv)
+            start_date = argv[i + 1]
+            i += 2
+        elseif arg == "--end-date" && i + 1 <= length(argv)
+            end_date = argv[i + 1]
             i += 2
         elseif arg == "--horizontal-cfl" && i + 1 <= length(argv)
             horizontal_cfl = parse(Float64, argv[i + 1])
@@ -196,6 +204,7 @@ function _parse_args(argv)
     abs(receptor_lat) <= 90 || error("--receptor-lat must be in [-90, 90]")
     return (; out, nc, days, dt_hours, grid_spacing, threshold, map_resolution,
             log_mode, log_decades, cs_binary, start_window,
+            start_date, end_date,
             receptor_lon, receptor_lat, mode, physics, scheme, horizontal_cfl,
             vertical_cfl, float_type, global_view, backend, tape_storage,
             diffusion_kind)

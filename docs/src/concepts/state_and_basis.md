@@ -75,11 +75,8 @@ User-facing surface mirrors `CellState`. The halo padding is exposed in
 
 By default, `state.air_mass` carries **dry-air mass** and every tracer
 is interpreted on a **dry-VMR contract**. This is the single most
-important runtime invariant in the project, encoded in
-[CLAUDE.md](https://github.com/RemoteSensingTools/AtmosTransport/blob/main/CLAUDE.md):
-
-> Dry basis is the default runtime contract. Trace-gas VMRs are always
-> dry VMRs, including column averages.
+important runtime invariant in the project: trace-gas VMRs are always
+dry VMRs, including column averages.
 
 A subtle point: **what's stored in `state.tracers_raw` is tracer mass,
 not VMR.** The "dry-VMR contract" describes the user-facing semantics

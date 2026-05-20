@@ -1,5 +1,5 @@
 # ===========================================================================
-# Plan 41 P0a — typed met-reader surface (Source axis).
+# Typed met-reader surface (source axis).
 #
 # `AbstractMetReader{FT, S, CP}` is the typed nominal that bundles a met-
 # source's settings, per-day handle context, and chained-mass-policy carry
@@ -7,13 +7,13 @@
 # …) wrap the existing `AbstractMetSettings` machinery in `met_sources.jl`
 # and `sources/geos.jl` — they do not rewrite it.
 #
-# What this commit closes (from `docs/plans/41_UNIFIED_PREPROCESSOR/DESIGN.md`):
+# Contract this surface enforces:
 #
-#   (A) per-method kwarg drift — the reader's struct fields, not the
+#   - per-method kwarg drift — the reader's struct fields, not the
 #       caller's kwargs, decide what state flows per window. Adding a new
 #       reader-side knob is a struct extension on one concrete reader, not
 #       a 3-method-fan-out edit.
-#   (D) cross-day seed plumbing — `ChainPolicy` is a type parameter, so
+#   - cross-day seed plumbing — `ChainPolicy` is a type parameter, so
 #       seed shape is statically known per reader. `NoChain` readers
 #       cannot accidentally accept a `ChainedMass{T}` seed, and
 #       `end_of_day_seed` is inferred to the right return type at compile
@@ -372,8 +372,7 @@ end
           "regrid + vertical merge inside the topology workspaces. Splitting " *
           "that source reader is a follow-up. For now the typed nominal " *
           "exists so downstream dispatch surfaces (target topology, " *
-          "vertical transform) can be exercised against it. See " *
-          "`docs/plans/41_UNIFIED_PREPROCESSOR/NOTES.md`.")
+          "vertical transform) can be exercised against it.")
 end
 
 @inline function close_reader!(reader::ERA5SpectralReader)

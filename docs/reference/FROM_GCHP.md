@@ -14,7 +14,7 @@ Quick reference for GEOS-Chem/GCHP users switching to AtmosTransport.jl.
 | `ak`, `bk` (hybrid coord) | `HybridSigmaPressure` | Same A+B*ps formula |
 | C180/C720 panels | `CubedSphereMesh(Nc=180, definition=GMAOCubedSphereDefinition())` | GMAO equal-distance gnomonic + `cell_center2` centers |
 | Panel ordering 1-6 | `GEOSNativePanelConvention()` for NetCDF files; `GnomonicPanelConvention()` for synthetic/FV-style tests | File order and algorithmic panel order are separate choices |
-| `calcScalingFactor` | Not needed — direct cumsum PE | See CLAUDE.md on hybrid PE bug |
+| `calcScalingFactor` | Not needed — direct cumsum PE | Avoid hybrid-PE reconstruction for GCHP parity |
 
 ## Key differences
 

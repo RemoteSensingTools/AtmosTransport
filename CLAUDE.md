@@ -12,8 +12,8 @@ provides CPU/GPU portability.
   possible.
 - Evidence, not speculation. If output looks unphysical, treat it as a bug
   until measurements prove otherwise.
-- Persistent docs record facts, not hypotheses. `MEMORY.md`, plan notes, and
-  design memos get reused as ground truth.
+- Persistent docs record facts, not hypotheses. Design memos and reference
+  docs get reused as ground truth.
 - For transport bugs: read the reference implementation first, find the exact
   semantic diff, and make one evidence-backed change at a time.
 - Before committing, check whether the diff changes public behavior, scripts,
@@ -130,4 +130,4 @@ mass basis, supported operators, and load-time consistency gates.
   `docs/reference/BINARY_FORMAT_V5.md`
 - Algorithm comparisons: `docs/reference/TRANSPORT_COMPARISON.md`,
   `docs/reference/FROM_TM5.md`, `docs/reference/FROM_GCHP.md`
-- Plan history and performance notes: `docs/plans/`, `artifacts/`
+- Historical design notes: `docs/memos/`, `docs/resources/`

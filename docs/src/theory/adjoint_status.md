@@ -2,10 +2,10 @@
 
 This page is a candid statement of what is shipped on the adjoint
 side. As of 2026-05-17 the picture is significantly different from
-what earlier drafts of this page claimed: Plan 25 (LinRood adjoint)
-and Plan 26 (TM5-style inversion scaffold) are largely shipped, and
-the inversion stack is on CI. The roadmap section below tracks what
-is and is not done by stage.
+what earlier drafts of this page claimed: the LinRood adjoint and
+TM5-style inversion scaffold are largely shipped, and the inversion
+stack is on CI. The roadmap section below tracks what is and is not
+done.
 
 ## What is shipped
 
@@ -42,8 +42,8 @@ The adjoint supports the following advection schemes (full union in
 - `SlopesScheme(NoLimiter())`
 - `PPMScheme(NoLimiter())`
 - `PPMScheme(MonotoneLimiter())` — via a stored tracer-branch tape around the base trajectory
-- `LinRoodPPMScheme(; ppm_order = 5)` — Plan 25 Commits 1–6 shipped
-- `LinRoodPPMScheme(; ppm_order = 7)` — Plan 25 ORD=7 also shipped
+- `LinRoodPPMScheme(; ppm_order = 5)`
+- `LinRoodPPMScheme(; ppm_order = 7)`
 
 The supporting kernel adjoints in
 `src/Operators/Advection/linrood_adjoint_kernels.jl` are
@@ -75,7 +75,7 @@ kwarg (`:device` / `:pinned_host` / `:mmap`). Storage backends are
 defined in `src/Tape/TapeStorage.jl` and `src/Tape/MmapTapeStorage.jl`;
 the mmap path is covered by `test_cs_tape_mmap_roundtrip.jl`.
 
-### Inversion scaffold (Plan 26)
+### Inversion scaffold
 
 `src/Inversion/` ships:
 
@@ -86,7 +86,7 @@ the mmap path is covered by `test_cs_tape_mmap_roundtrip.jl`.
 | `Optimizer.jl` | `AbstractCSOptimizer`, `CSGradientDescent`, `CSLBFGS` (via multiple-dispatch surfaces) |
 | `Jacobian.jl` | Footprint-Jacobian assembly for batched observation operators |
 | `CostGradient.jl` | 4D-Var cost / gradient evaluator with preconditioning |
-| `Observations.jl`, `ObservationBinding.jl`, `ObservationsIO.jl` | Typed observation surface + Plan-26-D3 schema |
+| `Observations.jl`, `ObservationBinding.jl`, `ObservationsIO.jl` | Typed observation surface + on-disk schema |
 | `DeparturesIO.jl` | Departures-file IO |
 
 These are all on CI. Full inversion tests:
@@ -158,7 +158,3 @@ For an end-to-end inversion (synthetic truth recovery), see
 - [Adjoints on top of the binary](../for_tm5_gchp_users/adjoints.md) —
   TM5-4DVAR / GIGC-adjoint user perspective on how the pipeline maps
   to those workflows.
-- The Plan 25 LinRood adjoint progress ledger:
-  `docs/plans/25_LINROOD_ADJOINT/`.
-- The Plan 26 inversion scaffold progress ledger:
-  `docs/plans/26_TM5_STYLE_INVERSION/`.

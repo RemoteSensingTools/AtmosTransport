@@ -17,16 +17,16 @@
 #      the effective cloud window are explicit identity rows and the
 #      lower-left quadrant below that window is zero.
 #   4. Factorize the active lower-right block with partial pivoting. Store the
-#      permutation vector in `pivots` (plan 23 principle 3 —
-#      plan 19's adjoint replays this factorization with trans='T';
-#      do NOT fuse the permutation into the solved coefficients).
+#      permutation vector in `pivots`; the adjoint replays this
+#      factorization with trans='T', so do NOT fuse the permutation
+#      into the solved coefficients.
 #   5. Back-substitute each tracer's active vertical profile.
 #
 # The matrix is dense lower + upper triangular within the cloud-coupled
-# window (no simple banded structure to exploit; see
-# artifacts/plan23/matrix_structure.md). The production implementation
-# skips the identity rows above the cloud window but intentionally keeps
-# the dense active block for TM5 parity and adjoint replay.
+# window (no simple banded structure to exploit). The production
+# implementation skips the identity rows above the cloud window but
+# intentionally keeps the dense active block for TM5 parity and adjoint
+# replay.
 # ---------------------------------------------------------------------------
 
 """

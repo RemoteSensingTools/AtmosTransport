@@ -62,13 +62,13 @@ read.
   tracer init via `build_initial_mixing_ratio` + basis-aware
   `pack_initial_tracer_mass`, surface-source wiring, GPU-residency
   assertion (`feedback_verify_gpu_runs_on_gpu`), per-window loop,
-  snapshot NetCDF output (plan 40 Commit 6a)
+  and snapshot NetCDF output
 
 ## Common Tasks
 
 - Changing operator block order:
-  start in [`TransportModel.jl`](TransportModel.jl) and compare against
-  [`../../docs/plans/OPERATOR_COMPOSITION.md`](../../docs/plans/OPERATOR_COMPOSITION.md)
+  start in [`TransportModel.jl`](TransportModel.jl) and the runtime
+  walkthrough in [`../../docs/20_RUNTIME_FLOW.md`](../../docs/20_RUNTIME_FLOW.md)
 - Debugging "operator exists but never runs":
   check `TransportModel.step!` before editing operator code
 - Debugging driver/model mismatch:
@@ -94,7 +94,8 @@ read.
 - Runtime walkthrough:
   [`../../docs/20_RUNTIME_FLOW.md`](../../docs/20_RUNTIME_FLOW.md)
 - Block-order design:
-  [`../../docs/plans/OPERATOR_COMPOSITION.md`](../../docs/plans/OPERATOR_COMPOSITION.md)
+  [`TransportModel.jl`](TransportModel.jl) and
+  [`../../docs/20_RUNTIME_FLOW.md`](../../docs/20_RUNTIME_FLOW.md)
 - Tests:
   - [`../../test/test_driven_simulation.jl`](../../test/test_driven_simulation.jl)
   - [`../../test/test_transport_model_diffusion.jl`](../../test/test_transport_model_diffusion.jl)

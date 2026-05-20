@@ -11,7 +11,7 @@
 #   julia --project=. scripts/visualization/plot_snapshot_grid.jl \
 #       --input  ~/data/AtmosTransport/output/catrine_c48_3d/advonly_cpu_float32.nc \
 #       --tracer co2_natural \
-#       --out    artifacts/plan40/c48_advonly_cpu_f32_natural.png
+#       --out    artifacts/visualization/c48_advonly_cpu_f32_natural.png
 #       [--cols 4]        # grid layout (default 4 columns, rows inferred)
 #       [--ppm]           # plot in ppm (×1e6) instead of mol/mol
 # ---------------------------------------------------------------------------

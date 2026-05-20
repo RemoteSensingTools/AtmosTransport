@@ -1,13 +1,11 @@
 # ---------------------------------------------------------------------------
 # Memory-mapped, on-disk cubed-sphere tape storage policy.
 #
-# Plan 26 Phase A.1 — `MmapCSTapeStorage` is a sibling of
-# `DeviceCSTapeStorage` and `PinnedHostCSTapeStorage` that evicts staged
+# `MmapCSTapeStorage` is a sibling of `DeviceCSTapeStorage` and
+# `PinnedHostCSTapeStorage` that evicts staged
 # panel snapshots from working memory onto a raw appended binary file
 # (`records.bin`). A separate human-readable manifest (`manifest.toml`)
 # is written at finalisation time and used during resume / inspection.
-#
-# Design doc: `docs/plans/26_TM5_STYLE_INVERSION/MMAP_TAPE_LAYOUT.md`.
 #
 # Layout summary (v1):
 #
@@ -57,8 +55,8 @@ bm-shaped (Nx,Nx+1,Nz), and cm-shaped (Nx,Nx,Nz+1) slots reuses each
 shape's cache instead of reallocating six `similar(panel)` device
 buffers on every read.
 
-See `docs/plans/26_TM5_STYLE_INVERSION/MMAP_TAPE_LAYOUT.md` for the
-on-disk format.
+The on-disk format is the `manifest.toml` metadata plus appended raw
+panel payloads in `records.bin`.
 """
 mutable struct MmapCSTapeStorage <: AbstractCSTapeStorage
     bin_path::String

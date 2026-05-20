@@ -1,7 +1,7 @@
 #!/usr/bin/env julia
 """
-Plan 23 Commit 7 benchmark: TM5Convection CPU + GPU timings on
-LatLon, ReducedGaussian, and CubedSphere grids.
+TM5Convection CPU + GPU benchmark on LatLon, ReducedGaussian, and
+CubedSphere grids.
 
 Usage:
 
@@ -10,14 +10,14 @@ Usage:
 Measures `apply!(state, forcing, grid, TM5Convection(), dt;
 workspace)` wall time per launch at three grid sizes × Nt ∈
 {1, 10, 30} tracers × CPU / GPU. Writes a markdown summary table
-to `artifacts/plan23/bench.md` with the arithmetic / memory-
+to `artifacts/benchmarks/tm5_convection.md` with the arithmetic / memory-
 traffic / launch-overhead breakdown (where measurable via
 `CUDA.@profile`) and compares TM5 overhead vs NoConvection.
 
 Complements the CMFMCConvection benchmark: TM5 is O(Nz³) solver
 per column, CMFMC is O(Nz) × n_sub. At production Nz=72 this is
 a meaningful cost difference. This bench records the actual
-numbers for a data-driven Commit 7 retrospective.
+numbers for a data-driven performance record.
 """
 
 using Printf
@@ -155,9 +155,9 @@ for (label, Nx, Ny, Nz) in grid_configs
 end
 
 # Write a markdown summary.
-mkpath("artifacts/plan23")
-open("artifacts/plan23/bench.md", "w") do io
-    println(io, "# Plan 23 Commit 7 — TM5Convection bench")
+mkpath("artifacts/benchmarks")
+open("artifacts/benchmarks/tm5_convection.md", "w") do io
+    println(io, "# TM5Convection bench")
     println(io)
     println(io, "Measurements on this host (L40S available if GPU column nonempty).")
     println(io, "Latency is min of 5 runs after warm-up.")
@@ -182,4 +182,4 @@ open("artifacts/plan23/bench.md", "w") do io
     println(io, "  scratches added in Commit 4 for allocation-free kernel use).")
 end
 println()
-println("Summary written to artifacts/plan23/bench.md")
+println("Summary written to artifacts/benchmarks/tm5_convection.md")

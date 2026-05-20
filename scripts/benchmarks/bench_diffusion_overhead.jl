@@ -25,8 +25,7 @@
 # - 3 warm-up steps (not timed)
 # - n_steps timed per configuration
 # - GPU: CUDA.synchronize before and after each step (wall-clock with sync);
-#   this matches the chemistry bench pattern and avoids CUDA.@elapsed pitfalls
-#   documented in artifacts/plan13/perf/sync_thesis_report.md
+#   this matches the chemistry bench pattern and avoids CUDA.@elapsed pitfalls.
 # - Report median and median-absolute-deviation per configuration
 # ===========================================================================
 

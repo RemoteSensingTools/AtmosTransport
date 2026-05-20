@@ -426,4 +426,4 @@ follow-up areas:
 - [`../src/preprocessing/overview.md`](../src/preprocessing/overview.md):
   Documenter overview for user-facing preprocessing docs.
 - [`../plans/41_UNIFIED_PREPROCESSOR/DESIGN.md`](../plans/41_UNIFIED_PREPROCESSOR/DESIGN.md):
-  Plan 41 design rationale and typed-axis migration history.
+  typed-axis migration history.

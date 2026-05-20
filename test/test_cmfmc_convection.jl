@@ -615,7 +615,7 @@ if haskey(ENV, "ATMOSTR_TIER_C_REFS") && !isempty(ENV["ATMOSTR_TIER_C_REFS"])
         # per v5.1 §3 Commit 3 acceptance.
         #
         # Placeholder: skip with a skip-reason until the reference
-        # dataset is curated in artifacts/plan18/validation/refs/.
+        # dataset is curated in local validation artifacts.
         @test_skip "Tier C reference data format not yet finalized " *
                     "(tracked as deferred item in plan 18 NOTES)"
     end

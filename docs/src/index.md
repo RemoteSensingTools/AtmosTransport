@@ -67,4 +67,5 @@ In the meantime, the most useful entry points in the repository are:
 - `scripts/preprocessing/preprocess_transport_binary.jl` — preprocessing CLI.
 - `scripts/diagnostics/inspect_transport_binary.jl` — inspect a transport binary.
 - `config/runs/` — example run configurations (TOML).
-- `CLAUDE.md` (root) — high-signal invariants and project map.
+- The repository `README.md` and `docs/reference/` pages carry the current
+  status, invariants, and project map.

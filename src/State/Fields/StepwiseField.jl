@@ -44,8 +44,7 @@ device load per field_value call, broadcast across all kernel threads
 After `update_field!(f, t)` has been called by the operator, the kernel
 can call `field_value(f, idx)` freely. The call is allocation-free and
 type-stable. The operator is responsible for calling `update_field!` on
-the host before launching the kernel, per
-[TimeVaryingField §7](../../../docs/plans/TIME_VARYING_FIELD_MODEL.md).
+the host before launching the kernel.
 
 # Out-of-bounds time
 

@@ -45,7 +45,7 @@ documented validation run.
 | GEOS-IT native → CS (C180) | ✅ | Adaptive substep schedule per window |
 | GEOS-FP native | 📐 | Source-axis abstraction in place |
 | MERRA-2 (OPeNDAP) | ❌ | `MERRA2Source` declared; `execute!` throws |
-| LL → CS conservative regrid | 🟡 | Works; not yet on the unified Plan 41 driver |
+| LL → CS conservative regrid | 🟡 | Works; separate regrid entry point |
 | Compressed binaries at rest (zstd) | ✅ | User-side; runtime always reads uncompressed |
 
 ### Advection schemes
@@ -100,8 +100,8 @@ documented validation run.
 | CMFMC convection adjoint | 📐 | Forward only |
 | `copy_corners` reverse | 📐 | CS halo-corner adjoint gap |
 | Covariance B^{1/2} | ✅ | B1 shipped (`src/Inversion/Covariance.jl`) |
-| Preconditioning + log-normal bijection | 📐 | Plan 26 B2 |
-| End-to-end 4D-Var driver | 📐 | Plan 26 Phase C |
+| Preconditioning + log-normal bijection | 📐 | Prototype pieces under `src/Inversion/` |
+| End-to-end 4D-Var driver | 📐 | Prototype driver under `scripts/inversions/` |
 
 ### Backends and IO
 
@@ -122,11 +122,11 @@ documented validation run.
 | --- | :---: | --- |
 | For TM5 & GCHP users | ✅ | Philosophy, binary pipeline, operators, adjoints, kernels |
 | Concepts (grids, state, operators, binary) | ✅ | |
-| Preprocessing reference | 🟡 | Plan 41 invariants not yet folded in |
+| Preprocessing reference | 🟡 | Current contract docs are being consolidated |
 | Theory (mass conservation, advection) | ✅ | |
 | Tutorials | 🟡 | Synthetic LL only; real-data tutorials planned |
 | API reference (auto-generated) | 🟡 | Docstrings incomplete in several modules |
-| Validation campaigns / inter-comparison | 📐 | Plan 40 ledger; not yet a top-level page |
+| Validation campaigns / inter-comparison | 📐 | Not yet a top-level page |
 
 ### Known broken
 
@@ -299,8 +299,8 @@ The reading order:
 6. **[Configuration & Runtime](https://RemoteSensingTools.github.io/AtmosTransport/dev/config/toml_schema)** — TOML schema, output schema, data sources.
 7. **[API Reference](https://RemoteSensingTools.github.io/AtmosTransport/dev/api/)** — auto-generated per submodule.
 
-A high-signal in-repo summary of invariants and "fast failure triage" lives
-at [`CLAUDE.md`](CLAUDE.md) in the repo root.
+A high-signal in-repo summary of invariants and "fast failure triage" lives in
+this README and the reference docs under [`docs/reference/`](docs/reference/).
 
 ## Design principles
 

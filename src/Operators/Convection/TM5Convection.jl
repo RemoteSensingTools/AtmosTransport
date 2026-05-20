@@ -38,18 +38,16 @@ matrix slab plus matching pivot / cloud-dim / `amu` / `amd`
 slabs. A larger budget means fewer kernel launches per substep at
 the cost of larger GPU working set; the default 1.0 GiB fits all
 production resolutions through C720/L137 with slack on H100. The
-tile machinery is the load-bearing change in the storage redesign
-plan's Commit 4 — the workspace no longer scales with
+tile machinery is the load-bearing storage change: the workspace no longer scales with
 `N_cells × Nz²`.
 
 # Basis convention
 
-Plan 23 Commit 0 decision: `TM5Convection` is **basis-polymorphic**,
-identical to [`CMFMCConvection`](@ref). The four forcing fields
+`TM5Convection` is **basis-polymorphic**, identical to
+[`CMFMCConvection`](@ref). The four forcing fields
 must be on the same basis as `state.air_mass` (moist by upstream
 Fortran convention and by the ec2tm preprocessor default; dry
-requires a sibling preprocessor path, out of plan 23 scope).
-See `artifacts/plan23/basis_decision.md`.
+requires a sibling preprocessor path).
 
 # Fields required on `ConvectionForcing`
 
@@ -62,16 +60,15 @@ See `artifacts/plan23/basis_decision.md`.
   - Panel-native CubedSphere: `NTuple{6, AbstractArray{FT, 3}}`
     per field, with per-panel shape `(Nc, Nc, Nz)`.
 
-Orientation conversion + sign flip on `entd` happen in the
-preprocessor (`src/Preprocessing/tm5_convection_conversion.jl`,
-plan 23 Commit 3). The operator performs zero runtime orientation
-gymnastics (plan 23 principle 1).
+Orientation conversion + sign flip on `entd` happen in the preprocessor
+(`src/Preprocessing/tm5_convection_conversion.jl`). The operator performs
+zero runtime orientation gymnastics.
 
 # Solver class
 
 Partial-pivot Gaussian elimination on the active lower-right block per
-column (see `artifacts/plan23/matrix_structure.md` and
-`test/test_tm5_sparsity_above_icltop.jl` for the structure survey).
+column (see `test/test_tm5_sparsity_above_icltop.jl` for the structure
+survey).
 Identity rows above the effective cloud top and the lower-left zero
 quadrant are skipped by both the factorization and the tracer solve.
 

@@ -63,7 +63,7 @@ Total core-suite cases: thousands; CI breaks down pass/fail per file.
 | ERA5 spectral → LL 144×73 F32, Dec 2021 | same | green |
 | ERA5 spectral → CS C24 F32, Dec 2021 | same; F32-CS path requires the `f3b3abf` fix to spectral_synthesis.jl | green (post-`f3b3abf`) |
 | ERA5 spectral → CS C90 F32, Dec 2021 | same | green (post-`f3b3abf`) |
-| GEOS-IT C180 → CS C180 F64 native | preprocessor closes write-time replay gate; binary loads cleanly via `inspect_transport_binary.jl`; per-window snapshot output verified. The 2026-04-25 unified-chain validation flagged a runtime GPU step-1 blocker on the unmerged-vertical C180 binary; the production response (Plan 41 P4i) targets the `merge_above_pressure = 0.25 hPa` 64-level product with adaptive substeps. Status against that product is tracked in current Catrine config notes. | preprocessor green; current C180 runtime path uses Plan-41-P4i merged + adaptive-substep binaries |
+| GEOS-IT C180 → CS C180 F64 native | preprocessor closes write-time replay gate; binary loads cleanly via `inspect_transport_binary.jl`; per-window snapshot output verified. The 2026-04-25 unified-chain validation flagged a runtime GPU step-1 blocker on the unmerged-vertical C180 binary; the production response targets the `merge_above_pressure = 0.25 hPa` 64-level product with adaptive substeps. Status against that product is tracked in current Catrine config notes. | preprocessor green; current C180 runtime path uses merged + adaptive-substep binaries |
 
 ### Model parity (TM5)
 
@@ -85,7 +85,7 @@ The following work is on the roadmap but **not yet done**:
 | **CATRINE D7.1 intercomparison** | The European CATRINE protocol is the natural validation target (4 tracers: CO2, fossil CO2, SF6, 222Rn; full-physics; multi-month). The configs (`config/runs/catrine_*.toml`) exist; the runtime can produce the output. The **gated 1-day smoke test** `test/test_tm5_catrine_1day.jl` (in the `--all` suite) exercises the Catrine TM5-physics setup over a single day, but **no full multi-month CATRINE-protocol regression test** is committed and no protocol-vs-reference comparison memo has been published. | gated 1-day smoke test in place; output runs successfully (see `docs/validation/geosit_c180_unified_chain_2026_04_25.md` — internal memo); full protocol regression not yet wired |
 | **Observational closure** | Comparison of model output (column CO2, surface SF6 etc.) against an observational network (NOAA in-situ + TCCON / OCO satellite) | not started |
 | **Multi-month GPU production runs** | The longest GPU validation run committed is 7 days. Multi-week stability has been spot-checked but not regression-tested. | committed test ceiling: 7-day; production target: ~30-day |
-| **Adjoint kernels** | See [Adjoint status](@ref) — Plan 25 (LinRood adjoint) and Plan 26 (TM5-style inversion scaffold) have largely shipped. Tape + checkpoint + revolve (bisection variant) + four-scheme reverse pass + 4D-Var driver are on CI. Gaps: CMFMC convection adjoint, `copy_corners` reverse, optimal binomial Revolve, TM5-4DVAR cross-validation. | partial (shipped) |
+| **Adjoint kernels** | See [Adjoint status](@ref). Tape + checkpoint + revolve (bisection variant) + four-scheme reverse pass + 4D-Var driver are on CI. Gaps: CMFMC convection adjoint, `copy_corners` reverse, optimal binomial Revolve, TM5-4DVAR cross-validation. | partial (shipped) |
 
 ## Floating-point tolerance practice
 

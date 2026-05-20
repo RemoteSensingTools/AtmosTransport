@@ -146,12 +146,10 @@ cm = ds["co2_bl_column_mean"][:, :, end]   # last frame, (lon, lat)
 | Uniform-tracer jump from 400 → ~535 ppm near the surface | Hybrid PE bug in vertical remap; should be direct `cumsum` PE. |
 | Day-boundary continuity warnings | Regenerate the binary with the current preprocessor (the contract evolves). |
 
-Refer to [CLAUDE.md](https://github.com/RemoteSensingTools/AtmosTransport/blob/main/CLAUDE.md)
-in the repository root for the full Fast-Failure-Triage table — it
-encodes hard-won debugging knowledge.
+The repository README carries the maintained Fast-Failure-Triage table.
 
 ## What's next
 
-- [Concepts](#) — the model architecture (Phase 3).
+- [Concepts](../concepts/grids.md) — the model architecture.
 - [Theory & Verification](#) — mass conservation, advection schemes,
   validation results (Phase 6).

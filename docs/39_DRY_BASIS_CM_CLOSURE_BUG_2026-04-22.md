@@ -155,8 +155,8 @@ quantified it; Codex's replay identified the math.
 
 ## See also
 
-- Plan 39 NOTES: [`docs/plans/39_TRANSPORT_CONTRACT/NOTES.md`](plans/39_TRANSPORT_CONTRACT/NOTES.md)
-- CLAUDE.md invariant 10 (rewritten 2026-04-22)
+- Transport-binary contract docs: [`reference/BINARY_FORMAT.md`](reference/BINARY_FORMAT.md)
+- Runtime/preprocessing contract docs: [`30_BINARY_AND_DRIVERS.md`](30_BINARY_AND_DRIVERS.md)
 - Plan 24 Commit 4 NOTES — cross-references this bug (the "contract breach at
   day boundaries" deferred investigation closes here)
 - Probe script: [`scripts/probe_f64_day_boundary.jl`](../scripts/probe_f64_day_boundary.jl)

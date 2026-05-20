@@ -261,9 +261,9 @@ The remaining performance hazards in the runtime are localized:
   for a single-launch refactor.
 
 Profile any run with `JULIA_NUM_THREADS=N julia --project --track-allocation=user`
-or the GPU profiler of choice; if you find a hotspot the
-[development docs](https://github.com/cfranken/AtmosTransportModel/blob/main/CLAUDE.md)
-have the conventional file structure to fix it.
+or the GPU profiler of choice; if you find a hotspot, start from the
+module map in the repository README and the source-side `README.md`
+files under `src/`.
 
 ## Reading next
 

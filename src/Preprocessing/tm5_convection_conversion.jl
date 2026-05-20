@@ -32,8 +32,8 @@
 # Downdraft:          `entd(k) = detd(k) - mfdo(k) + mfdo(k-1)` with sign
 #                     flip on mfdo.
 #
-# See upstream_fortran_notes.md §6.5 + §7 in artifacts/plan18/ for the
-# full provenance of these formulas.
+# These formulas are the direct `ec2tm` mass-balance identities from the
+# TM5 preprocessing path.
 #
 # Orientation: INPUTS are expected in ECMWF native orientation
 # (k=1=TOA, k=Nz=surface for CDS; half-levels numbered k=1 at TOA,

@@ -117,7 +117,7 @@ export verify_write_replay_cs!,
        update_cs_positivity_accumulator,
        summarize_cs_positivity_status
 
-# Plan 41 P1 — typed Axis-3 window-contract surface. The abstract types
+# Typed window-contract surface. The abstract types
 # (`AbstractWindowContract` / `AbstractWindowWorkspace` /
 # `AbstractBinaryWriter`) plus the concrete LL / CS / RG contract
 # structs and per-topology positivity kernels. Mass-basis tags
@@ -169,12 +169,11 @@ include("logging.jl")
 # Vertical coordinate handling and level merging
 include("vertical_coordinates.jl")
 
-# Plan 41 P0b — typed vertical-transform surface (Vertical axis of the
-# unified preprocessor). Wraps `merge_thin_levels` and
+# Typed vertical-transform surface (vertical axis of the unified
+# preprocessor). Wraps `merge_thin_levels` and
 # `select_levels_echlevs` into first-class transform types so layer
 # merging is available to every preprocessor pathway (LL/RG/CS ×
-# spectral/native), not just the ERA5 spectral path. Closes foot-gun
-# (B) from `docs/plans/41_UNIFIED_PREPROCESSOR/DESIGN.md`.
+# spectral/native), not just the ERA5 spectral path.
 include("vertical_transforms.jl")
 
 # Global 6-panel Poisson balance for cubed-sphere grids
@@ -228,9 +227,9 @@ include("sources/geos.jl")
 # TOML-driven met-source factory (Commit 4)
 include("sources/loader.jl")
 
-# Plan 41 P0a — typed met-reader surface (Source axis of the unified
-# preprocessor; additive façade over `AbstractMetSettings` machinery
-# above). Includes here so the abstract types are visible to
+# Typed met-reader surface (source axis of the unified preprocessor;
+# additive facade over `AbstractMetSettings` machinery above). Includes
+# here so the abstract types are visible to
 # `transport_binary/cubed_sphere_geos.jl` even though the existing
 # `process_day` orchestrators are not yet ported.
 include("met_readers.jl")
@@ -253,16 +252,16 @@ export endpoint_dry_mass, endpoint_dry_mass!
 # Met-source TOML factory (Commit 4) + vertical-coordinate helper used by GEOS CLI
 export load_met_settings, load_hybrid_coefficients
 
-# Plan 41 P0a — typed met-reader surface (Source axis)
+# Typed met-reader surface (source axis)
 export AbstractMetReader, AbstractChainPolicy, NoChain, ChainedMass
 export GEOSNativeReader, ERA5SpectralReader, ERA5SpectralSettings
 export open_reader, close_reader!, end_of_day_seed, set_end_of_day_seed!
 export native_vertical, window_metadata
 # Note: `windows_per_day` and `read_window!` are already exported above
-# (the existing `AbstractMetSettings` trait surface). P0a adds reader-
-# typed methods on the same generic functions.
+# (the existing `AbstractMetSettings` trait surface). The reader surface
+# adds typed methods on the same generic functions.
 
-# Plan 41 P0b — typed vertical-transform surface (Vertical axis)
+# Typed vertical-transform surface (vertical axis)
 export AbstractVerticalTransform, VerticalPlan
 export IdentityVertical, MergeByIndex, MergeLayersThinnerThan,
        MergeAbovePressure, LevelSelection, PressureOverlap

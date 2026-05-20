@@ -1,16 +1,15 @@
 """
-Unit tests for the `TimeVaryingField` abstraction (plan 16a).
+Unit tests for the `TimeVaryingField` abstraction.
 
-Validates the minimum concrete type `ConstantField{FT, N}` against
-the interface specified in `docs/plans/TIME_VARYING_FIELD_MODEL.md`:
+Validates the minimum concrete type `ConstantField{FT, N}` against the
+field interface:
 
 1. `field_value(f, idx)` returns the stored scalar regardless of index
 2. `update_field!(f, t)` is a no-op (returns `f`, no state change)
-3. Type stability at every rank used by downstream plans (N ∈ {0, 2, 3})
+3. Type stability at every rank used downstream (N ∈ {0, 2, 3})
 4. Kernel-safety on CPU (callable inside a KA kernel)
 
-Plan 16b adds N = 3 concrete types (`ProfileKzField`, etc.) and
-extends this suite.
+The concrete diffusion field types (`ProfileKzField`, etc.) extend this suite.
 """
 
 using Test

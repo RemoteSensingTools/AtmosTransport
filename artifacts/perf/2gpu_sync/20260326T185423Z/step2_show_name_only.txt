@@ -1,3 +1,0 @@
-ext/AtmosTransportCUDAExt.jl
-src/Architectures.jl
-src/Architectures/multi_gpu.jl

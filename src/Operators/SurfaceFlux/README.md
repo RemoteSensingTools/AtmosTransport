@@ -75,7 +75,8 @@ the topology-specific kernels that inject mass into the surface layer.
 - Topology coverage:
   [`../TOPOLOGY_SUPPORT.md`](../TOPOLOGY_SUPPORT.md)
 - Runtime/block ordering:
-  [`../../../docs/plans/OPERATOR_COMPOSITION.md`](../../../docs/plans/OPERATOR_COMPOSITION.md)
+  [`../../Models/TransportModel.jl`](../../Models/TransportModel.jl) and
+  [`../../../docs/20_RUNTIME_FLOW.md`](../../../docs/20_RUNTIME_FLOW.md)
 - Tests:
   - [`../../../test/test_surface_flux_operator.jl`](../../../test/test_surface_flux_operator.jl)
   - [`../../../test/test_transport_model_emissions.jl`](../../../test/test_transport_model_emissions.jl)

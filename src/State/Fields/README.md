@@ -82,7 +82,8 @@ runs on the host and may refresh caches before an operator launch.
 ## Related Docs And Tests
 
 - Field-model design:
-  [`../../../docs/plans/TIME_VARYING_FIELD_MODEL.md`](../../../docs/plans/TIME_VARYING_FIELD_MODEL.md)
+  this directory's field implementations and
+  [`../../MetDrivers/README.md`](../../MetDrivers/README.md)
 - Tests:
   - [`../../../test/test_fields.jl`](../../../test/test_fields.jl)
   - [`../../../test/test_diffusion_operator.jl`](../../../test/test_diffusion_operator.jl)

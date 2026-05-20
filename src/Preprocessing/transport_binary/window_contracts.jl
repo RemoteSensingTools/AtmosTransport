@@ -1,10 +1,9 @@
 # ===========================================================================
-# Plan 41 P1 — typed Axis-3 (Target topology) window-contract surface.
+# Typed target-topology window-contract surface.
 #
 # `AbstractWindowContract{G, FT}`, `AbstractWindowWorkspace{G, FT}`, and
 # `AbstractBinaryWriter{G, FT, Basis<:AbstractMassBasis}` are the typed
-# nominals that close the kwarg-drift / mass-basis-runtime-check
-# foot-guns (A) and (C) from `docs/plans/41_UNIFIED_PREPROCESSOR/DESIGN.md`.
+# nominals that close the kwarg-drift and mass-basis-runtime-check gaps.
 #
 # What this file defines (additive only; no behavior changes):
 #

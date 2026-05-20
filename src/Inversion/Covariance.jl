@@ -111,8 +111,7 @@ The wrapped-Gaussian normalization pins `C[i, i] = 1`, hence
 `B[i, i] = σ_i²` — the diagonal of `B` recovers the per-cell
 variance, independent of correlation length.
 
-**v1 limitations** (noted in `docs/plans/26_TM5_STYLE_INVERSION/NOTES.md`
-under "Phase B — cross-panel correlation"):
+**v1 limitations**:
 
 - Cross-panel correlation is dropped. Each panel is smoothed in
   isolation; the implicit wrap-around at panel boundaries leaves

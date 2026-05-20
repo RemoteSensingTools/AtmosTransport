@@ -1,12 +1,11 @@
 # ===========================================================================
-# Plan 41 P0b — typed vertical-transform surface (Vertical axis).
+# Typed vertical-transform surface (vertical axis).
 #
 # `AbstractVerticalTransform` makes the "native source levels → output
 # levels" mapping a first-class typed nominal, so every preprocessor
 # pathway (LL / RG / CS × ERA5 spectral / GEOS native / …) has the same
-# layer-merging option. Closes foot-gun (B) from
-# `docs/plans/41_UNIFIED_PREPROCESSOR/DESIGN.md`: the `vertical::NamedTuple`
-# field-name protocol with divergent semantics between
+# layer-merging option. This replaces the old `vertical::NamedTuple`
+# field-name protocol, which had divergent semantics between
 # `entrypoint.jl:161-163` (native, identity-faked) and
 # `entrypoint.jl:209` (spectral, real merge) is replaced by a
 # `VerticalPlan{FT, T}` whose transform policy is statically known.
@@ -21,7 +20,7 @@
 #                                       `merge_thin_levels`.
 #   - `MergeAbovePressure(p, thr)`    — upper-atmosphere coarsening.
 #                                       The GEOS-IT L72 mesosphere
-#                                       escape hatch (Plan 41 NOTES).
+#                                       escape hatch.
 #   - `LevelSelection(echlevs)`       — typed wrapper for today's
 #                                       `select_levels_echlevs`.
 #   - `PressureOverlap(coeff_path)`   — pressure-thickness overlap
@@ -42,14 +41,13 @@
 #
 # `apply_vertical!(buf_out, buf_in, plan, ::FieldKind)` dispatches on the
 # `FieldKind` singleton tag (extensive vs intensive, center vs interface)
-# to select the right vertical-reduction rule. The mandatory field-kind
-# set is enumerated in `docs/plans/41_UNIFIED_PREPROCESSOR/DESIGN.md`.
+# to select the right vertical-reduction rule.
 # ===========================================================================
 
 # ---------------------------------------------------------------------------
 # Field-kind singletons. The forward driver picks the kind per field; the
-# rule is fixed by Plan 41 DESIGN.md so every transform implementation has
-# to honor the same physical semantics.
+# rule is fixed here so every transform implementation honors the same
+# physical semantics.
 # ---------------------------------------------------------------------------
 
 """
@@ -622,8 +620,8 @@ end
 function apply_vertical!(_buf_out, _buf_in,
                           ::VerticalPlan{FT, PressureOverlap},
                           ::AbstractFieldKind, args...) where FT
-    error("apply_vertical!(::VerticalPlan{<:Any, PressureOverlap}, …) lands in " *
-          "P1 of Plan 41 alongside the spectral driver cutover. `plan_vertical` " *
+    error("apply_vertical!(::VerticalPlan{<:Any, PressureOverlap}, …) is " *
+          "not implemented yet. `plan_vertical` " *
           "already builds the target hybrid coordinate; the per-field overlap " *
           "coefficients are derived inside `apply_vertical!` and the spectral " *
           "path uses today's `build_vertical_setup` until then.")

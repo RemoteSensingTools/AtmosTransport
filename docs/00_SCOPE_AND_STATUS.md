@@ -15,7 +15,7 @@ The documentation style stays:
 Offline atmospheric transport runtime with:
 
 - **Multi-topology**: structured LatLon, face-indexed reduced Gaussian,
-  panel-native cubed sphere (all three runtime-live after plan 22A–D)
+  panel-native cubed sphere
 - **Multi-backend**: CPU and GPU via KernelAbstractions.jl
 - **Operator suite**: advection, vertical diffusion, surface flux,
   convection, chemistry — composed via symmetric Strang splitting
@@ -30,15 +30,15 @@ Offline atmospheric transport runtime with:
 - **Advection**: live on LatLon, RG, CS (see `Operators/Advection/`)
 - **Diffusion**: live on LatLon, RG, CS (see `Operators/Diffusion/`)
 - **Surface flux**: live on LatLon, RG, CS (see `Operators/SurfaceFlux/`)
-- **Convection (CMFMC)**: live on LatLon, RG, CS (plan 22D;
+- **Convection (CMFMC)**: live on LatLon, RG, CS
   `Operators/Convection/CMFMCConvection.jl`)
 - **Chemistry** (`ExponentialDecay`, `CompositeChemistry`): live on
   `CellState` (LatLon, RG) and `CubedSphereState` topologies
   (CS dispatch shipped in commit `bcd4fea`)
 - **Met drivers**: ERA5 spectral, GEOS-FP C720, GEOS-IT C180,
   cubed-sphere binary
-- **Adjoint**: forward operators ported; hand-coded discrete adjoint
-  planned as plan 19. Archival templates under
+- **Adjoint**: forward operators and selected discrete adjoints are ported.
+  Archival templates live under
   [`resources/developer_notes/legacy_adjoint_templates/`](resources/developer_notes/legacy_adjoint_templates/)
 
 Canonical operator × topology matrix:
@@ -46,22 +46,17 @@ Canonical operator × topology matrix:
 
 ## What is intentionally deferred
 
-- Plan 19 adjoint operator suite
-- Plan 20 user-facing documentation overhaul (Documenter + Literate)
+- Remaining adjoint coverage for physics operators
+- Additional user-facing tutorials and validation pages
 - Observation operators for 4D-Var
 
 ## Current phase
 
-Topology completion (plans 22A–D) and stabilization (plan 21)
-landed April 2026. Plan 23 (TM5 convection, in progress on branch
-`convection`) adds the `TM5Convection` operator for ERA5, to ship
-alongside the existing `CMFMCConvection` for GEOS-FP. After plan
-23, focus shifts to plan 19 (adjoint) and plan 20 (user-facing
-docs).
-
-See [`plans/PLAN_HISTORY.md`](plans/PLAN_HISTORY.md) for the canonical
-per-plan status.
+The active runtime supports LatLon, reduced Gaussian, and cubed-sphere
+topologies with advection, diffusion, surface fluxes, convection, chemistry,
+transport-binary I/O, and selected adjoint/inversion tooling. The top-level
+[`README.md`](../README.md) is the canonical capability/status table.
 
 ---
 
-*Last verified against `src/` on 2026-04-21 (plan 21 Phase 3a).*
+*Last verified against `src/` on 2026-05-20.*

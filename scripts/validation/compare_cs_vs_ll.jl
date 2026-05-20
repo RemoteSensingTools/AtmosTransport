@@ -32,7 +32,7 @@
 #   julia --project=. scripts/validation/compare_cs_vs_ll.jl \
 #       --cs  ~/data/AtmosTransport/output/catrine_c48_3d/advonly.nc  \
 #       --ll  ~/data/AtmosTransport/output/catrine_ll720_3d/advonly.nc \
-#       --out artifacts/plan40/catrine_c48_vs_ll720_3d_advonly.csv
+#       --out artifacts/validation/catrine_c48_vs_ll720_3d_advonly.csv
 #       [--cs-log /tmp/run_cs48_advonly.log]
 #       [--ll-log /tmp/run_ll720_advonly.log]
 # ---------------------------------------------------------------------------

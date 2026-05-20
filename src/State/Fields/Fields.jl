@@ -1,9 +1,7 @@
 """
     Fields
 
-Time-varying field abstraction (plan 16a). See
-`docs/plans/TIME_VARYING_FIELD_MODEL.md` for the authoritative
-interface spec.
+Time-varying field abstraction.
 
 `AbstractTimeVaryingField{FT, N}` is the common interface presented
 to physics operators for rate-like and field-like inputs (chemistry

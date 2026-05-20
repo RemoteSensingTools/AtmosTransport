@@ -180,5 +180,5 @@ only.
 - [`30_BINARY_AND_DRIVERS.md`](30_BINARY_AND_DRIVERS.md) — Transport binary format
 - [`35_RUNTIME_STABILITY_AND_SUBCYCLING.md`](35_RUNTIME_STABILITY_AND_SUBCYCLING.md) — CFL pilots and subcycling
 - [`../src/Operators/TOPOLOGY_SUPPORT.md`](../src/Operators/TOPOLOGY_SUPPORT.md) — Per-operator dispatch matrix
-- [`plans/OPERATOR_COMPOSITION.md`](plans/OPERATOR_COMPOSITION.md) — Block-ordering contract (design)
-- [`plans/PLAN_HISTORY.md`](plans/PLAN_HISTORY.md) — Plan-level change log
+- [`../src/Operators/TOPOLOGY_SUPPORT.md`](../src/Operators/TOPOLOGY_SUPPORT.md) — Per-operator dispatch matrix
+- [`reference/ARCHITECTURE.md`](reference/ARCHITECTURE.md) — Architecture overview

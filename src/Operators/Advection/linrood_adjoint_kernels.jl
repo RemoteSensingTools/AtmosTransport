@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Lin-Rood adjoint kernels (Plan 25 — LinRood CS adjoint).
+# Lin-Rood adjoint kernels.
 #
 # Reverse-mode kernels for the LinRood cubed-sphere PPM path. Each kernel
 # here is the discrete transpose of the matching forward kernel in
@@ -13,8 +13,7 @@
 # (atomically incremented). The forward velocity fields are passed
 # through unchanged.
 #
-# References:
-#   docs/plans/25_LINROOD_ADJOINT/NOTES.md  — staged plan and derivations
+# Reference:
 #   docs/src/theory/adjoint_status.md       — shipped adjoint surface
 # ---------------------------------------------------------------------------
 

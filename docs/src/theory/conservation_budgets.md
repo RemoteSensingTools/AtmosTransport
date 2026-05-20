@@ -74,7 +74,7 @@ side; GPU coverage is exercised on machines with hardware.
 
 Per-window replay is the contract that lets the runtime stream window
 N+1 starting from window N's evolved endpoint without drift. Tested
-in `test/test_replay_consistency.jl` (Plan 39 Commit H regressions):
+in `test/test_replay_consistency.jl`:
 
 | Subtest (line) | Asserts |
 |---|---|
@@ -118,9 +118,9 @@ matters when the IC interpolates from a different mesh.
 | `test/test_initial_condition_io.jl` | The `file` / `netcdf` IC kinds round-trip a known field through the IC pipeline and assert the recovered mixing ratio matches the source within tolerance. |
 | `test/test_basis_explicit_core.jl` | Dry-basis IC interpretation: `[tracers.co2.init] kind = "uniform"; background = 4.0e-4` produces a tracer field whose `mixing_ratio(state, :CO2)` is `4.0e-4` exactly when `air_mass` is on dry basis. |
 
-## Plan 41 preprocessor contract suite
+## Preprocessor contract suite
 
-The Plan 41 unified preprocessor (`run_unified_preprocessor_day!`)
+The unified preprocessor (`run_unified_preprocessor_day!`)
 anchors its window-contract invariants with a dedicated test set:
 
 | Test | Asserts |
@@ -132,7 +132,7 @@ anchors its window-contract invariants with a dedicated test set:
 | `test_preprocessor_writer_adapters.jl` | Each `AbstractBinaryWriter` matches its paired `AbstractWindowContract` on basis and topology at the type level. |
 | `test_{ll,rg,cs}_spectral_unified_driver.jl` | End-to-end day builds for the spectral path. |
 
-## Plan 26 inversion / adjoint suite
+## Inversion / adjoint suite
 
 The CS surface-emission footprint and 4D-Var stack are anchored by:
 

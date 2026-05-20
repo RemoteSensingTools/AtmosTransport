@@ -6,6 +6,9 @@ from the source docstrings; if a function is exported but the
 docstring is sparse, that's both a quick-fix opportunity and a
 signal that the function is internal-leaning.
 
+Start with [Curated public API](@ref) if you want the short list of names a
+scientist or new Julia user should learn first.
+
 The submodules are listed in load order — earlier modules don't
 depend on later ones:
 

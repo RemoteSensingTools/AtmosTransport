@@ -19,6 +19,18 @@ using Test
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 using .AtmosTransport: Grids, State, Operators, MetDrivers
+using .AtmosTransport.Grids: FaceIndexedFluxTopology, StructuredFluxTopology,
+                             cell_areas_by_latitude, cell_faces, face_cells,
+                             face_length, face_normal, flux_topology, n_levels
+using .AtmosTransport.MetDrivers: DiagnoseVerticalFromHorizontal
+using .AtmosTransport.Operators: MonotoneLimiter, strang_split!
+using .AtmosTransport.State: AbstractFaceFluxState,
+                             AbstractStructuredFaceFluxState,
+                             DryMassFluxBasis, DryStructuredFluxState,
+                             MoistMassFluxBasis, MoistStructuredFluxState,
+                             StructuredFaceFluxState, face_flux_x,
+                             face_flux_y, face_flux_z, flux_basis,
+                             mass_basis
 
 # =========================================================================
 # Test 1: Module loading and type construction

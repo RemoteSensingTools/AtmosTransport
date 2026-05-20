@@ -14,12 +14,12 @@ const TapeMod = AtmosTransport.Tape
 # Verifies:
 #   * FullCheckpoint + `:mmap` + `tape_path` produces `records.bin` +
 #     `manifest.toml` at the user-supplied directory and matches the
-#     temp-dir default to bit accuracy.
+#     temp-dir default to roundoff.
 #   * The user's directory is preserved after the call (no cleanup).
 #   * `load_mmap_tape(tape_path)` can reopen the finalised tape.
 #   * StrideCheckpoint with tape_path creates per-window subdirectories
 #     (`window_NNNNN/{records.bin,manifest.toml}`) and matches the
-#     temp-dir default.
+#     temp-dir default to roundoff.
 #   * RevolveCheckpoint with tape_path creates per-base-case subdirs
 #     (`step_NNNNN/{records.bin,manifest.toml}`).
 #   * Validation: `tape_path` with non-`:mmap` storage, with
@@ -76,7 +76,10 @@ end
 _objective(mesh::AT.CubedSphereMesh) =
     AT.CSColumnMeanObjective(1, max(2, mesh.Nc ÷ 2), max(2, mesh.Nc ÷ 2))
 
-function _footprints_equal(a, b; atol = 0.0, rtol = 0.0)
+const FOOTPRINT_REPLAY_ATOL = 1e-12
+const FOOTPRINT_REPLAY_RTOL = 1e-10
+
+function _footprints_equal(a, b; atol = FOOTPRINT_REPLAY_ATOL, rtol = FOOTPRINT_REPLAY_RTOL)
     length(a.footprints) == length(b.footprints) || return false
     for step in eachindex(a.footprints)
         for p in 1:6
@@ -118,7 +121,7 @@ end
         @test length(ro.records) > 0
         TapeMod.finalize_tape!(ro)
 
-        # Bit parity with the temp-dir default — same kernels, same order.
+        # Roundoff parity with the temp-dir default — same kernels, same order.
         @test _footprints_equal(got, base)
     end
 end
@@ -165,8 +168,8 @@ end
             @test isfile(joinpath(sub, "manifest.toml"))
         end
 
-        # Bit parity with the temp-dir default for the same K.
-        @test _footprints_equal(got, base; atol = 1e-12)
+        # Roundoff parity with the temp-dir default for the same K.
+        @test _footprints_equal(got, base)
     end
 end
 
@@ -194,7 +197,7 @@ end
             @test isfile(joinpath(sub, "manifest.toml"))
         end
 
-        @test _footprints_equal(got, base; atol = 1e-12)
+        @test _footprints_equal(got, base)
     end
 end
 

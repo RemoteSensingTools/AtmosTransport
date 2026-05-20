@@ -48,6 +48,28 @@ end
         @test startswith(paths[1], expanduser("~"))
     end
 
+    @testset "Shape A: data-root expansion" begin
+        withenv("ATMOSTRANSPORT_DATA_ROOT" => "/tmp/atmos_root",
+                "ATMOSTRANSPORT_DATA_ROOT_quickstart" => "/tmp/atmos_quickstart") do
+            @test expand_data_path(raw"$ATMOSTRANSPORT_DATA_ROOT/met/a.bin") ==
+                  "/tmp/atmos_root/met/a.bin"
+            @test expand_data_path(raw"${ATMOSTRANSPORT_DATA_ROOT}/met/a.bin") ==
+                  "/tmp/atmos_root/met/a.bin"
+            @test expand_data_path(raw"$ATMOSTRANSPORT_DATA_ROOT_quickstart/met/a.bin") ==
+                  "/tmp/atmos_quickstart/met/a.bin"
+            cfg = Dict("binary_paths" => [raw"$ATMOSTRANSPORT_DATA_ROOT/met/a.bin"])
+            @test expand_binary_paths(cfg) == ["/tmp/atmos_root/met/a.bin"]
+        end
+    end
+
+    @testset "quickstart data root has an independent fallback" begin
+        withenv("ATMOSTRANSPORT_DATA_ROOT" => "/tmp/atmos_root",
+                "ATMOSTRANSPORT_DATA_ROOT_quickstart" => nothing) do
+            @test expand_data_path(raw"$ATMOSTRANSPORT_DATA_ROOT_quickstart/met") ==
+                  expanduser("~/data/AtmosTransport_quickstart/met")
+        end
+    end
+
     @testset "Shape A: non-list errors" begin
         cfg = Dict("binary_paths" => "not-a-list.bin")
         @test_throws ArgumentError expand_binary_paths(cfg)
@@ -177,6 +199,17 @@ end
     @testset "Empty [input] errors" begin
         cfg = Dict{String, Any}()
         @test_throws ArgumentError expand_binary_paths(cfg)
+    end
+
+    @testset "validate_config reports missing input paths and bad float types" begin
+        cfg = Dict{String, Any}(
+            "input" => Dict("binary_paths" => ["/definitely/missing/transport.bin"]),
+            "numerics" => Dict("float_type" => "Float128"),
+        )
+        ok, errors = validate_config(cfg)
+        @test !ok
+        @test any(err -> occursin("resolved path does not exist", err), errors)
+        @test any(err -> occursin("float_type", err), errors)
     end
 
 end

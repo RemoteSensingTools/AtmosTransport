@@ -1,11 +1,14 @@
 #!/usr/bin/env julia
 
 using Test
+import NCDatasets: NCDataset, defDim, defVar
 
-include(joinpath(@__DIR__, "..", "scripts", "run_transport_binary.jl"))
+include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
+using .AtmosTransport.Operators.Convection: TM5Workspace
 
 const _RUNTIME_RECIPE_AIR_MASS = 1e16
+const _RUNTIME_RECIPE_SECONDS_PER_MONTH = 365.25 * 86400 / 12
 
 function _make_runtime_recipe_tm5_fields(::Type{FT}, Nx, Ny, Nz) where FT
     entu = zeros(FT, Nx, Ny, Nz)
@@ -50,7 +53,34 @@ function write_runtime_recipe_binary(path::AbstractString; FT::Type{<:AbstractFl
     return nothing
 end
 
-@testset "run_transport_binary builds structured runtime recipes" begin
+function write_runtime_recipe_surface_flux_file(path::AbstractString)
+    ds = NCDataset(path, "c")
+    try
+        defDim(ds, "longitude", 4)
+        defDim(ds, "latitude", 2)
+        defDim(ds, "time", 1)
+
+        vlon = defVar(ds, "longitude", Float64, ("longitude",))
+        vlat = defVar(ds, "latitude", Float64, ("latitude",))
+        vtime = defVar(ds, "time", Float64, ("time",))
+        vtotal = defVar(ds, "TOTAL", Float64, ("longitude", "latitude", "time"))
+        varea = defVar(ds, "cell_area", Float64, ("longitude", "latitude"))
+
+        vlon[:] = [-135.0, -45.0, 45.0, 135.0]
+        vlat[:] = [45.0, -45.0]
+        vtime[:] = [1.0]
+        raw = zeros(Float64, 4, 2)
+        raw[1, 1] = 7 * _RUNTIME_RECIPE_SECONDS_PER_MONTH
+        vtotal[:, :, 1] = raw
+        varea[:, :] = reshape(Float64.(1:8), 4, 2)
+        vtotal.attrib["units"] = "kgCO2/month/m2"
+    finally
+        close(ds)
+    end
+    return nothing
+end
+
+@testset "run_transport builds structured runtime recipes" begin
     mktempdir() do dir
         path = joinpath(dir, "tm5_runtime.bin")
         write_runtime_recipe_binary(path)
@@ -77,7 +107,63 @@ end
     end
 end
 
-@testset "run_transport_binary runtime recipe wiring" begin
+@testset "run_transport accepts multiple binary paths" begin
+    mktempdir() do dir
+        path1 = joinpath(dir, "tm5_runtime_day1.bin")
+        path2 = joinpath(dir, "tm5_runtime_day2.bin")
+        write_runtime_recipe_binary(path1)
+        write_runtime_recipe_binary(path2)
+
+        cfg = Dict{String, Any}(
+            "input" => Dict("binary_paths" => [path1, path2]),
+            "numerics" => Dict("float_type" => "Float64"),
+            "run" => Dict("start_window" => 1),
+            "advection" => Dict("scheme" => "upwind"),
+            "init" => Dict("kind" => "uniform", "background" => 4.0e-4),
+        )
+
+        model = run_driven_simulation(cfg)
+        @test total_air_mass(model.state) ≈ 60 * _RUNTIME_RECIPE_AIR_MASS rtol = 1e-12
+        @test total_mass(model.state, :CO2) ≈
+              60 * _RUNTIME_RECIPE_AIR_MASS * 4.0e-4 rtol = 1e-12
+    end
+end
+
+@testset "run_transport supports multi-tracer surface flux sources" begin
+    mktempdir() do dir
+        path = joinpath(dir, "tm5_runtime.bin")
+        flux_path = joinpath(dir, "gridfed.nc")
+        write_runtime_recipe_binary(path)
+        write_runtime_recipe_surface_flux_file(flux_path)
+
+        cfg = Dict{String, Any}(
+            "input" => Dict("binary_paths" => [path]),
+            "numerics" => Dict("float_type" => "Float64"),
+            "run" => Dict("start_window" => 1),
+            "advection" => Dict("scheme" => "upwind"),
+            "tracers" => Dict(
+                "natural_co2" => Dict(
+                    "init" => Dict("kind" => "uniform", "background" => 4.0e-4),
+                ),
+                "fossil_co2" => Dict(
+                    "init" => Dict("kind" => "uniform", "background" => 0.0),
+                    "surface_flux" => Dict(
+                        "kind" => "gridfed_fossil_co2",
+                        "file" => flux_path,
+                        "time_index" => 1,
+                    ),
+                ),
+            ),
+        )
+
+        model = run_driven_simulation(cfg)
+        @test total_mass(model.state, :natural_co2) ≈
+              60 * _RUNTIME_RECIPE_AIR_MASS * 4.0e-4 rtol = 1e-12
+        @test total_mass(model.state, :fossil_co2) ≈ 7.0 * 3600.0 rtol = 1e-12
+    end
+end
+
+@testset "run_transport runtime recipe wiring" begin
     mktempdir() do dir
         path = joinpath(dir, "tm5_runtime.bin")
         write_runtime_recipe_binary(path)
@@ -99,7 +185,7 @@ end
     end
 end
 
-@testset "run_transport_binary rejects unsupported recipe capabilities" begin
+@testset "run_transport rejects unsupported recipe capabilities" begin
     mktempdir() do dir
         path = joinpath(dir, "tm5_runtime.bin")
         write_runtime_recipe_binary(path)

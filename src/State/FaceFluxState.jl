@@ -83,6 +83,9 @@ indicate whether the stored values are moist or dry.
 
 # Examples
 ```jldoctest
+julia> using AtmosTransport.State: StructuredFaceFluxState, DryMassFluxBasis,
+       MoistMassFluxBasis, flux_basis
+
 julia> am = zeros(11, 8, 4); bm = zeros(10, 9, 4); cm = zeros(10, 8, 5);
 
 julia> dry = StructuredFaceFluxState{DryMassFluxBasis}(am, bm, cm);

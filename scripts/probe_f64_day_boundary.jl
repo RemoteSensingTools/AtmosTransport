@@ -11,7 +11,7 @@
 # Measures at every substep + day boundary:
 #   1. tracer min/max
 #   2. max |state.air_mass - next_window.m| / max(|m|)
-#   3. boundary mismatch echoed via scripts/run_transport_binary.jl style
+#   3. boundary mismatch echoed via the canonical driven-runtime style
 #
 # The binaries must be the Float64 post-plan-39 canonical-contract
 # files produced by `preprocess_transport_binary.jl` with

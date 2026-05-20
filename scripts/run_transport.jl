@@ -65,10 +65,42 @@ end
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 
+function _quickstart_configs()
+    dir = joinpath(@__DIR__, "..", "config", "runs", "quickstart")
+    isdir(dir) || return String[]
+    return sort([joinpath("config", "runs", "quickstart", f)
+                 for f in readdir(dir) if endswith(f, ".toml")])
+end
+
+function _print_help(io::IO = stdout)
+    println(io, "Usage:")
+    println(io, "  julia --project=. scripts/run_transport.jl <config.toml>")
+    println(io)
+    println(io, "Canonical runtime entry point for AtmosTransport run TOMLs.")
+    println(io, "Configs may use ~/..., \$ATMOSTRANSPORT_DATA_ROOT/..., or")
+    println(io, "\$ATMOSTRANSPORT_DATA_ROOT_quickstart/... paths.")
+    println(io)
+    println(io, "Quickstart configs:")
+    for cfg in _quickstart_configs()
+        println(io, "  ", cfg)
+    end
+    println(io)
+    println(io, "Example:")
+    println(io, "  bash scripts/download_quickstart_data.sh ll")
+    println(io, "  julia --project=. scripts/run_transport.jl config/runs/quickstart/ll72x37_advonly.toml")
+    return nothing
+end
+
 function main()
     global_logger(ConsoleLogger(stderr, Logging.Info; show_limited = false))
-    isempty(ARGS) &&
-        error("Usage: julia --project=. scripts/run_transport.jl <config.toml>")
+    if any(arg -> arg in ("-h", "--help"), ARGS)
+        _print_help(stdout)
+        return nothing
+    end
+    if isempty(ARGS)
+        _print_help(stderr)
+        error("missing required <config.toml>")
+    end
     cfg_path = expanduser(ARGS[1])
     isfile(cfg_path) || error("Config not found: $cfg_path")
     cfg = TOML.parsefile(cfg_path)

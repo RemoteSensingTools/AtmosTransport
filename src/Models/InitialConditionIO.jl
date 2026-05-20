@@ -39,7 +39,7 @@ topology-dispatched VMR builders for the unified runtime.
   at `src/Operators/SurfaceFlux/sources.jl:12`.
 
 Private helpers (underscore-prefixed) stay unexported and are
-accessed by callers (including `scripts/run_transport_binary.jl`)
+accessed by callers (including the canonical driven runtime)
 via `AtmosTransport.Models.InitialConditionIO.<name>` if needed.
 """
 module InitialConditionIO
@@ -64,7 +64,7 @@ using ..Grids: AbstractHorizontalMesh, nx, ny, ncells
 using Printf: @sprintf
 
 # ---------------------------------------------------------------------------
-# Longitude-wrap helpers (hoisted from run_transport_binary.jl:29,30)
+# Longitude-wrap helpers (hoisted from the historical LL/RG runner)
 # ---------------------------------------------------------------------------
 
 # NOTE: the source arrays (Catrine, GridFED) may be in [-180, 180)
@@ -73,7 +73,7 @@ using Printf: @sprintf
 @inline wrapped_longitude_360(lon) = mod(lon, 360)
 
 # ---------------------------------------------------------------------------
-# Config-kind resolvers (hoisted from run_transport_binary.jl:32,33)
+# Config-kind resolvers (hoisted from the historical LL/RG runner)
 # ---------------------------------------------------------------------------
 
 @inline _init_kind(cfg) = Symbol(lowercase(String(get(cfg, "kind", "uniform"))))
@@ -962,8 +962,8 @@ end
 # kg/m²/s) — the contract required by
 # `src/Operators/SurfaceFlux/sources.jl:12`.
 #
-# Hoisted verbatim (modulo renames for dependency consolidation) from
-# scripts/run_transport_binary.jl:
+# Hoisted verbatim (modulo renames for dependency consolidation) from the
+# historical LL/RG runner:
 #   FileSurfaceFluxField, SECONDS_PER_MONTH, _surface_flux_kind,
 #   _resolve_surface_flux_file, _normalize_units_string,
 #   _load_file_surface_flux_field, _renormalize_surface_flux_rate!,
@@ -1023,16 +1023,16 @@ end
 
 function _resolve_surface_flux_file(cfg, kind::Symbol)
     default_file, default_variable = if kind === :gridfed_fossil_co2
-        ("~/data/AtmosTransport/catrine/Emissions/gridfed/GCP-GridFEDv2024.0_2021.short.nc", "TOTAL")
+        ("\$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/gridfed/GCP-GridFEDv2024.0_2021.short.nc", "TOTAL")
     elseif kind === :edgar_sf6
-        ("~/data/AtmosTransport/catrine/Emissions/edgar_v8/v8.0_FT2022_GHG_SF6_2022_TOTALS_emi.nc", "emissions")
+        ("\$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/edgar_v8/v8.0_FT2022_GHG_SF6_2022_TOTALS_emi.nc", "emissions")
     elseif kind === :zhang_rn222
-        ("~/data/AtmosTransport/catrine/Emissions/ZHANG_Rn222/Rn222_Emis_Zhang_Liu_et_al_05x05_mass.nc", "rnemis")
+        ("\$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/ZHANG_Rn222/Rn222_Emis_Zhang_Liu_et_al_05x05_mass.nc", "rnemis")
     elseif kind === :lmdz_co2
         # Default points at the Dec 2021 CAMS monthly file. Set
         # `surface_flux.file` in TOML for other months; multi-month
         # auto-resolution from a directory is a follow-up.
-        ("~/data/AtmosTransport/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202112_FT24r2_ra_sfc_3h_co2_flux.nc",
+        ("\$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202112_FT24r2_ra_sfc_3h_co2_flux.nc",
          "flux_apos")
     else
         ("", "")

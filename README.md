@@ -268,6 +268,18 @@ and contains preprocessed transport binaries at four grid configurations
 [Quickstart with example data](https://RemoteSensingTools.github.io/AtmosTransport/dev/getting_started/quickstart)
 docs page for the full walkthrough.
 
+By default the quickstart downloader and configs use
+`~/data/AtmosTransport_quickstart`. For a different location, set the
+quickstart data root before downloading and running:
+
+```bash
+export ATMOSTRANSPORT_DATA_ROOT_quickstart=/scratch/$USER/AtmosTransport_quickstart
+bash scripts/download_quickstart_data.sh ll
+```
+
+Production configs use `$ATMOSTRANSPORT_DATA_ROOT/...`, which defaults to
+`~/data/AtmosTransport` when unset.
+
 Quickstart configs default to `use_gpu = true` with automatic backend
 detection: CUDA on NVIDIA hosts and Metal on Apple Silicon. If no usable GPU
 backend is available, the run fails rather than falling back to CPU; set

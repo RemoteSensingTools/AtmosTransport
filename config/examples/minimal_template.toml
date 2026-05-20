@@ -1,0 +1,59 @@
+# Minimal AtmosTransport runtime template.
+#
+# Copy this file when starting a new run. It is intentionally small; see
+# docs/src/config/toml_schema.md and config/examples/atmos_transport_schema_demo.toml
+# for the full schema.
+
+[input]
+# Required. Point at a folder of daily transport binaries, one per date.
+# Supports ~/..., $ATMOSTRANSPORT_DATA_ROOT/..., and set environment variables.
+folder = "$ATMOSTRANSPORT_DATA_ROOT_quickstart/met/era5_ll72x37_dec2021_f32/"
+
+# Required with folder input. Inclusive date range; every day must be present.
+start_date = "2021-12-01"
+end_date = "2021-12-03"
+
+# Optional. Use only if filenames need a strict date pattern.
+# file_pattern = "era5_transport_{YYYYMMDD}_merged1000Pa_float32.bin"
+
+[architecture]
+# Default is false if omitted. Set true for CUDA or Metal runs.
+use_gpu = false
+
+# Optional. Valid values: "cpu", "cuda", "metal", "auto".
+backend = "cpu"
+
+[numerics]
+# Required for predictable runs. Valid values: "Float32", "Float64".
+# Metal requires Float32.
+float_type = "Float32"
+
+[advection]
+# Valid values: "upwind", "slopes", "ppm", "linrood" (CS only).
+scheme = "slopes"
+
+[diffusion]
+# Valid values: "none", "constant", "pbl", and GCHP/TM5 named PBL modes.
+kind = "none"
+
+[convection]
+# Valid values: "none", "tm5", "cmfmc" (depending on binary payloads).
+kind = "none"
+
+[tracers.co2_bl.init]
+# Valid values include "uniform", "gaussian_blob", "latitude_step", and
+# file-backed options. The value is dry volume mixing ratio.
+kind = "gaussian_blob"
+background = 4.0e-4
+amplitude = 8.0e-5
+lon0_deg = -80.0
+lat0_deg = 35.0
+sigma_lon_deg = 35.0
+sigma_lat_deg = 18.0
+
+[output]
+# Optional. Hours since run start to save to NetCDF.
+snapshot_hours = [0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72]
+
+# Required if snapshots are enabled. Parent directories are created as needed.
+snapshot_file = "$ATMOSTRANSPORT_DATA_ROOT_quickstart/output/minimal_template.nc"

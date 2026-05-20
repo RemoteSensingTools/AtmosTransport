@@ -73,7 +73,7 @@ function expand_binary_paths(input_cfg::AbstractDict)
         raw = input_cfg["binary_paths"]
         raw isa AbstractVector ||
             throw(ArgumentError("[input].binary_paths must be a list, got $(typeof(raw))"))
-        return [expanduser(String(p)) for p in raw]
+        return [expand_data_path(String(p)) for p in raw]
     end
 
     if has_folder

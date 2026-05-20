@@ -296,6 +296,10 @@ function _max_footprint_diff(a, b)
                    for s in 1:nsteps, p in 1:6)
 end
 
+# Device and mmap tape replay should agree to roundoff; Julia/LLVM patch-level
+# differences can move the final adjoint accumulation by a few eps.
+const FOOTPRINT_REPLAY_ATOL = 1e-12
+
 @testset "cs_surface_emission_footprint :mmap parity with :device" begin
     @testset "$(nameof(typeof(scheme))) ($(nontrivial ? "transport" : "constant"))" for
         scheme in (AT.UpwindScheme(),
@@ -311,7 +315,7 @@ end
             mesh, obj; scheme = scheme, dt = 1.0, tape_storage = :device)
         mmap = AT.cs_surface_emission_footprint(panels_rm, panels_m, am, bm, cm,
             mesh, obj; scheme = scheme, dt = 1.0, tape_storage = :mmap)
-        @test _max_footprint_diff(dev, mmap) == 0
+        @test _max_footprint_diff(dev, mmap) ≤ FOOTPRINT_REPLAY_ATOL
     end
 
     @testset "from_seed parity" begin
@@ -329,7 +333,7 @@ end
         mmap = AT.cs_surface_emission_footprint_from_seed(seed, panels_m, am, bm, cm,
             mesh; scheme = AT.PPMScheme(AT.NoLimiter()), dt = 1.0,
             tape_storage = :mmap)
-        @test _max_footprint_diff(dev, mmap) == 0
+        @test _max_footprint_diff(dev, mmap) ≤ FOOTPRINT_REPLAY_ATOL
     end
 end
 

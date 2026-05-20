@@ -1,7 +1,11 @@
 """
     Simulation
 
-Minimal simulation harness for the standalone `src` transport model.
+Low-level fixed-step harness for custom in-memory experiments.
+
+Most users should call `run_driven_simulation` with a run config. Use
+`Simulation` only when you already constructed a `TransportModel` and want to
+drive it with a custom time loop.
 """
 mutable struct Simulation{ModelT, FT, CB}
     model      :: ModelT

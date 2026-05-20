@@ -55,8 +55,21 @@ against absolute / parent-traversing paths, and extracts under
     ├── era5_ll72x37_dec2021_f32/      (3 binaries, ~88 MB each)
     ├── era5_ll144x73_dec2021_f32/     (3 binaries, ~352 MB each)
     ├── era5_cs_c24_dec2021_f32/       (3 binaries, ~58 MB each)
-    └── era5_cs_c90_dec2021_f32/       (3 binaries, ~806 MB each)
+	    └── era5_cs_c90_dec2021_f32/       (3 binaries, ~806 MB each)
 ```
+
+For a different storage location, set the quickstart data root before
+downloading and running:
+
+```bash
+export ATMOSTRANSPORT_DATA_ROOT_quickstart=/scratch/$USER/AtmosTransport_quickstart
+bash scripts/download_quickstart_data.sh ll
+```
+
+The quickstart run configs use
+`$ATMOSTRANSPORT_DATA_ROOT_quickstart/...` for both input and output paths. If
+the variable is unset, AtmosTransport resolves it to
+`~/data/AtmosTransport_quickstart`.
 
 ## 2. Run the simulation
 

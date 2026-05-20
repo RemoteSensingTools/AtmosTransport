@@ -38,6 +38,7 @@ core_tests = [
     "test_identity_regrid.jl",
     "test_geos_reader.jl",
     "test_met_source_loader.jl",
+    "test_public_api_surface.jl",
     "test_config_matrix_contract.jl",
     "test_geos_cs_passthrough.jl",
     "test_geos_convection.jl",
@@ -117,7 +118,6 @@ if RUN_ALL
         "test_dry_flux_interface.jl",
         "test_transport_binary_reader.jl",
         "test_era5_latlon_e2e.jl",
-        "test_run_transport_binary_v2.jl",
         "test_tm5_catrine_1day.jl",
         "test_catrine_emissions.jl",
     ]

@@ -48,6 +48,11 @@ function load_met_settings(toml_path::String;
     ctor = _settings_constructor(name)
     Nc = Int(grid_cfg["Nc"])
     mass_flux_dt = Float64(get(pre_cfg, "mass_flux_dt_seconds", 450.0))
+    100.0 <= mass_flux_dt <= 3600.0 || throw(ArgumentError(
+        "[preprocessing] mass_flux_dt_seconds must be between 100 and 3600; got $(mass_flux_dt)."))
+    if !(400.0 <= mass_flux_dt <= 500.0)
+        @warn "[preprocessing] mass_flux_dt_seconds=$(mass_flux_dt) is outside the usual GEOS 400-500 s range."
+    end
     level_orientation = Symbol(get(pre_cfg, "level_orientation", "auto"))
     include_surface = Bool(get(pre_cfg, "include_surface", false))
     include_convection = Bool(get(pre_cfg, "include_convection", false))

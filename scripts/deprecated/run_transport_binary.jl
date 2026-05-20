@@ -44,7 +44,7 @@ if !isempty(ARGS)
     end
 end
 
-include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
+include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 
 function main()

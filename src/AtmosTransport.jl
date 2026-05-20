@@ -1,41 +1,43 @@
 """
     AtmosTransport
 
-Basis-explicit face-flux transport architecture.
+Offline atmospheric transport on lat-lon, reduced-Gaussian, and cubed-sphere
+grids.
 
-Mesh-generic transport core with explicit mass-basis tags, topology-aware
-grids, and multiple-dispatch operator selection.
+## Quick start
 
-## Architecture overview
+```julia
+using TOML
+using AtmosTransport
 
-```
-Grids (geometry)  ->  State (CellState, AbstractFaceFluxState)
-                          ↓
-Drivers / adapters -> basis-aware CellState + FluxState
-                          ↓
-Operators   -> apply!(CellState, AbstractFaceFluxState, AtmosGrid, scheme, dt)
-                          ↓
-Kernels     -> CellKernels / FaceKernels / ColumnKernels
+cfg = TOML.parsefile("config/runs/quickstart/ll72x37_advonly.toml")
+ok, errors = validate_config(cfg)
+ok || error(join(errors, "\n"))
+run_driven_simulation(cfg)
 ```
 
-## Design principles
+From the shell, use the same library entry point through the canonical runner:
 
-1. **Explicit mass-basis tags** are part of the state/flux contract.
-2. **Transport operators** receive only `CellState + AbstractFaceFluxState + AtmosGrid` -- never
-   raw winds, humidity, or met-specific variables.
-3. **Geometry is face/cell oriented**, not index-direction oriented, enabling support
-   for reduced Gaussian grids alongside structured lat-lon and cubed-sphere.
-4. **Multiple dispatch** on four orthogonal axes: grid geometry, backend, met driver,
-   numerical operator.
-5. **KernelAbstractions** for CPU/GPU portability (same code, no branching).
+```bash
+julia --project=. scripts/run_transport.jl config/runs/quickstart/ll72x37_advonly.toml
+```
 
-## Module loading order (strict, no circular deps)
+## Common entry points
 
-1. Grids
-2. State (depends on Grids for mesh types)
-3. Operators (depends on State and Grids)
-4. MetDrivers (depends on State and Grids)
-5. Kernels (standalone utility patterns)
+- [`run_driven_simulation`](@ref): load a run config, dispatch on the first
+  transport binary's topology, run the simulation, and write snapshots.
+- [`validate_config`](@ref): catch common run-config mistakes before opening
+  binary readers or allocating model state.
+- [`inspect_binary`](@ref): inspect a preprocessed transport binary header and
+  capability flags.
+- [`open_snapshot`](@ref), [`mapplot`](@ref), [`movie`](@ref): inspect and plot
+  written NetCDF snapshots.
+- [`write_transport_binary`](@ref): build a transport binary from in-memory
+  test or preprocessing windows.
+
+See the rendered getting-started docs under `docs/src/getting_started/` and
+the curated API map in `docs/src/api/public_api.md`. The detailed architecture
+notes remain in `docs/reference/ARCHITECTURE.md`.
 """
 module AtmosTransport
 
@@ -44,33 +46,56 @@ using KernelAbstractions
 # ---------------------------------------------------------------------------
 # Free-choice data root.
 #
-# Configs and CLI scripts express paths as either `~/...` or
-# `$ATMOSTRANSPORT_DATA_ROOT/...`.  `expand_data_path` resolves both forms,
-# letting a user point every read/write site at a custom data root via a
-# single env var without touching the TOMLs:
+# Configs and CLI scripts express paths as `~/...`, `$ENV_VAR/...`, or
+# `${ENV_VAR}/...`. `expand_data_path` resolves ordinary environment variables
+# plus two package-specific fallbacks:
 #
 #     export ATMOSTRANSPORT_DATA_ROOT=/scratch/$USER/atmostransport
+#     export ATMOSTRANSPORT_DATA_ROOT_quickstart=/scratch/$USER/atmostransport_quickstart
 #
-# When the env var is unset, the fallback is `~/data/AtmosTransport`, which
-# matches the historical default used throughout the legacy configs.
-# Trailing `/` on the env var is tolerated.
+# When these env vars are unset, the fallbacks are `~/data/AtmosTransport` and
+# `~/data/AtmosTransport_quickstart`. Trailing `/` on env vars is tolerated.
 # ---------------------------------------------------------------------------
-const _DATA_ROOT_ENV       = "ATMOSTRANSPORT_DATA_ROOT"
-const _DATA_ROOT_FALLBACK  = "~/data/AtmosTransport"
+const _DATA_ROOT_ENV                = "ATMOSTRANSPORT_DATA_ROOT"
+const _DATA_ROOT_FALLBACK           = "~/data/AtmosTransport"
+const _QUICKSTART_DATA_ROOT_ENV     = "ATMOSTRANSPORT_DATA_ROOT_quickstart"
+const _QUICKSTART_DATA_ROOT_FALLBACK = "~/data/AtmosTransport_quickstart"
+const _PATH_ENVVAR_RE = r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)"
 
 """
     expand_data_path(p::AbstractString) -> String
 
 Resolve a TOML/CLI path string by substituting `\$ATMOSTRANSPORT_DATA_ROOT`
-(or `\${ATMOSTRANSPORT_DATA_ROOT}`) and then running `expanduser` for any
-leading `~`.  Returns a plain `String`.
+(or `\${ATMOSTRANSPORT_DATA_ROOT}`), `\$ATMOSTRANSPORT_DATA_ROOT_quickstart`,
+and any environment variable that is set in `ENV`, then running `expanduser`
+for any leading `~`. Returns a plain `String`.
 """
 function expand_data_path(p::AbstractString)
-    root = rstrip(get(ENV, _DATA_ROOT_ENV, _DATA_ROOT_FALLBACK), '/')
     s = String(p)
-    s = replace(s, "\${$_DATA_ROOT_ENV}" => root)
-    s = replace(s, "\$$_DATA_ROOT_ENV"   => root)
-    return expanduser(s)
+    io = IOBuffer()
+    pos = firstindex(s)
+    for m in eachmatch(_PATH_ENVVAR_RE, s)
+        start = m.offset
+        if start > pos
+            print(io, s[pos:prevind(s, start)])
+        end
+        name = something(m.captures[1], m.captures[2])
+        value = if haskey(ENV, name)
+            ENV[name]
+        elseif name == _DATA_ROOT_ENV
+            _DATA_ROOT_FALLBACK
+        elseif name == _QUICKSTART_DATA_ROOT_ENV
+            _QUICKSTART_DATA_ROOT_FALLBACK
+        else
+            m.match
+        end
+        print(io, rstrip(String(value), '/'))
+        pos = nextind(s, start + ncodeunits(m.match) - 1)
+    end
+    if pos <= lastindex(s)
+        print(io, s[pos:end])
+    end
+    return expanduser(String(take!(io)))
 end
 expand_data_path(p) = expand_data_path(String(p))
 
@@ -194,234 +219,63 @@ using .Models
 include("Downloads/Downloads.jl")
 using .DataDownloads
 
-# ---- Re-exports for convenience ----
+# ---- Curated top-level API ----
+#
+# Deep internals remain reachable as `AtmosTransport.Submodule.symbol`. The
+# top-level exports are intentionally kept to the symbols a scientist is likely
+# to call directly while building, running, or inspecting a transport workflow.
 
-# Architectures and parameters
-export AbstractArchitecture, CPU, GPU
-export array_type, device, architecture
-export PlanetParameters, earth_parameters
+export expand_data_path
 
-# Quantity-kind dispatch traits
-export QuantityKind, IntensiveCellField, ExtensiveCellField,
-       HorizontalVectorField, HorizontalFluxField
+# Run configs and binary inspection
+export run_driven_simulation, validate_config, expand_binary_paths
+export inspect_binary, binary_capabilities
 
-# Grids
-export AtmosGrid, LatLonMesh, CubedSphereMesh, ReducedGaussianMesh
-export AbstractCubedSphereCoordinateLaw, AbstractCubedSphereCenterLaw
-export AbstractCubedSpherePanelConvention, AbstractCubedSphereDefinition
-export EquiangularGnomonic, GMAOEqualDistanceGnomonic
-export AngularMidpointCenter, FourCornerNormalizedCenter
-export CubedSphereDefinition, EquiangularCubedSphereDefinition, GMAOCubedSphereDefinition
-export GEOSIT_C180, GEOSFP_C720
-export GnomonicPanelConvention, GEOSNativePanelConvention
-export HybridSigmaPressure
-export AbstractFluxTopology, StructuredFluxTopology, FaceIndexedFluxTopology, flux_topology
-export StructuredTopology, FaceConnectedTopology
-export ncells, nfaces, nlevels, cell_area, cell_faces, nx, ny, nrings, nboundaries, cell_areas_by_latitude
-export face_length, face_normal, face_cells, floattype
-export planet_parameters, radius, gravity, reference_pressure
-export ring_cell_count, ring_longitudes, cell_index
-export boundary_face_count, boundary_face_offset, boundary_face_range
-export panel_count, panel_convention, panel_labels
-export PanelEdge, PanelConnectivity
-export default_panel_connectivity, gnomonic_panel_connectivity, panel_connectivity_for
-export cs_definition, coordinate_law, center_law, longitude_offset_deg
-export cs_definition_tag, coordinate_law_tag, center_law_tag
-export panel_cell_center_lonlat, panel_cell_corner_lonlat, panel_cell_local_tangent_basis
-export reciprocal_edge
-export EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST
-export n_levels, pressure_at_interface, pressure_at_level, level_thickness
+# Grids, backends, and geometry
+export CPU, GPU, earth_parameters
+export AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
+       HybridSigmaPressure
+export nx, ny, ncells, nfaces, nlevels, nrings, cell_index
+export cell_area, cell_faces, floattype
+export radius, gravity, reference_pressure
+export pressure_at_interface, pressure_at_level, level_thickness
 
-# State -- types and basis tags
-export AbstractMassBasis, MoistBasis, DryBasis, mass_basis
-export AbstractMassFluxBasis, MoistMassFluxBasis, DryMassFluxBasis, flux_basis
-export DryCellState, MoistCellState
-export DryCubedSphereState, MoistCubedSphereState
-export DryStructuredFluxState, MoistStructuredFluxState
-export DryCubedSphereFluxState, MoistCubedSphereFluxState
-export CellState
-export CubedSphereState
-export AbstractFaceFluxState, AbstractStructuredFaceFluxState, AbstractUnstructuredFaceFluxState
-export StructuredFaceFluxState, FaceIndexedFluxState, CubedSphereFaceFluxState, FluxState
-export face_flux_x, face_flux_y, face_flux_z, face_flux
-export MetState, allocate_face_fluxes, allocate_tracers
-export mixing_ratio, total_mass, total_air_mass, tracer_names
-export ntracers, tracer_index, tracer_name, get_tracer, eachtracer
-
-# Output diagnostics
-export SnapshotFrame, SnapshotWriteOptions
-export AbstractOutputSchedule, AbstractOutputPartition
-export AbstractLayerSelection, FullLayerSelection, SelectedLayerSelection
-export NoLayerSelection, TracerOutputFields, OutputFieldSpec
-export ExplicitSnapshotSchedule, IntervalSnapshotSchedule
-export SingleOutputFile, DailyOutputFiles, RuntimeOutputSpec
-export runtime_output_spec, snapshot_hours, output_enabled, output_path
-export output_fields, output_field_spec, output_path_for_day
-export tracer_fields, layer_selection, layer_selection_label, air_mass_layer_selection
+# State and diagnostics
+export CellState, CubedSphereState, DryBasis, MoistBasis
+export allocate_face_fluxes, allocate_tracers
+export get_tracer, mixing_ratio, total_mass, total_air_mass
+export tracer_names, ntracers
 export capture_snapshot, write_snapshot_netcdf
-export column_mean_mixing_ratio, layer_mass_per_area, column_mass_per_area
 
-# Time-varying field abstraction (plan 16a, extended in 16b/17)
-export AbstractTimeVaryingField, AbstractCubedSphereField,
-       ConstantField, ProfileKzField, PreComputedKzField, CubedSphereField,
-       DerivedKzField, WindowPBLKzField, GCHPHoltslagBovilleKzField,
-       PBLPhysicsParameters, StepwiseField,
-       field_value, update_field!, refresh_pbl_kz_cache!,
-       refresh_gchp_holtslag_boville_kz_cache!,
-       integral_between, panel_field
-
-# Operators -- public transport API
-export AdvectionWorkspace, strang_split!, strang_split_mt!, apply!
-export TracerView
-export diagnose_cm!
-
-# Diffusion solver infrastructure + operator types (plan 16b Commits 2-4)
-export solve_tridiagonal!, build_diffusion_coefficients
-export AbstractDiffusion, NoDiffusion, ImplicitVerticalDiffusion
-export AbstractSurfaceFluxCoupling, SplitSurfaceFluxCoupling,
-       DiffusiveSurfaceFluxBoundary, uses_diffusive_surface_flux_boundary
-export apply_vertical_diffusion!, apply_vertical_diffusion_vmr!
-
-# Surface flux data types + operator hierarchy (plan 17 Commits 2-3).
-# SurfaceFluxSource is re-exported above (from Models) for backward compat.
-export PerTracerFluxMap, flux_for
-export AbstractSurfaceFluxOperator, NoSurfaceFlux, SurfaceFluxOperator
-export apply_surface_flux!
-
-# Convection operator hierarchy (plan 18 + plan 23).
-# NoConvection, CMFMCConvection live since plan 18; TM5Convection
-# lands via plan 23 (Commit 1: types + dispatch stubs; Commit 4:
-# real kernels on all three topologies).
-# `ConvectionForcing` lives in MetDrivers and is re-exported below.
-export AbstractConvection, NoConvection
-export CMFMCConvection                          # plan 18 Commit 3
-export CMFMCWorkspace, invalidate_cmfmc_cache!  # plan 18 Commit 3
-export TM5Convection                            # plan 23 Commit 1
-export TM5Workspace                             # plan 23 Commit 1
-export apply_convection!
-
-# Advection scheme hierarchy
-export AbstractAdvectionScheme
-export AbstractConstantScheme, AbstractLinearScheme, AbstractQuadraticScheme
-export AbstractLimiter, NoLimiter, MonotoneLimiter, PositivityLimiter
+# Common operator configuration
+export AdvectionWorkspace
 export UpwindScheme, SlopesScheme, PPMScheme, LinRoodPPMScheme
-export reconstruction_order, required_halo_width
+export NoDiffusion, ImplicitVerticalDiffusion
+export NoSurfaceFlux, SurfaceFluxOperator, SurfaceFluxSource,
+       PerTracerFluxMap, flux_for
+export NoConvection, CMFMCConvection, TM5Convection
+export NoChemistry, ExponentialDecay, CompositeChemistry
+export ConstantField, ProfileKzField
+export apply!
 
-# Chemistry
-export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemistry
-export chemistry_block!
-
-# Cubed-sphere advection
-export fill_panel_halos!, copy_corners!, strang_split_cs!, strang_split_cs_mt!,
-       CSAdvectionWorkspace
-
-# Prototype adjoint / footprint utilities
-export AbstractCSFootprintObjective
-export CSLayerMeanObjective, CSColumnMeanObjective, CSSeedObjective, CSFootprintResult
-export CSSurfaceFluxWindow, CSSurfaceFluxJacobianResult
-export CSObservation, CSSurfaceFluxControl, CS4DVarResult, CS4DVarSolveResult
-export CSObservationRecord, CSObservationSet, read_observations, write_observations
-export bind_to_mesh
-export CSDepartureRecord, CSDepartureSet, build_departure_set
-export read_departures, write_departures
-export AbstractCSSurfaceFluxCovariance
-export DiagonalCSCovariance, IsotropicGaussianCSCovariance
-export apply_B_half!, apply_B_half_adjoint!, apply_B_half_inverse!
-export AbstractCSOptimType, LinearOptimType, LogNormalOptimType
-export CSSurfaceFluxPreconditioner
-export apply_preconditioner!, apply_preconditioner_inverse!
-export apply_preconditioner_tangent!, apply_preconditioner_adjoint!
-export CSAdjointWorkspace, CSTapeSlot, DeviceCSTapeStorage, PinnedHostCSTapeStorage
-export MmapCSTapeStorage, MmapCSTapeSlot
-export load_mmap_tape, get_record
-export AbstractCheckpointSchedule, FullCheckpoint, StrideCheckpoint, RevolveCheckpoint
-export PinnedHostCSTapeSlot, CSTapeByteEstimate
-export evaluate_objective, run_cs_footprint_forward
-export cs_surface_emission_footprint, cs_surface_emission_footprint_from_seed
-export cs_tape_byte_estimate
-export cs_surface_flux_jacobian
-export cs_surface_flux_4dvar, cs_surface_flux_4dvar_optimize
-export AbstractCSOptimizer, CSGradientDescent, CSLBFGS, cs_surface_flux_4dvar_solve
-export CSIterationLog, CSIterationLogEntry
-
-# Lin-Rood cross-term advection (FV3 fv_tp_2d)
-export LinRoodWorkspace, CSLinRoodAdvectionWorkspace
-export fv_tp_2d_cs!, fv_tp_2d_cs_q!, strang_split_linrood_ppm!
-export fillz_q!, apply_divergence_damping_cs!
-
-# NOTE: sweep_x!, sweep_y!, sweep_z!, max_cfl_*
-# are intentionally NOT exported. They accept raw arrays without basis
-# checking and are implementation details of strang_split!.
-# Access via AtmosTransport.Operators.Advection.sweep_x! if needed.
-
-# MetDrivers
-export AbstractDriver, AbstractClosure
-export AbstractMetDriver, PreprocessedERA5Driver
-export current_time
-export ERA5BinaryReader, ERA5BinaryHeader
-export TransportBinaryReader, TransportBinaryHeader, write_transport_binary
-export TransportBinaryDriver, AbstractTransportWindow
-export StructuredFluxDeltas, FaceIndexedFluxDeltas
-export StructuredTransportWindow, FaceIndexedTransportWindow
-export CubedSphereTransportWindow, CubedSphereTransportDriver
-export load_window!, load_qv_window!, load_flux_delta_window!
-export load_qv_pair_window!, load_grid, load_transport_window
-export driver_grid, air_mass_basis, has_humidity_endpoints
-export interpolate_fluxes!, expected_air_mass!, interpolate_qv!, copy_fluxes!
-export load_cmfmc_window!, load_surface_window!, load_tm5conv_window!
-export load_temperature_window!
-export ConvectionForcing, has_convection_forcing
-export copy_convection_forcing!, allocate_convection_forcing_like
-export PBLSurfaceForcing, has_pbl_surface_forcing
-export window_count, has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc
-export has_surface, has_vdiff_fields, has_tm5conv, has_temperature
-export grid_type, horizontal_topology
-export source_flux_sampling, air_mass_sampling, flux_sampling, flux_kind, humidity_sampling, delta_semantics
-export A_ifc, B_ifc
-export build_dry_fluxes!, build_air_mass!
-export total_windows, window_dt, steps_per_window, steps_per_window_schedule
-export diagnose_cm_from_continuity!, diagnose_cm_from_continuity_vc!
-export diagnose_cm_from_continuity_ka!
-export ERA5ReducedGaussianGeometry
-export read_era5_reduced_gaussian_geometry, read_era5_reduced_gaussian_mesh
-export DiagnoseVerticalFromHorizontal, PressureTendencyClosure
-export supports_diffusion, supports_convection
-export TRANSPORT_BINARY_FORMAT_VERSION
-export CubedSphereBinaryReader, CubedSphereBinaryHeader
-export load_cs_window, cs_window_count, mesh_convention, mesh_definition
-export StreamingTransportBinaryWriter
-export open_streaming_transport_binary, write_streaming_window!,
-       close_streaming_transport_binary!, set_streaming_steps_per_window_schedule!
-
-# Models
-export TransportModel, Simulation, DrivenSimulation, SurfaceFluxSource
-export step!, transport_step!, convection_chemistry_step!, run!, run_window!
-export window_index, substep_index, current_qv
+# Low-level model hooks for custom loops
+export TransportModel, Simulation, DrivenSimulation
+export step!, run!, run_window!
 export with_chemistry, with_diffusion, with_emissions
-export with_convection, with_convection_forcing
-export RuntimePhysicsRecipe, CSPhysicsRecipe
-export build_runtime_advection, build_runtime_diffusion, build_runtime_convection
 export build_runtime_physics_recipe, validate_runtime_physics_recipe
-export configured_halo_width
-export build_cs_advection, build_cs_diffusion, build_cs_convection
-export build_cs_physics_recipe, validate_cs_physics_recipe
-export configured_cs_halo_width
-export FileInitialConditionSource, build_initial_mixing_ratio, pack_initial_tracer_mass
-export FileSurfaceFluxField, build_surface_flux_source, build_surface_flux_sources
-export expand_binary_paths
-export binary_capabilities, inspect_binary   # plan 40 Commit 5
-export run_driven_simulation, TransportTracerSpec   # plan 40 Commit 6a
+export build_initial_mixing_ratio, pack_initial_tracer_mass
+export TransportTracerSpec
 
-# Offline regridding (preprocessing only)
-export build_regridder, save_regridder, load_regridder
-export save_esmf_weights, apply_regridder!
-export cubed_sphere_face_corners
+# Transport binaries and met-driver summaries
+export write_transport_binary
+export TransportBinaryReader, TransportBinaryHeader, TransportBinaryDriver
+export load_transport_window
+export total_windows, window_dt, steps_per_window, steps_per_window_schedule
+export grid_type, horizontal_topology
+export supports_diffusion, supports_convection
 
-# Visualization data layer. Makie plotting methods load from the optional
-# AtmosTransportMakieExt extension when a Makie backend is available.
-export SnapshotDataset, HorizontalField, RasterField, SnapshotRegridCache, PlotSpec
-export open_snapshot, available_variables, snapshot_times, snapshot_topology
-export fieldview, frame_indices, as_raster, robust_colorrange
-export mapplot, mapplot!, snapshot_grid, movie, movie_grid
+# Regridding and visualization
+export build_regridder, apply_regridder!
+export open_snapshot, fieldview, mapplot, movie
 
 end # module AtmosTransport

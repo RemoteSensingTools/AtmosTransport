@@ -59,11 +59,8 @@ See `config/runs/` for complete examples with emissions, snapshots, and multi-tr
 ## Step 3: Run the simulation
 
 ```bash
-# LatLon and Reduced Gaussian grids:
-julia --project=. scripts/run_transport_binary.jl config/runs/your_config.toml
-
-# Cubed-sphere grids:
-julia --project=. scripts/run_transport.jl config/runs/your_cs_config.toml
+# All grid topologies:
+julia --project=. scripts/run_transport.jl config/runs/your_config.toml
 ```
 
 Expected output:

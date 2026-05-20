@@ -39,7 +39,7 @@ export expand_binary_paths
 include("Simulation.jl")
 include("DrivenSimulation.jl")
 include("DrivenRunner.jl")        # plan 40 Commit 6a: library-level driven runner
-using .DrivenRunner: run_driven_simulation, TransportTracerSpec
-export run_driven_simulation, TransportTracerSpec
+using .DrivenRunner: run_driven_simulation, validate_config, TransportTracerSpec
+export run_driven_simulation, validate_config, TransportTracerSpec
 
 end # module Models

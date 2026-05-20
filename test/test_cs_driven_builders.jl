@@ -1,12 +1,21 @@
 #!/usr/bin/env julia
-# Smoke test for scripts/run_cs_driven.jl operator builders. Exercises the
+# Smoke test for the canonical runtime operator builders. Exercises the
 # TOML→operator path without requiring a real CS binary (that's what the
 # full end-to-end test in test_cubed_sphere_runtime.jl covers).
 
 using Test
 
-include(joinpath(@__DIR__, "..", "scripts", "run_cs_driven.jl"))
+include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
+using .AtmosTransport.Models:
+    build_runtime_advection, build_runtime_diffusion,
+    build_cs_advection, configured_cs_halo_width,
+    build_cs_diffusion, build_cs_convection, build_cs_physics_recipe
+using .AtmosTransport.State.Fields:
+    CubedSphereField, WindowPBLKzField, GCHPHoltslagBovilleKzField,
+    field_value, panel_field
+using .AtmosTransport.Operators.Diffusion:
+    uses_diffusive_surface_flux_boundary
 
 struct StubReader
     has_cmfmc :: Bool
@@ -240,8 +249,8 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
     # stub). CS tracers now flow through the unified pipeline:
     # `build_initial_mixing_ratio` + `pack_initial_tracer_mass`. Those are
     # tested in detail in `test/test_initial_condition_io.jl` (plan 40
-    # Commits 1b–1d). The CS runner `scripts/run_cs_driven.jl` wires
-    # exactly that pipeline through from TOML at line 130.
+    # Commits 1b–1d). The canonical runner wires exactly that pipeline
+    # through from TOML.
     @testset "CS tracer IC flows through unified pipeline" begin
         FT = Float64
         Nc = 4

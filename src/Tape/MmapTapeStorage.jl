@@ -71,8 +71,8 @@ mutable struct MmapCSTapeStorage <: AbstractCSTapeStorage
     # `_mmap_prepare_for_panels!` for non-`Array` panel sources;
     # stays empty for CPU runs so `_tape_panels` returns mmap views
     # directly (zero-copy through the page cache).
-    device_caches::Dict{NTuple{6, NTuple{3, Int}}, Any}
-    synchronize::Any
+    device_caches::Dict{NTuple{6, NTuple{3, Int}}, CSPanelCache}
+    synchronize::CSSynchronizeHook
     finalised::Bool
     closed::Bool
     cleanup_on_finalize::Bool
@@ -100,7 +100,7 @@ mutable struct MmapCSTapeStorage <: AbstractCSTapeStorage
         try
             storage = new(bin_path, manifest_path, String(dir), bin_io, Int64(0),
                           MmapTapeRecordEntry[],
-                          Dict{NTuple{6, NTuple{3, Int}}, Any}(),
+                          Dict{NTuple{6, NTuple{3, Int}}, CSPanelCache}(),
                           nothing,
                           false, false, cleanup, false)
             finalizer(_mmap_storage_gc_close!, storage)
@@ -131,7 +131,7 @@ mutable struct MmapCSTapeStorage <: AbstractCSTapeStorage
         try
             storage = new(bin_path, manifest_path, String(dir), bin_io, cursor,
                           records,
-                          Dict{NTuple{6, NTuple{3, Int}}, Any}(),
+                          Dict{NTuple{6, NTuple{3, Int}}, CSPanelCache}(),
                           nothing,
                           true, false, false, mode == "r")
             finalizer(_mmap_storage_gc_close!, storage)

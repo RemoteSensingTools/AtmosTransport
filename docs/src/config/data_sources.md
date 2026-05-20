@@ -183,6 +183,16 @@ bash scripts/download_quickstart_data.sh cs
 bash scripts/download_quickstart_data.sh         # both
 ```
 
+The quickstart downloader and run configs use
+`$ATMOSTRANSPORT_DATA_ROOT_quickstart`, defaulting to
+`~/data/AtmosTransport_quickstart`. Set it before downloading if the bundle
+should live somewhere else:
+
+```bash
+export ATMOSTRANSPORT_DATA_ROOT_quickstart=/scratch/$USER/AtmosTransport_quickstart
+bash scripts/download_quickstart_data.sh ll
+```
+
 See [Quickstart with example data](@ref) for the runnable
 walkthrough.
 

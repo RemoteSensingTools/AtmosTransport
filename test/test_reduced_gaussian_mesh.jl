@@ -4,6 +4,10 @@ using Test
 
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
+using .AtmosTransport.Grids: FaceIndexedFluxTopology, boundary_face_count,
+                             boundary_face_range, face_cells, face_length,
+                             face_normal, flux_topology, nboundaries,
+                             ring_cell_count, ring_longitudes
 
 @testset "ReducedGaussianMesh wiring" begin
     @test isdefined(AtmosTransport, :ReducedGaussianMesh)

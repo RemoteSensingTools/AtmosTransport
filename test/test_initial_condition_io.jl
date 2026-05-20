@@ -5,25 +5,101 @@
 # Covers:
 #   - `build_initial_mixing_ratio` bit-exact behaviour post-hoist on LL
 #     (uniform + gaussian_blob) and RG (uniform + gaussian_blob) — uses
-#     the same algebra as the pre-hoist path at scripts/run_transport_binary.jl:
-#     {570,593}, so equivalence is proven by "same output for the same inputs".
+#     the same algebra as the pre-hoist LL/RG runner path, so equivalence is
+#     proven by "same output for the same inputs".
 #   - `pack_initial_tracer_mass` basis-aware packing per
 #     feedback_vmr_to_mass_basis_aware:
 #       * DryBasis   → rm = vmr .* air_mass
 #       * MoistBasis → rm = vmr .* air_mass .* (1 .- qv)  (+ error without qv)
 #
-# Does NOT exercise the file-based IC path (needs Catrine NetCDF); that
-# is covered end-to-end via test_run_transport_binary_recipe.jl.
+# Also exercises the file-based IC path with a synthetic NetCDF fixture; the
+# real Catrine equivalence check is skipped when external data are absent.
 # CS dispatch is added in plan 40 Commit 1c.
 # ---------------------------------------------------------------------------
 
 using Test
+import NCDatasets: NCDataset, defDim, defVar
 
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
+using .AtmosTransport.Grids: cell_index, nrings, ring_longitudes
+using .AtmosTransport.Models.InitialConditionIO: build_surface_flux_source,
+                                                build_surface_flux_sources
 
 const FT = Float64
 const ICIO = AtmosTransport.Models.InitialConditionIO
+const _SYNTHETIC_SECONDS_PER_MONTH = 365.25 * 86400 / 12
+
+_synthetic_file_ic_value(lon_deg, lat_deg) =
+    3.5e-4 + 1e-6 * mod(lon_deg, 360.0) + 2e-6 * lat_deg
+
+function _write_synthetic_ic_file(path::AbstractString)
+    ds = NCDataset(path, "c")
+    try
+        defDim(ds, "longitude", 4)
+        defDim(ds, "latitude", 2)
+        defDim(ds, "level", 3)
+        defDim(ds, "hlevel", 4)
+
+        vlon = defVar(ds, "longitude", Float64, ("longitude",))
+        vlat = defVar(ds, "latitude", Float64, ("latitude",))
+        vlev = defVar(ds, "level", Float64, ("level",))
+        vhlev = defVar(ds, "hlevel", Float64, ("hlevel",))
+        vap = defVar(ds, "ap", Float64, ("hlevel",))
+        vbp = defVar(ds, "bp", Float64, ("hlevel",))
+        vps = defVar(ds, "Psurf", Float64, ("longitude", "latitude"))
+        vco2 = defVar(ds, "CO2", Float64, ("longitude", "latitude", "level"))
+
+        lon = [-135.0, -45.0, 45.0, 135.0]
+        lat = [45.0, -45.0]  # descending on purpose
+        vlon[:] = lon
+        vlat[:] = lat
+        vlev[:] = [0.0, 1.0, 2.0]
+        vhlev[:] = [0.0, 1.0, 2.0, 3.0]
+        vap[:] = [0.0, 0.0, 0.0, 0.0]
+        vbp[:] = [1.0, 2.0 / 3.0, 1.0 / 3.0, 0.0]
+        vps[:, :] = fill(9.0e4, 4, 2)
+
+        raw = Array{Float64}(undef, 4, 2, 3)
+        for k in 1:3, j in 1:2, i in 1:4
+            raw[i, j, k] = _synthetic_file_ic_value(lon[i], lat[j])
+        end
+        vco2[:, :, :] = raw
+        vco2.attrib["units"] = "mol mol-1"
+    finally
+        close(ds)
+    end
+    return nothing
+end
+
+function _write_synthetic_surface_flux_file(path::AbstractString)
+    ds = NCDataset(path, "c")
+    try
+        defDim(ds, "longitude", 4)
+        defDim(ds, "latitude", 2)
+        defDim(ds, "time", 2)
+
+        vlon = defVar(ds, "longitude", Float64, ("longitude",))
+        vlat = defVar(ds, "latitude", Float64, ("latitude",))
+        vtime = defVar(ds, "time", Float64, ("time",))
+        vtotal = defVar(ds, "TOTAL", Float64, ("longitude", "latitude", "time"))
+        varea = defVar(ds, "cell_area", Float64, ("longitude", "latitude"))
+
+        vlon[:] = [-135.0, -45.0, 45.0, 135.0]
+        vlat[:] = [45.0, -45.0]  # descending on purpose
+        vtime[:] = [1.0, 2.0]
+        raw1 = zeros(Float64, 4, 2)
+        raw1[1, 1] = 7 * _SYNTHETIC_SECONDS_PER_MONTH
+        raw2 = 2 .* raw1
+        vtotal[:, :, 1] = raw1
+        vtotal[:, :, 2] = raw2
+        varea[:, :] = reshape(Float64.(1:8), 4, 2)
+        vtotal.attrib["units"] = "kgCO2/month/m2"
+    finally
+        close(ds)
+    end
+    return nothing
+end
 
 @testset "plan 40 Commit 1b — InitialConditionIO hoist" begin
 
@@ -111,6 +187,50 @@ const ICIO = AtmosTransport.Models.InitialConditionIO
         q_mesh = build_initial_mixing_ratio(air_mass, mesh, cfg)
         q_grid = build_initial_mixing_ratio(air_mass, grid, cfg)
         @test q_mesh == q_grid   # bit-exact
+    end
+
+    @testset "file-based initial conditions support latlon and reduced grids" begin
+        mktempdir() do dir
+            ic_path = joinpath(dir, "test_ic.nc")
+            _write_synthetic_ic_file(ic_path)
+
+            init_cfg = Dict{String, Any}(
+                "kind" => "file",
+                "file" => ic_path,
+                "variable" => "CO2",
+            )
+
+            vertical = HybridSigmaPressure(Float64[0, 0, 0], Float64[1, 0.5, 0])
+
+            latlon_mesh = LatLonMesh(; FT = Float64, Nx = 4, Ny = 2)
+            latlon_grid = AtmosGrid(latlon_mesh, vertical, CPU(); FT = Float64)
+            air_mass_ll = ones(Float64, 4, 2, 2)
+            ps_ll = fill(9.0e4, 4, 2)
+            q_ll = build_initial_mixing_ratio(air_mass_ll, latlon_grid, init_cfg;
+                                              surface_pressure = ps_ll)
+            for j in 1:2, i in 1:4
+                expected = _synthetic_file_ic_value(latlon_mesh.λᶜ[i], latlon_mesh.φᶜ[j])
+                @test q_ll[i, j, 1] ≈ expected atol = 1e-12
+                @test q_ll[i, j, 2] ≈ expected atol = 1e-12
+            end
+
+            reduced_mesh = ReducedGaussianMesh([-45.0, 45.0], [4, 4]; FT = Float64)
+            reduced_grid = AtmosGrid(reduced_mesh, vertical, CPU(); FT = Float64)
+            air_mass_rg = ones(Float64, ncells(reduced_mesh), 2)
+            ps_rg = fill(9.0e4, ncells(reduced_mesh))
+            q_rg = build_initial_mixing_ratio(air_mass_rg, reduced_grid, init_cfg;
+                                              surface_pressure = ps_rg)
+            for j in 1:nrings(reduced_mesh)
+                lons = ring_longitudes(reduced_mesh, j)
+                lat = reduced_mesh.latitudes[j]
+                for i in eachindex(lons)
+                    c = cell_index(reduced_mesh, i, j)
+                    expected = _synthetic_file_ic_value(lons[i], lat)
+                    @test q_rg[c, 1] ≈ expected atol = 1e-12
+                    @test q_rg[c, 2] ≈ expected atol = 1e-12
+                end
+            end
+        end
     end
 
     # ---------------------------- pack_initial_tracer_mass ------------------
@@ -342,6 +462,33 @@ const ICIO = AtmosTransport.Models.InitialConditionIO
     end
 
     # --------- plan 40 Commit 1d: surface-flux builders --------------
+    @testset "build_surface_flux_source supports latlon and reduced grids" begin
+        mktempdir() do dir
+            flux_path = joinpath(dir, "gridfed.nc")
+            _write_synthetic_surface_flux_file(flux_path)
+
+            flux_cfg = Dict{String, Any}(
+                "kind" => "gridfed_fossil_co2",
+                "file" => flux_path,
+                "time_index" => 1,
+            )
+
+            vertical = HybridSigmaPressure(Float64[0, 0], Float64[1, 0])
+            native_total = 7.0
+
+            latlon_mesh = LatLonMesh(; FT = Float64, Nx = 4, Ny = 2)
+            latlon_grid = AtmosGrid(latlon_mesh, vertical, CPU(); FT = Float64)
+            ll_source = build_surface_flux_source(latlon_grid, :fossil_co2, flux_cfg, Float64)
+            @test sum(ll_source.cell_mass_rate) ≈ native_total rtol = 1e-12
+
+            reduced_mesh = ReducedGaussianMesh([-67.5, -22.5, 22.5, 67.5],
+                                               [8, 8, 8, 8]; FT = Float64)
+            reduced_grid = AtmosGrid(reduced_mesh, vertical, CPU(); FT = Float64)
+            rg_source = build_surface_flux_source(reduced_grid, :fossil_co2, flux_cfg, Float64)
+            @test sum(rg_source.cell_mass_rate) ≈ native_total rtol = 1e-12
+        end
+    end
+
     @testset "build_surface_flux_source — `kind = none` returns nothing" begin
         mesh = LatLonMesh(; Nx = 4, Ny = 3,
                           longitude = (0.0, 360.0),

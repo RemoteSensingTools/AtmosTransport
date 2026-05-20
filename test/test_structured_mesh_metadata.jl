@@ -4,6 +4,13 @@ using Test
 
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
+using .AtmosTransport.Grids:
+    GnomonicPanelConvention, GEOSNativePanelConvention,
+    panel_count, panel_convention, cs_definition, cs_definition_tag,
+    coordinate_law, coordinate_law_tag, center_law, center_law_tag,
+    longitude_offset_deg, panel_labels, panel_cell_center_lonlat,
+    panel_cell_corner_lonlat, panel_cell_local_tangent_basis,
+    EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST, reciprocal_edge
 
 _lonlat_to_xyz(lon, lat) = (
     cosd(lat) * cosd(lon),

@@ -1,8 +1,8 @@
 # src_v2 cubed-sphere C90 transport-binary config — 2-day Catrine validation
 #
-# Usage:
-#   julia --project=. scripts/run_transport_binary_v2.jl \
-#       config/runs/era5_cs_c90_v2_catrine_2day_f64.toml
+# Usage with the current runner:
+#   julia --project=. scripts/run_transport.jl \
+#       config/runs/completed_experiments/era5_cs_c90_v2_catrine_2day_f64.toml
 #
 # Prerequisites: generate C90 binaries using:
 #   julia --project=. scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl \

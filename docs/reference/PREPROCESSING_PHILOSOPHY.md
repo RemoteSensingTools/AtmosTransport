@@ -29,99 +29,43 @@ format-specific details stay in the existing reference docs.
 
 ## Stable Transport-Binary API
 
-Stable repo entrypoints:
-
-```julia
-build_transport_binary_v2_target(kind::Symbol, argv; FT=Float64)
-run_transport_binary_v2_preprocessor(target)
-target_summary(target)
-```
-
-The public entrypoint is `kind::Symbol`. The internal `Val(...)` builders stay
-behind the dispatch seam and should not be the primary user-facing API.
-
-Current binary-in / binary-out target kinds:
-- `:cubed_sphere_bilinear`
-- `:cubed_sphere_conservative`
-
-Extension contract for new targets:
-
-| Hook | Purpose |
-|------|---------|
-| `prepare_transport_binary_v2_target` | Build reusable context after opening the source binary |
-| `collect_transport_binary_v2_windows` | Produce output windows for the target |
-| `build_transport_binary_v2_header` | Build the output header dictionary |
-| `write_transport_binary_v2_output` | Write the final artifact and return bytes written |
-
-CLI example:
+The canonical config-driven entrypoint is:
 
 ```bash
-julia --project=. scripts/preprocessing/preprocess_era5_cs_conservative_v2.jl \
+julia -t8 --project=. scripts/preprocessing/preprocess_transport_binary.jl \
+    config/preprocessing/<config>.toml --day 2021-12-01
+```
+
+Native-source configs declare `[source].toml` plus `[source].root_dir`; ERA5
+spectral configs use the historical `[input].spectral_dir` shape. Both paths
+converge on `AtmosTransport.Preprocessing.process_day`.
+
+The supported binary-in / binary-out bridge is the LL-to-CS regrid CLI:
+
+```bash
+julia -t16 --project=. scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl \
     --input era5_latlon.bin --output era5_cs.bin --Nc 90
 ```
 
-Programmatic example:
+New source families should add an `AbstractMetSettings` loader and route through
+`process_day`. New binary regrid pairs should extend
+`Preprocessing.regrid_transport_binary` instead of adding another parallel
+runner.
 
-```julia
-include("scripts/preprocessing/transport_binary_v2_dispatch.jl")
-include("scripts/preprocessing/transport_binary_v2_cs_conservative.jl")
+## Config-Driven ERA5 Spectral Path
 
-target = build_transport_binary_v2_target(
-    :cubed_sphere_conservative,
-    ["--input", "era5_latlon.bin", "--output", "era5_cs.bin", "--Nc", "90"],
-)
-
-println(target_summary(target))
-run_transport_binary_v2_preprocessor(target)
-```
-
-Minimal new-target skeleton:
-
-```julia
-struct MyTarget <: AbstractTransportBinaryV2Target
-    input_path::String
-    output_path::String
-end
-
-target_input_path(t::MyTarget) = t.input_path
-target_output_path(t::MyTarget) = t.output_path
-target_float_type(::MyTarget) = Float64
-
-prepare_transport_binary_v2_target(target, reader) = ...
-collect_transport_binary_v2_windows(target, ctx, reader) = ...
-build_transport_binary_v2_header(target, ctx, reader, windows) = Dict(...)
-write_transport_binary_v2_output(target, ctx, reader, header, windows) = ...
-```
-
-## Stable Spectral Config API
-
-Stable repo entrypoints for config-driven ERA5 day builders:
-
-```julia
-build_spectral_transport_binary_v2_target(config_path, argv=String[]; FT=Float64)
-run_spectral_transport_binary_v2_preprocessor(target)
-target_summary(target)
-```
-
-Current config-driven target families:
-- structured lat-lon transport binaries via `preprocess_era5_latlon_transport_binary_v2.jl`
-- reduced-Gaussian transport binaries via `preprocess_transport_binary.jl`
-
-Extension contract for new config-driven targets:
-
-| Hook | Purpose |
-|------|---------|
-| `build_spectral_transport_binary_v2_target(::Val{kind}, ...)` | Build the target from parsed config/runtime state |
-| `target_dates` | Report the scheduled day set |
-| `log_spectral_transport_binary_v2_configuration` | Emit the startup summary |
-| `process_spectral_transport_binary_v2_day` | Process one day |
-
-CLI example:
+ERA5 spectral preprocessing now uses the same `preprocess_transport_binary.jl`
+entrypoint as the other supported source and topology pairs:
 
 ```bash
-julia --project=. scripts/preprocessing/preprocess_era5_latlon_transport_binary_v2.jl \
+julia -t8 --project=. scripts/preprocessing/preprocess_transport_binary.jl \
     config/preprocessing/era5_latlon_transport_binary_v2.toml --day 2021-12-01
 ```
+
+The historical `*_v2.toml` config names are still common because they name the
+transport-binary product family, not a separate runner. For new target grids,
+add the target geometry under `[grid]` and route the work through
+`process_day(date, grid, settings, vertical; ...)`.
 
 ## Go Deeper
 

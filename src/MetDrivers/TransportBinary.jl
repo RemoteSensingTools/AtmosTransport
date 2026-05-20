@@ -1038,40 +1038,69 @@ _transport_basis_symbol(sym::Symbol) = lowercase(String(sym)) == "dry" ? :dry : 
 _transport_basis_symbol(::DryBasis) = :dry
 _transport_basis_symbol(::MoistBasis) = :moist
 
+const _FIELD_PRODUCER_HINT = Dict{Symbol, String}(
+    :m => "Regenerate the transport binary with the unified preprocessor; `m` is a required air-mass section.",
+    :state => "Provide `window.state.air_mass` when using the in-memory writer API.",
+    :ps => "Regenerate with surface pressure enabled; `ps` is a required runtime surface-pressure section.",
+    :hflux => "Regenerate with horizontal mass fluxes enabled; LL/RG writers provide `am`/`bm`, RG writers may provide `hflux`.",
+    :fluxes => "Provide `window.fluxes` when using the in-memory writer API.",
+    :am => "Regenerate with x-direction mass fluxes enabled; `am` is required for lat-lon transport.",
+    :bm => "Regenerate with y-direction mass fluxes enabled; `bm` is required for lat-lon transport.",
+    :cm => "Regenerate with vertical continuity closure enabled so `cm` is written.",
+    :dam => "Regenerate with replay-gate flux deltas enabled; this section comes from the plan-39 continuity contract.",
+    :dbm => "Regenerate with replay-gate flux deltas enabled; this section comes from the plan-39 continuity contract.",
+    :dhflux => "Regenerate with replay-gate flux deltas enabled for reduced-Gaussian horizontal fluxes.",
+    :dcm => "Regenerate with replay-gate vertical-flux deltas enabled; this section comes from the plan-39 continuity contract.",
+    :dm => "Regenerate with replay-gate mass deltas enabled; this section comes from the plan-39 continuity contract.",
+    :tm5_fields => "Set `[preprocessing] include_convection = true` / TM5-enabled preprocessing when writing TM5 convection sections.",
+    :vdiff => "Set `[preprocessing] include_vdiff_fields = true` when writing GCHP VDIFF sections.",
+)
+
+function _missing_window_field_error(names::Symbol...)
+    rendered = join(("`$(name)`" for name in names), " or ")
+    hints = String[]
+    for name in names
+        hint = get(_FIELD_PRODUCER_HINT, name, "")
+        isempty(hint) || push!(hints, hint)
+    end
+    suffix = isempty(hints) ? "" : " " * join(unique(hints), " ")
+    return error("transport-binary window is missing $(rendered)." * suffix)
+end
+
 _transport_window_mass(window) =
     haskey(window, :m) ? window.m :
     haskey(window, :state) ? window.state.air_mass :
-    error("transport-binary window is missing `m` or `state`")
+    _missing_window_field_error(:m, :state)
 
 _transport_window_ps(window) =
     haskey(window, :ps) ? window.ps :
-    error("transport-binary window is missing `ps`")
+    _missing_window_field_error(:ps)
 
 _transport_window_hflux(window) =
     haskey(window, :hflux) ? window.hflux :
     haskey(window, :fluxes) ? window.fluxes.horizontal_flux :
-    error("transport-binary window is missing `hflux` or `fluxes`")
+    _missing_window_field_error(:hflux, :fluxes)
 
 _transport_window_am(window) =
     haskey(window, :am) ? window.am :
     haskey(window, :fluxes) ? window.fluxes.am :
-    error("transport-binary window is missing `am` or `fluxes`")
+    _missing_window_field_error(:am, :fluxes)
 
 _transport_window_bm(window) =
     haskey(window, :bm) ? window.bm :
     haskey(window, :fluxes) ? window.fluxes.bm :
-    error("transport-binary window is missing `bm` or `fluxes`")
+    _missing_window_field_error(:bm, :fluxes)
 
 _transport_window_cm(window) =
     haskey(window, :cm) ? window.cm :
     haskey(window, :fluxes) ? window.fluxes.cm :
-    error("transport-binary window is missing `cm` or `fluxes`")
+    _missing_window_field_error(:cm, :fluxes)
 
-_transport_window_dam(window) = haskey(window, :dam) ? window.dam : error("transport-binary window is missing `dam`")
-_transport_window_dbm(window) = haskey(window, :dbm) ? window.dbm : error("transport-binary window is missing `dbm`")
-_transport_window_dhflux(window) = haskey(window, :dhflux) ? window.dhflux : error("transport-binary window is missing `dhflux`")
-_transport_window_dcm(window) = haskey(window, :dcm) ? window.dcm : error("transport-binary window is missing `dcm`")
-_transport_window_dm(window) = haskey(window, :dm) ? window.dm : error("transport-binary window is missing `dm`")
+_transport_window_dam(window) = haskey(window, :dam) ? window.dam : _missing_window_field_error(:dam)
+_transport_window_dbm(window) = haskey(window, :dbm) ? window.dbm : _missing_window_field_error(:dbm)
+_transport_window_dhflux(window) = haskey(window, :dhflux) ? window.dhflux : _missing_window_field_error(:dhflux)
+_transport_window_dcm(window) = haskey(window, :dcm) ? window.dcm : _missing_window_field_error(:dcm)
+_transport_window_dm(window) = haskey(window, :dm) ? window.dm : _missing_window_field_error(:dm)
 
 @inline function _transport_window_has_surface(window)
     if haskey(window, :surface)
@@ -1099,7 +1128,8 @@ end
     elseif haskey(window, name)
         return getfield(window, name)
     else
-        error("transport-binary window is missing PBL surface field `$(name)`")
+        error("transport-binary window is missing PBL surface field `$(name)`. " *
+              "Set `[preprocessing] include_surface = true` when producing the binary.")
     end
 end
 
@@ -1110,8 +1140,7 @@ end
 # but the window didn't include `tm5_fields` (plan 23 Commit 3).
 @inline function _transport_window_tm5_field(window, name::Symbol)
     haskey(window, :tm5_fields) ||
-        error("transport-binary window is missing `tm5_fields` " *
-              "(required when writing TM5 convection sections)")
+        _missing_window_field_error(:tm5_fields)
     nt = window.tm5_fields
     hasproperty(nt, name) ||
         error("transport-binary window.tm5_fields is missing field `$(name)`")
@@ -1137,7 +1166,8 @@ end
     end
     key = Symbol(:vdiff_, name)
     haskey(window, key) ||
-        error("transport-binary window is missing GCHP VDIFF field `$(key)`")
+        error("transport-binary window is missing GCHP VDIFF field `$(key)`. " *
+              get(_FIELD_PRODUCER_HINT, :vdiff, ""))
     return getfield(window, key)
 end
 

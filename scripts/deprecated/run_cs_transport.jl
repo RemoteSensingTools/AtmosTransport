@@ -9,4 +9,4 @@
       "production runtime matrix; use scripts/run_transport.jl for runs, or " *
       "scripts/benchmarks/run_cs_transport.jl for the low-level CS benchmark."
 
-include(joinpath(@__DIR__, "benchmarks", "run_cs_transport.jl"))
+include(joinpath(@__DIR__, "..", "benchmarks", "run_cs_transport.jl"))

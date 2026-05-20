@@ -1,7 +1,8 @@
 # src_v2 transport-binary sequence runner config
 #
-# Example usage:
-#   julia --project=. scripts/run_transport_binary_v2.jl #       config/runs/era5_latlon_transport_v2_dec2021.toml
+# Example usage with the current runner:
+#   julia --project=. scripts/run_transport.jl \
+#       config/runs/completed_experiments/era5_latlon_transport_v2_dec2021.toml
 #
 # Add a second day to [input].binary_paths for a 2-day carry-forward run.
 

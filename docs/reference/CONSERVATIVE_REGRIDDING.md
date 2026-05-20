@@ -273,7 +273,7 @@ GEOS-style `(Xdim, Ydim, nf, ...)` arrays.
 | `src/Regridding/Regridding.jl` | Module shell, exports |
 | `src/Regridding/treeify_meshes.jl` | `Trees.treeify` for all 3 mesh types + `cubed_sphere_face_corners` |
 | `src/Regridding/weights_io.jl` | `build_regridder`, JLD2 save/load, ESMF export, `apply_regridder!` |
-| `scripts/preprocessing/preprocess_era5_cs_conservative_v2.jl` | ERA5 LL -> CS binary producer |
+| `scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl` | ERA5 LL -> CS binary regrid bridge |
 | `test/regridding/runtests.jl` | Test suite entry point (620 tests) |
 | `test/regridding/test_conservation.jl` | Mass conservation across grid pairs |
 | `test/regridding/test_cubed_sphere_corners.jl` | Panel geometry golden tests |

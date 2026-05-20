@@ -21,6 +21,9 @@
 
 abstract type AbstractCSTapeStorage end
 
+const CSPanelCache = NTuple{6, <:AbstractArray}
+const CSSynchronizeHook = Union{Nothing, Function}
+
 """
     DeviceCSTapeStorage()
 
@@ -38,8 +41,8 @@ uses a shared device-side read cache during the reverse pass. This policy
 requires the CUDA extension and CuArray panel states.
 """
 mutable struct PinnedHostCSTapeStorage <: AbstractCSTapeStorage
-    device_cache::Any
-    synchronize::Any
+    device_cache::Union{Nothing, CSPanelCache}
+    synchronize::CSSynchronizeHook
 
     PinnedHostCSTapeStorage() = new(nothing, nothing)
 end

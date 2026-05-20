@@ -165,6 +165,12 @@ function Base.getproperty(g::AtmosGrid, s::Symbol)
     end
 end
 
+function Base.propertynames(::AtmosGrid, private::Bool = false)
+    names = (:horizontal, :vertical, :arch, :planet,
+             :radius, :gravity, :reference_pressure)
+    return private ? names : names
+end
+
 export AbstractHorizontalMesh, AbstractStructuredMesh
 export AbstractFluxTopology, StructuredFluxTopology, FaceIndexedFluxTopology
 export StructuredTopology, FaceConnectedTopology

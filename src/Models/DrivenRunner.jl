@@ -3,13 +3,11 @@
 
 Library-level entry point for the driven transport runtime.
 
-Plan 40 Commit 6a hoists the LL/RG runner here from
-`scripts/run_transport_binary.jl` so both the old script (now a thin
-shim) and the forthcoming unified `scripts/run_transport.jl` share
-one implementation. Commit 6b will fold the CS-specific flow from
-`scripts/run_cs_driven.jl` into the same top-level
-`run_driven_simulation(cfg)` with dispatch driven by the first
-binary's header (`inspect_binary(first_path).grid_type`).
+The canonical CLI, `scripts/run_transport.jl`, is a thin wrapper over
+`run_driven_simulation(cfg)`. The library function handles LL/RG and CS
+runtime flows with dispatch driven by the first binary's header
+(`inspect_binary(first_path).grid_type`). Historical runner names live under
+`scripts/deprecated/` only for reference.
 
 ## Ownership boundary
 
@@ -29,6 +27,33 @@ binary's header (`inspect_binary(first_path).grid_type`).
   `build_initial_mixing_ratio` + `pack_initial_tracer_mass`
   (basis-aware per `feedback_vmr_to_mass_basis_aware`) and
   `build_surface_flux_sources`.
+
+## Where the physics actually runs
+
+`DrivenRunner` is the orchestration layer, not the kernel layer. It opens
+transport binaries, builds initial state, chooses output cadence, and installs
+the TOML-selected operators on a `TransportModel`. The live physics call chain
+is:
+
+1. `build_runtime_physics_recipe` reads `[advection]`, `[diffusion]`,
+   `[convection]`, `[chemistry]`, and tracer surface-flux settings and returns
+   the operator objects.
+2. `_make_structured_model` or the CS model constructor installs those
+   operators on `TransportModel(state, fluxes, grid, recipe.advection; ...)`.
+3. `DrivenSimulation(model, driver; ...)` loads the current met window and
+   wraps chemistry and surface sources into the model with `with_chemistry`
+   and `with_emissions`.
+4. The runtime loop below calls `run_window!(sim)` for LL/RG or `step!(sim)`
+   for CS. Those functions live in `DrivenSimulation.jl`.
+5. `DrivenSimulation.step!` refreshes time-varying forcing from the driver,
+   then calls `TransportModel.step!` or, for binary-scheduled substeps,
+   `transport_step!` plus an end-of-window `convection_chemistry_step!`.
+6. `TransportModel.jl` is where advection, surface emissions, diffusion,
+   convection, and chemistry are applied to the state.
+
+So, when following a run as a scientist: start here to understand data and
+configuration flow, then jump to `DrivenSimulation.step!` and
+`TransportModel.step!` to see the actual physics ordering.
 
 ## GPU residency (feedback_verify_gpu_runs_on_gpu)
 
@@ -84,7 +109,7 @@ import ..Models: DrivenSimulation, run_window!, run!, step!, allocate_face_fluxe
 using ..Models: build_runtime_physics_recipe, validate_runtime_physics_recipe,
                  configured_halo_width, build_cs_advection
 
-export run_driven_simulation, TransportTracerSpec
+export run_driven_simulation, validate_config, TransportTracerSpec
 
 # ===========================================================================
 # Forward-run progress timer — Transport vs IO wall-clock breakdown.
@@ -258,6 +283,93 @@ end
 function _backend_label(cfg)
     backend = _cfg_runtime_backend(cfg)
     return backend_label(backend)
+end
+
+function _cfg_float_type(cfg)
+    raw = get(get(cfg, "numerics", Dict{String, Any}()), "float_type", "Float64")
+    s = lowercase(String(raw))
+    if s == "float32"
+        return Float32
+    elseif s == "float64"
+        return Float64
+    end
+    throw(ArgumentError(
+        "[numerics] float_type must be \"Float32\" or \"Float64\"; got $(repr(raw))."))
+end
+
+function _capture_config_error!(f, errors::Vector{String})
+    try
+        f()
+    catch err
+        push!(errors, sprint(showerror, err))
+    end
+    return errors
+end
+
+function _check_run_window_bounds!(cfg, errors::Vector{String})
+    run_cfg = get(cfg, "run", Dict{String, Any}())
+    start_raw = get(run_cfg, "start_window", 1)
+    stop_raw = get(run_cfg, "stop_window", nothing)
+    _capture_config_error!(errors) do
+        start_window = Int(start_raw)
+        start_window >= 1 ||
+            throw(ArgumentError("[run] start_window must be >= 1; got $(start_raw)."))
+        if stop_raw !== nothing
+            stop_window = Int(stop_raw)
+            stop_window >= start_window ||
+                throw(ArgumentError("[run] stop_window=$(stop_raw) must be >= start_window=$(start_window)."))
+        end
+    end
+    return nothing
+end
+
+"""
+    validate_config(cfg::AbstractDict) -> (ok::Bool, errors::Vector{String})
+
+Run inexpensive pre-flight checks for a driven runtime config: input shape,
+resolved binary paths, numeric type, backend/float compatibility, tracer table
+shape, and basic run-window bounds. It does not open binary readers or allocate
+model state; topology and payload capability checks still run when
+`run_driven_simulation` inspects the first binary.
+"""
+function validate_config(cfg::AbstractDict)
+    errors = String[]
+
+    input_cfg = get(cfg, "input", nothing)
+    if !(input_cfg isa AbstractDict)
+        push!(errors, "[input] must be a TOML table with `binary_paths` or `folder + start_date + end_date`.")
+    else
+        binary_paths_ref = Ref(String[])
+        _capture_config_error!(errors) do
+            paths = expand_binary_paths(input_cfg)
+            isempty(paths) && throw(ArgumentError("[input] resolved to an empty binary list."))
+            binary_paths_ref[] = paths
+        end
+        for path in binary_paths_ref[]
+            isfile(path) || push!(errors, "[input] resolved path does not exist: $(path)")
+        end
+    end
+
+    ft_ref = Ref{Union{Nothing, DataType}}(nothing)
+    _capture_config_error!(errors) do
+        ft_ref[] = _cfg_float_type(cfg)
+    end
+    _capture_config_error!(errors) do
+        backend = _cfg_runtime_backend(cfg)
+        ft_ref[] === nothing || assert_backend_float_type!(backend, ft_ref[])
+    end
+
+    tracers_cfg = get(cfg, "tracers", nothing)
+    if tracers_cfg !== nothing
+        if !(tracers_cfg isa AbstractDict)
+            push!(errors, "[tracers] must be a TOML table of tracer subtables.")
+        elseif isempty(tracers_cfg)
+            push!(errors, "[tracers] was provided but contains no tracer subtables.")
+        end
+    end
+
+    _check_run_window_bounds!(cfg, errors)
+    return isempty(errors), errors
 end
 
 @inline _ansi_enabled() =
@@ -544,20 +656,35 @@ function _validate_input_binary_expectations(caps, input_cfg::AbstractDict,
     return nothing
 end
 
+function _log_binary_summary(path::AbstractString, caps)
+    schedule = caps.variable_step_schedule ?
+        "adaptive" : string(caps.steps_per_window)
+    fields = "[" * join(String.(sort(collect(caps.payload_sections))), ",") * "]"
+    @info "[binary] $(path) grid=$(caps.grid_type) levels=$(caps.nlevel) " *
+          "basis=$(caps.mass_basis) steps/window=$(schedule) fields=$(fields)"
+    return nothing
+end
+
 """
     run_driven_simulation(cfg::AbstractDict) -> TransportModel
 
-Run a driven transport simulation from a TOML config. Resolves
-`[input]` to a sorted binary list via `expand_binary_paths`, picks
-the right driver based on the binary's `grid_type` header field,
-validates physics-vs-capability, verifies GPU residency when
-requested, runs the loop, optionally captures topology-native diagnostic snapshots
-to NetCDF, and returns the terminal `TransportModel`.
+Canonical high-level entry point for scientists running an AtmosTransport TOML.
+Use this unless you are writing a custom time loop. It resolves `[input]` to a
+sorted binary list, prints a one-line summary for each binary, dispatches on
+the first binary's `grid_type`, validates physics-vs-capability, runs the loop,
+optionally writes topology-native snapshots, and returns the terminal
+`TransportModel`.
 
-Plan 40 Commit 6a supports LL/RG only (structured and
-reduced-Gaussian). CS dispatch is added in Commit 6b.
+This function does not call the advection/diffusion/convection kernels
+directly. The handoff to physics happens inside the structured loop at
+`run_window!(sim)` and inside the CS loop at `step!(sim)`. Both routes enter
+`DrivenSimulation.step!`, which refreshes forcing and then calls
+`TransportModel.step!` / `transport_step!` / `convection_chemistry_step!`.
 """
 function run_driven_simulation(cfg::AbstractDict)
+    ok, errors = validate_config(cfg)
+    ok || throw(ArgumentError(
+        "Invalid AtmosTransport run config:\n  - " * join(errors, "\n  - ")))
     input_cfg = get(cfg, "input", Dict{String, Any}())
     binary_paths = expand_binary_paths(input_cfg)
     isempty(binary_paths) &&
@@ -571,7 +698,12 @@ function run_driven_simulation(cfg::AbstractDict)
     # physics kinds). The capability probe also runs the load-time
     # gates (stale-binary, cm-continuity) as a side effect of opening
     # the reader in `inspect_binary`.
-    caps = inspect_binary(first(binary_paths); io = devnull)
+    binary_caps = [(path = path, caps = inspect_binary(path; io = devnull))
+                   for path in binary_paths]
+    for item in binary_caps
+        _log_binary_summary(item.path, item.caps)
+    end
+    caps = first(binary_caps).caps
     _validate_input_binary_expectations(caps, input_cfg, first(binary_paths))
     result = _run_driven_simulation_for(Val(caps.grid_type), binary_paths, cfg)
     if timers_on
@@ -601,8 +733,7 @@ function _run_driven_simulation_for(::Val{grid_type}, _binary_paths::Vector{Stri
 end
 
 function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
-    FT = Symbol(get(get(cfg, "numerics", Dict{String, Any}()), "float_type", "Float64")) == :Float32 ?
-         Float32 : Float64
+    FT = _cfg_float_type(cfg)
     assert_backend_float_type!(_cfg_runtime_backend(cfg), FT)
     run_cfg = get(cfg, "run", Dict{String, Any}())
     start_window = Int(get(run_cfg, "start_window", 1))
@@ -632,6 +763,10 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
     recipe = build_runtime_physics_recipe(cfg, first_driver, FT)
     _validate_capability_match(first_driver, recipe, cfg)
 
+    # Build the stateful physics object. The recipe selected from TOML is
+    # installed on `TransportModel` here, but no physics is applied yet; that
+    # starts when `run_window!(sim)` or `run!(sim)` calls
+    # `DrivenSimulation.step!` below.
     model = _make_structured_model(first_driver;
                                     FT = FT, recipe = recipe,
                                     tracer_specs = tracer_specs, cfg = cfg)
@@ -735,6 +870,10 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
 
         if do_snapshots
             for _ in 1:n_windows
+                # Physics handoff for LL/RG: `run_window!` advances through all
+                # substeps in the current met window. Each substep refreshes
+                # forcing in `DrivenSimulation.step!` and then calls the
+                # operator order documented in `TransportModel.step!`.
                 timed_transport!(timer, () -> run_window!(sim))
                 tick_window!(timer;
                              status = @sprintf("%s window %d/%d  steps/window=%d",
@@ -759,6 +898,8 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
                 end
             end
         else
+            # Same physics path as above, but without per-window snapshot
+            # interrupts. `run!` repeatedly calls `DrivenSimulation.step!`.
             timed_transport!(timer, () -> run!(sim))
             total_elapsed_hours += n_windows * window_hours
             # `run!` doesn't tick per window; advance the bar to the
@@ -824,12 +965,8 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
 end
 
 # ===========================================================================
-# CS runner (plan 40 Commit 6b, hoisted from scripts/run_cs_driven.jl)
+# CS runner (plan 40 Commit 6b, hoisted from the historical CS runner)
 # ===========================================================================
-
-_cfg_float_type(cfg) = let s = get(get(cfg, "numerics", Dict()), "float_type", "Float64")
-    s == "Float32" ? Float32 : Float64
-end
 
 function _cfg_architecture(cfg)
     if _cfg_use_gpu(cfg)
@@ -921,6 +1058,9 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
     state  = CubedSphereState(BasisT, mesh, air_mass; tracer_kwargs...)
     fluxes = allocate_face_fluxes(mesh, Nz; FT = FT, basis = BasisT)
 
+    # Build the CS physics object. The recipe-selected operators are installed
+    # on the model here; the kernels start running later in the `step!(sim)`
+    # loop after `DrivenSimulation` has loaded/refreshed each forcing window.
     model = TransportModel(state, fluxes, grid, recipe.advection;
                             diffusion  = recipe.diffusion,
                             convection = recipe.convection)
@@ -1050,6 +1190,11 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
                                                sim.steps_per_window),
                              redraw = true)
         while sim.iteration < sim.final_iteration
+            # Physics handoff for CS: one `step!(sim)` is one runtime substep.
+            # `DrivenSimulation.step!` refreshes window forcing, then delegates
+            # to `TransportModel.step!` or to the binary-scheduled
+            # `transport_step!` + end-of-window `convection_chemistry_step!`
+            # split. See those functions for the actual operator order.
             timed_transport!(timer, () -> step!(sim))
             if sim.iteration == sim.current_window_end_iteration
                 tick_window!(timer;

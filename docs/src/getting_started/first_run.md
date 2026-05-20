@@ -38,17 +38,34 @@ For double-buffered I/O overlap on GPU runs:
 julia --threads=2 --project=. scripts/run_transport.jl <config.toml>
 ```
 
+## Data roots
+
+Run configs can use `~/...`, `$ATMOSTRANSPORT_DATA_ROOT/...`, and
+`$ATMOSTRANSPORT_DATA_ROOT_quickstart/...` paths. The defaults are:
+
+| Variable | Default | Used by |
+|---|---|---|
+| `ATMOSTRANSPORT_DATA_ROOT` | `~/data/AtmosTransport` | Production and campaign configs. |
+| `ATMOSTRANSPORT_DATA_ROOT_quickstart` | `~/data/AtmosTransport_quickstart` | Downloaded quickstart bundle. |
+
+Set these variables when your data lives somewhere else:
+
+```bash
+export ATMOSTRANSPORT_DATA_ROOT=/scratch/$USER/AtmosTransport
+export ATMOSTRANSPORT_DATA_ROOT_quickstart=/scratch/$USER/AtmosTransport_quickstart
+```
+
 ## A worked TOML walkthrough
 
 `config/runs/quickstart/ll72x37_advonly.toml` (the smallest of the four
 quickstart configs) is a concise 3-day advection-only run on a 5°
-lat-lon grid with a boundary-layer-enhanced CO₂ initial condition. The
+lat-lon grid with a Gaussian CO2 anomaly initial condition. The
 schema is the canonical one consumed by `scripts/run_transport.jl` via
 `expand_binary_paths`:
 
 ```toml
 [input]
-folder     = "~/data/AtmosTransport_quickstart/met/era5_ll72x37_dec2021_f32/"
+folder     = "$ATMOSTRANSPORT_DATA_ROOT_quickstart/met/era5_ll72x37_dec2021_f32/"
 start_date = "2021-12-01"
 end_date   = "2021-12-03"
 # Alternative: explicit list
@@ -65,14 +82,17 @@ scheme = "slopes"            # "slopes" (Russell-Lerner) or "ppm" (Putman-Lin)
 
 [tracers.co2_bl]
 [tracers.co2_bl.init]
-kind        = "bl_enhanced"  # uniform | bl_enhanced | gaussian_blob | file | netcdf
-background  = 4.0e-4         # ~400 ppm dry VMR (uniform background)
-enhancement = 1.0e-4         # +100 ppm in lowest n_layers (LL only)
-n_layers    = 3              # bottom-3-layer enhancement
+kind          = "gaussian_blob"  # uniform | gaussian_blob | latitude_step | file | netcdf
+background    = 4.0e-4           # ~400 ppm dry VMR
+amplitude     = 8.0e-5           # +80 ppm anomaly
+lon0_deg      = -80.0
+lat0_deg      = 35.0
+sigma_lon_deg = 35.0
+sigma_lat_deg = 18.0
 
 [output]
 snapshot_hours = [0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72]
-snapshot_file  = "~/data/AtmosTransport_quickstart/output/ll72x37_advonly.nc"
+snapshot_file  = "$ATMOSTRANSPORT_DATA_ROOT_quickstart/output/ll72x37_advonly.nc"
 ```
 
 Things to know:

@@ -152,6 +152,11 @@ function Base.getproperty(state::CellState, name::Symbol)
     end
 end
 
+function Base.propertynames(::CellState, private::Bool = false)
+    names = (:air_mass, :air_dry_mass, :tracers_raw, :tracer_names, :tracers)
+    return private ? names : names
+end
+
 # ---------------------------------------------------------------------------
 # Convenience diagnostics
 # ---------------------------------------------------------------------------

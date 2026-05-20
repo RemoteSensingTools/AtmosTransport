@@ -18,6 +18,15 @@ using JSON3
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 using .AtmosTransport: Grids, State, Operators, MetDrivers
+using .AtmosTransport.Grids: StructuredFluxTopology
+using .AtmosTransport.MetDrivers: A_ifc, B_ifc, DiagnoseVerticalFromHorizontal,
+                                  ERA5BinaryReader, PreprocessedERA5Driver,
+                                  build_dry_fluxes!, has_flux_delta, has_qv,
+                                  load_flux_delta_window!, load_qv_window!,
+                                  load_window!, window_count
+using .AtmosTransport.Operators: MonotoneLimiter, strang_split!
+using .AtmosTransport.State: DryMassFluxBasis, MoistMassFluxBasis,
+                             StructuredFaceFluxState, flux_basis, mass_basis
 
 # =========================================================================
 # Helper: write a synthetic v4 binary file

@@ -5,6 +5,14 @@ using Adapt
 
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
+using .AtmosTransport.Grids: StructuredTopology, face_cells, face_length,
+                             face_normal, n_levels, planet_parameters
+using .AtmosTransport.Operators: AbstractConstantScheme, AbstractLinearScheme,
+                                 AbstractQuadraticScheme, MonotoneLimiter,
+                                 strang_split!
+using .AtmosTransport.Parameters: PlanetParameters
+using .AtmosTransport.State: FaceIndexedFluxState, StructuredFaceFluxState,
+                             mass_basis
 
 const HAS_CUDA_FOR_ADAPT = try
     using CUDA

@@ -197,6 +197,8 @@ function _validate_replay_consistency_cs(reader::CubedSphereBinaryReader{FT}) wh
             "with ENV[\"ATMOSTR_NO_REPLAY_CHECK\"]=\"1\" for diagnostic runs."
         ))
 
+    @info "Replay continuity gate passed: $(basename(reader.path)) " *
+          "topology=cubed_sphere worst_rel=$(worst_rel) worst_window=$(worst_win)"
     return (worst_window = worst_win, worst_rel = worst_rel, worst_abs = worst_abs)
 end
 

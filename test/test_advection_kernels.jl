@@ -22,7 +22,10 @@ using Test
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 using .AtmosTransport: Operators, Grids
+using .AtmosTransport.Grids: cell_areas_by_latitude
+using .AtmosTransport.Operators: MonotoneLimiter, strang_split!, strang_split_mt!
 using .AtmosTransport.Operators.Advection: _xface_tracer_flux
+using .AtmosTransport.State: StructuredFaceFluxState
 
 # Try to load CUDA; tests gracefully skip if unavailable
 const HAS_GPU = try

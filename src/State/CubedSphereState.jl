@@ -87,6 +87,12 @@ function Base.getproperty(state::CubedSphereState, name::Symbol)
     end
 end
 
+function Base.propertynames(::CubedSphereState, private::Bool = false)
+    names = (:air_mass, :air_dry_mass, :tracers_raw, :tracer_names,
+             :tracers, :halo_width)
+    return private ? names : names
+end
+
 @inline function _panel_interior(panel::AbstractArray, Hp::Int)
     nx_panel = size(panel, 1)
     ny_panel = size(panel, 2)

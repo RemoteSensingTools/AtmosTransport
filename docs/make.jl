@@ -81,6 +81,7 @@ const PAGES = [
         "config/data_sources.md",
     ],
     "API Reference" => [
+        "api/public_api.md",
         "api/index.md",
         "api/architectures.md",
         "api/parameters.md",

@@ -94,8 +94,8 @@ cubed-sphere-specific data paths.
   [`../../docs/20_RUNTIME_FLOW.md`](../../docs/20_RUNTIME_FLOW.md)
 - Tests:
   - [`../../test/test_transport_binary_reader.jl`](../../test/test_transport_binary_reader.jl)
-  - [`../../test/test_transport_binary_v2_dispatch.jl`](../../test/test_transport_binary_v2_dispatch.jl)
-  - [`../../test/test_run_transport_binary_v2.jl`](../../test/test_run_transport_binary_v2.jl)
+  - [`../../test/test_run_transport_binary_recipe.jl`](../../test/test_run_transport_binary_recipe.jl)
+  - [`../../test/test_binary_path_expander.jl`](../../test/test_binary_path_expander.jl)
   - [`../../test/test_dry_flux_interface.jl`](../../test/test_dry_flux_interface.jl)
   - [`../../test/test_current_time.jl`](../../test/test_current_time.jl)
   - [`../../test/test_cubed_sphere_runtime.jl`](../../test/test_cubed_sphere_runtime.jl)

@@ -1474,12 +1474,12 @@ function _verify_rg_balanced_window!(window_contract,
     return diag
 end
 
-mutable struct RGSpectralUnifiedDriverContext{G, S, V, SP}
+mutable struct RGSpectralUnifiedDriverContext{G, S, V, SP, P}
     grid              :: G
     settings          :: S
     vertical          :: V
     spec              :: SP
-    substep_policy    :: Any
+    substep_policy    :: P
     steps_per_window  :: Int
     write_replay_on   :: Bool
     worst_pre_raw     :: Float64

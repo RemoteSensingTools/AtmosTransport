@@ -1,13 +1,62 @@
 """
     DrivenSimulation
 
-Window-driven standalone runtime for `src` transport models.
+Low-level window-driven runtime for custom driver/model wiring.
+
+Most TOML-based runs should go through `run_driven_simulation`, which
+builds and validates this object for you. Construct `DrivenSimulation` directly
+only when you need a custom met driver, callback loop, or model assembly.
 
 A `DrivenSimulation` keeps transport-window timing and forcing in the driver,
 while the model retains ownership of prognostic tracer and air-mass state.
 The runtime interpolates forcing within each met window and advances the model
 with the same `step!(model, Δt)` entry point used by the fixed-flux smoke
 harness.
+
+For experienced users, the constructor is meant to be assembled from the same
+pieces used by `run_driven_simulation`: a met driver, a basis-compatible state,
+empty flux storage owned by the model, and a runtime physics recipe. A minimal
+LL/RG manual setup looks like this:
+
+```julia
+using TOML, AtmosTransport
+using AtmosTransport.MetDrivers: air_mass_basis, driver_grid
+
+cfg = TOML.parsefile("config/runs/quickstart/ll72x37_advonly.toml")
+paths = expand_binary_paths(cfg["input"])
+FT = Float64
+
+driver = TransportBinaryDriver(first(paths); FT = FT, arch = CPU())
+recipe = build_runtime_physics_recipe(cfg, driver, FT)
+validate_runtime_physics_recipe(recipe, driver)
+
+grid = driver_grid(driver)
+window1 = load_transport_window(driver, 1)
+Basis = air_mass_basis(driver) === :dry ? DryBasis : MoistBasis
+air = copy(window1.air_mass)
+
+vmr = build_initial_mixing_ratio(
+    air, grid, Dict("kind" => "uniform", "background" => 400e-6);
+    surface_pressure = window1.surface_pressure,
+)
+co2 = pack_initial_tracer_mass(grid, air, vmr; mass_basis = Basis())
+
+state = CellState(Basis, air; CO2 = co2)
+fluxes = allocate_face_fluxes(grid.horizontal, nlevels(grid);
+                              FT = FT, basis = Basis)
+model = TransportModel(state, fluxes, grid, recipe.advection;
+                       diffusion = recipe.diffusion,
+                       convection = recipe.convection)
+
+sim = DrivenSimulation(model, driver;
+                       stop_window = min(total_windows(driver), 24),
+                       chemistry = recipe.chemistry)
+run_window!(sim)
+```
+
+The full runner adds the practical edges around this skeleton: resolving many
+daily binaries, GPU adaptation, surface-flux source construction, snapshot
+output, progress reporting, and capability checks against every file.
 
 `SurfaceFluxSource` (previously defined here) was migrated to
 `src/Operators/SurfaceFlux/` in plan 17 Commit 2; it is still re-exported
@@ -232,8 +281,7 @@ end
     return _copy_flux_deltas!(dest, src)
 end
 
-function _copy_window_payload!(dest::StructuredTransportWindow{B},
-                               src::StructuredTransportWindow{B}) where {B <: AbstractMassBasis}
+function _copy_common_window_payload!(dest, src)
     _copy_storage!(dest.air_mass, src.air_mass)
     _copy_storage!(dest.surface_pressure, src.surface_pressure)
     copy_fluxes!(dest.fluxes, src.fluxes)
@@ -242,29 +290,21 @@ function _copy_window_payload!(dest::StructuredTransportWindow{B},
     _copy_optional_deltas!(dest.deltas, src.deltas)
     _copy_optional_convection!(dest.convection, src.convection)
     return dest
+end
+
+function _copy_window_payload!(dest::StructuredTransportWindow{B},
+                               src::StructuredTransportWindow{B}) where {B <: AbstractMassBasis}
+    return _copy_common_window_payload!(dest, src)
 end
 
 function _copy_window_payload!(dest::FaceIndexedTransportWindow{B},
                                src::FaceIndexedTransportWindow{B}) where {B <: AbstractMassBasis}
-    _copy_storage!(dest.air_mass, src.air_mass)
-    _copy_storage!(dest.surface_pressure, src.surface_pressure)
-    copy_fluxes!(dest.fluxes, src.fluxes)
-    _copy_optional_storage!(dest.qv_start, src.qv_start, :qv_start)
-    _copy_optional_storage!(dest.qv_end, src.qv_end, :qv_end)
-    _copy_optional_deltas!(dest.deltas, src.deltas)
-    _copy_optional_convection!(dest.convection, src.convection)
-    return dest
+    return _copy_common_window_payload!(dest, src)
 end
 
 function _copy_window_payload!(dest::CubedSphereTransportWindow{B},
                                src::CubedSphereTransportWindow{B}) where {B <: AbstractMassBasis}
-    _copy_storage!(dest.air_mass, src.air_mass)
-    _copy_storage!(dest.surface_pressure, src.surface_pressure)
-    copy_fluxes!(dest.fluxes, src.fluxes)
-    _copy_optional_storage!(dest.qv_start, src.qv_start, :qv_start)
-    _copy_optional_storage!(dest.qv_end, src.qv_end, :qv_end)
-    _copy_optional_deltas!(dest.deltas, src.deltas)
-    _copy_optional_convection!(dest.convection, src.convection)
+    _copy_common_window_payload!(dest, src)
     _copy_optional_surface!(dest.surface, src.surface)
     return dest
 end
@@ -373,13 +413,20 @@ using ..Operators.Diffusion: NoDiffusion, fill_dz_hydrostatic_constT!
 @inline function _refresh_dz_for_window!(sim::DrivenSimulation)
     sim.model.diffusion isa NoDiffusion && return nothing
     workspace = sim.model.workspace
-    hasproperty(workspace, :dz_scratch) || return nothing
-    dz_scratch = workspace.dz_scratch
+    dz_scratch = _window_dz_scratch(workspace)
+    dz_scratch === nothing && return nothing
     vertical = sim.model.grid.vertical
     ps = sim.window.surface_pressure
     fill_dz_hydrostatic_constT!(dz_scratch, ps, vertical.A, vertical.B)
     return nothing
 end
+
+@inline _window_dz_scratch(_workspace) = nothing
+@inline _window_dz_scratch(workspace::TransportModelWorkspace) =
+    _window_dz_scratch(workspace.advection_ws)
+@inline _window_dz_scratch(workspace::AdvectionWorkspace) = workspace.dz_scratch
+@inline _window_dz_scratch(workspace::CSAdvectionWorkspace) = workspace.dz_scratch
+@inline _window_dz_scratch(workspace::CSLinRoodAdvectionWorkspace) = workspace.dz_scratch
 
 @inline _refresh_pbl_kz_for_window!(_field, _sim::DrivenSimulation) = nothing
 

@@ -255,6 +255,8 @@ function _validate_replay_consistency_ll(reader::TransportBinaryReader{FT}) wher
             "bypass with ENV[\"ATMOSTR_NO_REPLAY_CHECK\"]=\"1\" for diagnostic runs."
         ))
 
+    @info "Replay continuity gate passed: $(basename(reader.path)) " *
+          "topology=latlon worst_rel=$(worst_rel) worst_window=$(worst_win)"
     return (worst_window = worst_win, worst_rel = worst_rel, worst_abs = worst_abs)
 end
 
@@ -339,6 +341,8 @@ function _validate_replay_consistency_rg(reader::TransportBinaryReader{FT}, grid
             "bypass with ENV[\"ATMOSTR_NO_REPLAY_CHECK\"]=\"1\" for diagnostic runs."
         ))
 
+    @info "Replay continuity gate passed: $(basename(reader.path)) " *
+          "topology=reduced_gaussian worst_rel=$(worst_rel) worst_window=$(worst_win)"
     return (worst_window = worst_win, worst_rel = worst_rel, worst_abs = worst_abs)
 end
 

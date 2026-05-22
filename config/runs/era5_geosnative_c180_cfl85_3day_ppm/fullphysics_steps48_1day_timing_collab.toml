@@ -1,0 +1,52 @@
+# ERA5 regridded to GEOS-native C180/L85, Dec 2 2021.
+# One-day timing run against the steps=48 binary built on 2026-05-20.
+# Identical to fullphysics_steps48_1day_timing.toml except for
+# [convection].use_collab_lu = true, which opts into the workgroup-
+# collaborative LU kernel (P6 / agent-loop synthesis 2026-05-22).
+#
+# Runner:
+#   ATMOSTR_TIMERS=1 julia --project=. scripts/run_transport.jl \
+#       config/runs/era5_geosnative_c180_cfl85_3day_ppm/fullphysics_steps48_1day_timing_collab.toml
+
+[input]
+folder       = "/temp1/c180_era5_geosgrid_cfl85_tm5_surface_f32_steps48_v3_20260520"
+start_date   = "2021-12-02"
+end_date     = "2021-12-02"
+file_pattern = "era5_transport_{YYYYMMDD}_merged1000Pa_float32.bin"
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[run]
+scheme = "ppm"
+
+[tracers.co2_natural]
+[tracers.co2_natural.init]
+kind = "catrine_co2"
+
+[tracers.co2_fossil]
+[tracers.co2_fossil.init]
+kind = "uniform"
+background = 0.0
+
+[tracers.co2_fossil.surface_flux]
+kind       = "gridfed_fossil_co2"
+file       = "/home/cfranken/data/AtmosTransport/catrine/Emissions/gridfed/GCP-GridFEDv2024.0_2021.short.nc"
+time_index = 12
+
+[diffusion]
+kind = "tm5_beljaars_viterbo_local_kz"
+surface_flux_boundary = true
+
+[convection]
+kind = "tm5"
+tile_workspace_gib = 0.25
+use_collab_lu = true
+
+[output]
+snapshot_hours = []
+snapshot_file  = "/temp1/c180_era5_geosgrid_cfl85_tm5_surface_f32_steps48_v3_20260520/fullphysics_tm5_ppm_1day_timing_collab.nc"

@@ -334,7 +334,15 @@ function build_runtime_convection(::AbstractRuntimeRecipeStyle, ::Val{:tm5}, sec
     # through C720/L137 with slack on H100. Set lower on memory-tight
     # GPUs (e.g. L40S 48 GiB) or higher to amortize launch overhead.
     budget = Float64(get(section, "tile_workspace_gib", 1.0))
-    return TM5Convection(; tile_workspace_gib = budget)
+    # `use_collab_lu` opts into the workgroup-collaborative kernel
+    # (~10× faster, bit-exact within Float32 rounding on CUDA — see
+    # docs/memos/TM5_CONVECTION_AGENTLOOP_SYNTHESIS.md). Default off
+    # so existing runs stay bit-identical. Falls back to the legacy
+    # per-thread kernel automatically when the (Nz, Nt, FT, backend)
+    # envelope is exceeded (see `_use_collab_path`).
+    use_collab = Bool(get(section, "use_collab_lu", false))
+    return TM5Convection(; tile_workspace_gib = budget,
+                           use_collab_lu = use_collab)
 end
 build_runtime_convection(::AbstractRuntimeRecipeStyle, ::Val{:cmfmc}, _section) = CMFMCConvection()
 

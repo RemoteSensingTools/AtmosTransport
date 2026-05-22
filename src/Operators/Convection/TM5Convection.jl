@@ -88,14 +88,58 @@ strong. The kernel launches once per tile and calls
 """
 struct TM5Convection{FT} <: AbstractConvection
     tile_workspace_gib :: FT
+    # Backend-portable workgroup-collaborative LU+solve path. When
+    # `true`, `apply_convection!` dispatches to the collaborative
+    # kernels in `tm5_kernels.jl` (`_tm5_*_column_collab_kernel!`)
+    # instead of the per-thread serial path. Bit-exact to the legacy
+    # path within Float32 rounding (~7e-7 max abs deviation on a C180
+    # panel); measured 8–11× faster on NVIDIA L40S. Designed for KA
+    # portability — same kernel compiles for CUDA and Metal — but
+    # see the deployment note below before flipping the default.
+    #
+    # Default off so existing runs are bit-identical until the user
+    # opts in. Production deployment as default still needs:
+    #   1. A Metal-machine sanity run (only CUDA L40S has been
+    #      measured to date).
+    #   2. Confirmation that the per-workgroup `@localmem` footprint
+    #      (~31.6 KB at Nz=85, Nt≤8) fits Metal's threadgroup-memory
+    #      ceiling on the target chip.
+    #   3. The kernel rejects Nz > 91 and Nt > 8 at the host side;
+    #      configs outside that envelope keep the legacy path.
+    # See `docs/memos/TM5_CONVECTION_AGENTLOOP_SYNTHESIS.md` for the
+    # full empirical record and `_tm5_collab_supports` for the
+    # runtime envelope check.
+    use_collab_lu :: Bool
 end
 
-TM5Convection(; tile_workspace_gib::Real = 1.0) =
-    TM5Convection{typeof(tile_workspace_gib)}(tile_workspace_gib)
+TM5Convection(; tile_workspace_gib::Real = 1.0, use_collab_lu::Bool = false) =
+    TM5Convection{typeof(tile_workspace_gib)}(tile_workspace_gib, use_collab_lu)
 
 # =========================================================================
 # Array-level entry: apply_convection!
 # =========================================================================
+
+# Decide between the collaborative path (workgroup-shared LU in
+# `@localmem`) and the legacy per-thread path. The collab kernel
+# only supports a bounded `(Nz, Nt)` envelope — `_tm5_collab_supports`
+# returns `false` outside that envelope — AND it hardcodes `Float32`
+# throughout the `@localmem` allocations and arithmetic. If the
+# caller's `FT` is anything else (the F64 curry/A100 runs are the
+# common case), we MUST fall back to the per-thread kernel rather
+# than silently truncating to F32 inside the shared-memory copy.
+#
+# We also exclude the KA CPU backend: the collab kernel uses
+# `@uniform g = @index(Group)` which KA's CPU-side lowering does
+# not accept (it produces `UndefVarError` at runtime). The CPU
+# backend is for unit-test convenience anyway; correctness lives
+# on the GPU backends (CUDA, Metal).
+#
+# The host call sites pass `eltype(q_raw)` as `FT` and
+# `get_backend(q_raw)` as `backend`.
+@inline _use_collab_path(op::TM5Convection, Nz::Integer, Nt::Integer,
+                          ::Type{FT}, backend) where FT =
+    op.use_collab_lu && FT === Float32 && _tm5_collab_supports(Nz, Nt) &&
+    !(backend isa KernelAbstractions.CPU)
 
 """
     apply_convection!(q_raw, air_mass, forcing::ConvectionForcing,
@@ -112,32 +156,42 @@ sub-cycling).
 function apply_convection!(q_raw::AbstractArray{FT, 4},
                             air_mass::AbstractArray{FT, 3},
                             forcing::ConvectionForcing,
-                            ::TM5Convection,
+                            op::TM5Convection,
                             dt::Real,
                             workspace::TM5Workspace,
                             grid::AtmosGrid{<:LatLonMesh}) where {FT}
     _assert_tm5_forcing(forcing)
     tm5 = forcing.tm5_fields
     cell_areas_y = _tm5_require_cell_metrics(workspace, "LatLon")
-    Nx, Ny, _, _ = size(q_raw)
+    Nx, Ny, Nz, Nt = size(q_raw)
     N_total = Nx * Ny
-    B       = size(workspace.conv1, 3)
     backend = get_backend(q_raw)
-    kernel  = _tm5_column_kernel!(backend)
     dt_ft   = FT(dt)
-    # Tile loop — KA stream ordering serializes panels safely
-    # because the workspace is shared. `synchronize(backend)`
-    # after the loop, not per launch.
-    for tile_off in 0:B:(N_total - 1)
-        n = min(B, N_total - tile_off)
+    if _use_collab_path(op, Nz, Nt, FT, backend)
+        kernel = _tm5_column_collab_kernel!(backend, _TM5_COLLAB_WG_SIZE)
         kernel(q_raw, air_mass,
                tm5.entu, tm5.detu, tm5.entd, tm5.detd,
                cell_areas_y,
-               workspace.conv1, workspace.pivots, workspace.cloud_dims,
-               workspace.f_scratch,
-               workspace.amu_scratch, workspace.amd_scratch,
-               Int(tile_off), Int(Nx), dt_ft;
-               ndrange = n)
+               Int(Nx), Int(Nt), Float32(dt), Val(Int(Nz));
+               ndrange = _TM5_COLLAB_WG_SIZE * N_total,
+               workgroupsize = _TM5_COLLAB_WG_SIZE)
+    else
+        kernel = _tm5_column_kernel!(backend)
+        # Tile loop — KA stream ordering serializes panels safely
+        # because the workspace is shared. `synchronize(backend)`
+        # after the loop, not per launch.
+        B = size(workspace.conv1, 3)
+        for tile_off in 0:B:(N_total - 1)
+            n = min(B, N_total - tile_off)
+            kernel(q_raw, air_mass,
+                   tm5.entu, tm5.detu, tm5.entd, tm5.detd,
+                   cell_areas_y,
+                   workspace.conv1, workspace.pivots, workspace.cloud_dims,
+                   workspace.f_scratch,
+                   workspace.amu_scratch, workspace.amd_scratch,
+                   Int(tile_off), Int(Nx), dt_ft;
+                   ndrange = n)
+        end
     end
     synchronize(backend)
     return nothing
@@ -146,28 +200,38 @@ end
 function apply_convection!(q_raw::AbstractArray{FT, 3},
                             air_mass::AbstractArray{FT, 2},
                             forcing::ConvectionForcing,
-                            ::TM5Convection,
+                            op::TM5Convection,
                             dt::Real,
                             workspace::TM5Workspace,
                             grid::AtmosGrid{<:ReducedGaussianMesh}) where {FT}
     _assert_tm5_forcing(forcing)
     tm5     = forcing.tm5_fields
     cell_areas = _tm5_require_cell_metrics(workspace, "face-indexed TM5Convection")
-    N_total = size(q_raw, 1)
-    B       = size(workspace.conv1, 3)
+    N_total, Nz, Nt = size(q_raw)
     backend = get_backend(q_raw)
-    kernel  = _tm5_faceindexed_column_kernel!(backend)
     dt_ft   = FT(dt)
-    for tile_off in 0:B:(N_total - 1)
-        n = min(B, N_total - tile_off)
+    if _use_collab_path(op, Nz, Nt, FT, backend)
+        kernel = _tm5_faceindexed_column_collab_kernel!(backend, _TM5_COLLAB_WG_SIZE)
         kernel(q_raw, air_mass,
                tm5.entu, tm5.detu, tm5.entd, tm5.detd,
                cell_areas,
-               workspace.conv1, workspace.pivots, workspace.cloud_dims,
-               workspace.f_scratch,
-               workspace.amu_scratch, workspace.amd_scratch,
-               Int(tile_off), dt_ft;
-               ndrange = n)
+               Int(Nt), Float32(dt), Val(Int(Nz));
+               ndrange = _TM5_COLLAB_WG_SIZE * N_total,
+               workgroupsize = _TM5_COLLAB_WG_SIZE)
+    else
+        kernel = _tm5_faceindexed_column_kernel!(backend)
+        B = size(workspace.conv1, 3)
+        for tile_off in 0:B:(N_total - 1)
+            n = min(B, N_total - tile_off)
+            kernel(q_raw, air_mass,
+                   tm5.entu, tm5.detu, tm5.entd, tm5.detd,
+                   cell_areas,
+                   workspace.conv1, workspace.pivots, workspace.cloud_dims,
+                   workspace.f_scratch,
+                   workspace.amu_scratch, workspace.amd_scratch,
+                   Int(tile_off), dt_ft;
+                   ndrange = n)
+        end
     end
     synchronize(backend)
     return nothing
@@ -176,7 +240,7 @@ end
 function apply_convection!(q_raw::NTuple{6, <:AbstractArray{FT, 4}},
                             air_mass::NTuple{6, <:AbstractArray{FT, 3}},
                             forcing::ConvectionForcing,
-                            ::TM5Convection,
+                            op::TM5Convection,
                             dt::Real,
                             workspace::TM5Workspace,
                             grid::AtmosGrid{<:CubedSphereMesh}) where {FT}
@@ -187,27 +251,47 @@ function apply_convection!(q_raw::NTuple{6, <:AbstractArray{FT, 4}},
     Nc      = mesh.Nc
     Hp      = mesh.Hp
     N_total = Nc * Nc
-    B       = size(workspace.conv1, 3)
     backend = get_backend(q_raw[1])
-    kernel  = _tm5_cs_panel_column_kernel!(backend)
     dt_ft   = FT(dt)
-    # The workspace is shared across panels; KA stream ordering
-    # makes that safe (panel n+1 can't start until panel n's
-    # writes are visible). The `for p` loop sits *outside* the
-    # tile loop so the workspace is reused per panel rather than
-    # cloned six times.
-    for p in 1:6
-        for tile_off in 0:B:(N_total - 1)
-            n = min(B, N_total - tile_off)
+    # Per-panel Nz / Nt: panels share a vertical resolution by
+    # construction, so we read them off panel 1.
+    Nz = size(air_mass[1], 3)
+    Nt = size(q_raw[1], 4)
+    if _use_collab_path(op, Nz, Nt, FT, backend)
+        kernel = _tm5_cs_panel_column_collab_kernel!(backend, _TM5_COLLAB_WG_SIZE)
+        # The workspace is no longer needed by the collab kernel
+        # (its scratch lives in `@localmem`), but the panel loop
+        # remains so each panel's halo offset and forcing arrays
+        # are passed individually.
+        for p in 1:6
             kernel(q_raw[p], air_mass[p],
                    tm5.entu[p], tm5.detu[p], tm5.entd[p], tm5.detd[p],
                    cell_areas[p],
-                   workspace.conv1, workspace.pivots,
-                   workspace.cloud_dims,
-                   workspace.f_scratch,
-                   workspace.amu_scratch, workspace.amd_scratch,
-                   Int(Hp), Int(tile_off), Int(Nc), dt_ft;
-                   ndrange = n)
+                   Int(Hp), Int(Nc), Int(Nt), Float32(dt), Val(Int(Nz));
+                   ndrange = _TM5_COLLAB_WG_SIZE * N_total,
+                   workgroupsize = _TM5_COLLAB_WG_SIZE)
+        end
+    else
+        kernel = _tm5_cs_panel_column_kernel!(backend)
+        B = size(workspace.conv1, 3)
+        # The workspace is shared across panels; KA stream ordering
+        # makes that safe (panel n+1 can't start until panel n's
+        # writes are visible). The `for p` loop sits *outside* the
+        # tile loop so the workspace is reused per panel rather than
+        # cloned six times.
+        for p in 1:6
+            for tile_off in 0:B:(N_total - 1)
+                n = min(B, N_total - tile_off)
+                kernel(q_raw[p], air_mass[p],
+                       tm5.entu[p], tm5.detu[p], tm5.entd[p], tm5.detd[p],
+                       cell_areas[p],
+                       workspace.conv1, workspace.pivots,
+                       workspace.cloud_dims,
+                       workspace.f_scratch,
+                       workspace.amu_scratch, workspace.amd_scratch,
+                       Int(Hp), Int(tile_off), Int(Nc), dt_ft;
+                       ndrange = n)
+            end
         end
     end
     synchronize(backend)

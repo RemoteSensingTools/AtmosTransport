@@ -614,6 +614,7 @@ function _maybe_advance_window!(sim::DrivenSimulation)
         # upwind monotonicity-violating window-edge jump (~0.87% on uniform
         # IC) diagnosed in plan-24 post-mortem (memo 37 + this plan).
         invalidate_cmfmc_cache!(sim.model.workspace.convection_ws)
+        invalidate_tm5_cache!(sim.model.workspace.convection_ws)
         _start_window_prefetch!(sim, next_window + 1)
     end
     return nothing

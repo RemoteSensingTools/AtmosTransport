@@ -62,7 +62,9 @@ dead branch.
 module Convection
 
 using Adapt
-using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
+import KernelAbstractions
+using KernelAbstractions: @kernel, @index, @Const, @localmem, @synchronize,
+                          @uniform, get_backend, synchronize
 using ...State: CellState, CubedSphereState
 using ...Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, cell_areas_by_latitude
 using ...MetDrivers: ConvectionForcing
@@ -74,7 +76,7 @@ export AbstractConvection, NoConvection
 export CMFMCConvection                          # plan 18 Commit 3
 export CMFMCWorkspace, invalidate_cmfmc_cache!  # plan 18 Commit 3
 export TM5Convection                            # plan 23 Commit 1
-export TM5Workspace                             # plan 23 Commit 1
+export TM5Workspace, invalidate_tm5_cache!      # plan 23 + P6 cache hook
 export apply_convection!
 
 include("operators.jl")

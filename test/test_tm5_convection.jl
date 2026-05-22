@@ -26,6 +26,7 @@ using .AtmosTransport.Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh,
 using .AtmosTransport.Operators: AbstractConvection, NoConvection,
                                  CMFMCConvection, TM5Convection,
                                  CMFMCWorkspace, TM5Workspace,
+                                 invalidate_tm5_cache!,
                                  UpwindScheme
 using .AtmosTransport.Operators.Convection: apply_convection!
 using .AtmosTransport.MetDrivers: ConvectionForcing
@@ -41,11 +42,21 @@ const FT = Float32
         @test op isa TM5Convection
         # Storage plan Commit 4: tile_workspace_gib field carries
         # the per-topology TM5 column-tile budget. Default 1.0 GiB.
-        @test fieldcount(typeof(op)) == 1
+        # P6 cache / collab-LU work: a second `use_collab_lu` Bool
+        # field opts the convection block into the workgroup-
+        # collaborative kernel; default false so existing runs are
+        # bit-identical to pre-collab behaviour.
+        @test fieldcount(typeof(op)) == 2
         @test op.tile_workspace_gib == 1.0
+        @test op.use_collab_lu == false
 
         op_tuned = TM5Convection(tile_workspace_gib = 2.5)
         @test op_tuned.tile_workspace_gib == 2.5
+        @test op_tuned.use_collab_lu == false
+
+        op_collab = TM5Convection(use_collab_lu = true)
+        @test op_collab.use_collab_lu == true
+        @test op_collab.tile_workspace_gib == 1.0
     end
 
     @testset "NoConvection and CMFMCConvection unchanged" begin
@@ -262,6 +273,261 @@ end
     apply!(state, forcing, grid, TM5Convection(), FT(600); workspace = ws)
     mass_after = interior_mass(state.tracers_raw)
     @test isapprox(mass_after, mass_before; rtol = 1f4 * eps(FT))
+end
+
+# The collaborative-LU kernel uses `@uniform` for workgroup-uniform
+# locals (`g`, `i`, `j`, `area`, …) so the KA-on-GPU paths hoist them
+# correctly. The KA CPU backend's `@uniform` lowering doesn't accept
+# `@index(Group)` in this exact shape, so the collab-LU path is
+# GPU-only. Production targets (CUDA + Metal) both honour `@uniform`
+# in the GPU-codegen path; the CPU backend is for unit-test convenience
+# only. This test therefore gates on a working CUDA backend and is
+# explicitly skipped on CPU-only hosts. A Metal sanity run is the
+# parallel validation step before production opt-in (see
+# `docs/memos/TM5_CONVECTION_AGENTLOOP_SYNTHESIS.md`).
+const _HAS_CUDA = try
+    @eval using CUDA
+    @eval CUDA.functional()
+catch
+    false
+end
+
+if _HAS_CUDA
+    @eval using Adapt
+    @eval using CUDA: CuArray
+end
+
+@testset "P6 collab-LU: bit-exact equivalence with per-thread kernel (CUDA)" begin
+    if !_HAS_CUDA
+        @test_skip "CUDA backend required for the workgroup-collaborative LU test"
+    else
+        Nx, Ny, Nz, Nt = 4, 3, 8, 2
+        mesh = LatLonMesh(; Nx=Nx, Ny=Ny, FT=FT)
+        A_ifc = FT[0, 500, 1000, 2000, 5000, 10000, 30000, 50000, 0]
+        B_ifc = FT[0, 0, 0, FT(0.05), FT(0.2), FT(0.4), FT(0.7), FT(0.9), 1]
+        vc = HybridSigmaPressure(A_ifc, B_ifc)
+        grid = AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT=FT)
+
+        m = fill(FT(5e3), Nx, Ny, Nz)
+        tracer1 = zeros(FT, Nx, Ny, Nz); tracer1[:, :, Nz] .= FT(1e-3) .* m[:, :, Nz]
+        tracer2 = zeros(FT, Nx, Ny, Nz); tracer2[:, :, 3] .= FT(2e-3) .* m[:, :, 3]
+
+        entu = zeros(FT, Nx, Ny, Nz); entu[:, :, 3:6] .= FT(0.03)
+        detu = zeros(FT, Nx, Ny, Nz); detu[:, :, 3:6] .= FT(0.02)
+        entd = zeros(FT, Nx, Ny, Nz); entd[:, :, 4:6] .= FT(0.01)
+        detd = zeros(FT, Nx, Ny, Nz); detd[:, :, 4:6] .= FT(0.005)
+        forcing = ConvectionForcing(nothing, nothing,
+                                     (; entu, detu, entd, detd))
+
+        # Reference: per-thread kernel on GPU.
+        state_ref = CellState(m; CO2 = copy(tracer1), CH4 = copy(tracer2))
+        ws_ref    = TM5Workspace(state_ref.air_mass; cell_metrics = ones(FT, Ny))
+        state_d_ref   = Adapt.adapt(CuArray, state_ref)
+        ws_d_ref      = Adapt.adapt(CuArray, ws_ref)
+        forcing_d     = Adapt.adapt(CuArray, forcing)
+        apply!(state_d_ref, forcing_d, grid, TM5Convection(), FT(600);
+                workspace = ws_d_ref)
+        CUDA.synchronize()
+
+        # Candidate: collab-LU kernel.
+        state_col = CellState(m; CO2 = copy(tracer1), CH4 = copy(tracer2))
+        ws_col    = TM5Workspace(state_col.air_mass; cell_metrics = ones(FT, Ny))
+        state_d_col   = Adapt.adapt(CuArray, state_col)
+        ws_d_col      = Adapt.adapt(CuArray, ws_col)
+        apply!(state_d_col, forcing_d, grid,
+                TM5Convection(use_collab_lu = true), FT(600);
+                workspace = ws_d_col)
+        CUDA.synchronize()
+
+        # The collab-LU performs the same multiplications in the same
+        # order as the per-thread builder + LU, so on small grids the
+        # output is *bit-identical*, not merely "within Float32 round-
+        # off".  The agent-loop synthesis measured a similar pattern
+        # on C180/L85 panels (`err = 0.0` on shallower-convection
+        # panels, ~7e-7 on the deepest one).  We accept any deviation
+        # ≤ 500·eps(FT)·|q_ref| to keep the test stable across CUDA
+        # toolchain bumps that might re-order multiply-adds.
+        ref = Array(state_d_ref.tracers_raw)
+        col = Array(state_d_col.tracers_raw)
+        @test maximum(abs.(col .- ref)) <= 500f0 * eps(FT) * maximum(abs.(ref))
+
+        # Zero-forcing → identity on both paths.
+        state_ref0 = CellState(m; CO2 = copy(tracer1), CH4 = copy(tracer2))
+        state_col0 = CellState(m; CO2 = copy(tracer1), CH4 = copy(tracer2))
+        ws_ref0    = TM5Workspace(state_ref0.air_mass; cell_metrics = ones(FT, Ny))
+        ws_col0    = TM5Workspace(state_col0.air_mass; cell_metrics = ones(FT, Ny))
+        state_d_ref0 = Adapt.adapt(CuArray, state_ref0); ws_d_ref0 = Adapt.adapt(CuArray, ws_ref0)
+        state_d_col0 = Adapt.adapt(CuArray, state_col0); ws_d_col0 = Adapt.adapt(CuArray, ws_col0)
+        zero_forcing = ConvectionForcing(nothing, nothing,
+            (; entu = zeros(FT, Nx, Ny, Nz), detu = zeros(FT, Nx, Ny, Nz),
+               entd = zeros(FT, Nx, Ny, Nz), detd = zeros(FT, Nx, Ny, Nz)))
+        zero_forcing_d = Adapt.adapt(CuArray, zero_forcing)
+        apply!(state_d_ref0, zero_forcing_d, grid, TM5Convection(), FT(600);
+                workspace = ws_d_ref0)
+        apply!(state_d_col0, zero_forcing_d, grid,
+                TM5Convection(use_collab_lu = true), FT(600);
+                workspace = ws_d_col0)
+        CUDA.synchronize()
+        @test Array(state_d_ref0.tracers_raw) == Array(state_d_col0.tracers_raw)
+    end
+end
+
+@testset "P6 collab-LU: bit-exact equivalence on ReducedGaussian (CUDA)" begin
+    # Same shape contract as the LL testset but with the face-indexed
+    # RG kernel, so a regression in the per-topology body duplication
+    # is caught here even if LL stays bit-exact.
+    if !_HAS_CUDA
+        @test_skip "CUDA backend required for the workgroup-collaborative LU test"
+    else
+        Nz = 8
+        mesh = ReducedGaussianMesh(FT[-0.9, 0.0, 0.9], [4, 4, 4]; FT=FT)
+        ncells = AtmosTransport.Grids.ncells(mesh)
+        A_ifc = collect(FT, range(0, 5f4; length=Nz+1))
+        B_ifc = collect(FT, range(1, 0;   length=Nz+1))
+        A_ifc[1] = 0; B_ifc[end] = 0
+        B_ifc[1] = 0; A_ifc[end] = 0
+        vc = HybridSigmaPressure(A_ifc, B_ifc)
+        grid = AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT=FT)
+
+        m = fill(FT(5e3), ncells, Nz)
+        tracer1 = zeros(FT, ncells, Nz); tracer1[:, Nz] .= FT(1e-3) .* m[:, Nz]
+        tracer2 = zeros(FT, ncells, Nz); tracer2[:, 3]  .= FT(2e-3) .* m[:, 3]
+
+        entu = zeros(FT, ncells, Nz); entu[:, 3:6] .= FT(0.03)
+        detu = zeros(FT, ncells, Nz); detu[:, 3:6] .= FT(0.02)
+        entd = zeros(FT, ncells, Nz); entd[:, 4:6] .= FT(0.01)
+        detd = zeros(FT, ncells, Nz); detd[:, 4:6] .= FT(0.005)
+        forcing = ConvectionForcing(nothing, nothing,
+                                     (; entu, detu, entd, detd))
+        forcing_d = Adapt.adapt(CuArray, forcing)
+
+        state_ref = CellState(m; CO2 = copy(tracer1), CH4 = copy(tracer2))
+        ws_ref    = TM5Workspace(state_ref.air_mass; cell_metrics = ones(FT, ncells))
+        state_d_ref = Adapt.adapt(CuArray, state_ref); ws_d_ref = Adapt.adapt(CuArray, ws_ref)
+        apply!(state_d_ref, forcing_d, grid, TM5Convection(), FT(600);
+                workspace = ws_d_ref)
+
+        state_col = CellState(m; CO2 = copy(tracer1), CH4 = copy(tracer2))
+        ws_col    = TM5Workspace(state_col.air_mass; cell_metrics = ones(FT, ncells))
+        state_d_col = Adapt.adapt(CuArray, state_col); ws_d_col = Adapt.adapt(CuArray, ws_col)
+        apply!(state_d_col, forcing_d, grid,
+                TM5Convection(use_collab_lu = true), FT(600);
+                workspace = ws_d_col)
+        CUDA.synchronize()
+
+        ref = Array(state_d_ref.tracers_raw)
+        col = Array(state_d_col.tracers_raw)
+        @test maximum(abs.(col .- ref)) <= 500f0 * eps(FT) * maximum(abs.(ref))
+    end
+end
+
+@testset "P6 collab-LU: bit-exact equivalence on CubedSphere (CUDA)" begin
+    # CS is the production topology — keep this test even at the tiny
+    # `Nc=6` grid we use elsewhere, so the halo-offset arithmetic in
+    # `_tm5_read_mass` / `_tm5_read_q` / `_tm5_write_q!` (only the CS
+    # variant adds `Hp`) is exercised on the equivalence path.
+    if !_HAS_CUDA
+        @test_skip "CUDA backend required for the workgroup-collaborative LU test"
+    else
+        Nc, Nz = 6, 8
+        mesh = CubedSphereMesh(; Nc=Nc, FT=FT, Hp=1)
+        A_ifc = collect(FT, range(0, 5f4; length=Nz+1))
+        B_ifc = collect(FT, range(1, 0;   length=Nz+1))
+        A_ifc[1] = 0; B_ifc[end] = 0
+        B_ifc[1] = 0; A_ifc[end] = 0
+        vc = HybridSigmaPressure(A_ifc, B_ifc)
+        grid = AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT=FT)
+        Hp = mesh.Hp
+        N = Nc + 2 * Hp
+
+        air_mass = ntuple(_ -> fill(FT(5e3), N, N, Nz), 6)
+        tracer1 = ntuple(_ -> begin
+            arr = zeros(FT, N, N, Nz)
+            arr[(Hp + 1):(Hp + Nc), (Hp + 1):(Hp + Nc), Nz] .= FT(1e-3) .* FT(5e3)
+            arr
+        end, 6)
+        # Use the topology-aware constructor (DryBasis, mesh, air_mass; …)
+        # — same signature as the existing CS apply! testset above.
+        state = CubedSphereState(DryBasis, mesh, air_mass; CO2 = tracer1)
+
+        entu = ntuple(_ -> (a = zeros(FT, Nc, Nc, Nz); a[:, :, 3:6] .= FT(0.03); a), 6)
+        detu = ntuple(_ -> (a = zeros(FT, Nc, Nc, Nz); a[:, :, 3:6] .= FT(0.02); a), 6)
+        entd = ntuple(_ -> (a = zeros(FT, Nc, Nc, Nz); a[:, :, 4:6] .= FT(0.01); a), 6)
+        detd = ntuple(_ -> (a = zeros(FT, Nc, Nc, Nz); a[:, :, 4:6] .= FT(0.005); a), 6)
+        forcing = ConvectionForcing(nothing, nothing,
+                                     (; entu, detu, entd, detd))
+        forcing_d = Adapt.adapt(CuArray, forcing)
+
+        state_ref = CubedSphereState(DryBasis, mesh, air_mass;
+                                      CO2 = ntuple(p -> copy(tracer1[p]), 6))
+        ws_ref    = TM5Workspace(state_ref.air_mass; cell_metrics = ntuple(_ -> ones(FT, Nc, Nc), 6))
+        state_d_ref = Adapt.adapt(CuArray, state_ref); ws_d_ref = Adapt.adapt(CuArray, ws_ref)
+        apply!(state_d_ref, forcing_d, grid, TM5Convection(), FT(600);
+                workspace = ws_d_ref)
+
+        state_col = CubedSphereState(DryBasis, mesh, air_mass;
+                                      CO2 = ntuple(p -> copy(tracer1[p]), 6))
+        ws_col    = TM5Workspace(state_col.air_mass; cell_metrics = ntuple(_ -> ones(FT, Nc, Nc), 6))
+        state_d_col = Adapt.adapt(CuArray, state_col); ws_d_col = Adapt.adapt(CuArray, ws_col)
+        apply!(state_d_col, forcing_d, grid,
+                TM5Convection(use_collab_lu = true), FT(600);
+                workspace = ws_d_col)
+        CUDA.synchronize()
+
+        # Compare all six panels.
+        max_err = 0f0; max_ref = 0f0
+        for p in 1:6
+            ref = Array(state_d_ref.tracers_raw[p])
+            col = Array(state_d_col.tracers_raw[p])
+            max_err = max(max_err, maximum(abs.(col .- ref)))
+            max_ref = max(max_ref, maximum(abs.(ref)))
+        end
+        @test max_err <= 500f0 * eps(FT) * max_ref
+    end
+end
+
+@testset "P6 collab-LU: outside-envelope falls back to per-thread" begin
+    # Configurations outside the supported `(Nz, Nt)` envelope must
+    # dispatch to the per-thread kernel even when `use_collab_lu =
+    # true`. Smallest direct probe: ask the host-side support oracle.
+    # Limits are set by Metal's 32 KiB threadgroup-memory budget:
+    # `4·Nz² + (4·NT_MAX + 16)·Nz + 16` bytes; current production
+    # bound is Nz ≤ 85, Nt ≤ 6.
+    @test AtmosTransport.Operators.Convection._tm5_collab_supports(85, 2) == true
+    @test AtmosTransport.Operators.Convection._tm5_collab_supports(85, 6) == true
+    @test AtmosTransport.Operators.Convection._tm5_collab_supports(85, 7) == false
+    # Nz > 85 doesn't fit Metal's 32 KB threadgroup-memory limit.
+    @test AtmosTransport.Operators.Convection._tm5_collab_supports(86, 2) == false
+    @test AtmosTransport.Operators.Convection._tm5_collab_supports(91, 2) == false
+    @test AtmosTransport.Operators.Convection._tm5_collab_supports(0,  2) == false
+end
+
+@testset "P6 cache: workspace fields + invalidation hook" begin
+    # The cache infrastructure (workspace fields + invalidation
+    # function) lands in this iteration so a follow-up can wire the
+    # hit/miss kernels without a workspace-shape change. Tests here
+    # only cover the storage / hook contract — the actual hit-kernel
+    # benchmark lives in `scripts/benchmarks/bench_tm5_p6_lu_cache.jl`
+    # and ships as a prototype, not a production code path yet.
+    Nx, Ny, Nz = 4, 3, 5
+    m = zeros(FT, Nx, Ny, Nz)
+    ws_off = TM5Workspace(m; cell_metrics = ones(FT, Ny))
+    @test ws_off.cache_A === nothing
+    @test ws_off.cache_pivots === nothing
+    @test ws_off.cache_valid === nothing
+    # `invalidate_tm5_cache!` is a no-op when the cache is disabled,
+    # so the call site can be unconditional regardless of opt-in.
+    @test invalidate_tm5_cache!(ws_off) === nothing
+    @test invalidate_tm5_cache!(nothing) === nothing
+
+    ws_on = TM5Workspace(m; cell_metrics = ones(FT, Ny),
+                          cache_columns = Nx * Ny)
+    @test size(ws_on.cache_A)      == (Nz, Nz, Nx * Ny)
+    @test size(ws_on.cache_pivots) == (Nz,     Nx * Ny)
+    @test ws_on.cache_valid[]      == false
+    ws_on.cache_valid[] = true
+    invalidate_tm5_cache!(ws_on)
+    @test ws_on.cache_valid[] == false
 end
 
 @testset "plan 23 Commit 4: _assert_tm5_forcing catches missing tm5_fields" begin

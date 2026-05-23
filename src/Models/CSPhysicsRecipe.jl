@@ -338,11 +338,31 @@ function build_runtime_convection(::AbstractRuntimeRecipeStyle, ::Val{:tm5}, sec
     # (~10× faster, bit-exact within Float32 rounding on CUDA — see
     # docs/memos/TM5_CONVECTION_AGENTLOOP_SYNTHESIS.md). Default off
     # so existing runs stay bit-identical. Falls back to the legacy
-    # per-thread kernel automatically when the (Nz, Nt, FT, backend)
-    # envelope is exceeded (see `_use_collab_path`).
+    # per-thread kernel automatically when the (lmax_conv, Nt, FT,
+    # backend) envelope is exceeded (see `_use_collab_path`).
     use_collab = Bool(get(section, "use_collab_lu", false))
+    # `lmax_conv` caps the convection matrix size at a value below
+    # the total Nz, matching TM5's tropoX* setups. Default 0 means
+    # "no truncation, use the full Nz". Run
+    # `scripts/diagnostics/per_column_depth_histogram.jl` on the
+    # production binary to pick a safe ceiling — for the
+    # ERA5/GEOS-native C180/L85 binary, `lmax_conv = 75` is bit-
+    # exact for every observed column (preserves all stratospheric
+    # overshoots) while making L91/L137 setups fit Metal's
+    # threadgroup-memory limit.
+    lmax_conv = Int(get(section, "lmax_conv", 0))
+    # `n_merge` aggregates `n_merge` adjacent fine layers into one
+    # super-layer for convection only (TM5's tropoX-style coarsening).
+    # Default 1 (no aggregation). The LU is O(L_super³), so n_merge=2
+    # gives ~8× cheaper LU, n_merge=3 ~27×. Only takes effect when
+    # `use_collab_lu = true`. Mass-conservative by design (proportional
+    # disaggregation of the new super-layer mass to fine layers, with
+    # uniform fallback when an old super-layer was empty).
+    n_merge = Int(get(section, "n_merge", 1))
     return TM5Convection(; tile_workspace_gib = budget,
-                           use_collab_lu = use_collab)
+                           use_collab_lu = use_collab,
+                           lmax_conv = lmax_conv,
+                           n_merge = n_merge)
 end
 build_runtime_convection(::AbstractRuntimeRecipeStyle, ::Val{:cmfmc}, _section) = CMFMCConvection()
 

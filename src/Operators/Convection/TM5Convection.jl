@@ -94,39 +94,129 @@ struct TM5Convection{FT} <: AbstractConvection
     # instead of the per-thread serial path. Bit-exact to the legacy
     # path within Float32 rounding (~7e-7 max abs deviation on a C180
     # panel); measured 8–11× faster on NVIDIA L40S. Designed for KA
-    # portability — same kernel compiles for CUDA and Metal — but
-    # see the deployment note below before flipping the default.
-    #
-    # Default off so existing runs are bit-identical until the user
-    # opts in. Production deployment as default still needs:
-    #   1. A Metal-machine sanity run (only CUDA L40S has been
-    #      measured to date).
-    #   2. Confirmation that the per-workgroup `@localmem` footprint
-    #      (~31.6 KB at Nz=85, Nt≤8) fits Metal's threadgroup-memory
-    #      ceiling on the target chip.
-    #   3. The kernel rejects Nz > 91 and Nt > 8 at the host side;
-    #      configs outside that envelope keep the legacy path.
-    # See `docs/memos/TM5_CONVECTION_AGENTLOOP_SYNTHESIS.md` for the
-    # full empirical record and `_tm5_collab_supports` for the
-    # runtime envelope check.
+    # portability — same kernel compiles for CUDA and Metal.
     use_collab_lu :: Bool
+    # Truncation ceiling for the convection matrix. `0` (default)
+    # means "no truncation, use the full Nz". A positive value
+    # corresponds to TM5's `lmax_conv` per `proj/levels/ml*/tropoX*/
+    # src/dims_levels.F90`: the collaborative kernel allocates
+    # `@localmem` at `(lmax_conv, lmax_conv)` and operates on the
+    # bottom `lmax_conv` layers only; layers `k ≤ Nz - lmax_conv`
+    # are passed through unchanged (no convection above that
+    # ceiling).
+    #
+    # Setting this below `Nz` is the lever that lets L91 / L137
+    # configurations fit Metal's 32 KB threadgroup memory (where
+    # the full-Nz allocation would not), and is the same structural
+    # choice TM5's own tropo25a / tropo34a / tropo60 setups make.
+    # Validate the choice by scanning the binary's active-depth
+    # distribution (scripts/diagnostics/per_column_depth_histogram.jl);
+    # on the ERA5/GEOS-native C180/L85 production binary the deepest
+    # convection reaches k=11 of 85, so `lmax_conv = 75` is bit-
+    # exact for every observed column.
+    #
+    # The runtime envelope is `lmax_conv ∈ {1..85}` (the size that
+    # fits Metal at Nt ≤ NT_MAX). Configurations whose effective
+    # `lmax_conv` falls outside that envelope auto-fall-back to the
+    # per-thread kernel.
+    lmax_conv :: Int
+    # Vertical aggregation factor for the convection grid. When > 1,
+    # the convection block runs on a coarsened vertical of size
+    # `L_super = lmax_conv / n_merge`, then the result is
+    # disaggregated back to the fine vertical proportionally to the
+    # pre-convection fine-layer distribution. The matrix LU is then
+    # O(L_super³) instead of O(lmax_conv³): n_merge=2 → ~8× cheaper,
+    # n_merge=3 → ~27× cheaper.
+    #
+    # This is TM5's standard tropoX* approach: a separate coarsened
+    # vertical for convection while transport stays on the full
+    # native grid. Within a super-layer, convection mixes air as a
+    # chunk — defensible for bulk tropospheric overturning. Mass is
+    # conserved exactly by the proportional redistribution.
+    #
+    # Default 1 (no aggregation). The collab kernel must already be
+    # enabled (`use_collab_lu = true`) for n_merge > 1 to take
+    # effect; the per-thread legacy path doesn't go through the
+    # aggregation wrapper.
+    #
+    # The host uses `fld(lmax_conv, n_merge)` so the actual active
+    # fine span is `L_super * n_merge ≤ lmax_conv` (possibly losing
+    # `n_merge - 1` fine layers above the user-specified ceiling).
+    # Pick `lmax_conv` so it divides `n_merge` cleanly for a tight
+    # active region.
+    #
+    # **KNOWN ISSUE**: `n_merge = 2` blows up mass conservation in
+    # multi-substep runs with surface emissions (single-substep
+    # tests still conserve mass to ~1e-3 relative, but production
+    # 1152-substep runs amplify to ~2e+6×). `n_merge ∈ {3, 4, 5,
+    # 15}` are all mass-conservative on the same binary, so the
+    # bug is `n_merge = 2`-specific (not a parity or divisibility
+    # issue). Until the n=2 root cause is identified, prefer
+    # `n_merge = 3` for production (matches TM5's tropoX setups
+    # anyway and still gives ~9× over n_merge=1 on the production
+    # binary). The `vertical aggregation conserves tracer mass`
+    # testset includes n=2 to guard the single-step boundary.
+    n_merge :: Int
+
+    # Inner constructor enforces the n_merge invariant for ALL
+    # construction paths — the outer kwarg constructor only sees
+    # explicit `TM5Convection(...)` calls, but Julia's default
+    # parametric constructor `TM5Convection{FT}(args...)` would
+    # otherwise let callers bypass the kwarg guard. Putting the
+    # validation here closes that hole: any construction (kwarg
+    # API, parametric API, Adapt.adapt, deserialisation,
+    # reflection) must run through this checker.
+    function TM5Convection{FT}(tile_workspace_gib::FT,
+                                use_collab_lu::Bool,
+                                lmax_conv::Int,
+                                n_merge::Int) where {FT}
+        n_merge >= 1 || throw(ArgumentError(
+            "TM5Convection: `n_merge` must be ≥ 1 (got $(n_merge))"))
+        # n_merge=2 is hard-rejected: production multi-substep runs
+        # with surface emissions amplify mass non-conservation by
+        # ~2e+6× on the C180/L85 binary. See the docstring above
+        # for the empirical record and the recommended alternatives
+        # (n_merge=3 gives ~9× over n_merge=1 with mass conservation
+        # to ~1e-3).
+        n_merge == 2 && throw(ArgumentError(
+            "TM5Convection: `n_merge = 2` is rejected — multi-substep " *
+            "runs with surface emissions amplify mass non-conservation " *
+            "by ~2e+6× on the C180/L85 production binary. Use " *
+            "`n_merge ∈ {1, 3, 4, 5}` instead. `n_merge = 3` gives " *
+            "~9× speedup over n_merge=1 on L85 binaries while " *
+            "conserving mass to ~1e-3."))
+        return new{FT}(tile_workspace_gib, use_collab_lu, lmax_conv, n_merge)
+    end
 end
 
-TM5Convection(; tile_workspace_gib::Real = 1.0, use_collab_lu::Bool = false) =
-    TM5Convection{typeof(tile_workspace_gib)}(tile_workspace_gib, use_collab_lu)
+function TM5Convection(; tile_workspace_gib::Real = 1.0,
+                         use_collab_lu::Bool = false,
+                         lmax_conv::Integer = 0,
+                         n_merge::Integer = 1)
+    # Validation is delegated to the inner constructor so the
+    # parametric `TM5Convection{FT}(args...)` path is guarded too.
+    return TM5Convection{typeof(tile_workspace_gib)}(
+        tile_workspace_gib, use_collab_lu, Int(lmax_conv), Int(n_merge))
+end
 
 # =========================================================================
 # Array-level entry: apply_convection!
 # =========================================================================
 
+# Effective lmax_conv: 0 means "no truncation, use the full Nz";
+# otherwise the operator's explicit cap is used.
+@inline _effective_lmax_conv(op::TM5Convection, Nz::Integer) =
+    op.lmax_conv == 0 ? Int(Nz) : op.lmax_conv
+
 # Decide between the collaborative path (workgroup-shared LU in
 # `@localmem`) and the legacy per-thread path. The collab kernel
-# only supports a bounded `(Nz, Nt)` envelope — `_tm5_collab_supports`
-# returns `false` outside that envelope — AND it hardcodes `Float32`
-# throughout the `@localmem` allocations and arithmetic. If the
-# caller's `FT` is anything else (the F64 curry/A100 runs are the
-# common case), we MUST fall back to the per-thread kernel rather
-# than silently truncating to F32 inside the shared-memory copy.
+# only supports a bounded `(lmax_conv, Nt)` envelope —
+# `_tm5_collab_supports` returns `false` outside that envelope — AND
+# it hardcodes `Float32` throughout the `@localmem` allocations and
+# arithmetic. If the caller's `FT` is anything else (the F64
+# curry/A100 runs are the common case), we MUST fall back to the
+# per-thread kernel rather than silently truncating to F32 inside
+# the shared-memory copy.
 #
 # We also exclude the KA CPU backend: the collab kernel uses
 # `@uniform g = @index(Group)` which KA's CPU-side lowering does
@@ -136,10 +226,182 @@ TM5Convection(; tile_workspace_gib::Real = 1.0, use_collab_lu::Bool = false) =
 #
 # The host call sites pass `eltype(q_raw)` as `FT` and
 # `get_backend(q_raw)` as `backend`.
-@inline _use_collab_path(op::TM5Convection, Nz::Integer, Nt::Integer,
-                          ::Type{FT}, backend) where FT =
-    op.use_collab_lu && FT === Float32 && _tm5_collab_supports(Nz, Nt) &&
-    !(backend isa KernelAbstractions.CPU)
+@inline function _use_collab_path(op::TM5Convection, Nz::Integer, Nt::Integer,
+                                   ::Type{FT}, backend) where FT
+    L = _effective_lmax_conv(op, Nz)
+    nm = max(1, op.n_merge)
+    # `fld` (floor-divide) so the padded fine span is always
+    # `≤ lmax_conv`. Rounding UP (`cld`) extends the active region
+    # by one layer above the user-specified `lmax_conv`, which sits
+    # at the boundary of the cloud-top-reach distribution. TM5's
+    # matrix is mass-conservative only when the active region's
+    # *top* row sees zero forcings (i.e., is structurally identity);
+    # an extra layer of "near-zero" forcings violates that subtly
+    # and can amplify mass non-conservation across many substeps.
+    # Truncating down loses at most `n_merge - 1` fine layers below
+    # the user's lmax_conv, which is safe as long as the binary
+    # scan's deepest reach (min_top_code) is comfortably below
+    # `Nz - lmax_conv + n_merge`.
+    L_super = nm > 1 ? fld(L, nm) : L
+    L_padded = L_super * nm
+    op.use_collab_lu && FT === Float32 && L > 0 && L_super > 0 &&
+        L_padded <= Int(Nz) &&
+        _tm5_collab_supports(L_super, Nt) &&
+        !(backend isa KernelAbstractions.CPU)
+end
+
+# Compute the super-grid size and the padded fine-span size for the
+# vertical-aggregation path. For n_merge=1, L_super == L, L_padded == L.
+@inline function _tm5_super_dims(op::TM5Convection, Nz::Integer)
+    L = _effective_lmax_conv(op, Nz)
+    nm = max(1, op.n_merge)
+    L_super = nm > 1 ? fld(L, nm) : L
+    L_padded = L_super * nm
+    return L_super, L_padded, nm
+end
+
+# Vertical-aggregation helper. Aggregates the active fine layers of
+# `(q_raw, air_mass, entu, detu, entd, detd)` along the `k_dim`-th
+# axis into a coarse super-grid of `L_super` layers (each spanning
+# `n_merge` fine layers), runs the supplied solve closure on the
+# super arrays, then disaggregates the new tracer values back to the
+# fine layers proportionally to the pre-convection distribution.
+# Mass is conserved exactly by the proportional redistribution
+# (uniform fallback when an old super-layer was empty).
+#
+# `q_raw` has one more axis than the forcings (the tracer axis).
+# `solve!` is a closure that takes the super-grid arrays
+# `(q_super, m_super, entu_super, detu_super, entd_super, detd_super)`
+# and mutates `q_super` in place.
+@inline function _tm5_merge_aggregate_solve_disaggregate!(
+        q_raw, air_mass, entu, detu, entd, detd,
+        k_shift::Int, L_padded::Int, L_super::Int, n_merge::Int,
+        k_dim::Int, solve!::F;
+        Hp::Int = 0,
+    ) where {F}
+    # Build slicing tuples for the active vertical span.  The
+    # `Nz`-axis is `k_dim` for q_raw and the same for forcings
+    # (forcings have one fewer axis since they lack the tracer
+    # dimension).  We slice the active sub-range, reshape it with
+    # the extra `n_merge` axis inserted at position `k_dim`, then
+    # sum over that axis to produce the super-grid array.
+    #
+    # `Hp` is the cubed-sphere panel halo half-width. When > 0,
+    # the write-back is restricted to the interior `Hp+1:end-Hp`
+    # cells in the horizontal dims so the halo region (which holds
+    # neighbouring-panel tracer values for the next advection
+    # step) is preserved bit-exact. Aggregation can still scan the
+    # full padded view — the kernel only reads / writes interior
+    # positions anyway, so halo-aggregated values are harmless
+    # junk in `q_super`.
+    q_active    = selectdim(q_raw,    k_dim, (k_shift + 1):(k_shift + L_padded))
+    m_active    = selectdim(air_mass, k_dim, (k_shift + 1):(k_shift + L_padded))
+    entu_active = selectdim(entu,     k_dim, (k_shift + 1):(k_shift + L_padded))
+    detu_active = selectdim(detu,     k_dim, (k_shift + 1):(k_shift + L_padded))
+    entd_active = selectdim(entd,     k_dim, (k_shift + 1):(k_shift + L_padded))
+    detd_active = selectdim(detd,     k_dim, (k_shift + 1):(k_shift + L_padded))
+
+    # Sum-aggregate along the `n_merge` super-internal axis.
+    q_super    = _agg_sum(q_active,    k_dim, n_merge, L_super)
+    m_super    = _agg_sum(m_active,    k_dim, n_merge, L_super)
+    entu_super = _agg_sum(entu_active, k_dim, n_merge, L_super)
+    detu_super = _agg_sum(detu_active, k_dim, n_merge, L_super)
+    entd_super = _agg_sum(entd_active, k_dim, n_merge, L_super)
+    detd_super = _agg_sum(detd_active, k_dim, n_merge, L_super)
+
+    # Snapshot fine q for the proportional disaggregation.
+    q_fine_save = copy(q_active)
+
+    # Solve on the coarse grid (mutates `q_super`).
+    solve!(q_super, m_super, entu_super, detu_super, entd_super, detd_super)
+
+    # Disaggregate: new_fine = super_new * (fine_old / super_old)
+    # with uniform fallback `1/n_merge` when super_old == 0.
+    n_inv = Float32(1) / Float32(n_merge)
+    _disaggregate!(q_active, q_super, q_fine_save, k_dim, n_merge, L_super, n_inv, Hp)
+    return nothing
+end
+
+# Sum-aggregate `arr` (already sliced to the active vertical span)
+# along the layer axis `k_dim`, producing an array of the same shape
+# except the layer dim is `L_super` instead of `L_super * n_merge`.
+# Uses `reshape + sum + dropdims` so the work runs on the underlying
+# backend (CuArray broadcasts on GPU).
+@inline function _agg_sum(arr, k_dim::Int, n_merge::Int, L_super::Int)
+    # Materialise the view into a contiguous fresh array before
+    # reshape. `selectdim` produces a SubArray whose `t`-stride is
+    # the parent's `Nz`-stride (not the active-slice's contiguous
+    # stride), so reshape can return a `ReshapedArray` wrapper whose
+    # downstream `sum(...; dims=k_dim)` interaction with CUDA's
+    # broadcast machinery is fragile. Copying once at the start
+    # gives a contiguous `(N1, …, L_padded, Nt)` array; reshape on
+    # *that* is a plain layout transform and the subsequent sum is
+    # bit-stable.
+    src = copy(arr)
+    sh = size(src)
+    # New shape: insert `n_merge` axis just before `k_dim` and replace
+    # the `k_dim` size with `L_super`.
+    new_shape = ntuple(d ->
+        d <  k_dim ? sh[d] :
+        d == k_dim ? n_merge :
+        d == k_dim + 1 ? L_super :
+                         sh[d - 1],
+        length(sh) + 1)
+    return dropdims(sum(reshape(src, new_shape); dims = k_dim); dims = k_dim)
+end
+
+# Proportional disaggregation. Writes `q_active` (the fine view of
+# q_raw) with `q_super .* (fine_old / super_old)`, broadcasting the
+# super-axis across `n_merge` fine slots. Uniform fallback when
+# `super_old == 0`.
+@inline function _disaggregate!(q_active, q_super, q_fine_save,
+                                 k_dim::Int, n_merge::Int, L_super::Int,
+                                 n_inv::Float32, Hp::Int)
+    sh_fine = size(q_fine_save)
+    # 5D view of the fine snapshot with the (n_merge, L_super) split.
+    sh5_fine = ntuple(d ->
+        d <  k_dim ? sh_fine[d] :
+        d == k_dim ? n_merge :
+        d == k_dim + 1 ? L_super :
+                         sh_fine[d - 1],
+        length(sh_fine) + 1)
+    fine_old_5d = reshape(q_fine_save, sh5_fine)
+    # super_old: sum over the n_merge axis.
+    super_old   = dropdims(sum(fine_old_5d; dims = k_dim); dims = k_dim)
+    # 5D broadcast view of super_old + q_super: insert a length-1
+    # axis at `k_dim` so they broadcast across n_merge fine slots.
+    sh5_super = ntuple(d ->
+        d <  k_dim ? size(super_old, d) :
+        d == k_dim ? 1 :
+                     size(super_old, d - 1),
+        length(sh_fine) + 1)
+    super_old_5d = reshape(super_old, sh5_super)
+    super_new_5d = reshape(q_super,   sh5_super)
+
+    ratio_5d   = @. ifelse(super_old_5d == 0f0, n_inv,
+                            fine_old_5d / super_old_5d)
+    new_fine_5d = super_new_5d .* ratio_5d
+    new_fine_fine = reshape(new_fine_5d, sh_fine)
+    if Hp == 0
+        # LL / RG: no halo, write the whole active slice.
+        copyto!(q_active, new_fine_fine)
+    else
+        # CS panel: restrict the write-back to the interior cells
+        # `Hp+1 : end-Hp` in the leading two dims. The halo region
+        # of `q_active` must NOT be overwritten — it carries
+        # neighbouring-panel tracer values that the next advection
+        # step's halo exchange relies on; clobbering it with
+        # convection-derived junk amplifies mass across substeps
+        # via the halo loop.
+        n1 = size(q_active, 1)
+        n2 = size(q_active, 2)
+        copyto!(view(q_active, (Hp + 1):(n1 - Hp), (Hp + 1):(n2 - Hp),
+                     :, ntuple(_ -> :, ndims(q_active) - 3)...),
+                view(new_fine_fine, (Hp + 1):(n1 - Hp), (Hp + 1):(n2 - Hp),
+                     :, ntuple(_ -> :, ndims(q_active) - 3)...))
+    end
+    return nothing
+end
 
 """
     apply_convection!(q_raw, air_mass, forcing::ConvectionForcing,
@@ -168,13 +430,35 @@ function apply_convection!(q_raw::AbstractArray{FT, 4},
     backend = get_backend(q_raw)
     dt_ft   = FT(dt)
     if _use_collab_path(op, Nz, Nt, FT, backend)
+        L_super, L_padded, nm = _tm5_super_dims(op, Nz)
+        k_shift = Nz - L_padded
         kernel = _tm5_column_collab_kernel!(backend, _TM5_COLLAB_WG_SIZE)
-        kernel(q_raw, air_mass,
-               tm5.entu, tm5.detu, tm5.entd, tm5.detd,
-               cell_areas_y,
-               Int(Nx), Int(Nt), Float32(dt), Val(Int(Nz));
-               ndrange = _TM5_COLLAB_WG_SIZE * N_total,
-               workgroupsize = _TM5_COLLAB_WG_SIZE)
+        if nm == 1
+            # No vertical aggregation — run the existing kernel
+            # directly on the fine grid.
+            kernel(q_raw, air_mass,
+                   tm5.entu, tm5.detu, tm5.entd, tm5.detd,
+                   cell_areas_y,
+                   Int(Nx), Int(Nz), Int(Nt), Float32(dt), Val(L_super);
+                   ndrange = _TM5_COLLAB_WG_SIZE * N_total,
+                   workgroupsize = _TM5_COLLAB_WG_SIZE)
+        else
+            # Aggregate → coarse solve → disaggregate.  The closure
+            # captures the kernel-launch parameters; `_tm5_merge_…`
+            # builds the super arrays, invokes it, and redistributes
+            # the new tracer mass back to the fine layers.
+            _tm5_merge_aggregate_solve_disaggregate!(
+                q_raw, air_mass,
+                tm5.entu, tm5.detu, tm5.entd, tm5.detd,
+                k_shift, L_padded, L_super, nm, 3,
+                function (qS, mS, eU, dU, eD, dD)
+                    kernel(qS, mS, eU, dU, eD, dD, cell_areas_y,
+                           Int(Nx), Int(L_super), Int(Nt),
+                           Float32(dt), Val(L_super);
+                           ndrange = _TM5_COLLAB_WG_SIZE * N_total,
+                           workgroupsize = _TM5_COLLAB_WG_SIZE)
+                end)
+        end
     else
         kernel = _tm5_column_kernel!(backend)
         # Tile loop — KA stream ordering serializes panels safely
@@ -211,13 +495,31 @@ function apply_convection!(q_raw::AbstractArray{FT, 3},
     backend = get_backend(q_raw)
     dt_ft   = FT(dt)
     if _use_collab_path(op, Nz, Nt, FT, backend)
+        L_super, L_padded, nm = _tm5_super_dims(op, Nz)
+        k_shift = Nz - L_padded
         kernel = _tm5_faceindexed_column_collab_kernel!(backend, _TM5_COLLAB_WG_SIZE)
-        kernel(q_raw, air_mass,
-               tm5.entu, tm5.detu, tm5.entd, tm5.detd,
-               cell_areas,
-               Int(Nt), Float32(dt), Val(Int(Nz));
-               ndrange = _TM5_COLLAB_WG_SIZE * N_total,
-               workgroupsize = _TM5_COLLAB_WG_SIZE)
+        if nm == 1
+            kernel(q_raw, air_mass,
+                   tm5.entu, tm5.detu, tm5.entd, tm5.detd,
+                   cell_areas,
+                   Int(Nz), Int(Nt), Float32(dt), Val(L_super);
+                   ndrange = _TM5_COLLAB_WG_SIZE * N_total,
+                   workgroupsize = _TM5_COLLAB_WG_SIZE)
+        else
+            # RG: q is (ncells, Nz, Nt), forcings (ncells, Nz),
+            # air_mass (ncells, Nz). Layer axis is k_dim = 2.
+            _tm5_merge_aggregate_solve_disaggregate!(
+                q_raw, air_mass,
+                tm5.entu, tm5.detu, tm5.entd, tm5.detd,
+                k_shift, L_padded, L_super, nm, 2,
+                function (qS, mS, eU, dU, eD, dD)
+                    kernel(qS, mS, eU, dU, eD, dD, cell_areas,
+                           Int(L_super), Int(Nt),
+                           Float32(dt), Val(L_super);
+                           ndrange = _TM5_COLLAB_WG_SIZE * N_total,
+                           workgroupsize = _TM5_COLLAB_WG_SIZE)
+                end)
+        end
     else
         kernel = _tm5_faceindexed_column_kernel!(backend)
         B = size(workspace.conv1, 3)
@@ -258,18 +560,43 @@ function apply_convection!(q_raw::NTuple{6, <:AbstractArray{FT, 4}},
     Nz = size(air_mass[1], 3)
     Nt = size(q_raw[1], 4)
     if _use_collab_path(op, Nz, Nt, FT, backend)
+        L_super, L_padded, nm = _tm5_super_dims(op, Nz)
+        k_shift = Nz - L_padded
         kernel = _tm5_cs_panel_column_collab_kernel!(backend, _TM5_COLLAB_WG_SIZE)
         # The workspace is no longer needed by the collab kernel
         # (its scratch lives in `@localmem`), but the panel loop
         # remains so each panel's halo offset and forcing arrays
         # are passed individually.
         for p in 1:6
-            kernel(q_raw[p], air_mass[p],
-                   tm5.entu[p], tm5.detu[p], tm5.entd[p], tm5.detd[p],
-                   cell_areas[p],
-                   Int(Hp), Int(Nc), Int(Nt), Float32(dt), Val(Int(Nz));
-                   ndrange = _TM5_COLLAB_WG_SIZE * N_total,
-                   workgroupsize = _TM5_COLLAB_WG_SIZE)
+            if nm == 1
+                kernel(q_raw[p], air_mass[p],
+                       tm5.entu[p], tm5.detu[p], tm5.entd[p], tm5.detd[p],
+                       cell_areas[p],
+                       Int(Hp), Int(Nc), Int(Nz), Int(Nt), Float32(dt), Val(L_super);
+                       ndrange = _TM5_COLLAB_WG_SIZE * N_total,
+                       workgroupsize = _TM5_COLLAB_WG_SIZE)
+            else
+                # CS panel: q_raw[p] is (Nc+2Hp, Nc+2Hp, Nz, Nt), air_mass[p]
+                # is (Nc+2Hp, Nc+2Hp, Nz), forcings are (Nc, Nc, Nz).
+                # All share `k_dim = 3` for the vertical layer axis.
+                # Pass `Hp` so the disaggregation write-back stays
+                # inside the interior and the halo region is left
+                # bit-exact (any disturbance there propagates to
+                # neighbouring panels via the next advection
+                # step's halo exchange).
+                _tm5_merge_aggregate_solve_disaggregate!(
+                    q_raw[p], air_mass[p],
+                    tm5.entu[p], tm5.detu[p], tm5.entd[p], tm5.detd[p],
+                    k_shift, L_padded, L_super, nm, 3,
+                    function (qS, mS, eU, dU, eD, dD)
+                        kernel(qS, mS, eU, dU, eD, dD, cell_areas[p],
+                               Int(Hp), Int(Nc), Int(L_super), Int(Nt),
+                               Float32(dt), Val(L_super);
+                               ndrange = _TM5_COLLAB_WG_SIZE * N_total,
+                               workgroupsize = _TM5_COLLAB_WG_SIZE)
+                    end;
+                    Hp = Int(Hp))
+            end
         end
     else
         kernel = _tm5_cs_panel_column_kernel!(backend)

@@ -249,7 +249,7 @@ export capture_snapshot, write_snapshot_netcdf
 
 # Common operator configuration
 export AdvectionWorkspace
-export UpwindScheme, SlopesScheme, PPMScheme, LinRoodPPMScheme
+export UpwindScheme, SlopesScheme, PPMScheme, LinRoodPPMScheme, NoAdvection
 export NoDiffusion, ImplicitVerticalDiffusion
 export NoSurfaceFlux, SurfaceFluxOperator, SurfaceFluxSource,
        PerTracerFluxMap, flux_for

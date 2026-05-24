@@ -81,6 +81,11 @@ _cs_advection_workspace_for(::LinRoodPPMScheme,
                             grid::AtmosGrid{<:CubedSphereMesh}) =
     CSLinRoodAdvectionWorkspace(grid.horizontal, state.air_mass[1])
 
+# No advection → no scratch buffers. Mirrors `_convection_workspace_for(::NoConvection, …)`.
+_cs_advection_workspace_for(::NoAdvection,
+                            state::CubedSphereState,
+                            grid::AtmosGrid{<:CubedSphereMesh}) = nothing
+
 _cmfmc_cell_metrics(mesh::LatLonMesh) = cell_areas_by_latitude(mesh)
 _cmfmc_cell_metrics(mesh::ReducedGaussianMesh) = [cell_area(mesh, c) for c in 1:ncells(mesh)]
 _cmfmc_cell_metrics(mesh::CubedSphereMesh) = ntuple(_ -> mesh.cell_areas, 6)

@@ -195,6 +195,35 @@ scheme = UpwindScheme()
 struct UpwindScheme <: AbstractConstantScheme end
 
 """
+    NoAdvection <: AbstractAdvectionScheme
+
+Identity scheme — `apply!` is a no-op. Default for runs that need to
+isolate other operators (convection, chemistry, diagnostics) from the
+advective transport block, e.g. a "convection-alone" timing
+experiment or a synthetic-state regression.
+
+When `NoAdvection` is selected:
+- The advection sweeps are skipped on all three topologies
+  (`LatLonMesh`, `ReducedGaussianMesh`, `CubedSphereMesh`).
+- Diffusion and surface emissions are normally invoked from inside
+  the advection palindrome for Strang-split accuracy; without
+  advection there is no palindrome to invoke them from, so the
+  constructor-level dispatch rejects non-`NoDiffusion` and
+  non-`NoSurfaceFlux` operators with a clear error. To run a
+  convection-only configuration set `[diffusion] kind = "none"`
+  and omit `[tracers.*.surface_flux]` blocks.
+- The CS workspace constructor returns `nothing` (no scratch
+  buffers are needed), so the workspace memory footprint matches
+  a `NoConvection` setup.
+
+# Example
+```julia
+scheme = NoAdvection()
+```
+"""
+struct NoAdvection <: AbstractAdvectionScheme end
+
+"""
     SlopesScheme{L <: AbstractLimiter} <: AbstractLinearScheme
 
 Van Leer / Russell–Lerner slopes advection (Russell & Lerner 1981).
@@ -302,6 +331,10 @@ struct CSLinRoodStyle    <: AbstractCSAdvectionStyle end
 
 @inline cs_advection_style(::AbstractAdvectionScheme) = CSSplitSweepStyle()
 @inline cs_advection_style(::LinRoodPPMScheme)        = CSLinRoodStyle()
+# `NoAdvection` doesn't run any CS execution path; the explicit
+# specialization returns the split-sweep style so callers that
+# branch on the trait don't choke on an unhandled scheme.
+@inline cs_advection_style(::NoAdvection)             = CSSplitSweepStyle()
 
 """
     required_halo_width(scheme) -> Int
@@ -315,6 +348,10 @@ paths.
 @inline required_halo_width(::AbstractLinearScheme)    = 2
 @inline required_halo_width(::AbstractQuadraticScheme) = 3
 @inline required_halo_width(::LinRoodPPMScheme)        = 3
+# `NoAdvection` doesn't read any horizontal stencil, so any halo
+# width works. Reporting 0 keeps the workspace sizer from
+# allocating CS halo scratch beyond what convection/diffusion need.
+@inline required_halo_width(::NoAdvection)             = 0
 
 # ---- Reconstruction order query -----------------------------------------
 
@@ -333,9 +370,12 @@ multi-tracer kernel fusion.
 @inline reconstruction_order(::AbstractLinearScheme)    = 1
 @inline reconstruction_order(::AbstractQuadraticScheme) = 2
 @inline reconstruction_order(::LinRoodPPMScheme)        = 2
+# `NoAdvection` has no reconstruction; report -1 as a clear
+# "not applicable" sentinel.
+@inline reconstruction_order(::NoAdvection)             = -1
 
 export AbstractAdvectionScheme
 export AbstractConstantScheme, AbstractLinearScheme, AbstractQuadraticScheme
 export AbstractLimiter, NoLimiter, MonotoneLimiter, PositivityLimiter
-export UpwindScheme, SlopesScheme, PPMScheme, LinRoodPPMScheme
+export UpwindScheme, SlopesScheme, PPMScheme, LinRoodPPMScheme, NoAdvection
 export reconstruction_order, required_halo_width

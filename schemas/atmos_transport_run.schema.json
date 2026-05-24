@@ -89,7 +89,7 @@
         "scheme": {
           "type": "string",
           "description": "Horizontal advection scheme.",
-          "enum": ["upwind", "slopes", "ppm", "linrood"],
+          "enum": ["upwind", "slopes", "ppm", "linrood", "none"],
           "default": "slopes",
           "x-taplo": {
             "docs": {
@@ -97,7 +97,8 @@
                 "Most diffusive but robust first-order upwind scheme.",
                 "Second-order slope-limited scheme used by current validation configs.",
                 "Piecewise parabolic method. Requires wider CS halos.",
-                "Lin-Rood style CS advection path where supported."
+                "Lin-Rood style CS advection path where supported.",
+                "Identity no-op for isolating other operators (convection-only timing, regression). Requires [diffusion] kind = \"none\" and no [tracers.*.surface_flux] blocks."
               ]
             }
           }

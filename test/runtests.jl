@@ -45,6 +45,7 @@ core_tests = [
     "test_cs_panel_geographic_roundtrip.jl",
     "test_basis_explicit_core.jl",
     "test_advection_kernels.jl",
+    "test_no_advection.jl",
     "test_cs_ppm_adjoint_footprint.jl",
     "test_cs_tape_mmap_roundtrip.jl",
     "test_cs_stride_checkpoint.jl",

@@ -101,9 +101,14 @@ scheme = "slopes"     # "upwind" | "slopes" | "ppm" | "linrood"
 `[run].scheme` is the legacy alias; if `[advection]` is present,
 `[run].scheme` is rejected.
 
-Advection has **no `NoAdvection` operator** — it's always active. To
-disable transport for a debug run, set `dt` very small or use the
-identity binary (mass fluxes ≡ 0).
+A `NoAdvection` identity operator is available for isolating other
+operators (e.g. convection-only timing, regression). Select with
+`[advection] scheme = "none"`. It is incompatible with non-`NoDiffusion`
+/ non-`NoSurfaceFlux` companion operators (both are integrated at the
+Strang-split palindrome center of the advection block) — the `apply!`
+dispatch hard-rejects those combinations with a pointer to the right
+TOML knob. For "near-zero" transport instead of identity, set `dt` very
+small or use an identity binary (mass fluxes ≡ 0).
 
 ## Diffusion
 

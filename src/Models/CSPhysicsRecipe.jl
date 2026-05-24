@@ -104,6 +104,7 @@ end
 
 build_runtime_advection(::AbstractStructuredRuntimeRecipeStyle, ::Val{:upwind}, _section) = UpwindScheme()
 build_runtime_advection(::AbstractStructuredRuntimeRecipeStyle, ::Val{:slopes}, _section) = SlopesScheme()
+build_runtime_advection(::AbstractStructuredRuntimeRecipeStyle, ::Val{:none}, _section)   = NoAdvection()
 
 function build_runtime_advection(::AbstractStructuredRuntimeRecipeStyle, ::Val{:ppm}, section)
     haskey(section, "ppm_order") &&
@@ -123,6 +124,10 @@ build_runtime_advection(style::AbstractStructuredRuntimeRecipeStyle, ::Val{:linr
 
 function build_runtime_advection(::CubedSphereRuntimeRecipeStyle, ::Val{:upwind}, _section)
     return UpwindScheme()
+end
+
+function build_runtime_advection(::CubedSphereRuntimeRecipeStyle, ::Val{:none}, _section)
+    return NoAdvection()
 end
 
 function build_runtime_advection(::CubedSphereRuntimeRecipeStyle, ::Val{:slopes}, _section)
@@ -146,7 +151,7 @@ build_runtime_advection(style::CubedSphereRuntimeRecipeStyle, ::Val{:linrood_ppm
 
 function build_runtime_advection(::AbstractRuntimeRecipeStyle, ::Val{name}, _section) where name
     throw(ArgumentError(
-        "Unknown [advection] scheme: $(name). Supported: upwind | slopes | ppm | linrood"))
+        "Unknown [advection] scheme: $(name). Supported: upwind | slopes | ppm | linrood | none"))
 end
 
 function build_runtime_diffusion(cfg, context, ::Type{FT}) where FT

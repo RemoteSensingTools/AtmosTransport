@@ -61,7 +61,7 @@ export diagnose_cm!
 export AbstractAdvectionScheme
 export AbstractConstantScheme, AbstractLinearScheme, AbstractQuadraticScheme
 export AbstractLimiter, NoLimiter, MonotoneLimiter, PositivityLimiter
-export UpwindScheme, SlopesScheme, PPMScheme, LinRoodPPMScheme
+export UpwindScheme, SlopesScheme, PPMScheme, LinRoodPPMScheme, NoAdvection
 export reconstruction_order, required_halo_width
 
 # Chemistry

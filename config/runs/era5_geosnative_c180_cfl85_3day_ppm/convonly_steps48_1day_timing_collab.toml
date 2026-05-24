@@ -1,0 +1,54 @@
+# Convection-only timing run — ERA5 regridded to GEOS-native C180/L85,
+# Dec 2 2021. Identical to fullphysics_steps48_1day_timing_collab.toml
+# except advection, diffusion, and surface emissions are all disabled so
+# the wall-clock is dominated entirely by the TM5 convection block.
+# Lets us measure the lower bound of "what does P6 buy us" without any
+# Strang-split overhead from neighbouring operators.
+#
+# NoAdvection is a typed no-op that hard-rejects non-NoDiffusion /
+# non-NoSurfaceFlux companion operators, so this config also doubles as
+# the smoke test for that contract: if anyone re-enables `[diffusion]`
+# or `[tracers.*.surface_flux]` here, the run will fail loudly with a
+# pointer to the right TOML knob.
+#
+# Runner:
+#   ATMOSTR_TIMERS=1 julia --project=. scripts/run_transport.jl \
+#       config/runs/era5_geosnative_c180_cfl85_3day_ppm/convonly_steps48_1day_timing_collab.toml
+
+[input]
+folder       = "/temp1/c180_era5_geosgrid_cfl85_tm5_surface_f32_steps48_v3_20260520"
+start_date   = "2021-12-02"
+end_date     = "2021-12-02"
+file_pattern = "era5_transport_{YYYYMMDD}_merged1000Pa_float32.bin"
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[advection]
+scheme = "none"
+
+[tracers.co2_natural]
+[tracers.co2_natural.init]
+kind = "catrine_co2"
+
+[tracers.co2_fossil]
+[tracers.co2_fossil.init]
+kind = "uniform"
+background = 0.0
+
+[diffusion]
+kind = "none"
+
+[convection]
+kind = "tm5"
+tile_workspace_gib = 0.25
+use_collab_lu = true
+lmax_conv = 75
+
+[output]
+snapshot_hours = []
+snapshot_file  = "/temp1/c180_era5_geosgrid_cfl85_tm5_surface_f32_steps48_v3_20260520/convonly_tm5_1day_timing_collab.nc"

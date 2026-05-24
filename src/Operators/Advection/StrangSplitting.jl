@@ -1258,6 +1258,51 @@ function apply!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
     return nothing
 end
 
+# NoAdvection no-op apply! — LatLon. The workspace, cfl_limit, and
+# meteo arguments are accepted but ignored so callers (e.g.
+# `transport_step!` in `Models/TransportModel.jl`) can dispatch
+# without branching on the scheme. Diffusion and surface emissions
+# are rejected here because they're normally invoked from inside the
+# advection palindrome — running them without that structure would
+# silently drop the Strang half-stepping. The caller must opt into a
+# clean convection-only setup (NoDiffusion + NoSurfaceFlux).
+@inline function apply!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
+                         grid::AtmosGrid{<:LatLonMesh},
+                         ::NoAdvection, dt;
+                         workspace = nothing,
+                         cfl_limit::Real = one(eltype(state.air_mass)),
+                         diffusion_op::AbstractDiffusion = NoDiffusion(),
+                         emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
+                         meteo = nothing) where {B <: AbstractMassBasis}
+    _noadvection_reject_companion_ops(diffusion_op, emissions_op)
+    return nothing
+end
+
+# Polymorphic guard. The two assertions live here so all three
+# topology entries share one implementation; the messages call out
+# the specific TOML knobs the user has to flip to recover a valid
+# configuration.
+@inline function _noadvection_reject_companion_ops(diffusion_op::AbstractDiffusion,
+                                                    emissions_op::AbstractSurfaceFluxOperator)
+    if !(diffusion_op isa NoDiffusion)
+        throw(ArgumentError(
+            "NoAdvection is incompatible with non-NoDiffusion: " *
+            "diffusion is integrated into the advection Strang-split " *
+            "palindrome center, so running it without advection drops " *
+            "the operator-splitting structure. Set `[diffusion] kind = \"none\"` " *
+            "for a convection-only run."))
+    end
+    if !(emissions_op isa NoSurfaceFlux)
+        throw(ArgumentError(
+            "NoAdvection is incompatible with non-NoSurfaceFlux: surface " *
+            "emissions are applied as Strang half-steps wrapping the " *
+            "advection palindrome, so running them without advection " *
+            "drops the symmetric splitting. Remove `[tracers.*.surface_flux]` " *
+            "blocks for a convection-only run."))
+    end
+    return nothing
+end
+
 function apply!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
                 grid::AtmosGrid{<:CubedSphereMesh},
                 scheme::AbstractAdvectionScheme, dt;
@@ -1280,6 +1325,41 @@ function apply!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxState{B},
                   emissions_op = emissions_op,
                   meteo = meteo,
                   dt = dt)
+    return nothing
+end
+
+# NoAdvection no-op apply! — CubedSphere.  Same contract as the LL
+# variant above.  The CS workspace is typed as `Any` so callers can
+# pass either `nothing` (the natural choice when advection is off)
+# or a leftover `CSAdvectionWorkspace` from a previous configuration
+# without touching this dispatch.
+@inline function apply!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxState{B},
+                         grid::AtmosGrid{<:CubedSphereMesh},
+                         ::NoAdvection, dt;
+                         workspace = nothing,
+                         cfl_limit::Real = 0.95,
+                         diffusion_op::AbstractDiffusion = NoDiffusion(),
+                         emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
+                         meteo = nothing) where {B <: AbstractMassBasis}
+    _noadvection_reject_companion_ops(diffusion_op, emissions_op)
+    return nothing
+end
+
+# NoAdvection no-op apply! — face-indexed (ReducedGaussian).  Same
+# contract as the LL / CS variants above.  Defined OUTSIDE the
+# `@eval` loop below because that loop only generates methods
+# dispatched on `AbstractConstantScheme` (the only face-indexed
+# advection scheme that has kernels); `NoAdvection` is a sibling
+# subtype and needs its own method.
+@inline function apply!(state::CellState{B}, fluxes::FaceIndexedFluxState{B},
+                         grid::AtmosGrid{<:AbstractHorizontalMesh},
+                         ::NoAdvection, dt;
+                         workspace = nothing,
+                         cfl_limit::Real = one(eltype(state.air_mass)),
+                         diffusion_op::AbstractDiffusion = NoDiffusion(),
+                         emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
+                         meteo = nothing) where {B <: AbstractMassBasis}
+    _noadvection_reject_companion_ops(diffusion_op, emissions_op)
     return nothing
 end
 

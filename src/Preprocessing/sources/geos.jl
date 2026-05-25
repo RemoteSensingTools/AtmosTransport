@@ -1142,6 +1142,12 @@ function _read_geosfp_convection_window!(raw::RawWindow{FT},
     @assert raw.cmfmc  !== nothing "RawWindow.cmfmc must be allocated when convection is enabled"
     @assert raw.dtrain !== nothing "RawWindow.dtrain must be allocated when convection is enabled"
 
+    # `_read_latlon_slice` calls `_time_index_for_geosfp_physics`
+    # internally, which already maps `win_idx` (hourly, 1..24) to the
+    # appropriate A3 record (3-hourly, 1..8) via
+    # `_a3_index_for_window`. Pass `win_idx` directly here — the CS
+    # fallback above uses `_read_panels_3d`, which has no such
+    # internal mapping and therefore precomputes `a3_idx`.
     cmfmc_name = _find_var_name(physics.a3mste, GEOS_CONVECTION_VAR_CANDIDATES[:cmfmc])
     dtrain_name = _find_var_name(physics.a3dyn, GEOS_CONVECTION_VAR_CANDIDATES[:dtrain])
     cmfmc_ll  = _read_latlon_slice(physics.a3mste, cmfmc_name,  win_idx, Val(3), FT)

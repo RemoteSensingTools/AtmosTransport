@@ -810,6 +810,12 @@ function build_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 3}},
             end
             q
         end, CS_PANEL_COUNT)
+    elseif kind === :pressure_layer
+        surface_pressure === nothing && throw(ArgumentError(
+            "init.kind=pressure_layer requires `surface_pressure` " *
+            "(NTuple{6, Matrix}) so the target layer can be selected by " *
+            "per-column ps. Pass `window.surface_pressure` from the binary."))
+        return _build_cs_pressure_layer_ic(air_mass, grid, cfg, FT, surface_pressure)
     elseif _is_file_init_kind(kind)
         surface_pressure === nothing && throw(ArgumentError(
             "build_initial_mixing_ratio(::AtmosGrid{<:CubedSphereMesh}, ...) " *
@@ -828,7 +834,7 @@ function build_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 3}},
     else
         throw(ArgumentError(
             "unsupported init.kind=$(kind) for CubedSphereMesh; " *
-            "supported: uniform | latitude_step | gaussian_blob | file | netcdf | file_field | catrine_co2"))
+            "supported: uniform | latitude_step | gaussian_blob | file | netcdf | file_field | catrine_co2 | pressure_layer"))
     end
 end
 
@@ -894,6 +900,106 @@ function _build_cs_file_ic(grid::AtmosGrid{<:CubedSphereMesh},
         end
     end
 
+    return vmr
+end
+
+# ---------------------------------------------------------------------------
+# pressure-layer single-layer IC — places a constant VMR in one model
+# layer per column (selected by psurf_fraction × ps_column, or k=Nz when
+# `lowest_layer = true`). VMR is computed globally so that the total
+# molecule count across all cells matches `total_molecules`.
+#
+# Used by the convection-comparison experiment (TM5 vs GCHP CMFMC):
+# four tracers, each in a different vertical slab at lowest /
+# 0.8 / 0.6 / 0.4 × ps_surf, with identical molecule counts so cross-
+# tracer redistribution can be compared directly.
+# ---------------------------------------------------------------------------
+
+const _MOLAR_MASS_AIR_KG_PER_MOL = 0.0289644
+const _AVOGADRO                  = 6.02214076e23
+
+function _build_cs_pressure_layer_ic(air_mass::NTuple{6, <:AbstractArray{FT, 3}},
+                                      grid::AtmosGrid{<:CubedSphereMesh},
+                                      cfg, ::Type{FT},
+                                      surface_pressure::NTuple{6, <:AbstractMatrix}) where FT
+    mesh = grid.horizontal
+    Nc   = mesh.Nc
+    Hp   = mesh.Hp
+    Nz   = size(air_mass[1], 3)
+    A    = grid.vertical.A
+    B    = grid.vertical.B
+
+    lowest_layer = Bool(get(cfg, "lowest_layer", false))
+    psurf_fraction = lowest_layer ? FT(NaN) :
+                     FT(get(cfg, "psurf_fraction", 0.5))
+    total_molecules = Float64(get(cfg, "total_molecules", 1.0e22))
+
+    if !lowest_layer
+        (FT(0) < psurf_fraction <= FT(1)) || throw(ArgumentError(
+            "init.kind=pressure_layer requires 0 < psurf_fraction <= 1; got $(psurf_fraction)"))
+    end
+    total_molecules > 0 || throw(ArgumentError(
+        "init.kind=pressure_layer requires total_molecules > 0; got $(total_molecules)"))
+
+    # air_mass is halo-padded `(Nc+2Hp, Nc+2Hp, Nz)` (see _cs_pack_interior_into_halo);
+    # surface_pressure is interior `(Nc, Nc)` per panel. We index the interior
+    # of air_mass via `[Hp+i, Hp+j, :]` so the per-column dry mass we sum matches
+    # the cells whose VMR we set.
+    k_target = ntuple(_ -> Array{Int}(undef, Nc, Nc), CS_PANEL_COUNT)
+    if lowest_layer
+        for p in 1:CS_PANEL_COUNT
+            fill!(k_target[p], Nz)
+        end
+    else
+        for p in 1:CS_PANEL_COUNT
+            ps = surface_pressure[p]
+            for j in 1:Nc, i in 1:Nc
+                ps_col = Float64(ps[i, j])
+                target_p = psurf_fraction * ps_col
+                k_best, dp_best = 1, Inf
+                for k in 1:Nz
+                    p_top = Float64(A[k])   + Float64(B[k])   * ps_col
+                    p_bot = Float64(A[k+1]) + Float64(B[k+1]) * ps_col
+                    p_mid = sqrt(max(p_top, eps()) * p_bot)  # log-midpoint
+                    dp = abs(p_mid - target_p)
+                    if dp < dp_best
+                        dp_best = dp
+                        k_best = k
+                    end
+                end
+                k_target[p][i, j] = k_best
+            end
+        end
+    end
+
+    # Total dry-air mass in the chosen layer across all (panel, i, j).
+    # air_mass is halo-padded, so the interior cell `(i, j)` is `[Hp+i, Hp+j, :]`.
+    total_dry_mass = 0.0
+    for p in 1:CS_PANEL_COUNT
+        m = air_mass[p]
+        kt = k_target[p]
+        for j in 1:Nc, i in 1:Nc
+            total_dry_mass += Float64(m[Hp + i, Hp + j, kt[i, j]])
+        end
+    end
+    total_dry_mass > 0 || throw(ArgumentError(
+        "init.kind=pressure_layer: target-layer dry mass summed to zero; binary may be empty"))
+
+    # VMR (mol_co2 / mol_air) chosen so Σ molecules = total_molecules.
+    #   molecules_per_cell = VMR × N_A × dry_mass_per_cell / M_air
+    #   total_molecules    = VMR × N_A × Σ dry_mass / M_air
+    vmr_value = FT(total_molecules * _MOLAR_MASS_AIR_KG_PER_MOL /
+                   (_AVOGADRO * total_dry_mass))
+
+    # Build the VMR panels (interior-shaped `(Nc, Nc, Nz)`): zero except
+    # in the chosen layer per column.
+    vmr = ntuple(_ -> zeros(FT, Nc, Nc, Nz), CS_PANEL_COUNT)
+    for p in 1:CS_PANEL_COUNT
+        kt = k_target[p]
+        for j in 1:Nc, i in 1:Nc
+            vmr[p][i, j, kt[i, j]] = vmr_value
+        end
+    end
     return vmr
 end
 

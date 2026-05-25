@@ -32,6 +32,38 @@
 # ---------------------------------------------------------------------------
 
 # =========================================================================
+# Numerical tiny — type-dispatched "treat as zero" threshold for
+# cmfmc/dtrain comparisons and column-mass guards. Two requirements:
+#
+#   (a) ABOVE the type's representation noise for typical cmfmc
+#       magnitudes (`eps(FT) × max_scale` where max_scale ~ 1 kg/m²/s
+#       in storage), so noise in a Float32 binary cannot spuriously
+#       activate cloud-base detection or Pass 0.
+#   (b) BELOW the smallest physically-meaningful cmfmc magnitude
+#       (~1e-6 kg/m²/s for very weak convection), so real signals
+#       are never silently dropped.
+#
+# That gives a target window (eps(FT) × ~1, 1e-6):
+#
+#   - Float32: `1f-6`  — about 8 × `eps(Float32) ≈ 1.19e-7`, at the
+#     top of the safe window. Real GEOS-IT CMFMC values that fall
+#     below this are essentially indistinguishable from Float32 round-off
+#     in the binary anyway.
+#   - Float64: `1e-14` — about 45 × `eps(Float64) ≈ 2.22e-16`, well
+#     above noise and well below physical signal.
+#
+# Previously the kernels used `FT(1e-30)` (which on Float32 sat
+# ~1e-23× BELOW `eps(Float32)` — i.e. inside the noise band and
+# at risk of spurious activation on Float32 binaries). Centralising
+# the constant here also makes it easy to retune without scanning
+# three kernels.
+# =========================================================================
+
+@inline _cmfmc_tiny(::Type{Float32}) = 1f-6
+@inline _cmfmc_tiny(::Type{Float64}) = 1e-14
+@inline _cmfmc_tiny(::Type{T}) where {T <: AbstractFloat} = T(1e-14)
+
+# =========================================================================
 # Inline helpers, dispatch-ready for future wet scavenging.
 # =========================================================================
 
@@ -55,10 +87,15 @@ on a solubility trait parameter.
 - `q_env` — environment mixing ratio at the current layer.
 - `cmfmc_below` — inflow mass flux from below [kg / m² / s].
 - `entrn` — environment air entrained into the updraft
-  [kg / m² / s], already capped at `cmout - cmfmc_below ≥ 0`.
+  [kg / m² / s]. After the post-2026-05-24 audit (C3) the caller
+  guards `entrn ≥ 0 && cmout > tiny` and falls back to
+  `qc = qc_below` when the guard fails; this helper therefore only
+  runs in the well-formed regime where `entrn ≥ 0` is guaranteed.
 - `cmout` — total outflow from the updraft [kg / m² / s].
-- `tiny` — small-value threshold; below `cmout ≤ tiny` the formula
-  is ill-conditioned and we fall back to `qc = q_env`.
+- `tiny` — small-value threshold; in the guarded calling pattern
+  `cmout > tiny` is enforced by the caller, but the helper keeps
+  the `cmout ≤ tiny → qc = q_env` fall-through for direct callers
+  (e.g. unit tests that exercise the helper outside the kernel).
 """
 @inline function _cmfmc_updraft_mix(qc_below, q_env, cmfmc_below, entrn, cmout, tiny)
     if cmout > tiny
@@ -321,14 +358,17 @@ end
     i, j = @index(Global, NTuple)
 
     FT = eltype(tracers_raw)
-    tiny = FT(1e-30)
+    tiny = _cmfmc_tiny(FT)
     ii = i + Hp
     jj = j + Hp
     cell_area = FT(cell_areas[i, j])
 
     @inbounds for t_idx in 1:Nt
+        # Cloud base = largest k with `|cmfmc[k+1]| > tiny` (lowest
+        # altitude with non-zero updraft inflow). See LL kernel above
+        # for the GCHP convention reference (convection_mod.F90:625).
         cldbase_k = 0
-        for k in 1:Nz
+        for k in Nz:-1:1
             cmfmc_bot_k = cmfmc[i, j, k + 1]
             if abs(cmfmc_bot_k) > tiny
                 cldbase_k = k
@@ -340,32 +380,42 @@ end
             continue
         end
 
+        # Well-mixed sub-cloud, kg/m² accumulator + column-closing
+        # cloud-base update — see LL kernel for the full derivation.
         if cldbase_k < Nz
             m_cb = air_mass[ii, jj, cldbase_k]
             q_cldbase = m_cb > tiny ? tracers_raw[ii, jj, cldbase_k, t_idx] / m_cb : zero(FT)
             cmfmc_at_cldbase = cmfmc[i, j, cldbase_k + 1]
             if cmfmc_at_cldbase > tiny
-                qb_num = zero(FT)
-                qb_comp = zero(FT)
-                mb = zero(FT)
-                mb_comp = zero(FT)
+                qb_num     = zero(FT); qb_comp    = zero(FT)
+                mb_pa      = zero(FT); mb_pa_comp = zero(FT)
                 for k in (cldbase_k + 1):Nz
                     m_k = air_mass[ii, jj, k]
                     q_k = m_k > tiny ? tracers_raw[ii, jj, k, t_idx] / m_k : zero(FT)
-                    qb_num, qb_comp = _kahan_add(qb_num, qb_comp, q_k * m_k)
-                    mb, mb_comp = _kahan_add(mb, mb_comp, m_k)
+                    m_k_pa = m_k / cell_area
+                    qb_num, qb_comp    = _kahan_add(qb_num, qb_comp, q_k * m_k_pa)
+                    mb_pa,  mb_pa_comp = _kahan_add(mb_pa,  mb_pa_comp, m_k_pa)
                 end
-                if mb > zero(FT)
-                    qb = qb_num / mb
-                    qc_mixed = (mb * qb + cmfmc_at_cldbase * q_cldbase * dt) /
-                               (mb + cmfmc_at_cldbase * dt)
+                if mb_pa > zero(FT)
+                    qb = qb_num / mb_pa
+                    qc_mixed = (mb_pa * qb + cmfmc_at_cldbase * q_cldbase * dt) /
+                               (mb_pa + cmfmc_at_cldbase * dt)
                     for k in (cldbase_k + 1):Nz
                         tracers_raw[ii, jj, k, t_idx] = qc_mixed * air_mass[ii, jj, k]
+                    end
+                    m_cb_pa = m_cb / cell_area
+                    if m_cb_pa > tiny
+                        q_cldbase_new = q_cldbase +
+                            cmfmc_at_cldbase * dt * (qc_mixed - q_cldbase) / m_cb_pa
+                        tracers_raw[ii, jj, cldbase_k, t_idx] = q_cldbase_new * m_cb
                     end
                 end
             end
         end
 
+        # Pass 1: GCHP-style guard — see LL kernel above for the
+        # `entrn ≥ 0 .and. cmout > tiny` rationale and the
+        # deliberate omission of the non-conservative `Q+DELQ<0` clamp.
         qc_below = zero(FT)
 
         for k in Nz:-1:1
@@ -377,11 +427,14 @@ end
             dtrain_k = has_dtrain ? dtrain[i, j, k] : zero(FT)
 
             cmout = cmfmc_top + dtrain_k
-            cmfmc_bot_eff = min(cmfmc_bot, cmout)
-            entrn = cmout - cmfmc_bot_eff
+            entrn = cmout - cmfmc_bot
 
-            qc, _qc_scav = _cmfmc_updraft_mix(qc_below, q_k,
-                                              cmfmc_bot_eff, entrn, cmout, tiny)
+            if entrn >= zero(FT) && cmout > tiny
+                qc, _qc_scav = _cmfmc_updraft_mix(qc_below, q_k,
+                                                  cmfmc_bot, entrn, cmout, tiny)
+            else
+                qc = qc_below
+            end
             qc_scratch[ii, jj, k] = qc
             qc_below = qc
         end
@@ -432,16 +485,21 @@ end
     i, j = @index(Global, NTuple)
 
     FT = eltype(tracers_raw)
-    tiny = FT(1e-30)
+    tiny = _cmfmc_tiny(FT)
     cell_area_j = FT(cell_areas_y[j])
 
     @inbounds for t_idx in 1:Nt
 
-        # ── Pass 0: cloud-base detection (plan 18 addition per Decision 17) ──
-        # Smallest k with |cmfmc[k+1]| > tiny — this is the level that
-        # first has updraft inflow from below.
+        # ── Pass 0: cloud-base detection ──
+        # Cloud base = lowest altitude with non-zero updraft inflow.
+        # In our TOA-first orientation (k=1=TOA, k=Nz=surface) that is
+        # the LARGEST k with `|cmfmc[k+1]| > tiny`. Scan k=Nz → 1
+        # (surface upward in altitude) and take the first hit.
+        # This mirrors GCHP `convection_mod.F90:625`, where the
+        # surface-up scan `DO K = 1, NLAY` selects the lowest level
+        # with non-zero forcing as the cloud base.
         cldbase_k = 0
-        for k in 1:Nz
+        for k in Nz:-1:1
             cmfmc_bot_k = cmfmc[i, j, k + 1]
             if abs(cmfmc_bot_k) > tiny
                 cldbase_k = k
@@ -454,31 +512,56 @@ end
             continue
         end
 
-        # ── Well-mixed sub-cloud layer (GCHP :742-782, missing in legacy) ──
+        # ── Well-mixed sub-cloud layer (GCHP convection_mod.F90:742-782) ──
         # Before Pass 1, uniformise the environment below cloud base so
-        # the updraft entrains a well-mixed column.
+        # the updraft entrains a well-mixed column. "Below cloud base"
+        # = larger k in our orientation = layers (cldbase_k+1):Nz.
+        #
+        # The mass-weighted mixing formula needs `mb` and `cmfmc·dt` in
+        # the SAME units (kg/m²) so the two terms in the denominator
+        # are commensurable. We accumulate `mb_pa` in kg/m² by
+        # dividing each layer's per-cell mass by `cell_area_j`.
+        #
+        # Deliberate improvement over GCHP: GCHP's step leaves
+        # `Q(CLDBASE)` unchanged, so the "extra mass" implicit in
+        # `(mb_pa + cmfmc·dt)` is never debited to the cloud-base
+        # layer — column tracer mass drifts by `cmfmc·dt·(q_new -
+        # q_cldbase)·cell_area` per call. GCHP relies on its dynamics
+        # core to absorb that residual; our convection-only operator
+        # has no such absorber. We therefore close the budget locally
+        # by updating `Q(CLDBASE) += cmfmc·dt·(qc_mixed - q_cldbase) /
+        # m_cb_pa`, which by construction makes Pass 0 strictly
+        # mass-conserving. The downstream Pass 1 entrainment then
+        # reads the updated `q_cldbase`, which is the physically
+        # correct value of the well-mixed air entering the updraft.
         if cldbase_k < Nz
             m_cb = air_mass[i, j, cldbase_k]
             q_cldbase = m_cb > tiny ?
                 tracers_raw[i, j, cldbase_k, t_idx] / m_cb : zero(FT)
             cmfmc_at_cldbase = cmfmc[i, j, cldbase_k + 1]
             if cmfmc_at_cldbase > tiny
-                # Inline the GCHP well-mixed sub-cloud formula; KA kernels
-                # cannot take column views cleanly.
                 qb_num = zero(FT); qb_comp = zero(FT)
-                mb = zero(FT); mb_comp = zero(FT)
+                mb_pa  = zero(FT); mb_pa_comp = zero(FT)
                 for k in (cldbase_k + 1):Nz
                     m_k = air_mass[i, j, k]
                     q_k = m_k > tiny ? tracers_raw[i, j, k, t_idx] / m_k : zero(FT)
-                    qb_num, qb_comp = _kahan_add(qb_num, qb_comp, q_k * m_k)
-                    mb, mb_comp = _kahan_add(mb, mb_comp, m_k)
+                    m_k_pa = m_k / cell_area_j
+                    qb_num, qb_comp     = _kahan_add(qb_num, qb_comp, q_k * m_k_pa)
+                    mb_pa,  mb_pa_comp  = _kahan_add(mb_pa,  mb_pa_comp, m_k_pa)
                 end
-                if mb > zero(FT)
-                    qb = qb_num / mb
-                    qc_mixed = (mb * qb + cmfmc_at_cldbase * q_cldbase * dt) /
-                               (mb + cmfmc_at_cldbase * dt)
+                if mb_pa > zero(FT)
+                    qb = qb_num / mb_pa
+                    qc_mixed = (mb_pa * qb + cmfmc_at_cldbase * q_cldbase * dt) /
+                               (mb_pa + cmfmc_at_cldbase * dt)
                     for k in (cldbase_k + 1):Nz
                         tracers_raw[i, j, k, t_idx] = qc_mixed * air_mass[i, j, k]
+                    end
+                    # Close the column budget at the cloud-base layer.
+                    m_cb_pa = m_cb / cell_area_j
+                    if m_cb_pa > tiny
+                        q_cldbase_new = q_cldbase +
+                            cmfmc_at_cldbase * dt * (qc_mixed - q_cldbase) / m_cb_pa
+                        tracers_raw[i, j, cldbase_k, t_idx] = q_cldbase_new * m_cb
                     end
                 end
             end
@@ -488,6 +571,14 @@ end
         # The updraft rises from the surface upward. In our convention,
         # "rising" = decreasing k. At the base (k=Nz), no updraft from
         # below, so we start with qc_below = 0.
+        #
+        # Match GCHP `convection_mod.F90:917`: only update qc when
+        # `entrn ≥ 0 .and. cmout > tiny`; otherwise keep qc unchanged.
+        # We do NOT add the GCHP `Q + DELQ < 0 → DELQ = -Q(K)` clamp
+        # (convection_mod.F90:1001-1004) because that clamp is
+        # non-conservative and breaks linearity in q, which the
+        # adjoint path requires. Negativity is the global mass fixer's
+        # responsibility.
         qc_below = zero(FT)
 
         for k in Nz:-1:1
@@ -499,15 +590,14 @@ end
             dtrain_k  = has_dtrain ? dtrain[i, j, k] : zero(FT)
 
             cmout = cmfmc_top + dtrain_k
-            # Cap inflow at outflow — safety against inconsistent met data
-            # (no positivity clamp; this is a pre-kernel consistency
-            # projection that keeps `entrn ≥ 0` without breaking
-            # linearity in q).
-            cmfmc_bot_eff = min(cmfmc_bot, cmout)
-            entrn = cmout - cmfmc_bot_eff
+            entrn = cmout - cmfmc_bot
 
-            qc, _qc_scav = _cmfmc_updraft_mix(qc_below, q_k,
-                                               cmfmc_bot_eff, entrn, cmout, tiny)
+            if entrn >= zero(FT) && cmout > tiny
+                qc, _qc_scav = _cmfmc_updraft_mix(qc_below, q_k,
+                                                   cmfmc_bot, entrn, cmout, tiny)
+            else
+                qc = qc_below
+            end
             qc_scratch[i, j, k] = qc
             qc_below = qc
         end
@@ -560,12 +650,15 @@ end
     c = @index(Global, Linear)
 
     FT = eltype(tracers_raw)
-    tiny = FT(1e-30)
+    tiny = _cmfmc_tiny(FT)
     cell_area = FT(cell_areas[c])
 
     @inbounds for t_idx in 1:Nt
+        # Cloud base = largest k with `|cmfmc[k+1]| > tiny` (lowest
+        # altitude with non-zero updraft inflow). See LL kernel above
+        # for the GCHP convention reference (convection_mod.F90:625).
         cldbase_k = 0
-        for k in 1:Nz
+        for k in Nz:-1:1
             cmfmc_bot_k = cmfmc[c, k + 1]
             if abs(cmfmc_bot_k) > tiny
                 cldbase_k = k
@@ -577,32 +670,42 @@ end
             continue
         end
 
+        # Well-mixed sub-cloud, kg/m² accumulator + column-closing
+        # cloud-base update — see LL kernel for the full derivation.
         if cldbase_k < Nz
             m_cb = air_mass[c, cldbase_k]
             q_cldbase = m_cb > tiny ? tracers_raw[c, cldbase_k, t_idx] / m_cb : zero(FT)
             cmfmc_at_cldbase = cmfmc[c, cldbase_k + 1]
             if cmfmc_at_cldbase > tiny
-                qb_num = zero(FT)
-                qb_comp = zero(FT)
-                mb = zero(FT)
-                mb_comp = zero(FT)
+                qb_num     = zero(FT); qb_comp    = zero(FT)
+                mb_pa      = zero(FT); mb_pa_comp = zero(FT)
                 for k in (cldbase_k + 1):Nz
                     m_k = air_mass[c, k]
                     q_k = m_k > tiny ? tracers_raw[c, k, t_idx] / m_k : zero(FT)
-                    qb_num, qb_comp = _kahan_add(qb_num, qb_comp, q_k * m_k)
-                    mb, mb_comp = _kahan_add(mb, mb_comp, m_k)
+                    m_k_pa = m_k / cell_area
+                    qb_num, qb_comp    = _kahan_add(qb_num, qb_comp, q_k * m_k_pa)
+                    mb_pa,  mb_pa_comp = _kahan_add(mb_pa,  mb_pa_comp, m_k_pa)
                 end
-                if mb > zero(FT)
-                    qb = qb_num / mb
-                    qc_mixed = (mb * qb + cmfmc_at_cldbase * q_cldbase * dt) /
-                               (mb + cmfmc_at_cldbase * dt)
+                if mb_pa > zero(FT)
+                    qb = qb_num / mb_pa
+                    qc_mixed = (mb_pa * qb + cmfmc_at_cldbase * q_cldbase * dt) /
+                               (mb_pa + cmfmc_at_cldbase * dt)
                     for k in (cldbase_k + 1):Nz
                         tracers_raw[c, k, t_idx] = qc_mixed * air_mass[c, k]
+                    end
+                    m_cb_pa = m_cb / cell_area
+                    if m_cb_pa > tiny
+                        q_cldbase_new = q_cldbase +
+                            cmfmc_at_cldbase * dt * (qc_mixed - q_cldbase) / m_cb_pa
+                        tracers_raw[c, cldbase_k, t_idx] = q_cldbase_new * m_cb
                     end
                 end
             end
         end
 
+        # Pass 1: GCHP-style guard — see LL kernel above for the
+        # `entrn ≥ 0 .and. cmout > tiny` rationale and the
+        # deliberate omission of the non-conservative `Q+DELQ<0` clamp.
         qc_below = zero(FT)
 
         for k in Nz:-1:1
@@ -614,11 +717,14 @@ end
             dtrain_k = has_dtrain ? dtrain[c, k] : zero(FT)
 
             cmout = cmfmc_top + dtrain_k
-            cmfmc_bot_eff = min(cmfmc_bot, cmout)
-            entrn = cmout - cmfmc_bot_eff
+            entrn = cmout - cmfmc_bot
 
-            qc, _qc_scav = _cmfmc_updraft_mix(qc_below, q_k,
-                                              cmfmc_bot_eff, entrn, cmout, tiny)
+            if entrn >= zero(FT) && cmout > tiny
+                qc, _qc_scav = _cmfmc_updraft_mix(qc_below, q_k,
+                                                  cmfmc_bot, entrn, cmout, tiny)
+            else
+                qc = qc_below
+            end
             qc_scratch[c, k] = qc
             qc_below = qc
         end

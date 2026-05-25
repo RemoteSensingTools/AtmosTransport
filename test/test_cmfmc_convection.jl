@@ -47,6 +47,14 @@ using LinearAlgebra: dot
 
 include(joinpath(@__DIR__, "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
+# `ConvectionForcing` is brought into AtmosTransport's namespace via
+# `using .MetDrivers: ConvectionForcing` but not re-exported. Pull it
+# in explicitly here so the test file runs standalone (and under the
+# runtests.jl isolation harness, which used to pick it up indirectly
+# via load order — making the dependency invisible).
+using .AtmosTransport.MetDrivers: ConvectionForcing
+using .AtmosTransport.Operators: CMFMCWorkspace, invalidate_cmfmc_cache!,
+                                  TM5Workspace
 
 # =========================================================================
 # Helpers — build a 4x3x5 LatLonMesh with realistic air_mass scale so
@@ -78,18 +86,29 @@ end
 
 function _make_cmfmc_profile(FT, Nx, Ny, Nz; peak = FT(0.02))
     cmfmc = zeros(FT, Nx, Ny, Nz + 1)
-    # Profile: zero at surface+TOA, peak in middle.
-    # cmfmc[:,:,k] at interface k = top of layer k. Nz+1 interfaces:
-    # k=1 (TOA boundary) → k=Nz+1 (surface boundary).
-    cmfmc[:, :, 4] .= peak * FT(0.5)
+    # Self-consistent profile (entrn ≥ 0 at every layer):
+    # cloud base inflow at peak at interface 4, unchanged through
+    # interface 3, halves at interface 2 (= 0.01 detrained between
+    # layers 3→2), zero at TOA (= remaining 0.01 detrained at cloud
+    # top). The matching `_make_dtrain_profile` provides the dtrain
+    # at layers 1 and 2 so the column updraft budget closes
+    # (`Σ entrn = Σ dtrain`).
+    cmfmc[:, :, 4] .= peak
     cmfmc[:, :, 3] .= peak
     cmfmc[:, :, 2] .= peak * FT(0.5)
     return cmfmc
 end
 
-function _make_dtrain_profile(FT, Nx, Ny, Nz; top_detrain = FT(0.01))
+function _make_dtrain_profile(FT, Nx, Ny, Nz; peak = FT(0.02))
     dtrain = zeros(FT, Nx, Ny, Nz)
-    dtrain[:, :, 1] .= top_detrain   # detrain at cloud top (k=1 is TOA side)
+    # Detrainment closes the cmfmc-profile updraft budget — see
+    # `_make_cmfmc_profile` for the matching cmfmc shape. With
+    # cmfmc[4]=peak, cmfmc[3]=peak, cmfmc[2]=peak/2, cmfmc[1]=0,
+    # layer 2 must shed `peak/2` to absorb the step between
+    # interfaces 3 and 2, and layer 1 sheds the remaining `peak/2`
+    # at cloud top. Total dtrain = peak = total cloud-base inflow.
+    dtrain[:, :, 1] .= peak * FT(0.5)
+    dtrain[:, :, 2] .= peak * FT(0.5)
     return dtrain
 end
 
@@ -180,7 +199,7 @@ end
 
     # Forcing strong enough to produce n_sub > 1.
     cmfmc = _make_cmfmc_profile(FT, Nx, Ny, Nz; peak = FT(0.5))
-    dtrain = _make_dtrain_profile(FT, Nx, Ny, Nz; top_detrain = FT(0.1))
+    dtrain = _make_dtrain_profile(FT, Nx, Ny, Nz; peak = FT(0.5))
     forcing = ConvectionForcing(cmfmc, dtrain, nothing)
     op = CMFMCConvection()
 
@@ -279,12 +298,21 @@ end
     tracer[:, Nz] .= FT(1e-6) .* air_mass[:, Nz]
     state = CellState(MoistBasis, copy(air_mass); CO2 = copy(tracer))
 
+    # Self-consistent flux profile: `entrn = cmout - cmfmc_below ≥ 0`
+    # at every layer, with column-summed entrainment = column-summed
+    # detrainment. Matches what a well-formed CMFMC/DTRAIN pair looks
+    # like in real met (monotone rise from cloud base, stepwise
+    # detrainment going up). The earlier version had an unphysical
+    # inversion `cmfmc[3] > cmfmc[2]` with no compensating dtrain[2],
+    # which made `entrn[2] = -0.01` and exposed the GCHP-matching
+    # kernel's documented lossy behaviour under inconsistent input.
     cmfmc = zeros(FT, ncell, Nz + 1)
-    cmfmc[:, 4] .= FT(0.02) * FT(0.5)
-    cmfmc[:, 3] .= FT(0.02)
-    cmfmc[:, 2] .= FT(0.02) * FT(0.5)
+    cmfmc[:, 4] .= FT(0.02)            # cloud base inflow
+    cmfmc[:, 3] .= FT(0.02)            # unchanged through layer 3
+    cmfmc[:, 2] .= FT(0.01)            # 0.01 detrained between layer 3 → 2
     dtrain = zeros(FT, ncell, Nz)
-    dtrain[:, 1] .= FT(0.01)
+    dtrain[:, 2] .= FT(0.01)           # matches the cmfmc step
+    dtrain[:, 1] .= FT(0.01)           # remaining mass detrained at cloud top
     forcing = ConvectionForcing(cmfmc, dtrain, nothing)
     op = CMFMCConvection()
     ws = CMFMCWorkspace(state.air_mass;
@@ -305,8 +333,9 @@ end
     # Construct a deliberately simple 3-layer column and hand-compute
     # the expected kernel output, then compare.
     #
-    # Nx=Ny=1 for simplicity. k=1=TOA, k=3=surface. Cloud spans layers
-    # 2 and 3; cmfmc = 0 at k=1 (no flux through TOA) and at k=Nz+1=4
+    # Nx=Ny=1 for simplicity. k=1=TOA, k=3=surface. Cloud spans
+    # layers 1 and 2; layer 3 is the sub-cloud (boundary-layer)
+    # column. cmfmc = 0 at k=1 (no flux through TOA) and at k=Nz+1=4
     # (no flux through surface).
     #
     # Interface layout (cmfmc indexing):
@@ -315,8 +344,11 @@ end
     #   cmfmc[3] = bottom of layer 2 = top of layer 3, value C3
     #   cmfmc[4] = surface boundary, = 0 (no flux through surface)
     #
-    # For the cloud-base logic to trigger at layer 3 (the surface
-    # layer), we need cmfmc[k+1] > tiny for k=2 → cmfmc[3] > 0.
+    # GCHP convention (convection_mod.F90:625): cloud base is the
+    # LOWEST altitude with non-zero updraft inflow. In our k-order
+    # (k=Nz=surface) that is the LARGEST k with cmfmc[k+1] > tiny.
+    # Here cmfmc[3] = c3 → cldbase_k = 2. Sub-cloud layers are
+    # (cldbase_k+1):Nz = k=3 only.
     FT = Float64
     Nx, Ny, Nz = 1, 1, 3
     mesh = LatLonMesh(; FT = FT, Nx = Nx, Ny = Ny)
@@ -338,8 +370,9 @@ end
     rm[1, 1, 3] = q3 * m0
     state = CellState(air_mass; CO2 = rm)
 
-    # Forcing: cmfmc[3] > 0 (cloud base at surface), cmfmc[2] > 0
-    # (updraft rises through mid-layer), detrain at layer 2.
+    # Forcing: cmfmc[3] > 0 (cloud base at top of layer 3 = bottom of
+    # layer 2), cmfmc[2] > 0 (updraft continues into layer 1),
+    # detrain at layer 2.
     c3 = FT(0.01); c2 = FT(0.005); d2 = FT(0.005)
     cmfmc = zeros(FT, Nx, Ny, Nz + 1)
     cmfmc[1, 1, 3] = c3
@@ -355,58 +388,55 @@ end
     @test ws.cached_n_sub[] == 1   # single sub-step for this hand-trace
 
     # --- Hand-compute the expected post-step q values ---
-    # Cloud base detection: smallest k with cmfmc[k+1] > tiny.
-    # cmfmc[2] = c2 > tiny → cldbase_k = 1. But Pass 0 well-mixed
-    # sub-cloud is skipped (cmfmc[cldbase_k+1=2] = c2 > tiny, so
-    # run — but cldbase_k=1 means sub-cloud layers are k=2..Nz=3).
-    # Pre-mix: qb = (q2·m + q3·m) / (2m) = (q2+q3)/2.
-    # mb = 2·m0.
-    # qc_mixed = (mb·qb + c2·q1·dt) / (mb + c2·dt)
-    #
-    # Wait — cmfmc_at_cldbase = cmfmc[cldbase_k+1=2] = c2. And
-    # q_cldbase = q[cldbase_k=1] = q1.
-    qb = (q2 + q3) / 2
-    mb = 2 * m0
-    qc_mixed = (mb * qb + c2 * q1 * dt) / (mb + c2 * dt)
+    # cldbase_k = 2 (largest k with cmfmc[k+1] > tiny).
+    # Pass 0 well-mixed sub-cloud iterates k=3..Nz=3 only (single layer).
+    # Mass-weighted accumulator runs in kg/m² (CC1 fix): mb_pa = m0/cell_area.
+    # q_cldbase = q[cldbase_k=2] = q2.
+    # cmfmc_at_cldbase = cmfmc[cldbase_k+1=3] = c3.
+    qb = q3                                              # single sub-cloud layer
+    mb_pa = m0 / cell_area
+    qc_mixed = (mb_pa * qb + c3 * q2 * dt) / (mb_pa + c3 * dt)
+    # Mass-closing cloud-base update (improvement over GCHP — see
+    # cmfmc_kernels.jl for the derivation): the throughflow exchange
+    # between sub-cloud and cloud-base layer debits the cloud-base
+    # layer so column tracer mass is exactly conserved through Pass 0.
+    m_cb_pa = m0 / cell_area
+    q2_closed = q2 + c3 * dt * (qc_mixed - q2) / m_cb_pa
 
-    # Post-Pass-0 state: q[1] = q1, q[2] = q[3] = qc_mixed
+    # Post-Pass-0 state: q[1] = q1, q[2] = q2_closed, q[3] = qc_mixed
     q_post0_1 = q1
-    q_post0_2 = qc_mixed
+    q_post0_2 = q2_closed
     q_post0_3 = qc_mixed
 
     # Pass 1 (updraft, bottom-to-top): k = 3, 2, 1
+    # GCHP-matching guard (C3 fix): qc updates only when
+    # entrn ≥ 0 && cmout > tiny; otherwise qc = qc_below.
     tiny = FT(1e-30)
-    #   Layer k=3: cmfmc_bot = 0 (surface), cmfmc_top = c3, dtrain = 0
-    #     cmout = c3 + 0 = c3; cmfmc_bot_eff = min(0, c3) = 0;
-    #     entrn = c3 - 0 = c3. qc_below = 0.
+    #   Layer k=3: cmfmc_bot = cmfmc[4] = 0, cmfmc_top = cmfmc[3] = c3, dtrain = 0
+    #     cmout = c3 + 0 = c3 > tiny; entrn = c3 - 0 = c3 ≥ 0 → update.
     #     qc3 = (0·0 + c3·q3_post0) / c3 = q_post0_3 = qc_mixed.
     qc3 = q_post0_3
-    #   Layer k=2: cmfmc_bot = c3, cmfmc_top = c2, dtrain = d2
-    #     cmout = c2 + d2; cmfmc_bot_eff = min(c3, c2+d2) = c3 (since c3=0.01, c2+d2=0.01);
-    #     entrn = cmout - cmfmc_bot_eff = 0.
-    #     qc2 = (c3·qc3 + 0·q2_post0) / cmout = c3·qc3 / (c2+d2)
+    #   Layer k=2: cmfmc_bot = cmfmc[3] = c3, cmfmc_top = cmfmc[2] = c2, dtrain = d2
+    #     cmout = c2 + d2 = 0.01; entrn = cmout - c3 = 0.01 - 0.01 = 0 ≥ 0 → update.
+    #     qc2 = (c3·qc3 + 0·q_post0_2) / (c2 + d2) = c3·qc3 / cmout.
     cmout_2 = c2 + d2
     qc2 = (c3 * qc3 + FT(0) * q_post0_2) / cmout_2
-    #   Layer k=1: cmfmc_bot = c2, cmfmc_top = 0 (TOA), dtrain = 0.
-    #     cmout = 0 + 0 = 0. cmout ≤ tiny → qc1 = q_post0_1 = q1.
-    qc1 = q_post0_1
+    #   Layer k=1: cmfmc_bot = cmfmc[2] = c2, cmfmc_top = cmfmc[1] = 0, dtrain = 0.
+    #     cmout = 0 + 0 = 0 ≤ tiny → qc1 = qc_below = qc2.
+    qc1 = qc2
 
     # Pass 2 (tendency, top-to-bottom, simultaneous update w/ q_env_prev):
-    # k=1: k > 1 false, so subsidence term 0. dtrain=0. tsum = 0.
-    #   q_new_1 = q_post0_1 = q1.
+    # k=1: k > 1 false, so subsidence term 0. dtrain=0.
+    #   tsum = 0 → q_new_1 = q_post0_1 = q1.
     q_new_1 = q_post0_1
-    q_env_prev = q_post0_1                              # save BEFORE update
     # k=2: q_above = q_env_prev = q_post0_1 = q1.
     #   cmfmc_above = cmfmc[2] = c2, dtrain = d2.
-    #   tsum = c2*(q_above - q_post0_2) + d2*(qc2 - q_post0_2)
-    #   q_new_2 = q_post0_2 + (dt / bmass) * tsum
+    #   tsum = c2*(q1 - q_post0_2) + d2*(qc2 - q_post0_2)
     tsum_2 = c2 * (q1 - q_post0_2) + d2 * (qc2 - q_post0_2)
     q_new_2 = q_post0_2 + (dt / bmass_per_layer) * tsum_2
-    q_env_prev = q_post0_2                              # save BEFORE update
-    # k=3: q_above = q_env_prev = q_post0_2 = qc_mixed.
+    # k=3: q_above = q_env_prev = q_post0_2 = q2.
     #   cmfmc_above = cmfmc[3] = c3, dtrain = 0.
-    #   tsum = c3*(q_above - q_post0_3) + 0.  But q_post0_3 == qc_mixed,
-    #   so q_above - q_post0_3 = qc_mixed - qc_mixed = 0 → tsum = 0.
+    #   tsum = c3*(q2 - q_post0_3) + 0.
     tsum_3 = c3 * (q_post0_2 - q_post0_3) + FT(0)
     q_new_3 = q_post0_3 + (dt / bmass_per_layer) * tsum_3
 
@@ -414,6 +444,10 @@ end
     @test q_out[1, 1, 1] ≈ q_new_1  rtol = 1e-10
     @test q_out[1, 1, 2] ≈ q_new_2  rtol = 1e-10
     @test q_out[1, 1, 3] ≈ q_new_3  rtol = 1e-10
+
+    # Suppress unused-binding hint on qc1 — it documents the
+    # qc_below fallback at the TOA layer and matters for clarity.
+    @test qc1 == qc2
 end
 
 @testset "B2. DTRAIN-missing Tiedtke fallback" begin
@@ -499,6 +533,285 @@ end
     for i in 2:Nx, j in 2:Ny
         @test state.tracers_raw[i, j, :, 1] == rm_before[i, j, :, 1]
     end
+end
+
+@testset "B3a. Cloud-base scan finds LOWEST altitude (GG1 regression)" begin
+    # Regression for 2026-05-24 audit: prior kernel scanned k=1:Nz and
+    # picked the smallest k with `|cmfmc[k+1]| > tiny`, which in our
+    # TOA-first orientation is the HIGHEST altitude with non-zero
+    # updraft inflow — i.e. cloud TOP, not cloud BASE. The fixed scan
+    # is k=Nz:-1:1 (surface upward in altitude), matching GCHP
+    # convection_mod.F90:625 semantics.
+    #
+    # This test pins the corrected behaviour by constructing two
+    # interfaces with non-zero flux at different altitudes and
+    # asserting that the sub-cloud well-mixed step affects only the
+    # layer(s) BELOW the lower one (the true cloud base), not also
+    # the cloud layer above it.
+    FT = Float64
+    Nx, Ny, Nz = 1, 1, 4
+    mesh = LatLonMesh(; FT = FT, Nx = Nx, Ny = Ny)
+    vc = HybridSigmaPressure(FT[0, 100, 300, 600, 1000],
+                              FT[0, 0, 0.1, 0.5, 1.0])
+    grid = AtmosGrid(mesh, vc, CPU(); FT = FT)
+
+    m0 = FT(_REALISTIC_AIR_MASS_KG)
+    air_mass = fill(m0, Nx, Ny, Nz)
+    q_init = [FT(1e-6), FT(2e-6), FT(3e-6), FT(4e-6)]   # TOA → surface, distinct
+    rm = zeros(FT, Nx, Ny, Nz)
+    for k in 1:Nz
+        rm[1, 1, k] = q_init[k] * m0
+    end
+    state = CellState(air_mass; CO2 = rm)
+
+    # Two non-zero interfaces: cmfmc[2] (top of layer 2) and
+    # cmfmc[3] (top of layer 3). The LARGEST k with cmfmc[k+1] > tiny
+    # is k=2 → cldbase_k = 2. Sub-cloud well-mix iterates k=3..Nz=4
+    # only; layers 1 and 2 must stay at their initial mixing ratios
+    # after Pass 0.
+    cmfmc = zeros(FT, Nx, Ny, Nz + 1)
+    cmfmc[1, 1, 2] = FT(0.005)
+    cmfmc[1, 1, 3] = FT(0.01)
+    dtrain = zeros(FT, Nx, Ny, Nz)
+    forcing = ConvectionForcing(cmfmc, dtrain, nothing)
+
+    # dt = 0 makes Pass 1's tendency vanish but Pass 0's well-mixed
+    # sub-cloud step still runs — isolates the cloud-base detection.
+    op = CMFMCConvection()
+    ws = CMFMCWorkspace(state.air_mass)
+    apply!(state, forcing, grid, op, FT(0); workspace = ws)
+
+    q_out = state.tracers_raw[1, 1, :, 1] ./ state.air_mass[1, 1, :]
+    # At dt=0 the well-mixed formula degenerates to qc_mixed = qb
+    # (mass-weighted mean of the sub-cloud column). Verify that
+    # (a) layers 1 and 2 (cloud + above) are untouched, and
+    # (b) layers 3 and 4 are equal to one another (well-mixed).
+    @test q_out[1] ≈ q_init[1]  rtol = 1e-12
+    @test q_out[2] ≈ q_init[2]  rtol = 1e-12
+    @test q_out[3] ≈ q_out[4]   rtol = 1e-12
+    # The pre-fix code would have set cldbase_k=1 (smallest k with
+    # cmfmc[k+1]>tiny → k=1) and then well-mixed k=2..4, which
+    # would have flushed q[2] into the average too. Pin that the
+    # corrected code does NOT do that:
+    @test !(q_out[2] ≈ q_out[3])
+end
+
+@testset "B3b. Sub-cloud well-mix is cell-area invariant (CC1 regression)" begin
+    # Regression for 2026-05-24 audit: prior code accumulated
+    # `mb = Σ air_mass[k]` in kg-per-cell and combined with
+    # `cmfmc * dt` in kg/m² inside the well-mixed denominator —
+    # ~10 orders of magnitude scale mismatch made the denominator
+    # collapse to `mb` alone and the result reduced to `qc_mixed ≈ qb`.
+    # The fixed code uses `mb_pa = Σ air_mass[k]/cell_area` in kg/m²
+    # so the formula's units agree.
+    #
+    # Two-part regression:
+    #
+    #   (a) Joint invariance: halving cell_area while halving
+    #       air_mass (so mass-per-area is unchanged) must produce
+    #       bit-identical qc_mixed under the corrected formula. The
+    #       broken kg/cell formula would also pass this — it's a
+    #       necessary but not sufficient check.
+    #
+    #   (b) Hand-formula assertion at scales where `cmfmc·dt ≳ mb_pa`,
+    #       so the corrected (kg/m²) formula gives a substantially
+    #       different `qc_mixed` than the broken (kg/cell) one. The
+    #       buggy formula would have denominator ≈ mb (kg/cell);
+    #       the correct denominator is mb_pa + cmfmc·dt (kg/m²).
+    #       We pin the kernel output against the correct hand
+    #       formula AND assert it differs measurably from the buggy
+    #       formula's prediction.
+    FT = Float64
+
+    # ── Part (a): joint invariance ─────────────────────────────────
+    function _run(cell_area_factor::Real, air_mass_factor::Real)
+        Nx, Ny, Nz = 1, 2, 3
+        mesh = LatLonMesh(; FT = FT, Nx = Nx, Ny = Ny)
+        vc = HybridSigmaPressure(FT[0, 200, 500, 1000], FT[0, 0, 0.3, 1.0])
+        grid = AtmosGrid(mesh, vc, CPU(); FT = FT)
+        m0 = FT(_REALISTIC_AIR_MASS_KG) * air_mass_factor
+        air_mass = fill(m0, Nx, Ny, Nz)
+        rm = zeros(FT, Nx, Ny, Nz)
+        rm[1, 1, 3] = FT(5e-6) * m0
+        rm[1, 2, 3] = FT(5e-6) * m0
+        state = CellState(air_mass; CO2 = rm)
+        cmfmc = zeros(FT, Nx, Ny, Nz + 1)
+        cmfmc[:, :, 3] .= FT(0.01)
+        dtrain = zeros(FT, Nx, Ny, Nz)
+        forcing = ConvectionForcing(cmfmc, dtrain, nothing)
+        op = CMFMCConvection()
+        cell_areas_actual = AtmosTransport.Grids.cell_areas_by_latitude(mesh) .* cell_area_factor
+        ws = CMFMCWorkspace(state.air_mass; cell_metrics = cell_areas_actual)
+        apply!(state, forcing, grid, op, FT(60); workspace = ws)
+        return state.tracers_raw ./ state.air_mass
+    end
+    q_base    = _run(FT(1.0), FT(1.0))
+    q_scaled  = _run(FT(0.5), FT(0.5))
+    @test q_base ≈ q_scaled  rtol = 1e-12
+
+    # ── Part (b): hand-formula vs buggy formula ─────────────────────
+    # Pick scales where `cmfmc·dt` is a SUBSTANTIAL fraction of
+    # `mb_pa` (well-formed sub-cloud column mass per area) so the
+    # corrected (kg/m²) and broken (kg/cell) denominators give
+    # measurably different `qc_mixed`. We keep the CFL strictly below
+    # the n_sub=1 threshold (cmfmc·dt / bmass < 0.5) so the kernel
+    # applies the full dt in a single substep — making the
+    # hand-formula prediction directly comparable.
+    Nx, Ny, Nz = 1, 1, 2
+    mesh = LatLonMesh(; FT = FT, Nx = Nx, Ny = Ny)
+    vc = HybridSigmaPressure(FT[0, 500, 1000], FT[0, 0, 1])
+    grid = AtmosGrid(mesh, vc, CPU(); FT = FT)
+    cell_area = AtmosTransport.Grids.cell_areas_by_latitude(mesh)[1]
+    # mb_pa = m0/cell_area = 10 kg/m². cmfmc·dt = 4 kg/m² → CFL = 0.4
+    # (< 0.5) → n_sub = 1. The corrected denominator is 14, the
+    # buggy denominator (kg/cell) is dominated by m0 (~5e15), so the
+    # corrected qc_mixed lands at ~(34/14)·1e-6 ≈ 2.43e-6 while the
+    # buggy formula would have given essentially q2 ≈ 3e-6.
+    m0 = FT(10) * cell_area
+    dt = FT(100)
+    cmfmc_val = FT(0.04)                   # CFL = 0.4 → n_sub = 1
+    air_mass = fill(m0, Nx, Ny, Nz)
+    q1 = FT(1e-6); q2 = FT(3e-6)
+    rm = zeros(FT, Nx, Ny, Nz)
+    rm[1, 1, 1] = q1 * m0
+    rm[1, 1, 2] = q2 * m0
+    state = CellState(air_mass; CO2 = rm)
+    cmfmc = zeros(FT, Nx, Ny, Nz + 1)
+    cmfmc[1, 1, 2] = cmfmc_val             # cloud-base interface
+    dtrain = zeros(FT, Nx, Ny, Nz)
+    dtrain[1, 1, 1] = cmfmc_val            # detrain at cloud top
+    forcing = ConvectionForcing(cmfmc, dtrain, nothing)
+    op = CMFMCConvection()
+    ws = CMFMCWorkspace(state.air_mass)
+    apply!(state, forcing, grid, op, dt; workspace = ws)
+    @test ws.cached_n_sub[] == 1           # confirm single-substep regime
+
+    # Correct (kg/m²) formula, then trace through Pass 1 + Pass 2.
+    m_pa = m0 / cell_area
+    bmass = m_pa
+    gamma = cmfmc_val * dt
+    denom = m_pa + gamma
+    qc_mixed_correct = (m_pa * q2 + gamma * q1) / denom
+    # Buggy (kg/cell) formula — m0 ≫ γ so this collapses to q2:
+    qc_mixed_buggy = (m0 * q2 + gamma * q1) / (m0 + gamma)
+    # The two formulas must disagree by a measurable amount at these
+    # scales — otherwise the test doesn't distinguish bug from fix.
+    @test abs(qc_mixed_correct - qc_mixed_buggy) / abs(qc_mixed_correct) > 0.2
+
+    # Post-Pass-0 state (one sub-cloud layer at k=2):
+    #   q_post0[2] = qc_mixed
+    #   q_post0[1] = q1 + γ·(qc_mixed - q1)/m_pa   (cloud-base closure)
+    q_post0_1 = q1 + gamma * (qc_mixed_correct - q1) / m_pa
+    q_post0_2 = qc_mixed_correct
+    # Pass 1: cmout > tiny, entrn ≥ 0 at every layer in this config.
+    #   k=2: qc[2] = q_post0[2].   k=1: qc[1] = qc[2].
+    qc2 = q_post0_2
+    qc1 = qc2
+    # Pass 2 (top-down):
+    α = dt / bmass
+    # k=1 (TOA): cmfmc_top = 0, dtrain[1] = cmfmc_val.
+    q_new_1 = q_post0_1 + α * cmfmc_val * (qc1 - q_post0_1)
+    # k=2: cmfmc_top = cmfmc_val, dtrain[2] = 0, q_env_prev = q_post0_1.
+    q_new_2 = q_post0_2 + α * cmfmc_val * (q_post0_1 - q_post0_2)
+
+    q_out = state.tracers_raw[1, 1, :, 1] ./ state.air_mass[1, 1, :]
+    @test q_out[1] ≈ q_new_1  rtol = 1e-12
+    @test q_out[2] ≈ q_new_2  rtol = 1e-12
+
+    # And not the buggy-formula prediction — for the sub-cloud
+    # layer, qc_mixed_buggy ≈ q2, so the buggy q_new_2 ≈ q2 +
+    # α·cmfmc·(buggy_q_post0_1 - q2) which is still ≈ q2 because
+    # the closure-update factor is identical-looking but uses the
+    # wrong qc_mixed_buggy seed. The contrast we want is the
+    # SUB-CLOUD layer landing at qc_mixed_correct's hand prediction
+    # (above), distinctly different from a kg/cell-bug prediction
+    # that would have left q[2] essentially at q2.
+    @test abs(q_out[2] - q2) / abs(q2) > 0.1
+end
+
+@testset "B3c. Updraft branching matches GCHP (C3 regression)" begin
+    # Regression for 2026-05-24 audit: prior code used
+    # `cmfmc_bot_eff = min(cmfmc_bot, cmout)` which silently dropped
+    # mass when cmfmc_below > cmout. The fixed code matches GCHP
+    # convection_mod.F90:917 — only updates qc when
+    # `entrn ≥ 0 && cmout > tiny`; otherwise qc stays at qc_below.
+    #
+    # Constructed case: cmfmc_below > cmout at one layer. Under the
+    # old min() the column would silently lose `cmfmc_below - cmout`
+    # worth of inflow. Under the fixed guard we instead preserve
+    # the qc value from the layer below (no update), which is the
+    # mass-conserving choice.
+    FT = Float64
+    Nx, Ny, Nz = 1, 1, 3
+    mesh = LatLonMesh(; FT = FT, Nx = Nx, Ny = Ny)
+    vc = HybridSigmaPressure(FT[0, 200, 500, 1000], FT[0, 0, 0.3, 1.0])
+    grid = AtmosGrid(mesh, vc, CPU(); FT = FT)
+    cell_area = AtmosTransport.Grids.cell_areas_by_latitude(mesh)[1]
+    m0 = FT(_REALISTIC_AIR_MASS_KG)
+    air_mass = fill(m0, Nx, Ny, Nz)
+    bmass = m0 / cell_area
+
+    q1, q2, q3 = FT(2e-6), FT(1e-6), FT(3e-6)
+    rm = zeros(FT, Nx, Ny, Nz)
+    rm[1, 1, 1] = q1 * m0
+    rm[1, 1, 2] = q2 * m0
+    rm[1, 1, 3] = q3 * m0
+    state = CellState(air_mass; CO2 = rm)
+
+    # cmfmc[3] = c3 (cloud base inflow). cmfmc[2] = c2 deliberately
+    # SMALLER than c3 so cmfmc_below > cmout at layer 2 (where
+    # cmout = c2 since dtrain=0). This is the "inconsistent met"
+    # regime — entrn = c2 - c3 < 0.
+    c3 = FT(0.01); c2 = FT(0.003)
+    cmfmc = zeros(FT, Nx, Ny, Nz + 1)
+    cmfmc[1, 1, 3] = c3
+    cmfmc[1, 1, 2] = c2
+    dtrain = zeros(FT, Nx, Ny, Nz)
+    forcing = ConvectionForcing(cmfmc, dtrain, nothing)
+
+    op = CMFMCConvection()
+    ws = CMFMCWorkspace(state.air_mass)
+    apply!(state, forcing, grid, op, FT(60); workspace = ws)
+    q_out = state.tracers_raw[1, 1, :, 1] ./ state.air_mass[1, 1, :]
+
+    # Hand-trace under GCHP branching:
+    # cldbase_k = 2 (largest k with cmfmc[k+1]>tiny).
+    # Pass 0 well-mixed sub-cloud at k=3: qb=q3, mb_pa=m0/cell_area,
+    # cmfmc_at_cldbase = c3 → qc_mixed = (mb_pa·q3 + c3·q2·dt)/(mb_pa + c3·dt).
+    # Plus the cloud-base mass-closing update at layer 2.
+    dt = FT(60)
+    mb_pa = m0 / cell_area
+    qc_mixed = (mb_pa * q3 + c3 * q2 * dt) / (mb_pa + c3 * dt)
+    m_cb_pa = m0 / cell_area
+    q2_closed = q2 + c3 * dt * (qc_mixed - q2) / m_cb_pa
+    q_post0 = (q1, q2_closed, qc_mixed)
+
+    # Pass 1: k=3: cmout=c3>tiny, entrn=c3-0=c3≥0 → qc3 = q_post0_3.
+    # k=2: cmout=c2>tiny, entrn=c2-c3<0 → SKIP update; qc2 = qc_below = qc3.
+    # k=1: cmout=0≤tiny → SKIP; qc1 = qc_below = qc2.
+    qc3 = q_post0[3]
+    qc2 = qc3        # C3-fix: entrn<0 → keep below
+    qc1 = qc2        # cmout<tiny → keep below
+
+    # Pass 2: tendencies. Save q_env_prev BEFORE each update.
+    # k=1: no q_above, tsum=0 → q[1] = q1.
+    q_new_1 = q_post0[1]
+    # k=2: q_above = q_post0[1] = q1, cmfmc_above = c2, dtrain=0.
+    #   tsum = c2*(q1 - q_post0[2]) + 0*(qc2 - q_post0[2])
+    tsum_2 = c2 * (q_post0[1] - q_post0[2])
+    q_new_2 = q_post0[2] + (dt / bmass) * tsum_2
+    # k=3: q_above = q_post0[2] = q2, cmfmc_above = c3.
+    #   tsum = c3*(q2 - q_post0[3]) + 0
+    tsum_3 = c3 * (q_post0[2] - q_post0[3])
+    q_new_3 = q_post0[3] + (dt / bmass) * tsum_3
+
+    @test q_out[1] ≈ q_new_1  rtol = 1e-10
+    @test q_out[2] ≈ q_new_2  rtol = 1e-10
+    @test q_out[3] ≈ q_new_3  rtol = 1e-10
+
+    # Document the `qc1` value via an assertion so it's not flagged
+    # as unused — propagates through the qc-below chain unchanged.
+    @test qc1 == qc2
 end
 
 @testset "B4. CFL-cache invalidation" begin

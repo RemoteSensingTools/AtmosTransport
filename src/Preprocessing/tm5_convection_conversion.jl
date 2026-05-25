@@ -250,6 +250,8 @@ function TM5CleanupStats()
         levels_detu_neg     = Ref(0),
         levels_entd_neg     = Ref(0),
         levels_detd_neg     = Ref(0),
+        columns_closure_entu = Ref(0),
+        columns_closure_entd = Ref(0),
     )
 end
 
@@ -458,6 +460,69 @@ function ec2tm_from_rates!(entu::AbstractVector{FT}, detu::AbstractVector{FT},
         end
     end
 
+    # Column-integrated net-zero closure (TM5 `meteo.F90:2023-2052`).
+    # The mass-budget step leaves `Σentu - Σdetu = udmf[uptop]` —
+    # the non-zero updraft flux at the cloud-top interface, which
+    # would otherwise propagate as a fictitious "leak" at the top
+    # of the column. TM5 shoves this residual into the layer of
+    # maximum entrainment so that `Σentu == Σdetu` exactly, which
+    # is the condition the downstream convection matrix needs for
+    # column tracer mass conservation (matrix row-sums = 1).
+    #
+    # We mirror TM5's defaults exactly for the fallback case where
+    # the column has imbalanced sums but no positive entrainment
+    # maximum (all `entu[k]` or `entd[k]` equal to their initial
+    # seed):
+    #
+    #   * Updraft (TM5 line 2026): `lsave = 1` (surface), `maxe =
+    #     entu(1)`. In our TOA-first orientation `level 1 = surface
+    #     = k = Nz`, so we seed `lsave_u = Nz` and `max_entu =
+    #     entu[Nz]` and iterate inward.
+    #   * Downdraft (TM5 lines 2044-2045): `lsave = lmax_conv` (top
+    #     of cloud), `maxe = 0.0`. In our orientation top of cloud
+    #     = smallest active k = `dotop`, with `max_entd = 0`.
+    #
+    # The search range covers the active layer span (entries above
+    # `uptop` / `dotop` were already zeroed by step 4 above), so
+    # omitting the inactive prefix is mathematically equivalent to
+    # TM5's `do l = 1, lmax_conv` form.
+    closure_entu = 0
+    closure_entd = 0
+    if uptop > 0 && uptop <= Nz
+        tote = zero(FT); totd = zero(FT)
+        lsave_u = Nz                 # TM5 init: lsave = 1 (surface)
+        max_entu = entu[Nz]          # TM5 init: maxe = entu(1)
+        @inbounds for k in uptop:Nz
+            tote += entu[k]
+            totd += detu[k]
+            if entu[k] > max_entu
+                max_entu = entu[k]
+                lsave_u = k
+            end
+        end
+        if tote != totd
+            entu[lsave_u] += totd - tote
+            closure_entu = 1
+        end
+    end
+    if dotop > 0 && dotop <= Nz
+        tote_d = zero(FT); totd_d = zero(FT)
+        lsave_d = dotop              # TM5 init: lsave = lmax_conv (top of cloud)
+        max_entd = zero(FT)          # TM5 init: maxe = 0.0
+        @inbounds for k in dotop:Nz
+            tote_d += entd[k]
+            totd_d += detd[k]
+            if entd[k] > max_entd
+                max_entd = entd[k]
+                lsave_d = k
+            end
+        end
+        if tote_d != totd_d
+            entd[lsave_d] += totd_d - tote_d
+            closure_entd = 1
+        end
+    end
+
     # Stats bookkeeping.  No-op when `stats === nothing`.
     if stats !== nothing
         stats.columns_processed[] += 1
@@ -471,6 +536,12 @@ function ec2tm_from_rates!(entu::AbstractVector{FT}, detu::AbstractVector{FT},
         stats.levels_detu_neg[]     += neg_detu
         stats.levels_entd_neg[]     += neg_entd
         stats.levels_detd_neg[]     += neg_detd
+        if hasproperty(stats, :columns_closure_entu)
+            stats.columns_closure_entu[] += closure_entu
+        end
+        if hasproperty(stats, :columns_closure_entd)
+            stats.columns_closure_entd[] += closure_entd
+        end
     end
 
     return nothing

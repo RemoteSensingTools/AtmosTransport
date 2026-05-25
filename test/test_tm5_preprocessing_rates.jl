@@ -124,10 +124,48 @@ function _f90_reference_column(udmf_in, ddmf_in, udrf_rate, ddrf_rate, dz, Nz)
             entu[k] -= detu[k]; detu[k] = 0.0
         end
         if entd[k] < 0
-            detd[k] -= entd[k]; entd[k] = 0.0
+            detd[k] -= entd[k]; entd[k] = 0.0    # zero entd, not detd
         end
         if detd[k] < 0
             entd[k] -= detd[k]; detd[k] = 0.0
+        end
+    end
+
+    # Column-integrated net-zero closure (TM5 `meteo.F90:2023-2052`).
+    # Snaps `Σentu == Σdetu` (and the same for the downdraft) by
+    # adjusting the layer of maximum entrainment, with TM5's exact
+    # fallback defaults (updraft: lsave=1 i.e. surface; downdraft:
+    # lsave=lmax_conv i.e. top of cloud — see the matching block
+    # in `tm5_convection_conversion.jl` for the orientation
+    # mapping).
+    if uptop > 0 && uptop <= Nz
+        tote = sum(@view entu[uptop:Nz])
+        totd = sum(@view detu[uptop:Nz])
+        if tote != totd
+            lsave_u = Nz
+            max_entu = entu[Nz]
+            for k in uptop:Nz
+                if entu[k] > max_entu
+                    max_entu = entu[k]
+                    lsave_u = k
+                end
+            end
+            entu[lsave_u] += totd - tote
+        end
+    end
+    if dotop > 0 && dotop <= Nz
+        tote_d = sum(@view entd[dotop:Nz])
+        totd_d = sum(@view detd[dotop:Nz])
+        if tote_d != totd_d
+            lsave_d = dotop
+            max_entd = 0.0
+            for k in dotop:Nz
+                if entd[k] > max_entd
+                    max_entd = entd[k]
+                    lsave_d = k
+                end
+            end
+            entd[lsave_d] += totd_d - tote_d
         end
     end
     return (entu, detu, entd, detd)
@@ -163,15 +201,23 @@ end
     @test all(entd .>= 0)
     @test all(detd .>= 0)
 
-    # In the updraft window only, entu - detu matches the flux
-    # divergence -(udmf[k+1] - udmf[k]) = udmf[k] - udmf[k+1].
+    # In the updraft window, entu - detu matches the flux divergence
+    # `udmf[k] - udmf[k+1]` everywhere EXCEPT the single layer that
+    # absorbs TM5's column net-zero closure (meteo.F90:2023-2033).
+    # The column sum is preserved, so we test that explicitly and
+    # then verify per-layer balance at all but one layer.
     udmf_clipped = copy(_UDMF_REF)
     @. udmf_clipped = ifelse(udmf_clipped < 1e-6, 0.0, udmf_clipped)
+    @test isapprox(sum(@view entu[3:5]), sum(@view detu[3:5]); atol = 1e-12)
+    closure_layers = 0
     for k in 3:5   # the active updraft levels by construction
-        @test isapprox(entu[k] - detu[k],
-                        udmf_clipped[k] - udmf_clipped[k + 1];
-                        atol = 1e-12)
+        if !isapprox(entu[k] - detu[k],
+                      udmf_clipped[k] - udmf_clipped[k + 1];
+                      atol = 1e-12)
+            closure_layers += 1
+        end
     end
+    @test closure_layers <= 1   # at most one layer absorbs the closure
 end
 
 @testset "plan 24 Commit 1: ec2tm_from_rates! zero forcing" begin
@@ -253,16 +299,90 @@ end
     @test entu == ref_entu
     @test detu == ref_detu
 
-    # Mass-budget preserved in the ACTIVE updraft window (uptop..Nz).
-    # Levels above uptop are explicitly zeroed by the algorithm;
-    # don't test mass balance there (udmf can have a zero above a
-    # nonzero and that's the physical "boundary" of the cloud).
+    # Mass-budget invariant in the ACTIVE updraft window (uptop..Nz)
+    # is preserved at every layer EXCEPT the one absorbing TM5's
+    # column net-zero closure (`meteo.F90:2023-2033`). The closure
+    # forces `Σentu = Σdetu` across the column by adjusting the
+    # layer of max entrainment, so per-layer `entu[k] - detu[k] =
+    # udmf[k] - udmf[k+1]` no longer holds globally. We instead check
+    # (a) column-summed balance and (b) the layer-budget at all
+    # layers other than the closure-adjusted one.
     uptop_k = findfirst(udmf .> 0.0)   # = 2
+    @test isapprox(sum(@view entu[uptop_k:Nz]), sum(@view detu[uptop_k:Nz]);
+                    atol = 1e-12)
+    lsave_u = findfirst(k -> abs((entu[k] - detu[k]) -
+                                  (udmf[k] - udmf[k + 1])) > 1e-12,
+                         uptop_k:Nz)
+    if lsave_u !== nothing
+        lsave_u += uptop_k - 1
+    end
     for k in uptop_k:Nz
+        k == lsave_u && continue
         @test isapprox(entu[k] - detu[k],
                         udmf[k] - udmf[k + 1];
                         atol = 1e-12)
     end
+end
+
+@testset "TM5 closure: Σentu = Σdetu after column net-zero step" begin
+    # Regression for the 2026-05-24 audit: TM5 reference applies
+    # `entu[lsave] += totd - tote` per column (meteo.F90:2023-2033)
+    # so the column-summed `entu == detu`. Without this step the
+    # downstream convection matrix has row-sums ≠ 1 and column tracer
+    # mass drifts. This test verifies that the closure is applied
+    # for both updraft and downdraft, and that the diagnostic stats
+    # increment on columns where the closure was needed.
+    Nz = 4
+    entu = zeros(Float64, Nz); detu = zeros(Float64, Nz)
+    entd = zeros(Float64, Nz); detd = zeros(Float64, Nz)
+    # Cloud top at interface 2 (uptop = 2): udmf[2] = 0.03 is the
+    # "leak" that the closure must absorb. Detrainment is uniform so
+    # `argmax(entu)` ≠ uptop and we exercise the lsave search.
+    udmf = Float64[0.0, 0.03, 0.05, 0.02, 0.00]
+    ddmf = Float64[0.0, -0.01, -0.03, -0.02, 0.00]
+    udrf = Float64[0.0, 5.0e-5, 5.0e-5, 5.0e-5]
+    ddrf = Float64[0.0, 5.0e-5, 5.0e-5, 5.0e-5]
+    dz   = fill(200.0, Nz)
+
+    stats = TM5CleanupStats()
+    ec2tm_from_rates!(entu, detu, entd, detd,
+                       udmf, ddmf, udrf, ddrf, dz, Nz; stats = stats)
+
+    # (a) Column-summed balance: |Σentu - Σdetu| ≤ rounding.
+    @test isapprox(sum(entu), sum(detu); atol = 1e-12)
+    @test isapprox(sum(entd), sum(detd); atol = 1e-12)
+    # (b) Non-negativity preserved by the closure.
+    @test all(entu .>= 0)
+    @test all(detu .>= 0)
+    @test all(entd .>= 0)
+    @test all(detd .>= 0)
+    # (c) Closure was actually applied (stats incremented).
+    @test stats.columns_closure_entu[] == 1
+    @test stats.columns_closure_entd[] == 1
+end
+
+@testset "TM5 closure: no-op when column is already balanced" begin
+    # When the mass budget already closes (udmf[uptop] = 0 after
+    # cleanup), the closure adjustment is zero and `Σentu == Σdetu`
+    # holds bit-exactly without modification.
+    Nz = 4
+    entu = zeros(Float64, Nz); detu = zeros(Float64, Nz)
+    entd = zeros(Float64, Nz); detd = zeros(Float64, Nz)
+    # No updraft anywhere → no closure work to do.
+    udmf = zeros(Float64, Nz + 1)
+    ddmf = zeros(Float64, Nz + 1)
+    udrf = zeros(Float64, Nz)
+    ddrf = zeros(Float64, Nz)
+    dz   = fill(200.0, Nz)
+
+    stats = TM5CleanupStats()
+    ec2tm_from_rates!(entu, detu, entd, detd,
+                       udmf, ddmf, udrf, ddrf, dz, Nz; stats = stats)
+
+    @test all(entu .== 0) && all(detu .== 0)
+    @test all(entd .== 0) && all(detd .== 0)
+    @test stats.columns_closure_entu[] == 0
+    @test stats.columns_closure_entd[] == 0
 end
 
 @testset "plan 24 Commit 1: dz_hydrostatic_virtual! sanity" begin

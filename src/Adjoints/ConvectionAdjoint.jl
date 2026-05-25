@@ -225,8 +225,12 @@ end
 end
 
 @inline function _cmfmc_cloud_base(cmfmc_panel, i, j, Nz::Int, tiny)
+    # Cloud base = largest k with `|cmfmc[k+1]| > tiny` (lowest
+    # altitude with non-zero updraft inflow). Matches the forward
+    # operator's GG1 fix in cmfmc_kernels.jl and GCHP
+    # convection_mod.F90:625.
     cldbase_k = 0
-    @inbounds for k in 1:Nz
+    @inbounds for k in Nz:-1:1
         cmfmc_bot_k = cmfmc_panel[i, j, k + 1]
         if abs(cmfmc_bot_k) > tiny
             cldbase_k = k
@@ -247,9 +251,15 @@ end
     dt,
     Hp::Int,
     ::Val{has_dtrain}) where has_dtrain
+    # Bit-exact replay of the production CMFMC forward kernel
+    # (Operators/Convection/cmfmc_kernels.jl `_cmfmc_cs_panel_column_kernel!`).
+    # Used by the adjoint to re-derive the per-substep state that the
+    # adjoint pass needs. MUST stay in lock-step with the production
+    # kernel: GG1 (surface-up cloud-base scan), CC1 (kg/m² well-mix +
+    # cloud-base closure), C3 (entrn≥0 guard, no min() cap).
     i, j = @index(Global, NTuple)
     FT = eltype(rm_panel)
-    tiny = FT(1e-30)
+    tiny = FT(_cmfmc_adjoint_tiny(FT))
     ii = i + Hp
     jj = j + Hp
     cell_area = FT(cell_areas_panel[i, j])
@@ -264,19 +274,26 @@ end
                 cmfmc_at_cldbase = cmfmc_panel[i, j, cldbase_k + 1]
                 if cmfmc_at_cldbase > tiny
                     qb_num = zero(FT)
-                    mb = zero(FT)
+                    mb_pa  = zero(FT)
                     for k in (cldbase_k + 1):Nz
                         m_k = air_mass_panel[ii, jj, k]
                         q_k = m_k > tiny ? rm_panel[ii, jj, k] / m_k : zero(FT)
-                        qb_num += q_k * m_k
-                        mb += m_k
+                        m_k_pa = m_k / cell_area
+                        qb_num += q_k * m_k_pa
+                        mb_pa  += m_k_pa
                     end
-                    if mb > zero(FT)
-                        qb = qb_num / mb
-                        qc_mixed = (mb * qb + cmfmc_at_cldbase * q_cldbase * dt_ft) /
-                                   (mb + cmfmc_at_cldbase * dt_ft)
+                    if mb_pa > zero(FT)
+                        qb = qb_num / mb_pa
+                        qc_mixed = (mb_pa * qb + cmfmc_at_cldbase * q_cldbase * dt_ft) /
+                                   (mb_pa + cmfmc_at_cldbase * dt_ft)
                         for k in (cldbase_k + 1):Nz
                             rm_panel[ii, jj, k] = qc_mixed * air_mass_panel[ii, jj, k]
+                        end
+                        m_cb_pa = m_cb / cell_area
+                        if m_cb_pa > tiny
+                            q_cldbase_new = q_cldbase +
+                                cmfmc_at_cldbase * dt_ft * (qc_mixed - q_cldbase) / m_cb_pa
+                            rm_panel[ii, jj, cldbase_k] = q_cldbase_new * m_cb
                         end
                     end
                 end
@@ -291,11 +308,10 @@ end
                 dtrain_k = _cmfmc_panel_dtrain(cmfmc_panel, dtrain_panel,
                                                i, j, k, Val(has_dtrain))
                 cmout = cmfmc_top + dtrain_k
-                cmfmc_bot_eff = min(cmfmc_bot, cmout)
-                entrn = cmout - cmfmc_bot_eff
-                qc = cmout > tiny ?
-                     (cmfmc_bot_eff * qc_below + entrn * q_k) / cmout :
-                     q_k
+                entrn = cmout - cmfmc_bot
+                qc = (entrn >= zero(FT) && cmout > tiny) ?
+                     (cmfmc_bot * qc_below + entrn * q_k) / cmout :
+                     qc_below
                 qc_scratch_panel[ii, jj, k] = qc
                 qc_below = qc
             end
@@ -325,6 +341,16 @@ end
     end
 end
 
+# Same scale-aware threshold used by the production CMFMC kernels —
+# noise-safe on Float32 and Float64 alike (above `eps(FT) × scale`,
+# below the smallest physically meaningful cmfmc value). Mirrored
+# here so the adjoint stays in lock-step without pulling Operators
+# code into Adjoints. Keep these values numerically identical to
+# `_cmfmc_tiny` in `Operators/Convection/cmfmc_kernels.jl`.
+@inline _cmfmc_adjoint_tiny(::Type{Float32}) = 1f-6
+@inline _cmfmc_adjoint_tiny(::Type{Float64}) = 1e-14
+@inline _cmfmc_adjoint_tiny(::Type{T}) where {T <: AbstractFloat} = T(1e-14)
+
 @kernel function _cmfmc_cs_panel_column_single_adjoint_kernel!(
     lambda_panel,
     @Const(air_mass_panel),
@@ -336,9 +362,17 @@ end
     dt,
     Hp::Int,
     ::Val{has_dtrain}) where has_dtrain
+    # Transpose of the production CMFMC forward operator (post-audit:
+    # GG1 surface-up cloud base, CC1 kg/m² well-mix with cloud-base
+    # closure, C3 entrn≥0 guard). Derivation: forward operator is
+    # linear in `q = rm/m`, so the adjoint is rm-to-rm linear. Walks
+    # Pass 2 → Pass 1 → Pass 0 in reverse order, accumulating gradient
+    # contributions. See comments at each pass for the per-step
+    # Jacobian terms. The lambda_qc_panel scratch carries λ_qc through
+    # Pass 1 just as qc_scratch carries qc through the forward Pass 1.
     i, j = @index(Global, NTuple)
     FT = eltype(lambda_panel)
-    tiny = FT(1e-30)
+    tiny = FT(_cmfmc_adjoint_tiny(FT))
     ii = i + Hp
     jj = j + Hp
     cell_area = FT(cell_areas_panel[i, j])
@@ -349,7 +383,15 @@ end
             lambda_qc_panel[ii, jj, k] = zero(FT)
         end
 
-        # Transpose the top-to-bottom environment tendency pass.
+        # ── Pass 2 adjoint ─────────────────────────────────────────
+        # Forward q_new[k] = q_post0[k] · (1 - α·(cmfmc_top + dtrain))
+        #                  + α · cmfmc_top · q_post0[k-1]   (for k > 1)
+        #                  + α · dtrain · qc_scratch[k]
+        # with α = dt / bmass. The adjoint walks k = 1..Nz so each
+        # iteration reads `lambda_panel[k]` (= λ_q_new[k]) before any
+        # later iteration writes a cross-contribution into it. The
+        # cross-contributions to λ_q_post0[k-1] accumulate via `+=`
+        # after iteration k-1 has already finalized that slot.
         for k in 1:Nz
             m_k = air_mass_panel[ii, jj, k]
             lambda_out = lambda_panel[ii, jj, k]
@@ -385,7 +427,11 @@ end
             end
         end
 
-        # Transpose the bottom-to-top updraft recurrence.
+        # ── Pass 1 adjoint (transposes the GCHP-style entrn≥0 guard) ─
+        # Forward: qc[k] = (cmfmc_bot · qc[k+1] + entrn · q_post0[k]) / cmout
+        #          when (entrn ≥ 0 ∧ cmout > tiny); else qc[k] = qc[k+1].
+        # Walk k = 1..Nz so λ_qc[k]'s contribution to λ_qc[k+1]
+        # accumulates by the time iteration k+1 reads it.
         for k in 1:Nz
             lambda_qc = lambda_qc_panel[ii, jj, k]
             cmfmc_bot = k < Nz ? cmfmc_panel[i, j, k + 1] : zero(FT)
@@ -393,10 +439,14 @@ end
             dtrain_k = _cmfmc_panel_dtrain(cmfmc_panel, dtrain_panel,
                                            i, j, k, Val(has_dtrain))
             cmout = cmfmc_top + dtrain_k
-            cmfmc_bot_eff = min(cmfmc_bot, cmout)
-            entrn = cmout - cmfmc_bot_eff
-            coeff_below = cmout > tiny ? cmfmc_bot_eff / cmout : zero(FT)
-            coeff_q = cmout > tiny ? entrn / cmout : one(FT)
+            entrn = cmout - cmfmc_bot
+            if entrn >= zero(FT) && cmout > tiny
+                coeff_below = cmfmc_bot / cmout
+                coeff_q     = entrn / cmout
+            else
+                coeff_below = one(FT)
+                coeff_q     = zero(FT)
+            end
             m_k = air_mass_panel[ii, jj, k]
             if m_k > tiny
                 lambda_panel[ii, jj, k] += lambda_qc * coeff_q / m_k
@@ -406,30 +456,74 @@ end
             end
         end
 
-        # Transpose the optional well-mixed sub-cloud preprocessing.
+        # ── Pass 0 adjoint (well-mix + cloud-base closure) ─────────
+        # Forward writes
+        #   rm[k] = qc_mixed · m_k                            (k > cb)
+        #   rm[cb] = (q_cb_old + γ/m_cb_pa · (qc_mixed − q_cb_old)) · m_cb
+        # with γ = cmfmc_at_cb · dt and
+        #   qc_mixed = (mb_pa · qb + γ · q_cb_old) / (mb_pa + γ),
+        #   qb = Σ_{k>cb} q_init[k] · m_k_pa / mb_pa.
+        # All quantities are linear in q_init, so the adjoint
+        # accumulates λ_q_init[k] from λ_q_post0[k] for k ≥ cb. For
+        # k > cb, λ_rm_init[k] depends only on the column-summed
+        # λ_qc_mixed (every sub-cloud layer collapses to the same
+        # value), which is why the post-loop store overwrites
+        # lambda_panel[k>cb] with a single coefficient rather than
+        # accumulating per-layer.
         cldbase_k = _cmfmc_cloud_base(cmfmc_panel, i, j, Nz, tiny)
         if cldbase_k != 0 && cldbase_k < Nz
             cmfmc_at_cldbase = cmfmc_panel[i, j, cldbase_k + 1]
             if cmfmc_at_cldbase > tiny
-                mb = zero(FT)
-                lambda_mixed = zero(FT)
+                mb_pa = zero(FT)
+                lambda_qc_mixed = zero(FT)
                 for k in (cldbase_k + 1):Nz
                     m_k = air_mass_panel[ii, jj, k]
-                    mb += m_k
-                    lambda_mixed += lambda_panel[ii, jj, k] * m_k
+                    mb_pa += m_k / cell_area
+                    # lambda_panel[k] at this point is λ_rm_post0[k].
+                    # λ_q_post0[k] = m_k · λ_rm_post0[k]; for k > cb,
+                    # all of it flows into λ_qc_mixed.
+                    lambda_qc_mixed += lambda_panel[ii, jj, k] * m_k
                 end
-                if mb > zero(FT)
-                    gamma = cmfmc_at_cldbase * dt_ft
-                    denom = mb + gamma
-                    coeff_sub = lambda_mixed / denom
-                    for k in (cldbase_k + 1):Nz
-                        m_k = air_mass_panel[ii, jj, k]
-                        lambda_panel[ii, jj, k] = m_k > tiny ? coeff_sub : zero(FT)
-                    end
+                if mb_pa > zero(FT)
+                    gamma_cb = cmfmc_at_cldbase * dt_ft
+                    denom = mb_pa + gamma_cb
                     m_cb = air_mass_panel[ii, jj, cldbase_k]
+                    m_cb_pa = m_cb / cell_area
+                    # Cloud-base layer: split λ_q_post0[cb] into a
+                    # direct λ_q_init[cb] contribution and a
+                    # closure-mediated λ_qc_mixed contribution.
+                    factor_cb = (m_cb > tiny && m_cb_pa > tiny) ?
+                                gamma_cb / m_cb_pa : zero(FT)
                     if m_cb > tiny
-                        lambda_panel[ii, jj, cldbase_k] +=
-                            lambda_mixed * gamma / denom / m_cb
+                        lambda_q_post0_cb = lambda_panel[ii, jj, cldbase_k] * m_cb
+                        lambda_qc_mixed += lambda_q_post0_cb * factor_cb
+                        lambda_panel[ii, jj, cldbase_k] =
+                            lambda_panel[ii, jj, cldbase_k] * (one(FT) - factor_cb)
+                    end
+                    # Now propagate λ_qc_mixed into λ_q_init:
+                    #   ∂qc_mixed/∂q_init[cb]  = γ_cb / denom
+                    #   ∂qc_mixed/∂q_init[k>cb] = m_k_pa / denom
+                    # In rm-space, λ_rm_init[k>cb] is layer-independent
+                    # (m_k_pa/m_k = 1/cell_area).
+                    if denom > tiny
+                        if m_cb > tiny
+                            lambda_panel[ii, jj, cldbase_k] +=
+                                lambda_qc_mixed * gamma_cb / denom / m_cb
+                        end
+                        coeff_sub = lambda_qc_mixed / (cell_area * denom)
+                        for k in (cldbase_k + 1):Nz
+                            m_k = air_mass_panel[ii, jj, k]
+                            lambda_panel[ii, jj, k] = m_k > tiny ? coeff_sub : zero(FT)
+                        end
+                    else
+                        # Edge case: denom collapsed; ensure sub-cloud
+                        # gradients are zeroed rather than carrying the
+                        # pre-Pass-0 λ_rm_post0 (which is meaningless
+                        # at this point since we already drained it
+                        # into λ_qc_mixed).
+                        for k in (cldbase_k + 1):Nz
+                            lambda_panel[ii, jj, k] = zero(FT)
+                        end
                     end
                 end
             end

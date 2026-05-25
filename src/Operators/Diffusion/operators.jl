@@ -168,6 +168,11 @@ function apply!(state::CellState, meteo, grid,
     workspace === nothing && throw(ArgumentError(
         "ImplicitVerticalDiffusion.apply!: workspace is required " *
         "(w_scratch and dz_scratch must be supplied)"))
+    # LL / face-indexed RG paths remain on the legacy geometric kernel
+    # (no `air_mass` plumbed through here). The D1 mass-flux conservation
+    # rewrite only landed on the CS path so far — see the file-top doc
+    # in `diffusion_kernels.jl` for why and the audit memo for the queued
+    # LL/RG follow-up.
     apply_vertical_diffusion!(state.tracers_raw, op, workspace, dt, meteo)
     return state
 end
@@ -235,6 +240,11 @@ apply_vertical_diffusion!(q_raw::AbstractArray{<:Any, 2},
                           ::NoDiffusion, workspace, dt,
                           meteo = nothing) = nothing
 apply_vertical_diffusion!(q_raw::NTuple{6}, ::NoDiffusion, workspace, dt,
+                          meteo = nothing; halo_width = 0) = nothing
+# CS-only mass-flux variant takes air_mass too; the no-op overload covers
+# the new dispatch.
+apply_vertical_diffusion!(q_raw::NTuple{6}, air_mass::NTuple{6},
+                          ::NoDiffusion, workspace, dt,
                           meteo = nothing; halo_width = 0) = nothing
 apply_vertical_diffusion_vmr!(q_raw::NTuple{6}, air_mass::NTuple{6},
                               ::NoDiffusion, workspace, dt,
@@ -328,6 +338,7 @@ function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 2},
 end
 
 function apply_vertical_diffusion!(q_raw::NTuple{6, A},
+                                   air_mass::NTuple{6, <:AbstractArray{FT, 3}},
                                    op::ImplicitVerticalDiffusion{FT, KzF},
                                    workspace, dt,
                                    meteo = nothing;
@@ -348,6 +359,10 @@ function apply_vertical_diffusion!(q_raw::NTuple{6, A},
     Hp = Int(halo_width)
     @inbounds for p in 1:6
         panel_q = q_raw[p]
+        panel_m = air_mass[p]
+        size(panel_q) == size(panel_m) || throw(DimensionMismatch(
+            "cubed-sphere diffusion panel $p: q shape $(size(panel_q)) does not match " *
+            "air_mass shape $(size(panel_m))"))
         Nc = size(panel_q, 1) - 2 * Hp
         Ny = size(panel_q, 2) - 2 * Hp
         Nz = size(panel_q, 3)
@@ -355,7 +370,8 @@ function apply_vertical_diffusion!(q_raw::NTuple{6, A},
         panel_kz = panel_field(op.kz_field, p)
         backend = get_backend(panel_q)
         kernel = _vertical_diffusion_cs_single_kernel!(backend, (8, 8))
-        kernel(panel_q, panel_kz, dz_scratch[p], w_scratch[p], FT(dt), Nz, Hp;
+        kernel(panel_q, panel_m, panel_kz, dz_scratch[p], w_scratch[p],
+               FT(dt), Nz, Hp;
                ndrange = (Nc, Ny))
         synchronize(backend)
     end
@@ -363,6 +379,7 @@ function apply_vertical_diffusion!(q_raw::NTuple{6, A},
 end
 
 function apply_vertical_diffusion!(q_raw::NTuple{6, A},
+                                   air_mass::NTuple{6, <:AbstractArray{FT, 3}},
                                    op::ImplicitVerticalDiffusion{FT, KzF},
                                    workspace, dt,
                                    meteo = nothing;
@@ -383,6 +400,10 @@ function apply_vertical_diffusion!(q_raw::NTuple{6, A},
     Hp = Int(halo_width)
     @inbounds for p in 1:6
         panel_q = q_raw[p]
+        panel_m = air_mass[p]
+        size(panel_q)[1:3] == size(panel_m) || throw(DimensionMismatch(
+            "cubed-sphere packed diffusion panel $p: q spatial shape " *
+            "$(size(panel_q)[1:3]) does not match air_mass shape $(size(panel_m))"))
         Nc = size(panel_q, 1) - 2 * Hp
         Ny = size(panel_q, 2) - 2 * Hp
         Nz = size(panel_q, 3)
@@ -391,7 +412,8 @@ function apply_vertical_diffusion!(q_raw::NTuple{6, A},
         panel_kz = panel_field(op.kz_field, p)
         backend = get_backend(panel_q)
         kernel = _vertical_diffusion_cs_kernel!(backend, (8, 8, 1))
-        kernel(panel_q, panel_kz, dz_scratch[p], w_scratch[p], FT(dt), Nz, Hp;
+        kernel(panel_q, panel_m, panel_kz, dz_scratch[p], w_scratch[p],
+               FT(dt), Nz, Hp;
                ndrange = (Nc, Ny, Nt))
         synchronize(backend)
     end
@@ -512,7 +534,8 @@ function apply_vertical_diffusion_vmr!(q_raw::NTuple{6, A},
                                        halo_width::Integer) where {FT, A <: AbstractArray{FT, 3},
                                                                     KzF <: AbstractCubedSphereField{FT}}
     _cs_scale_tracer_mass_to_vmr!(q_raw, air_mass, halo_width)
-    apply_vertical_diffusion!(q_raw, op, workspace, dt, meteo;
+    # Mass-flux kernel needs `air_mass` for coefficient construction.
+    apply_vertical_diffusion!(q_raw, air_mass, op, workspace, dt, meteo;
                               halo_width = halo_width)
     _cs_scale_vmr_to_tracer_mass!(q_raw, air_mass, halo_width)
     return nothing
@@ -526,7 +549,8 @@ function apply_vertical_diffusion_vmr!(q_raw::NTuple{6, A},
                                        halo_width::Integer) where {FT, A <: AbstractArray{FT, 4},
                                                                     KzF <: AbstractCubedSphereField{FT}}
     _cs_scale_tracer_mass_to_vmr!(q_raw, air_mass, halo_width)
-    apply_vertical_diffusion!(q_raw, op, workspace, dt, meteo;
+    # Mass-flux kernel needs `air_mass` for coefficient construction.
+    apply_vertical_diffusion!(q_raw, air_mass, op, workspace, dt, meteo;
                               halo_width = halo_width)
     _cs_scale_vmr_to_tracer_mass!(q_raw, air_mass, halo_width)
     return nothing

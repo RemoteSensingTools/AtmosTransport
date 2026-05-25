@@ -14,6 +14,23 @@
     return meteo === nothing ? zero(FT) : FT(current_time(meteo))
 end
 
+# Mass-flux adjoint: transpose of the forward `Ã = M⁻¹·A·M` (on VMR),
+# which is equivalent to the column-stochastic A on tracer mass. The
+# transposed tridiagonal has:
+#
+#     a_T[k] = c[k-1]    super-of-row-(k-1) becomes sub-of-row-k
+#     b_T[k] = b[k]
+#     c_T[k] = a[k+1]    sub-of-row-(k+1) becomes super-of-row-k
+#
+# Substituting the forward coefficients
+#     a[k]   = -dt·dkg[k-½]/m_k
+#     c[k]   = -dt·dkg[k+½]/m_k
+# at the transposed indices gives the adjoint entries in terms of the
+# `dkg` evaluated at the same interface but with the OTHER layer's
+# air mass as the normalizer:
+#     a_T[k] = c[k-1] = -dt·dkg[k-½]/m_{k-1}      (note m_{k-1}, not m_k)
+#     c_T[k] = a[k+1] = -dt·dkg[k+½]/m_{k+1}      (note m_{k+1}, not m_k)
+#     b_T[k] = 1 + dt·(dkg[k-½] + dkg[k+½])/m_k
 @kernel function _vertical_diffusion_cs_single_adjoint_kernel!(
     lambda, @Const(air_mass), kz_field, @Const(dz), w_scratch,
     dt, Nz::Int, Hp::Int)
@@ -30,32 +47,39 @@ end
         for k in 1:Nz
             Kz_k = field_value(kz_field, (ii, jj, k))
             dz_k = dz[ii, jj, k]
+            m_k  = air_mass[i, j, k]
 
-            D_above = zero(FT)
-            D_below = zero(FT)
+            dkg_above = zero(FT)
+            dkg_below = zero(FT)
+            inv_m_prev = zero(FT)
+            inv_m_next = zero(FT)
             a_T = zero(FT)
             c_T = zero(FT)
 
             if k > 1
                 Kz_prev = field_value(kz_field, (ii, jj, k - 1))
                 dz_prev = dz[ii, jj, k - 1]
-                Kz_above = (Kz_prev + Kz_k) / FT(2)
-                dz_above = (dz_prev + dz_k) / FT(2)
-                D_above = Kz_above / (dz_k * dz_above)
-                a_T = -dt_ft * Kz_above / (dz_prev * dz_above)
+                m_prev  = air_mass[i, j, k - 1]
+                sum_dz_above = dz_prev + dz_k
+                dkg_above = (m_prev + m_k) * (Kz_prev + Kz_k) /
+                            (sum_dz_above * sum_dz_above)
+                inv_m_prev = m_prev > zero(FT) ? one(FT) / m_prev : zero(FT)
+                a_T = -dt_ft * dkg_above * inv_m_prev
             end
 
             if k < Nz
                 Kz_next = field_value(kz_field, (ii, jj, k + 1))
                 dz_next = dz[ii, jj, k + 1]
-                Kz_below = (Kz_k + Kz_next) / FT(2)
-                dz_below = (dz_k + dz_next) / FT(2)
-                D_below = Kz_below / (dz_k * dz_below)
-                c_T = -dt_ft * Kz_below / (dz_next * dz_below)
+                m_next  = air_mass[i, j, k + 1]
+                sum_dz_below = dz_k + dz_next
+                dkg_below = (m_k + m_next) * (Kz_k + Kz_next) /
+                            (sum_dz_below * sum_dz_below)
+                inv_m_next = m_next > zero(FT) ? one(FT) / m_next : zero(FT)
+                c_T = -dt_ft * dkg_below * inv_m_next
             end
 
-            b_T = one(FT) + dt_ft * (D_above + D_below)
-            m_k = air_mass[i, j, k]
+            inv_m_k = m_k > zero(FT) ? one(FT) / m_k : zero(FT)
+            b_T = one(FT) + dt_ft * (dkg_above + dkg_below) * inv_m_k
             d_k = m_k > zero(FT) ? m_k * lambda[i, j, k] : zero(FT)
 
             if k == 1

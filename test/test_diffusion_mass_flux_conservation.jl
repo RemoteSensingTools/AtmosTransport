@@ -39,9 +39,11 @@ using KernelAbstractions: get_backend, synchronize
 function _build_air_mass_column(::Type{FT}, Nc::Int, Hp::Int, Nz::Int) where {FT}
     N = Nc + 2 * Hp
     panels = ntuple(_ -> zeros(FT, N, N, Nz), 6)
-    # Surface ~ 1e15 kg, exponentially decreasing toward TOA
+    # In our orientation (k=1=TOA, k=Nz=surface), mass should be largest at
+    # k=Nz and smallest at k=1. `(k - Nz)` is 0 at the surface and negative
+    # at TOA; the positive exponent puts the largest value at the surface.
     for p in 1:6, k in 1:Nz
-        scale = exp(-(k - Nz) * FT(0.05))   # k=Nz → 1, k=1 → exp(-Nz*0.05)
+        scale = exp(FT(k - Nz) * FT(0.05))   # k=Nz → 1, k=1 → exp(-(Nz-1)·0.05)
         panels[p][:, :, k] .= FT(1e15) * scale
     end
     return panels

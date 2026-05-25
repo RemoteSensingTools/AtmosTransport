@@ -1,11 +1,20 @@
 # ---------------------------------------------------------------------------
-# Vertical diffusion kernels — mass-flux form, TM5-style.
+# Vertical diffusion kernels.
 #
-# Backward-Euler implicit solve `Ã·q_new = q_old` on dry mass-mixing
-# ratio `q`. The coefficient matrix `Ã` is built so that the equivalent
-# operator on tracer mass `rm = m·q` is column-stochastic (each column
-# sums to 1), which preserves `Σ m·q` to roundoff for any inert tracer
-# — the conservation bar that the convection sweep also aims at.
+# Topology scope of the mass-flux form (D1, 2026-05-25):
+#   * CS (cubed-sphere) single 3D and packed 4D kernels: NEW mass-flux
+#     coefficients. Backward-Euler implicit solve `Ã·q_new = q_old` on
+#     dry mass-mixing ratio `q`; `Ã` built so that the equivalent
+#     operator on tracer mass `rm = m·q` is column-stochastic (each
+#     column sums to 1), which preserves `Σ m·q` to roundoff for any
+#     inert tracer — the conservation bar that the convection sweep
+#     also aims at.
+#   * LL (structured packed) and RG (face-indexed, both 2D and 3D)
+#     kernels: legacy geometric form `D = Kz / (dz_k · dz_iface)`.
+#     These run on the state's tracer-mass arrays without a VMR
+#     pre/post wrapper, so adopting the mass-flux form requires
+#     adding an LL/RG analog of `apply_vertical_diffusion_vmr!`
+#     first. Tracked as a D1 LL/RG follow-up in the audit memo.
 #
 # Coefficients per level k (with `m_k = air_mass[..., k]`, `Kz` at cell
 # centers, `dz` thickness in meters):

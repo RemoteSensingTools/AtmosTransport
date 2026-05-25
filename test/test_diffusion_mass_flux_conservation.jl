@@ -34,6 +34,18 @@ using .AtmosTransport.Grids: CubedSphereMesh
 
 using KernelAbstractions: get_backend, synchronize
 
+# Build a flat (non-CS) air-mass column for LL/RG: density decreases with
+# altitude exponentially.
+function _build_air_mass_column_flat(::Type{FT}, shape::Tuple) where {FT}
+    arr = zeros(FT, shape)
+    Nz = shape[end]
+    @views for k in 1:Nz
+        scale = exp(FT(k - Nz) * FT(0.05))      # surface (k=Nz) → 1
+        selectdim(arr, length(shape), k) .= FT(1e15) * scale
+    end
+    return arr
+end
+
 # Build a CS air-mass profile that decreases with height (typical
 # tropospheric column) so the OLD geometric kernel would leak.
 function _build_air_mass_column(::Type{FT}, Nc::Int, Hp::Int, Nz::Int) where {FT}
@@ -175,4 +187,120 @@ end
     rhs = inner_interior(lambda, x_rm)     # ⟨Lᵀ·y, x⟩
 
     @test isapprox(lhs, rhs; rtol = 1e-10, atol = 1e-10 * abs(lhs))
+end
+
+# ─────────────────────────────────────────────────────────────────────
+# LL packed + RG (face-indexed) — D1 follow-up. Same conservation bar
+# as CS but on the structured / face-indexed apply paths via the new
+# `apply_vertical_diffusion_vmr!` wrappers.
+# ─────────────────────────────────────────────────────────────────────
+
+using .AtmosTransport.Operators.Diffusion: apply_vertical_diffusion_vmr!
+using .AtmosTransport.State: ConstantField
+
+@testset "LL packed mass-flux diffusion — column tracer-mass conservation" begin
+    FT = Float64
+    Nx, Ny, Nz, Nt = 4, 4, 8, 2
+
+    air_mass = _build_air_mass_column_flat(FT, (Nx, Ny, Nz))
+
+    # Non-uniform Kz at cell centers.
+    Kz_arr = zeros(FT, Nx, Ny, Nz)
+    for k in 1:Nz
+        z_frac = FT(k - 1) / FT(Nz - 1)
+        bump = max(zero(FT), one(FT) - abs(z_frac - FT(0.7)) / FT(0.3))
+        Kz_arr[:, :, k] .= FT(50) * bump + FT(0.5)
+    end
+    kz_field = PreComputedKzField(Kz_arr)
+
+    # Non-uniform dz hydrostatic-ish.
+    dz_scratch = zeros(FT, Nx, Ny, Nz)
+    for k in 1:Nz
+        dz_scratch[:, :, k] .= FT(100) + FT(1900) * (one(FT) - FT(k - 1) / FT(Nz - 1))
+    end
+    w_scratch = zeros(FT, Nx, Ny, Nz)
+
+    # Random tracer mass.
+    rng = MersenneTwister(2026)
+    rm = abs.(randn(rng, FT, Nx, Ny, Nz, Nt))
+
+    sum_pre = dropdims(sum(rm; dims = 3); dims = 3)   # (Nx, Ny, Nt)
+
+    op = ImplicitVerticalDiffusion(; kz_field = kz_field)
+    workspace = (w_scratch = w_scratch, dz_scratch = dz_scratch)
+    apply_vertical_diffusion_vmr!(rm, air_mass, op, workspace, FT(450.0))
+
+    sum_post = dropdims(sum(rm; dims = 3); dims = 3)
+    for t in 1:Nt, j in 1:Ny, i in 1:Nx
+        @test isapprox(sum_pre[i, j, t], sum_post[i, j, t];
+                       rtol = 1e-12, atol = 0)
+    end
+end
+
+@testset "RG (face-indexed) packed mass-flux diffusion — tracer-mass conservation" begin
+    FT = Float64
+    ncells, Nz, Nt = 12, 8, 2
+
+    air_mass = _build_air_mass_column_flat(FT, (ncells, Nz))
+
+    Kz_arr = zeros(FT, ncells, Nz)
+    for k in 1:Nz
+        z_frac = FT(k - 1) / FT(Nz - 1)
+        bump = max(zero(FT), one(FT) - abs(z_frac - FT(0.7)) / FT(0.3))
+        Kz_arr[:, k] .= FT(50) * bump + FT(0.5)
+    end
+    kz_field = PreComputedKzField(Kz_arr)
+
+    dz_scratch = zeros(FT, ncells, Nz)
+    for k in 1:Nz
+        dz_scratch[:, k] .= FT(100) + FT(1900) * (one(FT) - FT(k - 1) / FT(Nz - 1))
+    end
+    w_scratch = zeros(FT, ncells, Nz)
+
+    rng = MersenneTwister(101)
+    rm = abs.(randn(rng, FT, ncells, Nz, Nt))
+    sum_pre = dropdims(sum(rm; dims = 2); dims = 2)   # (ncells, Nt)
+
+    op = ImplicitVerticalDiffusion(; kz_field = kz_field)
+    workspace = (w_scratch = w_scratch, dz_scratch = dz_scratch)
+    apply_vertical_diffusion_vmr!(rm, air_mass, op, workspace, FT(450.0))
+
+    sum_post = dropdims(sum(rm; dims = 2); dims = 2)
+    for t in 1:Nt, c in 1:ncells
+        @test isapprox(sum_pre[c, t], sum_post[c, t]; rtol = 1e-12, atol = 0)
+    end
+end
+
+@testset "RG (face-indexed) single mass-flux diffusion — tracer-mass conservation" begin
+    FT = Float64
+    ncells, Nz = 12, 8
+
+    air_mass = _build_air_mass_column_flat(FT, (ncells, Nz))
+
+    Kz_arr = zeros(FT, ncells, Nz)
+    for k in 1:Nz
+        z_frac = FT(k - 1) / FT(Nz - 1)
+        bump = max(zero(FT), one(FT) - abs(z_frac - FT(0.7)) / FT(0.3))
+        Kz_arr[:, k] .= FT(50) * bump + FT(0.5)
+    end
+    kz_field = PreComputedKzField(Kz_arr)
+
+    dz_scratch = zeros(FT, ncells, Nz)
+    for k in 1:Nz
+        dz_scratch[:, k] .= FT(100) + FT(1900) * (one(FT) - FT(k - 1) / FT(Nz - 1))
+    end
+    w_scratch = zeros(FT, ncells, Nz)
+
+    rng = MersenneTwister(73)
+    rm = abs.(randn(rng, FT, ncells, Nz))
+    sum_pre = dropdims(sum(rm; dims = 2); dims = 2)   # (ncells,)
+
+    op = ImplicitVerticalDiffusion(; kz_field = kz_field)
+    workspace = (w_scratch = w_scratch, dz_scratch = dz_scratch)
+    apply_vertical_diffusion_vmr!(rm, air_mass, op, workspace, FT(450.0))
+
+    sum_post = dropdims(sum(rm; dims = 2); dims = 2)
+    for c in 1:ncells
+        @test isapprox(sum_pre[c], sum_post[c]; rtol = 1e-12, atol = 0)
+    end
 end

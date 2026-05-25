@@ -151,6 +151,91 @@ transposed coefficient form.
     end
 end
 
+# ---------------------------------------------------------------------------
+# LL packed mass-flux kernel — used by `apply_vertical_diffusion_vmr!` for
+# the LL state path. Identical math to the CS kernels (mass-flux form,
+# preserves `Σ m·q` to roundoff for inert tracers); same TM5 reference at
+# `deps/tm5-cy3-4dvar/base/src/tm5_diff.F90:36-129`.
+# ---------------------------------------------------------------------------
+@kernel function _vertical_diffusion_kernel_mass_flux!(q, @Const(air_mass),
+                                                       kz_field,
+                                                       @Const(dz),
+                                                       w_scratch,
+                                                       dt, Nz::Int)
+    i, j, t = @index(Global, NTuple)
+    FT = eltype(q)
+    @inbounds begin
+        dt_ft = FT(dt)
+
+        Kz_prev = zero(FT)
+        dz_prev = zero(FT)
+        m_prev  = zero(FT)
+        w_prev  = zero(FT)
+        g_prev  = zero(FT)
+
+        Kz_k = field_value(kz_field, (i, j, 1))
+        dz_k = dz[i, j, 1]
+        m_k  = air_mass[i, j, 1]
+
+        for k in 1:Nz
+            dkg_above = zero(FT)
+            dkg_below = zero(FT)
+            Kz_next   = zero(FT)
+            dz_next   = zero(FT)
+            m_next    = zero(FT)
+
+            if k > 1
+                sum_dz_above = dz_prev + dz_k
+                dkg_above = (m_prev + m_k) * (Kz_prev + Kz_k) /
+                            (sum_dz_above * sum_dz_above)
+            end
+
+            if k < Nz
+                Kz_next  = field_value(kz_field, (i, j, k + 1))
+                dz_next  = dz[i, j, k + 1]
+                m_next   = air_mass[i, j, k + 1]
+                sum_dz_below = dz_k + dz_next
+                dkg_below = (m_k + m_next) * (Kz_k + Kz_next) /
+                            (sum_dz_below * sum_dz_below)
+            end
+
+            inv_m_k = m_k > zero(FT) ? one(FT) / m_k : zero(FT)
+            a_k = (k > 1)  ? -dt_ft * dkg_above * inv_m_k : zero(FT)
+            c_k = (k < Nz) ? -dt_ft * dkg_below * inv_m_k : zero(FT)
+            b_k = one(FT) + dt_ft * (dkg_above + dkg_below) * inv_m_k
+            d_k = q[i, j, k, t]
+
+            if k == 1
+                denom = b_k
+                w_k   = c_k / denom
+                g_k   = d_k / denom
+            else
+                denom = b_k - a_k * w_prev
+                w_k   = c_k / denom
+                g_k   = (d_k - a_k * g_prev) / denom
+            end
+
+            w_scratch[i, j, k] = w_k
+            q[i, j, k, t]      = g_k
+
+            if k < Nz
+                w_prev  = w_k
+                g_prev  = g_k
+                Kz_prev = Kz_k
+                dz_prev = dz_k
+                m_prev  = m_k
+                Kz_k    = Kz_next
+                dz_k    = dz_next
+                m_k     = m_next
+            end
+        end
+
+        for k in (Nz - 1):-1:1
+            q[i, j, k, t] = q[i, j, k, t] - w_scratch[i, j, k] * q[i, j, k + 1, t]
+        end
+    end
+end
+
 """
     _vertical_diffusion_cs_single_kernel!(q, kz_field, dz, w_scratch, dt, Nz, Hp)
 
@@ -525,4 +610,218 @@ per-tracer host loop.
             q[c, k] = q[c, k] - w_scratch[c, k] * q[c, k + 1]
         end
     end
+end
+
+# ---------------------------------------------------------------------------
+# Face-indexed (ReducedGaussian) mass-flux kernels — used by the LL/RG
+# branch of `apply_vertical_diffusion_vmr!`. Same TM5-style mass-flux
+# coefficients as the LL packed / CS kernels above; only the storage
+# layout changes (2D `(ncells, Nz)` interior).
+# ---------------------------------------------------------------------------
+
+@kernel function _vertical_diffusion_face_kernel_mass_flux!(q, @Const(air_mass),
+                                                             kz_field,
+                                                             @Const(dz),
+                                                             w_scratch,
+                                                             dt, Nz::Int)
+    c, t = @index(Global, NTuple)
+    FT = eltype(q)
+    @inbounds begin
+        dt_ft = FT(dt)
+
+        Kz_prev = zero(FT)
+        dz_prev = zero(FT)
+        m_prev  = zero(FT)
+        w_prev  = zero(FT)
+        g_prev  = zero(FT)
+
+        Kz_k = field_value(kz_field, (c, 1))
+        dz_k = dz[c, 1]
+        m_k  = air_mass[c, 1]
+
+        for k in 1:Nz
+            dkg_above = zero(FT)
+            dkg_below = zero(FT)
+            Kz_next   = zero(FT)
+            dz_next   = zero(FT)
+            m_next    = zero(FT)
+
+            if k > 1
+                sum_dz_above = dz_prev + dz_k
+                dkg_above = (m_prev + m_k) * (Kz_prev + Kz_k) /
+                            (sum_dz_above * sum_dz_above)
+            end
+
+            if k < Nz
+                Kz_next  = field_value(kz_field, (c, k + 1))
+                dz_next  = dz[c, k + 1]
+                m_next   = air_mass[c, k + 1]
+                sum_dz_below = dz_k + dz_next
+                dkg_below = (m_k + m_next) * (Kz_k + Kz_next) /
+                            (sum_dz_below * sum_dz_below)
+            end
+
+            inv_m_k = m_k > zero(FT) ? one(FT) / m_k : zero(FT)
+            a_k = (k > 1)  ? -dt_ft * dkg_above * inv_m_k : zero(FT)
+            c_k = (k < Nz) ? -dt_ft * dkg_below * inv_m_k : zero(FT)
+            b_k = one(FT) + dt_ft * (dkg_above + dkg_below) * inv_m_k
+            d_k = q[c, k, t]
+
+            if k == 1
+                denom = b_k
+                w_k   = c_k / denom
+                g_k   = d_k / denom
+            else
+                denom = b_k - a_k * w_prev
+                w_k   = c_k / denom
+                g_k   = (d_k - a_k * g_prev) / denom
+            end
+
+            w_scratch[c, k] = w_k
+            q[c, k, t]      = g_k
+
+            if k < Nz
+                w_prev  = w_k
+                g_prev  = g_k
+                Kz_prev = Kz_k
+                dz_prev = dz_k
+                m_prev  = m_k
+                Kz_k    = Kz_next
+                dz_k    = dz_next
+                m_k     = m_next
+            end
+        end
+
+        for k in (Nz - 1):-1:1
+            q[c, k, t] = q[c, k, t] - w_scratch[c, k] * q[c, k + 1, t]
+        end
+    end
+end
+
+@kernel function _vertical_diffusion_face_single_kernel_mass_flux!(q, @Const(air_mass),
+                                                                    kz_field,
+                                                                    @Const(dz),
+                                                                    w_scratch,
+                                                                    dt, Nz::Int)
+    c = @index(Global, Linear)
+    FT = eltype(q)
+    @inbounds begin
+        dt_ft = FT(dt)
+
+        Kz_prev = zero(FT)
+        dz_prev = zero(FT)
+        m_prev  = zero(FT)
+        w_prev  = zero(FT)
+        g_prev  = zero(FT)
+
+        Kz_k = field_value(kz_field, (c, 1))
+        dz_k = dz[c, 1]
+        m_k  = air_mass[c, 1]
+
+        for k in 1:Nz
+            dkg_above = zero(FT)
+            dkg_below = zero(FT)
+            Kz_next   = zero(FT)
+            dz_next   = zero(FT)
+            m_next    = zero(FT)
+
+            if k > 1
+                sum_dz_above = dz_prev + dz_k
+                dkg_above = (m_prev + m_k) * (Kz_prev + Kz_k) /
+                            (sum_dz_above * sum_dz_above)
+            end
+
+            if k < Nz
+                Kz_next  = field_value(kz_field, (c, k + 1))
+                dz_next  = dz[c, k + 1]
+                m_next   = air_mass[c, k + 1]
+                sum_dz_below = dz_k + dz_next
+                dkg_below = (m_k + m_next) * (Kz_k + Kz_next) /
+                            (sum_dz_below * sum_dz_below)
+            end
+
+            inv_m_k = m_k > zero(FT) ? one(FT) / m_k : zero(FT)
+            a_k = (k > 1)  ? -dt_ft * dkg_above * inv_m_k : zero(FT)
+            c_k = (k < Nz) ? -dt_ft * dkg_below * inv_m_k : zero(FT)
+            b_k = one(FT) + dt_ft * (dkg_above + dkg_below) * inv_m_k
+            d_k = q[c, k]
+
+            if k == 1
+                denom = b_k
+                w_k   = c_k / denom
+                g_k   = d_k / denom
+            else
+                denom = b_k - a_k * w_prev
+                w_k   = c_k / denom
+                g_k   = (d_k - a_k * g_prev) / denom
+            end
+
+            w_scratch[c, k] = w_k
+            q[c, k]         = g_k
+
+            if k < Nz
+                w_prev  = w_k
+                g_prev  = g_k
+                Kz_prev = Kz_k
+                dz_prev = dz_k
+                m_prev  = m_k
+                Kz_k    = Kz_next
+                dz_k    = dz_next
+                m_k     = m_next
+            end
+        end
+
+        for k in (Nz - 1):-1:1
+            q[c, k] = q[c, k] - w_scratch[c, k] * q[c, k + 1]
+        end
+    end
+end
+
+# ---------------------------------------------------------------------------
+# Pre/post mass-VMR scaling kernels — LL packed + RG face-indexed.
+# Mirror of the CS `_cs_tracer_mass_to_vmr_kernel!` / `_cs_vmr_to_tracer_mass_kernel!`
+# but for the structured `(Nx, Ny, Nz, Nt)` and face-indexed
+# `(ncells, Nz, Nt)` / `(ncells, Nz)` layouts.
+# ---------------------------------------------------------------------------
+
+@kernel function _ll_tracer_mass_to_vmr_kernel!(q, @Const(air_mass))
+    i, j, k, t = @index(Global, NTuple)
+    FT = eltype(q)
+    @inbounds begin
+        m = air_mass[i, j, k]
+        q[i, j, k, t] = m > zero(FT) ? q[i, j, k, t] / m : zero(FT)
+    end
+end
+
+@kernel function _ll_vmr_to_tracer_mass_kernel!(q, @Const(air_mass))
+    i, j, k, t = @index(Global, NTuple)
+    @inbounds q[i, j, k, t] *= air_mass[i, j, k]
+end
+
+@kernel function _face_tracer_mass_to_vmr_kernel!(q, @Const(air_mass))
+    c, k, t = @index(Global, NTuple)
+    FT = eltype(q)
+    @inbounds begin
+        m = air_mass[c, k]
+        q[c, k, t] = m > zero(FT) ? q[c, k, t] / m : zero(FT)
+    end
+end
+
+@kernel function _face_vmr_to_tracer_mass_kernel!(q, @Const(air_mass))
+    c, k, t = @index(Global, NTuple)
+    @inbounds q[c, k, t] *= air_mass[c, k]
+end
+
+@kernel function _face_single_tracer_mass_to_vmr_kernel!(q, @Const(air_mass))
+    c, k = @index(Global, NTuple)
+    FT = eltype(q)
+    @inbounds begin
+        m = air_mass[c, k]
+        q[c, k] = m > zero(FT) ? q[c, k] / m : zero(FT)
+    end
+end
+
+@kernel function _face_single_vmr_to_tracer_mass_kernel!(q, @Const(air_mass))
+    c, k = @index(Global, NTuple)
+    @inbounds q[c, k] *= air_mass[c, k]
 end

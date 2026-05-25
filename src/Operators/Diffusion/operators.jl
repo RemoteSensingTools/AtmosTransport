@@ -168,12 +168,14 @@ function apply!(state::CellState, meteo, grid,
     workspace === nothing && throw(ArgumentError(
         "ImplicitVerticalDiffusion.apply!: workspace is required " *
         "(w_scratch and dz_scratch must be supplied)"))
-    # LL / face-indexed RG paths remain on the legacy geometric kernel
-    # (no `air_mass` plumbed through here). The D1 mass-flux conservation
-    # rewrite only landed on the CS path so far — see the file-top doc
-    # in `diffusion_kernels.jl` for why and the audit memo for the queued
-    # LL/RG follow-up.
-    apply_vertical_diffusion!(state.tracers_raw, op, workspace, dt, meteo)
+    # LL packed + RG face-indexed now go through the mass-flux VMR
+    # wrapper: pre-scale tracer_mass → VMR, solve with mass-flux
+    # coefficients, post-scale VMR → tracer_mass. Preserves `Σ m·q` to
+    # roundoff for inert tracers, matching the CS path's conservation
+    # contract. See `memory/diffusion_full_pipeline_audit_2026_05_25.md`
+    # (D1 LL/RG follow-up).
+    apply_vertical_diffusion_vmr!(state.tracers_raw, state.air_mass,
+                                   op, workspace, dt, meteo)
     return state
 end
 
@@ -249,6 +251,32 @@ apply_vertical_diffusion!(q_raw::NTuple{6}, air_mass::NTuple{6},
 apply_vertical_diffusion_vmr!(q_raw::NTuple{6}, air_mass::NTuple{6},
                               ::NoDiffusion, workspace, dt,
                               meteo = nothing; halo_width = 0) = nothing
+# LL/RG mass-flux NoDiffusion stubs (new VMR wrappers and the bare
+# air_mass-bearing apply variants must also no-op).
+apply_vertical_diffusion!(q_raw::AbstractArray{<:Any, 4},
+                          air_mass::AbstractArray{<:Any, 3},
+                          ::NoDiffusion, workspace, dt,
+                          meteo = nothing) = nothing
+apply_vertical_diffusion!(q_raw::AbstractArray{<:Any, 3},
+                          air_mass::AbstractArray{<:Any, 2},
+                          ::NoDiffusion, workspace, dt,
+                          meteo = nothing) = nothing
+apply_vertical_diffusion!(q_raw::AbstractArray{<:Any, 2},
+                          air_mass::AbstractArray{<:Any, 2},
+                          ::NoDiffusion, workspace, dt,
+                          meteo = nothing) = nothing
+apply_vertical_diffusion_vmr!(q_raw::AbstractArray{<:Any, 4},
+                              air_mass::AbstractArray{<:Any, 3},
+                              ::NoDiffusion, workspace, dt,
+                              meteo = nothing) = nothing
+apply_vertical_diffusion_vmr!(q_raw::AbstractArray{<:Any, 3},
+                              air_mass::AbstractArray{<:Any, 2},
+                              ::NoDiffusion, workspace, dt,
+                              meteo = nothing) = nothing
+apply_vertical_diffusion_vmr!(q_raw::AbstractArray{<:Any, 2},
+                              air_mass::AbstractArray{<:Any, 2},
+                              ::NoDiffusion, workspace, dt,
+                              meteo = nothing) = nothing
 
 @inline function _diffusion_time(::Type{FT}, meteo) where FT
     return meteo === nothing ? zero(FT) : FT(current_time(meteo))
@@ -574,6 +602,180 @@ function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 3},
         "apply_vertical_diffusion!: rank-3 kz_field is incompatible with " *
         "face-indexed q_raw shape $(size(q_raw)); use a rank-2 field on " *
         "(ncells, Nz, Nt) grids"))
+end
+
+# ---------------------------------------------------------------------------
+# Mass-flux LL packed + face-indexed RG paths — opt-in via the
+# `apply_vertical_diffusion_vmr!` wrapper. These methods take `air_mass`
+# explicitly and dispatch to the mass-flux kernel variants. The legacy
+# geometric `apply_vertical_diffusion!` API (no `air_mass`) is preserved
+# above for backward compatibility — callers that haven't been
+# updated continue to get the leaky geometric behavior.
+# ---------------------------------------------------------------------------
+
+function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 4},
+                                   air_mass::AbstractArray{FT, 3},
+                                   op::ImplicitVerticalDiffusion{FT, KzF},
+                                   workspace, dt,
+                                   meteo = nothing) where {FT, KzF <: AbstractTimeVaryingField{FT, 3}}
+    w_scratch  = workspace.w_scratch
+    dz_scratch = workspace.dz_scratch
+    Nx, Ny, Nz, Nt = size(q_raw)
+    _check_diffusion_workspace_shape(dz_scratch, w_scratch, (Nx, Ny, Nz),
+                                     "spatial")
+    size(air_mass) == (Nx, Ny, Nz) || throw(DimensionMismatch(
+        "LL mass-flux diffusion: air_mass shape $(size(air_mass)) does not " *
+        "match q_raw spatial shape $((Nx, Ny, Nz))"))
+    update_field!(op.kz_field, _diffusion_time(FT, meteo))
+    backend = get_backend(q_raw)
+    kernel = _vertical_diffusion_kernel_mass_flux!(backend, (8, 8, 1))
+    kernel(q_raw, air_mass, op.kz_field, dz_scratch, w_scratch, FT(dt), Nz;
+           ndrange = (Nx, Ny, Nt))
+    synchronize(backend)
+    return nothing
+end
+
+function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 3},
+                                   air_mass::AbstractArray{FT, 2},
+                                   op::ImplicitVerticalDiffusion{FT, KzF},
+                                   workspace, dt,
+                                   meteo = nothing) where {FT, KzF <: AbstractTimeVaryingField{FT, 2}}
+    w_scratch  = workspace.w_scratch
+    dz_scratch = workspace.dz_scratch
+    ncells, Nz, Nt = size(q_raw)
+    _check_diffusion_workspace_shape(dz_scratch, w_scratch, (ncells, Nz),
+                                     "face-indexed")
+    size(air_mass) == (ncells, Nz) || throw(DimensionMismatch(
+        "RG mass-flux diffusion: air_mass shape $(size(air_mass)) does not " *
+        "match q_raw spatial shape $((ncells, Nz))"))
+    update_field!(op.kz_field, _diffusion_time(FT, meteo))
+    backend = get_backend(q_raw)
+    kernel = _vertical_diffusion_face_kernel_mass_flux!(backend, 256)
+    kernel(q_raw, air_mass, op.kz_field, dz_scratch, w_scratch, FT(dt), Nz;
+           ndrange = (ncells, Nt))
+    synchronize(backend)
+    return nothing
+end
+
+function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 2},
+                                   air_mass::AbstractArray{FT, 2},
+                                   op::ImplicitVerticalDiffusion{FT, KzF},
+                                   workspace, dt,
+                                   meteo = nothing) where {FT, KzF <: AbstractTimeVaryingField{FT, 2}}
+    w_scratch  = workspace.w_scratch
+    dz_scratch = workspace.dz_scratch
+    ncells, Nz = size(q_raw)
+    _check_diffusion_workspace_shape(dz_scratch, w_scratch, (ncells, Nz),
+                                     "face-indexed")
+    size(air_mass) == (ncells, Nz) || throw(DimensionMismatch(
+        "RG mass-flux diffusion: air_mass shape $(size(air_mass)) does not " *
+        "match q_raw shape $((ncells, Nz))"))
+    update_field!(op.kz_field, _diffusion_time(FT, meteo))
+    backend = get_backend(q_raw)
+    kernel = _vertical_diffusion_face_single_kernel_mass_flux!(backend, 256)
+    kernel(q_raw, air_mass, op.kz_field, dz_scratch, w_scratch, FT(dt), Nz;
+           ndrange = ncells)
+    synchronize(backend)
+    return nothing
+end
+
+# Mass-VMR scaling helpers for the LL + RG arrays.
+
+function _ll_scale_tracer_mass_to_vmr!(q_raw::AbstractArray{FT, 4},
+                                       air_mass::AbstractArray{FT, 3}) where {FT}
+    Nx, Ny, Nz, Nt = size(q_raw)
+    backend = get_backend(q_raw)
+    kernel = _ll_tracer_mass_to_vmr_kernel!(backend, (8, 8, 1, 1))
+    kernel(q_raw, air_mass; ndrange = (Nx, Ny, Nz, Nt))
+    synchronize(backend)
+    return q_raw
+end
+
+function _ll_scale_vmr_to_tracer_mass!(q_raw::AbstractArray{FT, 4},
+                                       air_mass::AbstractArray{FT, 3}) where {FT}
+    Nx, Ny, Nz, Nt = size(q_raw)
+    backend = get_backend(q_raw)
+    kernel = _ll_vmr_to_tracer_mass_kernel!(backend, (8, 8, 1, 1))
+    kernel(q_raw, air_mass; ndrange = (Nx, Ny, Nz, Nt))
+    synchronize(backend)
+    return q_raw
+end
+
+function _face_scale_tracer_mass_to_vmr!(q_raw::AbstractArray{FT, 3},
+                                         air_mass::AbstractArray{FT, 2}) where {FT}
+    ncells, Nz, Nt = size(q_raw)
+    backend = get_backend(q_raw)
+    kernel = _face_tracer_mass_to_vmr_kernel!(backend, (256, 1, 1))
+    kernel(q_raw, air_mass; ndrange = (ncells, Nz, Nt))
+    synchronize(backend)
+    return q_raw
+end
+
+function _face_scale_vmr_to_tracer_mass!(q_raw::AbstractArray{FT, 3},
+                                         air_mass::AbstractArray{FT, 2}) where {FT}
+    ncells, Nz, Nt = size(q_raw)
+    backend = get_backend(q_raw)
+    kernel = _face_vmr_to_tracer_mass_kernel!(backend, (256, 1, 1))
+    kernel(q_raw, air_mass; ndrange = (ncells, Nz, Nt))
+    synchronize(backend)
+    return q_raw
+end
+
+function _face_scale_tracer_mass_to_vmr!(q_raw::AbstractArray{FT, 2},
+                                         air_mass::AbstractArray{FT, 2}) where {FT}
+    ncells, Nz = size(q_raw)
+    backend = get_backend(q_raw)
+    kernel = _face_single_tracer_mass_to_vmr_kernel!(backend, (256, 1))
+    kernel(q_raw, air_mass; ndrange = (ncells, Nz))
+    synchronize(backend)
+    return q_raw
+end
+
+function _face_scale_vmr_to_tracer_mass!(q_raw::AbstractArray{FT, 2},
+                                         air_mass::AbstractArray{FT, 2}) where {FT}
+    ncells, Nz = size(q_raw)
+    backend = get_backend(q_raw)
+    kernel = _face_single_vmr_to_tracer_mass_kernel!(backend, (256, 1))
+    kernel(q_raw, air_mass; ndrange = (ncells, Nz))
+    synchronize(backend)
+    return q_raw
+end
+
+# LL packed VMR wrapper: pre-scale tracer_mass → VMR, mass-flux solve,
+# post-scale VMR → tracer_mass.
+function apply_vertical_diffusion_vmr!(q_raw::AbstractArray{FT, 4},
+                                       air_mass::AbstractArray{FT, 3},
+                                       op::ImplicitVerticalDiffusion{FT, KzF},
+                                       workspace, dt,
+                                       meteo = nothing) where {FT, KzF <: AbstractTimeVaryingField{FT, 3}}
+    _ll_scale_tracer_mass_to_vmr!(q_raw, air_mass)
+    apply_vertical_diffusion!(q_raw, air_mass, op, workspace, dt, meteo)
+    _ll_scale_vmr_to_tracer_mass!(q_raw, air_mass)
+    return nothing
+end
+
+# Face-indexed RG packed VMR wrapper.
+function apply_vertical_diffusion_vmr!(q_raw::AbstractArray{FT, 3},
+                                       air_mass::AbstractArray{FT, 2},
+                                       op::ImplicitVerticalDiffusion{FT, KzF},
+                                       workspace, dt,
+                                       meteo = nothing) where {FT, KzF <: AbstractTimeVaryingField{FT, 2}}
+    _face_scale_tracer_mass_to_vmr!(q_raw, air_mass)
+    apply_vertical_diffusion!(q_raw, air_mass, op, workspace, dt, meteo)
+    _face_scale_vmr_to_tracer_mass!(q_raw, air_mass)
+    return nothing
+end
+
+# Face-indexed RG single-tracer VMR wrapper.
+function apply_vertical_diffusion_vmr!(q_raw::AbstractArray{FT, 2},
+                                       air_mass::AbstractArray{FT, 2},
+                                       op::ImplicitVerticalDiffusion{FT, KzF},
+                                       workspace, dt,
+                                       meteo = nothing) where {FT, KzF <: AbstractTimeVaryingField{FT, 2}}
+    _face_scale_tracer_mass_to_vmr!(q_raw, air_mass)
+    apply_vertical_diffusion!(q_raw, air_mass, op, workspace, dt, meteo)
+    _face_scale_vmr_to_tracer_mass!(q_raw, air_mass)
+    return nothing
 end
 
 function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 2},

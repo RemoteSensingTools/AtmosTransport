@@ -376,7 +376,7 @@ build_runtime_convection(::AbstractRuntimeRecipeStyle, ::Val{:cmfmc}, _section) 
 # Inherits TM5's `tile_workspace_gib`, `use_collab_lu`, `lmax_conv`, `n_merge`
 # knobs because the LU machinery is the same. Reads from the CMFMC sections
 # of the binary, not the TM5 sections; selectable side-by-side with the
-# GCHP-faithful `cmfmc` kind for direct comparison.
+# GCHP-audited `cmfmc` kind for direct comparison.
 function build_runtime_convection(::AbstractRuntimeRecipeStyle, ::Val{:cmfmc_matrix}, section)
     budget     = Float64(get(section, "tile_workspace_gib", 1.0))
     use_collab = Bool(get(section, "use_collab_lu", false))

@@ -1,0 +1,59 @@
+# Same as convonly_tm5_era5_c180_3day.toml but reading the POSTCLOSURE
+# binary (v4_postclosure_20260524) — the LL preprocessor was rerun with
+# the `entu(lsave) += totd - tote` column net-zero closure (commit
+# 5ab951c, tm5_convection_conversion.jl). Use the diff vs the v3 (pre-
+# closure) binary to see the runtime mass-drift improvement from the
+# closure.
+
+[input]
+folder       = "/temp1/c180_era5_geosgrid_cfl85_tm5_surface_f32_steps48_v4_postclosure_20260524"
+start_date   = "2021-12-02"
+end_date     = "2021-12-04"
+file_pattern = "era5_transport_{YYYYMMDD}_merged1000Pa_float32.bin"
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[advection]
+scheme = "none"
+
+[diffusion]
+kind = "none"
+
+[convection]
+kind = "tm5"
+tile_workspace_gib = 0.25
+use_collab_lu = true
+lmax_conv = 75
+
+[tracers.co2_lowest_layer]
+[tracers.co2_lowest_layer.init]
+kind = "pressure_layer"
+lowest_layer = true
+total_molecules = 1.0e22
+
+[tracers.co2_p08]
+[tracers.co2_p08.init]
+kind = "pressure_layer"
+psurf_fraction = 0.8
+total_molecules = 1.0e22
+
+[tracers.co2_p06]
+[tracers.co2_p06.init]
+kind = "pressure_layer"
+psurf_fraction = 0.6
+total_molecules = 1.0e22
+
+[tracers.co2_p04]
+[tracers.co2_p04.init]
+kind = "pressure_layer"
+psurf_fraction = 0.4
+total_molecules = 1.0e22
+
+[output]
+cadence_hours = 1.0
+snapshot_file = "/temp1/convection_compare_4tracer/convonly_tm5_postclosure_era5_c180_3day.nc"

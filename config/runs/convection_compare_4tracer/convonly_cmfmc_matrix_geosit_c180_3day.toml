@@ -7,7 +7,7 @@
 # to roundoff for inert tracers (the bar Option 3 was selected to meet).
 #
 # Same 4-tracer single-layer IC, same binary, same numerics knobs as
-# `convonly_cmfmc_geosit_c180_3day.toml` (the GCHP-faithful comparison
+# `convonly_cmfmc_geosit_c180_3day.toml` (the GCHP-audited comparison
 # leg). The ONLY difference is `[convection].kind = "cmfmc_matrix"`.
 #
 # Runner:

@@ -56,3 +56,9 @@ nohup.out
 *.nohup
 
 /artifacts/
+
+# Untracked plot outputs (collect diagnostic PNGs locally for VSCode
+# preview without polluting `git status`). Already covered by the
+# global `*.png` rule above, but listed explicitly so the intent is
+# obvious in `.gitignore`.
+/plots/

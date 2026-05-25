@@ -124,13 +124,13 @@
     },
     "convection": {
       "type": "object",
-      "description": "Convection operator. Omit this table for no convection.",
+      "description": "Convection operator. Omit this table or set kind = \"none\" for no convection.",
       "additionalProperties": true,
       "properties": {
         "kind": {
           "type": "string",
-          "description": "Convection parameterization.",
-          "enum": ["tm5", "cmfmc", "ras"],
+          "description": "Convection parameterization. \"none\" disables the operator; \"tm5\" runs the TM5 backward-Euler LU on (entu, detu, entd, detd) fields; \"cmfmc\" runs the GCHP-audited two-pass CMFMC kernel on (cmfmc, dtrain); \"cmfmc_matrix\" derives (entu, detu, 0, 0) from (cmfmc, dtrain) per column and routes through the TM5 LU (conservative variant of the GEOS rates); \"ras\" is reserved for a future relaxed-Arakawa-Schubert path.",
+          "enum": ["none", "tm5", "cmfmc", "cmfmc_matrix", "ras"],
           "default": "tm5"
         }
       }

@@ -1,13 +1,34 @@
 # ---------------------------------------------------------------------------
-# CMFMCConvection — GCHP RAS / Grell-Freitas convective transport.
+# CMFMCConvection — GCHP-audited two-pass CMFMC convective transport.
 # Basis-polymorphic, with well-mixed sub-cloud treatment, mandatory CFL
 # sub-cycling, and no positivity clamp to preserve adjoint structure.
+#
+# Intentional divergences from line-by-line GCHP RAS (`convection_mod.F90`):
+#   1. Cloud-base detection uses the lowest non-zero `cmfmc[k+1]` rather
+#      than `DQRCU(K) > 0` (GCHP RAS proxy). Our binary contract delivers
+#      cmfmc + dtrain only — no DQRCU — so we proxy from the available
+#      mass flux. Same physical intent (lowest level with updraft inflow),
+#      different signal source. See cmfmc_kernels.jl:493.
+#   2. Pass-0 adds a local cloud-base mass-closing tracer update for
+#      column self-consistency (kg/m²-weighted well-mix). GCHP RAS does
+#      not have this step in the column kernel; it relies on the
+#      dynamics-core PBL air-mass rescale to absorb residual imbalance.
+#      In standalone offline transport this rescale is absent, so the
+#      added closure exists to keep our env-only column update truthful.
+#      See cmfmc_kernels.jl:559.
+#
+# These divergences are documented in the audit memo
+# `convection_reference_audit_2026_05_24.md`. The label is
+# "GCHP-audited" (matches the high-level operator design + ~95% of the
+# kernel mechanics) rather than "GCHP-faithful" (line-by-line parity).
 # ---------------------------------------------------------------------------
 
 """
     CMFMCConvection()
 
-GEOS-Chem RAS / Grell-Freitas convective transport operator.
+GCHP-audited CMFMC convective transport operator (env + qc two-pass).
+NOT line-by-line GCHP RAS — see the module-top comment for the two
+intentional divergences (cloud-base proxy + Pass-0 closure).
 
 No struct fields — the forcing arrays (`cmfmc`, optionally `dtrain`)
 arrive via `TransportModel.convection_forcing`, populated each substep by

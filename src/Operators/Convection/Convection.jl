@@ -77,6 +77,8 @@ export CMFMCConvection                          # plan 18 Commit 3
 export CMFMCWorkspace, invalidate_cmfmc_cache!  # plan 18 Commit 3
 export TM5Convection                            # plan 23 Commit 1
 export TM5Workspace, invalidate_tm5_cache!      # plan 23 + P6 cache hook
+export CMFMCMatrixConvection                    # GEOS-derived rates → TM5 LU (conservative CMFMC)
+export CMFMCMatrixWorkspace, invalidate_cmfmc_matrix_cache!
 export apply_convection!
 
 include("operators.jl")
@@ -86,5 +88,7 @@ include("CMFMCConvection.jl")        # struct + apply! methods (Commit 3)
 include("tm5_column_solve.jl")       # backend-agnostic column solver (plan 23 Commit 2)
 include("tm5_kernels.jl")            # @kernel wrappers per topology (plan 23 Commit 4)
 include("TM5Convection.jl")          # struct + apply! methods (plan 23 Commit 1 + Commit 4)
+include("cmfmc_matrix_kernels.jl")   # GEOS (cmfmc,dtrain) → TM5 (entu,detu) derivation kernels
+include("CMFMCMatrixConvection.jl")  # struct + apply! routing through TM5 LU
 
 end # module Convection

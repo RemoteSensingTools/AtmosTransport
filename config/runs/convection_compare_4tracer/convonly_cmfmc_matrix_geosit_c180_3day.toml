@@ -1,0 +1,71 @@
+# 4-tracer convection-comparison experiment, CMFMC-matrix side.
+#
+# CS180 GEOS-IT/L72, Dec 2-4 2021, NoAdvection + NoDiffusion + the
+# conservative CMFMC variant: GEOS `(cmfmc, dtrain)` derived into TM5
+# `(entu, detu, 0, 0)` per column, then solved by the TM5 backward-Euler
+# LU. Column-stochastic by construction so `Σ tracer_mass` is preserved
+# to roundoff for inert tracers (the bar Option 3 was selected to meet).
+#
+# Same 4-tracer single-layer IC, same binary, same numerics knobs as
+# `convonly_cmfmc_geosit_c180_3day.toml` (the GCHP-faithful comparison
+# leg). The ONLY difference is `[convection].kind = "cmfmc_matrix"`.
+#
+# Runner:
+#   ATMOSTR_TIMERS=1 julia --project=. scripts/run_transport.jl \
+#       config/runs/convection_compare_4tracer/convonly_cmfmc_matrix_geosit_c180_3day.toml
+
+[input]
+folder       = "/home/cfranken/data/AtmosTransport/met/geosit/C180/transport_binary_v4_merge025hpa_adaptive_f32"
+start_date   = "2021-12-02"
+end_date     = "2021-12-04"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[advection]
+scheme = "none"
+
+[diffusion]
+kind = "none"
+
+[convection]
+kind = "cmfmc_matrix"
+tile_workspace_gib = 0.25
+use_collab_lu = true
+# L72 GEOS-IT binary; deepest CMFMC reach has not been measured for this
+# binary so default to no truncation. Profile and lower if Metal threadgroup
+# memory becomes a constraint.
+lmax_conv = 0
+
+[tracers.co2_lowest_layer]
+[tracers.co2_lowest_layer.init]
+kind = "pressure_layer"
+lowest_layer = true
+total_molecules = 1.0e22
+
+[tracers.co2_p08]
+[tracers.co2_p08.init]
+kind = "pressure_layer"
+psurf_fraction = 0.8
+total_molecules = 1.0e22
+
+[tracers.co2_p06]
+[tracers.co2_p06.init]
+kind = "pressure_layer"
+psurf_fraction = 0.6
+total_molecules = 1.0e22
+
+[tracers.co2_p04]
+[tracers.co2_p04.init]
+kind = "pressure_layer"
+psurf_fraction = 0.4
+total_molecules = 1.0e22
+
+[output]
+cadence_hours = 1.0
+snapshot_file = "/temp1/convection_compare_4tracer/convonly_cmfmc_matrix_geosit_c180_3day.nc"

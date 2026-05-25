@@ -253,7 +253,10 @@ export UpwindScheme, SlopesScheme, PPMScheme, LinRoodPPMScheme, NoAdvection
 export NoDiffusion, ImplicitVerticalDiffusion
 export NoSurfaceFlux, SurfaceFluxOperator, SurfaceFluxSource,
        PerTracerFluxMap, flux_for
-export NoConvection, CMFMCConvection, TM5Convection
+export AbstractConvection, NoConvection, CMFMCConvection, TM5Convection,
+       CMFMCMatrixConvection
+export ConvectionForcing, apply_convection!, has_convection_forcing
+export AbstractMetDriver
 export NoChemistry, ExponentialDecay, CompositeChemistry
 export ConstantField, ProfileKzField
 export apply!

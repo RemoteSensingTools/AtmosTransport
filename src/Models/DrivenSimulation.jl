@@ -505,6 +505,24 @@ function _validate_convection_window!(::TM5Convection,
     return nothing
 end
 
+# CMFMCMatrixConvection reads the SAME binary sections as CMFMCConvection
+# (cmfmc + dtrain) — only the runtime numerics differ (GCHP two-pass vs
+# the conservative TM5 LU on derived rates).
+function _validate_convection_window!(::CMFMCMatrixConvection,
+                                       window::AbstractTransportWindow,
+                                       driver::AbstractMetDriver)
+    window.convection.cmfmc === nothing &&
+        throw(ArgumentError(
+            "CMFMCMatrixConvection requires `window.convection.cmfmc` to be populated; " *
+            "driver $(typeof(driver)) provided convection forcing without CMFMC."))
+    window.convection.dtrain === nothing &&
+        throw(ArgumentError(
+            "CMFMCMatrixConvection requires `window.convection.dtrain` to be populated " *
+            "(the matrix variant uses dtrain as the explicit detrainment rate); " *
+            "driver $(typeof(driver)) provided CMFMC but no DTRAIN."))
+    return nothing
+end
+
 function _validate_convection_window!(op::AbstractConvection,
                                        ::AbstractTransportWindow,
                                        ::AbstractMetDriver)

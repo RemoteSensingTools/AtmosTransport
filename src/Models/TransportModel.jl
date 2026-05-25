@@ -132,6 +132,29 @@ _convection_workspace_for(op::TM5Convection,
                  tile_workspace_gib = op.tile_workspace_gib,
                  cell_metrics = _cmfmc_cell_metrics(grid.horizontal))
 
+# CMFMCMatrixConvection — derives (entu, detu) from GEOS (cmfmc, dtrain) and
+# routes through the same TM5 LU machinery. Workspace composes a TM5Workspace
+# with rate-cache slabs sized to mirror dtrain (one entry per layer center).
+_convection_workspace_for(op::CMFMCMatrixConvection,
+                          state::CellState{B, A, Raw},
+                          grid::AtmosGrid{<:LatLonMesh}) where {B, A, Raw <: AbstractArray{<:Any, 4}} =
+    CMFMCMatrixWorkspace(state.air_mass;
+                         tile_workspace_gib = op.inner.tile_workspace_gib,
+                         cell_metrics = _cmfmc_cell_metrics(grid.horizontal))
+_convection_workspace_for(op::CMFMCMatrixConvection,
+                          state::CellState{B, A, Raw},
+                          grid::AtmosGrid{<:ReducedGaussianMesh}) where {B, A, Raw <: AbstractArray{<:Any, 3}} =
+    CMFMCMatrixWorkspace(state.air_mass;
+                         tile_workspace_gib = op.inner.tile_workspace_gib,
+                         cell_metrics = _cmfmc_cell_metrics(grid.horizontal))
+_convection_workspace_for(op::CMFMCMatrixConvection,
+                          state::CubedSphereState{B},
+                          grid::AtmosGrid{<:CubedSphereMesh}) where {B} =
+    CMFMCMatrixWorkspace(state.air_mass;
+                         tile_workspace_gib = op.inner.tile_workspace_gib,
+                         cell_metrics = _cmfmc_cell_metrics(grid.horizontal),
+                         halo_width = grid.horizontal.Hp)
+
 # Fallback for future operators — keep LAST so the specific
 # methods above take precedence. Returns `nothing` so installing an
 # unknown operator on the model compiles; DrivenSimulation's

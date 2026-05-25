@@ -38,8 +38,11 @@ using ..Operators.Diffusion: NoDiffusion, ImplicitVerticalDiffusion,
     apply_vertical_diffusion_vmr!
 using ..Operators.Convection: CMFMCConvection, CMFMCWorkspace,
     NoConvection, TM5Convection, TM5Workspace,
-    invalidate_cmfmc_cache!, _get_or_compute_n_sub!,
-    _tm5_diagnose_cloud_dims, _tm5_build_conv1!, _tm5_lu!
+    CMFMCMatrixConvection, CMFMCMatrixWorkspace,
+    invalidate_cmfmc_cache!, invalidate_cmfmc_matrix_cache!,
+    _get_or_compute_n_sub!,
+    _tm5_diagnose_cloud_dims, _tm5_build_conv1!, _tm5_lu!,
+    _launch_cmfmc_matrix_derivation!
 using ..State: AbstractCubedSphereField, GCHPHoltslagBovilleKzField,
     field_value, panel_field, update_field!
 using ..MetDrivers: ConvectionForcing, current_time

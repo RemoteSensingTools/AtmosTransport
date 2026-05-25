@@ -371,9 +371,26 @@ function build_runtime_convection(::AbstractRuntimeRecipeStyle, ::Val{:tm5}, sec
 end
 build_runtime_convection(::AbstractRuntimeRecipeStyle, ::Val{:cmfmc}, _section) = CMFMCConvection()
 
+# `cmfmc_matrix`: routes GEOS `(cmfmc, dtrain)` through the TM5 LU solver
+# (column-stochastic by construction → `Σ tracer_mass` preserved to roundoff).
+# Inherits TM5's `tile_workspace_gib`, `use_collab_lu`, `lmax_conv`, `n_merge`
+# knobs because the LU machinery is the same. Reads from the CMFMC sections
+# of the binary, not the TM5 sections; selectable side-by-side with the
+# GCHP-faithful `cmfmc` kind for direct comparison.
+function build_runtime_convection(::AbstractRuntimeRecipeStyle, ::Val{:cmfmc_matrix}, section)
+    budget     = Float64(get(section, "tile_workspace_gib", 1.0))
+    use_collab = Bool(get(section, "use_collab_lu", false))
+    lmax_conv  = Int(get(section, "lmax_conv", 0))
+    n_merge    = Int(get(section, "n_merge", 1))
+    return CMFMCMatrixConvection(; tile_workspace_gib = budget,
+                                   use_collab_lu = use_collab,
+                                   lmax_conv = lmax_conv,
+                                   n_merge = n_merge)
+end
+
 function build_runtime_convection(::AbstractRuntimeRecipeStyle, ::Val{name}, _section) where name
     throw(ArgumentError(
-        "Unknown [convection] kind: $(name). Supported: none | tm5 | cmfmc"))
+        "Unknown [convection] kind: $(name). Supported: none | tm5 | cmfmc | cmfmc_matrix"))
 end
 
 @inline validate_runtime_advection(::AbstractRuntimeRecipeStyle,
@@ -442,6 +459,23 @@ function validate_runtime_convection(::AbstractRuntimeRecipeStyle,
         throw(ArgumentError(
             "[convection] kind = \"cmfmc\" requires CMFMC convection forcing " *
             "in the runtime forcing source."))
+    return nothing
+end
+
+function validate_runtime_convection(::AbstractRuntimeRecipeStyle,
+                                     ::CMFMCMatrixConvection,
+                                     context)
+    # The matrix variant requires both cmfmc AND dtrain — see the
+    # capability check in `DrivenRunner._validate_capability_match` for
+    # the detailed reason. Recipe-level validators don't have access to
+    # `caps.payload_sections` so we can only check the cmfmc capability
+    # here; DrivenRunner enforces the dtrain requirement directly.
+    _runtime_has_cmfmc(context) ||
+        throw(ArgumentError(
+            "[convection] kind = \"cmfmc_matrix\" requires CMFMC convection " *
+            "forcing (cmfmc + dtrain) in the runtime forcing source. The " *
+            "matrix variant reads the same binary sections as kind=\"cmfmc\" " *
+            "and derives entu/detu at runtime — no Tiedtke fallback."))
     return nothing
 end
 

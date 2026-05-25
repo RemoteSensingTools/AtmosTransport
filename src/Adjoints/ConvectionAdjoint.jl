@@ -568,9 +568,50 @@ _require_cs_convection_workspace(::CMFMCConvection, workspace) =
     _require_cmfmc_convection_workspace(workspace)
 _require_cs_convection_workspace(::TM5Convection, workspace) =
     _require_tm5_convection_workspace(workspace)
+function _require_cs_convection_workspace(::CMFMCMatrixConvection, workspace)
+    workspace isa CMFMCMatrixWorkspace || throw(ArgumentError(
+        "CS CMFMCMatrix adjoint convection requires a `CMFMCMatrixWorkspace`; got $(typeof(workspace))"))
+    return _require_tm5_convection_workspace(workspace.tm5_workspace)
+end
 function _require_cs_convection_workspace(op, workspace)
     throw(ArgumentError("CS adjoint footprint supports `NoConvection`, " *
-                        "`CMFMCConvection`, and `TM5Convection`; got $(typeof(op))"))
+                        "`CMFMCConvection`, `TM5Convection`, and `CMFMCMatrixConvection`; " *
+                        "got $(typeof(op))"))
+end
+
+# CMFMCMatrixConvection adjoint forcing must look like the forward forcing:
+# cmfmc + dtrain populated. We derive (entu, detu) into the workspace cache
+# and build a synthetic TM5-form forcing that the TM5 forward / adjoint
+# kernels consume unchanged.
+function _assert_cmfmc_matrix_adjoint_forcing(forcing)
+    forcing isa ConvectionForcing || throw(ArgumentError(
+        "CS CMFMCMatrix adjoint convection requires a `ConvectionForcing`; got $(typeof(forcing))"))
+    forcing.cmfmc === nothing && throw(ArgumentError(
+        "CS CMFMCMatrix adjoint convection requires `forcing.cmfmc` panel fields"))
+    forcing.dtrain === nothing && throw(ArgumentError(
+        "CS CMFMCMatrix adjoint convection requires `forcing.dtrain` panel fields"))
+    return forcing.cmfmc, forcing.dtrain
+end
+
+@inline function _refresh_and_synthesize_cmfmc_matrix_forcing!(
+        workspace::CMFMCMatrixWorkspace, forcing::ConvectionForcing)
+    _assert_cmfmc_matrix_adjoint_forcing(forcing)
+    # ALWAYS invalidate at the entry of the footprint forward/adjoint helpers.
+    # Reason: these helpers are called from `Footprint/ReverseLoop.jl` with a
+    # per-step forcing slice that can differ step-to-step. Production
+    # `DrivenSimulation` invalidates the cache on met-window advance, but the
+    # footprint path bypasses that hook. Mirrors the CMFMC pattern at
+    # `:622` / `:708` where `invalidate_cmfmc_cache!(workspace)` is called
+    # before every kernel launch for the same reason.
+    invalidate_cmfmc_matrix_cache!(workspace)
+    if !workspace.derived_valid[]
+        _launch_cmfmc_matrix_derivation!(workspace.derived_entu, workspace.derived_detu,
+                                          forcing.cmfmc, forcing.dtrain)
+        workspace.derived_valid[] = true
+    end
+    return ConvectionForcing(nothing, nothing,
+        (entu = workspace.derived_entu, detu = workspace.derived_detu,
+         entd = workspace.zero_entd,    detd = workspace.zero_detd))
 end
 
 function _apply_cs_convection_forward!(panels_rm, panels_m, forcing,
@@ -640,11 +681,23 @@ function _apply_cs_convection_forward!(panels_rm, panels_m, forcing,
     return nothing
 end
 
+# CMFMCMatrixConvection forward = refresh-derive + TM5 forward. Cheap
+# alias-and-delegate; no kernel duplication.
+function _apply_cs_convection_forward!(panels_rm, panels_m, forcing,
+                                       op::CMFMCMatrixConvection, dt,
+                                       workspace::CMFMCMatrixWorkspace,
+                                       mesh::CubedSphereMesh)
+    synth = _refresh_and_synthesize_cmfmc_matrix_forcing!(workspace, forcing)
+    return _apply_cs_convection_forward!(panels_rm, panels_m, synth,
+                                          op.inner, dt, workspace.tm5_workspace, mesh)
+end
+
 function _apply_cs_convection_forward!(panels_rm, panels_m, forcing,
                                        op, dt, workspace,
                                        mesh::CubedSphereMesh)
-    throw(ArgumentError("CS adjoint footprint forward helper supports `NoConvection` " *
-                        "`CMFMCConvection`, and `TM5Convection`; got $(typeof(op))"))
+    throw(ArgumentError("CS adjoint footprint forward helper supports `NoConvection`, " *
+                        "`CMFMCConvection`, `TM5Convection`, and `CMFMCMatrixConvection`; " *
+                        "got $(typeof(op))"))
 end
 
 function _apply_cs_convection_adjoint!(lambda_panels, panels_m, forcing,
@@ -714,9 +767,24 @@ function _apply_cs_convection_adjoint!(lambda_panels, panels_m, forcing,
     return nothing
 end
 
+# CMFMCMatrixConvection adjoint: same path as forward — derive (entu, detu)
+# from the forcing, then delegate to the TM5 adjoint kernel. The state-space
+# operator is purely the TM5 LU (the derivation is independent of the state),
+# so the adjoint-identity ⟨y, L·x⟩ = ⟨Lᵀ·y, x⟩ inherits from the TM5 LU
+# adjoint with no chain-rule contribution from the derivation step.
+function _apply_cs_convection_adjoint!(lambda_panels, panels_m, forcing,
+                                       op::CMFMCMatrixConvection, dt,
+                                       workspace::CMFMCMatrixWorkspace,
+                                       mesh::CubedSphereMesh)
+    synth = _refresh_and_synthesize_cmfmc_matrix_forcing!(workspace, forcing)
+    return _apply_cs_convection_adjoint!(lambda_panels, panels_m, synth,
+                                          op.inner, dt, workspace.tm5_workspace, mesh)
+end
+
 function _apply_cs_convection_adjoint!(lambda_panels, panels_m, forcing,
                                        op, dt, workspace,
                                        mesh::CubedSphereMesh)
-    throw(ArgumentError("CS adjoint footprint reverse helper supports `NoConvection` " *
-                        "`CMFMCConvection`, and `TM5Convection`; got $(typeof(op))"))
+    throw(ArgumentError("CS adjoint footprint reverse helper supports `NoConvection`, " *
+                        "`CMFMCConvection`, `TM5Convection`, and `CMFMCMatrixConvection`; " *
+                        "got $(typeof(op))"))
 end

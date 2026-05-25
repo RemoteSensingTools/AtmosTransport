@@ -625,6 +625,21 @@ function _validate_capability_match(driver, recipe, cfg)
             "the cmfmc section; this binary's payload_sections are " *
             "$(caps.payload_sections)."))
     end
+    if conv_kind === :cmfmc_matrix
+        # The matrix variant has NO Tiedtke fallback — `dtrain` is the
+        # explicit detrainment rate that closes the continuity derivation
+        # `entu - detu = cmfmc[k] - cmfmc[k+1]`. A binary with cmfmc but
+        # no dtrain is hard-rejected up front so the failure mode is
+        # actionable at recipe-validation time (not at the first window
+        # load several seconds later).
+        (caps.cmfmc_convection && :dtrain in caps.payload_sections) ||
+            throw(ArgumentError(
+                "[convection] kind = \"cmfmc_matrix\" requires the binary " *
+                "to carry both cmfmc AND dtrain payloads (no Tiedtke fallback); " *
+                "this binary's payload_sections are $(caps.payload_sections). " *
+                "Regenerate the binary with a preprocessor that emits :dtrain, " *
+                "or fall back to kind=\"cmfmc\" which has a Tiedtke path."))
+    end
     return nothing
 end
 

@@ -73,6 +73,7 @@ core_tests = [
     "test_transport_model_convection.jl",
     "test_tm5_convection.jl",
     "test_cmfmc_adjoint_identity.jl",
+    "test_cmfmc_matrix_convection.jl",
     "test_tm5_alias_safety.jl",
     "test_tm5_tile_bit_equality.jl",
     "test_tm5_preprocessing.jl",

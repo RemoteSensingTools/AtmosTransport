@@ -438,10 +438,10 @@ function _refresh_pbl_kz_for_window!(field::WindowPBLKzField,
     return nothing
 end
 
-function _refresh_pbl_kz_for_window!(field::GCHPHoltslagBovilleKzField,
+function _refresh_pbl_kz_for_window!(field::LocalHoltslagBovilleKzField,
                                      sim::DrivenSimulation)
     mesh = sim.model.grid.horizontal
-    refresh_gchp_holtslag_boville_kz_cache!(
+    refresh_local_holtslag_boville_kz_cache!(
         field, sim.window.surface, sim.window.vdiff, sim.window.air_mass,
         mesh.cell_areas; halo_width = mesh.Hp)
     return nothing

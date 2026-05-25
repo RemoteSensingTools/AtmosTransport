@@ -1,17 +1,49 @@
 """
-    GCHPHoltslagBovilleKzField(host_cache; params = PBLPhysicsParameters{FT}())
+    LocalHoltslagBovilleKzField(host_cache; params = PBLPhysicsParameters{FT}())
 
 Panel-native Kz cache for the GEOS/GCHP VDIFF runtime path.
 
 The cache is refreshed from the active window's GEOS VDIFF payload
 (`vdiff_u`, `vdiff_v`, `vdiff_t`, `vdiff_qv`) plus PBL surface fields.
-This is a local-Kz Holtslag-Boville style closure: it uses GEOS
-temperature, humidity, and wind shear to derive column geometry and
-free-tropospheric shear enhancement, while retaining the existing
-surface-layer Beljaars-Viterbo shape inside the diagnosed PBL. The
-nonlocal counter-gradient term is not applied by this field.
+This is a **local** Holtslag-Boville Kz closure: it derives column
+geometry + free-tropospheric shear enhancement from GEOS T/qv/wind
+profiles, with the existing Beljaars-Viterbo surface-layer shape inside
+the diagnosed PBL.
+
+# ⚠ NOT full GCHP VDIFF parity
+
+Two intentional divergences from GCHP's `vdiff_mod.F90`:
+
+  1. **No non-local counter-gradient term.** GCHP's `pbldif`
+     (`vdiff_mod.F90:1237-1254`) computes counter-gradient terms
+     `cgs = fak3/(pblh·wm)`, `cgh = khfs·cgs` and injects them into
+     the θ and qv profiles before the implicit solve. We apply only the
+     LOCAL Kz, so daytime PBL lofting of surface-emitted tracers is
+     systematically weaker than GCHP — typically 10–30 % less mass
+     above the PBL top for surface sources. Use
+     `kind = "tm5_beljaars_viterbo_local_kz"` if you want to be explicit
+     that no parameterization claims GCHP parity.
+  2. **Surface-flux coupling default mismatch.** GCHP applies emissions
+     as a boundary condition inside one combined turbulence step
+     (`vdiff_mod.F90:679`, `gchp_chunk_mod.F90:1296`). Our default
+     `SplitSurfaceFluxCoupling` does `V(dt/2) → S(dt) → V(dt/2)` Strang
+     instead. For GCHP parity in long integrations, set
+     `[surface_flux].coupling = "boundary"` (which selects
+     `DiffusiveSurfaceFluxBoundary`). The recipe validator emits a
+     warning at config-load when this Kz field is selected without the
+     boundary-coupling switch.
+
+See `memory/diffusion_full_pipeline_audit_2026_05_25.md` for the full
+audit chain and pending D1 mass-flux conservation fix.
+
+# Backward compatibility
+
+The old type name `GCHPHoltslagBovilleKzField` is preserved as a
+`const` alias at the bottom of this file. Both names dispatch to the
+same type. The "GCHP" name is deprecated in favor of
+`LocalHoltslagBovilleKzField`, which is honest about what it is.
 """
-struct GCHPHoltslagBovilleKzField{FT, F <: AbstractTimeVaryingField{FT, 3}, H,
+struct LocalHoltslagBovilleKzField{FT, F <: AbstractTimeVaryingField{FT, 3}, H,
                                   P <: PBLPhysicsParameters{FT}, A} <: AbstractCubedSphereField{FT}
     panels     :: NTuple{6, F}
     host_cache :: H
@@ -19,33 +51,33 @@ struct GCHPHoltslagBovilleKzField{FT, F <: AbstractTimeVaryingField{FT, 3}, H,
     area_cache :: A
 end
 
-function GCHPHoltslagBovilleKzField(host_cache::NTuple{6, Array{FT, 3}};
+function LocalHoltslagBovilleKzField(host_cache::NTuple{6, Array{FT, 3}};
                                     params = PBLPhysicsParameters{FT}()) where FT
     params isa PBLPhysicsParameters{FT} ||
         throw(ArgumentError("params must be a PBLPhysicsParameters{$FT}; got $(typeof(params))"))
     panels = ntuple(p -> PreComputedKzField(host_cache[p]), 6)
     area_cache = _typed_area_cache_ref(FT, host_cache[1], size(host_cache[1], 1),
                                        size(host_cache[1], 2))
-    return GCHPHoltslagBovilleKzField{FT, typeof(panels[1]), typeof(host_cache),
+    return LocalHoltslagBovilleKzField{FT, typeof(panels[1]), typeof(host_cache),
                                       typeof(params), typeof(area_cache)}(
         panels, host_cache, params, area_cache)
 end
 
-@inline panel_field(f::GCHPHoltslagBovilleKzField, p::Integer) = f.panels[Int(p)]
-update_field!(f::GCHPHoltslagBovilleKzField, ::Real) = f
+@inline panel_field(f::LocalHoltslagBovilleKzField, p::Integer) = f.panels[Int(p)]
+update_field!(f::LocalHoltslagBovilleKzField, ::Real) = f
 
-function Adapt.adapt_structure(to, f::GCHPHoltslagBovilleKzField)
+function Adapt.adapt_structure(to, f::LocalHoltslagBovilleKzField)
     panels = Adapt.adapt(to, f.panels)
     data1 = panels[1].data
-    area_cache = _typed_area_cache_ref(_gchp_hb_eltype(f), data1,
+    area_cache = _typed_area_cache_ref(_local_hb_eltype(f), data1,
                                        size(data1, 1), size(data1, 2))
-    return GCHPHoltslagBovilleKzField{_gchp_hb_eltype(f), typeof(panels[1]),
+    return LocalHoltslagBovilleKzField{_local_hb_eltype(f), typeof(panels[1]),
                                       typeof(f.host_cache), typeof(f.params),
                                       typeof(area_cache)}(
         panels, f.host_cache, f.params, area_cache)
 end
 
-@inline _gchp_hb_eltype(::GCHPHoltslagBovilleKzField{FT}) where FT = FT
+@inline _local_hb_eltype(::LocalHoltslagBovilleKzField{FT}) where FT = FT
 
 @inline function _virtual_temperature(t, qv, ::Type{FT}) where FT
     return max(FT(t), FT(180)) * (one(FT) + FT(0.61) * max(FT(qv), zero(FT)))
@@ -78,7 +110,7 @@ end
     return clamp(max(base_kz, p.Kz_bg + shear_kz), p.Kz_bg, p.Kz_max)
 end
 
-@kernel function _gchp_hb_kz_cs_panel_kernel!(cache, @Const(air_mass),
+@kernel function _local_hb_kz_cs_panel_kernel!(cache, @Const(air_mass),
                                               @Const(pblh), @Const(ustar),
                                               @Const(hflux), @Const(t2m),
                                               @Const(u), @Const(v),
@@ -141,7 +173,7 @@ end
     end
 end
 
-function _cached_backend_cell_areas!(field::GCHPHoltslagBovilleKzField{FT},
+function _cached_backend_cell_areas!(field::LocalHoltslagBovilleKzField{FT},
                                      cell_areas::AbstractMatrix,
                                      reference) where FT
     cache = field.area_cache[]
@@ -162,7 +194,7 @@ end
                     _backend_ready_array(vdiff.qv[p]), 1:6)
 end
 
-function _try_refresh_gchp_hb_kz_cache_backend!(field::GCHPHoltslagBovilleKzField{FT},
+function _try_refresh_local_hb_kz_cache_backend!(field::LocalHoltslagBovilleKzField{FT},
                                                 surface,
                                                 vdiff,
                                                 air_mass::NTuple{6},
@@ -179,7 +211,7 @@ function _try_refresh_gchp_hb_kz_cache_backend!(field::GCHPHoltslagBovilleKzFiel
     Hp = Int(halo_width)
     @inbounds for panel in 1:6
         cache = field.panels[panel].data
-        kernel! = _gchp_hb_kz_cs_panel_kernel!(backend)
+        kernel! = _local_hb_kz_cs_panel_kernel!(backend)
         kernel!(cache, air_mass[panel], surface.pblh[panel],
                 surface.ustar[panel], surface.hflux[panel],
                 surface.t2m[panel], vdiff.u[panel], vdiff.v[panel],
@@ -190,7 +222,7 @@ function _try_refresh_gchp_hb_kz_cache_backend!(field::GCHPHoltslagBovilleKzFiel
     return true
 end
 
-function refresh_gchp_holtslag_boville_kz_cache!(field::GCHPHoltslagBovilleKzField{FT},
+function refresh_local_holtslag_boville_kz_cache!(field::LocalHoltslagBovilleKzField{FT},
                                                   surface,
                                                   vdiff,
                                                   air_mass::NTuple{6},
@@ -200,7 +232,7 @@ function refresh_gchp_holtslag_boville_kz_cache!(field::GCHPHoltslagBovilleKzFie
         throw(ArgumentError("[diffusion] kind=\"geoschem_holtslag_boville_vdiff\" requires pblh/ustar/pbl_hflux/t2m surface fields in the transport window"))
     vdiff === nothing &&
         throw(ArgumentError("[diffusion] kind=\"geoschem_holtslag_boville_vdiff\" requires vdiff_u/vdiff_v/vdiff_t/vdiff_qv sections in the transport window"))
-    if _try_refresh_gchp_hb_kz_cache_backend!(field, surface, vdiff, air_mass,
+    if _try_refresh_local_hb_kz_cache_backend!(field, surface, vdiff, air_mass,
                                               cell_areas; halo_width = halo_width)
         return field
     end
@@ -280,4 +312,14 @@ function refresh_gchp_holtslag_boville_kz_cache!(field::GCHPHoltslagBovilleKzFie
     return field
 end
 
+export LocalHoltslagBovilleKzField, refresh_local_holtslag_boville_kz_cache!
+
+# ----------------------------------------------------------------------
+# Deprecated aliases (the field was previously named "GCHPHoltslagBoville…"
+# under the false advertisement that it implemented full GCHP VDIFF.
+# Kept here so existing TOML configs, tests, scripts, and external code
+# continue to work without renaming. Prefer the new names in new code.
+# ----------------------------------------------------------------------
+const GCHPHoltslagBovilleKzField = LocalHoltslagBovilleKzField
+const refresh_gchp_holtslag_boville_kz_cache! = refresh_local_holtslag_boville_kz_cache!
 export GCHPHoltslagBovilleKzField, refresh_gchp_holtslag_boville_kz_cache!

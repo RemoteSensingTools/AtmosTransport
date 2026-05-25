@@ -25,10 +25,16 @@ and super-diagonals:
     b_T[k] = b[k]
     c_T[k] = a[k + 1]     # for k ≤ Nz - 1
 
-A future adjoint kernel calls this same `solve_tridiagonal!` after
-building `(a_T, b_T, c_T)`. No structural change required. Archival
-adjoint template:
-`docs/resources/developer_notes/legacy_adjoint_templates/boundary_layer_diffusion_adjoint.jl:74-84`.
+The CS adjoint kernel `_vertical_diffusion_cs_single_adjoint_kernel!`
+at `src/Adjoints/DiffusionAdjoint.jl:17-90` builds `(a_T, b_T, c_T)`
+inline and runs an inlined Thomas (rather than reusing this routine)
+so the kernel stays allocation-free under KA. The naming convention
+there is `Kz_above`/`dz_above` at row `k` referring to the interface
+`k-½`, which is the same physical quantity as `Kz_below`/`dz_below`
+at forward row `k-1` — the two are algebraically identical transposes.
+See `memory/diffusion_full_pipeline_audit_2026_05_25.md` for the
+verification (refutes the sub-agent's false-positive "D7 broken
+transpose" claim).
 """
 function solve_tridiagonal!(x::AbstractVector{FT},
                             a::AbstractVector{FT},

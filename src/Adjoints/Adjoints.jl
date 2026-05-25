@@ -43,7 +43,9 @@ using ..Operators.Convection: CMFMCConvection, CMFMCWorkspace,
     _get_or_compute_n_sub!,
     _tm5_diagnose_cloud_dims, _tm5_build_conv1!, _tm5_lu!,
     _launch_cmfmc_matrix_derivation!
-using ..State: AbstractCubedSphereField, GCHPHoltslagBovilleKzField,
+using ..State: AbstractCubedSphereField,
+    LocalHoltslagBovilleKzField,
+    GCHPHoltslagBovilleKzField,  # deprecated alias for LocalHoltslagBovilleKzField
     field_value, panel_field, update_field!
 using ..MetDrivers: ConvectionForcing, current_time
 

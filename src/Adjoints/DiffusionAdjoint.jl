@@ -118,18 +118,18 @@ end
 @inline _validate_cs_diffusion_kz_for_adjoint(_op) = nothing
 
 function _validate_cs_diffusion_kz_for_adjoint(
-    op::ImplicitVerticalDiffusion{FT, <:GCHPHoltslagBovilleKzField}) where FT
+    op::ImplicitVerticalDiffusion{FT, <:LocalHoltslagBovilleKzField}) where FT
     @inbounds for p in 1:6
         data = panel_field(op.kz_field, p).data
         all(isfinite, data) || throw(ArgumentError(
-            "GCHP VDIFF diffusion adjoint requires a finite Kz cache; " *
-            "panel $p contains NaN or Inf. Refresh with " *
-            "`refresh_gchp_holtslag_boville_kz_cache!` before recording the tape."))
+            "Local Holtslag-Boville VDIFF diffusion adjoint requires a finite Kz " *
+            "cache; panel $p contains NaN or Inf. Refresh with " *
+            "`refresh_local_holtslag_boville_kz_cache!` before recording the tape."))
         maximum(data) > zero(FT) || throw(ArgumentError(
-            "GCHP VDIFF diffusion adjoint received an all-zero Kz cache on " *
-            "panel $p. This usually means the VDIFF Kz field was constructed " *
-            "but never refreshed from surface/vdiff forcing before the adjoint " *
-            "tape was recorded."))
+            "Local Holtslag-Boville VDIFF diffusion adjoint received an all-zero " *
+            "Kz cache on panel $p. This usually means the VDIFF Kz field was " *
+            "constructed but never refreshed from surface/vdiff forcing before " *
+            "the adjoint tape was recorded."))
     end
     return nothing
 end

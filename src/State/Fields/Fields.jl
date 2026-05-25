@@ -19,7 +19,9 @@ Concrete types:
 - `PreComputedKzField{FT, A}` — rank-2/3 wrapper over a spatial array (plan 16b + 22A).
 - `DerivedKzField{FT, ...}` — Beljaars-Viterbo Kz from surface fields (plan 16b).
 - `WindowPBLKzField{FT, ...}` — cubed-sphere per-window Beljaars-Viterbo Kz.
-- `GCHPHoltslagBovilleKzField{FT, ...}` — cubed-sphere GEOS VDIFF local-Kz cache.
+- `LocalHoltslagBovilleKzField{FT, ...}` — cubed-sphere GEOS VDIFF local-Kz cache.
+  (Old name `GCHPHoltslagBovilleKzField` is a deprecated alias — see the
+  field docstring for why; no non-local PBL counter-gradient is applied.)
 - `StepwiseField{FT, N, A, B, W}` — piecewise-constant in time at any rank (plan 17).
 
 `PBLPhysicsParameters{FT}` carries the physical constants for
@@ -32,10 +34,12 @@ using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
 
 export AbstractTimeVaryingField, AbstractCubedSphereField
 export ConstantField, ProfileKzField, PreComputedKzField, CubedSphereField
-export DerivedKzField, WindowPBLKzField, GCHPHoltslagBovilleKzField
+export DerivedKzField, WindowPBLKzField, LocalHoltslagBovilleKzField,
+       GCHPHoltslagBovilleKzField  # deprecated alias
 export PBLPhysicsParameters, StepwiseField
 export field_value, update_field!, integral_between, panel_field
-export refresh_pbl_kz_cache!, refresh_gchp_holtslag_boville_kz_cache!
+export refresh_pbl_kz_cache!, refresh_local_holtslag_boville_kz_cache!,
+       refresh_gchp_holtslag_boville_kz_cache!  # deprecated alias
 
 # =========================================================================
 # Abstract type
@@ -115,7 +119,7 @@ include("PreComputedKzField.jl")
 include("CubedSphereField.jl")
 include("DerivedKzField.jl")
 include("WindowPBLKzField.jl")
-include("GCHPHoltslagBovilleKzField.jl")
+include("LocalHoltslagBovilleKzField.jl")
 include("StepwiseField.jl")
 
 end # module Fields

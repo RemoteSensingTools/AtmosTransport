@@ -47,8 +47,11 @@ runs on the host and may refresh caches before an operator launch.
   meteorological inputs and PBL parameter choices
 - [`WindowPBLKzField.jl`](WindowPBLKzField.jl) — window-cached
   panel-native PBL Kz field from runtime surface forcing
-- [`GCHPHoltslagBovilleKzField.jl`](GCHPHoltslagBovilleKzField.jl) —
-  GCHP Holtslag-Boville Kz field backed by GEOS-style surface inputs
+- [`LocalHoltslagBovilleKzField.jl`](LocalHoltslagBovilleKzField.jl) —
+  local Holtslag-Boville Kz field backed by GEOS VDIFF inputs.
+  *Old name `GCHPHoltslagBovilleKzField` is a deprecated alias; see the
+  field docstring for why — no non-local PBL counter-gradient is
+  applied, so it's not full GCHP VDIFF parity.*
 - [`StepwiseField.jl`](StepwiseField.jl) — piecewise-constant-in-time
   field cache
 

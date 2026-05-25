@@ -294,7 +294,7 @@ function build_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
     Nc1, Nc2, Nz = _pbl_cache_shape(context)
     host_cache = ntuple(_ -> zeros(FT, Nc1, Nc2, Nz), 6)
     return ImplicitVerticalDiffusion(;
-        kz_field = GCHPHoltslagBovilleKzField(host_cache),
+        kz_field = LocalHoltslagBovilleKzField(host_cache),
         surface_flux_coupling = _surface_flux_coupling(section))
 end
 
@@ -442,13 +442,30 @@ function validate_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
 end
 
 function validate_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
-                                    ::ImplicitVerticalDiffusion{FT, <:GCHPHoltslagBovilleKzField},
+                                    op::ImplicitVerticalDiffusion{FT, <:LocalHoltslagBovilleKzField},
                                     context) where FT
     _runtime_has_gchp_vdiff(context) ||
         throw(ArgumentError(
             "[diffusion] kind = \"geoschem_holtslag_boville_vdiff\" requires " *
             "pblh/ustar/pbl_hflux/t2m and vdiff_u/vdiff_v/vdiff_t/vdiff_qv " *
             "sections in every cubed-sphere transport binary."))
+    # D3: GCHP parity requires emissions to be applied as a boundary condition
+    # inside the same diffusive solve (see vdiff_mod.F90:679, gchp_chunk_mod.F90:1296).
+    # Our default `SplitSurfaceFluxCoupling` does V(dt/2) → S(dt) → V(dt/2)
+    # Strang, which is a valid integration but does NOT match GCHP. Warn at
+    # config-load time so users picking this Kz field for GCHP parity know
+    # to flip `surface_flux_boundary = true` (or equivalent recipe knob).
+    if !(op.surface_flux_coupling isa DiffusiveSurfaceFluxBoundary)
+        @warn """
+        [diffusion] kind = "geoschem_holtslag_boville_vdiff" was selected but
+        the surface-flux coupling is $(typeof(op.surface_flux_coupling)).
+        For GCHP VDIFF parity, surface emissions must be applied as a boundary
+        condition inside the diffusion solve (reference: vdiff_mod.F90:679,
+        gchp_chunk_mod.F90:1296). Switch to `DiffusiveSurfaceFluxBoundary`
+        (set `surface_flux_boundary = true` in the recipe) for GCHP-equivalent
+        behavior. See memory/diffusion_full_pipeline_audit_2026_05_25.md (D3).
+        """
+    end
     return nothing
 end
 

@@ -29,18 +29,22 @@ include("Fields/Fields.jl")
 using .Fields: AbstractTimeVaryingField, AbstractCubedSphereField,
                ConstantField, ProfileKzField, PreComputedKzField,
                CubedSphereField, DerivedKzField, WindowPBLKzField,
-               GCHPHoltslagBovilleKzField,
+               LocalHoltslagBovilleKzField,
+               GCHPHoltslagBovilleKzField,                  # deprecated alias
                PBLPhysicsParameters, StepwiseField,
                field_value, update_field!, refresh_pbl_kz_cache!,
-               refresh_gchp_holtslag_boville_kz_cache!,
+               refresh_local_holtslag_boville_kz_cache!,
+               refresh_gchp_holtslag_boville_kz_cache!,     # deprecated alias
                integral_between, panel_field
 export AbstractTimeVaryingField, AbstractCubedSphereField,
        ConstantField, ProfileKzField, PreComputedKzField,
        CubedSphereField, DerivedKzField, WindowPBLKzField,
-       GCHPHoltslagBovilleKzField,
+       LocalHoltslagBovilleKzField,
+       GCHPHoltslagBovilleKzField,                          # deprecated alias
        PBLPhysicsParameters, StepwiseField,
        field_value, update_field!, refresh_pbl_kz_cache!,
-       refresh_gchp_holtslag_boville_kz_cache!,
+       refresh_local_holtslag_boville_kz_cache!,
+       refresh_gchp_holtslag_boville_kz_cache!,             # deprecated alias
        integral_between, panel_field
 
 end # module State

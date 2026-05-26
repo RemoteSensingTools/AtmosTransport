@@ -78,6 +78,12 @@ jobs:
             FLOAT_TYPES="Float32"
             STEPS="1"
             REPEATS="1"
+          elif [[ "${{ github.event_name }}" == "push" ]]; then
+            GRID="C4"
+            OPS="advection,diffusion,convection,full,io,adjoint"
+            FLOAT_TYPES="Float32,Float64"
+            STEPS="1"
+            REPEATS="1"
           else
             GRID="${{ github.event.inputs.grid || 'C24,C48' }}"
             OPS="${{ github.event.inputs.operators || 'advection,diffusion,convection,full,io,adjoint' }}"

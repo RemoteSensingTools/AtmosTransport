@@ -32,9 +32,9 @@ Backend labels are intentionally hardware-class labels:
 The exact processor or GPU name is stored in each record's metadata and in the
 dashboard record `extra` field. Metal runs are restricted to `Float32`.
 
-The GitHub workflow in `.github/workflows/Benchmarks.yml` runs a tiny CPU smoke
-on pull requests and can publish the `github-action-benchmark` dashboard records
-under the Pages `benchmarks` directory on `main` or manual dispatch.
+The GitHub workflow in `.github/workflows/Benchmarks.yml` runs tiny CPU smokes
+on pull requests and pushes to `main`, and can publish heavier manual-dispatch
+runs under the Pages `benchmarks` directory.
 
 GPU benchmark jobs are manual opt-in lanes. Register self-hosted runners with
 these labels:

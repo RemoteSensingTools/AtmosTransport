@@ -621,7 +621,7 @@ function apply_vertical!(_buf_out, _buf_in,
                           ::VerticalPlan{FT, PressureOverlap},
                           ::AbstractFieldKind, args...) where FT
     error("apply_vertical!(::VerticalPlan{<:Any, PressureOverlap}, …) is " *
-          "not implemented yet. `plan_vertical` " *
+          "not implemented yet (Plan 41 P1). `plan_vertical` " *
           "already builds the target hybrid coordinate; the per-field overlap " *
           "coefficients are derived inside `apply_vertical!` and the spectral " *
           "path uses today's `build_vertical_setup` until then.")

@@ -1,0 +1,57 @@
+# 4-tracer diffusion-only experiment, ERA5 side.
+#
+# CS180 ERA5/L85 (postclosure binary), Dec 2-4 2021, NoAdvection +
+# NoConvection + `tm5_beljaars_viterbo_local_kz` diffusion via the
+# post-D1 mass-flux kernel. Uses `surface_flux_boundary = true` for
+# GCHP-like surface-flux coupling.
+
+[input]
+folder       = "/temp1/c180_era5_geosgrid_cfl85_tm5_surface_f32_steps48_v4_postclosure_20260524"
+start_date   = "2021-12-02"
+end_date     = "2021-12-04"
+file_pattern = "era5_transport_{YYYYMMDD}_merged1000Pa_float32.bin"
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[advection]
+scheme = "none"
+
+[diffusion]
+kind = "tm5_beljaars_viterbo_local_kz"
+surface_flux_boundary = true
+
+[convection]
+kind = "none"
+
+[tracers.co2_lowest_layer]
+[tracers.co2_lowest_layer.init]
+kind = "pressure_layer"
+lowest_layer = true
+total_molecules = 1.0e22
+
+[tracers.co2_p08]
+[tracers.co2_p08.init]
+kind = "pressure_layer"
+psurf_fraction = 0.8
+total_molecules = 1.0e22
+
+[tracers.co2_p06]
+[tracers.co2_p06.init]
+kind = "pressure_layer"
+psurf_fraction = 0.6
+total_molecules = 1.0e22
+
+[tracers.co2_p04]
+[tracers.co2_p04.init]
+kind = "pressure_layer"
+psurf_fraction = 0.4
+total_molecules = 1.0e22
+
+[output]
+cadence_hours = 1.0
+snapshot_file = "/temp1/diffusion_compare_4tracer/diffonly_era5_c180_3day.nc"

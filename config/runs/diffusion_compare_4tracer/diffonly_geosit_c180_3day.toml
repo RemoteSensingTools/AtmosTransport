@@ -1,0 +1,58 @@
+# 4-tracer diffusion-only experiment, GEOS-IT side.
+#
+# CS180 GEOS-IT/L72, Dec 2-4 2021, NoAdvection + NoConvection +
+# `LocalHoltslagBovilleKzField` diffusion via the post-D1 mass-flux
+# kernel + post-D6 virtual-T dz_scratch (VDIFF-driven column geometry).
+# Same 4-tracer single-layer IC as the convection-only experiment so
+# the lateral comparisons line up.
+
+[input]
+folder       = "/home/cfranken/data/AtmosTransport/met/geosit/C180/transport_binary_v4_merge025hpa_adaptive_f32"
+start_date   = "2021-12-02"
+end_date     = "2021-12-04"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[advection]
+scheme = "none"
+
+[diffusion]
+kind = "geoschem_holtslag_boville_vdiff"
+surface_flux_boundary = true
+
+[convection]
+kind = "none"
+
+[tracers.co2_lowest_layer]
+[tracers.co2_lowest_layer.init]
+kind = "pressure_layer"
+lowest_layer = true
+total_molecules = 1.0e22
+
+[tracers.co2_p08]
+[tracers.co2_p08.init]
+kind = "pressure_layer"
+psurf_fraction = 0.8
+total_molecules = 1.0e22
+
+[tracers.co2_p06]
+[tracers.co2_p06.init]
+kind = "pressure_layer"
+psurf_fraction = 0.6
+total_molecules = 1.0e22
+
+[tracers.co2_p04]
+[tracers.co2_p04.init]
+kind = "pressure_layer"
+psurf_fraction = 0.4
+total_molecules = 1.0e22
+
+[output]
+cadence_hours = 1.0
+snapshot_file = "/temp1/diffusion_compare_4tracer/diffonly_geosit_c180_3day.nc"

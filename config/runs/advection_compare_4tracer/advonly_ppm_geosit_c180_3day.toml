@@ -1,0 +1,55 @@
+# Advection-only sibling of `convonly_cmfmc_geosit_c180_3day.toml`:
+# GEOS-IT C180/L72, Dec 2-4 2021, PPM advection, NoConvection,
+# NoDiffusion. Same 4-tracer single-layer spike IC as the convection
+# experiment so the only difference between this file and the
+# convonly variant is which operator is "on".
+
+[input]
+folder       = "/home/cfranken/data/AtmosTransport/met/geosit/C180/transport_binary_v4_merge025hpa_adaptive_f32"
+start_date   = "2021-12-02"
+end_date     = "2021-12-04"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[advection]
+scheme = "ppm"
+
+[diffusion]
+kind = "none"
+
+[convection]
+kind = "none"
+
+[tracers.co2_lowest_layer]
+[tracers.co2_lowest_layer.init]
+kind = "pressure_layer"
+lowest_layer = true
+total_molecules = 1.0e22
+
+[tracers.co2_p08]
+[tracers.co2_p08.init]
+kind = "pressure_layer"
+psurf_fraction = 0.8
+total_molecules = 1.0e22
+
+[tracers.co2_p06]
+[tracers.co2_p06.init]
+kind = "pressure_layer"
+psurf_fraction = 0.6
+total_molecules = 1.0e22
+
+[tracers.co2_p04]
+[tracers.co2_p04.init]
+kind = "pressure_layer"
+psurf_fraction = 0.4
+total_molecules = 1.0e22
+
+[output]
+cadence_hours = 1.0
+snapshot_file = "/temp1/advection_compare_4tracer/advonly_ppm_geosit_c180_3day.nc"

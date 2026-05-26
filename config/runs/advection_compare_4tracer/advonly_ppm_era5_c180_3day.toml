@@ -1,0 +1,54 @@
+# Advection-only sibling on the ERA5 / TM5-postclosure side:
+# C180 GEOS-native horizontal, L85 cfl85 vertical, Dec 2-4 2021,
+# PPM advection, NoConvection, NoDiffusion. Same 4-tracer single-layer
+# spike IC as the convection experiment.
+
+[input]
+folder       = "/temp1/c180_era5_geosgrid_cfl85_tm5_surface_f32_steps48_v4_postclosure_20260524"
+start_date   = "2021-12-02"
+end_date     = "2021-12-04"
+file_pattern = "era5_transport_{YYYYMMDD}_merged1000Pa_float32.bin"
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[advection]
+scheme = "ppm"
+
+[diffusion]
+kind = "none"
+
+[convection]
+kind = "none"
+
+[tracers.co2_lowest_layer]
+[tracers.co2_lowest_layer.init]
+kind = "pressure_layer"
+lowest_layer = true
+total_molecules = 1.0e22
+
+[tracers.co2_p08]
+[tracers.co2_p08.init]
+kind = "pressure_layer"
+psurf_fraction = 0.8
+total_molecules = 1.0e22
+
+[tracers.co2_p06]
+[tracers.co2_p06.init]
+kind = "pressure_layer"
+psurf_fraction = 0.6
+total_molecules = 1.0e22
+
+[tracers.co2_p04]
+[tracers.co2_p04.init]
+kind = "pressure_layer"
+psurf_fraction = 0.4
+total_molecules = 1.0e22
+
+[output]
+cadence_hours = 1.0
+snapshot_file = "/temp1/advection_compare_4tracer/advonly_ppm_era5_c180_3day.nc"

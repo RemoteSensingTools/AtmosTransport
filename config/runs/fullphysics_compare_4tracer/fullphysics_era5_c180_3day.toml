@@ -1,0 +1,61 @@
+# 4-tracer full-physics experiment, ERA5 side.
+#
+# CS180 ERA5/L85 (postclosure binary with column net-zero closure on
+# entu/detu/entd/detd), Dec 2-4 2021. PPM advection + TM5
+# Beljaars-Viterbo local Kz diffusion + native TM5 backward-Euler LU
+# convection. All three operators routed through the post-D1 mass-flux
+# / column-stochastic paths.
+
+[input]
+folder       = "/temp1/c180_era5_geosgrid_cfl85_tm5_surface_f32_steps48_v4_postclosure_20260524"
+start_date   = "2021-12-02"
+end_date     = "2021-12-04"
+file_pattern = "era5_transport_{YYYYMMDD}_merged1000Pa_float32.bin"
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[advection]
+scheme = "ppm"
+
+[diffusion]
+kind = "tm5_beljaars_viterbo_local_kz"
+surface_flux_boundary = true
+
+[convection]
+kind = "tm5"
+tile_workspace_gib = 0.25
+use_collab_lu = true
+lmax_conv = 75
+
+[tracers.co2_lowest_layer]
+[tracers.co2_lowest_layer.init]
+kind = "pressure_layer"
+lowest_layer = true
+total_molecules = 1.0e22
+
+[tracers.co2_p08]
+[tracers.co2_p08.init]
+kind = "pressure_layer"
+psurf_fraction = 0.8
+total_molecules = 1.0e22
+
+[tracers.co2_p06]
+[tracers.co2_p06.init]
+kind = "pressure_layer"
+psurf_fraction = 0.6
+total_molecules = 1.0e22
+
+[tracers.co2_p04]
+[tracers.co2_p04.init]
+kind = "pressure_layer"
+psurf_fraction = 0.4
+total_molecules = 1.0e22
+
+[output]
+cadence_hours = 1.0
+snapshot_file = "/temp1/fullphysics_compare_4tracer/fullphysics_era5_c180_3day.nc"

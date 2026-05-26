@@ -81,7 +81,11 @@ _cs_advection_workspace_for(::LinRoodPPMScheme,
                             grid::AtmosGrid{<:CubedSphereMesh}) =
     CSLinRoodAdvectionWorkspace(grid.horizontal, state.air_mass[1])
 
-# No advection → no scratch buffers. Mirrors `_convection_workspace_for(::NoConvection, …)`.
+# No advection → no scratch buffers (NoAdvection alone doesn't need any).
+# When the runtime stacks diffusion on top of NoAdvection (the
+# "diffusion-only" experiment), the model constructor below detects that
+# case and allocates a `CSAdvectionWorkspace` anyway because the
+# diffusion kernel's `w_scratch` + `dz_scratch` live on that struct.
 _cs_advection_workspace_for(::NoAdvection,
                             state::CubedSphereState,
                             grid::AtmosGrid{<:CubedSphereMesh}) = nothing
@@ -247,6 +251,16 @@ function TransportModel(state::CubedSphereState{B},
                         emissions::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                         convection::AbstractConvection = NoConvection(),
                         convection_forcing::ConvectionForcing = ConvectionForcing()) where {B <: AbstractMassBasis}
+    # Diffusion needs a workspace with panel-native `w_scratch` / `dz_scratch`
+    # for its column kernels. When advection is NoAdvection AND diffusion is
+    # active (the "diffusion-only" experimental setup), the default
+    # `_cs_advection_workspace_for(::NoAdvection, ...)` returns `nothing` —
+    # force a `CSAdvectionWorkspace` allocation in that case so the kernel
+    # has its scratch.
+    if workspace === nothing && !(diffusion isa NoDiffusion)
+        workspace = CSAdvectionWorkspace(grid.horizontal, state.air_mass[1];
+                                          n_tracers = ntracers(state))
+    end
     workspace_model = _with_convection_workspace(
         workspace, _convection_workspace_for(convection, state, grid))
     return TransportModel{typeof(state), typeof(fluxes), typeof(grid),

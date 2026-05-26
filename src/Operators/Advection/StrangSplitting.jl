@@ -1274,31 +1274,32 @@ end
                          diffusion_op::AbstractDiffusion = NoDiffusion(),
                          emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                          meteo = nothing) where {B <: AbstractMassBasis}
-    _noadvection_reject_companion_ops(diffusion_op, emissions_op)
+    _noadvection_reject_emissions_op(emissions_op)
+    if !(diffusion_op isa NoDiffusion)
+        # NoAdvection + diffusion: skip the Strang half-step structure
+        # entirely and apply a single V(dt) step on the LL state. The
+        # mass-flux VMR wrapper preserves Σ tracer_mass per column to
+        # roundoff (D1), so this is the natural "diffusion-only"
+        # experimental setup.
+        apply_vertical_diffusion_vmr!(state.tracers_raw, state.air_mass,
+                                       diffusion_op, workspace, dt, meteo)
+    end
     return nothing
 end
 
-# Polymorphic guard. The two assertions live here so all three
-# topology entries share one implementation; the messages call out
-# the specific TOML knobs the user has to flip to recover a valid
-# configuration.
-@inline function _noadvection_reject_companion_ops(diffusion_op::AbstractDiffusion,
-                                                    emissions_op::AbstractSurfaceFluxOperator)
-    if !(diffusion_op isa NoDiffusion)
-        throw(ArgumentError(
-            "NoAdvection is incompatible with non-NoDiffusion: " *
-            "diffusion is integrated into the advection Strang-split " *
-            "palindrome center, so running it without advection drops " *
-            "the operator-splitting structure. Set `[diffusion] kind = \"none\"` " *
-            "for a convection-only run."))
-    end
+# Emission rejection still stands when NoAdvection is selected — surface
+# fluxes require the Strang half-step wrap around the advection step to
+# preserve 2nd-order accuracy. Diffusion alone is fine (it's mass-
+# conserving on its own via the VMR wrapper, no symmetric-splitting
+# requirement).
+@inline function _noadvection_reject_emissions_op(emissions_op::AbstractSurfaceFluxOperator)
     if !(emissions_op isa NoSurfaceFlux)
         throw(ArgumentError(
             "NoAdvection is incompatible with non-NoSurfaceFlux: surface " *
             "emissions are applied as Strang half-steps wrapping the " *
             "advection palindrome, so running them without advection " *
             "drops the symmetric splitting. Remove `[tracers.*.surface_flux]` " *
-            "blocks for a convection-only run."))
+            "blocks for a convection-only or diffusion-only run."))
     end
     return nothing
 end
@@ -1341,7 +1342,14 @@ end
                          diffusion_op::AbstractDiffusion = NoDiffusion(),
                          emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                          meteo = nothing) where {B <: AbstractMassBasis}
-    _noadvection_reject_companion_ops(diffusion_op, emissions_op)
+    _noadvection_reject_emissions_op(emissions_op)
+    if !(diffusion_op isa NoDiffusion)
+        # NoAdvection + diffusion on CS: single V(dt) step via the
+        # mass-flux VMR wrapper. State carries `state.halo_width`.
+        apply_vertical_diffusion_vmr!(state.tracers_raw, state.air_mass,
+                                       diffusion_op, workspace, dt, meteo;
+                                       halo_width = state.halo_width)
+    end
     return nothing
 end
 
@@ -1359,7 +1367,12 @@ end
                          diffusion_op::AbstractDiffusion = NoDiffusion(),
                          emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                          meteo = nothing) where {B <: AbstractMassBasis}
-    _noadvection_reject_companion_ops(diffusion_op, emissions_op)
+    _noadvection_reject_emissions_op(emissions_op)
+    if !(diffusion_op isa NoDiffusion)
+        # NoAdvection + diffusion on face-indexed RG: single V(dt) step.
+        apply_vertical_diffusion_vmr!(state.tracers_raw, state.air_mass,
+                                       diffusion_op, workspace, dt, meteo)
+    end
     return nothing
 end
 

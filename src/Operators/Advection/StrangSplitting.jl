@@ -1414,14 +1414,20 @@ for (scheme_type, h_sweep, v_sweep) in (
 
             _sweep_horizontal_face_subcycled!(rm_tracer, m, hflux, grid.horizontal, scheme, workspace, cfl_limit_ft)
             _sweep_vertical_face_subcycled!(rm_tracer, m, cm, scheme, workspace, cfl_limit_ft)
+            # D1 LL/RG: route through the mass-flux VMR wrapper so the
+            # Strang-coupled per-tracer diffusion step is column-mass
+            # conserving (preserves Σ tracer_mass per column to roundoff).
+            # `m` is the current air-mass slice `(ncells, Nz)`; `rm_tracer`
+            # is the per-tracer mass slice `(ncells, Nz)`. The wrapper
+            # does pre-scale → mass-flux kernel → post-scale internally.
             if emissions_op isa NoSurfaceFlux
-                SectionTimer.@section :diffusion apply_vertical_diffusion!(rm_tracer, diffusion_op, workspace, dt, meteo)
+                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(rm_tracer, m, diffusion_op, workspace, dt, meteo)
             else
                 half_dt = dt / 2
-                SectionTimer.@section :diffusion apply_vertical_diffusion!(rm_tracer, diffusion_op, workspace, half_dt, meteo)
+                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(rm_tracer, m, diffusion_op, workspace, half_dt, meteo)
                 apply_surface_flux!(rm_tracer, emissions_op, workspace, dt, meteo, grid;
                                     tracer_names = (tracer_name,))
-                SectionTimer.@section :diffusion apply_vertical_diffusion!(rm_tracer, diffusion_op, workspace, half_dt, meteo)
+                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(rm_tracer, m, diffusion_op, workspace, half_dt, meteo)
             end
             _sweep_vertical_face_subcycled!(rm_tracer, m, cm, scheme, workspace, cfl_limit_ft)
             _sweep_horizontal_face_subcycled!(rm_tracer, m, hflux, grid.horizontal, scheme, workspace, cfl_limit_ft)
@@ -1586,8 +1592,13 @@ function strang_split_mt!(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
     # is therefore NOT bit-exact when `diffusion_op` is non-trivial —
     # the two halves of V differ by O((dt·D)²). Acceptable since Path 2
     # is only reached when the user opts in to emissions.
+    # D1 LL/RG: route through the mass-flux VMR wrapper so the palindrome-
+    # center diffusion step is column-mass conserving. `m_cur` is the
+    # current air-mass field `(Nx, Ny, Nz)` paired with `rm_cur`'s
+    # `(Nx, Ny, Nz, Nt)` tracer storage; the wrapper does the
+    # tracer_mass ↔ VMR scaling internally.
     if emissions_op isa NoSurfaceFlux
-        apply_vertical_diffusion!(rm_cur, diffusion_op, ws, dt, meteo)
+        apply_vertical_diffusion_vmr!(rm_cur, m_cur, diffusion_op, ws, dt, meteo)
     elseif uses_diffusive_surface_flux_boundary(diffusion_op)
         tracer_names === nothing && throw(ArgumentError(
             "strang_split_mt!: `emissions_op` is non-trivial but " *
@@ -1596,7 +1607,7 @@ function strang_split_mt!(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
             "`tracer_names = state.tracer_names`."))
         apply_surface_flux!(rm_cur, emissions_op, ws, dt, meteo, grid;
                             tracer_names = tracer_names)
-        apply_vertical_diffusion!(rm_cur, diffusion_op, ws, dt, meteo)
+        apply_vertical_diffusion_vmr!(rm_cur, m_cur, diffusion_op, ws, dt, meteo)
     else
         tracer_names === nothing && throw(ArgumentError(
             "strang_split_mt!: `emissions_op` is non-trivial but " *
@@ -1604,10 +1615,10 @@ function strang_split_mt!(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
             "kernel needs per-tracer index resolution. Pass " *
             "`tracer_names = state.tracer_names`."))
         half_dt = dt === nothing ? nothing : dt / 2
-        apply_vertical_diffusion!(rm_cur, diffusion_op, ws, half_dt, meteo)
+        apply_vertical_diffusion_vmr!(rm_cur, m_cur, diffusion_op, ws, half_dt, meteo)
         apply_surface_flux!(rm_cur, emissions_op, ws, dt, meteo, grid;
                             tracer_names = tracer_names)
-        apply_vertical_diffusion!(rm_cur, diffusion_op, ws, half_dt, meteo)
+        apply_vertical_diffusion_vmr!(rm_cur, m_cur, diffusion_op, ws, half_dt, meteo)
     end
 
     # Reverse half: Z → Y → X

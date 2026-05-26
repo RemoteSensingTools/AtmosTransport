@@ -33,7 +33,7 @@ using AtmosTransport: CellState, AdvectionWorkspace,
                       SplitSurfaceFluxCoupling, DiffusiveSurfaceFluxBoundary,
                       SurfaceFluxSource, SurfaceFluxOperator,
                       UpwindScheme,
-                      apply_vertical_diffusion!
+                      apply_vertical_diffusion!, apply_vertical_diffusion_vmr!
 using AtmosTransport.Operators.Advection: strang_split_mt!
 
 # =========================================================================
@@ -171,9 +171,12 @@ end
     strang_split_mt!(rm_A, m_A, am, bm, cm, scheme, ws_A;
                      diffusion_op = op_A, dt = dt)
 
-    # Path B: standalone apply_vertical_diffusion! on the same input
+    # Path B: standalone diffusion on the same input. The Strang
+    # palindrome now routes through `apply_vertical_diffusion_vmr!`
+    # (D1 LL/RG, commit ...) so this comparison must use the same
+    # mass-flux VMR wrapper to remain a meaningful equivalence check.
     op_B = ImplicitVerticalDiffusion(; kz_field = kz_field_B)
-    apply_vertical_diffusion!(rm_B, op_B, ws_B, dt)
+    apply_vertical_diffusion_vmr!(rm_B, m_B, op_B, ws_B, dt)
 
     @test rm_A ≈ rm_B atol=1e-12 rtol=1e-12
 end
@@ -213,11 +216,12 @@ end
         kz_val = FT(1.5)
         op = ImplicitVerticalDiffusion(; kz_field = ConstantField{FT, 3}(kz_val))
 
-        # One full step
-        apply_vertical_diffusion!(rm_A, op, ws_A, dt)
+        # One full step (mass-flux VMR wrapper — same operator family
+        # used by the Strang palindrome center after D1 LL/RG)
+        apply_vertical_diffusion_vmr!(rm_A, m_ref, op, ws_A, dt)
         # Two half steps
-        apply_vertical_diffusion!(rm_B, op, ws_B, dt / 2)
-        apply_vertical_diffusion!(rm_B, op, ws_B, dt / 2)
+        apply_vertical_diffusion_vmr!(rm_B, m_ref, op, ws_B, dt / 2)
+        apply_vertical_diffusion_vmr!(rm_B, m_ref, op, ws_B, dt / 2)
 
         return maximum(abs.(rm_A .- rm_B))
     end
@@ -266,7 +270,9 @@ end
     op_ref = ImplicitVerticalDiffusion(;
         kz_field = ConstantField{FT, 3}(FT(1.0)),
         surface_flux_coupling = SplitSurfaceFluxCoupling())
-    apply_vertical_diffusion!(rm_ref, op_ref, ws_ref, dt)
+    # D1 LL/RG: comparison must use the same VMR wrapper that the Strang
+    # palindrome now uses; `m` is the air-mass field at the same step.
+    apply_vertical_diffusion_vmr!(rm_ref, m, op_ref, ws_ref, dt)
 
     @test rm_boundary ≈ rm_ref atol=1e-12 rtol=1e-12
 end

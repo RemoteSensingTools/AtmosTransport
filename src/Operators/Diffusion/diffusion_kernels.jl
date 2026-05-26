@@ -1,20 +1,29 @@
 # ---------------------------------------------------------------------------
 # Vertical diffusion kernels.
 #
-# Topology scope of the mass-flux form (D1, 2026-05-25):
-#   * CS (cubed-sphere) single 3D and packed 4D kernels: NEW mass-flux
-#     coefficients. Backward-Euler implicit solve `Ã·q_new = q_old` on
-#     dry mass-mixing ratio `q`; `Ã` built so that the equivalent
-#     operator on tracer mass `rm = m·q` is column-stochastic (each
-#     column sums to 1), which preserves `Σ m·q` to roundoff for any
-#     inert tracer — the conservation bar that the convection sweep
-#     also aims at.
-#   * LL (structured packed) and RG (face-indexed, both 2D and 3D)
-#     kernels: legacy geometric form `D = Kz / (dz_k · dz_iface)`.
-#     These run on the state's tracer-mass arrays without a VMR
-#     pre/post wrapper, so adopting the mass-flux form requires
-#     adding an LL/RG analog of `apply_vertical_diffusion_vmr!`
-#     first. Tracked as a D1 LL/RG follow-up in the audit memo.
+# Two coexisting families:
+#
+#   * Mass-flux kernels (D1, used by the new `apply_vertical_diffusion_vmr!`
+#     wrapper across CS, LL packed, and RG face-indexed paths). Backward-
+#     Euler implicit solve `Ã·q_new = q_old` on dry mass-mixing ratio `q`;
+#     `Ã` is built so that the equivalent operator on tracer mass
+#     `rm = m·q` is column-stochastic (each column sums to 1), which
+#     preserves `Σ m·q` to roundoff for any inert tracer. The CS Strang
+#     palindrome path (`apply!(::CubedSphereState, ...)`), the LL/RG
+#     standalone `apply!(::CellState, ...)`, and the LL/RG strang-split
+#     callers in `StrangSplitting.jl` all route through this family.
+#
+#   * Legacy geometric kernels (`D = Kz / (dz_k · dz_iface)`). Preserved
+#     as no-air_mass overloads for any external caller that hasn't been
+#     ported. These conserve `Σ q·dz`, NOT `Σ m·q` — so they're only
+#     safe when density is column-constant. New code should call the
+#     `apply_vertical_diffusion_vmr!` wrapper instead of these
+#     directly.
+#
+# Reference for the mass-flux form: TM5's `TM5_Diff_Matrix` at
+# `deps/tm5-cy3-4dvar/base/src/tm5_diff.F90:36-129`. See
+# `memory/diffusion_full_pipeline_audit_2026_05_25.md` for the audit
+# chain (D1 fix; D7 sub-agent "broken transpose" was a false positive).
 #
 # Coefficients per level k (with `m_k = air_mass[..., k]`, `Kz` at cell
 # centers, `dz` thickness in meters):

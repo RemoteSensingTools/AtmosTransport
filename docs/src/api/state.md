@@ -9,3 +9,14 @@ Modules = [AtmosTransport.State]
 Order   = [:type, :function]
 Private = false
 ```
+
+## Fields
+
+Time-varying and panel-wise field types used by `State` (Kz caches,
+profile fields, PBL parameters, …).
+
+```@autodocs
+Modules = [AtmosTransport.State.Fields]
+Order   = [:type, :function]
+Private = false
+```

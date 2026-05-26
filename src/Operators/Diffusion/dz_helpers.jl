@@ -165,8 +165,9 @@ end
 
 Populate a 3D `(Nx, Ny, Nz)` `dz` array using virtual temperature per
 layer: `T_v = T · (1 + 0.61 · qv)`. Matches the geometry the
-[`LocalHoltslagBovilleKzField`](@ref) uses for its column-mid heights,
-closing the D6 inconsistency between solver `dz` and Kz-cache `dz`.
+[`LocalHoltslagBovilleKzField`](@ref AtmosTransport.State.Fields.LocalHoltslagBovilleKzField)
+uses for its column-mid heights, closing the D6 inconsistency between
+solver `dz` and Kz-cache `dz`.
 
 `t_lyr`, `qv_lyr` are layer-center 3D fields with shape `(Nx, Ny, Nz)`,
 typically pulled from the active window's VDIFF payload.

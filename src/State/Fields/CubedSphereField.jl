@@ -45,6 +45,15 @@ function CubedSphereField(field::F) where {FT <: AbstractFloat, F <: AbstractTim
     return CubedSphereField(ntuple(_ -> field, 6))
 end
 
+"""
+    panel_field(f, p) -> AbstractTimeVaryingField
+
+Return the per-panel field stored at panel index `p` (`1..6`) inside an
+`AbstractCubedSphereField`. Subtypes implement this to expose their
+panel storage.
+"""
+function panel_field end
+
 @inline panel_field(f::CubedSphereField, p::Integer) = f.panels[Int(p)]
 
 function update_field!(f::CubedSphereField, t::Real)

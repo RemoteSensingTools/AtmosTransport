@@ -34,7 +34,7 @@ dashboard record `extra` field. Metal runs are restricted to `Float32`.
 
 The GitHub workflow in `.github/workflows/Benchmarks.yml` runs a tiny CPU smoke
 on pull requests and can publish the `github-action-benchmark` dashboard records
-on `main` or manual dispatch.
+under the Pages `benchmarks` directory on `main` or manual dispatch.
 
 GPU benchmark jobs are manual opt-in lanes. Register self-hosted runners with
 these labels:

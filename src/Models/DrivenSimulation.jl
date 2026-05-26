@@ -441,10 +441,18 @@ end
     vdiff = window.vdiff
     # Defensive fallback: if VDIFF isn't actually present on the window
     # (shouldn't happen — the diffusion runtime validator rejects this
-    # case at config-load time), drop back to the constant-T_ref path.
-    (vdiff === nothing ||
-     !hasproperty(vdiff, :t) || !hasproperty(vdiff, :qv)) &&
+    # case at config-load time), drop back to the constant-T_ref path and
+    # warn loudly so a silently degraded config doesn't go unnoticed.
+    if vdiff === nothing || !hasproperty(vdiff, :t) || !hasproperty(vdiff, :qv)
+        @warn """
+        _fill_dz_for_diffusion!: LocalHoltslagBovilleKzField was selected
+        but the active window lacks `vdiff.t` / `vdiff.qv`. Falling back
+        to constant-T_ref hydrostatic dz, which is INCONSISTENT with the
+        Kz cache's virtual-T column geometry. Check the binary's VDIFF
+        payload and the [diffusion] runtime config.
+        """
         return fill_dz_hydrostatic_constT!(dz_scratch, ps, ak, bk)
+    end
     fill_dz_hydrostatic_virtualT!(dz_scratch, vdiff.t, vdiff.qv, ps, ak, bk)
     return dz_scratch
 end

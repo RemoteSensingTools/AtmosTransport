@@ -132,7 +132,7 @@ end
 @inline _virtual_T_factor(qv::T) where {T<:Real} =
     one(T) + T(0.61) * max(qv, zero(T))
 
-@kernel function _dz_hydrostatic_virtualT_cs_kernel!(dz, @Const(t_lyr),
+@kernel function _dz_hydrostatic_virtualT_3d_kernel!(dz, @Const(t_lyr),
                                                      @Const(qv_lyr),
                                                      @Const(ps),
                                                      @Const(ak_ifc), @Const(bk_ifc),
@@ -187,7 +187,7 @@ function fill_dz_hydrostatic_virtualT!(dz::AbstractArray{<:AbstractFloat, 3},
     bk_dev = similar(dz, FT, Nz + 1)
     copyto!(ak_dev, FT.(ak_ifc))
     copyto!(bk_dev, FT.(bk_ifc))
-    kernel = _dz_hydrostatic_virtualT_cs_kernel!(backend, (8, 8, 1))
+    kernel = _dz_hydrostatic_virtualT_3d_kernel!(backend, (8, 8, 1))
     kernel(dz, t_lyr, qv_lyr, ps, ak_dev, bk_dev,
            FT(R), FT(gravity), Nz;
            ndrange = (Nx, Ny, Nz))
@@ -230,7 +230,7 @@ end
         bk_lo = bk_ifc[k]
         bk_hi = bk_ifc[k + 1]
         delp  = (ak_hi - ak_lo) + (bk_hi - bk_lo) * ps[c]
-        p_ctr = (ak_lo + ak_hi + (bk_lo + bk_hi) * ps[c]) * (1 // 2)
+        p_ctr = (ak_lo + ak_hi + (bk_lo + bk_hi) * ps[c]) * (one(eltype(dz)) / 2)
         dz[c, k] = R * T_ref / g * delp / p_ctr
     end
 end

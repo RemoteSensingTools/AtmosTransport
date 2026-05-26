@@ -2,7 +2,7 @@
 
 julia_version = "1.12.5"
 manifest_format = "2.0"
-project_hash = "ed5ff92c9d131009b23c37995b434dbce88412f8"
+project_hash = "ae8ae793562b1241685676f62e87c69909cb0f0c"
 
 [[deps.ADTypes]]
 git-tree-sha1 = "bbc22a9a08a0ef6460041086d8a7b27940ed4ffd"
@@ -121,7 +121,7 @@ version = "0.1.0"
     Metal = "dde4c033-4e86-420c-a63e-0dd931031962"
 
 [[deps.AtmosTransportBenchmarks]]
-deps = ["Adapt", "ArgParse", "AtmosTransport", "CUDA", "Dates", "JSON3", "KernelAbstractions", "Printf", "Serialization", "Statistics"]
+deps = ["Adapt", "ArgParse", "AtmosTransport", "CUDA", "ConservativeRegridding", "Dates", "JSON3", "KernelAbstractions", "Printf", "Serialization", "Statistics"]
 path = "."
 uuid = "d20f4d32-cc7a-4e89-a0da-5a0ee5cf5d70"
 version = "0.1.0"
@@ -266,25 +266,26 @@ version = "1.3.0+1"
 
 [[deps.ConservativeRegridding]]
 deps = ["ChunkSplitters", "DocStringExtensions", "Extents", "GeoInterface", "GeometryOps", "GeometryOpsCore", "LinearAlgebra", "ProgressMeter", "SciMLPublic", "SortTileRecursiveTree", "SparseArrays", "StableTasks", "StaticArrays"]
-path = "../../ConservativeRegridding.jl"
+git-tree-sha1 = "1759e50e231e32ee700bae6d12ddad0d721caace"
 uuid = "8e50ac2c-eb48-49bc-a402-07c87b949343"
-version = "0.2.0"
+version = "0.2.2"
 
     [deps.ConservativeRegridding.extensions]
     ConservativeRegriddingClimaCoreExt = "ClimaCore"
     ConservativeRegriddingHealpixExt = "Healpix"
     ConservativeRegriddingInterfacesExt = "Interfaces"
-    ConservativeRegriddingOceananigansExt = "Oceananigans"
+    ConservativeRegriddingNCDatasetsExt = "NCDatasets"
+    ConservativeRegriddingOceananigansExt = ["KernelAbstractions", "Oceananigans"]
     ConservativeRegriddingRingGridsExt = "RingGrids"
-    ConservativeRegriddingSpeedyWeatherExt = ["RingGrids", "SpeedyWeather"]
 
     [deps.ConservativeRegridding.weakdeps]
     ClimaCore = "d414da3d-4745-48bb-8d80-42e94e092884"
     Healpix = "9f4e344d-96bc-545a-84a3-ae6b9e1b672b"
     Interfaces = "85a1e053-f937-4924-92a5-1367d23b7b87"
+    KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
+    NCDatasets = "85f8d34a-cbdd-5861-8df4-14fed0d494ab"
     Oceananigans = "9e8cae18-63c1-5223-a75c-80ca9d6e9a09"
     RingGrids = "d1845624-ad4f-453b-8ff4-a8db365bf3a7"
-    SpeedyWeather = "9e226e20-d153-4fed-8a5b-493def4f21a9"
 
 [[deps.ConstructionBase]]
 git-tree-sha1 = "b4b092499347b18a015186eae3042f72267106cb"

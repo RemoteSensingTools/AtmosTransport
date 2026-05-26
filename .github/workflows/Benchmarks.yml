@@ -114,7 +114,9 @@ jobs:
   cuda:
     name: GPU-CUDA benchmarks
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_cuda == 'true'
-    runs-on: [self-hosted, linux, gpu-cuda]
+    runs-on: [self-hosted, linux, gpu-cuda, benchmark]
+    env:
+      TMPDIR: /temp1
     permissions:
       contents: write
       deployments: write
@@ -164,7 +166,7 @@ jobs:
   metal:
     name: GPU-Metal benchmarks
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_metal == 'true'
-    runs-on: [self-hosted, macOS, gpu-metal]
+    runs-on: [self-hosted, macOS, gpu-metal, benchmark]
     permissions:
       contents: write
       deployments: write

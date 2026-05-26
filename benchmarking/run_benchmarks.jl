@@ -35,10 +35,6 @@ function _preload_backend!(backend::Symbol)
     return nothing
 end
 
-const REPO_ROOT = normpath(joinpath(@__DIR__, ".."))
-pushfirst!(LOAD_PATH, REPO_ROOT)
-pushfirst!(LOAD_PATH, joinpath(@__DIR__, "src"))
-
 _preload_backend!(_early_backend(ARGS))
 
 using AtmosTransportBenchmarks

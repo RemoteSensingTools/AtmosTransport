@@ -50,25 +50,30 @@ end
         j = jj + Hp
         dt_ft = FT(dt)
 
-        w_prev = zero(FT)
-        g_prev = zero(FT)
+        # Scalar-carry pattern matching the forward kernel: amortize
+        # global-memory loads of (Kz, dz, air_mass) across consecutive
+        # vertical levels. Without this, every iteration re-loaded the
+        # k-1 and k+1 neighbors, tripling the load count on the column.
+        Kz_prev = zero(FT)
+        dz_prev = zero(FT)
+        m_prev  = zero(FT)
+        w_prev  = zero(FT)
+        g_prev  = zero(FT)
+
+        Kz_k = field_value(kz_field, (ii, jj, 1))
+        dz_k = dz[ii, jj, 1]
+        m_k  = air_mass[i, j, 1]
 
         for k in 1:Nz
-            Kz_k = field_value(kz_field, (ii, jj, k))
-            dz_k = dz[ii, jj, k]
-            m_k  = air_mass[i, j, k]
-
             dkg_above = zero(FT)
             dkg_below = zero(FT)
-            inv_m_prev = zero(FT)
-            inv_m_next = zero(FT)
+            Kz_next   = zero(FT)
+            dz_next   = zero(FT)
+            m_next    = zero(FT)
             a_T = zero(FT)
             c_T = zero(FT)
 
             if k > 1
-                Kz_prev = field_value(kz_field, (ii, jj, k - 1))
-                dz_prev = dz[ii, jj, k - 1]
-                m_prev  = air_mass[i, j, k - 1]
                 sum_dz_above = dz_prev + dz_k
                 dkg_above = (m_prev + m_k) * (Kz_prev + Kz_k) /
                             (sum_dz_above * sum_dz_above)
@@ -105,8 +110,14 @@ end
             lambda[i, j, k] = g_k
 
             if k < Nz
-                w_prev = w_k
-                g_prev = g_k
+                w_prev  = w_k
+                g_prev  = g_k
+                Kz_prev = Kz_k
+                dz_prev = dz_k
+                m_prev  = m_k
+                Kz_k    = Kz_next
+                dz_k    = dz_next
+                m_k     = m_next
             end
         end
 
@@ -116,8 +127,8 @@ end
         end
 
         for k in 1:Nz
-            m_k = air_mass[i, j, k]
-            lambda[i, j, k] = m_k > zero(FT) ? lambda[i, j, k] / m_k : zero(FT)
+            m_div = air_mass[i, j, k]
+            lambda[i, j, k] = m_div > zero(FT) ? lambda[i, j, k] / m_div : zero(FT)
         end
     end
 end

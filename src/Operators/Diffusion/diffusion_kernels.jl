@@ -25,6 +25,20 @@
 # `memory/diffusion_full_pipeline_audit_2026_05_25.md` for the audit
 # chain (D1 fix; D7 sub-agent "broken transpose" was a false positive).
 #
+# Multi-tracer `w_scratch` race (benign, intentional):
+# The packed kernels (`_vertical_diffusion_kernel!`,
+# `_vertical_diffusion_kernel_mass_flux!`, `_vertical_diffusion_cs_kernel!`,
+# `_vertical_diffusion_face_kernel!`, `_vertical_diffusion_face_kernel_mass_flux!`)
+# use `(i, j, t)` (LL/CS) or `(c, t)` (RG) as the global thread index but
+# write Thomas factors to `w_scratch` *without* the tracer dimension. Two
+# threads in the same column with different `t` race on `w_scratch[..., k]`.
+# Because the Thomas coefficients depend only on `(Kz, dz, m)` — column
+# meteorology that is identical for every tracer — both racers write the
+# SAME float value. Concurrent stores of equal values are well-defined on
+# all supported backends (CUDA/Metal/CPU-KA). The alternative would be a
+# 4D `w_scratch` slab, which doubles or quadruples scratch memory for no
+# numerical gain. Keep the 3D layout; the race is intentional.
+#
 # Coefficients per level k (with `m_k = air_mass[..., k]`, `Kz` at cell
 # centers, `dz` thickness in meters):
 #

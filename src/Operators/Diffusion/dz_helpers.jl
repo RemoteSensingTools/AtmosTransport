@@ -38,7 +38,7 @@ const _DZ_G_DEFAULT     = 9.81
         bk_lo = bk_ifc[k]
         bk_hi = bk_ifc[k + 1]
         delp  = (ak_hi - ak_lo) + (bk_hi - bk_lo) * ps[i, j]
-        p_ctr = (ak_lo + ak_hi + (bk_lo + bk_hi) * ps[i, j]) * (1 // 2)
+        p_ctr = (ak_lo + ak_hi + (bk_lo + bk_hi) * ps[i, j]) * (one(eltype(dz)) / 2)
         dz[i, j, k] = R * T_ref / g * delp / p_ctr
     end
 end
@@ -118,8 +118,17 @@ end
 
 # Convert specific humidity to mixing ratio for the virtual-T factor. We use
 # the standard 0.61 coefficient (`(1 - epsilon) / epsilon ≈ 0.61` with
-# epsilon = R_d / R_v); inputs are clamped to non-negative to absorb tiny
-# negative qv values that show up post-regrid.
+# epsilon = R_d / R_v); qv is clamped to non-negative to absorb tiny
+# post-regrid negative values.
+#
+# Note: this helper is intentionally LESS defensive than the Holtslag-Boville
+# closure's `_virtual_temperature` in
+# `src/State/Fields/LocalHoltslagBovilleKzField.jl:83`, which additionally
+# clamps T to ≥ 180 K. The HB clamp guards against pathological Kz when the
+# diagnosed mixing length collapses for very cold T (its closure divides by
+# theta_mid). Here we only need a geometric `dz`, so a physically realistic
+# stratospheric T < 180 K is fine: `dz` just gets a little smaller, which
+# is the correct hydrostatic answer at that altitude.
 @inline _virtual_T_factor(qv::T) where {T<:Real} =
     one(T) + T(0.61) * max(qv, zero(T))
 
@@ -135,7 +144,7 @@ end
         bk_lo = bk_ifc[k]
         bk_hi = bk_ifc[k + 1]
         delp  = (ak_hi - ak_lo) + (bk_hi - bk_lo) * ps[i, j]
-        p_ctr = (ak_lo + ak_hi + (bk_lo + bk_hi) * ps[i, j]) * (1 // 2)
+        p_ctr = (ak_lo + ak_hi + (bk_lo + bk_hi) * ps[i, j]) * (one(eltype(dz)) / 2)
         Tv    = t_lyr[i, j, k] * _virtual_T_factor(qv_lyr[i, j, k])
         dz[i, j, k] = R * Tv / g * delp / p_ctr
     end

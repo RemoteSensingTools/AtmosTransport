@@ -451,7 +451,13 @@ end
 function _cs_scale_tracer_mass_to_vmr!(q_raw::NTuple{6, A},
                                        air_mass::NTuple{6},
                                        halo_width::Integer) where {A <: AbstractArray}
+    # Single barrier at the end: the six CS panels are spatially
+    # independent within this scale step, so the six kernel launches
+    # can stream through the backend's queue and we only need one
+    # synchronize() before the caller observes the result. Saves five
+    # device-host round-trips per call.
     Hp = Int(halo_width)
+    backend = get_backend(q_raw[1])
     @inbounds for p in 1:6
         panel_q = q_raw[p]
         panel_m = air_mass[p]
@@ -464,11 +470,10 @@ function _cs_scale_tracer_mass_to_vmr!(q_raw::NTuple{6, A},
         Nc > 0 && Ny > 0 || throw(DimensionMismatch(
             "cubed-sphere panel $p shape $(size(panel_q)) cannot provide an " *
             "interior with halo_width=$Hp"))
-        backend = get_backend(panel_q)
         kernel = _cs_tracer_mass_to_vmr_kernel!(backend, (8, 8, 1))
         kernel(panel_q, panel_m, Hp; ndrange = (Nc, Ny, Nz))
-        synchronize(backend)
     end
+    synchronize(backend)
     return q_raw
 end
 
@@ -476,6 +481,7 @@ function _cs_scale_tracer_mass_to_vmr!(q_raw::NTuple{6, A},
                                        air_mass::NTuple{6},
                                        halo_width::Integer) where {A <: AbstractArray{<:Any, 4}}
     Hp = Int(halo_width)
+    backend = get_backend(q_raw[1])
     @inbounds for p in 1:6
         panel_q = q_raw[p]
         panel_m = air_mass[p]
@@ -489,11 +495,10 @@ function _cs_scale_tracer_mass_to_vmr!(q_raw::NTuple{6, A},
         Nc > 0 && Ny > 0 || throw(DimensionMismatch(
             "cubed-sphere panel $p shape $(size(panel_q)) cannot provide an " *
             "interior with halo_width=$Hp"))
-        backend = get_backend(panel_q)
         kernel = _cs_tracer_mass_to_vmr_4d_kernel!(backend, (8, 8, 1))
         kernel(panel_q, panel_m, Hp; ndrange = (Nc, Ny, Nz, Nt))
-        synchronize(backend)
     end
+    synchronize(backend)
     return q_raw
 end
 
@@ -501,6 +506,7 @@ function _cs_scale_vmr_to_tracer_mass!(q_raw::NTuple{6, A},
                                        air_mass::NTuple{6},
                                        halo_width::Integer) where {A <: AbstractArray}
     Hp = Int(halo_width)
+    backend = get_backend(q_raw[1])
     @inbounds for p in 1:6
         panel_q = q_raw[p]
         panel_m = air_mass[p]
@@ -513,11 +519,10 @@ function _cs_scale_vmr_to_tracer_mass!(q_raw::NTuple{6, A},
         Nc > 0 && Ny > 0 || throw(DimensionMismatch(
             "cubed-sphere panel $p shape $(size(panel_q)) cannot provide an " *
             "interior with halo_width=$Hp"))
-        backend = get_backend(panel_q)
         kernel = _cs_vmr_to_tracer_mass_kernel!(backend, (8, 8, 1))
         kernel(panel_q, panel_m, Hp; ndrange = (Nc, Ny, Nz))
-        synchronize(backend)
     end
+    synchronize(backend)
     return q_raw
 end
 
@@ -525,6 +530,7 @@ function _cs_scale_vmr_to_tracer_mass!(q_raw::NTuple{6, A},
                                        air_mass::NTuple{6},
                                        halo_width::Integer) where {A <: AbstractArray{<:Any, 4}}
     Hp = Int(halo_width)
+    backend = get_backend(q_raw[1])
     @inbounds for p in 1:6
         panel_q = q_raw[p]
         panel_m = air_mass[p]
@@ -538,11 +544,10 @@ function _cs_scale_vmr_to_tracer_mass!(q_raw::NTuple{6, A},
         Nc > 0 && Ny > 0 || throw(DimensionMismatch(
             "cubed-sphere panel $p shape $(size(panel_q)) cannot provide an " *
             "interior with halo_width=$Hp"))
-        backend = get_backend(panel_q)
         kernel = _cs_vmr_to_tracer_mass_4d_kernel!(backend, (8, 8, 1))
         kernel(panel_q, panel_m, Hp; ndrange = (Nc, Ny, Nz, Nt))
-        synchronize(backend)
     end
+    synchronize(backend)
     return q_raw
 end
 

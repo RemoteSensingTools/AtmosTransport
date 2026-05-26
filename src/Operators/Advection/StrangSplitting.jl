@@ -1259,13 +1259,14 @@ function apply!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
 end
 
 # NoAdvection no-op apply! — LatLon. The workspace, cfl_limit, and
-# meteo arguments are accepted but ignored so callers (e.g.
-# `transport_step!` in `Models/TransportModel.jl`) can dispatch
-# without branching on the scheme. Diffusion and surface emissions
-# are rejected here because they're normally invoked from inside the
-# advection palindrome — running them without that structure would
-# silently drop the Strang half-stepping. The caller must opt into a
-# clean convection-only setup (NoDiffusion + NoSurfaceFlux).
+# meteo arguments are accepted but ignored when diffusion is also
+# disabled, so callers (e.g. `transport_step!` in
+# `Models/TransportModel.jl`) can dispatch without branching on the
+# scheme. NoAdvection + non-trivial diffusion is supported: a single
+# V(dt) step is applied via the mass-flux VMR wrapper, which is
+# mass-conserving on its own and needs no Strang palindrome. Surface
+# emissions remain rejected because they are Strang half-steps
+# wrapping the advection block.
 @inline function apply!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
                          grid::AtmosGrid{<:LatLonMesh},
                          ::NoAdvection, dt;
@@ -1275,6 +1276,7 @@ end
                          emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                          meteo = nothing) where {B <: AbstractMassBasis}
     _noadvection_reject_emissions_op(emissions_op)
+    _noadvection_require_workspace(workspace, diffusion_op)
     if !(diffusion_op isa NoDiffusion)
         # NoAdvection + diffusion: skip the Strang half-step structure
         # entirely and apply a single V(dt) step on the LL state. The
@@ -1300,6 +1302,25 @@ end
             "advection palindrome, so running them without advection " *
             "drops the symmetric splitting. Remove `[tracers.*.surface_flux]` " *
             "blocks for a convection-only or diffusion-only run."))
+    end
+    return nothing
+end
+
+# Workspace guard for the direct `apply!` API: when diffusion is active
+# the mass-flux VMR kernels read `workspace.w_scratch` (and on the LL
+# path, `workspace`-owned scale buffers). The production `TransportModel`
+# constructor allocates a workspace automatically when diffusion is on,
+# so this only trips when callers reach the public apply! directly with
+# `workspace = nothing`. Throw an ArgumentError pointing at the fix.
+@inline function _noadvection_require_workspace(workspace, diffusion_op::AbstractDiffusion)
+    if !(diffusion_op isa NoDiffusion) && workspace === nothing
+        throw(ArgumentError(
+            "NoAdvection + diffusion requires an advection workspace " *
+            "(the mass-flux VMR kernel uses `workspace.w_scratch`). " *
+            "Pass `workspace = AdvectionWorkspace(state.air_mass)` (LL/RG) " *
+            "or `CSAdvectionWorkspace(grid.horizontal, state.air_mass[1]; " *
+            "n_tracers = …)` (CS), or build the model via TransportModel(...) " *
+            "which allocates one automatically."))
     end
     return nothing
 end
@@ -1343,6 +1364,7 @@ end
                          emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                          meteo = nothing) where {B <: AbstractMassBasis}
     _noadvection_reject_emissions_op(emissions_op)
+    _noadvection_require_workspace(workspace, diffusion_op)
     if !(diffusion_op isa NoDiffusion)
         # NoAdvection + diffusion on CS: single V(dt) step via the
         # mass-flux VMR wrapper. State carries `state.halo_width`.
@@ -1368,6 +1390,7 @@ end
                          emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                          meteo = nothing) where {B <: AbstractMassBasis}
     _noadvection_reject_emissions_op(emissions_op)
+    _noadvection_require_workspace(workspace, diffusion_op)
     if !(diffusion_op isa NoDiffusion)
         # NoAdvection + diffusion on face-indexed RG: single V(dt) step.
         apply_vertical_diffusion_vmr!(state.tracers_raw, state.air_mass,

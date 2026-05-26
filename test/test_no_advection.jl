@@ -138,7 +138,12 @@ end
 # Companion-operator rejection — diffusion + emissions both throw cleanly
 # ---------------------------------------------------------------------------
 
-@testset "NoAdvection rejects non-NoDiffusion / non-NoSurfaceFlux" begin
+@testset "NoAdvection — diffusion runs, surface emissions still rejected" begin
+    # NoAdvection + diffusion is a SUPPORTED setup ("diffusion-only"
+    # experiment); the V(dt) step is applied directly via the mass-flux
+    # VMR wrapper (no Strang palindrome is needed since diffusion is
+    # mass-conserving on its own). Surface emissions remain rejected
+    # because they're Strang-wrapped around the advection block.
     Nx, Ny, Nz = 6, 4, 2
     mesh = LatLonMesh(; Nx=Nx, Ny=Ny, FT=FT)
     vc = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
@@ -157,29 +162,32 @@ end
                   diffusion_op=NoDiffusion(),
                   emissions_op=NoSurfaceFlux()); true)
 
-    # Non-NoDiffusion → ArgumentError pointing at the TOML knob.
+    # NoAdvection + diffusion: V(dt) step runs without error and
+    # preserves column tracer mass to roundoff (mass-flux wrapper).
+    # `dz_scratch` is populated externally in production by
+    # `_refresh_dz_for_window!`; here we set it directly to 1 m so the
+    # implicit solve has well-defined coefficients.
     kz = ConstantField{FT, 3}(FT(1.0))
     diff_op = ImplicitVerticalDiffusion(; kz_field=kz)
+    fill!(ws.dz_scratch, one(FT))
+    air_pre = copy(state.air_mass)
+    co2_mass_pre = sum(state.tracers_raw[:, :, :, 1])
+    apply!(state, fluxes, grid, NoAdvection(), FT(1800);
+           workspace=ws, diffusion_op=diff_op)
+    @test state.air_mass == air_pre              # NoAdvection is air-inert
+    @test isapprox(sum(state.tracers_raw[:, :, :, 1]), co2_mass_pre;
+                   rtol = 1e-12, atol = 0)
+
+    # Direct-API guard: missing workspace + non-trivial diffusion must
+    # surface a clear ArgumentError rather than a cryptic FieldError
+    # from the kernel-internal `w_scratch` access.
     @test_throws ArgumentError apply!(state, fluxes, grid, NoAdvection(), FT(1800);
-                                      workspace=ws, diffusion_op=diff_op)
+                                      workspace=nothing, diffusion_op=diff_op)
 
     # Non-NoSurfaceFlux → ArgumentError pointing at the TOML knob.
     em_op = SurfaceFluxOperator(SurfaceFluxSource(:CO2, fill(FT(1.0), Nx, Ny)))
     @test_throws ArgumentError apply!(state, fluxes, grid, NoAdvection(), FT(1800);
                                       workspace=ws, emissions_op=em_op)
-
-    # Verify the message points users at the specific TOML knob (so the
-    # error is actionable, not just a type-check). This guards the
-    # contract documented in src/Operators/Advection/schemes.jl.
-    try
-        apply!(state, fluxes, grid, NoAdvection(), FT(1800);
-               workspace=ws, diffusion_op=diff_op)
-        @test false  # unreachable
-    catch err
-        @test err isa ArgumentError
-        @test occursin("[diffusion]", err.msg)
-        @test occursin("\"none\"", err.msg)
-    end
     try
         apply!(state, fluxes, grid, NoAdvection(), FT(1800);
                workspace=ws, emissions_op=em_op)
@@ -196,7 +204,7 @@ end
 # method, so each path must wire the helper in.
 # ---------------------------------------------------------------------------
 
-@testset "NoAdvection rejection on RG + CS topologies" begin
+@testset "NoAdvection on RG + CS: diffusion runs, emissions still rejected" begin
     # RG
     rg_mesh = ReducedGaussianMesh(FT[-45, 45], [4, 4]; FT=FT)
     rg_vc   = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
@@ -206,8 +214,21 @@ end
     rg_fluxes = allocate_face_fluxes(rg_mesh, 2; FT=FT, basis=DryBasis)
     rg_kz     = ConstantField{FT, 2}(FT(1.0))
     rg_diff   = ImplicitVerticalDiffusion(; kz_field=rg_kz)
+
+    # Without a workspace, the apply! API surfaces a clear ArgumentError
+    # rather than a kernel-internal FieldError on `w_scratch`.
     @test_throws ArgumentError apply!(rg_state, rg_fluxes, rg_grid, NoAdvection(),
                                       FT(1800); diffusion_op=rg_diff)
+
+    # With a workspace + populated `dz_scratch`, RG NoAdvection +
+    # diffusion runs and preserves column tracer mass to roundoff.
+    rg_ws = AdvectionWorkspace(rg_state.air_mass)
+    fill!(rg_ws.dz_scratch, one(FT))
+    rg_co2_pre = sum(rg_state.tracers_raw[:, :, 1])
+    apply!(rg_state, rg_fluxes, rg_grid, NoAdvection(), FT(1800);
+           workspace=rg_ws, diffusion_op=rg_diff)
+    @test isapprox(sum(rg_state.tracers_raw[:, :, 1]), rg_co2_pre;
+                   rtol = 1e-12, atol = 0)
 
     rg_em = SurfaceFluxOperator(SurfaceFluxSource(:CO2, fill(FT(1.0), ncells(rg_mesh))))
     @test_throws ArgumentError apply!(rg_state, rg_fluxes, rg_grid, NoAdvection(),
@@ -226,6 +247,8 @@ end
     cs_kz_panels = ntuple(_ -> ConstantField{FT, 3}(FT(1.0)), 6)
     cs_kz     = AtmosTransport.State.CubedSphereField(cs_kz_panels)
     cs_diff   = ImplicitVerticalDiffusion(; kz_field=cs_kz)
+
+    # CS workspace guard: same actionable ArgumentError as LL/RG.
     @test_throws ArgumentError apply!(cs_state, cs_fluxes, cs_grid, NoAdvection(),
                                       FT(1800); diffusion_op=cs_diff)
 

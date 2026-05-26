@@ -205,16 +205,19 @@ experiment or a synthetic-state regression.
 When `NoAdvection` is selected:
 - The advection sweeps are skipped on all three topologies
   (`LatLonMesh`, `ReducedGaussianMesh`, `CubedSphereMesh`).
-- Diffusion and surface emissions are normally invoked from inside
-  the advection palindrome for Strang-split accuracy; without
-  advection there is no palindrome to invoke them from, so the
-  constructor-level dispatch rejects non-`NoDiffusion` and
-  non-`NoSurfaceFlux` operators with a clear error. To run a
-  convection-only configuration set `[diffusion] kind = "none"`
-  and omit `[tracers.*.surface_flux]` blocks.
-- The CS workspace constructor returns `nothing` (no scratch
-  buffers are needed), so the workspace memory footprint matches
-  a `NoConvection` setup.
+- Diffusion is *allowed*: with no advection to wrap, the V(dt)
+  diffusion step is applied directly through the mass-flux VMR
+  kernels, which are mass-conserving on their own and need no
+  Strang palindrome. This is the natural "diffusion-only"
+  experimental setup.
+- Surface emissions are *rejected* with an actionable
+  `ArgumentError`. They are integrated as Strang half-steps
+  wrapping the advection block, so running them without advection
+  silently drops 2nd-order accuracy. To run a convection-only
+  configuration omit `[tracers.*.surface_flux]` blocks.
+- The CS workspace is auto-allocated by the `TransportModel`
+  constructor when diffusion is active (and is `nothing` when
+  diffusion is also off).
 
 # Example
 ```julia

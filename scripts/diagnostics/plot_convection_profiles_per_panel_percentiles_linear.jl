@@ -180,7 +180,7 @@ function plot_one(tracer::AbstractString, loaded::AbstractVector, out_path)
         ax.xticklabelsize = 9
         for L_idx in eachindex(loaded)
             L = loaded[L_idx]
-            scheme_style = SCHEMES[L_idx].style
+            scheme_style = L.scheme.style
             lw = scheme_style === :dot   ? 2.6 :
                  scheme_style === :dash  ? 2.0 : 1.8
             p_axis = L.p_mid[p] ./ 100.0
@@ -201,11 +201,11 @@ function plot_one(tracer::AbstractString, loaded::AbstractVector, out_path)
     # Legend: line styles for schemes, colors for percentiles.
     legends = Tuple{LineElement, String}[]
     for L_idx in eachindex(loaded)
-        lw = SCHEMES[L_idx].style === :dot   ? 2.6 :
-             SCHEMES[L_idx].style === :dash  ? 2.0 : 1.8
+        lw = loaded[L_idx].scheme.style === :dot   ? 2.6 :
+             loaded[L_idx].scheme.style === :dash  ? 2.0 : 1.8
         push!(legends,
-              (LineElement(linestyle = SCHEMES[L_idx].style, linewidth = lw, color = :black),
-               SCHEMES[L_idx].label))
+              (LineElement(linestyle = loaded[L_idx].scheme.style, linewidth = lw, color = :black),
+               loaded[L_idx].scheme.label))
     end
     for q in eachindex(PERCENTILES)
         push!(legends,
@@ -229,7 +229,7 @@ function main()
             continue
         end
         println("loading $(scheme.label) ...")
-        push!(loaded, load_one(scheme.path))
+        push!(loaded, (; load_one(scheme.path)..., scheme = scheme))
     end
     isempty(loaded) && error("No scheme NetCDFs found.")
     for tracer in TRACERS

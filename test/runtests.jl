@@ -75,6 +75,7 @@ core_tests = [
     "test_cmfmc_adjoint_identity.jl",
     "test_cmfmc_matrix_convection.jl",
     "test_diffusion_mass_flux_conservation.jl",
+    "test_dz_helpers_virtual_T.jl",
     "test_tm5_alias_safety.jl",
     "test_tm5_tile_bit_equality.jl",
     "test_tm5_preprocessing.jl",

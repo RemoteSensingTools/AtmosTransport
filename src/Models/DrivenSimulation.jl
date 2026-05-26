@@ -395,7 +395,9 @@ end
 using ..Operators.SurfaceFlux: _surface_shape,
                                 _check_surface_source_compatibility,
                                 _apply_surface_source!
-using ..Operators.Diffusion: NoDiffusion, fill_dz_hydrostatic_constT!
+using ..Operators.Diffusion: NoDiffusion, ImplicitVerticalDiffusion,
+                              fill_dz_hydrostatic_constT!,
+                              fill_dz_hydrostatic_virtualT!
 
 # ---------------------------------------------------------------------------
 # Diffusion `dz_scratch` populator.
@@ -417,8 +419,34 @@ using ..Operators.Diffusion: NoDiffusion, fill_dz_hydrostatic_constT!
     dz_scratch === nothing && return nothing
     vertical = sim.model.grid.vertical
     ps = sim.window.surface_pressure
-    fill_dz_hydrostatic_constT!(dz_scratch, ps, vertical.A, vertical.B)
+    _fill_dz_for_diffusion!(dz_scratch, ps, vertical.A, vertical.B,
+                             sim.model.diffusion, sim.window)
     return nothing
+end
+
+# D6: when the diffusion operator uses LocalHoltslagBovilleKzField (which
+# itself derives column geometry from VDIFF virtual-T), populate
+# dz_scratch from the SAME virtual-T-per-layer the Kz cache uses. Closes
+# the previous inconsistency where the kernel divided by a 260 K-constant
+# `dz` while Kz had been computed on layer-varying `dz`.
+#
+# All other diffusion configurations stay on the constant-T_ref path.
+@inline _fill_dz_for_diffusion!(dz_scratch, ps, ak, bk, _diffop, _window) =
+    fill_dz_hydrostatic_constT!(dz_scratch, ps, ak, bk)
+
+@inline function _fill_dz_for_diffusion!(
+        dz_scratch, ps, ak, bk,
+        op::ImplicitVerticalDiffusion{FT, <:LocalHoltslagBovilleKzField},
+        window) where FT
+    vdiff = window.vdiff
+    # Defensive fallback: if VDIFF isn't actually present on the window
+    # (shouldn't happen — the diffusion runtime validator rejects this
+    # case at config-load time), drop back to the constant-T_ref path.
+    (vdiff === nothing ||
+     !hasproperty(vdiff, :t) || !hasproperty(vdiff, :qv)) &&
+        return fill_dz_hydrostatic_constT!(dz_scratch, ps, ak, bk)
+    fill_dz_hydrostatic_virtualT!(dz_scratch, vdiff.t, vdiff.qv, ps, ak, bk)
+    return dz_scratch
 end
 
 @inline _window_dz_scratch(_workspace) = nothing

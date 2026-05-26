@@ -7,6 +7,25 @@ Panel-native Kz cache for cubed-sphere window-driven PBL diffusion.
 `(Nc, Nc, Nz)`. The runtime refreshes it from the active transport window's
 raw PBL surface fields and dry air mass whenever the met window advances.
 The diffusion kernels read the wrapped `PreComputedKzField`s.
+
+# Cadence — window-constant by design
+
+`update_field!(::WindowPBLKzField, ::Real)` is a deliberate no-op. The
+surface fields that feed the Kz closure (`pblh`, `ustar`, `pbl_hflux`,
+`t2m`) are loaded once per met window (hourly archive); the diagnosed
+Kz inherits that cadence. Refreshing per substep without first
+interpolating the surface fields would produce identical output — so
+the no-op accurately reflects the data flow.
+
+This matches the surface-state smoothness on the typical 1 h archive
+cadence (pblh and friends evolve on a 10 min - 1 h characteristic
+scale). The associated systematic error in tracer diffusion is well
+below the operator-level mass-conservation tolerance (10⁻⁷ — see D1).
+TM5 and GCHP refresh Kz at every dynamic step against state that's
+also updated each dynamic step; matching that cadence on offline
+transport would require sub-hourly surface forcing and per-substep
+linear interpolation, neither of which is wired up here. Tracked in
+`memory/diffusion_full_pipeline_audit_2026_05_25.md` (D5).
 """
 struct WindowPBLKzField{FT, F <: AbstractTimeVaryingField{FT, 3}, H,
                         P <: PBLPhysicsParameters{FT}, A} <: AbstractCubedSphereField{FT}
@@ -29,6 +48,7 @@ function WindowPBLKzField(host_cache::NTuple{6, Array{FT, 3}};
 end
 
 @inline panel_field(f::WindowPBLKzField, p::Integer) = f.panels[Int(p)]
+# Window-constant cadence by design — see struct docstring (D5).
 update_field!(f::WindowPBLKzField, ::Real) = f
 
 function Adapt.adapt_structure(to, f::WindowPBLKzField)

@@ -36,6 +36,29 @@ Two intentional divergences from GCHP's `vdiff_mod.F90`:
 See `memory/diffusion_full_pipeline_audit_2026_05_25.md` for the full
 audit chain and pending D1 mass-flux conservation fix.
 
+# Why no non-local kernel here
+
+In GCHP's full VDIFF the non-local term enters as an additive RHS source
+in the implicit tridiagonal solve, NOT a modification of `Kz` itself:
+
+    ∂(m·q)/∂t = ∂/∂z [ρ·Kz·(∂q/∂z - γ_q)]
+
+where `γ_q = a·w*·q*/wm²/pblh` is a scaled convective-velocity expression
+of the surface flux. A real non-local kernel would need:
+  1. Convective-velocity diagnostics (`w*`, `wm`, etc.) added to the
+     per-window refresh — currently only `pblh, ustar, hflux, t2m` are
+     in the surface payload.
+  2. A per-tracer `γ_q` derivation. For our offline pipeline this is
+     ill-defined because surface emissions are applied by
+     `apply_surface_flux!` as a SEPARATE operator outside the diffusion
+     solve, so the surface-source pattern that the GCHP counter-gradient
+     exists to handle doesn't appear inside our diffusion step.
+  3. A new RHS-source term in `_vertical_diffusion_cs_*` kernels +
+     a matching adjoint kernel.
+
+This is deferred indefinitely; the field is correctly named `Local…`
+so users opting into GCHP-style VDIFF know what they get.
+
 # Backward compatibility
 
 The old type name `GCHPHoltslagBovilleKzField` is preserved as a
@@ -64,6 +87,13 @@ function LocalHoltslagBovilleKzField(host_cache::NTuple{6, Array{FT, 3}};
 end
 
 @inline panel_field(f::LocalHoltslagBovilleKzField, p::Integer) = f.panels[Int(p)]
+# Window-constant cadence by design — see audit memo D5. VDIFF source
+# fields (`vdiff_u/v/t/qv`) + PBL surface (`pblh/ustar/hflux/t2m`)
+# are hourly-archive-loaded and refreshed only on met-window advance;
+# Kz inherits that cadence. Sub-window refresh would need surface
+# interpolation between adjacent archive snapshots, which is not
+# wired up. The systematic error is small relative to the typical
+# diurnal evolution of these fields over an hour.
 update_field!(f::LocalHoltslagBovilleKzField, ::Real) = f
 
 function Adapt.adapt_structure(to, f::LocalHoltslagBovilleKzField)

@@ -1,0 +1,254 @@
+name: Benchmarks
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish benchmark dashboard data"
+        required: true
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+      grid:
+        description: "Comma-separated CS grids"
+        required: true
+        default: "C24,C48"
+      operators:
+        description: "Comma-separated operators"
+        required: true
+        default: "advection,diffusion,convection,full,io,adjoint"
+      cpu_float_types:
+        description: "Comma-separated CPU float types"
+        required: true
+        default: "Float32,Float64"
+      gpu_float_types:
+        description: "Comma-separated GPU float types"
+        required: true
+        default: "Float32"
+      run_cuda:
+        description: "Run GPU-CUDA benchmarks on a self-hosted runner labeled gpu-cuda"
+        required: true
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+      run_metal:
+        description: "Run GPU-Metal benchmarks on a self-hosted runner labeled gpu-metal"
+        required: true
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
+jobs:
+  cpu:
+    name: CPU benchmark smoke
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      deployments: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
+
+      - uses: julia-actions/cache@v2
+
+      - name: Instantiate benchmark environment
+        shell: julia --color=yes --project=benchmarking {0}
+        run: |
+          using Pkg
+          Pkg.instantiate()
+
+      - name: Run benchmarks
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            GRID="C4"
+            OPS="advection,diffusion,convection,full,io,adjoint"
+            FLOAT_TYPES="Float32"
+            STEPS="1"
+            REPEATS="1"
+          else
+            GRID="${{ github.event.inputs.grid || 'C24,C48' }}"
+            OPS="${{ github.event.inputs.operators || 'advection,diffusion,convection,full,io,adjoint' }}"
+            FLOAT_TYPES="${{ github.event.inputs.cpu_float_types || 'Float32,Float64' }}"
+            STEPS="3"
+            REPEATS="5"
+          fi
+          julia --color=yes --project=benchmarking benchmarking/run_benchmarks.jl \
+            --backend=cpu \
+            --float-type="${FLOAT_TYPES}" \
+            --grid="${GRID}" \
+            --levels=32 \
+            --tracers=1,4 \
+            --operator="${OPS}" \
+            --steps="${STEPS}" \
+            --warmup-steps=1 \
+            --repeats="${REPEATS}" \
+            --group="CPU Synthetic CS Sweep" \
+            --output=benchmark_results.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cpu-benchmark-results
+          path: |
+            benchmark_results.json
+            benchmark_results.github-action-benchmark.json
+
+  cuda:
+    name: GPU-CUDA benchmarks
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_cuda == 'true'
+    runs-on: [self-hosted, linux, gpu-cuda]
+    permissions:
+      contents: write
+      deployments: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
+
+      - uses: julia-actions/cache@v2
+
+      - name: Probe CUDA device
+        run: nvidia-smi
+
+      - name: Instantiate benchmark environment
+        shell: julia --color=yes --project=benchmarking {0}
+        run: |
+          using Pkg
+          Pkg.instantiate()
+
+      - name: Run GPU-CUDA benchmarks
+        shell: bash
+        run: |
+          set -euo pipefail
+          julia --color=yes --project=benchmarking benchmarking/run_benchmarks.jl \
+            --backend=cuda \
+            --float-type="${{ github.event.inputs.gpu_float_types }}" \
+            --grid="${{ github.event.inputs.grid }}" \
+            --levels=32 \
+            --tracers=1,4 \
+            --operator="${{ github.event.inputs.operators }}" \
+            --steps=3 \
+            --warmup-steps=1 \
+            --repeats=5 \
+            --group="CUDA Synthetic CS Sweep" \
+            --output=benchmark_results_cuda.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cuda-benchmark-results
+          path: |
+            benchmark_results_cuda.json
+            benchmark_results_cuda.github-action-benchmark.json
+
+  metal:
+    name: GPU-Metal benchmarks
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_metal == 'true'
+    runs-on: [self-hosted, macOS, gpu-metal]
+    permissions:
+      contents: write
+      deployments: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
+
+      - uses: julia-actions/cache@v2
+
+      - name: Probe Metal device
+        shell: bash
+        run: |
+          system_profiler SPDisplaysDataType
+
+      - name: Instantiate benchmark environment
+        shell: julia --color=yes --project=benchmarking {0}
+        run: |
+          using Pkg
+          Pkg.add(name="Metal", version="1")
+          Pkg.instantiate()
+
+      - name: Run GPU-Metal benchmarks
+        shell: bash
+        run: |
+          set -euo pipefail
+          julia --color=yes --project=benchmarking benchmarking/run_benchmarks.jl \
+            --backend=metal \
+            --float-type="${{ github.event.inputs.gpu_float_types }}" \
+            --grid="${{ github.event.inputs.grid }}" \
+            --levels=32 \
+            --tracers=1,4 \
+            --operator="${{ github.event.inputs.operators }}" \
+            --steps=3 \
+            --warmup-steps=1 \
+            --repeats=5 \
+            --group="Metal Synthetic CS Sweep" \
+            --output=benchmark_results_metal.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: metal-benchmark-results
+          path: |
+            benchmark_results_metal.json
+            benchmark_results_metal.github-action-benchmark.json
+
+  publish:
+    name: Publish benchmark dashboard
+    if: always() && (github.event_name == 'push' || github.event.inputs.publish == 'true')
+    needs: [cpu, cuda, metal]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      deployments: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: benchmark-artifacts
+          merge-multiple: true
+
+      - name: Merge benchmark records
+        shell: python
+        run: |
+          import glob, json
+          files = sorted(glob.glob("benchmark-artifacts/*.github-action-benchmark.json"))
+          if not files:
+              raise SystemExit("no benchmark dashboard artifacts found")
+          records = []
+          for path in files:
+              with open(path) as handle:
+                  records.extend(json.load(handle))
+          with open("benchmark_results_all.github-action-benchmark.json", "w") as handle:
+              json.dump(records, handle, indent=2)
+              handle.write("\n")
+
+      - name: Publish dashboard
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: customSmallerIsBetter
+          output-file-path: benchmark_results_all.github-action-benchmark.json
+          benchmark-data-dir-path: "."
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          alert-threshold: "120%"
+          fail-on-alert: false
+          comment-on-alert: true
+          max-items-in-chart: 5000

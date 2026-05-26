@@ -7,21 +7,30 @@
 # otherwise the kernel divides by zero and the entire tracer field NaNs out
 # from the next snapshot onward.
 #
-# The fill uses a constant-`T_ref` hydrostatic approximation,
+# Two hydrostatic fills are provided:
 #
-#     delp[i,j,k] = (ak[k+1] - ak[k]) + (bk[k+1] - bk[k]) * ps[i,j]
-#     p_ctr[i,j,k] = ½·((ak[k] + ak[k+1]) + (bk[k] + bk[k+1])·ps[i,j])
-#     dz[i,j,k]   = R · T_ref / g · delp[i,j,k] / p_ctr[i,j,k]
+#   * `fill_dz_hydrostatic_constT!` — constant `T_ref = 260 K`:
+#         delp[i,j,k] = (ak[k+1] - ak[k]) + (bk[k+1] - bk[k]) * ps[i,j]
+#         p_ctr[i,j,k] = ½·((ak[k] + ak[k+1]) + (bk[k] + bk[k+1])·ps[i,j])
+#         dz[i,j,k]   = R · T_ref / g · delp / p_ctr
+#     Matches the preprocessing-side `dz_hydrostatic_constT!` in
+#     `src/Preprocessing/tm5_convection_conversion.jl`. Default for any
+#     configuration without VDIFF payload (legacy LL / RG / WindowPBLKzField).
 #
-# This matches the preprocessing-side `dz_hydrostatic_constT!`
-# (`src/Preprocessing/tm5_convection_conversion.jl`). A virtual-temperature
-# variant can be added when humidity is wired through the runtime workspace;
-# `T_ref = 260 K` is sufficient for boundary-layer Kz in the same way TM5
-# uses it.
+#   * `fill_dz_hydrostatic_virtualT!` — virtual T from VDIFF (D6 fix):
+#         T_v[k]      = T[k] · (1 + 0.61 · qv[k])     (qv ≥ 0 clamped)
+#         dz[i,j,k]   = R · T_v[k] / g · delp / p_ctr
+#     Used by the `LocalHoltslagBovilleKzField` runtime path so the
+#     solver `dz_scratch` shares the same column geometry the Kz cache
+#     itself uses (closes the D6 inconsistency from the audit memo).
 #
-# `dz` only depends on `ps + ak/bk`, so the fill runs once per met window
-# (constant within the window). The runtime hooks it from
-# `DrivenSimulation` at window-load time.
+# Both fills produce the same `dz` units (metres) and the same matrix
+# coefficient interpretation in the mass-flux kernel.
+#
+# `dz` only depends on `(ps, ak/bk, T_v?)`, all window-constant, so the
+# fill runs once per met window. `DrivenSimulation._refresh_dz_for_window!`
+# dispatches between the two variants via `_fill_dz_for_diffusion!` based
+# on the operator's Kz field type.
 # ---------------------------------------------------------------------------
 
 const _DZ_T_REF_DEFAULT = 260.0

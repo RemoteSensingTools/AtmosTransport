@@ -1,6 +1,6 @@
 #!/usr/bin/env julia
 """
-Tests for the virtual-temperature `dz` helper (D6 fix). Two checks:
+Tests for the virtual-temperature `dz` helper (D6 fix). Three checks:
 
   1. Numerical correctness vs hand-computed dz at a few sample columns.
      For each `(i, j, k)`, dz should reduce to
@@ -11,9 +11,16 @@ Tests for the virtual-temperature `dz` helper (D6 fix). Two checks:
   2. Cubed-sphere panel-tuple dispatch produces the same per-cell dz
      as the single-array variant on a synthetic per-panel column.
 
-  3. The fallback rule: when the VDIFF payload is missing on the
-     window, `_fill_dz_for_diffusion!` reverts to the constant-T_ref
-     path (verified via API: passing a `vdiff = nothing` window equivalent).
+  3. dz_v != dz_c when virtual T differs from `T_ref = 260 K` — the
+     whole point of D6.
+
+NOTE: the runtime fallback `_fill_dz_for_diffusion!` in
+`src/Models/DrivenSimulation.jl` (which warns + reverts to constT when
+the window lacks `vdiff`) is exercised indirectly by the regression
+test suite when LocalHoltslagBovilleKzField runs are loaded. We don't
+unit-test it here because it requires constructing a mock
+`DrivenSimulation` with a synthetic window payload — out of scope for
+the kernel-level helper tests.
 """
 
 using Test

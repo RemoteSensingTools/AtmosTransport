@@ -1,51 +1,63 @@
 # ===========================================================================
 # TOML-driven source-descriptor factory.
 #
-# `load_met_settings(toml_path; root_dir, kwargs...)` reads a met_sources
-# TOML and returns the typed `AbstractMetSettings` for that source. Dispatch
-# is on `[source].name` through `_settings_constructor`; currently "GEOS-IT"
-# and "GEOS-FP" map to the corresponding `GEOSSettings{flavor}` aliases.
-# MERRA-2 (LL) and other sources plug in by adding methods, not by extending
+# `load_met_settings(toml_path; root_dir, kwargs...)` reads a met_sources TOML
+# and returns the typed `AbstractMetSettings` for that source. The pipeline is
+# two-step:
+#
+#   1. `_settings_constructor(name)` maps `[source].name` to a concrete type.
+#   2. `_build_met_settings(ctor, cfg, root_dir; kwargs...)` consumes the
+#      TOML tables that constructor cares about and returns a built instance.
+#
+# Sources plug in by adding two methods on these generics — never by extending
 # a central if/else chain.
 # ===========================================================================
 
 _settings_constructor(name::AbstractString) =
     _settings_constructor(Val(Symbol(name)))
 
-_settings_constructor(::Val{Symbol("GEOS-IT")}) = GEOSITSettings
-_settings_constructor(::Val{Symbol("GEOS-FP")}) = GEOSFPSettings
+_settings_constructor(::Val{Symbol("GEOS-IT")})  = GEOSITSettings
+_settings_constructor(::Val{Symbol("GEOS-FP")})  = GEOSFPSettings
+_settings_constructor(::Val{Symbol("ERA5-N320")}) = ERA5N320Settings
 
 function _settings_constructor(::Val{name}) where name
-    error("Unsupported met source `$(String(name))`. Supported: GEOS-IT, GEOS-FP.")
+    error("Unsupported met source `$(String(name))`. " *
+          "Supported: GEOS-IT, GEOS-FP, ERA5-N320.")
 end
 
 """
     load_met_settings(toml_path::String; root_dir, kwargs...) -> AbstractMetSettings
 
 Construct a typed met-source descriptor from `toml_path`. The TOML's
-`[source].name` key picks the concrete settings type. The `[preprocessing]`
-table (if present) supplies defaults for `level_orientation`,
-`mass_flux_dt_seconds`, `include_surface`, `include_convection`, and
-`include_vdiff_fields`; explicit keyword
-arguments override.
+`[source].name` key picks the concrete settings type, and per-type
+`_build_met_settings` methods consume the source-specific TOML tables.
 
-`root_dir` is the on-disk directory holding the source's daily NetCDF files
-(e.g. `~/data/AtmosTransport/met/geosit/C180/raw_catrine`).
+`root_dir` is the on-disk directory holding the source's daily files.
+Additional `kwargs` are forwarded to the constructor and override any
+values supplied by the TOML.
 """
 function load_met_settings(toml_path::String;
                            root_dir::AbstractString,
                            kwargs...)
     isfile(toml_path) || error("Met source TOML not found: $toml_path")
-    cfg = TOML.parsefile(toml_path)
+    cfg  = TOML.parsefile(toml_path)
     name = cfg["source"]["name"]
+    ctor = _settings_constructor(name)
+    return _build_met_settings(ctor, cfg, String(root_dir); kwargs...)
+end
 
-    grid_cfg     = get(cfg, "grid",     Dict{String,Any}())
-    vertical_cfg = get(cfg, "vertical", Dict{String,Any}())
+# ---------------------------------------------------------------------------
+# GEOS-IT / GEOS-FP — flat NetCDF archive with a per-day file per collection.
+# ---------------------------------------------------------------------------
+
+function _build_met_settings(ctor::Type{<:GEOSSettings}, cfg::AbstractDict,
+                             root_dir::AbstractString; kwargs...)
+    grid_cfg     = get(cfg, "grid",          Dict{String,Any}())
+    vertical_cfg = get(cfg, "vertical",      Dict{String,Any}())
     pre_cfg      = get(cfg, "preprocessing", Dict{String,Any}())
 
-    coefs = String(get(vertical_cfg, "coefficients_file", "config/geos_L72_coefficients.toml"))
-
-    ctor = _settings_constructor(name)
+    coefs = String(get(vertical_cfg, "coefficients_file",
+                       "config/geos_L72_coefficients.toml"))
     Nc = Int(grid_cfg["Nc"])
     mass_flux_dt = Float64(get(pre_cfg, "mass_flux_dt_seconds", 450.0))
     100.0 <= mass_flux_dt <= 3600.0 || throw(ArgumentError(
@@ -53,16 +65,42 @@ function load_met_settings(toml_path::String;
     if !(400.0 <= mass_flux_dt <= 500.0)
         @warn "[preprocessing] mass_flux_dt_seconds=$(mass_flux_dt) is outside the usual GEOS 400-500 s range."
     end
-    level_orientation = Symbol(get(pre_cfg, "level_orientation", "auto"))
-    include_surface = Bool(get(pre_cfg, "include_surface", false))
-    include_convection = Bool(get(pre_cfg, "include_convection", false))
+    level_orientation    = Symbol(get(pre_cfg, "level_orientation", "auto"))
+    include_surface      = Bool(get(pre_cfg, "include_surface", false))
+    include_convection   = Bool(get(pre_cfg, "include_convection", false))
     include_vdiff_fields = Bool(get(pre_cfg, "include_vdiff_fields", false))
-    physics_dir = String(get(pre_cfg, "physics_dir", ""))
-    physics_layout = Symbol(get(pre_cfg, "physics_layout", "auto"))
+    physics_dir          = String(get(pre_cfg, "physics_dir", ""))
+    physics_layout       = Symbol(get(pre_cfg, "physics_layout", "auto"))
 
-    return ctor(; root_dir = String(root_dir),
+    return ctor(; root_dir,
                   Nc, mass_flux_dt, level_orientation,
                   include_surface, include_convection, include_vdiff_fields,
                   physics_dir, physics_layout,
+                  coefficients_file = coefs, kwargs...)
+end
+
+# ---------------------------------------------------------------------------
+# ERA5 native-GRIB — per-day hourly files split by stream
+# (`ml_an_native_core`, `ml_fc_convection`, `sfc_an_native`). The settings
+# type carries no horizontal `Nc` or `mass_flux_dt` — the source-mesh `Nx`
+# rings come from GRIB headers at read time, and ERA5 is hourly so there is
+# no dynamics-step accumulation analogous to GEOS MFXC/MFYC.
+# ---------------------------------------------------------------------------
+
+function _build_met_settings(ctor::Type{<:ERA5GRIBSettings}, cfg::AbstractDict,
+                             root_dir::AbstractString; kwargs...)
+    vertical_cfg = get(cfg, "vertical",      Dict{String,Any}())
+    pre_cfg      = get(cfg, "preprocessing", Dict{String,Any}())
+
+    coefs = String(get(vertical_cfg, "coefficients_file",
+                       "config/era5_L137_coefficients.toml"))
+    level_orientation    = Symbol(get(pre_cfg, "level_orientation", "top_down"))
+    include_surface      = Bool(get(pre_cfg, "include_surface", false))
+    include_convection   = Bool(get(pre_cfg, "include_convection", false))
+    include_vdiff_fields = Bool(get(pre_cfg, "include_vdiff_fields", false))
+
+    return ctor(; root_dir,
+                  include_surface, include_convection, include_vdiff_fields,
+                  level_orientation,
                   coefficients_file = coefs, kwargs...)
 end

@@ -37,6 +37,7 @@ core_tests = [
     "test_vertical_transforms.jl",
     "test_identity_regrid.jl",
     "test_geos_reader.jl",
+    "test_era5_n320_reader.jl",
     "test_met_source_loader.jl",
     "test_public_api_surface.jl",
     "test_config_matrix_contract.jl",

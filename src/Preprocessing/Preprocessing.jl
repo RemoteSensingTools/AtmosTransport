@@ -224,6 +224,11 @@ include("binary_pipeline.jl")
 # Native GEOS NetCDF reader (Commit 3 of plan indexed-baking-valiant)
 include("sources/geos.jl")
 
+# Native-GRIB ERA5 reader (N320 et al.; breakpoint A — settings, paths,
+# day handles, trait predicates). Window-level decoding lands in later
+# commits on the era5-n320-c180-catrine branch.
+include("sources/era5.jl")
+
 # TOML-driven met-source factory (Commit 4)
 include("sources/loader.jl")
 
@@ -239,7 +244,8 @@ include("transport_binary/cubed_sphere_geos.jl")
 
 # Met source abstraction (Commit 1 of plan indexed-baking-valiant)
 export AbstractMetSettings, RawWindow
-export read_window!, source_grid, windows_per_day, has_convection
+export read_window!, source_grid, windows_per_day
+export has_convection, has_surface, has_vdiff_fields
 export open_day, close_day!, allocate_raw_window
 
 # GEOS native NetCDF reader (Commit 3)
@@ -248,6 +254,11 @@ export GEOSDayHandles, open_geos_day, close_geos_day!
 export GEOSFPNativeDayHandles, geosfp_native_hourly_ctm_path
 export geos_collection_path, detect_level_orientation
 export endpoint_dry_mass, endpoint_dry_mass!
+
+# ERA5 native-GRIB reader (breakpoint A — settings + day handles only).
+export AbstractERA5GRIBSettings, ERA5GRIBSettings, ERA5N320Settings
+export ERA5GRIBDayHandles, open_era5_day, close_era5_day!
+export era5_grib_path
 
 # Met-source TOML factory (Commit 4) + vertical-coordinate helper used by GEOS CLI
 export load_met_settings, load_hybrid_coefficients

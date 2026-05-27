@@ -107,3 +107,13 @@ follow-on once the C180 mass-flux reconstruction lands.
    `(::ERA5N320Settings, ::CubedSphereTargetGeometry)` so the unified
    CLI in `scripts/preprocessing/preprocess_transport_binary.jl` picks
    up the new config without extra plumbing.
+
+   **Note:** this requires either implementing the generic
+   `read_window!(::RawWindow, ::ERA5N320Settings, ::ERA5GRIBDayHandles, …)`
+   for `AbstractMetReader` compatibility, or routing the N320 pipeline
+   through a dedicated `process_day` overload that bypasses
+   `AbstractMetReader` and consumes `ERA5N320ToC180Pipeline` directly.
+   The pipeline-level API on this branch deliberately stays outside the
+   `read_window!` contract — it produces structured per-window output on
+   both the source and target meshes rather than the single-grid
+   `RawWindow` shape, so a thin adapter is the cleanest wiring.

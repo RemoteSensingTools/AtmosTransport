@@ -225,9 +225,11 @@ include("binary_pipeline.jl")
 # Native GEOS NetCDF reader (Commit 3 of plan indexed-baking-valiant)
 include("sources/geos.jl")
 
-# Native-GRIB ERA5 reader (N320 et al.; breakpoint A — settings, paths,
-# day handles, trait predicates). Window-level decoding lands in later
-# commits on the era5-n320-c180-catrine branch.
+# ERA5 native-GRIB reader: N320 settings + day handles, spectral synthesis
+# (VO+D → U/V, LNSP → PS, reduced_gg Q reader), dry-basis layer-mass
+# derivation, convection forecast (UDMF/DDMF/UDRF/DDRF), conservative
+# regrid to a cubed-sphere target, and the per-window pipeline that
+# wires them all together.
 include("sources/era5.jl")
 
 # TOML-driven met-source factory (Commit 4)

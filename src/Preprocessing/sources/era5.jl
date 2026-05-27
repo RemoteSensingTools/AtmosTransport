@@ -14,9 +14,11 @@
 # The reader emits source-grid fields on the N-th reduced linear-Gaussian mesh
 # selected by the `flavor` type parameter.
 #
-# Breakpoint A in this file: settings type, file-path resolution, per-day
-# handle, and `AbstractMetSettings` trait hooks. The window-level GRIB decoder
-# (`read_window!`) and spectral-synthesis plumbing land in subsequent commits.
+# File organisation: settings + day-handle surface near the top, then the
+# per-window spectral synthesis (T / VO / D / LNSP → grid + reduced_gg Q),
+# the dry-mass derivation, the convection forecast reader, the conservative
+# regrid to a cubed-sphere target, and finally the per-window pipeline that
+# wires them together.
 # ===========================================================================
 
 """
@@ -175,6 +177,12 @@ function open_era5_day(settings::AbstractERA5GRIBSettings, date::Date;
         prev_convection_path = isfile(candidate) ? candidate : nothing
     end
 
+    if settings.include_vdiff_fields
+        @warn "ERA5 N320 source has `include_vdiff_fields = true` but the " *
+              "VDIFF payload reader is not yet implemented on this branch; " *
+              "the flag will be ignored and no VDIFF GRIB will be opened." maxlog=1
+    end
+
     return ERA5GRIBDayHandles{typeof(settings)}(
         settings, date,
         core_path, convection_path, surface_path, next_core_path,
@@ -208,7 +216,7 @@ has_convection(s::AbstractERA5GRIBSettings)   = s.include_convection
 has_vdiff_fields(s::AbstractERA5GRIBSettings) = s.include_vdiff_fields
 
 # ===========================================================================
-# Breakpoint B — per-window field synthesis on the N320 source mesh.
+# Per-window field synthesis on the N320 source mesh.
 #
 # Each daily N320 `core` GRIB carries spectral T/VO/D/LNSP and reduced-Gaussian
 # Q across 24 hours × 137 hybrid levels in a single file. For one window the
@@ -308,6 +316,12 @@ Per-window workspace for ERA5 N320 spectral synthesis. Owns:
 The cubes dominate memory: at T = 639 and Nz = 137 each cube is ≈ 0.9 GB.
 Workspaces are intended to be allocated once per day-handle and reused across
 the 24 hours.
+
+Spectral buffers (`vo_spec`, `d_spec`, `t_spec`, `lnsp_spec`, `u_spec`,
+`v_spec`, `synth_cache.P_buf`) are unconditionally `ComplexF64` / `Float64`
+regardless of `FT` — `read_spectral_coeffs!` and `vod2uv!` only operate at
+that precision. `FT` only controls the eltype of the downstream gridpoint
+fields written via [`read_era5_n320_window_fields!`](@ref).
 """
 struct ERA5N320SpectralWorkspace{FT <: AbstractFloat,
                                   G <: ReducedGaussianTargetGeometry{FT}}
@@ -630,7 +644,7 @@ function _divide_by_cos_lat_per_ring!(field::AbstractVector,
 end
 
 # ===========================================================================
-# Breakpoint C — hybrid pressure → dry-air mass on the N320 source grid.
+# Hybrid pressure → dry-air mass on the N320 source grid.
 #
 # Mirrors the GEOS endpoint dry-mass derivation (`endpoint_dry_mass!`) so the
 # dry-basis runtime contract is nominally bit-identical across source paths:
@@ -753,7 +767,7 @@ function derive_n320_dry_mass!(dry::ERA5N320DryMassFields{FT},
 end
 
 # ===========================================================================
-# Breakpoint E — convection forecast fields on the N320 source grid.
+# Convection forecast fields on the N320 source grid.
 #
 # The ERA5 convection product is a forecast bundle: model-level UDMF, DDMF,
 # UDRF, DDRF (param ids 235009-235012, GRIB shortNames `avg_umf`, `avg_dmf`,
@@ -910,7 +924,7 @@ function read_era5_n320_convection_window!(fields::ERA5N320ConvectionFields{FT},
 end
 
 # ===========================================================================
-# Breakpoint D — conservative regrid from N320 source mesh to a C180
+# Conservative regrid from N320 source mesh to a C180
 # cubed-sphere target. Intensive scalars (PS, T, Q, U, V) use the
 # `ConservativeRegridding` weights cached on disk; dry-mass derivation on
 # the C180 target stays a downstream concern (re-derived from regridded
@@ -1140,7 +1154,7 @@ function _synthesize_into_column!(column::AbstractVector,
 end
 
 # ===========================================================================
-# Breakpoint F — per-window end-to-end pipeline.
+# Per-window end-to-end pipeline.
 #
 # Bundles the breakpoint B (spectral synthesis + reduced_gg reader), C
 # (dry-mass), D (regrid to C180), and E (convection) workspaces into a

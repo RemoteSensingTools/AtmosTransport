@@ -73,9 +73,20 @@ function _catrine_path(catrine_root::String, date::Date, hour::Int)
 end
 
 function _summarize_panel(label::String, pipeline_panel::AbstractMatrix,
-                            catrine_panel::AbstractMatrix)
-    diff = Float64.(pipeline_panel) .- Float64.(catrine_panel)
-    @printf "  %s panel diff: mean=%9.3f rms=%9.3f min=%9.3f max=%9.3f\n" label mean(diff) sqrt(mean(diff.^2)) minimum(diff) maximum(diff)
+                            catrine_panel::AbstractMatrix;
+                            catrine_scale::Real = 1.0)
+    n = length(pipeline_panel)
+    n == length(catrine_panel) ||
+        throw(DimensionMismatch("panel size mismatch: $(size(pipeline_panel)) vs $(size(catrine_panel))"))
+    s = 0.0; sq = 0.0; mn = Inf; mx = -Inf
+    @inbounds for i in 1:n
+        d = Float64(pipeline_panel[i]) - catrine_scale * Float64(catrine_panel[i])
+        s  += d
+        sq += d * d
+        mn = min(mn, d)
+        mx = max(mx, d)
+    end
+    @printf "  %s panel diff: mean=%9.3f rms=%9.3f min=%9.3f max=%9.3f\n" label (s / n) sqrt(sq / n) mn mx
 end
 
 function main(args::Vector{String} = ARGS)
@@ -122,23 +133,36 @@ function main(args::Vector{String} = ARGS)
             for p in 1:6
                 _summarize_panel("PS p$p",
                                   pipeline.c180_fields.ps[p],
-                                  ps_factor .* @view(ps_catrine[:, :, p, 1]))
+                                  @view(ps_catrine[:, :, p, 1]);
+                                  catrine_scale = ps_factor)
             end
 
-            # Pipeline T is at L137 native; Catrine T is at L72 when available.
-            # Some Catrine snapshots (e.g. the 06 UTC instantaneous bundle)
-            # carry only the 2D met fields, so the temperature block is
-            # gated on `Met_T` being present.
+            # Pipeline T is at L137 native; Catrine T is at L72. We pick the
+            # ERA5 mid-layer pressure nearest 850 hPa (based on a 1000-hPa
+            # reference surface) and the Catrine level nearest 850 hPa
+            # (Catrine L72 mid-layer pressures aren't in the snapshot, so we
+            # use a precomputed GEOS L72 850-hPa level index k = 56). The
+            # diagnostic is then a per-panel residual at the same physical
+            # level, which is comparable across the two grids.
             if haskey(ds, "Met_T")
                 println()
-                println("T (K) global range — pipeline (L137) vs Catrine (L72):")
-                t_catrine  = Array(ds["Met_T"])
-                t_pipe_all = vcat([vec(pipeline.c180_fields.t[p]) for p in 1:6]...)
-                @printf "  pipeline T: min=%.2f max=%.2f mean=%.2f\n" minimum(t_pipe_all) maximum(t_pipe_all) mean(t_pipe_all)
-                @printf "  catrine T : min=%.2f max=%.2f mean=%.2f\n" minimum(t_catrine) maximum(t_catrine) mean(t_catrine)
+                vc = pipeline.vc
+                ps_ref = 100_000.0   # 1000 hPa reference surface
+                pmid_pipe = [(Float64(vc.A[k]) + Float64(vc.A[k+1]))/2 +
+                              (Float64(vc.B[k]) + Float64(vc.B[k+1]))/2 * ps_ref
+                              for k in 1:size(pipeline.c180_fields.t[1], 3)]
+                k_pipe = argmin(abs.(pmid_pipe .- 85_000.0))
+                k_catrine = 56   # GEOS L72 mid-layer at ~850 hPa (level 56 from surface=72)
+                @printf "T (K) at ~850 hPa — pipeline level %d (Pmid=%.0f Pa) vs Catrine level %d:\n" k_pipe pmid_pipe[k_pipe] k_catrine
+                t_catrine = Array(ds["Met_T"])
+                for p in 1:6
+                    _summarize_panel("T(850) p$p",
+                                      @view(pipeline.c180_fields.t[p][:, :, k_pipe]),
+                                      @view(t_catrine[:, :, p, k_catrine, 1]))
+                end
             else
                 println()
-                println("Met_T not in snapshot — skipping temperature dynamic-range check.")
+                println("Met_T not in snapshot — skipping per-panel 850-hPa T residual.")
             end
 
             # Dry-mass closure on the C180 mesh (re-derived from regridded

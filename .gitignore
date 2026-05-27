@@ -1,5 +1,6 @@
 # Julia
 /Manifest.toml
+/benchmarking/Manifest.toml
 *.jl.cov
 *.jl.mem
 /docs/site/

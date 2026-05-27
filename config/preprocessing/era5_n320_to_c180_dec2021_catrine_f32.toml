@@ -1,0 +1,45 @@
+# ===========================================================================
+# ERA5 native N320 GRIB → C180 GEOS-native cubed-sphere preprocess
+# (Dec 2021 Catrine validation).
+#
+# Drives the per-window pipeline assembled in
+# `src/Preprocessing/sources/era5.jl`:
+#
+#   1. Spectral synthesis of VO + D → U/V, T, LNSP → PS on the N320 mesh
+#   2. Q read directly from `gridType = reduced_gg`
+#   3. Hybrid-σ dry-mass derivation (matches the GEOS endpoint convention)
+#   4. Convective forecast UDMF/DDMF/UDRF/DDRF on the N320 mesh
+#   5. Conservative regrid of PS / U / V / T / Q from N320 to C180
+#
+# The downstream binary write (mass-flux reconstruction, panel-local wind
+# rotation, Poisson balance, v4 contract) is the natural follow-on commit;
+# it builds on `src/Preprocessing/transport_binary/cubed_sphere_regrid.jl`.
+#
+# Validated against the Catrine GEOS-Chem snapshots at
+# `~/data/AtmosTransport/catrine-geoschem-runs/` (which are C180 × L72).
+# ===========================================================================
+
+[source]
+name                 = "ERA5-N320"
+root_dir             = "/home/cfranken/data/AtmosTransport/met/era5/N320/hourly/raw"
+include_surface      = true
+include_convection   = true
+include_vdiff_fields = true
+
+[vertical]
+coefficients_file = "config/era5_L137_coefficients.toml"
+
+[output]
+directory  = "/home/cfranken/data/AtmosTransport/met/era5/n320_to_c180/transport_binary_dec2021_catrine_f32"
+mass_basis = "dry"
+
+[grid]
+type                = "cubed_sphere"
+Nc                  = 180
+panel_convention    = "geos_native"
+definition          = "gmao"
+regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
+
+[numerics]
+float_type     = "Float32"
+dt_met_seconds = 3600.0

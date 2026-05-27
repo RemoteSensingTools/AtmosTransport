@@ -42,6 +42,7 @@ core_tests = [
     "test_era5_n320_dry_mass.jl",
     "test_era5_n320_to_c180_regrid.jl",
     "test_era5_n320_convection.jl",
+    "test_era5_n320_to_c180_pipeline.jl",
     "test_met_source_loader.jl",
     "test_public_api_surface.jl",
     "test_config_matrix_contract.jl",

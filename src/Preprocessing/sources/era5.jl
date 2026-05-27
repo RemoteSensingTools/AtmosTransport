@@ -1138,3 +1138,127 @@ function _synthesize_into_column!(column::AbstractVector,
     end
     return column
 end
+
+# ===========================================================================
+# Breakpoint F — per-window end-to-end pipeline.
+#
+# Bundles the breakpoint B (spectral synthesis + reduced_gg reader), C
+# (dry-mass), D (regrid to C180), and E (convection) workspaces into a
+# single per-window driver. Produces the regridded C180 scalar fields
+# plus per-cell dry-mass and convection forecast fields on the N320
+# source mesh that downstream consumers (binary writer, diagnostic
+# notebooks) can pick up.
+#
+# Mass-flux reconstruction, panel-local wind rotation, Poisson balance,
+# and v4 binary writing are *not* part of this commit. They build on the
+# existing `cubed_sphere_regrid.jl` LL→CS pipeline and are the natural
+# follow-on once the per-window scalar surface is stable.
+# ===========================================================================
+
+"""
+    ERA5N320ToC180Pipeline{FT, RW, CSGrid, SrcGrid}
+
+All-in-one container for the per-day ERA5 N320 → C180 preprocessing
+workspace. Holds the source-grid descriptor, the hybrid coordinate, the
+shared per-cell area vector, every read/derive/regrid workspace from
+breakpoints B-D, the convection workspace from E, and the per-window
+output fields on both the source mesh and the C180 target.
+
+One pipeline allocated per day-handle, reused across the 24 hourly windows.
+"""
+struct ERA5N320ToC180Pipeline{FT <: AbstractFloat,
+                               RW <: ERA5C180RegridWorkspace{FT},
+                               CSGrid <: CubedSphereTargetGeometry{FT},
+                               SrcGrid <: ReducedGaussianTargetGeometry{FT}}
+    source_grid       :: SrcGrid
+    target_grid       :: CSGrid
+    vc                :: HybridSigmaPressure
+    cell_areas        :: Vector{Float64}
+    spectral_ws       :: ERA5N320SpectralWorkspace{FT}
+    regrid_ws         :: RW
+    window_fields     :: ERA5N320WindowFields{FT}
+    dry_fields        :: ERA5N320DryMassFields{FT}
+    convection_fields :: Union{Nothing, ERA5N320ConvectionFields{FT}}
+    c180_fields       :: ERA5C180RegridFields{FT}
+end
+
+"""
+    allocate_era5_n320_to_c180_pipeline(handles, target_grid;
+                                        Nz=ERA5_NATIVE_LEVEL_COUNT,
+                                        cache_dir=nothing,
+                                        include_convection=true)
+
+Build the full per-window pipeline for the ERA5 source described by
+`handles` (resolved via [`open_era5_day`](@ref)) and the C-tier target
+`target_grid`. Discovers the source mesh and spectral truncation from
+the day's core GRIB, loads the hybrid coordinate file declared in the
+settings, builds (or JLD2-loads from `cache_dir`) the conservative
+regridder, and allocates every B/C/D/E workspace.
+
+Convection workspace allocation is gated on `include_convection` so the
+caller can opt out for a scalar-only smoke.
+"""
+function allocate_era5_n320_to_c180_pipeline(handles::ERA5GRIBDayHandles,
+                                                target_grid::CubedSphereTargetGeometry{FT};
+                                                Nz::Integer = ERA5_NATIVE_LEVEL_COUNT,
+                                                cache_dir::Union{Nothing, AbstractString} = nothing,
+                                                include_convection::Bool = true) where FT
+    Nz_int = Int(Nz)
+    Nz_int >= 1 || throw(ArgumentError("Nz must be ≥ 1, got $Nz"))
+
+    source_grid = discover_era5_n320_source_grid(handles.core_path; FT = FT)
+    T_trunc     = discover_era5_spectral_truncation(handles.core_path)
+    vc          = load_hybrid_coefficients(handles.settings.coefficients_file)
+    length(vc.A) == length(vc.B) == Nz_int + 1 ||
+        throw(DimensionMismatch("hybrid A/B length $(length(vc.A))/$(length(vc.B)) ≠ Nz+1 = $(Nz_int + 1); " *
+                                "check `settings.coefficients_file` vs the requested Nz"))
+
+    cell_areas    = n320_cell_areas(source_grid)
+    spectral_ws   = allocate_era5_n320_spectral_workspace(source_grid, T_trunc, Nz_int)
+    regrid_ws     = allocate_era5_c180_regrid_workspace(source_grid, target_grid, Nz_int;
+                                                          cache_dir = cache_dir)
+    window_fields = allocate_era5_n320_window_fields(source_grid, Nz_int)
+    dry_fields    = allocate_era5_n320_dry_mass_fields(source_grid, Nz_int)
+    convection_fields = include_convection ?
+        allocate_era5_n320_convection_fields(source_grid, Nz_int) : nothing
+    c180_fields   = allocate_era5_c180_regrid_fields(target_grid, Nz_int)
+
+    return ERA5N320ToC180Pipeline{FT, typeof(regrid_ws), typeof(target_grid), typeof(source_grid)}(
+        source_grid, target_grid, vc, cell_areas,
+        spectral_ws, regrid_ws,
+        window_fields, dry_fields, convection_fields, c180_fields)
+end
+
+"""
+    process_era5_n320_window!(pipeline, handles, date, hour) -> pipeline
+
+Drive the per-window pipeline for `(date, hour)`:
+
+  1. Synthesise PS / U / V / T / Q on the N320 source mesh (breakpoint B).
+  2. Derive dry-air mass + DELP_dry + PS_dry on the source mesh (breakpoint C).
+  3. Optionally read UDMF / DDMF / UDRF / DDRF for the matching forecast
+     sample (breakpoint E), if the pipeline was built with
+     `include_convection = true`.
+  4. Conservatively regrid PS / U / V / T / Q to the C-tier target
+     (breakpoint D).
+
+After the call, `pipeline.window_fields`, `pipeline.dry_fields`,
+`pipeline.convection_fields`, and `pipeline.c180_fields` carry the
+window's data on their respective grids.
+"""
+function process_era5_n320_window!(pipeline::ERA5N320ToC180Pipeline,
+                                     handles::ERA5GRIBDayHandles,
+                                     date::Date,
+                                     hour::Integer)
+    read_era5_n320_window_fields!(pipeline.window_fields, pipeline.spectral_ws,
+                                    handles, date, hour)
+    derive_n320_dry_mass!(pipeline.dry_fields, pipeline.window_fields,
+                           pipeline.vc, pipeline.cell_areas)
+    if pipeline.convection_fields !== nothing
+        read_era5_n320_convection_window!(pipeline.convection_fields, handles,
+                                            pipeline.source_grid.mesh, date, hour)
+    end
+    regrid_n320_to_c180!(pipeline.c180_fields, pipeline.window_fields,
+                           pipeline.regrid_ws, pipeline.target_grid)
+    return pipeline
+end

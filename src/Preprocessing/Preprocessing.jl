@@ -272,6 +272,8 @@ export ERA5C180RegridFields, ERA5C180RegridWorkspace,
        regrid_n320_to_c180!
 export ERA5N320ConvectionFields, allocate_era5_n320_convection_fields,
        read_era5_n320_convection_window!, era5_convection_hour_address
+export ERA5N320ToC180Pipeline, allocate_era5_n320_to_c180_pipeline,
+       process_era5_n320_window!
 
 # Met-source TOML factory (Commit 4) + vertical-coordinate helper used by GEOS CLI
 export load_met_settings, load_hybrid_coefficients

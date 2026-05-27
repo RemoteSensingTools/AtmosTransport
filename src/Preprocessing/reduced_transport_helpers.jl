@@ -297,11 +297,13 @@ end
 function spectral_to_ring!(dest::AbstractVector{Float64},
                            spec::AbstractMatrix{ComplexF64},
                            T::Int,
-                           lat_deg::Float64,
+                           lat_deg::Real,
                            cache::ReducedSpectralThreadCache;
-                           lon_shift_rad::Float64 = 0.0)
+                           lon_shift_rad::Real = 0.0)
     Nlon = length(dest)
-    compute_legendre_column!(cache.P_buf, T, sind(lat_deg))
+    lat_deg64 = Float64(lat_deg)
+    lon_shift_rad64 = Float64(lon_shift_rad)
+    compute_legendre_column!(cache.P_buf, T, sind(lat_deg64))
     fft_buf = _fft_buffer!(cache, Nlon)
     fill!(fft_buf, zero(ComplexF64))
 
@@ -310,8 +312,8 @@ function spectral_to_ring!(dest::AbstractVector{Float64},
         @inbounds for n in m:T
             Gm += spec[n + 1, m + 1] * cache.P_buf[n + 1, m + 1]
         end
-        if lon_shift_rad != 0.0 && m > 0
-            Gm *= exp(im * m * lon_shift_rad)
+        if lon_shift_rad64 != 0.0 && m > 0
+            Gm *= exp(im * m * lon_shift_rad64)
         end
         fft_buf[m + 1] = Gm
     end

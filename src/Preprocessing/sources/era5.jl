@@ -739,6 +739,210 @@ function derive_n320_dry_mass!(dry::ERA5N320DryMassFields{FT},
     return dry
 end
 
+# ===========================================================================
+# Breakpoint D — conservative regrid from N320 source mesh to a C180
+# cubed-sphere target. Intensive scalars (PS, T, Q, U, V) use the
+# `ConservativeRegridding` weights cached on disk; dry-mass derivation on
+# the C180 target stays a downstream concern (re-derived from regridded
+# PS + Q in the breakpoint-F glue) so the regridder operates on a small
+# fixed set of fields.
+# ===========================================================================
+
+"""
+    ERA5C180RegridFields{FT}
+
+Per-window output container for fields regridded onto the C180 cubed-sphere
+target. Holds:
+
+  - `ps` — 2D `(Nc, Nc)` matrix per panel (Pa, moist surface pressure),
+  - `u`, `v`, `t`, `qv` — 3D `(Nc, Nc, Nz)` arrays per panel (U/V in
+    geographic east/north frame; rotation to panel-local axes happens in
+    the breakpoint-F glue where the panel basis is known).
+
+Mass fields (m_dry, delp_dry, ps_dry) are *not* regridded directly; they
+are re-derived on the C180 mesh from the regridded PS + Q so that
+`Σ_k DELP_dry == PS_dry` to roundoff on the target side as well.
+"""
+struct ERA5C180RegridFields{FT <: AbstractFloat}
+    ps :: NTuple{6, Matrix{FT}}
+    u  :: NTuple{6, Array{FT, 3}}
+    v  :: NTuple{6, Array{FT, 3}}
+    t  :: NTuple{6, Array{FT, 3}}
+    qv :: NTuple{6, Array{FT, 3}}
+end
+
+function allocate_era5_c180_regrid_fields(target_grid::CubedSphereTargetGeometry{FT},
+                                            Nz::Integer) where FT
+    Nz >= 1 || throw(ArgumentError("Nz must be ≥ 1, got $Nz"))
+    Nc = target_grid.mesh.Nc
+    Nz_int = Int(Nz)
+    return ERA5C180RegridFields{FT}(
+        ntuple(_ -> zeros(FT, Nc, Nc), 6),
+        ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6),
+        ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6),
+        ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6),
+        ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6),
+    )
+end
+
+"""
+    ERA5C180RegridWorkspace{FT, R}
+
+Owns the conservative regridder + flat scratch buffers used by
+[`regrid_n320_to_c180!`](@ref). Allocated once per (source_grid,
+target_grid) pair and reused across every window.
+"""
+struct ERA5C180RegridWorkspace{FT <: AbstractFloat, R}
+    regridder    :: R
+    src_flat_2d  :: Vector{Float64}
+    src_flat_3d  :: Matrix{Float64}
+    dst_flat_2d  :: Vector{Float64}
+    dst_flat_3d  :: Matrix{Float64}
+end
+
+"""
+    allocate_era5_c180_regrid_workspace(source_grid, target_grid, Nz; cache_dir=nothing)
+
+Build (or load from `cache_dir`) the N320 → C180 conservative regridder and
+allocate the flat scratch buffers. The regridder's `intersections` matrix is
+the expensive piece — on first run it is built and serialised to JLD2 under
+`cache_dir`, and subsequent runs load it in milliseconds.
+"""
+function allocate_era5_c180_regrid_workspace(source_grid::ReducedGaussianTargetGeometry{FT},
+                                                target_grid::CubedSphereTargetGeometry{FT},
+                                                Nz::Integer;
+                                                cache_dir::Union{Nothing, AbstractString} = nothing) where FT
+    Nz >= 1 || throw(ArgumentError("Nz must be ≥ 1, got $Nz"))
+    Nz_int = Int(Nz)
+    regridder = build_regridder(source_grid.mesh, target_grid.mesh;
+                                 normalize = false,
+                                 cache_dir = cache_dir)
+    n_src = length(regridder.src_areas)
+    n_dst = length(regridder.dst_areas)
+    n_src == ncells(source_grid.mesh) ||
+        throw(DimensionMismatch("regridder src_areas length $n_src ≠ N320 cells $(ncells(source_grid.mesh))"))
+    n_dst == ncells(target_grid.mesh) ||
+        throw(DimensionMismatch("regridder dst_areas length $n_dst ≠ C180 cells $(ncells(target_grid.mesh))"))
+    return ERA5C180RegridWorkspace{FT, typeof(regridder)}(
+        regridder,
+        zeros(Float64, n_src),               # src_flat_2d
+        zeros(Float64, n_src, Nz_int),       # src_flat_3d
+        zeros(Float64, n_dst),               # dst_flat_2d
+        zeros(Float64, n_dst, Nz_int),       # dst_flat_3d
+    )
+end
+
+"""
+    regrid_n320_to_c180!(c180_fields, n320_window, workspace, target_grid) -> c180_fields
+
+Conservatively regrid PS (2D) and U, V, T, Q (3D) from the N320 source mesh
+to the C180 cubed-sphere target. All five fields are intensive scalars; the
+regridder weights apply directly. The flat scratch buffers in `workspace`
+hold the intermediate Float64 arrays so the call is allocation-free after
+warm-up.
+"""
+function regrid_n320_to_c180!(c180_fields::ERA5C180RegridFields{FT},
+                                n320_window::ERA5N320WindowFields,
+                                workspace::ERA5C180RegridWorkspace{FT},
+                                target_grid::CubedSphereTargetGeometry{FT}) where FT
+    Nc = target_grid.mesh.Nc
+    Nz = size(n320_window.u, 2)
+    size(workspace.src_flat_3d, 2) == Nz ||
+        throw(DimensionMismatch("workspace Nz $(size(workspace.src_flat_3d, 2)) ≠ window Nz $Nz"))
+    size(workspace.dst_flat_3d, 2) == Nz ||
+        throw(DimensionMismatch("workspace dst Nz $(size(workspace.dst_flat_3d, 2)) ≠ $Nz"))
+
+    # PS — 2D intensive field.
+    _regrid_2d_intensive!(workspace.dst_flat_2d, workspace.src_flat_2d,
+                           workspace.regridder, n320_window.ps)
+    _unpack_flat_to_cs_panels_2d!(c180_fields.ps, workspace.dst_flat_2d, Nc)
+
+    # 3D intensive fields — all share the same workspace scratch.
+    for (src_field, dst_panels) in (
+            (n320_window.u,  c180_fields.u),
+            (n320_window.v,  c180_fields.v),
+            (n320_window.t,  c180_fields.t),
+            (n320_window.qv, c180_fields.qv))
+        _regrid_3d_intensive!(workspace.dst_flat_3d, workspace.src_flat_3d,
+                               workspace.regridder, src_field)
+        _unpack_flat_to_cs_panels_3d!(dst_panels, workspace.dst_flat_3d, Nc, Nz)
+    end
+
+    return c180_fields
+end
+
+# ---------------------------------------------------------------------------
+# Internal regrid helpers.
+# ---------------------------------------------------------------------------
+
+"""Conservative regrid of a 2D intensive field into the flat `n_dst` output
+buffer via the workspace-owned Float64 `src_scratch`. The single `copyto!`
+handles any Float32 → Float64 promotion that `apply_regridder!`'s sparse-
+matmul requires."""
+function _regrid_2d_intensive!(dst_flat::AbstractVector{Float64},
+                                src_scratch::AbstractVector{Float64},
+                                regridder,
+                                src::AbstractVector)
+    length(src_scratch) == length(src) ||
+        throw(DimensionMismatch("src_scratch length $(length(src_scratch)) ≠ source $(length(src))"))
+    copyto!(src_scratch, src)
+    apply_regridder!(dst_flat, regridder, src_scratch)
+    return dst_flat
+end
+
+"""Conservative regrid of a 3D intensive field stored as `(n_src, Nz)` into
+the flat `(n_dst, Nz)` output. `apply_regridder!` accepts `AbstractMatrix`
+sources and iterates the column dimension internally — the workspace
+`src_scratch` only exists to materialise a Float64 view of a Float32
+source (one `copyto!`) without per-window allocation."""
+function _regrid_3d_intensive!(dst_flat::AbstractMatrix{Float64},
+                                src_scratch::AbstractMatrix{Float64},
+                                regridder,
+                                src::AbstractMatrix)
+    size(src_scratch) == size(src) ||
+        throw(DimensionMismatch("src_scratch size $(size(src_scratch)) ≠ source $(size(src))"))
+    copyto!(src_scratch, src)
+    apply_regridder!(dst_flat, regridder, src_scratch)
+    return dst_flat
+end
+
+"""Unpack a flat `n_dst = 6 × Nc²` vector into 6 panels of `(Nc, Nc)`. The
+CS mesh enumerates cells panel-major in column-major Julia order within each
+panel: `flat_index = (p-1)·Nc² + (j-1)·Nc + i`, and
+`panel[i, j] = flat[offset + (j-1)·Nc + i]`."""
+function _unpack_flat_to_cs_panels_2d!(panels::NTuple{6, Matrix{FT}},
+                                        flat::AbstractVector{Float64},
+                                        Nc::Int) where FT
+    length(flat) == 6 * Nc * Nc ||
+        throw(DimensionMismatch("flat length $(length(flat)) ≠ 6×$Nc² = $(6*Nc*Nc)"))
+    @inbounds for p in 1:6
+        panel = panels[p]
+        offset = (p - 1) * Nc * Nc
+        for j in 1:Nc, i in 1:Nc
+            panel[i, j] = FT(flat[offset + (j - 1) * Nc + i])
+        end
+    end
+    return panels
+end
+
+"""Unpack a flat `(n_dst, Nz)` matrix into 6 panels of `(Nc, Nc, Nz)`."""
+function _unpack_flat_to_cs_panels_3d!(panels::NTuple{6, Array{FT, 3}},
+                                        flat::AbstractMatrix{Float64},
+                                        Nc::Int, Nz::Int) where FT
+    size(flat, 1) == 6 * Nc * Nc ||
+        throw(DimensionMismatch("flat rows $(size(flat, 1)) ≠ 6×$Nc² = $(6*Nc*Nc)"))
+    size(flat, 2) == Nz ||
+        throw(DimensionMismatch("flat cols $(size(flat, 2)) ≠ Nz=$Nz"))
+    @inbounds for p in 1:6
+        panel = panels[p]
+        offset = (p - 1) * Nc * Nc
+        for k in 1:Nz, j in 1:Nc, i in 1:Nc
+            panel[i, j, k] = FT(flat[offset + (j - 1) * Nc + i, k])
+        end
+    end
+    return panels
+end
+
 # ---------------------------------------------------------------------------
 # Internal helpers carried over from breakpoint B.
 # ---------------------------------------------------------------------------

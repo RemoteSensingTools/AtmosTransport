@@ -267,6 +267,9 @@ export discover_era5_n320_source_grid, discover_era5_spectral_truncation
 export read_era5_n320_window_fields!
 export ERA5N320DryMassFields, allocate_era5_n320_dry_mass_fields,
        derive_n320_dry_mass!, n320_cell_areas
+export ERA5C180RegridFields, ERA5C180RegridWorkspace,
+       allocate_era5_c180_regrid_fields, allocate_era5_c180_regrid_workspace,
+       regrid_n320_to_c180!
 
 # Met-source TOML factory (Commit 4) + vertical-coordinate helper used by GEOS CLI
 export load_met_settings, load_hybrid_coefficients

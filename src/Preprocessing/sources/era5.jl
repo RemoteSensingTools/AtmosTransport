@@ -107,12 +107,18 @@ likewise `surface_path` is `nothing` unless `settings.include_surface` is set.
 the available archive).
 """
 struct ERA5GRIBDayHandles{S <: AbstractERA5GRIBSettings}
-    settings        :: S
-    date            :: Date
-    core_path       :: String
-    convection_path :: Union{Nothing, String}
-    surface_path    :: Union{Nothing, String}
-    next_core_path  :: Union{Nothing, String}
+    settings             :: S
+    date                 :: Date
+    core_path            :: String
+    convection_path      :: Union{Nothing, String}
+    surface_path         :: Union{Nothing, String}
+    next_core_path       :: Union{Nothing, String}
+    # Previous-day convection file. ERA5 convection forecasts run from 06 UTC
+    # and 18 UTC bases with 1-12 h steps; hours 0..5 of `date` are covered
+    # by the previous day's 18 UTC base (steps 6..11). For dates at the
+    # start of an archive (where date-1 isn't downloaded) this stays
+    # `nothing` and the convection reader rejects requests for hours 0..5.
+    prev_convection_path :: Union{Nothing, String}
 end
 
 const ERA5_VALID_LEVEL_ORIENTATIONS = (:top_down, :bottom_up)
@@ -163,9 +169,16 @@ function open_era5_day(settings::AbstractERA5GRIBSettings, date::Date;
         next_core_path = isfile(candidate) ? candidate : nothing
     end
 
+    prev_convection_path = nothing
+    if settings.include_convection
+        candidate = era5_grib_path(settings, date - Day(1), :convection)
+        prev_convection_path = isfile(candidate) ? candidate : nothing
+    end
+
     return ERA5GRIBDayHandles{typeof(settings)}(
         settings, date,
-        core_path, convection_path, surface_path, next_core_path)
+        core_path, convection_path, surface_path, next_core_path,
+        prev_convection_path)
 end
 
 """
@@ -737,6 +750,163 @@ function derive_n320_dry_mass!(dry::ERA5N320DryMassFields{FT},
         dry.ps_dry[c] = FT(dry.ps_dry_acc[c])
     end
     return dry
+end
+
+# ===========================================================================
+# Breakpoint E — convection forecast fields on the N320 source grid.
+#
+# The ERA5 convection product is a forecast bundle: model-level UDMF, DDMF,
+# UDRF, DDRF (param ids 235009-235012, GRIB shortNames `avg_umf`, `avg_dmf`,
+# `avg_udr`, `avg_ddr`) archived twice daily from 06 UTC and 18 UTC bases,
+# each carrying hourly time-mean values for steps 1..12. One UTC day of
+# windowed transport-binary output is covered by:
+#
+#   hour 0..5  → previous-day `era5_convection_(D-1).grib`, 18 UTC base,
+#                stepRange "$(h+6)-$(h+7)"
+#   hour 6..17 → today's `era5_convection_D.grib`,           06 UTC base,
+#                stepRange "$(h-6)-$(h-5)"
+#   hour 18..23 → today's `era5_convection_D.grib`,          18 UTC base,
+#                 stepRange "$(h-18)-$(h-17)"
+#
+# All four fields live on the N320 reduced_gg mesh — same layout as Q. The
+# reader reuses `_reorder_grib_reduced_gg_to_mesh!` to flip the ring axis
+# from the GRIB's native N→S to the mesh's S→N convention.
+# ===========================================================================
+
+"""
+    ERA5N320ConvectionFields{FT}
+
+Per-window convection forecast fields on the N320 source mesh. All four
+fields are `(n_cells, Nz)`:
+
+  - `udmf` — updraft convective mass flux (kg m⁻² s⁻¹)
+  - `ddmf` — downdraft convective mass flux (kg m⁻² s⁻¹)
+  - `udrf` — updraft detrainment rate (kg m⁻³ s⁻¹)
+  - `ddrf` — downdraft detrainment rate (kg m⁻³ s⁻¹)
+
+Downstream conversion to GEOS-style CMFMC + DTRAIN (or TM5-style entu/entd)
+happens in the breakpoint-F glue once both source and target geometries
+are known.
+"""
+struct ERA5N320ConvectionFields{FT <: AbstractFloat}
+    udmf :: Matrix{FT}
+    ddmf :: Matrix{FT}
+    udrf :: Matrix{FT}
+    ddrf :: Matrix{FT}
+end
+
+function allocate_era5_n320_convection_fields(source_grid::ReducedGaussianTargetGeometry{FT},
+                                                Nz::Integer) where FT
+    Nz >= 1 || throw(ArgumentError("Nz must be ≥ 1, got $Nz"))
+    nc = ncells(source_grid.mesh)
+    return ERA5N320ConvectionFields{FT}(
+        zeros(FT, nc, Int(Nz)),
+        zeros(FT, nc, Int(Nz)),
+        zeros(FT, nc, Int(Nz)),
+        zeros(FT, nc, Int(Nz)),
+    )
+end
+
+"""
+    era5_convection_hour_address(hour) -> (use_prev_day, data_time_hhmm, step_range)
+
+Map a UTC hour `h ∈ 0..23` to the GRIB header tuple that addresses the
+matching ECMWF convection forecast sample (see `read_era5_n320_convection_window!`
+docstring for the cycle layout). Returns `(::Bool, ::Int, ::String)`.
+"""
+function era5_convection_hour_address(hour::Integer)
+    0 <= hour <= 23 || throw(ArgumentError("hour must be in 0..23, got $hour"))
+    h = Int(hour)
+    if h < 6
+        return (true,  1800, "$(h + 6)-$(h + 7)")
+    elseif h < 18
+        return (false,  600, "$(h - 6)-$(h - 5)")
+    else
+        return (false, 1800, "$(h - 18)-$(h - 17)")
+    end
+end
+
+# Maps ERA5 GRIB shortName → field slot in `ERA5N320ConvectionFields`.
+const _ERA5_CONVECTION_SHORT_NAMES = (
+    avg_umf = :udmf,
+    avg_dmf = :ddmf,
+    avg_udr = :udrf,
+    avg_ddr = :ddrf,
+)
+
+"""
+    read_era5_n320_convection_window!(fields, handles, mesh, date, hour) -> fields
+
+Fill `fields` with one hour's worth of N320 convection forecast fields for
+`(date, hour)`. The reader picks `handles.convection_path` or
+`handles.prev_convection_path` based on the hour-address mapping and
+forward-iterates that file, matching messages whose `(dataTime, stepRange,
+shortName)` triple falls within the requested sample. Each matching message
+is decoded directly into the appropriate `(n_cells, Nz)` output slot via
+`_reorder_grib_reduced_gg_to_mesh!`.
+
+Completeness gates name the missing field in any error so a corrupt or
+partial download is immediately visible. All four fields × 137 levels must
+be present for the call to succeed.
+"""
+function read_era5_n320_convection_window!(fields::ERA5N320ConvectionFields{FT},
+                                            handles::ERA5GRIBDayHandles,
+                                            mesh::ReducedGaussianMesh,
+                                            date::Date,
+                                            hour::Integer) where FT
+    handles.convection_path !== nothing ||
+        error("ERA5 convection read requested but settings.include_convection=false")
+
+    use_prev, data_time, step_range = era5_convection_hour_address(hour)
+    path = if use_prev
+        handles.prev_convection_path !== nothing ||
+            error("ERA5 convection hour $hour of $(date) needs the previous-day file " *
+                  "($(date - Day(1)) era5_convection*.grib) which is not on disk")
+        handles.prev_convection_path
+    else
+        handles.convection_path
+    end
+
+    nc, Nz = size(fields.udmf)
+    nc == ncells(mesh) ||
+        throw(DimensionMismatch("fields.udmf rows $nc ≠ ncells(mesh) $(ncells(mesh))"))
+
+    # NamedTuple of (slot_symbol → output Matrix) and (slot_symbol → completion
+    # BitVector). The shared `field_slot` symbol indexes both, so adding a
+    # fifth convection field is a one-liner here and in
+    # `_ERA5_CONVECTION_SHORT_NAMES`.
+    field_matrices = (udmf = fields.udmf, ddmf = fields.ddmf,
+                       udrf = fields.udrf, ddrf = fields.ddrf)
+    have = (udmf = falses(Nz), ddmf = falses(Nz),
+            udrf = falses(Nz), ddrf = falses(Nz))
+
+    GribFile(path) do gf
+        for msg in gf
+            Int(msg["dataTime"]) == data_time || continue
+            String(msg["stepRange"]) == step_range || continue
+            short_name = String(msg["shortName"])
+            field_slot = get(_ERA5_CONVECTION_SHORT_NAMES, Symbol(short_name), nothing)
+            field_slot === nothing && continue
+
+            level = Int(msg["level"])
+            1 <= level <= Nz || continue
+
+            vals = msg["values"]
+            pl   = msg["pl"]
+            _reorder_grib_reduced_gg_to_mesh!(
+                view(getproperty(field_matrices, field_slot), :, level),
+                vals, pl, mesh)
+            getproperty(have, field_slot)[level] = true
+        end
+    end
+
+    for name in propertynames(have)
+        bits = getproperty(have, name)
+        all(bits) || error("ERA5 convection read: $(uppercase(string(name))) missing for " *
+                            "$(date) hour $hour at levels $(findall(!, bits))")
+    end
+
+    return fields
 end
 
 # ===========================================================================

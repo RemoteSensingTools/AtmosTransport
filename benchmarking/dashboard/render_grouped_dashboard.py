@@ -1,0 +1,362 @@
+#!/usr/bin/env python3
+"""Render a compact benchmark dashboard from github-action-benchmark data."""
+
+from __future__ import annotations
+
+import json
+import re
+import sys
+from pathlib import Path
+
+
+DATA_PREFIX = "window.BENCHMARK_DATA = "
+
+
+def _load_data(path: Path) -> dict:
+    text = path.read_text()
+    if not text.startswith(DATA_PREFIX):
+        raise SystemExit(f"{path} does not look like github-action-benchmark data.js")
+    payload = text[len(DATA_PREFIX):].strip()
+    if payload.endswith(";"):
+        payload = payload[:-1]
+    return json.loads(payload)
+
+
+def _write_html(path: Path) -> None:
+    html = r"""<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AtmosTransport Benchmarks</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --border: #d6d9de;
+        --text: #20242a;
+        --muted: #59616d;
+        --band: #f6f8fa;
+      }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: var(--text);
+        background: white;
+      }
+      header {
+        padding: 16px 20px 10px;
+        border-bottom: 1px solid var(--border);
+      }
+      h1 {
+        margin: 0 0 6px;
+        font-size: 24px;
+        font-weight: 650;
+      }
+      .meta {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      main {
+        padding: 16px 20px 28px;
+      }
+      .toolbar {
+        display: flex;
+        gap: 14px;
+        flex-wrap: wrap;
+        align-items: center;
+        margin-bottom: 14px;
+        font-size: 13px;
+      }
+      select {
+        font: inherit;
+        padding: 4px 8px;
+      }
+      .row-title {
+        margin: 18px 0 8px;
+        font-size: 18px;
+        font-weight: 650;
+      }
+      .grid-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 14px;
+        align-items: stretch;
+      }
+      .panel {
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 10px 12px 12px;
+        min-height: 340px;
+      }
+      .panel h3 {
+        margin: 0 0 8px;
+        font-size: 15px;
+        font-weight: 650;
+      }
+      .chart-wrap {
+        position: relative;
+        height: 300px;
+      }
+      .summary {
+        margin-top: 10px;
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      .summary th,
+      .summary td {
+        padding: 5px 6px;
+        border-bottom: 1px solid #e8eaed;
+        text-align: right;
+      }
+      .summary th:first-child,
+      .summary td:first-child {
+        text-align: left;
+      }
+      .summary tbody tr:nth-child(odd) {
+        background: var(--band);
+      }
+      .empty {
+        color: var(--muted);
+        font-size: 13px;
+        padding: 20px 0;
+      }
+      a {
+        color: #0969da;
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      @media (max-width: 900px) {
+        .grid-row {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>AtmosTransport Benchmarks</h1>
+      <div class="meta">
+        Last update: <span id="last-update"></span> ·
+        <a id="repo-link" rel="noopener"></a> ·
+        <a href="data.js">raw dashboard data</a>
+      </div>
+    </header>
+    <main>
+      <div class="toolbar">
+        <label>Operator <select id="operator-select"></select></label>
+        <label>Tracers <select id="tracer-select"></select></label>
+        <label>Metric <select id="metric-select">
+          <option value="time">Time per step</option>
+          <option value="throughput">Cell-tracer updates/s</option>
+        </select></label>
+      </div>
+      <section>
+        <div class="row-title">C24, C90, C180</div>
+        <div class="grid-row">
+          <div class="panel"><h3>CPU</h3><div class="chart-wrap"><canvas id="small-cpu"></canvas></div><table class="summary" id="small-cpu-table"></table></div>
+          <div class="panel"><h3>GPU</h3><div class="chart-wrap"><canvas id="small-gpu"></canvas></div><table class="summary" id="small-gpu-table"></table></div>
+        </div>
+      </section>
+      <section>
+        <div class="row-title">C360, C720</div>
+        <div class="grid-row">
+          <div class="panel"><h3>CPU</h3><div class="chart-wrap"><canvas id="large-cpu"></canvas></div><table class="summary" id="large-cpu-table"></table></div>
+          <div class="panel"><h3>GPU</h3><div class="chart-wrap"><canvas id="large-gpu"></canvas></div><table class="summary" id="large-gpu-table"></table></div>
+        </div>
+      </section>
+    </main>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@2.9.2/dist/Chart.min.js"></script>
+    <script src="data.js"></script>
+    <script>
+      "use strict";
+
+      const colors = {
+        C24: "#0969da",
+        C90: "#1a7f37",
+        C180: "#bf8700",
+        C360: "#8250df",
+        C720: "#cf222e",
+      };
+      const charts = {};
+      const mainCaseRe = /^(CPU|CUDA|Metal) Synthetic CS Sweep \/ (C\d+) L\d+ ([^ ]+) (\d+)tr \/ (CPU-[^/]+|GPU-[^/]+) \/ ([^/]+)$/;
+
+      function parseExtra(extra) {
+        if (!extra || extra === "[object Object]") return {};
+        if (typeof extra === "object") return extra;
+        try { return JSON.parse(extra); } catch (_) { return {}; }
+      }
+
+      function records() {
+        const out = [];
+        for (const entries of Object.values(window.BENCHMARK_DATA.entries)) {
+          for (const entry of entries) {
+            for (const bench of entry.benches) {
+              const m = bench.name.match(mainCaseRe);
+              if (!m) continue;
+              const backendClass = m[5];
+              const backendGroup = backendClass.startsWith("CPU-") ? "CPU" : "GPU";
+              const extra = parseExtra(bench.extra);
+              out.push({
+                commit: entry.commit.id.slice(0, 7),
+                commitUrl: entry.commit.url,
+                date: entry.date,
+                name: bench.name,
+                backendGroup,
+                backendClass,
+                grid: m[2],
+                operator: m[3],
+                tracers: m[4],
+                floatType: m[6].trim(),
+                time: Number(bench.value),
+                throughput: Number(extra.updates_per_second || extra.updatesPerSecond || NaN),
+                device: extra.device || backendClass,
+              });
+            }
+          }
+        }
+        return out;
+      }
+
+      function latestByCase(rows) {
+        const map = new Map();
+        for (const row of rows) {
+          const key = [row.backendGroup, row.grid, row.operator, row.tracers, row.floatType].join("|");
+          const old = map.get(key);
+          if (!old || row.date > old.date) map.set(key, row);
+        }
+        return Array.from(map.values());
+      }
+
+      function unique(values) {
+        return Array.from(new Set(values)).sort((a, b) => {
+          const na = Number(a), nb = Number(b);
+          return Number.isFinite(na) && Number.isFinite(nb) ? na - nb : String(a).localeCompare(String(b));
+        });
+      }
+
+      function fillSelect(select, values) {
+        select.innerHTML = "";
+        for (const value of values) {
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = value;
+          select.appendChild(option);
+        }
+      }
+
+      function renderTable(id, rows, metric) {
+        const table = document.getElementById(id);
+        if (rows.length === 0) {
+          table.innerHTML = '<tbody><tr><td class="empty">No data</td></tr></tbody>';
+          return;
+        }
+        const valueLabel = metric === "time" ? "s/step" : "updates/s";
+        const body = rows.map(row => {
+          const value = metric === "time" ? row.time : row.throughput;
+          const formatted = metric === "time" ? value.toFixed(4) : value.toExponential(3);
+          return `<tr><td>${row.grid}</td><td>${row.device}</td><td>${formatted}</td></tr>`;
+        }).join("");
+        table.innerHTML = `<thead><tr><th>Grid</th><th>Device</th><th>${valueLabel}</th></tr></thead><tbody>${body}</tbody>`;
+      }
+
+      function renderChart(id, rows, metric) {
+        const ctx = document.getElementById(id).getContext("2d");
+        if (charts[id]) charts[id].destroy();
+        const labels = unique(rows.map(row => row.commit));
+        const datasets = unique(rows.map(row => row.grid)).map(grid => {
+          const byCommit = new Map(rows.filter(row => row.grid === grid).map(row => [row.commit, row]));
+          return {
+            label: grid,
+            data: labels.map(label => {
+              const row = byCommit.get(label);
+              return row ? (metric === "time" ? row.time : row.throughput) : null;
+            }),
+            borderColor: colors[grid] || "#57606a",
+            backgroundColor: (colors[grid] || "#57606a") + "33",
+            fill: false,
+            spanGaps: true,
+          };
+        });
+        charts[id] = new Chart(ctx, {
+          type: "line",
+          data: { labels, datasets },
+          options: {
+            maintainAspectRatio: false,
+            legend: { position: "bottom" },
+            scales: {
+              yAxes: [{
+                ticks: { beginAtZero: true },
+                scaleLabel: {
+                  display: true,
+                  labelString: metric === "time" ? "s/step" : "cell-tracer updates/s",
+                },
+              }],
+              xAxes: [{ scaleLabel: { display: true, labelString: "commit" } }],
+            },
+            tooltips: {
+              callbacks: {
+                label: (item, data) => {
+                  const value = item.yLabel;
+                  const unit = metric === "time" ? "s/step" : "updates/s";
+                  return `${data.datasets[item.datasetIndex].label}: ${value} ${unit}`;
+                },
+              },
+            },
+          },
+        });
+      }
+
+      function render() {
+        const operator = document.getElementById("operator-select").value;
+        const tracers = document.getElementById("tracer-select").value;
+        const metric = document.getElementById("metric-select").value;
+        const rows = latestByCase(records()).filter(row => row.operator === operator && row.tracers === tracers);
+        const groups = [
+          ["small-cpu", ["C24", "C90", "C180"], "CPU"],
+          ["small-gpu", ["C24", "C90", "C180"], "GPU"],
+          ["large-cpu", ["C360", "C720"], "CPU"],
+          ["large-gpu", ["C360", "C720"], "GPU"],
+        ];
+        for (const [id, grids, backend] of groups) {
+          const panelRows = rows
+            .filter(row => row.backendGroup === backend && grids.includes(row.grid))
+            .sort((a, b) => grids.indexOf(a.grid) - grids.indexOf(b.grid));
+          renderChart(id, panelRows, metric);
+          renderTable(id + "-table", panelRows, metric);
+        }
+      }
+
+      const all = latestByCase(records());
+      document.getElementById("last-update").textContent = new Date(window.BENCHMARK_DATA.lastUpdate).toString();
+      const repo = document.getElementById("repo-link");
+      repo.href = window.BENCHMARK_DATA.repoUrl;
+      repo.textContent = window.BENCHMARK_DATA.repoUrl;
+      fillSelect(document.getElementById("operator-select"), unique(all.map(row => row.operator)));
+      fillSelect(document.getElementById("tracer-select"), unique(all.map(row => row.tracers)));
+      document.getElementById("operator-select").onchange = render;
+      document.getElementById("tracer-select").onchange = render;
+      document.getElementById("metric-select").onchange = render;
+      render();
+    </script>
+  </body>
+</html>
+"""
+    path.write_text(html)
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 3:
+        print("usage: render_grouped_dashboard.py DATA_JS OUTPUT_HTML", file=sys.stderr)
+        return 2
+    data_path = Path(argv[1])
+    output_path = Path(argv[2])
+    _load_data(data_path)
+    _write_html(output_path)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

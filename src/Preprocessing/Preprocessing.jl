@@ -92,6 +92,7 @@ using ..MetDrivers: TransportBinaryReader, TransportBinaryHeader, write_transpor
                     set_streaming_steps_per_window_schedule!,
                     set_transport_header_steps_per_window_schedule!,
                     open_streaming_cs_transport_binary, write_streaming_cs_window!,
+                    read_era5_reduced_gaussian_geometry, read_era5_reduced_gaussian_mesh,
                     load_window!, load_flux_delta_window!,
                     has_tm5_convection, load_tm5_convection_window!,
                     load_surface_window!,
@@ -255,10 +256,15 @@ export GEOSFPNativeDayHandles, geosfp_native_hourly_ctm_path
 export geos_collection_path, detect_level_orientation
 export endpoint_dry_mass, endpoint_dry_mass!
 
-# ERA5 native-GRIB reader (breakpoint A — settings + day handles only).
+# ERA5 native-GRIB reader (breakpoints A + B — settings, day handles, and the
+# per-window spectral-synthesis surface for the N320 source grid).
 export AbstractERA5GRIBSettings, ERA5GRIBSettings, ERA5N320Settings
 export ERA5GRIBDayHandles, open_era5_day, close_era5_day!
 export era5_grib_path
+export ERA5N320SpectralWorkspace, ERA5N320WindowFields
+export allocate_era5_n320_spectral_workspace, allocate_era5_n320_window_fields
+export discover_era5_n320_source_grid, discover_era5_spectral_truncation
+export read_era5_n320_window_fields!
 
 # Met-source TOML factory (Commit 4) + vertical-coordinate helper used by GEOS CLI
 export load_met_settings, load_hybrid_coefficients

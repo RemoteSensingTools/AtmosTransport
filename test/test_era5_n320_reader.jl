@@ -12,8 +12,13 @@
 #      reads next-day endpoints when they exist, and tolerates a missing
 #      next-day file by setting next_core_path = nothing.
 #   4. close_era5_day! / close_day! are idempotent.
-#   5. has_surface / has_convection / has_vdiff_fields reflect the settings
-#      flags; windows_per_day is 24 for every UTC date.
+#   5. windows_per_day is 24 for every UTC date. The
+#      `has_surface / has_convection / has_vdiff_fields` traits report
+#      whether the `RawWindow` optional fields can be populated — on this
+#      branch the answer is unconditionally `false` for ERA5 because the
+#      per-window pipeline produces its own structured output rather than
+#      a `RawWindow`, so the traits stay `false` even when the matching
+#      `include_*` settings flag is `true`.
 #
 # Hermetic. Uses mktempdir + touched placeholder GRIBs so the test runs in
 # CI without any real-data dependency. A separate `@testset` runs only when
@@ -230,13 +235,14 @@ end
             include_vdiff_fields = true,
         )
 
-        @test has_surface(s_off)      === false
-        @test has_convection(s_off)   === false
-        @test has_vdiff_fields(s_off) === false
-
-        @test has_surface(s_on)      === true
-        @test has_convection(s_on)   === true
-        @test has_vdiff_fields(s_on) === true
+        # Both `s_off` and `s_on` advertise `false` for all three traits
+        # until the corresponding RawWindow writer paths land. The traits
+        # describe what RawWindow can carry, not what `open_era5_day` reads.
+        for s in (s_off, s_on)
+            @test has_surface(s)      === false
+            @test has_convection(s)   === false
+            @test has_vdiff_fields(s) === false
+        end
 
         # 24 hourly windows, regardless of date.
         @test windows_per_day(s_off, Date(2021, 12, 1)) == 24

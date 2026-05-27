@@ -211,9 +211,17 @@ close_day!(handles::ERA5GRIBDayHandles) = close_era5_day!(handles)
 
 windows_per_day(::AbstractERA5GRIBSettings, ::Date) = 24
 
-has_surface(s::AbstractERA5GRIBSettings)      = s.include_surface
-has_convection(s::AbstractERA5GRIBSettings)   = s.include_convection
-has_vdiff_fields(s::AbstractERA5GRIBSettings) = s.include_vdiff_fields
+# Trait predicates report whether the source can populate the optional
+# `RawWindow` fields (`surface`, `cmfmc`/`dtrain`, `vdiff`). On this branch
+# the ERA5 N320 source has its own per-window output containers
+# (`ERA5N320ConvectionFields`, etc.) but is *not* wired into `read_window!`,
+# so none of the `RawWindow` optional payloads are populated. Returning the
+# raw `include_*` flags here would lie to any generic downstream code that
+# trusts the trait to allocate / write physics sections. Each predicate
+# flips to `s.include_*` when its corresponding `RawWindow` writer lands.
+has_surface(::AbstractERA5GRIBSettings)      = false
+has_convection(::AbstractERA5GRIBSettings)   = false
+has_vdiff_fields(::AbstractERA5GRIBSettings) = false
 
 # ===========================================================================
 # Per-window field synthesis on the N320 source mesh.
@@ -350,6 +358,7 @@ struct ERA5N320SpectralWorkspace{FT <: AbstractFloat,
     have_t       :: BitVector
     have_vo      :: BitVector
     have_d       :: BitVector
+    have_q       :: BitVector
     have_lnsp    :: Base.RefValue{Bool}
     lnsp_grid    :: Vector{Float64}
 end
@@ -397,7 +406,7 @@ function allocate_era5_n320_spectral_workspace(source_grid::ReducedGaussianTarge
         zeros(ComplexF64, nc, nc),             # vo_scratch
         zeros(ComplexF64, nc, nc),             # d_scratch
         zeros(Float64, n_cells),               # grid_scratch — Float64 synthesis target
-        falses(Nz_int), falses(Nz_int), falses(Nz_int),
+        falses(Nz_int), falses(Nz_int), falses(Nz_int), falses(Nz_int),
         Ref(false),
         zeros(Float64, n_cells),               # lnsp_grid — scratch for PS synthesis
     )
@@ -509,6 +518,7 @@ function read_era5_n320_window_fields!(fields::ERA5N320WindowFields{FT},
     fill!(workspace.have_t,  false)
     fill!(workspace.have_vo, false)
     fill!(workspace.have_d,  false)
+    fill!(workspace.have_q,  false)
     workspace.have_lnsp[] = false
 
     mesh = workspace.source_grid.mesh
@@ -553,11 +563,15 @@ function read_era5_n320_window_fields!(fields::ERA5N320WindowFields{FT},
                 pl   = msg["pl"]
                 _reorder_grib_reduced_gg_to_mesh!(
                     view(fields.qv, :, level), vals, pl, mesh)
+                workspace.have_q[level] = true
             end
         end
     end
 
-    # Completeness gates — fail with the missing fields named so logs are debuggable.
+    # Completeness gates — fail with the missing fields named so logs are
+    # debuggable. Q has its own gate because `fields` is reused across
+    # windows and a stale Q slice from the previous read would otherwise
+    # silently corrupt dry-mass + the regridded Q output.
     workspace.have_lnsp[] ||
         error("ERA5 N320 read: LNSP missing for $(date) hour $(hour)")
     all(workspace.have_t) ||
@@ -566,6 +580,8 @@ function read_era5_n320_window_fields!(fields::ERA5N320WindowFields{FT},
         error("ERA5 N320 read: VO missing for $(date) hour $(hour) at levels $(findall(!, workspace.have_vo))")
     all(workspace.have_d) ||
         error("ERA5 N320 read: D missing for $(date) hour $(hour) at levels $(findall(!, workspace.have_d))")
+    all(workspace.have_q) ||
+        error("ERA5 N320 read: Q missing for $(date) hour $(hour) at levels $(findall(!, workspace.have_q))")
 
     # Spectral → gridpoint synthesis per level.
     grid = workspace.source_grid

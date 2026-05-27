@@ -616,6 +616,133 @@ function _divide_by_cos_lat_per_ring!(field::AbstractVector,
     return field
 end
 
+# ===========================================================================
+# Breakpoint C — hybrid pressure → dry-air mass on the N320 source grid.
+#
+# Mirrors the GEOS endpoint dry-mass derivation (`endpoint_dry_mass!`) so the
+# dry-basis runtime contract is nominally bit-identical across source paths:
+#
+#   ΔA[k] = A[k+1] − A[k]   (Pa)
+#   ΔB[k] = B[k+1] − B[k]   (dimensionless)
+#   DELP_full[k] = ΔA[k] + ΔB[k] · PS_total
+#   DELP_dry[k]  = (1 − Q[k]) · DELP_full[k]
+#   PS_dry       = Σ_k DELP_dry[k]
+#   m_dry[k]     = DELP_dry[k] · cell_area / g
+#
+# All arithmetic runs in Float64 internally and is downcast to FT only on
+# write. Vertical merge (e.g. `MergeAbovePressure` for parity with the GEOS
+# L72 cap) is delegated to the existing `apply_vertical!` plumbing in the
+# breakpoint-F glue.
+# ===========================================================================
+
+"""
+    ERA5N320DryMassFields{FT}
+
+Per-window dry-basis output container. `m_dry` is dry-air mass per cell per
+layer (kg), `delp_dry` is dry pressure thickness per cell per layer (Pa),
+`ps_dry` is the column-integrated dry surface pressure (Pa). `ps_dry_acc` is
+a Float64 accumulator that backs `ps_dry` so Σ_k DELP_dry stays accurate
+even when FT = Float32 (137-layer summation with ~10 hPa values per layer
+would otherwise lose ~100 Pa to single-precision rounding).
+"""
+struct ERA5N320DryMassFields{FT <: AbstractFloat}
+    m_dry      :: Matrix{FT}     # (n_cells, Nz)
+    delp_dry   :: Matrix{FT}     # (n_cells, Nz)
+    ps_dry     :: Vector{FT}     # (n_cells,)
+    ps_dry_acc :: Vector{Float64} # Float64 accumulator scratch
+end
+
+function allocate_era5_n320_dry_mass_fields(source_grid::ReducedGaussianTargetGeometry{FT},
+                                              Nz::Integer) where FT
+    Nz >= 1 || throw(ArgumentError("Nz must be ≥ 1, got $Nz"))
+    nc = ncells(source_grid.mesh)
+    Nz_int = Int(Nz)
+    return ERA5N320DryMassFields{FT}(
+        zeros(FT, nc, Nz_int),
+        zeros(FT, nc, Nz_int),
+        zeros(FT, nc),
+        zeros(Float64, nc),
+    )
+end
+
+"""
+    n320_cell_areas(source_grid) -> Vector{Float64}
+
+Materialise per-cell areas (m²) for the N320 source mesh. Always returns
+`Vector{Float64}` regardless of `source_grid`'s element type — downstream
+dry-mass arithmetic runs in Float64 for precision and the per-cell mesh
+quadrature is itself Float64. Cached by callers that derive dry mass for
+many windows of the same day.
+"""
+function n320_cell_areas(source_grid::ReducedGaussianTargetGeometry)
+    mesh = source_grid.mesh
+    return [Float64(cell_area(mesh, c)) for c in 1:ncells(mesh)]
+end
+
+"""
+    derive_n320_dry_mass!(dry, window, vc, cell_areas; grav=GRAV) -> dry
+
+Reconstruct dry-air mass per layer, dry pressure thickness, and dry surface
+pressure from a populated `window::ERA5N320WindowFields` (moist PS, Q) using
+the hybrid coordinate `vc` (length `Nz+1` A and B arrays in Pa and 1
+respectively, top-down) and the per-cell areas (m²). Matches the GEOS
+`endpoint_dry_mass!` formula so the runtime sees a nominally bit-identical
+dry-basis contract regardless of source.
+
+Asserts shapes and `length(vc.A) == length(vc.B) == Nz + 1` so a coefficient
+table that does not match the workspace `Nz` fails immediately with a clear
+DimensionMismatch.
+"""
+function derive_n320_dry_mass!(dry::ERA5N320DryMassFields{FT},
+                                window::ERA5N320WindowFields,
+                                vc::HybridSigmaPressure,
+                                cell_areas::AbstractVector{<:Real};
+                                grav::Real = GRAV) where FT
+    nc, Nz = size(dry.m_dry)
+    size(window.qv) == (nc, Nz) ||
+        throw(DimensionMismatch("window.qv $(size(window.qv)) ≠ ($nc, $Nz)"))
+    length(window.ps) == nc ||
+        throw(DimensionMismatch("window.ps length $(length(window.ps)) ≠ $nc"))
+    length(cell_areas) == nc ||
+        throw(DimensionMismatch("cell_areas length $(length(cell_areas)) ≠ $nc"))
+    length(dry.ps_dry_acc) == nc ||
+        throw(DimensionMismatch("ps_dry_acc length $(length(dry.ps_dry_acc)) ≠ $nc"))
+    length(vc.A) == length(vc.B) == Nz + 1 ||
+        throw(DimensionMismatch("hybrid A/B length $(length(vc.A))/$(length(vc.B)) ≠ Nz+1 = $(Nz + 1)"))
+
+    A = vc.A
+    B = vc.B
+    inv_g = 1.0 / Float64(grav)
+    fill!(dry.ps_dry_acc, 0.0)
+
+    # k-outer / c-inner traversal: the `(n_cells, Nz)` Float arrays are
+    # column-major, so the contiguous axis is `c`. This keeps every write
+    # to `delp_dry[c, k]`, `m_dry[c, k]` and every read from `qv[c, k]` on
+    # a unit stride. dA, dB are level-only and hoist out of the cell loop.
+    # `ps_dry_acc` accumulates in Float64 to keep precision when FT=Float32.
+    @inbounds for k in 1:Nz
+        dA = Float64(A[k + 1]) - Float64(A[k])
+        dB = Float64(B[k + 1]) - Float64(B[k])
+        for c in 1:nc
+            ps_total   = Float64(window.ps[c])
+            area       = Float64(cell_areas[c])
+            delp_full  = dA + dB * ps_total
+            delp_dry_k = (1.0 - Float64(window.qv[c, k])) * delp_full
+            dry.delp_dry[c, k] = FT(delp_dry_k)
+            dry.m_dry[c, k]    = FT(delp_dry_k * area * inv_g)
+            dry.ps_dry_acc[c] += delp_dry_k
+        end
+    end
+    @inbounds for c in 1:nc
+        dry.ps_dry[c] = FT(dry.ps_dry_acc[c])
+    end
+    return dry
+end
+
+# ---------------------------------------------------------------------------
+# Internal helpers carried over from breakpoint B.
+# ---------------------------------------------------------------------------
+
 """Synthesize one 2D spectral field onto an `n_cells`-laid-out output column.
 `spectral_to_reduced_scalar!` always writes `Float64`, so the caller supplies
 a Float64 `scratch` of the same length as `column` and the result is then

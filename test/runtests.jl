@@ -39,6 +39,7 @@ core_tests = [
     "test_geos_reader.jl",
     "test_era5_n320_reader.jl",
     "test_era5_n320_window_reader.jl",
+    "test_era5_n320_dry_mass.jl",
     "test_met_source_loader.jl",
     "test_public_api_surface.jl",
     "test_config_matrix_contract.jl",

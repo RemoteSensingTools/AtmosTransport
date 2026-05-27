@@ -2,280 +2,319 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1, user-scalable=yes" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AtmosTransport Benchmarks</title>
     <style>
-      html {
-        font-family: BlinkMacSystemFont,-apple-system,"Segoe UI",Roboto,Oxygen,Ubuntu,Cantarell,"Fira Sans","Droid Sans","Helvetica Neue",Helvetica,Arial,sans-serif;
-        -webkit-font-smoothing: antialiased;
-        background-color: #fff;
-        font-size: 16px;
+      :root {
+        color-scheme: light;
+        --border: #d6d9de;
+        --text: #20242a;
+        --muted: #59616d;
+        --band: #f6f8fa;
       }
       body {
-        color: #4a4a4a;
-        margin: 8px;
-        font-size: 1em;
-        font-weight: 400;
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: var(--text);
+        background: white;
       }
       header {
-        margin-bottom: 8px;
-        display: flex;
-        flex-direction: column;
+        padding: 16px 20px 10px;
+        border-bottom: 1px solid var(--border);
+      }
+      h1 {
+        margin: 0 0 6px;
+        font-size: 24px;
+        font-weight: 650;
+      }
+      .meta {
+        color: var(--muted);
+        font-size: 13px;
       }
       main {
-        width: 100%;
+        padding: 16px 20px 28px;
+      }
+      .toolbar {
         display: flex;
-        flex-direction: column;
+        gap: 14px;
+        flex-wrap: wrap;
+        align-items: center;
+        margin-bottom: 14px;
+        font-size: 13px;
+      }
+      select {
+        font: inherit;
+        padding: 4px 8px;
+      }
+      .row-title {
+        margin: 18px 0 8px;
+        font-size: 18px;
+        font-weight: 650;
+      }
+      .grid-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 14px;
+        align-items: stretch;
+      }
+      .panel {
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 10px 12px 12px;
+        min-height: 340px;
+      }
+      .panel h3 {
+        margin: 0 0 8px;
+        font-size: 15px;
+        font-weight: 650;
+      }
+      .chart-wrap {
+        position: relative;
+        height: 300px;
+      }
+      .summary {
+        margin-top: 10px;
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      .summary th,
+      .summary td {
+        padding: 5px 6px;
+        border-bottom: 1px solid #e8eaed;
+        text-align: right;
+      }
+      .summary th:first-child,
+      .summary td:first-child {
+        text-align: left;
+      }
+      .summary tbody tr:nth-child(odd) {
+        background: var(--band);
+      }
+      .empty {
+        color: var(--muted);
+        font-size: 13px;
+        padding: 20px 0;
       }
       a {
-        color: #3273dc;
-        cursor: pointer;
+        color: #0969da;
         text-decoration: none;
       }
       a:hover {
-        color: #000;
+        text-decoration: underline;
       }
-      button {
-        color: #fff;
-        background-color: #3298dc;
-        border-color: transparent;
-        cursor: pointer;
-        text-align: center;
-      }
-      button:hover {
-        background-color: #2793da;
-        flex: none;
-      }
-      .spacer {
-        flex: auto;
-      }
-      .small {
-        font-size: 0.75rem;
-      }
-      footer {
-        margin-top: 16px;
-        display: flex;
-        align-items: center;
-      }
-      .header-label {
-        margin-right: 4px;
-      }
-      .benchmark-set {
-        margin: 8px 0;
-        width: 100%;
-        display: flex;
-        flex-direction: column;
-      }
-      .benchmark-title {
-        font-size: 3rem;
-        font-weight: 600;
-        word-break: break-word;
-        text-align: center;
-      }
-      .benchmark-graphs {
-        display: flex;
-        flex-direction: row;
-        justify-content: space-around;
-        align-items: center;
-        flex-wrap: wrap;
-        width: 100%;
-      }
-      .benchmark-chart {
-        max-width: 1000px;
+      @media (max-width: 900px) {
+        .grid-row {
+          grid-template-columns: 1fr;
+        }
       }
     </style>
-    <title>Benchmarks</title>
   </head>
-
   <body>
-    <header id="header">
-      <div class="header-item">
-        <strong class="header-label">Last Update:</strong>
-        <span id="last-update"></span>
-      </div>
-      <div class="header-item">
-        <strong class="header-label">Repository:</strong>
-        <a id="repository-link" rel="noopener"></a>
+    <header>
+      <h1>AtmosTransport Benchmarks</h1>
+      <div class="meta">
+        Last update: <span id="last-update"></span> ·
+        <a id="repo-link" rel="noopener"></a> ·
+        <a href="data.js">raw dashboard data</a>
       </div>
     </header>
-    <main id="main"></main>
-    <footer>
-      <button id="dl-button">Download data as JSON</button>
-      <div class="spacer"></div>
-      <div class="small">Powered by <a rel="noopener" href="https://github.com/marketplace/actions/continuous-benchmark">github-action-benchmark</a></div>
-    </footer>
-
+    <main>
+      <div class="toolbar">
+        <label>Operator <select id="operator-select"></select></label>
+        <label>Tracers <select id="tracer-select"></select></label>
+        <label>Metric <select id="metric-select">
+          <option value="time">Time per step</option>
+          <option value="throughput">Cell-tracer updates/s</option>
+        </select></label>
+      </div>
+      <section>
+        <div class="row-title">C24, C90, C180</div>
+        <div class="grid-row">
+          <div class="panel"><h3>CPU</h3><div class="chart-wrap"><canvas id="small-cpu"></canvas></div><table class="summary" id="small-cpu-table"></table></div>
+          <div class="panel"><h3>GPU</h3><div class="chart-wrap"><canvas id="small-gpu"></canvas></div><table class="summary" id="small-gpu-table"></table></div>
+        </div>
+      </section>
+      <section>
+        <div class="row-title">C360, C720</div>
+        <div class="grid-row">
+          <div class="panel"><h3>CPU</h3><div class="chart-wrap"><canvas id="large-cpu"></canvas></div><table class="summary" id="large-cpu-table"></table></div>
+          <div class="panel"><h3>GPU</h3><div class="chart-wrap"><canvas id="large-gpu"></canvas></div><table class="summary" id="large-gpu-table"></table></div>
+        </div>
+      </section>
+    </main>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@2.9.2/dist/Chart.min.js"></script>
     <script src="data.js"></script>
-    <script id="main-script">
-      'use strict';
-      (function() {
-        // Colors from https://github.com/github/linguist/blob/master/lib/linguist/languages.yml
-        const toolColors = {
-          cargo: '#dea584',
-          go: '#00add8',
-          benchmarkjs: '#f1e05a',
-          benchmarkluau: '#000080',
-          pytest: '#3572a5',
-          googlecpp: '#f34b7d',
-          catch2: '#f34b7d',
-          julia: '#a270ba',
-          jmh: '#b07219',
-          benchmarkdotnet: '#178600',
-          customBiggerIsBetter: '#38ff38',
-          customSmallerIsBetter: '#ff3838',
-          _: '#333333'
-        };
+    <script>
+      "use strict";
 
-        function init() {
-          function collectBenchesPerTestCase(entries) {
-            const map = new Map();
-            for (const entry of entries) {
-              const {commit, date, tool, benches} = entry;
-              for (const bench of benches) {
-                const result = { commit, date, tool, bench };
-                const arr = map.get(bench.name);
-                if (arr === undefined) {
-                  map.set(bench.name, [result]);
-                } else {
-                  arr.push(result);
-                }
-              }
+      const colors = {
+        C24: "#0969da",
+        C90: "#1a7f37",
+        C180: "#bf8700",
+        C360: "#8250df",
+        C720: "#cf222e",
+      };
+      const charts = {};
+      const mainCaseRe = /^(CPU|CUDA|Metal) Synthetic CS Sweep \/ (C\d+) L\d+ ([^ ]+) (\d+)tr \/ (CPU-[^/]+|GPU-[^/]+) \/ ([^/]+)$/;
+
+      function parseExtra(extra) {
+        if (!extra || extra === "[object Object]") return {};
+        if (typeof extra === "object") return extra;
+        try { return JSON.parse(extra); } catch (_) { return {}; }
+      }
+
+      function records() {
+        const out = [];
+        for (const entries of Object.values(window.BENCHMARK_DATA.entries)) {
+          for (const entry of entries) {
+            for (const bench of entry.benches) {
+              const m = bench.name.match(mainCaseRe);
+              if (!m) continue;
+              const backendClass = m[5];
+              const backendGroup = backendClass.startsWith("CPU-") ? "CPU" : "GPU";
+              const extra = parseExtra(bench.extra);
+              out.push({
+                commit: entry.commit.id.slice(0, 7),
+                commitUrl: entry.commit.url,
+                date: entry.date,
+                name: bench.name,
+                backendGroup,
+                backendClass,
+                grid: m[2],
+                operator: m[3],
+                tracers: m[4],
+                floatType: m[6].trim(),
+                time: Number(bench.value),
+                throughput: Number(extra.updates_per_second || extra.updatesPerSecond || NaN),
+                device: extra.device || backendClass,
+              });
             }
-            return map;
           }
+        }
+        return out;
+      }
 
-          const data = window.BENCHMARK_DATA;
+      function latestByCase(rows) {
+        const map = new Map();
+        for (const row of rows) {
+          const key = [row.backendGroup, row.grid, row.operator, row.tracers, row.floatType].join("|");
+          const old = map.get(key);
+          if (!old || row.date > old.date) map.set(key, row);
+        }
+        return Array.from(map.values());
+      }
 
-          // Render header
-          document.getElementById('last-update').textContent = new Date(data.lastUpdate).toString();
-          const repoLink = document.getElementById('repository-link');
-          repoLink.href = data.repoUrl;
-          repoLink.textContent = data.repoUrl;
+      function unique(values) {
+        return Array.from(new Set(values)).sort((a, b) => {
+          const na = Number(a), nb = Number(b);
+          return Number.isFinite(na) && Number.isFinite(nb) ? na - nb : String(a).localeCompare(String(b));
+        });
+      }
 
-          // Render footer
-          document.getElementById('dl-button').onclick = () => {
-            const dataUrl = 'data:,' + JSON.stringify(data, null, 2);
-            const a = document.createElement('a');
-            a.href = dataUrl;
-            a.download = 'benchmark_data.json';
-            a.click();
+      function fillSelect(select, values) {
+        select.innerHTML = "";
+        for (const value of values) {
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = value;
+          select.appendChild(option);
+        }
+      }
+
+      function renderTable(id, rows, metric) {
+        const table = document.getElementById(id);
+        if (rows.length === 0) {
+          table.innerHTML = '<tbody><tr><td class="empty">No data</td></tr></tbody>';
+          return;
+        }
+        const valueLabel = metric === "time" ? "s/step" : "updates/s";
+        const body = rows.map(row => {
+          const value = metric === "time" ? row.time : row.throughput;
+          const formatted = metric === "time" ? value.toFixed(4) : value.toExponential(3);
+          return `<tr><td>${row.grid}</td><td>${row.device}</td><td>${formatted}</td></tr>`;
+        }).join("");
+        table.innerHTML = `<thead><tr><th>Grid</th><th>Device</th><th>${valueLabel}</th></tr></thead><tbody>${body}</tbody>`;
+      }
+
+      function renderChart(id, rows, metric) {
+        const ctx = document.getElementById(id).getContext("2d");
+        if (charts[id]) charts[id].destroy();
+        const labels = unique(rows.map(row => row.commit));
+        const datasets = unique(rows.map(row => row.grid)).map(grid => {
+          const byCommit = new Map(rows.filter(row => row.grid === grid).map(row => [row.commit, row]));
+          return {
+            label: grid,
+            data: labels.map(label => {
+              const row = byCommit.get(label);
+              return row ? (metric === "time" ? row.time : row.throughput) : null;
+            }),
+            borderColor: colors[grid] || "#57606a",
+            backgroundColor: (colors[grid] || "#57606a") + "33",
+            fill: false,
+            spanGaps: true,
           };
+        });
+        charts[id] = new Chart(ctx, {
+          type: "line",
+          data: { labels, datasets },
+          options: {
+            maintainAspectRatio: false,
+            legend: { position: "bottom" },
+            scales: {
+              yAxes: [{
+                ticks: { beginAtZero: true },
+                scaleLabel: {
+                  display: true,
+                  labelString: metric === "time" ? "s/step" : "cell-tracer updates/s",
+                },
+              }],
+              xAxes: [{ scaleLabel: { display: true, labelString: "commit" } }],
+            },
+            tooltips: {
+              callbacks: {
+                label: (item, data) => {
+                  const value = item.yLabel;
+                  const unit = metric === "time" ? "s/step" : "updates/s";
+                  return `${data.datasets[item.datasetIndex].label}: ${value} ${unit}`;
+                },
+              },
+            },
+          },
+        });
+      }
 
-          // Prepare data points for charts
-          return Object.keys(data.entries).map(name => ({
-            name,
-            dataSet: collectBenchesPerTestCase(data.entries[name]),
-          }));
+      function render() {
+        const operator = document.getElementById("operator-select").value;
+        const tracers = document.getElementById("tracer-select").value;
+        const metric = document.getElementById("metric-select").value;
+        const rows = latestByCase(records()).filter(row => row.operator === operator && row.tracers === tracers);
+        const groups = [
+          ["small-cpu", ["C24", "C90", "C180"], "CPU"],
+          ["small-gpu", ["C24", "C90", "C180"], "GPU"],
+          ["large-cpu", ["C360", "C720"], "CPU"],
+          ["large-gpu", ["C360", "C720"], "GPU"],
+        ];
+        for (const [id, grids, backend] of groups) {
+          const panelRows = rows
+            .filter(row => row.backendGroup === backend && grids.includes(row.grid))
+            .sort((a, b) => grids.indexOf(a.grid) - grids.indexOf(b.grid));
+          renderChart(id, panelRows, metric);
+          renderTable(id + "-table", panelRows, metric);
         }
+      }
 
-        function renderAllChars(dataSets) {
-
-          function renderGraph(parent, name, dataset) {
-            const canvas = document.createElement('canvas');
-            canvas.className = 'benchmark-chart';
-            parent.appendChild(canvas);
-
-            const color = toolColors[dataset.length > 0 ? dataset[0].tool : '_'];
-            const data = {
-              labels: dataset.map(d => d.commit.id.slice(0, 7)),
-              datasets: [
-                {
-                  label: name,
-                  data: dataset.map(d => d.bench.value),
-                  borderColor: color,
-                  backgroundColor: color + '60', // Add alpha for #rrggbbaa
-                }
-              ],
-            };
-            const options = {
-              scales: {
-                xAxes: [
-                  {
-                    scaleLabel: {
-                      display: true,
-                      labelString: 'commit',
-                    },
-                  }
-                ],
-                yAxes: [
-                  {
-                    scaleLabel: {
-                      display: true,
-                      labelString: dataset.length > 0 ? dataset[0].bench.unit : '',
-                    },
-                    ticks: {
-                      beginAtZero: true,
-                    }
-                  }
-                ],
-              },
-              tooltips: {
-                callbacks: {
-                  afterTitle: items => {
-                    const {index} = items[0];
-                    const data = dataset[index];
-                    return '\n' + data.commit.message + '\n\n' + data.commit.timestamp + ' committed by @' + data.commit.committer.username + '\n';
-                  },
-                  label: item => {
-                    let label = item.value;
-                    const { range, unit } = dataset[item.index].bench;
-                    label += ' ' + unit;
-                    if (range) {
-                      label += ' (' + range + ')';
-                    }
-                    return label;
-                  },
-                  afterLabel: item => {
-                    const { extra } = dataset[item.index].bench;
-                    return extra ? '\n' + extra : '';
-                  }
-                }
-              },
-              onClick: (_mouseEvent, activeElems) => {
-                if (activeElems.length === 0) {
-                  return;
-                }
-                // XXX: Undocumented. How can we know the index?
-                const index = activeElems[0]._index;
-                const url = dataset[index].commit.url;
-                window.open(url, '_blank');
-              },
-            };
-
-            new Chart(canvas, {
-              type: 'line',
-              data,
-              options,
-            });
-          }
-
-          function renderBenchSet(name, benchSet, main) {
-            const setElem = document.createElement('div');
-            setElem.className = 'benchmark-set';
-            main.appendChild(setElem);
-
-            const nameElem = document.createElement('h1');
-            nameElem.className = 'benchmark-title';
-            nameElem.textContent = name;
-            setElem.appendChild(nameElem);
-
-            const graphsElem = document.createElement('div');
-            graphsElem.className = 'benchmark-graphs';
-            setElem.appendChild(graphsElem);
-
-            for (const [benchName, benches] of benchSet.entries()) {
-              renderGraph(graphsElem, benchName, benches)
-            }
-          }
-
-          const main = document.getElementById('main');
-          for (const {name, dataSet} of dataSets) {
-            renderBenchSet(name, dataSet, main);
-          }
-        }
-
-        renderAllChars(init()); // Start
-      })();
+      const all = latestByCase(records());
+      document.getElementById("last-update").textContent = new Date(window.BENCHMARK_DATA.lastUpdate).toString();
+      const repo = document.getElementById("repo-link");
+      repo.href = window.BENCHMARK_DATA.repoUrl;
+      repo.textContent = window.BENCHMARK_DATA.repoUrl;
+      fillSelect(document.getElementById("operator-select"), unique(all.map(row => row.operator)));
+      fillSelect(document.getElementById("tracer-select"), unique(all.map(row => row.tracers)));
+      document.getElementById("operator-select").onchange = render;
+      document.getElementById("tracer-select").onchange = render;
+      document.getElementById("metric-select").onchange = render;
+      render();
     </script>
   </body>
 </html>

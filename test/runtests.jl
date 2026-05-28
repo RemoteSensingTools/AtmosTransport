@@ -50,6 +50,7 @@ core_tests = [
     "test_geos_convection.jl",
     "test_geosfp_native_physics_fallback.jl",
     "test_cs_panel_geographic_roundtrip.jl",
+    "test_cs_lonlat_inverse_projection.jl",
     "test_basis_explicit_core.jl",
     "test_advection_kernels.jl",
     "test_no_advection.jl",

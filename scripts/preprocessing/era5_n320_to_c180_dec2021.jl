@@ -84,13 +84,20 @@ function main(args::Vector{String} = ARGS)
         "panel_convention" => "geos_native",
         "definition"       => "gmao",
     )
-    target_grid = build_target_geometry(Val(:cubed_sphere), cfg, Float32)
     mkpath(cli.out_dir)
 
     _path_for(date::Date) = joinpath(cli.out_dir,
         "era5_n320_to_c$(cli.Nc)_transport_$(Dates.format(date, "yyyymmdd"))_float32.bin")
 
-    _run_one_day(date::Date) = process_era5_n320_to_cs_day(date, settings, target_grid;
+    # IMPORTANT: build a fresh `target_grid` PER DAY. The struct carries a
+    # mutable `poisson_scratch` (CSPoissonScratch — 7 Float64 vectors of
+    # size n_cells) that `balance_cs_*_mass_fluxes!` writes into during the
+    # CG solve. Sharing one `target_grid` across `Threads.@threads`-spawned
+    # days would race on that scratch and silently corrupt the balance.
+    # The construction is ~1-2 s at C180 (mesh + face table + tangent
+    # basis); trivial vs the ~15 min per-day cost.
+    _run_one_day(date::Date) = process_era5_n320_to_cs_day(date, settings,
+        build_target_geometry(Val(:cubed_sphere), cfg, Float32);
         out_path = _path_for(date),
         Nz = cli.Nz,
         steps_per_window = cli.steps_per_window,

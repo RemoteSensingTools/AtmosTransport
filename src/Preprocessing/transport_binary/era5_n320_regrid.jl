@@ -397,3 +397,58 @@ function process_era5_n320_to_cs_day(date::Date,
         close_era5_day!(handles)
     end
 end
+
+# ===========================================================================
+# Unified-CLI dispatch — wires the per-day driver into
+# `preprocess_transport_binary.jl` via the standard
+# `process_day(date, grid, settings, vertical; ...)` extension point.
+# ===========================================================================
+
+"""
+    process_day(date, grid::CubedSphereTargetGeometry, settings::AbstractERA5GRIBSettings,
+                vertical; out_path, FT, mass_basis, dt_met_seconds, positivity_cfl_limit,
+                kwargs...)
+
+Adapter that the unified preprocessor CLI calls into. Forwards to
+[`process_era5_n320_to_cs_day`](@ref) with the kwargs the underlying
+function actually accepts; the rest of the unified-CLI day-kwargs (e.g.
+`chain_mass`, `adaptive_substeps`, `min_steps_per_window`, `seed_m`) are
+absorbed by the trailing `kwargs...` and silently ignored — ERA5 N320 has
+no day-to-day mass-chain state, and the writer currently uses a fixed
+substep count rather than the adaptive policy.
+
+Returns `(; final_m = nothing)` so the unified CLI's `seed_m = get(result,
+:final_m, nothing)` chain remains a no-op.
+"""
+function process_day(date::Date,
+                     grid::CubedSphereTargetGeometry,
+                     settings::AbstractERA5GRIBSettings,
+                     vertical;
+                     out_path::AbstractString,
+                     mass_basis::Symbol = :dry,
+                     dt_met_seconds::Real = 3600.0,
+                     positivity_cfl_limit::Real = 0.95,
+                     min_steps_per_window::Union{Integer, Nothing} = nothing,
+                     kwargs...)
+    # Honor the substep policy's min_steps_per_window if the CLI passed one;
+    # otherwise fall back to the established N320 default. Adaptive substep
+    # scheduling isn't yet supported on this path.
+    steps_per_window = min_steps_per_window === nothing ? 8 : Int(min_steps_per_window)
+    process_era5_n320_to_cs_day(date, settings, grid;
+        out_path                  = out_path,
+        Nz                        = vertical.Nz,
+        mass_basis                = mass_basis,
+        dt_met_seconds            = dt_met_seconds,
+        steps_per_window          = steps_per_window,
+        positivity_cfl_limit      = positivity_cfl_limit,
+        cache_dir                 = grid.cache_dir,
+        include_convection        = settings.include_convection)
+    return (; final_m = nothing)
+end
+
+# Output filename matches the standalone CLI script's naming convention so
+# downstream tools that already grep for `era5_n320_to_cNNN_transport_…`
+# pick up the unified-CLI output without changes.
+function _native_output_filename(::AbstractERA5GRIBSettings, date::Date, FT::Type)
+    return "era5_n320_transport_$(Dates.format(date, "yyyymmdd"))_$(FT === Float32 ? "float32" : "float64").bin"
+end

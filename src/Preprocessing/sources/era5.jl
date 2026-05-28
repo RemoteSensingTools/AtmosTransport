@@ -709,6 +709,65 @@ function allocate_era5_n320_dry_mass_fields(source_grid::ReducedGaussianTargetGe
 end
 
 """
+    derive_c180_dry_mass!(m_dry, delp_dry, ps_dry, ps_dry_acc,
+                           ps_panels, qv_panels, vc, cell_areas; grav=GRAV) -> nothing
+
+Cubed-sphere variant of [`derive_n320_dry_mass!`](@ref). Builds the dry-air
+layer mass, dry pressure thickness, and dry surface pressure for each of
+the 6 C-tier panels from the regridded moist PS + Q on C180. Same formula
+as the GEOS endpoint dry-mass derivation so `Σ_k DELP_dry = PS_dry` to
+roundoff on the target mesh too.
+
+Inputs and outputs are `NTuple{6, ...}` panel tuples; `ps_dry_acc` is a
+panel-tuple Float64 accumulator (so a Float32 output preserves the
+multi-level summation precision). `cell_areas[i, j]` is shared across all
+6 panels (the CS mesh is isotropic per panel).
+"""
+function derive_c180_dry_mass!(m_dry::NTuple{6, AbstractArray{<:Real, 3}},
+                                 delp_dry::NTuple{6, AbstractArray{<:Real, 3}},
+                                 ps_dry::NTuple{6, AbstractMatrix{<:Real}},
+                                 ps_dry_acc::NTuple{6, Matrix{Float64}},
+                                 ps_panels::NTuple{6, AbstractMatrix{<:Real}},
+                                 qv_panels::NTuple{6, AbstractArray{<:Real, 3}},
+                                 vc::HybridSigmaPressure,
+                                 cell_areas::AbstractMatrix{<:Real};
+                                 grav::Real = GRAV)
+    Nc, _, Nz = size(m_dry[1])
+    length(vc.A) == length(vc.B) == Nz + 1 ||
+        throw(DimensionMismatch("hybrid A/B length $(length(vc.A))/$(length(vc.B)) ≠ Nz+1 = $(Nz + 1)"))
+    size(cell_areas) == (Nc, Nc) ||
+        throw(DimensionMismatch("cell_areas $(size(cell_areas)) ≠ (Nc=$Nc, Nc)"))
+
+    A = vc.A
+    B = vc.B
+    inv_g = 1.0 / Float64(grav)
+
+    @inbounds for p in 1:6
+        fill!(ps_dry_acc[p], 0.0)
+        # k outer / i,j inner — column-major over (Nc, Nc, Nz).
+        for k in 1:Nz
+            dA = Float64(A[k + 1]) - Float64(A[k])
+            dB = Float64(B[k + 1]) - Float64(B[k])
+            for j in 1:Nc, i in 1:Nc
+                ps_total   = Float64(ps_panels[p][i, j])
+                area       = Float64(cell_areas[i, j])
+                delp_full  = dA + dB * ps_total
+                delp_dry_k = (1.0 - Float64(qv_panels[p][i, j, k])) * delp_full
+                FT = eltype(delp_dry[p])
+                delp_dry[p][i, j, k] = FT(delp_dry_k)
+                m_dry[p][i, j, k]    = FT(delp_dry_k * area * inv_g)
+                ps_dry_acc[p][i, j] += delp_dry_k
+            end
+        end
+        FT = eltype(ps_dry[p])
+        for j in 1:Nc, i in 1:Nc
+            ps_dry[p][i, j] = FT(ps_dry_acc[p][i, j])
+        end
+    end
+    return nothing
+end
+
+"""
     n320_cell_areas(source_grid) -> Vector{Float64}
 
 Materialise per-cell areas (m²) for the N320 source mesh. Always returns

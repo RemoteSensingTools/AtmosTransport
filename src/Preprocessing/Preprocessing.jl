@@ -245,6 +245,12 @@ include("met_readers.jl")
 # GEOS → CS passthrough orchestrator (Commit 5)
 include("transport_binary/cubed_sphere_geos.jl")
 
+# ERA5 N320 → CS transport-binary writer. Drives one UTC day end-to-end
+# through the per-window pipeline shipped in `sources/era5.jl` plus the
+# C180 dry-mass re-derivation, wind rotation, face flux reconstruction,
+# Poisson balance, and v4 writer.
+include("transport_binary/era5_n320_regrid.jl")
+
 # Met source abstraction (Commit 1 of plan indexed-baking-valiant)
 export AbstractMetSettings, RawWindow
 export read_window!, source_grid, windows_per_day
@@ -268,7 +274,7 @@ export allocate_era5_n320_spectral_workspace, allocate_era5_n320_window_fields
 export discover_era5_n320_source_grid, discover_era5_spectral_truncation
 export read_era5_n320_window_fields!
 export ERA5N320DryMassFields, allocate_era5_n320_dry_mass_fields,
-       derive_n320_dry_mass!, n320_cell_areas
+       derive_n320_dry_mass!, derive_c180_dry_mass!, n320_cell_areas
 export ERA5C180RegridFields, ERA5C180RegridWorkspace,
        allocate_era5_c180_regrid_fields, allocate_era5_c180_regrid_workspace,
        regrid_n320_to_c180!
@@ -276,6 +282,7 @@ export ERA5N320ConvectionFields, allocate_era5_n320_convection_fields,
        read_era5_n320_convection_window!, era5_convection_hour_address
 export ERA5N320ToC180Pipeline, allocate_era5_n320_to_c180_pipeline,
        process_era5_n320_window!
+export process_era5_n320_to_cs_day
 
 # Met-source TOML factory (Commit 4) + vertical-coordinate helper used by GEOS CLI
 export load_met_settings, load_hybrid_coefficients

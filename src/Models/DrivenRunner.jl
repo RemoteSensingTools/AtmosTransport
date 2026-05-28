@@ -77,7 +77,10 @@ using ..State: AbstractMassBasis, DryBasis, MoistBasis, CellState,
 using ..Grids: nlevels
 using ..Operators: LinRoodPPMScheme, PPMScheme, SlopesScheme, UpwindScheme,
                   ImplicitVerticalDiffusion,
-                  uses_diffusive_surface_flux_boundary
+                  uses_diffusive_surface_flux_boundary,
+                  AbstractConvection,
+                  NoConvection, TM5Convection, CMFMCConvection,
+                  CMFMCMatrixConvection
 using ..Architectures: CPU, GPU,
                        runtime_backend_from_config, is_gpu_backend,
                        ensure_backend_runtime!, backend_array_adapter,
@@ -97,7 +100,7 @@ using ..Output: SnapshotFrame,
                 AbstractOutputPartition, SingleOutputFile, DailyOutputFiles,
                 RuntimeOutputSpec, runtime_output_spec, snapshot_hours,
                 output_enabled, output_path, output_path_for_day,
-                capture_snapshot, write_snapshot_netcdf
+                capture_snapshot, write_snapshot_netcdf, write_snapshot_binary
 # TransportModel + DrivenSimulation live alongside us in the Models module;
 # reach up to the parent and pull them in.
 using ..Models: TransportModel
@@ -493,11 +496,16 @@ function _write_output_frames!(timer::RunProgressTimer,
     output_enabled(spec) || return nothing
     isempty(frames) && return nothing
     path = _output_path_for_partition(spec, partition, date_label, day_index)
-    timed_io_write!(timer,
-        () -> write_snapshot_netcdf(path, frames, grid;
-                                    mass_basis = mass_basis,
-                                    options = spec.options,
-                                    fields = spec.fields))
+    timed_io_write!(timer, () -> if spec.format === :binary_mmap
+        write_snapshot_binary(path, frames, grid;
+                              mass_basis = mass_basis,
+                              options = spec.options)
+    else
+        write_snapshot_netcdf(path, frames, grid;
+                              mass_basis = mass_basis,
+                              options = spec.options,
+                              fields = spec.fields)
+    end)
     return path
 end
 
@@ -607,40 +615,59 @@ end
 # (which discovers problems at the first load).
 # ===========================================================================
 
-function _validate_capability_match(driver, recipe, cfg)
-    caps = binary_capabilities(driver.reader)
-
-    # Convection kind vs binary sections
-    conv_kind = Symbol(lowercase(String(get(get(cfg, "convection", Dict()), "kind", "none"))))
-    if conv_kind === :tm5 && !caps.tm5_convection
-        throw(ArgumentError(
-            "[convection] kind = \"tm5\" requires the binary to carry " *
-            "entu, detu, entd, detd; this binary's payload_sections are " *
-            "$(caps.payload_sections). Regenerate with a TM5-enabled " *
-            "preprocessor or set convection.kind = \"none\"."))
-    end
-    if conv_kind === :cmfmc && !caps.cmfmc_convection
-        throw(ArgumentError(
-            "[convection] kind = \"cmfmc\" requires the binary to carry " *
-            "the cmfmc section; this binary's payload_sections are " *
-            "$(caps.payload_sections)."))
-    end
-    if conv_kind === :cmfmc_matrix
-        # The matrix variant has NO Tiedtke fallback — `dtrain` is the
-        # explicit detrainment rate that closes the continuity derivation
-        # `entu - detu = cmfmc[k] - cmfmc[k+1]`. A binary with cmfmc but
-        # no dtrain is hard-rejected up front so the failure mode is
-        # actionable at recipe-validation time (not at the first window
-        # load several seconds later).
-        (caps.cmfmc_convection && :dtrain in caps.payload_sections) ||
-            throw(ArgumentError(
-                "[convection] kind = \"cmfmc_matrix\" requires the binary " *
-                "to carry both cmfmc AND dtrain payloads (no Tiedtke fallback); " *
-                "this binary's payload_sections are $(caps.payload_sections). " *
-                "Regenerate the binary with a preprocessor that emits :dtrain, " *
-                "or fall back to kind=\"cmfmc\" which has a Tiedtke path."))
-    end
+function _validate_capability_match(driver, recipe)
+    _validate_convection_capability(recipe.convection,
+                                     binary_capabilities(driver.reader))
     return nothing
+end
+
+# Dispatch on the concrete convection-operator type so a new operator is a
+# new method (compile-time coverage), not a new branch in an if-chain. The
+# raw `cfg` no longer participates — the recipe has already been built and
+# its convection field is authoritative.
+_validate_convection_capability(::NoConvection, _caps) = nothing
+
+function _validate_convection_capability(::TM5Convection, caps)
+    caps.tm5_convection || throw(ArgumentError(
+        "[convection] kind = \"tm5\" requires the binary to carry " *
+        "entu, detu, entd, detd; this binary's payload_sections are " *
+        "$(caps.payload_sections). Regenerate with a TM5-enabled " *
+        "preprocessor or set convection.kind = \"none\"."))
+    return nothing
+end
+
+function _validate_convection_capability(::CMFMCConvection, caps)
+    caps.cmfmc_convection || throw(ArgumentError(
+        "[convection] kind = \"cmfmc\" requires the binary to carry " *
+        "the cmfmc section; this binary's payload_sections are " *
+        "$(caps.payload_sections)."))
+    return nothing
+end
+
+# The matrix variant has NO Tiedtke fallback — `dtrain` is the explicit
+# detrainment rate that closes the continuity derivation
+# `entu - detu = cmfmc[k] - cmfmc[k+1]`. A binary with cmfmc but no dtrain is
+# hard-rejected up front so the failure mode is actionable at recipe-validation
+# time (not at the first window load several seconds later).
+function _validate_convection_capability(::CMFMCMatrixConvection, caps)
+    (caps.cmfmc_convection && :dtrain in caps.payload_sections) ||
+        throw(ArgumentError(
+            "[convection] kind = \"cmfmc_matrix\" requires the binary " *
+            "to carry both cmfmc AND dtrain payloads (no Tiedtke fallback); " *
+            "this binary's payload_sections are $(caps.payload_sections). " *
+            "Regenerate the binary with a preprocessor that emits :dtrain, " *
+            "or fall back to kind=\"cmfmc\" which has a Tiedtke path."))
+    return nothing
+end
+
+# Catch-all for any future convection operator. Forces a method to be added
+# here when a new operator type appears, which is the whole point of the
+# dispatch refactor.
+function _validate_convection_capability(op::AbstractConvection, _caps)
+    throw(ArgumentError(
+        "no _validate_convection_capability method for $(typeof(op)); " *
+        "add a dispatch in DrivenRunner.jl when introducing a new convection " *
+        "operator type."))
 end
 
 # ===========================================================================
@@ -776,7 +803,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
     snapshot_schedule_hours = snapshot_hours(output_spec)
     do_snapshots = output_enabled(output_spec)
     recipe = build_runtime_physics_recipe(cfg, first_driver, FT)
-    _validate_capability_match(first_driver, recipe, cfg)
+    _validate_capability_match(first_driver, recipe)
 
     # Build the stateful physics object. The recipe selected from TOML is
     # installed on `TransportModel` here, but no physics is applied yet; that
@@ -1033,7 +1060,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
             "omit stop_window for a continuous multi-day run."))
     end
     recipe  = build_runtime_physics_recipe(cfg, driver1, FT; halo_width = Hp)
-    _validate_capability_match(driver1, recipe, cfg)
+    _validate_capability_match(driver1, recipe)
 
     grid    = driver_grid(driver1)
     mesh    = grid.horizontal

@@ -13,23 +13,28 @@ module SectionTimer
 # Commit 1b CPU microbenchmark.
 
 using Printf
+using NVTX
 
 const _ENABLED = Ref(false)
 const _ALLOC_ENABLED = Ref(false)
+const _NVTX_ENABLED = Ref(false)
 const _TIMINGS = Dict{Symbol, Vector{Float64}}()
 const _ALLOCATIONS = Dict{Symbol, Vector{Int64}}()
 const _WALL_T0 = Ref{Float64}(0.0)
 const _WALL_TOTAL = Ref{Float64}(0.0)
 
 """
-    enable!()
-Reset and turn on. Called at run start when `ATMOSTR_TIMERS=1`.
+    enable!(; timing=true, allocations=false, nvtx=false)
+Reset and turn on. `timing` controls host-side wall-clock accumulation;
+`nvtx` emits NVTX ranges for nsys/Nsight Compute timelines (off by
+default — under `ATMOSTR_NVTX=1` it is set independently of timing).
 """
-function enable!(; allocations::Bool = false)
+function enable!(; timing::Bool = true, allocations::Bool = false, nvtx::Bool = false)
     empty!(_TIMINGS)
     empty!(_ALLOCATIONS)
-    _ENABLED[] = true
+    _ENABLED[] = timing
     _ALLOC_ENABLED[] = allocations
+    _NVTX_ENABLED[] = nvtx
     _WALL_T0[] = time_ns() / 1e9
     _WALL_TOTAL[] = 0.0
     return nothing
@@ -44,6 +49,7 @@ function disable!()
     _WALL_TOTAL[] = (time_ns() / 1e9) - _WALL_T0[]
     _ENABLED[] = false
     _ALLOC_ENABLED[] = false
+    _NVTX_ENABLED[] = false
     return nothing
 end
 
@@ -62,11 +68,13 @@ end
 """
     @section name expr
 Time `expr` and accumulate the elapsed nanoseconds under `name` (a
-`Symbol`). When timers are off the macro just executes `expr` with
+`Symbol`). When `ATMOSTR_NVTX=1`, also emits an NVTX range labeled with
+`name`. When everything is off the macro just executes `expr` with
 zero overhead beyond a single `Ref` load.
 """
 macro section(name, expr)
-    quote
+    nvtx_label = name isa QuoteNode ? String(name.value) : "section"
+    timed = quote
         if _ENABLED[]
             local _t0 = time_ns()
             local _result
@@ -84,6 +92,33 @@ macro section(name, expr)
             $(esc(expr))
         end
     end
+    quote
+        if _NVTX_ENABLED[]
+            local _nvtx_h = NVTX.range_start(; message = $nvtx_label)
+            try
+                $timed
+            finally
+                NVTX.range_end(_nvtx_h)
+            end
+        else
+            $timed
+        end
+    end
+end
+
+@inline function _time_section_inner(f, name::Symbol)
+    _ENABLED[] || return f()
+    t0 = time_ns()
+    if _ALLOC_ENABLED[]
+        local result
+        bytes = Int64(Base.@allocated (result = f()))
+        _record_sample!(name, Float64(time_ns() - t0), bytes)
+        return result
+    else
+        result = f()
+        _record_sample!(name, Float64(time_ns() - t0), Int64(0))
+        return result
+    end
 end
 
 """
@@ -92,19 +127,16 @@ Function-form equivalent of `@section`. Use when the timed region is
 a do-block or already a closure.
 """
 @inline function time_section(f, name::Symbol)
-    _ENABLED[] || return f()
-    t0 = time_ns()
-    result = nothing
-    bytes = if _ALLOC_ENABLED[]
-        Int64(Base.@allocated begin
-            result = f()
-        end)
+    if _NVTX_ENABLED[]
+        h = NVTX.range_start(; message = String(name))
+        try
+            return _time_section_inner(f, name)
+        finally
+            NVTX.range_end(h)
+        end
     else
-        result = f()
-        Int64(0)
+        return _time_section_inner(f, name)
     end
-    _record_sample!(name, Float64(time_ns() - t0), bytes)
-    return result
 end
 
 function _summary_row(samples::Vector{Float64})
@@ -186,14 +218,18 @@ end
 
 """
     maybe_enable_from_env!()
-Inspect `ENV["ATMOSTR_TIMERS"]` at call time. `"1"` / `"true"` / `"on"`
-turn timers on; anything else (or unset) is a no-op. Idempotent.
+Inspect `ENV["ATMOSTR_TIMERS"]`, `ENV["ATMOSTR_NVTX"]`,
+`ENV["ATMOSTR_ALLOC_TIMERS"]` at call time. `"1"` / `"true"` / `"on"` /
+`"yes"` switches each axis on independently; anything else (or unset)
+is a no-op for that axis. Returns `true` if anything was enabled.
 """
 function maybe_enable_from_env!()
-    raw = get(ENV, "ATMOSTR_TIMERS", "")
-    if lowercase(raw) in ("1", "true", "on", "yes")
-        alloc_raw = get(ENV, "ATMOSTR_ALLOC_TIMERS", "")
-        enable!(allocations = lowercase(alloc_raw) in ("1", "true", "on", "yes"))
+    truthy = s -> lowercase(s) in ("1", "true", "on", "yes")
+    timing_on = truthy(get(ENV, "ATMOSTR_TIMERS", ""))
+    nvtx_on   = truthy(get(ENV, "ATMOSTR_NVTX", ""))
+    alloc_on  = truthy(get(ENV, "ATMOSTR_ALLOC_TIMERS", ""))
+    if timing_on || nvtx_on
+        enable!(timing = timing_on, allocations = alloc_on, nvtx = nvtx_on)
         return true
     end
     return false

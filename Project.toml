@@ -24,7 +24,6 @@ LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 Mmap = "a63ad114-7e13-5084-954f-fe012c677804"
 NCDatasets = "85f8d34a-cbdd-5861-8df4-14fed0d494ab"
-NVTX = "5da4648a-3479-48b8-97b9-01cb529c0a1f"
 OffsetArrays = "6fe1bfb0-de20-5000-8ca7-80f57d26f881"
 Optim = "429524aa-4258-5aef-a3af-852621145aeb"
 PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
@@ -41,11 +40,13 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 Makie = "ee78f7c6-11fb-53f2-987a-cfe4a2b5a57a"
 Metal = "dde4c033-4e86-420c-a63e-0dd931031962"
+NVTX = "5da4648a-3479-48b8-97b9-01cb529c0a1f"
 
 [extensions]
 AtmosTransportCUDAExt = "CUDA"
 AtmosTransportMakieExt = "Makie"
 AtmosTransportMetalExt = "Metal"
+AtmosTransportNVTXExt = "NVTX"
 
 [compat]
 Adapt = "4"

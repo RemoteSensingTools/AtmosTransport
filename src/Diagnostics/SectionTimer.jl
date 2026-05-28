@@ -13,7 +13,17 @@ module SectionTimer
 # Commit 1b CPU microbenchmark.
 
 using Printf
-using NVTX
+
+# NVTX integration is OPTIONAL — provided by the `AtmosTransportNVTXExt`
+# package extension, which loads only when the user has NVTX in their
+# environment. These untyped fallbacks are no-ops; the extension adds
+# more-specific methods (`_nvtx_start(::AbstractString)`,
+# `_nvtx_end(::NVTX.RangeId)`) that win by dispatch when NVTX is present.
+# Keeping the fallbacks at `::Any` avoids the "method overwriting during
+# precompilation" error that triggers when fallback and extension share an
+# identical signature.
+_nvtx_start(_) = nothing
+_nvtx_end(_) = nothing
 
 const _ENABLED = Ref(false)
 const _ALLOC_ENABLED = Ref(false)
@@ -94,11 +104,11 @@ macro section(name, expr)
     end
     quote
         if _NVTX_ENABLED[]
-            local _nvtx_h = NVTX.range_start(; message = $nvtx_label)
+            local _nvtx_h = _nvtx_start($nvtx_label)
             try
                 $timed
             finally
-                NVTX.range_end(_nvtx_h)
+                _nvtx_end(_nvtx_h)
             end
         else
             $timed
@@ -132,11 +142,11 @@ a do-block or already a closure.
     # pre-init so callers receive a concrete `T`, not `Union{Nothing, T}` —
     # important for hot wrappers like the snapshot writer or `_load_window`.
     if _NVTX_ENABLED[]
-        h = NVTX.range_start(; message = String(name))
+        h = _nvtx_start(String(name))
         try
             return _time_section_inner(f, name)
         finally
-            NVTX.range_end(h)
+            _nvtx_end(h)
         end
     else
         return _time_section_inner(f, name)

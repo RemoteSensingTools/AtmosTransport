@@ -46,6 +46,16 @@ struct RuntimeOutputSpec{S <: AbstractOutputSchedule,
     options::O
     fields::F
     enabled::Bool
+    format::Symbol   # :netcdf (default) or :binary_mmap (offline NetCDF conversion)
+end
+
+# Backward-compatible 6-arg constructor: defaults format to :netcdf.
+function RuntimeOutputSpec(path::AbstractString, schedule::AbstractOutputSchedule,
+                            partition::AbstractOutputPartition,
+                            options::SnapshotWriteOptions,
+                            fields::OutputFieldSpec, enabled::Bool)
+    return RuntimeOutputSpec(String(path), schedule, partition, options, fields,
+                              enabled, :netcdf)
 end
 
 function ExplicitSnapshotSchedule(hours::AbstractVector{<:Real})
@@ -264,7 +274,16 @@ function runtime_output_spec(output_cfg::AbstractDict, ::Type{FT};
     fields = output_field_spec(get(output_cfg, "fields", Dict{String, Any}()))
     enabled = Bool(get(output_cfg, "enabled", true))
     path = _output_path(output_cfg, default_path)
-    return RuntimeOutputSpec(path, schedule, partition, options, fields, enabled)
+    format = _parse_output_format(get(output_cfg, "format", "netcdf"))
+    return RuntimeOutputSpec(path, schedule, partition, options, fields, enabled, format)
+end
+
+function _parse_output_format(value)
+    s = lowercase(String(value))
+    s in ("netcdf", "nc") && return :netcdf
+    s in ("binary_mmap", "binary", "mmap", "atmsnap") && return :binary_mmap
+    throw(ArgumentError(
+        "[output].format must be \"netcdf\" or \"binary_mmap\", got \"$(value)\""))
 end
 
 function _insert_suffix_before_extension(path::AbstractString, suffix::AbstractString)

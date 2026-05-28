@@ -133,6 +133,72 @@ end
     end
 end
 
+# Strategy B halo fusion (4D path): one launch fills all 4 edges of one panel.
+# Each edge_idx selects (src array, e, q_e, flip). KA's column-major iteration
+# puts `s` innermost, so 32-thread warps share the same `edge_idx` and the
+# branch is warp-uniform — only the ~4 boundary warps per launch see divergence.
+@kernel function _fill_4edges4d_kernel!(dst,
+                                          @Const(src1), @Const(src2),
+                                          @Const(src3), @Const(src4),
+                                          e1, e2, e3, e4,
+                                          q1, q2, q3, q4,
+                                          flip1, flip2, flip3, flip4,
+                                          Nc, Hp)
+    s, d, k, t, edge_idx = @index(Global, NTuple)
+    @inbounds begin
+        if edge_idx == 1
+            s_src = flip1 ? (Nc + 1 - s) : s
+            i_src, j_src = _edge_interior_ij(q1, d, s_src, Nc, Hp)
+            i_dst, j_dst = _edge_halo_ij(e1, d, s, Nc, Hp)
+            dst[i_dst, j_dst, k, t] = src1[i_src, j_src, k, t]
+        elseif edge_idx == 2
+            s_src = flip2 ? (Nc + 1 - s) : s
+            i_src, j_src = _edge_interior_ij(q2, d, s_src, Nc, Hp)
+            i_dst, j_dst = _edge_halo_ij(e2, d, s, Nc, Hp)
+            dst[i_dst, j_dst, k, t] = src2[i_src, j_src, k, t]
+        elseif edge_idx == 3
+            s_src = flip3 ? (Nc + 1 - s) : s
+            i_src, j_src = _edge_interior_ij(q3, d, s_src, Nc, Hp)
+            i_dst, j_dst = _edge_halo_ij(e3, d, s, Nc, Hp)
+            dst[i_dst, j_dst, k, t] = src3[i_src, j_src, k, t]
+        else
+            s_src = flip4 ? (Nc + 1 - s) : s
+            i_src, j_src = _edge_interior_ij(q4, d, s_src, Nc, Hp)
+            i_dst, j_dst = _edge_halo_ij(e4, d, s, Nc, Hp)
+            dst[i_dst, j_dst, k, t] = src4[i_src, j_src, k, t]
+        end
+    end
+end
+
+"""4D panel-fused halo edge fill: one kernel launch per panel covers all 4 edges."""
+function _fill_4edges_panel_4d!(panels::NTuple{6, A}, p::Int,
+                                 conn, Nc::Int, Hp::Int) where {A <: AbstractArray{<:Any, 4}}
+    nb1 = conn.neighbors[p][1]
+    nb2 = conn.neighbors[p][2]
+    nb3 = conn.neighbors[p][3]
+    nb4 = conn.neighbors[p][4]
+    q1 = reciprocal_edge(conn, p, 1)
+    q2 = reciprocal_edge(conn, p, 2)
+    q3 = reciprocal_edge(conn, p, 3)
+    q4 = reciprocal_edge(conn, p, 4)
+    dst = panels[p]
+    src1 = panels[nb1.panel]
+    src2 = panels[nb2.panel]
+    src3 = panels[nb3.panel]
+    src4 = panels[nb4.panel]
+    Nk = size(dst, 3)
+    Nt = size(dst, 4)
+    backend = get_backend(dst)
+    k! = _fill_4edges4d_kernel!(backend, 256)
+    k!(dst, src1, src2, src3, src4,
+       1, 2, 3, 4,
+       q1, q2, q3, q4,
+       nb1.orientation >= 2, nb2.orientation >= 2,
+       nb3.orientation >= 2, nb4.orientation >= 2,
+       Nc, Hp; ndrange = (Nc, Hp, Nk, Nt, 4))
+    return nothing
+end
+
 # ---------------------------------------------------------------------------
 # Corner fill — FV3 tp_core.F90 rotation formulas
 # ---------------------------------------------------------------------------
@@ -278,15 +344,24 @@ function fill_panel_halos!(panels::NTuple{6, A},
     Hp == 0 && return nothing
 
     conn = mesh.connectivity
-    # Fill all 24 edges (6 panels × 4 edges)
-    for p in 1:6
-        for e in 1:4
-            nb = conn.neighbors[p][e]
-            q_e = reciprocal_edge(conn, p, e)
-            _fill_edge!(panels[p], panels[nb.panel], e, q_e, nb.orientation, Nc, Hp)
+    backend = get_backend(panels[1])
+
+    if ndims(A) == 4 && !(backend isa KA_CPU)
+        # Strategy B halo fusion: one fused-4-edge launch per panel → 6 launches
+        # for the 4D path instead of 24. CPU path and 3D arrays keep the
+        # per-edge loop.
+        for p in 1:6
+            _fill_4edges_panel_4d!(panels, p, conn, Nc, Hp)
+        end
+    else
+        for p in 1:6
+            for e in 1:4
+                nb = conn.neighbors[p][e]
+                q_e = reciprocal_edge(conn, p, e)
+                _fill_edge!(panels[p], panels[nb.panel], e, q_e, nb.orientation, Nc, Hp)
+            end
         end
     end
-    backend = get_backend(panels[1])
     backend isa KA_CPU || synchronize(backend)
 
     # Corner rotation if a sweep direction is specified

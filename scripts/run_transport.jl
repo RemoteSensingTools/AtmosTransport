@@ -27,6 +27,23 @@
 using Logging
 using TOML
 
+# Default to 2 Julia threads. Per the GPU-profiling work on 2026-05-28, going
+# from --threads=1 → --threads=2 cut the 3-day C180 full-physics wall by 34 %
+# (130 s → 86 s): NetCDF/PCIe write overlaps GPU compute on the background
+# thread, and host-side launch dispatch pipelines across threads. Users who
+# want a different count can set JULIA_NUM_THREADS or pass --threads N
+# explicitly; setting ATMOSTR_NO_AUTO_THREADS=1 disables the re-exec.
+if Threads.nthreads() == 1 &&
+   get(ENV, "JULIA_NUM_THREADS", "") == "" &&
+   get(ENV, "ATMOSTR_NO_AUTO_THREADS", "") != "1"
+    @info "Re-executing with --threads=2 (set ATMOSTR_NO_AUTO_THREADS=1 to disable)"
+    julia = Base.julia_cmd()
+    base = filter(a -> !startswith(String(a), "--threads"), julia.exec)
+    new_cmd = Cmd([base; "--threads=2"; PROGRAM_FILE; ARGS...])
+    run(new_cmd; wait = true)
+    exit(0)
+end
+
 # Preload the GPU backend BEFORE `AtmosTransport` gets included so the
 # whole stack compiles in a single world age. Doing the load dynamically
 # later (from `_ensure_gpu_runtime!`) means every CuArray method
@@ -104,7 +121,44 @@ function main()
     cfg_path = expanduser(ARGS[1])
     isfile(cfg_path) || error("Config not found: $cfg_path")
     cfg = TOML.parsefile(cfg_path)
-    return run_driven_simulation(cfg)
+    return _run_with_optional_profiling(cfg)
+end
+
+# GPU profiling brackets, gated on ATMOSTR_PROFILE_MODE.
+#   "full"   — wrap the entire run in CUDA.@profile; CUPTI activity summary
+#              printed at end. Honors nsys if launched under it.
+#   "window" — spawn an async timer that calls CUDA.Profile.start() after
+#              ATMOSTR_PROFILE_WARMUP_SEC and CUDA.Profile.stop() +
+#              process exit after ATMOSTR_PROFILE_DUR_SEC. Used with
+#              `nsys profile -c cudaProfilerApi --capture-range-end=stop`.
+#   ""       — unchanged.
+function _run_with_optional_profiling(cfg)
+    mode = lowercase(get(ENV, "ATMOSTR_PROFILE_MODE", ""))
+    if mode == "" || !isdefined(Main, :CUDA)
+        return run_driven_simulation(cfg)
+    end
+    CUDA = getfield(Main, :CUDA)
+    if mode == "full"
+        @info "ATMOSTR_PROFILE_MODE=full → CUDA.@profile wrap of full run"
+        return CUDA.@profile run_driven_simulation(cfg)
+    elseif mode == "window"
+        warmup = parse(Float64, get(ENV, "ATMOSTR_PROFILE_WARMUP_SEC", "120"))
+        dur    = parse(Float64, get(ENV, "ATMOSTR_PROFILE_DUR_SEC", "60"))
+        @info "ATMOSTR_PROFILE_MODE=window → start after $(warmup)s, stop after +$(dur)s, then exit"
+        Threads.@spawn begin
+            sleep(warmup)
+            @info "Profile window: CUDA.Profile.start()"
+            CUDA.Profile.start()
+            sleep(dur)
+            @info "Profile window: CUDA.Profile.stop() and process exit"
+            CUDA.Profile.stop()
+            exit(0)
+        end
+        return run_driven_simulation(cfg)
+    else
+        @warn "Unknown ATMOSTR_PROFILE_MODE=$(mode); running without profile bracket"
+        return run_driven_simulation(cfg)
+    end
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__

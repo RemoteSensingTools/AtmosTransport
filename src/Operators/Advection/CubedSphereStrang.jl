@@ -604,17 +604,51 @@ function _sweep_z_panel_mt!(rm_4d, m, cm, scheme::UpwindScheme,
     return nothing
 end
 
-"""Copy interior region from buffer back to array."""
+@kernel function _copy_interior_3d_kernel!(dst, @Const(src), Hp)
+    ii, jj, kk = @index(Global, NTuple)
+    @inbounds begin
+        i = ii + Hp
+        j = jj + Hp
+        dst[i, j, kk] = src[i, j, kk]
+    end
+end
+
+@kernel function _copy_interior_4d_kernel!(dst, @Const(src), Hp)
+    ii, jj, kk, tt = @index(Global, NTuple)
+    @inbounds begin
+        i = ii + Hp
+        j = jj + Hp
+        dst[i, j, kk, tt] = src[i, j, kk, tt]
+    end
+end
+
+"""Copy interior region from buffer back to array.
+
+Replaces the prior `dst[r, r, 1:Nz] .= src[r, r, 1:Nz]` broadcast, which
+launched GPUArrays.jl's generic `gpu_getindex_kernel` (~50 % of GPU time on a
+C180 full-physics run, vs ~12% for a direct kernel). The custom kernels above
+do one device-local read/write per cell with no intermediate temporary.
+
+Synchronizes after the kernel launch so callers can safely reuse the shared
+`src` workspace buffer (e.g. `rm_A` / `m_A`) for the next panel's sweep.
+Without this barrier, panel p's copy-back can race against panel p+1's sweep
+kernel writing into the same workspace — silent today because CUDA serializes
+the default stream, but the dependency is not contractual across backends.
+"""
 function _copy_interior!(dst, src, Nc, Hp, Nz)
-    r = Hp+1:Hp+Nc
-    dst[r, r, 1:Nz] .= src[r, r, 1:Nz]
+    backend = get_backend(dst)
+    kernel! = _copy_interior_3d_kernel!(backend, 256)
+    kernel!(dst, src, Int32(Hp); ndrange = (Nc, Nc, Nz))
+    synchronize(backend)
     return nothing
 end
 
 function _copy_interior!(dst::AbstractArray{<:Any, 4}, src::AbstractArray{<:Any, 4},
                          Nc, Hp, Nz, Nt)
-    r = Hp+1:Hp+Nc
-    dst[r, r, 1:Nz, 1:Nt] .= src[r, r, 1:Nz, 1:Nt]
+    backend = get_backend(dst)
+    kernel! = _copy_interior_4d_kernel!(backend, 256)
+    kernel!(dst, src, Int32(Hp); ndrange = (Nc, Nc, Nz, Nt))
+    synchronize(backend)
     return nothing
 end
 

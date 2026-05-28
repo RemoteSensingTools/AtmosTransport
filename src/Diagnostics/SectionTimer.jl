@@ -94,17 +94,20 @@ a do-block or already a closure.
 @inline function time_section(f, name::Symbol)
     _ENABLED[] || return f()
     t0 = time_ns()
-    result = nothing
-    bytes = if _ALLOC_ENABLED[]
-        Int64(Base.@allocated begin
-            result = f()
-        end)
+    # Avoid `result = nothing` pre-init: inferring Union{Nothing, T} forces
+    # the caller to handle a boxed return at every wrapped call site (the
+    # generic timer wraps `_load_window`, snapshot writers, etc. — all of
+    # which return concrete types).
+    if _ALLOC_ENABLED[]
+        local result
+        bytes = Int64(Base.@allocated (result = f()))
+        _record_sample!(name, Float64(time_ns() - t0), bytes)
+        return result
     else
         result = f()
-        Int64(0)
+        _record_sample!(name, Float64(time_ns() - t0), Int64(0))
+        return result
     end
-    _record_sample!(name, Float64(time_ns() - t0), bytes)
-    return result
 end
 
 function _summary_row(samples::Vector{Float64})

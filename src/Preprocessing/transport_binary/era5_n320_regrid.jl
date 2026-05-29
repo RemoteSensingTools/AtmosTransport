@@ -147,6 +147,7 @@ function process_era5_n320_to_cs_day(date::Date,
             half_dt_seconds = Float64(dt_met_seconds) / 2,
             steps_per_window = steps_per_met,
             include_flux_delta = true,
+            include_tm5conv = include_convection,
             mass_basis = mass_basis,
             panel_convention = _cs_panel_convention_tag(target_grid),
             cs_definition = _cs_definition_tag(target_grid),
@@ -160,6 +161,8 @@ function process_era5_n320_to_cs_day(date::Date,
                 "target_type"  => "cubed_sphere",
                 "regrid_method" => "conservative",
                 "poisson_balanced" => true,
+                "tm5_convection_source" => include_convection ?
+                    "ec2tm_from_rates(udmf,ddmf,udrf,ddrf)" : "none",
             ))
         writer = CubedSphereBinaryWriter(inner_writer,
                                           mass_basis_from_symbol(mass_basis);
@@ -311,9 +314,16 @@ function process_era5_n320_to_cs_day(date::Date,
 
             convert_cs_mass_target_to_delta!(nxt_m_dry, cur_m_dry)
 
-            write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(win - 1,
-                (m = cur_m_dry, am = cur_am, bm = cur_bm, cm = cur_cm,
-                 ps = cur_ps_dry, dm = nxt_m_dry)))
+            base_payload = (m = cur_m_dry, am = cur_am, bm = cur_bm, cm = cur_cm,
+                            ps = cur_ps_dry, dm = nxt_m_dry)
+            payload = include_convection ?
+                merge(base_payload, (; tm5_fields = (
+                    entu = cur_pipe.tm5_c180_fields.entu,
+                    detu = cur_pipe.tm5_c180_fields.detu,
+                    entd = cur_pipe.tm5_c180_fields.entd,
+                    detd = cur_pipe.tm5_c180_fields.detd))) :
+                base_payload
+            write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(win - 1, payload))
 
             @info @sprintf("    Window %2d/%d: wrote (bal %.2fs pre=%.2e post=%.2e iter=%d) | read %2d (%.2fs)",
                             win - 1, nwindow, t_bal, bal_diag.max_pre_residual,
@@ -375,9 +385,16 @@ function process_era5_n320_to_cs_day(date::Date,
         diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cur_dm_dry, cur_m_dry, Nc, Nz_int)
         convert_cs_mass_target_to_delta!(nxt_m_dry, cur_m_dry)
 
-        write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(nwindow,
-            (m = cur_m_dry, am = cur_am, bm = cur_bm, cm = cur_cm,
-             ps = cur_ps_dry, dm = nxt_m_dry)))
+        final_base_payload = (m = cur_m_dry, am = cur_am, bm = cur_bm, cm = cur_cm,
+                              ps = cur_ps_dry, dm = nxt_m_dry)
+        final_payload = include_convection ?
+            merge(final_base_payload, (; tm5_fields = (
+                entu = cur_pipe.tm5_c180_fields.entu,
+                detu = cur_pipe.tm5_c180_fields.detu,
+                entd = cur_pipe.tm5_c180_fields.entd,
+                detd = cur_pipe.tm5_c180_fields.detd))) :
+            final_base_payload
+        write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(nwindow, final_payload))
 
         worst_pre  = max(worst_pre,  bal_diag.max_pre_residual)
         worst_post = max(worst_post, bal_diag.max_post_residual)

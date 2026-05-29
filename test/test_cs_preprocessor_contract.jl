@@ -26,6 +26,8 @@ using .AtmosTransport.Preprocessing: verify_substep_positivity_cs!,
 # helper just for tests.
 const _resolve_positivity_cfl_limit =
     AtmosTransport.Preprocessing._resolve_positivity_cfl_limit
+const _fill_cs_mass_delta_payload! =
+    AtmosTransport.Preprocessing._fill_cs_mass_delta_payload!
 
 # Build a 6-panel CS window whose horizontal fluxes vanish and whose vertical
 # fluxes encode the per-cell mass tendency exactly. The result satisfies the
@@ -67,6 +69,28 @@ end
 with_quiet_logger(f) = with_logger(f, NullLogger())
 
 @testset "CS preprocessor contract gates" begin
+
+    @testset "ERA5 sliding-window dm payload does not mutate endpoint" begin
+        FT = Float32
+        m_cur = ntuple(p -> fill(FT(100 + p), 2, 2, 2), 6)
+        m_next = ntuple(p -> fill(FT(130 + p), 2, 2, 2), 6)
+        m_next_before = ntuple(p -> copy(m_next[p]), 6)
+        dm_payload = ntuple(_ -> zeros(FT, 2, 2, 2), 6)
+
+        _fill_cs_mass_delta_payload!(dm_payload, m_cur, m_next)
+
+        for p in 1:6
+            @test dm_payload[p] == m_next_before[p] .- m_cur[p]
+            @test m_next[p] == m_next_before[p]
+        end
+
+        # Regression for the ERA5 N320 writer's window-2 replay failure:
+        # the buffer swapped into `cur_m_dry` must remain the absolute
+        # endpoint, not the serialized delta payload.
+        cur_after_swap = m_next
+        @test cur_after_swap[4][1, 1, 1] == m_next_before[4][1, 1, 1]
+        @test cur_after_swap[4][1, 1, 1] != dm_payload[4][1, 1, 1]
+    end
 
     # ------------------------------------------------------------------
     # verify_substep_positivity_cs!

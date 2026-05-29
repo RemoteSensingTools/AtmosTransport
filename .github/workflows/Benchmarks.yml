@@ -91,7 +91,7 @@ jobs:
             STEPS="3"
             REPEATS="5"
           fi
-          julia --color=yes --project=benchmarking benchmarking/run_benchmarks.jl \
+          julia --color=yes --threads=2 --project=benchmarking benchmarking/run_benchmarks.jl \
             --backend=cpu \
             --float-type="${FLOAT_TYPES}" \
             --grid="${GRID}" \
@@ -143,7 +143,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          julia --color=yes --project=benchmarking benchmarking/run_benchmarks.jl \
+          julia --color=yes --threads=2 --project=benchmarking benchmarking/run_benchmarks.jl \
             --backend=cuda \
             --float-type="${{ github.event.inputs.gpu_float_types }}" \
             --grid="${{ github.event.inputs.grid }}" \
@@ -196,7 +196,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          julia --color=yes --project=benchmarking benchmarking/run_benchmarks.jl \
+          julia --color=yes --threads=2 --project=benchmarking benchmarking/run_benchmarks.jl \
             --backend=metal \
             --float-type="${{ github.event.inputs.gpu_float_types }}" \
             --grid="${{ github.event.inputs.grid }}" \

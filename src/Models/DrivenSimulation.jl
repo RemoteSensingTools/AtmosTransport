@@ -313,16 +313,21 @@ function _load_window_into_existing_backend!(existing_window,
                                              driver::AbstractMetDriver,
                                              win::Int,
                                              model_air_mass)
-    loaded = _load_window(driver, win)
+    loaded = SectionTimer.time_section(:window_load_host) do
+        _load_window(driver, win)
+    end
     adaptor = _window_backend_adapter(model_air_mass)
     if adaptor === Array
         return loaded
     end
-    _copy_window_payload!(existing_window, loaded)
+    SectionTimer.time_section(:window_backend_copy) do
+        _copy_window_payload!(existing_window, loaded)
+    end
     return existing_window
 end
 
 @inline _prefetch_enabled(model_air_mass) =
+    get(ENV, "ATMOSTR_DISABLE_PREFETCH", "0") != "1" &&
     _window_backend_adapter(model_air_mass) !== Array && Threads.nthreads() > 1
 
 function _start_window_prefetch!(sim::DrivenSimulation, target_window::Int)
@@ -335,15 +340,19 @@ function _start_window_prefetch!(sim::DrivenSimulation, target_window::Int)
     driver = sim.driver
     model_air_mass = sim.model.state.air_mass
     sim.prefetch_window_index = target_window
-    sim.prefetch_task = Threads.@spawn _load_window_into_existing_backend!(
-        target_slot, driver, target_window, model_air_mass)
+    sim.prefetch_task = Threads.@spawn SectionTimer.time_section(:prefetch_task_total) do
+        _load_window_into_existing_backend!(
+            target_slot, driver, target_window, model_air_mass)
+    end
     return nothing
 end
 
 function _take_prefetched_window!(sim::DrivenSimulation, next_window::Int)
     if _prefetch_enabled(sim.model.state.air_mass) &&
        sim.prefetch_window_index == next_window
-        fetched = fetch(sim.prefetch_task)
+        fetched = SectionTimer.time_section(:prefetch_fetch_wait) do
+            fetch(sim.prefetch_task)
+        end
         fetched === sim.prefetch_window ||
             throw(ArgumentError("prefetched transport window identity changed unexpectedly"))
         old_current = sim.window
@@ -353,9 +362,11 @@ function _take_prefetched_window!(sim::DrivenSimulation, next_window::Int)
         sim.prefetch_window_index = 0
         return nothing
     end
-    sim.window = _load_window_into_existing_backend!(sim.window, sim.driver,
-                                                     next_window,
-                                                     sim.model.state.air_mass)
+    sim.window = SectionTimer.time_section(:window_sync_load_total) do
+        _load_window_into_existing_backend!(sim.window, sim.driver,
+                                           next_window,
+                                           sim.model.state.air_mass)
+    end
     return nothing
 end
 

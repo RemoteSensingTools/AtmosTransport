@@ -237,4 +237,14 @@ end
         @test_throws MethodError Pre.open_reader(bogus, Date(2021, 12, 1),
                                                   Float64; chain_mass = false)
     end
+
+    @testset "supports_day_threading trait" begin
+        # Default is conservative — unknown sources serialize. ERA5 GRIB
+        # opts in because process_day is fully day-local; GEOS keeps the
+        # default false because pressure-flux endpoint chaining couples
+        # consecutive days.
+        @test Pre.supports_day_threading(_MockMetSettings("default")) == false
+        era5_n320 = Pre.ERA5N320Settings(root_dir = "/tmp/nowhere")
+        @test Pre.supports_day_threading(era5_n320) == true
+    end
 end

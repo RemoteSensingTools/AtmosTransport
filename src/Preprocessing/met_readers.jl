@@ -389,3 +389,15 @@ preprocessor_pair_supported(::ReducedGaussianTargetGeometry, ::ERA5SpectralSetti
 preprocessor_pair_supported(::CubedSphereTargetGeometry, ::ERA5SpectralSettings) = true
 preprocessor_pair_supported(::CubedSphereTargetGeometry, ::AbstractGEOSSettings) = true
 preprocessor_pair_supported(::CubedSphereTargetGeometry, ::AbstractERA5GRIBSettings) = true
+
+"""
+    supports_day_threading(settings) -> Bool
+
+True when `process_day(date, grid, settings, ...)` is genuinely day-local and
+the unified driver may launch `Threads.@threads` over a date range. Sources
+that maintain cross-day state (e.g. GEOS pressure-flux endpoint chaining)
+must keep the serial default. The driver still respects `chain_mass=true` —
+threading is enabled only when this trait AND `!chain_mass` both hold.
+"""
+supports_day_threading(::AbstractMetSettings) = false
+supports_day_threading(::AbstractERA5GRIBSettings) = true

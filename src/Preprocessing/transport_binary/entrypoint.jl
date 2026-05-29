@@ -278,10 +278,15 @@ function _process_day_native(cfg::AbstractDict;
     @info "Plan 41 unified driver enabled for $(nameof(typeof(settings))) → $(grid_kind(grid))"
 
     t_total = time()
-    seed_m = nothing                   # source-defined cross-day state (e.g. GEOS PF endpoint)
-    for (idx, d) in enumerate(dates)
+
+    # Per-day worker. Builds a fresh `target_grid` per call so threads can't
+    # race on the mutable `poisson_scratch` inside the geometry. Returns the
+    # `process_day` result so the serial path can chain `seed_m`.
+    run_one_day = function (idx::Int, d::Date, seed_m_in)
         out_path = _native_output_path(cfg, settings, d, FT)
         @info "[$idx/$(length(dates))] $(d) → $(out_path)"
+        day_grid = build_target_geometry(cfg["grid"], FT)
+        ensure_supported_target(day_grid)
         day_kwargs = (
             out_path        = out_path,
             dt_met_seconds  = dt_met_seconds,
@@ -294,11 +299,36 @@ function _process_day_native(cfg::AbstractDict;
             substep_cfl_target         = substep_policy.substep_cfl_target,
             min_steps_per_window       = substep_policy.min_steps_per_window,
             max_steps_per_window       = substep_policy.max_steps_per_window,
-            seed_m          = seed_m,
+            seed_m          = seed_m_in,
         )
-        result = process_day(d, grid, settings, vertical; day_kwargs...)
-        seed_m = get(result, :final_m, nothing)
+        return process_day(d, day_grid, settings, vertical; day_kwargs...)
     end
+
+    threaded = Threads.nthreads() > 1 && length(dates) > 1 &&
+               supports_day_threading(settings) && !chain_mass
+    if threaded
+        # Cold-cache pre-warm: regridder weight caches + JIT specializations
+        # land during day 1 serial, then days 2..N run concurrently. Without
+        # the warm-up, N threads race to build the same regridder cache file.
+        @info @sprintf("  Day-threading enabled (%d threads). Pre-warming on day 1 serial.",
+                       Threads.nthreads())
+        run_one_day(1, dates[1], nothing)
+        if length(dates) >= 2
+            remaining = collect(2:length(dates))
+            @info @sprintf("  Threaded loop over days 2..%d (n=%d).",
+                           length(dates), length(remaining))
+            Threads.@threads for idx in remaining
+                run_one_day(idx, dates[idx], nothing)
+            end
+        end
+    else
+        seed_m = nothing                  # source-defined cross-day state (e.g. GEOS PF endpoint)
+        for (idx, d) in enumerate(dates)
+            result = run_one_day(idx, d, seed_m)
+            seed_m = get(result, :final_m, nothing)
+        end
+    end
+
     elapsed = time() - t_total
     @info @sprintf("All done! %d days in %.1fs (%.1fs/day)",
                    length(dates), elapsed, elapsed / max(length(dates), 1))

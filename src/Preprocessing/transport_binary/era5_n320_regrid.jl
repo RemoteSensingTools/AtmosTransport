@@ -45,6 +45,25 @@
 # ===========================================================================
 
 """
+    _fill_cs_mass_delta_payload!(dm_payload, m_cur, m_next)
+
+Fill the on-disk forward endpoint-difference payload without mutating the
+absolute next endpoint. The ERA5 writer's sliding-window loop swaps
+`m_next` into `m_cur` after each write, so in-place conversion of the endpoint
+would make the following window start from `m_next - m_cur`.
+"""
+function _fill_cs_mass_delta_payload!(dm_payload::NTuple{NP, <:AbstractArray{FT, 3}},
+                                      m_cur::NTuple{NP, <:AbstractArray{FT, 3}},
+                                      m_next::NTuple{NP, <:AbstractArray{FT, 3}}) where {FT, NP}
+    for p in 1:NP
+        @inbounds for idx in eachindex(dm_payload[p])
+            dm_payload[p][idx] = m_next[p][idx] - m_cur[p][idx]
+        end
+    end
+    return dm_payload
+end
+
+"""
     process_era5_n320_to_cs_day(date, settings, target_grid;
                                  out_path,
                                  FT = Float32,
@@ -318,10 +337,10 @@ function process_era5_n320_to_cs_day(date::Date,
             end
             worst_positivity = update_cs_positivity_accumulator(worst_positivity, pos_diag, win - 1)
 
-            convert_cs_mass_target_to_delta!(nxt_m_dry, cur_m_dry)
+            _fill_cs_mass_delta_payload!(cur_dm_dry, cur_m_dry, nxt_m_dry)
 
             base_payload = (m = cur_m_dry, am = cur_am, bm = cur_bm, cm = cur_cm,
-                            ps = cur_ps_dry, dm = nxt_m_dry)
+                            ps = cur_ps_dry, dm = cur_dm_dry)
             payload = include_convection ?
                 merge(base_payload, (; tm5_fields = (
                     entu = cur_pipe.tm5_c180_fields.entu,
@@ -406,10 +425,10 @@ function process_era5_n320_to_cs_day(date::Date,
                                           cfl_limit = positivity_cfl_limit)
         end
         worst_positivity = update_cs_positivity_accumulator(worst_positivity, final_pos_diag, nwindow)
-        convert_cs_mass_target_to_delta!(nxt_m_dry, cur_m_dry)
+        _fill_cs_mass_delta_payload!(cur_dm_dry, cur_m_dry, nxt_m_dry)
 
         final_base_payload = (m = cur_m_dry, am = cur_am, bm = cur_bm, cm = cur_cm,
-                              ps = cur_ps_dry, dm = nxt_m_dry)
+                              ps = cur_ps_dry, dm = cur_dm_dry)
         final_payload = include_convection ?
             merge(final_base_payload, (; tm5_fields = (
                 entu = cur_pipe.tm5_c180_fields.entu,

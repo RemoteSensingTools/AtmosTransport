@@ -501,7 +501,18 @@ function ec2tm_from_rates!(entu::AbstractVector{FT}, detu::AbstractVector{FT},
             end
         end
         if tote != totd
-            entu[lsave_u] += totd - tote
+            # Sign-aware closure: TM5's plain `entu[lsave_u] += (totd - tote)`
+            # subtracts when tote > totd and can re-introduce negative entu
+            # AFTER the symmetric-redistribution pass already cleaned up.
+            # Put the residual on the side that grows, never the side that
+            # shrinks. Net `sum(entu) - sum(detu)` invariant is preserved
+            # either way; non-negativity is preserved by construction.
+            delta = totd - tote
+            if delta >= zero(FT)
+                entu[lsave_u] += delta
+            else
+                detu[lsave_u] -= delta   # += abs(delta)
+            end
             closure_entu = 1
         end
     end
@@ -518,9 +529,27 @@ function ec2tm_from_rates!(entu::AbstractVector{FT}, detu::AbstractVector{FT},
             end
         end
         if tote_d != totd_d
-            entd[lsave_d] += totd_d - tote_d
+            delta_d = totd_d - tote_d
+            if delta_d >= zero(FT)
+                entd[lsave_d] += delta_d
+            else
+                detd[lsave_d] -= delta_d
+            end
             closure_entd = 1
         end
+    end
+
+    # Postcondition: after closure all four fields must be non-negative —
+    # the downstream `TM5Convection` operator and the transport-binary
+    # contract assume this. Cheap O(Nz) check; runs once per column.
+    @inbounds for k in 1:Nz
+        (entu[k] >= zero(FT) && detu[k] >= zero(FT) &&
+         entd[k] >= zero(FT) && detd[k] >= zero(FT)) ||
+            error("ec2tm_from_rates! produced negative TM5 field at level k=$k: " *
+                  "entu=$(entu[k]) detu=$(detu[k]) entd=$(entd[k]) detd=$(detd[k]). " *
+                  "This violates the non-negativity contract; closure should keep " *
+                  "the residual on the side that grows. Report with the column " *
+                  "inputs (udmf, ddmf, udrf_rate, ddrf_rate, dz).")
     end
 
     # Stats bookkeeping.  No-op when `stats === nothing`.

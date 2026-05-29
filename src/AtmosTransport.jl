@@ -257,14 +257,14 @@ export NoSurfaceFlux, SurfaceFluxOperator, SurfaceFluxSource,
 export AbstractConvection, NoConvection, CMFMCConvection, TM5Convection,
        CMFMCMatrixConvection, CMFMCWorkspace
 export ConvectionForcing, apply_convection!, has_convection_forcing
-export AbstractMetDriver
+export AbstractMetDriver, AbstractTransportWindow, StructuredTransportWindow
 export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemistry
 export ConstantField, ProfileKzField
 export apply!
 
 # Low-level model hooks for custom loops
 export TransportModel, Simulation, DrivenSimulation
-export step!, run!, run_window!
+export step!, run!, run_window!, window_index
 export with_chemistry, with_diffusion, with_emissions, with_convection, with_convection_forcing
 export build_runtime_physics_recipe, validate_runtime_physics_recipe
 export build_initial_mixing_ratio, pack_initial_tracer_mass

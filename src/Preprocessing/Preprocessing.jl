@@ -92,6 +92,7 @@ using ..MetDrivers: TransportBinaryReader, TransportBinaryHeader, write_transpor
                     set_streaming_steps_per_window_schedule!,
                     set_transport_header_steps_per_window_schedule!,
                     open_streaming_cs_transport_binary, write_streaming_cs_window!,
+                    read_era5_reduced_gaussian_geometry, read_era5_reduced_gaussian_mesh,
                     load_window!, load_flux_delta_window!,
                     has_tm5_convection, load_tm5_convection_window!,
                     load_surface_window!,
@@ -224,6 +225,13 @@ include("binary_pipeline.jl")
 # Native GEOS NetCDF reader (Commit 3 of plan indexed-baking-valiant)
 include("sources/geos.jl")
 
+# ERA5 native-GRIB reader: N320 settings + day handles, spectral synthesis
+# (VO+D → U/V, LNSP → PS, reduced_gg Q reader), dry-basis layer-mass
+# derivation, convection forecast (UDMF/DDMF/UDRF/DDRF), conservative
+# regrid to a cubed-sphere target, and the per-window pipeline that
+# wires them all together.
+include("sources/era5.jl")
+
 # TOML-driven met-source factory (Commit 4)
 include("sources/loader.jl")
 
@@ -237,9 +245,16 @@ include("met_readers.jl")
 # GEOS → CS passthrough orchestrator (Commit 5)
 include("transport_binary/cubed_sphere_geos.jl")
 
+# ERA5 N320 → CS transport-binary writer. Drives one UTC day end-to-end
+# through the per-window pipeline shipped in `sources/era5.jl` plus the
+# C180 dry-mass re-derivation, wind rotation, face flux reconstruction,
+# Poisson balance, and v4 writer.
+include("transport_binary/era5_n320_regrid.jl")
+
 # Met source abstraction (Commit 1 of plan indexed-baking-valiant)
 export AbstractMetSettings, RawWindow
-export read_window!, source_grid, windows_per_day, has_convection
+export read_window!, source_grid, windows_per_day
+export has_convection, has_surface, has_vdiff_fields
 export open_day, close_day!, allocate_raw_window
 
 # GEOS native NetCDF reader (Commit 3)
@@ -248,6 +263,26 @@ export GEOSDayHandles, open_geos_day, close_geos_day!
 export GEOSFPNativeDayHandles, geosfp_native_hourly_ctm_path
 export geos_collection_path, detect_level_orientation
 export endpoint_dry_mass, endpoint_dry_mass!
+
+# ERA5 native-GRIB reader (breakpoints A + B — settings, day handles, and the
+# per-window spectral-synthesis surface for the N320 source grid).
+export AbstractERA5GRIBSettings, ERA5GRIBSettings, ERA5N320Settings
+export ERA5GRIBDayHandles, open_era5_day, close_era5_day!
+export era5_grib_path
+export ERA5N320SpectralWorkspace, ERA5N320WindowFields
+export allocate_era5_n320_spectral_workspace, allocate_era5_n320_window_fields
+export discover_era5_n320_source_grid, discover_era5_spectral_truncation
+export read_era5_n320_window_fields!
+export ERA5N320DryMassFields, allocate_era5_n320_dry_mass_fields,
+       derive_n320_dry_mass!, derive_c180_dry_mass!, n320_cell_areas
+export ERA5C180RegridFields, ERA5C180RegridWorkspace,
+       allocate_era5_c180_regrid_fields, allocate_era5_c180_regrid_workspace,
+       regrid_n320_to_c180!
+export ERA5N320ConvectionFields, allocate_era5_n320_convection_fields,
+       read_era5_n320_convection_window!, era5_convection_hour_address
+export ERA5N320ToC180Pipeline, allocate_era5_n320_to_c180_pipeline,
+       process_era5_n320_window!
+export process_era5_n320_to_cs_day
 
 # Met-source TOML factory (Commit 4) + vertical-coordinate helper used by GEOS CLI
 export load_met_settings, load_hybrid_coefficients

@@ -1,0 +1,54 @@
+# ===========================================================================
+# GEOS-IT C180 native NetCDF -> v4 CS C180 transport binaries for Dec 2021,
+# laid out on NAS for the Catrine-vs-GEOS-Chem detailed comparison.
+#
+# Source: `~/data/AtmosTransport/met/geosit/C180/raw_catrine/YYYYMMDD/`
+#         (CTM_A1 + CTM_I1 + A1 + A3dyn + A3mstE + I3)
+# Output: `~/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32/`
+#         one `geos_transport_YYYYMMDD_float32.bin` per day, dry-basis,
+#         GEOS L72 with the top merged above 0.25 hPa, full physics:
+#         PBL surface fields, CMFMC + DTRAIN convection, plus U/V/T/QV
+#         for GCHP-style Holtslag-Boville VDIFF.
+#
+# Usage (detached for the month):
+#   setsid nohup julia -t8 --project=. \
+#       scripts/preprocessing/preprocess_transport_binary.jl \
+#       config/preprocessing/geosit_c180_dec2021_catrine_f32.toml \
+#       --start 2021-12-01 --end 2021-12-31 \
+#     > ~/atmostransport_logs/geosit_c180_dec2021_catrine_<ts>.log 2>&1 &
+# ===========================================================================
+
+[source]
+toml                 = "config/met_sources/geosit.toml"
+root_dir             = "/home/cfranken/data/AtmosTransport/met/geosit/C180/raw_catrine"
+include_surface      = true     # PBL section for runtime diffusion
+include_convection   = true     # CMFMC + DTRAIN for runtime convection
+include_vdiff_fields = true     # U/V/T/QV for GCHP Holtslag-Boville VDIFF
+
+[output]
+directory  = "/home/cfranken/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32"
+mass_basis = "dry"
+
+[grid]
+type                = "cubed_sphere"
+Nc                  = 180
+panel_convention    = "geos_native"
+definition          = "gmao"
+regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
+
+[vertical]
+coefficients = "config/geos_L72_coefficients.toml"
+transform    = "merge_above_pressure"
+pressure_hPa = 0.25
+
+[numerics]
+float_type     = "Float32"
+dt_met_seconds = 3600.0
+chain_mass     = false
+
+positivity_cfl_limit       = 0.95
+require_substep_positivity = true
+substep_schedule           = "adaptive_cfl"
+substep_cfl_target         = 0.95
+min_steps_per_window       = 1
+max_steps_per_window       = 64

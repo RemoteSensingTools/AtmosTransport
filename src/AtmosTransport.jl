@@ -239,6 +239,7 @@ export nx, ny, ncells, nfaces, nlevels, nrings, cell_index
 export cell_area, cell_faces, floattype
 export radius, gravity, reference_pressure
 export pressure_at_interface, pressure_at_level, level_thickness
+export lonlat_to_panel_xy
 
 # State and diagnostics
 export CellState, CubedSphereState, DryBasis, MoistBasis

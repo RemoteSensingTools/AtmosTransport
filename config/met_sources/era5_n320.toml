@@ -1,0 +1,37 @@
+# ===========================================================================
+# ERA5 N320 native GRIB — Met Data Source Configuration
+#
+# Distinct from `era5.toml` (which describes the spectral-coefficient path).
+# This descriptor selects the per-day-files-per-stream native-GRIB ERA5
+# archive used by `ERA5N320Settings` (= `ERA5GRIBSettings{:n320}`).
+#
+# Expected on-disk layout under `[source].root_dir`:
+#   ml_an_native_core/era5_core_YYYYMMDD.grib       # T, U/V via VO+D, LNSP
+#   ml_an_native_q/era5_ml_an_native_q_YYYYMMDD_YYYYMMDD.grib  # Q
+#   sfc_an_native/era5_surface_YYYYMMDD.grib        # surface (PS, T2M, ...)
+#   ml_fc_convection/era5_convection_YYYYMMDD.grib  # UDMF/DDMF/UDRF/DDRF
+#
+# This descriptor IS resolved by the unified preprocessor CLI when the
+# top-level preprocessing TOML uses
+#   [source]
+#   toml     = "config/met_sources/era5_n320.toml"
+#   root_dir = "..."
+# ===========================================================================
+
+[source]
+name        = "ERA5-N320"
+description = "ECMWF ERA5 reanalysis — native N320 reduced-Gaussian GRIB"
+institution = "European Centre for Medium-Range Weather Forecasts (ECMWF)"
+reference   = "https://doi.org/10.1002/qj.3803"
+
+[vertical]
+coefficients_file = "config/era5_L137_coefficients.toml"
+
+[preprocessing]
+# ERA5 model levels are top-down (level 1 = TOA, level 137 = surface).
+level_orientation = "top_down"
+
+# Toggle the optional GRIB streams the reader opens.
+include_surface      = true
+include_convection   = true
+include_vdiff_fields = true

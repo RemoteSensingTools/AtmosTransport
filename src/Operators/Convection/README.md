@@ -80,6 +80,14 @@ are genuine fast-path implementations, not generic wrappers.
 - [`TM5Convection.jl`](TM5Convection.jl) — `TM5Convection` struct +
   dispatch stubs (plan 23 Commit 1). Real kernels land in plan 23
   Commit 4.
+- [`CMFMCMatrixConvection.jl`](CMFMCMatrixConvection.jl) — conservation-
+  by-construction CMFMC variant; derives TM5 (entu/detu/entd/detd)
+  from GEOS (cmfmc/dtrain) per column, then reuses the TM5 LU
+  forward + adjoint. Selectable via `[convection].kind = "cmfmc_matrix"`.
+- [`cmfmc_matrix_kernels.jl`](cmfmc_matrix_kernels.jl) — three
+  derivation kernels (LL/RG/CS) for `CMFMCMatrixConvection`, with
+  inline column closure so the boundary residual is absorbed at
+  allocation time.
 - [`tm5_column_solve.jl`](tm5_column_solve.jl) — backend-agnostic
   column solver `_tm5_solve_column!` (plan 23 Commit 2): builds
   `conv1 = I - dt·D`, partial-pivot LU factorization, back-

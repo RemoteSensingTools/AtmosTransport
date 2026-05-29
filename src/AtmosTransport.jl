@@ -246,7 +246,9 @@ export CellState, CubedSphereState, DryBasis, MoistBasis
 export allocate_face_fluxes, allocate_tracers
 export get_tracer, mixing_ratio, total_mass, total_air_mass
 export tracer_names, ntracers
-export capture_snapshot, write_snapshot_netcdf
+export capture_snapshot, write_snapshot_netcdf, SnapshotFrame, SnapshotWriteOptions
+export runtime_output_spec
+export GnomonicPanelConvention, GEOSNativePanelConvention
 
 # Common operator configuration
 export AdvectionWorkspace
@@ -273,8 +275,13 @@ export TransportTracerSpec
 # Transport binaries and met-driver summaries
 export write_transport_binary
 export TransportBinaryReader, TransportBinaryHeader, TransportBinaryDriver
-export load_transport_window
+export CubedSphereTransportDriver, CubedSphereTransportWindow, CubedSphereBinaryReader
+export load_transport_window, driver_grid
 export total_windows, window_dt, steps_per_window, steps_per_window_schedule
+export window_count, load_grid, mass_basis, air_mass_basis
+export has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc, has_temperature
+export has_surface, has_vdiff_fields, has_tm5conv, has_humidity_endpoints
+export delta_semantics
 export grid_type, horizontal_topology
 export supports_diffusion, supports_convection
 

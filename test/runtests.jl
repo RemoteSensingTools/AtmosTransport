@@ -2,26 +2,66 @@
 #
 # Main test suite entrypoint for AtmosTransport.
 #
-# Usage:
-#   julia --project=. test/runtests.jl              # core tests (no external data)
-#   julia --project=. test/runtests.jl --all         # include real-data tests
+# Tiered layout (see test/README.md):
+#   test/core/        — canonical CI baseline (no external data); must stay green
+#   test/real_data/   — needs preprocessed binaries / ERA5 GRIB; opt-in via --all
+#   test/diagnostic/  — large numerical sweeps; opt-in via --diagnostic or --all
+#   test/archived/    — never run; kept as reference (see archived/legacy_README.md)
+#   test/orphan/      — promotion candidates; CI-excluded; opt-in via --orphan
+#   test/regridding/  — semantic grouping with its own (optional) runtests.jl
 #
-# Core tests run without any data files and validate types, kernels,
-# dispatch, and runtime logic. Real-data tests require preprocessed
-# ERA5 binaries and Catrine ICs in ~/data/AtmosTransport/.
+# Usage:
+#   julia --project=. test/runtests.jl                # core only (CI default)
+#   julia --project=. test/runtests.jl --all          # core + real_data + diagnostic
+#   julia --project=. test/runtests.jl --diagnostic   # core + diagnostic
+#   julia --project=. test/runtests.jl --orphan       # core + orphan watchlist
+#   julia --project=. test/runtests.jl --tiers=core,real_data,orphan
+#
+# Each test file is included into a fresh anonymous module so files don't
+# leak `using .AtmosTransport.X: Y` bindings into each other. On Julia 1.12
+# top-level `include`s in `Main` silently keep stale bindings between files
+# (e.g. `op isa AbstractConvection` returning false because LHS is from
+# include #2 but the RHS abstract type came from include #1).
 
-const RUN_ALL = "--all" in ARGS
+const TIER_FOLDERS = (
+    core       = "core",
+    real_data  = "real_data",
+    diagnostic = "diagnostic",
+    orphan     = "orphan",
+)
 
-# Each test file is included into a fresh anonymous module so that
-# multiple files in one Julia session don't reuse Main's `using
-# .AtmosTransport.X: Y` bindings from a prior file. Running the same
-# files as `for f in (...); include(f); end` at the Main top level on
-# Julia 1.12 silently keeps stale bindings (e.g. `op isa
-# AbstractConvection` returns false because the LHS is from
-# include #2 but the RHS is the include #1 abstract type). Always
-# route through this helper.
+function _selected_tiers(args::Vector{String})
+    selected = Set{Symbol}((:core,))
+    for arg in args
+        if arg == "--all"
+            push!(selected, :real_data); push!(selected, :diagnostic)
+        elseif arg == "--diagnostic"
+            push!(selected, :diagnostic)
+        elseif arg == "--real-data" || arg == "--real_data"
+            push!(selected, :real_data)
+        elseif arg == "--orphan"
+            push!(selected, :orphan)
+        elseif startswith(arg, "--tiers=")
+            for s in split(arg[length("--tiers=")+1:end], ",")
+                key = Symbol(replace(strip(s), "-" => "_"))
+                haskey(TIER_FOLDERS, key) ||
+                    error("Unknown tier '$key' (known: $(keys(TIER_FOLDERS)))")
+                push!(selected, key)
+            end
+        end
+    end
+    return selected
+end
+
+function _tier_files(tier::Symbol)
+    folder = joinpath(@__DIR__, TIER_FOLDERS[tier])
+    isdir(folder) || return String[]
+    return sort([joinpath(TIER_FOLDERS[tier], f)
+                 for f in readdir(folder) if endswith(f, ".jl")])
+end
+
 function run_test_file_isolated(test_file::AbstractString)
-    mod_name = Symbol("Test_", replace(basename(test_file), "." => "_"))
+    mod_name = Symbol("Test_", replace(replace(basename(test_file), "." => "_"), "/" => "_"))
     mod = Module(mod_name)
     Core.eval(mod, :(include(path::AbstractString) = Base.include($mod, path)))
     Core.eval(mod, :(include(mapexpr::Function, path::AbstractString) = Base.include(mapexpr, $mod, path)))
@@ -29,121 +69,21 @@ function run_test_file_isolated(test_file::AbstractString)
     return Base.include(mod, joinpath(@__DIR__, test_file))
 end
 
-# ── Core tests (no external data) ──────────────────────────────────
-
-core_tests = [
-    "test_met_sources_trait.jl",
-    "test_met_readers.jl",
-    "test_vertical_transforms.jl",
-    "test_identity_regrid.jl",
-    "test_geos_reader.jl",
-    "test_era5_n320_reader.jl",
-    "test_era5_n320_window_reader.jl",
-    "test_era5_n320_dry_mass.jl",
-    "test_era5_n320_to_c180_regrid.jl",
-    "test_era5_n320_convection.jl",
-    "test_era5_n320_to_c180_pipeline.jl",
-    "test_met_source_loader.jl",
-    "test_public_api_surface.jl",
-    "test_config_matrix_contract.jl",
-    "test_geos_cs_passthrough.jl",
-    "test_geos_convection.jl",
-    "test_geosfp_native_physics_fallback.jl",
-    "test_cs_panel_geographic_roundtrip.jl",
-    "test_cs_lonlat_inverse_projection.jl",
-    "test_basis_explicit_core.jl",
-    "test_advection_kernels.jl",
-    "test_no_advection.jl",
-    "test_cs_ppm_adjoint_footprint.jl",
-    "test_cs_tape_mmap_roundtrip.jl",
-    "test_cs_stride_checkpoint.jl",
-    "test_cs_tape_path.jl",
-    "test_cs_observations_io.jl",
-    "test_cs_observation_binding.jl",
-    "test_cs_departures_io.jl",
-    "test_cs_covariance.jl",
-    "test_cs_preconditioning.jl",
-    "test_cs_4dvar_preconditioned.jl",
-    "test_adjoint_identity_model_space.jl",
-    "test_adjoint_identity_preconditioned.jl",
-    "test_gradient_taylor_sweep.jl",
-    "test_cs_optimizer_dispatch.jl",
-    "test_cs_lbfgs.jl",
-    "test_cs_iteration_log.jl",
-    "test_cs_inversion_driver.jl",
-    "test_cs_inversion_truth_recovery.jl",
-    "test_runtime_chemistry_recipe.jl",
-    "test_linrood_kernel_adjoints.jl",
-    "test_structured_mesh_metadata.jl",
-    "test_reduced_gaussian_mesh.jl",
-    "test_driven_simulation.jl",
-    "test_transport_model_convection.jl",
-    "test_tm5_convection.jl",
-    "test_cmfmc_adjoint_identity.jl",
-    "test_cmfmc_matrix_convection.jl",
-    "test_diffusion_mass_flux_conservation.jl",
-    "test_dz_helpers_virtual_T.jl",
-    "test_tm5_alias_safety.jl",
-    "test_tm5_tile_bit_equality.jl",
-    "test_tm5_preprocessing.jl",
-    "test_tm5_preprocessing_rates.jl",
-    "test_era5_physics_binary.jl",
-    "test_preprocessing_vertical_presets.jl",
-    "test_cs_preprocessor_contract.jl",
-    "test_ll_preprocessor_contract.jl",
-    "test_rg_preprocessor_contract.jl",
-    "test_preprocessor_substep_schedule.jl",
-    "test_preprocessor_writer_adapters.jl",
-    "test_preprocessor_unified_driver.jl",
-    "test_rg_preprocessor_unified_driver.jl",
-    "test_cs_spectral_unified_driver.jl",
-    "test_ll_spectral_unified_driver.jl",
-    "test_tm5_vertical_remap.jl",
-    "test_tm5_process_day.jl",
-    "test_tm5_vs_cmfmc_parity.jl",
-    "test_tm5_driven_simulation.jl",
-    "test_cubed_sphere_advection.jl",
-    "test_cubed_sphere_runtime.jl",
-    "test_cs_chemistry.jl",
-    "test_poisson_balance.jl",
-    "test_replay_consistency.jl",
-    "test_runtime_backends.jl",
-    "test_run_transport_binary_recipe.jl",
-    "test_initial_condition_io.jl",
-    "test_binary_path_expander.jl",
-    "test_binary_inspector.jl",
-    "test_cs_driven_builders.jl",
-    "test_ll_to_cs_regrid_script.jl",
-    "test_preprocessing_cache_io.jl",
-    "test_output_snapshots.jl",
-    "test_visualization_snapshots.jl",
-    "test_aqua.jl",
-    "test_jet.jl",
-    "test_readme_current.jl",
-]
-
-for test_file in core_tests
-    @info "Running $test_file"
-    run_test_file_isolated(test_file)
-end
-
-# ── Real-data tests (require preprocessed binaries) ────────────────
-
-if RUN_ALL
-    real_data_tests = [
-        "test_dry_flux_interface.jl",
-        "test_transport_binary_reader.jl",
-        "test_era5_latlon_e2e.jl",
-        "test_tm5_catrine_1day.jl",
-        "test_catrine_emissions.jl",
-    ]
-
-    for test_file in real_data_tests
-        @info "Running $test_file"
-        run_test_file_isolated(test_file)
+selected = _selected_tiers(ARGS)
+for tier in (:core, :real_data, :diagnostic, :orphan)
+    tier in selected || continue
+    files = _tier_files(tier)
+    if isempty(files)
+        @info "Tier $(tier): no files"
+        continue
     end
-else
-    @info "Skipping real-data tests (pass --all to include them)"
+    @info "── Tier $(tier) — $(length(files)) files ──"
+    for f in files
+        @info "Running $f"
+        run_test_file_isolated(f)
+    end
 end
 
+skipped = setdiff(Set(keys(TIER_FOLDERS)), selected)
+isempty(skipped) || @info "Skipped tiers: $(sort(collect(skipped))) (opt-in flags: --real-data --diagnostic --orphan --all)"
 @info "Test suite complete."

@@ -223,6 +223,35 @@ subcycling pilot. It's a safety net for preprocessing flux-inconsistency
     return gamma * rm_donor
 end
 
+@inline _cs_gpu_profile_enabled() =
+    SectionTimer.is_enabled() &&
+    lowercase(get(ENV, "ATMOSTR_PROFILE_GPU", "")) in ("1", "true", "on", "yes")
+
+@inline function _profiled_launch_and_sync!(launch!::F, backend, launch_section::Symbol,
+                                            sync_section::Symbol) where {F}
+    if _cs_gpu_profile_enabled()
+        t0 = time_ns()
+        launch!()
+        SectionTimer.record_sample!(launch_section, Float64(time_ns() - t0))
+        t1 = time_ns()
+        synchronize(backend)
+        SectionTimer.record_sample!(sync_section, Float64(time_ns() - t1))
+    else
+        launch!()
+        synchronize(backend)
+    end
+    return nothing
+end
+
+@inline function _profiled_copy!(copy!::F, section::Symbol) where {F}
+    if _cs_gpu_profile_enabled()
+        SectionTimer.time_section(copy!, section)
+    else
+        copy!()
+    end
+    return nothing
+end
+
 """Higher-order X-sweep via KA kernel dispatching on scheme (Slopes, PPM, etc.).
 
 Requires sufficient halo padding: Hp >= 2 for SlopesScheme, Hp >= 3 for PPMScheme.
@@ -236,11 +265,14 @@ function _sweep_x_panel!(rm, m, am, scheme::AbstractAdvectionScheme, rm_A, m_A, 
     FT = eltype(m)
     backend = get_backend(rm)
     kernel! = _cs_xsweep_kernel!(backend, 256)
-    kernel!(rm_A, rm, m_A, m, am, scheme, Int32(Nc), Int32(Hp), FT(flux_scale);
-            ndrange=(Nc, Nc, Nz))
-    synchronize(backend)
-    _copy_interior!(rm, rm_A, Nc, Hp, Nz)
-    _copy_interior!(m, m_A, Nc, Hp, Nz)
+    _profiled_launch_and_sync!(backend, :cs_kernel_launch_x, :cs_kernel_sync_x) do
+        kernel!(rm_A, rm, m_A, m, am, scheme, Int32(Nc), Int32(Hp), FT(flux_scale);
+                ndrange=(Nc, Nc, Nz))
+    end
+    _profiled_copy!(:cs_copyback_x) do
+        _copy_interior!(rm, rm_A, Nc, Hp, Nz)
+        _copy_interior!(m, m_A, Nc, Hp, Nz)
+    end
     return nothing
 end
 
@@ -251,11 +283,14 @@ function _sweep_x_panel_mt!(rm_4d, m, am, scheme::AbstractAdvectionScheme,
     FT = eltype(m)
     backend = get_backend(rm_4d)
     kernel! = _cs_xsweep_mt_kernel!(backend, 256)
-    kernel!(rm_4d_A, rm_4d, m_A, m, am, scheme, Int32(Nc), Int32(Hp), Int32(Nt), FT(flux_scale);
-            ndrange=(Nc, Nc, Nz))
-    synchronize(backend)
-    _copy_interior!(rm_4d, rm_4d_A, Nc, Hp, Nz, Nt)
-    _copy_interior!(m, m_A, Nc, Hp, Nz)
+    _profiled_launch_and_sync!(backend, :cs_kernel_launch_x_mt, :cs_kernel_sync_x_mt) do
+        kernel!(rm_4d_A, rm_4d, m_A, m, am, scheme, Int32(Nc), Int32(Hp), Int32(Nt), FT(flux_scale);
+                ndrange=(Nc, Nc, Nz))
+    end
+    _profiled_copy!(:cs_copyback_x_mt) do
+        _copy_interior!(rm_4d, rm_4d_A, Nc, Hp, Nz, Nt)
+        _copy_interior!(m, m_A, Nc, Hp, Nz)
+    end
     return nothing
 end
 
@@ -330,11 +365,14 @@ function _sweep_x_panel!(rm, m, am, scheme::UpwindScheme, rm_A, m_A, Nc, Hp, Nz;
     FT = eltype(m)
     backend = get_backend(rm)
     kernel! = _cs_xsweep_upwind_kernel!(backend, 256)
-    kernel!(rm_A, rm, m_A, m, am, Int32(Nc), Int32(Hp), FT(flux_scale);
-            ndrange=(Nc, Nc, Nz))
-    synchronize(backend)
-    _copy_interior!(rm, rm_A, Nc, Hp, Nz)
-    _copy_interior!(m, m_A, Nc, Hp, Nz)
+    _profiled_launch_and_sync!(backend, :cs_kernel_launch_x, :cs_kernel_sync_x) do
+        kernel!(rm_A, rm, m_A, m, am, Int32(Nc), Int32(Hp), FT(flux_scale);
+                ndrange=(Nc, Nc, Nz))
+    end
+    _profiled_copy!(:cs_copyback_x) do
+        _copy_interior!(rm, rm_A, Nc, Hp, Nz)
+        _copy_interior!(m, m_A, Nc, Hp, Nz)
+    end
     return nothing
 end
 
@@ -344,11 +382,14 @@ function _sweep_x_panel_mt!(rm_4d, m, am, scheme::UpwindScheme,
     FT = eltype(m)
     backend = get_backend(rm_4d)
     kernel! = _cs_xsweep_mt_upwind_kernel!(backend, 256)
-    kernel!(rm_4d_A, rm_4d, m_A, m, am, Int32(Nc), Int32(Hp), Int32(Nt), FT(flux_scale);
-            ndrange=(Nc, Nc, Nz))
-    synchronize(backend)
-    _copy_interior!(rm_4d, rm_4d_A, Nc, Hp, Nz, Nt)
-    _copy_interior!(m, m_A, Nc, Hp, Nz)
+    _profiled_launch_and_sync!(backend, :cs_kernel_launch_x_mt, :cs_kernel_sync_x_mt) do
+        kernel!(rm_4d_A, rm_4d, m_A, m, am, Int32(Nc), Int32(Hp), Int32(Nt), FT(flux_scale);
+                ndrange=(Nc, Nc, Nz))
+    end
+    _profiled_copy!(:cs_copyback_x_mt) do
+        _copy_interior!(rm_4d, rm_4d_A, Nc, Hp, Nz, Nt)
+        _copy_interior!(m, m_A, Nc, Hp, Nz)
+    end
     return nothing
 end
 
@@ -359,11 +400,14 @@ function _sweep_y_panel!(rm, m, bm, scheme::AbstractAdvectionScheme, rm_A, m_A, 
     FT = eltype(m)
     backend = get_backend(rm)
     kernel! = _cs_ysweep_kernel!(backend, 256)
-    kernel!(rm_A, rm, m_A, m, bm, scheme, Int32(Nc), Int32(Hp), FT(flux_scale);
-            ndrange=(Nc, Nc, Nz))
-    synchronize(backend)
-    _copy_interior!(rm, rm_A, Nc, Hp, Nz)
-    _copy_interior!(m, m_A, Nc, Hp, Nz)
+    _profiled_launch_and_sync!(backend, :cs_kernel_launch_y, :cs_kernel_sync_y) do
+        kernel!(rm_A, rm, m_A, m, bm, scheme, Int32(Nc), Int32(Hp), FT(flux_scale);
+                ndrange=(Nc, Nc, Nz))
+    end
+    _profiled_copy!(:cs_copyback_y) do
+        _copy_interior!(rm, rm_A, Nc, Hp, Nz)
+        _copy_interior!(m, m_A, Nc, Hp, Nz)
+    end
     return nothing
 end
 
@@ -374,11 +418,14 @@ function _sweep_y_panel_mt!(rm_4d, m, bm, scheme::AbstractAdvectionScheme,
     FT = eltype(m)
     backend = get_backend(rm_4d)
     kernel! = _cs_ysweep_mt_kernel!(backend, 256)
-    kernel!(rm_4d_A, rm_4d, m_A, m, bm, scheme, Int32(Nc), Int32(Hp), Int32(Nt), FT(flux_scale);
-            ndrange=(Nc, Nc, Nz))
-    synchronize(backend)
-    _copy_interior!(rm_4d, rm_4d_A, Nc, Hp, Nz, Nt)
-    _copy_interior!(m, m_A, Nc, Hp, Nz)
+    _profiled_launch_and_sync!(backend, :cs_kernel_launch_y_mt, :cs_kernel_sync_y_mt) do
+        kernel!(rm_4d_A, rm_4d, m_A, m, bm, scheme, Int32(Nc), Int32(Hp), Int32(Nt), FT(flux_scale);
+                ndrange=(Nc, Nc, Nz))
+    end
+    _profiled_copy!(:cs_copyback_y_mt) do
+        _copy_interior!(rm_4d, rm_4d_A, Nc, Hp, Nz, Nt)
+        _copy_interior!(m, m_A, Nc, Hp, Nz)
+    end
     return nothing
 end
 
@@ -445,11 +492,14 @@ function _sweep_y_panel!(rm, m, bm, scheme::UpwindScheme, rm_A, m_A, Nc, Hp, Nz;
     FT = eltype(m)
     backend = get_backend(rm)
     kernel! = _cs_ysweep_upwind_kernel!(backend, 256)
-    kernel!(rm_A, rm, m_A, m, bm, Int32(Nc), Int32(Hp), FT(flux_scale);
-            ndrange=(Nc, Nc, Nz))
-    synchronize(backend)
-    _copy_interior!(rm, rm_A, Nc, Hp, Nz)
-    _copy_interior!(m, m_A, Nc, Hp, Nz)
+    _profiled_launch_and_sync!(backend, :cs_kernel_launch_y, :cs_kernel_sync_y) do
+        kernel!(rm_A, rm, m_A, m, bm, Int32(Nc), Int32(Hp), FT(flux_scale);
+                ndrange=(Nc, Nc, Nz))
+    end
+    _profiled_copy!(:cs_copyback_y) do
+        _copy_interior!(rm, rm_A, Nc, Hp, Nz)
+        _copy_interior!(m, m_A, Nc, Hp, Nz)
+    end
     return nothing
 end
 
@@ -459,11 +509,14 @@ function _sweep_y_panel_mt!(rm_4d, m, bm, scheme::UpwindScheme,
     FT = eltype(m)
     backend = get_backend(rm_4d)
     kernel! = _cs_ysweep_mt_upwind_kernel!(backend, 256)
-    kernel!(rm_4d_A, rm_4d, m_A, m, bm, Int32(Nc), Int32(Hp), Int32(Nt), FT(flux_scale);
-            ndrange=(Nc, Nc, Nz))
-    synchronize(backend)
-    _copy_interior!(rm_4d, rm_4d_A, Nc, Hp, Nz, Nt)
-    _copy_interior!(m, m_A, Nc, Hp, Nz)
+    _profiled_launch_and_sync!(backend, :cs_kernel_launch_y_mt, :cs_kernel_sync_y_mt) do
+        kernel!(rm_4d_A, rm_4d, m_A, m, bm, Int32(Nc), Int32(Hp), Int32(Nt), FT(flux_scale);
+                ndrange=(Nc, Nc, Nz))
+    end
+    _profiled_copy!(:cs_copyback_y_mt) do
+        _copy_interior!(rm_4d, rm_4d_A, Nc, Hp, Nz, Nt)
+        _copy_interior!(m, m_A, Nc, Hp, Nz)
+    end
     return nothing
 end
 
@@ -478,11 +531,14 @@ function _sweep_z_panel!(rm, m, cm, scheme::AbstractAdvectionScheme, rm_A, m_A, 
     FT = eltype(m)
     backend = get_backend(rm)
     kernel! = _cs_zsweep_kernel!(backend, 256)
-    kernel!(rm_A, rm, m_A, m, cm, scheme, Int32(Nz), Int32(Hp), FT(flux_scale);
-            ndrange=(Nc, Nc, Nz))
-    synchronize(backend)
-    _copy_interior!(rm, rm_A, Nc, Hp, Nz)
-    _copy_interior!(m, m_A, Nc, Hp, Nz)
+    _profiled_launch_and_sync!(backend, :cs_kernel_launch_z, :cs_kernel_sync_z) do
+        kernel!(rm_A, rm, m_A, m, cm, scheme, Int32(Nz), Int32(Hp), FT(flux_scale);
+                ndrange=(Nc, Nc, Nz))
+    end
+    _profiled_copy!(:cs_copyback_z) do
+        _copy_interior!(rm, rm_A, Nc, Hp, Nz)
+        _copy_interior!(m, m_A, Nc, Hp, Nz)
+    end
     return nothing
 end
 
@@ -492,11 +548,14 @@ function _sweep_z_panel_mt!(rm_4d, m, cm, scheme::AbstractAdvectionScheme,
     FT = eltype(m)
     backend = get_backend(rm_4d)
     kernel! = _cs_zsweep_mt_kernel!(backend, 256)
-    kernel!(rm_4d_A, rm_4d, m_A, m, cm, scheme, Int32(Nz), Int32(Hp), Int32(Nt), FT(flux_scale);
-            ndrange=(Nc, Nc, Nz))
-    synchronize(backend)
-    _copy_interior!(rm_4d, rm_4d_A, Nc, Hp, Nz, Nt)
-    _copy_interior!(m, m_A, Nc, Hp, Nz)
+    _profiled_launch_and_sync!(backend, :cs_kernel_launch_z_mt, :cs_kernel_sync_z_mt) do
+        kernel!(rm_4d_A, rm_4d, m_A, m, cm, scheme, Int32(Nz), Int32(Hp), Int32(Nt), FT(flux_scale);
+                ndrange=(Nc, Nc, Nz))
+    end
+    _profiled_copy!(:cs_copyback_z_mt) do
+        _copy_interior!(rm_4d, rm_4d_A, Nc, Hp, Nz, Nt)
+        _copy_interior!(m, m_A, Nc, Hp, Nz)
+    end
     return nothing
 end
 
@@ -582,11 +641,14 @@ function _sweep_z_panel!(rm, m, cm, scheme::UpwindScheme, rm_A, m_A, Nc, Hp, Nz;
     FT = eltype(m)
     backend = get_backend(rm)
     kernel! = _cs_zsweep_upwind_kernel!(backend, 256)
-    kernel!(rm_A, rm, m_A, m, cm, Int32(Nz), Int32(Hp), FT(flux_scale);
-            ndrange=(Nc, Nc, Nz))
-    synchronize(backend)
-    _copy_interior!(rm, rm_A, Nc, Hp, Nz)
-    _copy_interior!(m, m_A, Nc, Hp, Nz)
+    _profiled_launch_and_sync!(backend, :cs_kernel_launch_z, :cs_kernel_sync_z) do
+        kernel!(rm_A, rm, m_A, m, cm, Int32(Nz), Int32(Hp), FT(flux_scale);
+                ndrange=(Nc, Nc, Nz))
+    end
+    _profiled_copy!(:cs_copyback_z) do
+        _copy_interior!(rm, rm_A, Nc, Hp, Nz)
+        _copy_interior!(m, m_A, Nc, Hp, Nz)
+    end
     return nothing
 end
 
@@ -596,25 +658,57 @@ function _sweep_z_panel_mt!(rm_4d, m, cm, scheme::UpwindScheme,
     FT = eltype(m)
     backend = get_backend(rm_4d)
     kernel! = _cs_zsweep_mt_upwind_kernel!(backend, 256)
-    kernel!(rm_4d_A, rm_4d, m_A, m, cm, Int32(Nz), Int32(Hp), Int32(Nt), FT(flux_scale);
-            ndrange=(Nc, Nc, Nz))
-    synchronize(backend)
-    _copy_interior!(rm_4d, rm_4d_A, Nc, Hp, Nz, Nt)
-    _copy_interior!(m, m_A, Nc, Hp, Nz)
+    _profiled_launch_and_sync!(backend, :cs_kernel_launch_z_mt, :cs_kernel_sync_z_mt) do
+        kernel!(rm_4d_A, rm_4d, m_A, m, cm, Int32(Nz), Int32(Hp), Int32(Nt), FT(flux_scale);
+                ndrange=(Nc, Nc, Nz))
+    end
+    _profiled_copy!(:cs_copyback_z_mt) do
+        _copy_interior!(rm_4d, rm_4d_A, Nc, Hp, Nz, Nt)
+        _copy_interior!(m, m_A, Nc, Hp, Nz)
+    end
     return nothing
 end
 
-"""Copy interior region from buffer back to array."""
+@kernel function _copy_interior_3d_kernel!(dst, @Const(src), Hp)
+    ii, jj, kk = @index(Global, NTuple)
+    @inbounds begin
+        i = ii + Hp
+        j = jj + Hp
+        dst[i, j, kk] = src[i, j, kk]
+    end
+end
+
+@kernel function _copy_interior_4d_kernel!(dst, @Const(src), Hp)
+    ii, jj, kk, tt = @index(Global, NTuple)
+    @inbounds begin
+        i = ii + Hp
+        j = jj + Hp
+        dst[i, j, kk, tt] = src[i, j, kk, tt]
+    end
+end
+
+"""Copy interior region from buffer back to array.
+
+Synchronizes after the kernel launch so callers can safely reuse the shared
+`src` workspace buffer (e.g. `rm_A` / `m_A`) for the next panel's sweep. Without
+this barrier, panel p's copy-back can race against panel p+1's sweep kernel
+writing into the same workspace — silent today because CUDA serializes the
+default stream, but the dependency is not contractual across backends.
+"""
 function _copy_interior!(dst, src, Nc, Hp, Nz)
-    r = Hp+1:Hp+Nc
-    dst[r, r, 1:Nz] .= src[r, r, 1:Nz]
+    backend = get_backend(dst)
+    kernel! = _copy_interior_3d_kernel!(backend, 256)
+    kernel!(dst, src, Int32(Hp); ndrange = (Nc, Nc, Nz))
+    synchronize(backend)
     return nothing
 end
 
 function _copy_interior!(dst::AbstractArray{<:Any, 4}, src::AbstractArray{<:Any, 4},
                          Nc, Hp, Nz, Nt)
-    r = Hp+1:Hp+Nc
-    dst[r, r, 1:Nz, 1:Nt] .= src[r, r, 1:Nz, 1:Nt]
+    backend = get_backend(dst)
+    kernel! = _copy_interior_4d_kernel!(backend, 256)
+    kernel!(dst, src, Int32(Hp); ndrange = (Nc, Nc, Nz, Nt))
+    synchronize(backend)
     return nothing
 end
 

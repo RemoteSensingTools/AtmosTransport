@@ -132,9 +132,8 @@ function build_regridder(src::LatLonMesh, dst::ReducedGaussianMesh;
     manifold = GO.Spherical()
 
     # Build source tree ONCE (the expensive step for large grids)
-    src_pts = _latlon_corner_matrix(src)
-    src_tree = ConservativeRegridding.Trees.treeify(manifold, src_pts)
-    src_areas = ConservativeRegridding.areas(manifold, src_pts, src_tree)
+    src_tree = ConservativeRegridding.Trees.treeify(manifold, src)
+    src_areas = ConservativeRegridding.areas(manifold, src, src_tree)
     n_src = length(src_areas)
 
     to_sphere = GO.UnitSphereFromGeographic()

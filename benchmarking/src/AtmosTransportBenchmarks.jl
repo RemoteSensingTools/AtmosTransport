@@ -255,8 +255,14 @@ function _build_model(case::BenchmarkCase)
     diffusion = case.operator in (:diffusion, :full) ?
         ImplicitVerticalDiffusion(; kz_field = CubedSphereField(ConstantField{FT, 3}(FT(1.0)))) :
         NoDiffusion()
+    # use_collab_lu=true is the production-representative path. The
+    # collab-LU kernel parallelises the inner tridiagonal solve across the
+    # GPU's wide warps; with use_collab_lu=false the per-column solve runs
+    # serial inside each warp, making convection ~5x slower on GPU and
+    # distorting the convection:advection ratio relative to CPU. See
+    # `tm5_convection_perf_findings_2026_05_22.md` for the measurement.
     convection = case.operator in (:convection, :full) ?
-        TM5Convection(; use_collab_lu = false) :
+        TM5Convection(; use_collab_lu = true) :
         NoConvection()
     convection_forcing = _convection_forcing(case, mesh, adapter)
 

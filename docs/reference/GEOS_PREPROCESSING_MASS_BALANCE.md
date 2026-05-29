@@ -1,0 +1,261 @@
+# GEOS Preprocessing: Mass-Flux Balance and Global Dry-Air Conservation
+
+> **Status (2026-05-29).** The GEOS cubed-sphere preprocessor applies a *local*
+> mass-flux balance (column or per-layer) but does **not** yet pin the global
+> mean dry-air mass. This page documents the theory, the four balance
+> approaches, why the local balance provably cannot fix the global mean, and
+> the recommended fix (a GEOS-CS global dry-air pin, analogous to the ERA5
+> spectral path). The pin itself is **not yet implemented for GEOS-CS** —
+> it is the recommended next production change.
+
+This is the GEOS-cubed-sphere companion to
+[`../memos/GLOBAL_MEAN_PS_FIX.md`](../memos/GLOBAL_MEAN_PS_FIX.md) (which
+documents the already-shipped ERA5 spectral pin) and
+[`FROM_GCHP.md`](FROM_GCHP.md) (concept mapping). Read both for context.
+
+---
+
+## 1. The one theorem that governs everything
+
+On a closed sphere there is no domain boundary, so for any flux-form transport
+
+```
+∮ ∇·F dV = 0          (divergence theorem, no boundary)
+```
+
+and with the vertical boundary condition `cm(k=top) = cm(k=surface) = 0` the
+same holds per column for the vertical mass flux. Three guarantees follow, and
+they hold **independently of how good or bad the input meteorology is**:
+
+1. **Global dry-air mass is conserved to roundoff** by any flux-form runtime
+   that evolves air mass by flux divergence with no reset and no global
+   rescale.
+2. **Global inert-tracer mass = initial + ∫emissions to roundoff**, regardless
+   of any inconsistency in the binary's stored air mass `m`. This is why a
+   fossil-CO₂ burden tracks the imposed source integral even when the binary
+   endpoint drifts.
+3. **A flux-form model can never reproduce a globally non-conservative
+   endpoint.** If the stored endpoint `m_next` has a different global integral
+   than `m_cur`, no horizontal flux field can bridge that gap — its global
+   divergence is zero by the theorem. The mismatch is forced into the
+   write-time replay residual, not into runtime state.
+
+Guarantee 3 is the crux of this entire page: **the Poisson/CG balance cannot
+remove a global dry-air drift, and it is a category error to expect it to.**
+
+---
+
+## 2. Two independent problems, often conflated
+
+"The GEOS run is not conservative" actually decomposes into two separate
+issues that must not be confused:
+
+### Problem A — local replay closure (binary-internal)
+
+Does the stored flux field reproduce the stored per-window mass tendency,
+cell by cell?
+
+```
+m_next - m_cur  ?=  -(∂am/∂x + ∂bm/∂y) - Δcm     (per cell)
+```
+
+This is what `diagnose_cs_cm!` closes and what the write-time replay gate in
+[`../../src/Preprocessing/transport_binary/cubed_sphere_contracts.jl`](../../src/Preprocessing/transport_binary/cubed_sphere_contracts.jl)
+verifies. The local mass-flux balance
+(`balance_cs_column_mass_fluxes!` / `balance_cs_global_mass_fluxes!` in
+[`../../src/Preprocessing/transport_binary/cubed_sphere_geos.jl`](../../src/Preprocessing/transport_binary/cubed_sphere_geos.jl))
+is what tightens it.
+
+### Problem B — global dry-air conservation (physics)
+
+Is the global integral of the stored endpoint dry-air mass constant across
+windows and days?
+
+Dry air has no global sources or sinks, so the answer should be "yes, to
+roundoff." Raw GEOS analysis says "no" — the global dry mass derived from
+moist `PS` minus `Q` drifts ~1e-6/day because of analysis increments,
+moisture conversion, and conservative-regrid error. This is **Problem B**, and
+it is a *preprocessing* property of the stored endpoint, not a runtime leak.
+
+**Problem A is solvable by the balance. Problem B is not** (theorem §1.3).
+Conflating them leads to the trap of tightening the balance and being
+surprised the global residual is unchanged.
+
+---
+
+## 3. The balance approaches (and one pin)
+
+| Mode | What it does | Fixes A? | Fixes B? | Cost | Adjoint |
+|---|---|---|---|---|---|
+| **Raw GEOS** | Wind-derived fluxes, no balance | no | no | none | trivial (met-only) |
+| **Column balance** | Per-column flux adjustment to match column-integrated `dm` | partial (column-integrated) | no | cheap | met-only, not differentiated for emission adjoint |
+| **Per-layer reclose** | Global CG Leray projection per layer onto `∇·F = dm` | yes (local to ~1e-7) | no | ~1600 CG iter/window | iterative solve — harder to differentiate if winds were a control |
+| **GCHP Cameron-Smith** | Algebraic zonal-band + meridional-mode + `dbk` vertical spread | column-integrated only | no (online avoids B) | cheap | algebraic, easy to differentiate |
+| **Column balance + global pin** *(recommended)* | Column balance **plus** uniform `ps` offset pinning ⟨dry mass⟩ | yes | **yes** | cheap | met-only |
+
+Key points:
+
+- **Per-layer reclose is the L2-optimal local correction** (a true Leray
+  projection): the minimum-norm flux adjustment achieving exact local
+  continuity, isotropic, no zonal-band artifact. On polar-clustered
+  N320→C180 geometry its isotropy is a genuine advantage over the
+  Cameron-Smith zonal-band ansatz.
+- **None of the local modes touch Problem B.** The pin is orthogonal: it acts
+  on the global-mean subspace the projection discards as its singular mode.
+- **The pin + a local balance compose.** The pin fixes the global mean; the
+  balance fixes local divergence. They are independent subspaces, so it is not
+  "pin vs reclose" — the only open question is whether *column* balance's
+  local fidelity suffices or *per-layer reclose*'s tighter local replay
+  (~1e-7) is needed for regional gradients. That is empirically decidable, not
+  assumable.
+
+---
+
+## 4. Why the balance cannot fix the global mean (with measured proof)
+
+Measured on the GEOS-IT C180 Dec 1 2021 binary (investigation 2026-05-29):
+
+| Metric | Old binary | Per-layer reclosed |
+|---|---|---|
+| worst replay rel | 1.558e-6 | 1.153e-7 |
+| day replay L1 | 2.238e13 | 6.042e12 |
+| column L1 | 5.684e11 | 1.684e11 |
+| **signed global residual (kg dry air)** | **-6.306445e11** | **-6.306458e11** |
+
+Reclosing improved local replay 3–14× but left the global residual
+**unchanged to 6 significant figures**. That is the divergence theorem (§1.3)
+in measured form: the balance redistributes locally and cannot alter the
+global integral.
+
+The same investigation also showed the *runtime* is globally conservative,
+once Float32 summation noise is removed:
+
+| Metric | F32 | F64 |
+|---|---|---|
+| reclosed runtime global dry-air Δ over 24 h | -8.87e11 kg | **~+7.45e2 kg** |
+
+The scary F32 −8.87e11 (~1.7e-7 relative) was global-reduction cancellation
+precision, **not** a real flux-divergence imbalance — at F64 it collapses to
+roundoff. So the reclosed fluxes remain globally divergence-free, the runtime
+state remains globally conservative, and the unmatchable part of `dm` lives
+entirely in the binary's replay residual where it never propagates into the
+transported state. Fossil-CO₂ burden stayed source-consistent in both F32 and
+F64.
+
+**Conclusion: the runtime is correct; Problem B lives in the stored endpoint.**
+
+---
+
+## 5. Runtime contract (why the runtime is not the problem)
+
+Verified in
+[`../../src/Models/DrivenSimulation.jl`](../../src/Models/DrivenSimulation.jl):
+
+- **Air-mass carry (default).** `reset_air_mass_each_window = false`
+  (default). The prognostic `state.air_mass` is evolved purely by the stored
+  fluxes; under the `:window_constant` contract its flux divergence integrates
+  to `m_next - m_cur` over each window, so it tracks the binary endpoint
+  without an explicit reset (`DrivenSimulation.jl:673-676`).
+- **Advection denominator.** The tracer is divided by / re-multiplied by the
+  *same* runtime air-mass field the fluxes evolve — so inert tracer mass is
+  conserved to roundoff (`StrangSplitting.jl`).
+- **Diagnostics denominator.** Column-mean VMR / XCO₂ use the runtime
+  prognostic `state.air_mass`, **not** the binary's stored `m` — so the VMR
+  diagnostic is internally self-consistent with the transported tracer.
+- **No global rescale.** The runtime never forces global air mass to the GEOS
+  endpoint. (The legacy runtime `mass_fixer` band-aid is retired.)
+
+The optional `reset_air_mass_each_window = true` path resets air mass to the
+stored endpoint **while preserving VMR**, which re-injects/removes tracer mass
+at each window — see the policy fork below.
+
+---
+
+## 6. The forced policy fork (and how the pin dissolves it)
+
+As long as the stored endpoint drifts (Problem B unfixed), these two are
+mutually exclusive at the ~1e-6 level:
+
+- **Policy A — conserve tracer mass (default).** Trust flux continuity. Tracer
+  mass closes exactly (Σemissions = Δburden). Global dry air pinned constant
+  by the scheme. Cost: the air-mass *trajectory* diverges from GEOS-Chem by
+  the unremovable global-mean part.
+- **Policy B — match GEOS-Chem trajectory** (`reset_air_mass_each_window =
+  true`). Air-mass trajectory matches GEOS-Chem. Cost: preserving VMR across a
+  mass jump breaks exact tracer-mass conservation.
+
+**Pinning the global-mean dry-air mass in the preprocessor dissolves the
+fork.** If the stored endpoint is itself globally conservative, the flux-form
+runtime can reach it, and Policy A and Policy B converge — exact tracer mass
+*and* a GEOS-matching trajectory simultaneously. This is exactly what the ERA5
+spectral path already achieves with `pin_global_mean_ps!`.
+
+---
+
+## 7. GEOS vs ERA5 vs GCHP
+
+| | ERA5 spectral (shipped) | GEOS-CS (this page) | GCHP |
+|---|---|---|---|
+| Local balance | Poisson | column / per-layer | algebraic Cameron-Smith (zonal-band) |
+| Global dry-air pin | **yes** (`pin_global_mean_ps!`) | **no — recommended next** | n/a (online, never stitches snapshots) |
+| Endpoint source | spectral LNSP → ps | moist PS − Q → dry mass | live GMAO stream at 450 s |
+| Why pin needed | offline snapshot stitching | offline snapshot stitching | not needed — continuous budget |
+| Cadence | hourly window | hourly window | 450 s dynamics step |
+
+GCHP structurally avoids Problem B because it never reconstructs dry mass from
+snapshots — its dycore carries a closed dry-air budget forward continuously.
+Our offline design inherits Problem B and the pin is how we close it. See
+[`FROM_GCHP.md`](FROM_GCHP.md) and the GCHP pressure-fixer analysis for the
+full comparison (Cameron-Smith is a fast *online* fixer for a trusted stream;
+it does not help an offline binary whose endpoint is unpinned, and its
+zonal-band structure fits our polar-clustered target poorly).
+
+---
+
+## 8. Recommended procedure
+
+1. **Implement a GEOS-CS global dry-air pin** mirroring the ERA5 mechanism in
+   [`../memos/GLOBAL_MEAN_PS_FIX.md`](../memos/GLOBAL_MEAN_PS_FIX.md): a uniform
+   additive `ps` offset so ⟨ps_dry⟩ matches a fixed dry-air-mass target
+   (Trenberth & Smith 2005: M_dry = 5.1352e18 kg → ⟨ps_dry⟩ ≈ 98726 Pa).
+   Apply it in `cubed_sphere_geos.jl` before the dry-mass derivation, gate it
+   on a `[mass_fix]` TOML block, and record per-window offsets in the binary
+   header.
+2. **Keep the local balance.** Pin and balance are orthogonal; pin fixes the
+   global mean the balance discards as its singular mode.
+3. **Decide column vs per-layer empirically** from the regional-XCO₂-vs-GEOS-Chem
+   comparison (§3): column balance + pin is the expected cost-efficient winner;
+   per-layer reclose + pin is the maximum-fidelity option if regional gradients
+   need the tighter local replay.
+
+### Validation checklist for a pinned rebuild
+
+| Check | Expected |
+|---|---|
+| Stored endpoint global dry-mass Δ/day | drops from ~5e12 kg → roundoff |
+| Replay residual — global component | vanishes (pin removed the unmatchable part) |
+| Replay residual — local component | unchanged (set by the chosen balance) |
+| F32 **and** F64 burden vs source closure | unchanged (pin is denominator-side; if burden *moves*, something is wrongly coupled) |
+| Regional XCO₂ vs GEOS-Chem | the column-vs-per-layer decision metric |
+
+---
+
+## 9. References
+
+- ERA5 precedent (shipped): [`../memos/GLOBAL_MEAN_PS_FIX.md`](../memos/GLOBAL_MEAN_PS_FIX.md)
+- GCHP concept mapping: [`FROM_GCHP.md`](FROM_GCHP.md)
+- Advection mass-flux design: [`MASS_FLUX_EVOLUTION.md`](MASS_FLUX_EVOLUTION.md)
+- Binary preprocessing architecture: [`BINARY_PREPROCESSING_ARCHITECTURE.md`](BINARY_PREPROCESSING_ARCHITECTURE.md)
+- Code:
+  - `src/Preprocessing/transport_binary/cubed_sphere_geos.jl` — GEOS-CS balance + cm closure
+  - `src/Preprocessing/transport_binary/cubed_sphere_contracts.jl` — write-time replay + positivity gates
+  - `src/Preprocessing/mass_support.jl`, `src/Preprocessing/transport_binary/latlon_workspaces.jl` — ERA5 `pin_global_mean_ps!`
+  - `src/Models/DrivenSimulation.jl` — runtime air-mass carry policy
+- External: Trenberth, K. E., and L. Smith, 2005: "The Mass of the Atmosphere:
+  A Constraint on Global Analyses." *J. Climate* **18**, 864-875.
+
+---
+
+*Created 2026-05-29 from the GEOS-IT C180 Dec 2021 mass-conservation
+investigation. Update in the same commit as any change to the GEOS-CS balance
+or the (future) GEOS-CS global pin.*

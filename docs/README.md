@@ -51,6 +51,7 @@ For a new contributor:
 | Quick-start guide | [`reference/QUICKSTART.md`](reference/QUICKSTART.md) |
 | Architecture overview | [`reference/ARCHITECTURE.md`](reference/ARCHITECTURE.md) |
 | Preprocessing pipeline | [`reference/PREPROCESSING_PHILOSOPHY.md`](reference/PREPROCESSING_PHILOSOPHY.md) |
+| GEOS mass balance + global dry-air pin | [`reference/GEOS_PREPROCESSING_MASS_BALANCE.md`](reference/GEOS_PREPROCESSING_MASS_BALANCE.md) |
 | Diagnostic NetCDF output | [`reference/OUTPUT.md`](reference/OUTPUT.md) |
 | Snapshot visualization | [`reference/VISUALIZATION.md`](reference/VISUALIZATION.md) |
 | Conservative regridding | [`reference/CONSERVATIVE_REGRIDDING.md`](reference/CONSERVATIVE_REGRIDDING.md) |

@@ -64,6 +64,28 @@ function _fill_cs_mass_delta_payload!(dm_payload::NTuple{NP, <:AbstractArray{FT,
 end
 
 """
+    _next_day_core_only_handle(handles)
+
+Build a minimal next-day `ERA5GRIBDayHandles` that points only at the recorded
+`next_core_path`. Used for the final-window mass-endpoint look-ahead, which
+needs PS + Q from hour 0 of `date + 1` but not the convection or surface
+streams. Returns `nothing` when `handles.next_core_path` is absent (archive
+boundary day).
+"""
+function _next_day_core_only_handle(handles::ERA5GRIBDayHandles)
+    handles.next_core_path === nothing && return nothing
+    return ERA5GRIBDayHandles{typeof(handles.settings)}(
+        handles.settings,
+        handles.date + Day(1),
+        handles.next_core_path,
+        nothing,  # convection_path — not needed for mass endpoint
+        nothing,  # surface_path
+        nothing,  # next_core_path (chain stops here)
+        nothing,  # prev_convection_path
+    )
+end
+
+"""
     process_era5_n320_to_cs_day(date, settings, target_grid;
                                  out_path,
                                  FT = Float32,
@@ -364,11 +386,40 @@ function process_era5_n320_to_cs_day(date::Date,
             cur_ps_dry_acc, nxt_ps_dry_acc = nxt_ps_dry_acc, cur_ps_dry_acc
         end
 
-        # --- Final window: no next-day endpoint look-ahead yet. ---
-        @warn "process_era5_n320_to_cs_day: using zero-tendency fallback for the final window " *
-              "of $(date) — next-day endpoint look-ahead is the natural follow-on."
-        for p in 1:6
-            copyto!(nxt_m_dry[p], cur_m_dry[p])   # m_next = m_cur → zero tendency
+        # --- Final window: next-day hour-0 endpoint look-ahead. ---
+        # The closed contract for window h is m(h+1) - m(h); the final
+        # window's m_next must be the next day's hour-0 endpoint, not a
+        # zero-tendency copy of m_cur. A zero-tendency fallback forces
+        # Poisson balance to absorb the actual ERA5 wind divergence into
+        # `cm`, which the positivity gate then (correctly) rejects.
+        # Reuse `nxt_pipe`'s window/regrid buffers — those are convection-
+        # agnostic so we skip the heavier `process_era5_n320_window!` path.
+        next_handles = _next_day_core_only_handle(handles)
+        if next_handles !== nothing
+            read_era5_n320_window_fields!(nxt_pipe.window_fields,
+                                           nxt_pipe.spectral_ws,
+                                           next_handles,
+                                           handles.date + Day(1), 0)
+            regrid_n320_to_c180!(nxt_pipe.c180_fields,
+                                   nxt_pipe.window_fields,
+                                   nxt_pipe.regrid_ws,
+                                   target_grid)
+            derive_c180_dry_mass!(nxt_m_dry, nxt_delp_dry, nxt_ps_dry, nxt_ps_dry_acc,
+                                   nxt_pipe.c180_fields.ps, nxt_pipe.c180_fields.qv,
+                                   vc, cs_cell_areas)
+        else
+            # HACK: zero-tendency fallback for the final day of the archive
+            # (no next_core_path on disk). The positivity gate will likely
+            # warn/fail in this case — that's correct: a zero-tendency
+            # closure for the last hour is a known artifact, not a passing
+            # binary. Run with [numerics].require_substep_positivity = false
+            # only when you understand and accept this for boundary days.
+            @warn "process_era5_n320_to_cs_day: archive-boundary fallback — " *
+                  "no next-day core file for $(handles.date + Day(1)), using " *
+                  "zero-tendency m_next. Final window's continuity will not close."
+            for p in 1:6
+                copyto!(nxt_m_dry[p], cur_m_dry[p])
+            end
         end
 
         rotate_winds_to_panel_local!(cur_u_local, cur_v_local,

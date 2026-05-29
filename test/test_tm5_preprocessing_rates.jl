@@ -131,13 +131,16 @@ function _f90_reference_column(udmf_in, ddmf_in, udrf_rate, ddrf_rate, dz, Nz)
         end
     end
 
-    # Column-integrated net-zero closure (TM5 `meteo.F90:2023-2052`).
-    # Snaps `Σentu == Σdetu` (and the same for the downdraft) by
-    # adjusting the layer of maximum entrainment, with TM5's exact
-    # fallback defaults (updraft: lsave=1 i.e. surface; downdraft:
-    # lsave=lmax_conv i.e. top of cloud — see the matching block
-    # in `tm5_convection_conversion.jl` for the orientation
-    # mapping).
+    # Column-integrated net-zero closure (TM5 `meteo.F90:2023-2052`),
+    # with a deliberate fix vs the F90 source. TM5 writes
+    # `entu[lsave_u] += totd - tote` unconditionally, which subtracts
+    # from `entu[lsave_u]` when `tote > totd` and can re-introduce
+    # negative entu AFTER the symmetric-redistribution pass already
+    # cleaned them up. AtmosTransport's runtime TM5 operator and the
+    # transport-binary contract both require non-negativity, so we
+    # diverge from F90 here: put the residual on the side that grows
+    # (entu when delta >= 0; detu when delta < 0). The net
+    # `sum(entu) - sum(detu)` invariant is preserved either way.
     if uptop > 0 && uptop <= Nz
         tote = sum(@view entu[uptop:Nz])
         totd = sum(@view detu[uptop:Nz])
@@ -150,7 +153,12 @@ function _f90_reference_column(udmf_in, ddmf_in, udrf_rate, ddrf_rate, dz, Nz)
                     lsave_u = k
                 end
             end
-            entu[lsave_u] += totd - tote
+            delta = totd - tote
+            if delta >= 0
+                entu[lsave_u] += delta
+            else
+                detu[lsave_u] -= delta
+            end
         end
     end
     if dotop > 0 && dotop <= Nz
@@ -165,7 +173,12 @@ function _f90_reference_column(udmf_in, ddmf_in, udrf_rate, ddrf_rate, dz, Nz)
                     lsave_d = k
                 end
             end
-            entd[lsave_d] += totd_d - tote_d
+            delta_d = totd_d - tote_d
+            if delta_d >= 0
+                entd[lsave_d] += delta_d
+            else
+                detd[lsave_d] -= delta_d
+            end
         end
     end
     return (entu, detu, entd, detd)
@@ -468,4 +481,53 @@ end
     @test_throws ArgumentError ec2tm_from_rates!(
         entu, detu, entd, detd,
         zeros(Float64, Nz), ddmf, udrf, ddrf, dz, Nz)
+end
+
+@testset "ec2tm_from_rates! sign-aware closure (regression)" begin
+    # Regression for the closure step: a previous version did
+    #   `entu[lsave_u] += totd - tote`
+    # which subtracted from a non-negative entu when `tote > totd`,
+    # producing negative entu downstream. The sign-aware fix puts the
+    # residual on the side that grows (entu when delta >= 0, else detu).
+    #
+    # We construct a column where the redistribution pass already cleaned
+    # negatives and then the closure step needs `delta < 0`. The previous
+    # code would produce negative entu; the fix keeps both entu and detu
+    # non-negative AND preserves the `sum(entu) - sum(detu)` invariant.
+    Nz = 8
+    entu = zeros(Float64, Nz); detu = zeros(Float64, Nz)
+    entd = zeros(Float64, Nz); detd = zeros(Float64, Nz)
+    udmf = zeros(Float64, Nz + 1); ddmf = zeros(Float64, Nz + 1)
+    udrf = zeros(Float64, Nz); ddrf = zeros(Float64, Nz)
+    dz   = fill(100.0, Nz)
+
+    # Updraft cloud spans levels 3..6 (TOA = level 1).
+    # Half-level mass fluxes: zero at top, ramp up through cloud, back to
+    # zero below. Detrainment-rate is small relative to mass-flux
+    # divergence so the layer mass-budget produces positive entu, and
+    # then a deliberately-larger total detrainment forces `tote > totd`
+    # in the closure step.
+    udmf[3] = 0.05   # interface above layer 3
+    udmf[4] = 0.10
+    udmf[5] = 0.10
+    udmf[6] = 0.10
+    udmf[7] = 0.0    # cloud base
+    udrf[3] = 0.0
+    udrf[4] = 0.0
+    udrf[5] = 0.0
+    udrf[6] = 0.020  # large detrainment to drive `tote < totd` after closure
+
+    ec2tm_from_rates!(entu, detu, entd, detd,
+                      udmf, ddmf, udrf, ddrf,
+                      dz, Nz)
+
+    # Postcondition that the new sign-aware closure guarantees:
+    @test all(entu .>= 0)
+    @test all(detu .>= 0)
+    @test all(entd .>= 0)
+    @test all(detd .>= 0)
+
+    # Closure invariant: column-integrated entu equals column-integrated
+    # detu within FT precision (mass-budget continuity).
+    @test sum(entu) ≈ sum(detu) atol = 1e-12
 end

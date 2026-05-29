@@ -999,6 +999,148 @@ function read_era5_n320_convection_window!(fields::ERA5N320ConvectionFields{FT},
 end
 
 # ===========================================================================
+# TM5 convection conversion on N320 source mesh.
+#
+# `ec2tm_from_rates!` (from `Preprocessing/tm5_convection_conversion.jl`)
+# converts ECMWF's (UDMF, DDMF, UDRF, DDRF) at one column into TM5's
+# (entu, detu, entd, detd) at layer centers. This block adapts that
+# column-level call to the (n_cells, Nz) reduced-Gaussian layout used by
+# the rest of the ERA5 N320 pipeline.
+# ===========================================================================
+
+"""
+    ERA5N320TM5ConvectionFields{FT}
+
+Per-window TM5 convection output on the N320 source mesh, in AtmosTransport
+orientation (k=1=TOA, k=Nz=surface). All four fields are layer-center
+fluxes in kg / m² / s, derived from ECMWF UDMF / DDMF / UDRF / DDRF via
+`ec2tm_from_rates!`.
+"""
+struct ERA5N320TM5ConvectionFields{FT <: AbstractFloat}
+    entu :: Matrix{FT}    # (n_cells, Nz)
+    detu :: Matrix{FT}
+    entd :: Matrix{FT}
+    detd :: Matrix{FT}
+end
+
+function allocate_era5_n320_tm5_convection_fields(source_grid::ReducedGaussianTargetGeometry{FT},
+                                                    Nz::Integer) where FT
+    Nz >= 1 || throw(ArgumentError("Nz must be ≥ 1, got $Nz"))
+    nc = ncells(source_grid.mesh)
+    return ERA5N320TM5ConvectionFields{FT}(
+        zeros(FT, nc, Int(Nz)),
+        zeros(FT, nc, Int(Nz)),
+        zeros(FT, nc, Int(Nz)),
+        zeros(FT, nc, Int(Nz)),
+    )
+end
+
+"""
+    ERA5N320TM5DeriveScratch{FT}
+
+Per-column scratch reused across cells inside
+`derive_n320_tm5_convection!`. Allocated once per pipeline, not per
+window/cell.
+"""
+struct ERA5N320TM5DeriveScratch{FT <: AbstractFloat}
+    udmf_col :: Vector{FT}    # Nz+1 half-level
+    ddmf_col :: Vector{FT}    # Nz+1
+    udrf_col :: Vector{FT}    # Nz
+    ddrf_col :: Vector{FT}    # Nz
+    t_col    :: Vector{FT}    # Nz
+    q_col    :: Vector{FT}    # Nz
+    dz_col   :: Vector{FT}    # Nz
+    entu_col :: Vector{FT}    # Nz
+    detu_col :: Vector{FT}
+    entd_col :: Vector{FT}
+    detd_col :: Vector{FT}
+end
+
+function allocate_era5_n320_tm5_derive_scratch(::Type{FT}, Nz::Integer) where FT
+    Nz_int = Int(Nz)
+    return ERA5N320TM5DeriveScratch{FT}(
+        Vector{FT}(undef, Nz_int + 1),  # udmf_col half-level
+        Vector{FT}(undef, Nz_int + 1),
+        Vector{FT}(undef, Nz_int),
+        Vector{FT}(undef, Nz_int),
+        Vector{FT}(undef, Nz_int),
+        Vector{FT}(undef, Nz_int),
+        Vector{FT}(undef, Nz_int),
+        Vector{FT}(undef, Nz_int),
+        Vector{FT}(undef, Nz_int),
+        Vector{FT}(undef, Nz_int),
+        Vector{FT}(undef, Nz_int),
+    )
+end
+
+"""
+    derive_n320_tm5_convection!(tm5_fields, conv_fields, window_fields, vc, scratch;
+                                stats=nothing) -> tm5_fields
+
+Convert one window's raw ECMWF convective inputs into TM5
+`(entu, detu, entd, detd)` layer-center fields on the N320 source mesh.
+Calls [`ec2tm_from_rates!`](@ref) per cell, reusing `scratch` to avoid
+per-cell allocation. ERA5 half-level convention: native `udmf[k]` /
+`ddmf[k]` are read as the flux at the interface ABOVE layer `k`, so we
+zero-pad the TOA half-level (index 1 in the Nz+1 scratch).
+"""
+function derive_n320_tm5_convection!(tm5_fields::ERA5N320TM5ConvectionFields{FT},
+                                       conv_fields::ERA5N320ConvectionFields{FT},
+                                       window_fields::ERA5N320WindowFields{FT},
+                                       vc::HybridSigmaPressure,
+                                       scratch::ERA5N320TM5DeriveScratch{FT};
+                                       stats = nothing) where FT
+    n_cells, Nz = size(window_fields.t)
+    size(conv_fields.udmf, 1) == n_cells ||
+        throw(DimensionMismatch("conv_fields.udmf n_cells $(size(conv_fields.udmf, 1)) ≠ window $(n_cells)"))
+    size(conv_fields.udmf, 2) == Nz ||
+        throw(DimensionMismatch("conv_fields.udmf Nz $(size(conv_fields.udmf, 2)) ≠ window Nz $(Nz)"))
+
+    udmf_col = scratch.udmf_col
+    ddmf_col = scratch.ddmf_col
+    udrf_col = scratch.udrf_col
+    ddrf_col = scratch.ddrf_col
+    t_col    = scratch.t_col
+    q_col    = scratch.q_col
+    dz_col   = scratch.dz_col
+    entu_col = scratch.entu_col
+    detu_col = scratch.detu_col
+    entd_col = scratch.entd_col
+    detd_col = scratch.detd_col
+
+    @inbounds for c in 1:n_cells
+        # ERA5 native half-level packing: TOA interface = 0, then native
+        # full-level values map to interfaces below each layer.
+        udmf_col[1] = zero(FT)
+        ddmf_col[1] = zero(FT)
+        for k in 1:Nz
+            udmf_col[k + 1] = conv_fields.udmf[c, k]
+            ddmf_col[k + 1] = conv_fields.ddmf[c, k]
+            udrf_col[k]     = conv_fields.udrf[c, k]
+            ddrf_col[k]     = conv_fields.ddrf[c, k]
+            t_col[k]        = window_fields.t[c, k]
+            q_col[k]        = window_fields.qv[c, k]
+        end
+
+        dz_hydrostatic_virtual!(dz_col, t_col, q_col,
+                                 window_fields.ps[c],
+                                 vc.A, vc.B, Nz)
+
+        ec2tm_from_rates!(entu_col, detu_col, entd_col, detd_col,
+                           udmf_col, ddmf_col, udrf_col, ddrf_col,
+                           dz_col, Nz; stats = stats)
+
+        for k in 1:Nz
+            tm5_fields.entu[c, k] = entu_col[k]
+            tm5_fields.detu[c, k] = detu_col[k]
+            tm5_fields.entd[c, k] = entd_col[k]
+            tm5_fields.detd[c, k] = detd_col[k]
+        end
+    end
+    return tm5_fields
+end
+
+# ===========================================================================
 # Conservative regrid from N320 source mesh to a C180
 # cubed-sphere target. Intensive scalars (PS, T, Q, U, V) use the
 # `ConservativeRegridding` weights cached on disk; dry-mass derivation on
@@ -1037,6 +1179,34 @@ function allocate_era5_c180_regrid_fields(target_grid::CubedSphereTargetGeometry
     Nz_int = Int(Nz)
     return ERA5C180RegridFields{FT}(
         ntuple(_ -> zeros(FT, Nc, Nc), 6),
+        ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6),
+        ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6),
+        ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6),
+        ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6),
+    )
+end
+
+"""
+    ERA5C180TM5ConvectionFields{FT}
+
+TM5 convection fields regridded onto the C180 cubed-sphere target.
+Each field is a 6-tuple of `(Nc, Nc, Nz)` panel arrays, layer-centered,
+kg / m² / s. Conservative regrid is fine for entrainment/detrainment
+fluxes since they're intensive scalars from the writer's perspective.
+"""
+struct ERA5C180TM5ConvectionFields{FT <: AbstractFloat}
+    entu :: NTuple{6, Array{FT, 3}}
+    detu :: NTuple{6, Array{FT, 3}}
+    entd :: NTuple{6, Array{FT, 3}}
+    detd :: NTuple{6, Array{FT, 3}}
+end
+
+function allocate_era5_c180_tm5_convection_fields(target_grid::CubedSphereTargetGeometry{FT},
+                                                    Nz::Integer) where FT
+    Nz >= 1 || throw(ArgumentError("Nz must be ≥ 1, got $Nz"))
+    Nc = target_grid.mesh.Nc
+    Nz_int = Int(Nz)
+    return ERA5C180TM5ConvectionFields{FT}(
         ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6),
         ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6),
         ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6),
@@ -1128,6 +1298,39 @@ function regrid_n320_to_c180!(c180_fields::ERA5C180RegridFields{FT},
     end
 
     return c180_fields
+end
+
+"""
+    regrid_n320_tm5_convection_to_c180!(tm5_c180, tm5_n320, workspace, target_grid) -> tm5_c180
+
+Conservatively regrid the four TM5 layer-center fluxes (entu, detu, entd,
+detd) from the N320 reduced-Gaussian source mesh to the C180 cubed-sphere
+target. Reuses the same `ERA5C180RegridWorkspace` as the scalar pipeline —
+the per-field flat scratch is large enough since all four fields share the
+same `(n_cells, Nz)` shape as U/V/T/Q.
+"""
+function regrid_n320_tm5_convection_to_c180!(
+        tm5_c180::ERA5C180TM5ConvectionFields{FT},
+        tm5_n320::ERA5N320TM5ConvectionFields{FT},
+        workspace::ERA5C180RegridWorkspace{FT},
+        target_grid::CubedSphereTargetGeometry{FT}) where FT
+    Nc = target_grid.mesh.Nc
+    Nz = size(tm5_n320.entu, 2)
+    size(workspace.src_flat_3d, 2) == Nz ||
+        throw(DimensionMismatch("workspace Nz $(size(workspace.src_flat_3d, 2)) ≠ TM5 Nz $Nz"))
+    size(workspace.dst_flat_3d, 2) == Nz ||
+        throw(DimensionMismatch("workspace dst Nz $(size(workspace.dst_flat_3d, 2)) ≠ $Nz"))
+
+    for (src_field, dst_panels) in (
+            (tm5_n320.entu, tm5_c180.entu),
+            (tm5_n320.detu, tm5_c180.detu),
+            (tm5_n320.entd, tm5_c180.entd),
+            (tm5_n320.detd, tm5_c180.detd))
+        _regrid_3d_intensive!(workspace.dst_flat_3d, workspace.src_flat_3d,
+                               workspace.regridder, src_field)
+        _unpack_flat_to_cs_panels_3d!(dst_panels, workspace.dst_flat_3d, Nc, Nz)
+    end
+    return tm5_c180
 end
 
 # ---------------------------------------------------------------------------
@@ -1259,16 +1462,21 @@ struct ERA5N320ToC180Pipeline{FT <: AbstractFloat,
                                RW <: ERA5C180RegridWorkspace{FT},
                                CSGrid <: CubedSphereTargetGeometry{FT},
                                SrcGrid <: ReducedGaussianTargetGeometry{FT}}
-    source_grid       :: SrcGrid
-    target_grid       :: CSGrid
-    vc                :: HybridSigmaPressure
-    cell_areas        :: Vector{Float64}
-    spectral_ws       :: ERA5N320SpectralWorkspace{FT}
-    regrid_ws         :: RW
-    window_fields     :: ERA5N320WindowFields{FT}
-    dry_fields        :: ERA5N320DryMassFields{FT}
-    convection_fields :: Union{Nothing, ERA5N320ConvectionFields{FT}}
-    c180_fields       :: ERA5C180RegridFields{FT}
+    source_grid        :: SrcGrid
+    target_grid        :: CSGrid
+    vc                 :: HybridSigmaPressure
+    cell_areas         :: Vector{Float64}
+    spectral_ws        :: ERA5N320SpectralWorkspace{FT}
+    regrid_ws          :: RW
+    window_fields      :: ERA5N320WindowFields{FT}
+    dry_fields         :: ERA5N320DryMassFields{FT}
+    convection_fields  :: Union{Nothing, ERA5N320ConvectionFields{FT}}
+    # TM5 entrainment/detrainment derived from (UDMF/DDMF/UDRF/DDRF). Nothing
+    # when the pipeline was built with `include_convection = false`.
+    tm5_n320_fields    :: Union{Nothing, ERA5N320TM5ConvectionFields{FT}}
+    tm5_derive_scratch :: Union{Nothing, ERA5N320TM5DeriveScratch{FT}}
+    tm5_c180_fields    :: Union{Nothing, ERA5C180TM5ConvectionFields{FT}}
+    c180_fields        :: ERA5C180RegridFields{FT}
 end
 
 """
@@ -1310,12 +1518,20 @@ function allocate_era5_n320_to_c180_pipeline(handles::ERA5GRIBDayHandles,
     dry_fields    = allocate_era5_n320_dry_mass_fields(source_grid, Nz_int)
     convection_fields = include_convection ?
         allocate_era5_n320_convection_fields(source_grid, Nz_int) : nothing
+    tm5_n320_fields = include_convection ?
+        allocate_era5_n320_tm5_convection_fields(source_grid, Nz_int) : nothing
+    tm5_derive_scratch = include_convection ?
+        allocate_era5_n320_tm5_derive_scratch(FT, Nz_int) : nothing
+    tm5_c180_fields = include_convection ?
+        allocate_era5_c180_tm5_convection_fields(target_grid, Nz_int) : nothing
     c180_fields   = allocate_era5_c180_regrid_fields(target_grid, Nz_int)
 
     return ERA5N320ToC180Pipeline{FT, typeof(regrid_ws), typeof(target_grid), typeof(source_grid)}(
         source_grid, target_grid, vc, cell_areas,
         spectral_ws, regrid_ws,
-        window_fields, dry_fields, convection_fields, c180_fields)
+        window_fields, dry_fields, convection_fields,
+        tm5_n320_fields, tm5_derive_scratch, tm5_c180_fields,
+        c180_fields)
 end
 
 """
@@ -1346,6 +1562,18 @@ function process_era5_n320_window!(pipeline::ERA5N320ToC180Pipeline,
     if pipeline.convection_fields !== nothing
         read_era5_n320_convection_window!(pipeline.convection_fields, handles,
                                             pipeline.source_grid.mesh, date, hour)
+        # ec2tm conversion on N320 (per-column) + regrid to C180. Gated on
+        # the same `include_convection` toggle so the scalar-only smoke path
+        # remains exact-CPU-fast.
+        derive_n320_tm5_convection!(pipeline.tm5_n320_fields,
+                                     pipeline.convection_fields,
+                                     pipeline.window_fields,
+                                     pipeline.vc,
+                                     pipeline.tm5_derive_scratch)
+        regrid_n320_tm5_convection_to_c180!(pipeline.tm5_c180_fields,
+                                              pipeline.tm5_n320_fields,
+                                              pipeline.regrid_ws,
+                                              pipeline.target_grid)
     end
     regrid_n320_to_c180!(pipeline.c180_fields, pipeline.window_fields,
                            pipeline.regrid_ws, pipeline.target_grid)

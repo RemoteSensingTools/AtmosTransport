@@ -388,3 +388,4 @@ preprocessor_pair_supported(::LatLonTargetGeometry, ::ERA5SpectralSettings) = tr
 preprocessor_pair_supported(::ReducedGaussianTargetGeometry, ::ERA5SpectralSettings) = true
 preprocessor_pair_supported(::CubedSphereTargetGeometry, ::ERA5SpectralSettings) = true
 preprocessor_pair_supported(::CubedSphereTargetGeometry, ::AbstractGEOSSettings) = true
+preprocessor_pair_supported(::CubedSphereTargetGeometry, ::AbstractERA5GRIBSettings) = true

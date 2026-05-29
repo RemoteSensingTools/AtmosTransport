@@ -31,11 +31,17 @@
 # from a separate file yet — the warning is emitted at write time, mirroring
 # the `allow_terminal_zero_tendency` path in `regrid_ll_binary_to_cs`).
 #
-# Surface (PBL) and convection (CMFMC/DTRAIN or TM5 entu/detu/entd/detd)
-# payload sections are intentionally not written by this commit. The
-# convection forecast is read on the N320 mesh during step 1; the C180
-# regrid + convention conversion (UDMF → CMFMC, DTRAIN-equivalent) is
-# the natural follow-on once we have a verified baseline binary.
+# Surface (PBL) payload sections are intentionally not written by this
+# branch — the ERA5 N320 source doesn't expose them yet.
+#
+# TM5 convection (entu/detu/entd/detd) IS now written when
+# `include_convection = true`. The N320 forecast (UDMF/DDMF/UDRF/DDRF)
+# is converted to TM5 fields via `ec2tm_from_rates!` on each column,
+# then regridded to C180 via the existing conservative path, then
+# attached to the per-window writer payload as `window.tm5_fields`.
+# CMFMC/DTRAIN is NOT written from this preprocessor; consumers that
+# want CMFMC should read from a GEOS-IT binary or convert from TM5
+# downstream.
 # ===========================================================================
 
 """
@@ -147,6 +153,7 @@ function process_era5_n320_to_cs_day(date::Date,
             half_dt_seconds = Float64(dt_met_seconds) / 2,
             steps_per_window = steps_per_met,
             include_flux_delta = true,
+            include_tm5conv = include_convection,
             mass_basis = mass_basis,
             panel_convention = _cs_panel_convention_tag(target_grid),
             cs_definition = _cs_definition_tag(target_grid),
@@ -160,6 +167,8 @@ function process_era5_n320_to_cs_day(date::Date,
                 "target_type"  => "cubed_sphere",
                 "regrid_method" => "conservative",
                 "poisson_balanced" => true,
+                "tm5_convection_source" => include_convection ?
+                    "ec2tm_from_rates(udmf,ddmf,udrf,ddrf)" : "none",
             ))
         writer = CubedSphereBinaryWriter(inner_writer,
                                           mass_basis_from_symbol(mass_basis);
@@ -311,9 +320,16 @@ function process_era5_n320_to_cs_day(date::Date,
 
             convert_cs_mass_target_to_delta!(nxt_m_dry, cur_m_dry)
 
-            write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(win - 1,
-                (m = cur_m_dry, am = cur_am, bm = cur_bm, cm = cur_cm,
-                 ps = cur_ps_dry, dm = nxt_m_dry)))
+            base_payload = (m = cur_m_dry, am = cur_am, bm = cur_bm, cm = cur_cm,
+                            ps = cur_ps_dry, dm = nxt_m_dry)
+            payload = include_convection ?
+                merge(base_payload, (; tm5_fields = (
+                    entu = cur_pipe.tm5_c180_fields.entu,
+                    detu = cur_pipe.tm5_c180_fields.detu,
+                    entd = cur_pipe.tm5_c180_fields.entd,
+                    detd = cur_pipe.tm5_c180_fields.detd))) :
+                base_payload
+            write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(win - 1, payload))
 
             @info @sprintf("    Window %2d/%d: wrote (bal %.2fs pre=%.2e post=%.2e iter=%d) | read %2d (%.2fs)",
                             win - 1, nwindow, t_bal, bal_diag.max_pre_residual,
@@ -375,9 +391,16 @@ function process_era5_n320_to_cs_day(date::Date,
         diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cur_dm_dry, cur_m_dry, Nc, Nz_int)
         convert_cs_mass_target_to_delta!(nxt_m_dry, cur_m_dry)
 
-        write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(nwindow,
-            (m = cur_m_dry, am = cur_am, bm = cur_bm, cm = cur_cm,
-             ps = cur_ps_dry, dm = nxt_m_dry)))
+        final_base_payload = (m = cur_m_dry, am = cur_am, bm = cur_bm, cm = cur_cm,
+                              ps = cur_ps_dry, dm = nxt_m_dry)
+        final_payload = include_convection ?
+            merge(final_base_payload, (; tm5_fields = (
+                entu = cur_pipe.tm5_c180_fields.entu,
+                detu = cur_pipe.tm5_c180_fields.detu,
+                entd = cur_pipe.tm5_c180_fields.entd,
+                detd = cur_pipe.tm5_c180_fields.detd))) :
+            final_base_payload
+        write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(nwindow, final_payload))
 
         worst_pre  = max(worst_pre,  bal_diag.max_pre_residual)
         worst_post = max(worst_post, bal_diag.max_post_residual)
@@ -396,4 +419,59 @@ function process_era5_n320_to_cs_day(date::Date,
     finally
         close_era5_day!(handles)
     end
+end
+
+# ===========================================================================
+# Unified-CLI dispatch — wires the per-day driver into
+# `preprocess_transport_binary.jl` via the standard
+# `process_day(date, grid, settings, vertical; ...)` extension point.
+# ===========================================================================
+
+"""
+    process_day(date, grid::CubedSphereTargetGeometry, settings::AbstractERA5GRIBSettings,
+                vertical; out_path, FT, mass_basis, dt_met_seconds, positivity_cfl_limit,
+                kwargs...)
+
+Adapter that the unified preprocessor CLI calls into. Forwards to
+[`process_era5_n320_to_cs_day`](@ref) with the kwargs the underlying
+function actually accepts; the rest of the unified-CLI day-kwargs (e.g.
+`chain_mass`, `adaptive_substeps`, `min_steps_per_window`, `seed_m`) are
+absorbed by the trailing `kwargs...` and silently ignored — ERA5 N320 has
+no day-to-day mass-chain state, and the writer currently uses a fixed
+substep count rather than the adaptive policy.
+
+Returns `(; final_m = nothing)` so the unified CLI's `seed_m = get(result,
+:final_m, nothing)` chain remains a no-op.
+"""
+function process_day(date::Date,
+                     grid::CubedSphereTargetGeometry,
+                     settings::AbstractERA5GRIBSettings,
+                     vertical;
+                     out_path::AbstractString,
+                     mass_basis::Symbol = :dry,
+                     dt_met_seconds::Real = 3600.0,
+                     positivity_cfl_limit::Real = 0.95,
+                     min_steps_per_window::Union{Integer, Nothing} = nothing,
+                     kwargs...)
+    # Honor the substep policy's min_steps_per_window if the CLI passed one;
+    # otherwise fall back to the established N320 default. Adaptive substep
+    # scheduling isn't yet supported on this path.
+    steps_per_window = min_steps_per_window === nothing ? 8 : Int(min_steps_per_window)
+    process_era5_n320_to_cs_day(date, settings, grid;
+        out_path                  = out_path,
+        Nz                        = vertical.Nz,
+        mass_basis                = mass_basis,
+        dt_met_seconds            = dt_met_seconds,
+        steps_per_window          = steps_per_window,
+        positivity_cfl_limit      = positivity_cfl_limit,
+        cache_dir                 = grid.cache_dir,
+        include_convection        = settings.include_convection)
+    return (; final_m = nothing)
+end
+
+# Output filename matches the standalone CLI script's naming convention so
+# downstream tools that already grep for `era5_n320_to_cNNN_transport_…`
+# pick up the unified-CLI output without changes.
+function _native_output_filename(::AbstractERA5GRIBSettings, date::Date, FT::Type)
+    return "era5_n320_transport_$(Dates.format(date, "yyyymmdd"))_$(FT === Float32 ? "float32" : "float64").bin"
 end

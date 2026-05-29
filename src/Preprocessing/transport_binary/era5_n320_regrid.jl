@@ -389,6 +389,23 @@ function process_era5_n320_to_cs_day(date::Date,
         fill_cs_window_mass_tendency!(cur_dm_dry, cur_m_dry, nxt_m_dry, steps_per_met)
         for p in 1:6; fill!(cur_cm[p], zero(FT)); end
         diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cur_dm_dry, cur_m_dry, Nc, Nz_int)
+        final_pos_diag = if write_replay_on
+            contract = verify_cs_window_contract!(cur_m_dry, cur_am, cur_bm, cur_cm,
+                                                   nxt_m_dry,
+                                                   steps_per_met, nwindow;
+                                                   replay_tol = replay_tol,
+                                                   positivity_cfl_limit = positivity_cfl_limit)
+            if worst_replay_win == 0 || contract.replay.max_rel_err > worst_replay_rel
+                worst_replay_rel = contract.replay.max_rel_err
+                worst_replay_abs = contract.replay.max_abs_err
+                worst_replay_win = nwindow
+            end
+            contract.positivity
+        else
+            verify_substep_positivity_cs!(cur_m_dry, cur_am, cur_bm, cur_cm;
+                                          cfl_limit = positivity_cfl_limit)
+        end
+        worst_positivity = update_cs_positivity_accumulator(worst_positivity, final_pos_diag, nwindow)
         convert_cs_mass_target_to_delta!(nxt_m_dry, cur_m_dry)
 
         final_base_payload = (m = cur_m_dry, am = cur_am, bm = cur_bm, cm = cur_cm,
@@ -406,6 +423,12 @@ function process_era5_n320_to_cs_day(date::Date,
         worst_post = max(worst_post, bal_diag.max_post_residual)
         worst_iter = max(worst_iter, bal_diag.max_cg_iter)
 
+        # Summarize positivity BEFORE promoting the .tmp so a failed-gate day
+        # quarantines the staged file (matches cubed_sphere_regrid.jl:610-617).
+        summarize_cs_positivity_status(worst_positivity;
+                                       cfl_limit = positivity_cfl_limit,
+                                       steps_per_window = steps_per_met,
+                                       quarantine_path = writer_staging_path(writer))
         promote_streaming_binary!(writer)
 
         elapsed = time() - t_start
@@ -414,7 +437,6 @@ function process_era5_n320_to_cs_day(date::Date,
         worst_replay_win > 0 &&
             @info @sprintf("  Worst replay: rel=%.2e abs=%.2e at win=%d",
                             worst_replay_rel, worst_replay_abs, worst_replay_win)
-        summarize_cs_positivity_status(worst_positivity; cfl_limit = positivity_cfl_limit)
         return nothing
     finally
         close_era5_day!(handles)

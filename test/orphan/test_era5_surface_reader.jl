@@ -45,6 +45,46 @@ include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
     end
 end
 
+@testset "ERA5 surface reader returns latent heat flux on request" begin
+    mktempdir() do dir
+        path = joinpath(dir, "era5_surface_20211201.nc")
+        NCDataset(path, "c") do ds
+            ds.dim["longitude"] = 4
+            ds.dim["latitude"] = 3
+            ds.dim["time"] = 24
+            defVar(ds, "longitude", [0.0, 90.0, 180.0, 270.0], ("longitude",))
+            defVar(ds, "latitude", [90.0, 0.0, -90.0], ("latitude",))
+            defVar(ds, "time", collect(0:23), ("time",))
+            defVar(ds, "blh", fill(1000.0, 4, 3, 24), ("longitude", "latitude", "time"))
+            defVar(ds, "zust", fill(0.25, 4, 3, 24), ("longitude", "latitude", "time"))
+            # Both turbulent fluxes are accumulated J m⁻², downward-positive.
+            defVar(ds, "sshf", fill(-360.0, 4, 3, 24), ("longitude", "latitude", "time");
+                   attrib = ["units" => "J m**-2"])
+            defVar(ds, "slhf", fill(-720.0, 4, 3, 24), ("longitude", "latitude", "time");
+                   attrib = ["units" => "J m**-2"])
+            defVar(ds, "t2m", fill(290.0, 4, 3, 24), ("longitude", "latitude", "time"))
+        end
+
+        reader = AtmosTransport.Preprocessing.open_era5_surface_reader(dir, Date(2021, 12, 1), 4, 3)
+        try
+            # Default path is unchanged and never requires slhf in the file.
+            base = AtmosTransport.Preprocessing.load_era5_surface_window(reader, 2, Float64)
+            @test !haskey(base, :lhflux)
+
+            # Opt-in path adds upward-positive latent flux in W m⁻²:
+            #   -(-720 J m⁻²) / 3600 s = +0.2 W m⁻², same convention as hflux.
+            withlh = AtmosTransport.Preprocessing.load_era5_surface_window(
+                reader, 2, Float64; with_latent = true)
+            @test haskey(withlh, :lhflux)
+            @test size(withlh.lhflux) == (4, 3)
+            @test all(withlh.lhflux .== 0.2)
+            @test all(withlh.hflux .== 0.1)
+        finally
+            AtmosTransport.Preprocessing.close_era5_surface_reader(reader)
+        end
+    end
+end
+
 @testset "ERA5 surface reader opens split CDS ZIP payloads" begin
     mktempdir() do dir
         inst_path = joinpath(dir, "data_stream-oper_stepType-instant.nc")

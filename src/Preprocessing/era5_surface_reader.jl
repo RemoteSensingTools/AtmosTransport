@@ -6,12 +6,13 @@
 # latitude south-to-north.
 
 const ERA5_SURFACE_VAR_CANDIDATES = Dict(
-    :pblh  => ("pblh", "blh", "boundary_layer_height"),
-    :ustar => ("ustar", "zust", "friction_velocity"),
-    :hflux => ("hflux", "sshf", "surface_sensible_heat_flux"),
-    :t2m   => ("t2m", "2t", "2m_temperature"),
-    :u10   => ("u10", "10u", "10m_u_component_of_wind"),
-    :v10   => ("v10", "10v", "10m_v_component_of_wind"),
+    :pblh   => ("pblh", "blh", "boundary_layer_height"),
+    :ustar  => ("ustar", "zust", "friction_velocity"),
+    :hflux  => ("hflux", "sshf", "surface_sensible_heat_flux"),
+    :lhflux => ("lhflux", "slhf", "surface_latent_heat_flux"),
+    :t2m    => ("t2m", "2t", "2m_temperature"),
+    :u10    => ("u10", "10u", "10m_u_component_of_wind"),
+    :v10    => ("v10", "10v", "10m_v_component_of_wind"),
 )
 
 const ERA5_SURFACE_TIME_DIMS = ("time", "valid_time")
@@ -225,13 +226,33 @@ function _normalize_surface_ll!(field::AbstractMatrix{FT},
     return Array{FT}(out)
 end
 
-function _surface_hflux_to_upward_wm2(raw, ds::NCDataset, var_name::String, ::Type{FT}) where FT
+"""
+    _surface_flux_to_upward_wm2(raw, ds, var_name, FT) -> Matrix{FT}
+
+Normalise an ERA5 surface turbulent heat flux to **upward-positive W m⁻²**.
+
+ERA5 reports `sshf` (sensible) and `slhf` (latent) as time-accumulated
+energy over the output interval (J m⁻², downward-positive). Two corrections
+recover an instantaneous, upward-positive flux:
+
+  * **divide by 3600** — the accumulation window is one hour, so J m⁻²
+    becomes W m⁻²;
+  * **flip the sign** — ERA5 uses downward-positive, while the boundary-layer
+    scheme (and atmospheric convention) treats an upward surface flux of heat
+    into the atmosphere as positive.
+
+Fields already stored as a rate (units without `J`, e.g. a pre-divided
+`W m⁻²` export) pass through unchanged. The accumulated case is detected
+either from the `units` attribute containing `J` or from the canonical
+short/long names of the two accumulated fluxes.
+"""
+function _surface_flux_to_upward_wm2(raw, ds::NCDataset, var_name::String, ::Type{FT}) where FT
     units = lowercase(String(get(ds[var_name].attrib, "units", "")))
     lname = lowercase(var_name)
-    if occursin("j", units) || lname in ("sshf", "surface_sensible_heat_flux")
-        return FT.(-raw ./ 3600)
-    end
-    return FT.(raw)
+    accumulated = occursin("j", units) || lname in (
+        "sshf", "surface_sensible_heat_flux",
+        "slhf", "surface_latent_heat_flux")
+    return accumulated ? FT.(-raw ./ 3600) : FT.(raw)
 end
 
 function _load_surface_field(reader::ERA5SurfaceReader,
@@ -285,6 +306,10 @@ function _validate_era5_surface!(surface, path::String, win_idx::Int)
     150 < minimum(surface.t2m) < 350 || error("ERA5 surface T2M minimum is out of range in $(path) window $(win_idx)")
     150 < maximum(surface.t2m) < 350 || error("ERA5 surface T2M maximum is out of range in $(path) window $(win_idx)")
     maximum(abs, surface.hflux) < 5000 || error("ERA5 surface HFLUX magnitude is out of range in $(path) window $(win_idx)")
+    if haskey(surface, :lhflux)
+        all(isfinite, surface.lhflux) || error("ERA5 surface LHFLUX contains non-finite values in $(path) window $(win_idx)")
+        maximum(abs, surface.lhflux) < 5000 || error("ERA5 surface LHFLUX magnitude is out of range in $(path) window $(win_idx)")
+    end
     return nothing
 end
 
@@ -296,16 +321,46 @@ function _validate_surface_shapes!(surface, expected::Tuple{Int, Int})
     return nothing
 end
 
+"""
+    load_era5_surface_window(reader, win_idx, FT; with_latent = false) -> NamedTuple
+
+Read one time window of ERA5 surface fields, normalised to the lat-lon
+transport-binary convention (longitude on `[-180, 180)`, latitude south→north).
+
+Returns `(pblh, t2m, ustar, hflux)`:
+
+  * `pblh`  — boundary-layer height (m),
+  * `t2m`   — 2 m temperature (K),
+  * `ustar` — friction velocity (m s⁻¹), read directly when ERA5 `zust` is
+    present, otherwise estimated from the 10 m wind via a constant drag
+    coefficient,
+  * `hflux` — surface **sensible** heat flux, upward-positive (W m⁻²).
+
+With `with_latent = true` the result additionally carries
+
+  * `lhflux` — surface **latent** heat flux, upward-positive (W m⁻²),
+
+which the TM5 boundary-layer diffusion scheme (`bldiff`) needs to form the
+surface virtual heat flux. It is opt-in so existing callers that only need the
+four PBL fields neither require `slhf` in the file nor change behaviour.
+"""
 function load_era5_surface_window(reader::ERA5SurfaceReader,
                                   win_idx::Int,
-                                  ::Type{FT}) where FT
+                                  ::Type{FT};
+                                  with_latent::Bool = false) where FT
     pblh, _, _ = _load_surface_field(reader, :pblh, win_idx, FT)
     ustar = _load_surface_ustar(reader, win_idx, FT)
     hflux_raw, hflux_ds, hflux_name = _load_surface_raw_field(reader, :hflux, win_idx, FT)
-    hflux = _surface_hflux_to_upward_wm2(hflux_raw, hflux_ds, hflux_name, FT)
+    hflux = _surface_flux_to_upward_wm2(hflux_raw, hflux_ds, hflux_name, FT)
     t2m, _, _ = _load_surface_field(reader, :t2m, win_idx, FT)
 
     surface = (pblh = pblh, t2m = t2m, ustar = ustar, hflux = hflux)
+    if with_latent
+        lh_raw, lh_ds, lh_name = _load_surface_raw_field(reader, :lhflux, win_idx, FT)
+        surface = merge(surface,
+                        (lhflux = _surface_flux_to_upward_wm2(lh_raw, lh_ds, lh_name, FT),))
+    end
+
     _validate_surface_shapes!(surface, (reader.Nx, reader.Ny))
     _validate_era5_surface!(surface, reader.path, win_idx)
     return surface

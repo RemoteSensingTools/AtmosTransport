@@ -3,9 +3,14 @@
 # (Dec 2021 Catrine validation).
 #
 # Drives the unified CLI:
-#   julia -t 8 --project=. scripts/preprocessing/preprocess_transport_binary.jl \
+#   julia -t 16 --project=. scripts/preprocessing/preprocess_transport_binary.jl \
 #       config/preprocessing/era5_n320_to_c180_dec2021_catrine_f32.toml \
 #       --start 2021-12-01 --end 2021-12-31
+#
+# Use `-t 16` (or more): the spectral synthesis (~90% of per-window wall) is
+# threaded over the 137 model levels, so wall-time scales with thread count up
+# to ~Nz levels-per-thread. -t16 gives ~6× per-window over serial (~28 min/day
+# vs ~2.9 h). Set ERA5_N320_PROFILE=1 to log the per-phase breakdown.
 #
 # Per-window pipeline (B/C/D/E from `sources/era5.jl`, wired in
 # `transport_binary/era5_n320_regrid.jl`):

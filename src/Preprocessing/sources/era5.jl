@@ -340,9 +340,12 @@ struct ERA5N320SpectralWorkspace{FT <: AbstractFloat,
     d_spec       :: Array{ComplexF64, 3}
     t_spec       :: Array{ComplexF64, 3}
     lnsp_spec    :: Matrix{ComplexF64}
-    u_spec       :: Matrix{ComplexF64}
-    v_spec       :: Matrix{ComplexF64}
-    synth_cache  :: ReducedSpectralThreadCache
+    # Per-thread spectral-synthesis caches. Each `ReducedSpectralThreadCache`
+    # owns its own `u_spec`/`v_spec` (vod2uv output) and FFT/Legendre buffers,
+    # so the 137-level synthesis loop threads over levels with no shared state
+    # (the dominant cost: ~90% of per-window wall at T639/Nz137). Length =
+    # `Threads.maxthreadid()` at allocation; mirrors the RG path's `work.caches`.
+    synth_caches :: Vector{ReducedSpectralThreadCache}
     read_buf     :: Vector{Float64}
     # Per-spectral-field decode scratch. `read_spectral_coeffs!` wants a
     # concrete `Matrix{ComplexF64}` (not a view), so we keep one matrix per
@@ -351,10 +354,10 @@ struct ERA5N320SpectralWorkspace{FT <: AbstractFloat,
     t_scratch    :: Matrix{ComplexF64}
     vo_scratch   :: Matrix{ComplexF64}
     d_scratch    :: Matrix{ComplexF64}
-    # Gridpoint synthesis scratch — `spectral_to_reduced_scalar!` writes
-    # Float64. Reused for U/V/T/LNSP synthesis when the output buffer is
-    # narrower than Float64 (e.g. Float32 production runs).
-    grid_scratch :: Vector{Float64}
+    # Per-thread gridpoint synthesis scratch — `spectral_to_reduced_scalar!`
+    # writes Float64. One buffer per thread so the threaded synthesis loop
+    # never aliases. Length = `Threads.maxthreadid()`.
+    grid_scratches :: Vector{Vector{Float64}}
     have_t       :: BitVector
     have_vo      :: BitVector
     have_d       :: BitVector
@@ -383,29 +386,36 @@ function allocate_era5_n320_spectral_workspace(source_grid::ReducedGaussianTarge
 
     buffer_lengths = sort!(unique(vcat(collect(mesh.nlon_per_ring),
                                        collect(mesh.boundary_counts))))
-    cache = ReducedSpectralThreadCache(
+    # One cache + synthesis-scratch per thread so the level loop can run
+    # `Threads.@threads` with no shared mutable state. Each cache holds its own
+    # `u_spec`/`v_spec` (vod2uv output) and per-ring FFT/real buffers.
+    # Size by `maxthreadid()`, NOT `nthreads()`: `julia -tN` also spins up an
+    # interactive-pool thread, so `threadid()` inside the loop can exceed the
+    # default-pool count `nthreads()` (here it returned 17 with `-t16`). Indexing
+    # by `threadid()` therefore requires `maxthreadid()` slots.
+    n_cells = ncells(mesh)
+    nthreads = Threads.maxthreadid()
+    synth_caches = [ReducedSpectralThreadCache(
         zeros(Float64, nc, nc),
         Dict(n => zeros(ComplexF64, n) for n in buffer_lengths),
         Dict(n => zeros(Float64, n)    for n in buffer_lengths),
         zeros(ComplexF64, nc, nc),
         zeros(ComplexF64, nc, nc),
-    )
+    ) for _ in 1:nthreads]
+    grid_scratches = [zeros(Float64, n_cells) for _ in 1:nthreads]
 
-    n_cells = ncells(mesh)
     return ERA5N320SpectralWorkspace{FT, typeof(source_grid)}(
         source_grid, T_int, Nz_int,
         zeros(ComplexF64, nc, nc, Nz_int),     # vo_spec
         zeros(ComplexF64, nc, nc, Nz_int),     # d_spec
         zeros(ComplexF64, nc, nc, Nz_int),     # t_spec
         zeros(ComplexF64, nc, nc),             # lnsp_spec
-        zeros(ComplexF64, nc, nc),             # u_spec  — per-level scratch
-        zeros(ComplexF64, nc, nc),             # v_spec  — per-level scratch
-        cache,
+        synth_caches,
         Float64[],                             # read_buf — grows in read_spectral_coeffs!
         zeros(ComplexF64, nc, nc),             # t_scratch
         zeros(ComplexF64, nc, nc),             # vo_scratch
         zeros(ComplexF64, nc, nc),             # d_scratch
-        zeros(Float64, n_cells),               # grid_scratch — Float64 synthesis target
+        grid_scratches,
         falses(Nz_int), falses(Nz_int), falses(Nz_int), falses(Nz_int),
         Ref(false),
         zeros(Float64, n_cells),               # lnsp_grid — scratch for PS synthesis
@@ -530,6 +540,8 @@ function read_era5_n320_window_fields!(fields::ERA5N320WindowFields{FT},
     size(fields.qv) == (nc, Nz) ||
         throw(DimensionMismatch("fields.qv size $(size(fields.qv)) != ($nc, $Nz)"))
 
+    _prof = get(ENV, "ERA5_N320_PROFILE", "") == "1"
+    _t_io = time()
     GribFile(handles.core_path) do gf
         for msg in gf
             Int(msg["dataDate"]) == expected_data_date || continue
@@ -583,39 +595,55 @@ function read_era5_n320_window_fields!(fields::ERA5N320WindowFields{FT},
     all(workspace.have_q) ||
         error("ERA5 N320 read: Q missing for $(date) hour $(hour) at levels $(findall(!, workspace.have_q))")
 
-    # Spectral → gridpoint synthesis per level.
-    grid = workspace.source_grid
-    cache = workspace.synth_cache
+    _prof && (_t_io = time() - _t_io)
 
-    @inbounds for k in 1:Nz
-        vo_lvl = view(workspace.vo_spec, :, :, k)
-        d_lvl  = view(workspace.d_spec,  :, :, k)
-        t_lvl  = view(workspace.t_spec,  :, :, k)
+    # Spectral → gridpoint synthesis per level. The 137 levels are independent
+    # (each reads its own spectral slice, writes its own gridpoint column), so
+    # the loop threads with per-thread caches/scratch. `:static` keeps
+    # `threadid()` stable within the loop body. This is ~90% of per-window wall
+    # at T639/Nz137, so threading it is the dominant speedup.
+    grid = workspace.source_grid
+    caches = workspace.synth_caches
+    scratches = workspace.grid_scratches
+
+    _t_synth = time()
+    Threads.@threads :static for k in 1:Nz
+        tid     = Threads.threadid()
+        cache   = caches[tid]
+        scratch = scratches[tid]
+        vo_lvl  = view(workspace.vo_spec, :, :, k)
+        d_lvl   = view(workspace.d_spec,  :, :, k)
+        t_lvl   = view(workspace.t_spec,  :, :, k)
 
         # vod2uv! produces ECMWF's `U·cos(φ)` / `V·cos(φ)` "pseudo-winds";
         # the per-ring division below recovers physical `U`, `V` in m/s.
-        vod2uv!(workspace.u_spec, workspace.v_spec, vo_lvl, d_lvl, T)
+        vod2uv!(cache.u_spec, cache.v_spec, vo_lvl, d_lvl, T)
 
-        _synthesize_into_column!(view(fields.u, :, k), workspace.u_spec, T,
-                                  grid, cache, workspace.grid_scratch)
-        _synthesize_into_column!(view(fields.v, :, k), workspace.v_spec, T,
-                                  grid, cache, workspace.grid_scratch)
-        _synthesize_into_column!(view(fields.t, :, k), t_lvl,            T,
-                                  grid, cache, workspace.grid_scratch)
+        _synthesize_into_column!(view(fields.u, :, k), cache.u_spec, T,
+                                  grid, cache, scratch)
+        _synthesize_into_column!(view(fields.v, :, k), cache.v_spec, T,
+                                  grid, cache, scratch)
+        _synthesize_into_column!(view(fields.t, :, k), t_lvl,        T,
+                                  grid, cache, scratch)
 
         _divide_by_cos_lat_per_ring!(view(fields.u, :, k), mesh)
         _divide_by_cos_lat_per_ring!(view(fields.v, :, k), mesh)
     end
 
-    # LNSP → PS = exp(LNSP). The `lnsp_grid` buffer is Float64 already, so it
+    # LNSP → PS = exp(LNSP). Single synthesis (not in the threaded loop); use
+    # the first thread's cache. The `lnsp_grid` buffer is Float64 already, so it
     # serves as both column and scratch (the in-method copy becomes a self-copy
     # of ~500 KB and is amortised across the synthesis kernel cost).
     _synthesize_into_column!(workspace.lnsp_grid, workspace.lnsp_spec, T,
-                              grid, cache, workspace.lnsp_grid)
+                              grid, caches[1], workspace.lnsp_grid)
     @inbounds for c in 1:nc
         fields.ps[c] = exp(workspace.lnsp_grid[c])
     end
 
+    if _prof
+        @info @sprintf("      [prof] read_window: io+decode %.1fs  synthesis(%d lvls ×3) %.1fs",
+                       _t_io, Nz, time() - _t_synth)
+    end
     return fields
 end
 
@@ -1555,11 +1583,16 @@ function process_era5_n320_window!(pipeline::ERA5N320ToC180Pipeline,
                                      handles::ERA5GRIBDayHandles,
                                      date::Date,
                                      hour::Integer)
+    _prof = get(ENV, "ERA5_N320_PROFILE", "") == "1"
+    _t = time()
     read_era5_n320_window_fields!(pipeline.window_fields, pipeline.spectral_ws,
                                     handles, date, hour)
+    _t_read = time() - _t; _t = time()
     derive_n320_dry_mass!(pipeline.dry_fields, pipeline.window_fields,
                            pipeline.vc, pipeline.cell_areas)
+    _t_drymass = time() - _t; _t_conv = 0.0
     if pipeline.convection_fields !== nothing
+        _t = time()
         read_era5_n320_convection_window!(pipeline.convection_fields, handles,
                                             pipeline.source_grid.mesh, date, hour)
         # ec2tm conversion on N320 (per-column) + regrid to C180. Gated on
@@ -1574,8 +1607,14 @@ function process_era5_n320_window!(pipeline::ERA5N320ToC180Pipeline,
                                               pipeline.tm5_n320_fields,
                                               pipeline.regrid_ws,
                                               pipeline.target_grid)
+        _t_conv = time() - _t
     end
+    _t = time()
     regrid_n320_to_c180!(pipeline.c180_fields, pipeline.window_fields,
                            pipeline.regrid_ws, pipeline.target_grid)
+    if _prof
+        @info @sprintf("    [prof] window phases: read+synth %.1fs  drymass %.1fs  conv %.1fs  regrid→c180 %.1fs",
+                       _t_read, _t_drymass, _t_conv, time() - _t)
+    end
     return pipeline
 end

@@ -51,9 +51,10 @@ function _tiny_source_grid(::Type{FT} = Float64) where FT
 end
 
 """Allocate a minimal synthesis cache for a synthetic source grid at truncation
-`T`. Reuses the workspace allocator so the cache wiring stays in one place."""
+`T`. Reuses the workspace allocator so the cache wiring stays in one place.
+The workspace holds one cache per thread; the first is sufficient for tests."""
 function _synth_cache_for_test(grid, T::Int)
-    return allocate_era5_n320_spectral_workspace(grid, T, 1).synth_cache
+    return allocate_era5_n320_spectral_workspace(grid, T, 1).synth_caches[1]
 end
 
 @testset "ERA5 N320 window reader — breakpoint B" begin
@@ -71,8 +72,14 @@ end
         @test size(ws.d_spec)    == (T + 1, T + 1, Nz)
         @test size(ws.t_spec)    == (T + 1, T + 1, Nz)
         @test size(ws.lnsp_spec) == (T + 1, T + 1)
-        @test size(ws.u_spec)    == (T + 1, T + 1)
-        @test size(ws.v_spec)    == (T + 1, T + 1)
+        # Per-thread synthesis caches/scratch (one per thread; each cache owns
+        # its own u_spec/v_spec). Sized by maxthreadid() so the threaded level
+        # loop can index by threadid().
+        @test length(ws.synth_caches) == Threads.maxthreadid()
+        @test length(ws.grid_scratches) == Threads.maxthreadid()
+        @test all(c -> size(c.u_spec) == (T + 1, T + 1), ws.synth_caches)
+        @test all(c -> size(c.v_spec) == (T + 1, T + 1), ws.synth_caches)
+        @test all(s -> length(s) == ncells(grid.mesh), ws.grid_scratches)
         @test length(ws.lnsp_grid) == ncells(grid.mesh)
         @test length(ws.have_t)  == Nz
         @test ws.have_lnsp[] === false

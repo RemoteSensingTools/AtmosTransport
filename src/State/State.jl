@@ -31,20 +31,24 @@ using .Fields: AbstractTimeVaryingField, AbstractCubedSphereField,
                CubedSphereField, DerivedKzField, WindowPBLKzField,
                LocalHoltslagBovilleKzField,
                GCHPHoltslagBovilleKzField,                  # deprecated alias
+               PrecomputedCSKzField,
                PBLPhysicsParameters, StepwiseField,
                field_value, update_field!, refresh_pbl_kz_cache!,
                refresh_local_holtslag_boville_kz_cache!,
                refresh_gchp_holtslag_boville_kz_cache!,     # deprecated alias
+               refresh_precomputed_cs_kz_cache!,
                integral_between, panel_field
 export AbstractTimeVaryingField, AbstractCubedSphereField,
        ConstantField, ProfileKzField, PreComputedKzField,
        CubedSphereField, DerivedKzField, WindowPBLKzField,
        LocalHoltslagBovilleKzField,
        GCHPHoltslagBovilleKzField,                          # deprecated alias
+       PrecomputedCSKzField,
        PBLPhysicsParameters, StepwiseField,
        field_value, update_field!, refresh_pbl_kz_cache!,
        refresh_local_holtslag_boville_kz_cache!,
        refresh_gchp_holtslag_boville_kz_cache!,             # deprecated alias
+       refresh_precomputed_cs_kz_cache!,
        integral_between, panel_field
 
 end # module State

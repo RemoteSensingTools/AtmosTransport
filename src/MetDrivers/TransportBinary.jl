@@ -1941,6 +1941,9 @@ function _cs_section_elements(Nc::Int, npanel::Int, nlevel::Int, section::Symbol
         return npanel * Nc * Nc
     elseif _is_gchp_vdiff_payload_section(section)
         return npanel * Nc * Nc * nlevel
+    elseif section === :kz
+        # Precomputed layer-centre eddy diffusivity (TM5 bldiff), m² s⁻¹.
+        return npanel * Nc * Nc * nlevel
     elseif section === :cmfmc
         return npanel * Nc * Nc * (nlevel + 1)
     elseif section === :dtrain
@@ -2065,6 +2068,7 @@ function open_streaming_cs_transport_binary(
         include_surface::Bool = false,
         include_tm5conv::Bool = false,
         include_gchp_vdiff::Bool = false,
+        include_precomputed_kz::Bool = false,
         panel_convention = "gnomonic",
         cs_definition = nothing,
         cs_coordinate_law = nothing,
@@ -2087,6 +2091,7 @@ function open_streaming_cs_transport_binary(
         append!(payload_sections, (:entu, :detu, :entd, :detd))
     end
     include_gchp_vdiff && append!(payload_sections, _GCHP_VDIFF_PAYLOAD_SECTIONS)
+    include_precomputed_kz && push!(payload_sections, :kz)
 
     elems_per_window = sum(_cs_section_elements(Nc, npanel, nlevel, s)
                            for s in payload_sections)
@@ -2131,6 +2136,9 @@ function open_streaming_cs_transport_binary(
         "include_tm5conv" => include_tm5conv,
         "include_gchp_vdiff" => include_gchp_vdiff,
         "gchp_vdiff_payload" => include_gchp_vdiff ? "u_v_t_qv_layer_center_v1" : "none",
+        "include_precomputed_kz" => include_precomputed_kz,
+        "precomputed_kz_payload" => include_precomputed_kz ? "tm5_bldiff_layer_center_kvh_v1" : "none",
+        "n_kz" => include_precomputed_kz ? _cs_section_elements(Nc, npanel, nlevel, :kz) : 0,
         "n_pblh" => include_surface ? _cs_section_elements(Nc, npanel, nlevel, :pblh) : 0,
         "n_ustar" => include_surface ? _cs_section_elements(Nc, npanel, nlevel, :ustar) : 0,
         "n_pbl_hflux" => include_surface ? _cs_section_elements(Nc, npanel, nlevel, :pbl_hflux) : 0,

@@ -86,6 +86,41 @@ function _next_day_core_only_handle(handles::ERA5GRIBDayHandles)
 end
 
 """
+    fill_tm5_kz_payload!(kz_c180, c180_fields, hflux, lhflux, ustar,
+                         A, B, Nc, c, scratch) -> nothing
+
+Fill the per-panel layer-centre eddy diffusivity `kz_c180` (the binary `:kz`
+payload) by running the TM5 boundary-layer diffusion column kernel on every
+C180 cell. The 3D inputs are the already-regridded `c180_fields` (top-down
+u/v/t/qv/ps); the surface fluxes `hflux`/`lhflux` (W m⁻², upward-positive) and
+`ustar` are the C180-regridded surface panels. `A`/`B` are the hybrid-σ
+half-level coefficients. `scratch` is reused across columns.
+
+Computing on C180 (rather than regridding `kvh` from N320) matches the runtime
+GCHP Kz path and avoids a second regridder; `bldiff` is nonlinear, so this is
+the column-wise application of the scheme to the regridded state.
+"""
+function fill_tm5_kz_payload!(kz_c180, c180_fields, hflux, lhflux, ustar,
+                              A, B, Nc::Int,
+                              c::BLDiffConstants{FT},
+                              scratch::BLDiffColumnScratch{FT}) where {FT}
+    @inbounds for p in 1:6
+        kp, tp, qp = kz_c180[p], c180_fields.t[p], c180_fields.qv[p]
+        up, vp, psp = c180_fields.u[p], c180_fields.v[p], c180_fields.ps[p]
+        hf, lf, us = hflux[p], lhflux[p], ustar[p]
+        for j in 1:Nc, i in 1:Nc
+            tm5_bldiff_center_kz_column!(
+                view(kp, i, j, :),
+                view(tp, i, j, :), view(qp, i, j, :),
+                view(up, i, j, :), view(vp, i, j, :),
+                psp[i, j], hf[i, j], lf[i, j], us[i, j],
+                A, B, c, scratch)
+        end
+    end
+    return nothing
+end
+
+"""
     process_era5_n320_to_cs_day(date, settings, target_grid;
                                  out_path,
                                  FT = Float32,
@@ -193,6 +228,11 @@ function process_era5_n320_to_cs_day(date::Date,
         # `c180_fields` (already regridded), so it is essentially free.
         do_surface = settings.include_surface
         do_vdiff   = settings.include_vdiff_fields
+        # Precompute the TM5 boundary-layer diffusion (`bldiff`) eddy diffusivity
+        # on C180 from the regridded 3D fields + surface fluxes, written as the
+        # `:kz` payload. Needs the latent heat flux (slhf) in addition to the
+        # four PBL fields, so it reads the surface window `with_latent`.
+        do_tm5_diffusion = settings.include_tm5_diffusion
         if do_surface
             surf_Nx, surf_Ny = 1440, 721      # ERA5 0.25° single-levels regular-ll
             # radius = the TARGET mesh's radius so the LL source manifold matches
@@ -214,6 +254,13 @@ function process_era5_n320_to_cs_day(date::Date,
                 joinpath(settings.root_dir, "sfc_an_native"), date, surf_Nx, surf_Ny)
             @info "  Surface PBL payload ENABLED (regular-ll 0.25° → C180)"
             do_vdiff && @info "  VDIFF (u/v/t/qv) payload ENABLED"
+            if do_tm5_diffusion
+                surf_lhflux = ntuple(_ -> zeros(FT, Nc, Nc), 6)   # latent flux on C180
+                kz_c180     = ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6)
+                kz_scratch  = BLDiffColumnScratch{FT}(Nz_int)
+                kz_const    = BLDiffConstants{FT}()
+                @info "  TM5 diffusion (bldiff) :kz payload ENABLED"
+            end
         end
 
         # Read + regrid the four PBL fields for the written window's hour
@@ -221,11 +268,14 @@ function process_era5_n320_to_cs_day(date::Date,
         # off. `load_era5_surface_window` takes a 1-based within-day window idx.
         fill_surface_payload! = function (written_hour::Int)
             do_surface || return nothing
-            s = load_era5_surface_window(surf_reader, written_hour + 1, FT)
+            s = load_era5_surface_window(surf_reader, written_hour + 1, FT;
+                                         with_latent = do_tm5_diffusion)
             regrid_2d_to_cs_panels!(surf_pblh,  surf_regridder, s.pblh,  surf_ws, Nc, IntensiveCellField())
             regrid_2d_to_cs_panels!(surf_ustar, surf_regridder, s.ustar, surf_ws, Nc, IntensiveCellField())
             regrid_2d_to_cs_panels!(surf_hflux, surf_regridder, s.hflux, surf_ws, Nc, IntensiveCellField())
             regrid_2d_to_cs_panels!(surf_t2m,   surf_regridder, s.t2m,   surf_ws, Nc, IntensiveCellField())
+            do_tm5_diffusion &&
+                regrid_2d_to_cs_panels!(surf_lhflux, surf_regridder, s.lhflux, surf_ws, Nc, IntensiveCellField())
             return nothing
         end
 
@@ -241,6 +291,12 @@ function process_era5_n320_to_cs_day(date::Date,
             if do_vdiff
                 extra = merge(extra, (vdiff = (u = pipe.c180_fields.u, v = pipe.c180_fields.v,
                                                t = pipe.c180_fields.t, qv = pipe.c180_fields.qv),))
+            end
+            if do_tm5_diffusion
+                fill_tm5_kz_payload!(kz_c180, pipe.c180_fields,
+                                     surf_hflux, surf_lhflux, surf_ustar,
+                                     vc.A, vc.B, Nc, kz_const, kz_scratch)
+                extra = merge(extra, (kz = kz_c180,))
             end
             return extra
         end
@@ -287,6 +343,7 @@ function process_era5_n320_to_cs_day(date::Date,
             include_tm5conv = include_convection,
             include_surface = settings.include_surface,
             include_gchp_vdiff = settings.include_vdiff_fields,
+            include_precomputed_kz = settings.include_tm5_diffusion,
             mass_basis = mass_basis,
             panel_convention = _cs_panel_convention_tag(target_grid),
             cs_definition = _cs_definition_tag(target_grid),

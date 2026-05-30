@@ -43,12 +43,16 @@ flips to the project's runtime convention downstream — same path used by the
 GEOS-IT bottom-up source.
 """
 Base.@kwdef struct ERA5GRIBSettings{flavor} <: AbstractERA5GRIBSettings
-    root_dir             :: String
-    include_surface      :: Bool   = false
-    include_convection   :: Bool   = false
-    include_vdiff_fields :: Bool   = false
-    coefficients_file    :: String = "config/era5_L137_coefficients.toml"
-    level_orientation    :: Symbol = :top_down
+    root_dir              :: String
+    include_surface       :: Bool   = false
+    include_convection    :: Bool   = false
+    include_vdiff_fields  :: Bool   = false
+    # Precompute the TM5 boundary-layer diffusion (`bldiff`, Holtslag-Boville
+    # non-local PBL) eddy diffusivity into the binary `:kz` payload. Requires
+    # the surface stream (sshf + slhf + ustar) and the synthesised 3D fields.
+    include_tm5_diffusion :: Bool   = false
+    coefficients_file     :: String = "config/era5_L137_coefficients.toml"
+    level_orientation     :: Symbol = :top_down
 end
 
 const ERA5N320Settings = ERA5GRIBSettings{:n320}

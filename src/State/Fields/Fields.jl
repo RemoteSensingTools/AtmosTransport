@@ -36,10 +36,12 @@ export AbstractTimeVaryingField, AbstractCubedSphereField
 export ConstantField, ProfileKzField, PreComputedKzField, CubedSphereField
 export DerivedKzField, WindowPBLKzField, LocalHoltslagBovilleKzField,
        GCHPHoltslagBovilleKzField  # deprecated alias
+export PrecomputedCSKzField
 export PBLPhysicsParameters, StepwiseField
 export field_value, update_field!, integral_between, panel_field
 export refresh_pbl_kz_cache!, refresh_local_holtslag_boville_kz_cache!,
-       refresh_gchp_holtslag_boville_kz_cache!  # deprecated alias
+       refresh_gchp_holtslag_boville_kz_cache!,  # deprecated alias
+       refresh_precomputed_cs_kz_cache!
 
 # =========================================================================
 # Abstract type
@@ -120,6 +122,7 @@ include("CubedSphereField.jl")
 include("DerivedKzField.jl")
 include("WindowPBLKzField.jl")
 include("LocalHoltslagBovilleKzField.jl")
+include("PrecomputedCSKzField.jl")
 include("StepwiseField.jl")
 
 end # module Fields

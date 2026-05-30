@@ -308,6 +308,41 @@ function build_runtime_diffusion(::AbstractRuntimeRecipeStyle,
         "implemented for cubed-sphere runtime binaries with GCHP VDIFF payloads."))
 end
 
+# --- Precomputed TM5 bldiff diffusivity (`:kz` payload) --------------------
+
+_runtime_has_precomputed_kz(_context) = false
+_runtime_has_precomputed_kz(reader::CubedSphereBinaryReader) =
+    :kz in reader.header.payload_sections
+_runtime_has_precomputed_kz(driver::CubedSphereTransportDriver) =
+    _runtime_has_precomputed_kz(driver.reader)
+
+function build_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
+                                 ::Val{:precomputed_kz},
+                                 section,
+                                 ::Type{FT},
+                                 context) where FT
+    _runtime_has_precomputed_kz(context) ||
+        throw(ArgumentError(
+            "[diffusion] kind = \"precomputed_kz\" requires a `:kz` section in " *
+            "the cubed-sphere transport binary (the preprocessor's TM5 bldiff " *
+            "eddy diffusivity). Regenerate with include_tm5_diffusion=true."))
+    Nc1, Nc2, Nz = _pbl_cache_shape(context)
+    host_cache = ntuple(_ -> zeros(FT, Nc1, Nc2, Nz), 6)
+    return ImplicitVerticalDiffusion(;
+        kz_field = PrecomputedCSKzField(host_cache),
+        surface_flux_coupling = _surface_flux_coupling(section))
+end
+
+function build_runtime_diffusion(::AbstractRuntimeRecipeStyle,
+                                 ::Val{:precomputed_kz},
+                                 _section,
+                                 ::Type{FT},
+                                 _context) where FT
+    throw(ArgumentError(
+        "[diffusion] kind = \"precomputed_kz\" is implemented for cubed-sphere " *
+        "runtime binaries carrying a `:kz` payload."))
+end
+
 function build_runtime_diffusion(::AbstractRuntimeRecipeStyle,
                                  ::Val{name},
                                  _section,
@@ -315,7 +350,7 @@ function build_runtime_diffusion(::AbstractRuntimeRecipeStyle,
     throw(ArgumentError(
         "Unknown [diffusion] kind: $(name). Supported: none | constant | " *
         "tm5_beljaars_viterbo_local_kz | geoschem_holtslag_boville_vdiff | " *
-        "pbl (legacy alias)"))
+        "precomputed_kz | pbl (legacy alias)"))
 end
 build_runtime_diffusion(style::AbstractRuntimeRecipeStyle, ::Val{name}, section,
                         ::Type{FT}, _context) where {name, FT} =

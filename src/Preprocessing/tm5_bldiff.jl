@@ -344,3 +344,112 @@ function _pbl_height(u, v, θ, q, zc, us, w_heatv, θv_surf, L,
     θv_parcel = θv_surf + jq * excess
     return bulk_ri_height(θv_parcel)
 end
+
+# ===========================================================================
+# Top-down column driver: from the model's native top-down profiles (k=1 = TOA,
+# k=Nz = surface) to a layer-centre Kz field ready for the binary `:Kz` payload.
+#
+# The runtime diffusion kernel reads Kz at layer CENTRES and averages adjacent
+# centres to interfaces, whereas `bldiff` produces Kz at INTERFACES. We map the
+# interface profile to centres by averaging the two interfaces bounding each
+# layer; the runtime re-average then reproduces a faithful, lightly-smoothed
+# interface diffusivity (the same centre convention the GCHP runtime Kz field
+# uses).
+# ===========================================================================
+
+"""
+    BLDiffColumnScratch{FT}(Nz)
+
+Per-column work buffers for [`tm5_bldiff_center_kz_column!`]. Allocate once per
+thread and reuse across the millions of columns in a global preprocess to avoid
+per-column allocation.
+"""
+struct BLDiffColumnScratch{FT <: AbstractFloat}
+    T      :: Vector{FT}     # bottom-up layer-centre temperature (Nz)
+    q      :: Vector{FT}
+    u      :: Vector{FT}
+    v      :: Vector{FT}
+    p_edge :: Vector{FT}     # bottom-up half-level pressure (Nz+1)
+    z_edge :: Vector{FT}     # bottom-up half-level height above surface (Nz+1)
+    kvh    :: Vector{FT}     # bottom-up interface diffusivity (Nz)
+    dz     :: Vector{FT}     # top-down layer thickness (Nz)
+end
+
+BLDiffColumnScratch{FT}(Nz::Integer) where {FT} = BLDiffColumnScratch{FT}(
+    (zeros(FT, Nz) for _ in 1:4)..., zeros(FT, Nz + 1), zeros(FT, Nz + 1),
+    zeros(FT, Nz), zeros(FT, Nz))
+
+"""
+    tm5_bldiff_center_kz_column!(kz, T, q, u, v, ps, hflux, lhflux, ustar,
+                                 A, B, c, scratch) -> pblh
+
+Compute the layer-centre TM5 eddy diffusivity (m² s⁻¹) for one column given the
+model's **top-down** profiles, writing into `kz` (top-down, length `Nz`) and
+returning the diagnosed PBL height (m).
+
+Arguments
+
+  * `kz`            — output, top-down layer-centre Kz (m² s⁻¹), length `Nz`
+  * `T, q, u, v`    — top-down layer-centre temperature (K), specific humidity
+                      (kg kg⁻¹), and winds (m s⁻¹)
+  * `ps`            — surface pressure (Pa)
+  * `hflux, lhflux` — surface sensible / latent heat flux (W m⁻², upward-positive)
+  * `ustar`         — friction velocity (m s⁻¹)
+  * `A, B`          — hybrid-σ half-level coefficients, length `Nz + 1`, ordered
+                      TOA→surface, so `p_edge_topdown[k] = A[k] + B[k]·ps`
+  * `c`             — [`BLDiffConstants`](@ref)
+  * `scratch`       — [`BLDiffColumnScratch`](@ref) sized to `Nz`
+
+The hydrostatic layer thicknesses are derived internally via
+`dz_hydrostatic_virtual!`; heights are integrated upward from a zero surface
+reference. The column is flipped to the kernel's bottom-up convention, the
+interface diffusivities are mapped to centres, and the result is flipped back to
+top-down before storing.
+"""
+function tm5_bldiff_center_kz_column!(kz::AbstractVector{FT},
+                                      T::AbstractVector{FT},
+                                      q::AbstractVector{FT},
+                                      u::AbstractVector{FT},
+                                      v::AbstractVector{FT},
+                                      ps::FT, hflux::FT, lhflux::FT, ustar::FT,
+                                      A::AbstractVector, B::AbstractVector,
+                                      c::BLDiffConstants{FT},
+                                      scratch::BLDiffColumnScratch{FT}) where {FT}
+    Nz = length(T)
+
+    # Top-down layer thickness (m) from the virtual-temperature hydrostatic
+    # integral, then bottom-up edges: index 1 = surface (z = 0, p = ps).
+    dz = scratch.dz
+    dz_hydrostatic_virtual!(dz, T, q, ps, A, B, Nz)
+    pe, ze = scratch.p_edge, scratch.z_edge
+    @inbounds begin
+        ze[1] = zero(FT)
+        pe[1] = ps
+        for l in 1:Nz
+            k = Nz + 1 - l                       # top-down layer feeding bottom-up l
+            ze[l + 1] = ze[l] + dz[k]
+            pe[l + 1] = FT(A[k] + B[k] * ps)     # top-down upper edge of layer k
+        end
+        # Flip the centre profiles to bottom-up.
+        for l in 1:Nz
+            k = Nz + 1 - l
+            scratch.T[l] = T[k]; scratch.q[l] = q[k]
+            scratch.u[l] = u[k]; scratch.v[l] = v[k]
+        end
+    end
+
+    pblh = tm5_bldiff_kvh_column!(scratch.kvh, scratch.T, scratch.q,
+                                  scratch.u, scratch.v, pe, ze,
+                                  hflux, lhflux, ustar, c)
+
+    # Map bottom-up interface kvh → bottom-up centre Kz (average of the two
+    # interfaces bounding each layer; the surface interface carries no flux),
+    # then flip back to top-down for storage.
+    kvh = scratch.kvh
+    @inbounds for l in 1:Nz
+        below = l == 1 ? zero(FT) : kvh[l - 1]   # interface under layer l
+        above = kvh[l]                            # interface over layer l (kvh[Nz]=0)
+        kz[Nz + 1 - l] = (below + above) / 2
+    end
+    return pblh
+end

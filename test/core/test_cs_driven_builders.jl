@@ -13,7 +13,7 @@ using .AtmosTransport.Models:
     build_cs_diffusion, build_cs_convection, build_cs_physics_recipe
 using .AtmosTransport.State.Fields:
     CubedSphereField, WindowPBLKzField, GCHPHoltslagBovilleKzField,
-    field_value, panel_field
+    PrecomputedCSKzField, field_value, panel_field
 using .AtmosTransport.Operators.Diffusion:
     uses_diffusive_surface_flux_boundary
 
@@ -45,6 +45,15 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubGCHPVDIFFReader) = false
 AtmosTransport.Models._runtime_has_surface(::StubGCHPVDIFFReader) = true
 AtmosTransport.Models._runtime_has_gchp_vdiff(::StubGCHPVDIFFReader) = true
 AtmosTransport.Models._pbl_cache_shape(::StubGCHPVDIFFReader) = (4, 4, 2)
+
+struct StubKzReader end
+AtmosTransport.Models._runtime_recipe_style(::StubKzReader) =
+    AtmosTransport.Models.CubedSphereRuntimeRecipeStyle()
+AtmosTransport.Models._runtime_has_tm5conv(::StubKzReader) = false
+AtmosTransport.Models._runtime_has_cmfmc(::StubKzReader) = false
+AtmosTransport.Models._runtime_has_surface(::StubKzReader) = true
+AtmosTransport.Models._runtime_has_precomputed_kz(::StubKzReader) = true
+AtmosTransport.Models._pbl_cache_shape(::StubKzReader) = (4, 4, 2)
 
 struct StubStructuredReader
     has_tm5 :: Bool
@@ -160,6 +169,21 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
         @test gchp_vdiff_recipe.diffusion.kz_field isa GCHPHoltslagBovilleKzField
         @test_throws ArgumentError build_cs_physics_recipe(
             Dict("diffusion" => Dict("kind" => "geoschem_holtslag_boville_vdiff")),
+            StubPBLReader(),
+            Float64,
+        )
+
+        # kind = "precomputed_kz" → PrecomputedCSKzField when the binary carries
+        # the :kz section; errors otherwise.
+        kz_recipe = build_cs_physics_recipe(
+            Dict("diffusion" => Dict("kind" => "precomputed_kz")),
+            StubKzReader(),
+            Float64,
+        )
+        @test kz_recipe.diffusion isa ImplicitVerticalDiffusion
+        @test kz_recipe.diffusion.kz_field isa PrecomputedCSKzField
+        @test_throws ArgumentError build_cs_physics_recipe(
+            Dict("diffusion" => Dict("kind" => "precomputed_kz")),
             StubPBLReader(),
             Float64,
         )

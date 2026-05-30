@@ -9,7 +9,8 @@
 using Test
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport.Preprocessing: BLDiffConstants, tm5_bldiff_kvh_column!
+using .AtmosTransport.Preprocessing: BLDiffConstants, tm5_bldiff_kvh_column!,
+                                     tm5_bldiff_center_kz_column!, BLDiffColumnScratch
 
 """Build a consistent bottom-up column (index 1 = surface) with ERA5-like fine
 near-surface resolution. Returns `(T, q, u, v, p_edge, z_edge)`."""
@@ -130,6 +131,37 @@ end
         w_heatv = w_heat + vt * θ(1) * w_qflx
         dθv = (θv(l + 1) - θv(l)) / (col.zc[l + 1] - col.zc[l])
         @test kvh[l] ≈ 0.2 * w_heatv / dθv  rtol = 1e-6
+    end
+
+    @testset "top-down column driver maps to centres consistently" begin
+        # Build a top-down (k=1 TOA → k=Nz surface) hybrid column and run the
+        # driver. Cross-check against the bottom-up kernel on the same column.
+        c = BLDiffConstants{Float64}()
+        Nz = 30
+        A = collect(range(0.0, 1.0e4; length = Nz + 1))          # TOA→surface
+        B = collect(range(0.0, 1.0;    length = Nz + 1))
+        ps = 1.0e5
+        # Top-down profiles: surface (k=Nz) warm/moist, TOA (k=1) cold/dry.
+        σ = [(A[k] + B[k] * ps) / ps for k in 1:Nz+1]            # edge sigma
+        σc = [(σ[k] + σ[k+1]) / 2 for k in 1:Nz]
+        T = [215.0 + 73.0 * σc[k] for k in 1:Nz]                  # warmer toward surface
+        q = [max(1e-6, 9e-3 * σc[k]^3) for k in 1:Nz]
+        u = [3.0 + 6.0 * (1 - σc[k]) for k in 1:Nz]; v = zeros(Nz)
+
+        scratch = BLDiffColumnScratch{Float64}(Nz)
+        kz = zeros(Nz)
+        pblh = tm5_bldiff_center_kz_column!(kz, T, q, u, v, ps, 250.0, 150.0, 0.5,
+                                            A, B, c, scratch)
+        @test length(kz) == Nz
+        @test all(isfinite, kz)
+        @test all(>=(0), kz)
+        @test pblh >= c.pblh_min
+        # Centre Kz is largest in the lower troposphere (near the surface, high k)
+        # and ~0 in the upper levels (low k).
+        @test kz[Nz] >= 0                      # surface layer present
+        @test maximum(kz[1:Nz÷3]) < maximum(kz[2Nz÷3:Nz])
+        # The centre values bracket the bottom-up interface profile they average.
+        @test maximum(kz) <= maximum(scratch.kvh) + 1e-9
     end
 
     @testset "vanishing surface forcing collapses toward weak diffusivity" begin

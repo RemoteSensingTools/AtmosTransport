@@ -35,3 +35,8 @@ level_orientation = "top_down"
 include_surface      = true
 include_convection   = true
 include_vdiff_fields = true
+# Precompute the TM5 boundary-layer diffusion (`bldiff`, Holtslag-Boville
+# non-local PBL) eddy diffusivity into the binary `:kz` payload, consumed at
+# runtime by `[diffusion] kind = "precomputed_kz"`. Needs sshf + slhf + ustar
+# from the surface stream (requires include_surface = true).
+include_tm5_diffusion = true

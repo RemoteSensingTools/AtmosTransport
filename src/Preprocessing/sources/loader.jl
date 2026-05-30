@@ -94,13 +94,18 @@ function _build_met_settings(ctor::Type{<:ERA5GRIBSettings}, cfg::AbstractDict,
 
     coefs = String(get(vertical_cfg, "coefficients_file",
                        "config/era5_L137_coefficients.toml"))
-    level_orientation    = Symbol(get(pre_cfg, "level_orientation", "top_down"))
-    include_surface      = Bool(get(pre_cfg, "include_surface", false))
-    include_convection   = Bool(get(pre_cfg, "include_convection", false))
-    include_vdiff_fields = Bool(get(pre_cfg, "include_vdiff_fields", false))
+    level_orientation     = Symbol(get(pre_cfg, "level_orientation", "top_down"))
+    include_surface       = Bool(get(pre_cfg, "include_surface", false))
+    include_convection    = Bool(get(pre_cfg, "include_convection", false))
+    include_vdiff_fields  = Bool(get(pre_cfg, "include_vdiff_fields", false))
+    include_tm5_diffusion = Bool(get(pre_cfg, "include_tm5_diffusion", false))
+
+    include_tm5_diffusion && !include_surface &&
+        throw(ArgumentError("[preprocessing] include_tm5_diffusion=true requires \
+                             include_surface=true (needs sshf/slhf/ustar)."))
 
     return ctor(; root_dir,
                   include_surface, include_convection, include_vdiff_fields,
-                  level_orientation,
+                  include_tm5_diffusion, level_orientation,
                   coefficients_file = coefs, kwargs...)
 end

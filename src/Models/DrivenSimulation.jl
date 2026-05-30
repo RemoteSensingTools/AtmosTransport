@@ -494,6 +494,12 @@ function _refresh_pbl_kz_for_window!(field::LocalHoltslagBovilleKzField,
     return nothing
 end
 
+function _refresh_pbl_kz_for_window!(field::PrecomputedCSKzField,
+                                     sim::DrivenSimulation)
+    refresh_precomputed_cs_kz_cache!(field, sim.window.kz)
+    return nothing
+end
+
 @inline _refresh_pbl_kz_for_window!(::NoDiffusion, _sim::DrivenSimulation) = nothing
 
 function _refresh_pbl_kz_for_window!(op::ImplicitVerticalDiffusion,

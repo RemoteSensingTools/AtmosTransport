@@ -216,6 +216,9 @@ include("era5_physics_binary.jl")
 # ERA5 single-level surface reader for raw PBL diffusion fields.
 include("era5_surface_reader.jl")
 
+# TM5 boundary-layer diffusion (Holtslag-Boville non-local PBL) column kernel.
+include("tm5_bldiff.jl")
+
 # TM5 convection preprocessor pipeline wiring (plan 24 Commit 4)
 include("tm5_convection_pipeline.jl")
 

@@ -1,12 +1,14 @@
 # GEOS Preprocessing: Mass-Flux Balance and Global Dry-Air Conservation
 
 > **Status (2026-05-29).** The GEOS cubed-sphere preprocessor applies a *local*
-> mass-flux balance (column or per-layer) but does **not** yet pin the global
-> mean dry-air mass. This page documents the theory, the four balance
-> approaches, why the local balance provably cannot fix the global mean, and
-> the recommended fix (a GEOS-CS global dry-air pin, analogous to the ERA5
-> spectral path). The pin itself is **not yet implemented for GEOS-CS** —
-> it is the recommended next production change.
+> mass-flux balance (column or per-layer). A GEOS-CS global dry-air pin is
+> **implemented and under validation** (diagnostic rebuild in progress) using a
+> **fixed absolute dry-mass target** (`mode = "target_ps_dry"`,
+> `target_ps_dry_pa = 98726.0`), pinning the **measured** GEOS dry-air mass
+> after the Q-based dry-DELP derivation — see §8. This page documents the
+> theory, the balance approaches, why the local balance provably cannot fix the
+> global mean, and the confirmed GEOS pin design. Validation numbers will be
+> recorded once the rebuild completes.
 
 This is the GEOS-cubed-sphere companion to
 [`../memos/GLOBAL_MEAN_PS_FIX.md`](../memos/GLOBAL_MEAN_PS_FIX.md) (which
@@ -194,13 +196,25 @@ spectral path already achieves with `pin_global_mean_ps!`.
 
 ## 7. GEOS vs ERA5 vs GCHP
 
-| | ERA5 spectral (shipped) | GEOS-CS (this page) | GCHP |
+| | ERA5 spectral (shipped) | GEOS-CS (validating) | GCHP |
 |---|---|---|---|
 | Local balance | Poisson | column / per-layer | algebraic Cameron-Smith (zonal-band) |
-| Global dry-air pin | **yes** (`pin_global_mean_ps!`) | **no — recommended next** | n/a (online, never stitches snapshots) |
+| Global dry-air pin | **yes** (`pin_global_mean_ps!`) | **yes** (`mode="target_ps_dry"`) | n/a (online, never stitches snapshots) |
+| Pin quantity | total `ps` → dry via climatological ⟨q_v⟩=0.00247 | **measured** dry mass directly (no climatology) | — |
+| Native fluxes | reconstructed from winds (offset flows through `compute_dp!`) | native dry MFXC/MFYC (pin only shifts endpoints) | dry mass flux |
 | Endpoint source | spectral LNSP → ps | moist PS − Q → dry mass | live GMAO stream at 450 s |
 | Why pin needed | offline snapshot stitching | offline snapshot stitching | not needed — continuous budget |
 | Cadence | hourly window | hourly window | 450 s dynamics step |
+
+**GEOS/ERA pin asymmetry (both correct).** ERA works on total `ps` and converts
+the dry target with a climatological ⟨q_v⟩ — a ~12 Pa approximation the
+`GLOBAL_MEAN_PS_FIX.md` memo flags as a deferred upgrade (§9 there). GEOS does
+not need the proxy: it has the real per-column Q, so it pins the *measured*
+global dry mass directly (`target_ps_dry_pa · A_Earth / g`), applied after the
+Q-based dry-DELP derivation. And because GEOS MFXC/MFYC are *natively dry*,
+there is no moist-`ps` flux reconstruction for the offset to desync — the pin
+only shifts endpoint masses, the balance reconciles the unchanged dry fluxes
+against the pinned endpoints, and `ps` is recomputed from the pinned dry mass.
 
 GCHP structurally avoids Problem B because it never reconstructs dry mass from
 snapshots — its dycore carries a closed dry-air budget forward continuously.
@@ -212,21 +226,43 @@ zonal-band structure fits our polar-clustered target poorly).
 
 ---
 
-## 8. Recommended procedure
+## 8. Procedure
 
-1. **Implement a GEOS-CS global dry-air pin** mirroring the ERA5 mechanism in
-   [`../memos/GLOBAL_MEAN_PS_FIX.md`](../memos/GLOBAL_MEAN_PS_FIX.md): a uniform
-   additive `ps` offset so ⟨ps_dry⟩ matches a fixed dry-air-mass target
-   (Trenberth & Smith 2005: M_dry = 5.1352e18 kg → ⟨ps_dry⟩ ≈ 98726 Pa).
-   Apply it in `cubed_sphere_geos.jl` before the dry-mass derivation, gate it
-   on a `[mass_fix]` TOML block, and record per-window offsets in the binary
-   header.
-2. **Keep the local balance.** Pin and balance are orthogonal; pin fixes the
-   global mean the balance discards as its singular mode.
+1. **GEOS-CS global dry-air pin** (`mode = "target_ps_dry"`). Compute the
+   *measured* global dry-air mass after the Q-based dry-DELP derivation, then
+   apply a uniform offset so it equals a fixed target
+   `target_ps_dry_pa · A_Earth / g` (Trenberth & Smith 2005:
+   M_dry = 5.1352e18 kg → ⟨ps_dry⟩ ≈ 98726 Pa). Recompute `ps` from the pinned
+   dry mass. No climatological ⟨q_v⟩ proxy — GEOS has the real Q (§7).
+2. **Keep the local balance.** Pin and balance are orthogonal; the pin fixes
+   the global mean the balance discards as its singular mode. Because MFXC/MFYC
+   are native dry fluxes, the pin only shifts endpoint masses; the balance then
+   reconciles the unchanged fluxes against the pinned endpoints.
 3. **Decide column vs per-layer empirically** from the regional-XCO₂-vs-GEOS-Chem
    comparison (§3): column balance + pin is the expected cost-efficient winner;
    per-layer reclose + pin is the maximum-fidelity option if regional gradients
    need the tighter local replay.
+
+### Why a fixed absolute target, not "pin to first endpoint"
+
+Pinning each day to its own first processed endpoint removes drift *within* a
+run but leaves an arbitrary absolute baseline that depends on which day/window
+started it — Dec 1 and Dec 6 would carry different global dry masses. A fixed
+absolute target removes both the drift and the baseline ambiguity, which buys
+two things beyond reproducibility:
+
+- **Cross-dataset comparability.** Using the *same* 98726 Pa target for ERA and
+  GEOS gives both driver families one shared dry-air baseline, so an inversion
+  can mix ERA-driven and GEOS-driven binaries without a baseline jump in XCO₂.
+- **Multi-day binary coherence — the precondition for the preprocessing
+  architecture.** Every day in an archive shares one global baseline whether it
+  is built serially-chained (GEOS `chain_mass=true`: day D's pinned final mass
+  and day D+1's pinned first window agree globally, so the seed handoff carries
+  no global-mean jump) or **day-threaded** (the ERA5 case — independently
+  processed days only stay globally consistent under a fixed target; a
+  first-endpoint policy would give each thread its own per-day baseline and
+  silently inject day-boundary discontinuities). See the day-threading trait in
+  `met_readers.jl` (`supports_day_threading`).
 
 ### Validation checklist for a pinned rebuild
 

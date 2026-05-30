@@ -1,14 +1,16 @@
 # GEOS Preprocessing: Mass-Flux Balance and Global Dry-Air Conservation
 
-> **Status (2026-05-29).** The GEOS cubed-sphere preprocessor applies a *local*
-> mass-flux balance (column or per-layer). A GEOS-CS global dry-air pin is
-> **implemented and under validation** (diagnostic rebuild in progress) using a
-> **fixed absolute dry-mass target** (`mode = "target_ps_dry"`,
-> `target_ps_dry_pa = 98726.0`), pinning the **measured** GEOS dry-air mass
-> after the Q-based dry-DELP derivation — see §8. This page documents the
-> theory, the balance approaches, why the local balance provably cannot fix the
-> global mean, and the confirmed GEOS pin design. Validation numbers will be
-> recorded once the rebuild completes.
+> **Status (2026-05-29).** Global dry-air pins are **shipped** for both native
+> CS-producing paths in commit `8646772` ("Pin global dry mass in native
+> preprocessing"): **GEOS-CS** and **ERA5 N320→C180** both pin the **measured**
+> dry-air mass (after the Q-based dry-DELP derivation) to the **same fixed
+> absolute target** (`mode = "target_ps_dry"`, `target_ps_dry_pa = 98726.0`,
+> ⟨dry mass⟩ = 5.135e18 kg). Sharing one target across the two paths is what
+> makes GEOS-driven and ERA-N320-driven binaries mutually consistent (one
+> dry-air baseline; see §7). Enable per config via `[mass_fix]`. The local
+> mass-flux balance (column or per-layer) is orthogonal and unchanged. Per-day
+> production-binary validation numbers will be filled into §4 once a pinned day
+> completes.
 
 This is the GEOS-cubed-sphere companion to
 [`../memos/GLOBAL_MEAN_PS_FIX.md`](../memos/GLOBAL_MEAN_PS_FIX.md) (which
@@ -194,26 +196,37 @@ spectral path already achieves with `pin_global_mean_ps!`.
 
 ---
 
-## 7. GEOS vs ERA5 vs GCHP
+## 7. The three pinned paths
 
-| | ERA5 spectral (shipped) | GEOS-CS (validating) | GCHP |
-|---|---|---|---|
-| Local balance | Poisson | column / per-layer | algebraic Cameron-Smith (zonal-band) |
-| Global dry-air pin | **yes** (`pin_global_mean_ps!`) | **yes** (`mode="target_ps_dry"`) | n/a (online, never stitches snapshots) |
-| Pin quantity | total `ps` → dry via climatological ⟨q_v⟩=0.00247 | **measured** dry mass directly (no climatology) | — |
-| Native fluxes | reconstructed from winds (offset flows through `compute_dp!`) | native dry MFXC/MFYC (pin only shifts endpoints) | dry mass flux |
-| Endpoint source | spectral LNSP → ps | moist PS − Q → dry mass | live GMAO stream at 450 s |
-| Why pin needed | offline snapshot stitching | offline snapshot stitching | not needed — continuous budget |
-| Cadence | hourly window | hourly window | 450 s dynamics step |
+There are now **three** offline paths that pin the global mean, plus GCHP which
+doesn't need to. Two produce cubed-sphere binaries (**GEOS-CS** and
+**ERA5 N320→C180**) and both pin *measured* dry mass to the *same* target —
+that pairing is what makes their binaries mutually consistent.
 
-**GEOS/ERA pin asymmetry (both correct).** ERA works on total `ps` and converts
-the dry target with a climatological ⟨q_v⟩ — a ~12 Pa approximation the
-`GLOBAL_MEAN_PS_FIX.md` memo flags as a deferred upgrade (§9 there). GEOS does
-not need the proxy: it has the real per-column Q, so it pins the *measured*
-global dry mass directly (`target_ps_dry_pa · A_Earth / g`), applied after the
-Q-based dry-DELP derivation. And because GEOS MFXC/MFYC are *natively dry*,
-there is no moist-`ps` flux reconstruction for the offset to desync — the pin
-only shifts endpoint masses, the balance reconciles the unchanged dry fluxes
+| | ERA5 spectral → LL/RG/CS | **ERA5 N320→C180** | **GEOS-CS** | GCHP |
+|---|---|---|---|---|
+| Local balance | Poisson | column / per-layer | column / per-layer | algebraic Cameron-Smith (zonal-band) |
+| Global dry-air pin | **yes** (`pin_global_mean_ps!`) | **yes** (`mode="target_ps_dry"`) | **yes** (`mode="target_ps_dry"`) | n/a (online, never stitches snapshots) |
+| Pin quantity | total `ps` → dry via climatological ⟨q_v⟩=0.00247 | **measured** dry mass directly | **measured** dry mass directly | — |
+| Fixed target | `target_ps_dry_pa` | `98726.0` (shared) | `98726.0` (shared) | — |
+| Native fluxes | reconstructed from winds | reconstructed from winds | native dry MFXC/MFYC | dry mass flux |
+| `ps` after pin | uniform shift on `ps` | recomputed from pinned mass | recomputed from pinned mass | — |
+| Endpoint source | spectral LNSP → ps | N320 PS − Q → dry mass (regridded) | moist PS − Q → dry mass | live GMAO stream at 450 s |
+| Why pin needed | offline snapshot stitching | offline snapshot stitching | offline snapshot stitching | not needed — continuous budget |
+| Cadence | hourly window | hourly window | hourly window | 450 s dynamics step |
+
+**ERA-N320 and GEOS-CS are the consistent pair.** Both pin the *measured* dry
+mass (each has the real per-column Q) to the *same* `98726.0` Pa target
+(⟨dry mass⟩ = 5.135e18 kg), and both recompute `ps` from the pinned mass. So a
+4D-Var inversion can mix ERA-N320-driven and GEOS-driven binaries with no
+dry-air baseline jump in XCO₂. The ERA *spectral* path (the original
+`pin_global_mean_ps!`) instead works on total `ps` and converts the dry target
+with a climatological ⟨q_v⟩ — a ~12 Pa approximation the `GLOBAL_MEAN_PS_FIX.md`
+memo flags as a deferred upgrade (§9 there); the two native CS paths do not need
+that proxy because they have the gridded Q. And because GEOS MFXC/MFYC are
+*natively dry*, there is no moist-`ps` flux reconstruction for the offset to
+desync — the pin only shifts endpoint masses, the balance reconciles the
+unchanged dry fluxes
 against the pinned endpoints, and `ps` is recomputed from the pinned dry mass.
 
 GCHP structurally avoids Problem B because it never reconstructs dry mass from
@@ -282,10 +295,12 @@ two things beyond reproducibility:
 - GCHP concept mapping: [`FROM_GCHP.md`](FROM_GCHP.md)
 - Advection mass-flux design: [`MASS_FLUX_EVOLUTION.md`](MASS_FLUX_EVOLUTION.md)
 - Binary preprocessing architecture: [`BINARY_PREPROCESSING_ARCHITECTURE.md`](BINARY_PREPROCESSING_ARCHITECTURE.md)
-- Code:
-  - `src/Preprocessing/transport_binary/cubed_sphere_geos.jl` — GEOS-CS balance + cm closure
+- Code (pin shipped in commit `8646772`):
+  - `src/Preprocessing/transport_binary/cubed_sphere_geos.jl` — GEOS-CS balance + cm closure; the shared pin helpers `_pin_cs_global_air_mass!` + `_ps_from_air_mass!`
+  - `src/Preprocessing/transport_binary/era5_n320_regrid.jl` — ERA5 N320→C180 pin call sites (`pin_endpoint_mass!` after each `derive_c180_dry_mass!`)
+  - `src/Preprocessing/transport_binary/entrypoint.jl` — `_native_mass_fix_target_kg` + `[mass_fix]` parse/wiring (shared by all native sources)
   - `src/Preprocessing/transport_binary/cubed_sphere_contracts.jl` — write-time replay + positivity gates
-  - `src/Preprocessing/mass_support.jl`, `src/Preprocessing/transport_binary/latlon_workspaces.jl` — ERA5 `pin_global_mean_ps!`
+  - `src/Preprocessing/mass_support.jl`, `src/Preprocessing/transport_binary/latlon_workspaces.jl` — ERA5 spectral `pin_global_mean_ps!` (climatological-q_v variant)
   - `src/Models/DrivenSimulation.jl` — runtime air-mass carry policy
 - External: Trenberth, K. E., and L. Smith, 2005: "The Mass of the Atmosphere:
   A Constraint on Global Analyses." *J. Climate* **18**, 864-875.

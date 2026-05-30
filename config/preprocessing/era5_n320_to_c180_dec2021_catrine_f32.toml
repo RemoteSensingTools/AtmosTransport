@@ -49,6 +49,13 @@ regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
 [numerics]
 float_type     = "Float32"
 dt_met_seconds = 3600.0
+# ERA5 N320 days are independent — the final-window look-ahead reads next-day
+# hour-0 directly, and process_day returns no seed (final_m=nothing), so no
+# cross-day mass chaining occurs. chain_mass=false is correct here AND is what
+# lets the unified driver day-thread (the threading gate requires !chain_mass).
+# Changes no output; only enables parallel days. (GEOS uses chain_mass=true
+# because it chains the pressure-fixer endpoint; N320 does not.)
+chain_mass     = false
 
 [mass_fix]
 # Global dry-air mass pin — mirror of the GEOS-CS path. Removes the residual

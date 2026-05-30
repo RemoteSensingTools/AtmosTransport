@@ -208,6 +208,28 @@ end
 # carry (e.g. GEOS pressure-fixer chained mass).
 # ---------------------------------------------------------------------------
 
+function _native_mass_fix_target_kg(cfg::AbstractDict, grid)
+    mass_fix_cfg = get(cfg, "mass_fix", Dict{String, Any}())
+    Bool(get(mass_fix_cfg, "enable", false)) || return NaN
+    haskey(mass_fix_cfg, "target_total_kg") &&
+        return Float64(mass_fix_cfg["target_total_kg"])
+
+    mode = Symbol(replace(lowercase(String(get(mass_fix_cfg, "mode", "target_ps_dry"))),
+                          '-' => '_'))
+    if mode in (:target_ps_dry, :target_dry_ps, :fixed_dry_ps)
+        hasproperty(grid, :mesh) && hasproperty(grid.mesh, :cell_areas) ||
+            error("native-source [mass_fix].mode=\"target_ps_dry\" requires a grid with cell_areas")
+        target_ps_dry_pa = Float64(get(mass_fix_cfg, "target_ps_dry_pa", 98726.0))
+        total_area = 6.0 * sum(Float64, grid.mesh.cell_areas)
+        return target_ps_dry_pa * total_area / GRAV
+    elseif mode === :initial_endpoint
+        return NaN
+    else
+        error("native-source [mass_fix].mode must be \"target_ps_dry\" or " *
+              "\"initial_endpoint\"; got $(repr(String(get(mass_fix_cfg, "mode", ""))))")
+    end
+end
+
 function _process_day_native(cfg::AbstractDict;
                              day_override = nothing,
                              start_date   = nothing,
@@ -265,6 +287,18 @@ function _process_day_native(cfg::AbstractDict;
     positivity_cfl_limit       = _resolve_positivity_cfl_limit(cfg)
     require_substep_positivity = _resolve_require_substep_positivity(cfg)
     substep_policy = _resolve_substep_schedule_policy(cfg, positivity_cfl_limit)
+    numerics_cfg = get(cfg, "numerics", Dict{String, Any}())
+    balance_mode_raw = lowercase(String(get(numerics_cfg, "geos_balance_mode", "column")))
+    balance_mode = if balance_mode_raw in ("column", "column_poisson")
+        :column
+    elseif balance_mode_raw in ("per_layer", "layer", "layer_local", "global")
+        :per_layer
+    else
+        error("[numerics].geos_balance_mode must be \"column\" or \"per_layer\"; got $(repr(balance_mode_raw))")
+    end
+    mass_fix_cfg = get(cfg, "mass_fix", Dict{String, Any}())
+    global_mass_pin = Bool(get(mass_fix_cfg, "enable", false))
+    configured_global_mass_target_kg = _native_mass_fix_target_kg(cfg, grid)
     ensure_preprocessor_pair_supported(grid, settings; context = "native-source")
 
     dates = _resolve_dates_native(cfg; day_override, start_date, end_date)
@@ -300,12 +334,16 @@ function _process_day_native(cfg::AbstractDict;
             min_steps_per_window       = substep_policy.min_steps_per_window,
             max_steps_per_window       = substep_policy.max_steps_per_window,
             seed_m          = seed_m_in,
+            global_mass_pin = global_mass_pin,
+            global_mass_target_kg = configured_global_mass_target_kg,
+            balance_mode = balance_mode,
         )
         return process_day(d, day_grid, settings, vertical; day_kwargs...)
     end
 
     threaded = Threads.nthreads() > 1 && length(dates) > 1 &&
-               supports_day_threading(settings) && !chain_mass
+               supports_day_threading(settings) && !chain_mass &&
+               !(global_mass_pin && !isfinite(configured_global_mass_target_kg))
     if threaded
         # Cold-cache pre-warm: regridder weight caches + JIT specializations
         # land during day 1 serial, then days 2..N run concurrently. Without
@@ -323,9 +361,32 @@ function _process_day_native(cfg::AbstractDict;
         end
     else
         seed_m = nothing                  # source-defined cross-day state (e.g. GEOS PF endpoint)
+        global_mass_target_kg = configured_global_mass_target_kg
         for (idx, d) in enumerate(dates)
-            result = run_one_day(idx, d, seed_m)
+            day_grid = build_target_geometry(cfg["grid"], FT)
+            ensure_supported_target(day_grid)
+            out_path = _native_output_path(cfg, settings, d, FT)
+            @info "[$idx/$(length(dates))] $(d) → $(out_path)"
+            day_kwargs = (
+                out_path        = out_path,
+                dt_met_seconds  = dt_met_seconds,
+                FT              = FT,
+                mass_basis      = mass_basis,
+                chain_mass      = chain_mass,
+                positivity_cfl_limit       = positivity_cfl_limit,
+                require_substep_positivity = require_substep_positivity,
+                adaptive_substeps          = substep_policy.adaptive_substeps,
+                substep_cfl_target         = substep_policy.substep_cfl_target,
+                min_steps_per_window       = substep_policy.min_steps_per_window,
+                max_steps_per_window       = substep_policy.max_steps_per_window,
+                seed_m          = seed_m,
+                global_mass_pin = global_mass_pin,
+                global_mass_target_kg = global_mass_target_kg,
+                balance_mode = balance_mode,
+            )
+            result = process_day(d, day_grid, settings, vertical; day_kwargs...)
             seed_m = get(result, :final_m, nothing)
+            global_mass_target_kg = get(result, :global_mass_target_kg, global_mass_target_kg)
         end
     end
 

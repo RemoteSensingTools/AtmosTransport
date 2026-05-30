@@ -49,3 +49,14 @@ regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
 [numerics]
 float_type     = "Float32"
 dt_met_seconds = 3600.0
+
+[mass_fix]
+# Global dry-air mass pin — mirror of the GEOS-CS path. Removes the residual
+# global-mean dry-mass drift ERA reanalysis carries through PS/Q, pinning the
+# MEASURED C180 dry mass (not a climatological-qv proxy) to a fixed absolute
+# target shared with the GEOS path so the two driver families have one
+# dry-air baseline (cross-dataset XCO2 comparability + day-threaded multi-day
+# coherence). See docs/reference/GEOS_PREPROCESSING_MASS_BALANCE.md.
+enable = true
+mode = "target_ps_dry"
+target_ps_dry_pa = 98726.0

@@ -52,3 +52,11 @@ substep_schedule           = "adaptive_cfl"
 substep_cfl_target         = 0.95
 min_steps_per_window       = 1
 max_steps_per_window       = 64
+geos_balance_mode          = "column"
+
+[mass_fix]
+enable = true
+# Match the ERA spectral path's global dry-air target so the absolute dry mass
+# is independent of the first processed date/window.
+mode = "target_ps_dry"
+target_ps_dry_pa = 98726.0

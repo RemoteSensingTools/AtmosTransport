@@ -7,10 +7,12 @@
 #
 # Critical design choices:
 #
-#  1. **No Poisson balance.** FV3's native MFXC/MFYC are already discretely
-#     conservative; running a CG projection on top would only absorb
-#     floating-point noise at the cost of distorting the physics-consistent
-#     fluxes. (User correction 2026-04-24.)
+#  1. **Global-mean dry-mass pin + column replay balance.** FV3's native
+#     MFXC/MFYC are close to discretely conservative, but the dry endpoint
+#     derived from GEOS moist PS/QV can carry a small global-mean drift. Pin the
+#     output dry-air mass to one global target before balancing horizontal
+#     fluxes, then apply the column Poisson correction so the offline binary has
+#     a physically conservative endpoint contract.
 #
 #  2. **Raw dry endpoint mass + diagnosed cm.** FV3's pressure-fixer rule is
 #     useful for closing a local vertical flux, but its implied dry endpoint
@@ -26,7 +28,7 @@
 #       read_window!(settings, handles, date, win)         # raw GEOS endpoints
 #       geos_native_to_face_flux!(am_v4, bm_v4, ...)       # face-stagger + panel halos
 #       derive m_next_target from raw GEOS DELP_dry endpoint
-#       choose per-window steps, scale fluxes, balance column fluxes
+#       pin global dry-mass mean, choose steps, scale fluxes, balance columns
 #       diagnose cm from dm = (m_next_target - m_cur)/(2·steps)
 #       write window, m_cur ← m_next_target when chaining
 # ===========================================================================
@@ -67,6 +69,65 @@ function _ps_from_air_mass!(ps::AbstractMatrix{FT},
         ps[i, j] = s * g / cell_areas[i, j]
     end
     return ps
+end
+
+function _cs_total_air_mass(panels_m::NTuple{CS_PANEL_COUNT, <:AbstractArray})
+    total = 0.0
+    for p in 1:CS_PANEL_COUNT
+        total += sum(Float64, panels_m[p])
+    end
+    return total
+end
+
+function _cs_total_area(cell_areas::AbstractMatrix)
+    return CS_PANEL_COUNT * sum(Float64, cell_areas)
+end
+
+"""
+    _pin_cs_global_air_mass!(panels_m, cell_areas, g, target_kg)
+
+Apply a uniform dry-surface-pressure offset to a cubed-sphere dry-air mass
+state so its global mass equals `target_kg`. The column offset is distributed
+vertically in proportion to each column's existing dry layer mass, preserving
+the endpoint's vertical shape while removing the nonphysical global mean.
+"""
+function _pin_cs_global_air_mass!(panels_m::NTuple{CS_PANEL_COUNT, <:AbstractArray{FT, 3}},
+                                  cell_areas::AbstractMatrix,
+                                  g::FT,
+                                  target_kg::Real) where FT
+    current = _cs_total_air_mass(panels_m)
+    area_total = _cs_total_area(cell_areas)
+    delta_kg = Float64(target_kg) - current
+    delta_ps = delta_kg * Float64(g) / area_total
+    Nz = size(panels_m[1], 3)
+
+    @inbounds for p in 1:CS_PANEL_COUNT
+        m = panels_m[p]
+        for j in axes(m, 2), i in axes(m, 1)
+            delta_col = delta_ps * Float64(cell_areas[i, j]) / Float64(g)
+            col = 0.0
+            for k in 1:Nz
+                col += Float64(m[i, j, k])
+            end
+            if col > 0.0
+                for k in 1:Nz
+                    m[i, j, k] = FT(Float64(m[i, j, k]) + delta_col * Float64(m[i, j, k]) / col)
+                end
+            else
+                per_layer = delta_col / Nz
+                for k in 1:Nz
+                    m[i, j, k] = FT(Float64(m[i, j, k]) + per_layer)
+                end
+            end
+        end
+    end
+
+    final = _cs_total_air_mass(panels_m)
+    return (before_kg = current,
+            after_kg = final,
+            target_kg = Float64(target_kg),
+            delta_ps_pa = delta_ps,
+            residual_kg = final - Float64(target_kg))
 end
 
 _validate_geos_native_panel_convention(::GEOSNativePanelConvention) = nothing
@@ -427,6 +488,9 @@ mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV, V
     min_steps_per_window :: Int
     max_steps_per_window :: Int
     chain_mass  :: Bool
+    global_mass_pin_enabled :: Bool
+    global_mass_target_kg :: Float64
+    balance_mode :: Symbol
 end
 
 const _GEOS_ADAPTIVE_SUBSTEP_MAX_REFINEMENTS = 8
@@ -442,7 +506,10 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
                                    substep_cfl_target::Real = 0.95,
                                    min_steps_per_window::Integer = 1,
                                    max_steps_per_window::Integer = typemax(Int),
-                                   windows_per_day::Integer = 0) where FT
+                                   windows_per_day::Integer = 0,
+                                   global_mass_pin::Bool = false,
+                                   global_mass_target_kg::Real = NaN,
+                                   balance_mode::Symbol = :column) where FT
     Nc = grid.Nc
     Nz = vertical.Nz
     Nz_native = vertical.Nz_native
@@ -476,6 +543,8 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
     schedule_len = Int(windows_per_day)
     schedule_len >= 0 ||
         error("windows_per_day must be non-negative, got $(windows_per_day)")
+    balance_mode in (:column, :per_layer) ||
+        error("GEOS-CS balance_mode must be :column or :per_layer; got $(balance_mode)")
 
     am_native_v4 = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz_native), npanel)
     bm_native_v4 = ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz_native), npanel)
@@ -509,7 +578,31 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
             g, inv_g, cell_areas,
             flux_scale, flux_scale, steps_per_met, steps_per_met,
             fill(steps_per_met, schedule_len), Bool(adaptive_substeps),
-            target, min_steps, max_steps, chain_mass)
+            target, min_steps, max_steps, chain_mass,
+            Bool(global_mass_pin), Float64(global_mass_target_kg),
+            balance_mode)
+end
+
+function _geos_pin_global_mass_if_needed!(workspace::GEOSCubedSphereWindowWorkspace{FT},
+                                          panels_m::NTuple{CS_PANEL_COUNT, <:AbstractArray{FT, 3}},
+                                          label::AbstractString) where FT
+    workspace.global_mass_pin_enabled || return nothing
+    if !isfinite(workspace.global_mass_target_kg)
+        workspace.global_mass_target_kg = _cs_total_air_mass(panels_m)
+        @info @sprintf("  GEOS global dry-mass pin target initialized from %s: %.9e kg",
+                       label, workspace.global_mass_target_kg)
+        return (before_kg = workspace.global_mass_target_kg,
+                after_kg = workspace.global_mass_target_kg,
+                target_kg = workspace.global_mass_target_kg,
+                delta_ps_pa = 0.0,
+                residual_kg = 0.0)
+    end
+    stats = _pin_cs_global_air_mass!(panels_m, workspace.cell_areas,
+                                     workspace.g, workspace.global_mass_target_kg)
+    abs(stats.delta_ps_pa) > 1e-10 &&
+        @debug @sprintf("  GEOS global dry-mass pin %s: Δps=%+.6e Pa residual=%+.6e kg",
+                        label, stats.delta_ps_pa, stats.residual_kg)
+    return stats
 end
 
 function _scale_cs_flux_panels!(panels, factor)
@@ -538,10 +631,17 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
     workspace.flux_scale = workspace.base_flux_scale *
                            (workspace.source_steps_per_met / steps)
 
-    bal_diag = balance_cs_column_mass_fluxes!(
-        workspace.am_v4, workspace.bm_v4, workspace.m_cur,
-        workspace.m_next_target, grid.face_table, grid.cell_degree, steps,
-        grid.poisson_scratch)
+    bal_diag = if workspace.balance_mode === :per_layer
+        balance_cs_global_mass_fluxes!(
+            workspace.am_v4, workspace.bm_v4, workspace.m_cur,
+            workspace.m_next_target, grid.face_table, grid.cell_degree, steps,
+            grid.poisson_scratch)
+    else
+        balance_cs_column_mass_fluxes!(
+            workspace.am_v4, workspace.bm_v4, workspace.m_cur,
+            workspace.m_next_target, grid.face_table, grid.cell_degree, steps,
+            grid.poisson_scratch)
+    end
     fill_cs_window_mass_tendency!(workspace.dm_v4, workspace.m_cur,
                                   workspace.m_next_target, steps)
     for p in 1:CS_PANEL_COUNT
@@ -630,6 +730,8 @@ function ingest_window!(workspace::GEOSCubedSphereWindowWorkspace{FT},
                                 workspace.plan, MassField())
             end
         end
+        _geos_pin_global_mass_if_needed!(workspace, workspace.m_cur,
+                                         "window $(win) start")
         for p in 1:CS_PANEL_COUNT
             _ps_from_air_mass!(workspace.ps_cur[p], workspace.m_cur[p],
                                workspace.cell_areas, workspace.g, Nc, Nz)
@@ -643,6 +745,8 @@ function ingest_window!(workspace::GEOSCubedSphereWindowWorkspace{FT},
         apply_vertical!(workspace.m_next_target[p], workspace.m_native_kg[p],
                         workspace.plan, MassField())
     end
+    _geos_pin_global_mass_if_needed!(workspace, workspace.m_next_target,
+                                     "window $(win) endpoint")
     _geos_select_steps_for_window!(workspace, grid, win)
     return nothing
 end
@@ -779,7 +883,10 @@ function _process_day_geos_cs_unified(date::Date,
                                       min_steps_per_window::Integer,
                                       max_steps_per_window::Integer,
                                       chain_mass::Bool,
-                                      seed_m::Union{Nothing, NTuple{6, <:AbstractArray}})
+                                      seed_m::Union{Nothing, NTuple{6, <:AbstractArray}},
+                                      global_mass_pin::Bool,
+                                      global_mass_target_kg::Real,
+                                      balance_mode::Symbol)
     Nc     = grid.Nc
     npanel = CS_PANEL_COUNT
     Nz     = vertical.Nz
@@ -806,11 +913,20 @@ function _process_day_geos_cs_unified(date::Date,
                                                substep_cfl_target = substep_cfl_target,
                                                min_steps_per_window = min_steps_per_window,
                                                max_steps_per_window = max_steps_per_window,
-                                               windows_per_day = nw)
+                                               windows_per_day = nw,
+                                               global_mass_pin = global_mass_pin,
+                                               global_mass_target_kg = global_mass_target_kg,
+                                               balance_mode = balance_mode)
 
         @info "GEOS → CS: $(date), source=$(settings) → $(out_path) [unified]"
         @info "  source_C=$(settings.Nc) target_C=$Nc  strategy=$(_geos_cs_strategy_name(workspace.strategy))"
         @info "  Nz=$Nz  windows=$nw  steps_per_met=$steps_per_met  flux_scale=$(workspace.flux_scale)"
+        @info "  GEOS horizontal balance: $(workspace.balance_mode)"
+        global_mass_pin &&
+            @info @sprintf("  GEOS global dry-mass pin ENABLED: target=%s",
+                           isfinite(Float64(global_mass_target_kg)) ?
+                           @sprintf("%.9e kg", Float64(global_mass_target_kg)) :
+                           "first window start")
         adaptive_substeps &&
             @info "  Adaptive substeps: target CFL=$(Float64(substep_cfl_target)) bounds=$(Int(min_steps_per_window)):$(Int(max_steps_per_window))"
         @info "  Level orientation: $(reader.handles.orientation)  (next-day endpoint: $(_geos_next_endpoint_available(reader.handles)))"
@@ -838,9 +954,15 @@ function _process_day_geos_cs_unified(date::Date,
                 "preprocessor" => "geos_native_to_cs",
                 "preprocessor_contract" => "plan41_variable_substeps",
                 "runtime_substep_contract" => "binary_schedule",
-                "geos_mass_endpoint" => "raw_dry_endpoint",
-                "geos_horizontal_balance" => "column_poisson_to_raw_endpoint",
-                "geos_vertical_flux" => "diagnosed_from_balanced_horizontal_and_raw_endpoint",
+                "geos_mass_endpoint" => global_mass_pin ?
+                    "dry_endpoint_global_mean_pinned" : "raw_dry_endpoint",
+                "geos_horizontal_balance" => workspace.balance_mode === :per_layer ?
+                    "per_layer_poisson_to_endpoint" : "column_poisson_to_endpoint",
+                "geos_horizontal_balance_mode" => String(workspace.balance_mode),
+                "geos_vertical_flux" => "diagnosed_from_balanced_horizontal_and_endpoint",
+                "geos_global_mass_pin_enabled" => global_mass_pin,
+                "geos_global_mass_pin_target_kg" => isfinite(workspace.global_mass_target_kg) ?
+                    workspace.global_mass_target_kg : "first_window_start",
                 "source_Nc" => settings.Nc,
                 "geos_cs_resolution_strategy" => _geos_cs_strategy_name(workspace.strategy),
                 "source_steps_per_window" => steps_per_met,
@@ -891,6 +1013,7 @@ function _process_day_geos_cs_unified(date::Date,
             out_path = driver_result.out_path,
             steps_per_window_by_window = copy(workspace.steps_schedule),
             final_m = final_m,
+            global_mass_target_kg = workspace.global_mass_target_kg,
         )
     finally
         if !driver_started
@@ -960,6 +1083,9 @@ function process_day(date::Date,
                      max_steps_per_window::Integer = typemax(Int),
                      chain_mass::Bool = true,
                      seed_m::Union{Nothing, NTuple{6, <:AbstractArray}} = nothing,
+                     global_mass_pin::Bool = false,
+                     global_mass_target_kg::Real = NaN,
+                     balance_mode::Symbol = :column,
                      next_day_hour0 = nothing)
     # Reject configurations the path cannot honor:
     mass_basis === :dry ||
@@ -981,5 +1107,8 @@ function process_day(date::Date,
         max_steps_per_window = max_steps_per_window,
         chain_mass = chain_mass,
         seed_m = seed_m,
+        global_mass_pin = global_mass_pin,
+        global_mass_target_kg = global_mass_target_kg,
+        balance_mode = balance_mode,
     )
 end

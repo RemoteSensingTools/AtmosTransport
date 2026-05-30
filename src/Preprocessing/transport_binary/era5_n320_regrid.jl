@@ -128,7 +128,9 @@ function process_era5_n320_to_cs_day(date::Date,
                                        cs_balance_project_every::Integer = 50,
                                        positivity_cfl_limit::Real = 0.95,
                                        cache_dir::Union{Nothing, AbstractString} = nothing,
-                                       include_convection::Bool = false) where FT
+                                       include_convection::Bool = false,
+                                       global_mass_pin::Bool = false,
+                                       global_mass_target_kg::Real = NaN) where FT
     mass_basis === :dry ||
         throw(ArgumentError("ERA5 N320 → CS writer only supports mass_basis=:dry on this branch; got $(mass_basis)"))
     Nz_int = Int(Nz)
@@ -180,6 +182,31 @@ function process_era5_n320_to_cs_day(date::Date,
         gravity = FT(GRAV)
         out_dt_factor = FT(dt_met_seconds / (2 * steps_per_met))
 
+        # Global dry-air mass pin (mirror of the GEOS-CS path's
+        # `_geos_pin_global_mass_if_needed!`). Removes the residual global-mean
+        # dry-mass drift that ERA reanalysis carries through PS/Q, so the
+        # binary's absolute dry mass matches a fixed target shared with the
+        # GEOS path (consistency across driver families; see
+        # docs/reference/GEOS_PREPROCESSING_MASS_BALANCE.md). Applied to each
+        # freshly derived endpoint mass; `ps` is recomputed from the pinned
+        # mass so the stored surface pressure stays consistent. The fixed
+        # `target_ps_dry`-derived target is independent of the start
+        # day/window, which is required for the day-threaded build to produce
+        # a globally coherent multi-day archive.
+        do_mass_pin = global_mass_pin && isfinite(global_mass_target_kg)
+        do_mass_pin && @info @sprintf("  Global dry-mass pin ON: target=%.9e kg (%.3f Pa dry ⟨ps⟩)",
+                                      Float64(global_mass_target_kg),
+                                      Float64(global_mass_target_kg) * Float64(gravity) /
+                                      (6 * sum(Float64, cs_cell_areas)))
+        pin_endpoint_mass! = function (m_dry, ps_dry)
+            do_mass_pin || return nothing
+            _pin_cs_global_air_mass!(m_dry, cs_cell_areas, gravity, global_mass_target_kg)
+            for p in 1:6
+                _ps_from_air_mass!(ps_dry[p], m_dry[p], cs_cell_areas, gravity, Nc, Nz_int)
+            end
+            return nothing
+        end
+
         # --- Open the streaming writer. ---
         nwindow = 24
         mkpath(dirname(out_path))
@@ -210,6 +237,9 @@ function process_era5_n320_to_cs_day(date::Date,
                 "poisson_balanced" => true,
                 "tm5_convection_source" => include_convection ?
                     "ec2tm_from_rates(udmf,ddmf,udrf,ddrf)" : "none",
+                "global_mass_pin_enabled" => do_mass_pin,
+                "global_mass_pin_target_kg" => do_mass_pin ?
+                    Float64(global_mass_target_kg) : nothing,
             ))
         writer = CubedSphereBinaryWriter(inner_writer,
                                           mass_basis_from_symbol(mass_basis);
@@ -233,6 +263,7 @@ function process_era5_n320_to_cs_day(date::Date,
             derive_c180_dry_mass!(m_dry, delp_dry, ps_dry, ps_dry_acc,
                                    pipe.c180_fields.ps, pipe.c180_fields.qv,
                                    vc, cs_cell_areas)
+            pin_endpoint_mass!(m_dry, ps_dry)
 
             # DELP for face flux reconstruction is the MOIST pressure
             # thickness (matches what `reconstruct_cs_fluxes!` expects
@@ -407,6 +438,7 @@ function process_era5_n320_to_cs_day(date::Date,
             derive_c180_dry_mass!(nxt_m_dry, nxt_delp_dry, nxt_ps_dry, nxt_ps_dry_acc,
                                    nxt_pipe.c180_fields.ps, nxt_pipe.c180_fields.qv,
                                    vc, cs_cell_areas)
+            pin_endpoint_mass!(nxt_m_dry, nxt_ps_dry)
         else
             # HACK: zero-tendency fallback for the final day of the archive
             # (no next_core_path on disk). The positivity gate will likely
@@ -544,6 +576,8 @@ function process_day(date::Date,
                      dt_met_seconds::Real = 3600.0,
                      positivity_cfl_limit::Real = 0.95,
                      min_steps_per_window::Union{Integer, Nothing} = nothing,
+                     global_mass_pin::Bool = false,
+                     global_mass_target_kg::Real = NaN,
                      kwargs...)
     # Honor the substep policy's min_steps_per_window if the CLI passed one;
     # otherwise fall back to the established N320 default. Adaptive substep
@@ -557,8 +591,13 @@ function process_day(date::Date,
         steps_per_window          = steps_per_window,
         positivity_cfl_limit      = positivity_cfl_limit,
         cache_dir                 = grid.cache_dir,
-        include_convection        = settings.include_convection)
-    return (; final_m = nothing)
+        include_convection        = settings.include_convection,
+        global_mass_pin           = global_mass_pin,
+        global_mass_target_kg     = global_mass_target_kg)
+    # Surface the fixed target so the unified driver's serial path can echo it
+    # across days (no-op for the threaded path, which uses the config target).
+    return (; final_m = nothing,
+            global_mass_target_kg = global_mass_target_kg)
 end
 
 # Output filename matches the standalone CLI script's naming convention so

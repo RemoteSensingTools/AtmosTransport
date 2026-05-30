@@ -391,18 +391,20 @@ function allocate_era5_n320_spectral_workspace(source_grid::ReducedGaussianTarge
     # `u_spec`/`v_spec` (vod2uv output) and per-ring FFT/real buffers.
     # Size by `maxthreadid()`, NOT `nthreads()`: `julia -tN` also spins up an
     # interactive-pool thread, so `threadid()` inside the loop can exceed the
-    # default-pool count `nthreads()` (here it returned 17 with `-t16`). Indexing
-    # by `threadid()` therefore requires `maxthreadid()` slots.
+    # default-pool count `nthreads()` (it returned 17 with `-t16`). `nthreads()+1`
+    # is the tight bound for the usual single interactive thread, but
+    # `maxthreadid()` is robust to any interactive-pool size and the extra
+    # caches (~18 MB each at T639) are negligible here.
     n_cells = ncells(mesh)
-    nthreads = Threads.maxthreadid()
+    n_caches = Threads.maxthreadid()
     synth_caches = [ReducedSpectralThreadCache(
         zeros(Float64, nc, nc),
         Dict(n => zeros(ComplexF64, n) for n in buffer_lengths),
         Dict(n => zeros(Float64, n)    for n in buffer_lengths),
         zeros(ComplexF64, nc, nc),
         zeros(ComplexF64, nc, nc),
-    ) for _ in 1:nthreads]
-    grid_scratches = [zeros(Float64, n_cells) for _ in 1:nthreads]
+    ) for _ in 1:n_caches]
+    grid_scratches = [zeros(Float64, n_cells) for _ in 1:n_caches]
 
     return ERA5N320SpectralWorkspace{FT, typeof(source_grid)}(
         source_grid, T_int, Nz_int,
@@ -600,8 +602,10 @@ function read_era5_n320_window_fields!(fields::ERA5N320WindowFields{FT},
     # Spectral → gridpoint synthesis per level. The 137 levels are independent
     # (each reads its own spectral slice, writes its own gridpoint column), so
     # the loop threads with per-thread caches/scratch. `:static` keeps
-    # `threadid()` stable within the loop body. This is ~90% of per-window wall
-    # at T639/Nz137, so threading it is the dominant speedup.
+    # `threadid()` constant within each iteration — valid ONLY because the loop
+    # body has no yield points (no @spawn, I/O, or lock contention); if one is
+    # added later, switch to a chunk-based loop (ChunkSplitters.jl). This is
+    # ~90% of per-window wall at T639/Nz137, so threading it is the win.
     grid = workspace.source_grid
     caches = workspace.synth_caches
     scratches = workspace.grid_scratches
@@ -609,8 +613,8 @@ function read_era5_n320_window_fields!(fields::ERA5N320WindowFields{FT},
     _t_synth = time()
     Threads.@threads :static for k in 1:Nz
         tid     = Threads.threadid()
-        cache   = caches[tid]
-        scratch = scratches[tid]
+        @inbounds cache   = caches[tid]      # tid ≤ maxthreadid() == length(caches)
+        @inbounds scratch = scratches[tid]
         vo_lvl  = view(workspace.vo_spec, :, :, k)
         d_lvl   = view(workspace.d_spec,  :, :, k)
         t_lvl   = view(workspace.t_spec,  :, :, k)
@@ -630,8 +634,9 @@ function read_era5_n320_window_fields!(fields::ERA5N320WindowFields{FT},
         _divide_by_cos_lat_per_ring!(view(fields.v, :, k), mesh)
     end
 
-    # LNSP → PS = exp(LNSP). Single synthesis (not in the threaded loop); use
-    # the first thread's cache. The `lnsp_grid` buffer is Float64 already, so it
+    # LNSP → PS = exp(LNSP). Single synthesis after the threaded loop; the
+    # `@threads` barrier guarantees every level iteration has finished, so any
+    # cache (here `caches[1]`) is free to reuse. The `lnsp_grid` buffer is Float64 already, so it
     # serves as both column and scratch (the in-method copy becomes a self-copy
     # of ~500 KB and is amortised across the synthesis kernel cost).
     _synthesize_into_column!(workspace.lnsp_grid, workspace.lnsp_spec, T,

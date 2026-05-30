@@ -182,6 +182,69 @@ function process_era5_n320_to_cs_day(date::Date,
         gravity = FT(GRAV)
         out_dt_factor = FT(dt_met_seconds / (2 * steps_per_met))
 
+        # --- Surface PBL + VDIFF (runtime diffusion) payload setup. ---
+        # Surface fields live on a SEPARATE regular-lat-lon 0.25° NetCDF
+        # (`sfc_an_native/era5_surface_YYYYMM.nc`), read via the shared
+        # `era5_surface_reader` (handles ERA5 unit/sign + orientation: pblh=blh,
+        # ustar=zust, hflux=-sshf/3600, t2m=2t; lat S→N, lon centered). They are
+        # regridded to C180 with a dedicated regular-ll → CS regridder (the same
+        # `build_regridder` used by the LL→CS path), then written as the
+        # `surface` payload. VDIFF (u/v/t/qv) reuses the per-window
+        # `c180_fields` (already regridded), so it is essentially free.
+        do_surface = settings.include_surface
+        do_vdiff   = settings.include_vdiff_fields
+        if do_surface
+            surf_Nx, surf_Ny = 1440, 721      # ERA5 0.25° single-levels regular-ll
+            # radius = the TARGET mesh's radius so the LL source manifold matches
+            # the CS target manifold (build_regridder rejects a mismatch).
+            surf_ll_mesh = LatLonMesh(; FT = FT, Nx = surf_Nx, Ny = surf_Ny,
+                                       longitude = (-180, 180), latitude = (-90, 90),
+                                       radius = mesh.radius)
+            surf_regridder = build_regridder(surf_ll_mesh, mesh;
+                                             normalize = false, cache_dir = cache_dir)
+            surf_ws = allocate_cs_preprocess_workspace(
+                Nc, surf_Nx, surf_Ny, 1,
+                length(surf_regridder.src_areas),
+                length(surf_regridder.dst_areas), FT)
+            surf_pblh  = ntuple(_ -> zeros(FT, Nc, Nc), 6)
+            surf_ustar = ntuple(_ -> zeros(FT, Nc, Nc), 6)
+            surf_hflux = ntuple(_ -> zeros(FT, Nc, Nc), 6)
+            surf_t2m   = ntuple(_ -> zeros(FT, Nc, Nc), 6)
+            surf_reader = open_era5_surface_reader(
+                joinpath(settings.root_dir, "sfc_an_native"), date, surf_Nx, surf_Ny)
+            @info "  Surface PBL payload ENABLED (regular-ll 0.25° → C180)"
+            do_vdiff && @info "  VDIFF (u/v/t/qv) payload ENABLED"
+        end
+
+        # Read + regrid the four PBL fields for the written window's hour
+        # (0-indexed) into the shared `surf_*` CS panels. No-op when surface is
+        # off. `load_era5_surface_window` takes a 1-based within-day window idx.
+        fill_surface_payload! = function (written_hour::Int)
+            do_surface || return nothing
+            s = load_era5_surface_window(surf_reader, written_hour + 1, FT)
+            regrid_2d_to_cs_panels!(surf_pblh,  surf_regridder, s.pblh,  surf_ws, Nc, IntensiveCellField())
+            regrid_2d_to_cs_panels!(surf_ustar, surf_regridder, s.ustar, surf_ws, Nc, IntensiveCellField())
+            regrid_2d_to_cs_panels!(surf_hflux, surf_regridder, s.hflux, surf_ws, Nc, IntensiveCellField())
+            regrid_2d_to_cs_panels!(surf_t2m,   surf_regridder, s.t2m,   surf_ws, Nc, IntensiveCellField())
+            return nothing
+        end
+
+        # Build the surface/vdiff payload addition for the window whose pipeline
+        # is `pipe` (the written window). VDIFF comes from the pipe's already-
+        # regridded c180 winds/T/Q.
+        surface_vdiff_payload = function (pipe)
+            extra = NamedTuple()
+            if do_surface
+                extra = merge(extra, (surface = (pblh = surf_pblh, ustar = surf_ustar,
+                                                 hflux = surf_hflux, t2m = surf_t2m),))
+            end
+            if do_vdiff
+                extra = merge(extra, (vdiff = (u = pipe.c180_fields.u, v = pipe.c180_fields.v,
+                                               t = pipe.c180_fields.t, qv = pipe.c180_fields.qv),))
+            end
+            return extra
+        end
+
         # Global dry-air mass pin (mirror of the GEOS-CS path's
         # `_geos_pin_global_mass_if_needed!`). Removes the residual global-mean
         # dry-mass drift that ERA reanalysis carries through PS/Q, so the
@@ -222,6 +285,8 @@ function process_era5_n320_to_cs_day(date::Date,
             steps_per_window = steps_per_met,
             include_flux_delta = true,
             include_tm5conv = include_convection,
+            include_surface = settings.include_surface,
+            include_gchp_vdiff = settings.include_vdiff_fields,
             mass_basis = mass_basis,
             panel_convention = _cs_panel_convention_tag(target_grid),
             cs_definition = _cs_definition_tag(target_grid),
@@ -392,6 +457,9 @@ function process_era5_n320_to_cs_day(date::Date,
 
             _fill_cs_mass_delta_payload!(cur_dm_dry, cur_m_dry, nxt_m_dry)
 
+            # Surface PBL for the written window (window win-1 → hour win-2).
+            fill_surface_payload!(win - 2)
+
             base_payload = (m = cur_m_dry, am = cur_am, bm = cur_bm, cm = cur_cm,
                             ps = cur_ps_dry, dm = cur_dm_dry)
             payload = include_convection ?
@@ -401,6 +469,7 @@ function process_era5_n320_to_cs_day(date::Date,
                     entd = cur_pipe.tm5_c180_fields.entd,
                     detd = cur_pipe.tm5_c180_fields.detd))) :
                 base_payload
+            payload = merge(payload, surface_vdiff_payload(cur_pipe))
             write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(win - 1, payload))
 
             @info @sprintf("    Window %2d/%d: wrote (bal %.2fs pre=%.2e post=%.2e iter=%d) | read %2d (%.2fs)",
@@ -510,6 +579,11 @@ function process_era5_n320_to_cs_day(date::Date,
         worst_positivity = update_cs_positivity_accumulator(worst_positivity, final_pos_diag, nwindow)
         _fill_cs_mass_delta_payload!(cur_dm_dry, cur_m_dry, nxt_m_dry)
 
+        # Surface PBL for the final window (window nwindow → hour nwindow-1).
+        # VDIFF still comes from cur_pipe (current-day last hour); the look-ahead
+        # above overwrote only nxt_pipe.c180_fields with next-day hour-0 winds.
+        fill_surface_payload!(nwindow - 1)
+
         final_base_payload = (m = cur_m_dry, am = cur_am, bm = cur_bm, cm = cur_cm,
                               ps = cur_ps_dry, dm = cur_dm_dry)
         final_payload = include_convection ?
@@ -519,6 +593,7 @@ function process_era5_n320_to_cs_day(date::Date,
                 entd = cur_pipe.tm5_c180_fields.entd,
                 detd = cur_pipe.tm5_c180_fields.detd))) :
             final_base_payload
+        final_payload = merge(final_payload, surface_vdiff_payload(cur_pipe))
         write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(nwindow, final_payload))
 
         worst_pre  = max(worst_pre,  bal_diag.max_pre_residual)
@@ -542,6 +617,7 @@ function process_era5_n320_to_cs_day(date::Date,
         return nothing
     finally
         close_era5_day!(handles)
+        @isdefined(surf_reader) && close_era5_surface_reader(surf_reader)
     end
 end
 

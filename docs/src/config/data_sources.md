@@ -167,7 +167,7 @@ access.
 
 If you don't want to manage raw met data — for a smoke test, a tutorial,
 or a short benchmark — there's a **preprocessed bundle** on the
-[`data-quickstart-v2` GitHub Release](https://github.com/RemoteSensingTools/AtmosTransport/releases/tag/data-quickstart-v2):
+[`data-quickstart-v2` GitHub Release](https://github.com/RemoteSensingTools/AtmosTransport.jl/releases/tag/data-quickstart-v2):
 
 | Tarball | Contents |
 |---|---|

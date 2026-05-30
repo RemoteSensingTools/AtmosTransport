@@ -19,7 +19,7 @@ Metal runs require `Float32` numerics. The runtime rejects Metal with
 ## Get the code
 
 ```bash
-git clone https://github.com/RemoteSensingTools/AtmosTransport.git
+git clone https://github.com/RemoteSensingTools/AtmosTransport.jl.git
 cd AtmosTransport
 ```
 

@@ -61,6 +61,6 @@ CI builds the same target on every push and PR; deployment to
 - **API reference.** Edit the source-side docstring rather than the
   generated `api/*.md`; the autodoc surfaces whatever is in the
   source.
-- **Status tracker.** The top-level [`README.md`](https://github.com/RemoteSensingTools/AtmosTransport)
+- **Status tracker.** The top-level [`README.md`](https://github.com/RemoteSensingTools/AtmosTransport.jl)
   carries the canonical "what works now, what's experimental" table.
   Update that table when a capability moves between status tiers.

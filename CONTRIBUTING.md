@@ -14,7 +14,7 @@ for contributing to AtmosTransport.jl.
 ### Development Setup
 
 ```bash
-git clone https://github.com/RemoteSensingTools/AtmosTransport.git
+git clone https://github.com/RemoteSensingTools/AtmosTransport.jl.git
 cd AtmosTransport
 julia --project=. -e 'using Pkg; Pkg.instantiate()'
 ```

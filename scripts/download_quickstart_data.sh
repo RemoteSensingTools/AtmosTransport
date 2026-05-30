@@ -42,7 +42,7 @@ set -euo pipefail
 
 # ── Bundle metadata (one line each — update on a new release) ──────────────
 RELEASE_TAG="data-quickstart-v2"
-RELEASE_BASE="https://github.com/RemoteSensingTools/AtmosTransport/releases/download/${RELEASE_TAG}"
+RELEASE_BASE="https://github.com/RemoteSensingTools/AtmosTransport.jl/releases/download/${RELEASE_TAG}"
 
 LL_NAME="quickstart_ll_dec2021_v2.tar.gz"
 LL_URL_DEFAULT="${RELEASE_BASE}/${LL_NAME}"

@@ -25,7 +25,7 @@ benchmark — without depending on a multi-TB ERA5 archive.
 ## 1. Download the bundle
 
 Both tarballs are hosted as assets on the
-[`data-quickstart-v2`](https://github.com/RemoteSensingTools/AtmosTransport/releases/tag/data-quickstart-v2)
+[`data-quickstart-v2`](https://github.com/RemoteSensingTools/AtmosTransport.jl/releases/tag/data-quickstart-v2)
 GitHub Release.
 
 | Tarball | SHA-256 | Approx compressed |

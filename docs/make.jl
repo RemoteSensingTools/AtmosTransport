@@ -91,9 +91,9 @@ makedocs(
     modules  = [AtmosTransport],
     sitename = "AtmosTransport.jl",
     authors  = "RemoteSensingTools and contributors",
-    repo     = Remotes.GitHub("RemoteSensingTools", "AtmosTransport"),
+    repo     = Remotes.GitHub("RemoteSensingTools", "AtmosTransport.jl"),
     format   = DocumenterVitepress.MarkdownVitepress(
-        repo          = "github.com/RemoteSensingTools/AtmosTransport",
+        repo          = "github.com/RemoteSensingTools/AtmosTransport.jl",
         devbranch     = "main",
         devurl        = "dev",
     ),
@@ -118,7 +118,7 @@ if ATMOSTR_DOCS_BUILD_ONLY
 else
     DocumenterVitepress.deploydocs(
         root         = @__DIR__,
-        repo         = "github.com/RemoteSensingTools/AtmosTransport.git",
+        repo         = "github.com/RemoteSensingTools/AtmosTransport.jl.git",
         target       = "build",
         devbranch    = "main",
         branch       = "gh-pages",

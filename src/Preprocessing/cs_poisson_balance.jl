@@ -849,39 +849,20 @@ function balance_cs_global_mass_fluxes!(
     )
 end
 
-"""
-    balance_cs_column_mass_fluxes!(panels_am, panels_bm, panels_m, panels_m_next,
-                                   ft, degree, steps_per_window, scratch; ...)
-
-Apply a single vertically integrated CS Poisson correction, then distribute the
-face correction over levels with local air-mass weights.
-
-This is the ERA CS default. It enforces the column mass budget required by zero
-top/bottom `cm` while avoiding the legacy per-layer correction that can rewrite
-real vertical wind shear.
-"""
-function balance_cs_column_mass_fluxes!(
-    panels_am::NTuple{6, Array{FT, 3}},
-    panels_bm::NTuple{6, Array{FT, 3}},
-    panels_m::NTuple{6, Array{FT, 3}},
-    panels_m_next::NTuple{6, Array{FT, 3}},
-    ft::CSGlobalFaceTable,
-    degree::Vector{Int},
-    steps_per_window::Int,
-    scratch::CSPoissonScratch;
-    tol::Float64=1e-14,
-    max_iter::Int=20000,
-    project_every::Int=50,
-) where FT
-    Nc = ft.Nc
-    Nz = size(panels_am[1], 3)
-
-    col_am = ntuple(_ -> zeros(FT, Nc + 1, Nc, 1), 6)
-    col_bm = ntuple(_ -> zeros(FT, Nc, Nc + 1, 1), 6)
-    col_m = ntuple(_ -> zeros(FT, Nc, Nc, 1), 6)
-    col_m_next = ntuple(_ -> zeros(FT, Nc, Nc, 1), 6)
-
+function _fill_cs_column_buffers!(col_am::NTuple{6, Array{FT, 3}},
+                                  col_bm::NTuple{6, Array{FT, 3}},
+                                  col_m::NTuple{6, Array{FT, 3}},
+                                  col_m_next::NTuple{6, Array{FT, 3}},
+                                  panels_am::NTuple{6, Array{FT, 3}},
+                                  panels_bm::NTuple{6, Array{FT, 3}},
+                                  panels_m::NTuple{6, Array{FT, 3}},
+                                  panels_m_next::NTuple{6, Array{FT, 3}},
+                                  Nc::Int, Nz::Int) where FT
     for p in 1:6
+        fill!(col_am[p], zero(FT))
+        fill!(col_bm[p], zero(FT))
+        fill!(col_m[p], zero(FT))
+        fill!(col_m_next[p], zero(FT))
         @inbounds for k in 1:Nz
             for j in 1:Nc, i in 1:Nc + 1
                 col_am[p][i, j, 1] += panels_am[p][i, j, k]
@@ -895,13 +876,62 @@ function balance_cs_column_mass_fluxes!(
             end
         end
     end
+    return nothing
+end
 
-    col_am_before = ntuple(p -> copy(col_am[p]), 6)
-    col_bm_before = ntuple(p -> copy(col_bm[p]), 6)
-    diag = balance_cs_global_mass_fluxes!(
-        col_am, col_bm, col_m, col_m_next, ft, degree, steps_per_window, scratch;
-        tol, max_iter, project_every)
+function _cs_column_balance_projected_linf(col_am::NTuple{6, Array{FT, 3}},
+                                           col_bm::NTuple{6, Array{FT, 3}},
+                                           col_m::NTuple{6, Array{FT, 3}},
+                                           col_m_next::NTuple{6, Array{FT, 3}},
+                                           ft::CSGlobalFaceTable,
+                                           steps_per_window::Int,
+                                           scratch::CSPoissonScratch) where FT
+    Nc = ft.Nc
+    inv_scale = 1.0 / (2.0 * steps_per_window)
+    div = scratch.div
+    fill!(div, 0.0)
+    @inbounds for f in 1:ft.nf
+        panel = Int(ft.face_panel[f])
+        dir = Int(ft.face_dir[f])
+        i = Int(ft.face_idx_i[f])
+        j = Int(ft.face_idx_j[f])
+        flux = dir == 1 ? Float64(col_am[panel][i, j, 1]) :
+                          Float64(col_bm[panel][i, j, 1])
+        div[Int(ft.face_left[f])] += flux
+        div[Int(ft.face_right[f])] -= flux
+    end
 
+    raw_linf = 0.0
+    mean = 0.0
+    @inbounds for c in 1:ft.nc
+        p_idx = (c - 1) ÷ (Nc * Nc) + 1
+        local_idx = (c - 1) % (Nc * Nc)
+        j_local = local_idx ÷ Nc + 1
+        i_local = local_idx % Nc + 1
+        target = (Float64(col_m[p_idx][i_local, j_local, 1]) -
+                  Float64(col_m_next[p_idx][i_local, j_local, 1])) * inv_scale
+        r = div[c] - target
+        div[c] = r
+        mean += r
+        raw_linf = max(raw_linf, abs(r))
+    end
+    mean /= ft.nc
+    projected_linf = 0.0
+    @inbounds @simd for c in 1:ft.nc
+        projected_linf = max(projected_linf, abs(div[c] - mean))
+    end
+    return (raw_linf = raw_linf, projected_linf = projected_linf,
+            mean_abs = abs(mean))
+end
+
+function _distribute_cs_column_delta!(panels_am::NTuple{6, Array{FT, 3}},
+                                      panels_bm::NTuple{6, Array{FT, 3}},
+                                      panels_m::NTuple{6, Array{FT, 3}},
+                                      col_am::NTuple{6, Array{FT, 3}},
+                                      col_bm::NTuple{6, Array{FT, 3}},
+                                      col_am_before::NTuple{6, Array{FT, 3}},
+                                      col_bm_before::NTuple{6, Array{FT, 3}},
+                                      Nc::Int, Nz::Int) where FT
     max_face_delta = 0.0
     for p in 1:6
         @inbounds for j in 1:Nc, i in 1:Nc + 1
@@ -972,8 +1002,75 @@ function balance_cs_column_mass_fluxes!(
             end
         end
     end
+    return max_face_delta
+end
 
-    _sync_cs_mirrors!(panels_am, panels_bm, ft, Nz)
+"""
+    balance_cs_column_mass_fluxes!(panels_am, panels_bm, panels_m, panels_m_next,
+                                   ft, degree, steps_per_window, scratch; ...)
+
+Apply a single vertically integrated CS Poisson correction, then distribute the
+face correction over levels with local air-mass weights.
+
+This is the ERA CS default. It enforces the column mass budget required by zero
+top/bottom `cm` while avoiding the legacy per-layer correction that can rewrite
+real vertical wind shear.
+"""
+function balance_cs_column_mass_fluxes!(
+    panels_am::NTuple{6, Array{FT, 3}},
+    panels_bm::NTuple{6, Array{FT, 3}},
+    panels_m::NTuple{6, Array{FT, 3}},
+    panels_m_next::NTuple{6, Array{FT, 3}},
+    ft::CSGlobalFaceTable,
+    degree::Vector{Int},
+    steps_per_window::Int,
+    scratch::CSPoissonScratch;
+    tol::Float64=1e-14,
+    max_iter::Int=20000,
+    project_every::Int=50,
+    closure_passes::Int=1,
+    closure_tol::Float64=10.0,
+) where FT
+    Nc = ft.Nc
+    Nz = size(panels_am[1], 3)
+
+    col_am = ntuple(_ -> zeros(FT, Nc + 1, Nc, 1), 6)
+    col_bm = ntuple(_ -> zeros(FT, Nc, Nc + 1, 1), 6)
+    col_m = ntuple(_ -> zeros(FT, Nc, Nc, 1), 6)
+    col_m_next = ntuple(_ -> zeros(FT, Nc, Nc, 1), 6)
+    col_am_before = ntuple(_ -> zeros(FT, Nc + 1, Nc, 1), 6)
+    col_bm_before = ntuple(_ -> zeros(FT, Nc, Nc + 1, 1), 6)
+
+    max_face_delta = 0.0
+    diag = nothing
+    final_stats = nothing
+    passes = max(1, closure_passes)
+    for pass in 1:passes
+        _fill_cs_column_buffers!(col_am, col_bm, col_m, col_m_next,
+                                 panels_am, panels_bm, panels_m, panels_m_next,
+                                 Nc, Nz)
+        for p in 1:6
+            copyto!(col_am_before[p], col_am[p])
+            copyto!(col_bm_before[p], col_bm[p])
+        end
+        diag = balance_cs_global_mass_fluxes!(
+            col_am, col_bm, col_m, col_m_next, ft, degree, steps_per_window, scratch;
+            tol, max_iter, project_every)
+
+        max_face_delta = max(max_face_delta,
+            _distribute_cs_column_delta!(panels_am, panels_bm, panels_m,
+                                         col_am, col_bm,
+                                         col_am_before, col_bm_before,
+                                         Nc, Nz))
+        _sync_cs_mirrors!(panels_am, panels_bm, ft, Nz)
+
+        _fill_cs_column_buffers!(col_am, col_bm, col_m, col_m_next,
+                                 panels_am, panels_bm, panels_m, panels_m_next,
+                                 Nc, Nz)
+        final_stats = _cs_column_balance_projected_linf(
+            col_am, col_bm, col_m, col_m_next, ft, steps_per_window, scratch)
+        final_stats.projected_linf <= closure_tol && break
+    end
 
     return (;
         max_pre_residual = diag.max_pre_residual,
@@ -981,6 +1078,9 @@ function balance_cs_column_mass_fluxes!(
         max_rhs_mean = diag.max_rhs_mean,
         max_pre_projected = diag.max_pre_projected,
         max_post_projected = diag.max_post_projected,
+        final_column_raw_residual = final_stats.raw_linf,
+        final_column_projected_residual = final_stats.projected_linf,
+        final_column_mean_residual = final_stats.mean_abs,
         max_cg_iter = diag.max_cg_iter,
         max_face_delta = max_face_delta,
     )

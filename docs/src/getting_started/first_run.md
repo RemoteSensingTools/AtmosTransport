@@ -148,8 +148,7 @@ The preprocessor writes one binary per day to the path declared in the
 config's `[output] directory`. A subsequent run config points at that
 directory via `[input] folder`.
 
-The detailed preprocessing guide lands in Phase 5 of the documentation
-overhaul.
+See [Preprocessing overview](@ref) for the detailed preprocessor guide.
 
 ## Synthetic-fixture route (no external data)
 
@@ -169,9 +168,9 @@ To run just one of them without the full suite:
 julia --project=. test/test_driven_simulation.jl
 ```
 
-Phase 4 of the documentation overhaul will package one of these synthetic
-flows as a Literate.jl tutorial that produces both a runnable script and
-a rendered HTML page in the docs.
+See the [Tutorial: synthetic lat-lon end-to-end](@ref) for a Literate-rendered
+version of one of these flows — a runnable script that also doubles as an
+HTML docs page.
 
 ## What you should see
 

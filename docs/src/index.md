@@ -12,11 +12,6 @@ advection, convection, and boundary-layer diffusion on **lat-lon, reduced
 Gaussian, and cubed-sphere** grids, driven by **ERA5** or **GEOS** met data,
 with a clean separation between offline preprocessing and runtime stepping.
 
-!!! warning "Work in Progress"
-    This project is under rapid active development. APIs, file formats, and
-    physics implementations may change without notice. The documentation is
-    being overhauled; see [About these docs](@ref) for the current status.
-
 ## At a glance
 
 - **Multi-grid**: regular lat-lon, reduced Gaussian, cubed-sphere (gnomonic

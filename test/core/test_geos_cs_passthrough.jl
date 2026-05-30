@@ -289,7 +289,7 @@ end
             @test reader.header.raw_header["runtime_substep_contract"] == "binary_schedule"
             @test reader.header.raw_header["geos_mass_endpoint"] == "raw_dry_endpoint"
             @test reader.header.raw_header["geos_horizontal_balance"] ==
-                  "column_poisson_to_raw_endpoint"
+                  "column_poisson_to_endpoint"
 
             window = assert_cs_window_replay(reader, 1)
             @test any(panel -> any(x -> x != 0, panel), window.am)

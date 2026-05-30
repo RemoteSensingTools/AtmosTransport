@@ -182,10 +182,11 @@ them as starting points:
 ## What this quickstart does *not* cover
 
 - **Preprocessing**. The bundle ships preprocessed binaries; the
-  ERA5-spectral preprocessor itself is documented in Phase 5 of the
-  documentation overhaul.
+  ERA5-spectral preprocessor itself is documented under
+  [ERA5 spectral path](@ref).
 - **GEOS native CS**. The bundle is ERA5-only. GEOS-IT C180 native
-  preprocessing is documented separately (Phase 5).
+  preprocessing is covered under
+  [GEOS native cubed-sphere](@ref).
 - **Convection / diffusion**. The bundled configs are advection-only.
   See `config/runs/c180_uniform_*.toml` for full-physics templates
   (these need the larger GEOS-IT dataset — out of scope for a

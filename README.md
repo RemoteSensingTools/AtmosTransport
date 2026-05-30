@@ -5,9 +5,6 @@
 > physics implementations may change without notice. If you are interested
 > in contributing or following along, feel free to open an issue.
 
-# Warning Note: Big Refactor in progress
-We are currently refactoring everything cleanly from scratch, so hold on and check back later. Code will be much more stable long term and more unified.
-
 [![Documentation](https://img.shields.io/badge/docs-dev-blue.svg)](https://RemoteSensingTools.github.io/AtmosTransport/dev/)
 
 ## Status tracker

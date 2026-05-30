@@ -117,8 +117,7 @@ print(cm.shape, cm.min(), cm.max(), cm.mean())
     against an older snapshot schema (`co2_surface`, `co2_column_mean`,
     `time_hours`) and have not been updated for the current variable
     names (`<tracer>_column_mean`, `<tracer>_column_mass_per_area`,
-    `time`). They will need a small refresh before recommending — track
-    in the documentation overhaul follow-ups.
+    `time`). They will need a small refresh before recommending.
 
 ### From Julia
 

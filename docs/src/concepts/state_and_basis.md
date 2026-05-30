@@ -221,6 +221,6 @@ types currently in the tree:
 
 ## What's next
 
-- *Operators* (Advection, Convection, Diffusion, Sources) and
-  *Binary format* — covered in Phase 3B of the documentation overhaul;
-  pages will land in a follow-up commit.
+- [Operators](@ref) — Advection, Convection, Diffusion, Sources behind
+  abstract types with `No<Operator>` defaults.
+- [Binary format](@ref) — the on-disk layout the runtime consumes.

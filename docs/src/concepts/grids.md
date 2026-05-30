@@ -298,5 +298,5 @@ type and reaches into the appropriate per-topology helper.
 ## What's next
 
 - [State & basis](@ref) — how prognostic state is laid out on a grid.
-- *Operators* and *Binary format* — covered in Phase 3B of the
-  documentation overhaul; pages will land in a follow-up commit.
+- [Operators](@ref) — physics interfaces dispatched on grid type.
+- [Binary format](@ref) — the on-disk preprocessed-met layout.

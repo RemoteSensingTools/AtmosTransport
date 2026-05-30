@@ -162,6 +162,21 @@ end
         @test maximum(kz[1:Nz÷3]) < maximum(kz[2Nz÷3:Nz])
         # The centre values bracket the bottom-up interface profile they average.
         @test maximum(kz) <= maximum(scratch.kvh) + 1e-9
+
+        # Algebraic cross-check of the flip + interface→centre mapping: the
+        # driver left the flipped bottom-up profiles in `scratch`, so call the
+        # bottom-up kernel directly on them and reproduce the centre mapping by
+        # hand. This catches any flip-direction, off-by-one, or storage-index
+        # error that the plausibility checks above would miss.
+        kvh_direct = zeros(Nz)
+        tm5_bldiff_kvh_column!(kvh_direct, scratch.T, scratch.q, scratch.u,
+                               scratch.v, scratch.p_edge, scratch.z_edge,
+                               250.0, 150.0, 0.5, c)
+        for l in 1:Nz
+            below = l == 1 ? 0.0 : kvh_direct[l - 1]
+            above = kvh_direct[l]
+            @test kz[Nz + 1 - l] ≈ (below + above) / 2  atol = 1e-12
+        end
     end
 
     @testset "vanishing surface forcing collapses toward weak diffusivity" begin

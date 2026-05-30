@@ -87,28 +87,31 @@ end
 
 """
     fill_tm5_kz_payload!(kz_c180, c180_fields, hflux, lhflux, ustar,
-                         A, B, Nc, c, scratch) -> nothing
+                         A, B, Nc, c, scratches) -> nothing
 
 Fill the per-panel layer-centre eddy diffusivity `kz_c180` (the binary `:kz`
 payload) by running the TM5 boundary-layer diffusion column kernel on every
 C180 cell. The 3D inputs are the already-regridded `c180_fields` (top-down
 u/v/t/qv/ps); the surface fluxes `hflux`/`lhflux` (W m⁻², upward-positive) and
 `ustar` are the C180-regridded surface panels. `A`/`B` are the hybrid-σ
-half-level coefficients. `scratch` is reused across columns.
+half-level coefficients. `scratches` is a per-thread vector of
+[`BLDiffColumnScratch`](@ref) reused across columns.
 
 Computing on C180 (rather than regridding `kvh` from N320) matches the runtime
 GCHP Kz path and avoids a second regridder; `bldiff` is nonlinear, so this is
-the column-wise application of the scheme to the regridded state.
+the column-wise application of the scheme to the regridded state. The six panels
+are independent, so the loop threads over them with one scratch per thread.
 """
 function fill_tm5_kz_payload!(kz_c180, c180_fields, hflux, lhflux, ustar,
                               A, B, Nc::Int,
                               c::BLDiffConstants{FT},
-                              scratch::BLDiffColumnScratch{FT}) where {FT}
-    @inbounds for p in 1:6
+                              scratches::Vector{BLDiffColumnScratch{FT}}) where {FT}
+    Threads.@threads :static for p in 1:6
+        scratch = scratches[Threads.threadid()]
         kp, tp, qp = kz_c180[p], c180_fields.t[p], c180_fields.qv[p]
         up, vp, psp = c180_fields.u[p], c180_fields.v[p], c180_fields.ps[p]
         hf, lf, us = hflux[p], lhflux[p], ustar[p]
-        for j in 1:Nc, i in 1:Nc
+        @inbounds for j in 1:Nc, i in 1:Nc
             tm5_bldiff_center_kz_column!(
                 view(kp, i, j, :),
                 view(tp, i, j, :), view(qp, i, j, :),
@@ -257,7 +260,10 @@ function process_era5_n320_to_cs_day(date::Date,
             if do_tm5_diffusion
                 surf_lhflux = ntuple(_ -> zeros(FT, Nc, Nc), 6)   # latent flux on C180
                 kz_c180     = ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6)
-                kz_scratch  = BLDiffColumnScratch{FT}(Nz_int)
+                # One scratch per thread; the panel loop threads over the 6
+                # panels. Size by maxthreadid() (see synthesis-threading note).
+                kz_scratch  = [BLDiffColumnScratch{FT}(Nz_int)
+                               for _ in 1:Threads.maxthreadid()]
                 kz_const    = BLDiffConstants{FT}()
                 @info "  TM5 diffusion (bldiff) :kz payload ENABLED"
             end

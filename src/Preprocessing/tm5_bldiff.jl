@@ -364,7 +364,7 @@ Per-column work buffers for [`tm5_bldiff_center_kz_column!`]. Allocate once per
 thread and reuse across the millions of columns in a global preprocess to avoid
 per-column allocation.
 """
-struct BLDiffColumnScratch{FT <: AbstractFloat}
+Base.@kwdef struct BLDiffColumnScratch{FT <: AbstractFloat}
     T      :: Vector{FT}     # bottom-up layer-centre temperature (Nz)
     q      :: Vector{FT}
     u      :: Vector{FT}
@@ -375,9 +375,11 @@ struct BLDiffColumnScratch{FT <: AbstractFloat}
     dz     :: Vector{FT}     # top-down layer thickness (Nz)
 end
 
+# Keyword construction (field order can change without breaking the sizing call).
 BLDiffColumnScratch{FT}(Nz::Integer) where {FT} = BLDiffColumnScratch{FT}(
-    (zeros(FT, Nz) for _ in 1:4)..., zeros(FT, Nz + 1), zeros(FT, Nz + 1),
-    zeros(FT, Nz), zeros(FT, Nz))
+    T = zeros(FT, Nz), q = zeros(FT, Nz), u = zeros(FT, Nz), v = zeros(FT, Nz),
+    p_edge = zeros(FT, Nz + 1), z_edge = zeros(FT, Nz + 1),
+    kvh = zeros(FT, Nz), dz = zeros(FT, Nz))
 
 """
     tm5_bldiff_center_kz_column!(kz, T, q, u, v, ps, hflux, lhflux, ustar,

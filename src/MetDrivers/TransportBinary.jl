@@ -2137,7 +2137,7 @@ function open_streaming_cs_transport_binary(
         "include_gchp_vdiff" => include_gchp_vdiff,
         "gchp_vdiff_payload" => include_gchp_vdiff ? "u_v_t_qv_layer_center_v1" : "none",
         "include_precomputed_kz" => include_precomputed_kz,
-        "precomputed_kz_payload" => include_precomputed_kz ? "tm5_bldiff_layer_center_kvh_v1" : "none",
+        "precomputed_kz_payload" => include_precomputed_kz ? "tm5_bldiff_layer_center_kz_v1" : "none",
         "n_kz" => include_precomputed_kz ? _cs_section_elements(Nc, npanel, nlevel, :kz) : 0,
         "n_pblh" => include_surface ? _cs_section_elements(Nc, npanel, nlevel, :pblh) : 0,
         "n_ustar" => include_surface ? _cs_section_elements(Nc, npanel, nlevel, :ustar) : 0,

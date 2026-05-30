@@ -10,7 +10,10 @@ GEOS VDIFF profiles, this field simply *copies* the precomputed values into its
 panel caches on each met-window advance via
 [`refresh_precomputed_cs_kz_cache!`](@ref). It is the runtime half of the
 `[diffusion] kind = "precomputed_kz"` path: the heavy non-local PBL physics runs
-offline in the preprocessor, and the runtime does a single device-resident copy.
+offline in the preprocessor, and the runtime does one `copyto!` per panel per
+window — host↔host on CPU, and device↔device on GPU when the field is adapted
+alongside the model (the same per-kernel-launch transfer cost as the other CS Kz
+fields).
 
 Each panel wraps a [`PreComputedKzField`] over `host_cache[p]` (shape
 `(Nc, Nc, Nz)`, the unhaloed panel), so the diffusion kernel reads
@@ -49,9 +52,9 @@ end
 Copy the active window's precomputed Kz panels into the field's panel caches.
 `kz_panels` is the `kz` field of the loaded transport window (an
 `NTuple{6, AbstractArray}` shaped `(Nc, Nc, Nz)`, or `nothing` when the binary
-carries no `:kz` section). The copy is backend-resident: at runtime both the
-window panels and the field caches are device arrays, so `copyto!` stays on the
-GPU.
+carries no `:kz` section). `copyto!` runs on whichever backend the field and
+window share: host↔host on CPU, device↔device on GPU when both have been adapted
+with the model.
 """
 function refresh_precomputed_cs_kz_cache!(field::PrecomputedCSKzField, kz_panels)
     kz_panels === nothing && throw(ArgumentError(

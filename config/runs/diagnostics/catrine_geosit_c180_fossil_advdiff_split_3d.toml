@@ -1,0 +1,37 @@
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32"
+start_date   = "2021-12-01"
+end_date     = "2021-12-03"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "ppm"
+
+[tracers.co2_fossil]
+  [tracers.co2_fossil.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.co2_fossil.surface_flux]
+  kind = "gridfed_fossil_co2"
+  time_index = 12
+
+[diffusion]
+kind = "geoschem_holtslag_boville_vdiff"
+surface_flux_boundary = false
+
+[convection]
+kind = "none"
+
+[chemistry]
+kind = "none"
+
+[output]
+snapshot_interval_hours = 3
+snapshot_file = "~/data/AtmosTransport/output/diagnostics/catrine_geosit_c180_fossil_advdiff_split_3d.nc"

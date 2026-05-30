@@ -2,24 +2,27 @@
     SurfaceFluxSource{RateT}
 
 A single-tracer surface source: a `tracer_name` plus a `cell_mass_rate`
-array supplying mass added **per cell per second** to the surface layer.
+array supplying model-storage amount added **per cell per second** to the
+surface layer.
 
 - `tracer_name :: Symbol` — matches a name in `CellState.tracer_names`.
 - `cell_mass_rate :: RateT` — one of:
   - a 2D `(Nx, Ny)` array for structured grids
   - a 1D `(Nc,)` array for face-indexed grids
   - an `NTuple{6}` of 2D `(Nc, Nc)` arrays for cubed-sphere panels
-  The **units are kg/s per cell** — already area-integrated. The surface
-  flux kernel applies `rm_surface += rate × dt` without multiplying by
-  cell area.
+  The rates are already area-integrated. For dry-VMR tracers, file-based
+  physical fluxes in kg species/s are converted by the source builder to
+  dry-air-equivalent storage units before reaching this struct. The surface
+  flux kernel applies `rm_surface += rate × dt` without multiplying by cell
+  area.
 
-# Why kg/s per cell (not kg/m²/s)
+# Why per-cell rates (not kg/m²/s)
 
 Plan 17 Decision 1 (user-approved 2026-04-19): the prognostic tracer is
-mass (kg per cell), so a per-cell rate × dt is the natural unit and
-matches the legacy `DrivenSimulation._apply_surface_source!` signature
-that shipped before plan 17. A per-area (kg/m²/s) variant that multiplies
-by `cell_area` is deferred to a follow-up plan.
+stored per cell, so a per-cell rate × dt is the natural unit and matches
+the legacy `DrivenSimulation._apply_surface_source!` signature that shipped
+before plan 17. A per-area variant that multiplies by `cell_area` is
+deferred to a follow-up plan.
 
 # History
 

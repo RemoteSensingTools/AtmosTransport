@@ -12,12 +12,16 @@
 #
 # GeosChem reference is a directory of 3-hourly files
 # `~/data/AtmosTransport/catrine-geoschem-runs/GEOSChem.CATRINE_inst.YYYYMMDD_HHHHz.nc4`
-# with the same `(Xdim, Ydim, nf, lev)` layout but variables prefixed
-# `SpeciesConcVV_*` (one file per snapshot time).
+# with the same horizontal layout but variables prefixed
+# `SpeciesConcVV_*` (one file per snapshot time). GEOS-Chem stores its L72
+# vertical axis surface-to-top, while AtmosTransport snapshots store levels
+# top-to-surface. When vertical grids differ, metrics use the common
+# surface-aligned subset of levels and reorder GEOS-Chem into the
+# AtmosTransport convention before comparing.
 #
 # Tracer-name mapping is hard-coded at the top. Both data sources share
 # the C180 panel layout (no regridding required); per-cell area for
-# weighted RMS is recomputed from the AtmosTransport mesh.
+# weighted RMS is read from the AtmosTransport snapshot geometry.
 #
 # Outputs:
 #   * a single `--out` NetCDF with per-time / per-tracer metrics:
@@ -42,7 +46,6 @@ using NCDatasets
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
-using .AtmosTransport.Grids: CubedSphereMesh, cell_area, panel_cell_center_lonlat
 
 # Tracer-name mapping (AtmosTransport symbol → GeosChem variable name).
 # Hard-coded; matches the run config and the GC `SpeciesConcVV_*`
@@ -54,11 +57,21 @@ const TRACER_MAP = (
     rn222       = "SpeciesConcVV_Rn222",
 )
 
+# Used only for global species-mass diagnostics from dry VMR and dry-air mass.
+const M_DRY_AIR_KG_MOL = 28.96546e-3
+const TRACER_MOLAR_MASS_KG_MOL = (
+    co2_natural = 44.0095e-3,
+    co2_fossil  = 44.0095e-3,
+    sf6         = 146.055e-3,
+    rn222       = 222.0e-3,
+)
+
 # Run start; needed to convert AT's "hours since start" `time` axis to
 # absolute UTC for matching against GC filenames. Read from the AT
 # `time` units attribute when present, else default to the Dec 2021
 # Catrine run start.
 const DEFAULT_RUN_START = DateTime(2021, 12, 1, 0, 0, 0)
+const _WARNED_VERTICAL_MISMATCH = Set{Tuple{Int, Int}}()
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -131,14 +144,19 @@ function _build_time_pairs(at_path::AbstractString, gc_dir::AbstractString,
 end
 
 # ---------------------------------------------------------------------------
-# Cell-area weights from the AtmosTransport C180 mesh
+# Cell-area weights from the AtmosTransport snapshot geometry
 # ---------------------------------------------------------------------------
 
-function _build_cell_weights(Nc::Int)
-    mesh = CubedSphereMesh(Nc = Nc, Hp = 1, FT = Float64)
-    cell_areas = ntuple(p -> cell_area(mesh, p), 6)  # (Nc, Nc) per panel
+function _build_cell_weights(ds)
+    haskey(ds, "cell_area") || error("AT file missing `cell_area` geometry")
+    haskey(ds, "lats") || error("AT file missing `lats` geometry")
+    area = Float64.(coalesce.(Array(ds["cell_area"][:, :, :]), NaN))
+    lats = Float64.(coalesce.(Array(ds["lats"][:, :, :]), NaN))
+    size(area, 3) == 6 || error("expected 6 cubed-sphere panels in cell_area, got $(size(area))")
+    cell_areas = ntuple(p -> area[:, :, p], 6)
+    lat_panels = ntuple(p -> lats[:, :, p], 6)
     total_area = sum(p -> sum(cell_areas[p]), 1:6)
-    return (mesh = mesh, cell_areas = cell_areas, total_area = total_area)
+    return (cell_areas = cell_areas, lats = lat_panels, total_area = total_area)
 end
 
 # ---------------------------------------------------------------------------
@@ -152,8 +170,24 @@ function _read_5d_at_time(ds, var::AbstractString, time_idx::Int)
     return Float64.(coalesce.(raw, NaN))
 end
 
+function _surface_aligned_common_levels(at_top_to_surface::Array{Float64, 4},
+                                        gc_surface_to_top::Array{Float64, 4},
+                                        label_at::AbstractString,
+                                        label_gc::AbstractString)
+    nz = min(size(at_top_to_surface, 4), size(gc_surface_to_top, 4))
+    key = (size(at_top_to_surface, 4), size(gc_surface_to_top, 4))
+    if !(key in _WARNED_VERTICAL_MISMATCH)
+        push!(_WARNED_VERTICAL_MISMATCH, key)
+        @warn "Vertical level mismatch; comparing common surface-aligned levels" label_at size_at=size(at_top_to_surface) label_gc size_gc=size(gc_surface_to_top) common_levels=nz
+    end
+    at_cmp = at_top_to_surface[:, :, :, (end - nz + 1):end]
+    gc_surface_subset = gc_surface_to_top[:, :, :, 1:nz]
+    gc_cmp = gc_surface_subset[:, :, :, nz:-1:1]
+    return at_cmp, gc_cmp
+end
+
 # Global area- and mass-weighted metrics across all (panel, i, j, lev)
-# cells. Cell mass weight is `air_mass[panel][i, j, k]` so the metric
+# cells. Cell mass weight is `air_mass[i, j, panel, k]` so the metric
 # represents an atmospheric-mass-weighted error in the species
 # mixing ratio. Falls back to area-only weighting when `air_mass`
 # is unavailable.
@@ -177,7 +211,7 @@ function _vmr_metrics(at::Array{Float64, 4}, gc::Array{Float64, 4},
     @inbounds for k in 1:nz, p in 1:6, j in 1:ny, i in 1:nx
         a = at[i, j, p, k]; g = gc[i, j, p, k]
         (isnan(a) || isnan(g)) && continue
-        w = cell_areas[p][i, j] * (air_mass === nothing ? 1.0 : air_mass[i, j, p, k])
+        w = air_mass === nothing ? cell_areas[p][i, j] : air_mass[i, j, p, k]
         w > 0 || continue
         d = a - g
         w_sum   += w
@@ -192,7 +226,7 @@ function _vmr_metrics(at::Array{Float64, 4}, gc::Array{Float64, 4},
     end
 
     w_sum > 0 || return (rms = NaN, bias = NaN, correlation = NaN,
-                         column_burden_at = NaN, column_burden_gc = NaN,
+                         mean_vmr_at = NaN, mean_vmr_gc = NaN,
                          n_valid = 0)
     mean_at = sum_at / w_sum
     mean_gc = sum_gc / w_sum
@@ -204,15 +238,30 @@ function _vmr_metrics(at::Array{Float64, 4}, gc::Array{Float64, 4},
     return (rms = sqrt(sq_sum / w_sum),
             bias = diff_sum / w_sum,
             correlation = correlation,
-            column_burden_at = mean_at,
-            column_burden_gc = mean_gc,
+            mean_vmr_at = mean_at,
+            mean_vmr_gc = mean_gc,
             n_valid = n_valid)
+end
+
+function _global_species_mass_kg(vmr::Array{Float64, 4},
+                                 dry_air_mass::Array{Float64, 4},
+                                 tracer::Symbol)
+    @assert size(vmr) == size(dry_air_mass)
+    molar_mass = getfield(TRACER_MOLAR_MASS_KG_MOL, tracer)
+    total = 0.0
+    @inbounds for idx in eachindex(vmr, dry_air_mass)
+        q = vmr[idx]
+        m_air = dry_air_mass[idx]
+        (isnan(q) || isnan(m_air) || m_air <= 0) && continue
+        total += q * m_air * molar_mass / M_DRY_AIR_KG_MOL
+    end
+    return total
 end
 
 # Latitude-binned surface-level bias + RMS. Returns (bin_centers,
 # bias_per_bin, rms_per_bin). 10° bins, -90 to 90.
 function _surface_lat_binning(at::Array{Float64, 4}, gc::Array{Float64, 4},
-                               mesh::CubedSphereMesh,
+                               lat_panels::NTuple{6, Matrix{Float64}},
                                cell_areas::NTuple{6, Matrix{Float64}})
     nx, ny, nf, nz = size(at)
     n_bins = 18
@@ -222,7 +271,7 @@ function _surface_lat_binning(at::Array{Float64, 4}, gc::Array{Float64, 4},
     sum_d2 = zeros(n_bins)
 
     for p in 1:6
-        lons, lats = panel_cell_center_lonlat(mesh, p)
+        lats = lat_panels[p]
         for j in 1:ny, i in 1:nx
             lat = Float64(lats[i, j])
             bin = clamp(1 + Int(floor((lat + 90.0) / 10.0)), 1, n_bins)
@@ -265,7 +314,7 @@ function main(args = ARGS)
     Nc = ds_at.dim["Xdim"]
     Nz = ds_at.dim["lev"]
     @info @sprintf("C%d grid, %d levels", Nc, Nz)
-    weights = _build_cell_weights(Nc)
+    weights = _build_cell_weights(ds_at)
 
     # Per-tracer metric accumulators. One row per matched timestamp.
     tracer_keys = keys(TRACER_MAP)
@@ -274,8 +323,11 @@ function main(args = ARGS)
         :rms => fill(NaN, n_times),
         :bias => fill(NaN, n_times),
         :correlation => fill(NaN, n_times),
-        :column_burden_at => fill(NaN, n_times),
-        :column_burden_gc => fill(NaN, n_times),
+        :mean_vmr_at => fill(NaN, n_times),
+        :mean_vmr_gc => fill(NaN, n_times),
+        :species_mass_at_kg => fill(NaN, n_times),
+        :species_mass_gc_kg => fill(NaN, n_times),
+        :species_mass_ratio_at_over_gc => fill(NaN, n_times),
     ) for name in tracer_keys)
     lat_bin_centers = collect(-85.0:10.0:85.0)
     n_lat_bins = length(lat_bin_centers)
@@ -288,6 +340,8 @@ function main(args = ARGS)
         air_mass = haskey(ds_at, "air_mass") ?
             _read_5d_at_time(ds_at, "air_mass", p.at_index) : nothing
         NCDataset(p.gc_path, "r") do ds_gc
+            gc_air_mass_surface_to_top = haskey(ds_gc, "Met_AD") ?
+                Float64.(coalesce.(ds_gc["Met_AD"][:, :, :, :, 1], NaN)) : nothing
             for at_sym in tracer_keys
                 at_name = String(at_sym)
                 gc_name = String(getfield(TRACER_MAP, at_sym))
@@ -303,15 +357,30 @@ function main(args = ARGS)
                 # GC files have time = 1; squeeze to 4D.
                 gc_raw = ds_gc[gc_name][:, :, :, :, 1]
                 gc_field = Float64.(coalesce.(gc_raw, NaN))
-                m = _vmr_metrics(at_field, gc_field,
-                                  weights.cell_areas, air_mass)
+                at_cmp, gc_cmp = _surface_aligned_common_levels(
+                    at_field, gc_field, at_name, gc_name)
+                mass_cmp = air_mass === nothing ? nothing :
+                    air_mass[:, :, :, (end - size(at_cmp, 4) + 1):end]
+                gc_mass_cmp = gc_air_mass_surface_to_top === nothing ? nothing :
+                    _surface_aligned_common_levels(at_field, gc_air_mass_surface_to_top,
+                                                   "air_mass", "Met_AD")[2]
+
+                m = _vmr_metrics(at_cmp, gc_cmp, weights.cell_areas, mass_cmp)
                 metrics[at_sym][:rms][t_idx]         = m.rms
                 metrics[at_sym][:bias][t_idx]        = m.bias
                 metrics[at_sym][:correlation][t_idx] = m.correlation
-                metrics[at_sym][:column_burden_at][t_idx] = m.column_burden_at
-                metrics[at_sym][:column_burden_gc][t_idx] = m.column_burden_gc
-                lat = _surface_lat_binning(at_field, gc_field,
-                                            weights.mesh, weights.cell_areas)
+                metrics[at_sym][:mean_vmr_at][t_idx] = m.mean_vmr_at
+                metrics[at_sym][:mean_vmr_gc][t_idx] = m.mean_vmr_gc
+                if mass_cmp !== nothing && gc_mass_cmp !== nothing
+                    mass_at = _global_species_mass_kg(at_cmp, mass_cmp, at_sym)
+                    mass_gc = _global_species_mass_kg(gc_cmp, gc_mass_cmp, at_sym)
+                    metrics[at_sym][:species_mass_at_kg][t_idx] = mass_at
+                    metrics[at_sym][:species_mass_gc_kg][t_idx] = mass_gc
+                    metrics[at_sym][:species_mass_ratio_at_over_gc][t_idx] =
+                        mass_gc > 0 ? mass_at / mass_gc : NaN
+                end
+                lat = _surface_lat_binning(at_cmp, gc_cmp,
+                                            weights.lats, weights.cell_areas)
                 lat_bias[at_sym][:, t_idx] = lat.bias
                 lat_rms[at_sym][:, t_idx]  = lat.rms
             end
@@ -337,6 +406,13 @@ function main(args = ARGS)
                 vname = "$(at_sym)_$key"
                 vv = NCDatasets.defVar(ds, vname, Float64, ("time",))
                 vv[:] = vec
+                if key in (:rms, :bias, :mean_vmr_at, :mean_vmr_gc)
+                    vv.attrib["units"] = "mol mol-1 dry"
+                elseif key in (:species_mass_at_kg, :species_mass_gc_kg)
+                    vv.attrib["units"] = "kg"
+                elseif key === :correlation || key === :species_mass_ratio_at_over_gc
+                    vv.attrib["units"] = "1"
+                end
             end
             vv = NCDatasets.defVar(ds, "$(at_sym)_surface_lat_bias",
                                     Float64, ("lat_bin", "time"))
@@ -349,25 +425,30 @@ function main(args = ARGS)
         ds.attrib["at_file"] = cli.at
         ds.attrib["gc_directory"] = cli.gc
         ds.attrib["run_start"] = string(run_start)
+        ds.attrib["mixing_ratio_basis"] = "dry mole fraction (mol mol-1 dry)"
+        ds.attrib["vertical_alignment"] = "GEOS-Chem surface-to-top L72 is subset to the common surface levels and reversed to AtmosTransport top-to-surface order before comparison."
+        ds.attrib["species_mass_formula"] = "sum(dry_vmr * dry_air_mass * species_molar_mass / dry_air_molar_mass)"
     end
 
     # ── Console summary ─────────────────────────────────────────────
     println()
-    println("==== Monthly summary (mass-weighted, all levels) ====")
-    @printf("%-15s %12s %12s %12s\n", "tracer", "rms", "bias", "mean_corr")
+    println("==== Summary (mass-weighted dry VMR, common surface-aligned levels) ====")
+    @printf("%-15s %12s %12s %12s %12s\n", "tracer", "rms", "bias", "mean_corr", "mass_ratio")
     for at_sym in tracer_keys
         m = metrics[at_sym]
         valid_rms = filter(!isnan, m[:rms])
         valid_bias = filter(!isnan, m[:bias])
         valid_corr = filter(!isnan, m[:correlation])
+        valid_mass_ratio = filter(!isnan, m[:species_mass_ratio_at_over_gc])
         if isempty(valid_rms)
-            @printf("%-15s %12s %12s %12s\n", String(at_sym), "—", "—", "—")
+            @printf("%-15s %12s %12s %12s %12s\n", String(at_sym), "—", "—", "—", "—")
             continue
         end
-        @printf("%-15s %12.4g %12.4g %12.4f\n", String(at_sym),
+        @printf("%-15s %12.4g %12.4g %12.4f %12.6f\n", String(at_sym),
                 sqrt(sum(abs2, valid_rms) / length(valid_rms)),
                 sum(valid_bias) / length(valid_bias),
-                sum(valid_corr) / length(valid_corr))
+                sum(valid_corr) / length(valid_corr),
+                isempty(valid_mass_ratio) ? NaN : sum(valid_mass_ratio) / length(valid_mass_ratio))
     end
     println()
     @info "Metrics written to $(cli.out)"

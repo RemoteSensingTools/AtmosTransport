@@ -1,0 +1,85 @@
+# ===========================================================================
+# Three-day smoke for the full CATRINE 4-tracer GEOS-IT C180 run,
+# using the closest available GCHP-like diffusion and convection.
+#
+# Uses the canonical full-month Dec 2021 C180 transport binaries under
+# ~/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32,
+# but only runs Dec 1-3. The tracer/physics setup mirrors
+# catrine_geosit_c180_v4_fullphys_dec2021.toml.
+#
+# Runner:
+#   julia --project=. scripts/run_transport.jl \
+#       config/runs/catrine_geosit_c180_v4_fullphys_dec2021_smoke3d.toml
+#
+# Comparison:
+#   julia --project=. scripts/diagnostics/compare_at_vs_geoschem_c180.jl \
+#       --at ~/data/AtmosTransport/output/catrine_geosit_c180_v4_fullphys_dec2021_smoke3d.nc \
+#       --gc ~/data/AtmosTransport/catrine-geoschem-runs \
+#       --out ~/data/AtmosTransport/output/catrine_geosit_c180_v4_fullphys_dec2021_smoke3d_metrics.nc \
+#       --plots ~/data/AtmosTransport/output/catrine_geosit_c180_v4_fullphys_dec2021_smoke3d_plots
+# ===========================================================================
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32"
+start_date   = "2021-12-01"
+end_date     = "2021-12-03"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "ppm"
+
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"
+  [tracers.co2_natural.surface_flux]
+  kind = "lmdz_co2"
+
+[tracers.co2_fossil]
+  [tracers.co2_fossil.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.co2_fossil.surface_flux]
+  kind = "gridfed_fossil_co2"
+  time_index = 12
+
+[tracers.sf6]
+  [tracers.sf6.init]
+  kind = "file"
+  file = "~/data/AtmosTransport/catrine/InitialConditions/startSF6_202112010000.nc"
+  variable = "SF6"
+  [tracers.sf6.surface_flux]
+  kind = "edgar_sf6"
+
+[tracers.rn222]
+  [tracers.rn222.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.rn222.surface_flux]
+  kind = "zhang_rn222"
+  time_index = 12
+
+[diffusion]
+kind = "geoschem_holtslag_boville_vdiff"
+surface_flux_boundary = true
+
+[convection]
+kind = "cmfmc_matrix"
+tile_workspace_gib = 0.25
+use_collab_lu = true
+lmax_conv = 0
+
+[chemistry]
+kind = "decay"
+  [chemistry.half_lives_seconds]
+  rn222 = 330350.4
+
+[output]
+snapshot_interval_hours = 3
+snapshot_file = "~/data/AtmosTransport/output/catrine_geosit_c180_v4_fullphys_gchp_dec2021_smoke3d.nc"

@@ -52,6 +52,68 @@ is a follow-on commit.
 
 ## Comparison protocol
 
+### Full-physics smoke run vs GEOS-Chem
+
+For the C180 GEOS-IT full-physics smoke run, use:
+
+```bash
+julia --project=. scripts/run_transport.jl \
+  config/runs/catrine_geosit_c180_v4_fullphys_dec2021_smoke3d.toml
+
+julia --project=. scripts/diagnostics/compare_at_vs_geoschem_c180.jl \
+  --at  ~/data/AtmosTransport/output/catrine_geosit_c180_v4_fullphys_gchp_dec2021_smoke3d.nc \
+  --gc  ~/data/AtmosTransport/catrine-geoschem-runs \
+  --out ~/data/AtmosTransport/output/catrine_geosit_c180_v4_fullphys_gchp_dec2021_smoke3d_metrics.nc
+```
+
+The diagnostics compare dry mole fraction (`mol mol-1 dry`) for
+`co2_natural`, `co2_fossil`, `sf6`, and `rn222`. AtmosTransport snapshots
+store levels top-to-surface; GEOS-Chem CATRINE files store L72
+surface-to-top, so the comparison script takes the common surface-aligned
+levels and reverses the GEOS-Chem vertical axis before computing metrics.
+
+The runtime state stores dry mole fraction times dry-air mass. Physical
+surface inventories are loaded and checked as kg species/s, then converted to
+the model storage basis before injection:
+
+```text
+model_storage_rate = species_mass_rate * dry_air_molar_mass / species_molar_mass
+```
+
+This conversion is required for the per-layer snapshot fields to remain dry
+mole fractions when `tracer_storage / dry_air_mass` is written.
+
+Use recomputed species mass for column/global burden checks:
+
+```text
+species_mass = sum(dry_vmr * dry_air_mass * species_molar_mass / dry_air_molar_mass)
+```
+
+Do not use GEOS-Chem `ColumnMass_FossilCO2` as the fossil CO2 truth field for
+this comparison. In the Dec 2021 CATRINE output it has a constant semantic
+bias relative to the profile-derived mass from `SpeciesConcVV_FossilCO2` and
+`Met_AD`.
+
+Flux totals should be compared on the same calendar basis as the source
+inventory. GridFED fossil CO2 monthly fields are `kgCO2/month/m2`; December
+2021 must be divided by `31 * 86400` seconds, not an average month length.
+With the CATRINE C180 areas this gives about `1.2294e6 kg/s`, matching the
+embedded GEOS-Chem fossil CO2 surface-flux total.
+
+The map/curtain animation can be regenerated with:
+
+```bash
+python scripts/visualization/animate_catrine_map_curtains.py \
+  --at ~/data/AtmosTransport/output/catrine_geosit_c180_v4_fullphys_gchp_dec2021_smoke3d.nc \
+  --gc ~/data/AtmosTransport/catrine-geoschem-runs \
+  --species co2_fossil
+```
+
+It uses a Robinson world map with C180 cell corners, three continuous
+longitude-pressure curtains at 40 N, the equator, and 40 S, linear pressure
+with high pressure at the bottom, and symlog concentration colors. Defaults
+are 0-8 ppm for the column maps and 0-40 ppm for the curtains.
+
 ### Snapshot comparison (today)
 
 For every 3-hourly Catrine snapshot in Dec 2021:

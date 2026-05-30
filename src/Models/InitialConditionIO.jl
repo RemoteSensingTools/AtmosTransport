@@ -1064,9 +1064,9 @@ end
 #
 # Owns the file-based surface-flux path: NetCDF load + LL→{LL,RG,CS}
 # conservative regrid + area integration. Every builder returns
-# `SurfaceFluxSource` with cell_mass_rate in **kg/s per cell** (not
-# kg/m²/s) — the contract required by
-# `src/Operators/SurfaceFlux/sources.jl:12`.
+# `SurfaceFluxSource` with cell_mass_rate in model-storage units per cell per
+# second. File inventories are physical kg species/s; the builders convert
+# them to dry-air-equivalent storage for the dry-VMR transport state.
 #
 # Hoisted verbatim (modulo renames for dependency consolidation) from the
 # historical LL/RG runner:
@@ -1082,6 +1082,54 @@ end
 # ===========================================================================
 
 const SECONDS_PER_MONTH = 365.25 * 86400 / 12
+const _DAYS_PER_MONTH_COMMON = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+const _DRY_AIR_MOLAR_MASS_KG_MOL = 28.96546e-3
+const _KNOWN_TRACER_MOLAR_MASS_KG_MOL = Dict{Symbol, Float64}(
+    :co2         => 44.0095e-3,
+    :co2_natural => 44.0095e-3,
+    :co2_fossil  => 44.0095e-3,
+    :fossil_co2  => 44.0095e-3,
+    :sf6         => 146.055e-3,
+    :rn222       => 222.0e-3,
+)
+
+_is_leap_year(year::Integer) =
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+
+function _days_in_month(year::Integer, month::Integer)
+    1 <= month <= 12 || throw(ArgumentError("month must be in 1:12, got $month"))
+    month == 2 && _is_leap_year(year) && return 29
+    return _DAYS_PER_MONTH_COMMON[month]
+end
+
+function _infer_year_from_path(path::AbstractString)
+    m = match(r"(?:^|[^\d])((?:19|20)\d{2})(?:[^\d]|$)", basename(path))
+    return m === nothing ? nothing : parse(Int, m.captures[1])
+end
+
+function _infer_year_from_time_units(ds)
+    haskey(ds, "time") || return nothing
+    units = String(get(ds["time"].attrib, "units", ""))
+    m = match(r"((?:19|20)\d{2})-\d{1,2}-\d{1,2}", units)
+    return m === nothing ? nothing : parse(Int, m.captures[1])
+end
+
+function _surface_flux_year(cfg, file::AbstractString, ds)
+    haskey(cfg, "year") && return Int(cfg["year"])
+    year = _infer_year_from_time_units(ds)
+    year === nothing || return year
+    year = _infer_year_from_path(file)
+    year === nothing || return year
+    throw(ArgumentError(
+        "surface_flux.kind=gridfed_fossil_co2 with kgCO2/month/m2 units " *
+        "requires a calendar year to convert monthly totals to per-second " *
+        "rates. Set surface_flux.year or use a filename containing YYYY."))
+end
+
+function _gridfed_month_seconds(cfg, file::AbstractString, ds, month::Integer)
+    year = _surface_flux_year(cfg, file, ds)
+    return Float64(_days_in_month(year, month)) * 86400.0
+end
 
 const _REGRID_CACHE_DIR = expanduser("~/.cache/AtmosTransport/cr_regridding")
 
@@ -1102,6 +1150,29 @@ struct FileSurfaceFluxField{FT}
 end
 
 @inline _surface_flux_kind(cfg) = Symbol(lowercase(String(get(cfg, "kind", "none"))))
+
+function _tracer_molar_mass_kg_mol(tracer_name::Symbol, cfg)
+    if haskey(cfg, "molar_mass_kg_mol")
+        molar_mass = Float64(cfg["molar_mass_kg_mol"])
+        molar_mass > 0 || throw(ArgumentError(
+            "surface_flux.molar_mass_kg_mol for $(tracer_name) must be positive"))
+        return molar_mass
+    end
+    haskey(_KNOWN_TRACER_MOLAR_MASS_KG_MOL, tracer_name) &&
+        return _KNOWN_TRACER_MOLAR_MASS_KG_MOL[tracer_name]
+    throw(ArgumentError(
+        "surface flux for tracer $(tracer_name) is in physical kg species/s, " *
+        "but the transport state stores dry VMR times dry-air mass. Set " *
+        "surface_flux.molar_mass_kg_mol so the source can be converted to " *
+        "model storage units."))
+end
+
+function _surface_flux_storage_scale(tracer_name::Symbol, cfg)
+    # Surface inventories are physical kg species/s. The prognostic tracer
+    # storage is dry VMR * dry-air mass, so source rates must be converted to
+    # dry-air-equivalent storage before being applied by the surface kernels.
+    return _DRY_AIR_MOLAR_MASS_KG_MOL / _tracer_molar_mass_kg_mol(tracer_name, cfg)
+end
 
 # Derive per-cell area `(Nx, Ny)` on a regular lat/lon grid from the
 # coordinate vectors. Uses the spherical-cap formula
@@ -1232,7 +1303,8 @@ function _load_file_surface_flux_field(cfg, ::Type{FT}) where FT
 
         units_norm = _normalize_units_string(get(raw_var.attrib, "units", ""))
         if kind === :gridfed_fossil_co2 || units_norm == "kgco2/month/m2"
-            raw ./= FT(SECONDS_PER_MONTH)
+            month_seconds = _gridfed_month_seconds(cfg, file, ds, time_index)
+            raw ./= FT(month_seconds)
         elseif kind === :edgar_sf6 || units_norm == "tonnes"
             # EDGAR v8 stores per-cell annual mass (tonnes). Convert to
             # per-area per-second flux: kg/m²/s = (1000 · tonnes) /
@@ -1328,6 +1400,7 @@ function build_surface_flux_source(grid::AtmosGrid{<:LatLonMesh},
 
     if method === :conservative
         rate_flat = _conservative_surface_flux_rate(source, mesh, FT)
+        rate_flat .*= FT(_surface_flux_storage_scale(tracer_name, cfg))
         rate = reshape(rate_flat, nx(mesh), ny(mesh))
     else
         # Legacy bilinear sampling
@@ -1342,6 +1415,7 @@ function build_surface_flux_source(grid::AtmosGrid{<:LatLonMesh},
             end
         end
         _renormalize_surface_flux_rate!(rate, source)
+        rate .*= FT(_surface_flux_storage_scale(tracer_name, cfg))
     end
 
     return SurfaceFluxSource(tracer_name, rate)
@@ -1358,6 +1432,7 @@ function build_surface_flux_source(grid::AtmosGrid{<:ReducedGaussianMesh},
 
     if method === :conservative
         rate = _conservative_surface_flux_rate(source, mesh, FT)
+        rate .*= FT(_surface_flux_storage_scale(tracer_name, cfg))
     else
         # Legacy bilinear sampling
         rate = Array{FT}(undef, ncells(mesh))
@@ -1371,6 +1446,7 @@ function build_surface_flux_source(grid::AtmosGrid{<:ReducedGaussianMesh},
             end
         end
         _renormalize_surface_flux_rate!(rate, source)
+        rate .*= FT(_surface_flux_storage_scale(tracer_name, cfg))
     end
 
     return SurfaceFluxSource(tracer_name, rate)
@@ -1382,9 +1458,9 @@ end
 
 Plan 40 Commit 1d: CS surface-flux builder. Conservatively LL→CS
 regrids the 2-D flux density (kg/m²/s) onto the 6 CS panel cell
-centres, then multiplies by each panel's cell area to yield per-cell
-kg/s — the contract `SurfaceFluxSource` expects
-(`src/Operators/SurfaceFlux/sources.jl:12`). Returns a
+centres, multiplies by each panel's cell area to yield per-cell kg
+species/s, then converts that physical rate to the model storage basis.
+Returns a
 `SurfaceFluxSource` whose `cell_mass_rate` is an `NTuple{6, Matrix{FT}}`
 of interior-only `(Nc, Nc)` panels.
 
@@ -1410,6 +1486,7 @@ function build_surface_flux_source(grid::AtmosGrid{<:CubedSphereMesh},
     # (regridder.dst_areas × regridded flux density), so the panel unpack
     # only needs to reshape the flat `6*Nc^2` vector into 6 × (Nc, Nc).
     rate_flat = _conservative_surface_flux_rate(source, mesh, FT)
+    rate_flat .*= FT(_surface_flux_storage_scale(tracer_name, cfg))
     length(rate_flat) == CS_PANEL_COUNT * Nc * Nc || throw(DimensionMismatch(
         "CS surface-flux conservative regrid returned $(length(rate_flat)) cells; expected $(CS_PANEL_COUNT * Nc * Nc)"))
 

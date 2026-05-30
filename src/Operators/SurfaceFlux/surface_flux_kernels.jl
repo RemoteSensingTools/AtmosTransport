@@ -15,10 +15,11 @@ launch overhead is negligible relative to the kernel's O(Nx · Ny) work.
 
 # Unit convention
 
-`rate[i, j]` is in kg/s per cell (plan 17 Decision 1 — already area-
-integrated). `dt` is in seconds. Result is added mass in kg. The
+`rate[i, j]` is a model-storage rate per cell (plan 17 Decision 1 —
+already area-integrated). `dt` is in seconds. Physical kg-species/s file
+sources are converted to this storage basis by the source builder. The
 kernel does NOT multiply by cell area; the caller is expected to have
-pre-integrated the flux into per-cell rate.
+pre-integrated the flux into a per-cell rate.
 
 # Surface layer convention
 

@@ -833,7 +833,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
                          binary_count = length(binary_paths),
                          snapshot_file = _output_display_path(output_spec))
     for source in surface_sources
-        @info @sprintf("Surface source %s total mass rate: %.12e kg/s",
+        @info @sprintf("Surface source %s total model-storage rate: %.12e kg_air_equiv/s",
                        String(source.tracer_name),
                        Float64(sum(source.cell_mass_rate)))
     end
@@ -1129,7 +1129,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
         total_rate = source.cell_mass_rate isa Tuple ?
                      Float64(sum(sum, source.cell_mass_rate)) :
                      Float64(sum(source.cell_mass_rate))
-        @info @sprintf("Surface source %s total mass rate: %.12e kg/s",
+        @info @sprintf("Surface source %s total model-storage rate: %.12e kg_air_equiv/s",
                        String(source.tracer_name), total_rate)
     end
 

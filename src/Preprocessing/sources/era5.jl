@@ -1016,6 +1016,135 @@ orientation (k=1=TOA, k=Nz=surface). All four fields are layer-center
 fluxes in kg / m² / s, derived from ECMWF UDMF / DDMF / UDRF / DDRF via
 `ec2tm_from_rates!`.
 """
+# ===========================================================================
+# ERA5 surface PBL fields (for runtime vertical diffusion / Kz).
+#
+# The ERA5 single-level surface GRIB is a *regular* lat-lon grid
+# (0.25°, 1440×721), NOT the N320 reduced-Gaussian grid of the core/
+# convection streams — so these fields are read here and regridded to the
+# C180 target with a *separate* regular-ll → CS regridder (built in
+# `era5_n320_regrid.jl`), exactly as the LL→CS binary path does.
+#
+# Conventions (mirroring `era5_surface_reader.jl`, the NetCDF LatLon path):
+#   pblh ← blh   (m, as-is)
+#   ustar ← zust (m/s friction velocity, as-is)
+#   hflux ← -sshf/3600  (ERA5 sshf is accumulated J/m² over the hour, sign
+#                        flipped to upward-positive W/m²)
+#   t2m  ← 2t    (K, as-is)
+# Orientation is normalized to the LatLonMesh convention: latitude S→N,
+# longitude centered on [-180, 180).
+#
+# NOTE: GRIB.jl segfaults on `msg["units"]` for this file's accumulated
+# fields, so the reader keys only on `shortName` + `values`.
+# ===========================================================================
+
+# ERA5 GRIB shortName → ERA5N320SurfaceFields slot. ("2t" is not a valid
+# NamedTuple key, so a String→Symbol map is used.)
+const _ERA5_N320_SURFACE_SHORT_NAMES = Dict{String, Symbol}(
+    "blh"  => :pblh,
+    "zust" => :ustar,
+    "sshf" => :hflux,
+    "2t"   => :t2m,
+)
+
+"""
+    ERA5N320SurfaceFields{FT}
+
+Surface PBL fields on the regular-lat-lon ERA5 single-level grid
+(`Ni`×`Nj`), already normalized to the transport convention (lat S→N,
+lon centered) so they feed straight into the regular-ll → CS regridder.
+"""
+struct ERA5N320SurfaceFields{FT <: AbstractFloat}
+    pblh  :: Matrix{FT}   # (Ni, Nj)
+    ustar :: Matrix{FT}
+    hflux :: Matrix{FT}
+    t2m   :: Matrix{FT}
+    Ni    :: Int
+    Nj    :: Int
+end
+
+function allocate_era5_n320_surface_fields(Ni::Integer, Nj::Integer, ::Type{FT}) where FT
+    Ni >= 1 && Nj >= 1 || throw(ArgumentError("Ni,Nj must be ≥ 1, got $Ni,$Nj"))
+    z() = zeros(FT, Int(Ni), Int(Nj))
+    return ERA5N320SurfaceFields{FT}(z(), z(), z(), z(), Int(Ni), Int(Nj))
+end
+
+"""
+    era5_surface_grib_dims(surface_path) -> (Ni, Nj)
+
+Probe the regular-ll surface GRIB for its grid dimensions (read from the
+first message). Used to size the field buffers + regridder once per run.
+"""
+function era5_surface_grib_dims(surface_path::AbstractString)
+    Ni = 0; Nj = 0
+    GribFile(surface_path) do gf
+        for msg in gf
+            Ni = Int(msg["Ni"]); Nj = Int(msg["Nj"])
+            break
+        end
+    end
+    Ni >= 1 && Nj >= 1 ||
+        error("ERA5 surface GRIB $(surface_path): could not read Ni/Nj")
+    return (Ni, Nj)
+end
+
+"""
+    read_era5_n320_surface_window!(fields, surface_path, date, hour)
+
+Read the four PBL fields for `(date, hour)` from the regular-ll surface
+GRIB into `fields`, applying the unit/sign conventions above and
+normalizing orientation (lat S→N, lon centered). Analysis fields are keyed
+by `dataDate`/`dataTime`; no forecast-step addressing (unlike convection).
+"""
+function read_era5_n320_surface_window!(fields::ERA5N320SurfaceFields{FT},
+                                         surface_path::AbstractString,
+                                         date::Date,
+                                         hour::Integer) where FT
+    0 <= hour <= 23 || throw(ArgumentError("hour must be in 0..23, got $hour"))
+    expected_date = parse(Int, Dates.format(date, "yyyymmdd"))
+    expected_time = Int(hour) * 100
+    Ni, Nj = fields.Ni, fields.Nj
+    slot = (pblh = fields.pblh, ustar = fields.ustar,
+            hflux = fields.hflux, t2m = fields.t2m)
+    have = Dict(:pblh => false, :ustar => false, :hflux => false, :t2m => false)
+    # Native regular-ll longitudes 0 .. (360 - dλ), ascending. Used by
+    # `_normalize_lon_to_centered` to reorder onto [-180, 180).
+    dλ = 360.0 / Ni
+    lons_native = collect(0.0:dλ:(360.0 - dλ/2))
+
+    GribFile(surface_path) do gf
+        for msg in gf
+            Int(msg["dataDate"]) == expected_date || continue
+            Int(msg["dataTime"]) == expected_time || continue
+            sn = String(msg["shortName"])
+            field_slot = get(_ERA5_N320_SURFACE_SHORT_NAMES, sn, nothing)
+            field_slot === nothing && continue
+            have[field_slot] && continue   # first match wins
+
+            v = msg["values"]
+            length(v) == Ni * Nj ||
+                throw(DimensionMismatch("ERA5 surface $sn has $(length(v)) values, " *
+                                        "expected Ni*Nj = $(Ni*Nj)"))
+            # reshape: lon fastest, lat from +90 → -90 (N→S)
+            M = reshape(Float64.(v), Ni, Nj)
+            M = M[:, end:-1:1]                            # lat → S→N
+            Mc = _normalize_lon_to_centered(reshape(M, Ni, Nj, 1), lons_native)[:, :, 1]
+            if field_slot === :hflux
+                # ERA5 sshf: accumulated J/m² over the hour → upward-positive W/m².
+                @. Mc = -Mc / 3600
+            end
+            getproperty(slot, field_slot) .= FT.(Mc)
+            have[field_slot] = true
+        end
+    end
+
+    for (name, got) in have
+        got || error("ERA5 N320 surface read: $(uppercase(string(name))) missing for " *
+                     "$(date) hour $(hour) in $(surface_path)")
+    end
+    return fields
+end
+
 struct ERA5N320TM5ConvectionFields{FT <: AbstractFloat}
     entu :: Matrix{FT}    # (n_cells, Nz)
     detu :: Matrix{FT}

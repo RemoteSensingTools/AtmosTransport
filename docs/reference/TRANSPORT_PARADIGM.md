@@ -75,6 +75,32 @@ required_steps = ceil(2 * (out_x + out_y + out_z) / (m * cfl_target))
 This is a conservative proxy for the six half-sweep palindrome. Strict replay
 verification remains the contract that proves a written window is acceptable.
 
+### The substep schedule is a per-source-path contract
+
+**Every preprocessor source path must bake an adaptive per-window substep
+schedule so the runtime is substep-free.** The number of substeps a window
+needs is data-dependent (a deep convective window can need tens of substeps for
+vertical-flux CFL while a calm one needs one), so a single fixed count cannot be
+correct across a day.
+
+- The GEOS native path (`cubed_sphere_geos.jl`) does this via
+  `SubstepSchedulePolicy` — `adaptive_substeps`, `substep_cfl_target`,
+  `min/max_steps_per_window` — tightening per window against the positivity
+  gate.
+- The write-time positivity gate (`verify_substep_positivity_*`,
+  `[numerics].require_substep_positivity = true`) **enforces** this contract: a
+  window whose stored fluxes exceed the CFL limit at the recorded
+  `steps_per_window` is rejected. Setting `require_substep_positivity = false`
+  ships CFL-violating fluxes — it is a band-aid, never the fix.
+
+**Known gap (2026-05-30):** the ERA5 N320 → C180 path (`era5_n320_regrid.jl`)
+currently uses a *fixed* `steps_per_window` (the entrypoint resolves
+`min_steps_per_window = 1`, so it can bake one substep/window) and does not wire
+the adaptive policy. Full-day N320 binaries can therefore trip the positivity
+gate (e.g. Dec-1 win 22, vertical-flux ratio ≈ 33). The correct fix is to route
+N320 through the unified `process_day` + `SubstepSchedulePolicy`, not to disable
+the gate.
+
 ## Physics Placement
 
 Runtime composition is:

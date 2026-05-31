@@ -87,7 +87,7 @@ end
 
 """
     fill_tm5_kz_payload!(kz_c180, c180_fields, hflux, lhflux, ustar,
-                         A, B, Nc, c, scratches) -> nothing
+                         A, B, Nc, c, scratches) -> (; entr_fallback, kvh_floored, max_kz, total_columns)
 
 Fill the per-panel layer-centre eddy diffusivity `kz_c180` (the binary `:kz`
 payload) by running the TM5 boundary-layer diffusion column kernel on every
@@ -106,6 +106,9 @@ function fill_tm5_kz_payload!(kz_c180, c180_fields, hflux, lhflux, ustar,
                               A, B, Nc::Int,
                               c::BLDiffConstants{FT},
                               scratches::Vector{BLDiffColumnScratch{FT}}) where {FT}
+    for s in scratches
+        _reset!(s.diag)
+    end
     Threads.@threads :static for p in 1:6
         scratch = scratches[Threads.threadid()]
         kp, tp, qp = kz_c180[p], c180_fields.t[p], c180_fields.qv[p]
@@ -120,7 +123,14 @@ function fill_tm5_kz_payload!(kz_c180, c180_fields, hflux, lhflux, ustar,
                 A, B, c, scratch)
         end
     end
-    return nothing
+    # Aggregate the per-thread fallback counters into a per-window summary so the
+    # caller can log it (a handful of entrainment skips is expected; a non-zero
+    # `kvh_floored` or a widespread `entr_fallback` is a met problem to inspect).
+    entr = sum(s.diag.entr_fallback for s in scratches)
+    floored = sum(s.diag.kvh_floored for s in scratches)
+    max_kz = maximum(s.diag.max_kz for s in scratches; init = zero(FT))
+    return (; entr_fallback = entr, kvh_floored = floored, max_kz = max_kz,
+            total_columns = 6 * Nc * Nc)
 end
 
 """
@@ -324,9 +334,20 @@ function process_era5_n320_to_cs_day(date::Date,
                                                t = pipe.c180_fields.t, qv = pipe.c180_fields.qv),))
             end
             if do_tm5_diffusion
-                fill_tm5_kz_payload!(kz_c180, pipe.c180_fields,
-                                     surf_hflux, surf_lhflux, surf_ustar,
-                                     vc.A, vc.B, Nc, kz_const, kz_scratch)
+                kzdiag = fill_tm5_kz_payload!(kz_c180, pipe.c180_fields,
+                                              surf_hflux, surf_lhflux, surf_ustar,
+                                              vc.A, vc.B, Nc, kz_const, kz_scratch)
+                # Entrainment fallbacks are expected on a handful of cells; a
+                # non-zero `kvh_floored` (the finite-payload guard) or a large
+                # `entr_fallback` fraction flags a met problem to investigate.
+                if kzdiag.kvh_floored > 0
+                    @warn @sprintf("  Window %2d/%d: :kz output guard floored %d non-finite cell(s) — investigate met input",
+                                   win, nwindow, kzdiag.kvh_floored)
+                elseif kzdiag.entr_fallback > 0
+                    @info @sprintf("  Window %2d/%d: :kz entrainment fallback on %d/%d cell(s) (%.4f%%), max kz=%.1f m²/s",
+                                   win, nwindow, kzdiag.entr_fallback, kzdiag.total_columns,
+                                   100 * kzdiag.entr_fallback / kzdiag.total_columns, kzdiag.max_kz)
+                end
                 extra = merge(extra, (kz = kz_c180,))
             end
             return extra

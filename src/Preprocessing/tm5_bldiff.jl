@@ -86,7 +86,34 @@ Base.@kwdef struct BLDiffConstants{FT <: AbstractFloat}
     kvh_min     :: FT = 0.1
     kv_free_min :: FT = 1.0e-15
     pblh_min    :: FT = 100.0
+    # Validity bounds on the prescribed-entrainment override `K = 0.2·w_heatv/dθv`
+    # at the PBL top. The formula assumes a STABLE cap (dθv/dz > 0); it is applied
+    # only when dθv is meaningfully positive AND the resulting K is finite and
+    # within `[·, kvh_max]`. Outside that envelope (vanishing cap dθv→0 → +Inf;
+    # non-stable cap dθv ≤ 0 → negative; or an absurdly large K) the column keeps
+    # its regular in-PBL mixed-layer diffusivity instead — see the entrainment
+    # branch in `tm5_bldiff_kvh_column!`.
+    dthv_entr_min :: FT = 1.0e-4   # K m⁻¹: floor on a "meaningful" inversion
+    kvh_max       :: FT = 1.0e3    # m² s⁻¹: physical ceiling on a sane diffusivity
 end
+
+"""
+    BLDiffDiag{FT}()
+
+Per-thread counters for the boundary-layer diffusion fallbacks, accumulated by
+[`tm5_bldiff_kvh_column!`] over the columns of one window so the preprocessor can
+log how often (and how hard) the entrainment override was skipped or the output
+guard fired — a few stray cells is expected; widespread fallback means a met
+problem to investigate, not silently fill.
+"""
+mutable struct BLDiffDiag{FT <: AbstractFloat}
+    entr_fallback :: Int   # entrainment override skipped (cap absent/non-stable/absurd)
+    kvh_floored   :: Int   # final output guard tripped (non-finite Kvh → kvh_min)
+    max_kz        :: FT    # max diffusivity written (range sanity check)
+end
+BLDiffDiag{FT}() where {FT} = BLDiffDiag{FT}(0, 0, zero(FT))
+@inline _reset!(d::BLDiffDiag{FT}) where {FT} =
+    (d.entr_fallback = 0; d.kvh_floored = 0; d.max_kz = zero(FT); d)
 
 # TM5's branchless step function `jqif`: 1 if a ≥ b, else 0. Kept as integer
 # masks (rather than `if`s) so the multi-branch diffusivity expressions read the
@@ -136,7 +163,8 @@ function tm5_bldiff_kvh_column!(kvh::AbstractVector{FT},
                                 hflux::FT,
                                 lhflux::FT,
                                 ustar::FT,
-                                c::BLDiffConstants{FT}) where {FT}
+                                c::BLDiffConstants{FT};
+                                diag::Union{Nothing, BLDiffDiag{FT}} = nothing) where {FT}
     Nz = length(T)
     @assert length(kvh) == Nz
     @assert length(p_edge) == Nz + 1 && length(z_edge) == Nz + 1
@@ -275,20 +303,41 @@ function tm5_bldiff_kvh_column!(kvh::AbstractVector{FT},
             below_top = _step(pblh, zc[l]) * _step(zc[l + 1], pblh)
             if below_top == 1
                 dθv = (θv[l + 1] - θv[l]) / (zc[l + 1] - zc[l])
-                # TM5's prescribed entrainment assumes a STABLE cap at the PBL
-                # top (dθv/dz > 0), giving a positive K. On real columns the
-                # straddling interface is occasionally still weakly unstable
-                # (dθv/dz ≤ 0), where the unclamped formula returns a large
-                # NEGATIVE K — anti-diffusion the runtime solve cannot accept
-                # (~0.0003% of cells, down to ~-700 m² s⁻¹ on Dec-2021 N320).
-                # Floor at kvh_min so the entrainment override is never
-                # destabilising; the Fortran tolerates the sign in its own
-                # downstream, we do not.
-                Kvh = max(FT(0.2) * w_heatv / dθv, c.kvh_min)
+                # The prescribed entrainment K = 0.2·w_heatv/dθv assumes a STABLE
+                # cap (dθv/dz > 0). The straddling interface is occasionally
+                # OUTSIDE that validity envelope:
+                #   * dθv/dz ≤ 0 (non-stable / superadiabatic cap) → negative K
+                #     (anti-diffusion the runtime solve cannot accept);
+                #   * dθv/dz → 0 (vanishing inversion) → K → +Inf, or 0/0 → NaN;
+                #   * a tiny-but-positive dθv → finite but absurdly large K.
+                # In every such case the formula is out of bounds, so we KEEP the
+                # column's regular in-PBL mixed-layer diffusivity (continuous, the
+                # right sign/limit of mixing) rather than overriding. The override
+                # is applied only for a meaningfully positive dθv giving a finite,
+                # sane K — then floored at kvh_min. Earlier code wrote the +Inf/NaN
+                # straight into `:kz`, which NaN'd the runtime diffusion (Dec-11
+                # 2021 N320 blew the 14-day run to NaN). Skips are counted (`diag`)
+                # so widespread fallback surfaces as a met problem, not silently.
+                K_entr = FT(0.2) * w_heatv / dθv
+                if dθv > c.dthv_entr_min && isfinite(K_entr) && K_entr <= c.kvh_max
+                    Kvh = max(K_entr, c.kvh_min)
+                else
+                    diag === nothing || (diag.entr_fallback += 1)
+                end
             end
         end
 
-        kvh[l] = Kvh
+        # Final guard: the `:kz` payload MUST be finite — a single non-finite
+        # diffusivity NaN-propagates through the runtime implicit solve. With the
+        # entrainment fix above this should never fire; if it does (an unforeseen
+        # degeneracy) it is counted, not silently absorbed.
+        if isfinite(Kvh)
+            kvh[l] = Kvh
+        else
+            kvh[l] = c.kvh_min
+            diag === nothing || (diag.kvh_floored += 1)
+        end
+        diag === nothing || (diag.max_kz = max(diag.max_kz, kvh[l]))
     end
     kvh[Nz] = zero(FT)
     return pblh
@@ -382,13 +431,14 @@ Base.@kwdef struct BLDiffColumnScratch{FT <: AbstractFloat}
     z_edge :: Vector{FT}     # bottom-up half-level height above surface (Nz+1)
     kvh    :: Vector{FT}     # bottom-up interface diffusivity (Nz)
     dz     :: Vector{FT}     # top-down layer thickness (Nz)
+    diag   :: BLDiffDiag{FT} # per-thread fallback counters (reused across columns)
 end
 
 # Keyword construction (field order can change without breaking the sizing call).
 BLDiffColumnScratch{FT}(Nz::Integer) where {FT} = BLDiffColumnScratch{FT}(
     T = zeros(FT, Nz), q = zeros(FT, Nz), u = zeros(FT, Nz), v = zeros(FT, Nz),
     p_edge = zeros(FT, Nz + 1), z_edge = zeros(FT, Nz + 1),
-    kvh = zeros(FT, Nz), dz = zeros(FT, Nz))
+    kvh = zeros(FT, Nz), dz = zeros(FT, Nz), diag = BLDiffDiag{FT}())
 
 """
     tm5_bldiff_center_kz_column!(kz, T, q, u, v, ps, hflux, lhflux, ustar,
@@ -451,7 +501,7 @@ function tm5_bldiff_center_kz_column!(kz::AbstractVector{FT},
 
     pblh = tm5_bldiff_kvh_column!(scratch.kvh, scratch.T, scratch.q,
                                   scratch.u, scratch.v, pe, ze,
-                                  hflux, lhflux, ustar, c)
+                                  hflux, lhflux, ustar, c; diag = scratch.diag)
 
     # Map bottom-up interface kvh → bottom-up centre Kz (average of the two
     # interfaces bounding each layer; the surface interface carries no flux),

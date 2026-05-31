@@ -255,13 +255,40 @@ function _surface_flux_to_upward_wm2(raw, ds::NCDataset, var_name::String, ::Typ
     return accumulated ? FT.(-raw ./ 3600) : FT.(raw)
 end
 
+# ERA5 surface slices occasionally carry a handful of `_FillValue`-masked cells
+# (observed on some Dec-2021 hours for `sshf`); NCDatasets surfaces those as
+# `missing`, so a bare `FT.(...)` cast throws `Float32(::Missing)`. Coalesce the
+# masked cells to the slice's finite mean — a neutral fill that preserves the
+# downstream finiteness/range validators (`_validate_era5_surface!`) — log the
+# count, and REFUSE to fill a slice where more than
+# `ERA5_SURFACE_MAX_MASKED_FRACTION` of the field is masked (a genuinely broken
+# slice, not a few stray cells: regenerate the download instead).
+const ERA5_SURFACE_MAX_MASKED_FRACTION = 0.05
+
+function _surface_slice_to_FT(ds::NCDataset, var_name::String, time_idx::Int,
+                              ::Type{FT}) where FT
+    raw = _read_surface_slice(ds, var_name, time_idx)
+    nmiss = count(ismissing, raw)
+    nmiss == 0 && return FT.(raw)
+    frac = nmiss / length(raw)
+    frac <= ERA5_SURFACE_MAX_MASKED_FRACTION || error(
+        "ERA5 surface $(var_name) time $(time_idx): $(nmiss)/$(length(raw)) cells " *
+        "($(round(100 * frac; digits = 2))%) are _FillValue-masked, exceeding the " *
+        "$(round(Int, 100 * ERA5_SURFACE_MAX_MASKED_FRACTION))% guard — refusing to " *
+        "fill a broken slice; regenerate the surface download for this day.")
+    fill = FT(sum(skipmissing(raw)) / (length(raw) - nmiss))
+    @warn "ERA5 surface $(var_name) time $(time_idx): coalescing $(nmiss) masked " *
+          "cell(s) → finite mean $(fill)" maxlog = 8
+    return FT.(coalesce.(raw, fill))
+end
+
 function _load_surface_field(reader::ERA5SurfaceReader,
                              key::Symbol,
                              win_idx::Int,
                              ::Type{FT}) where FT
     ds, var_name = _surface_var_binding(reader, key)
     time_idx = _surface_time_index(reader, ds, win_idx)
-    field = _normalize_surface_ll!(FT.(_read_surface_slice(ds, var_name, time_idx)), ds)
+    field = _normalize_surface_ll!(_surface_slice_to_FT(ds, var_name, time_idx, FT), ds)
     return field, ds, var_name
 end
 
@@ -271,7 +298,7 @@ function _load_surface_raw_field(reader::ERA5SurfaceReader,
                                  ::Type{FT}) where FT
     ds, var_name = _surface_var_binding(reader, key)
     time_idx = _surface_time_index(reader, ds, win_idx)
-    field = _normalize_surface_ll!(FT.(_read_surface_slice(ds, var_name, time_idx)), ds)
+    field = _normalize_surface_ll!(_surface_slice_to_FT(ds, var_name, time_idx, FT), ds)
     return field, ds, var_name
 end
 
@@ -282,7 +309,7 @@ function _load_surface_ustar(reader::ERA5SurfaceReader,
     if direct !== nothing
         ds, var_name = direct
         time_idx = _surface_time_index(reader, ds, win_idx)
-        return _normalize_surface_ll!(FT.(_read_surface_slice(ds, var_name, time_idx)), ds)
+        return _normalize_surface_ll!(_surface_slice_to_FT(ds, var_name, time_idx, FT), ds)
     end
 
     u10, _, _ = _load_surface_field(reader, :u10, win_idx, FT)

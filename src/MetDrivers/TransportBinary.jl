@@ -624,6 +624,36 @@ function canonical_window_constant_contract(;
     )
 end
 
+# The cubed-sphere header keys the RUNTIME reads to decide execution cadence and
+# capabilities (`uses_binary_substep_contract`, `binary_capabilities`). Emitted
+# with defaults by `open_streaming_cs_transport_binary` so they can never go
+# missing; listed here once so the writer-side guard and the emitter agree.
+const _CS_WRITER_CONTRACT_KEYS = ("runtime_substep_contract",
+                                  "preprocessor_contract",
+                                  "adaptive_substeps")
+
+"""
+    validate_cs_writer_contract!(header::AbstractDict)
+
+Write-time guard: assert every runtime-read cubed-sphere contract key
+(`_CS_WRITER_CONTRACT_KEYS`) is present before a binary is finalized — the
+writer-side mirror of [`validate_transport_contract!`]. The single choke point
+`open_streaming_cs_transport_binary` emits these keys with defaults, so this
+never fires in normal use; it exists to fail LOUDLY if a future refactor drops
+the default emission, rather than silently shipping a binary that makes the
+runtime run convection/chemistry per advection substep (the 2026-05-31 N320
+regression: a new source path omitted `runtime_substep_contract`).
+"""
+function validate_cs_writer_contract!(header::AbstractDict)
+    absent = [k for k in _CS_WRITER_CONTRACT_KEYS if !haskey(header, k)]
+    isempty(absent) || error(
+        "CS transport-binary writer contract violation — runtime-read header " *
+        "keys absent: $(join(absent, ", ")). These are emitted with defaults by " *
+        "`open_streaming_cs_transport_binary`; a caller or refactor has bypassed " *
+        "that single source of truth.")
+    return nothing
+end
+
 """
     validate_transport_contract!(header::AbstractDict; allow_legacy::Bool = false)
 
@@ -2117,6 +2147,18 @@ function open_streaming_cs_transport_binary(
     default_geometry = _cs_default_geometry_tags(panel_convention_norm)
 
     merge!(header, Dict{String, Any}(
+        # --- Runtime CS contract keys (single source of truth) ---
+        # Emitted HERE, at the one choke point every CS writer funnels through,
+        # as DEFAULTS that writers override via `extra_header`. This makes it
+        # structurally impossible for a CS writer to omit them (the recurring
+        # N320-vs-GEOS drift). `runtime_substep_contract` is a format invariant:
+        # every streaming CS binary carries the per-window substep schedule, so
+        # the runtime MUST apply convection/chemistry once per met window, not
+        # once per advection substep. Asserted below by
+        # `validate_cs_writer_contract!`. See the 2026-05-31 contract audit.
+        "runtime_substep_contract" => "binary_schedule",
+        "preprocessor_contract" => "streaming_cs_v5",
+        "adaptive_substeps" => false,
         "Nc" => Nc,
         "npanel" => npanel,
         "panel_convention" => panel_convention_norm,
@@ -2165,6 +2207,7 @@ function open_streaming_cs_transport_binary(
         header["longitude_offset_deg"] = get(header, "longitude_offset_deg", default_geometry.longitude_offset_deg)
     end
 
+    validate_cs_writer_contract!(header)
     validate_transport_contract!(header)
     header_json = JSON3.write(header)
     pad = header_bytes - ncodeunits(header_json)

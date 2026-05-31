@@ -60,7 +60,7 @@ export ERA5BinaryReader, ERA5BinaryHeader
 export TRANSPORT_BINARY_FORMAT_VERSION
 export TransportBinaryReader, TransportBinaryHeader, write_transport_binary
 export TransportBinaryContract, canonical_window_constant_contract,
-       validate_transport_contract!
+       validate_transport_contract!, validate_cs_writer_contract!
 export StreamingTransportBinaryWriter
 export open_streaming_transport_binary, write_streaming_window!,
        close_streaming_transport_binary!, set_streaming_steps_per_window_schedule!,

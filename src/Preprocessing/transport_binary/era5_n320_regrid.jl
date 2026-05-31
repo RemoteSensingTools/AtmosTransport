@@ -386,6 +386,21 @@ function process_era5_n320_to_cs_day(date::Date,
             longitude_offset_deg = longitude_offset_deg(cs_definition(mesh)),
             extra_header = Dict{String, Any}(
                 "preprocessor" => "process_era5_n320_to_cs_day",
+                # Declare the per-window advection substep contract so the
+                # runtime applies advection at the baked substep cadence but
+                # runs convection + chemistry ONCE per met window (not per
+                # substep). Without this flag `uses_binary_substep_contract`
+                # is false and the driven loop falls into the per-substep
+                # `step!` branch, running convection ~25× too often — the GEOS
+                # cubed-sphere spectral writer sets the same key. The substep
+                # schedule itself is already baked per window (steps_per_window).
+                "runtime_substep_contract" => "binary_schedule",
+                "preprocessor_contract" => "plan41_variable_substeps",
+                # Declarative capability flag (matches the GEOS writers). The
+                # runtime surfaces this into `caps.adaptive_substeps`; a config
+                # that sets `[input].require_adaptive_substeps = true` rejects
+                # binaries that omit it, even though the schedule IS adaptive.
+                "adaptive_substeps" => substep_policy.adaptive_substeps,
                 "source_type"  => "era5_n320_native_grib",
                 "source_root"  => settings.root_dir,
                 "target_type"  => "cubed_sphere",

@@ -496,12 +496,16 @@ function catrine_map_curtains(args...; kwargs...)
     _makie_missing()
 end
 
+function catrine_map_curtains_3way(args...; kwargs...)
+    _makie_missing()
+end
+
 export AbstractSnapshotTopology
 export LatLonSnapshotTopology, ReducedGaussianSnapshotTopology, CubedSphereSnapshotTopology
 export SnapshotDataset, HorizontalField, RasterField, SnapshotRegridCache, PlotSpec
 export open_snapshot, available_variables, snapshot_times, snapshot_topology
 export fieldview, frame_indices, as_raster, robust_colorrange
 export mapplot, mapplot!, snapshot_grid, movie, movie_grid
-export catrine_map_curtains
+export catrine_map_curtains, catrine_map_curtains_3way
 
 end # module Visualization

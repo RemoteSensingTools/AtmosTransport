@@ -102,5 +102,12 @@ kind = "decay"
   rn222 = 330350.4
 
 [output]
+# Binary-first output: write fast ATMSNAP binaries inline (the NetCDF encode was
+# ~45% of wall once convection was fixed — io_write-bound), then convert offline
+# with `scripts/postprocess/binary_to_netcdf.jl`. `split = "daily"` emits one
+# file per day (the recommended cadence at C180; single-file is fine for smaller
+# grids, per-timestep only if matching GEOS output exactly).
+format = "binary_mmap"
+split = "daily"
 snapshot_interval_hours = 3
-snapshot_file = "~/data/AtmosTransport/output/catrine_era5_n320_c180_tm5diff_dec2021_2weeks.nc"
+snapshot_file = "~/data/AtmosTransport/output/catrine_era5_n320_tm5diff_dec2021/catrine_era5_n320_tm5diff_{YYYYMMDD}.atmsnap"

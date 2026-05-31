@@ -869,8 +869,14 @@ provide real time information on its own.
 """
 MetDrivers.current_time(sim::DrivenSimulation) = sim.time
 
+# Diagnostic override for convection-cadence sensitivity studies. Setting
+# ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS=1 forces convection + chemistry to run every
+# advection substep (the pre-2026-05-31 behaviour) even on a binary that declares
+# the per-window contract, so the two cadences can be A/B-compared on the SAME
+# binary. Default off — never affects production runs.
 @inline _uses_binary_transport_schedule(sim::DrivenSimulation) =
-    uses_binary_substep_contract(sim.driver)
+    uses_binary_substep_contract(sim.driver) &&
+    get(ENV, "ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS", "0") != "1"
 
 function step!(sim::DrivenSimulation)
     sim.iteration < sim.final_iteration ||

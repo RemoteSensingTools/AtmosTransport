@@ -511,8 +511,14 @@ function process_era5_n320_to_cs_day(date::Date,
             bal_diag = _balance_window_at_steps!(pipe, m_dry, m_next, am, bm, cm, dm, steps)
             if substep_policy.adaptive_substeps
                 for _ in 1:_N320_ADAPTIVE_SUBSTEP_MAX_REFINEMENTS
+                    # Pass `m_next` so the refinement uses the SAME full-palindrome
+                    # positivity ratio as the final `verify_cs_window_contract!`
+                    # gate (the single-endpoint ratio without it undershoots →
+                    # borderline windows pick too-few substeps and the gate
+                    # rejects them). Mirrors the GEOS path.
                     pos = verify_substep_positivity_cs!(m_dry, am, bm, cm;
-                                                        cfl_limit = substep_cfl_target)
+                                                        cfl_limit = substep_cfl_target,
+                                                        m_next = m_next)
                     next = next_substeps(substep_policy, steps, pos.ratio)
                     next == steps && break
                     steps = next

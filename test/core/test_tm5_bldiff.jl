@@ -71,6 +71,30 @@ end
         @test unstable.pblh > neutral.pblh > stable.pblh
     end
 
+    @testset "Kvh is non-negative across non-monotonic profiles (clamp guard)" begin
+        # TM5's prescribed entrainment `0.2·wheatv/dθv` is unclamped and goes
+        # large-negative when the PBL-top interface is locally unstable
+        # (dθv/dz ≤ 0) — seen on ~0.0003% of real Dec-2021 N320 cells (down to
+        # ~-700 m² s⁻¹). The kernel floors the override at kvh_min. This sweeps
+        # superadiabatic / non-monotonic θ profiles as a non-negativity
+        # regression guard; the entrainment clamp's specific real-data trigger
+        # is validated by the Dec-2021 binary regen (validate_tm5_kz_payload).
+        base = _idealized_column(Float64)
+        c, Nz, zc = base.c, base.Nz, base.zc
+        for s in 0:5
+            T = [z < 2500 ? 295.0 - (12 + 2s) * 1e-3 * z : base.T[l]
+                 for (l, z) in enumerate(zc)]
+            T = max.(T, 215.0)
+            for (h, lh, us) in ((300.0, 180.0, 0.55), (200.0, 120.0, 0.45))
+                kvh = zeros(Nz)
+                tm5_bldiff_kvh_column!(kvh, T, base.q, base.u, base.v,
+                                       base.p_edge, base.z_edge, h, lh, us, c)
+                @test all(isfinite, kvh)
+                @test minimum(kvh) >= 0.0
+            end
+        end
+    end
+
     @testset "convective mixed-layer diffusivity exceeds the stable case" begin
         col = _idealized_column(Float64)
         unstable = _run(col, 250.0, 150.0, 0.50)

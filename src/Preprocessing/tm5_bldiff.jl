@@ -275,7 +275,16 @@ function tm5_bldiff_kvh_column!(kvh::AbstractVector{FT},
             below_top = _step(pblh, zc[l]) * _step(zc[l + 1], pblh)
             if below_top == 1
                 dθv = (θv[l + 1] - θv[l]) / (zc[l + 1] - zc[l])
-                Kvh = FT(0.2) * w_heatv / dθv
+                # TM5's prescribed entrainment assumes a STABLE cap at the PBL
+                # top (dθv/dz > 0), giving a positive K. On real columns the
+                # straddling interface is occasionally still weakly unstable
+                # (dθv/dz ≤ 0), where the unclamped formula returns a large
+                # NEGATIVE K — anti-diffusion the runtime solve cannot accept
+                # (~0.0003% of cells, down to ~-700 m² s⁻¹ on Dec-2021 N320).
+                # Floor at kvh_min so the entrainment override is never
+                # destabilising; the Fortran tolerates the sign in its own
+                # downstream, we do not.
+                Kvh = max(FT(0.2) * w_heatv / dθv, c.kvh_min)
             end
         end
 

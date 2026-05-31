@@ -154,6 +154,11 @@ a larger binary.
 The function stages writes to `out_path.tmp` and promotes to `out_path`
 on success — a partial run leaves no usable file at the requested path.
 """
+# Cap on adaptive substep refinements per window. `required_substeps` jumps
+# directly to the count implied by the measured CFL ratio, so 1-2 iterations
+# converge; the cap only guards a pathological non-converging window.
+const _N320_ADAPTIVE_SUBSTEP_MAX_REFINEMENTS = 8
+
 function process_era5_n320_to_cs_day(date::Date,
                                        settings::ERA5N320Settings,
                                        target_grid::CubedSphereTargetGeometry{FT};
@@ -162,6 +167,9 @@ function process_era5_n320_to_cs_day(date::Date,
                                        mass_basis::Symbol = :dry,
                                        dt_met_seconds::Real = 3600.0,
                                        steps_per_window::Integer = 8,
+                                       adaptive_substeps::Bool = true,
+                                       substep_cfl_target::Real = 0.85,
+                                       max_steps_per_window::Integer = typemax(Int),
                                        cs_balance_tol::Real = 1e-14,
                                        cs_balance_project_every::Integer = 50,
                                        positivity_cfl_limit::Real = 0.95,
@@ -174,6 +182,17 @@ function process_era5_n320_to_cs_day(date::Date,
     Nz_int = Int(Nz)
     steps_per_met = Int(steps_per_window)
     steps_per_met >= 1 || throw(ArgumentError("steps_per_window must be ≥ 1; got $(steps_per_met)"))
+    # Adaptive per-window substep schedule (mirrors the GEOS path): start at
+    # `steps_per_met` (the floor) and, per window, raise the substep count until
+    # the per-substep vertical/horizontal CFL drops under `substep_cfl_target`
+    # (kept below the hard `positivity_cfl_limit` gate). The runtime then honors
+    # the recorded per-window schedule with no further substepping. A fixed
+    # count cannot be correct across a day — see KEY_PARADIGMS §A5.
+    substep_policy = SubstepSchedulePolicy(;
+        adaptive_substeps = adaptive_substeps,
+        substep_cfl_target = Float64(substep_cfl_target),
+        min_steps_per_window = steps_per_met,
+        max_steps_per_window = Int(max_steps_per_window))
 
     t_start = time()
     Nc = target_grid.Nc
@@ -218,7 +237,13 @@ function process_era5_n320_to_cs_day(date::Date,
         Δx = mesh.Δx
         Δy = mesh.Δy
         gravity = FT(GRAV)
-        out_dt_factor = FT(dt_met_seconds / (2 * steps_per_met))
+        # Per-substep flux scaling for a window taking `steps` substeps. The
+        # face flux is the substep-mass amount, so it scales as 1/steps; the
+        # adaptive loop re-reconstructs at the chosen `steps`.
+        out_dt_factor_for(steps) = FT(dt_met_seconds / (2 * steps))
+        # Window-1 throwaway reconstruct in `_process_window_to_cs!` uses the
+        # floor; its flux output is always re-done in the sliding-window loop.
+        out_dt_factor = out_dt_factor_for(steps_per_met)
 
         # --- Surface PBL + VDIFF (runtime diffusion) payload setup. ---
         # Surface fields live on a SEPARATE regular-lat-lon 0.25° NetCDF
@@ -334,6 +359,9 @@ function process_era5_n320_to_cs_day(date::Date,
 
         # --- Open the streaming writer. ---
         nwindow = 24
+        # Per-window substep schedule, filled adaptively below and stamped onto
+        # the binary header before close so the runtime executes it directly.
+        steps_schedule = fill(steps_per_met, nwindow)
         mkpath(dirname(out_path))
         tmp_path = out_path * ".tmp"
         isfile(tmp_path) && rm(tmp_path)
@@ -430,6 +458,70 @@ function process_era5_n320_to_cs_day(date::Date,
         worst_positivity = init_cs_positivity_accumulator()
         apply_horizontal_balance = horizontal_poisson_balance_enabled()
 
+        # Reconstruct + Poisson-balance + diagnose `cm` for the CURRENT window
+        # (`pipe` outputs, balanced against `m_next`) at a given substep count.
+        # `pipe` rotation + Δp are substep-independent, so they are computed once
+        # before the adaptive loop; only the flux scaling (`out_dt_factor_for`),
+        # the balance, the mass tendency, and `cm` depend on `steps`.
+        _balance_window_at_steps! = function (pipe, m_dry, m_next, am, bm, cm, dm, steps)
+            reconstruct_cs_fluxes!(am, bm, cur_u_local, cur_v_local,
+                                    cur_dp_panels, pipe.c180_fields.ps,
+                                    vc.A, vc.B, Δx, Δy,
+                                    gravity, out_dt_factor_for(steps), Nc, Nz_int)
+            bal_diag = if apply_horizontal_balance
+                balance_cs_global_mass_fluxes!(
+                    am, bm, m_dry, m_next,
+                    target_grid.face_table, target_grid.cell_degree, steps,
+                    target_grid.poisson_scratch; tol = Float64(cs_balance_tol),
+                    max_iter = 20000, project_every = Int(cs_balance_project_every))
+            else
+                balance_cs_column_mass_fluxes!(
+                    am, bm, m_dry, m_next,
+                    target_grid.face_table, target_grid.cell_degree, steps,
+                    target_grid.poisson_scratch; tol = Float64(cs_balance_tol),
+                    max_iter = 20000, project_every = Int(cs_balance_project_every))
+            end
+            sync_all_cs_boundary_mirrors!(am, bm, mesh.connectivity, Nc, Nz_int)
+            fill_cs_window_mass_tendency!(dm, m_dry, m_next, steps)
+            for p in 1:6; fill!(cm[p], zero(FT)); end
+            diagnose_cs_cm!(cm, am, bm, dm, m_dry, Nc, Nz_int)
+            return bal_diag
+        end
+
+        # Rotate `pipe` winds + build Δp (substep-independent), then adaptively
+        # raise the substep count until the per-substep CFL drops under the
+        # target (or the schedule converges). Returns the chosen `steps` and the
+        # final balance diagnostics. Re-prepares at each candidate `steps`
+        # (mirrors the GEOS path; guarantees continuity closes at that count).
+        _adapt_window! = function (pipe, m_dry, m_next, am, bm, cm, dm)
+            rotate_winds_to_panel_local!(cur_u_local, cur_v_local,
+                                          pipe.c180_fields.u, pipe.c180_fields.v,
+                                          mesh, Nz_int)
+            @inbounds for p in 1:6
+                for k in 1:Nz_int
+                    dA = Float64(vc.A[k + 1]) - Float64(vc.A[k])
+                    dB = Float64(vc.B[k + 1]) - Float64(vc.B[k])
+                    for j in 1:Nc, i in 1:Nc
+                        cur_dp_panels[p][i, j, k] =
+                            FT(abs(dA + dB * Float64(pipe.c180_fields.ps[p][i, j])))
+                    end
+                end
+            end
+            steps = steps_per_met
+            bal_diag = _balance_window_at_steps!(pipe, m_dry, m_next, am, bm, cm, dm, steps)
+            if substep_policy.adaptive_substeps
+                for _ in 1:_N320_ADAPTIVE_SUBSTEP_MAX_REFINEMENTS
+                    pos = verify_substep_positivity_cs!(m_dry, am, bm, cm;
+                                                        cfl_limit = substep_cfl_target)
+                    next = next_substeps(substep_policy, steps, pos.ratio)
+                    next == steps && break
+                    steps = next
+                    bal_diag = _balance_window_at_steps!(pipe, m_dry, m_next, am, bm, cm, dm, steps)
+                end
+            end
+            return steps, bal_diag
+        end
+
         # --- Window 1. ---
         t0 = time()
         _process_window_to_cs!(1, cur_pipe,
@@ -446,64 +538,26 @@ function process_era5_n320_to_cs_day(date::Date,
                                     cur_am, cur_bm)   # nxt_am/bm not needed — overwritten next round
             t_read = time() - t0
 
-            # Restore the current window's am/bm (the _process call above
-            # wrote into the cur_am/bm — but we want to balance the CURRENT
-            # window using the NEXT window's mass target. Re-run the flux
-            # reconstruction for the current window from its preserved
-            # cur_pipe outputs. Cheap: panel rotation + face flux.
-            # We could split _process_window_to_cs! into "pipeline" and
-            # "rotate+flux" but the rotate+flux step is fast and keeping
-            # the call site uniform avoids duplicate code paths.
-            rotate_winds_to_panel_local!(cur_u_local, cur_v_local,
-                                          cur_pipe.c180_fields.u,
-                                          cur_pipe.c180_fields.v,
-                                          mesh, Nz_int)
-            @inbounds for p in 1:6
-                for k in 1:Nz_int
-                    dA = Float64(vc.A[k + 1]) - Float64(vc.A[k])
-                    dB = Float64(vc.B[k + 1]) - Float64(vc.B[k])
-                    for j in 1:Nc, i in 1:Nc
-                        cur_dp_panels[p][i, j, k] = FT(abs(dA + dB * Float64(cur_pipe.c180_fields.ps[p][i, j])))
-                    end
-                end
-            end
-            reconstruct_cs_fluxes!(cur_am, cur_bm, cur_u_local, cur_v_local,
-                                    cur_dp_panels, cur_pipe.c180_fields.ps,
-                                    vc.A, vc.B, Δx, Δy,
-                                    gravity, out_dt_factor, Nc, Nz_int)
-
+            # Restore + adaptively balance the CURRENT window against the NEXT
+            # window's mass target. `_process_window_to_cs!` above overwrote
+            # cur_am/bm while reading the next window; `_adapt_window!` rebuilds
+            # them from the preserved `cur_pipe` outputs and raises the substep
+            # count until the per-substep CFL clears the target. Returns the
+            # per-window `win_steps` recorded into the schedule.
             t_bal = time()
-            bal_diag = if apply_horizontal_balance
-                balance_cs_global_mass_fluxes!(
-                    cur_am, cur_bm, cur_m_dry, nxt_m_dry,
-                    target_grid.face_table, target_grid.cell_degree, steps_per_met,
-                    target_grid.poisson_scratch; tol = Float64(cs_balance_tol),
-                    max_iter = 20000,
-                    project_every = Int(cs_balance_project_every))
-            else
-                balance_cs_column_mass_fluxes!(
-                    cur_am, cur_bm, cur_m_dry, nxt_m_dry,
-                    target_grid.face_table, target_grid.cell_degree, steps_per_met,
-                    target_grid.poisson_scratch; tol = Float64(cs_balance_tol),
-                    max_iter = 20000,
-                    project_every = Int(cs_balance_project_every))
-            end
+            win_steps, bal_diag = _adapt_window!(cur_pipe, cur_m_dry, nxt_m_dry,
+                                                 cur_am, cur_bm, cur_cm, cur_dm_dry)
             t_bal = time() - t_bal
+            steps_schedule[win - 1] = win_steps
 
             worst_pre  = max(worst_pre,  bal_diag.max_pre_residual)
             worst_post = max(worst_post, bal_diag.max_post_residual)
             worst_iter = max(worst_iter, bal_diag.max_cg_iter)
 
-            sync_all_cs_boundary_mirrors!(cur_am, cur_bm, mesh.connectivity, Nc, Nz_int)
-
-            fill_cs_window_mass_tendency!(cur_dm_dry, cur_m_dry, nxt_m_dry, steps_per_met)
-            for p in 1:6; fill!(cur_cm[p], zero(FT)); end
-            diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cur_dm_dry, cur_m_dry, Nc, Nz_int)
-
             pos_diag = if write_replay_on
                 contract = verify_cs_window_contract!(cur_m_dry, cur_am, cur_bm, cur_cm,
                                                        nxt_m_dry,
-                                                       steps_per_met, win - 1;
+                                                       win_steps, win - 1;
                                                        replay_tol = replay_tol,
                                                        positivity_cfl_limit = positivity_cfl_limit)
                 if worst_replay_win == 0 || contract.replay.max_rel_err > worst_replay_rel
@@ -535,8 +589,8 @@ function process_era5_n320_to_cs_day(date::Date,
             payload = merge(payload, surface_vdiff_payload(cur_pipe))
             write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(win - 1, payload))
 
-            @info @sprintf("    Window %2d/%d: wrote (bal %.2fs pre=%.2e post=%.2e iter=%d) | read %2d (%.2fs)",
-                            win - 1, nwindow, t_bal, bal_diag.max_pre_residual,
+            @info @sprintf("    Window %2d/%d: wrote (steps=%d bal %.2fs pre=%.2e post=%.2e iter=%d) | read %2d (%.2fs)",
+                            win - 1, nwindow, win_steps, t_bal, bal_diag.max_pre_residual,
                             bal_diag.max_post_residual, bal_diag.max_cg_iter,
                             win, t_read)
 
@@ -586,47 +640,15 @@ function process_era5_n320_to_cs_day(date::Date,
             end
         end
 
-        rotate_winds_to_panel_local!(cur_u_local, cur_v_local,
-                                      cur_pipe.c180_fields.u,
-                                      cur_pipe.c180_fields.v,
-                                      mesh, Nz_int)
-        @inbounds for p in 1:6
-            for k in 1:Nz_int
-                dA = Float64(vc.A[k + 1]) - Float64(vc.A[k])
-                dB = Float64(vc.B[k + 1]) - Float64(vc.B[k])
-                for j in 1:Nc, i in 1:Nc
-                    cur_dp_panels[p][i, j, k] = FT(abs(dA + dB * Float64(cur_pipe.c180_fields.ps[p][i, j])))
-                end
-            end
-        end
-        reconstruct_cs_fluxes!(cur_am, cur_bm, cur_u_local, cur_v_local,
-                                cur_dp_panels, cur_pipe.c180_fields.ps,
-                                vc.A, vc.B, Δx, Δy,
-                                gravity, out_dt_factor, Nc, Nz_int)
-
-        bal_diag = if apply_horizontal_balance
-            balance_cs_global_mass_fluxes!(
-                cur_am, cur_bm, cur_m_dry, nxt_m_dry,
-                target_grid.face_table, target_grid.cell_degree, steps_per_met,
-                target_grid.poisson_scratch; tol = Float64(cs_balance_tol),
-                max_iter = 20000,
-                project_every = Int(cs_balance_project_every))
-        else
-            balance_cs_column_mass_fluxes!(
-                cur_am, cur_bm, cur_m_dry, nxt_m_dry,
-                target_grid.face_table, target_grid.cell_degree, steps_per_met,
-                target_grid.poisson_scratch; tol = Float64(cs_balance_tol),
-                max_iter = 20000,
-                project_every = Int(cs_balance_project_every))
-        end
-        sync_all_cs_boundary_mirrors!(cur_am, cur_bm, mesh.connectivity, Nc, Nz_int)
-        fill_cs_window_mass_tendency!(cur_dm_dry, cur_m_dry, nxt_m_dry, steps_per_met)
-        for p in 1:6; fill!(cur_cm[p], zero(FT)); end
-        diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cur_dm_dry, cur_m_dry, Nc, Nz_int)
+        # Final window: same adaptive balance against the next-day hour-0 mass
+        # endpoint (or the zero-tendency boundary fallback above).
+        final_steps, bal_diag = _adapt_window!(cur_pipe, cur_m_dry, nxt_m_dry,
+                                               cur_am, cur_bm, cur_cm, cur_dm_dry)
+        steps_schedule[nwindow] = final_steps
         final_pos_diag = if write_replay_on
             contract = verify_cs_window_contract!(cur_m_dry, cur_am, cur_bm, cur_cm,
                                                    nxt_m_dry,
-                                                   steps_per_met, nwindow;
+                                                   final_steps, nwindow;
                                                    replay_tol = replay_tol,
                                                    positivity_cfl_limit = positivity_cfl_limit)
             if worst_replay_win == 0 || contract.replay.max_rel_err > worst_replay_rel
@@ -663,17 +685,23 @@ function process_era5_n320_to_cs_day(date::Date,
         worst_post = max(worst_post, bal_diag.max_post_residual)
         worst_iter = max(worst_iter, bal_diag.max_cg_iter)
 
+        # Stamp the adaptive per-window substep schedule onto the header so the
+        # runtime executes it directly (no runtime CFL adaptation).
+        set_streaming_steps_per_window_schedule!(writer.inner, steps_schedule)
+
         # Summarize positivity BEFORE promoting the .tmp so a failed-gate day
         # quarantines the staged file (matches cubed_sphere_regrid.jl:610-617).
         summarize_cs_positivity_status(worst_positivity;
                                        cfl_limit = positivity_cfl_limit,
-                                       steps_per_window = steps_per_met,
+                                       steps_per_window = maximum(steps_schedule),
                                        quarantine_path = writer_staging_path(writer))
         promote_streaming_binary!(writer)
 
         elapsed = time() - t_start
-        @info @sprintf("ERA5 N320 → C180 day complete: %.1fs (%.2fs/window). Worst bal pre=%.2e post=%.2e iter=%d.",
-                        elapsed, elapsed / nwindow, worst_pre, worst_post, worst_iter)
+        @info @sprintf("ERA5 N320 → C180 day complete: %.1fs (%.2fs/window). substeps=[%d..%d]. Worst bal pre=%.2e post=%.2e iter=%d.",
+                        elapsed, elapsed / nwindow,
+                        minimum(steps_schedule), maximum(steps_schedule),
+                        worst_pre, worst_post, worst_iter)
         worst_replay_win > 0 &&
             @info @sprintf("  Worst replay: rel=%.2e abs=%.2e at win=%d",
                             worst_replay_rel, worst_replay_abs, worst_replay_win)
@@ -715,19 +743,25 @@ function process_day(date::Date,
                      dt_met_seconds::Real = 3600.0,
                      positivity_cfl_limit::Real = 0.95,
                      min_steps_per_window::Union{Integer, Nothing} = nothing,
+                     adaptive_substeps::Bool = true,
+                     substep_cfl_target::Real = 0.85,
+                     max_steps_per_window::Integer = typemax(Int),
                      global_mass_pin::Bool = false,
                      global_mass_target_kg::Real = NaN,
                      kwargs...)
-    # Honor the substep policy's min_steps_per_window if the CLI passed one;
-    # otherwise fall back to the established N320 default. Adaptive substep
-    # scheduling isn't yet supported on this path.
-    steps_per_window = min_steps_per_window === nothing ? 8 : Int(min_steps_per_window)
+    # The substep floor is the policy's min_steps_per_window (the entrypoint
+    # resolves it from [numerics]); adaptive scheduling raises it per window to
+    # satisfy CFL. Default floor 1 when the CLI passes nothing.
+    steps_floor = min_steps_per_window === nothing ? 1 : Int(min_steps_per_window)
     process_era5_n320_to_cs_day(date, settings, grid;
         out_path                  = out_path,
         Nz                        = vertical.Nz,
         mass_basis                = mass_basis,
         dt_met_seconds            = dt_met_seconds,
-        steps_per_window          = steps_per_window,
+        steps_per_window          = steps_floor,
+        adaptive_substeps         = adaptive_substeps,
+        substep_cfl_target        = substep_cfl_target,
+        max_steps_per_window      = max_steps_per_window,
         positivity_cfl_limit      = positivity_cfl_limit,
         cache_dir                 = grid.cache_dir,
         include_convection        = settings.include_convection,

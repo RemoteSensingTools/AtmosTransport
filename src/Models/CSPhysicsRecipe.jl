@@ -16,12 +16,10 @@ This keeps the CLI scripts thin and prevents topology-specific
 `if/elseif` trees from growing in parallel.
 """
 
-abstract type AbstractRuntimeRecipeStyle end
-abstract type AbstractStructuredRuntimeRecipeStyle <: AbstractRuntimeRecipeStyle end
-
-struct LatLonRuntimeRecipeStyle <: AbstractStructuredRuntimeRecipeStyle end
-struct ReducedGaussianRuntimeRecipeStyle <: AbstractStructuredRuntimeRecipeStyle end
-struct CubedSphereRuntimeRecipeStyle <: AbstractRuntimeRecipeStyle end
+# The runtime-style traits (`AbstractRuntimeRecipeStyle` + the LatLon/RG/CS
+# variants) now live in `RuntimeRecipeStyles.jl`, included before this file (the
+# `RuntimePhysicsSpecs.jl` `materialize` methods dispatch on them). The
+# `_runtime_recipe_style(grid/driver/reader)` resolvers stay below.
 
 struct RuntimePhysicsRecipe{AdvT, DiffT, ConvT, ChemT}
     advection  :: AdvT
@@ -360,73 +358,14 @@ function build_runtime_convection(cfg, context)
     return build_runtime_convection(cfg, _runtime_recipe_style(context))
 end
 
-function build_runtime_convection(cfg, style::AbstractRuntimeRecipeStyle)
-    section = _convection_section(cfg)
-    return build_runtime_convection(style,
-                                    Val(_config_symbol(section, "kind", "none")),
-                                    section)
-end
-
-build_runtime_convection(::AbstractRuntimeRecipeStyle, ::Val{:none}, _section) = NoConvection()
-function build_runtime_convection(::AbstractRuntimeRecipeStyle, ::Val{:tm5}, section)
-    # `tile_workspace_gib` is the per-topology TM5 column-tile budget
-    # in binary GiB. Default 1.0 — fits all production resolutions
-    # through C720/L137 with slack on H100. Set lower on memory-tight
-    # GPUs (e.g. L40S 48 GiB) or higher to amortize launch overhead.
-    budget = Float64(get(section, "tile_workspace_gib", 1.0))
-    # `use_collab_lu` opts into the workgroup-collaborative kernel
-    # (~10× faster, bit-exact within Float32 rounding on CUDA — see
-    # docs/memos/TM5_CONVECTION_AGENTLOOP_SYNTHESIS.md). Default off
-    # so existing runs stay bit-identical. Falls back to the legacy
-    # per-thread kernel automatically when the (lmax_conv, Nt, FT,
-    # backend) envelope is exceeded (see `_use_collab_path`).
-    use_collab = Bool(get(section, "use_collab_lu", false))
-    # `lmax_conv` caps the convection matrix size at a value below
-    # the total Nz, matching TM5's tropoX* setups. Default 0 means
-    # "no truncation, use the full Nz". Run
-    # `scripts/diagnostics/per_column_depth_histogram.jl` on the
-    # production binary to pick a safe ceiling — for the
-    # ERA5/GEOS-native C180/L85 binary, `lmax_conv = 75` is bit-
-    # exact for every observed column (preserves all stratospheric
-    # overshoots) while making L91/L137 setups fit Metal's
-    # threadgroup-memory limit.
-    lmax_conv = Int(get(section, "lmax_conv", 0))
-    # `n_merge` aggregates `n_merge` adjacent fine layers into one
-    # super-layer for convection only (TM5's tropoX-style coarsening).
-    # Default 1 (no aggregation). The LU is O(L_super³), so n_merge=2
-    # gives ~8× cheaper LU, n_merge=3 ~27×. Only takes effect when
-    # `use_collab_lu = true`. Mass-conservative by design (proportional
-    # disaggregation of the new super-layer mass to fine layers, with
-    # uniform fallback when an old super-layer was empty).
-    n_merge = Int(get(section, "n_merge", 1))
-    return TM5Convection(; tile_workspace_gib = budget,
-                           use_collab_lu = use_collab,
-                           lmax_conv = lmax_conv,
-                           n_merge = n_merge)
-end
-build_runtime_convection(::AbstractRuntimeRecipeStyle, ::Val{:cmfmc}, _section) = CMFMCConvection()
-
-# `cmfmc_matrix`: routes GEOS `(cmfmc, dtrain)` through the TM5 LU solver
-# (column-stochastic by construction → `Σ tracer_mass` preserved to roundoff).
-# Inherits TM5's `tile_workspace_gib`, `use_collab_lu`, `lmax_conv`, `n_merge`
-# knobs because the LU machinery is the same. Reads from the CMFMC sections
-# of the binary, not the TM5 sections; selectable side-by-side with the
-# GCHP-audited `cmfmc` kind for direct comparison.
-function build_runtime_convection(::AbstractRuntimeRecipeStyle, ::Val{:cmfmc_matrix}, section)
-    budget     = Float64(get(section, "tile_workspace_gib", 1.0))
-    use_collab = Bool(get(section, "use_collab_lu", false))
-    lmax_conv  = Int(get(section, "lmax_conv", 0))
-    n_merge    = Int(get(section, "n_merge", 1))
-    return CMFMCMatrixConvection(; tile_workspace_gib = budget,
-                                   use_collab_lu = use_collab,
-                                   lmax_conv = lmax_conv,
-                                   n_merge = n_merge)
-end
-
-function build_runtime_convection(::AbstractRuntimeRecipeStyle, ::Val{name}, _section) where name
-    throw(ArgumentError(
-        "Unknown [convection] kind: $(name). Supported: none | tm5 | cmfmc | cmfmc_matrix"))
-end
+# Thin wrapper: parse the `[convection]` section into a typed `AbstractConvectionSpec`
+# (validated, incl. the lmax_conv/n_merge-needs-use_collab_lu guard) once, then
+# materialize the operator. Spec types + parser + `materialize` live in
+# `RuntimePhysicsSpecs.jl`. `style` is threaded for API uniformity with
+# build_runtime_advection/diffusion; convection materialization is
+# topology-independent, so the `materialize` methods ignore it.
+build_runtime_convection(cfg, style::AbstractRuntimeRecipeStyle) =
+    materialize(convection_spec(_convection_section(cfg)), style)
 
 @inline validate_runtime_advection(::AbstractRuntimeRecipeStyle,
                                    ::AbstractAdvectionScheme,

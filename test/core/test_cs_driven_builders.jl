@@ -10,7 +10,8 @@ using .AtmosTransport
 using .AtmosTransport.Models:
     build_runtime_advection, build_runtime_diffusion,
     build_cs_advection, configured_cs_halo_width,
-    build_cs_diffusion, build_cs_convection, build_cs_physics_recipe
+    build_cs_diffusion, build_cs_convection, build_cs_physics_recipe,
+    convection_spec, TM5ConvectionSpec, CMFMCMatrixConvectionSpec
 using .AtmosTransport.State.Fields:
     CubedSphereField, WindowPBLKzField, GCHPHoltslagBovilleKzField,
     PrecomputedCSKzField, field_value, panel_field
@@ -242,6 +243,36 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
             Dict("convection" => Dict("kind" => "cmfmc")), no_conv, Float64)
         @test_throws ArgumentError build_cs_convection(
             Dict("convection" => Dict("kind" => "ras")))
+    end
+
+    @testset "ConvectionSpec footgun + parse-time validation" begin
+        # lmax_conv / n_merge only take effect with use_collab_lu=true; setting them
+        # without it was a silent no-op and is now a hard error (the live footgun).
+        @test_throws ArgumentError convection_spec(Dict("kind" => "tm5", "lmax_conv" => 75))
+        @test_throws ArgumentError convection_spec(Dict("kind" => "tm5", "n_merge" => 3))
+        @test_throws ArgumentError convection_spec(
+            Dict("kind" => "cmfmc_matrix", "lmax_conv" => 75))
+        @test_throws ArgumentError build_cs_convection(
+            Dict("convection" => Dict("kind" => "tm5", "n_merge" => 3)))
+        # n_merge = 2 rejected at parse time (even with collab on).
+        @test_throws ArgumentError convection_spec(
+            Dict("kind" => "tm5", "use_collab_lu" => true, "n_merge" => 2))
+        # unknown kind throws at the parser.
+        @test_throws ArgumentError convection_spec(Dict("kind" => "ras"))
+
+        # Happy path: collab on → spec + operator carry the knobs (parse parity).
+        s = convection_spec(Dict("kind" => "tm5", "use_collab_lu" => true,
+                                 "lmax_conv" => 75, "n_merge" => 3))
+        @test s isa TM5ConvectionSpec
+        @test s.use_collab_lu && s.lmax_conv == 75 && s.n_merge == 3
+        op = build_cs_convection(Dict("convection" => Dict(
+            "kind" => "tm5", "use_collab_lu" => true, "lmax_conv" => 75, "n_merge" => 3)))
+        @test op isa TM5Convection && op.lmax_conv == 75 && op.n_merge == 3 && op.use_collab_lu
+        # cmfmc_matrix path materializes to the matrix operator with the knobs.
+        @test convection_spec(Dict("kind" => "cmfmc_matrix", "use_collab_lu" => true,
+                                   "lmax_conv" => 75, "n_merge" => 3)) isa CMFMCMatrixConvectionSpec
+        @test build_cs_convection(Dict("convection" => Dict("kind" => "cmfmc_matrix",
+            "use_collab_lu" => true, "lmax_conv" => 75, "n_merge" => 3))) isa CMFMCMatrixConvection
     end
 
     @testset "build_runtime_physics_recipe validates structured convection capabilities" begin

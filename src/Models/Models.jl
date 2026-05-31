@@ -23,6 +23,8 @@ using ..Preprocessing
 using ..Output
 
 include("TransportModel.jl")
+include("RuntimeRecipeStyles.jl")    # runtime-style traits (dispatched on by specs)
+include("RuntimePhysicsSpecs.jl")    # typed config specs + materialize (Oceananigans-style)
 include("CSPhysicsRecipe.jl")
 include("InitialConditionIO.jl")  # plan 40 Commit 1b: LL/RG hoisted; CS in 1c
 using .InitialConditionIO: FileInitialConditionSource,

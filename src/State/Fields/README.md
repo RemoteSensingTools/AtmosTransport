@@ -52,6 +52,10 @@ runs on the host and may refresh caches before an operator launch.
   *Old name `GCHPHoltslagBovilleKzField` is a deprecated alias; see the
   field docstring for why — no non-local PBL counter-gradient is
   applied, so it's not full GCHP VDIFF parity.*
+- [`PrecomputedCSKzField.jl`](PrecomputedCSKzField.jl) — six-panel
+  cubed-sphere Kz field whose caches are filled directly from a binary
+  `:kz` payload (the preprocessor's TM5 `bldiff` non-local PBL
+  diffusivity); the runtime half of `[diffusion] kind = "precomputed_kz"`.
 - [`StepwiseField.jl`](StepwiseField.jl) — piecewise-constant-in-time
   field cache
 

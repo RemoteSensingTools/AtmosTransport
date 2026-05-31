@@ -303,8 +303,8 @@ function _process_day_native(cfg::AbstractDict;
 
     dates = _resolve_dates_native(cfg; day_override, start_date, end_date)
 
-    @info @sprintf("Preprocessor: %s  Nc=%d  → %s  Nz=%d  FT=%s  %d day(s)",
-                   typeof(settings), settings.Nc, typeof(grid),
+    @info @sprintf("Preprocessor: %s  → %s  Nz=%d  FT=%s  %d day(s)",
+                   typeof(settings), typeof(grid),
                    vertical.Nz, FT, length(dates))
     vertical.Nz == vertical.Nz_native ||
         @info @sprintf("Vertical transform: %s  native Nz=%d → output Nz=%d",

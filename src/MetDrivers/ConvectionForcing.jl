@@ -1,8 +1,7 @@
 # ---------------------------------------------------------------------------
 # ConvectionForcing — per-window convective mass-flux container.
 #
-# Plan 18 runtime data flow (see plan 18 v5.1 §2.4 Decision 22 and
-# §2.17 Decision 23): convection forcing lives at TWO runtime slots:
+# Runtime data flow: convection forcing lives at TWO runtime slots:
 #
 #   1. On the transport window: `window.convection::Union{Nothing,
 #      ConvectionForcing}`, populated by `load_transport_window!`
@@ -13,14 +12,7 @@
 #
 # Both slots carry the same struct type. Capability (which of
 # `cmfmc`, `dtrain`, `tm5_fields` are non-nothing) is invariant for
-# the lifetime of a run (Decision 27).
-#
-# Commit 1 shipped the minimal struct + zero-arg placeholder.
-# Commit 2 adds: validating inner constructor (Decision 22 invariants
-# relaxed per Decision 28 — see note below), `_cap`,
-# `_check_capability_match`, `copy_convection_forcing!`,
-# `allocate_convection_forcing_like`, `Adapt.adapt_structure`, and
-# window-struct integration.
+# the lifetime of a run.
 # ---------------------------------------------------------------------------
 
 """
@@ -49,15 +41,14 @@ forcing. Three optional payload slots:
   DTRAIN without CMFMC is meaningless (DTRAIN detrains from the
   updraft mass flux; no mass flux, nothing to detrain).
 
-- **Dual capability is allowed** (plan 18 v5.1 §2.22 Decision 28).
+- **Dual capability is allowed.**
   A binary may carry both CMFMC and TM5 payloads simultaneously; the
   sim selects which capability to consume based on the installed
-  operator. v5.1 §2.4's stricter "no mixing CMFMC with TM5" language
-  is superseded by Decision 28's allowed-combinations table. The
-  invariant here only enforces the load-bearing constraint above.
+  operator. The invariant here only enforces the load-bearing
+  constraint above.
 
-- **Capability is INVARIANT for the lifetime of a `DrivenSimulation`**
-  (Decision 27). `copy_convection_forcing!` enforces strict tuple
+- **Capability is INVARIANT for the lifetime of a `DrivenSimulation`.**
+  `copy_convection_forcing!` enforces strict tuple
   match between `dst` and `src` so a mid-run capability toggle
   raises an error — catches both "stale values" (dst has a field src
   doesn't) and "missing destination" (src has a field dst doesn't).
@@ -66,8 +57,8 @@ forcing. Three optional payload slots:
 
 `ConvectionForcing()` produces an all-nothing placeholder. This is
 the initial value of `TransportModel.convection_forcing`;
-`DrivenSimulation` allocates real buffers at construction (plan 18
-v5.1 Decision 26) via `allocate_convection_forcing_like`.
+`DrivenSimulation` allocates real buffers at construction via
+`allocate_convection_forcing_like`.
 
 # See also
 
@@ -95,13 +86,13 @@ end
 # Defining a validating inner constructor suppresses Julia's
 # auto-generated outer constructors, so we provide them explicitly.
 # - 3-arg outer: forwards to the validating inner.
-# - 0-arg default: all-nothing placeholder (plan 18 v5.1 §2.20 Decision 26).
+# - 0-arg default: all-nothing placeholder.
 ConvectionForcing(cmfmc::CM, dtrain::DT, tm5_fields::TM) where {CM, DT, TM} =
     ConvectionForcing{CM, DT, TM}(cmfmc, dtrain, tm5_fields)
 ConvectionForcing() = ConvectionForcing(nothing, nothing, nothing)
 
 # =========================================================================
-# Capability probes (Decisions 27, 28)
+# Capability probes
 # =========================================================================
 
 """
@@ -114,7 +105,7 @@ convection operator.
 
 The window-level overload `has_convection_forcing(window) =
 window.convection !== nothing` is defined in `TransportBinaryDriver.jl`
-alongside the window struct extensions (plan 18 Commit 2).
+alongside the window struct extensions.
 """
 has_convection_forcing(forcing::ConvectionForcing) =
     forcing.cmfmc !== nothing ||
@@ -125,7 +116,7 @@ has_convection_forcing(forcing::ConvectionForcing) =
     _cap(f::ConvectionForcing) -> NTuple{3, Bool}
 
 Capability tuple `(has_cmfmc, has_dtrain, has_tm5_fields)`. Used by
-`_check_capability_match` to enforce Decision 27 invariance —
+`_check_capability_match` to enforce capability invariance —
 `copy_convection_forcing!` requires exact capability agreement between
 src and dst.
 """
@@ -145,7 +136,7 @@ function _check_capability_match(dst::ConvectionForcing, src::ConvectionForcing)
 end
 
 # =========================================================================
-# Per-substep copy (Decision 23 — refresh window → model)
+# Per-substep copy (refresh window → model)
 # =========================================================================
 
 """
@@ -154,14 +145,14 @@ end
 Copy `src`'s arrays into `dst`'s preallocated buffers in place.
 Preserves `===` identity of the destination's arrays — this is what
 makes the per-substep refresh zero-allocation after the sim-construction
-allocation step (Decision 26).
+allocation step.
 
-Enforces strict capability match first (Decision 27): both sides must
+Enforces strict capability match first: both sides must
 have identical `_cap(...)` tuples. Otherwise throws `ArgumentError`.
 This catches both directions of mismatch (dst has a field src lacks,
 or vice versa) — both are silent correctness hazards.
 
-Used by `DrivenSimulation._refresh_forcing!` (Commit 8) to populate
+Used by `DrivenSimulation._refresh_forcing!` to populate
 `sim.model.convection_forcing` from `sim.window.convection` each substep.
 """
 function copy_convection_forcing!(dst::ConvectionForcing, src::ConvectionForcing)
@@ -182,7 +173,7 @@ function copy_convection_forcing!(dst::ConvectionForcing, src::ConvectionForcing
 end
 
 # =========================================================================
-# Sim-construction allocation (Decision 26)
+# Sim-construction allocation
 # =========================================================================
 
 # Small backend-adapter helper. The implementation delegates to
@@ -219,8 +210,8 @@ Build a destination `ConvectionForcing` whose array fields are
 (inferred from `backend_hint`, typically `model.state.air_mass`).
 Capability (which fields are non-nothing) exactly matches `src`.
 
-Used by `DrivenSimulation` construction (plan 18 v5.1 Decision 26) to
-seed `model.convection_forcing` from the first loaded window. After
+Used by `DrivenSimulation` construction to seed
+`model.convection_forcing` from the first loaded window. After
 this step, `copy_convection_forcing!` reuses the same buffers across
 all subsequent substeps.
 

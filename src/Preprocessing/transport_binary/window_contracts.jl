@@ -14,16 +14,15 @@
 #       `update_accumulator!`, `summarize_status!`.
 #
 #   - `AbstractWindowWorkspace{G, FT}` — typed nominal for the per-day
-#       target-shape buffers. P1 ships only the abstract type; concrete
-#       subtypes land alongside the unified-driver cutover in P2.
+#       target-shape buffers. Only the abstract type exists today;
+#       concrete subtypes land alongside the unified-driver cutover.
 #
 #   - `AbstractBinaryWriter{G, FT, Basis}` — typed nominal for the
-#       topology's streaming binary writer. Same: abstract only in P1;
-#       concretes land in P2. The third type parameter is a subtype of
+#       topology's streaming binary writer. Same: abstract type only for
+#       now; concretes land later. The third type parameter is a subtype of
 #       the existing `State.AbstractMassBasis` (`DryBasis`/`MoistBasis`)
 #       so a writer↔reader pairing mismatch is a compile-time
-#       `MethodError` rather than a post-load runtime header check —
-#       closing foot-gun (C).
+#       `MethodError` rather than a post-load runtime header check.
 #
 # The concrete per-topology contracts ship in:
 #   * `cubed_sphere_contracts.jl`         (CubedSphereContract{FT})
@@ -88,20 +87,20 @@ summarize_status!(contract; quarantine_path) -> nothing
 ```
 
 `window` is the topology-specific window payload (NamedTuple of typed
-buffers today, P2-typed `ReadyWindow{G, FT}` later).
+buffers today, a typed `ReadyWindow{G, FT}` later).
 
-Closes foot-gun (A) from DESIGN.md: contract knobs aren't drift-prone
-kwargs anymore — each topology constructs its own contract once from
-config, with whatever fields IT needs.
+Keeps contract knobs from being drift-prone kwargs — each topology
+constructs its own contract once from config, with whatever fields IT
+needs (see DESIGN.md).
 """
 abstract type AbstractWindowContract{G <: AbstractTargetGeometry, FT} end
 
 """
     AbstractWindowWorkspace{G <: AbstractTargetGeometry, FT}
 
-Typed nominal for the per-day target-shape workspace buffers. P1 ships
-only the abstract type; concrete subtypes land alongside the unified
-driver cutover in P2 (today's workspaces are NamedTuples constructed
+Typed nominal for the per-day target-shape workspace buffers. Only the
+abstract type exists today; concrete subtypes land alongside the unified
+driver cutover (today's workspaces are NamedTuples constructed
 inside each topology's `process_day` orchestrator).
 """
 abstract type AbstractWindowWorkspace{G <: AbstractTargetGeometry, FT} end
@@ -116,7 +115,7 @@ type parameter encodes the on-disk mass-basis convention (reusing
 reader path) so a writer↔reader pairing mismatch is a compile-time
 `MethodError`.
 
-P1 ships only the abstract type; concrete subtypes land in P2.
+Only the abstract type exists today; concrete subtypes land later.
 """
 abstract type AbstractBinaryWriter{G <: AbstractTargetGeometry, FT,
                                     Basis <: AbstractMassBasis} end
@@ -214,10 +213,10 @@ end
 #
 # These are additive nominals for the unified driver cutover. Existing
 # preprocessors still own their control flow, but they can now hand a typed
-# `ReadyWindow{G, FT}` to the same `verify_window!` contract surface the P1
+# `ReadyWindow{G, FT}` to the same `verify_window!` contract surface the
 # NamedTuple payloads used. `ReadyWindow` deliberately forwards unknown
-# property access to its payload so the P1 contract methods do not need
-# duplicate overloads while the drivers migrate.
+# property access to its payload so the existing contract methods do not
+# need duplicate overloads while the drivers migrate.
 # ---------------------------------------------------------------------------
 
 """
@@ -323,8 +322,8 @@ replay gate throws on violation; the positivity gate is non-fatal at
 this layer (the run-level accumulator + `summarize_status!` decides
 fatal-vs-warn based on `require_substep_positivity`).
 
-`window` is the topology's per-window payload (a NamedTuple in P1, a
-typed `ReadyWindow{G, FT}` in P2).
+`window` is the topology's per-window payload (a NamedTuple today, a
+typed `ReadyWindow{G, FT}` later).
 """
 function verify_window! end
 

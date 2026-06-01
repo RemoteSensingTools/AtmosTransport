@@ -365,7 +365,7 @@ function diffusion_spec(section)
     # Reject the legacy `type = "..."` schema rather than silently mapping it to
     # NoDiffusion. Configs that said `type = "pbl"`/`"nonlocal_pbl"` expected
     # diffusion to run; the silent fall-through hid that for months. Migrate to
-    # `kind`. (Codex Section B P0 fix — preserved from the old builder.)
+    # `kind`. (Preserved from the old builder.)
     haskey(section, "type") && !haskey(section, "kind") &&
         throw(ArgumentError(
             "[diffusion] uses legacy `type = \"$(section["type"])\"`; rename to " *

@@ -153,8 +153,8 @@ restored without rewriting the kernel.
 - `bmass` — layer air mass per unit horizontal area [kg / m²].
 - `dt` — sub-step length [s].
 
-NO positivity clamp. Per plan 18 Decision 11 + adjoint addendum §D,
-the kernel is linear in `q_env`, `q_above`, `qc_post_mix` — tiny
+NO positivity clamp. The kernel is linear in `q_env`, `q_above`,
+`qc_post_mix` — tiny
 negativities are absorbed by the global mass fixer, not by a
 nonlinear clamp that would break the adjoint-identity property.
 """
@@ -299,7 +299,7 @@ end
 Return the cached CFL sub-step count, recomputing from the CMFMC
 field if the cache is stale (first call after a window advance).
 
-CFL rule (plan 18 v5.1 §2.8 Decision 21):
+CFL rule:
 
     n_sub = max(1, ceil(max_over_grid(cmfmc · dt / bmass) / cfl_safety))
 

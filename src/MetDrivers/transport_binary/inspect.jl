@@ -14,7 +14,7 @@ the existing `has_flux_delta`, `has_tm5_convection`, `has_cmfmc`, and
 `has_qv` predicates. Fields:
 
 - `advection :: Bool` — always `true` (m, am, bm, cm are required).
-- `replay_gate :: Bool` — plan-39 dam/dbm/dcm/dm present.
+- `replay_gate :: Bool` — dam/dbm/dcm/dm present.
 - `tm5_convection :: Bool` — entu/detu/entd/detd all present.
 - `cmfmc_convection :: Bool` — cmfmc present (CS only; LL/RG returns false).
 - `surface_pressure :: Bool` — ps present.
@@ -128,7 +128,7 @@ function _print_capability_rows(io::IO, reader)
     caps = binary_capabilities(reader)
     println(io, "Capabilities:")
     _print_cap(io, caps.advection,        "advection",        "(m, am, bm, cm)")
-    _print_cap(io, caps.replay_gate,      "plan-39 replay",   "(dam, dbm, dcm, dm)")
+    _print_cap(io, caps.replay_gate,      "replay gate",      "(dam, dbm, dcm, dm)")
     _print_cap(io, caps.tm5_convection,   "TM5 convection",   "(entu, detu, entd, detd)")
     _print_cap(io, caps.cmfmc_convection, "CMFMC convection", "(cmfmc)")
     _print_cap(io, caps.pbl_diffusion,    "PBL diffusion",    "(pblh, ustar, pbl_hflux, t2m)")

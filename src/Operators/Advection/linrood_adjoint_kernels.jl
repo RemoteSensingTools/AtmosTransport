@@ -286,7 +286,7 @@ function apply_pre_advect_x_adjoint!(lambda_rm, lambda_m, lambda_fx_face,
 end
 
 # ===========================================================================
-# Plan 25 Commit 3 — Adjoints of the two `_from_q` PPM face kernels (ORD=5)
+# Adjoints of the two `_from_q` PPM face kernels (ORD=5)
 #
 # The forward kernels `_ppm_x_face_from_q_kernel!` and
 # `_ppm_y_face_from_q_kernel!` (LinRood.jl:299, 325) compute a PPM
@@ -395,7 +395,7 @@ end
 end
 
 # `_ppm_face_value` (LinRood.jl:215) with the donor-mass denominator held
-# constant. For LinRood adjoint Commit 3 the velocity tape supplies
+# constant. For the LinRood adjoint the velocity tape supplies
 # fixed `(F, m_lo, m_hi)`; the d6 tangent only propagates the q-stencil
 # sensitivities.
 @inline function _ppm_face_value_d6(
@@ -444,7 +444,7 @@ end
 end
 
 # ---------------------------------------------------------------------------
-# ORD=7 discontinuous-edge boundary correction (Plan-25 Commit 3b).
+# ORD=7 discontinuous-edge boundary correction.
 #
 # At gnomonic CS face boundaries (`face_idx == 1` or `face_idx == Nc + 1`)
 # the forward `_apply_ord7_boundary` (LinRood.jl:186) overrides `q_R_m`
@@ -743,7 +743,7 @@ function apply_ppm_y_face_from_q_adjoint!(lambda_q, lambda_fy_face,
 end
 
 # ===========================================================================
-# Plan 25 Commit 3b — Adjoints of the rm-input PPM face kernels (ORD=5)
+# Adjoints of the rm-input PPM face kernels (ORD=5)
 #
 # Forward kernels `_ppm_x_face_kernel!` and `_ppm_y_face_kernel!`
 # (LinRood.jl:241, 270) at ORD=5 fold `_safe_mixing_ratio` into the
@@ -1373,13 +1373,13 @@ function apply_ppm_y_face_adjoint!(lambda_rm, lambda_m, lambda_fy_face,
 end
 
 # ===========================================================================
-# Plan 25 Commit 4 — Single-panel, zero-halo LinRood horizontal adjoint.
+# Single-panel, zero-halo LinRood horizontal adjoint.
 #
-# Composes the six kernel adjoints from Commits 1–3b into a single-step
+# Composes the six kernel adjoints above into a single-step
 # reverse pass that mirrors the forward `fv_tp_2d_cs!` (LinRood.jl:695)
 # for ONE panel with all halos held at zero. Cross-panel halo / corner
 # adjoint (`_adjoint_fill_panel_halos!`, `copy_corners` reverse) is
-# deferred to Commit 5 alongside the full tape integration.
+# deferred to the full tape integration.
 #
 # The forward path captured in this composition:
 #   Phase 1: q_buf = safe_mixing_ratio(rm, m)         (init A: state = c)
@@ -1553,14 +1553,14 @@ function apply_linrood_horizontal_adjoint_single_panel!(
 end
 
 # ===========================================================================
-# Plan 25 Commit 5 — single-panel, multi-substep LinRood horizontal adjoint
+# Single-panel, multi-substep LinRood horizontal adjoint
 # with ZERO cross-panel halos.
 #
-# Builds on the single-panel composition from Commit 4 to support a
+# Builds on the single-panel composition above to support a
 # sequence of forward substeps (each with its own `am`/`bm` tape),
 # replayed in reverse order. Six-panel orchestration and cross-panel
 # halo adjoint integration into `cs_surface_emission_footprint` are
-# deferred to Commit 6 — this commit ships a parallel API
+# deferred — this path ships a parallel API
 # `apply_linrood_multi_substep_adjoint!` that takes a single-panel
 # meteo tape and produces gradients of an objective over the substep
 # sequence.
@@ -1576,7 +1576,7 @@ end
 # matches the forward path at panel-edge faces. Same pattern as
 # `_CSLinRoodHorizRecord` in `src/Adjoints/LinRoodTape.jl`.
 #
-# (Codex review M1 2026-05-15: before this binding, a tape recorded
+# (Known issue: before this binding, a tape recorded
 # at ORD=7 silently reversed with ORD=5 if the caller did not pass
 # `Val(7)` to `apply_linrood_multi_substep_adjoint!` — reproduced
 # with a smooth one-step FD/VJP check, default error ~1.34e-4 vs
@@ -1685,14 +1685,14 @@ matching velocity tapes.
 Accumulates the gradient of the final-state objective
 `⟨lambda_rm_final, rm_final⟩ + ⟨lambda_m_final, m_final⟩` w.r.t. the
 substep-0 state into `(lambda_rm0, lambda_m0)`. Pure single-panel
-zero-cross-panel-halo path — same scope as Commit 4 extended over
+zero-cross-panel-halo path — the single-substep scope extended over
 substeps.
 
 The PPM scheme order `ORD` is read from the tape's element type
 (`LinRoodHorizontalTapeEntry{…, ORD}`), so a tape recorded at
 ORD=7 always reverses with the ORD=7 face-kernel adjoints — the
 ORD is not a separate kwarg that could drift from the forward
-pass. (Codex review M1 2026-05-15.)
+pass.
 """
 function apply_linrood_multi_substep_adjoint!(
     lambda_rm0, lambda_m0,

@@ -68,7 +68,7 @@ steps_per_window_schedule(d::AbstractMetDriver) =
     current_time(meteo) -> Float64
 
 Simulation time [s] at the start of the next step. Threaded through
-operator `apply!` methods by plan 17 Commit 4:
+operator `apply!` methods:
 
     apply!(state, meteo, grid, op, dt; workspace)
 
@@ -77,7 +77,7 @@ Every operator that consumes time (`ExponentialDecay` rates,
 `StepwiseField`s, etc.) reads `current_time(meteo)` once per call
 and passes the resulting scalar to each `update_field!(f, t)`.
 
-# Canonical usage (plan 18 A3)
+# Canonical usage
 
 - **Production**: `meteo = sim::DrivenSimulation`; returns `sim.time`,
   advanced by `sim.time += sim.Δt` at the end of each `step!(sim)`.
@@ -87,9 +87,9 @@ and passes the resulting scalar to each `update_field!(f, t)`.
   `0.0`. Retained for backward compatibility but should not be
   relied upon — the driver is stateless (struct holds only the
   reader + grid) and cannot provide real time information. Any code
-  that previously passed `meteo = sim.driver` silently got `0.0`;
-  plan 18 A3 changes `DrivenSimulation.step!` to pass `meteo = sim`
-  so the sim's clock is the canonical source.
+  that previously passed `meteo = sim.driver` silently got `0.0`.
+  `DrivenSimulation.step!` passes `meteo = sim` so the sim's clock is
+  the canonical source.
 """
 current_time(::AbstractMetDriver) = 0.0
 current_time(::Nothing) = 0.0

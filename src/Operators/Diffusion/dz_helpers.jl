@@ -17,12 +17,12 @@
 #     `src/Preprocessing/tm5_convection_conversion.jl`. Default for any
 #     configuration without VDIFF payload (legacy LL / RG / WindowPBLKzField).
 #
-#   * `fill_dz_hydrostatic_virtualT!` — virtual T from VDIFF (D6 fix):
+#   * `fill_dz_hydrostatic_virtualT!` — virtual T from VDIFF:
 #         T_v[k]      = T[k] · (1 + 0.61 · qv[k])     (qv ≥ 0 clamped)
 #         dz[i,j,k]   = R · T_v[k] / g · delp / p_ctr
 #     Used by the `LocalHoltslagBovilleKzField` runtime path so the
 #     solver `dz_scratch` shares the same column geometry the Kz cache
-#     itself uses (closes the D6 inconsistency from the audit memo).
+#     itself uses (closes the virtual-T inconsistency from the audit memo).
 #
 # Both fills produce the same `dz` units (metres) and the same matrix
 # coefficient interpretation in the mass-flux kernel.
@@ -112,7 +112,7 @@ function fill_dz_hydrostatic_constT!(dz_panels::NTuple{6, <:AbstractArray{<:Abst
 end
 
 # ---------------------------------------------------------------------------
-# Virtual-temperature hydrostatic dz (D6 fix).
+# Virtual-temperature hydrostatic dz.
 #
 # When VDIFF fields are present (LocalHoltslagBovilleKzField on CS), the
 # Kz cache already uses virtual T per layer to compute its own column
@@ -166,7 +166,7 @@ end
 Populate a 3D `(Nx, Ny, Nz)` `dz` array using virtual temperature per
 layer: `T_v = T · (1 + 0.61 · qv)`. Matches the geometry the
 [`LocalHoltslagBovilleKzField`](@ref AtmosTransport.State.Fields.LocalHoltslagBovilleKzField)
-uses for its column-mid heights, closing the D6 inconsistency between
+uses for its column-mid heights, closing the inconsistency between
 solver `dz` and Kz-cache `dz`.
 
 `t_lyr`, `qv_lyr` are layer-center 3D fields with shape `(Nx, Ny, Nz)`,

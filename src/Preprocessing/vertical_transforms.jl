@@ -26,7 +26,7 @@
 #   - `PressureOverlap(coeff_path)`   — pressure-thickness overlap
 #                                       onto an independent target
 #                                       hybrid grid. Detailed
-#                                       implementation deferred to P1
+#                                       implementation deferred
 #                                       (the existing spectral path's
 #                                       `build_vertical_setup` is used
 #                                       until the unified driver cuts
@@ -179,8 +179,8 @@ end
 
 Remap native layer integrals onto an independent target hybrid
 coordinate by pressure-thickness overlap. The target half-level
-coefficients are loaded from `target_coeff_path`. Full
-`apply_vertical!` implementation lands in P1 alongside the spectral
+coefficients are loaded from `target_coeff_path`. The full
+`apply_vertical!` implementation lands alongside the spectral
 driver cutover; `plan_vertical` constructs the plan today.
 """
 struct PressureOverlap <: AbstractVerticalTransform
@@ -388,7 +388,7 @@ function plan_vertical(transform::LevelSelection,
         transform, native_vc, selected_vc, mm, groups, Nz_out, n_levels(native_vc))
 end
 
-# PressureOverlap: plan today; apply_vertical! lands in P1 alongside the
+# PressureOverlap: plan today; apply_vertical! lands alongside the
 # spectral driver cutover. The plan still carries `merged_vc` so the
 # rest of the surface (header construction, output sizing) can be wired.
 function plan_vertical(transform::PressureOverlap,
@@ -397,7 +397,7 @@ function plan_vertical(transform::PressureOverlap,
     target_vc = HybridSigmaPressure(FT.(target_vc_raw.A), FT.(target_vc_raw.B))
     Nz_target = n_levels(target_vc)
     # No merge_map for pressure-overlap; mapping is sparse overlap
-    # coefficients (built lazily by `apply_vertical!` in P1).
+    # coefficients (built lazily by `apply_vertical!`).
     return VerticalPlan{FT, PressureOverlap}(
         transform, native_vc, target_vc, Int[], UnitRange{Int}[],
         Nz_target, n_levels(native_vc))
@@ -616,7 +616,7 @@ function apply_vertical!(buf_out::AbstractMatrix{T},
     return buf_out
 end
 
-# PressureOverlap fallback — full implementation lands in P1.
+# PressureOverlap fallback — full implementation pending.
 function apply_vertical!(_buf_out, _buf_in,
                           ::VerticalPlan{FT, PressureOverlap},
                           ::AbstractFieldKind, args...) where FT

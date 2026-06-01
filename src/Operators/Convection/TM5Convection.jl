@@ -1,14 +1,10 @@
 # ---------------------------------------------------------------------------
 # TM5Convection — TM5-style four-field Tiedtke 1989 mass-flux convection.
 #
-# Plan 23 Commit 1: struct + dispatch stubs.
-# Plan 23 Commit 4: real kernel launches via `_tm5_{…}_kernel!`
-#                    in tm5_kernels.jl, which wraps
-#                    `_tm5_solve_column!` (tm5_column_solve.jl)
-#                    per thread.  All three topologies (LatLon,
-#                    ReducedGaussian, CubedSphere) land in one
-#                    commit per plan 23 principle "topology rollout
-#                    policy" (no structured-first staging).
+# Real kernel launches go via `_tm5_{…}_kernel!` in tm5_kernels.jl,
+# which wraps `_tm5_solve_column!` (tm5_column_solve.jl) per thread.
+# All three topologies (LatLon, ReducedGaussian, CubedSphere) are
+# supported.
 # ---------------------------------------------------------------------------
 
 """
@@ -19,8 +15,7 @@ following Tiedtke (1989) as implemented in TM5-4DVAR: two entrainment
 and two detrainment fields (updraft + downdraft). The backward-Euler
 transport matrix `conv1 = I - dt·D` is dense within the cloud window
 and identity above; the solver assembles and factorizes only the active
-lower-right cloud block and stores the pivot vector for adjoint replay
-in plan 19.
+lower-right cloud block and stores the pivot vector for adjoint replay.
 
 The forcing arrays `(entu, detu, entd, detd)` arrive via
 `TransportModel.convection_forcing.tm5_fields`, populated each
@@ -74,9 +69,8 @@ quadrant are skipped by both the factorization and the tracer solve.
 
 Pivoting is kept even though the matrix is diagonally dominant by
 construction (upstream Fortran comment says pivoting "not needed").
-Per plan 23 principle 3, the pivot vector is stored in
-[`TM5Workspace`](@ref) so plan 19 (adjoint) can replay the same
-factorization with `trans='T'`.
+The pivot vector is stored in [`TM5Workspace`](@ref) so the adjoint
+can replay the same factorization with `trans='T'`.
 
 # CFL sub-cycling
 
@@ -626,7 +620,7 @@ function apply_convection!(q_raw::NTuple{6, <:AbstractArray{FT, 4}},
 end
 
 # Clear error message when `forcing.tm5_fields === nothing` — this
-# is the only "missing input" case because the Commit-1 validator
+# is the only "missing input" case because the validator
 # in DrivenSimulation rejects it at window-load time.  Direct
 # callers (e.g. tests that build forcing by hand) go through this
 # guard.

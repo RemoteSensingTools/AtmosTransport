@@ -15,15 +15,15 @@ launch overhead is negligible relative to the kernel's O(Nx · Ny) work.
 
 # Unit convention
 
-`rate[i, j]` is a model-storage rate per cell (plan 17 Decision 1 —
-already area-integrated). `dt` is in seconds. Physical kg-species/s file
+`rate[i, j]` is a model-storage rate per cell (already
+area-integrated). `dt` is in seconds. Physical kg-species/s file
 sources are converted to this storage basis by the source builder. The
 kernel does NOT multiply by cell area; the caller is expected to have
 pre-integrated the flux into a per-cell rate.
 
 # Surface layer convention
 
-`k = Nz` is the surface (plan 17 Decision 2). This matches the LatLon
+`k = Nz` is the surface. This matches the LatLon
 grid storage convention used everywhere in `src/`. A future
 `AbstractLayerOrdering` abstraction can generalise this.
 """

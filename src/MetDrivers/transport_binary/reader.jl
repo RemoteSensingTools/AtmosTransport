@@ -86,7 +86,7 @@ has_vdiff_fields(r::TransportBinaryReader) =
     all(s in r.header.payload_sections for s in _GCHP_VDIFF_PAYLOAD_SECTIONS)
 
 # ---------------------------------------------------------------------------
-# Capability summary + `inspect_binary` (plan 40 Commit 5)
+# Capability summary + `inspect_binary`
 #
 # `binary_capabilities(reader)` returns a NamedTuple describing what
 # operators this binary can drive, so the CLI + physics-recipe validator
@@ -105,7 +105,7 @@ function TransportBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = Flo
     read_sz = min(262144, filesize(bin_path))
     raw = read(io, read_sz)
 
-    # Plan 39 Commit D: validate the self-describing transport-binary
+    # Validate the self-describing transport-binary
     # contract BEFORE mmap'ing the payload. Rejects ambiguous/legacy
     # headers with a clear error (names the missing field + regeneration
     # command). format_version is a hard boundary: v1 files are obsolete.
@@ -229,8 +229,7 @@ _transport_allocate_surface_field(reader::TransportBinaryReader{FT}) where FT =
         Array{FT}(undef, reader.header.Nx, reader.header.Ny) :
         Array{FT}(undef, reader.header.ncell)
 
-# TM5 convection fields — all layer-center, shape matches `m`
-# (plan 23 Commit 3).
+# TM5 convection fields — all layer-center, shape matches `m`.
 _transport_allocate_tm5_field(reader::TransportBinaryReader{FT}) where FT =
     _transport_is_structured(reader.header) ?
         Array{FT}(undef, reader.header.Nx, reader.header.Ny, reader.header.nlevel) :
@@ -411,7 +410,7 @@ All fields share the same shape as `m`: `(Nx, Ny, Nz)` for
 structured or `(ncells, Nz)` for face-indexed binaries. Orientation
 is as written by the preprocessor (AtmosTransport: k=1=TOA,
 k=Nz=surface); no runtime reorientation happens here — the kernel
-(plan 23 Commit 4) reads them directly.
+reads them directly.
 
 Invariant: if ANY of the four sections is present in the header,
 ALL four must be present. This mirrors the

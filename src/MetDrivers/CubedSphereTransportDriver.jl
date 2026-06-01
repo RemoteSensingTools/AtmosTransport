@@ -1,8 +1,8 @@
 # ---------------------------------------------------------------------------
 # Cubed-sphere transport driver
 #
-# Plan 22B keeps the cubed-sphere runtime panel-native instead of forcing it
-# through the flat structured transport-binary contract.
+# The cubed-sphere runtime is panel-native instead of being forced through
+# the flat structured transport-binary contract.
 # ---------------------------------------------------------------------------
 
 struct CubedSphereTransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D, C, S, V, K} <: AbstractTransportWindow{Basis}
@@ -290,7 +290,7 @@ function load_transport_window(driver::CubedSphereTransportDriver, win::Int)
     panels_cm = ntuple(p -> _pad_horizontal(raw.cm[p], Hp), 6)
     basis = _cs_basis_type(driver.reader)
     fluxes = CubedSphereFaceFluxState{basis}(panels_am, panels_bm, panels_cm)
-    # Plan 23 Commit 3: `raw.tm5_fields` is a NamedTuple of per-panel
+    # `raw.tm5_fields` is a NamedTuple of per-panel
     # NTuples `(entu, detu, entd, detd)` when the binary carries TM5
     # sections, or `nothing` otherwise. The runtime validator in
     # DrivenSimulation decides whether TM5Convection can run against

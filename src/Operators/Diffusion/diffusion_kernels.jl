@@ -3,7 +3,7 @@
 #
 # Two coexisting families:
 #
-#   * Mass-flux kernels (D1, used by the new `apply_vertical_diffusion_vmr!`
+#   * Mass-flux kernels (used by the `apply_vertical_diffusion_vmr!`
 #     wrapper across CS, LL packed, and RG face-indexed paths). Backward-
 #     Euler implicit solve `Ã·q_new = q_old` on dry mass-mixing ratio `q`;
 #     `Ã` is built so that the equivalent operator on tracer mass
@@ -23,7 +23,8 @@
 # Reference for the mass-flux form: TM5's `TM5_Diff_Matrix` at
 # `deps/tm5-cy3-4dvar/base/src/tm5_diff.F90:36-129`. See
 # `memory/diffusion_full_pipeline_audit_2026_05_25.md` for the audit
-# chain (D1 fix; D7 sub-agent "broken transpose" was a false positive).
+# chain (the "broken transpose" concern was investigated and found to be
+# a false positive).
 #
 # Multi-tracer `w_scratch` race (benign, intentional):
 # The packed kernels (`_vertical_diffusion_kernel!`,
@@ -56,7 +57,7 @@
 # fraction-of-mass-exchanged form on the tracer-mass vector directly.
 # We operate on VMR with `Ã = M⁻¹·A·M`, which has the same conservation
 # guarantee via `Σ m·q_new = Σ m·q_old`. See the algebra in
-# `memory/diffusion_full_pipeline_audit_2026_05_25.md` (D1 fix).
+# `memory/diffusion_full_pipeline_audit_2026_05_25.md`.
 #
 # The previous geometric form `D = Kz / (dz_k · dz_iface)` (kept in git
 # history at commit 400410b~) conserved `Σ q·dz` but not `Σ m·q`,

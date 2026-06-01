@@ -33,7 +33,7 @@ RuntimePhysicsRecipe(adv, diff, conv) = RuntimePhysicsRecipe(adv, diff, conv, No
 
 const CSPhysicsRecipe = RuntimePhysicsRecipe
 
-# Plan 40 Commit 2: the flat-411 `catrine_co2` stub is gone. CS tracers
+# The flat-411 `catrine_co2` stub is gone. CS tracers
 # now flow through the same `build_initial_mixing_ratio` +
 # `pack_initial_tracer_mass` pipeline as LL/RG; `kind = "catrine_co2"`
 # loads the Catrine NetCDF and regrids + remaps it conservatively onto
@@ -214,7 +214,7 @@ function validate_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
             "[diffusion] kind = \"geoschem_holtslag_boville_vdiff\" requires " *
             "pblh/ustar/pbl_hflux/t2m and vdiff_u/vdiff_v/vdiff_t/vdiff_qv " *
             "sections in every cubed-sphere transport binary."))
-    # D3: GCHP parity requires emissions to be applied as a boundary condition
+    # GCHP parity requires emissions to be applied as a boundary condition
     # inside the same diffusive solve (see vdiff_mod.F90:679, gchp_chunk_mod.F90:1296).
     # Our default `SplitSurfaceFluxCoupling` does V(dt/2) → S(dt) → V(dt/2)
     # Strang, which is a valid integration but does NOT match GCHP. Warn at
@@ -377,8 +377,7 @@ build_cs_physics_recipe(cfg, context, ::Type{FT}; halo_width::Union{Nothing, Int
     build_runtime_physics_recipe(cfg, context, FT; halo_width = halo_width)
 configured_cs_halo_width(cfg, scheme::AbstractAdvectionScheme) = configured_halo_width(cfg, scheme)
 
-# `build_cs_tracer_panels` was a flat-411 stub (plan 23 era). Plan 40
-# Commit 2 removed it in favour of the unified pipeline:
+# CS tracers flow through the unified pipeline:
 #
 #     vmr = build_initial_mixing_ratio(air_mass, grid, init_cfg)
 #     rm  = pack_initial_tracer_mass(grid, air_mass, vmr;

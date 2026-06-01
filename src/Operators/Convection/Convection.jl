@@ -1,7 +1,7 @@
 """
     Convection
 
-Convective transport operators (plan 18).
+Convective transport operators.
 
 This submodule ships the convection-operator hierarchy:
 
@@ -12,21 +12,20 @@ This submodule ships the convection-operator hierarchy:
   in `TransportModel.step!` so the presence of the convection block
   has zero cost for users who don't opt in.
 
-History (plan 18 + plan 23):
+Operators:
 
-- Plan 18 Commit 1: type hierarchy + `NoConvection` no-op.
-- Plan 18 Commit 2: `ConvectionForcing` in `..MetDrivers` with
-  `copy_convection_forcing!`, `allocate_convection_forcing_like`,
-  and window-struct integration.
-- Plan 18 Commit 3: `CMFMCConvection` (GCHP path, CMFMC+DTRAIN
-  kernel with mandatory CFL sub-cycling and well-mixed sub-cloud).
-- Plan 22D: `step!`-level runtime block wiring across all
-  three topologies (LL / RG / CS).
-- Plan 23 Commit 1: `TM5Convection` struct + `TM5Workspace` +
-  dispatch stubs. Commit 2 ships the column solver; Commit 4
-  replaces stubs with real KA kernels on all three topologies.
+- `ConvectionForcing` in `..MetDrivers` carries the convective forcing
+  arrays (with `copy_convection_forcing!`,
+  `allocate_convection_forcing_like`, and window-struct integration).
+- `CMFMCConvection` (GCHP path, CMFMC+DTRAIN kernel with mandatory CFL
+  sub-cycling and well-mixed sub-cloud).
+- `TM5Convection` (TM5 column solver) with `TM5Workspace`, running on
+  all three topologies (LL / RG / CS).
 
-## `apply!` contract (per plan 18 v5.1 §2.14 Decision 3)
+The `step!`-level runtime block wires convection across all three
+topologies (LL / RG / CS).
+
+## `apply!` contract
 
     apply!(state::CellState{B},
            forcing::ConvectionForcing,
@@ -51,10 +50,7 @@ path keeps forcing panel-native too: the driver loads `cmfmc` /
 `dtrain` as per-panel tuples and the operator applies the same
 column-local logic on each panel interior.
 
-`TM5Convection` ships the same three-topology scope from the
-first kernel commit (plan 23 Commit 4); Commit 1 lands the type,
-workspace, and dispatch stubs so downstream wiring compiles
-without any kernel work.
+`TM5Convection` ships the same three-topology scope.
 
 The no-op `NoConvection` path accepts any state shape — it's a pure
 dead branch.
@@ -73,21 +69,21 @@ import ..apply!
 import ..AbstractConvection             # global root from src/Operators/AbstractOperators.jl
 
 export AbstractConvection, NoConvection
-export CMFMCConvection                          # plan 18 Commit 3
-export CMFMCWorkspace, invalidate_cmfmc_cache!  # plan 18 Commit 3
-export TM5Convection                            # plan 23 Commit 1
-export TM5Workspace, invalidate_tm5_cache!      # plan 23 + P6 cache hook
+export CMFMCConvection
+export CMFMCWorkspace, invalidate_cmfmc_cache!
+export TM5Convection
+export TM5Workspace, invalidate_tm5_cache!
 export CMFMCMatrixConvection                    # GEOS-derived rates → TM5 LU (conservative CMFMC)
 export CMFMCMatrixWorkspace, invalidate_cmfmc_matrix_cache!
 export apply_convection!
 
 include("operators.jl")
-include("convection_workspace.jl")   # CMFMCWorkspace (Commit 3) + TM5Workspace (plan 23)
-include("cmfmc_kernels.jl")          # kernels + inline helpers (Commit 3)
-include("CMFMCConvection.jl")        # struct + apply! methods (Commit 3)
-include("tm5_column_solve.jl")       # backend-agnostic column solver (plan 23 Commit 2)
-include("tm5_kernels.jl")            # @kernel wrappers per topology (plan 23 Commit 4)
-include("TM5Convection.jl")          # struct + apply! methods (plan 23 Commit 1 + Commit 4)
+include("convection_workspace.jl")   # CMFMCWorkspace + TM5Workspace
+include("cmfmc_kernels.jl")          # kernels + inline helpers
+include("CMFMCConvection.jl")        # struct + apply! methods
+include("tm5_column_solve.jl")       # backend-agnostic column solver
+include("tm5_kernels.jl")            # @kernel wrappers per topology
+include("TM5Convection.jl")          # struct + apply! methods
 include("cmfmc_matrix_kernels.jl")   # GEOS (cmfmc,dtrain) → TM5 (entu,detu) derivation kernels
 include("CMFMCMatrixConvection.jl")  # struct + apply! routing through TM5 LU
 

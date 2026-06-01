@@ -40,8 +40,8 @@
 # k=Nz+1 at surface). OUTPUTS are in AtmosTransport orientation
 # (same as the input ECMWF orientation). If raw data arrives in the
 # OPPOSITE orientation (some MARS extractions have k=1=surface),
-# reverse BEFORE calling ec2tm (a runtime reorientation inside this
-# function would violate plan 23 principle 1).
+# reverse BEFORE calling ec2tm (this function must not perform a
+# runtime reorientation).
 #
 # The commit point for this conversion in the preprocessor pipeline
 # is after moist-field merging but before Poisson balancing.
@@ -191,7 +191,7 @@ end
 end
 
 # ---------------------------------------------------------------------------
-# Plan 24 Commit 1: full-fidelity port of TM5 `ECconv_to_TMconv`.
+# Full-fidelity port of TM5 `ECconv_to_TMconv`.
 #
 # The minimal `ec2tm!` above takes already-integrated fluxes and does
 # simple clamping. Real ERA5 GRIB data carries
@@ -592,7 +592,7 @@ end
 end
 
 # ---------------------------------------------------------------------------
-# Plan 24 Commit 1: hydrostatic layer thickness with virtual-T correction.
+# Hydrostatic layer thickness with virtual-T correction.
 #
 # TM5's F90 takes `zh_ec` (geopotential height at half-levels) as input.
 # We don't have geopotential directly from the CDS download, but we have
@@ -707,7 +707,7 @@ function dz_hydrostatic_constT!(dz::AbstractVector{FT},
 end
 
 # ---------------------------------------------------------------------------
-# Plan 24 Commit 3: grid-level pipeline that produces merged (Nz) TM5
+# Grid-level pipeline that produces merged (Nz) TM5
 # fields from native-L137 ERA5 physics data.
 #
 # Per-column flow:

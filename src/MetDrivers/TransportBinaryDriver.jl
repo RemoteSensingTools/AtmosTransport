@@ -37,7 +37,7 @@ struct StructuredTransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D, C} 
     qv_start         :: Q
     qv_end           :: Q
     deltas           :: D
-    convection       :: C   # ::Union{Nothing, ConvectionForcing} — plan 18 Commit 2
+    convection       :: C   # ::Union{Nothing, ConvectionForcing}
 end
 
 struct FaceIndexedTransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D, C} <: AbstractTransportWindow{Basis}
@@ -47,7 +47,7 @@ struct FaceIndexedTransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D, C}
     qv_start         :: Q
     qv_end           :: Q
     deltas           :: D
-    convection       :: C   # ::Union{Nothing, ConvectionForcing} — plan 18 Commit 2
+    convection       :: C   # ::Union{Nothing, ConvectionForcing}
 end
 
 function Adapt.adapt_structure(to, deltas::StructuredFluxDeltas)
@@ -93,7 +93,7 @@ mass_basis(::AbstractTransportWindow{B}) where {B} = B()
 has_humidity_endpoints(window::AbstractTransportWindow) = window.qv_start !== nothing && window.qv_end !== nothing
 has_flux_delta(window::AbstractTransportWindow) = window.deltas !== nothing
 
-# Plan 18 Commit 2: window-level convection probe. Extends the
+# Window-level convection probe. Extends the
 # `ConvectionForcing` overload from `ConvectionForcing.jl` to the
 # window layer.
 has_convection_forcing(window::AbstractTransportWindow) = window.convection !== nothing
@@ -203,13 +203,13 @@ end
 """
     _validate_replay_consistency_ll(reader::TransportBinaryReader)
 
-Plan 39 Commit F — load-time replay gate for LL structured binaries.
+Load-time replay gate for LL structured binaries.
 Walks every consecutive window pair (k, k+1) and asserts
 
     m[k] − 2·steps·(∇·am + ∇·bm + ∂_k cm)  ≈  m[k+1]
 
 to within `tol_rel = 1e-10` (Float64) / `1e-4` (Float32). This mirrors the
-write-time gate from Commit E but fires at driver construction so a
+write-time gate but fires at driver construction so a
 binary produced by an older preprocessor (with the dry-basis Δb×pit cm
 closure bug) is rejected before any runtime integration.
 
@@ -261,7 +261,7 @@ function _validate_replay_consistency_ll(reader::TransportBinaryReader{FT}) wher
 end
 
 # Dispatch stub: CS topology not yet covered by load-time replay.
-# The write-time gate (Commit E) covers it; extend here if needed.
+# The write-time gate covers it; extend here if needed.
 _validate_replay_consistency_ll(::Any) = nothing
 
 @inline function _rg_face_connectivity(mesh)
@@ -290,7 +290,7 @@ end
 """
     _validate_replay_consistency_rg(reader::TransportBinaryReader, grid)
 
-Plan 39 Commit F — load-time replay gate for RG (`:faceindexed`) binaries.
+Load-time replay gate for RG (`:faceindexed`) binaries.
 Uses the `ReducedGaussianMesh` from `grid.horizontal` to build face-cell
 connectivity, then walks consecutive window pairs and asserts
 
@@ -440,8 +440,8 @@ function TransportBinaryDriver(path::AbstractString;
     _validate_runtime_semantics(reader)
     validate_windows && _validate_window_cm_sanity(reader; max_rel_cm=max_rel_cm)
     grid = load_grid(reader; FT=FT, arch=arch)
-    # Plan 39 Commit F: load-time replay-consistency gate. Opt-in because
-    # the write-time Commit E gate already guarantees continuity for
+    # Load-time replay-consistency gate. Opt-in because the write-time
+    # gate already guarantees continuity for
     # binaries we produce; the load-time gate is for suspect binaries
     # (manual imports, file corruption, older preprocessor versions).
     # Set `validate_replay=true` or `ENV["ATMOSTR_REPLAY_CHECK"]="1"` to
@@ -597,7 +597,7 @@ function load_transport_window(driver::TransportBinaryDriver{FT, ReaderT, <:Atmo
                                     convection=convection)
 end
 
-# Plan 23 Commit 3 — returns a ConvectionForcing with populated
+# Returns a ConvectionForcing with populated
 # tm5_fields when the LL/RG binary carries TM5 sections; nothing
 # otherwise.  CMFMC isn't yet written to LL/RG transport binaries
 # (only CS), so cmfmc/dtrain stay nothing on this path.  The

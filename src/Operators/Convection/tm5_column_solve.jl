@@ -1,11 +1,11 @@
 # ---------------------------------------------------------------------------
-# TM5 column solver — plan 23 Commit 2.
+# TM5 column solver.
 #
 # Backend-agnostic Julia implementation of the Tiedtke 1989 mass-flux
 # convection matrix builder + partial-pivot LU solve, transcribed once
 # from the TM5-4DVAR reference at deps/tm5/base/src/tm5_conv.F90:32–341
-# into AtmosTransport orientation (k=1=TOA, k=Nz=surface; plan 23
-# principle 1 — preprocessor writes forcings in this orientation, so
+# into AtmosTransport orientation (k=1=TOA, k=Nz=surface — the
+# preprocessor writes forcings in this orientation, so
 # the solver has zero runtime orientation logic).
 #
 # Algorithm overview (matches the Fortran line-by-line):
@@ -85,11 +85,10 @@ Follows [`tm5_conv.F90:32–191`](../../../deps/tm5/base/src/tm5_conv.F90)
 block by block. Intermediate `fu` (updraft subplane) and `f`
 (downdraft + subsidence) arrays are stack-allocated via `MVector`
 from StaticArrays… or are they? For an arbitrary `Nz` we can't.
-Commit 2 uses plain `Array`s sized `(Nz+1, Nz)` (TM5 Fortran's
-`f(0:lmx, 1:lmx)` pattern, shifted by +1); perf tuning in Commit 4
-can decide whether to batch-allocate these inside the workspace or
-keep them per-column (the matrices are small — `Nz × Nz` floats ≤
-72² × 4 bytes ≈ 20 KiB per column).
+This uses plain `Array`s sized `(Nz+1, Nz)` (TM5 Fortran's
+`f(0:lmx, 1:lmx)` pattern, shifted by +1); these can either be
+batch-allocated inside the workspace or kept per-column (the matrices
+are small — `Nz × Nz` floats ≤ 72² × 4 bytes ≈ 20 KiB per column).
 
 Reindex rules (AtmosTransport ↔ TM5; applied inline):
 
@@ -119,12 +118,11 @@ function _tm5_build_conv1!(conv1::AbstractMatrix{FT},
                            amd::AbstractVector{FT} = zeros(FT, Nz + 1),
                            ) where {FT}
     # Working storage: `f` holds the merged updraft + downdraft
-    # contribution. The plan-23 first cut carried a separate `fu`
-    # buffer to mirror TM5's two-array Fortran layout; the storage
-    # plan's Commit 3 folds the updraft directly into `f` because
-    # the two passes write disjoint index ranges (updraft at
-    # `kk_atm ≥ k_atm`, downdraft at `kk_atm < k_atm`). `amu`/`amd`
-    # are length-(Nz+1).
+    # contribution. Rather than carrying a separate `fu` buffer to
+    # mirror TM5's two-array Fortran layout, the updraft is folded
+    # directly into `f` because the two passes write disjoint index
+    # ranges (updraft at `kk_atm ≥ k_atm`, downdraft at
+    # `kk_atm < k_atm`). `amu`/`amd` are length-(Nz+1).
     #
     # Shape contract: callers pass either `(Nz+1, Nz)` (default
     # standalone path) or `(Nz, Nz)` aliased to `conv1`. Production
@@ -292,16 +290,15 @@ actively-modified range) factorize trivially — no row swap is
 needed and the back-substitution is a no-op. The `O(Nz³)` worst
 case is still cheap at production `Nz ≤ 72` (~370k flops / column).
 
-Partial pivoting is retained per plan 23 principle 3 for adjoint
-replay, even though TM5's diagonally-dominant conv1 rarely needs
-swaps in practice.
+Partial pivoting is retained for adjoint replay, even though TM5's
+diagonally-dominant conv1 rarely needs swaps in practice.
 """
 function _tm5_lu!(conv1::AbstractMatrix{FT},
                   pivots::AbstractVector{<:Integer},
                   Nz::Integer;
                   icltop_eff::Integer = 1) where {FT}
     Nz == 0 && return nothing
-    # Storage Commit 7 active-window LU: rows above `icltop_eff` are
+    # Active-window LU: rows above `icltop_eff` are
     # pure identity by `_tm5_build_conv1!`'s structure (proven by
     # `test/test_tm5_sparsity_above_icltop.jl`), and the lower-left
     # quadrant `(k ≥ icltop_eff, j < icltop_eff)` is zero. So the LU
@@ -339,7 +336,7 @@ function _tm5_lu!(conv1::AbstractMatrix{FT},
         if diag == zero(FT)
             # Singular column — leave matrix untouched; solve will
             # propagate NaN/Inf. Upstream validators (preprocessor
-            # sanity probe, Commit 3) should have caught this.
+            # sanity probe) should have caught this.
             continue
         end
         invd = one(FT) / diag
@@ -369,7 +366,7 @@ function _tm5_solve!(rm_col::AbstractMatrix{FT},
                      Nt::Integer;
                      icltop_eff::Integer = 1) where {FT}
     Nz == 0 && return nothing
-    # Storage Commit 7: rows [1, icltop_eff-1] are identity, so
+    # Rows [1, icltop_eff-1] are identity, so
     # rm_col[1:icltop_eff-1, :] passes through unchanged. Lower-left
     # quadrant `conv1[k ≥ icltop_eff, j < icltop_eff] == 0`, so the
     # forward solve's `j` loop can start at icltop_eff. Pivots are
@@ -457,7 +454,7 @@ function _tm5_solve_column!(rm_col::AbstractMatrix{FT},
         return nothing
     end
 
-    # Storage Commit 7 active-window LU. `icltop_eff` is the smallest
+    # Active-window LU. `icltop_eff` is the smallest
     # row index with any non-identity entry, derived from the builder
     # in `_tm5_build_conv1!`. Proven correct by
     # `test/test_tm5_sparsity_above_icltop.jl`. The `max(icltop, 2)`

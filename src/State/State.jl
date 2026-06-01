@@ -7,7 +7,7 @@ Provides:
 - `CellState` — cell-centered air mass + tracer masses (prognostic)
 - `AbstractFaceFluxState` hierarchy — face mass fluxes
   - `AbstractStructuredFaceFluxState` → `StructuredFaceFluxState` (am, bm, cm)
-  - `AbstractUnstructuredFaceFluxState` → `FaceIndexedFluxState` (Phase 2+)
+  - `AbstractUnstructuredFaceFluxState` → `FaceIndexedFluxState`
 - `MetState` — upstream meteorological fields (consumed by flux builders, not transport)
 - Tracer allocation and mixing-ratio utilities
 """

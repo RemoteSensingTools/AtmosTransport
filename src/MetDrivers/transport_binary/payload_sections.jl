@@ -19,7 +19,7 @@
         return ncell
     elseif _is_pbl_surface_payload_section(section)
         return ncell
-    # TM5 convection (plan 23 Commit 3): four layer-center fields.
+    # TM5 convection: four layer-center fields.
     elseif section === :entu || section === :detu ||
            section === :entd || section === :detd
         return ncell * nlevel
@@ -40,7 +40,7 @@ end
         return ncell
     elseif _is_pbl_surface_payload_section(section)
         return ncell
-    # TM5 convection (plan 23 Commit 3): four layer-center fields.
+    # TM5 convection: four layer-center fields.
     elseif section === :entu || section === :detu ||
            section === :entd || section === :detd
         return ncell * nlevel
@@ -158,7 +158,7 @@ end
 # layer-center fields from the preprocessor window.  The
 # preprocessor supplies `window.tm5_fields.entu`, `.detu`, `.entd`,
 # `.detd`.  Errors loudly if the writer requested a TM5 section
-# but the window didn't include `tm5_fields` (plan 23 Commit 3).
+# but the window didn't include `tm5_fields`.
 @inline function _transport_window_tm5_field(window, name::Symbol)
     haskey(window, :tm5_fields) ||
         _missing_window_field_error(:tm5_fields)
@@ -229,7 +229,7 @@ function _transport_window_field(window, section::Symbol)
         return _transport_window_surface_field(window, :hflux)
     elseif section === :t2m
         return _transport_window_surface_field(window, :t2m)
-    # TM5 convection fields (plan 23 Commit 3).
+    # TM5 convection fields.
     elseif section === :entu
         return _transport_window_tm5_field(window, :entu)
     elseif section === :detu
@@ -260,7 +260,7 @@ function _transport_push_optional_sections!(sections::Vector{Symbol}, window)
         push!(sections, :pbl_hflux)
         push!(sections, :t2m)
     end
-    # Plan 23 Commit 3: TM5 convection adds a NamedTuple of four
+    # TM5 convection adds a NamedTuple of four
     # layer-center fields.  Writer emits these when the preprocessor
     # window provides `tm5_fields`; reader populates
     # `ConvectionForcing.tm5_fields` from the corresponding binary

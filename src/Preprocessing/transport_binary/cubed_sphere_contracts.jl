@@ -64,7 +64,7 @@ explicit endpoint `m_next`. A failure here means the binary would produce a
 runtime day-boundary or window-boundary mass inconsistency.
 
 `div_scratch` may be pre-allocated by the caller (workspace-owned
-scratch from P2 / contract-owned lazy scratch from P1) so the gate
+scratch or contract-owned lazy scratch) so the gate
 doesn't allocate the panel-shared `div_h` per call. Default
 `nothing` → allocate locally. Shape must match `size(m_cur[1])`.
 """
@@ -346,19 +346,19 @@ function summarize_cs_positivity_status(worst::CSWorst;
 end
 
 # ===========================================================================
-# Plan 41 P1 — typed CS contract concrete.
+# Typed CS contract concrete.
 #
 # `CubedSphereContract{FT}` wraps the existing CS gate state (policy fields
 # + worst-window accumulator) in a typed nominal that participates in the
 # unified `AbstractWindowContract{G, FT}` dispatch surface. The struct holds
-# the policy at construction time (closes foot-gun A) and validates
+# the policy at construction time and validates
 # `positivity_cfl_limit` in its inner constructor so an invalid TOML value
 # errors before any window runs.
 #
 # The trait-surface methods (`verify_window!`, `update_accumulator!`,
 # `summarize_status!`) delegate to the existing NamedTuple-based helpers
 # above so the per-window math is bit-exact identical to today's path —
-# the typed surface is additive scaffolding for the P2 unified driver.
+# the typed surface is additive scaffolding for the unified driver.
 # ===========================================================================
 
 """
@@ -393,7 +393,7 @@ mutable struct CubedSphereContract{FT} <:
     # Lazy scratch (codex round-2): allocated on first `verify_window!`
     # call from the window's panel shape and reused thereafter. Eliminates
     # the `Array{Float64}(undef, panel_shape)` per-window allocation the
-    # original P1 path produced inside `verify_window_continuity_cs`.
+    # original path produced inside `verify_window_continuity_cs`.
     _div_scratch                :: Union{Nothing, Array{Float64, 3}}
 
     function CubedSphereContract{FT}(;

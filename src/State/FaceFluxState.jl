@@ -5,7 +5,7 @@
 #
 #   abstract type AbstractFaceFluxState end
 #       ├── AbstractStructuredFaceFluxState   (am, bm, cm on logically rectangular meshes)
-#       └── AbstractUnstructuredFaceFluxState  (face-indexed connectivity, Phase 2+)
+#       └── AbstractUnstructuredFaceFluxState  (face-indexed connectivity)
 #
 # Each concrete flux state carries a `Basis <: AbstractMassBasis` type
 # parameter that records whether the stored fluxes are on a moist or dry
@@ -51,7 +51,7 @@ abstract type AbstractStructuredFaceFluxState{Basis <: AbstractMassBasis} <: Abs
     AbstractUnstructuredFaceFluxState <: AbstractFaceFluxState
 
 Face fluxes stored as a single face-indexed array with explicit connectivity.
-Natural for reduced Gaussian and other unstructured meshes (Phase 2+).
+Natural for reduced Gaussian and other unstructured meshes.
 """
 abstract type AbstractUnstructuredFaceFluxState{Basis <: AbstractMassBasis} <: AbstractFaceFluxState{Basis} end
 
@@ -125,13 +125,13 @@ function Adapt.adapt_structure(to, fluxes::StructuredFaceFluxState{B}) where {B 
 end
 
 # ---------------------------------------------------------------------------
-# Concrete unstructured type — Phase 2+
+# Concrete unstructured type
 # ---------------------------------------------------------------------------
 
 """
     FaceIndexedFluxState{Basis, A, AZ} <: AbstractUnstructuredFaceFluxState
 
-Face-centered mass fluxes for unstructured meshes (Phase 2+), tagged with
+Face-centered mass fluxes for unstructured meshes, tagged with
 `Basis` for moist/dry safety.
 
 # Type parameters

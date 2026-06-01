@@ -2,9 +2,9 @@
     BinaryPathExpander
 
 Expand a `[input]` TOML block into a sorted list of transport-binary
-file paths. Plan 40 Commit 4 — preserves the existing explicit-list
-shape and adds a folder + date-range shape with continuity
-verification. Keeps the runtime file-window contract unchanged; the
+file paths. Supports both an explicit-list shape and a folder +
+date-range shape with continuity verification. Keeps the runtime
+file-window contract unchanged; the
 CLI simply receives a longer or shorter `Vector{String}`.
 
 ## Accepted TOML shapes

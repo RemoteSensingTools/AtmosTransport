@@ -1,14 +1,14 @@
 # ===========================================================================
-# Plan 41 P1 — per-window RG transport-binary contract surface.
+# Per-window RG transport-binary contract surface.
 #
 # Mirrors `cubed_sphere_contracts.jl` and `latlon_contracts.jl` for the
 # face-indexed reduced-Gaussian topology. Today the RG preprocessor calls
 # only `verify_window_continuity_rg` (the replay gate); there is no
-# analogue of `verify_substep_positivity_cs!` for RG fluxes. P1 closes
-# that asymmetry: RG gets the same per-substep positivity gate, the same
-# worst-window accumulator, and the same `require_substep_positivity`
-# escape-hatch policy as CS. The gate is intentionally NOT wired into the
-# RG `process_day` path yet — that's P2.
+# analogue of `verify_substep_positivity_cs!` for RG fluxes. This surface
+# closes that asymmetry: RG gets the same per-substep positivity gate, the
+# same worst-window accumulator, and the same `require_substep_positivity`
+# escape-hatch policy as CS. The gate is intentionally NOT yet wired into
+# the RG `process_day` path.
 #
 # RG array shapes (confirmed against `ReducedWindowStorage` and
 # `verify_window_continuity_rg`):
@@ -95,7 +95,7 @@ For every cell `(c, k)`:
 (matches the CS round-2 fix).
 
 `outgoing_h` and `bad_h` can be passed in as workspace-owned scratch
-to suppress per-window allocation once P2 wires this into the
+to suppress per-window allocation once this is wired into the
 unified driver. Default `nothing` → allocate locally.
 
 Returns `(direction, ratio, location, ok)` with:
@@ -128,7 +128,7 @@ function verify_substep_positivity_rg!(m::AbstractMatrix{FT},
         error("verify_substep_positivity_rg!: face_right length " *
               "$(length(face_right)) != nfaces $(nf).")
 
-    # Scratch buffers — pre-allocated by the caller (P2 will plumb this
+    # Scratch buffers — pre-allocated by the caller (eventually plumbed
     # through workspace state) or auto-allocated here as a fallback.
     if outgoing_h === nothing
         outgoing_h = zeros(Float64, nc, Nz)
@@ -325,7 +325,7 @@ in order:
      decides fatal-vs-warn.
 
 `div_scratch`, `outgoing_h`, `bad_h` may be pre-allocated by the
-caller (workspace-owned scratch from P2) to suppress per-window
+caller (workspace-owned scratch) to suppress per-window
 allocation. Default `nothing` → allocate locally.
 
 Returns `(; replay, positivity)`. Boundary-stub failure does not

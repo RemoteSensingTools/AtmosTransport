@@ -205,12 +205,12 @@ include("cs_transport_helpers.jl")
 # Configuration parsing
 include("configuration.jl")
 
-# TM5 convection ec2tm conversion (plan 23 Commit 3)
+# TM5 convection ec2tm conversion
 # (Loaded before binary_pipeline so the LL process_day hook can
 # reference TM5PreprocessingWorkspace / TM5CleanupStats by type.)
 include("tm5_convection_conversion.jl")
 
-# ERA5 physics NC → BIN converter + mmap reader (plan 24 Commit 2)
+# ERA5 physics NC → BIN converter + mmap reader
 include("era5_physics_binary.jl")
 
 # ERA5 single-level surface reader for raw PBL diffusion fields.
@@ -219,13 +219,13 @@ include("era5_surface_reader.jl")
 # TM5 boundary-layer diffusion (Holtslag-Boville non-local PBL) column kernel.
 include("tm5_bldiff.jl")
 
-# TM5 convection preprocessor pipeline wiring (plan 24 Commit 4)
+# TM5 convection preprocessor pipeline wiring
 include("tm5_convection_pipeline.jl")
 
 # Transport-binary workflows and shared preprocessing contracts.
 include("binary_pipeline.jl")
 
-# Native GEOS NetCDF reader (Commit 3 of plan indexed-baking-valiant)
+# Native GEOS NetCDF reader
 include("sources/geos.jl")
 
 # ERA5 native-GRIB reader: N320 settings + day handles, spectral synthesis
@@ -235,7 +235,7 @@ include("sources/geos.jl")
 # wires them all together.
 include("sources/era5.jl")
 
-# TOML-driven met-source factory (Commit 4)
+# TOML-driven met-source factory
 include("sources/loader.jl")
 
 # Typed met-reader surface (source axis of the unified preprocessor;
@@ -245,7 +245,7 @@ include("sources/loader.jl")
 # `process_day` orchestrators are not yet ported.
 include("met_readers.jl")
 
-# GEOS → CS passthrough orchestrator (Commit 5)
+# GEOS → CS passthrough orchestrator
 include("transport_binary/cubed_sphere_geos.jl")
 
 # ERA5 N320 → CS transport-binary writer. Drives one UTC day end-to-end
@@ -254,21 +254,21 @@ include("transport_binary/cubed_sphere_geos.jl")
 # Poisson balance, and v4 writer.
 include("transport_binary/era5_n320_regrid.jl")
 
-# Met source abstraction (Commit 1 of plan indexed-baking-valiant)
+# Met source abstraction
 export AbstractMetSettings, RawWindow
 export read_window!, source_grid, windows_per_day
 export has_convection, has_surface, has_vdiff_fields
 export open_day, close_day!, allocate_raw_window
 
-# GEOS native NetCDF reader (Commit 3)
+# GEOS native NetCDF reader
 export AbstractGEOSSettings, GEOSSettings, GEOSITSettings, GEOSFPSettings
 export GEOSDayHandles, open_geos_day, close_geos_day!
 export GEOSFPNativeDayHandles, geosfp_native_hourly_ctm_path
 export geos_collection_path, detect_level_orientation
 export endpoint_dry_mass, endpoint_dry_mass!
 
-# ERA5 native-GRIB reader (breakpoints A + B — settings, day handles, and the
-# per-window spectral-synthesis surface for the N320 source grid).
+# ERA5 native-GRIB reader: settings, day handles, and the
+# per-window spectral-synthesis surface for the N320 source grid.
 export AbstractERA5GRIBSettings, ERA5GRIBSettings, ERA5N320Settings
 export ERA5GRIBDayHandles, open_era5_day, close_era5_day!
 export era5_grib_path
@@ -287,7 +287,7 @@ export ERA5N320ToC180Pipeline, allocate_era5_n320_to_c180_pipeline,
        process_era5_n320_window!
 export process_era5_n320_to_cs_day
 
-# Met-source TOML factory (Commit 4) + vertical-coordinate helper used by GEOS CLI
+# Met-source TOML factory + vertical-coordinate helper used by GEOS CLI
 export load_met_settings, load_hybrid_coefficients
 
 # Typed met-reader surface (source axis)

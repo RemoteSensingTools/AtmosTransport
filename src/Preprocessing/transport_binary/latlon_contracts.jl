@@ -78,7 +78,7 @@ end
 """
     verify_storage_continuity_ll!(storage, last_hour_next, steps_per_window, ::Type{FT})
 
-Plan 39 Commit E — write-time replay gate for structured LL storage.
+Write-time replay gate for structured LL storage.
 Iterates every window k and asserts
 
     m[k] − 2·steps·(∇·am + ∇·bm + ∂_k cm) ≈ m[k+1]    (k < Nt)
@@ -243,7 +243,7 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
             worst_column_post = max(worst_column_post, col_diag.max_post_residual)
             worst_column_delta = max(worst_column_delta, col_diag.max_face_delta)
         end
-        # Plan 39 dry-basis fix (2026-04-22): use explicit-dm closure, not
+        # Dry-basis fix (2026-04-22): use explicit-dm closure, not
         # the hybrid Δb×pit one. The Δb×pit closure assumes
         # dm[k] = dB[k] × Σ_k dm[k], which holds under moist hybrid coords
         # but is violated by ~27% under dry basis because qv[k] varies with
@@ -261,7 +261,7 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
                        worst_column_pre, worst_column_post, worst_column_delta)
     end
 
-    # Plan 39 Commit E / Plan 41 P2a: write-time replay gate. Under the
+    # Write-time replay gate. Under the
     # `:window_constant` contract, starting from `storage.all_m[k]` and
     # integrating the stored fluxes (am, bm, cm) over one window via
     # palindrome continuity must reproduce `storage.all_m[k+1]` (or
@@ -488,7 +488,7 @@ function write_window!(io::IO,
     bytes_written += write_array!(io, merged.dcm_merged)
     bytes_written += write_array!(io, merged.dm_merged)
 
-    # Plan 24 Commit 4: TM5 convection sections (order must match
+    # TM5 convection sections (order must match
     # _transport_push_optional_sections! in TransportBinary.jl:557-578).
     if settings.tm5_convection_enable
         bytes_written += write_array!(io, storage.all_entu[win_idx])
@@ -507,17 +507,17 @@ function write_window!(io::IO,
 end
 
 # ===========================================================================
-# Plan 41 P1 — per-window LL transport-binary contract surface.
+# Per-window LL transport-binary contract surface.
 #
 # Mirrors `cubed_sphere_contracts.jl` for the structured lat-lon
 # topology. Today the LL preprocessor calls only `verify_window_continuity_ll`
 # (the replay gate); there is no analogue of `verify_substep_positivity_cs!`
 # for LL fluxes, so an LL binary that drives a cell mass negative mid-sweep
-# can pass replay and only break later inside the runtime CFL scan. P1
-# closes that asymmetry: LL gets the same per-substep positivity gate,
-# the same worst-window accumulator, and the same `require_substep_positivity`
-# escape-hatch policy as CS. The gate is intentionally NOT wired into the
-# LL `process_day` orchestrator yet — that's P2.
+# can pass replay and only break later inside the runtime CFL scan. This
+# surface closes that asymmetry: LL gets the same per-substep positivity
+# gate, the same worst-window accumulator, and the same
+# `require_substep_positivity` escape-hatch policy as CS. The gate is
+# intentionally NOT yet wired into the LL `process_day` orchestrator.
 #
 # LL array shapes (confirmed from `mass_support.jl` and the storage struct
 # in `latlon_workspaces.jl`):
@@ -531,12 +531,12 @@ end
 # missing panel loop. The diagnostic NamedTuple uses `(i, j, k)` instead
 # of `(panel, i, j, k)`.
 #
-# LL/RG positivity probe note (Plan 41 P1, DESIGN.md "Open design questions"):
+# LL/RG positivity probe note (DESIGN.md "Open design questions"):
 # the design asks for an explicit yes-with-gate or no-with-stub answer to
 # "do LL fluxes have a substep-positivity contract?". The gate IS shipped
 # here because (a) the kernel is essentially free to implement once the CS
 # kernel exists and (b) running it on a representative ERA5 day is the
-# cheapest way to answer the question once-and-for-all in P2 when the
+# cheapest way to answer the question once-and-for-all when the
 # unified driver wires the call into `process_day`. Until then, the gate
 # exists as a contract type with full test coverage but is not invoked by
 # the production orchestrator, so it cannot regress any current path.
@@ -633,7 +633,7 @@ gate (errors on failure) followed by the per-substep positivity scan
 (`verify_substep_positivity_ll!`, returns a diagnostic).
 
 `div_scratch` may be pre-allocated by the caller (workspace-owned
-scratch from P2) to suppress the per-window `Array{Float64}` the
+scratch) to suppress the per-window `Array{Float64}` the
 default-allocating `verify_window_continuity_ll` would otherwise
 produce. Default `nothing` → allocate locally.
 
@@ -764,7 +764,7 @@ end
 
 # ---------------------------------------------------------------------------
 # `LatLonContract{FT}` — typed Axis-3 concrete for the structured LL
-# topology. Mirrors `CubedSphereContract{FT}` so the unified driver in P2
+# topology. Mirrors `CubedSphereContract{FT}` so the unified driver
 # can dispatch the same `verify_window!` / `update_accumulator!` /
 # `summarize_status!` trait surface on either topology.
 # ---------------------------------------------------------------------------

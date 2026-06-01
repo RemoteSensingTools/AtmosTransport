@@ -963,7 +963,7 @@ end
 export LinRoodWorkspace, fv_tp_2d_cs!, fv_tp_2d_cs_q!, strang_split_linrood_ppm!
 export CSLinRoodAdvectionWorkspace
 export fillz_q!, apply_divergence_damping_cs!
-# Adjoint kernels (Plan 25). The forward kernels above are paired with
+# Adjoint kernels. The forward kernels above are paired with
 # reverse-mode kernels defined in `linrood_adjoint_kernels.jl`, included
 # alongside this file from `Advection.jl`. Re-export below for `Adjoints`.
 export apply_linrood_update_adjoint!,

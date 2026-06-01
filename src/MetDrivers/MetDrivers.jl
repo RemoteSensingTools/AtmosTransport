@@ -81,7 +81,7 @@ export copy_convection_forcing!, allocate_convection_forcing_like
 export PBLSurfaceForcing, has_pbl_surface_forcing
 export window_count, has_qv, has_qv_endpoints, has_flux_delta, has_cmfmc
 export total_windows, window_dt, steps_per_window, steps_per_window_schedule
-export binary_capabilities, inspect_binary   # plan 40 Commit 5
+export binary_capabilities, inspect_binary
 export has_surface, has_vdiff_fields, has_tm5conv, has_temperature
 export mass_basis, grid_type, horizontal_topology, A_ifc, B_ifc
 export uses_binary_substep_contract

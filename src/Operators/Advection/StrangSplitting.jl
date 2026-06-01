@@ -690,7 +690,7 @@ function _vertical_face_outgoing_ratio(cm::AbstractArray{FT,2},
     # flux through the BOTTOM face (positive = downward = outflow to below).
     # So per-cell OUTFLOW = upward through top (max(-cm[:,k], 0)) + downward
     # through bottom (max(cm[:,k+1], 0)). Single broadcast over all (:, :)
-    # stays on device for GPU callers. Correction of the pre-plan-13 bug
+    # stays on device for GPU callers. Corrects an earlier bug
     # that summed inflow, not outflow (GPU and CPU saw CFL half the true
     # value in flows where inflow ≠ outflow).
     Nz = size(m, 2)
@@ -698,7 +698,7 @@ function _vertical_face_outgoing_ratio(cm::AbstractArray{FT,2},
     return maximum(out ./ max.(m, eps(FT)))
 end
 
-# Face-indexed pilots — unified static algorithm (plan 13).
+# Face-indexed pilots — unified static algorithm.
 #
 # The horizontal path requires mesh connectivity (face_cells) which lives on
 # CPU, so device arrays are materialized via Array(...) before the static
@@ -767,7 +767,7 @@ end
     return n_sub
 end
 
-# Unified CFL pilot — single static algorithm for CPU and GPU (plan 13).
+# Unified CFL pilot — single static algorithm for CPU and GPU.
 #
 # For each cell (i,j,k), CFL = total_outflow / cell_mass. Total outflow is
 # the sum of flux leaving the cell through its two faces in the active
@@ -781,7 +781,7 @@ end
 # (positive cm = downward; cell k's outflow is upward through cm[:,:,k] and
 # downward through cm[:,:,k+1]).
 #
-# Plan 13 Commit 2 replaces the pre-existing dual-path (CPU evolving-mass,
+# This replaces an earlier dual-path (CPU evolving-mass,
 # GPU static-inflow) with one algorithm that (a) is backend-agnostic via
 # pure broadcast, (b) computes OUTFLOW correctly (the prior GPU path
 # summed inflow — a sign bug that under-estimated CFL on device).
@@ -979,9 +979,8 @@ Perform one full Strang-split advection step on a structured mesh.
 All `Nt = ntracers(state)` tracers are advanced together in a single
 multi-tracer kernel launch per direction. The mass update is computed
 once per cell; tracer fluxes are evaluated per-tracer inside the
-kernel. The per-tracer Julia loop has been eliminated (plan 14
-Commit 4) in favour of `strang_split_mt!` on the packed
-`state.tracers_raw` buffer.
+kernel. The per-tracer Julia loop has been eliminated in favour of
+`strang_split_mt!` on the packed `state.tracers_raw` buffer.
 
 # Arguments
 - `state::CellState` — contains `air_mass` and `tracers_raw`
@@ -1281,7 +1280,7 @@ end
         # NoAdvection + diffusion: skip the Strang half-step structure
         # entirely and apply a single V(dt) step on the LL state. The
         # mass-flux VMR wrapper preserves Σ tracer_mass per column to
-        # roundoff (D1), so this is the natural "diffusion-only"
+        # roundoff, so this is the natural "diffusion-only"
         # experimental setup.
         apply_vertical_diffusion_vmr!(state.tracers_raw, state.air_mass,
                                        diffusion_op, workspace, dt, meteo)
@@ -1433,9 +1432,9 @@ for (scheme_type, h_sweep, v_sweep) in (
         end
 
         # Face-indexed path keeps a per-tracer loop (multi-tracer fusion
-        # on unstructured grids is out of scope for plan 14). Slices are
+        # on unstructured grids is out of scope). Slices are
         # taken as views into state.tracers_raw so the algorithm is
-        # identical to the pre-plan-14 NamedTuple-iterating version; only
+        # identical to the earlier NamedTuple-iterating version; only
         # the data source changed.
         raw = state.tracers_raw
         last_dim = ndims(raw)
@@ -1450,7 +1449,7 @@ for (scheme_type, h_sweep, v_sweep) in (
 
             _sweep_horizontal_face_subcycled!(rm_tracer, m, hflux, grid.horizontal, scheme, workspace, cfl_limit_ft)
             _sweep_vertical_face_subcycled!(rm_tracer, m, cm, scheme, workspace, cfl_limit_ft)
-            # D1 LL/RG: route through the mass-flux VMR wrapper so the
+            # Route through the mass-flux VMR wrapper so the
             # Strang-coupled per-tracer diffusion step is column-mass
             # conserving (preserves Σ tracer_mass per column to roundoff).
             # `m` is the current air-mass slice `(ncells, Nz)`; `rm_tracer`
@@ -1474,7 +1473,7 @@ for (scheme_type, h_sweep, v_sweep) in (
 end
 
 # Error stubs for unsupported face-indexed scheme families.
-# `kwargs...` also swallows plan 18 A1's `diffusion_op` / `emissions_op`
+# `kwargs...` also swallows the `diffusion_op` / `emissions_op`
 # / `meteo` forwarding; the stubs still throw `ArgumentError` so no
 # additional work is needed.
 for (scheme_type, label) in (
@@ -1604,14 +1603,13 @@ function strang_split_mt!(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
     for _ in 1:n_y; rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_y_mt!, rm_cur, rm_alt, m_cur, m_alt, bm, fs_y); end
     for _ in 1:n_z; rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_z_mt!, rm_cur, rm_alt, m_cur, m_alt, cm, fs_z); end
 
-    # Palindrome center (plan 16b Commit 4 → plan 17 Commit 5).
+    # Palindrome center.
     # Two configurations:
     #
-    # 1. `emissions_op isa NoSurfaceFlux` (the default, and the only
-    #    path pre-plan-17): single V(dt) at the palindrome center.
-    #    Matches plan 16b exactly — NoDiffusion is a dead branch,
+    # 1. `emissions_op isa NoSurfaceFlux` (the default): single V(dt)
+    #    at the palindrome center. NoDiffusion is a dead branch,
     #    so with both defaults this whole block collapses to zero
-    #    floating-point work and is bit-exact with pre-16b behavior.
+    #    floating-point work and is bit-exact with the no-op behavior.
     #
     # 2. `emissions_op isa SurfaceFluxOperator`: the OPERATOR_COMPOSITION.md
     #    §3.2 arrangement, V(dt/2) → S(dt) → V(dt/2). Fresh emissions
@@ -1619,8 +1617,7 @@ function strang_split_mt!(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
     #    transport them. Emissions enter at the palindrome center with
     #    the FULL dt (not halved) — sources/sinks don't participate in
     #    the Strang half-step dance; symmetric operators around them
-    #    provide the 2nd-order accuracy. Plan 17 §4.3 Decision 7 +
-    #    Decision 12 Option A.
+    #    provide the 2nd-order accuracy.
     #
     # Linear-operator caveat: V(dt) = V(dt/2) ∘ V(dt/2) is exact for
     # the continuous ODE flow but only O(dt²) for Backward Euler
@@ -1628,7 +1625,7 @@ function strang_split_mt!(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
     # is therefore NOT bit-exact when `diffusion_op` is non-trivial —
     # the two halves of V differ by O((dt·D)²). Acceptable since Path 2
     # is only reached when the user opts in to emissions.
-    # D1 LL/RG: route through the mass-flux VMR wrapper so the palindrome-
+    # Route through the mass-flux VMR wrapper so the palindrome-
     # center diffusion step is column-mass conserving. `m_cur` is the
     # current air-mass field `(Nx, Ny, Nz)` paired with `rm_cur`'s
     # `(Nx, Ny, Nz, Nt)` tracer storage; the wrapper does the

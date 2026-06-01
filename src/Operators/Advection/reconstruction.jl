@@ -289,7 +289,7 @@ is bit-identical to the pre-clamp behavior.
     FT = eltype(F)
     # Defensive α clamp. With the LL→CS mass-regrid bug fixed (extensive `m`
     # converted via density), the clamp is bit-exactly a no-op on the C180
-    # ERA5 Dec-2 path: empirical test (commit landing this fix) shows
+    # ERA5 Dec-2 path: empirical test shows
     # max|Δ| = 0 between clamp-on and clamp-off PPM runs. The clamp is kept
     # as defensive in depth for two cases that can still produce |α| > 1:
     #   (1) Panel-edge cells where the Poisson balance solver corrects

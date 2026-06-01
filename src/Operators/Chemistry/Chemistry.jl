@@ -3,7 +3,7 @@
 
 Source/sink operators for tracer transformations (decay, photolysis, ...).
 
-Type hierarchy (plan 15):
+Type hierarchy:
 
     AbstractChemistryOperator
     ├── NoChemistry                     — identity / inert tracers
@@ -204,7 +204,7 @@ function apply!(state::CellState, meteo, grid,
 end
 
 # =========================================================================
-# CubedSphereState dispatches (plan 21 follow-up: close CS chemistry gap)
+# CubedSphereState dispatches
 #
 # CS tracer storage is an NTuple{6, Array{FT, 4}} of panel-native arrays
 # with shape `(Nc + 2Hp, Nc + 2Hp, Nz, Nt)`. Chemistry is pointwise, so
@@ -292,7 +292,7 @@ function apply!(state::CubedSphereState, meteo, grid,
 end
 
 # =========================================================================
-# chemistry_block! — step-level block composer (plan 15 Decision 7)
+# chemistry_block! — step-level block composer
 # =========================================================================
 
 include("chemistry_block.jl")

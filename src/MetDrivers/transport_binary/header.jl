@@ -267,10 +267,10 @@ end
 # TransportBinaryContract — self-describing timing/basis semantics.
 #
 # Every writer must supply an explicit contract; every reader must validate
-# one. Silent defaults are how plan 24 Commit 4's LL+TM5 binary landed on
-# disk without declaring `flux_sampling=:window_constant`, the runtime
-# parser defaulted to `:window_start_endpoint`, and the runtime ran the
-# pre-memo-37 bug class. See docs/37_WINDOW_CONSTANT_FLUX_INTERPRETATION_BUG.
+# one. Silent defaults are how an LL+TM5 binary can land on disk without
+# declaring `flux_sampling=:window_constant`: the runtime parser would
+# default to `:window_start_endpoint` and run the pre-memo-37 bug class.
+# See docs/37_WINDOW_CONSTANT_FLUX_INTERPRETATION_BUG.
 # ===========================================================================
 
 const _TRANSPORT_ALLOWED_AIR_MASS_SAMPLINGS = (:window_start_endpoint,)
@@ -316,7 +316,7 @@ function _parse_transport_header(raw_bytes::Vector{UInt8})
     haskey(hdr, :format_version) ||
         error("TransportBinaryReader requires the topology-generic binary family header (`format_version` missing)")
 
-    # Plan 39 Commit D: no more silent defaults for missing contract fields.
+    # No silent defaults for missing contract fields.
     # `validate_transport_contract!` (called by `TransportBinaryReader`
     # before we get here) has already verified the 8 fields are present —
     # unless the env-var legacy bypass was set, in which case missing

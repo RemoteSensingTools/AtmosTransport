@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------------------
 # CellState — prognostic cell-centered fields for transport
 #
-# Post-Commit-4 storage contract (plan 14 v3):
+# Storage contract:
 #   Tracers are stored in a SINGLE packed array `tracers_raw`:
 #     structured grids  → (Nx, Ny, Nz, Nt)
 #     face-indexed grids → (ncells, Nz, Nt)

@@ -309,7 +309,7 @@ function _process_day_native(cfg::AbstractDict;
     vertical.Nz == vertical.Nz_native ||
         @info @sprintf("Vertical transform: %s  native Nz=%d → output Nz=%d",
                        typeof(vertical.transform), vertical.Nz_native, vertical.Nz)
-    @info "Plan 41 unified driver enabled for $(nameof(typeof(settings))) → $(grid_kind(grid))"
+    @info "Unified preprocessor driver enabled for $(nameof(typeof(settings))) → $(grid_kind(grid))"
 
     t_total = time()
 
@@ -434,7 +434,7 @@ function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
     ensure_preprocessor_pair_supported(grid, settings; context = "ERA5 spectral")
 
     @info @sprintf("Processing %d days: %s to %s", length(dates), first(dates), last(dates))
-    @info "Plan 41 unified driver enabled for ERA5 spectral → $(grid_kind(grid))"
+    @info "Unified preprocessor driver enabled for ERA5 spectral → $(grid_kind(grid))"
     t_total = time()
     run_cache = PreprocessorRunCache(typeof(grid), settings.output_float_type)
     for (idx, date) in enumerate(dates)

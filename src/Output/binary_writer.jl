@@ -1,4 +1,4 @@
-# Binary snapshot writer — cubed-sphere only (Plan 2026-05-28 GPU-perf series).
+# Binary snapshot writer — cubed-sphere only.
 #
 # Drop-in alternative to `write_snapshot_netcdf` that skips the HDF5 / NetCDF
 # library entirely. Writes raw Float32 panel data to a single file with a

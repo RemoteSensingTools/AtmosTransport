@@ -13,9 +13,6 @@
 #     `_cs_ysweep_adjoint_kernel!`, `_cs_zsweep_adjoint_kernel!`).
 #   * The driver `_adjoint_scheme_sweep!` for both linear and monotone
 #     PPM schemes; LinRood is handled out-of-line in `LinRoodTape.jl`.
-#
-# Relocated from `src/Adjoints/Adjoints.jl` lines 475-1128 unchanged
-# in Plan 26 P0.2; no semantic change.
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------

@@ -6,17 +6,13 @@
 # transpose solve (upper-triangular sweep first, then back-substitution).
 # Mass-aware: enters and exits in lambda-on-tracer-mass space.
 #
-# History:
-#   - Plan 26 P0.2: relocated from `src/Adjoints/Adjoints.jl` lines
-#     1553-1722, no semantic change at relocation time.
-#   - D1 (commit `bff8933`, 2026-05-25): CS adjoint kernel updated to
-#     transpose the TM5-style mass-flux forward coefficients. The
-#     forward+adjoint now share the same `(dkg, m_k, dt)` ingredients;
-#     `a_T[k] = c[k-1]` and `c_T[k] = a[k+1]` reduce to mass-flux
-#     entries with the "other layer's" m as normalizer. See file-top
-#     doc of `src/Operators/Diffusion/diffusion_kernels.jl` for the
-#     forward derivation and `memory/diffusion_full_pipeline_audit_2026_05_25.md`
-#     for the audit chain.
+# The CS adjoint kernel (commit `bff8933`, 2026-05-25) transposes the
+# TM5-style mass-flux forward coefficients. The forward+adjoint share the
+# same `(dkg, m_k, dt)` ingredients; `a_T[k] = c[k-1]` and `c_T[k] = a[k+1]`
+# reduce to mass-flux entries with the "other layer's" m as normalizer. See
+# file-top doc of `src/Operators/Diffusion/diffusion_kernels.jl` for the
+# forward derivation and `memory/diffusion_full_pipeline_audit_2026_05_25.md`
+# for the audit chain.
 # ---------------------------------------------------------------------------
 
 @inline function _adjoint_diffusion_time(::Type{FT}, meteo) where FT

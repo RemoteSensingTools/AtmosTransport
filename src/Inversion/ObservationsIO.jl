@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Plan 26 P0.D1 — on-disk observation IO for the CS 4D-Var path.
+# On-disk observation IO for the CS 4D-Var path.
 #
 # Loose-compat NetCDF schema documented in `schemas/cs_observations_v1.toml`.
 # Single file. Dim `obs` (unlimited) plus `date_component` (length 6).
@@ -14,8 +14,8 @@
 #   * `read_observations(path)` — open + parse + validate -> CSObservationSet.
 #   * `write_observations(path, set)` — emit a v1-compliant NetCDF file.
 #
-# Bridge to the 4D-Var path (`bind_to_mesh`, `CSObservation` mapping) is
-# Plan 26 P0.D2 in a follow-up commit. This file is the pure IO layer.
+# Bridge to the 4D-Var path (`bind_to_mesh`, `CSObservation` mapping) lives
+# in a separate module. This file is the pure IO layer.
 # ---------------------------------------------------------------------------
 
 const _CS_OBSERVATIONS_SCHEMA_VERSION = "v1"

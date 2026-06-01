@@ -1,16 +1,15 @@
 # ---------------------------------------------------------------------------
-# Plan 26 P0.C1+C2 — polymorphic optimizer dispatch for CS 4D-Var.
+# Polymorphic optimizer dispatch for CS 4D-Var.
 #
 # Layout (new backends — hand-rolled L-BFGS-B, etc. — plug in as new
 # concrete subtypes without touching the public entrypoint):
 #
 #   AbstractCSOptimizer
 #       │
-#       ├── CSGradientDescent          (the shim shipped in P0.4b,
-#       │                               now wrapped as a concrete
-#       │                               subtype)
+#       ├── CSGradientDescent          (the descent shim, wrapped as a
+#       │                               concrete subtype)
 #       └── CSLBFGS                    (limited-memory BFGS via
-#                                       `Optim.jl` — C2)
+#                                       `Optim.jl`)
 #
 # Backends implement `cs_surface_flux_4dvar_solve(opt, cost_fn,
 # controls)` where `cost_fn(controls) -> CS4DVarResult` is the
@@ -36,9 +35,9 @@ Shipped backends:
 - [`CSGradientDescent`](@ref) — the dependency-free
   backtracking-line-search descent loop.
 
-Planned (Phase C continuation):
+Additional backends:
 
-- `CSLBFGS` — `Optim.jl` L-BFGS wrapper (Plan 26 commit C2).
+- `CSLBFGS` — `Optim.jl` L-BFGS wrapper.
 """
 abstract type AbstractCSOptimizer end
 
@@ -462,7 +461,7 @@ carries its own setting and overrides the entrypoint kwarg.
 
 Remaining keyword arguments are forwarded to `cs_surface_flux_4dvar`
 on every cost evaluation — including `preconditioner = ...` for the
-P0.B3 preconditioned-cost path.
+preconditioned-cost path.
 """
 function cs_surface_flux_4dvar_optimize(panels_rm0, panels_m0,
                                         panels_am_steps,

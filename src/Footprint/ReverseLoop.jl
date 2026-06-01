@@ -12,8 +12,8 @@
 # palindrome-with-emissions structure as the production runtime, but
 # without writing to a tape.
 #
-# Relocated from `src/Adjoints/Adjoints.jl` lines 606-865 unchanged in
-# Plan 26 P0.3c; no semantic change.
+# Relocated unchanged from `src/Adjoints/Adjoints.jl` lines 606-865;
+# no semantic change.
 # ---------------------------------------------------------------------------
 
 function _collect_surface_footprints(lambda_panels, ops, panels_m0,
@@ -41,7 +41,7 @@ function _collect_surface_footprints(lambda_panels, ops, panels_m0,
         objective, footprints, lag_steps, FT(dt), zero(FT), FT(NaN))
 end
 
-# Plan 26 P0.A.3 — extracted from the original `_collect_surface_footprints`
+# Extracted from the original `_collect_surface_footprints`
 # body so that the stride / revolve checkpoint drivers can call it once per
 # window without re-allocating `footprints` or seeding `lambda_panels` from
 # scratch. Behaviour for the `FullCheckpoint` path is unchanged: one call
@@ -81,7 +81,7 @@ function _walk_window_reverse!(footprints, lambda_panels, ops,
                                           op.forcing, op.op, op.dt,
                                           convection_workspace, mesh)
         elseif op isa _CSLinRoodHorizRecord
-            # Plan 25 Commit 6: LinRood horizontal substep reverse.
+            # LinRood horizontal substep reverse.
             # `lambda_panels` holds the tracer-rm adjoint propagated
             # through the tape. The substep produces an internal
             # `lambda_m_panels` (via the `c = rm / m` chain rule and

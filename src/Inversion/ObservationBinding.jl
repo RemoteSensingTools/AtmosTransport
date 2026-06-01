@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Plan 26 P0.D2 — bridge on-disk CSObservationSet to in-memory
+# Bridge on-disk CSObservationSet to in-memory
 # Vector{CSObservation{CSColumnMeanObjective, Float64}} consumed by the
 # CS 4D-Var surface-flux path (`cs_surface_flux_4dvar`,
 # `cs_surface_flux_jacobian`).

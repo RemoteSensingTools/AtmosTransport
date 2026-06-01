@@ -12,11 +12,7 @@
 #   * `_stage_panels`, `stage_panels!`, `_tape_panels`,
 #     `_allocate_tape_slot` — public-ish staging API.
 #
-# Phase A (Plan 26) will add `NetCDFCSTapeStorage` here for on-disk
-# checkpointed tapes.
-#
-# Code relocated from `src/Adjoints/Adjoints.jl` (lines 111-166, 2366-2447)
-# unchanged in Plan 26 P0.1; no semantic change.
+# `NetCDFCSTapeStorage` for on-disk checkpointed tapes will be added here.
 # ---------------------------------------------------------------------------
 
 abstract type AbstractCSTapeStorage end

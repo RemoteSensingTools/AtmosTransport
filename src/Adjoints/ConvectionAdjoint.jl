@@ -12,9 +12,6 @@
 #   * Workspace + forcing validation helpers.
 #   * `_apply_cs_convection_forward!` and `_apply_cs_convection_adjoint!`
 #     dispatch arms for `NoConvection` / `CMFMCConvection` / `TM5Convection`.
-#
-# Relocated from `src/Adjoints/Adjoints.jl` lines 1723-2333 unchanged
-# in Plan 26 P0.2; no semantic change.
 # ---------------------------------------------------------------------------
 
 function _tm5_solve_vector!(rm_col, conv1, pivots, Nz::Integer;

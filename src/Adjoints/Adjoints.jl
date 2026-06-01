@@ -15,7 +15,7 @@ module Adjoints
 
 using KernelAbstractions: @Const, @atomic, @index, @kernel, get_backend, synchronize
 # NCDatasets is loaded here (not inside ObservationsIO.jl) so the
-# Plan 26 P0.D1 observation IO can share the dependency with any
+# observation IO can share the dependency with any
 # future read/write helpers under `src/Inversion/`.
 import NCDatasets
 
@@ -49,10 +49,9 @@ using ..State: AbstractCubedSphereField,
     field_value, panel_field, update_field!
 using ..MetDrivers: ConvectionForcing, current_time
 
-# Plan 26 P0.1 — tape storage policies + record types live in src/Tape/
+# Tape storage policies + record types live in src/Tape/
 # (loaded before Adjoints in src/AtmosTransport.jl). Re-imported here so
-# call sites continue to use the unqualified names. No semantic change
-# from the previous monolithic definitions in this file.
+# call sites continue to use the unqualified names.
 using ..Tape: AbstractCSTapeStorage,
               DeviceCSTapeStorage, PinnedHostCSTapeStorage, MmapCSTapeStorage,
               CSTapeSlot, PinnedHostCSTapeSlot, MmapCSTapeSlot,
@@ -73,7 +72,7 @@ using ..Tape: AbstractCSTapeStorage,
 
 const CSAdjointLinearScheme = Union{UpwindScheme, SlopesScheme{NoLimiter}, PPMScheme{NoLimiter}}
 const CSAdjointNonlinearScheme = Union{PPMScheme{MonotoneLimiter}}
-# Plan 25 Commit 6: LinRoodPPMScheme is supported via its own
+# LinRoodPPMScheme is supported via its own
 # horizontal tape record (`_CSLinRoodHorizRecord`) and the kernel
 # adjoints shipped in `src/Operators/Advection/linrood_adjoint_kernels.jl`.
 # The reverse-loop dispatch arm in `_collect_surface_footprints`
@@ -85,45 +84,45 @@ const CSAdjointSupportedScheme = Union{CSAdjointLinearScheme,
                                         CSAdjointNonlinearScheme,
                                         CSAdjointLinRoodScheme}
 
-# Plan 26 P0.2 — footprint-objective types + seeding/eval kernels in a focused file.
+# Footprint-objective types + seeding/eval kernels.
 include("ObjectiveSeeding.jl")
 
 
-# Plan 26 P0.3a — CSFootprintResult + CSTapeByteEstimate relocated to a focused file.
+# CSFootprintResult + CSTapeByteEstimate.
 include("../Footprint/FootprintResult.jl")
 
 
-# Plan 26 P0.4a — control / observation / 4D-Var result types relocated to Inversion/.
+# Control / observation / 4D-Var result types.
 include("../Inversion/Observations.jl")
 
-# Plan 26 P0.D1 — on-disk observation IO (CSObservationRecord /
+# On-disk observation IO (CSObservationRecord /
 # CSObservationSet, read/write to the v1 NetCDF schema documented in
 # `schemas/cs_observations_v1.toml`). Loaded after Observations.jl so
 # the in-memory 4D-Var types and the raw observation-record types
 # coexist in the Adjoints namespace.
 include("../Inversion/ObservationsIO.jl")
 
-# Plan 26 P0.D2 — `bind_to_mesh` bridge from the on-disk
+# `bind_to_mesh` bridge from the on-disk
 # `CSObservationSet` to a 4D-Var-ready `Vector{CSObservation}`. Loaded
 # after Observations.jl + ObservationsIO.jl because it references
 # `CSObservation` and `CSObservationRecord` directly; uses
 # `CSColumnMeanObjective` defined in ObjectiveSeeding.jl above.
 include("../Inversion/ObservationBinding.jl")
 
-# Plan 26 P0.D3 — on-disk departures (forward-pass simulated values
+# On-disk departures (forward-pass simulated values
 # paired with their originating observations). Loaded after
 # ObservationBinding.jl because the `build_departure_set` helper
 # consumes both `CSObservationSet` and `Vector{CSObservation}`.
 include("../Inversion/DeparturesIO.jl")
 
-# Plan 26 P0.B1 — surface-flux background-error covariance B and its
+# Surface-flux background-error covariance B and its
 # spectral square root B^(1/2) for the preconditioned 4D-Var path.
 # Self-contained (depends only on FFTW + base) so include order is not
 # load-bearing; placed here so the export block below can re-export
 # the public surface.
 include("../Inversion/Covariance.jl")
 
-# Plan 26 P0.B2 — preconditioner (χ ↔ x change of variables) with
+# Preconditioner (χ ↔ x change of variables) with
 # Linear and LogNormal optim types. Depends on Covariance.jl for
 # `apply_B_half!` / `apply_B_half_adjoint!` / `apply_B_half_inverse!`,
 # so loaded immediately after.
@@ -240,20 +239,20 @@ function _add_surface_perturbation!(panels_rm, perturb::_SingleSurfaceRatePertur
     return nothing
 end
 
-# Plan 26 P0.2 — split-sweep advection adjoint kernels relocated to a focused file.
+# Split-sweep advection adjoint kernels.
 include("AdvectionAdjoint.jl")
 
-# Plan 26 P0.2 — CS halo-exchange adjoint kernels relocated to a focused file.
+# CS halo-exchange adjoint kernels.
 include("HaloAdjoint.jl")
 
 
 
 
 
-# Plan 26 P0.2 — vertical-diffusion adjoint kernels relocated to a focused file.
+# Vertical-diffusion adjoint kernels.
 include("DiffusionAdjoint.jl")
 
-# Plan 26 P0.2 — CMFMC + TM5 convection adjoint kernels relocated to a focused file.
+# CMFMC + TM5 convection adjoint kernels.
 include("ConvectionAdjoint.jl")
 
 
@@ -270,35 +269,34 @@ function _convection_forcing_at(convection_forcing, step::Int, nsteps::Int)
     end
 end
 
-# Plan 26 P0.1: tape storage policies + staging API now live in
+# Tape storage policies + staging API live in
 # `src/Tape/TapeStorage.jl` and are imported via `using ..Tape` at
 # the top of this module.
 
 
-# Plan 26 P0.1: tape record types (_CSSweepRecord, _CSHaloRecord,
+# Tape record types (_CSSweepRecord, _CSHaloRecord,
 # _CSMidpointRecord, _CSDiffusionRecord, _CSConvectionRecord) and the
-# _CSTapeOp union now live in `src/Tape/TapeRecords.jl` and are imported
+# _CSTapeOp union live in `src/Tape/TapeRecords.jl` and are imported
 # via `using ..Tape` at the top of this module. The `S <: CSAdjointSupportedScheme`
-# type constraint on `_CSSweepRecord.scheme` was relaxed to plain `S`
-# during the relocation (see Plan 26 NOTES for the dependency-order
-# rationale); the constraint is now enforced at the
+# type constraint on `_CSSweepRecord.scheme` is relaxed to plain `S`
+# there; the constraint is now enforced at the
 # `_record_sweep!`/`_adjoint_scheme_sweep!` call sites below.
 
-# Plan 25 Commit 6 — LinRoodPPMScheme tape record + forward/reverse
+# LinRoodPPMScheme tape record + forward/reverse
 # integration. Defines `_CSLinRoodHorizRecord`,
 # `_record_cs_linrood_tape`, `_apply_cs_linrood_horizontal_adjoint!`.
 include("LinRoodTape.jl")
 
-# Plan 26 P0.3b — tape-recorder kernels relocated to a focused file.
+# Tape-recorder kernels.
 include("../Footprint/TapeRecording.jl")
 
 
 
-# Plan 26 P0.3c — reverse-loop driver + forward-replay helpers relocated.
+# Reverse-loop driver + forward-replay helpers.
 include("../Footprint/ReverseLoop.jl")
 
 
-# Plan 26 P0.A.3 — strided checkpoint driver. Depends on the linear-scheme
+# Strided checkpoint driver. Depends on the linear-scheme
 # `_record_cs_mass_tape` + `_walk_window_reverse!` defined above; the
 # FootprintAPI below dispatches on the `checkpoint` kwarg to choose between
 # the existing `_collect_surface_footprints` path (FullCheckpoint, no
@@ -306,16 +304,16 @@ include("../Footprint/ReverseLoop.jl")
 include("../Footprint/StrideCheckpoint.jl")
 
 
-# Plan 26 P0.3c — user-facing footprint API relocated to a focused file.
+# User-facing footprint API.
 include("../Footprint/FootprintAPI.jl")
 
-# Plan 26 P0.4b — surface-flux Jacobian + aggregation relocated.
+# Surface-flux Jacobian + aggregation.
 include("../Inversion/Jacobian.jl")
 
-# Plan 26 P0.4b — 4D-Var cost + gradient evaluation relocated.
+# 4D-Var cost + gradient evaluation.
 include("../Inversion/CostGradient.jl")
 
-# Plan 26 P0.4b — prototype gradient-descent optimizer shim relocated.
+# Prototype gradient-descent optimizer shim.
 include("../Inversion/Optimizer.jl")
 
 

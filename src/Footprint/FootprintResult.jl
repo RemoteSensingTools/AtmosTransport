@@ -6,8 +6,8 @@
 # returned by `cs_surface_emission_footprint(..., dry_run=true)` to size
 # in-memory or on-disk tape allocations.
 #
-# Relocated from `src/Adjoints/Adjoints.jl` lines 73-114 unchanged in
-# Plan 26 P0.3a; no semantic change. Loaded into the `Adjoints` module
+# Relocated unchanged from `src/Adjoints/Adjoints.jl` lines 73-114;
+# no semantic change. Loaded into the `Adjoints` module
 # via an `include` from `src/Adjoints/Adjoints.jl` — the names remain
 # accessible at the same call sites with no import changes.
 # ---------------------------------------------------------------------------

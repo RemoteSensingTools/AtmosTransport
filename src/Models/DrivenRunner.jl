@@ -540,7 +540,7 @@ end
 """
     _assert_gpu_residency!(state, cfg)
 
-Plan 40 Commit 6a / `feedback_verify_gpu_runs_on_gpu`. When a GPU backend is
+See `feedback_verify_gpu_runs_on_gpu`. When a GPU backend is
 selected, assert that `state.air_mass` lives on that backend. A silent CPU
 fallback aborts with a precise error. Called once after model construction,
 before the run loop.
@@ -606,7 +606,7 @@ end
 # diagnostics and file layout.
 
 # ===========================================================================
-# Capability validation (plan 40 Commit 6a)
+# Capability validation
 #
 # Validate TOML physics against binary capabilities BEFORE constructing the
 # model, so users get a precise error up front instead of silently failing
@@ -731,13 +731,13 @@ function run_driven_simulation(cfg::AbstractDict)
     binary_paths = expand_binary_paths(input_cfg)
     isempty(binary_paths) &&
         throw(ArgumentError("[input] resolved to an empty binary list"))
-    # TM5-storage Commit 1: section timing instrumentation, off unless
-    # ATMOSTR_TIMERS=1. Enabled here so every section accumulator covers
-    # the whole driven loop including snapshot capture / write.
+    # Section timing instrumentation, off unless ATMOSTR_TIMERS=1.
+    # Enabled here so every section accumulator covers the whole driven
+    # loop including snapshot capture / write.
     timers_on = SectionTimer.maybe_enable_from_env!()
-    # Plan 40 Commit 6b: dispatch on the first binary's grid_type —
-    # the ownership boundary (binary header owns topology, TOML owns
-    # physics kinds). The capability probe also runs the load-time
+    # Dispatch on the first binary's grid_type — the ownership boundary
+    # (binary header owns topology, TOML owns physics kinds). The
+    # capability probe also runs the load-time
     # gates (stale-binary, cm-continuity) as a side effect of opening
     # the reader in `inspect_binary`.
     binary_caps = [(path = path, caps = inspect_binary(path; io = devnull))
@@ -1007,7 +1007,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
 end
 
 # ===========================================================================
-# CS runner (plan 40 Commit 6b, hoisted from the historical CS runner)
+# CS runner
 # ===========================================================================
 
 function _cfg_architecture(cfg)
@@ -1077,8 +1077,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
                 basis_sym === :moist ? MoistBasis :
                 error("CS binary has unsupported mass_basis $(basis_sym); expected :dry or :moist")
 
-    # Plan 40 Commit 2 + 1c: CS tracers flow through the unified IC
-    # pipeline. DryBasis is the default per invariant 14; MoistBasis
+    # CS tracers flow through the unified IC pipeline.
+    # DryBasis is the default per invariant 14; MoistBasis
     # requires qv from window1 (feedback_vmr_to_mass_basis_aware), which
     # CS windows do not carry today — so moist binaries error explicitly
     # here rather than producing silently wrong tracer mass.
@@ -1193,8 +1193,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
                       min(Int(stop_window_override), total_windows(driver))
         window_hours = window_dt(driver) / 3600.0
 
-        # Plan-39 Commit G removed the window-boundary air_mass reset, so
-        # the cross-day handoff is continuity-consistent. We rebuild the
+        # There is no window-boundary air_mass reset, so the cross-day
+        # handoff is continuity-consistent. We rebuild the
         # sim around each day's driver; state + physics carry over.
         if driver_idx != 1
             fluxes_d = allocate_face_fluxes(mesh, Nz; FT = FT, basis = BasisT)

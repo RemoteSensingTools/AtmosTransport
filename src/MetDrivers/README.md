@@ -51,8 +51,25 @@ cubed-sphere-specific data paths.
   containers and copy helpers for runtime physics fields
 - [`ReplayContinuity.jl`](ReplayContinuity.jl) — runtime replay and
   continuity diagnostics for loaded transport windows
-- [`TransportBinary.jl`](TransportBinary.jl) — binary reader/writer and
-  transport-window loading helpers
+- [`TransportBinary.jl`](TransportBinary.jl) — thin includer for the
+  transport-binary format; pulls in the concept files under
+  [`transport_binary/`](transport_binary/) in dependency order and re-exports
+  the public names. The implementation lives in:
+  - `transport_binary/header.jl` — header schema, schedule/sampling parsers,
+    header `summary`/`show`, `_parse_transport_header`, `_transport_common_header`
+  - `transport_binary/contract.jl` — `TransportBinaryContract`,
+    `canonical_window_constant_contract`, `validate_cs_writer_contract!`,
+    `validate_transport_contract!`
+  - `transport_binary/reader.jl` — `TransportBinaryReader` struct, accessors,
+    constructor, `load_grid`, and the per-window loaders
+  - `transport_binary/payload_sections.jl` — per-section element counts,
+    window-field accessors, optional-section validators
+  - `transport_binary/writer.jl` — eager `write_transport_binary` + packers
+  - `transport_binary/streaming_writer.jl` — `StreamingTransportBinaryWriter`
+    (structured / reduced-Gaussian)
+  - `transport_binary/cubed_sphere.jl` — cubed-sphere streaming writer
+  - `transport_binary/inspect.jl` — `binary_capabilities`, `inspect_binary`,
+    header peeking
 - [`TransportBinaryDriver.jl`](TransportBinaryDriver.jl) — structured and
   reduced-Gaussian runtime driver
 - [`CubedSphereBinaryReader.jl`](CubedSphereBinaryReader.jl) — CS window reader

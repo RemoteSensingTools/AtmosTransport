@@ -821,7 +821,7 @@ end
 """
     verify_storage_continuity_rg!(storage, work, steps_per_window, ::Type{FT})
 
-Plan 39 Commit E — write-time replay gate for RG storage. See
+Write-time replay gate for RG storage. See
 [`verify_storage_continuity_ll!`](@ref) for semantics. For the final
 window (which targets zero tendency by construction), compares
 `m_evolved` against `m_cur` itself.
@@ -919,7 +919,7 @@ function apply_reduced_poisson_balance!(storage::ReducedWindowStorage{FT},
         storage.all_hflux[win] = FT.(hflux_work)
 
         # Recompute cm from balanced hflux using the explicit-dm closure
-        # (plan 39 dry-basis fix, 2026-04-22). The legacy Δb×pit closure
+        # (dry-basis fix, 2026-04-22). The legacy Δb×pit closure
         # is wrong under dry basis because dm[k] = dB[k] × Σ dm[k] only
         # holds under moist hybrid coordinates; qv[k] variation breaks it
         # by ~27%, producing the 0.75% day-boundary air_mass jump seen in
@@ -932,7 +932,7 @@ function apply_reduced_poisson_balance!(storage::ReducedWindowStorage{FT},
         storage.all_cm[win] = FT.(cm_buf)
     end
 
-    # Plan 39 Commit E: write-time replay gate for RG storage.
+    # Write-time replay gate for RG storage.
     verify_storage_continuity_rg!(storage, work, steps_per_window, FT)
 
     @info @sprintf("  Poisson balance complete for %d windows.", Nt)
@@ -1412,7 +1412,7 @@ function balance_window!(hflux_work::Matrix{Float64},
     buf.hflux[slot] .= FT.(hflux_work)
 
     # Recompute cm from balanced hflux using the explicit-dm closure
-    # (plan 39 dry-basis fix, 2026-04-22). See apply_reduced_poisson_balance!
+    # (dry-basis fix, 2026-04-22). See apply_reduced_poisson_balance!
     # comment for rationale.
     size(dm_target_work) == size(m_cur_work) ||
         error("balance_window!: dm_target_work shape $(size(dm_target_work)) " *
@@ -1662,10 +1662,10 @@ function process_day(date::Date,
     sample_window = (m = buf.m[1], hflux = buf.hflux[1],
                      cm = buf.cm[1], ps = buf.ps[1])
 
-    # Plan 39 Commit C: declare the canonical window_constant contract
-    # explicitly — all 6 semantic fields + Poisson fields. Before this,
-    # the RG writer inherited legacy defaults for flux_sampling/delta_semantics
-    # and omitted Poisson fields entirely, leaving ambiguity the runtime
+    # Declare the canonical window_constant contract
+    # explicitly — all 6 semantic fields + Poisson fields. Otherwise
+    # the RG writer inherits legacy defaults for flux_sampling/delta_semantics
+    # and omits Poisson fields entirely, leaving ambiguity the runtime
     # parser would silently resolve.
     rg_contract = canonical_window_constant_contract(
         steps_per_window     = steps_per_met,
@@ -1695,7 +1695,7 @@ function process_day(date::Date,
             "poisson_balanced" => true,
             "mass_fix_enabled" => settings.mass_fix_enable,
             # Poisson fields via extra_header — _transport_common_header
-            # doesn't accept these yet (fixed in Commit D). Single source
+            # doesn't accept these directly. Single source
             # of truth: the contract.
             "poisson_balance_target_scale"     => rg_contract.poisson_balance_target_scale,
             "poisson_balance_target_semantics" => rg_contract.poisson_balance_target_semantics,

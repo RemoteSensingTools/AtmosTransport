@@ -148,7 +148,7 @@ function apply_convection!(q_raw::AbstractArray{FT, 4},
 
     cmfmc = forcing.cmfmc
 
-    # DTRAIN-missing Tiedtke-style fallback (plan 18 v5.1 Decision 2):
+    # DTRAIN-missing Tiedtke-style fallback:
     # when `forcing.dtrain === nothing`, derive per-layer detrainment
     # from the updraft-flux divergence:
     #
@@ -175,7 +175,7 @@ function apply_convection!(q_raw::AbstractArray{FT, 4},
                    cell_areas_by_latitude(grid.horizontal) :
                    workspace.cell_metrics
 
-    # Cache the CFL sub-step count per met window (Decision 21).
+    # Cache the CFL sub-step count per met window.
     n_sub = _get_or_compute_n_sub!(workspace, cmfmc, air_mass,
                                     cell_areas_y, dt)
     sdt = FT(dt) / FT(n_sub)
@@ -299,8 +299,8 @@ end
 
 State-level delegate. Unpacks `state.tracers_raw` and
 `state.air_mass`, then forwards to `apply_convection!`. Requires an
-allocated `CMFMCWorkspace` — `DrivenSimulation` construction (plan
-18 Commit 8) allocates this per Decision 26.
+allocated `CMFMCWorkspace` — `DrivenSimulation` construction
+allocates this (caller-owned pre-allocation).
 """
 function apply!(state::CellState{B, A, Raw, Names},
                 forcing::ConvectionForcing,

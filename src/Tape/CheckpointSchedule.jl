@@ -1,11 +1,10 @@
 # ---------------------------------------------------------------------------
-# Plan 26 Phase A.3 — checkpoint schedules for tape reduction.
+# Checkpoint schedules for tape reduction.
 #
 # `AbstractCheckpointSchedule` lets the user trade compute for tape storage
 # during the reverse pass. Two concrete schedules:
 #
-#   * `FullCheckpoint()` (default) — every step lives on the tape. Identical
-#     behaviour to the pre-A.3 `cs_surface_emission_footprint`; zero
+#   * `FullCheckpoint()` (default) — every step lives on the tape; zero
 #     recomputation, peak tape disk ~ nsteps × per-step panel bytes.
 #
 #   * `StrideCheckpoint(K)` — save full `panels_m` snapshots every K steps;

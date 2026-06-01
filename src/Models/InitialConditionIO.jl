@@ -20,23 +20,19 @@ topology-dispatched VMR builders for the unified runtime.
 - [`FileInitialConditionSource`](@ref) — container for a loaded IC
   NetCDF (3D VMR + hybrid coefficients + surface pressure).
 
-## Plan 40 commit provenance
+## Contents
 
-- 1a (2026-04-24, commit `1450204`) — module scaffold.
-- 1b (2026-04-24, commit `29fcca5`) — LL/RG hoist (verbatim, bit-exact)
-  + basis-aware `pack_initial_tracer_mass` (LL/RG).
-- 1c (this file) — CS `build_initial_mixing_ratio` for
-  `uniform | file | catrine_co2 | netcdf | file_field`; CS
-  `pack_initial_tracer_mass` (DryBasis + MoistBasis, halo-padded
-  output with halo zeroed); `_build_source_latlon_mesh` helper for
-  LL→CS conservative regridding.
-- 1d (this file) — Hoist of surface-flux NetCDF loader (13 helpers
-  + `FileSurfaceFluxField` struct) and LL/RG `build_surface_flux_source`
-  methods; new CS `build_surface_flux_source` that conservatively
-  LL→CS-regrids the flux (the regridder's `dst_areas` × regridded
-  density already yields kg/s per cell) and unpacks to
-  `NTuple{6, Matrix{FT}}` — satisfying the per-cell kg/s contract
-  at `src/Operators/SurfaceFlux/sources.jl:12`.
+- LL/RG and CS `build_initial_mixing_ratio` for
+  `uniform | file | catrine_co2 | netcdf | file_field`.
+- Basis-aware `pack_initial_tracer_mass` (DryBasis + MoistBasis); CS
+  output is halo-padded with the halo zeroed. `_build_source_latlon_mesh`
+  helper for LL→CS conservative regridding.
+- Surface-flux NetCDF loader (13 helpers + `FileSurfaceFluxField`
+  struct) and LL/RG `build_surface_flux_source` methods; CS
+  `build_surface_flux_source` conservatively LL→CS-regrids the flux (the
+  regridder's `dst_areas` × regridded density already yields kg/s per
+  cell) and unpacks to `NTuple{6, Matrix{FT}}` — satisfying the per-cell
+  kg/s contract at `src/Operators/SurfaceFlux/sources.jl:12`.
 
 Private helpers (underscore-prefixed) stay unexported and are
 accessed by callers (including the canonical driven runtime)
@@ -51,9 +47,9 @@ using ..State: AbstractMassBasis, DryBasis, MoistBasis
 using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                 nrings, ring_longitudes, cell_index, cell_area,
                 gravity, panel_cell_center_lonlat
-# Regridding + Preprocessing are loaded before Models (AtmosTransport.jl,
-# plan 40 Commit 1c reorder) so we can pull in the LL→CS conservative
-# regridder + panel unpacking helpers for the CS file-based IC path.
+# Regridding + Preprocessing are loaded before Models (AtmosTransport.jl)
+# so we can pull in the LL→CS conservative regridder + panel unpacking
+# helpers for the CS file-based IC path.
 using ..Regridding: build_regridder, apply_regridder!
 using ..Preprocessing: unpack_flat_to_panels_3d!, unpack_flat_to_panels_2d!,
                        CS_PANEL_COUNT
@@ -482,7 +478,7 @@ end
 # Shapes:
 #   LL: (Nx, Ny, Nz)
 #   RG: (ncells, Nz)
-#   CS: NTuple{6, Array{FT, 3}} of (Nc, Nc, Nz) — added in plan 40 Commit 1c
+#   CS: NTuple{6, Array{FT, 3}} of (Nc, Nc, Nz)
 # ---------------------------------------------------------------------------
 
 function build_initial_mixing_ratio(air_mass::AbstractArray{FT}, mesh::LatLonMesh{FT}, cfg) where FT
@@ -681,7 +677,7 @@ same shape as `air_mass`.
   invariant 9. Result: `vmr_dry .* air_mass .* (1 .- qv)`. `qv` must
   be supplied from the first transport window; missing `qv` errors.
 
-CS dispatch (per-panel halo packing) is added in plan 40 Commit 1c.
+CS dispatch handles per-panel halo packing.
 
 ## Arguments
 
@@ -727,7 +723,7 @@ function _pack_tracer_mass(::AtmosGrid{<:ReducedGaussianMesh}, air_mass, vmr_dry
 end
 
 # ---------------------------------------------------------------------------
-# CS file-based IC source mesh construction (plan 40 Commit 1c)
+# CS file-based IC source mesh construction
 #
 # Build a LatLonMesh matching the source NetCDF's lon/lat grid so the
 # conservative regridder in `src/Regridding/` can LL→CS the 3D VMR field
@@ -761,7 +757,7 @@ function _build_source_latlon_mesh(lon_src::Vector{Float64}, lat_src::Vector{Flo
 end
 
 # ---------------------------------------------------------------------------
-# CS build_initial_mixing_ratio (plan 40 Commit 1c)
+# CS build_initial_mixing_ratio
 #
 # Returns a 6-tuple of interior `(Nc, Nc, Nz)` VMR arrays. The tuple is
 # topology-shaped but halo-free; the halo ring is added later by
@@ -1004,7 +1000,7 @@ function _build_cs_pressure_layer_ic(air_mass::NTuple{6, <:AbstractArray{FT, 3}}
 end
 
 # ---------------------------------------------------------------------------
-# CS pack_initial_tracer_mass (plan 40 Commit 1c)
+# CS pack_initial_tracer_mass
 #
 # Takes interior `NTuple{6, (Nc, Nc, Nz)}` VMR + halo-padded
 # `NTuple{6, (Nc+2Hp, Nc+2Hp, Nz)}` air_mass. Returns halo-padded tracer
@@ -1060,7 +1056,7 @@ function _cs_pack_interior_into_halo(grid::AtmosGrid{<:CubedSphereMesh},
 end
 
 # ===========================================================================
-# Surface-flux loader + builders (plan 40 Commit 1d)
+# Surface-flux loader + builders
 #
 # Owns the file-based surface-flux path: NetCDF load + LL→{LL,RG,CS}
 # conservative regrid + area integration. Every builder returns
@@ -1456,7 +1452,7 @@ end
     build_surface_flux_source(grid::AtmosGrid{<:CubedSphereMesh},
                               tracer_name, cfg, ::Type{FT})
 
-Plan 40 Commit 1d: CS surface-flux builder. Conservatively LL→CS
+CS surface-flux builder. Conservatively LL→CS
 regrids the 2-D flux density (kg/m²/s) onto the 6 CS panel cell
 centres, multiplies by each panel's cell area to yield per-cell kg
 species/s, then converts that physical rate to the model storage basis.

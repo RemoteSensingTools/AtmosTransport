@@ -68,7 +68,7 @@ struct WindowStorage{FT}
     all_ps       :: Vector{Array{FT, 2}}
     all_qv_start :: Vector{Array{FT, 3}}   # empty vector when include_qv=false
     all_qv_end   :: Vector{Array{FT, 3}}   # empty vector when include_qv=false
-    # Plan 24 Commit 4: four TM5 convection sections on the merged
+    # Four TM5 convection sections on the merged
     # transport grid, one per window.  Empty vectors when
     # tm5_convection=false.  Shape per window: (Nx, Ny, Nz).
     all_entu     :: Vector{Array{FT, 3}}

@@ -58,8 +58,8 @@ The full runner adds the practical edges around this skeleton: resolving many
 daily binaries, GPU adaptation, surface-flux source construction, snapshot
 output, progress reporting, and capability checks against every file.
 
-`SurfaceFluxSource` (previously defined here) was migrated to
-`src/Operators/SurfaceFlux/` in plan 17 Commit 2; it is still re-exported
+`SurfaceFluxSource` (previously defined here) lives in
+`src/Operators/SurfaceFlux/`; it is still re-exported
 below for backward compatibility with external callers that imported it
 via `AtmosTransport.SurfaceFluxSource`.
 """
@@ -399,10 +399,9 @@ end
 end
 
 # Surface-source helpers (`_surface_shape`, `_check_surface_source_compatibility`,
-# `_apply_surface_source!`) migrated to `src/Operators/SurfaceFlux/sources.jl`
-# in plan 17 Commit 2. Imported here from the SurfaceFlux submodule so the
-# sim-level application path (`_apply_surface_sources!` below) keeps working
-# unchanged until plan 17 Commit 6 moves the call site into the palindrome.
+# `_apply_surface_source!`) live in `src/Operators/SurfaceFlux/sources.jl`.
+# Imported here from the SurfaceFlux submodule so the sim-level application
+# path (`_apply_surface_sources!` below) keeps working.
 using ..Operators.SurfaceFlux: _surface_shape,
                                 _check_surface_source_compatibility,
                                 _apply_surface_source!
@@ -435,7 +434,7 @@ using ..Operators.Diffusion: NoDiffusion, ImplicitVerticalDiffusion,
     return nothing
 end
 
-# D6: when the diffusion operator uses LocalHoltslagBovilleKzField (which
+# When the diffusion operator uses LocalHoltslagBovilleKzField (which
 # itself derives column geometry from VDIFF virtual-T), populate
 # dz_scratch from the SAME virtual-T-per-layer the Kz cache uses. Closes
 # the previous inconsistency where the kernel divided by a 260 K-constant
@@ -523,12 +522,11 @@ end
 Per-operator validation of a loaded transport window. Operator
 authors add a method for their concrete type; the fallback method
 throws `ArgumentError` naming the operator and pointing at this
-function as the place to add a method (plan 23 principle 10).
+function as the place to add a method.
 
-Plan 23 Commit 1 refactors the former `if/elseif op isa …` chain
-in `_validate_convection_runtime` into this dispatch pattern so
-adding `TM5Convection` (or any future operator) does not require
-editing the old runtime block, only adding a method here.
+Validation dispatches on the operator type rather than an
+`if/elseif op isa …` chain, so adding `TM5Convection` (or any future
+operator) only requires adding a method here.
 """
 _validate_convection_window!(::NoConvection,
                               ::AbstractTransportWindow,
@@ -676,14 +674,13 @@ function _maybe_advance_window!(sim::DrivenSimulation)
         _validate_convection_runtime(sim.model, sim.driver, sim.window)
         _refresh_dz_for_window!(sim)
         _refresh_pbl_kz_for_window!(sim.model.diffusion, sim)
-        # Plan 39 Commit G: the `reset_air_mass_each_window` flag has been
-        # removed. Under the canonical `:window_constant` contract, the
-        # runtime's own flux divergence integrates to `(m_next - m)` over
-        # each window, so `state.air_mass` naturally tracks `window.air_mass`
-        # at window boundaries without an explicit reset. The reset used to
-        # inject the 2nd-order ps-acceleration mismatch that caused the
-        # upwind monotonicity-violating window-edge jump (~0.87% on uniform
-        # IC) diagnosed in plan-24 post-mortem (memo 37 + this plan).
+        # There is no `reset_air_mass_each_window` flag. Under the canonical
+        # `:window_constant` contract, the runtime's own flux divergence
+        # integrates to `(m_next - m)` over each window, so `state.air_mass`
+        # naturally tracks `window.air_mass` at window boundaries without an
+        # explicit reset. An explicit reset would inject the 2nd-order
+        # ps-acceleration mismatch that causes the upwind
+        # monotonicity-violating window-edge jump (~0.87% on uniform IC).
         invalidate_cmfmc_cache!(sim.model.workspace.convection_ws)
         invalidate_tm5_cache!(sim.model.workspace.convection_ws)
         _start_window_prefetch!(sim, next_window + 1)
@@ -749,23 +746,21 @@ function DrivenSimulation(model::TransportModel,
     surface_sources_adapted = _adapt_sources_to_model_backend(Tuple(surface_sources), model.state.air_mass)
     foreach(source -> _check_surface_source_compatibility(model.state, source), surface_sources_adapted)
 
-    # Plan 17 Commit 6: move chemistry + emissions from sim-level post-
-    # step application into the model's transport block. `with_emissions`
-    # installs the user-supplied surface sources as a `SurfaceFluxOperator`
-    # inside the wrapped model so the palindrome's S slot runs at the
-    # correct center-of-transport position. `with_chemistry` installs the
-    # user's chemistry in the model; `step!(model)` runs
+    # Chemistry + emissions are applied inside the model's transport block,
+    # not as a sim-level post-step. `with_emissions` installs the
+    # user-supplied surface sources as a `SurfaceFluxOperator` inside the
+    # wrapped model so the palindrome's S slot runs at the correct
+    # center-of-transport position. `with_chemistry` installs the user's
+    # chemistry in the model; `step!(model)` runs
     # `advection → emissions → diffusion → chemistry` as ONE composed
     # call. The sim's `_apply_surface_sources!` helper and post-step
     # `chemistry_block!` are no longer called at sim level — they are
     # retained on the sim struct for adaptive reconfiguration via
     # future helpers but the step loop no longer invokes them directly.
     #
-    # Pre-plan-17 the sim held chemistry at the sim level as a plan-15
-    # workaround to preserve TM5's `advection → emissions → chemistry`
-    # order while emissions still lived outside the palindrome. That
-    # workaround is now resolved by the palindrome integration (plan 17
-    # Commit 5), so the sim delegates entirely to `step!(model)`.
+    # The palindrome integration preserves TM5's
+    # `advection → emissions → chemistry` order with emissions inside the
+    # palindrome, so the sim delegates entirely to `step!(model)`.
     model = with_chemistry(model, chemistry)
     if !isempty(surface_sources_adapted)
         emissions_op = SurfaceFluxOperator(PerTracerFluxMap(surface_sources_adapted))
@@ -853,7 +848,7 @@ Simulation time [s] at the start of the next step. Returns
 `sim.time`, which is initialized to `zero(FT)` at sim construction
 and advanced by `sim.time += sim.Δt` at the end of each `step!(sim)`.
 
-Plan 18 A3 threads `sim` through operators via the `meteo` kwarg:
+`sim` is threaded through operators via the `meteo` kwarg:
 
     step!(sim.model, sim.Δt; meteo = sim)   # not sim.driver
 
@@ -869,8 +864,14 @@ provide real time information on its own.
 """
 MetDrivers.current_time(sim::DrivenSimulation) = sim.time
 
+# Diagnostic override for convection-cadence sensitivity studies. Setting
+# ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS=1 forces convection + chemistry to run every
+# advection substep (the pre-2026-05-31 behaviour) even on a binary that declares
+# the per-window contract, so the two cadences can be A/B-compared on the SAME
+# binary. Default off — never affects production runs.
 @inline _uses_binary_transport_schedule(sim::DrivenSimulation) =
-    uses_binary_substep_contract(sim.driver)
+    uses_binary_substep_contract(sim.driver) &&
+    get(ENV, "ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS", "0") != "1"
 
 function step!(sim::DrivenSimulation)
     sim.iteration < sim.final_iteration ||
@@ -880,9 +881,9 @@ function step!(sim::DrivenSimulation)
     substep = substep_index(sim)
     SectionTimer.@section :forcing_refresh _refresh_forcing!(sim, substep)
 
-    # Plan 17 Commit 6 + plan 18 A3: the default path keeps the live
-    # operator suite in one call. Plan 41 v3 transport binaries carry an
-    # advection substep contract, not a physics cadence contract, so driven
+    # The default path keeps the live operator suite in one call.
+    # Transport binaries carry an advection substep contract, not a
+    # physics cadence contract, so driven
     # binary-scheduled runs apply only the transport block at each stored
     # substep and defer convection + chemistry to the end of the met window.
     if _uses_binary_transport_schedule(sim)
@@ -924,5 +925,5 @@ end
 
 # `SurfaceFluxSource` re-exported for backward compat with external callers.
 # The symbol resolves to `Operators.SurfaceFlux.SurfaceFluxSource` — its
-# canonical location post plan 17 Commit 2.
+# canonical location.
 export SurfaceFluxSource, DrivenSimulation, run_window!, window_index, substep_index, current_qv

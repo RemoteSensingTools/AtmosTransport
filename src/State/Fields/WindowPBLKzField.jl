@@ -20,12 +20,12 @@ the no-op accurately reflects the data flow.
 This matches the surface-state smoothness on the typical 1 h archive
 cadence (pblh and friends evolve on a 10 min - 1 h characteristic
 scale). The associated systematic error in tracer diffusion is well
-below the operator-level mass-conservation tolerance (10⁻⁷ — see D1).
+below the operator-level mass-conservation tolerance (10⁻⁷).
 TM5 and GCHP refresh Kz at every dynamic step against state that's
 also updated each dynamic step; matching that cadence on offline
 transport would require sub-hourly surface forcing and per-substep
 linear interpolation, neither of which is wired up here. Tracked in
-`memory/diffusion_full_pipeline_audit_2026_05_25.md` (D5).
+`memory/diffusion_full_pipeline_audit_2026_05_25.md`.
 """
 struct WindowPBLKzField{FT, F <: AbstractTimeVaryingField{FT, 3}, H,
                         P <: PBLPhysicsParameters{FT}, A} <: AbstractCubedSphereField{FT}
@@ -48,7 +48,7 @@ function WindowPBLKzField(host_cache::NTuple{6, Array{FT, 3}};
 end
 
 @inline panel_field(f::WindowPBLKzField, p::Integer) = f.panels[Int(p)]
-# Window-constant cadence by design — see struct docstring (D5).
+# Window-constant cadence by design — see struct docstring.
 update_field!(f::WindowPBLKzField, ::Real) = f
 
 function Adapt.adapt_structure(to, f::WindowPBLKzField)

@@ -38,8 +38,14 @@ if Threads.nthreads() == 1 &&
    get(ENV, "ATMOSTR_NO_AUTO_THREADS", "") != "1"
     @info "Re-executing with --threads=2 (set ATMOSTR_NO_AUTO_THREADS=1 to disable)"
     julia = Base.julia_cmd()
-    base = filter(a -> !startswith(String(a), "--threads"), julia.exec)
-    new_cmd = Cmd([base; "--threads=2"; PROGRAM_FILE; ARGS...])
+    base = filter(a -> !startswith(String(a), "--threads") &&
+                       !startswith(String(a), "--project"), julia.exec)
+    # `Base.julia_cmd()` does NOT carry `--project`, so the re-exec would land in
+    # the default environment and fail to find the project deps (e.g.
+    # KernelAbstractions). Propagate the active project explicitly.
+    proj = Base.active_project()
+    proj_flag = proj === nothing ? String[] : ["--project=$(dirname(proj))"]
+    new_cmd = Cmd([base; proj_flag; "--threads=2"; PROGRAM_FILE; ARGS...])
     run(new_cmd; wait = true)
     exit(0)
 end

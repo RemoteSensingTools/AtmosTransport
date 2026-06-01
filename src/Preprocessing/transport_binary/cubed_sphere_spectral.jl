@@ -508,6 +508,9 @@ function process_day(date::Date,
                     "preprocessor"     => "preprocess_transport_binary.jl",
                     "preprocessor_contract" => "plan41_variable_substeps",
                     "runtime_substep_contract" => "binary_schedule",
+                    # Declare the real adaptive flag (the choke point would
+                    # otherwise default it to false — wrong for adaptive runs).
+                    "adaptive_substeps" => substep_policy.adaptive_substeps,
                     "source_type"      => "era5_spectral",
                     "target_type"      => "cubed_sphere",
                     "staging_nlon"     => Nx_stg,

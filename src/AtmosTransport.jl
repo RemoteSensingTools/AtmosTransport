@@ -173,17 +173,17 @@ using .MetDrivers: AbstractDriver, AbstractClosure, AbstractMetDriver,
                    StreamingTransportBinaryWriter,
                    open_streaming_transport_binary, write_streaming_window!,
                    close_streaming_transport_binary!, set_streaming_steps_per_window_schedule!,
-                   binary_capabilities, inspect_binary   # plan 40 Commit 5
+                   binary_capabilities, inspect_binary
 
 # ---- Physics operators ----
 include("Operators/Operators.jl")
 using .Operators
 
-# ---- Adjoint tape storage + records (Plan 26 P0.1) ----
+# ---- Adjoint tape storage + records ----
 # Loaded BEFORE `Adjoints/` so the kernels module can `using ..Tape: ...`
 # for the relocated storage policies and record types. The reverse-loop
 # driver that DISPATCHES on these record types still lives in Adjoints
-# pending Plan 26 P0.3 (moves to `Footprint/`).
+# (eventual move to `Footprint/`).
 include("Tape/Tape.jl")
 using .Tape
 
@@ -196,7 +196,7 @@ include("Kernels/Kernels.jl")
 using .Kernels
 
 # ---- Offline regridding glue (CR.jl + JLD2) ----
-# Loaded before Models so `Models.InitialConditionIO` (plan 40 Commit 1c) can
+# Loaded before Models so `Models.InitialConditionIO` can
 # directly `using ..Regridding` and `using ..Preprocessing.CSHelpers` for the
 # CS file-based IC path. Regridding and Preprocessing have no back-references
 # to Models (verified by grep), so reordering is safe.

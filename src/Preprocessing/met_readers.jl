@@ -315,16 +315,17 @@ end
 Typed reader nominal for the ERA5 spectral path. ChainPolicy is fixed at
 `NoChain` because today's spectral path does not carry cross-day mass
 state (it pins global-mean ps per window instead). The per-window read
-still fuses with merge in today's `process_window!` and is deferred to P2.
+still fuses with merge in today's `process_window!`; splitting it out is
+deferred.
 """
 mutable struct ERA5SpectralReader{FT, S <: AbstractMetSettings} <:
                 AbstractMetReader{FT, S, NoChain}
     settings   :: S
     date       :: Date
-    # P0a placeholder: the spectral pipeline's `process_window!` fuses
+    # Placeholder: the spectral pipeline's `process_window!` fuses
     # synthesis + regrid + merge, so this field stays empty (`::Nothing`)
-    # until the P2 split lands. Pinned to `Nothing` rather than `Any`
-    # so reader.spec access is type-stable now and a P2 introduction of
+    # until the read/merge split lands. Pinned to `Nothing` rather than `Any`
+    # so reader.spec access is type-stable now and a future introduction of
     # a typed payload (`SpectralDayData`) becomes a struct extension,
     # not a silent retype.
     spec       :: Nothing
@@ -335,10 +336,10 @@ end
     open_reader(settings::ERA5SpectralSettings, date::Date, ::Type{FT};
                 seed = nothing, next_day_handle::Bool = true)
 
-P0a: opens the spectral day's GRIB and caches the typed nominal.
+Opens the spectral day's GRIB and caches the typed nominal.
 `seed`/`next_day_handle` accepted for signature parity with the GEOS
 constructor; the spectral path's "next-day endpoint" is handled by the
-existing `next_day_hour0` helper in `configuration.jl:349` until P2.
+existing `next_day_hour0` helper in `configuration.jl:349`.
 """
 function open_reader(settings::ERA5SpectralSettings, date::Date, ::Type{FT};
                      seed = nothing,

@@ -1,4 +1,4 @@
-# Plan 41 unified-preprocessor lifecycle shared by production topology drivers:
+# Unified-preprocessor lifecycle shared by production topology drivers:
 # ingest source windows, drain ready windows, verify and accumulate the
 # contract, write, close, summarize, promote, and quarantine on failure.
 

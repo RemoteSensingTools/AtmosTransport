@@ -1,5 +1,5 @@
 """
-Plan 41 P3 writer adapters.
+Writer adapters.
 
 These wrappers put the existing topology-specific binary writers behind the
 typed `AbstractBinaryWriter{G, FT, Basis}` contract without changing the byte

@@ -85,8 +85,8 @@ function expected_payload_sections(settings)
     sections = String["m", "am", "bm", "cm", "ps"]
     settings.include_qv && append!(sections, ["qv_start", "qv_end"])
     append!(sections, ["dam", "dbm", "dcm", "dm"])
-    # Plan 24 Commit 4: TM5 sections follow the deltas, matching the
-    # ordering in _transport_push_optional_sections! (plan 23 Commit 3).
+    # TM5 sections follow the deltas, matching the
+    # ordering in _transport_push_optional_sections!.
     settings.tm5_convection_enable && append!(sections, ["entu", "detu", "entd", "detd"])
     _settings_include_surface(settings) && append!(sections, ["pblh", "t2m", "ustar", "pbl_hflux"])
     return sections
@@ -113,7 +113,7 @@ function build_v4_header(date::Date,
     ncell = sizes.Nx * sizes.Ny
     nface_h = (sizes.Nx + 1) * sizes.Ny + sizes.Nx * (sizes.Ny + 1)
 
-    # Plan 39 Commit B: declare the self-describing transport-binary
+    # Declare the self-describing transport-binary
     # contract explicitly. LL uses the memo-37 canonical window_constant
     # path (tracer drift = 0 for Upwind on uniform IC over 2 days).
     contract = canonical_window_constant_contract(
@@ -138,11 +138,10 @@ function build_v4_header(date::Date,
         "mass_basis" => String(settings.mass_basis),
         "payload_sections" => payload_sections,
         "elems_per_window" => counts.elems_per_window,
-        # Plan 39 Commit B: the 6 semantic contract fields. Before this,
-        # the LL daily writer emitted only the 2 Poisson fields; the
-        # runtime parser silently defaulted the missing ones to the
-        # pre-memo-37 :window_start_endpoint path, causing the plan-24
-        # Commit-4 blow-up. Now declared explicitly.
+        # The 6 semantic contract fields. If the LL daily writer emits
+        # only the 2 Poisson fields, the runtime parser silently defaults
+        # the missing ones to the pre-memo-37 :window_start_endpoint path,
+        # causing a TM5-convection blow-up. Declared explicitly here.
         "source_flux_sampling"            => String(contract.source_flux_sampling),
         "air_mass_sampling"               => String(contract.air_mass_sampling),
         "flux_sampling"                   => String(contract.flux_sampling),

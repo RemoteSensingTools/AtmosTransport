@@ -22,7 +22,7 @@ using ..MetDrivers
 include("AbstractOperators.jl")
 
 # Diffusion is included BEFORE Advection so `strang_split_mt!`
-# (plan 16b Commit 4 palindrome integration) can import
+# (palindrome integration) can import
 # `NoDiffusion`, `AbstractDiffusion`, and
 # `apply_vertical_diffusion!`. Diffusion has no dependency on
 # Advection; reordering preserves correctness.
@@ -30,16 +30,14 @@ include("Diffusion/Diffusion.jl")
 using .Diffusion
 
 # SurfaceFlux is included BEFORE Advection so `strang_split_mt!`
-# (plan 17 Commit 5 palindrome integration) can import
+# (palindrome integration) can import
 # `NoSurfaceFlux`, `AbstractSurfaceFluxOperator`, and
-# `apply_surface_flux!`. Commit 2 ships only the data types
-# (`SurfaceFluxSource`, `PerTracerFluxMap`); the operator types
-# and kernel land in Commit 3.
+# `apply_surface_flux!`.
 include("SurfaceFlux/SurfaceFlux.jl")
 using .SurfaceFlux
 
-# Convection is included before Advection. Plan 18 v5.1 Decision 1
-# runs convection as a SEPARATE block in `TransportModel.step!`
+# Convection is included before Advection. Convection
+# runs as a SEPARATE block in `TransportModel.step!`
 # (between the transport palindrome and the chemistry block), so
 # `strang_split_mt!` doesn't need the convection types. The include
 # order still puts Convection alongside Diffusion/SurfaceFlux (both
@@ -68,27 +66,24 @@ export reconstruction_order, required_halo_width
 export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemistry
 export chemistry_block!
 
-# Diffusion solver infrastructure + operator types (plan 16b Commits 2-4)
+# Diffusion solver infrastructure + operator types
 export solve_tridiagonal!, build_diffusion_coefficients
 export AbstractDiffusion, NoDiffusion, ImplicitVerticalDiffusion
 export AbstractSurfaceFluxCoupling, SplitSurfaceFluxCoupling,
        DiffusiveSurfaceFluxBoundary, uses_diffusive_surface_flux_boundary
 export apply_vertical_diffusion!, apply_vertical_diffusion_vmr!
 
-# SurfaceFlux data types + operator hierarchy (plan 17 Commits 2-3)
+# SurfaceFlux data types + operator hierarchy
 export SurfaceFluxSource, PerTracerFluxMap, flux_for
 export AbstractSurfaceFluxOperator, NoSurfaceFlux, SurfaceFluxOperator
 export apply_surface_flux!
 
-# Convection operator hierarchy (plan 18 + plan 23).
-# NoConvection, CMFMCConvection live since plan 18; TM5Convection
-# lands via plan 23 (Commit 1: types + dispatch stubs; Commit 4:
-# real kernels on all three topologies).
+# Convection operator hierarchy.
 export AbstractConvection, NoConvection
-export CMFMCConvection                          # plan 18 Commit 3
-export CMFMCWorkspace, invalidate_cmfmc_cache!  # plan 18 Commit 3
-export TM5Convection                            # plan 23 Commit 1
-export TM5Workspace, invalidate_tm5_cache!      # plan 23 + P6 cache hook
+export CMFMCConvection
+export CMFMCWorkspace, invalidate_cmfmc_cache!
+export TM5Convection
+export TM5Workspace, invalidate_tm5_cache!
 export CMFMCMatrixConvection                    # GEOS rates → TM5 LU (conservative CMFMC)
 export CMFMCMatrixWorkspace, invalidate_cmfmc_matrix_cache!
 export apply_convection!

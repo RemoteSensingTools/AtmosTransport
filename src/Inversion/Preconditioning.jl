@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Plan 26 P0.B2 — change of variables between preconditioned χ-space
+# Change of variables between preconditioned χ-space
 # and physical x-space for the CS 4D-Var surface-flux path.
 #
 # Two `optim_type` flavors:
@@ -34,7 +34,7 @@
 #
 # The tangent/adjoint pair satisfies
 #     ⟨T'(χ) δχ, g_phys⟩ = ⟨δχ, T'(χ)^T g_phys⟩
-# which is the B2 adjoint-identity test.
+# which is the adjoint-identity test.
 #
 # For LogNormal the chain rule reads
 #     ∂x_i/∂χ_j = x_i · L_{ij}

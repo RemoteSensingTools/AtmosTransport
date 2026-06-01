@@ -1,8 +1,7 @@
 """
     AbstractSurfaceFluxOperator
 
-Top of the surface emission operator hierarchy. Concrete subtypes in
-plan 17 Commit 3:
+Top of the surface emission operator hierarchy. Concrete subtypes:
 
 - [`NoSurfaceFlux`](@ref) — identity (default).
 - [`SurfaceFluxOperator`](@ref) — wraps a
@@ -20,8 +19,8 @@ Every concrete subtype implements two entry points:
 - face-indexed packed: `(ncells, Nz, Nt)`
 - face-indexed single-tracer slice: `(ncells, Nz)`
 - cubed-sphere single-tracer panels: `NTuple{6}` of `(Nc + 2Hp, Nc + 2Hp, Nz)`
-  Used by the structured multi-tracer palindrome (Commit 5) and the
-  reduced-Gaussian face-indexed transport block (plan 22A).
+  Used by the structured multi-tracer palindrome and the
+  reduced-Gaussian face-indexed transport block.
 """
 abstract type AbstractSurfaceFluxOperator end
 
@@ -30,7 +29,7 @@ abstract type AbstractSurfaceFluxOperator end
 
 Identity operator — `apply!` is a no-op. Default for configurations
 without surface emissions, and the value `strang_split_mt!` sees when
-the palindrome's S position is unoccupied (Commit 5).
+the palindrome's S position is unoccupied.
 
 `NoSurfaceFlux`'s `apply!` is literally `= state` (and the array-level
 `apply_surface_flux!` is `= nothing`). Julia's dispatch turns the call
@@ -58,10 +57,10 @@ surface layer `k = Nz` of the matching tracer:
 Tracer indices are resolved on the host from `state.tracer_names`.
 Tracers absent from the map are untouched.
 
-Per plan 17 Decision 1, the rate is in kg/s per cell (already area-
-integrated); no cell-area multiplier appears in the kernel. This
-preserves the pre-17 `_apply_surface_source!` semantics and matches
-the way legacy `SurfaceFluxSource` callers supply their arrays.
+The rate is in kg/s per cell (already area-integrated); no cell-area
+multiplier appears in the kernel. This preserves the earlier
+`_apply_surface_source!` semantics and matches the way legacy
+`SurfaceFluxSource` callers supply their arrays.
 
 # `apply!` contract
 
@@ -97,7 +96,7 @@ SurfaceFluxOperator(sources::SurfaceFluxSource...) =
     SurfaceFluxOperator(PerTracerFluxMap(sources...))
 
 # =========================================================================
-# Array-level entry point (for the palindrome, Commit 5)
+# Array-level entry point (for the palindrome)
 # =========================================================================
 
 """
@@ -117,7 +116,7 @@ Supported layouts:
 `tracer_names::NTuple{Nt, Symbol}` is required as a keyword so the
 function can resolve each source's name to a slab index without
 reaching back into the caller's `CellState`. This lets the palindrome
-integration (Commit 5) point the operator at either the caller's
+integration point the operator at either the caller's
 `state.tracers_raw` or the workspace's ping-pong buffer — whichever
 currently holds the post-Z-sweep tracer state.
 

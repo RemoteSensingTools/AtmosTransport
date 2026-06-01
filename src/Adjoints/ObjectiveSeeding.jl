@@ -12,9 +12,6 @@
 #     (`_seed_objective!`), and
 #   * accumulate the per-step surface footprint
 #     (`_accumulate_surface_footprint!`).
-#
-# Code relocated from `src/Adjoints/Adjoints.jl` lines 69-103, 355-429,
-# and 482-550 unchanged in Plan 26 P0.2; no semantic change.
 # ---------------------------------------------------------------------------
 
 abstract type AbstractCSFootprintObjective end

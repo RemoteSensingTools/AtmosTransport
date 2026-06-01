@@ -34,7 +34,7 @@ Two intentional divergences from GCHP's `vdiff_mod.F90`:
      boundary-coupling switch.
 
 See `memory/diffusion_full_pipeline_audit_2026_05_25.md` for the full
-audit chain and pending D1 mass-flux conservation fix.
+audit chain and pending mass-flux conservation fix.
 
 # Why no non-local kernel here
 
@@ -87,7 +87,7 @@ function LocalHoltslagBovilleKzField(host_cache::NTuple{6, Array{FT, 3}};
 end
 
 @inline panel_field(f::LocalHoltslagBovilleKzField, p::Integer) = f.panels[Int(p)]
-# Window-constant cadence by design — see audit memo D5. VDIFF source
+# Window-constant cadence by design — see audit memo. VDIFF source
 # fields (`vdiff_u/v/t/qv`) + PBL surface (`pblh/ustar/hflux/t2m`)
 # are hourly-archive-loaded and refreshed only on met-window advance;
 # Kz inherits that cadence. Sub-window refresh would need surface

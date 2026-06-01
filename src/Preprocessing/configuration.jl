@@ -69,16 +69,16 @@ end
     resolve_tm5_convection_settings(cfg) -> NamedTuple
 
 Parse the optional `[tm5_convection]` section.  When `enable=true` the
-preprocessor reads ERA5 physics binaries (built by `convert_era5_physics_nc_to_bin`,
-plan 24 Commit 2), computes TM5 entu/detu/entd/detd per hour via
-`tm5_native_fields_for_hour!` (plan 24 Commit 3), merges to the transport Nz,
+preprocessor reads ERA5 physics binaries (built by `convert_era5_physics_nc_to_bin`),
+computes TM5 entu/detu/entd/detd per hour via
+`tm5_native_fields_for_hour!`, merges to the transport Nz,
 conservatively regrids to the target horizontal grid, and writes the four
 TM5 sections into the transport binary.
 
 Fields:
 - `tm5_convection_enable :: Bool` — master switch.
 - `tm5_physics_bin_dir   :: String` — NVMe directory holding
-  `era5_physics_YYYYMMDD.bin` files produced by Commit 2's converter.
+  `era5_physics_YYYYMMDD.bin` files produced by the physics-binary converter.
   Empty when disabled.
 """
 function resolve_tm5_convection_settings(cfg)

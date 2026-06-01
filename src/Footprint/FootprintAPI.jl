@@ -10,8 +10,8 @@
 #     explicit final-time adjoint seed (`dJ/drm_final`) instead of
 #     constructing it from one of the built-in objectives.
 #
-# Relocated from `src/Adjoints/Adjoints.jl` lines 867-1046 unchanged in
-# Plan 26 P0.3c; no semantic change.
+# Relocated unchanged from `src/Adjoints/Adjoints.jl` lines 867-1046;
+# no semantic change.
 # ---------------------------------------------------------------------------
 
 """
@@ -283,8 +283,8 @@ function cs_surface_emission_footprint_from_seed(final_adjoint_rm::NTuple{6},
                                                  tape_storage = :device,
                                                  tape_path::Union{Nothing, AbstractString} = nothing,
                                                  checkpoint::AbstractCheckpointSchedule = FullCheckpoint())
-    # Plan 26 P0.A.3d: from-seed stride. The objective-driven stride
-    # drivers (A.3a/b/c) accept a `final_adjoint_seed` kwarg that
+    # From-seed stride. The objective-driven stride
+    # drivers accept a `final_adjoint_seed` kwarg that
     # bypasses `_seed_objective!` and `_validate_objective` (since
     # `CSSeedObjective` would throw); reuse them by threading
     # `final_adjoint_seed = final_adjoint_rm` through. The objective

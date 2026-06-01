@@ -56,9 +56,14 @@ The `ppm_order` parameter selects the reconstruction variant:
 | ORD | Name | Monotonicity | Reference |
 |-----|------|-------------|-----------|
 | 4 | LR96 + minmod | Fully monotone | Putman & Lin Sec. 4 |
-| 5 | Huynh constraint | Quasi-monotone | Huynh 1996 |
-| 6 | Quasi-5th order | Non-monotone (~1% undershoot) | Suresh & Huynh 1997 |
+| 5 | 4th-order edge interp + extremum limiter | Quasi-monotone | Colella & Woodward 1984; Putman & Lin Sec. 4 |
+| 6 | Unlimited 5th-order upwind | Non-monotone (small over/undershoot) | Suresh & Huynh 1997 |
 | 7 | ORD=5 + CS face discontinuity | Quasi-monotone | Putman & Lin App. C |
+
+ORD=5/7 use the 4th-order cell-edge interpolation
+`q_{i∓1/2} = (7/12)(q_im+q_i) − (1/12)(q_imm+q_ip)`, with quasi-monotone extremum
+flattening applied separately in the face kernels. ORD=6 uses the unlimited
+5th-order upwind-biased stencil `(2,−13,47,27,−3)/60`.
 
 The parabolic reconstruction:
 ```

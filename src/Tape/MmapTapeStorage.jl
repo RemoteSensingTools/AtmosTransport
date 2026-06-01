@@ -534,7 +534,7 @@ _machine_endianness() =
     ENDIAN_BOM == 0x01020304 ? "big" : "unknown"
 
 # ---------------------------------------------------------------------------
-# Resume / inspection API (Plan 26 P0.A.2c)
+# Resume / inspection API
 # ---------------------------------------------------------------------------
 
 # Manifest stores `eltype` as a string for human-readability + portability.

@@ -1,15 +1,15 @@
 # ---------------------------------------------------------------------------
 # chemistry_block! — block-level composer for a tuple of chemistry operators
 #
-# This is the "chemistry block" called by `step!` (plan 15, OPERATOR_COMPOSITION
+# This is the "chemistry block" called by `step!` (OPERATOR_COMPOSITION
 # §3.1). It differs from `CompositeChemistry` in kind, not in behaviour:
 #
 #   * `CompositeChemistry(op1, op2)` is a SINGLE operator that happens to wrap
 #     others; `apply!(state, ..., ::CompositeChemistry, dt)` iterates them.
 #   * `chemistry_block!(state, meteo, grid, (op1, op2), dt)` is the step-level
 #     scaffolding: takes an EXTERNAL tuple of operators and applies them in
-#     order. The tuple shape matches `TransportModel.chemistry` in plan 15
-#     Commit 3, which carries the operators chosen at model-construction
+#     order. The tuple shape matches `TransportModel.chemistry`,
+#     which carries the operators chosen at model-construction
 #     time.
 #
 # Both are sequential composition; the choice is whether the composition is

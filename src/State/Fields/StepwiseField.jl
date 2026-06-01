@@ -188,7 +188,7 @@ function update_field!(f::StepwiseField, t::Real)
 end
 
 # ==========================================================================
-# Optional interface (TimeVaryingField §3.2)
+# Optional interface
 # ==========================================================================
 
 """
@@ -201,7 +201,7 @@ max(0, min(t2, b[n+1]) - max(t1, b[n]))`.
 
 Host-side helper — not kernel-safe. Included for operators that care
 about the time-integrated flux (e.g. an emissions operator that integrates
-across a window boundary within a single step). Plan 17's surface flux
+across a window boundary within a single step). The surface flux
 kernel uses the instantaneous `field_value × dt` form and does NOT consume
 `integral_between`.
 """

@@ -87,6 +87,7 @@ function load_atmostr_natural(at_dir::String, rmap::CSRegridMap,
     nl  = length(levs)
     buf = zeros(Float32, rmap.nlon, rmap.nlat)
     fields = [zeros(Float32, rmap.nlon, rmap.nlat, nt) for _ in 1:nl]
+    filled = falses(nt)   # which target frames actually received AtmosTransport data
 
     for fname in daily_files
         NCDataset(joinpath(at_dir, fname), "r") do ds
@@ -106,11 +107,24 @@ function load_atmostr_natural(at_dir::String, rmap::CSRegridMap,
                     regrid_cs!(buf, nat_cs, rmap)
                     fields[li][:, :, ti] .= buf
                 end
+                filled[ti] = true
             end
         end
     end
 
-    @info "AtmosTransport: matched $nt timesteps"
+    # Time-axis assert: every target frame must have a matching AtmosTransport
+    # snapshot. Unfilled frames stay all-zero and render as blank panels (the
+    # Dec-11–14 "missing last days" bug); fail loudly with the gap rather than
+    # silently animating blanks. Regenerate the AT NetCDF to cover these times.
+    if !all(filled)
+        miss = target_times[.!filled]
+        error("AtmosTransport coverage gap: $(count(!, filled))/$nt target frames have " *
+              "no snapshot within 30 min — frames would render blank. Missing times: " *
+              "$(first(miss)) … $(last(miss)) ($(length(miss)) frames). " *
+              "Regenerate the AtmosTransport run to cover the full GEOS-Chem time axis.")
+    end
+
+    @info "AtmosTransport: matched all $nt timesteps"
     return (; fields)
 end
 

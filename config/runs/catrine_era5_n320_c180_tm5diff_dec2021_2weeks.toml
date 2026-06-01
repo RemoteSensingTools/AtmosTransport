@@ -1,0 +1,113 @@
+# ===========================================================================
+# Two-week CATRINE 4-tracer ERA5-N320 → C180 run with the TM5 boundary-layer
+# diffusion (precomputed `:kz` from bldiff) + TM5 four-field convection, driving
+# fossil + natural CO2 + SF6 + Rn222 from the adaptive-substep, dry-mass-pinned
+# Dec 1-14 2021 ERA5 N320 transport binaries.
+#
+# Same tracers / IC / surface-flux / chemistry as the GEOS-IT 2-week config
+# (`catrine_geosit_c180_v4_fullphys_dec2021_2weeks.toml`) so the two runs are
+# directly comparable; the differences are the MET SOURCE (ERA5 N320 vs GEOS-IT)
+# and the PHYSICS the binary carries:
+#   - diffusion: `precomputed_kz` (TM5 Holtslag-Boville non-local PBL, baked into
+#     the `:kz` payload) instead of GCHP `geoschem_holtslag_boville_vdiff`.
+#   - convection: TM5 four-field (entu/detu/entd/detd) instead of CMFMC-matrix.
+#
+# Runner:
+#   julia --project=. scripts/run_transport.jl \
+#       config/runs/catrine_era5_n320_c180_tm5diff_dec2021_2weeks.toml
+#
+# Compare vs GeosChem + the previous GEOS-based AT run via
+# animate_catrine_map_curtains_makie.jl (--at this output, --gc the GeosChem dir).
+# ===========================================================================
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder       = "~/data/AtmosTransport/met/era5/n320_to_c180/transport_binary_dec2021_catrine_f32"
+start_date   = "2021-12-01"
+end_date     = "2021-12-14"
+file_pattern = "era5_n320_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "ppm"
+
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"
+  [tracers.co2_natural.surface_flux]
+  kind = "lmdz_co2"
+
+[tracers.co2_fossil]
+  [tracers.co2_fossil.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.co2_fossil.surface_flux]
+  kind = "gridfed_fossil_co2"
+  time_index = 12
+
+[tracers.sf6]
+  [tracers.sf6.init]
+  kind = "file"
+  file = "~/data/AtmosTransport/catrine/InitialConditions/startSF6_202112010000.nc"
+  variable = "SF6"
+  [tracers.sf6.surface_flux]
+  kind = "edgar_sf6"
+
+[tracers.rn222]
+  [tracers.rn222.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.rn222.surface_flux]
+  kind = "zhang_rn222"
+  time_index = 12
+
+# TM5 boundary-layer diffusion — the non-local Holtslag-Boville Kz the
+# preprocessor baked into the binary's `:kz` payload (this run's headline).
+[diffusion]
+kind = "precomputed_kz"
+surface_flux_boundary = true
+
+# TM5 four-field convection from the binary's entu/detu/entd/detd sections.
+#
+# `lmax_conv` caps the column LU to the bottom N layers. The deepest convective
+# reach measured on this L137 binary (per_column_depth_histogram.jl over all 24
+# windows × 6 panels) is 84 layers from the surface, so `lmax_conv = 85` (84 + 1
+# margin) is LOSS-FREE — it drops only the top 52 layers, which carry zero
+# convection. (The legacy `75` was tuned for L85 binaries and would truncate
+# real convection here.) `n_merge = 1` keeps the convection BIT-EXACT (no layer
+# aggregation) — chosen for CATRINE validation fidelity. The collab kernel still
+# engages at L_super = lmax_conv = 85 (≤ 85 envelope), so convection stays cheap
+# (~tens of s/day, negligible vs io_write); set `n_merge = 3` only if convection
+# ever needs to be ~10× cheaper at the cost of a 3-layer-aggregation approximation.
+[convection]
+kind = "tm5"
+# `use_collab_lu = true` is REQUIRED for `lmax_conv`/`n_merge` to take effect:
+# the workgroup-collaborative LU kernel (32 threads/column) is 8-11× faster than
+# the per-thread fallback AND is the only path that runs the `n_merge`
+# layer-aggregation. Without it both caps are silently ignored and convection
+# solves the full L137 column per thread (~33× slower — measured). Float32 +
+# lmax_conv ≤ 85 are required for the collab path; both hold here.
+use_collab_lu = true
+lmax_conv = 85
+n_merge = 1
+
+[chemistry]
+kind = "decay"
+  [chemistry.half_lives_seconds]
+  rn222 = 330350.4
+
+[output]
+# Binary-first output: write fast ATMSNAP binaries inline (the NetCDF encode was
+# ~45% of wall once convection was fixed — io_write-bound), then convert offline
+# with `scripts/postprocess/binary_to_netcdf.jl`. `split = "daily"` emits one
+# file per day (the recommended cadence at C180; single-file is fine for smaller
+# grids, per-timestep only if matching GEOS output exactly).
+format = "binary_mmap"
+split = "daily"
+snapshot_interval_hours = 3
+snapshot_file = "~/data/AtmosTransport/output/catrine_era5_n320_tm5diff_dec2021/catrine_era5_n320_tm5diff_{YYYYMMDD}.atmsnap"

@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------------------
-# LinRood adjoint tape integration (Plan 25 Commit 6).
+# LinRood adjoint tape integration.
 #
-# Wires the per-kernel LinRood adjoints shipped in Plan 25 Commits 1–5
+# Wires the per-kernel LinRood adjoints
 # (in `src/Operators/Advection/linrood_adjoint_kernels.jl`) into the
 # CS surface-emission-footprint reverse pass managed by Adjoints.jl.
 # Provides:
@@ -14,18 +14,16 @@
 #     returns the operations list + final air-mass panels.
 #   * `_apply_cs_linrood_horizontal_adjoint!` — reverse of one
 #     `_CSLinRoodHorizRecord`: per-panel single-panel adjoint
-#     composition (Plan 25 Commit 4) followed by
+#     composition followed by
 #     `_adjoint_fill_panel_halos!` for cross-panel halo
 #     redistribution.
 #
-# Limitations carried forward (Plan 25 NOTES):
+# Limitations:
 #   * `copy_corners!` reverse not implemented; the small contribution
 #     from corner halos to the gradient is treated as zero. Real-data
 #     impact is concentrated near panel corners and decays inward.
-#
-# Lifted limitations:
-#   * ORD ∈ {5, 7} (LinRoodPPMScheme(5) and LinRoodPPMScheme(7) both
-#     supported as of Plan-25 Commit 3b, 2026-05-15). `_CSLinRoodHorizRecord`
+#   * ORD ∈ {5, 7} (LinRoodPPMScheme(5) and LinRoodPPMScheme(7) are both
+#     supported). `_CSLinRoodHorizRecord`
 #     binds ORD as a type parameter; the reverse pass reads it via
 #     dispatch and forwards `Val(ORD)` to the face-kernel adjoints.
 # ---------------------------------------------------------------------------
@@ -80,7 +78,7 @@ end
 # `panels_m` in place. With `record_ops = true` (default) captures
 # per-phase snapshots and returns a `_CSLinRoodHorizRecord` for the
 # reverse pass; with `record_ops = false` (used by the strided
-# checkpoint propagation pass — Plan 26 A.3c) skips every state
+# checkpoint propagation pass) skips every state
 # snapshot and returns `nothing`, leaving only the face / q_buf
 # scratch buffers that are required to run the kernels themselves
 # (they go out of scope at function exit, so peak memory is bounded
@@ -232,7 +230,7 @@ function _apply_cs_linrood_horizontal_adjoint!(
     record::_CSLinRoodHorizRecord{FT, A3, A3x, A3y, P, ORD},
     mesh::CubedSphereMesh{FT},
 ) where {FT, A3, A3x, A3y, P, ORD}
-    # Step 1: per-panel single-panel composition (Plan 25 Commit 4).
+    # Step 1: per-panel single-panel composition.
     # Each panel's lambda_rm / lambda_m accumulate contributions to
     # their own interior + halo from the panel's own kernel adjoints.
     for p in 1:6
@@ -307,7 +305,7 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
                                   record_ops::Bool = true) where {FT, ORD}
     _ = cfl_limit  # LinRood doesn't subcycle horizontally — single substep per step
 
-    # `step_offset` and `record_ops` are Plan 26 A.3c additions for
+    # `step_offset` and `record_ops` support
     # strided checkpointing — `step_offset` shifts `_CSMidpointRecord`
     # indices into absolute step numbers for window invocations;
     # `record_ops = false` is the propagation pass that runs every
@@ -329,8 +327,8 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
     # `_stage_panels_strict` (which hardcodes `DeviceCSTapeStorage()`)
     # — the `_CSLinRoodHorizRecord` struct holds raw `NTuple{6, P}`
     # references rather than per-policy slots. Until the LinRood tape
-    # is refactored to plumb the storage policy through (Plan 26
-    # follow-up), any non-`:device` storage request would be silently
+    # is refactored to plumb the storage policy through, any
+    # non-`:device` storage request would be silently
     # ignored, leaving the mmap tape with `cursor=0, records=0` and
     # the LinRood tape entirely device-resident — a latent OOM trap
     # for large LinRood footprints. Reject explicitly so the failure

@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Plan 26 P0.D3 — on-disk departures (one observation set's forward-pass
+# On-disk departures (one observation set's forward-pass
 # simulated values, paired with the originating observations) for the
 # CS 4D-Var inversion path.
 #
@@ -256,7 +256,7 @@ Base.getindex(set::CSDepartureSet, i::Integer) = set.records[i]
 # ---------------------------------------------------------------------------
 
 # Parse an ISO-8601 datetime in either `T`-separated (strict) or
-# space-separated (common variant used by D1 / D3 test fixtures) form.
+# space-separated (common variant used by the test fixtures) form.
 # Used by `build_departure_set` to re-derive the expected step index
 # from each observation record's `date_components`.
 function _parse_iso_datetime(s::AbstractString)
@@ -296,7 +296,7 @@ Validation (`ArgumentError` on any violation):
   `departure = simulated - observed`. The resulting `departure` and
   `normalized_departure = departure / value_sigma` are also finite
   by construction (the parent observations are already finite via
-  the D1/D2 hardening).
+  the observation-IO hardening).
 
 Mesh metadata is captured at build time so the writer can pin it
 into the file's root attributes.

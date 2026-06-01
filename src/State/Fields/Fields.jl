@@ -14,15 +14,15 @@ Required interface (every concrete type):
 - `update_field!(f, t::Real) -> f` — refresh caches for time `t`
 
 Concrete types:
-- `ConstantField{FT, N}` — one scalar presented as a rank-N field (plan 16a).
-- `ProfileKzField{FT}` — rank-2/3 vertical profile, horizontally uniform (plan 16b + 22A).
-- `PreComputedKzField{FT, A}` — rank-2/3 wrapper over a spatial array (plan 16b + 22A).
-- `DerivedKzField{FT, ...}` — Beljaars-Viterbo Kz from surface fields (plan 16b).
+- `ConstantField{FT, N}` — one scalar presented as a rank-N field.
+- `ProfileKzField{FT}` — rank-2/3 vertical profile, horizontally uniform.
+- `PreComputedKzField{FT, A}` — rank-2/3 wrapper over a spatial array.
+- `DerivedKzField{FT, ...}` — Beljaars-Viterbo Kz from surface fields.
 - `WindowPBLKzField{FT, ...}` — cubed-sphere per-window Beljaars-Viterbo Kz.
 - `LocalHoltslagBovilleKzField{FT, ...}` — cubed-sphere GEOS VDIFF local-Kz cache.
   (Old name `GCHPHoltslagBovilleKzField` is a deprecated alias — see the
   field docstring for why; no non-local PBL counter-gradient is applied.)
-- `StepwiseField{FT, N, A, B, W}` — piecewise-constant in time at any rank (plan 17).
+- `StepwiseField{FT, N, A, B, W}` — piecewise-constant in time at any rank.
 
 `PBLPhysicsParameters{FT}` carries the physical constants for
 `DerivedKzField`.

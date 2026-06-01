@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Plan 26 P0.A.3 — strided checkpoint driver for `cs_surface_emission_footprint`.
+# Strided checkpoint driver for `cs_surface_emission_footprint`.
 #
 # `_collect_surface_footprints_stride` is the entry point used when the
 # `checkpoint` kwarg is a `StrideCheckpoint(K)`. It runs a forward
@@ -307,7 +307,7 @@ function _require_tape_path_supported(scheme,
 end
 
 # ---------------------------------------------------------------------------
-# Plan 26 P0.A.3b — strided checkpoint driver for the nonlinear PPM
+# Strided checkpoint driver for the nonlinear PPM
 # tracer tape.
 #
 # Differs from the linear-scheme driver above in three ways:
@@ -505,10 +505,10 @@ function _collect_surface_footprints_stride(panels_rm0, panels_m0,
 end
 
 # ---------------------------------------------------------------------------
-# Plan 26 P0.A.3c — strided checkpoint driver for the LinRood horizontal
+# Strided checkpoint driver for the LinRood horizontal
 # tape (LinRoodPPMScheme).
 #
-# LinRood differs from the tracer tape (A.3b) in two key ways:
+# LinRood differs from the nonlinear PPM tracer tape in two key ways:
 #
 # 1. **Storage policy is fixed to `:device`.** The `_CSLinRoodHorizRecord`
 #    struct holds raw `NTuple{6, P}` references rather than per-policy
@@ -712,7 +712,7 @@ function _collect_surface_footprints_stride(panels_rm0, panels_m0,
 end
 
 # ---------------------------------------------------------------------------
-# Plan 26 P0.A.3e — RevolveCheckpoint driver.
+# RevolveCheckpoint driver.
 #
 # Recursive-bisection variant of Griewank-Walther Revolve. The reverse
 # pass walks the step range via depth-first bisection:

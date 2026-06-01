@@ -82,7 +82,7 @@ _resolve_chain_mass(cfg::AbstractDict) =
     Bool(get(get(cfg, "numerics", Dict()), "chain_mass", true))
 
 # Canonical CS substep-positivity contract knobs. Defaults match the gate the
-# regrid path has enforced since plan 39 — every CS-producing preprocessor
+# regrid path enforces — every CS-producing preprocessor
 # (spectral, regrid, GEOS-native) reads them from the same `[numerics]` block
 # so a config can't silently bypass the contract on one path while honoring it
 # on another.
@@ -241,9 +241,9 @@ function _process_day_native(cfg::AbstractDict;
 
     # Single source of truth for the float type: build the grid AND the
     # source settings against the same `FT` so cell areas and the reader's
-    # mass buffers share an element type. (Codex 2026-04-25: P2 fix —
-    # without this, Float32 configs trip a `MethodError` in
-    # `_delp_pa_to_air_mass_kg!` because cell_areas was Matrix{Float64}.)
+    # mass buffers share an element type. Without this, Float32 configs
+    # trip a `MethodError` in `_delp_pa_to_air_mass_kg!` because
+    # cell_areas was Matrix{Float64}.
     FT   = _resolve_float_type(cfg)
     grid = build_target_geometry(cfg["grid"], FT)
     ensure_supported_target(grid)
@@ -251,7 +251,7 @@ function _process_day_native(cfg::AbstractDict;
     # Single source of truth for hybrid coefficients: the source descriptor
     # owns it. Overrides flow back into `settings.coefficients_file` so the
     # reader (`open_day` → `endpoint_dry_mass!`) and the writer's vertical
-    # setup never desync. (Codex 2026-04-25: P2 fix.)
+    # setup never desync.
     settings_kwargs = (root_dir = expand_data_path(String(src_cfg["root_dir"])),)
     if haskey(src_cfg, "include_surface")
         settings_kwargs = (settings_kwargs..., include_surface = Bool(src_cfg["include_surface"]))
@@ -309,7 +309,7 @@ function _process_day_native(cfg::AbstractDict;
     vertical.Nz == vertical.Nz_native ||
         @info @sprintf("Vertical transform: %s  native Nz=%d → output Nz=%d",
                        typeof(vertical.transform), vertical.Nz_native, vertical.Nz)
-    @info "Plan 41 unified driver enabled for $(nameof(typeof(settings))) → $(grid_kind(grid))"
+    @info "Unified preprocessor driver enabled for $(nameof(typeof(settings))) → $(grid_kind(grid))"
 
     t_total = time()
 
@@ -434,7 +434,7 @@ function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
     ensure_preprocessor_pair_supported(grid, settings; context = "ERA5 spectral")
 
     @info @sprintf("Processing %d days: %s to %s", length(dates), first(dates), last(dates))
-    @info "Plan 41 unified driver enabled for ERA5 spectral → $(grid_kind(grid))"
+    @info "Unified preprocessor driver enabled for ERA5 spectral → $(grid_kind(grid))"
     t_total = time()
     run_cache = PreprocessorRunCache(typeof(grid), settings.output_float_type)
     for (idx, date) in enumerate(dates)

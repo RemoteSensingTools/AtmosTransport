@@ -16,12 +16,10 @@ This keeps the CLI scripts thin and prevents topology-specific
 `if/elseif` trees from growing in parallel.
 """
 
-abstract type AbstractRuntimeRecipeStyle end
-abstract type AbstractStructuredRuntimeRecipeStyle <: AbstractRuntimeRecipeStyle end
-
-struct LatLonRuntimeRecipeStyle <: AbstractStructuredRuntimeRecipeStyle end
-struct ReducedGaussianRuntimeRecipeStyle <: AbstractStructuredRuntimeRecipeStyle end
-struct CubedSphereRuntimeRecipeStyle <: AbstractRuntimeRecipeStyle end
+# The runtime-style traits (`AbstractRuntimeRecipeStyle` + the LatLon/RG/CS
+# variants) now live in `RuntimeRecipeStyles.jl`, included before this file (the
+# `RuntimePhysicsSpecs.jl` `materialize` methods dispatch on them). The
+# `_runtime_recipe_style(grid/driver/reader)` resolvers stay below.
 
 struct RuntimePhysicsRecipe{AdvT, DiffT, ConvT, ChemT}
     advection  :: AdvT
@@ -35,15 +33,12 @@ RuntimePhysicsRecipe(adv, diff, conv) = RuntimePhysicsRecipe(adv, diff, conv, No
 
 const CSPhysicsRecipe = RuntimePhysicsRecipe
 
-# Plan 40 Commit 2: the flat-411 `catrine_co2` stub is gone. CS tracers
+# The flat-411 `catrine_co2` stub is gone. CS tracers
 # now flow through the same `build_initial_mixing_ratio` +
 # `pack_initial_tracer_mass` pipeline as LL/RG; `kind = "catrine_co2"`
 # loads the Catrine NetCDF and regrids + remaps it conservatively onto
 # the CS grid. Historical flat-411 behaviour is now expressed as
 # `kind = "uniform" background = 4.11e-4`.
-
-@inline _config_symbol(section, key::AbstractString, default::AbstractString) =
-    Symbol(lowercase(String(get(section, key, default))))
 
 function _advection_section(cfg)
     run = get(cfg, "run", Dict{String,Any}())
@@ -60,13 +55,7 @@ function _advection_section(cfg)
 end
 @inline _diffusion_section(cfg) = get(cfg, "diffusion", Dict{String,Any}())
 @inline _convection_section(cfg) = get(cfg, "convection", Dict{String,Any}())
-
-function _surface_flux_coupling(section)
-    boundary = get(section, "surface_flux_boundary", false)
-    boundary isa Bool || throw(ArgumentError(
-        "[diffusion].surface_flux_boundary must be true or false; got $(boundary)"))
-    return boundary ? DiffusiveSurfaceFluxBoundary() : SplitSurfaceFluxCoupling()
-end
+@inline _chemistry_section(cfg) = get(cfg, "chemistry", Dict{String,Any}())
 
 @inline _runtime_recipe_style(style::AbstractRuntimeRecipeStyle) = style
 @inline _runtime_recipe_style(::AtmosGrid{<:LatLonMesh}) = LatLonRuntimeRecipeStyle()
@@ -95,103 +84,31 @@ function build_runtime_advection(cfg, context)
     return build_runtime_advection(cfg, _runtime_recipe_style(context))
 end
 
-function build_runtime_advection(cfg, style::AbstractRuntimeRecipeStyle)
-    section = _advection_section(cfg)
-    return build_runtime_advection(style,
-                                   Val(_config_symbol(section, "scheme", "upwind")),
-                                   section)
-end
-
-build_runtime_advection(::AbstractStructuredRuntimeRecipeStyle, ::Val{:upwind}, _section) = UpwindScheme()
-build_runtime_advection(::AbstractStructuredRuntimeRecipeStyle, ::Val{:slopes}, _section) = SlopesScheme()
-build_runtime_advection(::AbstractStructuredRuntimeRecipeStyle, ::Val{:none}, _section)   = NoAdvection()
-
-function build_runtime_advection(::AbstractStructuredRuntimeRecipeStyle, ::Val{:ppm}, section)
-    haskey(section, "ppm_order") &&
-        throw(ArgumentError(
-            "[advection] `ppm_order` is only valid with `scheme = \"linrood\"`; " *
-            "structured runtime `scheme = \"ppm\"` selects `PPMScheme()`."))
-    return PPMScheme()
-end
-
-function build_runtime_advection(::AbstractStructuredRuntimeRecipeStyle, ::Val{:linrood}, _section)
-    throw(ArgumentError(
-        "[advection] `scheme = \"linrood\"` is only available on cubed-sphere runs."))
-end
-
-build_runtime_advection(style::AbstractStructuredRuntimeRecipeStyle, ::Val{:linrood_ppm}, section) =
-    build_runtime_advection(style, Val(:linrood), section)
-
-function build_runtime_advection(::CubedSphereRuntimeRecipeStyle, ::Val{:upwind}, _section)
-    return UpwindScheme()
-end
-
-function build_runtime_advection(::CubedSphereRuntimeRecipeStyle, ::Val{:none}, _section)
-    return NoAdvection()
-end
-
-function build_runtime_advection(::CubedSphereRuntimeRecipeStyle, ::Val{:slopes}, _section)
-    return SlopesScheme()
-end
-
-function build_runtime_advection(::CubedSphereRuntimeRecipeStyle, ::Val{:ppm}, section)
-    haskey(section, "ppm_order") &&
-        throw(ArgumentError(
-            "[advection] `ppm_order` is only valid with `scheme = \"linrood\"`; " *
-            "`scheme = \"ppm\"` selects the standard split `PPMScheme()` path."))
-    return PPMScheme()
-end
-
-function build_runtime_advection(::CubedSphereRuntimeRecipeStyle, ::Val{:linrood}, section)
-    return LinRoodPPMScheme(Int(get(section, "ppm_order", 5)))
-end
-
-build_runtime_advection(style::CubedSphereRuntimeRecipeStyle, ::Val{:linrood_ppm}, section) =
-    build_runtime_advection(style, Val(:linrood), section)
-
-function build_runtime_advection(::AbstractRuntimeRecipeStyle, ::Val{name}, _section) where name
-    throw(ArgumentError(
-        "Unknown [advection] scheme: $(name). Supported: upwind | slopes | ppm | linrood | none"))
-end
+# Thin wrapper: parse the `[advection]` section into a typed `AbstractAdvectionSpec`
+# once (validated), then materialize the scheme. The structured-vs-CS split lives in
+# `materialize` (LinRood is CS-only); spec types + parser live in `RuntimePhysicsSpecs.jl`.
+build_runtime_advection(cfg, style::AbstractRuntimeRecipeStyle) =
+    materialize(advection_spec(_advection_section(cfg)), style)
 
 function build_runtime_diffusion(cfg, context, ::Type{FT}) where FT
     return build_runtime_diffusion(cfg, _runtime_recipe_style(context), FT, context)
 end
 
-function build_runtime_diffusion(cfg, style::AbstractRuntimeRecipeStyle, ::Type{FT},
-                                 context = nothing) where FT
-    section = _diffusion_section(cfg)
-    # Empty / absent section is explicit "no diffusion".
-    isempty(section) && return NoDiffusion()
-    # Reject the legacy `type = "..."` schema rather than silently mapping
-    # it to NoDiffusion. Configs that said `type = "pbl"` / `"nonlocal_pbl"`
-    # etc. expected diffusion to run; the silent fall-through hid that for
-    # months. Migrate to `kind` — supported kinds today are "none",
-    # "constant", and the named PBL/VDIFF closures. (Codex Section B P0 fix.)
-    haskey(section, "type") && !haskey(section, "kind") &&
-        throw(ArgumentError(
-            "[diffusion] uses legacy `type = \"$(section["type"])\"`; rename to " *
-            "`kind = \"...\"`. Supported kinds: \"none\", \"constant\", " *
-            "\"tm5_beljaars_viterbo_local_kz\", " *
-            "\"geoschem_holtslag_boville_vdiff\"."))
-    haskey(section, "kind") ||
-        throw(ArgumentError(
-            "[diffusion] section is present but has no `kind` key. " *
-            "Set `kind = \"none\"`, `kind = \"constant\"`, " *
-            "`kind = \"tm5_beljaars_viterbo_local_kz\"`, or " *
-            "`kind = \"geoschem_holtslag_boville_vdiff\"`."))
-    return build_runtime_diffusion(style,
-                                   Val(_config_symbol(section, "kind", "none")),
-                                   section,
-                                   FT,
-                                   context)
-end
+# Thin wrapper: parse the `[diffusion]` section into a typed `AbstractDiffusionSpec`
+# once (validating the legacy `type=`/missing-`kind`/unknown-kind cases), then
+# materialize. Diffusion is the one family whose `materialize` needs `style` (Kz-field
+# rank / CS-only gating), `FT` (precision), AND the runtime `context` (driver/reader,
+# for the Kz-cache shape + binary-capability gate). The spec stays context-free; the
+# context work happens in `materialize`, which calls the helpers below. Spec types +
+# parser + `materialize` live in `RuntimePhysicsSpecs.jl`.
+build_runtime_diffusion(cfg, style::AbstractRuntimeRecipeStyle, ::Type{FT},
+                        context = nothing) where FT =
+    materialize(diffusion_spec(_diffusion_section(cfg)), style, FT, context)
 
-build_runtime_diffusion(::AbstractRuntimeRecipeStyle, ::Val{:none}, _section, ::Type{FT}) where FT =
-    NoDiffusion()
-build_runtime_diffusion(style::AbstractRuntimeRecipeStyle, ::Val{:none}, section,
-                        ::Type{FT}, _context) where FT =
-    build_runtime_diffusion(style, Val(:none), section, FT)
+# --- Context helpers the diffusion `materialize` methods call ----------------
+# Kept here (not in RuntimePhysicsSpecs.jl) because they resolve concrete
+# grid/reader/driver types; tests stub them via `AtmosTransport.Models._runtime_has_*`
+# and `AtmosTransport.Models._pbl_cache_shape`.
 
 @inline _constant_runtime_kz_field(::LatLonRuntimeRecipeStyle, value::FT) where FT =
     ConstantField{FT, 3}(value)
@@ -199,19 +116,6 @@ build_runtime_diffusion(style::AbstractRuntimeRecipeStyle, ::Val{:none}, section
     ConstantField{FT, 2}(value)
 @inline _constant_runtime_kz_field(::CubedSphereRuntimeRecipeStyle, value::FT) where FT =
     CubedSphereField(ntuple(_ -> ConstantField{FT, 3}(value), 6))
-
-function build_runtime_diffusion(style::AbstractRuntimeRecipeStyle,
-                                 ::Val{:constant},
-                                 section,
-                                 ::Type{FT}) where FT
-    value = FT(get(section, "value", 1.0))
-    return ImplicitVerticalDiffusion(;
-        kz_field = _constant_runtime_kz_field(style, value),
-        surface_flux_coupling = _surface_flux_coupling(section))
-end
-build_runtime_diffusion(style::AbstractRuntimeRecipeStyle, ::Val{:constant}, section,
-                        ::Type{FT}, _context) where FT =
-    build_runtime_diffusion(style, Val(:constant), section, FT)
 
 function _pbl_cache_shape(context)
     throw(ArgumentError(
@@ -223,92 +127,17 @@ _pbl_cache_shape(reader::CubedSphereBinaryReader) =
 _pbl_cache_shape(driver::CubedSphereTransportDriver) =
     (driver.reader.header.Nc, driver.reader.header.Nc, driver.reader.header.nlevel)
 
-function _runtime_has_surface(_context)
-    return false
-end
+@inline _runtime_has_surface(_context) = false
 _runtime_has_surface(reader::TransportBinaryReader) = MetDrivers.has_surface(reader)
 _runtime_has_surface(reader::CubedSphereBinaryReader) = MetDrivers.has_surface(reader)
 _runtime_has_surface(driver::TransportBinaryDriver) = MetDrivers.has_surface(driver.reader)
 _runtime_has_surface(driver::CubedSphereTransportDriver) = MetDrivers.has_surface(driver.reader)
 
-function _runtime_has_gchp_vdiff(_context)
-    return false
-end
+@inline _runtime_has_gchp_vdiff(_context) = false
 _runtime_has_gchp_vdiff(reader::CubedSphereBinaryReader) =
     MetDrivers.has_surface(reader) && MetDrivers.has_vdiff_fields(reader)
 _runtime_has_gchp_vdiff(driver::CubedSphereTransportDriver) =
     _runtime_has_gchp_vdiff(driver.reader)
-
-function build_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
-                                 ::Val{:pbl},
-                                 _section,
-                                 ::Type{FT},
-                                 context) where FT
-    _runtime_has_surface(context) ||
-        throw(ArgumentError(
-            "[diffusion] kind = \"pbl\" requires pblh/ustar/pbl_hflux/t2m sections " *
-            "in the cubed-sphere transport binary. Regenerate the binary with " *
-            "include_surface=true."))
-    Nc1, Nc2, Nz = _pbl_cache_shape(context)
-    host_cache = ntuple(_ -> zeros(FT, Nc1, Nc2, Nz), 6)
-    return ImplicitVerticalDiffusion(;
-        kz_field = WindowPBLKzField(host_cache),
-        surface_flux_coupling = _surface_flux_coupling(_section))
-end
-
-build_runtime_diffusion(style::AbstractRuntimeRecipeStyle,
-                        ::Val{:tm5_beljaars_viterbo_local_kz},
-                        section,
-                        ::Type{FT},
-                        context) where FT =
-    build_runtime_diffusion(style, Val(:pbl), section, FT, context)
-
-build_runtime_diffusion(style::AbstractRuntimeRecipeStyle,
-                        ::Val{:beljaars_viterbo_local_kz},
-                        section,
-                        ::Type{FT},
-                        context) where FT =
-    build_runtime_diffusion(style, Val(:pbl), section, FT, context)
-
-function build_runtime_diffusion(::AbstractRuntimeRecipeStyle,
-                                 ::Val{:pbl},
-                                 _section,
-                                 ::Type{FT},
-                                 _context) where FT
-    throw(ArgumentError(
-        "[diffusion] kind = \"pbl\" is currently implemented for cubed-sphere " *
-        "runtime binaries with pblh/ustar/pbl_hflux/t2m sections."))
-end
-
-function build_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
-                                 ::Val{:geoschem_holtslag_boville_vdiff},
-                                 section,
-                                 ::Type{FT},
-                                 context) where FT
-    _runtime_has_gchp_vdiff(context) ||
-        throw(ArgumentError(
-            "[diffusion] kind = \"geoschem_holtslag_boville_vdiff\" requires " *
-            "pblh/ustar/pbl_hflux/t2m and vdiff_u/vdiff_v/vdiff_t/vdiff_qv " *
-            "sections in the cubed-sphere transport binary. Regenerate with " *
-            "include_surface=true and include_gchp_vdiff=true."))
-    Nc1, Nc2, Nz = _pbl_cache_shape(context)
-    host_cache = ntuple(_ -> zeros(FT, Nc1, Nc2, Nz), 6)
-    return ImplicitVerticalDiffusion(;
-        kz_field = LocalHoltslagBovilleKzField(host_cache),
-        surface_flux_coupling = _surface_flux_coupling(section))
-end
-
-function build_runtime_diffusion(::AbstractRuntimeRecipeStyle,
-                                 ::Val{:geoschem_holtslag_boville_vdiff},
-                                 _section,
-                                 ::Type{FT},
-                                 _context) where FT
-    throw(ArgumentError(
-        "[diffusion] kind = \"geoschem_holtslag_boville_vdiff\" is currently " *
-        "implemented for cubed-sphere runtime binaries with GCHP VDIFF payloads."))
-end
-
-# --- Precomputed TM5 bldiff diffusivity (`:kz` payload) --------------------
 
 _runtime_has_precomputed_kz(_context) = false
 _runtime_has_precomputed_kz(reader::CubedSphereBinaryReader) =
@@ -316,117 +145,18 @@ _runtime_has_precomputed_kz(reader::CubedSphereBinaryReader) =
 _runtime_has_precomputed_kz(driver::CubedSphereTransportDriver) =
     _runtime_has_precomputed_kz(driver.reader)
 
-function build_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
-                                 ::Val{:precomputed_kz},
-                                 section,
-                                 ::Type{FT},
-                                 context) where FT
-    _runtime_has_precomputed_kz(context) ||
-        throw(ArgumentError(
-            "[diffusion] kind = \"precomputed_kz\" requires a `:kz` section in " *
-            "the cubed-sphere transport binary (the preprocessor's TM5 bldiff " *
-            "eddy diffusivity). Regenerate with include_tm5_diffusion=true."))
-    Nc1, Nc2, Nz = _pbl_cache_shape(context)
-    host_cache = ntuple(_ -> zeros(FT, Nc1, Nc2, Nz), 6)
-    return ImplicitVerticalDiffusion(;
-        kz_field = PrecomputedCSKzField(host_cache),
-        surface_flux_coupling = _surface_flux_coupling(section))
-end
-
-function build_runtime_diffusion(::AbstractRuntimeRecipeStyle,
-                                 ::Val{:precomputed_kz},
-                                 _section,
-                                 ::Type{FT},
-                                 _context) where FT
-    throw(ArgumentError(
-        "[diffusion] kind = \"precomputed_kz\" is implemented for cubed-sphere " *
-        "runtime binaries carrying a `:kz` payload."))
-end
-
-function build_runtime_diffusion(::AbstractRuntimeRecipeStyle,
-                                 ::Val{name},
-                                 _section,
-                                 ::Type{FT}) where {name, FT}
-    throw(ArgumentError(
-        "Unknown [diffusion] kind: $(name). Supported: none | constant | " *
-        "tm5_beljaars_viterbo_local_kz | geoschem_holtslag_boville_vdiff | " *
-        "precomputed_kz | pbl (legacy alias)"))
-end
-build_runtime_diffusion(style::AbstractRuntimeRecipeStyle, ::Val{name}, section,
-                        ::Type{FT}, _context) where {name, FT} =
-    build_runtime_diffusion(style, Val(name), section, FT)
-
 function build_runtime_convection(cfg, context)
     return build_runtime_convection(cfg, _runtime_recipe_style(context))
 end
 
-function build_runtime_convection(cfg, style::AbstractRuntimeRecipeStyle)
-    section = _convection_section(cfg)
-    return build_runtime_convection(style,
-                                    Val(_config_symbol(section, "kind", "none")),
-                                    section)
-end
-
-build_runtime_convection(::AbstractRuntimeRecipeStyle, ::Val{:none}, _section) = NoConvection()
-function build_runtime_convection(::AbstractRuntimeRecipeStyle, ::Val{:tm5}, section)
-    # `tile_workspace_gib` is the per-topology TM5 column-tile budget
-    # in binary GiB. Default 1.0 — fits all production resolutions
-    # through C720/L137 with slack on H100. Set lower on memory-tight
-    # GPUs (e.g. L40S 48 GiB) or higher to amortize launch overhead.
-    budget = Float64(get(section, "tile_workspace_gib", 1.0))
-    # `use_collab_lu` opts into the workgroup-collaborative kernel
-    # (~10× faster, bit-exact within Float32 rounding on CUDA — see
-    # docs/memos/TM5_CONVECTION_AGENTLOOP_SYNTHESIS.md). Default off
-    # so existing runs stay bit-identical. Falls back to the legacy
-    # per-thread kernel automatically when the (lmax_conv, Nt, FT,
-    # backend) envelope is exceeded (see `_use_collab_path`).
-    use_collab = Bool(get(section, "use_collab_lu", false))
-    # `lmax_conv` caps the convection matrix size at a value below
-    # the total Nz, matching TM5's tropoX* setups. Default 0 means
-    # "no truncation, use the full Nz". Run
-    # `scripts/diagnostics/per_column_depth_histogram.jl` on the
-    # production binary to pick a safe ceiling — for the
-    # ERA5/GEOS-native C180/L85 binary, `lmax_conv = 75` is bit-
-    # exact for every observed column (preserves all stratospheric
-    # overshoots) while making L91/L137 setups fit Metal's
-    # threadgroup-memory limit.
-    lmax_conv = Int(get(section, "lmax_conv", 0))
-    # `n_merge` aggregates `n_merge` adjacent fine layers into one
-    # super-layer for convection only (TM5's tropoX-style coarsening).
-    # Default 1 (no aggregation). The LU is O(L_super³), so n_merge=2
-    # gives ~8× cheaper LU, n_merge=3 ~27×. Only takes effect when
-    # `use_collab_lu = true`. Mass-conservative by design (proportional
-    # disaggregation of the new super-layer mass to fine layers, with
-    # uniform fallback when an old super-layer was empty).
-    n_merge = Int(get(section, "n_merge", 1))
-    return TM5Convection(; tile_workspace_gib = budget,
-                           use_collab_lu = use_collab,
-                           lmax_conv = lmax_conv,
-                           n_merge = n_merge)
-end
-build_runtime_convection(::AbstractRuntimeRecipeStyle, ::Val{:cmfmc}, _section) = CMFMCConvection()
-
-# `cmfmc_matrix`: routes GEOS `(cmfmc, dtrain)` through the TM5 LU solver
-# (column-stochastic by construction → `Σ tracer_mass` preserved to roundoff).
-# Inherits TM5's `tile_workspace_gib`, `use_collab_lu`, `lmax_conv`, `n_merge`
-# knobs because the LU machinery is the same. Reads from the CMFMC sections
-# of the binary, not the TM5 sections; selectable side-by-side with the
-# GCHP-audited `cmfmc` kind for direct comparison.
-function build_runtime_convection(::AbstractRuntimeRecipeStyle, ::Val{:cmfmc_matrix}, section)
-    budget     = Float64(get(section, "tile_workspace_gib", 1.0))
-    use_collab = Bool(get(section, "use_collab_lu", false))
-    lmax_conv  = Int(get(section, "lmax_conv", 0))
-    n_merge    = Int(get(section, "n_merge", 1))
-    return CMFMCMatrixConvection(; tile_workspace_gib = budget,
-                                   use_collab_lu = use_collab,
-                                   lmax_conv = lmax_conv,
-                                   n_merge = n_merge)
-end
-
-function build_runtime_convection(::AbstractRuntimeRecipeStyle, ::Val{name}, _section) where name
-    throw(ArgumentError(
-        "Unknown [convection] kind: $(name). Supported: none | tm5 | cmfmc | cmfmc_matrix"))
-end
+# Thin wrapper: parse the `[convection]` section into a typed `AbstractConvectionSpec`
+# (validated, incl. the lmax_conv/n_merge-needs-use_collab_lu guard) once, then
+# materialize the operator. Spec types + parser + `materialize` live in
+# `RuntimePhysicsSpecs.jl`. `style` is threaded for API uniformity with
+# build_runtime_advection/diffusion; convection materialization is
+# topology-independent, so the `materialize` methods ignore it.
+build_runtime_convection(cfg, style::AbstractRuntimeRecipeStyle) =
+    materialize(convection_spec(_convection_section(cfg)), style)
 
 @inline validate_runtime_advection(::AbstractRuntimeRecipeStyle,
                                    ::AbstractAdvectionScheme,
@@ -484,7 +214,7 @@ function validate_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
             "[diffusion] kind = \"geoschem_holtslag_boville_vdiff\" requires " *
             "pblh/ustar/pbl_hflux/t2m and vdiff_u/vdiff_v/vdiff_t/vdiff_qv " *
             "sections in every cubed-sphere transport binary."))
-    # D3: GCHP parity requires emissions to be applied as a boundary condition
+    # GCHP parity requires emissions to be applied as a boundary condition
     # inside the same diffusive solve (see vdiff_mod.F90:679, gchp_chunk_mod.F90:1296).
     # Our default `SplitSurfaceFluxCoupling` does V(dt/2) → S(dt) → V(dt/2)
     # Strang, which is a valid integration but does NOT match GCHP. Warn at
@@ -501,6 +231,17 @@ function validate_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
         behavior. See memory/diffusion_full_pipeline_audit_2026_05_25.md (D3).
         """
     end
+    return nothing
+end
+
+function validate_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
+                                    ::ImplicitVerticalDiffusion{FT, <:PrecomputedCSKzField},
+                                    context) where FT
+    _runtime_has_precomputed_kz(context) ||
+        throw(ArgumentError(
+            "[diffusion] kind = \"precomputed_kz\" requires a `:kz` section in " *
+            "every cubed-sphere transport binary (the preprocessor's TM5 bldiff " *
+            "eddy diffusivity). Regenerate with include_tm5_diffusion=true."))
     return nothing
 end
 
@@ -603,27 +344,13 @@ Supported `kind` values:
   symbol that the run is carrying (case-insensitive — the builder
   symbolizes the key as-is and `ExponentialDecay.apply!` resolves
   it against `state.tracer_names` at call time).
+
+Thin wrapper: parse the `[chemistry]` section into a typed
+`AbstractChemistrySpec` once (validated), then materialize at run precision
+`FT`. Spec types + parser live in `RuntimePhysicsSpecs.jl`.
 """
-function build_runtime_chemistry(cfg, ::Type{FT}) where FT
-    section = get(cfg, "chemistry", Dict{String, Any}())
-    kind = _config_symbol(section, "kind", "none")
-    if kind === :none
-        return NoChemistry()
-    elseif kind === :decay
-        hl = get(section, "half_lives_seconds", Dict{String, Any}())
-        isempty(hl) && return NoChemistry()
-        # Splat the (name → half-life) map as keyword arguments to
-        # `ExponentialDecay`'s outer constructor, which internally
-        # converts half-life → first-order decay rate `log(2)/T`.
-        sym_keys = Tuple(Symbol(k) for k in keys(hl))
-        vals = Tuple(FT(v) for v in values(hl))
-        nt = NamedTuple{sym_keys}(vals)
-        return ExponentialDecay(FT; nt...)
-    else
-        throw(ArgumentError(
-            "Unknown [chemistry] kind: $(kind). Supported: none | decay"))
-    end
-end
+build_runtime_chemistry(cfg, ::Type{FT}) where FT =
+    materialize(chemistry_spec(_chemistry_section(cfg)), FT)
 
 function configured_halo_width(cfg, scheme::AbstractAdvectionScheme)
     run_cfg = get(cfg, "run", Dict{String,Any}())
@@ -650,8 +377,7 @@ build_cs_physics_recipe(cfg, context, ::Type{FT}; halo_width::Union{Nothing, Int
     build_runtime_physics_recipe(cfg, context, FT; halo_width = halo_width)
 configured_cs_halo_width(cfg, scheme::AbstractAdvectionScheme) = configured_halo_width(cfg, scheme)
 
-# `build_cs_tracer_panels` was a flat-411 stub (plan 23 era). Plan 40
-# Commit 2 removed it in favour of the unified pipeline:
+# CS tracers flow through the unified pipeline:
 #
 #     vmr = build_initial_mixing_ratio(air_mass, grid, init_cfg)
 #     rm  = pack_initial_tracer_mass(grid, air_mass, vmr;

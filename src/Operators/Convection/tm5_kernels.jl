@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# TM5 convection kernels — plan 23 Commit 4 + storage-redesign Commit 4.
+# TM5 convection kernels.
 #
 # Thin KernelAbstractions wrappers around `_tm5_solve_column!`
 # (tm5_column_solve.jl).  One kernel per topology:
@@ -9,7 +9,7 @@
 #   _tm5_cs_panel_column_kernel!    — CubedSphere per-panel 4D
 #                                     `(Nc+2Hp, Nc+2Hp, Nz, Nt)` state.
 #
-# Storage-plan Commit 4: every kernel runs on a 1D ndrange of `B`
+# Every kernel runs on a 1D ndrange of `B`
 # tile cells. The host wraps the launch in a tile loop, biasing
 # the per-tile global cell index by `tile_offset`. The workspace
 # slabs are flat `(Nz, Nz, B)` / `(Nz, B)` / `(3, B)` /
@@ -29,7 +29,7 @@
 # CLAUDE.md gotcha: the kernel uses `@view` for per-column slices
 # because KA + CUDA tolerate SubArrays here — the surrounding
 # kernel body is non-trivial.  No allocation inside the kernel
-# (mandatory for GPU correctness, plan 23 principle 4).
+# (mandatory for GPU correctness).
 # ---------------------------------------------------------------------------
 
 # LatLon (structured 4D): state.tracers_raw :: (Nx, Ny, Nz, Nt),

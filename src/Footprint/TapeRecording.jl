@@ -13,8 +13,8 @@
 #     recorder for the requested scheme; LinRood goes through
 #     `_record_cs_linrood_tape` in `LinRoodTape.jl`.
 #
-# Relocated from `src/Adjoints/Adjoints.jl` lines 586-702 and 718-1050
-# unchanged in Plan 26 P0.3b; no semantic change. Loaded into the
+# Relocated unchanged from `src/Adjoints/Adjoints.jl` lines 586-702 and
+# 718-1050; no semantic change. Loaded into the
 # `Adjoints` module via an `include` from `Adjoints.jl`.
 # ---------------------------------------------------------------------------
 

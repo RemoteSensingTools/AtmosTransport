@@ -16,7 +16,7 @@ Implements the standard Thomas algorithm with one extra array (`w`)
 so that `b` and `d` can be read-only. For per-column Nz this is
 Θ(Nz) arithmetic, no allocation.
 
-# Adjoint note (forward-only in this commit)
+# Adjoint note (this routine is forward-only)
 
 The matrix transpose `T^T` is obtained by swapping *shifted* sub-
 and super-diagonals:

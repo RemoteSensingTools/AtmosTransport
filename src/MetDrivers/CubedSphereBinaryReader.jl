@@ -68,7 +68,7 @@ function _cs_on_disk_float_type(path::AbstractString)
     end
 end
 
-# Plan 40 Commit 5: bridge for `inspect_binary` in TransportBinary.jl.
+# Bridge for `inspect_binary` in TransportBinary.jl.
 # Lives here because the CS reader type is defined in this file but the
 # inspector lives in TransportBinary.jl (which is loaded first).  Use the
 # on-disk float type; otherwise inspecting a large Float32 CS binary eagerly
@@ -236,7 +236,7 @@ function _cs_section_elements(h::CubedSphereBinaryHeader, section::Symbol)
         return np * Nc * Nc * (Nz + 1)
     elseif section === :dtrain
         return np * Nc * Nc * Nz
-    # TM5 convection (plan 23 Commit 3) — four layer-center fields.
+    # TM5 convection — four layer-center fields.
     elseif section in (:entu, :detu, :entd, :detd)
         return np * Nc * Nc * Nz
     elseif section in (:qv, :qv_start, :qv_end, :dm)

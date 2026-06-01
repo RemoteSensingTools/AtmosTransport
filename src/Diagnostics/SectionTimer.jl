@@ -1,7 +1,5 @@
 module SectionTimer
 
-# Plan TM5-storage-redesign Commit 1.
-#
 # Hand-rolled host-side section timer. Off by default; enabled when
 # `ENV["ATMOSTR_TIMERS"] == "1"` at run-start. Set
 # `ATMOSTR_ALLOC_TIMERS=1` as well to collect CPU allocation bytes for
@@ -9,8 +7,8 @@ module SectionTimer
 # relies on the existing `synchronize(backend)` calls inside operator
 # applys to make host time ≈ GPU time per section.
 # Per-phase decomposition inside a single kernel launch (build / LU / solve
-# inside `_tm5_solve_column!`) is not host-timeable; that lives in the
-# Commit 1b CPU microbenchmark.
+# inside `_tm5_solve_column!`) is not host-timeable; that lives in a
+# separate CPU microbenchmark.
 
 using Printf
 

@@ -1,13 +1,12 @@
 # ---------------------------------------------------------------------------
-# Convection workspace storage — plan 18 Decision 21 (CFL caching) + §2.20
-# Decision 26 (caller-owned pre-allocation).
+# Convection workspace storage — CFL caching + caller-owned
+# pre-allocation.
 #
 # CMFMCWorkspace — scratch + CFL cache for CMFMCConvection.
 # TM5Workspace   — `conv1` matrix slab + pivot vectors + cloud-dim
-#                  indices for TM5Convection (plan 23 Commit 1).
-#                  Per principle 3 (plan 23), pivots stay a
-#                  dedicated field even though the TM5 matrix is
-#                  diagonally dominant: the adjoint port in plan 19
+#                  indices for TM5Convection.
+#                  Pivots stay a dedicated field even though the TM5
+#                  matrix is diagonally dominant: the adjoint port
 #                  replays the same factorization with trans='T'.
 # ---------------------------------------------------------------------------
 
@@ -33,7 +32,7 @@ Per-sim pre-allocated workspace for [`CMFMCConvection`](@ref).
   Float) because it's the integer sub-step count.
 - `cache_valid :: Base.RefValue{Bool}` — sentinel; cleared via
   [`invalidate_cmfmc_cache!`](@ref) when the met window advances
-  (`DrivenSimulation._maybe_advance_window!`, Commit 8).
+  (`DrivenSimulation._maybe_advance_window!`).
 
 # Usage
 
@@ -111,9 +110,8 @@ end
     invalidate_cmfmc_cache!(ws::CMFMCWorkspace) -> nothing
 
 Mark the cached CFL `n_sub` as stale. Called on met-window
-advance by `DrivenSimulation._maybe_advance_window!` (plan 18
-Commit 8). The next `apply!` recomputes `n_sub` from the fresh CMFMC
-array.
+advance by `DrivenSimulation._maybe_advance_window!`. The next
+`apply!` recomputes `n_sub` from the fresh CMFMC array.
 """
 function invalidate_cmfmc_cache!(ws::CMFMCWorkspace)
     ws.cache_valid[] = false
@@ -125,7 +123,7 @@ end
 invalidate_cmfmc_cache!(::Any) = nothing
 
 # ===========================================================================
-# TM5Workspace — plan 23 Commit 1
+# TM5Workspace
 # ===========================================================================
 
 """
@@ -138,16 +136,16 @@ Per-sim pre-allocated workspace for [`TM5Convection`](@ref).
 - `conv1 :: M` — `conv1 = I - dt·D` matrix slab, one `(Nz, Nz)`
   block per column. Parametric on array type so
   `Adapt.adapt_structure` can swap CPU ↔ GPU without changing the
-  `TM5Workspace` type constructor (plan 23 principle 5).
+  `TM5Workspace` type constructor.
   Shapes per topology:
   - Structured LatLon: `(Nz, Nz, Nx, Ny)` — 4D.
   - Face-indexed ReducedGaussian: `(Nz, Nz, ncells)` — 3D.
   - Panel-native CubedSphere: `NTuple{6, AbstractArray{FT, 4}}`
     with per-panel shape `(Nz, Nz, Nc, Nc)`.
 - `pivots :: P` — permutation vector from partial-pivot LU, one
-  Nz-length Int slice per column. Per plan 23 principle 3,
-  preserved so plan 19 (adjoint) can replay the same factorization
-  with transposed back-substitution. Shapes strip the leading Nz
+  Nz-length Int slice per column. Preserved so the adjoint can
+  replay the same factorization with transposed back-substitution.
+  Shapes strip the leading Nz
   from `conv1` shape: `(Nz, Nx, Ny)` / `(Nz, ncells)` /
   `NTuple{6, (Nz, Nc, Nc)}`.
 - `cloud_dims :: C` — per-column `(icltop, iclbas, icllfs)` triple
@@ -156,15 +154,13 @@ Per-sim pre-allocated workspace for [`TM5Convection`](@ref).
   has zero orientation logic). Shape `(3, Nx, Ny)` /
   `(3, ncells)` / `NTuple{6, (3, Nc, Nc)}`.
 - `f_scratch :: F` — per-column intermediate matrix for the
-  matrix build (TM5 `f(0:lmx, 1:lmx)` after the storage plan's
-  Commit 3 merged the updraft into `f`). Plan 23 Commit 4
-  pre-allocates this so `_tm5_build_conv1!` runs without heap
+  matrix build (TM5 `f(0:lmx, 1:lmx)`, with the updraft merged into
+  `f`). Pre-allocated so `_tm5_build_conv1!` runs without heap
   allocation inside KA kernels (mandatory on GPU; same contract on
   CPU for parity). `f_scratch` aliases `conv1` in the production
   workspace because `conv1` is only needed after `f` has been
   converted into `I - dt*D`; this saves one dense `(Nz, Nz)` slab
-  per column. The standalone `fu_scratch` field that previously
-  carried the updraft contribution was dropped in Commit 3 — the
+  per column. There is no standalone `fu_scratch` field — the
   updraft and downdraft passes write disjoint index ranges, so the
   builder writes directly into `f`.
 - `amu_scratch :: A`, `amd_scratch :: A` — length-`(Nz+1)`
@@ -191,7 +187,7 @@ struct TM5Workspace{FT, M, P, C, F, A, CA, CM, CP, CV}
     amu_scratch :: A
     amd_scratch :: A
     cell_metrics :: CA
-    # Optional P6 LU-factor cache fields (allocated only when the
+    # Optional LU-factor cache fields (allocated only when the
     # operator requests it). `cache_A` mirrors `conv1` per-grid-cell
     # (so its leading dim is `Nz × Nz` matching `_tm5_build_conv1!`'s
     # output), `cache_pivots` mirrors `pivots`, and `cache_valid` is a
@@ -209,7 +205,7 @@ end
 # constructor. Single dispatch on the air-mass payload picks Nz,
 # the per-launch cell count, and a "template" array (used by
 # `similar` to inherit backend / element type) — the workspace
-# itself is topology-agnostic after Commit 4 of the storage plan.
+# itself is topology-agnostic.
 
 @inline _tm5_template(air_mass::AbstractArray) = air_mass
 @inline _tm5_template(air_mass::NTuple)        = air_mass[1]
@@ -280,7 +276,7 @@ The per-launch column count `B` is set by exactly one of:
 
 - `tile_columns::Integer` (explicit). Default
   `_tm5_total_cells_per_launch(air_mass)` — one tile covers the
-  whole launch and the workspace is bit-equal to the pre-Commit-4
+  whole launch and the workspace is bit-equal to the earlier
   per-cell allocator. Production paths use this branch when they
   already know `B`.
 - `tile_workspace_gib::Real` (budget). Picks `B` via
@@ -320,7 +316,7 @@ function TM5Workspace(air_mass;
     amu_scratch = similar(template, FT,  Nz + 1, B)
     amd_scratch = similar(template, FT,  Nz + 1, B)
     metrics = cell_metrics === nothing ? nothing : _cmfmc_metric_buffer(cell_metrics, FT)
-    # Optional P6 cache. `cache_columns` is the *total* per-topology
+    # Optional LU-factor cache. `cache_columns` is the *total* per-topology
     # cell count to allocate cache slots for; pass `nothing` (default)
     # to disable the cache. The memory cost is `Nz² · cache_columns ·
     # sizeof(FT) + Nz · cache_columns · sizeof(Int)` — at C180/L85
@@ -382,7 +378,7 @@ end
     invalidate_tm5_cache!(ws::TM5Workspace) -> nothing
     invalidate_tm5_cache!(::Any) -> nothing
 
-Mark the P6 LU-factor cache stale. Called on met-window advance by
+Mark the LU-factor cache stale. Called on met-window advance by
 `DrivenSimulation._maybe_advance_window!` so the next `apply!` repopulates
 the cache from the new forcing fields. The polymorphic no-op default
 keeps the call site type-agnostic (the same way `invalidate_cmfmc_cache!`

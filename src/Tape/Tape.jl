@@ -1,22 +1,17 @@
 """
     Tape
 
-Tape storage policies, tape record types, and (in Phase A) on-disk
-checkpointing for the AtmosTransport.jl cubed-sphere adjoint pipeline.
+Tape storage policies, tape record types, and on-disk checkpointing for the
+AtmosTransport.jl cubed-sphere adjoint pipeline.
 
-Plan 26 Commit P0.1 extracts these utilities from the previously-monolithic
-`src/Adjoints/Adjoints.jl` into a focused sibling module so subsequent
-Plan 26 phases (NetCDF tape, sliding-window replay) land here rather than
-growing `Adjoints.jl` further.
+This is a focused sibling module to `src/Adjoints/Adjoints.jl`; on-disk-tape
+utilities (NetCDF tape, sliding-window replay) live here rather than growing
+`Adjoints.jl` further.
 
-Module dependency order (Plan 26 P0.0 NOTES):
+Module dependency order:
     Adjoints  →  Tape  →  Footprint  →  Inversion
                   ↑
                   this module
-
-Phase P0.1 is **pure code motion** — no semantic change. The reverse-loop
-driver that dispatches on tape records currently lives in `Adjoints.jl`;
-it moves to `Footprint/` in P0.3.
 """
 module Tape
 

@@ -1,17 +1,17 @@
 # ---------------------------------------------------------------------------
-# Plan 24 Commit 4 — TM5 convection pipeline wiring.
+# TM5 convection pipeline wiring.
 #
-# Bridges Commits 1–3 (column math, physics BIN reader, grid-level loop
-# + native→merged remap) to the `process_day` preprocessor.  Shared
+# Bridges the column math, physics BIN reader, and grid-level loop
+# + native→merged remap to the `process_day` preprocessor.  Shared
 # across LL / RG / CS targets.
 #
 # Per-hour flow on the ERA5-native horizontal grid (Nlon_src, Nlat_src,
 # typically 720×361 matching the physics BIN):
 #
 #   native-L137 UDMF/DDMF/UDRF/DDRF + T + Q + PS (from physics BIN)
-#       ↓  tm5_native_fields_for_hour!  (Commit 3)
+#       ↓  tm5_native_fields_for_hour!
 #   native-L137 entu/detu/entd/detd (kg/m²/s)
-#       ↓  merge_tm5_field_3d!  (Commit 3)
+#       ↓  merge_tm5_field_3d!
 #   merged-Nz entu/detu/entd/detd on the source (ERA5) grid
 #       ↓  ConservativeRegridding (per-topology) — NOT bilinear, see
 #          feedback_conservative_regrid_for_mass_fluxes.md

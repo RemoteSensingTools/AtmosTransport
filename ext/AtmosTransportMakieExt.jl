@@ -17,7 +17,8 @@ import AtmosTransport
 import AtmosTransport.Visualization:
     HorizontalField, RasterField, SnapshotDataset, SnapshotRegridCache, PlotSpec,
     fieldview, frame_indices, as_raster, robust_colorrange,
-    mapplot, mapplot!, snapshot_grid, movie, movie_grid, catrine_map_curtains
+    mapplot, mapplot!, snapshot_grid, movie, movie_grid, catrine_map_curtains,
+    catrine_map_curtains_3way
 
 using Makie
 using Dates
@@ -1033,6 +1034,219 @@ function catrine_map_curtains(at_path::AbstractString,
 
     scale_tag = scale === :linear ? "linear" : "symlog"
     stem = "$(species)_column_map_curtains_$(scale_tag)_at_vs_geoschem_makie"
+    png = joinpath(out_dir, "$(stem)_first_frame.png")
+    gif = joinpath(out_dir, "$(stem).gif")
+    Makie.save(png, fig)
+    if write_animation
+        Makie.record(fig, gif, eachindex(pairs); framerate=fps) do frame
+            update_frame!(frame)
+        end
+    end
+    return (; fig, png, gif = write_animation ? gif : nothing, frames = length(pairs))
+end
+
+"""
+    catrine_map_curtains_3way(at_geos_path, at_era5_path, gc_dir; kwargs...) -> NamedTuple
+
+Same column-map + longitude-pressure-curtain plot as [`catrine_map_curtains`],
+but with THREE stacked sections instead of two: GeosChem (top), AtmosTransport
+driven by GEOS-IT met (middle), and AtmosTransport driven by ERA5 met (bottom).
+Both AT runs must share the GeosChem time base; they are precomputed against the
+same matched frames. Reuses every helper of the 2-section renderer.
+"""
+function catrine_map_curtains_3way(at_geos_path::AbstractString,
+                                   at_era5_path::AbstractString,
+                                   gc_dir::AbstractString;
+                                   species::Symbol=:co2_fossil,
+                                   out_dir::AbstractString=joinpath(homedir(), "data", "AtmosTransport", "output", "catrine_3way_animation"),
+                                   fps::Integer=3,
+                                   max_frames::Integer=0,
+                                   map_vmax::Real=8.0,
+                                   map_vmin::Real=0.0,
+                                   curtain_vmax::Real=40.0,
+                                   curtain_vmin::Real=0.0,
+                                   scale::Symbol=:symlog,
+                                   auto_range_day1::Union{Nothing, Tuple{<:Real, <:Real}}=nothing,
+                                   latitudes=(40.0, 0.0, -40.0),
+                                   dlon::Real=2.0,
+                                   dp::Real=10.0,
+                                   write_animation::Bool=true,
+                                   row_labels=("GEOS-Chem", "AT (GEOS-IT)", "AT (ERA5)"),
+                                   size=(1896, 1380))
+    species = Symbol(species)
+    haskey(_CATRINE_GC_VAR, species) ||
+        throw(ArgumentError("unsupported CATRINE species $(species)"))
+    scale in (:symlog, :linear) ||
+        throw(ArgumentError("scale must be :symlog or :linear, got $(scale)"))
+    at_geos_path = expanduser(String(at_geos_path))
+    at_era5_path = expanduser(String(at_era5_path))
+    gc_dir = expanduser(String(gc_dir))
+    out_dir = expanduser(String(out_dir))
+    mkpath(out_dir)
+
+    pairs = _matched_catrine_times(at_era5_path, gc_dir, max_frames)
+    isempty(pairs) && throw(ArgumentError("no matched CATRINE AT/GEOS-Chem frames"))
+
+    lons = lats = corner_lons = corner_lats = nothing
+    NCDataset(at_era5_path, "r") do ds
+        lons = _read_cs3(ds, "lons")
+        lats = _read_cs3(ds, "lats")
+        corner_lons = _read_cs3(ds, "corner_lons")
+        corner_lats = _read_cs3(ds, "corner_lats")
+    end
+
+    section_lats = Float64.(collect(latitudes))
+    sections = _build_sections(lons, lats, section_lats, Float64(dlon))
+    p_grid = collect(0.0:Float64(dp):1000.0)
+    polygons, poly_indices = _cs_cell_polygons(corner_lons, corner_lats)
+    lon_grid = sections[1].lons
+
+    t_pre = time()
+    precomp_e = _precompute_catrine_frames(at_era5_path, pairs, species, sections, p_grid)
+    precomp_g = _precompute_catrine_frames(at_geos_path, pairs, species, sections, p_grid)
+    @info @sprintf("  Pre-computed %d frame(s) ×2 (GEOS+ERA5) in %.1fs", length(pairs), time() - t_pre)
+    _, dt0, _ = first(pairs)
+
+    # Three data rows, top→bottom: GeosChem, AT(GEOS-IT), AT(ERA5).
+    row_col = (precomp_e.gc_col, precomp_g.at_col, precomp_e.at_col)
+    row_cur = (precomp_e.gc_curtains, precomp_g.at_curtains, precomp_e.at_curtains)
+
+    if auto_range_day1 !== nothing
+        low_pct  = Float64(auto_range_day1[1])
+        high_pct = Float64(auto_range_day1[2])
+        n_day1 = min(8, length(pairs))
+        col_vals = Float64[]
+        for i in 1:n_day1, rc in row_col
+            append!(col_vals, vec(rc[i]))
+        end
+        map_vmin, map_vmax = _percentile_range(col_vals, low_pct, high_pct)
+        cur_vals = Float64[]
+        for i in 1:n_day1, rcur in row_cur, s_idx in eachindex(sections)
+            append!(cur_vals, vec(rcur[i][s_idx]))
+        end
+        curtain_vmin, curtain_vmax = _percentile_range(cur_vals, low_pct, high_pct)
+        @info @sprintf("  Auto-range day-1 %.1f-%.1f pct: map=[%.3f, %.3f]  curtain=[%.3f, %.3f]",
+                        low_pct, high_pct, map_vmin, map_vmax, curtain_vmin, curtain_vmax)
+    end
+
+    cmap = scale === :linear ?
+        Makie.cgrad(:RdBu_10, rev=true) :
+        Makie.cgrad([:white, "#fee8a8", "#fca85d", "#e34a33", "#7f0000"])
+    map_color(field) = scale === :linear ?
+        _polygon_colors_linear(field, poly_indices, map_vmin, map_vmax) :
+        _polygon_colors(field, poly_indices, map_vmax)
+    curtain_norm(values) = scale === :linear ?
+        _linear_array(values, curtain_vmin, curtain_vmax) :
+        _symlog_array(values, curtain_vmax)
+
+    map_obs = [Makie.Observable(map_color(row_col[r][1])) for r in 1:3]
+    curtain_obs = [[Makie.Observable(curtain_norm(row_cur[r][1][i])) for i in eachindex(sections)] for r in 1:3]
+    tracer_label = _catrine_tracer_label(species)
+    title_obs = Makie.Observable("Time: $(Dates.format(dt0, _CATRINE_TITLE_DATEFORMAT)) UTC    Tracer: $(tracer_label)")
+
+    bg_top = "#edf1f5"
+    bg_bot = "#f3eee5"
+    header_color = "#1f2328"
+    fig = Makie.Figure(size=size, fontsize=14, backgroundcolor=bg_top, figure_padding=0)
+    Makie.rowgap!(fig.layout, 0)
+    Makie.colgap!(fig.layout, 0)
+    Makie.Box(fig[0, 1:6]; color=(header_color, 1.0), strokecolor=(:transparent, 0.0))
+    Makie.Label(fig[0, 1:6], title_obs; fontsize=22, font=:bold, color=:white)
+
+    coastlines = _load_robinson_coastlines()
+    map_axes = Vector{Any}(undef, 3)
+    map_plots = Vector{Any}(undef, 3)
+    for r in 1:3
+        rows = (3r - 2):(3r)   # 1:3, 4:6, 7:9
+        Makie.Label(fig[rows, 1], row_labels[r]; rotation=pi / 2, fontsize=20,
+                    font=:bold, tellwidth=false)
+        ax = Makie.Axis(fig[rows, 2]; title = r == 1 ? "Column mean" : "",
+                        aspect=Makie.DataAspect(), backgroundcolor=:transparent)
+        map_plots[r] = Makie.poly!(ax, polygons; color=map_obs[r], colormap=cmap,
+                                   colorrange=(0, 1), strokewidth=0)
+        _decorate_robinson_axis!(ax, section_lats)
+        _draw_robinson_coastlines!(ax, coastlines)
+        map_axes[r] = ax
+    end
+
+    if scale === :linear
+        tick_values_map = collect(range(Float64(map_vmin), Float64(map_vmax); length=5))
+        tick_pos_map = [_linear01(v, map_vmin, map_vmax) for v in tick_values_map]
+    else
+        tick_values_map = [0.0, 0.05, 0.1, 0.5, 1, 2, 4, Float64(map_vmax)]
+        tick_pos_map = [_symlog01(v, map_vmax) for v in tick_values_map]
+    end
+    Makie.Colorbar(fig[1:9, 3], map_plots[1]; label="X$(species) [ppm]",
+                   ticks=(tick_pos_map, string.(tick_values_map)), width=14)
+
+    # 9 curtain panels: 3 sections per data row, in column 4, rows 1..9.
+    ncur = 3 * length(sections)
+    curtain_axes = Vector{Any}(undef, ncur)
+    curtain_plots = Vector{Any}(undef, ncur)
+    k = 1
+    for r in 1:3
+        for col in eachindex(sections)
+            ax = Makie.Axis(fig[k, 4]; title = _lat_label(sections[col].lat),
+                            ylabel = k == 5 ? "pressure [hPa]" : "",
+                            xlabel = k == ncur ? "longitude" : "",
+                            yreversed=true, backgroundcolor=:transparent)
+            Makie.hidespines!(ax)
+            ax.xticksvisible[] = k == ncur
+            ax.xticklabelsvisible[] = k == ncur
+            ax.yaxisposition[] = :right
+            ax.xticks = -180:60:180
+            ax.yticks = [0, 250, 500, 750, 1000]
+            ax.xgridvisible[] = true
+            ax.ygridvisible[] = true
+            ax.xgridcolor[] = (:gray35, 0.18)
+            ax.ygridcolor[] = (:gray35, 0.22)
+            ax.xgridwidth[] = 0.6
+            ax.ygridwidth[] = 0.6
+            (k % length(sections) == 0) || (ax.yticklabelsvisible[] = false)
+            hm = Makie.heatmap!(ax, lon_grid, p_grid, curtain_obs[r][col];
+                                colormap=cmap, colorrange=(0, 1), nan_color=:white)
+            _draw_curtain_guides!(ax)
+            curtain_axes[k] = ax
+            curtain_plots[k] = hm
+            k += 1
+        end
+    end
+
+    if scale === :linear
+        tick_values_c = collect(range(Float64(curtain_vmin), Float64(curtain_vmax); length=6))
+        tick_pos_c = [_linear01(v, curtain_vmin, curtain_vmax) for v in tick_values_c]
+    else
+        tick_values_c = [0.0, 0.1, 0.5, 1, 5, 10, 20, Float64(curtain_vmax)]
+        tick_pos_c = [_symlog01(v, curtain_vmax) for v in tick_values_c]
+    end
+    Makie.Colorbar(fig[1:9, 5], curtain_plots[1]; label="$(species) [ppm]",
+                   ticks=(tick_pos_c, string.(tick_values_c)), width=14)
+    Makie.colsize!(fig.layout, 1, 54)
+    Makie.colsize!(fig.layout, 2, Makie.Relative(0.43))
+    Makie.colsize!(fig.layout, 6, 110)
+    Makie.resize_to_layout!(fig)
+    x0, x1 = _fig_x_extent(fig)
+    fig_y0, _ = _fig_y_extent(fig)
+    # Tint the two AT sections (rows 4:9) with the warm background; GeosChem
+    # (rows 1:3) keeps the cool page colour. The rect spans from the bottom of
+    # the figure up to the top of the AT(GEOS-IT) map block.
+    _, lower_top = _axis_block_y_extent(map_axes[2])
+    _page_rect!(fig, x0, x1, fig_y0, lower_top; color=(bg_bot, 1.0))
+
+    function update_frame!(frame)
+        _, dt, _ = pairs[frame]
+        for r in 1:3
+            map_obs[r][] = map_color(row_col[r][frame])
+            for i in eachindex(sections)
+                curtain_obs[r][i][] = curtain_norm(row_cur[r][frame][i])
+            end
+        end
+        title_obs[] = "Time: $(Dates.format(dt, _CATRINE_TITLE_DATEFORMAT)) UTC    Tracer: $(tracer_label)"
+        return nothing
+    end
+
+    scale_tag = scale === :linear ? "linear" : "symlog"
+    stem = "$(species)_column_map_curtains_$(scale_tag)_3way_makie"
     png = joinpath(out_dir, "$(stem)_first_frame.png")
     gif = joinpath(out_dir, "$(stem).gif")
     Makie.save(png, fig)

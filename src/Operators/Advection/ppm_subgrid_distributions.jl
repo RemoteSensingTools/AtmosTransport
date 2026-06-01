@@ -7,10 +7,14 @@
 # Each variant reads a 5-point stencil (q_{i-2}, q_{i-1}, q_i, q_{i+1}, q_{i+2})
 # and returns left and right face values (q_L, q_R) for the parabolic profile.
 #
-# Reference: Putman & Lin (2007), "Finite-volume transport on various cubed-sphere grids"
+# Reference: Putman & Lin (2007), "Finite-volume transport on various cubed-sphere
+# grids"; Colella & Woodward (1984), "The piecewise parabolic method".
 #
-# Line-for-line port of the legacy Advection PPM helpers (git commit
-# ec2d2c0, path src_legacy/Advection/ppm_subgrid_distributions.jl).
+# ORD=5/7 use the 4th-order cell-edge interpolation (7/12, -1/12); ORD=6 uses the
+# unlimited 5th-order upwind-biased stencil. (The earlier port from legacy
+# src_legacy/Advection/ppm_subgrid_distributions.jl carried two reconstruction
+# bugs — an ORD=5 Huynh call that collapsed to 2-point averaging, and ORD=6
+# weights that summed to 58/60 — both corrected here.)
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
@@ -34,34 +38,6 @@ the same sign, otherwise zero. Used in ORD=4 and ORD=5.
 """
 @inline function minmod_ppm(a::FT, b::FT, c::FT) where FT
     return _minmod3(a, b, c)
-end
-
-# ---------------------------------------------------------------------------
-# Huynh's second constraint (monotonicity)
-#
-# Huynh (1996), "Schemes and constraints for advection"
-# Eq. 21 from Putman & Lin (2007) Appendix A
-# ---------------------------------------------------------------------------
-
-"""
-    huynh_second_constraint(q_l, q_c, q_r, q_LL, q_RR)
-
-Huynh's second constraint: ensures monotonicity without over-limiting minmod.
-More accurate than minmod for smooth flows.
-
-Formula (Putman & Lin Appendix A):
-q_6 = 3(q_c - (2q_L + q_R)/3) is clamped to lie in [-|q_R - q_L|, |q_R - q_L|]
-"""
-@inline function huynh_second_constraint(q_l, q_c, q_r, q_LL, q_RR)
-    FT = typeof(q_l)
-    denom = q_r - q_l
-    mag = abs(denom)
-
-    # Curvature coefficient in the parabolic profile
-    q_6 = 3 * (q_c - (2 * q_l + q_r) / 3)
-
-    # Clamp to magnitude of edge difference
-    return ifelse(mag < 10 * eps(FT), zero(FT), clamp(q_6, -mag, mag))
 end
 
 # ---------------------------------------------------------------------------
@@ -102,16 +78,22 @@ end
 """
     _ppm_edge_values_ord5(q_imm, q_im, q_i, q_ip, q_ipp)
 
-Compute PPM edge values (q_L, q_R) using ORD=5 (Huynh's second constraint).
-Provides better accuracy than minmod while maintaining quasi-monotonicity.
+Compute PPM cell-edge values (q_L, q_R) for ORD=5 via the 4th-order interpolation
+
+    q_{i-1/2} = (7/12)(q_im + q_i) - (1/12)(q_imm + q_ip)   (= q_L)
+    q_{i+1/2} = (7/12)(q_i + q_ip) - (1/12)(q_im + q_ipp)   (= q_R)
+
+(Colella & Woodward 1984; FV3 xppm/yppm `ord>=5` base; Putman & Lin 2007 Sec. 4).
+Quasi-monotone (Huynh-class) limiting is applied separately by
+`_apply_monotonicity` in the face kernels, so this returns the *unlimited*
+4th-order edge values. Exact for constant and linear fields; 4th-order accurate
+for smooth data.
 """
 @inline function _ppm_edge_values_ord5(q_imm::FT, q_im::FT, q_i::FT, q_ip::FT, q_ipp::FT) where FT
-    s_im = huynh_second_constraint(q_im, q_i, q_i, q_imm, q_ip)
-    s_i = huynh_second_constraint(q_i, q_ip, q_ip, q_im, q_ipp)
-
-    q_L = q_i - s_im / 2
-    q_R = q_i + s_i / 2
-
+    p1 = FT(7) / FT(12)
+    p2 = -FT(1) / FT(12)
+    q_L = p1 * (q_im + q_i) + p2 * (q_imm + q_ip)
+    q_R = p1 * (q_i + q_ip) + p2 * (q_im + q_ipp)
     return (q_L, q_R)
 end
 
@@ -125,19 +107,20 @@ end
 """
     _ppm_edge_values_ord6(q_imm, q_im, q_i, q_ip, q_ipp)
 
-Compute PPM edge values (q_L, q_R) using ORD=6 (quasi-5th order, non-monotonic).
-Best pointwise error (L-inf) at cost of ~1% negative excursions.
+Compute edge values (q_L, q_R) using ORD=6 (unlimited 5th-order upwind-biased,
+non-monotone). Best pointwise (L∞) error at the cost of small over/undershoots.
+
+    q_{i-1/2} = (-3 q_imm + 27 q_im + 47 q_i - 13 q_ip +  2 q_ipp) / 60   (= q_L)
+    q_{i+1/2} = ( 2 q_imm - 13 q_im + 47 q_i + 27 q_ip -  3 q_ipp) / 60   (= q_R)
+
+(Suresh & Huynh 1997; the q_R weights are the standard 5th-order upwind stencil,
+q_L its mirror.) Both stencils sum to 60/60 = 1, so constant fields are preserved
+exactly — the previous coefficients summed to 58/60 and did not.
 """
 @inline function _ppm_edge_values_ord6(q_imm::FT, q_im::FT, q_i::FT, q_ip::FT, q_ipp::FT) where FT
-    a1 = FT(1/30)
-    a2 = FT(13/60)
-    a3 = FT(13/60)
-    a4 = FT(9/20)
-    a5 = FT(1/20)
-
-    q_R = a1 * q_imm + a2 * q_im + a3 * q_i + a4 * q_ip + a5 * q_ipp
-    q_L = a5 * q_imm + a4 * q_im + a3 * q_i + a2 * q_ip + a1 * q_ipp
-
+    inv60 = one(FT) / FT(60)
+    q_L = inv60 * (-FT(3) * q_imm + FT(27) * q_im + FT(47) * q_i - FT(13) * q_ip + FT(2) * q_ipp)
+    q_R = inv60 * ( FT(2) * q_imm - FT(13) * q_im + FT(47) * q_i + FT(27) * q_ip - FT(3) * q_ipp)
     return (q_L, q_R)
 end
 
@@ -186,7 +169,8 @@ end
 end
 
 @inline function _ppm_edge_values(q_imm::FT, q_im::FT, q_i::FT, q_ip::FT, q_ipp::FT, ::Val{7}) where FT
-    # ORD=7 uses Huynh constraint same as ORD=5; special boundary handling
-    # is done at the kernel level via _apply_ord7_boundary()
+    # ORD=7 uses the same 4th-order interior reconstruction as ORD=5; the special
+    # gnomonic CS face-discontinuity treatment is applied at the kernel level via
+    # _apply_ord7_boundary().
     return _ppm_edge_values_ord5(q_imm, q_im, q_i, q_ip, q_ipp)
 end

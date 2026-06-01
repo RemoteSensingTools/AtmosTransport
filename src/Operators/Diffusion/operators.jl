@@ -1,7 +1,7 @@
 # `AbstractDiffusion` is the global root declared in
 # `src/Operators/AbstractOperators.jl`. Concrete subtypes here:
-# [`NoDiffusion`](@ref), [`ImplicitVerticalDiffusion`](@ref). Plan 16b+
-# can add non-local / counter-gradient variants as sibling concrete types.
+# [`NoDiffusion`](@ref), [`ImplicitVerticalDiffusion`](@ref). Non-local /
+# counter-gradient variants can be added as sibling concrete types.
 # Every concrete subtype implements
 #
 #     apply!(state::CellState, meteo, grid, op, dt; workspace)
@@ -30,7 +30,7 @@ struct DiffusiveSurfaceFluxBoundary <: AbstractSurfaceFluxCoupling end
 
 Identity operator — `apply!` is a no-op. Default for configurations
 without active vertical mixing, and the value `strang_split_mt!` sees
-when the palindrome's V position is unoccupied (Commit 4).
+when the palindrome's V position is unoccupied.
 """
 struct NoDiffusion <: AbstractDiffusion end
 
@@ -61,8 +61,8 @@ Concrete examples:
     apply!(state, meteo, grid, op::ImplicitVerticalDiffusion, dt; workspace)
 
 - Refreshes the Kz cache: `update_field!(op.kz_field, t)` with
-  `t` drawn from the meteorology where available; plan 16b currently
-  passes `zero(FT)` as a placeholder (chemistry-style, mirrors plan 15's
+  `t` drawn from the meteorology where available; currently
+  passes `zero(FT)` as a placeholder (chemistry-style, mirroring the
   deferred `current_time(meteo)` accessor).
 - Reads `workspace.dz_scratch` as the current layer thicknesses [m].
   The caller is responsible for filling this array before calling
@@ -75,8 +75,7 @@ Concrete examples:
 
 The operator is linear (Kz does not depend on tracer values), so
 a single `apply!(dt)` at the palindrome center is equivalent to two
-half-steps — see plan 16b §4.3 Decision 8. Commit 4 performs the
-palindrome integration.
+half-steps.
 
 # Fields
 - `kz_field::KzF` — any `AbstractTimeVaryingField{FT, 2}` or
@@ -172,8 +171,7 @@ function apply!(state::CellState, meteo, grid,
     # wrapper: pre-scale tracer_mass → VMR, solve with mass-flux
     # coefficients, post-scale VMR → tracer_mass. Preserves `Σ m·q` to
     # roundoff for inert tracers, matching the CS path's conservation
-    # contract. See `memory/diffusion_full_pipeline_audit_2026_05_25.md`
-    # (D1 LL/RG follow-up).
+    # contract. See `memory/diffusion_full_pipeline_audit_2026_05_25.md`.
     apply_vertical_diffusion_vmr!(state.tracers_raw, state.air_mass,
                                    op, workspace, dt, meteo)
     return state
@@ -215,19 +213,18 @@ raw tracer buffer in any of the supported layouts:
 - face-indexed single-tracer slice: `q_raw :: (ncells, Nz)`
 
 This is the function `strang_split_mt!` calls at the palindrome
-center (plan 16b Commit 4). The face-indexed reduced-Gaussian path also
+center. The face-indexed reduced-Gaussian path also
 uses it at its H → V → D → V → H center slot.
 
 `meteo` is threaded through to `update_field!(op.kz_field, t)` as
 `t = FT(current_time(meteo))` (or `zero(FT)` if `meteo === nothing`).
-Plan 17 Commit 4: `meteo` defaults to `nothing` so pre-17 palindrome
-call sites (`apply_vertical_diffusion!(rm, op, ws, dt)`) continue
-to work unchanged; Commit 5 threads `meteo` through the palindrome.
+`meteo` defaults to `nothing` so call sites that omit it
+(`apply_vertical_diffusion!(rm, op, ws, dt)`) continue to work unchanged.
 
 `NoDiffusion` is a no-op: the method is `= nothing` so Julia's
 dispatch reduces the call site to a dead branch when
-`diffusion_op isa NoDiffusion`. This is what makes the Commit 4
-palindrome integration bit-exact backward-compatible.
+`diffusion_op isa NoDiffusion`. This makes the palindrome
+integration bit-exact backward-compatible.
 """
 function apply_vertical_diffusion! end
 function apply_vertical_diffusion_vmr! end

@@ -18,19 +18,17 @@ surface layer.
 
 # Why per-cell rates (not kg/m²/s)
 
-Plan 17 Decision 1 (user-approved 2026-04-19): the prognostic tracer is
-stored per cell, so a per-cell rate × dt is the natural unit and matches
-the legacy `DrivenSimulation._apply_surface_source!` signature that shipped
-before plan 17. A per-area variant that multiplies by `cell_area` is
-deferred to a follow-up plan.
+The prognostic tracer is stored per cell, so a per-cell rate × dt is the
+natural unit and matches the legacy
+`DrivenSimulation._apply_surface_source!` signature. A per-area variant
+that multiplies by `cell_area` is deferred to a follow-up.
 
-# History
+# Provenance
 
-Originally introduced in `src/Models/DrivenSimulation.jl` before plan 17.
-Migrated to `src/Operators/SurfaceFlux/` in plan 17 Commit 2 so that
-`SurfaceFluxOperator` (Commit 3) can consume it; the name is still
-re-exported from `AtmosTransport` for backward compat with external
-callers that imported it by fully-qualified name.
+Originally introduced in `src/Models/DrivenSimulation.jl`, then migrated
+to `src/Operators/SurfaceFlux/` so that `SurfaceFluxOperator` can consume
+it; the name is still re-exported from `AtmosTransport` for backward
+compat with external callers that imported it by fully-qualified name.
 
 # Fields
 - `tracer_name :: Symbol`
@@ -52,9 +50,8 @@ function Adapt.adapt_structure(to, source::SurfaceFluxSource)
 end
 
 # =========================================================================
-# Surface-slice helpers — internal, used by the Commit 3 kernel shell and
-# by the legacy `DrivenSimulation._apply_surface_sources!` until plan 17
-# Commit 6 moves the call site into the palindrome.
+# Surface-slice helpers — internal, used by the kernel shell and
+# by the legacy `DrivenSimulation._apply_surface_sources!`.
 # =========================================================================
 
 """
@@ -73,7 +70,7 @@ this is `(Nx, Ny)`; for 2D face-indexed `(Nc, Nz)` tracers, `(Nc,)`.
 Validate that `source.tracer_name` is present in `state`, and that
 `size(source.cell_mass_rate)` matches the state's surface slice shape.
 Throws `ArgumentError` on mismatch. Used at DrivenSimulation construction
-and (in Commit 3) at SurfaceFluxOperator construction.
+and at SurfaceFluxOperator construction.
 """
 function _check_surface_source_compatibility(state, source::SurfaceFluxSource)
     tracer_index(state, source.tracer_name) === nothing &&
@@ -110,17 +107,14 @@ end
 Add `source.cell_mass_rate × dt` to the surface slice of the tracer mass
 array `rm`. The surface slice is `rm[:, :, Nz]` for 3D tracers and
 `rm[:, Nz]` for 2D tracers — the `k = Nz = surface` convention
-established by the LatLon storage layout (plan 17 Decision 2).
+established by the LatLon storage layout.
 
 Broadcasts over all surface cells; fused `.+=` is allocation-free and
 GPU-friendly (KernelAbstractions dispatches to the backend of `rm`).
 
 This is the legacy application path used by
-`DrivenSimulation._apply_surface_sources!`. Plan 17 Commit 3 ships a
-unified KA-kernel version that the `SurfaceFluxOperator.apply!` path
-launches; Commit 5 moves the call site into the palindrome. Until
-Commit 6, DrivenSimulation continues to call this helper at the sim
-level.
+`DrivenSimulation._apply_surface_sources!`. A unified KA-kernel version
+backs the `SurfaceFluxOperator.apply!` path.
 """
 function _apply_surface_source!(rm::AbstractArray{FT, 3},
                                 source::SurfaceFluxSource, dt) where FT

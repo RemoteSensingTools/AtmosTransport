@@ -293,7 +293,7 @@ end
            @sprintf("rel=%.3e > tol=%.3e at window %d cell %s (abs=%.3e kg).",
                     worst_rel, tol_rel, worst_win, worst_idx, worst_abs) *
            " Stored fluxes do not integrate to stored m_next under palindrome continuity. " *
-           "See plan 39 memo."
+           "Regenerate the binary with the current preprocessor."
 end
 
 """

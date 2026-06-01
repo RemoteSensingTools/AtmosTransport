@@ -2,9 +2,8 @@
 # Tape records for the CS adjoint reverse loop.
 #
 # Each forward-recorded operation pushes one record type onto the tape;
-# the reverse-loop driver in `src/Footprint/ReverseLoop.jl` (post-P0.3;
-# currently still in Adjoints.jl) dispatches on these record types and
-# calls the appropriate per-physics adjoint kernel.
+# the reverse-loop driver in `src/Footprint/ReverseLoop.jl` dispatches on
+# these record types and calls the appropriate per-physics adjoint kernel.
 #
 # Notes on the scheme parameter:
 #
@@ -19,12 +18,9 @@
 # constructs these records).
 #
 # `_CSLinRoodHorizRecord` is defined separately in
-# `src/Adjoints/LinRoodTape.jl` (Plan 25 Commit 6 baseline) and is
+# `src/Adjoints/LinRoodTape.jl` and is
 # **not** part of the `_CSTapeOp` union below. The reverse-loop driver
 # handles it via an explicit branch alongside the union dispatch.
-#
-# Code relocated from `src/Adjoints/Adjoints.jl` lines 2567-2604
-# unchanged in Plan 26 P0.1; no semantic change.
 # ---------------------------------------------------------------------------
 
 """

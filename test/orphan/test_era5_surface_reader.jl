@@ -6,6 +6,44 @@ using NCDatasets
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 
+const _fill_masked_surface = AtmosTransport.Preprocessing._fill_masked_surface
+
+@testset "masked-surface neighbour fill" begin
+    # All-finite slice round-trips unchanged.
+    A = Float32[1 2 3; 4 5 6; 7 8 9]
+    @test _fill_masked_surface(A, Float32) == A
+
+    # A single stray masked cell takes the mean of its finite 4-neighbours,
+    # NOT the global mean — local structure is preserved.
+    B = Union{Missing,Float32}[10 10 10; 10 missing 10; 10 10 10]
+    out = _fill_masked_surface(B, Float32)
+    @test all(isfinite, out)
+    @test out[2, 2] == 10.0f0            # neighbours are all 10 (global mean is also 10 here)
+
+    # Local-gradient case: the filled cell follows its neighbours, not the global mean.
+    C = Union{Missing,Float32}[1 2 3; 2 missing 4; 3 4 100]
+    oc = _fill_masked_surface(C, Float32)
+    # 4-neighbours of (2,2): (1,2)=2 [lon+1 wrap], (3,2)=4 [lon-1 wrap], (2,1)=2, (2,3)=4 → mean 3
+    @test oc[2, 2] == 3.0f0
+    gmean = (1 + 2 + 3 + 2 + 4 + 3 + 4 + 100) / 8
+    @test oc[2, 2] != Float32(gmean)     # decidedly not the global mean (~14.9)
+
+    # Longitude wraps: a masked cell in the first column can be filled from the last.
+    D = Union{Missing,Float32}[missing; 5; 5;;]   # 3×1 (lon × lat) column
+    od = _fill_masked_surface(D, Float32)
+    @test all(isfinite, od)
+    @test od[1, 1] == 5.0f0              # neighbours (2,1)=5 and wrap (3,1)=5
+
+    # Fully-isolated masked region (no finite neighbour ever) falls back to the
+    # global finite mean.
+    E = Matrix{Union{Missing,Float32}}(missing, 2, 2)
+    E[1, 1] = 7.0f0
+    oe = _fill_masked_surface(E, Float32)
+    @test all(isfinite, oe)
+    @test oe[1, 1] == 7.0f0
+    @test all(oe .== 7.0f0)              # the lone finite cell propagates everywhere
+end
+
 @testset "ERA5 surface reader normalizes raw PBL fields" begin
     mktempdir() do dir
         path = joinpath(dir, "era5_surface_20211201.nc")

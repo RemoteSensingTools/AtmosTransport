@@ -1,6 +1,5 @@
 # ---------------------------------------------------------------------------
-# Plan 26 P0.B1 — surface-flux background-error covariance B for the CS
-# 4D-Var path.
+# Surface-flux background-error covariance B for the CS 4D-Var path.
 #
 # Preconditioned-4D-Var convention:
 #     x   = x_b + B^(1/2) * χ              (physical-space control)
@@ -30,7 +29,7 @@
 #     eigen-correction lands later.
 #   * Temporal correlation. v1 operates on a single CSSurfaceFluxControl
 #     `value` shape (`NTuple{6, Matrix{FT}}`). Multi-window temporal
-#     smoothing comes with B2.
+#     smoothing is not yet implemented.
 #   * GPU storage. The FFTW path is CPU-only. GPU support requires a
 #     CUFFT path (gated on KernelAbstractions backend); deferred.
 # ---------------------------------------------------------------------------
@@ -333,7 +332,7 @@ function apply_B_half_adjoint!(g_chi::NTuple{6, A},
 end
 
 # ---------------------------------------------------------------------------
-# Inverse — `B^(-1/2)`. Needed by the preconditioner (B2) to map a
+# Inverse — `B^(-1/2)`. Needed by the preconditioner to map a
 # physical-space initial guess back into χ-space and for the
 # LogNormal bijection. `apply_B_half_inverse!` is `D^(-1) · L^(-1)`:
 # elementwise divide by σ, then deconvolve via spectral `1/sqrt(C̃)`.

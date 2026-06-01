@@ -10,7 +10,13 @@ using .AtmosTransport
 using .AtmosTransport.Models:
     build_runtime_advection, build_runtime_diffusion,
     build_cs_advection, configured_cs_halo_width,
-    build_cs_diffusion, build_cs_convection, build_cs_physics_recipe
+    build_cs_diffusion, build_cs_convection, build_cs_physics_recipe,
+    convection_spec, TM5ConvectionSpec, CMFMCMatrixConvectionSpec,
+    advection_spec, UpwindAdvectionSpec, SlopesAdvectionSpec, PPMAdvectionSpec,
+    NoAdvectionSpec, LinRoodAdvectionSpec,
+    diffusion_spec, NoDiffusionSpec, ConstantDiffusionSpec,
+    WindowPBLKzDiffusionSpec, HoltslagBovilleVdiffDiffusionSpec,
+    PrecomputedKzDiffusionSpec, materialize
 using .AtmosTransport.State.Fields:
     CubedSphereField, WindowPBLKzField, GCHPHoltslagBovilleKzField,
     PrecomputedCSKzField, field_value, panel_field
@@ -99,6 +105,25 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
         @test_throws ArgumentError build_cs_advection(
             Dict("run" => Dict("scheme" => "linrood"),
                  "advection" => Dict("ppm_order" => 7)))
+    end
+
+    @testset "AdvectionSpec parse + materialize" begin
+        @test advection_spec(Dict("scheme" => "upwind")) isa UpwindAdvectionSpec
+        @test advection_spec(Dict("scheme" => "slopes")) isa SlopesAdvectionSpec
+        @test advection_spec(Dict("scheme" => "ppm"))    isa PPMAdvectionSpec
+        @test advection_spec(Dict("scheme" => "none"))   isa NoAdvectionSpec
+        @test advection_spec(Dict{String,Any}())         isa UpwindAdvectionSpec  # default
+        # linrood + the legacy `linrood_ppm` alias both → LinRoodAdvectionSpec(order).
+        @test advection_spec(Dict("scheme" => "linrood")).order == 5  # default order
+        @test advection_spec(Dict("scheme" => "linrood", "ppm_order" => 7)).order == 7
+        @test advection_spec(Dict("scheme" => "linrood_ppm", "ppm_order" => 7)) isa LinRoodAdvectionSpec
+        # parse-time validation matches the old builder.
+        @test_throws ArgumentError advection_spec(Dict("scheme" => "ppm", "ppm_order" => 7))
+        @test_throws ArgumentError advection_spec(Dict("scheme" => "xyz"))
+        # LinRood materializes only on cubed-sphere; structured throws.
+        @test build_cs_advection(Dict("advection" => Dict("scheme" => "linrood_ppm"))) isa LinRoodPPMScheme
+        @test_throws ArgumentError build_runtime_advection(
+            Dict("advection" => Dict("scheme" => "linrood_ppm")), latlon_grid)
     end
 
     @testset "configured_cs_halo_width dispatch" begin
@@ -217,6 +242,32 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
         @test field_value(op_rg.kz_field, (1, 1)) == 1.5
     end
 
+    @testset "DiffusionSpec parse + materialize" begin
+        @test diffusion_spec(Dict{String,Any}())             isa NoDiffusionSpec  # empty
+        @test diffusion_spec(Dict("kind" => "none"))         isa NoDiffusionSpec
+        @test diffusion_spec(Dict("kind" => "constant", "value" => 2.5)) isa ConstantDiffusionSpec
+        @test diffusion_spec(Dict("kind" => "constant", "value" => 2.5)).value == 2.5
+        # the three CS closures + their legacy aliases.
+        @test diffusion_spec(Dict("kind" => "pbl")) isa WindowPBLKzDiffusionSpec
+        @test diffusion_spec(Dict("kind" => "beljaars_viterbo_local_kz")) isa WindowPBLKzDiffusionSpec
+        @test diffusion_spec(Dict("kind" => "tm5_beljaars_viterbo_local_kz")) isa WindowPBLKzDiffusionSpec
+        @test diffusion_spec(Dict("kind" => "geoschem_holtslag_boville_vdiff")) isa HoltslagBovilleVdiffDiffusionSpec
+        @test diffusion_spec(Dict("kind" => "precomputed_kz")) isa PrecomputedKzDiffusionSpec
+        # surface_flux_boundary flows onto the spec.
+        @test diffusion_spec(Dict("kind" => "pbl", "surface_flux_boundary" => true)).surface_flux_boundary
+        @test !diffusion_spec(Dict("kind" => "pbl")).surface_flux_boundary
+        # parse-time validation (matches the old builder).
+        @test_throws ArgumentError diffusion_spec(Dict("kind" => "magic"))
+        @test_throws ArgumentError diffusion_spec(Dict("type" => "pbl"))         # legacy schema
+        @test_throws ArgumentError diffusion_spec(Dict("value" => 1.0))         # present, no kind
+        @test_throws ArgumentError diffusion_spec(
+            Dict("kind" => "constant", "surface_flux_boundary" => "yes"))       # non-bool
+        # CS-only closures throw on structured styles at materialize time.
+        @test_throws ArgumentError materialize(
+            diffusion_spec(Dict("kind" => "pbl")),
+            AtmosTransport.Models.LatLonRuntimeRecipeStyle(), Float64, nothing)
+    end
+
     @testset "build_cs_convection + recipe validation" begin
         no_conv   = StubReader(false, false)
         only_tm5  = StubReader(false, true)
@@ -242,6 +293,36 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
             Dict("convection" => Dict("kind" => "cmfmc")), no_conv, Float64)
         @test_throws ArgumentError build_cs_convection(
             Dict("convection" => Dict("kind" => "ras")))
+    end
+
+    @testset "ConvectionSpec footgun + parse-time validation" begin
+        # lmax_conv / n_merge only take effect with use_collab_lu=true; setting them
+        # without it was a silent no-op and is now a hard error (the live footgun).
+        @test_throws ArgumentError convection_spec(Dict("kind" => "tm5", "lmax_conv" => 75))
+        @test_throws ArgumentError convection_spec(Dict("kind" => "tm5", "n_merge" => 3))
+        @test_throws ArgumentError convection_spec(
+            Dict("kind" => "cmfmc_matrix", "lmax_conv" => 75))
+        @test_throws ArgumentError build_cs_convection(
+            Dict("convection" => Dict("kind" => "tm5", "n_merge" => 3)))
+        # n_merge = 2 rejected at parse time (even with collab on).
+        @test_throws ArgumentError convection_spec(
+            Dict("kind" => "tm5", "use_collab_lu" => true, "n_merge" => 2))
+        # unknown kind throws at the parser.
+        @test_throws ArgumentError convection_spec(Dict("kind" => "ras"))
+
+        # Happy path: collab on → spec + operator carry the knobs (parse parity).
+        s = convection_spec(Dict("kind" => "tm5", "use_collab_lu" => true,
+                                 "lmax_conv" => 75, "n_merge" => 3))
+        @test s isa TM5ConvectionSpec
+        @test s.use_collab_lu && s.lmax_conv == 75 && s.n_merge == 3
+        op = build_cs_convection(Dict("convection" => Dict(
+            "kind" => "tm5", "use_collab_lu" => true, "lmax_conv" => 75, "n_merge" => 3)))
+        @test op isa TM5Convection && op.lmax_conv == 75 && op.n_merge == 3 && op.use_collab_lu
+        # cmfmc_matrix path materializes to the matrix operator with the knobs.
+        @test convection_spec(Dict("kind" => "cmfmc_matrix", "use_collab_lu" => true,
+                                   "lmax_conv" => 75, "n_merge" => 3)) isa CMFMCMatrixConvectionSpec
+        @test build_cs_convection(Dict("convection" => Dict("kind" => "cmfmc_matrix",
+            "use_collab_lu" => true, "lmax_conv" => 75, "n_merge" => 3))) isa CMFMCMatrixConvection
     end
 
     @testset "build_runtime_physics_recipe validates structured convection capabilities" begin

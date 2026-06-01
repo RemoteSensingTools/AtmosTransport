@@ -4,16 +4,16 @@
 Minimal Oceanigans-style model object for standalone `src` transport runs.
 
 Carries advection, chemistry, vertical diffusion, surface emissions,
-and convection operators. The long-term composition target from
-`OPERATOR_COMPOSITION.md` §3.1 and plan 18 v5.1 §2.2 Decision 1 is:
+and convection operators. The composition target from
+`OPERATOR_COMPOSITION.md` §3.1 is:
 
     transport_block(dt)   →   convection_block(dt)   →   chemistry_block(dt)
 
 where `transport_block` runs the full palindrome with diffusion and
-emissions at the center (plan 16b Commit 4 + plan 17 Commit 5):
+emissions at the center:
 
     X → Y → Z → V(dt/2) → S(dt) → V(dt/2) → Z → Y → X      (emissions active)
-    X → Y → Z → V(dt) → Z → Y → X                          (no emissions; bit-exact pre-17)
+    X → Y → Z → V(dt) → Z → Y → X                          (no emissions)
 
 `step!(model, dt)` executes the full runtime composition:
 transport block → convection block → chemistry block.
@@ -22,20 +22,16 @@ Defaults `chemistry = NoChemistry()`, `diffusion = NoDiffusion()`,
 `emissions = NoSurfaceFlux()`, `convection = NoConvection()` keep
 pre-refactor behaviour for callers that don't opt in.
 
-# Plan 18 Commit 2 additions
-
-Two new fields beyond plan 17:
+# Convection fields
 
 - `convection :: ConvT` — operator type, defaults to `NoConvection()`.
-  Concrete subtypes (`CMFMCConvection`, `TM5Convection`) land in plan
-  18 Commits 3 and 4. `NoConvection` is a compile-time dead branch
-  in `step!` (Commit 6 wires the block).
-- `convection_forcing :: CF` — per-step forcing container (plan 18
-  v5.1 §2.17 Decision 23). Defaults to `ConvectionForcing()` (all-
-  nothing placeholder). `DrivenSimulation` construction allocates
-  real buffers via `allocate_convection_forcing_like`
-  (§2.20 Decision 26); `_refresh_forcing!` populates them from
-  `sim.window.convection` each substep.
+  Concrete subtypes are `CMFMCConvection` and `TM5Convection`.
+  `NoConvection` is a compile-time dead branch in `step!`.
+- `convection_forcing :: CF` — per-step forcing container. Defaults to
+  `ConvectionForcing()` (all-nothing placeholder). `DrivenSimulation`
+  construction allocates real buffers via
+  `allocate_convection_forcing_like`; `_refresh_forcing!` populates them
+  from `sim.window.convection` each substep.
 
 Helpers `with_convection(model, op)` and
 `with_convection_forcing(model, forcing)` parallel
@@ -113,8 +109,8 @@ _convection_workspace_for(::CMFMCConvection,
 # metrics. TM5's original matrix divides kg/m²/s convective fluxes
 # by layer mass per unit area; runtime state stores kg per cell, so
 # the kernels need cell areas just like the CMFMC path. The operator
-# also carries a `tile_workspace_gib::FT` budget (storage plan
-# Commit 4); the `TM5Workspace` constructor turns that into a tile
+# also carries a `tile_workspace_gib::FT` budget; the `TM5Workspace`
+# constructor turns that into a tile
 # column count via `derive_tile_columns`, so the same code path
 # covers all three topologies.
 _convection_workspace_for(op::TM5Convection,
@@ -184,8 +180,8 @@ struct TransportModel{StateT, FluxT, GridT, SchemeT, WorkspaceT,
     chemistry          :: ChemT
     diffusion          :: DiffT
     emissions          :: EmT
-    convection         :: ConvT     # plan 18 Commit 2 — default NoConvection()
-    convection_forcing :: CF        # plan 18 Commit 2 — default ConvectionForcing() placeholder
+    convection         :: ConvT     # default NoConvection()
+    convection_forcing :: CF        # default ConvectionForcing() placeholder
 end
 
 function TransportModel(state::CellState{B},
@@ -275,11 +271,9 @@ end
     with_chemistry(model::TransportModel, chemistry)
 
 Return a copy of `model` with its chemistry operator replaced. All other
-fields share storage with the original. Used by `DrivenSimulation` up
-through plan 15 to install the sim-level chemistry operator into the
-model; plan 17 Commit 6 removed the sim-level workaround so this helper
-is now primarily useful for tests that want to swap chemistry on a
-constructed model.
+fields share storage with the original. Chemistry is installed into the
+model rather than held at the sim level, so this helper is primarily
+useful for tests that want to swap chemistry on a constructed model.
 """
 function with_chemistry(model::TransportModel, chemistry::AbstractChemistryOperator)
     return TransportModel{typeof(model.state), typeof(model.fluxes),
@@ -317,7 +311,7 @@ end
 Return a copy of `model` with its surface-emissions operator replaced.
 All other fields share storage with the original. Parallel to
 [`with_chemistry`](@ref) and [`with_diffusion`](@ref); used by
-`DrivenSimulation` (plan 17 Commit 6) to install the sim-level
+`DrivenSimulation` to install the sim-level
 `surface_sources` tuple as a `SurfaceFluxOperator` inside the wrapped
 model, so the palindrome's S slot runs at the right place in the
 transport block without sim-level post-step hacks.
@@ -336,16 +330,15 @@ end
 """
     with_convection(model::TransportModel, convection)
 
-Return a copy of `model` with its convection operator replaced
-(plan 18 Commit 2). All other fields — including
+Return a copy of `model` with its convection operator replaced.
+All other fields — including
 `convection_forcing` — share storage with the original.
 
 Note: `with_convection` does NOT allocate convection-forcing
 buffers. The model-side `ConvectionForcing()` placeholder stays
-as-is. `DrivenSimulation` construction (plan 18 Commit 8) is
-responsible for allocating real buffers via
-`allocate_convection_forcing_like` after the first window loads
-(plan 18 v5.1 §2.20 Decision 26). For tests that bypass the sim
+as-is. `DrivenSimulation` construction is responsible for allocating
+real buffers via `allocate_convection_forcing_like` after the first
+window loads. For tests that bypass the sim
 layer, use `with_convection_forcing(model, forcing)` to inject
 allocated buffers directly. The model workspace is re-wrapped as
 needed so concrete operators can carry their own scratch storage
@@ -368,11 +361,11 @@ end
     with_convection_forcing(model::TransportModel, forcing::ConvectionForcing)
 
 Return a copy of `model` with its per-step convection-forcing
-container replaced (plan 18 Commit 2). All other fields — including
+container replaced. All other fields — including
 the `convection` operator — share storage with the original.
 
-Used by `DrivenSimulation` construction (plan 18 Commit 8) to
-install the allocated forcing buffers after the first window loads.
+Used by `DrivenSimulation` construction to install the allocated
+forcing buffers after the first window loads.
 Also useful for tests that inject forcing directly without going
 through the sim's `_refresh_forcing!` path.
 """
@@ -461,7 +454,7 @@ pre-refactor advection.
 
 `meteo` is optional and defaults to `nothing`; pass a real
 meteorology object (`AbstractMetDriver`) or a `DrivenSimulation`
-(plan 18 A3) to thread `current_time(meteo)` through operators
+to thread `current_time(meteo)` through operators
 that consume time-varying fields.
 """
 function step!(model::TransportModel, dt; meteo = nothing)

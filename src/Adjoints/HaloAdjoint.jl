@@ -5,9 +5,6 @@
 # The kernels here scatter halo cell contributions back to the interior
 # cells of the neighbouring panels they were copied from, applying the
 # same edge/corner orientation logic as the forward pass.
-#
-# Relocated from `src/Adjoints/Adjoints.jl` lines 1130-1256 unchanged
-# in Plan 26 P0.2; no semantic change.
 # ---------------------------------------------------------------------------
 
 @inline function _edge_interior_ij(q_e, d, s, Nc, Hp)

@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# ERA5 physics binary format — plan 24 Commit 2.
+# ERA5 physics binary format.
 #
 # Two-layer design per DATA_LAYOUT.md's NVMe staging strategy:
 #

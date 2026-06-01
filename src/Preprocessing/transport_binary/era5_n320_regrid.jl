@@ -87,7 +87,7 @@ end
 
 """
     fill_tm5_kz_payload!(kz_c180, c180_fields, hflux, lhflux, ustar,
-                         A, B, Nc, c, scratches) -> nothing
+                         A, B, Nc, c, scratches) -> (; entr_fallback, kvh_floored, max_kz, total_columns)
 
 Fill the per-panel layer-centre eddy diffusivity `kz_c180` (the binary `:kz`
 payload) by running the TM5 boundary-layer diffusion column kernel on every
@@ -106,6 +106,9 @@ function fill_tm5_kz_payload!(kz_c180, c180_fields, hflux, lhflux, ustar,
                               A, B, Nc::Int,
                               c::BLDiffConstants{FT},
                               scratches::Vector{BLDiffColumnScratch{FT}}) where {FT}
+    for s in scratches
+        _reset!(s.diag)
+    end
     Threads.@threads :static for p in 1:6
         scratch = scratches[Threads.threadid()]
         kp, tp, qp = kz_c180[p], c180_fields.t[p], c180_fields.qv[p]
@@ -120,7 +123,14 @@ function fill_tm5_kz_payload!(kz_c180, c180_fields, hflux, lhflux, ustar,
                 A, B, c, scratch)
         end
     end
-    return nothing
+    # Aggregate the per-thread fallback counters into a per-window summary so the
+    # caller can log it (a handful of entrainment skips is expected; a non-zero
+    # `kvh_floored` or a widespread `entr_fallback` is a met problem to inspect).
+    entr = sum(s.diag.entr_fallback for s in scratches)
+    floored = sum(s.diag.kvh_floored for s in scratches)
+    max_kz = maximum(s.diag.max_kz for s in scratches; init = zero(FT))
+    return (; entr_fallback = entr, kvh_floored = floored, max_kz = max_kz,
+            total_columns = 6 * Nc * Nc)
 end
 
 """
@@ -313,7 +323,7 @@ function process_era5_n320_to_cs_day(date::Date,
         # Build the surface/vdiff payload addition for the window whose pipeline
         # is `pipe` (the written window). VDIFF comes from the pipe's already-
         # regridded c180 winds/T/Q.
-        surface_vdiff_payload = function (pipe)
+        surface_vdiff_payload = function (pipe, win_idx)
             extra = NamedTuple()
             if do_surface
                 extra = merge(extra, (surface = (pblh = surf_pblh, ustar = surf_ustar,
@@ -324,9 +334,20 @@ function process_era5_n320_to_cs_day(date::Date,
                                                t = pipe.c180_fields.t, qv = pipe.c180_fields.qv),))
             end
             if do_tm5_diffusion
-                fill_tm5_kz_payload!(kz_c180, pipe.c180_fields,
-                                     surf_hflux, surf_lhflux, surf_ustar,
-                                     vc.A, vc.B, Nc, kz_const, kz_scratch)
+                kzdiag = fill_tm5_kz_payload!(kz_c180, pipe.c180_fields,
+                                              surf_hflux, surf_lhflux, surf_ustar,
+                                              vc.A, vc.B, Nc, kz_const, kz_scratch)
+                # Entrainment fallbacks are expected on a handful of cells; a
+                # non-zero `kvh_floored` (the finite-payload guard) or a large
+                # `entr_fallback` fraction flags a met problem to investigate.
+                if kzdiag.kvh_floored > 0
+                    @warn @sprintf("  Window %2d/%d: :kz output guard floored %d non-finite cell(s) — investigate met input",
+                                   win_idx, nwindow, kzdiag.kvh_floored)
+                elseif kzdiag.entr_fallback > 0
+                    @info @sprintf("  Window %2d/%d: :kz entrainment fallback on %d/%d cell(s) (%.4f%%), max kz=%.1f m²/s",
+                                   win_idx, nwindow, kzdiag.entr_fallback, kzdiag.total_columns,
+                                   100 * kzdiag.entr_fallback / kzdiag.total_columns, kzdiag.max_kz)
+                end
                 extra = merge(extra, (kz = kz_c180,))
             end
             return extra
@@ -386,6 +407,21 @@ function process_era5_n320_to_cs_day(date::Date,
             longitude_offset_deg = longitude_offset_deg(cs_definition(mesh)),
             extra_header = Dict{String, Any}(
                 "preprocessor" => "process_era5_n320_to_cs_day",
+                # Declare the per-window advection substep contract so the
+                # runtime applies advection at the baked substep cadence but
+                # runs convection + chemistry ONCE per met window (not per
+                # substep). Without this flag `uses_binary_substep_contract`
+                # is false and the driven loop falls into the per-substep
+                # `step!` branch, running convection ~25× too often — the GEOS
+                # cubed-sphere spectral writer sets the same key. The substep
+                # schedule itself is already baked per window (steps_per_window).
+                "runtime_substep_contract" => "binary_schedule",
+                "preprocessor_contract" => "plan41_variable_substeps",
+                # Declarative capability flag (matches the GEOS writers). The
+                # runtime surfaces this into `caps.adaptive_substeps`; a config
+                # that sets `[input].require_adaptive_substeps = true` rejects
+                # binaries that omit it, even though the schedule IS adaptive.
+                "adaptive_substeps" => substep_policy.adaptive_substeps,
                 "source_type"  => "era5_n320_native_grib",
                 "source_root"  => settings.root_dir,
                 "target_type"  => "cubed_sphere",
@@ -592,7 +628,7 @@ function process_era5_n320_to_cs_day(date::Date,
                     entd = cur_pipe.tm5_c180_fields.entd,
                     detd = cur_pipe.tm5_c180_fields.detd))) :
                 base_payload
-            payload = merge(payload, surface_vdiff_payload(cur_pipe))
+            payload = merge(payload, surface_vdiff_payload(cur_pipe, win - 1))
             write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(win - 1, payload))
 
             @info @sprintf("    Window %2d/%d: wrote (steps=%d bal %.2fs pre=%.2e post=%.2e iter=%d) | read %2d (%.2fs)",
@@ -684,7 +720,7 @@ function process_era5_n320_to_cs_day(date::Date,
                 entd = cur_pipe.tm5_c180_fields.entd,
                 detd = cur_pipe.tm5_c180_fields.detd))) :
             final_base_payload
-        final_payload = merge(final_payload, surface_vdiff_payload(cur_pipe))
+        final_payload = merge(final_payload, surface_vdiff_payload(cur_pipe, nwindow))
         write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(nwindow, final_payload))
 
         worst_pre  = max(worst_pre,  bal_diag.max_pre_residual)

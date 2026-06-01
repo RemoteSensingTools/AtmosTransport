@@ -46,7 +46,8 @@ read.
 - [`RuntimePhysicsSpecs.jl`](RuntimePhysicsSpecs.jl) — typed config specs parsed
   once from TOML + `materialize` (Oceananigans-style); convection family
   (`convection_spec`, the `lmax_conv`/`n_merge`-needs-`use_collab_lu` guard) +
-  advection family (`advection_spec`, LinRood is cubed-sphere only)
+  advection family (`advection_spec`, LinRood is cubed-sphere only) +
+  chemistry family (`chemistry_spec`, `materialize` dispatches on run `FT`)
 - [`CSPhysicsRecipe.jl`](CSPhysicsRecipe.jl) — CS runtime physics recipe
   builders (thin wrappers over the specs) and capability validation for
   advection, diffusion, convection, and surface forcing

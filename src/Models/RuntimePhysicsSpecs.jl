@@ -18,7 +18,7 @@
 # not define `materialize` elsewhere in the Models module — keeping them together is
 # what makes the dispatch discoverable.
 #
-# This file currently holds the convection family.
+# This file holds the convection, advection, and chemistry spec families.
 
 # --- Typed TOML-value accessors (clean errors at the boundary) -------------
 # All three give the user the section + key + offending value, instead of a bare
@@ -213,8 +213,94 @@ materialize(::LinRoodAdvectionSpec, ::AbstractStructuredRuntimeRecipeStyle) = th
 
 Base.summary(s::LinRoodAdvectionSpec) = "LinRoodAdvectionSpec(order=$(s.order))"
 
+# =========================================================================
+# Chemistry
+# =========================================================================
+#
+# Chemistry is topology-independent, so its `materialize` dispatches on the run
+# `FT` (not a style) — `ExponentialDecay` converts each half-life → first-order
+# rate `log(2)/T` at FT precision.
+
+abstract type AbstractChemistrySpec end
+
+struct NoChemistrySpec <: AbstractChemistrySpec end
+
+# Carries the parsed (tracer-name → half-life-seconds) map as a NamedTuple of raw
+# Float64 values. The Symbol keys are the `[tracers.<name>]` names the run carries;
+# `ExponentialDecay.apply!` resolves them against `state.tracer_names` at call time.
+struct DecayChemistrySpec{NT <: NamedTuple} <: AbstractChemistrySpec
+    half_lives :: NT
+end
+
+function _parse_chemistry_kind(section)
+    raw = lowercase(String(get(section, "kind", "none")))
+    raw == "none"  && return :none
+    raw == "decay" && return :decay
+    throw(ArgumentError(
+        "Unknown [chemistry] kind: $(repr(raw)). Supported: none | decay"))
+end
+
+# A single half-life must be a positive number. The TOML parser normally hands us
+# a Real, but a config arriving from test/programmatic code (or a stray string)
+# would otherwise fail with a cryptic `MethodError(Float64, …)`; a zero/negative
+# value silently yields an Inf/negative decay rate. Validate at the boundary.
+function _spec_half_life(name, v)
+    # `Bool <: Real`, so guard against it explicitly — otherwise `rn222 = true`
+    # would pass `> 0` and silently store a 1-second half-life.
+    (v isa Real && !(v isa Bool)) || throw(ArgumentError(
+        "[chemistry.half_lives_seconds].$(name) must be a number; got $(repr(v))"))
+    v > 0 || throw(ArgumentError(
+        "[chemistry.half_lives_seconds].$(name) must be positive; got $(v)"))
+    return Float64(v)
+end
+
+"""
+    chemistry_spec(section) -> AbstractChemistrySpec
+
+Parse a `[chemistry]` section into a typed spec. `kind = "decay"` with an empty
+(or absent) `half_lives_seconds` table reduces to `NoChemistrySpec` — matching the
+old builder (an inert decay scheme is just no chemistry). Each half-life is
+validated positive at parse time (the old builder silently produced an Inf/negative
+decay rate for a non-positive value).
+"""
+function chemistry_spec(section)
+    kind = _parse_chemistry_kind(section)
+    kind === :none && return NoChemistrySpec()
+    hl = get(section, "half_lives_seconds", Dict{String, Any}())  # :decay
+    isempty(hl) && return NoChemistrySpec()
+    syms = Symbol[]
+    vals = Float64[]
+    for (k, v) in pairs(hl)
+        s = Symbol(k)
+        # Distinct TOML string keys can't collide, but a programmatic
+        # Dict{Any,Any} could carry both "rn222" and :rn222 → same Symbol. The old
+        # `NamedTuple{sym_keys}(vals)` threw on that; preserve the visible error
+        # rather than silently dropping a tracer.
+        s in syms && throw(ArgumentError(
+            "[chemistry.half_lives_seconds] has duplicate tracer name $(repr(s)) after " *
+            "symbolization (keys that differ only by string-vs-Symbol collide)."))
+        push!(syms, s)
+        push!(vals, _spec_half_life(k, v))
+    end
+    return DecayChemistrySpec(NamedTuple{Tuple(syms)}(Tuple(vals)))
+end
+
+# `FT` is unused for the no-op, but the signature must accept it so the
+# `materialize(spec, FT)` call site dispatches uniformly across both specs.
+materialize(::NoChemistrySpec, ::Type{FT}) where {FT} = NoChemistry()
+# Convert each half-life to `FT` BEFORE handing it to `ExponentialDecay`, exactly
+# as the old builder did (`Tuple(FT(v) …)`). `ExponentialDecay` then forms the rate
+# as `FT(log(2) / FT(T))`; pre-converting keeps the Float32 rounding bit-identical
+# (`log(2) / Float32(T)` ≠ `Float32(log(2) / Float64(T))` in the last ULP).
+materialize(s::DecayChemistrySpec, ::Type{FT}) where {FT} =
+    ExponentialDecay(FT; map(FT, s.half_lives)...)
+
+Base.summary(s::DecayChemistrySpec) =
+    "DecayChemistrySpec($(join(keys(s.half_lives), ", ")))"
+
 export AbstractConvectionSpec, AbstractCollabLUConvectionSpec, NoConvectionSpec,
        TM5ConvectionSpec, CMFMCConvectionSpec, CMFMCMatrixConvectionSpec
 export AbstractAdvectionSpec, UpwindAdvectionSpec, SlopesAdvectionSpec,
        PPMAdvectionSpec, NoAdvectionSpec, LinRoodAdvectionSpec
-export convection_spec, advection_spec, materialize
+export AbstractChemistrySpec, NoChemistrySpec, DecayChemistrySpec
+export convection_spec, advection_spec, chemistry_spec, materialize

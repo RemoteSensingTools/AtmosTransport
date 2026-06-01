@@ -18,7 +18,8 @@ using Test
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 const AT = AtmosTransport
-using .AT.Models: build_runtime_chemistry
+using .AT.Models: build_runtime_chemistry,
+    chemistry_spec, NoChemistrySpec, DecayChemistrySpec
 using .AT.State: field_value
 
 @testset "build_runtime_chemistry — dispatch" begin
@@ -69,6 +70,36 @@ using .AT.State: field_value
     @test length(op.tracer_names) == 2
     @test :rn222 in op.tracer_names
     @test :kr85 in op.tracer_names
+end
+
+@testset "ChemistrySpec parse" begin
+    @test chemistry_spec(Dict{String,Any}())          isa NoChemistrySpec  # default
+    @test chemistry_spec(Dict("kind" => "none"))      isa NoChemistrySpec
+    @test chemistry_spec(Dict("kind" => "decay"))     isa NoChemistrySpec  # empty table
+    s = chemistry_spec(Dict("kind" => "decay",
+                            "half_lives_seconds" => Dict("rn222" => 330350.4)))
+    @test s isa DecayChemistrySpec
+    @test s.half_lives.rn222 == 330350.4
+    @test_throws ArgumentError chemistry_spec(Dict("kind" => "photolysis"))
+    # parse-time boundary validation on half-lives (positive number).
+    @test_throws ArgumentError chemistry_spec(
+        Dict("kind" => "decay", "half_lives_seconds" => Dict("rn222" => 0.0)))
+    @test_throws ArgumentError chemistry_spec(
+        Dict("kind" => "decay", "half_lives_seconds" => Dict("rn222" => -1.0)))
+    @test_throws ArgumentError chemistry_spec(
+        Dict("kind" => "decay", "half_lives_seconds" => Dict("rn222" => "3d")))
+    # Bool <: Real, but a boolean half-life is a typo, not 1 second.
+    @test_throws ArgumentError chemistry_spec(
+        Dict("kind" => "decay", "half_lives_seconds" => Dict("rn222" => true)))
+
+    # Float32 decay rate is bit-identical to the old pre-conversion builder:
+    # ExponentialDecay forms FT(log(2)/FT(T)), so the half-life must be cast to
+    # FT *before* the division (not Float32(log(2)/Float64(T))).
+    T = 330350.4
+    op32 = build_runtime_chemistry(
+        Dict("chemistry" => Dict("kind" => "decay",
+                                  "half_lives_seconds" => Dict("rn222" => T))), Float32)
+    @test field_value(op32.decay_rates[1], ()) === Float32(log(2) / Float32(T))
 end
 
 @testset "RuntimePhysicsRecipe — chemistry field default + override" begin

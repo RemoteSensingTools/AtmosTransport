@@ -58,6 +58,7 @@ function _advection_section(cfg)
 end
 @inline _diffusion_section(cfg) = get(cfg, "diffusion", Dict{String,Any}())
 @inline _convection_section(cfg) = get(cfg, "convection", Dict{String,Any}())
+@inline _chemistry_section(cfg) = get(cfg, "chemistry", Dict{String,Any}())
 
 function _surface_flux_coupling(section)
     boundary = get(section, "surface_flux_boundary", false)
@@ -489,27 +490,13 @@ Supported `kind` values:
   symbol that the run is carrying (case-insensitive — the builder
   symbolizes the key as-is and `ExponentialDecay.apply!` resolves
   it against `state.tracer_names` at call time).
+
+Thin wrapper: parse the `[chemistry]` section into a typed
+`AbstractChemistrySpec` once (validated), then materialize at run precision
+`FT`. Spec types + parser live in `RuntimePhysicsSpecs.jl`.
 """
-function build_runtime_chemistry(cfg, ::Type{FT}) where FT
-    section = get(cfg, "chemistry", Dict{String, Any}())
-    kind = _config_symbol(section, "kind", "none")
-    if kind === :none
-        return NoChemistry()
-    elseif kind === :decay
-        hl = get(section, "half_lives_seconds", Dict{String, Any}())
-        isempty(hl) && return NoChemistry()
-        # Splat the (name → half-life) map as keyword arguments to
-        # `ExponentialDecay`'s outer constructor, which internally
-        # converts half-life → first-order decay rate `log(2)/T`.
-        sym_keys = Tuple(Symbol(k) for k in keys(hl))
-        vals = Tuple(FT(v) for v in values(hl))
-        nt = NamedTuple{sym_keys}(vals)
-        return ExponentialDecay(FT; nt...)
-    else
-        throw(ArgumentError(
-            "Unknown [chemistry] kind: $(kind). Supported: none | decay"))
-    end
-end
+build_runtime_chemistry(cfg, ::Type{FT}) where FT =
+    materialize(chemistry_spec(_chemistry_section(cfg)), FT)
 
 function configured_halo_width(cfg, scheme::AbstractAdvectionScheme)
     run_cfg = get(cfg, "run", Dict{String,Any}())

@@ -323,7 +323,7 @@ function process_era5_n320_to_cs_day(date::Date,
         # Build the surface/vdiff payload addition for the window whose pipeline
         # is `pipe` (the written window). VDIFF comes from the pipe's already-
         # regridded c180 winds/T/Q.
-        surface_vdiff_payload = function (pipe)
+        surface_vdiff_payload = function (pipe, win_idx)
             extra = NamedTuple()
             if do_surface
                 extra = merge(extra, (surface = (pblh = surf_pblh, ustar = surf_ustar,
@@ -342,10 +342,10 @@ function process_era5_n320_to_cs_day(date::Date,
                 # `entr_fallback` fraction flags a met problem to investigate.
                 if kzdiag.kvh_floored > 0
                     @warn @sprintf("  Window %2d/%d: :kz output guard floored %d non-finite cell(s) — investigate met input",
-                                   win, nwindow, kzdiag.kvh_floored)
+                                   win_idx, nwindow, kzdiag.kvh_floored)
                 elseif kzdiag.entr_fallback > 0
                     @info @sprintf("  Window %2d/%d: :kz entrainment fallback on %d/%d cell(s) (%.4f%%), max kz=%.1f m²/s",
-                                   win, nwindow, kzdiag.entr_fallback, kzdiag.total_columns,
+                                   win_idx, nwindow, kzdiag.entr_fallback, kzdiag.total_columns,
                                    100 * kzdiag.entr_fallback / kzdiag.total_columns, kzdiag.max_kz)
                 end
                 extra = merge(extra, (kz = kz_c180,))
@@ -628,7 +628,7 @@ function process_era5_n320_to_cs_day(date::Date,
                     entd = cur_pipe.tm5_c180_fields.entd,
                     detd = cur_pipe.tm5_c180_fields.detd))) :
                 base_payload
-            payload = merge(payload, surface_vdiff_payload(cur_pipe))
+            payload = merge(payload, surface_vdiff_payload(cur_pipe, win - 1))
             write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(win - 1, payload))
 
             @info @sprintf("    Window %2d/%d: wrote (steps=%d bal %.2fs pre=%.2e post=%.2e iter=%d) | read %2d (%.2fs)",
@@ -720,7 +720,7 @@ function process_era5_n320_to_cs_day(date::Date,
                 entd = cur_pipe.tm5_c180_fields.entd,
                 detd = cur_pipe.tm5_c180_fields.detd))) :
             final_base_payload
-        final_payload = merge(final_payload, surface_vdiff_payload(cur_pipe))
+        final_payload = merge(final_payload, surface_vdiff_payload(cur_pipe, nwindow))
         write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(nwindow, final_payload))
 
         worst_pre  = max(worst_pre,  bal_diag.max_pre_residual)

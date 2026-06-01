@@ -50,8 +50,49 @@ function _read_header(path::AbstractString)
     end
 end
 
+# Refuse to declare the contract on anything that isn't the intended target: a
+# cubed-sphere transport binary that actually carries the per-window substep
+# schedule the runtime keys on. `binary_schedule` is the panel-native CS substep
+# contract, and the runtime's schedule parser REQUIRES `steps_per_window_by_window`
+# — declaring the flag on a LL/RG binary, or on a CS binary that lacks the schedule
+# array, would make the driven loop throw at load (strictly worse than the
+# slow-but-correct unpatched state). Validate before touching the header.
+function _validate_patch_target(dict, path)
+    gt = get(dict, "grid_type", nothing)
+    String(something(gt, "")) == "cubed_sphere" || error(
+        "$(basename(path)): grid_type=$(repr(gt)) — this patcher only applies to " *
+        "cubed_sphere transport binaries (binary_schedule is the panel-native CS " *
+        "substep contract). Refusing to patch.")
+    haskey(dict, "steps_per_window_by_window") || error(
+        "$(basename(path)): header has no `steps_per_window_by_window` — the runtime's " *
+        "binary_schedule contract requires the per-window schedule array, so declaring " *
+        "it here would make the driven loop throw at load. This binary predates the " *
+        "schedule writer; regenerate it instead of patching.")
+    # Mirror the exact invariants `_parse_steps_per_window_schedule` enforces at
+    # load (header.jl), so a successful patch GUARANTEES the runtime will accept the
+    # schedule — never the "patched but throws at load" state for a malformed one.
+    sched = collect(dict["steps_per_window_by_window"])
+    all(x -> x isa Real && x > 0 && x == floor(x), sched) || error(
+        "$(basename(path)): `steps_per_window_by_window` must be all positive integers; " *
+        "got $(sched). Refusing to declare a contract over a broken schedule.")
+    nwindow = get(dict, "nwindow", nothing)
+    nwindow === nothing && error(
+        "$(basename(path)): header lacks `nwindow`; cannot verify the schedule length.")
+    length(sched) == Int(nwindow) || error(
+        "$(basename(path)): schedule length $(length(sched)) ≠ nwindow $(nwindow) — the " *
+        "runtime rejects this. Regenerate the binary instead of patching.")
+    spw = get(dict, "steps_per_window", nothing)
+    spw === nothing && error(
+        "$(basename(path)): header lacks `steps_per_window`; cannot verify the schedule maximum.")
+    Int(spw) == Int(maximum(sched)) || error(
+        "$(basename(path)): steps_per_window=$(spw) ≠ maximum(schedule)=$(maximum(sched)) — " *
+        "the runtime requires equality. Regenerate the binary instead of patching.")
+    return nothing
+end
+
 function patch!(path::AbstractString; apply::Bool)
     dict, header_bytes = _read_header(path)
+    _validate_patch_target(dict, path)
     cur = get(dict, CONTRACT_KEY, nothing)
     steps = get(dict, "steps_per_window", "?")
     if cur == CONTRACT_VAL

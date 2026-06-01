@@ -180,13 +180,12 @@ end
 
         @test model_ctrl.state.tracers_raw == rm_before
         @test model_conv.state.tracers_raw != rm_before
-        # CMFMCConvection is the GCHP-faithful RAS-like path; it is NOT
-        # conservation-by-construction. The reference audit (memo
-        # convection_reference_audit_2026_05_24) documents drift ~10⁻¹ on a
-        # 3-day inert-tracer run; this 1-step synthetic shows ~2 %. The
-        # conservation-by-construction variant is CMFMCMatrixConvection
-        # (~10⁻⁷ drift), exercised in test_cmfmc_matrix_convection.jl.
-        @test isapprox(sum(model_conv.state.tracers_raw), total_before; rtol = 0.05)
+        # CMFMCConvection is now the GCHP RAS scheme written in true interface-
+        # flux-divergence form (cmfmc_kernels.jl Pass 2): every interior interface
+        # flux telescopes, so column dry-tracer mass is conserved to machine
+        # precision — no fixer, no matrix. (Previously a simplified 2-term
+        # tendency drifted ~10⁻¹.) The non-conservative GCHP clamp is omitted.
+        @test isapprox(sum(model_conv.state.tracers_raw), total_before; rtol = 1e-12)
         @test model_conv.state.tracers.CO2[1, 1, Nz] < rm_before[1, 1, Nz, 1]
         @test maximum(model_conv.state.tracers.CO2[:, :, 1:(Nz - 1)]) > 0
     end
@@ -221,10 +220,10 @@ end
 
         step!(model, FT(1800))
 
-        # CMFMCConvection drift is physical, not roundoff. See the LL testset
-        # above for the audit-memo citation; CMFMCMatrixConvection is the
-        # mass-conserving variant.
-        @test abs(sum(model.state.tracers_raw) - sum(rm_before)) / sum(rm_before) < 0.05
+        # Reduced-Gaussian CMFMCConvection conserves column mass to machine
+        # precision via the same interface-flux-divergence form (see the LL
+        # testset above for the derivation).
+        @test abs(sum(model.state.tracers_raw) - sum(rm_before)) / sum(rm_before) < 1e-12
         @test model.state.tracers_raw != rm_before
     end
 end

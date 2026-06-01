@@ -313,25 +313,19 @@ end
                 qc_below = qc
             end
 
-            q_env_prev = zero(FT)
-            for k in 1:Nz
+            # Pass 2: conservative interface-flux divergence (production form).
+            # Φ(k) = cmfmc[k]·(qc[k] − q_env_orig(k−1)); update by Φ(k+1) − Φ(k);
+            # cloud-base bottom interface closed (Φ = 0); loop k = 1 … cldbase.
+            q_env_above = zero(FT)
+            for k in 1:cldbase_k
                 m_k = air_mass_panel[ii, jj, k]
                 q_k = m_k > tiny ? rm_panel[ii, jj, k] / m_k : zero(FT)
                 bmass = m_k / cell_area
-                cmfmc_top = cmfmc_panel[i, j, k]
-                dtrain_k = _cmfmc_panel_dtrain(cmfmc_panel, dtrain_panel,
-                                               i, j, k, Val(has_dtrain))
-                qc_post = qc_scratch_panel[ii, jj, k]
-                q_new = if k > 1 && bmass > tiny
-                    q_k + (dt_ft / bmass) *
-                          (cmfmc_top * (q_env_prev - q_k) +
-                           dtrain_k * (qc_post - q_k))
-                elseif bmass > tiny
-                    q_k + (dt_ft / bmass) * dtrain_k * (qc_post - q_k)
-                else
-                    q_k
-                end
-                q_env_prev = q_k
+                phi_top = cmfmc_panel[i, j, k] * (qc_scratch_panel[ii, jj, k] - q_env_above)
+                phi_bot = k < cldbase_k ?
+                    cmfmc_panel[i, j, k + 1] * (qc_scratch_panel[ii, jj, k + 1] - q_k) : zero(FT)
+                q_new = bmass > tiny ? q_k + (dt_ft / bmass) * (phi_bot - phi_top) : q_k
+                q_env_above = q_k
                 rm_panel[ii, jj, k] = q_new * m_k
             end
         end
@@ -380,43 +374,44 @@ end
             lambda_qc_panel[ii, jj, k] = zero(FT)
         end
 
-        # ── Pass 2 adjoint ─────────────────────────────────────────
-        # Forward q_new[k] = q_post0[k] · (1 - α·(cmfmc_top + dtrain))
-        #                  + α · cmfmc_top · q_post0[k-1]   (for k > 1)
-        #                  + α · dtrain · qc_scratch[k]
-        # with α = dt / bmass. The adjoint walks k = 1..Nz so each
-        # iteration reads `lambda_panel[k]` (= λ_q_new[k]) before any
-        # later iteration writes a cross-contribution into it. The
-        # cross-contributions to λ_q_post0[k-1] accumulate via `+=`
-        # after iteration k-1 has already finalized that slot.
-        for k in 1:Nz
+        # ── Pass 2 adjoint (transpose of the flux-divergence update) ──
+        # Forward (k = 1 … cldbase): q_new[k] = q_post0[k]·(1 − α·cbot)
+        #   + α·cb·q_post0[k−1] − α·cb·qc[k] + α·cbot·qc[k+1],
+        # with α = dt/bmass, cb = cmfmc[k] (top interface), cbot = cmfmc[k+1]
+        # (bottom interface; 0 at the cloud base, which Pass 0 already closed).
+        # For k > cldbase the forward leaves q_post0 untouched → adjoint identity
+        # (λ_panel[k] kept as-is). λ_qc accumulates from BOTH q_new[k] (the
+        # −α·cb·qc[k] term) and q_new[k−1] (the +α·cbot·qc[k] term), so it is +=
+        # into the zeroed scratch. The self-read of λ_panel[k] precedes any
+        # cross-write into it (which only ever comes from iteration k+1).
+        cldbase_k_p2 = _cmfmc_cloud_base(cmfmc_panel, i, j, Nz, tiny)
+        for k in 1:cldbase_k_p2
             m_k = air_mass_panel[ii, jj, k]
             lambda_out = lambda_panel[ii, jj, k]
             lambda_panel[ii, jj, k] = zero(FT)
             if m_k > tiny
                 lambda_qnew = lambda_out * m_k
                 bmass = m_k / cell_area
-                dtrain_k = _cmfmc_panel_dtrain(cmfmc_panel, dtrain_panel,
-                                               i, j, k, Val(has_dtrain))
                 if bmass > tiny
                     alpha = dt_ft / bmass
+                    cb   = cmfmc_panel[i, j, k]
+                    cbot = k < cldbase_k_p2 ? cmfmc_panel[i, j, k + 1] : zero(FT)
+                    # ∂q_new[k]/∂q_post0[k] = 1 − α·cbot
+                    lambda_panel[ii, jj, k] +=
+                        lambda_qnew * (one(FT) - alpha * cbot) / m_k
+                    # ∂q_new[k]/∂q_post0[k−1] = α·cb  (cb = 0 at k = 1)
                     if k > 1
-                        cmfmc_top = cmfmc_panel[i, j, k]
-                        lambda_panel[ii, jj, k] +=
-                            lambda_qnew *
-                            (one(FT) - alpha * (cmfmc_top + dtrain_k)) / m_k
                         m_prev = air_mass_panel[ii, jj, k - 1]
                         if m_prev > tiny
                             lambda_panel[ii, jj, k - 1] +=
-                                lambda_qnew * alpha * cmfmc_top / m_prev
+                                lambda_qnew * alpha * cb / m_prev
                         end
-                        lambda_qc_panel[ii, jj, k] =
-                            lambda_qnew * alpha * dtrain_k
-                    else
-                        lambda_panel[ii, jj, k] +=
-                            lambda_qnew * (one(FT) - alpha * dtrain_k) / m_k
-                        lambda_qc_panel[ii, jj, k] =
-                            lambda_qnew * alpha * dtrain_k
+                    end
+                    # ∂q_new[k]/∂qc[k] = −α·cb
+                    lambda_qc_panel[ii, jj, k] += lambda_qnew * (-(alpha * cb))
+                    # ∂q_new[k]/∂qc[k+1] = α·cbot  (only k < cldbase)
+                    if k < cldbase_k_p2
+                        lambda_qc_panel[ii, jj, k + 1] += lambda_qnew * alpha * cbot
                     end
                 else
                     lambda_panel[ii, jj, k] += lambda_qnew / m_k

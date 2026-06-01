@@ -106,65 +106,6 @@ on a solubility trait parameter.
     return qc, zero(qc)
 end
 
-"""
-    _cmfmc_apply_tendency(q_env, q_above, qc_post_mix, cmfmc_above,
-                          dtrain, bmass, dt)
-        -> q_new
-
-Apply one sub-step's tendency to the environment mixing ratio at the
-current layer.
-
-# Inert two-term form
-
-The GCHP four-term tendency from `convection_mod.F90:DO_RAS_CLOUD_CONVECTION`
-is algebraically equivalent to the two-term form below for inert tracers
-(`QC_PRES = old_QC`).
-
-```
-tsum = cmfmc_above * (q_above - q_env) + dtrain * (qc_post_mix - q_env)
-q_new = q_env + (dt / bmass) * tsum
-```
-
-- `cmfmc_above * (q_above - q_env)` — compensating subsidence at the
-  top interface: environment air from the layer above (q_above)
-  descends to replace what the updraft removed.
-- `dtrain * (qc_post_mix - q_env)` — in-cloud air at `qc_post_mix`
-  detrained into the environment.
-
-For the top-down tendency pass, `q_above` is the PRE-tendency value
-at layer k-1 (saved by the caller before updating); simultaneous-
-update semantics match GCHP.
-
-A future wet-deposition plan adds a method on this helper accepting
-`(qc_pres, qc_scav)` so the four-term form with scavenging is
-restored without rewriting the kernel.
-
-# Arguments
-
-- `q_env` — environment mixing ratio at current layer (pre-update).
-- `q_above` — environment mixing ratio at the layer above
-  (PRE-tendency value).
-- `qc_post_mix` — updraft mixing ratio at current layer (post-mix,
-  from Pass 1).
-- `cmfmc_above` — updraft mass flux at the TOP interface of the
-  current layer (leaves the layer going up) [kg / m² / s].
-- `dtrain` — detrainment from updraft to environment at the current
-  layer [kg / m² / s].
-- `bmass` — layer air mass per unit horizontal area [kg / m²].
-- `dt` — sub-step length [s].
-
-NO positivity clamp. The kernel is linear in `q_env`, `q_above`,
-`qc_post_mix` — tiny
-negativities are absorbed by the global mass fixer, not by a
-nonlinear clamp that would break the adjoint-identity property.
-"""
-@inline function _cmfmc_apply_tendency(q_env, q_above, qc_post_mix,
-                                        cmfmc_above, dtrain, bmass, dt)
-    tsum = cmfmc_above * (q_above - q_env) +
-           dtrain      * (qc_post_mix - q_env)
-    return q_env + (dt / bmass) * tsum
-end
-
 # =========================================================================
 # CFL sub-cycling
 # =========================================================================
@@ -439,28 +380,24 @@ end
             qc_below = qc
         end
 
-        q_env_prev = zero(FT)
+        # Pass 2: conservative interface-flux divergence over the cloud
+        # (k = 1 … cldbase). See the LL kernel for the full derivation —
+        # Φ(k) = cmfmc[k]·(qc[k] − q_env_orig(k−1)), update by Φ(k+1) − Φ(k),
+        # cloud-base bottom interface closed (Φ = 0). Telescopes to exact
+        # column-mass conservation.
+        q_env_above = zero(FT)
 
-        for k in 1:Nz
+        for k in 1:cldbase_k
             m_k = air_mass[ii, jj, k]
             q_k = m_k > tiny ? tracers_raw[ii, jj, k, t_idx] / m_k : zero(FT)
-
             bmass = m_k / cell_area
-            cmfmc_top = cmfmc[i, j, k]
-            dtrain_k = has_dtrain ? dtrain[i, j, k] : zero(FT)
-            qc_post = qc_scratch[ii, jj, k]
 
-            if k > 1 && bmass > tiny
-                q_new = _cmfmc_apply_tendency(q_k, q_env_prev, qc_post,
-                                              cmfmc_top, dtrain_k, bmass, dt)
-            elseif bmass > tiny
-                q_new = _cmfmc_apply_tendency(q_k, q_k, qc_post,
-                                              zero(FT), dtrain_k, bmass, dt)
-            else
-                q_new = q_k
-            end
+            phi_top = cmfmc[i, j, k] * (qc_scratch[ii, jj, k] - q_env_above)
+            phi_bot = k < cldbase_k ?
+                cmfmc[i, j, k + 1] * (qc_scratch[ii, jj, k + 1] - q_k) : zero(FT)
 
-            q_env_prev = q_k
+            q_new = bmass > tiny ? q_k + (dt / bmass) * (phi_bot - phi_top) : q_k
+            q_env_above = q_k
             tracers_raw[ii, jj, k, t_idx] = q_new * m_k
         end
     end
@@ -602,34 +539,37 @@ end
             qc_below = qc
         end
 
-        # ── Pass 2: environment tendency, top-to-bottom (1 → Nz) ──
-        # In our convention, "top-to-bottom" = increasing k. Subsidence
-        # uses the PRE-tendency q at layer k-1 — saved in q_env_prev
-        # before the layer-k update.
-        q_env_prev = zero(FT)
+        # ── Pass 2: conservative interface-flux divergence over the cloud ──
+        # The GCHP 4-term level balance (convection_mod.F90:991-999) is a flux
+        # divergence. Define ONE net upward tracer flux per interface,
+        #   Φ(k) = cmfmc[k] · (qc[k] − q_env_orig(k−1)),
+        # (in-cloud updraft up minus compensating subsidence down) and update
+        # each layer by Φ(k+1) − Φ(k). Every interior interface flux then appears
+        # once with each sign, so the column sum telescopes to zero — exact
+        # (machine-precision) conservation, the GCHP scheme written in true
+        # flux form. dtrain enters only through `cmout`/`qc` in Pass 1 (matching
+        # GCHP, whose T-terms use CMFMC, not CMOUT); there is no separate dtrain
+        # tendency term. The cloud-base bottom interface cmfmc[cldbase+1] is
+        # already settled by the conservative sub-cloud step above, so it is
+        # treated as closed (Φ = 0) and Pass 2 runs only over the cloud
+        # (k = 1 … cldbase). `q_env_above` carries the PRE-tendency environment
+        # value of the layer above; cmfmc[1] = 0 at the TOA, so the k=1 top flux
+        # vanishes. The deliberate non-conservative GCHP clamp (Q+DELQ<0 → −Q,
+        # convection_mod.F90:1002-1004) is omitted to keep this exactly
+        # conservative and the adjoint linear.
+        q_env_above = zero(FT)
 
-        for k in 1:Nz
+        for k in 1:cldbase_k
             m_k = air_mass[i, j, k]
             q_k = m_k > tiny ? tracers_raw[i, j, k, t_idx] / m_k : zero(FT)
-
             bmass = m_k / cell_area_j
-            cmfmc_top = cmfmc[i, j, k]    # flux out the top, going up
-            dtrain_k  = has_dtrain ? dtrain[i, j, k] : zero(FT)
-            qc_post   = qc_scratch[i, j, k]
 
-            if k > 1 && bmass > tiny
-                q_new = _cmfmc_apply_tendency(q_k, q_env_prev, qc_post,
-                                               cmfmc_top, dtrain_k, bmass, dt)
-            elseif bmass > tiny
-                # Top layer (k=1): no q_above — the subsidence term
-                # reduces to zero (legacy `if k > 1` guard at :188-189).
-                q_new = _cmfmc_apply_tendency(q_k, q_k, qc_post,
-                                               zero(FT), dtrain_k, bmass, dt)
-            else
-                q_new = q_k
-            end
+            phi_top = cmfmc[i, j, k] * (qc_scratch[i, j, k] - q_env_above)
+            phi_bot = k < cldbase_k ?
+                cmfmc[i, j, k + 1] * (qc_scratch[i, j, k + 1] - q_k) : zero(FT)
 
-            q_env_prev = q_k     # save PRE-update for next level's subsidence
+            q_new = bmass > tiny ? q_k + (dt / bmass) * (phi_bot - phi_top) : q_k
+            q_env_above = q_k     # PRE-tendency env value, for next level's Φ
             tracers_raw[i, j, k, t_idx] = q_new * m_k
         end
     end
@@ -729,28 +669,24 @@ end
             qc_below = qc
         end
 
-        q_env_prev = zero(FT)
+        # Pass 2: conservative interface-flux divergence over the cloud
+        # (k = 1 … cldbase). See the LL kernel for the full derivation —
+        # Φ(k) = cmfmc[k]·(qc[k] − q_env_orig(k−1)), update by Φ(k+1) − Φ(k),
+        # cloud-base bottom interface closed (Φ = 0). Telescopes to exact
+        # column-mass conservation.
+        q_env_above = zero(FT)
 
-        for k in 1:Nz
+        for k in 1:cldbase_k
             m_k = air_mass[c, k]
             q_k = m_k > tiny ? tracers_raw[c, k, t_idx] / m_k : zero(FT)
-
             bmass = m_k / cell_area
-            cmfmc_top = cmfmc[c, k]
-            dtrain_k = has_dtrain ? dtrain[c, k] : zero(FT)
-            qc_post = qc_scratch[c, k]
 
-            if k > 1 && bmass > tiny
-                q_new = _cmfmc_apply_tendency(q_k, q_env_prev, qc_post,
-                                              cmfmc_top, dtrain_k, bmass, dt)
-            elseif bmass > tiny
-                q_new = _cmfmc_apply_tendency(q_k, q_k, qc_post,
-                                              zero(FT), dtrain_k, bmass, dt)
-            else
-                q_new = q_k
-            end
+            phi_top = cmfmc[c, k] * (qc_scratch[c, k] - q_env_above)
+            phi_bot = k < cldbase_k ?
+                cmfmc[c, k + 1] * (qc_scratch[c, k + 1] - q_k) : zero(FT)
 
-            q_env_prev = q_k
+            q_new = bmass > tiny ? q_k + (dt / bmass) * (phi_bot - phi_top) : q_k
+            q_env_above = q_k
             tracers_raw[c, k, t_idx] = q_new * m_k
         end
     end

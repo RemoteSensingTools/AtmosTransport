@@ -40,9 +40,6 @@ const CSPhysicsRecipe = RuntimePhysicsRecipe
 # the CS grid. Historical flat-411 behaviour is now expressed as
 # `kind = "uniform" background = 4.11e-4`.
 
-@inline _config_symbol(section, key::AbstractString, default::AbstractString) =
-    Symbol(lowercase(String(get(section, key, default))))
-
 function _advection_section(cfg)
     run = get(cfg, "run", Dict{String,Any}())
     if haskey(cfg, "advection")
@@ -59,13 +56,6 @@ end
 @inline _diffusion_section(cfg) = get(cfg, "diffusion", Dict{String,Any}())
 @inline _convection_section(cfg) = get(cfg, "convection", Dict{String,Any}())
 @inline _chemistry_section(cfg) = get(cfg, "chemistry", Dict{String,Any}())
-
-function _surface_flux_coupling(section)
-    boundary = get(section, "surface_flux_boundary", false)
-    boundary isa Bool || throw(ArgumentError(
-        "[diffusion].surface_flux_boundary must be true or false; got $(boundary)"))
-    return boundary ? DiffusiveSurfaceFluxBoundary() : SplitSurfaceFluxCoupling()
-end
 
 @inline _runtime_recipe_style(style::AbstractRuntimeRecipeStyle) = style
 @inline _runtime_recipe_style(::AtmosGrid{<:LatLonMesh}) = LatLonRuntimeRecipeStyle()
@@ -104,40 +94,21 @@ function build_runtime_diffusion(cfg, context, ::Type{FT}) where FT
     return build_runtime_diffusion(cfg, _runtime_recipe_style(context), FT, context)
 end
 
-function build_runtime_diffusion(cfg, style::AbstractRuntimeRecipeStyle, ::Type{FT},
-                                 context = nothing) where FT
-    section = _diffusion_section(cfg)
-    # Empty / absent section is explicit "no diffusion".
-    isempty(section) && return NoDiffusion()
-    # Reject the legacy `type = "..."` schema rather than silently mapping
-    # it to NoDiffusion. Configs that said `type = "pbl"` / `"nonlocal_pbl"`
-    # etc. expected diffusion to run; the silent fall-through hid that for
-    # months. Migrate to `kind` — supported kinds today are "none",
-    # "constant", and the named PBL/VDIFF closures. (Codex Section B P0 fix.)
-    haskey(section, "type") && !haskey(section, "kind") &&
-        throw(ArgumentError(
-            "[diffusion] uses legacy `type = \"$(section["type"])\"`; rename to " *
-            "`kind = \"...\"`. Supported kinds: \"none\", \"constant\", " *
-            "\"tm5_beljaars_viterbo_local_kz\", " *
-            "\"geoschem_holtslag_boville_vdiff\"."))
-    haskey(section, "kind") ||
-        throw(ArgumentError(
-            "[diffusion] section is present but has no `kind` key. " *
-            "Set `kind = \"none\"`, `kind = \"constant\"`, " *
-            "`kind = \"tm5_beljaars_viterbo_local_kz\"`, or " *
-            "`kind = \"geoschem_holtslag_boville_vdiff\"`."))
-    return build_runtime_diffusion(style,
-                                   Val(_config_symbol(section, "kind", "none")),
-                                   section,
-                                   FT,
-                                   context)
-end
+# Thin wrapper: parse the `[diffusion]` section into a typed `AbstractDiffusionSpec`
+# once (validating the legacy `type=`/missing-`kind`/unknown-kind cases), then
+# materialize. Diffusion is the one family whose `materialize` needs `style` (Kz-field
+# rank / CS-only gating), `FT` (precision), AND the runtime `context` (driver/reader,
+# for the Kz-cache shape + binary-capability gate). The spec stays context-free; the
+# context work happens in `materialize`, which calls the helpers below. Spec types +
+# parser + `materialize` live in `RuntimePhysicsSpecs.jl`.
+build_runtime_diffusion(cfg, style::AbstractRuntimeRecipeStyle, ::Type{FT},
+                        context = nothing) where FT =
+    materialize(diffusion_spec(_diffusion_section(cfg)), style, FT, context)
 
-build_runtime_diffusion(::AbstractRuntimeRecipeStyle, ::Val{:none}, _section, ::Type{FT}) where FT =
-    NoDiffusion()
-build_runtime_diffusion(style::AbstractRuntimeRecipeStyle, ::Val{:none}, section,
-                        ::Type{FT}, _context) where FT =
-    build_runtime_diffusion(style, Val(:none), section, FT)
+# --- Context helpers the diffusion `materialize` methods call ----------------
+# Kept here (not in RuntimePhysicsSpecs.jl) because they resolve concrete
+# grid/reader/driver types; tests stub them via `AtmosTransport.Models._runtime_has_*`
+# and `AtmosTransport.Models._pbl_cache_shape`.
 
 @inline _constant_runtime_kz_field(::LatLonRuntimeRecipeStyle, value::FT) where FT =
     ConstantField{FT, 3}(value)
@@ -145,19 +116,6 @@ build_runtime_diffusion(style::AbstractRuntimeRecipeStyle, ::Val{:none}, section
     ConstantField{FT, 2}(value)
 @inline _constant_runtime_kz_field(::CubedSphereRuntimeRecipeStyle, value::FT) where FT =
     CubedSphereField(ntuple(_ -> ConstantField{FT, 3}(value), 6))
-
-function build_runtime_diffusion(style::AbstractRuntimeRecipeStyle,
-                                 ::Val{:constant},
-                                 section,
-                                 ::Type{FT}) where FT
-    value = FT(get(section, "value", 1.0))
-    return ImplicitVerticalDiffusion(;
-        kz_field = _constant_runtime_kz_field(style, value),
-        surface_flux_coupling = _surface_flux_coupling(section))
-end
-build_runtime_diffusion(style::AbstractRuntimeRecipeStyle, ::Val{:constant}, section,
-                        ::Type{FT}, _context) where FT =
-    build_runtime_diffusion(style, Val(:constant), section, FT)
 
 function _pbl_cache_shape(context)
     throw(ArgumentError(
@@ -169,138 +127,23 @@ _pbl_cache_shape(reader::CubedSphereBinaryReader) =
 _pbl_cache_shape(driver::CubedSphereTransportDriver) =
     (driver.reader.header.Nc, driver.reader.header.Nc, driver.reader.header.nlevel)
 
-function _runtime_has_surface(_context)
-    return false
-end
+@inline _runtime_has_surface(_context) = false
 _runtime_has_surface(reader::TransportBinaryReader) = MetDrivers.has_surface(reader)
 _runtime_has_surface(reader::CubedSphereBinaryReader) = MetDrivers.has_surface(reader)
 _runtime_has_surface(driver::TransportBinaryDriver) = MetDrivers.has_surface(driver.reader)
 _runtime_has_surface(driver::CubedSphereTransportDriver) = MetDrivers.has_surface(driver.reader)
 
-function _runtime_has_gchp_vdiff(_context)
-    return false
-end
+@inline _runtime_has_gchp_vdiff(_context) = false
 _runtime_has_gchp_vdiff(reader::CubedSphereBinaryReader) =
     MetDrivers.has_surface(reader) && MetDrivers.has_vdiff_fields(reader)
 _runtime_has_gchp_vdiff(driver::CubedSphereTransportDriver) =
     _runtime_has_gchp_vdiff(driver.reader)
-
-function build_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
-                                 ::Val{:pbl},
-                                 _section,
-                                 ::Type{FT},
-                                 context) where FT
-    _runtime_has_surface(context) ||
-        throw(ArgumentError(
-            "[diffusion] kind = \"pbl\" requires pblh/ustar/pbl_hflux/t2m sections " *
-            "in the cubed-sphere transport binary. Regenerate the binary with " *
-            "include_surface=true."))
-    Nc1, Nc2, Nz = _pbl_cache_shape(context)
-    host_cache = ntuple(_ -> zeros(FT, Nc1, Nc2, Nz), 6)
-    return ImplicitVerticalDiffusion(;
-        kz_field = WindowPBLKzField(host_cache),
-        surface_flux_coupling = _surface_flux_coupling(_section))
-end
-
-build_runtime_diffusion(style::AbstractRuntimeRecipeStyle,
-                        ::Val{:tm5_beljaars_viterbo_local_kz},
-                        section,
-                        ::Type{FT},
-                        context) where FT =
-    build_runtime_diffusion(style, Val(:pbl), section, FT, context)
-
-build_runtime_diffusion(style::AbstractRuntimeRecipeStyle,
-                        ::Val{:beljaars_viterbo_local_kz},
-                        section,
-                        ::Type{FT},
-                        context) where FT =
-    build_runtime_diffusion(style, Val(:pbl), section, FT, context)
-
-function build_runtime_diffusion(::AbstractRuntimeRecipeStyle,
-                                 ::Val{:pbl},
-                                 _section,
-                                 ::Type{FT},
-                                 _context) where FT
-    throw(ArgumentError(
-        "[diffusion] kind = \"pbl\" is currently implemented for cubed-sphere " *
-        "runtime binaries with pblh/ustar/pbl_hflux/t2m sections."))
-end
-
-function build_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
-                                 ::Val{:geoschem_holtslag_boville_vdiff},
-                                 section,
-                                 ::Type{FT},
-                                 context) where FT
-    _runtime_has_gchp_vdiff(context) ||
-        throw(ArgumentError(
-            "[diffusion] kind = \"geoschem_holtslag_boville_vdiff\" requires " *
-            "pblh/ustar/pbl_hflux/t2m and vdiff_u/vdiff_v/vdiff_t/vdiff_qv " *
-            "sections in the cubed-sphere transport binary. Regenerate with " *
-            "include_surface=true and include_gchp_vdiff=true."))
-    Nc1, Nc2, Nz = _pbl_cache_shape(context)
-    host_cache = ntuple(_ -> zeros(FT, Nc1, Nc2, Nz), 6)
-    return ImplicitVerticalDiffusion(;
-        kz_field = LocalHoltslagBovilleKzField(host_cache),
-        surface_flux_coupling = _surface_flux_coupling(section))
-end
-
-function build_runtime_diffusion(::AbstractRuntimeRecipeStyle,
-                                 ::Val{:geoschem_holtslag_boville_vdiff},
-                                 _section,
-                                 ::Type{FT},
-                                 _context) where FT
-    throw(ArgumentError(
-        "[diffusion] kind = \"geoschem_holtslag_boville_vdiff\" is currently " *
-        "implemented for cubed-sphere runtime binaries with GCHP VDIFF payloads."))
-end
-
-# --- Precomputed TM5 bldiff diffusivity (`:kz` payload) --------------------
 
 _runtime_has_precomputed_kz(_context) = false
 _runtime_has_precomputed_kz(reader::CubedSphereBinaryReader) =
     :kz in reader.header.payload_sections
 _runtime_has_precomputed_kz(driver::CubedSphereTransportDriver) =
     _runtime_has_precomputed_kz(driver.reader)
-
-function build_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
-                                 ::Val{:precomputed_kz},
-                                 section,
-                                 ::Type{FT},
-                                 context) where FT
-    _runtime_has_precomputed_kz(context) ||
-        throw(ArgumentError(
-            "[diffusion] kind = \"precomputed_kz\" requires a `:kz` section in " *
-            "the cubed-sphere transport binary (the preprocessor's TM5 bldiff " *
-            "eddy diffusivity). Regenerate with include_tm5_diffusion=true."))
-    Nc1, Nc2, Nz = _pbl_cache_shape(context)
-    host_cache = ntuple(_ -> zeros(FT, Nc1, Nc2, Nz), 6)
-    return ImplicitVerticalDiffusion(;
-        kz_field = PrecomputedCSKzField(host_cache),
-        surface_flux_coupling = _surface_flux_coupling(section))
-end
-
-function build_runtime_diffusion(::AbstractRuntimeRecipeStyle,
-                                 ::Val{:precomputed_kz},
-                                 _section,
-                                 ::Type{FT},
-                                 _context) where FT
-    throw(ArgumentError(
-        "[diffusion] kind = \"precomputed_kz\" is implemented for cubed-sphere " *
-        "runtime binaries carrying a `:kz` payload."))
-end
-
-function build_runtime_diffusion(::AbstractRuntimeRecipeStyle,
-                                 ::Val{name},
-                                 _section,
-                                 ::Type{FT}) where {name, FT}
-    throw(ArgumentError(
-        "Unknown [diffusion] kind: $(name). Supported: none | constant | " *
-        "tm5_beljaars_viterbo_local_kz | geoschem_holtslag_boville_vdiff | " *
-        "precomputed_kz | pbl (legacy alias)"))
-end
-build_runtime_diffusion(style::AbstractRuntimeRecipeStyle, ::Val{name}, section,
-                        ::Type{FT}, _context) where {name, FT} =
-    build_runtime_diffusion(style, Val(name), section, FT)
 
 function build_runtime_convection(cfg, context)
     return build_runtime_convection(cfg, _runtime_recipe_style(context))
@@ -388,6 +231,17 @@ function validate_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
         behavior. See memory/diffusion_full_pipeline_audit_2026_05_25.md (D3).
         """
     end
+    return nothing
+end
+
+function validate_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
+                                    ::ImplicitVerticalDiffusion{FT, <:PrecomputedCSKzField},
+                                    context) where FT
+    _runtime_has_precomputed_kz(context) ||
+        throw(ArgumentError(
+            "[diffusion] kind = \"precomputed_kz\" requires a `:kz` section in " *
+            "every cubed-sphere transport binary (the preprocessor's TM5 bldiff " *
+            "eddy diffusivity). Regenerate with include_tm5_diffusion=true."))
     return nothing
 end
 

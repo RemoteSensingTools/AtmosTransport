@@ -13,7 +13,10 @@ using .AtmosTransport.Models:
     build_cs_diffusion, build_cs_convection, build_cs_physics_recipe,
     convection_spec, TM5ConvectionSpec, CMFMCMatrixConvectionSpec,
     advection_spec, UpwindAdvectionSpec, SlopesAdvectionSpec, PPMAdvectionSpec,
-    NoAdvectionSpec, LinRoodAdvectionSpec
+    NoAdvectionSpec, LinRoodAdvectionSpec,
+    diffusion_spec, NoDiffusionSpec, ConstantDiffusionSpec,
+    WindowPBLKzDiffusionSpec, HoltslagBovilleVdiffDiffusionSpec,
+    PrecomputedKzDiffusionSpec, materialize
 using .AtmosTransport.State.Fields:
     CubedSphereField, WindowPBLKzField, GCHPHoltslagBovilleKzField,
     PrecomputedCSKzField, field_value, panel_field
@@ -237,6 +240,32 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
             Float64)
         @test op_rg isa ImplicitVerticalDiffusion
         @test field_value(op_rg.kz_field, (1, 1)) == 1.5
+    end
+
+    @testset "DiffusionSpec parse + materialize" begin
+        @test diffusion_spec(Dict{String,Any}())             isa NoDiffusionSpec  # empty
+        @test diffusion_spec(Dict("kind" => "none"))         isa NoDiffusionSpec
+        @test diffusion_spec(Dict("kind" => "constant", "value" => 2.5)) isa ConstantDiffusionSpec
+        @test diffusion_spec(Dict("kind" => "constant", "value" => 2.5)).value == 2.5
+        # the three CS closures + their legacy aliases.
+        @test diffusion_spec(Dict("kind" => "pbl")) isa WindowPBLKzDiffusionSpec
+        @test diffusion_spec(Dict("kind" => "beljaars_viterbo_local_kz")) isa WindowPBLKzDiffusionSpec
+        @test diffusion_spec(Dict("kind" => "tm5_beljaars_viterbo_local_kz")) isa WindowPBLKzDiffusionSpec
+        @test diffusion_spec(Dict("kind" => "geoschem_holtslag_boville_vdiff")) isa HoltslagBovilleVdiffDiffusionSpec
+        @test diffusion_spec(Dict("kind" => "precomputed_kz")) isa PrecomputedKzDiffusionSpec
+        # surface_flux_boundary flows onto the spec.
+        @test diffusion_spec(Dict("kind" => "pbl", "surface_flux_boundary" => true)).surface_flux_boundary
+        @test !diffusion_spec(Dict("kind" => "pbl")).surface_flux_boundary
+        # parse-time validation (matches the old builder).
+        @test_throws ArgumentError diffusion_spec(Dict("kind" => "magic"))
+        @test_throws ArgumentError diffusion_spec(Dict("type" => "pbl"))         # legacy schema
+        @test_throws ArgumentError diffusion_spec(Dict("value" => 1.0))         # present, no kind
+        @test_throws ArgumentError diffusion_spec(
+            Dict("kind" => "constant", "surface_flux_boundary" => "yes"))       # non-bool
+        # CS-only closures throw on structured styles at materialize time.
+        @test_throws ArgumentError materialize(
+            diffusion_spec(Dict("kind" => "pbl")),
+            AtmosTransport.Models.LatLonRuntimeRecipeStyle(), Float64, nothing)
     end
 
     @testset "build_cs_convection + recipe validation" begin

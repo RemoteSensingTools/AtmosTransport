@@ -18,7 +18,7 @@
 # not define `materialize` elsewhere in the Models module — keeping them together is
 # what makes the dispatch discoverable.
 #
-# This file holds the convection, advection, and chemistry spec families.
+# This file holds the convection, advection, chemistry, and diffusion spec families.
 
 # --- Typed TOML-value accessors (clean errors at the boundary) -------------
 # All three give the user the section + key + offending value, instead of a bare
@@ -298,9 +298,177 @@ materialize(s::DecayChemistrySpec, ::Type{FT}) where {FT} =
 Base.summary(s::DecayChemistrySpec) =
     "DecayChemistrySpec($(join(keys(s.half_lives), ", ")))"
 
+# =========================================================================
+# Diffusion
+# =========================================================================
+#
+# The one family whose `materialize` needs all three of `style` (Kz-field rank /
+# cubed-sphere-only gating), `FT` (precision), and the runtime `context`
+# (driver/reader — for the Kz-cache shape + binary-capability gate). The spec stays
+# context-free so it can be parsed before any driver exists; the context work is
+# deferred to `materialize`, which calls the helpers in `CSPhysicsRecipe.jl`
+# (`_constant_runtime_kz_field`, `_pbl_cache_shape`, `_runtime_has_*`) — those resolve
+# concrete grid/reader/driver types and are stubbed by tests, so they stay there.
+
+abstract type AbstractDiffusionSpec end
+
+struct NoDiffusionSpec <: AbstractDiffusionSpec end
+
+# Constant Kz everywhere. `value` stored raw (Float64); the run `FT` is applied in
+# `materialize` (the field rank comes from the style).
+struct ConstantDiffusionSpec <: AbstractDiffusionSpec
+    value                 :: Float64
+    surface_flux_boundary :: Bool
+end
+
+# The three cubed-sphere, context-dependent closures. They differ only in which Kz
+# field `materialize` builds and which binary capability it gates on; all carry the
+# same parsed surface-flux-boundary flag. `WindowPBLKz` is the TM5 Beljaars-Viterbo
+# local-Kz path (`kind = "pbl"` / `"beljaars_viterbo_local_kz"` /
+# `"tm5_beljaars_viterbo_local_kz"`).
+struct WindowPBLKzDiffusionSpec <: AbstractDiffusionSpec
+    surface_flux_boundary :: Bool
+end
+struct HoltslagBovilleVdiffDiffusionSpec <: AbstractDiffusionSpec
+    surface_flux_boundary :: Bool
+end
+struct PrecomputedKzDiffusionSpec <: AbstractDiffusionSpec
+    surface_flux_boundary :: Bool
+end
+
+function _parse_diffusion_kind(section)
+    raw = lowercase(String(get(section, "kind", "none")))
+    raw == "none"     && return :none
+    raw == "constant" && return :constant
+    (raw == "pbl" || raw == "beljaars_viterbo_local_kz" ||
+        raw == "tm5_beljaars_viterbo_local_kz") && return :pbl
+    raw == "geoschem_holtslag_boville_vdiff" && return :vdiff
+    raw == "precomputed_kz" && return :precomputed_kz
+    throw(ArgumentError(
+        "Unknown [diffusion] kind: $(repr(raw)). Supported: none | constant | " *
+        "tm5_beljaars_viterbo_local_kz | geoschem_holtslag_boville_vdiff | " *
+        "precomputed_kz | pbl (legacy alias) | beljaars_viterbo_local_kz (legacy alias)"))
+end
+
+"""
+    diffusion_spec(section) -> AbstractDiffusionSpec
+
+Parse a `[diffusion]` section into a typed spec, validating at the boundary. An
+empty/absent section or `kind = "none"` is explicit "no diffusion". The legacy
+`type = "..."` schema is rejected (it used to silently fall through to
+`NoDiffusion`, hiding configs that expected diffusion to run); a present section
+with no `kind` is rejected too.
+"""
+function diffusion_spec(section)
+    # Empty / absent section is explicit "no diffusion".
+    isempty(section) && return NoDiffusionSpec()
+    # Reject the legacy `type = "..."` schema rather than silently mapping it to
+    # NoDiffusion. Configs that said `type = "pbl"`/`"nonlocal_pbl"` expected
+    # diffusion to run; the silent fall-through hid that for months. Migrate to
+    # `kind`. (Codex Section B P0 fix — preserved from the old builder.)
+    haskey(section, "type") && !haskey(section, "kind") &&
+        throw(ArgumentError(
+            "[diffusion] uses legacy `type = \"$(section["type"])\"`; rename to " *
+            "`kind = \"...\"`. Supported kinds: \"none\", \"constant\", " *
+            "\"tm5_beljaars_viterbo_local_kz\", " *
+            "\"geoschem_holtslag_boville_vdiff\", \"precomputed_kz\"."))
+    haskey(section, "kind") ||
+        throw(ArgumentError(
+            "[diffusion] section is present but has no `kind` key. " *
+            "Set `kind = \"none\"`, `kind = \"constant\"`, " *
+            "`kind = \"tm5_beljaars_viterbo_local_kz\"`, " *
+            "`kind = \"geoschem_holtslag_boville_vdiff\"`, or " *
+            "`kind = \"precomputed_kz\"`."))
+    kind = _parse_diffusion_kind(section)
+    kind === :none && return NoDiffusionSpec()
+    sfb = _spec_bool(section, "surface_flux_boundary", false, "[diffusion]")
+    kind === :constant &&
+        return ConstantDiffusionSpec(_spec_float64(section, "value", 1.0, "[diffusion]"), sfb)
+    kind === :pbl   && return WindowPBLKzDiffusionSpec(sfb)
+    kind === :vdiff && return HoltslagBovilleVdiffDiffusionSpec(sfb)
+    return PrecomputedKzDiffusionSpec(sfb)  # :precomputed_kz
+end
+
+@inline _diffusion_surface_coupling(b::Bool) =
+    b ? DiffusiveSurfaceFluxBoundary() : SplitSurfaceFluxCoupling()
+
+# materialize — uniform `(spec, style, FT, context)` signature so the recipe calls
+# every diffusion kind identically. `NoDiffusion`/`constant` ignore `context`; the
+# three CS closures dispatch on `CubedSphereRuntimeRecipeStyle` (build) vs the
+# structured fallback (throw), exactly like the old `Val`-dispatch builders.
+materialize(::NoDiffusionSpec, ::AbstractRuntimeRecipeStyle, ::Type{FT}, _context) where {FT} =
+    NoDiffusion()
+
+materialize(s::ConstantDiffusionSpec, style::AbstractRuntimeRecipeStyle, ::Type{FT},
+            _context) where {FT} =
+    ImplicitVerticalDiffusion(;
+        kz_field = _constant_runtime_kz_field(style, FT(s.value)),
+        surface_flux_coupling = _diffusion_surface_coupling(s.surface_flux_boundary))
+
+function materialize(s::WindowPBLKzDiffusionSpec, ::CubedSphereRuntimeRecipeStyle,
+                     ::Type{FT}, context) where {FT}
+    _runtime_has_surface(context) ||
+        throw(ArgumentError(
+            "[diffusion] kind = \"pbl\" requires pblh/ustar/pbl_hflux/t2m sections " *
+            "in the cubed-sphere transport binary. Regenerate the binary with " *
+            "include_surface=true."))
+    Nc1, Nc2, Nz = _pbl_cache_shape(context)
+    host_cache = ntuple(_ -> zeros(FT, Nc1, Nc2, Nz), 6)
+    return ImplicitVerticalDiffusion(;
+        kz_field = WindowPBLKzField(host_cache),
+        surface_flux_coupling = _diffusion_surface_coupling(s.surface_flux_boundary))
+end
+materialize(::WindowPBLKzDiffusionSpec, ::AbstractRuntimeRecipeStyle, ::Type{FT},
+            _context) where {FT} =
+    throw(ArgumentError(
+        "[diffusion] kind = \"pbl\" is currently implemented for cubed-sphere " *
+        "runtime binaries with pblh/ustar/pbl_hflux/t2m sections."))
+
+function materialize(s::HoltslagBovilleVdiffDiffusionSpec, ::CubedSphereRuntimeRecipeStyle,
+                     ::Type{FT}, context) where {FT}
+    _runtime_has_gchp_vdiff(context) ||
+        throw(ArgumentError(
+            "[diffusion] kind = \"geoschem_holtslag_boville_vdiff\" requires " *
+            "pblh/ustar/pbl_hflux/t2m and vdiff_u/vdiff_v/vdiff_t/vdiff_qv " *
+            "sections in the cubed-sphere transport binary. Regenerate with " *
+            "include_surface=true and include_gchp_vdiff=true."))
+    Nc1, Nc2, Nz = _pbl_cache_shape(context)
+    host_cache = ntuple(_ -> zeros(FT, Nc1, Nc2, Nz), 6)
+    return ImplicitVerticalDiffusion(;
+        kz_field = LocalHoltslagBovilleKzField(host_cache),
+        surface_flux_coupling = _diffusion_surface_coupling(s.surface_flux_boundary))
+end
+materialize(::HoltslagBovilleVdiffDiffusionSpec, ::AbstractRuntimeRecipeStyle, ::Type{FT},
+            _context) where {FT} =
+    throw(ArgumentError(
+        "[diffusion] kind = \"geoschem_holtslag_boville_vdiff\" is currently " *
+        "implemented for cubed-sphere runtime binaries with GCHP VDIFF payloads."))
+
+function materialize(s::PrecomputedKzDiffusionSpec, ::CubedSphereRuntimeRecipeStyle,
+                     ::Type{FT}, context) where {FT}
+    _runtime_has_precomputed_kz(context) ||
+        throw(ArgumentError(
+            "[diffusion] kind = \"precomputed_kz\" requires a `:kz` section in " *
+            "the cubed-sphere transport binary (the preprocessor's TM5 bldiff " *
+            "eddy diffusivity). Regenerate with include_tm5_diffusion=true."))
+    Nc1, Nc2, Nz = _pbl_cache_shape(context)
+    host_cache = ntuple(_ -> zeros(FT, Nc1, Nc2, Nz), 6)
+    return ImplicitVerticalDiffusion(;
+        kz_field = PrecomputedCSKzField(host_cache),
+        surface_flux_coupling = _diffusion_surface_coupling(s.surface_flux_boundary))
+end
+materialize(::PrecomputedKzDiffusionSpec, ::AbstractRuntimeRecipeStyle, ::Type{FT},
+            _context) where {FT} =
+    throw(ArgumentError(
+        "[diffusion] kind = \"precomputed_kz\" is implemented for cubed-sphere " *
+        "runtime binaries carrying a `:kz` payload."))
+
 export AbstractConvectionSpec, AbstractCollabLUConvectionSpec, NoConvectionSpec,
        TM5ConvectionSpec, CMFMCConvectionSpec, CMFMCMatrixConvectionSpec
 export AbstractAdvectionSpec, UpwindAdvectionSpec, SlopesAdvectionSpec,
        PPMAdvectionSpec, NoAdvectionSpec, LinRoodAdvectionSpec
 export AbstractChemistrySpec, NoChemistrySpec, DecayChemistrySpec
-export convection_spec, advection_spec, chemistry_spec, materialize
+export AbstractDiffusionSpec, NoDiffusionSpec, ConstantDiffusionSpec,
+       WindowPBLKzDiffusionSpec, HoltslagBovilleVdiffDiffusionSpec,
+       PrecomputedKzDiffusionSpec
+export convection_spec, advection_spec, chemistry_spec, diffusion_spec, materialize

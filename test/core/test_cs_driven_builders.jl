@@ -11,7 +11,9 @@ using .AtmosTransport.Models:
     build_runtime_advection, build_runtime_diffusion,
     build_cs_advection, configured_cs_halo_width,
     build_cs_diffusion, build_cs_convection, build_cs_physics_recipe,
-    convection_spec, TM5ConvectionSpec, CMFMCMatrixConvectionSpec
+    convection_spec, TM5ConvectionSpec, CMFMCMatrixConvectionSpec,
+    advection_spec, UpwindAdvectionSpec, SlopesAdvectionSpec, PPMAdvectionSpec,
+    NoAdvectionSpec, LinRoodAdvectionSpec
 using .AtmosTransport.State.Fields:
     CubedSphereField, WindowPBLKzField, GCHPHoltslagBovilleKzField,
     PrecomputedCSKzField, field_value, panel_field
@@ -100,6 +102,25 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
         @test_throws ArgumentError build_cs_advection(
             Dict("run" => Dict("scheme" => "linrood"),
                  "advection" => Dict("ppm_order" => 7)))
+    end
+
+    @testset "AdvectionSpec parse + materialize" begin
+        @test advection_spec(Dict("scheme" => "upwind")) isa UpwindAdvectionSpec
+        @test advection_spec(Dict("scheme" => "slopes")) isa SlopesAdvectionSpec
+        @test advection_spec(Dict("scheme" => "ppm"))    isa PPMAdvectionSpec
+        @test advection_spec(Dict("scheme" => "none"))   isa NoAdvectionSpec
+        @test advection_spec(Dict{String,Any}())         isa UpwindAdvectionSpec  # default
+        # linrood + the legacy `linrood_ppm` alias both → LinRoodAdvectionSpec(order).
+        @test advection_spec(Dict("scheme" => "linrood")).order == 5  # default order
+        @test advection_spec(Dict("scheme" => "linrood", "ppm_order" => 7)).order == 7
+        @test advection_spec(Dict("scheme" => "linrood_ppm", "ppm_order" => 7)) isa LinRoodAdvectionSpec
+        # parse-time validation matches the old builder.
+        @test_throws ArgumentError advection_spec(Dict("scheme" => "ppm", "ppm_order" => 7))
+        @test_throws ArgumentError advection_spec(Dict("scheme" => "xyz"))
+        # LinRood materializes only on cubed-sphere; structured throws.
+        @test build_cs_advection(Dict("advection" => Dict("scheme" => "linrood_ppm"))) isa LinRoodPPMScheme
+        @test_throws ArgumentError build_runtime_advection(
+            Dict("advection" => Dict("scheme" => "linrood_ppm")), latlon_grid)
     end
 
     @testset "configured_cs_halo_width dispatch" begin

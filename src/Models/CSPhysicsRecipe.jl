@@ -93,64 +93,11 @@ function build_runtime_advection(cfg, context)
     return build_runtime_advection(cfg, _runtime_recipe_style(context))
 end
 
-function build_runtime_advection(cfg, style::AbstractRuntimeRecipeStyle)
-    section = _advection_section(cfg)
-    return build_runtime_advection(style,
-                                   Val(_config_symbol(section, "scheme", "upwind")),
-                                   section)
-end
-
-build_runtime_advection(::AbstractStructuredRuntimeRecipeStyle, ::Val{:upwind}, _section) = UpwindScheme()
-build_runtime_advection(::AbstractStructuredRuntimeRecipeStyle, ::Val{:slopes}, _section) = SlopesScheme()
-build_runtime_advection(::AbstractStructuredRuntimeRecipeStyle, ::Val{:none}, _section)   = NoAdvection()
-
-function build_runtime_advection(::AbstractStructuredRuntimeRecipeStyle, ::Val{:ppm}, section)
-    haskey(section, "ppm_order") &&
-        throw(ArgumentError(
-            "[advection] `ppm_order` is only valid with `scheme = \"linrood\"`; " *
-            "structured runtime `scheme = \"ppm\"` selects `PPMScheme()`."))
-    return PPMScheme()
-end
-
-function build_runtime_advection(::AbstractStructuredRuntimeRecipeStyle, ::Val{:linrood}, _section)
-    throw(ArgumentError(
-        "[advection] `scheme = \"linrood\"` is only available on cubed-sphere runs."))
-end
-
-build_runtime_advection(style::AbstractStructuredRuntimeRecipeStyle, ::Val{:linrood_ppm}, section) =
-    build_runtime_advection(style, Val(:linrood), section)
-
-function build_runtime_advection(::CubedSphereRuntimeRecipeStyle, ::Val{:upwind}, _section)
-    return UpwindScheme()
-end
-
-function build_runtime_advection(::CubedSphereRuntimeRecipeStyle, ::Val{:none}, _section)
-    return NoAdvection()
-end
-
-function build_runtime_advection(::CubedSphereRuntimeRecipeStyle, ::Val{:slopes}, _section)
-    return SlopesScheme()
-end
-
-function build_runtime_advection(::CubedSphereRuntimeRecipeStyle, ::Val{:ppm}, section)
-    haskey(section, "ppm_order") &&
-        throw(ArgumentError(
-            "[advection] `ppm_order` is only valid with `scheme = \"linrood\"`; " *
-            "`scheme = \"ppm\"` selects the standard split `PPMScheme()` path."))
-    return PPMScheme()
-end
-
-function build_runtime_advection(::CubedSphereRuntimeRecipeStyle, ::Val{:linrood}, section)
-    return LinRoodPPMScheme(Int(get(section, "ppm_order", 5)))
-end
-
-build_runtime_advection(style::CubedSphereRuntimeRecipeStyle, ::Val{:linrood_ppm}, section) =
-    build_runtime_advection(style, Val(:linrood), section)
-
-function build_runtime_advection(::AbstractRuntimeRecipeStyle, ::Val{name}, _section) where name
-    throw(ArgumentError(
-        "Unknown [advection] scheme: $(name). Supported: upwind | slopes | ppm | linrood | none"))
-end
+# Thin wrapper: parse the `[advection]` section into a typed `AbstractAdvectionSpec`
+# once (validated), then materialize the scheme. The structured-vs-CS split lives in
+# `materialize` (LinRood is CS-only); spec types + parser live in `RuntimePhysicsSpecs.jl`.
+build_runtime_advection(cfg, style::AbstractRuntimeRecipeStyle) =
+    materialize(advection_spec(_advection_section(cfg)), style)
 
 function build_runtime_diffusion(cfg, context, ::Type{FT}) where FT
     return build_runtime_diffusion(cfg, _runtime_recipe_style(context), FT, context)

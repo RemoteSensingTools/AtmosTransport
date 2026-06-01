@@ -23,20 +23,21 @@
 # --- Typed TOML-value accessors (clean errors at the boundary) -------------
 # All three give the user the section + key + offending value, instead of a bare
 # MethodError/InexactError from a `Float64("1.5")`/`Int(2.0)` deep in the parser.
+# `label` is the TOML table name (e.g. "[convection]") for the error message.
 
-function _spec_bool(section, key::AbstractString, default::Bool)
+function _spec_bool(section, key::AbstractString, default::Bool, label::AbstractString)
     v = get(section, key, default)
-    v isa Bool || throw(ArgumentError("[convection].$(key) must be true or false; got $(repr(v))"))
+    v isa Bool || throw(ArgumentError("$(label).$(key) must be true or false; got $(repr(v))"))
     return v
 end
-function _spec_int(section, key::AbstractString, default::Int)
+function _spec_int(section, key::AbstractString, default::Int, label::AbstractString)
     v = get(section, key, default)
-    v isa Integer || throw(ArgumentError("[convection].$(key) must be an integer; got $(repr(v))"))
+    v isa Integer || throw(ArgumentError("$(label).$(key) must be an integer; got $(repr(v))"))
     return Int(v)
 end
-function _spec_float64(section, key::AbstractString, default::Float64)
+function _spec_float64(section, key::AbstractString, default::Float64, label::AbstractString)
     v = get(section, key, default)
-    v isa Real || throw(ArgumentError("[convection].$(key) must be a number; got $(repr(v))"))
+    v isa Real || throw(ArgumentError("$(label).$(key) must be a number; got $(repr(v))"))
     return Float64(v)
 end
 
@@ -95,10 +96,10 @@ end
 
 # Shared knob extraction + validation for the collaborative-LU kinds.
 function _collab_lu_knobs(section)
-    budget     = _spec_float64(section, "tile_workspace_gib", 1.0)
-    use_collab = _spec_bool(section, "use_collab_lu", false)
-    lmax_conv  = _spec_int(section, "lmax_conv", 0)
-    n_merge    = _spec_int(section, "n_merge", 1)
+    budget     = _spec_float64(section, "tile_workspace_gib", 1.0, "[convection]")
+    use_collab = _spec_bool(section, "use_collab_lu", false, "[convection]")
+    lmax_conv  = _spec_int(section, "lmax_conv", 0, "[convection]")
+    n_merge    = _spec_int(section, "n_merge", 1, "[convection]")
 
     if (lmax_conv != 0 || n_merge != 1) && !use_collab
         throw(ArgumentError(
@@ -151,6 +152,69 @@ materialize(s::CMFMCMatrixConvectionSpec, ::AbstractRuntimeRecipeStyle) =
 Base.summary(s::AbstractCollabLUConvectionSpec) =
     "$(nameof(typeof(s)))(use_collab_lu=$(s.use_collab_lu), lmax_conv=$(s.lmax_conv), n_merge=$(s.n_merge))"
 
+# =========================================================================
+# Advection
+# =========================================================================
+
+abstract type AbstractAdvectionSpec end
+
+struct UpwindAdvectionSpec <: AbstractAdvectionSpec end
+struct SlopesAdvectionSpec <: AbstractAdvectionSpec end
+struct PPMAdvectionSpec    <: AbstractAdvectionSpec end
+struct NoAdvectionSpec     <: AbstractAdvectionSpec end
+
+# LinRood is cubed-sphere only and carries the reconstruction order.
+struct LinRoodAdvectionSpec <: AbstractAdvectionSpec
+    order :: Int
+end
+
+function _parse_advection_scheme(section)
+    raw = lowercase(String(get(section, "scheme", "upwind")))
+    raw == "upwind" && return :upwind
+    raw == "slopes" && return :slopes
+    raw == "ppm"    && return :ppm
+    raw == "none"   && return :none
+    (raw == "linrood" || raw == "linrood_ppm") && return :linrood   # legacy alias
+    throw(ArgumentError(
+        "Unknown [advection] scheme: $(repr(raw)). Supported: upwind | slopes | ppm | linrood | none"))
+end
+
+"""
+    advection_spec(section) -> AbstractAdvectionSpec
+
+Parse an `[advection]` section into a typed spec. `ppm_order` is only meaningful
+for `scheme = "linrood"`; pairing it with `scheme = "ppm"` is rejected (the split
+PPM path takes no order knob), matching the old builder.
+"""
+function advection_spec(section)
+    kind = _parse_advection_scheme(section)
+    kind === :upwind && return UpwindAdvectionSpec()
+    kind === :slopes && return SlopesAdvectionSpec()
+    kind === :none   && return NoAdvectionSpec()
+    if kind === :ppm
+        haskey(section, "ppm_order") && throw(ArgumentError(
+            "[advection] `ppm_order` is only valid with `scheme = \"linrood\"`; " *
+            "`scheme = \"ppm\"` selects the standard split `PPMScheme()` path."))
+        return PPMAdvectionSpec()
+    end
+    return LinRoodAdvectionSpec(_spec_int(section, "ppm_order", 5, "[advection]"))  # :linrood
+end
+
+# materialize — upwind/slopes/ppm/none are topology-independent; LinRood is
+# cubed-sphere only (the structured method throws, matching the old builder). This
+# collapses the old ~14 `Val`-dispatch methods to these 6.
+materialize(::UpwindAdvectionSpec, ::AbstractRuntimeRecipeStyle) = UpwindScheme()
+materialize(::SlopesAdvectionSpec, ::AbstractRuntimeRecipeStyle) = SlopesScheme()
+materialize(::PPMAdvectionSpec,    ::AbstractRuntimeRecipeStyle) = PPMScheme()
+materialize(::NoAdvectionSpec,     ::AbstractRuntimeRecipeStyle) = NoAdvection()
+materialize(s::LinRoodAdvectionSpec, ::CubedSphereRuntimeRecipeStyle) = LinRoodPPMScheme(s.order)
+materialize(::LinRoodAdvectionSpec, ::AbstractStructuredRuntimeRecipeStyle) = throw(ArgumentError(
+    "[advection] `scheme = \"linrood\"` is only available on cubed-sphere runs."))
+
+Base.summary(s::LinRoodAdvectionSpec) = "LinRoodAdvectionSpec(order=$(s.order))"
+
 export AbstractConvectionSpec, AbstractCollabLUConvectionSpec, NoConvectionSpec,
        TM5ConvectionSpec, CMFMCConvectionSpec, CMFMCMatrixConvectionSpec
-export convection_spec, materialize
+export AbstractAdvectionSpec, UpwindAdvectionSpec, SlopesAdvectionSpec,
+       PPMAdvectionSpec, NoAdvectionSpec, LinRoodAdvectionSpec
+export convection_spec, advection_spec, materialize

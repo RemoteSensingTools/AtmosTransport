@@ -16,8 +16,8 @@ include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 const AT = AtmosTransport
 const Adv = AtmosTransport.Operators.Advection
 
-# Reuse the existing test helpers.
-include(joinpath(@__DIR__, "test_cs_ppm_adjoint_footprint.jl"))
+# Reuse the existing test helpers (the footprint test lives under test/core/).
+include(joinpath(@__DIR__, "..", "core", "test_cs_ppm_adjoint_footprint.jl"))
 
 @testset "Plan 25 Commit 6 — LinRoodPPMScheme footprint vs FD" begin
     mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =

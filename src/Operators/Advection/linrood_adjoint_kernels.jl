@@ -349,37 +349,16 @@ end
 # in `ppm_subgrid_distributions.jl` and `LinRood.jl`.
 # ---------------------------------------------------------------------------
 
-@inline function _huynh_second_constraint_d6(
-    q_l::D6{FT}, q_c::D6{FT}, q_r::D6{FT},
-    q_LL::D6{FT}, q_RR::D6{FT},
-) where {FT}
-    _ = (q_LL, q_RR)  # kept for forward-signature parity; not used by the formula
-    denom = q_r - q_l
-    if abs(denom.v) < FT(10) * eps(FT)
-        return _d6_const(FT, zero(FT))
-    end
-    # q_6 = 3 · (q_c − (2·q_l + q_r) / 3)
-    q6 = FT(3) * (q_c - (FT(2) * q_l + q_r) * (one(FT) / FT(3)))
-    abs_denom = abs(denom)               # D6: value = |denom.v|, grad = sign(denom.v)·denom.g
-    if q6.v > abs_denom.v
-        # Clamp triggered at +mag. `mag = abs(denom)` carries the q_r/q_l
-        # gradient.
-        return abs_denom
-    elseif q6.v < -abs_denom.v
-        return -abs_denom
-    else
-        return q6
-    end
-end
-
+# d6 mirror of the forward `_ppm_edge_values_ord5` (the 4th-order PPM edge
+# interpolation). The formula is purely linear in the q-stencil, so the dual
+# carries an exact gradient with no clamp branches.
 @inline function _ppm_edge_values_ord5_d6(
     q_imm::D6{FT}, q_im::D6{FT}, q_i::D6{FT}, q_ip::D6{FT}, q_ipp::D6{FT},
 ) where {FT}
-    s_im = _huynh_second_constraint_d6(q_im, q_i, q_i, q_imm, q_ip)
-    s_i  = _huynh_second_constraint_d6(q_i, q_ip, q_ip, q_im, q_ipp)
-    half = one(FT) / FT(2)
-    q_L = q_i - s_im * half
-    q_R = q_i + s_i  * half
+    p1 = FT(7) / FT(12)
+    p2 = -FT(1) / FT(12)
+    q_L = (q_im + q_i) * p1 + (q_imm + q_ip) * p2
+    q_R = (q_i + q_ip) * p1 + (q_im + q_ipp) * p2
     return (q_L, q_R)
 end
 

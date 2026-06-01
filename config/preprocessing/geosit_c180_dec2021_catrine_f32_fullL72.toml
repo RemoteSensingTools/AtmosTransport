@@ -1,0 +1,61 @@
+# ===========================================================================
+# GEOS-IT C180 native NetCDF -> v4 CS C180 transport binaries for Dec 2021,
+# FULL native L72 (no top merge) — the full-layer-set counterpart to
+# `geosit_c180_dec2021_catrine_f32.toml` (which merges above 0.25 hPa to ~64
+# levels). Same source, physics, and dry-mass pin; only the vertical transform
+# (`identity`, i.e. all 72 native levels) and the output directory differ.
+#
+# CFL caveat: keeping the native mesospheric layers above 0.25 hPa (which the
+# merged build collapses) means those top layers carry extreme winds, so the
+# adaptive substep schedule needs far more headroom — `max_steps_per_window` is
+# raised to 512 and the positivity gate is kept strict, so a window that still
+# cannot satisfy positivity fails loudly rather than writing bad data.
+#
+# Output: `~/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_fullL72/`
+#         one `geos_transport_YYYYMMDD_float32.bin` per day, dry-basis, 72-level.
+#
+# Usage (per-day batch, after the ERA5 N320 regen finishes):
+#   bash ~/atmostransport_logs/run_december_geos_fullL72_batch.sh 01 02 ... 31
+# ===========================================================================
+
+[source]
+toml                 = "config/met_sources/geosit.toml"
+root_dir             = "/home/cfranken/data/AtmosTransport/met/geosit/C180/raw_catrine"
+include_surface      = true     # PBL section for runtime diffusion
+include_convection   = true     # CMFMC + DTRAIN for runtime convection
+include_vdiff_fields = true     # U/V/T/QV for GCHP Holtslag-Boville VDIFF
+
+[output]
+directory  = "/home/cfranken/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_fullL72"
+mass_basis = "dry"
+
+[grid]
+type                = "cubed_sphere"
+Nc                  = 180
+panel_convention    = "geos_native"
+definition          = "gmao"
+regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
+
+[vertical]
+coefficients = "config/geos_L72_coefficients.toml"
+transform    = "identity"        # full native L72 — no top merge
+
+[numerics]
+float_type     = "Float32"
+dt_met_seconds = 3600.0
+chain_mass     = false
+
+positivity_cfl_limit       = 0.95
+require_substep_positivity = true
+substep_schedule           = "adaptive_cfl"
+substep_cfl_target         = 0.95
+min_steps_per_window       = 1
+max_steps_per_window       = 512   # headroom for the unmerged mesospheric top
+geos_balance_mode          = "column"
+
+[mass_fix]
+enable = true
+# Match the ERA spectral path's global dry-air target so the absolute dry mass
+# is independent of the first processed date/window.
+mode = "target_ps_dry"
+target_ps_dry_pa = 98726.0

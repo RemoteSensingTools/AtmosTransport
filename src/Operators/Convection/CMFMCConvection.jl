@@ -91,7 +91,18 @@ the two-pass order (tendency first, then updraft accumulation) with
 transposed coefficients; the four-term scavenging-restoring form is a
 wet-deposition follow-up.
 """
-struct CMFMCConvection <: AbstractConvection end
+# `clamp = true` opts into the GCHP positivity clamp (Q+DELQ<0 → DELQ=−Q) made
+# conservative by a post-update per-column rescale. The clamp absorbs the CFL
+# overshoot of strong convection so the scheme stays stable at FEW sub-steps (the
+# explicit flux-divergence form alone is CFL-limited and would need thousands);
+# the rescale restores the pre-convection column tracer mass exactly, so the
+# scheme remains conservative. The default `clamp = false` is the pure
+# (unclamped) conservative explicit scheme — exactly mass-conserving but
+# CFL-substep-limited.
+struct CMFMCConvection <: AbstractConvection
+    clamp :: Bool
+end
+CMFMCConvection(; clamp::Bool = false) = CMFMCConvection(clamp)
 
 # =========================================================================
 # Array-level entry: apply_convection!
@@ -145,6 +156,9 @@ function apply_convection!(q_raw::AbstractArray{FT, 4},
         "CMFMCConvection requires `forcing.cmfmc` to be populated; got nothing. " *
         "Install via `TransportModel.convection_forcing` or " *
         "`with_convection_forcing(model, ConvectionForcing(cmfmc, dtrain, nothing))`."))
+    op.clamp && throw(ArgumentError(
+        "CMFMCConvection(clamp=true) is currently implemented for cubed-sphere only; " *
+        "the lat-lon column kernel does not yet apply the clamp + column rescale."))
 
     cmfmc = forcing.cmfmc
 
@@ -200,6 +214,9 @@ function apply_convection!(q_raw::AbstractArray{FT, 3},
                             dt,
                             workspace::CMFMCWorkspace,
                             grid::AtmosGrid{<:ReducedGaussianMesh}) where FT
+    op.clamp && throw(ArgumentError(
+        "CMFMCConvection(clamp=true) is currently implemented for cubed-sphere only; " *
+        "the reduced-Gaussian column kernel does not yet apply the clamp + column rescale."))
     forcing.cmfmc === nothing && throw(ArgumentError(
         "CMFMCConvection requires `forcing.cmfmc` to be populated; got nothing. " *
         "Install via `TransportModel.convection_forcing` or " *
@@ -271,7 +288,7 @@ function apply_convection!(q_raw::NTuple{6, <:AbstractArray{FT, 4}},
     Nz = size(q_raw[1], 3)
     Nt = size(q_raw[1], 4)
     n_sub = _get_or_compute_n_sub!(workspace, cmfmc, air_mass,
-                                   cell_areas, dt)
+                                   cell_areas, dt; allow_clamp = op.clamp)
     sdt = FT(dt) / FT(n_sub)
 
     backend = get_backend(q_raw[1])
@@ -281,7 +298,7 @@ function apply_convection!(q_raw::NTuple{6, <:AbstractArray{FT, 4}},
         for p in 1:6
             kernel(q_raw[p], air_mass[p], cmfmc[p], dtrain_arr[p], cell_areas[p],
                    workspace.qc_scratch[p],
-                   Nz, Nt, sdt, Hp, Val(has_dtrain_val);
+                   Nz, Nt, sdt, Hp, Val(has_dtrain_val), Val(op.clamp);
                    ndrange = (Nc, Nc))
         end
     end

@@ -52,7 +52,12 @@ abstract type AbstractConvectionSpec end
 abstract type AbstractCollabLUConvectionSpec <: AbstractConvectionSpec end
 
 struct NoConvectionSpec    <: AbstractConvectionSpec end
-struct CMFMCConvectionSpec <: AbstractConvectionSpec end
+# `clamp` opts the explicit GCHP CMFMC scheme into the positivity clamp +
+# whole-column rescale (stable at few sub-steps for strong convection, still
+# conservative). Default false = the pure conservative explicit scheme.
+struct CMFMCConvectionSpec <: AbstractConvectionSpec
+    clamp :: Bool
+end
 
 # Knobs stored as raw/friendly scalars — never the run `FT` (TM5Convection's own FT
 # is `typeof(tile_workspace_gib)` = Float64, independent of the run precision).
@@ -127,7 +132,8 @@ them without `use_collab_lu` used to be a silent no-op; it is now a hard error.
 function convection_spec(section)
     kind = _parse_convection_kind(section)
     kind === :none  && return NoConvectionSpec()
-    kind === :cmfmc && return CMFMCConvectionSpec()
+    kind === :cmfmc &&
+        return CMFMCConvectionSpec(_spec_bool(section, "clamp", false, "[convection]"))
     knobs = _collab_lu_knobs(section)
     kind === :tm5 && return TM5ConvectionSpec(knobs...)
     return CMFMCMatrixConvectionSpec(knobs...)  # :cmfmc_matrix
@@ -138,7 +144,8 @@ end
 # (no unused ceremony args). The two collaborative-LU specs share knobs but build
 # DIFFERENT operators, so they dispatch on their concrete types.
 materialize(::NoConvectionSpec, ::AbstractRuntimeRecipeStyle)    = NoConvection()
-materialize(::CMFMCConvectionSpec, ::AbstractRuntimeRecipeStyle) = CMFMCConvection()
+materialize(s::CMFMCConvectionSpec, ::AbstractRuntimeRecipeStyle) =
+    CMFMCConvection(; clamp = s.clamp)
 materialize(s::TM5ConvectionSpec, ::AbstractRuntimeRecipeStyle) =
     TM5Convection(; tile_workspace_gib = s.tile_workspace_gib, use_collab_lu = s.use_collab_lu,
                     lmax_conv = s.lmax_conv, n_merge = s.n_merge)

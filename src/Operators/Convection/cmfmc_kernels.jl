@@ -257,16 +257,29 @@ false so the next call re-scans.
 # convection) and error with an actionable message above that.
 const _CMFMC_N_SUB_MAX = 1024
 
+# When the positivity clamp is enabled (`CMFMCConvection(clamp=true)`), the clamp
+# absorbs CFL overshoot, so we do NOT need the CFL-stable sub-step count (which can
+# be many thousands for strong convection). Cap the sub-step count at this modest
+# value: the bulk of the column (low CFL) is integrated accurately, and the rare
+# high-CFL cells are kept stable by the clamp + conserved by the column rescale.
+const _CMFMC_CLAMP_N_SUB_CAP = 48
+
 function _get_or_compute_n_sub!(ws::CMFMCWorkspace,
                                  cmfmc,
                                  air_mass,
                                  cell_metrics,
-                                 dt::Real)
-    if !ws.cache_valid[]
+                                 dt::Real;
+                                 allow_clamp::Bool = false)
+    # Recompute when the cache is stale OR when the clamp mode differs from the
+    # cached decision — a clamped call caps at 48, an unclamped call must apply
+    # the CFL ceiling/throw, so the two must not share a cached n_sub.
+    if !ws.cache_valid[] || ws.cached_clamp[] != allow_clamp
         worst = _cmfmc_max_cfl(cmfmc, air_mass, cell_metrics, dt)
         cfl_safety = typeof(worst)(0.5)
         n_sub = max(1, ceil(Int, worst / cfl_safety))
-        if n_sub > _CMFMC_N_SUB_MAX
+        if allow_clamp
+            n_sub = min(n_sub, _CMFMC_CLAMP_N_SUB_CAP)
+        elseif n_sub > _CMFMC_N_SUB_MAX
             throw(ArgumentError(
                 "CMFMCConvection CFL sub-step count $(n_sub) exceeds " *
                 "safety ceiling $(_CMFMC_N_SUB_MAX). Worst local " *
@@ -274,10 +287,12 @@ function _get_or_compute_n_sub!(ws::CMFMCWorkspace,
                 "`forcing.cmfmc` is in kg/m²/s on the same basis as " *
                 "`state.air_mass`, and that `air_mass` is in kg per " *
                 "cell (NOT kg/m²). Use a smaller `dt` if the ratio " *
-                "is physically realistic (sustained CFL > $(cfl_safety * _CMFMC_N_SUB_MAX) is unusual)."
+                "is physically realistic (sustained CFL > $(cfl_safety * _CMFMC_N_SUB_MAX) is unusual), " *
+                "or enable the positivity clamp via `CMFMCConvection(clamp=true)`."
             ))
         end
         ws.cached_n_sub[] = n_sub
+        ws.cached_clamp[] = allow_clamp
         ws.cache_valid[] = true
     end
     return ws.cached_n_sub[]
@@ -294,8 +309,9 @@ end
     Nt::Int,
     dt,
     Hp::Int,
-    ::Val{has_dtrain}
-) where has_dtrain
+    ::Val{has_dtrain},
+    ::Val{do_clamp}
+) where {has_dtrain, do_clamp}
     i, j = @index(Global, NTuple)
 
     FT = eltype(tracers_raw)
@@ -319,6 +335,18 @@ end
 
         if cldbase_k == 0
             continue
+        end
+
+        # Clamp+rescale (do_clamp): record the WHOLE-column tracer mass before
+        # convection. After the (clamped) update the column is rescaled by
+        # m_before/m_after, restoring column mass exactly while keeping the
+        # profile continuous (a single uniform factor — no jump at the cloud
+        # base). do_clamp=false compiles this away.
+        m_before = zero(FT)
+        if do_clamp
+            for k in 1:Nz
+                m_before += tracers_raw[ii, jj, k, t_idx]
+            end
         end
 
         # Well-mixed sub-cloud, kg/m² accumulator + column-closing
@@ -384,7 +412,9 @@ end
         # (k = 1 … cldbase). See the LL kernel for the full derivation —
         # Φ(k) = cmfmc[k]·(qc[k] − q_env_orig(k−1)), update by Φ(k+1) − Φ(k),
         # cloud-base bottom interface closed (Φ = 0). Telescopes to exact
-        # column-mass conservation.
+        # column-mass conservation. With do_clamp, q_new<0 is clamped to 0
+        # (GCHP positivity) and conservation is restored by the whole-column
+        # rescale below.
         q_env_above = zero(FT)
 
         for k in 1:cldbase_k
@@ -397,8 +427,31 @@ end
                 cmfmc[i, j, k + 1] * (qc_scratch[ii, jj, k + 1] - q_k) : zero(FT)
 
             q_new = bmass > tiny ? q_k + (dt / bmass) * (phi_bot - phi_top) : q_k
+            if do_clamp && q_new < zero(FT)
+                q_new = zero(FT)
+            end
             q_env_above = q_k
             tracers_raw[ii, jj, k, t_idx] = q_new * m_k
+        end
+
+        # Clamp+rescale: restore the whole-column tracer mass with a single
+        # uniform factor (keeps the profile continuous; positivity preserved
+        # since the factor is positive and clamped cells are already 0).
+        if do_clamp
+            m_after = zero(FT)
+            for k in 1:Nz
+                m_after += tracers_raw[ii, jj, k, t_idx]
+            end
+            # Guard only against an unusable (non-positive) denominator — NOT the
+            # CMFMC flux-noise `tiny`, which is far too large for raw tracer mass
+            # (a low-abundance tracer's column can be positive but ≪ tiny, and
+            # must still be rescaled to conserve).
+            if m_after > zero(FT)
+                f = m_before / m_after
+                for k in 1:Nz
+                    tracers_raw[ii, jj, k, t_idx] *= f
+                end
+            end
         end
     end
 end

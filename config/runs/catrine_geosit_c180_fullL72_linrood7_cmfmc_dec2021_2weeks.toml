@@ -77,9 +77,13 @@ kind = "geoschem_holtslag_boville_vdiff"
 surface_flux_boundary = true
 
 [convection]
-# Real GCHP-style CMFMC convection (CMFMCConvection) — the conserving
-# interface-flux-divergence column kernel, not the LU matrix variant.
+# Real GCHP-style CMFMC convection (CMFMCConvection) — the explicit column
+# scheme. clamp=true enables the GCHP positivity clamp (Q+DELQ<0 -> 0) made
+# conservative by a whole-column rescale, so it stays stable at few sub-steps
+# (n_sub capped at 48) on strong convection while conserving column mass and
+# keeping the profile continuous.
 kind = "cmfmc"
+clamp = true
 
 [chemistry]
 kind = "decay"

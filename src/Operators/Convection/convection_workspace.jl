@@ -45,6 +45,7 @@ struct CMFMCWorkspace{FT, QC, CA}
     cell_metrics :: CA
     cached_n_sub :: Base.RefValue{Int}
     cache_valid  :: Base.RefValue{Bool}
+    cached_clamp :: Base.RefValue{Bool}   # clamp mode the cached n_sub was computed for
 end
 
 """
@@ -77,6 +78,7 @@ function CMFMCWorkspace(air_mass::AbstractArray{FT}; cell_metrics = nothing) whe
         metrics,
         Ref{Int}(1),
         Ref{Bool}(false),
+        Ref{Bool}(false),
     )
 end
 
@@ -92,6 +94,7 @@ function CMFMCWorkspace(air_mass::NTuple{N, <:AbstractArray{FT}}; cell_metrics =
         metrics,
         Ref{Int}(1),
         Ref{Bool}(false),
+        Ref{Bool}(false),
     )
 end
 
@@ -103,6 +106,7 @@ function Adapt.adapt_structure(to, ws::CMFMCWorkspace{FT}) where FT
         cell_metrics,
         Ref{Int}(ws.cached_n_sub[]),
         Ref{Bool}(ws.cache_valid[]),
+        Ref{Bool}(ws.cached_clamp[]),
     )
 end
 

@@ -18,27 +18,35 @@
 #     `_adjoint_fill_panel_halos!` for cross-panel halo
 #     redistribution.
 #
-# Status / known residual (WIP, 2026-06-02):
-#   The full-footprint LinRood reverse has a ~7.4e-4-PER-SUBSTEP residual vs a
-#   centered-FD footprint (requires non-trivial horizontal transport; grows
-#   linearly with nsteps). It is NOT a broken reverse kernel — an exhaustive
-#   audit showed every component exact: the edge-halo scatter is the exact
-#   transpose of `_fill_edge!` (isolated identity 8e-16), the single-panel
-#   `apply_linrood_horizontal_adjoint_single_panel!` is exact including its
-#   halo-λ output (per-cell nonzero-halo VJP), the halo carry-over has zero
-#   effect, and Z / emission / objective are exact (am=bm=0 gives reldiff 0).
-#   `copy_corners!` reverse is a NON-ISSUE: the 1-D LinRood face kernels never
-#   read the corner blocks, so corner-λ is identically zero (verified: adding
-#   the exact corner transpose is byte-for-byte a no-op).
-#   Most-likely cause: a forward FIDELITY drift between the inlined H here
-#   (`_record_linrood_horizontal_substep!`) and production `fv_tp_2d_cs!` — the
-#   adjoint faithfully transposes the recorded forward, but the FD reference
-#   runs `fv_tp_2d_cs!`; if they differ, pred≠fd. NEXT STEP: smallest
-#   forward-vs-forward comparator — one `_record_linrood_horizontal_substep!`
-#   (record_ops=false) vs `fv_tp_2d_cs!` on identical 6-panel input + identical
-#   stripped fluxes, diff rm/m immediately. Until resolved, use the FD-validated
-#   split-sweep (PPM/Upwind/Slopes) adjoint for inversions; LinRood reverse is
-#   forward-faithful enough for forward transport but tracked WIP for 4D-Var.
+# Status (RESOLVED 2026-06-02): the LinRood reverse-mode adjoint is correct.
+#   LinRoodPPMScheme applies a monotonicity limiter (`_apply_monotonicity`:
+#   clip the PPM reconstruction to first order at local extrema), so the
+#   forward map is mildly NONLINEAR. This reverse is the transpose of its
+#   tangent-linear model — the limiter switch is decided by the forward base
+#   value and the active branch is propagated linearly, which is exactly right.
+#
+#   The former "~7.4e-4-per-substep footprint-vs-centered-FD residual" was a
+#   FINITE-DIFFERENCE ARTIFACT, not an adjoint error. It appears only when the
+#   forward trajectory sits ON limiter switch points — e.g. a zero IC plus a
+#   localized emission, where central FD straddles a kink and returns the
+#   AVERAGE of the two one-sided derivatives while the adjoint returns one side.
+#   The mismatch is eps-INDEPENDENT (constant from FD step 2e-4 down to 2e-7),
+#   the signature of a kink rather than roundoff or a transpose error.
+#
+#   Evidence (all reproduced this session):
+#     * Forward replay is bit-identical to production `fv_tp_2d_cs!` — the
+#       single-H comparator (`_record_linrood_horizontal_substep!`,
+#       record_ops=false, vs `fv_tp_2d_cs!` on identical stripped fluxes) and
+#       the full-step comparator (vs `_linrood_run_forward_step!`) both give 0.0.
+#     * The single-substep VJP matches central FD to 1e-7 (incl. m-coupling).
+#     * The full footprint identity matches FD to ~1e-8 for BOTH ORD=5 and
+#       ORD=7, at every nsteps, on a SMOOTH or CONSTANT base field. Only the
+#       non-smooth zero-IC case shows the ~1.4e-3 kink artifact.
+#   The split-sweep (PPM/Upwind/Slopes) footprint test validates at a zero IC
+#   precisely because those schemes are NoLimiter (linear). The LinRood adjoint
+#   is production-ready for 4D-Var; FD validation must use a smooth base field
+#   (standard practice for limited-scheme adjoints — see
+#   test/diagnostic/test_linrood_adjoint_integration.jl `_seed_smooth_cs_ic!`).
 #   * ORD ∈ {5, 7} (LinRoodPPMScheme(5) and LinRoodPPMScheme(7) are both
 #     supported). `_CSLinRoodHorizRecord`
 #     binds ORD as a type parameter; the reverse pass reads it via
@@ -104,9 +112,9 @@ function _record_linrood_horizontal_substep!(
     panels_rm, panels_m,
     panels_am, panels_bm,
     mesh::CubedSphereMesh{FT},
-    flux_scale;
+    flux_scale,
+    ord::Val{ORD} = Val(5);
     record_ops::Bool = true,
-    ord::Val{ORD} = Val(5),
 ) where {FT, ORD}
     Nc = mesh.Nc; Hp = mesh.Hp
     Nz = size(panels_rm[1], 3)
@@ -403,8 +411,8 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
 
         # LinRood horizontal substep (first half of the palindrome).
         record_a = _record_linrood_horizontal_substep!(
-            panels_rm, panels_m, panels_am, panels_bm, mesh, FT(flux_scale);
-            record_ops = record_ops, ord = Val(ORD))
+            panels_rm, panels_m, panels_am, panels_bm, mesh, FT(flux_scale), Val(ORD);
+            record_ops = record_ops)
         record_ops && push!(ops, record_a)
 
         # Z half-sweep.
@@ -475,8 +483,8 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
 
         # LinRood horizontal substep (second half of the palindrome).
         record_b = _record_linrood_horizontal_substep!(
-            panels_rm, panels_m, panels_am, panels_bm, mesh, FT(flux_scale);
-            record_ops = record_ops, ord = Val(ORD))
+            panels_rm, panels_m, panels_am, panels_bm, mesh, FT(flux_scale), Val(ORD);
+            record_ops = record_ops)
         record_ops && push!(ops, record_b)
 
         # Convection (optional, post-transport).

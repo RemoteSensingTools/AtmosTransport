@@ -18,10 +18,27 @@
 #     `_adjoint_fill_panel_halos!` for cross-panel halo
 #     redistribution.
 #
-# Limitations:
-#   * `copy_corners!` reverse not implemented; the small contribution
-#     from corner halos to the gradient is treated as zero. Real-data
-#     impact is concentrated near panel corners and decays inward.
+# Status / known residual (WIP, 2026-06-02):
+#   The full-footprint LinRood reverse has a ~7.4e-4-PER-SUBSTEP residual vs a
+#   centered-FD footprint (requires non-trivial horizontal transport; grows
+#   linearly with nsteps). It is NOT a broken reverse kernel — an exhaustive
+#   audit showed every component exact: the edge-halo scatter is the exact
+#   transpose of `_fill_edge!` (isolated identity 8e-16), the single-panel
+#   `apply_linrood_horizontal_adjoint_single_panel!` is exact including its
+#   halo-λ output (per-cell nonzero-halo VJP), the halo carry-over has zero
+#   effect, and Z / emission / objective are exact (am=bm=0 gives reldiff 0).
+#   `copy_corners!` reverse is a NON-ISSUE: the 1-D LinRood face kernels never
+#   read the corner blocks, so corner-λ is identically zero (verified: adding
+#   the exact corner transpose is byte-for-byte a no-op).
+#   Most-likely cause: a forward FIDELITY drift between the inlined H here
+#   (`_record_linrood_horizontal_substep!`) and production `fv_tp_2d_cs!` — the
+#   adjoint faithfully transposes the recorded forward, but the FD reference
+#   runs `fv_tp_2d_cs!`; if they differ, pred≠fd. NEXT STEP: smallest
+#   forward-vs-forward comparator — one `_record_linrood_horizontal_substep!`
+#   (record_ops=false) vs `fv_tp_2d_cs!` on identical 6-panel input + identical
+#   stripped fluxes, diff rm/m immediately. Until resolved, use the FD-validated
+#   split-sweep (PPM/Upwind/Slopes) adjoint for inversions; LinRood reverse is
+#   forward-faithful enough for forward transport but tracked WIP for 4D-Var.
 #   * ORD ∈ {5, 7} (LinRoodPPMScheme(5) and LinRoodPPMScheme(7) are both
 #     supported). `_CSLinRoodHorizRecord`
 #     binds ORD as a type parameter; the reverse pass reads it via
@@ -95,6 +112,17 @@ function _record_linrood_horizontal_substep!(
     Nz = size(panels_rm[1], 3)
     N = Nc + 2 * Hp
     backend = get_backend(panels_rm[1])
+
+    # Strip the driver's Hp halo from the flux panels so the forward replay AND
+    # the stored tape (read back by `_apply_cs_linrood_horizontal_adjoint!`) use
+    # the same interior faces the corrected production forward does. The record's
+    # typed `A3x`/`A3y` flux fields materialise these views into owned copies on
+    # construction, so the reverse pass reads stable data. No-op for unpadded
+    # callers. Must match the strip in `_linrood_run_forward_step!` (FD path) and
+    # `_cs_transport_step!(::CSLinRoodStyle)` (production) — otherwise the FD,
+    # forward-replay, and adjoint paths would disagree by a Hp-cell flux shift.
+    panels_am = ntuple(p -> _cs_flux_x_interior(panels_am[p], Nc, Hp), Val(6))
+    panels_bm = ntuple(p -> _cs_flux_y_interior(panels_bm[p], Nc, Hp), Val(6))
 
     init_k!    = _init_q_buf_kernel!(backend, 256)
     y_face_k!  = _ppm_y_face_kernel!(backend, 256)
@@ -219,6 +247,7 @@ function _record_linrood_horizontal_substep!(
         FT(flux_scale),
     )
 end
+
 
 # Reverse of one LinRood horizontal substep. Mutates the `lambda_panels_rm`,
 # `lambda_panels_m` adjoint accumulators IN PLACE. The record's `ORD` type
@@ -347,9 +376,16 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
     Nc, Hp = mesh.Nc, mesh.Hp
     Nz = size(panels_rm[1], 3)
 
-    # PPM(MonotoneLimiter) is the Strang Z reverse scheme — LinRood
-    # uses the same _sweep_z_panel! Z kernel as PPM(MonotoneLimiter).
-    z_scheme = PPMScheme(MonotoneLimiter())
+    # The Z (vertical) sweep MUST match the production LinRood forward: both
+    # `_strang_split_linrood_ppm_cs!` and the FD reference `_linrood_run_forward_step!`
+    # do the vertical sweep via `_sweep_z!`, which uses `UpwindScheme()`
+    # (CubedSphereStrang.jl). Recording a different Z scheme here (the old
+    # `PPMScheme(MonotoneLimiter())`) makes the adjoint the transpose of a
+    # DIFFERENT forward — masked while horizontal fluxes were trivial (the field
+    # stayed vertically uniform, where Upwind and PPM Z agree), but a ~0.14%
+    # footprint-vs-FD error once real horizontal transport develops vertical
+    # structure. Use Upwind so the tape, the FD reference, and production agree.
+    z_scheme = UpwindScheme()
 
     @inbounds for step in 1:nsteps
         panels_am = panels_am_steps[step]
@@ -378,9 +414,13 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
                             flux_scale = FT(flux_scale))
         end
         if record_ops
+            # `UpwindScheme ∈ CSAdjointLinearScheme`: its Z adjoint is linear, so
+            # record `nothing` for rm (the 4-arg linear reverse path). Storing rm
+            # would route to the `PPMScheme{MonotoneLimiter}` 5-arg reverse, which
+            # rejects Upwind.
             push!(ops, _CSSweepRecord(:z, z_scheme,
                                       _stage_panels_strict(panels_m),
-                                      _stage_panels_strict(panels_rm),
+                                      nothing,
                                       panels_cm, FT(flux_scale)))
         end
 
@@ -423,9 +463,13 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
                             flux_scale = FT(flux_scale))
         end
         if record_ops
+            # `UpwindScheme ∈ CSAdjointLinearScheme`: its Z adjoint is linear, so
+            # record `nothing` for rm (the 4-arg linear reverse path). Storing rm
+            # would route to the `PPMScheme{MonotoneLimiter}` 5-arg reverse, which
+            # rejects Upwind.
             push!(ops, _CSSweepRecord(:z, z_scheme,
                                       _stage_panels_strict(panels_m),
-                                      _stage_panels_strict(panels_rm),
+                                      nothing,
                                       panels_cm, FT(flux_scale)))
         end
 
@@ -477,27 +521,24 @@ function _linrood_run_forward_step!(panels_rm, panels_m,
                                      ws::CSAdvectionWorkspace,
                                      midpoint!) where {FT, ORD}
     Nz = size(panels_rm[1], 3)
-    # The user-facing `strang_split_linrood_ppm!` requires a
-    # `LinRoodWorkspace`. The FD-reference path doesn't carry one;
-    # allocate a fresh, backend-aware workspace per call. This is
-    # only on the FD path (not on the production tape recording),
-    # so the allocation overhead is acceptable.
+    # The footprint/inversion driver passes Hp-padded flux panels, but the
+    # LinRood kernels index the interior faces; strip the halo so this
+    # FD-reference forward runs the same (corrected) transport the production
+    # `_cs_transport_step!(::CSLinRoodStyle)` and the tape do. No-op for unpadded
+    # callers. See `_cs_flux_x_interior` / `_cs_flux_y_interior`.
+    Nc, Hp = mesh.Nc, mesh.Hp
+    panels_am = ntuple(p -> _cs_flux_x_interior(panels_am[p], Nc, Hp), Val(6))
+    panels_bm = ntuple(p -> _cs_flux_y_interior(panels_bm[p], Nc, Hp), Val(6))
     array_type = typeof(parent(panels_rm[1]))
     ws_lr = LinRoodWorkspace(mesh; FT = FT, Nz = Nz, array_type = array_type)
-    # The Strang palindrome midpoint! callback is applied between the
-    # two halves; emulate it by manually invoking Z + horiz + (midpoint)
-    # + Z + horiz like `strang_split_linrood_ppm!` does, but with
-    # midpoint! inserted in the centre. For the LinRood path the
-    # midpoint goes between the two Z sweeps inside the function (see
-    # `_strang_split_linrood_ppm_cs!`).
-    fv_tp_2d_cs!(panels_rm, panels_m, panels_am, panels_bm,
-                                      mesh, Val(ORD), ws, ws_lr)
+    # Palindrome H → Z → (midpoint/emissions) → Z → H, matching
+    # `_strang_split_linrood_ppm_cs!`.
+    fv_tp_2d_cs!(panels_rm, panels_m, panels_am, panels_bm, mesh, Val(ORD), ws, ws_lr)
     _sweep_z!(panels_rm, panels_m, panels_cm, mesh, ws)
     if midpoint! !== nothing
         midpoint!()
     end
     _sweep_z!(panels_rm, panels_m, panels_cm, mesh, ws)
-    fv_tp_2d_cs!(panels_rm, panels_m, panels_am, panels_bm,
-                                      mesh, Val(ORD), ws, ws_lr)
+    fv_tp_2d_cs!(panels_rm, panels_m, panels_am, panels_bm, mesh, Val(ORD), ws, ws_lr)
     return nothing
 end

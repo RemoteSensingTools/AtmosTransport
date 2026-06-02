@@ -1093,7 +1093,15 @@ function _cs_transport_step!(::CSLinRoodStyle,
                              subcycle_count::Union{Nothing, Integer} = nothing,
                              midpoint! = nothing) where ORD
     _ = subcycle_count
-    _strang_split_linrood_ppm_cs!(rm_tracer, m, fluxes.am, fluxes.bm, fluxes.cm,
+    # The runtime driver Hp-pads the flux panels; the LinRood cross-term kernels
+    # expect the interior faces only. Strip the halo here (see
+    # `_cs_flux_*_interior`) so the kernels read the correct cell. `cm` stays
+    # padded — the shared vertical `_sweep_z!` indexes it with the Hp offset like
+    # the rest of the CS sweeps.
+    Nc, Hp = mesh.Nc, mesh.Hp
+    am = ntuple(p -> _cs_flux_x_interior(fluxes.am[p], Nc, Hp), 6)
+    bm = ntuple(p -> _cs_flux_y_interior(fluxes.bm[p], Nc, Hp), 6)
+    _strang_split_linrood_ppm_cs!(rm_tracer, m, am, bm, fluxes.cm,
                                   mesh, Val(ORD), workspace;
                                   cfl_limit = cfl_limit,
                                   midpoint! = midpoint!)

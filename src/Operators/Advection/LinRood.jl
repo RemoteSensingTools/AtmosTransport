@@ -13,6 +13,33 @@
 using KernelAbstractions: @kernel, @index, @Const, synchronize, get_backend
 
 # ---------------------------------------------------------------------------
+# Flux-panel halo normalization (runtime entry only)
+#
+# The LinRood flux kernels index `am`/`bm` with the *interior* face index
+# (`am[i]`, `am[iif]`, no Hp offset) — the unpadded convention the kernels, the
+# adjoint tape (LinRoodTape), and their kernel/footprint tests are all written
+# for. The production runtime driver, however, Hp-pads the flux panels
+# (`CubedSphereTransportDriver._pad_horizontal`) exactly like the cell panels,
+# so `am` arrives as (Nc+1+2Hp, Nc+2Hp, ·) and `bm` as (Nc+2Hp, Nc+1+2Hp, ·).
+# Strip the halo to the interior faces at the runtime operator boundary
+# (`_cs_transport_step!(::CSLinRoodStyle)`) so the kernels read the correct cell.
+# No flux halo is ever read — the cross-term only needs interior faces;
+# neighbour-panel information is carried by the padded `rm`/`m` cell halos.
+# Without this the fluxes are shifted by Hp cells, which still conserves *total*
+# mass (telescoping) and leaves uniform fields uniform — so unit + footprint
+# tests pass — but corrupts real fields, driving air mass negative first at
+# panel edges (C180 GEOS: panel-1 j=Nc → NaN by t=3h). The size guard makes this
+# a no-op for the already-unpadded callers (footprint/adjoint tape, kernel
+# tests), which build their own consistently-shifted fluxes and must stay
+# untouched.
+@inline _cs_flux_x_interior(am, Nc::Int, Hp::Int) =
+    (Hp > 0 && size(am, 1) == Nc + 1 + 2Hp) ?
+        view(am, (Hp + 1):(Hp + Nc + 1), (Hp + 1):(Hp + Nc), :) : am
+@inline _cs_flux_y_interior(bm, Nc::Int, Hp::Int) =
+    (Hp > 0 && size(bm, 2) == Nc + 1 + 2Hp) ?
+        view(bm, (Hp + 1):(Hp + Nc), (Hp + 1):(Hp + Nc + 1), :) : bm
+
+# ---------------------------------------------------------------------------
 # Divergence Damping (del-2 diffusion on mixing ratio)
 #
 # FV3-style horizontal diffusion to suppress grid imprinting at panel boundaries.

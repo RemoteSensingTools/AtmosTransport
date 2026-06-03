@@ -30,9 +30,13 @@ module SurfaceFlux
 using Adapt
 using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
 using ...State: CellState, CubedSphereState, get_tracer, tracer_index, eachtracer
+using ...MetDrivers: current_time
 import ..apply!
 
-export SurfaceFluxSource, PerTracerFluxMap, flux_for
+export SurfaceFluxSource, AbstractSurfaceFluxSource, TimeVaryingSurfaceFluxSource
+export AbstractFluxTemporalScheme, StepwiseFlux, LinearInterpFlux, ConservativeMeanFlux
+export flux_temporal_scheme
+export PerTracerFluxMap, flux_for
 export AbstractSurfaceFluxOperator, NoSurfaceFlux, SurfaceFluxOperator
 export apply_surface_flux!, emitting_tracer_indices
 

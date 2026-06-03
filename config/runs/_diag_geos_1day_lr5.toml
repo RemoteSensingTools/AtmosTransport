@@ -1,0 +1,36 @@
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_fullL72"
+start_date   = "2021-12-01"
+end_date     = "2021-12-01"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "linrood"
+ppm_order = 5
+
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"
+  [tracers.co2_natural.surface_flux]
+  kind = "lmdz_co2"
+
+[diffusion]
+kind = "geoschem_holtslag_boville_vdiff"
+surface_flux_boundary = true
+
+[convection]
+kind = "cmfmc"
+clamp = true
+
+[output]
+format = "netcdf"
+split = "daily"
+snapshot_interval_hours = 3
+snapshot_file = "~/data/AtmosTransport/output/_diag_geos_1day/diaglr5_{YYYYMMDD}.nc"

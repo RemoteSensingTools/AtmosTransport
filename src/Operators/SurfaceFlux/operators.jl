@@ -235,13 +235,21 @@ function apply_surface_flux!(q_raw::NTuple{6, A},
     tracer_name = tracer_names[1]
     src = flux_for(op.flux_map, tracer_name)
     src === nothing && return nothing
-    rates = src.cell_mass_rate
-    rates isa NTuple{6} || throw(ArgumentError(
-        "apply_surface_flux!: cubed-sphere source $(src.tracer_name) must provide NTuple{6} panel rates"))
 
     Hp = Int(halo_width)
     dt_FT = FT(dt)
     backend = get_backend(q_raw[1])
+    _apply_cs_single_surface_flux!(q_raw, src, dt_FT, Hp, backend, meteo)
+    synchronize(backend)
+    return nothing
+end
+
+# Static per-cell rate: launch the plain accumulation kernel per panel.
+function _apply_cs_single_surface_flux!(q_raw::NTuple{6, A}, src::SurfaceFluxSource,
+                                        dt_FT::FT, Hp::Int, backend, meteo) where {FT, A <: AbstractArray{FT, 3}}
+    rates = src.cell_mass_rate
+    rates isa NTuple{6} || throw(ArgumentError(
+        "apply_surface_flux!: cubed-sphere source $(src.tracer_name) must provide NTuple{6} panel rates"))
     @inbounds for p in 1:6
         panel_q = q_raw[p]
         Nc = size(panel_q, 1) - 2Hp
@@ -253,7 +261,35 @@ function apply_surface_flux!(q_raw::NTuple{6, A},
         kernel = _surface_flux_cs_single_kernel!(backend, (16, 16))
         kernel(panel_q, rates[p], dt_FT, Nz, Hp; ndrange = (Nc, Ny))
     end
-    synchronize(backend)
+    return nothing
+end
+
+# Time-varying series: resolve the bracketing slices + interp weights on
+# the host from the sim clock, then launch the interpolated kernel per
+# panel. `meteo` supplies `current_time(meteo)` (production sim → sim.time,
+# nothing → 0.0).
+function _apply_cs_single_surface_flux!(q_raw::NTuple{6, A}, src::TimeVaryingSurfaceFluxSource,
+                                        dt_FT::FT, Hp::Int, backend, meteo) where {FT, A <: AbstractArray{FT, 3}}
+    series = src.cell_mass_rate_series
+    series isa NTuple{6} || throw(ArgumentError(
+        "apply_surface_flux!: cubed-sphere time-varying source $(src.tracer_name) must provide NTuple{6} panel series"))
+
+    t = current_time(meteo)
+    segments = _flux_temporal_segments(src.scheme, src.times, Float64(t), Float64(dt_FT))
+    kernel = _surface_flux_cs_single_interp_kernel!(backend, (16, 16))
+    @inbounds for p in 1:6
+        panel_q = q_raw[p]
+        Nc = size(panel_q, 1) - 2Hp
+        Ny = size(panel_q, 2) - 2Hp
+        Nz = size(panel_q, 3)
+        size(series[p])[1:2] == (Nc, Ny) || throw(DimensionMismatch(
+            "time-varying surface source $(src.tracer_name) panel $p has shape $(size(series[p])) " *
+            "but cubed-sphere interior panel shape is $((Nc, Ny))"))
+        for (i0, i1, w0, w1, frac) in segments
+            kernel(panel_q, series[p], FT(w0), FT(w1), i0, i1, dt_FT * FT(frac), Nz, Hp;
+                   ndrange = (Nc, Ny))
+        end
+    end
     return nothing
 end
 
@@ -272,22 +308,55 @@ function apply_surface_flux!(q_raw::NTuple{6, A},
     for src in op.flux_map.sources
         t_idx = findfirst(==(src.tracer_name), tracer_names)
         t_idx === nothing && continue
-        rates = src.cell_mass_rate
-        rates isa NTuple{6} || throw(ArgumentError(
-            "apply_surface_flux!: cubed-sphere source $(src.tracer_name) must provide NTuple{6} panel rates"))
-        @inbounds for p in 1:6
-            panel_q = q_raw[p]
-            Nc = size(panel_q, 1) - 2Hp
-            Ny = size(panel_q, 2) - 2Hp
-            Nz = size(panel_q, 3)
-            size(rates[p]) == (Nc, Ny) || throw(DimensionMismatch(
-                "surface source $(src.tracer_name) panel $p has shape $(size(rates[p])) " *
-                "but cubed-sphere interior panel shape is $((Nc, Ny))"))
-            kernel = _surface_flux_cs_kernel!(backend, (16, 16))
-            kernel(panel_q, rates[p], dt_FT, t_idx, Nz, Hp; ndrange = (Nc, Ny))
-        end
+        _apply_cs_packed_surface_flux!(q_raw, src, dt_FT, t_idx, Hp, backend, meteo)
     end
     synchronize(backend)
+    return nothing
+end
+
+# Static per-cell rate on the packed multi-tracer CS buffer.
+function _apply_cs_packed_surface_flux!(q_raw::NTuple{6, A}, src::SurfaceFluxSource,
+                                        dt_FT::FT, t_idx::Integer, Hp::Int, backend, meteo) where {FT, A <: AbstractArray{FT, 4}}
+    rates = src.cell_mass_rate
+    rates isa NTuple{6} || throw(ArgumentError(
+        "apply_surface_flux!: cubed-sphere source $(src.tracer_name) must provide NTuple{6} panel rates"))
+    @inbounds for p in 1:6
+        panel_q = q_raw[p]
+        Nc = size(panel_q, 1) - 2Hp
+        Ny = size(panel_q, 2) - 2Hp
+        Nz = size(panel_q, 3)
+        size(rates[p]) == (Nc, Ny) || throw(DimensionMismatch(
+            "surface source $(src.tracer_name) panel $p has shape $(size(rates[p])) " *
+            "but cubed-sphere interior panel shape is $((Nc, Ny))"))
+        kernel = _surface_flux_cs_kernel!(backend, (16, 16))
+        kernel(panel_q, rates[p], dt_FT, t_idx, Nz, Hp; ndrange = (Nc, Ny))
+    end
+    return nothing
+end
+
+# Time-varying series on the packed multi-tracer CS buffer: resolve the
+# bracket on the host from the sim clock, then launch the interp kernel.
+function _apply_cs_packed_surface_flux!(q_raw::NTuple{6, A}, src::TimeVaryingSurfaceFluxSource,
+                                        dt_FT::FT, t_idx::Integer, Hp::Int, backend, meteo) where {FT, A <: AbstractArray{FT, 4}}
+    series = src.cell_mass_rate_series
+    series isa NTuple{6} || throw(ArgumentError(
+        "apply_surface_flux!: cubed-sphere time-varying source $(src.tracer_name) must provide NTuple{6} panel series"))
+    t = current_time(meteo)
+    segments = _flux_temporal_segments(src.scheme, src.times, Float64(t), Float64(dt_FT))
+    kernel = _surface_flux_cs_interp_kernel!(backend, (16, 16))
+    @inbounds for p in 1:6
+        panel_q = q_raw[p]
+        Nc = size(panel_q, 1) - 2Hp
+        Ny = size(panel_q, 2) - 2Hp
+        Nz = size(panel_q, 3)
+        size(series[p])[1:2] == (Nc, Ny) || throw(DimensionMismatch(
+            "time-varying surface source $(src.tracer_name) panel $p has shape $(size(series[p])) " *
+            "but cubed-sphere interior panel shape is $((Nc, Ny))"))
+        for (i0, i1, w0, w1, frac) in segments
+            kernel(panel_q, series[p], FT(w0), FT(w1), i0, i1, dt_FT * FT(frac), t_idx, Nz, Hp;
+                   ndrange = (Nc, Ny))
+        end
+    end
     return nothing
 end
 

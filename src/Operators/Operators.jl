@@ -74,7 +74,10 @@ export AbstractSurfaceFluxCoupling, SplitSurfaceFluxCoupling,
 export apply_vertical_diffusion!, apply_vertical_diffusion_vmr!
 
 # SurfaceFlux data types + operator hierarchy
-export SurfaceFluxSource, PerTracerFluxMap, flux_for
+export SurfaceFluxSource, AbstractSurfaceFluxSource, TimeVaryingSurfaceFluxSource,
+       PerTracerFluxMap, flux_for
+export AbstractFluxTemporalScheme, StepwiseFlux, LinearInterpFlux, ConservativeMeanFlux,
+       flux_temporal_scheme
 export AbstractSurfaceFluxOperator, NoSurfaceFlux, SurfaceFluxOperator
 export apply_surface_flux!
 

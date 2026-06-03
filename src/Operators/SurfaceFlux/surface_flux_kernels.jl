@@ -72,6 +72,24 @@ interior `(Nc, Nc)` panel source.
 end
 
 """
+    _surface_flux_cs_single_interp_kernel!(q_raw, series, w0, w1, i0, i1, dt, Nz, Hp)
+
+Cubed-sphere single-tracer time-interpolated surface-flux kernel. `q_raw`
+is one halo-padded tracer panel `(Nc + 2Hp, Nc + 2Hp, Nz)` and `series`
+is the full `(Nc, Nc, ntime)` interior panel rate series. The surface
+layer is incremented by the linear blend of the two bracketing slices
+`i0, i1` (weights `w0, w1`, already resolved on the host):
+
+    q_raw[ii+Hp, jj+Hp, Nz] += (w0·series[ii,jj,i0] + w1·series[ii,jj,i1]) · dt
+"""
+@kernel function _surface_flux_cs_single_interp_kernel!(q_raw, @Const(series),
+                                                        w0, w1, i0, i1, dt, Nz, Hp)
+    ii, jj = @index(Global, NTuple)
+    @inbounds q_raw[ii + Hp, jj + Hp, Nz] +=
+        (w0 * series[ii, jj, i0] + w1 * series[ii, jj, i1]) * dt
+end
+
+"""
     _surface_flux_cs_kernel!(q_raw, rate, dt, tracer_idx, Nz, Hp)
 
 Packed cubed-sphere surface-flux kernel. `q_raw` is one halo-padded panel
@@ -81,4 +99,23 @@ panel source for `tracer_idx`.
 @kernel function _surface_flux_cs_kernel!(q_raw, @Const(rate), dt, tracer_idx, Nz, Hp)
     ii, jj = @index(Global, NTuple)
     @inbounds q_raw[ii + Hp, jj + Hp, Nz, tracer_idx] += rate[ii, jj] * dt
+end
+
+"""
+    _surface_flux_cs_interp_kernel!(q_raw, series, w0, w1, i0, i1, dt, tracer_idx, Nz, Hp)
+
+Packed cubed-sphere time-interpolated surface-flux kernel. `q_raw` is one
+halo-padded panel `(Nc + 2Hp, Nc + 2Hp, Nz, Nt)` and `series` is the full
+`(Nc, Nc, ntime)` interior panel rate series. The surface layer of
+`tracer_idx` is incremented by the linear blend of the two bracketing
+slices `i0, i1` (host-resolved weights `w0, w1`):
+
+    q_raw[ii+Hp, jj+Hp, Nz, tracer_idx] +=
+        (w0·series[ii,jj,i0] + w1·series[ii,jj,i1]) · dt
+"""
+@kernel function _surface_flux_cs_interp_kernel!(q_raw, @Const(series),
+                                                 w0, w1, i0, i1, dt, tracer_idx, Nz, Hp)
+    ii, jj = @index(Global, NTuple)
+    @inbounds q_raw[ii + Hp, jj + Hp, Nz, tracer_idx] +=
+        (w0 * series[ii, jj, i0] + w1 * series[ii, jj, i1]) * dt
 end

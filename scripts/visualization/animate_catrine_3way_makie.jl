@@ -52,8 +52,20 @@ function main()
         (parse(Float64, parts[1]), parse(Float64, parts[2]))
     end
 
+    # Optional custom row labels (top→bottom: gc, at_geos, at_era5). Lets this
+    # 3-row layout double as a *scheme* comparison (e.g. "GEOS-Chem","AT PPM",
+    # "AT LinRood") by passing the two AT runs to --at-geos / --at-era5.
+    rl_arg = _arg("--row-labels", "")
+    row_labels = if isempty(rl_arg)
+        ("GEOS-Chem", "AT (GEOS-IT)", "AT (ERA5)")
+    else
+        parts = split(rl_arg, ",")
+        length(parts) == 3 || error("--row-labels expects 3 comma-separated labels, got $rl_arg")
+        (String(parts[1]), String(parts[2]), String(parts[3]))
+    end
+
     result = catrine_map_curtains_3way(at_geos, at_era5, gc;
-        species, out_dir, fps, max_frames, scale, auto_range_day1,
+        species, out_dir, fps, max_frames, scale, auto_range_day1, row_labels,
         map_vmax = _arg_float("--map-vmax", 8.0),
         map_vmin = _arg_float("--map-vmin", 0.0),
         curtain_vmax = _arg_float("--curtain-vmax", 40.0),

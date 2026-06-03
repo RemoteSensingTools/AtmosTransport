@@ -65,6 +65,7 @@ aborts the run with a precise error message.
 module DrivenRunner
 
 using Adapt
+using Dates: Date, DateTime
 using Printf: @sprintf, @printf
 using Logging
 using ProgressMeter: Progress, next!, finish!, update!
@@ -774,6 +775,30 @@ function _run_driven_simulation_for(::Val{grid_type}, _binary_paths::Vector{Stri
     throw(ArgumentError("Unsupported transport-binary grid_type=$(grid_type)."))
 end
 
+# Parse the run start as a `DateTime` (at 00:00) from `[input].start_date`,
+# used as the `reference_time` for time-varying surface fluxes so their slice
+# times align to the simulation clock. Returns `nothing` if no start_date is
+# present (the time-varying loader then assumes the file origin == run start).
+function _run_reference_time(cfg)
+    input_cfg = get(cfg, "input", nothing)
+    input_cfg isa AbstractDict || return nothing
+    haskey(input_cfg, "start_date") || return nothing
+    return DateTime(Date(String(input_cfg["start_date"])))
+end
+
+# Reduce a surface source's per-cell rate to a scalar total for logging,
+# handling both static (`cell_mass_rate`) and time-varying
+# (`cell_mass_rate_series`, summed over the first slice) sources.
+function _surface_source_total_rate(source)
+    if hasproperty(source, :cell_mass_rate)
+        r = source.cell_mass_rate
+        return r isa Tuple ? Float64(sum(sum, r)) : Float64(sum(r))
+    else
+        series = source.cell_mass_rate_series   # NTuple{6} of (Nc,Nc,ntime)
+        return Float64(sum(p -> sum(@view p[:, :, 1]), series))
+    end
+end
+
 function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
     FT = _cfg_float_type(cfg)
     assert_backend_float_type!(_cfg_runtime_backend(cfg), FT)
@@ -815,7 +840,8 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
     _assert_gpu_residency!(model.state, cfg)
 
     grid_of_first = driver_grid(first_driver)
-    surface_sources = build_surface_flux_sources(grid_of_first, tracer_specs, FT)
+    surface_sources = build_surface_flux_sources(grid_of_first, tracer_specs, FT;
+                                                 reference_time = _run_reference_time(cfg))
     m0 = total_air_mass(model.state)
     tracer_masses0 = Dict(name => total_mass(model.state, name)
                           for name in tracer_names(model.state))
@@ -835,7 +861,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
     for source in surface_sources
         @info @sprintf("Surface source %s total model-storage rate: %.12e kg_air_equiv/s",
                        String(source.tracer_name),
-                       Float64(sum(source.cell_mass_rate)))
+                       _surface_source_total_rate(source))
     end
 
     snapshots = SnapshotFrame[]
@@ -1121,16 +1147,15 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
     # mass rates. Matches the LL/RG path; `DrivenSimulation`'s constructor
     # adapts these to the model backend (CPU Array or GPU array) via
     # `_adapt_sources_to_model_backend`, so no manual adapt step here.
-    surface_sources = build_surface_flux_sources(grid, tracer_specs, FT)
+    surface_sources = build_surface_flux_sources(grid, tracer_specs, FT;
+                                                 reference_time = _run_reference_time(cfg))
     source_tracers = Set(source.tracer_name for source in surface_sources)
     for source in surface_sources
-        # `cell_mass_rate` is topology-shaped: 2D Array on LL/RG, 6-tuple of
-        # Matrices on CS. Reduce to a scalar for the log either way.
-        total_rate = source.cell_mass_rate isa Tuple ?
-                     Float64(sum(sum, source.cell_mass_rate)) :
-                     Float64(sum(source.cell_mass_rate))
+        # Reduce the topology-shaped per-cell rate to a scalar for the log;
+        # `_surface_source_total_rate` handles static (2D / 6-tuple) and
+        # time-varying (first-slice) sources alike.
         @info @sprintf("Surface source %s total model-storage rate: %.12e kg_air_equiv/s",
-                       String(source.tracer_name), total_rate)
+                       String(source.tracer_name), _surface_source_total_rate(source))
     end
 
     _log_runtime_summary(topology = :CubedSphere,

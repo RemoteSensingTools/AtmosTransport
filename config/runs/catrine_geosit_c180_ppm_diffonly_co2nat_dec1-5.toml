@@ -1,0 +1,54 @@
+# ===========================================================================
+# Tropopause isolation experiment — run A: ADVECTION + DIFFUSION (NO convection).
+#
+# PPM advection + GEOS-Chem Holtslag-Boville vertical diffusion, convection
+# DISABLED. Single tracer co2_natural (LMDZ surface flux), Dec 1-5 2021, GEOS-IT
+# C180 full-L72 pinned transport binaries. Paired with the convection-only run
+# `catrine_geosit_c180_ppm_convonly_co2nat_dec1-5.toml` to isolate which physics
+# produces the tropopause features seen in the full-physics run. Emissions are
+# injected identically in both runs (the surface-flux operator always applies the
+# full flux; `surface_flux_boundary` only sets emission/diffusion ordering).
+#
+# Runner:
+#   julia --project=. scripts/run_transport.jl \
+#       config/runs/catrine_geosit_c180_ppm_diffonly_co2nat_dec1-5.toml
+# ===========================================================================
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_fullL72"
+start_date   = "2021-12-01"
+end_date     = "2021-12-05"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "ppm"
+
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"
+  [tracers.co2_natural.surface_flux]
+  kind = "lmdz_co2"
+  time_varying = true
+
+[diffusion]
+kind = "geoschem_holtslag_boville_vdiff"
+surface_flux_boundary = true
+
+[convection]
+kind = "none"
+
+[chemistry]
+kind = "none"
+
+[output]
+format = "netcdf"
+split = "single"
+snapshot_interval_hours = 3
+path = "~/data/AtmosTransport/output/tropopause_iso/catrine_geosit_c180_ppm_diffonly_co2nat_dec1-5.nc"

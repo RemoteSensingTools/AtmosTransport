@@ -296,6 +296,14 @@ function _process_day_native(cfg::AbstractDict;
     else
         error("[numerics].geos_balance_mode must be \"column\" or \"per_layer\"; got $(repr(balance_mode_raw))")
     end
+    cm_closure_raw = lowercase(String(get(numerics_cfg, "geos_cm_closure", "endpoint_balanced")))
+    cm_closure = if cm_closure_raw in ("endpoint_balanced", "endpoint", "diagnose", "balanced")
+        :endpoint_balanced
+    elseif cm_closure_raw in ("pressure_fixer", "pressurefixer", "fv3", "native")
+        :pressure_fixer
+    else
+        error("[numerics].geos_cm_closure must be \"endpoint_balanced\" or \"pressure_fixer\"; got $(repr(cm_closure_raw))")
+    end
     mass_fix_cfg = get(cfg, "mass_fix", Dict{String, Any}())
     global_mass_pin = Bool(get(mass_fix_cfg, "enable", false))
     configured_global_mass_target_kg = _native_mass_fix_target_kg(cfg, grid)
@@ -337,6 +345,7 @@ function _process_day_native(cfg::AbstractDict;
             global_mass_pin = global_mass_pin,
             global_mass_target_kg = configured_global_mass_target_kg,
             balance_mode = balance_mode,
+            cm_closure = cm_closure,
         )
         return process_day(d, day_grid, settings, vertical; day_kwargs...)
     end
@@ -383,6 +392,7 @@ function _process_day_native(cfg::AbstractDict;
                 global_mass_pin = global_mass_pin,
                 global_mass_target_kg = global_mass_target_kg,
                 balance_mode = balance_mode,
+                cm_closure = cm_closure,
             )
             result = process_day(d, day_grid, settings, vertical; day_kwargs...)
             seed_m = get(result, :final_m, nothing)

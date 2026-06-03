@@ -1,0 +1,59 @@
+# ===========================================================================
+# EXPERIMENT (2026-06-03): GEOS-IT C180 fullL72, but with the FV3 PRESSURE-FIXER
+# cm closure instead of the endpoint-DELP diagnose closure.
+#
+# Identical to `geosit_c180_dec2021_catrine_f32_fullL72.toml` except:
+#   - [numerics].geos_cm_closure = "pressure_fixer": keep native horizontal
+#     fluxes UNBALANCED, close cm by construction via the ΔB-distributed FV3 rule
+#     (`compute_cs_cm_pressure_fixer!`), chaining the implied endpoint mass
+#     `m_next = m_cur + 2·steps·ΔB·pit`. This avoids dumping the column
+#     moisture-source term (vertical water-vapor transport) into cm — the
+#     SH-UTLS "fingering" — at the cost of the stored m drifting from raw GEOS
+#     DELP by that (small for dry CO2) moisture term. See commit e648bf3f.
+#   - chain_mass = true (chain the pressure-fixer endpoints across windows).
+#   - separate output directory (does NOT overwrite the endpoint-closure binary).
+#
+# Test purpose: regenerate Dec 1 and run adv-only to see if the SH-UTLS
+# co2_natural fingering drops vs the endpoint-closure (Path-A) binary.
+# ===========================================================================
+
+[source]
+toml                 = "config/met_sources/geosit.toml"
+root_dir             = "/home/cfranken/data/AtmosTransport/met/geosit/C180/raw_catrine"
+include_surface      = true
+include_convection   = true
+include_vdiff_fields = true
+
+[output]
+directory  = "/home/cfranken/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_fullL72_pressurefixer"
+mass_basis = "dry"
+
+[grid]
+type                = "cubed_sphere"
+Nc                  = 180
+panel_convention    = "geos_native"
+definition          = "gmao"
+regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
+
+[vertical]
+coefficients = "config/geos_L72_coefficients.toml"
+transform    = "identity"
+
+[numerics]
+float_type     = "Float32"
+dt_met_seconds = 3600.0
+chain_mass     = true              # chain pressure-fixer endpoints across windows
+
+positivity_cfl_limit       = 0.95
+require_substep_positivity = true
+substep_schedule           = "adaptive_cfl"
+substep_cfl_target         = 0.95
+min_steps_per_window       = 1
+max_steps_per_window       = 512
+geos_balance_mode          = "column"     # ignored when cm_closure=pressure_fixer
+geos_cm_closure            = "pressure_fixer"
+
+[mass_fix]
+enable = true
+mode = "target_ps_dry"
+target_ps_dry_pa = 98726.0

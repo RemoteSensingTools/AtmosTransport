@@ -71,6 +71,44 @@ function _ps_from_air_mass!(ps::AbstractMatrix{FT},
     return ps
 end
 
+"""
+    _evolve_mass_pressure_fixer!(m_next, m_cur, am_v4, bm_v4, ΔB, two_steps, Nc, Nz)
+
+FV3 pressure-fixer mass evolution (restored from commit e648bf3f):
+
+    pit       = Σ_k (am[i,j,k] − am[i+1,j,k] + bm[i,j,k] − bm[i,j+1,k])
+    m_next[k] = m_cur[k] + two_steps · ΔB[k] · pit
+
+This is the endpoint implied by `compute_cs_cm_pressure_fixer!`'s closure
+`cm[k+1]−cm[k] = C_k − ΔB[k]·pit`, so the window replay closes to roundoff.
+The `two_steps` factor cancels the per-window flux scaling (`am ∝ 1/steps`), so
+`m_next` is independent of the chosen substep count. Globally mass-conserving
+(Σ_cells pit = 0 on the closed sphere), so the dry-mass pin is a no-op here.
+"""
+function _evolve_mass_pressure_fixer!(
+        m_next::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+        m_cur::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+        am_v4::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+        bm_v4::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+        ΔB::AbstractVector,
+        two_steps::FT, Nc::Int, Nz::Int) where {FT}
+    @inbounds for p in 1:CS_PANEL_COUNT
+        am = am_v4[p]; bm = bm_v4[p]
+        m  = m_cur[p]; mn = m_next[p]
+        for j in 1:Nc, i in 1:Nc
+            pit = zero(FT)
+            for k in 1:Nz
+                pit += (am[i, j, k] - am[i + 1, j, k]) +
+                       (bm[i, j, k] - bm[i, j + 1, k])
+            end
+            for k in 1:Nz
+                mn[i, j, k] = m[i, j, k] + two_steps * FT(ΔB[k]) * pit
+            end
+        end
+    end
+    return nothing
+end
+
 function _cs_total_air_mass(panels_m::NTuple{CS_PANEL_COUNT, <:AbstractArray})
     total = 0.0
     for p in 1:CS_PANEL_COUNT
@@ -491,6 +529,15 @@ mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV, V
     global_mass_pin_enabled :: Bool
     global_mass_target_kg :: Float64
     balance_mode :: Symbol
+    # Vertical-flux (cm) closure: `:endpoint_balanced` (default) closes cm from
+    # the column-balanced horizontal fluxes against the raw GEOS DELP_dry
+    # endpoint tendency (`diagnose_cs_cm!`); `:pressure_fixer` keeps the native
+    # horizontal fluxes UNBALANCED and closes cm by construction via the FV3
+    # ΔB-distributed rule (`compute_cs_cm_pressure_fixer!`), chaining the mass
+    # `m_next = m_cur + 2·steps·ΔB·pit` (avoids dumping the column moisture-source
+    # term into cm — the SH-UTLS "fingering"). See module header + commit e648bf3f.
+    cm_closure :: Symbol
+    ΔB :: Vector{FT}          # B[k+1]-B[k], TOA-first, length Nz, Σ ΔB = 1
 end
 
 const _GEOS_ADAPTIVE_SUBSTEP_MAX_REFINEMENTS = 8
@@ -509,7 +556,8 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
                                    windows_per_day::Integer = 0,
                                    global_mass_pin::Bool = false,
                                    global_mass_target_kg::Real = NaN,
-                                   balance_mode::Symbol = :column) where FT
+                                   balance_mode::Symbol = :column,
+                                   cm_closure::Symbol = :endpoint_balanced) where FT
     Nc = grid.Nc
     Nz = vertical.Nz
     Nz_native = vertical.Nz_native
@@ -545,6 +593,15 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
         error("windows_per_day must be non-negative, got $(windows_per_day)")
     balance_mode in (:column, :per_layer) ||
         error("GEOS-CS balance_mode must be :column or :per_layer; got $(balance_mode)")
+    cm_closure in (:endpoint_balanced, :pressure_fixer) ||
+        error("GEOS-CS cm_closure must be :endpoint_balanced or :pressure_fixer; got $(cm_closure)")
+    # ΔB[k] = B_interface[k+1] − B_interface[k] (TOA-first; Σ ΔB = 1 by hybrid
+    # sigma-pressure construction). The merged_vc is the target coordinate (same
+    # source the identity plan above is built from). Used by :pressure_fixer cm.
+    Bifc = vertical.merged_vc.B
+    length(Bifc) == Nz + 1 ||
+        error("GEOS-CS ΔB needs $(Nz+1) interface B coefficients, got $(length(Bifc))")
+    ΔB = FT[FT(Bifc[k + 1] - Bifc[k]) for k in 1:Nz]
 
     am_native_v4 = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz_native), npanel)
     bm_native_v4 = ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz_native), npanel)
@@ -580,7 +637,7 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
             fill(steps_per_met, schedule_len), Bool(adaptive_substeps),
             target, min_steps, max_steps, chain_mass,
             Bool(global_mass_pin), Float64(global_mass_target_kg),
-            balance_mode)
+            balance_mode, cm_closure, ΔB)
 end
 
 function _geos_pin_global_mass_if_needed!(workspace::GEOSCubedSphereWindowWorkspace{FT},
@@ -631,6 +688,28 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
     workspace.flux_scale = workspace.base_flux_scale *
                            (workspace.source_steps_per_met / steps)
 
+    for p in 1:CS_PANEL_COUNT
+        fill!(workspace.cm_v4[p], zero(FT))
+    end
+
+    if workspace.cm_closure === :pressure_fixer
+        # Keep native horizontal fluxes UNBALANCED; close cm by construction via
+        # the FV3 ΔB-distributed rule, and chain the implied endpoint mass
+        # `m_next = m_cur + 2·steps·ΔB·pit` (replay closes to roundoff). This
+        # avoids dumping the column moisture-source term into cm. The raw-DELP
+        # `m_next_target` set during ingest is replaced here by the pressure-
+        # fixer endpoint so the chained mass / dm / ps stay self-consistent.
+        compute_cs_cm_pressure_fixer!(workspace.cm_v4, workspace.am_v4,
+                                      workspace.bm_v4, workspace.ΔB, Nc, Nz)
+        _evolve_mass_pressure_fixer!(workspace.m_next_target, workspace.m_cur,
+                                     workspace.am_v4, workspace.bm_v4,
+                                     workspace.ΔB, FT(2 * steps), Nc, Nz)
+        fill_cs_window_mass_tendency!(workspace.dm_v4, workspace.m_cur,
+                                      workspace.m_next_target, steps)
+        return (max_pre_residual = 0.0, max_post_residual = 0.0,
+                max_cg_iter = 0, mode = :pressure_fixer)
+    end
+
     bal_diag = if workspace.balance_mode === :per_layer
         balance_cs_global_mass_fluxes!(
             workspace.am_v4, workspace.bm_v4, workspace.m_cur,
@@ -644,9 +723,6 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
     end
     fill_cs_window_mass_tendency!(workspace.dm_v4, workspace.m_cur,
                                   workspace.m_next_target, steps)
-    for p in 1:CS_PANEL_COUNT
-        fill!(workspace.cm_v4[p], zero(FT))
-    end
     diagnose_cs_cm!(workspace.cm_v4, workspace.am_v4, workspace.bm_v4,
                     workspace.dm_v4, workspace.m_cur, Nc, Nz)
     return bal_diag
@@ -886,7 +962,8 @@ function _process_day_geos_cs_unified(date::Date,
                                       seed_m::Union{Nothing, NTuple{6, <:AbstractArray}},
                                       global_mass_pin::Bool,
                                       global_mass_target_kg::Real,
-                                      balance_mode::Symbol)
+                                      balance_mode::Symbol,
+                                      cm_closure::Symbol = :endpoint_balanced)
     Nc     = grid.Nc
     npanel = CS_PANEL_COUNT
     Nz     = vertical.Nz
@@ -916,12 +993,13 @@ function _process_day_geos_cs_unified(date::Date,
                                                windows_per_day = nw,
                                                global_mass_pin = global_mass_pin,
                                                global_mass_target_kg = global_mass_target_kg,
-                                               balance_mode = balance_mode)
+                                               balance_mode = balance_mode,
+                                               cm_closure = cm_closure)
 
         @info "GEOS → CS: $(date), source=$(settings) → $(out_path) [unified]"
         @info "  source_C=$(settings.Nc) target_C=$Nc  strategy=$(_geos_cs_strategy_name(workspace.strategy))"
         @info "  Nz=$Nz  windows=$nw  steps_per_met=$steps_per_met  flux_scale=$(workspace.flux_scale)"
-        @info "  GEOS horizontal balance: $(workspace.balance_mode)"
+        @info "  GEOS horizontal balance: $(workspace.balance_mode)   cm closure: $(workspace.cm_closure)"
         global_mass_pin &&
             @info @sprintf("  GEOS global dry-mass pin ENABLED: target=%s",
                            isfinite(Float64(global_mass_target_kg)) ?
@@ -956,10 +1034,16 @@ function _process_day_geos_cs_unified(date::Date,
                 "runtime_substep_contract" => "binary_schedule",
                 "geos_mass_endpoint" => global_mass_pin ?
                     "dry_endpoint_global_mean_pinned" : "raw_dry_endpoint",
-                "geos_horizontal_balance" => workspace.balance_mode === :per_layer ?
-                    "per_layer_poisson_to_endpoint" : "column_poisson_to_endpoint",
-                "geos_horizontal_balance_mode" => String(workspace.balance_mode),
-                "geos_vertical_flux" => "diagnosed_from_balanced_horizontal_and_endpoint",
+                "geos_horizontal_balance" => workspace.cm_closure === :pressure_fixer ?
+                    "none_native_unbalanced" :
+                    (workspace.balance_mode === :per_layer ?
+                        "per_layer_poisson_to_endpoint" : "column_poisson_to_endpoint"),
+                "geos_horizontal_balance_mode" => workspace.cm_closure === :pressure_fixer ?
+                    "none" : String(workspace.balance_mode),
+                "geos_cm_closure" => String(workspace.cm_closure),
+                "geos_vertical_flux" => workspace.cm_closure === :pressure_fixer ?
+                    "fv3_pressure_fixer_native_horizontal_chained_mass" :
+                    "diagnosed_from_balanced_horizontal_and_endpoint",
                 "geos_global_mass_pin_enabled" => global_mass_pin,
                 "geos_global_mass_pin_target_kg" => isfinite(workspace.global_mass_target_kg) ?
                     workspace.global_mass_target_kg : "first_window_start",
@@ -1086,6 +1170,7 @@ function process_day(date::Date,
                      global_mass_pin::Bool = false,
                      global_mass_target_kg::Real = NaN,
                      balance_mode::Symbol = :column,
+                     cm_closure::Symbol = :endpoint_balanced,
                      next_day_hour0 = nothing)
     # Reject configurations the path cannot honor:
     mass_basis === :dry ||
@@ -1110,5 +1195,6 @@ function process_day(date::Date,
         global_mass_pin = global_mass_pin,
         global_mass_target_kg = global_mass_target_kg,
         balance_mode = balance_mode,
+        cm_closure = cm_closure,
     )
 end

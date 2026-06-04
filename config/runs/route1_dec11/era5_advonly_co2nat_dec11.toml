@@ -1,0 +1,39 @@
+# Route-1 tracer test — ERA5 spectral-wind C180, adv-only co2_natural, Dec-11.
+# The clean reference. Matched to the MERRA-2 and GEOS-native Dec-11 runs.
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder       = "~/data/AtmosTransport/met/era5/n320_to_c180/transport_binary_dec2021_catrine_f32"
+start_date   = "2021-12-11"
+end_date     = "2021-12-11"
+file_pattern = "era5_n320_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "ppm"
+
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"
+  [tracers.co2_natural.surface_flux]
+  kind = "lmdz_co2"
+  time_varying = true
+
+[diffusion]
+kind = "none"
+
+[convection]
+kind = "none"
+
+[chemistry]
+kind = "none"
+
+[output]
+format = "netcdf"
+split = "single"
+snapshot_interval_hours = 3
+path = "~/data/AtmosTransport/output/route1_dec11/era5_c180_advonly_co2nat_dec11.nc"

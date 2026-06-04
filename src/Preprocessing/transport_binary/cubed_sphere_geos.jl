@@ -109,6 +109,86 @@ function _evolve_mass_pressure_fixer!(
     return nothing
 end
 
+"""
+    _smooth_cs_residual_panels!(field, niter, w, Nc, Nz)
+
+In-place horizontal Jacobi smoothing of the moisture-source residual, applied
+INDEPENDENTLY and IDENTICALLY to each vertical level of every panel. The stencil
+is the 4-neighbour interior average with weight `w`; panel-edge cells average
+only their in-panel neighbours (no cross-panel exchange — the SH-UTLS fingering
+lives in panel interiors, and a missing seam neighbour leaves the gate identity
+untouched). Because the operator is LINEAR and LEVEL-INDEPENDENT,
+`Σ_k smooth(rₖ) = smooth(Σ_k rₖ)`; with a zero column-integral residual this is
+`smooth(0) = 0`, so the column closure (and thus surface pressure) is preserved
+exactly while only the grid-scale per-layer structure is damped.
+"""
+function _smooth_cs_residual_panels!(field::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                     niter::Int, w::FT, Nc::Int, Nz::Int) where FT
+    niter <= 0 && return nothing
+    scratch = Array{FT}(undef, Nc, Nc)
+    @inbounds for p in 1:CS_PANEL_COUNT
+        f = field[p]
+        for k in 1:Nz
+            for _ in 1:niter
+                for j in 1:Nc, i in 1:Nc
+                    scratch[i, j] = f[i, j, k]
+                end
+                for j in 1:Nc, i in 1:Nc
+                    s = zero(FT); n = 0
+                    i > 1  && (s += scratch[i - 1, j]; n += 1)
+                    i < Nc && (s += scratch[i + 1, j]; n += 1)
+                    j > 1  && (s += scratch[i, j - 1]; n += 1)
+                    j < Nc && (s += scratch[i, j + 1]; n += 1)
+                    f[i, j, k] = (one(FT) - w) * scratch[i, j] + w * (s / FT(n))
+                end
+            end
+        end
+    end
+    return nothing
+end
+
+"""
+    _smooth_cs_columns!(field, niter, w, Nc)
+
+In-place horizontal Jacobi low-pass of a per-panel 2D column field (e.g. the
+column dry-mass drift), GLOBAL-SUM-PRESERVING (a uniform offset restores the
+total after smoothing, so a zero-sum input stays zero-sum and the global dry
+mass lands exactly on the analyzed target). Per-panel (no cross-panel exchange);
+keeps the LARGE-SCALE part of the field and damps grid scales.
+"""
+function _smooth_cs_columns!(field::NTuple{CS_PANEL_COUNT, Array{FT, 2}},
+                             niter::Int, w::FT, Nc::Int) where FT
+    niter <= 0 && return nothing
+    total_before = 0.0
+    @inbounds for p in 1:CS_PANEL_COUNT, v in field[p]
+        total_before += Float64(v)
+    end
+    scratch = Array{FT}(undef, Nc, Nc)
+    @inbounds for p in 1:CS_PANEL_COUNT
+        f = field[p]
+        for _ in 1:niter
+            copyto!(scratch, f)
+            for j in 1:Nc, i in 1:Nc
+                s = zero(FT); n = 0
+                i > 1  && (s += scratch[i - 1, j]; n += 1)
+                i < Nc && (s += scratch[i + 1, j]; n += 1)
+                j > 1  && (s += scratch[i, j - 1]; n += 1)
+                j < Nc && (s += scratch[i, j + 1]; n += 1)
+                f[i, j] = (one(FT) - w) * scratch[i, j] + w * (s / FT(n))
+            end
+        end
+    end
+    total_after = 0.0
+    @inbounds for p in 1:CS_PANEL_COUNT, v in field[p]
+        total_after += Float64(v)
+    end
+    offset = FT((total_before - total_after) / (CS_PANEL_COUNT * Nc * Nc))
+    @inbounds for p in 1:CS_PANEL_COUNT, idx in eachindex(field[p])
+        field[p][idx] += offset
+    end
+    return nothing
+end
+
 function _cs_total_air_mass(panels_m::NTuple{CS_PANEL_COUNT, <:AbstractArray})
     total = 0.0
     for p in 1:CS_PANEL_COUNT
@@ -538,6 +618,16 @@ mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV, V
     # term into cm — the SH-UTLS "fingering"). See module header + commit e648bf3f.
     cm_closure :: Symbol
     ΔB :: Vector{FT}          # B[k+1]-B[k], TOA-first, length Nz, Σ ΔB = 1
+    # Raw (pinned) GEOS DELP_dry endpoint, preserved across the adaptive
+    # refinement loop. `:moisture_filtered` balances + diagnoses against THIS
+    # (the faithful analyzed endpoint) while `m_next_target` holds the filtered
+    # endpoint the replay gate checks. For `:endpoint_balanced`/`:pressure_fixer`
+    # it is unused (they read `m_next_target` directly).
+    m_next_delp :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
+    # Horizontal Jacobi sweeps applied to the moisture-source residual in the
+    # `:moisture_filtered` closure (0 ⇒ equivalent to `:endpoint_balanced`, up to
+    # the dm = (m_next−m_cur)/(2·steps) round-trip in F32).
+    smooth_iters :: Int
 end
 
 const _GEOS_ADAPTIVE_SUBSTEP_MAX_REFINEMENTS = 8
@@ -557,7 +647,8 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
                                    global_mass_pin::Bool = false,
                                    global_mass_target_kg::Real = NaN,
                                    balance_mode::Symbol = :column,
-                                   cm_closure::Symbol = :endpoint_balanced) where FT
+                                   cm_closure::Symbol = :endpoint_balanced,
+                                   smooth_iters::Integer = 8) where FT
     Nc = grid.Nc
     Nz = vertical.Nz
     Nz_native = vertical.Nz_native
@@ -593,8 +684,10 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
         error("windows_per_day must be non-negative, got $(windows_per_day)")
     balance_mode in (:column, :per_layer) ||
         error("GEOS-CS balance_mode must be :column or :per_layer; got $(balance_mode)")
-    cm_closure in (:endpoint_balanced, :pressure_fixer) ||
-        error("GEOS-CS cm_closure must be :endpoint_balanced or :pressure_fixer; got $(cm_closure)")
+    cm_closure in (:endpoint_balanced, :pressure_fixer, :moisture_filtered,
+                   :pfix_corrected) ||
+        error("GEOS-CS cm_closure must be :endpoint_balanced, :pressure_fixer, " *
+              ":moisture_filtered, or :pfix_corrected; got $(cm_closure)")
     # ΔB[k] = B_interface[k+1] − B_interface[k] (TOA-first; Σ ΔB = 1 by hybrid
     # sigma-pressure construction). The merged_vc is the target coordinate (same
     # source the identity plan above is built from). Used by :pressure_fixer cm.
@@ -612,6 +705,7 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
     dm_v4 = ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel)
     m_cur = ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel)
     m_next_target = ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel)
+    m_next_delp = ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel)
     ps_cur = ntuple(_ -> zeros(FT, Nc, Nc), npanel)
     cmfmc_v4 = settings.include_convection ?
         ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), npanel) : nothing
@@ -637,7 +731,7 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
             fill(steps_per_met, schedule_len), Bool(adaptive_substeps),
             target, min_steps, max_steps, chain_mass,
             Bool(global_mass_pin), Float64(global_mass_target_kg),
-            balance_mode, cm_closure, ΔB)
+            balance_mode, cm_closure, ΔB, m_next_delp, Int(smooth_iters))
 end
 
 function _geos_pin_global_mass_if_needed!(workspace::GEOSCubedSphereWindowWorkspace{FT},
@@ -708,6 +802,126 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
                                       workspace.m_next_target, steps)
         return (max_pre_residual = 0.0, max_post_residual = 0.0,
                 max_cg_iter = 0, mode = :pressure_fixer)
+    end
+
+    if workspace.cm_closure === :pfix_corrected
+        # "Spatially-resolved dry-mass correction" (generalizes the scalar global
+        # mass pin). Native fluxes (smooth pit) → pressure-fixer cm; correct the
+        # column drift toward the analyzed dry-PS with a ZERO-SUM SPATIAL LOW-PASS
+        # — only the LARGE-SCALE drift (which prevents the pressure-fixer blow-up
+        # and carries the global-mass target), leaving the grid-scale residual as
+        # a small bounded mass perturbation NOT advected into cm. cm stays at the
+        # smooth pressure-fixer floor.  `pit_eff = pit_native + δ_smooth/(2·steps)`;
+        # `cm[k+1]=cm[k]+conv−ΔB·pit_eff` and `m_next=m_cur+2·steps·ΔB·pit_eff` ⇒
+        # the replay gate closes by construction; global Σ(ΔB·δ_smooth)=Σδ lands
+        # the global dry mass on the analyzed (pinned) target.
+        # DIAGNOSTIC-ONLY LIMITATION: when δ_smooth ≠ 0 this leaves a nonzero
+        # SURFACE flux cm[Nz+1] = −δ_smooth/(2·steps) (the closed-bottom boundary
+        # is violated), and chain_mass=true accumulates negative UTLS mass. The
+        # tracer test (docs/reference/GEOS_MASS_FLUX_UTLS_FINGERING.md) showed it
+        # makes ~164–280 hPa WORSE. NOT a production closure.
+        two_steps = FT(2 * steps)
+        pit = ntuple(_ -> zeros(FT, Nc, Nc), CS_PANEL_COUNT)
+        δ   = ntuple(_ -> zeros(FT, Nc, Nc), CS_PANEL_COUNT)
+        @inbounds for p in 1:CS_PANEL_COUNT
+            am = workspace.am_v4[p]; bm = workspace.bm_v4[p]
+            mc = workspace.m_cur[p]; md = workspace.m_next_delp[p]
+            for j in 1:Nc, i in 1:Nc
+                pp = zero(FT); cur = zero(FT); ana = zero(FT)
+                for k in 1:Nz
+                    pp  += (am[i, j, k] - am[i + 1, j, k]) +
+                           (bm[i, j, k] - bm[i, j + 1, k])
+                    cur += mc[i, j, k]; ana += md[i, j, k]
+                end
+                pit[p][i, j] = pp
+                δ[p][i, j]   = ana - (cur + two_steps * pp)   # column drift to analyzed
+            end
+        end
+        _smooth_cs_columns!(δ, workspace.smooth_iters, FT(0.5), Nc)   # large-scale, Σ-preserving
+        @inbounds for p in 1:CS_PANEL_COUNT
+            am = workspace.am_v4[p]; bm = workspace.bm_v4[p]; cm = workspace.cm_v4[p]
+            mc = workspace.m_cur[p]; mt = workspace.m_next_target[p]
+            for j in 1:Nc, i in 1:Nc
+                pe = pit[p][i, j] + δ[p][i, j] / two_steps
+                cm[i, j, 1] = zero(FT); acc = zero(FT)
+                for k in 1:Nz
+                    conv = (am[i, j, k] - am[i + 1, j, k]) +
+                           (bm[i, j, k] - bm[i, j + 1, k])
+                    acc += conv - FT(workspace.ΔB[k]) * pe
+                    cm[i, j, k + 1] = acc
+                    mt[i, j, k] = mc[i, j, k] + two_steps * FT(workspace.ΔB[k]) * pe
+                end
+            end
+        end
+        fill_cs_window_mass_tendency!(workspace.dm_v4, workspace.m_cur,
+                                      workspace.m_next_target, steps)
+        return (max_pre_residual = 0.0, max_post_residual = 0.0,
+                max_cg_iter = 0, mode = :pfix_corrected)
+    end
+
+    if workspace.cm_closure === :moisture_filtered
+        # Balance native fluxes to the raw GEOS DELP_dry endpoint (faithful winds;
+        # column closes so per-column `pit = Σ_k dm_dry`). Then split the endpoint
+        # tendency dm_dry = ΔB·pit (smooth, ps-driven hybrid expansion) + residual
+        # (the column moisture-source term that carries the SH-UTLS grid noise),
+        # smooth ONLY the residual horizontally, and recombine. The residual has
+        # zero column integral, and the per-level-identical linear smoother
+        # preserves that ⇒ surface pressure is conserved per column EXACTLY; only
+        # the grid-scale per-layer mass redistribution (the fingering) is damped.
+        # `m_next_target` is set to the filtered endpoint so the replay gate
+        # (m_evolved = m_cur − 2·steps·(div_h + Δcm)) closes by construction.
+        #
+        # The zero-column-integral property REQUIRES the column balance: it pins
+        # `Σ_k div_h == Σ_k dm_dry` per column, so the residual `dm_dry − ΔB·pit`
+        # integrates to exactly zero and the per-level smoother conserves PS per
+        # column. The per-layer balance only closes the column up to a global
+        # constant, which would let the smoother shift column dry mass — so this
+        # closure forces the column balance regardless of `balance_mode`.
+        bal_diag = balance_cs_column_mass_fluxes!(
+            workspace.am_v4, workspace.bm_v4, workspace.m_cur,
+            workspace.m_next_delp, grid.face_table, grid.cell_degree, steps,
+            grid.poisson_scratch)
+        # dm_dry = (m_next_delp − m_cur) / (2·steps)
+        fill_cs_window_mass_tendency!(workspace.dm_v4, workspace.m_cur,
+                                      workspace.m_next_delp, steps)
+        # residual ← dm_dry − ΔB·pit (per-half-step convergence pit from balanced
+        # fluxes; identical convention to `_evolve_mass_pressure_fixer!`).
+        @inbounds for p in 1:CS_PANEL_COUNT
+            am = workspace.am_v4[p]; bm = workspace.bm_v4[p]; dm = workspace.dm_v4[p]
+            for j in 1:Nc, i in 1:Nc
+                pit = zero(FT)
+                for k in 1:Nz
+                    pit += (am[i, j, k] - am[i + 1, j, k]) +
+                           (bm[i, j, k] - bm[i, j + 1, k])
+                end
+                for k in 1:Nz
+                    dm[i, j, k] -= FT(workspace.ΔB[k]) * pit
+                end
+            end
+        end
+        _smooth_cs_residual_panels!(workspace.dm_v4, workspace.smooth_iters,
+                                    FT(0.5), Nc, Nz)
+        # dmc ← ΔB·pit + smooth(residual); filtered endpoint m_next_target.
+        two_steps = FT(2 * steps)
+        @inbounds for p in 1:CS_PANEL_COUNT
+            am = workspace.am_v4[p]; bm = workspace.bm_v4[p]
+            dm = workspace.dm_v4[p]; mc = workspace.m_cur[p]
+            mt = workspace.m_next_target[p]
+            for j in 1:Nc, i in 1:Nc
+                pit = zero(FT)
+                for k in 1:Nz
+                    pit += (am[i, j, k] - am[i + 1, j, k]) +
+                           (bm[i, j, k] - bm[i, j + 1, k])
+                end
+                for k in 1:Nz
+                    dm[i, j, k] += FT(workspace.ΔB[k]) * pit
+                    mt[i, j, k] = mc[i, j, k] + two_steps * dm[i, j, k]
+                end
+            end
+        end
+        diagnose_cs_cm!(workspace.cm_v4, workspace.am_v4, workspace.bm_v4,
+                        workspace.dm_v4, workspace.m_cur, Nc, Nz)
+        return bal_diag
     end
 
     bal_diag = if workspace.balance_mode === :per_layer
@@ -823,6 +1037,12 @@ function ingest_window!(workspace::GEOSCubedSphereWindowWorkspace{FT},
     end
     _geos_pin_global_mass_if_needed!(workspace, workspace.m_next_target,
                                      "window $(win) endpoint")
+    # Preserve the pinned raw GEOS DELP_dry endpoint; `:moisture_filtered`
+    # balances + diagnoses against it while overwriting `m_next_target` with the
+    # filtered endpoint inside the adaptive loop.
+    for p in 1:CS_PANEL_COUNT
+        copyto!(workspace.m_next_delp[p], workspace.m_next_target[p])
+    end
     _geos_select_steps_for_window!(workspace, grid, win)
     return nothing
 end
@@ -963,7 +1183,8 @@ function _process_day_geos_cs_unified(date::Date,
                                       global_mass_pin::Bool,
                                       global_mass_target_kg::Real,
                                       balance_mode::Symbol,
-                                      cm_closure::Symbol = :endpoint_balanced)
+                                      cm_closure::Symbol = :endpoint_balanced,
+                                      smooth_iters::Integer = 8)
     Nc     = grid.Nc
     npanel = CS_PANEL_COUNT
     Nz     = vertical.Nz
@@ -994,7 +1215,8 @@ function _process_day_geos_cs_unified(date::Date,
                                                global_mass_pin = global_mass_pin,
                                                global_mass_target_kg = global_mass_target_kg,
                                                balance_mode = balance_mode,
-                                               cm_closure = cm_closure)
+                                               cm_closure = cm_closure,
+                                               smooth_iters = smooth_iters)
 
         @info "GEOS → CS: $(date), source=$(settings) → $(out_path) [unified]"
         @info "  source_C=$(settings.Nc) target_C=$Nc  strategy=$(_geos_cs_strategy_name(workspace.strategy))"
@@ -1041,9 +1263,14 @@ function _process_day_geos_cs_unified(date::Date,
                 "geos_horizontal_balance_mode" => workspace.cm_closure === :pressure_fixer ?
                     "none" : String(workspace.balance_mode),
                 "geos_cm_closure" => String(workspace.cm_closure),
-                "geos_vertical_flux" => workspace.cm_closure === :pressure_fixer ?
-                    "fv3_pressure_fixer_native_horizontal_chained_mass" :
-                    "diagnosed_from_balanced_horizontal_and_endpoint",
+                "geos_vertical_flux" =>
+                    workspace.cm_closure === :pressure_fixer ?
+                        "fv3_pressure_fixer_native_horizontal_chained_mass" :
+                    workspace.cm_closure === :pfix_corrected ?
+                        "fv3_pressure_fixer_native_horizontal_plus_zerosum_spatial_lowpass_drift_correction" :
+                    workspace.cm_closure === :moisture_filtered ?
+                        "diagnosed_from_balanced_horizontal_and_filtered_endpoint_moisture_residual_smoothed" :
+                        "diagnosed_from_balanced_horizontal_and_endpoint",
                 "geos_global_mass_pin_enabled" => global_mass_pin,
                 "geos_global_mass_pin_target_kg" => isfinite(workspace.global_mass_target_kg) ?
                     workspace.global_mass_target_kg : "first_window_start",
@@ -1062,6 +1289,11 @@ function _process_day_geos_cs_unified(date::Date,
                 "vertical_transform" => String(Symbol(get(vertical, :vertical_mapping_method, :identity))),
                 "vertical_Nz_native" => vertical.Nz_native,
                 "vertical_Nz_output" => vertical.Nz,
+                # Diagnostic-only key: emitted ONLY for the smoothing closures so
+                # production `:endpoint_balanced` headers stay byte-for-byte identical.
+                (workspace.cm_closure in (:moisture_filtered, :pfix_corrected) ?
+                    ("geos_moisture_filter_smooth_iters" => workspace.smooth_iters,) :
+                    ())...,
             ),
         )
         writer = CubedSphereBinaryWriter(inner_writer, DryBasis();
@@ -1171,6 +1403,7 @@ function process_day(date::Date,
                      global_mass_target_kg::Real = NaN,
                      balance_mode::Symbol = :column,
                      cm_closure::Symbol = :endpoint_balanced,
+                     smooth_iters::Integer = 8,
                      next_day_hour0 = nothing)
     # Reject configurations the path cannot honor:
     mass_basis === :dry ||
@@ -1196,5 +1429,6 @@ function process_day(date::Date,
         global_mass_target_kg = global_mass_target_kg,
         balance_mode = balance_mode,
         cm_closure = cm_closure,
+        smooth_iters = smooth_iters,
     )
 end

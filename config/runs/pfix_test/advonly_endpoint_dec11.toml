@@ -1,0 +1,31 @@
+# Adv-only co2_natural, Dec-11, endpoint cm-closure binary.
+# reset_air_mass_each_window=true → re-anchor to analyzed DELP each window,
+# preserving VMR (the chain_mass=false + VMR-preserving contract).
+[architecture]
+use_gpu = true
+backend = "cuda"
+[numerics]
+float_type = "Float32"
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32"
+start_date   = "2021-12-11"
+end_date     = "2021-12-11"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+[run]
+reset_air_mass_each_window = true
+[advection]
+scheme = "ppm"
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"
+[diffusion]
+kind = "none"
+[convection]
+kind = "none"
+[chemistry]
+kind = "none"
+[output]
+format = "netcdf"
+split = "single"
+snapshot_interval_hours = 1
+path = "~/data/AtmosTransport/output/pfix_test/advonly_endpoint_dec11.nc"

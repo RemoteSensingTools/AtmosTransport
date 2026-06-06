@@ -68,12 +68,34 @@ pressure are one consistent state); and a pressure-fixer (smooth cm but the mass
 endpoint drifts from analysis and goes negative at the tropopause). The residual
 is intrinsic; any closure relocates it rather than removing it.
 
+### GCHP's own design documents this exact sensitivity
+
+The cubed-sphere advection stream archives only the horizontal mass fluxes (+
+Courant + PS + SPHU); the **vertical mass flux is reconstructed offline from the
+convergence of the horizontal fluxes**. The GCHP v13 description (Eastham et al.,
+GMD 15, 8731, 2022) states this and flags the failure mode verbatim — vertical
+mass fluxes are "**expected to be particularly sensitive to errors because they
+are computed from the convergence of horizontal mass fluxes**." The fingering is
+the realized form of that documented sensitivity: the reconstruction is forced to
+absorb `M` (the accumulation-vs-endpoint residual) into the implied `cm`.
+
+Notably, GMAO **already computes and archives** the resolved vertical mass flux —
+`MFZ` in `tavg3_3d_lsf_Ne` — but **only on the lat-lon analysis grid**, never on
+the cubed-sphere advection stream. So the one field that would let offline
+transport skip the noisy reconstruction exists; it's just not produced where a
+cubed-sphere CTM can use it.
+
 ### The clean route (matches your benchmark practice)
 
 Reducing `M` at the source — i.e. **wind-derived fluxes consistent with the
 analyzed pressure** (your 3-hourly winds, or a spectral source like ERA5) — gives
-`M ≈ 0` and no fingering. Consistent with #342: benchmarks use winds, and our
-ERA5 run is clean.
+`M ≈ 0` and no fingering. We built and tracer-validated this: deriving the fluxes
+from MERRA-2 winds (the GEOS-Chem CO₂ met) + a Cameron-Smith pressure-fix moves
+our SH-UTLS field **~3× closer to the GEOS-Chem reference** (state-aligned Dec 1–5
+run) with ~3–4× less grid-noise than the native-MFXC run. Consistent with #342:
+benchmarks use winds, and our ERA5 run is clean. The one limitation is resolution:
+the wind path is regridded from a lat-lon source, so it caps at ≲C180 — which is
+why an on-cube `MFZ` matters for native-resolution work.
 
 ### Questions
 
@@ -83,6 +105,12 @@ ERA5 run is clean.
 2. Would the `MFXC` source ever be made discretely consistent with the archived
    `DELP` offline (e.g. an archived dry-air `Δp` tendency, or sub-step-consistent
    fluxes), so that the offline closure could be exact?
+3. **Could the resolved vertical mass flux (`MFZ`, already archived on lat-lon in
+   `tavg3_3d_lsf_Ne`) be exported on the cubed-sphere advection stream?** Ingesting
+   the model's own `MFZ` would let offline transport reproduce the *online* vertical
+   flux directly — bypassing the convergence-reconstruction that the GMD paper
+   itself flags as error-sensitive, and which we trace to the fingering — at full
+   native resolution (where the lat-lon wind route can't reach).
 
 Happy to share the quantification scripts, the residual maps, and the
 ERA5-vs-GEOS comparison if useful.

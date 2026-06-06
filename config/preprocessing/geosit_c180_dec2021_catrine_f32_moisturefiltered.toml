@@ -1,0 +1,68 @@
+# ===========================================================================
+# GEOS-IT C180 native -> v4 CS C180, Dec 2021, MERGED top, full physics —
+# `:moisture_filtered` cm closure (SH-UTLS fingering fix experiment).
+#
+# Identical to geosit_c180_dec2021_catrine_f32.toml EXCEPT the vertical-flux
+# (cm) closure: the endpoint dry-dp tendency is split into the smooth ΔB·pit
+# (ps-driven hybrid expansion) plus the column moisture-source residual; the
+# residual — which carries the grid-scale SH-UTLS noise — is horizontally
+# smoothed, then recombined. Because the residual has zero column integral and
+# the per-level smoother is linear, SURFACE PRESSURE IS CONSERVED PER COLUMN
+# EXACTLY; only the grid-scale per-layer mass redistribution (the fingering) is
+# damped. The replay gate (m_evolved = m_cur − 2·steps·(div_h + Δcm)) closes by
+# construction. Writes to a SEPARATE directory for head-to-head vs endpoint.
+#
+# Usage:
+#   setsid nohup julia -t14 --project=. \
+#       scripts/preprocessing/preprocess_transport_binary.jl \
+#       config/preprocessing/geosit_c180_dec2021_catrine_f32_moisturefiltered.toml \
+#       --start 2021-12-11 --end 2021-12-11 \
+#     > ~/atmostransport_logs/geosit_c180_dec2021_moisturefiltered_<ts>.log 2>&1 &
+# ===========================================================================
+
+[source]
+toml                 = "config/met_sources/geosit.toml"
+root_dir             = "/home/cfranken/data/AtmosTransport/met/geosit/C180/raw_catrine"
+include_surface      = true
+include_convection   = true
+include_vdiff_fields = true
+
+[output]
+directory  = "/home/cfranken/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_moisturefiltered"
+mass_basis = "dry"
+
+[grid]
+type                = "cubed_sphere"
+Nc                  = 180
+panel_convention    = "geos_native"
+definition          = "gmao"
+regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
+
+[vertical]
+coefficients = "config/geos_L72_coefficients.toml"
+transform    = "merge_above_pressure"
+pressure_hPa = 0.25
+
+[numerics]
+float_type     = "Float32"
+dt_met_seconds = 3600.0
+chain_mass     = false
+
+positivity_cfl_limit       = 0.95
+require_substep_positivity = true
+substep_schedule           = "adaptive_cfl"
+substep_cfl_target         = 0.95
+min_steps_per_window       = 1
+max_steps_per_window       = 64
+geos_balance_mode          = "column"
+
+# --- SH-UTLS fingering fix ---
+# moisture_filtered: ps conserved per column EXACTLY; only the grid-scale
+# per-layer UTLS noise is damped. smooth_iters=0 ⇒ endpoint_balanced (to F32).
+geos_cm_closure                   = "moisture_filtered"
+geos_moisture_filter_smooth_iters = 8
+
+[mass_fix]
+enable = true
+mode = "target_ps_dry"
+target_ps_dry_pa = 98726.0

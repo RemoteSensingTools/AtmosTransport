@@ -217,3 +217,39 @@ fingering *is* the native-MFXC↔DELP artifact, and a wind-derived flux removes 
 conservatively-regridded flux carries no cubed-sphere grid imprint. Faithful
 winds use the `tavg3` collection (`winds_collection = "tavg3"`); `inst3`
 instantaneous winds are a slightly-less-faithful fallback.
+
+## 11. The native-resolution route — no archived `MFZ` (2026-06-04)
+
+The lat-lon wind path is clean *because the source is finer than the C180 target*:
+conservatively regridding 0.5°/0.28° lat-lon → C180 **averages out the C180-grid
+checkerboard**. So it caps at ≲C180 — it can't reach native C720. The question:
+can the **native cube** run clean at full resolution?
+
+**The clean native fix would be to ingest the model's own vertical mass flux
+(`MFZ`) instead of diagnosing `cm`** — but it is **not archived on the cube.** A
+sourced agent search (GEOS-IT/GEOS-FP File Specs, GES DISC, GCHP GMD 2022 paper)
+confirmed: `MFZ` ("vertical mass flux", `tavg3_3d_lsf_Ne`) exists **only on the
+lat-lon analysis grid**; the cubed-sphere advection stream (`CTM_*`, the C720 FP
+advection output) carries **only** horizontal fluxes + Courant + PS + SPHU, and
+the vertical is reconstructed offline by horizontal-flux convergence — which is
+our `diagnose_cs_cm!`, the fingering. **GCHP's own paper documents the exact
+sensitivity:** vertical mass fluxes are "*expected to be particularly sensitive
+to errors because they are computed from the convergence of horizontal mass
+fluxes*" (Eastham et al., GMD 15, 8731, 2022). So getting a native-cube `MFZ`
+requires a special request to GMAO (folded into
+`DRAFT_gchp_issue_utls_fingering.md`, question 3).
+
+**Buildable native fallback — `OMEGA`.** The native cube *does* carry `OMEGA`
+(`A3dyn`), the model's resolved vertical pressure velocity.
+`scripts/diagnostics/omega_vs_cm_driver_roughness.jl` (Dec-11): `OMEGA`'s SH-UTLS
+relative roughness is **0.15 vs `div_h(MFXC)`'s 0.27 — ~2× smoother (ratio
+0.43–0.54), right at MERRA-2's level**, on the native grid. So an `OMEGA`-derived
+`cm` (`MFZ ≈ ω − ∂p/∂t − v·∇p`) is the only native-resolution route we can build
+today; it won't be exact `MFZ` (the corrections pull in noisy fields), but the
+probe says ~MERRA-clean is plausible.
+
+| route | resolution | clean? | status |
+|---|---|---|---|
+| lat-lon MERRA-2/ERA5 winds → flux → pfix | ≲ C180 (regrid caps it) | ✅ ~3× closer to GEOS-Chem | **done** |
+| `OMEGA`-derived `cm` on the native cube | C180 / C720 native | ~2× better (probe 0.5×), not exact `MFZ` | **buildable** |
+| archived cube `MFZ` | native, exact | ✅ ideal | **needs GMAO request** |

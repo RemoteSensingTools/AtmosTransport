@@ -1,0 +1,44 @@
+# ===========================================================================
+# ERA5 native N320 GRIB -> C180 GEOS-native cubed-sphere preprocess
+# (2022-2023 Catrine multi-year extension).
+#
+# Identical pipeline to era5_n320_to_c180_dec2021_catrine_f32.toml (same source
+# descriptor, vertical coefficients, grid, numerics, and dry-mass pin) — only the
+# OUTPUT DIRECTORY differs so the multi-year binaries land in their own folder.
+# The input root_dir is year-agnostic; pass the date range via the CLI.
+#
+# Run ONE PROCESS PER DAY (`--day YYYY-MM-DD`), NOT `--start/--end`: the built-in
+# N320 day-threading crashes (nested :static spectral synthesis), so a batch of
+# per-day processes is the supported path (see run_december_batch.sh).
+#
+# 2022 input on disk: Jan 1 - ~Oct 25 (q is in the `core` GRIB). 2022 Nov-Dec +
+# all 2023 land as the CDS download (era5_native_daily.toml) fills them in.
+# ===========================================================================
+
+[source]
+toml     = "config/met_sources/era5_n320.toml"
+root_dir = "/home/cfranken/data/AtmosTransport/met/era5/N320/hourly/raw"
+
+[vertical]
+coefficients_file = "config/era5_L137_coefficients.toml"
+
+[output]
+directory  = "/home/cfranken/data/AtmosTransport/met/era5/n320_to_c180/transport_binary_2022_2023_catrine_f32"
+mass_basis = "dry"
+
+[grid]
+type                = "cubed_sphere"
+Nc                  = 180
+panel_convention    = "geos_native"
+definition          = "gmao"
+regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
+
+[numerics]
+float_type     = "Float32"
+dt_met_seconds = 3600.0
+chain_mass     = false
+
+[mass_fix]
+enable = true
+mode = "target_ps_dry"
+target_ps_dry_pa = 98726.0

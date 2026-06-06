@@ -1,0 +1,41 @@
+# GEOS-Chem comparison — MERRA-2 wind-derived C180, adv-only co2_natural, Dec 1-5.
+# Starts from the shared Dec-1 IC (catrine_co2 = GEOS-Chem Dec-1 0000z state), so
+# the run is state-aligned with the GEOS-Chem reference and the 5-day divergence
+# is comparable. Matched to the GEOS-native dec1-5 + ERA5 dec1-5 runs.
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder       = "~/data/AtmosTransport/met/merra2/c180/transport_binary_dec2021_f32"
+start_date   = "2021-12-01"
+end_date     = "2021-12-05"
+file_pattern = "merra2_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "ppm"
+
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"
+  [tracers.co2_natural.surface_flux]
+  kind = "lmdz_co2"
+  time_varying = true
+
+[diffusion]
+kind = "none"
+
+[convection]
+kind = "none"
+
+[chemistry]
+kind = "none"
+
+[output]
+format = "netcdf"
+split = "single"
+snapshot_interval_hours = 3
+path = "~/data/AtmosTransport/output/route1_dec1-5/merra2_c180_advonly_co2nat_dec1-5.nc"

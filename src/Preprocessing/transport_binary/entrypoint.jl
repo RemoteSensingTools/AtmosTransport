@@ -392,6 +392,11 @@ function _process_day_native(cfg::AbstractDict;
     threaded = Threads.nthreads() > 1 && length(dates) > 1 &&
                supports_day_threading(settings) && !chain_mass &&
                !(global_mass_pin && !isfinite(configured_global_mass_target_kg))
+    # When the day loop itself is threaded, the inner `:omega_consistent`
+    # per-level Poisson loop must run SERIAL so day-workers don't each re-grab
+    # the whole pool (oversubscription). In the single-day-per-process (`--day`)
+    # path the day loop is serial, so the level solve keeps the full pool.
+    _OMEGA_LEVEL_PARALLEL[] = !threaded
     if threaded
         # Cold-cache pre-warm: regridder weight caches + JIT specializations
         # land during day 1 serial, then days 2..N run concurrently. Without

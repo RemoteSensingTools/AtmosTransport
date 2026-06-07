@@ -190,6 +190,33 @@ function _smooth_cs_columns!(field::NTuple{CS_PANEL_COUNT, Array{FT, 2}},
 end
 
 # ---------------------------------------------------------------------------
+# Env-gated timing/diagnostic accumulator for the `:omega_consistent` prepare
+# (set `ATMOS_OMEGA_TIMING=1`). Counts per-window prepares, omega Poisson solves,
+# and CG iterations so the build-cost diagnosis is measurable without touching
+# the production hot path when the env var is unset.
+const _OMEGA_TIMING = Base.RefValue(false)
+# Per-level Poisson parallelism for the `:omega_consistent` reconstruction.
+# `true` in the single-day-per-process (`--day`) path so the level solve grabs
+# the full thread pool (the validated/production usage, ~5.0× speedup). The
+# multi-day driver sets it `false` BEFORE its `Threads.@threads` day loop so the
+# inner per-level loop runs SERIAL — otherwise each day-worker re-grabs the whole
+# pool (oversubscription / severe multi-day regression). Serial uses
+# `scratches[1]` so it is bit-identical to the parallel path.
+const _OMEGA_LEVEL_PARALLEL = Base.RefValue(true)
+mutable struct _OmegaTimingState
+    prepares::Int          # `_geos_prepare_window_for_steps!` calls (omega path)
+    solves::Int            # per-level Poisson solves issued
+    cg_iters::Int          # total CG iterations across all solves
+    recon_time::Float64    # wall seconds inside `_reconstruct_omega_consistent!`
+end
+const _OMEGA_TIMING_STATE = _OmegaTimingState(0, 0, 0, 0.0)
+function _reset_omega_timing!()
+    s = _OMEGA_TIMING_STATE
+    s.prepares = 0; s.solves = 0; s.cg_iters = 0; s.recon_time = 0.0
+    return s
+end
+
+# ---------------------------------------------------------------------------
 # OMEGA-consistent cm closure (geos_cm_closure="omega_consistent").
 #
 # The diagnosed cm[k+1]=cm[k]+div_h[k]-dm[k] forces the grid-noisy MFXC↔DELP
@@ -233,21 +260,51 @@ end
 end
 
 # CTM_A1 window w (1..24) valid minute; A3dyn / I3 3-hourly node valid minutes.
+# The A3dyn / I3 node valid-minute formulas are GLOBAL: they extend to node
+# indices ≤ 0 (previous UTC day) and > n3 (next UTC day) at the same uniform
+# 180-min spacing, so `_a3_valid_min(0)` = −90 (prev-day 22:30) and
+# `_a3_valid_min(n3+1)` = next-day 01:30. This lets the day-edge PCHIP brackets
+# span midnight when the adjacent-day handles are open.
 @inline _ctm_valid_min(w::Int) = (w - 1) * 60 + 30
 @inline _a3_valid_min(a::Int) = (a - 1) * 180 + 90
 @inline _i3_valid_min(a::Int) = (a - 1) * 180
 
-"4-node PCHIP bracket (clamped to [1,n3]) + local frac for target minute t."
-function _pchip_bracket(valid_min::Function, n3::Int, t::Float64)
-    a = 1
-    for ai in 1:n3
-        valid_min(ai) <= t && (a = ai)
+# Map a GLOBAL node index `g` (may be ≤0 = prev day, or >n3 = next day) to the
+# dataset + 1-based local index that holds it. Returns `nothing` when the
+# required adjacent-day dataset is absent (archive edge) so the caller can clamp
+# back into today's range (the legacy constant-extrapolation fallback).
+@inline function _resolve_global_node(g::Int, n3::Int, today, prev, next)
+    if 1 <= g <= n3
+        return (today, g)
+    elseif g <= 0
+        prev === nothing && return nothing
+        n_prev = prev.dim["time"]
+        loc = g + n_prev
+        return loc >= 1 ? (prev, loc) : nothing
+    else # g > n3
+        next === nothing && return nothing
+        n_next = next.dim["time"]
+        loc = g - n3
+        return loc <= n_next ? (next, loc) : nothing
     end
-    a0 = clamp(a, 1, n3); a1 = clamp(a + 1, 1, n3)
-    t0 = Float64(valid_min(a0)); t1 = Float64(valid_min(a1))
+end
+
+# 4-node PCHIP stencil over the GLOBAL node axis for target minute `t`, clamping
+# each stencil index to the range of nodes actually available (today plus any
+# present adjacent days). Returns global stencil `(gm1, g0, g1, gp2)`, the local
+# fraction `f` between `g0` and `g1`, and `atnode` (g0 == g1, exact hit).
+function _pchip_bracket_global(valid_min::Function, n3::Int, t::Float64,
+                               gmin::Int, gmax::Int)
+    # Largest global node index with valid_min ≤ t, searched over [gmin, gmax].
+    a = gmin
+    for g in gmin:gmax
+        valid_min(g) <= t && (a = g)
+    end
+    g0 = clamp(a, gmin, gmax); g1 = clamp(a + 1, gmin, gmax)
+    t0 = Float64(valid_min(g0)); t1 = Float64(valid_min(g1))
     f = (t1 == t0) ? 0.0 : clamp((t - t0) / (t1 - t0), 0.0, 1.0)
-    am1 = clamp(a0 - 1, 1, n3); ap2 = clamp(a1 + 1, 1, n3)
-    return (am1, a0, a1, ap2), f, (a0 == a1)
+    gm1 = clamp(g0 - 1, gmin, gmax); gp2 = clamp(g1 + 1, gmin, gmax)
+    return (gm1, g0, g1, gp2), f, (g0 == g1)
 end
 
 """
@@ -255,15 +312,14 @@ end
 
 Read A3dyn OMEGA and I3 QV at the CTM window `win`'s valid time via monotone
 cubic (PCHIP) interpolation of the 3-hourly nodes, level-flipped to TOA-first.
-# HACK: (Codex P2) windows whose valid time is PAST the last same-day node
-# (win 23/24, last A3dyn node 22:30 / last I3 node 21:00) CONSTANT-extrapolate to
-# that node instead of interpolating toward the NEXT day's first node, giving a
-# bounded (~1-1.5 h hold on a slowly-varying 3-hourly field) but discontinuous
-# OMEGA/QV target at midnight. Bounded and the fingering metric is dominated by
-# interior windows, but it anchors the day-edge windows to a slightly stale
-# target. TODO before promoting from CANDIDATE: thread the next-day A3dyn/I3
-# handles into the PCHIP bracket so boundary windows interpolate across midnight.
-Fills `omega`/`qv` (NTuple{6,Array{FT,3}}).
+Day-edge windows whose valid time lies outside the same-day node span (win 1 is
+BEFORE the first A3dyn node 01:30; win 23/24 are PAST the last A3dyn node 22:30 /
+last I3 node 21:00) bracket ACROSS midnight into the previous/next day's nodes
+when `handles.prev_a3dyn`/`next_a3dyn`/`prev_i3`/`next_i3` are open — removing the
+former constant-extrapolation discontinuity at the day boundary. When an adjacent
+handle is absent (first/last day of the archive) that edge clamps to the nearest
+same-day node (the legacy bounded constant-extrapolation). Fills `omega`/`qv`
+(NTuple{6,Array{FT,3}}).
 """
 function _read_geos_omega_qv_pchip!(omega::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
                                     qv::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
@@ -277,24 +333,36 @@ function _read_geos_omega_qv_pchip!(omega::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
     n3_a3 = handles.a3dyn.dim["time"]
     n3_i3 = handles.i3.dim["time"]
     t = Float64(_ctm_valid_min(win))
-    _read_pchip_field!(omega, handles.a3dyn, "OMEGA", _a3_valid_min, n3_a3, t, or, FT)
-    _read_pchip_field!(qv,    handles.i3,    "QV",    _i3_valid_min, n3_i3, t, or, FT)
+    _read_pchip_field_xday!(omega, "OMEGA", _a3_valid_min, n3_a3, t, or, FT,
+                            handles.a3dyn, handles.prev_a3dyn, handles.next_a3dyn)
+    _read_pchip_field_xday!(qv, "QV", _i3_valid_min, n3_i3, t, or, FT,
+                            handles.i3, handles.prev_i3, handles.next_i3)
     return nothing
 end
 
-function _read_pchip_field!(out::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
-                            ds, var::AbstractString, valid_min::Function,
-                            n3::Int, t::Float64, or::Symbol, ::Type{FT}) where FT
-    (nodes, f, atnode) = _pchip_bracket(valid_min, n3, t)
+# Read one PCHIP-interpolated field, with the 4-node stencil resolved across the
+# previous/today/next-day datasets. `gmin`/`gmax` bound the global stencil to the
+# nodes that are actually on disk: today (1..n3) is always present, prev extends
+# down to `1 - n_prev` when `prev` is open, next up to `n3 + n_next` when `next`
+# is open.
+function _read_pchip_field_xday!(out::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                 var::AbstractString, valid_min::Function,
+                                 n3::Int, t::Float64, or::Symbol, ::Type{FT},
+                                 today, prev, next) where FT
+    gmin = prev === nothing ? 1 : 1 - prev.dim["time"]
+    gmax = next === nothing ? n3 : n3 + next.dim["time"]
+    (nodes, f, atnode) = _pchip_bracket_global(valid_min, n3, t, gmin, gmax)
     if atnode && f == 0.0
-        y = _read_panels_3d(ds[var], nodes[2], or; FT = FT)
+        (ds, loc) = _resolve_global_node(nodes[2], n3, today, prev, next)
+        y = _read_panels_3d(ds[var], loc, or; FT = FT)
         for p in 1:CS_PANEL_COUNT; copyto!(out[p], y[p]); end
         return out
     end
-    y1 = _read_panels_3d(ds[var], nodes[1], or; FT = FT)
-    y2 = _read_panels_3d(ds[var], nodes[2], or; FT = FT)
-    y3 = _read_panels_3d(ds[var], nodes[3], or; FT = FT)
-    y4 = _read_panels_3d(ds[var], nodes[4], or; FT = FT)
+    ys = ntuple(4) do s
+        (ds, loc) = _resolve_global_node(nodes[s], n3, today, prev, next)
+        _read_panels_3d(ds[var], loc, or; FT = FT)
+    end
+    y1, y2, y3, y4 = ys
     @inbounds for p in 1:CS_PANEL_COUNT
         o = out[p]; a = y1[p]; b = y2[p]; c = y3[p]; d = y4[p]
         for idx in eachindex(o)
@@ -355,27 +423,26 @@ solve; zero grid-scale signature so r_vdiv is unchanged, global-mean part
 reconciled by the dry-mass pin). Continuity holds per column to roundoff. Returns
 (max_increment, max_post_residual) over interior cells for the gate log.
 """
-function _reconstruct_omega_consistent!(am::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
-                                        bm::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
-                                        dm::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
-                                        vdiv_om::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
-                                        grid::CubedSphereTargetGeometry,
-                                        vdiv_scale::Float64;
-                                        tol::Float64 = 1e-11,
-                                        max_iter::Int = 8000) where FT
-    ft = grid.face_table
-    degree = grid.cell_degree
-    scratch = grid.poisson_scratch
-    Nc = ft.Nc
-    nc = ft.nc
-    Nz = size(dm[1], 3)
+# Single-level OMEGA-consistent flux-potential correction. Independent per level
+# (touches only `am[:,:,k]`/`bm[:,:,k]` and the supplied per-thread `scratch`),
+# so the Nz levels can be solved concurrently. Returns the per-level correction
+# magnitude, post-residual, and CG iteration count for the gate/timing reduction.
+@inline function _reconstruct_omega_level!(k::Int,
+                                           am::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                           bm::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                           dm::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                           vdiv_om::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                           ft::CSGlobalFaceTable,
+                                           degree::Vector{Int},
+                                           scratch::CSPoissonScratch,
+                                           vdiv_scale::Float64,
+                                           Nc::Int, nc::Int;
+                                           tol::Float64, max_iter::Int) where FT
     div = scratch.div
     rhs = scratch.rhs
     psi = scratch.psi
     cg_scratch = (r = scratch.r, p = scratch.p, Ap = scratch.Ap, z = scratch.z)
-    max_inc = 0.0
-    max_post = 0.0
-    @inbounds for k in 1:Nz
+    @inbounds begin
         # Current graph divergence at level k (= −div_h).
         fill!(div, 0.0)
         for f in 1:ft.nf
@@ -410,10 +477,11 @@ function _reconstruct_omega_consistent!(am::NTuple{CS_PANEL_COUNT, Array{FT, 3}}
         @simd for c in 1:nc
             rhs[c] -= dh_mean
         end
-        solve_cs_poisson_pcg!(psi, rhs, ft, degree, cg_scratch;
+        _, cg_iter = solve_cs_poisson_pcg!(psi, rhs, ft, degree, cg_scratch;
                               tol = tol, max_iter = max_iter, project_every = 50)
         apply_cs_flux_correction!(am, bm, psi, ft, k)
         # Track the correction magnitude + post residual for the gate log.
+        max_inc = 0.0
         for f in 1:ft.nf
             d = abs(psi[Int(ft.face_right[f])] - psi[Int(ft.face_left[f])])
             d > max_inc && (max_inc = d)
@@ -426,6 +494,7 @@ function _reconstruct_omega_consistent!(am::NTuple{CS_PANEL_COUNT, Array{FT, 3}}
             div[Int(ft.face_left[f])]  += flux
             div[Int(ft.face_right[f])] -= flux
         end
+        max_post = 0.0
         for c in 1:nc
             p_idx = (c - 1) ÷ (Nc * Nc) + 1
             li = (c - 1) % (Nc * Nc); jl = li ÷ Nc + 1; il = li % Nc + 1
@@ -434,6 +503,73 @@ function _reconstruct_omega_consistent!(am::NTuple{CS_PANEL_COUNT, Array{FT, 3}}
             r = abs(div[c] - (-dh_new))
             r > max_post && (max_post = r)
         end
+    end
+    return (max_inc, max_post, cg_iter)
+end
+
+function _reconstruct_omega_consistent!(am::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                        bm::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                        dm::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                        vdiv_om::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                        grid::CubedSphereTargetGeometry,
+                                        vdiv_scale::Float64;
+                                        tol::Float64 = 1e-11,
+                                        max_iter::Int = 8000) where FT
+    ft = grid.face_table
+    degree = grid.cell_degree
+    Nc = ft.Nc
+    nc = ft.nc
+    Nz = size(dm[1], 3)
+
+    # Each level is an independent Poisson solve; give every thread its own
+    # CSPoissonScratch so the per-level div/rhs/psi/CG buffers never alias.
+    # `apply_cs_flux_correction!` writes only level k (incl. its mirror entries),
+    # so the cross-panel mirror sync is deferred to a single pass at the end.
+    # The CG is a deterministic sequential solve on a per-level RHS, so the
+    # written am/bm/cm are BIT-IDENTICAL to the serial loop regardless of the
+    # thread schedule.
+    nthread = Threads.maxthreadid()
+    scratches = Vector{CSPoissonScratch}(undef, nthread)
+    scratches[1] = grid.poisson_scratch
+    for t in 2:nthread
+        scratches[t] = CSPoissonScratch(nc)
+    end
+
+    inc_by_level = zeros(Float64, Nz)
+    post_by_level = zeros(Float64, Nz)
+    iter_by_level = zeros(Int, Nz)
+    # Per-level parallelism only when the level solve owns the pool. The
+    # multi-day driver clears `_OMEGA_LEVEL_PARALLEL` before its day `@threads`
+    # so this runs SERIAL (no oversubscription); single-day `--day` runs keep
+    # it set and use the full pool. Serial uses `scratches[1]`, so the written
+    # am/bm/cm are bit-identical regardless of path.
+    use_threads = _OMEGA_LEVEL_PARALLEL[] && Threads.maxthreadid() > 1
+    if use_threads
+        Threads.@threads :static for k in 1:Nz
+            mi, mp, ci = _reconstruct_omega_level!(
+                k, am, bm, dm, vdiv_om, ft, degree,
+                scratches[Threads.threadid()], vdiv_scale, Nc, nc;
+                tol = tol, max_iter = max_iter)
+            inc_by_level[k] = mi
+            post_by_level[k] = mp
+            iter_by_level[k] = ci
+        end
+    else
+        for k in 1:Nz
+            mi, mp, ci = _reconstruct_omega_level!(
+                k, am, bm, dm, vdiv_om, ft, degree,
+                scratches[1], vdiv_scale, Nc, nc;
+                tol = tol, max_iter = max_iter)
+            inc_by_level[k] = mi
+            post_by_level[k] = mp
+            iter_by_level[k] = ci
+        end
+    end
+    max_inc = maximum(inc_by_level)
+    max_post = maximum(post_by_level)
+    if _OMEGA_TIMING[]
+        _OMEGA_TIMING_STATE.solves += Nz
+        _OMEGA_TIMING_STATE.cg_iters += sum(iter_by_level)
     end
     _sync_cs_mirrors!(am, bm, ft, Nz)
     return (max_increment = max_inc, max_post_residual = max_post)
@@ -1225,9 +1361,12 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
         # rescale) so dm and vdiv share units, WITHOUT mutating the stored array
         # (the adaptive loop may re-prepare at another `steps`).
         vdiv_scale = workspace.source_steps_per_met / steps
+        _OMEGA_TIMING[] && (_OMEGA_TIMING_STATE.prepares += 1)
+        _t_recon = _OMEGA_TIMING[] ? time() : 0.0
         recon = _reconstruct_omega_consistent!(workspace.am_v4, workspace.bm_v4,
                                                workspace.dm_v4, workspace.vdiv_om,
                                                grid, Float64(vdiv_scale))
+        _OMEGA_TIMING[] && (_OMEGA_TIMING_STATE.recon_time += time() - _t_recon)
         diagnose_cs_cm!(workspace.cm_v4, workspace.am_v4, workspace.bm_v4,
                         workspace.dm_v4, workspace.m_cur, Nc, Nz)
         return (bal_diag..., omega_max_increment = recon.max_increment,
@@ -1288,6 +1427,12 @@ function _geos_select_steps_for_window!(workspace::GEOSCubedSphereWindowWorkspac
         throw(ArgumentError("GEOS steps_schedule length $(length(workspace.steps_schedule)) " *
                             "cannot record window $(win)."))
     workspace.steps_schedule[win] = steps
+    if _OMEGA_TIMING[] && workspace.cm_closure === :omega_consistent
+        s = _OMEGA_TIMING_STATE
+        @info @sprintf("  [OMEGA_TIMING] win %2d steps=%-4d prepares=%d solves=%d cg_iters=%d recon=%.3fs (%.4fs/window)",
+                       win, steps, s.prepares, s.solves, s.cg_iters, s.recon_time, s.recon_time)
+        _reset_omega_timing!()
+    end
     return (steps = steps, balance = bal_diag, positivity = positivity)
 end
 
@@ -1507,6 +1652,7 @@ function _process_day_geos_cs_unified(date::Date,
                                       balance_mode::Symbol,
                                       cm_closure::Symbol = :endpoint_balanced,
                                       smooth_iters::Integer = 8)
+    _OMEGA_TIMING[] = get(ENV, "ATMOS_OMEGA_TIMING", "0") in ("1", "true", "yes")
     Nc     = grid.Nc
     npanel = CS_PANEL_COUNT
     Nz     = vertical.Nz
@@ -1519,7 +1665,11 @@ function _process_day_geos_cs_unified(date::Date,
     reader = open_reader(settings, date, FT;
                          seed = reader_seed,
                          chain_mass = chain_mass,
-                         next_day_handle = true)
+                         next_day_handle = true,
+                         # Only the OMEGA-consistent closure reads the prev/next-day
+                         # A3dyn+I3 handles (cross-midnight PCHIP); every other
+                         # closure leaves them `nothing` (no extra opens).
+                         adjacent_omega = cm_closure === :omega_consistent)
     driver_started = false
     inner_writer = nothing
     tmp_path = out_path * ".tmp"

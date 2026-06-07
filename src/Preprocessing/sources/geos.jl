@@ -285,6 +285,17 @@ mutable struct GEOSDayHandles{V <: HybridSigmaPressure}
     a3dyn       :: Union{Nothing, NCDataset}
     a3mste      :: Union{Nothing, NCDataset}
     i3          :: Union{Nothing, NCDataset}
+    # Adjacent-day A3dyn (OMEGA) + I3 (QV) handles for the `:omega_consistent`
+    # closure's PCHIP time interpolation. The 3-hourly OMEGA/QV nodes do not span
+    # the CTM window valid times at the day edges (A3dyn node 1 = 01:30, last node
+    # 22:30; I3 last node 21:00), so the early/late windows bracket ACROSS midnight
+    # into the previous/next day's nodes instead of constant-extrapolating to the
+    # nearest same-day node. `nothing` ⇒ that edge falls back to constant-extrap
+    # (e.g. first/last day of the archive). Opened only when these collections are.
+    prev_a3dyn  :: Union{Nothing, NCDataset}
+    next_a3dyn  :: Union{Nothing, NCDataset}
+    prev_i3     :: Union{Nothing, NCDataset}
+    next_i3     :: Union{Nothing, NCDataset}
     orientation :: Symbol                          # :bottom_up or :top_down
     vc          :: V                               # hybrid sigma-pressure (top-down)
 end
@@ -298,14 +309,22 @@ mutable struct GEOSFPNativeDayHandles{V <: HybridSigmaPressure, P <: AbstractGEO
 end
 
 """
-    open_geos_day(settings, date; next_day_handle=true) -> GEOSDayHandles
+    open_geos_day(settings, date; next_day_handle=true, adjacent_omega=false)
+        -> GEOSDayHandles
 
 Open per-collection NCDataset handles for `date`. When `next_day_handle` is
 `true` and the next-day CTM_I1 file exists, opens it too so the last window
 of `date` has its right endpoint available.
+
+`adjacent_omega` (default `false`) opens the prev/next-day A3dyn (OMEGA) + I3
+(QV) handles that the `:omega_consistent` cm closure needs to PCHIP-interpolate
+across midnight. Every other closure (incl. the validated `:endpoint_balanced`
+default and the GCHP VDIFF path) never reads them, so the default leaves all
+four handles `nothing` and opens nothing extra.
 """
 function open_geos_day(settings::GEOSSettings, date::Date;
-                       next_day_handle::Bool=true)
+                       next_day_handle::Bool=true,
+                       adjacent_omega::Bool=false)
     ctm_a1 = NCDataset(geos_collection_path(settings, date, "CTM_A1"), "r")
     ctm_i1 = NCDataset(geos_collection_path(settings, date, "CTM_I1"), "r")
 
@@ -331,13 +350,37 @@ function open_geos_day(settings::GEOSSettings, date::Date;
     end
     i3 = settings.include_vdiff_fields ? NCDataset(geos_collection_path(settings, date, "I3"), "r") : nothing
 
+    # Adjacent-day A3dyn (OMEGA) + I3 (QV) for the `:omega_consistent` PCHIP
+    # cross-midnight bracket. Open both prev and next so day-edge windows
+    # interpolate instead of constant-extrapolating. Missing files (archive
+    # edges) leave the handle `nothing` and fall back to constant-extrapolation.
+    prev_a3dyn = nothing; next_a3dyn = nothing
+    prev_i3 = nothing;    next_i3 = nothing
+    if adjacent_omega
+        prev_a3dyn = _try_open_geos_collection(settings, date - Day(1), "A3dyn")
+        next_a3dyn = _try_open_geos_collection(settings, date + Day(1), "A3dyn")
+        prev_i3    = _try_open_geos_collection(settings, date - Day(1), "I3")
+        next_i3    = _try_open_geos_collection(settings, date + Day(1), "I3")
+    end
+
     orientation = settings.level_orientation === :auto ?
                   detect_level_orientation(ctm_a1) :
                   settings.level_orientation
 
     vc = load_hybrid_coefficients(expand_data_path(settings.coefficients_file))
 
-    return GEOSDayHandles(ctm_a1, ctm_i1, next_ctm_i1, a1, a3dyn, a3mste, i3, orientation, vc)
+    return GEOSDayHandles(ctm_a1, ctm_i1, next_ctm_i1, a1, a3dyn, a3mste, i3,
+                          prev_a3dyn, next_a3dyn, prev_i3, next_i3, orientation, vc)
+end
+
+"Open a GEOS collection NetCDF for `date`, returning `nothing` if absent."
+function _try_open_geos_collection(settings::GEOSSettings, date::Date,
+                                   collection::AbstractString)
+    try
+        return NCDataset(geos_collection_path(settings, date, collection), "r")
+    catch
+        return nothing
+    end
 end
 
 function open_geosfp_native_day(settings::GEOSSettings{:geosfp}, date::Date;
@@ -372,6 +415,10 @@ function close_geos_day!(handles::GEOSDayHandles)
     handles.a3dyn       === nothing || close(handles.a3dyn)
     handles.a3mste      === nothing || close(handles.a3mste)
     handles.i3          === nothing || close(handles.i3)
+    handles.prev_a3dyn  === nothing || close(handles.prev_a3dyn)
+    handles.next_a3dyn  === nothing || close(handles.next_a3dyn)
+    handles.prev_i3     === nothing || close(handles.prev_i3)
+    handles.next_i3     === nothing || close(handles.next_i3)
     return nothing
 end
 
@@ -802,9 +849,14 @@ Canonical-contract alias for `open_geos_day`. The orchestrator calls this
 once per day and threads the returned handles through every per-window
 `read_window!`.
 """
-open_day(settings::GEOSSettings{:geosit}, date::Date; next_day_handle::Bool=true) =
-    open_geos_day(settings, date; next_day_handle=next_day_handle)
-open_day(settings::GEOSSettings{:geosfp}, date::Date; next_day_handle::Bool=true) =
+open_day(settings::GEOSSettings{:geosit}, date::Date; next_day_handle::Bool=true,
+         adjacent_omega::Bool=false) =
+    open_geos_day(settings, date; next_day_handle=next_day_handle,
+                  adjacent_omega=adjacent_omega)
+# GEOS-FP native has no `:omega_consistent` path yet (it errors on
+# include_vdiff_fields); accept the kwarg for a uniform trait surface and ignore.
+open_day(settings::GEOSSettings{:geosfp}, date::Date; next_day_handle::Bool=true,
+         adjacent_omega::Bool=false) =
     open_geosfp_native_day(settings, date; next_day_handle=next_day_handle)
 
 """Canonical-contract alias for `close_geos_day!`."""

@@ -219,8 +219,13 @@ end
 function open_reader(settings::AbstractGEOSSettings, date::Date, ::Type{FT};
                      seed = nothing,
                      next_day_handle::Bool = true,
-                     chain_mass::Bool = true) where {FT <: AbstractFloat}
-    handles = open_day(settings, date; next_day_handle = next_day_handle)
+                     chain_mass::Bool = true,
+                     adjacent_omega::Bool = false) where {FT <: AbstractFloat}
+    # `adjacent_omega` opens the prev/next-day A3dyn+I3 handles the
+    # `:omega_consistent` cm closure needs to interpolate across midnight; every
+    # other closure leaves them `nothing` (no extra file opens on the default path).
+    handles = open_day(settings, date; next_day_handle = next_day_handle,
+                       adjacent_omega = adjacent_omega)
     H = typeof(handles)
     # `chain_mass = false` opts out of cross-day carry entirely (NoChain).
     # Otherwise the policy is `ChainedMass{NTuple{6, Array{FT,3}}}`.

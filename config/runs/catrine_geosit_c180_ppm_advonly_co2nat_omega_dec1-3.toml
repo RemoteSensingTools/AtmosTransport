@@ -1,0 +1,59 @@
+# ===========================================================================
+# OMEGA-consistent cm closure — ADV-ONLY tracer validation (Dec 1-3 2021).
+#
+# Apples-to-apples clone of `catrine_geosit_c180_ppm_advonly_co2nat_dec1-5.toml`
+# (the DIRTY native-GEOS control), pointing at the OMEGA-CONSISTENT cm-closure
+# transport binary instead of the default :endpoint_balanced one. Same Dec-1 IC
+# (catrine_co2), same lmdz_co2 time-varying surface flux, same PPM scheme, no
+# diffusion / convection. The ONLY difference is the met binary's cm closure, so
+# any SH-UTLS tracer-fingering difference is attributable to the OMEGA-consistent
+# vertical-flux reconstruction.
+#
+# Compare against:
+#   DIRTY (native GEOS, :endpoint_balanced):
+#     ~/data/AtmosTransport/output/tropopause_iso/catrine_geosit_c180_ppm_advonly_co2nat_dec1-5.nc
+#   CLEAN (MERRA-2 wind-derived):
+#     ~/data/AtmosTransport/output/route1_dec1-5/merra2_c180_advonly_co2nat_dec1-5.nc
+#
+# Runner:
+#   julia --project=. scripts/run_transport.jl \
+#       config/runs/catrine_geosit_c180_ppm_advonly_co2nat_omega_dec1-3.toml
+# ===========================================================================
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_fullL72_omega"
+start_date   = "2021-12-01"
+end_date     = "2021-12-03"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "ppm"
+
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"
+  [tracers.co2_natural.surface_flux]
+  kind = "lmdz_co2"
+  time_varying = true
+
+[diffusion]
+kind = "none"
+
+[convection]
+kind = "none"
+
+[chemistry]
+kind = "none"
+
+[output]
+format = "netcdf"
+split = "single"
+snapshot_interval_hours = 3
+path = "~/data/AtmosTransport/output/route1_dec1-5/omega_c180_advonly_co2nat_dec1-3.nc"

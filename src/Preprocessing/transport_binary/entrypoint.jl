@@ -305,9 +305,11 @@ function _process_day_native(cfg::AbstractDict;
         :moisture_filtered
     elseif cm_closure_raw in ("pfix_corrected", "pfixcorrected", "pfix", "pressure_fixer_corrected")
         :pfix_corrected
+    elseif cm_closure_raw in ("omega_consistent", "omegaconsistent", "omega", "omega_cm")
+        :omega_consistent
     else
         error("[numerics].geos_cm_closure must be \"endpoint_balanced\", \"pressure_fixer\", " *
-              "\"moisture_filtered\", or \"pfix_corrected\"; got $(repr(cm_closure_raw))")
+              "\"moisture_filtered\", \"pfix_corrected\", or \"omega_consistent\"; got $(repr(cm_closure_raw))")
     end
     # cm-closure status (2026-06-03): `:endpoint_balanced` is the ONLY validated
     # production default. ALL of `:pressure_fixer`, `:moisture_filtered`, and
@@ -318,14 +320,22 @@ function _process_day_native(cfg::AbstractDict;
     #   :pfix_corrected    → reduces upper-UTLS noise but makes ~164-280 hPa WORSE
     #                        (the drift correction emits a spurious surface cm flux),
     #                        and chain_mass=true accumulates negative UTLS mass.
-    # The fingering is the intrinsic MFXC↔DELP residual; the cure is input-side
-    # (wind-derived / ERA5), not a cm closure.
+    #   :omega_consistent  → anchors cm to the A3dyn OMEGA resolved vertical motion
+    #                        (vdiv=+vdiv_om, smooth); continuity exact by
+    #                        construction. Binary-validated (r_vdiv 0.197 ≈ MERRA-2
+    #                        CLEAN, cor(cm,OMEGA)=+1.00); UNDER tracer validation —
+    #                        keep gated until the adv-only tracer fingering is
+    #                        confirmed ≤ DIRTY (see fingerfix_proto_omega-...jl).
+    # The fingering is the intrinsic MFXC↔DELP residual; the validated cure is
+    # input-side (wind-derived / ERA5). `:omega_consistent` is the native-cube
+    # candidate cure that keeps the GEOS mass fluxes but re-anchors cm to OMEGA.
     if cm_closure !== :endpoint_balanced
-        @warn "[numerics].geos_cm_closure=$(cm_closure) is DIAGNOSTIC-ONLY, NOT " *
-              "science-validated (it fails at the tracer level — see " *
+        @warn "[numerics].geos_cm_closure=$(cm_closure) is DIAGNOSTIC/CANDIDATE, NOT " *
+              "the science-validated production default (see " *
               "docs/reference/GEOS_MASS_FLUX_UTLS_FINGERING.md). Use " *
               ":endpoint_balanced for production and the ERA5/wind-derived path " *
-              "for UTLS-sensitive science."
+              "for UTLS-sensitive science. :omega_consistent is binary-validated " *
+              "and under tracer validation."
     end
     # Spatial low-pass sweeps: the `:moisture_filtered` residual smoother and the
     # `:pfix_corrected` column-drift smoother (ignored by the other closures).

@@ -189,6 +189,256 @@ function _smooth_cs_columns!(field::NTuple{CS_PANEL_COUNT, Array{FT, 2}},
     return nothing
 end
 
+# ---------------------------------------------------------------------------
+# OMEGA-consistent cm closure (geos_cm_closure="omega_consistent").
+#
+# The diagnosed cm[k+1]=cm[k]+div_h[k]-dm[k] forces the grid-noisy MFXC↔DELP
+# residual M into cm, so the per-layer vertical convergence vdiv=cm[k]-cm[k+1]
+# (==div_h) is grid-rough at the SH-UTLS → "fingering". GEOS A3dyn archives
+# OMEGA, the model's RESOLVED vertical pressure velocity, ~2x smoother than
+# div_h(MFXC). We build a SMOOTH physical vertical-convergence target vdiv_om
+# from OMEGA (DOWNWARD-positive, same sign as cm; dry-corrected by I3 QV), then
+# per level solve for a least-norm horizontal flux POTENTIAL λ so the NEW
+# horizontal convergence is div_h_new[k] = dm[k] − vdiv_om[k]; the telescoped cm
+# then gives EXACTLY vdiv[k] = dm[k]−div_h_new[k] = +vdiv_om[k] (smooth, cm
+# TRACKS OMEGA), while continuity holds BY CONSTRUCTION (the correction lives in
+# continuity's null space → the replay gate passes, and Σ_k vdiv_om = 0 ⇒
+# cm[Nz+1]=0).  alpha=1 (pure OMEGA) only; the hyperdiffusive-fallback blend in
+# the prototype is not productionized.
+#
+# Validated at the binary level (r_vdiv 0.197 ≈ MERRA-2 CLEAN 0.227, continuity
+# 4e-10, cor(cm,OMEGA)=+1.00). See
+# scripts/diagnostics/fingerfix_proto_omega-consistent-flux-reconstruction.jl.
+# ---------------------------------------------------------------------------
+
+# --- Monotone-cubic (PCHIP / Fritsch-Carlson) 3-hourly→hourly time interp -----
+# Uniform 3-hourly node spacing ⇒ the interior PCHIP slope is the harmonic-mean
+# limited secant; C1 curve, no kink across a bracket boundary, monotone (no
+# over/undershoot). At a node it returns that node exactly. Same scheme as the
+# validated prototype.
+@inline function _pchip_slope(dm1::Float64, d0::Float64)
+    (dm1 == 0.0 || d0 == 0.0 || sign(dm1) != sign(d0)) && return 0.0
+    return 2.0 / (1.0 / dm1 + 1.0 / d0)
+end
+@inline function _pchip_eval(y1::Float64, y2::Float64, y3::Float64, y4::Float64,
+                             f::Float64)
+    d12 = y2 - y1; d23 = y3 - y2; d34 = y4 - y3
+    m2 = _pchip_slope(d12, d23)
+    m3 = _pchip_slope(d23, d34)
+    h00 = (1 + 2f) * (1 - f)^2
+    h10 = f * (1 - f)^2
+    h01 = f^2 * (3 - 2f)
+    h11 = f^2 * (f - 1)
+    return h00 * y2 + h10 * m2 + h01 * y3 + h11 * m3
+end
+
+# CTM_A1 window w (1..24) valid minute; A3dyn / I3 3-hourly node valid minutes.
+@inline _ctm_valid_min(w::Int) = (w - 1) * 60 + 30
+@inline _a3_valid_min(a::Int) = (a - 1) * 180 + 90
+@inline _i3_valid_min(a::Int) = (a - 1) * 180
+
+"4-node PCHIP bracket (clamped to [1,n3]) + local frac for target minute t."
+function _pchip_bracket(valid_min::Function, n3::Int, t::Float64)
+    a = 1
+    for ai in 1:n3
+        valid_min(ai) <= t && (a = ai)
+    end
+    a0 = clamp(a, 1, n3); a1 = clamp(a + 1, 1, n3)
+    t0 = Float64(valid_min(a0)); t1 = Float64(valid_min(a1))
+    f = (t1 == t0) ? 0.0 : clamp((t - t0) / (t1 - t0), 0.0, 1.0)
+    am1 = clamp(a0 - 1, 1, n3); ap2 = clamp(a1 + 1, 1, n3)
+    return (am1, a0, a1, ap2), f, (a0 == a1)
+end
+
+"""
+    _read_geos_omega_qv_pchip!(omega, qv, handles, win, Nc, Nz, FT)
+
+Read A3dyn OMEGA and I3 QV at the CTM window `win`'s valid time via monotone
+cubic (PCHIP) interpolation of the 3-hourly nodes, level-flipped to TOA-first.
+# HACK: (Codex P2) windows whose valid time is PAST the last same-day node
+# (win 23/24, last A3dyn node 22:30 / last I3 node 21:00) CONSTANT-extrapolate to
+# that node instead of interpolating toward the NEXT day's first node, giving a
+# bounded (~1-1.5 h hold on a slowly-varying 3-hourly field) but discontinuous
+# OMEGA/QV target at midnight. Bounded and the fingering metric is dominated by
+# interior windows, but it anchors the day-edge windows to a slightly stale
+# target. TODO before promoting from CANDIDATE: thread the next-day A3dyn/I3
+# handles into the PCHIP bracket so boundary windows interpolate across midnight.
+Fills `omega`/`qv` (NTuple{6,Array{FT,3}}).
+"""
+function _read_geos_omega_qv_pchip!(omega::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                    qv::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                    handles::GEOSDayHandles, win::Int,
+                                    Nc::Int, Nz::Int) where FT
+    handles.a3dyn === nothing &&
+        error("geos_cm_closure=:omega_consistent needs A3dyn OMEGA; set include_vdiff_fields=true")
+    handles.i3 === nothing &&
+        error("geos_cm_closure=:omega_consistent needs I3 QV; set include_vdiff_fields=true")
+    or = handles.orientation
+    n3_a3 = handles.a3dyn.dim["time"]
+    n3_i3 = handles.i3.dim["time"]
+    t = Float64(_ctm_valid_min(win))
+    _read_pchip_field!(omega, handles.a3dyn, "OMEGA", _a3_valid_min, n3_a3, t, or, FT)
+    _read_pchip_field!(qv,    handles.i3,    "QV",    _i3_valid_min, n3_i3, t, or, FT)
+    return nothing
+end
+
+function _read_pchip_field!(out::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                            ds, var::AbstractString, valid_min::Function,
+                            n3::Int, t::Float64, or::Symbol, ::Type{FT}) where FT
+    (nodes, f, atnode) = _pchip_bracket(valid_min, n3, t)
+    if atnode && f == 0.0
+        y = _read_panels_3d(ds[var], nodes[2], or; FT = FT)
+        for p in 1:CS_PANEL_COUNT; copyto!(out[p], y[p]); end
+        return out
+    end
+    y1 = _read_panels_3d(ds[var], nodes[1], or; FT = FT)
+    y2 = _read_panels_3d(ds[var], nodes[2], or; FT = FT)
+    y3 = _read_panels_3d(ds[var], nodes[3], or; FT = FT)
+    y4 = _read_panels_3d(ds[var], nodes[4], or; FT = FT)
+    @inbounds for p in 1:CS_PANEL_COUNT
+        o = out[p]; a = y1[p]; b = y2[p]; c = y3[p]; d = y4[p]
+        for idx in eachindex(o)
+            o[idx] = FT(_pchip_eval(Float64(a[idx]), Float64(b[idx]),
+                                    Float64(c[idx]), Float64(d[idx]), f))
+        end
+    end
+    return out
+end
+
+"""
+    _omega_vdiv_target!(vdiv_om, omega, qv, cell_areas, g, tau, Nc, Nz)
+
+Build the OMEGA-derived smooth per-layer vertical mass-convergence target
+(downward-positive, same sign as cm), INTERFACE-consistent dry conversion:
+qv_ifc[k]=0.5(qv[k-1]+qv[k]); the dry interface pressure velocity is
+omega_ifc·(1−qv_ifc); the per-layer convergence is the telescoped interface
+difference ·area/g·tau. Because omega_dry_ifc[1]=omega_dry_ifc[Nz+1]=0,
+Σ_k vdiv_om = 0 exactly (matches cm[1]=cm[Nz+1]=0). `tau = MFDT/2`.
+"""
+function _omega_vdiv_target!(vdiv_om::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                             omega::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                             qv::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                             cell_areas::AbstractMatrix,
+                             g::FT, tau::FT, Nc::Int, Nz::Int) where FT
+    @inbounds for p in 1:CS_PANEL_COUNT
+        om = omega[p]; q = qv[p]; vo = vdiv_om[p]
+        for j in 1:Nc, i in 1:Nc
+            a = FT(cell_areas[i, j])
+            for k in 1:Nz
+                om_top = (k == 1)  ? zero(FT) : FT(0.5) * (om[i, j, k - 1] + om[i, j, k])
+                om_bot = (k == Nz) ? zero(FT) : FT(0.5) * (om[i, j, k] + om[i, j, k + 1])
+                qv_top = (k == 1)  ? zero(FT) : FT(0.5) * (q[i, j, k - 1] + q[i, j, k])
+                qv_bot = (k == Nz) ? zero(FT) : FT(0.5) * (q[i, j, k] + q[i, j, k + 1])
+                od_top = om_top * (one(FT) - qv_top)
+                od_bot = om_bot * (one(FT) - qv_bot)
+                vo[i, j, k] = (a / g) * (od_top - od_bot) * tau
+            end
+        end
+    end
+    return vdiv_om
+end
+
+"""
+    _reconstruct_omega_consistent!(am, bm, dm, vdiv_om, grid, vdiv_scale; tol, max_iter)
+
+After the column balance (so div_h closes the column: Σ_k div_h = Σ_k dm), apply
+a per-level Poisson flux-potential correction so the NEW horizontal convergence
+is div_h_new[k] = dm[k] − vdiv_scale·vdiv_om[k]. Structurally identical to
+`_balance_cs_level!`: drive the graph divergence (= −div_h) toward
+−(dm − vdiv) by solving L·ψ = (div_current − desired) and applying the flux
+correction. `vdiv_scale = source_steps_per_met/steps` matches the per-substep
+flux scaling without mutating the stored base-scaled `vdiv_om` (so the adaptive
+loop can re-prepare at a different `steps` without F32 drift). The realized
+telescoped cm then has vdiv[k] = dm[k] − div_h_new[k] = +vdiv_scale·vdiv_om[k]
+UP TO a per-level global constant (the unrealizable mean removed before the
+solve; zero grid-scale signature so r_vdiv is unchanged, global-mean part
+reconciled by the dry-mass pin). Continuity holds per column to roundoff. Returns
+(max_increment, max_post_residual) over interior cells for the gate log.
+"""
+function _reconstruct_omega_consistent!(am::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                        bm::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                        dm::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                        vdiv_om::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
+                                        grid::CubedSphereTargetGeometry,
+                                        vdiv_scale::Float64;
+                                        tol::Float64 = 1e-11,
+                                        max_iter::Int = 8000) where FT
+    ft = grid.face_table
+    degree = grid.cell_degree
+    scratch = grid.poisson_scratch
+    Nc = ft.Nc
+    nc = ft.nc
+    Nz = size(dm[1], 3)
+    div = scratch.div
+    rhs = scratch.rhs
+    psi = scratch.psi
+    cg_scratch = (r = scratch.r, p = scratch.p, Ap = scratch.Ap, z = scratch.z)
+    max_inc = 0.0
+    max_post = 0.0
+    @inbounds for k in 1:Nz
+        # Current graph divergence at level k (= −div_h).
+        fill!(div, 0.0)
+        for f in 1:ft.nf
+            panel = Int(ft.face_panel[f]); dir = Int(ft.face_dir[f])
+            i = Int(ft.face_idx_i[f]); j = Int(ft.face_idx_j[f])
+            flux = dir == 1 ? Float64(am[panel][i, j, k]) : Float64(bm[panel][i, j, k])
+            div[Int(ft.face_left[f])]  += flux
+            div[Int(ft.face_right[f])] -= flux
+        end
+        # Desired graph divergence: −div_h_new = −(dm − vdiv_om).
+        # rhs[c] = div_current[c] − desired_graph_div[c] = div[c] + dh_new[c].
+        # A horizontal flux divergence is globally mean-zero per level, so ONLY
+        # the null-space (mean-zero) part of dh_new is realizable as a flux
+        # correction. Subtract its per-level global mean EXPLICITLY (rather than
+        # leaning on the solver's internal mean-zero projection): the realized
+        # vdiv = vdiv_scale·vdiv_om + (a per-level global CONSTANT). That constant
+        # has zero grid-scale Laplacian, so the r_vdiv fingering metric is
+        # UNCHANGED; the dropped global-mean part is the net per-level mass
+        # tendency that cm carries, reconciled to ~0 by the dry-mass pin (so the
+        # column bottom residual handed to diagnose_cs_cm! is the global-mean
+        # drift only, not a per-column leak). [Codex P1: make this intentional.]
+        dh_sum = 0.0
+        for c in 1:nc
+            p_idx = (c - 1) ÷ (Nc * Nc) + 1
+            li = (c - 1) % (Nc * Nc); jl = li ÷ Nc + 1; il = li % Nc + 1
+            dh_new = Float64(dm[p_idx][il, jl, k]) -
+                     vdiv_scale * Float64(vdiv_om[p_idx][il, jl, k])
+            rhs[c] = div[c] + dh_new
+            dh_sum += dh_new
+        end
+        dh_mean = dh_sum / nc
+        @simd for c in 1:nc
+            rhs[c] -= dh_mean
+        end
+        solve_cs_poisson_pcg!(psi, rhs, ft, degree, cg_scratch;
+                              tol = tol, max_iter = max_iter, project_every = 50)
+        apply_cs_flux_correction!(am, bm, psi, ft, k)
+        # Track the correction magnitude + post residual for the gate log.
+        for f in 1:ft.nf
+            d = abs(psi[Int(ft.face_right[f])] - psi[Int(ft.face_left[f])])
+            d > max_inc && (max_inc = d)
+        end
+        fill!(div, 0.0)
+        for f in 1:ft.nf
+            panel = Int(ft.face_panel[f]); dir = Int(ft.face_dir[f])
+            i = Int(ft.face_idx_i[f]); j = Int(ft.face_idx_j[f])
+            flux = dir == 1 ? Float64(am[panel][i, j, k]) : Float64(bm[panel][i, j, k])
+            div[Int(ft.face_left[f])]  += flux
+            div[Int(ft.face_right[f])] -= flux
+        end
+        for c in 1:nc
+            p_idx = (c - 1) ÷ (Nc * Nc) + 1
+            li = (c - 1) % (Nc * Nc); jl = li ÷ Nc + 1; il = li % Nc + 1
+            dh_new = Float64(dm[p_idx][il, jl, k]) -
+                     vdiv_scale * Float64(vdiv_om[p_idx][il, jl, k])
+            r = abs(div[c] - (-dh_new))
+            r > max_post && (max_post = r)
+        end
+    end
+    _sync_cs_mirrors!(am, bm, ft, Nz)
+    return (max_increment = max_inc, max_post_residual = max_post)
+end
+
 function _cs_total_air_mass(panels_m::NTuple{CS_PANEL_COUNT, <:AbstractArray})
     total = 0.0
     for p in 1:CS_PANEL_COUNT
@@ -574,7 +824,7 @@ function _geos_vdiff_payload!(workspace)
     return workspace.vdiff_v4
 end
 
-mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV, VD} <:
+mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV, VD, VO} <:
                AbstractWindowWorkspace{CubedSphereTargetGeometry, FT}
     strategy    :: ST
     strategy_ws :: SW
@@ -628,6 +878,12 @@ mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV, V
     # `:moisture_filtered` closure (0 ⇒ equivalent to `:endpoint_balanced`, up to
     # the dm = (m_next−m_cur)/(2·steps) round-trip in F32).
     smooth_iters :: Int
+    # `:omega_consistent` closure scratch (else `nothing`): OMEGA/QV PCHIP read
+    # buffers + the smooth OMEGA-derived per-layer vertical-convergence target
+    # vdiv_om (downward-positive, Σ_k=0). Populated per window in `ingest_window!`.
+    omega_buf :: VO
+    qv_buf    :: VO
+    vdiv_om   :: VO
 end
 
 const _GEOS_ADAPTIVE_SUBSTEP_MAX_REFINEMENTS = 8
@@ -685,9 +941,23 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
     balance_mode in (:column, :per_layer) ||
         error("GEOS-CS balance_mode must be :column or :per_layer; got $(balance_mode)")
     cm_closure in (:endpoint_balanced, :pressure_fixer, :moisture_filtered,
-                   :pfix_corrected) ||
+                   :pfix_corrected, :omega_consistent) ||
         error("GEOS-CS cm_closure must be :endpoint_balanced, :pressure_fixer, " *
-              ":moisture_filtered, or :pfix_corrected; got $(cm_closure)")
+              ":moisture_filtered, :pfix_corrected, or :omega_consistent; got $(cm_closure)")
+    if cm_closure === :omega_consistent
+        settings.include_vdiff_fields ||
+            error("GEOS-CS cm_closure=:omega_consistent needs A3dyn OMEGA + I3 QV; " *
+                  "set [source].include_vdiff_fields=true")
+        grid.Nc == settings.Nc ||
+            error("GEOS-CS cm_closure=:omega_consistent is wired for the native " *
+                  "passthrough (target Nc == source Nc) only; got target Nc=$(grid.Nc), " *
+                  "source Nc=$(settings.Nc).")
+        Nz == Nz_native ||
+            error("GEOS-CS cm_closure=:omega_consistent is wired for the identity " *
+                  "vertical transform (Nz == Nz_native) only; got Nz=$(Nz), " *
+                  "Nz_native=$(Nz_native). Use [vertical].transform=\"identity\" " *
+                  "(the validated full-L72 build).")
+    end
     # ΔB[k] = B_interface[k+1] − B_interface[k] (TOA-first; Σ ΔB = 1 by hybrid
     # sigma-pressure construction). The merged_vc is the target coordinate (same
     # source the identity plan above is built from). Used by :pressure_fixer cm.
@@ -717,11 +987,21 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
         t  = ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel),
         qv = ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel),
     ) : nothing
+    # OMEGA-consistent closure scratch: OMEGA/QV read buffers + the smooth
+    # vertical-convergence target. Identity passthrough (Nc==settings.Nc,
+    # Nz==Nz_native) is enforced above, so all three are target-shaped.
+    omega_buf = cm_closure === :omega_consistent ?
+        ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel) : nothing
+    qv_buf = cm_closure === :omega_consistent ?
+        ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel) : nothing
+    vdiv_om = cm_closure === :omega_consistent ?
+        ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel) : nothing
     raw = allocate_raw_window(settings; FT = FT, Nz = Nz_native)
 
     return GEOSCubedSphereWindowWorkspace{
         FT, typeof(strategy), typeof(strategy_ws), typeof(raw), typeof(cell_areas),
-        typeof(plan), typeof(cmfmc_v4), typeof(dtrain_v4), typeof(vdiff_v4)}(
+        typeof(plan), typeof(cmfmc_v4), typeof(dtrain_v4), typeof(vdiff_v4),
+        typeof(vdiv_om)}(
             strategy, strategy_ws, raw, plan,
             am_native_v4, bm_native_v4, m_native_kg,
             am_v4, bm_v4, cm_v4, dm_v4,
@@ -731,7 +1011,8 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
             fill(steps_per_met, schedule_len), Bool(adaptive_substeps),
             target, min_steps, max_steps, chain_mass,
             Bool(global_mass_pin), Float64(global_mass_target_kg),
-            balance_mode, cm_closure, ΔB, m_next_delp, Int(smooth_iters))
+            balance_mode, cm_closure, ΔB, m_next_delp, Int(smooth_iters),
+            omega_buf, qv_buf, vdiv_om)
 end
 
 function _geos_pin_global_mass_if_needed!(workspace::GEOSCubedSphereWindowWorkspace{FT},
@@ -924,6 +1205,36 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
         return bal_diag
     end
 
+    if workspace.cm_closure === :omega_consistent
+        # OMEGA-consistent cm closure (alpha=1, pure OMEGA). (1) Column-balance the
+        # native horizontal fluxes to the raw GEOS DELP_dry endpoint so the column
+        # closes (Σ_k div_h = Σ_k dm_dry). (2) Apply a per-level flux-potential
+        # correction so div_h_new[k] = dm[k] − vdiv_om[k] (vdiv_om from A3dyn OMEGA,
+        # built at base flux scaling in ingest, rescaled here to the chosen steps).
+        # (3) Diagnose cm: the telescoped cm then has vdiv[k]=cm[k]−cm[k+1]=+vdiv_om
+        # (smooth, anti-fingering); continuity is exact by construction (the
+        # correction lives in continuity's null space and Σ_k vdiv_om=0 ⇒ cm[Nz+1]=0).
+        bal_diag = balance_cs_column_mass_fluxes!(
+            workspace.am_v4, workspace.bm_v4, workspace.m_cur,
+            workspace.m_next_target, grid.face_table, grid.cell_degree, steps,
+            grid.poisson_scratch)
+        fill_cs_window_mass_tendency!(workspace.dm_v4, workspace.m_cur,
+                                      workspace.m_next_target, steps)
+        # vdiv_om was built at base tau=mass_flux_dt/2 (i.e. steps=source_steps_per_met).
+        # Pass the per-substep scale (= source_steps_per_met/steps, same as the flux
+        # rescale) so dm and vdiv share units, WITHOUT mutating the stored array
+        # (the adaptive loop may re-prepare at another `steps`).
+        vdiv_scale = workspace.source_steps_per_met / steps
+        recon = _reconstruct_omega_consistent!(workspace.am_v4, workspace.bm_v4,
+                                               workspace.dm_v4, workspace.vdiv_om,
+                                               grid, Float64(vdiv_scale))
+        diagnose_cs_cm!(workspace.cm_v4, workspace.am_v4, workspace.bm_v4,
+                        workspace.dm_v4, workspace.m_cur, Nc, Nz)
+        return (bal_diag..., omega_max_increment = recon.max_increment,
+                omega_max_post_residual = recon.max_post_residual,
+                mode = :omega_consistent)
+    end
+
     bal_diag = if workspace.balance_mode === :per_layer
         balance_cs_global_mass_fluxes!(
             workspace.am_v4, workspace.bm_v4, workspace.m_cur,
@@ -1042,6 +1353,17 @@ function ingest_window!(workspace::GEOSCubedSphereWindowWorkspace{FT},
     # filtered endpoint inside the adaptive loop.
     for p in 1:CS_PANEL_COUNT
         copyto!(workspace.m_next_delp[p], workspace.m_next_target[p])
+    end
+    # `:omega_consistent`: read A3dyn OMEGA + I3 QV (PCHIP time-interp to this
+    # window's valid time) and build the smooth vdiv_om target at the BASE flux
+    # scaling (tau = mass_flux_dt/2). `_geos_prepare_window_for_steps!` rescales
+    # it by source_steps_per_met/steps to match the per-substep flux scaling.
+    if workspace.cm_closure === :omega_consistent
+        _read_geos_omega_qv_pchip!(workspace.omega_buf, workspace.qv_buf,
+                                   reader.handles, win, Nc, Nz)
+        tau_base = FT(settings.mass_flux_dt / 2)
+        _omega_vdiv_target!(workspace.vdiv_om, workspace.omega_buf, workspace.qv_buf,
+                            workspace.cell_areas, workspace.g, tau_base, Nc, Nz)
     end
     _geos_select_steps_for_window!(workspace, grid, win)
     return nothing

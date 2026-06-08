@@ -1,0 +1,52 @@
+# ===========================================================================
+# DIURNAL-CYCLE TEST — OLD constant (monthly-mean) surface-flux convention.
+#
+# Control for the NEW time-varying run. Identical in every respect EXCEPT
+# the lmdz_co2 surface flux is the monthly mean (time_varying absent/false),
+# i.e. a single constant 2D field with NO diurnal cycle. This is the OLD
+# convention that we expect to MISS GEOS-Chem's tropical PBL diurnal CO2.
+#
+# Pair: ..._NEW_timevarying_dec1-2.toml.
+# ===========================================================================
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_fullL72_omega"
+start_date   = "2021-12-01"
+end_date     = "2021-12-02"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "ppm"
+
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"
+  [tracers.co2_natural.surface_flux]
+  kind = "lmdz_co2"
+  time_varying = false
+
+[diffusion]
+kind = "geoschem_holtslag_boville_vdiff"
+surface_flux_boundary = true
+
+[convection]
+kind = "cmfmc_matrix"
+tile_workspace_gib = 0.25
+use_collab_lu = true
+lmax_conv = 0
+
+[chemistry]
+kind = "none"
+
+[output]
+format = "netcdf"
+split = "single"
+snapshot_interval_hours = 1
+path = "~/data/AtmosTransport/output/diurnal_test_dec1-2/omega_fullphys_co2nat_OLD_constant_dec1-2.nc"

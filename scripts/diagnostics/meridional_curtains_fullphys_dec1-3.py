@@ -1,12 +1,21 @@
 #!/usr/bin/env python3
-"""Meridional (latitude-pressure) curtain animation of co2_natural at three
-tropical source longitudes — central Amazonia (60°W), central Africa (20°E),
-SE Asia (110°E) — over Dec 1-5, comparing GEOS-Chem │ GEOS-native MFXC │ MERRA-2
-winds. All three are native C180 cubed-sphere; a meridian is extracted by
-nearest-cell (3D-sphere KDTree, built once) so no full regrid is needed. The
-runs start from the shared Dec-1 IC so they're state-aligned with GEOS-Chem.
+"""FULL-PHYSICS meridional (latitude-pressure) curtain animation of co2_natural
+at three tropical source longitudes — central Amazonia (60°W), central Africa
+(20°E), SE Asia (110°E) — over Dec 1-3 2021, comparing
+  GEOS-Chem │ GEOS-native(full) │ OMEGA-consistent(full) │ ERA5(full).
 
-  python3 scripts/diagnostics/meridional_curtains_dec1-5.py [stride]
+This is the full-physics counterpart of `meridional_curtains_dec1-5.py`. The
+three model rows now run advection + convection + diffusion (apples-to-apples
+with GEOS-Chem, which includes everything). MERRA-2 is DROPPED here: its met
+binary is flux-only ([:m,:am,:bm,:cm,:ps,:dm], no convection/diffusion fields)
+so it cannot do full physics without a binary regen.
+
+All three model rows are native C180 cubed-sphere (ERA5 is L137, the GEOS rows
+L72); a meridian is extracted by nearest-cell (3D-sphere KDTree, built once) so
+no full regrid is needed. Runs start from the shared Dec-1 IC so they're
+state-aligned with GEOS-Chem.
+
+  python3 scripts/diagnostics/meridional_curtains_fullphys_dec1-3.py [stride]
 """
 import sys, datetime as dt
 import numpy as np
@@ -19,7 +28,8 @@ import matplotlib.animation as anim
 
 OUT = "/home/cfranken/data/AtmosTransport/output/route1_dec1-5"
 GCDIR = "/home/cfranken/data/AtmosTransport/catrine-geoschem-runs"
-OUTGIF = f"{OUT}/animations/meridional_curtains_omega_amazonia_africa_seasia.gif"
+OUTGIF = ("/home/cfranken/www/catrine/route1_meridional_curtains/"
+          "meridional_curtains_omega_FULLPHYS_amazonia_africa_seasia.gif")
 
 # GEOS native L72 nominal layer TOP-edge pressures [hPa] (GEOS FP File Spec, App. B)
 _EDGE72 = [0.0100,0.0200,0.0327,0.0476,0.0660,0.0893,0.1197,0.1595,0.2113,0.2785,
@@ -32,11 +42,10 @@ _EDGE72 = [0.0100,0.0200,0.0327,0.0476,0.0660,0.0893,0.1197,0.1595,0.2113,0.2785
 
 REGIONS = [("Amazonia 60°W", -60.0), ("Africa 20°E", 20.0), ("SE Asia 110°E", 110.0)]
 RUNS = [  # (label, path, var, surface_first)
-    ("GEOS-Chem",          None,                                       "SpeciesConcVV_CO2", True),
-    ("GEOS-native MFXC",   f"{OUT.replace('route1_dec1-5','tropopause_iso')}/catrine_geosit_c180_ppm_advonly_co2nat_dec1-5.nc", "co2_natural", False),
-    ("OMEGA-consistent",   f"{OUT}/omega_c180_advonly_co2nat_dec1-3.nc", "co2_natural", False),
-    ("MERRA-2 winds",      f"{OUT}/merra2_c180_advonly_co2nat_dec1-5.nc", "co2_natural", False),
-    ("ERA5 spectral",      f"{OUT}/era5_c180_advonly_co2nat_dec1-5.nc",   "co2_natural", False),  # L137
+    ("GEOS-Chem",            None,                                          "SpeciesConcVV_CO2", True),
+    ("GEOS-native (full)",   f"{OUT}/geosnative_fullphys_co2nat_dec1-3.nc", "co2_natural", False),
+    ("OMEGA-consistent (full)", f"{OUT}/omega_fullphys_co2nat_dec1-3.nc",   "co2_natural", False),
+    ("ERA5 (full)",          f"{OUT}/era5_fullphys_co2nat_dec1-3.nc",       "co2_natural", False),  # L137
 ]
 L137 = "/home/cfranken/code/gitHub/AtmosTransportModel/config/era5_L137_coefficients.toml"
 LATG = np.linspace(-88.0, 88.0, 119)          # meridian sample latitudes
@@ -79,13 +88,11 @@ def gc_path(t):
     return f"{GCDIR}/GEOSChem.CATRINE_inst.{d:%Y%m%d}_{d:%H%M}z.nc4"
 
 # --- preload meridian curtains for every frame -----------------------------
-print("Preloading meridian curtains...")
-# coordinate + nearest-index per source (GC vs ours share the C180 GMAO grid,
-# but build separately from each source's own lons/lats to be safe)
+print("Preloading meridian curtains (FULL PHYSICS)...")
 src_idx = {}
 ours = Dataset(RUNS[1][1], "r")
-# Cap frames to the shortest our-run (OMEGA-consistent = Dec 1-3) so every row is
-# present in every frame; all runs are 3-hourly and start from the Dec-1 IC.
+# Cap frames to the shortest our-run so every row is present in every frame;
+# all runs are 3-hourly and start from the Dec-1 IC.
 nt = min(Dataset(p, "r").variables["co2_natural"].shape[0] for _, p, *_ in RUNS if p)
 our_lons = np.asarray(ours.variables["lons"][:]); our_lats = np.asarray(ours.variables["lats"][:])
 src_idx["ours"] = build_meridian_idx(our_lons, our_lats)
@@ -100,7 +107,6 @@ src_idx["gc"] = build_meridian_idx(g_lons, g_lats)
 
 frames = list(range(0, nt, STRIDE))
 data = {lab: {name: [] for name, _ in REGIONS} for lab, *_ in RUNS}
-# open our-run datasets once
 our_ds = {lab: Dataset(p, "r") for lab, p, *_ in RUNS if p}
 for t in frames:
     for lab, path, var, sfc in RUNS:
@@ -154,7 +160,8 @@ def update(fi):
     for r, (lab, *_ ) in enumerate(RUNS):
         for c, (name, _) in enumerate(REGIONS):
             ims[(r, c)].set_array(data[lab][name][fi].ravel())
-    sup.set_text(f"co2_natural meridional curtains — {(T0+dt.timedelta(hours=3*t)):%Y-%m-%d %H:%M}Z")
+    sup.set_text("co2_natural meridional curtains (FULL PHYSICS) — "
+                 f"{(T0+dt.timedelta(hours=3*t)):%Y-%m-%d %H:%M}Z")
     return list(ims.values()) + [sup]
 
 import os

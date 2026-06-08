@@ -814,6 +814,8 @@ function build_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 3}},
             "(NTuple{6, Matrix}) so the target layer can be selected by " *
             "per-column ps. Pass `window.surface_pressure` from the binary."))
         return _build_cs_pressure_layer_ic(air_mass, grid, cfg, FT, surface_pressure)
+    elseif kind === :cs_native
+        return _build_cs_native_ic(grid, air_mass, cfg, FT)
     elseif _is_file_init_kind(kind)
         surface_pressure === nothing && throw(ArgumentError(
             "build_initial_mixing_ratio(::AtmosGrid{<:CubedSphereMesh}, ...) " *
@@ -832,7 +834,7 @@ function build_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 3}},
     else
         throw(ArgumentError(
             "unsupported init.kind=$(kind) for CubedSphereMesh; " *
-            "supported: uniform | latitude_step | gaussian_blob | file | netcdf | file_field | catrine_co2 | pressure_layer"))
+            "supported: uniform | latitude_step | gaussian_blob | file | netcdf | file_field | catrine_co2 | pressure_layer | cs_native"))
     end
 end
 
@@ -898,6 +900,91 @@ function _build_cs_file_ic(grid::AtmosGrid{<:CubedSphereMesh},
         end
     end
 
+    return vmr
+end
+
+# ---------------------------------------------------------------------------
+# CS NATIVE IC — read a native cubed-sphere field cell-for-cell (no
+# horizontal regrid, no vertical interpolation) and state-align to the
+# binary's own topology. Used to seed tracers from a GEOS-Chem 3D field
+# stored on the SAME C180 cube the binary uses (e.g. CATRINE FossilCO2 /
+# Rn222), so only transport + emission diverge from GC afterwards.
+#
+# The source NetCDF carries `<variable>(time, lev, nf, Ydim, Xdim)` in CF
+# (surface-first lev, like GEOS-Chem SpeciesConcVV_*). NCDatasets reads it
+# in reversed (Julia column-major) order as `(Xdim, Ydim, nf, lev[, time])`,
+# so panel axis-1 == Xdim and axis-2 == Ydim — IDENTICAL to the model's own
+# CS writer (`_cs_stack3`: `out[:, :, p, :] = panels[p]`). We therefore map
+# `src[i, j, p, k_src]` directly onto interior panel `p` cell `(i, j)`, and
+# flip the vertical (source SURFACE-first → model TOA-first) via
+# `k = Nz - k_src + 1`. Requires `size(lev) == Nz` (same vertical grid).
+# ---------------------------------------------------------------------------
+
+function _build_cs_native_ic(grid::AtmosGrid{<:CubedSphereMesh},
+                             air_mass::NTuple{6, <:AbstractArray{FT, 3}},
+                             cfg, ::Type{FT}) where FT
+    mesh = grid.horizontal
+    Nc   = mesh.Nc
+    Nz   = size(air_mass[1], 3)
+
+    file = expand_data_path(String(get(cfg, "file", "")))
+    variable = String(get(cfg, "variable", ""))
+    isempty(file) && throw(ArgumentError("init.kind=cs_native requires init.file"))
+    isempty(variable) && throw(ArgumentError("init.kind=cs_native requires init.variable"))
+    isfile(file) || throw(ArgumentError("cs_native initial-condition file not found: $file"))
+    time_index = Int(get(cfg, "time_index", 1))
+    # Source vertical convention: "surface_first" (GEOS-Chem default) flips to
+    # the model's TOA-first ordering; "toa_first" copies straight through.
+    vertical_order = Symbol(lowercase(String(get(cfg, "vertical_order", "surface_first"))))
+    vertical_order in (:surface_first, :toa_first) || throw(ArgumentError(
+        "init.kind=cs_native: vertical_order=$(vertical_order) must be " *
+        "\"surface_first\" (GEOS-Chem, flips to TOA-first) or \"toa_first\""))
+    flip_vertical = vertical_order === :surface_first
+
+    ds = NCDataset(file)
+    raw = try
+        haskey(ds, variable) || throw(ArgumentError("variable '$variable' not found in $file"))
+        rv = ds[variable]
+        nd = ndims(rv)
+        # NCDatasets reverses CF dim order: (Xdim, Ydim, nf, lev[, time]).
+        if nd == 5
+            FT.(nomissing(rv[:, :, :, :, time_index], zero(FT)))
+        elseif nd == 4
+            FT.(nomissing(rv[:, :, :, :], zero(FT)))
+        else
+            throw(ArgumentError("init.kind=cs_native: variable '$variable' must be " *
+                                "4D (Xdim,Ydim,nf,lev) or 5D (…,time), got ndims=$nd"))
+        end
+    finally
+        close(ds)
+    end
+
+    size(raw, 1) == Nc || throw(DimensionMismatch(
+        "cs_native: source Xdim=$(size(raw, 1)) != binary Nc=$Nc (no horizontal " *
+        "regrid is performed; the source must be on the SAME cube as the binary)"))
+    size(raw, 2) == Nc || throw(DimensionMismatch(
+        "cs_native: source Ydim=$(size(raw, 2)) != binary Nc=$Nc"))
+    size(raw, 3) == CS_PANEL_COUNT || throw(DimensionMismatch(
+        "cs_native: source nf=$(size(raw, 3)) != $CS_PANEL_COUNT panels"))
+    size(raw, 4) == Nz || throw(DimensionMismatch(
+        "cs_native: source lev=$(size(raw, 4)) != binary Nz=$Nz (no vertical " *
+        "interpolation is performed; the source must share the vertical grid)"))
+
+    # Clamp tiny negative VMRs (GEOS-Chem advection can emit ~-1e-6 cells)
+    # to zero so the dry-VMR state and downstream mass packing stay physical.
+    clamp_negative = Bool(get(cfg, "clamp_negative", true))
+
+    vmr = ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), CS_PANEL_COUNT)
+    for p in 1:CS_PANEL_COUNT
+        dst = vmr[p]
+        @inbounds for k in 1:Nz
+            k_src = flip_vertical ? (Nz - k + 1) : k
+            for j in 1:Nc, i in 1:Nc
+                v = raw[i, j, p, k_src]
+                dst[i, j, k] = (clamp_negative && v < zero(FT)) ? zero(FT) : v
+            end
+        end
+    end
     return vmr
 end
 
@@ -1479,6 +1566,20 @@ function _load_timevarying_surface_flux_field(cfg, ::Type{FT},
         time_units = String(get(ds[time_var].attrib, "units", ""))
         times_sec = _surface_flux_times_seconds(ds[time_var][:], time_units, reference_time)
 
+        # --- emission temporal-stamp convention (CAMS / LMDZ natural CO2) ---
+        # The CAMS file (`flux_apos`, 3-hourly, "hours since 2021-12-01") uses
+        # INTERVAL-START stamps: HEMCO/GEOS-Chem holds slice k (stamp k·Δ)
+        # PIECEWISE-CONSTANT over [k·Δ, (k+1)·Δ) — verified against GC's
+        # EmisCO2_Total, which at output stamp T equals the CAMS slice at T−Δ
+        # (e.g. GC's 03:00z emission = the 00:00 CAMS slice). The faithful
+        # match is therefore `temporal_scheme = "stepwise"` (StepwiseFlux holds
+        # the largest knot ≤ t, i.e. v_k over [k·Δ, (k+1)·Δ)), with the knots
+        # left UNSHIFTED. Do NOT add a +Δ time shift here: a shift only realigns
+        # the point values at the knots, while the integrated/transported
+        # emission still depends on the scheme (a "conservative" linear-blend
+        # scheme would average adjacent slices regardless of any shift). Keeping
+        # the raw stamps + StepwiseFlux reproduces GC's step exactly.
+
         # Require ascending; sort consistently if needed.
         if !issorted(times_sec)
             perm = sortperm(times_sec)
@@ -1733,7 +1834,13 @@ function _build_timevarying_cs_surface_flux_source(mesh, tracer_name::Symbol, cf
         end
     end
 
-    scheme = flux_temporal_scheme(String(get(cfg, "temporal_scheme", "linear")))
+    # Kind-aware default: lmdz_co2 (CAMS) is held PIECEWISE-CONSTANT in 3-hourly
+    # blocks by HEMCO/GEOS-Chem (verified: GC's EmisCO2_Total at stamp T equals
+    # the CAMS slice at T−Δ), so it MUST default to "stepwise" for GC parity — a
+    # linear/interp default smears the diurnal cycle (anomaly corr 0.91 vs 0.998).
+    # Other kinds keep the generic "linear" default.
+    default_scheme = _surface_flux_kind(cfg) === :lmdz_co2 ? "stepwise" : "linear"
+    scheme = flux_temporal_scheme(String(get(cfg, "temporal_scheme", default_scheme)))
     return TimeVaryingSurfaceFluxSource(tracer_name, panels_series, field.times_sec, scheme)
 end
 

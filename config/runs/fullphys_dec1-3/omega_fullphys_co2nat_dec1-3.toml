@@ -1,0 +1,63 @@
+# ===========================================================================
+# OMEGA-consistent cm closure — FULL PHYSICS, Dec 1-3 2021.
+#
+# Apples-to-apples with the GEOS-Chem reference (advection + convection +
+# diffusion). Full-physics counterpart of the adv-only
+# `catrine_geosit_c180_ppm_advonly_co2nat_omega_dec1-3.toml`: same Dec-1 IC
+# (catrine_co2), same lmdz_co2 time-varying surface flux, same PPM scheme,
+# now with CMFMC-matrix convection + GCHP-like Holtslag-Boville diffusion ON.
+# The ONLY difference vs the GEOS-native full-physics run is the met binary's
+# cm closure (OMEGA-consistent vertical-flux reconstruction), so any residual
+# SH-UTLS tracer-fingering difference is attributable to the cm closure — now
+# evaluated WITH convection + diffusion. Single tracer co2_natural (passive).
+#
+# Met binary: GEOS-IT, OMEGA-consistent cm closure; carries cmfmc/dtrain/
+# vdiff/pbl for full physics.
+#
+# Runner:
+#   julia --project=. scripts/run_transport.jl \
+#       config/runs/fullphys_dec1-3/omega_fullphys_co2nat_dec1-3.toml
+# ===========================================================================
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_fullL72_omega"
+start_date   = "2021-12-01"
+end_date     = "2021-12-03"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "ppm"
+
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"
+  [tracers.co2_natural.surface_flux]
+  kind = "lmdz_co2"
+  time_varying = true
+  temporal_scheme = "stepwise"   # GC/HEMCO piecewise-constant CAMS hold (parity)
+
+[diffusion]
+kind = "geoschem_holtslag_boville_vdiff"
+surface_flux_boundary = true
+
+[convection]
+kind = "cmfmc_matrix"
+tile_workspace_gib = 0.25
+use_collab_lu = true
+lmax_conv = 0
+
+[chemistry]
+kind = "none"
+
+[output]
+format = "netcdf"
+split = "single"
+snapshot_interval_hours = 3
+path = "~/data/AtmosTransport/output/route1_dec1-5/omega_fullphys_co2nat_dec1-3.nc"

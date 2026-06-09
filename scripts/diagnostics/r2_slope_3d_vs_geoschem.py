@@ -89,19 +89,25 @@ def main():
             except Exception as e:
                 print(f"  {s:%m-%d %H:%M}  (GC read failed: {e})"); continue
             gc3d = gc_nat[::-1]                                   # -> TOA-first to align with ours
-            if gc3d.shape != our3d.shape:
-                print(f"  {s:%m-%d %H:%M}  SHAPE MISMATCH our{our3d.shape} gc{gc3d.shape}"); continue
-            r2, slope, _ = r2_slope(our3d, gc3d)
-            summ[our_v]["3d"][0].append(r2); summ[our_v]["3d"][1].append(slope)
+            # Full-3D R^2 only when the vertical grids match (geosit L72 == GC L72).
+            # ERA5 is L137 != GC L72, so 3D is N/A there; the column-mean (a
+            # vertical integral, grid-agnostic on the shared C180 horizontal) is
+            # the valid metric and is computed regardless.
+            if gc3d.shape == our3d.shape:
+                r2, slope, _ = r2_slope(our3d, gc3d)
+                summ[our_v]["3d"][0].append(r2); summ[our_v]["3d"][1].append(slope)
+                c3 = f"{r2:>9.4f}{slope:>8.3f}"
+            else:
+                c3 = f"{'(L%d vs L%d)' % (our3d.shape[0], gc3d.shape[0]):>17}"
             # column-mean: GC = sum_k(VMR*AD)/sum_k(AD) [order-free vertical sum], ours = precomputed
             if have_col:
                 gc_col = np.sum(gc_nat * ad, axis=0) / np.sum(ad, axis=0)   # (nf,Y,X)
                 our_col = np.asarray(ods.variables[colvar][i])             # (nf,Y,X)
                 r2c, slc, _ = r2_slope(our_col, gc_col)
                 summ[our_v]["col"][0].append(r2c); summ[our_v]["col"][1].append(slc)
-                print(f"  {s:%Y-%m-%d %H:%M} {r2:>9.4f}{slope:>8.3f}  | {r2c:>9.4f}{slc:>8.3f}")
+                print(f"  {s:%Y-%m-%d %H:%M} {c3}  | {r2c:>9.4f}{slc:>8.3f}")
             else:
-                print(f"  {s:%Y-%m-%d %H:%M} {r2:>9.4f}{slope:>8.3f}  |   (no {colvar})")
+                print(f"  {s:%Y-%m-%d %H:%M} {c3}  |   (no {colvar})")
     ods.close()
 
     print(f"\n=== SUMMARY (mean over day {SKIP+1}..{NDAYS} timesteps, spin-up skipped) ===")

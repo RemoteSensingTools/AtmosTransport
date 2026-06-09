@@ -165,7 +165,7 @@ function apply_surface_flux!(q_raw::AbstractArray{FT, 4},
         t_idx === nothing && continue   # tracer not in this state; skip
         _check_surface_flux_rate_shape(src, (Nx, Ny), size(q_raw))
         kernel = _surface_flux_kernel!(backend, (16, 16))
-        kernel(q_raw, src.cell_mass_rate, dt_FT, t_idx, Nz;
+        kernel(q_raw, src.cell_mass_rate, src.compensation, dt_FT, t_idx, Nz;
                ndrange = (Nx, Ny))
     end
 
@@ -189,7 +189,7 @@ function apply_surface_flux!(q_raw::AbstractArray{FT, 3},
         t_idx === nothing && continue
         _check_surface_flux_rate_shape(src, (ncells,), size(q_raw))
         kernel = _surface_flux_face_kernel!(backend, 256)
-        kernel(q_raw, src.cell_mass_rate, dt_FT, t_idx, Nz;
+        kernel(q_raw, src.cell_mass_rate, src.compensation, dt_FT, t_idx, Nz;
                ndrange = ncells)
     end
 
@@ -216,7 +216,7 @@ function apply_surface_flux!(q_raw::AbstractArray{FT, 2},
 
     backend = get_backend(q_raw)
     kernel = _surface_flux_face_single_kernel!(backend, 256)
-    kernel(q_raw, src.cell_mass_rate, FT(dt), Nz; ndrange = ncells)
+    kernel(q_raw, src.cell_mass_rate, src.compensation, FT(dt), Nz; ndrange = ncells)
     synchronize(backend)
     return nothing
 end
@@ -244,7 +244,7 @@ function apply_surface_flux!(q_raw::NTuple{6, A},
     return nothing
 end
 
-# Static per-cell rate: launch the plain accumulation kernel per panel.
+# Static per-cell rate: launch the Kahan accumulation kernel per panel.
 function _apply_cs_single_surface_flux!(q_raw::NTuple{6, A}, src::SurfaceFluxSource,
                                         dt_FT::FT, Hp::Int, backend, meteo) where {FT, A <: AbstractArray{FT, 3}}
     rates = src.cell_mass_rate
@@ -259,7 +259,7 @@ function _apply_cs_single_surface_flux!(q_raw::NTuple{6, A}, src::SurfaceFluxSou
             "surface source $(src.tracer_name) panel $p has shape $(size(rates[p])) " *
             "but cubed-sphere interior panel shape is $((Nc, Ny))"))
         kernel = _surface_flux_cs_single_kernel!(backend, (16, 16))
-        kernel(panel_q, rates[p], dt_FT, Nz, Hp; ndrange = (Nc, Ny))
+        kernel(panel_q, rates[p], src.compensation[p], dt_FT, Nz, Hp; ndrange = (Nc, Ny))
     end
     return nothing
 end
@@ -286,7 +286,8 @@ function _apply_cs_single_surface_flux!(q_raw::NTuple{6, A}, src::TimeVaryingSur
             "time-varying surface source $(src.tracer_name) panel $p has shape $(size(series[p])) " *
             "but cubed-sphere interior panel shape is $((Nc, Ny))"))
         for (i0, i1, w0, w1, frac) in segments
-            kernel(panel_q, series[p], FT(w0), FT(w1), i0, i1, dt_FT * FT(frac), Nz, Hp;
+            kernel(panel_q, series[p], src.compensation[p],
+                   FT(w0), FT(w1), i0, i1, dt_FT * FT(frac), Nz, Hp;
                    ndrange = (Nc, Ny))
         end
     end
@@ -329,7 +330,7 @@ function _apply_cs_packed_surface_flux!(q_raw::NTuple{6, A}, src::SurfaceFluxSou
             "surface source $(src.tracer_name) panel $p has shape $(size(rates[p])) " *
             "but cubed-sphere interior panel shape is $((Nc, Ny))"))
         kernel = _surface_flux_cs_kernel!(backend, (16, 16))
-        kernel(panel_q, rates[p], dt_FT, t_idx, Nz, Hp; ndrange = (Nc, Ny))
+        kernel(panel_q, rates[p], src.compensation[p], dt_FT, t_idx, Nz, Hp; ndrange = (Nc, Ny))
     end
     return nothing
 end
@@ -353,7 +354,8 @@ function _apply_cs_packed_surface_flux!(q_raw::NTuple{6, A}, src::TimeVaryingSur
             "time-varying surface source $(src.tracer_name) panel $p has shape $(size(series[p])) " *
             "but cubed-sphere interior panel shape is $((Nc, Ny))"))
         for (i0, i1, w0, w1, frac) in segments
-            kernel(panel_q, series[p], FT(w0), FT(w1), i0, i1, dt_FT * FT(frac), t_idx, Nz, Hp;
+            kernel(panel_q, series[p], src.compensation[p],
+                   FT(w0), FT(w1), i0, i1, dt_FT * FT(frac), t_idx, Nz, Hp;
                    ndrange = (Nc, Ny))
         end
     end

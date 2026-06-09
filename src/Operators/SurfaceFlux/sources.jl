@@ -54,18 +54,35 @@ compat with external callers that imported it by fully-qualified name.
   the array between host and device transparently via
   `Adapt.adapt_structure`.
 """
-struct SurfaceFluxSource{RateT} <: AbstractSurfaceFluxSource
+struct SurfaceFluxSource{RateT, CompT} <: AbstractSurfaceFluxSource
     tracer_name    :: Symbol
     cell_mass_rate :: RateT
+    compensation   :: CompT   # Kahan compensation; same shape as cell_mass_rate
 end
 
-# Adapt hook: carries the rate array to the device without disturbing
-# the tracer name.
+# Outer constructor: allocate zero compensation matching the rate shape.
+SurfaceFluxSource(name::Symbol, rate::RateT) where {RateT} =
+    SurfaceFluxSource(name, rate, _alloc_flux_comp(rate))
+
+# Adapt hook: carry both the rate and the compensation to the device.
 function Adapt.adapt_structure(to, source::SurfaceFluxSource)
     cell_mass_rate = Adapt.adapt(to, source.cell_mass_rate)
-    return SurfaceFluxSource{typeof(cell_mass_rate)}(source.tracer_name,
-                                                      cell_mass_rate)
+    compensation   = Adapt.adapt(to, source.compensation)
+    return SurfaceFluxSource{typeof(cell_mass_rate), typeof(compensation)}(
+        source.tracer_name, cell_mass_rate, compensation)
 end
+
+# Allocate a zero compensation array matching the shape of a static rate.
+_alloc_flux_comp(rate::AbstractArray) = zero(rate)
+_alloc_flux_comp(rates::NTuple{6})    = ntuple(p -> zero(rates[p]), Val(6))
+
+# Allocate a zero compensation array matching ONE time-slice of a rate series
+# (drops the trailing time dimension). Uses `similar` to match the source's
+# array type and backend — preserves device placement for GPU-resident series.
+_alloc_flux_comp_from_series(s::AbstractArray{FT}) where {FT} =
+    fill!(similar(s, size(s)[1:end-1]...), zero(FT))
+_alloc_flux_comp_from_series(s::NTuple{6}) =
+    ntuple(p -> _alloc_flux_comp_from_series(s[p]), Val(6))
 
 # =========================================================================
 # Temporal reconstruction schemes — how a time-varying source maps its
@@ -236,24 +253,33 @@ slices in the kernel. End slices are clamped (constant extrapolation) outside
 `[times[1], times[end]]`.
 """
 struct TimeVaryingSurfaceFluxSource{RateT, T <: AbstractVector{<:Real},
-                                    S <: AbstractFluxTemporalScheme} <: AbstractSurfaceFluxSource
+                                    S <: AbstractFluxTemporalScheme,
+                                    CompT} <: AbstractSurfaceFluxSource
     tracer_name           :: Symbol
     cell_mass_rate_series :: RateT
     times                 :: T
     scheme                :: S
+    compensation          :: CompT   # Kahan compensation; shape = one time-slice of series
 end
 
-# Convenience constructor: default to linear interpolation (HEMCO-like).
-TimeVaryingSurfaceFluxSource(tracer_name::Symbol, series, times) =
-    TimeVaryingSurfaceFluxSource(tracer_name, series, times, LinearInterpFlux())
+# Outer constructors: allocate zero compensation from the series shape.
+function TimeVaryingSurfaceFluxSource(name::Symbol, series::RateT,
+                                      times::T, scheme::S) where {RateT, T, S}
+    comp = _alloc_flux_comp_from_series(series)
+    return TimeVaryingSurfaceFluxSource{RateT, T, S, typeof(comp)}(
+        name, series, times, scheme, comp)
+end
 
-# Adapt hook: carry the rate series to the device but KEEP `times` (host —
-# searchsorted on the host) and `scheme` (singleton) unchanged.
+TimeVaryingSurfaceFluxSource(name::Symbol, series, times) =
+    TimeVaryingSurfaceFluxSource(name, series, times, LinearInterpFlux())
+
+# Adapt hook: carry series + compensation to device; keep times + scheme on host.
 function Adapt.adapt_structure(to, source::TimeVaryingSurfaceFluxSource)
-    series = Adapt.adapt(to, source.cell_mass_rate_series)
+    series       = Adapt.adapt(to, source.cell_mass_rate_series)
+    compensation = Adapt.adapt(to, source.compensation)
     return TimeVaryingSurfaceFluxSource{typeof(series), typeof(source.times),
-                                        typeof(source.scheme)}(
-        source.tracer_name, series, source.times, source.scheme)
+                                        typeof(source.scheme), typeof(compensation)}(
+        source.tracer_name, series, source.times, source.scheme, compensation)
 end
 
 function _check_surface_source_compatibility(state::CubedSphereState,
@@ -377,29 +403,48 @@ backs the `SurfaceFluxOperator.apply!` path.
 """
 function _apply_surface_source!(rm::AbstractArray{FT, 3},
                                 source::SurfaceFluxSource, dt) where FT
-    Nz = size(rm, 3)
-    @views rm[:, :, Nz] .+= source.cell_mass_rate .* dt
+    Nz   = size(rm, 3)
+    surf = @view rm[:, :, Nz]
+    comp = source.compensation
+    x    = source.cell_mass_rate .* FT(dt)
+    y    = x .- comp
+    t    = surf .+ y
+    comp .= (t .- surf) .- y
+    surf .= t
     return nothing
 end
 
 function _apply_surface_source!(rm::AbstractArray{FT, 2},
                                 source::SurfaceFluxSource, dt) where FT
-    Nz = size(rm, 2)
-    @views rm[:, Nz] .+= source.cell_mass_rate .* dt
+    Nz   = size(rm, 2)
+    surf = @view rm[:, Nz]
+    comp = source.compensation
+    x    = source.cell_mass_rate .* FT(dt)
+    y    = x .- comp
+    t    = surf .+ y
+    comp .= (t .- surf) .- y
+    surf .= t
     return nothing
 end
 
 function _apply_surface_source!(rm::NTuple{6}, source::SurfaceFluxSource, dt;
                                 halo_width::Integer)
-    Hp = Int(halo_width)
+    Hp    = Int(halo_width)
     rates = source.cell_mass_rate
+    comps = source.compensation
     rates isa NTuple{6} || throw(ArgumentError(
         "cubed-sphere surface source $(source.tracer_name) must provide NTuple{6} panel rates"))
     @inbounds for p in 1:6
         panel_rm = rm[p]
-        Nz = size(panel_rm, 3)
-        Nc = size(panel_rm, 1) - 2Hp
-        @views panel_rm[Hp + 1:Hp + Nc, Hp + 1:Hp + Nc, Nz] .+= rates[p] .* dt
+        Nz   = size(panel_rm, 3)
+        Nc   = size(panel_rm, 1) - 2Hp
+        surf = @view panel_rm[Hp + 1:Hp + Nc, Hp + 1:Hp + Nc, Nz]
+        comp = comps[p]
+        x    = rates[p] .* dt
+        y    = x .- comp
+        t    = surf .+ y
+        comp .= (t .- surf) .- y
+        surf .= t
     end
     return nothing
 end

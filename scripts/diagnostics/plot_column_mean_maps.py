@@ -59,8 +59,12 @@ def main():
             if ti is None or not os.path.exists(gc_path(s)):
                 for c in range(3): axes[r][c].set_visible(False); continue
             our_col = np.asarray(o.variables[colv][ti]) * sc                      # (nf,Y,X)
-            with Dataset(gc_path(s)) as g:
-                vmr = np.asarray(g.variables[gv][0]); ad = np.asarray(g.variables["Met_AD"][0])
+            try:                                                                  # skip unreadable GC files (corrupt 20211221_1200z)
+                with Dataset(gc_path(s)) as g:
+                    vmr = np.asarray(g.variables[gv][0]); ad = np.asarray(g.variables["Met_AD"][0])
+            except Exception:
+                for c in range(3): axes[r][c].set_visible(False)
+                continue
             gc_col = (np.sum(vmr*ad,axis=0)/np.sum(ad,axis=0)) * sc               # (nf,Y,X)
             mo = bin_latlon(lons,lats,our_col); mg = bin_latlon(lons,lats,gc_col)
             vmin, vmax = np.nanpercentile(np.concatenate([mo.ravel(),mg.ravel()]),[2,98])

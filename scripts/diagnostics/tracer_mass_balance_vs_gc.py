@@ -40,12 +40,15 @@ for i,s in enumerate(stamps):
     if s >= T0+dt.timedelta(days=NDAYS) or not os.path.exists(gc_path(s)): continue
     am = np.asarray(air[i]); our_airmass = float(np.sum(am))
     row=[]
-    with Dataset(gc_path(s)) as g:
-        ad = np.asarray(g.variables["Met_AD"][0])
-        for ov,gv in TR:
-            ours = float(np.sum(np.asarray(o.variables[ov][i]) * am))
-            gc   = float(np.sum(np.asarray(g.variables[gv][0]) * ad))
-            row.append(ours/gc if gc!=0 else np.nan)
+    try:                                              # skip unreadable GC files (e.g. corrupt 20211221_1200z)
+        with Dataset(gc_path(s)) as g:
+            ad = np.asarray(g.variables["Met_AD"][0])
+            for ov,gv in TR:
+                ours = float(np.sum(np.asarray(o.variables[ov][i]) * am))
+                gc   = float(np.sum(np.asarray(g.variables[gv][0]) * ad))
+                row.append(ours/gc if gc!=0 else np.nan)
+    except Exception as e:
+        print(f"  {s:%Y-%m-%d %H:%M}  (GC read failed, skipped: {e})"); continue
     print(f"  {s:%Y-%m-%d %H:%M}"+"".join(f"{r:>10.4f}" for r in row)+f"{our_airmass:>18.6e}")
 o.close()
 print("\nratio ~1.000 => global mass conserved & emission matches GC (low map-R^2 = pure")

@@ -281,6 +281,23 @@ column solve is unchanged; only the panel halo offset differs.
         j = jj + Hp
         dt_ft = FT(dt)
 
+        # Anomaly diffusion (F32 conservation fix): the implicit operator
+        # preserves a uniform column exactly (each tridiagonal row sums to 1
+        # under the zero-flux BCs), so subtracting a per-column reference VMR
+        # before the solve and adding it back is an identity in exact arithmetic
+        # (L⁻¹(c·1)=c·1) — it only changes the F32 ROUNDING, keeping the
+        # elimination on the small anomaly instead of the large background.
+        # Without it, the Thomas elimination on a background-dominated VMR loses
+        # ~1e-5 relative mass, contaminating small emission budgets (the SF6
+        # ~2.5% deficit). Never worse than the plain solve: a column whose
+        # current min is exactly 0 (e.g. a still-zero IC=0 tracer) gives cref=0
+        # and is bit-identical; otherwise it strictly improves F32 conservation.
+        cref = q[i, j, 1]
+        for k in 2:Nz
+            v = q[i, j, k]
+            cref = v < cref ? v : cref
+        end
+
         Kz_prev = zero(FT)
         dz_prev = zero(FT)
         m_prev  = zero(FT)
@@ -317,7 +334,7 @@ column solve is unchanged; only the panel halo offset differs.
             a_k = (k > 1)  ? -dt_ft * dkg_above * inv_m_k : zero(FT)
             c_k = (k < Nz) ? -dt_ft * dkg_below * inv_m_k : zero(FT)
             b_k = one(FT) + dt_ft * (dkg_above + dkg_below) * inv_m_k
-            d_k = q[i, j, k]
+            d_k = q[i, j, k] - cref
 
             if k == 1
                 denom = b_k
@@ -347,6 +364,11 @@ column solve is unchanged; only the panel halo offset differs.
         for k in (Nz - 1):-1:1
             q[i, j, k] = q[i, j, k] - w_scratch[ii, jj, k] * q[i, j, k + 1]
         end
+
+        # restore the per-column reference removed before the solve
+        for k in 1:Nz
+            q[i, j, k] += cref
+        end
     end
 end
 
@@ -369,6 +391,18 @@ column and are computed locally to keep the workspace rank unchanged.
         i = ii + Hp
         j = jj + Hp
         dt_ft = FT(dt)
+
+        # Anomaly diffusion (F32 conservation fix) — see the single-column
+        # kernel above for the rationale. Per-tracer per-column reference: the
+        # tridiagonal coefficients are shared across tracers but the reference
+        # is the column min of THIS tracer slice. A column whose current min is
+        # exactly 0 gives cref=0 (bit-identical to the plain solve); otherwise
+        # it strictly improves F32 conservation.
+        cref = q[i, j, 1, t]
+        for k in 2:Nz
+            v = q[i, j, k, t]
+            cref = v < cref ? v : cref
+        end
 
         Kz_prev = zero(FT)
         dz_prev = zero(FT)
@@ -406,7 +440,7 @@ column and are computed locally to keep the workspace rank unchanged.
             a_k = (k > 1)  ? -dt_ft * dkg_above * inv_m_k : zero(FT)
             c_k = (k < Nz) ? -dt_ft * dkg_below * inv_m_k : zero(FT)
             b_k = one(FT) + dt_ft * (dkg_above + dkg_below) * inv_m_k
-            d_k = q[i, j, k, t]
+            d_k = q[i, j, k, t] - cref
 
             if k == 1
                 denom = b_k
@@ -435,6 +469,11 @@ column and are computed locally to keep the workspace rank unchanged.
 
         for k in (Nz - 1):-1:1
             q[i, j, k, t] = q[i, j, k, t] - w_scratch[ii, jj, k] * q[i, j, k + 1, t]
+        end
+
+        # restore the per-column reference removed before the solve
+        for k in 1:Nz
+            q[i, j, k, t] += cref
         end
     end
 end

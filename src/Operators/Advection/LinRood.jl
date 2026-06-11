@@ -732,13 +732,38 @@ end
 #      F64 round-trip here; FT is deliberate — the fire path is rare and an
 #      F64 staging copy of six C180 panels per fillz call is a GPU
 #      memory/perf cost the rare event does not justify.)
+# Opt-in diagnostic: accumulate the NET interior tracer-mass change that fillz
+# injects across a run. In exact arithmetic fillz conserves (borrows mass
+# between levels), but the F32 rm→q→rm round-trip + the borrow arithmetic add
+# a small net mass each time it repairs an undershoot — the source of the
+# LinRood co2_fossil transient surplus. Gate with ATMOSTR_FILLZ_MASS_DIAG=1;
+# the GPU reductions make it run-only-when-asked. Sums over ALL fillz calls /
+# tracers, so attribute with a single-tracer run.
+const _FILLZ_NET_MASS = Ref(0.0)
+"Cumulative net interior tracer mass injected by fillz since the last reset."
+fillz_net_mass_injected() = _FILLZ_NET_MASS[]
+"Reset the fillz mass-injection accumulator (call at run start to scope a run)."
+fillz_reset_net_mass!() = (_FILLZ_NET_MASS[] = 0.0; nothing)
+@inline _fillz_mass_diag_on() = get(ENV, "ATMOSTR_FILLZ_MASS_DIAG", "0") == "1"
+@inline function _sum_interior_rm(rm_panels::NTuple{6}, mesh::CubedSphereMesh)
+    Nc, Hp = mesh.Nc, mesh.Hp
+    s = 0.0
+    @inbounds for p in 1:6
+        s += sum(Float64, view(rm_panels[p], (Hp+1):(Hp+Nc), (Hp+1):(Hp+Nc), :))
+    end
+    return s
+end
+
 function _fillz_rm_panels!(rm_panels::NTuple{6}, m_panels::NTuple{6},
                            mesh::CubedSphereMesh;
                            q_ref::Union{Nothing, Float64} = nothing)
+    diag = _fillz_mass_diag_on()
+    before_diag = diag ? _sum_interior_rm(rm_panels, mesh) : 0.0
     if q_ref === nothing
         rm_to_q_panels!(rm_panels, m_panels, mesh)
         fillz_q!(rm_panels, m_panels, mesh)
         q_to_rm_panels!(rm_panels, m_panels, mesh)
+        diag && (_FILLZ_NET_MASS[] += _sum_interior_rm(rm_panels, mesh) - before_diag)
         return nothing
     end
     FT = eltype(rm_panels[1])
@@ -771,6 +796,7 @@ function _fillz_rm_panels!(rm_panels::NTuple{6}, m_panels::NTuple{6},
     @inbounds for p in 1:6
         rm_panels[p] .+= scratch[p] .- before[p]
     end
+    diag && (_FILLZ_NET_MASS[] += _sum_interior_rm(rm_panels, mesh) - before_diag)
     return nothing
 end
 
@@ -1038,7 +1064,7 @@ end
 
 export LinRoodWorkspace, fv_tp_2d_cs!, fv_tp_2d_cs_q!, strang_split_linrood_ppm!
 export CSLinRoodAdvectionWorkspace
-export fillz_q!, apply_divergence_damping_cs!
+export fillz_q!, apply_divergence_damping_cs!, fillz_net_mass_injected, fillz_reset_net_mass!
 # Adjoint kernels. The forward kernels above are paired with
 # reverse-mode kernels defined in `linrood_adjoint_kernels.jl`, included
 # alongside this file from `Advection.jl`. Re-export below for `Adjoints`.

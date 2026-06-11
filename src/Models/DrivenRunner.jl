@@ -79,7 +79,7 @@ using ..State: AbstractMassBasis, DryBasis, MoistBasis, CellState,
                 tracer_reference_value, mass_weighted_global_mean_vmr
 using ..Grids: nlevels
 using ..Operators: LinRoodPPMScheme, PPMScheme, SlopesScheme, UpwindScheme,
-                  NoAdvection,
+                  NoAdvection, fillz_net_mass_injected,
                   ImplicitVerticalDiffusion, NoDiffusion,
                   uses_diffusive_surface_flux_boundary,
                   AbstractConvection,
@@ -1615,6 +1615,14 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
         else
             @info @sprintf("  %s total mass:               %.6e kg", name, rm1)
         end
+    end
+    # Opt-in fillz mass-injection diagnostic (ATMOSTR_FILLZ_MASS_DIAG=1): the
+    # cumulative net tracer mass the LinRood fillz positivity fixer injected
+    # over the run (its F32 round-trip/borrow non-conservation). Single-tracer
+    # runs attribute it cleanly. See LinRood.jl `_FILLZ_NET_MASS`.
+    if get(ENV, "ATMOSTR_FILLZ_MASS_DIAG", "0") == "1"
+        @info @sprintf("  [fillz diag] cumulative net mass injected by fillz: %.6e",
+                       fillz_net_mass_injected())
     end
 
     if do_snapshots

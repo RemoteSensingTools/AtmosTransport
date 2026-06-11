@@ -207,6 +207,23 @@ function _reset_air_mass_preserve_tracer_mass!(state::CubedSphereState,
                                                new_air_mass::NTuple{6},
                                                mesh::CubedSphereMesh)
     fill_panel_halos!(new_air_mass, mesh; dir = 1)
+    # Reference-state tracers (plan 45): the analytic reference contributes
+    # q_ref·m to the physical burden, so preserving FULL tracer mass across
+    # an air-mass reset requires the anomaly store to absorb the reference
+    # shift: anom_new = anom_old + q_ref·(m_old − m_new). `state.air_mass`
+    # still holds m_old at this point. Unreferenced tracers need nothing —
+    # their stored mass IS the physical mass. The correction is at the
+    # air-mass-residual scale (pinned binaries: tiny), so the FT store
+    # rounds at the anomaly scale, not the background scale.
+    for idx in 1:ntracers(state)
+        q_ref = tracer_reference_value(state, idx)
+        q_ref === nothing && continue
+        raw = get_tracer_raw(state, idx)
+        qr = eltype(state.air_mass[1])(q_ref)
+        @inbounds for p in 1:6
+            raw[p] .+= qr .* (state.air_mass[p] .- new_air_mass[p])
+        end
+    end
     for p in 1:6
         copyto!(state.air_mass[p], new_air_mass[p])
     end

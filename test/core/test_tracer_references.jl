@@ -307,16 +307,16 @@ end
 
     # all-invariant recipe: passes
     @test _validate_tracer_reference_compat((refspec, nospec), ok_recipe;
-                                            reset_air_mass_each_window = false) === nothing
+                                            air_mass_reset_mode = :none) === nothing
     # unreferenced specs: no checks at all (any recipe passes)
     bad_adv = RuntimePhysicsRecipe(PPMScheme(), NoDiffusion(), NoConvection(), NoChemistry())
     @test _validate_tracer_reference_compat((nospec,), bad_adv;
-                                            reset_air_mass_each_window = true) === nothing
+                                            air_mass_reset_mode = :preserve_vmr) === nothing
 
     # split-sweep advection rejected with actionable message
     err = try
         _validate_tracer_reference_compat((refspec,), bad_adv;
-                                          reset_air_mass_each_window = false)
+                                          air_mass_reset_mode = :none)
     catch e; e end
     @test err isa ArgumentError && occursin("linrood", err.msg)
 
@@ -324,25 +324,30 @@ end
     clamp_recipe = RuntimePhysicsRecipe(lr, NoDiffusion(),
                                         CMFMCConvection(clamp = true), NoChemistry())
     @test_throws ArgumentError _validate_tracer_reference_compat(
-        (refspec,), clamp_recipe; reset_air_mass_each_window = false)
+        (refspec,), clamp_recipe; air_mass_reset_mode = :none)
     noclamp = RuntimePhysicsRecipe(lr, NoDiffusion(),
                                    CMFMCConvection(clamp = false), NoChemistry())
     @test _validate_tracer_reference_compat((refspec,), noclamp;
-                                            reset_air_mass_each_window = false) === nothing
+                                            air_mass_reset_mode = :none) === nothing
 
     # decay: rejected only when it acts on the REFERENCED tracer
     decay_other = ExponentialDecay(; rn222 = 330350.0)
     okr = RuntimePhysicsRecipe(lr, NoDiffusion(), NoConvection(), decay_other)
     @test _validate_tracer_reference_compat((refspec,), okr;
-                                            reset_air_mass_each_window = false) === nothing
+                                            air_mass_reset_mode = :none) === nothing
     decay_ref = ExponentialDecay(; co2 = 1.0e6)
     badr = RuntimePhysicsRecipe(lr, NoDiffusion(), NoConvection(), decay_ref)
     @test_throws ArgumentError _validate_tracer_reference_compat(
-        (refspec,), badr; reset_air_mass_each_window = false)
+        (refspec,), badr; air_mass_reset_mode = :none)
 
-    # preserve-VMR window reset rejected
+    # preserve-VMR window reset rejected; preserve_tracer_mass accepted
+    # (the CS reset absorbs the reference shift — see the absorb testset)
     @test_throws ArgumentError _validate_tracer_reference_compat(
-        (refspec,), ok_recipe; reset_air_mass_each_window = true)
+        (refspec,), ok_recipe; air_mass_reset_mode = :preserve_vmr)
+    @test _validate_tracer_reference_compat(
+        (refspec,), ok_recipe; air_mass_reset_mode = :preserve_tracer_mass) === nothing
+    @test _validate_tracer_reference_compat(
+        (refspec,), ok_recipe; air_mass_reset_mode = "preserve_tracer_mass") === nothing
 
     # pin the full trait table (codex finding: TM5 merge path n_merge > 1
     # disaggregates with fine_old/super_old tracer RATIOS — nonlinear, must
@@ -359,7 +364,7 @@ end
     @test !is_offset_invariant(mtx_merge, :co2)
     @test_throws ArgumentError _validate_tracer_reference_compat(
         (refspec,), RuntimePhysicsRecipe(lr, NoDiffusion(), mtx_merge, NoChemistry());
-        reset_air_mass_each_window = false)
+        air_mass_reset_mode = :none)
 end
 
 @testset "Stage 3: fillz negativity gate on anomaly stores" begin
@@ -477,6 +482,32 @@ end
     @test q_after != q_before
     cb(FakeSimEnd)                   # idempotent-ish: mean now ~0, tiny move
     @test abs(tracer_reference_value(state2, i2) - q_after) < 1e-3 * abs(q_after - q_before)
+end
+
+@testset "preserve_tracer_mass reset absorbs the reference shift" begin
+    state = _mini_cs_state(; FT = Float32, Nz = 3)
+    raw = get_tracer_raw(state, :co2)
+    for p in 1:6
+        raw[p] .+= Float32(2e-5) .* reshape(collect(Float32, 1:size(raw[p], 3)), 1, 1, :)
+    end
+    specs = (TransportTracerSpec(:co2, Dict{String, Any}(), Dict{String, Any}(),
+                                 :global_mean, :fixed),)
+    _seed_tracer_references!(state, specs)
+    burden_co2 = total_mass_full(state, :co2)         # referenced (F64)
+    burden_sf6 = total_mass_full(state, :sf6)         # unreferenced control
+
+    # an air-mass "binary endpoint" 0.3% off the carried state
+    mesh = CubedSphereMesh(; FT = Float32, Nc = 4, Hp = 1)
+    new_m = ntuple(p -> state.air_mass[p] .* Float32(1.003), 6)
+    AtmosTransport.Models._reset_air_mass_preserve_tracer_mass!(state, new_m, mesh)
+
+    # FULL physical burden preserved for the REFERENCED tracer (the absorb
+    # term) and exactly for the unreferenced one (stored mass untouched)
+    @test isapprox(total_mass_full(state, :co2), burden_co2;
+                   rtol = 8 * eps(Float32))
+    @test total_mass_full(state, :sf6) == burden_sf6
+    # air mass actually moved to the endpoint
+    @test state.air_mass[1][2, 2, 1] ≈ new_m[1][2, 2, 1]
 end
 
 println("test_tracer_references.jl OK")

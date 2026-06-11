@@ -171,11 +171,11 @@ function run_cs_closed(; FT=Float64, scheme=UpwindScheme(), cross_panel::Bool,
         fluxes = CubedSphereFaceFluxState{DryMassFluxBasis}(panels_am, panels_bm, panels_cm)
         ws = CSLinRoodAdvectionWorkspace(mesh, state.air_mass[1])
         m0 = total_air_mass(state)
-        rm0 = total_mass(state, :tracer)
+        rm0 = total_mass_full(state, :tracer)
         for _ in 1:steps
             strang_split!(state, fluxes, grid, scheme; workspace=ws)
         end
-        return relerr(total_air_mass(state), m0), relerr(total_mass(state, :tracer), rm0)
+        return relerr(total_air_mass(state), m0), relerr(total_mass_full(state, :tracer), rm0)
     end
 
     ws = CSAdvectionWorkspace(mesh, Nz)

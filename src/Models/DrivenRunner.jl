@@ -115,7 +115,8 @@ import ..Models: DrivenSimulation, run_window!, run!, step!, allocate_face_fluxe
 # (loaded before us in Models). Pull them in so we don't have to stutter
 # through `Main.AtmosTransport.*`.
 using ..Models: build_runtime_physics_recipe, validate_runtime_physics_recipe,
-                 configured_halo_width, build_cs_advection
+                 configured_halo_width, build_cs_advection,
+                 _normalize_air_mass_reset_mode
 
 export run_driven_simulation, validate_config, TransportTracerSpec
 
@@ -374,28 +375,31 @@ is_offset_invariant(::NoDiffusion, ::Symbol) = true
 
 """
     _validate_tracer_reference_compat(tracer_specs, recipe;
-                                      reset_air_mass_each_window)
+                                      air_mass_reset_mode)
 
 Model-level compatibility check for referenced tracers (CS runner). Throws
 an `ArgumentError` naming the offending operator for the first referenced
-tracer that any non-offset-invariant operator acts on, and rejects the
-preserve-VMR window reset (it rescales FULL VMR, which double-counts the
-reference — see plan 45 Risk 5).
+tracer that any non-offset-invariant operator acts on. Window-reset policy:
+`:none` and `:preserve_tracer_mass` are reference-safe (the CS reset absorbs
+the reference shift `anom += q_ref·(m_old − m_new)` — see
+`_reset_air_mass_preserve_tracer_mass!`); `:preserve_vmr` is rejected (it
+rescales FULL VMR, double-counting the reference — plan 45 Risk 5).
 """
 function _validate_tracer_reference_compat(tracer_specs, recipe;
-                                           reset_air_mass_each_window::Bool)
+                                           air_mass_reset_mode)
     referenced = [spec for spec in tracer_specs if spec.reference_kind !== :none]
     isempty(referenced) && return nothing
     names = join((String(s.name) for s in referenced), ", ")
-    # REBASE NOTE (air_mass_reset_mode refactor): preserve_vmr stays rejected;
-    # preserve_tracer_mass is NOT automatically safe for referenced tracers —
-    # the q_ref·m part of the burden rides the air mass, so the reset must
-    # absorb anom += q_ref·(m_old − m_new) or also be rejected. See
-    # docs/plans/45_ANOMALY_REFERENCE_TRANSPORT/REBASE_NOTES_air_mass_reset_mode.md
-    reset_air_mass_each_window && throw(ArgumentError(
-        "reset_air_mass_each_window = true preserves VMR across the window " *
-        "air-mass reset, which is not reference-aware (it would double-count " *
-        "q_ref for: $(names)); disable the reset or use reference = \"none\""))
+    mode = _normalize_air_mass_reset_mode(air_mass_reset_mode)
+    # :none and :preserve_tracer_mass are reference-safe — the CS reset
+    # absorbs the reference shift anom += q_ref·(m_old − m_new) so the FULL
+    # tracer mass is preserved (see _reset_air_mass_preserve_tracer_mass!).
+    # :preserve_vmr rescales full VMR, double-counting q_ref (plan 45 Risk 5).
+    mode === :preserve_vmr && throw(ArgumentError(
+        "air_mass_reset_mode = \"preserve_vmr\" rescales full VMR across the " *
+        "window air-mass reset, which is not reference-aware (it would " *
+        "double-count q_ref for: $(names)); use \"preserve_tracer_mass\", " *
+        "\"none\", or reference = \"none\""))
     for spec in referenced
         for (label, op) in (("[advection]", recipe.advection),
                             ("[diffusion]", recipe.diffusion),
@@ -1364,8 +1368,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
     # incompatible. Fail at setup with the offending operator named, before
     # any state is allocated.
     _validate_tracer_reference_compat(tracer_specs, recipe;
-                                      reset_air_mass_each_window =
-                                          reset_air_mass_each_window)
+                                      air_mass_reset_mode = air_mass_reset_mode)
 
     grid    = driver_grid(driver1)
     mesh    = grid.horizontal

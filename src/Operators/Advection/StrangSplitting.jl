@@ -1091,7 +1091,8 @@ function _cs_transport_step!(::CSLinRoodStyle,
                              workspace::CSLinRoodAdvectionWorkspace;
                              cfl_limit::Real = 0.95,
                              subcycle_count::Union{Nothing, Integer} = nothing,
-                             midpoint! = nothing) where ORD
+                             midpoint! = nothing,
+                             q_ref::Union{Nothing, Float64} = nothing) where ORD
     _ = subcycle_count
     # The runtime driver Hp-pads the flux panels; the LinRood cross-term kernels
     # expect the interior faces only. Strip the halo here (see
@@ -1104,7 +1105,8 @@ function _cs_transport_step!(::CSLinRoodStyle,
     _strang_split_linrood_ppm_cs!(rm_tracer, m, am, bm, fluxes.cm,
                                   mesh, Val(ORD), workspace;
                                   cfl_limit = cfl_limit,
-                                  midpoint! = midpoint!)
+                                  midpoint! = midpoint!,
+                                  q_ref = q_ref)
     return nothing
 end
 
@@ -1150,6 +1152,16 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
     m = state.air_mass
     subcycle_count = _cs_runtime_subcycle_count(meteo)
     if cs_advection_style(scheme) isa CSSplitSweepStyle
+        # Reference-state (anomaly) tracers are unsupported on the split-sweep
+        # path: its moment limiter clamps against the stored tracer mass
+        # (`_limited_moment`, reconstruction.jl), which inverts for a signed
+        # anomaly store. Runtime defense-in-depth behind the config-parse
+        # guard — keeps this branch safe even after Stage 2 enables
+        # referencing for the LinRood path. See plan 45 ⚠️ CORRECTION.
+        any_tracer_referenced(state.tracer_refs) && throw(ArgumentError(
+            "cubed-sphere split-sweep advection ($(typeof(scheme))) does not " *
+            "support reference-state (anomaly) tracers; use [advection] " *
+            "scheme = \"linrood\" for referenced tracers"))
         fill_panel_halos!(state.tracers_raw, grid.horizontal; dir=1)
         midpoint! = if emissions_op isa NoSurfaceFlux
             () -> SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
@@ -1227,11 +1239,16 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
                     halo_width = state.halo_width)
             end
         end
+        # Per-tracer reference VMR (anomaly transport, plan 45): `nothing` for
+        # unreferenced tracers keeps the raw path; only the LinRood style
+        # reaches this per-tracer loop (split-sweep schemes take the
+        # multi-tracer branch above and are gated against referencing).
         _cs_transport_step!(cs_advection_style(scheme),
                             rm_tracer, m, fluxes, grid.horizontal, scheme, workspace;
                             cfl_limit = cfl_limit,
                             subcycle_count = subcycle_count,
-                            midpoint! = midpoint!)
+                            midpoint! = midpoint!,
+                            q_ref = tracer_reference_value(state, idx))
     end
 
     return nothing

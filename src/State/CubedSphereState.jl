@@ -11,8 +11,12 @@ Panel-native prognostic state for cubed-sphere transport.
 - `air_mass :: NTuple{6, A3}` — halo-padded panel air mass arrays with shape
   `(Nc + 2Hp, Nc + 2Hp, Nz)`.
 - `tracers_raw :: NTuple{6, Raw4}` — packed per-panel tracer storage with shape
-  `(Nc + 2Hp, Nc + 2Hp, Nz, Nt)`.
+  `(Nc + 2Hp, Nc + 2Hp, Nz, Nt)`. Holds full tracer mass `q_full·m` for
+  unreferenced tracers and anomaly mass `q_anom·m` for tracers with an active
+  reference (see `tracer_refs` and TracerReferences.jl).
 - `tracer_names :: Names` — names of the tracer axis in storage order.
+- `tracer_refs :: TracerReferences` — per-tracer reference-state metadata
+  (host-resident, default all-`REF_NONE` = every path raw/bit-identical).
 - `halo_width :: Int` — halo width `Hp` needed to recover the physical interior.
 """
 struct CubedSphereState{Basis <: AbstractMassBasis,
@@ -22,7 +26,20 @@ struct CubedSphereState{Basis <: AbstractMassBasis,
     air_mass     :: NTuple{6, A3}
     tracers_raw  :: NTuple{6, Raw4}
     tracer_names :: Names
+    tracer_refs  :: TracerReferences
     halo_width   :: Int
+
+    function CubedSphereState{B, A3, Raw4, Names}(air_mass, tracers_raw,
+                                                  tracer_names, tracer_refs,
+                                                  halo_width) where
+            {B <: AbstractMassBasis, A3 <: AbstractArray,
+             Raw4 <: AbstractArray, Names <: Tuple}
+        ntracers(tracer_refs) == length(tracer_names) || throw(DimensionMismatch(
+            "tracer_refs carries $(ntracers(tracer_refs)) tracers but " *
+            "tracer_names has $(length(tracer_names))"))
+        return new{B, A3, Raw4, Names}(air_mass, tracers_raw, tracer_names,
+                                       tracer_refs, halo_width)
+    end
 end
 
 @inline halo_width(state::CubedSphereState) = state.halo_width
@@ -55,16 +72,18 @@ function CubedSphereState(::Type{B},
     raw = _pack_cs_tracers_raw(air_mass, tr)
     names = keys(tr)
     return CubedSphereState{B, typeof(air_mass[1]), typeof(raw[1]), typeof(names)}(
-        air_mass, raw, names, Int(halo_width))
+        air_mass, raw, names, TracerReferences(length(names)), Int(halo_width))
 end
 
 function CubedSphereState(::Type{B},
                           air_mass::NTuple{6},
                           tracers_raw::NTuple{6},
                           tracer_names::Tuple;
-                          halo_width::Integer) where {B <: AbstractMassBasis}
+                          halo_width::Integer,
+                          tracer_refs::TracerReferences =
+                              TracerReferences(length(tracer_names))) where {B <: AbstractMassBasis}
     return CubedSphereState{B, typeof(air_mass[1]), typeof(tracers_raw[1]), typeof(tracer_names)}(
-        air_mass, tracers_raw, tracer_names, Int(halo_width))
+        air_mass, tracers_raw, tracer_names, tracer_refs, Int(halo_width))
 end
 
 mass_basis(::CubedSphereState{B}) where {B <: AbstractMassBasis} = B()
@@ -73,8 +92,12 @@ function Adapt.adapt_structure(to, state::CubedSphereState{B}) where {B <: Abstr
     air_mass = Adapt.adapt(to, state.air_mass)
     tracers_raw = Adapt.adapt(to, state.tracers_raw)
     names = state.tracer_names
+    # tracer_refs passes through unchanged: it is host-resident metadata (like
+    # tracer_names) consumed as scalar kernel arguments, and sharing the same
+    # carrier keeps post-adapt mutation (IC seeding, re-referencing) visible
+    # from both the host and the adapted state.
     return CubedSphereState{B, typeof(air_mass[1]), typeof(tracers_raw[1]), typeof(names)}(
-        air_mass, tracers_raw, names, state.halo_width)
+        air_mass, tracers_raw, names, getfield(state, :tracer_refs), state.halo_width)
 end
 
 function Base.getproperty(state::CubedSphereState, name::Symbol)
@@ -89,9 +112,22 @@ end
 
 function Base.propertynames(::CubedSphereState, private::Bool = false)
     names = (:air_mass, :air_dry_mass, :tracers_raw, :tracer_names,
-             :tracers, :halo_width)
+             :tracer_refs, :tracers, :halo_width)
     return private ? names : names
 end
+
+"""
+    tracer_reference_kind(state::CubedSphereState, idx::Integer)  -> UInt8
+    tracer_reference_value(state::CubedSphereState, idx::Integer) -> Union{Nothing, Float64}
+
+State-level accessors for the per-tracer reference metadata; see
+TracerReferences.jl for the kind-flag contract.
+"""
+@inline tracer_reference_kind(state::CubedSphereState, idx::Integer) =
+    tracer_reference_kind(getfield(state, :tracer_refs), idx)
+
+@inline tracer_reference_value(state::CubedSphereState, idx::Integer) =
+    tracer_reference_value(getfield(state, :tracer_refs), idx)
 
 @inline function _panel_interior(panel::AbstractArray, Hp::Int)
     nx_panel = size(panel, 1)

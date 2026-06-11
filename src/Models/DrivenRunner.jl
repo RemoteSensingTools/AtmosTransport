@@ -215,10 +215,18 @@ end
 # ===========================================================================
 
 struct TransportTracerSpec
-    name             :: Symbol
-    init_cfg         :: Dict{String, Any}
-    surface_flux_cfg :: Dict{String, Any}
+    name              :: Symbol
+    init_cfg          :: Dict{String, Any}
+    surface_flux_cfg  :: Dict{String, Any}
+    reference_kind    :: Symbol   # :none | :global_mean   ([tracers.X.transport] reference)
+    reference_cadence :: Symbol   # :fixed | :daily | :per_window
 end
+
+# Back-compat convenience: specs built without a [tracers.X.transport] block
+# (and the LL single-tracer fallback) default to the raw, unreferenced path.
+TransportTracerSpec(name::Symbol, init_cfg::Dict{String, Any},
+                    surface_flux_cfg::Dict{String, Any}) =
+    TransportTracerSpec(name, init_cfg, surface_flux_cfg, :none, :fixed)
 
 _copy_cfg_dict(cfg) = Dict{String, Any}(String(k) => v for (k, v) in pairs(cfg))
 
@@ -253,14 +261,61 @@ function _tracer_surface_flux_cfg(tracer_cfg)
     return cfg
 end
 
+# Parse + validate the optional [tracers.X.transport] block (reference-state /
+# anomaly transport; see docs/plans/45_ANOMALY_REFERENCE_TRANSPORT/PLAN.md).
+# Strings become Symbols HERE and nowhere downstream; unknown keys and values
+# are parse-time errors so a typo cannot silently run unreferenced.
+function _tracer_transport_cfg(name, tracer_cfg)
+    transport_cfg = get(tracer_cfg, "transport", nothing)
+    transport_cfg === nothing && return (reference = :none, cadence = :fixed)
+    transport_cfg isa AbstractDict || throw(ArgumentError(
+        "[tracers.$(name).transport] must be a table"))
+    known = ("reference", "reference_cadence")
+    for key in keys(transport_cfg)
+        key in known || throw(ArgumentError(
+            "[tracers.$(name).transport] has unknown key \"$(key)\"; " *
+            "supported keys: $(join(known, ", "))"))
+    end
+    reference_raw = get(transport_cfg, "reference", "none")
+    reference_raw isa AbstractString || throw(ArgumentError(
+        "[tracers.$(name).transport] reference must be a string, got " *
+        "$(typeof(reference_raw))"))
+    reference = String(reference_raw)
+    reference in ("none", "global_mean") || throw(ArgumentError(
+        "[tracers.$(name).transport] reference=\"$(reference)\" is not supported; " *
+        "use \"none\" or \"global_mean\""))
+    cadence_raw = get(transport_cfg, "reference_cadence", "fixed")
+    cadence_raw isa AbstractString || throw(ArgumentError(
+        "[tracers.$(name).transport] reference_cadence must be a string, got " *
+        "$(typeof(cadence_raw))"))
+    cadence = String(cadence_raw)
+    cadence in ("fixed", "daily", "per_window") || throw(ArgumentError(
+        "[tracers.$(name).transport] reference_cadence=\"$(cadence)\" is not " *
+        "supported; use \"fixed\", \"daily\", or \"per_window\""))
+    # HACK: Stage-0 plumbing guard — anomaly seeding + operator gates land in a
+    # later stage of plan 45; rejecting here keeps a half-wired build from
+    # silently transporting full mass under a declared reference.
+    # TODO(plan 45 Stage 2): remove this throw when IC seeding ships.
+    reference == "none" || throw(ArgumentError(
+        "[tracers.$(name).transport] reference=\"$(reference)\" is not yet " *
+        "wired (anomaly-reference transport is staged in; IC seeding lands in " *
+        "plan 45 Stage 2); set reference=\"none\""))
+    return (reference = Symbol(reference), cadence = Symbol(cadence))
+end
+
 function _parse_tracer_specs(cfg)
     tracers_cfg = get(cfg, "tracers", nothing)
     tracers_cfg isa AbstractDict || return nothing
     names = sort!(collect(keys(tracers_cfg)))
     isempty(names) && throw(ArgumentError("config has [tracers] but no tracer sections"))
-    return Tuple(TransportTracerSpec(Symbol(name),
-                                     _tracer_init_cfg(tracers_cfg[name]),
-                                     _tracer_surface_flux_cfg(tracers_cfg[name])) for name in names)
+    return Tuple(begin
+        transport = _tracer_transport_cfg(name, tracers_cfg[name])
+        TransportTracerSpec(Symbol(name),
+                            _tracer_init_cfg(tracers_cfg[name]),
+                            _tracer_surface_flux_cfg(tracers_cfg[name]),
+                            transport.reference,
+                            transport.cadence)
+    end for name in names)
 end
 
 # ===========================================================================
@@ -369,6 +424,13 @@ function validate_config(cfg::AbstractDict)
             push!(errors, "[tracers] must be a TOML table of tracer subtables.")
         elseif isempty(tracers_cfg)
             push!(errors, "[tracers] was provided but contains no tracer subtables.")
+        else
+            # Full spec parse so per-tracer table errors ([tracers.X.transport]
+            # unknown keys/values, staged-feature guards) surface in preflight
+            # instead of only at runner start.
+            _capture_config_error!(errors) do
+                _parse_tracer_specs(cfg)
+            end
         end
     end
 

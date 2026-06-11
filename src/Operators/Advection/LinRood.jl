@@ -718,8 +718,14 @@ function fillz_q!(q_panels::NTuple{6}, m_panels::NTuple{6}, mesh::CubedSphereMes
     synchronize(backend)
 end
 
+# `q_ref` is the tracer's reference-state VMR (anomaly transport, plan 45):
+# `nothing` = unreferenced tracer, raw path. The Stage-3 negativity gate will
+# skip the rm→q→rm round-trip (an F32 re-contamination hazard for anomaly
+# stores) whenever the full field `q_anom + q_ref` has no negative cell.
 function _fillz_rm_panels!(rm_panels::NTuple{6}, m_panels::NTuple{6},
-                           mesh::CubedSphereMesh)
+                           mesh::CubedSphereMesh;
+                           q_ref::Union{Nothing, Float64} = nothing)
+    _ = q_ref   # consumed by the Stage-3 gate; threaded now so signatures settle
     rm_to_q_panels!(rm_panels, m_panels, mesh)
     fillz_q!(rm_panels, m_panels, mesh)
     q_to_rm_panels!(rm_panels, m_panels, mesh)
@@ -971,19 +977,20 @@ function _strang_split_linrood_ppm_cs!(rm_panels, m_panels, am_panels, bm_panels
                                        mesh::CubedSphereMesh, ::Val{ORD},
                                        ws::CSLinRoodAdvectionWorkspace;
                                        cfl_limit=0.95, midpoint! = nothing,
-                                       damp_coeff=0.0) where ORD
+                                       damp_coeff=0.0,
+                                       q_ref::Union{Nothing, Float64} = nothing) where ORD
     _ = cfl_limit
     fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
                  mesh, Val(ORD), ws.cs, ws.linrood; damp_coeff)
-    _fillz_rm_panels!(rm_panels, m_panels, mesh)
+    _fillz_rm_panels!(rm_panels, m_panels, mesh; q_ref)
     _sweep_z!(rm_panels, m_panels, cm_panels, mesh, ws.cs)
-    _fillz_rm_panels!(rm_panels, m_panels, mesh)
+    _fillz_rm_panels!(rm_panels, m_panels, mesh; q_ref)
     midpoint! === nothing || midpoint!()
     _sweep_z!(rm_panels, m_panels, cm_panels, mesh, ws.cs)
-    _fillz_rm_panels!(rm_panels, m_panels, mesh)
+    _fillz_rm_panels!(rm_panels, m_panels, mesh; q_ref)
     fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
                  mesh, Val(ORD), ws.cs, ws.linrood; damp_coeff = 0.0)
-    _fillz_rm_panels!(rm_panels, m_panels, mesh)
+    _fillz_rm_panels!(rm_panels, m_panels, mesh; q_ref)
     return nothing
 end
 

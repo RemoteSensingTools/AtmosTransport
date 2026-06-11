@@ -20,6 +20,7 @@ using ..Grids: AbstractHorizontalMesh, AbstractStructuredMesh, CubedSphereMesh,
 
 include("Basis.jl")
 include("CellState.jl")
+include("TracerReferences.jl")
 include("CubedSphereState.jl")
 include("FaceFluxState.jl")
 include("MetState.jl")

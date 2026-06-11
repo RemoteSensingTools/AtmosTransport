@@ -47,7 +47,8 @@ using ...State: CellState, CubedSphereState,
     StructuredFaceFluxState, AbstractUnstructuredFaceFluxState,
     DryMassFluxBasis, DryStructuredFluxState, AbstractMassBasis,
     FaceIndexedFluxState, CubedSphereFaceFluxState,
-    ntracers, tracer_index, tracer_name, get_tracer, eachtracer
+    ntracers, tracer_index, tracer_name, get_tracer, eachtracer,
+    tracer_reference_value, any_tracer_referenced
 using ...Grids: AtmosGrid, AbstractHorizontalMesh, AbstractStructuredMesh,
     LatLonMesh, CubedSphereMesh, face_cells, nfaces,
     PanelConnectivity, reciprocal_edge,

@@ -48,6 +48,9 @@ time-varying field contracts consumed by operators.
 - [`Basis.jl`](Basis.jl) — dry/moist basis tags for state and fluxes
 - [`CellState.jl`](CellState.jl) — structured and face-indexed
   cell-centered prognostic state
+- [`TracerReferences.jl`](TracerReferences.jl) — per-tracer reference-state
+  (anomaly transport) metadata: `REF_NONE`/`REF_GLOBAL_MEAN` kind codes plus
+  F64 reference VMRs for F32 large-background mass conservation
 - [`CubedSphereState.jl`](CubedSphereState.jl) — panel-native
   cubed-sphere prognostic state
 - [`FaceFluxState.jl`](FaceFluxState.jl) — flux-state hierarchy,

@@ -15,7 +15,13 @@ using .AtmosTransport
     # took the count to 107. Bump to 120 to give breathing room. Next API
     # audit should bring it back down (good candidates: internal accessors
     # that escaped through `using .Submodule` re-exports).
-    @test length(exported) < 140
+    # 2026-06 (plan 45): the reference-state accessor split adds deliberate
+    # public API (`get_tracer_raw`/`get_tracer_full`/`total_mass_full`/
+    # `mixing_ratio_full`) — physical-field readers that downstream
+    # diagnostics MUST use instead of the bare accessors. Count 148; bump
+    # the cap to 160. The next audit's trim candidates stand.
+    @test length(exported) < 160
+    @test :get_tracer_full in exported     # plan-45 physical-field reader
     @test :run_driven_simulation in exported
     @test :validate_config in exported
     @test :inspect_binary in exported

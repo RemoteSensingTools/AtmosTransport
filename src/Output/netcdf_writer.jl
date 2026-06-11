@@ -200,10 +200,33 @@ function write_snapshot_netcdf(path::AbstractString,
         geometry = _define_geometry!(ds, mesh, Nz, times)
         _write_snapshot_payload!(ds, mesh, frames, tracer_keys, geometry,
                                  mass_basis, options, fields)
+        # Topology-independent exact conservation diagnostic (always Float64).
+        _write_tracer_total_mass!(ds, frames, tracer_keys)
     end
     @info @sprintf("Saved snapshots: %s (%d frame(s), %s, mass_basis=%s)",
                    expanded, length(frames), summary(mesh), mass_basis)
     return expanded
+end
+
+# Exact per-tracer total mass [kg], Float64, dim ("time",). Computed from the
+# model state at capture (`total_mass_full`), so it is the AUTHORITATIVE
+# conservation quantity — unlike a budget integrated from the spatial field,
+# which for a reference-state (anomaly) tracer is F32-reconstruction-polluted
+# at the background scale. Mesh-independent; skipped when frames carry no
+# total_mass (back-compat).
+function _write_tracer_total_mass!(ds, frames, tracer_keys)
+    all(isempty(frame.total_mass) for frame in frames) && return nothing
+    for name in tracer_keys
+        all(haskey(frame.total_mass, name) for frame in frames) || continue
+        s = String(name)
+        v = defVar(ds, "$(s)_total_mass", Float64, ("time",))
+        v.attrib["long_name"] = "exact total $(s) mass (total_mass_full, F64)"
+        v.attrib["units"] = "kg_air_equiv"
+        v.attrib["note"] = "authoritative conservation quantity; use this, not " *
+                           "an integral of the F32 spatial field, for mass budgets"
+        v[:] = [frame.total_mass[name] for frame in frames]
+    end
+    return nothing
 end
 
 function _write_snapshot_payload!(ds, mesh::LatLonMesh, frames, tracer_keys,

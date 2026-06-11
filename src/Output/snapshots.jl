@@ -19,20 +19,32 @@ struct SnapshotFrame{A}
     air_mass::A
     tracers::Dict{Symbol, A}
     mass_basis::Symbol
+    # Per-tracer TRUE total tracer mass in Float64, computed from the model
+    # state at capture (`total_mass_full`). The spatial `tracers` field is
+    # written at the output `float_type` (default Float32); for a
+    # reference-state (anomaly) tracer that F32 full-field reconstruction
+    # reintroduces background-scale rounding, so a mass budget integrated
+    # from the output field is wrong by ~that scale. This exact F64 scalar
+    # is the authoritative conservation quantity (and is correct for plain
+    # tracers too). Empty ⇒ not captured (back-compat).
+    total_mass::Dict{Symbol, Float64}
 end
 
 function SnapshotFrame(time_hours::Real,
                        air_mass::A,
                        tracers::AbstractDict{Symbol, <:Any},
-                       mass_basis::Symbol) where A
+                       mass_basis::Symbol;
+                       total_mass::AbstractDict{Symbol, <:Real} =
+                           Dict{Symbol, Float64}()) where A
     typed_tracers = Dict{Symbol, A}()
     for (name, tracer) in tracers
         tracer isa A || throw(ArgumentError(
             "snapshot tracer $(name) has type $(typeof(tracer)); expected $(A) to match air_mass"))
         typed_tracers[name] = tracer
     end
+    tm = Dict{Symbol, Float64}(k => Float64(v) for (k, v) in total_mass)
     return SnapshotFrame{A}(Float64(time_hours), air_mass, typed_tracers,
-                            mass_basis)
+                            mass_basis, tm)
 end
 
 """
@@ -111,8 +123,14 @@ function capture_snapshot(model; time_hours::Real=0, halo_width::Integer=0)
         tracers[name] = _extract_for_output(get_tracer_full(model.state, name), mesh;
                                             halo_width=halo_width)
     end
+    # Exact F64 conservation quantity per tracer (authoritative for budgets;
+    # the spatial field above is the output float_type and, for referenced
+    # tracers, F32-reconstruction-polluted at the background scale).
+    total_mass = Dict{Symbol, Float64}(name => total_mass_full(model.state, name)
+                                       for name in names)
     return SnapshotFrame(Float64(time_hours), air, tracers,
-                         _basis_symbol(mass_basis(model.state)))
+                         _basis_symbol(mass_basis(model.state));
+                         total_mass = total_mass)
 end
 
 function _frame_tracer_names(frame::SnapshotFrame)

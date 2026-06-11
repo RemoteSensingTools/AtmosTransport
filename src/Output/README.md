@@ -16,7 +16,12 @@ writing topology-specific NetCDF files directly.
   downstream diagnostics never need to know `q_ref` (plan 45).
 - `diagnostics.jl` derives VMR, column means, and mass-per-area fields.
 - `netcdf_schema.jl` defines topology-specific dimensions, coordinates, and metadata.
-- `netcdf_writer.jl` writes topology-specific payload variables through one public API.
+- `netcdf_writer.jl` writes topology-specific payload variables through one public API,
+  plus a topology-independent `<tracer>_total_mass` (Float64, `time`) — the EXACT
+  per-tracer total mass from `total_mass_full` at capture. **Use this, not an
+  integral of the spatial field, for mass budgets**: for a reference-state
+  (anomaly) tracer the spatial field is the F32 full-field reconstruction and its
+  integral is polluted at the background-rounding scale.
 
 ## Topology Contract
 

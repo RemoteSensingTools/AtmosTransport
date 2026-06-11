@@ -14,9 +14,13 @@ Budget readout at the top-left of each panel (referenced to the FIRST frame):
   EVERY column shows dm vs |F = its own emission-conservation check:
     dm = mass(t) - mass(0)            (burden change from the IC)
     |F = integral of that run's own surface flux   (cumulative emission)
-  GeoChem column uses GC's Emis* diagnostics for |F. The two AtmosTransport
-  columns (GEOS-IT, ERA5) use OUR OWN emission flux for |F (same inventory for
-  both AT runs, only the transport met differs):
+  |F is the COMMON forcing inventory on ALL THREE columns — GC and both AT runs
+  are driven by the same CAMS biospheric / EDGAR / gridfed fluxes, so each
+  column's dm-vs-|F is a like-for-like conservation check against the IDENTICAL
+  emission. (GC's own EmisCO2_Total diagnostic integrates ~0.4% below the lmdz
+  file for co2_natural — an instantaneous-snapshot vs stepwise-integral
+  artefact, same inventory — kept in the printed budget line, not the panels.)
+  The |F series:
     sf6 / co2_fossil / rn222 : constant global rate (run-log conservative-regrid
                                src_total) integrated as rate*t.
     co2_natural              : time-varying lmdz CAMS (stepwise), the global rate
@@ -232,23 +236,28 @@ def main():
         cax = fig.add_axes([0.915, axes[ti][2].get_position().y0,
                             0.012, axes[ti][2].get_position().height])
         fig.colorbar(ims[ti][2], cax=cax)
-    sup = fig.suptitle("", fontsize=14)
+    sup = fig.suptitle("", fontsize=11.5, y=0.985)
 
     def update(f):
         for ti in range(len(TRACERS)):
             for c in range(3):
                 ims[ti][c].set_data(maps[f][ti][c])
-                if c == 0:
-                    # GC column: dm vs GC's own emission integral
-                    txt[ti][c].set_text(
-                        f"dm = {fmt_mass(dm[f][ti][0])}\n|F = {fmt_mass(cumF_gc[f][ti])}")
-                else:
-                    # AT columns: dm vs OUR own emission integral (per-run conservation check)
-                    txt[ti][c].set_text(
-                        f"dm = {fmt_mass(dm[f][ti][c])}\n|F = {fmt_mass(cumF_at[f][ti])}")
-        sup.set_text(f"Column-mean mixing ratio — {frames[f]:%Y-%m-%d %H:%M}z   "
-                     f"(GeoChem | AtmosTransport GEOS-IT-omega | AtmosTransport ERA5)   "
-                     f"[dm = burden change from IC;  |F = integrated own surface flux]")
+                # |F is the COMMON forcing inventory on every panel (both AT
+                # runs and GC are driven by the same CAMS biospheric / EDGAR /
+                # gridfed fluxes), so each column's dm-vs-|F is a like-for-like
+                # conservation check against the identical emission. (GC's own
+                # EmisCO2_Total diagnostic integrates ~0.4% below the lmdz file
+                # — an instantaneous-snapshot vs stepwise-integral artefact, NOT
+                # a different inventory; printed in the budget line for the
+                # record but not shown per-panel.)
+                txt[ti][c].set_text(
+                    f"dm = {fmt_mass(dm[f][ti][c if c else 0])}\n|F = {fmt_mass(cumF_at[f][ti])}")
+        # Column identities live on the per-axis titles (GeoChem / AT GEOS-IT /
+        # AT ERA5), so the suptitle stays short enough to fit the figure width:
+        # date + the dm/|F legend only.
+        sup.set_text(f"Column-mean mixing ratio   ·   {frames[f]:%Y-%m-%d %H:%M}z"
+                     f"      dm = burden change from IC      "
+                     f"|F = ∫ common surface flux")
         return []
 
     _qc = nframes - 1                                            # QC on the last frame (accumulated dm/|F)

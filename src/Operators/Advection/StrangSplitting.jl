@@ -1106,7 +1106,8 @@ function _cs_transport_step!(::CSLinRoodStyle,
                                   mesh, Val(ORD), workspace;
                                   cfl_limit = cfl_limit,
                                   midpoint! = midpoint!,
-                                  q_ref = q_ref)
+                                  q_ref = q_ref,
+                                  fillz = scheme.fillz)
     return nothing
 end
 

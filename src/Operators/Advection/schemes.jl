@@ -311,18 +311,54 @@ Supported orders currently match the implemented PPM edge-value families in
 - `ORD = 5` — Huynh-constrained PPM
 - `ORD = 7` — order-5 interior with special cubed-sphere face treatment
 
+# Fields
+- `fillz :: Bool` (default `true`) — run the GCHP `fillz` positivity fixer
+  after each sweep of the palindrome.
+
+  `fillz = true` (GCHP-faithful): transient advection undershoots (negative
+  mixing ratios just downwind of sharp gradients) are repaired by borrowing
+  mass between column levels. **Pro:** strictly non-negative output fields;
+  bit-comparable to GCHP's transport at sharp gradients. **Con:** the
+  `rm → q → fillz → q → rm` round-trip is NOT Float32-conservative — each
+  repair injects a little net mass. Measured: a sharp IC=0 tracer
+  (co2_fossil) gains +5% of emission at t=3 h, saturating to ~0.3% at month
+  scale; the injection accounts for the surplus to 3 decimals
+  (fillz/surplus = 1.000, see `ATMOSTR_FILLZ_MASS_DIAG`).
+
+  `fillz = false`: undershoots are left in place as small signed transients.
+  **Pro:** flux-form advection then conserves tracer mass EXACTLY
+  (telescoping) — the right choice for conservation-critical budget and
+  inversion work; also removes the one non-differentiable operation from the
+  forward (better-behaved 4D-Var adjoint). Every production operator
+  (LinRood limiter, vertical donor-cell, implicit diffusion, TM5/CMFMC
+  convection, exponential decay) is sign-safe, so negatives are benign in
+  this offline model. **Con:** output VMR fields can dip slightly negative
+  near sharp sources (cosmetic, bounded by the undershoot scale); deviates
+  from GCHP's exact transport behavior; NOT safe if a nonlinear/positivity-
+  requiring chemistry operator is ever added.
+
+  Set from TOML via `[advection] fillz = false` (only valid with
+  `scheme = "linrood"`). See docs/reference/ADVECTION_SCHEMES.md.
+
 # Examples
 ```julia
-LinRoodPPMScheme()    # default ORD=5
-LinRoodPPMScheme(7)   # ORD=7 cubed-sphere boundary treatment
+LinRoodPPMScheme()                  # default ORD=5, fillz=true
+LinRoodPPMScheme(7)                 # ORD=7 cubed-sphere boundary treatment
+LinRoodPPMScheme(7; fillz = false)  # exactly mass-conserving, signed transients
 ```
 """
-struct LinRoodPPMScheme{ORD} <: AbstractAdvectionScheme end
+struct LinRoodPPMScheme{ORD} <: AbstractAdvectionScheme
+    fillz :: Bool
+end
 
-function LinRoodPPMScheme(order::Integer = 5)
+# Back-compat: the fieldless-era forms `LinRoodPPMScheme{7}()` /
+# `LinRoodPPMScheme()` keep working and mean fillz=true (GCHP-faithful).
+LinRoodPPMScheme{ORD}() where {ORD} = LinRoodPPMScheme{ORD}(true)
+
+function LinRoodPPMScheme(order::Integer = 5; fillz::Bool = true)
     order in (5, 7) || throw(ArgumentError(
         "LinRoodPPMScheme supports ORD=5 or ORD=7, got ORD=$(order)"))
-    return LinRoodPPMScheme{Int(order)}()
+    return LinRoodPPMScheme{Int(order)}(fillz)
 end
 
 # ---- Cubed-sphere execution style + capability traits -------------------

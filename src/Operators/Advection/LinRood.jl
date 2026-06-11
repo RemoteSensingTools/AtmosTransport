@@ -1041,24 +1041,30 @@ function strang_split_linrood_ppm!(rm_panels, m_panels, am_panels, bm_panels, cm
     return nothing
 end
 
+# `fillz=false` disables the GCHP positivity fixer entirely: flux-form
+# advection then conserves tracer mass EXACTLY (the fixer's F32 round-trip is
+# the scheme's only non-conservation; measured fillz/surplus = 1.000 on a
+# sharp IC=0 tracer), at the cost of small signed undershoot transients near
+# sharp gradients. See the LinRoodPPMScheme docstring for the full tradeoff.
 function _strang_split_linrood_ppm_cs!(rm_panels, m_panels, am_panels, bm_panels, cm_panels,
                                        mesh::CubedSphereMesh, ::Val{ORD},
                                        ws::CSLinRoodAdvectionWorkspace;
                                        cfl_limit=0.95, midpoint! = nothing,
                                        damp_coeff=0.0,
-                                       q_ref::Union{Nothing, Float64} = nothing) where ORD
+                                       q_ref::Union{Nothing, Float64} = nothing,
+                                       fillz::Bool = true) where ORD
     _ = cfl_limit
     fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
                  mesh, Val(ORD), ws.cs, ws.linrood; damp_coeff)
-    _fillz_rm_panels!(rm_panels, m_panels, mesh; q_ref)
+    fillz && _fillz_rm_panels!(rm_panels, m_panels, mesh; q_ref)
     _sweep_z!(rm_panels, m_panels, cm_panels, mesh, ws.cs)
-    _fillz_rm_panels!(rm_panels, m_panels, mesh; q_ref)
+    fillz && _fillz_rm_panels!(rm_panels, m_panels, mesh; q_ref)
     midpoint! === nothing || midpoint!()
     _sweep_z!(rm_panels, m_panels, cm_panels, mesh, ws.cs)
-    _fillz_rm_panels!(rm_panels, m_panels, mesh; q_ref)
+    fillz && _fillz_rm_panels!(rm_panels, m_panels, mesh; q_ref)
     fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
                  mesh, Val(ORD), ws.cs, ws.linrood; damp_coeff = 0.0)
-    _fillz_rm_panels!(rm_panels, m_panels, mesh; q_ref)
+    fillz && _fillz_rm_panels!(rm_panels, m_panels, mesh; q_ref)
     return nothing
 end
 

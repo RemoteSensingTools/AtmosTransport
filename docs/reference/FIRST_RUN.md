@@ -90,6 +90,10 @@ Or use Julia with CairoMakie (see `scripts/visualization/` for examples).
 ## Next steps
 
 - **Change the advection scheme**: set `scheme = "slopes"` or `"ppm"` in your TOML
+- **Exactly-conservative LinRood**: `scheme = "linrood"` + `fillz = false` disables
+  the GCHP positivity fixer — flux-form advection then conserves tracer mass exactly,
+  at the cost of small signed undershoot transients near sharp sources. Full
+  pros/cons: [ADVECTION_SCHEMES.md](ADVECTION_SCHEMES.md) §fillz
 - **Try a different grid**: see [GRID_TYPES.md](GRID_TYPES.md) for LL vs RG vs CS
 - **Add emissions**: see the `[tracers.fossil_co2.surface_flux]` sections in Catrine configs
 - **Large-background F32 tracers** (e.g. ~412 ppm CO2): add `[tracers.X.transport]` with

@@ -170,10 +170,14 @@ struct SlopesAdvectionSpec <: AbstractAdvectionSpec end
 struct PPMAdvectionSpec    <: AbstractAdvectionSpec end
 struct NoAdvectionSpec     <: AbstractAdvectionSpec end
 
-# LinRood is cubed-sphere only and carries the reconstruction order.
+# LinRood is cubed-sphere only and carries the reconstruction order plus the
+# fillz positivity-fixer switch (see LinRoodPPMScheme docstring +
+# docs/reference/ADVECTION_SCHEMES.md for the conservation tradeoff).
 struct LinRoodAdvectionSpec <: AbstractAdvectionSpec
     order :: Int
+    fillz :: Bool
 end
+LinRoodAdvectionSpec(order::Int) = LinRoodAdvectionSpec(order, true)
 
 function _parse_advection_scheme(section)
     raw = lowercase(String(get(section, "scheme", "upwind")))
@@ -195,16 +199,24 @@ PPM path takes no order knob), matching the old builder.
 """
 function advection_spec(section)
     kind = _parse_advection_scheme(section)
+    # linrood-only knobs are rejected on EVERY other scheme so a config typo
+    # cannot silently run with the knob ignored.
+    if kind !== :linrood
+        for key in ("ppm_order", "fillz")
+            haskey(section, key) && throw(ArgumentError(
+                "[advection] `$(key)` is only valid with `scheme = \"linrood\"`; " *
+                "got scheme = \"$(kind)\"."))
+        end
+    end
     kind === :upwind && return UpwindAdvectionSpec()
     kind === :slopes && return SlopesAdvectionSpec()
     kind === :none   && return NoAdvectionSpec()
-    if kind === :ppm
-        haskey(section, "ppm_order") && throw(ArgumentError(
-            "[advection] `ppm_order` is only valid with `scheme = \"linrood\"`; " *
-            "`scheme = \"ppm\"` selects the standard split `PPMScheme()` path."))
-        return PPMAdvectionSpec()
-    end
-    return LinRoodAdvectionSpec(_spec_int(section, "ppm_order", 5, "[advection]"))  # :linrood
+    kind === :ppm    && return PPMAdvectionSpec()
+    fillz_raw = get(section, "fillz", true)
+    fillz_raw isa Bool || throw(ArgumentError(
+        "[advection] fillz must be a boolean, got $(typeof(fillz_raw))"))
+    return LinRoodAdvectionSpec(_spec_int(section, "ppm_order", 5, "[advection]"),
+                                fillz_raw)  # :linrood
 end
 
 # materialize — upwind/slopes/ppm/none are topology-independent; LinRood is
@@ -214,11 +226,11 @@ materialize(::UpwindAdvectionSpec, ::AbstractRuntimeRecipeStyle) = UpwindScheme(
 materialize(::SlopesAdvectionSpec, ::AbstractRuntimeRecipeStyle) = SlopesScheme()
 materialize(::PPMAdvectionSpec,    ::AbstractRuntimeRecipeStyle) = PPMScheme()
 materialize(::NoAdvectionSpec,     ::AbstractRuntimeRecipeStyle) = NoAdvection()
-materialize(s::LinRoodAdvectionSpec, ::CubedSphereRuntimeRecipeStyle) = LinRoodPPMScheme(s.order)
+materialize(s::LinRoodAdvectionSpec, ::CubedSphereRuntimeRecipeStyle) = LinRoodPPMScheme(s.order; fillz = s.fillz)
 materialize(::LinRoodAdvectionSpec, ::AbstractStructuredRuntimeRecipeStyle) = throw(ArgumentError(
     "[advection] `scheme = \"linrood\"` is only available on cubed-sphere runs."))
 
-Base.summary(s::LinRoodAdvectionSpec) = "LinRoodAdvectionSpec(order=$(s.order))"
+Base.summary(s::LinRoodAdvectionSpec) = "LinRoodAdvectionSpec(order=$(s.order), fillz=$(s.fillz))"
 
 # =========================================================================
 # Chemistry

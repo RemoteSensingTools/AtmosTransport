@@ -17,7 +17,13 @@ using AtmosTransport.Grids: CubedSphereMesh
 using AtmosTransport: HybridSigmaPressure, AtmosGrid, allocate_face_fluxes,
     strang_split!, PPMScheme
 using AtmosTransport.Models.DrivenRunner: _parse_tracer_specs,
-    _tracer_transport_cfg, TransportTracerSpec
+    _tracer_transport_cfg, TransportTracerSpec,
+    _seed_tracer_references!, _validate_tracer_reference_compat,
+    is_offset_invariant
+using AtmosTransport.Models: RuntimePhysicsRecipe
+using AtmosTransport: LinRoodPPMScheme, NoDiffusion, NoConvection, NoChemistry,
+    CMFMCConvection, ExponentialDecay, TM5Convection, CMFMCMatrixConvection,
+    ImplicitVerticalDiffusion, ConstantField
 
 @testset "TracerReferences carrier" begin
     refs = TracerReferences(3)
@@ -108,10 +114,17 @@ end
         @test_throws ArgumentError _parse_tracer_specs(cfg)
     end
 
-    # Stage-0 guard: reference="global_mean" rejected until seeding ships
-    # (plan 45 Stage 2 removes this — flip the test to expect success then)
+    # Stage 2: reference="global_mean" parses (seeding + gates are wired)
     cfg = deepcopy(base)
     cfg["tracers"]["co2"]["transport"] = Dict{String, Any}("reference" => "global_mean")
+    specs = _parse_tracer_specs(cfg)
+    @test specs[1].reference_kind === :global_mean
+    @test specs[1].reference_cadence === :fixed
+
+    # non-fixed cadences are Stage-5 scope: rejected for a referenced tracer
+    cfg = deepcopy(base)
+    cfg["tracers"]["co2"]["transport"] =
+        Dict{String, Any}("reference" => "global_mean", "reference_cadence" => "daily")
     @test_throws ArgumentError _parse_tracer_specs(cfg)
 
     # back-compat 3-arg spec constructor defaults to the raw path
@@ -232,6 +245,152 @@ end
         @info "bare tracer accessors in gated namespaces (use _raw/_full):" offenders
     end
     @test isempty(offenders)
+end
+
+@testset "Stage 2: IC seeding converts full mass to anomaly exactly" begin
+    state = _mini_cs_state(; FT = Float32)
+    # make co2 spatially structured so the test is not a trivial uniform field
+    raw = get_tracer_raw(state, :co2)
+    for p in 1:6
+        raw[p] .+= Float32(1e-5) .* reshape(collect(Float32, 1:size(raw[p], 3)), 1, 1, :)
+    end
+    burden_before = total_mass_full(state, :co2)
+    vmr_before = mixing_ratio_full(state, :co2)
+
+    specs = (TransportTracerSpec(:co2, Dict{String, Any}(), Dict{String, Any}(),
+                                 :global_mean, :fixed),
+             TransportTracerSpec(:sf6, Dict{String, Any}(), Dict{String, Any}()),)
+    _seed_tracer_references!(state, specs)
+
+    idx = tracer_index(state, :co2)
+    @test tracer_reference_kind(state.tracer_refs, idx) == REF_GLOBAL_MEAN
+    q_ref = tracer_reference_value(state, idx)
+    @test q_ref isa Float64 && q_ref > 0
+
+    # physical burden + VMR unchanged by seeding (to FT roundoff of the store)
+    @test isapprox(total_mass_full(state, :co2), burden_before;
+                   rtol = 8 * eps(Float32))
+    vmr_after = mixing_ratio_full(state, :co2)
+    @test all(all(isapprox.(vmr_after[p], vmr_before[p]; atol = 4e-4 * eps(Float32) * 100))
+              for p in 1:6)
+
+    # the anomaly store straddles zero (mean removed) and is small vs q_ref
+    raw_after = get_tracer_raw(state, idx)
+    anom_min = minimum(minimum.(raw_after))
+    anom_max = maximum(maximum.(raw_after))
+    @test anom_min < 0 < anom_max
+    @test max(abs(anom_min), abs(anom_max)) < 0.2 * q_ref   # mean removed
+
+    # sf6 untouched (kind REF_NONE, store unchanged semantics)
+    @test tracer_reference_value(state, tracer_index(state, :sf6)) === nothing
+
+    # IC=0 tracer: q_ref = 0 but the REFERENCED path is installed (kind flag)
+    state0 = _mini_cs_state(; FT = Float32)
+    raw0 = get_tracer_raw(state0, :co2)
+    for p in 1:6; raw0[p] .= 0; end
+    _seed_tracer_references!(state0, (TransportTracerSpec(
+        :co2, Dict{String, Any}(), Dict{String, Any}(), :global_mean, :fixed),))
+    i0 = tracer_index(state0, :co2)
+    @test tracer_reference_kind(state0.tracer_refs, i0) == REF_GLOBAL_MEAN
+    @test tracer_reference_value(state0, i0) === 0.0
+    @test all(all(iszero, raw0[p]) for p in 1:6)   # anomaly == full == 0
+end
+
+@testset "Stage 2: compatibility gates name the offending operator" begin
+    refspec = TransportTracerSpec(:co2, Dict{String, Any}(), Dict{String, Any}(),
+                                  :global_mean, :fixed)
+    nospec = TransportTracerSpec(:rn222, Dict{String, Any}(), Dict{String, Any}())
+    lr = LinRoodPPMScheme{7}()
+    ok_recipe = RuntimePhysicsRecipe(lr, NoDiffusion(), NoConvection(), NoChemistry())
+
+    # all-invariant recipe: passes
+    @test _validate_tracer_reference_compat((refspec, nospec), ok_recipe;
+                                            reset_air_mass_each_window = false) === nothing
+    # unreferenced specs: no checks at all (any recipe passes)
+    bad_adv = RuntimePhysicsRecipe(PPMScheme(), NoDiffusion(), NoConvection(), NoChemistry())
+    @test _validate_tracer_reference_compat((nospec,), bad_adv;
+                                            reset_air_mass_each_window = true) === nothing
+
+    # split-sweep advection rejected with actionable message
+    err = try
+        _validate_tracer_reference_compat((refspec,), bad_adv;
+                                          reset_air_mass_each_window = false)
+    catch e; e end
+    @test err isa ArgumentError && occursin("linrood", err.msg)
+
+    # clamped CMFMC rejected; unclamped accepted
+    clamp_recipe = RuntimePhysicsRecipe(lr, NoDiffusion(),
+                                        CMFMCConvection(clamp = true), NoChemistry())
+    @test_throws ArgumentError _validate_tracer_reference_compat(
+        (refspec,), clamp_recipe; reset_air_mass_each_window = false)
+    noclamp = RuntimePhysicsRecipe(lr, NoDiffusion(),
+                                   CMFMCConvection(clamp = false), NoChemistry())
+    @test _validate_tracer_reference_compat((refspec,), noclamp;
+                                            reset_air_mass_each_window = false) === nothing
+
+    # decay: rejected only when it acts on the REFERENCED tracer
+    decay_other = ExponentialDecay(; rn222 = 330350.0)
+    okr = RuntimePhysicsRecipe(lr, NoDiffusion(), NoConvection(), decay_other)
+    @test _validate_tracer_reference_compat((refspec,), okr;
+                                            reset_air_mass_each_window = false) === nothing
+    decay_ref = ExponentialDecay(; co2 = 1.0e6)
+    badr = RuntimePhysicsRecipe(lr, NoDiffusion(), NoConvection(), decay_ref)
+    @test_throws ArgumentError _validate_tracer_reference_compat(
+        (refspec,), badr; reset_air_mass_each_window = false)
+
+    # preserve-VMR window reset rejected
+    @test_throws ArgumentError _validate_tracer_reference_compat(
+        (refspec,), ok_recipe; reset_air_mass_each_window = true)
+
+    # pin the full trait table (codex finding: TM5 merge path n_merge > 1
+    # disaggregates with fine_old/super_old tracer RATIOS — nonlinear, must
+    # be rejected; n_merge = 1 is the bit-exact linear path)
+    diff_op = ImplicitVerticalDiffusion(; kz_field = ConstantField{Float64, 2}(1.0))
+    @test is_offset_invariant(diff_op, :co2)
+    tm5_exact = TM5Convection(; n_merge = 1)
+    tm5_merge = TM5Convection(; n_merge = 3)
+    @test is_offset_invariant(tm5_exact, :co2)
+    @test !is_offset_invariant(tm5_merge, :co2)
+    mtx_exact = CMFMCMatrixConvection(; n_merge = 1)
+    mtx_merge = CMFMCMatrixConvection(; n_merge = 3)
+    @test is_offset_invariant(mtx_exact, :co2)
+    @test !is_offset_invariant(mtx_merge, :co2)
+    @test_throws ArgumentError _validate_tracer_reference_compat(
+        (refspec,), RuntimePhysicsRecipe(lr, NoDiffusion(), mtx_merge, NoChemistry());
+        reset_air_mass_each_window = false)
+end
+
+@testset "Stage 3: fillz negativity gate on anomaly stores" begin
+    fillz! = AtmosTransport.Operators.Advection._fillz_rm_panels!
+    Nc, Hp, Nz = 4, 1, 3
+    mesh = CubedSphereMesh(; FT = Float32, Nc = Nc, Hp = Hp)
+    Np = Nc + 2Hp
+    m = ntuple(_ -> ones(Float32, Np, Np, Nz), 6)
+    q_ref = 4.0e-4
+
+    # signed anomaly, but q_full = q_anom + q_ref > 0 everywhere
+    rm = ntuple(_ -> Float32(1e-5) .* (rand(Float32, Np, Np, Nz) .- 0.5f0), 6)
+    before = deepcopy(rm)
+    fillz!(rm, m, mesh; q_ref = q_ref)
+    # gate skips: stored anomaly is bit-identical (no rm→q→rm round-trip)
+    @test all(rm[p] == before[p] for p in 1:6)
+
+    # unreferenced call on the same panels DOES run the round-trip (baseline
+    # behavior preserved; values may or may not change, but the call works)
+    fillz!(rm, m, mesh)
+
+    # inject a genuine full-field negative: q_anom < -q_ref in one interior cell
+    rm2 = ntuple(_ -> Float32(1e-5) .* (rand(Float32, Np, Np, Nz) .- 0.5f0), 6)
+    rm2[1][Hp + 2, Hp + 2, 1] = Float32(-2 * q_ref)   # q_full = -q_ref < 0
+    fillz!(rm2, m, mesh; q_ref = q_ref)
+    # fillz fired and fixed the FULL field: q_full ≥ 0 on the interior.
+    # ACCEPTANCE NOTE (plan 45 / codex review): the fire path is "physical
+    # positivity with FT reconstruction" via the delta-form scratch — NOT an
+    # F64-exact full-field repair. Cells fillz does not modify receive exactly
+    # zero delta; modified cells carry FT-scale reconstruction rounding.
+    qfull_min = minimum(minimum(view(rm2[p], Hp+1:Hp+Nc, Hp+1:Hp+Nc, :) ./
+                                view(m[p],  Hp+1:Hp+Nc, Hp+1:Hp+Nc, :)) for p in 1:6) + q_ref
+    @test qfull_min >= -4 * eps(Float32)
 end
 
 println("test_tracer_references.jl OK")

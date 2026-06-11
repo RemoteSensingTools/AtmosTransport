@@ -1,0 +1,42 @@
+# Plan 45 Stage-2/3 referenced smoke: identical run to stage0_linrood_1day.toml
+# but with sf6 carried as a global-mean reference anomaly (q_ref seeded from the
+# IC's mass-weighted mean; fillz negativity-gated). Expectations vs the raw run:
+# agrees to F32 reconstruction noise (NOT bit-identical), conserves at least as
+# well, no NaN. The full conservation payoff measurement is Stage 4 (co2-like
+# 412 ppm background); sf6 here exercises the end-to-end referenced pipeline.
+[architecture]
+use_gpu = true
+backend = "cuda"
+[numerics]
+float_type = "Float32"
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_fullL72_omega"
+start_date   = "2021-12-01"
+end_date     = "2021-12-01"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+[advection]
+scheme = "linrood"
+ppm_order = 7
+[tracers.sf6]
+  [tracers.sf6.init]
+  kind = "file"
+  file = "~/data/AtmosTransport/catrine/InitialConditions/startSF6_202112010000.nc"
+  variable = "SF6"
+  [tracers.sf6.transport]
+  reference = "global_mean"
+  [tracers.sf6.surface_flux]
+  kind = "edgar_sf6"
+  scale = 1.0116635
+[diffusion]
+kind = "geoschem_holtslag_boville_vdiff"
+surface_flux_boundary = false
+[convection]
+kind = "cmfmc_matrix"
+tile_workspace_gib = 0.25
+use_collab_lu = true
+lmax_conv = 0
+[chemistry]
+kind = "none"
+[output]
+snapshot_interval_hours = 1
+snapshot_file = "~/data/AtmosTransport/output/anomaly_ref_gate/stage23_referenced_1day.nc"

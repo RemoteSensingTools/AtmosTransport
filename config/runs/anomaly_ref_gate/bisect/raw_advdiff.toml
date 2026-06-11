@@ -1,0 +1,34 @@
+# Plan 45 Stage-0 bit-identical gate (docs/plans/45_ANOMALY_REFERENCE_TRANSPORT).
+# Full-physics 1-day C180 F32 GPU run on the LinRood path (the scheme referenced
+# tracers will require). With reference="none" (the only mode Stage 0 allows),
+# the output NetCDF must hash-identical between the pre-plumbing baseline
+# (9ddf3d68) and the plumbed build. Re-used by later stages as the raw-path
+# regression anchor.
+[architecture]
+use_gpu = true
+backend = "cuda"
+[numerics]
+float_type = "Float32"
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_fullL72_omega"
+start_date   = "2021-12-01"
+end_date     = "2021-12-01"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+[advection]
+scheme = "linrood"
+ppm_order = 7
+[tracers.sf6]
+  [tracers.sf6.init]
+  kind = "file"
+  file = "~/data/AtmosTransport/catrine/InitialConditions/startSF6_202112010000.nc"
+  variable = "SF6"
+[diffusion]
+kind = "geoschem_holtslag_boville_vdiff"
+surface_flux_boundary = false
+[convection]
+kind = "none"
+[chemistry]
+kind = "none"
+[output]
+snapshot_interval_hours = 1
+snapshot_file = "~/data/AtmosTransport/output/anomaly_ref_gate/bisect_raw_advdiff.nc"

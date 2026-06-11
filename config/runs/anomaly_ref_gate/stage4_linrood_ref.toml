@@ -1,0 +1,73 @@
+# Plan 45 Stage-4 A/B treatment: identical to stage4_linrood_raw.toml but
+# co2_natural carried as a global-mean reference anomaly. The +28%-of-emission
+# F32 surplus must drop sharply if the leak is background-proportional.
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_fullL72_omega"
+start_date   = "2021-12-01"
+end_date     = "2021-12-31"        # DECEMBER scope (valid emissions + GC reference); see SCOPE note above
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "linrood"
+ppm_order = 7
+
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"
+  [tracers.co2_natural.transport]
+  reference = "global_mean"
+  [tracers.co2_natural.surface_flux]
+  kind            = "lmdz_co2"
+  time_varying    = true            # diurnal CAMS biospheric flux (matches GC)
+  temporal_scheme = "stepwise"      # piecewise-constant hold = GC/HEMCO's exact CAMS treatment (verified vs EmisCO2_Total)
+
+[tracers.co2_fossil]
+  [tracers.co2_fossil.init]
+  kind = "uniform"            # fossil CO2 perturbation tracer: 0 at t=0 (GC also starts at 0)
+  background = 0.0
+  [tracers.co2_fossil.surface_flux]
+  kind = "gridfed_fossil_co2"
+  time_index = 12                   # NOTE: monthly index; advance to Jan/Feb (1,2) for those months if regenerating per-month, or use a time-varying gridfed if available
+
+[tracers.sf6]
+  [tracers.sf6.init]
+  kind = "file"
+  file = "~/data/AtmosTransport/catrine/InitialConditions/startSF6_202112010000.nc"
+  variable = "SF6"
+  [tracers.sf6.surface_flux]
+  kind = "edgar_sf6"
+  scale = 1.0116635                 # match GC 10.10 kt/yr (Catrine protocol)
+
+[tracers.rn222]
+  [tracers.rn222.init]
+  kind = "uniform"            # Rn222 starts at 0 (spins up via emission - decay)
+  background = 0.0
+  [tracers.rn222.surface_flux]
+  kind = "zhang_rn222"
+  time_index = 12
+
+[diffusion]
+kind = "geoschem_holtslag_boville_vdiff"
+surface_flux_boundary = true
+
+[convection]
+kind = "cmfmc_matrix"
+tile_workspace_gib = 0.25
+use_collab_lu = true
+lmax_conv = 0
+
+[chemistry]
+kind = "decay"
+  [chemistry.half_lives_seconds]
+  rn222 = 330350.4
+
+[output]
+snapshot_interval_hours = 3         # 3-hourly, matches GC CATRINE_inst output
+snapshot_file = "~/data/AtmosTransport/output/anomaly_ref_gate/stage4_linrood_ref.nc"

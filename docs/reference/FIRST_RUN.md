@@ -92,5 +92,9 @@ Or use Julia with CairoMakie (see `scripts/visualization/` for examples).
 - **Change the advection scheme**: set `scheme = "slopes"` or `"ppm"` in your TOML
 - **Try a different grid**: see [GRID_TYPES.md](GRID_TYPES.md) for LL vs RG vs CS
 - **Add emissions**: see the `[tracers.fossil_co2.surface_flux]` sections in Catrine configs
+- **Large-background F32 tracers** (e.g. ~412 ppm CO2): add `[tracers.X.transport]` with
+  `reference = "global_mean"` to transport the tracer as a signed anomaly against an
+  analytic global-mean reference — removes the F32 background-proportional conservation
+  drift. Cubed-sphere + `scheme = "linrood"` only; see `config/runs/anomaly_ref_gate/`
 - **Run on GPU**: set `use_gpu = true` and `backend = "auto"` in `[architecture]` (CUDA or Metal; Metal requires `float_type = "Float32"`)
 - **Multi-day runs**: add multiple binary_paths (one per day)

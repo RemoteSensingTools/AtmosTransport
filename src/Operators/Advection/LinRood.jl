@@ -719,16 +719,58 @@ function fillz_q!(q_panels::NTuple{6}, m_panels::NTuple{6}, mesh::CubedSphereMes
 end
 
 # `q_ref` is the tracer's reference-state VMR (anomaly transport, plan 45):
-# `nothing` = unreferenced tracer, raw path. The Stage-3 negativity gate will
-# skip the rm→q→rm round-trip (an F32 re-contamination hazard for anomaly
-# stores) whenever the full field `q_anom + q_ref` has no negative cell.
+# `nothing` = unreferenced tracer, exactly today's path. For a referenced
+# tracer, fillz's physical meaning is positivity of the FULL field
+# `q_full = q_anom + q_ref`, and the rm→q→rm round-trip is an F32
+# re-contamination hazard for the anomaly store — so the gate:
+#   1. skips fillz entirely when no interior cell has q_full < 0
+#      (`rm < -q_ref·m`), the overwhelmingly common case for a large
+#      background (this skip IS the F32 win);
+#   2. otherwise reconstructs full mass (muladd in FT), runs fillz on the
+#      physical field, and re-subtracts. The FT round-trip cost is incurred
+#      only on steps where a genuine negative exists. (The plan sketched an
+#      F64 round-trip here; FT is deliberate — the fire path is rare and an
+#      F64 staging copy of six C180 panels per fillz call is a GPU
+#      memory/perf cost the rare event does not justify.)
 function _fillz_rm_panels!(rm_panels::NTuple{6}, m_panels::NTuple{6},
                            mesh::CubedSphereMesh;
                            q_ref::Union{Nothing, Float64} = nothing)
-    _ = q_ref   # consumed by the Stage-3 gate; threaded now so signatures settle
-    rm_to_q_panels!(rm_panels, m_panels, mesh)
-    fillz_q!(rm_panels, m_panels, mesh)
-    q_to_rm_panels!(rm_panels, m_panels, mesh)
+    if q_ref === nothing
+        rm_to_q_panels!(rm_panels, m_panels, mesh)
+        fillz_q!(rm_panels, m_panels, mesh)
+        q_to_rm_panels!(rm_panels, m_panels, mesh)
+        return nothing
+    end
+    FT = eltype(rm_panels[1])
+    qr = FT(q_ref)
+    Nc = mesh.Nc; Hp = mesh.Hp
+    has_negative = false
+    @inbounds for p in 1:6
+        # interior-only: halo cells may hold stale values between exchanges
+        rm_i = view(rm_panels[p], (Hp + 1):(Hp + Nc), (Hp + 1):(Hp + Nc), :)
+        m_i  = view(m_panels[p],  (Hp + 1):(Hp + Nc), (Hp + 1):(Hp + Nc), :)
+        # q_full < 0  ⟺  rm < -q_ref·m  (scalar reduce; no field-sized temp)
+        has_negative = mapreduce((r, mm) -> r < -qr * mm, |, rm_i, m_i;
+                                 init = false)
+        has_negative && break
+    end
+    has_negative || return nothing
+    # Delta-form fire path: run fillz on a SCRATCH copy of the full field and
+    # apply only the fillz-induced change to the anomaly store. The
+    # full-scale add/round-trip/subtract never touches the stored anomaly —
+    # cells fillz does not modify receive exactly zero, so the F32
+    # re-contamination is confined to the (sparse) cells fillz actually
+    # filled. A direct add→fillz→subtract on the store would round the whole
+    # anomaly at the background scale on every fire event, which measurably
+    # degraded conservation in the stage-2/3 sf6 smoke run.
+    scratch = ntuple(p -> muladd.(qr, m_panels[p], rm_panels[p]), 6)
+    before  = ntuple(p -> copy(scratch[p]), 6)
+    rm_to_q_panels!(scratch, m_panels, mesh)
+    fillz_q!(scratch, m_panels, mesh)
+    q_to_rm_panels!(scratch, m_panels, mesh)
+    @inbounds for p in 1:6
+        rm_panels[p] .+= scratch[p] .- before[p]
+    end
     return nothing
 end
 

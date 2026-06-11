@@ -214,6 +214,28 @@ function total_mass_full(state::CubedSphereState, name::Symbol)
 end
 
 """
+    mass_weighted_global_mean_vmr(rm_panels, m_panels, Hp) -> Float64
+
+Mass-weighted global-mean dry VMR `Σ_interior(rm) / Σ_interior(m)`, both sums
+in `Float64` over EXACTLY the interior cells `total_mass_full` uses — that
+shared cell set is what makes the reference seed/burden bookkeeping close
+exactly. This is the `q_ref` definition for `reference = "global_mean"`
+(plan 45): NOT an area-weighted or column-averaged mean.
+"""
+function mass_weighted_global_mean_vmr(rm_panels::NTuple{6}, m_panels::NTuple{6},
+                                       Hp::Integer)
+    rm_sum = 0.0
+    m_sum  = 0.0
+    @inbounds for p in 1:6
+        rm_sum += sum(Float64, _panel_interior(rm_panels[p], Int(Hp)))
+        m_sum  += sum(Float64, _panel_interior(m_panels[p], Int(Hp)))
+    end
+    m_sum > 0.0 || throw(ArgumentError(
+        "mass_weighted_global_mean_vmr: total interior air mass is not positive"))
+    return rm_sum / m_sum
+end
+
+"""
     mixing_ratio_full(state, name)
 
 Physical dry VMR `q_anom + q_ref` (= `get_tracer_full ./ air_mass`, computed
@@ -275,3 +297,4 @@ end
 export allocate_tracers, set_uniform_mixing_ratio!
 export ntracers, tracer_index, tracer_name, get_tracer, eachtracer
 export get_tracer_raw, get_tracer_full, total_mass_full, mixing_ratio_full
+export mass_weighted_global_mean_vmr

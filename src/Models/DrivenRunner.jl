@@ -74,14 +74,18 @@ import ...expand_data_path
 using ...SectionTimer
 using ..State: AbstractMassBasis, DryBasis, MoistBasis, CellState,
                 CubedSphereState, total_air_mass, total_mass_full,
-                tracer_names, tracer_index
+                tracer_names, tracer_index, halo_width,
+                get_tracer_raw, set_tracer_reference!, REF_GLOBAL_MEAN,
+                mass_weighted_global_mean_vmr
 using ..Grids: nlevels
 using ..Operators: LinRoodPPMScheme, PPMScheme, SlopesScheme, UpwindScheme,
-                  ImplicitVerticalDiffusion,
+                  NoAdvection,
+                  ImplicitVerticalDiffusion, NoDiffusion,
                   uses_diffusive_surface_flux_boundary,
                   AbstractConvection,
                   NoConvection, TM5Convection, CMFMCConvection,
-                  CMFMCMatrixConvection
+                  CMFMCMatrixConvection,
+                  NoChemistry, ExponentialDecay
 using ..Architectures: CPU, GPU,
                        runtime_backend_from_config, is_gpu_backend,
                        ensure_backend_runtime!, backend_array_adapter,
@@ -292,14 +296,16 @@ function _tracer_transport_cfg(name, tracer_cfg)
     cadence in ("fixed", "daily", "per_window") || throw(ArgumentError(
         "[tracers.$(name).transport] reference_cadence=\"$(cadence)\" is not " *
         "supported; use \"fixed\", \"daily\", or \"per_window\""))
-    # HACK: Stage-0 plumbing guard — anomaly seeding + operator gates land in a
-    # later stage of plan 45; rejecting here keeps a half-wired build from
-    # silently transporting full mass under a declared reference.
-    # TODO(plan 45 Stage 2): remove this throw when IC seeding ships.
-    reference == "none" || throw(ArgumentError(
-        "[tracers.$(name).transport] reference=\"$(reference)\" is not yet " *
-        "wired (anomaly-reference transport is staged in; IC seeding lands in " *
-        "plan 45 Stage 2); set reference=\"none\""))
+    # NOTE: reference_cadence = "daily"/"per_window" parses but the
+    # re-reference hook ships in plan 45 Stage 5; until then only "fixed"
+    # changes nothing (the seed is computed once at IC either way). Reject
+    # the not-yet-wired cadences for a referenced tracer so a config cannot
+    # silently run with a weaker guarantee than it requested.
+    if reference != "none" && cadence != "fixed"
+        throw(ArgumentError(
+            "[tracers.$(name).transport] reference_cadence=\"$(cadence)\" is not " *
+            "yet wired (plan 45 Stage 5); use reference_cadence=\"fixed\""))
+    end
     return (reference = Symbol(reference), cadence = Symbol(cadence))
 end
 
@@ -316,6 +322,136 @@ function _parse_tracer_specs(cfg)
                             transport.reference,
                             transport.cadence)
     end for name in names)
+end
+
+# ===========================================================================
+# Reference-state (anomaly) transport — compatibility gates + IC seeding
+# (plan 45 Stage 2). A tracer may opt into `reference = "global_mean"` only
+# when every operator acting on it is offset-invariant: the analytic
+# reference must follow the air mass exactly while operators see the anomaly.
+# ===========================================================================
+
+"""
+    is_offset_invariant(op, tracer_name) -> Bool
+
+`true` when applying `op` to a tracer stored as anomaly mass
+`q_anom·m = (q_full - q_ref)·m` produces exactly the anomaly of applying it
+to the full field — i.e. a uniform-VMR field is an eigenstate of `op` and
+`op` is linear in the tracer. Granularity is per-(operator, tracer,
+configuration): decay applies per-tracer rates, convection flips with
+`clamp`. The default is `false` — a new operator must opt IN by proving the
+property, never inherit it.
+"""
+is_offset_invariant(op, tracer_name::Symbol) = false
+
+# Advection: only the LinRood palindrome qualifies — its horizontal
+# monotonicity works on VMR differences and its vertical sweep is pure
+# donor-cell. The split-sweep schemes (Upwind/Slopes/PPM) share a moment
+# limiter that clamps against stored tracer mass (`_limited_moment`), which
+# inverts for a signed anomaly store; they are also runtime-guarded in
+# `strang_split!`. (fillz on the LinRood path is handled by the Stage-3
+# negativity gate, not by this trait.)
+is_offset_invariant(::LinRoodPPMScheme, ::Symbol) = true
+is_offset_invariant(::NoAdvection, ::Symbol) = true   # apply! is a no-op
+
+# Diffusion: the implicit vertical solve is linear in the tracer with
+# row-sum-1 (uniform columns are exact eigenstates; it already carries its
+# own per-column anomaly subtraction internally).
+is_offset_invariant(::ImplicitVerticalDiffusion, ::Symbol) = true
+
+# Convection: flux-divergence / LU forms are linear and uniform-preserving
+# ("uniform mixing ratio preserved" is a pinned TM5 test invariant) — but ONLY
+# on the exact path. The optional CMFMC clamp is a positivity fixer on stored
+# mass, and the level-merge approximation (`n_merge > 1`) disaggregates
+# supercells with `fine_old / super_old` RATIOS of stored tracer values —
+# nonlinear, and meaningless on a signed anomaly store. `n_merge = 1` is the
+# bit-exact path and the only one that qualifies (codex review finding).
+is_offset_invariant(::NoConvection, ::Symbol) = true
+is_offset_invariant(op::CMFMCConvection, ::Symbol) = !op.clamp
+is_offset_invariant(op::TM5Convection, tracer_name::Symbol) = op.n_merge == 1
+is_offset_invariant(op::CMFMCMatrixConvection, tracer_name::Symbol) =
+    is_offset_invariant(op.inner, tracer_name)
+
+# Chemistry: exponential decay is multiplicative (`rm *= e^{-kΔt}`) — it
+# would decay the stored anomaly but not the analytic reference. Only a
+# tracer the decay operator does not act on is safe.
+is_offset_invariant(op::ExponentialDecay, tracer_name::Symbol) =
+    !(tracer_name in op.tracer_names)
+is_offset_invariant(::NoChemistry, ::Symbol) = true
+
+# NoDiffusion/NoAdvection-style defaults: a no-op is trivially invariant.
+is_offset_invariant(::NoDiffusion, ::Symbol) = true
+
+"""
+    _validate_tracer_reference_compat(tracer_specs, recipe;
+                                      reset_air_mass_each_window)
+
+Model-level compatibility check for referenced tracers (CS runner). Throws
+an `ArgumentError` naming the offending operator for the first referenced
+tracer that any non-offset-invariant operator acts on, and rejects the
+preserve-VMR window reset (it rescales FULL VMR, which double-counts the
+reference — see plan 45 Risk 5).
+"""
+function _validate_tracer_reference_compat(tracer_specs, recipe;
+                                           reset_air_mass_each_window::Bool)
+    referenced = [spec for spec in tracer_specs if spec.reference_kind !== :none]
+    isempty(referenced) && return nothing
+    names = join((String(s.name) for s in referenced), ", ")
+    reset_air_mass_each_window && throw(ArgumentError(
+        "reset_air_mass_each_window = true preserves VMR across the window " *
+        "air-mass reset, which is not reference-aware (it would double-count " *
+        "q_ref for: $(names)); disable the reset or use reference = \"none\""))
+    for spec in referenced
+        for (label, op) in (("[advection]", recipe.advection),
+                            ("[diffusion]", recipe.diffusion),
+                            ("[convection]", recipe.convection),
+                            ("[chemistry]", recipe.chemistry))
+            is_offset_invariant(op, spec.name) || throw(ArgumentError(
+                "[tracers.$(spec.name).transport] reference=\"global_mean\" is " *
+                "incompatible with $(label) operator $(typeof(op)): it is not " *
+                "offset-invariant, so it cannot act on anomaly-mass storage. " *
+                (op isa CMFMCConvection && op.clamp ?
+                     "Disable the CMFMC clamp or use reference=\"none\"." :
+                 label == "[advection]" ?
+                     "Use [advection] scheme = \"linrood\" for referenced tracers." :
+                     "Use reference=\"none\" for this tracer.")))
+        end
+    end
+    return nothing
+end
+
+"""
+    _seed_tracer_references!(state, tracer_specs)
+
+Convert each `reference = "global_mean"` tracer from full mass to anomaly
+mass: `q_ref = mass_weighted_global_mean_vmr` (F64, interior cells), then
+`raw ← raw - q_ref·m` computed in F64 and stored back in `FT`. Must run on
+the CPU-resident state BEFORE backend adaptation, immediately after IC
+packing — the stored field and the binary's window-1 air mass are still
+consistent there. Logs each seeded reference (probe-before-build).
+"""
+function _seed_tracer_references!(state, tracer_specs)
+    for spec in tracer_specs
+        spec.reference_kind === :none && continue
+        spec.reference_kind === :global_mean || throw(ArgumentError(
+            "unsupported reference kind $(spec.reference_kind) for tracer $(spec.name)"))
+        idx = tracer_index(state, spec.name)
+        idx === nothing && throw(KeyError(spec.name))
+        raw = get_tracer_raw(state, idx)
+        m = state.air_mass
+        q_ref = mass_weighted_global_mean_vmr(raw, m, halo_width(state))
+        FT = eltype(m[1])
+        @inbounds for p in 1:6
+            # F64 subtraction, FT store: the seed must not round in FT before
+            # the subtraction or the anomaly inherits the background's F32
+            # quantization (the thing this scheme removes).
+            raw[p] .= FT.(Float64.(raw[p]) .- q_ref .* Float64.(m[p]))
+        end
+        set_tracer_reference!(state.tracer_refs, idx, REF_GLOBAL_MEAN, q_ref)
+        @info @sprintf("Tracer %s: reference-state transport enabled, q_ref = %.9e (dry VMR, global mean)",
+                       String(spec.name), q_ref)
+    end
+    return nothing
 end
 
 # ===========================================================================
@@ -878,6 +1014,15 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
                              (TransportTracerSpec(Symbol(get(run_cfg, "tracer_name", "CO2")),
                                                   _copy_cfg_dict(init_cfg),
                                                   Dict{String, Any}()),))
+    # Reference-state (anomaly) transport is cubed-sphere-only: the LL/RG
+    # state carries no reference metadata and its schemes are split-sweep
+    # (moment limiter is not offset-invariant).
+    for spec in tracer_specs
+        spec.reference_kind === :none || throw(ArgumentError(
+            "[tracers.$(spec.name).transport] reference=\"global_mean\" is only " *
+            "supported on cubed-sphere runs (LinRood advection); this is a " *
+            "lat-lon / reduced-Gaussian run"))
+    end
 
     _ensure_gpu_runtime!(cfg)
 
@@ -1157,6 +1302,13 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
     end
     recipe  = build_runtime_physics_recipe(cfg, driver1, FT; halo_width = Hp)
     _validate_capability_match(driver1, recipe)
+    # Reference-state (anomaly) tracers: every operator acting on a referenced
+    # tracer must be offset-invariant, and the preserve-VMR window reset is
+    # incompatible. Fail at setup with the offending operator named, before
+    # any state is allocated.
+    _validate_tracer_reference_compat(tracer_specs, recipe;
+                                      reset_air_mass_each_window =
+                                          reset_air_mass_each_window)
 
     grid    = driver_grid(driver1)
     mesh    = grid.horizontal
@@ -1194,6 +1346,10 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
     end
 
     state  = CubedSphereState(BasisT, mesh, air_mass; tracer_kwargs...)
+    # Seed reference-state tracers while the state is CPU-resident and still
+    # exactly consistent with window-1 air mass: full mass -> anomaly mass
+    # (F64 math, FT store) + carrier metadata. Must precede backend adaptation.
+    _seed_tracer_references!(state, tracer_specs)
     fluxes = allocate_face_fluxes(mesh, Nz; FT = FT, basis = BasisT)
 
     # Build the CS physics object. The recipe-selected operators are installed

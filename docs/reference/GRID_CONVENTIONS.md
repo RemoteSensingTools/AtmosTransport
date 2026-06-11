@@ -48,6 +48,15 @@ dataset.
 
 ## Cubed-sphere panel-order conventions
 
+> **Interactive illustration:** open
+> [`docs/interactive/cubed_sphere.html`](../interactive/cubed_sphere.html) in a
+> browser for a drag-rotatable D3 view of the six GEOS-native panels (real
+> `CubedSphereMesh` corner geometry) and the staircase net with hover-linked
+> halo-edge connectivity, including the panels-4/5 quarter-turn and
+> aligned/reversed edge orientations. Regenerate with
+> `julia --project=. scripts/diagnostics/build_cs_interactive.jl [Nc]` after
+> changing the mesh or `PanelConnectivity.jl`.
+
 AtmosTransport distinguishes the cubed-sphere **definition** from the native
 GEOS file order. A definition is the combination of coordinate law, center law,
 panel convention, and longitude offset.

@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<!-- TEMPLATE — do not open directly. `scripts/diagnostics/build_cs_interactive.jl`
+     splices real GEOS-native mesh geometry (panel_cell_corner_lonlat +
+     default_panel_connectivity) into __GEOMETRY_JSON__ and writes the
+     self-contained cubed_sphere.html next to this file. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AtmosTransport — GEOS cubed-sphere panels, interactive</title>
+<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+<style>
+  body { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+         margin: 1.2em; color: #222; max-width: 1250px; }
+  h1 { font-size: 1.25em; margin-bottom: .2em; }
+  .sub { color: #666; font-size: .9em; margin-bottom: 1em; }
+  .row { display: flex; flex-wrap: wrap; gap: 1.5em; align-items: flex-start; }
+  svg { background: #fbfbfd; border: 1px solid #e3e3ea; border-radius: 8px; }
+  .hint { font-size: .82em; color: #777; margin-top: .35em; }
+  #tip { font-size: .9em; min-height: 2.2em; margin-top: .6em; padding: .45em .7em;
+         background: #f4f6fa; border-left: 3px solid #888; border-radius: 4px;
+         max-width: 560px; }
+  .legend { font-size: .82em; color: #555; margin-top: .8em; line-height: 1.45; }
+  code { background: #f0f0f4; padding: 0 .25em; border-radius: 3px; }
+</style>
+</head>
+<body>
+<h1>GEOS cubed-sphere panel geometry &amp; halo connectivity</h1>
+<div class="sub">
+  Real mesh geometry from <code>Grids.CubedSphereMesh</code>
+  (<span id="meta"></span>) — the same corner law and panel convention the
+  transport runtime uses. Drag the globe to rotate; hover a panel edge in the
+  staircase net to see its halo partner on both views.
+</div>
+<div class="row">
+  <div>
+    <svg id="globe" width="520" height="520"></svg>
+    <div class="hint">drag to rotate &middot; scroll does nothing (on purpose)</div>
+  </div>
+  <div>
+    <svg id="net" width="640" height="520"></svg>
+    <div id="tip">Hover an edge of any panel square&hellip;</div>
+    <div class="legend">
+      Edge indices are <em>local</em>: 1&nbsp;=&nbsp;+Y, 2&nbsp;=&nbsp;&minus;Y,
+      3&nbsp;=&nbsp;+X, 4&nbsp;=&nbsp;&minus;X
+      (<code>PanelConnectivity.jl</code>). Orientation
+      <b>aligned</b>: halo index <code>s &rarr; s</code>;
+      <b>reversed</b>: <code>s &rarr; Nc+1&minus;s</code>.
+      Panels 1&ndash;2: X&rarr;east, Y&rarr;north. Panels 4&ndash;5 are stored
+      a quarter-turn rotated (X&rarr;south, Y&rarr;east) — the classic GEOS
+      file-convention gotcha. Panels 3/6 are the polar caps.
+    </div>
+  </div>
+</div>
+<script>
+const G = __GEOMETRY_JSON__;
+
+const COLORS = ["#0072B2", "#E69F00", "#009E73", "#D55E00", "#CC79A7", "#56B4E9"];
+const EDGE_NAMES = ["+Y (1)", "−Y (2)", "+X (3)", "−X (4)"];
+d3.select("#meta").text(`C${G.Nc}, ${G.convention}`);
+
+// ---- shared helpers --------------------------------------------------------
+// corners[i][j] = [lon, lat], i = local X index, j = local Y index (1-based in
+// Julia, 0-based here). Edge e (0..3) -> polyline of corner points.
+function edgeLine(corners, e) {
+  const N = corners.length - 1;
+  if (e === 0) return corners.map(row => row[N]);      // +Y : j = N
+  if (e === 1) return corners.map(row => row[0]);      // -Y : j = 0
+  if (e === 2) return corners[N];                      // +X : i = N
+  return corners[0];                                   // -X : i = 0
+}
+
+// ---- globe -----------------------------------------------------------------
+const gsvg = d3.select("#globe"), W = +gsvg.attr("width"), H = +gsvg.attr("height");
+const proj = d3.geoOrthographic().translate([W/2, H/2]).scale(W/2 - 12)
+               .rotate([10, -18]).clipAngle(90);
+const path = d3.geoPath(proj);
+const globe = gsvg.append("g");
+
+globe.append("path").datum({type: "Sphere"})
+  .attr("fill", "#ffffff").attr("stroke", "#999").attr("d", path);
+globe.append("path").datum(d3.geoGraticule10())
+  .attr("fill", "none").attr("stroke", "#eee").attr("d", path);
+
+function panelMultiline(corners) {
+  const lines = [];
+  const N = corners.length - 1;
+  for (let i = 0; i <= N; i++) lines.push(corners[i]);                    // X = const
+  for (let j = 0; j <= N; j++) lines.push(corners.map(row => row[j]));    // Y = const
+  return {type: "MultiLineString", coordinates: lines};
+}
+function panelBoundary(corners) {
+  const N = corners.length - 1;
+  const ring = corners.map(r => r[0])
+    .concat(corners[N].slice(1))
+    .concat(corners.map(r => r[N]).reverse().slice(1))
+    .concat(corners[0].slice().reverse().slice(1));
+  return {type: "LineString", coordinates: ring};
+}
+
+const gridPaths = [], boundaryPaths = [], labelNodes = [], edgeHL = [];
+G.panels.forEach((p, k) => {
+  gridPaths.push(globe.append("path").datum(panelMultiline(p.corners))
+    .attr("fill", "none").attr("stroke", COLORS[k]).attr("stroke-width", 0.5)
+    .attr("stroke-opacity", 0.55).attr("d", path));
+  boundaryPaths.push(globe.append("path").datum(panelBoundary(p.corners))
+    .attr("fill", "none").attr("stroke", COLORS[k]).attr("stroke-width", 2.2)
+    .attr("d", path));
+});
+G.panels.forEach((p, k) => {
+  labelNodes.push(globe.append("text").datum(G.centers[k])
+    .attr("font-size", "15px").attr("font-weight", 700).attr("fill", COLORS[k])
+    .attr("stroke", "#fff").attr("stroke-width", 3).attr("paint-order", "stroke")
+    .attr("text-anchor", "middle").text(k + 1));
+});
+// two highlight paths (the hovered edge + its partner)
+for (let i = 0; i < 2; i++)
+  edgeHL.push(globe.append("path").attr("fill", "none")
+    .attr("stroke", "#000").attr("stroke-width", 4.5).attr("stroke-linecap", "round")
+    .attr("visibility", "hidden"));
+
+function redraw() {
+  globe.selectAll("path").attr("d", path);
+  labelNodes.forEach((n, k) => {
+    const c = G.centers[k];
+    const visible = d3.geoDistance(c, [-proj.rotate()[0], -proj.rotate()[1]]) < Math.PI / 2;
+    n.attr("visibility", visible ? "visible" : "hidden");
+    const xy = proj(c);
+    if (xy) n.attr("x", xy[0]).attr("y", xy[1] + 5);
+  });
+}
+redraw();
+
+gsvg.call(d3.drag().on("drag", (ev) => {
+  const r = proj.rotate(), sens = 0.25;   // degrees per pixel
+  proj.rotate([r[0] + ev.dx * sens,
+               Math.max(-90, Math.min(90, r[1] - ev.dy * sens)), r[2]]);
+  redraw();
+}));
+
+// ---- staircase net ---------------------------------------------------------
+// FV3 staircase: every drawn adjacency is an aligned (orientation 0) edge pair.
+//      5 6
+//    3 4
+//  1 2
+const NET_POS = [[0, 2], [1, 2], [1, 1], [2, 1], [2, 0], [3, 0]];  // [col,row]
+const S = 132, PAD = 42;
+const nsvg = d3.select("#net");
+const net = nsvg.append("g").attr("transform", `translate(${PAD},${PAD})`);
+
+const tip = d3.select("#tip");
+
+function edgeSegment(px, py, e) {
+  // returns [x1,y1,x2,y2] for edge e of the square at panel position, in
+  // LOCAL index space: +Y = top, -Y = bottom, +X = right, -X = left
+  if (e === 0) return [px, py, px + S, py];               // +Y top
+  if (e === 1) return [px, py + S, px + S, py + S];       // -Y bottom
+  if (e === 2) return [px + S, py, px + S, py + S];       // +X right
+  return [px, py, px, py + S];                            // -X left
+}
+
+const netEdgeSel = {};   // "p:e" -> selection, for partner highlighting
+G.panels.forEach((p, k) => {
+  const [c, r] = NET_POS[k];
+  const x = c * S + c * 8, y = r * S + r * 8;
+  net.append("rect").attr("x", x).attr("y", y).attr("width", S).attr("height", S)
+     .attr("fill", COLORS[k]).attr("fill-opacity", 0.10)
+     .attr("stroke", COLORS[k]).attr("stroke-width", 2);
+  net.append("text").attr("x", x + S/2).attr("y", y + S/2 - 16)
+     .attr("text-anchor", "middle").attr("font-size", "21px")
+     .attr("font-weight", 700).attr("fill", COLORS[k]).text(k + 1);
+  net.append("text").attr("x", x + S/2).attr("y", y + S/2 + 38)
+     .attr("text-anchor", "middle").attr("font-size", "10.5px")
+     .attr("fill", "#666").text(G.panel_notes[k]);
+  // local axis arrows (index space)
+  const ax = x + 14, ay = y + S - 14;
+  net.append("line").attr("x1", ax).attr("y1", ay).attr("x2", ax + 30).attr("y2", ay)
+     .attr("stroke", "#444").attr("stroke-width", 1.6).attr("marker-end", "url(#arr)");
+  net.append("line").attr("x1", ax).attr("y1", ay).attr("x2", ax).attr("y2", ay - 30)
+     .attr("stroke", "#444").attr("stroke-width", 1.6).attr("marker-end", "url(#arr)");
+  net.append("text").attr("x", ax + 34).attr("y", ay + 4).attr("font-size", "10px").text("X");
+  net.append("text").attr("x", ax - 4).attr("y", ay - 34).attr("font-size", "10px").text("Y");
+
+  for (let e = 0; e < 4; e++) {
+    const [x1, y1, x2, y2] = edgeSegment(x, y, e);
+    const hl = net.append("line").attr("x1", x1).attr("y1", y1).attr("x2", x2).attr("y2", y2)
+      .attr("stroke", "#000").attr("stroke-width", 5).attr("visibility", "hidden");
+    netEdgeSel[`${k}:${e}`] = hl;
+    net.append("line").attr("x1", x1).attr("y1", y1).attr("x2", x2).attr("y2", y2)
+      .attr("stroke", "transparent").attr("stroke-width", 14).style("cursor", "pointer")
+      .on("mouseenter", () => showEdge(k, e))
+      .on("mouseleave", clearEdge);
+  }
+});
+
+nsvg.append("defs").append("marker").attr("id", "arr").attr("viewBox", "0 0 10 10")
+  .attr("refX", 9).attr("refY", 5).attr("markerWidth", 6).attr("markerHeight", 6)
+  .attr("orient", "auto-start-reverse")
+  .append("path").attr("d", "M 0 0 L 10 5 L 0 10 z").attr("fill", "#444");
+
+function partnerEdge(p, e) {
+  const conn = G.connectivity[p][e];          // {panel, orient}
+  const q = conn.panel - 1;
+  for (let eq = 0; eq < 4; eq++)
+    if (G.connectivity[q][eq].panel === p + 1) {
+      // disambiguate panels that touch twice (polar caps touch each
+      // equatorial panel once, so first match is unique here)
+      return [q, eq, conn.orient];
+    }
+  return [q, 0, conn.orient];
+}
+
+function showEdge(p, e) {
+  const [q, eq, orient] = partnerEdge(p, e);
+  netEdgeSel[`${p}:${e}`].attr("visibility", "visible").attr("stroke", COLORS[p]);
+  netEdgeSel[`${q}:${eq}`].attr("visibility", "visible").attr("stroke", COLORS[q]);
+  edgeHL[0].datum({type: "LineString", coordinates: edgeLine(G.panels[p].corners, e)})
+    .attr("stroke", COLORS[p]).attr("visibility", "visible").attr("d", path);
+  edgeHL[1].datum({type: "LineString", coordinates: edgeLine(G.panels[q].corners, eq)})
+    .attr("stroke", COLORS[q]).attr("stroke-dasharray", "7 5")
+    .attr("visibility", "visible").attr("d", path);
+  tip.html(`Panel <b style="color:${COLORS[p]}">${p + 1}</b> edge <b>${EDGE_NAMES[e]}</b>
+    &nbsp;&harr;&nbsp; panel <b style="color:${COLORS[q]}">${q + 1}</b> edge
+    <b>${EDGE_NAMES[eq]}</b> &mdash;
+    <b>${orient === 0 ? "aligned (s → s)" : "reversed (s → Nc+1−s)"}</b>.
+    Halo flux crossing this edge is rotated by
+    <code>panel_connectivity.jl</code>; on the globe the partner edge is dashed
+    (it is the <em>same</em> physical great-circle arc).`);
+}
+function clearEdge() {
+  Object.values(netEdgeSel).forEach(s => s.attr("visibility", "hidden"));
+  edgeHL.forEach(s => s.attr("visibility", "hidden"));
+  tip.html("Hover an edge of any panel square&hellip;");
+}
+</script>
+</body>
+</html>

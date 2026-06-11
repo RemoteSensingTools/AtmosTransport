@@ -32,11 +32,6 @@ Conventions: **[S]** small (≤1 day) · **[M]** medium (days) · **[L]** large
 Ranked by payoff × (1/risk). Estimated total: ~18 kLOC of structural
 redundancy; the items below are the tractable core.
 
-6. **[M] Thomas-solver dedup** — 8 diffusion `@kernel` bodies in
-   `src/Operators/Diffusion/diffusion_kernels.jl` repeat a ~50-line
-   tridiagonal elimination. Shared `@inline _thomas_forward!/_backward!`
-   helpers (~300 LOC saved; GPU-safe). MUST preserve the CS-only `cref`
-   anomaly subtraction asymmetry (the F32 fix, `9ddf3d68`).
 8. **[M] Per-topology NetCDF writers** — three ~90-line
    `_write_snapshot_payload!` methods sharing the skeleton
    (`src/Output/netcdf_writer.jl`). Shared body + topology shims
@@ -99,6 +94,16 @@ existing `sweep_x/y/z!` `@eval` loops (already idiomatic); the
 
 ## Done log
 
+- 2026-06-11 — consolidation batch 2: Thomas-solver dedup (890→579 lines in
+  `diffusion_kernels.jl`): 8 `@kernel` bodies → two `@inline` column cores
+  (`_thomas_geometric_column!` / `_thomas_massflux_column!`) over a zero-cost
+  `_ColumnView`/`_KzColumn` accessor; CS `cref` anomaly path preserved via
+  `cref::Union{Nothing,FT}` compile-time dispatch (plain path adds NO float
+  ops). Verified: old-vs-new CPU harness bit-identical (9/9, all layouts +
+  negative-anomaly cref), 1-day C180 GPU run bit-identical, codex APPROVE.
+  Also fixed suite-aborter #2: stale `test_era5_n320_reader` "unknown source"
+  case used `MERRA-2`, which became a real source — `Pkg.test()` now runs the
+  full alphabet.
 - 2026-06-11 — consolidation batch 1 (bit-identical gated): suite-aborting
   writer-guard fixture fixed (full `Pkg.test()` restored as CI gate); twin
   `_cs_section_elements` → one canonical superset + header-dispatch shim;

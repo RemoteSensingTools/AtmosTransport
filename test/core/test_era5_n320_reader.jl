@@ -217,9 +217,11 @@ end
         mktempdir() do root
             toml_path = joinpath(root, "bogus.toml")
             open(toml_path, "w") do io
+                # NB: must be a name no source registers. "MERRA-2" was used
+                # here until it became a real source (sources/merra2.jl).
                 println(io, """
                 [source]
-                name = "MERRA-2"
+                name = "NOT-A-SOURCE"
                 """)
             end
             @test_throws "Unsupported met source" load_met_settings(toml_path; root_dir = root)

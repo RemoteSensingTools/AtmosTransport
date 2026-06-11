@@ -64,62 +64,60 @@
 # leaking tracer mass by ~1–10 % per 3-day CS180 run.
 # ---------------------------------------------------------------------------
 
-"""
-    _vertical_diffusion_kernel!(q, air_mass, kz_field, dz, w_scratch, dt, Nz)
+# ---------------------------------------------------------------------------
+# Shared column machinery.
+#
+# Every kernel below solves the same per-column Backward-Euler tridiagonal
+# system; the eight @kernel entry points differ only in storage layout
+# (LL packed 4-D, CS halo-padded panel 3-D/4-D, face-indexed 2-D/3-D) and in
+# whether the CS anomaly reference is subtracted. `_ColumnView` erases the
+# layout: it pins every index except the vertical one so the solver cores
+# read and write plain `[k]`. The wrappers construct the views inside the
+# kernel from device arrays + integer indices — isbits, zero-cost, GPU-safe.
+# The cores run the SAME float ops in the SAME order as the former inline
+# bodies (verified bit-identical), so this is layout plumbing only.
+# ---------------------------------------------------------------------------
 
-KernelAbstractions kernel: implicit (Backward-Euler) vertical
-diffusion for one column per `(i, j, t)` thread, mass-flux form
-(TM5-style; preserves `Σ m·q` to roundoff).
+struct _ColumnView{A, I <: Tuple, J <: Tuple}
+    a    :: A
+    pre  :: I   # indices before the vertical index
+    post :: J   # indices after the vertical index
+end
+Base.@propagate_inbounds Base.getindex(v::_ColumnView, k::Int) =
+    v.a[v.pre..., k, v.post...]
+Base.@propagate_inbounds Base.setindex!(v::_ColumnView, x, k::Int) =
+    (v.a[v.pre..., k, v.post...] = x)
 
-- `q::AbstractArray{FT, 4}` — dry-VMR tracer values `(Nx, Ny, Nz, Nt)`,
-  read for old values and written with new values in place.
-- `air_mass::AbstractArray{FT, 3}` — dry layer mass `(Nx, Ny, Nz)`,
-  used to build the mass-flux coefficients. Not mutated.
-- `kz_field::AbstractTimeVaryingField{FT, 3}` — Kz at cell centers.
-- `dz::AbstractArray{FT, 3}` — layer thicknesses in meters,
-  `(Nx, Ny, Nz)`. Caller supplies; not mutated.
-- `w_scratch::AbstractArray{FT, 3}` — caller-supplied workspace,
-  `(Nx, Ny, Nz)`. Holds the Thomas forward-elimination factors
-  between the forward and back-substitution loops.
-- `dt::FT` — time step.
-- `Nz::Int` — number of vertical levels.
+struct _KzColumn{F, I <: Tuple}
+    f   :: F
+    pre :: I
+end
+Base.@propagate_inbounds Base.getindex(v::_KzColumn, k::Int) =
+    field_value(v.f, (v.pre..., k))
 
-# Adjoint note
-
-The mass-flux coefficients are not symmetric in `(a, c)`: at row k,
-`a_k = -dt·dkg[k-½]/m_k` and `c_k = -dt·dkg[k+½]/m_k`, with `m_k` in
-both denominators (NOT `m_{k-1}` and `m_{k+1}`). The TRANSPOSE of this
-matrix swaps to `a_T[k] = c[k-1]·... ` patterns that resolve to
-`-dt·dkg[k-½]/m_{k-1}` etc. See `src/Adjoints/DiffusionAdjoint.jl` for
-the corresponding adjoint kernel that reads `air_mass` and builds the
-transposed coefficient form.
-"""
-# NOTE: LL packed and RG (face-indexed) kernels remain on the legacy
-# GEOMETRIC form `D = Kz/(dz·dz)` for now. The mass-flux conservation
-# rewrite has only been threaded through the CS path because that's
-# where the user's experiments run; the LL/RG paths currently apply
-# the kernel directly to tracer mass without pre/post VMR scaling and
-# fixing them requires either (a) adding the LL/RG mass-VMR wrapper
-# (matching CS's `apply_vertical_diffusion_vmr!`) or (b) reformulating
-# the LL/RG state contract to VMR-native. Tracked as a follow-up in
-# the D1 audit memo. See the CS-side kernels below for the mass-flux
-# form.
-@kernel function _vertical_diffusion_kernel!(q, kz_field,
-                                              @Const(dz),
-                                              w_scratch,
-                                              dt, Nz::Int)
-    i, j, t = @index(Global, NTuple)
-    FT = eltype(q)
+@inline function _column_min(q, Nz::Int)
     @inbounds begin
-        dt_ft = FT(dt)
+        cref = q[1]
+        for k in 2:Nz
+            v = q[k]
+            cref = v < cref ? v : cref
+        end
+        return cref
+    end
+end
 
+# Legacy GEOMETRIC family: D = Kz / (dz_k · dz_iface). Conserves Σ q·dz,
+# NOT Σ m·q — see the header comment above.
+@inline function _thomas_geometric_column!(q, kz, dz, w,
+                                           dt_ft::FT, Nz::Int) where FT
+    @inbounds begin
         Kz_prev = zero(FT)
         dz_prev = zero(FT)
         w_prev  = zero(FT)
         g_prev  = zero(FT)
 
-        Kz_k = field_value(kz_field, (i, j, 1))
-        dz_k = dz[i, j, 1]
+        Kz_k = kz[1]
+        dz_k = dz[1]
 
         for k in 1:Nz
             D_above = zero(FT)
@@ -134,8 +132,8 @@ transposed coefficient form.
             end
 
             if k < Nz
-                Kz_next  = field_value(kz_field, (i, j, k + 1))
-                dz_next  = dz[i, j, k + 1]
+                Kz_next  = kz[k + 1]
+                dz_next  = dz[k + 1]
                 Kz_below = (Kz_k + Kz_next) / FT(2)
                 dz_below = (dz_k + dz_next) / FT(2)
                 D_below  = Kz_below / (dz_k * dz_below)
@@ -144,7 +142,7 @@ transposed coefficient form.
             a_k = (k > 1)  ? -dt_ft * D_above : zero(FT)
             b_k = one(FT) + dt_ft * (D_above + D_below)
             c_k = (k < Nz) ? -dt_ft * D_below : zero(FT)
-            d_k = q[i, j, k, t]
+            d_k = q[k]
 
             if k == 1
                 denom = b_k
@@ -156,8 +154,8 @@ transposed coefficient form.
                 g_k   = (d_k - a_k * g_prev) / denom
             end
 
-            w_scratch[i, j, k] = w_k
-            q[i, j, k, t]      = g_k
+            w[k] = w_k
+            q[k] = g_k
 
             if k < Nz
                 w_prev  = w_k
@@ -170,9 +168,138 @@ transposed coefficient form.
         end
 
         for k in (Nz - 1):-1:1
-            q[i, j, k, t] = q[i, j, k, t] - w_scratch[i, j, k] * q[i, j, k + 1, t]
+            q[k] = q[k] - w[k] * q[k + 1]
         end
     end
+    return nothing
+end
+
+# TM5 MASS-FLUX family (preserves Σ m·q to roundoff; coefficients in the
+# header comment). `cref` selects the CS anomaly path at compile time:
+# `nothing` runs the plain solve with NO extra float ops (a `± 0` would
+# flip `-0.0` bits); an `FT` subtracts the per-column reference before the
+# elimination and restores it after back-substitution (the F32 fix — the
+# implicit operator preserves a uniform column exactly, so this is an
+# identity in exact arithmetic that keeps the F32 rounding on the small
+# anomaly instead of the large background).
+@inline function _thomas_massflux_column!(q, m, kz, dz, w,
+                                          dt_ft::FT, Nz::Int,
+                                          cref::Union{Nothing, FT}) where FT
+    @inbounds begin
+        Kz_prev = zero(FT)
+        dz_prev = zero(FT)
+        m_prev  = zero(FT)
+        w_prev  = zero(FT)
+        g_prev  = zero(FT)
+
+        Kz_k = kz[1]
+        dz_k = dz[1]
+        m_k  = m[1]
+
+        for k in 1:Nz
+            dkg_above = zero(FT)
+            dkg_below = zero(FT)
+            Kz_next   = zero(FT)
+            dz_next   = zero(FT)
+            m_next    = zero(FT)
+
+            if k > 1
+                sum_dz_above = dz_prev + dz_k
+                dkg_above = (m_prev + m_k) * (Kz_prev + Kz_k) /
+                            (sum_dz_above * sum_dz_above)
+            end
+
+            if k < Nz
+                Kz_next  = kz[k + 1]
+                dz_next  = dz[k + 1]
+                m_next   = m[k + 1]
+                sum_dz_below = dz_k + dz_next
+                dkg_below = (m_k + m_next) * (Kz_k + Kz_next) /
+                            (sum_dz_below * sum_dz_below)
+            end
+
+            inv_m_k = m_k > zero(FT) ? one(FT) / m_k : zero(FT)
+            a_k = (k > 1)  ? -dt_ft * dkg_above * inv_m_k : zero(FT)
+            c_k = (k < Nz) ? -dt_ft * dkg_below * inv_m_k : zero(FT)
+            b_k = one(FT) + dt_ft * (dkg_above + dkg_below) * inv_m_k
+            d_k = cref === nothing ? q[k] : q[k] - cref
+
+            if k == 1
+                denom = b_k
+                w_k   = c_k / denom
+                g_k   = d_k / denom
+            else
+                denom = b_k - a_k * w_prev
+                w_k   = c_k / denom
+                g_k   = (d_k - a_k * g_prev) / denom
+            end
+
+            w[k] = w_k
+            q[k] = g_k
+
+            if k < Nz
+                w_prev  = w_k
+                g_prev  = g_k
+                Kz_prev = Kz_k
+                dz_prev = dz_k
+                m_prev  = m_k
+                Kz_k    = Kz_next
+                dz_k    = dz_next
+                m_k     = m_next
+            end
+        end
+
+        for k in (Nz - 1):-1:1
+            q[k] = q[k] - w[k] * q[k + 1]
+        end
+
+        if cref !== nothing
+            # restore the per-column reference removed before the solve
+            for k in 1:Nz
+                q[k] += cref
+            end
+        end
+    end
+    return nothing
+end
+
+
+"""
+    _vertical_diffusion_kernel!(q, kz_field, dz, w_scratch, dt, Nz)
+
+Legacy LL packed GEOMETRIC kernel (`D = Kz/(dz·dz_iface)`; conserves
+`Σ q·dz`, not `Σ m·q`): one column per `(i, j, t)` thread on
+`(Nx, Ny, Nz, Nt)` tracer values. Kept for external callers that have
+not been ported; new code should route through
+`apply_vertical_diffusion_vmr!`, which dispatches to the mass-flux
+kernels below.
+
+- `kz_field::AbstractTimeVaryingField{FT, 3}` — Kz at cell centers.
+- `dz::AbstractArray{FT, 3}` — layer thicknesses in meters `(Nx, Ny, Nz)`.
+- `w_scratch::AbstractArray{FT, 3}` — Thomas forward-elimination factors
+  between the forward and back-substitution loops.
+
+# Adjoint note (mass-flux family)
+
+The mass-flux coefficients are not symmetric in `(a, c)`: at row k,
+`a_k = -dt·dkg[k-½]/m_k` and `c_k = -dt·dkg[k+½]/m_k`, with `m_k` in
+both denominators (NOT `m_{k-1}` and `m_{k+1}`). The TRANSPOSE of this
+matrix swaps to `a_T[k] = c[k-1]·... ` patterns that resolve to
+`-dt·dkg[k-½]/m_{k-1}` etc. See `src/Adjoints/DiffusionAdjoint.jl` for
+the corresponding adjoint kernel that reads `air_mass` and builds the
+transposed coefficient form.
+"""
+@kernel function _vertical_diffusion_kernel!(q, kz_field,
+                                              @Const(dz),
+                                              w_scratch,
+                                              dt, Nz::Int)
+    i, j, t = @index(Global, NTuple)
+    FT = eltype(q)
+    _thomas_geometric_column!(_ColumnView(q, (i, j), (t,)),
+                              _KzColumn(kz_field, (i, j)),
+                              _ColumnView(dz, (i, j), ()),
+                              _ColumnView(w_scratch, (i, j), ()),
+                              FT(dt), Nz)
 end
 
 # ---------------------------------------------------------------------------
@@ -188,86 +315,23 @@ end
                                                        dt, Nz::Int)
     i, j, t = @index(Global, NTuple)
     FT = eltype(q)
-    @inbounds begin
-        dt_ft = FT(dt)
-
-        Kz_prev = zero(FT)
-        dz_prev = zero(FT)
-        m_prev  = zero(FT)
-        w_prev  = zero(FT)
-        g_prev  = zero(FT)
-
-        Kz_k = field_value(kz_field, (i, j, 1))
-        dz_k = dz[i, j, 1]
-        m_k  = air_mass[i, j, 1]
-
-        for k in 1:Nz
-            dkg_above = zero(FT)
-            dkg_below = zero(FT)
-            Kz_next   = zero(FT)
-            dz_next   = zero(FT)
-            m_next    = zero(FT)
-
-            if k > 1
-                sum_dz_above = dz_prev + dz_k
-                dkg_above = (m_prev + m_k) * (Kz_prev + Kz_k) /
-                            (sum_dz_above * sum_dz_above)
-            end
-
-            if k < Nz
-                Kz_next  = field_value(kz_field, (i, j, k + 1))
-                dz_next  = dz[i, j, k + 1]
-                m_next   = air_mass[i, j, k + 1]
-                sum_dz_below = dz_k + dz_next
-                dkg_below = (m_k + m_next) * (Kz_k + Kz_next) /
-                            (sum_dz_below * sum_dz_below)
-            end
-
-            inv_m_k = m_k > zero(FT) ? one(FT) / m_k : zero(FT)
-            a_k = (k > 1)  ? -dt_ft * dkg_above * inv_m_k : zero(FT)
-            c_k = (k < Nz) ? -dt_ft * dkg_below * inv_m_k : zero(FT)
-            b_k = one(FT) + dt_ft * (dkg_above + dkg_below) * inv_m_k
-            d_k = q[i, j, k, t]
-
-            if k == 1
-                denom = b_k
-                w_k   = c_k / denom
-                g_k   = d_k / denom
-            else
-                denom = b_k - a_k * w_prev
-                w_k   = c_k / denom
-                g_k   = (d_k - a_k * g_prev) / denom
-            end
-
-            w_scratch[i, j, k] = w_k
-            q[i, j, k, t]      = g_k
-
-            if k < Nz
-                w_prev  = w_k
-                g_prev  = g_k
-                Kz_prev = Kz_k
-                dz_prev = dz_k
-                m_prev  = m_k
-                Kz_k    = Kz_next
-                dz_k    = dz_next
-                m_k     = m_next
-            end
-        end
-
-        for k in (Nz - 1):-1:1
-            q[i, j, k, t] = q[i, j, k, t] - w_scratch[i, j, k] * q[i, j, k + 1, t]
-        end
-    end
+    _thomas_massflux_column!(_ColumnView(q, (i, j), (t,)),
+                             _ColumnView(air_mass, (i, j), ()),
+                             _KzColumn(kz_field, (i, j)),
+                             _ColumnView(dz, (i, j), ()),
+                             _ColumnView(w_scratch, (i, j), ()),
+                             FT(dt), Nz, nothing)
 end
 
 """
-    _vertical_diffusion_cs_single_kernel!(q, kz_field, dz, w_scratch, dt, Nz, Hp)
+    _vertical_diffusion_cs_single_kernel!(q, air_mass, kz_field, dz, w_scratch,
+                                          dt, Nz, Hp)
 
-Cubed-sphere single-tracer diffusion kernel.
+Cubed-sphere single-tracer mass-flux diffusion kernel (anomaly/cref path).
 
-`q` is one halo-padded panel `(Nc + 2Hp, Nc + 2Hp, Nz)` while `dz` and
-`w_scratch` are interior `(Nc, Nc, Nz)` workspaces. The structured
-column solve is unchanged; only the panel halo offset differs.
+`q` and `air_mass` are halo-padded panels `(Nc + 2Hp, Nc + 2Hp, Nz)` while
+`kz_field`, `dz`, and `w_scratch` are interior `(Nc, Nc, Nz)`; only the
+panel halo offset differs from the LL packed kernel.
 """
 @kernel function _vertical_diffusion_cs_single_kernel!(q, @Const(air_mass),
                                                        kz_field,
@@ -276,106 +340,34 @@ column solve is unchanged; only the panel halo offset differs.
                                                        dt, Nz::Int, Hp::Int)
     ii, jj = @index(Global, NTuple)
     FT = eltype(q)
-    @inbounds begin
-        i = ii + Hp
-        j = jj + Hp
-        dt_ft = FT(dt)
-
-        # Anomaly diffusion (F32 conservation fix): the implicit operator
-        # preserves a uniform column exactly (each tridiagonal row sums to 1
-        # under the zero-flux BCs), so subtracting a per-column reference VMR
-        # before the solve and adding it back is an identity in exact arithmetic
-        # (L⁻¹(c·1)=c·1) — it only changes the F32 ROUNDING, keeping the
-        # elimination on the small anomaly instead of the large background.
-        # Without it, the Thomas elimination on a background-dominated VMR loses
-        # ~1e-5 relative mass, contaminating small emission budgets (the SF6
-        # ~2.5% deficit). Never worse than the plain solve: a column whose
-        # current min is exactly 0 (e.g. a still-zero IC=0 tracer) gives cref=0
-        # and is bit-identical; otherwise it strictly improves F32 conservation.
-        cref = q[i, j, 1]
-        for k in 2:Nz
-            v = q[i, j, k]
-            cref = v < cref ? v : cref
-        end
-
-        Kz_prev = zero(FT)
-        dz_prev = zero(FT)
-        m_prev  = zero(FT)
-        w_prev  = zero(FT)
-        g_prev  = zero(FT)
-
-        Kz_k = field_value(kz_field, (ii, jj, 1))
-        dz_k = dz[ii, jj, 1]
-        m_k  = air_mass[i, j, 1]
-
-        for k in 1:Nz
-            dkg_above = zero(FT)
-            dkg_below = zero(FT)
-            Kz_next   = zero(FT)
-            dz_next   = zero(FT)
-            m_next    = zero(FT)
-
-            if k > 1
-                sum_dz_above = dz_prev + dz_k
-                dkg_above = (m_prev + m_k) * (Kz_prev + Kz_k) /
-                            (sum_dz_above * sum_dz_above)
-            end
-
-            if k < Nz
-                Kz_next  = field_value(kz_field, (ii, jj, k + 1))
-                dz_next  = dz[ii, jj, k + 1]
-                m_next   = air_mass[i, j, k + 1]
-                sum_dz_below = dz_k + dz_next
-                dkg_below = (m_k + m_next) * (Kz_k + Kz_next) /
-                            (sum_dz_below * sum_dz_below)
-            end
-
-            inv_m_k = m_k > zero(FT) ? one(FT) / m_k : zero(FT)
-            a_k = (k > 1)  ? -dt_ft * dkg_above * inv_m_k : zero(FT)
-            c_k = (k < Nz) ? -dt_ft * dkg_below * inv_m_k : zero(FT)
-            b_k = one(FT) + dt_ft * (dkg_above + dkg_below) * inv_m_k
-            d_k = q[i, j, k] - cref
-
-            if k == 1
-                denom = b_k
-                w_k   = c_k / denom
-                g_k   = d_k / denom
-            else
-                denom = b_k - a_k * w_prev
-                w_k   = c_k / denom
-                g_k   = (d_k - a_k * g_prev) / denom
-            end
-
-            w_scratch[ii, jj, k] = w_k
-            q[i, j, k]           = g_k
-
-            if k < Nz
-                w_prev  = w_k
-                g_prev  = g_k
-                Kz_prev = Kz_k
-                dz_prev = dz_k
-                m_prev  = m_k
-                Kz_k    = Kz_next
-                dz_k    = dz_next
-                m_k     = m_next
-            end
-        end
-
-        for k in (Nz - 1):-1:1
-            q[i, j, k] = q[i, j, k] - w_scratch[ii, jj, k] * q[i, j, k + 1]
-        end
-
-        # restore the per-column reference removed before the solve
-        for k in 1:Nz
-            q[i, j, k] += cref
-        end
-    end
+    i = ii + Hp
+    j = jj + Hp
+    qcol = _ColumnView(q, (i, j), ())
+    # Anomaly diffusion (F32 conservation fix): the implicit operator
+    # preserves a uniform column exactly (each tridiagonal row sums to 1
+    # under the zero-flux BCs), so subtracting a per-column reference VMR
+    # before the solve and adding it back is an identity in exact arithmetic
+    # (L⁻¹(c·1)=c·1) — it only changes the F32 ROUNDING, keeping the
+    # elimination on the small anomaly instead of the large background.
+    # Without it, the Thomas elimination on a background-dominated VMR loses
+    # ~1e-5 relative mass, contaminating small emission budgets (the SF6
+    # ~2.5% deficit). Never worse than the plain solve: a column whose
+    # current min is exactly 0 (e.g. a still-zero IC=0 tracer) gives cref=0
+    # and is bit-identical; otherwise it strictly improves F32 conservation.
+    cref = _column_min(qcol, Nz)
+    _thomas_massflux_column!(qcol,
+                             _ColumnView(air_mass, (i, j), ()),
+                             _KzColumn(kz_field, (ii, jj)),
+                             _ColumnView(dz, (ii, jj), ()),
+                             _ColumnView(w_scratch, (ii, jj), ()),
+                             FT(dt), Nz, cref)
 end
 
 """
-    _vertical_diffusion_cs_kernel!(q, kz_field, dz, w_scratch, dt, Nz, Hp)
+    _vertical_diffusion_cs_kernel!(q, air_mass, kz_field, dz, w_scratch,
+                                   dt, Nz, Hp)
 
-Packed cubed-sphere diffusion kernel. `q` is one halo-padded panel
+Packed cubed-sphere mass-flux diffusion kernel (anomaly/cref path). `q` is one halo-padded panel
 `(Nc + 2Hp, Nc + 2Hp, Nz, Nt)`. One thread owns one `(ii, jj, tracer)`
 column; the tridiagonal coefficients are identical for all tracers in a
 column and are computed locally to keep the workspace rank unchanged.
@@ -387,95 +379,22 @@ column and are computed locally to keep the workspace rank unchanged.
                                                 dt, Nz::Int, Hp::Int)
     ii, jj, t = @index(Global, NTuple)
     FT = eltype(q)
-    @inbounds begin
-        i = ii + Hp
-        j = jj + Hp
-        dt_ft = FT(dt)
-
-        # Anomaly diffusion (F32 conservation fix) — see the single-column
-        # kernel above for the rationale. Per-tracer per-column reference: the
-        # tridiagonal coefficients are shared across tracers but the reference
-        # is the column min of THIS tracer slice. A column whose current min is
-        # exactly 0 gives cref=0 (bit-identical to the plain solve); otherwise
-        # it strictly improves F32 conservation.
-        cref = q[i, j, 1, t]
-        for k in 2:Nz
-            v = q[i, j, k, t]
-            cref = v < cref ? v : cref
-        end
-
-        Kz_prev = zero(FT)
-        dz_prev = zero(FT)
-        m_prev  = zero(FT)
-        w_prev  = zero(FT)
-        g_prev  = zero(FT)
-
-        Kz_k = field_value(kz_field, (ii, jj, 1))
-        dz_k = dz[ii, jj, 1]
-        m_k  = air_mass[i, j, 1]
-
-        for k in 1:Nz
-            dkg_above = zero(FT)
-            dkg_below = zero(FT)
-            Kz_next   = zero(FT)
-            dz_next   = zero(FT)
-            m_next    = zero(FT)
-
-            if k > 1
-                sum_dz_above = dz_prev + dz_k
-                dkg_above = (m_prev + m_k) * (Kz_prev + Kz_k) /
-                            (sum_dz_above * sum_dz_above)
-            end
-
-            if k < Nz
-                Kz_next  = field_value(kz_field, (ii, jj, k + 1))
-                dz_next  = dz[ii, jj, k + 1]
-                m_next   = air_mass[i, j, k + 1]
-                sum_dz_below = dz_k + dz_next
-                dkg_below = (m_k + m_next) * (Kz_k + Kz_next) /
-                            (sum_dz_below * sum_dz_below)
-            end
-
-            inv_m_k = m_k > zero(FT) ? one(FT) / m_k : zero(FT)
-            a_k = (k > 1)  ? -dt_ft * dkg_above * inv_m_k : zero(FT)
-            c_k = (k < Nz) ? -dt_ft * dkg_below * inv_m_k : zero(FT)
-            b_k = one(FT) + dt_ft * (dkg_above + dkg_below) * inv_m_k
-            d_k = q[i, j, k, t] - cref
-
-            if k == 1
-                denom = b_k
-                w_k   = c_k / denom
-                g_k   = d_k / denom
-            else
-                denom = b_k - a_k * w_prev
-                w_k   = c_k / denom
-                g_k   = (d_k - a_k * g_prev) / denom
-            end
-
-            w_scratch[ii, jj, k] = w_k
-            q[i, j, k, t]        = g_k
-
-            if k < Nz
-                w_prev  = w_k
-                g_prev  = g_k
-                Kz_prev = Kz_k
-                dz_prev = dz_k
-                m_prev  = m_k
-                Kz_k    = Kz_next
-                dz_k    = dz_next
-                m_k     = m_next
-            end
-        end
-
-        for k in (Nz - 1):-1:1
-            q[i, j, k, t] = q[i, j, k, t] - w_scratch[ii, jj, k] * q[i, j, k + 1, t]
-        end
-
-        # restore the per-column reference removed before the solve
-        for k in 1:Nz
-            q[i, j, k, t] += cref
-        end
-    end
+    i = ii + Hp
+    j = jj + Hp
+    qcol = _ColumnView(q, (i, j), (t,))
+    # Anomaly diffusion (F32 conservation fix) — see the single-column
+    # kernel above for the rationale. Per-tracer per-column reference: the
+    # tridiagonal coefficients are shared across tracers but the reference
+    # is the column min of THIS tracer slice. A column whose current min is
+    # exactly 0 gives cref=0 (bit-identical to the plain solve); otherwise
+    # it strictly improves F32 conservation.
+    cref = _column_min(qcol, Nz)
+    _thomas_massflux_column!(qcol,
+                             _ColumnView(air_mass, (i, j), ()),
+                             _KzColumn(kz_field, (ii, jj)),
+                             _ColumnView(dz, (ii, jj), ()),
+                             _ColumnView(w_scratch, (ii, jj), ()),
+                             FT(dt), Nz, cref)
 end
 
 @kernel function _cs_tracer_mass_to_vmr_kernel!(q, @Const(air_mass), Hp::Int)
@@ -532,69 +451,11 @@ layout changes.
                                                   dt, Nz::Int)
     c, t = @index(Global, NTuple)
     FT = eltype(q)
-    @inbounds begin
-        dt_ft = FT(dt)
-
-        Kz_prev = zero(FT)
-        dz_prev = zero(FT)
-        w_prev  = zero(FT)
-        g_prev  = zero(FT)
-
-        Kz_k = field_value(kz_field, (c, 1))
-        dz_k = dz[c, 1]
-
-        for k in 1:Nz
-            D_above = zero(FT)
-            D_below = zero(FT)
-            Kz_next = zero(FT)
-            dz_next = zero(FT)
-
-            if k > 1
-                Kz_above = (Kz_prev + Kz_k) / FT(2)
-                dz_above = (dz_prev + dz_k) / FT(2)
-                D_above  = Kz_above / (dz_k * dz_above)
-            end
-
-            if k < Nz
-                Kz_next  = field_value(kz_field, (c, k + 1))
-                dz_next  = dz[c, k + 1]
-                Kz_below = (Kz_k + Kz_next) / FT(2)
-                dz_below = (dz_k + dz_next) / FT(2)
-                D_below  = Kz_below / (dz_k * dz_below)
-            end
-
-            a_k = (k > 1)  ? -dt_ft * D_above : zero(FT)
-            b_k = one(FT) + dt_ft * (D_above + D_below)
-            c_k = (k < Nz) ? -dt_ft * D_below : zero(FT)
-            d_k = q[c, k, t]
-
-            if k == 1
-                denom = b_k
-                w_k   = c_k / denom
-                g_k   = d_k / denom
-            else
-                denom = b_k - a_k * w_prev
-                w_k   = c_k / denom
-                g_k   = (d_k - a_k * g_prev) / denom
-            end
-
-            w_scratch[c, k] = w_k
-            q[c, k, t]      = g_k
-
-            if k < Nz
-                w_prev  = w_k
-                g_prev  = g_k
-                Kz_prev = Kz_k
-                dz_prev = dz_k
-                Kz_k    = Kz_next
-                dz_k    = dz_next
-            end
-        end
-
-        for k in (Nz - 1):-1:1
-            q[c, k, t] = q[c, k, t] - w_scratch[c, k] * q[c, k + 1, t]
-        end
-    end
+    _thomas_geometric_column!(_ColumnView(q, (c,), (t,)),
+                              _KzColumn(kz_field, (c,)),
+                              _ColumnView(dz, (c,), ()),
+                              _ColumnView(w_scratch, (c,), ()),
+                              FT(dt), Nz)
 end
 
 """
@@ -610,69 +471,11 @@ per-tracer host loop.
                                                          dt, Nz::Int)
     c = @index(Global, Linear)
     FT = eltype(q)
-    @inbounds begin
-        dt_ft = FT(dt)
-
-        Kz_prev = zero(FT)
-        dz_prev = zero(FT)
-        w_prev  = zero(FT)
-        g_prev  = zero(FT)
-
-        Kz_k = field_value(kz_field, (c, 1))
-        dz_k = dz[c, 1]
-
-        for k in 1:Nz
-            D_above = zero(FT)
-            D_below = zero(FT)
-            Kz_next = zero(FT)
-            dz_next = zero(FT)
-
-            if k > 1
-                Kz_above = (Kz_prev + Kz_k) / FT(2)
-                dz_above = (dz_prev + dz_k) / FT(2)
-                D_above  = Kz_above / (dz_k * dz_above)
-            end
-
-            if k < Nz
-                Kz_next  = field_value(kz_field, (c, k + 1))
-                dz_next  = dz[c, k + 1]
-                Kz_below = (Kz_k + Kz_next) / FT(2)
-                dz_below = (dz_k + dz_next) / FT(2)
-                D_below  = Kz_below / (dz_k * dz_below)
-            end
-
-            a_k = (k > 1)  ? -dt_ft * D_above : zero(FT)
-            b_k = one(FT) + dt_ft * (D_above + D_below)
-            c_k = (k < Nz) ? -dt_ft * D_below : zero(FT)
-            d_k = q[c, k]
-
-            if k == 1
-                denom = b_k
-                w_k   = c_k / denom
-                g_k   = d_k / denom
-            else
-                denom = b_k - a_k * w_prev
-                w_k   = c_k / denom
-                g_k   = (d_k - a_k * g_prev) / denom
-            end
-
-            w_scratch[c, k] = w_k
-            q[c, k]         = g_k
-
-            if k < Nz
-                w_prev  = w_k
-                g_prev  = g_k
-                Kz_prev = Kz_k
-                dz_prev = dz_k
-                Kz_k    = Kz_next
-                dz_k    = dz_next
-            end
-        end
-
-        for k in (Nz - 1):-1:1
-            q[c, k] = q[c, k] - w_scratch[c, k] * q[c, k + 1]
-        end
-    end
+    _thomas_geometric_column!(_ColumnView(q, (c,), ()),
+                              _KzColumn(kz_field, (c,)),
+                              _ColumnView(dz, (c,), ()),
+                              _ColumnView(w_scratch, (c,), ()),
+                              FT(dt), Nz)
 end
 
 # ---------------------------------------------------------------------------
@@ -689,76 +492,12 @@ end
                                                              dt, Nz::Int)
     c, t = @index(Global, NTuple)
     FT = eltype(q)
-    @inbounds begin
-        dt_ft = FT(dt)
-
-        Kz_prev = zero(FT)
-        dz_prev = zero(FT)
-        m_prev  = zero(FT)
-        w_prev  = zero(FT)
-        g_prev  = zero(FT)
-
-        Kz_k = field_value(kz_field, (c, 1))
-        dz_k = dz[c, 1]
-        m_k  = air_mass[c, 1]
-
-        for k in 1:Nz
-            dkg_above = zero(FT)
-            dkg_below = zero(FT)
-            Kz_next   = zero(FT)
-            dz_next   = zero(FT)
-            m_next    = zero(FT)
-
-            if k > 1
-                sum_dz_above = dz_prev + dz_k
-                dkg_above = (m_prev + m_k) * (Kz_prev + Kz_k) /
-                            (sum_dz_above * sum_dz_above)
-            end
-
-            if k < Nz
-                Kz_next  = field_value(kz_field, (c, k + 1))
-                dz_next  = dz[c, k + 1]
-                m_next   = air_mass[c, k + 1]
-                sum_dz_below = dz_k + dz_next
-                dkg_below = (m_k + m_next) * (Kz_k + Kz_next) /
-                            (sum_dz_below * sum_dz_below)
-            end
-
-            inv_m_k = m_k > zero(FT) ? one(FT) / m_k : zero(FT)
-            a_k = (k > 1)  ? -dt_ft * dkg_above * inv_m_k : zero(FT)
-            c_k = (k < Nz) ? -dt_ft * dkg_below * inv_m_k : zero(FT)
-            b_k = one(FT) + dt_ft * (dkg_above + dkg_below) * inv_m_k
-            d_k = q[c, k, t]
-
-            if k == 1
-                denom = b_k
-                w_k   = c_k / denom
-                g_k   = d_k / denom
-            else
-                denom = b_k - a_k * w_prev
-                w_k   = c_k / denom
-                g_k   = (d_k - a_k * g_prev) / denom
-            end
-
-            w_scratch[c, k] = w_k
-            q[c, k, t]      = g_k
-
-            if k < Nz
-                w_prev  = w_k
-                g_prev  = g_k
-                Kz_prev = Kz_k
-                dz_prev = dz_k
-                m_prev  = m_k
-                Kz_k    = Kz_next
-                dz_k    = dz_next
-                m_k     = m_next
-            end
-        end
-
-        for k in (Nz - 1):-1:1
-            q[c, k, t] = q[c, k, t] - w_scratch[c, k] * q[c, k + 1, t]
-        end
-    end
+    _thomas_massflux_column!(_ColumnView(q, (c,), (t,)),
+                             _ColumnView(air_mass, (c,), ()),
+                             _KzColumn(kz_field, (c,)),
+                             _ColumnView(dz, (c,), ()),
+                             _ColumnView(w_scratch, (c,), ()),
+                             FT(dt), Nz, nothing)
 end
 
 @kernel function _vertical_diffusion_face_single_kernel_mass_flux!(q, @Const(air_mass),
@@ -768,76 +507,12 @@ end
                                                                     dt, Nz::Int)
     c = @index(Global, Linear)
     FT = eltype(q)
-    @inbounds begin
-        dt_ft = FT(dt)
-
-        Kz_prev = zero(FT)
-        dz_prev = zero(FT)
-        m_prev  = zero(FT)
-        w_prev  = zero(FT)
-        g_prev  = zero(FT)
-
-        Kz_k = field_value(kz_field, (c, 1))
-        dz_k = dz[c, 1]
-        m_k  = air_mass[c, 1]
-
-        for k in 1:Nz
-            dkg_above = zero(FT)
-            dkg_below = zero(FT)
-            Kz_next   = zero(FT)
-            dz_next   = zero(FT)
-            m_next    = zero(FT)
-
-            if k > 1
-                sum_dz_above = dz_prev + dz_k
-                dkg_above = (m_prev + m_k) * (Kz_prev + Kz_k) /
-                            (sum_dz_above * sum_dz_above)
-            end
-
-            if k < Nz
-                Kz_next  = field_value(kz_field, (c, k + 1))
-                dz_next  = dz[c, k + 1]
-                m_next   = air_mass[c, k + 1]
-                sum_dz_below = dz_k + dz_next
-                dkg_below = (m_k + m_next) * (Kz_k + Kz_next) /
-                            (sum_dz_below * sum_dz_below)
-            end
-
-            inv_m_k = m_k > zero(FT) ? one(FT) / m_k : zero(FT)
-            a_k = (k > 1)  ? -dt_ft * dkg_above * inv_m_k : zero(FT)
-            c_k = (k < Nz) ? -dt_ft * dkg_below * inv_m_k : zero(FT)
-            b_k = one(FT) + dt_ft * (dkg_above + dkg_below) * inv_m_k
-            d_k = q[c, k]
-
-            if k == 1
-                denom = b_k
-                w_k   = c_k / denom
-                g_k   = d_k / denom
-            else
-                denom = b_k - a_k * w_prev
-                w_k   = c_k / denom
-                g_k   = (d_k - a_k * g_prev) / denom
-            end
-
-            w_scratch[c, k] = w_k
-            q[c, k]         = g_k
-
-            if k < Nz
-                w_prev  = w_k
-                g_prev  = g_k
-                Kz_prev = Kz_k
-                dz_prev = dz_k
-                m_prev  = m_k
-                Kz_k    = Kz_next
-                dz_k    = dz_next
-                m_k     = m_next
-            end
-        end
-
-        for k in (Nz - 1):-1:1
-            q[c, k] = q[c, k] - w_scratch[c, k] * q[c, k + 1]
-        end
-    end
+    _thomas_massflux_column!(_ColumnView(q, (c,), ()),
+                             _ColumnView(air_mass, (c,), ()),
+                             _KzColumn(kz_field, (c,)),
+                             _ColumnView(dz, (c,), ()),
+                             _ColumnView(w_scratch, (c,), ()),
+                             FT(dt), Nz, nothing)
 end
 
 # ---------------------------------------------------------------------------

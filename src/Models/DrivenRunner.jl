@@ -1504,9 +1504,13 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
                       min(Int(stop_window_override), total_windows(driver))
         window_hours = window_dt(driver) / 3600.0
 
-        # There is no window-boundary air_mass reset, so the cross-day
-        # handoff is continuity-consistent. We rebuild the
-        # sim around each day's driver; state + physics carry over.
+        # Cross-day handoff: we rebuild the sim around each day's driver;
+        # state + physics carry over. Under the default
+        # air_mass_reset_mode = :preserve_tracer_mass the rebuilt sim resets
+        # the carried air mass to the new binary's endpoint while preserving
+        # FULL tracer mass (reference-state tracers absorb the q_ref shift —
+        # see _reset_air_mass_preserve_tracer_mass!); :none keeps the old
+        # pure-carry behavior.
         if driver_idx != 1
             fluxes_d = allocate_face_fluxes(mesh, Nz; FT = FT, basis = BasisT)
             # Match the device of the already-adapted `state`: on GPU runs

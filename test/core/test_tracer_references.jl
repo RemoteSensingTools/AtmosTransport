@@ -508,6 +508,18 @@ end
     @test total_mass_full(state, :sf6) == burden_sf6
     # air mass actually moved to the endpoint
     @test state.air_mass[1][2, 2, 1] ≈ new_m[1][2, 2, 1]
+
+    # referenced with q_ref == 0 (IC=0 tracer): the absorb term is exact zero
+    # — stored mass bit-identical through the reset (kind-flag path, not a
+    # value test)
+    state0 = _mini_cs_state(; FT = Float32, Nz = 3)
+    raw0 = get_tracer_raw(state0, :co2)
+    for p in 1:6; raw0[p] .= 0; end
+    _seed_tracer_references!(state0, (TransportTracerSpec(
+        :co2, Dict{String, Any}(), Dict{String, Any}(), :global_mean, :fixed),))
+    new_m0 = ntuple(p -> state0.air_mass[p] .* Float32(1.003), 6)
+    AtmosTransport.Models._reset_air_mass_preserve_tracer_mass!(state0, new_m0, mesh)
+    @test all(all(iszero, get_tracer_raw(state0, :co2)[p]) for p in 1:6)
 end
 
 println("test_tracer_references.jl OK")

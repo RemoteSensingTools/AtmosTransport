@@ -32,11 +32,6 @@ Conventions: **[S]** small (≤1 day) · **[M]** medium (days) · **[L]** large
 Ranked by payoff × (1/risk). Estimated total: ~18 kLOC of structural
 redundancy; the items below are the tractable core.
 
-8. **[M] Per-topology NetCDF writers** — three ~90-line
-   `_write_snapshot_payload!` methods sharing the skeleton
-   (`src/Output/netcdf_writer.jl`). Shared body + topology shims
-   (~150 LOC). Medium risk: the CS `_cs_stack3` and RG raster paths are
-   subtle — gate with an output-bytes regression test.
 9. **[L] LL vs CS runner unification** — ~900 overlapping lines in
    `src/Models/DrivenRunner.jl`. The runners diverged for physics reasons
    (CS per-binary flux reallocation, moist guard, reference gates), so do
@@ -94,6 +89,18 @@ existing `sweep_x/y/z!` `@eval` loops (already idiomatic); the
 
 ## Done log
 
+- 2026-06-11 — consolidation batch 3: snapshot NetCDF writers (523→419
+  lines): three per-topology `_write_snapshot_payload!` methods → one
+  skeleton + topology dispatches (`_layer_base_dims` / `_payload_coordinates`
+  / `_payload_grid_mapping` / `_native_prefix` / `_pack_layers` /
+  `_pack_scalar`, RG dual column-mean via `_def_column_mean_vars`).
+  Verified: exhaustive before/after NetCDF diff (dims, names, order, dtypes,
+  var+global attrs, bitwise data) over 3 topologies × 2 field specs =
+  IDENTICAL; 1-day C180 GPU run bit-identical; codex APPROVE (no findings).
+  En route, FIXED a real output bug: `_ensure_selected_lev!` used
+  `length(ds.dim[...])` (always 1) so any file with ≥2 selected-layer
+  variables threw — selected-level output now works and is regression-tested
+  (`test_netcdf_writer_selected_levels.jl`).
 - 2026-06-11 — consolidation batch 2: Thomas-solver dedup (890→579 lines in
   `diffusion_kernels.jl`): 8 `@kernel` bodies → two `@inline` column cores
   (`_thomas_geometric_column!` / `_thomas_massflux_column!`) over a zero-cost

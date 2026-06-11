@@ -424,8 +424,7 @@ function _parse_transport_header(raw_bytes::Vector{UInt8})
 end
 
 _transport_basis_symbol(sym::Symbol) = lowercase(String(sym)) == "dry" ? :dry : :moist
-_transport_basis_symbol(::DryBasis) = :dry
-_transport_basis_symbol(::MoistBasis) = :moist
+_transport_basis_symbol(b::AbstractMassBasis) = mass_basis_symbol(b)
 
 function _transport_common_header(grid_type::String,
                                   horizontal_topology::String,

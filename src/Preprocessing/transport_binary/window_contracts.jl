@@ -38,15 +38,6 @@
 # basis" vs "runtime basis" parallel hierarchy.
 # ===========================================================================
 
-"""
-    mass_basis_symbol(::AbstractMassBasis) -> Symbol
-
-Map a basis singleton (`State.DryBasis` / `State.MoistBasis`) to the
-on-disk binary-header value (`:dry` / `:moist`). Inverse of
-`mass_basis_from_symbol`.
-"""
-@inline mass_basis_symbol(::DryBasis)   = :dry
-@inline mass_basis_symbol(::MoistBasis) = :moist
 
 """
     mass_basis_from_symbol(s::Symbol) -> AbstractMassBasis
@@ -54,11 +45,7 @@ on-disk binary-header value (`:dry` / `:moist`). Inverse of
 Construct the matching basis singleton from a header `Symbol`. Throws
 `ArgumentError` for unknown values.
 """
-@inline function mass_basis_from_symbol(s::Symbol)
-    s === :dry   && return DryBasis()
-    s === :moist && return MoistBasis()
-    throw(ArgumentError("Unknown mass-basis symbol $(s); expected :dry or :moist."))
-end
+@inline mass_basis_from_symbol(s::Symbol) = mass_basis_type(s)()
 
 # ---------------------------------------------------------------------------
 # Abstract trait surface. Every topology that produces a transport-binary

@@ -72,7 +72,7 @@ using ProgressMeter: Progress, next!, finish!, update!
 
 import ...expand_data_path
 using ...SectionTimer
-using ..State: AbstractMassBasis, DryBasis, MoistBasis, CellState,
+using ..State: AbstractMassBasis, DryBasis, MoistBasis, mass_basis_type, CellState,
                 CubedSphereState, total_air_mass, total_mass_full,
                 tracer_names, tracer_index, halo_width,
                 get_tracer_raw, set_tracer_reference!, REF_GLOBAL_MEAN,
@@ -832,7 +832,7 @@ function _make_structured_model(driver::TransportBinaryDriver;
     tracer_specs_tuple = Tuple(tracer_specs)
     isempty(tracer_specs_tuple) && throw(ArgumentError("at least one tracer must be configured"))
 
-    basis_type = air_mass_basis(driver) == :dry ? DryBasis : MoistBasis
+    basis_type = mass_basis_type(air_mass_basis(driver))
     tracer_names_tup = Tuple(spec.name for spec in tracer_specs_tuple)
     rm_arrays = map(tracer_specs_tuple) do spec
         vmr = build_initial_mixing_ratio(air_mass, grid, spec.init_cfg;
@@ -1381,9 +1381,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
     # and throws if they diverge. Hardcoding `DryBasis` would trip a
     # runtime ArgumentError on any moist-basis CS binary.
     basis_sym = air_mass_basis(driver1)
-    BasisT    = basis_sym === :dry   ? DryBasis   :
-                basis_sym === :moist ? MoistBasis :
-                error("CS binary has unsupported mass_basis $(basis_sym); expected :dry or :moist")
+    BasisT    = mass_basis_type(basis_sym)
 
     # CS tracers flow through the unified IC pipeline.
     # DryBasis is the default per invariant 14; MoistBasis

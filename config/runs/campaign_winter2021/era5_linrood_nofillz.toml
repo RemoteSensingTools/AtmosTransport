@@ -1,0 +1,84 @@
+# ===========================================================================
+# CAMPAIGN — ERA5 N320->C180 + full physics, 4 tracers, December 2021.
+# The wind-derived (spectral, M=0) reference alongside the GEOS-IT omega run,
+# both vs GEOS-Chem. Same 4-tracer + emission setup (verified GO vs GC); ERA5
+# uses its own precomputed TM5 convection (entu/detu/entd/detd) + :kz diffusion.
+#
+# REQUIRES: ERA5 N320->C180 binaries for the period (only Dec 2021 + partial
+# 2022 generated so far; the C180 gen needs to catch up to the downloaded raw).
+#
+#   julia --project=. scripts/run_transport.jl \
+#       config/runs/campaign_winter2021/era5_4tracer_fullphys.toml
+# ===========================================================================
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder       = "~/data/AtmosTransport/met/era5/n320_to_c180/transport_binary_dec2021_catrine_f32"
+start_date   = "2021-12-01"
+end_date     = "2021-12-31"        # DECEMBER scope: lmdz Dec-only CAMS file + fossil/Rn time_index=12; Jan/Feb need new emissions
+file_pattern = "era5_n320_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "linrood"   # exactly-conservative mode: see ADVECTION_SCHEMES.md §fillz
+ppm_order = 7
+fillz = false
+
+[tracers.co2_natural]
+  [tracers.co2_natural.transport]
+  reference = "global_mean"     # F32 anomaly transport (plan 45)
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"
+  [tracers.co2_natural.surface_flux]
+  kind            = "lmdz_co2"
+  time_varying    = true
+  temporal_scheme = "stepwise"      # piecewise-constant hold = GC/HEMCO's exact CAMS treatment
+
+[tracers.co2_fossil]
+  [tracers.co2_fossil.init]
+  kind = "uniform"            # fossil CO2 perturbation tracer: 0 at t=0 (GC also starts at 0)
+  background = 0.0
+  [tracers.co2_fossil.surface_flux]
+  kind = "gridfed_fossil_co2"
+  time_index = 12
+
+[tracers.sf6]
+  [tracers.sf6.init]
+  kind = "file"
+  file = "~/data/AtmosTransport/catrine/InitialConditions/startSF6_202112010000.nc"
+  variable = "SF6"
+  [tracers.sf6.surface_flux]
+  kind = "edgar_sf6"
+  scale = 1.0116635
+
+[tracers.rn222]
+  [tracers.rn222.init]
+  kind = "uniform"            # Rn222 starts at 0 (spins up via emission - decay)
+  background = 0.0
+  [tracers.rn222.surface_flux]
+  kind = "zhang_rn222"
+  time_index = 12
+
+[diffusion]
+kind = "precomputed_kz"             # ERA5 carries the TM5 bldiff :kz section
+surface_flux_boundary = true
+
+[convection]
+kind = "tm5"                        # ERA5 carries precomputed TM5 entrainment (entu/detu/entd/detd)
+tile_workspace_gib = 0.25
+use_collab_lu = true
+lmax_conv = 0
+
+[chemistry]
+kind = "decay"
+  [chemistry.half_lives_seconds]
+  rn222 = 330350.4
+
+[output]
+snapshot_interval_hours = 3
+snapshot_file = "~/data/AtmosTransport/output/campaign_winter2021/era5_linrood_nofillz_dec2021.nc"

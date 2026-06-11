@@ -213,44 +213,13 @@ end
 # Section element counts
 # ---------------------------------------------------------------------------
 
-function _cs_section_elements(h::CubedSphereBinaryHeader, section::Symbol)
-    Nc, Nz, np = h.Nc, h.nlevel, h.npanel
-    if section === :m
-        return np * Nc * Nc * Nz
-    elseif section === :am
-        return np * (Nc + 1) * Nc * Nz
-    elseif section === :bm
-        return np * Nc * (Nc + 1) * Nz
-    elseif section === :cm
-        return np * Nc * Nc * (Nz + 1)
-    elseif section === :ps
-        return np * Nc * Nc
-    elseif _is_pbl_surface_payload_section(section)
-        return np * Nc * Nc
-    elseif _is_gchp_vdiff_payload_section(section)
-        return np * Nc * Nc * Nz
-    elseif section === :kz
-        # Precomputed layer-centre eddy diffusivity (TM5 bldiff), m² s⁻¹.
-        return np * Nc * Nc * Nz
-    elseif section === :cmfmc
-        return np * Nc * Nc * (Nz + 1)
-    elseif section === :dtrain
-        return np * Nc * Nc * Nz
-    # TM5 convection — four layer-center fields.
-    elseif section in (:entu, :detu, :entd, :detd)
-        return np * Nc * Nc * Nz
-    elseif section in (:qv, :qv_start, :qv_end, :dm)
-        return np * Nc * Nc * Nz
-    elseif section in (:dam,)
-        return np * (Nc + 1) * Nc * Nz
-    elseif section in (:dbm,)
-        return np * Nc * (Nc + 1) * Nz
-    elseif section in (:dcm,)
-        return np * Nc * Nc * (Nz + 1)
-    else
-        error("Unknown CS binary section: $section")
-    end
-end
+# Element calculus is canonical in transport_binary/cubed_sphere.jl (same
+# MetDrivers namespace, included earlier); this header-typed method is the
+# read-side entry. One source of truth — the two copies previously here and
+# in the writer had already drifted (the reader knew :qv/:dam sections the
+# writer didn't).
+_cs_section_elements(h::CubedSphereBinaryHeader, section::Symbol) =
+    _cs_section_elements(h.Nc, h.npanel, h.nlevel, section)
 
 # ---------------------------------------------------------------------------
 # Window loading

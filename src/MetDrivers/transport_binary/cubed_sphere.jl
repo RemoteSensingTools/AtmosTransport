@@ -38,8 +38,18 @@ function _cs_section_elements(Nc::Int, npanel::Int, nlevel::Int, section::Symbol
     elseif section === :entu || section === :detu ||
            section === :entd || section === :detd
         return npanel * Nc * Nc * nlevel
+    # Moisture + flux-delta payloads (read-side sections; the canonical
+    # element calculus lives here so the reader can dispatch to it).
+    elseif section in (:qv, :qv_start, :qv_end)
+        return npanel * Nc * Nc * nlevel
+    elseif section === :dam
+        return npanel * (Nc + 1) * Nc * nlevel
+    elseif section === :dbm
+        return npanel * Nc * (Nc + 1) * nlevel
+    elseif section === :dcm
+        return npanel * Nc * Nc * (nlevel + 1)
     else
-        error("Unsupported CS section: $section")
+        error("Unknown CS binary section: $section")
     end
 end
 

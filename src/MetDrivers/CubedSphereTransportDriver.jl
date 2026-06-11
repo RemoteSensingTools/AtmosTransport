@@ -242,7 +242,7 @@ flux_interpolation_mode(::CubedSphereTransportDriver) = :constant
 Base.close(driver::CubedSphereTransportDriver) = close(driver.reader)
 
 @inline _cs_basis_type(reader::CubedSphereBinaryReader) =
-    mass_basis(reader) === :dry ? DryBasis : MoistBasis
+    mass_basis_type(mass_basis(reader))
 
 @inline function _pad_horizontal(a::AbstractArray{T, N}, Hp::Int) where {T, N}
     dims = ntuple(d -> d <= 2 ? size(a, d) + 2 * Hp : size(a, d), N)

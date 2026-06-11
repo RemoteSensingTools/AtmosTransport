@@ -35,7 +35,8 @@ using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                cell_area, panel_cell_center_lonlat, panel_cell_corner_lonlat,
                cs_definition, coordinate_law, center_law, longitude_offset_deg,
                cs_definition_tag, coordinate_law_tag, center_law_tag
-using ..State: DryBasis, MoistBasis, mass_basis, tracer_names, get_tracer_full,
+using ..State: DryBasis, MoistBasis, mass_basis, mass_basis_symbol,
+    tracer_names, get_tracer_full,
                total_mass_full
 
 export SnapshotFrame, SnapshotWriteOptions

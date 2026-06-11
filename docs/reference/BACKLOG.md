@@ -17,11 +17,9 @@ Conventions: **[S]** small (≤1 day) · **[M]** medium (days) · **[L]** large
    round-trip. Verify with `ATMOSTR_FILLZ_MASS_DIAG=1` (net must be 0).
    Until then `[advection] fillz = false` is the conservation answer
    (ADVECTION_SCHEMES.md §fillz).
-2. **[S] Pre-existing test failures** — `test/core/test_cs_writer_contract_guard.jl`
-   fails at base (patcher `grid_type=nothing` fixture) and **aborts
-   `Pkg.test()` mid-suite**, so alphabetically-later files never run in CI;
-   `test/orphan/test_output_snapshots.jl` has stale `output_field_spec`
-   imports. Fix the guard fixture first — it unblocks the whole suite.
+2. **[S] Pre-existing test failures** — `test/orphan/test_output_snapshots.jl`
+   has stale `output_field_spec` imports. (The suite-aborting
+   `test_cs_writer_contract_guard.jl` fixture is fixed — see Done log.)
 3. **[M] Per-level reference `q_ref[k]`** (plan 45 deferred extension) —
    removes the mean vertical profile too (~100× background reduction for
    CO₂-class tracers vs ~34× for the global scalar). Requires a
@@ -34,20 +32,11 @@ Conventions: **[S]** small (≤1 day) · **[M]** medium (days) · **[L]** large
 Ranked by payoff × (1/risk). Estimated total: ~18 kLOC of structural
 redundancy; the items below are the tractable core.
 
-5. **[S] Twin `_cs_section_elements`** — verbatim duplicate in
-   `src/MetDrivers/CubedSphereBinaryReader.jl` and
-   `src/MetDrivers/transport_binary/cubed_sphere.jl` (~82 lines, drift
-   risk). One canonical version + a signature adapter.
 6. **[M] Thomas-solver dedup** — 8 diffusion `@kernel` bodies in
    `src/Operators/Diffusion/diffusion_kernels.jl` repeat a ~50-line
    tridiagonal elimination. Shared `@inline _thomas_forward!/_backward!`
    helpers (~300 LOC saved; GPU-safe). MUST preserve the CS-only `cref`
    anomaly subtraction asymmetry (the F32 fix, `9ddf3d68`).
-7. **[S] StrangSplitting mechanical triplets** — `_x/_y/_z_subcycling_pass_count`
-   and `_sweep_*_pp_subcycled!` (extend the existing `@eval` idiom);
-   `midpoint!` closure built twice in `strang_split!` → one
-   `_build_midpoint_closure` helper; `_copy_optional_*` guard family in
-   DrivenSimulation → one parameterized helper (~100 LOC total).
 8. **[M] Per-topology NetCDF writers** — three ~90-line
    `_write_snapshot_payload!` methods sharing the skeleton
    (`src/Output/netcdf_writer.jl`). Shared body + topology shims
@@ -74,6 +63,12 @@ different boundary conditions per axis + documentation value); the diffusion
 kernels' `cref` asymmetry; the CS per-binary `fluxes_d` reallocation; the
 existing `sweep_x/y/z!` `@eval` loops (already idiomatic); the
 `RunProgressTimer` helper chain.
+
+11a. **[S] Strict unknown-basis handling end-to-end** — `State.mass_basis_type`
+    now throws on unknown basis symbols, but the LL/RG header read path
+    (`transport_binary/header.jl` `_transport_basis_symbol(::Symbol)` and the
+    header parser) still silently coerces any non-`"dry"` value to `:moist`.
+    Tighten to throw; audit old binaries first (read-path behavior change).
 
 ## P3 — hygiene: tests, scripts, configs
 
@@ -104,6 +99,15 @@ existing `sweep_x/y/z!` `@eval` loops (already idiomatic); the
 
 ## Done log
 
+- 2026-06-11 — consolidation batch 1 (bit-identical gated): suite-aborting
+  writer-guard fixture fixed (full `Pkg.test()` restored as CI gate); twin
+  `_cs_section_elements` → one canonical superset + header-dispatch shim;
+  `_x/_y/_z_subcycling_pass_count` → one `Val{dim}` core; `_sweep_*_pp_subcycled!`
+  → `@eval` loop; `midpoint!` closure → `_build_midpoint_closure`;
+  `_copy_optional_*` → one higher-order `_copy_optional!`; basis `Symbol` ↔ tag
+  maps canonicalized as `State.mass_basis_type` / `State.mass_basis_symbol`
+  (replacing 4 ternaries — one of which silently defaulted unknown bases to
+  moist — and 4 duplicate reverse maps).
 - 2026-06-11 — `air_mass_reset_mode`, `fillz`, and
   `[tracers.X.transport] reference` documented in the canonical TOML schema;
   `GEOS_PREPROCESSING_MASS_BALANCE.md` §5/§6 modernized (the Policy A/B fork

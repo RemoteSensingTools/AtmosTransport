@@ -785,41 +785,37 @@ end
 # GPU static-inflow) with one algorithm that (a) is backend-agnostic via
 # pure broadcast, (b) computes OUTFLOW correctly (the prior GPU path
 # summed inflow — a sign bug that under-estimated CFL on device).
-function _x_subcycling_pass_count(am::AbstractArray{FT,3}, m::AbstractArray{FT,3},
-                                  ws::AdvectionWorkspace{FT},
-                                  cfl_limit::FT; max_n_sub::Int = 4096) where FT
+# One directed implementation, dispatched on the axis (Val{1|2|3}); the named
+# x/y/z entry points are thin wrappers. `selectdim` keeps the staggered-face
+# views axis-generic without index gymnastics; broadcasting is unchanged, so
+# the computed pass counts are bit-identical to the former per-axis copies.
+function _directed_subcycling_pass_count(flux::AbstractArray{FT,3},
+                                         m::AbstractArray{FT,3},
+                                         cfl_limit::FT, ::Val{dim};
+                                         max_n_sub::Int = 4096) where {FT, dim}
     isinf(cfl_limit) && return 1
-    Nx = size(m, 1)
-    out = max.(.- @view(am[1:Nx, :, :]), zero(FT)) .+ max.(@view(am[2:Nx+1, :, :]), zero(FT))
+    N = size(m, dim)
+    out = max.(.- selectdim(flux, dim, 1:N), zero(FT)) .+
+          max.(selectdim(flux, dim, 2:N+1), zero(FT))
     static_cfl = maximum(out ./ max.(m, eps(FT)))
     n_sub = _subcycling_pass_count(static_cfl, cfl_limit)
-    n_sub <= max_n_sub || throw(ArgumentError("x-direction subcycling exceeded max_n_sub=$(max_n_sub)"))
+    n_sub <= max_n_sub || throw(ArgumentError(
+        "$(("x", "y", "z")[dim])-direction subcycling exceeded max_n_sub=$(max_n_sub)"))
     return n_sub
 end
 
-function _y_subcycling_pass_count(bm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
-                                  ws::AdvectionWorkspace{FT},
-                                  cfl_limit::FT; max_n_sub::Int = 4096) where FT
-    isinf(cfl_limit) && return 1
-    Ny = size(m, 2)
-    out = max.(.- @view(bm[:, 1:Ny, :]), zero(FT)) .+ max.(@view(bm[:, 2:Ny+1, :]), zero(FT))
-    static_cfl = maximum(out ./ max.(m, eps(FT)))
-    n_sub = _subcycling_pass_count(static_cfl, cfl_limit)
-    n_sub <= max_n_sub || throw(ArgumentError("y-direction subcycling exceeded max_n_sub=$(max_n_sub)"))
-    return n_sub
-end
-
-function _z_subcycling_pass_count(cm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
-                                  ws::AdvectionWorkspace{FT},
-                                  cfl_limit::FT; max_n_sub::Int = 4096) where FT
-    isinf(cfl_limit) && return 1
-    Nz = size(m, 3)
-    out = max.(.- @view(cm[:, :, 1:Nz]), zero(FT)) .+ max.(@view(cm[:, :, 2:Nz+1]), zero(FT))
-    static_cfl = maximum(out ./ max.(m, eps(FT)))
-    n_sub = _subcycling_pass_count(static_cfl, cfl_limit)
-    n_sub <= max_n_sub || throw(ArgumentError("z-direction subcycling exceeded max_n_sub=$(max_n_sub)"))
-    return n_sub
-end
+_x_subcycling_pass_count(am::AbstractArray{FT,3}, m::AbstractArray{FT,3},
+                         ::AdvectionWorkspace{FT}, cfl_limit::FT;
+                         max_n_sub::Int = 4096) where FT =
+    _directed_subcycling_pass_count(am, m, cfl_limit, Val(1); max_n_sub)
+_y_subcycling_pass_count(bm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
+                         ::AdvectionWorkspace{FT}, cfl_limit::FT;
+                         max_n_sub::Int = 4096) where FT =
+    _directed_subcycling_pass_count(bm, m, cfl_limit, Val(2); max_n_sub)
+_z_subcycling_pass_count(cm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
+                         ::AdvectionWorkspace{FT}, cfl_limit::FT;
+                         max_n_sub::Int = 4096) where FT =
+    _directed_subcycling_pass_count(cm, m, cfl_limit, Val(3); max_n_sub)
 
 @inline function _sweep_x_subcycled!(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
                                      am::AbstractArray{FT,3},
@@ -880,70 +876,33 @@ end
 # The caller rebinds `cur` / `alt` locally based on `isodd(n_sub)`.
 # -------------------------------------------------------------------------
 
-@inline function _sweep_x_pp_subcycled!(rm_in::AbstractArray{FT,3},  rm_out::AbstractArray{FT,3},
-                                        m_in::AbstractArray{FT,3},   m_out::AbstractArray{FT,3},
-                                        am::AbstractArray{FT,3},
-                                        scheme::AbstractAdvectionScheme,
-                                        ws::AdvectionWorkspace{FT},
-                                        cfl_limit::FT) where FT
-    n_sub = _x_subcycling_pass_count(am, m_in, ws, cfl_limit)
-    if n_sub == 1
-        sweep_x!(rm_in, rm_out, m_in, m_out, am, scheme, ws)
-        return n_sub
-    end
-    flux_scale = inv(FT(n_sub))
-    @inbounds for pass in 1:n_sub
-        if isodd(pass)
-            sweep_x!(rm_in,  rm_out, m_in,  m_out, am, scheme, ws, flux_scale)
-        else
-            sweep_x!(rm_out, rm_in,  m_out, m_in,  am, scheme, ws, flux_scale)
+for (dir, sweep!, pass_count) in ((:x, :sweep_x!, :_x_subcycling_pass_count),
+                                  (:y, :sweep_y!, :_y_subcycling_pass_count),
+                                  (:z, :sweep_z!, :_z_subcycling_pass_count))
+    fname = Symbol(:_sweep_, dir, :_pp_subcycled!)
+    @eval begin
+        @inline function $fname(rm_in::AbstractArray{FT,3}, rm_out::AbstractArray{FT,3},
+                                m_in::AbstractArray{FT,3}, m_out::AbstractArray{FT,3},
+                                flux::AbstractArray{FT,3},
+                                scheme::AbstractAdvectionScheme,
+                                ws::AdvectionWorkspace{FT},
+                                cfl_limit::FT) where FT
+            n_sub = $pass_count(flux, m_in, ws, cfl_limit)
+            if n_sub == 1
+                $sweep!(rm_in, rm_out, m_in, m_out, flux, scheme, ws)
+                return n_sub
+            end
+            flux_scale = inv(FT(n_sub))
+            @inbounds for pass in 1:n_sub
+                if isodd(pass)
+                    $sweep!(rm_in,  rm_out, m_in,  m_out, flux, scheme, ws, flux_scale)
+                else
+                    $sweep!(rm_out, rm_in,  m_out, m_in,  flux, scheme, ws, flux_scale)
+                end
+            end
+            return n_sub
         end
     end
-    return n_sub
-end
-
-@inline function _sweep_y_pp_subcycled!(rm_in::AbstractArray{FT,3},  rm_out::AbstractArray{FT,3},
-                                        m_in::AbstractArray{FT,3},   m_out::AbstractArray{FT,3},
-                                        bm::AbstractArray{FT,3},
-                                        scheme::AbstractAdvectionScheme,
-                                        ws::AdvectionWorkspace{FT},
-                                        cfl_limit::FT) where FT
-    n_sub = _y_subcycling_pass_count(bm, m_in, ws, cfl_limit)
-    if n_sub == 1
-        sweep_y!(rm_in, rm_out, m_in, m_out, bm, scheme, ws)
-        return n_sub
-    end
-    flux_scale = inv(FT(n_sub))
-    @inbounds for pass in 1:n_sub
-        if isodd(pass)
-            sweep_y!(rm_in,  rm_out, m_in,  m_out, bm, scheme, ws, flux_scale)
-        else
-            sweep_y!(rm_out, rm_in,  m_out, m_in,  bm, scheme, ws, flux_scale)
-        end
-    end
-    return n_sub
-end
-
-@inline function _sweep_z_pp_subcycled!(rm_in::AbstractArray{FT,3},  rm_out::AbstractArray{FT,3},
-                                        m_in::AbstractArray{FT,3},   m_out::AbstractArray{FT,3},
-                                        cm::AbstractArray{FT,3},
-                                        scheme::AbstractAdvectionScheme,
-                                        ws::AdvectionWorkspace{FT},
-                                        cfl_limit::FT) where FT
-    n_sub = _z_subcycling_pass_count(cm, m_in, ws, cfl_limit)
-    if n_sub == 1
-        sweep_z!(rm_in, rm_out, m_in, m_out, cm, scheme, ws)
-        return n_sub
-    end
-    flux_scale = inv(FT(n_sub))
-    @inbounds for pass in 1:n_sub
-        if isodd(pass)
-            sweep_z!(rm_in,  rm_out, m_in,  m_out, cm, scheme, ws, flux_scale)
-        else
-            sweep_z!(rm_out, rm_in,  m_out, m_in,  cm, scheme, ws, flux_scale)
-        end
-    end
-    return n_sub
 end
 
 # =========================================================================
@@ -1132,6 +1091,39 @@ end
     return uses_binary_substep_contract(_meteo_driver_for_substeps(meteo)) ? 1 : nothing
 end
 
+# Build the mid-palindrome physics closure (diffusion + surface flux at the
+# Strang midpoint). One construction for both the multi-tracer (rm = the
+# packed 4-D store) and per-tracer (rm = one tracer's panels) branches —
+# the closure captures `rm` by reference either way. Operator ORDER is the
+# TM5 contract: S(dt)->V(dt) when the diffusion couples the surface flux
+# through its boundary condition, V(dt/2)->S(dt)->V(dt/2) otherwise.
+function _build_midpoint_closure(diffusion_op, emissions_op, rm, m, workspace,
+                                 dt, meteo, grid, tracer_names_tuple, halo_width)
+    if emissions_op isa NoSurfaceFlux
+        return () -> SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
+            rm, m, diffusion_op, workspace, dt, meteo; halo_width = halo_width)
+    elseif uses_diffusive_surface_flux_boundary(diffusion_op)
+        return () -> begin
+            apply_surface_flux!(rm, emissions_op, workspace, dt, meteo, grid;
+                                tracer_names = tracer_names_tuple,
+                                halo_width = halo_width)
+            SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
+                rm, m, diffusion_op, workspace, dt, meteo; halo_width = halo_width)
+        end
+    else
+        half_dt = dt / 2
+        return () -> begin
+            SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
+                rm, m, diffusion_op, workspace, half_dt, meteo; halo_width = halo_width)
+            apply_surface_flux!(rm, emissions_op, workspace, dt, meteo, grid;
+                                tracer_names = tracer_names_tuple,
+                                halo_width = halo_width)
+            SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
+                rm, m, diffusion_op, workspace, half_dt, meteo; halo_width = halo_width)
+        end
+    end
+end
+
 function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxState{B},
                        grid::AtmosGrid{<:CubedSphereMesh},
                        scheme::AbstractAdvectionScheme;
@@ -1164,33 +1156,10 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
             "support reference-state (anomaly) tracers; use [advection] " *
             "scheme = \"linrood\" for referenced tracers"))
         fill_panel_halos!(state.tracers_raw, grid.horizontal; dir=1)
-        midpoint! = if emissions_op isa NoSurfaceFlux
-            () -> SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
-                state.tracers_raw, m, diffusion_op, workspace, dt, meteo;
-                halo_width = state.halo_width)
-        elseif uses_diffusive_surface_flux_boundary(diffusion_op)
-            () -> begin
-                apply_surface_flux!(state.tracers_raw, emissions_op, workspace, dt, meteo, grid;
-                                    tracer_names = state.tracer_names,
-                                    halo_width = state.halo_width)
-                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
-                    state.tracers_raw, m, diffusion_op, workspace, dt, meteo;
-                    halo_width = state.halo_width)
-            end
-        else
-            half_dt = dt / 2
-            () -> begin
-                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
-                    state.tracers_raw, m, diffusion_op, workspace, half_dt, meteo;
-                    halo_width = state.halo_width)
-                apply_surface_flux!(state.tracers_raw, emissions_op, workspace, dt, meteo, grid;
-                                    tracer_names = state.tracer_names,
-                                    halo_width = state.halo_width)
-                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
-                    state.tracers_raw, m, diffusion_op, workspace, half_dt, meteo;
-                    halo_width = state.halo_width)
-            end
-        end
+        midpoint! = _build_midpoint_closure(diffusion_op, emissions_op,
+                                            state.tracers_raw, m, workspace, dt,
+                                            meteo, grid, state.tracer_names,
+                                            state.halo_width)
         _cs_transport_step!(CSSplitSweepStyle(), state.tracers_raw, m, fluxes,
                             grid.horizontal, scheme, workspace;
                             cfl_limit = cfl_limit,
@@ -1213,33 +1182,10 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
         rm_tracer = get_tracer_raw(state, idx)
         fill_panel_halos!(rm_tracer, grid.horizontal; dir=1)
         tracer_name = tracer_names[idx]
-        midpoint! = if emissions_op isa NoSurfaceFlux
-            () -> SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
-                rm_tracer, m, diffusion_op, workspace, dt, meteo;
-                halo_width = state.halo_width)
-        elseif uses_diffusive_surface_flux_boundary(diffusion_op)
-            () -> begin
-                apply_surface_flux!(rm_tracer, emissions_op, workspace, dt, meteo, grid;
-                                    tracer_names = (tracer_name,),
-                                    halo_width = state.halo_width)
-                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
-                    rm_tracer, m, diffusion_op, workspace, dt, meteo;
-                    halo_width = state.halo_width)
-            end
-        else
-            half_dt = dt / 2
-            () -> begin
-                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
-                    rm_tracer, m, diffusion_op, workspace, half_dt, meteo;
-                    halo_width = state.halo_width)
-                apply_surface_flux!(rm_tracer, emissions_op, workspace, dt, meteo, grid;
-                                    tracer_names = (tracer_name,),
-                                    halo_width = state.halo_width)
-                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
-                    rm_tracer, m, diffusion_op, workspace, half_dt, meteo;
-                    halo_width = state.halo_width)
-            end
-        end
+        midpoint! = _build_midpoint_closure(diffusion_op, emissions_op,
+                                            rm_tracer, m, workspace, dt,
+                                            meteo, grid, (tracer_name,),
+                                            state.halo_width)
         # Per-tracer reference VMR (anomaly transport, plan 45): `nothing` for
         # unreferenced tracers keeps the raw path; only the LinRood style
         # reaches this per-tracer loop (split-sweep schemes take the

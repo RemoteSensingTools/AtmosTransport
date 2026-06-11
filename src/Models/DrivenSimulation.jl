@@ -21,6 +21,7 @@ LL/RG manual setup looks like this:
 ```julia
 using TOML, AtmosTransport
 using AtmosTransport.MetDrivers: air_mass_basis, driver_grid
+using AtmosTransport.State: mass_basis_type
 
 cfg = TOML.parsefile("config/runs/quickstart/ll72x37_advonly.toml")
 paths = expand_binary_paths(cfg["input"])
@@ -32,7 +33,7 @@ validate_runtime_physics_recipe(recipe, driver)
 
 grid = driver_grid(driver)
 window1 = load_transport_window(driver, 1)
-Basis = air_mass_basis(driver) === :dry ? DryBasis : MoistBasis
+Basis = mass_basis_type(air_mass_basis(driver))
 air = copy(window1.air_mass)
 
 vmr = build_initial_mixing_ratio(
@@ -93,9 +94,6 @@ mutable struct DrivenSimulation{ModelT, DriverT, WindowT, AT, QT, FT, CB, SS, CT
     air_mass_reset_mode         :: Symbol
 end
 
-@inline _basis_symbol(::DryBasis) = :dry
-@inline _basis_symbol(::MoistBasis) = :moist
-
 function _check_grid_compatibility(model_grid::AtmosGrid, driver_grid_ref::AtmosGrid)
     typeof(model_grid.horizontal) === typeof(driver_grid_ref.horizontal) ||
         throw(ArgumentError("model grid $(typeof(model_grid.horizontal)) does not match driver grid $(typeof(driver_grid_ref.horizontal))"))
@@ -110,10 +108,10 @@ end
 
 function _check_basis_compatibility(model::TransportModel, driver::D) where {D <: AbstractMetDriver}
     basis_sym = air_mass_basis(driver)
-    _basis_symbol(mass_basis(model.state)) == basis_sym ||
-        throw(ArgumentError("model state basis $(_basis_symbol(mass_basis(model.state))) does not match driver basis $(basis_sym)"))
-    _basis_symbol(mass_basis(model.fluxes)) == basis_sym ||
-        throw(ArgumentError("model flux basis $(_basis_symbol(mass_basis(model.fluxes))) does not match driver basis $(basis_sym)"))
+    mass_basis_symbol(mass_basis(model.state)) == basis_sym ||
+        throw(ArgumentError("model state basis $(mass_basis_symbol(mass_basis(model.state))) does not match driver basis $(basis_sym)"))
+    mass_basis_symbol(mass_basis(model.fluxes)) == basis_sym ||
+        throw(ArgumentError("model flux basis $(mass_basis_symbol(mass_basis(model.fluxes))) does not match driver basis $(basis_sym)"))
     return nothing
 end
 
@@ -263,31 +261,15 @@ end
     return adaptor === Array ? window : Base.invokelatest(Adapt.adapt, adaptor, window)
 end
 
-@inline function _copy_optional_storage!(dest, src, field::Symbol)
+# Optional window sections are `nothing` when the binary lacks them; a
+# capability must not appear or vanish between windows of one run.
+@inline function _copy_optional!(copy!::F, dest, src, what::String) where {F}
     if dest === nothing || src === nothing
         dest === src ||
-            throw(ArgumentError("transport window capability for `$(field)` changed between windows"))
+            throw(ArgumentError("transport window $(what) capability changed between windows"))
         return dest
     end
-    return _copy_storage!(dest, src)
-end
-
-@inline function _copy_optional_convection!(dest, src)
-    if dest === nothing || src === nothing
-        dest === src ||
-            throw(ArgumentError("transport window convection capability changed between windows"))
-        return dest
-    end
-    return copy_convection_forcing!(dest, src)
-end
-
-@inline function _copy_optional_surface!(dest, src)
-    if dest === nothing || src === nothing
-        dest === src ||
-            throw(ArgumentError("transport window surface-forcing capability changed between windows"))
-        return dest
-    end
-    return _copy_surface_forcing!(dest, src)
+    return copy!(dest, src)
 end
 
 @inline _copy_surface_forcing!(dest, src) =
@@ -321,23 +303,14 @@ end
     return dest
 end
 
-@inline function _copy_optional_deltas!(dest, src)
-    if dest === nothing || src === nothing
-        dest === src ||
-            throw(ArgumentError("transport window flux-delta capability changed between windows"))
-        return dest
-    end
-    return _copy_flux_deltas!(dest, src)
-end
-
 function _copy_common_window_payload!(dest, src)
     _copy_storage!(dest.air_mass, src.air_mass)
     _copy_storage!(dest.surface_pressure, src.surface_pressure)
     copy_fluxes!(dest.fluxes, src.fluxes)
-    _copy_optional_storage!(dest.qv_start, src.qv_start, :qv_start)
-    _copy_optional_storage!(dest.qv_end, src.qv_end, :qv_end)
-    _copy_optional_deltas!(dest.deltas, src.deltas)
-    _copy_optional_convection!(dest.convection, src.convection)
+    _copy_optional!(_copy_storage!, dest.qv_start, src.qv_start, "`qv_start`")
+    _copy_optional!(_copy_storage!, dest.qv_end, src.qv_end, "`qv_end`")
+    _copy_optional!(_copy_flux_deltas!, dest.deltas, src.deltas, "flux-delta")
+    _copy_optional!(copy_convection_forcing!, dest.convection, src.convection, "convection")
     return dest
 end
 
@@ -354,7 +327,7 @@ end
 function _copy_window_payload!(dest::CubedSphereTransportWindow{B},
                                src::CubedSphereTransportWindow{B}) where {B <: AbstractMassBasis}
     _copy_common_window_payload!(dest, src)
-    _copy_optional_surface!(dest.surface, src.surface)
+    _copy_optional!(_copy_surface_forcing!, dest.surface, src.surface, "surface-forcing")
     return dest
 end
 

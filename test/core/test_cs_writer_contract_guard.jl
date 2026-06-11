@@ -21,10 +21,23 @@ const _PATCH_TOOL = joinpath(@__DIR__, "..", "..", "scripts", "diagnostics",
 include(_PATCH_TOOL)   # exposes patch!, _read_header (guarded main, not run)
 
 """Write a synthetic CS binary: JSON header + 0x00 terminator + zero pad to
-`header_bytes`, then `payload`. Mirrors `open_streaming_cs_transport_binary`."""
+`header_bytes`, then `payload`. Mirrors `open_streaming_cs_transport_binary`.
+Defaults satisfy `_validate_patch_target`'s patchability requirements
+(`grid_type = "cubed_sphere"`, a positive-integer schedule with
+`nwindow == length(schedule)` and `steps_per_window == maximum(schedule)`),
+DERIVED from any `hdr` overrides so the consistency checks hold. Pass explicit
+overrides to test the rejection paths."""
 function _write_synthetic(path; header_bytes::Int, hdr::AbstractDict,
                           payload::Vector{UInt8} = UInt8[])
-    merged = merge(Dict{String,Any}("header_bytes" => header_bytes), hdr)
+    merged = merge(Dict{String,Any}("header_bytes" => header_bytes,
+                                    "grid_type" => "cubed_sphere"),
+                   hdr)
+    spw = get(merged, "steps_per_window", 20)
+    merged["steps_per_window"] = spw
+    haskey(merged, "steps_per_window_by_window") ||
+        (merged["steps_per_window_by_window"] = fill(spw, 4))
+    haskey(merged, "nwindow") ||
+        (merged["nwindow"] = length(merged["steps_per_window_by_window"]))
     json = JSON3.write(merged)
     @assert ncodeunits(json) < header_bytes "synthetic header too big for test"
     buf = zeros(UInt8, header_bytes)
@@ -102,12 +115,16 @@ end
         end
 
         @testset "overflow guard: rejects when the key would not fit" begin
-            # Pack the base JSON to within ~30 bytes of header_bytes so the base
-            # fits but the added ~45-byte contract key overflows.
-            small = 256
-            filler = "x"^(small - 60)
+            # Measure the ACTUAL serialized base-header length (the fixture
+            # derives schedule keys, so guessing a byte budget is fragile),
+            # then re-write with header_bytes leaving less headroom than the
+            # ~45-byte contract key needs: base fits, the patch cannot.
             p = joinpath(dir, "d.bin")
-            _write_synthetic(p; header_bytes = small, hdr = Dict("pad" => filler))
+            base_hdr = Dict("pad" => "x"^100)
+            _write_synthetic(p; header_bytes = 4096, hdr = base_hdr)
+            json_len = findfirst(==(0x00), read(p)) - 1      # on-disk JSON bytes
+            small = json_len + 20
+            _write_synthetic(p; header_bytes = small, hdr = base_hdr)
             before = read(p)
             @test patch!(p; apply = true) === :overflow
             @test read(p) == before                          # untouched on overflow

@@ -80,7 +80,7 @@ using ..Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                default_panel_connectivity, gnomonic_panel_connectivity, reciprocal_edge,
                GnomonicPanelConvention, GEOSNativePanelConvention,
                EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST
-using ..State: AbstractMassBasis, DryBasis, MoistBasis
+using ..State: AbstractMassBasis, DryBasis, MoistBasis, mass_basis_type, mass_basis_symbol
 using ..Regridding: build_regridder, apply_regridder!
 using ..Quantities: QuantityKind, IntensiveCellField, ExtensiveCellField,
                     HorizontalVectorField, HorizontalFluxField

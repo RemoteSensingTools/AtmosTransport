@@ -935,6 +935,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg, st
         snap_idx += 1
     end
 
+    run_time_seconds = 0.0   # accumulated across binaries (sim clock origin)
     for (idx, path) in enumerate(binary_paths)
         # `path` (NAS) is kept for date labels/logging; the driver opens the
         # staged local copy when staging is enabled (idx==1 already staged above).
@@ -953,7 +954,11 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg, st
                                     initialize_air_mass = initialize_air_mass,
                                     air_mass_reset_mode = air_mass_reset_mode,
                                     surface_sources = surface_sources,
-                                    chemistry = recipe.chemistry))
+                                    chemistry = recipe.chemistry,
+                                    # seconds since RUN start — see the CS loop
+                                    # note: per-binary clock restarts replay
+                                    # day-1 time-varying fluxes
+                                    start_time = run_time_seconds))
         model = sim.model
         if !initialize_air_mass
             boundary_rel = maximum(abs.(model.state.air_mass .- sim.window.air_mass)) /
@@ -1022,6 +1027,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg, st
             end
         end
 
+        run_time_seconds += (stop_window - start_window + 1) * Float64(window_dt(driver))
         _synchronize_backend!(cfg)
         set_progress_status!(timer;
                              status = @sprintf("finished %s", basename(path)),
@@ -1308,7 +1314,15 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::In
                                     initialize_air_mass = initialize_air_mass,
                                     air_mass_reset_mode = air_mass_reset_mode,
                                     surface_sources = surface_sources,
-                                    chemistry = recipe.chemistry))
+                                    # accumulated run time: time-varying surface
+                                    # sources index emission slices in seconds
+                                    # since RUN start; restarting at 0 per day
+                                    # replays day-1 fluxes (the +1 Pg/month
+                                    # co2_natural surplus). (`callbacks` /
+                                    # reference-cadence is an anomaly-ref feature
+                                    # not on this branch, so omitted here.)
+                                    chemistry = recipe.chemistry,
+                                    start_time = total_hour * 3600.0))
         # `DrivenSimulation` may wrap `model` with a surface-flux operator;
         # keep snapshots and the return value aligned with the stepped model.
         model = sim.model

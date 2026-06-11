@@ -775,6 +775,13 @@ Keyword arguments:
 - `surface_sources=()`
 - `chemistry=NoChemistry()` — applied after advection + surface sources each step
 - `callbacks=NamedTuple()`
+- `start_time=0` — simulation clock origin [s]. Multi-binary runners MUST pass
+  the accumulated run time here when rebuilding the sim per binary: `sim.time`
+  feeds `current_time(meteo)`, which time-varying surface-flux sources use to
+  select their emission slice (seconds since the RUN start, not the binary
+  start). Restarting the clock at 0 each day silently replays day-1 fluxes —
+  the December-2021 co2_natural +1 Pg/month surplus (plan 45 Stage-4 A/B
+  experiment attributed the leak to exactly this).
 """
 function DrivenSimulation(model::TransportModel,
                           driver::D;
@@ -786,7 +793,8 @@ function DrivenSimulation(model::TransportModel,
                           air_mass_reset_mode = :preserve_tracer_mass,
                           surface_sources = (),
                           chemistry::AbstractChemistryOperator = NoChemistry(),
-                          callbacks = NamedTuple()) where {D <: AbstractMetDriver}
+                          callbacks = NamedTuple(),
+                          start_time::Real = 0) where {D <: AbstractMetDriver}
     1 <= start_window <= stop_window <= total_windows(driver) ||
         throw(ArgumentError("invalid window range: start_window=$(start_window), stop_window=$(stop_window), total_windows=$(total_windows(driver))"))
     supports_native_vertical_flux(driver) ||
@@ -852,7 +860,7 @@ function DrivenSimulation(model::TransportModel,
         FT(window_dt(driver)),
         steps_current,
         step_schedule,
-        zero(FT),
+        FT(start_time),
         0,
         Int(start_window),
         Int(start_window),
@@ -906,7 +914,8 @@ current_qv(sim::DrivenSimulation) = sim.qv_buffer
     current_time(sim::DrivenSimulation) -> FT
 
 Simulation time [s] at the start of the next step. Returns
-`sim.time`, which is initialized to `zero(FT)` at sim construction
+`sim.time`, which is initialized to `FT(start_time)` at sim construction
+(seconds since the RUN start for multi-binary runs)
 and advanced by `sim.time += sim.Δt` at the end of each `step!(sim)`.
 
 `sim` is threaded through operators via the `meteo` kwarg:

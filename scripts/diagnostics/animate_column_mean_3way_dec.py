@@ -26,10 +26,11 @@ Budget readout at the top-left of each panel (referenced to the FIRST frame):
     co2_natural              : time-varying lmdz CAMS (stepwise), the global rate
                                series read from the SAME file the model uses,
                                anchored to the model's logged first-slice rate.
-For a conserving, non-decaying tracer dm == |F to the F32 conservation floor
-(post diffusion-anomaly fix, SF6 ~0.3%; pre-fix ~1.9%). For Rn222 the dm < |F gap
-is the radioactive-decay sink. AT and GC use DIFFERENT emission inventories, so
-dm_AT vs dm_GC differences reflect the inventories, not conservation.
+For a conserving, non-decaying tracer dm == |F to that run's conservation floor
+(F32 LinRood fillz=false: ~exact; PPM: ~0.04-0.4% by tracer sharpness). For
+Rn222 the dm < |F gap is the radioactive-decay sink. AT dm prefers the exact
+F64 `<tracer>_total_mass` variable when the run wrote it (true mass balance);
+GC dm is always the field integral (GC files carry no such variable).
 
 ALL masses/column-means come from the 3D fields and the dry layer air mass
 (= dry-dP * area / g; our `air_mass`, GC's `Met_AD`) — never the precomputed
@@ -49,8 +50,12 @@ import cartopy.feature as cfeature
 OUTDIR = os.path.expanduser("~/www/catrine"); os.makedirs(OUTDIR, exist_ok=True)
 OUTMP4 = sys.argv[1] if len(sys.argv) > 1 else f"{OUTDIR}/column_mean_3way_dec_4tracer.mp4"
 GCDIR  = "/home/cfranken/data/AtmosTransport/catrine-geoschem-runs"
-GEOSIT = "/home/cfranken/data/AtmosTransport/output/campaign_winter2021/geosit_omega_4tracer_dec2021_feb2022.nc"
-ERA5   = "/home/cfranken/data/AtmosTransport/output/campaign_winter2021/era5_4tracer_dec2021_feb2022.nc"
+# Override the two AtmosTransport inputs without editing the script:
+#   ANIM_GEOSIT=/path/a.nc ANIM_ERA5=/path/b.nc animate_... out.gif
+GEOSIT = os.environ.get("ANIM_GEOSIT",
+    "/home/cfranken/data/AtmosTransport/output/campaign_winter2021/geosit_omega_4tracer_dec2021_feb2022.nc")
+ERA5   = os.environ.get("ANIM_ERA5",
+    "/home/cfranken/data/AtmosTransport/output/campaign_winter2021/era5_4tracer_dec2021_feb2022.nc")
 T0 = dt.datetime(2021, 12, 1)
 NLON, NLAT = 180, 90
 M_AIR = 28.9644
@@ -181,6 +186,13 @@ def main():
             gc_col, gc_m = gc[ti]
             o_col, o_m = col_and_mass(np.asarray(go.variables[ov][gi]), go_am, mr)
             e_col, e_m = col_and_mass(np.asarray(er.variables[ov][gi]), er_am, mr)
+            # TRUE mass balance: prefer the exact F64 `<tracer>_total_mass`
+            # written at capture (authoritative; the F32 spatial-field
+            # integral is reconstruction-polluted for reference-state
+            # tracers). GC files have no such variable -> field integral.
+            tmv = f"{ov}_total_mass"
+            if tmv in go.variables: o_m = float(go.variables[tmv][gi]) * mr
+            if tmv in er.variables: e_m = float(er.variables[tmv][gi]) * mr
             row_maps.append([bin_latlon(g_lons,g_lats, gc_col*sc),
                              bin_latlon(g_lons,g_lats, o_col*sc),
                              bin_latlon(e_lons,e_lats, e_col*sc)])

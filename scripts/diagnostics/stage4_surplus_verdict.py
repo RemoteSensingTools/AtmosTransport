@@ -19,7 +19,8 @@ M_AIR = 28.9644
 M_CO2 = 44.01
 M_SF6 = 146.055
 KGC_TO_KGCO2 = 44.01 / 12.011
-SF6_RATE = 3.239166e-1          # kg/s (EDGAR * 1.0116635 scale)
+SF6_RATE = 3.201820e-1          # kg/s (EDGAR incl. the 1.0116635 scale —
+                                # this IS the final rate; do not re-scale)
 FOSSIL_RATE = 1.229399e6        # kg/s (gridfed Dec 2021)
 LMDZ = os.path.expanduser(
     "~/data/AtmosTransport/catrine/Emissions/LMDZ_fluxes/"

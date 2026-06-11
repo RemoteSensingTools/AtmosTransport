@@ -120,7 +120,11 @@ function _ensure_selected_lev!(ds, fields::OutputFieldSpec, Nz::Integer)
                                  "positive" => "down",
                                  "selection" => "configured [output.fields].levels"))
         v[:] = Float64.(levels)
-    elseif length(ds.dim["lev_selected"]) != length(levels)
+    elseif ds.dim["lev_selected"] != length(levels) ||
+           ds["lev_selected"][:] != Float64.(levels)
+        # NB: `ds.dim[name]` IS the length (Int). `length(ds.dim[name])` is
+        # always 1 and made this guard throw for every selected-layer output
+        # after the first (any file with >= 2 selected-layer variables).
         throw(ArgumentError("all selected-layer outputs must use the same [output.fields].levels"))
     end
     return levels

@@ -1155,6 +1155,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
         snap_idx += 1
     end
 
+    run_time_seconds = 0.0   # accumulated across binaries (sim clock origin)
     for (idx, path) in enumerate(binary_paths)
         driver = idx == 1 ? first_driver :
                  timed_io_read!(timer,
@@ -1170,7 +1171,11 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
                                     initialize_air_mass = initialize_air_mass,
                                     air_mass_reset_mode = air_mass_reset_mode,
                                     surface_sources = surface_sources,
-                                    chemistry = recipe.chemistry))
+                                    chemistry = recipe.chemistry,
+                                    # seconds since RUN start — see the CS loop
+                                    # note: per-binary clock restarts replay
+                                    # day-1 time-varying fluxes
+                                    start_time = run_time_seconds))
         model = sim.model
         if !initialize_air_mass
             boundary_rel = maximum(abs.(model.state.air_mass .- sim.window.air_mass)) /
@@ -1239,6 +1244,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
             end
         end
 
+        run_time_seconds += (stop_window - start_window + 1) * Float64(window_dt(driver))
         _synchronize_backend!(cfg)
         set_progress_status!(timer;
                              status = @sprintf("finished %s", basename(path)),
@@ -1519,7 +1525,13 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
                                     air_mass_reset_mode = air_mass_reset_mode,
                                     surface_sources = surface_sources,
                                     chemistry = recipe.chemistry,
-                                    callbacks = _reference_cadence_callbacks(tracer_specs)))
+                                    callbacks = _reference_cadence_callbacks(tracer_specs),
+                                    # accumulated run time: time-varying sources
+                                    # index emission slices in seconds since RUN
+                                    # start; restarting at 0 per day replays
+                                    # day-1 fluxes (the +1 Pg/month co2_natural
+                                    # surplus, root-caused by plan 45 Stage 4)
+                                    start_time = total_hour * 3600.0))
         # `DrivenSimulation` may wrap `model` with a surface-flux operator;
         # keep snapshots and the return value aligned with the stepped model.
         model = sim.model

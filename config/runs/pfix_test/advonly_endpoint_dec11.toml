@@ -1,6 +1,6 @@
 # Adv-only co2_natural, Dec-11, endpoint cm-closure binary.
-# reset_air_mass_each_window=true → re-anchor to analyzed DELP each window,
-# preserving VMR (the chain_mass=false + VMR-preserving contract).
+# air_mass_reset_mode = "preserve_tracer_mass" → re-anchor to analyzed DELP each window,
+# preserving tracer mass while allowing VMR to adjust to the analyzed dry-air mass.
 [architecture]
 use_gpu = true
 backend = "cuda"
@@ -12,7 +12,7 @@ start_date   = "2021-12-11"
 end_date     = "2021-12-11"
 file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
 [run]
-reset_air_mass_each_window = true
+air_mass_reset_mode = "preserve_tracer_mass"
 [advection]
 scheme = "ppm"
 [tracers.co2_natural]

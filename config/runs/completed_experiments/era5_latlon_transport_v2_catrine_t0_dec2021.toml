@@ -18,7 +18,7 @@ scheme = "upwind"
 tracer_name = "CO2"
 start_window = 1
 stop_window = 0
-reset_air_mass_each_window = false
+air_mass_reset_mode = "none"
 
 [init]
 kind = "catrine_co2"

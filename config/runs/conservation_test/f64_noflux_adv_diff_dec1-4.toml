@@ -1,0 +1,35 @@
+# F64 no-flux: advection + DIFFUSION (geoschem Holtslag-Boville vdiff) ONLY (no
+# convection, no chemistry, no surface flux -> the surface-flux coupling is moot).
+# Companion to f64_noflux_adv_conv_dec1-4.toml: isolates whether the diffusion
+# conserves the total background-tracer mass. Diffusion is verified conservative
+# (96/96), so this is the control; the leak is expected in the convection pair.
+[architecture]
+use_gpu = true
+backend = "cuda"
+[numerics]
+float_type = "Float64"
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_fullL72_omega"
+start_date   = "2021-12-01"
+end_date     = "2021-12-04"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+[advection]
+scheme = "ppm"
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"
+[tracers.sf6]
+  [tracers.sf6.init]
+  kind = "file"
+  file = "~/data/AtmosTransport/catrine/InitialConditions/startSF6_202112010000.nc"
+  variable = "SF6"
+[diffusion]
+kind = "geoschem_holtslag_boville_vdiff"
+surface_flux_boundary = false   # no surface flux here; just vertical mixing
+[convection]
+kind = "none"
+[chemistry]
+kind = "none"
+[output]
+snapshot_interval_hours = 3
+snapshot_file = "~/data/AtmosTransport/output/conservation_test/f64_noflux_adv_diff_dec1-4.nc"

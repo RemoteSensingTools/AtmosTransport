@@ -10,6 +10,8 @@ using .AtmosTransport.Operators: MonotoneLimiter, required_halo_width
 using .AtmosTransport.Operators.Advection: fill_panel_halos!, strang_split_cs!,
     strang_split_cs_mt!, strang_split!, CSAdvectionWorkspace, VerticalRemapWorkspace,
     compute_target_pressure_from_mass_direct!, vertical_remap_cs!
+using .AtmosTransport.State: CubedSphereFaceFluxState, DryMassFluxBasis,
+    total_air_mass, total_mass
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -64,6 +66,102 @@ function total_cs_surface_rate(rates)
         s += sum(rates[p])
     end
     return s
+end
+
+function make_structured_cs_state(; FT=Float64, Nc=8, Hp=1, Nz=2)
+    mesh = CubedSphereMesh(; FT, Nc, Hp)
+    N = Nc + 2Hp
+    panels_m = ntuple(6) do p
+        m = zeros(FT, N, N, Nz)
+        for k in 1:Nz, j in 1:Nc, i in 1:Nc
+            m[Hp+i, Hp+j, k] = FT(1.0e9) * (1 + FT(0.01) * k + FT(0.002) * p)
+        end
+        m
+    end
+    panels_rm = ntuple(6) do p
+        rm = zeros(FT, N, N, Nz)
+        for k in 1:Nz, j in 1:Nc, i in 1:Nc
+            χ = FT(390e-6) +
+                FT(30e-6) * sin(FT(2π) * FT(i - 1) / FT(Nc)) +
+                FT(20e-6) * cos(FT(2π) * FT(j - 1) / FT(Nc)) +
+                FT(8e-6) * FT(p - 3) +
+                FT(5e-6) * FT(k - 1)
+            rm[Hp+i, Hp+j, k] = panels_m[p][Hp+i, Hp+j, k] * χ
+        end
+        rm
+    end
+    fill_panel_halos!(panels_m, mesh; dir=0)
+    fill_panel_halos!(panels_rm, mesh; dir=0)
+    return mesh, panels_m, panels_rm
+end
+
+function make_mirrored_cs_horizontal_fluxes(mesh::CubedSphereMesh{FT}, Nz::Int) where FT
+    Prep = AtmosTransport.Preprocessing
+    Nc, Hp = mesh.Nc, mesh.Hp
+    N = Nc + 2Hp
+    raw_am = ntuple(6) do p
+        am = zeros(FT, Nc + 1, Nc, Nz)
+        for k in 1:Nz, s in 1:Nc
+            am[1,      s, k] = FT(1.0e6) * sin(FT(0.3p + 0.2s + 0.1k))
+            am[Nc + 1, s, k] = FT(1.0e6) * cos(FT(0.2p - 0.4s + 0.1k))
+        end
+        am
+    end
+    raw_bm = ntuple(6) do p
+        bm = zeros(FT, Nc, Nc + 1, Nz)
+        for k in 1:Nz, s in 1:Nc
+            bm[s, 1,      k] = FT(0.8e6) * cos(FT(0.1p + 0.3s - 0.2k))
+            bm[s, Nc + 1, k] = FT(0.8e6) * sin(FT(0.4p - 0.1s + 0.2k))
+        end
+        bm
+    end
+    Prep.sync_all_cs_boundary_mirrors!(raw_am, raw_bm, mesh.connectivity, Nc, Nz)
+
+    panels_am = ntuple(6) do p
+        am = zeros(FT, N + 1, N, Nz)
+        for k in 1:Nz, j in 1:Nc, i in 1:(Nc + 1)
+            am[Hp + i, Hp + j, k] = raw_am[p][i, j, k]
+        end
+        am
+    end
+    panels_bm = ntuple(6) do p
+        bm = zeros(FT, N, N + 1, Nz)
+        for k in 1:Nz, j in 1:(Nc + 1), i in 1:Nc
+            bm[Hp + i, Hp + j, k] = raw_bm[p][i, j, k]
+        end
+        bm
+    end
+    panels_cm = ntuple(_ -> zeros(FT, N, N, Nz + 1), 6)
+    return panels_am, panels_bm, panels_cm
+end
+
+function run_mirrored_seam_advection_conservation(scheme; FT=Float64, Nc=8, Nz=2, steps=2)
+    Hp = required_halo_width(scheme)
+    mesh, panels_m, panels_rm = make_structured_cs_state(; FT, Nc, Hp, Nz)
+    panels_am, panels_bm, panels_cm = make_mirrored_cs_horizontal_fluxes(mesh, Nz)
+    if scheme isa LinRoodPPMScheme
+        vertical = HybridSigmaPressure(FT[0, 100, 500], FT[0, 0.2, 1])
+        grid = AtmosGrid(mesh, vertical, CPU(); FT)
+        state = CubedSphereState(DryBasis, mesh, panels_m; tracer=panels_rm)
+        fluxes = CubedSphereFaceFluxState{DryMassFluxBasis}(panels_am, panels_bm, panels_cm)
+        ws = AtmosTransport.Operators.CSLinRoodAdvectionWorkspace(mesh, state.air_mass[1])
+        m0 = total_air_mass(state)
+        rm0 = total_mass(state, :tracer)
+        for _ in 1:steps
+            strang_split!(state, fluxes, grid, scheme; workspace=ws)
+        end
+        return (total_air_mass(state) - m0) / m0, (total_mass(state, :tracer) - rm0) / rm0
+    end
+
+    ws = CSAdvectionWorkspace(mesh, Nz)
+    m0 = total_interior(panels_m, Nc, Hp, Nz)
+    rm0 = total_interior(panels_rm, Nc, Hp, Nz)
+    for _ in 1:steps
+        strang_split_cs!(panels_rm, panels_m, panels_am, panels_bm, panels_cm,
+                         mesh, scheme, ws; subcycle_count=1)
+    end
+    return (total_interior(panels_m, Nc, Hp, Nz) - m0) / m0,
+           (total_interior(panels_rm, Nc, Hp, Nz) - rm0) / rm0
 end
 
 # ---------------------------------------------------------------------------
@@ -530,6 +628,25 @@ end
 
         @test abs(rm1 - rm0) / rm0 < 1e-13
         @test abs(m1 - m0) / m0 < 1e-13
+    end
+end
+
+@testset "CS advection conserves structured tracers across mirrored seams" begin
+    # Mirrors GCHP/FV3's contract: C-grid seam mass fluxes are oriented by the
+    # cubed-sphere contact map, then exchanged into each panel's boundary slots.
+    # A structured tracer background must conserve in F64 under that contract.
+    schemes = (
+        ("upwind", UpwindScheme(), 1e-9),
+        ("ppm", PPMScheme(), 1e-9),
+        ("linrood5", LinRoodPPMScheme(5), 1e-9),
+        ("linrood7", LinRoodPPMScheme(7), 1e-9),
+    )
+    for (label, scheme, tol) in schemes
+        @testset "$label" begin
+            air_rel, tracer_rel = run_mirrored_seam_advection_conservation(scheme)
+            @test abs(air_rel) < 1e-12
+            @test abs(tracer_rel) < tol
+        end
     end
 end
 

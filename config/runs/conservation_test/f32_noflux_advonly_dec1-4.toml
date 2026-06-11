@@ -1,0 +1,50 @@
+# ===========================================================================
+# F32 twin of f64_noflux_advonly_dec1-4.toml — same pure-advection, no-flux,
+# no-convection/diffusion/chemistry test, but Float32. Comparing the total-mass
+# drift here vs the F64 run isolates F32 ROUNDING: flux-form advection updates a
+# cell by (flux_in - flux_out), which for a high-background tracer is a tiny
+# change against a huge cell mass (co2_natural storage ~4e9/cell vs sf6 ~1e2/cell)
+# and is rounded away in F32 -> total-mass drift that scales with the background.
+# If F32 drifts (esp. co2_natural >> sf6) while F64 conserves, the cure is to
+# advect the ANOMALY (subtract a constant background, add it back).
+#   julia --project=. scripts/run_transport.jl <this>   (wurst is fine; F32)
+# ===========================================================================
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_fullL72_omega"
+start_date   = "2021-12-01"
+end_date     = "2021-12-04"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "ppm"
+
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"
+
+[tracers.sf6]
+  [tracers.sf6.init]
+  kind = "file"
+  file = "~/data/AtmosTransport/catrine/InitialConditions/startSF6_202112010000.nc"
+  variable = "SF6"
+
+[diffusion]
+kind = "none"
+
+[convection]
+kind = "none"
+
+[chemistry]
+kind = "none"
+
+[output]
+snapshot_interval_hours = 3
+snapshot_file = "~/data/AtmosTransport/output/conservation_test/f32_noflux_advonly_dec1-4.nc"

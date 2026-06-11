@@ -17,7 +17,7 @@ float_type = "Float32"
 
 [run]
 scheme = "ppm"
-reset_air_mass_each_window = true
+air_mass_reset_mode = "preserve_tracer_mass"
 
 [tracers.co2_natural]
 [tracers.co2_natural.init]

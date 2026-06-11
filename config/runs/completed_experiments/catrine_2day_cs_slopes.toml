@@ -17,7 +17,7 @@ float_type = "Float32"
 scheme = "slopes"
 start_window = 1
 stop_window = 24
-reset_air_mass_each_window = false
+air_mass_reset_mode = "none"
 halo_padding = 2
 
 [tracers.natural_co2.init]

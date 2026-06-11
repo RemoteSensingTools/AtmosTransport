@@ -805,7 +805,11 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
     run_cfg = get(cfg, "run", Dict{String, Any}())
     start_window = Int(get(run_cfg, "start_window", 1))
     stop_window_override = get(run_cfg, "stop_window", nothing)
-    reset_air_mass_each_window = Bool(get(run_cfg, "reset_air_mass_each_window", false))
+    haskey(run_cfg, "reset_air_mass_each_window") &&
+        throw(ArgumentError("run.reset_air_mass_each_window was replaced by " *
+                            "run.air_mass_reset_mode = \"none\", " *
+                            "\"preserve_vmr\", or \"preserve_tracer_mass\""))
+    air_mass_reset_mode = get(run_cfg, "air_mass_reset_mode", "preserve_tracer_mass")
 
     init_cfg = get(cfg, "init", Dict{String, Any}())
     tracer_specs = something(_parse_tracer_specs(cfg),
@@ -911,7 +915,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
                                     start_window = start_window,
                                     stop_window = stop_window,
                                     initialize_air_mass = initialize_air_mass,
-                                    reset_air_mass_each_window = reset_air_mass_each_window,
+                                    air_mass_reset_mode = air_mass_reset_mode,
                                     surface_sources = surface_sources,
                                     chemistry = recipe.chemistry))
         model = sim.model
@@ -1053,7 +1057,11 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
     advection = build_cs_advection(cfg)
     Hp = configured_halo_width(cfg, advection)
     stop_window_override = get(run_cfg, "stop_window", nothing)
-    reset_air_mass_each_window = Bool(get(run_cfg, "reset_air_mass_each_window", false))
+    haskey(run_cfg, "reset_air_mass_each_window") &&
+        throw(ArgumentError("run.reset_air_mass_each_window was replaced by " *
+                            "run.air_mass_reset_mode = \"none\", " *
+                            "\"preserve_vmr\", or \"preserve_tracer_mass\""))
+    air_mass_reset_mode = get(run_cfg, "air_mass_reset_mode", "preserve_tracer_mass")
 
     tracers_cfg = get(cfg, "tracers", Dict{String, Any}())
     isempty(tracers_cfg) && error("[tracers] must define at least one tracer")
@@ -1241,7 +1249,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
             () -> DrivenSimulation(model, driver;
                                     start_window = 1, stop_window = stop_window,
                                     initialize_air_mass = initialize_air_mass,
-                                    reset_air_mass_each_window = reset_air_mass_each_window,
+                                    air_mass_reset_mode = air_mass_reset_mode,
                                     surface_sources = surface_sources,
                                     chemistry = recipe.chemistry))
         # `DrivenSimulation` may wrap `model` with a surface-flux operator;

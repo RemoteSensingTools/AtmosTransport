@@ -1,0 +1,36 @@
+# F32 no-flux: co2_natural, advection + DIFFUSION only.
+# Companion to the SF6-only operator toggle; isolates whether the structured
+# 3238 Pg / 412 ppm CO2 background leaks when diffusion is added.
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_fullL72_omega"
+start_date   = "2021-12-01"
+end_date     = "2021-12-04"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "ppm"
+
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"
+
+[diffusion]
+kind = "geoschem_holtslag_boville_vdiff"
+surface_flux_boundary = false
+
+[convection]
+kind = "none"
+
+[chemistry]
+kind = "none"
+
+[output]
+snapshot_interval_hours = 3
+snapshot_file = "~/data/AtmosTransport/output/conservation_test/f32_noflux_adv_diff_co2nat_dec1-4.nc"

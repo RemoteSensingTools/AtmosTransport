@@ -1,0 +1,37 @@
+# F32 no-flux: co2_natural, advection only, first-order upwind.
+# Paired with curry_f64_noflux_advonly_co2nat_dec1-4.toml / PPM runs to test
+# whether the adv-only tracer drift is PPM-specific or present in the base
+# cubed-sphere sweep/halo mass-flux path.
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_fullL72_omega"
+start_date   = "2021-12-01"
+end_date     = "2021-12-04"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "upwind"
+
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"
+
+[diffusion]
+kind = "none"
+
+[convection]
+kind = "none"
+
+[chemistry]
+kind = "none"
+
+[output]
+snapshot_interval_hours = 3
+snapshot_file = "~/data/AtmosTransport/output/conservation_test/f32_noflux_advonly_upwind_co2nat_dec1-4.nc"

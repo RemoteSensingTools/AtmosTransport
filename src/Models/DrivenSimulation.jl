@@ -90,7 +90,7 @@ mutable struct DrivenSimulation{ModelT, DriverT, WindowT, AT, QT, FT, CB, SS, CT
     initialize_air_mass         :: Bool
     use_midpoint_forcing        :: Bool
     interpolate_fluxes_within_window :: Bool
-    reset_air_mass_each_window  :: Bool
+    air_mass_reset_mode         :: Symbol
 end
 
 @inline _basis_symbol(::DryBasis) = :dry
@@ -196,6 +196,38 @@ function _reset_air_mass_preserve_vmr!(state::CubedSphereState,
         copyto!(old_p, new_p)
     end
     return _refresh_state_halos!(state, mesh)
+end
+
+function _reset_air_mass_preserve_tracer_mass!(state::CellState, new_air_mass, _mesh)
+    copyto!(state.air_mass, new_air_mass)
+    return state
+end
+
+function _reset_air_mass_preserve_tracer_mass!(state::CubedSphereState,
+                                               new_air_mass::NTuple{6},
+                                               mesh::CubedSphereMesh)
+    fill_panel_halos!(new_air_mass, mesh; dir = 1)
+    for p in 1:6
+        copyto!(state.air_mass[p], new_air_mass[p])
+    end
+    return _refresh_state_halos!(state, mesh)
+end
+
+function _normalize_air_mass_reset_mode(air_mass_reset_mode)
+    mode = air_mass_reset_mode === nothing ? :none : Symbol(air_mass_reset_mode)
+    mode in (:none, :preserve_vmr, :preserve_tracer_mass) ||
+        throw(ArgumentError("air_mass_reset_mode must be one of :none, " *
+                            ":preserve_vmr, or :preserve_tracer_mass; got $(repr(mode))"))
+    return mode
+end
+
+function _reset_air_mass!(state, new_air_mass, mesh, mode::Symbol)
+    mode === :none && return state
+    mode === :preserve_vmr &&
+        return _reset_air_mass_preserve_vmr!(state, new_air_mass, mesh)
+    mode === :preserve_tracer_mass &&
+        return _reset_air_mass_preserve_tracer_mass!(state, new_air_mass, mesh)
+    throw(ArgumentError("unknown air_mass_reset_mode $(repr(mode))"))
 end
 
 @inline function _allocate_qv_buffer(window)
@@ -664,9 +696,10 @@ function _maybe_advance_window!(sim::DrivenSimulation)
         sim.current_window_end_iteration = sim.iteration + sim.steps_per_window
         sim.Δt = sim.window_dt / typeof(sim.Δt)(sim.steps_per_window)
         _take_prefetched_window!(sim, next_window)
-        if sim.reset_air_mass_each_window
-            _reset_air_mass_preserve_vmr!(sim.model.state, sim.window.air_mass,
-                                          sim.model.grid.horizontal)
+        if sim.air_mass_reset_mode !== :none
+            _reset_air_mass!(sim.model.state, sim.window.air_mass,
+                             sim.model.grid.horizontal,
+                             sim.air_mass_reset_mode)
         end
         if sim.qv_buffer !== nothing && !has_humidity_endpoints(sim.window)
             throw(ArgumentError("driver humidity endpoint support changed between windows"))
@@ -674,13 +707,10 @@ function _maybe_advance_window!(sim::DrivenSimulation)
         _validate_convection_runtime(sim.model, sim.driver, sim.window)
         _refresh_dz_for_window!(sim)
         _refresh_pbl_kz_for_window!(sim.model.diffusion, sim)
-        # There is no `reset_air_mass_each_window` flag. Under the canonical
-        # `:window_constant` contract, the runtime's own flux divergence
-        # integrates to `(m_next - m)` over each window, so `state.air_mass`
-        # naturally tracks `window.air_mass` at window boundaries without an
-        # explicit reset. An explicit reset would inject the 2nd-order
-        # ps-acceleration mismatch that causes the upwind
-        # monotonicity-violating window-edge jump (~0.87% on uniform IC).
+        # Under the canonical `:window_constant` contract, the runtime's own
+        # flux divergence should integrate to `(m_next - m)` over each window.
+        # `air_mass_reset_mode` controls whether the binary endpoint is still
+        # treated as authoritative at window boundaries.
         invalidate_cmfmc_cache!(sim.model.workspace.convection_ws)
         invalidate_tm5_cache!(sim.model.workspace.convection_ws)
         _start_window_prefetch!(sim, next_window + 1)
@@ -689,11 +719,12 @@ function _maybe_advance_window!(sim::DrivenSimulation)
 end
 
 function _maybe_reset_to_window_endpoint!(sim::DrivenSimulation)
-    (sim.reset_air_mass_each_window && _uses_binary_transport_schedule(sim)) ||
+    (sim.air_mass_reset_mode !== :none && _uses_binary_transport_schedule(sim)) ||
         return nothing
     expected_air_mass!(sim.expected_air_mass, sim.window, one(typeof(sim.Δt)))
-    _reset_air_mass_preserve_vmr!(sim.model.state, sim.expected_air_mass,
-                                  sim.model.grid.horizontal)
+    _reset_air_mass!(sim.model.state, sim.expected_air_mass,
+                     sim.model.grid.horizontal,
+                     sim.air_mass_reset_mode)
     return nothing
 end
 
@@ -708,11 +739,12 @@ Keyword arguments:
 - `initialize_air_mass=true`
 - `use_midpoint_forcing=true`
 - `interpolate_fluxes_within_window=nothing` (derive from driver)
-- `reset_air_mass_each_window=false` — when true, each newly loaded
-  window replaces prognostic air mass while preserving tracer VMR.
-  For binary-scheduled runs, the same endpoint reset is applied before
-  the once-per-window convection/chemistry block so physics sees the
-  binary's authoritative window-end mass.
+- `air_mass_reset_mode=:preserve_tracer_mass` — one of `:none`, `:preserve_vmr`, or
+  `:preserve_tracer_mass`. When non-`:none`, each newly loaded window
+  replaces prognostic air mass using the selected tracer invariant. For
+  binary-scheduled runs, the same endpoint reset is applied before the
+  once-per-window convection/chemistry block so physics sees the binary's
+  authoritative window-end mass.
 - `surface_sources=()`
 - `chemistry=NoChemistry()` — applied after advection + surface sources each step
 - `callbacks=NamedTuple()`
@@ -724,7 +756,7 @@ function DrivenSimulation(model::TransportModel,
                           initialize_air_mass::Bool = true,
                           use_midpoint_forcing::Bool = true,
                           interpolate_fluxes_within_window = nothing,
-                          reset_air_mass_each_window::Bool = false,
+                          air_mass_reset_mode = :preserve_tracer_mass,
                           surface_sources = (),
                           chemistry::AbstractChemistryOperator = NoChemistry(),
                           callbacks = NamedTuple()) where {D <: AbstractMetDriver}
@@ -775,6 +807,7 @@ function DrivenSimulation(model::TransportModel,
 
     flux_interp = interpolate_fluxes_within_window === nothing ?
                   (flux_interpolation_mode(driver) === :interpolate) : Bool(interpolate_fluxes_within_window)
+    reset_mode = _normalize_air_mass_reset_mode(air_mass_reset_mode)
 
     sim = DrivenSimulation{typeof(model), typeof(driver), typeof(window),
                            typeof(expected_air_mass), typeof(qv_buffer), FT,
@@ -806,15 +839,16 @@ function DrivenSimulation(model::TransportModel,
         initialize_air_mass,
         use_midpoint_forcing,
         flux_interp,
-        Bool(reset_air_mass_each_window),
+        reset_mode,
     )
 
     if initialize_air_mass
         _copy_storage!(sim.model.state.air_mass, sim.window.air_mass)
         _refresh_state_halos!(sim.model.state, sim.model.grid.horizontal)
-    elseif sim.reset_air_mass_each_window
-        _reset_air_mass_preserve_vmr!(sim.model.state, sim.window.air_mass,
-                                      sim.model.grid.horizontal)
+    elseif sim.air_mass_reset_mode !== :none
+        _reset_air_mass!(sim.model.state, sim.window.air_mass,
+                         sim.model.grid.horizontal,
+                         sim.air_mass_reset_mode)
     else
         _refresh_state_halos!(sim.model.state, sim.model.grid.horizontal)
     end

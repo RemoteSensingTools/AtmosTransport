@@ -1,0 +1,56 @@
+# ===========================================================================
+# F64 PURE-TRANSPORT CONSERVATION TEST — advection only, NO surface flux, NO
+# convection/diffusion/chemistry. Run on curry (A100, Float64) to (a) EXCLUDE
+# floating point as the cause of the per-tracer mass-tendency differences, and
+# (b) isolate whether flux-form advection conserves total tracer mass on the
+# omega cubed-sphere. With no emission/chemistry the total mass of each tracer
+# MUST be constant in exact arithmetic; in F64 any drift >~1e-13 is an
+# algorithmic leak (location to be found by staging operators back in).
+#
+# co2_natural (catrine_co2 background) + sf6 (file IC) carry a real background
+# to transport — these are exactly the IC-carrying tracers that showed the
+# ~1-2% with-flux injection deficit. fossil/Rn start at 0 (nothing to transport
+# without flux; they need a build-up + flux-off restart — separate follow-up).
+#
+# The F32 omega binaries load into the F64 runtime via TransportBinaryReader{Float64<-Float32}.
+#   ssh curry; cd repo; julia --project=. scripts/run_transport.jl <this>
+# ===========================================================================
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float64"
+
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_fullL72_omega"
+start_date   = "2021-12-01"
+end_date     = "2021-12-04"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "ppm"
+
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"
+
+[tracers.sf6]
+  [tracers.sf6.init]
+  kind = "file"
+  file = "~/data/AtmosTransport/catrine/InitialConditions/startSF6_202112010000.nc"
+  variable = "SF6"
+
+[diffusion]
+kind = "none"
+
+[convection]
+kind = "none"
+
+[chemistry]
+kind = "none"
+
+[output]
+snapshot_interval_hours = 3
+snapshot_file = "~/data/AtmosTransport/output/conservation_test/f64_noflux_advonly_dec1-4.nc"

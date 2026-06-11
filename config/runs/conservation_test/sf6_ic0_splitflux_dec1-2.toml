@@ -1,0 +1,38 @@
+# DECISIVE TEST: sf6 with IC = 0 (instead of the file background) + the SAME
+# edgar emission + split coupling + full physics. The surface-flux add is exact
+# (q_raw[Nz] += rate·dt, mass units, background-independent), so if the model is
+# correct this MUST close (rel_close ~ F32 floor) just like fossil. If it closes,
+# the ~2.5% deficit seen with the file IC was the budget diagnostic's
+# burden(t0)-cancellation for IC>>emission tracers, NOT a model non-conservation.
+[architecture]
+use_gpu = true
+backend = "cuda"
+[numerics]
+float_type = "Float32"
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_fullL72_omega"
+start_date   = "2021-12-01"
+end_date     = "2021-12-02"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+[advection]
+scheme = "ppm"
+[tracers.sf6]
+  [tracers.sf6.init]
+  kind = "uniform"
+  background = 0.0           # <-- IC = 0 (the only change vs the val)
+  [tracers.sf6.surface_flux]
+  kind = "edgar_sf6"
+  scale = 1.0116635
+[diffusion]
+kind = "geoschem_holtslag_boville_vdiff"
+surface_flux_boundary = false   # split coupling (exact add)
+[convection]
+kind = "cmfmc_matrix"
+tile_workspace_gib = 0.25
+use_collab_lu = true
+lmax_conv = 0
+[chemistry]
+kind = "none"
+[output]
+snapshot_interval_hours = 1
+snapshot_file = "~/data/AtmosTransport/output/conservation_test/sf6_ic0_splitflux_dec1-2.nc"

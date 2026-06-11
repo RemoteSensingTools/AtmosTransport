@@ -1,0 +1,33 @@
+# F32 no-flux: advection + DIFFUSION (vdiff) ONLY. No convection/chemistry/flux.
+# Isolation of the F32 BACKGROUND non-conservation per operator: with no source,
+# total SF6 mass MUST be constant. Any F32 drift here is the leak that, riding on
+# the 2.8e8 kg SF6 background, contaminates the ~5.5e4 kg/2-day emission budget as
+# the observed ~2.5% "deficit". Compare drift vs f32_noflux_advonly (adv alone
+# drifts ~-1e-6 over 96h). Single-tracer SF6 for speed.
+[architecture]
+use_gpu = true
+backend = "cuda"
+[numerics]
+float_type = "Float32"
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_fullL72_omega"
+start_date   = "2021-12-01"
+end_date     = "2021-12-04"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+[advection]
+scheme = "ppm"
+[tracers.sf6]
+  [tracers.sf6.init]
+  kind = "file"
+  file = "~/data/AtmosTransport/catrine/InitialConditions/startSF6_202112010000.nc"
+  variable = "SF6"
+[diffusion]
+kind = "geoschem_holtslag_boville_vdiff"
+surface_flux_boundary = false
+[convection]
+kind = "none"
+[chemistry]
+kind = "none"
+[output]
+snapshot_interval_hours = 3
+snapshot_file = "~/data/AtmosTransport/output/conservation_test/f32_noflux_adv_diff_dec1-4.nc"

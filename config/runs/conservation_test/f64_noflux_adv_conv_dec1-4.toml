@@ -1,0 +1,38 @@
+# F64 no-flux: advection + CONVECTION (cmfmc_matrix) ONLY (no diffusion, no
+# chemistry, no surface flux). Isolates whether the convection conserves the
+# total background-tracer mass. With no source/sink the total of each tracer
+# MUST be constant; any drift >~1e-12 (F64) is the cmfmc_matrix leak we're after
+# (the consistent ~5e-6 background non-conservation that appears as ~2.5% of the
+# tiny sf6/co2nat emission).
+[architecture]
+use_gpu = true
+backend = "cuda"
+[numerics]
+float_type = "Float64"
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_fullL72_omega"
+start_date   = "2021-12-01"
+end_date     = "2021-12-04"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+[advection]
+scheme = "ppm"
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"
+[tracers.sf6]
+  [tracers.sf6.init]
+  kind = "file"
+  file = "~/data/AtmosTransport/catrine/InitialConditions/startSF6_202112010000.nc"
+  variable = "SF6"
+[diffusion]
+kind = "none"
+[convection]
+kind = "cmfmc_matrix"
+tile_workspace_gib = 0.25
+use_collab_lu = false        # collaborative-LU is F32-only; standard LU path for F64
+lmax_conv = 0
+[chemistry]
+kind = "none"
+[output]
+snapshot_interval_hours = 3
+snapshot_file = "~/data/AtmosTransport/output/conservation_test/f64_noflux_adv_conv_dec1-4.nc"

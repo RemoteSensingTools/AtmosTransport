@@ -76,7 +76,7 @@ using ..State: AbstractMassBasis, DryBasis, MoistBasis, CellState,
                 CubedSphereState, total_air_mass, total_mass_full,
                 tracer_names, tracer_index, halo_width,
                 get_tracer_raw, set_tracer_reference!, REF_GLOBAL_MEAN,
-                mass_weighted_global_mean_vmr
+                tracer_reference_value, mass_weighted_global_mean_vmr
 using ..Grids: nlevels
 using ..Operators: LinRoodPPMScheme, PPMScheme, SlopesScheme, UpwindScheme,
                   NoAdvection,
@@ -296,16 +296,6 @@ function _tracer_transport_cfg(name, tracer_cfg)
     cadence in ("fixed", "daily", "per_window") || throw(ArgumentError(
         "[tracers.$(name).transport] reference_cadence=\"$(cadence)\" is not " *
         "supported; use \"fixed\", \"daily\", or \"per_window\""))
-    # NOTE: reference_cadence = "daily"/"per_window" parses but the
-    # re-reference hook ships in plan 45 Stage 5; until then only "fixed"
-    # changes nothing (the seed is computed once at IC either way). Reject
-    # the not-yet-wired cadences for a referenced tracer so a config cannot
-    # silently run with a weaker guarantee than it requested.
-    if reference != "none" && cadence != "fixed"
-        throw(ArgumentError(
-            "[tracers.$(name).transport] reference_cadence=\"$(cadence)\" is not " *
-            "yet wired (plan 45 Stage 5); use reference_cadence=\"fixed\""))
-    end
     return (reference = Symbol(reference), cadence = Symbol(cadence))
 end
 
@@ -418,6 +408,62 @@ function _validate_tracer_reference_compat(tracer_specs, recipe;
         end
     end
     return nothing
+end
+
+"""
+    _apply_reference_cadence!(state, tracer_specs, boundary::Symbol)
+
+Re-reference hook (plan 45 Stage 5): for each referenced tracer whose
+`reference_cadence` matches `boundary` (`:daily` at day/binary boundaries,
+`:per_window` at met-window ends), recompute the reference and shift the
+anomaly store by the drift of its global mean:
+
+    Δ = Σ_interior(q_anom·m) / Σ_interior(m)      (F64)
+    q_anom·m ← q_anom·m − Δ·m                      (FT muladd)
+    q_ref    ← q_ref + Δ                           (F64)
+
+The full-field burden `Σ(q_anom·m) + q_ref·Σm` is invariant in exact
+arithmetic; the FT store incurs BOUNDED per-cell roundoff at the anomaly
+scale (Δ is the accumulated mean drift, normally ≪ the anomaly spread), not
+an exact-F64 guarantee. Runs on the live (possibly GPU-adapted) state — the
+broadcast shift and F64 reductions are backend-generic, and the carrier is
+host-shared.
+"""
+function _apply_reference_cadence!(state, tracer_specs, boundary::Symbol)
+    for spec in tracer_specs
+        spec.reference_kind === :none && continue
+        spec.reference_cadence === boundary || continue
+        idx = tracer_index(state, spec.name)
+        idx === nothing && continue
+        raw = get_tracer_raw(state, idx)
+        m = state.air_mass
+        Δ = mass_weighted_global_mean_vmr(raw, m, halo_width(state))
+        q_ref_old = tracer_reference_value(state, idx)
+        q_ref_old === nothing && continue   # defensive: spec/carrier mismatch
+        FT = eltype(m[1])
+        dq = FT(Δ)
+        @inbounds for p in 1:6
+            raw[p] .= muladd.(-dq, m[p], raw[p])
+        end
+        set_tracer_reference!(state.tracer_refs, idx, REF_GLOBAL_MEAN,
+                              q_ref_old + Δ)
+        @debug "re-referenced tracer" spec.name boundary Δ new_q_ref = q_ref_old + Δ
+    end
+    return nothing
+end
+
+# End-of-window callback for `reference_cadence = "per_window"` tracers;
+# returns an empty tuple when no tracer needs it (zero overhead default).
+function _reference_cadence_callbacks(tracer_specs)
+    any(spec -> spec.reference_kind !== :none &&
+                spec.reference_cadence === :per_window, tracer_specs) ||
+        return NamedTuple()
+    callback = sim -> begin
+        sim.iteration == sim.current_window_end_iteration &&
+            _apply_reference_cadence!(sim.model.state, tracer_specs, :per_window)
+        nothing
+    end
+    return (reference_cadence = callback,)
 end
 
 """
@@ -1463,13 +1509,17 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
                 (model = Base.invokelatest(Adapt.adapt, adaptor, model))
         end
         initialize_air_mass = driver_idx == 1
+        # Re-reference `reference_cadence = "daily"` tracers at the day/binary
+        # boundary, before the new day's forcing applies (plan 45 Stage 5).
+        driver_idx == 1 || _apply_reference_cadence!(state, tracer_specs, :daily)
         sim = timed_io_read!(timer,
             () -> DrivenSimulation(model, driver;
                                     start_window = 1, stop_window = stop_window,
                                     initialize_air_mass = initialize_air_mass,
                                     air_mass_reset_mode = air_mass_reset_mode,
                                     surface_sources = surface_sources,
-                                    chemistry = recipe.chemistry))
+                                    chemistry = recipe.chemistry,
+                                    callbacks = _reference_cadence_callbacks(tracer_specs)))
         # `DrivenSimulation` may wrap `model` with a surface-flux operator;
         # keep snapshots and the return value aligned with the stepped model.
         model = sim.model

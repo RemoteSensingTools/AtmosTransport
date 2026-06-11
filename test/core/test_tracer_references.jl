@@ -19,7 +19,7 @@ using AtmosTransport: HybridSigmaPressure, AtmosGrid, allocate_face_fluxes,
 using AtmosTransport.Models.DrivenRunner: _parse_tracer_specs,
     _tracer_transport_cfg, TransportTracerSpec,
     _seed_tracer_references!, _validate_tracer_reference_compat,
-    is_offset_invariant
+    is_offset_invariant, _apply_reference_cadence!, _reference_cadence_callbacks
 using AtmosTransport.Models: RuntimePhysicsRecipe
 using AtmosTransport: LinRoodPPMScheme, NoDiffusion, NoConvection, NoChemistry,
     CMFMCConvection, ExponentialDecay, TM5Convection, CMFMCMatrixConvection,
@@ -121,11 +121,13 @@ end
     @test specs[1].reference_kind === :global_mean
     @test specs[1].reference_cadence === :fixed
 
-    # non-fixed cadences are Stage-5 scope: rejected for a referenced tracer
+    # Stage 5: non-fixed cadences parse for referenced tracers
     cfg = deepcopy(base)
     cfg["tracers"]["co2"]["transport"] =
         Dict{String, Any}("reference" => "global_mean", "reference_cadence" => "daily")
-    @test_throws ArgumentError _parse_tracer_specs(cfg)
+    specs = _parse_tracer_specs(cfg)
+    @test specs[1].reference_kind === :global_mean
+    @test specs[1].reference_cadence === :daily
 
     # back-compat 3-arg spec constructor defaults to the raw path
     spec = TransportTracerSpec(:x, Dict{String, Any}(), Dict{String, Any}())
@@ -391,6 +393,90 @@ end
     qfull_min = minimum(minimum(view(rm2[p], Hp+1:Hp+Nc, Hp+1:Hp+Nc, :) ./
                                 view(m[p],  Hp+1:Hp+Nc, Hp+1:Hp+Nc, :)) for p in 1:6) + q_ref
     @test qfull_min >= -4 * eps(Float32)
+end
+
+@testset "Stage 5: re-reference cadence hook" begin
+    state = _mini_cs_state(; FT = Float32)
+    raw = get_tracer_raw(state, :co2)
+    for p in 1:6   # structured field
+        raw[p] .+= Float32(2e-5) .* reshape(collect(Float32, 1:size(raw[p], 3)), 1, 1, :)
+    end
+    specs = (TransportTracerSpec(:co2, Dict{String, Any}(), Dict{String, Any}(),
+                                 :global_mean, :daily),
+             TransportTracerSpec(:sf6, Dict{String, Any}(), Dict{String, Any}()),)
+    _seed_tracer_references!(state, specs)
+    idx = tracer_index(state, :co2)
+    q_ref0 = tracer_reference_value(state, idx)
+
+    # drift the anomaly mean (simulates accumulated emission since the seed)
+    drift = Float32(5e-6)
+    for p in 1:6
+        raw[p] .+= drift .* state.air_mass[p]
+    end
+    burden_drifted = total_mass_full(state, :co2)
+    # the hook's contract: Δ = anomaly mean AT CALL TIME (which includes any
+    # bounded FT residual the seed left behind, not the synthetic literal)
+    mean_before = AtmosTransport.State.mass_weighted_global_mean_vmr(
+        raw, state.air_mass, state.halo_width)
+
+    # wrong boundary: no-op
+    _apply_reference_cadence!(state, specs, :per_window)
+    @test tracer_reference_value(state, idx) === q_ref0
+
+    # matching boundary: q_ref absorbs the pre-hook anomaly mean; burden
+    # invariant to BOUNDED FT shift roundoff (plan 45 Stage-5 contract)
+    _apply_reference_cadence!(state, specs, :daily)
+    q_ref1 = tracer_reference_value(state, idx)
+    @test q_ref1 - q_ref0 == mean_before
+    # absolute bound from the actual FT cast: per-cell |err| ≤ eps(FT)·|Δ·m|
+    # (muladd: one rounding at the shift scale), summed over interior cells
+    Hp = state.halo_width
+    shift_err_bound = sum(sum(abs, view(state.air_mass[p],
+                                        Hp+1:size(state.air_mass[p],1)-Hp,
+                                        Hp+1:size(state.air_mass[p],2)-Hp, :))
+                          for p in 1:6) * abs(mean_before) * eps(Float32) * 4
+    @test abs(total_mass_full(state, :co2) - burden_drifted) <= shift_err_bound
+    # anomaly mean re-centred at ~0 (post-shift mean ≪ the applied drift)
+    post_mean = AtmosTransport.State.mass_weighted_global_mean_vmr(
+        raw, state.air_mass, state.halo_width)
+    @test abs(post_mean) < 1e-3 * drift
+
+    # unreferenced tracer untouched throughout
+    @test tracer_reference_value(state, tracer_index(state, :sf6)) === nothing
+
+    # callbacks: empty unless some referenced tracer asks for per_window
+    @test _reference_cadence_callbacks(specs) === NamedTuple()
+    pw = (TransportTracerSpec(:co2, Dict{String, Any}(), Dict{String, Any}(),
+                              :global_mean, :per_window),)
+    cbs = _reference_cadence_callbacks(pw)
+    @test haskey(cbs, :reference_cadence)
+
+    # callback timing: fires exactly at the window-end iteration, not before
+    state2 = _mini_cs_state(; FT = Float32)
+    raw2 = get_tracer_raw(state2, :co2)
+    for p in 1:6
+        raw2[p] .+= Float32(2e-5) .* reshape(collect(Float32, 1:size(raw2[p], 3)), 1, 1, :)
+    end
+    pw2 = (TransportTracerSpec(:co2, Dict{String, Any}(), Dict{String, Any}(),
+                               :global_mean, :per_window),)
+    _seed_tracer_references!(state2, pw2)
+    i2 = tracer_index(state2, :co2)
+    for p in 1:6   # drift again so a firing visibly moves q_ref
+        raw2[p] .+= Float32(3e-6) .* state2.air_mass[p]
+    end
+    q_before = tracer_reference_value(state2, i2)
+    cb = _reference_cadence_callbacks(pw2).reference_cadence
+    FakeSim = (model = (state = state2,), iteration = 3,
+               current_window_end_iteration = 8)
+    cb(FakeSim)                      # mid-window: must NOT fire
+    @test tracer_reference_value(state2, i2) === q_before
+    FakeSimEnd = (model = (state = state2,), iteration = 8,
+                  current_window_end_iteration = 8)
+    cb(FakeSimEnd)                   # boundary: fires exactly once
+    q_after = tracer_reference_value(state2, i2)
+    @test q_after != q_before
+    cb(FakeSimEnd)                   # idempotent-ish: mean now ~0, tiny move
+    @test abs(tracer_reference_value(state2, i2) - q_after) < 1e-3 * abs(q_after - q_before)
 end
 
 println("test_tracer_references.jl OK")

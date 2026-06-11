@@ -85,10 +85,24 @@ casts on load).
 start_window = 1              # default: 1 — first window to process
 stop_window  = 24             # default: nothing — uses the binary's full range
 scheme       = "slopes"       # advection scheme; one of "upwind" / "slopes" / "ppm" / "linrood"
+air_mass_reset_mode = "preserve_tracer_mass"   # default; see table below
 ```
 
 `stop_window` is the inclusive last window; setting it lets you
 run a partial day for smoke tests.
+
+`air_mass_reset_mode` controls what happens to the prognostic air mass at
+each met-window boundary (it replaced the old boolean
+`reset_air_mass_each_window`, which now errors with a pointer here):
+
+| mode | air mass | tracer mass | when to use |
+|---|---|---|---|
+| `"preserve_tracer_mass"` (default) | reset to the binary endpoint | FULL tracer mass preserved exactly (reference-state tracers absorb the `q_ref·Δm` shift) | production: GEOS-matching air-mass trajectory AND exact tracer conservation (the Policy A/B fork dissolves on dry-mass-pinned binaries) |
+| `"none"` | carried (evolved purely by the stored fluxes) | conserved by flux form | legacy carry behavior; debugging flux continuity |
+| `"preserve_vmr"` | reset to the binary endpoint | re-scaled to keep VMR → injects/removes tracer mass | matching a VMR trajectory at the cost of conservation; REJECTED for reference-state tracers |
+
+See `docs/reference/MASS_BALANCE.md` for the conservation story behind the
+default.
 
 ### `[tracers.<name>]` — per-tracer setup
 
@@ -138,6 +152,37 @@ Registered surface-flux source kinds (full list in
 NetCDF sources. There is no `edgar_co2` kind — use
 `gridfed_fossil_co2` for the GridFED-derived fossil CO₂ inventory.
 
+**Reference-state (anomaly) transport** — opt-in per tracer, for
+large-background tracers (e.g. ~412 ppm CO₂) whose F32 conservation
+suffers from background-proportional rounding:
+
+```toml
+[tracers.co2_natural.transport]
+reference         = "global_mean"   # "none" (default) | "global_mean"
+reference_cadence = "fixed"         # "fixed" (default) | "daily" | "per_window"
+```
+
+The tracer is carried as a signed anomaly against an analytic global-mean
+reference (`q = q_ref + q_anom`); only the small anomaly transports in F32,
+while the exact F64 reference rides the air mass. Constraints (enforced at
+setup with actionable errors):
+
+- cubed-sphere runs with `scheme = "linrood"` only (the split-sweep
+  moment limiter is not offset-invariant);
+- every operator acting on the tracer must be offset-invariant: no
+  radioactive decay on this tracer, no `CMFMCConvection(clamp=true)`,
+  convection `n_merge = 1` only;
+- `air_mass_reset_mode = "preserve_vmr"` is rejected
+  (`"preserve_tracer_mass"` and `"none"` are reference-safe);
+- mass budgets for referenced tracers MUST use the F64
+  `<tracer>_total_mass` output variable, not an integral of the saved
+  field (which is an F32 reconstruction).
+
+`reference_cadence` re-anchors `q_ref` to the evolving global mean at day
+(`"daily"`) or met-window (`"per_window"`) boundaries — a bounded-roundoff
+uniform shift; `"fixed"` (compute once at IC) suffices for month-scale runs.
+Background + measured impact: `docs/reference/MASS_BALANCE.md`.
+
 ### `[advection]`, `[diffusion]`, `[convection]`, `[chemistry]`
 
 Each operator has a `kind` selector + per-kind kwargs. See
@@ -149,6 +194,14 @@ selector means; relevant config keys:
 scheme    = "ppm"               # "upwind" | "slopes" | "ppm" | "linrood"
 ppm_order = 7                   # cubed-sphere LinRoodPPM only; ∈ {5, 7}.
                                 # Setting ppm_order with scheme = "ppm" errors.
+fillz     = true                # LinRood only (errors on other schemes).
+                                # true (default): GCHP positivity fixer —
+                                #   non-negative fields, but its F32 round-trip
+                                #   injects mass at sharp gradients.
+                                # false: exactly mass-conserving flux-form
+                                #   transport; small signed undershoot
+                                #   transients near sharp sources.
+                                # Full trade-off: ADVECTION_SCHEMES.md §fillz.
 
 [diffusion]
 kind  = "constant"              # "none" | "constant" |

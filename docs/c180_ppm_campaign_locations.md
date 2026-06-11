@@ -82,7 +82,7 @@ GEOS-IT diagnostics:
 GEOS-IT notes:
 
 - Preprocessing uses `chain_mass = false`; every hourly window starts from the raw GEOS endpoint mass.
-- Runtime configs use `reset_air_mass_each_window = true` and preserve tracer VMR across air-mass resets.
+- Runtime configs used the (since-removed) `reset_air_mass_each_window = true`, i.e. today's `air_mass_reset_mode = "preserve_vmr"` — note this mode re-injects tracer mass; the modern default is `"preserve_tracer_mass"`. [ARCHIVE NOTE: this campaign predates the 2026-06 conservation work — see docs/reference/MASS_BALANCE.md.]
 - CTM dry mass fluxes are 450 s dynamics-step transport amounts reused over the hourly window; the GEOS passthrough test expects `MFXC/(2g)` per horizontal Strang half-sweep.
 - Regenerated main binary wind diagnostic matches GEOS A3dyn U/V at sampled points with mean inferred/raw speed ratio 0.976.
 - All three speed-fix campaign outputs are finite at every 6-hour snapshot.

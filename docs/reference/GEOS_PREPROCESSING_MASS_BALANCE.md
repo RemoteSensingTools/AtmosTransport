@@ -155,8 +155,10 @@ F64.
 Verified in
 [`../../src/Models/DrivenSimulation.jl`](../../src/Models/DrivenSimulation.jl):
 
-- **Air-mass carry (default).** `reset_air_mass_each_window = false`
-  (default). The prognostic `state.air_mass` is evolved purely by the stored
+- **Air-mass carry.** `air_mass_reset_mode = "none"` (formerly
+  `reset_air_mass_each_window = false`, the old default — the runtime default
+  is now `"preserve_tracer_mass"`, see §6). The prognostic `state.air_mass`
+  is evolved purely by the stored
   fluxes; under the `:window_constant` contract its flux divergence integrates
   to `m_next - m_cur` over each window, so it tracks the binary endpoint
   without an explicit reset (`DrivenSimulation.jl:673-676`).
@@ -169,9 +171,10 @@ Verified in
 - **No global rescale.** The runtime never forces global air mass to the GEOS
   endpoint. (The legacy runtime `mass_fixer` band-aid is retired.)
 
-The optional `reset_air_mass_each_window = true` path resets air mass to the
-stored endpoint **while preserving VMR**, which re-injects/removes tracer mass
-at each window — see the policy fork below.
+The `air_mass_reset_mode = "preserve_vmr"` path (formerly
+`reset_air_mass_each_window = true`) resets air mass to the stored endpoint
+**while preserving VMR**, which re-injects/removes tracer mass at each
+window — see the policy fork below.
 
 ---
 
@@ -184,9 +187,17 @@ mutually exclusive at the ~1e-6 level:
   mass closes exactly (Σemissions = Δburden). Global dry air pinned constant
   by the scheme. Cost: the air-mass *trajectory* diverges from GEOS-Chem by
   the unremovable global-mean part.
-- **Policy B — match GEOS-Chem trajectory** (`reset_air_mass_each_window =
-  true`). Air-mass trajectory matches GEOS-Chem. Cost: preserving VMR across a
-  mass jump breaks exact tracer-mass conservation.
+- **Policy B — match GEOS-Chem trajectory** (`air_mass_reset_mode =
+  "preserve_vmr"`). Air-mass trajectory matches GEOS-Chem. Cost: preserving
+  VMR across a mass jump breaks exact tracer-mass conservation.
+
+**UPDATE (2026-06): the fork is dissolved in the runtime.** The new default
+`air_mass_reset_mode = "preserve_tracer_mass"` resets the air mass to the
+binary endpoint while keeping FULL tracer mass exact (reference-state
+tracers absorb the `q_ref·Δm` shift) — on dry-mass-pinned binaries this
+delivers Policy A's conservation AND Policy B's trajectory simultaneously,
+exactly as the pin argument below predicted. See
+`docs/reference/MASS_BALANCE.md`.
 
 **Pinning the global-mean dry-air mass in the preprocessor dissolves the
 fork.** If the stored endpoint is itself globally conservative, the flux-form

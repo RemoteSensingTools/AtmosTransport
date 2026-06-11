@@ -1,5 +1,12 @@
 # Caveats and Troubleshooting
 
+> **2026-06 update:** most mass-conservation caveats are resolved — see
+> [MASS_BALANCE.md](MASS_BALANCE.md) for the F32 conservation story and the
+> current measured floors, and [BACKLOG.md](BACKLOG.md) for open items. New
+> config knobs (`air_mass_reset_mode`, `[advection] fillz`,
+> `[tracers.X.transport] reference`) are documented in the TOML schema and
+> ADVECTION_SCHEMES.md.
+
 This page documents important operational caveats and known gotchas discovered
 during model development and validation. Read this before running production
 simulations — several of these issues can silently produce wrong results without

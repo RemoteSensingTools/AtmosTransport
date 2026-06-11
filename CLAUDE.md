@@ -125,6 +125,9 @@ mass basis, supported operators, and load-time consistency gates.
 - Architecture: `docs/reference/ARCHITECTURE.md`
 - Grid and data conventions: `docs/reference/GRID_CONVENTIONS.md`,
   `docs/reference/DATA_LAYOUT.md`
+- Mass balance / F32 conservation: `docs/reference/MASS_BALANCE.md` (verification
+  rules, issue catalog, measured floors, when F64 is needed)
+- Known issues + potential work: `docs/reference/BACKLOG.md` (committed, living list)
 - Advection details: `docs/reference/ADVECTION_SCHEMES.md`
 - Preprocessing and binary formats: `docs/reference/PREPROCESSING_GUIDE.md`,
   `docs/reference/BINARY_FORMAT_V5.md`

@@ -237,7 +237,7 @@ between them. Performance-tuning notes are inline at line 118.
 | Slopes face flux (Russell-Lerner formula) | `src/Operators/Advection/reconstruction.jl::_slopes_face_flux` |
 | Structured-grid Strang palindrome | `src/Operators/Advection/StrangSplitting.jl::strang_split!` |
 | Cubed-sphere Strang palindrome | `src/Operators/Advection/CubedSphereStrang.jl::strang_split_cs!` |
-| CFL subcycle counters (structured) | `StrangSplitting.jl::_subcycling_pass_count`, `_static_*_subcycle_count` |
+| CFL subcycle counters (structured) | `StrangSplitting.jl::_subcycling_pass_count`, `_directed_subcycling_pass_count` (one `Val{dim}` core behind the `_x/_y/_z_subcycling_pass_count` wrappers) |
 | CFL subcycle counters (CS) | `CubedSphereStrang.jl::_cs_static_subcycle_count`, `_cs_static_palindrome_subcycle_count` |
 | CS multi-tracer fused kernels (X / Y / Z) | `src/Operators/Advection/multitracer_kernels.jl` |
 | CS panel-edge halo sync | `src/Grids/PanelConnectivity.jl` + `cs_transport_helpers.jl::_propagate_cs_outflow_to_halo!` |

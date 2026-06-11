@@ -41,7 +41,12 @@ run on structured, face-indexed, and panel-native cubed-sphere state.
 - [`thomas_solve.jl`](thomas_solve.jl) — reference Thomas solve and
   coefficient builder
 - [`diffusion_kernels.jl`](diffusion_kernels.jl) — KernelAbstractions
-  kernels for structured, face-indexed, and cubed-sphere panel solves
+  kernels for structured, face-indexed, and cubed-sphere panel solves.
+  The eight `@kernel` entry points are thin index wiring over two shared
+  `@inline` column cores (`_thomas_geometric_column!`,
+  `_thomas_massflux_column!`) and a zero-cost `_ColumnView` accessor;
+  the CS anomaly (`cref`) path is selected by `cref::Union{Nothing, FT}`
+  at compile time
 - [`dz_helpers.jl`](dz_helpers.jl) — hydrostatic layer-thickness helper
   kernels and host wrappers shared by vertical diffusion paths
 - [`operators.jl`](operators.jl) — operator hierarchy, constructor

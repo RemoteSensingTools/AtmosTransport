@@ -387,6 +387,11 @@ function _validate_tracer_reference_compat(tracer_specs, recipe;
     referenced = [spec for spec in tracer_specs if spec.reference_kind !== :none]
     isempty(referenced) && return nothing
     names = join((String(s.name) for s in referenced), ", ")
+    # REBASE NOTE (air_mass_reset_mode refactor): preserve_vmr stays rejected;
+    # preserve_tracer_mass is NOT automatically safe for referenced tracers —
+    # the q_ref·m part of the burden rides the air mass, so the reset must
+    # absorb anom += q_ref·(m_old − m_new) or also be rejected. See
+    # docs/plans/45_ANOMALY_REFERENCE_TRANSPORT/REBASE_NOTES_air_mass_reset_mode.md
     reset_air_mass_each_window && throw(ArgumentError(
         "reset_air_mass_each_window = true preserves VMR across the window " *
         "air-mass reset, which is not reference-aware (it would double-count " *

@@ -27,6 +27,14 @@ Two patterns dominate the current report count and are NOT bugs:
    that call site. Users must call `Foo{Float64}()` explicitly.
    Documented in `CLAUDE.md` under "Julia / language gotchas".
 
+3. **Inner-constructor `convert` union splits under abstract
+   inference** — JET analyzes `CubedSphereState{...}(::Any, ...)`
+   reachable from generic code and reports the auto-`convert` of the
+   `tracer_refs::TracerReferences` field for whatever union it
+   inferred upstream. Every concrete construction site passes a
+   `TracerReferences` (audited 2026-06-11); the report is an artifact
+   of the abstract path, not a demonstrated bug.
+
 ## Escape hatch
 
 Set `ATMOSTRANSPORT_JET_ADVISORY=1` to demote any count increase to
@@ -64,7 +72,14 @@ const HOT_PATH_MODULES = (
 # Snapshot baselines captured during CI runs. Dominant sources are the
 # known-tolerated patterns documented above.
 const JET_HOT_PATH_BASELINE_1_10 = 119
-const JET_HOT_PATH_BASELINE_1_12 = 170
+# 170 (2026-05-29, e3ef729a) -> 186 (2026-06-11): the +16 are new
+# instances of the tolerated patterns above, introduced by the PBL kz
+# fields (WindowPBLKz / LocalHoltslagBoville — pattern 1 kwcall),
+# dz_helpers GPU dispatch (pattern 1), PBLPhysicsParameters (pattern 2),
+# and the plan-45 CubedSphereState tracer_refs field (pattern 3).
+# Attribution verified: identical count at a052e22a (pre-cleaning) and
+# the consolidation HEAD — the refactors added zero reports.
+const JET_HOT_PATH_BASELINE_1_12 = 186
 const JET_HOT_PATH_BASELINE =
     VERSION >= v"1.12" ? JET_HOT_PATH_BASELINE_1_12 :
                          JET_HOT_PATH_BASELINE_1_10

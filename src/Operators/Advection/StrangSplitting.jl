@@ -1209,7 +1209,7 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
             _copy_cs_storage!(m, m_save)
         end
 
-        rm_tracer = get_tracer(state, idx)
+        rm_tracer = get_tracer_raw(state, idx)
         fill_panel_halos!(rm_tracer, grid.horizontal; dir=1)
         tracer_name = tracer_names[idx]
         midpoint! = if emissions_op isa NoSurfaceFlux

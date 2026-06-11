@@ -73,8 +73,8 @@ using ProgressMeter: Progress, next!, finish!, update!
 import ...expand_data_path
 using ...SectionTimer
 using ..State: AbstractMassBasis, DryBasis, MoistBasis, CellState,
-                CubedSphereState, total_air_mass, total_mass, tracer_names,
-                tracer_index, get_tracer
+                CubedSphereState, total_air_mass, total_mass_full,
+                tracer_names, tracer_index
 using ..Grids: nlevels
 using ..Operators: LinRoodPPMScheme, PPMScheme, SlopesScheme, UpwindScheme,
                   ImplicitVerticalDiffusion,
@@ -909,7 +909,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
     surface_sources = build_surface_flux_sources(grid_of_first, tracer_specs, FT;
                                                  reference_time = _run_reference_time(cfg))
     m0 = total_air_mass(model.state)
-    tracer_masses0 = Dict(name => total_mass(model.state, name)
+    tracer_masses0 = Dict(name => total_mass_full(model.state, name)
                           for name in tracer_names(model.state))
     source_tracers = Set(source.tracer_name for source in surface_sources)
 
@@ -1083,7 +1083,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
     @info @sprintf("Final air-mass change vs initial state:  %.3e", (m1 - m0) / m0)
     for name in tracer_names(model.state)
         rm0 = Float64(tracer_masses0[name])
-        rm1 = Float64(total_mass(model.state, name))
+        rm1 = Float64(total_mass_full(model.state, name))
         if name in source_tracers
             @info @sprintf("Final tracer mass for %s (with source): %.12e kg",
                            String(name), rm1)
@@ -1379,7 +1379,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
                    time() - t0, snapshot_count[], total_hour)
 
     for name in keys(tracer_init)
-        rm1 = Float64(total_mass(state, name))
+        rm1 = Float64(total_mass_full(state, name))
         if name in source_tracers
             @info @sprintf("  %s total mass (with source): %.6e kg", name, rm1)
         else

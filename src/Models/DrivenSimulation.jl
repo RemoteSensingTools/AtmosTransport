@@ -542,7 +542,7 @@ end
 function _apply_surface_sources!(sim::DrivenSimulation)
     isempty(sim.surface_sources) && return nothing
     for source in sim.surface_sources
-        rm = get_tracer(sim.model.state, source.tracer_name)
+        rm = get_tracer_raw(sim.model.state, source.tracer_name)
         _apply_surface_source!(rm, source, sim.Δt)
     end
     return nothing

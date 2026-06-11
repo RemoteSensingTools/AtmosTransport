@@ -12,7 +12,7 @@ using Adapt
 using AtmosTransport
 using AtmosTransport.State: TracerReferences, REF_NONE, REF_GLOBAL_MEAN,
     tracer_reference_kind, tracer_reference_value, set_tracer_reference!,
-    any_tracer_referenced, DryBasis
+    any_tracer_referenced, DryBasis, tracer_index, set_uniform_mixing_ratio!
 using AtmosTransport.Grids: CubedSphereMesh
 using AtmosTransport: HybridSigmaPressure, AtmosGrid, allocate_face_fluxes,
     strang_split!, PPMScheme
@@ -160,6 +160,78 @@ end
     @test err_ref isa ArgumentError
     @test occursin("reference-state", err_ref.msg)
     @test occursin("linrood", err_ref.msg)
+end
+
+@testset "_raw/_full accessors recover the physical field" begin
+    state = _mini_cs_state(; FT = Float32)
+    m = state.air_mass
+    Hp = state.halo_width
+
+    # raw == get_tracer (alias), full == raw for unreferenced (zero-copy)
+    @test get_tracer_raw(state, :co2)[1] === get_tracer(state, :co2)[1]
+    @test get_tracer_full(state, :co2)[1] === get_tracer(state, :co2)[1]
+    tm_raw = total_mass_full(state, :co2)
+    @test tm_raw isa Float64
+
+    # synthetic reference: convert the stored field to an anomaly against
+    # q_ref, then assert the _full accessors recover the original physical
+    # field / burden to F64 round-off.
+    q_ref = 4.0e-4
+    full_before = deepcopy(get_tracer(state, :co2))           # physical field
+    burden_before = total_mass_full(state, :co2)
+    raw = get_tracer_raw(state, :co2)
+    for p in 1:6
+        raw[p] .= raw[p] .- Float32(q_ref) .* m[p]            # seed anomaly
+    end
+    set_tracer_reference!(state.tracer_refs, tracer_index(state, :co2),
+                          REF_GLOBAL_MEAN, q_ref)
+
+    recovered = get_tracer_full(state, :co2)
+    @test all(all(isapprox.(recovered[p], full_before[p];
+                        rtol = 4 * eps(Float32))) for p in 1:6)
+    @test isapprox(total_mass_full(state, :co2), burden_before;
+                   rtol = 8 * eps(Float32))
+    vmr = mixing_ratio_full(state, :co2)
+    @test all(all(isapprox.(vmr[p], full_before[p] ./ m[p];
+                        rtol = 4 * eps(Float32))) for p in 1:6)
+
+    # the OTHER tracer stays untouched and raw-pathed
+    @test get_tracer_full(state, :sf6)[1] === get_tracer(state, :sf6)[1]
+
+    # full-field semantic writes are rejected for referenced tracers
+    @test_throws ArgumentError set_uniform_mixing_ratio!(state, :co2, 1.0e-6)
+    @test set_uniform_mixing_ratio!(state, :sf6, 1.0e-12) === nothing
+end
+
+@testset "accessor discipline: no bare accessors in output namespaces" begin
+    # Physical-field namespaces must use get_tracer_full/_raw etc. explicitly —
+    # a bare `get_tracer(`/`total_mass(`/`mixing_ratio(` there would silently
+    # read ANOMALY mass for referenced tracers. Same freshness-gate pattern as
+    # test_readme_current.jl: grep the sources, fail loudly with file:line.
+    src_root = normpath(joinpath(@__DIR__, "..", "..", "src"))
+    gated_dirs = [joinpath(src_root, "Output"),
+                  joinpath(src_root, "Models"),
+                  normpath(joinpath(@__DIR__, "..", "..", "scripts", "diagnostics"))]
+    bare = r"(?<![_a-zA-Z])(get_tracer|total_mass|mixing_ratio)\("
+    offenders = String[]
+    for dir in gated_dirs
+        isdir(dir) || continue
+        for (root, _, files) in walkdir(dir)
+            for f in files
+                endswith(f, ".jl") || continue
+                path = joinpath(root, f)
+                for (i, line) in enumerate(eachline(path))
+                    startswith(strip(line), "#") && continue
+                    occursin(bare, line) &&
+                        push!(offenders, "$(path):$(i): $(strip(line))")
+                end
+            end
+        end
+    end
+    if !isempty(offenders)
+        @info "bare tracer accessors in gated namespaces (use _raw/_full):" offenders
+    end
+    @test isempty(offenders)
 end
 
 println("test_tracer_references.jl OK")

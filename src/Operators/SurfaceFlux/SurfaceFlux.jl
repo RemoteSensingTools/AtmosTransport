@@ -29,7 +29,7 @@ module SurfaceFlux
 
 using Adapt
 using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
-using ...State: CellState, CubedSphereState, get_tracer, tracer_index, eachtracer
+using ...State: CellState, CubedSphereState, get_tracer_raw, tracer_index, eachtracer
 using ...MetDrivers: current_time
 import ..apply!
 

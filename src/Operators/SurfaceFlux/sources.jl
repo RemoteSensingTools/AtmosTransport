@@ -360,7 +360,7 @@ and at SurfaceFluxOperator construction.
 function _check_surface_source_compatibility(state, source::SurfaceFluxSource)
     tracer_index(state, source.tracer_name) === nothing &&
         throw(ArgumentError("surface source tracer $(source.tracer_name) is not present in model state"))
-    rm = get_tracer(state, source.tracer_name)
+    rm = get_tracer_raw(state, source.tracer_name)
     size(source.cell_mass_rate) == _surface_shape(rm) ||
         throw(ArgumentError("surface source $(source.tracer_name) has shape $(size(source.cell_mass_rate)) but tracer surface shape is $(_surface_shape(rm))"))
     return nothing

@@ -10,6 +10,10 @@ writing topology-specific NetCDF files directly.
 ## Files
 
 - `snapshots.jl` defines `SnapshotFrame`, `SnapshotWriteOptions`, and model-state capture.
+  Capture reads the PHYSICAL tracer mass via `get_tracer_full` — for
+  reference-state (anomaly-transport) tracers this reconstructs
+  `q_anom·m + q_ref·m`, so output files are always reference-agnostic and
+  downstream diagnostics never need to know `q_ref` (plan 45).
 - `diagnostics.jl` derives VMR, column means, and mass-per-area fields.
 - `netcdf_schema.jl` defines topology-specific dimensions, coordinates, and metadata.
 - `netcdf_writer.jl` writes topology-specific payload variables through one public API.

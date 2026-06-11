@@ -245,6 +245,9 @@ export lonlat_to_panel_xy
 export CellState, CubedSphereState, DryBasis, MoistBasis
 export allocate_face_fluxes, allocate_tracers
 export get_tracer, mixing_ratio, total_mass, total_air_mass
+# Reference-state (anomaly transport) accessors: _raw mutates storage,
+# _full reads the physical field (plan 45).
+export get_tracer_raw, get_tracer_full, total_mass_full, mixing_ratio_full
 export tracer_names, ntracers
 export capture_snapshot, write_snapshot_netcdf, SnapshotFrame, SnapshotWriteOptions
 export runtime_output_spec

@@ -119,6 +119,128 @@ function eachtracer(state::CubedSphereState)
 end
 
 # =========================================================================
+# Raw vs full tracer access (reference-state / anomaly transport, plan 45)
+#
+# For a tracer with an active reference (kind != REF_NONE) the stored array
+# holds ANOMALY mass `q_anom·m`; the physical field is `q_anom·m + q_ref·m`.
+# The split is enforced, not conventional:
+#
+# - Operators/kernels mutate the STORED array in place → `get_tracer_raw`
+#   (exactly `get_tracer`; the bare name keeps raw semantics).
+# - Output, diagnostics, and budget readers want the PHYSICAL field →
+#   `get_tracer_full` / `total_mass_full` / `mixing_ratio_full`.
+#
+# A test gate (test/core/test_tracer_references.jl) fails on bare accessor
+# names in output/diagnostic namespaces so a physical-field caller cannot
+# silently read anomaly mass. CellState carries no references (referencing is
+# cubed-sphere-only); its `_full` variants reduce to the raw ones.
+# =========================================================================
+
+@inline tracer_reference_kind(::CellState, ::Integer) = REF_NONE
+@inline tracer_reference_value(::CellState, ::Integer) = nothing
+
+"""
+    get_tracer_raw(state, name_or_idx)
+
+The mutable STORED tracer-mass array — anomaly mass for referenced tracers,
+full mass otherwise. Identical to `get_tracer`; the explicit name marks
+operator/kernel call sites that must keep mutating storage in place.
+"""
+@inline get_tracer_raw(state::CellState, x::Union{Symbol, Integer}) = get_tracer(state, x)
+@inline get_tracer_raw(state::CubedSphereState, x::Union{Symbol, Integer}) = get_tracer(state, x)
+
+"""
+    get_tracer_full(state, name_or_idx)
+
+The PHYSICAL tracer-mass field: the stored array for unreferenced tracers
+(zero-copy view), or a materialized `q_anom·m + q_ref·m` for referenced ones.
+Read-only by contract — mutations to a materialized copy are lost.
+"""
+function get_tracer_full(state::CellState, idx::Integer)
+    raw = get_tracer(state, idx)
+    q_ref = tracer_reference_value(state, idx)
+    q_ref === nothing && return raw
+    FT = eltype(state.air_mass)
+    return raw .+ FT(q_ref) .* state.air_mass
+end
+
+function get_tracer_full(state::CubedSphereState, idx::Integer)
+    raw = get_tracer(state, idx)
+    q_ref = tracer_reference_value(state, idx)
+    q_ref === nothing && return raw
+    FT = eltype(state.air_mass[1])
+    qr = FT(q_ref)
+    return ntuple(p -> raw[p] .+ qr .* state.air_mass[p], 6)
+end
+
+function get_tracer_full(state::Union{CellState, CubedSphereState}, name::Symbol)
+    idx = tracer_index(state, name)
+    idx === nothing && throw(KeyError(name))
+    return get_tracer_full(state, idx)
+end
+
+"""
+    total_mass_full(state, name) -> Float64
+
+Physical tracer burden `Σ_interior(q_anom·m) + q_ref·Σ_interior(m)`.
+Accumulates in `Float64` regardless of storage `FT` — this is the budget
+diagnostic the reference bookkeeping must close against, so it must not
+round in `FT`. (`total_mass`/raw accumulates in storage eltype.)
+"""
+function total_mass_full(state::CellState, name::Symbol)
+    idx = tracer_index(state, name)
+    idx === nothing && throw(KeyError(name))
+    raw_sum = sum(Float64, get_tracer(state, idx))
+    q_ref = tracer_reference_value(state, idx)
+    q_ref === nothing && return raw_sum
+    return raw_sum + q_ref * sum(Float64, state.air_mass)
+end
+
+function total_mass_full(state::CubedSphereState, name::Symbol)
+    idx = tracer_index(state, name)
+    idx === nothing && throw(KeyError(name))
+    Hp = halo_width(state)
+    raw_sum = 0.0
+    @inbounds for p in 1:6
+        raw_sum += sum(Float64, _panel_interior(state.tracers_raw[p], Hp, idx))
+    end
+    q_ref = tracer_reference_value(state, idx)
+    q_ref === nothing && return raw_sum
+    air_sum = 0.0
+    @inbounds for p in 1:6
+        air_sum += sum(Float64, _panel_interior(state.air_mass[p], Hp))
+    end
+    return raw_sum + q_ref * air_sum
+end
+
+"""
+    mixing_ratio_full(state, name)
+
+Physical dry VMR `q_anom + q_ref` (= `get_tracer_full ./ air_mass`, computed
+as `raw ./ m .+ q_ref` to avoid the `q_ref·m` round-trip). Reduces to
+`mixing_ratio` for unreferenced tracers.
+"""
+function mixing_ratio_full(state::CellState, name::Symbol)
+    idx = tracer_index(state, name)
+    idx === nothing && throw(KeyError(name))
+    q_ref = tracer_reference_value(state, idx)
+    q_ref === nothing && return mixing_ratio(state, name)
+    FT = eltype(state.air_mass)
+    return get_tracer(state, idx) ./ state.air_mass .+ FT(q_ref)
+end
+
+function mixing_ratio_full(state::CubedSphereState, name::Symbol)
+    idx = tracer_index(state, name)
+    idx === nothing && throw(KeyError(name))
+    q_ref = tracer_reference_value(state, idx)
+    q_ref === nothing && return mixing_ratio(state, name)
+    raw = get_tracer(state, idx)
+    FT = eltype(state.air_mass[1])
+    qr = FT(q_ref)
+    return ntuple(p -> raw[p] ./ state.air_mass[p] .+ qr, 6)
+end
+
+# =========================================================================
 # Mutating utilities
 # =========================================================================
 
@@ -134,7 +256,16 @@ function set_uniform_mixing_ratio!(state::CellState, name::Symbol, χ)
 end
 
 function set_uniform_mixing_ratio!(state::CubedSphereState, name::Symbol, χ)
-    rm_panels = get_tracer(state, name)
+    idx = tracer_index(state, name)
+    idx === nothing && throw(KeyError(name))
+    # Full-field semantic write: `rm = χ·m` assumes the stored array holds full
+    # mass. For a referenced tracer that would silently corrupt the anomaly
+    # store (the correct write would be `(χ - q_ref)·m`) — reject until a
+    # reference-aware variant is actually needed.
+    tracer_reference_kind(state, idx) == REF_NONE || throw(ArgumentError(
+        "set_uniform_mixing_ratio! writes full-field mass and is not " *
+        "reference-aware; tracer $(name) carries an active reference"))
+    rm_panels = get_tracer(state, idx)
     @inbounds for p in 1:6
         rm_panels[p] .= χ .* state.air_mass[p]
     end
@@ -143,3 +274,4 @@ end
 
 export allocate_tracers, set_uniform_mixing_ratio!
 export ntracers, tracer_index, tracer_name, get_tracer, eachtracer
+export get_tracer_raw, get_tracer_full, total_mass_full, mixing_ratio_full

@@ -104,7 +104,11 @@ function capture_snapshot(model; time_hours::Real=0, halo_width::Integer=0)
     names = tracer_names(model.state)
     tracers = Dict{Symbol, typeof(air)}()
     for name in names
-        tracers[name] = _extract_for_output(get_tracer(model.state, name), mesh;
+        # Snapshots store the PHYSICAL tracer mass: `get_tracer_full`
+        # reconstructs `q_anom·m + q_ref·m` for reference-state tracers
+        # (zero-copy for unreferenced ones), so output files are
+        # reference-agnostic and downstream diagnostics need no q_ref.
+        tracers[name] = _extract_for_output(get_tracer_full(model.state, name), mesh;
                                             halo_width=halo_width)
     end
     return SnapshotFrame(Float64(time_hours), air, tracers,

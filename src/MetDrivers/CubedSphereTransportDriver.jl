@@ -116,6 +116,7 @@ function binary_capabilities(reader::CubedSphereBinaryReader)
         nlevel           = hdr.nlevel,
         steps_per_window = hdr.steps_per_window,
         variable_step_schedule = _has_variable_step_schedule(hdr.steps_per_window_by_window),
+        flux_kind = flux_kind(reader),
         preprocessor_contract = get(hdr.raw_header, "preprocessor_contract", nothing),
         vertical_Nz_output = get(hdr.raw_header, "vertical_Nz_output", nothing),
         adaptive_substeps = get(hdr.raw_header, "adaptive_substeps", nothing),
@@ -169,6 +170,12 @@ function _validate_replay_consistency_cs(reader::CubedSphereBinaryReader{FT}) wh
     for k in 1:Nt
         cur = load_cs_window(reader, k)
         steps = reader.header.steps_per_window_by_window[k]
+        if flux_kind(reader) === :full_window_mass_amount
+            scale = FT(1) / FT(2 * steps)
+            _scale_cs_replay_panels!(cur.am, scale)
+            _scale_cs_replay_panels!(cur.bm, scale)
+            _scale_cs_replay_panels!(cur.cm, scale)
+        end
         m_target = if k < Nt
             load_cs_window(reader, k + 1).m
         elseif has_flux_delta(reader)
@@ -205,6 +212,13 @@ function _validate_replay_consistency_cs(reader::CubedSphereBinaryReader{FT}) wh
     return (worst_window = worst_win, worst_rel = worst_rel, worst_abs = worst_abs)
 end
 
+@inline function _scale_cs_replay_panels!(panels::NTuple{6}, scale)
+    @inbounds for p in 1:6
+        panels[p] .*= scale
+    end
+    return panels
+end
+
 function CubedSphereTransportDriver(reader::CubedSphereBinaryReader{FT};
                                     arch = CPU(),
                                     Hp::Int = 1) where {FT}
@@ -238,6 +252,7 @@ supports_convection(driver::CubedSphereTransportDriver) =
 supports_diffusion(driver::CubedSphereTransportDriver) = has_surface(driver.reader)
 driver_grid(driver::CubedSphereTransportDriver) = driver.grid
 flux_interpolation_mode(::CubedSphereTransportDriver) = :constant
+flux_kind(driver::CubedSphereTransportDriver) = flux_kind(driver.reader)
 
 Base.close(driver::CubedSphereTransportDriver) = close(driver.reader)
 

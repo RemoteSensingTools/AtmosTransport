@@ -20,7 +20,7 @@ LL/RG manual setup looks like this:
 
 ```julia
 using TOML, AtmosTransport
-using AtmosTransport.MetDrivers: air_mass_basis, driver_grid
+using AtmosTransport.MetDrivers: air_mass_basis, driver_grid, flux_kind
 
 cfg = TOML.parsefile("config/runs/quickstart/ll72x37_advonly.toml")
 paths = expand_binary_paths(cfg["input"])
@@ -149,6 +149,32 @@ end
         copyto!(dest[p], src[p])
     end
     return dest
+end
+
+@inline _scale_storage!(dest, scale) = (dest .*= scale; dest)
+@inline function _scale_storage!(dest::NTuple{6}, scale)
+    @inbounds for p in 1:6
+        dest[p] .*= scale
+    end
+    return dest
+end
+
+@inline function _scale_runtime_fluxes!(fluxes, _scale)
+    throw(ArgumentError("flux_kind=:full_window_mass_amount is only implemented " *
+                        "for CubedSphereFaceFluxState runtime fluxes; got $(typeof(fluxes))."))
+end
+@inline function _scale_runtime_fluxes!(fluxes::CubedSphereFaceFluxState, scale)
+    _scale_storage!(fluxes.am, scale)
+    _scale_storage!(fluxes.bm, scale)
+    _scale_storage!(fluxes.cm, scale)
+    return fluxes
+end
+
+@inline function _apply_runtime_flux_storage_scale!(sim::DrivenSimulation)
+    flux_kind(sim.driver) === :full_window_mass_amount || return nothing
+    scale = inv(typeof(sim.Δt)(2 * sim.steps_per_window))
+    _scale_runtime_fluxes!(sim.model.fluxes, scale)
+    return nothing
 end
 
 @inline _storage_eltype(reference) = eltype(reference)
@@ -673,6 +699,7 @@ function _refresh_forcing!(sim::DrivenSimulation, substep::Int)
     else
         copy_fluxes!(sim.model.fluxes, sim.window.fluxes)
     end
+    _apply_runtime_flux_storage_scale!(sim)
     expected_air_mass!(sim.expected_air_mass, sim.window, λ)
     if sim.qv_buffer !== nothing
         interpolate_qv!(sim.qv_buffer, sim.window, λ)

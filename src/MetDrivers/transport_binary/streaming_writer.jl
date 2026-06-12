@@ -131,13 +131,21 @@ function set_transport_header_steps_per_window_schedule!(
     header["steps_per_window"] = maximum(steps)
     header["time_step_schedule"] =
         _has_variable_step_schedule(steps) ? "per_window" : "constant"
-    header["poisson_balance_target_scale_by_window"] =
-        [1.0 / (2 * s) for s in steps]
-    header["poisson_balance_target_semantics"] =
-        _has_variable_step_schedule(steps) ?
-        "forward_window_mass_difference / (2 * steps_per_window_by_window[win])" :
-        "forward_window_mass_difference / (2 * steps_per_window)"
-    header["poisson_balance_target_scale"] = 1.0 / (2 * maximum(steps))
+    flux_kind = Symbol(replace(lowercase(String(get(header, "flux_kind",
+        "substep_mass_amount"))), '-' => '_', ' ' => '_'))
+    if flux_kind === :full_window_mass_amount
+        header["poisson_balance_target_scale_by_window"] = fill(1.0, length(steps))
+        header["poisson_balance_target_semantics"] = "forward_window_mass_difference"
+        header["poisson_balance_target_scale"] = 1.0
+    else
+        header["poisson_balance_target_scale_by_window"] =
+            [1.0 / (2 * s) for s in steps]
+        header["poisson_balance_target_semantics"] =
+            _has_variable_step_schedule(steps) ?
+            "forward_window_mass_difference / (2 * steps_per_window_by_window[win])" :
+            "forward_window_mass_difference / (2 * steps_per_window)"
+        header["poisson_balance_target_scale"] = 1.0 / (2 * maximum(steps))
+    end
     validate_transport_contract!(header)
     return header
 end

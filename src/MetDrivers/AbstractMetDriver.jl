@@ -55,6 +55,7 @@ function load_transport_window end
 function driver_grid end
 function air_mass_basis end
 function flux_interpolation_mode end
+function flux_kind end
 function uses_binary_substep_contract end
 function load_met_window! end
 
@@ -63,6 +64,7 @@ start_date(::AbstractMetDriver) = Date(2000, 1, 1)
 steps_per_window(d::AbstractMetDriver, _win::Integer) = steps_per_window(d)
 steps_per_window_schedule(d::AbstractMetDriver) =
     fill(steps_per_window(d), total_windows(d))
+flux_kind(::AbstractMetDriver) = :substep_mass_amount
 
 """
     current_time(meteo) -> Float64

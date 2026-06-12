@@ -288,14 +288,21 @@ function validate_transport_contract!(header::AbstractDict;
         throw(ArgumentError("Transport-binary contract violation — time_step_schedule=$(repr(time_step_schedule)) " *
                             "but schedule requires $(repr(expected_time_step_schedule))"))
 
+    flux_kind = _transport_normalize_symbol(header["flux_kind"])
+    full_window_flux = flux_kind === :full_window_mass_amount
+
     scalar_scale = Float64(header["poisson_balance_target_scale"])
-    expected_scalar_scale = 1.0 / (2 * steps_per_window)
+    expected_scalar_scale = full_window_flux ? 1.0 : 1.0 / (2 * steps_per_window)
     isapprox(scalar_scale, expected_scalar_scale; atol=eps(Float64) * 8, rtol=0.0) ||
         throw(ArgumentError("Transport-binary contract violation — poisson_balance_target_scale=$(scalar_scale), " *
-                            "expected $(expected_scalar_scale) from steps_per_window=$(steps_per_window)"))
-    expected_semantics = variable_steps ?
-        "forward_window_mass_difference / (2 * steps_per_window_by_window[win])" :
+                            "expected $(expected_scalar_scale) for flux_kind=$(flux_kind)"))
+    expected_semantics = if full_window_flux
+        "forward_window_mass_difference"
+    elseif variable_steps
+        "forward_window_mass_difference / (2 * steps_per_window_by_window[win])"
+    else
         "forward_window_mass_difference / (2 * steps_per_window)"
+    end
     semantics = String(header["poisson_balance_target_semantics"])
     semantics == expected_semantics ||
         throw(ArgumentError("Transport-binary contract violation — poisson_balance_target_semantics=$(repr(semantics)), " *
@@ -310,10 +317,10 @@ function validate_transport_contract!(header::AbstractDict;
         throw(ArgumentError("Transport-binary contract violation — poisson_balance_target_scale_by_window length $(length(scale_schedule)) " *
                             "does not match nwindow=$(nwindow)"))
     for win in 1:nwindow
-        expected = 1.0 / (2 * schedule[win])
+        expected = full_window_flux ? 1.0 : 1.0 / (2 * schedule[win])
         isapprox(scale_schedule[win], expected; atol=eps(Float64) * 8, rtol=0.0) ||
             throw(ArgumentError("Transport-binary contract violation — poisson_balance_target_scale_by_window[$win]=" *
-                                "$(scale_schedule[win]), expected $(expected) from steps_per_window_by_window[$win]=$(schedule[win])"))
+                                "$(scale_schedule[win]), expected $(expected) for flux_kind=$(flux_kind)"))
     end
     return nothing
 end

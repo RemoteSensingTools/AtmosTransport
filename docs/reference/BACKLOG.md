@@ -45,6 +45,30 @@ redundancy; the items below are the tractable core.
     replay/positivity gate logic (~2 kLOC, ~65 % overlap). Shared gate
     framework + section-access callbacks.
 
+11c. **[M/L] Split-substep runtime schedules (the payoff of 11b)** — run the
+    horizontal sweeps at `recommended_substeps_xy_by_window` and the vertical
+    at `recommended_substeps_z_by_window` instead of the combined schedule.
+    Measured per-direction requirements (Dec 2 2021, offline analyzer
+    `scripts/diagnostics/split_substep_analysis.jl`, x ≡ y everywhere):
+
+    | binary | x med/max | z med/max | stored | xy over-stepping |
+    |---|---|---|---|---|
+    | GEOS C45  | 3/4   | 6/10  | 8–10  | ~2.0× |
+    | GEOS C90  | 7/7   | 13/20 | 11–21 | ~1.9× |
+    | GEOS C180 | 13/14 | 18/26 | 22–29 | 1.7× median |
+    | ERA5 C180 | 14/14 | 20/35 | 18–34 | 1.5× median, 2.4× worst |
+
+    Horizontal requirement is purely kinematic (ERA5 ≈ GEOS; linear in
+    resolution); vertical is set by the vertical grid (ERA5's thin levels
+    dominate despite smoother fluxes). Expected transport-time saving
+    ~45–55 % at C180 (z sweeps are cheap — no halo exchange/reconstruction;
+    the combined gate is super-additive so even z pays less than stored;
+    per-substep overheads scale down). Design work: palindrome composition
+    with n_xy ≠ n_z while preserving the symmetric splitting and ping-pong
+    air-mass bookkeeping; recommended arrays are HARD MINIMA
+    (`recommended_substeps_are_minimum`); validate with the uniform-tracer
+    eigenstate test under a split schedule + per-direction SectionTimer.
+
 **Do-NOT-refactor list** (verbosity that is load-bearing — from the style
 audit): the `reconstruction.jl` x/y/z face-flux families (genuinely
 different boundary conditions per axis + documentation value); the diffusion

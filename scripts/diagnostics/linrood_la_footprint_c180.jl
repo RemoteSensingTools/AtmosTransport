@@ -83,13 +83,14 @@ function _build_meteo_step_sequence(reader, nsteps_total, AT)
         # (no Hp offset), so face arrays should be shaped
         # (Nc+1, Nc, Nz) for am, (Nc, Nc+1, Nz) for bm,
         # (Nc, Nc, Nz+1) for cm. Cell arrays (m) ARE padded to Hp=3.
-        # CLAUDE.md INVARIANT: "GEOS `MFXC` and `MFYC` are accumulated
-        # over the dynamics timestep, not the 1-hour met interval. Use
-        # `mass_flux_dt = 450`." → the binary stores per-substep
-        # (450 s) accumulated fluxes, so `fs = 1` (no division by
-        # steps_per_window). am/bm stay UNPADDED for the LinRood
+        # flux_kind-aware: convert STORED amounts to per-palindrome-
+        # application amounts (1 for legacy per-substep storage; 1/(2*steps)
+        # for full_window_mass_amount binaries) so the rest of the script
+        # always sees legacy units. am/bm stay UNPADDED for the LinRood
         # kernel convention; cm gets padded for the Z-sweep convention.
-        fs = FT(1)
+        fs = AtmosTransport.MetDrivers.flux_storage_substep_scale(
+            FT, reader.header.steps_per_window_by_window[win],
+            AtmosTransport.MetDrivers.flux_kind(reader))
         pam = ntuple(p -> AT(FT.(pam_w[p]) .* fs), 6)
         pbm = ntuple(p -> AT(FT.(pbm_w[p]) .* fs), 6)
         pcm = ntuple(p -> AT(_pad_panel(FT.(pcm_w[p]) .* fs, Hp)), 6)

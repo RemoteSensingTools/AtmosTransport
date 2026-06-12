@@ -67,6 +67,37 @@ steps_per_window_schedule(d::AbstractMetDriver) =
 flux_kind(::AbstractMetDriver) = :substep_mass_amount
 
 """
+    flux_application_seconds(dt_seconds, steps, fk::Symbol) -> Float64
+
+Seconds spanned by ONE stored flux amount — the normalization interval for
+converting stored `am/bm/cm` mass amounts [kg] to rates or winds.
+Per-substep storage: one palindrome application = `dt / (2 * steps)`.
+Full-window storage: the full met window = `dt`. Every diagnostic that
+divides a stored flux by a time interval must use this (not a hand-rolled
+`dt/(2*steps)`), or it is wrong by `2 * steps` on full-window binaries.
+"""
+function flux_application_seconds(dt_seconds::Real, steps::Integer, fk::Symbol)
+    fk === :full_window_mass_amount && return Float64(dt_seconds)
+    fk === :substep_mass_amount && return Float64(dt_seconds) / (2 * steps)
+    throw(ArgumentError("unknown flux_kind $(fk)"))
+end
+
+"""
+    flux_storage_substep_scale(::Type{FT}, steps, fk::Symbol) -> FT
+
+Multiplier converting STORED flux amounts to per-palindrome-application
+amounts (what the transport kernels consume): `1` for per-substep storage,
+`1/(2*steps)` for full-window storage. Transport-style script consumers
+that feed raw window fluxes into kernels must scale by this (the runtime's
+`DrivenSimulation` does so automatically at every forcing refresh).
+"""
+function flux_storage_substep_scale(::Type{FT}, steps::Integer, fk::Symbol) where {FT}
+    fk === :full_window_mass_amount && return FT(1) / FT(2 * steps)
+    fk === :substep_mass_amount && return one(FT)
+    throw(ArgumentError("unknown flux_kind $(fk)"))
+end
+
+"""
     current_time(meteo) -> Float64
 
 Simulation time [s] at the start of the next step. Threaded through

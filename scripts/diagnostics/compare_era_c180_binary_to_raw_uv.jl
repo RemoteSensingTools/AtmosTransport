@@ -200,7 +200,9 @@ function main()
         basis = ntuple(p -> panel_cell_local_tangent_basis(mesh, p), 6)
         lonlat = ntuple(p -> panel_cell_center_lonlat(mesh, p), 6)
         steps = reader.header.steps_per_window_by_window[cfg.window]
-        dt_factor = Float64(reader.header.dt_met_seconds) / (2.0 * Float64(steps))
+        dt_factor = AtmosTransport.MetDrivers.flux_application_seconds(
+            reader.header.dt_met_seconds, steps,
+            AtmosTransport.MetDrivers.flux_kind(reader))
 
         rows = NamedTuple[]
         for p in 1:6

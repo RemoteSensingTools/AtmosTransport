@@ -921,6 +921,17 @@ function _real_binary_problem(path::AbstractString; start_window::Int,
                 win_window.air_mass, mesh,
                 "window $win of $(basename(bin_path))")
             steps_this = Int(step_schedule[win])
+            # full-window binaries store unscaled met-window amounts; the
+            # substep slots below alias these panel arrays, so scale ONCE
+            # per loaded window (mirrors DrivenSimulation's refresh scale).
+            if AtmosTransport.MetDrivers.flux_kind(driver) === :full_window_mass_amount
+                fscale = Float32(1 / (2 * steps_this))
+                for pn in 1:6
+                    win_window.fluxes.am[pn] .*= fscale
+                    win_window.fluxes.bm[pn] .*= fscale
+                    win_window.fluxes.cm[pn] .*= fscale
+                end
+            end
             n_this = min(steps_this, requested_steps - step_idx)
             dt_this = Float64(window_dt(driver)) / steps_this
             chunk_m0 = _copy_haloed_air_mass(win_window, mesh)

@@ -379,3 +379,28 @@ end
         close(driver)
     end
 end
+
+@testset "full-window flux scaling guard (flux_kind contract)" begin
+    # The runtime divides full-window fluxes by 2*steps_per_window before each
+    # substep. Only the CS flux state implements that scaling; every other
+    # flux state must FAIL LOUDLY — a silent no-op would run LL/RG transport
+    # with ~2*steps_per_window-times overstrength winds.
+    Models = AtmosTransport.Models
+    FT = Float64
+    mesh = ReducedGaussianMesh(FT[-45, 45], [4, 4]; FT = FT)
+    fluxes_rg = allocate_face_fluxes(mesh, 2; FT = FT, basis = DryBasis)
+    @test_throws ArgumentError Models._scale_runtime_fluxes!(fluxes_rg, FT(0.5))
+
+    # CS flux state: am/bm/cm scale, nothing else does.
+    cs_mesh = CubedSphereMesh(; FT = FT, Nc = 4, Hp = 1)
+    fluxes_cs = allocate_face_fluxes(cs_mesh, 2; FT = FT, basis = DryBasis)
+    for p in 1:6
+        fluxes_cs.am[p] .= 2.0
+        fluxes_cs.bm[p] .= 4.0
+        fluxes_cs.cm[p] .= 8.0
+    end
+    Models._scale_runtime_fluxes!(fluxes_cs, FT(0.5))
+    @test all(all(fluxes_cs.am[p] .== 1.0) for p in 1:6)
+    @test all(all(fluxes_cs.bm[p] .== 2.0) for p in 1:6)
+    @test all(all(fluxes_cs.cm[p] .== 4.0) for p in 1:6)
+end

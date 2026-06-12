@@ -70,6 +70,47 @@ for rectangular lat-lon grids (ERA5).
 | `A_ifc` | float[Nz+1] | Hybrid A-coefficients at level interfaces [Pa] |
 | `B_ifc` | float[Nz+1] | Hybrid B-coefficients at level interfaces [–] |
 | `mass_basis` | string | **NEW in v5**: `"moist"` or `"dry"` — what basis m/am/bm/cm are on |
+| `flux_kind` | string | `"substep_mass_amount"` (default; missing field reads as this) or `"full_window_mass_amount"` — see below |
+
+### Flux storage contract (`flux_kind`)
+
+Two storage conventions coexist; the header field selects which one a file
+uses, and readers of old files (no `flux_kind` field) get the per-substep
+default.
+
+- **`substep_mass_amount`** (legacy): `am/bm/cm` are stored already divided
+  by the baked schedule — the mass [kg] moved per palindrome application at
+  the write-time `steps_per_window_by_window`. The Poisson balance targets
+  `forward_window_mass_difference / (2 * steps_per_window_by_window[win])`
+  and `poisson_balance_target_scale_by_window[win] = 1/(2*steps)`.
+- **`full_window_mass_amount`** (GEOS-CS writer default since 2026-06-11):
+  `am/bm/cm` are the FULL met-window mass amounts — meteorological truth
+  with no baked numerical policy. The runtime divides by
+  `2 * steps_per_window_by_window[win]` at every forcing refresh (the
+  factor 2 is the Strang palindrome's two applications per step and is
+  owned by the runtime, not the file). Poisson balance targets the full
+  `forward_window_mass_difference`; `poisson_balance_target_scale = 1.0`.
+
+Invariants either way:
+
+- The stored `steps_per_window_by_window` schedule remains a **hard
+  minimum** for the runtime (`recommended_substeps_are_minimum = true`):
+  it is what guarantees intermediate air mass stays positive inside the
+  ping-pong sweeps. The CFL definition used to derive it is recorded in
+  `cfl_definition` (`palindrome_outgoing_sum_over_min_endpoint_mass`).
+- Write-time replay/positivity gates measure per-substep amounts at the
+  stored schedule regardless of `flux_kind` (the full-window up-scale
+  happens after the contract checks); the reader-side replay gate
+  down-scales full-window fluxes per window before replaying.
+- `dm` semantics are unchanged in both conventions
+  (`forward_window_endpoint_difference`); there is no separate mass
+  divisor — per-substep air mass evolves from the scaled flux divergences.
+- Generation logs a split-substep diagnostic (hypothetical max xy vs z
+  substeps, from the per-direction positivity ratios). These are not yet
+  stored per window; see BACKLOG for `recommended_substeps_{xy,z}_by_window`.
+- Only the cubed-sphere runtime implements full-window scaling; LL/RG
+  flux states throw on `full_window_mass_amount` rather than silently
+  running unscaled.
 
 ### Required geometry
 

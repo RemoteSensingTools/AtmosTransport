@@ -45,4 +45,4 @@ kind = "none"
 
 [output]
 snapshot_file = "~/data/AtmosTransport/output/binary_format_ab/c45_old_format.nc"
-snapshot_every_hours = 6
+snapshot_interval_hours = 6

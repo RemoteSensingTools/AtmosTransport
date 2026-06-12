@@ -479,7 +479,12 @@ function main()
                     reader = readers[spec.name]
                     ctx = contexts[spec.name]
                     steps = reader.header.steps_per_window_by_window[win]
-                    dt_factor = Float64(reader.header.dt_met_seconds) /
+                    # see compare_c180_binary_winds.jl: full-window storage
+                    # normalizes by the full window dt, per-substep by dt/(2*steps)
+                    fk = get(reader.header.raw_header, "flux_kind", "substep_mass_amount")
+                    dt_factor = String(fk) == "full_window_mass_amount" ?
+                        Float64(reader.header.dt_met_seconds) :
+                        Float64(reader.header.dt_met_seconds) /
                         (2.0 * Float64(steps))
                     window = load_mass_flux_window(reader, win)
                     speeds = speed_fields_at_pressures(window, ctx.mesh, ctx.basis, dt_factor, TARGET_HPA)

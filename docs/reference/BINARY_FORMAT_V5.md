@@ -70,7 +70,7 @@ for rectangular lat-lon grids (ERA5).
 | `A_ifc` | float[Nz+1] | Hybrid A-coefficients at level interfaces [Pa] |
 | `B_ifc` | float[Nz+1] | Hybrid B-coefficients at level interfaces [–] |
 | `mass_basis` | string | **NEW in v5**: `"moist"` or `"dry"` — what basis m/am/bm/cm are on |
-| `flux_kind` | string | `"substep_mass_amount"` (default; missing field reads as this) or `"full_window_mass_amount"` — see below |
+| `flux_kind` | string | `"substep_mass_amount"` (legacy) or `"full_window_mass_amount"` — see below. All v5 writers emit the field (the contract validator requires it); the reader-side `:substep_mass_amount` default only covers pre-contract files. |
 
 ### Flux storage contract (`flux_kind`)
 

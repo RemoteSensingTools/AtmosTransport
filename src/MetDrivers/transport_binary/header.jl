@@ -49,8 +49,9 @@ Metadata for a topology-generic preprocessed transport binary.
   pure sigma level).
 - `mass_basis`: `:moist` or `:dry` — determines whether the stored air mass
   includes or excludes water vapour.
-- `flux_kind`: `:substep_mass_amount` — stored flux is the mass [kg] per
-  substep (divide by `steps_per_window` to get per-window total).
+- `flux_kind`: `:substep_mass_amount` or `:full_window_mass_amount` — stored
+  flux is either the mass [kg] per scheduled transport substep, or the full
+  met-window mass amount that the runtime divides by its schedule.
 - `flux_sampling`: `:window_constant` — same flux applied at every substep
   within a window.
 """
@@ -72,7 +73,7 @@ struct TransportBinaryHeader
     source_flux_sampling :: Symbol
     air_mass_sampling    :: Symbol
     flux_sampling        :: Symbol      # :window_constant
-    flux_kind            :: Symbol      # :substep_mass_amount
+    flux_kind            :: Symbol      # :substep_mass_amount or :full_window_mass_amount
     humidity_sampling    :: Symbol
     delta_semantics      :: Symbol
     poisson_balance_target_scale :: Float64
@@ -275,7 +276,7 @@ end
 
 const _TRANSPORT_ALLOWED_AIR_MASS_SAMPLINGS = (:window_start_endpoint,)
 const _TRANSPORT_ALLOWED_FLUX_SAMPLINGS     = (:window_start_endpoint, :window_constant, :window_mean)
-const _TRANSPORT_ALLOWED_FLUX_KINDS         = (:substep_mass_amount,)
+const _TRANSPORT_ALLOWED_FLUX_KINDS         = (:substep_mass_amount, :full_window_mass_amount)
 const _TRANSPORT_ALLOWED_DELTA_SEMANTICS    = (:forward_window_endpoint_difference, :none)
 const _TRANSPORT_ALLOWED_HUMIDITY_SAMPLINGS = (:window_endpoints, :single_field, :none)
 

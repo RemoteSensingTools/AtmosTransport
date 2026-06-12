@@ -1534,6 +1534,11 @@ function drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{FT},
     end
     convert_cs_mass_target_to_delta!(workspace.dm_v4, workspace.m_cur)
 
+    full_window_scale = FT(2 * steps)
+    _scale_cs_flux_panels!(workspace.am_v4, full_window_scale)
+    _scale_cs_flux_panels!(workspace.bm_v4, full_window_scale)
+    _scale_cs_flux_panels!(workspace.cm_v4, full_window_scale)
+
     surface_payload = (settings.include_surface || settings.include_vdiff_fields) ?
         _geos_surface_payload!(workspace.strategy, workspace.strategy_ws,
                                workspace.raw) : nothing
@@ -1572,17 +1577,45 @@ end
 
 GEOSReplayStats() = GEOSReplayStats(0.0, 0.0, 0)
 
+struct GEOSSplitSubstepStats
+    max_steps_xy :: Int
+    max_steps_z  :: Int
+    win_xy       :: Int
+    win_z        :: Int
+    ratio_xy     :: Float64
+    ratio_z      :: Float64
+end
+
+GEOSSplitSubstepStats() = GEOSSplitSubstepStats(0, 0, 0, 0, 0.0, 0.0)
+
 struct GEOSCSUnifiedDriverContext{G, S, V}
     grid             :: G
     settings         :: S
     vertical         :: V
     steps_per_met    :: Int
     replay_stats     :: Base.RefValue{GEOSReplayStats}
+    split_stats      :: Base.RefValue{GEOSSplitSubstepStats}
 end
 
 GEOSCSUnifiedDriverContext(grid, settings, vertical, steps_per_met::Integer) =
     GEOSCSUnifiedDriverContext{typeof(grid), typeof(settings), typeof(vertical)}(
-        grid, settings, vertical, Int(steps_per_met), Ref(GEOSReplayStats()))
+        grid, settings, vertical, Int(steps_per_met), Ref(GEOSReplayStats()),
+        Ref(GEOSSplitSubstepStats()))
+
+function _geos_required_split_steps(workspace::GEOSCubedSphereWindowWorkspace,
+                                    current_steps::Integer,
+                                    ratio::Real)
+    r = Float64(ratio)
+    if isfinite(r)
+        scaled = Float64(current_steps) * r / workspace.substep_cfl_target
+        raw = scaled <= typemax(Int) ? ceil(Int, scaled) :
+              workspace.max_steps_per_window
+    else
+        raw = workspace.max_steps_per_window
+    end
+    return min(max(raw, workspace.min_steps_per_window),
+               workspace.max_steps_per_window)
+end
 
 function driver_ingest_window!(workspace::GEOSCubedSphereWindowWorkspace{FT},
                                reader::GEOSNativeReader{FT},
@@ -1604,6 +1637,20 @@ function driver_drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{F
                                              replay.max_abs_err,
                                              win)
     end
+    positivity = ready_diag.contract.positivity
+    xy_steps = _geos_required_split_steps(workspace, workspace.steps_current,
+                                          positivity.ratio_xy)
+    z_steps = _geos_required_split_steps(workspace, workspace.steps_current,
+                                         positivity.ratio_z)
+    split = ctx.split_stats[]
+    ctx.split_stats[] = GEOSSplitSubstepStats(
+        max(split.max_steps_xy, xy_steps),
+        max(split.max_steps_z, z_steps),
+        xy_steps > split.max_steps_xy ? win : split.win_xy,
+        z_steps > split.max_steps_z ? win : split.win_z,
+        xy_steps > split.max_steps_xy ? Float64(positivity.ratio_xy) : split.ratio_xy,
+        z_steps > split.max_steps_z ? Float64(positivity.ratio_z) : split.ratio_z,
+    )
     return ready_diag
 end
 
@@ -1711,6 +1758,7 @@ function _process_day_geos_cs_unified(date::Date,
             FT = FT,
             dt_met_seconds = dt_met_seconds,
             steps_per_window = steps_per_met,
+            flux_kind = :full_window_mass_amount,
             mass_basis = mass_basis,
             include_flux_delta = true,
             include_surface    = settings.include_surface || settings.include_vdiff_fields,
@@ -1726,6 +1774,8 @@ function _process_day_geos_cs_unified(date::Date,
                 "preprocessor" => "geos_native_to_cs",
                 "preprocessor_contract" => "plan41_variable_substeps",
                 "runtime_substep_contract" => "binary_schedule",
+                "runtime_flux_scaling" => "full_window_flux_divided_by_2x_steps_per_window",
+                "cfl_definition" => "palindrome_outgoing_sum_over_min_endpoint_mass",
                 "geos_mass_endpoint" => global_mass_pin ?
                     "dry_endpoint_global_mean_pinned" : "raw_dry_endpoint",
                 "geos_horizontal_balance" => workspace.cm_closure === :pressure_fixer ?
@@ -1752,6 +1802,7 @@ function _process_day_geos_cs_unified(date::Date,
                 "adaptive_substeps" => adaptive_substeps,
                 "substep_cfl_target" => Float64(substep_cfl_target),
                 "positivity_cfl_limit" => Float64(positivity_cfl_limit),
+                "recommended_substeps_are_minimum" => true,
                 "require_substep_positivity" => require_substep_positivity,
                 "include_gchp_vdiff" => settings.include_vdiff_fields,
                 "gchp_vdiff_source_fields" => settings.include_vdiff_fields ?
@@ -1789,6 +1840,14 @@ function _process_day_geos_cs_unified(date::Date,
         @info @sprintf("  Done in %.1fs (%.2fs/window). Worst replay: rel=%.2e abs=%.2e at win=%d",
                        elapsed, elapsed / nw, stats.worst_replay_rel,
                        stats.worst_replay_abs, stats.worst_replay_win)
+        split_stats = ctx.split_stats[]
+        @info @sprintf("  Substep diagnostic: stored=%d..%d; hypothetical split max xy=%d at win=%d (ratio=%.3f), z=%d at win=%d (ratio=%.3f)",
+                       minimum(workspace.steps_schedule),
+                       maximum(workspace.steps_schedule),
+                       split_stats.max_steps_xy, split_stats.win_xy,
+                       split_stats.ratio_xy,
+                       split_stats.max_steps_z, split_stats.win_z,
+                       split_stats.ratio_z)
 
         final_m = chain_mass ? ntuple(p -> copy(workspace.m_cur[p]), npanel) : nothing
         set_end_of_day_seed!(reader, final_m)

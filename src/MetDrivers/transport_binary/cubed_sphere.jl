@@ -235,8 +235,14 @@ function open_streaming_cs_transport_binary(
         "longitude_offset_deg" => something(longitude_offset_deg, default_geometry.longitude_offset_deg),
         "Hp" => 0,
         "poisson_balance_method" => "global_cg_graph_laplacian",
-        "poisson_balance_target_scale" => 1.0 / (2 * steps_per_window),
-        "poisson_balance_target_semantics" => "forward_window_mass_difference / (2 * steps_per_window)",
+        "poisson_balance_target_scale" => flux_kind === :full_window_mass_amount ?
+                                          1.0 : 1.0 / (2 * steps_per_window),
+        "poisson_balance_target_semantics" => flux_kind === :full_window_mass_amount ?
+            "forward_window_mass_difference" :
+            "forward_window_mass_difference / (2 * steps_per_window)",
+        "poisson_balance_target_scale_by_window" =>
+            flux_kind === :full_window_mass_amount ?
+            fill(1.0, nwindow) : fill(1.0 / (2 * steps_per_window), nwindow),
         "n_dm" => include_flux_delta ? _cs_section_elements(Nc, npanel, nlevel, :dm) : 0,
         "include_cmfmc" => include_cmfmc,
         "include_dtrain" => include_dtrain,

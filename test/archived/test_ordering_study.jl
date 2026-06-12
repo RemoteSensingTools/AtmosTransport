@@ -1,3 +1,7 @@
+# ARCHIVED (era: plan 17, 2026-04) — palindrome ordering MEASUREMENT, not a
+# regression test. Documents why surface flux sits at the diffusion midpoint
+# (X Y Z V S V Z Y X). The decision it grounds is live in StrangSplitting.jl;
+# rerun only if that ordering is ever revisited.
 """
 Plan 17 Commit 7 — Palindrome ordering study.
 

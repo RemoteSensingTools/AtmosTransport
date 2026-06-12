@@ -1,4 +1,8 @@
 #!/usr/bin/env julia
+# ARCHIVED (era: binary format v4, spectral preprocessor, 2026-04) — setup
+# checks for the v4 spectral pipeline. v4 binaries are no longer written;
+# readers reject format_version < 5 paths these tests exercised. Kept as
+# documentation of the v4 contract; do not port.
 
 using Test
 using Dates

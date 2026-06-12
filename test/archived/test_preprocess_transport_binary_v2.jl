@@ -1,4 +1,7 @@
 #!/usr/bin/env julia
+# ARCHIVED (era: binary format v2, 2026-03) — v2 writer/reader tests. v2 is
+# rejected by all current readers ("regenerate with the current
+# preprocessor"). Kept for archaeology of the v2 header layout only.
 
 using Test
 

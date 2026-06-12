@@ -1,4 +1,6 @@
 #!/usr/bin/env julia
+# ARCHIVED (era: binary format v2, 2026-03) — v2 topology dispatch tests.
+# Same status as test_preprocess_transport_binary_v2.jl.
 
 using Test
 using JSON3

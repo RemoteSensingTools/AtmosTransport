@@ -184,6 +184,58 @@ uploaded (not `:cached`) to avoid double-correction.
 
 ## Configuration Caveats
 
+### Binary Flux Storage (`flux_kind`) and Mixed-Format Directories
+
+**Severity: High — diagnostics silently wrong by 2×steps if hand-rolled**
+
+GEOS-CS binaries generated since 2026-06-11 store `am/bm/cm` as FULL
+met-window amounts (`flux_kind = full_window_mass_amount`); older binaries
+store per-substep amounts. The runtime handles both transparently, and a
+day-chained run may legally mix formats. Two caveats:
+
+- Any script that converts stored fluxes to rates/winds or feeds them into
+  transport kernels MUST use `MetDrivers.flux_application_seconds` /
+  `MetDrivers.flux_storage_substep_scale` — a hand-rolled `dt/(2*steps)` is
+  wrong by `2*steps` on full-window binaries (see BINARY_FORMAT_V5.md).
+- The LL/RG runtime rejects `full_window_mass_amount` outright (only the CS
+  flux state implements the scaling). This is intentional — a silent no-op
+  would run LL transport with ~16–40× overstrength winds.
+
+### `air_mass_reset_mode` (window-boundary air-mass absorption)
+
+**Severity: Medium — wrong choice shifts tracer mass or VMR at every window**
+
+`preserve_tracer_mass` (default) keeps total tracer mass exact across the
+met-window air-mass reset and lets VMR absorb the air-mass step;
+`preserve_vmr` does the opposite (legacy behavior; conserves column VMR,
+NOT mass — rejects reference-state tracers); `none` disables the reset.
+For mass-budget work always use the default. See the use-case table in
+`docs/src/config/toml_schema.md`.
+
+### `[advection] fillz = false` (exact conservation vs positivity)
+
+**Severity: Medium — bounded negative VMRs near strong sources**
+
+`fillz = false` removes the GCHP positivity fixer's F32 borrow round-trip
+(the entire +5% LinRood co2_fossil surplus) and is the conservation-grade
+setting. The cost: bounded negative VMRs (−14 % of the local peak next to
+strong point sources at t≈3 h, ±ε far-field) which mix away. Filter at
+visualization if maps must be non-negative; keep budgets on
+`<tracer>_total_mass`.
+
+### Reference-State (Anomaly) Tracers — Constraints
+
+**Severity: Medium — config rejected at setup if violated**
+
+`[tracers.X.transport] reference = "global_mean"` requires the LinRood
+scheme (split-sweep moment limiters clamp against tracer mass and are not
+offset-invariant), `clamp = false` convection, no decay chemistry on the
+referenced tracer, and `air_mass_reset_mode != "preserve_vmr"`. Budgets for
+referenced tracers must use the F64 `<tracer>_total_mass` output variable —
+the F32 spatial field is reconstruction-polluted at the background scale
+(MASS_BALANCE.md rule 1).
+
+
 ### Diffusion Required for Realistic Column-Mean Output
 
 **Severity: High — visually misleading output without diffusion**

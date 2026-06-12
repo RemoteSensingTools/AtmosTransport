@@ -1,4 +1,14 @@
 # ===========================================================================
+# DEPRECATED (2026-06-12): this recipe produces the *merged* Nz=64
+# (`transform = "merge_above_pressure"`, top above 0.25 hPa) GEOS binary, which
+# is SUPERSEDED by the full-native-L72 omega-consistent production path
+# `geosit_c180_dec2021_catrine_f32_fullL72_omega_fullwindow.toml`. The merged
+# binary collapses the thin mesospheric top levels; the omega path keeps them
+# (Nz=72, identity transform) and additionally re-anchors the vertical cm flux
+# to A3dyn OMEGA (the SH-UTLS fingering cure). Kept only for provenance — do not
+# regenerate the merged binary for production. Run configs that used it were
+# moved to `config/runs/likely_legacy/`.
+# ---------------------------------------------------------------------------
 # GEOS-IT C180 native NetCDF -> v4 CS C180 transport binaries for Dec 2021,
 # laid out on NAS for the Catrine-vs-GEOS-Chem detailed comparison.
 #

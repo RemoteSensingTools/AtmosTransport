@@ -424,3 +424,20 @@ end
         @test model_gpu.grid === model.grid
     end
 end
+
+@testset "strict unknown-basis handling (BACKLOG 11a)" begin
+    MD = AtmosTransport.MetDrivers
+    # present-but-unknown values throw — never silently coerce to moist
+    @test_throws ArgumentError MD._transport_parse_mass_basis(
+        Dict(:mass_basis => "total"))
+    @test MD._transport_parse_mass_basis(Dict(:mass_basis => "dry")) === :dry
+    @test MD._transport_parse_mass_basis(Dict(:mass_basis => "Moist")) === :moist
+    # missing field keeps the documented legacy default (moist) with a warning
+    @test (@test_logs (:warn, r"no mass_basis field") match_mode = :any begin
+        MD._transport_parse_mass_basis(Dict{Symbol, Any}())
+    end) === :moist
+    # writer-side symbol normalization throws on garbage
+    @test_throws ArgumentError MD._transport_basis_symbol(:wet)
+    @test MD._transport_basis_symbol(:dry) === :dry
+    @test MD._transport_basis_symbol(:MOIST) === :moist
+end

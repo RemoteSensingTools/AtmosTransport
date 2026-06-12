@@ -218,11 +218,19 @@ end
 
 function _transport_parse_mass_basis(hdr)
     if !haskey(hdr, :mass_basis)
+        # Deliberate legacy default: pre-mass_basis (v4-era) binaries are
+        # moist by construction. A PRESENT but unknown value throws below —
+        # never silently coerce a typo to moist (fleet audit 2026-06-11:
+        # only "dry"/"moist" exist on disk).
         @warn "Transport binary header has no mass_basis field — assuming moist (legacy binary). " *
               "Regenerate with the current preprocessor for dry-basis binaries (Invariant 14)."
+        return :moist
     end
-    basis_str = lowercase(string(get(hdr, :mass_basis, "moist")))
-    return basis_str == "dry" ? :dry : :moist
+    basis_str = lowercase(string(hdr[:mass_basis]))
+    basis_str == "dry" && return :dry
+    basis_str == "moist" && return :moist
+    throw(ArgumentError("transport binary header has unknown mass_basis=" *
+                        "$(repr(string(hdr[:mass_basis]))); expected \"dry\" or \"moist\""))
 end
 
 @inline function _transport_normalize_symbol(value)
@@ -424,7 +432,12 @@ function _parse_transport_header(raw_bytes::Vector{UInt8})
     )
 end
 
-_transport_basis_symbol(sym::Symbol) = lowercase(String(sym)) == "dry" ? :dry : :moist
+function _transport_basis_symbol(sym::Symbol)
+    s = lowercase(String(sym))
+    s == "dry" && return :dry
+    s == "moist" && return :moist
+    throw(ArgumentError("unknown mass-basis symbol $(repr(sym)); expected :dry or :moist"))
+end
 _transport_basis_symbol(b::AbstractMassBasis) = mass_basis_symbol(b)
 
 function _transport_common_header(grid_type::String,

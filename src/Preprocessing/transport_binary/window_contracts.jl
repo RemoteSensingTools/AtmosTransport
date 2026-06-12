@@ -162,6 +162,39 @@ function required_substeps(policy::SubstepSchedulePolicy,
     return clamp_substeps(policy, max(required, current, 1))
 end
 
+"""
+    split_required_substeps(current_steps, ratio; cfl_target, min_steps, max_steps) -> Int
+    split_required_substeps(policy::SubstepSchedulePolicy, current_steps, ratio) -> Int
+
+The substep count ONE direction would need if only its own CFL bound,
+given the window's applied `current_steps` and that direction's outgoing
+budget `ratio`. Unlike [`required_substeps`](@ref) (adaptive escalation,
+which never drops below `current_steps`), this MAY fall below the combined
+schedule — that asymmetry is the whole point of a per-direction
+recommendation (`recommended_substeps_{xy,z}_by_window`, BACKLOG 11b).
+Clamped to `[min_steps, max_steps]`.
+"""
+function split_required_substeps(current_steps::Integer, ratio::Real;
+                                 cfl_target::Real,
+                                 min_steps::Integer,
+                                 max_steps::Integer)
+    r = Float64(ratio)
+    raw = if isfinite(r)
+        scaled = Float64(current_steps) * r / Float64(cfl_target)
+        scaled <= typemax(Int) ? ceil(Int, scaled) : Int(max_steps)
+    else
+        Int(max_steps)
+    end
+    return min(max(raw, Int(min_steps)), Int(max_steps))
+end
+
+split_required_substeps(policy::SubstepSchedulePolicy, current_steps::Integer,
+                        ratio::Real) =
+    split_required_substeps(current_steps, ratio;
+                            cfl_target = policy.substep_cfl_target,
+                            min_steps  = policy.min_steps_per_window,
+                            max_steps  = policy.max_steps_per_window)
+
 function next_substeps(policy::SubstepSchedulePolicy,
                        current_steps::Integer,
                        ratio::Real)

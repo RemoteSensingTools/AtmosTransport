@@ -21,6 +21,10 @@ mutable struct CubedSphereSpectralWindowWorkspace{FT, SG, R, TW, MW, QW, CSW, DX
     cur_bm       :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
     cur_cm       :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
     steps_schedule :: Vector{Int}
+    # Per-window split-substep recommendations (BACKLOG 11b): substeps each
+    # direction would need if only its own CFL bound. 0 = not yet recorded.
+    split_steps_xy_schedule :: Vector{Int}
+    split_steps_z_schedule  :: Vector{Int}
     regridder_time :: Float64
     qv_time        :: Float64
 end
@@ -117,6 +121,7 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
             cs_ws, A_ifc, B_ifc, gravity, dt_factor, Δx, Δy,
             cur_m, cur_ps, cur_am, cur_bm, cur_cm,
             fill(steps_per_met, spec.n_times),
+            fill(0, spec.n_times), fill(0, spec.n_times),
             t_regridder, t_qv)
 end
 
@@ -353,6 +358,28 @@ function _cs_spectral_contract_diag!(workspace::CubedSphereSpectralWindowWorkspa
     end
     update_accumulator!(contract, contract_diag.positivity, win)
 
+    # Per-window split-substep recommendations (BACKLOG 11b): the per-direction
+    # requirement from this window's outgoing budgets at the FINAL `steps`.
+    pos = contract_diag.positivity
+    if 1 <= win <= length(workspace.split_steps_xy_schedule)
+        workspace.split_steps_xy_schedule[win] =
+            split_required_substeps(ctx.substep_policy, steps, pos.ratio_xy)
+        workspace.split_steps_z_schedule[win] =
+            split_required_substeps(ctx.substep_policy, steps, pos.ratio_z)
+    end
+
+    # Full-window flux storage (flux_kind = full_window_mass_amount): upscale
+    # the per-substep am/bm/cm to full met-window amounts AFTER every gate
+    # (which measured per-substep budgets). The runtime divides by 2*steps.
+    # dm is a mass-tendency (computed from m, not fluxes) and is unaffected —
+    # mirrors the GEOS writer.
+    full_window_scale = FT(2 * steps)
+    @inbounds for p in 1:CS_PANEL_COUNT
+        cur_am[p] .*= full_window_scale
+        cur_bm[p] .*= full_window_scale
+        cur_cm[p] .*= full_window_scale
+    end
+
     convert_cs_mass_target_to_delta!(cs_ws.m_next_panels, cur_m)
     payload = (m = cur_m, am = cur_am, bm = cur_bm, cm = cur_cm,
                ps = workspace.cur_ps, dm = cs_ws.m_next_panels)
@@ -415,6 +442,13 @@ function driver_before_close_writer!(workspace::CubedSphereSpectralWindowWorkspa
                                      ::CSSpectralUnifiedDriverContext)
     set_streaming_steps_per_window_schedule!(writer.inner, workspace.steps_schedule)
     set_contract_steps_schedule!(contract, workspace.steps_schedule)
+    if all(>=(1), workspace.split_steps_xy_schedule) &&
+       all(>=(1), workspace.split_steps_z_schedule)
+        set_streaming_split_substep_recommendations!(
+            writer.inner,
+            workspace.split_steps_xy_schedule,
+            workspace.split_steps_z_schedule)
+    end
     return nothing
 end
 
@@ -497,6 +531,7 @@ function process_day(date::Date,
                 dt_met_seconds=settings.met_interval,
                 half_dt_seconds=settings.half_dt,
                 steps_per_window=steps_per_met,
+                flux_kind=:full_window_mass_amount,
                 include_flux_delta=true,
                 mass_basis=Symbol(settings.mass_basis),
                 panel_convention=_cs_panel_convention_tag(grid),

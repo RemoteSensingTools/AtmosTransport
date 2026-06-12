@@ -1609,20 +1609,15 @@ GEOSCSUnifiedDriverContext(grid, settings, vertical, steps_per_met::Integer) =
         grid, settings, vertical, Int(steps_per_met), Ref(GEOSReplayStats()),
         Ref(GEOSSplitSubstepStats()))
 
-function _geos_required_split_steps(workspace::GEOSCubedSphereWindowWorkspace,
-                                    current_steps::Integer,
-                                    ratio::Real)
-    r = Float64(ratio)
-    if isfinite(r)
-        scaled = Float64(current_steps) * r / workspace.substep_cfl_target
-        raw = scaled <= typemax(Int) ? ceil(Int, scaled) :
-              workspace.max_steps_per_window
-    else
-        raw = workspace.max_steps_per_window
-    end
-    return min(max(raw, workspace.min_steps_per_window),
-               workspace.max_steps_per_window)
-end
+# Thin wrapper over the shared `split_required_substeps` primitive
+# (window_contracts.jl) — GEOS keeps the CFL bounds as flat workspace fields
+# rather than a SubstepSchedulePolicy, so it passes them explicitly.
+_geos_required_split_steps(workspace::GEOSCubedSphereWindowWorkspace,
+                           current_steps::Integer, ratio::Real) =
+    split_required_substeps(current_steps, ratio;
+                            cfl_target = workspace.substep_cfl_target,
+                            min_steps  = workspace.min_steps_per_window,
+                            max_steps  = workspace.max_steps_per_window)
 
 function driver_ingest_window!(workspace::GEOSCubedSphereWindowWorkspace{FT},
                                reader::GEOSNativeReader{FT},

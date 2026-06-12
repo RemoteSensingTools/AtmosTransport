@@ -1,0 +1,64 @@
+# ===========================================================================
+# GEOS-IT C180 native NetCDF -> v4 CS C180 transport binaries for Dec 2021,
+# FULL native L72 (no top merge), OMEGA-CONSISTENT cm closure.
+#
+# Clone of `geosit_c180_dec2021_catrine_f32_fullL72.toml` with
+# `[numerics].geos_cm_closure = "omega_consistent"`: keep the native GEOS
+# horizontal mass fluxes (column-balanced to the analyzed DELP_dry endpoint), but
+# RE-ANCHOR the vertical mass flux cm to the A3dyn OMEGA resolved vertical motion
+# (dry-corrected by I3 QV, PCHIP 3-hourly->hourly time-interp) via a per-level
+# least-norm flux-potential correction so the per-layer vertical convergence
+# vdiv = cm[k]-cm[k+1] = +vdiv_om (smooth) instead of the grid-noisy div_h(MFXC).
+# Continuity is exact by construction and Σ_k vdiv_om = 0 ⇒ cm[Nz+1]=0.
+#
+# This is the native-cube candidate cure for the SH-UTLS "fingering" (the
+# intrinsic MFXC<->DELP residual M). Binary-validated: SH-UTLS r_vdiv 0.197 ≈
+# MERRA-2 CLEAN 0.227 (DIRTY 0.294), continuity 4e-10, cor(cm,OMEGA)=+1.00.
+# Requires include_vdiff_fields=true (A3dyn OMEGA + I3 QV) and the identity
+# vertical transform (Nz == Nz_native = 72).
+#
+# Output: `~/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_fullL72_omega/`
+# ===========================================================================
+
+[source]
+toml                 = "config/met_sources/geosit.toml"
+root_dir             = "/home/cfranken/data/AtmosTransport/met/geosit/C180/raw_catrine"
+include_surface      = true     # PBL section for runtime diffusion
+include_convection   = true     # CMFMC + DTRAIN for runtime convection
+include_vdiff_fields = true     # U/V/T/QV + A3dyn OMEGA + I3 QV (REQUIRED for omega_consistent)
+
+[output]
+directory  = "/home/cfranken/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_fullL72_omega_fullwindow"
+mass_basis = "dry"
+
+[grid]
+type                = "cubed_sphere"
+Nc                  = 180
+panel_convention    = "geos_native"
+definition          = "gmao"
+regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
+
+[vertical]
+coefficients = "config/geos_L72_coefficients.toml"
+transform    = "identity"        # full native L72 — no top merge (required by omega_consistent)
+
+[numerics]
+float_type     = "Float32"
+dt_met_seconds = 3600.0
+chain_mass     = false
+
+positivity_cfl_limit       = 0.95
+require_substep_positivity = true
+substep_schedule           = "adaptive_cfl"
+substep_cfl_target         = 0.95
+min_steps_per_window       = 1
+max_steps_per_window       = 512   # headroom for the unmerged mesospheric top
+geos_balance_mode          = "column"
+geos_cm_closure            = "omega_consistent"
+
+[mass_fix]
+enable = true
+# Match the ERA spectral path's global dry-air target so the absolute dry mass
+# is independent of the first processed date/window.
+mode = "target_ps_dry"
+target_ps_dry_pa = 98726.0

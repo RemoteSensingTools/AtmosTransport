@@ -134,7 +134,7 @@ export verify_write_replay_cs!,
 export mass_basis_symbol, mass_basis_from_symbol
 export AbstractWindowContract, AbstractWindowWorkspace, AbstractBinaryWriter
 export SubstepSchedulePolicy, clamp_substeps, initial_substeps,
-       required_substeps, next_substeps, rescale_substep_amounts!,
+       required_substeps, split_required_substeps, next_substeps, rescale_substep_amounts!,
        contract_steps_for_window, set_contract_steps_schedule!
 export ReadyWindow, PreverifiedWindow, PreprocessorRunCache
 export verify_window!, update_accumulator!, summarize_status!

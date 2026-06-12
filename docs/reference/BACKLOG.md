@@ -54,6 +54,15 @@ kernels' `cref` asymmetry; the CS per-binary `fluxes_d` reallocation; the
 existing `sweep_x/y/z!` `@eval` loops (already idiomatic); the
 `RunProgressTimer` helper chain.
 
+11b. **[S] Store split-substep recommendations in the header** —
+    generation already computes per-window hypothetical xy/z substep
+    requirements (`ratio_xy`/`ratio_z` from the positivity gate) but only
+    logs the day maxima. Store `recommended_substeps_{xy,z}_by_window` so a
+    future split-schedule runtime can pay z-substeps (cheap: no halo
+    exchange, donor-cell) only where vertical CFL binds (smoke C45 Dec 2:
+    xy needs 5, z needs 10) without regenerating met. Keep
+    `recommended_substeps_are_minimum` semantics.
+
 11a. **[S] Strict unknown-basis handling end-to-end** — `State.mass_basis_type`
     now throws on unknown basis symbols, but the LL/RG header read path
     (`transport_binary/header.jl` `_transport_basis_symbol(::Symbol)` and the

@@ -1,0 +1,74 @@
+# ===========================================================================
+# ERA5 native N320 GRIB → C180 GEOS-native cubed-sphere preprocess
+# (Dec 2021 Catrine validation).
+#
+# Drives the unified CLI:
+#   julia -t 16 --project=. scripts/preprocessing/preprocess_transport_binary.jl \
+#       config/preprocessing/era5_n320_to_c180_dec2021_catrine_f32.toml \
+#       --start 2021-12-01 --end 2021-12-31
+#
+# Use `-t 16` (or more): the spectral synthesis (~90% of per-window wall) is
+# threaded over the 137 model levels, so wall-time scales with thread count up
+# to ~Nz levels-per-thread. -t16 gives ~6× per-window over serial (~28 min/day
+# vs ~2.9 h). Set ERA5_N320_PROFILE=1 to log the per-phase breakdown.
+#
+# Per-window pipeline (B/C/D/E from `sources/era5.jl`, wired in
+# `transport_binary/era5_n320_regrid.jl`):
+#
+#   1. Spectral synthesis of VO + D → U/V, T, LNSP → PS on the N320 mesh
+#   2. Q read directly from `gridType = reduced_gg`
+#   3. Hybrid-σ dry-mass derivation (matches the GEOS endpoint convention)
+#   4. Convective forecast UDMF/DDMF/UDRF/DDRF on the N320 mesh
+#      (currently read-only — conversion to CMFMC/DTRAIN or TM5
+#      entu/detu/entd/detd is a follow-on; see CATRINE_DEC2021_VALIDATION)
+#   5. Conservative regrid of PS / U / V / T / Q from N320 to C180
+#   6. Panel-local wind rotation + Arakawa-C face flux reconstruction
+#   7. Per-window Poisson balance closing the mass-tendency continuity
+#   8. Streaming write through the v4 transport-binary writer
+#
+# Source-descriptor knobs (include_surface / include_convection /
+# include_vdiff_fields) live in `config/met_sources/era5_n320.toml`.
+#
+# Validation target: Catrine GEOS-Chem snapshots at
+# `~/data/AtmosTransport/catrine-geoschem-runs/` (which are C180 × L72).
+# ===========================================================================
+
+[source]
+toml     = "config/met_sources/era5_n320.toml"
+root_dir = "/home/cfranken/data/AtmosTransport/met/era5/N320/hourly/raw"
+
+[vertical]
+coefficients_file = "config/era5_L137_coefficients.toml"
+
+[output]
+directory  = "/home/cfranken/data/AtmosTransport/met/era5/n320_to_c180/transport_binary_dec2021_catrine_f32_fullwindow"
+mass_basis = "dry"
+
+[grid]
+type                = "cubed_sphere"
+Nc                  = 180
+panel_convention    = "geos_native"
+definition          = "gmao"
+regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
+
+[numerics]
+float_type     = "Float32"
+dt_met_seconds = 3600.0
+# ERA5 N320 days are independent — the final-window look-ahead reads next-day
+# hour-0 directly, and process_day returns no seed (final_m=nothing), so no
+# cross-day mass chaining occurs. chain_mass=false is correct here AND is what
+# lets the unified driver day-thread (the threading gate requires !chain_mass).
+# Changes no output; only enables parallel days. (GEOS uses chain_mass=true
+# because it chains the pressure-fixer endpoint; N320 does not.)
+chain_mass     = false
+
+[mass_fix]
+# Global dry-air mass pin — mirror of the GEOS-CS path. Removes the residual
+# global-mean dry-mass drift ERA reanalysis carries through PS/Q, pinning the
+# MEASURED C180 dry mass (not a climatological-qv proxy) to a fixed absolute
+# target shared with the GEOS path so the two driver families have one
+# dry-air baseline (cross-dataset XCO2 comparability + day-threaded multi-day
+# coherence). See docs/reference/GEOS_PREPROCESSING_MASS_BALANCE.md.
+enable = true
+mode = "target_ps_dry"
+target_ps_dry_pa = 98726.0

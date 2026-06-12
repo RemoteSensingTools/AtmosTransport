@@ -383,6 +383,31 @@ function process_era5_n320_to_cs_day(date::Date,
         # Per-window substep schedule, filled adaptively below and stamped onto
         # the binary header before close so the runtime executes it directly.
         steps_schedule = fill(steps_per_met, nwindow)
+        # Per-window split-substep recommendations (BACKLOG 11b).
+        split_steps_xy = fill(0, nwindow)
+        split_steps_z  = fill(0, nwindow)
+
+        # Finalize one window's flux storage just before it is written: record
+        # the per-direction split recommendation from the positivity ratios at
+        # this window's final `steps`, then upscale am/bm/cm to FULL-window
+        # amounts (flux_kind = full_window_mass_amount; the runtime divides by
+        # 2*steps). Applied AFTER every gate (which measured per-substep
+        # budgets); cur_am/bm/cm are rebuilt by `_adapt_window!` next window, so
+        # the in-place mul cannot leak forward. dm is m-tendency-derived and
+        # untouched. Mirrors the GEOS + spectral writers.
+        finalize_fullwindow_window! = (am, bm, cm, steps, pos_diag, win_idx) -> begin
+            if 1 <= win_idx <= nwindow
+                split_steps_xy[win_idx] =
+                    split_required_substeps(substep_policy, steps, pos_diag.ratio_xy)
+                split_steps_z[win_idx] =
+                    split_required_substeps(substep_policy, steps, pos_diag.ratio_z)
+            end
+            sc = FT(2 * steps)
+            @inbounds for p in 1:6
+                am[p] .*= sc; bm[p] .*= sc; cm[p] .*= sc
+            end
+            return nothing
+        end
         mkpath(dirname(out_path))
         tmp_path = out_path * ".tmp"
         isfile(tmp_path) && rm(tmp_path)
@@ -394,6 +419,7 @@ function process_era5_n320_to_cs_day(date::Date,
             dt_met_seconds = Float64(dt_met_seconds),
             half_dt_seconds = Float64(dt_met_seconds) / 2,
             steps_per_window = steps_per_met,
+            flux_kind = :full_window_mass_amount,
             include_flux_delta = true,
             include_tm5conv = include_convection,
             include_surface = settings.include_surface,
@@ -614,6 +640,8 @@ function process_era5_n320_to_cs_day(date::Date,
             end
             worst_positivity = update_cs_positivity_accumulator(worst_positivity, pos_diag, win - 1)
 
+            finalize_fullwindow_window!(cur_am, cur_bm, cur_cm, win_steps, pos_diag, win - 1)
+
             _fill_cs_mass_delta_payload!(cur_dm_dry, cur_m_dry, nxt_m_dry)
 
             # Surface PBL for the written window (window win-1 → hour win-2).
@@ -704,6 +732,7 @@ function process_era5_n320_to_cs_day(date::Date,
                                           cfl_limit = positivity_cfl_limit)
         end
         worst_positivity = update_cs_positivity_accumulator(worst_positivity, final_pos_diag, nwindow)
+        finalize_fullwindow_window!(cur_am, cur_bm, cur_cm, final_steps, final_pos_diag, nwindow)
         _fill_cs_mass_delta_payload!(cur_dm_dry, cur_m_dry, nxt_m_dry)
 
         # Surface PBL for the final window (window nwindow → hour nwindow-1).
@@ -730,6 +759,10 @@ function process_era5_n320_to_cs_day(date::Date,
         # Stamp the adaptive per-window substep schedule onto the header so the
         # runtime executes it directly (no runtime CFL adaptation).
         set_streaming_steps_per_window_schedule!(writer.inner, steps_schedule)
+        if all(>=(1), split_steps_xy) && all(>=(1), split_steps_z)
+            set_streaming_split_substep_recommendations!(writer.inner,
+                                                         split_steps_xy, split_steps_z)
+        end
 
         # Summarize positivity BEFORE promoting the .tmp so a failed-gate day
         # quarantines the staged file (matches cubed_sphere_regrid.jl:610-617).

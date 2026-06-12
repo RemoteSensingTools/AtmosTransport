@@ -72,7 +72,8 @@ using ProgressMeter: Progress, next!, finish!, update!
 
 import ...expand_data_path
 using ...SectionTimer
-using ..State: AbstractMassBasis, DryBasis, MoistBasis, mass_basis_type, CellState,
+using ..State: AbstractMassBasis, DryBasis, MoistBasis, mass_basis_type,
+    mass_basis_symbol, CellState,
                 CubedSphereState, total_air_mass, total_mass_full,
                 tracer_names, tracer_index, halo_width,
                 get_tracer_raw, set_tracer_reference!, REF_GLOBAL_MEAN,
@@ -1052,17 +1053,108 @@ function _surface_source_total_rate(source)
     end
 end
 
+
+# ===========================================================================
+# Shared runner blocks (BACKLOG #9, low-risk partial extraction).
+#
+# The LL/RG and CS loops stay separate on purpose — they diverged for physics
+# reasons (CS per-binary flux reallocation, moist guard, reference gates).
+# What lives here is the genuinely topology-agnostic plumbing both loops
+# duplicated line-for-line: config parsing, snapshot capture/drain, daily
+# flush, and the surface-source log. Log format strings are parameters where
+# the two loops historically differed (e.g. t=%.0fh vs t=%.1fh) so extraction
+# is byte-identical in the run logs.
+# ===========================================================================
+
+function _parse_air_mass_reset_mode(run_cfg)
+    haskey(run_cfg, "reset_air_mass_each_window") &&
+        throw(ArgumentError("run.reset_air_mass_each_window was replaced by " *
+                            "run.air_mass_reset_mode = \"none\", " *
+                            "\"preserve_vmr\", or \"preserve_tracer_mass\""))
+    return get(run_cfg, "air_mass_reset_mode", "preserve_tracer_mass")
+end
+
+function _log_surface_source_rates(surface_sources)
+    for source in surface_sources
+        @info @sprintf("Surface source %s total model-storage rate: %.12e kg_air_equiv/s",
+                       String(source.tracer_name),
+                       _surface_source_total_rate(source))
+    end
+    return nothing
+end
+
+# One snapshot: capture (timed as io_write), push into the partition's
+# accumulators, count. `model` is passed per call because both loops rebind
+# it (`model = sim.model`) across binaries.
+function _capture_frame!(timer, output_spec, snapshots, day_snapshots,
+                         snapshot_count, model, hour_total; halo_width = nothing)
+    timed_io_write!(timer, () -> begin
+        frame = halo_width === nothing ?
+            capture_snapshot(model; time_hours = hour_total) :
+            capture_snapshot(model; time_hours = hour_total, halo_width = halo_width)
+        _push_snapshot_frame!(output_spec.partition, snapshots,
+                              day_snapshots, frame)
+    end)
+    snapshot_count[] += 1
+    return nothing
+end
+
+# The t=0 snapshot both loops take before any stepping. Returns the advanced
+# snapshot index. `detail_fn(idx, hour)` builds each loop's historic status
+# line — a literal-@sprintf closure at the call site, so the format stays
+# loop-specific AND fully inferable (a runtime `Printf.Format` is abstractly
+# typed and costs two JET hot-path reports).
+function _initial_snapshot!(capture!, timer, do_snapshots,
+                            snapshot_schedule_hours, snap_idx; detail_fn::F) where {F}
+    if do_snapshots && snap_idx <= length(snapshot_schedule_hours) &&
+       abs(snapshot_schedule_hours[snap_idx]) < 0.5
+        capture!(0.0)
+        set_progress_status!(timer;
+                             detail = detail_fn(snap_idx, 0.0),
+                             redraw = true)
+        snap_idx += 1
+    end
+    return snap_idx
+end
+
+# Drain every snapshot due at the current simulated hour. Returns the
+# advanced snapshot index.
+function _drain_due_snapshots!(capture!, timer,
+                               snapshot_schedule_hours, snap_idx, hour_total;
+                               detail_fn::F) where {F}
+    while snap_idx <= length(snapshot_schedule_hours) &&
+          abs(hour_total - snapshot_schedule_hours[snap_idx]) < 0.5
+        capture!(hour_total)
+        set_progress_status!(timer;
+                             detail = detail_fn(snap_idx, hour_total),
+                             redraw = true)
+        snap_idx += 1
+    end
+    return snap_idx
+end
+
+# End-of-binary daily flush + "wrote ..." status line.
+function _flush_day_and_log!(timer, output_spec, day_snapshots, grid;
+                             mass_basis, date_label, day_index)
+    written = _flush_daily_output!(output_spec.partition, timer,
+                                   output_spec, day_snapshots, grid;
+                                   mass_basis = mass_basis,
+                                   date_label = date_label,
+                                   day_index = day_index)
+    written !== nothing &&
+        set_progress_status!(timer;
+                             detail = @sprintf("wrote %s", basename(written)),
+                             redraw = true)
+    return written
+end
+
 function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
     FT = _cfg_float_type(cfg)
     assert_backend_float_type!(_cfg_runtime_backend(cfg), FT)
     run_cfg = get(cfg, "run", Dict{String, Any}())
     start_window = Int(get(run_cfg, "start_window", 1))
     stop_window_override = get(run_cfg, "stop_window", nothing)
-    haskey(run_cfg, "reset_air_mass_each_window") &&
-        throw(ArgumentError("run.reset_air_mass_each_window was replaced by " *
-                            "run.air_mass_reset_mode = \"none\", " *
-                            "\"preserve_vmr\", or \"preserve_tracer_mass\""))
-    air_mass_reset_mode = get(run_cfg, "air_mass_reset_mode", "preserve_tracer_mass")
+    air_mass_reset_mode = _parse_air_mass_reset_mode(run_cfg)
 
     init_cfg = get(cfg, "init", Dict{String, Any}())
     tracer_specs = something(_parse_tracer_specs(cfg),
@@ -1124,11 +1216,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
                          tracers = tracer_names(model.state),
                          binary_count = length(binary_paths),
                          snapshot_file = _output_display_path(output_spec))
-    for source in surface_sources
-        @info @sprintf("Surface source %s total model-storage rate: %.12e kg_air_equiv/s",
-                       String(source.tracer_name),
-                       _surface_source_total_rate(source))
-    end
+    _log_surface_source_rates(surface_sources)
 
     snapshots = SnapshotFrame[]
     day_snapshots = SnapshotFrame[]
@@ -1144,25 +1232,18 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
                  Int(stop_window_override) - start_window + 1
     timer = RunProgressTimer(per_binary * length(binary_paths))
 
-    function capture_structured!(hour_total)
-        timed_io_write!(timer, () -> begin
-            frame = capture_snapshot(model; time_hours = hour_total)
-            _push_snapshot_frame!(output_spec.partition, snapshots,
-                                  day_snapshots, frame)
-        end)
-        snapshot_count[] += 1
-        return nothing
-    end
+    # `model` is rebound per binary (`model = sim.model`). Capturing the
+    # reassigned variable directly would box it (Core.Box: abstract loads +
+    # a JET possibly-undefined report), so every capture closure is built by
+    # `_make_capture` over an immutable argument binding instead.
+    _make_capture(m) = hour_total ->
+        _capture_frame!(timer, output_spec, snapshots, day_snapshots,
+                        snapshot_count, m, hour_total)
 
-    if do_snapshots && snap_idx <= length(snapshot_schedule_hours) &&
-       abs(snapshot_schedule_hours[snap_idx]) < 0.5
-        capture_structured!(0.0)
-        set_progress_status!(timer;
-                             detail = @sprintf("snapshot %d at t=%.0fh",
-                                               snap_idx, 0.0),
-                             redraw = true)
-        snap_idx += 1
-    end
+    snap_idx = _initial_snapshot!(_make_capture(model), timer, do_snapshots,
+                                  snapshot_schedule_hours, snap_idx;
+                                  detail_fn = (i, h) ->
+                                      @sprintf("snapshot %d at t=%.0fh", i, h))
 
     run_time_seconds = 0.0   # accumulated across binaries (sim clock origin)
     for (idx, path) in enumerate(binary_paths)
@@ -1186,6 +1267,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
                                     # day-1 time-varying fluxes
                                     start_time = run_time_seconds))
         model = sim.model
+        capture_structured! = _make_capture(model)
         if !initialize_air_mass
             boundary_rel = maximum(abs.(model.state.air_mass .- sim.window.air_mass)) /
                            max(maximum(abs.(sim.window.air_mass)), eps(FT))
@@ -1224,17 +1306,11 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
                                                snapshot_count[],
                                                _output_basename(output_spec)))
                 total_elapsed_hours += window_hours
-                while snap_idx <= length(snapshot_schedule_hours) &&
-                      abs(total_elapsed_hours - snapshot_schedule_hours[snap_idx]) < 0.5
-                    capture_structured!(total_elapsed_hours)
-                    set_progress_status!(timer;
-                                         detail = @sprintf("snapshot %d at t=%.0fh  output=%s",
-                                                           snap_idx,
-                                                           total_elapsed_hours,
-                                                           _output_basename(output_spec)),
-                                         redraw = true)
-                    snap_idx += 1
-                end
+                snap_idx = _drain_due_snapshots!(capture_structured!, timer,
+                    snapshot_schedule_hours, snap_idx, total_elapsed_hours;
+                    detail_fn = (i, h) ->
+                        @sprintf("snapshot %d at t=%.0fh  output=%s", i, h,
+                                 _output_basename(output_spec)))
             end
         else
             # Same physics path as above, but without per-window snapshot
@@ -1259,18 +1335,11 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
                              status = @sprintf("finished %s", basename(path)),
                              detail = @sprintf("file wall %.2fs", time() - t0),
                              redraw = true)
-        if do_snapshots
-            written = _flush_daily_output!(output_spec.partition, timer,
-                                           output_spec, day_snapshots,
-                                           driver_grid(first_driver);
-                                           mass_basis = air_mass_basis(first_driver),
-                                           date_label = _binary_date_label(path),
-                                           day_index = idx)
-            written !== nothing &&
-                set_progress_status!(timer;
-                                     detail = @sprintf("wrote %s", basename(written)),
-                                     redraw = true)
-        end
+        do_snapshots && _flush_day_and_log!(timer, output_spec, day_snapshots,
+                                             driver_grid(first_driver);
+                                             mass_basis = air_mass_basis(first_driver),
+                                             date_label = _binary_date_label(path),
+                                             day_index = idx)
         close(driver)
     end
 
@@ -1325,11 +1394,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
     advection = build_cs_advection(cfg)
     Hp = configured_halo_width(cfg, advection)
     stop_window_override = get(run_cfg, "stop_window", nothing)
-    haskey(run_cfg, "reset_air_mass_each_window") &&
-        throw(ArgumentError("run.reset_air_mass_each_window was replaced by " *
-                            "run.air_mass_reset_mode = \"none\", " *
-                            "\"preserve_vmr\", or \"preserve_tracer_mass\""))
-    air_mass_reset_mode = get(run_cfg, "air_mass_reset_mode", "preserve_tracer_mass")
+    air_mass_reset_mode = _parse_air_mass_reset_mode(run_cfg)
 
     tracers_cfg = get(cfg, "tracers", Dict{String, Any}())
     isempty(tracers_cfg) && error("[tracers] must define at least one tracer")
@@ -1434,13 +1499,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
     surface_sources = build_surface_flux_sources(grid, tracer_specs, FT;
                                                  reference_time = _run_reference_time(cfg))
     source_tracers = Set(source.tracer_name for source in surface_sources)
-    for source in surface_sources
-        # Reduce the topology-shaped per-cell rate to a scalar for the log;
-        # `_surface_source_total_rate` handles static (2D / 6-tuple) and
-        # time-varying (first-slice) sources alike.
-        @info @sprintf("Surface source %s total model-storage rate: %.12e kg_air_equiv/s",
-                       String(source.tracer_name), _surface_source_total_rate(source))
-    end
+    _log_surface_source_rates(surface_sources)
 
     _log_runtime_summary(topology = :CubedSphere,
                          mesh_label = @sprintf("C%d", mesh.Nc),
@@ -1467,28 +1526,18 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
                           min(Int(stop_window_override), total_windows(driver1))
     timer = RunProgressTimer(per_binary_estimate * length(binary_paths))
 
-    function capture_cs!(hour_total)
-        timed_io_write!(timer, () -> begin
-            frame = capture_snapshot(model; time_hours = hour_total,
-                                     halo_width = Hp)
-            _push_snapshot_frame!(output_spec.partition, snapshots,
-                                  day_snapshots, frame)
-        end)
-        snapshot_count[] += 1
-        return nothing
-    end
+    # `model` is rebound per binary (`model = sim.model`); un-boxed capture
+    # via `_make_capture` as in the LL loop.
+    _make_capture(m) = hour_total ->
+        _capture_frame!(timer, output_spec, snapshots, day_snapshots,
+                        snapshot_count, m, hour_total; halo_width = Hp)
 
     snap_idx = 1
     total_hour = 0.0
-    if do_snapshots && snap_idx <= length(snapshot_schedule_hours) &&
-       abs(snapshot_schedule_hours[snap_idx]) < 0.5
-        capture_cs!(0.0)
-        set_progress_status!(timer;
-                             detail = @sprintf("snapshot %d at t=%.1fh",
-                                               snap_idx, 0.0),
-                             redraw = true)
-        snap_idx += 1
-    end
+    snap_idx = _initial_snapshot!(_make_capture(model), timer, do_snapshots,
+                                  snapshot_schedule_hours, snap_idx;
+                                  detail_fn = (i, h) ->
+                                      @sprintf("snapshot %d at t=%.1fh", i, h))
 
     t0 = time()
     for (driver_idx, path) in enumerate(binary_paths)
@@ -1545,6 +1594,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
         # `DrivenSimulation` may wrap `model` with a surface-flux operator;
         # keep snapshots and the return value aligned with the stepped model.
         model = sim.model
+        capture_cs! = _make_capture(model)
 
         day_t0 = time()
         set_progress_status!(timer;
@@ -1572,34 +1622,22 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
                                                snapshot_count[],
                                                _output_basename(output_spec)))
                 total_hour += window_hours
-                while do_snapshots && snap_idx <= length(snapshot_schedule_hours) &&
-                      abs(total_hour - snapshot_schedule_hours[snap_idx]) < 0.5
-                    capture_cs!(total_hour)
-                    set_progress_status!(timer;
-                                         detail = @sprintf("snapshot %d at t=%.1fh  output=%s",
-                                                           snap_idx,
-                                                           total_hour,
-                                                           _output_basename(output_spec)),
-                                         redraw = true)
-                    snap_idx += 1
-                end
+                do_snapshots && (snap_idx = _drain_due_snapshots!(capture_cs!,
+                    timer, snapshot_schedule_hours, snap_idx, total_hour;
+                    detail_fn = (i, h) ->
+                        @sprintf("snapshot %d at t=%.1fh  output=%s", i, h,
+                                 _output_basename(output_spec))))
             end
         end
         set_progress_status!(timer;
                              status = @sprintf("finished %s", basename(path)),
                              detail = @sprintf("file wall %.1fs", time() - day_t0),
                              redraw = true)
-        if do_snapshots
-            written = _flush_daily_output!(output_spec.partition, timer,
-                                           output_spec, day_snapshots, grid;
-                                           mass_basis = BasisT === DryBasis ? :dry : :moist,
-                                           date_label = _binary_date_label(path),
-                                           day_index = driver_idx)
-            written !== nothing &&
-                set_progress_status!(timer;
-                                     detail = @sprintf("wrote %s", basename(written)),
-                                     redraw = true)
-        end
+        do_snapshots && _flush_day_and_log!(timer, output_spec, day_snapshots,
+                                             grid;
+                                             mass_basis = mass_basis_symbol(BasisT()),
+                                             date_label = _binary_date_label(path),
+                                             day_index = driver_idx)
         close(driver)
     end
 
@@ -1629,7 +1667,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
         # `air_mass` arrays were stored under.
         _flush_single_output!(output_spec.partition, timer, output_spec,
                               snapshots, grid;
-                              mass_basis = BasisT === DryBasis ? :dry : :moist)
+                              mass_basis = mass_basis_symbol(BasisT()))
     end
     summarize_progress!(timer)
     return model

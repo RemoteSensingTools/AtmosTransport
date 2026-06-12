@@ -17,9 +17,6 @@ Conventions: **[S]** small (≤1 day) · **[M]** medium (days) · **[L]** large
    round-trip. Verify with `ATMOSTR_FILLZ_MASS_DIAG=1` (net must be 0).
    Until then `[advection] fillz = false` is the conservation answer
    (ADVECTION_SCHEMES.md §fillz).
-2. **[S] Pre-existing test failures** — `test/orphan/test_output_snapshots.jl`
-   has stale `output_field_spec` imports. (The suite-aborting
-   `test_cs_writer_contract_guard.jl` fixture is fixed — see Done log.)
 3. **[M] Per-level reference `q_ref[k]`** (plan 45 deferred extension) —
    removes the mean vertical profile too (~100× background reduction for
    CO₂-class tracers vs ~34× for the global scalar). Requires a
@@ -32,12 +29,13 @@ Conventions: **[S]** small (≤1 day) · **[M]** medium (days) · **[L]** large
 Ranked by payoff × (1/risk). Estimated total: ~18 kLOC of structural
 redundancy; the items below are the tractable core.
 
-9. **[L] LL vs CS runner unification** — ~900 overlapping lines in
-   `src/Models/DrivenRunner.jl`. The runners diverged for physics reasons
-   (CS per-binary flux reallocation, moist guard, reference gates), so do
-   the LOW-RISK PARTIAL first: extract snapshot accumulation, output
-   flushing, and the mass-logging epilog into shared helpers; do NOT force
-   a unified loop.
+9. **[L] LL vs CS runner unification — REMAINING (large) part** — the
+   low-risk partial shipped (see Done log 2026-06-12): config parse,
+   snapshot capture/drain, daily flush, source-rate logging are shared.
+   Still split by design: the two loops themselves (CS per-binary flux
+   reallocation, moist guard, reference gates) and the tracer-mass epilogs
+   (different semantics AND log-parsing diagnostics pin their exact lines).
+   Only revisit if a third topology arrives.
 10. **[L] Preprocessing pipeline unification** — `era5_n320_regrid.jl` /
     `latlon_spectral.jl` / `merra2_latlon_regrid.jl` are ~60 % parallel
     `process_day` pipelines (~1.9 kLOC). A parameterized
@@ -54,28 +52,11 @@ kernels' `cref` asymmetry; the CS per-binary `fluxes_d` reallocation; the
 existing `sweep_x/y/z!` `@eval` loops (already idiomatic); the
 `RunProgressTimer` helper chain.
 
-11b. **[S] Store split-substep recommendations in the header** —
-    generation already computes per-window hypothetical xy/z substep
-    requirements (`ratio_xy`/`ratio_z` from the positivity gate) but only
-    logs the day maxima. Store `recommended_substeps_{xy,z}_by_window` so a
-    future split-schedule runtime can pay z-substeps (cheap: no halo
-    exchange, donor-cell) only where vertical CFL binds (smoke C45 Dec 2:
-    xy needs 5, z needs 10) without regenerating met. Keep
-    `recommended_substeps_are_minimum` semantics.
-
-11a. **[S] Strict unknown-basis handling end-to-end** — `State.mass_basis_type`
-    now throws on unknown basis symbols, but the LL/RG header read path
-    (`transport_binary/header.jl` `_transport_basis_symbol(::Symbol)` and the
-    header parser) still silently coerces any non-`"dry"` value to `:moist`.
-    Tighten to throw; audit old binaries first (read-path behavior change).
 
 ## P3 — hygiene: tests, scripts, configs
 
 12. **[M] Orphan test triage** — `test/orphan/` is 7.5 kLOC, CI-excluded,
     60–70 % dead or subsumed by core. Promote / merge / delete per file.
-13. **[S] Shared test fixtures** — mini CS-state and synthetic-binary
-    builders are copy-pasted across ≥5 core test files. One
-    `test/core/test_fixtures.jl` module.
 14. **[M] Diagnostics scripts consolidation** — `scripts/diagnostics/` has
     91 files, ~70 % one-shot or overlapping: 5 mass-balance checkers → one
     parametric tool (built on the F64 `<tracer>_total_mass` variable +
@@ -90,14 +71,27 @@ existing `sweep_x/y/z!` `@eval` loops (already idiomatic); the
 
 ## P4 — docs
 
-16. **[S] CAVEATS.md refresh** — add the new-knob caveats
-    (`air_mass_reset_mode` choice, referencing constraints, `fillz=false`
-    negatives) and prune items fixed by the 2026-06 conservation work.
-17. **[S] Archived-test provenance** — `test/archived/` (560 lines of v2/v4
-    era tests) lacks headers explaining what era each documents.
 
 ## Done log
 
+- 2026-06-12 — **#9 partial** runner extraction: `_parse_air_mass_reset_mode`,
+  `_log_surface_source_rates`, `_capture_frame!` (+ per-loop closures so the
+  `model = sim.model` rebinding still works), `_initial_snapshot!`,
+  `_drain_due_snapshots!`, `_flush_day_and_log!`; CS basis ternary →
+  `mass_basis_symbol(BasisT())`. Log formats parameterized so run logs are
+  byte-identical; epilogs intentionally left per-topology. Verified:
+  bit-identical stage0 C180 + 4 driven/snapshot test files green.
+- 2026-06-12 — backlog sweep batch: **11b** per-window
+  `recommended_substeps_{xy,z}_by_window` stored + contract-validated
+  (smoke C45: xy flat 5, z 5–10 drives the schedule); **11a** strict
+  unknown-basis (present-but-garbage header values and writer symbols throw;
+  fleet audit: only dry/moist exist on disk; missing-field legacy default
+  kept with warning); **13** shared `test/fixtures/mini_models.jl`
+  (CS/LL/RG mini-model builders; 3 files migrated); **P1.2** orphan
+  `test_output_snapshots` import drift fixed (92/92 — the suite was healthy);
+  **16** CAVEATS new-knob sections (flux_kind mixed formats,
+  air_mass_reset_mode, fillz=false negatives, referencing constraints);
+  **17** archived-test provenance headers.
 - 2026-06-11 — consolidation batch 3: snapshot NetCDF writers (523→419
   lines): three per-topology `_write_snapshot_payload!` methods → one
   skeleton + topology dispatches (`_layer_base_dims` / `_payload_coordinates`

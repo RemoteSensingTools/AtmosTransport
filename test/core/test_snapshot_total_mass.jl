@@ -20,18 +20,14 @@ using .AtmosTransport.State: CubedSphereState, DryBasis, REF_GLOBAL_MEAN,
 using .AtmosTransport.Grids: CubedSphereMesh
 using .AtmosTransport.Models: mass_weighted_global_mean_vmr
 
+include(joinpath(@__DIR__, "..", "fixtures", "mini_models.jl"))
+
+# structured co2 so the referenced anomaly is non-trivial
 function _mini_cs_model(; Nc = 4, Hp = 1, Nz = 3, FT = Float32)
-    mesh = CubedSphereMesh(; FT = FT, Nc = Nc, Hp = Hp)
-    vc = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
-    grid = AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT = FT)
-    Np = Nc + 2Hp
-    air = ntuple(_ -> ones(FT, Np, Np, Nz), 6)
-    # structured co2 so the referenced anomaly is non-trivial
-    co2 = ntuple(_ -> FT(4e-4) .+ FT(2e-5) .* reshape(collect(FT, 1:Nz), 1, 1, :), 6)
-    sf6 = ntuple(_ -> fill(FT(1e-11), Np, Np, Nz), 6)
-    state = CubedSphereState(DryBasis, mesh, air; co2 = co2, sf6 = sf6)
-    fluxes = allocate_face_fluxes(mesh, Nz; FT = FT, basis = DryBasis)
-    return TransportModel(state, fluxes, grid, LinRoodPPMScheme{7}()), grid
+    fx = fixture_cs_model(; Nc, Hp, Nz, FT,
+                          co2 = fixture_cs_ramp_panels(4e-4, 2e-5, Nc + 2Hp, Nz; FT),
+                          sf6 = fixture_cs_panels(1e-11, Nc + 2Hp, Nz; FT))
+    return fx.model, fx.grid
 end
 
 @testset "snapshot writes exact F64 <tracer>_total_mass" begin

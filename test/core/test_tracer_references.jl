@@ -50,15 +50,9 @@ using AtmosTransport: LinRoodPPMScheme, NoDiffusion, NoConvection, NoChemistry,
     @test_throws DimensionMismatch TracerReferences(fill(REF_NONE, 2), zeros(3))
 end
 
-function _mini_cs_state(; Nc = 4, Hp = 1, Nz = 3, FT = Float32)
-    mesh = CubedSphereMesh(; FT = FT, Nc = Nc, Hp = Hp)
-    Np = Nc + 2Hp
-    air = ntuple(_ -> ones(FT, Np, Np, Nz), 6)
-    co2 = ntuple(_ -> fill(FT(400e-6), Np, Np, Nz), 6)
-    sf6 = ntuple(_ -> fill(FT(10e-12), Np, Np, Nz), 6)
-    state = CubedSphereState(DryBasis, mesh, air; co2 = co2, sf6 = sf6)
-    return state
-end
+include(joinpath(@__DIR__, "..", "fixtures", "mini_models.jl"))
+
+_mini_cs_state(; kwargs...) = fixture_cs_state(; kwargs...).state
 
 @testset "CubedSphereState carries tracer_refs (default raw)" begin
     state = _mini_cs_state()

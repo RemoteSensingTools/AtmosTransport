@@ -20,15 +20,11 @@ using .AtmosTransport.Grids: LatLonMesh
 using .AtmosTransport.Output: OutputFieldSpec, TracerOutputFields,
     FullLayerSelection, SelectedLayerSelection
 
-function _mini_ll_model(; FT = Float32, Nx = 6, Ny = 4, Nz = 3)
-    mesh = LatLonMesh(; FT, Nx, Ny)
-    vc = HybridSigmaPressure(FT[0, 100, 300, 600], FT[0, 0, 0.5, 1])
-    grid = AtmosGrid(mesh, vc, CPU(); FT)
-    air = FT(1e16) .+ FT(1e14) .* reshape(1:(Nx * Ny * Nz), Nx, Ny, Nz)
-    state = CellState(DryBasis, air;
-                      co2 = FT(4e-4) .* air, sf6 = FT(1e-11) .* air)
-    fluxes = allocate_face_fluxes(grid.horizontal, Nz; FT, basis = DryBasis)
-    return TransportModel(state, fluxes, grid, UpwindScheme()), grid
+include(joinpath(@__DIR__, "..", "fixtures", "mini_models.jl"))
+
+function _mini_ll_model(; kwargs...)
+    fx = fixture_ll_model(; kwargs...)
+    return fx.model, fx.grid
 end
 
 @testset "selected-layer output: >= 2 selected-layer variables in one file" begin

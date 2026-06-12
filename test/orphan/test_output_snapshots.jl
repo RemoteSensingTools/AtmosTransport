@@ -3,6 +3,7 @@ using NCDatasets
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
+using .AtmosTransport.Output
 
 @testset "Output NetCDF snapshots" begin
     @testset "write options validate compression settings" begin

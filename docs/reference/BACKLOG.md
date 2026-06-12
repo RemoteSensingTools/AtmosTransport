@@ -41,9 +41,16 @@ redundancy; the items below are the tractable core.
     `process_day` pipelines (~1.9 kLOC). A parameterized
     `process_day_generic!` + `MetSourceAdapter` types also fixes the
     long-standing N320 substep-contract divergence (KEY_PARADIGMS §A5).
-11. **[M] Topology binary-contract gates** — `*_contracts.jl` triplicate the
-    replay/positivity gate logic (~2 kLOC, ~65 % overlap). Shared gate
-    framework + section-access callbacks.
+11. **[S, partial done] Topology binary-contract gates** — the "~65 % overlap /
+    ~2 kLOC" estimate was optimistic. Inspection (2026-06-12): the big
+    functions (`verify_substep_positivity_{cs,ll,rg}!`,
+    `verify_*_window_contract!`) are GENUINELY geometry-specific — the safety
+    net that must stay per-topology (do-NOT-refactor). The shareable surface
+    is the worst-window bookkeeping: `update_*_positivity_accumulator` (done —
+    one generic `update_positivity_accumulator`) and `summarize_*_positivity_status`
+    (~80 % shared but the gate-FAILURE error messages are topology-specific
+    user-facing text; deliberately left split — unifying risks mangling a
+    safety-gate message for little gain).
 
 11c. **[M/L] Split-substep runtime schedules (the payoff of 11b)** — run the
     horizontal sweeps at `recommended_substeps_xy_by_window` and the vertical
@@ -98,6 +105,11 @@ existing `sweep_x/y/z!` `@eval` loops (already idiomatic); the
 
 ## Done log
 
+- 2026-06-12 — ERA5 N320->C180 spectral path joined the full-window flux
+  contract via a shared `split_required_substeps` primitive (`5ef095a0`);
+  `update_positivity_accumulator` unified across CS/LL/RG (#11 partial);
+  config/runs + diagnostics READMEs and the diagnostics `archive/` (#14/#15);
+  the per-direction substep analyzer + measured 11c payoff table (`f2c7cbad`).
 - 2026-06-12 — **#9 partial** runner extraction: `_parse_air_mass_reset_mode`,
   `_log_surface_source_rates`, `_capture_frame!` (+ per-loop closures so the
   `model = sim.model` rebinding still works), `_initial_snapshot!`,

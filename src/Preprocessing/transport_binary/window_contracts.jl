@@ -195,6 +195,28 @@ split_required_substeps(policy::SubstepSchedulePolicy, current_steps::Integer,
                             min_steps  = policy.min_steps_per_window,
                             max_steps  = policy.max_steps_per_window)
 
+"""
+    update_positivity_accumulator(worst::NamedTuple, diag, win_idx) -> NamedTuple
+
+Topology-generic worst-window positivity reducer: keep `worst` unless this
+window's `diag.ratio` is larger, in which case rebuild the accumulator from
+this window. `worst` is a
+`@NamedTuple{ratio::Float64, direction::Symbol, win::Int, location::NTuple{N,Int}}`;
+the result preserves the same `N` (cell/face coordinate rank), so the CS/LL/RG
+`*Worst` types all flow through unchanged. The per-topology
+`update_{cs,ll,rg}_positivity_accumulator` wrappers delegate here — the
+worst-window bookkeeping is identical across topologies; only the per-window
+positivity GATES (`verify_substep_positivity_{cs,ll,rg}!`) are geometry-specific.
+"""
+function update_positivity_accumulator(worst::NamedTuple, diag, win_idx::Integer)
+    diag.ratio > worst.ratio || return worst
+    N = length(worst.location)
+    return (ratio = Float64(diag.ratio),
+            direction = diag.direction === nothing ? :none : Symbol(diag.direction),
+            win = Int(win_idx),
+            location = NTuple{N, Int}(diag.location))
+end
+
 function next_substeps(policy::SubstepSchedulePolicy,
                        current_steps::Integer,
                        ratio::Real)

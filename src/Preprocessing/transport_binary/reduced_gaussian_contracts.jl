@@ -403,14 +403,11 @@ init_rg_positivity_accumulator() = RGWorst((0.0, :none, 0, (0, 0)))
 
 Return an updated RG accumulator from a fresh per-window diagnostic.
 """
-function update_rg_positivity_accumulator(worst::RGWorst, diag::NamedTuple,
-                                            win_idx::Integer)
-    diag.ratio > worst.ratio || return worst
-    return RGWorst((Float64(diag.ratio),
-                    diag.direction === nothing ? :none : Symbol(diag.direction),
-                    Int(win_idx),
-                    NTuple{2, Int}(diag.location)))
-end
+# Worst-window reducer — delegates to the topology-generic
+# `update_positivity_accumulator` (window_contracts.jl); only the
+# RGWorst location rank (2) differs and is preserved generically.
+update_rg_positivity_accumulator(worst::RGWorst, diag, win_idx::Integer) =
+    update_positivity_accumulator(worst, diag, win_idx)::RGWorst
 
 """
     summarize_rg_positivity_status(worst; cfl_limit, steps_per_window,

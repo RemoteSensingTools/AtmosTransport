@@ -689,14 +689,11 @@ init_ll_positivity_accumulator() = LLWorst((0.0, :none, 0, (0, 0, 0)))
 
 Return an updated LL accumulator from a fresh per-window diagnostic.
 """
-function update_ll_positivity_accumulator(worst::LLWorst, diag::NamedTuple,
-                                            win_idx::Integer)
-    diag.ratio > worst.ratio || return worst
-    return LLWorst((Float64(diag.ratio),
-                    diag.direction === nothing ? :none : Symbol(diag.direction),
-                    Int(win_idx),
-                    NTuple{3, Int}(diag.location)))
-end
+# Worst-window reducer — delegates to the topology-generic
+# `update_positivity_accumulator` (window_contracts.jl); only the
+# LLWorst location rank (3) differs and is preserved generically.
+update_ll_positivity_accumulator(worst::LLWorst, diag, win_idx::Integer) =
+    update_positivity_accumulator(worst, diag, win_idx)::LLWorst
 
 """
     summarize_ll_positivity_status(worst; cfl_limit, steps_per_window,

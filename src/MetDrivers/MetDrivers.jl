@@ -64,7 +64,9 @@ export TransportBinaryContract, canonical_window_constant_contract,
 export StreamingTransportBinaryWriter
 export open_streaming_transport_binary, write_streaming_window!,
        close_streaming_transport_binary!, set_streaming_steps_per_window_schedule!,
-       set_transport_header_steps_per_window_schedule!
+       set_transport_header_steps_per_window_schedule!,
+       set_transport_header_split_substep_recommendations!,
+       set_streaming_split_substep_recommendations!
 export TransportBinaryDriver, AbstractTransportWindow
 export StructuredFluxDeltas, FaceIndexedFluxDeltas, CubedSphereFluxDeltas
 export StructuredTransportWindow, FaceIndexedTransportWindow

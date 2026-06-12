@@ -91,6 +91,8 @@ using ..MetDrivers: TransportBinaryReader, TransportBinaryHeader, write_transpor
                     close_streaming_transport_binary!,
                     set_streaming_steps_per_window_schedule!,
                     set_transport_header_steps_per_window_schedule!,
+                    set_transport_header_split_substep_recommendations!,
+                    set_streaming_split_substep_recommendations!,
                     open_streaming_cs_transport_binary, write_streaming_cs_window!,
                     read_era5_reduced_gaussian_geometry, read_era5_reduced_gaussian_mesh,
                     load_window!, load_flux_delta_window!,

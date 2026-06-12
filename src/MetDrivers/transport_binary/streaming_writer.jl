@@ -160,6 +160,52 @@ function set_streaming_steps_per_window_schedule!(
     return writer
 end
 
+"""
+    set_transport_header_split_substep_recommendations!(header, xy, z)
+
+Record the optional per-window split-substep recommendations
+(`recommended_substeps_{xy,z}_by_window`): the substep count each
+direction would need if ONLY its own CFL bound — hard minima per
+direction under a future split-schedule runtime
+(`recommended_substeps_are_minimum` semantics). The combined
+`steps_per_window_by_window` schedule remains the operative floor and
+must dominate both per window (`outgoing_xy + outgoing_z >= each part`).
+Call AFTER `set_transport_header_steps_per_window_schedule!`.
+"""
+function set_transport_header_split_substep_recommendations!(
+        header::AbstractDict,
+        xy::AbstractVector{<:Integer},
+        z::AbstractVector{<:Integer})
+    haskey(header, "steps_per_window_by_window") ||
+        throw(ArgumentError("set the steps_per_window schedule before the split recommendations"))
+    schedule = Int.(collect(header["steps_per_window_by_window"]))
+    nx, nz = length(xy), length(z)
+    nx == nz == length(schedule) ||
+        throw(ArgumentError("split recommendation lengths (xy=$(nx), z=$(nz)) " *
+                            "must match the schedule length $(length(schedule))"))
+    xs, zs = Int.(collect(xy)), Int.(collect(z))
+    for w in eachindex(schedule)
+        xs[w] >= 1 && zs[w] >= 1 ||
+            throw(ArgumentError("split recommendations must be >= 1; window $w has xy=$(xs[w]) z=$(zs[w])"))
+        max(xs[w], zs[w]) <= schedule[w] ||
+            throw(ArgumentError("split recommendation exceeds the combined schedule at window $w: " *
+                                "xy=$(xs[w]) z=$(zs[w]) vs steps=$(schedule[w]) — the combined " *
+                                "schedule must dominate each direction"))
+    end
+    header["recommended_substeps_xy_by_window"] = xs
+    header["recommended_substeps_z_by_window"] = zs
+    validate_transport_contract!(header)
+    return header
+end
+
+function set_streaming_split_substep_recommendations!(
+        writer::StreamingTransportBinaryWriter,
+        xy::AbstractVector{<:Integer},
+        z::AbstractVector{<:Integer})
+    set_transport_header_split_substep_recommendations!(writer.header, xy, z)
+    return writer
+end
+
 function _rewrite_streaming_header!(writer::StreamingTransportBinaryWriter)
     validate_transport_contract!(writer.header)
     header_json = JSON3.write(writer.header)

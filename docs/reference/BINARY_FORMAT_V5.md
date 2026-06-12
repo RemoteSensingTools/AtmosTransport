@@ -105,9 +105,13 @@ Invariants either way:
 - `dm` semantics are unchanged in both conventions
   (`forward_window_endpoint_difference`); there is no separate mass
   divisor — per-substep air mass evolves from the scaled flux divergences.
-- Generation logs a split-substep diagnostic (hypothetical max xy vs z
-  substeps, from the per-direction positivity ratios). These are not yet
-  stored per window; see BACKLOG for `recommended_substeps_{xy,z}_by_window`.
+- Generation records per-window split-substep recommendations in the header
+  (`recommended_substeps_{xy,z}_by_window`): the substep count each direction
+  would need if only its own CFL bound — hard minima per direction under a
+  future split-schedule runtime. The combined schedule dominates both per
+  window (validated by the contract). Smoke C45 Dec 2: xy flat at 5 while z
+  varies 5–10 and drives the combined schedule — the split-schedule payoff,
+  quantified per window.
 - Only the cubed-sphere runtime implements full-window scaling; LL/RG
   flux states throw on `full_window_mass_amount` rather than silently
   running unscaled.

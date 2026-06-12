@@ -322,5 +322,29 @@ function validate_transport_contract!(header::AbstractDict;
             throw(ArgumentError("Transport-binary contract violation — poisson_balance_target_scale_by_window[$win]=" *
                                 "$(scale_schedule[win]), expected $(expected) for flux_kind=$(flux_kind)"))
     end
+
+    # Optional split-substep recommendations: when present, both arrays must
+    # exist, match the schedule length, be >= 1 everywhere, and be dominated
+    # by the combined schedule per window.
+    has_xy = haskey(header, "recommended_substeps_xy_by_window")
+    has_z = haskey(header, "recommended_substeps_z_by_window")
+    if has_xy || has_z
+        has_xy && has_z ||
+            throw(ArgumentError("Transport-binary contract violation — recommended_substeps_xy/z_by_window " *
+                                "must be present together"))
+        xs = Int.(collect(header["recommended_substeps_xy_by_window"]))
+        zs = Int.(collect(header["recommended_substeps_z_by_window"]))
+        length(xs) == length(zs) == nwindow ||
+            throw(ArgumentError("Transport-binary contract violation — split recommendation lengths " *
+                                "(xy=$(length(xs)), z=$(length(zs))) must equal nwindow=$(nwindow)"))
+        for win in 1:nwindow
+            xs[win] >= 1 && zs[win] >= 1 ||
+                throw(ArgumentError("Transport-binary contract violation — split recommendations must be >= 1; " *
+                                    "window $win has xy=$(xs[win]) z=$(zs[win])"))
+            max(xs[win], zs[win]) <= schedule[win] ||
+                throw(ArgumentError("Transport-binary contract violation — split recommendation exceeds the " *
+                                    "combined schedule at window $win: xy=$(xs[win]) z=$(zs[win]) vs steps=$(schedule[win])"))
+        end
+    end
     return nothing
 end

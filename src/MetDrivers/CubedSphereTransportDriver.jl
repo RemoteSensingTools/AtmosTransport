@@ -117,6 +117,10 @@ function binary_capabilities(reader::CubedSphereBinaryReader)
         steps_per_window = hdr.steps_per_window,
         variable_step_schedule = _has_variable_step_schedule(hdr.steps_per_window_by_window),
         flux_kind = flux_kind(reader),
+        recommended_substeps_xy_by_window =
+            get(hdr.raw_header, "recommended_substeps_xy_by_window", nothing),
+        recommended_substeps_z_by_window =
+            get(hdr.raw_header, "recommended_substeps_z_by_window", nothing),
         preprocessor_contract = get(hdr.raw_header, "preprocessor_contract", nothing),
         vertical_Nz_output = get(hdr.raw_header, "vertical_Nz_output", nothing),
         adaptive_substeps = get(hdr.raw_header, "adaptive_substeps", nothing),

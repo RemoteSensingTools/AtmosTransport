@@ -987,6 +987,11 @@ mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV, V
     source_steps_per_met :: Int
     steps_current :: Int
     steps_schedule :: Vector{Int}
+    # Per-window split-substep recommendations (BACKLOG 11b): the substep
+    # count each direction would need if ONLY its CFL bound — hard minima
+    # per direction under a future split schedule. 0 = not yet recorded.
+    split_steps_xy_schedule :: Vector{Int}
+    split_steps_z_schedule  :: Vector{Int}
     adaptive_substeps :: Bool
     substep_cfl_target :: Float64
     min_steps_per_window :: Int
@@ -1144,7 +1149,9 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
             m_cur, m_next_target, ps_cur, cmfmc_v4, dtrain_v4, vdiff_v4,
             g, inv_g, cell_areas,
             flux_scale, flux_scale, steps_per_met, steps_per_met,
-            fill(steps_per_met, schedule_len), Bool(adaptive_substeps),
+            fill(steps_per_met, schedule_len),
+            fill(0, schedule_len), fill(0, schedule_len),
+            Bool(adaptive_substeps),
             target, min_steps, max_steps, chain_mass,
             Bool(global_mass_pin), Float64(global_mass_target_kg),
             balance_mode, cm_closure, ΔB, m_next_delp, Int(smooth_iters),
@@ -1638,10 +1645,15 @@ function driver_drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{F
                                              win)
     end
     positivity = ready_diag.contract.positivity
-    xy_steps = _geos_required_split_steps(workspace, workspace.steps_current,
+    drained_steps = workspace.steps_schedule[win]
+    xy_steps = _geos_required_split_steps(workspace, drained_steps,
                                           positivity.ratio_xy)
-    z_steps = _geos_required_split_steps(workspace, workspace.steps_current,
+    z_steps = _geos_required_split_steps(workspace, drained_steps,
                                          positivity.ratio_z)
+    if 1 <= win <= length(workspace.split_steps_xy_schedule)
+        workspace.split_steps_xy_schedule[win] = xy_steps
+        workspace.split_steps_z_schedule[win] = z_steps
+    end
     split = ctx.split_stats[]
     ctx.split_stats[] = GEOSSplitSubstepStats(
         max(split.max_steps_xy, xy_steps),
@@ -1667,6 +1679,13 @@ function driver_before_close_writer!(workspace::GEOSCubedSphereWindowWorkspace,
                                      writer::CubedSphereBinaryWriter,
                                      _ctx::GEOSCSUnifiedDriverContext)
     set_streaming_steps_per_window_schedule!(writer.inner, workspace.steps_schedule)
+    if all(>=(1), workspace.split_steps_xy_schedule) &&
+       all(>=(1), workspace.split_steps_z_schedule)
+        set_streaming_split_substep_recommendations!(
+            writer.inner,
+            workspace.split_steps_xy_schedule,
+            workspace.split_steps_z_schedule)
+    end
     return nothing
 end
 

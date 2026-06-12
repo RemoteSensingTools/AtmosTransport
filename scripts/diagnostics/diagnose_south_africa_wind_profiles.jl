@@ -9,7 +9,8 @@ using Printf
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 
 using .AtmosTransport.Grids: CubedSphereMesh, panel_cell_local_tangent_basis
-using .AtmosTransport.MetDrivers: CubedSphereBinaryReader, load_cs_window, mesh_definition
+using .AtmosTransport.MetDrivers: CubedSphereBinaryReader, load_cs_window, mesh_definition,
+    flux_application_seconds, flux_kind
 
 const GRAV = 9.80665
 const R_EARTH_M = 6.371229e6
@@ -162,7 +163,8 @@ function profile_rows(source::SourceSpec, masks::Vector{MaskSpec}, area, cfg::Co
         window = load_cs_window(reader, cfg.profile_window)
         basis = ntuple(p -> panel_cell_local_tangent_basis(mesh, p), 6)
         steps = reader.header.steps_per_window_by_window[cfg.profile_window]
-        dt_factor = Float64(reader.header.dt_met_seconds) / (2.0 * Float64(steps))
+        dt_factor = flux_application_seconds(reader.header.dt_met_seconds, steps,
+                                              flux_kind(reader))
         rows = NamedTuple[]
         for mask_spec in masks
             idxs = findall(mask_spec.mask)

@@ -84,21 +84,27 @@ function _make_cs_advection_workspaces(::LinRoodPPMScheme, mesh, Nz; FT, array_t
            LinRoodWorkspace(mesh; FT, Nz)
 end
 
+# `storage_scale` converts stored flux amounts to legacy per-substep units
+# (1 for substep_mass_amount binaries; 1/(2*steps) for full_window ones), so
+# both scheme paths below behave identically across flux_kind formats.
 function _prepare_cs_flux_panels(::AbstractAdvectionScheme,
                                  pam_w, pbm_w, pcm_w, _pm_w,
-                                 Hp, AT, FT, _steps_per_window, _win)
+                                 Hp, AT, FT, _steps_per_window, _win;
+                                 storage_scale = one(FT))
+    fs = FT(storage_scale)
     return 1,
-           ntuple(p -> AT(_pad(pam_w[p], Hp)), 6),
-           ntuple(p -> AT(_pad(pbm_w[p], Hp)), 6),
-           ntuple(p -> AT(_pad(pcm_w[p], Hp)), 6)
+           ntuple(p -> AT(_pad(pam_w[p] .* fs, Hp)), 6),
+           ntuple(p -> AT(_pad(pbm_w[p] .* fs, Hp)), 6),
+           ntuple(p -> AT(_pad(pcm_w[p] .* fs, Hp)), 6)
 end
 
 function _prepare_cs_flux_panels(::LinRoodPPMScheme,
                                  pam_w, pbm_w, pcm_w, pm_w,
-                                 Hp, AT, FT, steps_per_window, win)
+                                 Hp, AT, FT, steps_per_window, win;
+                                 storage_scale = one(FT))
     max_cfl = _linrood_max_cfl(pam_w, pbm_w, pm_w, steps_per_window)
     n_lr = max(1, ceil(Int, max_cfl / 0.85))
-    fs = FT(1) / (steps_per_window * n_lr)
+    fs = FT(storage_scale) / (steps_per_window * n_lr)
     @printf("  Win %d: CFL %.1f → %d LR sub-passes\n", win, max_cfl, n_lr)
     return n_lr,
            ntuple(p -> AT(_pad(pam_w[p] .* fs, Hp)), 6),
@@ -273,7 +279,11 @@ function run_cs(cfg)
 
             n_lr, pam_p, pbm_p, pcm_p =
                 _prepare_cs_flux_panels(scheme, pam_w, pbm_w, pcm_w, pm_w,
-                                        Hp, AT, FT, steps_per_window, win)
+                                        Hp, AT, FT, steps_per_window, win;
+                                        storage_scale =
+                                            AtmosTransport.MetDrivers.flux_storage_substep_scale(
+                                                FT, steps_per_window,
+                                                AtmosTransport.MetDrivers.flux_kind(reader)))
 
             for _ in 1:steps_per_window, _ in 1:n_lr
                 pm_snap = ntuple(p -> copy(pm[p]), 6)

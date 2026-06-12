@@ -412,7 +412,8 @@ function main()
             for (tw, w) in enumerate(windows)
                 @info @sprintf("  Window %d/%d (GEOS time index %d)", tw, length(windows), w)
                 steps = h.steps_per_window_by_window[w]
-                dt_factor = Float32(h.dt_met_seconds / (2 * steps))
+                dt_factor = Float32(AtmosTransport.MetDrivers.flux_application_seconds(
+                h.dt_met_seconds, steps, AtmosTransport.MetDrivers.flux_kind(reader)))
                 geos_flux_scale = Float32(Float64(dt_factor) / geos_mass_flux_dt) / GRAVITY
                 win = load_cs_window(reader, w)
                 fill_dp_from_mass!(gen_dp, win.m, mesh.cell_areas, GRAVITY)

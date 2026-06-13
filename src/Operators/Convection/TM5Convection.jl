@@ -110,9 +110,12 @@ struct TM5Convection{FT} <: AbstractConvection
     # exact for every observed column.
     #
     # The runtime envelope is `lmax_conv ∈ {1..85}` (the size that
-    # fits Metal at Nt ≤ NT_MAX). Configurations whose effective
-    # `lmax_conv` falls outside that envelope auto-fall-back to the
-    # per-thread kernel.
+    # fits Metal at Nt ≤ NT_MAX). When `use_collab_lu = true` but the
+    # effective collab size (`L_super`) or `Nt` falls outside the
+    # envelope, `apply_convection!` HARD-ERRORS on F32+GPU runs (the
+    # silent ~20-60× perf cliff is a config bug — cap `lmax_conv ≤ 85`
+    # and/or raise `n_merge`) and warns-once before the per-thread
+    # fallback on F64/CPU. See `_collab_contract_violation`.
     lmax_conv :: Int
     # Vertical aggregation factor for the convection grid. When > 1,
     # the convection block runs on a coarsened vertical of size
@@ -139,17 +142,21 @@ struct TM5Convection{FT} <: AbstractConvection
     # Pick `lmax_conv` so it divides `n_merge` cleanly for a tight
     # active region.
     #
-    # **KNOWN ISSUE**: `n_merge = 2` blows up mass conservation in
-    # multi-substep runs with surface emissions (single-substep
-    # tests still conserve mass to ~1e-3 relative, but production
-    # 1152-substep runs amplify to ~2e+6×). `n_merge ∈ {3, 4, 5,
-    # 15}` are all mass-conservative on the same binary, so the
-    # bug is `n_merge = 2`-specific (not a parity or divisibility
-    # issue). Until the n=2 root cause is identified, prefer
-    # `n_merge = 3` for production (matches TM5's tropoX setups
-    # anyway and still gives ~9× over n_merge=1 on the production
-    # binary). The `vertical aggregation conserves tracer mass`
-    # testset includes n=2 to guard the single-step boundary.
+    # **RESOLVED (2026-06-13)**: the historical `n_merge = 2` mass blow-up
+    # (~2e+6× in multi-substep runs with surface emissions) was NOT
+    # n=2-specific. It was a CLIPPING bug — when `lmax_conv` truncates the
+    # active region below the cloud top, the updraft never fully detrains and
+    # the residual updraft mass flux `amu` at the active-region top is
+    # uncompensated; fed by emission tracers it amplifies over many substeps.
+    # It hits ANY `n_merge` (and `n_merge=1`) under a clipping `lmax_conv`; it
+    # only looked n=2-specific because of the L85 cloud-top/lmax alignment
+    # (there n=2's `L_padded=74` clipped the cloud-top layer while n=3's
+    # `L_padded=75` did not; on deeper-cloud L137 both clip and both blew up).
+    # FIXED by forcing the updraft to fully detrain at the active-region top
+    # (the "cloud-top closure" in the updraft pass of `tm5_kernels.jl` +
+    # `tm5_column_solve.jl`). All `n_merge ≥ 1` are now mass-conservative;
+    # `n_merge = 2` is the most accurate merge and the production default.
+    # Note `lmax_conv = 0` (full column) never clips, so it was always safe.
     n_merge :: Int
 
     # Inner constructor enforces the n_merge invariant for ALL
@@ -166,19 +173,14 @@ struct TM5Convection{FT} <: AbstractConvection
                                 n_merge::Int) where {FT}
         n_merge >= 1 || throw(ArgumentError(
             "TM5Convection: `n_merge` must be ≥ 1 (got $(n_merge))"))
-        # n_merge=2 is hard-rejected: production multi-substep runs
-        # with surface emissions amplify mass non-conservation by
-        # ~2e+6× on the C180/L85 binary. See the docstring above
-        # for the empirical record and the recommended alternatives
-        # (n_merge=3 gives ~9× over n_merge=1 with mass conservation
-        # to ~1e-3).
-        n_merge == 2 && throw(ArgumentError(
-            "TM5Convection: `n_merge = 2` is rejected — multi-substep " *
-            "runs with surface emissions amplify mass non-conservation " *
-            "by ~2e+6× on the C180/L85 production binary. Use " *
-            "`n_merge ∈ {1, 3, 4, 5}` instead. `n_merge = 3` gives " *
-            "~9× speedup over n_merge=1 on L85 binaries while " *
-            "conserving mass to ~1e-3."))
+        # NOTE (2026-06-13): the historical `n_merge == 2` hard-reject is
+        # lifted. The ~2e+6× multi-substep mass blow-up was a CLIPPING bug (not
+        # n=2-intrinsic): a clipping `lmax_conv` leaves an uncompensated residual
+        # updraft mass flux at the active-region top. The kernels now force the
+        # updraft to fully detrain at that top (the cloud-top closure in the
+        # updraft pass), so `amu` closes for any `n_merge`/`lmax_conv`. Validated
+        # by the L137 clip+emissions reproduction: co2_fossil max/min 2.1e41 →
+        # 12 (linear) after the fix. See the `n_merge` field docstring above.
         return new{FT}(tile_workspace_gib, use_collab_lu, lmax_conv, n_merge)
     end
 end
@@ -252,6 +254,46 @@ end
     L_super = nm > 1 ? fld(L, nm) : L
     L_padded = L_super * nm
     return L_super, L_padded, nm
+end
+
+# --- Contract guard: NO silent collaborative-LU fallback ----------------------
+# `use_collab_lu = true` is a REQUEST for the fast collaborative LU path, not a
+# best-effort hint. There are exactly two reasons it can fail to engage:
+#   * Intrinsic — `FT ≠ Float32` (the `@localmem` kernel is Float32-only) or the
+#     KA CPU backend (unsupported lowering). These are legitimate; downgrade to
+#     the per-thread path with a one-time `@warn` (non-breaking).
+#   * Envelope — F32 + GPU, but the effective `L_super > 85` or `Nt > NT_MAX`.
+#     That is a CONFIG mistake (e.g. `lmax_conv = 0 → Nz = 137`) which would
+#     otherwise silently run the per-thread kernel ~20-60× slower. Hard error so
+#     the perf cliff can never hide.
+@noinline function _collab_contract_violation(op::TM5Convection, Nz::Integer,
+                                              Nt::Integer, ::Type{FT}, backend) where {FT}
+    L = _effective_lmax_conv(op, Nz)
+    L_super, _, nm = _tm5_super_dims(op, Nz)
+    if FT !== Float32
+        @warn "TM5Convection: use_collab_lu=true but FT=$(FT) — the collaborative LU kernel is Float32-only; using the per-thread path (slower). Set use_collab_lu=false to silence this." maxlog=1
+    elseif backend isa KernelAbstractions.CPU
+        @warn "TM5Convection: use_collab_lu=true but backend is CPU — the collaborative kernel is GPU-only; using the per-thread path. Set use_collab_lu=false to silence this." maxlog=1
+    else
+        throw(ArgumentError(
+            "TM5Convection: use_collab_lu=true requested but the collaborative LU path " *
+            "cannot engage on this F32 GPU run — L_super=$(L_super) (lmax_conv=$(L), " *
+            "n_merge=$(nm)) or Nt=$(Nt) exceeds the envelope (L_super ≤ 85, Nt ≤ " *
+            "$(_TM5_COLLAB_NT_MAX)). Falling back here would run the per-thread kernel " *
+            "~20-60× slower SILENTLY. Fix: cap lmax_conv ≤ 85 (the binary's max active " *
+            "convective depth) and/or set n_merge ∈ {3,4,5} so fld(lmax_conv,n_merge) ≤ 85. " *
+            "To deliberately use the per-thread path, set use_collab_lu=false."))
+    end
+    return nothing
+end
+
+# Single choke point for the three `apply_convection!` dispatch sites: enforce
+# the contract above, then return whether the collaborative path engages.
+@inline function _should_use_collab(op::TM5Convection, Nz::Integer, Nt::Integer,
+                                    ::Type{FT}, backend) where {FT}
+    use = _use_collab_path(op, Nz, Nt, FT, backend)
+    (op.use_collab_lu && !use) && _collab_contract_violation(op, Nz, Nt, FT, backend)
+    return use
 end
 
 # Vertical-aggregation helper. Aggregates the active fine layers of
@@ -423,7 +465,7 @@ function apply_convection!(q_raw::AbstractArray{FT, 4},
     N_total = Nx * Ny
     backend = get_backend(q_raw)
     dt_ft   = FT(dt)
-    if _use_collab_path(op, Nz, Nt, FT, backend)
+    if _should_use_collab(op, Nz, Nt, FT, backend)
         L_super, L_padded, nm = _tm5_super_dims(op, Nz)
         k_shift = Nz - L_padded
         kernel = _tm5_column_collab_kernel!(backend, _TM5_COLLAB_WG_SIZE)
@@ -488,7 +530,7 @@ function apply_convection!(q_raw::AbstractArray{FT, 3},
     N_total, Nz, Nt = size(q_raw)
     backend = get_backend(q_raw)
     dt_ft   = FT(dt)
-    if _use_collab_path(op, Nz, Nt, FT, backend)
+    if _should_use_collab(op, Nz, Nt, FT, backend)
         L_super, L_padded, nm = _tm5_super_dims(op, Nz)
         k_shift = Nz - L_padded
         kernel = _tm5_faceindexed_column_collab_kernel!(backend, _TM5_COLLAB_WG_SIZE)
@@ -553,7 +595,7 @@ function apply_convection!(q_raw::NTuple{6, <:AbstractArray{FT, 4}},
     # construction, so we read them off panel 1.
     Nz = size(air_mass[1], 3)
     Nt = size(q_raw[1], 4)
-    if _use_collab_path(op, Nz, Nt, FT, backend)
+    if _should_use_collab(op, Nz, Nt, FT, backend)
         L_super, L_padded, nm = _tm5_super_dims(op, Nz)
         k_shift = Nz - L_padded
         kernel = _tm5_cs_panel_column_collab_kernel!(backend, _TM5_COLLAB_WG_SIZE)

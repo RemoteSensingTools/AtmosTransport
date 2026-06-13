@@ -68,7 +68,8 @@ surface_flux_boundary = true
 kind = "tm5"                        # ERA5 carries precomputed TM5 entrainment (entu/detu/entd/detd)
 tile_workspace_gib = 0.25
 use_collab_lu = true
-lmax_conv = 0
+lmax_conv = 0           # full column; with n_merge=2 the active span is the bottom 136 of 137 (layer 1 = model top, no convection)
+n_merge    = 2          # L_super=fld(137,2)=68 ≤ 85 → collab fast path; cloud top (k≈45-53) is never clipped → mass-safe; best-accuracy merge (cloud-top closure 2026-06-13)
 
 [chemistry]
 kind = "decay"

@@ -24,7 +24,7 @@
 #   Putman & Lin (2007) — FV3 cubed-sphere transport
 # ---------------------------------------------------------------------------
 
-using KernelAbstractions: @kernel, @index, @Const, synchronize, get_backend
+using KernelAbstractions: @kernel, @index, @Const, synchronize, get_backend, CPU as KA_CPU
 
 # Track max (n_x, n_y, n_z) across the run; emit one @info line each time
 # any component grows. Quiet on stable flows, surfaces CFL hotspots early.
@@ -238,7 +238,14 @@ end
         SectionTimer.record_sample!(sync_section, Float64(time_ns() - t1))
     else
         launch!()
-        synchronize(backend)
+        # Intra-stream workspace dependency only: panel p's sweep/copy-back and
+        # panel p+1's sweep share `rm_4d_A`/`m_A`, but they are issued on one
+        # ordered GPU stream, so no host barrier is needed on GPU — the periodic
+        # sync lands at the `fill_panel_halos!` boundary. The per-kernel host
+        # `synchronize` here was the dominant launch-bound bubble (GPU profiling
+        # 2026-06-13: ~3 host barriers per panel per sweep). Keep it on the CPU
+        # backend defensively, mirroring HaloExchange.jl's `KA_CPU` gate.
+        backend isa KA_CPU && synchronize(backend)
     end
     return nothing
 end
@@ -694,17 +701,19 @@ launched GPUArrays.jl's generic `gpu_getindex_kernel` (~50 % of GPU time on a
 C180 full-physics run, vs ~12% for a direct kernel). The custom kernels above
 do one device-local read/write per cell with no intermediate temporary.
 
-Synchronizes after the kernel launch so callers can safely reuse the shared
-`src` workspace buffer (e.g. `rm_A` / `m_A`) for the next panel's sweep.
-Without this barrier, panel p's copy-back can race against panel p+1's sweep
-kernel writing into the same workspace — silent today because CUDA serializes
-the default stream, but the dependency is not contractual across backends.
+The shared `src` workspace buffer (e.g. `rm_A` / `m_A`) is reused for the next
+panel's sweep, so panel p's copy-back must precede panel p+1's sweep. On GPU
+that ordering is guaranteed by the single issue-ordered stream, so no host
+barrier is needed — the periodic GPU sync lands at the `fill_panel_halos!`
+boundary. On the CPU backend we synchronize defensively, mirroring
+HaloExchange.jl's `KA_CPU` gate. The per-panel host `synchronize` previously
+here was the dominant launch-bound bubble (GPU profiling 2026-06-13).
 """
 function _copy_interior!(dst, src, Nc, Hp, Nz)
     backend = get_backend(dst)
     kernel! = _copy_interior_3d_kernel!(backend, 256)
     kernel!(dst, src, Int32(Hp); ndrange = (Nc, Nc, Nz))
-    synchronize(backend)
+    backend isa KA_CPU && synchronize(backend)
     return nothing
 end
 
@@ -713,7 +722,7 @@ function _copy_interior!(dst::AbstractArray{<:Any, 4}, src::AbstractArray{<:Any,
     backend = get_backend(dst)
     kernel! = _copy_interior_4d_kernel!(backend, 256)
     kernel!(dst, src, Int32(Hp); ndrange = (Nc, Nc, Nz, Nt))
-    synchronize(backend)
+    backend isa KA_CPU && synchronize(backend)
     return nothing
 end
 

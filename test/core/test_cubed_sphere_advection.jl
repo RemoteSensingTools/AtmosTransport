@@ -9,7 +9,11 @@ using .AtmosTransport.Grids: reciprocal_edge
 using .AtmosTransport.Operators: MonotoneLimiter, required_halo_width
 using .AtmosTransport.Operators.Advection: fill_panel_halos!, strang_split_cs!,
     strang_split_cs_mt!, strang_split!, CSAdvectionWorkspace, VerticalRemapWorkspace,
-    compute_target_pressure_from_mass_direct!, vertical_remap_cs!
+    compute_target_pressure_from_mass_direct!, vertical_remap_cs!,
+    _sweep_x_panel_mt!, _sweep_y_panel_mt!, _sweep_z_panel_mt!,
+    _sweep_x_panels_mt_pingpong!, _sweep_y_panels_mt_pingpong!,
+    _sweep_z_panels_mt_pingpong!, _strang_split_cs_mt_copyback!,
+    strang_split_cs_mt_pingpong!
 using .AtmosTransport.State: CubedSphereFaceFluxState, DryMassFluxBasis,
     total_air_mass, total_mass
 
@@ -364,6 +368,157 @@ end
 
             @test max_interior_absdiff_4d(rm_mt, rm_ref, Nc, Hp, Nz, 2) < 1e-12
             @test max_interior_absdiff(m_mt, m_ref, Nc, Hp, Nz) < 1e-12
+        end
+    end
+
+    @testset "Packed sweep ping-pong prototypes match copy-back path" begin
+        for scheme in (UpwindScheme(), PPMScheme())
+            Hp = required_halo_width(scheme)
+            mesh, panels_m0, panels_rm0 = make_cs_test_state(Nc=8, Hp=Hp, Nz=3, vmr=100.0)
+            Nc, Nz, Nt = mesh.Nc, 3, 2
+            N = Nc + 2Hp
+            panels_rm2 = ntuple(p -> panels_rm0[p] .* 1.7, 6)
+            panels_am = ntuple(6) do p
+                am = zeros(Float64, N + 1, N, Nz)
+                for k in 1:Nz, j in (Hp+1):(Hp+Nc), i in (Hp+1):(Hp+Nc+1)
+                    am[i, j, k] = 0.015 * sin(0.2p + 0.7i - 0.4j + 0.3k)
+                end
+                am
+            end
+            panels_bm = ntuple(6) do p
+                bm = zeros(Float64, N, N + 1, Nz)
+                for k in 1:Nz, j in (Hp+1):(Hp+Nc+1), i in (Hp+1):(Hp+Nc)
+                    bm[i, j, k] = 0.012 * cos(0.3p - 0.5i + 0.6j + 0.2k)
+                end
+                bm
+            end
+            panels_cm = ntuple(6) do p
+                cm = zeros(Float64, N, N, Nz + 1)
+                for k in 2:Nz, j in (Hp+1):(Hp+Nc), i in (Hp+1):(Hp+Nc)
+                    cm[i, j, k] = 0.01 * sin(0.1p + 0.2i + 0.3j - 0.7k)
+                end
+                cm
+            end
+
+            rm_in = ntuple(p -> cat(panels_rm0[p], panels_rm2[p]; dims = 4), 6)
+            m_in = deepcopy(panels_m0)
+            rm_ref = deepcopy(rm_in)
+            m_ref = deepcopy(m_in)
+            ws_ref = CSAdvectionWorkspace(mesh, Nz; n_tracers = Nt)
+            for p in 1:6
+                _sweep_x_panel_mt!(rm_ref[p], m_ref[p], panels_am[p],
+                                   scheme, ws_ref.rm_4d_A, ws_ref.m_A,
+                                   Nc, Hp, Nz, Nt; flux_scale = 0.75)
+            end
+            fill_panel_halos!(rm_ref, mesh; dir = 1)
+            fill_panel_halos!(m_ref, mesh; dir = 1)
+
+            rm_out = ntuple(p -> similar(rm_in[p]), 6)
+            m_out = ntuple(p -> similar(m_in[p]), 6)
+            _sweep_x_panels_mt_pingpong!(rm_out, m_out, rm_in, m_in, panels_am,
+                                         mesh, scheme; flux_scale = 0.75)
+            fill_panel_halos!(rm_out, mesh; dir = 1)
+            fill_panel_halos!(m_out, mesh; dir = 1)
+
+            @test max_interior_absdiff_4d(rm_out, rm_ref, Nc, Hp, Nz, Nt) < 1e-12
+            @test max_interior_absdiff(m_out, m_ref, Nc, Hp, Nz) < 1e-12
+
+            rm_ref = deepcopy(rm_in)
+            m_ref = deepcopy(m_in)
+            for p in 1:6
+                _sweep_y_panel_mt!(rm_ref[p], m_ref[p], panels_bm[p],
+                                   scheme, ws_ref.rm_4d_A, ws_ref.m_A,
+                                   Nc, Hp, Nz, Nt; flux_scale = 0.75)
+            end
+            fill_panel_halos!(rm_ref, mesh; dir = 2)
+            fill_panel_halos!(m_ref, mesh; dir = 2)
+
+            rm_out = ntuple(p -> similar(rm_in[p]), 6)
+            m_out = ntuple(p -> similar(m_in[p]), 6)
+            _sweep_y_panels_mt_pingpong!(rm_out, m_out, rm_in, m_in, panels_bm,
+                                         mesh, scheme; flux_scale = 0.75)
+            fill_panel_halos!(rm_out, mesh; dir = 2)
+            fill_panel_halos!(m_out, mesh; dir = 2)
+
+            @test max_interior_absdiff_4d(rm_out, rm_ref, Nc, Hp, Nz, Nt) < 1e-12
+            @test max_interior_absdiff(m_out, m_ref, Nc, Hp, Nz) < 1e-12
+
+            rm_ref = deepcopy(rm_in)
+            m_ref = deepcopy(m_in)
+            for p in 1:6
+                _sweep_z_panel_mt!(rm_ref[p], m_ref[p], panels_cm[p],
+                                   scheme, ws_ref.rm_4d_A, ws_ref.m_A,
+                                   Nc, Hp, Nz, Nt; flux_scale = 0.75)
+            end
+
+            rm_out = ntuple(p -> similar(rm_in[p]), 6)
+            m_out = ntuple(p -> similar(m_in[p]), 6)
+            _sweep_z_panels_mt_pingpong!(rm_out, m_out, rm_in, m_in, panels_cm,
+                                         mesh, scheme; flux_scale = 0.75)
+
+            @test max_interior_absdiff_4d(rm_out, rm_ref, Nc, Hp, Nz, Nt) < 1e-12
+            @test max_interior_absdiff(m_out, m_ref, Nc, Hp, Nz) < 1e-12
+        end
+    end
+
+    @testset "Packed Strang ping-pong prototype matches copy-back path" begin
+        for scheme in (UpwindScheme(), PPMScheme())
+            Hp = required_halo_width(scheme)
+            mesh, panels_m0, panels_rm0 = make_cs_test_state(Nc=8, Hp=Hp, Nz=3, vmr=100.0)
+            Nc, Nz, Nt = mesh.Nc, 3, 2
+            N = Nc + 2Hp
+            panels_rm2 = ntuple(p -> panels_rm0[p] .* 1.7, 6)
+            panels_am = ntuple(6) do p
+                am = zeros(Float64, N + 1, N, Nz)
+                for k in 1:Nz, j in (Hp+1):(Hp+Nc), i in (Hp+1):(Hp+Nc+1)
+                    am[i, j, k] = 0.015 * sin(0.2p + 0.7i - 0.4j + 0.3k)
+                end
+                am
+            end
+            panels_bm = ntuple(6) do p
+                bm = zeros(Float64, N, N + 1, Nz)
+                for k in 1:Nz, j in (Hp+1):(Hp+Nc+1), i in (Hp+1):(Hp+Nc)
+                    bm[i, j, k] = 0.012 * cos(0.3p - 0.5i + 0.6j + 0.2k)
+                end
+                bm
+            end
+            panels_cm = ntuple(6) do p
+                cm = zeros(Float64, N, N, Nz + 1)
+                for k in 2:Nz, j in (Hp+1):(Hp+Nc), i in (Hp+1):(Hp+Nc)
+                    cm[i, j, k] = 0.01 * sin(0.1p + 0.2i + 0.3j - 0.7k)
+                end
+                cm
+            end
+
+            rm_ref = ntuple(p -> cat(panels_rm0[p], panels_rm2[p]; dims = 4), 6)
+            m_ref = deepcopy(panels_m0)
+            ws_ref = CSAdvectionWorkspace(mesh, Nz; n_tracers = Nt)
+            _strang_split_cs_mt_copyback!(rm_ref, m_ref, panels_am, panels_bm, panels_cm,
+                                          mesh, scheme, ws_ref; subcycle_count = 1)
+
+            rm_ping = ntuple(p -> cat(panels_rm0[p], panels_rm2[p]; dims = 4), 6)
+            m_ping = deepcopy(panels_m0)
+            ws_ping = CSAdvectionWorkspace(mesh, Nz; n_tracers = Nt)
+            rm_final, m_final = strang_split_cs_mt_pingpong!(
+                rm_ping, m_ping, ws_ping.rm_4d_pp_buf, ws_ping.m_pp_buf,
+                panels_am, panels_bm, panels_cm,
+                mesh, scheme, ws_ping; subcycle_count = 1)
+
+            @test rm_final === rm_ping
+            @test m_final === m_ping
+            @test max_interior_absdiff_4d(rm_final, rm_ref, Nc, Hp, Nz, Nt) < 1e-12
+            @test max_interior_absdiff(m_final, m_ref, Nc, Hp, Nz) < 1e-12
+
+            # Contract: the ping-pong path needs a buffer-aware (2-arg) midpoint!;
+            # a 0-arg midpoint! would silently mutate the stale buffer, so it must
+            # error loudly instead.
+            rm_bad = ntuple(p -> cat(panels_rm0[p], panels_rm2[p]; dims = 4), 6)
+            m_bad = deepcopy(panels_m0)
+            ws_bad = CSAdvectionWorkspace(mesh, Nz; n_tracers = Nt)
+            @test_throws ArgumentError strang_split_cs_mt_pingpong!(
+                rm_bad, m_bad, ws_bad.rm_4d_pp_buf, ws_bad.m_pp_buf,
+                panels_am, panels_bm, panels_cm,
+                mesh, scheme, ws_bad; subcycle_count = 1, midpoint! = () -> nothing)
         end
     end
 

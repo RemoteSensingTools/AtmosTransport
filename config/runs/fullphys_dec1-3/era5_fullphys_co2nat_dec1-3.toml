@@ -48,6 +48,8 @@ kind = "precomputed_kz"
 [convection]
 kind = "tm5"
 use_collab_lu = true
+lmax_conv = 0           # full L137; n_merge=2 → L_super=fld(137,2)=68 ≤ 85 engages the collab fast path (else the contract guard hard-errors on L137)
+n_merge   = 2
 
 [chemistry]
 kind = "none"

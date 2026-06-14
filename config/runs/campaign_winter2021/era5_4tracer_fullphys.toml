@@ -19,7 +19,7 @@ backend = "cuda"
 float_type = "Float32"
 
 [input]
-folder       = "~/data/AtmosTransport/met/era5/n320_to_c180/transport_binary_dec2021_catrine_f32"
+folder       = "~/data/AtmosTransport/met/era5/n320_to_c180/transport_binary_dec2021_catrine_f32_fullwindow"
 start_date   = "2021-12-01"
 end_date     = "2021-12-31"        # DECEMBER scope: lmdz Dec-only CAMS file + fossil/Rn time_index=12; Jan/Feb need new emissions
 file_pattern = "era5_n320_transport_{YYYYMMDD}_float32.bin"

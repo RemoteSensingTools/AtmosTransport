@@ -77,5 +77,9 @@ kind = "decay"
   rn222 = 330350.4
 
 [output]
+# Binary-first IO: write fast per-day ATMSNAP binaries inline, then convert to
+# NetCDF offline on CPU with scripts/postprocess/binary_to_netcdf.jl.
+format = "binary_mmap"
+split  = "daily"
 snapshot_interval_hours = 3
-snapshot_file = "~/data/AtmosTransport/output/campaign_winter2021/era5_4tracer_dec2021_feb2022.nc"
+snapshot_file = "~/data/AtmosTransport/output/campaign_winter2021/era5_month/era5_4tracer_{YYYYMMDD}.atmsnap"

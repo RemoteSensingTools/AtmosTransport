@@ -79,5 +79,10 @@ kind = "decay"
   rn222 = 330350.4
 
 [output]
+# Binary-first IO: write fast per-day ATMSNAP binaries inline (avoids the
+# IO-bound NetCDF encode in the GPU run), then convert to NetCDF offline on CPU
+# with scripts/postprocess/binary_to_netcdf.jl.
+format = "binary_mmap"
+split  = "daily"
 snapshot_interval_hours = 3         # 3-hourly, matches GC CATRINE_inst output
-snapshot_file = "~/data/AtmosTransport/output/campaign_winter2021/geosit_omega_4tracer_dec2021_feb2022.nc"
+snapshot_file = "~/data/AtmosTransport/output/campaign_winter2021/geos_month/geosit_omega_4tracer_{YYYYMMDD}.atmsnap"

@@ -510,6 +510,24 @@ function _write_output_frames!(timer::RunProgressTimer,
     return path
 end
 
+# Write accumulated HOST-side snapshot frames to disk. Used by the async
+# daily-flush path (Threads.@spawn): runs off the main loop so the next day's
+# GPU transport overlaps the disk write. Deliberately does NOT touch the run
+# timer (the overlapped write is not charged to wall io_write) and never touches
+# GPU memory (frames are `Array(...)` copies captured at snapshot time).
+function _write_frames_to_disk(spec::RuntimeOutputSpec, path::AbstractString,
+                               frames::Vector{SnapshotFrame}, grid, mass_basis::Symbol)
+    isempty(frames) && return path
+    if spec.format === :binary_mmap
+        write_snapshot_binary(path, frames, grid; mass_basis = mass_basis,
+                              options = spec.options)
+    else
+        write_snapshot_netcdf(path, frames, grid; mass_basis = mass_basis,
+                              options = spec.options, fields = spec.fields)
+    end
+    return path
+end
+
 _flush_daily_output!(::SingleOutputFile, timer, spec, frames, grid;
                      mass_basis, date_label, day_index) = nothing
 
@@ -873,6 +891,9 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
     snapshot_count = Ref(0)
     snap_idx = 1
     total_elapsed_hours = 0.0
+    # In-flight async daily write (one at a time); kept off the GPU loop so the
+    # disk write overlaps the next day's transport. `nothing` until first flush.
+    pending_write = nothing
 
     # Estimate total windows for the progress bar. Each daily binary has
     # the same window count for a homogeneous run; multiplying gives a
@@ -991,20 +1012,34 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
                              status = @sprintf("finished %s", basename(path)),
                              detail = @sprintf("file wall %.2fs", time() - t0),
                              redraw = true)
-        if do_snapshots
-            written = _flush_daily_output!(output_spec.partition, timer,
-                                           output_spec, day_snapshots,
-                                           driver_grid(first_driver);
-                                           mass_basis = air_mass_basis(first_driver),
-                                           date_label = _binary_date_label(path),
-                                           day_index = idx)
-            written !== nothing &&
-                set_progress_status!(timer;
-                                     detail = @sprintf("wrote %s", basename(written)),
-                                     redraw = true)
+        if do_snapshots && output_spec.partition isa DailyOutputFiles &&
+           output_enabled(output_spec) && !isempty(day_snapshots)
+            # Async daily flush: hand the host-side frames to a background task
+            # so the next day's GPU transport overlaps the disk write. Bound to
+            # ONE in-flight write (wait the previous before spawning the next),
+            # which caps extra host memory at ~one day of frames. The shallow
+            # `copy` + `empty!` lets `capture_structured!` keep pushing into the
+            # same `day_snapshots` binding (no closure rebox) while the spawned
+            # task owns the previous day's frames.
+            pending_write !== nothing && wait(pending_write)
+            frames_to_write = copy(day_snapshots)
+            empty!(day_snapshots)
+            out_path = _output_path_for_partition(output_spec, output_spec.partition,
+                                                   _binary_date_label(path), idx)
+            grid_ref = driver_grid(first_driver)
+            mb = air_mass_basis(first_driver)
+            pending_write = Threads.@spawn _write_frames_to_disk(output_spec, out_path,
+                                                                 frames_to_write, grid_ref, mb)
+            set_progress_status!(timer;
+                                 detail = @sprintf("async write %s", basename(out_path)),
+                                 redraw = true)
         end
         close(driver)
     end
+
+    # Drain the last in-flight async daily write before the final flush / mass
+    # accounting, so the run never returns with a write still pending.
+    pending_write !== nothing && wait(pending_write)
 
     if do_snapshots
         # `air_mass_basis(driver)` already returns the Symbol and has been

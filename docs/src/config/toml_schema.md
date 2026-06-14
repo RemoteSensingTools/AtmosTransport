@@ -45,6 +45,31 @@ Path expansion + continuity validation lives in
 Shape B asserts that the resolved binaries form a contiguous date
 sequence; gaps fail at expansion time, not at first window-load.
 
+#### `[input.staging]` — rolling NVMe staging (opt-in)
+
+Transport binaries (~15 GB/day) usually live on NFS-mounted storage. Cold,
+strided per-window reads over NFS make the window prefetch IO-bound (measured
+on a C180 GEOS 6-day run: `prefetch_fetch_wait` 96 s → 5 s, wall 265 s → 160 s,
+−40 %, when reading from local NVMe instead). For long (multi-month/year) runs
+the dataset exceeds RAM, so every new day is a cold NFS read mid-run.
+
+Enable rolling staging to copy a small look-ahead window of upcoming day-files
+onto fast local disk and evict processed days, bounding local use to
+`lookahead_days + 1 + keep_behind_days` files regardless of run length:
+
+```toml
+[input.staging]
+enabled          = true                       # default false ⇒ read NAS directly
+dir              = "/temp1/atmostransport_stage"   # local NVMe directory (required)
+lookahead_days   = 2                          # days kept staged ahead (default 2)
+keep_behind_days = 0                          # processed days retained (default 0)
+cleanup_on_exit  = true                       # remove staged files at run end (default true)
+```
+
+Default off ⇒ bit-identical to a non-staged run. Copies run on a background
+task (overlapping GPU transport); a copy failure transparently falls back to the
+NAS path. Implementation: `src/Models/InputStaging.jl`.
+
 ### `[architecture]` — backend selection
 
 ```toml

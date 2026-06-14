@@ -97,6 +97,7 @@ using ..InitialConditionIO: build_initial_mixing_ratio,
                              pack_initial_tracer_mass,
                              build_surface_flux_sources
 using ..BinaryPathExpander: expand_binary_paths
+using ..InputStaging: InputStager, staged_path_for!, cleanup_staging!
 using ..Output: SnapshotFrame,
                 AbstractOutputPartition, SingleOutputFile, DailyOutputFiles,
                 RuntimeOutputSpec, runtime_output_spec, snapshot_hours,
@@ -766,7 +767,16 @@ function run_driven_simulation(cfg::AbstractDict)
     end
     caps = first(binary_caps).caps
     _validate_input_binary_expectations(caps, input_cfg, first(binary_paths))
-    result = _run_driven_simulation_for(Val(caps.grid_type), binary_paths, cfg)
+    # Rolling NVMe input staging (opt-in via [input.staging]; default off ⇒
+    # `staged_path_for!` returns the NAS path, bit-identical to today). Created
+    # here and torn down in `finally` so staged multi-GB files are always
+    # cleaned up, even if the run throws partway through.
+    stager = InputStager(binary_paths, get(input_cfg, "staging", Dict{String, Any}()))
+    result = try
+        _run_driven_simulation_for(Val(caps.grid_type), binary_paths, cfg, stager)
+    finally
+        cleanup_staging!(stager)
+    end
     if timers_on
         SectionTimer.disable!()
         SectionTimer.report(stderr)
@@ -783,13 +793,13 @@ function run_driven_simulation(cfg::AbstractDict)
     return result
 end
 
-_run_driven_simulation_for(::Val{:latlon}, binary_paths::Vector{String}, cfg) =
-    _run_driven_simulation_structured(binary_paths, cfg)
-_run_driven_simulation_for(::Val{:reduced_gaussian}, binary_paths::Vector{String}, cfg) =
-    _run_driven_simulation_structured(binary_paths, cfg)
-_run_driven_simulation_for(::Val{:cubed_sphere}, binary_paths::Vector{String}, cfg) =
-    _run_driven_simulation_cs(binary_paths, cfg)
-function _run_driven_simulation_for(::Val{grid_type}, _binary_paths::Vector{String}, _cfg) where grid_type
+_run_driven_simulation_for(::Val{:latlon}, binary_paths::Vector{String}, cfg, stager::InputStager) =
+    _run_driven_simulation_structured(binary_paths, cfg, stager)
+_run_driven_simulation_for(::Val{:reduced_gaussian}, binary_paths::Vector{String}, cfg, stager::InputStager) =
+    _run_driven_simulation_structured(binary_paths, cfg, stager)
+_run_driven_simulation_for(::Val{:cubed_sphere}, binary_paths::Vector{String}, cfg, stager::InputStager) =
+    _run_driven_simulation_cs(binary_paths, cfg, stager)
+function _run_driven_simulation_for(::Val{grid_type}, _binary_paths::Vector{String}, _cfg, _stager::InputStager) where grid_type
     throw(ArgumentError("Unsupported transport-binary grid_type=$(grid_type)."))
 end
 
@@ -817,7 +827,7 @@ function _surface_source_total_rate(source)
     end
 end
 
-function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
+function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg, stager::InputStager)
     FT = _cfg_float_type(cfg)
     assert_backend_float_type!(_cfg_runtime_backend(cfg), FT)
     run_cfg = get(cfg, "run", Dict{String, Any}())
@@ -837,8 +847,10 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
 
     _ensure_gpu_runtime!(cfg)
 
+    # `stager` (rolling NVMe input staging) is created + torn down by the caller
+    # `run_driven_simulation`; here we just route driver opens through it.
     # Open first driver, build recipe, validate capability, build model
-    first_driver = TransportBinaryDriver(first(binary_paths);
+    first_driver = TransportBinaryDriver(staged_path_for!(stager, 1);
                                           FT = FT,
                                           arch = CPU())
     output_cfg = get(cfg, "output", Dict{String, Any}())
@@ -924,9 +936,12 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg)
     end
 
     for (idx, path) in enumerate(binary_paths)
+        # `path` (NAS) is kept for date labels/logging; the driver opens the
+        # staged local copy when staging is enabled (idx==1 already staged above).
         driver = idx == 1 ? first_driver :
                  timed_io_read!(timer,
-                     () -> TransportBinaryDriver(path; FT = FT, arch = CPU()))
+                     () -> TransportBinaryDriver(staged_path_for!(stager, idx);
+                                                 FT = FT, arch = CPU()))
         validate_runtime_physics_recipe(recipe, driver)
         stop_window = stop_window_override === nothing ?
                       total_windows(driver) : Int(stop_window_override)
@@ -1083,7 +1098,7 @@ function _cfg_architecture(cfg)
     return CPU()
 end
 
-function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
+function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::InputStager)
     FT   = _cfg_float_type(cfg)
     assert_backend_float_type!(_cfg_runtime_backend(cfg), FT)
     arch = _cfg_architecture(cfg)
@@ -1109,8 +1124,10 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
         error("[tracers] section is malformed; expected per-tracer subsections")
     tracer_init = Dict(spec.name => spec.init_cfg for spec in tracer_specs)
 
+    # `stager` (rolling NVMe input staging) is created + torn down by the caller
+    # `run_driven_simulation`; here we just route driver opens through it.
     # First driver + model (reuses air_mass from window 1)
-    driver1 = CubedSphereTransportDriver(first(binary_paths);
+    driver1 = CubedSphereTransportDriver(staged_path_for!(stager, 1);
                                           FT = FT, arch = arch, Hp = Hp)
     output_cfg = get(cfg, "output", Dict{String, Any}())
     output_spec = runtime_output_spec(output_cfg, FT;
@@ -1251,9 +1268,11 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg)
 
     t0 = time()
     for (driver_idx, path) in enumerate(binary_paths)
+        # `path` (NAS) kept for labels/logging; driver opens the staged local
+        # copy when staging is enabled (driver_idx==1 already staged above).
         driver = driver_idx == 1 ? driver1 :
                  timed_io_read!(timer,
-                     () -> CubedSphereTransportDriver(expanduser(path);
+                     () -> CubedSphereTransportDriver(staged_path_for!(stager, driver_idx);
                                                        FT = FT, arch = arch, Hp = Hp))
         validate_runtime_physics_recipe(recipe, driver; halo_width = Hp)
         stop_window = stop_window_override === nothing ?

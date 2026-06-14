@@ -1267,6 +1267,9 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::In
     end
 
     t0 = time()
+    # In-flight async daily write (one at a time); kept off the GPU loop so the
+    # disk write overlaps the next day's transport. `nothing` until first flush.
+    pending_write = nothing
     for (driver_idx, path) in enumerate(binary_paths)
         # `path` (NAS) kept for labels/logging; driver opens the staged local
         # copy when staging is enabled (driver_idx==1 already staged above).
@@ -1353,19 +1356,33 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg, stager::In
                              status = @sprintf("finished %s", basename(path)),
                              detail = @sprintf("file wall %.1fs", time() - day_t0),
                              redraw = true)
-        if do_snapshots
-            written = _flush_daily_output!(output_spec.partition, timer,
-                                           output_spec, day_snapshots, grid;
-                                           mass_basis = BasisT === DryBasis ? :dry : :moist,
-                                           date_label = _binary_date_label(path),
-                                           day_index = driver_idx)
-            written !== nothing &&
-                set_progress_status!(timer;
-                                     detail = @sprintf("wrote %s", basename(written)),
-                                     redraw = true)
+        if do_snapshots && output_spec.partition isa DailyOutputFiles &&
+           output_enabled(output_spec) && !isempty(day_snapshots)
+            # Async daily flush: hand the host-side frames to a background task so
+            # the next day's GPU transport overlaps the disk write. One in-flight
+            # write at a time (wait the previous before spawning the next), which
+            # caps extra host memory at ~one day of frames. The shallow `copy` +
+            # `empty!` lets `capture_structured!` keep pushing into the same
+            # `day_snapshots` binding while the spawned task owns the prior frames.
+            pending_write !== nothing && wait(pending_write)
+            frames_to_write = copy(day_snapshots)
+            empty!(day_snapshots)
+            out_path = _output_path_for_partition(output_spec, output_spec.partition,
+                                                   _binary_date_label(path), driver_idx)
+            grid_ref = grid
+            mb = BasisT === DryBasis ? :dry : :moist
+            pending_write = Threads.@spawn _write_frames_to_disk(output_spec, out_path,
+                                                                 frames_to_write, grid_ref, mb)
+            set_progress_status!(timer;
+                                 detail = @sprintf("async write %s", basename(out_path)),
+                                 redraw = true)
         end
         close(driver)
     end
+
+    # Drain the last in-flight async daily write before the final mass accounting,
+    # so the run never returns with a write still pending.
+    pending_write !== nothing && wait(pending_write)
 
     @info @sprintf("Done: %.1fs  (%d snapshots, final t=%.1fh)",
                    time() - t0, snapshot_count[], total_hour)

@@ -51,8 +51,16 @@ end
 Reader for cubed-sphere transport binaries. Data is memory-mapped for
 zero-copy access to per-window payloads.
 """
-struct CubedSphereBinaryReader{FT}
-    data    :: Vector{FT}
+# `FT` is the *load-as* element type (per-window panels are `Array{FT}`); `DT`
+# is the *on-disk* element type the payload is memory-mapped as. Keeping `data`
+# at the on-disk type (DT, usually Float32) and converting element-wise in the
+# per-window `copyto!` avoids materializing a full FT copy of the whole binary.
+# For an FT=Float64 run that eager copy was ~2× the file: a C180/L137 ERA5 day
+# is ~36 GB on disk, so the dropped F64 copy was ~72 GB of host RAM *per day*,
+# which OOM-killed multi-day F64 runs. F32 runs are unaffected (DT===FT, so
+# `data` is the zero-copy mmap exactly as before).
+struct CubedSphereBinaryReader{FT, DT}
+    data    :: Vector{DT}
     io      :: IOStream
     header  :: CubedSphereBinaryHeader
     path    :: String
@@ -159,10 +167,10 @@ function CubedSphereBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = F
     seek(io, 0)
     raw_data = Mmap.mmap(io, Vector{DiskFT}, n_elems, header_bytes)
 
-    # Convert to requested FT if needed
-    data = FT === DiskFT ? raw_data : FT.(raw_data)
-
-    return CubedSphereBinaryReader{FT}(data, io, cs_header, bin_path)
+    # Keep the payload at its on-disk type (`DiskFT`); the per-window `copyto!`
+    # into `Array{FT}` panels converts element-wise on read. This avoids the
+    # whole-binary FT copy (the F64 OOM described on the struct above).
+    return CubedSphereBinaryReader{FT, DiskFT}(raw_data, io, cs_header, bin_path)
 end
 
 function Base.summary(r::CubedSphereBinaryReader{FT}) where FT
@@ -175,14 +183,14 @@ function Base.summary(r::CubedSphereBinaryReader{FT}) where FT
     )
 end
 
-function Base.show(io::IO, r::CubedSphereBinaryReader)
+function Base.show(io::IO, r::CubedSphereBinaryReader{FT}) where FT
     h = r.header
     disk_ft = h.float_bytes == 8 ? Float64 : Float32
     print(io, summary(r), "\n",
           "├── path:          ", r.path, "\n",
           "├── geometry:      C", h.Nc, ", panels=", h.npanel,
           ", convention=", h.panel_convention, ", definition=", h.cs_definition, "\n",
-          "├── storage:       ", disk_ft, " on disk, load as ", eltype(r.data), "\n",
+          "├── storage:       ", disk_ft, " on disk, load as ", FT, "\n",
           "├── basis:         ", h.mass_basis, "\n",
           "├── timing:        dt=", h.dt_met_seconds, " s, steps/window=",
               _steps_per_window_summary(h.steps_per_window, h.steps_per_window_by_window), "\n",

@@ -3,6 +3,12 @@ using NCDatasets
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
+# AtmosTransport re-exports only a subset of Output's names (e.g.
+# `runtime_output_spec`); the output-spec accessors used below
+# (`output_enabled`, `output_field_spec`, `snapshot_hours`, `layer_selection`,
+# `output_fields`, `output_path_for_day`, …) live in the Output submodule, so
+# pull them in directly to keep this file self-sufficient.
+using .AtmosTransport.Output
 
 @testset "Output NetCDF snapshots" begin
     @testset "write options validate compression settings" begin
@@ -49,6 +55,28 @@ using .AtmosTransport
                                            Float32)
             @test output_path_for_day(suffixed, "20211203", 3) ==
                   joinpath(dir, "run_20211203.nc")
+
+            # On-disk snapshot precision is decoupled from the model compute type.
+            # The ATMSNAP/binary writer is Float32-only on disk, so a Float64 run
+            # with `format = "binary_mmap"` must coerce the on-disk dtype to
+            # Float32 (the F64 precision lives in the in-run transport, not the
+            # snapshot). NetCDF still honors the compute type.
+            f64_binary = runtime_output_spec(Dict{String, Any}(
+                                                 "path" => joinpath(dir, "run_{date}.atmsnap"),
+                                                 "snapshot_interval_hours" => 6,
+                                                 "stop_hour" => 6,
+                                                 "split" => "daily",
+                                                 "format" => "binary_mmap"),
+                                             Float64)
+            @test f64_binary.format === :binary_mmap
+            @test f64_binary.options.float_type === Float32
+            f64_netcdf = runtime_output_spec(Dict{String, Any}(
+                                                 "path" => joinpath(dir, "run.nc"),
+                                                 "snapshot_interval_hours" => 6,
+                                                 "stop_hour" => 6,
+                                                 "split" => "single"),
+                                             Float64)
+            @test f64_netcdf.options.float_type === Float64
 
             disabled = runtime_output_spec(Dict{String, Any}("enabled" => false,
                                                              "path" => path,

@@ -110,10 +110,24 @@ _staged_path(mgr::InputStager, idx::Int) =
 
 # Background copy NAS → NVMe, verified by size. Returns the staged path, or
 # throws (caught by the caller, which falls back to the NAS path).
+#
+# Uses O_DIRECT (`dd iflag=direct oflag=direct`) when available: a buffered `cp`
+# double-buffers through the page cache and contends with the running transport's
+# own NVMe I/O (measured ~0.78 GB/s in-run, so the copy can't keep ahead of the
+# day loop); O_DIRECT streams NAS→NVMe without polluting the cache (~1.38 GB/s).
+# Falls back to `cp` if `dd` is unavailable or errors (e.g. O_DIRECT unsupported
+# on the target filesystem).
 function _stage_copy(src::AbstractString, dst::AbstractString)
     tmp = dst * ".part"
     isfile(tmp) && rm(tmp; force = true)
-    cp(src, tmp; force = true)
+    ok = false
+    try
+        run(pipeline(`dd if=$src of=$tmp bs=8M iflag=direct oflag=direct status=none`))
+        ok = filesize(tmp) == filesize(src)
+    catch
+        ok = false
+    end
+    ok || cp(src, tmp; force = true)   # fallback: buffered copy
     filesize(tmp) == filesize(src) || throw(ErrorException(
         "staged copy size mismatch: $(filesize(tmp)) vs $(filesize(src)) for $src"))
     mv(tmp, dst; force = true)   # atomic publish: a reader never sees a partial file

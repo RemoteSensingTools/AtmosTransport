@@ -14,18 +14,23 @@ Budget readout at the top-left of each panel (referenced to the FIRST frame):
   EVERY column shows dm vs |F = its own emission-conservation check:
     dm = mass(t) - mass(0)            (burden change from the IC)
     |F = integral of that run's own surface flux   (cumulative emission)
-  GeoChem column uses GC's Emis* diagnostics for |F. The two AtmosTransport
-  columns (GEOS-IT, ERA5) use OUR OWN emission flux for |F (same inventory for
-  both AT runs, only the transport met differs):
+  |F is the COMMON forcing inventory on ALL THREE columns — GC and both AT runs
+  are driven by the same CAMS biospheric / EDGAR / gridfed fluxes, so each
+  column's dm-vs-|F is a like-for-like conservation check against the IDENTICAL
+  emission. (GC's own EmisCO2_Total diagnostic integrates ~0.4% below the lmdz
+  file for co2_natural — an instantaneous-snapshot vs stepwise-integral
+  artefact, same inventory — kept in the printed budget line, not the panels.)
+  The |F series:
     sf6 / co2_fossil / rn222 : constant global rate (run-log conservative-regrid
                                src_total) integrated as rate*t.
     co2_natural              : time-varying lmdz CAMS (stepwise), the global rate
                                series read from the SAME file the model uses,
                                anchored to the model's logged first-slice rate.
-For a conserving, non-decaying tracer dm == |F to the F32 conservation floor
-(post diffusion-anomaly fix, SF6 ~0.3%; pre-fix ~1.9%). For Rn222 the dm < |F gap
-is the radioactive-decay sink. AT and GC use DIFFERENT emission inventories, so
-dm_AT vs dm_GC differences reflect the inventories, not conservation.
+For a conserving, non-decaying tracer dm == |F to that run's conservation floor
+(F32 LinRood fillz=false: ~exact; PPM: ~0.04-0.4% by tracer sharpness). For
+Rn222 the dm < |F gap is the radioactive-decay sink. AT dm prefers the exact
+F64 `<tracer>_total_mass` variable when the run wrote it (true mass balance);
+GC dm is always the field integral (GC files carry no such variable).
 
 ALL masses/column-means come from the 3D fields and the dry layer air mass
 (= dry-dP * area / g; our `air_mass`, GC's `Met_AD`) — never the precomputed
@@ -41,12 +46,17 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as manim
 from matplotlib.colors import Normalize, LogNorm
 import cartopy.feature as cfeature
+import cartopy.crs as ccrs
 
 OUTDIR = os.path.expanduser("~/www/catrine"); os.makedirs(OUTDIR, exist_ok=True)
 OUTMP4 = sys.argv[1] if len(sys.argv) > 1 else f"{OUTDIR}/column_mean_3way_dec_4tracer.mp4"
 GCDIR  = "/home/cfranken/data/AtmosTransport/catrine-geoschem-runs"
-GEOSIT = "/home/cfranken/data/AtmosTransport/output/campaign_winter2021/geosit_omega_4tracer_dec2021_feb2022.nc"
-ERA5   = "/home/cfranken/data/AtmosTransport/output/campaign_winter2021/era5_4tracer_dec2021_feb2022.nc"
+# Override the two AtmosTransport inputs without editing the script:
+#   ANIM_GEOSIT=/path/a.nc ANIM_ERA5=/path/b.nc animate_... out.gif
+GEOSIT = os.environ.get("ANIM_GEOSIT",
+    "/home/cfranken/data/AtmosTransport/output/campaign_winter2021/geosit_omega_4tracer_dec2021_feb2022.nc")
+ERA5   = os.environ.get("ANIM_ERA5",
+    "/home/cfranken/data/AtmosTransport/output/campaign_winter2021/era5_4tracer_dec2021_feb2022.nc")
 T0 = dt.datetime(2021, 12, 1)
 NLON, NLAT = 180, 90
 M_AIR = 28.9644
@@ -57,7 +67,7 @@ TRACERS = [
     ("sf6",         "SpeciesConcVV_SF6",       "EmisSF6",             146.06, 1e12, "ppt",   "viridis", "lin", ("pct", 2, 98)),
     ("rn222",       "SpeciesConcVV_Rn222",     "EmisRn_Soil",         222.0,  1e21, "1e-21", "Reds",    "log", ("pct", 40, 99.5)),
 ]
-SOURCES = ["GeoChem", "AT GEOS-IT", "AT ERA5"]
+SOURCES = ["GEOS-Chem", "AT GEOS-IT", "AT ERA5"]
 
 # --- our own emission flux for the AT columns (identical inventory for both AT
 # runs; only the transport met differs). Constant global rates [kg species/s]
@@ -177,6 +187,13 @@ def main():
             gc_col, gc_m = gc[ti]
             o_col, o_m = col_and_mass(np.asarray(go.variables[ov][gi]), go_am, mr)
             e_col, e_m = col_and_mass(np.asarray(er.variables[ov][gi]), er_am, mr)
+            # TRUE mass balance: prefer the exact F64 `<tracer>_total_mass`
+            # written at capture (authoritative; the F32 spatial-field
+            # integral is reconstruction-polluted for reference-state
+            # tracers). GC files have no such variable -> field integral.
+            tmv = f"{ov}_total_mass"
+            if tmv in go.variables: o_m = float(go.variables[tmv][gi]) * mr
+            if tmv in er.variables: e_m = float(er.variables[tmv][gi]) * mr
             row_maps.append([bin_latlon(g_lons,g_lats, gc_col*sc),
                              bin_latlon(g_lons,g_lats, o_col*sc),
                              bin_latlon(e_lons,e_lats, e_col*sc)])
@@ -215,40 +232,53 @@ def main():
         norms.append(build_norm(nm, vl, allv))
         cmap = plt.get_cmap(cmn).copy(); cmap.set_bad("white"); cmaps.append(cmap)
 
-    fig, axes = plt.subplots(len(TRACERS), 3, figsize=(13.5, 9.4), squeeze=False)
-    fig.subplots_adjust(left=0.08, right=0.91, top=0.93, bottom=0.03, wspace=0.06, hspace=0.12)
+    # Robinson projection: a global pseudocylindrical view that shows the full
+    # globe (incl. high latitudes) without the equirectangular pole-stretching.
+    # The lat-lon raster is drawn with a PlateCarree transform; cartopy warps it.
+    proj = ccrs.Robinson(central_longitude=0)
+    pc   = ccrs.PlateCarree()
+    fig, axes = plt.subplots(len(TRACERS), 3, figsize=(13.5, 9.4), squeeze=False,
+                             subplot_kw={"projection": proj})
+    fig.subplots_adjust(left=0.08, right=0.91, top=0.93, bottom=0.02, wspace=0.05, hspace=0.10)
     ims = [[None]*3 for _ in TRACERS]; txt = [[None]*3 for _ in TRACERS]
     for ti,(ov,gv,ge,M,sc,un,cmn,nm,vl) in enumerate(TRACERS):
         for c in range(3):
             ax = axes[ti][c]
+            ax.set_global()
             ims[ti][c] = ax.imshow(maps[0][ti][c], origin="lower", extent=[-180,180,-90,90],
-                                   aspect="auto", cmap=cmaps[ti], norm=norms[ti])
-            txt[ti][c] = ax.text(0.015, 0.96, "", transform=ax.transAxes, fontsize=7,
-                                 color="black", va="top", ha="left",
+                                   transform=pc, cmap=cmaps[ti], norm=norms[ti])
+            txt[ti][c] = ax.text(0.015, 0.97, "", transform=ax.transAxes, fontsize=7,
+                                 color="black", va="top", ha="left", zorder=5,
                                  bbox=dict(boxstyle="round,pad=0.15", fc="white", alpha=0.6, lw=0))
-            ax.set_xticks([]); ax.set_yticks([]); draw_coast(ax)
+            ax.coastlines(linewidth=0.25, color="0.2", alpha=0.6)
             if ti == 0: ax.set_title(SOURCES[c], fontsize=12, fontweight="bold")
-            if c == 0: ax.set_ylabel(f"{ov}\n({un})", fontsize=10)
+            if c == 0: ax.text(-0.04, 0.5, f"{ov}\n({un})", fontsize=10, rotation=90,
+                               va="center", ha="center", transform=ax.transAxes)
         cax = fig.add_axes([0.915, axes[ti][2].get_position().y0,
                             0.012, axes[ti][2].get_position().height])
         fig.colorbar(ims[ti][2], cax=cax)
-    sup = fig.suptitle("", fontsize=14)
+    sup = fig.suptitle("", fontsize=11.5, y=0.985)
 
     def update(f):
         for ti in range(len(TRACERS)):
             for c in range(3):
                 ims[ti][c].set_data(maps[f][ti][c])
-                if c == 0:
-                    # GC column: dm vs GC's own emission integral
-                    txt[ti][c].set_text(
-                        f"dm = {fmt_mass(dm[f][ti][0])}\n|F = {fmt_mass(cumF_gc[f][ti])}")
-                else:
-                    # AT columns: dm vs OUR own emission integral (per-run conservation check)
-                    txt[ti][c].set_text(
-                        f"dm = {fmt_mass(dm[f][ti][c])}\n|F = {fmt_mass(cumF_at[f][ti])}")
-        sup.set_text(f"Column-mean mixing ratio — {frames[f]:%Y-%m-%d %H:%M}z   "
-                     f"(GeoChem | AtmosTransport GEOS-IT-omega | AtmosTransport ERA5)   "
-                     f"[dm = burden change from IC;  |F = integrated own surface flux]")
+                # |F is the COMMON forcing inventory on every panel (both AT
+                # runs and GC are driven by the same CAMS biospheric / EDGAR /
+                # gridfed fluxes), so each column's dm-vs-|F is a like-for-like
+                # conservation check against the identical emission. (GC's own
+                # EmisCO2_Total diagnostic integrates ~0.4% below the lmdz file
+                # — an instantaneous-snapshot vs stepwise-integral artefact, NOT
+                # a different inventory; printed in the budget line for the
+                # record but not shown per-panel.)
+                txt[ti][c].set_text(
+                    f"dm = {fmt_mass(dm[f][ti][c if c else 0])}\n|F = {fmt_mass(cumF_at[f][ti])}")
+        # Column identities live on the per-axis titles (GeoChem / AT GEOS-IT /
+        # AT ERA5), so the suptitle stays short enough to fit the figure width:
+        # date + the dm/|F legend only.
+        sup.set_text(f"Column-mean mixing ratio   ·   {frames[f]:%Y-%m-%d %H:%M}z"
+                     f"      dm = burden change from IC      "
+                     f"|F = ∫ common surface flux")
         return []
 
     _qc = nframes - 1                                            # QC on the last frame (accumulated dm/|F)

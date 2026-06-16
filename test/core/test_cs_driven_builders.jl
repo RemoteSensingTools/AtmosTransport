@@ -304,9 +304,11 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
             Dict("kind" => "cmfmc_matrix", "lmax_conv" => 75))
         @test_throws ArgumentError build_cs_convection(
             Dict("convection" => Dict("kind" => "tm5", "n_merge" => 3)))
-        # n_merge = 2 rejected at parse time (even with collab on).
-        @test_throws ArgumentError convection_spec(
-            Dict("kind" => "tm5", "use_collab_lu" => true, "n_merge" => 2))
+        # n_merge = 2 is a valid merge with collab on: the historical mass
+        # blow-up was a clipping bug (fixed), not n_merge=2 itself, so it is now
+        # the production value rather than a parse-time error.
+        s2 = convection_spec(Dict("kind" => "tm5", "use_collab_lu" => true, "n_merge" => 2))
+        @test s2 isa TM5ConvectionSpec && s2.n_merge == 2 && s2.use_collab_lu
         # unknown kind throws at the parser.
         @test_throws ArgumentError convection_spec(Dict("kind" => "ras"))
 

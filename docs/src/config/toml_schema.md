@@ -163,6 +163,31 @@ Registered surface-flux source kinds (full list in
 NetCDF sources. There is no `edgar_co2` kind — use
 `gridfed_fossil_co2` for the GridFED-derived fossil CO₂ inventory.
 
+**Time-varying emission** (cubed-sphere). A source whose inventory has
+sub-monthly time slices (e.g. the LMDZ/CAMS biospheric flux) can drive the
+diurnal cycle instead of a monthly mean:
+
+```toml
+[tracers.co2_natural.surface_flux]
+kind            = "lmdz_co2"
+time_varying    = true            # advance through the inventory's time slices
+temporal_scheme = "stepwise"      # how slices are applied between sample times
+```
+
+`temporal_scheme` (default `"stepwise"` for `lmdz_co2`) is one of:
+
+- `"stepwise"` — hold each slice piecewise-constant until the next sample.
+  This matches GEOS-Chem/HEMCO's exact CAMS treatment (verified against
+  `EmisCO2_Total`), so use it to reproduce GC.
+- `"linear"` — linearly interpolate between adjacent slices.
+- `"conservative_mean"` — window-mean each interval (mass-conserving over the
+  window, but smears the diurnal cycle).
+
+Slices are indexed by **absolute** time since the run's `start_date`, so a
+multi-day run advances through the inventory correctly (a per-day clock would
+replay the first day's slices — the cause of the historical co2_natural
++1 Pg/month surplus, now fixed).
+
 ### `[advection]`, `[diffusion]`, `[convection]`, `[chemistry]`
 
 Each operator has a `kind` selector + per-kind kwargs. See
@@ -180,12 +205,29 @@ kind  = "constant"              # "none" | "constant" |
                                 # "tm5_beljaars_viterbo_local_kz" |
                                 # "pbl" (legacy alias for the above; CS-only) |
                                 # "geoschem_holtslag_boville_vdiff" (CS-only;
-                                #   requires include_gchp_vdiff=true binary)
+                                #   requires include_gchp_vdiff=true binary) |
+                                # "precomputed_kz" (CS-only; uses the binary's
+                                #   :kz payload, the TM5 bldiff eddy diffusivity
+                                #   baked at preprocess time — requires a binary
+                                #   built with include_tm5_diffusion=true)
 value = 1.0                     # m²/s — broadcast Kz when kind="constant"
 surface_flux_boundary = false   # true: S(dt)->V(dt); false: V/2->S->V/2
 
 [convection]
-kind = "cmfmc"                  # "none" | "cmfmc" | "tm5"
+kind = "cmfmc"                  # "none" | "cmfmc" | "cmfmc_matrix" | "tm5"
+                                # cmfmc_matrix = TM5 LU solver on GEOS CMFMC
+                                # rates; tm5 = TM5 entrainment (:entu/:detu/
+                                # :entd/:detd payload)
+
+# Collaborative-LU knobs (cmfmc_matrix and tm5). use_collab_lu is REQUIRED for
+# lmax_conv / n_merge to take effect — setting them without it is a hard error.
+use_collab_lu = true            # batched/collaborative column LU (fast path)
+lmax_conv     = 0               # 0 = full column; >0 truncates convection above
+                                # that level (cloud-top closure keeps it mass-safe)
+n_merge       = 2               # merge n adjacent columns per LU solve; 1 is
+                                # bit-exact, 2 is the best-accuracy production
+                                # merge (the historical n=2 blow-up was a
+                                # clipping bug, since fixed)
 
 # TM5-only — per-topology budget for the column-tile workspace,
 # in binary GiB. Default 1.0 (fits production through C720/L137 on
@@ -204,10 +246,11 @@ the binary doesn't support (e.g. `convection.kind = "cmfmc"`
 against a binary lacking `:cmfmc` payload). See
 [Binary format](@ref Binary-format) for the capability surface.
 
-### `[output]` — snapshot NetCDF
+### `[output]` — snapshots
 
 ```toml
 [output]
+format        = "netcdf"       # "netcdf" | "binary_mmap" (ATMSNAP)
 path          = "~/data/.../my_run.nc"
 cadence_hours = 3              # or hours = [0, 6, 12, ...]
 split         = "single"       # "single" | "daily"
@@ -215,12 +258,21 @@ deflate_level = 0              # NetCDF4 deflate (0..9); 0 = no compression
 shuffle       = true           # shuffle filter; only effective when deflate>0
 ```
 
-`split = "single"` writes one NetCDF after the run. `split = "daily"` writes
-one complete NetCDF per daily binary; use `{date}` or `{YYYYMMDD}` in `path`
-for an explicit filename template, otherwise the date is inserted before
-`.nc`. Legacy `snapshot_file`, `snapshot_hours`, and
+`split = "single"` writes one file after the run. `split = "daily"` writes
+one complete file per daily binary; use `{date}` or `{YYYYMMDD}` in `path`
+for an explicit filename template, otherwise the date is inserted before the
+suffix. Legacy `snapshot_file`, `snapshot_hours`, and
 `snapshot_interval_hours` are still accepted. See [Output schema](@ref) for
 the per-topology variable list the file actually contains.
+
+`format = "binary_mmap"` writes fast self-describing per-day **ATMSNAP** binary
+files inline (skipping the NetCDF/HDF5 encode in the GPU run), to be converted
+to NetCDF offline on CPU with `scripts/postprocess/binary_to_netcdf.jl`. This
+is the throughput path for long multi-day runs. The ATMSNAP payload is **always
+Float32 on disk**, including for `float_type = "Float64"` runs — the on-disk
+snapshot precision is independent of the compute precision (the F64 benefit is
+in the in-run transport; the F64 mass-balance check comes from the runtime
+budget log, not the snapshot file).
 
 Optional field selection keeps production files small:
 
@@ -253,10 +305,15 @@ julia --threads=2 --project=. scripts/run_transport.jl <cfg.toml>
 
 Some preprocessing kernels (spectral synthesis, regridding) and
 some host-side workspace operations parallelize across threads.
-The runtime window-load itself is **synchronous** today
-(`DrivenSimulation.jl::step!` blocks on each `read_window!` rather
-than overlapping with compute on window `N − 1`); there is no
-`[buffering]` TOML block.
+The runtime also overlaps I/O with compute when ≥2 threads are
+available: each met window is **prefetched** on a background task
+while the current window integrates (`_start_window_prefetch!` in
+`DrivenSimulation.jl`), and the per-day snapshot write runs on a
+spawned task (`pending_write` in `DrivenRunner.jl`) so disk output
+overlaps the next day's transport. For multi-day/-year runs over
+NFS, opt into rolling local-NVMe input staging via `[input.staging]`
+(above). There is no `[buffering]` TOML block — these overlaps are
+automatic; give the run `--threads=2` (or more) to enable them.
 
 ## Preprocessing config (`config/preprocessing/*.toml`)
 
@@ -367,6 +424,27 @@ dt_met_seconds = 3600.0      # window cadence (s); 1 hour for GEOS-IT
 `[preprocessing].mass_flux_dt_seconds` (`config/met_sources/geosit.toml`,
 default `450.0` — the FV3 dynamics step); there is **no per-run
 `[numerics].mass_flux_dt` override** today.
+
+#### `geos_cm_closure` — GEOS native CS vertical-flux closure
+
+How the vertical mass flux `cm` is diagnosed when regridding GEOS native fields
+to cubed-sphere:
+
+```toml
+[numerics]
+geos_cm_closure = "endpoint"   # default; "omega_consistent" (production cure)
+```
+
+- `"endpoint"` (default) — diagnose `cm` from the endpoint-`DELP` mass tendency.
+  Closes the explicit-`dm` continuity gate exactly, but injects the intrinsic
+  native MFXC↔DELP residual as grid-scale noise that shows up as SH-UTLS
+  "fingering" in adv-only tracers.
+- `"omega_consistent"` — re-anchor `cm` to the A3dyn `OMEGA` field (cube-native),
+  keeping the native horizontal fluxes. Tracer-validated to suppress the
+  fingering to the MERRA-2 level while keeping mass balance closed; this is the
+  production closure for clean GEOS runs.
+- `:pressure_fixer`, `:moisture_filtered`, `:pfix_corrected` are diagnostic-only
+  (they fail the replay gate or drift `ps`) and are warned at use.
 
 ### `[mass_fix]` — global PS pinning (spectral path only)
 
